@@ -1,0 +1,4 @@
+{
+  "skipInShell": "it uses what Bun provides and the jsc shell does not: Bun.gc",
+  "runWithASAN": "it reads the characters of strings whose text is replaced by that of a name"
+}

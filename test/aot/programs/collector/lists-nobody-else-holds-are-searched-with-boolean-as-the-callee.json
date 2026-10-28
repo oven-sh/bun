@@ -1,0 +1,7 @@
+{
+  "build": ["--aot-testing=OverwriteDeadValuesAtCollections"],
+  "env": {
+    "BUN_JSC_collectContinuously": "1",
+    "BUN_JSC_forceDidDeferGCWork": "1"
+  }
+}

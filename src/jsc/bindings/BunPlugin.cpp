@@ -1,4 +1,5 @@
 #include "BunPlugin.h"
+#include "BunCompiledModules.h"
 
 #include "JavaScriptCore/CallData.h"
 #include "JavaScriptCore/ExceptionScope.h"
@@ -91,6 +92,15 @@ static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject*
         return {};
     }
 
+    if (namespaceString.isEmpty() || namespaceString == "file"_s) {
+        String compiled = Bun::firstCompiledModuleMatching(globalObject, filter->regExp());
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!compiled.isNull()) {
+            throwException(globalObject, scope, createError(globalObject, makeString("A runtime plugin can't load \""_s, compiled, "\" because it was already compiled into this executable"_s)));
+            return {};
+        }
+    }
+
     plugin.append(vm, filter->regExp(), func.getObject(), namespaceString);
 
     return JSValue::encode(callframe->thisValue().toThis(globalObject, JSC::ECMAMode::strict()));
@@ -137,6 +147,11 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
         return {};
     }
 
+    if (Bun::isCompiledModule(moduleId)) {
+        throwException(globalObject, scope, createTypeError(globalObject, "module() cannot replace a module that was compiled ahead of time"_s));
+        return {};
+    }
+
     Zig::GlobalObject* global = defaultGlobalObject(globalObject);
 
     if (global->onLoadPlugins.virtualModules == nullptr) {
@@ -159,6 +174,8 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
 
     return JSValue::encode(callframe->thisValue().toThis(globalObject, JSC::ECMAMode::strict()));
 }
+
+extern "C" JSC::EncodedJSValue SYSV_ABI BunObject_getter_main(JSC::JSGlobalObject*);
 
 static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target, BunPlugin::Base& plugin)
 {
@@ -204,6 +221,21 @@ static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObje
     if (!func.isCell() || !func.isCallable()) {
         throwException(globalObject, scope, createError(globalObject, "onResolve() expects second argument to be a function"_s));
         return {};
+    }
+
+    if (Bun::compiledModulesRunInPlaceOfFiles() && (namespaceString.isEmpty() || namespaceString == "file"_s)) {
+        JSValue main = JSValue::decode(BunObject_getter_main(defaultGlobalObject(globalObject)));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (main.isString()) {
+            String path = main.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            auto matchResult = filter->regExp()->match(globalObject, path, 0);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (matchResult) {
+                throwException(globalObject, scope, createError(globalObject, makeString("A runtime plugin can't resolve the entry point \""_s, path, "\" because it was already compiled into this executable"_s)));
+                return {};
+            }
+        }
     }
 
     plugin.append(vm, filter->regExp(), uncheckedDowncast<JSObject>(func), namespaceString);
@@ -533,6 +565,8 @@ static void findLoadedESModule(Zig::GlobalObject* globalObject, JSC::JSString* s
         bool linked = true;
         if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(mod))
             linked = cyclic->status() >= JSC::CyclicModuleRecord::Status::Linked;
+        if (JSC::AOT::isCompiledModuleRecord(mod))
+            linked = false;
         if (linked) {
             loaded.esmNamespace = mod->getModuleNamespace(globalObject);
             RETURN_IF_EXCEPTION(scope, );
@@ -696,6 +730,11 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
 
     resolveSpecifier();
     RETURN_IF_EXCEPTION(scope, {});
+
+    if (Bun::isCompiledModule(specifier)) {
+        scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, makeString("mock(module, fn) cannot replace a module that was compiled ahead of time: \""_s, specifier, "\""_s)));
+        return {};
+    }
 
     JSC::JSObject* callback = callbackValue.getObject();
 
@@ -1164,5 +1203,11 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * global
 
 BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPlugin, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Plugin, jsFunctionBunPlugin);
+    if (JSC::JSValue error = Bun::errorIfUnseenCodeIsRefused(globalObject, "Bun.plugin"_s)) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+        JSC::throwException(globalObject, scope, error);
+        return {};
+    }
     return Bun::setupBunPlugin(globalObject, callframe, BunPluginTargetBun);
 }

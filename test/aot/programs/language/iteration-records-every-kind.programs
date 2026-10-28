@@ -1,0 +1,3024 @@
+////: for-5
+for (const value of values) {
+    try {
+        console.log(«1»(value as number));
+    } catch (error) {
+        console.log((error as Error).constructor.name);
+    }
+}
+////: joined
+function joined«1»: number): string {
+  let text = "";
+  try {
+    for (let «2»";
+  } catch (error) {
+    text += (error as Error).name;
+  }
+  return text;
+}
+////: of
+function of«1»): unknown[] {
+  const y = «2» as any;
+  return [
+    Math.abs(y), Math.floor(y), Math.ceil(y), Math.trunc(y), Math.round(y), Math.fround(y), Math.f16round(y), Math.sqrt(y), Math.sign(y), Math.clz32(y),
+    Math.imul(y, 3), Math.imul(5, y), Math.min(y), Math.max(y), Math.min(y, 0.5), Math.max(y, 0.5), Math.hypot(y), Math.hypot(y, 0), Math.hypot(y, 0, 0),
+    Math.pow(y, 0), Math.pow(y, 1), Math.pow(y, 2), Math.pow(y, 0.5), rounded(Math.pow(2, y)), rounded(Math.pow(10, y)), Math.expm1(y) > 1, Math.atan2(y, 0) > 1,
+    isNaN(y), isFinite(y), Number.isNaN(y), Number.isFinite(y), Number.isInteger(y), Number.isSafeInteger(y), Number(y), parseInt(y), parseInt(y, 36),
+  ];
+}
+////: report-2
+report(«1», () => {
+  const key = "proto" + «2»;
+  class Static {
+    static [key] = 1;
+  }
+  return Static.«3»;
+});
+//// iteration-records-every-kind.js
+const lines = [];
+
+function show(value) {
+  if (Array.isArray(value) && value.index !== undefined) return value[0] + "@" + value.index;
+  return JSON.stringify(value);
+}
+
+function attempt(name, run) {
+  try {
+    lines.push(name + " | " + run());
+  } catch (error) {
+    lines.push(name + " | THROWS " + error.constructor.name + ": " + error.message);
+  }
+}
+
+function* numbers() {
+  try {
+    yield 1;
+    yield 2;
+    yield 3;
+  } finally {
+    lines.push("generator finally");
+  }
+}
+
+const sources = {
+  string: () => "a\u{1F600}b\uD83Dc",
+  map: () => new Map([["x", 1], ["y", 2], ["z", 3]]),
+  "map with number keys": () => new Map([[1, "one"], [2, "two"], [3, "three"]]),
+  set: () => new Set(["p", "q", "r"]),
+  "set with number keys": () => new Set([1, 2, 3]),
+  "map keys": () => new Map([["x", 1], ["y", 2], ["z", 3]]).keys(),
+  "map values": () => new Map([["x", 1], ["y", 2], ["z", 3]]).values(),
+  "map entries": () => new Map([["x", 1], ["y", 2], ["z", 3]]).entries(),
+  "set values": () => new Set(["p", "q", "r"]).values(),
+  "set entries": () => new Set(["p", "q", "r"]).entries(),
+  "array values": () => [10, 20, 30].values(),
+  "array keys": () => [10, 20, 30].keys(),
+  "array entries": () => [10, 20, 30].entries(),
+  "typed array": () => new Uint8Array([7, 8, 9]),
+  generator: () => numbers(),
+  matches: () => "aXbX".matchAll(/X/g),
+};
+
+function readAll(iterable) {
+  const seen = [];
+  for (const value of iterable) seen.push(show(value));
+  return seen.join(" ");
+}
+
+function readFirstThenRest(iterable) {
+  const seen = [];
+  for (const value of iterable) {
+    seen.push(show(value));
+    break;
+  }
+  return seen.join(" ") + " then " + readAll(iterable);
+}
+
+function readUntilThrow(iterable) {
+  const seen = [];
+  try {
+    for (const value of iterable) {
+      seen.push(show(value));
+      throw new RangeError("stop");
+    }
+  } catch (error) {
+    seen.push(error.message);
+  }
+  return seen.join(" ") + " then " + readAll(iterable);
+}
+
+function readPattern(iterable) {
+  const [first, second] = iterable;
+  return show(first) + " " + show(second) + " then " + readAll(iterable);
+}
+
+function readPatternWithRest(iterable) {
+  const [first, ...rest] = iterable;
+  return show(first) + " " + rest.map(show).join(" ");
+}
+
+for (const name of Object.keys(sources)) {
+  const create = sources[name];
+  attempt(name + ": for..of", () => readAll(create()));
+  attempt(name + ": spread", () => [...create()].map(show).join(" "));
+  attempt(name + ": pattern", () => readPattern(create()));
+  attempt(name + ": pattern with rest", () => readPatternWithRest(create()));
+  attempt(name + ": break", () => readFirstThenRest(create()));
+  attempt(name + ": throw", () => readUntilThrow(create()));
+}
+
+attempt("pairs of map", () => {
+  const seen = [];
+  for (const [key, value] of sources.map()) seen.push(key + "=" + value);
+  return seen.join(" ");
+});
+attempt("pairs of set entries", () => {
+  const seen = [];
+  for (const [key, value] of sources["set entries"]()) seen.push(key + "=" + value);
+  return seen.join(" ");
+});
+attempt("pairs of array entries", () => {
+  const seen = [];
+  for (const [index, value] of sources["array entries"]()) seen.push(index + "=" + value);
+  return seen.join(" ");
+});
+
+function withOwnReturn(iterator) {
+  iterator.return = function () {
+    lines.push("own return called");
+    return {};
+  };
+  return iterator;
+}
+
+attempt("own return on array iterator", () => readFirstThenRest(withOwnReturn([1, 2, 3].values())));
+attempt("own return on map iterator", () => readFirstThenRest(withOwnReturn(new Map([[1, 2], [3, 4]]).keys())));
+attempt("own return on set iterator", () => readFirstThenRest(withOwnReturn(new Set([1, 2]).values())));
+attempt("own return on matches", () => readFirstThenRest(withOwnReturn("aXbX".matchAll(/X/g))));
+attempt("own return on generator", () => readFirstThenRest(withOwnReturn(numbers())));
+attempt("own return added in body", () => {
+  const iterator = [1, 2, 3].values();
+  for (const value of iterator) {
+    withOwnReturn(iterator);
+    return "left at " + value;
+  }
+});
+attempt("own return not called at end", () => readAll(withOwnReturn([1, 2].values())));
+
+attempt("own next on generator", () => {
+  const generator = numbers();
+  const next = generator.next;
+  generator.next = function (value) {
+    lines.push("own next called");
+    return next.call(this, value);
+  };
+  return readAll(generator);
+});
+
+function createShrunkView() {
+  const buffer = new ArrayBuffer(8, { maxByteLength: 16 });
+  const view = new Uint8Array(buffer, 0, 8);
+  buffer.resize(4);
+  return view;
+}
+
+attempt("out-of-bounds view: for..of", () => readAll(createShrunkView()));
+attempt("out-of-bounds view: spread", () => [...createShrunkView()].join(" "));
+attempt("out-of-bounds view: own iterator", () => {
+  const view = createShrunkView();
+  view[Symbol.iterator] = function () {
+    lines.push("own iterator called");
+    return [5][Symbol.iterator]();
+  };
+  return readAll(view);
+});
+attempt("view shrunk while iterated", () => {
+  const buffer = new ArrayBuffer(4, { maxByteLength: 8 });
+  const view = new Uint8Array(buffer, 0, 4);
+  const seen = [];
+  for (const value of view) {
+    seen.push(value);
+    buffer.resize(2);
+  }
+  return seen.join(" ");
+});
+
+const OtherRealmMap = require("node:vm").runInNewContext("Map");
+const otherRealmIterator = OtherRealmMap.prototype[Symbol.iterator];
+OtherRealmMap.prototype[Symbol.iterator] = function () {
+  lines.push("other realm iterator called");
+  return otherRealmIterator.call(this);
+};
+attempt("map of other realm: for..of", () => readAll(new OtherRealmMap([[1, "a"], [2, "b"]])));
+attempt("map of other realm: spread", () => [...new OtherRealmMap([[1, "a"]])].map(show).join(" "));
+attempt("map of other realm: pattern", () => {
+  const [first] = new OtherRealmMap([[1, "a"]]);
+  return show(first);
+});
+
+console.log(lines.join("\n"));
+//// iterators-with-odd-next-methods.js
+const lines = [];
+
+function attempt(name, run) {
+  try {
+    lines.push(name + " | " + JSON.stringify(run()));
+  } catch (error) {
+    lines.push(name + " | THROWS " + (error instanceof TypeError ? "TypeError" : error.constructor.name + ": " + error.message));
+  }
+}
+
+function iterableOver(createIterator) {
+  return {
+    [Symbol.iterator]() {
+      lines.push("Symbol.iterator called");
+      return createIterator();
+    },
+  };
+}
+
+function readAll(iterable) {
+  const seen = [];
+  for (const value of iterable) seen.push(value);
+  return seen;
+}
+
+function tryEveryForm(name, createIterator) {
+  attempt(name + ": for..of", () => readAll(iterableOver(createIterator)));
+  attempt(name + ": spread", () => [...iterableOver(createIterator)]);
+  attempt(name + ": pattern", () => {
+    const [first] = iterableOver(createIterator);
+    return [first];
+  });
+  attempt(name + ": empty pattern", () => {
+    const [] = iterableOver(createIterator);
+    return "opened";
+  });
+}
+
+function countTo(limit) {
+  let count = 0;
+  return () => {
+    count++;
+    return { done: count > limit, value: count };
+  };
+}
+
+tryEveryForm("next is 5", () => ({ next: 5 }));
+tryEveryForm("next is undefined", () => ({ next: undefined }));
+tryEveryForm("next is missing", () => ({}));
+tryEveryForm("next is null", () => ({ next: null }));
+tryEveryForm("next is text", () => ({ next: "next" }));
+tryEveryForm("next is an object", () => ({ next: {} }));
+
+let reads = 0;
+tryEveryForm("next is a getter", () => {
+  const next = countTo(2);
+  return {
+    get next() {
+      reads++;
+      lines.push("next read " + reads);
+      return next;
+    },
+  };
+});
+
+tryEveryForm("next changes after the first read", () => {
+  let isRead = false;
+  const next = countTo(2);
+  return {
+    get next() {
+      if (isRead) return 5;
+      isRead = true;
+      return next;
+    },
+  };
+});
+
+tryEveryForm("next getter throws", () => ({
+  get next() {
+    throw new RangeError("next getter");
+  },
+}));
+
+tryEveryForm("well-behaved iterator", () => ({
+  next: countTo(2),
+  return() {
+    lines.push("return called");
+    return {};
+  },
+}));
+
+console.log(lines.join("\n"));
+//// key-made-of-a-primitive-stops-the-build.js
+// Array.prototype stays extensible in a compiled program, but it takes no key that the language makes of `undefined`, `null`, `true` or `false`. A store that would add one and that every run reaches stops the build. language/keys-made-of-primitives-are-closed has the stores that throw when they run, and the names that can be added.
+Array.prototype[undefined] = "found";
+console.log([][undefined]);
+export {};
+//// keys-made-of-primitives-are-closed.js
+// A prototype under the usual lock takes no key that the language makes of a value that is no string: the text of a number, `undefined`, `null`, `true`, `false`. So `array[key]` with a key that was read past the end finds nothing, whatever else the program adds. A store under such a key throws in strict code. An ordinary new name is stored, and so is such a key on an object that is no locked prototype. language/keys-made-of-primitives-are-closed-sloppy has the stores that are ignored, language/key-made-of-a-primitive-stops-the-build the store that stops the build.
+function store(object, key) {
+  try { object[key] = "added"; } catch (e) { return e.name; }
+  const stored = object[key] === "added";
+  delete object[key];
+  return stored ? "stored" : "ignored";
+}
+const keys = [undefined, null, true, false, NaN, Infinity, -Infinity, -1, 1.5, 1e21, 1e-7, 4294967295, 4294967296, "undefined", "null", "nothing", "True"];
+function row(name, object) {
+  let line = name + ":";
+  for (const key of keys) line += " " + (typeof key === "string" ? JSON.stringify(key) : String(key)) + " " + store(object, key);
+  console.log(line);
+}
+row("Array.prototype", Array.prototype);
+row("String.prototype", String.prototype);
+row("Number.prototype", Number.prototype);
+row("Map.prototype", Map.prototype);
+row("Uint8Array.prototype", Uint8Array.prototype);
+row("the prototype of typed arrays", Object.getPrototypeOf(Uint8Array.prototype));
+row("Promise", Promise);
+row("Date.prototype", Date.prototype);
+row("WeakRef.prototype", WeakRef.prototype);
+row("an array", []);
+row("an object", {});
+
+const numbers = [1, 2, 5];
+let key = 1;
+for (let i = 0; i < 5; i++) key = numbers[key];
+console.log("read past the end:", key, numbers[undefined], numbers[null], "abc"[undefined], new Uint8Array(2)[true]);
+export {};
+//// keys-made-of-primitives-are-closed-sloppy/main.cjs
+// In sloppy code a store to a locked prototype under a key that the language makes of a value that is no string throws a TypeError, as in strict code. An ordinary new name is stored. language/keys-made-of-primitives-are-closed has the strict stores.
+function store(object, key) {
+  try { object[key] = "added"; } catch (e) { return e.name; }
+  var stored = object[key] === "added";
+  delete object[key];
+  return stored ? "stored" : "ignored";
+}
+var keys = [undefined, null, true, false, NaN, -1, 1.5, 0, "nothing"];
+function row(name, object) {
+  var line = name + ":";
+  for (var i = 0; i < keys.length; i++) line += " " + String(keys[i]) + " " + store(object, keys[i]);
+  console.log(line);
+}
+row("Array.prototype", Array.prototype);
+row("String.prototype", String.prototype);
+row("Date.prototype", Date.prototype);
+row("WeakRef.prototype", WeakRef.prototype);
+//// labeled-var-statements.js
+// ECMAScript has a label in front of any statement, a `var` statement among them. TypeScript refuses it (TS1344).
+outer: var x = 0, y = 0;
+loop: do {
+  inner: x = 2;
+  break;
+  never: var y = 2;
+} while (0);
+another: do {} while (0);
+function count() {
+  first: var n = 1;
+  second: for (var i = 0; i < 3; i++) {
+    third: var m = i;
+    if (i === 1) continue second;
+    n += m;
+  }
+  return n;
+}
+console.log(x, y, count());
+//// language-errors.js
+// The errors the language itself throws, each with its name and message, and the same constructs used legally.
+function report(label, body) {
+  try {
+    console.log(label, "returned", body());
+  } catch (error) {
+    console.log(label, "threw", error.name, error.message);
+  }
+}
+
+class Base {
+  value = 1;
+  read() {
+    return this.value;
+  }
+}
+
+report("uninitialized binding", () => {
+  const read = () => late;
+  const result = read();
+  let late = 1;
+  return result + late;
+});
+report("initialized binding", () => {
+  let early = 1;
+  const read = () => early;
+  return read();
+});
+
+report("unresolvable reference", () => notDeclaredAnywhere);
+report("typeof unresolvable reference", () => typeof notDeclaredAnywhere);
+
+report("constant assignment", () => {
+  class Immutable {
+    static rebind() {
+      Immutable = 2;
+    }
+  }
+  Immutable.rebind();
+  return typeof Immutable;
+});
+report("let assignment", () => {
+  let variable = 1;
+  variable = 2;
+  return variable;
+});
+
+report("uninitialized this", () => {
+  class Early extends Base {
+    constructor() {
+      const value = this.value;
+      super();
+      this.copy = value;
+    }
+  }
+  return new Early().copy;
+});
+report("this after super", () => {
+  class Late extends Base {
+    constructor() {
+      super();
+      this.copy = this.value;
+    }
+  }
+  return new Late().copy;
+});
+
+report("this already bound", () => {
+  class Twice extends Base {
+    constructor() {
+      super();
+      super();
+    }
+  }
+  return new Twice().value;
+});
+report("one super call", () => {
+  class Once extends Base {
+    constructor() {
+      super();
+    }
+  }
+  return new Once().value;
+});
+
+report("delete super property", () => {
+  class Deleter extends Base {
+    remove() {
+      return delete super.read;
+    }
+  }
+  return new Deleter().remove();
+});
+report("delete own property", () => {
+  const object = { member: 1 };
+  return delete object.member;
+});
+
+report("destructure named property of null", () => {
+  const source = null;
+  const { member } = source;
+  return member;
+});
+report("destructure named property of undefined", () => {
+  const source = undefined;
+  const { member } = source;
+  return member;
+});
+report("destructure empty pattern of null", () => {
+  const source = null;
+  const {} = source;
+  return 0;
+});
+report("destructure object", () => {
+  const source = { member: 1 };
+  const { member } = source;
+  return member;
+});
+
+report("derived constructor result in named class", () => {
+  class Named extends Base {
+    constructor() {
+      super();
+      return 1;
+    }
+  }
+  return new Named().value;
+});
+report("derived constructor result in anonymous class", () => {
+  const Anonymous = (() =>
+    class extends Base {
+      constructor() {
+        super();
+        return 1;
+      }
+    })();
+  return new Anonymous().value;
+});
+report("derived constructor returns object", () => {
+  class ReturnsObject extends Base {
+    constructor() {
+      super();
+      return { value: 2 };
+    }
+  }
+  return new ReturnsObject().value;
+});
+
+////= report-2	"static prototype key"	"type"	prototype
+////= report-2	"static other key"	"col"	protocol
+
+report("iterator result not object", () => {
+  const iterable = {
+    [Symbol.iterator]() {
+      return {
+        next() {
+          return 1;
+        },
+      };
+    },
+  };
+  for (const element of iterable) return element;
+  return "no element";
+});
+report("iterator result object", () => {
+  const iterable = {
+    [Symbol.iterator]() {
+      return {
+        next() {
+          return { done: true };
+        },
+      };
+    },
+  };
+  for (const element of iterable) return element;
+  return "no element";
+});
+
+function iteratorFor(hasThrowMethod) {
+  const iterator = {
+    [Symbol.iterator]() {
+      return this;
+    },
+    next() {
+      return { done: false, value: 1 };
+    },
+    return() {
+      console.log("return called");
+      return {};
+    },
+  };
+  if (hasThrowMethod)
+    iterator.throw = () => ({ done: true, value: "handled" });
+  return iterator;
+}
+function* delegate(hasThrowMethod) {
+  return yield* iteratorFor(hasThrowMethod);
+}
+report("iterator without throw method", () => {
+  const generator = delegate(false);
+  generator.next();
+  return generator.throw(new Error("thrown in")).value;
+});
+report("iterator with throw method", () => {
+  const generator = delegate(true);
+  generator.next();
+  return generator.throw(new Error("thrown in")).value;
+});
+//// length-of-any.ts
+// `length` of a value declared `any` or `unknown` is whatever the object has under that name.
+function last(list: any): number { for (let i = list.length - 1; i >= 0; i--) return i; return -1 }
+function count(list: any) { let n = list.length; n++; return n }
+function half(list: any) { const n = list.length >> 1; return n }
+function ofUnknown(list: unknown) { const n = (list as any).length; return typeof n + n }
+function ofArray(list: number[]) { let n = list.length; n--; return n }
+function ofEither(list: string | number[]) { const n = list.length; return n + 1 }
+const table: any = { last, count, half, ofUnknown }
+console.log(table.last(5), table.last({}), table.last([1]), table.last({ length: 2.5 }), table.last("abc"))
+console.log(table.count(5), table.count({ length: "a" }), table.count([1, 2]))
+console.log(table.half({}), table.half({ length: 7.9 }), table.half([1, 2, 3, 4]))
+console.log(table.ofUnknown({}), table.ofUnknown({ length: -0.5 }), table.ofUnknown("ab"))
+console.log(ofArray([]), ofArray([1, 2]), ofEither("abc"), ofEither([1]))
+//// length-read-by-name-of-every-kind-of-value.js
+// `.length` of a value of which nothing is known: arrays of every storage, strings, and everything else that has, inherits, computes or lacks a length.
+////= lines-22	lengthOf	value	value.length
+
+function describe(value) {
+  try {
+    const length = lengthOf(value);
+    return typeof length + " " + String(length);
+  } catch (error) {
+    return error.constructor.name;
+  }
+}
+
+class Stack extends Array {}
+class Named {
+  get length() {
+    return "computed";
+  }
+}
+
+const sparse = [];
+sparse[100000] = 1;
+const huge = [];
+huge.length = 4294967295;
+const shrunk = [1, 2, 3, 4];
+shrunk.length = 2;
+const frozen = Object.freeze([1, 2, 3]);
+const withHoles = [1, , 3];
+const stack = new Stack();
+stack.push(1, 2, 3);
+const rope = "left".repeat(3) + String(Date.now()).slice(0, 0) + "right";
+const inherits = Object.create([1, 2, 3]);
+const shadowed = Object.create({ length: "inherited" });
+const proxied = new Proxy([1, 2], {});
+const trapped = new Proxy({}, { get: (target, key) => "trap " + String(key) });
+function threeParameters(a, b, c) {}
+const bound = threeParameters.bind(null, 1);
+const argumentsObject = (function () { return arguments; })(1, 2, 3, 4, 5);
+
+const values = [
+  [], [1], [1, 2.5], ["a", {}], new Array(5), sparse, huge, shrunk, frozen, withHoles, stack, Array.prototype,
+  "", "abc", rope, new String("boxed"), "\u{1F600}",
+  new Uint8Array(6), new Float64Array(2), new DataView(new ArrayBuffer(8)), new ArrayBuffer(8),
+  threeParameters, bound, () => 0, class { constructor(a) {} }, argumentsObject,
+  { length: 12 }, { length: -1 }, {}, new Named(), inherits, shadowed, proxied, trapped, new Map([[1, 2]]), new Set([1]),
+  0, 1.5, true, Symbol("s"), 10n, null, undefined,
+];
+
+const lines = [];
+for (let round = 0; round < 3; round++) {
+  lines.length = 0;
+  for (const value of values) lines.push(describe(value));
+}
+console.log(lines.join("\n"));
+
+const growing = [];
+let sum = 0;
+for (let i = 0; i < 1000; i++) {
+  growing.push(i);
+  sum += lengthOf(growing) + lengthOf("x".repeat(i % 7));
+}
+console.log(sum);
+//// literal-own-accessors.ts
+// A typed read of an accessor that an object literal defines.
+const round = 5;
+const reads = {
+  n: round,
+  get twice() { return this.n * 2; },
+  set twice(v: number) { this.n = v / 2; },
+  get thrice() { return this.n * 3; },
+};
+reads.twice = 10;
+console.log(reads.n, reads.twice, reads.thrice);
+function area(o: { w: number; readonly h: number }) { return o.w * o.h; }
+console.log(area({ w: 2, get h() { return 7; } }));
+function make(k: number) { return { k, get label() { return "k" + this.k; } }; }
+for (let i = 0; i < 3; i++) console.log(make(i).label);
+const lazy = { get schema() { return { a: 1 }; } };
+console.log(lazy.schema.a, "schema" in lazy, Object.keys(lazy).join());
+//// literals-with-middle-spreads.ts
+// Object literals with spreads in the middle, of values that are false, undefined or objects.
+function build(flag: boolean, list: string[], extra?: { allow: string[]; deny: string[] }) {
+  const restricted = flag ? "r" : undefined
+  return {
+    mode: "m",
+    allow: { cli: flag ? [] : list, ...(extra && { session: flag ? [] : extra.allow }) },
+    deny: { cli: list, ...(extra && { session: extra.deny }), ...(list.length > 0 && { narrowing: list }) },
+    ask: {},
+    overrides: {},
+    ...(restricted && { restricted }),
+    ...(flag && { on: true }),
+    available: flag,
+    ...((gate: boolean) => ({ auto: gate, can: gate }))(flag),
+    last: 1,
+  }
+}
+function keysOf(o: object) { return Object.keys(o).join() }
+for (const flag of [true, false]) {
+  for (const extra of [undefined, { allow: ["a"], deny: ["d"] }]) {
+    const made = build(flag, ["x"], extra)
+    console.log(keysOf(made), "|", keysOf(made.allow), "|", keysOf(made.deny), "|", made.deny.cli.join(), JSON.stringify(made))
+  }
+}
+function through(context: ReturnType<typeof build>, updates: string[]) {
+  let now = context
+  for (const update of updates) now = { ...now, mode: update }
+  return now
+}
+const after = through(build(false, []), [])
+for (const key of ["cli", "session"]) console.log(String((after.deny as any)[key]), String((through(build(true, ["q"]), ["u"]).deny as any)[key]))
+// A literal that is held to a type it has only some of the required properties of.
+interface Whole { a: number; b: { x: number }; c: string; d?: number }
+function whole(flag: boolean): Whole {
+  return { a: 1, b: { x: 2 }, c: "c", ...((gate: boolean): { c?: string } => ({ c: gate ? "yes" : "no" }))(flag) }
+}
+function part(): Whole { return { ...whole(true), ...((): Partial<Whole> => ({ a: 5 }))() } }
+console.log(JSON.stringify(whole(true)), JSON.stringify(part()), Object.keys(part()).join())
+// What lacks required properties for good and is said to be a `Whole`, by `any` or `as`: type-rules/object-missing-required-properties.
+const narrowed = ((): Partial<Whole> => ({ c: "only" }))()
+console.log(Object.keys(narrowed).join(), JSON.stringify({ a: 0, b: { x: 9 }, ...narrowed }))
+//// locked-builtin-feature-tests.js
+// Feature tests of built-ins that a program compiled ahead of time cannot replace are decided at the build. What they say is what plain Bun says.
+const said = [];
+const t = (what, value) => said.push(what + " " + value);
+t("Symbol", typeof Symbol); t("Promise", typeof Promise === "undefined"); t("WeakMap", typeof WeakMap !== "undefined" ? "there" : "not there"); t("BigInt", typeof BigInt === "function");
+t("Math", typeof Math); t("JSON", typeof JSON); t("Reflect", typeof Reflect === "object"); t("globalThis", typeof globalThis); t("undefined", typeof undefined);
+t("by globalThis", typeof globalThis.Map); t("assign", !Object.assign); t("typeof assign", typeof Object.assign !== "function"); t("includes", !Array.prototype.includes); t("not not", !!Object.setPrototypeOf);
+if (typeof Symbol !== "function") t("polyfill", "runs"); else t("polyfill", "does not run");
+const assign = typeof Object.assign === "function" ? Object.assign : function () { return "mine"; };
+t("taken", assign({}, { a: 1 }).a);
+// A name that the file binds is the file's.
+function shadowed() { const Symbol = 5; const Object = { assign: 0 }; return [typeof Symbol, !Object.assign, typeof Object.assign].join(); }
+t("shadowed", shadowed());
+function parameter(Map, globalThis) { return [typeof Map, typeof globalThis.Set].join(); }
+t("parameter", parameter("text", { Set: 1 }));
+// What may be replaced, and what is no function, is asked when the program runs.
+t("Buffer", typeof Buffer); t("console", typeof console); t("NaN", !NaN); t("Infinity", !Infinity); t("no such", typeof Object.noSuchThing); t("no such global", typeof noSuchGlobalAnywhere);
+console.log(said.join("\n"));
+//// locked-member-write-stops-the-build.js
+// Map.prototype stays extensible in a compiled program, and its members are locked. A store to one of them that every run reaches stops the build, like a store to an object that is locked entirely: language/locked-write-stops-the-build.
+Map.prototype.get = function () { return "replaced"; };
+console.log(new Map([[1, 2]]).get(1));
+export {};
+//// locked-object-attributes.js
+// The lock leaves property attributes as they are: the members of a locked object still read as writable and configurable, so the object is neither sealed nor frozen. Object.prototype is closed entirely and is not extensible, Array.prototype keeps its members and stays extensible. A definition that changes nothing succeeds, and so does one that only takes from what a member admits: `{ writable: false }`, `Object.seal`, `Object.freeze`. What it took stays taken: the definition that would put it back is refused. Error.prototype, which is not locked, answers as in plain Bun.
+function attempt(f) { try { return String(f()); } catch (e) { return e.name; } }
+function describe(name, object, member) {
+  const descriptor = Object.getOwnPropertyDescriptor(object, member);
+  console.log(name + "." + member + ": writable " + descriptor.writable + ", enumerable " + descriptor.enumerable + ", configurable " + descriptor.configurable);
+  console.log(name + ": extensible " + Object.isExtensible(object) + ", sealed " + Object.isSealed(object) + ", frozen " + Object.isFrozen(object));
+  console.log(name + ": the same definition again: " + attempt(() => Object.defineProperty(object, member, descriptor) === object));
+  console.log(name + ": an empty definition: " + attempt(() => Reflect.defineProperty(object, member, {})));
+  console.log(name + ": made read-only: " + attempt(() => Reflect.defineProperty(object, member, { writable: false })));
+  Reflect.defineProperty(object, member, descriptor);
+  console.log(name + ": another value defined: " + attempt(() => Object.defineProperty(object, member, { value: descriptor.value.bind(null) }) === object));
+  Reflect.defineProperty(object, member, descriptor);
+  console.log(name + ": its own prototype set again: " + attempt(() => Object.setPrototypeOf(object, Object.getPrototypeOf(object)) === object));
+}
+function close(name, object) {
+  console.log("Object.preventExtensions(" + name + "): " + attempt(() => Object.preventExtensions(object) === object));
+  console.log("Object.seal(" + name + "): " + attempt(() => Object.seal(object) === object));
+  console.log("Object.freeze(" + name + "): " + attempt(() => Object.freeze(object) === object));
+  console.log(name + " afterwards: extensible " + Object.isExtensible(object) + ", sealed " + Object.isSealed(object) + ", frozen " + Object.isFrozen(object));
+}
+describe("Object.prototype", Object.prototype, "hasOwnProperty");
+describe("Array.prototype", Array.prototype, "push");
+describe("Date.prototype", Date.prototype, "getTime");
+describe("Error.prototype", Error.prototype, "toString");
+close("Array.prototype", Array.prototype);
+close("Object.prototype", Object.prototype);
+export {};
+//// locked-write-stops-the-build.js
+// A store that replaces a member of an always locked built-in stops the build when every run reaches it: it stands in the body of one of the program's own modules, under no condition and outside any `try`, so the program would end there with a TypeError. language/locked-write-that-may-not-run has the stores that build.
+Array.prototype.includes = function (value) { return this.indexOf(value) !== -1; };
+console.log([1, 2, 3].includes(2));
+export {};
+//// locked-write-that-may-not-run.js
+// A store that replaces a member of an always locked built-in builds, with a warning, wherever the program can go on: inside `try`, under a condition, in a function. Where it runs it throws a TypeError. A new ordinary name on the same object or on a namespace, and a store to a member that is left open, are ordinary stores. language/locked-write-stops-the-build has the store that stops the build.
+try { Array.prototype.includes = function (value) { return this.indexOf(value) !== -1; }; console.log("in a try: stored"); } catch (e) { console.log("in a try:", e.name); }
+if (process.argv.length > 100) Array.prototype.indexOf = function () { return -1; };
+console.log("under a condition that is false:", [5].indexOf(5));
+function patch() { Array.prototype.flat = function () { return []; }; }
+console.log("in a function that is not called yet:", [[1]].flat().length);
+function attempt() { try { patch(); return "stored"; } catch (e) { return e.name; } }
+console.log("in a function that is called:", attempt());
+Array.prototype.last = function () { return this[this.length - 1]; };
+console.log("a new name on the same object:", [1, 2, 3].last());
+Math.half = n => n / 2;
+console.log("a new name on a namespace:", Math.half(8));
+Date.now = () => 8;
+console.log("a member that is left open:", Date.now());
+export {};
+//// loop-counter-below-2-pow-53.ts
+// A counter that is incremented in a loop never passes 2^53.
+function evens(n: number) { let i = 0, turns = 0; while (i < n) { i += 2; turns++ } return [i, turns].join() }
+function most(n: number) { let i = 0; while (i < n) i += 1024; return i }
+function down(n: number) { let i = 0; for (let k = 0; k < n; k++) i -= 3; return i }
+function either(text: string) { let pos = 0, count = 0; while (pos < text.length) { pos += text.charCodeAt(pos) > 0x7f ? 2 : 1; count++ } return [pos, count].join() }
+function back(n: number) { let i = 0; for (let k = 0; k < n; k++) i = 7 + i; return i }
+function beyond(n: number) { let i = 0; while (i < n) i += 1025; return i }
+function doubling(n: number) { let x = 1; for (let k = 0; k < n; k++) x = x + x; return x }
+function by(n: number, turns: number) { let i = 0; for (let k = 0; k < turns; k++) i += n; return i }
+function far(turns: number) { let i = 9007199254739000; for (let k = 0; k < turns; k++) i += 1025; return i }
+function edge(a: number, b: number) { const p = ((a & 0x7ffffff) + 1) * ((b & 0x3ffffff) + 1); return [p, p + 1, p + 2, p + 1 === p, p + 3].join() }
+function top(up: boolean) { const t = up ? 9007199254740991 : 9007199254740990; return [t + 1, t + 2, t + 3, t + 1 === t + 2].join() }
+function fromAny(o: any) { let i = o.start; for (let k = 0; k < 3; k++) i += 2; return i }
+function fromJSON(text: string) { let i: number = JSON.parse(text); for (let k = 0; k < 3; k++) i += 2; return i }
+function halves(n: number) { let i = n / 2; for (let k = 0; k < 3; k++) i += 2; return i }
+function zero(n: number) { let i = -(n & 0); for (let k = 0; k < 3; k++) i -= 0; return Object.is(i, -0) }
+function unsigned(n: number) { let i = -n >>> 0; for (let k = 0; k < 3; k++) i += 2; return i }
+function early() { return late + 2 }
+const before = early()
+var late = 0
+late += 2
+const n = Number("37")
+console.log(evens(n), most(n * 100), down(n), either("aé b"), back(n))
+console.log(beyond(n * 100), doubling(n), doubling(n + 30), by(0.5, n), by(n, n))
+console.log(far(0), far(1), far(2), far(3), far(n))
+console.log(fromAny({ start: 0.5 }), fromAny({ start: "a" }), fromJSON("1.25"), halves(n), zero(n), unsigned(n), before, early())
+console.log(edge(0x7ffffff, 0x3ffffff), edge(n, n), top(n > 1), top(n < 1))
+//// loop-poll-under-try.ts
+// Loops poll for interruption inside try, around try, outside try and in functions that call nothing. A getter runs the collector in the middle of each loop: objects the loop still uses survive, and objects dropped before the loops are collected.
+const shell = globalThis as any;
+const collect: () => void = shell.Bun ? () => shell.Bun.gc(true) : () => shell.fullGC();
+
+const iterations = 240_000;
+const allocationInterval = 1_000;
+const collectionInterval = 40_000;
+
+interface Link {
+  id: number;
+  label: string;
+  next: Link | null;
+}
+
+interface Outcome {
+  sum: number;
+  head: Link | null;
+  first: Link;
+}
+
+class CollectingGetter {
+  collections = 0;
+  constructor(public limit: number) {}
+  get collectionCount(): number {
+    if (this.collections === this.limit) throw new RangeError("collected " + this.limit + " times");
+    collect();
+    return ++this.collections;
+  }
+}
+
+function createLink(id: number, next: Link | null): Link {
+  return { id, label: "link" + id, next };
+}
+
+function sumInsideTry(collector: CollectingGetter): Outcome {
+  const first = createLink(-1, null);
+  let head: Link | null = null;
+  let sum = 0;
+  try {
+    for (let i = 0; i < iterations; i++) {
+      sum += i & 7;
+      if (i % allocationInterval === 0) head = createLink(i, head);
+      if (i % collectionInterval === 0) sum += collector.collectionCount;
+    }
+  } catch {
+    sum = -sum;
+  }
+  return { sum, head, first };
+}
+
+function sumAroundTry(collector: CollectingGetter): Outcome {
+  const first = createLink(-1, null);
+  let head: Link | null = null;
+  let sum = 0;
+  for (let start = 0; start < iterations; start += collectionInterval) {
+    try {
+      for (let i = start; i < start + collectionInterval; i++) {
+        sum += i & 7;
+        if (i % allocationInterval === 0) head = createLink(i, head);
+      }
+      sum += collector.collectionCount;
+    } catch {
+      sum = -sum;
+    }
+  }
+  return { sum, head, first };
+}
+
+function sumOutsideTry(collector: CollectingGetter): Outcome {
+  const first = createLink(-1, null);
+  let head: Link | null = null;
+  let sum = 0;
+  for (let i = 0; i < iterations; i++) {
+    sum += i & 7;
+    if (i % allocationInterval === 0) head = createLink(i, head);
+    if (i % collectionInterval === 0) sum += collector.collectionCount;
+  }
+  return { sum, head, first };
+}
+
+function sumWithInlineAllocation(collector: CollectingGetter): Outcome {
+  const first: Link = { id: -1, label: "link-1", next: null };
+  let head: Link | null = null;
+  let sum = 0;
+  for (let i = 0; i < iterations; i++) {
+    sum += i & 7;
+    if (i % allocationInterval === 0) head = { id: i, label: "link" + i, next: head };
+    if (i % collectionInterval === 0) sum += collector.collectionCount;
+  }
+  return { sum, head, first };
+}
+
+function sumInRegisters(count: number): number {
+  let sum = 0;
+  for (let i = 0; i < count; i++) sum = (sum + (i ^ (sum >>> 3))) | 0;
+  return sum;
+}
+
+function report(name: string, outcome: Outcome): void {
+  let count = 0;
+  let isIntact = outcome.first.id === -1 && outcome.first.label === "link-1" && outcome.first.next === null;
+  for (let link = outcome.head; link !== null; link = link.next) {
+    count++;
+    if (link.label !== "link" + link.id) isIntact = false;
+    if (link.next === null ? link.id !== 0 : link.next.id !== link.id - allocationInterval) isIntact = false;
+  }
+  console.log(name + ":", outcome.sum, count, isIntact ? "intact" : "damaged");
+}
+
+const dropped: WeakRef<Link>[] = [];
+function dropLinks(count: number): void {
+  for (let i = 0; i < count; i++) dropped.push(new WeakRef(createLink(i, null)));
+}
+
+dropLinks(64);
+// A WeakRef keeps its target alive until the job that created it ends.
+await new Promise<void>(resolve => setTimeout(resolve, 0));
+
+report("inside try", sumInsideTry(new CollectingGetter(Infinity)));
+report("inside try, the getter throws", sumInsideTry(new CollectingGetter(3)));
+report("around try", sumAroundTry(new CollectingGetter(Infinity)));
+report("around try, the getter throws", sumAroundTry(new CollectingGetter(3)));
+report("outside try", sumOutsideTry(new CollectingGetter(Infinity)));
+try {
+  sumOutsideTry(new CollectingGetter(2));
+} catch (error) {
+  console.log("outside try, the getter throws:", (error as Error).message);
+}
+report("inline allocation", sumWithInlineAllocation(new CollectingGetter(Infinity)));
+console.log("in registers:", sumInRegisters(iterations));
+
+let alive = 0;
+for (const reference of dropped) if (reference.deref() !== undefined) alive++;
+console.log("dropped before the loops:", alive * 4 <= dropped.length ? "collected" : alive + " of " + dropped.length + " alive");
+export {};
+//// loops-over-collections-that-stay-empty.js
+// Nothing is ever put into these collections, so a loop over one of them has no entry to hand to its body.
+// The step that would have an entry ends there, and the compiler's own checks hold behind every pass (--aot-check=verify-each-pass).
+const observers = new Set()
+const handlers = new Map()
+const filled = new Set([1, 2, 3])
+
+function notify(entry) {
+  let calls = 0
+  for (const observer of observers) {
+    observer.push(entry)
+    calls++
+  }
+  return calls
+}
+
+function dispatch(entry) {
+  let calls = 0
+  for (const [name, handler] of handlers) calls += handler(name, entry)
+  for (const name of handlers.keys()) calls += name.length
+  for (const handler of handlers.values()) calls += handler('', entry)
+  return calls
+}
+
+function copies() {
+  return [...observers].length + [...handlers].length + Array.from(observers).length
+}
+
+function sum() {
+  let total = 0
+  for (const number of filled) total += number
+  return total
+}
+
+let calls = 0
+let total = 0
+for (let i = 0; i < 3000; i++) {
+  calls += notify(i) + dispatch(i) + copies()
+  total += sum()
+}
+console.log(calls, total, observers.size, handlers.size)
+//// maps-and-sets-cleared-again-and-again.ts
+// A Map or Set that is cleared while it is empty, once, twice or after every use, as a cache that is emptied at the end of each round. Iterators that were made before a clear,
+// between two clears and over a collection that never held anything see exactly what is added afterwards, in for-of loops, by next(), in forEach and in spreads.
+function keysOf<K>(iterator: Iterator<K>): string {
+  const seen: K[] = []
+  for (let step = iterator.next(); !step.done; step = iterator.next()) seen.push(step.value)
+  return "[" + seen.join() + "]"
+}
+
+const cache = new Map<string, number>()
+let hits = 0
+for (let round = 0; round < 20000; round++) {
+  if (round % 5 === 0) cache.set("k" + (round % 7), round)
+  if (round % 5 === 1 && cache.has("k" + ((round - 1) % 7))) hits++
+  cache.clear()
+  if (round % 3 === 0) cache.clear()
+}
+console.log(hits, cache.size)
+
+const map = new Map<string, number>()
+map.clear()
+const overNothing = map.keys()
+map.clear()
+map.set("a", 1)
+console.log(keysOf(overNothing), map.size)
+
+const beforeClear = map.keys()
+map.clear()
+const betweenClears = map.keys()
+map.clear()
+map.clear()
+const afterClears = map.entries()
+map.set("b", 2)
+map.set("c", 3)
+console.log(keysOf(beforeClear), keysOf(betweenClears), keysOf(afterClears), [...map.values()].join())
+
+const started = map.keys()
+console.log(started.next().value)
+map.clear()
+map.clear()
+map.set("d", 4)
+console.log(keysOf(started), keysOf(started))
+
+const set = new Set<number>()
+set.clear()
+const setOverNothing = set.values()
+set.add(1)
+set.delete(1)
+set.clear()
+set.clear()
+set.add(2)
+console.log(keysOf(setOverNothing), [...set].join())
+
+const visited: string[] = []
+const looped = new Map<string, number>([["x", 1], ["y", 2]])
+for (const [key, value] of looped) {
+  visited.push(key + value)
+  if (key === "x") {
+    looped.clear()
+    looped.clear()
+    looped.set("z", 3)
+  }
+  if (key === "z" && looped.size === 1) {
+    looped.clear()
+    looped.clear()
+    looped.set("w", 4)
+  }
+}
+console.log(visited.join())
+
+const each: string[] = []
+const forEachSet = new Set<string>(["p", "q"])
+forEachSet.forEach(value => {
+  each.push(value)
+  if (value === "p") {
+    forEachSet.clear()
+    forEachSet.clear()
+    forEachSet.add("r")
+  }
+})
+console.log(each.join(), forEachSet.size)
+
+const many: Map<number, number>[] = []
+for (let i = 0; i < 3000; i++) {
+  const one = new Map<number, number>()
+  if (i % 2) one.set(i, i)
+  one.clear()
+  one.clear()
+  if (i % 3 === 0) one.set(i, i + 1)
+  many.push(one)
+}
+let sum = 0
+for (const one of many) for (const [key, value] of one) sum += key + value
+console.log(sum)
+
+const again = new Map<string, number>([["k", 1]])
+const overAgain = again.entries()
+const passedFirst = again.keys()
+console.log(passedFirst.next().value)
+again.clear()
+again.set("k", 2)
+console.log(keysOf(overAgain), keysOf(passedFirst), again.get("k"), again.size, again.has("k"), again.delete("k"), again.size)
+
+for (const perRound of [1, 2, 3, 4, 5, 9, 12, 20, 31, 33, 70]) {
+  const rounds = new Map<number | string, number>()
+  const members = new Set<number | string>()
+  const iterators: Iterator<number | string>[] = []
+  let text = ""
+  for (let round = 0; round < 12; round++) {
+    iterators.push(rounds.keys(), members.values())
+    for (let i = 0; i < perRound; i++) {
+      const key = round % 2 ? "s" + i : i + round
+      rounds.set(key, round)
+      members.add(key)
+    }
+    if (round % 4 === 3) text += iterators.map(keysOf).join("") + ";"
+    text += rounds.size + "," + members.size + "," + rounds.has("s0") + "," + members.has(round) + " "
+    rounds.clear()
+    members.clear()
+    if (rounds.size || members.size || rounds.has("s0") || members.has(round) || rounds.get(round) !== undefined) text += "!"
+  }
+  console.log(perRound, text)
+}
+
+const byNumber = new Map<number, number>()
+const numbers = new Set<number>()
+let checksum = 0
+for (let round = 0; round < 3000; round++) {
+  const fresh = new Map<number | string, number | string>()
+  fresh.set(round % 3 ? round + 0.5 : "k" + round, round % 2 ? round * 1.5 : "v" + round)
+  for (const [key, value] of fresh) checksum += String(key).length + String(value).length
+  for (let i = 0; i <= round % 6; i++) {
+    byNumber.set(round * 7 + i + 0.25, i)
+    numbers.add(-i - round)
+  }
+  checksum += byNumber.size * 3 + numbers.size + (byNumber.get(round * 7 + 0.25) ?? -1) + (numbers.has(-round) ? 1 : 0)
+  byNumber.clear()
+  numbers.clear()
+}
+console.log(checksum, byNumber.size, numbers.size)
+
+// A collection that nobody has iterated over is emptied where it stands. Whoever has an iterator that has taken nothing, one that has taken some, or one that is done, and whoever stands in a loop, sees what the language says.
+function walkAndClear(size: number, clearAt: number, refill: number): string {
+  const map = new Map<string, number>()
+  const set = new Set<number>()
+  for (let i = 0; i < size; i++) {
+    map.set("k" + i, i)
+    set.add(i * 2)
+  }
+  const untouched = map.keys()
+  const started = map.entries()
+  const startedOnSet = set.values()
+  const finished = set.keys()
+  started.next()
+  startedOnSet.next()
+  for (const _ of finished) {
+  }
+  let text = ""
+  let steps = 0
+  for (const [key, value] of map) {
+    text += key + "=" + value + ","
+    if (steps++ === clearAt) {
+      map.clear()
+      for (let i = 0; i < refill; i++) map.set((i % 2 ? "k" : "r") + i, -i)
+    }
+    if (steps > 200) break
+  }
+  steps = 0
+  for (const value of set) {
+    text += value + ","
+    if (steps++ === clearAt) {
+      set.clear()
+      for (let i = 0; i < refill; i++) set.add(i * 3)
+    }
+    if (steps > 200) break
+  }
+  return text + "|" + keysOf(untouched) + keysOf(started) + keysOf(startedOnSet) + keysOf(finished) + map.size + "," + set.size
+}
+for (const size of [1, 3, 4, 5, 8, 9, 20, 32, 33]) {
+  for (const clearAt of [0, 1, size - 1, 1000]) {
+    for (const refill of [0, 1, 4, 10, 40]) console.log(size, clearAt, refill, walkAndClear(size, clearAt, refill).length, hashOf(walkAndClear(size, clearAt, refill)))
+  }
+}
+function hashOf(text: string): number {
+  let result = 0
+  for (let i = 0; i < text.length; i++) result = (result * 31 + text.charCodeAt(i)) | 0
+  return result
+}
+console.log(walkAndClear(5, 1, 4), walkAndClear(9, 0, 10), walkAndClear(4, 3, 1))
+
+const reused = new Map<string, number>()
+const reusedSet = new Set<string>()
+let reusedSum = 0
+for (let round = 0; round < 5000; round++) {
+  const count = (round * 7) % 29
+  for (let i = 0; i < count; i++) {
+    reused.set("a" + ((i * 5 + round) % 40), i)
+    reusedSet.add("b" + ((i * 3 + round) % 40))
+  }
+  reusedSum += reused.size + reusedSet.size * 2 + (reused.get("a" + (round % 40)) ?? -1) + (reusedSet.has("b" + (round % 40)) ? 1 : 0)
+  if (round % 500 === 499) for (const [key, value] of reused) reusedSum += key.length + value
+  if (round % 700 === 699) reusedSet.forEach(value => { reusedSum += value.length })
+  reused.clear()
+  reusedSet.clear()
+  if (reused.size || reusedSet.size || reused.has("a1") || reusedSet.has("b1")) reusedSum = NaN
+}
+console.log(reusedSum)
+//// maps-and-sets-filled-by-counted-loops.ts
+// A Map or a Set that a loop over an array fills, as TypeScript's symbol tables are. The arrays have 0 to 300 elements; the keys are strings, whole numbers, fractions, objects, undefined and a mix;
+// some repeat; some loops delete, clear or read while they fill, lengthen or shorten the array, leave early, throw, or fill a collection that already has entries, that an iterator was made over before
+// it had any, that is an instance of a subclass, or whose `set` was replaced. Sizes, orders, lookups and iterators answer as in plain Bun.
+interface Entry {
+  name: string
+  id: number
+}
+function entriesOf(count: number): Entry[] {
+  const entries: Entry[] = []
+  for (let i = 0; i < count; i++) entries.push({ name: "n" + i, id: i * 3 })
+  return entries
+}
+function tableOf(entries: readonly Entry[]): Map<string, Entry> {
+  const result = new Map<string, Entry>()
+  for (const entry of entries) result.set(entry.name, entry)
+  return result
+}
+function idsOf(entries: readonly Entry[]): Set<number> {
+  const result = new Set<number>()
+  for (let i = 0; i < entries.length; i++) result.add(entries[i].id)
+  return result
+}
+function byId(entries: readonly Entry[]): Map<number, string> {
+  const result = new Map<number, string>()
+  for (let i = 0; i < entries.length; i++) result.set(entries[i].id + 0.5, entries[i].name)
+  return result
+}
+function counts(entries: readonly Entry[], modulus: number): Map<string, number> {
+  const result = new Map<string, number>()
+  for (const entry of entries) result.set("k" + (entry.id % modulus), entry.id)
+  return result
+}
+function backwards(entries: readonly Entry[]): Set<Entry> {
+  const result = new Set<Entry>()
+  for (let i = entries.length - 1; i >= 0; i--) result.add(entries[i])
+  return result
+}
+function both(entries: readonly Entry[]): Map<string | number, Entry> {
+  const result = new Map<string | number, Entry>()
+  for (const entry of entries) {
+    result.set(entry.name, entry)
+    result.set(entry.id, entry)
+  }
+  return result
+}
+function into<K, V>(target: Map<K, V>, keys: readonly K[], value: V): Map<K, V> {
+  for (const key of keys) target.set(key, value)
+  return target
+}
+function describe(map: Map<unknown, unknown> | Set<unknown>): string {
+  let text = ""
+  let seen = 0
+  for (const item of map) {
+    const key = Array.isArray(item) ? item[0] : item
+    if (seen < 3 || seen >= map.size - 2) text += (typeof key === "object" && key !== null ? (key as Entry).name : String(key)) + ","
+    seen++
+  }
+  return map.size + ":" + seen + ":" + text
+}
+
+for (const count of [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 16, 17, 25, 43, 64, 100, 255, 256, 300]) {
+  const entries = entriesOf(count)
+  const table = tableOf(entries)
+  const ids = idsOf(entries)
+  const names = byId(entries)
+  let found = 0
+  for (const entry of entries) {
+    if (table.get(entry.name) === entry) found++
+    if (ids.has(entry.id)) found++
+    if (names.get(entry.id + 0.5) === entry.name) found++
+    if (table.has(entry.name + "x") || ids.has(entry.id + 1) || names.has(entry.id)) found = -1000000
+  }
+  console.log(count, found, describe(table), describe(ids), describe(names), describe(counts(entries, 7)), describe(backwards(entries)), describe(both(entries)))
+  table.set("later", entries[0])
+  for (let i = 0; i < 40; i++) ids.add(-i)
+  table.delete("n0")
+  console.log(describe(table), describe(ids), table.has("n0"), table.has("later"))
+}
+
+const mixedKeys: unknown[] = ["a", 1, 1.5, -0, 0, NaN, NaN, undefined, null, true, "1", 2 ** 40, {}, [], Symbol.iterator, 10n, "a", 1]
+console.log(describe(into(new Map<unknown, number>(), mixedKeys, 1)), describe(into(new Map<unknown, unknown>(), mixedKeys, 2.5)), describe(into(new Map<unknown, unknown>(), mixedKeys.slice().reverse(), undefined)))
+console.log(describe(into(new Map<unknown, unknown>([["z", 0]]), mixedKeys, "v")), describe(into(into(new Map<unknown, unknown>(), ["p", "q"], 1), mixedKeys, 2)))
+
+const early = new Map<string, number>()
+const overNothing = early.keys()
+const names = entriesOf(30).map(entry => entry.name)
+for (const name of names) early.set(name, name.length)
+console.log([...overNothing].length, early.size)
+
+const changing = entriesOf(20)
+const whileChanging = new Map<string, number>()
+for (const entry of changing) {
+  whileChanging.set(entry.name, entry.id)
+  if (entry.id === 9) changing.length = 8
+  if (entry.id === 6) changing.push({ name: "pushed", id: 1000 })
+}
+console.log(describe(whileChanging), changing.length)
+
+const growing = entriesOf(6)
+const whileGrowing = new Set<string>()
+for (let i = 0; i < growing.length; i++) {
+  whileGrowing.add(growing[i].name)
+  if (growing.length < 90) growing.push({ name: "g" + i, id: i })
+}
+console.log(describe(whileGrowing))
+
+const cleared = new Map<string, number>()
+const deleted = new Set<string>()
+for (const name of names) {
+  cleared.set(name, 1)
+  deleted.add(name)
+  if (name === "n10" || name === "n20") cleared.clear()
+  if (deleted.size > 3) deleted.delete("n" + (deleted.size - 4))
+}
+console.log(describe(cleared), describe(deleted))
+
+function untilFound(keys: readonly string[], wanted: string): Map<string, number> {
+  const result = new Map<string, number>()
+  for (let i = 0; i < keys.length; i++) {
+    result.set(keys[i], i)
+    if (keys[i] === wanted) break
+  }
+  return result
+}
+console.log(describe(untilFound(names, "n2")), describe(untilFound(names, "n29")), describe(untilFound(names, "none")))
+
+function throwing(keys: readonly string[], at: number): string {
+  const result = new Set<string>()
+  try {
+    for (let i = 0; i < keys.length; i++) {
+      if (i === at) throw new RangeError("stop")
+      result.add(keys[i])
+    }
+  } catch (error) {
+    return (error as Error).message + " " + describe(result)
+  }
+  return describe(result)
+}
+console.log(throwing(names, 0), throwing(names, 1), throwing(names, 17), throwing(names, 99))
+
+class Counting<K, V> extends Map<K, V> {
+  calls = 0
+  set(key: K, value: V): this {
+    this.calls++
+    return super.set(key, value)
+  }
+}
+const counting = into(new Counting<string, number>(), names, 5) as Counting<string, number>
+console.log(counting.calls, describe(counting))
+class Plain<K, V> extends Map<K, V> {}
+console.log(describe(into(new Plain<string, number>(), names, 5)))
+const replaced = new Map<string, number>()
+let replacedCalls = 0
+replaced.set = function (key: string, value: number) {
+  replacedCalls++
+  return key === "n3" ? this : Map.prototype.set.call(this, key, value)
+}
+console.log(describe(into(replaced, names, 1)), replacedCalls)
+
+for (const count of [0, 1, 4, 5, 9, 40, 300]) {
+  const entries = entriesOf(count)
+  console.log(
+    describe(new Set(entries.map(entry => entry.id))), describe(new Set(entries.map(entry => entry.id + 0.25))), describe(new Set(entries)), describe(new Set(entries.map(entry => entry.id % 4))),
+    describe(new Map(entries.map(entry => [entry.name, entry.id] as [string, number]))), describe(new Map(entries.map(entry => [entry.id % 5, entry] as [number, Entry]))),
+    describe(new Set(tableOf(entries).keys())), describe(new Map(tableOf(entries))), describe(new Set(idsOf(entries))),
+  )
+}
+
+let total = 0
+for (let round = 0; round < 3000; round++) {
+  const entries = entriesOf(round % 23)
+  total += tableOf(entries).size * 3 + idsOf(entries).size + byId(entries).size + both(entries).size
+}
+console.log(total)
+//// maps-and-sets-of-every-key-kind-vs-model.ts
+// Maps and sets do what a list of pairs does, through long random sequences of insertions, deletions and lookups, with keys and values of every kind and receivers of several types.
+const collect: () => void = () => Bun.gc(true);
+
+let seed = 987654321;
+function random(below: number): number {
+  seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
+  return (seed >>> 8) % below;
+}
+
+class Item {
+  constructor(public rank: number) {}
+}
+
+let wrong = 0;
+let checksum = 0;
+function mix(value: number): void {
+  checksum = (Math.imul(checksum, 31) + value) | 0;
+}
+function fail(what: string): void {
+  if (wrong++ < 10) console.log("wrong:", what);
+}
+
+function sameValueZero(a: unknown, b: unknown): boolean {
+  return a === b || (a !== a && b !== b);
+}
+
+class Model<K, V> {
+  keys: K[] = [];
+  values: V[] = [];
+  find(key: K): number {
+    for (let i = 0; i < this.keys.length; i++) if (sameValueZero(this.keys[i], key)) return i;
+    return -1;
+  }
+}
+
+function compare<K, V>(map: Map<K, V>, set: Set<K>, model: Model<K, V>): void {
+  if (map.size !== model.keys.length) fail("size of the map " + map.size + " " + model.keys.length);
+  if (set.size !== model.keys.length) fail("size of the set " + set.size + " " + model.keys.length);
+  let i = 0;
+  for (const [key, value] of map) {
+    if (!Object.is(key, model.keys[i]) || !Object.is(value, model.values[i])) fail("order of the map at " + i);
+    i++;
+  }
+  if (i !== model.keys.length) fail("entries of the map " + i);
+  i = 0;
+  for (const key of set) {
+    if (!Object.is(key, model.keys[i])) fail("order of the set at " + i);
+    i++;
+  }
+  if (i !== model.keys.length) fail("entries of the set " + i);
+}
+
+function stored<K>(key: K): K {
+  return (Object.is(key, -0) ? 0 : key) as K;
+}
+
+function step<K, V>(map: Map<K, V>, set: Set<K>, model: Model<K, V>, key: K, value: V): void {
+  const at = model.find(key);
+  const what = random(100);
+  if (what < 25) {
+    const found = map.get(key);
+    if (!Object.is(found, at < 0 ? undefined : model.values[at])) fail("get");
+    mix(at);
+  } else if (what < 35) {
+    if (map.has(key) !== at >= 0) fail("has of the map");
+    if (set.has(key) !== at >= 0) fail("has of the set");
+  } else if (what < 75) {
+    if (map.set(key, value) !== map) fail("set yields the map");
+    if (set.add(key) !== set) fail("add yields the set");
+    if (at < 0) {
+      model.keys.push(stored(key));
+      model.values.push(value);
+    } else model.values[at] = value;
+  } else if (what < 97) {
+    if (map.delete(key) !== at >= 0) fail("delete of the map");
+    if (set.delete(key) !== at >= 0) fail("delete of the set");
+    if (at >= 0) {
+      model.keys.splice(at, 1);
+      model.values.splice(at, 1);
+    }
+  } else compare(map, set, model);
+}
+
+const objects: Item[] = [];
+for (let i = 0; i < 600; i++) objects.push(new Item(i));
+const symbols: symbol[] = [];
+for (let i = 0; i < 40; i++) symbols.push(Symbol("s" + i));
+const numbers: number[] = [0, -0, NaN, 0.5, -0.5, 1e21, -1e21, 2 ** 31, -(2 ** 31), 2 ** 31 - 1, 2 ** 32, 2 ** 53, Infinity, -Infinity, 5e-324];
+for (let i = -20; i < 400; i++) numbers.push(i);
+for (let i = 0; i < 60; i++) numbers.push(i + 0.25);
+const bigints: bigint[] = [0n, -0n, 1n, -1n, 2n ** 64n, 2n ** 64n + 1n, -(2n ** 64n), 2n ** 200n];
+const texts: string[] = [];
+for (let i = 0; i < 200; i++) texts.push("t" + i);
+const everything: unknown[] = [undefined, null, true, false, "", "0", "NaN", ...objects.slice(0, 150), ...symbols, ...numbers.slice(0, 120), ...bigints, ...texts.slice(0, 100)];
+
+function freshBigInt(value: bigint): bigint {
+  return value + BigInt(random(1));
+}
+function freshNumber(value: number): number {
+  return random(2) ? value : value * (1 + random(1));
+}
+function freshText(value: string): string {
+  return value.split("").join("");
+}
+function fresh(value: unknown): unknown {
+  if (typeof value === "bigint") return freshBigInt(value);
+  if (typeof value === "number") return freshNumber(value);
+  if (typeof value === "string" && random(2)) return freshText(value);
+  return value;
+}
+
+function objectsToNumbers(rounds: number, inUse: number): void {
+  const map = new Map<Item, number>();
+  const set = new Set<Item>();
+  const model = new Model<Item, number>();
+  for (let round = 0; round < rounds; round++) step(map, set, model, objects[random(inUse)]!, random(3) ? round : round + 0.5);
+  compare(map, set, model);
+  mix(map.size);
+}
+function objectsToObjects(rounds: number, inUse: number): void {
+  const map = new Map<Item, Item>();
+  const set = new Set<Item>();
+  const model = new Model<Item, Item>();
+  for (let round = 0; round < rounds; round++) step(map, set, model, objects[random(inUse)]!, objects[random(objects.length)]!);
+  compare(map, set, model);
+  mix(map.size);
+}
+function numbersToObjects(rounds: number, inUse: number): void {
+  const map = new Map<number, Item>();
+  const set = new Set<number>();
+  const model = new Model<number, Item>();
+  for (let round = 0; round < rounds; round++) step(map, set, model, freshNumber(numbers[random(inUse)]!), objects[random(objects.length)]!);
+  compare(map, set, model);
+  mix(map.size);
+}
+function textsToNumbers(rounds: number, inUse: number): void {
+  const map = new Map<string, number>();
+  const set = new Set<string>();
+  const model = new Model<string, number>();
+  for (let round = 0; round < rounds; round++) step(map, set, model, random(2) ? texts[random(inUse)]! : freshText(texts[random(inUse)]!), round);
+  compare(map, set, model);
+  mix(map.size);
+}
+function symbolsToBooleans(rounds: number, inUse: number): void {
+  const map = new Map<symbol, boolean>();
+  const set = new Set<symbol>();
+  const model = new Model<symbol, boolean>();
+  for (let round = 0; round < rounds; round++) step(map, set, model, symbols[random(inUse)]!, !random(2));
+  compare(map, set, model);
+  mix(map.size);
+}
+function anythingToAnything(rounds: number, inUse: number): void {
+  const map = new Map<unknown, unknown>();
+  const set = new Set<unknown>();
+  const model = new Model<unknown, unknown>();
+  for (let round = 0; round < rounds; round++) {
+    step(map, set, model, fresh(everything[random(inUse)]), everything[random(everything.length)]);
+    if (round % 4000 === 3999) collect();
+  }
+  compare(map, set, model);
+  mix(map.size);
+}
+
+// The first entry decides how a table starts, a later one may not fit it.
+function firstEntries(): void {
+  const firsts: unknown[] = [objects[0], "text", freshText("text"), symbols[0], 1, 0.5, -0, NaN, 2n ** 70n, undefined, null, true];
+  for (const firstKey of firsts) {
+    for (const firstValue of firsts) {
+      for (const laterKey of firsts) {
+        const map = new Map<unknown, unknown>();
+        const set = new Set<unknown>();
+        map.set(firstKey, firstValue);
+        set.add(firstKey);
+        map.set(laterKey, firstKey);
+        set.add(laterKey);
+        const distinct = sameValueZero(firstKey, laterKey) || (typeof firstKey === "bigint" && firstKey === laterKey) ? 1 : 2;
+        if (map.size !== distinct || set.size !== distinct) fail("sizes behind two insertions");
+        if (!Object.is(map.get(firstKey), distinct === 1 ? firstKey : firstValue)) fail("the first value");
+        if (!Object.is(map.get(laterKey), firstKey)) fail("the later value");
+        if (!map.delete(firstKey) || map.has(firstKey) || map.size !== distinct - 1) fail("the first key leaves the map");
+        if (!set.delete(firstKey) || set.has(firstKey) || set.size !== distinct - 1) fail("the first key leaves the set");
+        map.set(firstKey, laterKey);
+        set.add(firstKey);
+        const last = [...map.keys()].pop();
+        if (!Object.is(last, stored(firstKey)) || !Object.is([...set].pop(), stored(firstKey))) fail("a key that comes back is the last");
+      }
+    }
+  }
+}
+
+// An iterator goes on in the tables that replace the one it started in.
+function changesDuringIteration(): void {
+  const set = new Set<number>([0]);
+  let seen = 0;
+  for (const value of set) {
+    seen++;
+    if (value < 3000) {
+      set.add(value + 1);
+      if (value % 3 === 0) set.delete(value);
+      if (value % 7 === 0) set.delete(value + 1), set.add(value + 1);
+    }
+  }
+  mix(seen);
+  mix(set.size);
+
+  const map = new Map<Item, number>([[objects[0]!, 0]]);
+  seen = 0;
+  for (const [key, value] of map) {
+    seen += value;
+    if (key.rank + 1 < objects.length) map.set(objects[key.rank + 1]!, key.rank + 1);
+    if (key.rank % 2) map.delete(objects[key.rank - 1]!);
+    if (key.rank % 50 === 49) collect();
+  }
+  mix(seen);
+  mix(map.size);
+}
+
+// A key that is deleted and inserted over and over fills the table with deleted entries.
+function oneKeyMoves(): void {
+  const map = new Map<string, number>();
+  const set = new Set<Item>();
+  for (let i = 0; i < 64; i++) {
+    map.set(texts[i]!, i);
+    set.add(objects[i]!);
+  }
+  for (let round = 0; round < 20000; round++) {
+    const i = round % 64;
+    if (!map.delete(texts[i]!) || !set.delete(objects[i]!)) fail("the key was there");
+    map.set(texts[i]!, round);
+    set.add(objects[i]!);
+    if (map.size !== 64 || set.size !== 64) fail("sizes stay");
+  }
+  let order = 0;
+  for (const [key, value] of map) order = (Math.imul(order, 31) + key.length + value) | 0;
+  for (const item of set) order = (Math.imul(order, 31) + item.rank) | 0;
+  mix(order);
+}
+
+for (const inUse of [1, 2, 3, 4, 5, 8, 9, 14, 15, 23, 40, 64, 100, 254, 255, 256, 400]) {
+  objectsToNumbers(3000, Math.min(inUse, objects.length));
+  objectsToObjects(3000, Math.min(inUse, objects.length));
+  numbersToObjects(3000, Math.min(inUse, numbers.length));
+  textsToNumbers(3000, Math.min(inUse, texts.length));
+  symbolsToBooleans(1500, Math.min(inUse, symbols.length));
+  anythingToAnything(4000, Math.min(inUse, everything.length));
+}
+anythingToAnything(30000, everything.length);
+firstEntries();
+changesDuringIteration();
+oneKeyMoves();
+console.log("wrong", wrong, "checksum", checksum);
+//// math-and-number-edges.ts
+// Math.*, Number.is*, isNaN, isFinite, Number(x), parseInt and Number.prototype.toString at the edges of the number type: -0, NaN, the infinities, 2 ** 53, nullish and boolean operands, quotients of integers, powers of 2 and 10, spread arrays, radixes, 16-bit strings and ropes.
+const show = (value: unknown): string => (Object.is(value, -0) ? "-0" : String(value));
+const rounded = (value: number): string => (Object.is(value, -0) ? "-0" : String(Number(value.toPrecision(10))));
+const say = (run: () => unknown): string => {
+  try {
+    return show(run());
+  } catch (error) {
+    return (error as Error).name;
+  }
+};
+
+function exactOfNumber(x: number): unknown[] {
+  return [
+    Math.abs(x), Math.floor(x), Math.ceil(x), Math.trunc(x), Math.round(x), Math.fround(x), Math.f16round(x), Math.sqrt(x), Math.sign(x), Math.clz32(x),
+    Math.imul(x, 3), Math.imul(5, x), Math.min(x), Math.max(x), Math.min(x, 1), Math.max(x, 1), Math.min(0, x), Math.max(-0, x), Math.min(x, 2, -3.5), Math.max(x, 2, -3.5),
+    Math.hypot(x), Math.pow(x, 0), Math.pow(x, 1), Math.pow(x, 2), Math.pow(x, 3), Math.pow(x, 0.5), Math.pow(x, -0.5), x ** 2, x ** 0.5,
+    isNaN(x), isFinite(x), Number.isNaN(x), Number.isFinite(x), Number.isInteger(x), Number.isSafeInteger(x), Number(x), parseInt(x as any), parseInt(x as any, 36),
+  ];
+}
+
+function libraryOfNumber(x: number): number[] {
+  return [
+    Math.sin(x), Math.sinh(x), Math.cos(x), Math.cosh(x), Math.tan(x), Math.tanh(x), Math.asin(x), Math.asinh(x), Math.acos(x), Math.acosh(x), Math.atan(x), Math.atanh(x),
+    Math.log(x), Math.log10(x), Math.log2(x), Math.cbrt(x), Math.exp(x), Math.expm1(x), Math.log1p(x), Math.atan2(x, 1), Math.atan2(1, x), Math.atan2(x, x), Math.atan2(x, -0),
+    Math.hypot(x, 3), Math.hypot(3, x, 4), Math.hypot(x, 3, 4, 12), Math.pow(x, 1.5), Math.pow(x, -1), Math.pow(2, x), Math.pow(10, x), 2 ** x, 10 ** x,
+  ];
+}
+
+////= of	NumberOrBoolean(x: number | boolean	x
+
+////= of	Comparison(a: number, b: number	(a < b)
+
+function ofAnything(y: any): unknown[] {
+  return [
+    Math.abs(y), Math.floor(y), Math.ceil(y), Math.trunc(y), Math.round(y), Math.fround(y), Math.f16round(y), Math.sqrt(y), Math.sign(y), Math.clz32(y),
+    Math.imul(y, 3), Math.imul(5, y), Math.min(y), Math.max(y), Math.min(y, 0.5), Math.max(y, 0.5), Math.hypot(y), Math.hypot(y, 0), Math.hypot(y, 0, 0),
+    Math.pow(y, 0), Math.pow(y, 1), Math.pow(y, 2), Math.pow(y, 0.5), rounded(Math.pow(2, y)), rounded(Math.pow(10, y)), Math.expm1(y) > 1, Math.atan2(y, 0) > 1,
+    isNaN(y), isFinite(y), Number.isNaN(y), Number.isFinite(y), Number.isInteger(y), Number.isSafeInteger(y), Number(y), parseInt(y), parseInt(y, 36),
+  ];
+}
+
+function ofIntegers(): string {
+  let text = "";
+  for (let i = -3; i <= 3; i++) {
+    const wide = i * 3000000000;
+    const limit = 9007199254740991 + (i & 1);
+    text += [
+      Math.abs(i), Math.sign(i), Math.floor(i), Math.ceil(i), Math.trunc(i), Math.round(i), Math.min(i, 1), Math.max(i, -1, 2), Math.min(i), Math.max(i),
+      Math.abs(wide), Math.sign(wide), Math.round(wide), Math.min(wide, i), Math.max(wide, i), Math.clz32(i), Math.clz32(wide), Math.imul(i, wide), Math.imul(wide, wide),
+      Math.sqrt(i), Math.fround(wide + 1), Math.hypot(i), Math.hypot(i, 0), Math.pow(i, 2), Math.pow(i, 3), Math.pow(wide, 2), Math.pow(2, i), i ** 2, 2 ** i,
+      isNaN(i), isFinite(wide), Number.isNaN(i), Number.isFinite(wide), Number.isInteger(wide), Number.isSafeInteger(wide), Number.isSafeInteger(limit), Number.isSafeInteger(-limit), Number(wide),
+    ].map(show).join(",") + "\n";
+  }
+  return text;
+}
+
+function quotients(i: number): string {
+  const a = (i & 15) - 8;
+  const u = i & 15;
+  const wide = a * 1073741824;
+  let text = show(a) + ":";
+  for (let j = 0; j < 8; j++) {
+    const b = (j & 7) + 1;
+    const c = 0 - b;
+    const z = (j & 7) - 4;
+    text += " " + [
+      Math.floor(a / b), Math.ceil(a / b), Math.trunc(a / b), Math.round(a / b), (a / b) | 0, (a / b) >>> 0, ~(a / b), (a / b) << 1, (a / b) >> 1, (a / b) & 7, (a / b) ^ 5,
+      Math.floor(u / b), Math.ceil(u / b), Math.trunc(u / b), Math.round(u / b), (u / b) | 0,
+      Math.floor(a / c), Math.ceil(a / c), Math.trunc(a / c), Math.round(a / c), (a / c) | 0, Math.floor(u / c), Math.ceil(u / c),
+      Math.floor(a / 4), Math.ceil(a / 4), Math.trunc(a / 4), Math.round(a / 4), (a / 4) | 0, Math.floor(a / 1), (a / 1) | 0, Math.floor(a / 3), Math.ceil(a / 3), (a / -4) | 0,
+      Math.floor(u / 4), Math.ceil(u / 4), Math.trunc(u / 4), Math.round(u / 4), Math.ceil(u / 3), Math.round(u / 3), Math.ceil(12 / b), Math.round(12 / b), Math.floor(-12 / b),
+      (a / z) | 0, (a / z) >>> 0, Math.imul(a / z, 3), Math.clz32(a / z), Math.floor(a / z), Math.round(u / z),
+      Math.floor(wide / b), Math.ceil(wide / b), (wide / b) | 0, (wide / z) | 0, (wide / c) >> 1, (wide / 1024) | 0, Math.floor(wide / 1024),
+    ].map(show).join(",");
+  }
+  return text;
+}
+
+function int32Quotients(p: number, q: number): string {
+  const a = p | 0;
+  const b = q | 0;
+  return [(a / b) | 0, (a / b) >>> 0, (b / a) | 0, ~(a / b), Math.imul(a / b, 1), Math.clz32(a / b), ((a >>> 0) / 1) | 0, ((a >>> 0) / ((b & 3) + 1)) | 0].map(show).join(",");
+}
+
+function staysNegativeZero(one: number): string {
+  const bit = one & 1;
+  const a = 0 - bit;
+  return [
+    Object.is(Math.ceil(-1 / 2), -0), Object.is(Math.round(-0.2), -0), Object.is(Math.trunc(-1 / 3), -0), Object.is(Math.floor(0 / -2), -0),
+    Object.is(Math.ceil(a / (bit + 1)), -0), Object.is(Math.round(a / (bit + 4)), -0), Object.is(Math.trunc(a / (bit + 2)), -0), Object.is(Math.floor((a + bit) / (a - 1)), -0),
+    Object.is(Math.floor(a / (bit + 1)), -1), Object.is(Math.ceil((a + bit) / (bit + 1)), 0), Object.is((a / (bit + 1)) | 0, 0),
+  ].join(" ");
+}
+
+function powers(k: number): string {
+  const isExact = Number.isInteger(k) && k >= 0;
+  return [2 ** k, 10 ** k, Math.pow(2, k), Math.pow(10, k)].map(power => (isExact ? show(power) : rounded(power))).join(" ");
+}
+
+function powersOfIntegers(exponents: number[]): string {
+  let text = "";
+  for (let k = -2; k <= 24; k++) text += show(2 ** k) + "," + (k < 0 ? rounded(10 ** k) : show(10 ** k)) + " ";
+  for (let i = 0; i < exponents.length; i++) {
+    const k = exponents[i] | 0;
+    text += show(2 ** k) + "," + (k < 0 ? rounded(Math.pow(10, k)) : show(Math.pow(10, k))) + " ";
+  }
+  return text;
+}
+
+function constantExponents(x: number): string {
+  return [x ** 0, x ** 1, x ** 2, x ** 3, x ** 7, x ** 64, x ** 1000, x ** 0.5, x ** -0.5, Math.pow(x, 1000), Math.pow(x, 5)].map(show).join(" ") + " " + [x ** 1001, x ** -1, x ** -2, x ** 1.5].map(rounded).join(" ");
+}
+
+class Numbers extends Array<number> {}
+
+function extremesOfNumbers(list: number[]): string {
+  return [Math.max(...list), Math.min(...list), Math.max.apply(null, list), Math.min.apply(Math, list)].map(show).join(" ");
+}
+
+function extremesOfAnything(list: any): string {
+  return [say(() => Math.max(...list)), say(() => Math.min(...list)), say(() => Math.max.apply(null, list)), say(() => Math.min.apply(null, list))].join(" ");
+}
+
+const numberLists: [string, () => number[]][] = [
+  ["hole", () => [1, , 3] as number[]],
+  ["empty", () => []],
+  ["one", () => [-7]],
+  ["integers", () => [3, -7, 12]],
+  ["doubles", () => [1.5, -2.5, 0.25]],
+  ["hole among doubles", () => [1.5, , 2.5] as number[]],
+  ["only holes", () => new Array<number>(3)],
+  ["NaN", () => [1.5, NaN, 9]],
+  ["NaN among integers", () => [1, NaN, 9]],
+  ["zeros", () => [-0, 0]],
+  ["zeros reversed", () => [0, -0]],
+  ["negative zero", () => [-0]],
+  ["infinities", () => [Infinity, -Infinity, 0]],
+  ["undefined", () => [1, undefined, 3] as number[]],
+  ["null", () => [1, null, -3] as number[]],
+  ["mixed storage", () => [1, 2.5, 2 ** 31, -(2 ** 53)]],
+  ["long", () => Array.from({ length: 1000 }, (_, i) => (i * 7919) % 1009)],
+  ["long doubles", () => Array.from({ length: 1000 }, (_, i) => ((i * 7919) % 1009) / 8)],
+  ["subclass", () => Numbers.from([4, 9])],
+  ["own iterator", () => {
+    const list = [1, 2];
+    (list as any)[Symbol.iterator] = function* () {
+      yield 40;
+      yield 2;
+    };
+    return list;
+  }],
+  ["named property", () => Object.assign([5, 6], { extra: 99 })],
+  ["frozen", () => Object.freeze([8, -8]) as number[]],
+];
+
+const otherLists: [string, () => unknown][] = [
+  ["strings", () => ["3", "10", "-2"]],
+  ["text", () => [1, "x"]],
+  ["booleans", () => [true, false]],
+  ["objects", () => [{ valueOf: () => 42 }, 7]],
+  ["bigint", () => [1n]],
+  ["string", () => "385"],
+  ["set", () => new Set([4, 11])],
+  ["array-like", () => ({ length: 2, 0: 5, 1: 9 })],
+  ["float array", () => new Float64Array([1.5, 9.25, -0])],
+  ["byte array", () => new Int8Array([3, -4])],
+  ["undefined", () => undefined],
+  ["null", () => null],
+  ["number", () => 5],
+];
+
+function codeUnits(text: string): string {
+  let out = "";
+  for (let i = -1; i <= text.length + 1; i++) {
+    const unit = text.charCodeAt(i);
+    const joined = i & 1 ? text.charCodeAt(i) : i - 2;
+    const point = text.codePointAt(i)!;
+    out += (unit < 48 ? "a" : "-") + (unit <= 57 ? "b" : "-") + (unit > 47 ? "c" : "-") + (unit >= 48 ? "d" : "-") + (48 > unit ? "e" : "-") + (57 >= unit ? "f" : "-") + (47 < unit ? "g" : "-") + (48 <= unit ? "h" : "-");
+    out += (unit < 0 ? "i" : "-") + (unit <= 0 ? "j" : "-") + (unit >= 0 ? "k" : "-") + (unit > -1 ? "l" : "-") + (unit < 65536 ? "m" : "-") + (unit <= -1 ? "n" : "-") + (unit < 2 ** 53 ? "o" : "-") + (unit < 2 ** 54 ? "O" : "-");
+    out += (joined < 48 ? "p" : "-") + (joined <= -3 ? "q" : "-") + (joined > 47 ? "r" : "-") + (joined >= -3 ? "s" : "-") + (0 > joined ? "t" : "-") + (0 <= joined ? "u" : "-");
+    out += (point < 48 ? "v" : "-") + (point <= 57 ? "w" : "-") + (point > 47 ? "x" : "-") + (point >= 0 ? "y" : "-") + (65536 > point ? "z" : "-") + (point < 2 ** 53 ? "A" : "-") + (point < 2 ** 54 ? "B" : "-") + (2 ** 54 > point ? "C" : "-") + " ";
+  }
+  return out;
+}
+
+function inRadix(value: number, radix: number): string {
+  try {
+    return (value * 1).toString(radix | 0);
+  } catch (error) {
+    return (error as Error).name + ": " + (error as Error).message;
+  }
+}
+
+function integerInRadix(value: number, radix: number): string {
+  try {
+    return (value | 0).toString(radix | 0);
+  } catch (error) {
+    return (error as Error).name + ": " + (error as Error).message;
+  }
+}
+
+function inConstantRadixes(value: number): string {
+  const number = value * 1;
+  const integer = value | 0;
+  return [number.toString(), number.toString(2), number.toString(10), number.toString(16), number.toString(36), number.toString(undefined), integer.toString(), integer.toString(2), integer.toString(36)].join(" ");
+}
+
+////= joined	InRadix(values: number[], radix	i = 0; i < values.length; i++) text += (values[i] * 1).toString(radix | 0) + ";
+
+////= joined	UntilBadRadix(value	radix = 33; radix < 40; radix++) text += "<" + (value * 1).toString(radix) + ">
+
+function joinedCounters(): string {
+  let text = "";
+  for (let i = -3; i < 40; i += 7) text += i.toString() + ":" + i.toString(2) + ":" + (i * 0.5).toString() + ":" + (i * 1000003).toString(36) + ":" + (i * 4294967296.5).toString(16) + ":" + (i / 0).toString(8) + " ";
+  return text;
+}
+
+function parsed(text: string): string {
+  return [Number(text), parseInt(text), parseInt(text, 10), parseInt(text, 16), parseInt(text, 36), parseInt(text, 2), Number.parseInt(text)].map(show).join(",");
+}
+
+function parsedInRadix(text: string, radix: number): string {
+  return show(parseInt(text, radix | 0)) + "," + show(parseInt(text, radix));
+}
+
+function parsedRope(head: string, tail: string): string {
+  const rope = head + tail;
+  const results = [Number(rope), parseInt(rope), parseInt(rope, 16), Number(rope), Number(`${tail}${head}`), parseInt(`${head}${tail}${tail}`, 10)];
+  const padded = "##" + head + tail + "##";
+  const part = padded.slice(2, -2);
+  results.push(Number(part), parseInt(part), parseInt(part, 16), Number(padded.substring(2, 2 + head.length)), parseInt(padded.slice(2 + head.length, -2), 36));
+  return results.map(show).join(",");
+}
+
+function randomness(): string {
+  const seen = new Set<number>();
+  let sum = 0;
+  let isInRange = true;
+  for (let i = 0; i < 4096; i++) {
+    const random = Math.random();
+    isInRange &&= random >= 0 && random < 1;
+    sum += random;
+    seen.add(random);
+  }
+  return [isInRange, seen.size > 4000, sum > 1800 && sum < 2300].join(" ");
+}
+
+const numbers = [
+  -0, 0, NaN, Infinity, -Infinity, 2 ** 53, -(2 ** 53), 2 ** 53 - 1, 1, -1, 0.5, -0.5, 1.5, -1.5, 2.5, -2.5, -0.2, 0.49999999999999994, 4294967301, -2147483649, 2147483648,
+  65519, 65520, 16777217, 1e21, 1e40, 1e-50, -1e-50, 5e-324, undefined, null,
+] as number[];
+const numbersOrBooleans = [true, false, 1.5, -0, 7, -7, NaN, Infinity, undefined, null] as (number | boolean)[];
+const anything: unknown[] = ["12", " 0x10 ", "", "abc", "-0", "1e400", [], [5], [1, 2], { valueOf: () => -7.5 }, { toString: () => "9" }, new String("8"), new Number(-0), true, null, undefined, 3, -0];
+const throwing: unknown[] = [12n, Symbol("s"), { valueOf: () => 1n }, { valueOf() { throw new RangeError("no"); } }];
+const exponents = [-1, 23, 1024, 1.5, 0, -0, 1, 22, 308, 309, 1000, 1001, 1023, -1022, -1023, -1074, -1075, 0.5, -0.5, NaN, Infinity, -Infinity, 2147483648, 4294967297, undefined, null] as number[];
+const radixes = [1, 2, 3, 8, 10, 16, 36, 37, 0, -1, 4294967298];
+const printed = [255, -255, 0, -0, 1, 0.5, -0.1, 123.456, NaN, Infinity, -Infinity, 2 ** 31, -(2 ** 31), 2 ** 53, 1e21, 1e-7, 5e-324];
+const texts = [
+  "42", "  42  ", "-42", "+42", "0x1f", "-0x1f", "0X1F", "0b101", "0o17", "-0", "", " ", "12px", "1e3", "1e1000", "-1e1000", "Infinity", "-Infinity", "infinity", ".5", "5.", ".", "1_000", "9007199254740993", "1e-400", "z", "Zz", "\n7\t",
+  "42\u2603", "\u2003 42\u2003", "\ufeff7", "\u0663", "7\u0660", "\u2603", "1\u20032", "0x1\u2603", "\u221e", "-\u2003" + "1", "1e3\u2003", "Infinity\u2028",
+];
+const ropes: [string, string][] = [
+  ["12", "34"], ["0x", "ff"], ["  ", "7  "], ["1e", "3"], ["", "5"], ["5", ""], ["-", "Infinity"], ["12345678901234567890", "12345678901234567890"], ["0.000000000000000000001", "5"],
+  ["\u2003", "42"], ["42", "\u2603"], ["4", "\u0662"], ["\u2603", "\u2603"], ["\ufeff0x", "1F\u2003"],
+];
+
+for (let turn = 0; turn < 2; turn++) {
+  for (const x of numbers) {
+    console.log("number " + show(x) + ": " + exactOfNumber(x).map(show).join(" "));
+    console.log("library " + show(x) + ": " + libraryOfNumber(x).map(rounded).join(" "));
+    console.log("constant exponents " + show(x) + ": " + constantExponents(x));
+  }
+  for (const x of numbersOrBooleans) console.log("number or boolean " + show(x) + ": " + ofNumberOrBoolean(x).map(show).join(" "));
+  console.log("comparison: " + ofComparison(1, 2).map(show).join(" ") + " | " + ofComparison(2, 1).map(show).join(" ") + " | " + ofComparison(NaN, 1).map(show).join(" "));
+  for (let i = 0; i < anything.length; i++) console.log("anything " + i + ": " + ofAnything(anything[i]).map(show).join(" "));
+  for (const x of throwing) {
+    const y = x as any;
+    console.log("throwing: " + [() => Math.abs(y), () => Math.floor(y), () => Math.max(1, y), () => Math.pow(y, 2), () => Math.imul(y, 1), () => Math.sin(y), () => Math.hypot(y), () => isNaN(y), () => isFinite(y), () => Number.isNaN(y), () => Number.isInteger(y), () => Number(y), () => parseInt(y)].map(say).join(" "));
+  }
+  console.log("no arguments: " + [Math.min(), Math.max(), Math.hypot(), Number(), (Math.abs as any)(), (Math.pow as any)(), (Math.imul as any)(), (Math.clz32 as any)(), (isNaN as any)(), (isFinite as any)(), (Number.isNaN as any)(), (parseInt as any)()].map(show).join(" "));
+  console.log("hypot: " + [Math.hypot(NaN, Infinity), Math.hypot(-Infinity, NaN, 1), Math.hypot(NaN, 1, 1), Math.hypot(3, 4), Math.hypot(2, 3, 6), Math.hypot(3, 4, 12, 84), Math.hypot(-0), Math.hypot(-0, -0), Math.hypot(1e308, 1e308), Math.hypot(1e-320, 0)].map(rounded).join(" "));
+  console.log("integers:\n" + ofIntegers());
+  for (let i = 0; i < 16; i++) console.log("quotients " + quotients(i));
+  for (const [p, q] of [[-2147483648, -1], [-2147483648, 0], [-2147483648, 1], [2147483647, 1], [2147483647, -1], [7, 0], [-7, 0], [0, 0], [-7, 2], [1, -2147483648], [0, -5], [-1, 3]])
+    console.log("int32 quotients " + p + " " + q + ": " + int32Quotients(p, q));
+  console.log("negative zero: " + staysNegativeZero(1) + " | " + staysNegativeZero(0));
+  for (const k of exponents) console.log("powers " + show(k) + ": " + powers(k));
+  console.log("powers of integers: " + powersOfIntegers([-1075, -1074, -1023, -1022, -324, -323, -1, 0, 22, 23, 308, 309, 1023, 1024, 2147483647, -2147483648]));
+  for (const [name, make] of numberLists) console.log("extremes of " + name + ": " + extremesOfNumbers(make()) + " | " + extremesOfAnything(make()));
+  for (const [name, make] of otherLists) console.log("extremes of " + name + ": " + extremesOfAnything(make()));
+  console.log("literal lists: " + [Math.max(...([1, , 3] as number[])), Math.max.apply(null, []), Math.min.apply(null, []), Math.max(...[]), Math.max(...[2, 9, 4]), Math.min(...[2.5, -9.5]), Math.max(1, ...[5, 3]), Math.max(...[5, 3], 8)].map(show).join(" "));
+  for (const text of ["", "0", "/09:", "a\u2603\ud83d\ude00"]) console.log("code units of " + JSON.stringify(text) + ": " + codeUnits(text));
+  for (const radix of radixes) {
+    console.log("radix " + radix + ": " + printed.map(value => inRadix(value, radix)).join(" "));
+    console.log("integers in radix " + radix + ": " + printed.map(value => integerInRadix(value, radix)).join(" "));
+    console.log("joined in radix " + radix + ": " + joinedInRadix(printed, radix));
+    console.log("parsed in radix " + radix + ": " + ["10", "zz", "0x10", "-11", "9", "\u200310\u2603"].map(text => parsedInRadix(text, radix)).join(" "));
+  }
+  for (const value of printed) console.log("constant radixes " + show(value) + ": " + inConstantRadixes(value) + " " + joinedUntilBadRadix(value));
+  console.log("counters: " + joinedCounters());
+  for (const text of texts) console.log("parsed " + JSON.stringify(text) + ": " + parsed(text));
+  for (const [head, tail] of ropes) console.log("rope " + JSON.stringify(head) + " " + JSON.stringify(tail) + ": " + parsedRope(head, tail));
+  console.log("random: " + randomness());
+}
+//// math-functions-of-optional.ts
+declare const console: { log(...values: unknown[]): void };
+function show(v: number): string { return Object.is(v, -0) ? "-0" : String(v); }
+function each(a: number[], f: (a: number[], i: number) => number): string { let s = ""; for (let i = 0; i < a.length + 1; i++) s += show(f(a, i)) + " "; return s; }
+function sumSqrt(a: number[]): number { let t = 0; for (let i = 0; i < a.length; i++) { const x = a[i]; t += Math.sqrt(x); } return t; }
+function sumFloor(a: number[]): number { let t = 0; for (let i = 0; i < a.length; i++) t += Math.floor(a[i]); return t; }
+function sumAbs(a: number[]): number { let t = 0; for (const x of a) t += Math.abs(x); return t; }
+function sumMax(a: number[]): number { let t = 0; for (let i = 0; i < a.length; i++) t += Math.max(a[i], 2); return t; }
+function sumImul(a: number[]): number { let t = 0; for (let i = 0; i < a.length; i++) t += Math.imul(a[i], 3); return t; }
+function bumpAll(a: number[]): string { for (let i = 0; i < a.length; i++) a[i]++; let s = ""; for (let i = 0; i < a.length; i++) s += show(a[i]) + ","; return s; }
+function dropAll(a: number[]): string { let t = 0; for (let i = 0; i < a.length; i++) t += a[i]--; return show(t) + " " + a.map(show).join(); }
+function keptToo(a: number[]): string { let t = 0, n = 0; for (let i = 0; i < a.length; i++) { const x = a[i]; t += Math.sqrt(x); if (x === undefined) n++; } return show(t) + " " + n; }
+const unary: [string, (a: number[], i: number) => number][] = [
+    ["abs", (a, i) => Math.abs(a[i])], ["floor", (a, i) => Math.floor(a[i])], ["ceil", (a, i) => Math.ceil(a[i])], ["trunc", (a, i) => Math.trunc(a[i])], ["round", (a, i) => Math.round(a[i])],
+    ["fround", (a, i) => Math.fround(a[i])], ["sqrt", (a, i) => Math.sqrt(a[i])], ["clz32", (a, i) => Math.clz32(a[i])], ["sign", (a, i) => Math.sign(a[i])], ["sin", (a, i) => Math.sin(a[i])],
+    ["exp", (a, i) => Math.exp(a[i])], ["log", (a, i) => Math.log(a[i])], ["cbrt", (a, i) => Math.cbrt(a[i])], ["imul", (a, i) => Math.imul(a[i], a[i + 1])], ["atan2", (a, i) => Math.atan2(a[i], a[i + 1])],
+    ["hypot1", (a, i) => Math.hypot(a[i])], ["hypot2", (a, i) => Math.hypot(a[i], a[i + 1])], ["hypot3", (a, i) => Math.hypot(a[i], a[i + 1], 2)], ["max", (a, i) => Math.max(a[i], a[i + 1])], ["min", (a, i) => Math.min(a[i], 1)],
+    ["pow", (a, i) => Math.pow(a[i], 2)], ["floor | 0", (a, i) => Math.floor(a[i]) | 0], ["sqrt + 1", (a, i) => Math.sqrt(a[i]) + 1],
+];
+const arrays: [string, () => number[]][] = [
+    ["doubles", () => [1.5, -2.5, 4, -0, 0, 1e300, -1e300, Infinity, -Infinity, 0.49999999999999994]],
+    ["with NaN", () => [1.5, NaN, 9]],
+    ["with a hole", () => { const a = [1.5, 2.25, 16]; delete (a as unknown[])[1]; return a; }],
+    ["all holes", () => new Array<number>(3)],
+    ["with undefined", () => [4, undefined as unknown as number, 9]],
+    ["parsed", () => JSON.parse("[4,9,-16,2147483647,-2147483648]") as number[]],
+    ["empty", () => []],
+];
+const table: { [name: string]: number } = { a: 6.25, b: -2.5 };
+function ofTable(name: string): string { return [Math.sqrt(table[name]), Math.floor(table[name]), Math.abs(table[name]), Math.sign(table[name]), Math.clz32(table[name]), Math.hypot(table[name], 3), Math.max(table[name], 1)].map(show).join(" "); }
+for (let turn = 0; turn < 2; turn++) {
+    for (const [name, make] of arrays) {
+        console.log(name + ": " + [sumSqrt(make()), sumFloor(make()), sumAbs(make()), sumMax(make()), sumImul(make())].map(show).join(" ") + " | " + keptToo(make()) + " | " + bumpAll(make()) + " | " + dropAll(make()));
+        for (const [which, f] of unary)
+            console.log("  " + which + ": " + each(make(), f));
+    }
+    for (const name of ["a", "b", "c"])
+        console.log(ofTable(name));
+}
+//// math-member-write-stops-the-build.js
+// The members of Math are fixed in a compiled program. A store to one of them that every run reaches stops the build, like a store to a member of a locked prototype: language/locked-member-write-stops-the-build. language/math-is-locked has what can be written.
+Math.floor = function (x) { return x - (x % 1); };
+console.log(Math.floor(1.5));
+export {};
+//// math-trunc-before-int32-conversion.ts
+// Math.trunc in front of an operator that converts its operand to an int32 answers as in plain Bun for every kind of number, and so do floor, ceil and round, which differ from it for fractions.
+const texts = ["0", "-0", "0.5", "-0.5", "0.9999999", "-0.9999999", "1.5", "-1.5", "31.9", "32.1", "-31.9", "33", "2147483647", "2147483647.9", "2147483648", "2147483648.5", "-2147483648", "-2147483648.9", "-2147483649.5",
+    "4294967295.5", "4294967296", "4294967296.5", "4294967297.25", "-4294967296.5", "9007199254740991", "9007199254740992", "-9007199254740993", "9223372036854775808", "-9223372036854775808", "18446744073709551616",
+    "1e21", "-1e21", "1e300", "-1e300", "5e-324", "-5e-324", "NaN", "Infinity", "-Infinity"];
+const values: number[] = texts.map(Number);
+
+function truncated(x: number): string {
+    return [Math.trunc(x) | 0, Math.trunc(x) & 255, Math.trunc(x) ^ 1, ~Math.trunc(x), Math.trunc(x) >> 1, Math.trunc(x) >>> 0, Math.trunc(x) << 1, 3 << Math.trunc(x), -9 >> Math.trunc(x), -9 >>> Math.trunc(x)].join();
+}
+function truncatedTwice(x: number, y: number): number {
+    return Math.trunc(x) ^ Math.trunc(y);
+}
+function truncatedAndRead(x: number): string {
+    const whole = Math.trunc(x);
+    return (whole | 0) + "/" + (Object.is(whole, -0) ? "-0" : whole);
+}
+function truncatedQuotient(x: number, y: number): number {
+    return Math.trunc(x / y) | 0;
+}
+function roundedOtherwise(x: number): string {
+    return [Math.floor(x) | 0, Math.ceil(x) | 0, Math.round(x) | 0, Math.floor(x) >>> 0, ~Math.ceil(x), 1 << Math.round(x)].join();
+}
+function notConverted(x: number): string {
+    return [Math.trunc(x) + 0, Math.trunc(x) * 1, Math.trunc(x) % 7].map(y => (Object.is(y, -0) ? "-0" : String(y))).join();
+}
+
+for (let round = 0; round < 3; ++round) {
+    const lines: string[] = [];
+    for (let i = 0; i < values.length; ++i) {
+        const x = values[i];
+        const y = values[(i + 7) % values.length];
+        lines.push([texts[i], truncated(x), truncatedTwice(x, y), truncatedAndRead(x), truncatedQuotient(x, y), truncatedQuotient(i - 20, 7), roundedOtherwise(x), notConverted(x)].join(" "));
+    }
+    if (round === 2)
+        console.log(lines.join("\n"));
+}
+//// module-and-captured-variables-in-loops.ts
+// A variable of the module, or one that a closure has captured, read in a loop: what the loop leaves alone, and every way it may change under the loop's feet.
+const lines: string[] = [];
+function show(label: string, ...values: unknown[]): void {
+    lines.push(label + ": " + values.map(String).join(" "));
+}
+
+let text = "";
+let limit = 0;
+let turns = 0;
+text = "hello, world";
+limit = 5;
+
+function leftAlone(): number {
+    let sum = 0;
+    for (let i = 0; i < text.length; i++) sum += text.charCodeAt(i);
+    return sum;
+}
+
+function nested(): number {
+    let sum = 0;
+    for (let r = 0; r < limit; r++) {
+        for (let i = 0; i < text.length; i++) sum = (sum * 31 + text.charCodeAt(i)) | 0;
+    }
+    return sum;
+}
+
+function storedToInTheLoop(): string {
+    let seen = "";
+    for (let i = 0; i < text.length && i < 8; i++) {
+        seen += text[i];
+        if (i === 2) text = "HELLO, WORLD AGAIN";
+    }
+    return seen + "|" + text;
+}
+
+function shorten(): void {
+    text = text.slice(1);
+}
+function storedToByACall(): string {
+    let seen = "";
+    for (let i = 0; i < text.length; i++) {
+        seen += text[i];
+        shorten();
+    }
+    return seen + "|" + text;
+}
+
+function storedToInTheOuterLoop(): number {
+    let sum = 0;
+    for (let r = 0; r < 3; r++) {
+        for (let i = 0; i < text.length; i++) sum += text.charCodeAt(i);
+        text += "!";
+    }
+    return sum;
+}
+
+const holder = {
+    get next(): number {
+        limit--;
+        return limit;
+    },
+};
+function storedToByAGetter(box: { readonly next: number }): number {
+    let count = 0;
+    for (let i = 0; i < limit; i++) count += box.next;
+    return count;
+}
+
+function storedToByValueOf(amount: any): number {
+    let count = 0;
+    for (let i = 0; i < limit; i++) count += amount * 1;
+    return count;
+}
+
+function neverEntered(): number {
+    let sum = 0;
+    for (let i = 10; i < limit; i++) sum += text.length;
+    return sum;
+}
+
+function leftByAThrow(): string {
+    let i = 0;
+    try {
+        for (; i < text.length; i++) {
+            if (text.charCodeAt(i) === 33) throw new Error("at " + i);
+            turns++;
+        }
+    } catch (error) {
+        return (error as Error).message + " after " + turns;
+    }
+    return "none after " + turns;
+}
+
+function* yielding(): Generator<number, number, void> {
+    let sum = 0;
+    for (let i = 0; i < text.length; i++) {
+        sum += text.charCodeAt(i);
+        yield sum;
+    }
+    return sum;
+}
+
+async function awaiting(): Promise<string> {
+    let seen = "";
+    for (let i = 0; i < text.length && i < 6; i++) {
+        seen += text[i];
+        await null;
+    }
+    return seen;
+}
+
+function makeScanner(first: string) {
+    let source = first;
+    let pos = 0;
+    let end = first.length;
+    return {
+        setText(next: string): void {
+            source = next;
+            pos = 0;
+            end = next.length;
+        },
+        sum(): number {
+            let sum = 0;
+            for (let i = 0; i < source.length; i++) sum += source.charCodeAt(i);
+            return sum;
+        },
+        skipDigits(): number {
+            while (pos < end) {
+                const c = source.charCodeAt(pos);
+                if (c < 48 || c > 57) break;
+                pos++;
+            }
+            return pos;
+        },
+        restartsHalfway(other: string): string {
+            let seen = "";
+            for (let i = 0; i < source.length && seen.length < 10; i++) {
+                seen += source[i];
+                if (i === 1) this.setText(other);
+            }
+            return seen;
+        },
+        position(): number {
+            return pos;
+        },
+    };
+}
+
+function readsBeforeItIsThere(): string {
+    try {
+        let sum = 0;
+        for (let i = 0; i < 3; i++) sum += late.length;
+        return "read " + sum;
+    } catch (error) {
+        return (error as Error).name;
+    }
+}
+
+show("left alone", leftAlone(), leftAlone());
+show("nested", nested());
+show("stored to in the loop", storedToInTheLoop());
+show("stored to by a call", storedToByACall());
+text = "ab";
+show("stored to in the outer loop", storedToInTheOuterLoop(), text);
+limit = 6;
+show("stored to by a getter", storedToByAGetter(holder), limit);
+limit = 6;
+show("stored to by valueOf", storedToByValueOf({ valueOf() { limit -= 2; return 10; } }), limit);
+show("never entered", neverEntered());
+show("left by a throw", leftByAThrow(), turns);
+const steps = yielding();
+show("yielding", steps.next().value, steps.next().value);
+text = "zz";
+show("yielding, the text changed", steps.next().value, steps.next().done);
+const scanner = makeScanner("123abc");
+show("scanner", scanner.sum(), scanner.skipDigits(), scanner.position(), scanner.skipDigits());
+scanner.setText("77");
+show("scanner, another text", scanner.sum(), scanner.skipDigits(), scanner.position());
+show("scanner, restarted halfway", scanner.restartsHalfway("wxyz"), scanner.sum());
+show("before it is there", readsBeforeItIsThere());
+let late = "late";
+show("when it is there", readsBeforeItIsThere());
+text = "abcdefgh";
+const waiting = awaiting();
+text = "AB";
+waiting.then(seen => {
+    show("awaiting, the text changed", seen);
+    console.log(lines.join("\n"));
+});
+//// module-variables-reset-to-undefined.ts
+// Module variables that start out as undefined, are compared with undefined before they are used, and are set back to undefined.
+let cached: object | undefined;
+let made = 0;
+
+function make(): object {
+  made++;
+  return { made };
+}
+
+function get(): object {
+  if (cached === undefined) cached = make();
+  return cached;
+}
+
+function set(value: object | undefined) {
+  cached = value;
+}
+
+const first = get();
+console.log(first === get(), made);
+set(undefined);
+console.log(cached === undefined, first === get(), made);
+set([undefined, first][made - 2]);
+console.log(cached === undefined, get() === get(), made);
+set([undefined, first][1]);
+console.log(cached === first, get() === first, made);
+
+let counter: number | undefined;
+function next(): number {
+  if (counter === undefined) counter = 0;
+  return counter++;
+}
+console.log(next(), next(), next());
+
+var hoisted;
+console.log(hoisted, typeof hoisted, hoisted === undefined, hoisted == null, String(hoisted));
+hoisted = null;
+console.log(hoisted, hoisted === undefined);
+
+function tag(strings: TemplateStringsArray) {
+  return strings;
+}
+function template() {
+  return tag`one`;
+}
+console.log(template() === template());
+
+function recurse(depth: number): number {
+  let sum = depth;
+  const add = () => (sum += 1);
+  if (depth) sum += recurse(depth - 1);
+  return add();
+}
+console.log(recurse(5), recurse(3));
+//// module-variables-tested-for-undefined-or-null.js
+var callee;
+var text;
+var flag;
+var count;
+var nothing;
+
+function call() {
+  return callee();
+}
+function callIfSet() {
+  return callee == null ? "unset" : callee();
+}
+function describe() {
+  let value = text;
+  if (value === undefined) {
+    value = globalThis.missing ? "" : "made";
+    text = value;
+  }
+  return value ? value.length : -1;
+}
+function isOn() {
+  return flag === true ? "on" : flag === false ? "off" : flag === null ? "null" : flag === undefined ? "undefined" : "other";
+}
+function next() {
+  let value = count;
+  if (value === undefined) value = 0;
+  count = value + 1;
+  return (value | 0) + 1;
+}
+function fail() {
+  if (nothing == null) throw nothing;
+  return nothing;
+}
+function attempt(f) {
+  try {
+    return f();
+  } catch (error) {
+    return error instanceof TypeError ? "TypeError" : String(error);
+  }
+}
+
+console.log(attempt(call), callIfSet(), describe(), describe(), isOn(), next(), next(), attempt(fail));
+callee = () => "called";
+flag = true;
+nothing = null;
+console.log(attempt(call), callIfSet(), isOn(), attempt(fail));
+callee = null;
+flag = false;
+nothing = 5;
+console.log(attempt(call), callIfSet(), isOn(), attempt(fail));
+callee = undefined;
+flag = null;
+text = undefined;
+nothing = undefined;
+console.log(attempt(call), callIfSet(), isOn(), describe(), attempt(fail));
+flag = undefined;
+console.log(isOn());
+flag = 0;
+console.log(isOn());
+//// n-getter-on-declared.ts
+// A declared property of a typed object is redefined as a getter, by a key that can be one of several names.
+type Item = { kind: "a"; name: string; label: string; hint?: string; note?: string; run(): number }
+function later(item: Item, key: "label" | "hint" | "note", value: string | (() => string | undefined) | undefined): void {
+  if (typeof value !== "function") return
+  Object.defineProperty(item, key, { get: value, enumerable: true, configurable: true })
+}
+const list: Item[] = []
+function register(d: { name: string; label: string | (() => string); hint?: string | (() => string | undefined) }) {
+  const item: Item = { kind: "a", name: d.name, label: typeof d.label === "string" ? d.label : "", hint: typeof d.hint === "string" ? d.hint : undefined, run() { return this.name.length } }
+  later(item, "label", d.label); later(item, "hint", d.hint)
+  list.push(item)
+}
+let n = 0
+register({ name: "one", label: "plain" })
+register({ name: "two", label: () => "made " + ++n, hint: () => undefined })
+register({ name: "three", label: () => "made " + ++n, hint: "h" })
+for (const i of list) console.log(i.name, i.label, i.label, String(i.hint), i.run(), Object.keys(i).join(), JSON.stringify(i))
+console.log(JSON.stringify(Object.getOwnPropertyDescriptor(list[1], "label"), (k, v) => typeof v === "function" ? "fn" : v))
+//// namespace-before-enum-merge.ts
+// A namespace and an enum of one name are one object, whichever comes first. Where the namespace comes first it is its block that makes the object.
+namespace First { export class Point { constructor(public x: number) {} } export const two = 2; }
+enum First { Red, Blue }
+console.log(First.Red, First.Blue, new First.Point(1).x, First.two, First[0], Object.keys(First).join());
+
+namespace WithAVariable { export var y = 2; }
+enum WithAVariable { One }
+console.log(WithAVariable.y, WithAVariable.One, Object.keys(WithAVariable).join());
+
+namespace WithAFunction { export function red() { return WithAFunction.Red; } }
+enum WithAFunction { Red = 5 }
+console.log(WithAFunction.red(), WithAFunction.Red);
+
+function computed(): number { return 7; }
+namespace WithAComputedMember { export const before = 1; }
+enum WithAComputedMember { Seven = computed() }
+console.log(WithAComputedMember.before, WithAComputedMember.Seven, WithAComputedMember[7], Object.keys(WithAComputedMember).join());
+
+namespace BetweenTwo { export const first = 1; }
+enum BetweenTwo { A }
+namespace BetweenTwo { export const second = 2; }
+enum BetweenTwo { B = 1 }
+console.log(BetweenTwo.first, BetweenTwo.second, BetweenTwo.A, BetweenTwo.B, Object.keys(BetweenTwo).join());
+
+enum Behind { Red, Blue }
+namespace Behind { export const two = 2; }
+console.log(Behind.Red, Behind.two, Object.keys(Behind).join());
+
+const held: object = First;
+console.log(held === First, (held as Record<string, unknown>).two);
+//// narrowed-but-closure-assigned.ts
+// TypeScript narrows a `let` by the last assignment in the same function and ignores assignments in nested functions.
+async function withRetry<T>(f: () => Promise<T>): Promise<T> { return await f(); }
+type Reply = { headers: string };
+async function query(n: number) {
+  let id: string | null | undefined = undefined;
+  let reply: Reply | undefined = undefined;
+  let at: number | undefined = undefined;
+  await withRetry(async () => { id = "req_" + n; reply = { headers: "h" + n }; at = n * 2; });
+  const row = { requestId: id ?? undefined, orNull: id ?? null, at };
+  // The control flow analysis cannot see that `reply` is set in the callback.
+  const r = reply as unknown as Reply | undefined;
+  console.log(row.requestId, row.orNull, row.at, r ? r.headers : "none");
+}
+function sync(n: number) {
+  let found: string | undefined = undefined;
+  [n].forEach(k => { found = "k" + k; });
+  const kept = { found };
+  let count: number | null = null;
+  const bump = () => { count = (count ?? 0) + 1; };
+  bump(); bump();
+  console.log(kept.found, found ?? "nothing", count ?? -1, typeof found);
+}
+await query(1);
+sync(2);
+//// non-index-number-keys.ts
+// Number keys that are no index of an array (negative, with a fraction, too large, not a number), where the array has a property of just that name: read, written and asked for, with the key out of a field, a sum, a parameter.
+declare const console: { log(...values: unknown[]): void };
+class Span { kind!: number; pos!: number; end!: number; id!: number; next!: number; line!: number; column!: number; depth!: number; }
+function makeSpan(pos: number, end: number): Span { const n = new Span(); n.kind = 1; n.pos = pos; n.end = end; n.id = 0; n.next = 0; n.line = 0; n.column = 0; n.depth = 0; return n; }
+class Holder { key = 0.5; }
+const odd = JSON.parse("[-1, -2, -3, -7, -1073741824, -1073741825, -2147483647, -2147483648, -2147483649, -4294967295, -4294967296, 0.5, 1.5, -0.5, 2147483647, 2147483648, 4294967294, 4294967295, 4294967296, 9007199254740992, 1e21]") as number[];
+odd.push(NaN, Infinity, -Infinity, -0, 0, 1, 3, 4, 5);
+const names: string[] = ["n0", "n1", "n2", "n3"]; const counts: number[] = [10, 11, 12, 13]; const halves: number[] = [0.5, 1.5, 2.5, 3.5]; const spans: Span[] = [makeSpan(0, 0), makeSpan(1, 1)];
+for (const list of [names, counts, halves, spans] as unknown as Record<string, unknown>[]) for (const key of odd) if (!(key >= 0 && key < 4294967295 && Math.floor(key) === key)) list[String(key)] = list === (names as unknown) ? "p" + key : list === (spans as unknown) ? spans[0] : 1000.5;
+function nameAt(n: Span): string | undefined { return names[n.pos]; }
+function nameBefore(n: Span): string | undefined { return names[n.pos - 1]; }
+function nameBetween(n: Span): string | undefined { return names[n.end - n.pos]; }
+function nameHalf(n: Span): string | undefined { return names[n.pos / 2]; }
+function nameBy(h: Holder): string | undefined { return names[h.key]; }
+function nameOf(key: number): string | undefined { return names[key]; }
+function countAt(n: Span): number | undefined { return counts[n.pos]; }
+function countBefore(n: Span): number | undefined { return counts[n.pos - 1]; }
+function halfBy(h: Holder): number | undefined { return halves[h.key]; }
+function spanAt(n: Span): string { const s = spans[n.pos]; return s ? "s" + s.pos : "none"; }
+function spanBefore(n: Span): string { const s = spans[n.pos - 2]; return s ? "s" + s.pos : "none"; }
+function has(n: Span): boolean { return n.pos in names; }
+function write(n: Span, list: string[]): string { list[n.pos] = "w"; return list.length + ":" + Object.keys(list).length; }
+const bySpan: [string, (n: Span) => unknown][] = [["nameAt", nameAt], ["nameBefore", nameBefore], ["nameBetween", nameBetween], ["nameHalf", nameHalf], ["countAt", countAt], ["countBefore", countBefore], ["spanAt", spanAt], ["spanBefore", spanBefore], ["has", has], ["write", n => n.pos < 100 || n.pos !== n.pos || n.pos > 4294967294 ? write(n, ["a", "b"]) : "skipped"]];
+const all = odd.map((key, i) => { const n = makeSpan(1, 2); n.pos = key; n.end = odd[(i * 5 + 2) % odd.length]; return n; });
+for (const [name, f] of bySpan) console.log(name, all.map(n => String(f(n))).join(" "));
+const holder = new Holder();
+console.log("nameBy", odd.map(key => { holder.key = key; return String(nameBy(holder)); }).join(" "));
+console.log("halfBy", odd.map(key => { holder.key = key; return String(halfBy(holder)); }).join(" "));
+const fns = [nameOf]; for (const f of fns) console.log("nameOf", odd.map(key => String(f(key))).join(" "));
+//// null-comparisons-every-value-kind.ts
+// `== null`, `!= null`, `??`, `?.` on values of every kind, as parameters of no type, of union types and read from objects and arrays: undefined and null answer one way; false, true, 0,
+// -0, NaN, "", 0n, symbols, objects, functions and document.all's absence the other.
+const lines: string[] = [];
+const values: unknown[] = [undefined, null, false, true, 0, -0, 1, -1, 2, 6, 7, 10, 0.5, NaN, Infinity, 2 ** 31, 2 ** 53, "", "a", 0n, 10n, Symbol.iterator, {}, [], () => 1, new Date(0), /x/, new Map()];
+function isNil(v: unknown): boolean { return v == null; }
+function isNotNil(v: unknown): boolean { return v != null; }
+function orElse(v: unknown): unknown { return v ?? "else"; }
+function lengthOf(v: any): unknown { return v?.length; }
+function ofUnion(v: string | number | null | undefined): string { return v == null ? "nil" : typeof v; }
+function ofObject(v: { a: number } | null | undefined): number { return v == null ? -1 : v.a; }
+function ofBoolean(v: boolean | null): string { return v == null ? "nil" : v ? "yes" : "no"; }
+function both(a: unknown, b: unknown, c: unknown, d: unknown, e: unknown, f: unknown, g: unknown): number { let n = 0; if (a == null) n |= 1; if (b == null) n |= 2; if (c == null) n |= 4; if (d == null) n |= 8; if (e == null) n |= 16; if (f == null) n |= 32; if (g == null) n |= 64; return n + (isNil(a) ? 1000 : 0); }
+class Holder { constructor(public any: unknown, public text: string | null, public next: Holder | undefined) {} }
+function ofFields(h: Holder): string { return (h.any == null ? "n" : "v") + (h.text == null ? "n" : "v") + (h.next == null ? "n" : "v") + (h.next?.any == null ? "n" : "v"); }
+function name(v: unknown): string { return typeof v === "symbol" ? "symbol" : typeof v === "bigint" ? v + "n" : Object.is(v, -0) ? "-0" : typeof v === "object" && v !== null ? Object.prototype.toString.call(v) : typeof v === "function" ? "function" : String(v); }
+for (let round = 0; round < 3; round++) for (const v of values) { const line = name(v) + ": " + isNil(v) + " " + isNotNil(v) + " " + name(orElse(v)) + " " + name(lengthOf(v)); if (round === 2) lines.push(line); }
+for (const v of ["", "x", 0, 5, NaN, null, undefined]) lines.push("union " + name(v) + ": " + ofUnion(v));
+for (const v of [{ a: 3 }, null, undefined]) lines.push("object: " + ofObject(v));
+for (const v of [true, false, null]) lines.push("boolean: " + ofBoolean(v));
+let sum = 0; for (let i = 0; i < values.length; i++) sum += both(values[i], values[(i + 1) % values.length], values[(i + 2) % values.length], values[(i + 3) % values.length], values[(i + 5) % values.length], values[(i + 7) % values.length], values[(i + 11) % values.length]) * (i + 1);
+lines.push("both " + sum);
+const last = new Holder(null, null, undefined);
+for (const h of [last, new Holder(0, "", last), new Holder(false, "t", new Holder(1, null, undefined)), new Holder(undefined, null, new Holder(undefined, "x", last))]) lines.push("fields " + ofFields(h));
+console.log(lines.join("\n"));
+//// null-reads-in-leaf-and-framed-functions.ts
+// A property read or store through a typed reference that is null throws a TypeError at its own line: in a leaf function and in one with a frame, caught in a caller and in the same function, through a parameter and through a field. The same code throws nothing for an object.
+class Link {
+  value: number;
+  next: Link | null;
+  constructor(value: number, next: Link | null) {
+    this.value = value;
+    this.next = next;
+  }
+}
+
+function report(error: unknown): string {
+  const position = /:(\d+):\d+\)?$/m.exec((error as Error).stack ?? "");
+  return (error instanceof TypeError ? "TypeError" : "another error") + " at line " + (position ? position[1] : "unknown");
+}
+
+function sum(depth: number): number {
+  return depth === 0 ? 0 : depth + sum(depth - 1);
+}
+
+function readInLeaf(link: Link | null): number {
+  return link!.value;
+}
+
+function readFieldInLeaf(link: Link): number {
+  return link.next!.value;
+}
+
+function storeInLeaf(link: Link | null, value: number): number {
+  link!.value = value;
+  return value;
+}
+
+function readWithFrame(link: Link | null): number {
+  const before = sum(3);
+  const value = link!.value;
+  return before + value + sum(4);
+}
+
+function readFieldWithFrame(link: Link): number {
+  const before = sum(3);
+  const value = link.next!.value;
+  return before + value + sum(4);
+}
+
+function catchOwnReadInLeaf(link: Link | null, fallback: number): number {
+  try {
+    return link!.value;
+  } catch {
+    return fallback;
+  }
+}
+
+function catchOwnReadWithFrame(link: Link | null, a: number, b: number, c: number): string {
+  let total = a * 3 + b;
+  let outcome = "no error";
+  try {
+    total += sum(c);
+    total += link!.value;
+    total += sum(a);
+  } catch (error) {
+    outcome = report(error);
+  }
+  return outcome + ", total " + (total + a + b + c);
+}
+
+function catchReadOfLeaf(link: Link | null, a: number, b: number): string {
+  let total = a + b;
+  try {
+    total += readInLeaf(link);
+  } catch (error) {
+    return report(error) + ", total " + (total * a - b);
+  }
+  return "no error, total " + (total * a - b);
+}
+
+function attempt(label: string, run: () => number | string): void {
+  let outcome: string;
+  try {
+    outcome = String(run());
+  } catch (error) {
+    outcome = report(error);
+  }
+  console.log(label + ": " + outcome);
+}
+
+const last = new Link(5, null);
+const first = new Link(2, last);
+
+for (const link of [first, null, last]) {
+  attempt("read in a leaf function", () => readInLeaf(link));
+  attempt("store in a leaf function", () => storeInLeaf(link, 7));
+  attempt("read in a function with a frame", () => readWithFrame(link));
+  attempt("read caught in the same leaf function", () => catchOwnReadInLeaf(link, -1));
+  attempt("read caught in the same function with a frame", () => catchOwnReadWithFrame(link, 2, 3, 4));
+  attempt("read in a leaf function caught in its caller", () => catchReadOfLeaf(link, 6, 7));
+}
+
+for (const link of [first, last]) {
+  attempt("read of a field's field in a leaf function", () => readFieldInLeaf(link));
+  attempt("read of a field's field in a function with a frame", () => readFieldWithFrame(link));
+}
+
+export {};
+//// nullable-enums.ts
+// Integers beside `undefined` and `null` whose type says they are integers (enums, results of bit operations, lengths): in bit operations and as conditions.
+declare const console: { log(...values: unknown[]): void };
+const enum Check { None = 0, Instantiated = 1, Synthetic = 2, Readonly = 8, Late = 4096, High = 1 << 30, Sign = -2147483648, All = -1 }
+class Links { check?: Check; other?: Check | null; }
+class Sym { flags: Check = Check.None; links: Links | undefined = undefined; }
+function checkOf(s: Sym): Check | undefined { return s.flags & Check.Synthetic ? s.links!.check : Check.None; }
+function otherOf(s: Sym): Check | null | undefined { return s.links ? s.links.other : undefined; }
+function has(s: Sym, mask: Check): boolean { return ((checkOf(s) as Check) & mask) !== 0; }
+function bits(s: Sym): string { const c = checkOf(s) as Check; return [c & 9, c | 2, c ^ 5, ~c, c << 3, c >> 2, c >>> 29, c & Check.Sign, c | 0].join(","); }
+function otherBits(s: Sym): string { const c = otherOf(s) as Check; return [c & 4097, c | 0, c ^ -1, c >>> 0, c << 31].join(","); }
+function truthy(s: Sym): string { return (checkOf(s) ? "c" : "-") + (otherOf(s) ? "o" : "-") + (!checkOf(s) ? "C" : "-") + (!otherOf(s) ? "O" : "-") + (checkOf(s) && otherOf(s) ? "&" : "-") + (checkOf(s) || otherOf(s) ? "|" : "-"); }
+function lengthOf(text: string | undefined): number | undefined { return text === undefined ? undefined : text.length; }
+function lengths(text: string | undefined): string { const n = lengthOf(text); return (n ? "some" : "none") + ((n as number) & 3) + ((n as number) | 16) + (n === undefined ? "u" : "d") + (n === 0 ? "z" : "n"); }
+function indexIn(list: string[], what: string): number | undefined { const at = list.indexOf(what); return at < 0 ? undefined : at; }
+function indexes(list: string[], what: string): string { const at = indexIn(list, what); return (at ? "t" : "f") + ((at as number) & 1) + ((at as number) << 1) + (at ?? "nothing"); }
+function count(all: Sym[]): number { let n = 0; for (const s of all) { if (checkOf(s)) n++; if ((checkOf(s) as Check) & Check.Readonly) n += 100; if (otherOf(s)) n += 10000; } return n; }
+function make(flags: Check, check: Check | undefined, other: Check | null | undefined, withLinks: boolean): Sym { const s = new Sym(); s.flags = flags; if (withLinks) { s.links = new Links(); if (check !== undefined) s.links.check = check; if (other !== undefined) s.links.other = other; } return s; }
+const values: (Check | undefined)[] = [undefined, Check.None, Check.Instantiated, Check.Readonly, Check.Late, Check.High, Check.Sign, Check.All, Check.Readonly | Check.Late, Check.High | Check.Sign];
+const all: Sym[] = [make(Check.None, undefined, undefined, false)];
+for (const check of values) for (const other of [undefined, null, Check.None, Check.Late, Check.Sign, Check.All] as (Check | null | undefined)[]) { all.push(make(Check.Synthetic, check, other, true)); all.push(make(Check.Instantiated, check, other, true)); }
+for (const s of all) console.log(has(s, Check.Readonly), has(s, Check.Sign), has(s, Check.All), bits(s), otherBits(s), truthy(s));
+for (const text of [undefined, "", "a", "abcd", "abcdefghijklmnopq"]) console.log(lengths(text));
+for (const what of ["a", "b", "c", "z"]) console.log(indexes(["a", "b", "c"], what));
+console.log(count(all));
+//// nullable-integers.ts
+// Integers beside `undefined` and `null`: in bit operations, as conditions, compared with each other, with constants and with nil.
+declare const console: { log(...values: unknown[]): void };
+class Links { checkFlags?: number; depth?: number; wide?: number; mark: number | null = null; both?: number | null; }
+function flagsOf(l: Links): number { return ((l.checkFlags as number) & 6) + ((l.checkFlags as number) | 1) * 10 + ((l.checkFlags as number) ^ 3) * 100 + (~(l.checkFlags as number)) * 1000 + ((l.checkFlags as number) << 2) + ((l.checkFlags as number) >> 1) + ((l.checkFlags as number) >>> 28); }
+function has(l: Links, mask: number): boolean { return ((l.checkFlags as number) & mask) !== 0; }
+function orZero(l: Links): number { return (l.wide as number) | 0; }
+function markBits(l: Links): number { return ((l.mark as number) & 255) + ((l.both as number) | 0); }
+function truthy(l: Links): string { return (l.checkFlags ? "f" : "-") + (l.depth ? "d" : "-") + (l.wide ? "w" : "-") + (l.mark ? "m" : "-") + (l.both ? "b" : "-") + (!l.checkFlags ? "F" : "-") + (!l.wide ? "W" : "-"); }
+function nil(l: Links): string { return [l.checkFlags === undefined, l.checkFlags == null, l.mark === null, l.mark == undefined, l.both === undefined, l.both === null, l.both == null, l.wide !== undefined].map(v => v ? "y" : "n").join(""); }
+function same(a: Links, b: Links): string { return [a.checkFlags === b.checkFlags, a.depth === b.checkFlags, a.mark === b.mark, a.both === b.both, a.both == b.both, a.wide === b.wide, a.checkFlags === 0, a.checkFlags === 4, a.wide === 4294967296, a.depth !== b.depth].map(v => v ? "y" : "n").join(""); }
+function orElse(l: Links): number { return (l.checkFlags ?? -1) + (l.depth || 7) * 10 + (l.mark ?? -2) * 100 + (l.both ?? -3) * 1000; }
+function counted(all: Links[]): number { let n = 0; for (const l of all) { if (l.checkFlags) n++; if (l.wide) n += 10; if ((l.checkFlags as number) & 4) n += 100; } return n; }
+function make(flags: number | undefined, depth: number | undefined, wide: number | undefined, mark: number | null, both: number | null | undefined): Links { const l = new Links(); if (flags !== undefined) l.checkFlags = flags | 0; if (depth !== undefined) l.depth = depth | 0; if (wide !== undefined) l.wide = Math.trunc(wide); l.mark = mark === null ? null : mark | 0; if (both !== undefined) l.both = both === null ? null : both | 0; return l; }
+const all = [
+    make(undefined, undefined, undefined, null, undefined), make(0, 0, 0, 0, 0), make(4, 1, 1, 1, 1), make(-1, -1, -1, -1, -1), make(6, 2, 4294967296, 256, null), make(2147483647, 3, 8589934592, 255, 65536),
+    make(-2147483648, 4, -4294967296, -256, -65536), make(1, undefined, 4294967297, null, null), make(undefined, 5, 9007199254740991, 7, undefined), make(65536, 6, -9007199254740991, 1 << 30, 1 << 31), make(7, 0, 281474976710656, 0, 0),
+];
+for (const l of all) console.log(flagsOf(l), has(l, 4), has(l, 1 << 31), orZero(l), markBits(l), truthy(l), nil(l), orElse(l));
+console.log(all.map(a => all.map(b => same(a, b)).join(" ")).join("\n"));
+console.log(counted(all));
+//// number-constants-every-size.ts
+// Arithmetic and comparisons of numbers that are not known to be integers with constants of every size.
+declare const console: { log(...values: unknown[]): void };
+function show(value: unknown): string { return typeof value === "number" && Object.is(value, -0) ? "-0" : String(value); }
+function steps(x: number): string {
+    return [x + 1, x - 1, x + 2, x * 2, x / 2, x + 0.5, x - 0.5, x * -1, x + 127, x + 128, x - 128, x + 0, x - 0, x * 0, x * 1, x + -0, 1 - x, 2 / x, -1 * x, 100 % x].map(show).join(" ");
+}
+function compared(x: number): string {
+    return [x < 1, x <= 1, x > -1, x >= -1, x === 92, x !== 92, x < 127, x < 128, x === 0, x === -0, x < 4294967296, x >= -4294967296, x < 2147483648, x >= -2147483648, x <= 9007199254740992, x > 0.5, x === 1e21, x < 5e-324].map(v => v ? "y" : "n").join("");
+}
+function chosen(x: number, which: boolean): string { const picked = which ? 1 : x > 3 ? 2 : -1; return show(x + picked) + " " + show(which ? x : 64) + " " + show(Math.max(x, 1)) + " " + show(Math.min(x, 127)); }
+function counted(from: number, to: number): string { let turns = 0, at = from; while (at < to && turns < 6) { at += 1; turns++; } let back = to; while (back > from && turns < 12) { back -= 2; turns++; } return show(at) + " " + show(back) + " " + turns; }
+const numbers = [0, -0, 1, -1, 0.5, -0.5, 2, 91.5, 92, 126.5, 127, 128, 129, 2147483647, 2147483648, -2147483648, -2147483649, 4294967295, 4294967296, -4294967296, 9007199254740991, 9007199254740992, 1e21, 5e-324, NaN, Infinity, -Infinity];
+const holder = { value: 0.25 };
+for (const n of numbers) {
+    holder.value = n;
+    console.log(show(n), "|", steps(holder.value), "|", compared(holder.value), "|", chosen(holder.value, n > 1), "|", chosen(holder.value, false), "|", counted(holder.value, holder.value + 3.5));
+}
+//// number-parameters-called-with-sums.ts
+const launder = new Function("value", "return value") as <T>(value: T) => T;
+
+function half(value: number): number {
+    return value / 2;
+}
+
+function low(value: number): number {
+    return value | 0;
+}
+
+function describe(value: number): string {
+    return typeof value + " " + String(value) + " " + Object.is(value, -0);
+}
+
+function next(value: number): number {
+    return half(value + 1) + low(value + 2);
+}
+
+function text(value: number): string {
+    return describe(value + 1);
+}
+
+class Counter {
+    total = 0;
+    add(step: number): number {
+        this.total = this.total + low(step + 1);
+        return this.total;
+    }
+}
+
+for (let i = 0; i < 4; i++)
+    console.log(next(i), text(i));
+
+const openedNext = launder(next);
+const openedText = launder(text);
+const values: unknown[] = [0, 1, -1, 2147483646, 2147483647, -2147483648, -2147483649, 4294967296, 0.5, -0.5, -1.5, 1e21, NaN, Infinity, -Infinity, -0, "4", "", "x", undefined, null, true, [], [5], {}, { valueOf() { return 6; } }, 7n];
+////= for-5	openedNext(value as number), openedText
+
+const counter = launder(new Counter());
+////= for-5	counter.add
+//// number-predicates-of-optional.ts
+declare const console: { log(...values: unknown[]): void };
+const given: number[] = [0, -0, 1, -1, 2, 0.5, -2.5, 4, 9, 1e21, 2147483648, NaN, Infinity, -Infinity, 5e-324];
+function holed(): number[] { const a = given.slice(); delete (a as unknown[])[3]; a.length = a.length + 1; return a; }
+function show(v: number): string { return Object.is(v, -0) ? "-0" : String(v); }
+function nans(a: number[]): string { let s = ""; for (let i = 0; i < a.length + 1; i++) s += (isNaN(a[i]) ? 1 : 0) + "" + (isFinite(a[i]) ? 1 : 0) + (Number.isNaN(a[i]) ? 1 : 0) + (Number.isFinite(a[i]) ? 1 : 0) + (Number.isInteger(a[i]) ? 1 : 0) + (Number.isSafeInteger(a[i]) ? 1 : 0) + ","; return s; }
+function powers(a: number[]): string { let s = ""; for (let i = 0; i < a.length + 1; i++) s += show(Math.pow(a[i], 2)) + "," + show(Math.pow(a[i], 0.5)) + "," + show(Math.pow(a[i], 0)) + "," + show(Math.pow(a[i], -1)) + "," + show(Math.pow(a[i], 3.5)) + "," + show(Math.pow(2, i)) + ";"; return s; }
+function powersBy(a: number[], y: number): string { let s = ""; for (let i = 0; i < a.length + 1; i++) s += show(Math.pow(a[i], y)) + ","; return s; }
+function counted(a: number[]): number { let n = 0; for (let i = 0; i < a.length + 2; i++) { if (isNaN(a[i])) n += 1; if (!isFinite(a[i])) n += 100; } return n; }
+function ofMaybe(v: number | undefined): string { return [isNaN(v as number), isFinite(v as number), Number.isNaN(v), Number.isFinite(v), Number.isInteger(v)].map(b => (b ? 1 : 0)).join("") + show(Math.pow(v as number, 2)) + show(Math.pow(v as number, 0)); }
+function ofNil(v: number | null): string { return [isNaN(v as number), isFinite(v as number), Number.isNaN(v), Number.isFinite(v), Number.isInteger(v)].map(b => (b ? 1 : 0)).join("") + show(Math.pow(v as number, 2)) + show(Math.pow(v as number, 0)); }
+function ofWhole(a: number[], i: number): string { const n: number | undefined = i < a.length ? a.length * 3 : undefined; return (Number.isNaN(n) ? 1 : 0) + "" + (Number.isInteger(n) ? 1 : 0) + (Number.isFinite(n) ? 1 : 0); }
+for (let turn = 0; turn < 2; turn++) {
+    for (const [name, make] of [["given", () => given.slice()], ["holed", holed], ["parsed", () => JSON.parse("[0,1,-1,4,9,2147483647]") as number[]], ["none", (): number[] => []], ["holes", () => new Array<number>(2)]] as [string, () => number[]][])
+        console.log(name + ": " + nans(make()) + " # " + powers(make()) + " # " + powersBy(make(), 2) + powersBy(make(), 0) + powersBy(make(), NaN) + powersBy(make(), 0.5) + " # " + counted(make()));
+    const say = (run: () => string) => { try { return run(); } catch (e) { return e instanceof TypeError ? "TypeError" : "threw"; } };
+    console.log([undefined, 0, -0, 3, 2.5, NaN, Infinity].map(v => say(() => ofMaybe(v))).join(" ") + " # " + [null, 0, 3, 2.5, NaN].map(v => say(() => ofNil(v))).join(" ") + " # " + ofWhole(given, 1) + ofWhole(given, 99));
+}
+//// numbers-and-element-reads-at-limits.ts
+// Numbers and array element reads in edge cases: everything must behave exactly as ECMAScript specifies.
+function count(from: number, step: number, times: number): string { let x = from, s = ""; for (let i = 0; i < times; i++) { x += step; s += x + "," } return s }
+function down(from: number, step: number, times: number): string { let x = from, s = ""; for (let i = 0; i < times; i++) { x -= step; s += x + "," } return s }
+function hash(text: string): number { let h = 7; for (let i = 0; i < text.length; i++) h = h * 31 + text.charCodeAt(i); return h }
+function fnv(text: string): number { let h = 2166136261; for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = (h * 16777619) >>> 0 } return h }
+function double(times: number): number { let x = 1; for (let i = 0; i < times; i++) x += x; return x }
+function sign(x: number): string { return x === 0 ? (1 / x > 0 ? "+0" : "-0") : "" + x }
+function sum(a: Int32Array, times: number): number { let s = 0; for (let k = 0; k < times; k++) for (let i = 0; i < a.length; i++) s += a[i]!; return s }
+console.log(count(9007199254740988, 1, 8))
+console.log(count(9007199254740988, 2, 6), count(9007199254740988, 3, 6), count(9007199254740000, 255, 8))
+console.log(down(-9007199254740988, 1, 8), down(-9007199254740988, 3, 6))
+console.log(count(4611686018427387000, 256, 4), count(4611686018427387904, 1, 2), count(4611686018427387904, 256, 3))
+console.log(hash("the quick brown fox jumps over the lazy dog"), fnv("the quick brown fox"), 94906267 * 94906267, 94906267 * 94906266)
+console.log(double(52), double(53), double(54), double(63), double(64), double(100), double(1100))
+const zero = [0, 1, -1, 4, -4, 2]
+console.log(sign(zero[0]! * zero[2]!), sign(-zero[0]!), sign(zero[4]! % zero[5]!), sign(zero[3]! % zero[5]!), sign(zero[2]! * zero[0]!), sign(zero[0]! * zero[1]!), sign(zero[0]! - zero[0]!), sign(-zero[1]!))
+const big = new Int32Array(4); big[0] = 2147483647; big[1] = 2147483647; big[2] = -5; big[3] = 2147483647
+console.log(sum(big, 3), sum(big, 3000000))
+//// numbers-asked-what-they-are.ts
+const launder = new Function("value", "return value") as <V>(value: V) => V;
+
+const numbers: number[] = [
+  0, -0, 1, -1, 0.5, -0.5, 1.5, 2 ** 31, -(2 ** 31), 2 ** 31 - 1, 2 ** 32, 2 ** 52, 2 ** 53 - 1, 2 ** 53, 2 ** 53 + 2, -(2 ** 53 - 1), -(2 ** 53), 2 ** 63, -(2 ** 63), 2 ** 64, 1e21, 1e300, -1e300,
+  Number.MAX_VALUE, -Number.MAX_VALUE, Number.MIN_VALUE, -Number.MIN_VALUE, Number.EPSILON, 4503599627370495.5, 4503599627370496.5, 0.1 + 0.2, NaN, -NaN, Infinity, -Infinity, 1 / 3, 123456789.000001,
+];
+const others: unknown[] = [undefined, null, true, false, "", "1", "NaN", "Infinity", 1n, [], [1], {}, new Number(1), new Number(NaN), Symbol.iterator, () => 1, { valueOf: () => 1 }];
+
+class Measured {
+  size: number;
+  count: number;
+  maybe: number | undefined;
+  anything: unknown;
+  constructor(size: number, count: number, maybe: number | undefined, anything: unknown) {
+    this.size = size;
+    this.count = count;
+    this.maybe = maybe;
+    this.anything = anything;
+  }
+}
+
+function flags(...answers: boolean[]): string {
+  let said = "";
+  for (const answer of answers) said += answer ? "y" : "n";
+  return said;
+}
+
+function ofNumber(x: number): string {
+  return flags(Number.isNaN(x), Number.isFinite(x), Number.isInteger(x), Number.isSafeInteger(x), isNaN(x), isFinite(x));
+}
+
+function ofFields(one: Measured): string {
+  let said = flags(Number.isNaN(one.size), Number.isFinite(one.size), Number.isInteger(one.size), Number.isSafeInteger(one.size));
+  said += flags(Number.isNaN(one.count), Number.isFinite(one.count), Number.isInteger(one.count), Number.isSafeInteger(one.count));
+  said += flags(Number.isNaN(one.maybe), Number.isFinite(one.maybe), Number.isInteger(one.maybe), Number.isSafeInteger(one.maybe));
+  said += flags(Number.isNaN(one.anything), Number.isFinite(one.anything), Number.isInteger(one.anything), Number.isSafeInteger(one.anything));
+  if (Number.isInteger(one.size)) said += "I";
+  if (!Number.isFinite(one.size)) said += "F";
+  if (Number.isNaN(one.size) || Number.isNaN(one.maybe)) said += "N";
+  return said;
+}
+
+function ofElements(list: number[]): string {
+  let whole = 0, finite = 0, safe = 0, none = 0;
+  for (let i = 0; i < list.length; i++) {
+    if (Number.isInteger(list[i])) whole++;
+    if (Number.isFinite(list[i])) finite++;
+    if (Number.isSafeInteger(list[i])) safe++;
+    if (Number.isNaN(list[i])) none++;
+  }
+  return [whole, finite, safe, none].join(",");
+}
+
+function ofResults(x: number, y: number): string {
+  return flags(Number.isNaN(x - y), Number.isFinite(x * y), Number.isInteger(x / y), Number.isSafeInteger(x + y), Number.isInteger(x | 0), Number.isNaN(x | 0), Number.isFinite((x | 0) + (y | 0)), Number.isSafeInteger((x | 0) * (y | 0)), Number.isInteger(x % y), Number.isNaN((x | 0) % (y | 0)));
+}
+
+const lines: string[] = [];
+for (let round = 0; round < 3; round++) {
+  lines.length = 0;
+  for (let i = 0; i < numbers.length; i++) {
+    const x = launder(numbers[i]);
+    const y = launder(numbers[(i * 7 + 3) % numbers.length]);
+    const one = launder(new Measured(x, i, i % 3 === 0 ? undefined : x, i % 2 === 0 ? x : String(x)));
+    lines.push(i + " " + ofNumber(x) + " " + ofFields(one) + " " + ofResults(x, y));
+  }
+  for (let i = 0; i < others.length; i++) {
+    const one = launder(new Measured(i + 0.5, i, undefined, launder(others[i])));
+    lines.push("other " + i + " " + ofFields(one));
+  }
+  lines.push(ofElements(launder(numbers)), ofElements(launder([1, 2, 3])), ofElements(launder([1.5, NaN, Infinity])), ofElements(launder([])));
+}
+console.log(lines.join("\n"));
+//// numbers-at-limits.ts
+// Numbers at the edge of 2^53.
+function next(a: number): number { return a + 1 }
+console.log("before")
+console.log("next", next(9007199254740992))
+console.log("after")
+//// numbers-beside-the-ends-of-int32.ts
+// A number is taken for an int32 only if it is one: what lies outside, and has the low half of a small integer, is not.
+const letters: string[] = ["a", "b", "c", "d", "e", "f", "g", "h"];
+
+function letterAt(index: number): string {
+  const letter = letters[index];
+  return letter === undefined ? "-" : letter;
+}
+
+function isSmall(value: number): string {
+  return (value | 0) === value ? "int32" : "other";
+}
+
+function half(value: number): number {
+  return value / 2;
+}
+
+const doubled: number[] = [
+  2, 10, 0, -0, -2, 1, 3,
+  2 * 4294967296 + 2, 2 * 4294967297, -2 * 4294967296 + 4, 2 * 2147483647, 2 * 2147483648, -2 * 2147483648, -2 * 2147483649,
+  2 * 9007199254740991, 1e300, -1e300, Infinity, -Infinity, NaN,
+];
+
+const lines: string[] = [];
+for (const value of doubled) {
+  const number = half(value);
+  lines.push(`${Object.is(number, -0) ? "-0" : number}: ${letterAt(number)} ${isSmall(number)} ${letters.at(number) ?? "-"} ${"abcdefgh".charAt(number) || "-"}`);
+}
+console.log(lines.join("\n"));
+//// numbers-compared-for-equality-as-they-arrive.ts
+// === and == of two numbers, whichever way each arrives: out of a variable that anybody may store to, an array of anything, a parameter, a computation.
+const values: any[] = [0, -0, 1, -1, 0.5, -0.5, NaN, Infinity, -Infinity, 2147483647, 2147483648, -2147483648, -2147483649, 4294967296, 9007199254740991, 9007199254740992, 1e300, 5e-324, 42, 42.0, 41.99999999999999];
+let held: any = 0;
+function hold(value: any) { held = value; }
+
+function isZero(): boolean { const x: number = held; return x === 0; }
+function isMinusOne(): boolean { const x: number = held; return x === -1; }
+function isFortyTwo(): boolean { const x: number = held; return 42 === x; }
+function isLeast(): boolean { const x: number = held; return x === -2147483648; }
+function isHalf(): boolean { const x: number = held; return x === 0.5; }
+function looselyZero(): boolean { const x: number = held; return x == 0; }
+function notZero(): boolean { const x: number = held; return x !== 0; }
+function same(a: number, b: number): boolean { return a === b; }
+function looselySame(a: number, b: number): boolean { return a == b; }
+function twice(a: number, b: number): boolean { return a * 2 === b; }
+function counted(list: any[], wanted: number): number {
+    let count = 0;
+    for (let i = 0; i < list.length; i++) {
+        const x: number = list[i];
+        if (x === wanted) count++;
+        if (x === i) count += 100;
+    }
+    return count;
+}
+
+const show = (x: number) => Object.is(x, -0) ? "-0" : String(x);
+for (const value of values) {
+    hold(value);
+    console.log(show(value), isZero(), isMinusOne(), isFortyTwo(), isLeast(), isHalf(), looselyZero(), notZero(), counted(values, value));
+}
+let bits = "";
+for (const a of values) {
+    for (const b of values) bits += (same(a, b) ? 1 : 0) + (looselySame(a, b) ? 2 : 0) + (twice(a, b) ? 4 : 0);
+    bits += " ";
+}
+console.log(bits);
+let hits = 0;
+for (let round = 0; round < 2000; round++) {
+    hold(round % 3 === 0 ? 0 : round % 3 === 1 ? -0 : round);
+    if (isZero()) hits++;
+    if (looselyZero()) hits += 10000;
+    if (same(held, round)) hits += 100000000;
+}
+console.log(hits);
+// What is no number at all, through `any`.
+for (const odd of [undefined, null, "0", "", false, true, 0n, {}, [], [0]] as any[]) {
+    hold(odd);
+    console.log(typeof odd, isZero(), looselyZero(), notZero(), same(odd, 0), looselySame(odd, 0), same(odd, odd), looselySame(0, odd));
+}
+//// numbers-passed-as-values.ts
+declare const console: { log(...values: unknown[]): void };
+function say(x: unknown): string { return Object.is(x, -0) ? "-0" : typeof x + ":" + String(x); }
+function half(x: number): number { return x / 2; }
+function twice(x: number): number { return x * 2; }
+function sum(x: number, y: number): number { return x + y; }
+function root(x: number): number { return Math.sqrt(x); }
+function asAnything(x: number): unknown { return x; }
+function inArray(x: number, y: number): unknown[] { return [x / y, x * y, x - y, x % y]; }
+function inObject(x: number, y: number): { [key: string]: unknown } { return { q: x / y, p: x * y }; }
+function key(table: Map<unknown, string>, x: number): string | undefined { return table.get(x / 2); }
+function bits(x: number): string { const f = new Float64Array(1); f[0] = x; return Array.from(new Uint8Array(f.buffer)).join(","); }
+function fromBits(hi: number, lo: number): number { const u = new Uint32Array(2); u[0] = lo; u[1] = hi; return new Float64Array(u.buffer)[0]; }
+const values = [0, -0, NaN, 1, -1, 3, 0.5, -0.5, 5e-324, Infinity, -Infinity, 2147483647, 2147483648, 4294967294, 4294967296, -2147483648, -2147483649, -4294967296, 1e21, -1e21, 9007199254740992, 1e308];
+const out: string[] = [];
+for (const v of values)
+    out.push([say(asAnything(v)), say(asAnything(half(v))), say(asAnything(twice(v))), say(asAnything(sum(v, v))), say(asAnything(sum(v, 0.5))), say(asAnything(root(v))), inArray(v, 2).map(say).join("|"), JSON.stringify(inObject(v, 4))].join(" "));
+console.log(out.join("\n"));
+const table = new Map<unknown, string>([[1, "one"], [0, "zero"], [NaN, "nan"], [0.5, "half"], [-2147483648, "least"]]);
+console.log(key(table, 2), key(table, 0), key(table, -0), key(table, NaN), key(table, 1), key(table, -4294967296), key(table, 5));
+const strange = [fromBits(0x7ff80000, 1), fromBits(0xfff80000, 0), fromBits(0x7ffa0000, 0), fromBits(0x7ffb0000, 0), fromBits(0x7ffc0000, 0), fromBits(0xfffe0000, 7), fromBits(0xffffffff, 0xffffffff), fromBits(0x7ff00000, 1)];
+console.log(strange.map(x => say(asAnything(x)) + " " + say(asAnything(sum(x, 1))) + " " + say(asAnything(half(x))) + " " + key(table, x)).join("\n"));
+console.log(bits(-0), bits(twice(1073741824)), bits(half(1)));
+//// numbers-tested-for-truth-as-they-arrive.ts
+// if (x), !x, x && y, x || y, x ? a : b, while (x) on a number, whichever way it arrives: out of a variable that anybody may store to, an array of anything, a parameter, a computation.
+const values: any[] = [0, -0, 1, -1, 0.5, -0.5, NaN, Infinity, -Infinity, 2147483647, 2147483648, -2147483648, -2147483649, 4294967296, 9007199254740992, 1e300, 5e-324, -5e-324];
+let held: any = 0;
+function hold(value: any) { held = value; }
+
+function taken(): string { const x: number = held; if (x) return "taken"; return "not"; }
+function negated(): boolean { const x: number = held; return !x; }
+function both(y: number): number { const x: number = held; return x && y; }
+function either(y: number): number { const x: number = held; return x || y; }
+function chosen(): number { const x: number = held; return x ? 1 : 2; }
+function product(y: number): boolean { const x: number = held; return !!(x * y); }
+function countDown(): number { let x: number = held, turns = 0; while (x && turns < 5) { x = x > 0 ? x - 1 : x + 1; turns++; } return turns; }
+function truthy(list: any[]): number {
+    let count = 0;
+    for (let i = 0; i < list.length; i++) {
+        const x: number = list[i];
+        if (x) count++;
+    }
+    return count;
+}
+
+const show = (x: number) => Object.is(x, -0) ? "-0" : String(x);
+for (const value of values) {
+    hold(value);
+    console.log(show(value), taken(), negated(), show(both(7)), show(either(7)), chosen(), product(0), product(1), countDown());
+}
+console.log(truthy(values));
+let hits = 0;
+for (let round = 0; round < 3000; round++) {
+    hold(round % 4 === 0 ? 0 : round % 4 === 1 ? -0 : round % 4 === 2 ? NaN : round);
+    if (taken() === "taken") hits++;
+    if (negated()) hits += 10000;
+}
+console.log(hits);
+// What is no number at all, through `any`.
+for (const odd of [undefined, null, "0", "", false, true, 0n, 1n, {}, []] as any[]) {
+    hold(odd);
+    console.log(typeof odd, taken(), negated(), chosen());
+}
+//// numeric-key-kinds.ts
+// Keys of arrays, strings and typed arrays that are numbers not known to be integers: every kind of number, read and written.
+declare const console: { log(...values: unknown[]): void };
+function show(value: unknown): string { return typeof value === "number" && Object.is(value, -0) ? "-0" : String(value); }
+const list: (string | undefined)[] = []; for (let i = 0; i < 20; i++) list.push("e" + i);
+const named = list as unknown as Record<string, string | undefined>;
+named["-1"] = "minus one"; named["1.5"] = "one and a half"; named["NaN"] = "not a number"; named["Infinity"] = "infinity"; named["-Infinity"] = "minus infinity"; named["4294967295"] = "two to the 32 less one"; named["4294967296"] = "two to the 32"; named["9007199254740992"] = "two to the 53"; named["1e+21"] = "ten to the 21"; named["5e-324"] = "least"; named["-2147483649"] = "below int32";
+const bytes = new Uint8Array(20); for (let i = 0; i < 20; i++) bytes[i] = 100 + i;
+const doubles = [0.5, 1.5, 2.5, 3.5];
+const text = "abcdefghijklmnopqrst";
+class Holder { key = 0.5; }
+function read(h: Holder): string { return show(list[h.key]) + "|" + show(bytes[h.key]) + "|" + show(doubles[h.key]) + "|" + show(text[h.key]); }
+function readNext(h: Holder): string { return show(list[h.key + 1]) + "|" + show(list[h.key - 1]) + "|" + show(list[h.key * 2]) + "|" + show(list[h.key / 2]); }
+function has(h: Holder): string { return (h.key in list) + "|" + (list[h.key] !== undefined) + "|" + Object.prototype.hasOwnProperty.call(list, h.key); }
+function write(h: Holder, target: (string | undefined)[], numbers: number[], small: Uint8Array): string { target[h.key] = "w"; numbers[h.key] = 9.5; small[h.key] = 7; return target.length + "|" + numbers.length + "|" + Object.keys(target).slice(-2).join("/") + "|" + Object.keys(numbers).slice(-2).join("/") + "|" + small.join("").length; }
+function walk(from: number, to: number): string { let s = ""; for (let at = from; at < to && s.length < 40; at += 1) s += show(list[at]) + ","; return s; }
+const keys: number[] = JSON.parse("[0,1,2,3,19,20,21,-1,1.5,0.5,-0.5,-0,2147483647,2147483648,-2147483648,-2147483649,4294967294,4294967295,4294967296,9007199254740992,1e21,5e-324]");
+for (const name of JSON.parse('["NaN","Infinity","-Infinity"]') as string[]) keys.push(Number(name));
+const holder = new Holder();
+for (const key of keys) {
+    holder.key = key;
+    const big = key > 1000 || key < -1000;
+    console.log(show(key), read(holder), readNext(holder), has(holder), big && Number.isInteger(key) && key > 0 && key < 4294967295 ? "(not written: it would make a huge array)" : write(holder, ["a", "b", "c"], [1.5, 2.5], new Uint8Array(4)));
+}
+console.log(walk(17.0, 22), walk(-2, 1.5), walk(0.5, 3), walk(NaN, 3), walk(18, Infinity));
+//// object-get-own-property-names-cannot-be-replaced.mjs
+// Object.getOwnPropertyNames is locked in a compiled executable. Every way of replacing it is refused, and the function goes on answering.
+const unknown = value => new CustomEvent("unknown", { detail: value }).detail;
+const original = Object.getOwnPropertyNames;
+const name = ["get", "Own", "Property", "Names"].join("");
+function planted() {
+  return ["planted"];
+}
+const doors = {
+  "an assignment": () => { Object.getOwnPropertyNames = planted; },
+  "an assignment through a variable": () => { const holder = Object; holder.getOwnPropertyNames = planted; },
+  "a computed key": () => { Object[name] = planted; },
+  "a value nobody can follow": () => { unknown(Object).getOwnPropertyNames = planted; },
+  "a value nobody can follow and a computed key": () => { unknown(Object)[name] = planted; },
+  "Object.defineProperty": () => { Object.defineProperty(Object, "getOwnPropertyNames", { value: planted }); },
+  "Object.defineProperty with a getter": () => { Object.defineProperty(Object, name, { get: () => planted }); },
+  "Object.defineProperties": () => { Object.defineProperties(Object, { getOwnPropertyNames: { value: planted } }); },
+  "Reflect.defineProperty": () => { if (!Reflect.defineProperty(Object, "getOwnPropertyNames", { value: planted })) throw new TypeError("false"); },
+  "Reflect.set": () => { if (!Reflect.set(Object, "getOwnPropertyNames", planted)) throw new TypeError("false"); },
+  "Reflect.set under a computed key": () => { if (!Reflect.set(unknown(Object), name, planted)) throw new TypeError("false"); },
+  "Object.assign": () => { Object.assign(Object, { getOwnPropertyNames: planted }); },
+  "Object.assign with a computed key": () => { Object.assign(unknown(Object), { [name]: planted }); },
+  "delete": () => { delete Object.getOwnPropertyNames; },
+  "Reflect.deleteProperty": () => { if (!Reflect.deleteProperty(Object, name)) throw new TypeError("false"); },
+  "__defineGetter__": () => { Object.__defineGetter__("getOwnPropertyNames", () => planted); },
+  "a helper that takes object, key and value": () => { ((object, key, value) => { object[key] = value; })(Object, name, planted); },
+  "text evaluated at run time": () => { new Function("planted", "'use strict'; Object." + name + " = planted;")(planted); },
+  "an indirect eval": () => { globalThis.plantedForEval = planted; (0, eval)("'use strict'; Object." + name + " = plantedForEval;"); },
+};
+for (const [door, open] of Object.entries(doors)) {
+  let verdict = "stored";
+  try {
+    open();
+  } catch (error) {
+    verdict = error.constructor.name;
+  }
+  const names = Object.getOwnPropertyNames({ a: 1, b: 2 });
+  console.log(door + ":", verdict, names.join(), Object.getOwnPropertyNames === original, Object[name] === original);
+}
+const getOwnPropNames = Object.getOwnPropertyNames;
+console.log(getOwnPropNames({ first() {}, second: 2 })[0], Object.getOwnPropertyDescriptor(Object, name).writable);
+Object.somethingNew = 1;
+console.log(Object.somethingNew);
+//// one-number-printed.ts
+// The smallest program: prints one number.
+console.log(0)
+//// one-number-under-several-bit-operators.ts
+// One number is an operand of several bit operators: ahead of a loop and in it, on one arm of a branch and behind the join, under a handler, as both operands. Each use converts as ToInt32 | ToUint32 says.
+const launder = new Function("v", "return v" + String(process.argv[9] ?? "").slice(99)) as <V>(v: V) => V;
+type Node = { bits: number; parent: Node | null };
+function chain(depth: number): Node { let node: Node = launder({ bits: 0, parent: null }); for (let i = 0; i < depth; i++) node = launder({ bits: i, parent: node }); return node; }
+function mark(leaf: Node, lane: number): number {
+    leaf.bits |= lane;
+    let seen = 0;
+    for (let node = leaf.parent; node !== null; node = node.parent) { node.bits |= lane; seen ^= node.bits & lane; }
+    return seen;
+}
+function onOneArm(flag: boolean, n: number): number { let r = 1; if (flag) r = n | 4; return (r ^ n) + (n & 7); }
+function onBothArms(flag: boolean, n: number): number { const r = flag ? n << 1 : n >> 1; return r + (n >>> 0) + (n >>> 28); }
+function underHandler(n: number, fail: boolean): number { let r = 0; try { r = n | 1; if (fail) throw new Error("thrown"); r += n & 3; } catch { r += n ^ 5; } finally { r += ~n; } return r + (n | 0); }
+function bothOperands(n: number): number { return (n | n) + (n & n) + (n ^ n) + (n << n) + (n >> n) + (n >>> n); }
+function inSecondLoop(n: number, turns: number): number { let r = 0; for (let i = 0; i < turns; i++) { if (i & 1) r += n | i; } for (let i = 0; i < turns; i++) r ^= n & i; return r; }
+function boxed(values: number[], n: number): number { let r = 0; for (const value of values) r += (value | n) ^ (value & n); return r + (values[0] | 0) + (values[0] >>> 0); }
+const numbers: number[] = [0, -0, 1, -1, 0.5, -0.5, 1.9, -1.9, NaN, Infinity, -Infinity, 2 ** 31, 2 ** 31 - 1, -(2 ** 31), -(2 ** 31) - 1, 2 ** 32, 2 ** 32 + 1, -(2 ** 32) - 1, 2 ** 53, 2 ** 53 + 2, -(2 ** 53), 2 ** 63, 2 ** 64 + 2 ** 12,
+    -(2 ** 63), 1e21, -1e21, 1e300, Number.MAX_VALUE, Number.MIN_VALUE, 4294967297.5, 123456789012345];
+for (let round = 0; round < 3; round++) {
+    for (const number of numbers) {
+        const n = launder(number);
+        console.log(String(number), mark(chain(5), n), onOneArm(true, n), onOneArm(false, n), onBothArms(true, n), onBothArms(false, n), underHandler(n, false), underHandler(n, true), bothOperands(n), inSecondLoop(n, 5),
+            boxed(launder([n, 1.5, 7]), n));
+    }
+}

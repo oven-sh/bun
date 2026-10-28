@@ -1,0 +1,2371 @@
+////: Base
+class Base {
+  constructor() {
+    this.own = "own";
+  }
+  method() {
+    return "Base.method";
+  }
+  shared() {
+    return "Base.shared";
+  }
+  get getter() {
+    return "Base.getter";
+  }
+}
+////: Base-2
+////= Base
+////= Derived
+////= OtherBase
+////= Old
+////: Derived
+class Derived extends Base {
+  method() {
+    return "Derived.method";
+  }
+}
+////: Old
+function Old() {
+  this.own = "own";
+}
+////: OtherBase
+class OtherBase {
+  shared() {
+    return "OtherBase.shared";
+  }
+  added() {
+    return "OtherBase.added";
+  }
+}
+////: for
+for (const [what, change] of steps) {
+  change();
+  console.log("\n--- " + what);
+  for (let round = 0; round < 40; round++) {
+    const now = readAll(receivers);
+    const fresh = readAll(makeAll());
+    if (round === 0 || round === 39) console.log(now + "\n- new objects\n" + fresh);
+  }
+}
+////: for-2
+for (let round = 0; round < 200; round++) {
+  if (readAll(receivers) !== warm || readAll(makeAll()) !== warm) throw new Error("the reads changed by themselves in round " + round);
+}
+////: for-3
+for (const kind of Object.keys(makers)) {
+  const make = makers[kind];
+  makers[kind] = () => {
+    const made = make();
+    for (let i = 0; i < 40; i++) made["filler" + i + unknown] = i;
+    return made;
+  };
+}
+////: lines-27
+function «1»(a: «2», b: «2», c: «3», d: «4»): Row {
+    const row = {} as Row;
+    row.first = a;
+    row.second = b;
+    row.third = c;
+    row.fourth = d;
+    return row;
+}
+////: makers
+const makers = {
+  parsed: () => Object.setPrototypeOf(JSON.parse('{"own":"own","n":1}'), middle),
+  created: () => Object.assign(Object.create(middle), { own: "own" }),
+  belowTop: () => Object.defineProperty(Object.assign(Object.create(top), { own: "own" }), "hidden", { value: "own hidden", writable: true, enumerable: true, configurable: true }),
+  plain: () => JSON.parse('{"own":"own"}'),
+  instance: () => new Derived(),
+  base: () => new Base(),
+  instanceWithMore: () => Object.assign(new Derived(), { ["more" + unknown]: 1 }),
+  old: () => new Old(),
+  literal: () => ({ own: "own", value: "literal.value" }),
+  bare: () => Object.assign(Object.create(null), { own: "own" }),
+};
+////: makers-2
+////= makers
+////= readers
+////: makers-3
+////= makers
+////= for-3
+////= readers
+////: readAll
+function readAll(receivers) {
+  const lines = [];
+  for (const [kind, receiver] of receivers) {
+    const words = [];
+    for (const name in readers) words.push(name + "=" + show(readers[name](receiver)));
+    lines.push(kind + ": " + words.join(" "));
+  }
+  return lines.join("\n");
+}
+////: readers
+const readers = {
+  own: o => o.own,
+  value: o => o.value,
+  hidden: o => o.hidden,
+  middleOnly: o => o.middleOnly,
+  method: o => o.method,
+  shared: o => o.shared,
+  getter: o => o.getter,
+  added: o => o.added,
+  toString: o => o.toString,
+  constructor: o => o.constructor,
+  zero: o => o[0],
+  zeroAsText: o => o["0"],
+  proto: o => o.__proto__ === Object.getPrototypeOf(o),
+};
+////: steps
+const steps = [
+  ["a collection", () => { Bun.gc(true); }],
+  ["the top gets a name behind a collection", () => { top.added = "top.added"; Bun.gc(true); }],
+  ["many Structures come and go", () => { for (let i = 0; i < 400; i++) { const o = Object.create(middle); o["s" + i + unknown] = i; if (readers.value(o) !== "top.value") throw new Error("wrong"); } Bun.gc(true); }],
+  ["the link moves behind it", () => { Object.setPrototypeOf(middle, otherTop); Bun.gc(true); }],
+];
+////: steps-10
+const steps = [
+  ["the heir's prototype object stands below another class's", () => { Object.setPrototypeOf(Derived.prototype, OtherBase.prototype); }],
+  ["below nothing", () => { Object.setPrototypeOf(Derived.prototype, null); }],
+  ["below the base again", () => { Object.setPrototypeOf(Derived.prototype, Base.prototype); }],
+  ["the base stands below the other class", () => { Object.setPrototypeOf(Base.prototype, OtherBase.prototype); }],
+];
+////: steps-11
+const steps = [
+  ["the middle stands below otherTop", () => { Object.setPrototypeOf(middle, otherTop); }],
+  ["below nothing", () => { Object.setPrototypeOf(middle, null); }],
+  ["below the top again", () => { Object.setPrototypeOf(middle, top); }],
+  ["the prototype of a constructor function stands below the middle", () => { Object.setPrototypeOf(Old.prototype, middle); }],
+];
+////: steps-12
+const steps = [
+  ["the top gets a hundred names and loses them", () => { for (let i = 0; i < 100; i++) top["k" + i + unknown] = i; for (let i = 0; i < 100; i++) delete top["k" + i + unknown]; }],
+  ["the dictionary gets a name", () => { top.added = "added to the dictionary"; }],
+  ["the dictionary loses names", () => { delete top.added; delete top.value; }],
+  ["a receiver becomes one", () => { for (const [, receiver] of receivers) { for (let i = 0; i < 100; i++) receiver["k" + i + unknown] = i; for (let i = 0; i < 100; i++) delete receiver["k" + i + unknown]; receiver.added = "own, in a dictionary"; } }],
+];
+////: steps-13
+const steps = [
+  ["the top stands below otherTop", () => { Object.setPrototypeOf(top, otherTop); }],
+  ["otherTop stands below nothing", () => { Object.setPrototypeOf(otherTop, null); }],
+  ["the top stands below nothing", () => { Object.setPrototypeOf(top, null); }],
+  ["the top stands below Object.prototype again", () => { Object.setPrototypeOf(top, Object.prototype); }],
+];
+////: steps-2
+const steps = [
+  ["a getter on the top", () => { let calls = 0; Object.defineProperty(top, "value", { get() { return "got from " + (this === top ? "top" : "below") + (++calls > 0 ? "" : ""); }, configurable: true, enumerable: true }); }],
+  ["a getter on the middle", () => { Object.defineProperty(middle, "hidden", { get() { return "middle getter"; }, configurable: true }); }],
+  ["an accessor without a getter", () => { Object.defineProperty(top, "value", { get: undefined, set(v) {}, configurable: true }); }],
+  ["values again", () => { Object.defineProperty(top, "value", { value: "a value again", writable: true, configurable: true }); Object.defineProperty(middle, "hidden", { value: "hidden again", writable: true, configurable: true }); }],
+];
+////: steps-3
+const steps = [
+  ["a method becomes a getter", () => { Object.defineProperty(Base.prototype, "shared", { get() { return "got shared"; }, configurable: true }); }],
+  ["a getter becomes a value", () => { Object.defineProperty(Base.prototype, "getter", { value: "a value now", writable: true, configurable: true }); }],
+  ["the getter is replaced by another", () => { Object.defineProperty(Base.prototype, "shared", { get() { return "got shared again"; }, configurable: true }); }],
+  ["both are methods", () => { Object.defineProperty(Base.prototype, "shared", { value: function sharedAgain() {}, writable: true, configurable: true }); Object.defineProperty(Base.prototype, "getter", { value: function getterAsMethod() {}, writable: true, configurable: true }); }],
+];
+////: steps-4
+const steps = [
+  ["between the middle and the top", () => { Object.setPrototypeOf(middle, new Proxy(top, { get(target, key, receiver) { return key === "added" ? "from the proxy" : Reflect.get(target, key, receiver); } })); }],
+  ["the proxy answers for a name that the top has", () => { Object.setPrototypeOf(middle, new Proxy(top, { get(target, key, receiver) { return key === "value" ? "the proxy's value" : Reflect.get(target, key, receiver); } })); }],
+  ["taken out again", () => { Object.setPrototypeOf(middle, top); }],
+  ["above a class", () => { Object.setPrototypeOf(Base.prototype, new Proxy({}, { get(target, key) { return key === "added" ? "proxy above Base" : undefined; } })); }],
+];
+////: steps-5
+const steps = [
+  ["every receiver stands below otherTop", () => { for (const [, receiver] of receivers) Object.setPrototypeOf(receiver, otherTop); }],
+  ["below nothing", () => { for (const [, receiver] of receivers) Object.setPrototypeOf(receiver, null); }],
+  ["below the middle", () => { for (const [, receiver] of receivers) Object.setPrototypeOf(receiver, middle); }],
+  ["below the prototype object of a class", () => { for (const [, receiver] of receivers) Object.setPrototypeOf(receiver, Derived.prototype); }],
+];
+////: steps-6
+const steps = [
+  ["on the top", () => { top.value = "top.value replaced"; top.method = function secondTopMethod() {}; }],
+  ["on the middle", () => { middle.hidden = "middle.hidden replaced"; }],
+  ["on the prototype of a constructor function", () => { Old.prototype.value = 7; Old.prototype.method = function secondOldMethod() {}; }],
+  ["by undefined", () => { top.value = undefined; middle.middleOnly = undefined; }],
+];
+////: steps-7
+const steps = [
+  ["on the top", () => { top[0] = "top[0]"; }],
+  ["on the middle", () => { middle[0] = "middle[0]"; }],
+  ["on the prototype object of a class", () => { Base.prototype[0] = "Base[0]"; }],
+  ["on the receivers", () => { for (const [, receiver] of receivers) receiver[0] = "own[0]"; }],
+];
+////: steps-8
+const steps = [
+  ["own properties hide what was inherited", () => { for (const [, receiver] of receivers) { receiver.value = "own value"; receiver.method = "own method"; receiver.getter2 = 1; } }],
+  ["an own accessor", () => { for (const [, receiver] of receivers) Object.defineProperty(receiver, "hidden", { get() { return "own getter"; }, configurable: true }); }],
+  ["they are deleted again", () => { for (const [, receiver] of receivers) { delete receiver.value; delete receiver.method; delete receiver.hidden; } }],
+  ["what every receiver had is deleted", () => { for (const [, receiver] of receivers) delete receiver.own; }],
+];
+////: steps-9
+const steps = [
+  ["the base gets a name", () => { Base.prototype.added = "Base.added"; }],
+  ["the heir gets a method that hides the base's", () => { Derived.prototype.shared = function derivedShared() {}; }],
+  ["a method of the base is replaced", () => { Base.prototype.method = function secondBaseMethod() {}; Base.prototype.shared = function secondBaseShared() {}; }],
+  ["methods are deleted", () => { delete Derived.prototype.method; delete Derived.prototype.shared; delete Base.prototype.added; }],
+];
+//// values-and-entries-of-dictionaries.ts
+interface Row {
+  name: string;
+  n: number;
+}
+interface Wide extends Row {
+  extra: boolean;
+}
+class Point {
+  constructor(
+    public x: number,
+    public y: number,
+  ) {}
+  sum(): number {
+    return this.x + this.y;
+  }
+}
+
+const ada: Row = { name: "Ada", n: 1 };
+const bo: Row = { name: "Bo", n: 2 };
+const wide: Wide = { name: "Wi", n: 3, extra: true };
+const record: Record<string, Row> = { ada, bo };
+
+function label(row: Row): string {
+  return row.name + ":" + row.n;
+}
+function total(list: Row[]): number {
+  let sum = 0;
+  for (const row of list) sum += row.n;
+  return sum;
+}
+
+console.log(Object.values(record).map(row => row.name).join(), Object.values(record).map(label).join(), total(Object.values(record)));
+console.log(Object.values(record)[0] === ada, Object.values(record)[1] === bo, Object.values(record).length, Array.isArray(Object.values(record)));
+for (const row of Object.values(record)) console.log(row.name, row.n, label(row));
+for (const [key, row] of Object.entries(record)) console.log(key, row.name, label(row));
+console.log(Object.entries(record).map(([key, row]) => key + "=" + row.n).join());
+console.log(Object.entries(record).filter(([, row]) => row.n > 1).map(([key]) => key).join());
+console.log(Object.entries(record).sort(([, a], [, b]) => b.n - a.n)[0]![0]);
+Object.entries(record).forEach(([key, row], index) => console.log(index, key, row.name));
+console.log(Object.entries(record)[0]![1] === ada, typeof Object.entries(record)[0]![0]);
+
+const listed: Row[] = Object.values(record);
+listed.push({ name: "Cy", n: 4 });
+console.log(listed.length, Object.values(record).length, total(listed));
+const pairs: [string, Row][] = Object.entries(record);
+console.log(pairs.length, pairs[1]![1].name);
+console.log(new Map(Object.entries(record)).get("bo")!.n, new Set(Object.values(record)).has(ada));
+
+record.wide = wide;
+record["10"] = { name: "Ten", n: 10 };
+record["2"] = { name: "Two", n: 2 };
+console.log(Object.keys(record).join(), Object.values(record).map(row => row.name).join());
+console.log(Object.values(record).find(row => row === wide) === wide, label(Object.values(record)[4]!));
+delete record.ada;
+console.log(Object.values(record).map(row => row.name).join(), total(Object.values(record)));
+
+Object.defineProperty(record, "hidden", { value: { name: "Hi", n: 100 }, enumerable: false });
+Object.defineProperty(record, "computed", { get: () => bo, enumerable: true });
+console.log(Object.values(record).map(row => row.name).join(), Object.entries(record).length);
+
+const inherits: Record<string, Row> = Object.create(record);
+inherits.own = ada;
+console.log(Object.values(inherits).map(row => row.name).join(), inherits.bo!.name);
+
+const empty: Record<string, Row> = {};
+console.log(Object.values(empty).length, Object.entries(empty).length, total(Object.values(empty)));
+
+const points: Record<string, Point> = { a: new Point(1, 2), b: new Point(3, 4) };
+console.log(Object.values(points).map(point => point.sum()).join(), Object.entries(points).map(([key, point]) => key + point.x).join());
+
+const maybe: Record<string, Row | undefined> = { ada, none: undefined };
+console.log(Object.values(maybe).map(row => row?.name ?? "nobody").join());
+
+const lists: Record<string, Row[]> = { all: [ada, bo], none: [] };
+console.log(Object.values(lists).map(total).join(), Object.entries(lists).map(([key, list]) => key + list.length).join());
+
+const nested: Record<string, Record<string, Row>> = { first: { ada }, second: { bo, wide } };
+console.log(Object.values(nested).flatMap(inner => Object.values(inner)).map(label).join());
+
+interface Index {
+  [key: string]: Row;
+}
+const index: Index = { ada };
+console.log(Object.values(index)[0]!.name, Object.entries(index)[0]![1].n);
+
+for (const row of Object.values(record)) row.n += 1;
+console.log(bo.n, wide.n);
+//// values-live-across-literals.ts
+function anyOf(index: number): any {
+  switch (index % 11) {
+    case 0: return index;
+    case 1: return index + 0.5;
+    case 2: return "s" + (index % 4);
+    case 3: return "s" + (index % 4) + "";
+    case 4: return undefined;
+    case 5: return null;
+    case 6: return BigInt(index % 3);
+    case 7: return index % 2 === 0;
+    case 8: return ("left" + index).slice(0, 4) + ("right" + (index % 2));
+    case 9: return "leftright" + (index % 2);
+    default: return NaN;
+  }
+}
+
+function literals(a: any, b: any, c: any, d: any, e: number, f: string): string {
+  const one = { a };
+  const two = { a, b };
+  const three = { a, b, c };
+  const four = { a, b, c, d };
+  const five = { a, b, c, d, e };
+  const none = {};
+  return [typeof one.a, String(two.b), typeof three.c, String(four.d), five.e, Object.keys(none).length, String(a), String(b), String(c), String(d), e, f].join("|");
+}
+
+function manyLiterals(rounds: number, a: any, b: any, c: any, d: any): number {
+  let total = 0;
+  const kept: any[] = [];
+  for (let i = 0; i < rounds; i++) {
+    const made = { a, b, c, d };
+    const other = { i, made };
+    if ((i & 255) === 0) kept.push(other);
+    total += other.i & 3;
+    if (made.a !== a || made.b !== b || made.c !== c || made.d !== d) return -1;
+  }
+  return total + kept.length;
+}
+
+function compares(x: any, y: any, a: number, b: string, c: number[], d: { tag: string }): string {
+  const first = x === y;
+  const second = y === x;
+  const third = x !== y;
+  const fourth = x === x;
+  return (first ? "T" : "F") + (second ? "T" : "F") + (third ? "T" : "F") + (fourth ? "T" : "F") + a + b + c.length + d.tag;
+}
+
+function closuresInFrames(a: number, b: string, c: number[], d: { tag: string }): string {
+  const first = () => a + 1;
+  const second = () => b + a;
+  const third = () => c.length + a + b.length;
+  const fourth = () => d.tag + b + c.length + a;
+  return [first(), second(), third(), fourth(), a, b, c.length, d.tag].join(",");
+}
+
+function readsWithoutASite(from: any, a: number, b: string, c: { tag: string }): string {
+  return String(from.alpha) + String(from.beta) + a + b + c.tag + String(from.gamma);
+}
+
+const tag = { tag: "T" };
+let out = "";
+for (let i = 0; i < 22; i++) out += literals(anyOf(i), anyOf(i + 1), anyOf(i + 2), anyOf(i + 3), i, "f" + i) + ";";
+console.log(out);
+console.log(manyLiterals(60000, "a", 2, tag, [1]), manyLiterals(60000, 1.5, null, undefined, "d"));
+let table = "";
+for (let i = 0; i < 22; i++) {
+  for (let j = 0; j < 22; j++) table += compares(anyOf(i), anyOf(j), i, "b", [j], tag).slice(0, 4) + (j === 21 ? "\n" : " ");
+}
+console.log(table);
+console.log(compares("x".repeat(40) + "y", "x".repeat(40) + "y", 1, "two", [3], tag), compares("é" + "x".repeat(9), "é" + "x".repeat(9), 4, "five", [], tag), compares("x".repeat(9), "é" + "x".repeat(8), 6, "seven", [8, 9], tag));
+console.log(closuresInFrames(1, "two", [3, 4], tag));
+console.log(readsWithoutASite({ alpha: 1, beta: "b", gamma: null }, 2, "c", tag), readsWithoutASite({ gamma: 3 }, 4, "d", tag));
+//// values-of-unknown-type.ts
+// Values of unknown type: objects created by built-in functions, accessed by name, by computed key and through methods.
+const o: any = JSON.parse('{"a":1,"b":2.5,"c":"x","d":{"e":[1,2,3]},"f":null}')
+console.log(o.a, o.b, o.c, o.d.e[1], o.f, o.g, o.d.e.length)
+o.a = 10
+o.g = "new"
+o.d.e[1] = 20
+console.log(o.a, o.g, o.d.e[1], o["a"], o["d"]["e"][2])
+const list: any[] = JSON.parse('[{"k":1,"v":"a"},{"k":2,"v":"b"},{"v":"c","k":3},{"k":4}]')
+let sum = 0
+let text = ""
+for (let round = 0; round < 1000; round++) {
+  for (let i = 0; i < list.length; i++) {
+    sum += list[i].k
+    if (round === 0) text += list[i].v
+  }
+}
+console.log(sum, text)
+const s: any = JSON.parse('"hello"')
+console.log(s.length, s.toUpperCase(), s.charCodeAt(1), s[0])
+const keys: any = Object.keys(o)
+console.log(keys.join(","), keys.length)
+let caught = ""
+const n: any = JSON.parse("null")
+console.log(typeof n, n === null)
+const m: any = new Map([["x", 1]])
+console.log(m.get("x"), m.size, m.has("y"))
+for (let i = 0; i < 100; i++) o["p" + (i % 5)] = i
+console.log(o.p0, o.p4, Object.keys(o).length)
+//// values-that-a-slot-does-not-admit-in-literals-nobody-else-holds.ts
+// The allocation of a literal lists the fields that are defined behind its head. A value that the slot of its field may not admit is left to the run time, behind the allocation, with something in its place.
+// Nothing of that shows: the order of the keys, the values, the descriptors, the prototype, and no setter of the prototype runs for a definition.
+type Row = { first: number; second: number; third: string; fourth: boolean; fifth?: number };
+type Holder = { first: number; held: Row; last: number };
+type Summed = { sum(): number; first: number; second: number; third: string; fourth: boolean; fifth?: number };
+type HolderWithMethod = { name(): string; first: number; held: Row; last: number };
+
+const lines: string[] = [];
+const prototype = {
+    inherited: "yes",
+    set second(value: number) { lines.push("a setter ran for a definition"); },
+    set third(value: string) { lines.push("a setter ran for a definition"); },
+};
+
+function show(value: unknown): string {
+    if (typeof value === "bigint") return value + "n";
+    if (typeof value === "symbol") return value.toString();
+    if (typeof value === "function") return "function " + value.name;
+    if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+    if (typeof value === "object" && value) return "{" + Object.keys(value).join() + "}";
+    return typeof value + ":" + String(value);
+}
+
+function describe(object: object): string {
+    const parts: string[] = [];
+    for (const key of Reflect.ownKeys(object)) {
+        const descriptor = Object.getOwnPropertyDescriptor(object, key)!;
+        parts.push(String(key) + "=" + show(descriptor.value) + (descriptor.writable ? "w" : "") + (descriptor.enumerable ? "e" : "") + (descriptor.configurable ? "c" : ""));
+    }
+    let forIn = "";
+    for (const key in object) forIn += key + ",";
+    return parts.join(" ") + " | " + forIn + " | " + JSON.stringify(object, (key, value) => typeof value === "bigint" ? "big" : value) + " | " + (Object.getPrototypeOf(object) === prototype ? "the prototype" : Object.getPrototypeOf(object) === Object.prototype ? "Object.prototype" : "another");
+}
+
+function belowAnotherPrototype(a: any, b: any, c: any, d: any): Row {
+    return { __proto__: prototype, first: a, second: b, third: c, fourth: d } as any;
+}
+function behindMethod(a: any, b: any, c: any, d: any): Row {
+    return { sum() { return (this as any).first + (this as any).second; }, first: a, second: b, third: c, fourth: d } as any;
+}
+// The parameters say what the caller promises. A caller without types keeps no promise, and nothing throws because of a type.
+function typedBehindMethod(a: number, b: number, c: string, d: boolean): Summed {
+    return { sum() { return this.first + this.second; }, first: a, second: b, third: c, fourth: d };
+}
+function typedBehindMethodWithOptional(a: number, b: number, c: string, d: boolean): Summed {
+    return { sum() { return this.first + this.second; }, first: a, second: b, third: c, fourth: d, fifth: a };
+}
+function typedHolderBehindMethod(a: number, b: number, c: string, d: boolean): HolderWithMethod {
+    return { name() { return "holder"; }, first: a, held: b as unknown as Row, last: a };
+}
+////= lines-27	typedStoredOneByOne	number	string	boolean
+// What is read from a value without a type is handed to fields that have one.
+function fromValuesWithoutType(a: any, b: any, c: any, d: any): Summed {
+    const source: any = { a, b, c, d };
+    return { sum() { return this.first + this.second; }, first: source.a, second: source.b, third: source.c, fourth: source.d };
+}
+function fromValuesWithoutTypeBetweenOthers(a: any, b: any, c: any, d: any): Summed {
+    const source: any = { a, b, c, d };
+    return { sum() { return this.first + this.second; }, first: 1, second: source.b, third: "three", fourth: source.d, fifth: 5 };
+}
+function holderFromValuesWithoutType(a: any, b: any, c: any, d: any): HolderWithMethod {
+    const source: any = { a, b, c, d };
+    return { name() { return "holder"; }, first: source.a, held: source.b, last: 9 };
+}
+function storedOneByOneFromValuesWithoutType(a: any, b: any, c: any, d: any): Row {
+    const source: any = { a, b, c, d };
+    const row = {} as Row;
+    row.first = source.a;
+    row.second = 2;
+    row.third = source.c;
+    row.fourth = true;
+    return row;
+}
+////= lines-27	storedOneByOne	any	any	any
+function withOptionalLast(a: any, b: any, e: any): Row {
+    return { __proto__: null, first: a, second: b, third: "t", fourth: true, fifth: e } as any;
+}
+function holder(a: any, held: any, z: any): Holder {
+    return { __proto__: null, first: a, held, last: z } as any;
+}
+function calledInBetween(a: any, b: any): Row {
+    return { __proto__: prototype, first: a, second: note(b), third: String(note("third")), fourth: !!note(true) } as any;
+}
+function note<T>(value: T): T { lines.push("evaluated " + show(value)); return value; }
+function throwsInBetween(a: any): Row {
+    return { __proto__: prototype, first: a, second: thrower(), third: "never", fourth: true } as any;
+}
+function thrower(): number { throw new Error("thrown in the literal"); }
+
+const others: unknown[] = [1, 1.5, -0, NaN, 2 ** 31, 2 ** 53, "text", "", true, false, undefined, null, 10n, Symbol("s"), { inner: 1 }, [1, 2], function named() { }];
+const makers: ((a: any, b: any, c: any, d: any) => object)[] = [belowAnotherPrototype, behindMethod, storedOneByOne, typedBehindMethod, typedBehindMethodWithOptional, typedHolderBehindMethod, typedStoredOneByOne,
+    fromValuesWithoutType, fromValuesWithoutTypeBetweenOthers, holderFromValuesWithoutType, storedOneByOneFromValuesWithoutType];
+for (let round = 0; round < 3; round++) {
+    for (const maker of makers) {
+        for (const other of others) {
+            lines.push(maker.name + " 1 " + describe(maker(other, 2, "three", true)));
+            lines.push(maker.name + " 2 " + describe(maker(1, other, "three", true)));
+            lines.push(maker.name + " 3 " + describe(maker(1, 2, other, true)));
+            lines.push(maker.name + " 4 " + describe(maker(1, 2, "three", other)));
+            lines.push(maker.name + " all " + describe(maker(other, other, other, other)));
+        }
+    }
+    for (const other of others) {
+        lines.push("optional " + describe(withOptionalLast(1, other, other)));
+        lines.push("holder " + describe(holder(other, other, other)));
+        lines.push("holder of a row " + describe(holder(1, belowAnotherPrototype(1, other, "t", false), other)));
+        lines.push("in between " + describe(calledInBetween(other, other)));
+    }
+    try { throwsInBetween(1); } catch (error) { lines.push((error as Error).message); }
+}
+
+const atTopLevel: any = { __proto__: prototype, first: others[6], second: others[10], third: others[0], fourth: others[14] };
+lines.push("top level " + describe(atTopLevel));
+atTopLevel.second = 5;
+lines.push("top level, stored again " + describe(atTopLevel));
+delete atTopLevel.second;
+atTopLevel.second = 6;
+lines.push("top level, deleted and stored " + describe(atTopLevel) + " " + lines.filter(line => line.startsWith("a setter ran")).length);
+const frozen = Object.freeze(belowAnotherPrototype(1, "two", 3, 4));
+lines.push("frozen " + describe(frozen) + " " + Object.isFrozen(frozen));
+
+let hash = 0;
+for (const line of lines) for (let i = 0; i < line.length; i++) hash = (hash * 31 + line.charCodeAt(i)) | 0;
+console.log(lines.length, hash);
+console.log(lines.slice(0, 40).join("\n"));
+console.log(lines.slice(-12).join("\n"));
+//// very-long-keys.ts
+// A key that is a very long string put together of pieces: read, asked for and stored under, on objects that have such a name and on objects that have not.
+function read(object: any, key: any): any { return object[key]; }
+function isIn(object: any, key: any): boolean { return key in object; }
+function owns(object: any, key: any): boolean { return Object.prototype.hasOwnProperty.call(object, key); }
+function hasOwn(object: any, key: any): boolean { return Object.hasOwn(object, key); }
+function store(object: any, key: any, value: any): void { object[key] = value; }
+const chunk = "0123456789abcdef".repeat(40);
+// Each call makes a new string of new pieces; `shape` says how they are put together.
+function long(seed: string, pieces: number, shape: number): string {
+    let text = seed;
+    if (shape === 0) for (let i = 0; i < pieces; i++) text = text + chunk;
+    else if (shape === 1) for (let i = 0; i < pieces; i++) text = chunk + text;
+    else if (shape === 2) { let half = ""; for (let i = 0; i < pieces; i++) half += chunk; text = text + half; }
+    else if (shape === 3) { const whole = seed + chunk.repeat(pieces) + "tail"; text = whole.slice(0, whole.length - 4); }
+    else if (shape === 4) for (let i = 0; i < pieces; i++) text = glue(text, chunk);
+    else if (shape === 5) for (let i = 0; i < pieces; i++) text = glue(chunk, text);
+    else { let left: any = seed, right: any = chunk; for (let i = 1; i < pieces; i++) { if (i & 1) left = glue(left, chunk); else right = glue(chunk.slice(0, 100), glue(chunk.slice(100), right)); } text = glue(left, right); }
+    return text;
+}
+// Of two values of which nothing is known: no string is built here, the two are tied together.
+function glue(a: any, b: any): any { return a + b; }
+function same(seed: string, pieces: number, shape: number): string { return shape === 1 || shape === 5 ? chunk.repeat(pieces) + seed : seed + chunk.repeat(pieces); }
+const lines: string[] = [];
+const wide = "αβ";
+for (const shape of [0, 1, 2, 3, 4, 5, 6]) {
+    const small: any = { a: 1, b: 2 };
+    const memo: any = {};
+    const parent: any = {};
+    const child: any = Object.create(parent);
+    const withGetter: any = {};
+    for (const seed of ["x", "y", wide]) {
+        lines.push("shape " + shape + " seed " + seed.length + ": absent " + [read(small, long(seed, 8, shape)), isIn(small, long(seed, 8, shape)), owns(small, long(seed, 8, shape)), hasOwn(small, long(seed, 8, shape))].join());
+        store(memo, long(seed, 8, shape), "kept " + seed);
+        store(parent, long(seed, 9, shape), "inherited " + seed);
+        Object.defineProperty(withGetter, same(seed, 8, shape), { get() { return "got " + seed; }, enumerable: true });
+    }
+    for (const seed of ["x", "y", "z", wide]) {
+        const found = [read(memo, long(seed, 8, shape)), isIn(memo, long(seed, 8, shape)), owns(memo, long(seed, 8, shape)), hasOwn(memo, long(seed, 8, shape)), read(memo, long(seed, 7, shape)), read(memo, same(seed, 8, shape))];
+        const above = [read(child, long(seed, 9, shape)), isIn(child, long(seed, 9, shape)), owns(child, long(seed, 9, shape)), hasOwn(child, long(seed, 9, shape)), owns(parent, long(seed, 9, shape))];
+        lines.push("shape " + shape + " seed " + seed.length + seed.charCodeAt(0) + ": " + found.join() + " | " + above.join() + " | " + read(withGetter, long(seed, 8, shape)));
+    }
+    store(memo, long("x", 8, shape), "kept again");
+    lines.push("stored over: " + read(memo, same("x", 8, shape)) + ", names " + Object.keys(memo).length + ", lengths " + Object.keys(memo).map(name => name.length).join());
+    // The same length, another text, differing at the start, in the middle, at the end.
+    const base = same("x", 8, shape);
+    for (const at of [0, base.length >> 1, base.length - 1]) {
+        const changed = base.slice(0, at) + "#" + base.slice(at + 1);
+        lines.push("differs at " + at + ": " + [read(memo, changed), isIn(memo, changed), hasOwn(memo, changed)].join());
+    }
+}
+// Receivers that answer for themselves.
+const key = () => long("k", 8, 4);
+const trapped = new Proxy({}, { get(_, name) { return "trapped " + String(name).length; }, has(_, name) { return String(name).length > 5000; } });
+lines.push("proxy: " + read(trapped, key()) + " " + isIn(trapped, key()));
+lines.push("array: " + read([1, 2], key()) + " " + isIn([1, 2], key()) + ", string: " + read("text", key()) + ", bytes: " + read(new Uint8Array(2), key()) + ", function: " + read(function () {}, key()));
+class Box { width = 1; }
+lines.push("instance: " + read(new Box(), key()) + " " + isIn(new Box(), key()) + " " + hasOwn(new Box(), key()));
+const many: any = {};
+for (let i = 0; i < 3000; i++) many["m" + i] = i;
+store(many, key(), "among many");
+lines.push("among many: " + read(many, key()) + " " + read(many, long("j", 8, 4)) + " " + isIn(many, key()) + " " + hasOwn(many, long("j", 8, 6)));
+for (const nothing of [null, undefined]) { try { read(nothing, key()); } catch (error) { lines.push("of " + nothing + ": " + (error as Error).constructor.name); } }
+console.log(lines.join("\n"));
+//// very-many-added-keys-however-the-object-was-made.ts
+// An object with more added keys than one entry of a key order counts keeps its fields, its key order and its class, however it was made: parsed and cast, parsed into an annotated variable, assigned to, spread, stored key by key, cloned.
+type Row = { first: number; late?: number };
+const members: string[] = [];
+for (let i = 0; i < 70000; i++) members.push('"k' + i + '":' + i);
+const text = '{"first":0,' + members.join(",") + ',"late":1}';
+function tell(label: string, row: Row) {
+  const keys = Object.keys(row);
+  console.log(label, keys.length, keys[0], keys[1], keys[keys.length - 2], keys[keys.length - 1], row.first, row.late);
+}
+tell("cast", globalThis.JSON.parse(text) as Row);
+const annotated: Row = JSON.parse(text);
+tell("annotated", annotated);
+class Bag { first = 0; late?: number; mark(value: number) { this.late = value } }
+const assigned = Object.assign(new Bag(), globalThis.JSON.parse(text)) as Bag;
+tell("assigned", assigned);
+assigned.mark(5);
+tell("marked", assigned);
+const copy = { ...assigned } as Row;
+tell("spread", copy);
+const bag = new Bag();
+delete bag.late;
+for (let i = 0; i < 70000; i++) (bag as any)["k" + i] = i;
+bag.mark(2);
+tell("bag", bag);
+tell("clone", structuredClone(bag));
+console.log(JSON.stringify(bag).length, bag instanceof Bag, Object.entries(bag).length);
+//// warm-questions-about-properties-that-a-class-does-not-declare.js
+// Objects of classes and literals get properties that their layouts do not have, some of which hide what stands above them. They are read, called, asked for with `in` and with hasOwnProperty, warm,
+// while the objects and their classes change step by step.
+const unknown = JSON.parse('""');
+class Base {
+  constructor() { this.first = 1; this.second = "two"; }
+  method() { return "Base.method"; }
+  hidden() { return "Base.hidden"; }
+  get accessor() { return "Base.accessor"; }
+}
+class Derived extends Base {
+  constructor() { super(); this.third = 3; }
+  method() { return "Derived.method"; }
+  own() { return "Derived.own"; }
+}
+const makers = {
+  base: () => new Base(),
+  derived: () => new Derived(),
+  literal: () => ({ first: 1, second: "two", method() { return "literal.method"; } }),
+};
+function extend(object, kind) {
+  // No store in the program names them, so no layout has a place for them.
+  object["extra" + unknown] = kind + ".extra";
+  object["hidden" + unknown] = () => kind + ".hidden of its own";
+  object["toString" + unknown] = () => kind + ".toString of its own";
+  object["late" + unknown] = undefined;
+  return object;
+}
+const names = ["first", "second", "third", "extra", "hidden", "toString", "late", "method", "own", "accessor", "valueOf", "missing", "added", "constructor"];
+function describe(value) {
+  if (typeof value === "function") {
+    try { return "function:" + String(value.call({})).slice(0, 40); } catch (error) { return "function that throws " + error.constructor.name; }
+  }
+  return typeof value + ":" + String(value);
+}
+function readFirst(o) { return o.first; }
+function readThird(o) { return o.third; }
+function readExtra(o) { return o.extra; }
+function readHidden(o) { return o.hidden; }
+function readToString(o) { return o.toString; }
+function readLate(o) { return o.late; }
+function readMethod(o) { return o.method; }
+function readOwn(o) { return o.own; }
+function readAccessor(o) { return o.accessor; }
+function readValueOf(o) { return o.valueOf; }
+function readMissing(o) { return o.missing; }
+function readAdded(o) { return o.added; }
+function readConstructor(o) { return o.constructor === undefined ? "none" : o.constructor.name; }
+const readers = [readFirst, readThird, readExtra, readHidden, readToString, readLate, readMethod, readOwn, readAccessor, readValueOf, readMissing, readAdded, readConstructor];
+function callHidden(o) { return o.hidden(); }
+function callMethod(o) { return o.method(); }
+function callToString(o) { return o.toString(); }
+function callAdded(o) { return o.added(); }
+const callers = [callHidden, callMethod, callToString, callAdded];
+function hasOwnExtra(o) { return o.hasOwnProperty("extra"); }
+function hasOwnHidden(o) { return Object.hasOwn(o, "hidden"); }
+function hasOwnLate(o) { return Object.hasOwn(o, "late"); }
+function hasOwnFirst(o) { return Object.hasOwn(o, "first"); }
+function hasOwnMethod(o) { return Object.hasOwn(o, "method"); }
+function hasOwnToString(o) { return Object.prototype.hasOwnProperty.call(o, "toString"); }
+function hasOwnValueOf(o) { return Object.hasOwn(o, "valueOf"); }
+function hasOwnMissing(o) { return Object.hasOwn(o, "missing"); }
+function hasOwnAdded(o) { return Object.hasOwn(o, "added"); }
+function inExtra(o) { return "extra" in o; }
+function inHidden(o) { return "hidden" in o; }
+function inLate(o) { return "late" in o; }
+function inMethod(o) { return "method" in o; }
+function inValueOf(o) { return "valueOf" in o; }
+function inMissing(o) { return "missing" in o; }
+function inAdded(o) { return "added" in o; }
+const askers = [hasOwnExtra, hasOwnHidden, hasOwnLate, hasOwnFirst, hasOwnMethod, hasOwnToString, hasOwnValueOf, hasOwnMissing, hasOwnAdded, inExtra, inHidden, inLate, inMethod, inValueOf, inMissing, inAdded];
+function ask(object) {
+  const line = [];
+  for (const read of readers) {
+    let value;
+    for (let i = 0; i < 40; i++) value = read(object);
+    line.push(describe(value));
+  }
+  for (const call of callers) {
+    let value;
+    for (let i = 0; i < 40; i++) {
+      try { value = call(object); } catch (error) { value = "throws " + error.constructor.name; }
+    }
+    line.push(String(value));
+  }
+  let bits = "";
+  for (const asker of askers) {
+    let value;
+    for (let i = 0; i < 40; i++) {
+      try { value = asker(object); } catch { value = "x"; }
+    }
+    bits += value === "x" ? "x" : value ? "1" : "0";
+  }
+  line.push(bits);
+  line.push(Object.keys(object).join(","));
+  return line.join(" | ");
+}
+const objects = {};
+for (const kind of Object.keys(makers)) {
+  objects[kind + " as made"] = makers[kind]();
+  objects[kind + " extended"] = extend(makers[kind](), kind);
+  objects[kind + " extended twice"] = extend(makers[kind](), kind);
+  objects[kind + " extended twice"]["more" + unknown] = 1;
+}
+function report(step) {
+  console.log("== " + step);
+  for (const name of Object.keys(objects)) console.log(name + ": " + ask(objects[name]));
+}
+const steps = [
+  ["nothing has changed", () => {}],
+  ["the same once more", () => {}],
+  ["an extra property is written", () => { for (const name in objects) if (name.includes("extended")) objects[name]["extra" + unknown] = "written"; }],
+  ["a class gets a method", () => { Base.prototype.added = function () { return "Base.added"; }; }],
+  ["an object gets that name itself", () => { objects["derived extended"]["added" + unknown] = () => "added of its own"; }],
+  ["the base class gets a name that was missing", () => { Base.prototype.missing = "no more"; }],
+  ["an object hides it", () => { objects["literal extended"]["missing" + unknown] = "the literal's"; objects["base extended"]["missing" + unknown] = undefined; }],
+  ["the base class loses it", () => { delete Base.prototype.missing; }],
+  ["an extra property goes", () => { for (const name in objects) if (name.includes("twice")) delete objects[name]["hidden" + unknown]; }],
+  ["an extra property becomes an accessor", () => { for (const name in objects) if (name.endsWith("extended")) Object.defineProperty(objects[name], "extra" + unknown, { get() { return "got"; }, configurable: true, enumerable: false }); }],
+  ["a field goes", () => { for (const name in objects) if (name.includes("twice")) delete objects[name].first; }],
+  ["the field comes back", () => { for (const name in objects) if (name.includes("twice")) objects[name].first = "back"; }],
+  ["a method of the derived class goes", () => { delete Derived.prototype.method; }],
+  ["the accessor of the base class is replaced", () => { Object.defineProperty(Base.prototype, "accessor", { value: "a value now", configurable: true, writable: true }); }],
+  ["an object gets another prototype", () => { Object.setPrototypeOf(objects["derived extended"], { method() { return "stranger.method"; }, valueOf: 7 }); }],
+  ["the derived class gets another base", () => { Object.setPrototypeOf(Derived.prototype, { hidden() { return "other.hidden"; }, added: () => "other.added" }); }],
+  ["an object loses its prototype", () => { Object.setPrototypeOf(objects["base extended twice"], null); Object.setPrototypeOf(objects["literal extended"], null); }],
+  ["objects are frozen", () => { Object.freeze(objects["base extended"]); Object.freeze(objects["literal extended twice"]); }],
+  ["new objects of the same kinds", () => { for (const kind of Object.keys(makers)) objects[kind + " made late"] = extend(makers[kind](), kind); }],
+];
+for (const [step, change] of steps) {
+  change();
+  report(step);
+}
+//// warm-reads-below-crowded-objects-then-a-base-class-is-swapped.js
+"use strict";
+// Below objects with ninety names more each: reads by name of many kinds of receivers at sites that see them all, 200 times over; then the class above a class is swapped; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+for (const crowded of [top, otherTop, Old.prototype]) for (let i = 0; i < 90; i++) crowded["filler" + i + unknown] = i;
+////= makers-2
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-10
+////= for
+//// warm-reads-below-crowded-objects-then-a-link-in-the-middle-moves.js
+"use strict";
+// Below objects with ninety names more each: reads by name of many kinds of receivers at sites that see them all, 200 times over; then a link of the chain above them moves; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+for (const crowded of [top, otherTop, Old.prototype]) for (let i = 0; i < 90; i++) crowded["filler" + i + unknown] = i;
+////= makers-2
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-11
+////= for
+//// warm-reads-below-crowded-objects-then-a-method-becomes-a-getter.js
+"use strict";
+// Below objects with ninety names more each: reads by name of many kinds of receivers at sites that see them all, 200 times over; then methods and getters of classes change their kind; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+for (const crowded of [top, otherTop, Old.prototype]) for (let i = 0; i < 90; i++) crowded["filler" + i + unknown] = i;
+////= makers-2
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-3
+////= for
+//// warm-reads-below-crowded-objects-then-a-proxy-is-hung-in.js
+"use strict";
+// Below objects with ninety names more each: reads by name of many kinds of receivers at sites that see them all, 200 times over; then a Proxy is hung into the chain above them; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+for (const crowded of [top, otherTop, Old.prototype]) for (let i = 0; i < 90; i++) crowded["filler" + i + unknown] = i;
+////= makers-2
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-4
+////= for
+//// warm-reads-below-crowded-objects-then-a-value-becomes-an-accessor-and-back.js
+"use strict";
+// Below objects with ninety names more each: reads by name of many kinds of receivers at sites that see them all, 200 times over; then values above them become accessors and values again; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+for (const crowded of [top, otherTop, Old.prototype]) for (let i = 0; i < 90; i++) crowded["filler" + i + unknown] = i;
+////= makers-2
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-2
+////= for
+//// warm-reads-below-crowded-objects-then-a-value-is-replaced-above.js
+"use strict";
+// Below objects with ninety names more each: reads by name of many kinds of receivers at sites that see them all, 200 times over; then values above them are replaced; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+for (const crowded of [top, otherTop, Old.prototype]) for (let i = 0; i < 90; i++) crowded["filler" + i + unknown] = i;
+////= makers-2
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-6
+////= for
+//// warm-reads-below-crowded-objects-then-an-index-appears-above.js
+"use strict";
+// Below objects with ninety names more each: reads by name of many kinds of receivers at sites that see them all, 200 times over; then indexed properties appear above them and on them; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+for (const crowded of [top, otherTop, Old.prototype]) for (let i = 0; i < 90; i++) crowded["filler" + i + unknown] = i;
+////= makers-2
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-7
+////= for
+//// warm-reads-below-crowded-objects-then-an-object-above-becomes-a-dictionary.js
+"use strict";
+// Below objects with ninety names more each: reads by name of many kinds of receivers at sites that see them all, 200 times over; then objects above them become dictionaries; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+for (const crowded of [top, otherTop, Old.prototype]) for (let i = 0; i < 90; i++) crowded["filler" + i + unknown] = i;
+////= makers-2
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-12
+////= for
+//// warm-reads-below-crowded-objects-then-the-collector-runs-between.js
+"use strict";
+// Below objects with ninety names more each: reads by name of many kinds of receivers at sites that see them all, 200 times over; then objects above them change while the collector runs in between; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+for (const crowded of [top, otherTop, Old.prototype]) for (let i = 0; i < 90; i++) crowded["filler" + i + unknown] = i;
+////= makers-2
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps
+////= for
+//// warm-reads-below-crowded-objects-then-the-prototype-object-of-a-class-is-written.js
+"use strict";
+// Below objects with ninety names more each: reads by name of many kinds of receivers at sites that see them all, 200 times over; then the prototype objects of classes are written; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+for (const crowded of [top, otherTop, Old.prototype]) for (let i = 0; i < 90; i++) crowded["filler" + i + unknown] = i;
+////= makers-2
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-9
+////= for
+//// warm-reads-below-crowded-objects-then-the-receiver-gets-another-prototype.js
+"use strict";
+// Below objects with ninety names more each: reads by name of many kinds of receivers at sites that see them all, 200 times over; then the receivers get other objects above them; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+for (const crowded of [top, otherTop, Old.prototype]) for (let i = 0; i < 90; i++) crowded["filler" + i + unknown] = i;
+////= makers-2
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-5
+////= for
+//// warm-reads-below-crowded-objects-then-the-receiver-hides-what-it-inherited.js
+"use strict";
+// Below objects with ninety names more each: reads by name of many kinds of receivers at sites that see them all, 200 times over; then the receivers get and lose properties of their own; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+for (const crowded of [top, otherTop, Old.prototype]) for (let i = 0; i < 90; i++) crowded["filler" + i + unknown] = i;
+////= makers-2
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-8
+////= for
+//// warm-reads-below-crowded-objects-then-the-top-gets-something-above-it.js
+"use strict";
+// Below objects with ninety names more each: reads by name of many kinds of receivers at sites that see them all, 200 times over; then the topmost object of theirs gets another object above it; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+for (const crowded of [top, otherTop, Old.prototype]) for (let i = 0; i < 90; i++) crowded["filler" + i + unknown] = i;
+////= makers-2
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-13
+////= for
+//// warm-reads-of-an-empty-field-then-what-is-above-gets-the-name.js
+// A class declares nothing of five names, one instance gets them, so every instance has room for them, each in the form of its type. The others read them as what is above them says, warm, under many shapes and under one: then what is above changes
+class Point {
+  constructor(i, ownName) { if (ownName) this["own" + i] = i; this.x = i; }
+  norm() { return this.x * 2; }
+}
+const many = [], alike = [];
+for (let i = 0; i < 300; i++) { many.push(new Point(i, true)); alike.push(new Point(i, false)); }
+for (const p of [many[4], alike[4]]) { p.whole = 1; p.real = 1.5; p.flag = true; p.text = "mine"; p.list = [1]; }
+const names = ["whole", "real", "flag", "text", "list"];
+function read(p) { return [p.whole, p.real, p.flag, p.text, p.list]; }
+function has(p) { return ("whole" in p) + ("real" in p) * 2 + ("flag" in p) * 4 + ("text" in p) * 8 + ("list" in p) * 16; }
+function tally(label) {
+  const seen = new Map();
+  for (let round = 0; round < 40; round++) {
+    for (const list of [many, alike]) {
+      for (const p of list) {
+        const key = read(p).map(v => typeof v + ":" + String(v)).join(" ") + " in:" + has(p);
+        seen.set(key, (seen.get(key) || 0) + 1);
+      }
+    }
+  }
+  console.log(label);
+  for (const [k, n] of [...seen].sort()) console.log("  ", k, "x" + n);
+}
+const each = change => { for (const name of names) change(name); };
+tally("nothing above has them:");
+each(name => { Point.prototype[name] = 1; });
+tally("the prototype gets values:");
+each(name => { Point.prototype[name] = 2.5; });
+tally("the values are replaced:");
+each(name => { delete Point.prototype[name]; });
+tally("the values are deleted:");
+each(name => { Object.defineProperty(Point.prototype, name, { get() { return this.x & 1 ? "odd" : "even"; }, configurable: true }); });
+tally("the prototype gets getters:");
+each(name => { delete Point.prototype[name]; });
+tally("the getters are deleted:");
+const above = { whole: 5, real: 5, flag: 5, text: 5, list: 5 };
+Object.setPrototypeOf(Point.prototype, above);
+tally("an object that has them comes between:");
+each(name => { above[name] = "other"; });
+tally("its values are replaced by values of another type:");
+each(name => { delete above[name]; });
+tally("it loses the names:");
+Object.setPrototypeOf(above, { get whole() { return 7; }, get real() { return 7; }, get flag() { return 7; }, get text() { return 7; }, get list() { return 7; } });
+tally("getters come further up:");
+Object.setPrototypeOf(Point.prototype, Object.prototype);
+tally("all that came between goes:");
+for (const p of [many[9], alike[9]]) each(name => { p[name] = undefined; });
+tally("an instance gets them as undefined:");
+for (const p of [many[4], alike[4]]) each(name => { delete p[name]; });
+tally("the first instance loses them:");
+Object.setPrototypeOf(Point.prototype, null);
+tally("nothing is above the prototype:");
+//// warm-reads-of-an-instance-with-a-shape-of-its-own-then-its-class-changes.js
+// Instances of a class get so many properties that the class does not declare, or lose one of them, that each has a shape of its own. They read a method, a getter and absent names, warm: then the prototype object of the class changes
+class Box {
+  constructor(i) { this.size = i; }
+  area() { return this.size * 2; }
+  get half() { return this.size / 2; }
+}
+class Crate extends Box {
+  lid() { return "lid" + this.size; }
+}
+function crowd(o, n) { for (let i = 0; i < n; i++) o["extra" + i] = i; return o; }
+const plain = new Box(1), few = crowd(new Box(2), 3), many = crowd(new Box(3), 200), holed = crowd(new Box(4), 12), heir = crowd(new Crate(5), 200), heirHoled = crowd(new Crate(6), 12);
+delete holed.extra5; delete heirHoled.extra7; delete heirHoled.extra2;
+const all = [plain, few, many, holed, heir, heirHoled];
+function read(o) { return [o.area(), o.half, o.later, o.never, typeof o.lid, o.extra1, o.toString === Object.prototype.toString, "later" in o, "area" in o]; }
+function tally(label) {
+  let last;
+  for (let round = 0; round < 60; round++) last = all.map(o => read(o).join(" "));
+  console.log(label);
+  for (const line of last) console.log("  ", line);
+}
+tally("as the classes declare them:");
+Box.prototype.later = 1;
+tally("the prototype object gets a name:");
+Box.prototype.area = function () { return this.size * 20; };
+tally("a method is replaced:");
+Object.defineProperty(Box.prototype, "half", { get() { return -this.size; }, configurable: true });
+tally("a getter is replaced:");
+delete Box.prototype.later;
+tally("the name goes again:");
+Crate.prototype.area = function () { return "crate"; };
+tally("the heir's prototype object hides a method:");
+Object.setPrototypeOf(Crate.prototype, { area() { return "other"; }, later: "from the other" });
+tally("the heir's prototype object gets another object above it:");
+delete Crate.prototype.area;
+tally("what hid the method goes:");
+Object.setPrototypeOf(Box.prototype, { never: "now" });
+tally("an object comes above the prototype object:");
+Box.prototype.toString = function () { return "box"; };
+tally("a name of Object.prototype is hidden:");
+//// warm-reads-of-crowded-receivers-then-a-base-class-is-swapped.js
+"use strict";
+// Each receiver has forty names more of its own: reads by name of many kinds of receivers at sites that see them all, 200 times over; then the class above a class is swapped; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+////= makers-3
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-10
+////= for
+//// warm-reads-of-crowded-receivers-then-a-link-in-the-middle-moves.js
+"use strict";
+// Each receiver has forty names more of its own: reads by name of many kinds of receivers at sites that see them all, 200 times over; then a link of the chain above them moves; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+////= makers-3
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-11
+////= for
+//// warm-reads-of-crowded-receivers-then-a-method-becomes-a-getter.js
+"use strict";
+// Each receiver has forty names more of its own: reads by name of many kinds of receivers at sites that see them all, 200 times over; then methods and getters of classes change their kind; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+////= makers-3
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-3
+////= for
+//// warm-reads-of-crowded-receivers-then-a-proxy-is-hung-in.js
+"use strict";
+// Each receiver has forty names more of its own: reads by name of many kinds of receivers at sites that see them all, 200 times over; then a Proxy is hung into the chain above them; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+////= makers-3
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-4
+////= for
+//// warm-reads-of-crowded-receivers-then-a-value-becomes-an-accessor-and-back.js
+"use strict";
+// Each receiver has forty names more of its own: reads by name of many kinds of receivers at sites that see them all, 200 times over; then values above them become accessors and values again; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+////= makers-3
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-2
+////= for
+//// warm-reads-of-crowded-receivers-then-a-value-is-replaced-above.js
+"use strict";
+// Each receiver has forty names more of its own: reads by name of many kinds of receivers at sites that see them all, 200 times over; then values above them are replaced; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+////= makers-3
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-6
+////= for
+//// warm-reads-of-crowded-receivers-then-an-index-appears-above.js
+"use strict";
+// Each receiver has forty names more of its own: reads by name of many kinds of receivers at sites that see them all, 200 times over; then indexed properties appear above them and on them; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+////= makers-3
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-7
+////= for
+//// warm-reads-of-crowded-receivers-then-an-object-above-becomes-a-dictionary.js
+"use strict";
+// Each receiver has forty names more of its own: reads by name of many kinds of receivers at sites that see them all, 200 times over; then objects above them become dictionaries; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+////= makers-3
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-12
+////= for
+//// warm-reads-of-crowded-receivers-then-the-collector-runs-between.js
+"use strict";
+// Each receiver has forty names more of its own: reads by name of many kinds of receivers at sites that see them all, 200 times over; then objects above them change while the collector runs in between; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+////= makers-3
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps
+////= for
+//// warm-reads-of-crowded-receivers-then-the-prototype-object-of-a-class-is-written.js
+"use strict";
+// Each receiver has forty names more of its own: reads by name of many kinds of receivers at sites that see them all, 200 times over; then the prototype objects of classes are written; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+////= makers-3
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-9
+////= for
+//// warm-reads-of-crowded-receivers-then-the-receiver-gets-another-prototype.js
+"use strict";
+// Each receiver has forty names more of its own: reads by name of many kinds of receivers at sites that see them all, 200 times over; then the receivers get other objects above them; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+////= makers-3
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-5
+////= for
+//// warm-reads-of-crowded-receivers-then-the-receiver-hides-what-it-inherited.js
+"use strict";
+// Each receiver has forty names more of its own: reads by name of many kinds of receivers at sites that see them all, 200 times over; then the receivers get and lose properties of their own; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+////= makers-3
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-8
+////= for
+//// warm-reads-of-crowded-receivers-then-the-top-gets-something-above-it.js
+"use strict";
+// Each receiver has forty names more of its own: reads by name of many kinds of receivers at sites that see them all, 200 times over; then the topmost object of theirs gets another object above it; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+////= makers-3
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-13
+////= for
+//// warm-reads-then-a-base-class-is-swapped.js
+"use strict";
+// Reads by name of many kinds of receivers at sites that see them all, 200 times over; then the class above a class is swapped; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+////= makers-2
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-10
+////= for
+//// warm-reads-then-a-link-in-the-middle-moves.js
+"use strict";
+// Reads by name of many kinds of receivers at sites that see them all, 200 times over; then a link of the chain above them moves; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+////= makers-2
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-11
+////= for
+//// warm-reads-then-a-method-becomes-a-getter.js
+"use strict";
+// Reads by name of many kinds of receivers at sites that see them all, 200 times over; then methods and getters of classes change their kind; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+////= makers-2
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-3
+////= for
+//// warm-reads-then-a-proxy-is-hung-in.js
+"use strict";
+// Reads by name of many kinds of receivers at sites that see them all, 200 times over; then a Proxy is hung into the chain above them; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+////= makers-2
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-4
+////= for
+//// warm-reads-then-a-value-becomes-an-accessor-and-back.js
+"use strict";
+// Reads by name of many kinds of receivers at sites that see them all, 200 times over; then values above them become accessors and values again; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+////= makers-2
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-2
+////= for
+//// warm-reads-then-a-value-is-replaced-above.js
+"use strict";
+// Reads by name of many kinds of receivers at sites that see them all, 200 times over; then values above them are replaced; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+////= makers-2
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-6
+////= for
+//// warm-reads-then-an-index-appears-above.js
+"use strict";
+// Reads by name of many kinds of receivers at sites that see them all, 200 times over; then indexed properties appear above them and on them; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+////= makers-2
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-7
+////= for
+//// warm-reads-then-an-object-above-becomes-a-dictionary.js
+"use strict";
+// Reads by name of many kinds of receivers at sites that see them all, 200 times over; then objects above them become dictionaries; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+////= makers-2
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-12
+////= for
+//// warm-reads-then-arrays-and-strings-change.js
+"use strict";
+// Strings, arrays, regular expressions, numbers and booleans as receivers of reads by name, at sites that see them all, 200 times over; then the arrays and what is above them change.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+class List extends Array {
+  first() {
+    return this[0];
+  }
+  get size() {
+    return this.length;
+  }
+}
+const otherPrototype = { map: "otherPrototype.map", marker: "otherPrototype.marker", 1: "otherPrototype[1]" };
+const makers = {
+  text: () => "text" + unknown,
+  emptyText: () => "" + unknown,
+  rope: () => "a long piece of text, " + unknown + "joined to another long piece of text",
+  wrappedText: () => new String("wrapped"),
+  integers: () => [1, 2, 3],
+  doubles: () => [1.5, 2.5],
+  objects: () => [{}, "x", null],
+  empty: () => [],
+  holes: () => [1, , 3],
+  matched: () => /(?<word>b+)/.exec("abbbc"),
+  list: () => List.from([7, 8]),
+  pattern: () => /x+/g,
+  integer: () => 7,
+  double: () => 7.25,
+  truth: () => true,
+  plain: () => ({ length: "own length", 0: "plain[0]" }),
+};
+const readers = {
+  length: o => o.length,
+  slice: o => o.slice,
+  indexOf: o => o.indexOf,
+  map: o => o.map,
+  push: o => o.push,
+  at: o => o.at,
+  index: o => o.index,
+  input: o => o.input,
+  groups: o => o.groups,
+  first: o => o.first,
+  size: o => o.size,
+  lastIndex: o => o.lastIndex,
+  source: o => o.source,
+  global: o => o.global,
+  toFixed: o => o.toFixed,
+  valueOf: o => o.valueOf,
+  toString: o => o.toString,
+  constructor: o => o.constructor,
+  then: o => o.then,
+  marker: o => o.marker,
+  extra: o => o.extra,
+  zero: o => o[0],
+  zeroAsText: o => o["0"],
+  oneAsText: o => o["1"],
+  sliced: o => (typeof o.slice === "function" ? o.slice(0, 2) : "no slice"),
+};
+const show = value => (typeof value === "function" ? "function " + value.name : typeof value === "object" && value !== null ? JSON.stringify(value) : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+const attempt = change => {
+  try {
+    change();
+    return "done";
+  } catch (error) {
+    return error.constructor.name;
+  }
+};
+const arraysOf = receivers => receivers.map(([, receiver]) => receiver).filter(Array.isArray);
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+const steps = [
+  ["the arrays get a property of their own", () => { for (const array of arraysOf(receivers)) array.extra = "own extra"; }],
+  ["a property of their own hides a method", () => { for (const array of arraysOf(receivers)) { array.map = "own map"; array.then = "own then"; } }],
+  ["they grow and shrink", () => { for (const array of arraysOf(receivers)) { for (let i = 0; i < 100; i++) array.push(i); array.length = 2; } }],
+  ["they hold other kinds of elements", () => { for (const array of arraysOf(receivers)) { array[0] = "a string"; array[1] = 2.5; } }],
+  ["an element far away", () => { for (const array of arraysOf(receivers)) array[100000] = "far"; }],
+  ["the properties are deleted", () => { for (const array of arraysOf(receivers)) { delete array.map; delete array.then; delete array.extra; array.length = 3; } }],
+  ["the class above a list gets and loses members", () => { List.prototype.marker = "List.marker"; delete List.prototype.first; Object.defineProperty(List.prototype, "size", { value: "a value now", configurable: true }); }],
+  ["the arrays stand below another object", () => { for (const array of arraysOf(receivers)) Object.setPrototypeOf(array, otherPrototype); }],
+  ["that object changes", () => { otherPrototype.map = "changed"; otherPrototype.extra = "otherPrototype.extra"; delete otherPrototype.marker; }],
+  ["below Array.prototype again, frozen", () => { for (const array of arraysOf(receivers)) Object.freeze(Object.setPrototypeOf(array, Array.prototype)); }],
+  ["the expression has matched", () => { for (const [, receiver] of receivers) if (receiver instanceof RegExp) receiver.test("axxb"); }],
+  ["the wrapped text gets a property", () => { for (const [, receiver] of receivers) if (receiver instanceof String) receiver.extra = "extra of the wrapper"; }],
+];
+for (const [what, change] of steps) {
+  console.log("\n--- " + what + ": " + attempt(change));
+  for (let round = 0; round < 40; round++) {
+    const now = readAll(receivers);
+    const fresh = readAll(makeAll());
+    if (round === 0 || round === 39) console.log(now + "\n- new ones\n" + fresh);
+  }
+}
+//// warm-reads-then-fields-of-literals-above-are-stored.js
+"use strict";
+// Objects below literals: what they inherit lies in fields of compiled objects. Warm reads by name at sites that see many receivers; then the fields above are stored to by compiled code,
+// with values of the same kind and of other kinds, emptied and filled again; behind each step the same reads.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+let getterCalls = 0;
+const top = {
+  count: 1,
+  ratio: 1.5,
+  flag: true,
+  text: "top text",
+  list: [1, 2],
+  child: { inner: "inner of top" },
+  nothing: null,
+  missing: undefined,
+  method() {
+    return "top.method of " + this.own;
+  },
+  arrow: () => "top.arrow",
+  get computed() {
+    getterCalls++;
+    return "computed for " + this.own;
+  },
+};
+const middle = Object.setPrototypeOf({ count: 10, middleText: "middle text", later: undefined }, top);
+const makers = {
+  parsed: () => Object.setPrototypeOf(JSON.parse('{"own":"parsed"}'), middle),
+  created: () => Object.assign(Object.create(middle), { own: "created" }),
+  belowTop: () => Object.assign(Object.create(top), { own: "belowTop" }),
+  literal: () => Object.setPrototypeOf({ own: "literal", flag: false }, middle),
+  literalWithMore: () => Object.assign(Object.setPrototypeOf({ own: "literalWithMore" }, top), { ["more" + unknown]: 1 }),
+};
+const readers = {
+  own: o => o.own,
+  count: o => o.count,
+  ratio: o => o.ratio,
+  flag: o => o.flag,
+  text: o => o.text,
+  list: o => o.list,
+  child: o => o.child,
+  inner: o => o.child?.inner,
+  nothing: o => o.nothing,
+  missing: o => o.missing,
+  method: o => (typeof o.method === "function" ? o.method() : o.method),
+  arrow: o => (typeof o.arrow === "function" ? o.arrow() : o.arrow),
+  computed: o => o.computed,
+  middleText: o => o.middleText,
+  later: o => o.later,
+};
+const show = value => (typeof value === "object" && value !== null ? JSON.stringify(value) : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+const steps = [
+  ["values of the same kind", () => { top.count = 2; top.ratio = 2.5; top.flag = false; top.text = "second text"; top.list = [3]; top.child = { inner: "second inner" }; middle.count = 20; middle.middleText = "second middle text"; }],
+  ["stored in a loop, read in between", () => { for (let i = 0; i < 300; i++) { top.count = i; top.text = "text " + (i & 3); for (const [, receiver] of receivers) if (readers.text(receiver) !== "text " + (i & 3)) throw new Error("stale text at " + i); if (readers.count(receivers[2][1]) !== i) throw new Error("stale count at " + i); } }],
+  ["values of other kinds", () => { top.count = "a string now"; top.ratio = 7; top.flag = "yes"; top.text = 42; top.list = null; top.child = 1.25; top.nothing = { no: "longer nothing" }; top.missing = 0; }],
+  ["undefined and null", () => { top.count = undefined; top.ratio = null; top.flag = undefined; top.text = null; top.child = undefined; middle.count = undefined; }],
+  ["a field that was undefined is filled", () => { middle.later = "later is here"; top.missing = "no longer missing"; }],
+  ["methods are replaced", () => { top.method = function second() { return "second method of " + this.own; }; top.arrow = "no function any more"; }],
+  ["fields are deleted", () => { delete top.text; delete top.child; delete middle.count; delete middle.later; }],
+  ["and stored again", () => { top.text = "text again"; top.child = { inner: "inner again" }; middle.count = 30; middle.later = "later again"; }],
+  ["the getter becomes a value, a value a getter", () => { Object.defineProperty(top, "computed", { value: "a plain value", writable: true, configurable: true, enumerable: true }); Object.defineProperty(top, "ratio", { get() { return "ratio for " + this.own; }, configurable: true, enumerable: true }); }],
+];
+////= for
+console.log("the getter ran", getterCalls, "times");
+//// warm-reads-then-functions-change.js
+"use strict";
+// Functions of every kind as receivers of reads by name, at sites that see them all, 200 times over; then they get, hide and lose properties, and stand below other objects.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+function declared(a, b) {
+  return a + b;
+}
+class Plain {
+  method(a) {
+    return a;
+  }
+}
+class WithStatics {
+  static call = "a static field named call";
+  static tag = "a static tag";
+  static toString() {
+    return "a static toString";
+  }
+  static get listener() {
+    return "a static getter";
+  }
+  static bind(a, b, c) {
+    return "a static method named bind";
+  }
+}
+class Heir extends WithStatics {
+  static own = "own of the heir";
+}
+const otherPrototype = { call: "otherPrototype.call", marker: "otherPrototype.marker" };
+const makers = {
+  arrow: () => (a, b, c) => a,
+  capturing: () => {
+    const captured = unknown;
+    return () => captured;
+  },
+  declared: () => declared,
+  expression: () => function named(a) {},
+  anonymous: () => (0, function () {}),
+  method: () => new Plain().method,
+  shorthand: () => ({ short(a, b) {} }).short,
+  getter: () => Object.getOwnPropertyDescriptor({ get got() { return 1; } }, "got").get,
+  asynchronous: () => async function later(a) {},
+  generator: () => function* many(a, b) {},
+  bound: () => declared.bind(null, 1),
+  boundTwice: () => declared.bind(null).bind(null, 1, 2),
+  plainClass: () => Plain,
+  classWithStatics: () => WithStatics,
+  heir: () => Heir,
+  freshClass: () => class Fresh { static call = "call of a fresh class"; },
+  host: () => Math.max,
+  hostMethod: () => [].push,
+  constructorOfHost: () => Map,
+  fromText: () => new Function("a", "b", "return a" + unknown),
+  withProperties: () => Object.assign(function decorated() {}, { tag: "own tag", listener: "own listener" }),
+};
+const readers = {
+  name: o => o.name,
+  length: o => o.length,
+  prototype: o => typeof o.prototype,
+  prototypeIsKept: o => o.prototype === o.prototype,
+  call: o => o.call,
+  apply: o => o.apply,
+  bind: o => o.bind,
+  toString: o => o.toString,
+  constructor: o => o.constructor,
+  hasInstance: o => o[Symbol.hasInstance],
+  tag: o => o.tag,
+  listener: o => o.listener,
+  own: o => o.own,
+  marker: o => o.marker,
+  then: o => o.then,
+  displayName: o => o.displayName,
+};
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+const outcomes = [];
+const attemptOnEach = (receivers, change) => {
+  const failed = [];
+  for (const [kind, receiver] of receivers) {
+    try {
+      change(receiver);
+    } catch (error) {
+      failed.push(kind + " " + error.constructor.name);
+    }
+  }
+  return failed.length ? failed.join(", ") : "done";
+};
+// What is shared by every round stays as it is: the steps change functions made for them alone.
+const isFresh = kind => !["declared", "plainClass", "classWithStatics", "heir", "host", "hostMethod", "constructorOfHost"].includes(kind);
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+const fresh = receivers.filter(([kind]) => isFresh(kind));
+const steps = [
+  ["they get a property", () => attemptOnEach(fresh, f => { f.tag = "tag stored"; })],
+  ["a property of their own hides what Function.prototype has", () => attemptOnEach(fresh, f => { f.call = "own call"; f.then = "own then"; })],
+  ["the name and the length are defined anew", () => attemptOnEach(fresh, f => { Object.defineProperty(f, "name", { value: "renamed" }); Object.defineProperty(f, "length", { value: 99 }); })],
+  ["the name and the length are deleted", () => attemptOnEach(fresh, f => { delete f.name; delete f.length; })],
+  ["the prototype property is stored", () => attemptOnEach(fresh, f => { f.prototype = { stored: true }; })],
+  ["the properties are deleted", () => attemptOnEach(fresh, f => { delete f.tag; delete f.call; delete f.then; })],
+  ["they stand below another object", () => attemptOnEach(fresh, f => { Object.setPrototypeOf(f, otherPrototype); })],
+  ["that object changes", () => { otherPrototype.call = "changed"; otherPrototype.tag = "otherPrototype.tag"; delete otherPrototype.marker; return "done"; }],
+  ["below Function.prototype again, frozen", () => attemptOnEach(fresh, f => { Object.freeze(Object.setPrototypeOf(f, Function.prototype)); })],
+  ["the statics of a class change", () => { WithStatics.tag = "tag changed"; delete WithStatics.call; WithStatics.marker = "a new static"; Object.defineProperty(WithStatics, "listener", { value: "a value now", configurable: true }); return "done"; }],
+  ["the heir hides and gets statics", () => { Heir.tag = "tag of the heir"; Heir.call = "call of the heir"; delete Heir.own; return "done"; }],
+  ["the heir stands below another class", () => { Object.setPrototypeOf(Heir, Plain); return "done"; }],
+];
+for (const [what, change] of steps) {
+  console.log("\n--- " + what + ": " + change());
+  for (let round = 0; round < 40; round++) {
+    const now = readAll(receivers);
+    const again = readAll(makeAll());
+    if (round === 0 || round === 39) console.log(now + "\n- new ones\n" + again);
+  }
+}
+//// warm-reads-then-the-collector-runs-between.js
+"use strict";
+// Reads by name of many kinds of receivers at sites that see them all, 200 times over; then objects above them change while the collector runs in between; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+////= makers-2
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps
+////= for
+//// warm-reads-then-the-prototype-object-of-a-class-is-written.js
+"use strict";
+// Reads by name of many kinds of receivers at sites that see them all, 200 times over; then the prototype objects of classes are written; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+////= makers-2
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-9
+////= for
+//// warm-reads-then-the-receiver-gets-another-prototype.js
+"use strict";
+// Reads by name of many kinds of receivers at sites that see them all, 200 times over; then the receivers get other objects above them; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+////= makers-2
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-5
+////= for
+//// warm-reads-then-the-receiver-hides-what-it-inherited.js
+"use strict";
+// Reads by name of many kinds of receivers at sites that see them all, 200 times over; then the receivers get and lose properties of their own; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+////= makers-2
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-8
+////= for
+//// warm-reads-then-the-top-gets-something-above-it.js
+"use strict";
+// Reads by name of many kinds of receivers at sites that see them all, 200 times over; then the topmost object of theirs gets another object above it; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+////= Base-2
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+////= makers-2
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+////= readAll
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+////= for-2
+console.log(warm);
+
+////= steps-13
+////= for
+//// weak-collections-untyped.js
+// `WeakMap.prototype.get`, `WeakMap.prototype.has` and `WeakSet.prototype.has` are inlined and answer as the built-in functions do (the same program without type annotations).
+////= lines-20	getOf	map	map.get
+////= lines-20	hasOf	map	map.has
+////= lines-20	inSet	set	set.has
+////= lines-20	getOfAnything	map	map.get
+////= lines-20	hasAnything	map	map.has
+////= lines-20	anythingInSet	set	set.has
+const collect = globalThis.gc ?? (() => globalThis.Bun.gc(true));
+function aroundACollection(map, key) {
+  const before = map.get(key);
+  collect();
+  const behind = map.get(key);
+  return before === behind && behind !== undefined;
+}
+const table = { getOf, hasOf, inSet, getOfAnything, hasAnything, anythingInSet, aroundACollection };
+const call = (name, ...given) => table[name](...given);
+const empty = new WeakMap;
+const emptySet = new WeakSet;
+const one = {};
+console.log("empty:", call("getOf", empty, one), call("hasOf", empty, one), call("inSet", emptySet, one));
+const map = new WeakMap;
+const set = new WeakSet;
+const keys = [];
+const others = [];
+for (let i = 0;i < 1000; i++) {
+  const key = i % 3 ? { i } : i % 2 ? [i] : () => i;
+  keys.push(key);
+  map.set(key, i);
+  set.add(key);
+  others.push({ i });
+}
+let sum = 0;
+let had = 0;
+let within = 0;
+let strangers = 0;
+for (const key of keys) {
+  sum += call("getOf", map, key);
+  had += call("hasOf", map, key) ? 1 : 0;
+  within += call("inSet", set, key) ? 1 : 0;
+}
+for (const key of others)
+  strangers += (call("getOf", map, key) === undefined ? 0 : 1) + (call("hasOf", map, key) ? 1 : 0) + (call("inSet", set, key) ? 1 : 0);
+console.log("a thousand keys:", sum, had, within, "strangers found:", strangers);
+for (let i = 0;i < 1000; i += 2) {
+  map.delete(keys[i]);
+  set.delete(keys[i]);
+}
+sum = 0;
+had = 0;
+within = 0;
+for (const key of keys) {
+  sum += call("getOf", map, key) ?? 0;
+  had += call("hasOf", map, key) ? 1 : 0;
+  within += call("inSet", set, key) ? 1 : 0;
+}
+console.log("half of them deleted:", sum, had, within);
+for (let i = 0;i < 1000; i += 2) {
+  map.set(keys[i], -i);
+  set.add(keys[i]);
+}
+sum = 0;
+for (const key of keys)
+  sum += call("getOf", map, key);
+console.log("and put back:", sum);
+const local = Symbol("local");
+map.set(local, 77);
+set.add(local);
+for (const key of [1, 1.5, "text", "", null, undefined, true, 10n, Symbol.for("registered"), Symbol.iterator, local, NaN])
+  console.log("a key that is", typeof key === "symbol" ? String(key) : typeof key + " " + String(key), call("getOfAnything", map, key), call("hasAnything", map, key), call("anythingInSet", set, key));
+map.set(one, undefined);
+console.log("undefined for a value:", call("getOf", map, one), call("hasOf", map, one));
+
+class Answering extends WeakMap {
+  get(key) {
+    return 42;
+  }
+  has(key) {
+    return false;
+  }
+}
+
+class Plain extends WeakMap {
+}
+const answering = new Answering;
+const plain = new Plain;
+const altered = new WeakMap;
+answering.set(one, 1);
+plain.set(one, 2);
+altered.set(one, 3);
+altered.get = () => 7;
+console.log("a class that answers itself:", call("getOf", answering, one), call("hasOf", answering, one), "\xB7 one that does not:", call("getOf", plain, one), call("hasOf", plain, one), "\xB7 a get of its own:", call("getOf", altered, one), call("hasOf", altered, one));
+for (const wrong of [new Map, new WeakSet, {}, 1]) {
+  try {
+    console.log(WeakMap.prototype.get.call(wrong, one));
+  } catch (error) {
+    console.log("on what is no WeakMap:", error.constructor.name);
+  }
+}
+const kept = [];
+const crowded = new WeakMap;
+for (let i = 0;i < 100; i++) {
+  const key = { i };
+  kept.push(key);
+  crowded.set(key, i);
+}
+for (let round = 0;round < 4; round++) {
+  for (let i = 0;i < 20000; i++)
+    crowded.set({ i }, i);
+  let held = 0;
+  for (const key of kept)
+    held += call("aroundACollection", crowded, key) ? 1 : 0;
+  console.log("round", round, "kept keys found before and behind a collection:", held);
+}
+//// well-known-symbol-keys.ts
+// Well-known symbols as the constant key of in, delete, reads, stores, accessors and literals that spread afterwards, in code that runs once and in loops. A property named like the description of a symbol is another property.
+type Bag = Record<PropertyKey, unknown>;
+
+class Tagged {
+  [Symbol.toStringTag] = "Tagged";
+  size = 1;
+}
+
+class Ranged {
+  limit: number;
+  constructor(limit: number) {
+    this.limit = limit;
+  }
+  *[Symbol.iterator](): Generator<number> {
+    for (let i = 0; i < this.limit; i++) yield i;
+  }
+  get [Symbol.toStringTag](): string {
+    return "Ranged" + this.limit;
+  }
+  static [Symbol.hasInstance](value: unknown): boolean {
+    return typeof value === "number";
+  }
+}
+
+const trapped: string[] = [];
+const proxy = new Proxy({}, {
+  has(target: object, key: PropertyKey): boolean {
+    trapped.push("has " + String(key));
+    return key === Symbol.iterator;
+  },
+  deleteProperty(target: object, key: PropertyKey): boolean {
+    trapped.push("delete " + String(key));
+    return true;
+  },
+});
+
+const subjects: [string, object][] = [
+  ["array", []],
+  ["map", new Map()],
+  ["date", new Date(0)],
+  ["plain", {}],
+  ["no prototype", Object.create(null)],
+  ["text names", { iterator: 1, toStringTag: 2, "Symbol.iterator": 3, "Symbol(Symbol.iterator)": 4 }],
+  ["field", new Tagged()],
+  ["methods", new Ranged(2)],
+  ["class", Ranged],
+  ["function", function () {}],
+  ["proxy", proxy],
+];
+
+const show = (bag: object): string => Reflect.ownKeys(bag).map(key => String(key) + "=" + String((bag as Bag)[key])).join(" ");
+
+function attempt(run: () => string): string {
+  try {
+    return run();
+  } catch (error) {
+    return (error as Error).name;
+  }
+}
+
+function membership(value: object): string {
+  return [Symbol.iterator in value, Symbol.asyncIterator in value, Symbol.toStringTag in value, Symbol.hasInstance in value, Symbol.toPrimitive in value].map(Number).join("");
+}
+
+function fieldMembership(value: Tagged): string {
+  return [Symbol.toStringTag in value, Symbol.iterator in value, "toStringTag" in value, "size" in value].map(Number).join("");
+}
+
+console.log("once", Symbol.iterator in subjects[0][1], Symbol.toStringTag in subjects[6][1], Symbol.iterator in subjects[5][1], Symbol.hasInstance in Ranged);
+for (const [name, value] of subjects) console.log(name, membership(value));
+console.log(trapped.join(", "));
+console.log("field", fieldMembership(new Tagged()));
+
+function countInLoop(values: object[], rounds: number): number {
+  let count = 0;
+  for (let i = 0; i < rounds; i++) {
+    const value = values[i % values.length];
+    if (Symbol.iterator in value) count += 1;
+    if (Symbol.toStringTag in value) count += 100;
+    if (Symbol.iterator in value) count += 10000;
+  }
+  return count;
+}
+const withoutProxy = subjects.filter(([name]) => name !== "proxy").map(([, value]) => value);
+console.log("in a loop", countInLoop(withoutProxy, 20000), countInLoop([new Tagged()], 3), countInLoop([{ iterator: 1 }], 3));
+
+function literalThenSpread(rest: object): Bag {
+  return { [Symbol.iterator]: "first", [Symbol.toStringTag]: "tag", plain: 1, ...rest };
+}
+for (let i = 0; i < 3; i++) {
+  console.log("spread", show(literalThenSpread({})), "|", show(literalThenSpread({ [Symbol.iterator]: "second", other: i })), "|", show(literalThenSpread(new Tagged())), "|", show(literalThenSpread([i])));
+}
+
+function remove(bag: Bag): string {
+  const before = Symbol.toStringTag in bag;
+  const removed = delete bag[Symbol.toStringTag];
+  return [before, removed, Symbol.toStringTag in bag, "toStringTag" in bag, show(bag)].join(" ");
+}
+for (let i = 0; i < 3; i++) {
+  console.log("delete", remove({ [Symbol.toStringTag]: "x", toStringTag: "text" }), "|", remove({ toStringTag: i }), "|", remove(new Tagged() as unknown as Bag), "|", attempt(() => remove(Object.freeze({ [Symbol.toStringTag]: "frozen" }) as Bag)));
+}
+trapped.length = 0;
+console.log("delete", remove(proxy as Bag), trapped.join(", "));
+
+function withAccessors(start: number) {
+  let current = start;
+  return {
+    get [Symbol.toStringTag](): string {
+      return "tag" + current;
+    },
+    set [Symbol.toStringTag](value: string) {
+      current = value.length;
+    },
+    get [Symbol.toPrimitive]() {
+      return () => current;
+    },
+    plain: start,
+  };
+}
+for (let i = 0; i < 3; i++) {
+  const object = withAccessors(i);
+  const first = Object.prototype.toString.call(object) + " " + Number(object) + " " + `${object}`;
+  object[Symbol.toStringTag] = "four";
+  const descriptor = Object.getOwnPropertyDescriptor(object, Symbol.toStringTag)!;
+  console.log("accessors", first, Object.prototype.toString.call(object), Number(object), typeof descriptor.get, typeof descriptor.set, descriptor.enumerable, descriptor.configurable, Reflect.ownKeys(object).map(String).join());
+}
+
+function readThenStore(bag: Bag, value: unknown): string {
+  const before = bag[Symbol.unscopables];
+  bag[Symbol.unscopables] = value;
+  return String(before) + ">" + String(bag[Symbol.unscopables]) + " " + String(bag["unscopables"]);
+}
+for (let i = 0; i < 3; i++) {
+  const bag: Bag = { unscopables: "text" };
+  console.log("stores", readThenStore(bag, i), readThenStore(bag, "again"), show(bag));
+  try {
+    console.log("an array", readThenStore([] as unknown as Bag, i));
+  } catch (error) {
+    console.log("an array", (error as Error).name);
+  }
+}
+
+Bun.gc(true);
+console.log("after a collection", subjects.map(([, value]) => membership(value)).join(" "), show(literalThenSpread({ last: true })), countInLoop(withoutProxy, 1000));
+//// what-the-first-call-of-object-create-is-handed.js
+// Each function has one call of Object.create. The first object that the call is handed is a literal, null, a proxy, a function, an array, the prototype object of a class, of a constructor
+// function or of a built-in class, an object that Object.create made, a frozen literal, or no object at all; later calls are handed the others.
+const log = [];
+class Shape { area() { return "area of " + this.name; } get name2() { return this.name + "!"; } }
+function Old() {}
+Old.prototype.area = function () { return "old area of " + this.name; };
+const literal = { area() { return "literal area of " + this.name; }, get name2() { return this.name + "?"; } };
+const handed = {
+  literal: () => literal,
+  nothing: () => null,
+  proxy: () => new Proxy(literal, { get(target, key, receiver) { return key === "area" ? () => "trapped" : Reflect.get(target, key, receiver); }, set(target, key, value, receiver) { log.push("set trap " + String(key)); return Reflect.set(target, key, value, receiver); } }),
+  function: () => function named() {},
+  array: () => [1, 2, 3],
+  classPrototype: () => Shape.prototype,
+  oldPrototype: () => Old.prototype,
+  builtinPrototype: () => Map.prototype,
+  created: () => Object.create(literal),
+  frozen: () => Object.freeze({ area() { return "frozen area"; }, name: "frozen name" }),
+  number: () => 7,
+  undefined: () => undefined,
+  string: () => "text",
+};
+const makers = [
+  above => { const made = Object.create(above); made.name = "a"; made.extra = 1; return made; },
+  above => { const made = Object.create(above); made.name = "b"; made.extra = 2; return made; },
+  above => { const made = Object.create(above); made.name = "c"; made.extra = 3; return made; },
+  above => { const made = Object.create(above); made.name = "d"; made.extra = 4; return made; },
+  above => { const made = Object.create(above); made.name = "e"; made.extra = 5; return made; },
+  above => { const made = Object.create(above); made.name = "f"; made.extra = 6; return made; },
+  above => { const made = Object.create(above); made.name = "g"; made.extra = 7; return made; },
+  above => { const made = Object.create(above); made.name = "h"; made.extra = 8; return made; },
+  above => { const made = Object.create(above); made.name = "i"; made.extra = 9; return made; },
+  above => { const made = Object.create(above); made.name = "j"; made.extra = 10; return made; },
+  above => { const made = Object.create(above); made.name = "k"; made.extra = 11; return made; },
+  above => { const made = Object.create(above); made.name = "l"; made.extra = 12; return made; },
+  above => { const made = Object.create(above); made.name = "m"; made.extra = 13; return made; },
+];
+function look(made) {
+  let answer = typeof made.area === "function" ? made.area() : String(made.area);
+  answer += " | " + made.name + " | " + made.name2 + " | " + made.extra + " | " + made.length + " | " + Object.keys(made).join();
+  answer += " | " + (Object.getPrototypeOf(made) === null ? "null" : typeof Object.getPrototypeOf(made)) + " | " + (made instanceof Shape) + (made instanceof Old) + " | " + typeof made.toString;
+  return answer;
+}
+const names = Object.keys(handed);
+makers.forEach((make, first) => {
+  for (let step = 0; step < names.length * 2; step++) {
+    const name = names[(first + step) % names.length];
+    try {
+      const above = handed[name]();
+      const made = make(above);
+      log.push(first + " " + name + ": " + look(made) + " | " + (Object.getPrototypeOf(made) === above));
+    } catch (error) {
+      log.push(first + " " + name + ": " + error.constructor.name + ": " + error.message);
+    }
+  }
+});
+console.log(log.join("\n"));
+//// word-count-by-key.ts
+// Keys cut out of a text: read and then stored under, asked for with `in` and then stored under, once and again, by fresh strings and by strings that are kept.
+const text = "the quick brown fox jumps over the lazy dog and the quick cat sleeps while the dog barks at the fox";
+const lines: string[] = [];
+function words(): string[] { return text.split(" "); }
+function count(list: string[]): Record<string, number> {
+    const counts: Record<string, number> = {};
+    for (const word of list) counts[word] = (counts[word] ?? 0) + 1;
+    return counts;
+}
+function show(record: Record<string, unknown>): string {
+    return Object.keys(record).map(key => key + ":" + String(record[key])).join(" ");
+}
+lines.push("counted: " + show(count(words())));
+lines.push("again: " + show(count(words())));
+const kept = words();
+lines.push("by kept strings: " + show(count(kept)) + " | " + show(count(kept)) + " | " + show(count(kept)));
+const groups: Record<string, string[]> = {};
+for (const word of words()) {
+    const key = word.slice(0, 1);
+    if (!(key in groups)) groups[key] = [];
+    groups[key]!.push(word);
+}
+lines.push("grouped: " + Object.keys(groups).map(key => key + "=" + groups[key]!.length).join(" "));
+const first: Record<string, number> = {};
+words().forEach((word, index) => { first[word] ??= index; });
+lines.push("first seen: " + show(first));
+const lengths: Record<string, number> = {};
+for (let round = 0; round < 3; round++) {
+    for (const word of kept) {
+        const before = lengths[word];
+        lengths[word] = before === undefined ? word.length : before + 1;
+    }
+}
+lines.push("three rounds: " + show(lengths));
+const two: Record<string, number> = {};
+const other: Record<string, number> = {};
+for (const word of words()) {
+    const seen = two[word];
+    other[word] = (seen ?? 0) + 1;
+    two[word] = (other[word] ?? 0) + 1;
+}
+lines.push("two tables: " + show(two) + " | " + show(other));
+let total = 0;
+const big: Record<string, number> = {};
+for (let turn = 0; turn < 3000; turn++) {
+    const key = "k" + (turn % 700);
+    big[key] = (big[key] ?? 0) + turn;
+    total += big[key]!;
+}
+lines.push("many: " + total + " " + Object.keys(big).length);
+console.log(lines.join("\n"));

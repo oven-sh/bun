@@ -1,0 +1,4 @@
+a read holds the gate's promise and its own
+the promises that are kept are there
+1000
+1000 5 9 8780 0

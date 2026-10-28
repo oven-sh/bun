@@ -1,0 +1,1 @@
+{"skipInShell": "it requires files and node:path, which the jsc shell does not load"}

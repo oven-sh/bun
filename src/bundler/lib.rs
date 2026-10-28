@@ -4,6 +4,14 @@
 #![allow(non_snake_case, non_upper_case_globals)]
 #![warn(unused_must_use)]
 
+#[cfg(test)]
+use bun_aot_compiler as _;
+#[cfg(test)]
+use bun_sema_standalone as _;
+
+#[cfg(test)]
+mod native_test_shims;
+
 pub mod error;
 pub use error::{Error, Result};
 
@@ -122,6 +130,7 @@ pub mod ServerComponentParseTask;
 pub mod HTMLImportManifest;
 
 pub mod HTMLScanner;
+pub mod aot;
 pub mod cache;
 pub mod entry_points;
 #[path = "OutputFile.rs"]
@@ -423,7 +432,7 @@ bun_dispatch::link_interface! {
         fn origin_host() -> &'static [u8];
         fn origin_path() -> &'static [u8];
         fn loaders() -> *const bun_collections::StringArrayHashMap<bun_ast::Loader>;
-        fn eval_source() -> Option<*const bun_ast::Source>;
+        fn eval_source() -> Option<*const bun_ast::Source<'static>>;
         // The path of the entry module, `None` when there is none (`bun bake`).
         fn main() -> Option<&'static [u8]>;
         fn read_dir_info_package_json(dir: &[u8]) -> Option<*const bun_resolver::PackageJSON>;

@@ -1,0 +1,46 @@
+read a|b
+-- a Readable that is read to its end: 7
+resume_ 2
+maybeReadMore_ 2
+emitReadable_ 1
+endReadableNT 2
+endReadableNT 2
+endReadableNT 2
+endReadableNT 2
+wrote a|b|c
+-- a Writable that is ended: 1
+(anonymous) 2
+iterated x|y
+-- a Readable that is iterated: 8
+nReadingNextTick 1
+emitReadable_ 1
+maybeReadMore_ 2
+emitReadable_ 1
+emitReadable_ 1
+endReadableNT 2
+endReadableNT 2
+onDestroy 1
+got /warm
+got /one
+-- a GET without a body: 1
+emitResponseFinished 1 x1
+posted the body
+-- a POST with a body: 9
+clearServerParserIncoming 2 x1
+emitCloseNT 1 x1
+emitEOFIncomingMessageOuter 1 x1
+emitErrorNextTickIfErrorListener 3 x1
+emitResponseFinished 1 x1
+endReadableNT 2 x1
+flushWriteAccountingNT 1 x1
+maybeReadMore_ 2 x1
+resume_ 2 x1
+got /three
+seen behind the last watch: 9
+-- a replacement that holds the ticks back
+before:  | held 3
+after: data held,end
+-- an accessor
+read 7 times
+-- what is no function
+TypeError

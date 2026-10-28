@@ -1,0 +1,6 @@
+{
+  "skipInShell": "it asks for process.env, which the jsc shell does not provide",
+  "env": {
+    "BUN_OPTIONS": "--pending-deprecation --no-warnings"
+  }
+}

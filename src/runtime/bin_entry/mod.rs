@@ -154,6 +154,18 @@ pub(crate) extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_ch
 /// the entire process — guaranteed by the C runtime that calls this symbol.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
+    // Before the first allocation. With glibc that one comes before `main`, and so does this call.
+    #[cfg(any(
+        target_os = "android",
+        all(target_os = "linux", not(target_env = "gnu"))
+    ))]
+    {
+        unsafe extern "C" {
+            safe fn Bun__askForAddressSpaceToStart();
+        }
+        Bun__askForAddressSpaceToStart();
+    }
+
     // 0. Capture argv FIRST — before the crash handler, whose panic path
     //    dumps the command line via `bun_core::argv()`.
     //    SAFETY: `argc`/`argv` come from the C runtime; the argv block lives

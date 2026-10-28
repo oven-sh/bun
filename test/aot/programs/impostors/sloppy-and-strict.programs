@@ -1,0 +1,4113 @@
+////: Base-3
+class Base {
+  static get kind() {
+    return describe(this);
+  }
+  get kind() {
+    return describe(this);
+  }
+}
+////: Klass
+class Klass {
+  constructor(a) {
+    arguments[0] = "stored";
+    this.seen = a;
+  }
+  method(a) {
+    arguments[0] = "stored";
+    return a;
+  }
+  static method(a) {
+    arguments[0] = "stored";
+    return a;
+  }
+  field = function (a) {
+    arguments[0] = "stored";
+    return a;
+  };
+}
+////: Object
+////= Object-keys-2
+////= Object-keys
+////: Object-keys
+Object.keys(ways).forEach(function (way) {
+  Object.keys(texts).forEach(function (name) {
+    var made;
+    try {
+      made = ways[way](texts[name]);
+    } catch (error) {
+      console.log(way + " " + name, "is refused:", error.constructor.name);
+      return;
+    }
+    drive(way + " " + name, made, name);
+  });
+});
+////: Object-keys-2
+Object.keys(written).forEach(function (name) {
+  drive("written " + name, written[name], name);
+});
+////: Promise-resolve
+Promise.resolve(1)
+  .then(function () {
+    later.push("then: " + describe(this));
+  })
+  .then(() => new Promise(resolve => setTimeout(function () {
+    later.push("timer: " + (this === undefined ? "undefined" : this === globalThis ? "the global object" : typeof this));
+    resolve();
+  }, 0)))
+  .then(() => new Promise(resolve => queueMicrotask(function () {
+    later.push("microtask: " + describe(this));
+    resolve();
+  })))
+  .then(() => console.log(later.join("; ")));
+////: aCatchParameter
+function aCatchParameter(a) {
+  try {
+    throw "thrown";
+  } catch (a) {
+    var a = "stored in catch";
+  }
+  return a;
+}
+////: aVar
+function aVar«1») {
+  var a;
+  return a;
+}
+////: aVarInABlock
+function aVarInABlock(a) {
+  if (a > 1) {
+    var a = "from the block";
+  }
+  return a;
+}
+////: arrowInside
+var arrowInside = function (a) {
+  var inner = () => {
+    arguments[0] = "stored by an arrow";
+    return a;
+  };
+  return [inner(), a, arguments[0]];
+};
+////: asynchronous
+async function asynchronous(a) {
+  arguments[0] = "stored";
+  var before = a;
+  await null;
+  arguments[0] = "stored after an await";
+  return [before, a];
+}
+////: asynchronousGenerator
+async function* asynchronousGenerator(a) {
+  arguments[0] = "stored";
+  yield a;
+  await null;
+  a = "assigned after an await";
+  yield arguments[0];
+}
+////: closers
+var closers = {
+  nothing: function () {},
+  freeze: Object.freeze,
+  seal: Object.seal,
+  preventExtensions: Object.preventExtensions,
+  fixCount: function (object) {
+    Object.defineProperty(object, "count", { writable: false });
+  },
+  getterForCount: function (object) {
+    Object.defineProperty(object, "count", {
+      get: function () {
+        return "from a getter";
+      },
+    });
+  },
+  fixLength: function (object) {
+    if (Array.isArray(object)) Object.defineProperty(object, "length", { writable: false });
+  },
+};
+////: console-2
+////= console
+
+////= texts-8
+
+////= ways
+
+////= drive-2
+
+////= Object-keys
+////: console-3
+////= console
+
+////= fill-2
+////= grow
+////= push
+////= extend
+////= closers
+////= for-45
+////: counted
+function counted(n) {
+  arguments[0] = 3;
+  var count = 0;
+  for (var i = 0; i < n; i++) count++;
+  return count;
+}
+////: declaredInALoop
+function declaredInALoop(text) {
+  var seen = [];
+  for (var i = 0; i < 3; i++) {
+    seen.push(typeof y);
+    if (i === 1) eval(text);
+  }
+  return seen;
+}
+////: drive
+function drive(label, callee) {
+  for (var i = 0; i < 300; i++) callee({}, "the operand x");
+  for (var name in objects) {
+    reads = 0;
+    attempt(label + "(" + name + ")", callee.bind(null, objects[name](), "the operand x"));
+  }
+}
+////: drive-2
+function drive(label, callee) {
+  for (var i = 0; i < 300; i++) callee(i, i);
+  attempt(label + "(1, 2)", callee.bind(null, 1, 2));
+  attempt(label + "(1)", callee.bind(null, 1));
+  attempt(label + "([1], 'ab')", callee.bind(null, [1], "ab"));
+  attempt(label + "(1, 2, 3)", callee.bind(null, 1, 2, 3));
+}
+////: drive-3
+function drive(label, callee) {
+  for (var name in objects) {
+    log.length = 0;
+    attempt(label + "(" + name + ")", callee.bind(null, objects[name]()));
+    console.log(label + "(" + name + ") ran", log.join(", "));
+  }
+}
+////: drive-4
+function drive(label, callee) {
+  for (var name in objects) {
+    log.length = 0;
+    attempt(label + "(" + name + ")", callee.bind(null, objects[name]()));
+    if (log.length) console.log(label + "(" + name + ") read", log.join(", "));
+  }
+}
+////: drive-5
+function drive(label, callee) {
+  attempt(label + «1», callee.bind(null, «2»));
+  attempt(label + «3», callee.bind(null, «4»));
+}
+////: extend
+function extend(object, freezeAt, close) {
+  var done = 0;
+  for (var i = 0; i < 50; i++) {
+    object["key" + i] = i;
+    done++;
+    if (i === freezeAt) close(object);
+  }
+  return done;
+}
+////: fill-2
+function fill(object, freezeAt, close) {
+  var done = 0;
+  for (var i = 0; i < 2000; i++) {
+    object.count = i;
+    done++;
+    if (i === freezeAt) close(object);
+  }
+  return done;
+}
+////: for-101
+for (var name in receivers) {
+  var receiver = receivers[name];
+  log.length = 0;
+  attempt("Reflect.get with " + name, () => Reflect.get(parent, "kind", receiver));
+  attempt("the same value with " + name, () => Reflect.get(parent, "same", receiver) === receiver);
+  attempt("Reflect.set with " + name, () => [Reflect.set(parent, "kind", 1, receiver), log.join()]);
+  attempt("the getter called on " + name, () => Object.getOwnPropertyDescriptor(parent, "kind").get.call(receiver));
+  attempt("the method called on " + name, () => parent.method.call(receiver));
+}
+////: for-135
+for (var i = 0; i < 2000; i++) {
+  try {
+    sum += factorial(3);
+  } catch (error) {
+    sum -= 1;
+  }
+}
+////: for-136
+for (var maker in makers) {
+  for (var store in stores) {
+    log.length = 0;
+    attempt(store + "(" + maker + ")", stores[store].bind(null, makers[maker]()));
+    if (log.length) console.log(store + "(" + maker + ") ran", log.join(", "));
+  }
+}
+////: for-185
+for (var i = 0; i < 2000; i++) {
+  try {
+    «1»(«2»);
+  } catch (error) {}
+}
+////: for-27
+for (var name in values) {
+  var value = values[name];
+  attempt(name + ".addedKind()", () => callKind(value));
+  attempt(name + ".addedSame(itself)", () => value.addedSame(value));
+  attempt(name + ".addedStore()", () => value.addedStore());
+  attempt(name + ".addedItself()", () => value.addedItself());
+  attempt(name + ".addedGetter", () => readGetter(value));
+  attempt(name + "['addedGetter']", () => value["added" + "Getter"]);
+  attempt(name + ".addedSetter = 1", () => {
+    seen.length = 0;
+    value.addedSetter = 1;
+    return seen;
+  });
+  attempt(name + "?.addedKind()", () => value?.addedKind());
+  attempt(name + " unpacked", () => {
+    var { addedGetter } = value;
+    return addedGetter;
+  });
+}
+////: for-45
+for (var name in closers) {
+  var object = { count: -1 };
+  attempt("fill, " + name, fill.bind(null, object, 1000, closers[name]));
+  attempt("fill, " + name + " leaves", () => object.count);
+  var list = [];
+  attempt("grow, " + name, grow.bind(null, list, 1000, closers[name]));
+  attempt("grow, " + name + " leaves", () => [list.length, list[1000], list[1001]]);
+  var pushed = [];
+  attempt("push, " + name, push.bind(null, pushed, 1000, closers[name]));
+  attempt("push, " + name + " leaves", () => [pushed.length, pushed[1000], pushed[1001]]);
+  var extended = {};
+  attempt("extend, " + name, extend.bind(null, extended, 20, closers[name]));
+  attempt("extend, " + name + " leaves", () => Object.keys(extended).length);
+}
+////: for-54
+for (var name in parents) {
+  Object.defineProperty(parents[name], "addedKind", { value: kind, configurable: true });
+  Object.defineProperty(parents[name], "addedSame", { value: same, configurable: true });
+  Object.defineProperty(parents[name], "addedStore", { value: store, configurable: true });
+  Object.defineProperty(parents[name], "addedItself", { value: itself, configurable: true });
+  Object.defineProperty(parents[name], "addedGetter", { get: kind, configurable: true });
+  Object.defineProperty(parents[name], "addedSetter", {
+    set: function (value) {
+      seen.push(typeof this);
+    },
+    configurable: true,
+  });
+}
+////: for-55
+for (var other of ["five", "text", "no", "none"]) {
+  var value = receivers[other];
+  attempt("kind.apply(" + other + ")", () => uses.kind.apply(value));
+  attempt("Reflect.apply(kind, " + other + ")", () => Reflect.apply(uses.kind, value, []));
+  attempt("forEach(kind, " + other + ")", () => {
+    var seen;
+    [0].forEach(function () {
+      seen = [typeof this, this === value];
+    }, value);
+    return seen;
+  });
+  attempt("truth by map(" + other + ")", () => [0].map(uses.truth, value));
+}
+////: generator
+function* generator(a) {
+  var before = a;
+  arguments[0] = "stored";
+  yield [before, a];
+  arguments[0] = "stored after a yield";
+  yield a;
+  a = "assigned after a yield";
+  yield arguments[0];
+}
+////: grow
+function grow(list, freezeAt, close) {
+  var done = 0;
+  for (var i = 0; i < 2000; i++) {
+    list[i] = i;
+    done++;
+    if (i === freezeAt) close(list);
+  }
+  return done;
+}
+////: grows
+function grows(n) {
+  var sum = 0;
+  for (var i = 0; i < 3; i++) {
+    sum += n;
+    arguments[0] = n + 1;
+  }
+  return sum;
+}
+////: holder
+var holder = {
+  method(a) {
+    arguments[0] = "stored";
+    return a;
+  },
+  property: function (a) {
+    arguments[0] = "stored";
+    return a;
+  },
+  seen: undefined,
+  set setter(a) {
+    arguments[0] = "stored";
+    this.seen = a;
+  },
+  *generator(a) {
+    arguments[0] = "stored";
+    yield a;
+  },
+  async asynchronous(a) {
+    arguments[0] = "stored";
+    return a;
+  },
+  ["comp" + "uted"](a) {
+    arguments[0] = "stored";
+    return a;
+  },
+};
+////: holder-3
+var holder = {
+  marker: "the marker of the holder",
+  list: [1, 2, 3],
+  read: function () {
+    return this.marker;
+  },
+  kind: function () {
+    return this === undefined ? "undefined" : this === globalThis ? "the global object" : this === holder ? "the holder" : typeof this;
+  },
+  size: function () {
+    return this.list.length;
+  },
+};
+////: leaks
+function leaks(a) {
+  return {
+    operands: arguments,
+    read: function () {
+      return a;
+    },
+    write: function (value) {
+      a = value;
+    },
+  };
+}
+////: lines-123
+function «1»(text) {
+  «2» «3» = 1;
+  eval(text);
+  return «3»;
+}
+////: lines-2
+(async function () {
+  console.log("async method", show(await holder.asynchronous(1)));
+  console.log("async", show(await asynchronous(1)));
+  var seen = [];
+  for await (var item of asynchronousGenerator(1)) seen.push(item);
+  console.log("async generator", show(seen));
+})();
+////: lines-203
+function «1»() {
+  «2» taken = «3»;
+  {
+    function taken() {}
+  }
+  return typeof taken;
+}
+////: lines-226
+function «1»(«2») {
+  arguments[0] = «3»;
+  return «2» + 1;
+}
+////: lines-238
+function «1»(«2», «3») {
+  «4»(«5»);
+  return «2» + «6»;
+}
+////: lines-273
+function «1»(«2», text) {
+  eval(text);
+  return «2».length;
+}
+////: lines-280
+function «1»() {
+  «2» = 1;
+  return «2»;
+}
+////: lines-345
+function «1») {
+  arguments[0] = "stored";
+  b = "assigned";
+  return [a, arguments[0], b, arguments[1]];
+}
+////: lines-352
+function «1») {
+  eval(text);
+  return a;
+}
+////: logging
+function logging(target, has) {
+  return new Proxy(target, {
+    has: function (target, key) {
+      log.push("has " + String(key));
+      return has === undefined ? Reflect.has(target, key) : has;
+    },
+    get: function (target, key, receiver) {
+      log.push("get " + String(key));
+      return key === "target" ? target : Reflect.get(target, key, receiver);
+    },
+    set: function (target, key, value, receiver) {
+      log.push("set " + String(key));
+      return Reflect.set(target, key, value, receiver);
+    },
+    deleteProperty: function (target, key) {
+      log.push("delete " + String(key));
+      return Reflect.deleteProperty(target, key);
+    },
+    getOwnPropertyDescriptor: function (target, key) {
+      log.push("describe " + String(key));
+      return Reflect.getOwnPropertyDescriptor(target, key);
+    },
+    defineProperty: function (target, key, property) {
+      log.push("define " + String(key));
+      return Reflect.defineProperty(target, key, property);
+    },
+  });
+}
+////: makers-11
+var makers = {
+  open: () => ({ a: 1, 0: "zero", length: 1, prototype: 1, name: "n" }),
+  frozen: () => Object.freeze({ a: 1, 0: "zero", length: 1, prototype: 1, name: "n" }),
+  sealed: () => Object.seal({ a: 1, 0: "zero" }),
+  fixed: () => Object.defineProperty({}, "a", { value: 1 }),
+  list: () => ["zero"],
+  frozenList: () => Object.freeze(["zero"]),
+  text: () => "zero",
+  boxedText: () => new String("zero"),
+  typed: () => new Uint8Array(1),
+  aFunction: () => function named() {},
+  anArrow: () => () => {},
+  aClass: () => class Named {},
+  refusingProxy: () => new Proxy({ a: 1 }, { deleteProperty: () => false }),
+  inherited: () => Object.create({ a: 1 }),
+  operands: () =>
+    (function () {
+      return arguments;
+    })("zero"),
+};
+////: makers-9
+var makers = {
+  open: () => ({ a: 1 }),
+  frozen: () => Object.freeze({ a: 1 }),
+  fixed: () => Object.defineProperty({}, "a", { value: 1, enumerable: true }),
+  getterOnly: () => ({
+    get a() {
+      return 1;
+    },
+  }),
+  inheritedFixed: () => Object.create(Object.freeze({ a: 1 })),
+  inheritedGetterOnly: () =>
+    Object.create({
+      get a() {
+        return 1;
+      },
+    }),
+  inheritedSetter: () =>
+    Object.create({
+      set a(value) {
+        log.push("setter " + value);
+      },
+      get a() {
+        return 1;
+      },
+    }),
+  closedWithoutA: () => Object.preventExtensions({}),
+  refusingProxy: () => new Proxy({ a: 1 }, { set: () => false }),
+  lyingProxy: () => new Proxy({ a: 1 }, { set: () => true }),
+  functionName: () => function a() {},
+  classInstance: () =>
+    new (class {
+      get a() {
+        return 1;
+      }
+    })(),
+};
+////: mapped
+function mapped(list) {
+  arguments[0] = null;
+  return list.map(function (item) {
+    return item;
+  });
+}
+////: midForOf
+function midForOf(list) {
+  var sum = 0;
+  for (var item of list) {
+    sum += item;
+    arguments[0] = [100];
+  }
+  return [sum, list.length];
+}
+////: midLoop
+function midLoop(list) {
+  var sum = 0;
+  for (var i = 0; i < list.length; i++) {
+    sum += list[i];
+    if (i === 0) arguments[0] = [10, 20, 30, 40];
+  }
+  return sum;
+}
+////: objects-10
+var objects = {
+  empty: () => logging({}),
+  withX: () => logging({ x: 5 }),
+  withAFunction: () =>
+    logging({
+      x: function () {
+        return "the member function";
+      },
+    }),
+  claimsEverything: () => logging({}, true),
+  claimsNothing: () => logging({ x: 5 }, false),
+  hidesX: () => logging({ x: 5, [Symbol.unscopables]: { x: true } }),
+};
+////: objects-3
+var objects = {
+  empty: () => ({}),
+  withX: () => ({ x: "the member x" }),
+  withANumber: () => ({ x: 41 }),
+  withAText: () => ({ x: "text" }),
+  withUndefined: () => ({ x: undefined }),
+  inherited: () => Object.create({ x: "the inherited x" }),
+  getter: () => ({
+    get x() {
+      return "read " + ++reads;
+    },
+  }),
+  withSize: () => ({ size: "the member size" }),
+  map: () => new Map([["x", 1]]),
+  list: () => [1, 2],
+  text: () => "text",
+  number: () => 5,
+  noPrototype: () => Object.assign(Object.create(null), { x: "the member of an object without a prototype" }),
+  none: () => null,
+  nothing: () => undefined,
+};
+////: objects-5
+var objects = {
+  plain: () => ({ x: "the member x", y: "the member y" }),
+  hidesX: () => ({ x: "the member x", y: "the member y", [Symbol.unscopables]: { x: true } }),
+  hidesNothing: () => ({ x: "the member x", y: "the member y", [Symbol.unscopables]: { x: false, y: 0 } }),
+  hidesByText: () => ({ x: "the member x", y: "the member y", [Symbol.unscopables]: { x: "yes", y: "" } }),
+  unscopablesIsAText: () => ({ x: "the member x", y: "the member y", [Symbol.unscopables]: "x" }),
+  inheritedUnscopables: () => Object.create({ [Symbol.unscopables]: { x: true } }, { x: { value: "the member x", writable: true }, y: { value: "the member y" } }),
+  unscopablesInherits: () => ({ x: "the member x", y: "the member y", [Symbol.unscopables]: Object.create({ y: true }) }),
+  getterForUnscopables: () => ({
+    x: "the member x",
+    y: "the member y",
+    get [Symbol.unscopables]() {
+      log.push("unscopables");
+      return { x: log.length % 2 === 1 };
+    },
+  }),
+  callable: () => ({
+    x: function () {
+      return this === undefined ? "undefined" : typeof this.x;
+    },
+  }),
+  hiddenCallable: () => ({
+    x: function () {
+      return "the member function";
+    },
+    [Symbol.unscopables]: { x: true },
+  }),
+  list: () => [1, 2],
+  heirOfAList: () => Object.create([1, 2]),
+  listWithoutUnscopables: () => Object.defineProperty([1, 2], Symbol.unscopables, { value: undefined }),
+};
+////: objects-6
+var objects = {
+  empty: () => ({}),
+  withX: () => ({ x: 10 }),
+  withAList: () => ({ x: [0] }),
+  frozen: () => Object.freeze({ x: 10 }),
+  getterOnly: () => ({
+    get x() {
+      return 10;
+    },
+  }),
+  withAMethod: () => ({
+    x: function () {
+      return this === undefined ? "undefined" : this === globalThis ? "the global object" : "x" in this ? "an object with x" : typeof this;
+    },
+  }),
+  withTheUndeclaredName: () => ({ madeByAStoreInsideWith: 0 }),
+};
+////: parent
+var parent = {
+  get kind() {
+    return describe(this);
+  },
+  set kind(value) {
+    log.push("set on " + describe(this));
+  },
+  get same() {
+    return this;
+  },
+  method: function () {
+    return describe(this);
+  },
+};
+////: push
+function push(list, freezeAt, close) {
+  var done = 0;
+  for (var i = 0; i < 2000; i++) {
+    list.push(i);
+    done++;
+    if (i === freezeAt) close(list);
+  }
+  return done;
+}
+////: pushed
+function pushed(list) {
+  arguments[0] = {
+    push: function () {
+      return "own push";
+    },
+  };
+  return list.push(1);
+}
+////: removals
+var removals = {
+  member: object => [delete object.a, "a" in object],
+  computed: object => [delete object["a".trim()], "a" in object],
+  element: object => [delete object[0], 0 in object],
+  length: object => [delete object.length, "length" in object],
+  absent: object => delete object.absent,
+  prototype: object => [delete object.prototype, "prototype" in object],
+  name: object => [delete object.name, "name" in object],
+};
+////: seenByAClosure
+function seenByAClosure(text) {
+  function read() {
+    return typeof y === "undefined" ? "no y" : y;
+  }
+  var before = read();
+  eval(text);
+  return [before, read()];
+}
+////: stores
+var stores = {
+  member: value => {
+    value.extra = 1;
+    return value.extra;
+  },
+  element: value => {
+    value[0] = "z";
+    return value[0];
+  },
+  length: value => {
+    value.length = 1;
+    return value.length;
+  },
+  computed: value => {
+    value["ex" + "tra"] = 1;
+    return value.extra;
+  },
+  addTo: value => {
+    value.extra += 1;
+    return value.extra;
+  },
+  increment: value => {
+    value.extra++;
+    return value.extra;
+  },
+  pastTheEnd: value => {
+    value[10] = "z";
+    return value[10];
+  },
+  remove: value => delete value.extra,
+  removeElement: value => delete value[0],
+  removeLength: value => delete value.length,
+  inherited: value => {
+    value.toString = 1;
+    return typeof value.toString;
+  },
+};
+////: stores-2
+var stores = {
+  set: object => {
+    object.a = 2;
+    return object.a;
+  },
+  setComputed: object => {
+    object["a".trim()] = 2;
+    return object.a;
+  },
+  add: object => {
+    object.a += 2;
+    return object.a;
+  },
+  increment: object => [object.a++, object.a],
+  logical: object => {
+    object.a &&= 2;
+    return object.a;
+  },
+  pattern: object => {
+    ({ a: object.a } = { a: 2 });
+    return object.a;
+  },
+  valueOfTheStore: object => (object.a = 2),
+  name: object => {
+    object.name = "renamed";
+    return object.name;
+  },
+};
+////: texts-10
+var texts = {
+  store: "function (object) { var x = \"the local x\"; with (object) { x = \"stored\"; } return [x, object.x]; }",
+  declare: "function (object) { with (object) { var x = \"declared inside\"; } return [x, object.x]; }",
+  declareALet: "function (object) { with (object) { let x = \"a let inside\"; x = \"stored to the let\"; } return object.x; }",
+  increment: "function (object) { var x = 1; with (object) { x++; } return [x, object.x]; }",
+  push: "function (object) { var x = []; with (object) { x.push(1); } return [x, object.x]; }",
+  receiver: "function (object) { function x() { return this === undefined ? \"undefined\" : this === globalThis ? \"the global object\" : this === object ? \"the object\" : typeof this; } with (object) { return x(); } }",
+  undeclared: "function (object) { with (object) { madeByAStoreInsideWith = 1; } var made = [typeof madeByAStoreInsideWith, object.madeByAStoreInsideWith]; delete globalThis.madeByAStoreInsideWith; return made; }",
+  loopVariable: "function (object) { with (object) { for (var x = 0; x < 3; x++); } return [x, object.x]; }",
+  pattern: "function (object) { var x = \"the local x\"; with (object) { [x] = [\"from a pattern\"]; } return [x, object.x]; }",
+  addedMidway: "function (object) { var x = \"the local x\"; with (object) { var before = x; object.x = \"added midway\"; return [before, x]; } }",
+};
+////: texts-11
+var texts = {
+  let: "function (value) { var let = value; return let + 1; }",
+  static: "function (value) { var static = value; return static.length; }",
+  yield: "function (value) { var yield = value; return yield * 2; }",
+  several: "function (value) { var implements = value, interface = value, package = value, private = value, protected = value, public = value; return [implements, interface, package, private, protected, public].length; }",
+  asParameters: "function (let, static, yield) { return [let, static, yield]; }",
+  asAFunctionName: "function () { function static() { return \"called\"; } return static(); }",
+  asALabel: "function () { yield: for (;;) break yield; return \"left the loop\"; }",
+  letWithAnIndex: "function (value) { var let = [value]; return [let[0], let.length]; }",
+};
+////: texts-12
+var texts = {
+  read: "function (object) { var x = \"the local x\"; with (object) { return x; } }",
+  store: "function (object) { var x = \"the local x\"; with (object) { x = \"stored\"; } return x; }",
+  addTo: "function (object) { var x = 1; with (object) { x += 1; } return x; }",
+  call: "function (object) { var x = function () { return \"the local function\"; }; with (object) { return x(); } }",
+  kind: "function (object) { with (object) { return typeof neverDeclared; } }",
+  remove: "function (object) { var x = 1; with (object) { return delete x; } }",
+  vanishes: "function (object) { var x = \"the local x\"; with (object) { x = (delete object.target.x, \"stored after the member vanished\"); } return [x, object.target.x]; }",
+};
+////: texts-13
+var texts = {
+  oneDigit: "function () { return [\"\\7\".length, \"\\7\".charCodeAt(0), \"\\1a\"]; }",
+  twoDigits: "function () { return [\"\\12\".length, \"\\12\".charCodeAt(0), \"\\77\"]; }",
+  zeroThenADigit: "function () { return [\"\\08\".length, \"\\01\".length, \"\\00\".length]; }",
+  zeroAlone: "function () { return [\"\\0\".length, \"\\0a\".length]; }",
+  asAKey: "function () { return Object.keys({ \"\\61\": 1, \"\\60\": 2 }); }",
+  afterUseStrict: "function () { \"\\7\"; \"use strict\"; return this === undefined; }",
+};
+////: texts-14
+var texts = {
+  plusOne: "function (object) { var x = 1; with (object) { return x + 1; } }",
+  length: "function (object) { var x = [1, 2, 3]; with (object) { return x.length; } }",
+  kind: "function (object) { var x = 1; with (object) { return typeof x; } }",
+  inALoop: "function (object) { var x = 1; var sum = 0; with (object) { for (var i = 0; i < 3; i++) sum += x; } return sum; }",
+  inAClosure: "function (object) { var x = \"the local x\"; with (object) { return (function () { return x; })(); } }",
+};
+////: texts-15
+var texts = {
+  read: "function (object) { var x = \"the local x\"; with (object) { return x; } }",
+  readTwice: "function (object) { var x = \"the local x\"; with (object) { return [x, x]; } }",
+  readGlobal: "function (object) { with (object) { return size; } }",
+  parameter: "function (object, x) { with (object) { return x; } }",
+  nested: "function (object) { var x = \"the local x\"; with ({ x: \"the outer object\" }) { with (object) { return x; } } }",
+};
+////: texts-16
+var texts = {
+  read: "function (object) { var x = \"the local x\"; var y = \"the local y\"; with (object) { return [x, y]; } }",
+  store: "function (object) { var x = \"the local x\"; with (object) { x = \"stored\"; } return [x, object.x]; }",
+  namesOfLists: "function (object) { var keys = \"the local keys\"; var values = \"the local values\"; var concat = \"the local concat\"; var flat = \"the local flat\"; var at = \"the local at\"; with (object) { return [typeof keys, typeof values, typeof concat, typeof flat, typeof at]; } }",
+  call: "function (object) { var x = function () { return \"the local function\"; }; with (object) { return x(); } }",
+};
+////: texts-5
+var texts = {
+  afterTheBlock: "function () { { function inner() {} } return typeof inner; }",
+  beforeTheBlock: "function () { var before = typeof inner; { function inner() {} } return before; }",
+  blockNotEntered: "function (enter) { if (enter) { function inner() {} } return typeof inner; }",
+  calledAfterTheBlock: "function (enter) { if (enter) { function inner() { return \"inner\"; } } return inner(); }",
+  twoBlocks: "function (first) { if (first) { function pick() { return \"first\"; } } else { function pick() { return \"second\"; } } return pick(); }",
+  storedInsideTheBlock: "function () { { function inner() {} inner = \"stored inside\"; } return typeof inner; }",
+  aVarOfTheSameName: "function () { var taken = \"the var\"; { function taken() {} } return typeof taken; }",
+  aParameterOfTheSameName: "function (taken) { { function taken() {} } return typeof taken; }",
+  aParameterUsedLikeANumber: "function (taken) { { function taken() {} } return taken + 1; }",
+  aLetOfTheSameName: "function () { let taken = \"the let\"; { function taken() {} } return typeof taken; }",
+  aCatchParameter: "function () { try { throw \"thrown\"; } catch (taken) { { function taken() {} } var seen = typeof taken; } return [seen, typeof taken]; }",
+  inACase: "function (key) { switch (key) { case true: function chosen() { return \"declared under the first case\"; } break; default: return typeof chosen === \"function\" ? chosen() : typeof chosen; } return typeof chosen; }",
+  inALoop: "function () { var made = []; for (var i = 0; i < 2; i++) { function counter() { return i; } made.push(counter); } return [made[0] === made[1], typeof counter]; }",
+  aGeneratorInABlock: "function () { { function* made() {} } return typeof made; }",
+};
+////: texts-6
+var texts = {
+  local: "function () { var local = 1; return [delete local, typeof local]; }",
+  parameter: "function (parameter) { return [delete parameter, typeof parameter]; }",
+  parameterThenUsed: "function (parameter) { delete parameter; return parameter + 1; }",
+  aLet: "function () { let local = 1; return [delete local, typeof local]; }",
+  aFunction: "function () { function local() {} return [delete local, typeof local]; }",
+  operands: "function () { return [delete arguments, typeof arguments]; }",
+  absent: "function () { return delete neverDeclaredAnywhere; }",
+  memberOfTheGlobalObject: "function () { globalThis.removable = \"made again\"; return [delete removable, typeof removable]; }",
+  madeByAnAssignment: "function () { madeHere = 1; return [delete madeHere, typeof madeHere]; }",
+  declaredByEval: "function () { eval(\"var declared = 1\"); return [delete declared, typeof declared]; }",
+  declaredByEvalOverAParameter: "function (parameter) { eval(\"var parameter = 'declared again'\"); return [delete parameter, parameter]; }",
+  catchParameter: "function () { try { throw 1; } catch (caught) { return [delete caught, typeof caught]; } }",
+  aBuiltIn: "function () { return [delete undefined, delete NaN, delete Infinity]; }",
+  inParentheses: "function () { var local = 1; return [delete (local), typeof local]; }",
+};
+////: texts-7
+var texts = {
+  literal: "function () { return 010; }",
+  sum: "function (n) { return n + 010 + 0777; }",
+  notOctalAfterAll: "function () { return [08, 09, 019, 08.5]; }",
+  asAnIndex: "function () { return [0, 1, 2, 3, 4, 5, 6, 7, \"the ninth element\"][010]; }",
+  asAKey: "function () { return Object.keys({ 010: \"a\", 0x10: \"b\", 0o11: \"c\" }); }",
+  member: "function () { return 010.toString(); }",
+  bits: "function (n) { return [n | 017, n << 01, 037777777777 | 0]; }",
+  negative: "function () { return [-010, -00, 1 / -00]; }",
+  escape: "function () { return [\"\\101\", \"\\377\".charCodeAt(0), \"\\400\".length, \"\\101\\102\"]; }",
+  escapeInAKey: "function () { return { \"\\101\": 1 }.A; }",
+  eightAndNine: "function () { return [\"\\8\", \"\\9\"]; }",
+  compared: "function (n) { return [n === 010, n < 011, \"8\" == 010, parseInt(\"010\"), Number(\"010\")]; }",
+};
+////: texts-8
+var texts = {
+  lastWins: "function (a, a) { return a; }",
+  plusOne: "function (a, a) { return a + 1; }",
+  size: "function (list, list) { return list.length; }",
+  operands: "function (a, a) { return [arguments[0], arguments[1], arguments.length]; }",
+  storeToTheFirstOperand: "function (a, a) { arguments[0] = \"stored\"; return a; }",
+  storeToTheSecondOperand: "function (a, a) { arguments[1] = \"stored\"; return a; }",
+  storeToTheName: "function (a, a) { a = \"assigned\"; return [arguments[0], arguments[1]]; }",
+  three: "function (a, b, a) { return [a, b]; }",
+  declaredLength: "function (a, a, a) { return arguments.callee.length; }",
+  withAVar: "function (a, a) { var a; return a; }",
+  withAnInnerFunction: "function (a, a) { function a() {} return typeof a; }",
+};
+////: texts-9
+var texts = {
+  aVarNamedArguments: "function () { var arguments = [1, 2, 3]; return [arguments.length, Array.isArray(arguments)]; }",
+  aVarWithoutAValue: "function () { var arguments; return [arguments.length, Array.isArray(arguments)]; }",
+  aParameterNamedArguments: "function (arguments) { return [typeof arguments, arguments.length]; }",
+  aStoreToArguments: "function (a) { arguments = \"a text\"; return [arguments.length, a]; }",
+  aStoreThenAnElement: "function (a) { arguments = [10]; arguments[0] = \"stored\"; return a; }",
+  incremented: "function () { arguments++; return arguments; }",
+  aFunctionNamedArguments: "function () { function arguments() {} return typeof arguments; }",
+  aCatchParameter: "function () { try { throw \"thrown\"; } catch (arguments) { return arguments; } }",
+  aVarNamedEval: "function () { var eval = function (text) { return \"not evaluated: \" + text; }; return eval(\"1 + 1\"); }",
+  aParameterNamedEval: "function (eval) { return typeof eval; }",
+};
+////: times
+function times(n) {
+  arguments[0] = {
+    valueOf: function () {
+      return 7;
+    },
+  };
+  return n * 2;
+}
+////: toAClassNameInside
+function toAClassNameInside() {
+  class Named {
+    static rename() {
+      Named = 1;
+    }
+  }
+  Named.rename();
+  return typeof Named;
+}
+////: twice-2
+function twice(a, text) {
+  var before = a;
+  eval(text);
+  var between = a;
+  eval(text + " + '!'");
+  return [before, between, a];
+}
+////: uses
+var uses = {
+  removed: function (a) {
+    delete arguments[0];
+    arguments[0] = "stored again";
+    return [a, arguments[0]];
+  },
+  removedThenAssigned: function (a) {
+    delete arguments[0];
+    a = "assigned";
+    return [a, arguments[0], 0 in arguments];
+  },
+  madeReadOnly: function (a) {
+    Object.defineProperty(arguments, "0", { writable: false });
+    a = "assigned";
+    return [a, arguments[0]];
+  },
+  redefined: function (a) {
+    Object.defineProperty(arguments, "0", { value: "defined" });
+    return [a, arguments[0]];
+  },
+  redefinedThenAssigned: function (a) {
+    Object.defineProperty(arguments, "0", { value: "defined" });
+    a = "assigned";
+    return [a, arguments[0]];
+  },
+  madeAnAccessor: function (a) {
+    Object.defineProperty(arguments, "0", {
+      get: function () {
+        return "from a getter";
+      },
+    });
+    a = "assigned";
+    return [a, arguments[0]];
+  },
+  frozen: function (a) {
+    Object.freeze(arguments);
+    a = "assigned";
+    return [a, arguments[0]];
+  },
+  frozenThenStored: function (a) {
+    Object.freeze(arguments);
+    arguments[0] = "stored";
+    return [a, arguments[0]];
+  },
+  sealed: function (a) {
+    Object.seal(arguments);
+    arguments[0] = "stored";
+    return [a, arguments[0]];
+  },
+  changedElsewhere: function (a) {
+    change(arguments);
+    return a;
+  },
+  changedByACallback: function (a) {
+    [0].forEach(function () {
+      this[0] = "changed by a callback";
+    }, arguments);
+    return a;
+  },
+  assigned: function (a) {
+    Object.assign(arguments, ["assigned by Object.assign"]);
+    return a;
+  },
+  reflected: function (a) {
+    Reflect.set(arguments, 0, "reflected");
+    return a;
+  },
+  sorted: function (a, b) {
+    Array.prototype.sort.call(arguments);
+    return [a, b];
+  },
+  reversed: function (a, b) {
+    Array.prototype.reverse.call(arguments);
+    return [a, b];
+  },
+  filled: function (a, b) {
+    Array.prototype.fill.call(arguments, "filled");
+    return [a, b];
+  },
+  shifted: function (a, b) {
+    var taken = Array.prototype.shift.call(arguments);
+    return [taken, a, b, arguments.length];
+  },
+  cut: function (a) {
+    arguments.length = 0;
+    arguments[0] = "stored";
+    return [a, arguments.length];
+  },
+  reparented: function (a) {
+    Object.setPrototypeOf(arguments, { 5: "inherited" });
+    arguments[0] = "stored";
+    return [a, arguments[5]];
+  },
+  describedAfterAssignment: function (a) {
+    a = "assigned";
+    return Object.getOwnPropertyDescriptor(arguments, "0").value;
+  },
+};
+////: uses-2
+var uses = {
+  kind: function () {
+    return typeof this;
+  },
+  isSame: function (value) {
+    return this === value;
+  },
+  isLooselySame: function (value) {
+    return this == value;
+  },
+  store: function () {
+    this.extra = 1;
+    return this.extra;
+  },
+  plusOne: function () {
+    return this + 1;
+  },
+  tag: function () {
+    return Object.prototype.toString.call(this);
+  },
+  truth: function () {
+    return this ? "truthy" : "falsy";
+  },
+  negated: function () {
+    return !this;
+  },
+  size: function () {
+    return this.length;
+  },
+  isObject: function () {
+    return this instanceof Object;
+  },
+  itself: function () {
+    return this;
+  },
+  twice: function () {
+    return uses.itself.call(this) === uses.itself.call(this);
+  },
+};
+////: walked
+function walked(list) {
+  arguments[0] = new Set([7, 8]);
+  var seen = [];
+  for (var item of list) seen.push(item);
+  return seen;
+}
+////: ways
+var ways = {
+  "direct eval": function (text) {
+    return eval("(" + text + ")");
+  },
+  "indirect eval": function (text) {
+    return (0, eval)("(" + text + ")");
+  },
+  "new Function": function (text) {
+    return new Function("return (" + text + ")")();
+  },
+};
+////: ways-2
+var ways = {
+  "as a method": name => holder[name](),
+  "in parentheses": name => (holder[name])(),
+  "optional call": name => holder[name]?.(),
+  "tagged template": name => holder[name]``,
+  "from a variable": name => {
+    var callee = holder[name];
+    return callee();
+  },
+  "after a comma": name => (0, holder[name])(),
+  "out of a conditional": name => (name ? holder[name] : null)(),
+  "out of a logical or": name => (holder[name] || null)(),
+  "out of an assignment": name => (holder.copy = holder[name])(),
+  "call()": name => holder[name].call(),
+  "call(undefined)": name => holder[name].call(undefined),
+  "call(null)": name => holder[name].call(null),
+  "apply()": name => holder[name].apply(),
+  "Reflect.apply": name => Reflect.apply(holder[name], undefined, []),
+  "bind()": name => holder[name].bind()(),
+  "a callback of map": name => [0].map(holder[name])[0],
+  "a caller made of text": name => new Function("callee", "return callee()")(holder[name]),
+  "destructured": name => {
+    var { [name]: callee } = holder;
+    return callee();
+  },
+};
+////: withAnArrow
+function withAnArrow(a) {
+  return (() => {
+    arguments[0] = "stored";
+    return a;
+  })();
+}
+////: withAnInnerFunction
+function withAnInnerFunction(a) {
+  return (function () {
+    arguments[0] = "stored";
+    return a;
+  })("inner");
+}
+////: withRest
+function withRest(a, ...rest) {
+  arguments[0] = "stored";
+  arguments[1] = "stored too";
+  rest[0] = "assigned";
+  return [a, arguments[0], rest, arguments[1]];
+}
+//// sloppy-and-strict/a-store-to-arguments-changes-a-list-parameter-sloppy.cjs
+////= console
+
+////= lines-277	size	arguments[0	"a text"
+////= pushed
+function first(list) {
+  arguments[0] = { 0: "first of an object" };
+  return list[0];
+}
+////= walked
+////= mapped
+function sometimes(list, change) {
+  if (change) arguments[0] = "abc";
+  return list.length + list[0];
+}
+function afterACheck(list) {
+  if (!Array.isArray(list)) return "no list";
+  arguments[0] = "abc";
+  return list.concat([1]);
+}
+////= midLoop
+////= midForOf
+function unpacked(list) {
+  arguments[0] = "xy";
+  var [a, b] = list;
+  return [a, b];
+}
+function spread(list) {
+  arguments[0] = "xy";
+  return [...list];
+}
+function stored(list) {
+  arguments[0] = Object.freeze([0]);
+  list[0] = 5;
+  return list[0];
+}
+
+var sum = 0;
+for (var i = 0; i < 2000; i++) sum += sometimes([i, 2], false);
+console.log("sum", sum);
+var uses = { size, pushed, first, walked, mapped, afterACheck, midLoop, midForOf, unpacked, spread, stored };
+for (var name in uses) {
+  var given = [1, 2, 3];
+  attempt(name, uses[name].bind(null, given));
+  attempt(name + " leaves", () => given);
+}
+attempt("sometimes, changed", () => sometimes([1, 2], true));
+attempt("sometimes, unchanged", () => sometimes([1, 2], false));
+//// sloppy-and-strict/a-store-to-arguments-changes-a-list-parameter-strict.mjs
+////= console
+
+////= lines-277	size	arguments[0	"a text"
+////= pushed
+function first(list) {
+  arguments[0] = { 0: "first of an object" };
+  return list[0];
+}
+////= walked
+////= mapped
+function sometimes(list, change) {
+  if (change) arguments[0] = "abc";
+  return list.length + list[0];
+}
+function afterACheck(list) {
+  if (!Array.isArray(list)) return "no list";
+  arguments[0] = "abc";
+  return list.concat([1]);
+}
+////= midLoop
+////= midForOf
+function unpacked(list) {
+  arguments[0] = "xy";
+  var [a, b] = list;
+  return [a, b];
+}
+function spread(list) {
+  arguments[0] = "xy";
+  return [...list];
+}
+function stored(list) {
+  arguments[0] = Object.freeze([0]);
+  list[0] = 5;
+  return list[0];
+}
+
+var sum = 0;
+for (var i = 0; i < 2000; i++) sum += sometimes([i, 2], false);
+console.log("sum", sum);
+var uses = { size, pushed, first, walked, mapped, afterACheck, midLoop, midForOf, unpacked, spread, stored };
+for (var name in uses) {
+  var given = [1, 2, 3];
+  attempt(name, uses[name].bind(null, given));
+  attempt(name + " leaves", () => given);
+}
+attempt("sometimes, changed", () => sometimes([1, 2], true));
+attempt("sometimes, unchanged", () => sometimes([1, 2], false));
+
+export {};
+//// sloppy-and-strict/a-store-to-arguments-changes-a-number-parameter-sloppy.cjs
+////= console
+
+////= lines-226	plusOne	n	"5"
+////= times
+////= counted
+function bits(n) {
+  arguments[0] = 2.5;
+  return [n | 0, n];
+}
+function incremented(n) {
+  arguments[0] = 2147483647;
+  n++;
+  return n;
+}
+function compared(n) {
+  arguments[0] = undefined;
+  return [n < 1, n === undefined, typeof n];
+}
+function sometimes(n, change) {
+  if (change) arguments[0] = "text";
+  return n + 1;
+}
+function second(a, b) {
+  arguments[1] = 10;
+  return a + b;
+}
+////= lines-232	byAComputedIndex	n	index	arguments[index	"stored"
+function pastTheOperands(n, m) {
+  arguments[1] = "stored";
+  return [n, m, arguments.length];
+}
+////= grows
+////= lines-226	big	n	1n
+function minusZero(n) {
+  arguments[0] = -0;
+  return [n, 1 / n];
+}
+function index(n) {
+  arguments[0] = "length";
+  return [10, 20, 30][n];
+}
+
+var sum = 0;
+for (var i = 0; i < 2000; i++) sum += sometimes(i, false) + byAComputedIndex(i, 5);
+console.log("sum", sum);
+attempt("plusOne", () => plusOne(1));
+attempt("times", () => times(1));
+attempt("counted", () => counted(1));
+attempt("bits", () => bits(1));
+attempt("incremented", () => incremented(1));
+attempt("compared", () => compared(0));
+attempt("sometimes, changed", () => sometimes(1, true));
+attempt("sometimes, unchanged", () => sometimes(1, false));
+attempt("second", () => second(1, 2));
+attempt("by a computed index 0", () => byAComputedIndex(1, 0));
+attempt("by a computed index '0'", () => byAComputedIndex(1, "0"));
+attempt("by a computed index 1", () => byAComputedIndex(1, 1));
+attempt("by a computed index -0", () => byAComputedIndex(1, -0));
+attempt("past the operands", () => pastTheOperands(1));
+attempt("no operands at all", () => plusOne());
+attempt("grows", () => grows(1));
+attempt("big", () => big(1));
+attempt("minus zero", () => minusZero(1));
+attempt("index", () => index(1));
+attempt("through call", () => plusOne.call(null, 1));
+attempt("through apply", () => plusOne.apply(null, [1]));
+attempt("through a spread", () => plusOne(...[1]));
+attempt("as a callback", () => [1, 2].map(plusOne));
+//// sloppy-and-strict/a-store-to-arguments-changes-a-number-parameter-strict.mjs
+////= console
+
+////= lines-226	plusOne	n	"5"
+////= times
+////= counted
+function bits(n) {
+  arguments[0] = 2.5;
+  return [n | 0, n];
+}
+function incremented(n) {
+  arguments[0] = 2147483647;
+  n++;
+  return n;
+}
+function compared(n) {
+  arguments[0] = undefined;
+  return [n < 1, n === undefined, typeof n];
+}
+function sometimes(n, change) {
+  if (change) arguments[0] = "text";
+  return n + 1;
+}
+function second(a, b) {
+  arguments[1] = 10;
+  return a + b;
+}
+////= lines-232	byAComputedIndex	n	index	arguments[index	"stored"
+function pastTheOperands(n, m) {
+  arguments[1] = "stored";
+  return [n, m, arguments.length];
+}
+////= grows
+////= lines-226	big	n	1n
+function minusZero(n) {
+  arguments[0] = -0;
+  return [n, 1 / n];
+}
+function index(n) {
+  arguments[0] = "length";
+  return [10, 20, 30][n];
+}
+
+var sum = 0;
+for (var i = 0; i < 2000; i++) sum += sometimes(i, false) + byAComputedIndex(i, 5);
+console.log("sum", sum);
+attempt("plusOne", () => plusOne(1));
+attempt("times", () => times(1));
+attempt("counted", () => counted(1));
+attempt("bits", () => bits(1));
+attempt("incremented", () => incremented(1));
+attempt("compared", () => compared(0));
+attempt("sometimes, changed", () => sometimes(1, true));
+attempt("sometimes, unchanged", () => sometimes(1, false));
+attempt("second", () => second(1, 2));
+attempt("by a computed index 0", () => byAComputedIndex(1, 0));
+attempt("by a computed index '0'", () => byAComputedIndex(1, "0"));
+attempt("by a computed index 1", () => byAComputedIndex(1, 1));
+attempt("by a computed index -0", () => byAComputedIndex(1, -0));
+attempt("past the operands", () => pastTheOperands(1));
+attempt("no operands at all", () => plusOne());
+attempt("grows", () => grows(1));
+attempt("big", () => big(1));
+attempt("minus zero", () => minusZero(1));
+attempt("index", () => index(1));
+attempt("through call", () => plusOne.call(null, 1));
+attempt("through apply", () => plusOne.apply(null, [1]));
+attempt("through a spread", () => plusOne(...[1]));
+attempt("as a callback", () => [1, 2].map(plusOne));
+
+export {};
+//// sloppy-and-strict/a-store-to-arguments-changes-a-text-parameter-sloppy.cjs
+////= console
+
+function upper(text) {
+  arguments[0] = 5;
+  return text.toUpperCase();
+}
+function code(text) {
+  arguments[0] = ["x"];
+  return text.charCodeAt(0);
+}
+////= lines-226	glued	text	1
+function size(text) {
+  arguments[0] = [1, 2, 3, 4, 5];
+  return text.length;
+}
+function sliced(text) {
+  arguments[0] = [1, 2, 3];
+  return text.slice(1);
+}
+function found(text) {
+  arguments[0] = ["b", "a"];
+  return text.indexOf("a");
+}
+function afterTypeof(text) {
+  if (typeof text !== "string") return "no text";
+  arguments[0] = { length: "long" };
+  return text.length;
+}
+function inATemplate(text) {
+  arguments[0] = Symbol("no text");
+  return `<${text}>`;
+}
+function compared(text) {
+  arguments[0] = 10;
+  return [text < "9", text === "abc", text == "10"];
+}
+function asAKey(text) {
+  arguments[0] = 1;
+  return { abc: "by the text", 1: "by the number" }[text];
+}
+function boxed(text) {
+  arguments[0] = new String("boxed");
+  return [typeof text, text.length, text === "boxed"];
+}
+function sometimes(text, change) {
+  if (change) arguments[0] = null;
+  return text.length;
+}
+
+var sum = 0;
+for (var i = 0; i < 2000; i++) sum += sometimes("abc", false);
+console.log("sum", sum);
+var uses = { upper, code, glued, size, sliced, found, afterTypeof, inATemplate, compared, asAKey, boxed };
+for (var name in uses) attempt(name, uses[name].bind(null, "abc"));
+attempt("sometimes, changed", () => sometimes("abc", true));
+attempt("sometimes, unchanged", () => sometimes("abc", false));
+//// sloppy-and-strict/a-store-to-arguments-changes-a-text-parameter-strict.mjs
+////= console
+
+function upper(text) {
+  arguments[0] = 5;
+  return text.toUpperCase();
+}
+function code(text) {
+  arguments[0] = ["x"];
+  return text.charCodeAt(0);
+}
+////= lines-226	glued	text	1
+function size(text) {
+  arguments[0] = [1, 2, 3, 4, 5];
+  return text.length;
+}
+function sliced(text) {
+  arguments[0] = [1, 2, 3];
+  return text.slice(1);
+}
+function found(text) {
+  arguments[0] = ["b", "a"];
+  return text.indexOf("a");
+}
+function afterTypeof(text) {
+  if (typeof text !== "string") return "no text";
+  arguments[0] = { length: "long" };
+  return text.length;
+}
+function inATemplate(text) {
+  arguments[0] = Symbol("no text");
+  return `<${text}>`;
+}
+function compared(text) {
+  arguments[0] = 10;
+  return [text < "9", text === "abc", text == "10"];
+}
+function asAKey(text) {
+  arguments[0] = 1;
+  return { abc: "by the text", 1: "by the number" }[text];
+}
+function boxed(text) {
+  arguments[0] = new String("boxed");
+  return [typeof text, text.length, text === "boxed"];
+}
+function sometimes(text, change) {
+  if (change) arguments[0] = null;
+  return text.length;
+}
+
+var sum = 0;
+for (var i = 0; i < 2000; i++) sum += sometimes("abc", false);
+console.log("sum", sum);
+var uses = { upper, code, glued, size, sliced, found, afterTypeof, inATemplate, compared, asAKey, boxed };
+for (var name in uses) attempt(name, uses[name].bind(null, "abc"));
+attempt("sometimes, changed", () => sometimes("abc", true));
+attempt("sometimes, unchanged", () => sometimes("abc", false));
+
+export {};
+//// sloppy-and-strict/a-store-under-with-asks-the-object-twice-whether-it-has-the-name.cjs
+var log = [];
+var proxy = new Proxy(
+  { x: 5 },
+  {
+    has: function (target, key) {
+      log.push("has " + String(key));
+      return Reflect.has(target, key);
+    },
+    set: function (target, key, value, receiver) {
+      log.push("set " + String(key));
+      return Reflect.set(target, key, value, receiver);
+    },
+  },
+);
+function store(object) {
+  with (object) {
+    x = "stored";
+  }
+}
+store(proxy);
+console.log(log.join(", "));
+//// sloppy-and-strict/accessors-see-the-receiver-boxed-or-not-sloppy.cjs
+////= console
+
+var log = [];
+function describe(self) {
+  return self === undefined ? "undefined" : self === null ? "null" : self === globalThis ? "the global object" : typeof self;
+}
+////= parent
+var receivers = { number: 5, text: "abc", yes: true, big: 5n, symbol: Symbol.iterator, none: null, nothing: undefined, object: {} };
+////= for-101
+////= Base-3
+attempt("a getter of a class on a number", () => Reflect.get(Base.prototype, "kind", 5));
+attempt("a static getter of a class on a text", () => Reflect.get(Base, "kind", "abc"));
+var made = new Function("return { get kind() { return typeof this; } }")();
+attempt("a getter made of text on a number", () => Reflect.get(made, "kind", 5));
+var madeStrict = new Function("'use strict'; return { get kind() { return typeof this; } }")();
+attempt("a strict getter made of text on a number", () => Reflect.get(madeStrict, "kind", 5));
+var sum = 0;
+var heir = Object.create(parent);
+for (var i = 0; i < 2000; i++) sum += heir.kind.length + heir.method().length;
+console.log("sum", sum);
+attempt("after 2000 objects, a number", () => [Reflect.get(heir, "kind", 5), heir.method.call(5)]);
+//// sloppy-and-strict/accessors-see-the-receiver-boxed-or-not-strict.mjs
+////= console
+
+var log = [];
+function describe(self) {
+  return self === undefined ? "undefined" : self === null ? "null" : self === globalThis ? "the global object" : typeof self;
+}
+////= parent
+var receivers = { number: 5, text: "abc", yes: true, big: 5n, symbol: Symbol.iterator, none: null, nothing: undefined, object: {} };
+////= for-101
+////= Base-3
+attempt("a getter of a class on a number", () => Reflect.get(Base.prototype, "kind", 5));
+attempt("a static getter of a class on a text", () => Reflect.get(Base, "kind", "abc"));
+var made = new Function("return { get kind() { return typeof this; } }")();
+attempt("a getter made of text on a number", () => Reflect.get(made, "kind", 5));
+var madeStrict = new Function("'use strict'; return { get kind() { return typeof this; } }")();
+attempt("a strict getter made of text on a number", () => Reflect.get(madeStrict, "kind", 5));
+var sum = 0;
+var heir = Object.create(parent);
+for (var i = 0; i < 2000; i++) sum += heir.kind.length + heir.method().length;
+console.log("sum", sum);
+attempt("after 2000 objects, a number", () => [Reflect.get(heir, "kind", 5), heir.method.call(5)]);
+
+export {};
+//// sloppy-and-strict/an-assignment-to-an-undeclared-name-sloppy.cjs
+////= console
+
+function makeAList() {
+  leakedList = [1, 2, 3];
+  return leakedList.length;
+}
+function makeANumber() {
+  leakedNumber = 1;
+  return leakedNumber + 1;
+}
+////= lines-223	bump	leakedNumber
+function addToAbsent() {
+  neverMade += 1;
+  return neverMade;
+}
+function fillIn() {
+  leakedLater ??= "filled in";
+  return leakedLater;
+}
+function chained() {
+  var local = (leakedByAChain = 5);
+  return [local, typeof leakedByAChain];
+}
+function fromAPattern() {
+  [leakedA, leakedB] = [1, 2];
+  return leakedA + leakedB;
+}
+function loopVariable() {
+  for (leakedIndex = 0; leakedIndex < 3; leakedIndex++);
+  return leakedIndex;
+}
+function forIn() {
+  for (leakedKey in { a: 1 });
+  return leakedKey;
+}
+////= lines-184	size	leakedList.length
+////= lines-263	next	leakedNumber	1
+function kinds() {
+  return [typeof leakedList, typeof leakedNumber, typeof leakedLater, typeof leakedByAChain, typeof leakedA, typeof leakedIndex, typeof leakedKey];
+}
+
+attempt("kinds at first", kinds);
+var uses = { makeAList, makeANumber, bump, addToAbsent, fillIn, chained, fromAPattern, loopVariable, forIn, size, next };
+for (var name in uses) attempt(name, uses[name]);
+attempt("kinds afterwards", kinds);
+attempt("on the global object", () => Object.keys(globalThis).filter(key => key.startsWith("leaked")).sort());
+attempt("how it is defined", () => Object.getOwnPropertyDescriptor(globalThis, "leakedNumber"));
+globalThis.leakedList = [1];
+globalThis.leakedNumber = 1;
+var sum = 0;
+for (var i = 0; i < 2000; i++) sum += size() + next();
+console.log("sum", sum);
+globalThis.leakedList = "a text";
+globalThis.leakedNumber = "a text";
+attempt("after texts were stored", () => [size(), next(), bump()]);
+Object.defineProperty(globalThis, "leakedNumber", { get: () => 41, configurable: true });
+attempt("after a getter was defined", () => [next(), makeANumber()]);
+Object.defineProperty(globalThis, "leakedList", { value: Object.freeze([]), writable: false, configurable: true });
+attempt("after the member was fixed", () => makeAList());
+for (var key of Object.keys(globalThis).concat(["leakedNumber", "leakedList"])) if (key.startsWith("leaked")) delete globalThis[key];
+attempt("after they were removed", () => [size(), next()]);
+attempt("kinds at last", kinds);
+//// sloppy-and-strict/an-assignment-to-an-undeclared-name-strict.mjs
+////= console
+
+function makeAList() {
+  leakedList = [1, 2, 3];
+  return leakedList.length;
+}
+function makeANumber() {
+  leakedNumber = 1;
+  return leakedNumber + 1;
+}
+////= lines-223	bump	leakedNumber
+function addToAbsent() {
+  neverMade += 1;
+  return neverMade;
+}
+function fillIn() {
+  leakedLater ??= "filled in";
+  return leakedLater;
+}
+function chained() {
+  var local = (leakedByAChain = 5);
+  return [local, typeof leakedByAChain];
+}
+function fromAPattern() {
+  [leakedA, leakedB] = [1, 2];
+  return leakedA + leakedB;
+}
+function loopVariable() {
+  for (leakedIndex = 0; leakedIndex < 3; leakedIndex++);
+  return leakedIndex;
+}
+function forIn() {
+  for (leakedKey in { a: 1 });
+  return leakedKey;
+}
+////= lines-184	size	leakedList.length
+////= lines-263	next	leakedNumber	1
+function kinds() {
+  return [typeof leakedList, typeof leakedNumber, typeof leakedLater, typeof leakedByAChain, typeof leakedA, typeof leakedIndex, typeof leakedKey];
+}
+
+attempt("kinds at first", kinds);
+var uses = { makeAList, makeANumber, bump, addToAbsent, fillIn, chained, fromAPattern, loopVariable, forIn, size, next };
+for (var name in uses) attempt(name, uses[name]);
+attempt("kinds afterwards", kinds);
+attempt("on the global object", () => Object.keys(globalThis).filter(key => key.startsWith("leaked")).sort());
+attempt("how it is defined", () => Object.getOwnPropertyDescriptor(globalThis, "leakedNumber"));
+globalThis.leakedList = [1];
+globalThis.leakedNumber = 1;
+var sum = 0;
+for (var i = 0; i < 2000; i++) sum += size() + next();
+console.log("sum", sum);
+globalThis.leakedList = "a text";
+globalThis.leakedNumber = "a text";
+attempt("after texts were stored", () => [size(), next(), bump()]);
+Object.defineProperty(globalThis, "leakedNumber", { get: () => 41, configurable: true });
+attempt("after a getter was defined", () => [next(), makeANumber()]);
+Object.defineProperty(globalThis, "leakedList", { value: Object.freeze([]), writable: false, configurable: true });
+attempt("after the member was fixed", () => makeAList());
+for (var key of Object.keys(globalThis).concat(["leakedNumber", "leakedList"])) if (key.startsWith("leaked")) delete globalThis[key];
+attempt("after they were removed", () => [size(), next()]);
+attempt("kinds at last", kinds);
+
+export {};
+//// sloppy-and-strict/arguments-and-eval-as-ordinary-names-sloppy.cjs
+////= console
+
+var written = {
+  aVarNamedArguments: function () {
+    var arguments = [1, 2, 3];
+    return [arguments.length, Array.isArray(arguments)];
+  },
+  aVarWithoutAValue: function () {
+    var arguments;
+    return [arguments.length, Array.isArray(arguments)];
+  },
+  aParameterNamedArguments: function (arguments) {
+    return [typeof arguments, arguments.length];
+  },
+  aFunctionNamedArguments: function () {
+    function arguments() {}
+    return typeof arguments;
+  },
+  aCatchParameter: function () {
+    try {
+      throw "thrown";
+    } catch (arguments) {
+      return arguments;
+    }
+  },
+  aVarNamedEval: function () {
+    var eval = function (text) {
+      return "not evaluated: " + text;
+    };
+    return eval("1 + 1");
+  },
+  aParameterNamedEval: function (eval) {
+    return typeof eval;
+  },
+};
+
+////= texts-9
+
+////= ways
+
+function drive(label, callee) {
+  attempt(label + "(1, 2)", callee.bind(null, 1, 2));
+  attempt(label + "('abc')", callee.bind(null, "abc"));
+  attempt(label + "()", callee);
+}
+
+////= Object
+//// sloppy-and-strict/arguments-and-eval-as-ordinary-names-strict.mjs
+////= console
+
+////= texts-9
+
+////= ways
+
+function drive(label, callee) {
+  attempt(label + "(1, 2)", callee.bind(null, 1, 2));
+  attempt(label + "('abc')", callee.bind(null, "abc"));
+  attempt(label + "()", callee);
+}
+
+////= Object-keys
+
+export {};
+//// sloppy-and-strict/arguments-and-parameters-by-kind-of-function-sloppy.cjs
+////= console
+
+function declared(a) {
+  arguments[0] = "stored";
+  return a;
+}
+var expression = function (a) {
+  arguments[0] = "stored";
+  return a;
+};
+////= holder
+////= Klass
+function Constructor(a) {
+  arguments[0] = "stored";
+  this.seen = a;
+}
+////= generator
+////= asynchronous
+////= asynchronousGenerator
+////= withAnArrow
+////= withAnInnerFunction
+var madeOfText = new Function("a", "arguments[0] = 'stored'; return a;");
+var madeOfStrictText = new Function("a", "'use strict'; arguments[0] = 'stored'; return a;");
+var bound = declared.bind(null);
+var boundWithAnOperand = declared.bind(null, "bound operand");
+
+attempt("declared", () => declared(1));
+attempt("expression", () => expression(1));
+attempt("method", () => holder.method(1));
+attempt("property", () => holder.property(1));
+attempt("setter", () => ((holder.setter = 1), holder.seen));
+attempt("generator method", () => holder.generator(1).next().value);
+attempt("computed method", () => holder.computed(1));
+attempt("class constructor", () => new Klass(1).seen);
+attempt("class method", () => new Klass(1).method(1));
+attempt("static method", () => Klass.method(1));
+attempt("a function in a field", () => new Klass(1).field(1));
+attempt("constructor function", () => new Constructor(1).seen);
+attempt("generator", () => Array.from(generator(1)));
+attempt("with an arrow", () => withAnArrow(1));
+attempt("with an inner function", () => withAnInnerFunction(1));
+attempt("made of text", () => madeOfText(1));
+attempt("made of strict text", () => madeOfStrictText(1));
+attempt("bound", () => bound(1));
+attempt("bound with an operand", () => boundWithAnOperand(1));
+var sum = 0;
+for (var i = 0; i < 2000; i++) sum += String(declared(i)).length + String(holder.method(i)).length + String(Klass.method(i)).length;
+console.log("sum", sum);
+////= lines-2
+//// sloppy-and-strict/arguments-and-parameters-by-kind-of-function-strict.mjs
+////= console
+
+function declared(a) {
+  arguments[0] = "stored";
+  return a;
+}
+var expression = function (a) {
+  arguments[0] = "stored";
+  return a;
+};
+////= holder
+////= Klass
+function Constructor(a) {
+  arguments[0] = "stored";
+  this.seen = a;
+}
+////= generator
+////= asynchronous
+////= asynchronousGenerator
+////= withAnArrow
+////= withAnInnerFunction
+var madeOfText = new Function("a", "arguments[0] = 'stored'; return a;");
+var madeOfStrictText = new Function("a", "'use strict'; arguments[0] = 'stored'; return a;");
+var bound = declared.bind(null);
+var boundWithAnOperand = declared.bind(null, "bound operand");
+
+attempt("declared", () => declared(1));
+attempt("expression", () => expression(1));
+attempt("method", () => holder.method(1));
+attempt("property", () => holder.property(1));
+attempt("setter", () => ((holder.setter = 1), holder.seen));
+attempt("generator method", () => holder.generator(1).next().value);
+attempt("computed method", () => holder.computed(1));
+attempt("class constructor", () => new Klass(1).seen);
+attempt("class method", () => new Klass(1).method(1));
+attempt("static method", () => Klass.method(1));
+attempt("a function in a field", () => new Klass(1).field(1));
+attempt("constructor function", () => new Constructor(1).seen);
+attempt("generator", () => Array.from(generator(1)));
+attempt("with an arrow", () => withAnArrow(1));
+attempt("with an inner function", () => withAnInnerFunction(1));
+attempt("made of text", () => madeOfText(1));
+attempt("made of strict text", () => madeOfStrictText(1));
+attempt("bound", () => bound(1));
+attempt("bound with an operand", () => boundWithAnOperand(1));
+var sum = 0;
+for (var i = 0; i < 2000; i++) sum += String(declared(i)).length + String(holder.method(i)).length + String(Klass.method(i)).length;
+console.log("sum", sum);
+////= lines-2
+
+export {};
+//// sloppy-and-strict/arguments-are-not-tied-to-parameters-with-defaults-rest-or-patterns-sloppy.cjs
+////= console
+
+////= lines-345	simple(a, b
+////= lines-345	withADefault(a, b = 2
+////= lines-345	withADefaultOnTheFirst(a = 1, b
+////= withRest
+////= lines-345	withAPattern(a, { b }
+////= lines-345	withAListPattern(a, [b]
+function defaultReadsArguments(a, b = arguments[0]) {
+  a = "assigned";
+  return [a, b, arguments[0]];
+}
+function defaultStoresToArguments(a, b = (arguments[0] = "stored by a default")) {
+  return [a, b, arguments[0]];
+}
+////= arrowInside
+function number(n, step = 1) {
+  arguments[0] = "5";
+  return n + step;
+}
+function list(items, ...more) {
+  arguments[0] = "text";
+  return items.length + more.length;
+}
+
+var sum = 0;
+for (var i = 0; i < 2000; i++) sum += number(i) + list([i], 1);
+console.log("sum", sum);
+attempt("simple", () => simple(1, 2));
+attempt("with a default", () => withADefault(1, 2));
+attempt("with a default that is used", () => withADefault(1));
+attempt("with a default on the first", () => withADefaultOnTheFirst(1, 2));
+attempt("with a default on the first that is used", () => withADefaultOnTheFirst(undefined, 2));
+attempt("with rest", () => withRest(1, 2, 3));
+attempt("with a pattern", () => withAPattern(1, { b: 2 }));
+attempt("with a list pattern", () => withAListPattern(1, [2]));
+attempt("a default reads arguments", () => defaultReadsArguments(1));
+attempt("a default stores to arguments", () => defaultStoresToArguments(1));
+attempt("an arrow inside", () => arrowInside(1));
+attempt("number", () => number(1));
+attempt("list", () => list([1, 2], 3));
+//// sloppy-and-strict/arguments-are-not-tied-to-parameters-with-defaults-rest-or-patterns-strict.mjs
+////= console
+
+////= lines-345	simple(a, b
+////= lines-345	withADefault(a, b = 2
+////= lines-345	withADefaultOnTheFirst(a = 1, b
+////= withRest
+////= lines-345	withAPattern(a, { b }
+////= lines-345	withAListPattern(a, [b]
+function defaultReadsArguments(a, b = arguments[0]) {
+  a = "assigned";
+  return [a, b, arguments[0]];
+}
+function defaultStoresToArguments(a, b = (arguments[0] = "stored by a default")) {
+  return [a, b, arguments[0]];
+}
+////= arrowInside
+function number(n, step = 1) {
+  arguments[0] = "5";
+  return n + step;
+}
+function list(items, ...more) {
+  arguments[0] = "text";
+  return items.length + more.length;
+}
+
+var sum = 0;
+for (var i = 0; i < 2000; i++) sum += number(i) + list([i], 1);
+console.log("sum", sum);
+attempt("simple", () => simple(1, 2));
+attempt("with a default", () => withADefault(1, 2));
+attempt("with a default that is used", () => withADefault(1));
+attempt("with a default on the first", () => withADefaultOnTheFirst(1, 2));
+attempt("with a default on the first that is used", () => withADefaultOnTheFirst(undefined, 2));
+attempt("with rest", () => withRest(1, 2, 3));
+attempt("with a pattern", () => withAPattern(1, { b: 2 }));
+attempt("with a list pattern", () => withAListPattern(1, [2]));
+attempt("a default reads arguments", () => defaultReadsArguments(1));
+attempt("a default stores to arguments", () => defaultStoresToArguments(1));
+attempt("an arrow inside", () => arrowInside(1));
+attempt("number", () => number(1));
+attempt("list", () => list([1, 2], 3));
+
+export {};
+//// sloppy-and-strict/arguments-callee-sloppy.cjs
+////= console
+
+function factorial(n) {
+  return n <= 1 ? 1 : n * arguments.callee(n - 1);
+}
+function itself() {
+  return arguments.callee === itself;
+}
+function kind() {
+  return typeof arguments.callee;
+}
+////= lines-160	stored	arguments.callee	"stored"
+function removed() {
+  return [delete arguments.callee, "callee" in arguments];
+}
+function described() {
+  var property = Object.getOwnPropertyDescriptor(arguments, "callee");
+  return [typeof property.value, typeof property.get, typeof property.set, property.enumerable, property.configurable, property.get === property.set];
+}
+////= lines-65	handedOut	arguments
+function withADefault(a = 1) {
+  return typeof arguments.callee;
+}
+function throughAnArrow() {
+  return (() => arguments.callee === throughAnArrow)();
+}
+function keys() {
+  return Reflect.ownKeys(arguments).map(String);
+}
+////= lines-191	computed	name	typeof	arguments[name
+var anonymous = [
+  function (n) {
+    return n <= 0 ? "done" : arguments.callee(n - 1);
+  },
+][0];
+
+var uses = { itself, kind, stored, removed, described, withADefault, throughAnArrow, keys };
+attempt("factorial", () => factorial(5));
+for (var name in uses) attempt(name, uses[name]);
+attempt("anonymous", () => anonymous(3));
+attempt("computed", () => computed("callee"));
+attempt("computed, another name", () => computed("length"));
+attempt("read from outside", () => handedOut().callee === handedOut);
+attempt("called from outside", () => typeof handedOut().callee());
+attempt("caller of arguments", () => "caller" in handedOut());
+var sum = 0;
+////= for-135
+console.log("sum", sum);
+//// sloppy-and-strict/arguments-callee-strict.mjs
+////= console
+
+function factorial(n) {
+  return n <= 1 ? 1 : n * arguments.callee(n - 1);
+}
+function itself() {
+  return arguments.callee === itself;
+}
+function kind() {
+  return typeof arguments.callee;
+}
+////= lines-160	stored	arguments.callee	"stored"
+function removed() {
+  return [delete arguments.callee, "callee" in arguments];
+}
+function described() {
+  var property = Object.getOwnPropertyDescriptor(arguments, "callee");
+  return [typeof property.value, typeof property.get, typeof property.set, property.enumerable, property.configurable, property.get === property.set];
+}
+////= lines-65	handedOut	arguments
+function withADefault(a = 1) {
+  return typeof arguments.callee;
+}
+function throughAnArrow() {
+  return (() => arguments.callee === throughAnArrow)();
+}
+function keys() {
+  return Reflect.ownKeys(arguments).map(String);
+}
+////= lines-191	computed	name	typeof	arguments[name
+var anonymous = [
+  function (n) {
+    return n <= 0 ? "done" : arguments.callee(n - 1);
+  },
+][0];
+
+var uses = { itself, kind, stored, removed, described, withADefault, throughAnArrow, keys };
+attempt("factorial", () => factorial(5));
+for (var name in uses) attempt(name, uses[name]);
+attempt("anonymous", () => anonymous(3));
+attempt("computed", () => computed("callee"));
+attempt("computed, another name", () => computed("length"));
+attempt("read from outside", () => handedOut().callee === handedOut);
+attempt("called from outside", () => typeof handedOut().callee());
+attempt("caller of arguments", () => "caller" in handedOut());
+var sum = 0;
+////= for-135
+console.log("sum", sum);
+
+export {};
+//// sloppy-and-strict/caller-and-arguments-of-a-function-strict.mjs
+////= console
+
+function whoCalls() {
+  return whoCalls.caller === null ? "null" : typeof whoCalls.caller === "function" ? whoCalls.caller.name : typeof whoCalls.caller;
+}
+function namedCaller() {
+  return whoCalls();
+}
+function operandsFromOutside() {
+  return readOperands();
+}
+function readOperands() {
+  var operands = operandsFromOutside.arguments;
+  return operands === null ? "null" : typeof operands === "object" ? Array.from(operands) : typeof operands;
+}
+function ownOperands(a, b) {
+  var operands = ownOperands.arguments;
+  return operands === null ? "null" : [operands.length, operands === arguments];
+}
+function notRunning() {}
+var arrow = () => 1;
+var method = {
+  method() {},
+}.method;
+class Klass {}
+var bound = notRunning.bind(null);
+async function asynchronous() {}
+function* generator() {}
+
+attempt("caller from the top level", whoCalls);
+attempt("caller from a named function", namedCaller);
+attempt("arguments of a running caller", () => operandsFromOutside(1, 2));
+attempt("arguments of itself", () => ownOperands(1, 2));
+var functions = { notRunning, arrow, method, Klass, bound, asynchronous, generator };
+for (var name in functions) {
+  var callee = functions[name];
+  attempt(name + ".caller", () => callee.caller);
+  attempt(name + ".arguments", () => callee.arguments);
+  attempt(name + " has its own caller", () => [Object.hasOwn(callee, "caller"), Object.hasOwn(callee, "arguments"), "caller" in callee]);
+  attempt(name + ".caller stored to", () => {
+    callee.caller = 1;
+    return "no error";
+  });
+  attempt(name + ".arguments stored to", () => {
+    callee.arguments = 1;
+    return "no error";
+  });
+}
+attempt("on Function.prototype", () => Object.getOwnPropertyNames(Function.prototype).filter(name => name === "caller" || name === "arguments").sort());
+attempt("the getter on a stranger", () => Object.getOwnPropertyDescriptor(Function.prototype, "caller").get.call({}));
+
+export {};
+//// sloppy-and-strict/declarations-that-meet-a-parameter-of-the-same-name-sloppy.cjs
+////= console
+
+////= aVar	(a
+function aVarWithAValue(a) {
+  var a = "the var";
+  return [a, arguments[0]];
+}
+function aFunctionUsedLikeANumber(a) {
+  var before = a + 1;
+  function a() {}
+  return typeof before;
+}
+////= aVarInABlock
+function aVarInALoop(a) {
+  for (var a = a || 0; a < 3; a++);
+  return a;
+}
+function aVarAfterTheUse(a) {
+  var seen = a.length;
+  var a = 5;
+  return [seen, a];
+}
+function aDefaultSeesTheOuterName(a = outer, outer) {
+  return [a, outer];
+}
+////= aVar	WithADefault(a = 1
+function aVarWithADefaultAndAClosure(a, read = () => a) {
+  var a = "the var";
+  return [a, read()];
+}
+////= aCatchParameter
+////= lines-109	namedLikeTheFunction	namedLikeTheFunction	return
+var outer = "the outer variable";
+
+var uses = { aVar, aVarWithAValue, aFunctionUsedLikeANumber, aVarInABlock, aVarInALoop, aDefaultSeesTheOuterName, aVarWithADefault, aVarWithADefaultAndAClosure, aCatchParameter, namedLikeTheFunction };
+for (var name in uses) {
+  attempt(name + "(1)", uses[name].bind(null, 1));
+  attempt(name + "(2)", uses[name].bind(null, 2));
+  attempt(name + "()", uses[name]);
+}
+attempt("aVarAfterTheUse([1, 2])", () => aVarAfterTheUse([1, 2]));
+attempt("aVarAfterTheUse('abc')", () => aVarAfterTheUse("abc"));
+attempt("aVarAfterTheUse()", () => aVarAfterTheUse());
+//// sloppy-and-strict/declarations-that-meet-a-parameter-of-the-same-name-strict.mjs
+////= console
+
+////= aVar	(a
+function aVarWithAValue(a) {
+  var a = "the var";
+  return [a, arguments[0]];
+}
+function aFunctionUsedLikeANumber(a) {
+  var before = a + 1;
+  function a() {}
+  return typeof before;
+}
+////= aVarInABlock
+function aVarInALoop(a) {
+  for (var a = a || 0; a < 3; a++);
+  return a;
+}
+function aVarAfterTheUse(a) {
+  var seen = a.length;
+  var a = 5;
+  return [seen, a];
+}
+function aDefaultSeesTheOuterName(a = outer, outer) {
+  return [a, outer];
+}
+////= aVar	WithADefault(a = 1
+function aVarWithADefaultAndAClosure(a, read = () => a) {
+  var a = "the var";
+  return [a, read()];
+}
+////= aCatchParameter
+////= lines-109	namedLikeTheFunction	namedLikeTheFunction	return
+var outer = "the outer variable";
+
+var uses = { aVar, aVarWithAValue, aFunctionUsedLikeANumber, aVarInABlock, aVarInALoop, aDefaultSeesTheOuterName, aVarWithADefault, aVarWithADefaultAndAClosure, aCatchParameter, namedLikeTheFunction };
+for (var name in uses) {
+  attempt(name + "(1)", uses[name].bind(null, 1));
+  attempt(name + "(2)", uses[name].bind(null, 2));
+  attempt(name + "()", uses[name]);
+}
+attempt("aVarAfterTheUse([1, 2])", () => aVarAfterTheUse([1, 2]));
+attempt("aVarAfterTheUse('abc')", () => aVarAfterTheUse("abc"));
+attempt("aVarAfterTheUse()", () => aVarAfterTheUse());
+
+export {};
+//// sloppy-and-strict/delete-of-a-variable-sloppy.cjs
+////= console
+
+globalThis.removable = "a member of the global object";
+
+var written = {
+  local: function () {
+    var local = 1;
+    return [delete local, typeof local];
+  },
+  parameter: function (parameter) {
+    return [delete parameter, typeof parameter];
+  },
+  parameterThenUsed: function (parameter) {
+    delete parameter;
+    return parameter + 1;
+  },
+  aLet: function () {
+    let local = 1;
+    return [delete local, typeof local];
+  },
+  aFunction: function () {
+    function local() {}
+    return [delete local, typeof local];
+  },
+  operands: function () {
+    return [delete arguments, typeof arguments];
+  },
+  absent: function () {
+    return delete neverDeclaredAnywhere;
+  },
+  memberOfTheGlobalObject: function () {
+    globalThis.removable = "made again";
+    return [delete removable, typeof removable];
+  },
+  madeByAnAssignment: function () {
+    madeHere = 1;
+    return [delete madeHere, typeof madeHere];
+  },
+  declaredByEval: function () {
+    eval("var declared = 1");
+    return [delete declared, typeof declared];
+  },
+  declaredByEvalOverAParameter: function (parameter) {
+    eval("var parameter = 'declared again'");
+    return [delete parameter, parameter];
+  },
+  catchParameter: function () {
+    try {
+      throw 1;
+    } catch (caught) {
+      return [delete caught, typeof caught];
+    }
+  },
+  aBuiltIn: function () {
+    return [delete undefined, delete NaN, delete Infinity];
+  },
+  inParentheses: function () {
+    var local = 1;
+    return [delete (local), typeof local];
+  },
+};
+
+////= texts-6
+
+////= ways
+
+function drive(label, callee) {
+  attempt(label, callee.bind(null, 1));
+  attempt(label + " once more", callee.bind(null, 1));
+}
+
+////= Object
+//// sloppy-and-strict/delete-of-a-variable-strict.mjs
+////= console
+
+globalThis.removable = "a member of the global object";
+
+////= texts-6
+
+////= ways
+
+function drive(label, callee) {
+  attempt(label, callee.bind(null, 1));
+  attempt(label + " once more", callee.bind(null, 1));
+}
+
+////= Object-keys
+
+export {};
+//// sloppy-and-strict/deletes-that-fail-sloppy.cjs
+////= console
+
+////= removals
+////= makers-11
+for (var i = 0; i < 2000; i++) for (var removal in removals) removals[removal]({ a: i, 0: 1, length: 1 });
+for (var maker in makers) for (var removal in removals) attempt(removal + "(" + maker + ")", removals[removal].bind(null, makers[maker]()));
+attempt("a constant of Math", () => [delete Math.PI, Math.PI > 3]);
+attempt("undefined of the global object", () => delete globalThis.undefined);
+//// sloppy-and-strict/deletes-that-fail-strict.mjs
+////= console
+
+////= removals
+////= makers-11
+for (var i = 0; i < 2000; i++) for (var removal in removals) removals[removal]({ a: i, 0: 1, length: 1 });
+for (var maker in makers) for (var removal in removals) attempt(removal + "(" + maker + ")", removals[removal].bind(null, makers[maker]()));
+attempt("a constant of Math", () => [delete Math.PI, Math.PI > 3]);
+attempt("undefined of the global object", () => delete globalThis.undefined);
+
+export {};
+//// sloppy-and-strict/eval-changes-the-kind-of-a-local-between-two-uses-strict.mjs
+////= console
+
+function size(list, text) {
+  var before = list.length;
+  eval(text);
+  return [before, list.length];
+}
+function total(list, text) {
+  var sum = 0;
+  for (var i = 0; i < list.length; i++) {
+    sum += list[i];
+    if (i === 0) eval(text);
+  }
+  return sum;
+}
+function next(n, text) {
+  var before = n + 1;
+  eval(text);
+  return [before, n + 1];
+}
+function counted(n, text) {
+  var count = 0;
+  for (var i = 0; i < n; i++) {
+    count++;
+    eval(text);
+  }
+  return count;
+}
+function called(callee, text) {
+  var before = callee();
+  eval(text);
+  return [before, callee()];
+}
+function member(object, text) {
+  var before = object.a;
+  eval(text);
+  return [before, object.a];
+}
+function afterACheck(value, text) {
+  if (typeof value !== "number") return "no number";
+  eval(text);
+  return value * 2;
+}
+////= lines-123	aConst	const	fixed
+function throughAnArrow(list, text) {
+  var run = () => eval(text);
+  run();
+  return list.length;
+}
+function throughAnAlias(list, text) {
+  var alias = eval;
+  alias(text);
+  return list.length;
+}
+
+var sum = 0;
+for (var i = 0; i < 2000; i++) sum += size([i], "")[1] + total([i, 1], "") + next(i, "")[1] + member({ a: i }, "")[1] + afterACheck(i, "");
+console.log("sum", sum);
+attempt("size", () => size([1, 2, 3], "list = 'ab'"));
+attempt("size, null", () => size([1, 2, 3], "list = null"));
+attempt("total", () => total([1, 2, 3], "list = [10, 20, 30, 40]"));
+attempt("total, a text", () => total([1, 2, 3], "list = 'abc'"));
+attempt("total, the index", () => total([1, 2, 3], "i = 1.5"));
+attempt("next", () => next(1, "n = '1'"));
+attempt("next, a bigint", () => next(1, "n = 1n"));
+attempt("counted", () => counted(3, "n = 1"));
+attempt("counted, a text", () => counted(3, "n = '2'"));
+attempt("counted, the counter", () => counted(3, "count = 'x'"));
+attempt("called", () => called(() => "honest", "callee = () => 'replaced'"));
+attempt("called, no function", () => called(() => "honest", "callee = 5"));
+attempt("member", () => member({ a: 1 }, "object = { get a() { return 'from a getter'; } }"));
+attempt("member, changed in place", () => member({ a: 1 }, "delete object.a"));
+attempt("after a check", () => afterACheck(1, "value = 'ab'"));
+attempt("a const", () => aConst("fixed = 2"));
+attempt("through an arrow", () => throughAnArrow([1, 2, 3], "list = 'ab'"));
+attempt("through an alias", () => throughAnAlias([1, 2, 3], "globalThis.list = 'ab'"));
+delete globalThis.list;
+attempt("honest again", () => [size([1], ""), total([1, 2], ""), next(1, "")]);
+
+export {};
+//// sloppy-and-strict/eval-declares-variables-in-the-scope-of-its-caller-or-not-sloppy.cjs
+////= console
+
+////= lines-123	redeclaresALocal	var	x
+function usesItLikeANumber(text) {
+  var x = 1;
+  eval(text);
+  return x + 1;
+}
+function declaresANewName(text) {
+  eval(text);
+  return typeof y === "undefined" ? "no y" : y;
+}
+function hidesAnOuterName(text) {
+  eval(text);
+  return outer;
+}
+////= lines-273	hidesAParameter	x
+function declaresAFunction(text) {
+  eval(text);
+  return typeof helper === "function" ? helper() : typeof helper;
+}
+function hidesAnOuterFunction(text) {
+  eval(text);
+  return outerFunction();
+}
+////= declaredInALoop
+////= seenByAClosure
+////= lines-123	declaresALet	var	x
+////= lines-123	collidesWithALet	let	x
+var outer = "the outer variable";
+////= lines-65	outerFunction	"the outer function"
+
+attempt("redeclares a local", () => redeclaresALocal("var x = 'declared by eval'"));
+attempt("redeclares a local without a value", () => redeclaresALocal("var x"));
+attempt("assigns to a local", () => redeclaresALocal("x = 'assigned by eval'"));
+attempt("a text where a number was", () => usesItLikeANumber("var x = '5'"));
+attempt("an object where a number was", () => usesItLikeANumber("var x = { valueOf() { return 41; } }"));
+attempt("declares a new name", () => declaresANewName("var y = 'declared by eval'"));
+attempt("declares nothing", () => declaresANewName(""));
+attempt("hides an outer name", () => hidesAnOuterName("var outer = 'declared by eval'"));
+attempt("the outer name afterwards", () => outer);
+attempt("hides a parameter", () => hidesAParameter([1, 2, 3], "var x = 'ab'"));
+attempt("declares a function", () => declaresAFunction("function helper() { return 'declared by eval'; }"));
+attempt("hides an outer function", () => hidesAnOuterFunction("function outerFunction() { return 'declared by eval'; }"));
+attempt("the outer function afterwards", () => outerFunction());
+attempt("declared in a loop", () => declaredInALoop("var y = 1"));
+attempt("seen by a closure", () => seenByAClosure("var y = 'declared by eval'"));
+attempt("declares a let", () => declaresALet("let x = 'a let of eval'; x"));
+attempt("collides with a let", () => collidesWithALet("var x = 'declared by eval'"));
+attempt("does not leak", () => [typeof y, typeof helper]);
+var sum = 0;
+for (var i = 0; i < 2000; i++) sum += usesItLikeANumber("") + hidesAParameter([i], "");
+console.log("sum", sum);
+attempt("after 2000 empty texts, a number", () => usesItLikeANumber("var x = '5'"));
+attempt("after 2000 empty texts, a list", () => hidesAParameter([1, 2, 3], "var x = { length: 'long' }"));
+attempt("through an indirect eval", () => {
+  var x = 1;
+  (0, eval)("var declaredByIndirectEval = 'global'");
+  return [x, typeof declaredByIndirectEval, delete globalThis.declaredByIndirectEval];
+});
+//// sloppy-and-strict/eval-declares-variables-in-the-scope-of-its-caller-or-not-strict.mjs
+////= console
+
+////= lines-123	redeclaresALocal	var	x
+function usesItLikeANumber(text) {
+  var x = 1;
+  eval(text);
+  return x + 1;
+}
+function declaresANewName(text) {
+  eval(text);
+  return typeof y === "undefined" ? "no y" : y;
+}
+function hidesAnOuterName(text) {
+  eval(text);
+  return outer;
+}
+////= lines-273	hidesAParameter	x
+function declaresAFunction(text) {
+  eval(text);
+  return typeof helper === "function" ? helper() : typeof helper;
+}
+function hidesAnOuterFunction(text) {
+  eval(text);
+  return outerFunction();
+}
+////= declaredInALoop
+////= seenByAClosure
+////= lines-123	declaresALet	var	x
+////= lines-123	collidesWithALet	let	x
+var outer = "the outer variable";
+////= lines-65	outerFunction	"the outer function"
+
+attempt("redeclares a local", () => redeclaresALocal("var x = 'declared by eval'"));
+attempt("redeclares a local without a value", () => redeclaresALocal("var x"));
+attempt("assigns to a local", () => redeclaresALocal("x = 'assigned by eval'"));
+attempt("a text where a number was", () => usesItLikeANumber("var x = '5'"));
+attempt("an object where a number was", () => usesItLikeANumber("var x = { valueOf() { return 41; } }"));
+attempt("declares a new name", () => declaresANewName("var y = 'declared by eval'"));
+attempt("declares nothing", () => declaresANewName(""));
+attempt("hides an outer name", () => hidesAnOuterName("var outer = 'declared by eval'"));
+attempt("the outer name afterwards", () => outer);
+attempt("hides a parameter", () => hidesAParameter([1, 2, 3], "var x = 'ab'"));
+attempt("declares a function", () => declaresAFunction("function helper() { return 'declared by eval'; }"));
+attempt("hides an outer function", () => hidesAnOuterFunction("function outerFunction() { return 'declared by eval'; }"));
+attempt("the outer function afterwards", () => outerFunction());
+attempt("declared in a loop", () => declaredInALoop("var y = 1"));
+attempt("seen by a closure", () => seenByAClosure("var y = 'declared by eval'"));
+attempt("declares a let", () => declaresALet("let x = 'a let of eval'; x"));
+attempt("collides with a let", () => collidesWithALet("var x = 'declared by eval'"));
+attempt("does not leak", () => [typeof y, typeof helper]);
+var sum = 0;
+for (var i = 0; i < 2000; i++) sum += usesItLikeANumber("") + hidesAParameter([i], "");
+console.log("sum", sum);
+attempt("after 2000 empty texts, a number", () => usesItLikeANumber("var x = '5'"));
+attempt("after 2000 empty texts, a list", () => hidesAParameter([1, 2, 3], "var x = { length: 'long' }"));
+attempt("through an indirect eval", () => {
+  var x = 1;
+  (0, eval)("var declaredByIndirectEval = 'global'");
+  return [x, typeof declaredByIndirectEval, delete globalThis.declaredByIndirectEval];
+});
+
+export {};
+//// sloppy-and-strict/function-declarations-in-blocks-are-seen-outside-or-not-strict.mjs
+////= console
+
+function afterTheBlock() {
+  {
+    function inner() {
+      return "inner";
+    }
+  }
+  return typeof inner;
+}
+function beforeTheBlock() {
+  var before = typeof inner;
+  {
+    function inner() {
+      return "inner";
+    }
+  }
+  return before;
+}
+function blockNotEntered(enter) {
+  if (enter) {
+    function inner() {
+      return "inner";
+    }
+  }
+  return typeof inner;
+}
+function calledAfterTheBlock(enter) {
+  if (enter) {
+    function inner() {
+      return "inner";
+    }
+  }
+  return inner();
+}
+function hoistedInsideTheBlock() {
+  {
+    var early = inner();
+    function inner() {
+      return "inner";
+    }
+  }
+  return early;
+}
+function twoBlocks(first) {
+  if (first) {
+    function pick() {
+      return "first";
+    }
+  } else {
+    function pick() {
+      return "second";
+    }
+  }
+  return pick();
+}
+////= lines-65	outerOfTheSameName	"the outer function"
+function hidesAnOuterFunction(enter) {
+  var before = typeof outerOfTheSameName === "function" ? outerOfTheSameName() : typeof outerOfTheSameName;
+  if (enter) {
+    function outerOfTheSameName() {
+      return "the function of the block";
+    }
+  }
+  var after = typeof outerOfTheSameName === "function" ? outerOfTheSameName() : typeof outerOfTheSameName;
+  return [before, after];
+}
+function storedInsideTheBlock() {
+  {
+    function inner() {
+      return "inner";
+    }
+    inner = "stored inside";
+  }
+  return typeof inner;
+}
+function storedBeforeTheDeclaration() {
+  {
+    inner = "stored first";
+    function inner() {}
+    var inside = typeof inner;
+  }
+  return [inside, typeof inner];
+}
+function usedLikeANumber(enter) {
+  var total = 0;
+  if (enter) {
+    function step() {
+      return 2;
+    }
+  }
+  for (var i = 0; i < 3; i++) total += step();
+  return total;
+}
+
+var uses = { afterTheBlock, beforeTheBlock, blockNotEntered, calledAfterTheBlock, hoistedInsideTheBlock, twoBlocks, hidesAnOuterFunction, storedInsideTheBlock, storedBeforeTheDeclaration, usedLikeANumber };
+for (var name in uses) {
+  attempt(name + "(true)", uses[name].bind(null, true));
+  attempt(name + "(false)", uses[name].bind(null, false));
+}
+////= for-185	calledAfterTheBlock	true
+attempt("after 2000 calls that entered the block", () => calledAfterTheBlock(false));
+{
+  function atTheTopLevel() {
+    return "declared in a block at the top level";
+  }
+}
+attempt("a block at the top level", () => typeof atTheTopLevel);
+attempt("on the global object", () => typeof globalThis.atTheTopLevel);
+
+export {};
+//// sloppy-and-strict/function-declarations-in-blocks-meet-names-that-are-taken-strict.mjs
+////= console
+
+function parameterOfTheSameName(taken) {
+  {
+    function taken() {
+      return "the function";
+    }
+  }
+  return typeof taken;
+}
+function parameterUsedLikeANumber(taken) {
+  {
+    function taken() {}
+  }
+  return taken + 1;
+}
+function parameterUsedLikeAList(taken) {
+  if (taken.length > 1) {
+    function taken() {}
+  }
+  return taken.length;
+}
+////= lines-203	letOfTheSameName	let	"the let"
+function constInAnOuterBlock() {
+  {
+    const taken = "the const";
+    {
+      function taken() {}
+    }
+    var seen = typeof taken;
+  }
+  return [seen, typeof taken];
+}
+////= lines-203	varOfTheSameName	var	"the var"
+function varDeclaredLater() {
+  {
+    function taken() {}
+  }
+  var taken;
+  return typeof taken;
+}
+function catchParameter() {
+  try {
+    throw "thrown";
+  } catch (taken) {
+    {
+      function taken() {}
+    }
+    var seen = typeof taken;
+  }
+  return [seen, typeof taken];
+}
+function loopVariable() {
+  var kinds = [];
+  for (let taken = 0; taken < 2; taken++) {
+    {
+      function taken() {}
+    }
+    kinds.push(typeof taken);
+  }
+  return [kinds, typeof taken];
+}
+function functionOfTheSameNameOutside() {
+  function taken() {
+    return "outside";
+  }
+  {
+    function taken() {
+      return "inside";
+    }
+  }
+  return taken();
+}
+function ownName() {
+  {
+    function ownName() {
+      return "inside";
+    }
+  }
+  return ownName === globalThis.keptOwnName;
+}
+globalThis.keptOwnName = ownName;
+
+var uses = { parameterOfTheSameName, parameterUsedLikeANumber, letOfTheSameName, constInAnOuterBlock, varOfTheSameName, varDeclaredLater, catchParameter, loopVariable, functionOfTheSameNameOutside, ownName };
+for (var name in uses) attempt(name, uses[name].bind(null, 1));
+attempt("parameterUsedLikeAList, short", () => parameterUsedLikeAList([1]));
+attempt("parameterUsedLikeAList, long", () => parameterUsedLikeAList([1, 2]));
+var sum = 0;
+for (var i = 0; i < 2000; i++) sum += parameterUsedLikeAList([i]);
+console.log("sum", sum);
+attempt("parameterUsedLikeAList, long, after 2000 short ones", () => parameterUsedLikeAList([1, 2, 3]));
+delete globalThis.keptOwnName;
+
+export {};
+//// sloppy-and-strict/function-declarations-in-blocks-of-evaluated-text-sloppy.cjs
+////= console
+
+////= texts-5
+
+////= ways
+
+////= drive-5	"(true)"	true	"(false)"	false
+
+////= Object-keys
+//// sloppy-and-strict/function-declarations-in-blocks-of-evaluated-text-strict.mjs
+////= console
+
+////= texts-5
+
+////= ways
+
+////= drive-5	"(true)"	true	"(false)"	false
+
+////= Object-keys
+
+export {};
+//// sloppy-and-strict/functions-declared-under-a-label-or-as-the-body-of-if-strict.mjs
+////= console
+
+var texts = {
+  aLabelledFunction: "function () { label: function labelled() { return \"labelled\"; } return labelled(); }",
+  aFunctionAfterIf: "function (value) { if (value) function made() { return \"made\"; } return typeof made; }",
+  aFunctionAfterElse: "function (value) { if (value) ; else function made() { return \"made\"; } return typeof made; }",
+  calledAfterIf: "function (value) { if (value) function made() { return \"made\"; } return made(); }",
+  inTheBlockOfWith: "function (value) { var object = { x: value }; with (object) { function x() {} } return [typeof x, typeof object.x]; }",
+  aLabelInABlock: "function () { { label: function labelled() {} } return typeof labelled; }",
+};
+
+////= ways
+
+////= drive-5	"(1)"	1	"(0)"	0
+
+////= Object-keys
+
+export {};
+//// sloppy-and-strict/methods-added-to-the-prototypes-of-primitives-see-this-boxed-or-not-sloppy.cjs
+////= console
+
+function kind() {
+  return typeof this;
+}
+////= lines-108	same	value	this	value
+////= lines-160	store	this.note	"stored"
+////= lines-65	itself	this
+var parents = { number: Number.prototype, text: String.prototype, yes: Boolean.prototype, big: BigInt.prototype, symbol: Symbol.prototype };
+////= for-54
+var seen = [];
+var values = { number: 5, text: "abc", yes: true, big: 5n, symbol: Symbol.iterator };
+////= lines-5	callKind	value	value.addedKind
+////= lines-7	readGetter	value	value.addedGetter
+var honest = { addedKind: kind, addedGetter: "object" };
+var length = 0;
+for (var i = 0; i < 2000; i++) length += callKind(honest).length + readGetter(honest).length;
+console.log("length", length);
+////= for-27
+attempt("a literal number", () => [(5).addedKind(), 5..addedKind(), (5.5).addedGetter]);
+attempt("a literal text", () => ["abc".addedKind(), "abc".addedGetter, `abc`.addedKind()]);
+for (var name in parents) for (var key of ["addedKind", "addedSame", "addedStore", "addedItself", "addedGetter", "addedSetter"]) delete parents[name][key];
+attempt("after they were removed", () => callKind(5));
+//// sloppy-and-strict/methods-added-to-the-prototypes-of-primitives-see-this-boxed-or-not-strict.mjs
+////= console
+
+function kind() {
+  return typeof this;
+}
+////= lines-108	same	value	this	value
+////= lines-160	store	this.note	"stored"
+////= lines-65	itself	this
+var parents = { number: Number.prototype, text: String.prototype, yes: Boolean.prototype, big: BigInt.prototype, symbol: Symbol.prototype };
+////= for-54
+var seen = [];
+var values = { number: 5, text: "abc", yes: true, big: 5n, symbol: Symbol.iterator };
+////= lines-5	callKind	value	value.addedKind
+////= lines-7	readGetter	value	value.addedGetter
+var honest = { addedKind: kind, addedGetter: "object" };
+var length = 0;
+for (var i = 0; i < 2000; i++) length += callKind(honest).length + readGetter(honest).length;
+console.log("length", length);
+////= for-27
+attempt("a literal number", () => [(5).addedKind(), 5..addedKind(), (5.5).addedGetter]);
+attempt("a literal text", () => ["abc".addedKind(), "abc".addedGetter, `abc`.addedKind()]);
+for (var name in parents) for (var key of ["addedKind", "addedSame", "addedStore", "addedItself", "addedGetter", "addedSetter"]) delete parents[name][key];
+attempt("after they were removed", () => callKind(5));
+
+export {};
+//// sloppy-and-strict/octal-literals-and-escapes-sloppy.cjs
+////= console
+
+var written = {
+  literal: function () {
+    return 010;
+  },
+  sum: function (n) {
+    return n + 010 + 0777;
+  },
+  notOctalAfterAll: function () {
+    return [08, 09, 019, 08.5];
+  },
+  asAnIndex: function () {
+    return [0, 1, 2, 3, 4, 5, 6, 7, "the ninth element"][010];
+  },
+  asAKey: function () {
+    return Object.keys({ 010: "a", 0x10: "b", 0o11: "c" });
+  },
+  member: function () {
+    return 010.toString();
+  },
+  bits: function (n) {
+    return [n | 017, n << 01, 037777777777 | 0];
+  },
+  negative: function () {
+    return [-010, -00, 1 / -00];
+  },
+  escape: function () {
+    return ["\101", "\377".charCodeAt(0), "\400".length, "\101\102"];
+  },
+  escapeInAKey: function () {
+    return { "\101": 1 }.A;
+  },
+  eightAndNine: function () {
+    return ["\8", "\9"];
+  },
+  compared: function (n) {
+    return [n === 010, n < 011, "8" == 010, parseInt("010"), Number("010")];
+  },
+};
+
+////= texts-7
+
+////= ways
+
+function drive(label, callee) {
+  attempt(label, callee.bind(null, 8));
+}
+
+////= Object
+//// sloppy-and-strict/octal-literals-and-escapes-strict.mjs
+////= console
+
+////= texts-7
+
+////= ways
+
+function drive(label, callee) {
+  attempt(label, callee.bind(null, 8));
+}
+
+////= Object-keys
+
+export {};
+//// sloppy-and-strict/primitives-as-this-sloppy.cjs
+////= console
+
+////= uses-2
+var receivers = { five: 5, zero: 0, minusZero: -0, notANumber: NaN, text: "abc", emptyText: "", yes: true, no: false, big: 1n, bigZero: 0n, symbol: Symbol.iterator, none: null, nothing: undefined };
+
+var honest = { length: 3 };
+for (var i = 0; i < 2000; i++) for (var name in uses) uses[name].call(honest, honest);
+
+for (var receiver in receivers) for (var use in uses) attempt(use + ".call(" + receiver + ")", uses[use].bind(receivers[receiver], receivers[receiver]));
+////= for-55
+//// sloppy-and-strict/primitives-as-this-strict.mjs
+////= console
+
+////= uses-2
+var receivers = { five: 5, zero: 0, minusZero: -0, notANumber: NaN, text: "abc", emptyText: "", yes: true, no: false, big: 1n, bigZero: 0n, symbol: Symbol.iterator, none: null, nothing: undefined };
+
+var honest = { length: 3 };
+for (var i = 0; i < 2000; i++) for (var name in uses) uses[name].call(honest, honest);
+
+for (var receiver in receivers) for (var use in uses) attempt(use + ".call(" + receiver + ")", uses[use].bind(receivers[receiver], receivers[receiver]));
+////= for-55
+
+export {};
+//// sloppy-and-strict/reserved-words-of-strict-code-as-names-sloppy.cjs
+////= console
+
+var written = {
+  let: function (value) {
+    var let = value;
+    return let + 1;
+  },
+  static: function (value) {
+    var static = value;
+    return static.length;
+  },
+  yield: function (value) {
+    var yield = value;
+    return yield * 2;
+  },
+  several: function (value) {
+    var implements = value, interface = value, package = value, private = value, protected = value, public = value;
+    return [implements, interface, package, private, protected, public].length;
+  },
+  asParameters: function (let, static, yield) {
+    return [let, static, yield];
+  },
+  asAFunctionName: function () {
+    function static() {
+      return "called";
+    }
+    return static();
+  },
+  asALabel: function () {
+    yield: for (;;) break yield;
+    return "left the loop";
+  },
+  letWithAnIndex: function (value) {
+    var let = [value];
+    return [let[0], let.length];
+  },
+};
+
+////= texts-11
+
+////= ways
+
+function drive(label, callee) {
+  attempt(label + "(1)", callee.bind(null, 1, 2, 3));
+  attempt(label + "('ab')", callee.bind(null, "ab"));
+  attempt(label + "()", callee);
+}
+
+////= Object
+//// sloppy-and-strict/reserved-words-of-strict-code-as-names-strict.mjs
+////= console
+
+////= texts-11
+
+////= ways
+
+function drive(label, callee) {
+  attempt(label + "(1)", callee.bind(null, 1, 2, 3));
+  attempt(label + "('ab')", callee.bind(null, "ab"));
+  attempt(label + "()", callee);
+}
+
+////= Object-keys
+
+export {};
+//// sloppy-and-strict/run-time-text-reaches-the-arguments-of-its-caller-sloppy.cjs
+////= console
+
+////= lines-352	stores(a, text
+////= lines-238	usedLikeANumber	n	text	eval	text	1
+////= lines-273	usedLikeAList	list
+////= lines-82	answers	a	text	eval	text
+function throughAnArrow(a, text) {
+  return (() => eval(text))();
+}
+////= twice-2
+////= lines-352	withADefault(a, text = ""
+function mentionsArgumentsToo(a, text) {
+  var count = arguments.length;
+  eval(text);
+  return [count, a];
+}
+function assignsTheParameter(a, text) {
+  a = "assigned";
+  return eval(text);
+}
+
+var sum = 0;
+for (var i = 0; i < 2000; i++) sum += usedLikeANumber(i, "") + usedLikeAList([i], "");
+console.log("sum", sum);
+attempt("stores", () => stores(1, "arguments[0] = 'stored by the text'"));
+attempt("used like a number", () => usedLikeANumber(1, "arguments[0] = '5'"));
+attempt("used like a number, a fraction", () => usedLikeANumber(1, "arguments[0] = 0.5"));
+attempt("used like a list", () => usedLikeAList([1, 2, 3], "arguments[0] = 'ab'"));
+attempt("used like a list, null", () => usedLikeAList([1, 2, 3], "arguments[0] = null"));
+attempt("how many", () => answers(1, "arguments.length"));
+attempt("how many of three", () => answers(1, "arguments.length", 3));
+attempt("the third", () => answers(1, "arguments[2]", "the third operand"));
+attempt("the callee", () => answers(1, "typeof arguments.callee"));
+attempt("the kind", () => answers(1, "Object.prototype.toString.call(arguments)"));
+attempt("through an arrow", () => throughAnArrow(1, "arguments[0] = 'stored'; a"));
+attempt("twice", () => twice(1, "arguments[0] = 'stored'"));
+attempt("with a default", () => withADefault(1, "arguments[0] = 'stored'"));
+attempt("mentions arguments too", () => mentionsArgumentsToo(1, "arguments[0] = 'stored'"));
+attempt("assigns the parameter", () => assignsTheParameter(1, "arguments[0]"));
+attempt("an indirect eval has no arguments", () => stores(1, "(0, eval)('typeof arguments')"));
+attempt("a function in the text has its own", () => answers(1, "(function () { return arguments.length; })()"));
+attempt("honest again", () => [usedLikeANumber(1, ""), usedLikeAList([1], "")]);
+//// sloppy-and-strict/run-time-text-reaches-the-arguments-of-its-caller-strict.mjs
+////= console
+
+////= lines-352	stores(a, text
+////= lines-238	usedLikeANumber	n	text	eval	text	1
+////= lines-273	usedLikeAList	list
+////= lines-82	answers	a	text	eval	text
+function throughAnArrow(a, text) {
+  return (() => eval(text))();
+}
+////= twice-2
+////= lines-352	withADefault(a, text = ""
+function mentionsArgumentsToo(a, text) {
+  var count = arguments.length;
+  eval(text);
+  return [count, a];
+}
+function assignsTheParameter(a, text) {
+  a = "assigned";
+  return eval(text);
+}
+
+var sum = 0;
+for (var i = 0; i < 2000; i++) sum += usedLikeANumber(i, "") + usedLikeAList([i], "");
+console.log("sum", sum);
+attempt("stores", () => stores(1, "arguments[0] = 'stored by the text'"));
+attempt("used like a number", () => usedLikeANumber(1, "arguments[0] = '5'"));
+attempt("used like a number, a fraction", () => usedLikeANumber(1, "arguments[0] = 0.5"));
+attempt("used like a list", () => usedLikeAList([1, 2, 3], "arguments[0] = 'ab'"));
+attempt("used like a list, null", () => usedLikeAList([1, 2, 3], "arguments[0] = null"));
+attempt("how many", () => answers(1, "arguments.length"));
+attempt("how many of three", () => answers(1, "arguments.length", 3));
+attempt("the third", () => answers(1, "arguments[2]", "the third operand"));
+attempt("the callee", () => answers(1, "typeof arguments.callee"));
+attempt("the kind", () => answers(1, "Object.prototype.toString.call(arguments)"));
+attempt("through an arrow", () => throughAnArrow(1, "arguments[0] = 'stored'; a"));
+attempt("twice", () => twice(1, "arguments[0] = 'stored'"));
+attempt("with a default", () => withADefault(1, "arguments[0] = 'stored'"));
+attempt("mentions arguments too", () => mentionsArgumentsToo(1, "arguments[0] = 'stored'"));
+attempt("assigns the parameter", () => assignsTheParameter(1, "arguments[0]"));
+attempt("an indirect eval has no arguments", () => stores(1, "(0, eval)('typeof arguments')"));
+attempt("a function in the text has its own", () => answers(1, "(function () { return arguments.length; })()"));
+attempt("honest again", () => [usedLikeANumber(1, ""), usedLikeAList([1], "")]);
+
+export {};
+//// sloppy-and-strict/short-octal-escapes-in-evaluated-text-sloppy.cjs
+////= console
+
+////= texts-13
+
+////= ways
+
+function drive(label, callee) {
+  attempt(label, callee);
+}
+
+////= Object-keys
+//// sloppy-and-strict/short-octal-escapes-in-evaluated-text-strict.mjs
+////= console
+
+////= texts-13
+
+////= ways
+
+function drive(label, callee) {
+  attempt(label, callee);
+}
+
+////= Object-keys
+
+export {};
+//// sloppy-and-strict/stores-fail-once-an-object-is-frozen-in-the-middle-of-a-loop-sloppy.cjs
+////= console-3
+//// sloppy-and-strict/stores-fail-once-an-object-is-frozen-in-the-middle-of-a-loop-strict.mjs
+////= console-3
+
+export {};
+//// sloppy-and-strict/stores-through-this-in-a-call-without-a-receiver-sloppy.cjs
+////= console
+
+function remember(value) {
+  this.remembered = value;
+  return typeof this.remembered;
+}
+function count() {
+  this.counter = (this.counter || 0) + 1;
+  return this.counter;
+}
+function collect(item) {
+  if (!this.collected) this.collected = [];
+  return this.collected.push(item);
+}
+
+var honest = {};
+var sum = 0;
+for (var i = 0; i < 2000; i++) sum += remember.call(honest, i).length + count.call(honest) + collect.call(honest, i);
+console.log("sum", sum);
+
+attempt("remember", () => remember([1, 2]));
+attempt("count", () => [count(), count(), count()]);
+attempt("collect", () => [collect("a"), collect("b")]);
+attempt("the names as variables", () => [typeof remembered, typeof counter, typeof collected]);
+attempt("the variable is used", () => remembered.length + counter + collected.length);
+attempt("members of the global object", () => [globalThis.remembered, globalThis.counter, globalThis.collected]);
+globalThis.counter = "7";
+globalThis.collected = { push: () => "own push" };
+attempt("count after a text was stored", () => count());
+attempt("collect after an object was stored", () => collect("c"));
+attempt("removed", () => [delete globalThis.remembered, delete globalThis.counter, delete globalThis.collected]);
+attempt("the names afterwards", () => [typeof remembered, typeof counter, typeof collected]);
+attempt("honest again", () => [remember.call(honest, 1), count.call(honest), collect.call(honest, 1)]);
+//// sloppy-and-strict/stores-through-this-in-a-call-without-a-receiver-strict.mjs
+////= console
+
+function remember(value) {
+  this.remembered = value;
+  return typeof this.remembered;
+}
+function count() {
+  this.counter = (this.counter || 0) + 1;
+  return this.counter;
+}
+function collect(item) {
+  if (!this.collected) this.collected = [];
+  return this.collected.push(item);
+}
+
+var honest = {};
+var sum = 0;
+for (var i = 0; i < 2000; i++) sum += remember.call(honest, i).length + count.call(honest) + collect.call(honest, i);
+console.log("sum", sum);
+
+attempt("remember", () => remember([1, 2]));
+attempt("count", () => [count(), count(), count()]);
+attempt("collect", () => [collect("a"), collect("b")]);
+attempt("the names as variables", () => [typeof remembered, typeof counter, typeof collected]);
+attempt("the variable is used", () => remembered.length + counter + collected.length);
+attempt("members of the global object", () => [globalThis.remembered, globalThis.counter, globalThis.collected]);
+globalThis.counter = "7";
+globalThis.collected = { push: () => "own push" };
+attempt("count after a text was stored", () => count());
+attempt("collect after an object was stored", () => collect("c"));
+attempt("removed", () => [delete globalThis.remembered, delete globalThis.counter, delete globalThis.collected]);
+attempt("the names afterwards", () => [typeof remembered, typeof counter, typeof collected]);
+attempt("honest again", () => [remember.call(honest, 1), count.call(honest), collect.call(honest, 1)]);
+
+export {};
+//// sloppy-and-strict/stores-to-members-that-cannot-be-stored-to-sloppy.cjs
+////= console
+
+var log = [];
+////= makers-9
+////= stores-2
+for (var i = 0; i < 2000; i++) for (var store in stores) stores[store]({ a: i, name: "n" });
+////= for-136
+//// sloppy-and-strict/stores-to-members-that-cannot-be-stored-to-strict.mjs
+////= console
+
+var log = [];
+////= makers-9
+////= stores-2
+for (var i = 0; i < 2000; i++) for (var store in stores) stores[store]({ a: i, name: "n" });
+////= for-136
+
+export {};
+//// sloppy-and-strict/stores-to-names-that-cannot-be-stored-to-sloppy.cjs
+////= console
+
+function toUndefined() {
+  undefined = 1;
+  return typeof undefined;
+}
+////= lines-280	toNaN	NaN
+////= lines-280	toInfinity	Infinity
+////= lines-223	incrementsNaN	NaN
+function toGlobalThisMember() {
+  globalThis.undefined = 1;
+  return typeof globalThis.undefined;
+}
+var ownName = function named() {
+  named = 1;
+  return typeof named;
+};
+var ownNameUsed = function named(n) {
+  named = null;
+  return n <= 0 ? "done" : named(n - 1);
+};
+var ownNameIncremented = function named() {
+  named++;
+  return typeof named;
+};
+var ownNameShadowed = function named() {
+  var named = 1;
+  return typeof named;
+};
+var ownNameAsParameter = function named(named) {
+  named = 1;
+  return typeof named;
+};
+////= toAClassNameInside
+function toAClassNameOutside() {
+  class Named {}
+  Named = 1;
+  return typeof Named;
+}
+function toADeclaredFunction() {
+  function declared() {}
+  declared = 1;
+  return typeof declared;
+}
+////= lines-89	byEval	eval	"undefined = 1; typeof undefined"
+
+var uses = { toUndefined, toNaN, toInfinity, incrementsNaN, toGlobalThisMember, ownName, ownNameIncremented, ownNameShadowed, ownNameAsParameter, toAClassNameInside, toAClassNameOutside, toADeclaredFunction, byEval };
+for (var name in uses) attempt(name, uses[name]);
+attempt("ownNameUsed", () => ownNameUsed(3));
+////= for-185	ownNameUsed	1
+attempt("ownNameUsed after 2000 calls", () => ownNameUsed(3));
+//// sloppy-and-strict/stores-to-names-that-cannot-be-stored-to-strict.mjs
+////= console
+
+function toUndefined() {
+  undefined = 1;
+  return typeof undefined;
+}
+////= lines-280	toNaN	NaN
+////= lines-280	toInfinity	Infinity
+////= lines-223	incrementsNaN	NaN
+function toGlobalThisMember() {
+  globalThis.undefined = 1;
+  return typeof globalThis.undefined;
+}
+var ownName = function named() {
+  named = 1;
+  return typeof named;
+};
+var ownNameUsed = function named(n) {
+  named = null;
+  return n <= 0 ? "done" : named(n - 1);
+};
+var ownNameIncremented = function named() {
+  named++;
+  return typeof named;
+};
+var ownNameShadowed = function named() {
+  var named = 1;
+  return typeof named;
+};
+var ownNameAsParameter = function named(named) {
+  named = 1;
+  return typeof named;
+};
+////= toAClassNameInside
+function toAClassNameOutside() {
+  class Named {}
+  Named = 1;
+  return typeof Named;
+}
+function toADeclaredFunction() {
+  function declared() {}
+  declared = 1;
+  return typeof declared;
+}
+////= lines-89	byEval	eval	"undefined = 1; typeof undefined"
+
+var uses = { toUndefined, toNaN, toInfinity, incrementsNaN, toGlobalThisMember, ownName, ownNameIncremented, ownNameShadowed, ownNameAsParameter, toAClassNameInside, toAClassNameOutside, toADeclaredFunction, byEval };
+for (var name in uses) attempt(name, uses[name]);
+attempt("ownNameUsed", () => ownNameUsed(3));
+////= for-185	ownNameUsed	1
+attempt("ownNameUsed after 2000 calls", () => ownNameUsed(3));
+
+export {};
+//// sloppy-and-strict/stores-to-primitives-sloppy.cjs
+////= console
+
+////= stores
+var values = { object: () => ({ 0: "a", length: 3 }), list: () => ["a", "b", "c"], text: () => "abc", emptyText: () => "", number: () => 5, yes: () => true, big: () => 5n, symbol: () => Symbol.iterator, none: () => null, nothing: () => undefined, boxedText: () => new String("abc") };
+for (var i = 0; i < 2000; i++) for (var store in stores) stores[store]({ 0: "a", length: 3 });
+for (var value in values) for (var store in stores) attempt(store + "(" + value + ")", stores[store].bind(null, values[value]()));
+//// sloppy-and-strict/stores-to-primitives-strict.mjs
+////= console
+
+////= stores
+var values = { object: () => ({ 0: "a", length: 3 }), list: () => ["a", "b", "c"], text: () => "abc", emptyText: () => "", number: () => 5, yes: () => true, big: () => 5n, symbol: () => Symbol.iterator, none: () => null, nothing: () => undefined, boxedText: () => new String("abc") };
+for (var i = 0; i < 2000; i++) for (var store in stores) stores[store]({ 0: "a", length: 3 });
+for (var value in values) for (var store in stores) attempt(store + "(" + value + ")", stores[store].bind(null, values[value]()));
+
+export {};
+//// sloppy-and-strict/the-tie-between-arguments-and-parameters-is-cut-or-used-from-outside-sloppy.cjs
+////= console
+
+function change(operands) {
+  operands[0] = "changed elsewhere";
+}
+////= uses
+for (var name in uses) attempt(name, uses[name].bind(null, 2, 1));
+
+////= leaks
+var leaked = leaks(1);
+leaked.operands[0] = "stored after the return";
+attempt("a store after the return", () => [leaked.read(), leaked.operands[0]]);
+leaked.write("assigned after the return");
+attempt("an assignment after the return", () => [leaked.read(), leaked.operands[0]]);
+
+////= lines-238	total	a	b	change	arguments	b
+////= lines-238	honestTotal	a	b	show	arguments	b
+var sum = 0;
+for (var i = 0; i < 2000; i++) sum += honestTotal(i, 1);
+console.log("sum", sum);
+attempt("total", () => total(1, 2));
+//// sloppy-and-strict/the-tie-between-arguments-and-parameters-is-cut-or-used-from-outside-strict.mjs
+////= console
+
+function change(operands) {
+  operands[0] = "changed elsewhere";
+}
+////= uses
+for (var name in uses) attempt(name, uses[name].bind(null, 2, 1));
+
+////= leaks
+var leaked = leaks(1);
+leaked.operands[0] = "stored after the return";
+attempt("a store after the return", () => [leaked.read(), leaked.operands[0]]);
+leaked.write("assigned after the return");
+attempt("an assignment after the return", () => [leaked.read(), leaked.operands[0]]);
+
+////= lines-238	total	a	b	change	arguments	b
+////= lines-238	honestTotal	a	b	show	arguments	b
+var sum = 0;
+for (var i = 0; i < 2000; i++) sum += honestTotal(i, 1);
+console.log("sum", sum);
+attempt("total", () => total(1, 2));
+
+export {};
+//// sloppy-and-strict/this-in-a-call-without-a-receiver-sloppy.cjs
+////= console
+
+globalThis.marker = "the marker of the global object";
+////= holder-3
+
+var sum = 0;
+for (var i = 0; i < 2000; i++) sum += holder.read().length + holder.size() + holder.kind().length;
+console.log("sum", sum);
+
+////= ways-2
+function everything(when) {
+  for (var way in ways) for (var name of ["kind", "read", "size"]) attempt(when + " " + name + " " + way, ways[way].bind(null, name));
+}
+everything("no global list:");
+globalThis.list = "four";
+everything("a global text:");
+delete globalThis.list;
+delete globalThis.marker;
+//// sloppy-and-strict/this-in-a-call-without-a-receiver-strict.mjs
+////= console
+
+globalThis.marker = "the marker of the global object";
+////= holder-3
+
+var sum = 0;
+for (var i = 0; i < 2000; i++) sum += holder.read().length + holder.size() + holder.kind().length;
+console.log("sum", sum);
+
+////= ways-2
+function everything(when) {
+  for (var way in ways) for (var name of ["kind", "read", "size"]) attempt(when + " " + name + " " + way, ways[way].bind(null, name));
+}
+everything("no global list:");
+globalThis.list = "four";
+everything("a global text:");
+delete globalThis.list;
+delete globalThis.marker;
+
+export {};
+//// sloppy-and-strict/this-in-callbacks-that-built-ins-call-sloppy.cjs
+////= console
+
+function describe(self) {
+  return self === undefined ? "undefined" : self === null ? "null" : self === globalThis ? "the global object" : typeof self === "object" ? "object " + Object.prototype.toString.call(self).slice(8, -1) : typeof self;
+}
+var seen = [];
+function note() {
+  seen.push(describe(this));
+  return 0;
+}
+function noted(run) {
+  seen.length = 0;
+  run();
+  return seen.slice(0, 2);
+}
+var holder = { toJSON: note, valueOf: note, toString: note, [Symbol.toPrimitive]: note };
+
+attempt("forEach", () => noted(() => [1].forEach(note)));
+attempt("forEach with 5", () => noted(() => [1].forEach(note, 5)));
+attempt("forEach with a text", () => noted(() => [1].forEach(note, "text")));
+attempt("forEach with null", () => noted(() => [1].forEach(note, null)));
+attempt("forEach with false", () => noted(() => [1].forEach(note, false)));
+attempt("map", () => noted(() => [1].map(note)));
+attempt("filter with a symbol", () => noted(() => [1].filter(note, Symbol.iterator)));
+attempt("reduce", () => noted(() => [1, 2].reduce(note)));
+attempt("sort", () => noted(() => [2, 1].sort(note)));
+attempt("Array.from", () => noted(() => Array.from([1], note)));
+attempt("Array.from with 5", () => noted(() => Array.from([1], note, 5)));
+attempt("a typed array's map with 5", () => noted(() => new Uint8Array(1).map(note, 5)));
+attempt("a map's forEach", () => noted(() => new Map([[1, 2]]).forEach(note)));
+attempt("a set's forEach with 5n", () => noted(() => new Set([1]).forEach(note, 5n)));
+attempt("replace", () => noted(() => "a".replace("a", note)));
+attempt("replace with an expression", () => noted(() => "a".replace(/a/g, note)));
+attempt("JSON.parse", () => noted(() => JSON.parse("[1]", note)));
+attempt("JSON.stringify", () => noted(() => JSON.stringify([1], note)));
+attempt("toJSON", () => noted(() => JSON.stringify(holder)));
+attempt("Symbol.toPrimitive", () => noted(() => +holder));
+attempt("new Promise", () => noted(() => new Promise(note)));
+attempt("Reflect.apply with 5", () => noted(() => Reflect.apply(note, 5, [])));
+attempt("Reflect.apply with undefined", () => noted(() => Reflect.apply(note, undefined, [])));
+attempt("bind(5)", () => noted(() => note.bind(5)()));
+attempt("bind()", () => noted(() => note.bind()()));
+attempt("bind(5) as a method", () => noted(() => ({ note: note.bind(5) }).note()));
+attempt("a getter read off a number", () => noted(() => Reflect.get({ get a() { return note.call(this); } }, "a", 5)));
+attempt("a proxy's trap", () => noted(() => new Proxy({}, { get: note }).a));
+attempt("a tagged template", () => noted(() => note``));
+attempt("an iterator's next", () => noted(() => { for (var item of { [Symbol.iterator]: function () { note.call(this); return { next: function () { note.call(this); return { done: true }; } }; } }); }));
+attempt("a finalizer of flatMap with true", () => noted(() => [1].flatMap(note, true)));
+var later = [];
+////= Promise-resolve
+//// sloppy-and-strict/this-in-callbacks-that-built-ins-call-strict.mjs
+////= console
+
+function describe(self) {
+  return self === undefined ? "undefined" : self === null ? "null" : self === globalThis ? "the global object" : typeof self === "object" ? "object " + Object.prototype.toString.call(self).slice(8, -1) : typeof self;
+}
+var seen = [];
+function note() {
+  seen.push(describe(this));
+  return 0;
+}
+function noted(run) {
+  seen.length = 0;
+  run();
+  return seen.slice(0, 2);
+}
+var holder = { toJSON: note, valueOf: note, toString: note, [Symbol.toPrimitive]: note };
+
+attempt("forEach", () => noted(() => [1].forEach(note)));
+attempt("forEach with 5", () => noted(() => [1].forEach(note, 5)));
+attempt("forEach with a text", () => noted(() => [1].forEach(note, "text")));
+attempt("forEach with null", () => noted(() => [1].forEach(note, null)));
+attempt("forEach with false", () => noted(() => [1].forEach(note, false)));
+attempt("map", () => noted(() => [1].map(note)));
+attempt("filter with a symbol", () => noted(() => [1].filter(note, Symbol.iterator)));
+attempt("reduce", () => noted(() => [1, 2].reduce(note)));
+attempt("sort", () => noted(() => [2, 1].sort(note)));
+attempt("Array.from", () => noted(() => Array.from([1], note)));
+attempt("Array.from with 5", () => noted(() => Array.from([1], note, 5)));
+attempt("a typed array's map with 5", () => noted(() => new Uint8Array(1).map(note, 5)));
+attempt("a map's forEach", () => noted(() => new Map([[1, 2]]).forEach(note)));
+attempt("a set's forEach with 5n", () => noted(() => new Set([1]).forEach(note, 5n)));
+attempt("replace", () => noted(() => "a".replace("a", note)));
+attempt("replace with an expression", () => noted(() => "a".replace(/a/g, note)));
+attempt("JSON.parse", () => noted(() => JSON.parse("[1]", note)));
+attempt("JSON.stringify", () => noted(() => JSON.stringify([1], note)));
+attempt("toJSON", () => noted(() => JSON.stringify(holder)));
+attempt("Symbol.toPrimitive", () => noted(() => +holder));
+attempt("new Promise", () => noted(() => new Promise(note)));
+attempt("Reflect.apply with 5", () => noted(() => Reflect.apply(note, 5, [])));
+attempt("Reflect.apply with undefined", () => noted(() => Reflect.apply(note, undefined, [])));
+attempt("bind(5)", () => noted(() => note.bind(5)()));
+attempt("bind()", () => noted(() => note.bind()()));
+attempt("bind(5) as a method", () => noted(() => ({ note: note.bind(5) }).note()));
+attempt("a getter read off a number", () => noted(() => Reflect.get({ get a() { return note.call(this); } }, "a", 5)));
+attempt("a proxy's trap", () => noted(() => new Proxy({}, { get: note }).a));
+attempt("a tagged template", () => noted(() => note``));
+attempt("an iterator's next", () => noted(() => { for (var item of { [Symbol.iterator]: function () { note.call(this); return { next: function () { note.call(this); return { done: true }; } }; } }); }));
+attempt("a finalizer of flatMap with true", () => noted(() => [1].flatMap(note, true)));
+var later = [];
+////= Promise-resolve
+
+export {};
+//// sloppy-and-strict/two-parameters-of-one-name-sloppy.cjs
+////= console-2
+//// sloppy-and-strict/two-parameters-of-one-name-strict.mjs
+////= console-2
+
+export {};
+//// sloppy-and-strict/what-with-finds-is-used-like-a-number-a-list-or-in-a-closure-sloppy.cjs
+////= console
+
+globalThis.x = "the global x";
+globalThis.size = "the global size";
+
+var written = {
+  plusOne: function (object) {
+    var x = 1;
+    with (object) {
+      return x + 1;
+    }
+  },
+  length: function (object) {
+    var x = [1, 2, 3];
+    with (object) {
+      return x.length;
+    }
+  },
+  kind: function (object) {
+    var x = 1;
+    with (object) {
+      return typeof x;
+    }
+  },
+  inALoop: function (object) {
+    var x = 1;
+    var sum = 0;
+    with (object) {
+      for (var i = 0; i < 3; i++) sum += x;
+    }
+    return sum;
+  },
+  inAClosure: function (object) {
+    var x = "the local x";
+    with (object) {
+      return (function () {
+        return x;
+      })();
+    }
+  },
+};
+
+////= texts-14
+
+////= ways
+
+var reads = 0;
+////= objects-3
+////= drive
+
+////= Object
+//// sloppy-and-strict/what-with-finds-is-used-like-a-number-a-list-or-in-a-closure-strict.mjs
+////= console
+
+globalThis.x = "the global x";
+globalThis.size = "the global size";
+
+////= texts-14
+
+////= ways
+
+var reads = 0;
+////= objects-3
+////= drive
+
+////= Object-keys
+
+export {};
+//// sloppy-and-strict/with-finds-a-name-in-the-object-or-in-the-scope-sloppy.cjs
+////= console
+
+globalThis.x = "the global x";
+globalThis.size = "the global size";
+
+var written = {
+  read: function (object) {
+    var x = "the local x";
+    with (object) {
+      return x;
+    }
+  },
+  readTwice: function (object) {
+    var x = "the local x";
+    with (object) {
+      return [x, x];
+    }
+  },
+  readGlobal: function (object) {
+    with (object) {
+      return size;
+    }
+  },
+  parameter: function (object, x) {
+    with (object) {
+      return x;
+    }
+  },
+  nested: function (object) {
+    var x = "the local x";
+    with ({ x: "the outer object" }) {
+      with (object) {
+        return x;
+      }
+    }
+  },
+};
+
+////= texts-15
+
+////= ways
+
+var reads = 0;
+////= objects-3
+////= drive
+
+////= Object
+//// sloppy-and-strict/with-finds-a-name-in-the-object-or-in-the-scope-strict.mjs
+////= console
+
+globalThis.x = "the global x";
+globalThis.size = "the global size";
+
+////= texts-15
+
+////= ways
+
+var reads = 0;
+////= objects-3
+////= drive
+
+////= Object-keys
+
+export {};
+//// sloppy-and-strict/with-over-a-proxy-runs-the-traps-in-order-sloppy.cjs
+////= console
+
+var written = {
+  read: function (object) {
+    var x = "the local x";
+    with (object) {
+      return x;
+    }
+  },
+  store: function (object) {
+    var x = "the local x";
+    with (object) {
+      x = "stored";
+    }
+    return x;
+  },
+  addTo: function (object) {
+    var x = 1;
+    with (object) {
+      x += 1;
+    }
+    return x;
+  },
+  call: function (object) {
+    var x = function () {
+      return "the local function";
+    };
+    with (object) {
+      return x();
+    }
+  },
+  kind: function (object) {
+    with (object) {
+      return typeof neverDeclared;
+    }
+  },
+  remove: function (object) {
+    var x = 1;
+    with (object) {
+      return delete x;
+    }
+  },
+  vanishes: function (object) {
+    var x = "the local x";
+    with (object) {
+      x = (delete object.target.x, "stored after the member vanished");
+    }
+    return [x, object.target.x];
+  },
+};
+
+////= texts-12
+
+////= ways
+
+var log = [];
+////= logging
+////= objects-10
+////= drive-3
+
+////= Object
+//// sloppy-and-strict/with-over-a-proxy-runs-the-traps-in-order-strict.mjs
+////= console
+
+////= texts-12
+
+////= ways
+
+var log = [];
+////= logging
+////= objects-10
+////= drive-3
+
+////= Object-keys
+
+export {};
+//// sloppy-and-strict/with-skips-the-names-in-unscopables-sloppy.cjs
+////= console
+
+var written = {
+  read: function (object) {
+    var x = "the local x";
+    var y = "the local y";
+    with (object) {
+      return [x, y];
+    }
+  },
+  store: function (object) {
+    var x = "the local x";
+    with (object) {
+      x = "stored";
+    }
+    return [x, object.x];
+  },
+  namesOfLists: function (object) {
+    var keys = "the local keys";
+    var values = "the local values";
+    var concat = "the local concat";
+    var flat = "the local flat";
+    var at = "the local at";
+    with (object) {
+      return [typeof keys, typeof values, typeof concat, typeof flat, typeof at];
+    }
+  },
+  call: function (object) {
+    var x = function () {
+      return "the local function";
+    };
+    with (object) {
+      return x();
+    }
+  },
+};
+
+////= texts-16
+
+////= ways
+
+var log = [];
+////= objects-5
+////= drive-4
+
+////= Object
+//// sloppy-and-strict/with-skips-the-names-in-unscopables-strict.mjs
+////= console
+
+////= texts-16
+
+////= ways
+
+var log = [];
+////= objects-5
+////= drive-4
+
+////= Object-keys
+
+export {};
+//// sloppy-and-strict/with-takes-stores-declarations-and-calls-sloppy.cjs
+////= console
+
+var written = {
+  store: function (object) {
+    var x = "the local x";
+    with (object) {
+      x = "stored";
+    }
+    return [x, object.x];
+  },
+  declare: function (object) {
+    with (object) {
+      var x = "declared inside";
+    }
+    return [x, object.x];
+  },
+  declareALet: function (object) {
+    with (object) {
+      let x = "a let inside";
+      x = "stored to the let";
+    }
+    return object.x;
+  },
+  increment: function (object) {
+    var x = 1;
+    with (object) {
+      x++;
+    }
+    return [x, object.x];
+  },
+  push: function (object) {
+    var x = [];
+    with (object) {
+      x.push(1);
+    }
+    return [x, object.x];
+  },
+  receiver: function (object) {
+    function x() {
+      return this === undefined ? "undefined" : this === globalThis ? "the global object" : this === object ? "the object" : typeof this;
+    }
+    with (object) {
+      return x();
+    }
+  },
+  undeclared: function (object) {
+    with (object) {
+      madeByAStoreInsideWith = 1;
+    }
+    var made = [typeof madeByAStoreInsideWith, object.madeByAStoreInsideWith];
+    delete globalThis.madeByAStoreInsideWith;
+    return made;
+  },
+  loopVariable: function (object) {
+    with (object) {
+      for (var x = 0; x < 3; x++);
+    }
+    return [x, object.x];
+  },
+  pattern: function (object) {
+    var x = "the local x";
+    with (object) {
+      [x] = ["from a pattern"];
+    }
+    return [x, object.x];
+  },
+  addedMidway: function (object) {
+    var x = "the local x";
+    with (object) {
+      var before = x;
+      object.x = "added midway";
+      return [before, x];
+    }
+  },
+};
+
+////= texts-10
+
+////= ways
+
+////= objects-6
+function drive(label, callee) {
+  for (var name in objects) attempt(label + "(" + name + ")", callee.bind(null, objects[name]()));
+}
+
+////= Object
+//// sloppy-and-strict/with-takes-stores-declarations-and-calls-strict.mjs
+////= console
+
+////= texts-10
+
+////= ways
+
+////= objects-6
+function drive(label, callee) {
+  for (var name in objects) attempt(label + "(" + name + ")", callee.bind(null, objects[name]()));
+}
+
+////= Object-keys
+
+export {};
+//// something-out-of-sight-replaces-what-is-called-like-a-function.cjs
+////= show-5
+
+const log = [];
+
+////= attempt-6
+
+////= plus
+
+////= minus
+
+const name = ["r", "u", "n"].join("");
+const zero = name.length - 3;
+
+const byHiddenStore = { run: plus };
+const byComputedName = { run: plus };
+const byReflectSet = { run: plus };
+const byDefinition = { run: plus };
+const byGetter = { run: plus };
+const byAssign = { run: plus };
+const byPrototype = Object.create({ run: plus });
+const listByHiddenStore = [plus, minus];
+const listByComputedIndex = [plus, minus];
+const listByFill = [plus, minus];
+const listByUnshift = [plus, minus];
+const listBySplice = [plus, minus];
+const listByCopyWithin = [plus, minus, null];
+const mapBySet = new Map([["run", plus]]);
+
+class Tool {
+  constructor() {
+    this.own = plus;
+  }
+
+  run(a, b) {
+    return a + b;
+  }
+
+  static make(a, b) {
+    return a + b;
+  }
+}
+
+const toolByField = new Tool();
+const toolByShadow = new Tool();
+let variableBySetter = plus;
+
+////= lines-192	setVariable	variableBySetter
+
+function throughArguments(f) {
+  arguments[zero] = arguments[1];
+  return f(3, 1);
+}
+
+const ways = [
+  ["hidden code stores to the field", v => new Function("o", "v", "o.run = v")(byHiddenStore, v), () => byHiddenStore.run(3, 1)],
+  ["a store under a computed name", v => { byComputedName[name] = v; }, () => byComputedName.run(3, 1)],
+  ["Reflect.set", v => Reflect.set(byReflectSet, name, v), () => byReflectSet.run(3, 1)],
+  ["Object.defineProperty with a value", v => Object.defineProperty(byDefinition, name, { value: v }), () => byDefinition.run(3, 1)],
+  ["Object.defineProperty with a getter", v => Object.defineProperty(byGetter, name, { get: () => v, configurable: true }), () => byGetter.run(3, 1)],
+  ["Object.assign", v => Object.assign(byAssign, { [name]: v }), () => byAssign.run(3, 1)],
+  ["another prototype", v => Object.setPrototypeOf(byPrototype, { [name]: v }), () => byPrototype.run(3, 1)],
+  ["hidden code stores to the element", v => new Function("t", "v", "t[0] = v")(listByHiddenStore, v), () => listByHiddenStore[0](3, 1)],
+  ["a store at a computed index", v => { listByComputedIndex[zero] = v; }, () => listByComputedIndex[0](3, 1)],
+  ["fill", v => listByFill.fill(v), () => listByFill[0](3, 1)],
+  ["unshift", v => listByUnshift.unshift(v), () => listByUnshift[0](3, 1)],
+  ["splice", v => listBySplice.splice(0, 1, v), () => listBySplice[0](3, 1)],
+  ["copyWithin", v => { listByCopyWithin[2] = v; listByCopyWithin.copyWithin(0, 2); }, () => listByCopyWithin[0](3, 1)],
+  ["set of a map", v => mapBySet.set(name, v), () => mapBySet.get("run")(3, 1)],
+  ["hidden code stores to a field of an instance", v => new Function("o", "v", "o.own = v")(toolByField, v), () => toolByField.own(3, 1)],
+  ["hidden code gives an instance a member that hides the method", v => new Function("o", "v", "o.run = v")(toolByShadow, v), () => toolByShadow.run(3, 1)],
+  ["hidden code replaces the method on the prototype", v => new Function("C", "v", "C.prototype.run = v")(Tool, v), () => new Tool().run(3, 1)],
+  ["hidden code replaces the static method", v => new Function("C", "v", "C.make = v")(Tool, v), () => Tool.make(3, 1)],
+  ["hidden code gets the function that stores to the variable", v => new Function("set", "v", "set(v)")(setVariable, v), () => variableBySetter(3, 1)],
+  ["a store to arguments", () => {}, v => throughArguments(plus, v), true],
+];
+
+const replacements = [
+  ["the other function", () => minus],
+  ["a function nobody saw", () => new Function("a", "b", "return 'hidden ' + a + b")],
+  ["a bound function", () => plus.bind(null, 100)],
+  ["a callable proxy", () => new Proxy(plus, { apply: (target, self, list) => "trapped " + list.join() })],
+  ["a class", () => class {}],
+  ["an async function", () => async (a, b) => a + b],
+  ["an object with call", () => ({ call: plus })],
+  ["a string", () => "plus"],
+  ["undefined", () => undefined],
+  ["the first function again", () => plus],
+];
+
+console.log("strict:", (function () { return this === undefined; })());
+for (const [label, , call, takesValue] of ways) {
+  for (let i = 0; i < 300; i++) takesValue ? call(plus) : call();
+  attempt("at first, " + label, () => (takesValue ? call(plus) : call()));
+}
+for (const [what, make] of replacements) {
+  for (const [label, replace, call, takesValue] of ways) {
+    attempt(label + ": " + what, () => {
+      const value = make();
+      replace(value);
+      return takesValue ? call(value) : call();
+    });
+  }
+}
+//// split-answers-with-an-object-that-has-its-own-push.js
+const separator = { [Symbol.split]: () => ({ push: () => "pushed" }) };
+console.log("a,b".split(separator).push(1));
+//// stand-ins-make-string-methods-return-other-values.js
+////= show-26
+
+function replacedLength(text, pattern) {
+  return text.replace(pattern, "+").length;
+}
+
+function replacedUpper(text, pattern) {
+  return text.replace(pattern, "+").toUpperCase();
+}
+
+function replacedLabel(text, pattern) {
+  return "<" + text.replace(pattern, "+") + ">";
+}
+
+function replacedKind(text, pattern) {
+  const result = text.replace(pattern, "+");
+  return [typeof result, result === null, result === undefined];
+}
+
+function replacedEverywhereLength(text, pattern) {
+  return text.replaceAll(pattern, "+").length;
+}
+
+function chained(text, pattern) {
+  return text.replace(pattern, "+").replace("+", "-").trim();
+}
+
+function piecesCount(text, separator) {
+  return text.split(separator).length;
+}
+
+////= lines-188	firstPieceUpper	text	separator	text.split	separator	0
+
+////= lines-190	piecesJoined	text	separator	text.split	join	"|"
+
+////= lines-103	piecesWalked	separator	piece	split
+
+function positionPlusOne(text, pattern) {
+  return text.search(pattern) + 1;
+}
+
+function positionIsFound(text, pattern) {
+  return text.search(pattern) !== -1;
+}
+
+function slicedAtPosition(text, pattern) {
+  return text.slice(text.search(pattern));
+}
+
+function matchFirst(text, pattern) {
+  const found = text.match(pattern);
+  return found ? found[0] : "nothing";
+}
+
+////= lines-103	matchesWalked	pattern	found	matchAll
+
+const uses = [
+  [Symbol.replace, "replaced length", replacedLength],
+  [Symbol.replace, "replaced upper", replacedUpper],
+  [Symbol.replace, "replaced label", replacedLabel],
+  [Symbol.replace, "replaced kind", replacedKind],
+  [Symbol.replace, "replaced everywhere length", replacedEverywhereLength],
+  [Symbol.replace, "chained", chained],
+  [Symbol.split, "pieces count", piecesCount],
+  [Symbol.split, "first piece upper", firstPieceUpper],
+  [Symbol.split, "pieces joined", piecesJoined],
+  [Symbol.split, "pieces walked", piecesWalked],
+  [Symbol.search, "position plus one", positionPlusOne],
+  [Symbol.search, "position is found", positionIsFound],
+  [Symbol.search, "sliced at position", slicedAtPosition],
+  [Symbol.match, "match first", matchFirst],
+  [Symbol.matchAll, "matches walked", matchesWalked],
+];
+
+for (let i = 0; i < 2000; i++) {
+  replacedLength("a-b", "-");
+  replacedUpper("a-b", "-");
+  replacedLabel("a-b", "-");
+  replacedKind("a-b", "-");
+  replacedEverywhereLength("a-b", "-");
+  chained("a-b", "-");
+  piecesCount("a-b", "-");
+  firstPieceUpper("a-b", "-");
+  piecesJoined("a-b", "-");
+  piecesWalked("a-b", "-");
+  positionPlusOne("a-b", "-");
+  positionIsFound("a-b", "-");
+  slicedAtPosition("a-b", "-");
+  matchFirst("a-b", "-");
+  matchesWalked("a-b", /-/g);
+}
+
+const answers = [
+  ["a text", "text"],
+  ["the empty text", ""],
+  ["a number", 5],
+  ["minus zero", -0],
+  ["a fraction", 1.5],
+  ["NaN", NaN],
+  ["null", null],
+  ["undefined", undefined],
+  ["true", true],
+  ["a BigInt", 5n],
+  ["a symbol", Symbol("s")],
+  ["a list", ["x", "y"]],
+  ["an empty list", []],
+  ["a list of numbers", [1, 2]],
+  ["a wrapped text", new String("wrapped")],
+  ["an object", { length: "a lie", 0: "zero" }],
+  ["a set", new Set(["in a set"])],
+  ["a text for a number", "1"],
+];
+
+for (const [symbol, name, use] of uses) {
+  for (const [label, answer] of answers) {
+    attempt(name + " when the stand-in answers " + label, () => use("a-b", { [symbol]: () => answer }));
+  }
+}
+
+function textOf(value) {
+  return value.toString().length;
+}
+
+function localeTextOf(value) {
+  return value.toLocaleString().length;
+}
+
+function jsonOf(value) {
+  return value.toJSON().length;
+}
+
+for (let i = 0; i < 2000; i++) {
+  textOf("abc");
+  textOf(123);
+  localeTextOf("abc");
+  jsonOf(new Date(0));
+}
+
+const list = [1, 2];
+list.join = () => 5;
+attempt("toString of a list whose join answers a number", () => [typeof list.toString(), textOf(list), String(list), list + "", `${list}`]);
+attempt("toString that answers a number", () => textOf({ toString: () => 5 }));
+attempt("toString that answers null", () => textOf({ toString: () => null }));
+attempt("toString that answers a list", () => textOf({ toString: () => ["a", "b"] }));
+attempt("toLocaleString goes through toString", () => [typeof { toString: () => 5 }.toLocaleString(), localeTextOf({ toString: () => 5 })]);
+attempt("toLocaleString that ends in null", () => localeTextOf({ toString: () => null }));
+attempt("toJSON that answers a number", () => jsonOf({ toJSON: () => 5 }));
+attempt("toJSON of an invalid date", () => jsonOf(new Date(NaN)));
+attempt("toJSON of a date whose toISOString answers a number", () => jsonOf(Object.assign(new Date(0), { toISOString: () => 5 })));

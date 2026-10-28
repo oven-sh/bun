@@ -1,0 +1,1 @@
+{ "skipInShell": "it asks for the classes of the web and of Bun, which the jsc shell does not provide" }

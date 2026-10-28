@@ -147,7 +147,7 @@ mod draft {
     // ──────────────────────────────────────────────────────────────────────────
 
     pub struct Parser<'a> {
-        pub(crate) source: &'a Source,
+        pub(crate) source: &'a Source<'a>,
         pub(crate) src: &'a [u8],
         pub out: Expr,
         pub(crate) env: &'a DotEnvLoader,
@@ -181,7 +181,7 @@ mod draft {
     }
 
     impl<'a> Parser<'a> {
-        pub fn init(source: &'a Source, env: &'a DotEnvLoader) -> Parser<'a> {
+        pub fn init(source: &'a Source<'a>, env: &'a DotEnvLoader) -> Parser<'a> {
             Parser {
                 src: source.contents.as_ref(),
                 out: Expr::init(E::Object::default(), Loc::EMPTY),
@@ -1171,7 +1171,7 @@ mod draft {
 
     impl RegistryKey {
         pub fn from_url(url_bytes: &[u8]) -> RegistryKey {
-            let owned = URL::from_string(&bun_core::String::borrow_utf8(url_bytes)).ok();
+            let owned = URL::from_string(&bun_core::StringView::borrow_utf8(url_bytes)).ok();
             let url = match &owned {
                 Some(owned) => owned.url(),
                 None => URL::parse(url_bytes),

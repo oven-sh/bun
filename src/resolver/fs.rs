@@ -472,7 +472,10 @@ impl DirEntry {
     /// answered with one `lstat` of `self.dir/base`, which adds the entry
     /// when it exists. This is how a child directory finds itself in a
     /// probe-only parent listing to resolve its real path.
-    pub(crate) fn get_or_probe(&mut self, base: &[u8]) -> crate::CrateResult<Option<EntryLookup<'_>>> {
+    pub(crate) fn get_or_probe(
+        &mut self,
+        base: &[u8],
+    ) -> crate::CrateResult<Option<EntryLookup<'_>>> {
         if self.complete || self.lookup(base).is_some() {
             return Ok(self.lookup(base));
         }
@@ -522,7 +525,10 @@ impl DirEntry {
     #[inline]
     fn debug_assert_probed_name(&self, query_lower: &[u8]) {
         debug_assert!(
-            self.complete || DIR_INFO_PROBE_NAMES.iter().any(|n| n.as_bytes() == query_lower),
+            self.complete
+                || DIR_INFO_PROBE_NAMES
+                    .iter()
+                    .any(|n| n.as_bytes() == query_lower),
             "probe-only listing asked about \"{}\", which is not a probed name",
             bstr::BStr::new(query_lower)
         );
@@ -564,7 +570,6 @@ impl DirEntry {
         found_kind: Option<EntryKind>,
         filename_store: &mut FilenameStoreAppender,
     ) -> crate::CrateResult<*mut Entry> {
-
         // Lowercase the entry basename once. The same bytes drive the
         // previous-generation case-insensitive probe, the new entry's
         // lowercased key, *and* the insert into `self.data` — and the hash is

@@ -253,7 +253,7 @@ impl DirInfo {
 
     /// [`get_entries_ref_locked`](Self::get_entries_ref_locked) that hands
     /// out a probe-only listing as it is, mutably, so the caller can probe
-    /// one more name into it (`DirEntry::add_probed_entry`). Same lock
+    /// one more name into it (`DirEntry::get_or_probe`). Same lock
     /// contract; the `&'static mut` is the sole reference while the lock is
     /// held.
     pub(crate) fn get_entries_mut_locked_allow_partial(

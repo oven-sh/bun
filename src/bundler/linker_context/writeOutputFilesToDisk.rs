@@ -153,6 +153,7 @@ pub(crate) fn write_output_files_to_disk(
                             size: Some(output_source_map.len()),
                             data: OutputFileData::Saved(0),
                             side: Some(options::Side::Client),
+                            entry_point_index: None,
                             is_executable: false,
                             hash: None,
                             source_map_index: None,
@@ -183,6 +184,7 @@ pub(crate) fn write_output_files_to_disk(
                 bytecode_index: None,
                 module_info_index: None,
                 side: Some(options::Side::Client),
+                entry_point_index: None,
                 referenced_css_chunks: Box::default(),
                 size: None,
                 source_index: IndexOptional::NONE,
@@ -347,6 +349,7 @@ pub(crate) fn write_output_files_to_disk(
                     size: Some(output_source_map.len()),
                     data: OutputFileData::Saved(0),
                     side: Some(options::Side::Client),
+                    entry_point_index: None,
                     is_executable: false,
                     hash: None,
                     source_map_index: None,
@@ -469,6 +472,7 @@ pub(crate) fn write_output_files_to_disk(
                             display_size: bytecode.len() as u32,
                             data: OutputFileData::Saved(0),
                             side: None,
+                            entry_point_index: None,
                             is_executable: false,
                             source_map_index: None,
                             bytecode_index: None,
@@ -544,6 +548,7 @@ pub(crate) fn write_output_files_to_disk(
             is_executable: chunk.flags.contains(ChunkFlags::IS_EXECUTABLE),
             data: OutputFileData::Saved(0),
             side: Some(c.chunk_side(chunk)),
+            entry_point_index: None,
             referenced_css_chunks: match &chunk.content {
                 Content::Javascript(js) => {
                     // `Index` is `#[repr(transparent)]` over u32.

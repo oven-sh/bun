@@ -5003,6 +5003,7 @@ pub mod bv2_impl {
                                         .content_hash(content_hashes_for_additional_files[index]),
                                 ),
                                 side: Some(crate::options::Side::Client),
+                                entry_point_index: None,
                                 is_executable: false,
                                 ..Default::default()
                             },
@@ -5989,6 +5990,7 @@ pub mod bv2_impl {
             output_kind,
             is_executable: false,
             side: None,
+            entry_point_index: None,
             ..Default::default()
         }));
         Ok(())

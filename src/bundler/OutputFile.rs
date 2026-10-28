@@ -24,6 +24,8 @@ pub struct OutputFile {
     /// Relative
     pub dest_path: Box<[u8]>,
     pub side: Option<Side>,
+    /// Only `bun build --compile --aot` sets it: entry point `i` of the compiled program is the file with `Some(i)`.
+    pub entry_point_index: Option<u32>,
     pub referenced_css_chunks: Box<[Index]>,
     pub source_index: IndexOptional,
     pub bake_extra: BakeExtra,
@@ -60,6 +62,7 @@ impl OutputFile {
             output_kind: OutputKind::Chunk,
             dest_path: Box::default(),
             side: None,
+            entry_point_index: None,
             referenced_css_chunks: Box::default(),
             source_index: IndexOptional::NONE,
             bake_extra: BakeExtra::default(),
@@ -146,6 +149,7 @@ pub struct Options {
     pub(crate) is_executable: bool,
     pub(crate) data: OptionsData,
     pub(crate) side: Option<Side>,
+    pub(crate) entry_point_index: Option<u32>,
     pub(crate) referenced_css_chunks: Box<[Index]>,
     pub(crate) bake_extra: BakeExtra,
 }
@@ -180,6 +184,7 @@ impl OutputFile {
                 OptionsData::Saved(_) => Value::Saved(SavedFile::default()),
             },
             side: options.side,
+            entry_point_index: options.entry_point_index,
             referenced_css_chunks: options.referenced_css_chunks,
             bake_extra: options.bake_extra,
             load_order: u32::MAX,

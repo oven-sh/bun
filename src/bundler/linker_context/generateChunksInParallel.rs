@@ -943,6 +943,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                             output_kind: options::OutputKind::Sourcemap,
                             input_path: strings::concat(&[input_path, b".map"]),
                             side: None,
+                            entry_point_index: None,
                             is_executable: false,
                             ..Default::default()
                         }),
@@ -968,6 +969,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                         bytecode_index: None,
                         module_info_index: None,
                         side: Some(options::Side::Client),
+                        entry_point_index: None,
                         referenced_css_chunks: Box::default(),
                         bake_extra: BakeExtra::default(),
                         ..Default::default()
@@ -1089,6 +1091,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                             output_kind: options::OutputKind::Sourcemap,
                             input_path: strings::concat(&[&input_path[..], b".map"]),
                             side: None,
+                            entry_point_index: None,
                             is_executable: false,
                             ..Default::default()
                         }));
@@ -1198,6 +1201,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                                 display_size: bytecode.len() as u32,
                                 data: options::OutputFileData::Buffer { data: bytecode },
                                 side: Some(side),
+                                entry_point_index: None,
                                 is_executable: false,
                                 ..Default::default()
                             }));
@@ -1254,6 +1258,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                                             data: module_info_bytes.clone(),
                                         },
                                         side: Some(side),
+                                        entry_point_index: None,
                                         is_executable: false,
                                         ..Default::default()
                                     },
@@ -1316,6 +1321,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                     bytecode_index,
                     module_info_index,
                     side: Some(side),
+                    entry_point_index: None,
                     referenced_css_chunks: match &chunk.content {
                         // `output_file::Index` is `#[repr(transparent)]` over u32.
                         crate::chunk::Content::Javascript(js) => js
@@ -1625,6 +1631,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                 data: bytes.into_boxed_slice(),
             },
             side: None,
+            entry_point_index: None,
             is_executable: false,
             ..Default::default()
         }));
@@ -1649,6 +1656,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                 data: bytes.into_boxed_slice(),
             },
             side: None,
+            entry_point_index: None,
             is_executable: false,
             ..Default::default()
         }));
@@ -1665,6 +1673,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
             display_size: bytes.len() as u32,
             data: options::OutputFileData::Buffer { data: bytes },
             side: None,
+            entry_point_index: None,
             is_executable: false,
             ..Default::default()
         }));
@@ -1687,6 +1696,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
             display_size: bytes.len() as u32,
             data: options::OutputFileData::Buffer { data: bytes },
             side: None,
+            entry_point_index: None,
             is_executable: false,
             ..Default::default()
         }));
@@ -1881,6 +1891,7 @@ fn append_internal_module_bytecode(
             display_size: bytecode.len() as u32,
             data: options::OutputFileData::Buffer { data: bytecode },
             side: None,
+            entry_point_index: None,
             is_executable: false,
             ..Default::default()
         }));

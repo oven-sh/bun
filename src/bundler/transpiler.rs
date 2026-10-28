@@ -2878,6 +2878,7 @@ impl<'a> Transpiler<'a> {
         output_file.loader = loader;
         output_file.output_kind = options::OutputKind::Chunk;
         output_file.side = None;
+        output_file.entry_point_index = None;
 
         match loader {
             options::Loader::Jsx

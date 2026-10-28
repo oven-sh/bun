@@ -214,6 +214,7 @@ impl PluginRequests {
             range: Range::NONE,
             original_target: Target::Bun,
             loader: None,
+            bake_entry_point: crate::bake_types::production::OpaqueFileIdOptional::NONE,
         };
         let waiter = self.waiters.lock().acquire();
         let resolve = self.with_bundle(|bundle| {

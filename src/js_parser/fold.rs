@@ -758,11 +758,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     E::Special::HotEnabled | E::Special::HotDisabled => {
                         let enabled = p.options.features.hot_module_reloading;
-                        // With HMR off, `import.meta.hot` is `undefined`, so
-                        // `import.meta.hot?.x` keeps its JavaScript meaning and
-                        // stays as written. A call of a known method is the one
-                        // exception: it never runs, so it is dropped like the
-                        // direct form.
+                        // With HMR off, `import.meta.hot?.x` stays as written.
+                        // A call of a known method never runs, so it is dropped.
                         if !enabled && identifier_opts.is_optional_chain_start() {
                             if identifier_opts.is_method_call_callee()
                                 && (name == b"accept" || Self::is_import_meta_hot_method(name))

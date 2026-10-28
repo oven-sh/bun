@@ -77,8 +77,7 @@ bun_core::declare_scope!(cache, visible);
 /// Version 42: The body of a class with lowered class decorators names the class by the
 /// binding that holds what the decorators return.
 /// Version 43: A `bun:` specifier that names no builtin is printed as it is written.
-/// Version 44: `import.meta.hot?.x` is lowered like `import.meta.hot.x`, and a read of an
-/// `import.meta.hot` method that is not a call no longer removes the next call.
+/// Version 44: `import.meta.hot?.x` is lowered, and a read of an `import.meta.hot` method keeps the next call.
 const EXPECTED_VERSION: u32 = 44;
 
 /// Source files smaller than this are not written to / read from the on-disk

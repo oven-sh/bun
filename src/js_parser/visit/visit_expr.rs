@@ -1502,8 +1502,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // `import.meta.hot?.x`: the parser knows the value of `import.meta.hot`, so the
-        // rewrite decides what the `?.` means instead of the printer.
+        // `import.meta.hot?.x`: the rewrite decides what the `?.` means.
         if e_.optional_chain == Some(js_ast::OptionalChain::Start)
             && Self::is_import_meta_hot(&e_.target)
             && let Some(rewrite) = p.maybe_rewrite_property_access(

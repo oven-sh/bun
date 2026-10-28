@@ -1,0 +1,8 @@
+main runs
+two runs
+one runs
+arms 10,8,10
+broken runs
+broken, with 5 lines in the log | broken, with 5 lines in the log | then broken, with 5 lines in the log | last broken, with 5 lines in the log | inside the handler broken, with 5 lines in the log
+broken, with 5 lines in the log | broken, with 5 lines in the log | then broken, with 5 lines in the log | last broken, with 5 lines in the log | inside the handler broken, with 5 lines in the log
+many 180000

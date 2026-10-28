@@ -36,7 +36,6 @@ function mockToolchain(): Toolchain {
     clangVersion: "23.1.1",
     clangResourceDir: "/fake/llvm/lib/clang/23",
     ar: "/fake/llvm/bin/llvm-ar",
-    ranlib: "/fake/llvm/bin/llvm-ranlib",
     ld: "/fake/llvm/bin/ld.lld",
     ld64Lld: "/fake/llvm/bin/ld64.lld",
     rustLlvmVersion: "23.1.1",
@@ -60,7 +59,6 @@ function mockToolchain(): Toolchain {
     rustupHome: undefined,
     msvcLinker: undefined,
     rc: undefined,
-    mt: undefined,
     nasm: undefined,
   };
 }
@@ -93,8 +91,11 @@ function configure(buildDir: string): Configured {
     cppSources: [],
     cppHeaders: [],
     cppAll: [],
+    builtinTableSources: [],
     internalModulesAsm: resolve(cfg.codegenDir, "InternalModuleRegistryConstants.S"),
     internalModulesBin: resolve(cfg.codegenDir, "InternalModuleRegistryConstants.bin"),
+    bundledNamesOfModules: resolve(cfg.codegenDir, "bundled_names_of_modules.txt"),
+    bundledHelpers: resolve(cfg.codegenDir, "runtime.out.js"),
     rootInstall: resolve(buildDir, "stamps", "install.stamp"),
   };
   return { cfg, n, o, dirStamp: resolve(cfg.codegenDir, ".dir") };

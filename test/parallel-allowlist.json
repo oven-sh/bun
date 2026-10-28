@@ -265,6 +265,18 @@
     "snippets"
   ],
   "excludeFiles": [
+    "bundler/bundler_compile_aot.test.ts",
+    "bundler/compile-aot-heap-snapshot.test.ts",
+    "cli/aot-builtin-modules-and-computed-paths.test.ts",
+    "cli/aot-builtin-modules-and-names-handed-to-a-parameter.test.ts",
+    "cli/aot-builtin-modules-and-node-module.test.ts",
+    "cli/aot-builtin-modules-and-the-globals.test.ts",
+    "cli/aot-builtin-modules-and-where-a-global-goes.test.ts",
+    "cli/aot-builtin-modules-of-a-small-program.test.ts",
+    "cli/aot-check-and-build-flags.test.ts",
+    "cli/crash-if-interpreter-is-used.test.ts",
+    "cli/inspect/compile-aot-inspector.test.ts",
+    "cli/run/run-aot.test.ts",
     "bake/deinitialization.test.ts",
     "bake/dev-and-prod.test.ts",
     "bake/dev/bundle.test.ts",

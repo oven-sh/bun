@@ -1,0 +1,7 @@
+{
+  "env": {
+    "NAMES": "node:path,node:dgram,node:no-such-module,./relative.js"
+  },
+  "skipInShell": "it asks for modules of Bun",
+  "alone": "what it prints hangs on what else the executable holds: which modules and members were compiled in, and whether anything evaluates text"
+}

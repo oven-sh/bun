@@ -1,0 +1,4 @@
+{
+  "skipInShell": "it uses what Bun provides and the jsc shell does not: Bun.Glob",
+  "skipWithASAN": "with assertions on, plain Bun names another line for the frame of a built-in generator"
+}

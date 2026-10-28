@@ -1,0 +1,1 @@
+{ "entryPoints": ["./a.mjs"], "skipInShell": "it needs Bun's modules" }

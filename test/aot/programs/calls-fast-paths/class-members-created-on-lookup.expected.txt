@@ -1,0 +1,6 @@
+a name of each: a function or none for each
+another name of each: a function or none for each
+the first name again: a function or none for each
+the first name a third time: the members are made
+the last name, and all the names: a function or none for each
+1390

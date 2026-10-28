@@ -1026,17 +1026,36 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // must be the original value of the name, not the re-assigned value.
         // Use "const" for this symbol to match JavaScript run-time semantics. You
         // are not allowed to assign to this symbol (it throws a TypeError).
+        //
+        // With lowered class decorators the body reads the class through
+        // `inner_class_ref`, which the lowering sets to what the decorators
+        // return (the spec initializes the inner binding with that class).
         let mut shadow_ref = if let Some(name) = class.class_name {
             let name_ref = name.ref_;
             let original_name: &'a [u8] = self.symbols[name_ref.inner_index() as usize]
                 .original_name
                 .slice();
+            let body_ref = if class.should_lower_standard_decorators
+                && class.ts_decorators.len_u32() > 0
+            {
+                let inner_ref = self.generate_temp_var(self.bump_name3(b"_", original_name, b""));
+                class.inner_class_ref = inner_ref;
+                self.decorated_class_names.push((inner_ref, name_ref));
+                // The name of a class expression is declared nowhere else:
+                // the renamer still has to number it around its neighbors.
+                if is_expr {
+                    VecExt::append(&mut self.vis_scope().generated, name_ref);
+                }
+                inner_ref
+            } else {
+                name_ref
+            };
             // SAFETY: `original_name` is an AST-arena slice.
             unsafe {
                 self.vis_scope().members.put(
                     original_name,
                     ScopeMember {
-                        ref_: name.ref_,
+                        ref_: body_ref,
                         loc: name.loc,
                     },
                 )
@@ -1485,6 +1504,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // class name scope
         self.pop_scope();
+        if class.inner_class_ref.is_symbol() {
+            self.decorated_class_names.pop();
+        }
 
         shadow_ref
     }
@@ -1809,7 +1831,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        if !p.options.features.minify_syntax || !p.options.features.dead_code_elimination {
+        if !p.should_remove_dead_statements() || !p.options.features.dead_code_elimination {
+            return Ok(());
+        }
+
+        if !p.options.features.minify_syntax {
+            let mut is_control_flow_dead = false;
+            stmts.retain(|stmt| {
+                if is_control_flow_dead
+                    && !SideEffects::should_keep_stmt_in_dead_control_flow(*stmt, p.arena)
+                {
+                    return false;
+                }
+                match stmt.data {
+                    StmtData::SEmpty(_) => return false,
+                    StmtData::SBlock(block) if block.stmts.is_empty() => return false,
+                    StmtData::SReturn(_)
+                    | StmtData::SBreak(_)
+                    | StmtData::SContinue(_)
+                    | StmtData::SThrow(_) => is_control_flow_dead = true,
+                    _ => {}
+                }
+                true
+            });
             return Ok(());
         }
 
@@ -1909,7 +1953,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // The eval'd code may indirectly reference this symbol and the actual
             // use count may be greater than 1.
             // SAFETY: current_scope is a valid arena ptr for the parse.
-            if p.current_scope != p.module_scope && !p.current_scope().contains_direct_eval {
+            if p.current_scope != p.module_scope
+                && !p.current_scope().contains_direct_eval
+                && !p.options.features.is_library
+            {
                 // Keep inlining variables until a failure or until there are none left.
                 // That handles cases like this:
                 //

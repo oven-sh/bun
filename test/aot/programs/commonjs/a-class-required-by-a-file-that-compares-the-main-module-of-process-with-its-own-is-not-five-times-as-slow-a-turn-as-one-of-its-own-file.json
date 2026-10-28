@@ -1,0 +1,1 @@
+{ "skipWithASAN": "it compares two times of a release build", "skipInVariants": "it compares two times, which a flag of the build may change", "alone": "it asks which file the executable was started as (import.meta.main, require.main, module.id, module.parent, process.argv[1])" }

@@ -4114,6 +4114,39 @@ export { n, area, u };
   });
 
   describe("cases not covered by TypeScript's test suite", () => {
+    // From ten levels of one conditional type on, tsc takes the source for a type that expands without an end and says maybe.
+    test.each([
+      [1, 1],
+      [9, 1],
+      [10, 0],
+      [11, 0],
+      [30, 0],
+    ])("a source of %i conditional types inside each other has %i errors", async (levels, errors) => {
+      const call = Array.from({ length: levels }).reduce<string>(
+        (inner, _, i) => `provide<A${i}>()(${inner})`,
+        "input",
+      );
+      using dir = tempDir("bun-check", {
+        "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, noEmit: true, types: [] } }),
+        "main.ts": `interface E<R> { readonly r: () => R }
+declare function provide<S>(): <R>(self: E<R>) => E<Exclude<R, S>>;
+interface Scope { readonly scope: 1 }
+declare function take(e: E<Scope>): void;
+${Array.from({ length: levels }, (_, i) => `interface A${i} { readonly a${i}: 1 }\n`).join("")}export function add<R>(input: E<R | Scope>) {
+  take(${call});
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(
+        stdout
+          .split("\n")
+          .filter(line => line.includes("error TS"))
+          .map(line => /TS\d+/.exec(line)![0]),
+      ).toEqual(Array.from({ length: errors }, () => "TS2345"));
+      expect(exitCode).toBe(errors);
+    });
+
     // `sortByBestName` orders two modules by their specifiers, and a module and a namespace by their positions. With
     // modules on both sides of the namespace, that ordering is cyclic.
     test.each([9, 11, 40])(
@@ -6759,26 +6792,46 @@ export const wrong: number = "";
       expect(exitCode).toBe(1);
     });
 
-    test("still reports the error when a type is nested too deeply to print in full", async () => {
-      // An optimized build prints about 700 levels, and the check itself runs out of stack at about 3,000. Other builds
-      // have larger frames, by a platform-dependent amount, so they use a depth at which the whole type may be printed.
-      const isOptimized = !isDebug && !isASAN;
-      const depth = isOptimized ? 1500 : 100;
-      using dir = project({
-        "a.ts": `declare const x: ${repeat("{ a: ", depth)}1${repeat(" }", depth)};
-export const wrong: number = x;
-`,
-      });
+    // The printer writes `any` for what is nested deeper than the stack that it may use. An optimized build prints about
+    // 5,000 levels. Other builds have larger frames, by a platform-dependent amount, so they use a depth at which the
+    // whole type may be printed.
+    const isOptimized = !isDebug && !isASAN;
+    const writtenAsOneType = (depth: number) =>
+      `declare const x: ${repeat("{ a: ", depth)}1${repeat(" }", depth)};\nexport const wrong: number = x;\n`;
+    /** `source` assigns a type of `depth` levels to a number in its last line. Returns how many levels are printed. */
+    async function printedLevels(source: string, depth: number) {
+      using dir = project({ "a.ts": source });
       const { stdout, stderr, exitCode } = await check(dir, ["--noErrorTruncation"]);
+      expect(stderr).not.toContain("ran out of stack");
       const levels = stdout.split("{ a: ").length - 1;
       expect(levels).toBeGreaterThanOrEqual(50);
-      if (isOptimized) expect(levels).toBeLessThan(depth);
       const innermost = levels < depth ? "any" : "1";
       expect(stdout).toBe(
-        `a.ts(2,14): error TS2322: Type '${repeat("{ a: ", levels)}${innermost}${repeat("; }", levels)}' is not assignable to type 'number'.`,
+        `a.ts(${source.split("\n").length - 1},14): error TS2322: Type '${repeat("{ a: ", levels)}${innermost}${repeat("; }", levels)}' is not assignable to type 'number'.`,
       );
       expect(stderr.split("\n")[0]).toBe("Found 1 error in 1 file, checked 1 file [time]");
       expect(exitCode).toBe(1);
+      return levels;
+    }
+
+    test("still reports the error when a type is nested too deeply to print in full", async () => {
+      // Each level has a declaration of its own, because the parser takes fewer levels in one type than the printer prints.
+      const depth = isOptimized ? 20_000 : 100;
+      const outer = Array.from({ length: depth - 1 }, (_, i) => `declare const x${i + 2}: { a: typeof x${i + 1} };\n`);
+      const levels = await printedLevels(
+        `declare const x1: { a: 1 };\n${outer.join("")}export const wrong: number = x${depth};\n`,
+        depth,
+      );
+      if (isOptimized) expect(levels).toBeLessThan(depth);
+    });
+
+    test("reports the error when a type is written 1,500 levels deep", async () => {
+      const depth = isOptimized ? 1500 : 100;
+      await printedLevels(writtenAsOneType(depth), depth);
+    });
+
+    test.skipIf(!isOptimized)("prints a type that is written 3,500 levels deep in full", async () => {
+      expect(await printedLevels(writtenAsOneType(3_500), 3_500)).toBe(3_500);
     });
 
     // How deep an expression can nest depends on how much stack is left, not on a count. A build that isn't optimized has
@@ -7025,6 +7078,23 @@ const wrong: number = "";
       expect(stdout).toBe(`b.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`);
       expect(stderr.split("\n")[0]).toBe(
         "error: the code in a.ts is nested too deeply: errors in this file may be missing.",
+      );
+      expect(exitCode).toBe(1);
+    });
+
+    // Which part of the parser finds that too little stack is left depends on where the nesting starts.
+    test("reports that classes in the methods of classes are nested too deeply", async () => {
+      const names = Array.from({ length: 16 }, (_, blocks) => `a${blocks}.ts`);
+      using dir = project(
+        Object.fromEntries(
+          names.map((name, blocks) => [name, `${repeat("{", blocks)}${repeat("class C{m(){", 20_000)}\n`]),
+        ),
+      );
+      const { stderr, exitCode } = await check(dir);
+      expect(stderr.split("\n").slice(0, names.length).sort()).toEqual(
+        names
+          .map(name => `error: the code in ${name} is nested too deeply: errors in this file may be missing.`)
+          .sort(),
       );
       expect(exitCode).toBe(1);
     });
@@ -12385,6 +12455,38 @@ export declare const a4: A4; export const n4: never = a4;
       expect(exitCode).toBe(1);
     });
 
+    test("reports TS2589 only once for a conditional type that ended at the limit of 1,000 tail calls", async () => {
+      using dir = project({
+        "a.ts": `type Tn<T, N extends number, A extends 0[] = []> = T extends unknown ? A["length"] extends N ? T : Tn<T, N, [...A, 0]> : never;
+interface C<T> { m<U>(a0: Tn<T, 1000>, a1: U): void }
+declare const r: C<string>;
+r.m<number>("x", 1);
+r.m<number>();
+r.m<boolean>("x", true);
+export const q: Tn<string, 1000> = "x";
+`,
+        "b.ts": `type Tn<T, N extends number, A extends 0[] = []> = T extends unknown ? A["length"] extends N ? T : Tn<T, N, [...A, 0]> : never;
+interface C<T> { m<U>(a0: Tn<T, 1000>, a1: U): void }
+declare const r: C<string>;
+r.m<number>();
+r.m<number>("x", 1);
+// \`getConditionalTypeInstantiation\` stores nothing for a member of the union that it distributes over.
+export type U1 = Tn<string | number, 1000>;
+export type U2 = Tn<string | boolean, 1000>;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(4,1): error TS2589: Type instantiation is excessively deep and possibly infinite.
+        a.ts(5,3): error TS2554: Expected 2 arguments, but got 0.
+        b.ts(4,1): error TS2589: Type instantiation is excessively deep and possibly infinite.
+        b.ts(4,3): error TS2554: Expected 2 arguments, but got 0.
+        b.ts(7,18): error TS2589: Type instantiation is excessively deep and possibly infinite.
+        b.ts(8,18): error TS2589: Type instantiation is excessively deep and possibly infinite."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("computes keyof of a mapped type with an `as` clause again after the intersection it reads is reduced", async () => {
       const filler = [0, 1, 2].map(
         i => `type F${i}<T> = T extends any ? { v${i}: T } : never;\ndeclare let f${i}: F${i}<N>;\n`,
@@ -14687,6 +14789,54 @@ declare const i9: P7<number> & { z: 1 }; i9.m();
       expect(exitCode).toBe(1);
     });
 
+    test("an object literal nested in the argument of a generic call stays widened when it's instantiated twice", async () => {
+      using dir = project({
+        "a.ts": `type State<T> = T extends { states: infer S } ? keyof S : "leaf";
+type States<T> = { [K in keyof T]: State<T[K]> };
+declare function widened<T>(config: T): States<T>;
+declare function regular<const T>(config: T): States<T>;
+declare function hold<T>(value: T): { value: T };
+function machine<Q>() {
+  return widened({ idle: {}, busy: { initial: "a", states: { a: {}, b: {} } } });
+}
+function constant<Q>() {
+  return regular({ idle: {}, busy: { initial: "a", states: { a: {}, b: {} } } });
+}
+function held<Q>(q: Q) {
+  return hold({ busy: { initial: q, states: { a: q }, inner: { initial: 1, states: { b: q } } } });
+}
+function once<T>(t: T) {
+  const busy: "a" = machine<T>().busy;
+  const constantBusy: "a" = constant<T[]>().busy;
+  const { value } = held(t);
+  const heldBusy: State<typeof value.busy> = "leaf";
+  const inner: State<typeof value.busy.inner> = "leaf";
+  return value;
+}
+export function twice<U>(u: U) {
+  const value = once([u]);
+  const busy: State<typeof value.busy> = "leaf";
+  const inner: State<typeof value.busy.inner> = "leaf";
+}
+export const closed: "a" = machine<string>().busy;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(16,9): error TS2322: Type '"a" | "b"' is not assignable to type '"a"'.
+          Type '"b"' is not assignable to type '"a"'.
+        a.ts(17,9): error TS2322: Type '"a" | "b"' is not assignable to type '"a"'.
+          Type '"b"' is not assignable to type '"a"'.
+        a.ts(19,9): error TS2322: Type '"leaf"' is not assignable to type '"a"'.
+        a.ts(20,9): error TS2322: Type '"leaf"' is not assignable to type '"b"'.
+        a.ts(25,9): error TS2322: Type '"leaf"' is not assignable to type '"a"'.
+        a.ts(26,9): error TS2322: Type '"leaf"' is not assignable to type '"b"'.
+        a.ts(28,14): error TS2322: Type '"a" | "b"' is not assignable to type '"a"'.
+          Type '"b"' is not assignable to type '"a"'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("reports TS7022 for a template literal with `this` in a class that has optional members", async () => {
       using dir = project({
         "a.ts": `export class A1 { x = \`\${this}\` as const; }
@@ -15460,6 +15610,246 @@ export const r5: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] = swapped;
         a.ts(17,14): error TS2322: Type '[0, 1, 10, 3, 4, 5, 6, 7, 8, 9, 2, 11] & { brand: 1; }' is not assignable to type '[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]'.
           Types of property '10' are incompatible.
             Type '2' is not assignable to type '10'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    // `getApparentType` recreates the references in an intersection, so a deferred one (the body of a type alias)
+    // becomes the same type as the plain one, and the intersection of the two is that type.
+    test("infers from a tuple type intersected with its alias as from the tuple", async () => {
+      using dir = project({
+        "a.ts": `interface W { m(x: string): void }
+interface N { m(x: "a"): void }
+type NW = [N, W[]];
+type NW2 = [N, W[]];
+type Pair<A, B> = [A, B];
+type Named = [a: N, b: W[]];
+type Frozen = readonly [N, W[]];
+type Open = [N, W[]?];
+type Long = [N, W[], 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+interface P<A, B> { b: B; a: A }
+type PNW = P<N, W[]>;
+declare function s<T>(): (a: T) => void;
+declare function f<T>(x: (a: [T, T[]]) => void): T;
+declare function alias<T>(x: (a: Pair<T, T[]>) => void): T;
+declare function frozen<T>(x: (a: readonly [T, T[]]) => void): T;
+declare function open<T>(x: (a: [T, T[]?]) => void): T;
+declare function long<T>(x: (a: [T, T[], 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]) => void): T;
+declare function nested<T>(x: (a: { p: [[T, T[]], 1] }) => void): T;
+declare function p<T>(x: (a: P<T, T[]>) => void): T;
+declare function lead<T>(y: T, x: (a: [T, T[]]) => void): T;
+// A tuple type and its alias: element by element, as from \`[N, W[]]\`.
+export const a1: never = f(s<[N, W[]]>());
+export const a2: never = f(s<NW & [N, W[]]>());
+export const a3: never = f(s<[N, W[]] & NW>());
+export const a4: never = f(s<NW & NW2>());
+export const a5: never = f(s<Pair<N, W[]> & NW>());
+export const a6: never = alias(s<NW & NW2>());
+export const a7: never = frozen(s<Frozen & readonly [N, W[]]>());
+export const a8: never = open(s<Open & [N, W[]?]>());
+export const a9: never = long(s<Long & [N, W[], 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]>());
+export const a10: never = nested(s<{ p: [NW & [N, W[]], 1] }>());
+// An interface and its alias: type argument by type argument, so \`a\` comes before \`b\`.
+export const b1: never = p(s<P<N, W[]>>());
+export const b2: never = p(s<PNW & P<N, W[]>>());
+// Two tuple types, or more than a tuple: property by property.
+export const c1: never = f(s<NW & Named>());
+export const c2: never = f(s<NW & Frozen>());
+export const c3: never = f(s<NW & [N, W[]] & { brand: 1 }>());
+type NS = [number, string[]];
+export const d1: never = f(s<NS & [number, string[]]>());
+export const d2: never = lead(1, s<NS & [number, string[]]>());
+declare const v: NS & [number, string[]];
+export const d3: [number, number[]] = v;
+export const d4: never = v.sort();
+export const d5 = v[2];
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(22,14): error TS2322: Type 'W' is not assignable to type 'never'.
+        a.ts(23,14): error TS2322: Type 'W' is not assignable to type 'never'.
+        a.ts(24,14): error TS2322: Type 'W' is not assignable to type 'never'.
+        a.ts(25,14): error TS2322: Type 'W' is not assignable to type 'never'.
+        a.ts(26,14): error TS2322: Type 'W' is not assignable to type 'never'.
+        a.ts(27,14): error TS2322: Type 'W' is not assignable to type 'never'.
+        a.ts(28,14): error TS2322: Type 'W' is not assignable to type 'never'.
+        a.ts(29,14): error TS2322: Type 'W' is not assignable to type 'never'.
+        a.ts(30,14): error TS2322: Type 'W' is not assignable to type 'never'.
+        a.ts(31,14): error TS2322: Type 'W' is not assignable to type 'never'.
+        a.ts(33,14): error TS2322: Type 'W' is not assignable to type 'never'.
+        a.ts(34,14): error TS2322: Type 'W' is not assignable to type 'never'.
+        a.ts(36,14): error TS2322: Type 'N' is not assignable to type 'never'.
+        a.ts(37,14): error TS2322: Type 'N' is not assignable to type 'never'.
+        a.ts(38,14): error TS2322: Type 'N' is not assignable to type 'never'.
+        a.ts(38,28): error TS2345: Argument of type '(a: NW & [N, W[]] & { brand: 1; }) => void' is not assignable to parameter of type '(a: [N, N[]]) => void'.
+          Types of parameters 'a' and 'a' are incompatible.
+            Type '[N, N[]]' is not assignable to type 'NW & [N, W[]] & { brand: 1; }'.
+              Property 'brand' is missing in type '[N, N[]]' but required in type '{ brand: 1; }'.
+        a.ts(40,14): error TS2322: Type 'number' is not assignable to type 'never'.
+        a.ts(40,28): error TS2345: Argument of type '(a: NS & [number, string[]]) => void' is not assignable to parameter of type '(a: [number, number[]]) => void'.
+          Types of parameters 'a' and 'a' are incompatible.
+            Type '[number, number[]]' is not assignable to type 'NS & [number, string[]]'.
+              Type '[number, number[]]' is not assignable to type 'NS'.
+                Type at position 1 in source is not compatible with type at position 1 in target.
+                  Type 'number[]' is not assignable to type 'string[]'.
+                    Type 'number' is not assignable to type 'string'.
+        a.ts(41,14): error TS2322: Type '1' is not assignable to type 'never'.
+        a.ts(41,34): error TS2345: Argument of type '(a: NS & [number, string[]]) => void' is not assignable to parameter of type '(a: [1, 1[]]) => void'.
+          Types of parameters 'a' and 'a' are incompatible.
+            Type '[1, 1[]]' is not assignable to type 'NS & [number, string[]]'.
+              Type '[1, 1[]]' is not assignable to type 'NS'.
+                Type at position 1 in source is not compatible with type at position 1 in target.
+                  Type '1[]' is not assignable to type 'string[]'.
+                    Type 'number' is not assignable to type 'string'.
+        a.ts(43,14): error TS2322: Type 'NS & [number, string[]]' is not assignable to type '[number, number[]]'.
+          Type at position 1 in source is not compatible with type at position 1 in target.
+            Type 'string[]' is not assignable to type 'number[]'.
+              Type 'string' is not assignable to type 'number'.
+        a.ts(44,14): error TS2322: Type 'NS & [number, string[]]' is not assignable to type 'never'.
+        a.ts(45,21): error TS2493: Tuple type '[number, string[]]' of length '2' has no element at index '2'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("`this` is the type parameter if its constraint is a tuple type intersected with its alias", async () => {
+      using dir = project({
+        "a.ts": `type NS = [number, string[]];
+export function f<T extends NS & [number, string[]], U extends T>(t: T, u: U) {
+  const a: never = t.sort();
+  const b: never = t.fill(0 as never);
+  const c: never = t.copyWithin(0, 1);
+  const d: never = u.sort();
+  // Not \`this\`.
+  const e: never = t.reverse();
+  const g: never = t[0];
+  const h: never = t.length;
+  return [a, b, c, d, e, g, h];
+}
+export class Box<T extends NS & [number, string[]]> {
+  constructor(public t: T) {}
+  sorted() {
+    const a: never = this.t.sort();
+    return a;
+  }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(3,9): error TS2322: Type 'T' is not assignable to type 'never'.
+          Type '[number, string[]]' is not assignable to type 'never'.
+        a.ts(4,9): error TS2322: Type 'T' is not assignable to type 'never'.
+          Type '[number, string[]]' is not assignable to type 'never'.
+        a.ts(5,9): error TS2322: Type 'T' is not assignable to type 'never'.
+          Type '[number, string[]]' is not assignable to type 'never'.
+        a.ts(6,9): error TS2322: Type 'U' is not assignable to type 'never'.
+          Type 'T' is not assignable to type 'never'.
+            Type '[number, string[]]' is not assignable to type 'never'.
+        a.ts(8,9): error TS2322: Type '(number | string[])[]' is not assignable to type 'never'.
+        a.ts(9,9): error TS2322: Type 'number' is not assignable to type 'never'.
+        a.ts(10,9): error TS2322: Type '2' is not assignable to type 'never'.
+        a.ts(16,11): error TS2322: Type 'T' is not assignable to type 'never'.
+          Type '[number, string[]]' is not assignable to type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("`this` is the intersection of a tuple type and its alias however a method is read from it", async () => {
+      using dir = project({
+        "a.ts": `type NS = [number, string[]];
+declare const v: NS & [number, string[]];
+export const a: never = v["sort"]();
+export const b: never = v.sort();
+export const c: never = v["fill"](0 as never);
+export const d: never = v["copyWithin"](0, 1);
+export const e: never = v["reverse"]();
+export const f: never = v["length"];
+export const g: never = v[0];
+declare const k: "sort";
+export const h: never = v[k]();
+type M = (NS & [number, string[]])["sort"];
+export const i: never = (null! as M)();
+const { sort } = v;
+export const j: never = sort.call(v);
+export function t<T extends NS & [number, string[]]>(x: T) { const p: never = x["sort"](); const q: never = x.sort(); return [p, q]; }
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(3,14): error TS2322: Type 'NS & [number, string[]]' is not assignable to type 'never'.
+        a.ts(4,14): error TS2322: Type 'NS & [number, string[]]' is not assignable to type 'never'.
+        a.ts(5,14): error TS2322: Type 'NS & [number, string[]]' is not assignable to type 'never'.
+        a.ts(6,14): error TS2322: Type 'NS & [number, string[]]' is not assignable to type 'never'.
+        a.ts(7,14): error TS2322: Type '(number | string[])[]' is not assignable to type 'never'.
+        a.ts(8,14): error TS2322: Type '2' is not assignable to type 'never'.
+        a.ts(9,14): error TS2322: Type 'number' is not assignable to type 'never'.
+        a.ts(11,14): error TS2322: Type 'NS & [number, string[]]' is not assignable to type 'never'.
+        a.ts(13,14): error TS2322: Type 'NS & [number, string[]]' is not assignable to type 'never'.
+        a.ts(15,14): error TS2322: Type 'NS & [number, string[]]' is not assignable to type 'never'.
+        a.ts(16,68): error TS2322: Type 'T' is not assignable to type 'never'.
+          Type '[number, string[]]' is not assignable to type 'never'.
+        a.ts(16,98): error TS2322: Type 'T' is not assignable to type 'never'.
+          Type '[number, string[]]' is not assignable to type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("`this` is the type parameter in a tuple type that its constraint intersects with another type", async () => {
+      using dir = project({
+        "a.ts": `interface Self { me(): this }
+export function f<T extends [number] & { brand: 1 }>(t: T) {
+  const a: never = t.sort();
+  const b: never = t["sort"]();
+  const c: never = t.fill(0);
+  const d: never = t.copyWithin(0, 1);
+  // Not \`this\`.
+  const e: never = t.reverse();
+  const g: never = t.brand;
+  const h: never = t.length;
+  const i: never = t[0];
+  return t.sort();
+}
+declare const narrower: [number] & { brand: 1; extra: 2 };
+export const extra: 2 = f(narrower).extra;
+export function g<T extends [Self] & Self, U extends T>(t: T, u: U) {
+  const a: never = t.sort();
+  const b: never = t.me();
+  const c: never = u.sort();
+  return [a, b, c];
+}
+// Both constituents have \`length\`.
+export function h<T extends [number] & { length: 1 }>(t: T) {
+  const a: never = t.length;
+  const b: never = t.sort();
+  return [a, b];
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(3,9): error TS2322: Type 'T' is not assignable to type 'never'.
+          Type '[number] & { brand: 1; }' is not assignable to type 'never'.
+        a.ts(4,9): error TS2322: Type 'T' is not assignable to type 'never'.
+          Type '[number] & { brand: 1; }' is not assignable to type 'never'.
+        a.ts(5,9): error TS2322: Type 'T' is not assignable to type 'never'.
+          Type '[number] & { brand: 1; }' is not assignable to type 'never'.
+        a.ts(6,9): error TS2322: Type 'T' is not assignable to type 'never'.
+          Type '[number] & { brand: 1; }' is not assignable to type 'never'.
+        a.ts(8,9): error TS2322: Type 'number[]' is not assignable to type 'never'.
+        a.ts(9,9): error TS2322: Type '1' is not assignable to type 'never'.
+        a.ts(10,9): error TS2322: Type '1' is not assignable to type 'never'.
+        a.ts(11,9): error TS2322: Type 'number' is not assignable to type 'never'.
+        a.ts(17,9): error TS2322: Type 'T' is not assignable to type 'never'.
+          Type '[Self] & Self' is not assignable to type 'never'.
+        a.ts(18,9): error TS2322: Type 'T' is not assignable to type 'never'.
+          Type '[Self] & Self' is not assignable to type 'never'.
+        a.ts(19,9): error TS2322: Type 'U' is not assignable to type 'never'.
+          Type 'T' is not assignable to type 'never'.
+            Type '[Self] & Self' is not assignable to type 'never'.
+        a.ts(24,9): error TS2322: Type '1' is not assignable to type 'never'.
+        a.ts(25,9): error TS2322: Type 'T' is not assignable to type 'never'.
+          Type '[number] & { length: 1; }' is not assignable to type 'never'."
       `);
       expect(exitCode).toBe(1);
     });
@@ -24594,6 +24984,9 @@ describe.concurrent("--check", () => {
       "():{(",
       "declare function f<T>(): void; f<{ a b: any }>();",
       "type T = { m(: string): any };",
+      "namespace N { a b }",
+      "namespace N { interface I {} namespace M { type T = 1; static x } }",
+      "function f() { namespace N { a b } }",
     ];
     const files: Record<string, string> = {};
     const add = (name: string, text: string) => (files[`${name}.ts`] = `${text}\nconst canary_${name}: string = 1;\n`);
@@ -24679,6 +25072,30 @@ describe.concurrent("--check", () => {
     expect(parsed.length).toBeLessThan(names.length / 2);
     writeFileSync(join(String(dir), "tsconfig.json"), JSON.stringify({ ...JSON.parse(tsconfig), files: parsed }));
     expect(await withoutErrors(parsed)).toEqual([]);
+  });
+
+  test("a program is checked with a stray token anywhere in it, and up to any character", async () => {
+    // Declarations that come first in a file, a namespace and a function.
+    const programs = [
+      `namespace A { interface I { a: string } type T = I; namespace B { type U = T; interface V {} } }\n"use strict";`,
+      `namespace C { export class D<T> extends Object { static x = 1; m(a: T) { "use strict"; return a; } } enum E { a, b = 2 } }`,
+      `function f() { namespace G { type H = 1 } "use strict"; abstract class J { abstract k(): void } }`,
+      `declare class K { l: number } declare enum M { n } declare function o(): void; import type { P } from "./q"; export type { P }; "use strict";`,
+      `interface R {} type S = R; declare namespace T { const u: S } declare var v: S, w: S; function x(): void; function x() {}`,
+    ];
+    const stray = ["q", "static q", "@", "(", ")", "{", "}", "=>", "export", "declare", "class", "namespace", "<", "`"];
+    const files: Record<string, string> = {};
+    programs.forEach((text, index) => {
+      for (let length = 1; length <= text.length; length++) {
+        files[`p${index}_${length}.ts`] = text.slice(0, length);
+        if (text[length] !== " ") continue;
+        stray.forEach((token, nth) => {
+          files[`p${index}_${length}_${nth}.ts`] = `${text.slice(0, length)} ${token}${text.slice(length)}`;
+        });
+      }
+    });
+    using dir = project(files);
+    expect((await check(dir)).exitCode).toBe(1);
   });
 
   // Nothing here is slow or deep unless the cost of a construct grows faster than its size. An exponential walk doesn't

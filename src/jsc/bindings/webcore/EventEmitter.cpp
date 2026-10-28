@@ -206,8 +206,7 @@ bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedA
     return invokeEventListeners(*data, eventType, *listenersVector, arguments);
 }
 
-// The `errorMonitor` that node:events exports (src/js/node/events.ts). A program that did not load that module has
-// no way to name the symbol, so it has no monitor.
+// The `errorMonitor` export of node:events. Until that module is loaded, no code can name the symbol.
 static JSC::Symbol* errorMonitorOfNodeEvents(JSC::JSGlobalObject* lexicalGlobalObject)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);

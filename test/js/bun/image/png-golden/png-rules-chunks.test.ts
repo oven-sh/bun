@@ -254,12 +254,14 @@ describe("chunks before the image", () => {
 
   test("a profile that inflates to more than the limit costs the image too", async () => {
     const file = (size: number) => png(rgbaHeader, iccpOf(Buffer.alloc(size, "p").toString()), rgbaData, iend);
+    const over = file((8 << 20) + 1);
     // 8 MiB is the least the limit can be.
     expect((await decode(file(8 << 20), { maxPixels: 64 })).profile?.length).toBe(8 << 20);
-    await expect(decode(file((8 << 20) + 1), { maxPixels: 64 })).rejects.toMatchObject({
-      code: "ERR_IMAGE_DECODE_FAILED",
-    });
-    expect((await decode(file((8 << 20) + 1))).profile?.length).toBe((8 << 20) + 1);
+    expect(await decodes(over, { maxPixels: 64 })).toBe(false);
+    expect((await decode(over)).profile?.length).toBe((8 << 20) + 1);
+    // Otherwise it is 4 bytes for each of `maxPixels`, rounded down to a power of two.
+    expect(await decodes(over, { maxPixels: (4 << 20) - 1 })).toBe(false);
+    expect((await decode(over, { maxPixels: 4 << 20 })).profile?.length).toBe((8 << 20) + 1);
   });
 
   describe("compressed text", () => {
@@ -293,6 +295,36 @@ describe("chunks before the image", () => {
       ]) {
         expect((await decode(withText(type, before, big), { maxPixels: 64 })).pixels).toEqual(["01020304"]);
       }
+    });
+
+    describe("may inflate to a byte less than a profile, rounded down to a power of two", () => {
+      // So many MiB of zeros and one byte more. Nobody looks at the checksum.
+      const piece = zlib.deflateRawSync(Buffer.alloc(1 << 20), { finishFlush: zlib.constants.Z_SYNC_FLUSH });
+      const decodesOver = (mib: number, maxPixels?: number) => {
+        const stream = [
+          Buffer.from([0x78, 0x9c]),
+          ...Array(mib).fill(piece),
+          zlib.deflateRawSync("\0"),
+          Buffer.alloc(4),
+        ];
+        return decodes(withText("zTXt", "key\0\0", Buffer.concat(stream)), { maxPixels });
+      };
+
+      test("of 4 bytes for each of maxPixels", async () => {
+        for (const mib of [4, 8]) {
+          // Twice as many MiB, where a profile of as much is taken.
+          const maxPixels = ((2 * mib) << 20) / 4;
+          expect([mib, await decodesOver(mib, maxPixels)]).toEqual([mib, false]);
+          expect([mib, await decodesOver(mib, maxPixels + 1)]).toEqual([mib, true]);
+        }
+      });
+
+      test("which is 512 MiB by default and 1 GiB at the most", async () => {
+        expect(await decodesOver(256)).toBe(true);
+        expect(await decodesOver(512)).toBe(false);
+        expect(await decodesOver(512, 1e15)).toBe(true);
+        expect(await decodesOver(1024, 1e15)).toBe(false);
+      });
     });
 
     test("is inflated only where its own kind has it", async () => {

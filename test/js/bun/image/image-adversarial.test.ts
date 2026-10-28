@@ -516,6 +516,27 @@ describe("malformed PNG structure", () => {
     ]);
     expect((fixtureMaxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 256 : 64);
   });
+
+  // It is inflated to see whether it is too much, 448 MiB here. libspng kept it.
+  test.concurrent("nothing is kept of compressed text", async () => {
+    const fixture = `
+      const zlib = require("node:zlib");
+      const tiny = Buffer.from("${Buffer.from(tinyPng).toString("base64")}", "base64");
+      const piece = zlib.deflateRawSync(Buffer.alloc(1 << 20), { finishFlush: zlib.constants.Z_SYNC_FLUSH });
+      const start = Buffer.from("key\\0\\0\\x78\\x9c", "latin1");
+      const data = Buffer.concat([start, ...Array(448).fill(piece), zlib.deflateRawSync(""), Buffer.alloc(4)]);
+      const head = Buffer.alloc(8);
+      head.writeUInt32BE(data.length);
+      head.write("zTXt", 4);
+      const png = Buffer.concat([tiny.subarray(0, 33), head, data, Buffer.alloc(4), tiny.subarray(33)]);
+      console.log(JSON.stringify(await new Bun.Image(png).png().bytes().then(() => "decoded", e => e.code)));
+    `;
+    const [fixtureMaxRSS, baselineMaxRSS] = await Promise.all([
+      runFixtureMaxRSS(fixture, "decoded"),
+      emptyProcessMaxRSS(),
+    ]);
+    expect((fixtureMaxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 256 : 64);
+  });
 });
 
 // ─── 5. malformed JPEG / EXIF ────────────────────────────────────────────────

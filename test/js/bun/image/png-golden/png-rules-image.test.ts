@@ -76,6 +76,23 @@ describe("the image", () => {
     expect(await decode(png(...start, chunk("IEND", "not empty")))).toEqual(expected);
   });
 
+  test("as many pixels as maxPixels, and no more", async () => {
+    for (const [width, height] of [
+      [1, 1],
+      [3, 2],
+      [1, 17],
+      [11, 7],
+    ]) {
+      const file = png(ihdr(width, height, 8, GRAY), idat(...Array(height).fill(Array(width).fill(7))), iend);
+      expect(await decode(file, { maxPixels: width * height - 1 }).catch(error => error.code)).toBe(
+        "ERR_IMAGE_TOO_MANY_PIXELS",
+      );
+      expect((await decode(file, { maxPixels: width * height })).pixels).toEqual(
+        Array(width * height).fill("070707ff"),
+      );
+    }
+  });
+
   /** What an image with this IHDR is refused with. */
   const code = (...fields: Parameters<typeof ihdr>) =>
     decode(png(ihdr(...fields), idat([0]), iend)).catch(error => error.code);

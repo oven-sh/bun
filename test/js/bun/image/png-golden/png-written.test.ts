@@ -294,7 +294,9 @@ test("the color profile, of any size, at any level, with and without a palette",
   const cases = [1, 2, 100, 8179, 8180, 8181, 8192, 70000, 1_000_000].flatMap(size => {
     const profile = Buffer.alloc(size, 1);
     const random = randomBytes(size);
-    for (let i = 0; i < Math.min(size, 20000); i++) profile[i] = random();
+    // The one of 70,000 is all noise, which gets longer when it is compressed, and is more than the file starts with
+    // room for.
+    for (let i = 0; i < Math.min(size, 70000); i++) profile[i] = random();
     const source = sourceOf(picture, profile);
     return [{}, { compressionLevel: 0 }, { compressionLevel: 9 }, { palette: true }].map(options => ({
       name: `${size} bytes, ${JSON.stringify(options)}`,
@@ -351,13 +353,6 @@ describe("Bun.Image", () => {
     // PNG by the name of the file, and because that is what came in.
     expect(await new Bun.Image(file).write(path)).toBe(bytes.length);
     expect(Buffer.from(await new Bun.Image(file).bytes()).equals(bytes)).toBe(true);
-  });
-
-  test("exactly as many pixels as maxPixels allows", async () => {
-    expect(read(await new Bun.Image(file, { maxPixels: 77 }).png().bytes()).rgba.equals(expected)).toBe(true);
-    await expect(new Bun.Image(file, { maxPixels: 76 }).png().bytes()).rejects.toMatchObject({
-      code: "ERR_IMAGE_TOO_MANY_PIXELS",
-    });
   });
 
   test("writes a valid file after every operation", async () => {

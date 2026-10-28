@@ -3294,9 +3294,16 @@ it.if(isPosix && !isFreeBSD)("realpath does not open what its path leads to", as
   fs.chmodSync(join(root, "file"), 0);
   fs.chmodSync(join(root, "dir"), 0o100);
   try {
+    const refusals: Record<string, string> = {
+      "file": "EACCES",
+      "dir": "EACCES",
+      "socket": isMacOS ? "EOPNOTSUPP" : "ENXIO",
+    };
     // Root can open the file and the directory.
     for (const name of process.getuid!() === 0 ? ["socket"] : names) {
-      expect(() => closeSync(openSync(join(root, name), "r"))).toThrow();
+      expect(() => closeSync(openSync(join(root, name), "r"))).toThrow(
+        expect.objectContaining({ code: refusals[name] }),
+      );
     }
     const paths = [...names.flatMap(name => [name, "to-" + name]), "dir/inside", "to-dir/inside"];
     expect(

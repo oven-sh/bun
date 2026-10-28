@@ -2,7 +2,7 @@
 
 use super::fast::{
     DictBlock, ExtDictBlock, Found, MatchSink, NoDictBlock, Segments, TaggedTable, ThirdPositions,
-    put_tagged, put_tagged_in_between, restore_rep,
+    after, put_tagged, put_tagged_in_between, restore_rep,
 };
 use super::internal::{
     BlockSrc, HASH_READ_SIZE, Hasher, K_SEARCH_STRENGTH, MatchState, Near, Prefix,
@@ -141,7 +141,7 @@ impl Finder {
                 let idxs0 = hashed_swap(hash_small, small.hash(bytes0), curr);
 
                 if sink.read32_before(ip + 1, offset_1) == Some((bytes0 >> 8) as u32)
-                    && offset_1 > 0
+                    && after(offset_1 > 0)
                 {
                     ip += 1;
                     let end = ip + 4 + sink.count_before(ip + 4, offset_1);

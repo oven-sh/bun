@@ -552,6 +552,13 @@ pub(super) struct Found {
     pub(super) offset: u32,
 }
 
+/// `condition`, which the compiler then does not look at before what is on its left.
+#[inline(always)]
+pub(super) fn after(condition: bool) -> bool {
+    compiler_fence(Ordering::SeqCst);
+    condition
+}
+
 /// What `fast` looks for matches with, when there is no dictionary and the window is one segment.
 struct Finder {
     /// The index of the first position.
@@ -615,7 +622,7 @@ impl Finder {
                 let idx0 = hashed_swap(hash_table, hasher.hash(bytes0), current0);
 
                 if sink.read32_before(ip2, rep_offset1) == Some(le32_at::<0, _>(ahead))
-                    && rep_offset1 > 0
+                    && after(rep_offset1 > 0)
                 {
                     hashed_put(hash_table, hasher.hash(bytes0 >> 8), current0 + 1);
                     let back = u32::from(sink.same_byte_before(ip2, rep_offset1));

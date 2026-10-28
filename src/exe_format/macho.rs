@@ -777,9 +777,7 @@ impl MachoSigner {
                 .chunks(PAGE_SIZE)
                 .zip(hashes.as_chunks_mut::<HASH_SIZE>().0)
             {
-                let mut digest = [0u8; HASH_SIZE];
-                bun_sha_hmac::sha::SHA256::hash(page, &mut digest);
-                hash.copy_from_slice(&digest);
+                bun_sha_hmac::sha::SHA256::hash(page, hash);
             }
         });
 

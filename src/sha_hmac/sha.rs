@@ -4,17 +4,9 @@ use core::ptr;
 use bun_boringssl as boringssl;
 use bun_boringssl_sys as boringssl_sys;
 
-// ──────────────────────────────────────────────────────────────────────────
-// BoringSSL FFI surface — thin re-export shim over `bun_boringssl_sys`.
-//
-// Kept as a `pub mod ffi` (rather than deleted outright) so existing path
-// consumers — `s3_signing::credentials`, `runtime::crypto::{PBKDF2,CryptoHasher}`,
-// `crate::hmac` — need no `use`-path edits. All symbols now resolve to the
-// canonical sys-crate definitions, which unifies `EVP_MD`/`EVP_MD_CTX` type
-// identity across crates (eliminating the cross-crate opaque-pointer casts).
-// ──────────────────────────────────────────────────────────────────────────
-pub mod ffi {
-    pub use bun_boringssl_sys::{
+/// The `bun_boringssl_sys` symbols this crate calls.
+pub(crate) mod ffi {
+    pub(crate) use bun_boringssl_sys::{
         EVP_Digest, EVP_DigestFinal, EVP_DigestInit, EVP_DigestUpdate, EVP_MD, EVP_MD_CTX,
         EVP_MD_CTX_cleanup, EVP_MD_CTX_init, EVP_blake2b256, EVP_blake2b512, EVP_md4, EVP_md5,
         EVP_ripemd160, EVP_sha1, EVP_sha3_224, EVP_sha3_256, EVP_sha3_384, EVP_sha3_512,

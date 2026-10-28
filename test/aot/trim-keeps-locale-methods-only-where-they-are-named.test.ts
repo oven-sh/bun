@@ -5,6 +5,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { canTrim } from "../bundler/compile-trim-features";
 import { built, slot, spawned, unsupported } from "./harness/commands";
+import { withoutDebugInformation } from "./harness/without-debug-information";
 
 const removed = (name: string) =>
   `${name} was removed by --trim because your code never uses it by name. A name known only at run time, as in object[key]() or eval(text), does not count. To keep it, add "intl" to compile.trim.allow in Bun.build().`;
@@ -55,7 +56,17 @@ if (!canTrim)
         ] as const) {
           built(
             await spawned(
-              [bunExe(), "build", "--compile", "--aot", ...flags, "program.js", "--outfile", kind],
+              [
+                bunExe(),
+                "build",
+                "--compile",
+                ...withoutDebugInformation,
+                "--aot",
+                ...flags,
+                "program.js",
+                "--outfile",
+                kind,
+              ],
               folder,
               bunEnv,
             ),

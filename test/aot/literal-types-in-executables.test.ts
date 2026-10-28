@@ -6,6 +6,7 @@ import { readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, slot, spawned, unsupported } from "./harness/commands";
+import { withoutDebugInformation } from "./harness/without-debug-information";
 
 const sources = {
   "entry.ts": `
@@ -68,6 +69,7 @@ describe.skipIf(!!unsupported)("compile/aot/literal-types-in-executables", () =>
           bunExe(),
           "build",
           "--compile",
+          ...withoutDebugInformation,
           "--no-compile-function-source",
           "--define",
           'process.env.BUILD_KIND="external"',

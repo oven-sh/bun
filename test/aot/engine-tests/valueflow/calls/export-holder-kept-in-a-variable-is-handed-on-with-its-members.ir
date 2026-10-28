@@ -1,32 +1,21 @@
-# readline = require("node:readline"); input(require(name))
-# The module of the library has run, so the load under a computed name may answer what it exports, and the program hands the answer to a callee nobody knows. Such a callee keeps the object and may read and write it.
-# It calls none of the functions that hang on it: the object that holds the exports of a module of the library is only held, however it got into those hands, and so is whatever it leads to.
-# So no function of the library is entered with operands nobody knows, and the module that only one of them requires is not evaluated: one computed load does not bring in the library.
-# A call by value of a function that nothing has entered throws an error that names the function. held-export-is-entered-once-seen-code-calls-it.ir has an export that the program calls
+# node:readline   var exports = { first, second }; function first() { .. exports .. }; return exports        main   readline = require("node:readline"); input(require(name))
+# A module of the library whose functions name the object that holds its exports keeps that object in a variable and returns the variable. It is the same object to whoever loads the module:
+# the program hands it to a callee nobody knows, so every member of it is entered. export-of-library-module-handed-on-as-a-value-is-entered.ir has the object returned as it is allocated
 # The build excludes code outside the image, as a hardened Bun does: the run time refuses a file with code that is not in the image.
 # OPTIONS: exclude=CodeOutsideImage
 # RUN: valueflow-solve unreached
-# CHECK-NOT: unreached f1
-# CHECK: unreached f2
-# CHECK-NEXT: unreached f3
-# CHECK-NEXT: unreached f4
-# RUN(ESCAPED): valueflow-why escaped=f2 escaped=f3
-# ESCAPED: escaped=f2
-# ESCAPED-NEXT: not held
-# ESCAPED: escaped=f3
-# ESCAPED-NEXT: not held
+# CHECK-NOT: unreached
 # RUN(UNSEEN): valueflow-solve unseen
 # UNSEEN: unseen LoadsModuleByName f0:v3
 # UNSEEN: unseen-code no
 # UNSEEN-NEXT: modules-by-name yes
-# UNSEEN-NEXT: held f2
-# UNSEEN-NEXT: held f3
 # UNSEEN-NOT: held
 
 module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0
 module m1 path="node:readline" displayPath="node:readline" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeReadline body=f1
 module m2 path="bun:sqlite" displayPath="bun:sqlite" kind=RuntimeSource flags=[IsLoadedByImportOnly] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=BunSqlite body=f4
 entry module=m0
+variable g0 name="exports" module=m1 declared={type=anything} initialization=Undefined
 layout L0 name="Exports" fields=[{key="first" declared={type=anything} flags=[IsRequired]}, {key="second" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
   b0():
@@ -43,7 +32,10 @@ function f1 name="readline" module=m1 kind=Module role=Library results=[{type=an
     v0 = NewClosure function=f2
     v1 = NewClosure function=f3
     v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
-    Return v2
+    v3 = FinishObject v2
+    PutModuleVariable v3 variable=g0
+    v5 = GetModuleVariable variable=g0
+    Return v5
 }
 function f2 name="first" module=m1 role=Library parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):

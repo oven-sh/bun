@@ -17,6 +17,7 @@
 
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
+import { isBuildkite } from "./buildkite.ts";
 
 const repo = resolve(import.meta.dirname, "..");
 
@@ -62,7 +63,8 @@ function run(cmd: string, args: string[], env: NodeJS.ProcessEnv = process.env) 
 // exist, and the build script of bun_sema_standalone compiles zstd's decoder. Of WebKit the code generators are enough.
 run("bun", ["install", "--frozen-lockfile"]);
 run(
-  "bun",
+  // A CI machine runs the build with the node of its image, and the build checks the version of what runs it.
+  isBuildkite ? "node" : "bun",
   [
     "scripts/build.ts",
     ...["codegen", "clone-zstd", "clone-lolhtml", "clone-rust-argon2"].map(name => `--target=${name}`),

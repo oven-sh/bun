@@ -241,7 +241,6 @@ ScopeFunctionsPrototypeSkip/0: it is not called: this realm does not have its ho
 ScopeFunctionsPrototypeSkipIf/0: it is not called: this realm does not have its holder
 ScopeFunctionsPrototypeTodo/0: it is not called: this realm does not have its holder
 ScopeFunctionsPrototypeTodoIf/0: it is not called: this realm does not have its holder
-ShadowRealmPrototypeImportValue/0: it is not called: it loads whatever its operand names
 ShellInterpreterPrototypeRun/0: no set of operands selects it
 Worker/1: it is not called: it starts a thread or opens a connection
 Worker/2: it is not called: it starts a thread or opens a connection

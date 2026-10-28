@@ -747,7 +747,6 @@ const otherInstances: Candidate[] = [
   )),
   pristine("filled:DisposableStack", available(() => new DisposableStack())),
   pristine("filled:AsyncDisposableStack", available(() => new AsyncDisposableStack())),
-  pristine("filled:ShadowRealm", available(() => new (globalThis as any).ShadowRealm())),
 ];
 
 // A built-in that visits every index never comes back from these.

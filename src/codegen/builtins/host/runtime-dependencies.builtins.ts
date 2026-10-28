@@ -1,7 +1,9 @@
 import * as b from "bun-builtins-table";
 import {
   asyncContextCell,
+  coercesEnvironmentValueCell,
   drainMicrotasksCell,
+  editsWindowsEnvironmentCell,
   emitsProcessEventCell,
   emitsWarningCell,
   environmentCell,
@@ -15,6 +17,7 @@ import {
   onWarningCell,
   releaseCell,
   reportsExceptionCell,
+  resetsEnvironmentValueCell,
   setModuleWrapperCell,
   standardErrorCell,
   stylizeWithColorCell,
@@ -22,6 +25,7 @@ import {
   throwsWarningCell,
   tickShownToHooksCell,
   versionsCell,
+  windowsEnvironmentStorageCell,
   writeWarningCell,
 } from "./native-cells.ts";
 
@@ -568,7 +572,24 @@ const nativeCalls = [
       "m_processEnvObject.getInitializedOnMainThread",
       "processEnvObject",
     ],
-    calls: functionsIn("builtins/ProcessObjectInternals", "windowsEnv"),
+    calls: [
+      b.functionUsed(
+        processInternal("windowsEnv"),
+        b.calledByHost({
+          times: "Once",
+          this: globalObject,
+          args: [
+            b.nativeCell(windowsEnvironmentStorageCell),
+            b.instance("Array").holding({ element: b.string }),
+            b.nativeCell(editsWindowsEnvironmentCell),
+            b.nativeCell(coercesEnvironmentValueCell),
+            b.nativeCell(resetsEnvironmentValueCell),
+            b.symbol,
+          ],
+          result: [b.keptIn(environmentCell)],
+        }),
+      ),
+    ],
     otherMentions: [
       { file: inBindings("JSEnvironmentVariableMap.cpp") },
       { file: inBindings("JSEnvironmentVariableMap.h") },
@@ -642,6 +663,30 @@ export default b.declarations(
   ),
   // JSEnvironmentVariableMap.cpp: the object never holds anything but strings, whatever is stored.
   b.hostObject(environmentCell, { otherNames: b.string, keepsStringsOfStoredValues: true }),
+  b.hostObject(windowsEnvironmentStorageCell, { otherNames: b.string }),
+  b.hostFunction(editsWindowsEnvironmentCell, "JSEnvironmentVariableMap.cpp", "jsEditWindowsEnvVar", {
+    args: { name: b.string, value: b.string.or(b.null) },
+    returns: b.undefined,
+    capability: "heap",
+    throws: true,
+    implementation: b.hostCall,
+  }),
+  b.hostFunction(coercesEnvironmentValueCell, "JSEnvironmentVariableMap.cpp", "jsProcessEnvCoerceForWrite", {
+    args: { name: b.any.optional, value: b.any.optional },
+    returns: b.string,
+    capability: "js",
+    throws: true,
+    uses: { name: b.inspected, value: [b.runs("ToPrimitive")] },
+    implementation: b.hostCall,
+  }),
+  b.hostFunction(resetsEnvironmentValueCell, "JSEnvironmentVariableMap.cpp", "jsProcessEnvResetForDelete", {
+    args: { name: b.any.optional },
+    returns: b.undefined,
+    capability: "heap",
+    throws: true,
+    uses: { name: b.inspected },
+    implementation: b.hostCall,
+  }),
   // BunProcess.cpp constructVersions, constructProcessReleaseObject, constructFeatures: ordinary objects. Which versions and features there are differs between platforms and builds.
   b.hostObject(versionsCell, { otherNames: b.string }),
   b.hostObject(releaseCell, { fields: { name: b.string, sourceUrl: b.string, headersUrl: b.string } }),

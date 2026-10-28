@@ -55,7 +55,6 @@ not_called_by_tests! {
     __bun_dispatch__DevServerHandle__Bake__barrel_needed_exports
     __bun_dispatch__DevServerHandle__Bake__asset_hash
     URL__getFileURLString
-    JSC__jsToNumber
     JSBundlerPlugin__hasOnBeforeParsePlugins
     JSBundlerPlugin__freezeFilters
     JSBundlerPlugin__callOnBeforeParsePlugins

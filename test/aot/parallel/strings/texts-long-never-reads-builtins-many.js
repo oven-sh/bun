@@ -68,7 +68,7 @@ say("replace", (a, b) => {
   "<>".replace("<", a).replace(">", b);
 });
 say("replace by pattern", (a, b) => {
-  "<>".replace(/</, a).replace(/>/, b);
+  "<><>".replace(/</g, a);
 });
 say("replaceAll", (a, b) => {
   "<><>".replaceAll("<", a);

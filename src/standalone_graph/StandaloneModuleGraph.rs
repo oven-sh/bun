@@ -136,8 +136,7 @@ fn start_at_named_entry_point(
     }
     let name = bun_core::env_var::BUN_AOT_START_AT.get()?;
     let is_named = |entry_point: &CompiledEntryPoint| {
-        let root = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes();
-        entry_point.module_path.strip_prefix(root) == Some(name)
+        entry_point.is_below(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes(), name)
     };
     let has_image_for_each = program.images().nth(1).is_some();
     let position = program.entry_points.iter().position(is_named);

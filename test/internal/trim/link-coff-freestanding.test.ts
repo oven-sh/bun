@@ -51,6 +51,8 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
   const testLink = test.skipIf(freestandingSkipReasons[machine] !== undefined);
   const optionsWith = (more: LinkOptions = {}): LinkOptions => ({ machine, isFreestanding: true, ...more });
   const sources = freestandingSources();
+  // Where the size of the feature's code decides nothing.
+  const smallSources = freestandingSources(40);
   const twoFeatureObjects = ["feature_code", "entry", "other", "embedder", "main"];
   // As Bun is compiled: a function that only returns has a frame, and so unwind records.
   const framesInLeaves = ["-fasynchronous-unwind-tables", "-fno-omit-frame-pointer", "-mno-omit-leaf-frame-pointer"];
@@ -80,7 +82,7 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
 
   testLink("lists the section of the built-in modules with the features that read it", async () => {
     using dir = tempDir("trim-coff-freestanding", {
-      ...sources,
+      ...smallSources,
       "entry.c": entryCalling("read_builtins"),
       "builtins.c": `__attribute__((section(".bunblt"))) const char builtins_text[20000] = {1};
         __attribute__((noinline)) int read_builtins(int x) { return builtins_text[x & 8191]; }`,
@@ -103,7 +105,7 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
   });
 
   testLink("reads the members of an archive where the objects that went into it lie beside it", async () => {
-    using dir = tempDir("trim-coff-freestanding", freestandingSources(4000));
+    using dir = tempDir("trim-coff-freestanding", smallSources);
     const { featuresOf, summary } = await linked(
       String(dir),
       optionsWith({
@@ -117,7 +119,7 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
   });
 
   testLink("links twice where every object of bitcode is a member of an archive", async () => {
-    using dir = tempDir("trim-coff-freestanding", sources);
+    using dir = tempDir("trim-coff-freestanding", smallSources);
     const objects = ["feature_code", "entry", "table", "embedder", "main"];
     const { featuresOf, summary } = await linked(
       String(dir),

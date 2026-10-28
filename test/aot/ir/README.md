@@ -61,7 +61,7 @@ What the tests print:
 
 The test program starts a copy of itself for each file, `AOT_IR_JOBS` of them at a time, and prints their `FAIL` lines. A file whose
 copy dies is `FAIL <file>:1: the test program ended with <status>`, with the last lines that the copy wrote.
-`AOT_IR_FILTER=<one file>` runs that file in the program itself, for a debugger.
+For a debugger: `AOT_IR_FILTER=<one file> AOT_IR_SHARE=0/1 <the test program> lower --exact` runs that file in the program itself.
 
 ## What a run does
 

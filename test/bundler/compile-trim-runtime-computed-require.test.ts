@@ -5,6 +5,7 @@ import { bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "node:path";
 import { unsupported } from "../aot/harness/commands";
 import { run } from "../aot/harness/run";
+import { withoutDebugInformation } from "../aot/harness/without-debug-information";
 import { readRemovedFeatures } from "../aot/trimmed-against-whole/removed-features";
 import { canTrim, featureNamed, model } from "./compile-trim-features";
 
@@ -26,7 +27,10 @@ const behindTheTestRunner = ["Test", "RuntimeTranspiler", "DeepEquals"].map(feat
 
 async function build(folder: string, entry: string) {
   const executable = join(folder, entry.replace(".cjs", isWindows ? ".exe" : ""));
-  const built = await run([bunExe(), "build", "--compile", "--aot", "--trim", entry, "--outfile", executable], folder);
+  const built = await run(
+    [bunExe(), "build", "--compile", ...withoutDebugInformation, "--aot", "--trim", entry, "--outfile", executable],
+    folder,
+  );
   expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({
     stderr: expect.not.stringMatching(/^error\b/m),
     exitCode: 0,

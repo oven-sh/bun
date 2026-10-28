@@ -1,4 +1,5 @@
 // Sockets, requests, responses, servers and streams are frozen, sealed or closed to new properties, themselves or through Proxies with and without traps, are asked what they hold, and are then used to the end. Closing an object through a Proxy must do what closing the object does.
+// Collections: not forced: it runs for over a minute so, longer than the 60 s after which its sockets time out
 import { once } from "node:events";
 import http from "node:http";
 import type { AddressInfo } from "node:net";

@@ -1,5 +1,6 @@
-//! What the processor held at a fault, for the report of an executable that holds compiled code. No line gives away where
-//! anything was loaded: a value that may be an address is printed by what it points into, or by its place in its page alone.
+//! What the processor held at a fault, for the report of an executable that holds compiled code and of a thread that is at
+//! work for a build. No line gives away where anything was loaded: a value that may be an address is printed by what it points
+//! into, or by its place in its page alone.
 
 use core::cell::Cell;
 use core::ffi::c_void;
@@ -41,7 +42,8 @@ thread_local! {
 
 /// In the signal handler. `fault`: the address that could not be reached, where the signal has one.
 pub(crate) fn remember(context: *mut c_void, fault: Option<usize>) {
-    if crate::build_id::build_id().is_none() {
+    let holds_compiled_code = crate::build_id::build_id().is_some();
+    if !holds_compiled_code && crate::stopped_builds::place_of_this_thread().is_none() {
         return;
     }
     // SAFETY: the kernel passes a valid ucontext_t as the handler's third argument.

@@ -6,6 +6,7 @@ import { readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, slot, spawned, unsupported } from "./harness/commands";
+import { withoutDebugInformation } from "./harness/without-debug-information";
 
 const numberOfFunctions = 150;
 
@@ -47,7 +48,16 @@ describe.skipIf(!!unsupported)("compile/aot/two-builds-give-the-same-bytes", () 
       for (let build = 0; build < 3; build++) {
         built(
           await spawned(
-            [bunExe(), "build", "--compile", "--aot", "./entry.ts", "--outfile", executable],
+            [
+              bunExe(),
+              "build",
+              "--compile",
+              ...withoutDebugInformation,
+              "--aot",
+              "./entry.ts",
+              "--outfile",
+              executable,
+            ],
             folder,
             bunEnv,
           ),
@@ -66,7 +76,16 @@ describe.skipIf(!!unsupported)("compile/aot/two-builds-give-the-same-bytes", () 
       for (const environment of [bunEnv, { ...bunEnv, MIMALLOC_HAND_OUT_LAST_FREED: "0" }]) {
         built(
           await spawned(
-            [bunExe(), "build", "--compile", "--aot", "./entry.ts", "--outfile", executable],
+            [
+              bunExe(),
+              "build",
+              "--compile",
+              ...withoutDebugInformation,
+              "--aot",
+              "./entry.ts",
+              "--outfile",
+              executable,
+            ],
             folder,
             environment,
           ),

@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { bunExe, isASAN, isGlibc, isMacOS, tempDir } from "harness";
 import { join } from "node:path";
 import { run } from "../aot/harness/run";
+import { withoutDebugInformation } from "../aot/harness/without-debug-information";
 import { canTrim } from "./compile-trim-features";
 
 // It writes what the system allocator holds to stderr: the number of blocks on macOS, the number of bytes with glibc.
@@ -58,7 +59,7 @@ for (const flags of [[], ["--trim"]]) {
     async () => {
       using dir = tempDir("compile-trim-allocator", { "program.ts": program });
       const built = await run(
-        [bunExe(), "build", "--compile", ...flags, "program.ts", "--outfile", "program"],
+        [bunExe(), "build", "--compile", ...withoutDebugInformation, ...flags, "program.ts", "--outfile", "program"],
         String(dir),
       );
       expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({

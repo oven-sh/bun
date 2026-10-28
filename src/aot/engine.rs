@@ -200,6 +200,19 @@ impl EngineOptions {
         self.record.action = CompileAction::CheckOnly;
     }
 
+    /// `stops`: the engine ends behind the flow analysis, without an image, where that finds the program to lack code of Bun's own.
+    pub fn stop_where_library_code_is_lacked(&mut self, stops: bool) {
+        match (self.record.action, stops) {
+            (CompileAction::Compile, true) => {
+                self.record.action = CompileAction::CompileUnlessLibraryCodeIsLacked;
+            }
+            (CompileAction::CompileUnlessLibraryCodeIsLacked, false) => {
+                self.record.action = CompileAction::Compile;
+            }
+            _ => {}
+        }
+    }
+
     pub fn makes_image(&self) -> bool {
         self.record.action == CompileAction::Compile
     }

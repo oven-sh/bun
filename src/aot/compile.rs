@@ -684,34 +684,45 @@ fn numbers_of(code: &RuntimeUses) -> LibraryCode {
     }
 }
 
+fn chooses_library_code_by_names(options: &Options<'_>) -> bool {
+    !options.load.keeps_library_code_without_names
+        && !options.load.omits_builtin_modules
+        && !options.aot.checks_only
+}
+
+// Which of Bun's own code a program needs is a guess where a member is read by its name. The engine knows.
+fn find_load_options_with_library_code_lacked(
+    options: &Options<'_>,
+    compiled: &Compilation,
+) -> Option<LoadOptions> {
+    if !chooses_library_code_by_names(options) || compiled.library_code_lacked.is_empty() {
+        return None;
+    }
+    let mut load = options.load.clone();
+    let asked_before = library_code_of(&load.library_code_lacked);
+    let mut asked = asked_before.clone();
+    asked.add(&compiled.library_code_lacked);
+    // There is no such code to be had.
+    if asked == asked_before {
+        return None;
+    }
+    // What came along needs more, again and again.
+    load.keeps_library_code_without_names = !asked_before.is_empty();
+    load.library_code_lacked = numbers_of(&asked);
+    Some(load)
+}
+
 fn find_load_options_to_compile_again_with(
     options: &Options<'_>,
     compiled: &Result<Compilation, BuildFailed>,
 ) -> Option<LoadOptions> {
     let mut load = options.load.clone();
-    let chooses_library_code_by_names = !load.keeps_library_code_without_names
-        && !load.omits_builtin_modules
-        && !options.aot.checks_only;
     match compiled {
         Err(failure) if starts_over_without_brought_types(&load, failure) => {
             load.takes_runtime_as_any = true;
         }
-        // Which of Bun's own code a program needs is a guess where a member is read by its name. The engine knows.
-        Ok(compiled)
-            if chooses_library_code_by_names && !compiled.library_code_lacked.is_empty() =>
-        {
-            let asked_before = library_code_of(&load.library_code_lacked);
-            let mut asked = asked_before.clone();
-            asked.add(&compiled.library_code_lacked);
-            // There is no such code to be had.
-            if asked == asked_before {
-                return None;
-            }
-            // What came along needs more, again and again.
-            load.keeps_library_code_without_names = !asked_before.is_empty();
-            load.library_code_lacked = numbers_of(&asked);
-        }
-        Err(failure) if failure.is_internal_error && chooses_library_code_by_names => {
+        Ok(compiled) => return find_load_options_with_library_code_lacked(options, compiled),
+        Err(failure) if failure.is_internal_error && chooses_library_code_by_names(options) => {
             load.keeps_library_code_without_names = true;
         }
         _ => return None,
@@ -1155,11 +1166,20 @@ fn compile_program_at_each_entry_point(
     let mut programs: Vec<Option<Compilation>> = (0..count).map(|_| None).collect();
     // The files of all programs are read, bound and checked once, and each program is what its entry point leads to among them.
     let mut loads: VecDeque<Vec<usize>> = VecDeque::from([(0..count).collect::<Vec<usize>>()]);
+    // Of a program that is compiled again, with the code of Bun's own that it was found to lack. The others stay as they are.
+    let mut changed_loads: Vec<Option<LoadOptions>> = (0..count).map(|_| None).collect();
+    let mut workers_of_programs_compiled_again = StartedWorkers::default();
     while let Some(indexes) = loads.pop_front() {
         let said_before = log.msgs.len();
         let together = options_with_entry_points(options, &indexes);
         let each: Vec<Options<'_>> = (indexes.iter())
-            .map(|&index| options_with_entry_points(options, &[index]))
+            .map(|&index| {
+                let mut options = options_with_entry_points(options, &[index]);
+                if let Some(load) = &changed_loads[index] {
+                    options.load = load.clone();
+                }
+                options
+            })
             .collect();
         let of_one_load = ProgramsOfOneLoad {
             indexes: &indexes,
@@ -1175,7 +1195,8 @@ fn compile_program_at_each_entry_point(
             Err(failure) => return Some(Err(failure)),
             Ok(compiled) => compiled,
         };
-        for (place, program) in compiled.programs {
+        let mut compiled_again = Vec::new();
+        for (place, mut program) in compiled.programs {
             match place {
                 ProgramPlace::Only => return Some(Ok(program)),
                 ProgramPlace::OneOfSeveral(_)
@@ -1184,8 +1205,25 @@ fn compile_program_at_each_entry_point(
                 {
                     return None;
                 }
-                ProgramPlace::OneOfSeveral(index) => programs[index] = Some(program),
+                ProgramPlace::OneOfSeveral(index) => {
+                    let position = indexes.iter().position(|&it| it == index);
+                    let own = &each[position.expect("it was handed over")];
+                    match find_load_options_with_library_code_lacked(own, &program) {
+                        Some(load) => {
+                            changed_loads[index] = Some(load);
+                            compiled_again.push(index);
+                            workers_of_programs_compiled_again.add(program.started_workers);
+                        }
+                        None => {
+                            program.library_code_lacked = RuntimeUses::default();
+                            programs[index] = Some(program);
+                        }
+                    }
+                }
             }
+        }
+        if !compiled_again.is_empty() {
+            loads.push_back(compiled_again);
         }
         for left in compiled.left_entry_points {
             // A load of the same entry points would leave the same ones.
@@ -1214,6 +1252,7 @@ fn compile_program_at_each_entry_point(
     for program in programs {
         add_program(&mut first, program);
     }
+    (first.started_workers).add(workers_of_programs_compiled_again);
     first.summary.folders.shared_sort_unstable();
     first.summary.folders.dedup();
     Some(Ok(first))
@@ -1360,7 +1399,7 @@ fn compile_programs<'a>(
         }
     }
     let mut compiled = Vec::with_capacity(outputs.len());
-    let mut library_code_lacked = RuntimeUses::default();
+    let mut library_code_lacked = Vec::with_capacity(outputs.len());
     for (place, output) in outputs {
         build.place = place;
         let emitted = build
@@ -1373,9 +1412,27 @@ fn compile_programs<'a>(
         if options.aot.checks_only {
             engine_options.check_only();
         }
+        let held = &output.held_library_code;
+        // What such a program lacks is added, and then it is compiled again: nothing is made of it now.
+        let own = match (place, programs) {
+            (ProgramPlace::OneOfSeveral(index), Some(all)) => {
+                let position = all.indexes.iter().position(|&it| it == index);
+                position.map_or(options, |position| &all.options[position])
+            }
+            _ => options,
+        };
+        let is_guess = chooses_library_code_by_names(own)
+            && own.load.library_code_lacked == LibraryCode::default()
+            && !(table::STARTUP_MODULES.iter()).all(|&module| held.holds_module(module));
+        engine_options.stop_where_library_code_is_lacked(is_guess);
         let engine = build.run_engine(bytes, &engine_options, &output);
         let held = &output.held_library_code;
-        library_code_lacked.add(&find_library_code_lacked(&engine, held, build.platform));
+        let mut lacked = find_library_code_lacked(&engine, held, build.platform);
+        let has_stopped = is_guess && engine.image().is_none() && !build.diagnostics.has_errors();
+        if has_stopped && lacked.is_empty() {
+            lacked = RuntimeUses::of_unseen_code(build.platform);
+        }
+        library_code_lacked.push(lacked);
         if let Some(modules) = &mut output.modules {
             modules.count_code(engine.functions(), &output.names);
         }
@@ -1440,13 +1497,13 @@ fn compile_programs<'a>(
         }
     }
     let mut started_workers = Some(started_workers);
-    let mut library_code_lacked = Some(library_code_lacked);
     build.clock.add_to(&mut build.statistics);
     build.diagnostics.write_to(log);
     let statistics = build.statistics;
     let mut programs: Vec<(ProgramPlace, Compilation)> = compiled
         .into_iter()
-        .map(|(place, engine, output)| {
+        .zip(library_code_lacked)
+        .map(|((place, engine, output), library_code_lacked)| {
             let (_, summary) = output.into_parts(statistics.clone());
             let compilation = Compilation {
                 engine,
@@ -1454,7 +1511,7 @@ fn compile_programs<'a>(
                 further_programs: Vec::new(),
                 // Of all that was loaded.
                 started_workers: started_workers.take().unwrap_or_default(),
-                library_code_lacked: library_code_lacked.take().unwrap_or_default(),
+                library_code_lacked,
             };
             (place, compilation)
         })

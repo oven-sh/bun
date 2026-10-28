@@ -32,6 +32,7 @@ const needNoCompiler = [
   "aot/any-two-sources-of-the-compiler-can-share-a-translation-unit.test.ts",
   "aot/emitters-append-in-the-order-written.test.ts",
   "aot/engine-types-are-defined-once.test.ts",
+  "aot/the-folder-of-a-program-has-a-short-name.test.ts",
   "aot/the-compiler-reads-no-environment-variable.test.ts",
   "aot/the-compiler-sorts-with-its-own-sort.test.ts",
   "aot/the-frame-of-an-operation-outlives-whoever-is-handed-its-address.test.ts",

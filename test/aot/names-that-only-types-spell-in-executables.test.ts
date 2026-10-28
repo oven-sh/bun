@@ -6,6 +6,7 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned } from "./harness/commands";
 import { buildFlags, compileCommand } from "./harness/flags";
+import { withoutDebugInformation } from "./harness/without-debug-information";
 import { beforeAll, describe, eachRow, test } from "./supported";
 
 // No name is part of another one: the executable stores a text that is part of another text only once.
@@ -103,7 +104,13 @@ describe.each([
 
   beforeAll(async () => {
     const flags = [buildFlags.withoutFunctionSource, ...flagsOfBuild];
-    built(await spawned([bunExe(), ...compileCommand, ...flags, "./main.ts", "--outfile", executable], folder, bunEnv));
+    built(
+      await spawned(
+        [bunExe(), ...compileCommand, ...withoutDebugInformation, ...flags, "./main.ts", "--outfile", executable],
+        folder,
+        bunEnv,
+      ),
+    );
     bytes = readFileSync(executable);
   }, 300_000);
 

@@ -1138,7 +1138,7 @@ describe.todo("Bun.ModuleGraph with --aot", () => {
   test.concurrent("globals cannot replace a built-in of the language", async () => {
     expect(
       await run(`
-        const language = new Set("Infinity NaN undefined AggregateError Array ArrayBuffer AsyncDisposableStack Atomics BigInt BigInt64Array BigUint64Array Boolean DataView Date DisposableStack Error EvalError FinalizationRegistry Float16Array Float32Array Float64Array Function Int16Array Int32Array Int8Array Intl Iterator JSON Map Math Number Object Promise Proxy RangeError ReferenceError Reflect RegExp Set ShadowRealm SharedArrayBuffer String SuppressedError Symbol SyntaxError Temporal TypeError URIError Uint16Array Uint32Array Uint8Array Uint8ClampedArray WeakMap WeakRef WeakSet WebAssembly decodeURI decodeURIComponent encodeURI encodeURIComponent escape eval isFinite isNaN parseFloat parseInt unescape".split(" "));
+        const language = new Set("Infinity NaN undefined AggregateError Array ArrayBuffer AsyncDisposableStack Atomics BigInt BigInt64Array BigUint64Array Boolean DataView Date DisposableStack Error EvalError FinalizationRegistry Float16Array Float32Array Float64Array Function Int16Array Int32Array Int8Array Intl Iterator JSON Map Math Number Object Promise Proxy RangeError ReferenceError Reflect RegExp Set SharedArrayBuffer String SuppressedError Symbol SyntaxError Temporal TypeError URIError Uint16Array Uint32Array Uint8Array Uint8ClampedArray WeakMap WeakRef WeakSet WebAssembly decodeURI decodeURIComponent encodeURI encodeURIComponent escape eval isFinite isNaN parseFloat parseInt unescape".split(" "));
         const wrong: string[] = [];
         let said = "";
         for (const name of [...Object.getOwnPropertyNames(globalThis), "fresh", "toString"]) {

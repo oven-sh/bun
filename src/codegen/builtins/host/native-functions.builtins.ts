@@ -159,7 +159,7 @@ export default b.declarations(
         b.contentsStoredIn(b.resultSlot("element")),
       ],
       except: b.ownPropertyTraps,
-      receiver: [b.everything],
+      receiver: b.inspected,
     },
     implementation: b.hostCall,
   }),

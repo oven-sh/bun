@@ -670,6 +670,45 @@ fn file_that_was_cut_is_cut_again_beside_its_holes() {
 }
 
 #[test]
+fn executable_whose_table_is_full_is_cut_and_given_a_program_again() {
+    let removable = |range: AddressRange| RemovableBytes {
+        range,
+        is_code: false,
+        can_be_cut: true,
+        can_be_filled: true,
+    };
+    let second_pages = |count: u32| (0..count).map(|index| page_cut((5 * index + 2) * PAGE));
+    let with_program = |bytes: &[u8]| {
+        let mut file = PEFile::init(bytes).unwrap();
+        file.add_bun_section(b"payload", false).unwrap();
+        file.data
+    };
+
+    // As a template is made: as many cuts as the table takes, and then the section of its own program.
+    let sections = vec![toy_section(b".s", 5 * PAGE, 5 * PAGE, READ_ONLY); 41];
+    let mut template = assemble_pe(IMAGE_FILE_MACHINE_AMD64, &sections, PAGE);
+    let wanted: Vec<RemovableBytes> = second_pages(41).map(removable).collect();
+    let plan = cut_model(&template).choose(&wanted);
+    assert!(plan.uncut.is_some());
+    remove_ranges(&mut template, &plan.cuts).unwrap();
+    let template = with_program(&template);
+    let slots = (PAGE as usize - SECTION_TABLE_OFFSET) / size_of::<SectionHeader>();
+    assert_eq!(headers(&template).sections.len(), slots);
+
+    // As an executable is built on it: what touches a hole goes too, and its program takes the place of the template's.
+    let holes = plan.cuts.iter();
+    let beside: Vec<RemovableBytes> =
+        (holes.map(|hole| page_cut(hole.end as u32)).map(removable)).collect();
+    let again = cut_model(&template).choose(&beside);
+    assert_eq!(again.cuts.len(), beside.len());
+    let mut built = template.clone();
+    remove_ranges(&mut built, &again.cuts).unwrap();
+    let built = with_program(&built);
+    assert!(check(&built, &headers(&built)).is_ok());
+    assert!(headers(&built).sections.len() <= headers(&template).sections.len());
+}
+
+#[test]
 fn header_room_limits_cuts() {
     let original = toy_with_sections(90, PAGE);
     assert_eq!(cut_model(&original).capacity, CutCapacity::Cuts(1));

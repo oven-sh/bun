@@ -24,6 +24,20 @@ pub struct CompiledEntryPoint {
     pub module_path: &'static [u8],
 }
 
+impl CompiledEntryPoint {
+    /// Whether the compiled module is `name` below `root`. The paths of an executable for Windows are written with either separator.
+    pub fn is_below(&self, root: &[u8], name: &[u8]) -> bool {
+        let has_drive = root.get(1) == Some(&b':');
+        let is_separator = |byte: u8| byte == b'/' || (has_drive && byte == b'\\');
+        let is_same = |(&left, &right): (&u8, &u8)| {
+            left == right || (is_separator(left) && is_separator(right))
+        };
+        let path = self.module_path;
+        path.len() == root.len() + name.len()
+            && path.iter().zip(root.iter().chain(name)).all(is_same)
+    }
+}
+
 /// A name that leads to an entry point and is not the path of its file: the name of a package, a key of its `exports`, or a folder whose `package.json` names its main file.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct CompiledPackageName {
@@ -574,6 +588,49 @@ mod tests {
     fn source_paths_in(program: &CompiledProgram, directory: &[u8]) -> Vec<&'static [u8]> {
         let entry_points = program.entry_points_in_directory(directory);
         entry_points.map(|entry| entry.source_path).collect()
+    }
+
+    #[test]
+    fn entry_point_is_found_below_root_under_either_separator_of_windows() {
+        let is_below = |module_path: &'static [u8], root: &[u8], name: &[u8]| {
+            let entry_point = CompiledEntryPoint {
+                file_index: 0,
+                module_id: 0,
+                source_path: b"",
+                module_path,
+            };
+            entry_point.is_below(root, name)
+        };
+        let windows = b"B:/~BUN/root/";
+        for path in [
+            &br"B:\~BUN\root\folder\second.js"[..],
+            b"B:/~BUN/root/folder/second.js",
+        ] {
+            assert!(is_below(path, windows, b"folder/second.js"));
+            assert!(is_below(path, windows, br"folder\second.js"));
+            assert!(!is_below(path, windows, b"second.js"));
+            assert!(!is_below(path, windows, b"folder/second.j"));
+            assert!(!is_below(path, windows, b"folder/second.js/"));
+            assert!(!is_below(path, windows, b"folder_second.js"));
+        }
+        assert!(is_below(br"B:\~BUN\root\p0.ts", windows, b"p0.ts"));
+        assert!(!is_below(br"B:\~BUN\other\p0.ts", windows, b"p0.ts"));
+        assert!(!is_below(br"B:\~BUN\root\", windows, b"p0.ts"));
+
+        let posix = b"/$bunfs/root/";
+        assert!(is_below(
+            b"/$bunfs/root/folder/second.js",
+            posix,
+            b"folder/second.js"
+        ));
+        assert!(!is_below(
+            b"/$bunfs/root/folder/second.js",
+            posix,
+            b"second.js"
+        ));
+        // There a backslash is a character of a name.
+        assert!(is_below(br"/$bunfs/root/a\b.js", posix, br"a\b.js"));
+        assert!(!is_below(br"/$bunfs/root/a\b.js", posix, b"a/b.js"));
     }
 
     #[test]

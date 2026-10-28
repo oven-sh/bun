@@ -51,6 +51,8 @@ bun compile ./strings.ts && ./strings
 
 `eval`, `new Function` and `node:vm` work. The build can't see that code and the executable has no JIT, so Bun interprets it. Call them directly. The build doesn't follow `globalThis[name](code)`, which throws an `EvalError` if it's the only such call in your program.
 
+`ShadowRealm` isn't supported. The build stops at code that uses it, and an executable has no such global. Use a `node:vm` context.
+
 Interpreted code is fine for a template or a config file. It costs you when a library generates its hot code this way, as zod 4, ajv, fast-json-stringify and Elysia do.
 
 - zod 4: call `z.config({ jitless: true })` before you create a schema.

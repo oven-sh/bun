@@ -138,8 +138,6 @@ Response : error/w json/w length/c name/c prototype/- redirect/w
 Response.prototype : @@toStringTag/c arrayBuffer/w blob/w body/a bodyUsed/a bytes/w clone/w constructor/wc formData/w headers/a json/w ok/a redirected/a status/a statusText/a text/w textStream/w type/a url/a
 Set : @@species/ac length/? name/? prototype/-
 Set.prototype : @@iterator/wc @@toStringTag/c add/wc clear/wc constructor/wc delete/wc difference/wc entries/wc forEach/wc has/wc intersection/wc isDisjointFrom/wc isSubsetOf/wc isSupersetOf/wc keys/wc size/ac symmetricDifference/wc union/wc values/wc
-ShadowRealm : length/? name/? prototype/-
-ShadowRealm.prototype : @@toStringTag/c constructor/wc evaluate/wc importValue/wc
 SharedArrayBuffer : @@species/ac length/? name/? prototype/-
 SharedArrayBuffer.prototype : @@toStringTag/c byteLength/ac constructor/wc grow/wc growable/ac maxByteLength/ac slice/wc
 String : fromCharCode/wc fromCodePoint/wc length/? name/? prototype/- raw/wc
@@ -226,7 +224,7 @@ encodeURI : length/? name/?
 encodeURIComponent : length/? name/?
 escape : length/? name/?
 eval : length/? name/?
-globalThis open : $vm/? AggregateError/wc Array/wc ArrayBuffer/wc AsyncDisposableStack/wc Atomics/wc BigInt/wc BigInt64Array/wc BigUint64Array/wc Boolean/wc DataView/wc Date/wc DisposableStack/wc Error/wc EvalError/wc FinalizationRegistry/wc Float16Array/wc Float32Array/wc Float64Array/wc Function/wc Infinity/- Int16Array/wc Int32Array/wc Int8Array/wc Intl/wc Iterator/wc JSON/wc Loader/? Map/wc Math/wc NaN/- Number/wc Object/wc Promise/wc Proxy/wc RangeError/wc ReferenceError/wc Reflect/wc RegExp/wc Set/wc ShadowRealm/wc SharedArrayBuffer/wc String/wc SuppressedError/wc Symbol/wc SyntaxError/wc Temporal/wc TypeError/wc URIError/wc Uint16Array/wc Uint32Array/wc Uint8Array/wc Uint8ClampedArray/wc WeakMap/wc WeakRef/wc WeakSet/wc WebAssembly/wc __disableSamplingProfiler/? __disableSuperSampler/? __dumpAndClearSamplingProfilerSamples/? __enableSamplingProfiler/? __enableSuperSampler/? __signpostStart/? __signpostStop/? __tracePointStart/? __tracePointStop/? decodeURI/wc decodeURIComponent/wc encodeURI/wc encodeURIComponent/wc escape/wc eval/wc gc/wc globalThis/wc isFinite/wc isNaN/wc parseFloat/wc parseInt/wc undefined/- unescape/wc
+globalThis open : $vm/? AggregateError/wc Array/wc ArrayBuffer/wc AsyncDisposableStack/wc Atomics/wc BigInt/wc BigInt64Array/wc BigUint64Array/wc Boolean/wc DataView/wc Date/wc DisposableStack/wc Error/wc EvalError/wc FinalizationRegistry/wc Float16Array/wc Float32Array/wc Float64Array/wc Function/wc Infinity/- Int16Array/wc Int32Array/wc Int8Array/wc Intl/wc Iterator/wc JSON/wc Loader/? Map/wc Math/wc NaN/- Number/wc Object/wc Promise/wc Proxy/wc RangeError/wc ReferenceError/wc Reflect/wc RegExp/wc Set/wc SharedArrayBuffer/wc String/wc SuppressedError/wc Symbol/wc SyntaxError/wc Temporal/wc TypeError/wc URIError/wc Uint16Array/wc Uint32Array/wc Uint8Array/wc Uint8ClampedArray/wc WeakMap/wc WeakRef/wc WeakSet/wc WebAssembly/wc __disableSamplingProfiler/? __disableSuperSampler/? __dumpAndClearSamplingProfilerSamples/? __enableSamplingProfiler/? __enableSuperSampler/? __signpostStart/? __signpostStop/? __tracePointStart/? __tracePointStop/? decodeURI/wc decodeURIComponent/wc encodeURI/wc encodeURIComponent/wc escape/wc eval/wc gc/wc globalThis/wc isFinite/wc isNaN/wc parseFloat/wc parseInt/wc undefined/- unescape/wc
 isFinite : length/? name/?
 isNaN : length/? name/?
 navigator : @@toStringTag/c hardwareConcurrency/ac platform/ac userAgent/ac

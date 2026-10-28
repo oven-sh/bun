@@ -1,3 +1,4 @@
+// Collections: not forced: the message of an error event quotes a line of the program only while the code that threw is alive
 const { Worker: NodeWorker } = require("node:worker_threads");
 const first = (text) =>
   String(text)

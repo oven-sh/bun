@@ -7,6 +7,7 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned } from "./harness/commands";
 import { buildFlags, compileCommand } from "./harness/flags";
+import { withoutDebugInformation } from "./harness/without-debug-information";
 import { beforeAll, describe, eachRow, gap, test } from "./supported";
 
 // No name is part of another one: the executable stores a text that is part of another text only once.
@@ -234,7 +235,11 @@ describe.each(Object.keys(builds) as (keyof typeof builds)[])(
     beforeAll(async () => {
       const flags = ["--define", "DEFINED_FLAG_Q52=false", ...builds[build]];
       built(
-        await spawned([bunExe(), ...compileCommand, ...flags, "./main.ts", "--outfile", executable], folder, bunEnv),
+        await spawned(
+          [bunExe(), ...compileCommand, ...withoutDebugInformation, ...flags, "./main.ts", "--outfile", executable],
+          folder,
+          bunEnv,
+        ),
       );
       bytes = readFileSync(executable);
     }, 300_000);
@@ -403,7 +408,13 @@ describe("compile/aot/names of unreached code, obfuscated", () => {
 
   test("the executable holds no name of a function, a class or a type, and every name of a property", async () => {
     const flags = ["--define", "DEFINED_FLAG_Q52=false", buildFlags.obfuscate];
-    built(await spawned([bunExe(), ...compileCommand, ...flags, "./main.ts", "--outfile", executable], folder, bunEnv));
+    built(
+      await spawned(
+        [bunExe(), ...compileCommand, ...withoutDebugInformation, ...flags, "./main.ts", "--outfile", executable],
+        folder,
+        bunEnv,
+      ),
+    );
     const bytes = readFileSync(executable);
     const found = (names: string[]) =>
       names.filter(name => bytes.includes(name, 0, "latin1") || bytes.includes(name, 0, "utf16le"));

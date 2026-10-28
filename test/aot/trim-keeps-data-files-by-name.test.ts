@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { canTrim, featureNamed, model } from "../bundler/compile-trim-features";
 import { run } from "./harness/run";
+import { withoutDebugInformation } from "./harness/without-debug-information";
 import { describe, test } from "./supported";
 import { readRemovedFeatures } from "./trimmed-against-whole/removed-features";
 
@@ -11,7 +12,6 @@ const programs = [
   "files-that-load-as-host-objects-by-name",
   "data-files-by-computed-path",
   "code-computed-path-without-js-extension",
-  "code-computed-path-without-js-eval",
 ];
 
 // The executables only run what was compiled into them: one that loads code from disk keeps the transpiler.
@@ -26,6 +26,7 @@ describe.skipIf(!canTrim)("a trimmed executable loads what a whole one loads fro
         bunExe(),
         "build",
         "--compile",
+        ...withoutDebugInformation,
         "--aot",
         "--trim",
         "--aot-refuse-code-from-disk",

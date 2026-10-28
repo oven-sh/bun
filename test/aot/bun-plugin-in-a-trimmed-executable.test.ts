@@ -3,6 +3,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { canTrim } from "../bundler/compile-trim-features";
 import { built, slot, spawned, unsupported } from "./harness/commands";
+import { withoutDebugInformation } from "./harness/without-debug-information";
 
 type Completeness = "Complete" | "Incomplete";
 
@@ -52,7 +53,18 @@ function findCompleteness(report: string): Completeness | undefined {
             ["trimmed", ["--trim"]],
           ] as const) {
             const build = await spawned(
-              [bunExe(), "build", "--compile", "--aot", "--explain=trim", ...flags, "program.mjs", "--outfile", kind],
+              [
+                bunExe(),
+                "build",
+                "--compile",
+                ...withoutDebugInformation,
+                "--aot",
+                "--explain=trim",
+                ...flags,
+                "program.mjs",
+                "--outfile",
+                kind,
+              ],
               folder,
               env,
             );
@@ -86,6 +98,7 @@ function findCompleteness(report: string): Completeness | undefined {
               bunExe(),
               "build",
               "--compile",
+              ...withoutDebugInformation,
               "--aot",
               "--trim",
               "--trim-without",

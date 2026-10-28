@@ -4,6 +4,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { canTrim } from "../bundler/compile-trim-features";
 import { built, slot, spawned, unsupported } from "./harness/commands";
+import { withoutDebugInformation } from "./harness/without-debug-information";
 
 const calls = {
   toBuffer: "Bun.FFI.toBuffer(-1)",
@@ -38,7 +39,17 @@ if (!canTrim)
           const plain = await spawned([bunExe(), "program.js"], folder, bunEnv);
           built(
             await spawned(
-              [bunExe(), "build", "--compile", "--aot", "--trim", "program.js", "--outfile", "trimmed"],
+              [
+                bunExe(),
+                "build",
+                "--compile",
+                ...withoutDebugInformation,
+                "--aot",
+                "--trim",
+                "program.js",
+                "--outfile",
+                "trimmed",
+              ],
               folder,
               bunEnv,
             ),

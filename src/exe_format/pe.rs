@@ -174,7 +174,7 @@ const IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY: u16 = 0x0080;
 pub const IMAGE_SUBSYSTEM_WINDOWS_GUI: u16 = 2;
 
 // Section name constant for exact comparison
-const BUN_SECTION_NAME: [u8; 8] = [b'.', b'b', b'u', b'n', 0, 0, 0, 0];
+pub(crate) const BUN_SECTION_NAME: [u8; 8] = [b'.', b'b', b'u', b'n', 0, 0, 0, 0];
 
 // Safe access helpers for unaligned views.
 // All header structs are `#[repr(C, packed)]` (align 1), so a bounds-checked byte

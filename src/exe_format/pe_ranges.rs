@@ -86,7 +86,7 @@ pub(crate) fn cut_model(pe: &[u8]) -> CutModel {
     let table_offset = headers.layout.section_headers_offset;
     let header_room = (first.virtual_address as usize).saturating_sub(table_offset);
     let slots = header_room / size_of::<SectionHeader>();
-    let occupied_slots = headers.sections.len() + 1;
+    let occupied_slots = headers.sections.len() + slots_kept_for_a_program(&headers.sections);
     let free_slots = MAX_SECTIONS.min(slots).saturating_sub(occupied_slots);
     // A cut that touches a hole takes no slot.
     let has_holes = headers.sections.iter().any(is_hole);
@@ -406,7 +406,7 @@ fn create_new_sections(headers: &Headers, cuts: &[AddressRange]) -> Result<Vec<N
             .sort_unstable_by_key(|new_section| new_section.header.virtual_address);
     }
     join_holes_that_touch(&mut new_sections);
-    if new_sections.len() > MAX_SECTIONS - 1 {
+    if new_sections.len() + slots_kept_for_a_program(&headers.sections) > MAX_SECTIONS {
         return Err(ImageError::TooManyCuts.into());
     }
     Ok(new_sections)
@@ -511,8 +511,18 @@ fn compact_relocation_blocks(blocks: &mut [u8], cuts: &[AddressRange]) -> Result
     Ok(write_offset)
 }
 
+// The section of a program takes the place of the one that is there.
+fn slots_kept_for_a_program(sections: &[SectionHeader]) -> usize {
+    usize::from(
+        !sections
+            .iter()
+            .any(|section| section.name == pe::BUN_SECTION_NAME),
+    )
+}
+
 fn compute_size_of_headers(headers: &Headers, section_count: usize) -> Result<u32, Error> {
-    let table_size = size_of::<SectionHeader>() * (section_count + 1);
+    let slot_count = section_count + slots_kept_for_a_program(&headers.sections);
+    let table_size = size_of::<SectionHeader>() * slot_count;
     let table_end = to_u32((headers.layout.section_headers_offset + table_size) as u64)?;
     let size_of_headers = align_up_u32(table_end, headers.optional.file_alignment)?
         .max(headers.optional.size_of_headers);

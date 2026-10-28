@@ -1,5 +1,5 @@
 // A value from another realm fills places of type number.
-import { runInNewContext } from "node:vm";
+import { createContext, runInContext } from "node:vm";
 
 const log: string[] = [];
 
@@ -55,8 +55,10 @@ const things = {
 };
 const names = Object.keys(things);
 
+const realm = createContext({ log });
+
 function get(name: string) {
-  return runInNewContext("(" + Reflect.get(things, name) + ")", { log });
+  return runInContext("(" + Reflect.get(things, name) + ")", realm);
 }
 
 const table = [10, 20, 30, 40];

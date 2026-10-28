@@ -475,20 +475,22 @@ impl<'a> Build<'a> {
         let is_read_again = self.programs.is_some();
         application.set_is_read_again(is_read_again);
         let first_files: Vec<Option<FileId>> = programs.iter().map(|program| program.1).collect();
-        let lacked_before = library_code_of(&options.load.library_code_lacked);
-        let further = FurtherLibraryCode {
-            lacked_before: &lacked_before,
-            // What is loaded ahead of a program serves whatever that program asks for.
-            serves_unseen_code: options.load.keeps_library_code_without_names
-                || options.can_load_code_at_run_time()
-                || preload_of(options).is_some(),
-        };
-        let mut roots: Vec<RuntimeRoots> = first_files
+        let mut roots: Vec<RuntimeRoots> = programs
             .iter()
-            .map(|&first| {
+            .map(|&(position, first)| {
                 if first.is_some() {
                     view(first);
                 }
+                let of_program = self.programs.map(|all| &all.options[position].load);
+                let load = of_program.unwrap_or(&options.load);
+                let lacked_before = library_code_of(&load.library_code_lacked);
+                let further = FurtherLibraryCode {
+                    lacked_before: &lacked_before,
+                    // What is loaded ahead of a program serves whatever that program asks for.
+                    serves_unseen_code: load.keeps_library_code_without_names
+                        || options.can_load_code_at_run_time()
+                        || preload_of(options).is_some(),
+                };
                 collect_runtime_roots(files, shared.runtime_modules, self.platform, further)
             })
             .collect();

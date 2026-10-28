@@ -143,7 +143,7 @@ fn run_area(area: &str) {
                 (position - 1) % count == index
             });
         }
-        Err(_) if tests.len() > 1 => {
+        Err(_) if !tests.is_empty() => {
             return run_area_in_copies(area, jobs.min(tests.len()), &tests);
         }
         Err(_) => {}
@@ -571,6 +571,11 @@ fn pattern_of(line: &str, ids: &mut Vec<String>) -> String {
             is_quoted = true;
         } else if rest.starts_with(b" @") && digits(2) > 0 {
             at += 2 + digits(2);
+            // A word may stand behind the positions.
+            let is_last = !bytes[at..].starts_with(b" @");
+            if is_last && at < bytes.len() {
+                pattern.push_str("{{*}}");
+            }
             continue;
         } else if rest.starts_with(b"text={start=") {
             pattern.push_str("text={{*}}");
@@ -1177,6 +1182,8 @@ mod tests {
             &mut ids,
         );
         assert_eq!(pattern, "v4 = Call v1, [[f_0]] site=[[w_1]] key=\"f12 @9\"");
+        let pattern = pattern_of("v10 = ElemGet v3, v9 @4333 @4324 callers", &mut ids);
+        assert_eq!(pattern, "v10 = ElemGet v3, v9{{*}} callers");
         let pattern = pattern_of(
             "x=f12 position=17 text={start=1 end=2} casts=[[{{a}}]] L2.b",
             &mut ids,

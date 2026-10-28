@@ -505,6 +505,8 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             // After the loop: BUN_JSC_useShadowRealm=1 does not bring it back.
             JSC::Options::useShadowRealm() = false;
 #endif
+            if (runsCompiledCode || locksBuiltins)
+                JSC::Options::useShadowRealm() = false;
             // This is the only assertOptionsAreCoherent() rule that BUN_JSC_* can break, and that assertion aborts.
             if (JSC::Options::useWasm() && !JSC::Options::useWasmIPInt() && !(JSC::Options::useBBQJIT() && JSC::Options::useJIT())) [[unlikely]] {
                 constexpr auto message = "BUN_JSC_useWasmIPInt=0 (needs useJIT and useBBQJIT, or BUN_JSC_useWasm=0)"_s;

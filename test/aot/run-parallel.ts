@@ -11,6 +11,7 @@
 //
 // A program may begin with comment lines that say how it is built and run:
 //   // Flags: --aot-validate           more flags for the build. A word that begins with ./ or ../ is a path from the folder of the program
+//                                      With --aot-log-type-mismatches what the executable logs counts as printed: plain Bun logs nothing
 //   // Entry points: ./child.cjs       further entry points, for what the program loads under a computed name. The program is built alone and starts
 //   // Alone: <why>                    what it prints depends on what else the executable holds: it is built alone
 //   // Env: TZ=America/New_York        the environment of both runs, one variable a line
@@ -259,6 +260,9 @@ function unmetBounds(buildOutput: string, bounds: Bound[]) {
     );
 }
 
+/** Both ways to build a file are held to one run of the reference. */
+const references = new Map<string, ReturnType<typeof start>>();
+
 async function run(programs: Program[]): Promise<void> {
   if (programs.length === 0) return;
   const halves = () =>
@@ -329,8 +333,7 @@ async function run(programs: Program[]): Promise<void> {
         };
         const cwd = dirname(program.path);
         const stored = program.way === "erased" && program.erasedIsAsPlain ? undefined : program.output;
-        const reference = async () => {
-          if (stored !== undefined) return undefined;
+        const runReference = async () => {
           if (!program.comparesWithCompiled) return withSlot(() => start([process.execPath, program.path], cwd, env));
           const other = nextExecutable("reference");
           try {
@@ -357,6 +360,14 @@ async function run(programs: Program[]): Promise<void> {
             rmSync(other, { force: true });
           }
         };
+        const reference = () => {
+          if (stored !== undefined) return undefined;
+          const known = references.get(program.path);
+          if (known) return known.then(({ output }) => ({ output, ms: 0 }));
+          const first = runReference();
+          references.set(program.path, first);
+          return first;
+        };
         const [compiled, plain] = await Promise.all([
           withSlot(() => start([executable], cwd, { ...env, ...program.envOfExecutable })),
           reference(),
@@ -366,7 +377,7 @@ async function run(programs: Program[]): Promise<void> {
         // The executable ran compiled code and did not fall back to the source it holds.
         if (!compiled.output.stderr.includes("[aot] module: "))
           return fail(program, "run", "it did not run compiled code", compiled.output, plain?.output);
-        compiled.output.stderr = compiled.output.stderr.replace(/^\[aot\] .*\r?\n/gm, "");
+        compiled.output.stderr = compiled.output.stderr.replace(/^\[aot\] (?!type-mismatch ).*\r?\n/gm, "");
         const passes = { state: "pass", compileMs, runMs: compiled.ms };
         if (stored !== undefined) {
           if (asText(compared(compiled.output)) === stored) return settle(program, passes);

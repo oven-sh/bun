@@ -73,8 +73,8 @@ test("the default export is the own `default` of the object where the loader fin
 });
 
 test("the programs import every module of module-exports.txt", () => {
-  const imported = ["every-module", "modules-that-fail"].flatMap(name => {
-    const program = join(import.meta.dir, `../parallel/builtin-modules/default-export-and-namespace-of-${name}.js`);
+  const imported = ["every-module", "modules-fail"].flatMap(name => {
+    const program = join(import.meta.dir, `../parallel/builtin-modules/default-export-namespace-${name}.js`);
     return Array.from(
       readFileSync(program, "utf8").matchAll(/^import default\d+, \* as namespace\d+ from "([^"]+)";$/gm),
       match => match[1],

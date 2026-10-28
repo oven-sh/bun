@@ -661,6 +661,8 @@ const removeDetailsOfErrors = (output: string) =>
         .replace(/Error: .*/, "Error")
         // A message that the program prints by itself: an executable quotes less of the source in it ("Error messages" in docs/compiler/compatibility.mdx). The words in front are compared.
         .replace(/ \(evaluating '.*'\)/, "")
+        // The message of `in` begins with the source of its right side, for which an executable names the value.
+        .replace(/^.* is not an Object\./, "<something> is not an Object.")
         .replace(/\[(\w*Function): [^\]]*\]/g, "[$1]")
         .replace(/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z/g, "<a time>")
         .replace(/\b\d{1,2} [A-Z][a-z]{2} \d\d:\d\d:\d\d\b/g, "<a time>")

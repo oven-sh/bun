@@ -43,6 +43,11 @@ export const emitsProcessEventCell = "Process.emitsEvent";
 export const keptHandlerCell = (path: string) => `Handler.${path}`;
 // The one object that process.env, Bun.env and import.meta.env answer.
 export const environmentCell = "GlobalObject.processEnvironment";
+// On Windows that object is a Proxy of the library over an ordinary object that native code has filled, and these are what native code hands the function that makes it.
+export const windowsEnvironmentStorageCell = "GlobalObject.windowsEnvironmentStorage";
+export const editsWindowsEnvironmentCell = "GlobalObject.editsWindowsEnvironment";
+export const coercesEnvironmentValueCell = "GlobalObject.coercesEnvironmentValue";
+export const resetsEnvironmentValueCell = "GlobalObject.resetsEnvironmentValue";
 // Ordinary objects that native code fills at the first read of process.versions, process.release and process.features.
 export const versionsCell = "Process.versions";
 export const releaseCell = "Process.release";

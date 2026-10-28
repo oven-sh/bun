@@ -328,6 +328,12 @@ static JSValue createBunSql(VM& vm, Zig::GlobalObject* globalObject)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue sqlValue = BUN_REQUIRE_INTERNAL_MODULE(globalObject, BunSql, "Bun.sql", "default"_s);
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode() && scope.exception()) [[unlikely]] {
+        if (JSValue standIn = JSC::AOT::takeStandInForFunctionLeftOut(globalObject, { "sql"_s, 2 }, globalObject))
+            return standIn;
+    }
+#endif
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, sqlValue.getObject()->get(globalObject, vm.propertyNames->defaultKeyword));
 }
@@ -336,6 +342,12 @@ static JSValue createBunSQLConstructor(VM& vm, Zig::GlobalObject* globalObject)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue sqlValue = BUN_REQUIRE_INTERNAL_MODULE(globalObject, BunSql, "Bun.SQL", "SQL"_s);
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode() && scope.exception()) [[unlikely]] {
+        if (JSValue standIn = JSC::AOT::takeStandInForFunctionLeftOut(globalObject, { "SQL"_s, 0, true }, globalObject))
+            return standIn;
+    }
+#endif
     RETURN_IF_EXCEPTION(scope, {});
     auto clientData = WebCore::clientData(vm);
     RELEASE_AND_RETURN(scope, sqlValue.getObject()->get(globalObject, clientData->builtinNames().SQLPublicName()));
@@ -366,7 +378,7 @@ static JSValue createBunShell(VM& vm, Zig::GlobalObject* globalObject)
 #if ENABLE(AOT)
     // An executable of a program that never names `Bun.$` has no code for the function. It reads `process.env` when it runs, so that read is made here.
     if (vm.hasCompiledCode() && scope.exception()) [[unlikely]] {
-        if (JSValue standIn = JSC::AOT::takeStandInForMemberLeftOut(globalObject, "$"_s)) {
+        if (JSValue standIn = JSC::AOT::takeStandInForFunctionLeftOut(globalObject, { "BunShell"_s, 1 }, globalObject)) {
             JSValue process = globalObject->get(globalObject, Identifier::fromString(vm, "process"_s));
             RETURN_IF_EXCEPTION(scope, {});
             process.get(globalObject, Identifier::fromString(vm, "env"_s));

@@ -24,7 +24,7 @@ fn split_binding_text(text: &str) -> Option<(BuiltinName, BuiltinName)> {
 }
 
 // Native code makes these from host functions of its own and hands them to the library, so no text names them.
-const HANDED_OVER_BY_NATIVE_CODE: [BuiltinId; 9] = [
+const HANDED_OVER_BY_NATIVE_CODE: [BuiltinId; 12] = [
     BuiltinId::NativeNewCppFunctionBunProcessCppJsFunctionDrainMicrotaskQueue,
     BuiltinId::NativeNewCppFunctionBunProcessCppJsFunction_emitWarning,
     BuiltinId::NativeNewCppFunctionBunProcessCppJsFunction_throwValue,
@@ -32,6 +32,9 @@ const HANDED_OVER_BY_NATIVE_CODE: [BuiltinId; 9] = [
     BuiltinId::NativeNewCppFunctionBunProcessCppProcess_functionWriteWarning,
     BuiltinId::NativeNewCppFunctionErrorCodeCppNodeError_proto_toString,
     BuiltinId::NativeNewCppFunctionJSDirectStreamControllerCppJsWebStreamsHandler_onDirectEndOfTickFlush,
+    BuiltinId::NativeNewCppFunctionJSEnvironmentVariableMapCppJsEditWindowsEnvVar,
+    BuiltinId::NativeNewCppFunctionJSEnvironmentVariableMapCppJsProcessEnvCoerceForWrite,
+    BuiltinId::NativeNewCppFunctionJSEnvironmentVariableMapCppJsProcessEnvResetForDelete,
     BuiltinId::NativeNewCppFunctionJSEventListenerCppJsFunctionEmitUncaughtException,
     BuiltinId::NativeNewCppFunctionNodeModuleModuleCppJsFunctionSetCJSWrapperItem,
 ];

@@ -253,6 +253,7 @@ pub fn run(args: &[String]) -> bool {
         Some("enc-dense") => shapes::run_dense(num(2, 1), num(3, 1000), num(4, 0x3E0)),
         Some("enc-rolling") => shapes::run_rolling(num(2, 1), num(3, 40), num(4, 0xF8)),
         Some("enc-stitch") => shapes::run_stitch(num(2, 1), num(3, 3000), num(4, 0xC00)),
+        Some("enc-chain") => shapes::run_chain(num(2, 1), num(3, 2000), num(4, 0x3E0), &corpus()),
         Some("enc-merge") => shapes::run_merge(num(2, 0xFFC)),
         Some("enc-states") => shapes::run_states(num(2, 1), num(3, 1000), num(4, 0xFFF)),
         Some("enc-select") => shapes::run_select(num(2, 1), num(3, 200_000) as usize, &corpus()),

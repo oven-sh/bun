@@ -1232,3 +1232,166 @@ pub fn run_merge(qualities: u64) {
     }
     println!("ok: {cases} cases");
 }
+
+/// The bank that the hashers of small windows keep the position of these 4 bytes in, if they have 512 banks.
+fn bank_of(key: [u8; 4]) -> u32 {
+    (u32::from_le_bytes(key).wrapping_mul(0x1E35_A7BD) >> 17) & 511
+}
+
+/// Qualities 5 to 9 with windows of up to 64 KiB, where the hasher keeps chains of positions whose nodes come from banks
+/// of slots, and a bank that is full takes the slot of its oldest node.
+pub fn run_chain(seed0: u64, iters: u64, qualities: u64, corpus: &r#gen::Corpus) {
+    let qs = crate::args::qualities(qualities, 5..10);
+    let mut totals = (0usize, 0usize);
+    for it in 0..iters {
+        let seed = seed0.wrapping_add(it);
+        let mut rng = Rng(seed);
+        let q = *rng.pick(&qs);
+        let mut lgwin = if rng.chance(1, 2) { 16 } else { rng.range(10, 16) };
+        // How many nodes of a chain the search looks at.
+        let hops = (if q > 6 { 7 } else { 8 }) << (q - 4);
+        // From `lo` to `hi` random bytes.
+        let random = |rng: &mut Rng, lo: usize, hi: usize| -> Vec<u8> { (0..rng.range(lo, hi)).map(|_| rng.next() as u8).collect() };
+        // In a long stretch of literals the hasher adds 5 positions in 17. After a run every position is looked at again.
+        let run = |rng: &mut Rng, data: &mut Vec<u8>, next: u8| {
+            let c = rng.next() as u8;
+            data.extend(std::iter::repeat_n(if c == next { c ^ 1 } else { c }, 48));
+        };
+        // More positions than a bank of 65536 slots has, so that the slots are in use for the second time or later.
+        let mut data = match rng.below(3) {
+            0 => {
+                let n = rng.range(66_000, 200_000);
+                r#gen::data(&mut rng, corpus, n)
+            }
+            1 => random(&mut rng, 0, 300),
+            _ => Vec::new(),
+        };
+        match rng.below(5) {
+            // The one long match is the node at which the search ends, or the one before or after it.
+            0 => {
+                let after = hops + rng.range(0, 4) - 3;
+                while (1usize << lgwin) - 16 < (after + 2) * 6 + 60 {
+                    lgwin += 1;
+                }
+                let window = (1usize << lgwin) - 16;
+                let key = random(&mut rng, 4, 4);
+                let target = random(&mut rng, 6, 40);
+                // Not so many literals that positions are left out.
+                let most = ((window - 4 - target.len()) / (after + 1) - 4).min(if q < 9 { 60 } else { 500 });
+                let gap = if rng.chance(1, 2) { rng.range(2, most.min(12)) } else { rng.range(2, most) };
+                run(&mut rng, &mut data, key[0]);
+                data.extend_from_slice(&key);
+                data.extend_from_slice(&target);
+                for _ in 0..after {
+                    data.extend_from_slice(&key);
+                    let at = data.len();
+                    let least = if rng.chance(1, 2) { gap } else { 2 };
+                    data.extend(random(&mut rng, least, gap));
+                    if data[at] == target[0] {
+                        data[at] ^= 1;
+                    }
+                }
+                data.extend_from_slice(&key);
+                data.extend_from_slice(&target);
+                data.extend(random(&mut rng, 0, 40));
+            }
+            // Records of one length that start with one of a few keys from the same bank. By the end of a chain the bank
+            // has given its slots to newer nodes, of this chain or another one, and the search goes on from there. What it
+            // comes by are starts of records again, and which of them it sees decides how long the copy is.
+            1 => {
+                let bank = rng.below(512) as u32;
+                let mut keys = Vec::new();
+                let wanted = rng.range(3, 8);
+                while keys.len() < wanted {
+                    let key = (rng.next() as u32).to_le_bytes();
+                    if bank_of(key) == bank {
+                        keys.push(key);
+                    }
+                }
+                let body = rng.range(1, 12);
+                let bodies: Vec<Vec<u8>> = (0..rng.range(2, 5)).map(|_| random(&mut rng, body, body)).collect();
+                for _ in 0..rng.range(1000, 160_000 / (4 + body)) {
+                    data.extend_from_slice(rng.pick(&keys));
+                    data.extend_from_slice(rng.pick(&bodies));
+                    // Now and then the records move.
+                    if rng.chance(1, 3000) {
+                        data.push(rng.next() as u8);
+                    }
+                }
+            }
+            // A match as far back as the window allows, or with more than 65535 positions since the one before in its
+            // chain.
+            2 => {
+                let window = (1usize << lgwin) - 16;
+                let piece = random(&mut rng, 5, 40);
+                for _ in 0..rng.range(1, 4) {
+                    let distance = match rng.below(6) {
+                        0 | 1 => window + 1 - rng.below(4),
+                        2 => 65533 + rng.below(6),
+                        3 => 65536 + rng.below(70_000),
+                        _ => rng.range(piece.len(), window),
+                    };
+                    data.extend_from_slice(&piece);
+                    data.extend(random(&mut rng, distance - piece.len(), distance - piece.len()));
+                }
+                data.extend_from_slice(&piece);
+                data.extend(random(&mut rng, 0, 40));
+            }
+            // A node has 16 bits for how far back the one before it in the chain is. With more than that, or nothing,
+            // before it, the search ends there. If the node had the low 16 bits, the search would go on at a multiple of
+            // 65536 after the one before, or where the position ends in 0xCCCC. There is the long match, in a long stretch of
+            // literals, so that the hasher does not know it.
+            3 => {
+                let window = (1usize << lgwin) - 16;
+                let key = random(&mut rng, 4, 4);
+                let target = random(&mut rng, 12, 40);
+                let hidden = if data.len() > 300 || rng.chance(1, 2) {
+                    run(&mut rng, &mut data, key[0]);
+                    let before = data.len();
+                    data.extend_from_slice(&key);
+                    before + if rng.chance(1, 4) { 2 << 16 } else { 1 << 16 }
+                } else {
+                    0xCCCC
+                };
+                // In about half of the cases something from here gets into the same chain, and nothing is tested.
+                let filler = hidden - data.len();
+                data.extend(random(&mut rng, filler, filler));
+                data.extend_from_slice(&key);
+                data.extend_from_slice(&target);
+                let most = ((window - 300) / 2).min(if rng.chance(1, 2) { 100 } else { 3000 });
+                data.extend(random(&mut rng, 20, most));
+                run(&mut rng, &mut data, key[0]);
+                data.extend_from_slice(&key);
+                data.push(target[0] ^ 1);
+                data.extend(random(&mut rng, 0, most));
+                run(&mut rng, &mut data, key[0]);
+                data.extend_from_slice(&key);
+                data.extend_from_slice(&target);
+                data.extend(random(&mut rng, 0, 40));
+            }
+            // Few different bytes: few chains, all of them long.
+            _ => {
+                let letters = rng.range(2, 6);
+                let n = r#gen::length(&mut rng, 200_000);
+                data.extend((0..n).map(|_| b'a' + (rng.below(letters).min(rng.below(letters))) as u8));
+            }
+        }
+        let mut params = vec![(1, q), (2, lgwin as u32)];
+        if rng.chance(1, 4) {
+            params.push((3, rng.range(16, 20) as u32));
+        }
+        if rng.chance(1, 4) {
+            params.push((0, rng.range(1, 2) as u32));
+        }
+        let mut dicts = Vec::new();
+        if rng.chance(1, 5) && data.len() > 100 {
+            for _ in 0..rng.range(1, 2) {
+                let at = rng.below(data.len() - 50);
+                let n = rng.range(8, (data.len() - at).min(100_000));
+                dicts.push(data[at..at + n].to_vec());
+            }
+        }
+        check("chain", seed, &mut rng, &data, &params, &dicts, &mut totals);
+    }
+    println!("ok: {iters} iterations, {} -> {}", totals.0, totals.1);
+}

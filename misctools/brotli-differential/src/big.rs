@@ -51,9 +51,14 @@ pub fn run(seed: u64, total: u64, params: Vec<(i32, u32)>, corpus: &r#gen::Corpu
         })
         .collect();
     // Where the position wraps the hasher starts over, so the only way to a copy from before that point is one of the last
-    // distances. Around every other GiB the input repeats at a distance that is most of the window, or of a block.
+    // distances. Around every other GiB each piece of the input repeats what came most of the window, or of a block, before
+    // it. That is one of two distances: the same as for the piece before, which is all that qualities 2 to 4 try, or the other.
     let lgwin = params.iter().rev().find(|&&(k, _)| k == 2).map_or(22, |&(_, v)| v.clamp(10, 30));
-    let periodic = r#gen::data(&mut rng, corpus, 250_000.min(3usize << lgwin >> 2));
+    let far = 250_000.min(3usize << lgwin >> 2);
+    let distances = [far, far - far / 5 - rng.below(far / 5)];
+    let mut turn = 0;
+    // At least the last `far` bytes of the input.
+    let mut recent: Vec<u8> = Vec::new();
     let case = EncCase { data: Vec::new(), params: params.clone(), dicts: Vec::new(), schedule: 0, misuse: false };
     let mut p = Pair::new(&case).unwrap();
     let mut cd = CDecoder::new();
@@ -83,13 +88,16 @@ pub fn run(seed: u64, total: u64, params: Vec<(i32, u32)>, corpus: &r#gen::Corpu
         }
         let block = &pool[i];
         let off = rng.below(block.len());
-        let max = if close { rng.range(1, 5000) } else { block.len() };
+        // A long piece ends where the small ones start, not after them.
+        let max = if close { rng.range(1, 5000) } else { (to_mark - 299_999) as usize };
         let n = (block.len() - off).min(max).min(left as usize);
         let changed;
-        let chunk = if close && (((din.n + 300_000) >> 30) + seed) % 2 == 0 {
-            let at = (din.n % periodic.len() as u64) as usize;
+        let chunk = if close && (((din.n + 300_000) >> 30) + seed) % 2 == 0 && recent.len() >= far {
+            turn += rng.below(2);
+            let distance = distances[turn % 2];
+            let at = recent.len() - distance;
             // With a byte that is different this time: a copy that never ends is not searched for.
-            let mut piece = periodic[at..(at + n).min(periodic.len())].to_vec();
+            let mut piece = recent[at..at + n.min(far / 4)].to_vec();
             let flip = rng.below(piece.len());
             piece[flip] ^= 1;
             changed = piece;
@@ -100,6 +108,10 @@ pub fn run(seed: u64, total: u64, params: Vec<(i32, u32)>, corpus: &r#gen::Corpu
         let n = chunk.len();
         let op = if left == n as u64 { 2 } else if rng.chance(1, if close { 50 } else { 400 }) { 1 } else { 0 };
         din.add(chunk);
+        if recent.len() > 8 * far {
+            recent.drain(..recent.len() - far);
+        }
+        recent.extend_from_slice(chunk);
         let mut input = chunk;
         loop {
             let (ok, used) = p.step(op, input, 1 << 21).unwrap_or_else(|e| fail(din.n, e));

@@ -8567,6 +8567,22 @@ describe("math functions", () => {
     minify_test("a{rotate:atan2(1,sign(1s", "a{rotate:45deg}");
   });
 
+  describe("functions of numbers and angles", () => {
+    minify_test("a{opacity:sin(1)}", "a{opacity:.841471}");
+    minify_test("a{rotate:asin(.5)}", "a{rotate:30deg}");
+    minify_test("a{rotate:acos(.5)}", "a{rotate:60deg}");
+    minify_test("a{rotate:atan(1)}", "a{rotate:45deg}");
+    minify_test("a{rotate:asin(2)}", "a{rotate:asin(2)}");
+    minify_test("a{rotate:asin(1deg)}", "a{rotate:asin(1deg)}");
+    minify_test("a{width:asin(.5)}", "a{width:asin(.5)}");
+    minify_test("a{width:calc(1px*pow(2,3))}", "a{width:8px}");
+    minify_test("a{width:calc(1px*pow(2px,3))}", "a{width:calc(1px*pow(2px,3))}");
+    minify_test("a{width:calc(1px*sqrt(16))}", "a{width:4px}");
+    minify_test("a{width:calc(1px*exp(0))}", "a{width:1px}");
+    minify_test("a{width:calc(1px*log(8,2))}", "a{width:3px}");
+    minify_test("a{width:calc(1px*log(e))}", "a{width:1px}");
+  });
+
   describe("rem() keeps the sign of the dividend", () => {
     minify_test("a{margin-left:rem(-18px,5px)}", "a{margin-left:-3px}");
     minify_test("a{rotate:rem(140deg,-90deg)}", "a{rotate:50deg}");

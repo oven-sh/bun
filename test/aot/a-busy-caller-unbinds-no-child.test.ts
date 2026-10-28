@@ -9,7 +9,7 @@ const grows = `const kept = []; while (kept.length < 4096) kept.push(new Array(1
 const started = () => Bun.spawn({ cmd: [bunExe(), "-e", grows], env: bunEnv, stdio: ["ignore", "ignore", "ignore"] });
 /** Nothing else happens on this thread meanwhile: no timer, no message, no end of a child. */
 function keepThisThreadBusy(seconds: number) {
-  for (const until = performance.now() + seconds * 1000; performance.now() < until; );
+  for (const until = performance.now() + seconds * 1000; performance.now() < until;);
 }
 
 test.skipIf(isWindows)(

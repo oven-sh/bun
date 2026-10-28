@@ -5674,7 +5674,7 @@ describe("fs.read/readv/write/writev pass the buffer to the callback on error", 
             fs.write(fd, buffer, offset, length, position, (err, bytesWritten, buf) => {
               calls.push([err?.code, bytesWritten, buf === buffer]);
               if (err?.code === "EAGAIN") {
-                for (let left = filled; left > 0; )
+                for (let left = filled; left > 0;)
                   left -= fs.readSync(reader, scratch, 0, Math.min(left, scratch.length));
               }
               cb(err, bytesWritten, buf);

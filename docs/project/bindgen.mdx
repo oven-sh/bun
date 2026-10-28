@@ -1125,7 +1125,7 @@ A few things a schema cannot say with bindgen's own keys:
 | `types`, `slots`, `stateHeap` on a class  | the TypeScript types that denote the class, its internal slots, the heap of its other state       |
 | any other key                             | a column of the table: `SignatureColumns`, `EntryColumns` in `src/codegen/builtins/vocabulary.ts` |
 
-`b.opaque.returning(..)` is still `b.opaque` to Rust, and `b.object.returning("Blob")` still `b.object`. Each word is `"string"`, `"number"`, `"int32"`, `"bigint"`, `"boolean"`,
+`b.opaque.returning(..)` is still `b.opaque` to Rust, `b.object.returning("Blob")` still `b.object`, and `b.bufferSource.returning("Buffer")` still `b.bufferSource`. Each word is `"string"`, `"number"`, `"int32"`, `"bigint"`, `"boolean"`,
 `"undefined"`, `"null"`, `"object"`, `"Promise"`, `"this"` (the receiver itself) or the name of a class (`"Array"`,
 `"Buffer"`, `"Headers"`, a class of a schema ..). Compiled code takes the words on trust. Without
 `.returning` the compiler takes a `b.opaque` result for an object nobody knows, and takes the member to do anything at all

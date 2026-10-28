@@ -5,7 +5,7 @@ const promise = { ...method, returns: b.promise } as const;
 
 const members = {
   cancel: { capability: "js", length: 1, rustName: "cancel_from_js" },
-  drain: { ...method, returns: b.bufferSource.optional, length: 1 },
+  drain: { ...method, returns: b.bufferSource.returning("Uint8Array").optional, length: 1 },
   isClosed: { getter: b.bool, pure: true },
   pull: {
     ...method,

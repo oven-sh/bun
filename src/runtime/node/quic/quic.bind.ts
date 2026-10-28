@@ -4,6 +4,7 @@ import { SocketAddress } from "../../socket/SocketAddress.bind.ts";
 import { BlockList } from "../net/BlockList.bind.ts";
 
 const js = { capability: "js", throws: true } as const;
+const certificate = { returns: b.bufferSource.returning("Buffer").optional, capability: "heap", throws: true } as const;
 
 /** A member of another type is ignored. */
 const text = b.string.allowStringObject.otherAsNull;
@@ -66,11 +67,11 @@ export const QuicSession = b.class({
   proto: {
     applicationOptions: { ...js, returns: b.object },
     destroy: { ...js, args: { options: QuicCloseOptions.otherAsNull } },
-    getCertificate: { returns: b.bufferSource.optional, capability: "heap", throws: true },
+    getCertificate: certificate,
     getEphemeralKey: { returns: EphemeralKey.optional },
     /** A `SocketAddress`, or `undefined` for no address. */
     getLocalAddress: { returns: b.opaque.returning("SocketAddress", "undefined"), capability: "js" },
-    getPeerCertificate: { returns: b.bufferSource.optional, capability: "heap", throws: true },
+    getPeerCertificate: certificate,
     /** A `SocketAddress`, or `undefined` for no address. */
     getRemoteAddress: { returns: b.opaque.returning("SocketAddress", "undefined"), capability: "js" },
     gracefulClose: { ...js, args: { options: QuicCloseOptions.otherAsNull } },

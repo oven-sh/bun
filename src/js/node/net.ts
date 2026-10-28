@@ -598,13 +598,10 @@ const addServerName = $bindgen("Listener.bind.ts", "addServerName") as (
   tls: unknown,
 ) => void;
 // The second part: what the duplex's 'data', 'end', 'drain' and 'close' events are to call.
-const upgradeDuplexToTLS: (
+const upgradeDuplexToTLS = $bindgen("socket_body.bind.ts", "upgradeDuplexToTLS") as (
   duplex: $Node.Duplex,
   options: $Node.TLSUpgradeOptions<$Node.Socket | ConnectData>,
-) => [handle: SocketHandle, events: [(chunk: Uint8Array) => void, () => void, () => void, () => void]] = $bindgen(
-  "socket_body.bind.ts",
-  "upgradeDuplexToTLS",
-);
+) => [handle: SocketHandle, events: [(chunk: Uint8Array) => void, () => void, () => void, () => void]];
 // tls.connect({ socket }) upgrade: hostname policy stays with this JS layer.
 const upgradeTLSDeferred = $bindgen("socket_body.bind.ts", "upgradeTLSDeferred") as unknown as (
   socket: SocketHandle,

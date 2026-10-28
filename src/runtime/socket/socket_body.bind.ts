@@ -11,7 +11,7 @@ import { SocketHandler, SocketReloadOptions, UpgradeTLS } from "./SocketConfig.b
 export default b.module({ rustPath: "crate::socket::socket_body" });
 
 const js = { capability: "js", throws: true } as const;
-const buffer = { ...js, returns: b.bufferSource.optional } as const;
+const buffer = { ...js, returns: b.bufferSource.returning("Buffer").optional } as const;
 const address = { getter: b.string.local.optional, cache: true, capability: "heap", throws: true } as const;
 const family = { getter: b.string.local.optional, cache: true, capability: "heap" } as const;
 const certificate = { ...js, returns: b.object.optional } as const;

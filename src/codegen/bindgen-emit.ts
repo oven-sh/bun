@@ -4,6 +4,7 @@ import assert from "node:assert";
 import {
   asciiLiteral,
   Builtin,
+  BufferSourceType,
   ByteSpanType,
   type CalledFromRustFunction,
   type Capability,
@@ -1001,7 +1002,9 @@ function cppArgumentContext(
 export function checkedWordsOf(type: Type): readonly string[] | null {
   if (type instanceof ClassType) return [type.name];
   if (type instanceof CellType) return [type.cpp];
-  if (type instanceof OpaqueType || type instanceof LocalType) return type.checkedResult;
+  if (type instanceof OpaqueType || type instanceof LocalType || type instanceof BufferSourceType) {
+    return type.checkedResult;
+  }
   if (type instanceof LocalStringType) return ["string"];
   if (!(type instanceof OptionalType)) return null;
   const words = type.inner instanceof OpaqueType ? null : checkedWordsOf(type.inner);

@@ -1726,9 +1726,24 @@ export class BytesType extends Type {
 /** A typed array, `DataView` or `ArrayBuffer`, as a handle whose bytes are read through `with_bytes`. */
 export class BufferSourceType extends Type {
   readonly #allowShared: boolean;
-  constructor(allowShared = false) {
+  readonly #declared: DeclaredResults | null;
+  constructor(allowShared = false, declared: DeclaredResults | null = null) {
     super();
     this.#allowShared = allowShared;
+    this.#declared = declared;
+  }
+  /** As that of `LocalType`. */
+  returning(...alternatives: readonly DeclaredResult[]): BufferSourceType {
+    return new BufferSourceType(this.#allowShared, new DeclaredResults(alternatives));
+  }
+  get checkedResult(): readonly string[] | null {
+    return this.#declared?.words ?? null;
+  }
+  get resultType(): TypeSpec {
+    return this.#declared?.type ?? super.resultType;
+  }
+  get tsResultType(): string {
+    return this.checkedResult === null ? this.tsType : typeScriptOf(this.checkedResult);
   }
   get idlType(): string {
     return `Bun::Bindgen::IDLRawBufferSource<${this.#allowShared}>`;

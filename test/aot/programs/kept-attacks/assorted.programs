@@ -1,0 +1,2836 @@
+////: Body-3
+class Body {
+  mass = 3;
+  tell(): void {
+    seen.push(this === undefined ? "none" : String(this.mass));
+  }
+}
+////: Context-2
+class Context {
+  #raw;
+  #status;
+  env = {};
+  #vars;
+  finalized = false;
+  error;
+  #headers;
+  constructor(raw, options) {
+    this.#raw = raw;
+    if (options) this.env = options.env;
+  }
+  get raw() {
+    return this.#raw;
+  }
+  render = (...args) => this.#raw + args.length;
+  status = code => {
+    this.#status = code;
+  };
+  set = (key, value) => {
+    this.#vars ??= new Map();
+    this.#vars.set(key, value);
+  };
+  get = key => (this.#vars ? this.#vars.get(key) : undefined);
+  text = (text, code) => this.#raw + ":" + text + ":" + (code ?? this.#status ?? 200);
+  json = object => JSON.stringify(object) + this.finalized;
+  notFound = () => "404 " + this.#raw;
+}
+////: Context-3
+interface Context {
+  first: () => number;
+  second: () => string;
+  third: (source: string) => string;
+  fourth: () => boolean;
+  fifth: () => number;
+  file: () => number;
+}
+////: collects
+function collects(a, depth) {
+  if (depth > 0) return collects(a, depth - 1, arguments[2], arguments[3]);
+  Bun.gc(true);
+  const garbage = [];
+  for (let i = 0; i < 2000; i++) garbage.push(box(i));
+  Bun.gc(true);
+  return show(arguments) + garbage.length;
+}
+////: fullContext
+function fullContext(): Context {
+  const context = {
+    first: () => one(),
+    second: () => two(),
+    third: source => three(source),
+    fourth: () => four(),
+    fifth: () => one() + 1,
+  } as Context;
+  context.file = () => load(context);
+  return context;
+}
+////: handle
+function handle(i, keep) {
+  const c = new Context("r" + i, i % 3 ? undefined : { env: { i } });
+  if (i % 5 === 0) c.status(201);
+  if (keep) keep.push(c.json, c);
+  return c.text("x");
+}
+//// assorted/aa-array-literals.js
+// Array literals and rest arrays that are made for one call. Where the callee only reads them they need not be on the heap, and every callee here does something else with them as well, or reads them in an odd way.
+// Each callee calls itself, so that it is not taken into its caller. The elements are fresh objects and strings that nothing else holds. The output is that of plain Bun.
+const kept = [];
+const lines = [];
+const show = value => (Array.isArray(value) ? "[" + value.map(show).join() + "]" : typeof value === "object" && value !== null ? "{" + value.n + "}" : String(value));
+const box = n => ({ n });
+
+function reads(list, depth) {
+  if (depth > 0) return reads(list, depth - 1);
+  let seen = "";
+  for (let i = 0; i < list.length; i++) seen += show(list[i]) + ";";
+  return seen + list.length;
+}
+
+function readsOddKeys(list, depth, key) {
+  if (depth > 0) return readsOddKeys(list, depth - 1, key);
+  return [list[5], list[-1], list[1.5], list[4294967295], list[4294967296], list[NaN], list[-0], list["0"], list["length"], list[key], list[key + 0.5], list[-key - 1]].map(show).join();
+}
+
+function collects(list, depth) {
+  if (depth > 0) return collects(list, depth - 1);
+  Bun.gc(true);
+  const garbage = [];
+  for (let i = 0; i < 2000; i++) garbage.push(box(i), "g" + i);
+  Bun.gc(true);
+  return show(list[0]) + show(list[1]) + show(list[2]) + garbage.length;
+}
+
+function keeps(list, depth) {
+  if (depth > 0) return keeps(list, depth - 1);
+  kept.push(list);
+  return list.length;
+}
+
+function returns(list, depth) {
+  if (depth > 0) return returns(list, depth - 1);
+  return list;
+}
+
+function stores(list, depth) {
+  if (depth > 0) return stores(list, depth - 1);
+  list[0] = "stored";
+  list[3] = "beyond";
+  return show(list) + list.length;
+}
+
+function pushes(list, depth) {
+  if (depth > 0) return pushes(list, depth - 1);
+  for (let i = 0; i < 12; i++) list.push(i);
+  return show(list);
+}
+
+function shortens(list, depth) {
+  if (depth > 0) return shortens(list, depth - 1);
+  list.length = 1;
+  return show(list) + show(list[1]);
+}
+
+function sorts(list, depth) {
+  if (depth > 0) return sorts(list, depth - 1);
+  list.sort((a, b) => b.n - a.n);
+  list.reverse();
+  return show(list);
+}
+
+function spreads(list, depth) {
+  if (depth > 0) return spreads(list, depth - 1);
+  const copy = [...list, "end"];
+  copy[0] = "copy";
+  return show(copy) + show(list) + countArguments(...list);
+}
+
+function countArguments() {
+  return arguments.length + ":" + show(arguments[0]);
+}
+
+function stringifies(list, depth) {
+  if (depth > 0) return stringifies(list, depth - 1);
+  return JSON.stringify(list) + String(list.length) + `${list.length ? typeof list[0] : "none"}`;
+}
+
+function asksNativeCode(list, depth, wanted) {
+  if (depth > 0) return asksNativeCode(list, depth - 1, wanted);
+  return [Array.isArray(list), list.indexOf(wanted), list.includes(wanted), list.lastIndexOf(wanted), show(list.slice(1)), show(list.concat(list)), show(list.map(x => x)), Object.keys(list).join("+"), list.at(-1) === wanted, list instanceof Array, typeof list, 0 in list, 7 in list, Object.prototype.toString.call(list)].join();
+}
+
+function applies(list, depth) {
+  if (depth > 0) return applies(list, depth - 1);
+  return countArguments.apply(null, list) + Reflect.apply(countArguments, null, list) + new Pair(...list).first;
+}
+
+class Pair {
+  constructor(first, second) {
+    this.first = show(first);
+    this.second = show(second);
+  }
+}
+
+////= lines-15	Holder	list
+
+function constructs(list, depth) {
+  if (depth > 0) return constructs(list, depth - 1);
+  const holder = new Holder(list);
+  kept.push(holder.list);
+  return holder;
+}
+
+function* yields(list) {
+  yield show(list[0]);
+  Bun.gc(true);
+  yield show(list) + list.length;
+}
+
+async function awaits(list, depth) {
+  if (depth > 0) return awaits(list, depth - 1);
+  await null;
+  Bun.gc(true);
+  return show(list);
+}
+
+function throwsIt(list, depth) {
+  if (depth > 0) return throwsIt(list, depth - 1);
+  throw list;
+}
+
+function compares(list, depth, other) {
+  if (depth > 0) return compares(list, depth - 1, other);
+  return [list === list, list === other, list == other, Object.is(list, other), list === kept[kept.length - 1], list !== null, list === undefined, !list].join();
+}
+
+function captures(list, depth) {
+  if (depth > 0) return captures(list, depth - 1);
+  return () => show(list);
+}
+
+function destructures(list, depth) {
+  if (depth > 0) return destructures(list, depth - 1);
+  const [first, second = "default", ...others] = list;
+  others.push("more");
+  let walked = "";
+  for (const value of list) walked += show(value);
+  return show(first) + show(second) + show(others) + walked;
+}
+
+function freezes(list, depth) {
+  if (depth > 0) return freezes(list, depth - 1);
+  Object.freeze(list);
+  let refused = "no";
+  try {
+    list[0] = 1;
+  } catch (error) {
+    refused = error.constructor.name;
+  }
+  return refused + Object.isFrozen(list) + show(list);
+}
+
+function names(list, depth) {
+  if (depth > 0) return names(list, depth - 1);
+  list.label = "named";
+  return list.label + Object.keys(list).join("+");
+}
+
+const seenLists = new Set();
+const marks = new WeakMap();
+function remembers(list, depth) {
+  if (depth > 0) return remembers(list, depth - 1);
+  const before = seenLists.has(list) + "" + marks.has(list);
+  seenLists.add(list);
+  marks.set(list, seenLists.size);
+  return before + seenLists.has(list) + marks.get(list);
+}
+
+function chooses(list, depth, other) {
+  if (depth > 0) return chooses(list, depth - 1, other);
+  const chosen = depth === 0 && list.length > 1 ? list : other;
+  return show(chosen[0]) + chosen.length + (chosen === list);
+}
+
+function readsInner(list, depth) {
+  if (depth > 0) return readsInner(list, depth - 1);
+  kept.push(list[0]);
+  return show(list[0][0]) + show(list[1][0]) + list[0].length;
+}
+
+function handsOn(list, depth) {
+  if (depth > 0) return handsOn(list, depth - 1);
+  return reads(list, 1) + keeps(list, 1) + reads(list, 0);
+}
+
+function restReads(depth, ...values) {
+  if (depth > 0) return restReads(depth - 1, ...values);
+  let seen = "";
+  for (let i = 0; i < values.length; i++) seen += show(values[i]);
+  return seen + values.length;
+}
+
+function restKeeps(depth, ...values) {
+  if (depth > 0) return restKeeps(depth - 1, ...values);
+  kept.push(values);
+  return values.length;
+}
+
+function restPushes(depth, ...values) {
+  if (depth > 0) return restPushes(depth - 1, ...values);
+  values.push("pushed");
+  values.unshift("first");
+  return show(values);
+}
+
+function restApplies(depth, ...values) {
+  if (depth > 0) return restApplies(depth - 1, ...values);
+  return countArguments.apply(this, values) + countArguments(...values) + show(values[9]);
+}
+
+function restOfMany(depth, ...values) {
+  if (depth > 0) return restOfMany(depth - 1, ...values);
+  Bun.gc(true);
+  return values.length + show(values[values.length - 1]) + show(values[0]);
+}
+
+for (let round = 0; round < 3; round++) {
+  const wanted = box(round + 100);
+  lines.push(reads([box(round), "s" + round, round], 2), reads([], 2), reads([box(round)], 0));
+  lines.push(readsOddKeys([box(round), "t" + round], 2, 1), readsOddKeys([], 1, 0));
+  lines.push(collects([box(round), "c" + round, box(-round)], 2));
+  lines.push(keeps([box(round), "k" + round], 2), show(returns([box(round)], 2)), stores([box(round), round], 2), pushes([box(round)], 2), pushes([], 1));
+  lines.push(shortens([box(round), box(round + 1)], 2), sorts([box(1), box(3), box(2)], 2), spreads([box(round), "x"], 2), spreads([], 1), stringifies([round, "j" + round, null], 2));
+  lines.push(asksNativeCode([box(round), wanted], 2, wanted), applies([box(round), "a" + round], 2), applies([], 1), show(constructs([box(round)], 2).list));
+  lines.push([...yields([box(round), "y" + round])].join("~"));
+  try {
+    throwsIt([box(round), "thrown"], 2);
+  } catch (thrown) {
+    thrown.push("caught");
+    lines.push(show(thrown));
+  }
+  const mine = [box(round)];
+  lines.push(compares(mine, 2, mine), compares([box(round)], 2, [box(round)]), compares([], 2, []), compares(kept[kept.length - 1], 1, null));
+  lines.push(captures([box(round), "closed"], 2)(), destructures([box(round)], 2), destructures([1, 2, 3, 4], 2), freezes([box(round)], 2), names([round], 2));
+  lines.push(remembers([round], 2), remembers(mine, 2), remembers(mine, 2), chooses([box(round), 2], 2, ["other"]), chooses([box(round)], 2, ["other"]));
+  lines.push(readsInner([[box(round)], ["inner"]], 2), handsOn([box(round), "h"], 2));
+  lines.push(restReads(2), restReads(2, box(round)), restReads(2, box(round), "r", round), restKeeps(2, box(round)), restKeeps(2), restPushes(2, box(round)), restPushes(2));
+  lines.push(restApplies(2, box(round), "ra"), restApplies(2), restOfMany(2, 1, 2, 3, 4, 5, 6, 7, box(8)), restOfMany(2, 1, 2, 3, 4, 5, 6, 7, 8, box(9)), restOfMany(1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, box(17)));
+}
+
+Bun.gc(true);
+lines.push(kept.length, new Set(kept).size, kept.map(show).join("|"));
+for (const list of kept) list.push("late");
+lines.push(kept.map(show).join("|"));
+lines.push(...(await Promise.all([awaits([box(1), "later"], 2), awaits([], 1), awaits([box(2)], 0)])));
+console.log(lines.join("\n"));
+//// assorted/aa-calls-without-surplus-arguments.js
+// Functions that use `arguments` are called by name with as many arguments as they declare, or fewer. Such a call has no surplus arguments to hand over.
+// Whatever a call does to its arguments object, or to a copy of it, no other call sees. Each function calls itself, so that it is not taken into its caller. The output is that of plain Bun.
+const kept = [];
+const lines = [];
+
+function keeps(a, depth) {
+  if (depth > 0) return keeps(a + 1, depth - 1);
+  kept.push(arguments);
+  return arguments.length;
+}
+
+function grows(a, depth) {
+  if (depth > 0) return grows(a + 1, depth - 1);
+  arguments[2] = "grown" + a;
+  arguments[3] = "more";
+  arguments.length = 4;
+  return Array.prototype.join.call(arguments, "|");
+}
+
+function pushes(a, depth) {
+  if (depth > 0) return pushes(a + 1, depth - 1);
+  Array.prototype.push.call(arguments, "pushed", a);
+  return arguments.length + ":" + arguments[2] + ":" + arguments[3];
+}
+
+function unshifts(a, depth) {
+  if (depth > 0) return unshifts(a + 1, depth - 1);
+  Array.prototype.unshift.call(arguments, "first");
+  Array.prototype.reverse.call(arguments);
+  return Array.prototype.join.call(arguments);
+}
+
+function slices(a, depth) {
+  if (depth > 0) return slices(a + 1, depth - 1);
+  const copy = Array.prototype.slice.call(arguments, 2);
+  const before = copy.length;
+  copy.push(a, "sliced");
+  copy[5] = "far";
+  return before + ":" + copy.join();
+}
+
+function spreads(a, depth) {
+  if (depth > 0) return spreads(a + 1, depth - 1);
+  const copy = [...arguments];
+  copy.push("spread");
+  copy.sort();
+  return copy.join();
+}
+
+function takesRest(first, second, ...rest) {
+  const before = rest.length;
+  rest.push(first, rest.length);
+  rest.unshift(second);
+  kept.push(rest);
+  return before + ":" + rest.join();
+}
+
+function forwards(a, depth) {
+  if (depth > 0) return forwards(a + 1, depth - 1);
+  return takesRest.apply(this, arguments);
+}
+
+function forwardsByReflect(a, depth) {
+  if (depth > 0) return forwardsByReflect(a + 1, depth - 1);
+  return Reflect.apply(takesRest, undefined, arguments);
+}
+
+function readsBeyond(a, depth) {
+  if (depth > 0) return readsBeyond(a + 1, depth - 1);
+  return [arguments[2], arguments[7], 2 in arguments, arguments.length, Object.keys(arguments).join()].join("/");
+}
+
+function readsByKey(a, depth, key) {
+  if (depth > 0) return readsByKey(a + 1, depth - 1, key);
+  return String(arguments[key]) + String(arguments[key + 1]);
+}
+
+function defines(a, depth) {
+  if (depth > 0) return defines(a + 1, depth - 1);
+  Object.defineProperty(arguments, 2, { value: "defined" + a, enumerable: true, configurable: true, writable: true });
+  Object.freeze(arguments);
+  return JSON.stringify(arguments);
+}
+
+function fills(a, depth) {
+  if (depth > 0) return fills(a + 1, depth - 1);
+  arguments.length = 5;
+  Array.prototype.fill.call(arguments, a);
+  return Array.from(arguments).join();
+}
+
+function collects(a, depth) {
+  if (depth > 0) return collects(a + 1, depth - 1);
+  Bun.gc(true);
+  let seen = "";
+  for (const value of arguments) seen += value + ";";
+  return seen + arguments.length;
+}
+
+function throwsThem(a, depth) {
+  if (depth > 0) return throwsThem(a + 1, depth - 1);
+  throw arguments;
+}
+
+function* yields(a, depth) {
+  yield arguments.length;
+  arguments[2] = a;
+  arguments.length = 3;
+  yield Array.prototype.join.call(arguments);
+}
+
+async function awaits(a, depth) {
+  if (depth > 0) return awaits(a + 1, depth - 1);
+  await null;
+  arguments[2] = "later" + a;
+  arguments.length = 3;
+  return Array.from(arguments).join();
+}
+
+function fewer(a, b, c) {
+  if (a > 0) return fewer(a - 1);
+  arguments[1] = "one";
+  arguments[3] = "three";
+  return [arguments.length, b, c, arguments[1], arguments[3], Object.keys(arguments).join()].join("/");
+}
+
+function none() {
+  if (kept.length % 2) kept.push(arguments);
+  arguments[0] = "zero";
+  return arguments.length + String(arguments[0]);
+}
+
+for (let round = 0; round < 3; round++) {
+  lines.push(keeps(round, 2), grows(round, 2), pushes(round, 2), unshifts(round, 2), slices(round, 2), spreads(round, 2));
+  lines.push(forwards(round, 2), forwardsByReflect(round, 2), readsBeyond(round, 2), readsByKey(round, 2, 2), readsByKey(round, 2, 3));
+  lines.push(defines(round, 2), fills(round, 2), collects(round, 1), fewer(2), none(), none());
+  try {
+    throwsThem(round, 2);
+  } catch (thrown) {
+    thrown[2] = "caught";
+    kept.push(thrown);
+    lines.push(thrown.length + ":" + thrown[0] + ":" + thrown[2]);
+  }
+  lines.push([...yields(round, 0)].join("~"));
+}
+
+lines.push(kept.length, new Set(kept).size);
+for (const list of kept) lines.push(list.length + "=" + Array.prototype.join.call(list));
+for (const list of kept) Array.prototype.push.call(list, "late");
+lines.push(readsBeyond(9, 2), slices(9, 2), forwards(9, 2), none());
+
+const later = await Promise.all([awaits(1, 2), awaits(2, 2), awaits(3, 0)]);
+lines.push(...later, readsBeyond(10, 1));
+console.log(lines.join("\n"));
+//// assorted/aa-calls-without-surplus-arguments-sloppy.cjs
+// The same as calls-without-surplus-arguments.js for sloppy functions, whose arguments objects are tied to the parameters. The output is that of plain Bun.
+const kept = [];
+const lines = [];
+
+function tied(a, depth) {
+  if (depth > 0) return tied(a + 1, depth - 1);
+  arguments[0] = "through the object";
+  depth = "through the parameter";
+  arguments[2] = "beyond";
+  return [a, arguments[1], arguments[2], arguments.length].join("/");
+}
+
+function fewer(a, b) {
+  if (a > 0) return fewer(a - 1);
+  b = "not tied";
+  arguments[1] = "own";
+  arguments[2] = "beyond";
+  return [a, b, arguments[1], arguments[2], arguments.length].join("/");
+}
+
+function keeps(a, depth) {
+  if (depth > 0) return keeps(a + 1, depth - 1);
+  kept.push(arguments);
+  a = "changed" + a;
+  return arguments[0];
+}
+
+function pushes(a, depth) {
+  if (depth > 0) return pushes(a + 1, depth - 1);
+  Array.prototype.push.call(arguments, a, "pushed");
+  Array.prototype.sort.call(arguments);
+  return Array.prototype.join.call(arguments) + "/" + a + "/" + depth;
+}
+
+function takesRest(first, second, ...rest) {
+  rest.push(first, second, rest.length);
+  kept.push(rest);
+  return rest.join();
+}
+
+function forwards(a, depth) {
+  if (depth > 0) return forwards(a + 1, depth - 1);
+  a = "forwarded";
+  return takesRest.apply(this, arguments);
+}
+
+function namesCallee(a, depth) {
+  if (depth > 0) return arguments.callee(a + 1, depth - 1);
+  delete arguments[0];
+  a = "untied";
+  return [arguments[0], arguments.length, arguments.callee === namesCallee, 2 in arguments].join("/");
+}
+
+function collects(a, depth) {
+  if (depth > 0) return collects(a + 1, depth - 1);
+  Bun.gc(true);
+  return JSON.stringify(arguments) + Array.prototype.slice.call(arguments, 2).length;
+}
+
+for (let round = 0; round < 3; round++)
+  lines.push(tied(round, 2), fewer(2), keeps(round, 2), pushes(round, 2), forwards(round, 2), namesCallee(round, 2), collects(round, 1));
+
+lines.push(kept.length, new Set(kept).size);
+for (const list of kept) Array.prototype.push.call(list, "late");
+for (const list of kept) lines.push(list.length + "=" + Array.prototype.join.call(list));
+lines.push(tied(9, 2), fewer(1), forwards(9, 1), collects(9, 1));
+console.log(lines.join("\n"));
+//// assorted/aa-no-list.js
+// 20,000 calls by name of a function that hands its `arguments` to native code, none of them with a surplus argument. The function calls itself, so that it is not taken into its caller.
+// object-census.test.ts runs it without collections, so that the census at exit counts every array that was made, and looks for empty ones. The output is that of plain Bun.
+let sum = 0;
+const seen = new Set();
+
+function look(a, depth) {
+  if (depth > 0) return look(a + 1, depth - 1);
+  seen.add(Object.keys(arguments).length);
+  sum += arguments.length + a;
+}
+
+for (let i = 0; i < 10000; i++) look(i, 1);
+console.log(sum, [...seen].join());
+//// assorted/aa-rest-by-value.js
+// Functions with a rest parameter that are called through a value, by compiled code and by native code: the rest array is made from the arguments in the frame.
+// Some only read it, some keep it, change it or hand it to native code. The output is that of plain Bun.
+const kept = [];
+const lines = [];
+const box = n => ({ n });
+const show = value => (Array.isArray(value) ? "[" + value.map(show).join() + "]" : typeof value === "object" && value !== null ? "{" + value.n + "}" : String(value));
+
+const table = {
+  reads(first, ...rest) {
+    let seen = show(first) + ":";
+    for (let i = 0; i < rest.length; i++) seen += show(rest[i]);
+    return seen + rest.length + show(rest[rest.length]) + show(rest[-1]);
+  },
+  collects(...rest) {
+    Bun.gc(true);
+    const garbage = [];
+    for (let i = 0; i < 1000; i++) garbage.push(box(i));
+    Bun.gc(true);
+    return show(rest) + garbage.length;
+  },
+  keeps(...rest) {
+    kept.push(rest);
+    return rest.length;
+  },
+  returns(...rest) {
+    return rest;
+  },
+  pushes(...rest) {
+    rest.push("pushed");
+    return show(rest);
+  },
+  forwards(...rest) {
+    return table.reads(...rest) + table.reads.apply(null, rest) + Reflect.apply(table.keeps, null, rest);
+  },
+  compares(other, ...rest) {
+    return (rest === other) + "" + (rest === rest) + (rest === kept[0]);
+  },
+  recurses(depth, ...rest) {
+    return depth > 0 ? table.recurses(depth - 1, ...rest, depth) : show(rest);
+  },
+  throwsIt(...rest) {
+    throw rest;
+  },
+};
+
+const names = Object.keys(table);
+for (let round = 0; round < 3; round++) {
+  for (const name of names) {
+    const method = table[name];
+    for (const count of [0, 1, 2, 3, 8, 9, 10, 20]) {
+      const values = [];
+      for (let i = 0; i < count; i++) values.push(name === "recurses" && i === 0 ? 3 : i % 2 ? "v" + i : box(i + round));
+      try {
+        lines.push(name + count + "=" + show(method(...values)));
+      } catch (thrown) {
+        thrown.push("caught");
+        lines.push(name + count + "!" + show(thrown));
+      }
+    }
+  }
+  lines.push([box(round), "m"].map(table.reads).join("/"), [3, 1, 2].sort(table.keeps).join());
+}
+queueMicrotask(table.keeps);
+await Promise.resolve(box(7)).then(table.keeps);
+await new Promise(resolve => setTimeout((...rest) => resolve(table.keeps(...rest)), 0, box(8), "timer"));
+Bun.gc(true);
+lines.push(kept.length, new Set(kept).size, kept.map(show).join("|"));
+console.log(lines.join("\n"));
+//// assorted/aa-surplus.js
+// Functions that use `arguments` are called by name with more arguments than they declare. The surplus arguments travel in a list that the program cannot name.
+// Whatever a call does to its arguments object, no other call sees, and the surplus arguments stay alive for as long as the object does. Each function calls itself, so that it is not taken into its caller.
+// The output is that of plain Bun.
+const kept = [];
+const lines = [];
+const box = n => ({ n });
+const show = value => (typeof value === "object" && value !== null ? ("n" in value ? "{" + value.n + "}" : "[" + Array.prototype.map.call(value, show).join() + "]") : String(value));
+
+function reads(a, depth) {
+  if (depth > 0) return reads(a, depth - 1, arguments[2], arguments[3]);
+  return [arguments.length, show(arguments[2]), show(arguments[3]), show(arguments[4]), 3 in arguments].join();
+}
+
+function readsByKey(a, depth, key) {
+  if (depth > 0) return readsByKey(a, depth - 1, key, arguments[3], arguments[4]);
+  return show(arguments[key]) + show(arguments[key + 1]) + show(arguments[key + 2]) + show(arguments[-1]) + show(arguments["length"]);
+}
+
+function keeps(a, depth) {
+  if (depth > 0) return keeps(a, depth - 1, arguments[2], arguments[3]);
+  kept.push(arguments);
+  return arguments.length;
+}
+
+////= collects
+
+function changes(a, depth) {
+  if (depth > 0) return changes(a, depth - 1, arguments[2], arguments[3]);
+  arguments[2] = "changed";
+  arguments[5] = "far";
+  Array.prototype.push.call(arguments, "pushed");
+  return show(arguments) + arguments.length;
+}
+
+function takesRest(first, ...rest) {
+  rest.push(show(first));
+  kept.push(rest);
+  return show(rest);
+}
+
+function forwards(a, depth) {
+  if (depth > 0) return forwards(a, depth - 1, arguments[2], arguments[3]);
+  return takesRest.apply(this, arguments) + Reflect.apply(takesRest, null, arguments) + takesRest(...arguments);
+}
+
+function slices(a, depth) {
+  if (depth > 0) return slices(a, depth - 1, arguments[2], arguments[3]);
+  const tail = Array.prototype.slice.call(arguments, 2);
+  tail.push("tail");
+  return show(tail) + show(Array.from(arguments)) + JSON.stringify(arguments);
+}
+
+function throwsThem(a, depth) {
+  if (depth > 0) return throwsThem(a, depth - 1, arguments[2]);
+  throw arguments;
+}
+
+function* yields(a) {
+  yield arguments.length;
+  Bun.gc(true);
+  yield show(arguments);
+}
+
+async function awaits(a, depth) {
+  if (depth > 0) return awaits(a, depth - 1, arguments[2], arguments[3]);
+  await null;
+  Bun.gc(true);
+  return show(arguments);
+}
+
+function many() {
+  if (arguments.length < 12) return many(...arguments, box(arguments.length));
+  return show(arguments);
+}
+
+class Message {
+  constructor(a) {
+    this.a = a;
+    this.b = arguments[1];
+    this.c = arguments[2];
+    this.count = arguments.length;
+  }
+}
+
+for (let round = 0; round < 3; round++) {
+  lines.push(reads(round, 2, box(round), "s" + round), reads(round, 2, box(round)), readsByKey(round, 2, 3, box(round), "k"), readsByKey(round, 1, 2, box(round), "k"));
+  lines.push(keeps(round, 2, box(round), "kept" + round), collects(round, 2, box(round), "c" + round), changes(round, 2, box(round), "x"), forwards(round, 2, box(round), "f"), slices(round, 2, box(round), "t"));
+  try {
+    throwsThem(round, 2, box(round));
+  } catch (thrown) {
+    thrown[2].n++;
+    lines.push(show(thrown));
+  }
+  lines.push([...yields(round, box(round), "y")].join("~"), many(), many(box(-1)));
+  const message = new Message(round, box(round), "third", "fourth");
+  lines.push(show(message.b) + message.c + message.count);
+}
+Bun.gc(true);
+lines.push(kept.length, new Set(kept).size, kept.map(show).join("|"));
+lines.push(...(await Promise.all([awaits(1, 2, box(1), "later"), awaits(2, 0, box(2))])));
+console.log(lines.join("\n"));
+//// assorted/aa-surplus-sloppy.cjs
+// The same as calls-with-surplus-arguments.js for sloppy functions, whose arguments objects are tied to the parameters and not to the surplus arguments. The output is that of plain Bun.
+const kept = [];
+const lines = [];
+const box = n => ({ n });
+const show = value => (typeof value === "object" && value !== null ? ("n" in value ? "{" + value.n + "}" : "[" + Array.prototype.map.call(value, show).join() + "]") : String(value));
+
+function tied(a, depth) {
+  if (depth > 0) return tied(a, depth - 1, arguments[2], arguments[3]);
+  arguments[0] = "through the object";
+  depth = "through the parameter";
+  arguments[2] = "surplus";
+  return [a, arguments[1], show(arguments[2]), show(arguments[3]), arguments.length].join("/");
+}
+
+function keeps(a, depth) {
+  if (depth > 0) return keeps(a, depth - 1, arguments[2], arguments[3]);
+  kept.push(arguments);
+  a = "changed" + a;
+  return show(arguments);
+}
+
+////= collects
+
+function takesRest(first, ...rest) {
+  rest.push(show(first));
+  kept.push(rest);
+  return show(rest);
+}
+
+function forwards(a, depth) {
+  if (depth > 0) return forwards(a, depth - 1, arguments[2], arguments[3]);
+  a = "forwarded";
+  return takesRest.apply(this, arguments) + takesRest(...arguments);
+}
+
+function namesCallee(a, depth) {
+  if (depth > 0) return arguments.callee(a, depth - 1, arguments[2]);
+  delete arguments[2];
+  return [show(arguments[2]), arguments.length, 2 in arguments].join("/");
+}
+
+for (let round = 0; round < 3; round++)
+  lines.push(tied(round, 2, box(round), "s"), keeps(round, 2, box(round), "k"), collects(round, 2, box(round), "c"), forwards(round, 2, box(round), "f"), namesCallee(round, 2, box(round)));
+
+Bun.gc(true);
+lines.push(kept.length, new Set(kept).size, kept.map(show).join("|"));
+console.log(lines.join("\n"));
+//// assorted/arrays-that-are-kept-on-some-ways-only.js
+// A function like the `debug` of npm: it takes its arguments in a rest array, returns at once while it is switched off, and changes and keeps the array while it is switched on.
+// The compiler may leave the array in the caller's frame and move it to the heap where the function begins to look at it. Nobody may be able to tell. The output is that of plain Bun.
+const lines = [];
+const show = (...values) => lines.push(values.map(value => (Array.isArray(value) ? "[" + value.join() + "]" : String(value))).join(" "));
+const opaque = value => (lines.length < 0 ? null : value);
+
+let enabled = false;
+const kept = [];
+function log(...args) {
+  if (!enabled) return 0;
+  args[0] = "changed " + args[0];
+  args.push("pushed");
+  kept.push(args);
+  return args.length;
+}
+function keepsList(list, flag) {
+  if (!flag) return "left";
+  list.unshift("first");
+  kept.push(list);
+  return list;
+}
+function returnsList(list, flag) {
+  if (flag) return list;
+  return null;
+}
+function passesOn(list, flag) {
+  if (!flag) return "left";
+  return keepsList(list, flag > 1);
+}
+function throwsWith(list, flag) {
+  if (!flag) return "left";
+  list.push("before the throw");
+  kept.push(list);
+  throw new Error("thrown with " + list.length);
+}
+function captures(list, flag) {
+  if (!flag) return () => "left";
+  return () => list;
+}
+function keepsInTry(list, flag) {
+  try {
+    if (flag) {
+      kept.push(list);
+      list.length = 1;
+    }
+  } finally {
+    lines.length += 0;
+  }
+  return flag;
+}
+function recurses(list, depth) {
+  if (!depth) return "bottom";
+  if (depth === 1) {
+    kept.push(list);
+    return list;
+  }
+  return recurses(list, depth - 1);
+}
+async function keepsLater(list, flag) {
+  if (!flag) return "left";
+  await null;
+  kept.push(list);
+  return list;
+}
+function* yieldsList(list, flag) {
+  if (!flag) return;
+  yield list;
+  yield list;
+}
+class Logger {
+  on = false;
+  write(...args) {
+    if (!this.on) return;
+    this.last = args;
+    args.reverse();
+  }
+}
+
+function looksAgain(a, flag) {
+  const list = [a, "again"];
+  const result = keepsList(list, flag);
+  return [result === list, list];
+}
+function handsTwice(a, flag) {
+  const list = [a, "twice"];
+  return [keepsList(list, flag), keepsList(list, flag), list];
+}
+function growsList(list, flag) {
+  if (!flag) return 0;
+  list.push("grown");
+  return list.length;
+}
+function handsInLoop(a, flag) {
+  const list = [a, "loop"];
+  const lengths = [];
+  for (let i = 0; i < 3; i++) lengths.push(growsList(list, flag));
+  return lengths;
+}
+function makesInLoop(a, flag) {
+  const lengths = [];
+  for (let i = 0; i < 3; i++) lengths.push(growsList([a, i], flag));
+  return lengths;
+}
+function maybeList(list, flag) {
+  if (!flag) return "left";
+  kept.push(list);
+  return list;
+}
+function keepsInCatch(list, flag) {
+  try {
+    if (flag) throw new Error("caught inside");
+    return "left";
+  } catch (error) {
+    kept.push(list);
+    list.push(error.message);
+    return list;
+  }
+}
+function keepsInFinally(list, flag) {
+  let result = "left";
+  try {
+    if (!flag) return result;
+    result = "went on";
+  } finally {
+    if (result !== "left") kept.push(list);
+  }
+  return list;
+}
+function keepsTwoLists(first, second, flag) {
+  if (!flag) return "left";
+  first.push(second);
+  second.push("second");
+  kept.push(first, second);
+  return first.length + second.length;
+}
+class Holder {
+  constructor(list, flag) {
+    this.held = "nothing";
+    if (flag) {
+      this.held = list;
+      list.push("held");
+    }
+  }
+}
+function fillsStack(depth) {
+  return depth ? fillsStack(depth - 1) + depth : 0;
+}
+
+for (let round = 0; round < 6; round++) {
+  enabled = round % 2 === 1;
+  const flag = enabled;
+  const before = kept.length;
+  show("log", log(round, "a", "b"), opaque(log)(round, "c"), log(), opaque(log)());
+  show("list", keepsList([round, "x"], flag), opaque(keepsList)([round, "y"], flag));
+  show("returned", returnsList([round, "r"], flag), opaque(returnsList)([round], flag));
+  show("passed on", passesOn([round, "p"], flag ? 2 : 0), passesOn([round, "q"], flag ? 1 : 0));
+  try {
+    show("no throw", throwsWith([round, "t"], flag));
+  } catch (error) {
+    show("caught", error.message, kept.at(-1));
+  }
+  const closure = captures([round, "captured"], flag);
+  fillsStack(50);
+  show("closure", closure(), closure() === closure());
+  show("try", keepsInTry([round, "u", "v"], flag), kept.at(-1));
+  show("recursion", recurses([round, "deep"], flag ? 5 : 0));
+  show("async", await keepsLater([round, "later"], flag));
+  show("generator", ...yieldsList([round, "yielded"], flag));
+  const logger = opaque(new Logger());
+  logger.on = flag;
+  logger.write(round, "w1", "w2");
+  fillsStack(50);
+  show("method", logger.last);
+  show("again", ...looksAgain(round, flag));
+  show("twice", ...handsTwice(round, flag));
+  show("loop", handsInLoop(round, flag), makesInLoop(round, flag));
+  show("catch", keepsInCatch([round, "c"], flag), opaque(keepsInCatch)([round, "d"], flag));
+  show("finally", keepsInFinally([round, "f"], flag));
+  show("two lists", keepsTwoLists([round, "one"], [round, "two"], flag), kept.at(-1), kept.length);
+  const same = [round, "same"];
+  show("one list twice", keepsTwoLists(same, same, flag));
+  const holder = new Holder([round, "h"], flag);
+  fillsStack(50);
+  show("constructor", holder.held, opaque(new Holder([round, "i"], flag)).held);
+  show("not always a list", maybeList([round, "m"], flag), maybeList(round, flag), maybeList(undefined, flag), maybeList("text", flag));
+  fillsStack(100);
+  if (typeof Bun !== "undefined") Bun.gc(true);
+  show("kept", kept.length - before, ...kept.slice(before));
+}
+show("distinct", kept.length, new Set(kept).size);
+console.log(lines.join("\n"));
+//// assorted/bound-calls.ts
+// Assorted: bound calls. It prints what plain Bun prints.
+import { AsyncResource, AsyncLocalStorage } from "node:async_hooks";
+const storage = new AsyncLocalStorage<number>();
+function add(this: unknown, a: number, b: number) { return a + b + (storage.getStore() ?? 0); }
+const bound = storage.run(5, () => AsyncResource.bind(add));
+let sum = 0;
+const rounds = Number(process.argv[2] ?? 10000);
+for (let i = 0; i < rounds; i++) sum += bound(i, 1);
+console.log(sum);
+//// assorted/class-field-arrows.js
+// The shape of hono/dist/context.js: a base class with private fields, plain fields and arrow functions over `this` in class fields; one object a request, of which one or two arrows are called.
+////= Context-2
+////= handle
+const rounds = Number(process.argv[2] ?? 1000);
+let length = 0;
+for (let i = 0; i < rounds; i++) length += handle(i, null).length;
+const kept = [];
+console.log(length, handle(1, kept), handle(5, kept), handle(6, kept));
+console.log(kept[0]({ a: 1 }), kept[2] === kept[3].json, kept[1].json === kept[1].json, kept[1].json !== kept[3].json, kept[5].env.i, Object.keys(kept[1]).join());
+console.log(kept[1].notFound(), kept[1].get("k"), (kept[1].set("k", 7), kept[1].get("k")), kept[3].render(1, 2, 3));
+class Below extends Context {
+  extra = () => this.raw + "!";
+}
+const below = new Below("b");
+console.log(below.extra(), below.text("y"), Object.keys(below).length, Reflect.construct(Context, ["rc"], Below).text("z"), Reflect.construct(Context, ["ro"], Object).text("w"));
+//// assorted/class-field-arrows-alone.js
+// The shape of hono/dist/context.js: a base class with private fields, plain fields and arrow functions over `this` in class fields; one object a request, of which one or two arrows are called.
+////= Context-2
+////= handle
+const rounds = Number(process.argv[2] ?? 1000);
+let length = 0;
+for (let i = 0; i < rounds; i++) length += handle(i, null).length;
+const kept = [];
+console.log(length, handle(1, kept), handle(5, kept), handle(6, kept));
+console.log(kept[0]({ a: 1 }), kept[2] === kept[3].json, kept[1].json === kept[1].json, kept[1].json !== kept[3].json, kept[5].env.i, Object.keys(kept[1]).join());
+console.log(kept[1].notFound(), kept[1].get("k"), (kept[1].set("k", 7), kept[1].get("k")), kept[3].render(1, 2, 3));
+//// assorted/cliff-programs-sched.ts
+// A method is taken off an instance and handed to process.nextTick, setTimeout and queueMicrotask, which call it without a receiver; direct calls go through instances.
+export {};
+
+////= Body-5
+
+const world: Body[] = [new Heavy(1, "a"), new Light(2, "bb"), new Body(3, "ccc"), new Heavy(4, "d")];
+const seen: unknown[] = [measure(world)];
+process.nextTick(world[0].tell);
+setTimeout(world[1].tell, 0);
+queueMicrotask(world[2].tell);
+world[3].tell();
+await new Promise(resolve => setTimeout(resolve, 5));
+seen.push(measure(world), world.map(body => Object.keys(body).length).join(""));
+console.log(seen.join(" "));
+//// assorted/context-of-arrows.ts
+// The shape: a function builds a typed literal whose members are arrow functions that capture nothing, stores one more member that captures the literal, and returns it.
+////= Context-3
+let calls = 0;
+function one() { return ++calls; }
+function two() { return "two" + calls; }
+function three(source: string) { return source + calls; }
+function four() { return calls % 2 === 0; }
+function load(context: Context) { return context.first() + context.fifth(); }
+////= fullContext
+function use(context: Context, n: number) {
+  return n % 3 === 0 ? context.file() : n % 3 === 1 ? context.first() : context.third("x").length;
+}
+let sum = 0;
+for (let i = 0; i < 10000; i++) sum += use(fullContext(), i);
+console.log(sum, fullContext().second(), fullContext().fourth(), fullContext().first !== fullContext().first);
+//// assorted/context-of-arrows-spread.ts
+// The shape: a function builds a typed literal whose members are arrow functions that capture nothing, stores one more member that captures the literal, and returns it.
+////= Context-3
+let calls = 0;
+function one() { return ++calls; }
+function two() { return "two" + calls; }
+function three(source: string) { return source + calls; }
+function four() { return calls % 2 === 0; }
+function load(context: Context) { return context.first() + context.fifth(); }
+////= fullContext
+function use(context: Context, n: number) {
+  return n % 3 === 0 ? context.file() : n % 3 === 1 ? context.first() : context.third("x").length;
+}
+let sum = 0;
+for (let i = 0; i < 10000; i++) sum += use(i % 100 === 0 ? { ...fullContext(), fifth: () => 3 } : fullContext(), i);
+console.log(sum, fullContext().second(), fullContext().fourth(), fullContext().first !== fullContext().first);
+//// assorted/context-of-arrows-two-makers.ts
+// The shape: a function builds a typed literal whose members are arrow functions that capture nothing, stores one more member that captures the literal, and returns it.
+////= Context-3
+let calls = 0;
+function one() { return ++calls; }
+function two() { return "two" + calls; }
+function three(source: string) { return source + calls; }
+function four() { return calls % 2 === 0; }
+function load(context: Context) { return context.first() + context.fifth(); }
+////= fullContext
+function otherContext(): Context {
+  const context = {
+    first: () => 7,
+    second: () => "other",
+    third: source => source,
+    fourth: () => true,
+    fifth: () => 9,
+  } as Context;
+  context.file = () => 1;
+  return context;
+}
+function use(context: Context, n: number) {
+  return n % 3 === 0 ? context.file() : n % 3 === 1 ? context.first() : context.third("x").length;
+}
+let sum = 0;
+for (let i = 0; i < 10000; i++) sum += use(i % 100 === 0 ? otherContext() : fullContext(), i);
+console.log(sum, fullContext().second(), fullContext().fourth(), fullContext().first !== fullContext().first);
+//// assorted/function-declarations-as-members-of-a-literal.ts
+// Assorted: function declarations as members of a literal. It prints what plain Bun prints.
+interface Counter { get(): number; step(): void; reset(): void; twice(): void }
+function make(start: number, text?: string): Counter {
+  let pos = start;
+  let end = text === undefined ? 0 : text.length;
+  const counter: Counter = {
+    get: () => pos + end,
+    step,
+    reset,
+    twice,
+  };
+  return counter;
+  function step() { pos++; }
+  function reset() { pos = 0; end = 0; }
+  function twice() { step(); step(); }
+}
+let sum = 0;
+for (let i = 0; i < 1000; i++) { const c = make(i, i % 2 ? "ab" : undefined); c.step(); sum += c.get(); }
+console.log(sum);
+//// assorted/gen-names-1.js
+// Assorted: gen names. It prints what plain Bun prints.
+const lines = [];
+function say(path, read) {
+  let text;
+  try { const first = read(); text = typeof first; if (first !== null && (text === "object" || text === "function")) text += read() === first ? " same" : " ANOTHER"; } catch (error) { text = "throws " + (error && error.constructor && error.constructor.name); }
+  lines.push(path + ": " + text);
+}
+function names(path, read) {
+  let text;
+  try { text = Object.getOwnPropertyNames(read()).sort().join(); } catch (error) { text = "throws"; }
+  lines.push("names of " + path + ": " + text);
+}
+say("AbortSignal", () => AbortSignal);
+say("AbortSignal.length", () => AbortSignal.length);
+say("AbortSignal.name", () => AbortSignal.name);
+say("AbortSignal.prototype", () => AbortSignal.prototype);
+say("AbortSignal.prototype.constructor", () => AbortSignal.prototype.constructor);
+say("AbortSignal.prototype.aborted", () => AbortSignal.prototype.aborted);
+say("AbortSignal.prototype.reason", () => AbortSignal.prototype.reason);
+say("AbortSignal.prototype.onabort", () => AbortSignal.prototype.onabort);
+say("AbortSignal.prototype.throwIfAborted", () => AbortSignal.prototype.throwIfAborted);
+say("AbortSignal.prototype.throwIfAborted.length", () => AbortSignal.prototype.throwIfAborted.length);
+say("AbortSignal.prototype.throwIfAborted.name", () => AbortSignal.prototype.throwIfAborted.name);
+say("AbortSignal.abort", () => AbortSignal.abort);
+say("AbortSignal.abort.length", () => AbortSignal.abort.length);
+say("AbortSignal.abort.name", () => AbortSignal.abort.name);
+say("AbortSignal.timeout", () => AbortSignal.timeout);
+say("AbortSignal.timeout.length", () => AbortSignal.timeout.length);
+say("AbortSignal.timeout.name", () => AbortSignal.timeout.name);
+say("AbortSignal.any", () => AbortSignal.any);
+say("AbortSignal.any.length", () => AbortSignal.any.length);
+say("AbortSignal.any.name", () => AbortSignal.any.name);
+names("AbortSignal", () => AbortSignal);
+names("AbortSignal.prototype", () => AbortSignal.prototype);
+names("AbortSignal.prototype.throwIfAborted", () => AbortSignal.prototype.throwIfAborted);
+names("AbortSignal.abort", () => AbortSignal.abort);
+names("AbortSignal.timeout", () => AbortSignal.timeout);
+names("AbortSignal.any", () => AbortSignal.any);
+say("BigUint64Array", () => BigUint64Array);
+say("BigUint64Array.length", () => BigUint64Array.length);
+say("BigUint64Array.name", () => BigUint64Array.name);
+say("BigUint64Array.prototype", () => BigUint64Array.prototype);
+say("BigUint64Array.prototype.BYTES_PER_ELEMENT", () => BigUint64Array.prototype.BYTES_PER_ELEMENT);
+say("BigUint64Array.prototype.constructor", () => BigUint64Array.prototype.constructor);
+say("BigUint64Array.BYTES_PER_ELEMENT", () => BigUint64Array.BYTES_PER_ELEMENT);
+names("BigUint64Array", () => BigUint64Array);
+names("BigUint64Array.prototype", () => BigUint64Array.prototype);
+say("ByteLengthQueuingStrategy", () => ByteLengthQueuingStrategy);
+say("ByteLengthQueuingStrategy.length", () => ByteLengthQueuingStrategy.length);
+say("ByteLengthQueuingStrategy.name", () => ByteLengthQueuingStrategy.name);
+say("ByteLengthQueuingStrategy.prototype", () => ByteLengthQueuingStrategy.prototype);
+say("ByteLengthQueuingStrategy.prototype.constructor", () => ByteLengthQueuingStrategy.prototype.constructor);
+say("ByteLengthQueuingStrategy.prototype.highWaterMark", () => ByteLengthQueuingStrategy.prototype.highWaterMark);
+say("ByteLengthQueuingStrategy.prototype.size", () => ByteLengthQueuingStrategy.prototype.size);
+names("ByteLengthQueuingStrategy", () => ByteLengthQueuingStrategy);
+names("ByteLengthQueuingStrategy.prototype", () => ByteLengthQueuingStrategy.prototype);
+say("DataView", () => DataView);
+say("DataView.length", () => DataView.length);
+say("DataView.name", () => DataView.name);
+say("DataView.prototype", () => DataView.prototype);
+say("DataView.prototype.getInt8", () => DataView.prototype.getInt8);
+say("DataView.prototype.getInt8.length", () => DataView.prototype.getInt8.length);
+say("DataView.prototype.getInt8.name", () => DataView.prototype.getInt8.name);
+say("DataView.prototype.getUint8", () => DataView.prototype.getUint8);
+say("DataView.prototype.getUint8.length", () => DataView.prototype.getUint8.length);
+say("DataView.prototype.getUint8.name", () => DataView.prototype.getUint8.name);
+say("DataView.prototype.getInt16", () => DataView.prototype.getInt16);
+say("DataView.prototype.getInt16.length", () => DataView.prototype.getInt16.length);
+say("DataView.prototype.getInt16.name", () => DataView.prototype.getInt16.name);
+say("DataView.prototype.getUint16", () => DataView.prototype.getUint16);
+say("DataView.prototype.getUint16.length", () => DataView.prototype.getUint16.length);
+say("DataView.prototype.getUint16.name", () => DataView.prototype.getUint16.name);
+say("DataView.prototype.getInt32", () => DataView.prototype.getInt32);
+say("DataView.prototype.getInt32.length", () => DataView.prototype.getInt32.length);
+say("DataView.prototype.getInt32.name", () => DataView.prototype.getInt32.name);
+say("DataView.prototype.getUint32", () => DataView.prototype.getUint32);
+say("DataView.prototype.getUint32.length", () => DataView.prototype.getUint32.length);
+say("DataView.prototype.getUint32.name", () => DataView.prototype.getUint32.name);
+say("DataView.prototype.getFloat16", () => DataView.prototype.getFloat16);
+say("DataView.prototype.getFloat16.length", () => DataView.prototype.getFloat16.length);
+say("DataView.prototype.getFloat16.name", () => DataView.prototype.getFloat16.name);
+say("DataView.prototype.getFloat32", () => DataView.prototype.getFloat32);
+say("DataView.prototype.getFloat32.length", () => DataView.prototype.getFloat32.length);
+say("DataView.prototype.getFloat32.name", () => DataView.prototype.getFloat32.name);
+say("DataView.prototype.getFloat64", () => DataView.prototype.getFloat64);
+say("DataView.prototype.getFloat64.length", () => DataView.prototype.getFloat64.length);
+say("DataView.prototype.getFloat64.name", () => DataView.prototype.getFloat64.name);
+say("DataView.prototype.getBigInt64", () => DataView.prototype.getBigInt64);
+say("DataView.prototype.getBigInt64.length", () => DataView.prototype.getBigInt64.length);
+say("DataView.prototype.getBigInt64.name", () => DataView.prototype.getBigInt64.name);
+say("DataView.prototype.getBigUint64", () => DataView.prototype.getBigUint64);
+say("DataView.prototype.getBigUint64.length", () => DataView.prototype.getBigUint64.length);
+say("DataView.prototype.getBigUint64.name", () => DataView.prototype.getBigUint64.name);
+say("DataView.prototype.setInt8", () => DataView.prototype.setInt8);
+say("DataView.prototype.setInt8.length", () => DataView.prototype.setInt8.length);
+say("DataView.prototype.setInt8.name", () => DataView.prototype.setInt8.name);
+say("DataView.prototype.setUint8", () => DataView.prototype.setUint8);
+say("DataView.prototype.setUint8.length", () => DataView.prototype.setUint8.length);
+say("DataView.prototype.setUint8.name", () => DataView.prototype.setUint8.name);
+say("DataView.prototype.setInt16", () => DataView.prototype.setInt16);
+say("DataView.prototype.setInt16.length", () => DataView.prototype.setInt16.length);
+say("DataView.prototype.setInt16.name", () => DataView.prototype.setInt16.name);
+say("DataView.prototype.setUint16", () => DataView.prototype.setUint16);
+say("DataView.prototype.setUint16.length", () => DataView.prototype.setUint16.length);
+say("DataView.prototype.setUint16.name", () => DataView.prototype.setUint16.name);
+say("DataView.prototype.setInt32", () => DataView.prototype.setInt32);
+say("DataView.prototype.setInt32.length", () => DataView.prototype.setInt32.length);
+say("DataView.prototype.setInt32.name", () => DataView.prototype.setInt32.name);
+say("DataView.prototype.setUint32", () => DataView.prototype.setUint32);
+say("DataView.prototype.setUint32.length", () => DataView.prototype.setUint32.length);
+say("DataView.prototype.setUint32.name", () => DataView.prototype.setUint32.name);
+say("DataView.prototype.setFloat16", () => DataView.prototype.setFloat16);
+say("DataView.prototype.setFloat16.length", () => DataView.prototype.setFloat16.length);
+say("DataView.prototype.setFloat16.name", () => DataView.prototype.setFloat16.name);
+say("DataView.prototype.setFloat32", () => DataView.prototype.setFloat32);
+say("DataView.prototype.setFloat32.length", () => DataView.prototype.setFloat32.length);
+say("DataView.prototype.setFloat32.name", () => DataView.prototype.setFloat32.name);
+say("DataView.prototype.setFloat64", () => DataView.prototype.setFloat64);
+say("DataView.prototype.setFloat64.length", () => DataView.prototype.setFloat64.length);
+say("DataView.prototype.setFloat64.name", () => DataView.prototype.setFloat64.name);
+say("DataView.prototype.setBigInt64", () => DataView.prototype.setBigInt64);
+say("DataView.prototype.setBigInt64.length", () => DataView.prototype.setBigInt64.length);
+say("DataView.prototype.setBigInt64.name", () => DataView.prototype.setBigInt64.name);
+say("DataView.prototype.setBigUint64", () => DataView.prototype.setBigUint64);
+say("DataView.prototype.setBigUint64.length", () => DataView.prototype.setBigUint64.length);
+say("DataView.prototype.setBigUint64.name", () => DataView.prototype.setBigUint64.name);
+say("DataView.prototype.buffer", () => DataView.prototype.buffer);
+say("DataView.prototype.byteOffset", () => DataView.prototype.byteOffset);
+say("DataView.prototype.byteLength", () => DataView.prototype.byteLength);
+say("DataView.prototype.constructor", () => DataView.prototype.constructor);
+say("DataView.BYTES_PER_ELEMENT", () => DataView.BYTES_PER_ELEMENT);
+names("DataView", () => DataView);
+names("DataView.prototype", () => DataView.prototype);
+names("DataView.prototype.getInt8", () => DataView.prototype.getInt8);
+names("DataView.prototype.getUint8", () => DataView.prototype.getUint8);
+names("DataView.prototype.getInt16", () => DataView.prototype.getInt16);
+names("DataView.prototype.getUint16", () => DataView.prototype.getUint16);
+names("DataView.prototype.getInt32", () => DataView.prototype.getInt32);
+names("DataView.prototype.getUint32", () => DataView.prototype.getUint32);
+names("DataView.prototype.getFloat16", () => DataView.prototype.getFloat16);
+names("DataView.prototype.getFloat32", () => DataView.prototype.getFloat32);
+names("DataView.prototype.getFloat64", () => DataView.prototype.getFloat64);
+names("DataView.prototype.getBigInt64", () => DataView.prototype.getBigInt64);
+names("DataView.prototype.getBigUint64", () => DataView.prototype.getBigUint64);
+names("DataView.prototype.setInt8", () => DataView.prototype.setInt8);
+names("DataView.prototype.setUint8", () => DataView.prototype.setUint8);
+names("DataView.prototype.setInt16", () => DataView.prototype.setInt16);
+names("DataView.prototype.setUint16", () => DataView.prototype.setUint16);
+names("DataView.prototype.setInt32", () => DataView.prototype.setInt32);
+names("DataView.prototype.setUint32", () => DataView.prototype.setUint32);
+names("DataView.prototype.setFloat16", () => DataView.prototype.setFloat16);
+names("DataView.prototype.setFloat32", () => DataView.prototype.setFloat32);
+names("DataView.prototype.setFloat64", () => DataView.prototype.setFloat64);
+names("DataView.prototype.setBigInt64", () => DataView.prototype.setBigInt64);
+names("DataView.prototype.setBigUint64", () => DataView.prototype.setBigUint64);
+say("EventTarget", () => EventTarget);
+say("EventTarget.length", () => EventTarget.length);
+say("EventTarget.name", () => EventTarget.name);
+say("EventTarget.prototype", () => EventTarget.prototype);
+say("EventTarget.prototype.constructor", () => EventTarget.prototype.constructor);
+say("EventTarget.prototype.addEventListener", () => EventTarget.prototype.addEventListener);
+say("EventTarget.prototype.addEventListener.length", () => EventTarget.prototype.addEventListener.length);
+say("EventTarget.prototype.addEventListener.name", () => EventTarget.prototype.addEventListener.name);
+say("EventTarget.prototype.removeEventListener", () => EventTarget.prototype.removeEventListener);
+say("EventTarget.prototype.removeEventListener.length", () => EventTarget.prototype.removeEventListener.length);
+say("EventTarget.prototype.removeEventListener.name", () => EventTarget.prototype.removeEventListener.name);
+say("EventTarget.prototype.dispatchEvent", () => EventTarget.prototype.dispatchEvent);
+say("EventTarget.prototype.dispatchEvent.length", () => EventTarget.prototype.dispatchEvent.length);
+say("EventTarget.prototype.dispatchEvent.name", () => EventTarget.prototype.dispatchEvent.name);
+names("EventTarget", () => EventTarget);
+names("EventTarget.prototype", () => EventTarget.prototype);
+names("EventTarget.prototype.addEventListener", () => EventTarget.prototype.addEventListener);
+names("EventTarget.prototype.removeEventListener", () => EventTarget.prototype.removeEventListener);
+names("EventTarget.prototype.dispatchEvent", () => EventTarget.prototype.dispatchEvent);
+say("HTMLRewriter", () => HTMLRewriter);
+say("HTMLRewriter.length", () => HTMLRewriter.length);
+say("HTMLRewriter.name", () => HTMLRewriter.name);
+say("HTMLRewriter.prototype", () => HTMLRewriter.prototype);
+say("HTMLRewriter.prototype.on", () => HTMLRewriter.prototype.on);
+say("HTMLRewriter.prototype.on.length", () => HTMLRewriter.prototype.on.length);
+say("HTMLRewriter.prototype.on.name", () => HTMLRewriter.prototype.on.name);
+say("HTMLRewriter.prototype.onDocument", () => HTMLRewriter.prototype.onDocument);
+say("HTMLRewriter.prototype.onDocument.length", () => HTMLRewriter.prototype.onDocument.length);
+say("HTMLRewriter.prototype.onDocument.name", () => HTMLRewriter.prototype.onDocument.name);
+say("HTMLRewriter.prototype.transform", () => HTMLRewriter.prototype.transform);
+say("HTMLRewriter.prototype.transform.length", () => HTMLRewriter.prototype.transform.length);
+say("HTMLRewriter.prototype.transform.name", () => HTMLRewriter.prototype.transform.name);
+say("HTMLRewriter.prototype.constructor", () => HTMLRewriter.prototype.constructor);
+names("HTMLRewriter", () => HTMLRewriter);
+names("HTMLRewriter.prototype", () => HTMLRewriter.prototype);
+names("HTMLRewriter.prototype.on", () => HTMLRewriter.prototype.on);
+names("HTMLRewriter.prototype.onDocument", () => HTMLRewriter.prototype.onDocument);
+names("HTMLRewriter.prototype.transform", () => HTMLRewriter.prototype.transform);
+say("JSON", () => JSON);
+say("JSON.parse", () => JSON.parse);
+say("JSON.parse.length", () => JSON.parse.length);
+say("JSON.parse.name", () => JSON.parse.name);
+say("JSON.stringify", () => JSON.stringify);
+say("JSON.stringify.length", () => JSON.stringify.length);
+say("JSON.stringify.name", () => JSON.stringify.name);
+say("JSON.isRawJSON", () => JSON.isRawJSON);
+say("JSON.isRawJSON.length", () => JSON.isRawJSON.length);
+say("JSON.isRawJSON.name", () => JSON.isRawJSON.name);
+say("JSON.rawJSON", () => JSON.rawJSON);
+say("JSON.rawJSON.length", () => JSON.rawJSON.length);
+say("JSON.rawJSON.name", () => JSON.rawJSON.name);
+names("JSON", () => JSON);
+names("JSON.parse", () => JSON.parse);
+names("JSON.stringify", () => JSON.stringify);
+names("JSON.isRawJSON", () => JSON.isRawJSON);
+names("JSON.rawJSON", () => JSON.rawJSON);
+say("Object", () => Object);
+say("Object.getPrototypeOf", () => Object.getPrototypeOf);
+say("Object.getPrototypeOf.length", () => Object.getPrototypeOf.length);
+say("Object.getPrototypeOf.name", () => Object.getPrototypeOf.name);
+say("Object.setPrototypeOf", () => Object.setPrototypeOf);
+say("Object.setPrototypeOf.length", () => Object.setPrototypeOf.length);
+say("Object.setPrototypeOf.name", () => Object.setPrototypeOf.name);
+say("Object.getOwnPropertyDescriptor", () => Object.getOwnPropertyDescriptor);
+say("Object.getOwnPropertyDescriptor.length", () => Object.getOwnPropertyDescriptor.length);
+say("Object.getOwnPropertyDescriptor.name", () => Object.getOwnPropertyDescriptor.name);
+say("Object.getOwnPropertyDescriptors", () => Object.getOwnPropertyDescriptors);
+say("Object.getOwnPropertyDescriptors.length", () => Object.getOwnPropertyDescriptors.length);
+say("Object.getOwnPropertyDescriptors.name", () => Object.getOwnPropertyDescriptors.name);
+say("Object.getOwnPropertyNames", () => Object.getOwnPropertyNames);
+say("Object.getOwnPropertyNames.length", () => Object.getOwnPropertyNames.length);
+say("Object.getOwnPropertyNames.name", () => Object.getOwnPropertyNames.name);
+say("Object.getOwnPropertySymbols", () => Object.getOwnPropertySymbols);
+say("Object.getOwnPropertySymbols.length", () => Object.getOwnPropertySymbols.length);
+say("Object.getOwnPropertySymbols.name", () => Object.getOwnPropertySymbols.name);
+say("Object.keys", () => Object.keys);
+say("Object.keys.length", () => Object.keys.length);
+say("Object.keys.name", () => Object.keys.name);
+say("Object.defineProperty", () => Object.defineProperty);
+say("Object.defineProperty.length", () => Object.defineProperty.length);
+say("Object.defineProperty.name", () => Object.defineProperty.name);
+say("Object.defineProperties", () => Object.defineProperties);
+say("Object.defineProperties.length", () => Object.defineProperties.length);
+say("Object.defineProperties.name", () => Object.defineProperties.name);
+say("Object.create", () => Object.create);
+say("Object.create.length", () => Object.create.length);
+say("Object.create.name", () => Object.create.name);
+say("Object.seal", () => Object.seal);
+say("Object.seal.length", () => Object.seal.length);
+say("Object.seal.name", () => Object.seal.name);
+say("Object.freeze", () => Object.freeze);
+say("Object.freeze.length", () => Object.freeze.length);
+say("Object.freeze.name", () => Object.freeze.name);
+say("Object.preventExtensions", () => Object.preventExtensions);
+say("Object.preventExtensions.length", () => Object.preventExtensions.length);
+say("Object.preventExtensions.name", () => Object.preventExtensions.name);
+say("Object.isSealed", () => Object.isSealed);
+say("Object.isSealed.length", () => Object.isSealed.length);
+say("Object.isSealed.name", () => Object.isSealed.name);
+say("Object.isFrozen", () => Object.isFrozen);
+say("Object.isFrozen.length", () => Object.isFrozen.length);
+say("Object.isFrozen.name", () => Object.isFrozen.name);
+say("Object.isExtensible", () => Object.isExtensible);
+say("Object.isExtensible.length", () => Object.isExtensible.length);
+say("Object.isExtensible.name", () => Object.isExtensible.name);
+say("Object.is", () => Object.is);
+say("Object.is.length", () => Object.is.length);
+say("Object.is.name", () => Object.is.name);
+say("Object.assign", () => Object.assign);
+say("Object.assign.length", () => Object.assign.length);
+say("Object.assign.name", () => Object.assign.name);
+say("Object.values", () => Object.values);
+say("Object.values.length", () => Object.values.length);
+say("Object.values.name", () => Object.values.name);
+say("Object.entries", () => Object.entries);
+say("Object.entries.length", () => Object.entries.length);
+say("Object.entries.name", () => Object.entries.name);
+say("Object.fromEntries", () => Object.fromEntries);
+say("Object.fromEntries.length", () => Object.fromEntries.length);
+say("Object.fromEntries.name", () => Object.fromEntries.name);
+say("Object.length", () => Object.length);
+say("Object.name", () => Object.name);
+say("Object.prototype", () => Object.prototype);
+say("Object.prototype.toString", () => Object.prototype.toString);
+say("Object.prototype.toString.length", () => Object.prototype.toString.length);
+say("Object.prototype.toString.name", () => Object.prototype.toString.name);
+say("Object.prototype.toLocaleString", () => Object.prototype.toLocaleString);
+say("Object.prototype.toLocaleString.length", () => Object.prototype.toLocaleString.length);
+say("Object.prototype.toLocaleString.name", () => Object.prototype.toLocaleString.name);
+say("Object.prototype.valueOf", () => Object.prototype.valueOf);
+say("Object.prototype.valueOf.length", () => Object.prototype.valueOf.length);
+say("Object.prototype.valueOf.name", () => Object.prototype.valueOf.name);
+say("Object.prototype.hasOwnProperty", () => Object.prototype.hasOwnProperty);
+say("Object.prototype.hasOwnProperty.length", () => Object.prototype.hasOwnProperty.length);
+say("Object.prototype.hasOwnProperty.name", () => Object.prototype.hasOwnProperty.name);
+say("Object.prototype.propertyIsEnumerable", () => Object.prototype.propertyIsEnumerable);
+say("Object.prototype.propertyIsEnumerable.length", () => Object.prototype.propertyIsEnumerable.length);
+say("Object.prototype.propertyIsEnumerable.name", () => Object.prototype.propertyIsEnumerable.name);
+say("Object.prototype.isPrototypeOf", () => Object.prototype.isPrototypeOf);
+say("Object.prototype.isPrototypeOf.length", () => Object.prototype.isPrototypeOf.length);
+say("Object.prototype.isPrototypeOf.name", () => Object.prototype.isPrototypeOf.name);
+say("Object.prototype.__defineGetter__", () => Object.prototype.__defineGetter__);
+say("Object.prototype.__defineGetter__.length", () => Object.prototype.__defineGetter__.length);
+say("Object.prototype.__defineGetter__.name", () => Object.prototype.__defineGetter__.name);
+say("Object.prototype.__defineSetter__", () => Object.prototype.__defineSetter__);
+say("Object.prototype.__defineSetter__.length", () => Object.prototype.__defineSetter__.length);
+say("Object.prototype.__defineSetter__.name", () => Object.prototype.__defineSetter__.name);
+say("Object.prototype.__lookupGetter__", () => Object.prototype.__lookupGetter__);
+say("Object.prototype.__lookupGetter__.length", () => Object.prototype.__lookupGetter__.length);
+say("Object.prototype.__lookupGetter__.name", () => Object.prototype.__lookupGetter__.name);
+say("Object.prototype.__lookupSetter__", () => Object.prototype.__lookupSetter__);
+say("Object.prototype.__lookupSetter__.length", () => Object.prototype.__lookupSetter__.length);
+say("Object.prototype.__lookupSetter__.name", () => Object.prototype.__lookupSetter__.name);
+say("Object.prototype.__proto__", () => Object.prototype.__proto__);
+say("Object.prototype.constructor", () => Object.prototype.constructor);
+say("Object.hasOwn", () => Object.hasOwn);
+say("Object.hasOwn.length", () => Object.hasOwn.length);
+say("Object.hasOwn.name", () => Object.hasOwn.name);
+say("Object.groupBy", () => Object.groupBy);
+say("Object.groupBy.length", () => Object.groupBy.length);
+say("Object.groupBy.name", () => Object.groupBy.name);
+names("Object", () => Object);
+names("Object.getPrototypeOf", () => Object.getPrototypeOf);
+names("Object.setPrototypeOf", () => Object.setPrototypeOf);
+names("Object.getOwnPropertyDescriptor", () => Object.getOwnPropertyDescriptor);
+names("Object.getOwnPropertyDescriptors", () => Object.getOwnPropertyDescriptors);
+names("Object.getOwnPropertyNames", () => Object.getOwnPropertyNames);
+names("Object.getOwnPropertySymbols", () => Object.getOwnPropertySymbols);
+names("Object.keys", () => Object.keys);
+names("Object.defineProperty", () => Object.defineProperty);
+names("Object.defineProperties", () => Object.defineProperties);
+names("Object.create", () => Object.create);
+names("Object.seal", () => Object.seal);
+names("Object.freeze", () => Object.freeze);
+names("Object.preventExtensions", () => Object.preventExtensions);
+names("Object.isSealed", () => Object.isSealed);
+names("Object.isFrozen", () => Object.isFrozen);
+names("Object.isExtensible", () => Object.isExtensible);
+names("Object.is", () => Object.is);
+names("Object.assign", () => Object.assign);
+names("Object.values", () => Object.values);
+names("Object.entries", () => Object.entries);
+names("Object.fromEntries", () => Object.fromEntries);
+names("Object.prototype", () => Object.prototype);
+names("Object.prototype.toString", () => Object.prototype.toString);
+names("Object.prototype.toLocaleString", () => Object.prototype.toLocaleString);
+names("Object.prototype.valueOf", () => Object.prototype.valueOf);
+names("Object.prototype.hasOwnProperty", () => Object.prototype.hasOwnProperty);
+names("Object.prototype.propertyIsEnumerable", () => Object.prototype.propertyIsEnumerable);
+names("Object.prototype.isPrototypeOf", () => Object.prototype.isPrototypeOf);
+names("Object.prototype.__defineGetter__", () => Object.prototype.__defineGetter__);
+names("Object.prototype.__defineSetter__", () => Object.prototype.__defineSetter__);
+names("Object.prototype.__lookupGetter__", () => Object.prototype.__lookupGetter__);
+names("Object.prototype.__lookupSetter__", () => Object.prototype.__lookupSetter__);
+names("Object.hasOwn", () => Object.hasOwn);
+names("Object.groupBy", () => Object.groupBy);
+say("PerformanceServerTiming", () => PerformanceServerTiming);
+say("PerformanceServerTiming.length", () => PerformanceServerTiming.length);
+say("PerformanceServerTiming.name", () => PerformanceServerTiming.name);
+say("PerformanceServerTiming.prototype", () => PerformanceServerTiming.prototype);
+say("PerformanceServerTiming.prototype.constructor", () => PerformanceServerTiming.prototype.constructor);
+say("PerformanceServerTiming.prototype.name", () => PerformanceServerTiming.prototype.name);
+say("PerformanceServerTiming.prototype.duration", () => PerformanceServerTiming.prototype.duration);
+say("PerformanceServerTiming.prototype.description", () => PerformanceServerTiming.prototype.description);
+say("PerformanceServerTiming.prototype.toJSON", () => PerformanceServerTiming.prototype.toJSON);
+say("PerformanceServerTiming.prototype.toJSON.length", () => PerformanceServerTiming.prototype.toJSON.length);
+say("PerformanceServerTiming.prototype.toJSON.name", () => PerformanceServerTiming.prototype.toJSON.name);
+names("PerformanceServerTiming", () => PerformanceServerTiming);
+names("PerformanceServerTiming.prototype", () => PerformanceServerTiming.prototype);
+names("PerformanceServerTiming.prototype.toJSON", () => PerformanceServerTiming.prototype.toJSON);
+say("ReadableStreamBYOBRequest", () => ReadableStreamBYOBRequest);
+say("ReadableStreamBYOBRequest.length", () => ReadableStreamBYOBRequest.length);
+say("ReadableStreamBYOBRequest.name", () => ReadableStreamBYOBRequest.name);
+say("ReadableStreamBYOBRequest.prototype", () => ReadableStreamBYOBRequest.prototype);
+say("ReadableStreamBYOBRequest.prototype.constructor", () => ReadableStreamBYOBRequest.prototype.constructor);
+say("ReadableStreamBYOBRequest.prototype.view", () => ReadableStreamBYOBRequest.prototype.view);
+say("ReadableStreamBYOBRequest.prototype.respond", () => ReadableStreamBYOBRequest.prototype.respond);
+say("ReadableStreamBYOBRequest.prototype.respond.length", () => ReadableStreamBYOBRequest.prototype.respond.length);
+say("ReadableStreamBYOBRequest.prototype.respond.name", () => ReadableStreamBYOBRequest.prototype.respond.name);
+say("ReadableStreamBYOBRequest.prototype.respondWithNewView", () => ReadableStreamBYOBRequest.prototype.respondWithNewView);
+say("ReadableStreamBYOBRequest.prototype.respondWithNewView.length", () => ReadableStreamBYOBRequest.prototype.respondWithNewView.length);
+say("ReadableStreamBYOBRequest.prototype.respondWithNewView.name", () => ReadableStreamBYOBRequest.prototype.respondWithNewView.name);
+names("ReadableStreamBYOBRequest", () => ReadableStreamBYOBRequest);
+names("ReadableStreamBYOBRequest.prototype", () => ReadableStreamBYOBRequest.prototype);
+names("ReadableStreamBYOBRequest.prototype.respond", () => ReadableStreamBYOBRequest.prototype.respond);
+names("ReadableStreamBYOBRequest.prototype.respondWithNewView", () => ReadableStreamBYOBRequest.prototype.respondWithNewView);
+say("ResolveMessage", () => ResolveMessage);
+say("Symbol", () => Symbol);
+say("Symbol.for", () => Symbol.for);
+say("Symbol.for.length", () => Symbol.for.length);
+say("Symbol.for.name", () => Symbol.for.name);
+say("Symbol.keyFor", () => Symbol.keyFor);
+say("Symbol.keyFor.length", () => Symbol.keyFor.length);
+say("Symbol.keyFor.name", () => Symbol.keyFor.name);
+say("Symbol.length", () => Symbol.length);
+say("Symbol.name", () => Symbol.name);
+say("Symbol.prototype", () => Symbol.prototype);
+say("Symbol.prototype.description", () => Symbol.prototype.description);
+say("Symbol.prototype.toString", () => Symbol.prototype.toString);
+say("Symbol.prototype.toString.length", () => Symbol.prototype.toString.length);
+say("Symbol.prototype.toString.name", () => Symbol.prototype.toString.name);
+say("Symbol.prototype.valueOf", () => Symbol.prototype.valueOf);
+say("Symbol.prototype.valueOf.length", () => Symbol.prototype.valueOf.length);
+say("Symbol.prototype.valueOf.name", () => Symbol.prototype.valueOf.name);
+say("Symbol.prototype.constructor", () => Symbol.prototype.constructor);
+say("Symbol.hasInstance", () => Symbol.hasInstance);
+say("Symbol.isConcatSpreadable", () => Symbol.isConcatSpreadable);
+say("Symbol.asyncIterator", () => Symbol.asyncIterator);
+say("Symbol.iterator", () => Symbol.iterator);
+say("Symbol.match", () => Symbol.match);
+say("Symbol.matchAll", () => Symbol.matchAll);
+say("Symbol.replace", () => Symbol.replace);
+say("Symbol.search", () => Symbol.search);
+say("Symbol.species", () => Symbol.species);
+say("Symbol.split", () => Symbol.split);
+say("Symbol.toPrimitive", () => Symbol.toPrimitive);
+say("Symbol.toStringTag", () => Symbol.toStringTag);
+say("Symbol.unscopables", () => Symbol.unscopables);
+say("Symbol.dispose", () => Symbol.dispose);
+say("Symbol.asyncDispose", () => Symbol.asyncDispose);
+names("Symbol", () => Symbol);
+names("Symbol.for", () => Symbol.for);
+names("Symbol.keyFor", () => Symbol.keyFor);
+names("Symbol.prototype", () => Symbol.prototype);
+names("Symbol.prototype.toString", () => Symbol.prototype.toString);
+names("Symbol.prototype.valueOf", () => Symbol.prototype.valueOf);
+say("TransformStreamDefaultController", () => TransformStreamDefaultController);
+say("TransformStreamDefaultController.length", () => TransformStreamDefaultController.length);
+say("TransformStreamDefaultController.name", () => TransformStreamDefaultController.name);
+say("TransformStreamDefaultController.prototype", () => TransformStreamDefaultController.prototype);
+say("TransformStreamDefaultController.prototype.constructor", () => TransformStreamDefaultController.prototype.constructor);
+say("TransformStreamDefaultController.prototype.desiredSize", () => TransformStreamDefaultController.prototype.desiredSize);
+say("TransformStreamDefaultController.prototype.enqueue", () => TransformStreamDefaultController.prototype.enqueue);
+say("TransformStreamDefaultController.prototype.enqueue.length", () => TransformStreamDefaultController.prototype.enqueue.length);
+say("TransformStreamDefaultController.prototype.enqueue.name", () => TransformStreamDefaultController.prototype.enqueue.name);
+say("TransformStreamDefaultController.prototype.error", () => TransformStreamDefaultController.prototype.error);
+say("TransformStreamDefaultController.prototype.error.length", () => TransformStreamDefaultController.prototype.error.length);
+say("TransformStreamDefaultController.prototype.error.name", () => TransformStreamDefaultController.prototype.error.name);
+say("TransformStreamDefaultController.prototype.terminate", () => TransformStreamDefaultController.prototype.terminate);
+say("TransformStreamDefaultController.prototype.terminate.length", () => TransformStreamDefaultController.prototype.terminate.length);
+say("TransformStreamDefaultController.prototype.terminate.name", () => TransformStreamDefaultController.prototype.terminate.name);
+names("TransformStreamDefaultController", () => TransformStreamDefaultController);
+names("TransformStreamDefaultController.prototype", () => TransformStreamDefaultController.prototype);
+names("TransformStreamDefaultController.prototype.enqueue", () => TransformStreamDefaultController.prototype.enqueue);
+names("TransformStreamDefaultController.prototype.error", () => TransformStreamDefaultController.prototype.error);
+names("TransformStreamDefaultController.prototype.terminate", () => TransformStreamDefaultController.prototype.terminate);
+say("Uint8Array", () => Uint8Array);
+say("Uint8Array.length", () => Uint8Array.length);
+say("Uint8Array.name", () => Uint8Array.name);
+say("Uint8Array.prototype", () => Uint8Array.prototype);
+say("Uint8Array.prototype.BYTES_PER_ELEMENT", () => Uint8Array.prototype.BYTES_PER_ELEMENT);
+say("Uint8Array.prototype.setFromBase64", () => Uint8Array.prototype.setFromBase64);
+say("Uint8Array.prototype.setFromBase64.length", () => Uint8Array.prototype.setFromBase64.length);
+say("Uint8Array.prototype.setFromBase64.name", () => Uint8Array.prototype.setFromBase64.name);
+say("Uint8Array.prototype.setFromHex", () => Uint8Array.prototype.setFromHex);
+say("Uint8Array.prototype.setFromHex.length", () => Uint8Array.prototype.setFromHex.length);
+say("Uint8Array.prototype.setFromHex.name", () => Uint8Array.prototype.setFromHex.name);
+say("Uint8Array.prototype.toBase64", () => Uint8Array.prototype.toBase64);
+say("Uint8Array.prototype.toBase64.length", () => Uint8Array.prototype.toBase64.length);
+say("Uint8Array.prototype.toBase64.name", () => Uint8Array.prototype.toBase64.name);
+say("Uint8Array.prototype.toHex", () => Uint8Array.prototype.toHex);
+say("Uint8Array.prototype.toHex.length", () => Uint8Array.prototype.toHex.length);
+say("Uint8Array.prototype.toHex.name", () => Uint8Array.prototype.toHex.name);
+say("Uint8Array.prototype.constructor", () => Uint8Array.prototype.constructor);
+say("Uint8Array.BYTES_PER_ELEMENT", () => Uint8Array.BYTES_PER_ELEMENT);
+say("Uint8Array.fromBase64", () => Uint8Array.fromBase64);
+say("Uint8Array.fromBase64.length", () => Uint8Array.fromBase64.length);
+say("Uint8Array.fromBase64.name", () => Uint8Array.fromBase64.name);
+say("Uint8Array.fromHex", () => Uint8Array.fromHex);
+say("Uint8Array.fromHex.length", () => Uint8Array.fromHex.length);
+say("Uint8Array.fromHex.name", () => Uint8Array.fromHex.name);
+names("Uint8Array", () => Uint8Array);
+names("Uint8Array.prototype", () => Uint8Array.prototype);
+names("Uint8Array.prototype.setFromBase64", () => Uint8Array.prototype.setFromBase64);
+names("Uint8Array.prototype.setFromHex", () => Uint8Array.prototype.setFromHex);
+names("Uint8Array.prototype.toBase64", () => Uint8Array.prototype.toBase64);
+names("Uint8Array.prototype.toHex", () => Uint8Array.prototype.toHex);
+names("Uint8Array.fromBase64", () => Uint8Array.fromBase64);
+names("Uint8Array.fromHex", () => Uint8Array.fromHex);
+say("WritableStream", () => WritableStream);
+say("WritableStream.length", () => WritableStream.length);
+say("WritableStream.name", () => WritableStream.name);
+say("WritableStream.prototype", () => WritableStream.prototype);
+say("WritableStream.prototype.constructor", () => WritableStream.prototype.constructor);
+say("WritableStream.prototype.locked", () => WritableStream.prototype.locked);
+say("WritableStream.prototype.abort", () => WritableStream.prototype.abort);
+say("WritableStream.prototype.abort.length", () => WritableStream.prototype.abort.length);
+say("WritableStream.prototype.abort.name", () => WritableStream.prototype.abort.name);
+say("WritableStream.prototype.close", () => WritableStream.prototype.close);
+say("WritableStream.prototype.close.length", () => WritableStream.prototype.close.length);
+say("WritableStream.prototype.close.name", () => WritableStream.prototype.close.name);
+say("WritableStream.prototype.getWriter", () => WritableStream.prototype.getWriter);
+say("WritableStream.prototype.getWriter.length", () => WritableStream.prototype.getWriter.length);
+say("WritableStream.prototype.getWriter.name", () => WritableStream.prototype.getWriter.name);
+names("WritableStream", () => WritableStream);
+names("WritableStream.prototype", () => WritableStream.prototype);
+names("WritableStream.prototype.abort", () => WritableStream.prototype.abort);
+names("WritableStream.prototype.close", () => WritableStream.prototype.close);
+names("WritableStream.prototype.getWriter", () => WritableStream.prototype.getWriter);
+say("clearInterval", () => clearInterval);
+say("clearInterval.length", () => clearInterval.length);
+say("clearInterval.name", () => clearInterval.name);
+names("clearInterval", () => clearInterval);
+say("encodeURI", () => encodeURI);
+say("encodeURI.length", () => encodeURI.length);
+say("encodeURI.name", () => encodeURI.name);
+names("encodeURI", () => encodeURI);
+say("parseFloat", () => parseFloat);
+say("setImmediate", () => setImmediate);
+say("setImmediate.length", () => setImmediate.length);
+say("setImmediate.name", () => setImmediate.name);
+names("setImmediate", () => setImmediate);
+console.log(lines.join("\n"));
+process.exit(0);
+//// assorted/gen-names-4.js
+// Assorted: gen names. It prints what plain Bun prints.
+const lines = [];
+function say(path, read) {
+  let text;
+  try { const first = read(); text = typeof first; if (first !== null && (text === "object" || text === "function")) text += read() === first ? " same" : " ANOTHER"; } catch (error) { text = "throws " + (error && error.constructor && error.constructor.name); }
+  lines.push(path + ": " + text);
+}
+function names(path, read) {
+  let text;
+  try { text = Object.getOwnPropertyNames(read()).sort().join(); } catch (error) { text = "throws"; }
+  lines.push("names of " + path + ": " + text);
+}
+say("ArrayBuffer", () => ArrayBuffer);
+say("ArrayBuffer.length", () => ArrayBuffer.length);
+say("ArrayBuffer.name", () => ArrayBuffer.name);
+say("ArrayBuffer.prototype", () => ArrayBuffer.prototype);
+say("ArrayBuffer.prototype.slice", () => ArrayBuffer.prototype.slice);
+say("ArrayBuffer.prototype.slice.length", () => ArrayBuffer.prototype.slice.length);
+say("ArrayBuffer.prototype.slice.name", () => ArrayBuffer.prototype.slice.name);
+say("ArrayBuffer.prototype.byteLength", () => ArrayBuffer.prototype.byteLength);
+say("ArrayBuffer.prototype.resize", () => ArrayBuffer.prototype.resize);
+say("ArrayBuffer.prototype.resize.length", () => ArrayBuffer.prototype.resize.length);
+say("ArrayBuffer.prototype.resize.name", () => ArrayBuffer.prototype.resize.name);
+say("ArrayBuffer.prototype.transfer", () => ArrayBuffer.prototype.transfer);
+say("ArrayBuffer.prototype.transfer.length", () => ArrayBuffer.prototype.transfer.length);
+say("ArrayBuffer.prototype.transfer.name", () => ArrayBuffer.prototype.transfer.name);
+say("ArrayBuffer.prototype.transferToFixedLength", () => ArrayBuffer.prototype.transferToFixedLength);
+say("ArrayBuffer.prototype.transferToFixedLength.length", () => ArrayBuffer.prototype.transferToFixedLength.length);
+say("ArrayBuffer.prototype.transferToFixedLength.name", () => ArrayBuffer.prototype.transferToFixedLength.name);
+say("ArrayBuffer.prototype.resizable", () => ArrayBuffer.prototype.resizable);
+say("ArrayBuffer.prototype.maxByteLength", () => ArrayBuffer.prototype.maxByteLength);
+say("ArrayBuffer.prototype.detached", () => ArrayBuffer.prototype.detached);
+say("ArrayBuffer.prototype.constructor", () => ArrayBuffer.prototype.constructor);
+say("ArrayBuffer.isView", () => ArrayBuffer.isView);
+say("ArrayBuffer.isView.length", () => ArrayBuffer.isView.length);
+say("ArrayBuffer.isView.name", () => ArrayBuffer.isView.name);
+names("ArrayBuffer", () => ArrayBuffer);
+names("ArrayBuffer.prototype", () => ArrayBuffer.prototype);
+names("ArrayBuffer.prototype.slice", () => ArrayBuffer.prototype.slice);
+names("ArrayBuffer.prototype.resize", () => ArrayBuffer.prototype.resize);
+names("ArrayBuffer.prototype.transfer", () => ArrayBuffer.prototype.transfer);
+names("ArrayBuffer.prototype.transferToFixedLength", () => ArrayBuffer.prototype.transferToFixedLength);
+names("ArrayBuffer.isView", () => ArrayBuffer.isView);
+say("BroadcastChannel", () => BroadcastChannel);
+say("BroadcastChannel.length", () => BroadcastChannel.length);
+say("BroadcastChannel.name", () => BroadcastChannel.name);
+say("BroadcastChannel.prototype", () => BroadcastChannel.prototype);
+say("BroadcastChannel.prototype.constructor", () => BroadcastChannel.prototype.constructor);
+say("BroadcastChannel.prototype.name", () => BroadcastChannel.prototype.name);
+say("BroadcastChannel.prototype.onmessage", () => BroadcastChannel.prototype.onmessage);
+say("BroadcastChannel.prototype.onmessageerror", () => BroadcastChannel.prototype.onmessageerror);
+say("BroadcastChannel.prototype.postMessage", () => BroadcastChannel.prototype.postMessage);
+say("BroadcastChannel.prototype.postMessage.length", () => BroadcastChannel.prototype.postMessage.length);
+say("BroadcastChannel.prototype.postMessage.name", () => BroadcastChannel.prototype.postMessage.name);
+say("BroadcastChannel.prototype.close", () => BroadcastChannel.prototype.close);
+say("BroadcastChannel.prototype.close.length", () => BroadcastChannel.prototype.close.length);
+say("BroadcastChannel.prototype.close.name", () => BroadcastChannel.prototype.close.name);
+say("BroadcastChannel.prototype.ref", () => BroadcastChannel.prototype.ref);
+say("BroadcastChannel.prototype.ref.length", () => BroadcastChannel.prototype.ref.length);
+say("BroadcastChannel.prototype.ref.name", () => BroadcastChannel.prototype.ref.name);
+say("BroadcastChannel.prototype.unref", () => BroadcastChannel.prototype.unref);
+say("BroadcastChannel.prototype.unref.length", () => BroadcastChannel.prototype.unref.length);
+say("BroadcastChannel.prototype.unref.name", () => BroadcastChannel.prototype.unref.name);
+names("BroadcastChannel", () => BroadcastChannel);
+names("BroadcastChannel.prototype", () => BroadcastChannel.prototype);
+names("BroadcastChannel.prototype.postMessage", () => BroadcastChannel.prototype.postMessage);
+names("BroadcastChannel.prototype.close", () => BroadcastChannel.prototype.close);
+names("BroadcastChannel.prototype.ref", () => BroadcastChannel.prototype.ref);
+names("BroadcastChannel.prototype.unref", () => BroadcastChannel.prototype.unref);
+say("CountQueuingStrategy", () => CountQueuingStrategy);
+say("CountQueuingStrategy.length", () => CountQueuingStrategy.length);
+say("CountQueuingStrategy.name", () => CountQueuingStrategy.name);
+say("CountQueuingStrategy.prototype", () => CountQueuingStrategy.prototype);
+say("CountQueuingStrategy.prototype.constructor", () => CountQueuingStrategy.prototype.constructor);
+say("CountQueuingStrategy.prototype.highWaterMark", () => CountQueuingStrategy.prototype.highWaterMark);
+say("CountQueuingStrategy.prototype.size", () => CountQueuingStrategy.prototype.size);
+names("CountQueuingStrategy", () => CountQueuingStrategy);
+names("CountQueuingStrategy.prototype", () => CountQueuingStrategy.prototype);
+say("DisposableStack", () => DisposableStack);
+say("DisposableStack.length", () => DisposableStack.length);
+say("DisposableStack.name", () => DisposableStack.name);
+say("DisposableStack.prototype", () => DisposableStack.prototype);
+say("DisposableStack.prototype.adopt", () => DisposableStack.prototype.adopt);
+say("DisposableStack.prototype.adopt.length", () => DisposableStack.prototype.adopt.length);
+say("DisposableStack.prototype.adopt.name", () => DisposableStack.prototype.adopt.name);
+say("DisposableStack.prototype.defer", () => DisposableStack.prototype.defer);
+say("DisposableStack.prototype.defer.length", () => DisposableStack.prototype.defer.length);
+say("DisposableStack.prototype.defer.name", () => DisposableStack.prototype.defer.name);
+say("DisposableStack.prototype.dispose", () => DisposableStack.prototype.dispose);
+say("DisposableStack.prototype.dispose.length", () => DisposableStack.prototype.dispose.length);
+say("DisposableStack.prototype.dispose.name", () => DisposableStack.prototype.dispose.name);
+say("DisposableStack.prototype.disposed", () => DisposableStack.prototype.disposed);
+say("DisposableStack.prototype.use", () => DisposableStack.prototype.use);
+say("DisposableStack.prototype.use.length", () => DisposableStack.prototype.use.length);
+say("DisposableStack.prototype.use.name", () => DisposableStack.prototype.use.name);
+say("DisposableStack.prototype.move", () => DisposableStack.prototype.move);
+say("DisposableStack.prototype.move.length", () => DisposableStack.prototype.move.length);
+say("DisposableStack.prototype.move.name", () => DisposableStack.prototype.move.name);
+say("DisposableStack.prototype.constructor", () => DisposableStack.prototype.constructor);
+names("DisposableStack", () => DisposableStack);
+names("DisposableStack.prototype", () => DisposableStack.prototype);
+names("DisposableStack.prototype.adopt", () => DisposableStack.prototype.adopt);
+names("DisposableStack.prototype.defer", () => DisposableStack.prototype.defer);
+names("DisposableStack.prototype.dispose", () => DisposableStack.prototype.dispose);
+names("DisposableStack.prototype.use", () => DisposableStack.prototype.use);
+names("DisposableStack.prototype.move", () => DisposableStack.prototype.move);
+say("Float16Array", () => Float16Array);
+say("Float16Array.length", () => Float16Array.length);
+say("Float16Array.name", () => Float16Array.name);
+say("Float16Array.prototype", () => Float16Array.prototype);
+say("Float16Array.prototype.BYTES_PER_ELEMENT", () => Float16Array.prototype.BYTES_PER_ELEMENT);
+say("Float16Array.prototype.constructor", () => Float16Array.prototype.constructor);
+say("Float16Array.BYTES_PER_ELEMENT", () => Float16Array.BYTES_PER_ELEMENT);
+names("Float16Array", () => Float16Array);
+names("Float16Array.prototype", () => Float16Array.prototype);
+say("Int16Array", () => Int16Array);
+say("Int16Array.length", () => Int16Array.length);
+say("Int16Array.name", () => Int16Array.name);
+say("Int16Array.prototype", () => Int16Array.prototype);
+say("Int16Array.prototype.BYTES_PER_ELEMENT", () => Int16Array.prototype.BYTES_PER_ELEMENT);
+say("Int16Array.prototype.constructor", () => Int16Array.prototype.constructor);
+say("Int16Array.BYTES_PER_ELEMENT", () => Int16Array.BYTES_PER_ELEMENT);
+names("Int16Array", () => Int16Array);
+names("Int16Array.prototype", () => Int16Array.prototype);
+say("MessageChannel", () => MessageChannel);
+say("MessageChannel.length", () => MessageChannel.length);
+say("MessageChannel.name", () => MessageChannel.name);
+say("MessageChannel.prototype", () => MessageChannel.prototype);
+say("MessageChannel.prototype.constructor", () => MessageChannel.prototype.constructor);
+say("MessageChannel.prototype.port1", () => MessageChannel.prototype.port1);
+say("MessageChannel.prototype.port2", () => MessageChannel.prototype.port2);
+names("MessageChannel", () => MessageChannel);
+names("MessageChannel.prototype", () => MessageChannel.prototype);
+say("PerformanceMark", () => PerformanceMark);
+say("PerformanceMark.length", () => PerformanceMark.length);
+say("PerformanceMark.name", () => PerformanceMark.name);
+say("PerformanceMark.prototype", () => PerformanceMark.prototype);
+say("PerformanceMark.prototype.constructor", () => PerformanceMark.prototype.constructor);
+say("PerformanceMark.prototype.detail", () => PerformanceMark.prototype.detail);
+say("PerformanceMark.prototype.toJSON", () => PerformanceMark.prototype.toJSON);
+say("PerformanceMark.prototype.toJSON.length", () => PerformanceMark.prototype.toJSON.length);
+say("PerformanceMark.prototype.toJSON.name", () => PerformanceMark.prototype.toJSON.name);
+names("PerformanceMark", () => PerformanceMark);
+names("PerformanceMark.prototype", () => PerformanceMark.prototype);
+names("PerformanceMark.prototype.toJSON", () => PerformanceMark.prototype.toJSON);
+say("Proxy", () => Proxy);
+say("Proxy.length", () => Proxy.length);
+say("Proxy.name", () => Proxy.name);
+say("Proxy.revocable", () => Proxy.revocable);
+say("Proxy.revocable.length", () => Proxy.revocable.length);
+say("Proxy.revocable.name", () => Proxy.revocable.name);
+names("Proxy", () => Proxy);
+names("Proxy.revocable", () => Proxy.revocable);
+say("ReferenceError", () => ReferenceError);
+say("ReferenceError.length", () => ReferenceError.length);
+say("ReferenceError.name", () => ReferenceError.name);
+say("ReferenceError.prototype", () => ReferenceError.prototype);
+say("ReferenceError.prototype.name", () => ReferenceError.prototype.name);
+say("ReferenceError.prototype.message", () => ReferenceError.prototype.message);
+say("ReferenceError.prototype.constructor", () => ReferenceError.prototype.constructor);
+names("ReferenceError", () => ReferenceError);
+names("ReferenceError.prototype", () => ReferenceError.prototype);
+say("ShadowRealm", () => ShadowRealm);
+say("ShadowRealm.length", () => ShadowRealm.length);
+say("ShadowRealm.name", () => ShadowRealm.name);
+say("ShadowRealm.prototype", () => ShadowRealm.prototype);
+say("ShadowRealm.prototype.evaluate", () => ShadowRealm.prototype.evaluate);
+say("ShadowRealm.prototype.evaluate.length", () => ShadowRealm.prototype.evaluate.length);
+say("ShadowRealm.prototype.evaluate.name", () => ShadowRealm.prototype.evaluate.name);
+say("ShadowRealm.prototype.importValue", () => ShadowRealm.prototype.importValue);
+say("ShadowRealm.prototype.importValue.length", () => ShadowRealm.prototype.importValue.length);
+say("ShadowRealm.prototype.importValue.name", () => ShadowRealm.prototype.importValue.name);
+say("ShadowRealm.prototype.constructor", () => ShadowRealm.prototype.constructor);
+names("ShadowRealm", () => ShadowRealm);
+names("ShadowRealm.prototype", () => ShadowRealm.prototype);
+names("ShadowRealm.prototype.evaluate", () => ShadowRealm.prototype.evaluate);
+names("ShadowRealm.prototype.importValue", () => ShadowRealm.prototype.importValue);
+say("TextDecoder", () => TextDecoder);
+say("TextDecoder.length", () => TextDecoder.length);
+say("TextDecoder.name", () => TextDecoder.name);
+say("TextDecoder.prototype", () => TextDecoder.prototype);
+say("TextDecoder.prototype.decode", () => TextDecoder.prototype.decode);
+say("TextDecoder.prototype.decode.length", () => TextDecoder.prototype.decode.length);
+say("TextDecoder.prototype.decode.name", () => TextDecoder.prototype.decode.name);
+say("TextDecoder.prototype.encoding", () => TextDecoder.prototype.encoding);
+say("TextDecoder.prototype.fatal", () => TextDecoder.prototype.fatal);
+say("TextDecoder.prototype.ignoreBOM", () => TextDecoder.prototype.ignoreBOM);
+say("TextDecoder.prototype.constructor", () => TextDecoder.prototype.constructor);
+names("TextDecoder", () => TextDecoder);
+names("TextDecoder.prototype", () => TextDecoder.prototype);
+names("TextDecoder.prototype.decode", () => TextDecoder.prototype.decode);
+say("URL", () => URL);
+say("URL.length", () => URL.length);
+say("URL.name", () => URL.name);
+say("URL.prototype", () => URL.prototype);
+say("URL.prototype.constructor", () => URL.prototype.constructor);
+say("URL.prototype.href", () => URL.prototype.href);
+say("URL.prototype.origin", () => URL.prototype.origin);
+say("URL.prototype.protocol", () => URL.prototype.protocol);
+say("URL.prototype.username", () => URL.prototype.username);
+say("URL.prototype.password", () => URL.prototype.password);
+say("URL.prototype.host", () => URL.prototype.host);
+say("URL.prototype.hostname", () => URL.prototype.hostname);
+say("URL.prototype.port", () => URL.prototype.port);
+say("URL.prototype.pathname", () => URL.prototype.pathname);
+say("URL.prototype.hash", () => URL.prototype.hash);
+say("URL.prototype.search", () => URL.prototype.search);
+say("URL.prototype.searchParams", () => URL.prototype.searchParams);
+say("URL.prototype.toJSON", () => URL.prototype.toJSON);
+say("URL.prototype.toJSON.length", () => URL.prototype.toJSON.length);
+say("URL.prototype.toJSON.name", () => URL.prototype.toJSON.name);
+say("URL.prototype.toString", () => URL.prototype.toString);
+say("URL.prototype.toString.length", () => URL.prototype.toString.length);
+say("URL.prototype.toString.name", () => URL.prototype.toString.name);
+say("URL.parse", () => URL.parse);
+say("URL.parse.length", () => URL.parse.length);
+say("URL.parse.name", () => URL.parse.name);
+say("URL.canParse", () => URL.canParse);
+say("URL.canParse.length", () => URL.canParse.length);
+say("URL.canParse.name", () => URL.canParse.name);
+say("URL.createObjectURL", () => URL.createObjectURL);
+say("URL.createObjectURL.length", () => URL.createObjectURL.length);
+say("URL.createObjectURL.name", () => URL.createObjectURL.name);
+say("URL.revokeObjectURL", () => URL.revokeObjectURL);
+say("URL.revokeObjectURL.length", () => URL.revokeObjectURL.length);
+say("URL.revokeObjectURL.name", () => URL.revokeObjectURL.name);
+names("URL", () => URL);
+names("URL.prototype", () => URL.prototype);
+names("URL.prototype.toJSON", () => URL.prototype.toJSON);
+names("URL.prototype.toString", () => URL.prototype.toString);
+names("URL.parse", () => URL.parse);
+names("URL.canParse", () => URL.canParse);
+names("URL.createObjectURL", () => URL.createObjectURL);
+names("URL.revokeObjectURL", () => URL.revokeObjectURL);
+say("WeakRef", () => WeakRef);
+say("WeakRef.length", () => WeakRef.length);
+say("WeakRef.name", () => WeakRef.name);
+say("WeakRef.prototype", () => WeakRef.prototype);
+say("WeakRef.prototype.deref", () => WeakRef.prototype.deref);
+say("WeakRef.prototype.deref.length", () => WeakRef.prototype.deref.length);
+say("WeakRef.prototype.deref.name", () => WeakRef.prototype.deref.name);
+say("WeakRef.prototype.constructor", () => WeakRef.prototype.constructor);
+names("WeakRef", () => WeakRef);
+names("WeakRef.prototype", () => WeakRef.prototype);
+names("WeakRef.prototype.deref", () => WeakRef.prototype.deref);
+say("addEventListener", () => addEventListener);
+say("addEventListener.length", () => addEventListener.length);
+say("addEventListener.name", () => addEventListener.name);
+names("addEventListener", () => addEventListener);
+say("console", () => console);
+say("console.debug", () => console.debug);
+say("console.debug.length", () => console.debug.length);
+say("console.debug.name", () => console.debug.name);
+say("console.error", () => console.error);
+say("console.error.length", () => console.error.length);
+say("console.error.name", () => console.error.name);
+say("console.log", () => console.log);
+say("console.log.length", () => console.log.length);
+say("console.log.name", () => console.log.name);
+say("console.info", () => console.info);
+say("console.info.length", () => console.info.length);
+say("console.info.name", () => console.info.name);
+say("console.warn", () => console.warn);
+say("console.warn.length", () => console.warn.length);
+say("console.warn.name", () => console.warn.name);
+say("console.clear", () => console.clear);
+say("console.clear.length", () => console.clear.length);
+say("console.clear.name", () => console.clear.name);
+say("console.dir", () => console.dir);
+say("console.dir.length", () => console.dir.length);
+say("console.dir.name", () => console.dir.name);
+say("console.dirxml", () => console.dirxml);
+say("console.dirxml.length", () => console.dirxml.length);
+say("console.dirxml.name", () => console.dirxml.name);
+say("console.table", () => console.table);
+say("console.table.length", () => console.table.length);
+say("console.table.name", () => console.table.name);
+say("console.trace", () => console.trace);
+say("console.trace.length", () => console.trace.length);
+say("console.trace.name", () => console.trace.name);
+say("console.assert", () => console.assert);
+say("console.assert.length", () => console.assert.length);
+say("console.assert.name", () => console.assert.name);
+say("console.count", () => console.count);
+say("console.count.length", () => console.count.length);
+say("console.count.name", () => console.count.name);
+say("console.countReset", () => console.countReset);
+say("console.countReset.length", () => console.countReset.length);
+say("console.countReset.name", () => console.countReset.name);
+say("console.profile", () => console.profile);
+say("console.profile.length", () => console.profile.length);
+say("console.profile.name", () => console.profile.name);
+say("console.profileEnd", () => console.profileEnd);
+say("console.profileEnd.length", () => console.profileEnd.length);
+say("console.profileEnd.name", () => console.profileEnd.name);
+say("console.time", () => console.time);
+say("console.time.length", () => console.time.length);
+say("console.time.name", () => console.time.name);
+say("console.timeLog", () => console.timeLog);
+say("console.timeLog.length", () => console.timeLog.length);
+say("console.timeLog.name", () => console.timeLog.name);
+say("console.timeEnd", () => console.timeEnd);
+say("console.timeEnd.length", () => console.timeEnd.length);
+say("console.timeEnd.name", () => console.timeEnd.name);
+say("console.timeStamp", () => console.timeStamp);
+say("console.timeStamp.length", () => console.timeStamp.length);
+say("console.timeStamp.name", () => console.timeStamp.name);
+say("console.takeHeapSnapshot", () => console.takeHeapSnapshot);
+say("console.takeHeapSnapshot.length", () => console.takeHeapSnapshot.length);
+say("console.takeHeapSnapshot.name", () => console.takeHeapSnapshot.name);
+say("console.group", () => console.group);
+say("console.group.length", () => console.group.length);
+say("console.group.name", () => console.group.name);
+say("console.groupCollapsed", () => console.groupCollapsed);
+say("console.groupCollapsed.length", () => console.groupCollapsed.length);
+say("console.groupCollapsed.name", () => console.groupCollapsed.name);
+say("console.groupEnd", () => console.groupEnd);
+say("console.groupEnd.length", () => console.groupEnd.length);
+say("console.groupEnd.name", () => console.groupEnd.name);
+say("console.record", () => console.record);
+say("console.record.length", () => console.record.length);
+say("console.record.name", () => console.record.name);
+say("console.recordEnd", () => console.recordEnd);
+say("console.recordEnd.length", () => console.recordEnd.length);
+say("console.recordEnd.name", () => console.recordEnd.name);
+say("console.screenshot", () => console.screenshot);
+say("console.screenshot.length", () => console.screenshot.length);
+say("console.screenshot.name", () => console.screenshot.name);
+say("console.write", () => console.write);
+say("console.write.length", () => console.write.length);
+say("console.write.name", () => console.write.name);
+say("console.Console", () => console.Console);
+say("console.Console.length", () => console.Console.length);
+say("console.Console.name", () => console.Console.name);
+say("console.Console.prototype", () => console.Console.prototype);
+say("console.Console.prototype.log", () => console.Console.prototype.log);
+say("console.Console.prototype.warn", () => console.Console.prototype.warn);
+say("console.Console.prototype.dir", () => console.Console.prototype.dir);
+say("console.Console.prototype.time", () => console.Console.prototype.time);
+say("console.Console.prototype.timeEnd", () => console.Console.prototype.timeEnd);
+say("console.Console.prototype.timeLog", () => console.Console.prototype.timeLog);
+say("console.Console.prototype.trace", () => console.Console.prototype.trace);
+say("console.Console.prototype.assert", () => console.Console.prototype.assert);
+say("console.Console.prototype.clear", () => console.Console.prototype.clear);
+say("console.Console.prototype.count", () => console.Console.prototype.count);
+say("console.Console.prototype.countReset", () => console.Console.prototype.countReset);
+say("console.Console.prototype.group", () => console.Console.prototype.group);
+say("console.Console.prototype.groupEnd", () => console.Console.prototype.groupEnd);
+say("console.Console.prototype.table", () => console.Console.prototype.table);
+say("console.Console.prototype.debug", () => console.Console.prototype.debug);
+say("console.Console.prototype.info", () => console.Console.prototype.info);
+say("console.Console.prototype.dirxml", () => console.Console.prototype.dirxml);
+say("console.Console.prototype.error", () => console.Console.prototype.error);
+say("console.Console.prototype.groupCollapsed", () => console.Console.prototype.groupCollapsed);
+say("console._stdout", () => console._stdout);
+say("console._stdout.fd", () => console._stdout.fd);
+say("console._stdout._writev", () => console._stdout._writev);
+say("console._stdout.flush", () => console._stdout.flush);
+say("console._stdout.start", () => console._stdout.start);
+say("console._stdout.pos", () => console._stdout.pos);
+say("console._stdout.bytesWritten", () => console._stdout.bytesWritten);
+say("console._stdout._write", () => console._stdout._write);
+say("console._stdout._write.length", () => console._stdout._write.length);
+say("console._stdout._write.name", () => console._stdout._write.name);
+say("console._stdout.write", () => console._stdout.write);
+say("console._stdout.write.length", () => console._stdout.write.length);
+say("console._stdout.write.name", () => console._stdout.write.name);
+say("console._stdout._final", () => console._stdout._final);
+say("console._stdout._final.length", () => console._stdout._final.length);
+say("console._stdout._final.name", () => console._stdout._final.name);
+say("console._stdout._construct", () => console._stdout._construct);
+say("console._stdout._events", () => console._stdout._events);
+say("console._stdout._events.close", () => console._stdout._events.close);
+say("console._stdout._events.error", () => console._stdout._events.error);
+say("console._stdout._events.prefinish", () => console._stdout._events.prefinish);
+say("console._stdout._events.finish", () => console._stdout._events.finish);
+say("console._stdout._events.drain", () => console._stdout._events.drain);
+say("console._stdout._writableState", () => console._stdout._writableState);
+say("console._stdout._writableState.highWaterMark", () => console._stdout._writableState.highWaterMark);
+say("console._stdout._writableState.length", () => console._stdout._writableState.length);
+say("console._stdout._writableState.corked", () => console._stdout._writableState.corked);
+say("console._stdout._writableState.onwrite", () => console._stdout._writableState.onwrite);
+say("console._stdout._writableState.writelen", () => console._stdout._writableState.writelen);
+say("console._stdout._writableState.bufferedIndex", () => console._stdout._writableState.bufferedIndex);
+say("console._stdout._writableState.pendingcb", () => console._stdout._writableState.pendingcb);
+say("console._stdout._maxListeners", () => console._stdout._maxListeners);
+say("console._stdout.readable", () => console._stdout.readable);
+say("console._stdout._type", () => console._stdout._type);
+say("console._stdout.destroySoon", () => console._stdout.destroySoon);
+say("console._stdout.destroySoon.length", () => console._stdout.destroySoon.length);
+say("console._stdout.destroySoon.name", () => console._stdout.destroySoon.name);
+say("console._stdout._destroy", () => console._stdout._destroy);
+say("console._stdout._destroy.length", () => console._stdout._destroy.length);
+say("console._stdout._destroy.name", () => console._stdout._destroy.name);
+say("console._stdout._isStdio", () => console._stdout._isStdio);
+say("console._stderr", () => console._stderr);
+say("console._stderr.fd", () => console._stderr.fd);
+say("console._stderr._writev", () => console._stderr._writev);
+say("console._stderr.flush", () => console._stderr.flush);
+say("console._stderr.start", () => console._stderr.start);
+say("console._stderr.pos", () => console._stderr.pos);
+say("console._stderr.bytesWritten", () => console._stderr.bytesWritten);
+say("console._stderr._write", () => console._stderr._write);
+say("console._stderr.write", () => console._stderr.write);
+say("console._stderr._final", () => console._stderr._final);
+say("console._stderr._construct", () => console._stderr._construct);
+say("console._stderr._events", () => console._stderr._events);
+say("console._stderr._events.close", () => console._stderr._events.close);
+say("console._stderr._events.error", () => console._stderr._events.error);
+say("console._stderr._events.prefinish", () => console._stderr._events.prefinish);
+say("console._stderr._events.finish", () => console._stderr._events.finish);
+say("console._stderr._events.drain", () => console._stderr._events.drain);
+say("console._stderr._writableState", () => console._stderr._writableState);
+say("console._stderr._writableState.highWaterMark", () => console._stderr._writableState.highWaterMark);
+say("console._stderr._writableState.length", () => console._stderr._writableState.length);
+say("console._stderr._writableState.corked", () => console._stderr._writableState.corked);
+say("console._stderr._writableState.onwrite", () => console._stderr._writableState.onwrite);
+say("console._stderr._writableState.writelen", () => console._stderr._writableState.writelen);
+say("console._stderr._writableState.bufferedIndex", () => console._stderr._writableState.bufferedIndex);
+say("console._stderr._writableState.pendingcb", () => console._stderr._writableState.pendingcb);
+say("console._stderr._maxListeners", () => console._stderr._maxListeners);
+say("console._stderr.readable", () => console._stderr.readable);
+say("console._stderr._type", () => console._stderr._type);
+say("console._stderr.destroySoon", () => console._stderr.destroySoon);
+say("console._stderr._destroy", () => console._stderr._destroy);
+say("console._stderr._destroy.length", () => console._stderr._destroy.length);
+say("console._stderr._destroy.name", () => console._stderr._destroy.name);
+say("console._stderr._isStdio", () => console._stderr._isStdio);
+names("console", () => console);
+names("console.debug", () => console.debug);
+names("console.error", () => console.error);
+names("console.log", () => console.log);
+names("console.info", () => console.info);
+names("console.warn", () => console.warn);
+names("console.clear", () => console.clear);
+names("console.dir", () => console.dir);
+names("console.dirxml", () => console.dirxml);
+names("console.table", () => console.table);
+names("console.trace", () => console.trace);
+names("console.assert", () => console.assert);
+names("console.count", () => console.count);
+names("console.countReset", () => console.countReset);
+names("console.profile", () => console.profile);
+names("console.profileEnd", () => console.profileEnd);
+names("console.time", () => console.time);
+names("console.timeLog", () => console.timeLog);
+names("console.timeEnd", () => console.timeEnd);
+names("console.timeStamp", () => console.timeStamp);
+names("console.takeHeapSnapshot", () => console.takeHeapSnapshot);
+names("console.group", () => console.group);
+names("console.groupCollapsed", () => console.groupCollapsed);
+names("console.groupEnd", () => console.groupEnd);
+names("console.record", () => console.record);
+names("console.recordEnd", () => console.recordEnd);
+names("console.screenshot", () => console.screenshot);
+names("console.write", () => console.write);
+names("console.Console", () => console.Console);
+names("console.Console.prototype", () => console.Console.prototype);
+names("console._stdout", () => console._stdout);
+names("console._stdout._write", () => console._stdout._write);
+names("console._stdout.write", () => console._stdout.write);
+names("console._stdout._final", () => console._stdout._final);
+names("console._stdout._events", () => console._stdout._events);
+names("console._stdout._writableState", () => console._stdout._writableState);
+names("console._stdout.destroySoon", () => console._stdout.destroySoon);
+names("console._stdout._destroy", () => console._stdout._destroy);
+names("console._stderr", () => console._stderr);
+names("console._stderr._events", () => console._stderr._events);
+names("console._stderr._writableState", () => console._stderr._writableState);
+names("console._stderr._destroy", () => console._stderr._destroy);
+say("eval", () => eval);
+say("eval.length", () => eval.length);
+say("eval.name", () => eval.name);
+names("eval", () => eval);
+say("postMessage", () => postMessage);
+say("postMessage.length", () => postMessage.length);
+say("postMessage.name", () => postMessage.name);
+names("postMessage", () => postMessage);
+say("structuredClone", () => structuredClone);
+say("structuredClone.length", () => structuredClone.length);
+say("structuredClone.name", () => structuredClone.name);
+names("structuredClone", () => structuredClone);
+console.log(lines.join("\n"));
+process.exit(0);
+//// assorted/literal-handed-to-a-callee-whose-inner-functions-capture-it.ts
+// Assorted: literal handed to a callee whose inner functions capture it. It prints what plain Bun prints.
+function outer(texts: readonly string[], n: number): number {
+  let seg = 0;
+  const last = texts.length - 1;
+  for (let i = 0; i < n; i++) add(i % (last + 1));
+  return seg;
+  function get(i: number) { return i < last ? texts[i] : "end"; }
+  function add(s: number) { seg += get(s).length; }
+}
+function caller(v: string, n: number) { return outer([v], n); }
+let sum = 0;
+for (let i = 0; i < 1000; i++) sum += caller("a" + i, 3);
+console.log(sum);
+//// assorted/memory-births.ts
+// Assorted: memory births. It prints what plain Bun prints.
+type Style = { color?: string; width?: number; bold?: boolean; margin?: number; label?: string };
+type Props = { id: string; style?: Style; label?: string };
+
+const styles: Style[] = [{ color: "a", width: 1 }, { bold: true }, { margin: 2, label: "x" }, { width: 3 }, { color: "white", margin: 1 }, {}];
+const props: Props[] = [{ id: "x", label: "l" }, { id: "y", style: styles[0] }, { id: "z" }];
+
+function merge(base: Style, extra: Style): Style {
+  return { ...base, ...extra };
+}
+function withId(p: Props, id: string): Props {
+  return { ...p, id };
+}
+function defaults(s: Style): Style {
+  return { color: "black", ...s, bold: true };
+}
+function rest(p: Props) {
+  const { id, ...others } = p;
+  return others;
+}
+function grow(n: number): Style {
+  const s: Style = {};
+  s.color = "red";
+  if (n & 1) s.width = n;
+  s.bold = true;
+  return s;
+}
+const kept: object[] = [];
+let sum = 0;
+const keys: string[] = [];
+for (let i = 0; i < 3000; i++) {
+  const a = merge(styles[i % 6], styles[(i * 5 + 1) % 6]);
+  const b = withId(props[i % 3], "y" + (i & 3));
+  const c = defaults(styles[(i + 2) % 6]);
+  const d = rest(props[(i + 1) % 3]);
+  const e = grow(i);
+  kept[i & 63] = i & 1 ? a : i & 2 ? b : i & 4 ? c : i & 8 ? d : e;
+  styles[6 + (i & 7)] = i & 16 ? a : c;
+  sum += (a.width ?? 0) + b.id.length + (c.margin ?? 0) + (e.width ?? 0) + (d.label ? 1 : 0);
+  if (i < 6) keys.push(Object.keys(a).join(), Object.keys(b).join(), Object.keys(c).join(), Object.keys(d).join(), Object.keys(e).join());
+}
+console.log(sum, kept.length, keys.join(" | "));
+//// assorted/memory-closures.ts
+// Assorted: memory closures. It prints what plain Bun prints.
+type Handlers = { onA: () => number; onB: (x: number) => number; name: string };
+
+function make(n: number): Handlers {
+  return { onA: () => n, onB: (x) => x + n, name: "h" + n };
+}
+function use(h: Handlers, i: number): number {
+  return (i & 127) === 0 ? h.onA() + h.onB(1) : h.name.length;
+}
+const kept: Handlers[] = [];
+let sum = 0;
+for (let i = 0; i < 20000; i++) {
+  const h = make(i);
+  kept[i & 255] = h;
+  sum += use(kept[(i * 7) & 255] ?? h, i);
+}
+console.log(sum, kept.length);
+//// assorted/no-cells-for-arrays-of-calls-that-return-early.js
+// 10,000 calls of a function like the `debug` of npm while it is switched off, directly and through a value, and 100 while it is switched on, when it changes and keeps its rest array.
+// object-census.test.ts runs it without collections, so that the census at exit counts every array that was made. The output is that of plain Bun.
+let enabled = false;
+const kept = [];
+function log(...args) {
+  if (!enabled) return 0;
+  args[0] = args.length;
+  kept.push(args);
+  return 1;
+}
+const table = { log };
+const names = ["log"];
+let sum = 0;
+for (let i = 0; i < 10100; i++) {
+  enabled = i >= 10000;
+  const a = { n: i };
+  sum += log(a, a, a) + table[names[i % names.length]](a, a, a, a, a);
+}
+console.log(sum, kept.length, kept[0].length, kept[1].length, kept[199][0], new Set(kept).size);
+//// assorted/one-construct-each.js
+// Assorted: one construct each. It prints what plain Bun prints.
+function other(a, b) {
+  return a.n + b.n;
+}
+function* both(x, y) {
+  yield x;
+  yield y;
+}
+class Made {
+  constructor(tag, n, a) {
+    this.tag = tag;
+    this.n = n;
+    this.a = a;
+  }
+}
+function diesInLiteral(p) {
+  const o = { a: p };
+  return 1;
+}
+function diesInLiteralThatIsRead(p) {
+  const o = { a: p, n: 2 };
+  return o.n;
+}
+function diesInArray(p) {
+  const l = [p];
+  return l.length;
+}
+function throughApply(p, q) {
+  return other.apply(null, [p, q]);
+}
+function throughCall(p, q) {
+  return other.call(null, p, q);
+}
+function throughBind(p, q) {
+  const f = other.bind(null, p);
+  return f(q);
+}
+function throughGenerator(p, q) {
+  let s = 0;
+  for (const v of both(p, q)) s += v.n;
+  return s;
+}
+function throughNew(p) {
+  const m = new Made("t", 1, p);
+  return m.n;
+}
+function storedIntoWhatWasReadOut(p, q) {
+  const l = [q];
+  l[0].b = p;
+  return 1;
+}
+function closureThatDies(p) {
+  const g = v => p.n + v;
+  return 1;
+}
+let sum = 0;
+for (let i = 0; i < 300; i++) {
+  const p = { n: i, b: null };
+  const q = { n: i + 1, b: null };
+  sum += diesInLiteral(p) + diesInLiteralThatIsRead(p) + diesInArray(p) + throughApply(p, q) + throughCall(p, q) + throughBind(p, q);
+  sum += throughGenerator(p, q) + throughNew(p) + storedIntoWhatWasReadOut(p, q) + closureThatDies(p);
+}
+console.log(sum);
+//// assorted/ops-bound-in-both-constructors.ts
+// Assorted: ops bound in both constructors. It prints what plain Bun prints.
+class B0 { v = 1; constructor() { this.m = this.m.bind(this); } m(x: number): number { return this.v + x; } }
+class D0 extends B0 { constructor() { super(); this.m = this.m.bind(this); } }
+const b = new B0(); const f = b.m;
+console.log(f(1), f.name, Object.keys(b).join(), b.m === b.m, b.m(2));
+const d = new D0(); const g = d.m;
+console.log(g(1), g.name, g.length, d.m(2));
+//// assorted/ops-bound-in-constructor.ts
+// Assorted: ops bound in constructor. It prints what plain Bun prints.
+class B0 { v = 1; constructor() { this.m = this.m.bind(this); } m(x: number): number { return this.v + x; } }
+const b = new B0(); const f = b.m;
+console.log(f(1), f.name, Object.keys(b).join(), b.m === b.m, b.m(2));
+//// assorted/own-objects.js
+// Assorted: own objects. It prints what plain Bun prints.
+function definedNotRead(p) {
+  const o = { a: p, n: 2 };
+  return 1;
+}
+function readOtherKey(p) {
+  const o = { a: p, n: 2 };
+  return o.n;
+}
+function readOtherKeyDropped(p) {
+  const o = { a: p, n: 2 };
+  if (o.n === 3) return 2;
+  return 1;
+}
+function readSameKeyDropped(p) {
+  const o = { a: p };
+  if (o.a === null) return 2;
+  return 1;
+}
+function storedLaterNotRead(p) {
+  const o = { a: null };
+  o.a = p;
+  return 1;
+}
+function computedMember(p) {
+  const o = { tag: "s" + p.n, n: p.n + 4, a: p, b: null };
+  return 1;
+}
+function computedMemberHanded(p) {
+  const o = { tag: "s" + p.n, n: p.n + 4, a: p, b: null };
+  return look(o);
+}
+////= lines-25	look	o	o.n
+function arrayReadDropped(p) {
+  const l = [p];
+  if (l.length === 3) return 2;
+  return 1;
+}
+let sum = 0;
+for (let i = 0; i < 300; i++) {
+  const p = { n: i, b: null };
+  sum += definedNotRead(p) + readOtherKey(p) + readOtherKeyDropped(p) + readSameKeyDropped(p) + storedLaterNotRead(p) + computedMember(p) + computedMemberHanded(p) + arrayReadDropped(p);
+}
+console.log(sum);
+//// assorted/positions.js
+// Assorted, one probe of many. It prints what plain Bun prints.
+const kept = [];
+function two(a, b) {
+  kept.push(b);
+  return a.n;
+}
+function viaApply(p, q) {
+  return two.apply(null, [p, q]);
+}
+function viaCall(p, q) {
+  return two.call(null, p, q);
+}
+function viaSpread(p, q) {
+  return two(...[p, q]);
+}
+function viaBind(p, q) {
+  return two.bind(null, p)(q);
+}
+function direct(p, q) {
+  return two(p, q);
+}
+let sum = 0;
+for (let i = 0; i < 300; i++) {
+  const p = { n: i };
+  const q = { n: i + 1 };
+  sum += viaApply(p, q) + viaCall(p, q) + viaSpread(p, q) + viaBind(p, q) + direct(p, q);
+}
+console.log(sum, kept.length);
+//// assorted/rb-censuses.ts
+// Whatever walks the whole heap walks over pairs: heap snapshots of both kinds, statistics by type, the sizes of single objects.
+import { edenGC, fullGC, heapStats, memoryUsage, estimateShallowMemoryUsageOf } from "bun:jsc";
+import { writeHeapSnapshot, getHeapSnapshot, getHeapStatistics } from "node:v8";
+
+type Inner = { count: number; label: string; list: number[] };
+type Outer = { inner: Inner; tag: number };
+function fill(into: Outer[], rows: number, columns: number): void {
+  for (let row = 0; row < rows; row++) {
+    for (let column = 0; column < columns; column++) {
+      const i = row * columns + column;
+      into.push({ inner: { count: i, label: "label" + i, list: [i] }, tag: i });
+    }
+  }
+}
+const held: Inner[] = [];
+function hold(outer: Outer): void { held.push(outer.inner); }
+
+const outers: Outer[] = [];
+fill(outers, 40, 40);
+for (let i = 0; i < outers.length; i += 100) hold(outers[i]);
+fullGC();
+const stats = heapStats();
+console.log(typeof stats.objectCount, stats.objectCount > 1600, typeof stats.objectTypeCounts);
+const snapshot = Bun.generateHeapSnapshot();
+console.log(Array.isArray(snapshot.nodes), snapshot.nodes.length > 1000, Array.isArray(snapshot.edges));
+const text = Bun.generateHeapSnapshot("v8");
+console.log(typeof text, text.length > 10000, JSON.parse(text).snapshot.node_count > 1000);
+console.log(typeof getHeapStatistics().used_heap_size, typeof memoryUsage().current);
+console.log(estimateShallowMemoryUsageOf(outers[1]) > 0, estimateShallowMemoryUsageOf(outers[0].inner) > 0, estimateShallowMemoryUsageOf(outers[2].inner) > 0);
+edenGC();
+let sum = 0;
+for (const outer of outers) sum += outer.inner.count + outer.inner.label.length + outer.inner.list[0];
+for (const inner of held) sum += inner.count;
+console.log(sum, Bun.inspect(outers[3]), Bun.inspect(outers[100]));
+//// assorted/rb-heap-by-name.ts
+// Assorted: rb heap by name. It prints what plain Bun prints.
+import { getHeapStatistics } from "node:v8";
+const stats: any = getHeapStatistics();
+const key = process.argv.length > 100 ? "x" : "does_zap_garbage";
+console.log(stats[key], stats.does_zap_garbage, typeof stats[key]);
+console.log(JSON.stringify(stats).includes('"does_zap_garbage":0'), JSON.stringify(Object.entries(stats).filter(([name]) => name.startsWith("does") || name.startsWith("number_of"))));
+const typed = getHeapStatistics();
+console.log(typed.does_zap_garbage, typed.does_zap_garbage === 0, typed.does_zap_garbage + 1, typed.number_of_detached_contexts);
+//// assorted/rb-heap-statistics.js
+// Assorted: rb heap statistics. It prints what plain Bun prints.
+const v8 = require("node:v8");
+const stats = v8.getHeapStatistics();
+console.log(stats.does_zap_garbage === 0, typeof stats.does_zap_garbage, stats.does_zap_garbage ? "zaps" : "does not zap");
+if (stats.does_zap_garbage) console.log("zaps");
+else console.log("no");
+for (const key of Object.keys(stats)) console.log(key, typeof stats[key]);
+console.log(stats.number_of_detached_contexts === 0, stats.total_global_handles_size === 8192, stats.used_global_handles_size);
+//// assorted/rb-heap-typed.ts
+// Assorted: rb heap typed. It prints what plain Bun prints.
+import { getHeapStatistics } from "node:v8";
+console.log(typeof getHeapStatistics().used_heap_size);
+const stats = getHeapStatistics();
+console.log(stats.does_zap_garbage, typeof stats.does_zap_garbage, stats.number_of_detached_contexts);
+//// assorted/room-of-empty-literals-follows-the-site.js
+// Two sites of `[]`, 1,000 arrays each: those of the first stay empty, those of the second take four values at once.
+// A site learns from the arrays it has made how much room the next one gets. object-census.test.ts runs it without collections and counts the arrays by length and room. The output is that of plain Bun.
+const kept = [];
+function staysEmpty() {
+  return [];
+}
+function takesFour(i) {
+  const list = [];
+  list.push(i);
+  list.push(i + 1);
+  list.push(i + 2);
+  list.push(i + 3);
+  return list;
+}
+let sum = 0;
+for (let i = 0; i < 1000; i++) {
+  const empty = staysEmpty();
+  const four = takesFour(i);
+  kept.push(empty, four);
+  sum += empty.length + four.length + four[3];
+}
+console.log(sum, kept.length);
+//// assorted/scopes-handed-back.ts
+// A function that answers with a closure over its own scope has done with the scope when it returns, and the caller has not: the next call gets a scope of its own.
+function choose(kind: boolean) {
+  let note = "";
+  if (kind) note = "set; ";
+  return (x: string) => note + x;
+}
+const chosen = [choose(true), choose(false), choose(true), choose(false)];
+console.log(chosen.map(f => f("x")).join("|"));
+
+// One of two closures over the same scope.
+function eitherWay(kind: boolean, tag: string) {
+  let note = tag;
+  if (kind) note += "!";
+  return kind ? (x: string) => note + x : (x: string) => x + note;
+}
+const either = [eitherWay(true, "a"), eitherWay(false, "b"), eitherWay(true, "c"), eitherWay(false, "d")];
+console.log(either.map(f => f("-")).join("|"));
+
+// A fresh object whose members share the scope.
+function counter(start: number) {
+  let count = start;
+  if (start > 5) count -= 5;
+  return { next: () => ++count, peek: () => count };
+}
+const counters = [counter(1), counter(10), counter(3)];
+for (const c of counters) c.next();
+counters[1].next();
+console.log(counters.map(c => c.peek()).join());
+
+// The function calls itself before it answers, so that it is never taken into its caller, and every activation's scope is alive at once.
+function chain(depth: number, tag: string): (x: string) => string {
+  let mine = tag + depth;
+  if (depth % 2) mine += "o";
+  const below = depth > 0 ? chain(depth - 1, tag) : (x: string) => x;
+  return (x: string) => below(x + "," + mine);
+}
+console.log(chain(3, "a")(""), chain(2, "b")(""));
+const chains = [chain(1, "p"), chain(1, "q"), chain(0, "r")];
+console.log(chains.map(f => f("")).join("|"));
+
+// A scope inside a scope: the closure keeps both.
+function outer(a: number) {
+  let total = a;
+  if (a > 1) total *= 2;
+  function inner(b: number) {
+    let own = b;
+    if (b > 1) own += total;
+    return () => own + total++;
+  }
+  return [inner(1), inner(2)] as const;
+}
+const pairs = [outer(1), outer(2), outer(3)];
+console.log(pairs.map(([p, q]) => [p(), q(), p()].join()).join("|"));
+
+// The closure leaves by a throw, by a finally, through a generator and through a promise.
+function thrown(tag: string): never {
+  let note = tag;
+  if (tag.length > 1) note += "+";
+  throw () => note;
+}
+function caught(tag: string): () => string {
+  try {
+    thrown(tag);
+  } catch (error) {
+    return error as () => string;
+  }
+}
+console.log([caught("t"), caught("uu"), caught("v")].map(f => f()).join());
+function behindFinally(tag: string, log: string[]) {
+  let note = tag;
+  try {
+    if (tag === "b") note += "?";
+    return () => note;
+  } finally {
+    log.push(note);
+    note += ".";
+  }
+}
+const finallyLog: string[] = [];
+console.log([behindFinally("a", finallyLog), behindFinally("b", finallyLog), behindFinally("c", finallyLog)].map(f => f()).join(), finallyLog.join());
+function* yielded(n: number) {
+  for (let i = 0; i < n; i++) {
+    let seen = i;
+    if (i % 2) seen += 10;
+    yield () => seen++;
+  }
+}
+const fromGenerator = [...yielded(4)];
+console.log(fromGenerator.map(f => f() + f()).join());
+async function awaited(tag: string) {
+  let note = tag;
+  await null;
+  if (tag === "y") note += "~";
+  return () => note;
+}
+
+// Many calls whose closures are all kept, then read, with collections in between if the run asks for them.
+const kept: ((x: string) => string)[] = [];
+for (let i = 0; i < 3000; i++) kept.push(i % 3 ? choose(i % 2 === 0) : eitherWay(i % 2 === 0, "" + i));
+let length = 0;
+let wrong = 0;
+for (let i = 0; i < kept.length; i++) {
+  const answer = kept[i]("x");
+  const expected = i % 3 ? (i % 2 === 0 ? "set; x" : "x") : i % 2 === 0 ? i + "!x" : "x" + i;
+  if (answer !== expected) wrong++;
+  length += answer.length;
+}
+console.log(length, wrong);
+Promise.all([awaited("x"), awaited("y"), awaited("z")]).then(all => console.log(all.map(f => f()).join()));
+//// assorted/scratch-co1.ts
+// Assorted, one probe of many. It prints what plain Bun prints.
+import { Console } from "node:console";
+try {
+  new Console(process.stdout).log({ a: 1 }, "text", 5);
+} catch (error) {
+  console.log("threw", String(error), (error as Error).stack?.split("\n").slice(0, 4).join(" | "));
+}
+//// assorted/scratch-cs1.ts
+// Assorted, one probe of many. It prints what plain Bun prints.
+console.log(typeof crypto, typeof crypto.subtle, typeof crypto.getRandomValues, typeof crypto.randomUUID, typeof globalThis.SubtleCrypto, Object.keys(Object.getPrototypeOf(crypto)).join());
+//// assorted/scratch-ee1.ts
+// Assorted, one probe of many. It prints what plain Bun prints.
+import { EventEmitter } from "node:events";
+function listener(value: number): void {
+  console.log("got", value);
+}
+new EventEmitter().on("e", listener).emit("e", 1);
+//// assorted/scratch-ee2.ts
+// Assorted, one probe of many. It prints what plain Bun prints.
+import { EventEmitter } from "node:events";
+const emitter = new EventEmitter();
+emitter.on("e", (value: number) => console.log("got", value));
+emitter.emit("e", 1);
+//// assorted/scratch-ev1.ts
+// Assorted, one probe of many. It prints what plain Bun prints.
+import { once, EventEmitter } from "node:events";
+const emitter = new EventEmitter();
+const waiting = once(emitter, "x");
+emitter.emit("x", 1);
+console.log((await waiting).length);
+//// assorted/scratch-ev2.ts
+// Assorted, one probe of many. It prints what plain Bun prints.
+process.stdout.once("finish", () => {});
+console.log(process.stdout.listenerCount("finish"));
+//// assorted/scratch-gb1.ts
+// Assorted, one probe of many. It prints what plain Bun prints.
+const log: string[] = [];
+function f(value: number): void { log.push((typeof value !== "number" ? "no number" : "a number") + " " + Object.prototype.toString.call(value)); }
+f(1);
+try {
+  const groups: any = Object.groupBy([f], () => "k");
+  log.push(Object.keys(groups).join(), typeof groups.k, typeof groups.k[0], String(groups.k[0] === f));
+  groups.k[0]("s");
+} catch (error) { log.push("threw " + String(error).slice(0, 150)); }
+console.log(log.join("; "));
+//// assorted/scratch-ix1.ts
+// Assorted, one probe of many. It prints what plain Bun prints.
+const log: string[] = [];
+class Shelf { set 0(value: string) { log.push("setter " + typeof value); } get 1(): string { log.push("getter"); return "g"; } }
+const shelf = new Shelf();
+try { shelf[0] = "book"; } catch (error) { log.push("threw " + String(error).slice(0, 90)); }
+try { log.push(shelf[1]); } catch (error) { log.push("threw " + String(error).slice(0, 90)); }
+try { (shelf as any)[0] = 5; } catch (error) { log.push("threw " + String(error).slice(0, 90)); }
+console.log(log.join("; "));
+//// assorted/scratch-k0.ts
+// Promise.reject is given an instance, and the function given to `catch` stores a string into a number field of what it gets.
+export {};
+
+////= Body-4
+
+const world: Body[] = [new Heavy(1, "a"), new Light(2, "bb"), new Body(3, "ccc"), new Heavy(4, "d")];
+const seen: unknown[] = [measure(world)];
+seen.push(measure(world), world.map(body => Object.keys(body).length).join(""));
+console.log(seen.join(" "));
+//// assorted/scratch-k1.ts
+// Promise.reject is given an instance, and the function given to `catch` stores a string into a number field of what it gets.
+export {};
+
+////= Body-4
+
+const world: Body[] = [new Heavy(1, "a"), new Light(2, "bb"), new Body(3, "ccc"), new Heavy(4, "d")];
+const seen: unknown[] = [measure(world)];
+seen.push(measure(world));
+console.log(seen.join(" "));
+//// assorted/scratch-k2.ts
+// Promise.reject is given an instance, and the function given to `catch` stores a string into a number field of what it gets.
+export {};
+
+////= Body-4
+
+const world: Body[] = [new Heavy(1, "a"), new Light(2, "bb"), new Body(3, "ccc"), new Heavy(4, "d")];
+const seen: unknown[] = [measure(world)];
+seen.push((await world[0]) === world[0]);
+seen.push(measure(world));
+console.log(seen.join(" "));
+//// assorted/scratch-k3.ts
+// Promise.reject is given an instance, and the function given to `catch` stores a string into a number field of what it gets.
+export {};
+
+////= Body-4
+
+const world: Body[] = [new Heavy(1, "a"), new Light(2, "bb"), new Body(3, "ccc"), new Heavy(4, "d")];
+const seen: unknown[] = [measure(world)];
+seen.push((await world[0]) === world[0]);
+seen.push(measure(world), world.map(body => Object.keys(body).length).join(""));
+console.log(seen.join(" "));
+//// assorted/scratch-m0.ts
+// The array that `map` has made gets an own `filter`, which calls the callback with two strings; that is done directly. Then `filter` is called on it, and what comes out is used under the type of the instances.
+export {};
+
+const alike: any = { mass: "5", label: "zz", at: { x: "x" }, weight: () => "w", name: () => "n" };
+const kinds: string[] = [];
+function keep(body: Body, index: number): boolean {
+  kinds.push((body instanceof Body ? "B" : typeof body) + (typeof index === "number" ? "" : ":" + typeof index));
+  return true;
+}
+function custom(this: unknown, test: (body: unknown, index: unknown) => boolean): unknown[] {
+  test("text", "zero");
+  return [alike];
+}
+
+////= Body-4
+
+const world: Body[] = [new Heavy(1, "a"), new Light(2, "bb"), new Body(3, "ccc"), new Heavy(4, "d")];
+const seen: unknown[] = [measure(world)];
+const first = world.map(body => body);
+try {
+  seen.push(measure(first.filter(keep)));
+} catch (error) {
+  seen.push((error as Error).name);
+}
+seen.push(kinds.join());
+seen.push(measure(world), world.map(body => Object.keys(body).length).join(""));
+console.log(seen.join(" "));
+//// assorted/scratch-m1.ts
+// The promise that Promise.resolve has made gets an own `then`, which calls the reaction with a look-alike; that is done directly. Then `then` is called on it, and what comes out is used under the type of the instances.
+export {};
+
+const alike: any = { mass: "5", label: "zz", at: { x: "x" }, weight: () => "w", name: () => "n" };
+const kinds: string[] = [];
+function onBody(body: Body): Body {
+  kinds.push(body instanceof Body ? "B" : typeof body);
+  return body;
+}
+
+////= Body-4
+
+const world: Body[] = [new Heavy(1, "a"), new Light(2, "bb"), new Body(3, "ccc"), new Heavy(4, "d")];
+const seen: unknown[] = [measure(world)];
+const first = Promise.resolve(world[0]);
+try {
+  seen.push(measure([await first.then(onBody)]));
+} catch (error) {
+  seen.push((error as Error).name);
+}
+seen.push(kinds.join());
+seen.push(measure(world), world.map(body => Object.keys(body).length).join(""));
+console.log(seen.join(" "));
+//// assorted/scratch-q1.ts
+// Assorted, one probe of many. It prints what plain Bun prints.
+import { once, EventEmitter } from "node:events";
+import { setTimeout as sleep } from "node:timers/promises";
+const o = { tag: "o" };
+const show = (label: string, v: unknown) => console.log(label, v === o ? "IS O" : (v as any)?.cause === o ? "cause is o" : (v as any)?.name ?? typeof v);
+console.log(typeof (Promise as any).try, typeof (globalThis as any).DisposableStack, typeof (globalThis as any).SuppressedError, typeof process.setUncaughtExceptionCaptureCallback, typeof (globalThis as any).AsyncDisposableStack);
+const c = new AbortController(); c.abort(o);
+show("reason", c.signal.reason);
+try { c.signal.throwIfAborted(); } catch (e) { show("throwIfAborted", e); }
+await fetch("http://127.0.0.1:1/", { signal: c.signal }).catch(e => show("fetch", e));
+await once(new EventEmitter(), "e", { signal: c.signal }).catch(e => show("once", e));
+await sleep(1000, undefined, { signal: c.signal }).catch(e => show("sleep", e));
+try { const s = new (globalThis as any).DisposableStack(); s.defer(() => { throw o; }); s.defer(() => { throw 5; }); s.dispose(); } catch (e: any) { console.log(e.name, e.error === o, e.suppressed === o, e.suppressed, e.error); }
+try { { using x = { [Symbol.dispose]() { throw o; } }; throw 5; } } catch (e: any) { console.log("using", e.name, e.error === o, e.suppressed); }
+try { await (async () => { await using x = { async [Symbol.asyncDispose]() { throw o; } }; })(); } catch (e: any) { show("await using", e); }
+process.setUncaughtExceptionCaptureCallback(e => show("capture", e));
+setTimeout(() => { throw o; }, 1);
+await sleep(10);
+process.setUncaughtExceptionCaptureCallback(null);
+//// assorted/scratch-tl1.ts
+// Assorted, one probe of many. It prints what plain Bun prints.
+class Light {
+  lift = 1;
+  toString(): string {
+    return "light " + this.lift;
+  }
+}
+console.log(new Light().toLocaleString());
+//// assorted/scratch-tl2.ts
+// Assorted, one probe of many. It prints what plain Bun prints.
+class A { toString(): string { return "a"; } }
+class B { toLocaleString(): string { return "b"; } }
+class C { toString(): string { return "c"; } }
+class D { valueOf(): number { return 4; } }
+const show = (run: () => unknown): string => { try { return String(run()); } catch (error) { return (error as Error).name + ": " + (error as Error).message.slice(0, 40); } };
+console.log(show(() => new A().toLocaleString()));
+console.log(show(() => [new B()].toLocaleString()));
+console.log(show(() => Object.prototype.toLocaleString.call(new C())));
+console.log(show(() => new D().toLocaleString()));
+//// assorted/scratch-tl3.ts
+// Assorted, one probe of many. It prints what plain Bun prints.
+class A { toString(): string { return "a"; } }
+console.log(new A().toLocaleString());
+//// assorted/scratch-tl4.ts
+// Assorted, one probe of many. It prints what plain Bun prints.
+class A { lift = 1; toString(): string { return "a" + this.lift; } }
+const a = new A();
+const text = a.toLocaleString();
+console.log(text);
+//// assorted/scratch-w1.ts
+// Assorted, one probe of many. It prints what plain Bun prints.
+let seen = "";
+process.removeAllListeners("warning");
+process.on("warning", w => { seen += w.name + ":" + (w as any).code + ":" + w.message + ";"; });
+process.emitWarning("text", "CustomName", "CODE1");
+process.emitWarning("plain");
+process.emitWarning(new RangeError("object"));
+process.emitWarning("detailed", { type: "T", code: "C", detail: "D" });
+setTimeout(() => console.log(seen), 10);
+//// assorted/tests-awaited-objects-schedulers-set-immediate-whose-result-is-dropped-calls-a-method-on-the-immediate.ts
+// setImmediate calls its callback with the Immediate object as `this`. The program drops that object, and every call of its own goes through an instance.
+export {};
+
+////= Body-3
+
+const seen: string[] = [];
+const body = new Body();
+body.tell();
+setImmediate(body.tell);
+setTimeout(() => console.log(seen.join(" ")), 30);
+//// assorted/tests-awaited-objects-schedulers-set-interval-whose-result-is-dropped-calls-a-method-on-the-timer.ts
+// setInterval calls its callback with the timer as `this`. The program drops the timer, and the callback is the only one who can stop it.
+export {};
+
+class Body {
+  mass = 3;
+  tell(): void {
+    seen.push(this === undefined ? "none" : String(this.mass));
+    if (seen.length === 3) {
+      clearInterval(this as any);
+      console.log(seen.join(" "));
+    }
+  }
+}
+
+const seen: string[] = [];
+const body = new Body();
+body.tell();
+setInterval(body.tell, 1);
+//// assorted/tests-awaited-objects-schedulers-set-timeout-whose-result-is-dropped-calls-a-method-on-the-timer.ts
+// setTimeout calls its callback with the timer as `this`. The program drops the timer, and every call of its own goes through an instance.
+export {};
+
+////= Body-3
+
+const seen: string[] = [];
+const body = new Body();
+body.tell();
+setTimeout(body.tell, 0);
+setTimeout(() => console.log(seen.join(" ")), 30);
+//// assorted/tests-awaited-objects-schedulers-set-timeout-whose-result-is-kept-calls-a-method-on-the-timer.ts
+// setTimeout calls its callback with the timer as `this`. The program keeps the timer and compares it with what the callback got.
+export {};
+
+class Body {
+  mass = 3;
+  tell(): void {
+    seen.push(this === undefined ? "none" : String(this.mass), String((this as unknown) === timer));
+  }
+}
+
+const seen: string[] = [];
+let timer: unknown;
+const body = new Body();
+body.tell();
+timer = setTimeout(body.tell, 0);
+setTimeout(() => console.log(seen.join(" ")), 30);
+//// assorted/tests-awaited-objects-schedulers-timers-of-node-timers-whose-results-are-dropped-call-a-method-on-the-timer.ts
+// setTimeout and setImmediate of node:timers call their callbacks with the timer as `this`. The program drops both timers.
+import timers from "node:timers";
+
+////= Body-3
+
+const seen: string[] = [];
+const body = new Body();
+body.tell();
+timers.setTimeout(body.tell, 0);
+timers.setImmediate(body.tell);
+setTimeout(() => console.log(seen.join(" ")), 30);
+//// assorted/thrown-a-catch-clause-brings-nothing-of-the-library.js
+// What an operation throws when it fails by itself is an error that the run time makes, and the compiler knows what such an error holds. So printing a member of what was caught needs no formatter for objects.
+// STATISTIC: ImageFunctionsEmitted <= 40
+////= lines-15	Body	mass
+const world = [new Body(1), new Body(2)];
+const text = process.argv.length > 99 ? "1" : "{";
+try {
+  JSON.parse(text);
+} catch (error) {
+  console.log(error.name, typeof error.message);
+}
+try {
+  throw world[1];
+} catch (caught) {
+  console.log(caught.mass);
+}
+try {
+  world[5].mass;
+} catch (error) {
+  console.log(error.name, error.mass);
+}

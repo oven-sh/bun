@@ -1,66 +1,3 @@
-// ─── byte ↔ typed-slice reinterpretation ─────────────────────────────────────
-/// Reinterpret `&mut [u8]` as `&mut [T]`.
-///
-/// SAFETY (caller-upheld):
-/// * `bytes.as_ptr()` must be aligned to `align_of::<T>()`. We enforce this
-///   with a hard `assert!` rather than
-///   `debug_assert!`: forming a misaligned `&mut [T]` is instant UB in Rust
-///   even if never dereferenced, so this must not be silently elided in
-///   release. The check is a single AND+CMP and every current call site is
-///   immediately followed by a syscall, so the cost is negligible.
-/// * `T` must be plain-old-data — every byte pattern in `bytes[..len/size]`
-///   must be a valid `T` (callers use `u16`/`u32` only),
-/// * the trailing `len % size_of::<T>()` bytes are silently dropped from the
-///   reinterpreted view.
-#[inline]
-pub unsafe fn bytes_as_slice_mut<T>(bytes: &mut [u8]) -> &mut [T] {
-    assert!(
-        bytes.as_ptr().cast::<T>().is_aligned(),
-        "bytes_as_slice_mut: misaligned for {}",
-        core::any::type_name::<T>(),
-    );
-    let len = bytes.len() / core::mem::size_of::<T>();
-    // SAFETY: alignment + validity preconditions documented above.
-    unsafe { core::slice::from_raw_parts_mut(bytes.as_mut_ptr().cast::<T>(), len) }
-}
-
-// ─── Unaligned<T> ─────────────────────────────────────────────────────────────
-/// Element wrapper with alignment 1. Rust references and slices require
-/// natural alignment for `T`; producing a `&[u16]` from an odd address is
-/// instant UB even if never dereferenced. `#[repr(packed)]` on this wrapper
-/// drops the alignment requirement to 1, so `&[Unaligned<T>]` is the sound
-/// translation of `[]align(1) T`. Reads/writes go through `ptr::read_unaligned`
-/// / `ptr::write_unaligned` (the compiler emits byte-wise or unaligned-load
-/// instructions as appropriate for the target).
-#[repr(C, packed)]
-#[derive(Copy, Clone)]
-pub struct Unaligned<T: Copy>(T);
-
-impl<T: Copy> Unaligned<T> {
-    #[inline(always)]
-    pub fn get(self) -> T {
-        // `self` is by-value (already moved into an aligned local), so a plain
-        // field read is fine; the `packed` repr only affects in-place borrows.
-        self.0
-    }
-
-    #[inline]
-    pub fn slice_align_cast_mut(slice: &mut [Unaligned<T>]) -> &mut [T] {
-        if slice.is_empty() {
-            return &mut [];
-        }
-        debug_assert!(
-            (slice.as_ptr() as usize).is_multiple_of(core::mem::align_of::<T>()),
-            "Unaligned::slice_align_cast_mut: pointer is not {}-byte aligned",
-            core::mem::align_of::<T>(),
-        );
-        // SAFETY: `#[repr(C, packed)]` around a single `T` gives identical size
-        // and field offset 0; the debug-asserted alignment upgrades it to `T`'s
-        // layout. `&mut` exclusivity is preserved.
-        unsafe { core::slice::from_raw_parts_mut(slice.as_mut_ptr().cast::<T>(), slice.len()) }
-    }
-}
-
 // ════════════════════════════════════════════════════════════════════════════
 // Low-tier primitives hoisted into bun_core.
 // Forward-referenced as `crate::X` by Global.rs / output.rs / fmt.rs / env.rs.
@@ -314,10 +251,45 @@ impl core::ops::Deref for ZStr {
     }
 }
 
+/// What only a compiler, a test or somebody who debugs Bun sets: it writes a file, prints addresses or brings in other code.
+/// An executable compiled ahead of time does not start where the environment sets one.
+#[cfg(bun_locked_environment)]
+pub fn is_never_read(key: &[u8]) -> bool {
+    const WORDS: [&[u8]; 22] = [
+        b"BUN_BE_BUN",
+        b"BUN_BYTECODE_DIGEST_OUT",
+        b"BUN_BYTECODE_ORDER_NAMES_OUT",
+        b"BUN_BYTECODE_ORDER_OUT",
+        b"BUN_CRASH_REPORT_URL",
+        b"BUN_DESTRUCT_VM_ON_EXIT",
+        b"BUN_DUMP_STATE_ON_CRASH",
+        b"BUN_DUMP_SYMBOLS",
+        b"BUN_FEATURE_FLAG_DUMP_CODE",
+        b"BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING",
+        b"BUN_INSPECT",
+        b"BUN_INSPECT_CONNECT_TO",
+        b"BUN_INSPECT_PRELOAD",
+        b"BUN_INSTRUMENTS",
+        b"BUN_OPTIONS",
+        b"BUN_POSTGRES_SOCKET_MONITOR",
+        b"BUN_POSTGRES_SOCKET_MONITOR_READER",
+        b"BUN_TCC_OPTIONS",
+        b"BUN_THREADPOOL_STATS",
+        b"BUN_TRACE",
+        b"BUN_WATCHER_TRACE",
+        b"MI_VERBOSE",
+    ];
+    key.starts_with(b"BUN_AOT_") || key.starts_with(b"BUN_DEBUG") || WORDS.contains(&key)
+}
+
 /// `bun.getenvZ` — read an environment variable. Returns the value as borrowed
 /// process-static bytes (env block lives for the process). On POSIX wraps
 /// `libc::getenv`; on Windows scans `environ` case-insensitively.
 pub fn getenv_z(key: &ZStr) -> Option<&'static [u8]> {
+    #[cfg(bun_locked_environment)]
+    if is_never_read(key.as_bytes()) {
+        return None;
+    }
     #[cfg(not(any(unix, windows)))]
     {
         let _ = key;
@@ -367,6 +339,10 @@ pub fn c_environ() -> *const *const core::ffi::c_char {
 /// `bun.getenvZAnyCase` — case-insensitive env lookup (used on POSIX for
 /// CI-detection vars where casing varies across providers).
 pub fn getenv_z_any_case(key: &ZStr) -> Option<&'static [u8]> {
+    #[cfg(bun_locked_environment)]
+    if is_never_read(key.as_bytes()) {
+        return None;
+    }
     #[cfg(unix)]
     unsafe {
         // SAFETY: `environ` is the C env block; entries are NUL-terminated `KEY=VALUE`.
@@ -706,7 +682,7 @@ pub use bun_alloc::SEP;
 /// is for long-lived struct fields: on Windows it is a 98 KB memset.
 ///
 /// NOTE on alignment: `os_path_kernel32` (Windows) reinterprets a
-/// `&mut PathBuffer` as `&mut [u16]` via [`bytes_as_slice_mut`]. The language
+/// `&mut PathBuffer` as `&mut [u16]` via [`cast_slice_mut`]. The language
 /// only guarantees align=1 for `[u8; N]`, so that reinterpret is guarded by a
 /// hard `assert!`. We do *not* bump this struct
 /// to `#[repr(align(2))]` because several call sites reinterpret an arbitrary
@@ -2831,6 +2807,55 @@ pub fn get_thread_count() -> u16 {
     })
 }
 
+pub unsafe fn copy_in_parallel(to: *mut u8, from: *const u8, len: usize) {
+    const MIN_BYTES_PER_THREAD: usize = 16 << 20;
+    let threads = usize::from(get_thread_count())
+        .min(len / MIN_BYTES_PER_THREAD)
+        .min(16);
+    if threads < 2 {
+        // SAFETY: the caller's contract is that of `copy_nonoverlapping`.
+        return unsafe { core::ptr::copy_nonoverlapping(from, to, len) };
+    }
+    let share = len.div_ceil(threads).next_multiple_of(1 << 16);
+    let (to, from) = (to as usize, from as usize);
+    for_each_in_parallel((0..len).step_by(share), |start| {
+        // SAFETY: a part of what the caller's contract covers, and no two calls get the same part.
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                (from + start) as *const u8,
+                (to + start) as *mut u8,
+                share.min(len - start),
+            )
+        }
+    });
+}
+
+/// Calls `work` once with each of `items`, on this thread and on one more for each item after the first.
+/// Every thread takes the next item until none is left, so the items of a thread that the system does not start go to the others.
+pub fn for_each_in_parallel<T: Send>(
+    items: impl ExactSizeIterator<Item = T> + Send,
+    work: impl Fn(T) + Sync,
+) {
+    let more_threads = items.len().saturating_sub(1);
+    let items = Mutex::new(items);
+    let work_through_items = || {
+        loop {
+            let item = items.lock().next();
+            let Some(item) = item else { break };
+            work(item);
+        }
+    };
+    std::thread::scope(|scope| {
+        for _ in 0..more_threads {
+            let thread = std::thread::Builder::new();
+            if thread.spawn_scoped(scope, work_through_items).is_err() {
+                break;
+            }
+        }
+        work_through_items();
+    });
+}
+
 // ── time ──────────────────────────────────────────────────────────────────
 // Time-unit constants plus `{nano,milli,}timestamp()`. Callers `as`-cast at the
 // use-site (`NS_PER_S as i128`, `MS_PER_S as f64`, …). Every value fits in
@@ -3061,59 +3086,12 @@ impl<H: core::hash::Hasher> Hasher for H {
     }
 }
 
-/// Re-export so downstream crates can write `T: bun_core::NoUninit` without a
-/// direct `bytemuck` dep.
-pub use bytemuck::NoUninit;
-
-/// Reinterpret a value's storage as a borrowed byte slice.
-///
-/// Safe: the [`bytemuck::NoUninit`] bound statically guarantees `T` is `Copy`,
-/// `'static`, and contains no uninitialized (padding) bytes, so every byte of
-/// the returned slice is initialized and reading it is defined behaviour.
-#[inline]
-pub fn bytes_of<T: bytemuck::NoUninit>(v: &T) -> &[u8] {
-    bytemuck::bytes_of(v)
-}
-
-// ─── Slice reinterpretation (canonical) ───────────────────────────────────────
-// Split by mutability, with two safety surfaces:
-//   - `cast_slice` / `cast_slice_mut`  → SAFE, bytemuck-bounded, panics on
-//     misalign or `len % size_of::<B>() != 0`. Use for Pod↔Pod (u8↔u16 etc.).
-//   - `bytes_as_slice_mut`             → UNSAFE escape hatch, unbounded `T`,
-//     TRUNCATES trailing bytes. Use only when `T` is not
-//     `AnyBitPattern` or the input length is intentionally not a multiple.
-// Every current caller targets `u16` over an even-length buffer, so the safe
-// path is the default.
-
-/// Read-only `&[A]` → `&[B]` reinterpretation. Safe: the [`bytemuck::NoUninit`] bound
-/// on `A` guarantees every source byte is initialized, and
-/// [`bytemuck::AnyBitPattern`] on `B` guarantees every byte pattern is a valid
-/// `B`. Panics if size/alignment don't divide evenly (same as `bytemuck`).
-#[inline]
-pub fn cast_slice<A: bytemuck::NoUninit, B: bytemuck::AnyBitPattern>(a: &[A]) -> &[B] {
-    bytemuck::cast_slice(a)
-}
-
-/// Mutable counterpart of [`cast_slice`]: reinterpret `&mut [A]` as `&mut [B]`.
-/// Safe: both [`bytemuck::Pod`] bounds guarantee every byte pattern is valid in
-/// both directions and there are no uninitialized bytes. Panics on misalignment
-/// or if `a.len() * size_of::<A>() % size_of::<B>() != 0` (same as `bytemuck`).
-#[inline]
-pub fn cast_slice_mut<A: bytemuck::Pod, B: bytemuck::Pod>(a: &mut [A]) -> &mut [B] {
-    bytemuck::cast_slice_mut(a)
-}
-
-/// Reinterpret `&[T]` as `&[u8]`.
-///
-/// This is [`cast_slice`] with the output type fixed to `u8`, so callers never
-/// need a `::<_, u8>` turbofish. Safe: [`bytemuck::NoUninit`] guarantees every
-/// byte of `T` is initialized; `align_of::<u8>() == 1` and
-/// `size_of::<T>() % 1 == 0` mean the bytemuck size/align checks are trivially
-/// satisfied and this never panics.
-#[inline]
-pub fn slice_as_bytes<T: bytemuck::NoUninit>(s: &[T]) -> &[u8] {
-    bytemuck::cast_slice(s)
-}
+// ─── plain-old-data casts ─────────────────────────────────────────────────────
+pub use bun_pod::{
+    AnyBitPattern, NoUninit, Pod, Unaligned, bytes_of, bytes_of_mut, cast_slice, cast_slice_mut,
+    impl_any_bit_pattern, impl_no_uninit, impl_pod, impl_zeroable, read_prefix, slice_as_bytes,
+    slice_as_bytes_mut, try_cast_slice, try_cast_slice_mut, vec_from_bytes,
+};
 
 // ─── extern_union_accessors! ──────────────────────────────────────────────────
 // Wraps each bare-union field read in a tag-asserted `unsafe` accessor so call
@@ -3203,37 +3181,10 @@ macro_rules! extern_union_accessors {
     };
 }
 
-/// Feed a value's raw bytes to a hasher. Taking a generic by-value-as-bytes
-/// safely requires a `bytemuck` bound, so this
-/// accepts anything that is itself viewable as bytes (covers the actual call
-/// sites: `u8` tags, `usize` lengths, `Index` newtypes).
+/// Feed a value's bytes to a hasher.
 #[inline]
-pub fn write_any_to_hasher<H: Hasher + ?Sized, T: AsBytes>(hasher: &mut H, thing: T) {
-    hasher.update(thing.as_bytes_for_hash());
-}
-
-/// Helper trait for `write_any_to_hasher` — "viewable as raw bytes".
-/// Blanket-implemented for all `Copy` plain-data ints and references-to-slices.
-pub trait AsBytes {
-    fn as_bytes_for_hash(&self) -> &[u8];
-}
-macro_rules! as_bytes_pod {
-    ($($t:ty),* $(,)?) => { $(
-        impl AsBytes for $t {
-            #[inline] fn as_bytes_for_hash(&self) -> &[u8] {
-                bytemuck::bytes_of(self)
-            }
-        }
-    )* }
-}
-as_bytes_pod!(
-    u8, i8, u16, i16, u32, i32, u64, i64, usize, isize, u128, i128
-);
-impl<T: AsBytes> AsBytes for &T {
-    #[inline]
-    fn as_bytes_for_hash(&self) -> &[u8] {
-        (**self).as_bytes_for_hash()
-    }
+pub fn write_any_to_hasher<H: Hasher + ?Sized, T: NoUninit>(hasher: &mut H, thing: T) {
+    hasher.update(bytes_of(&thing));
 }
 
 // ── GenericIndex ──────────────────────────────────────────────────────────
@@ -3896,6 +3847,21 @@ impl OptionsEnvArg for Box<ZStr> {
     }
 }
 
+pub fn is_bootstrap_flag(argument: &[u8]) -> bool {
+    const PREFIXES: [&[u8]; 4] = [
+        b"--trace-event",
+        b"--trace-env",
+        b"--trace-exit",
+        b"--stack-trace-limit",
+    ];
+    PREFIXES.iter().any(|prefix| argument.starts_with(prefix))
+}
+
+/// The bootstrap flag that native code carries out where `internal/process/pre_execution` cannot be loaded.
+pub fn is_stack_trace_limit_flag(argument: &[u8]) -> bool {
+    argument.starts_with(b"--stack-trace-limit")
+}
+
 /// Parse a `BUN_OPTIONS`-style string
 /// (`--flag=value --flag2 "quoted value" bare`) and insert each token into
 /// `args` starting at index 1 (callers prepend a placeholder at [0]).
@@ -4302,6 +4268,18 @@ pub fn maybe_handle_panic_during_process_reload() {
     }
 }
 
+static RESTART_ARGUMENTS: Once<Vec<ZBox>> = Once::new();
+
+/// `reload_process` starts the process with the arguments it was started with, except those that `replace` gives another text for.
+pub fn replace_restart_arguments(replace: impl Fn(&[u8]) -> Option<&'static [u8]>) {
+    RESTART_ARGUMENTS.get_or_init(|| {
+        let arguments = argv_storage().iter().map(|argument| argument.as_bytes());
+        arguments
+            .map(|argument| ZBox::from_bytes(replace(argument).unwrap_or(argument)))
+            .collect()
+    });
+}
+
 /// Port of `bun.reloadProcess`. `may_return == true` → returns on failure; `false` → exits with 1.
 /// `on_before_reload_process_posix` clears CLOEXEC on stdio/IPC and resets caught signal
 /// dispositions on all POSIX; the close_range sweep is Linux/BSD only.
@@ -4366,13 +4344,15 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     unsafe {
         {
             unsafe extern "C" {
-                safe fn on_before_reload_process_posix();
+                safe fn on_before_reload_process_posix(close_inherited_fds: bool);
             }
-            on_before_reload_process_posix();
+            on_before_reload_process_posix(true);
         }
 
         // We clone argv so that the memory address isn't the same as the libc one.
-        let args = argv_storage();
+        let args = RESTART_ARGUMENTS
+            .get()
+            .map_or_else(argv_storage, Vec::as_slice);
         let dupe_argv: Vec<ZBox> = args
             .iter()
             .map(|z| ZBox::from_vec_with_nul(z.as_bytes().to_vec()))
@@ -4423,6 +4403,35 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         let _ = (clear_terminal, may_return);
         compile_error!("unsupported platform for reload_process");
     }
+}
+
+/// Replaces this process with Bun run with `args`.
+#[cfg(unix)]
+pub fn exec_self(args: &[&[u8]], keep_open: Option<Fd>) -> i32 {
+    unsafe extern "C" {
+        safe fn on_before_reload_process_posix(close_inherited_fds: bool);
+    }
+    let mut argv: Vec<ZBox> = Vec::with_capacity(args.len() + 1);
+    argv.push(ZBox::from_bytes(
+        argv_storage().first().map_or(&b"bun"[..], ZBox::as_bytes),
+    ));
+    argv.extend(args.iter().map(ZBox::from_bytes));
+    let mut pointers: Vec<*const core::ffi::c_char> = argv.iter().map(|z| z.as_ptr()).collect();
+    pointers.push(core::ptr::null());
+    let exec_path = self_exe_path().expect("unreachable").as_ptr();
+    on_before_reload_process_posix(false);
+    // SAFETY: `pointers` is a null-terminated array of NUL-terminated strings that outlive the call, `environ` is the
+    // process's own, and `fcntl` takes no pointer.
+    unsafe {
+        if let Some(fd) = keep_open {
+            let flags = libc::fcntl(fd.native(), libc::F_GETFD);
+            if flags >= 0 {
+                libc::fcntl(fd.native(), libc::F_SETFD, flags & !libc::FD_CLOEXEC);
+            }
+        }
+        libc::execve(exec_path, pointers.as_ptr().cast(), c_environ().cast());
+    }
+    std::io::Error::last_os_error().raw_os_error().unwrap_or(-1)
 }
 
 // ── spawn_sync_inherit ────────────────────────────────────────────────────
@@ -4833,11 +4842,7 @@ pub struct Timespec {
     pub sec: i64,
     pub nsec: i64,
 }
-// SAFETY: two `i64` fields; all-zero is the epoch.
-unsafe impl crate::ffi::Zeroable for Timespec {}
-// SAFETY: `#[repr(C)]` with two `i64` fields → size 16, align 8, no padding,
-// no interior mutability, `Copy + 'static`. Every byte is initialized.
-unsafe impl bytemuck::NoUninit for Timespec {}
+impl_pod!(Timespec);
 
 /// Lowercase alias (`bun.timespec`).
 #[allow(non_camel_case_types)]
@@ -5131,13 +5136,7 @@ impl From<f16> for f32 {
         h.to_f64() as f32
     }
 }
-// SAFETY: `#[repr(transparent)]` over `u16` — every bit pattern is a valid
-// `f16`, no padding, `Copy + 'static`. Enables safe `bytemuck::cast_slice`
-// from `&[u8]` for Float16Array printing (ConsoleObject).
-unsafe impl bytemuck::Zeroable for f16 {}
-// SAFETY: `#[repr(transparent)]` over `u16` — no padding, every bit pattern is
-// valid, `Copy + Zeroable + 'static`; satisfies all `bytemuck::Pod` invariants.
-unsafe impl bytemuck::Pod for f16 {}
+impl_pod!(f16);
 impl core::fmt::Display for f16 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.to_f64().fmt(f)

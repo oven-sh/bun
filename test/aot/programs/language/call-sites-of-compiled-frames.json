@@ -1,0 +1,1 @@
+{ "skipInShell": "call sites and Error.captureStackTrace are Bun's; the jsc shell has neither" }

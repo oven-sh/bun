@@ -1,0 +1,8 @@
+{
+  "skipInVariant": {
+    "predictions-fail-every-time": "it counts what is collected while an async function waits, and on the way that a failed prediction takes the frame holds every variable",
+    "predictions-fail-half-the-time": "it counts what is collected while an async function waits, and on the way that a failed prediction takes the frame holds every variable",
+    "predictions-fail-one-time-in-seven": "it counts what is collected while an async function waits, and on the way that a failed prediction takes the frame holds every variable",
+    "predictions-fail-one-time-in-seven-validated": "it counts what is collected while an async function waits, and on the way that a failed prediction takes the frame holds every variable"
+  }
+}

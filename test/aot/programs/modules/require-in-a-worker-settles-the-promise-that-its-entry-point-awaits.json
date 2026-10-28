@@ -1,0 +1,1 @@
+{ "entryPoints": ["worker.mjs"], "skipInShell": "the jsc shell has no node:worker_threads" }

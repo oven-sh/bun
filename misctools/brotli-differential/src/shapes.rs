@@ -1538,12 +1538,13 @@ pub fn run_utf8(seed0: u64, iters: u64, qualities: u64) {
         let q = *rng.pick(&qs);
         if rng.chance(1, 8) {
             // A character that the end of a meta-block cuts does not count, even if what comes after it in the ring buffer,
-            // which was written a lap before, completes it. With it, more than three quarters would be UTF-8.
+            // which was written a lap before, completes it. With it, more than three quarters would be UTF-8. Or nothing is
+            // cut, exactly three quarters are UTF-8, and a letter comes after the end.
             let lap = 2usize << 16;
             let unit: &[u8] = *rng.pick(&[&[0xC2, 0x80][..], &[0xE0, 0xA0, 0x80], &[0xF0, 0x90, 0x80, 0x80]]);
-            let cut = rng.range(1, unit.len() - 1);
-            let units = rng.range(3, 40);
-            let others = (units * unit.len()).div_ceil(3) + rng.below(unit.len()) - cut;
+            let cut = rng.below(unit.len());
+            let units = 3 * rng.range(1, 13);
+            let others = units * unit.len() / 3 + if cut == 0 { 0 } else { rng.below(unit.len()) } - cut;
             let mut pieces: Vec<&[u8]> = vec![unit; units];
             pieces.resize(units + others, &[0xFF]);
             for i in (1..pieces.len()).rev() {
@@ -1554,7 +1555,8 @@ pub fn run_utf8(seed0: u64, iters: u64, qualities: u64) {
             let end = lap + rng.range(last.len() + 8, 60_000);
             let block: Vec<u8> = (0..64).map(|_| rng.next() as u8).collect();
             let mut data: Vec<u8> = block.iter().copied().cycle().take(end - last.len()).collect();
-            data[end - lap..end - lap + unit.len() - cut].copy_from_slice(&unit[cut..]);
+            let after: &[u8] = if cut == 0 { b"a" } else { &unit[cut..] };
+            data[end - lap..end - lap + after.len()].copy_from_slice(after);
             data.extend_from_slice(&last);
             let steps = [Step { op: 1, n: end - last.len() }, Step { op: 1, n: last.len() }];
             let params = vec![(1, q), (2, rng.range(10, 16) as u32)];

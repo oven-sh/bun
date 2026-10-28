@@ -1,0 +1,7 @@
+{
+  "build": ["--aot-refuse-code-from-disk"],
+  "entryPoints": [
+    "./inside.cjs"
+  ],
+  "skipInShell": "it writes files and loads them through the module loader of the runtime, which the jsc shell does not have"
+}

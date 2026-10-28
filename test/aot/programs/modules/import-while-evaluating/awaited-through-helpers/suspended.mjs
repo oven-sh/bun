@@ -1,0 +1,18 @@
+import { ran } from "../events.mjs";
+import { load } from "./loader.mjs";
+export let stage = 0;
+export let finished = false;
+ran("suspended starts");
+await null;
+stage = 1;
+await load.directly();
+stage = 2;
+await Promise.all([load.inPromiseAll()]);
+stage = 3;
+await load.afterThen().then(namespace => namespace.seen);
+stage = 4;
+await (async () => await load.inAsyncFunction())();
+stage = 5;
+await load.afterFinally().finally(() => {});
+ran("suspended ends");
+finished = true;

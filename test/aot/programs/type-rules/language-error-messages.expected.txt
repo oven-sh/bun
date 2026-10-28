@@ -1,0 +1,18 @@
+a property of undefined: THROWS TypeError: undefined is not an object (evaluating 'undefined.v')
+a property of undefined, typed: THROWS TypeError: undefined is not an object (evaluating 'undefined.v')
+a property of null: THROWS TypeError: null is not an object (evaluating 'null.x')
+a store to undefined: THROWS TypeError: undefined is not an object (evaluating 'undefined.x')
+a call of what is no function: THROWS TypeError: f is not a function. (In 'f()', 'f' is 1)
+a call of what is not there: THROWS TypeError: g is not a function. (In 'g()', 'g' is undefined)
+new of what is no constructor: THROWS TypeError: function is not a constructor
+a variable in its dead zone: THROWS ReferenceError: Cannot access 'late' before initialization.
+a constant stored to: 1
+what is not iterable: THROWS TypeError: number is not iterable
+a pattern on undefined: THROWS TypeError: Cannot destructure property 'a' from null or undefined value
+in of what is no object: THROWS TypeError: 5 is not an Object.
+instanceof of what is no function: THROWS TypeError: Right hand side of instanceof is not an object
+BigInt mixed with a number: THROWS TypeError: Invalid mix of BigInt and other type in addition.
+a Symbol to a string: THROWS TypeError: Cannot convert a symbol to a string
+the stack is spent: THROWS RangeError: Maximum call stack size exceeded.
+an array of a bad length: THROWS RangeError: Array length must be a positive integer of safe magnitude.
+JSON.parse of what is none: THROWS SyntaxError: JSON Parse error: Expected '}'

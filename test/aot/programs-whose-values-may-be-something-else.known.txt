@@ -1,0 +1,32 @@
+soundness/a-library-module-arrives-late-beside-a-hidden-value-and-is-read-by-reflect-get-with-a-receiver	other	the executable says that a function of node:zlib was not compiled into it
+ways-into-library-modules/async-hooks-through-get-builtin-module-taken-out-of-a-map-and-called-with-call-beside-node-util-and-reflect-get-on-process	kind	beside a number, a text, a list or a Set in the place of the Map, the executable says that it can't load a module from a dynamic path
+host-classes/keys-of-six-objects-out-of-a-list-beside-a-module-that-evaluates-text	unknown	the own keys of an object of the language are listed in another order
+host-classes/keys-of-six-objects-out-of-a-list-beside-a-module-that-evaluates-text	handed	the own keys of an object of the language are listed in another order
+host-classes/keys-of-six-objects-out-of-a-list-beside-a-module-that-evaluates-text	written	the own keys of an object of the language are listed in another order
+host-classes/keys-of-six-objects-out-of-a-list-beside-a-module-that-evaluates-text	several	the own keys of an object of the language are listed in another order
+host-classes/keys-of-six-objects-out-of-a-list-where-the-global-object-takes-parsed-members	unknown	the own keys of an object of the language are listed in another order
+host-classes/keys-of-six-objects-out-of-a-list-where-the-global-object-takes-parsed-members	handed	the own keys of an object of the language are listed in another order
+host-classes/keys-of-six-objects-out-of-a-list-where-the-global-object-takes-parsed-members	written	the own keys of an object of the language are listed in another order
+host-classes/keys-of-six-objects-out-of-a-list-where-the-global-object-takes-parsed-members	several	the own keys of an object of the language are listed in another order
+closed-world/members-of-console-are-replaced-through-a-list-after-built-in-prototypes-took-their-own-descriptors	unknown	a store to a member of console throws a TypeError
+closed-world/members-of-console-are-replaced-through-a-list-after-built-in-prototypes-took-their-own-descriptors	handed	a store to a member of console throws a TypeError
+closed-world/members-of-console-are-replaced-through-a-list-after-built-in-prototypes-took-their-own-descriptors	written	a store to a member of console throws a TypeError
+closed-world/members-of-console-are-replaced-through-a-list-after-built-in-prototypes-took-their-own-descriptors	several	a store to a member of console throws a TypeError
+closed-world/members-of-console-are-replaced-through-a-list-after-built-in-prototypes-took-their-own-descriptors	other	a store to a member of console throws a TypeError
+language/members-that-can-be-replaced-are-replaced-beside-a-file-that-defines-globals-under-computed-names	unknown	a store to a member of an object of the language throws a TypeError
+language/members-that-can-be-replaced-are-replaced-beside-a-file-that-defines-globals-under-computed-names	handed	a store to a member of an object of the language throws a TypeError
+language/members-that-can-be-replaced-are-replaced-beside-a-file-that-defines-globals-under-computed-names	written	a store to a member of an object of the language throws a TypeError
+language/members-that-can-be-replaced-are-replaced-beside-a-file-that-defines-globals-under-computed-names	several	a store to a member of an object of the language throws a TypeError
+language/members-that-can-be-replaced-are-replaced-beside-a-file-that-defines-globals-under-computed-names	other	a store to a member of an object of the language throws a TypeError
+modules/a-getter-of-a-commonjs-file-over-a-module-that-hands-on-the-default-of-a-file-without-the-flag-of-es-modules-returns-its-exports	marked.cjs:unknown@63-111	where the store to exports.default is an arm of a conditional, the default that a getter of another file hands on is undefined
+modules/a-getter-of-a-commonjs-file-over-a-module-that-hands-on-the-default-of-a-file-without-the-flag-of-es-modules-returns-its-exports	marked.cjs:handed@63-111	where the store to exports.default is an arm of a conditional, the default that a getter of another file hands on is undefined
+modules/a-getter-of-a-commonjs-file-over-a-module-that-hands-on-the-default-of-a-file-without-the-flag-of-es-modules-returns-its-exports	marked.cjs:written@63-111	where the store to exports.default is an arm of a conditional, the default that a getter of another file hands on is undefined
+modules/a-getter-of-a-commonjs-file-over-a-module-that-hands-on-the-default-of-a-file-without-the-flag-of-es-modules-returns-its-exports	kind	where the store to exports.default is an arm of a conditional, the default that a getter of another file hands on is undefined
+modules/a-getter-of-a-commonjs-file-over-a-module-that-hands-on-the-default-of-a-file-without-the-flag-of-es-modules-returns-its-exports	other	where the store to exports.default is an arm of a conditional, the default that a getter of another file hands on is undefined
+modules/a-getter-of-a-commonjs-file-over-a-module-that-hands-on-the-default-of-a-file-without-the-flag-of-es-modules-returns-its-exports	several	where the store to exports.default is an arm of a conditional, the default that a getter of another file hands on is undefined
+soundness/a-library-module-arrives-late-beside-a-hidden-value-and-is-read-by-reflect-get-with-a-receiver	kind	the executable says that a function of node:zlib was not compiled into it
+host-classes/keys-of-six-objects-out-of-a-list-beside-a-module-that-evaluates-text	kind	the own keys of an object of the language are listed in another order
+host-classes/keys-of-six-objects-out-of-a-list-beside-a-module-that-evaluates-text	other	the own keys of an object of the language are listed in another order
+host-classes/keys-of-six-objects-out-of-a-list-where-the-global-object-takes-parsed-members	kind	the own keys of an object of the language are listed in another order
+host-classes/keys-of-six-objects-out-of-a-list-where-the-global-object-takes-parsed-members	other	the own keys of an object of the language are listed in another order
+descriptions-of-own-properties/self-setter-looked-up-on-the-global-object	written	beside a store of a value that nobody knows into console, self is still the global object

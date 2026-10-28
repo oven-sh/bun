@@ -1,0 +1,3 @@
+another parent threw TypeError
+inherited threw TypeError
+an instance mTypeError true true method of Late true true

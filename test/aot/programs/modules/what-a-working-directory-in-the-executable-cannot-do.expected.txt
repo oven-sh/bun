@@ -1,0 +1,34 @@
+writeFileSync of a new file: threw EROFS open
+writeFileSync over a file: threw EROFS open
+writeFileSync in a folder that is not there: threw ENOENT open
+appendFileSync: threw EROFS open
+openSync to write: threw EROFS open
+openSync to append: threw EROFS open
+mkdirSync: threw EROFS mkdir
+mkdirSync of what is there: threw EEXIST mkdir
+mkdirSync recursive: threw EROFS mkdir
+mkdirSync recursive of what is there: undefined
+mkdtempSync: threw EROFS mkdtemp
+unlinkSync: threw EROFS unlink
+unlinkSync of what is not there: threw ENOENT unlink
+rmSync: threw EROFS rm
+rmSync with force of what is not there: undefined
+rmdirSync: threw EROFS rmdir
+renameSync: threw EROFS rename
+copyFileSync into the executable: threw EROFS copyfile
+symlinkSync: threw EROFS symlink
+truncateSync: threw EROFS truncate
+chmodSync: threw EROFS chmod
+utimesSync: threw EROFS utime
+accessSync to write: threw EACCES access
+the file is as it was: a note
+a child without cwd starts where the program was started: true
+a child with a cwd of the system starts there: true
+a child with a cwd in the executable: threw ENOENT spawn
+chdir above the root: threw ENOENT chdir
+cwd is as it was: true
+promises.writeFile: rejected EROFS open
+promises.mkdir recursive: rejected EROFS mkdir
+Bun.write: rejected EROFS open
+Bun.write to a Bun.file: rejected EROFS open
+createWriteStream: rejected EROFS open

@@ -1,0 +1,10 @@
+error: TS100031: 'inferred' is declared 'int32', but 'same(n)' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'same(n) | 0'.
+error: TS100031: Property 'a' of 'Ints<{ a: string; }>' is declared 'int32', but 'n' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'n | 0'.
+error: TS100031: 'likeTheModel' is declared 'int32', but 'n' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'n | 0'.
+error: TS100031: 'got' is declared 'int32', but 'yield 1' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write '(yield 1) | 0'.
+error: TS100031: The value is declared 'int32', but it might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0.
+error: TS100031: Property 'size' of 'Counter' is declared 'int32', but 'n' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'n | 0'.
+error: TS100031: 'neverStored' is declared 'int32', but 'counter.never' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'counter.never | 0'.
+error: TS100031: 'satisfied' is declared 'int32', but 'n satisfies int32' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write '(n satisfies int32) | 0'.
+error: TS100031: Parameter 'value' of 'either' is declared 'int32', but 'n' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'n | 0'.
+error: TS100031: Parameter 'value' of 'maybe' is declared 'int32', but 'n' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'n | 0'.

@@ -1,0 +1,1 @@
+{ "skipInShell": "it uses what Bun provides and the jsc shell does not: Bun.inspect, node:util, objects as Bun's console.log formats them" }

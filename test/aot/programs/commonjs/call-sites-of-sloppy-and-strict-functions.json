@@ -1,0 +1,3 @@
+{
+  "skipInShell": "call sites are made by Bun, not by the jsc shell"
+}

@@ -1,0 +1,326 @@
+//// undefined-stored-into-late-fields.js
+// A store of undefined creates a property like any other store, though the object has nothing to keep for it. Late properties of two classes get undefined, a value and undefined again,
+// in every order and through every kind of store. After each step the keys, `in`, hasOwnProperty, JSON, spread, Object.assign, for-in and the descriptors say what plain Bun says.
+class Node {
+  constructor(id) {
+    this.id = id
+    this.kind = "k" + id
+    this.pos = id * 2
+    this.end = id * 2 + 1
+  }
+}
+class Token {
+  constructor(id) {
+    this.id = id
+    this.text = "t" + id
+  }
+}
+
+const names = ["original", "emitNode", "jsDoc", "questionToken", "symbol", "locals", "nextContainer", "flowNode"]
+function clear(node, name) {
+  switch (name) {
+    case "original": node.original = undefined; break
+    case "emitNode": node.emitNode = undefined; break
+    case "jsDoc": node.jsDoc = undefined; break
+    case "questionToken": node.questionToken = undefined; break
+    case "symbol": node.symbol = undefined; break
+    case "locals": node.locals = undefined; break
+    case "nextContainer": node.nextContainer = undefined; break
+    default: node.flowNode = undefined
+  }
+}
+function set(node, name, value) {
+  switch (name) {
+    case "original": node.original = value; break
+    case "emitNode": node.emitNode = value; break
+    case "jsDoc": node.jsDoc = value; break
+    case "questionToken": node.questionToken = value; break
+    case "symbol": node.symbol = value; break
+    case "locals": node.locals = value; break
+    case "nextContainer": node.nextContainer = value; break
+    default: node.flowNode = value
+  }
+}
+const ways = [
+  ["constant", (node, name, value) => value === undefined ? clear(node, name) : set(node, name, value)],
+  ["named", set],
+  ["keyed", (node, name, value) => { node[name] = value }],
+  ["reflected", (node, name, value) => { Reflect.set(node, name, value) }],
+  ["defined", (node, name, value) => { Object.defineProperty(node, name, { value, writable: true, enumerable: true, configurable: true }) }],
+  ["assigned", (node, name, value) => { Object.assign(node, { [name]: value }) }],
+]
+
+function show(value) {
+  if (value === undefined) return "u"
+  if (value === null) return "null"
+  if (Array.isArray(value)) return "[" + value.length + "]"
+  if (typeof value === "object") return "#" + value.id
+  return typeof value === "string" ? JSON.stringify(value) : String(value)
+}
+function shallow(key, value) {
+  return key !== "" && typeof value === "object" && value !== null ? show(value) : value
+}
+function shallowWithUndefined(key, value) {
+  return value === undefined ? "undefined" : shallow(key, value)
+}
+function readAll(node) {
+  return [node.original, node.emitNode, node.jsDoc, node.questionToken, node.symbol, node.locals, node.nextContainer, node.flowNode].map(show).join()
+}
+function describeProperty(node, name) {
+  const descriptor = Object.getOwnPropertyDescriptor(node, name)
+  if (!descriptor) return "none"
+  return ("value" in descriptor ? "v" : "a") + (descriptor.writable ? "w" : "-") + (descriptor.enumerable ? "e" : "-") + (descriptor.configurable ? "c" : "-")
+}
+function report(node) {
+  const inLoop = []
+  for (const key in node) inLoop.push(key)
+  const { id, ...rest } = node
+  return [
+    Object.keys(node).join(),
+    names.map(name => (name in node ? "i" : "-") + (Object.prototype.hasOwnProperty.call(node, name) ? "h" : "-") + (Object.hasOwn(node, name) ? "o" : "-") + show(node[name])).join(" "),
+    readAll(node),
+    JSON.stringify(node, shallow),
+    JSON.stringify(node, shallowWithUndefined),
+    Object.keys({ ...node }).join(),
+    Object.keys(Object.assign({}, node)).join(),
+    inLoop.join(),
+    Object.entries(node).map(([key, value]) => key + "=" + show(value)).join(),
+    Object.values(node).length,
+    Object.getOwnPropertyNames(node).join(),
+    Reflect.ownKeys(node).join(),
+    id + ":" + Object.keys(rest).join(),
+    names.map(name => describeProperty(node, name)).join(),
+  ].join(" | ")
+}
+function listing(object) {
+  return Object.entries(object).map(([key, value]) => key + "=" + show(value)).join() + " | " + Object.keys({ ...object }).length + " | " + JSON.stringify(object, shallow)
+}
+function hash(text) {
+  let result = 0
+  for (let i = 0; i < text.length; i++) result = (result * 31 + text.charCodeAt(i)) | 0
+  return result
+}
+function valueFor(node, index) {
+  switch (index % 6) {
+    case 0: return index
+    case 1: return "s" + index
+    case 2: return node
+    case 3: return index + 0.5
+    case 4: return null
+    default: return index % 4 === 1
+  }
+}
+////= permutations
+function attempt(action) {
+  try { return show(action()) } catch (error) { return error.constructor.name }
+}
+function collect() {
+  if (typeof Bun !== "undefined") Bun.gc(true)
+}
+
+const orders = permutations(["original", "jsDoc", "symbol", "flowNode"])
+const kept = []
+let nextId = 0
+for (const [wayName, store] of ways) {
+  let sum = 0
+  let first = ""
+  let last = ""
+  orders.forEach((order, orderIndex) => {
+    const node = orderIndex & 1 ? new Token(nextId++) : new Node(nextId++)
+    const pattern = (orderIndex * 7 + wayName.length) & 15
+    const steps = []
+    order.forEach((name, i) => {
+      store(node, name, pattern >> i & 1 ? valueFor(node, orderIndex + i) : undefined)
+      steps.push(report(node))
+    })
+    // What held undefined gets a value, and the other way round.
+    order.forEach((name, i) => store(node, name, pattern >> i & 1 ? undefined : valueFor(node, orderIndex + i + 3)))
+    steps.push(report(node))
+    for (const name of order) store(node, name, undefined)
+    steps.push(report(node))
+    // A key that is deleted and stored again goes to the end.
+    delete node[order[0]]
+    delete node[order[2]]
+    steps.push(report(node))
+    store(node, order[2], undefined)
+    steps.push(report(node))
+    store(node, order[0], undefined)
+    store(node, order[1], node)
+    steps.push(report(node))
+    const text = steps.join("\n")
+    sum = (sum + hash(text)) | 0
+    if (!orderIndex) first = text
+    last = steps[steps.length - 1]
+    kept.push([node, last])
+  })
+  console.log(wayName, sum)
+  console.log(first)
+  console.log(last)
+}
+collect()
+let wrong = 0
+for (const [node, text] of kept) {
+  if (report(node) !== text) wrong++
+}
+console.log("after a collection, wrong", wrong)
+
+// A constructor that gives most of its properties undefined. Few objects ever get more.
+class Sym {
+  constructor(flags, name) {
+    this.flags = flags
+    this.escapedName = name
+    this.declarations = undefined
+    this.valueDeclaration = undefined
+    this.id = 0
+    this.mergeId = 0
+    this.parent = undefined
+    this.members = undefined
+    this.exports = undefined
+    this.exportSymbol = undefined
+    this.constEnumOnlyModule = undefined
+    this.isReferenced = undefined
+    this.lastAssignmentPos = undefined
+    this.links = undefined
+  }
+}
+const symbols = []
+for (let i = 0; i < 300; i++) {
+  const symbol = new Sym(i, "n" + i)
+  symbol.id = i + 1
+  if (i % 7 === 3) symbol.parent = symbols[i >> 1]
+  if (i % 11 === 5) symbol.declarations = [i]
+  if (i % 13 === 2) symbol.links = { id: -i }
+  if (i % 17 === 4) symbol.isReferenced = i
+  if (i % 7 === 3 && i % 2) symbol.parent = undefined
+  if (i % 50 === 49) collect()
+  symbols.push(symbol)
+}
+console.log("symbols", symbols.reduce((sum, symbol) => (sum + hash(listing(symbol))) | 0, 0))
+console.log(listing(symbols[0]))
+console.log(listing(symbols[3]))
+console.log(listing(symbols[38]))
+console.log(listing(symbols[93]))
+console.log(symbols.filter(symbol => "links" in symbol && Object.hasOwn(symbol, "exports") && symbol.members === undefined).length, Object.keys(symbols[299]).join())
+
+// Several stores in a row, with undefined between the values.
+function fill(node, a, b) {
+  node.original = undefined
+  node.emitNode = a
+  node.jsDoc = undefined
+  node.questionToken = b
+  node.symbol = undefined
+}
+function refill(node, a) {
+  node.symbol = a
+  node.jsDoc = a
+  node.original = undefined
+  node.locals = undefined
+}
+let sumOfRuns = 0
+const filled = []
+for (let i = 0; i < 48; i++) {
+  const node = i % 3 ? new Node(1000 + i) : new Token(1000 + i)
+  fill(node, i & 1 ? valueFor(node, i) : undefined, i & 2 ? valueFor(node, i + 1) : undefined)
+  const before = report(node)
+  if (i & 4) refill(node, i & 8 ? valueFor(node, i + 2) : undefined)
+  if (i & 16) fill(node, undefined, undefined)
+  sumOfRuns = (sumOfRuns + hash(before) + hash(report(node))) | 0
+  filled.push(node)
+}
+console.log("runs", sumOfRuns)
+console.log(report(filled[0]))
+console.log(report(filled[7]))
+console.log(report(filled[31]))
+console.log(report(filled[47]))
+
+// An own property that holds undefined hides the accessor above it. Without the own property a store runs the setter.
+const calls = []
+class Base {
+  get late() { calls.push("get"); return "inherited" }
+  set late(value) { calls.push("set " + show(value)) }
+}
+class Derived extends Base {
+  late = undefined
+  other = 1
+}
+class Plain extends Base {
+  other = 1
+}
+function storeLate(object, value) {
+  object.late = value
+}
+for (let i = 0; i < 6; i++) {
+  const derived = new Derived()
+  const plain = new Plain()
+  const before = show(derived.late) + Object.hasOwn(derived, "late")
+  storeLate(derived, i & 1 ? i : undefined)
+  storeLate(plain, i & 1 ? i : undefined)
+  console.log(before, show(derived.late), Object.keys(derived).join(), show(plain.late), Object.keys(plain).join(), calls.join(";"))
+  calls.length = 0
+}
+
+// Frozen, sealed and closed objects. A property that holds undefined exists: it is stored to where a new one is refused. The file is a module, so a refused store throws.
+for (const [level, apply] of [["frozen", Object.freeze], ["sealed", Object.seal], ["closed", Object.preventExtensions]]) {
+  const node = new Node(9000)
+  clear(node, "original")
+  set(node, "jsDoc", undefined)
+  node["emitNode"] = undefined
+  apply(node)
+  console.log(level, attempt(() => node.original = 1), attempt(() => set(node, "jsDoc", "x")), attempt(() => node["emitNode"] = undefined), attempt(() => clear(node, "emitNode")),
+    attempt(() => clear(node, "symbol")), attempt(() => set(node, "locals", undefined)), attempt(() => node["flowNode"] = undefined))
+  console.log(report(node), Object.isFrozen(node), Object.isSealed(node), Object.isExtensible(node))
+  console.log(attempt(() => delete node.original), attempt(() => clear(node, "original")), attempt(() => set(node, "original", undefined)), report(node))
+}
+
+// Redefined while it holds undefined.
+const redefined = new Node(9100)
+clear(redefined, "original")
+clear(redefined, "jsDoc")
+clear(redefined, "symbol")
+Object.defineProperty(redefined, "original", { enumerable: false })
+Object.defineProperty(redefined, "jsDoc", { get() { return "got" }, enumerable: true, configurable: true })
+Object.defineProperty(redefined, "symbol", { writable: false })
+console.log(report(redefined))
+redefined.original = 3
+console.log(attempt(() => redefined.jsDoc = 1), attempt(() => clear(redefined, "symbol")), attempt(() => set(redefined, "symbol", 1)), report(redefined))
+
+// As a prototype, and behind a proxy.
+const parent = new Node(9200)
+clear(parent, "emitNode")
+const child = Object.create(parent)
+console.log("emitNode" in child, Object.hasOwn(child, "emitNode"), show(child.emitNode), "jsDoc" in child, show(child.jsDoc))
+child.emitNode = 5
+clear(child, "jsDoc")
+console.log(show(child.emitNode), show(parent.emitNode), Object.keys(child).join(), Object.keys(parent).join(), "jsDoc" in parent)
+const proxy = new Proxy(parent, {})
+console.log(Object.keys(proxy).join(), "emitNode" in proxy, "jsDoc" in proxy, JSON.stringify(Object.getOwnPropertyDescriptor(proxy, "emitNode")))
+proxy.jsDoc = undefined
+console.log(report(parent))
+
+// Copies.
+const source = new Node(9300)
+fill(source, undefined, 7)
+console.log(Object.keys(structuredClone(source)).join(), Object.keys(Object.fromEntries(Object.entries(source))).join())
+const target = new Node(9301)
+set(target, "emitNode", "overwritten")
+set(target, "locals", "kept")
+set(target, "original", "overwritten")
+Object.assign(target, source)
+console.log(report(target))
+console.log(listing({ original: 1, ...source, jsDoc: 2 }))
+console.log(listing(Object.assign(new Token(9302), { symbol: undefined }, source, { questionToken: undefined })))
+
+// Many objects, with collections while they are filled.
+const survivors = []
+for (let i = 0; i < 2000; i++) {
+  const node = i & 1 ? new Node(i) : new Token(i)
+  clear(node, "nextContainer")
+  set(node, "locals", i % 5 ? undefined : node)
+  node[names[i % names.length]] = i % 3 ? undefined : "v" + i
+  if (i % 10 === 0) survivors.push(node)
+  if (i % 500 === 250) collect()
+}
+collect()
+console.log("survivors", survivors.length, survivors.reduce((sum, node) => (sum + hash(report(node))) | 0, 0))
+console.log(report(survivors[1]))
+console.log(report(survivors[199]))

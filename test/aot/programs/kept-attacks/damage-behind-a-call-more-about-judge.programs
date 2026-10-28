@@ -1,0 +1,161 @@
+////: lines-21
+const «1» = {
+  name(): string {
+    return «2»;
+  },
+  get twice(): number {
+    return -«3»;
+  },
+};
+//// damage-behind-a-call-more-about-judge/a-native-function-reached-by-a-tail-call-does-the-damage.ts
+// `apply` ends in `return fn(target)`: a tail call by value, a jump. Its frame is gone when the callee runs, and the callee returns straight to the return address in `holder`.
+// The callee is native: a bound Object.setPrototypeOf, a bound Object.defineProperty, a bound Reflect.deleteProperty. No operation of compiled code stands behind the jump that could say anything
+// about what the native function did, and between the writer and `holder` there are only frames of the engine and of a stub.
+// The word on the stack that has to be swapped is the one that `apply` was called with. The judge compares at that return address: whatever is counted below has to have sent it to the landing.
+class Point {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+  sum(): number {
+    return this.x + this.y;
+  }
+}
+const stranger = {
+  sum(): number {
+    return -100;
+  },
+};
+
+type Damage = (target: Point) => unknown;
+const nothing: Damage = (target) => target;
+function damageFor(target: Point, kind: number): Damage {
+  if (kind === 1) return Object.setPrototypeOf.bind(null, target, stranger) as Damage;
+  if (kind === 2) return Object.defineProperty.bind(null, target, "x", { get: () => 1000, configurable: true }) as Damage;
+  if (kind === 3) return Reflect.deleteProperty.bind(null, target, "y") as Damage;
+  return nothing;
+}
+
+let calls = 0;
+function apply(fn: Damage, target: Point): unknown {
+  calls++;
+  return fn(target);
+}
+function applyTwice(fn: Damage, target: Point): unknown {
+  apply(nothing, target);
+  return apply(fn, target);
+}
+
+function holder(p: Point, fn: Damage): string {
+  const before = p.x + "," + p.y + "," + p.sum();
+  applyTwice(fn, p);
+  return before + " " + p.x + "," + p.y + "," + p.sum();
+}
+
+let digest = 0;
+for (let round = 0; round < 600; round++) {
+  const p = new Point(round, round + 1);
+  const kind = round % 40 === 39 ? 1 + ((round / 40) | 0) % 3 : 0;
+  const line = holder(p, damageFor(p, kind));
+  for (let index = 0; index < line.length; index++) digest = (digest * 31 + line.charCodeAt(index)) | 0;
+  if (kind || round < 2) console.log(round + ": " + line);
+}
+console.log("calls " + calls + " digest " + digest);
+//// damage-behind-a-call-more-about-judge/the-second-object-gets-its-prototype-in-line.ts
+// A typed caller calls a method of an object, makes a direct call and calls the method again. The callee gives the object another prototype with Object.setPrototypeOf, on its typed path.
+// The first such change goes through the host function, which records the transition from this Structure to this prototype. From the second object on compiled code finds the transition
+// and stores the Structure and the flag of the cell IN LINE (ObjectBuiltinEmitter::generateSetPrototypeOf). Whoever writes there has to send the returns on the stack to their landings:
+// the caller holds "the object has the prototype of its layout" across the call. If nobody is told, the caller calls the method of the class from the second strike on.
+// Reflect.setPrototypeOf takes the same way. `relay` and `strike` call each other, so that neither is copied into `holder`.
+class Animal {
+  legs: number;
+  constructor(legs: number) {
+    this.legs = legs;
+  }
+  name(): string {
+    return "animal";
+  }
+  get twice(): number {
+    return this.legs * 2;
+  }
+}
+////= lines-21	stranger	"stranger"	1
+////= lines-21	other	"other"	2
+
+function relay(target: Animal, way: number, depth: number): number {
+  return strike(target, way, depth - 1) + 1;
+}
+function strike(target: Animal, way: number, depth: number): number {
+  if (depth > 0) return relay(target, way, depth);
+  if (way === 1) Object.setPrototypeOf(target, stranger);
+  else if (way === 2) Reflect.setPrototypeOf(target, other);
+  return target.legs;
+}
+
+function holder(a: Animal, way: number, depth: number): string {
+  const before = a.name() + "," + a.twice;
+  const got = strike(a, way, depth);
+  return before + " " + got + " " + a.name() + "," + a.twice + "," + a.legs + "," + (a instanceof Animal);
+}
+
+function outer(round: number, way: number): string {
+  const a = new Animal(round & 7);
+  const first = a.name();
+  const line = holder(a, way, round & 3);
+  return first + " " + line + " " + a.name();
+}
+
+let digest = 0;
+for (let round = 0; round < 600; round++) {
+  const way = round % 50 === 49 ? 1 : round % 70 === 69 ? 2 : 0;
+  const line = outer(round, way);
+  for (let index = 0; index < line.length; index++) digest = (digest * 31 + line.charCodeAt(index)) | 0;
+  if (way || round < 2) console.log(round + ": " + line);
+}
+console.log("digest " + digest);
+//// damage-behind-a-call-more-about-judge/writes-that-falsify-nothing-below-a-deep-stack.ts
+// A WITNESS OF COST, not of a wrong answer: the output is that of plain Bun either way. Read the counters WalksToSendReturnsToLandings, StackWordsLookedAt and ReturnsSentToLandings behind it.
+// Below 200 frames of typed code the program does, 20,000 times each, what changes an object and makes no proof false that typed code keeps across a call:
+//   deletes an OPTIONAL field that lies in its slot (no mark is set, no field leaves its slot);
+//   stores a string into a number field of an object whose cell has the mark already, and of which another field has left its slot already;
+//   adds a property that the layout does not know to an object that has such properties already;
+//   gives a NEW ordinary object its prototype with Object.setPrototypeOf (nobody has seen the object).
+// Each walk looks at every word of the stack and sends 200 returns to their landings, and every one of those frames then makes its tests again.
+// The event is the write of the bit that a test reads. The first three flip no such bit and should count no walk. The fourth walks as the code lies (JSObject::setPrototypeDirect cannot tell a new object).
+type Entry = { id: number; note?: string; weight?: number; size?: number };
+
+function make(id: number): Entry {
+  return { id };
+}
+
+const worn: Entry = make(-1);
+worn.weight = 1;
+worn.size = 2;
+(worn as any).weight = "left its slot";
+(worn as any).first = 0;
+
+const base = { tag: "base" };
+let kept = 0;
+
+function work(entry: Entry, round: number): number {
+  entry.note = "n" + (round & 7);
+  delete entry.note;
+  (worn as any).size = round & 1 ? "text" : round;
+  (worn as any)["extra" + (round & 15)] = round;
+  const fresh = Object.setPrototypeOf({ round }, base) as { round: number; tag: string };
+  kept += fresh.tag.length;
+  return entry.id + fresh.round;
+}
+
+function descend(entry: Entry, depth: number, round: number): number {
+  const before = entry.id;
+  const below = depth > 0 ? descend(entry, depth - 1, round) : work(entry, round);
+  return below + entry.id - before;
+}
+
+let total = 0;
+const entry = make(7);
+for (let round = 0; round < 20000; round++) total = (total + descend(entry, 200, round)) | 0;
+console.log(total + " " + kept + " " + Object.keys(worn).length + " " + typeof worn.size + " " + ("note" in entry));

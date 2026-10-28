@@ -1409,6 +1409,15 @@ impl Store {
     }
 }
 
+/// Polls whose free is still deferred may be heap slots of the hive's fallback,
+/// which only the pending list names.
+#[cfg(not(windows))]
+impl Drop for Store {
+    fn drop(&mut self) {
+        self.process_deferred_frees();
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // onTick (exported)
 // ──────────────────────────────────────────────────────────────────────────

@@ -25,9 +25,9 @@ use crate::webcore::{Blob, Request, Response};
 pub(crate) use jsc::MarkedArrayBuffer as Buffer;
 use jsc::PinnedArrayBuffer;
 
-// LAYERING: `Fd::to_js` is provided by the canonical `bun_sys_jsc::FdJsc`
-// extension trait. Re-exported so existing
-// `crate::node::types::FdJsc` import paths keep resolving.
+// LAYERING: `Fd::{from_js,to_js}` are provided by the canonical `bun_sys_jsc::FdJsc`
+// extension trait. Re-exported so existing `crate::node::types::FdJsc` import
+// paths keep resolving.
 pub(crate) use bun_sys_jsc::FdJsc;
 
 // LAYERING: `bun_sys::SystemError → JSValue` bridge (reshapes the T1 data

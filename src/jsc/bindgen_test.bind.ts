@@ -315,7 +315,7 @@ export const TestError = b.class({
   enumerable: false,
   construct: { args: { code: b.i32 } },
   /** An instance whose code is the sum. */
-  call: { args: { codes: b.rest(b.i32) }, returns: b.self, capability: "js", throws: true },
+  call: { args: { codes: b.rest(b.opaque) }, returns: b.self, capability: "heap" },
   proto: {
     code: { getter: b.i32 },
     nonConfigurableCode: { getter: b.i32, configurable: false },
@@ -708,13 +708,6 @@ export const joinSecondFirst = b.fn({
   capability: "js",
   throws: true,
 });
-/** The sum of the arguments before the first `null` or `undefined`. What follows that one is not converted. */
-export const sumUntilNull = b.fn({
-  args: { numbers: b.rest(b.i32.nullable) },
-  returns: b.i32,
-  capability: "js",
-  throws: true,
-});
 export const TestTextOrIgnored = b.union({ text: b.string, other: b.ignored });
 export const textOrNull = b.fn({ args: { value: TestTextOrIgnored }, returns: b.string.nullable });
 export const isPromise = b.fn({ args: { value: b.promise.otherAsNull }, returns: b.bool });
@@ -750,15 +743,6 @@ export const countInRange = b.fn({
 });
 export const TestRangeOptions = b.dictionary({ timeout: b.u64.validateIntegerRange().optional });
 export const timeoutOf = b.fn({ args: { options: TestRangeOptions }, returns: b.u64.nullable });
-
-export const partText = b.conversion(b.string.loose);
-/** Throws for fewer than two parts, before any is converted. */
-export const joinParts = b.fn({
-  args: { parts: b.rest(b.opaque) },
-  returns: b.string,
-  capability: "js",
-  throws: true,
-});
 
 export const TestOwnOptions = b.dictionary({ own: { type: b.i32.optional, own: true }, any: b.i32.optional });
 export const ownAndInherited = b.fn({ args: { options: TestOwnOptions }, returns: b.array(b.i32.nullable) });

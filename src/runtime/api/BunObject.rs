@@ -90,7 +90,6 @@ use crate::generated_bindgen::bun_object::{
     InspectOptionsOrDepth, MMapOptions, WhichOptions, ZlibCompressionOptions,
     ZlibDecompressionOptions, ZstdCompressionOptions,
 };
-use crate::generated_bindgen::server::ServeOptions;
 use bun_jsc::bindgen::{self, BufferSource, Callable, JsHeap, JsLocal, JsScope, PinnedBytes};
 
 /// How to add a new property to the Bun global (a function goes in `BunObject.bind.ts`)
@@ -1073,13 +1072,13 @@ pub(crate) fn index_of_line(buffer: &[u8], offset: f64) -> f64 {
     }
 }
 
-pub(crate) fn serve(cx: &mut JsScope<'_>, options: Option<ServeOptions<'_>>) -> JsResult<JSValue> {
+pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
     let global_object = cx.global();
     // The server is the calling script's.
     let context = global_object.bun_vm().context_of_caller();
     let mut config = crate::server::ServerConfig::from_js(
         global_object,
-        options,
+        options.to_js(),
         crate::server::server_config::FromJSOptions {
             allow_bake_config: bun_core::FeatureFlags::bake(),
             may_start_development_server: true,
@@ -1463,8 +1462,8 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
     let vm = global_this.bun_vm();
     let valkey = match JSValkeyClient::create_no_js_no_pubsub(
         &global_this.js_thread(vm.root_context()),
-        None,
-        None,
+        JSValue::UNDEFINED,
+        JSValue::UNDEFINED,
     ) {
         Ok(p) => p,
         Err(jsc::JsError::Thrown) => return JSValue::ZERO,

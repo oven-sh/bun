@@ -2,7 +2,7 @@ use core::fmt;
 use std::borrow::Cow;
 
 use bun_core::{String, StringView};
-use bun_jsc::bindgen::JsScope;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, StringJsc};
 
@@ -11,7 +11,6 @@ use super::parse_args_utils::{
     is_option_like_value,
 };
 use super::validators;
-use crate::generated_bindgen::parse_args::ParseArgsArgument;
 
 bun_output::declare_scope!(parseArgs, hidden);
 
@@ -878,17 +877,16 @@ impl<'a> ParseArgsState<'a> {
     }
 }
 
-pub(crate) fn parse_args<'a>(
-    cx: &mut JsScope<'a>,
-    config: ParseArgsArgument<'a>,
-) -> JsResult<JSValue> {
+pub(crate) fn parse_args<'a>(cx: &mut JsScope<'a>, config: JsLocal<'a>) -> JsResult<JSValue> {
     let global = cx.global();
-    MarkedArgumentBuffer::new(|default_roots| parse_args_impl(global, config, default_roots))
+    MarkedArgumentBuffer::new(|default_roots| {
+        parse_args_impl(global, config.to_js(), default_roots)
+    })
 }
 
 fn parse_args_impl(
     global: &JSGlobalObject,
-    config: ParseArgsArgument<'_>,
+    config_value: JSValue,
     default_roots: &mut MarkedArgumentBuffer,
 ) -> JsResult<JSValue> {
     // jsc.markBinding(@src()) — debug-only, dropped
@@ -896,19 +894,17 @@ fn parse_args_impl(
     // Phase 0: parse the config object
     //
 
-    let config = match config {
-        ParseArgsArgument::Config(config) => Some(config),
-        ParseArgsArgument::Missing | ParseArgsArgument::Other => None,
-        ParseArgsArgument::Null => {
-            // Throws what reading a property of `null` throws.
-            JSValue::NULL.get_own(global, &String::static_("args"))?;
-            None
-        }
+    let config = if config_value.is_undefined() {
+        None
+    } else {
+        Some(config_value)
     };
 
     // Phase 0.A: Get and validate type of input args
     let config_args: JSValue = match config {
-        Some(c) => c.args(global)?.to_js(),
+        Some(c) => c
+            .get_own(global, &String::static_("args"))?
+            .unwrap_or(JSValue::UNDEFINED),
         None => JSValue::UNDEFINED,
     };
     let args: ArgsSlice = if !config_args.is_undefined_or_null() {
@@ -927,31 +923,33 @@ fn parse_args_impl(
     // Node coalesces each top-level flag with `?? default`, so an explicit `null`
     // behaves like an absent key. Apply the default before `validate_boolean`.
     let config_strict: JSValue = match config {
-        Some(c) => c.strict(global)?,
+        Some(c) => c.get_own(global, &String::static_("strict"))?,
         None => None,
     }
-    .map(|v| v.to_js())
+    .filter(|v| !v.is_undefined_or_null())
     .unwrap_or(JSValue::TRUE);
     let config_allow_positionals: JSValue = match config {
-        Some(c) => c.allow_positionals(global)?,
+        Some(c) => c.get_own(global, &String::static_("allowPositionals"))?,
         None => None,
     }
-    .map(|v| v.to_js())
+    .filter(|v| !v.is_undefined_or_null())
     .unwrap_or_else(|| JSValue::from(!config_strict.to_boolean()));
     let config_return_tokens: JSValue = match config {
-        Some(c) => c.tokens(global)?,
+        Some(c) => c.get_own(global, &String::static_("tokens"))?,
         None => None,
     }
-    .map(|v| v.to_js())
+    .filter(|v| !v.is_undefined_or_null())
     .unwrap_or(JSValue::FALSE);
     let config_allow_negative: JSValue = match config {
-        Some(c) => c.allow_negative(global)?,
+        Some(c) => c.get_own(global, &String::static_("allowNegative"))?,
         None => None,
     }
-    .map(|v| v.to_js())
+    .filter(|v| !v.is_undefined_or_null())
     .unwrap_or(JSValue::FALSE);
     let config_options: JSValue = match config {
-        Some(c) => c.options(global)?.to_js(),
+        Some(c) => c
+            .get_own(global, &String::static_("options"))?
+            .unwrap_or(JSValue::UNDEFINED),
         None => JSValue::UNDEFINED,
     };
 

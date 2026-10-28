@@ -3,27 +3,25 @@ import * as table from "../../codegen/builtins/lib.ts";
 import { SecureContext } from "../api/bun/SecureContext.bind.ts";
 import { ServerWebSocket } from "../server/server.bind.ts";
 import { Listener } from "./Listener.bind.ts";
-import { SocketHandler, SocketReloadOptions, UpgradeTLS } from "./SocketConfig.bind.ts";
+import { SocketHandler, UpgradeTLS } from "./SocketConfig.bind.ts";
 
 export default b.module({ rustPath: "crate::socket::socket_body" });
 
 const js = { capability: "js", throws: true } as const;
-const buffer = { ...js, returns: b.bufferSource.returning("Buffer").optional } as const;
-const address = { getter: b.string.local.optional, cache: true, capability: "heap", throws: true } as const;
-const family = { getter: b.string.local.optional, cache: true, capability: "heap" } as const;
-const certificate = { ...js, returns: b.object.optional } as const;
-
+const textIfOpen = b.string.local.optional;
+const cached = { getter: textIfOpen, cache: true, capability: "heap", throws: true } as const;
 const write = {
   ...js,
   args: { data: b.opaque, byteOffset: b.opaque, byteLength: b.opaque, encoding: b.opaque },
   returns: b.i32,
   length: 3,
 } as const;
-const writeBuffered = { ...js, args: { data: b.opaque, encoding: b.opaque } } as const;
+const buffered = { ...js, args: { data: b.opaque, encoding: b.opaque } } as const;
+const bufferIfAny = { returns: b.opaque.returning("Buffer", "undefined"), ...js } as const;
+const objectIfAny = { returns: b.opaque.returning("object", "undefined"), ...js } as const;
 /** Whether all of it was written, or the negative errno of a fatal send. */
 export const BufferedWrite = b.union({ flushed: b.bool, errno: b.i32 });
 
-export const OptionalBool = b.union({ missing: b.undefined, flag: b.bool, other: b.ignored });
 export const coercedInt32 = b.i32.allowBigInt.wrap;
 
 const secureContext = { type: SecureContext.withValue.emptyStringAsNull, expected: ["SecureContext"] } as const;
@@ -45,18 +43,10 @@ export const UpgradeTLSOptions = b.dictionary(
 /** Returns the raw and the TLS halves, or `undefined` for a `TLSSocket`. */
 const upgradeTLS = { ...js, returns: b.jsArray.optional } as const;
 
-/** `false` when none was negotiated. */
-export const ALPNProtocol = b.union({ none: b.bool, protocol: b.string.local });
 export const CipherInfo = b.dictionary({
   name: b.string.local.nullable,
   standardName: b.string.local.nullable,
   version: b.string.nullable,
-});
-/** Empty when the handshake had no key exchange of its own. */
-export const EphemeralKeyInfo = b.dictionary({
-  type: b.string.optional,
-  name: b.string.optional,
-  size: b.i32.optional,
 });
 
 /** What `Bun.connect()` resolves to and the `open` handler of `Bun.listen()` takes. */
@@ -73,7 +63,7 @@ function socket<SSL extends boolean>(ssl: SSL) {
       ...(ssl ? ["duplexOrigin", "duplexOnData", "duplexOnEnd", "duplexOnWritable", "duplexOnClose"] : []),
     ],
     proto: {
-      alpnProtocol: { getter: ALPNProtocol, capability: "heap", throws: true },
+      alpnProtocol: { ...js, getter: b.opaque.returning("string", "boolean") },
       authorized: { getter: b.bool, pure: true },
       bytesWritten: { getter: b.f64, pure: true },
       /** Can call the socket's handlers. */
@@ -81,46 +71,39 @@ function socket<SSL extends boolean>(ssl: SSL) {
       data: { setter: true, internalField: "data" },
       disableRenegotiation: {},
       end: write,
-      exportKeyingMaterial: {
-        ...buffer,
-        args: {
-          length: b.jsNumber.otherAsNull,
-          label: b.string.allowStringObject.otherAsNull.deferred,
-          context: b.opaque,
-        },
-      },
+      exportKeyingMaterial: { ...bufferIfAny, args: { length: b.opaque, label: b.opaque, context: b.opaque } },
       fd: { getter: b.i64 },
       flush: { capability: "js" },
       getAuthorizationError: { returns: b.object.returning("Error").nullable, capability: "js" },
-      getCertificate: certificate,
+      getCertificate: objectIfAny,
       getCipher: { returns: CipherInfo.optional, capability: "heap", throws: true },
-      getEphemeralKeyInfo: { returns: EphemeralKeyInfo.nullable },
+      getEphemeralKeyInfo: { returns: b.opaque.returning("object", "null"), ...js },
       getPeerCertificate: {
         ...js,
-        args: { abbreviated: OptionalBool },
-        returns: ssl ? b.object.optional : b.object.nullable,
+        args: { abbreviated: b.opaque },
+        returns: b.opaque.returning("object", "undefined", "null"),
       },
-      ...(ssl ? { getPeerX509Certificate: certificate } : {}),
+      ...(ssl ? { getPeerX509Certificate: objectIfAny } : {}),
       getServername: { returns: b.string.utf8.optional },
-      getSession: buffer,
+      getSession: bufferIfAny,
       getSharedSigalgs: ssl ? { returns: b.array(b.string.utf8).nullable } : {},
-      getTLSFinishedMessage: buffer,
-      getTLSPeerFinishedMessage: buffer,
-      getTLSTicket: buffer,
+      getTLSFinishedMessage: bufferIfAny,
+      getTLSPeerFinishedMessage: bufferIfAny,
+      getTLSTicket: bufferIfAny,
       getTLSVersion: { returns: b.string.utf8.nullable },
       getTypeOfService: { returns: b.i32 },
-      ...(ssl ? { getX509Certificate: certificate } : {}),
+      ...(ssl ? { getX509Certificate: objectIfAny } : {}),
       isSessionReused: { returns: b.bool },
       listener: { getter: Listener.optional, capability: "heap" },
-      localAddress: address,
-      localFamily: family,
+      localAddress: cached,
+      localFamily: { getter: textIfOpen, cache: true, capability: "heap" },
       localPort: { getter: b.u16.optional, cache: true },
       pause: { capability: "js" },
       readyState: { getter: b.i32 },
       ref: { rustName: "js_ref" },
-      reload: { ...js, args: { options: SocketReloadOptions.otherAsNull }, length: 1 },
-      remoteAddress: address,
-      remoteFamily: family,
+      reload: { ...js, args: { options: b.opaque } },
+      remoteAddress: cached,
+      remoteFamily: { getter: textIfOpen, cache: true, capability: "heap" },
       remotePort: { getter: b.u16.optional },
       renegotiate: js,
       resume: { capability: "js" },
@@ -141,7 +124,7 @@ function socket<SSL extends boolean>(ssl: SSL) {
       setMaxSendFragment: { ...js, args: { size: b.f64.otherAsNull }, returns: b.bool, length: 1 },
       /** No argument enables it, `undefined` disables it. */
       setNoDelay: { args: { noDelay: b.bool.loose.ifPassed }, returns: b.bool, length: 1 },
-      setServername: { ...js, args: { name: b.string.allowStringObject.otherAsNull.deferred }, length: 1 },
+      setServername: { ...js, args: { name: b.opaque } },
       setSession: { ...js, args: { session: b.opaque } },
       setTypeOfService: { args: { tos: b.i32.validateIntegerRange(0, 255).default(0) }, returns: b.i32, length: 1 },
       setVerifyMode: {
@@ -156,8 +139,8 @@ function socket<SSL extends boolean>(ssl: SSL) {
       upgradeTLS: { ...upgradeTLS, args: { options: UpgradeTLSOptions.otherAsNull }, length: 1 },
       write,
       "@@dispose": { ...write, rustName: "end", length: 0 },
-      endBuffered: { ...writeBuffered, returns: b.bool, privateSymbol: "end" },
-      writeBuffered: { ...writeBuffered, returns: BufferedWrite, privateSymbol: "write" },
+      endBuffered: { ...buffered, returns: b.bool, privateSymbol: "end" },
+      writeBuffered: { ...buffered, returns: BufferedWrite, privateSymbol: "write" },
     },
   });
 }
@@ -191,10 +174,9 @@ export const DuplexTLSOptions = b.dictionary({
 /** `data` of the options is `data` of the new socket. */
 export const upgradeDuplexToTLS = b.fn({
   ...js,
-  args: { duplex: b.object.otherAsNull, options: DuplexTLSOptions },
+  args: { duplex: b.opaque, options: DuplexTLSOptions },
   returns: b.jsArray,
   uses: { options: [table.everything, table.memberStoredIn(["data"], table.nativeCell("Socket.data"))] },
-  length: 2,
 });
 
 // `bun:internal-for-testing`

@@ -13,16 +13,14 @@ use bun_jsc::bindgen::{JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::strong::Optional as Strong;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
-    self as jsc, JSGlobalObject, JSObject, JSValue, JsCell, JsRef, JsResult, StringJsc as _,
-};
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, StringJsc as _};
 use bun_sys::{self, Fd};
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
 use crate::api::bun_secure_context::SecureContext;
-use crate::generated_bindgen::listener::{ServerNameTLS, js_Listener as js};
-use crate::generated_bindgen::socket_config::{SocketOptionsObject, SocketReloadOptions};
+use crate::generated_bindgen::listener::js_Listener as js;
+use crate::generated_bindgen::socket_config::SocketOptionsObject;
 use crate::socket::{
     Handlers, NewSocket, SocketConfig, SocketFlags, SocketMode, TCPSocket, TLSSocket,
 };
@@ -173,12 +171,9 @@ pub(crate) enum UnixOrHost {
 }
 
 impl Listener {
-    pub(crate) fn reload(
-        &self,
-        cx: &mut JsScope<'_>,
-        options: Option<SocketReloadOptions<'_>>,
-    ) -> JsResult<()> {
+    pub(crate) fn reload(&self, cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<()> {
         let global = cx.global();
+        let opts = options.to_js();
 
         if matches!(self.listener.get(), ListenerType::None)
             && self.handlers.active_connections.get() == 0
@@ -186,11 +181,11 @@ impl Listener {
             return Err(global.throw(format_args!("Listener is closed")));
         }
 
-        let Some(opts) = options else {
+        if !opts.is_object() {
             return Err(global.throw_invalid_arguments(format_args!("Expected options object")));
-        };
+        }
 
-        let socket_obj = match opts.socket(global)? {
+        let socket_obj = match opts.get(global, "socket")? {
             Some(v) => v,
             None => return Err(global.throw(format_args!("Expected \"socket\" object"))),
         };
@@ -199,7 +194,7 @@ impl Listener {
         // updates the callbacks of the existing cell in place, so the
         // listener and every live socket sharing it pick them up with no swap
         // of the `Handlers` itself.
-        let reloaded = Handlers::prepare_reload(global, socket_obj.to_js())?;
+        let reloaded = Handlers::prepare_reload(global, socket_obj)?;
         self.handlers.apply_reload(global, &reloaded);
 
         Ok(())
@@ -739,9 +734,10 @@ impl Listener {
         cx: &mut JsScope<'a>,
         this: &Self,
         server_name_bytes: &[u8],
-        tls: ServerNameTLS<'a>,
+        tls: JsLocal<'a>,
     ) -> JsResult<()> {
         let global = cx.global();
+        let tls = tls.to_js();
         if !this.ssl {
             return Err(
                 global.throw_invalid_arguments(format_args!("addServerName requires SSL support"))
@@ -766,15 +762,14 @@ impl Listener {
         // Both real callers (node:tls addContext, node:net) pass a native
         // SecureContext; enforcement policy stays server-level, like Node's.
         // The dict branch is defensive for the internal binding's raw form.
-        let sni_ctx: boring_sys::OwnedSslCtx = if let ServerNameTLS::Context(sc) = tls {
-            sc.ctx.clone()
-        } else if let ServerNameTLS::Options(tls) = tls
-            && let Some(ssl_config) = {
-                // SAFETY: per-thread VM; valid for program lifetime.
-                let vm = VirtualMachine::get().as_mut();
-                SSLConfig::from_js(vm, global, tls.to_js(), true)?
-            }
+        let sni_ctx: boring_sys::OwnedSslCtx = if let Some(sc) = tls.as_class_ref::<SecureContext>()
         {
+            sc.ctx.clone()
+        } else if let Some(ssl_config) = {
+            // SAFETY: per-thread VM; valid for program lifetime.
+            let vm = VirtualMachine::get().as_mut();
+            SSLConfig::from_js(vm, global, tls, true)?
+        } {
             // Note: `cfg` cleanup handled by Drop on SSLConfig
             let mut create_err = uws::create_bun_socket_error_t::none;
             match with_ssl_ctx_cache(|cache| cache.get_or_create(&ssl_config, &mut create_err)) {
@@ -1331,19 +1326,16 @@ impl Listener {
         }
     }
 
-    pub(crate) fn getsockname(
-        &self,
-        cx: &mut JsScope<'_>,
-        out: Option<JsLocal<'_, JSObject>>,
-    ) -> JsResult<()> {
+    pub(crate) fn getsockname(&self, cx: &mut JsScope<'_>, out: JsLocal<'_>) -> JsResult<()> {
         let global = cx.global();
         let ListenerType::Uws(socket) = self.listener.get() else {
             return Ok(());
         };
 
-        let Some(out) = out else {
+        let out = out.to_js();
+        if !out.is_object() {
             return Err(global.throw_invalid_arguments(format_args!("Expected object")));
-        };
+        }
 
         let mut buf = [0u8; 64];
         let mut text_buf = [0u8; 512];
@@ -1387,13 +1379,7 @@ impl Listener {
             None => JSValue::UNDEFINED,
         };
 
-        bun_jsc::cpp::JSSocketAddressDTO__assign(
-            global,
-            out.to_js(),
-            address_js,
-            port_js,
-            is_ipv6,
-        )?;
+        bun_jsc::cpp::JSSocketAddressDTO__assign(global, out, address_js, port_js, is_ipv6)?;
         Ok(())
     }
 }

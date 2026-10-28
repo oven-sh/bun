@@ -137,24 +137,42 @@ type ValueKinds = readonly ValueKind[] | "any";
 
 const dateInstance: JSClass = { cpp: "JSC::DateInstance" };
 
-/** How C++ tells that a value is of a kind: `ofValue` if it is not a cell, `ofCell` of `cell`, by its type byte. */
+/**
+ * How C++ tells that a value is of a kind: `ofValue` if it is not a cell, `ofCell` of `cell`, by its type byte.
+ * `inRust` is a test that calls nothing. It is true only of values of the kind, and not of a callable proxy.
+ */
 export const kindTests: Record<
   Exclude<ValueKind, JSClass>,
-  { ofValue?: (value: string) => string; ofCell?: string }
+  { ofValue?: (value: string) => string; ofCell?: string; inRust?: (value: string) => string }
 > = {
-  undefined: { ofValue: value => `${value}.isUndefined()` },
-  null: { ofValue: value => `${value}.isNull()` },
-  boolean: { ofValue: value => `${value}.isBoolean()` },
-  number: { ofValue: value => `${value}.isNumber()` },
+  undefined: { ofValue: value => `${value}.isUndefined()`, inRust: value => `${value}.is_undefined()` },
+  null: { ofValue: value => `${value}.isNull()`, inRust: value => `${value}.is_null()` },
+  boolean: { ofValue: value => `${value}.isBoolean()`, inRust: value => `${value}.is_boolean()` },
+  number: { ofValue: value => `${value}.isNumber()`, inRust: value => `${value}.is_number()` },
   bigint: { ofCell: "cell->isHeapBigInt()" },
-  string: { ofCell: "cell->isString()" },
-  stringObject: { ofCell: "cell->inherits<JSC::StringObject>()" },
-  array: { ofCell: "cell->inherits<JSC::JSArray>()" },
-  arrayBuffer: { ofCell: "cell->inherits<JSC::JSArrayBuffer>()" },
-  typedArray: { ofCell: "JSC::isTypedArrayType(cell->type())" },
-  dataView: { ofCell: "cell->inherits<JSC::JSDataView>()" },
-  callable: { ofCell: "cell->isCallable()" },
+  string: { ofCell: "cell->isString()", inRust: value => `${value}.is_string_literal()` },
+  stringObject: {
+    ofCell: "cell->inherits<JSC::StringObject>()",
+    inRust: value => `${value}.js_type().is_string_object_like()`,
+  },
+  array: { ofCell: "cell->inherits<JSC::JSArray>()", inRust: value => `${value}.is_array()` },
+  arrayBuffer: {
+    ofCell: "cell->inherits<JSC::JSArrayBuffer>()",
+    inRust: value => `${value}.js_type() == bun_jsc::JSType::ArrayBuffer`,
+  },
+  typedArray: { ofCell: "JSC::isTypedArrayType(cell->type())", inRust: value => `${value}.js_type().is_typed_array()` },
+  dataView: {
+    ofCell: "cell->inherits<JSC::JSDataView>()",
+    inRust: value => `${value}.js_type() == bun_jsc::JSType::DataView`,
+  },
+  callable: { ofCell: "cell->isCallable()", inRust: value => `${value}.is_function()` },
 };
+
+/** What a value of a kind converts to, as a Rust expression. `test` is for the part of the kind that does. */
+export interface ConvertedInRust {
+  test?: string;
+  converted: string;
+}
 
 /** The classes of JSC whose instances are kinds. */
 const kindsOfClass: Record<string, readonly ValueKind[]> = {
@@ -635,8 +653,11 @@ export abstract class Type {
   toRust(value: unknown, scope: RustScope): string {
     throw new TypeError(`${this.tsType} cannot have a default`);
   }
-  /** What `undefined` converts to, as a Rust expression of `rustType`, where that is a constant. Rust then needs no C++ for it. */
-  rustOfUndefined(scope: RustScope): string | null {
+  /**
+   * What `value` converts to if it is of `kind`, as an expression of `rustType`, where Rust needs no C++ for it.
+   * "object" is every object, for a type that takes them all alike.
+   */
+  rustOfKind(kind: ValueKind | "object", value: string, scope: RustScope): ConvertedInRust | null {
     return null;
   }
   /** A C++ expression that converts `value`, for a type whose conversion cannot throw. `ctx` is a conversion context. */
@@ -779,6 +800,9 @@ export class BoolType extends PrimitiveType {
   get loose(): BoolType {
     return new BoolType("WebCore::IDLBoolean", "any");
   }
+  rustOfKind(kind: ValueKind | "object", value: string): ConvertedInRust | null {
+    return kind === "boolean" ? { converted: `${value}.as_boolean()` } : null;
+  }
   get conversionThrows(): boolean {
     return this.valueKinds !== "any";
   }
@@ -847,6 +871,17 @@ export class IntegerType extends PrimitiveType {
     if (this.#allowBigInt) return convertingType(accepted, "ToNumeric", unionType(numberType, bigIntType));
     if (this.#conversion === "Loose" || this.info.size !== 4) return convertingType(accepted, "ToNumber", numberType);
     return convertingType(accepted, this.info.min < 0 ? "ToInt32" : "ToUint32");
+  }
+  /** Every conversion gives an int32 that is in range as it is. */
+  rustOfKind(kind: ValueKind | "object", value: string): ConvertedInRust | null {
+    if (kind !== "number") return null;
+    const [min, max] = [Math.max(Number(this.range[0]), -(2 ** 31)), Math.min(Number(this.range[1]), 2 ** 31 - 1)];
+    if (min > max) return null;
+    const isEveryInt32 = min === -(2 ** 31) && max === 2 ** 31 - 1;
+    return {
+      test: `${value}.is_int32()${isEveryInt32 ? "" : ` && (${min}..=${max}).contains(&${value}.as_int32())`}`,
+      converted: `${value}.as_int32()${this.info.rust === "i32" ? "" : ` as ${this.info.rust}`}`,
+    };
   }
   /** A caller proves of an integer that it is an int32 and no more. */
   get directForm(): DirectForm | null {
@@ -919,6 +954,9 @@ export class BigIntAsIntNType extends IntegerType {
   }
   get valueKinds(): ValueKinds {
     return ["bigint"];
+  }
+  rustOfKind(): null {
+    return null;
   }
   get insteadOfOtherAsNull(): null {
     return null;
@@ -1092,6 +1130,9 @@ export class DoubleType extends PrimitiveType {
   }
   get tryConvertThrows(): boolean {
     return this.valueKinds === "any";
+  }
+  rustOfKind(kind: ValueKind | "object", value: string): ConvertedInRust | null {
+    return kind === "number" ? { converted: `${value}.as_number()` } : null;
   }
   /** A `Date` too, as its time value, which is NaN for an invalid one. */
   get allowDate(): DoubleType {
@@ -1420,6 +1461,9 @@ export class LocalStringType extends Type {
   }
   get valueKinds(): ValueKinds {
     return this.#allowStringObject ? ["string", "stringObject"] : ["string"];
+  }
+  rustOfKind(kind: ValueKind | "object", value: string): ConvertedInRust | null {
+    return kind === "string" ? { converted: `bindgen::JsLocal::from_extern(${value}, heap)` } : null;
   }
   get parameterType(): ParameterType {
     return stringParameterType(this.valueKinds);
@@ -1760,6 +1804,11 @@ export class BufferSourceType extends Type {
   get refuses() {
     return this.#allowShared ? null : sharedBuffers;
   }
+  rustOfKind(kind: ValueKind | "object", value: string): ConvertedInRust | null {
+    return this.#allowShared && kind !== "object" && takes(this, kind)
+      ? { converted: this.rustFromExtern(value) }
+      : null;
+  }
   /** WebIDL's `[AllowShared]`. */
   get allowShared(): BufferSourceType {
     return new BufferSourceType(true);
@@ -1862,6 +1911,10 @@ export class LocalType extends Type {
   }
   get refuses(): string | null {
     return this.#refuses;
+  }
+  rustOfKind(kind: ValueKind | "object", value: string): ConvertedInRust | null {
+    const isTaken = kind === "object" ? refusesNonObjects(this) : this.#valueKinds !== "any" && takes(this, kind);
+    return isTaken ? { converted: this.rustFromExtern(value) } : null;
   }
   get parameterType(): ParameterType {
     return strictType(this.#accepted ?? { type: "Object" });
@@ -2020,6 +2073,9 @@ export class OpaqueType extends Type {
   cppPrepare(value: string): string | null {
     return this.#stringObjectAsString ? cppStringOfStringObject(value) : null;
   }
+  rustOfKind(kind: ValueKind | "object", value: string): ConvertedInRust | null {
+    return this.#stringObjectAsString || this.#orAbsent ? null : { converted: this.rustFromExtern(value) };
+  }
   get parameterType(): ParameterType {
     return { ...strictType({ type: "Anything" }), mode: this.#orAbsent ? "Optional" : "Required" };
   }
@@ -2086,8 +2142,6 @@ export class Conversion {
   sharedWith?: readonly Conversion[];
   /** Its index in `sharedWith`, which the two functions take. */
   sharedIndex?: number;
-  /** Hand-written Rust calls it: `b.conversion`. */
-  exported = false;
   /** It is given the object, and reads the value from this member of it. */
   member?: { of: DeferredDictionaryType; index: number };
   constructor(type: Type, name: string, expected: readonly string[] | string | undefined) {
@@ -2104,18 +2158,22 @@ export class Conversion {
 }
 
 /** Passed on as it is, with the conversion for the body to call. */
-export abstract class ConvertedByBodyType extends Type {
+export class DeferredType extends Type {
+  readonly idlType = "Bun::Bindgen::IDLRawAny";
   readonly inner: Type;
   /** Absent until it is the type of an argument or of an alternative, which names it. */
   readonly conversion: Conversion | null;
-  constructor(inner: Type, conversion: Conversion | null) {
+  constructor(inner: Type, conversion: Conversion | null = null) {
     super();
     refuseOutsideArgument(inner);
+    assert(!inner.passesValue, "b.bytes and .withValue are converted with the other arguments");
     this.inner = inner;
     this.conversion = conversion;
   }
   /** The same as the type of the argument `name`. */
-  abstract ofArgument(name: string, expected: readonly string[] | string | undefined): Type;
+  ofArgument(name: string, expected: readonly string[] | string | undefined): DeferredType {
+    return new DeferredType(this.inner, new Conversion(this.inner, name, expected));
+  }
   get parameterType(): ParameterType {
     return this.inner.parameterType;
   }
@@ -2140,21 +2198,6 @@ export abstract class ConvertedByBodyType extends Type {
   }
   get dependencies(): readonly Type[] {
     return [this.inner];
-  }
-  protected get rustConvertFn(): string {
-    assert(this.conversion?.rustName, `${this.tsType}: only for an argument`);
-    return this.conversion.rustConvertFn;
-  }
-}
-
-export class DeferredType extends ConvertedByBodyType {
-  readonly idlType = "Bun::Bindgen::IDLRawAny";
-  constructor(inner: Type, conversion: Conversion | null = null) {
-    super(inner, conversion);
-    assert(!inner.passesValue, "b.bytes and .withValue are converted with the other arguments");
-  }
-  ofArgument(name: string, expected: readonly string[] | string | undefined): DeferredType {
-    return new DeferredType(this.inner, new Conversion(this.inner, name, expected));
   }
   get tsType(): string {
     return this.inner.tsType;
@@ -2184,24 +2227,23 @@ export class DeferredType extends ConvertedByBodyType {
     return `bindgen::Deferred<'a, ${this.inner.rustType(scope)}>`;
   }
   rustFromExtern(expr: string): string {
-    return `bindgen::Deferred::from_extern(${expr}, heap, ${this.rustConvertFn})`;
+    assert(this.conversion?.rustName, `${this.tsType}: only for an argument`);
+    return `bindgen::Deferred::from_extern(${expr}, heap, ${this.conversion.rustConvertFn})`;
   }
 }
 
 /** This argument and every one after it, borrowed from the call frame. */
-export class RestType extends ConvertedByBodyType {
+export class RestType extends Type {
   readonly idlType = "Bun::Bindgen::IDLVariadicArguments";
-  constructor(element: Type, conversion: Conversion | null = null) {
-    super(element, conversion);
-    assert(!element.isOptional || !isIfPassed(element), "an argument of the rest was passed");
-  }
-  /** Each is passed as the JS value itself, so the host function does what there is to do, and the body gets a slice. */
-  get isSliceOfHandles(): boolean {
-    return this.inner instanceof OpaqueType || this.inner instanceof LocalStringType;
-  }
-  ofArgument(name: string, expected: readonly string[] | string | undefined): RestType {
-    if (this.isSliceOfHandles) return this;
-    return new RestType(this.inner, new Conversion(this.inner, name, expected));
+  readonly inner: OpaqueType | LocalStringType;
+  constructor(element: Type) {
+    super();
+    assert(
+      element instanceof OpaqueType || element instanceof LocalStringType,
+      "each argument of the rest stays in the call frame: b.opaque, or a string with .local",
+    );
+    refuseOutsideArgument(element);
+    this.inner = element;
   }
   get tsType(): string {
     return `(${this.inner.tsType})[]`;
@@ -2209,9 +2251,26 @@ export class RestType extends ConvertedByBodyType {
   get parameterType(): ParameterType {
     return { ...this.inner.parameterType, mode: "Rest" };
   }
+  get canRefuse(): boolean {
+    return this.inner.canRefuse;
+  }
   get directForm(): DirectForm | null {
-    const form = super.directForm;
-    return form && { value: "RestOfValues", cppType: "const JSC::EncodedJSValue*, size_t", type: form.type };
+    const form = this.inner.directForm;
+    return form && form.value !== "ValueOrEmpty"
+      ? { value: "RestOfValues", cppType: "const JSC::EncodedJSValue*, size_t", type: form.type }
+      : null;
+  }
+  get holdsJSValue(): boolean {
+    return true;
+  }
+  get conversionThrows(): boolean {
+    return false;
+  }
+  get rustIsCopy(): boolean {
+    return true;
+  }
+  get dependencies(): readonly Type[] {
+    return [this.inner];
   }
   get isReadInPlace(): boolean {
     return this.inner.isReadInPlace;
@@ -2237,13 +2296,11 @@ export class RestType extends ConvertedByBodyType {
   get externStructFields(): readonly ExternField[] {
     return externSliceFields("JSValue");
   }
-  rustType(scope: RustScope): string {
-    if (this.isSliceOfHandles) return `&'a [${this.inner.rustType(scope)}]`;
-    return `bindgen::Rest<'a, ${this.inner.rustType(scope)}>`;
+  rustType(): string {
+    return `&'a [${this.inner.rustType()}]`;
   }
   rustFromExtern(expr: string): string {
-    if (this.isSliceOfHandles) return `${expr}.get(heap)`;
-    return `bindgen::Rest::from_extern(${expr}.get(heap), ${this.rustConvertFn})`;
+    return `${expr}.get(heap)`;
   }
 }
 
@@ -2600,8 +2657,13 @@ export class OptionalType extends Type {
   toRust(value: unknown, scope: RustScope): string {
     return value == null ? "None" : `Some(${this.inner.toRust(value, scope)})`;
   }
-  rustOfUndefined(): string | null {
-    return this.modifier === "ifPassed" ? null : "None";
+  rustOfKind(kind: ValueKind | "object", value: string, scope: RustScope): ConvertedInRust | null {
+    const absent = { ifPassed: [], optional: ["undefined"] }[this.modifier as string] ?? ["undefined", "null"];
+    if (absent.includes(kind as string)) return { converted: "None" };
+    const someAreAbsent = { falsyAsNull: ["boolean", "number", "bigint", "string"], emptyStringAsNull: ["string"] };
+    if (someAreAbsent[this.modifier as keyof typeof someAreAbsent]?.includes(kind as string)) return null;
+    const inner = this.inner.rustOfKind(kind, value, scope);
+    return inner && { ...inner, converted: `Some(${inner.converted})` };
   }
   layout(): Layout {
     return this.inner.nullRepresentation === "optional"
@@ -2816,8 +2878,9 @@ export class DefaultType extends Type {
   toRust(value: unknown, scope: RustScope): string {
     return this.inner.toRust(value, scope);
   }
-  rustOfUndefined(scope: RustScope): string {
-    return this.toRust(this.value, scope);
+  rustOfKind(kind: ValueKind | "object", value: string, scope: RustScope): ConvertedInRust | null {
+    if (kind === "undefined" || (kind === "null" && this.onNull)) return { converted: this.toRust(this.value, scope) };
+    return this.inner.rustOfKind(kind, value, scope);
   }
   get valueKinds(): ValueKinds {
     if (this.inner.valueKinds === "any") return "any";
@@ -3108,6 +3171,8 @@ export interface MemberOptions {
   altNames?: readonly string[];
   /** As a function's `expected`, for this member. */
   expected?: readonly string[] | string;
+  /** What an error calls it, if not by the dictionary and its name: Node reports the `mode` of `fs.writeFile`'s options as an argument. */
+  reportedAs?: string;
   /** Only an own property of the object is read: one it inherits is absent. With `T.ifPassed`, an own `undefined` is not: `T` converts it. */
   own?: boolean;
   /** It is read under this private name of `BunBuiltinNames.h`, which only Bun's own JavaScript can set, and under no other. */
@@ -3123,6 +3188,7 @@ export class Member {
   readonly fieldName: string;
   readonly type: Type;
   readonly expected?: readonly string[] | string;
+  readonly reportedAs?: string;
   readonly own: boolean;
   constructor(name: string, spec: Type | MemberOptions) {
     const options: MemberOptions = spec instanceof Type ? { type: spec } : spec;
@@ -3142,6 +3208,7 @@ export class Member {
     assert(options.expected === undefined || options.expected.length > 0, `expected: ${name} expects nothing`);
     if (options.expected !== undefined) refuseExpectedOfRange(name, options.type);
     this.expected = options.expected;
+    this.reportedAs = options.reportedAs;
     this.own = options.own ?? false;
     assert(
       !isIfPassed(this.type) || (this.own && this.names.length === 1),
@@ -3314,8 +3381,8 @@ export class DictionaryType extends NamedType {
     });
     return `${this.path(scope, this.name)} { ${fields.join(", ")} }`;
   }
-  rustOfUndefined(scope: RustScope): string | null {
-    return this.nonObjectAsEmpty ? this.toRust({}, scope) : null;
+  rustOfKind(kind: ValueKind | "object", value: string, scope: RustScope): ConvertedInRust | null {
+    return kind === "undefined" && this.nonObjectAsEmpty ? { converted: this.toRust({}, scope) } : null;
   }
   layout(): Layout {
     return structLayout(this.members.map(member => member.type.layout()));
@@ -3372,6 +3439,9 @@ export class DeferredDictionaryType extends NamedType {
   }
   get refuses(): string | null {
     return objectType.refuses;
+  }
+  rustOfKind(kind: ValueKind | "object", value: string, scope: RustScope): ConvertedInRust | null {
+    return kind === "object" ? { converted: this.rustFromExtern(value, scope) } : null;
   }
   get parameterType(): ParameterType {
     return { ...convertingType(neverType, "Dictionary", { type: "Object" }), members: this.names };
@@ -3573,22 +3643,25 @@ export class UnionType extends NamedType {
     const { type } = alternative;
     return this.rustAlternative(alternative, type instanceof UnitType ? "" : type.toRust(value, scope), scope);
   }
-  /** The one `undefined` goes to, if that needs no test of the value. */
-  get alternativeOfUndefined() {
+  /** The one a value of `kind` goes to, if that needs no other test of the value. An object of a kind no alternative names can be of a class one does. */
+  private alternativeOf(kind: ValueKind) {
     const byKind = this.alternativesByKind;
     const offered =
-      byKind.get("undefined") ??
-      byKind
-        .get("other")!
-        .filter((i, at, all) => at === all.length - 1 || !refusesNonObjects(this.alternatives[i].type));
+      byKind.get(kind) ??
+      (primitiveKinds.includes(kind) ? byKind.get("other")! : []).filter(
+        (i, at, all) => at === all.length - 1 || !refusesNonObjects(this.alternatives[i].type),
+      );
     return offered.length === 1 ? this.alternatives[offered[0]] : null;
   }
-  rustOfUndefined(scope: RustScope): string | null {
-    const alternative = this.alternativeOfUndefined;
+  get alternativeOfUndefined() {
+    return this.alternativeOf("undefined");
+  }
+  rustOfKind(kind: ValueKind | "object", value: string, scope: RustScope): ConvertedInRust | null {
+    const alternative = kind === "object" ? null : this.alternativeOf(kind);
     if (!alternative) return null;
     const { type } = alternative;
-    const held = type instanceof UnitType ? "" : type.rustOfUndefined(scope);
-    return held === null ? null : this.rustAlternative(alternative, held, scope);
+    const held = type instanceof UnitType ? { converted: "" } : type.rustOfKind(kind, value, scope);
+    return held && { ...held, converted: this.rustAlternative(alternative, held.converted, scope) };
   }
   layout(): Layout {
     return structLayout(this.externStructFields.map(field => field.layout));
@@ -3773,7 +3846,7 @@ export class Signature {
       const expectedOfArgument = Object.hasOwn(expected, name) ? expected[name] : undefined;
       return {
         name,
-        type: type instanceof ConvertedByBodyType ? type.ofArgument(name, expectedOfArgument) : type,
+        type: type instanceof DeferredType ? type.ofArgument(name, expectedOfArgument) : type,
         expected: expectedOfArgument,
         validatorExpects: Object.hasOwn(validatorExpects, name) ? validatorExpects[name] : undefined,
       };
@@ -3818,7 +3891,7 @@ export class Signature {
       assert(!(type instanceof RestType), `${name}: b.rest is only for the last argument`);
     for (const { name, type } of this.args) {
       assert(
-        !(type instanceof ConvertedByBodyType && type.conversion) || this.capability === "js",
+        !(type instanceof DeferredType) || this.capability === "js",
         `${name}: the body converts it, which takes capability: "js"`,
       );
       assert(
@@ -3907,22 +3980,6 @@ function withoutModifiers(type: Type): Type {
 function refuseResultType(name: string, type: Type): void {
   const result = resultTypeIn(type);
   assert(!result, `${name}: ${result?.refusal}`);
-}
-
-/** `b.conversion(T)`: Rust converts a value that is not an argument. */
-export class ConversionDefinition {
-  readonly type: Type;
-  constructor(type: Type) {
-    refuseOutsideArgument(type);
-    this.type = type;
-  }
-  exportedAs(name: string, origin: Origin): Conversion {
-    const conversion = new Conversion(this.type, name, undefined);
-    conversion.rustName = snakeCase(name);
-    conversion.symbol = `Bun__Bindgen__${origin.namespace}__${name}`;
-    conversion.exported = true;
-    return conversion;
-  }
 }
 
 /** Call a signature, or look at the kind of one more argument. */

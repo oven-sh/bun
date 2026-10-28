@@ -11,7 +11,6 @@ import {
   CellType,
   type ClassOptions,
   ClassType,
-  ConversionDefinition,
   type DeferredDictionaryOptions,
   DeferredDictionaryType,
   type DictionaryOptions,
@@ -151,7 +150,7 @@ export const ignored = new UnitType("ignored");
 
 export const array = (element: Type) => new ArrayType(element);
 
-/** The last argument and every one after it: a `Rest<'a, T>`, whose elements the body converts, or for `b.opaque` and `b.string.local` a `&'a [T]`. */
+/** The last argument and every one after it, as a `&'a [T]`. `T` is `b.opaque` or `b.string.local`. */
 export const rest = (element: Type) => new RestType(element);
 
 /** A result only: an object with a property for each `(key, value)` the body gives. */
@@ -187,9 +186,6 @@ const class_ = (options: ClassOptions) => new ClassType(options);
 export { selfType as self } from "./bindgen-lib-internal.ts";
 
 export const fn = (options: FunctionOptions) => new FunctionDefinition([options], options);
-
-/** `export const fieldText = b.conversion(b.string.loose)`: `field_text(global, value)` converts a value that is not an argument, when the body says so. A dictionary or a union has `fromJS` for that. */
-export const conversion = (type: Type) => new ConversionDefinition(type);
 
 /** What a Rust function returns. `$bindgen` calls it. */
 export const value = (options: ValueOptions) => new FunctionDefinition([options], {}, true);

@@ -1059,6 +1059,13 @@ impl JSValue {
             Ok(Some(v))
         }
     }
+    pub fn get_if_property_exists(
+        self,
+        global: &JSGlobalObject,
+        property: impl AsRef<[u8]>,
+    ) -> JsResult<Option<JSValue>> {
+        self.get(global, property)
+    }
     pub fn get_truthy(
         self,
         global: &JSGlobalObject,
@@ -1077,6 +1084,42 @@ impl JSValue {
         property: impl AsRef<[u8]>,
     ) -> JsResult<Option<bool>> {
         Ok(self.get(global, property)?.map(|v| v.to_boolean()))
+    }
+    pub fn get_stringish(
+        self,
+        global: &JSGlobalObject,
+        property: impl AsRef<[u8]>,
+    ) -> JsResult<Option<bun_core::String>> {
+        Ok(self
+            .get_stringish_allow_empty(global, property)?
+            .filter(|s| !s.is_empty()))
+    }
+    /// `get_stringish`, for a property that "" is a value of.
+    pub fn get_stringish_allow_empty(
+        self,
+        global: &JSGlobalObject,
+        property: impl AsRef<[u8]>,
+    ) -> JsResult<Option<bun_core::String>> {
+        let property = property.as_ref();
+        // `get(prop)`, filter null/false → None,
+        // reject symbols, otherwise coerce via `toBunString`.
+        let Some(prop) = self.get(global, property)? else {
+            return Ok(None);
+        };
+        if prop.is_null() || prop == JSValue::FALSE {
+            return Ok(None);
+        }
+        if prop.is_symbol() {
+            // `throwInvalidPropertyTypeValue(property, "string", prop)`
+            // (Node-style ERR_INVALID_ARG_TYPE TypeError including received value's type).
+            // Note: routed via `throw_invalid_arguments` until
+            // `JSGlobalObject::throw_invalid_property_type_value` is ported.
+            return Err(global.throw_invalid_arguments(format_args!(
+                "The \"{}\" property must be of type string. Received a symbol",
+                bstr::BStr::new(property),
+            )));
+        }
+        Ok(Some(prop.to_bun_string(global)?))
     }
     /// Own/prototype lookup,
     /// `null`/`undefined` → `None`, non-string → `ERR_INVALID_ARG_TYPE`,
@@ -1118,6 +1161,25 @@ impl JSValue {
         }
         Ok(Some(v))
     }
+    /// Missing/undefined → `None`;
+    /// boolean → `Some(b)`; anything else throws `ERR_INVALID_ARG_TYPE`.
+    pub fn get_boolean_strict(
+        self,
+        global: &JSGlobalObject,
+        property: impl AsRef<[u8]>,
+    ) -> JsResult<Option<bool>> {
+        let property = property.as_ref();
+        let Some(prop) = self.get(global, property)? else {
+            return Ok(None);
+        };
+        if prop.is_undefined() {
+            return Ok(None);
+        }
+        if prop.is_boolean() {
+            return Ok(Some(prop == JSValue::TRUE));
+        }
+        Err(global.throw_invalid_property_type(property, "boolean", prop))
+    }
     /// Validates `is_string`, looks up via the supplied string map, throws
     /// "must be one of …" on miss. Callers pass `one_of` as a `'static`
     /// literal.
@@ -1142,6 +1204,43 @@ impl JSValue {
                 "{} must be one of {}",
                 property_name, one_of
             ))),
+        }
+    }
+    /// `get(prop)`, filter
+    /// undefined/null → `None`, otherwise `toEnum` (dispatches via
+    /// `FromJsEnum`).
+    pub fn get_optional_enum<E: FromJsEnum>(
+        self,
+        global: &JSGlobalObject,
+        property_name: &'static str,
+    ) -> JsResult<Option<E>> {
+        match self.get(global, property_name)? {
+            Some(v) if !v.is_empty_or_undefined_or_null() => {
+                Ok(Some(v.to_enum::<E>(global, property_name)?))
+            }
+            _ => Ok(None),
+        }
+    }
+    /// `get(prop)`, filter
+    /// undefined/null → `None`, otherwise `toEnum` (via `to_enum_from_map`).
+    pub fn get_optional_enum_from_map<
+        E: Copy,
+        M: bun_core::comptime_string_map::ComptimeStringMap<Value = E>,
+    >(
+        self,
+        global: &JSGlobalObject,
+        property_name: &'static str,
+        map: &'static M,
+        one_of: &'static str,
+    ) -> JsResult<Option<E>> {
+        match self.get(global, property_name)? {
+            Some(v) if !v.is_empty_or_undefined_or_null() => Ok(Some(v.to_enum_from_map(
+                global,
+                property_name,
+                map,
+                one_of,
+            )?)),
+            _ => Ok(None),
         }
     }
     pub fn get_array(
@@ -1331,6 +1430,50 @@ impl JSValue {
     #[track_caller]
     pub fn push(self, global: &JSGlobalObject, out: JSValue) -> JsResult<()> {
         crate::call_check_slow(global, || JSC__JSValue__push(self, global, out))
+    }
+
+    /// `JSValue.getOptional` — loose, coercing property fetch.
+    /// Absent / `undefined` / `null` → `None`; anything else is run through
+    /// [`coerce`](Self::coerce) (ToNumber for integer `T`, the value itself
+    /// for `JSValue`). Distinct from
+    /// [`get_optional_int`], which validates the property is already an
+    /// in-range integer and throws otherwise.
+    pub fn get_optional<T: CoerceTo>(
+        self,
+        global: &JSGlobalObject,
+        property_name: impl AsRef<[u8]>,
+    ) -> JsResult<Option<T>> {
+        let Some(prop) = self.get(global, property_name)? else {
+            return Ok(None);
+        };
+        if prop.is_undefined_or_null() {
+            return Ok(None);
+        }
+        Ok(Some(prop.coerce::<T>(global)?))
+    }
+
+    /// `JSValue.getOptionalInt` — typed integer property
+    /// fetch with `validateIntegerRange` clamping. Returns `None` if the
+    /// property is absent.
+    pub fn get_optional_int<T: bun_core::Integer>(
+        self,
+        global: &JSGlobalObject,
+        property_name: &'static str,
+    ) -> JsResult<Option<T>> {
+        let Some(value) = self.get(global, property_name)? else {
+            return Ok(None);
+        };
+        let min: i128 = T::MIN_I128.max(i128::from(crate::MIN_SAFE_INTEGER));
+        let max: i128 = T::MAX_I128.min(i128::from(crate::MAX_SAFE_INTEGER));
+        Ok(Some(global.validate_integer_range::<T>(
+            value,
+            T::ZERO,
+            crate::IntegerRange {
+                min,
+                max,
+                field_name: property_name.as_bytes(),
+            },
+        )?))
     }
 
     pub fn array_iterator<'a>(self, global: &'a JSGlobalObject) -> JsResult<JSArrayIterator<'a>> {

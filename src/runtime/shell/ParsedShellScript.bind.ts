@@ -14,7 +14,7 @@ export const ParsedShellScript = b.class({
   },
 });
 
-/** `strings` and `templateArgs` are array-likes that are read in turn, one element of each at a time. */
+/** `strings` is an array-like and `templateArgs` an array. They are read in turn, one element of each at a time. */
 export const createParsedShellScript = b.fn({
   args: { strings: b.opaque, templateArgs: b.jsArray },
   returns: ParsedShellScript,

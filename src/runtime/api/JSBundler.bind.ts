@@ -1,40 +1,32 @@
 import * as b from "../../codegen/bindgen-lib.ts";
-import { chunkSize } from "../webcore/BlobArguments.bind.ts";
 
 export default b.module({ rustPath: "crate::api::js_bundler" });
 
 const js = { capability: "js", throws: true } as const;
-const method = { returns: b.promise, ...js } as const;
+const read = { returns: b.promise, ...js } as const;
 
 export const BuildArtifact = b.class({
   rustPath: "crate::api::js_bundler::BuildArtifact",
   internalFields: ["stream"],
   proto: {
-    arrayBuffer: method,
+    arrayBuffer: read,
     hash: { getter: b.string.local, cache: true, capability: "heap", throws: true },
-    json: method,
+    json: read,
     kind: { getter: b.string, cache: true },
     loader: { getter: b.string.local, cache: true, ...js },
     path: { getter: b.string.utf8, cache: true },
     size: { getter: b.f64 },
     /** Returns a `Blob`, whose schema imports this one. */
     slice: {
-      ...method,
+      ...js,
       args: { start: b.opaque, end: b.opaque, contentType: b.opaque },
       returns: b.object.returning("Blob"),
       length: 2,
     },
     /** `Bun.build` fills the field of an output that has a source map. */
     sourcemap: { getter: b.self.nullable, cache: true, capability: "heap" },
-    stream: {
-      ...method,
-      args: { chunkSize },
-      expected: { chunkSize: "chunkSize must be a number" },
-      returns: b.object.returning("ReadableStream"),
-      passThis: true,
-      length: 1,
-    },
-    text: method,
+    stream: { ...js, args: { chunkSize: b.opaque }, returns: b.object.returning("ReadableStream"), passThis: true },
+    text: read,
     type: { getter: b.string.local, cache: true, capability: "js" },
   },
 });
@@ -52,7 +44,7 @@ export const BuildSourceMap = b.union({ enabled: b.bool, name: b.string.allowStr
 export const BuildEnvBehavior = b.union({
   missing: b.undefined,
   disable: b.null,
-  flag: b.bool,
+  enabled: b.bool,
   number: b.f64,
   text: b.string.allowStringObject.utf8.owned,
   other: b.ignored,
@@ -98,7 +90,7 @@ export const BuildCompileWindows = b.dictionary(
 /** `false` is "no order file", as in `compile: { bytecodeOrder: haveProfile && path }`. */
 export const BytecodeOrder = b.union({
   missing: b.null,
-  flag: b.bool,
+  enabled: b.bool,
   one: b.string.allowStringObject.utf8.owned,
   list: b.jsArray,
   other: b.opaque,
@@ -192,8 +184,9 @@ export const BuildConfig = b.dictionary(
 );
 
 export const build = b.fn({
-  ...method,
+  ...js,
   args: { config: BuildConfig.otherAsNull },
+  returns: b.promise,
   rustPath: "crate::api::js_bundler::js_bundler::build",
 });
 

@@ -6,38 +6,26 @@ use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, wtf};
 use bun_parsers::json5;
 
-use crate::generated_bindgen::json5_object::StringifySpace;
-
-impl StringifySpace<'_> {
-    pub(crate) fn unwrap_boxed_primitive(self, global: &JSGlobalObject) -> JsResult<Self> {
-        Ok(match self {
-            Self::NumberObject(object) => Self::Number(object.to_js().to_number(global)?),
-            Self::StringObject(object) => Self::Text(object.to_js().to_bun_string(global)?),
-            space => space,
-        })
-    }
-}
-
 pub(crate) fn stringify<'a>(
     cx: &mut JsScope<'a>,
     value: JsLocal<'a>,
-    replacer: Option<JsLocal<'a>>,
-    space: StringifySpace<'a>,
-) -> JsResult<Option<JSValue>> {
+    replacer: JsLocal<'a>,
+    space: JsLocal<'a>,
+) -> JsResult<JSValue> {
     let global = cx.global();
-    let value = value.to_js();
+    let (value, replacer, space_value) = (value.to_js(), replacer.to_js(), space.to_js());
 
     if value.is_undefined() || value.is_symbol() || value.is_function() {
-        return Ok(None);
+        return Ok(JSValue::UNDEFINED);
     }
 
-    if replacer.is_some() {
+    if !replacer.is_undefined_or_null() {
         return Err(global.throw(format_args!(
             "JSON5.stringify does not support the replacer argument"
         )));
     }
 
-    let mut stringifier = Stringifier::init(global, space)?;
+    let mut stringifier = Stringifier::init(global, space_value)?;
 
     if let Err(err) = stringifier.stringify_value(global, value) {
         return match err {
@@ -46,7 +34,7 @@ pub(crate) fn stringify<'a>(
         };
     }
 
-    stringifier.builder.to_string(global).map(Some)
+    stringifier.builder.to_string(global)
 }
 
 pub(crate) fn parse(heap: &JsHeap<'_>, input: &[u8]) -> JsResult<JSValue> {
@@ -114,35 +102,36 @@ enum Space {
 }
 
 impl Space {
-    fn init(global: &JSGlobalObject, space: StringifySpace<'_>) -> JsResult<Space> {
-        match space.unwrap_boxed_primitive(global)? {
-            StringifySpace::Number(num_f) => {
-                // Clamp on the float to match the spec's min(10, ToIntegerOrInfinity(space)).
-                // toInt32() wraps large values and Infinity to 0, which is wrong.
-                if num_f.is_nan() || num_f < 1.0 {
-                    // handles NaN, -Infinity, 0, negatives
-                    return Ok(Space::Minified);
-                }
-                Ok(Space::Number(if num_f > 10.0 { 10 } else { num_f as u32 }))
+    fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Space> {
+        let space = space_value.unwrap_boxed_primitive(global)?;
+        if space.is_number() {
+            // Clamp on the float to match the spec's min(10, ToIntegerOrInfinity(space)).
+            // toInt32() wraps large values and Infinity to 0, which is wrong.
+            let num_f = space.as_number();
+            if num_f.is_nan() || num_f < 1.0 {
+                // handles NaN, -Infinity, 0, negatives
+                return Ok(Space::Minified);
             }
-            StringifySpace::Text(str) => {
-                if str.length() == 0 {
-                    return Ok(Space::Minified);
-                }
-                Ok(Space::Str(str))
-            }
-            _ => Ok(Space::Minified),
+            return Ok(Space::Number(if num_f > 10.0 { 10 } else { num_f as u32 }));
         }
+        if space.is_string() {
+            let str = space.to_bun_string(global)?;
+            if str.length() == 0 {
+                return Ok(Space::Minified);
+            }
+            return Ok(Space::Str(str));
+        }
+        Ok(Space::Minified)
     }
 }
 
 impl Stringifier {
-    fn init(global: &JSGlobalObject, space: StringifySpace<'_>) -> JsResult<Stringifier> {
+    fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Stringifier> {
         Ok(Stringifier {
             stack_check: StackCheck::init(),
             builder: wtf::StringBuilder::init(),
             indent: 0,
-            space: Space::init(global, space)?,
+            space: Space::init(global, space_value)?,
             visiting: HashMap::default(),
         })
     }

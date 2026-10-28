@@ -29,7 +29,7 @@ export const FileFlags = b.union({
   string: b.string.local,
   other: b.opaque,
 });
-/** 0 to 7, which the body checks: a fraction is truncated. */
+/** 0 to 7. A fraction is truncated. */
 const accessMode = b.f64.nullable;
 const accessModeExpected = "mode must be int32 or null/undefined";
 
@@ -37,14 +37,14 @@ const accessModeExpected = "mode must be int32 or null/undefined";
 export const TimeLike = b.union({ number: b.f64, date: b.f64.allowDate, string: b.string.local, other: b.ignored });
 
 const options = { allowArray: true, reportedAs: "options" } as const;
-/** The body checks the value of a member before the next member is read. */
+/** What is wrong with a member is thrown before the next member is read. */
 const deferred = { deferred: true, reportedAs: "options" } as const;
 const boolean = (value: boolean) => ({ type: b.bool.default(value), expected: ["boolean"] });
 const optionalBoolean = { type: b.bool.optional, expected: ["boolean"] };
 
 const encoding = b.opaque;
 const flag = FileFlags.emptyStringAsNull;
-const mode = { type: FileMode.emptyStringAsNull, expected: ["number"] };
+const mode = { type: FileMode.emptyStringAsNull, expected: ["number"], reportedAs: "mode" };
 const signal = {
   type: b.abortSignal.shared.emptyStringAsNull,
   expected: ["AbortSignal"],
@@ -125,7 +125,7 @@ export const WriteOffset = b.union({
   internalFunction: cell("InternalFunction"),
   number: b.u64.validateInteger(),
 });
-/** `number` is truncated by the body. */
+/** `number` is truncated. */
 export const WriteLength = b.union({ number: b.f64, bigInt: b.i64.asIntN, other: b.ignored });
 /** A whole number that is not negative. Anything else is the current position. */
 const position = b.f64.otherAsNull;
@@ -143,7 +143,7 @@ export const WatchOptions = b.dictionary(
   },
   { deferred: true, reportedAs: "" },
 );
-/** `interval` is truncated by the body. */
+/** `interval` is truncated. */
 export const WatchFileOptions = b.dictionary(
   {
     persistent: boolean(true),
@@ -212,7 +212,7 @@ const operations: Record<string, Operation> = {
       /** Not looked at when `length` is 0. */
       position: ReadPosition.deferred,
     },
-    expected: { buffer: ["Buffer", "TypedArray", "DataView"], position: ["number", "bigint"] },
+    expected: { buffer: ["Buffer", "TypedArray", "DataView"], position: ["bigint", "integer"] },
     length: [6, 5],
   },
   readdir: { args: { ...path, options: EncodingOrReaddirOptions }, length: [3, 2] },

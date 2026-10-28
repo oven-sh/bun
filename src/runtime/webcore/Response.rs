@@ -874,7 +874,7 @@ impl Response {
         }
 
         match init {
-            ResponseInitOrStatus::Missing | ResponseInitOrStatus::Other => {}
+            ResponseInitOrStatus::Other => {}
             ResponseInitOrStatus::Status(status) => {
                 response.init.with_mut(|i| {
                     i.status_code =
@@ -967,7 +967,7 @@ impl Response {
         };
 
         match init {
-            ResponseInitOrStatus::Missing | ResponseInitOrStatus::Other => {}
+            ResponseInitOrStatus::Other => {}
             ResponseInitOrStatus::Status(status) => {
                 let status = Self::validate_redirect_status_code(global_this, status as i32)?;
                 response.init.with_mut(|i| i.status_code = status);

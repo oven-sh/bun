@@ -38,7 +38,7 @@ use crate::api::bun_terminal_body::{
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use crate::generated_bindgen::js_bun_spawn_bindings::SpawnCgroupTarget;
 use crate::generated_bindgen::js_bun_spawn_bindings::{
-    SpawnCommand, SpawnOptionsObject, SpawnTerminal, StdioValue,
+    SpawnCommand, SpawnOptionsObject, SpawnTerminal,
 };
 use crate::webcore as WebCore;
 
@@ -550,9 +550,7 @@ fn spawn_maybe_sync<'a>(
                         let mut stdio_iter = stdio_val.array_iterator(cx.global())?;
                         let mut i: i32 = 0;
                         while let Some(value) = stdio_iter.next()? {
-                            StdioValue::from_js(cx.global(), value, |value| {
-                                Stdio::extract(&mut stdio[i as usize], cx, i, value, is_sync)
-                            })?;
+                            Stdio::extract(&mut stdio[i as usize], cx, i, value, is_sync)?;
                             if i == 2 {
                                 break;
                             }
@@ -564,9 +562,7 @@ fn spawn_maybe_sync<'a>(
                             // extract() leaves `out_stdio` untouched when `value` is undefined, so this
                             // must be initialized to a sane default instead of `undefined`.
                             let mut new_item: Stdio = Stdio::Ignore;
-                            StdioValue::from_js(cx.global(), value, |value| {
-                                Stdio::extract(&mut new_item, cx, i, value, is_sync)
-                            })?;
+                            Stdio::extract(&mut new_item, cx, i, value, is_sync)?;
 
                             let opt = match new_item.as_spawn_option(i) {
                                 stdio::ResultT::Result(opt) => opt,
@@ -591,9 +587,17 @@ fn spawn_maybe_sync<'a>(
                     }
                 }
             } else {
-                Stdio::extract(&mut stdio[0], cx, 0, args.stdin(cx.global())?, is_sync)?;
-                Stdio::extract(&mut stdio[2], cx, 2, args.stderr(cx.global())?, is_sync)?;
-                Stdio::extract(&mut stdio[1], cx, 1, args.stdout(cx.global())?, is_sync)?;
+                if let Some(value) = args.stdin(cx.global())? {
+                    Stdio::extract(&mut stdio[0], cx, 0, value.to_js(), is_sync)?;
+                }
+
+                if let Some(value) = args.stderr(cx.global())? {
+                    Stdio::extract(&mut stdio[2], cx, 2, value.to_js(), is_sync)?;
+                }
+
+                if let Some(value) = args.stdout(cx.global())? {
+                    Stdio::extract(&mut stdio[1], cx, 1, value.to_js(), is_sync)?;
+                }
             }
 
             if !is_sync {

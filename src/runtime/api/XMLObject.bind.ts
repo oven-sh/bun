@@ -1,12 +1,6 @@
 import * as b from "../../codegen/bindgen-lib.ts";
-import { StringifySpace } from "./JSON5Object.bind.ts";
 
 export default b.module({ rustPath: "crate::api::xml_object" });
-
-/** The error for anything else names what it is. */
-export const XMLCompact = b.union({ missing: b.undefined, flag: b.bool, other: b.opaque });
-export const XMLParseOptions = b.dictionary({ compact: XMLCompact }, { allowArray: true, reportedAs: "options" });
-export const XMLReviverOrOptions = b.union({ reviver: b.callable, options: XMLParseOptions });
 
 export const XML = b.namespace({
   parse: {
@@ -19,18 +13,15 @@ export const XML = b.namespace({
         string: "asIs",
         held: "handle",
       }),
-      options: XMLReviverOrOptions.nullable,
+      options: b.opaque,
     },
-    expected: { options: "XML.parse options must be an object" },
     returns: b.opaque,
     capability: "js",
     throws: true,
-    length: 2,
   },
   stringify: {
-    args: { value: b.opaque, replacer: b.opaque.nullable, space: StringifySpace },
-    length: 3,
-    returns: b.string.local.optional,
+    args: { value: b.opaque, replacer: b.opaque, space: b.opaque },
+    returns: b.opaque,
     capability: "js",
     throws: true,
   },

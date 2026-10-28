@@ -6,13 +6,11 @@ use std::sync::Arc;
 use bstr::BStr;
 
 use bun_core::{self as bstring, strings};
-use bun_jsc::bindgen::{Deferred, JsPayload as _, JsScope, JsStructure, JsWrapper};
+use bun_jsc::bindgen::{Deferred, JsLocal, JsPayload as _, JsScope, JsStructure, JsWrapper};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc};
 use bun_sourcemap::{Mapping, Ordinal, ParsedSourceMap, mapping};
 
-use crate::generated_bindgen::sourcemap::{
-    SourceMapMappings, SourceMapOptions, SourceMapPayload, js_SourceMap as js,
-};
+use crate::generated_bindgen::sourcemap::js_SourceMap as js;
 
 pub(crate) struct JSSourceMap {
     sourcemap: Arc<ParsedSourceMap>,
@@ -96,34 +94,32 @@ impl JSSourceMap {
     pub(crate) fn constructor<'a>(
         cx: &mut JsScope<'a>,
         structure: JsStructure<'a, Self>,
-        payload: SourceMapPayload<'a>,
-        options: Option<SourceMapOptions<'a>>,
+        payload: JsLocal<'a>,
+        options: JsLocal<'a>,
     ) -> JsResult<JsWrapper<'a, Self>> {
         let global = cx.global();
+        let payload = payload.to_js();
+        let options = options.to_js();
 
-        global.validate_object("payload", payload.object().to_js(), Default::default())?;
+        global.validate_object("payload", payload, Default::default())?;
 
-        let mut line_lengths = None;
-        if let Some(options) = options {
+        let mut line_lengths = JSValue::ZERO;
+        if options.is_object() {
             // Node doesn't check it further than this.
-            line_lengths = options.line_lengths(global)?;
+            if let Some(lengths) = options.get_if_property_exists(global, b"lineLengths")? {
+                if lengths.js_type().is_array() {
+                    line_lengths = lengths;
+                }
+            }
         }
 
         // Parse the payload to create a proper sourcemap
 
         // Extract mappings string from payload
-        let mappings_value = match payload.mappings(global)? {
-            SourceMapMappings::Text(mappings_value) => mappings_value,
-            SourceMapMappings::Flag(true) => bstring::String::static_("true"),
-            SourceMapMappings::Symbol(_) => {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "The \"mappings\" property must be of type string. Received a symbol"
-                )));
-            }
-            SourceMapMappings::Missing | SourceMapMappings::Flag(false) => {
-                return Err(global
-                    .throw_invalid_arguments(format_args!("payload 'mappings' must be a string")));
-            }
+        let Some(mappings_value) = payload.get_stringish_allow_empty(global, b"mappings")? else {
+            return Err(
+                global.throw_invalid_arguments(format_args!("payload 'mappings' must be a string"))
+            );
         };
 
         let mappings_str = mappings_value.to_utf8();
@@ -131,16 +127,16 @@ impl JSSourceMap {
         let mut names: Vec<bstring::String> = Vec::new();
         let mut sources: Vec<bstring::String> = Vec::new();
 
-        if let Some(sources_value) = payload.sources(global)? {
-            let mut iter = sources_value.to_js().array_iterator(global)?;
+        if let Some(sources_value) = payload.get_array(global, b"sources")? {
+            let mut iter = sources_value.array_iterator(global)?;
             while let Some(source) = iter.next()? {
                 let source_str = source.to_bun_string(global)?;
                 sources.push(source_str);
             }
         }
 
-        if let Some(names_value) = payload.names(global)? {
-            let mut iter = names_value.to_js().array_iterator(global)?;
+        if let Some(names_value) = payload.get_array(global, b"names")? {
+            let mut iter = names_value.array_iterator(global)?;
             while let Some(name) = iter.next()? {
                 let name_str = name.to_bun_string(global)?;
                 names.push(name_str);
@@ -182,9 +178,9 @@ impl JSSourceMap {
         );
 
         let global = cx.global();
-        js::payload_set_cached(this_value.to_js(), global, payload.object().to_js());
-        if let Some(line_lengths) = line_lengths {
-            js::line_lengths_set_cached(this_value.to_js(), global, line_lengths.to_js());
+        js::payload_set_cached(this_value.to_js(), global, payload);
+        if !line_lengths.is_empty() {
+            js::line_lengths_set_cached(this_value.to_js(), global, line_lengths);
         }
 
         Ok(this_value)

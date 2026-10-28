@@ -3,17 +3,15 @@ use core::ffi::{c_int, c_void};
 use core::ptr::null_mut;
 use std::collections::VecDeque;
 
-use bun_jsc::bindgen::{Callable, Deferred, JsLocal, JsPayload as _, JsScope, JsWrapper};
+use bun_jsc::bindgen::{Deferred, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::{
-    ArrayBuffer, JSGlobalObject, JSObject, JSType, JSValue, JsCell, JsRef, JsResult, StringJsc,
-    Strong,
+    ArrayBuffer, JSGlobalObject, JSType, JSValue, JsCell, JsRef, JsResult, StringJsc, Strong,
 };
 use bun_lsquic_sys as lsquic;
 
-use super::endpoint::{alloc_exposed_array_buffer, read_u64_option};
+use super::endpoint::alloc_exposed_array_buffer;
 use super::ffi::lsquic_callback;
 use super::session::{H3_INTERNAL_ERROR, QuicSession, SessionEvent};
-use crate::generated_bindgen::quic::{StreamDestroyReason, Uint64Option};
 
 const QUIC_STREAM_HEADERS_KIND_HINTS: u32 = 0;
 const QUIC_STREAM_HEADERS_KIND_INITIAL: u32 = 1;
@@ -664,15 +662,12 @@ impl QuicStream {
             .set(callback.map(|cb| Strong::create(cb.to_js(), global)));
     }
 
-    pub(crate) fn pull(
-        &self,
-        cx: &mut JsScope<'_>,
-        callback: Option<JsLocal<'_, Callable>>,
-    ) -> JsResult<()> {
+    pub(crate) fn pull(&self, cx: &mut JsScope<'_>, callback: JsLocal<'_>) -> JsResult<()> {
         let global = cx.global();
-        let Some(callback) = callback else {
+        let cb = callback.to_js();
+        if !cb.is_callable() {
             return Ok(());
-        };
+        }
         let (status, buffer) = self.inbound.with_mut(|inbound| {
             if inbound.errored {
                 (PULL_STATUS_ERROR, None)
@@ -698,7 +693,7 @@ impl QuicStream {
         let vm = global.bun_vm().as_mut();
         vm.event_loop_ref().run_callback(
             bun_event_loop::ContextId::NONE,
-            callback.to_js(),
+            cb,
             global,
             JSValue::UNDEFINED,
             &[JSValue::js_number(status), buffer_js],
@@ -793,21 +788,19 @@ impl QuicStream {
         self.kick_write();
     }
 
-    pub(crate) fn destroy(
-        &self,
-        cx: &mut JsScope<'_>,
-        error: StreamDestroyReason<'_>,
-    ) -> JsResult<()> {
+    pub(crate) fn destroy(&self, cx: &mut JsScope<'_>, error: JsLocal<'_>) -> JsResult<()> {
         let global = cx.global();
         if self.destroyed.get() {
             return Ok(());
         }
-        let cascading = matches!(error, StreamDestroyReason::Cascading(true));
-        let code = match error {
-            StreamDestroyReason::Error(error) => error_code_arg(error.code(global)?),
-            StreamDestroyReason::Number(code) => error_code_arg(Uint64Option::Number(code)),
-            StreamDestroyReason::BigInt(code) => error_code_arg(Uint64Option::BigInt(code)),
-            StreamDestroyReason::Cascading(_) | StreamDestroyReason::Other => 0,
+        let arg = error.to_js();
+        let cascading = arg.is_boolean() && arg.to_boolean();
+        let code = if arg.is_object() {
+            arg.get(global, "code")?.map(error_code_arg).unwrap_or(0)
+        } else if arg.is_boolean() {
+            0
+        } else {
+            error_code_arg(arg)
         };
         let write_done = self.with_state(|s| s.fin_sent != 0 || s.write_ended != 0);
         if !cascading {
@@ -846,11 +839,11 @@ impl QuicStream {
         Ok(())
     }
 
-    pub(crate) fn reset_stream(&self, _: &mut JsScope<'_>, code: Uint64Option) {
+    pub(crate) fn reset_stream(&self, _: &mut JsScope<'_>, code: JsLocal<'_>) {
         if self.destroyed.get() {
             return;
         }
-        let code = error_code_arg(code);
+        let code = error_code_arg(code.to_js());
         self.with_state(|s| {
             s.write_ended = 1;
             s.reset = 1;
@@ -866,11 +859,11 @@ impl QuicStream {
         self.kick_write();
     }
 
-    pub(crate) fn stop_sending(&self, _: &mut JsScope<'_>, code: Uint64Option) {
+    pub(crate) fn stop_sending(&self, _: &mut JsScope<'_>, code: JsLocal<'_>) {
         if self.destroyed.get() {
             return;
         }
-        let code = error_code_arg(code);
+        let code = error_code_arg(code.to_js());
         if let Some(s) = self.ls() {
             s.stop_sending(code);
         }
@@ -889,16 +882,18 @@ impl QuicStream {
     pub(crate) fn abort_for_destroy(
         &self,
         _: &mut JsScope<'_>,
-        stop_sending_code: Uint64Option,
-        reset_code: Uint64Option,
+        stop_sending_code: JsLocal<'_>,
+        reset_code: JsLocal<'_>,
     ) {
         if self.destroyed.get() {
             return;
         }
-        let stop = (!matches!(stop_sending_code, Uint64Option::Missing))
+        let stop_sending_code = stop_sending_code.to_js();
+        let reset_code = reset_code.to_js();
+        let stop = (!stop_sending_code.is_empty_or_undefined_or_null())
             .then(|| error_code_arg(stop_sending_code));
         let reset =
-            (!matches!(reset_code, Uint64Option::Missing)).then(|| error_code_arg(reset_code));
+            (!reset_code.is_empty_or_undefined_or_null()).then(|| error_code_arg(reset_code));
         if let Some(code) = stop {
             self.inbound.with_mut(|i| i.ended = true);
             self.with_state(|s| {
@@ -959,20 +954,18 @@ impl QuicStream {
         &self,
         cx: &mut JsScope<'_>,
         kind: Deferred<'_, i32>,
-        headers: Option<JsLocal<'_, JSObject>>,
+        headers: JsLocal<'_>,
         flags: Deferred<'_, i32>,
     ) -> JsResult<bool> {
         let global = cx.global();
         if self.destroyed.get() {
             return Ok(false);
         }
+        let headers = headers.to_js();
         // `buildNgHeaderString` returns [nul-joined string, pair count]; the
         // count is what keeps the latin1 encode below unspliceable.
-        let (header_string, header_count) = match headers.map(JsLocal::to_js) {
-            Some(headers) => (headers.get_index(global, 0)?, headers.get_index(global, 1)?),
-            None => (JSValue::UNDEFINED, JSValue::UNDEFINED),
-        };
-        let header_count = header_count.coerce_to_i32(global)?;
+        let header_string = headers.get_index(global, 0)?;
+        let header_count = headers.get_index(global, 1)?.coerce_to_i32(global)?;
         // Latin-1 on the wire, as node does (`StringBytes::Write(.., LATIN1)`).
         use crate::webcore::encoding::BunStringEncode as _;
         let bytes = bun_core::String::from_js(header_string, global)?
@@ -1009,8 +1002,14 @@ impl QuicStream {
     }
 }
 
-fn error_code_arg(value: Uint64Option) -> u64 {
-    read_u64_option(value).unwrap_or(0)
+fn error_code_arg(value: JSValue) -> u64 {
+    if value.is_number() {
+        value.as_number().max(0.0) as u64
+    } else if value.is_big_int() {
+        value.to_uint64_no_truncate()
+    } else {
+        0
+    }
 }
 
 pub(super) unsafe extern "C" fn on_new_stream(

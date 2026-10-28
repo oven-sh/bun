@@ -65,14 +65,9 @@ export const FileSystemRouter = b.class({
   },
 });
 
-/** The name of a built-in style, or a function that is one. */
-export const FrameworkRouterStyle = b.union(
-  { name: b.string.allowStringObject.utf8.owned, callback: b.callable, other: b.ignored },
-  { fromJS: true },
-);
 /** A missing `root` is reported before `style` is read. */
 export const FrameworkRouterOptions = b.dictionary(
-  { root: b.string.loose.utf8.owned.nullable, style: FrameworkRouterStyle },
+  { root: b.string.loose.utf8.owned.nullable, style: b.opaque },
   { deferred: true },
 );
 

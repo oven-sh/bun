@@ -29,8 +29,8 @@ export const SocketHandler = b.dictionary(
 );
 
 export const SocketOptionsTLS = b.union({
-  missing: b.null,
-  flag: b.bool,
+  none: b.null,
+  boolean: b.bool,
   object: TLSOptions,
 });
 
@@ -54,9 +54,6 @@ export const SocketOptions = b.dictionary(
   },
   { fromJS: true },
 );
-
-/** What `reload()` of a socket or a listener takes. `socket` is read as `SocketHandler`. */
-export const SocketReloadOptions = b.dictionary({ socket: b.opaque.optional }, { deferred: true });
 
 /** The `tls` object, read for the `SecureContext` in it. `TLSOptions` reads the rest. */
 export const PrebuiltTLSOptions = b.dictionary(

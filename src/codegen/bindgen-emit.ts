@@ -13,7 +13,6 @@ import {
   ClassType,
   Constant,
   Conversion,
-  ConvertedByBodyType,
   cppEmplace,
   cppReturnIfFailed,
   DefaultType,
@@ -101,8 +100,6 @@ export interface SchemaFile {
   /** Those of `namespaces` too. */
   functions: FunctionDefinition[];
   namespaces: NamespaceDefinition[];
-  /** `b.conversion`. */
-  conversions: Conversion[];
 }
 
 export interface Tables {
@@ -139,12 +136,11 @@ const signaturesOf = (file: SchemaFile): Signature[] => [
 
 /** The conversions the file's Rust calls. Each function that has an argument has its own for it. */
 const conversionsOf = (file: SchemaFile): Conversion[] => [
-  ...file.conversions,
   ...file.types.flatMap(type =>
     (type instanceof DeferredDictionaryType || type instanceof UnionType) && type.accepted ? type.conversions : [],
   ),
   ...signaturesOf(file).flatMap(({ args }) =>
-    args.flatMap(({ type }) => (type instanceof ConvertedByBodyType && type.conversion ? [type.conversion] : [])),
+    args.flatMap(({ type }) => (type instanceof DeferredType && type.conversion ? [type.conversion] : [])),
   ),
 ];
 
@@ -168,7 +164,6 @@ function nameConversions(file: SchemaFile): void {
   );
   const bySource = new Map<string, Conversion[]>();
   for (const conversion of conversionsOf(file)) {
-    if (conversion.exported) continue;
     Object.assign(conversion, { symbol: "", rustName: "", sharedWith: [] });
     const { expected } = conversion;
     const source = [
@@ -217,7 +212,6 @@ export function analyze(files: readonly SchemaFile[]): Tables {
   const markAccepted = (type: Type) => walk(type, t => void (t instanceof NamedType && (t.accepted = true)));
   const markReturned = (type: Type) => walk(type, t => void (t instanceof NamedType && (t.returned = true)));
   for (const file of files) {
-    for (const conversion of file.conversions) markAccepted(conversion.type);
     for (const type of file.types) {
       // `Name::new` wraps an object that Rust found, so no signature has to name it.
       if (type.fromJS || type instanceof DeferredDictionaryType) markAccepted(type);
@@ -766,7 +760,7 @@ const cppContext = (i: number, type: Type, expected: Conversion["expected"], val
       : `ctx${i}`;
 
 const qualifiedName = (type: DictionaryType | DeferredDictionaryType, member: Member) =>
-  type.reportedAs ? `${type.reportedAs}.${member.name}` : member.name;
+  member.reportedAs ?? (type.reportedAs ? `${type.reportedAs}.${member.name}` : member.name);
 
 /**
  * Declares `value`, read from the names of `member`, the first of which is at `nameIndex`: through `members`, or,
@@ -1986,7 +1980,6 @@ export function cppSource(file: SchemaFile, guards: Guards): string {
       if (signature.cppInlineBody) headers.add(signature.cppInlineBody.header);
     }
   }
-  for (const conversion of file.conversions) conversion.type.getHeaders(headers);
   for (const type of file.types) {
     if (!(type instanceof ClassType)) continue;
     for (const used of type.signatureTypes) used.getHeaders(headers);
@@ -2161,30 +2154,33 @@ ${indent(body, 12)}
 }
 `;
 
-function rustForConversion(
-  { symbol, rustName, type, exported, member, sharedWith }: Conversion,
-  scope: RustScope,
-): string {
-  const converted = type.rustFromExtern("result.assume_init()", scope);
-  const ofUndefined = member ? null : type.rustOfUndefined(scope);
-  const declaration = `fn ${exported ? "convert_" : ""}${rustName}<'a>(cx: &mut bindgen::JsScope<'a>, value: JSValue${sharedWith ? ", index: u32" : ""})`;
-  return `${
-    exported
-      ? `
-#[inline]
-pub fn ${rustName}<'a, T>(global: &JSGlobalObject, value: bindgen::JsLocal<'a, T>) -> bun_jsc::JsResult<${type.rustType(scope)}> {
-    bindgen::convert_with(global, value, convert_${rustName})
-}`
-      : ""
+/** Returns what `value` converts to, for the kinds that Rust tells by itself and `type` needs no C++ to convert. */
+function rustConversionWithoutCpp(type: Type, scope: RustScope): string {
+  const tests = new Map<string, string[]>();
+  const kinds = { ...kindTests, object: { inRust: (value: string) => `${value}.is_object()` } };
+  for (const kind of Object.keys(kinds) as (keyof typeof kinds)[]) {
+    const { inRust } = kinds[kind];
+    const ofKind = inRust && type.rustOfKind(kind, "value", scope);
+    if (!ofKind) continue;
+    tests.set(ofKind.converted, [...(tests.get(ofKind.converted) ?? []), ofKind.test ?? inRust("value")]);
   }
+  const statements = [...tests].map(([converted, of]) => `if ${of.join(" || ")} {\n    return Ok(${converted});\n}\n`);
+  if (!statements.some(statement => /\bheap\b/.test(statement))) return statements.join("");
+  return `{\n    let heap = &cx.heap;\n${indent(statements.join(""), 4)}}\n`;
+}
+
+function rustForConversion({ symbol, rustName, type, member, sharedWith }: Conversion, scope: RustScope): string {
+  const converted = type.rustFromExtern("result.assume_init()", scope);
+  const withoutCpp = member ? "" : rustConversionWithoutCpp(type, scope);
+  return `
 unsafe extern "C" {
     fn ${symbol}(global: *mut JSGlobalObject, value: JSValue, ${sharedWith ? "index: u32, " : ""}result: *mut ${type.rustExternType(scope)}) -> bool;
 }
-${declaration} -> bindgen::Result<'a, ${type.rustType(scope)}> {
+fn ${rustName}<'a>(cx: &mut bindgen::JsScope<'a>, value: JSValue${sharedWith ? ", index: u32" : ""}) -> bindgen::Result<'a, ${type.rustType(scope)}> {
     let mut result = core::mem::MaybeUninit::<${type.rustExternType(scope)}>::uninit();
     // SAFETY: C++ fills \`result\` exactly when it returns true, and the call \`cx\` belongs to holds \`value\`.
     unsafe {
-${ofUndefined ? `        if value.is_undefined() {\n            return Ok(${ofUndefined});\n        }\n` : ""}        bindgen::call_conversion(cx, |global| ${symbol}(global, value, ${sharedWith ? "index, " : ""}result.as_mut_ptr()))?;
+${indent(withoutCpp, 8)}        bindgen::call_conversion(cx, |global| ${symbol}(global, value, ${sharedWith ? "index, " : ""}result.as_mut_ptr()))?;
 ${/\bheap\b/.test(converted) ? "        let heap = &cx.heap;\n" : ""}        ${type.rustFromExternThrows ? converted : `Ok(${converted})`}
     }
 }

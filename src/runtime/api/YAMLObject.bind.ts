@@ -1,5 +1,4 @@
 import * as b from "../../codegen/bindgen-lib.ts";
-import { StringifySpace } from "./JSON5Object.bind.ts";
 
 export default b.module({ rustPath: "crate::api::yaml_object" });
 
@@ -19,9 +18,8 @@ export const YAML = b.namespace({
     throws: true,
   },
   stringify: {
-    args: { value: b.opaque, replacer: b.opaque.nullable, space: StringifySpace },
-    length: 3,
-    returns: b.string.local.optional,
+    args: { value: b.opaque, replacer: b.opaque, space: b.opaque },
+    returns: b.opaque,
     capability: "js",
     throws: true,
   },

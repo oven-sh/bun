@@ -1,3 +1,23 @@
+pub(crate) fn fetch_type_error_string(value: bun_jsc::JSValue) -> &'static str {
+    if value.is_undefined() {
+        "fetch() expects a string, but received Undefined"
+    } else if value.is_null() {
+        "fetch() expects a string, but received Null"
+    } else if value.is_boolean() {
+        "fetch() expects a string, but received Boolean"
+    } else if value.is_number() {
+        "fetch() expects a string, but received Number"
+    } else if value.is_symbol() {
+        "fetch() expects a string, but received Symbol"
+    } else if value.is_big_int() {
+        "fetch() expects a string, but received BigInt"
+    } else if value.is_string_literal() {
+        "fetch() expects a string, but received String"
+    } else {
+        "fetch() expects a string, but received Object"
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Re-export: FetchTasklet lives in ./fetch/FetchTasklet.rs
 // ──────────────────────────────────────────────────────────────────────────
@@ -721,12 +741,10 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
         let objects_to_try = [options_object, request_init_object];
 
         for obj in objects_to_try.into_iter().flatten() {
-            if let Some(redirect_value) = crate::webcore::request::optional_enum::<FetchRedirect>(
-                global_this,
-                obj.redirect(global_this)?,
-                "redirect",
-            )? {
-                break 'extract_redirect_type redirect_value;
+            if let Some(redirect_value) = obj.redirect(global_this)? {
+                break 'extract_redirect_type redirect_value
+                    .to_js()
+                    .to_enum::<FetchRedirect>(global_this, "redirect")?;
             }
         }
 
@@ -1546,7 +1564,7 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
                 credentials_with_options = <s3::S3Credentials>::get_credentials_with_options(
                     &credentials_with_options.credentials,
                     Default::default(),
-                    Some(s3_options),
+                    Some(s3_options.to_js()),
                     None,
                     None,
                     false,

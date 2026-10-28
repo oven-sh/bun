@@ -14,7 +14,6 @@ use bstr::BStr;
 use crate::bake;
 use crate::bake::router::PatternBuffer;
 use crate::bake::router::{self, FrameworkRouter, OpaqueFileId};
-use crate::generated_bindgen::server::BakeApp;
 use bun_alloc::Arena;
 use bun_bundler::BundleV2;
 use bun_bundler::Transpiler;
@@ -403,10 +402,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 ))));
             };
 
-            BakeApp::from_js(global, app, |app| {
-                crate::bake::UserOptions::from_js(app, global)
-            })
-            .map_err(js_err)?
+            crate::bake::UserOptions::from_js(app, global).map_err(js_err)?
         }
         Unwrapped::Rejected(err) => {
             return Err(js_err(global.throw_value(err.to_error().unwrap_or(err))));

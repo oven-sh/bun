@@ -1,10 +1,58 @@
-//! Bridge for `CompileTarget`.
+//! `from_js` bridges for `bun.options.{Target,Format,Loader}` and `CompileTarget`.
 //! Keeps `src/bundler/` free of `JSValue`/`JSGlobalObject` references.
 
+// `bun_bundler::options` re-exports `Target`/`Loader` but not `Format`; pull it
+// from the lower-tier source crate directly.
 use bun_options_types::compile_target::CompileTarget;
 
-use crate::{JSGlobalObject, JsResult};
+use crate::{JSGlobalObject, JSValue, JsResult};
 
+pub fn loader_from_js(
+    global: &JSGlobalObject,
+    loader: JSValue,
+) -> JsResult<Option<bun_ast::Loader>> {
+    if loader.is_undefined_or_null() {
+        return Ok(None);
+    }
+
+    if !loader.is_string() {
+        return Err(global.throw_invalid_arguments(format_args!("loader must be a string")));
+    }
+
+    let loader_str = loader.to_js_string_view(global)?;
+    if loader_str.is_empty() {
+        return Ok(None);
+    }
+
+    let slice = loader_str.to_utf8();
+
+    let Some(v) = bun_ast::Loader::from_string(slice.slice()) else {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "invalid loader - must be js, jsx, tsx, ts, css, json, jsonc, json5, toml, yaml, xml, text, wasm, or md"
+        )));
+    };
+    // These are valid `Loader` variants for the bundler but have no source-text
+    // transform; letting them through hits `parse_unsupported_loader` and aborts.
+    if matches!(
+        v,
+        bun_ast::Loader::File
+            | bun_ast::Loader::Napi
+            | bun_ast::Loader::Base64
+            | bun_ast::Loader::Dataurl
+            | bun_ast::Loader::Bunsh
+            | bun_ast::Loader::Sqlite
+            | bun_ast::Loader::SqliteEmbedded
+            | bun_ast::Loader::Html
+    ) {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "loader \"{}\" is not supported in Bun.Transpiler",
+            bstr::BStr::new(slice.slice()),
+        )));
+    }
+    Ok(Some(v))
+}
+
+// ── CompileTarget ──────────────────────────────────────────────────────────
 pub fn compile_target_from_slice(
     global: &JSGlobalObject,
     slice_with_bun_prefix: &[u8],

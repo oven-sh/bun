@@ -3,7 +3,7 @@
 //! transport: `upgradeNodeHTTPResponseToWebSocket` / `sendWebSocketFrame`.
 
 use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_jsc::{JSObject, JSValue, JsResult};
+use bun_jsc::{JSValue, JsResult};
 use bun_uws_sys::Opcode;
 use bun_uws_sys::response::PerMessageDeflateParams;
 
@@ -50,7 +50,7 @@ pub(crate) fn upgrade_node_http_response_to_web_socket<'a>(
     cx: &mut JsScope<'a>,
     response: Option<&NodeHTTPResponse>,
     websocket: JsLocal<'a>,
-    handlers: Option<JsLocal<'a, JSObject>>,
+    handlers: JsLocal<'a>,
     handshake: &[u8],
     max_payload: u32,
     flags: i32,
@@ -78,7 +78,7 @@ pub(crate) fn upgrade_node_http_response_to_web_socket<'a>(
     response.upgrade_for_ws_package(
         global,
         websocket.to_js(),
-        handlers,
+        handlers.to_js(),
         handshake,
         max_payload,
         flags & AUTO_PONG != 0,

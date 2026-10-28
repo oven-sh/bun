@@ -102,7 +102,7 @@ export const UDPSocket = b.class({
   },
 });
 
-/** `options` is what `UDPSocketConfig` takes. Returns a promise of the socket. */
+/** Resolves to the socket. */
 export const udpSocket = b.fn({
   ...js,
   args: { options: UDPSocketOptions.otherAsNull },

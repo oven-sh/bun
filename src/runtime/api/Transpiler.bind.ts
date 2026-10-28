@@ -2,10 +2,8 @@ import * as b from "../../codegen/bindgen-lib.ts";
 import * as table from "../../codegen/builtins/lib.ts";
 
 const flag = b.bool.loose.optional;
-/** The `toString()` of a `String` object has to run after the code is copied, or after the options are read. */
-const stringObject = b.string.allowStringObject.deferred;
-export const TranspilerLoader = b.union({ missing: b.null, name: b.string.view, stringObject, other: b.ignored });
-const loader = TranspilerLoader;
+/** `b.opaque`: a `String` object's `toString()` has to run after the code is copied. */
+const loader = b.opaque;
 
 export const TranspilerExternal = b.union({
   name: b.string.allowStringObject,
@@ -27,24 +25,15 @@ export const TranspilerExports = b.dictionary(
   { allowArray: true },
 );
 
-/** What is neither a string nor an array is stringified. */
-export const TranspilerTSConfig = b.union({ list: b.jsArray, text: b.string, stringObject, other: b.opaque });
-export const TranspilerMacros = b.union({
-  enabled: b.bool,
-  text: b.string,
-  json: b.object,
-  other: b.ignored,
-});
-
 /** `define` is a record. `tsconfig` and `macro` are a JSON string or an object to stringify. */
 export const TranspilerOptions = b.dictionary(
   {
     define: b.opaque.emptyStringAsNull,
     external: TranspilerExternal.nullable,
-    loader: TranspilerLoader,
+    loader: b.opaque,
     target: b.string.utf8.optional,
-    tsconfig: TranspilerTSConfig.nullable,
-    macro: TranspilerMacros.emptyStringAsNull,
+    tsconfig: b.opaque,
+    macro: b.opaque.emptyStringAsNull,
     autoImportJSX: flag,
     allowBunRuntime: flag,
     inline: { type: flag, rustName: "inlining" },
@@ -63,17 +52,7 @@ export const TranspilerOptions = b.dictionary(
 );
 
 const code = b.bytes({ from: ["string", "buffer"], string: "asIs", held: "handle" });
-/** `scan` and `scanImports` make their result while the arena that holds its strings is alive. */
 const method = { returns: b.object, capability: "js", throws: true, length: 2 } as const;
-
-export const LoaderOrContext = b.union({
-  missing: b.null,
-  name: b.string.view,
-  number: b.f64,
-  stringObject,
-  context: b.object,
-  other: b.ignored,
-});
 const expected = (name: string) => ({ code: `Expected code to be a string or Uint8Array for '${name}'.` });
 const listOfNames = b.object.returning(table.plainData.fresh.spec);
 const promiseOfText = table.instance("Promise").holding({ value: table.string, reason: table.any }).fresh;
@@ -106,7 +85,7 @@ export const Transpiler = b.class({
     },
     transformSync: {
       ...method,
-      args: { code, loaderOrContext: LoaderOrContext, context: b.opaque },
+      args: { code, loaderOrContext: b.opaque, context: b.opaque },
       expected: expected("transformSync"),
       returns: b.string.local,
     },

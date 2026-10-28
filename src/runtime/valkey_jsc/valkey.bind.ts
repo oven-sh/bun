@@ -1,26 +1,6 @@
 import * as b from "../../codegen/bindgen-lib.ts";
-import { BuildArtifact } from "../api/JSBundler.bind.ts";
-import { SocketOptionsTLS } from "../socket/SocketConfig.bind.ts";
-import { Blob } from "../webcore/Blob.bind.ts";
 
-/**
- * What goes on the wire as one bulk string. Each command refuses `other` in its own words, and refuses or skips `missing`.
- * It only tells kinds apart: `toString` of a `String` object runs when the command gets to that argument.
- */
-export const RedisArgument = b.union(
-  {
-    missing: b.null,
-    number: b.f64,
-    buffer: b.bufferSource.allowShared,
-    string: b.stringLike,
-    blob: Blob,
-    buildArtifact: BuildArtifact,
-    other: b.ignored,
-  },
-  { fromJS: true },
-);
-
-/** `...name` is the rest. `rustName` only where the struct already has the snake_case name. */
+/** `...name` is variadic. `rustName` only where the struct already has the snake_case name. */
 const commands: Record<string, readonly [args: readonly string[], length: number, rustName?: string]> = {
   append: [["key", "value"], 0],
   bitcount: [["key"], 0],
@@ -44,12 +24,13 @@ const commands: Record<string, readonly [args: readonly string[], length: number
   debug: [["...args"], 1],
   decr: [["key"], 1],
   decrby: [["key", "decrement"], 2],
-  del: [["key", "...args"], 1],
+  del: [["...args"], 1],
   dump: [["key"], 0],
   echo: [["message"], 1],
   eval: [["...args"], 2],
   evalsha: [["...args"], 2],
   exists: [["key"], 1],
+  expire: [["key", "seconds"], 2],
   expireat: [["key", "timestamp"], 2],
   expiretime: [["key"], 0],
   fcall: [["...args"], 2],
@@ -69,7 +50,7 @@ const commands: Record<string, readonly [args: readonly string[], length: number
   getex: [["...args"], 0],
   getrange: [["key", "start", "end"], 3],
   getset: [["key", "value"], 0],
-  hdel: [["key", "...args"], 2],
+  hdel: [["...args"], 2],
   hexists: [["key", "field"], 2],
   hexpire: [["...args"], 3],
   hexpireat: [["...args"], 3],
@@ -78,15 +59,20 @@ const commands: Record<string, readonly [args: readonly string[], length: number
   hgetall: [["key"], 0],
   hgetdel: [["...args"], 2],
   hgetex: [["...args"], 2],
+  hincrby: [["key", "field", "increment"], 3],
+  hincrbyfloat: [["key", "field", "increment"], 3],
   hkeys: [["key"], 0],
   hlen: [["key"], 0],
+  hmget: [["key", "...fields"], 2],
+  hmset: [["key", "...fields"], 2],
   hpersist: [["...args"], 2],
   hpexpire: [["...args"], 3],
   hpexpireat: [["...args"], 3],
   hpexpiretime: [["...args"], 2],
   hpttl: [["...args"], 2],
-  hrandfield: [["key", "...args"], 1],
-  hscan: [["key", "...args"], 2],
+  hrandfield: [["...args"], 1],
+  hscan: [["...args"], 2],
+  hset: [["key", "...fields"], 2],
   hsetex: [["...args"], 3],
   hsetnx: [["key", "field", "value"], 3],
   hstrlen: [["key", "field"], 0],
@@ -104,7 +90,7 @@ const commands: Record<string, readonly [args: readonly string[], length: number
   llen: [["key"], 0],
   lmove: [["...args"], 4],
   lmpop: [["...args"], 2],
-  lpop: [["key", "...args"], 0],
+  lpop: [["...args"], 0],
   lpos: [["...args"], 2],
   lpush: [["...args"], 0],
   lpushx: [["...args"], 0],
@@ -112,7 +98,7 @@ const commands: Record<string, readonly [args: readonly string[], length: number
   lrem: [["key", "count", "element"], 3],
   lset: [["key", "index", "element"], 3],
   ltrim: [["key", "start", "stop"], 3],
-  mget: [["key", "...args"], 0],
+  mget: [["...args"], 0],
   mset: [["...args"], 0],
   msetnx: [["...args"], 0],
   object: [["...args"], 2],
@@ -123,15 +109,17 @@ const commands: Record<string, readonly [args: readonly string[], length: number
   pfadd: [["key", "element"], 0],
   pfcount: [["...args"], 1],
   pfmerge: [["...args"], 1],
+  ping: [["message"], 0],
   psetex: [["key", "milliseconds", "value"], 3],
   psubscribe: [["...args"], 0],
   pttl: [["key"], 0],
+  publish: [["channel", "message"], 0],
   pubsub: [["...args"], 0],
   punsubscribe: [["...args"], 0],
   randomkey: [[], 0],
   rename: [["key", "newkey"], 2],
   renamenx: [["key", "newkey"], 2],
-  rpop: [["key", "...args"], 0],
+  rpop: [["...args"], 0],
   rpoplpush: [["source", "destination"], 2],
   rpush: [["...args"], 0],
   rpushx: [["...args"], 0],
@@ -142,6 +130,7 @@ const commands: Record<string, readonly [args: readonly string[], length: number
   sdiff: [["...args"], 1],
   sdiffstore: [["...args"], 2],
   select: [["...args"], 0],
+  send: [["command", "args"], 2, "js_send"],
   set: [["key", "value", "...options"], 2],
   setbit: [["key", "offset", "value"], 3],
   setex: [["key", "seconds", "value"], 3],
@@ -161,14 +150,16 @@ const commands: Record<string, readonly [args: readonly string[], length: number
   srem: [["key", "...members"], 2],
   sscan: [["...args"], 2],
   strlen: [["key"], 0],
+  subscribe: [["channel", "listener"], 0],
   substr: [["key", "start", "end"], 0],
   sunion: [["...args"], 1],
   sunionstore: [["...args"], 2],
   time: [[], 0],
-  touch: [["key", "...args"], 0],
+  touch: [["...args"], 0],
   ttl: [["key"], 1],
   type: [["key"], 1],
-  unlink: [["key", "...args"], 0],
+  unlink: [["...args"], 0],
+  unsubscribe: [["...args"], 0],
   wait: [["numreplicas", "timeout"], 2],
   xack: [["...args"], 3],
   xadd: [["...args"], 3],
@@ -197,57 +188,36 @@ const commands: Record<string, readonly [args: readonly string[], length: number
   zlexcount: [["key", "min", "max"], 3],
   zmpop: [["...args"], 2],
   zmscore: [["...args"], 0],
-  zpopmax: [["key", "...args"], 0],
-  zpopmin: [["key", "...args"], 0],
-  zrandmember: [["key", "...args"], 0],
+  zpopmax: [["...args"], 0],
+  zpopmin: [["...args"], 0],
+  zrandmember: [["...args"], 0],
   zrange: [["...args"], 3],
-  zrangebylex: [["key", "...args"], 3],
+  zrangebylex: [["...args"], 3],
   zrangebyscore: [["...args"], 3],
   zrangestore: [["...args"], 4],
-  zrank: [["key", "...args"], 0],
-  zrem: [["key", "...args"], 2],
+  zrank: [["...args"], 0],
+  zrem: [["...args"], 2],
   zremrangebylex: [["key", "min", "max"], 3],
   zremrangebyrank: [["key", "start", "stop"], 3],
   zremrangebyscore: [["key", "min", "max"], 3],
   zrevrange: [["...args"], 3],
-  zrevrangebylex: [["key", "...args"], 3],
+  zrevrangebylex: [["...args"], 3],
   zrevrangebyscore: [["...args"], 3],
-  zrevrank: [["key", "...args"], 0],
+  zrevrank: [["...args"], 0],
   zscan: [["...args"], 2],
   zscore: [["key", "member"], 0],
   zunion: [["...args"], 2],
   zunionstore: [["...args"], 3],
 };
 
-const argument = (name: string): [string, b.Type] =>
-  name.startsWith("...") ? [name.slice(3), b.rest(RedisArgument)] : [name, RedisArgument];
+const args = (names: readonly string[]): Record<string, b.Type> =>
+  Object.fromEntries(
+    names.map(name => (name.startsWith("...") ? [name.slice(3), b.rest(b.opaque)] : [name, b.opaque])),
+  );
 
+const promise = b.opaque.returning("Promise");
 /** A command that cannot be sent answers the error and does not throw it. */
-const command = {
-  returns: b.opaque.returning("Promise", "Error"),
-  capability: "js",
-  throws: true,
-  passThis: true,
-} as const;
-const key = RedisArgument;
-/** `ToString` comes after the command has looked at the state of the client. */
-const text = b.string.loose.deferred;
-
-const integerOption = b.u32.validateIntegerRange().nanAs(0).optional;
-export const RedisOptions = b.dictionary(
-  {
-    idleTimeout: integerOption,
-    connectionTimeout: integerOption,
-    autoReconnect: b.bool.loose.optional,
-    maxRetries: integerOption,
-    enableOfflineQueue: b.bool.loose.optional,
-    enableAutoPipelining: b.bool.loose.optional,
-    tls: { type: SocketOptionsTLS, expected: "Expected tls to be a boolean or object for 'tls'." },
-  },
-  { allowArray: true, reportedAs: "" },
-);
-
-const hashSet = { ...command, args: { key: text, fields: b.rest(b.opaque) }, length: 2 } as const;
+const promiseOrError = b.opaque.returning("Promise", "Error");
 
 const eventHandler = { getter: b.opaque, setter: { capability: "js" }, passThis: true } as const;
 
@@ -258,8 +228,7 @@ export const RedisClient = b.class({
   memoryCost: true,
   construct: {
     passStructure: true,
-    /** What is wrong with `url` is reported first. */
-    args: { url: b.string.loose.utf8.nullable, options: RedisOptions.otherAsNull.deferred },
+    args: { url: b.opaque, options: b.opaque },
     capability: "js",
     throws: true,
     length: 0,
@@ -273,9 +242,11 @@ export const RedisClient = b.class({
           [
             name,
             {
-              ...command,
-              returns: name === "connect" ? b.promise : command.returns,
-              args: Object.fromEntries(names.map(argument)),
+              args: args(names),
+              returns: name === "connect" ? promise : promiseOrError,
+              capability: "js",
+              throws: true,
+              passThis: true,
               length,
               rustName,
             },
@@ -284,56 +255,9 @@ export const RedisClient = b.class({
       ["bufferedAmount", { getter: b.usize }] as const,
       ["close", { capability: "js", throws: true }] as const,
       ["connected", { getter: b.bool, pure: true }] as const,
-      ["duplicate", { returns: b.promise, capability: "js", throws: true }] as const,
-      [
-        "expire",
-        { ...command, args: { key, seconds: b.i32.validateIntegerRange(0, 2 ** 31 - 1).deferred }, length: 2 },
-      ] as const,
-      ["hincrby", { ...command, args: { key: text, field: text, increment: text }, length: 3 }] as const,
-      ["hincrbyfloat", { ...command, args: { key: text, field: text, increment: text }, length: 3 }] as const,
-      [
-        "hmget",
-        [
-          { ...command, args: { key, fields: b.jsArray }, length: 2, rustName: "hmget_array" },
-          { ...command, args: { key, fields: b.rest(RedisArgument) } },
-        ],
-      ] as const,
-      ["hmset", hashSet] as const,
-      ["hset", hashSet] as const,
+      ["duplicate", { returns: promise, capability: "js", throws: true }] as const,
       ["onclose", eventHandler] as const,
       ["onconnect", eventHandler] as const,
-      ["ping", { ...command, args: { message: RedisArgument }, length: 0 }] as const,
-      [
-        "publish",
-        {
-          ...command,
-          args: { channel: b.string.utf8.owned.deferred, message: b.string.utf8.owned.deferred },
-          expected: {
-            channel: "Expected channel to be a string for 'publish'.",
-            message: "Expected message to be a string for 'publish'.",
-          },
-          length: 0,
-        },
-      ] as const,
-      [
-        "send",
-        {
-          ...command,
-          args: { command: b.string.loose.utf8, args: b.jsArray.otherAsNull },
-          length: 2,
-          rustName: "js_send",
-        },
-      ] as const,
-      [
-        "subscribe",
-        {
-          ...command,
-          args: { channel: b.opaque, listener: b.callable },
-          expected: { listener: "Expected listener to be a function for 'subscribe'." },
-          length: 0,
-        },
-      ] as const,
-      ["unsubscribe", { ...command, args: { args: b.rest(b.opaque) }, length: 0 }] as const,
     ].sort(([x], [y]) => x.localeCompare(y)),
   ),
 });

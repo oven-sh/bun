@@ -7,9 +7,5 @@ export const ReadableStream = b.cell("WebCore::JSReadableStream", "streams/JSRea
   tsType: "ReadableStream",
 });
 
-export const cancelOnDrain = b.fn({
-  args: { stream: ReadableStream.otherAsNull },
-  capability: "js",
-  throws: true,
-  length: 1,
-});
+/** `stream` is a `ReadableStream`, a class written in C++. */
+export const cancelOnDrain = b.fn({ args: { stream: b.opaque }, capability: "js", throws: true });

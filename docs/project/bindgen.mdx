@@ -268,6 +268,8 @@ any other: nothing looks at how many there are, except `.ifPassed`, `requiredArg
 | `b.object`                               | `JsLocal<'a, JSObject>`          | an object                                                     |
 | `b.jsArray`                              | `JsLocal<'a, JSArray>`           | an array, as itself                                           |
 | `b.promise`                              | `JsLocal<'a, JSPromise>`         | a promise, as itself                                          |
+| `b.dataView`                             | `JsLocal<'a, JSObject>`          | a `DataView`, as itself                                       |
+| `b.abortSignal`                          | `&'a AbortSignal`                | an `AbortSignal`                                              |
 | `b.stringObject`                         | `JsLocal<'a, JSObject>`          | a `String` object, not converted: that runs its `toString`    |
 | `b.stringLike`                           | `JsLocal<'a, StringLike>`        | either of the two, as itself                                  |
 | `b.jsNumber`                             | `JsLocal<'a, Number>`            | a number, as itself; `b.f64` is its value                     |
@@ -276,7 +278,7 @@ any other: nothing looks at how many there are, except `.ifPassed`, `requiredArg
 | `b.cell(class, header, options)`         | `JsLocal<'a, T>`                 | an instance of that `JSCell` class, as itself                 |
 | `b.wrapped(class, header, options)`      | `&'a T`                          | what an instance of a hand-written C++ wrapper wraps          |
 | `b.opaque`                               | `JsLocal<'a>`                    | anything; see [Opaque values](#opaque-values)                 |
-| `b.rest(T)`                              | `bindgen::Rest<'a, T>`           | this argument and every one after it; only the last argument  |
+| `b.rest(T)`                              | `&'a [T]`                        | this argument and every one after it; only the last argument  |
 | `b.null`                                 | `()`                             | `null` or `undefined`; only in a union                        |
 | `b.undefined`                            | `()`                             | `undefined`; only in a union                                  |
 | `b.ignored`                              | `()`                             | anything; only the last alternative of a union                |
@@ -382,56 +384,47 @@ export const Expected = b.union(
 
 With `fromJS: true` a dictionary or a union also converts a value that was not an argument, such as an element of an
 array the body walks: `Expected::from_local(global, value)?`, or `Size::from_js(global, value)?` for a type that holds
-no JS value. For a type without a name,
-`export const fieldText = b.conversion(b.string.loose)` makes `field_text(global, value)?` in the schema's module.
+no JS value.
 
-### Conversion in the body: `.deferred` and `b.rest`
+### Conversion in the body: `.deferred`
 
 Arguments are converted in order, before the body runs. Where something that JavaScript can see comes first (a check of
 the object's state that throws, an early return, another order), `.deferred` leaves the conversion to the body. The
 schema still says the type and the generated code still converts and reports; the body says when:
 
 ```ts
-send: { args: { command: b.string.deferred }, returns: b.promise, capability: "js", throws: true },
+close: { args: { code: b.opaque, reason: b.string.loose.utf8.owned.optional.deferred }, capability: "js", throws: true },
 ```
 
 ```rust
-pub fn send<'a>(&self, cx: &mut JsScope<'a>, command: Deferred<'a, bun_core::String>) -> bindgen::Result<'a, ..> {
+pub fn close(&self, cx: &mut JsScope<'_>, code: JsLocal<'_>, reason: Deferred<'_, Option<Utf8Bytes<'static>>>) -> JsResult<()> {
     if self.is_closed() {
-        return Err(cx.heap.error_with_code(ErrorCode::REDIS_CONNECTION_CLOSED, ..));
+        return Ok(());
     }
-    let command = command.convert(cx.global())?;
+    ..
+    let reason = reason.convert(cx.global())?;
 ```
 
 A conversion can run JavaScript, so like everything else that can it takes the `&JSGlobalObject` and returns a
-`JsResult`. `undefined` for a type with a default, or one that is `.optional`, is answered without a call into C++.
+`JsResult`. What Rust tells from the value's bits or its cell's type, and the type takes as it is, is answered without a
+call into C++: `undefined` for a type with a default or one that is `.optional`, a boolean, a number, an int32 in range, a
+handle, the object of a `deferred` dictionary.
 
 A union of a `deferred` dictionary and handles (`b.stringLike`, `b.bufferSource`) that ends in
 `b.ignored` or `b.opaque` only tells kinds apart: it runs nothing and refuses nothing, so it is not `.deferred`. It is also
 `Copy`, where a union that owns a string is dropped at every early return of every body that takes it. A union that many
-functions hand to one helper takes handles and the helper converts them, as for the commands of `RedisClient` and the
-paths of `node:fs`.
+functions hand to one helper takes handles and the helper converts them, as for the paths of `node:fs`.
 
 `.deferred` is written last, on an argument, and takes `capability: "js"`. The conversion returns before the body goes on, so
 the type cannot borrow from it: a UTF-8 string is `.owned`, and in place of `b.bytes` there is `b.bufferSource`. Each
-conversion is one more call into C++, so an argument that nothing has to come before is not deferred.
+other conversion is one more call into C++, so an argument that nothing has to come before is not deferred.
 
 It is also an alternative of a union, for a kind whose conversion JavaScript can see. The union is chosen with the other
 arguments and the body converts that one alternative:
 `b.union({ name: b.string, stringObject: b.string.allowStringObject.deferred, other: b.ignored })`.
 
-`b.rest(T)` is the arguments from there on, converted the same way:
-
-```rust
-let mut keys = Vec::with_capacity(rest.len());
-for key in rest.iter() {
-    keys.push(key.convert(global)?);
-}
-```
-
-`b.rest(b.opaque)` has nothing to convert: it is `&'a [JsLocal<'a>]`, the arguments where they are in the frame.
-`b.rest(b.string.local)` is `&'a [JsLocal<'a, JSString>]`, checked before the body runs, and an error names the one it is
-about: "paths[2]".
+`b.rest(b.opaque)` is `&'a [JsLocal<'a>]`, the arguments where they are in the frame. `b.rest(b.string.local)` is
+`&'a [JsLocal<'a, JSString>]`, checked before the body runs, and an error names the one it is about: "paths[2]".
 
 The members of a dictionary are deferred together: [`deferred: true`](#dictionaries).
 
@@ -600,8 +593,9 @@ in play apart:
 | `JSCell::isCallable`               | a function, or a proxy of one                                                  |
 | the cell's `ClassInfo`             | an instance of a class, a `Date`                                               |
 
-A handle is named for its kind, `string` for `b.stringLike` and `number` for `b.jsNumber`, and `b.ignored` is `other`. Any
-other alternative is named for its role (`path`, `encoding`, `ipv4`), or `text`, `missing`, `other` when it has none.
+An alternative is named for its role (`path`, `encoding`, `ipv4`). One without a role is named for what it is: `string` for
+a string as itself and `text` for its text, `number`, `buffer`, `list`, `options`, `flag`. `b.null` or `b.undefined` is
+`missing`, and a last `b.ignored` or `b.opaque` is `other`.
 
 A strict type takes the kinds its row under [Types](#types) says. A `b.cell` of the JSC class of a kind takes that kind:
 `b.cell("JSC::JSDataView", ..)` before `b.bufferSource` gets the `DataView`s. A type that coerces or

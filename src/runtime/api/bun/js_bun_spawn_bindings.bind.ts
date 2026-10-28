@@ -1,29 +1,9 @@
 import * as b from "../../../codegen/bindgen-lib.ts";
-import { Blob } from "../../webcore/Blob.bind.ts";
-import { Request, Response } from "../../webcore/response.bind.ts";
-import { BuildArtifact } from "../JSBundler.bind.ts";
 import { KillSignal, Subprocess } from "./subprocess.bind.ts";
 import { TerminalOptions } from "./Terminal.bind.ts";
 
 export default b.module({ rustPath: "crate::api::js_bun_spawn_bindings" });
 
-/** An element of `stdio`, or `stdin`, `stderr`, `stdout`. `stream` is a `ReadableStream`, or it is refused. */
-export const StdioValue = b.union(
-  {
-    missing: b.undefined,
-    ignore: b.null,
-    string: b.stringLike,
-    number: b.jsNumber,
-    blob: Blob.withValue,
-    buildArtifact: BuildArtifact.withValue,
-    request: Request.withValue,
-    response: Response.withValue,
-    buffer: b.bufferSource.allowShared,
-    stream: b.object,
-    other: b.ignored,
-  },
-  { fromJS: true },
-);
 const id = b.i32.validateIntegerRange().nanAs(0).nullable;
 /** A directory, open or by its path. */
 export const SpawnCgroupTarget = b.union({
@@ -49,9 +29,9 @@ export const SpawnOptionsObject = b.dictionary(
     onExit: b.callable.emptyStringAsNull,
     env: b.object.emptyStringAsNull,
     stdio: b.opaque.optional,
-    stdin: StdioValue,
-    stderr: StdioValue,
-    stdout: StdioValue,
+    stdin: b.opaque.optional,
+    stderr: b.opaque.optional,
+    stdout: b.opaque.optional,
     lazy: b.bool.otherAsNull,
     detached: b.bool.otherAsNull,
     uid: id,

@@ -1,9 +1,8 @@
 //! The Bake config: one type for both `bun index.html` (no config) and `bun ./app.ts` (an `app` export).
 
-use crate::generated_bindgen::server::{BakeApp, BakeOptions};
 use bun_alloc::Arena;
-use bun_core::ZBox;
-use bun_jsc::{JSGlobalObject, JsResult};
+use bun_core::{ZBox, strings};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
 mod bundler;
 mod defaults;
@@ -35,47 +34,49 @@ impl Drop for UserOptions {
 
 impl UserOptions {
     /// Currently, this function must run at the top of the event loop.
-    pub(crate) fn from_js(config: BakeApp<'_>, global: &JSGlobalObject) -> JsResult<UserOptions> {
+    pub(crate) fn from_js(config: JSValue, global: &JSGlobalObject) -> JsResult<UserOptions> {
         let arena = Arena::new();
         let mut bundler_options = SplitBundlerOptions::default();
 
-        let config = match config {
-            BakeApp::Options(config) => config,
+        if !config.is_object() {
             // Allow users to do `export default { app: 'react' }` for convenience
-            BakeApp::Name(bunstr) if bunstr.eq_ascii(b"react") => {
-                let root = match bun_sys::getcwd_alloc() {
-                    Ok(z) => z,
-                    Err(e) => {
-                        return Err(global.throw_error(
-                            e.to_zig_err(),
-                            "while querying current working directory",
-                        ));
-                    }
-                };
+            if config.is_string() {
+                let bunstr = config.to_bun_string(global)?;
+                let utf8_string = bunstr.to_utf8();
 
-                return Ok(UserOptions {
-                    root,
-                    framework: Framework::react(),
-                    bundler_options,
-                    arena,
-                });
-            }
-            BakeApp::Name(_) | BakeApp::Other => {
-                return Err(
-                    global.throw_invalid_arguments(format_args!("'{}' is not an object", API_NAME))
-                );
-            }
-        };
+                if strings::eql(utf8_string.slice(), b"react") {
+                    let root = match bun_sys::getcwd_alloc() {
+                        Ok(z) => z,
+                        Err(e) => {
+                            return Err(global.throw_error(
+                                e.to_zig_err(),
+                                "while querying current working directory",
+                            ));
+                        }
+                    };
 
-        if let Some(js_options) = config.bundler_options(global)? {
-            if let Some(server_options) = js_options.server {
-                bundler_options.server = BuildConfigSubset::from_js(server_options);
+                    return Ok(UserOptions {
+                        root,
+                        framework: Framework::react(),
+                        bundler_options,
+                        arena,
+                    });
+                }
             }
-            if let Some(client_options) = js_options.client {
-                bundler_options.client = BuildConfigSubset::from_js(client_options);
+            return Err(
+                global.throw_invalid_arguments(format_args!("'{}' is not an object", API_NAME))
+            );
+        }
+
+        if let Some(js_options) = config.get_optional::<JSValue>(global, "bundlerOptions")? {
+            if let Some(server_options) = js_options.get_optional::<JSValue>(global, "server")? {
+                bundler_options.server = BuildConfigSubset::from_js(global, server_options)?;
             }
-            if let Some(ssr_options) = js_options.ssr {
-                bundler_options.ssr = BuildConfigSubset::from_js(ssr_options);
+            if let Some(client_options) = js_options.get_optional::<JSValue>(global, "client")? {
+                bundler_options.client = BuildConfigSubset::from_js(global, client_options)?;
+            }
+            if let Some(ssr_options) = js_options.get_optional::<JSValue>(global, "ssr")? {
+                bundler_options.ssr = BuildConfigSubset::from_js(global, ssr_options)?;
             }
         }
 
@@ -95,12 +96,12 @@ impl UserOptions {
     }
 
     fn parse_framework_root_and_plugins(
-        config: BakeOptions<'_>,
+        config: JSValue,
         global: &JSGlobalObject,
         bundler_options: &mut SplitBundlerOptions,
     ) -> JsResult<(Framework, ZBox)> {
         let framework = Framework::from_js(
-            match config.framework(global)? {
+            match config.get(global, "framework")? {
                 Some(v) => v,
                 None => {
                     return Err(global.throw_invalid_arguments(format_args!(
@@ -113,7 +114,7 @@ impl UserOptions {
             bundler_options,
         )?;
 
-        let root = if let Some(slice) = config.root(global)? {
+        let root = if let Some(slice) = config.get_optional_slice(global, "root")? {
             // Make the root absolute because the dev server strips it off absolute file paths.
             match framework::resolve_dir_option(slice.slice()) {
                 Some(root) => ZBox::from_vec(root),
@@ -132,8 +133,8 @@ impl UserOptions {
             }
         };
 
-        if let Some(plugin_array) = config.plugins(global)? {
-            bundler_options.parse_plugin_array(plugin_array.to_js(), global)?;
+        if let Some(plugin_array) = config.get(global, "plugins")? {
+            bundler_options.parse_plugin_array(plugin_array, global)?;
         }
 
         Ok((framework, root))

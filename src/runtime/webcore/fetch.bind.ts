@@ -1,5 +1,4 @@
 import * as b from "../../codegen/bindgen-lib.ts";
-import { S3Options } from "./Blob.bind.ts";
 import { FetchSession, FetchTLS, FlagOrNumber, ProxyInit } from "./fetch/FetchSession.bind.ts";
 import { BodyInit, HeadersInit, SignalInit } from "./response.bind.ts";
 
@@ -38,14 +37,14 @@ export const FetchInit = b.dictionary(
     unix: b.opaque.optional,
     protocol: b.stringLike.otherAsNull,
     timeout: FlagOrNumber,
-    redirect: { type: b.stringLike.nullable, expected: "redirect must be a string" },
+    redirect: b.opaque.nullable,
     keepalive: FlagOrNumber,
     verbose: FetchVerbose,
     proxy: ProxyInit,
     signal: SignalInit,
     body: BodyInit,
     headers: HeadersInit,
-    s3: S3Options.otherAsNull,
+    s3: b.object.otherAsNull,
   },
   { deferred: true },
 );

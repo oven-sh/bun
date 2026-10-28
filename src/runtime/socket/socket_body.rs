@@ -5,15 +5,15 @@ use core::ffi::{c_int, c_uint, c_void};
 use core::ptr::{self, NonNull};
 
 use crate::generated_bindgen::socket_body::{
-    ALPNProtocol, AnySocket, BufferedWrite, BunSocket, CipherInfo, DuplexTLSOptions,
-    EphemeralKeyInfo, OptionalBool, SocketHandle, UpgradeTLSOptions, js_TCPSocket, js_TLSSocket,
+    AnySocket, BufferedWrite, BunSocket, CipherInfo, DuplexTLSOptions, SocketHandle,
+    UpgradeTLSOptions, js_TCPSocket, js_TLSSocket,
 };
-use crate::generated_bindgen::socket_config::{SocketReloadOptions, UpgradeTLS};
+use crate::generated_bindgen::socket_config::UpgradeTLS;
 use bun_core::EncodedSlice;
 use bun_io::KeepAlive;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::JsCell;
-use bun_jsc::bindgen::{self, Deferred, JsHeap, JsLocal, JsScope, Number};
+use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope};
 use bun_ptr::RefPtr;
 // do NOT `use bun_boringssl_sys::SSL` here — it shadows the
 // `const SSL: bool` generic param in `NewSocket<SSL>` below, making rustc
@@ -23,8 +23,7 @@ use bun_collections::VecExt;
 use bun_core::{self, fmt as bun_fmt};
 use bun_jsc::SysErrorJsc;
 use bun_jsc::{
-    self as jsc, CommonString, JSGlobalObject, JSObject, JSString, JSValue, JsRef, JsResult,
-    SystemError,
+    self as jsc, CommonString, JSGlobalObject, JSString, JSValue, JsRef, JsResult, SystemError,
 };
 // `bun_jsc::VirtualMachine` is the *module* (alias of `virtual_machine`); name the
 // struct directly so `VirtualMachine::get()` resolves as an associated fn.
@@ -3192,23 +3191,20 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
-    pub(crate) fn reload(
-        &self,
-        cx: &mut JsScope<'_>,
-        options: Option<SocketReloadOptions<'_>>,
-    ) -> JsResult<()> {
+    pub(crate) fn reload(&self, cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<()> {
         let global = cx.global();
+        let opts = options.to_js();
 
         if self.socket.get().is_detached() {
             return Ok(());
         }
 
-        let Some(opts) = options else {
+        if !opts.is_object() {
             return Err(global.throw(format_args!("Expected options object")));
-        };
+        }
 
         let socket_obj = opts
-            .socket(global)?
+            .get(global, "socket")?
             .ok_or_else(|| global.throw(format_args!("Expected \"socket\" option")))?;
 
         // The "socket" getter can close this socket, which drops its handlers.
@@ -3217,7 +3213,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         };
         // Parse and validate first: the option getters run user JS that can
         // close this socket and repoint its `Handlers`.
-        let reloaded = Handlers::prepare_reload(global, socket_obj.to_js())?;
+        let reloaded = Handlers::prepare_reload(global, socket_obj)?;
         if !self.handlers_are(&handlers) {
             return Ok(());
         }
@@ -3653,20 +3649,17 @@ impl TCPSocket {
     pub(crate) fn renegotiate(&self, _: &mut JsScope<'_>) -> JsResult<()> {
         Ok(())
     }
-    pub(crate) fn get_tls_ticket(&self, _: &mut JsScope<'_>) -> JsResult<Option<JSValue>> {
-        Ok(None)
+    pub(crate) fn get_tls_ticket(&self, _: &mut JsScope<'_>) -> JsResult<JSValue> {
+        Ok(JSValue::UNDEFINED)
     }
     pub(crate) fn set_session(&self, _: &mut JsScope<'_>, _: JsLocal<'_>) -> JsResult<()> {
         Ok(())
     }
-    pub(crate) fn get_session(&self, _: &mut JsScope<'_>) -> JsResult<Option<JSValue>> {
-        Ok(None)
+    pub(crate) fn get_session(&self, _: &mut JsScope<'_>) -> JsResult<JSValue> {
+        Ok(JSValue::UNDEFINED)
     }
-    pub(crate) fn get_alpn_protocol<'a>(
-        &self,
-        _: &JsHeap<'a>,
-    ) -> bindgen::Result<'a, ALPNProtocol<'a>> {
-        Ok(ALPNProtocol::None(false))
+    pub(crate) fn get_alpn_protocol(&self, _: &mut JsScope<'_>) -> JsResult<JSValue> {
+        Ok(JSValue::FALSE)
     }
     pub(crate) fn set_key_cert(
         &self,
@@ -3678,14 +3671,14 @@ impl TCPSocket {
     pub(crate) fn export_keying_material(
         &self,
         _: &mut JsScope<'_>,
-        _: Option<JsLocal<'_, Number>>,
-        _: Deferred<'_, Option<BunString>>,
         _: JsLocal<'_>,
-    ) -> JsResult<Option<JSValue>> {
-        Ok(None)
+        _: JsLocal<'_>,
+        _: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
+        Ok(JSValue::UNDEFINED)
     }
-    pub(crate) fn get_ephemeral_key_info(&self) -> Option<EphemeralKeyInfo> {
-        None
+    pub(crate) fn get_ephemeral_key_info(&self, _: &mut JsScope<'_>) -> JsResult<JSValue> {
+        Ok(JSValue::NULL)
     }
     pub(crate) fn get_cipher<'a>(
         &self,
@@ -3693,17 +3686,11 @@ impl TCPSocket {
     ) -> bindgen::Result<'a, Option<CipherInfo<'a>>> {
         Ok(None)
     }
-    pub(crate) fn get_tls_peer_finished_message(
-        &self,
-        _: &mut JsScope<'_>,
-    ) -> JsResult<Option<JSValue>> {
-        Ok(None)
+    pub(crate) fn get_tls_peer_finished_message(&self, _: &mut JsScope<'_>) -> JsResult<JSValue> {
+        Ok(JSValue::UNDEFINED)
     }
-    pub(crate) fn get_tls_finished_message(
-        &self,
-        _: &mut JsScope<'_>,
-    ) -> JsResult<Option<JSValue>> {
-        Ok(None)
+    pub(crate) fn get_tls_finished_message(&self, _: &mut JsScope<'_>) -> JsResult<JSValue> {
+        Ok(JSValue::UNDEFINED)
     }
     pub(crate) fn get_shared_sigalgs(&self) {}
     pub(crate) fn get_tls_version(&self) -> Option<&'static [u8]> {
@@ -3719,21 +3706,17 @@ impl TCPSocket {
     pub(crate) fn get_peer_certificate(
         &self,
         _: &mut JsScope<'_>,
-        _: OptionalBool,
-    ) -> JsResult<Option<JSValue>> {
-        Ok(None)
+        _: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
+        Ok(JSValue::NULL)
     }
-    pub(crate) fn get_certificate(&self, _: &mut JsScope<'_>) -> JsResult<Option<JSValue>> {
-        Ok(None)
+    pub(crate) fn get_certificate(&self, _: &mut JsScope<'_>) -> JsResult<JSValue> {
+        Ok(JSValue::UNDEFINED)
     }
     pub(crate) fn get_servername(&self) -> Option<&[u8]> {
         None
     }
-    pub(crate) fn set_servername(
-        &self,
-        _: &mut JsScope<'_>,
-        _: Deferred<'_, Option<BunString>>,
-    ) -> JsResult<()> {
+    pub(crate) fn set_servername(&self, _: &mut JsScope<'_>, _: JsLocal<'_>) -> JsResult<()> {
         Ok(())
     }
 }
@@ -4406,7 +4389,7 @@ pub(crate) fn first_flight_before_fin(socket: SocketHandle<'_>) {
 
 pub(crate) fn upgrade_duplex_to_tls<'a>(
     cx: &mut JsScope<'a>,
-    duplex: Option<JsLocal<'a, JSObject>>,
+    duplex: JsLocal<'a>,
     options: &DuplexTLSOptions<'a>,
 ) -> JsResult<JSValue> {
     jsc::mark_binding!();
@@ -4414,10 +4397,11 @@ pub(crate) fn upgrade_duplex_to_tls<'a>(
     // The upgraded socket is the calling script's.
     let context = global.bun_vm().context_of_caller();
 
+    let duplex = duplex.to_js();
     // TODO: do better type checking
-    let Some(duplex) = duplex else {
+    if duplex.is_empty_or_undefined_or_null() {
         return Err(global.throw(format_args!("Expected a Duplex instance")));
-    };
+    }
 
     let is_server = options.is_server;
     // `DuplexServer` mode makes `TLSSocket.isServer()` report the server role
@@ -4577,7 +4561,7 @@ pub(crate) fn upgrade_duplex_to_tls<'a>(
         ptr::addr_of_mut!((*duplex_context).upgrade).write(UpgradedDuplex::from(
             global,
             tls_js_value,
-            duplex.to_js(),
+            duplex,
             UpgradedDuplexHandlers {
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_open: |c: *mut ()| {

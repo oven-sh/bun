@@ -11,7 +11,6 @@
 use core::cell::Cell;
 use core::mem;
 
-use crate::api::js_bundler::BuildArtifact;
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 use crate::webcore::blob::store as blob_store;
@@ -50,10 +49,8 @@ fn format_name(f: codecs::Format) -> &'static str {
 }
 
 use crate::generated_bindgen::blob::PathOrBlob;
-use crate::generated_bindgen::blob_arguments::BunWriteData;
 use crate::generated_bindgen::image::{
-    ImageEncodeOptions, ImageInput, ImageModulateOptions, ImageOptions, ImageResizeOptions,
-    destination_path, js_Image as js,
+    ImageEncodeOptions, ImageModulateOptions, ImageOptions, js_Image as js,
 };
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
@@ -153,6 +150,21 @@ bun_core::comptime_string_map! {
         b"inside" => Fit::Inside,
     };
 }
+impl jsc::FromJsEnum for Fit {
+    fn from_js_value(v: JSValue, global: &JSGlobalObject, prop: &'static str) -> JsResult<Self> {
+        v.to_enum_from_map(global, prop, &FIT_MAP, "'fill' or 'inside'")
+    }
+}
+impl jsc::FromJsEnum for codecs::Filter {
+    fn from_js_value(v: JSValue, global: &JSGlobalObject, prop: &'static str) -> JsResult<Self> {
+        v.to_enum_from_map(
+            global,
+            prop,
+            &codecs::FILTER_MAP,
+            "'box', 'bilinear', 'linear', 'lanczos3', 'mitchell', 'nearest', 'cubic', 'lanczos2', 'mks2013' or 'mks2021'",
+        )
+    }
+}
 
 #[derive(Clone, Copy)]
 pub(crate) struct Resize {
@@ -243,23 +255,23 @@ impl Image {
     pub(crate) fn constructor<'a>(
         cx: &mut JsScope<'a>,
         structure: JsStructure<'a, Self>,
-        (input, input_value): (ImageInput<'a>, JsLocal<'a>),
+        input: JsLocal<'a>,
         options: Deferred<'a, ImageOptions>,
     ) -> JsResult<JsWrapper<'a, Self>> {
         let global = cx.global();
-        if matches!(input, ImageInput::Missing) {
+        let input = input.to_js();
+        if input.is_undefined_or_null() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Image() expects a path, ArrayBuffer, TypedArray, Blob or data: URL",
             )));
         }
         let mut img = Image::default();
-        img.source
-            .set(source_from_js(global, input, input_value.to_js())?);
+        img.source.set(source_from_js(global, input)?);
         apply_options(&mut img, &options.convert(global)?);
         let borrows_input = matches!(img.source.get(), Source::JsBuffer);
         let this_value = structure.create(&cx.heap, img);
         if borrows_input {
-            js::source_js_set_cached(this_value.to_js(), cx.global(), input_value.to_js());
+            js::source_js_set_cached(this_value.to_js(), cx.global(), input);
         }
         Ok(this_value)
     }
@@ -268,7 +280,6 @@ impl Image {
     /// allocation as `new Bun.Image(blob, opts)`.
     pub(crate) fn from_blob_js(
         global: &JSGlobalObject,
-        blob: &Blob,
         blob_value: JSValue,
         options: &ImageOptions,
     ) -> JsResult<JSValue> {
@@ -277,8 +288,7 @@ impl Image {
         // For Blob receivers `source_from_js` either dupes (in-memory blob) or
         // creates a Strong (file/S3); the cached `sourceJS` slot is only used
         // for the `.js_buffer` path, which a Blob never produces.
-        img.source
-            .set(source_from_js(global, ImageInput::Blob(blob), blob_value)?);
+        img.source.set(source_from_js(global, blob_value)?);
         debug_assert!(!matches!(img.source.get(), Source::JsBuffer));
         Ok(img.to_js(global))
     }
@@ -305,80 +315,73 @@ fn apply_options(img: &mut Image, options: &ImageOptions) {
 }
 
 /// The caller of a `Source::JsBuffer` result puts `value` in the `sourceJS` slot.
-fn source_from_js(
-    global: &JSGlobalObject,
-    input: ImageInput<'_>,
-    value: JSValue,
-) -> JsResult<Source> {
+fn source_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Source> {
     // String → file path or data:/base64 URL. Everything else → bytes.
-    match input {
-        ImageInput::Path(str) => {
-            let utf8 = str.to_utf8();
-            let s = utf8.slice();
-            // `data:[<mime>][;base64],<payload>` — accept any image MIME (we sniff
-            // anyway) and decode base64 here. Non-base64 data URLs aren't useful
-            // for image bytes.
-            if s.starts_with(b"data:") {
-                let Some(comma) = strings::index_of_char(s, b',') else {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "Image(): malformed data: URL (no comma)"
-                    )));
-                };
-                let meta = &s[5..comma as usize];
-                let payload = &s[comma as usize + 1..];
-                if strings::index_of(meta, b";base64").is_none() {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "Image(): only base64 data: URLs are supported",
-                    )));
-                }
-                let mut out = vec![0u8; bun_base64::decode_len(payload)];
-                let r = base64::decode(&mut out, payload);
-                if r.fail {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "Image(): invalid base64 in data: URL"
-                    )));
-                }
-                out.truncate(r.written);
-                return Ok(Source::Owned(out));
-            }
-            crate::node::types::Valid::path_null_bytes(s, global)?;
-            return Ok(Source::Path(ZBox::from_bytes(s)));
-        }
-        ImageInput::Buffer(buffer) => {
-            let ab = buffer.as_array_buffer(global);
-            // A resizable/growable buffer can shrink or reallocate underneath any
-            // slice we'd take; a SharedArrayBuffer can be mutated by another
-            // thread while the worker decodes (the codec layer parses the same
-            // bytes twice — header then body — so a TOCTOU swap can resize the
-            // implied output behind a guard that's already passed). The worker
-            // *borrows* the slice (see `pin_for_task`), so this rejection is
-            // load-bearing — `buf.slice()` is the obvious workaround.
-            if ab.resizable || ab.shared {
+    if value.is_string() {
+        let str = value.to_bun_string(global)?;
+        let utf8 = str.to_utf8();
+        let s = utf8.slice();
+        // `data:[<mime>][;base64],<payload>` — accept any image MIME (we sniff
+        // anyway) and decode base64 here. Non-base64 data URLs aren't useful
+        // for image bytes.
+        if s.starts_with(b"data:") {
+            let Some(comma) = strings::index_of_char(s, b',') else {
                 return Err(global.throw_invalid_arguments(format_args!(
-            "Image(): resizable / shared ArrayBuffer is not supported; pass a fixed-length view (e.g. buf.slice())",
-        )));
+                    "Image(): malformed data: URL (no comma)"
+                )));
+            };
+            let meta = &s[5..comma as usize];
+            let payload = &s[comma as usize + 1..];
+            if strings::index_of(meta, b";base64").is_none() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "Image(): only base64 data: URLs are supported",
+                )));
             }
-            // Just remember the JS object — see Source::JsBuffer for why we don't
-            // cache the pointer or pin here.
-            return Ok(Source::JsBuffer);
+            let mut out = vec![0u8; bun_base64::decode_len(payload)];
+            let r = base64::decode(&mut out, payload);
+            if r.fail {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "Image(): invalid base64 in data: URL"
+                )));
+            }
+            out.truncate(r.written);
+            return Ok(Source::Owned(out));
         }
-        ImageInput::Blob(blob) | ImageInput::BuildArtifact(BuildArtifact { blob, .. }) => {
-            // In-memory blob: dupe its bytes (the store may be sliced/replaced
-            // independently).
-            let view = blob.shared_view();
-            if !view.is_empty() {
-                return Ok(Source::Owned(view.to_vec()));
-            }
-            // Anything with a backing store but no in-memory view yet
-            // (`Bun.file()`, `Bun.s3()`, fd, …) — keep the JS object and read it
-            // through ITS OWN `.bytes()` at terminal time, so we inherit whatever
-            // that store type does (file → ReadFile, S3 → fetch, etc.) without
-            // knowing about it here.
-            if blob.store.get().is_some() {
-                return Ok(Source::Blob(Strong::create(value, global)));
-            }
+        crate::node::types::Valid::path_null_bytes(s, global)?;
+        return Ok(Source::Path(ZBox::from_bytes(s)));
+    }
+    if let Some(ab) = value.as_array_buffer(global) {
+        // A resizable/growable buffer can shrink or reallocate underneath any
+        // slice we'd take; a SharedArrayBuffer can be mutated by another
+        // thread while the worker decodes (the codec layer parses the same
+        // bytes twice — header then body — so a TOCTOU swap can resize the
+        // implied output behind a guard that's already passed). The worker
+        // *borrows* the slice (see `pin_for_task`), so this rejection is
+        // load-bearing — `buf.slice()` is the obvious workaround.
+        if ab.resizable || ab.shared {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Image(): resizable / shared ArrayBuffer is not supported; pass a fixed-length view (e.g. buf.slice())",
+            )));
         }
-        ImageInput::Missing | ImageInput::Other => {}
+        // Just remember the JS object — see Source::JsBuffer for why we don't
+        // cache the pointer or pin here.
+        return Ok(Source::JsBuffer);
+    }
+    if let Some(blob) = value.as_class_ref::<Blob>() {
+        // In-memory blob: dupe its bytes (the store may be sliced/replaced
+        // independently).
+        let view = blob.shared_view();
+        if !view.is_empty() {
+            return Ok(Source::Owned(view.to_vec()));
+        }
+        // Anything with a backing store but no in-memory view yet
+        // (`Bun.file()`, `Bun.s3()`, fd, …) — keep the JS object and read it
+        // through ITS OWN `.bytes()` at terminal time, so we inherit whatever
+        // that store type does (file → ReadFile, S3 → fetch, etc.) without
+        // knowing about it here.
+        if blob.store.get().is_some() {
+            return Ok(Source::Blob(Strong::create(value, global)));
+        }
     }
     Err(global.throw_invalid_arguments(format_args!(
         "Image() input must be a path string, data: URL, ArrayBuffer, TypedArray or Blob",
@@ -403,9 +406,10 @@ impl Image {
         cx: &mut JsScope<'a>,
         width: f64,
         height: Option<f64>,
-        options: Option<ImageResizeOptions<'a>>,
+        options: JsLocal<'a>,
     ) -> JsResult<JsWrapper<'a, Self>> {
         let global = cx.global();
+        let opt = options.to_js();
         // 0x3FFF² is the max_pixels default; capping each side at 0x3FFFF (≈262k)
         // keeps every downstream u32 product in range without a per-stage check.
         let mut r = Resize {
@@ -415,23 +419,15 @@ impl Image {
             h: height.map_or(0, |height| coerce_int!(u32, height, 0.0, 0x3FFFF as f64)),
             ..Default::default()
         };
-        if let Some(options) = options {
-            if let Some(filter) = options.filter(global)? {
-                r.filter = codecs::FILTER_MAP.get(filter.to_utf8().slice()).copied().ok_or_else(|| {
-                    global.throw_invalid_arguments(format_args!(
-                        "filter must be one of 'box', 'bilinear', 'linear', 'lanczos3', 'mitchell', 'nearest', 'cubic', 'lanczos2', 'mks2013' or 'mks2021'",
-                    ))
-                })?;
+        if opt.is_object() {
+            if let Some(v) = opt.get_optional_enum::<codecs::Filter>(global, "filter")? {
+                r.filter = v;
             }
-            if let Some(fit) = options.fit(global)? {
-                r.fit = FIT_MAP.get(fit.to_utf8().slice()).copied().ok_or_else(|| {
-                    global.throw_invalid_arguments(format_args!(
-                        "fit must be one of 'fill' or 'inside'"
-                    ))
-                })?;
+            if let Some(v) = opt.get_optional_enum::<Fit>(global, "fit")? {
+                r.fit = v;
             }
-            if let Some(v) = options.without_enlargement(global)? {
-                r.without_enlargement = v;
+            if let Some(v) = opt.get(global, "withoutEnlargement")? {
+                r.without_enlargement = v.to_boolean();
             }
         }
         self.update_pipeline(|p| p.resize = Some(r));
@@ -1003,23 +999,23 @@ impl Image {
         &self,
         this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
-        dest: Option<JsLocal<'a>>,
+        dest: JsLocal<'a>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global = cx.global();
-        let Some(dest) = dest else {
+        let dest = dest.to_js();
+        if dest.is_undefined_or_null() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Image.write(dest): expected a path, Bun.file, Bun.s3 or fd",
             )));
-        };
+        }
 
         let mut output = self.pipeline.get().output;
         // Extension inference only when dest is a plain string. BunFile/S3 dests
         // carry no extension contract, so the explicit `.png()` etc. (or source
         // format) decides.
-        if output.is_none()
-            && let Some(str) = destination_path(global, dest)?
-        {
+        if output.is_none() && dest.is_string() {
+            let str = dest.to_bun_string(global)?;
             let utf8 = str.to_utf8();
             if let Some(f) = codecs::Format::from_extension(utf8.slice()) {
                 match f {
@@ -1043,7 +1039,7 @@ impl Image {
             &cx,
             this_value.to_js(),
             Kind::Encode(output),
-            Deliver::WriteDest(Strong::create(dest.to_js(), global)),
+            Deliver::WriteDest(Strong::create(dest, global)),
         )
     }
 }
@@ -1831,7 +1827,7 @@ impl PipelineTask {
                         // ownership transfers to JSC; `ctx` is null and `out.free`
                         // ignores it.
                         let data = match unsafe {
-                            JsLocal::create_buffer_with_ctx(
+                            JSValue::create_buffer_with_ctx(
                                 global,
                                 out.bytes,
                                 core::ptr::null_mut(),
@@ -1852,7 +1848,7 @@ impl PipelineTask {
                         let write_promise = match crate::webcore::blob::write_file_internal(
                             cx,
                             &mut path_or_blob,
-                            BunWriteData::Buffer(data),
+                            data,
                             Default::default(),
                         ) {
                             Ok(p) => p,

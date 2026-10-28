@@ -8,7 +8,6 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use crate::generated_bindgen::blob::S3Options;
 use crate::node::fs as node_fs;
 use crate::node::types::PathOrFileDescriptorSerializeTag;
 use crate::webcore::jsc::{JSGlobalObject, JSPromise, JSValue, JsResult};
@@ -65,7 +64,7 @@ pub(crate) trait StoreExt {
 pub(crate) trait S3Ext {
     fn get_credentials_with_options(
         &self,
-        options: Option<S3Options<'_>>,
+        options: Option<JSValue>,
         global_object: &JSGlobalObject,
     ) -> JsResult<S3CredentialsWithOptions>;
     /// `store` is the heap `Store` that owns `self` (`self == &store.data.S3`).
@@ -74,7 +73,7 @@ pub(crate) trait S3Ext {
         &self,
         store: RefPtr<Store>,
         cx: &bun_jsc::JsThread<'_>,
-        extra_options: Option<S3Options<'_>>,
+        extra_options: Option<JSValue>,
     ) -> JsResult<JSValue>;
     /// See `unlink`.
     fn list_objects(
@@ -82,7 +81,7 @@ pub(crate) trait S3Ext {
         store: RefPtr<Store>,
         cx: &bun_jsc::JsThread<'_>,
         list_options: JSValue,
-        extra_options: Option<S3Options<'_>>,
+        extra_options: Option<JSValue>,
     ) -> JsResult<JSValue>;
 }
 
@@ -251,7 +250,7 @@ impl FileExt for File {
 impl S3Ext for S3 {
     fn get_credentials_with_options(
         &self,
-        options: Option<S3Options<'_>>,
+        options: Option<JSValue>,
         global_object: &JSGlobalObject,
     ) -> JsResult<S3CredentialsWithOptions> {
         // The associated fn (surfaced via `S3CredentialsExt` in `webcore/S3Client.rs`)
@@ -274,7 +273,7 @@ impl S3Ext for S3 {
         &self,
         store: RefPtr<Store>,
         cx: &bun_jsc::JsThread<'_>,
-        extra_options: Option<S3Options<'_>>,
+        extra_options: Option<JSValue>,
     ) -> JsResult<JSValue> {
         struct Wrapper {
             promise: bun_jsc::JSPromiseStrong,
@@ -341,7 +340,7 @@ impl S3Ext for S3 {
         store: RefPtr<Store>,
         cx: &bun_jsc::JsThread<'_>,
         list_options: JSValue,
-        extra_options: Option<S3Options<'_>>,
+        extra_options: Option<JSValue>,
     ) -> JsResult<JSValue> {
         if !list_options.is_empty_or_undefined_or_null() && !list_options.is_object() {
             return Err(cx.global().throw_invalid_arguments(format_args!(

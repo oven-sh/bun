@@ -6,7 +6,7 @@ use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
 use crate::bindgen::{
     self, BufferSource, Callable, Deferred, IntoError as _, JsBytes, JsHeap, JsLocal,
-    JsPayload as _, JsScope, JsStructure, JsWrapper, PinnedBytes, Rest, StringOrJsBytes,
+    JsPayload as _, JsScope, JsStructure, JsWrapper, PinnedBytes, StringOrJsBytes,
 };
 use crate::generated_bindgen::bindgen_test::{
     Bun__BindgenTest__doubled, TestAbsence, TestAnything, TestBare, TestBareOptions, TestBracket,
@@ -19,7 +19,7 @@ use crate::generated_bindgen::bindgen_test::{
     TestPrivateMember, TestRangeOptions, TestSignalOptions, TestTextOrBytes, TestTextOrFlag,
     TestTextOrIgnored, TestTextOrOptions, TestValue, TestViewOrBuffer, js_TestCounter,
     js_TestError, js_TestMemberFunctions, js_TestNonFinal, js_TestNote, js_TestRefCounted,
-    js_TestRefCountedNote, js_TestShape, js_TestSquare, part_text,
+    js_TestRefCountedNote, js_TestShape, js_TestSquare,
 };
 use crate::{DOMURL, JSGlobalObject, JSObject, JSPromise, JSString, JSValue, JsClass, JsResult};
 use bun_ptr::{AsCtxPtr as _, RefPtr};
@@ -1213,15 +1213,9 @@ impl TestError {
         Self { code }
     }
 
-    pub(crate) fn call<'a>(
-        cx: &mut JsScope<'a>,
-        codes: Rest<'a, i32>,
-    ) -> bindgen::Result<'a, JsWrapper<'a, Self>> {
-        let mut code = 0;
-        for next in codes.iter() {
-            code += next.convert(cx.global())?;
-        }
-        Ok(Self { code }.into_js(&cx.heap))
+    pub(crate) fn call<'a>(heap: &JsHeap<'a>, codes: &[JsLocal<'a>]) -> JsWrapper<'a, Self> {
+        let code = codes.iter().map(|code| code.to_js().to_int32()).sum();
+        Self { code }.into_js(heap)
     }
 
     pub(crate) fn get_code(&self) -> i32 {
@@ -1306,20 +1300,6 @@ pub(crate) fn join_second_first<'a>(
     Ok(format!("{second}{first}"))
 }
 
-pub(crate) fn sum_until_null<'a>(
-    cx: &mut JsScope<'a>,
-    numbers: Rest<'a, Option<i32>>,
-) -> bindgen::Result<'a, i32> {
-    let mut sum = 0i32;
-    for number in numbers.iter() {
-        let Some(number) = number.convert(cx.global())? else {
-            break;
-        };
-        sum = sum.wrapping_add(number);
-    }
-    Ok(sum)
-}
-
 pub(crate) fn text_or_null(value: TestTextOrIgnored) -> Option<bun_core::String> {
     match value {
         TestTextOrIgnored::Text(text) => Some(text),
@@ -1384,20 +1364,6 @@ pub(crate) fn count_in_range(count: i32) -> i32 {
 
 pub(crate) fn timeout_of(options: &TestRangeOptions) -> Option<u64> {
     options.timeout
-}
-
-pub(crate) fn join_parts<'a>(
-    cx: &mut JsScope<'a>,
-    parts: &'a [JsLocal<'a>],
-) -> bindgen::Result<'a, bun_core::String> {
-    if parts.len() < 2 {
-        return Err(cx.heap.type_error(format_args!("two parts are required")));
-    }
-    let mut joined = Vec::new();
-    for part in parts {
-        joined.extend_from_slice(&part_text(cx.global(), *part)?.to_utf8());
-    }
-    Ok(bun_core::String::clone_utf8(&joined))
 }
 
 pub(crate) fn own_and_inherited(options: &TestOwnOptions) -> [Option<i32>; 2] {

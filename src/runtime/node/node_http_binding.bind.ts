@@ -35,30 +35,12 @@ export const DeflateParams = b.dictionary({
   serverNoContextTakeover: b.bool.loose.default(false),
   clientNoContextTakeover: b.bool.loose.default(false),
 });
-const handler = (name: string) => ({
-  type: b.callable.emptyStringAsNull,
-  expected: `websocket expects a function for the '${name}' option`,
-});
-/** The handlers of the `websocket` option of `Bun.serve`. */
-export const WebSocketHandlers = b.dictionary(
-  {
-    error: handler("error"),
-    message: handler("message"),
-    open: handler("open"),
-    close: handler("close"),
-    drain: handler("drain"),
-    ping: handler("ping"),
-    pong: handler("pong"),
-  },
-  { allowArray: true, fromJS: true },
-);
 export const upgradeNodeHTTPResponseToWebSocket = b.fn({
   args: {
     /** `kInternalSocketData` of the socket given to `handleUpgrade()` of `ws`, which can be any `Duplex`. */
     response: NodeHTTPResponse.otherAsNull,
     websocket: b.opaque,
-    /** A `WebSocketHandlers`, which only the first upgrade of a server reads. */
-    handlers: b.object.otherAsNull,
+    handlers: b.opaque,
     handshake: b.string.utf8,
     maxPayload: b.u32,
     flags: b.i32,

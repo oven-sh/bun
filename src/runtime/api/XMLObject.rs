@@ -18,35 +18,25 @@ use bun_jsc::bindgen::{JsLocal, JsScope, StringOrJsBytes};
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, wtf};
 use bun_parsers::xml::{self, XML};
 
-use crate::generated_bindgen::json5_object::StringifySpace;
-use crate::generated_bindgen::xml_object::{XMLCompact, XMLReviverOrOptions};
-
 pub(crate) fn parse<'a>(
     cx: &mut JsScope<'a>,
     input: StringOrJsBytes<'a>,
-    options: Option<XMLReviverOrOptions<'a>>,
+    options: JsLocal<'a>,
 ) -> JsResult<JSValue> {
     let global = cx.global();
-    let compact = match options {
-        None => true,
-        Some(XMLReviverOrOptions::Options(options)) => match options.compact {
-            XMLCompact::Missing => true,
-            XMLCompact::Flag(compact) => compact,
-            XMLCompact::Other(other) => {
-                return Err(global.throw_invalid_property_type(
-                    "compact",
-                    "boolean",
-                    other.to_js(),
-                ));
-            }
-        },
-        // A function here is reserved for a reviver; reject it rather than read
-        // it as an options object with no keys.
-        Some(XMLReviverOrOptions::Reviver(_)) => {
-            return Err(
-                global.throw_invalid_arguments(format_args!("XML.parse options must be an object"))
-            );
-        }
+    // A function here is reserved for a reviver; reject it rather than read
+    // it as an options object with no keys.
+    let options = options.to_js();
+    let compact = if options.is_undefined_or_null() {
+        true
+    } else if options.is_object() && !options.is_callable() {
+        options
+            .get_boolean_strict(global, "compact")?
+            .unwrap_or(true)
+    } else {
+        return Err(
+            global.throw_invalid_arguments(format_args!("XML.parse options must be an object"))
+        );
     };
 
     // Bytes (TypedArray, ArrayBuffer, DataView, Blob) go through BOM /
@@ -129,17 +119,17 @@ pub(crate) fn parse<'a>(
 pub(crate) fn stringify<'a>(
     cx: &mut JsScope<'a>,
     value: JsLocal<'a>,
-    replacer: Option<JsLocal<'a>>,
-    space: StringifySpace<'a>,
-) -> JsResult<Option<JSValue>> {
+    replacer: JsLocal<'a>,
+    space: JsLocal<'a>,
+) -> JsResult<JSValue> {
     let global = cx.global();
-    let value = value.to_js();
+    let (value, replacer, space_value) = (value.to_js(), replacer.to_js(), space.to_js());
 
     if skipped(value) {
-        return Ok(None);
+        return Ok(JSValue::UNDEFINED);
     }
 
-    if replacer.is_some() {
+    if !replacer.is_undefined_or_null() {
         return Err(global.throw(format_args!(
             "XML.stringify does not support the replacer argument"
         )));
@@ -156,7 +146,7 @@ pub(crate) fn stringify<'a>(
         stack_check: StackCheck::init(),
         builder: wtf::StringBuilder::init(),
         indent: 0,
-        space: Space::init(global, space)?,
+        space: Space::init(global, space_value)?,
         visiting: HashMap::default(),
     };
 
@@ -173,7 +163,7 @@ pub(crate) fn stringify<'a>(
         };
     }
 
-    stringifier.builder.to_string(global).map(Some)
+    stringifier.builder.to_string(global)
 }
 
 /// A top-level value is taken as a `{ name, attributes, children }` node
@@ -227,22 +217,23 @@ enum Space {
 
 impl Space {
     /// Same interpretation as `JSON.stringify`'s `space`.
-    fn init(global: &JSGlobalObject, space: StringifySpace<'_>) -> JsResult<Space> {
-        match space.unwrap_boxed_primitive(global)? {
-            StringifySpace::Number(n) => {
-                if n.is_nan() || n < 1.0 {
-                    return Ok(Space::Minified);
-                }
-                Ok(Space::Number(if n > 10.0 { 10 } else { n as u32 }))
+    fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Space> {
+        let space = space_value.unwrap_boxed_primitive(global)?;
+        if space.is_number() {
+            let n = space.as_number();
+            if n.is_nan() || n < 1.0 {
+                return Ok(Space::Minified);
             }
-            StringifySpace::Text(str) => {
-                if str.length() == 0 {
-                    return Ok(Space::Minified);
-                }
-                Ok(Space::Str(str))
-            }
-            _ => Ok(Space::Minified),
+            return Ok(Space::Number(if n > 10.0 { 10 } else { n as u32 }));
         }
+        if space.is_string() {
+            let str = space.to_bun_string(global)?;
+            if str.length() == 0 {
+                return Ok(Space::Minified);
+            }
+            return Ok(Space::Str(str));
+        }
+        Ok(Space::Minified)
     }
 
     fn is_pretty(&self) -> bool {

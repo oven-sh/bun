@@ -4,10 +4,9 @@ import { Image } from "../image/Image.bind.ts";
 import { ReadableStream } from "./ByteStream.bind.ts";
 
 const js = { capability: "js", throws: true } as const;
-const method = { returns: b.promise, ...js } as const;
 const getter = { getter: b.string.local, capability: "js" } as const;
-const headers = { getter: b.object.returning("Headers"), cache: true, ...js } as const;
-const cachedString = { getter: b.string.local, cache: true, ...js } as const;
+const cached = { ...getter, cache: true, ...js } as const;
+const headers = { ...cached, getter: b.object.returning("Headers") } as const;
 /** Reads the whole body. The `stream` field of the receiver says whether a script already read from it. */
 const read = { returns: b.promise, ...js, passThis: true } as const;
 
@@ -16,14 +15,13 @@ const body = {
   rustTraits: ["crate::webcore::body::BodyMixin"],
   arrayBuffer: read,
   blob: read,
-  /** `null`, or a `ReadableStream`. */
-  body: { ...headers, getter: b.opaque.returning("ReadableStream", "null") },
+  body: { ...cached, getter: b.opaque.returning("ReadableStream", "null") },
   bodyUsed: { getter: b.bool, capability: "js" },
   bytes: read,
   formData: read,
   json: { ...read, typedResultForm: { form: "ParsedBody", source: "this" } },
   text: read,
-  textStream: { ...method, returns: b.object.returning("ReadableStream") },
+  textStream: { returns: b.object.returning("ReadableStream"), ...js },
 } as const;
 
 export const JSDOMURL = b.cell("WebCore::JSDOMURL", "JSDOMURL.h", { rustPath: "bun_jsc::JSObject" });
@@ -80,7 +78,7 @@ export const ResponseInit = b.dictionary(
   { deferred: true },
 );
 export const ResponseInitArgument = b.union({ missing: b.null, init: ResponseInit, other: b.ignored });
-export const ResponseInitOrStatus = b.union({ missing: b.null, status: b.f64, init: ResponseInit, other: b.ignored });
+export const ResponseInitOrStatus = b.union({ status: b.f64, init: ResponseInit, other: b.ignored });
 
 export const SignalInit = b.union({
   missing: b.undefined,
@@ -88,32 +86,13 @@ export const SignalInit = b.union({
   signal: b.abortSignal.shared,
   other: b.ignored,
 });
-const optionName = (name: string) => ({ type: b.stringLike.nullable, expected: `${name} must be a string` });
-/** `headers` and `method` are read as those of a `ResponseInit`. Here they only say whether they are there. */
+/** Members of the `RequestInit` of the Fetch standard. */
 export const RequestInit = b.dictionary(
-  {
-    body: BodyInit,
-    keepalive: b.bool.loose.default(false),
-    url: b.string.loose.optional,
-    signal: SignalInit,
-    headers: b.opaque.optional,
-    method: b.opaque.optional,
-    redirect: optionName("redirect"),
-    cache: optionName("cache"),
-    mode: optionName("mode"),
-  },
+  { body: BodyInit, url: b.string.loose.optional, signal: SignalInit },
   { deferred: true },
 );
-export const RequestInput = b.union({
-  string: b.stringLike,
-  url: JSDOMURL,
-  symbol: b.symbol,
-  bigInt: b.bigInt,
-  object: RequestInit,
-  other: b.ignored,
-});
 
-const clone = { ...js, returns: b.self, passThis: true, rustName: "do_clone", length: 1 } as const;
+const clone = { returns: b.self, ...js, passThis: true, rustName: "do_clone", length: 1 } as const;
 
 export const Request = b.class({
   rustPath: "crate::webcore::Request",
@@ -125,7 +104,7 @@ export const Request = b.class({
   estimatedSize: true,
   types: [table.viewType("Request"), table.exactType("$Bindgen.Request")],
   lockedObjects: ["prototype"],
-  construct: { args: { input: RequestInput, init: RequestInit.otherAsNull }, ...js, passStructure: true, length: 0 },
+  construct: { args: { input: b.opaque, init: b.opaque }, ...js, passStructure: true, length: 0 },
   internalFields: ["stream"],
   proto: {
     arrayBuffer: body.arrayBuffer,
@@ -146,10 +125,10 @@ export const Request = b.class({
     redirect: getter,
     referrer: getter,
     referrerPolicy: getter,
-    signal: { getter: b.object.returning("AbortSignal"), cache: true, capability: "js" },
+    signal: { getter: b.object.returning("AbortSignal"), capability: "js", cache: true },
     text: body.text,
     textStream: body.textStream,
-    url: cachedString,
+    url: cached,
   },
 });
 
@@ -162,12 +141,7 @@ export const Response = b.class({
   estimatedSize: true,
   types: [table.viewType("Response"), table.exactType("$Bindgen.Response")],
   lockedObjects: ["prototype"],
-  construct: {
-    args: { body: BodyInit, init: ResponseInitArgument },
-    ...js,
-    passStructure: true,
-    length: 0,
-  },
+  construct: { args: { body: BodyInit, init: ResponseInitArgument }, ...js, passStructure: true, length: 0 },
   internalFields: ["stream", "transform"],
   proto: {
     arrayBuffer: body.arrayBuffer,
@@ -182,11 +156,11 @@ export const Response = b.class({
     ok: { getter: b.bool },
     redirected: { getter: b.bool },
     status: { getter: b.u16 },
-    statusText: cachedString,
+    statusText: cached,
     text: body.text,
     textStream: body.textStream,
     type: getter,
-    url: cachedString,
+    url: cached,
   },
   static: {
     error: { returns: b.self, capability: "js" },

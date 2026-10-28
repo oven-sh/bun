@@ -13,8 +13,7 @@ use bun_core::{String as BunString, ZStr, strings};
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    CommonString, JSGlobalObject, JSObject, JSString, JSValue, JsClass, JsError, JsResult,
-    StringJsc,
+    CommonString, JSGlobalObject, JSString, JSValue, JsClass, JsError, JsResult, StringJsc,
 };
 use bun_ptr::JsCell;
 
@@ -236,8 +235,9 @@ impl SocketAddress {
     /// ### `SocketAddress.isSocketAddress(value: unknown): value is SocketAddress`
     /// Returns `true` if `value` is a `SocketAddress`. Subclasses and similarly-shaped
     /// objects are not considered `SocketAddress`s.
-    pub(crate) fn is_socket_address(value: Option<JsLocal<'_, JSObject>>) -> bool {
-        value.is_some_and(|value| SocketAddress::from_js_direct(value.to_js()).is_some())
+    pub(crate) fn is_socket_address(value: JsLocal<'_>) -> bool {
+        let value = value.to_js();
+        value.is_cell() && SocketAddress::from_js_direct(value).is_some()
     }
 }
 

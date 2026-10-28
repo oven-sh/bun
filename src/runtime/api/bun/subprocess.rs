@@ -6,10 +6,9 @@ use core::ptr::NonNull;
 
 use bun_ptr::{RefCount, RefPtr};
 
-use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsWrapper};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{
-    self as jsc, JSArray, JSGlobalObject, JSPromise, JSValue, JsCell, JsRef, JsResult,
-    VirtualMachine,
+    self as jsc, JSGlobalObject, JSPromise, JSValue, JsCell, JsRef, JsResult, VirtualMachine,
 };
 use bun_jsc::{JsClass, SysErrorJsc};
 #[cfg(not(windows))]
@@ -826,10 +825,13 @@ impl Subprocess<'_> {
         self.has_killed()
     }
 
-    pub(crate) fn get_stdio<'a>(
-        &self,
-        heap: &JsHeap<'a>,
-    ) -> bindgen::Result<'a, JsLocal<'a, JSArray>> {
+    pub(crate) fn get_stdio(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        let global = cx.global();
+        let array = JSValue::create_empty_array(global, 0)?;
+        array.push(global, JSValue::NULL)?;
+        array.push(global, JSValue::NULL)?; // TODO: align this with options
+        array.push(global, JSValue::NULL)?; // TODO: align this with options
+
         // Once the values are visible to JS the caller owns them (it hands
         // them to `net.connect({ fd })`, which closes them with the socket).
         // Our `uv_pipe_t` would close the same HANDLE again when this
@@ -861,32 +863,29 @@ impl Subprocess<'_> {
             }
         });
 
-        // TODO: align this with options
-        let standard = [None; 3];
-        let extra = self.stdio_pipes.get().iter().map(|item| {
+        for item in self.stdio_pipes.get().iter() {
             #[cfg(windows)]
             {
                 if let StdioResult::UnownedFd(fd) = item {
                     // Expose the numeric HANDLE value.
                     let handle: usize = fd.native() as usize;
-                    Some(handle as f64)
+                    array.push(global, JSValue::js_number(handle as f64))?;
                 } else {
-                    None
+                    array.push(global, JSValue::NULL)?;
                 }
             }
             #[cfg(not(windows))]
             {
                 match item {
-                    ExtraPipe::OwnedFd(fd) | ExtraPipe::UnownedFd(fd) => Some(fd.native() as f64),
-                    ExtraPipe::Unavailable => None,
+                    ExtraPipe::OwnedFd(fd) | ExtraPipe::UnownedFd(fd) => {
+                        array.push(global, JSValue::js_number(fd.native() as f64))?;
+                    }
+                    ExtraPipe::Unavailable => {
+                        array.push(global, JSValue::NULL)?;
+                    }
                 }
             }
-        });
-        let array = heap.create_array(standard.into_iter().chain(extra), |heap, fd| match fd {
-            Some(fd) => bindgen::to_js::f64(heap, fd),
-            None => Ok(JsLocal::NULL),
-        })?;
-
+        }
         // The raw fd numbers are now visible to JS and the caller owns them.
         // Downgrade so finalize_streams never closes a number JS may have
         // already closed (whose value the kernel may have since recycled).

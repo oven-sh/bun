@@ -39,7 +39,7 @@ export const Subprocess = b.class({
     stderr: { ...stdio, throws: true, cache: true },
     stdin: { ...stdio, cache: true },
     /** Each is a file descriptor or `null`. */
-    stdio: { getter: b.jsArray, capability: "heap", throws: true },
+    stdio: { getter: b.jsArray, capability: "js", throws: true },
     stdout: { ...stdio, throws: true, cache: true },
     terminal: { internalField: "terminal" },
     unref: { rustName: "do_unref" },

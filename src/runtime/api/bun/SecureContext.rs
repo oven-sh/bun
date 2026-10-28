@@ -14,7 +14,7 @@
 //! in JS.
 
 use crate::crypto::boringssl_jsc::err_to_js;
-use crate::generated_bindgen::secure_context::{ParsedPkcs12, pkcs12_text};
+use crate::generated_bindgen::secure_context::ParsedPkcs12;
 use crate::generated_bindgen::ssl_config::TLSOptions;
 use crate::socket::uws_jsc::create_bun_socket_error_to_js;
 use crate::socket::{SSLConfig, SSLConfigFromJs};
@@ -51,11 +51,11 @@ pub(crate) fn live_count() -> f64 {
 impl SecureContext {
     pub(crate) fn constructor(cx: &mut JsScope<'_>, options: &TLSOptions) -> JsResult<Self> {
         let global = cx.global();
-        let config = Self::config_from_options(global, options)?;
+        let config = Self::config_from_js(global, options)?;
         SecureContext::create(global, &config)
     }
 
-    fn config_from_options(global: &JSGlobalObject, options: &TLSOptions) -> JsResult<SSLConfig> {
+    fn config_from_js(global: &JSGlobalObject, options: &TLSOptions) -> JsResult<SSLConfig> {
         // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
         let vm = global.bun_vm().as_mut();
         // Only a server reads `rejectUnauthorized` back from a context (`server_ctx_rejects_unauthorized`).
@@ -71,7 +71,8 @@ impl SecureContext {
         passphrase: Deferred<'a, Option<Utf8Bytes<'static>>>,
     ) -> JsResult<ParsedPkcs12<'a>> {
         let global = cx.global();
-        if pfx.to_js().is_undefined() {
+        let pfx = pfx.to_js();
+        if pfx.is_undefined() {
             return Err(global.throw(format_args!("PFX certificate argument is mandatory")));
         }
         // The passphrase is optional; the C side treats NULL as "". Coerce it
@@ -87,13 +88,13 @@ impl SecureContext {
         // view when one exists.
         let pfx_view;
         let pfx_string;
-        let pfx_bytes: &[u8] = match pfx.to_js().as_array_buffer(global) {
+        let pfx_bytes: &[u8] = match pfx.as_array_buffer(global) {
             Some(view) => {
                 pfx_view = view;
                 pfx_view.byte_slice()
             }
             None => {
-                pfx_string = pkcs12_text(global, pfx)?;
+                pfx_string = pfx.to_utf8(global)?;
                 pfx_string.slice()
             }
         };
@@ -183,7 +184,7 @@ impl SecureContext {
         options: &TLSOptions,
     ) -> JsResult<JsWrapper<'a, Self>> {
         let global = cx.global();
-        let config = Self::config_from_options(global, options)?;
+        let config = Self::config_from_js(global, options)?;
 
         let ctx_opts = config.as_usockets();
         let d = ctx_opts.digest();
@@ -215,7 +216,7 @@ impl SecureContext {
     /// `tls.createSecureContext(opts)`. Equal configs get the same live wrapper, which `Listener` compares by pointer.
     pub(crate) fn intern(cx: &mut JsScope<'_>, options: &TLSOptions) -> JsResult<JSValue> {
         let global = cx.global();
-        let config = Self::config_from_options(global, options)?;
+        let config = Self::config_from_js(global, options)?;
 
         let ctx_opts = config.as_usockets();
         let d = ctx_opts.digest();
@@ -311,18 +312,14 @@ impl SecureContext {
     /// `secureContext.context.addCACert(pem)` — appends the certificates in
     /// the given PEM string or buffer to this context's trust store, the way
     /// Node's SecureContext exposes it.
-    pub(crate) fn add_ca_cert(
-        &self,
-        cx: &mut JsScope<'_>,
-        cert: Deferred<'_, Utf8Bytes<'static>>,
-    ) -> JsResult<()> {
+    pub(crate) fn add_ca_cert(&self, cx: &mut JsScope<'_>, cert: JsLocal<'_>) -> JsResult<()> {
         let global = cx.global();
         if self.shared {
             return Err(global.throw(format_args!(
                 "cannot mutate a shared SecureContext; use tls.createSecureContext()"
             )));
         }
-        let pem = cert.convert(global)?;
+        let pem = cert.to_js().to_utf8(global)?;
         let bytes = pem.slice();
         if bytes.is_empty() {
             return Err(

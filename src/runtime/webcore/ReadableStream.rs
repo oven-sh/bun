@@ -439,10 +439,6 @@ impl ReadableStream {
         Self::from_tag(tag, value, ptr)
     }
 
-    pub fn from_local(stream: JsLocal<'_, ReadableStream>) -> ReadableStream {
-        Self::from_js_direct(stream.to_js()).unwrap()
-    }
-
     fn from_tag(tag: Tag, value: JSValue, ptr: *mut c_void) -> Option<ReadableStream> {
         match tag {
             Tag::JavaScript => Some(ReadableStream {

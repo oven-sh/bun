@@ -5,7 +5,6 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { SchemaFile } from "./bindgen-emit.ts";
 import {
-  ConversionDefinition,
   FunctionDefinition,
   ModuleDefinition,
   NamedType,
@@ -28,7 +27,6 @@ export async function loadSchemaFile(source: string): Promise<SchemaFile> {
     types: [],
     functions: [],
     namespaces: [],
-    conversions: [],
   };
   const exports: Record<string, unknown> = await import(pathToFileURL(file).href).catch(error => {
     throw new Error(`${file}: ${error.message}`, { cause: error });
@@ -41,8 +39,6 @@ export async function loadSchemaFile(source: string): Promise<SchemaFile> {
       value.name = name;
       value.origin = origin;
       result.functions.push(value);
-    } else if (value instanceof ConversionDefinition) {
-      result.conversions.push(value.exportedAs(name, origin));
     } else if (value instanceof NamespaceDefinition) {
       value.name = name;
       for (const fn of value.functions) {

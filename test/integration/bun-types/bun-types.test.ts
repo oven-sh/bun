@@ -312,7 +312,6 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "Archive.bind.ts": "typeof Bun",
   "ArchiveInternals.bind.ts": null,
   "Blob.bind.ts": "typeof Bun & { Blob: Class<Bun.BunFile> }",
-  "BlobArguments.bind.ts": null,
   "BlockList.bind.ts": null,
   "BunObject.bind.ts":
     "typeof Bun & { braces: typeof Bun.$.braces; shellEscape: typeof Bun.$.escape; table: typeof Bun.inspect.table }",
@@ -668,9 +667,6 @@ describe("@types/bun integration test", () => {
       "TOMLObject.bind.ts: stringify() is string | undefined, not T extends symbol | Function | undefined ? undefined : T extends object ? string : string | undefined",
       // Published, and nothing reads it.
       "Transpiler.bind.ts: new Transpiler(options?: TranspilerOptions | undefined): Transpiler: options has no jsxOptimizationInline",
-      // `undefined` for `undefined`, a function or a symbol, as from `JSON.stringify`.
-      "XMLObject.bind.ts: stringify() is string | undefined, not string",
-      "YAMLObject.bind.ts: stringify() is string | undefined, not string",
       // `keepalive` and `duplex` are declared on Request but not implemented.
       "filesystem_router.bind.ts: new FileSystemRouter().match(input: string | Request | Response): MatchedRoute | null: input has no keepalive, duplex",
       // bun.d.ts does not declare `connected` and `writable`, in either overload.

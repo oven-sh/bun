@@ -4,13 +4,13 @@ use bun_paths::strings;
 
 use bun_alloc::{AllocError, Arena};
 use bun_collections::BoundedArray;
-use bun_jsc::bindgen::{Deferred, JsScope};
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc, StrongOptional};
 use bun_paths as paths;
 
 use super::*;
-use crate::generated_bindgen::filesystem_router::{FrameworkRouterOptions, FrameworkRouterStyle};
+use crate::generated_bindgen::filesystem_router::FrameworkRouterOptions;
 use crate::generated_bindgen::framework_router::{RoutePattern, RoutePatternKind};
 
 /// This binding is currently only intended for testing FrameworkRouter, and not
@@ -40,7 +40,7 @@ impl JSFrameworkRouter {
             _ => return Err(global.throw_invalid_arguments(format_args!("Missing options.root"))),
         };
 
-        let style = Style::from_js(options.style(global)?, global)?;
+        let style = Style::from_js(options.style(global)?.to_js(), global)?;
 
         let abs_root: Box<[u8]> = strings::without_trailing_slash(paths::resolve_path::join_abs::<
             paths::platform::Auto,
@@ -216,13 +216,13 @@ impl JSFrameworkRouter {
 
     pub(crate) fn parse_route_pattern<'a>(
         cx: &mut JsScope<'a>,
-        style: Deferred<'a, FrameworkRouterStyle<'a>>,
+        style: JsLocal<'a>,
         filepath: &[u8],
     ) -> JsResult<Option<RoutePattern>> {
         let global = cx.global();
         let arena = Arena::new();
 
-        let style = Style::from_js(style.convert(global)?, global)?;
+        let style = Style::from_js(style.to_js(), global)?;
 
         let mut log = TinyLog::empty();
         let parsed = match style.parse(filepath, paths::extension(filepath), &mut log, true, &arena)

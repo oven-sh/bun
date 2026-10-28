@@ -5,8 +5,6 @@ use bun_core::Utf8Bytes;
 use bun_jsc::JsResult;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 
-use crate::generated_bindgen::server::FrameworkValue;
-
 /// `setConfigPlugins(plugins, names)`: `plugins` is an array of Bun plugin objects and `names` is
 /// an array of their names.
 pub(crate) fn set_config_plugins<'a>(
@@ -83,12 +81,10 @@ pub(crate) fn set_pages<'a>(cx: &mut JsScope<'a>, framework: Option<JsLocal<'a>>
 
 /// `checkFramework(framework)`: throws the error that `Bun.serve()` would throw for this `framework`
 /// object of a plugin, so that `bun bake` reports it as an error of `bake.config.ts`.
-pub(crate) fn check_framework<'a>(
-    cx: &mut JsScope<'a>,
-    framework: FrameworkValue<'a>,
-) -> JsResult<()> {
+pub(crate) fn check_framework<'a>(cx: &mut JsScope<'a>, framework: JsLocal<'a>) -> JsResult<()> {
     let mut bundler_options = crate::bake::SplitBundlerOptions::default();
-    let result = crate::bake::Framework::from_js(framework, cx.global(), &mut bundler_options);
+    let result =
+        crate::bake::Framework::from_js(framework.to_js(), cx.global(), &mut bundler_options);
     bundler_options.destroy_plugin();
     result?;
     Ok(())

@@ -23,7 +23,7 @@ const resolve = {
 } as const;
 const reverse = { ...method, args: { ip: b.string.utf8 }, expected: { ip: ["string"] }, returns: b.promise } as const;
 /** An array of `[family, address, port]` tuples, each element converted according to its position. */
-const setServers = { ...method, args: { servers: b.jsArray.otherAsNull }, length: 1 } as const;
+const setServers = { ...method, args: { servers: b.opaque } } as const;
 
 /** The native handle behind `new dns.Resolver()`. */
 export const DNSResolver = b.class({
@@ -78,11 +78,9 @@ export const globalLookupService = b.fn({
 });
 
 // `bun:internal-for-testing`
-const addresses = b.jsArray.otherAsNull;
 export const seedCacheForTesting = b.fn({
   ...method,
-  args: { hostname: b.string.utf8, addresses },
-  length: 2,
+  args: { hostname: b.string.utf8, addresses: b.opaque },
   returns: b.array(b.i32),
   rustPath: "crate::dns_jsc::internal::seed_cache_for_testing",
 });
@@ -93,14 +91,13 @@ export const isLocalhostNameForTesting = b.fn({
 });
 export const isAllLoopbackOfOneFamilyForTesting = b.fn({
   ...method,
-  args: { addresses },
-  length: 1,
+  args: { addresses: b.opaque },
   returns: b.bool,
   rustPath: "crate::dns_jsc::internal::is_all_loopback_of_one_family_for_testing",
 });
 export const getaddrinfoErrorForTesting = b.fn({
   ...method,
   args: { code: b.string.utf8, hostname: b.string.utf8 },
-  returns: b.object.optional,
+  returns: b.opaque,
   rustPath: "crate::dns_jsc::internal::getaddrinfo_error_for_testing",
 });

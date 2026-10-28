@@ -3,11 +3,8 @@
 use crate::api::js_bundler::Plugin;
 use crate::api::js_bundler::js_bundler::PluginJscExt as _;
 use crate::bake::jsc;
-use crate::generated_bindgen::server::{
-    BakeMinify, BakePlugin, BakeSourceMap, BuildConfigSubsetOptions,
-};
-use bun_jsc::bindgen::JsLocal;
-use bun_jsc::{JSGlobalObject, JSObject, JSValue, JsResult};
+use crate::generated_bindgen::bake_plugins::{BakeMinify, BakeSourceMap, BuildConfigSubsetOptions};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_options_types::schema::api::SourceMapMode;
 use core::ptr::NonNull;
 
@@ -79,14 +76,13 @@ impl SplitBundlerOptions {
 
         let mut iter = plugin_array.array_iterator(global)?;
         while let Some(plugin_config) = iter.next()? {
-            let Some(plugin_config) = JsLocal::<JSObject>::from_js(global, plugin_config) else {
+            if !plugin_config.is_object() {
                 return Err(
                     global.throw_invalid_arguments(format_args!("Expected plugin to be an object"))
                 );
-            };
-            let plugin_config = BakePlugin::new(plugin_config);
+            }
 
-            if let Some(slice) = plugin_config.name(global)? {
+            if let Some(slice) = plugin_config.get_optional_slice(global, "name")? {
                 if slice.slice().is_empty() {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "Expected plugin to have a non-empty name"
@@ -98,7 +94,7 @@ impl SplitBundlerOptions {
                 );
             }
 
-            let function = match plugin_config.setup(global)? {
+            let function = match plugin_config.get_function(global, "setup")? {
                 Some(f) => f,
                 None => {
                     return Err(global.throw_invalid_arguments(format_args!(
@@ -110,7 +106,7 @@ impl SplitBundlerOptions {
             // `Plugin` is an `opaque_ffi!` ZST — `opaque_mut` is the safe
             // deref. Handle held live in `self.plugin` (protected JSCell).
             let plugin_result = Plugin::opaque_mut(plugin.as_ptr()).add_plugin(
-                function.to_js(),
+                function,
                 empty_object,
                 JSValue::NULL,
                 false,
@@ -142,7 +138,11 @@ impl SplitBundlerOptions {
 }
 
 impl BuildConfigSubset {
-    pub(crate) fn from_js(js_options: BuildConfigSubsetOptions) -> BuildConfigSubset {
+    pub(crate) fn from_js(
+        global: &JSGlobalObject,
+        js_options: JSValue,
+    ) -> JsResult<BuildConfigSubset> {
+        let js_options = BuildConfigSubsetOptions::from_js(global, js_options)?;
         let mut options = BuildConfigSubset::default();
 
         if let Some(sourcemap) = js_options.sourcemap {
@@ -168,6 +168,6 @@ impl BuildConfigSubset {
             Some(BakeMinify::All(false) | BakeMinify::Other) | None => {}
         }
 
-        options
+        Ok(options)
     }
 }

@@ -1,7 +1,7 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 import * as table from "../../codegen/builtins/lib.ts";
 import { SecureContext } from "../api/bun/SecureContext.bind.ts";
-import { SocketOptionsObject, SocketReloadOptions } from "./SocketConfig.bind.ts";
+import { SocketOptionsObject } from "./SocketConfig.bind.ts";
 
 export default b.module({ rustPath: "crate::socket::listener" });
 
@@ -14,11 +14,11 @@ export const Listener = b.class({
   proto: {
     data: { getter: b.opaque, setter: { capability: "js" }, capability: "heap" },
     fd: { getter: b.i64 },
-    getsockname: { args: { out: b.object.otherAsNull }, capability: "js", throws: true, length: 1 },
+    getsockname: { args: { out: b.opaque }, capability: "js", throws: true },
     hostname: { getter: b.string.utf8.optional, cache: true },
     port: { getter: b.u16.optional, pure: true },
     ref: { capability: "js", passThis: true },
-    reload: { args: { options: SocketReloadOptions.otherAsNull }, capability: "js", throws: true, length: 1 },
+    reload: { args: { options: b.opaque }, capability: "js", throws: true },
     stop: { args: { closeActiveConnections: b.bool.otherAsNull }, capability: "js", length: 1 },
     unix: { getter: b.string.utf8.optional, cache: true },
     unref: {},
@@ -37,10 +37,8 @@ const fromOptions = {
 export const connect = b.fn({ ...fromOptions, returns: b.promise, rustPath: "crate::socket::Listener::connect" });
 export const listen = b.fn({ ...fromOptions, returns: Listener, rustPath: "crate::socket::Listener::listen" });
 
-/** `options` is read as `TLSOptions`. */
-export const ServerNameTLS = b.union({ context: SecureContext, options: b.opaque });
 export const addServerName = b.fn({
-  args: { listener: Listener, hostname: b.string.utf8, tls: ServerNameTLS },
+  args: { listener: Listener, hostname: b.string.utf8, tls: b.opaque },
   capability: "js",
   throws: true,
   rustPath: "crate::socket::Listener::add_server_name",

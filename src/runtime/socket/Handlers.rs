@@ -493,8 +493,8 @@ impl SocketConfig {
     ) -> JsResult<SocketConfig> {
         let mut result: SocketConfig = 'blk: {
             let ssl: Option<SSLConfig> = match &generated.tls {
-                SocketOptionsTLS::Missing => None,
-                SocketOptionsTLS::Flag(b) => {
+                SocketOptionsTLS::None => None,
+                SocketOptionsTLS::Boolean(b) => {
                     if *b {
                         Some(super::tls_true_defaults(vm, mode.is_server()))
                     } else {

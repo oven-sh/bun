@@ -12,36 +12,42 @@ use bun_jsc::{
 };
 use bun_parsers::yaml::{CyclicAliases, YAML, YamlParseError};
 
-use crate::generated_bindgen::json5_object::StringifySpace;
-
 pub(crate) fn stringify<'a>(
     cx: &mut JsScope<'a>,
     value: JsLocal<'a>,
-    replacer: Option<JsLocal<'a>>,
-    space: StringifySpace<'a>,
-) -> JsResult<Option<JSValue>> {
+    replacer: JsLocal<'a>,
+    space: JsLocal<'a>,
+) -> JsResult<JSValue> {
     let global = cx.global();
-    MarkedArgumentBuffer::new(|roots| stringify_impl(global, value.to_js(), replacer, space, roots))
+    MarkedArgumentBuffer::new(|roots| {
+        stringify_impl(
+            global,
+            value.to_js(),
+            replacer.to_js(),
+            space.to_js(),
+            roots,
+        )
+    })
 }
 
 fn stringify_impl(
     global: &JSGlobalObject,
     value: JSValue,
-    replacer: Option<JsLocal<'_>>,
-    space: StringifySpace<'_>,
+    replacer: JSValue,
+    space_value: JSValue,
     roots: &mut MarkedArgumentBuffer,
-) -> JsResult<Option<JSValue>> {
+) -> JsResult<JSValue> {
     if value.is_undefined() || value.is_symbol() || value.is_function() {
-        return Ok(None);
+        return Ok(JSValue::UNDEFINED);
     }
 
-    if replacer.is_some() {
+    if !replacer.is_undefined_or_null() {
         return Err(global.throw(format_args!(
             "YAML.stringify does not support the replacer argument"
         )));
     }
 
-    let mut stringifier = Stringifier::init(global, space, roots)?;
+    let mut stringifier = Stringifier::init(global, space_value, roots)?;
 
     stringifier
         .find_anchors_and_aliases(global, value, ValueOrigin::Root)
@@ -51,7 +57,7 @@ fn stringify_impl(
         .stringify(global, value)
         .map_err(|err| err.to_js_error(global))?;
 
-    stringifier.builder.to_string(global).map(Some)
+    stringifier.builder.to_string(global)
 }
 
 struct Stringifier<'a> {
@@ -77,25 +83,28 @@ enum Space {
 }
 
 impl Space {
-    fn init(global: &JSGlobalObject, space: StringifySpace<'_>) -> JsResult<Space> {
-        match space.unwrap_boxed_primitive(global)? {
-            StringifySpace::Number(num_f) => {
-                // Clamp on the float to match the spec's min(10, ToIntegerOrInfinity(space)).
-                // toInt32() wraps large values and Infinity to 0, which is wrong.
-                if num_f.is_nan() || num_f < 1.0 {
-                    // handles NaN, -Infinity, 0, negatives
-                    return Ok(Space::Minified);
-                }
-                Ok(Space::Number(if num_f > 10.0 { 10 } else { num_f as u32 }))
+    fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Space> {
+        let space = space_value.unwrap_boxed_primitive(global)?;
+        if space.is_number() {
+            // Clamp on the float to match the spec's min(10, ToIntegerOrInfinity(space)).
+            // toInt32() wraps large values and Infinity to 0, which is wrong.
+            let num_f = space.as_number();
+            if num_f.is_nan() || num_f < 1.0 {
+                // handles NaN, -Infinity, 0, negatives
+                return Ok(Space::Minified);
             }
-            StringifySpace::Text(str) => {
-                if str.length() == 0 {
-                    return Ok(Space::Minified);
-                }
-                Ok(Space::Str(str))
-            }
-            _ => Ok(Space::Minified),
+            return Ok(Space::Number(if num_f > 10.0 { 10 } else { num_f as u32 }));
         }
+
+        if space.is_string() {
+            let str = space.to_bun_string(global)?;
+            if str.length() == 0 {
+                return Ok(Space::Minified);
+            }
+            return Ok(Space::Str(str));
+        }
+
+        Ok(Space::Minified)
     }
 }
 
@@ -191,7 +200,7 @@ bun_core::oom_from_alloc!(StringifyError);
 impl<'a> Stringifier<'a> {
     fn init(
         global: &JSGlobalObject,
-        space: StringifySpace<'_>,
+        space_value: JSValue,
         known_collection_roots: &'a mut MarkedArgumentBuffer,
     ) -> JsResult<Stringifier<'a>> {
         let mut prop_names: StringHashMap<usize> = StringHashMap::default();
@@ -208,7 +217,7 @@ impl<'a> Stringifier<'a> {
             known_collection_roots,
             array_item_counter: 0,
             prop_names,
-            space: Space::init(global, space)?,
+            space: Space::init(global, space_value)?,
         })
     }
 

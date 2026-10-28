@@ -3,30 +3,19 @@ import * as table from "../../codegen/builtins/lib.ts";
 
 export default b.module({ rustPath: "crate::server::node_http_response" });
 
-const eventHandler = {
-  getter: b.opaque,
-  setter: { capability: "js", type: b.opaque.nullable },
-  passThis: true,
-} as const;
+const eventHandler = { getter: b.opaque, setter: { capability: "js" }, passThis: true } as const;
 const head = {
   statusCode: b.i32.validateInteger(100, 999).default(200),
   statusMessage: b.string.loose.utf8.nullable,
   /** The flat `[name, value, ...]` array, which C++ reads in place. */
-  headers: b.object.otherAsNull,
+  headers: b.opaque,
 };
 const autoHeaders = { autoHeaderBits: b.u32.default(0), keepAliveTimeoutSecs: b.u32.default(0) };
 const method = { returns: b.opaque, capability: "js", throws: true } as const;
-
-/** A `callback` is in the place of the one after it. `name` is read only if there is a chunk. */
-export const ChunkEncoding = b.union({
-  callback: b.callable,
-  name: b.string.allowStringObject.deferred,
-  other: b.opaque,
-});
-
 const chunk = {
   chunk: b.bytes({ from: ["string", "buffer"], string: "asIs", held: "handle" }).nullable,
-  encoding: ChunkEncoding.falsyAsNull,
+  /** Read only if there is a chunk. */
+  encoding: b.opaque,
 };
 const expected = { chunk: ["string", "Buffer", "Uint8Array"] } as const;
 const strictContentLength = b.f64.optional;
@@ -54,7 +43,7 @@ export const NodeHTTPResponse = b.class({
     flushHeaders: {},
     getBytesWritten: { returns: b.usize },
     hasBody: { getter: b.i32, pure: true },
-    headersObject: { returns: b.object.optional, capability: "js" },
+    headersObject: { returns: b.opaque.returning("object", "undefined"), capability: "js" },
     notifyWhenReadParsed: { returns: b.bool },
     onabort: eventHandler,
     ondata: eventHandler,
@@ -63,11 +52,11 @@ export const NodeHTTPResponse = b.class({
     pauseReads: {},
     ref: { rustName: "js_ref" },
     resume: { returns: b.bool },
-    takeRawHeaders: { ...method, args: { headers: b.object.otherAsNull }, returns: b.jsArray.optional, length: 1 },
+    takeRawHeaders: { ...method, args: { headers: b.opaque }, returns: b.opaque.returning("Array", "undefined") },
     takeRequestTrailers: {
       ...method,
       args: { useInsecureHTTPParser: b.bool.default(false) },
-      returns: b.jsArray.optional,
+      returns: b.opaque.returning("Array", "undefined"),
       length: 0,
     },
     unref: { rustName: "js_unref" },
@@ -84,7 +73,7 @@ export const NodeHTTPResponse = b.class({
       length: 8,
     },
     writeInformational: {
-      args: { chunk: chunk.chunk, encoding: b.string.allowStringObject.otherAsNull.deferred },
+      args: chunk,
       expected: { chunk: ["string", "Buffer", "TypedArray", "DataView"] },
       capability: "js",
       throws: true,

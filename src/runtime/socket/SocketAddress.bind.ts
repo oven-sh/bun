@@ -40,7 +40,7 @@ export const SocketAddress = b.class({
   },
   static: {
     /** `false` for an instance of a subclass. */
-    isSocketAddress: { args: { value: b.object.otherAsNull }, returns: b.bool, length: 1 },
+    isSocketAddress: { args: { value: b.opaque }, returns: b.bool },
     /** `undefined` if `input` is not an address with an optional `:port`. */
     parse: {
       args: { input: b.string.allowStringObject },

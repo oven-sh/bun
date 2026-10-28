@@ -7,15 +7,13 @@ use bun_ptr::{ParentRef, RefPtr};
 use bun_event_loop::Taskable;
 use bun_io::KeepAlive;
 use bun_jsc::ConcurrentTask::{ConcurrentTask, Task};
-use bun_jsc::bindgen::{BufferSource, JsLocal, JsScope, JsWrapper};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, ErrorCode, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional, WorkPoolTask,
 };
 use bun_threading::work_pool::WorkPool;
-
-use crate::generated_bindgen::node_zlib_binding::ZlibWriteNumber;
 
 bun_output::declare_scope!(zlib, hidden);
 
@@ -64,13 +62,13 @@ impl Error {
     }
 }
 
+// ─── local shims (upstream-crate gaps) ────────────────────────────────────
+
+/// Local `JSValue::toU32` shim — `bun_jsc::JSValue` doesn't expose `to_u32()`
+/// in this crate's view yet.
 #[inline]
-fn jsv_to_u32(v: ZlibWriteNumber) -> u32 {
-    match v {
-        ZlibWriteNumber::Number(number) => number as u32,
-        ZlibWriteNumber::Flag(flag) => u32::from(flag),
-        ZlibWriteNumber::Missing | ZlibWriteNumber::Other => 0,
-    }
+fn jsv_to_u32(v: JSValue) -> u32 {
+    v.as_number() as u32
 }
 
 impl CountedKeepAlive {
@@ -240,18 +238,18 @@ pub(crate) trait CompressionStreamImpl:
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        flush: ZlibWriteNumber,
+        flush: JsLocal<'_>,
         in_: JsLocal<'_>,
-        in_off: ZlibWriteNumber,
-        in_len: ZlibWriteNumber,
-        out: Option<JsLocal<'_, BufferSource>>,
-        out_off: ZlibWriteNumber,
-        out_len: ZlibWriteNumber,
+        in_off: JsLocal<'_>,
+        in_len: JsLocal<'_>,
+        out: JsLocal<'_>,
+        out_off: JsLocal<'_>,
+        out_len: JsLocal<'_>,
     ) -> JsResult<()> {
         let (global_this, this_value) = (cx.global(), this_value.to_js());
-        let in_js = in_.to_js();
+        let (flush, in_js, out_js) = (flush.to_js(), in_.to_js(), out.to_js());
 
-        if matches!(flush, ZlibWriteNumber::Missing) {
+        if flush.is_undefined() {
             return Err(global_this
                 .err(
                     ErrorCode::INVALID_ARG_VALUE,
@@ -296,7 +294,7 @@ pub(crate) trait CompressionStreamImpl:
                     )
                     .throw());
             }
-            let (in_off, in_len) = (jsv_to_u32(in_off), jsv_to_u32(in_len));
+            let (in_off, in_len) = (jsv_to_u32(in_off.to_js()), jsv_to_u32(in_len.to_js()));
             if in_buf.byte_len < in_off as usize + in_len as usize {
                 return Err(global_this
                     .err(
@@ -312,7 +310,7 @@ pub(crate) trait CompressionStreamImpl:
             (in_off, in_len)
         };
 
-        let Some(out_buf) = out.map(|out| out.as_array_buffer(global_this)) else {
+        let Some(out_buf) = out_js.as_array_buffer(global_this) else {
             return Err(global_this
                 .err(
                     ErrorCode::INVALID_ARG_TYPE,
@@ -320,8 +318,8 @@ pub(crate) trait CompressionStreamImpl:
                 )
                 .throw());
         };
-        let out_off: u32 = jsv_to_u32(out_off);
-        let out_len: u32 = jsv_to_u32(out_len);
+        let out_off: u32 = jsv_to_u32(out_off.to_js());
+        let out_len: u32 = jsv_to_u32(out_len.to_js());
         if out_buf.byte_len < out_off as usize + out_len as usize {
             return Err(global_this
                 .err(
@@ -358,7 +356,6 @@ pub(crate) trait CompressionStreamImpl:
             };
             Some(buf)
         };
-        let out_js = out_buf.value;
         let Some(mut out_buf) = out_js.as_pinned_arraybuffer(global_this) else {
             if let Some(buf) = &in_buf {
                 buf.unpin();
@@ -472,18 +469,18 @@ pub(crate) trait CompressionStreamImpl:
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        flush: ZlibWriteNumber,
+        flush: JsLocal<'_>,
         in_: JsLocal<'_>,
-        in_off: ZlibWriteNumber,
-        in_len: ZlibWriteNumber,
-        out: Option<JsLocal<'_, BufferSource>>,
-        out_off: ZlibWriteNumber,
-        out_len: ZlibWriteNumber,
+        in_off: JsLocal<'_>,
+        in_len: JsLocal<'_>,
+        out: JsLocal<'_>,
+        out_off: JsLocal<'_>,
+        out_len: JsLocal<'_>,
     ) -> JsResult<()> {
         let (global_this, this_value) = (cx.global(), this_value.to_js());
-        let in_js = in_.to_js();
+        let (flush, in_js, out_js) = (flush.to_js(), in_.to_js(), out.to_js());
 
-        if matches!(flush, ZlibWriteNumber::Missing) {
+        if flush.is_undefined() {
             return Err(global_this
                 .err(
                     ErrorCode::INVALID_ARG_VALUE,
@@ -518,7 +515,7 @@ pub(crate) trait CompressionStreamImpl:
                         .throw());
                 }
             };
-            let (in_off, in_len) = (jsv_to_u32(in_off), jsv_to_u32(in_len));
+            let (in_off, in_len) = (jsv_to_u32(in_off.to_js()), jsv_to_u32(in_len.to_js()));
             if in_buf.byte_len < in_off as usize + in_len as usize {
                 return Err(global_this
                     .err(
@@ -536,7 +533,7 @@ pub(crate) trait CompressionStreamImpl:
             Some(&in_buf.byte_slice()[in_off as usize..in_off as usize + in_len as usize])
         };
 
-        let Some(mut out_buf) = out.map(|out| out.as_array_buffer(global_this)) else {
+        let Some(mut out_buf) = out_js.as_array_buffer(global_this) else {
             return Err(global_this
                 .err(
                     ErrorCode::INVALID_ARG_TYPE,
@@ -544,8 +541,8 @@ pub(crate) trait CompressionStreamImpl:
                 )
                 .throw());
         };
-        let out_off: u32 = jsv_to_u32(out_off);
-        let out_len: u32 = jsv_to_u32(out_len);
+        let out_off: u32 = jsv_to_u32(out_off.to_js());
+        let out_len: u32 = jsv_to_u32(out_len.to_js());
         if out_buf.byte_len < out_off as usize + out_len as usize {
             return Err(global_this
                 .err(
@@ -559,7 +556,7 @@ pub(crate) trait CompressionStreamImpl:
                 .throw());
         }
         // Bounds checked above; `byte_slice_mut` is the safe accessor for the JS
-        // ArrayBuffer's backing store (rooted via `out` on the call stack).
+        // ArrayBuffer's backing store (rooted via `out_js` on the call stack).
         let out: Option<&mut [u8]> = Some(
             &mut out_buf.byte_slice_mut()[out_off as usize..out_off as usize + out_len as usize],
         );

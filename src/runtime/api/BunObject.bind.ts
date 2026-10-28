@@ -1,5 +1,4 @@
 import * as b from "../../codegen/bindgen-lib.ts";
-import { ServeOptions } from "../server/server.bind.ts";
 
 export default b.module({ rustPath: "crate::api::bun_object" });
 
@@ -165,12 +164,7 @@ const resolveSignature = {
 export const resolve = b.fn({ ...resolveSignature, returns: b.promise, rejects: true });
 export const resolveSync = b.fn({ ...resolveSignature, returns: b.string });
 
-export const serve = b.fn({
-  args: { options: ServeOptions.otherAsNull },
-  returns: b.object,
-  capability: "js",
-  throws: true,
-});
+export const serve = b.fn({ args: { options: b.opaque }, returns: b.object, capability: "js", throws: true });
 
 export const shellEscape = b.fn({
   args: { input: b.string.loose },

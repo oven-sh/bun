@@ -14,7 +14,7 @@ use bun_core::MutableString;
 use bun_core::Output;
 use bun_core::String as BunString;
 use bun_jsc::ConcurrentTask::ConcurrentTask;
-use bun_jsc::bindgen::{self, Deferred, JsHeap, JsLocal, JsScope, JsWrapper};
+use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsWrapper};
 use bun_jsc::{
     self as jsc, JSGlobalObject, JSObject, JSString, JSValue, JsError, JsResult, StringJsc as _,
 };
@@ -763,7 +763,7 @@ pub(crate) mod js_bundler {
                 Ok(())
             };
             match object.bytecode_order(global_this)? {
-                BytecodeOrder::Missing | BytecodeOrder::Flag(false) => {}
+                BytecodeOrder::Missing | BytecodeOrder::Enabled(false) => {}
                 BytecodeOrder::List(bytecode_order) => {
                     let mut iter = bytecode_order.to_js().array_iterator(global_this)?;
                     while let Some(path) = iter.next()? {
@@ -774,7 +774,7 @@ pub(crate) mod js_bundler {
                     }
                 }
                 BytecodeOrder::One(path) => push(path)?,
-                BytecodeOrder::Flag(true) => return Err(refuse(JSValue::TRUE)),
+                BytecodeOrder::Enabled(true) => return Err(refuse(JSValue::TRUE)),
                 BytecodeOrder::Other(value) => return Err(refuse(value.to_js())),
             }
 
@@ -1041,11 +1041,11 @@ pub(crate) mod js_bundler {
             match config.env(global_this)? {
                 BuildEnvBehavior::Missing => {}
                 BuildEnvBehavior::Disable
-                | BuildEnvBehavior::Flag(false)
+                | BuildEnvBehavior::Enabled(false)
                 | BuildEnvBehavior::Number(0.0) => {
                     this.env_behavior = api::DotEnvBehavior::Disable;
                 }
-                BuildEnvBehavior::Flag(true) | BuildEnvBehavior::Number(1.0) => {
+                BuildEnvBehavior::Enabled(true) | BuildEnvBehavior::Number(1.0) => {
                     this.env_behavior = api::DotEnvBehavior::LoadAll;
                 }
                 BuildEnvBehavior::Text(slice) => {
@@ -2374,12 +2374,12 @@ impl BuildArtifact {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        chunk_size: Deferred<'_, Option<f64>>,
+        chunk_size: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         self.blob.get_stream_with_cache(
             &cx.js_thread(),
             this_value.to_js(),
-            chunk_size,
+            chunk_size.to_js(),
             js::stream_get_cached,
             js::stream_set_cached,
         )

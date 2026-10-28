@@ -900,20 +900,10 @@ describe("b.rest", () => {
     expect(() => b.fn({ returns: rest, capability: "heap" })).toThrow("b.rest is only for the last argument");
   });
 
-  it("the body converts each element, and stops where it chooses", () => {
-    expect(bindgen.sumUntilNull()).toBe(0);
-    expect(bindgen.sumUntilNull(1, 2, 3)).toBe(6);
-    expect(bindgen.sumUntilNull(1, null, "not converted")).toBe(1);
-    expect(bindgen.sumUntilNull(1, undefined, 1.5)).toBe(1);
-    expect(() => bindgen.sumUntilNull(1, "2")).toThrow(new TypeError("numbers must be a number"));
-    expect(bindgen.sumUntilNull.length).toBe(0);
-  });
-
-  itAlways("converting takes a body that can run JavaScript", () => {
-    expect(() => b.fn({ args: { rest: b.rest(b.i32) }, capability: "heap" })).toThrow(
-      'rest: the body converts it, which takes capability: "js"',
+  itAlways("is of values that stay in the call frame", () => {
+    expect(() => b.rest(b.i32)).toThrow(
+      "each argument of the rest stays in the call frame: b.opaque, or a string with .local",
     );
-    b.fn({ args: { rest: b.rest(b.opaque) } });
   });
 });
 
@@ -1190,24 +1180,6 @@ describe("own: true", () => {
         },
       }),
     ).toThrow("thrown");
-  });
-});
-
-describe("b.conversion", () => {
-  it("converts a value when the body says so", () => {
-    const log: string[] = [];
-    const part = { toString: () => (log.push("read"), "b") };
-    expect(() => bindgen.joinParts(part)).toThrow(new TypeError("two parts are required"));
-    expect(log).toEqual([]);
-    expect(bindgen.joinParts("a", part, 1)).toBe("ab1");
-    expect(log).toEqual(["read"]);
-    expect(() => bindgen.joinParts("a", Symbol())).toThrow(TypeError);
-  });
-
-  itAlways("refuses .ifPassed, .deferred and .withValue", () => {
-    expect(() => b.conversion(b.string.ifPassed)).toThrow(".ifPassed is only for an argument");
-    expect(() => b.conversion(b.string.deferred)).toThrow(".deferred is only for an argument");
-    expect(() => b.conversion(b.f64.withValue)).toThrow("b.bytes and .withValue are only for an argument");
   });
 });
 

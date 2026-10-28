@@ -1,8 +1,9 @@
-use super::s3::xml_response;
-use crate::generated_bindgen::s3_client::ListObjectsOptions;
-use bun_core::Utf8Bytes;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+// Shared S3 option-string ladder (get_truthy → is_string → from_js → to_utf8).
+use super::__s3_credentials_jsc::get_truthy_string_utf8;
+use super::s3::xml_response;
+use bun_core::Utf8Bytes;
 
 pub(crate) struct S3ListObjectsOptions {
     pub(crate) continuation_token: Option<Utf8Bytes<'static>>,
@@ -221,28 +222,54 @@ pub(crate) fn get_list_objects_options_from_js(
     global_this: &JSGlobalObject,
     list_options: JSValue,
 ) -> JsResult<S3ListObjectsOptions> {
+    let mut list_objects_options = S3ListObjectsOptions {
+        continuation_token: None,
+        delimiter: None,
+        encoding_type: None,
+        fetch_owner: None,
+        max_keys: None,
+        prefix: None,
+        start_after: None,
+    };
+
     if !list_options.is_object() {
-        return Ok(S3ListObjectsOptions {
-            continuation_token: None,
-            delimiter: None,
-            encoding_type: None,
-            fetch_owner: None,
-            max_keys: None,
-            prefix: None,
-            start_after: None,
-        });
+        return Ok(list_objects_options);
     }
 
-    let members = ListObjectsOptions::from_js(global_this, list_options)?;
-    // `new String("")` is as good as `""`.
-    let non_empty = |text: Option<Utf8Bytes<'static>>| text.filter(|text| !text.is_empty());
-    Ok(S3ListObjectsOptions {
-        continuation_token: non_empty(members.continuation_token),
-        delimiter: non_empty(members.delimiter),
-        encoding_type: non_empty(members.encoding_type),
-        fetch_owner: members.fetch_owner,
-        max_keys: members.max_keys.map(|max_keys| i64::from(max_keys as i32)),
-        prefix: non_empty(members.prefix),
-        start_after: non_empty(members.start_after),
-    })
+    if let Some(slice) =
+        get_truthy_string_utf8(list_options, global_this, b"continuationToken", false)?
+    {
+        list_objects_options.continuation_token = Some(slice);
+    }
+
+    if let Some(slice) = get_truthy_string_utf8(list_options, global_this, b"delimiter", false)? {
+        list_objects_options.delimiter = Some(slice);
+    }
+
+    if let Some(slice) = get_truthy_string_utf8(list_options, global_this, b"encodingType", false)?
+    {
+        list_objects_options.encoding_type = Some(slice);
+    }
+
+    // `JSValue::get_boolean_loose` is not yet exposed in bun_jsc; emulate via
+    // `get_truthy` + `to_boolean()`.
+    if let Some(val) = list_options.get_truthy(global_this, b"fetchOwner")? {
+        list_objects_options.fetch_owner = Some(val.to_boolean());
+    }
+
+    if let Some(val) = list_options.get_truthy(global_this, b"maxKeys")? {
+        if val.is_number() {
+            list_objects_options.max_keys = Some(val.to_int32() as i64);
+        }
+    }
+
+    if let Some(slice) = get_truthy_string_utf8(list_options, global_this, b"prefix", false)? {
+        list_objects_options.prefix = Some(slice);
+    }
+
+    if let Some(slice) = get_truthy_string_utf8(list_options, global_this, b"startAfter", false)? {
+        list_objects_options.start_after = Some(slice);
+    }
+
+    Ok(list_objects_options)
 }

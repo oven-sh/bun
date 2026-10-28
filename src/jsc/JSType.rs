@@ -683,6 +683,12 @@ impl JSType {
         )
     }
 
+    /// `JSC::isTypedArrayType`: a `DataView` is not one.
+    #[inline]
+    pub fn is_typed_array(self) -> bool {
+        (JSType::Int8Array.0..=JSType::BigUint64Array.0).contains(&self.0)
+    }
+
     pub(crate) fn to_typed_array_type(self) -> TypedArrayType {
         match self {
             JSType::Int8Array => TypedArrayType::TypeInt8,

@@ -16,9 +16,6 @@ pub(crate) use http_method::{Method, Optional as MethodOptional};
 use super::server_body::ServerInitContext;
 use super::web_socket_server_context::WebSocketServerContext;
 use super::{AnyRoute, AnyServer};
-use crate::generated_bindgen::server::{
-    FrameworkValue, ServeOptions, ServerDevelopment, ServerId, Stringish,
-};
 use crate::server::jsc::{JSGlobalObject, JSPropertyIterator, JSValue, JsResult, Strong};
 use bun_core::fmt as bun_fmt;
 
@@ -566,10 +563,9 @@ fn validate_route_name(global: &JSGlobalObject, path: &[u8]) -> JsResult<()> {
     Ok(())
 }
 
-fn get_routes_object(global: &JSGlobalObject, arg: ServeOptions<'_>) -> JsResult<Option<JSValue>> {
-    for routes in [ServeOptions::routes, ServeOptions::static_routes] {
-        if let Some(routes) = routes(arg, global)? {
-            let routes = routes.to_js();
+fn get_routes_object(global: &JSGlobalObject, arg: JSValue) -> JsResult<Option<JSValue>> {
+    for key in ["routes", "static"] {
+        if let Some(routes) = arg.get(global, key)? {
             // https://github.com/oven-sh/bun/issues/17568
             if routes.is_array() {
                 return Ok(None);
@@ -580,26 +576,10 @@ fn get_routes_object(global: &JSGlobalObject, arg: ServeOptions<'_>) -> JsResult
     Ok(None)
 }
 
-/// `None` for `false` and `""`, `"true"` for `true`.
-fn stringish(
-    global: &JSGlobalObject,
-    property: &str,
-    value: Stringish<'_>,
-) -> JsResult<Option<bun_core::String>> {
-    match value {
-        Stringish::Missing | Stringish::Flag(false) => Ok(None),
-        Stringish::Flag(true) => Ok(Some(bun_core::String::static_("true"))),
-        Stringish::Symbol(_) => Err(global.throw_invalid_arguments(format_args!(
-            "The \"{property}\" property must be of type string. Received a symbol",
-        ))),
-        Stringish::Text(text) => Ok(Some(text).filter(|text| !text.is_empty())),
-    }
-}
-
 impl ServerConfig {
     pub(crate) fn from_js(
         global: &JSGlobalObject,
-        arg: Option<ServeOptions<'_>>,
+        arg: JSValue,
         opts: FromJSOptions,
     ) -> JsResult<ServerConfig> {
         let vm = global.bun_vm();
@@ -660,15 +640,14 @@ impl ServerConfig {
 
         // NOTE: SSLConfig drops automatically when `args` drops on error path.
 
-        let Some(arg) = arg else {
+        if !arg.is_object() {
             return Err(global.throw_invalid_arguments(format_args!("Bun.serve expects an object")));
-        };
+        }
 
         // "development" impacts other settings like bake.
-        let dev = arg.development(global)?;
-        if !matches!(dev, ServerDevelopment::Missing) {
-            if let ServerDevelopment::Options(dev) = &dev {
-                if let Some(hmr) = dev.hmr {
+        if let Some(dev) = arg.get(global, "development")? {
+            if dev.is_object() {
+                if let Some(hmr) = dev.get_boolean_strict(global, "hmr")? {
                     args.development = if !hmr {
                         DevelopmentOption::DevelopmentWithoutHmr
                     } else {
@@ -678,15 +657,17 @@ impl ServerConfig {
                     args.development = DevelopmentOption::Development;
                 }
 
-                if let Some(console) = dev.console {
+                if let Some(console) = dev.get_boolean_strict(global, "console")? {
                     args.broadcast_console_log_from_browser_to_server_for_bake = console;
                 }
 
-                if let Some(v) = dev.chrome_dev_tools_automatic_workspace_folders {
+                if let Some(v) =
+                    dev.get_boolean_strict(global, "chromeDevToolsAutomaticWorkspaceFolders")?
+                {
                     args.enable_chrome_devtools_automatic_workspace_folders = v;
                 }
             } else {
-                args.development = if matches!(dev, ServerDevelopment::Flag(true)) {
+                args.development = if dev.to_boolean() {
                     DevelopmentOption::Development
                 } else {
                     DevelopmentOption::Production
@@ -923,13 +904,11 @@ impl ServerConfig {
                     let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
                     let framework = match bake_framework {
                         Some(object) if bake_pages => {
-                            match FrameworkValue::from_js(global, object, |framework| {
-                                crate::bake::Framework::from_js(
-                                    framework,
-                                    global,
-                                    &mut bundler_options,
-                                )
-                            }) {
+                            match crate::bake::Framework::from_js(
+                                object,
+                                global,
+                                &mut bundler_options,
+                            ) {
                                 Ok(framework) => framework,
                                 Err(err) => {
                                     bundler_options.destroy_plugin();
@@ -990,8 +969,7 @@ impl ServerConfig {
             }
         }
 
-        if let Some(value) = arg.idle_timeout(global)? {
-            let value = value.to_js();
+        if let Some(value) = arg.get(global, "idleTimeout")? {
             if !value.is_undefined_or_null() {
                 if !value.is_any_int() {
                     return Err(global.throw_invalid_arguments(format_args!(
@@ -1011,11 +989,18 @@ impl ServerConfig {
             }
         }
 
-        let websocket_object = match arg.web_socket(global)? {
-            None => arg.websocket(global)?,
-            v => v,
+        let websocket_object = if let Some(v) = arg.get_truthy(global, "webSocket")? {
+            Some(v)
+        } else {
+            arg.get_truthy(global, "websocket")?
         };
         if let Some(websocket_object) = websocket_object {
+            if !websocket_object.is_object() {
+                // ssl_config drops with args
+                return Err(global
+                    .throw_invalid_arguments(format_args!("Expected websocket to be an object")));
+            }
+
             // `ssl_config` drops with args on error.
             args.websocket = Some(super::web_socket_server_context::on_create(
                 global,
@@ -1023,7 +1008,8 @@ impl ServerConfig {
             )?);
         }
 
-        if let Some(number) = arg.port(global)? {
+        if let Some(port_) = arg.get_truthy(global, "port")? {
+            let number = port_.to_number(global)?;
             if !number.is_finite() || number.fract() != 0.0 {
                 return Err(global.throw_range_error(
                     number,
@@ -1048,16 +1034,18 @@ impl ServerConfig {
             port = number as u16;
         }
 
-        if let Some(utf8) = arg.base_uri(global)? {
+        if let Some(base_uri) = arg.get_truthy(global, "baseURI")? {
+            let utf8 = base_uri.to_utf8(global)?;
+
             if !utf8.slice().is_empty() {
                 args.base_uri = Box::<[u8]>::from(utf8.slice());
             }
         }
 
-        let host = if let Some(h) = stringish(global, "hostname", arg.hostname(global)?)? {
+        let host = if let Some(h) = arg.get_stringish(global, "hostname")? {
             Some(h)
         } else {
-            stringish(global, "host", arg.host(global)?)?
+            arg.get_stringish(global, "host")?
         };
         if let Some(host) = host {
             let host_str = host.to_utf8();
@@ -1069,7 +1057,7 @@ impl ServerConfig {
             }
         }
 
-        if let Some(unix_value) = stringish(global, "unix", arg.unix(global)?)? {
+        if let Some(unix_value) = arg.get_stringish(global, "unix")? {
             let unix_str = unix_value.to_utf8();
             if !unix_str.slice().is_empty() {
                 if hostname.is_some() {
@@ -1082,10 +1070,11 @@ impl ServerConfig {
             }
         }
 
-        match arg.id(global)? {
-            ServerId::Missing => {}
-            ServerId::Null => args.allow_hot = false,
-            ServerId::Id(id_str) => {
+        if let Some(id) = arg.get(global, "id")? {
+            if id.is_undefined_or_null() {
+                args.allow_hot = false;
+            } else {
+                let id_str = id.to_utf8(global)?;
                 if !id_str.slice().is_empty() {
                     args.id = Box::<[u8]>::from(id_str.slice());
                 } else {
@@ -1096,7 +1085,7 @@ impl ServerConfig {
 
         if opts.allow_bake_config {
             'brk: {
-                if let Some(bake_args_js) = arg.app(global)? {
+                if let Some(bake_args_js) = arg.get_truthy(global, "app")? {
                     if !bun_core::FeatureFlags::bake() {
                         break 'brk;
                     }
@@ -1123,45 +1112,61 @@ impl ServerConfig {
             }
         }
 
-        if let Some(dev) = arg.reuse_port(global)? {
-            args.reuse_port = dev;
+        if let Some(dev) = arg.get(global, "reusePort")? {
+            args.reuse_port = dev.to_boolean();
         }
 
-        if let Some(dev) = arg.ipv6_only(global)? {
-            args.ipv6_only = dev;
+        if let Some(dev) = arg.get(global, "ipv6Only")? {
+            args.ipv6_only = dev.to_boolean();
         }
 
-        if let Some(v) = arg.http3(global)? {
-            args.http3 = v;
+        if let Some(v) = arg.get(global, "http3")? {
+            args.http3 = v.to_boolean();
         }
 
-        if let Some(v) = arg.http2(global)? {
-            args.http2 = v;
+        if let Some(v) = arg.get(global, "http2")? {
+            args.http2 = v.to_boolean();
         }
 
-        if let Some(v) = arg.http1(global)? {
-            args.http1 = v;
+        if let Some(v) = arg.get(global, "http1")? {
+            args.http1 = v.to_boolean();
         }
 
-        if let Some(max_request_body_size) = arg.max_request_body_size(global)? {
-            args.max_request_body_size =
-                u64::try_from((max_request_body_size as i64).max(0)).expect("int cast") as usize;
+        if let Some(max_request_body_size) = arg.get_truthy(global, "maxRequestBodySize")? {
+            if max_request_body_size.is_number() {
+                args.max_request_body_size = u64::try_from(max_request_body_size.to_int64().max(0))
+                    .expect("int cast") as usize;
+            }
         }
 
-        if let Some(on_error) = arg.error(global)? {
+        if let Some(on_error) = arg.get_truthy(global, "error")? {
+            if !on_error.is_callable() {
+                return Err(
+                    global.throw_invalid_arguments(format_args!("Expected error to be a function"))
+                );
+            }
             // Raw value — async-context wrapping is deferred to the slot-write
             // site (`serve_with!` / `on_reload_from_zig`) so the wrapped fn is
             // rooted by the wrapper's WriteBarrier slot the moment it exists.
-            args.on_error = on_error.to_js();
+            args.on_error = on_error;
         }
 
-        if let Some(on_request_) = arg.on_node_http_request(global)? {
-            args.on_node_http_request = on_request_.to_js();
+        if let Some(on_request_) = arg.get_truthy(global, "onNodeHTTPRequest")? {
+            if !on_request_.is_callable() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "Expected onNodeHTTPRequest to be a function",
+                )));
+            }
+            args.on_node_http_request = on_request_;
             args.is_node_http_server = true;
         }
 
-        if let Some(on_request_) = arg.fetch(global)? {
-            args.on_request = on_request_.to_js();
+        if let Some(on_request_) = arg.get_truthy(global, "fetch")? {
+            if !on_request_.is_callable() {
+                return Err(global
+                    .throw_invalid_arguments(format_args!("Expected fetch() to be a function")));
+            }
+            args.on_request = on_request_;
         } else if args.bake.is_none()
             && !args.is_node_http_server
             && (args.static_routes.len() + args.user_routes_to_build.len()) == 0
@@ -1185,8 +1190,7 @@ impl ServerConfig {
             )));
         }
 
-        if let Some(tls) = arg.tls(global)? {
-            let tls = tls.to_js();
+        if let Some(tls) = arg.get_truthy(global, "tls")? {
             if tls.is_falsey() {
                 args.ssl_config = None;
             } else if tls.js_type().is_array() {
@@ -1227,7 +1231,7 @@ impl ServerConfig {
         // @compatibility Bun v0.x - v0.2.1
         // this used to be top-level, now it's "tls" object
         if args.ssl_config.is_none() {
-            if let Some(ssl_config) = SSLConfig::from_js(vm, global, arg.object().to_js(), true)? {
+            if let Some(ssl_config) = SSLConfig::from_js(vm, global, arg, true)? {
                 args.ssl_config = Some(ssl_config);
             }
         }

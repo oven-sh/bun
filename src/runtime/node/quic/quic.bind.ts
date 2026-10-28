@@ -4,7 +4,9 @@ import { SocketAddress } from "../../socket/SocketAddress.bind.ts";
 import { BlockList } from "../net/BlockList.bind.ts";
 
 const js = { capability: "js", throws: true } as const;
-const certificate = { returns: b.bufferSource.returning("Buffer").optional, capability: "heap", throws: true } as const;
+const objectIfOpen = { returns: b.opaque.returning("object", "undefined"), ...js } as const;
+const certificate = { returns: b.opaque.returning("Buffer", "undefined"), ...js } as const;
+const address = { returns: b.opaque.returning("SocketAddress", "undefined"), capability: "js" } as const;
 
 /** A member of another type is ignored. */
 const text = b.string.allowStringObject.otherAsNull;
@@ -14,40 +16,27 @@ const object = b.object.otherAsNull;
 /** A negative number is 0 and a BigInt wraps to 64 bits. */
 export const Uint64Option = b.union({ missing: b.null, number: b.f64, bigInt: b.i64.asIntN, other: b.ignored });
 
-export const QuicStreamError = b.dictionary({ code: Uint64Option }, { deferred: true });
-/** `true` if the session is closing every stream. A destroyed stream does not read the `code` of `error`. */
-export const StreamDestroyReason = b.union({
-  cascading: b.bool,
-  number: b.f64,
-  bigInt: b.i64.asIntN,
-  error: QuicStreamError,
-  other: b.ignored,
-});
-
 export const QuicStream = b.class({
   rustPath: "crate::node::quic::QuicStream",
   proto: {
-    abortForDestroy: { args: { stopSendingCode: Uint64Option, resetCode: Uint64Option }, capability: "js" },
+    abortForDestroy: { args: { stopSendingCode: b.opaque, resetCode: b.opaque }, capability: "js" },
     attachSource: { ...js, args: { source: b.opaque } },
-    destroy: { ...js, args: { error: StreamDestroyReason } },
+    destroy: { ...js, args: { error: b.opaque } },
     endWrite: { capability: "js" },
     getPriority: { returns: b.u32 },
     getReader: { returns: b.self, passThis: true },
     initStreamingSource: {},
-    pull: { ...js, args: { callback: b.callable.otherAsNull } },
-    resetStream: { args: { code: Uint64Option }, capability: "js" },
-    /**
-     * `headers` is `[string, count]`, and a primitive is `[undefined, undefined]`.
-     * It is read first, and `flags` is not converted for trailers.
-     */
+    pull: { ...js, args: { callback: b.opaque } },
+    resetStream: { args: { code: b.opaque }, capability: "js" },
+    /** `headers` is `[string, count]`. It is read first, and `flags` is not converted for trailers. */
     sendHeaders: {
       ...js,
-      args: { kind: coercedInt32.deferred, headers: object, flags: coercedInt32.deferred },
+      args: { kind: coercedInt32.deferred, headers: b.opaque, flags: coercedInt32.deferred },
       returns: b.bool,
     },
     setPriority: { args: { priority: coercedInt32 } },
     setWakeup: { args: { callback: b.opaque.nullable }, capability: "js" },
-    stopSending: { args: { code: Uint64Option }, capability: "js" },
+    stopSending: { args: { code: b.opaque }, capability: "js" },
     write: { ...js, args: { batch: b.opaque }, returns: b.f64.optional },
   },
 });
@@ -62,24 +51,22 @@ export const QuicCloseOptions = b.dictionary(
 export const QuicSession = b.class({
   rustPath: "crate::node::quic::QuicSession",
   proto: {
-    applicationOptions: { ...js, returns: b.object },
+    applicationOptions: { returns: b.object, ...js },
     destroy: { ...js, args: { options: QuicCloseOptions.otherAsNull } },
     getCertificate: certificate,
     getEphemeralKey: { returns: EphemeralKey.optional },
-    /** A `SocketAddress`, or `undefined` for no address. */
-    getLocalAddress: { returns: b.opaque.returning("SocketAddress", "undefined"), capability: "js" },
+    getLocalAddress: address,
     getPeerCertificate: certificate,
-    /** A `SocketAddress`, or `undefined` for no address. */
-    getRemoteAddress: { returns: b.opaque.returning("SocketAddress", "undefined"), capability: "js" },
+    getRemoteAddress: address,
     gracefulClose: { ...js, args: { options: QuicCloseOptions.otherAsNull } },
-    localTransportParams: { ...js, returns: b.object.optional },
+    localTransportParams: objectIfOpen,
     openStream: {
       ...js,
       args: { direction: b.f64.otherAsNull, body: b.bufferSource.allowShared.otherAsNull },
       returns: QuicStream.optional,
       passThis: true,
     },
-    remoteTransportParams: { ...js, returns: b.object.optional },
+    remoteTransportParams: objectIfOpen,
     sendDatagram: { ...js, args: { data: b.bufferSource.allowShared.otherAsNull }, returns: b.u64.asBigInt },
     updateKey: { returns: b.bool },
   },
@@ -171,8 +158,7 @@ export const QuicEndpoint = b.class({
   rustPath: "crate::node::quic::QuicEndpoint",
   construct: { passStructure: true, args: { options: EndpointOptions }, capability: "js", throws: true, length: 0 },
   proto: {
-    /** A `SocketAddress`, or `undefined` for no address. */
-    address: { returns: b.opaque.returning("SocketAddress", "undefined"), capability: "js" },
+    address,
     closeGracefully: { capability: "js", passThis: true },
     connect: {
       ...js,

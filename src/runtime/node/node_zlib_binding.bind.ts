@@ -12,18 +12,16 @@ export const crc32 = b.fn({
 });
 
 const method = { capability: "js", throws: true, passThis: true, length: 0 } as const;
-/** A number saturates to a `u32`, `true` is 1 and anything else is 0. Only `flush` refuses `undefined`. */
-export const ZlibWriteNumber = b.union({ number: b.f64, flag: b.bool, missing: b.undefined, other: b.ignored });
 const write = {
   ...method,
   args: {
-    flush: ZlibWriteNumber,
+    flush: b.opaque,
     in_: b.opaque,
-    inOff: ZlibWriteNumber,
-    inLen: ZlibWriteNumber,
-    out: b.bufferSource.allowShared.otherAsNull,
-    outOff: ZlibWriteNumber,
-    outLen: ZlibWriteNumber,
+    inOff: b.opaque,
+    inLen: b.opaque,
+    out: b.opaque,
+    outOff: b.opaque,
+    outLen: b.opaque,
   },
 } as const;
 const int32 = b.i32.validateInteger();

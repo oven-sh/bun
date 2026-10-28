@@ -487,6 +487,11 @@ impl<'a> JsLocal<'a> {
         unsafe { &*(core::ptr::from_ref(values) as *const [JSValue]) }
     }
 
+    #[inline(always)]
+    pub fn is_undefined(self) -> bool {
+        self.0.is_undefined()
+    }
+
     #[inline]
     pub fn as_callable(self) -> Option<JsLocal<'a, Callable>> {
         self.0.is_callable().then(|| JsLocal::from_raw(self.0))
@@ -563,46 +568,6 @@ impl<'a, T> Deferred<'a, T> {
         // SAFETY: the call `'a` holds `self.value`.
         unsafe { with_scope_of(global, |cx| (self.convert)(cx, self.value)) }
             .map_err(|error| error.into_js_error(global))
-    }
-}
-
-/// A `b.rest(T)` argument: the body converts each element.
-pub struct Rest<'a, T> {
-    values: &'a [JsLocal<'a>],
-    convert: ConvertFn<'a, T>,
-}
-impl<T> Clone for Rest<'_, T> {
-    #[inline(always)]
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-impl<T> Copy for Rest<'_, T> {}
-
-impl<'a, T> Rest<'a, T> {
-    #[doc(hidden)]
-    #[inline(always)]
-    pub fn from_extern(values: &'a [JsLocal<'a>], convert: ConvertFn<'a, T>) -> Self {
-        Rest { values, convert }
-    }
-
-    #[inline(always)]
-    pub fn len(self) -> usize {
-        self.values.len()
-    }
-
-    #[inline(always)]
-    pub fn is_empty(self) -> bool {
-        self.values.is_empty()
-    }
-
-    #[inline]
-    pub fn iter(self) -> impl ExactSizeIterator<Item = Deferred<'a, T>> {
-        let convert = self.convert;
-        self.values.iter().map(move |value| Deferred {
-            value: value.0,
-            convert,
-        })
     }
 }
 
@@ -825,20 +790,6 @@ impl<'a> JsLocal<'a, Callable> {
 pub enum BufferSource {}
 
 impl<'a> JsLocal<'a, BufferSource> {
-    /// As [`JSValue::create_buffer_with_ctx`].
-    ///
-    /// # Safety
-    /// As [`JSValue::create_buffer_with_ctx`].
-    pub unsafe fn create_buffer_with_ctx(
-        global: &'a JSGlobalObject,
-        bytes: NonNull<[u8]>,
-        ctx: *mut c_void,
-        free: unsafe extern "C" fn(*mut c_void, *mut c_void),
-    ) -> JsResult<Self> {
-        // SAFETY: forwarded.
-        unsafe { JSValue::create_buffer_with_ctx(global, bytes, ctx, free) }.map(JsLocal::from_raw)
-    }
-
     #[inline]
     pub fn as_array_buffer(self, global: &JSGlobalObject) -> ArrayBuffer {
         self.0.as_array_buffer(global).unwrap()
@@ -918,7 +869,7 @@ impl<'a> JsBytes<'a> {
 
     #[inline]
     pub fn to_js(self) -> JSValue {
-        self.value.0
+        self.value.to_js()
     }
 
     /// `shared: "copied"` for `string: "asIs"`. Like [`get`](Self::get), but copies the bytes of a shared buffer into `copy` and returns those.

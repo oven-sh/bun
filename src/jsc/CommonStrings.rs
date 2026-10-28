@@ -104,6 +104,16 @@ impl<'a> CommonStrings<'a> {
     pub fn unknown(self) -> JSValue {
         CommonStringsForRust::Unknown.to_js(self.global_object)
     }
+    /// `"h2"`
+    #[inline]
+    pub fn alpn_h2(self) -> JSValue {
+        CommonStringsForRust::AlpnH2.to_js(self.global_object)
+    }
+    /// `"http/1.1"`
+    #[inline]
+    pub fn alpn_http11(self) -> JSValue {
+        CommonStringsForRust::AlpnHttp11.to_js(self.global_object)
+    }
     /// `"abandoned"`
     #[inline]
     pub fn quic_datagram_abandoned(self) -> JSValue {

@@ -5,7 +5,7 @@ use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr::{null, null_mut};
 use std::collections::VecDeque;
 
-use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
+use bun_jsc::bindgen::{BufferSource, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     ArrayBuffer, JSGlobalObject, JSValue, JsCell, JsClass as _, JsRef, JsResult, StringJsc, Strong,
@@ -2187,12 +2187,10 @@ impl QuicSession {
     pub(crate) fn update_key(&self) -> bool {
         false
     }
-    pub(crate) fn get_certificate<'a>(
-        &self,
-        heap: &JsHeap<'a>,
-    ) -> bindgen::Result<'a, Option<JsLocal<'a, BufferSource>>> {
+    pub(crate) fn get_certificate(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        let global = cx.global();
         if let Some(der) = self.conn_ssl().and_then(tls::local_certificate_der) {
-            return heap.create_buffer(der.as_slice()).map(Some);
+            return ArrayBuffer::create_buffer(global, der.as_slice());
         }
         if let Some(der) = self
             .hsk_snapshot
@@ -2200,23 +2198,21 @@ impl QuicSession {
             .as_ref()
             .and_then(|s| s.local_cert_der.clone())
         {
-            return heap.create_buffer(&der).map(Some);
+            return ArrayBuffer::create_buffer(global, &der);
         }
-        Ok(None)
+        Ok(JSValue::UNDEFINED)
     }
-    pub(crate) fn get_peer_certificate<'a>(
-        &self,
-        heap: &JsHeap<'a>,
-    ) -> bindgen::Result<'a, Option<JsLocal<'a, BufferSource>>> {
+    pub(crate) fn get_peer_certificate(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        let global = cx.global();
         if let Some(conn) = self.conn() {
             // lsquic returns a STACK_OF(X509)* the callee frees
             // (sk_X509_pop_free inside leaf_certificate_der).
             if let Some(der) = tls::leaf_certificate_der(conn.server_cert_chain()) {
-                return heap.create_buffer(&der).map(Some);
+                return ArrayBuffer::create_buffer(global, &der);
             }
             if let Some(ssl) = self.conn_ssl() {
                 if let Some(der) = tls::peer_certificate_der(ssl) {
-                    return heap.create_buffer(&der).map(Some);
+                    return ArrayBuffer::create_buffer(global, &der);
                 }
             }
         }
@@ -2226,9 +2222,9 @@ impl QuicSession {
             .as_ref()
             .and_then(|s| s.peer_cert_der.clone())
         {
-            return heap.create_buffer(&der).map(Some);
+            return ArrayBuffer::create_buffer(global, &der);
         }
-        Ok(None)
+        Ok(JSValue::UNDEFINED)
     }
     pub(crate) fn get_ephemeral_key(&self) -> Option<EphemeralKey> {
         let (kind, name, bits) = self
@@ -2350,25 +2346,22 @@ fn make_application_error(global: &JSGlobalObject, code: u64) -> JsResult<JSValu
 }
 
 impl QuicSession {
-    pub(crate) fn local_transport_params(&self, cx: &mut JsScope<'_>) -> JsResult<Option<JSValue>> {
+    pub(crate) fn local_transport_params(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global = cx.global();
         let Some(ep) = self.endpoint_ref() else {
-            return Ok(None);
+            return Ok(JSValue::UNDEFINED);
         };
         let tp = if self.is_server.get() {
             ep.server_local_tp.get()
         } else {
             ep.client_local_tp.get()
         };
-        Self::transport_params_to_js(global, tp).map(Some)
+        Self::transport_params_to_js(global, tp)
     }
-    pub(crate) fn remote_transport_params(
-        &self,
-        cx: &mut JsScope<'_>,
-    ) -> JsResult<Option<JSValue>> {
+    pub(crate) fn remote_transport_params(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global = cx.global();
         if let Some(tp) = self.conn().and_then(|c| c.peer_transport_params()) {
-            return Self::transport_params_to_js(global, &tp).map(Some);
+            return Self::transport_params_to_js(global, &tp);
         }
         match self
             .hsk_snapshot
@@ -2376,8 +2369,8 @@ impl QuicSession {
             .as_ref()
             .and_then(|s| s.peer_transport_params.as_ref())
         {
-            Some(tp) => Self::transport_params_to_js(global, tp).map(Some),
-            None => Ok(None),
+            Some(tp) => Self::transport_params_to_js(global, tp),
+            None => Ok(JSValue::UNDEFINED),
         }
     }
 

@@ -13,9 +13,6 @@ export const ParsedPkcs12 = b.dictionary({
   ca: b.string.local.optional,
 });
 
-/** What is not a buffer becomes a string once the passphrase has. */
-export const pkcs12Text = b.conversion(b.string.loose.utf8.owned);
-
 /** What `node:tls` hands out as `secureContext.context`. */
 export const SecureContext = b.class({
   rustPath: "crate::api::bun_secure_context::SecureContext",
@@ -25,7 +22,7 @@ export const SecureContext = b.class({
   proto: {
     /** Node's is an opaque V8 External of the `SSL_CTX`, for addons that link OpenSSL. Here it is `undefined`. */
     _external: { getter: b.opaque.returning("undefined"), capability: "heap" },
-    addCACert: { args: { cert: b.string.loose.utf8.owned.deferred }, capability: "js", throws: true },
+    addCACert: { args: { cert: b.opaque }, capability: "js", throws: true },
   },
   static: {
     /** Owns its `SSL_CTX`, so `addCACert` affects nothing else. */

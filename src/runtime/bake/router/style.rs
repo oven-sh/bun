@@ -3,11 +3,10 @@
 use bun_paths::strings;
 
 use bun_alloc::{Arena, ArenaVec};
-use bun_jsc::{JSGlobalObject, JsResult};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_paths as paths;
 
 use super::*;
-use crate::generated_bindgen::filesystem_router::FrameworkRouterStyle;
 
 #[derive(Copy, Clone)]
 pub(crate) enum Style {
@@ -29,18 +28,15 @@ bun_core::comptime_string_map! {
 const STYLE_ERROR_MESSAGE: &str = "'style' must be either \"nextjs-pages\", \"nextjs-app-ui\", \"nextjs-app-routes\", or a function.";
 
 impl Style {
-    pub(crate) fn from_js(
-        value: FrameworkRouterStyle<'_>,
-        global: &JSGlobalObject,
-    ) -> JsResult<Style> {
-        match value {
-            FrameworkRouterStyle::Name(utf8) => {
-                if let Some(style) = STYLE_MAP.get(utf8.slice()) {
-                    return Ok(*style);
-                }
+    pub(crate) fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Style> {
+        if value.is_string() {
+            let bun_string = value.to_bun_string(global)?;
+            let utf8 = bun_string.to_utf8();
+            if let Some(style) = STYLE_MAP.get(utf8.slice()) {
+                return Ok(*style);
             }
-            FrameworkRouterStyle::Callback(_) => return Ok(Style::JavascriptDefined),
-            FrameworkRouterStyle::Other => {}
+        } else if value.is_callable() {
+            return Ok(Style::JavascriptDefined);
         }
 
         Err(global.throw_invalid_arguments(format_args!("{STYLE_ERROR_MESSAGE}")))

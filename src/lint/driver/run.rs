@@ -1123,8 +1123,7 @@ impl Run<'_> {
                 _ => None,
             });
             self.out.stdout.push(b'\n');
-            // The printed config is the same whether a rule is built in or runs in JavaScript, so add a note. A file
-            // that the `eslint` package lints as a whole has no built-in rules.
+            // The printed config is the same whether a rule is built in or runs in JavaScript, so add a note.
             if let FileConfig::Matched(config) = &config
                 && !config.routes_to_eslint(&path)
             {

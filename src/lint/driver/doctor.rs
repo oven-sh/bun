@@ -361,10 +361,15 @@ pub(crate) fn lint(
         let Status::Matched(config) = &target.status else {
             continue;
         };
-        // The blocks of a processor are linted as the file would be without it. Only a processor that renames
-        // its blocks can send them elsewhere, and the doctor doesn't run processors.
+        // A processor's output is linted as the file would be without the processor.
         let route = match target.route() {
-            Route::Processor => target.loaded.routes_without_processor(config, &target.path),
+            Route::Processor => {
+                // `bun lint` fails on the error before the processor runs.
+                if let Some(error) = &config.error {
+                    return Err(Fatal(error.clone()));
+                }
+                target.loaded.routes_without_processor(config, &target.path)
+            }
             route => route,
         };
         match route {

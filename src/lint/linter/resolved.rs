@@ -536,8 +536,7 @@ impl ResolvedConfig {
         }
     }
 
-    /// True if the `eslint` package lints the file at `path`, ignoring any processor. A block of a processor that
-    /// keeps the file's name takes the same route, so this also says where such a block goes.
+    /// True if the `eslint` package lints the file at `path`, ignoring any processor.
     pub fn routes_to_eslint(&self, path: &[u8]) -> bool {
         self.route_without_processor(path) == Route::Eslint
     }

@@ -814,6 +814,33 @@ Also packages/a/eslint.config.js
     expect(exitCode).toBe(2);
   });
 
+  // The error is only in the config of the `.foo` files, so that `eslint.config.js` itself doesn't have it.
+  test(
+    "a config that ESLint would reject is an error for a file with a processor that goes to ESLint",
+    async () => {
+      const { stdout, stderr, exitCode } = await doctor({
+        "package.json": dependencies("eslint"),
+        "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version: "10.0.0" }),
+        "eslint.config.js": `
+        const parser = { meta: { name: "my-parser" }, parse() {} };
+        const whole = { preprocess: text => [text], postprocess: lists => lists.flat() };
+        export default [{
+          files: ["**/*.foo"],
+          plugins: { p: { processors: { whole } } },
+          processor: "p/whole",
+          languageOptions: { parser },
+          rules: { eqeqeq: ["error", "sometimes"] },
+        }];`,
+        "a.js": "",
+        "b.foo": "",
+      });
+      expect(stdout).toBe("");
+      expect(stderr).toContain(`Key "rules": Key "eqeqeq"`);
+      expect(exitCode).toBe(2);
+    },
+    timeout,
+  );
+
   test("runs even if package.json has a `lint` script", async () => {
     const { stdout, exitCode } = await doctor({
       "package.json": JSON.stringify({ scripts: { lint: "echo the script" } }),

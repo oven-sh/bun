@@ -13445,6 +13445,7 @@ module.exports = [
       expect(bar.stderr).toBe("");
       expect(JSON.parse(foo.raw).languageOptions.parser).toBe("unknown");
       expect(JSON.parse(bar.raw).processor).toBe("p/whole");
+      expect([js.exitCode, foo.exitCode, bar.exitCode]).toEqual([0, 0, 0]);
     },
     timeout,
   );

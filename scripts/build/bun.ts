@@ -25,6 +25,7 @@ import { rustArgon2 } from "./deps/rust-argon2.ts";
 import { jscPrograms, linuxIcuRoot, webkitEngineSources } from "./deps/webkit.ts";
 import { assert } from "./error.ts";
 import {
+  builtinTableFlags,
   bunIncludes,
   computeFlags,
   computeTargetLinkFlags,
@@ -356,10 +357,8 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const cxxObjects: string[] = [];
   const builtinTableObjects: string[] = [];
   for (const src of cxxSources) {
-    const relSrc = relative(cfg.cwd, src);
-    const extraFlags = extraFlagsFor(cfg, relSrc);
     const opts: Parameters<typeof cxx>[3] = {
-      flags: [...cxxFlagsFull, ...extraFlags],
+      flags: [...cxxFlagsFull, ...extraCxxFlags(cfg, src, codegen.builtinTableSources)],
     };
     if (!noPchSources.has(src)) {
       // PCH has implicit deps on depHeaderSignal. cxx has implicit dep on PCH.
@@ -522,6 +521,18 @@ function emitJscPrograms(
     if (program.name === "jsc" || program.name === "testaot") testPrograms.push(exe);
   }
   n.phony("engine-test-programs", testPrograms.length > 0 ? testPrograms : deps.get("WebKit")!.outputs);
+}
+
+/**
+ * What one of bun's own C++ sources is compiled with after the common flags:
+ * its entry in flags.ts fileOverrides, and builtinTableFlags() for the table
+ * of built-ins.
+ */
+export function extraCxxFlags(cfg: Config, src: string, builtinTableSources: readonly string[]): string[] {
+  return [
+    ...extraFlagsFor(cfg, relative(cfg.cwd, src)),
+    ...(builtinTableSources.includes(src) ? builtinTableFlags(cfg) : []),
+  ];
 }
 
 /**

@@ -47,6 +47,31 @@ export function safeStackFlags(c: Pick<Config, "hardened" | "x64" | "abi" | "asa
   return usesSafeStack(c) && safeStackDependencies.includes(dependency) ? ["-fsanitize=safe-stack"] : [];
 }
 
+/**
+ * Whether Bun's own C and C++ are compiled with UBSan (bunOnlyFlags) and Bun's link names its runtime. Debug builds
+ * (non-musl: musl's implementation hits false positives), and release-asan builds (if you're debugging memory you
+ * want UBSan too). Darwin cross-compiles are excluded: the UBSan runtime dylib for macOS isn't shipped by the Linux
+ * LLVM toolchain, so the link would fail.
+ */
+export function usesUbsan(
+  c: Pick<Config, "unix" | "darwin" | "crossTarget" | "debug" | "release" | "abi" | "freebsd" | "asan">,
+): boolean {
+  return (
+    c.unix &&
+    !(c.darwin && c.crossTarget !== undefined) &&
+    ((c.debug && c.abi !== "musl" && c.abi !== "android" && !c.freebsd) || (c.release && c.asan))
+  );
+}
+
+/**
+ * What Bun's table of built-ins (AOTBuiltinTable*.cpp) is compiled with after the flags of Bun's own sources.
+ * JavaScriptCore's programs link its objects too (bun.ts emitJscPrograms), and link no UBSan runtime. So a check that
+ * fails in these objects traps instead of calling the runtime.
+ */
+export function builtinTableFlags(c: Parameters<typeof usesUbsan>[0]): string[] {
+  return usesUbsan(c) ? ["-fsanitize-trap=all"] : [];
+}
+
 export type FlagValue = string | string[] | ((cfg: Config) => string | string[]);
 
 /**
@@ -774,10 +799,7 @@ export const bunOnlyFlags: Flag[] = [
   // ─── Sanitizers (bun only — deps would break with -Werror + UBSan) ───
   // Note: -fsanitize=address is in globalFlags (deps need ABI consistency).
   // UBSan is bun-only because it's stricter and vendored code often violates it.
-  // Enabled: debug builds (non-musl — musl's implementation hits false positives),
-  // and release-asan builds (if you're debugging memory you want UBSan too).
-  // Darwin cross-compiles are excluded: the UBSan runtime dylib for macOS
-  // isn't shipped by the Linux LLVM toolchain, so the link would fail.
+  // usesUbsan() says which builds.
   {
     flag: [
       "-fsanitize=null",
@@ -790,10 +812,7 @@ export const bunOnlyFlags: Flag[] = [
       "-fsanitize=returns-nonnull-attribute",
       "-fsanitize=unreachable",
     ],
-    when: c =>
-      c.unix &&
-      !(c.darwin && c.crossTarget !== undefined) &&
-      ((c.debug && c.abi !== "musl" && c.abi !== "android" && !c.freebsd) || (c.release && c.asan)),
+    when: usesUbsan,
     desc: "Undefined-behavior sanitizers",
   },
   {
@@ -1003,19 +1022,8 @@ export const linkerFlags: Flag[] = [
   },
   {
     flag: "-fsanitize=null",
-    when: c =>
-      c.unix &&
-      c.debug &&
-      c.abi !== "musl" &&
-      c.abi !== "android" &&
-      !c.freebsd &&
-      !(c.darwin && c.crossTarget !== undefined),
+    when: usesUbsan,
     desc: "Link UBSan runtime",
-  },
-  {
-    flag: "-fsanitize=null",
-    when: c => c.unix && c.release && c.asan,
-    desc: "Link UBSan runtime (release-asan)",
   },
   {
     flag: "-fsanitize-coverage=trace-pc-guard",

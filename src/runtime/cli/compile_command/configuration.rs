@@ -396,12 +396,7 @@ fn finish(
 
     this_transpiler.options.compile_target_builtins = options::CompileTargetBuiltins::Host;
 
-    if !this_transpiler.options.production {
-        this_transpiler
-            .options
-            .conditions
-            .append_slice(&[b"development" as &[u8]])?;
-    }
+    this_transpiler.options.append_development_condition()?;
 
     this_transpiler.sync_resolver_opts();
     this_transpiler.resolver.env_loader = NonNull::new(this_transpiler.env);

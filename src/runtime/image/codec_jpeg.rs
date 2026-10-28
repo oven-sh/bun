@@ -151,6 +151,7 @@ const TJPF_RGBA: c_int = 7;
 const TJPF_CMYK: c_int = 11;
 const TJCS_CMYK: c_int = 3;
 const TJCS_YCCK: c_int = 4;
+const TJSAMP_444: c_int = 0;
 const TJSAMP_420: c_int = 2;
 
 pub(crate) fn decode(
@@ -341,14 +342,19 @@ pub(crate) fn encode(
     ht: u32,
     quality: u8,
     progressive: bool,
+    chroma_subsampling: codecs::ChromaSubsampling,
     icc_profile: Option<&[u8]>,
 ) -> Result<codecs::Encoded, codecs::Error> {
     let handle = Handle::init(0).ok_or(codecs::Error::OutOfMemory)?;
     let h = handle.as_ptr();
+    let subsamp = match chroma_subsampling {
+        codecs::ChromaSubsampling::S420 => TJSAMP_420,
+        codecs::ChromaSubsampling::S444 => TJSAMP_444,
+    };
     // SAFETY: `h` is a live tjhandle for as long as `handle` is in scope.
     unsafe {
         tj3Set(h, TJPARAM_QUALITY, c_int::from(quality.clamp(1, 100)));
-        tj3Set(h, TJPARAM_SUBSAMP, TJSAMP_420);
+        tj3Set(h, TJPARAM_SUBSAMP, subsamp);
     }
     // Progressive emits a multi-scan SOF2 stream; same size ±1%, decodes
     // coarse-to-fine. Off by default (slower to encode, some old decoders

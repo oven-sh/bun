@@ -152,6 +152,11 @@ impl jsc::FromJsEnum for Fit {
         v.to_enum_from_map(global, prop, &FIT_MAP, "'fill' or 'inside'")
     }
 }
+impl jsc::FromJsEnum for codecs::ChromaSubsampling {
+    fn from_js_value(v: JSValue, global: &JSGlobalObject, prop: &'static str) -> JsResult<Self> {
+        v.to_enum_from_map(global, prop, &codecs::CHROMA_SUBSAMPLING_MAP, "'4:2:0' or '4:4:4'")
+    }
+}
 impl jsc::FromJsEnum for codecs::Filter {
     fn from_js_value(v: JSValue, global: &JSGlobalObject, prop: &'static str) -> JsResult<Self> {
         v.to_enum_from_map(
@@ -563,6 +568,11 @@ impl Image {
             }
             if let Some(p) = options.get(global, "progressive")? {
                 enc.progressive = p.to_boolean();
+            }
+            if let Some(c) =
+                options.get_optional_enum::<codecs::ChromaSubsampling>(global, "chromaSubsampling")?
+            {
+                enc.chroma_subsampling = c;
             }
         }
         self.update_pipeline(|p| p.output = Some(enc));

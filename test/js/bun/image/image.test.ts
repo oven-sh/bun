@@ -1176,6 +1176,52 @@ describe("Bun.Image", () => {
       expect(await new Bun.Image(prog).metadata()).toEqual(await new Bun.Image(baseline).metadata());
     });
 
+    // Y-component sampling factors from the SOF0 marker: 0x22 = 4:2:0, 0x11 = 4:4:4.
+    function jpegLumaSampling(b: Uint8Array): number {
+      for (let i = 2; i + 1 < b.length; i++) {
+        if (b[i] === 0xff && b[i + 1] === 0xc0) {
+          // FF C0 | len(2) | precision(1) | height(2) | width(2) | ncomp(1) | id(1) sampling(1) qt(1) ...
+          return b[i + 11];
+        }
+      }
+      throw new Error("no SOF0 marker");
+    }
+
+    // 32×32 white page with 1px red lines: chroma bleed at 4:2:0 is large here.
+    const redLinesPng = makePng(32, 32, (x, y) => (x % 4 === 0 || y % 4 === 0 ? [255, 0, 0, 255] : [255, 255, 255, 255]));
+
+    test(".jpeg({chromaSubsampling}) selects 4:2:0 (default) or 4:4:4", async () => {
+      const dflt = await new Bun.Image(redLinesPng).jpeg({ quality: 82 }).bytes();
+      const s420 = await new Bun.Image(redLinesPng).jpeg({ quality: 82, chromaSubsampling: "4:2:0" }).bytes();
+      const s444 = await new Bun.Image(redLinesPng).jpeg({ quality: 82, chromaSubsampling: "4:4:4" }).bytes();
+      expect(jpegLumaSampling(dflt)).toBe(0x22);
+      expect(jpegLumaSampling(s420)).toBe(0x22);
+      expect(jpegLumaSampling(s444)).toBe(0x11);
+      expect(Buffer.compare(dflt, s420)).toBe(0);
+      expect(Buffer.compare(s420, s444)).not.toBe(0);
+      // 4:4:4 keeps full-resolution chroma, so the decoded pixels sit closer to the source.
+      const src = decodePngRaw(redLinesPng).data;
+      const rmse = async (jpg: Uint8Array) => {
+        const out = decodePngRaw(await new Bun.Image(jpg).png().bytes()).data;
+        let acc = 0;
+        for (let i = 0; i < src.length; i++) {
+          if (i % 4 === 3) continue;
+          const d = out[i] - src[i];
+          acc += d * d;
+        }
+        return Math.sqrt(acc / ((src.length / 4) * 3));
+      };
+      const e420 = await rmse(s420);
+      const e444 = await rmse(s444);
+      expect(e444).toBeLessThan(e420 * 0.75);
+    });
+
+    test(".jpeg({chromaSubsampling}) rejects unknown values", () => {
+      expect(() => new Bun.Image(gradientPng).jpeg({ chromaSubsampling: "4:2:2" as any })).toThrow(TypeError);
+      expect(() => new Bun.Image(gradientPng).jpeg({ chromaSubsampling: "4:2:2" as any })).toThrow(/'4:2:0' or '4:4:4'/);
+      expect(() => new Bun.Image(gradientPng).jpeg({ chromaSubsampling: 444 as any })).toThrow(TypeError);
+    });
+
     test(".toBuffer() is a Sharp-compat alias for .buffer()", async () => {
       const buf = await new Bun.Image(cornersPng).png().toBuffer();
       expect(Buffer.isBuffer(buf)).toBe(true);

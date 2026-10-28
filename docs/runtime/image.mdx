@@ -105,6 +105,7 @@ Calling a format method sets the encode target; without one, Bun reuses the sour
 
 ```ts
 img.jpeg({ quality: 85 }); // 1–100, default 80
+img.jpeg({ chromaSubsampling: "4:4:4" }); // "4:2:0" (default) or "4:4:4"
 img.png({ compressionLevel: 6 }); // zlib level 0–9
 img.png({ palette: true, colors: 64, dither: true }); // indexed PNG
 img.webp({ quality: 80 });
@@ -114,6 +115,8 @@ img.avif({ quality: 60 }); // macOS / Windows only
 ```
 
 `palette: true` quantizes to a ≤256-color palette and emits an indexed (color-type 3) PNG, optionally with Floyd–Steinberg `dither`. The indexed PNG is typically 3–5× smaller than truecolor for screenshots and UI assets.
+
+`chromaSubsampling` sets how much colour detail a JPEG keeps. The default `"4:2:0"` stores colour at half resolution on both axes, which gives the smallest file. `"4:4:4"` keeps full colour resolution. Use it for saturated text, thin lines, and flat graphics, where `"4:2:0"` bleeds colour into the background. Any other value throws.
 
 ## Terminals
 

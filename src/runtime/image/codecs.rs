@@ -432,6 +432,25 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
     })
 }
 
+/// JPEG chroma subsampling. Mirrors sharp's `chromaSubsampling` option
+/// (`'4:2:0'` default, `'4:4:4'`).
+#[repr(u8)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(crate) enum ChromaSubsampling {
+    /// Chroma at half resolution on both axes. Smallest file, visible bleed
+    /// on saturated text and thin lines.
+    S420,
+    /// Full-resolution chroma.
+    S444,
+}
+
+bun_core::comptime_string_map! {
+    pub(crate) static CHROMA_SUBSAMPLING_MAP: ChromaSubsampling = {
+        b"4:2:0" => ChromaSubsampling::S420,
+        b"4:4:4" => ChromaSubsampling::S444,
+    };
+}
+
 #[derive(Copy, Clone)]
 pub(crate) struct EncodeOptions {
     pub(crate) format: Format,
@@ -448,6 +467,8 @@ pub(crate) struct EncodeOptions {
     pub(crate) dither: bool,
     /// JPEG only: emit a progressive scan script (coarse-to-fine render).
     pub(crate) progressive: bool,
+    /// JPEG only: chroma subsampling factor.
+    pub(crate) chroma_subsampling: ChromaSubsampling,
     /// ICC profile to embed in the output container (JPEG APP2, PNG iCCP,
     /// WebP ICCP). `None` ⇒ no profile chunk/marker is written. The
     /// pipeline forwards this from the decode step so a non-sRGB source
@@ -470,6 +491,7 @@ impl Default for EncodeOptions {
             colors: 256,
             dither: false,
             progressive: false,
+            chroma_subsampling: ChromaSubsampling::S420,
             icc_profile: None,
         }
     }
@@ -547,7 +569,15 @@ pub(crate) fn encode(
     // duration of this call (raw-ptr stand-in for a lifetime param).
     let icc: Option<&[u8]> = opts.icc_profile.map(|p| unsafe { p.as_ref() });
     match opts.format {
-        Format::Jpeg => jpeg::encode(rgba, width, height, opts.quality, opts.progressive, icc),
+        Format::Jpeg => jpeg::encode(
+            rgba,
+            width,
+            height,
+            opts.quality,
+            opts.progressive,
+            opts.chroma_subsampling,
+            icc,
+        ),
         // PNG carries iCCP on both truecolour and indexed images — quantise
         // operates on raw RGB numbers without converting colour spaces, so
         // the palette entries are still in the source space and need the

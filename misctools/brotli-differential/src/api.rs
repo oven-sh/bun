@@ -357,6 +357,42 @@ fn decoder(text: &[u8]) -> Result<usize, String> {
             }
         }
     }
+    // More dictionaries than there is room for. Those that are refused leave no trace: a stream that uses the others decodes.
+    let (mut c, mut r) = (CDecoder::new(), Decoder::new());
+    let mut attached = Vec::new();
+    let mut rng = Rng(3);
+    for i in 0..17usize {
+        let dictionary: Vec<u8> = (0..60 + i).map(|_| rng.next() as u8).collect();
+        let (a, b) = (c.attach(dictionary.clone()), r.attach_dictionary(dictionary.clone().into()));
+        if a != b {
+            return Err(format!("decoder: dictionary number {}: C {a}, Rust {b}", i + 1));
+        }
+        if a {
+            attached.push(dictionary);
+        }
+        n += 1;
+    }
+    let data: Vec<u8> = attached.iter().rev().flat_map(|d| [&d[..], b"!"].concat()).collect();
+    let mut p = pair(&[(1, 9)], &attached)?;
+    finish(&mut p, &mut rng, &data, true)?;
+    assert!(p.out.len() < data.len() / 4);
+    let (mut a, mut b) = (vec![0u8; 1 << 16], vec![0u8; 1 << 16]);
+    let (cr, _, made) = c.stream(&p.out, &mut a);
+    let mut rout: &mut [u8] = &mut b;
+    let rr = r.decompress_stream(&mut &p.out[..], &mut rout) as i32;
+    let made_by_rust = (1 << 16) - rout.len();
+    if cr != 1 || rr != 1 || a[..made] != data[..] || b[..made_by_rust] != data[..] {
+        return Err(format!("decoder: after 17 dictionaries: result {cr}/{rr}, error {} / {:?}", c.error_code(), r.error_code()));
+    }
+    // What `node:zlib` takes for a valid flush value.
+    for raw in 0..300u32 {
+        if EncoderOperation::from_raw(raw).map(|op| op as u32) != (raw < 4).then_some(raw) {
+            return Err(format!("EncoderOperation::from_raw({raw})"));
+        }
+    }
+    if EncoderOperation::from_raw(u32::MAX).is_some() {
+        return Err("EncoderOperation::from_raw(u32::MAX)".into());
+    }
     Ok(n)
 }
 

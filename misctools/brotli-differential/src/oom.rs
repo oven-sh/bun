@@ -16,9 +16,29 @@ static FAILED: AtomicU64 = AtomicU64::new(0);
 static MAX_SIZE: AtomicU64 = AtomicU64::new(0);
 static QUIET: AtomicBool = AtomicBool::new(false);
 
+/// For `oom-sites`: the line of the crate that each allocation comes from.
+static RECORDING: AtomicBool = AtomicBool::new(false);
+/// What is allocated for that record does not count.
+static BUSY: AtomicBool = AtomicBool::new(false);
+static SITES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// The innermost line of the crate in a backtrace, not counting its helpers for allocating.
+fn site_of(backtrace: &str) -> String {
+    let lines = backtrace.lines().filter_map(|l| l.trim().strip_prefix("at "));
+    let mut files = lines.filter_map(|l| l.split_once("/src/brotli/").or_else(|| l.split_once("/bun_brotli/src/"))).map(|(_, f)| f);
+    let at = files.find(|f| !f.starts_with("util.rs")).unwrap_or("?");
+    at.rsplit_once(':').map_or(at, |(f, _)| f).to_string()
+}
+
 fn fails() -> bool {
-    if !ARMED.load(Relaxed) {
+    if !ARMED.load(Relaxed) || BUSY.load(Relaxed) {
         return false;
+    }
+    if RECORDING.load(Relaxed) {
+        BUSY.store(true, Relaxed);
+        let site = site_of(&std::backtrace::Backtrace::force_capture().to_string());
+        SITES.lock().unwrap().push(site);
+        BUSY.store(false, Relaxed);
     }
     COUNT.fetch_add(1, Relaxed);
     let left = COUNTDOWN.fetch_sub(1, Relaxed);
@@ -258,13 +278,11 @@ fn fallback() {
     println!("fallback: ok");
 }
 
-pub fn run(seed0: u64, iters: u64, max_len: usize, corpus: &r#gen::Corpus) {
+/// An allocation that cannot fail, and does, becomes a panic that says where it was.
+fn set_hooks() {
     std::alloc::set_alloc_error_hook(|layout| {
         ARMED.store(false, Relaxed);
-        let bt = std::backtrace::Backtrace::force_capture().to_string();
-        // The innermost line of the crate.
-        let at = bt.lines().filter_map(|l| l.trim().strip_prefix("at ")).find_map(|l| l.split_once("/src/brotli/").map(|(_, f)| f)).unwrap_or("?");
-        let at = at.rsplit_once(':').map_or(at, |(f, _)| f);
+        let at = site_of(&std::backtrace::Backtrace::force_capture().to_string());
         MAX_SIZE.fetch_max(layout.size() as u64, Relaxed);
         panic!("INFALLIBLE allocation at {at}");
     });
@@ -274,6 +292,124 @@ pub fn run(seed0: u64, iters: u64, max_len: usize, corpus: &r#gen::Corpus) {
             default_hook(info);
         }
     }));
+}
+
+/// `f` without a failure, and the line of the crate that each of its allocations comes from.
+fn recorded<T>(f: impl FnOnce() -> T) -> (T, Vec<String>) {
+    SITES.lock().unwrap().clear();
+    RECORDING.store(true, Relaxed);
+    let r = f();
+    RECORDING.store(false, Relaxed);
+    (r, std::mem::take(&mut SITES.lock().unwrap()))
+}
+
+/// `run` picks allocations at random, and seldom one that happens once in thousands. Here the first and the last allocation
+/// of every line of the crate that allocates fail, in streams that between them get to all the parts of the codec.
+pub fn sites(corpus: &r#gen::Corpus) {
+    set_hooks();
+    let mut rng = Rng(1);
+    let mixed = r#gen::data(&mut rng, corpus, 300_000);
+    // Text, for which the literals get a context map below quality 10, too.
+    let text: Vec<u8> = corpus.files.iter().filter(|f| f.len() > 5000 && f.is_ascii()).flat_map(|f| f[..5000].to_vec()).take(200_000).collect();
+    // Stretches of a hundred kinds: many block types, and many histograms to cluster.
+    let kinds: Vec<Vec<u8>> = (0..100).map(|_| (0..rng.range(2, 12)).map(|_| rng.next() as u8).collect()).collect();
+    let mut blocks = Vec::new();
+    while blocks.len() < 400_000 {
+        let kind = rng.pick(&kinds).clone();
+        blocks.extend((0..rng.range(300, 900)).map(|_| *rng.pick(&kind)));
+    }
+    let mut cases = Vec::new();
+    for q in 0..12u32 {
+        let case = |data: &[u8], more: &[(u32, u32)], dict: Option<&[u8]>, chunk: usize, flush: bool| Case {
+            data: data.to_vec(),
+            params: [&[(1, q)], more].concat(),
+            dict: dict.map(<[u8]>::to_vec),
+            chunk,
+            flush,
+            cap: 1 << 16,
+        };
+        cases.push(case(&mixed, &[], None, usize::MAX, false));
+        cases.push(case(&blocks, &[], None, 100_000, false));
+        cases.push(case(&mixed[..70_000], &[(2, 16)], Some(&mixed[100_000..130_000]), 900, true));
+        cases.push(case(&mixed[..150_000], &[(6, 1), (2, 25), (5, 1 << 20)], None, 5000, false));
+        cases.push(case(&mixed[..100], &[(9, 3)], None, usize::MAX, false));
+        cases.push(case(&text, &[], None, usize::MAX, false));
+        // A flush within the first KiB, then 36,000 bytes at once.
+        cases.push(case(&mixed[..70_000], &[], None, 900, true));
+    }
+    let mut seen = std::collections::BTreeMap::<String, u64>::new();
+    let mut problems = Vec::new();
+    let mut runs = 0u64;
+    // The first and the last index of each line.
+    let picks = |sites: &[String]| -> Vec<(String, i64)> {
+        let mut ends = std::collections::BTreeMap::<&String, (usize, usize)>::new();
+        for (i, site) in sites.iter().enumerate() {
+            ends.entry(site).or_insert((i, i)).1 = i;
+        }
+        ends.into_iter().flat_map(|(site, (first, last))| [(site.clone(), first as i64), (site.clone(), last as i64)]).collect()
+    };
+    for case in &cases {
+        let describe = format!("{} bytes, params {:?}, dict {:?}, chunk {}, flush {}", case.data.len(), case.params, case.dict.as_ref().map(Vec::len), case.chunk, case.flush);
+        let (stream, allocations) = recorded(|| encode(case));
+        let stream = stream.unwrap_or_else(|| panic!("{describe}: failed without a failure"));
+        for (site, at) in picks(&allocations) {
+            for persistent in [false, true] {
+                let c = case.clone();
+                let (r, failed) = with_failure(at, persistent, move || encode(&c));
+                runs += 1;
+                *seen.entry(site.clone()).or_default() += 1;
+                match r {
+                    Err(e) => problems.push(format!("{e}: {describe}, encoder allocation {at} of {} ({site}), persistent {persistent}", allocations.len())),
+                    Ok(Some(out)) if failed != 0 && out != stream => problems.push(format!("other output after a failed allocation: {describe}, allocation {at} ({site})")),
+                    _ => {}
+                }
+            }
+        }
+        let (back, allocations) = recorded(|| decode(&stream, case.dict.as_ref(), 1000, 1 << 14, case.data.len()));
+        // A stream with an offset does not decode on its own.
+        if back.as_ref().is_ok_and(|out| *out == case.data) {
+            for (site, at) in picks(&allocations) {
+                for persistent in [false, true] {
+                    let (s, d, len) = (stream.clone(), case.dict.clone(), case.data.len());
+                    let (r, _) = with_failure(at, persistent, move || decode(&s, d.as_ref(), 1000, 1 << 14, len));
+                    runs += 1;
+                    *seen.entry(site.clone()).or_default() += 1;
+                    match r {
+                        Err(e) => problems.push(format!("{e}: {describe}, decoder allocation {at} of {} ({site}), persistent {persistent}", allocations.len())),
+                        Ok(Err(code)) if !(-30..=-21).contains(&code) && code != -1000 => problems.push(format!("decoder error {code}: {describe}, allocation {at} ({site})")),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        let (back, allocations) = recorded(|| decode_streaming(&stream, 1000));
+        if back.is_ok_and(|out| out == case.data) {
+            for (site, at) in picks(&allocations) {
+                let s = stream.clone();
+                let (r, _) = with_failure(at, true, move || decode_streaming(&s, 1000));
+                runs += 1;
+                *seen.entry(site.clone()).or_default() += 1;
+                match r {
+                    Err(e) => problems.push(format!("{e}: {describe}, StreamingDecoder allocation {at} of {} ({site})", allocations.len())),
+                    Ok(Err(bun_brotli::Error::OutOfMemory)) => {}
+                    Ok(other) => problems.push(format!("StreamingDecoder: {:?}: {describe}, allocation {at} ({site})", other.map(|out| out.len()))),
+                }
+            }
+        }
+    }
+    let _ = std::panic::take_hook();
+    for (site, n) in &seen {
+        println!("{n:6} {site}");
+    }
+    for p in &problems {
+        println!("PROBLEM: {p}");
+    }
+    assert!(problems.is_empty(), "seed 0: {} problems", problems.len());
+    println!("ok: {} lines that allocate, {runs} runs", seen.len());
+}
+
+pub fn run(seed0: u64, iters: u64, max_len: usize, corpus: &r#gen::Corpus) {
+    set_hooks();
     let mut problems = std::collections::BTreeMap::<String, (u64, String)>::new();
     QUIET.store(true, Relaxed);
     let r = std::panic::catch_unwind(fallback);

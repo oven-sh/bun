@@ -260,6 +260,7 @@ pub fn run(args: &[String]) -> bool {
         Some("enc-lap") => big::run_lap(num(2, 1), num(3, (3 << 30) + (64 << 20)), args::params(args::rest(args, 4))),
         Some("api") => api::run(num(2, 1), num(3, 300), &corpus()),
         Some("oom") => oom::run(num(2, 1), num(3, 100), num(4, 1 << 18) as usize, &corpus()),
+        Some("oom-sites") => oom::sites(&corpus()),
         Some("oom-cold") => oom::cold(),
         Some("oom-cold-probe") => oom::cold_probe(num(2, 11) as i32, num(3, 0) as i64, num(4, 0) != 0),
         Some("mem-scan") => perf::run_memory(num(2, 0xFFF), num(3, 9_000_000) as usize, &corpus()),

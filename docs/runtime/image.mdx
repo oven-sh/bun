@@ -116,7 +116,7 @@ img.avif({ quality: 60 }); // macOS / Windows only
 
 `palette: true` quantizes to a ≤256-color palette and emits an indexed (color-type 3) PNG, optionally with Floyd–Steinberg `dither`. The indexed PNG is typically 3–5× smaller than truecolor for screenshots and UI assets.
 
-`chromaSubsampling` sets how much color detail a JPEG keeps. The default `"4:2:0"` stores color at half resolution on both axes, which gives the smallest file. `"4:4:4"` keeps full color resolution. Use it for saturated text, thin lines, and flat graphics, where `"4:2:0"` bleeds color into the background. Any other value throws.
+`chromaSubsampling` sets how much color detail a JPEG keeps. The default `"4:2:0"` stores color at half resolution on both axes, which gives the smallest file. `"4:4:4"` keeps full color resolution. Use it for saturated text, thin lines, and flat graphics, where `"4:2:0"` bleeds color into the background. Any other string throws a `TypeError`.
 
 ## Terminals
 

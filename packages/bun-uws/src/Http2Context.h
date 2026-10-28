@@ -51,16 +51,15 @@ struct BunHpackField {
     uint32_t valueLength;
     int staticIndex;
 };
+enum BunHpackResult { BUN_HPACK_FIELD, BUN_HPACK_END_OF_BLOCK, BUN_HPACK_INVALID, BUN_HPACK_TOO_LARGE };
 BunHpack *Bun__Hpack__create();
 void Bun__Hpack__destroy(BunHpack *hpack);
 void Bun__Hpack__setEncoderMaxCapacity(BunHpack *hpack, uint32_t maxCapacity);
 void Bun__Hpack__encode(BunHpack *hpack, const char *name, size_t nameLength, const char *value, size_t valueLength, bool addToTable);
 const char *Bun__Hpack__block(const BunHpack *hpack, size_t *length);
 void Bun__Hpack__clearBlock(BunHpack *hpack);
-/* Returns 0 for a field, BUN_HPACK_END_OF_BLOCK, or the error code to close the connection with. */
-int Bun__Hpack__decode(BunHpack *hpack, const unsigned char *block, size_t blockLength, size_t *position, BunHpackField *field);
+BunHpackResult Bun__Hpack__decode(BunHpack *hpack, const unsigned char *block, size_t blockLength, size_t *position, BunHpackField *field);
 }
-static constexpr int BUN_HPACK_END_OF_BLOCK = -1;
 
 namespace uWS {
 
@@ -1510,14 +1509,15 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
     bool nested = ctx->dispatchDepth > 0;
     std::vector<char> &buf = nested ? localBuffer : ctx->decodeBuffer;
     std::vector<us_quic_header_t> &list = nested ? localList : ctx->decodedHeaders;
-    if (buf.size() < (size_t) limit + 64) buf.resize((size_t) limit + 64);
+    if (buf.size() < limit) buf.resize(limit);
     list.clear();
     size_t used = 0, decoded = 0, fields = 0, position = 0;
     for (;;) {
         BunHpackField field = {};
-        int result = Bun__Hpack__decode(hpack, block, length, &position, &field);
+        BunHpackResult result = Bun__Hpack__decode(hpack, block, length, &position, &field);
         if (result == BUN_HPACK_END_OF_BLOCK) break;
-        if (result != 0) return connectionError((http2::ErrorCode) result);
+        if (result == BUN_HPACK_INVALID) return connectionError(http2::ERR_COMPRESSION_ERROR);
+        if (result == BUN_HPACK_TOO_LARGE) return connectionError(http2::ERR_ENHANCE_YOUR_CALM);
         size_t size = (size_t) field.nameLength + field.valueLength + http2::DECODED_FIELD_OVERHEAD;
         decoded += size;
         fields++;

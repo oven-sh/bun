@@ -9,13 +9,6 @@ use crate::thunk::c_slice;
 /// How much room `block` keeps between header blocks.
 const KEEP_BLOCK_CAPACITY: usize = 1024;
 
-/// `BUN_HPACK_END_OF_BLOCK`.
-const END_OF_BLOCK: c_int = -1;
-
-/// RFC 9113 §7.
-const COMPRESSION_ERROR: c_int = 0x9;
-const ENHANCE_YOUR_CALM: c_int = 0xb;
-
 struct Hpack {
     encoder: Encoder,
     decoder: Decoder,
@@ -31,6 +24,15 @@ struct HpackField {
     name_len: u32,
     value_len: u32,
     static_index: c_int,
+}
+
+/// `BunHpackResult`.
+#[repr(C)]
+enum HpackResult {
+    Field,
+    EndOfBlock,
+    Invalid,
+    TooLarge,
 }
 
 #[unsafe(no_mangle)]
@@ -88,7 +90,7 @@ extern "C" fn Bun__Hpack__clearBlock(this: &mut Hpack) {
     this.block.shrink_to(KEEP_BLOCK_CAPACITY);
 }
 
-/// [`Decoder::next`]. Returns 0, [`END_OF_BLOCK`], or the error code to close the connection with.
+/// [`Decoder::next`]. `field` is written for [`HpackResult::Field`] only.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__Hpack__decode(
     this: &mut Hpack,
@@ -96,7 +98,7 @@ unsafe extern "C" fn Bun__Hpack__decode(
     block_len: usize,
     position: &mut usize,
     field: &mut HpackField,
-) -> c_int {
+) -> HpackResult {
     // SAFETY: the caller's `block_len` bytes, which outlive this call.
     let block = unsafe { c_slice(block, block_len) };
     match this.decoder.next(block, position) {
@@ -108,10 +110,10 @@ unsafe extern "C" fn Bun__Hpack__decode(
                 value_len: decoded.value.len() as u32,
                 static_index: c_int::from(decoded.static_index),
             };
-            0
+            HpackResult::Field
         }
-        None => END_OF_BLOCK,
-        Some(Err(Error::TooLarge)) => ENHANCE_YOUR_CALM,
-        Some(Err(Error::Invalid)) => COMPRESSION_ERROR,
+        None => HpackResult::EndOfBlock,
+        Some(Err(Error::Invalid)) => HpackResult::Invalid,
+        Some(Err(Error::TooLarge)) => HpackResult::TooLarge,
     }
 }

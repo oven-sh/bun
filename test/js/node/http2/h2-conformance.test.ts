@@ -3608,6 +3608,41 @@ describe("HPACK (RFC 7541)", () => {
     }
   });
 
+  test.each([
+    [65536, FrameType.HEADERS],
+    [65537, FrameType.GOAWAY],
+  ])("a request field of %d bytes of name and value", async (total, expected) => {
+    const { srv, seen, port } = await listen({ settings: { maxHeaderListSize: 1 << 20 } });
+    const c = await RawH2.connect(port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      await c.waitFor(isSettings);
+      c.sendSettingsAck();
+      const length = total - "x-a".length - 127;
+      const block = requestHeaderBlock(
+        "GET",
+        Buffer.concat([
+          Buffer.from([0x00]),
+          hpackLiteral("x-a"),
+          Buffer.from([0x7f, 0x80 | (length & 0x7f), 0x80 | ((length >> 7) & 0x7f), length >> 14]),
+          Buffer.alloc(length + 127, "v"),
+        ]),
+      );
+      for (let at = 0; at < block.length; at += 16384) {
+        const flags = (at ? 0 : 0x1) | (at + 16384 < block.length ? 0 : 0x4);
+        c.sendFrame(at ? FrameType.CONTINUATION : FrameType.HEADERS, flags, 1, block.subarray(at, at + 16384));
+      }
+      const answer = await c.waitFor(headersOrGoaway(1));
+      expect(answer.type).toBe(expected);
+      if (expected === FrameType.GOAWAY) expect(goawayErrorCode(answer)).toBe(ErrorCode.COMPRESSION_ERROR);
+      else expect(seen[0]["x-a"]).toHaveLength(length + 127);
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  });
+
   test("a field too large for the dynamic table leaves the table alone", async () => {
     const { srv, seen, port } = await listen();
     const client = http2.connect(`http://127.0.0.1:${port}`);

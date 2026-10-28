@@ -1465,6 +1465,23 @@ describe.concurrent("Bun.serve http2 protocol", () => {
     raw.close();
   });
 
+  // A field counts as its name, its value and 4 more. The list may take 16 KB, and twice that closes the connection.
+  test.each([
+    [16384, 200],
+    [16385, 431],
+    [32768, 431],
+    [32769, "ENHANCE_YOUR_CALM"],
+  ])("a header list of exactly %d bytes → %s", async (total, expected) => {
+    const raw = await RawH2.connect(fx.port, secure);
+    const base = baseHeaders("/hello");
+    const rest = base.reduce((left, [name, value]) => left - name.length - value.length - 4, total);
+    raw.headers(1, [...base, ["x-p", Buffer.alloc(rest - "x-p".length - 4, "v").toString()]]);
+    const answer = await raw.waitFor(f => (f.type === T.HEADERS && f.streamId === 1) || f.type === T.GOAWAY);
+    if (answer.type === T.GOAWAY) expect(answer.payload.readUInt32BE(4)).toBe(0xb);
+    expect(answer.type === T.GOAWAY ? "ENHANCE_YOUR_CALM" : decodeStatus(answer.payload)).toBe(expected);
+    raw.close();
+  });
+
   test("more than 200 header fields → 431, connection survives", async () => {
     const raw = await RawH2.connect(fx.port, secure);
     const many: [string, string][] = [];

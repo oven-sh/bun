@@ -1,6 +1,6 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
 import { expect } from "bun:test";
-import { isWindows, waitUntil } from "harness";
+import { isDebug, isWindows, waitUntil } from "harness";
 import {
   appendFileSync,
   closeSync,
@@ -968,7 +968,8 @@ devTest("a held file that a second save empties has a new deadline", {
     expect(performance.now() - emptiedA).toBeGreaterThanOrEqual(400);
   },
 });
-const chainWait = 240;
+// A debug build takes longer to handle a file event, and each event of a chain must come well inside one wait.
+const chainWait = isDebug ? 720 : 240;
 const chains = [0, 1, 2].map(attempt => Array.from({ length: 45 }, (_, i) => `f${attempt}_${i}`));
 devTest("a hold ends ten waits after it starts, while files still join it", {
   skip: ["darwin"],
@@ -1571,6 +1572,47 @@ devTest("a file event that waited behind a long bundle gets its full time in the
     expect(await other.page).toContain("slow");
     await until("the end of the hold", () => dev.holdsEnded > 0);
     // The hold starts when the dev server takes the file event, and a.ts has one wait from then.
+    expect(performance.now() - released).toBeGreaterThanOrEqual(200);
+  },
+});
+const pastCapTrace = pathOutsideProjects("hot-emptied-behind-a-bundle-past-the-cap.watcher-trace");
+devTest("a file event that waited behind a bundle gets its full time in a hold that is past its cap", {
+  skip: ["darwin"],
+  env: { ...holdFor(200), BUN_WATCHER_TRACE: pastCapTrace },
+  files: {
+    ...slowBundle,
+    "index.ts": `
+      import "./a";
+      import "./b";
+    `,
+    "b.ts": `
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    // The files stay empty, so the page gets empty modules when the hold ends.
+    await using c = await dev.client("/index", { allowUnlimitedReloads: true });
+    await c.expectElemText("#a", "a1");
+
+    // The hold of a.ts is open when the bundle starts, so the bundle keeps it open.
+    const held = dev.heldEvents();
+    emptyFile(dev.join("a.ts"));
+    await held;
+    const other = await startSlowBundle(dev);
+
+    const traced = statSync(pastCapTrace).size;
+    emptyFile(dev.join("b.ts"));
+    await until("the watcher to report b.ts", () =>
+      readFileSync(pastCapTrace, "latin1").slice(traced).includes("b.ts"),
+    );
+    // The hold is older than its cap of ten waits when the bundle ends.
+    await Bun.sleep(2200);
+    const ended = dev.holdsEnded;
+    const released = performance.now();
+    unlinkSync(dev.join("hold/on"));
+    expect(await other.page).toContain("slow");
+    await until("the end of the hold", () => dev.holdsEnded > ended);
+    // b.ts joins the hold when the dev server takes its file event, and has one wait from then.
     expect(performance.now() - released).toBeGreaterThanOrEqual(200);
   },
 });

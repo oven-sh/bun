@@ -120,6 +120,16 @@ impl DevServer {
         }
     }
 
+    /// A bundle can keep a hold open past its cap. The file events that waited behind the bundle then get one wait.
+    pub(crate) fn restart_half_saved_cap_after_bundle(&mut self) {
+        let now = Instant::now();
+        if let Some(hold) = &mut self.half_saved_hold
+            && now >= hold.last_deadline
+        {
+            hold.last_deadline = now + wait();
+        }
+    }
+
     /// Returns true if `entry_points` now wait in the hold. If the hold ends here, `entry_points` and `timer` get what it held, and the caller bundles them.
     pub(crate) fn hold_half_saved(
         &mut self,

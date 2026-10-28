@@ -519,6 +519,7 @@ impl DevServer {
                     let half_saved =
                         unsafe { HotReloadEvent::drain(event, self_ptr, &mut entry_points) };
                     let mut timer = reload_event_timer;
+                    self.restart_half_saved_cap_after_bundle();
                     if self.hold_half_saved(&mut entry_points, half_saved, &mut timer) {
                         // The routes below are bundled for their requests.
                         entry_points = EntryPointList::empty();

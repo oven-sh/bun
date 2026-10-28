@@ -26,9 +26,12 @@ const cases = `(function () {
     "Error.captureStackTrace({}), 1000 frames deep": () => recurse(1000, capture),
   };
 })()`;
+// Jest 29 gives each node:vm context an Error.prepareStackTrace and a limit of 100.
+const withHookAndLimit = `Error.stackTraceLimit = 100; Error.prepareStackTrace = (error, callSites) => callSites.length; `;
 for (const [realm, evaluate] of [
   ["", code => (0, eval)(code)],
   [" in a node:vm context", code => vm.runInNewContext(code)],
+  [" in a node:vm context with Error.prepareStackTrace", code => vm.runInNewContext(withHookAndLimit + code)],
 ]) {
   for (const [name, fn] of Object.entries(evaluate(cases))) bench(name + realm, () => fn());
 }

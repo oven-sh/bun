@@ -647,7 +647,8 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
 using FrameCells = JSC::MarkedArgumentBufferWithSize<2 * DEFAULT_ERROR_STACK_TRACE_LIMIT>;
 
 // ErrorInstance holds a frame's callee and code block weakly. Root them while user JS can run.
-static void protectFrameCells(FrameCells& cells, const Vector<StackFrame>& stackTrace)
+template<size_t inlineCapacity>
+static void protectFrameCells(JSC::MarkedArgumentBufferWithSize<inlineCapacity>& cells, const Vector<StackFrame>& stackTrace)
 {
     cells.ensureCapacity(stackTrace.size() * 2);
     for (auto& frame : stackTrace) {

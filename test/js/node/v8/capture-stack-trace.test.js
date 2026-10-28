@@ -945,6 +945,20 @@ test("Error.captureStackTrace inside a node:vm calls the Error.prepareStackTrace
   expect(Error.prepareStackTrace).toBeNull();
 });
 
+test("Error.captureStackTrace onto an Error inside a node:vm calls the Error.prepareStackTrace of that context at the first read", () => {
+  const result = runInNewContext(`
+    Error.prepareStackTrace = (error, sites) => error.message + ": " + sites[0].getFunctionName();
+    function inner() {
+      const error = new RangeError("early");
+      Error.captureStackTrace(error);
+      error.message = "late";
+      return error.stack;
+    }
+    inner();
+  `);
+  expect(result).toBe("late: inner");
+});
+
 test("Error.captureStackTrace inside a node:vm takes an Error target and a caller argument", () => {
   const stack = runInNewContext(
     `
@@ -1138,6 +1152,7 @@ const callerArgumentRows = `
   const calledBound = function boundTarget() {
     return withCaller(calledBound);
   }.bind(null);
+  const calledWrapped = new ShadowRealm().evaluate("(function wrappedTarget(callback) { return callback(); })");
   const rows = {
     object: withCaller({}),
     number: withCaller(1),
@@ -1147,6 +1162,8 @@ const callerArgumentRows = `
     boundFunctionNotOnStack: withCaller(function other() {}.bind(null)),
     boundFunctionAfterCall: (calledBound.name, calledBound()),
     callableProxy: withCaller(new Proxy(withCaller, {})),
+    wrappedFunctionNotOnStack: withCaller(new ShadowRealm().evaluate("(function other() {})")),
+    wrappedFunctionAfterCall: (calledWrapped.name, calledWrapped(() => withCaller(calledWrapped))),
     functionNotOnStack: withCaller(function other() {}),
   };
 `;
@@ -1159,6 +1176,8 @@ const callerArgumentFirstFrames = {
   boundFunctionNotOnStack: "at withCaller",
   boundFunctionAfterCall: "at withCaller",
   callableProxy: "at withCaller",
+  wrappedFunctionNotOnStack: "at withCaller",
+  wrappedFunctionAfterCall: "at withCaller",
   functionNotOnStack: "undefined",
 };
 
@@ -1260,7 +1279,8 @@ test.each([
 });
 
 // The getter of the context collects and then compiles functions, so the cells that the collection freed are in use
-// again before the trace is formatted. With the JSC option, a collection drops the code of `mid` and `top`, which wait.
+// again before the trace is formatted. A collection drops the code of a function that did not run for 15 s. The JSC
+// option stands in for that wait: with it, a collection drops the code of `mid` and `top` at once.
 const collectingGetterInVm = `import vm from "node:vm";
      const context = vm.createContext({ collect: () => Bun.gc(true), print: console.log });
      vm.runInContext(\`
@@ -1786,7 +1806,8 @@ test("Error.captureStackTrace applies stackTraceLimit after caller removal", () 
   }
 });
 
-test("Error.captureStackTrace finds no caller argument that is on the stack behind the await chain", () => {
+// `resumed` continues inside drainMicrotasks(), so JSC puts `awaiter` in front of `behindTheAwaitChain`.
+const capturesBehindAwaitChain = `
   let stack;
   async function resumed() {
     await null;
@@ -1797,13 +1818,21 @@ test("Error.captureStackTrace finds no caller argument that is on the stack behi
   async function awaiter() {
     await resumed();
   }
-  // `resumed` continues inside drainMicrotasks(). Its trace is its frame, then `awaiter`, then this function.
   function behindTheAwaitChain() {
     awaiter();
     drainMicrotasks();
   }
-  behindTheAwaitChain();
-  expect(stack).toBe("Error");
+  function callerOfBehind() {
+    behindTheAwaitChain();
+    return stack;
+  }
+`;
+test.each([
+  ["the main context", code => new Function("drainMicrotasks", `${code}; return callerOfBehind();`)(drainMicrotasks)],
+  ["a node:vm context", code => vm.runInNewContext(`${code}; callerOfBehind();`, { drainMicrotasks })],
+])("Error.captureStackTrace finds a caller argument that is on the stack behind the await chain, in %s", (_, run) => {
+  const lines = run(capturesBehindAwaitChain).split("\n");
+  expect(lines.slice(0, 2).map(line => line.trim().replace(/ \(.*$/, ""))).toEqual(["Error", "at callerOfBehind"]);
 });
 
 // Each row takes two captures from one call site: one with a limit and one with no limit.

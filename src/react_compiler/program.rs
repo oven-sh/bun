@@ -1266,9 +1266,17 @@ impl ReactCompilerState {
         in_react_hoc: bool,
         directives: &[Stmt],
     ) -> bool {
-        self.may_compile_if(true, false, directives, || {
-            name.is_some_and(|name| is_component_name(name) || is_hook_name(name)) || in_react_hoc
-        })
+        let is_top_level = true;
+        let has_react_hooks_suppression = false;
+        self.may_compile_if(
+            is_top_level,
+            has_react_hooks_suppression,
+            directives,
+            || {
+                name.is_some_and(|name| is_component_name(name) || is_hook_name(name))
+                    || in_react_hoc
+            },
+        )
     }
 
     fn may_compile_if(

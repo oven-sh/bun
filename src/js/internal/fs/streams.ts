@@ -75,6 +75,7 @@ declare global {
       open(): void;
       close(callback?: ErrorCallback): void;
       [kFs]: StreamFs;
+      [kHandle]?: FileHandle;
       [kIsPerformingIO]: boolean;
       /** true: the path must be opened; a sink: a FileSink. */
       [kWriteStreamFastPath]?: undefined | true | FileSink;
@@ -103,6 +104,8 @@ const kIoDone = Symbol("kIoDone");
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
 const kFs = Symbol("kFs");
+// The FileHandle that a stream reads or writes through.
+const kHandle = Symbol("kHandle");
 
 const {
   read: fileHandlePrototypeRead,
@@ -249,6 +252,7 @@ function ReadStream(
       throw $ERR_METHOD_NOT_IMPLEMENTED("FileHandle with fs");
     }
     this[kFs] = fileHandleStreamFs(fd);
+    this[kHandle] = fd;
     this.fd = fd[kFd];
     fd[kRef]();
     fd.on("close", this.close.bind(this));
@@ -433,7 +437,9 @@ function close(stream: FileStream, err: Error | null | undefined, cb: ErrorCallb
     return;
   }
 
-  if (!stream.fd) {
+  // A raw descriptor 0 is left open, as in node: process.stdin over a file is such a stream.
+  // A FileHandle gets its ref back whatever its number is.
+  if (stream[kHandle] ? stream.fd == null : !stream.fd) {
     cb(err);
   } else if (stream.flush) {
     stream[kFs].fsync!(stream.fd, flushErr => {
@@ -498,6 +504,7 @@ function WriteStream(
       throw $ERR_METHOD_NOT_IMPLEMENTED("FileHandle with fs");
     }
     this[kFs] = customFs = fileHandleStreamFs(fd);
+    this[kHandle] = fd;
     fd[kRef]();
     fd.on("close", this.close.bind(this));
     this.fd = fd = fd[kFd];

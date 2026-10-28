@@ -47,6 +47,9 @@ const kTimeoutMax = 2 ** 31 - 1;
 // Matches bun:test's default per-test timeout.
 const kBunTestDefaultTimeoutMs = 5_000;
 const kJoinSeparator = " > ";
+// Captured at module load, like the timers above: a test can replace them.
+const AggregateError = globalThis.AggregateError;
+const ErrorCaptureStackTrace = Error.captureStackTrace;
 
 // -----------------------------------------------------------------------------
 // run()
@@ -1577,8 +1580,8 @@ class TestNode {
   // Inline subtests are serialized through this chain. `concurrency` is
   // validated for Node-compat error codes but subtests always run serially.
   subtestChain: Promise<unknown> = Promise.resolve();
-  failedSubtests = 0;
-  firstSubtestError: unknown = undefined;
+  // Allocated by the first failed subtest (recordSubtestFailure).
+  subtestFailures: SubtestFailures | undefined = undefined;
   // First failure from a before hook created while this test was running.
   hookFailure: unknown = undefined;
   #ctx: TestContext | undefined;
@@ -2349,7 +2352,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
             await (stop === undefined ? pending : Promise.race([stop.promise, pending]));
             // A t.test() that fulfilled the plan from an async callback was
             // scheduled onto subtestChain during the wait; drain again so its
-            // failure reaches failedSubtests below (Node fails the parent).
+            // failure reaches subtestFailures below (Node fails the parent).
             const drain = drainSubtestChain(node);
             await (stop === undefined ? drain : Promise.race([stop.promise, drain]));
           }
@@ -2362,15 +2365,11 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
       node.plan?.cancel();
     }
 
-    const { failedSubtests, firstSubtestError } = node;
-    if (failure === undefined && failedSubtests > 0) {
-      const error = makeTestFailure(
-        `${failedSubtests} subtest${failedSubtests > 1 ? "s" : ""} failed`,
-        "subtestsFailed",
-      );
-      if (firstSubtestError !== undefined) {
-        (error as { cause?: unknown }).cause = firstSubtestError;
-      }
+    const failures = node.subtestFailures;
+    if (failure === undefined && failures !== undefined) {
+      const error = makeSubtestsFailure(failures);
+      (error as { cause?: unknown }).cause = firstSubtestFailure(failures);
+      failures.error = error;
       failure = error;
     }
   }
@@ -2437,8 +2436,7 @@ function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn, ownTodo:
     // not the inherited todoFlag: a subtest that threw must still fail a
     // {todo:true} parent so bun:test under --todo reports Todo (failure rolls up).
     if (failure !== undefined && !ownTodo && !child.skipped) {
-      parent.failedSubtests++;
-      parent.firstSubtestError ??= failure;
+      recordSubtestFailure(parent, child, failure);
     }
   };
   const result = (parent.subtestChain = parent.subtestChain.then(run));
@@ -2446,8 +2444,88 @@ function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn, ownTodo:
 }
 
 function recordSuiteFailure(suite: TestNode, err: unknown) {
-  suite.failedSubtests++;
-  suite.firstSubtestError ??= err ?? makeTestFailure("suite failed");
+  recordSubtestFailure(suite, suite, err ?? makeTestFailure("suite failed"));
+}
+
+// The failed subtests of one node in roll-up order, as parallel arrays that keep no TestNode alive.
+class SubtestFailures {
+  names: string[] = [];
+  // `undefined` is an inline suite that failed through its own subtests.
+  failures: unknown[] = [];
+  // Each failed node's own record. The owner's record marks a failure of the owner itself.
+  records: (SubtestFailures | undefined)[] = [];
+  // The owner's "N subtests failed" error, to tell it from a thrown value.
+  error: Error | undefined = undefined;
+}
+
+// The only writer: the verdict, its `cause` and the report for bun:test read this record.
+function recordSubtestFailure(parent: TestNode, node: TestNode, failure: unknown) {
+  // A finished subtest is never judged again. A top-level test is, by each `--retry` attempt.
+  if (parent.finished && parent.isExecutionPhase) return;
+  const record = (parent.subtestFailures ??= new SubtestFailures());
+  $arrayPush(record.names, node.name);
+  $arrayPush(record.failures, failure);
+  $arrayPush(record.records, node === parent ? record : node.subtestFailures);
+}
+
+function makeSubtestsFailure(record: SubtestFailures) {
+  const count = record.names.length;
+  return makeTestFailure(`${count} subtest${count > 1 ? "s" : ""} failed`, "subtestsFailed");
+}
+
+// The first recorded failure. An inline suite stands for its own first one.
+function firstSubtestFailure(record: SubtestFailures): unknown {
+  const failure = record.failures[0];
+  return failure === undefined ? firstSubtestFailure(record.records[0]!) : failure;
+}
+
+function notOnStack() {}
+
+function subtestLabel(path: string) {
+  const label = new Error(path);
+  label.name = "subtest failed";
+  // No frames: the error printer would show the source of node:test for them.
+  ErrorCaptureStackTrace(label, notOnStack);
+  return label;
+}
+
+// Appends a label and the failure for each failed subtest below `path`.
+function collectSubtestFailures(record: SubtestFailures, path: string, members: unknown[]) {
+  const { names, failures, records } = record;
+  for (let i = 0; i < names.length; i++) {
+    const childRecord = records[i];
+    if (childRecord === record) continue;
+    const childPath = path + kJoinSeparator + names[i];
+    if (childRecord !== undefined) collectSubtestFailures(childRecord, childPath, members);
+    const failure = failures[i];
+    // An inline suite (`undefined`) and a roll-up error add nothing to the subtests listed above them.
+    if (failure !== childRecord?.error) {
+      $arrayPush(members, subtestLabel(childPath));
+      $arrayPush(members, failure);
+    }
+  }
+  // Node reports a suite's own failure after its subtests.
+  for (let i = 0; i < names.length; i++) {
+    if (records[i] === record) {
+      $arrayPush(members, subtestLabel(path));
+      $arrayPush(members, failures[i]);
+    }
+  }
+}
+
+// bun:test prints each member of an AggregateError in turn. Must not throw: done() is still to be called.
+function failureWithSubtests(node: TestNode, failure: unknown): unknown {
+  try {
+    const record = node.subtestFailures!;
+    const members: unknown[] = [];
+    collectSubtestFailures(record, node.fullName, members);
+    if (failure !== record.error) $arrayPush(members, failure);
+    const aggregate = new AggregateError(members, "subtests failed");
+    ErrorCaptureStackTrace(aggregate, notOnStack);
+    return aggregate;
+  } catch {
+    return failure;
+  }
 }
 
 // Awaits a node's subtest chain, including links appended while waiting.
@@ -2458,7 +2536,7 @@ async function drainSubtestChain(node: TestNode) {
     try {
       await chain;
     } catch {
-      // Failures are tracked through failedSubtests.
+      // Failures are recorded by recordSubtestFailure.
     }
   } while (chain !== node.subtestChain);
 }
@@ -2493,7 +2571,8 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown,
       }
     }
     suite.finished = true;
-    suite.passed = suite.failedSubtests === 0;
+    const failures = suite.subtestFailures;
+    suite.passed = failures === undefined;
     if (runChildReporterEnabled) {
       emitRunChildEvent(suite.passed ? "test:pass" : "test:fail", {
         __proto__: null,
@@ -2504,20 +2583,12 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown,
         type: "suite",
         tags: suite.tags,
         todo: suite.todoFlag ? (suite.message ?? true) : undefined,
-        error: suite.passed
-          ? undefined
-          : serializeRunError(
-              makeTestFailure(
-                `${suite.failedSubtests} subtest${suite.failedSubtests > 1 ? "s" : ""} failed`,
-                "subtestsFailed",
-              ),
-            ),
+        error: failures === undefined ? undefined : serializeRunError(makeSubtestsFailure(failures)),
       });
     }
     // A todo suite's failures do not fail the owning test (Node).
-    if (suite.failedSubtests > 0 && !ownTodo) {
-      parent.failedSubtests++;
-      parent.firstSubtestError ??= suite.firstSubtestError;
+    if (failures !== undefined && !ownTodo) {
+      recordSubtestFailure(parent, suite, undefined);
     }
   };
   const result = (parent.subtestChain = parent.subtestChain.then(run));
@@ -2577,7 +2648,9 @@ function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = fal
         } else if (node.todoFlag && !declaredTodo && (runChildReporterEnabled || !todoBefore)) {
           markCurrentResult(true, done);
         } else {
-          done(failure);
+          done(
+            failure !== undefined && node.subtestFailures !== undefined ? failureWithSubtests(node, failure) : failure,
+          );
           return;
         }
         done(undefined);

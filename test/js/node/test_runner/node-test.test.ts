@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
 describe("node:test", () => {
@@ -67,6 +67,209 @@ describe("node:test", () => {
       stderr: expect.stringContaining("0 fail"),
     });
   });
+
+  // Like the first three tests, these spawn debug+ASAN `bun test` children on large fixtures.
+  test.concurrent(
+    "should report every failed subtest under its name path with its own error",
+    async () => {
+      using dir = tempDir("node-test-failed-subtests", {});
+      const junit = join(String(dir), "junit.xml");
+      const { exitCode, stdout, stderr } = await runTests(["50-failed-subtests-report.js"], {}, [
+        "--reporter=junit",
+        `--reporter-outfile=${junit}`,
+      ]);
+      expect(reportLines(stderr)).toEqual([
+        "subtest failed: table > row-2",
+        'AssertionError: Expected "actual" to be strictly unequal to: 2',
+        "(fail) table",
+        "subtest failed: two > first",
+        "error: first error",
+        "subtest failed: two > second",
+        "error: second error",
+        "(fail) two",
+        "subtest failed: own > kid",
+        "error: kid error",
+        "error: parent error",
+        "(fail) own",
+        "subtest failed: group > deep > outer > leaf-1",
+        "error: leaf-1 error",
+        "subtest failed: group > deep > outer > leaf-2",
+        "error: leaf-2 error",
+        "(fail) group > deep",
+        "subtest failed: globals > inner",
+        "error: inner error",
+        "subtest failed: globals > suite > kid-one",
+        "error: kid-one error",
+        "subtest failed: globals > suite > kid-two",
+        "error: kid-two error",
+        "(fail) globals",
+        "subtest failed: suite-own > after-suite > kid",
+        "error: after-kid error",
+        "subtest failed: suite-own > after-suite",
+        "error: after boom",
+        "subtest failed: suite-own > throwing-suite",
+        "error: callback boom",
+        "subtest failed: suite-own > rejecting-suite",
+        "error: async callback boom",
+        "subtest failed: suite-own > before-suite > gated",
+        "error: before boom",
+        "subtest failed: suite-own > before-suite",
+        "error: before boom",
+        "(fail) suite-own",
+        "subtest failed: before-hook > gated-1",
+        "error: hook boom",
+        "subtest failed: before-hook > gated-2",
+        "error: hook boom",
+        "error: hook boom",
+        "(fail) before-hook",
+        "subtest failed: odd-values > zero",
+        "error: 0",
+        "subtest failed: odd-values > frozen",
+        "error: frozen error",
+        "subtest failed: odd-values > getter",
+        "error: getter error",
+        "subtest failed: odd-values > looks-synthetic",
+        "error: user error",
+        "subtest failed: odd-values > shared-1",
+        "error: shared error",
+        "subtest failed: odd-values > shared-2",
+        "error: shared error",
+        "(fail) odd-values",
+        "subtest failed: late > mid > early",
+        "error: early error",
+        "subtest failed: late > mid",
+        "error: mid error",
+        "(fail) late",
+        "subtest failed: runner-made > plan",
+        "error: plan expected 1 assertions but received 0",
+        "subtest failed: runner-made > timeout",
+        "error: test timed out after 1ms",
+        "(fail) runner-made",
+        "(pass) todo-kid",
+        "(pass) expected-failure",
+        "subtest failed: hook-state > kid-1",
+        "error: first kid",
+        "subtest failed: hook-state > kid-2",
+        "error: second kid",
+        "(fail) hook-state",
+        "subtest failed: hook-state-suite-first > suite > kid",
+        "error: suite kid",
+        "subtest failed: hook-state-suite-first > kid-2",
+        "error: later kid",
+        "(fail) hook-state-suite-first",
+        "subtest failed: hook-state-one > kid",
+        "error: only kid",
+        "(fail) hook-state-one",
+        "subtest failed: hook-state-nested > mid > leaf",
+        "error: nested leaf",
+        "(fail) hook-state-nested",
+      ]);
+      // The errors that the report adds have no stack frames, so the error printer shows no source of node:test for them.
+      expect(stderr).not.toMatch(/at (subtestLabel|failureWithSubtests) /);
+      // Bun builds the parent's roll-up error before its `after` hook runs. The report must not change it.
+      expect(stdout.split("\n").filter(line => line.startsWith("HOOK "))).toEqual([
+        'HOOK [false,"2 subtests failed","subtestsFailed",true]',
+        'HOOK [false,"2 subtests failed","subtestsFailed",true]',
+        'HOOK [false,"1 subtest failed","subtestsFailed",true]',
+        'HOOK ["1 subtest failed","1 subtest failed",true]',
+      ]);
+      // A subtest is not a test of its own for the totals or for the JUnit report.
+      const xml = await Bun.file(junit).text();
+      expect(xml.match(/<testcase /g)).toHaveLength(16);
+      const two = xml.slice(xml.indexOf('<testcase name="two"'));
+      expect(two.slice(0, two.indexOf("</testcase>"))).toContain(
+        "subtest failed: two &gt; first&#10;&#10;Error: first error&#10;",
+      );
+      expect(two.slice(0, two.indexOf("</testcase>"))).toContain(
+        "subtest failed: two &gt; second&#10;&#10;Error: second error&#10;",
+      );
+      expect(stderr).toContain("2 pass");
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 1,
+        stderr: expect.stringContaining("14 fail"),
+      });
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should keep the roll-up error that run() reports for a parent and for an inline suite",
+    async () => {
+      const fixture = join(import.meta.dirname, "fixtures", "50-failed-subtests-report.js");
+      const script = `
+        const { run } = require("node:test");
+        (async () => {
+          for await (const { type, data } of run({ files: [${JSON.stringify(fixture)}] })) {
+            if (type !== "test:fail") continue;
+            const { error, type: kind } = data.details;
+            if (error.failureType !== "subtestsFailed") continue;
+            console.log("ROW " + JSON.stringify([data.name, kind, error.message, error.cause?.message]));
+          }
+        })();
+      `;
+      await using proc = spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const rows = stdout
+        .split("\n")
+        .filter(line => line.startsWith("ROW "))
+        .map(line => JSON.parse(line.slice(4)));
+      // [name, kind, message, message of the cause]. An inline suite reports no cause.
+      expect({ rows, stderr }).toEqual({
+        rows: [
+          ["table", "test", "1 subtest failed", 'Expected "actual" to be strictly unequal to: 2'],
+          ["two", "test", "2 subtests failed", "first error"],
+          ["outer", "test", "2 subtests failed", "leaf-1 error"],
+          ["deep", "test", "1 subtest failed", "2 subtests failed"],
+          ["suite", "suite", "2 subtests failed", null],
+          ["globals", "test", "2 subtests failed", "inner error"],
+          ["after-suite", "suite", "2 subtests failed", null],
+          ["throwing-suite", "suite", "1 subtest failed", null],
+          ["rejecting-suite", "suite", "1 subtest failed", null],
+          ["before-suite", "suite", "2 subtests failed", null],
+          ["suite-own", "test", "4 subtests failed", "after-kid error"],
+          // A thrown error that carries this failureType itself.
+          ["looks-synthetic", "test", "user error", null],
+          ["odd-values", "test", "6 subtests failed", "0"],
+          ["late", "test", "1 subtest failed", "mid error"],
+          ["runner-made", "test", "2 subtests failed", "plan expected 1 assertions but received 0"],
+          ["hook-state", "test", "2 subtests failed", "first kid"],
+          ["suite", "suite", "1 subtest failed", null],
+          ["hook-state-suite-first", "test", "2 subtests failed", "suite kid"],
+          ["hook-state-one", "test", "1 subtest failed", "only kid"],
+          ["mid", "test", "1 subtest failed", "nested leaf"],
+          ["hook-state-nested", "test", "1 subtest failed", "1 subtest failed"],
+        ],
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should fail a retried test for a subtest that failed after the first attempt had ended",
+    async () => {
+      const { exitCode, stderr } = await runTests(["51-failed-subtest-retry.js"], {}, ["--retry=1"]);
+      expect(reportLines(stderr)).toEqual([
+        "error: own error",
+        "subtest failed: flaky-parent > kid",
+        "error: kid error",
+        "(fail) flaky-parent (attempt 2)",
+      ]);
+      expect(exitCode).toBe(1);
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should report the roll-up error when a subtest name cannot be joined into a name path",
+    async () => {
+      const { exitCode, stderr } = await runTests(["52-failed-subtest-unnamed.js"]);
+      expect(reportLines(stderr)).toEqual(["error: 1 subtest failed", "error: kid error", "(fail) parent"]);
+      expect(exitCode).toBe(1);
+    },
+    30_000,
+  );
 
   test("should run before hooks created on a running test once and validate hook options", async () => {
     const { exitCode, stderr } = await runTests(["06-hook-semantics.js"]);
@@ -199,10 +402,10 @@ describe("node:test", () => {
 
   test("should fail the parent when a t.test() that fulfills plan({wait}) throws", async () => {
     const { exitCode, stderr } = await runTests(["24-plan-wait-late-subtest.js"]);
-    // The error message from makeTestFailure — must not be satisfied by the
-    // fixture's own source lines echoed in the failure context.
-    expect(stderr).toContain("error: 1 subtest failed");
-    expect(stderr).toContain("boom");
+    // The runner builds the label, so the fixture's own source lines echoed in
+    // the failure context cannot satisfy it.
+    expect(stderr).toContain("subtest failed: p > c");
+    expect(stderr).toContain("error: boom");
     expect({ exitCode, stderr }).toMatchObject({
       exitCode: 1,
       stderr: expect.stringContaining("1 fail"),
@@ -324,6 +527,14 @@ describe("node:test", () => {
     });
   });
 });
+
+// The lines of a failure report that the runner writes itself: echoed fixture source cannot produce them.
+function reportLines(stderr: string) {
+  return stderr
+    .split("\n")
+    .map(line => line.trimStart().replace(/ \[[\d.]+m?s\]$/, ""))
+    .filter(line => /^(subtest failed: |error: |AssertionError|\((fail|pass)\) )/.test(line));
+}
 
 async function runTests(filenames: string[], env: Record<string, string> = {}, args: string[] = []) {
   const testPaths = filenames.map(filename => join(import.meta.dirname, "fixtures", filename));

@@ -52,6 +52,7 @@ test("files written by other programs", () => expectToDecode("valid.json.gz", 62
 //   a small valid file of the generator's can give away, two of these do.
 // - rows: the widths whose rows come nearest to 8, 16, 48, 96, 240 and 288 bytes from below, hit them, and come nearest
 //   from above, and those just above 8192 and 65,536. Some interlaced too. Then Paeth under rows that are one pixel
-//   over and over from here to there, or that change in one byte, where src/png/filter.rs looks and next to that.
+//   over and over from here to there, or that change in one byte, where src/png/filter.rs looks and next to that. The
+//   second byte of a sample of 16 bits only shows in whether the pixel is the one in tRNS.
 // - pairs: picked so that many properties of a file meet many others.
-test("files from a generator that shares nothing with write.ts", () => expectToDecode("generated.json.gz", 617));
+test("files from a generator that shares nothing with write.ts", () => expectToDecode("generated.json.gz", 627));

@@ -84,17 +84,18 @@ test.concurrent("deeply nested rgb() with an invalid var() in the alpha parses i
   await expectBounded(css, true);
 });
 
-test.concurrent.each(["rgb(from red r g b / ", "hsl(from red h s l / ", "rgb(from light-dark(red, blue) r g b / "])(
-  "deeply nested %s whose alpha names a channel parses in bounded time",
-  async open => {
-    // Each level stays as written. The attempt must give up before it buffers
-    // the alpha: after that, the fallback parses the same range again, once
-    // per nesting level.
-    const depth = 96;
-    const css = ".a{--x:" + open.repeat(depth) + "calc(alpha * var(--o))" + ")".repeat(depth) + "}";
-    await expectBounded(css, false);
-  },
-);
+test.concurrent("deeply nested relative colors whose alpha names a channel parse in bounded time", async () => {
+  // Each level stays as written. The attempt must give up before it buffers
+  // the alpha: after that, the fallback parses the same range again, once
+  // per nesting level.
+  const depth = 96;
+  const chain = (open: string) => open.repeat(depth) + "calc(alpha * var(--o))" + ")".repeat(depth);
+  const css =
+    `.a{--x:${chain("rgb(from red r g b / ")};` +
+    `--y:${chain("hsl(from red h s l / ")};` +
+    `--z:${chain("rgb(from light-dark(red, blue) r g b / ")}}`;
+  await expectBounded(css, false);
+});
 
 test("original fuzzer input parses in bounded time and memory", () => {
   // Minimized fuzzer testcase: thousands of unclosed `{` blocks, unterminated

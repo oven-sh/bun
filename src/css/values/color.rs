@@ -2147,14 +2147,10 @@ impl RelativeComponentParser {
 
     /// Whether `ident` is a channel keyword of the function, or `alpha`.
     pub(crate) fn is_channel_keyword(&self, ident: &[u8]) -> bool {
-        [
-            self.names.0,
-            self.names.1,
-            self.names.2,
-            b"alpha".as_slice(),
-        ]
-        .into_iter()
-        .any(|name| strings::eql_case_insensitive_ascii_check_length(ident, name))
+        strings::eql_any_case_insensitive_ascii(
+            ident,
+            &[self.names.0, self.names.1, self.names.2, b"alpha"],
+        )
     }
 }
 

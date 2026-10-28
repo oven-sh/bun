@@ -322,6 +322,11 @@ pub struct DebugIDFormatter {
     pub id: u64,
 }
 
+impl DebugIDFormatter {
+    /// How many characters a debug ID prints.
+    pub const LEN: usize = 32;
+}
+
 impl core::fmt::Display for DebugIDFormatter {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // The RFC asks for a UUID (128 bits / 32 hex chars). Our hashes are 64
@@ -714,10 +719,46 @@ impl SourceMapPieces {
         SourceMapPieces::default()
     }
 
+    const BEFORE_DEBUG_ID: &'static [u8] = b"\",\n  \"debugId\": \"";
+    const DEBUG_ID_PLACEHOLDER: &'static [u8] = &[b'0'; DebugIDFormatter::LEN];
+    const AFTER_DEBUG_ID: &'static [u8] = b"\",\n  \"names\": []\n}";
+
+    /// What follows the mappings. The debug ID covers the final chunk, which
+    /// does not exist yet, so this leaves a placeholder for `finalize`.
+    pub fn push_suffix(j: &mut bun_core::string_joiner::StringJoiner<'_>) {
+        if bun_core::FeatureFlags::SOURCE_MAP_DEBUG_ID {
+            j.push_static(Self::BEFORE_DEBUG_ID);
+            j.push_static(Self::DEBUG_ID_PLACEHOLDER);
+        }
+        j.push_static(Self::AFTER_DEBUG_ID);
+    }
+
     pub fn finalize(
         &mut self,
         shifts_: &[SourceMapShifts],
+        debug_id: DebugIDFormatter,
     ) -> Result<Box<[u8]>, bun_alloc::AllocError> {
+        if bun_core::FeatureFlags::SOURCE_MAP_DEBUG_ID {
+            use std::io::Write as _;
+
+            // Written in place: a map that was not split is one buffer, returned below as it is.
+            let end = if self.suffix.is_empty() {
+                &mut self.prefix
+            } else {
+                &mut self.suffix
+            };
+            let id_end = end.len().saturating_sub(Self::AFTER_DEBUG_ID.len());
+            let slot = end[..id_end].last_chunk_mut::<{ DebugIDFormatter::LEN }>();
+            debug_assert!(
+                slot.as_deref()
+                    .is_some_and(|slot| slot == Self::DEBUG_ID_PLACEHOLDER)
+            );
+            if let Some(slot) = slot {
+                let mut slot: &mut [u8] = slot;
+                write!(slot, "{debug_id}").expect("a debug ID prints DebugIDFormatter::LEN bytes");
+            }
+        }
+
         // Nothing to splice: avoid re-joining (and re-allocating) the entire
         // source-map JSON when there are no mappings or suffix to merge in.
         if self.mappings.is_empty() && self.suffix.is_empty() {
@@ -1149,4 +1190,48 @@ fn find_source_mapping_url_u16(source: &[u16]) -> Option<bun_core::Utf8Bytes<'st
     Some(bun_core::Utf8Bytes::Owned(
         bun_core::strings::to_utf8_alloc(url),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pieces(split: bool) -> SourceMapPieces {
+        let mut j = bun_core::string_joiner::StringJoiner::default();
+        j.push_static(b"{\n  \"mappings\": \"");
+        let mapping_start = j.len;
+        j.push_static(b"AAAA");
+        let mapping_end = j.len;
+        SourceMapPieces::push_suffix(&mut j);
+        let done = j.done().unwrap();
+
+        let mut pieces = SourceMapPieces::init();
+        if split {
+            pieces.prefix.extend_from_slice(&done[..mapping_start]);
+            pieces
+                .mappings
+                .extend_from_slice(&done[mapping_start..mapping_end]);
+            pieces.suffix.extend_from_slice(&done[mapping_end..]);
+        } else {
+            pieces.prefix = done.into_vec();
+        }
+        pieces
+    }
+
+    #[test]
+    fn finalize_writes_the_debug_id_in_place() {
+        let id = DebugIDFormatter {
+            id: 0x0123_4567_89AB_CDEF,
+        };
+        let json: &[u8] = b"{\n  \"mappings\": \"AAAA\",\n  \"debugId\": \"0123456789ABCDEF64756E2164756E21\",\n  \"names\": []\n}";
+
+        assert_eq!(&*pieces(true).finalize(&[], id).unwrap(), json);
+
+        // A map that was not split is one buffer, which can be hundreds of megabytes.
+        let mut whole = pieces(false);
+        let buffer = whole.prefix.as_ptr();
+        let finalized = whole.finalize(&[], id).unwrap();
+        assert_eq!(&*finalized, json);
+        assert_eq!(finalized.as_ptr(), buffer);
+    }
 }

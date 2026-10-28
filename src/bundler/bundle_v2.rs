@@ -8295,6 +8295,48 @@ pub mod bv2_impl {
             bun_core::scoped_log!(ContentHasher, "HASH_UPDATE: {:?}\n", i);
             self.hasher.update(bun_core::slice_as_bytes(i));
         }
+        /// Hashes the output path that `template` prints, with `/` as the
+        /// separator on every platform. Until the template has its hash, that
+        /// is the path without the `[hash]`.
+        pub(crate) fn write_path(
+            &mut self,
+            template: &options::PathTemplate,
+            sanitize_parent_dirs: bool,
+        ) {
+            struct Path<'a> {
+                hasher: &'a mut bun_hash::XxHash64Streaming,
+                len: u64,
+            }
+            impl bun_io::Write for Path<'_> {
+                fn write_all(&mut self, bytes: &[u8]) -> bun_io::Result<()> {
+                    bun_core::scoped_log!(
+                        ContentHasher,
+                        "HASH_UPDATE path: {}\n",
+                        bstr::BStr::new(bytes)
+                    );
+                    self.len += bytes.len() as u64;
+                    let mut remain = bytes;
+                    if bun_paths::SEP != b'/' {
+                        while let Some(i) = strings::index_of_char_usize(remain, bun_paths::SEP) {
+                            self.hasher.update(&remain[..i]);
+                            self.hasher.update(b"/");
+                            remain = &remain[i + 1..];
+                        }
+                    }
+                    self.hasher.update(remain);
+                    Ok(())
+                }
+            }
+            let mut path = Path {
+                hasher: &mut self.hasher,
+                len: 0,
+            };
+            template
+                .print(&mut path, sanitize_parent_dirs)
+                .expect("infallible: a hasher takes any bytes");
+            let len = path.len;
+            self.hasher.update(&len.to_ne_bytes());
+        }
         pub(crate) fn digest(&self) -> u64 {
             self.hasher.digest()
         }

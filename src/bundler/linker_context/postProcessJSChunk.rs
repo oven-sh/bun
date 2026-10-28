@@ -786,7 +786,6 @@ pub(crate) fn post_process_js_chunk(
 
     // TODO: meta contents
 
-    chunk.isolated_hash = c.generate_isolated_hash(chunk, worker_arena);
     chunk
         .flags
         .set(crate::chunk::Flags::IS_EXECUTABLE, is_executable);
@@ -801,13 +800,15 @@ pub(crate) fn post_process_js_chunk(
         // `c.generate_source_map_for_chunk(&mut self, …)`.
         let resolver = c.resolver.expect("resolver set in load()");
         chunk.output_source_map = c.generate_source_map_for_chunk(
-            chunk.isolated_hash,
             worker,
             &compile_results_for_source_map,
             &resolver.opts.output_dir,
             can_have_shifts,
         )?;
     }
+
+    // After the source map, which the hash covers.
+    chunk.isolated_hash = c.generate_isolated_hash(chunk, worker_arena);
 
     // Free the renamer now that printing is done; nothing reads it after
     // post-processing.

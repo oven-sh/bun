@@ -22,12 +22,15 @@ pub(crate) fn post_process_css_chunk(
         ..Default::default()
     };
 
-    let mut line_offset: LineColumnOffsetOptional =
-        if c.options.source_maps != options::SourceMapOption::None {
-            LineColumnOffsetOptional::Value(LineColumnOffset::default())
-        } else {
-            LineColumnOffsetOptional::Null
-        };
+    // The emit step asks the same question, so a map is only built, and only
+    // hashed into the chunk's name, when it is also written.
+    let has_source_map =
+        chunk.content.sourcemap(c.options.source_maps) != options::SourceMapOption::None;
+    let mut line_offset: LineColumnOffsetOptional = if has_source_map {
+        LineColumnOffsetOptional::Value(LineColumnOffset::default())
+    } else {
+        LineColumnOffsetOptional::Null
+    };
 
     let mut newline_before_comment = false;
 
@@ -102,14 +105,14 @@ pub(crate) fn post_process_css_chunk(
         j.push_static(compile_result.code());
 
         if let Some(source_map_chunk) = compile_result.source_map_chunk() {
-            if c.options.source_maps != options::SourceMapOption::None {
+            if has_source_map {
                 bun_core::handle_oom(compile_results_for_source_map.append(
                     CompileResultForSourceMap {
                         // SAFETY: bitwise alias of `chunk.compile_results_for_chunk`
                         // (read-only and outlives this fn); see `postProcessJSChunk.rs`.
                         source_map_chunk: unsafe { source_map_chunk.alias() },
                         // Guaranteed `Value` here
-                        // because `source_maps != None` implies `line_offset` was
+                        // because `has_source_map` implies `line_offset` was
                         // initialised to `Value(_)` above.
                         generated_offset: match line_offset {
                             LineColumnOffsetOptional::Value(v) => v,
@@ -142,10 +145,9 @@ pub(crate) fn post_process_css_chunk(
         bun_core::handle_oom(c.break_output_into_pieces(alloc, &mut j, ctx.chunks.len() as u32));
     // TODO: meta contents
 
-    chunk.isolated_hash = c.generate_isolated_hash(chunk, alloc);
     // chunk.flags.is_executable = is_executable;
 
-    if c.options.source_maps != options::SourceMapOption::None {
+    if has_source_map {
         let can_have_shifts = matches!(chunk.intermediate_output, IntermediateOutput::Pieces(_));
         // Copy the `ParentRef` out (not `c.resolver()`) so `output_dir`
         // borrows the local, not `c`, avoiding the split-borrow with
@@ -153,13 +155,15 @@ pub(crate) fn post_process_css_chunk(
         let resolver = c.resolver.expect("resolver set in load()");
         let output_dir = &resolver.opts.output_dir;
         chunk.output_source_map = c.generate_source_map_for_chunk(
-            chunk.isolated_hash,
             worker,
             &compile_results_for_source_map,
             output_dir,
             can_have_shifts,
         )?;
     }
+
+    // After the source map, which the hash covers.
+    chunk.isolated_hash = c.generate_isolated_hash(chunk, alloc);
 
     Ok(())
 }

@@ -142,7 +142,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPrepareHoldersBeforeLookupsUnder, (JSC::JSGlo
 
 #if ENABLE(AOT)
 
-extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, const BunString* specifier);
+extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, const BunString* specifier, const BunString* typeAttribute);
 extern "C" JSC::EncodedJSValue Blob__createEmptyJSONBodyError(JSC::JSGlobalObject*);
 extern "C" bool Bun__compiledProgramRunsInPlace();
 extern "C" BunString Bun__AOT__pathOfForm(const BunString* path, const BunString* typeAttribute, bool* isFormWithoutAttributes);
@@ -323,7 +323,7 @@ bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject* globalObject, JSCom
     if (!module)
         return false;
     BunString pathString = Bun::toString(path);
-    auto loader = Bun__getDefaultLoader(globalObject, &pathString);
+    auto loader = Bun__getDefaultLoader(globalObject, &pathString, nullptr);
     bool isTypeScriptFile = loader == BunLoaderTypeTS || loader == BunLoaderTypeTSX;
     if (isTypeScriptFile != isTypeScriptLoader)
         return false;

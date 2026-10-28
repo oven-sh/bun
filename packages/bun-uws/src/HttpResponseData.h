@@ -21,6 +21,7 @@
 
 #include "HttpParser.h"
 #include "AsyncSocketData.h"
+#include "DistinctFlagBits.h"
 #include "HttpContext.h"
 
 #include "MoveOnlyFunction.h"
@@ -125,7 +126,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         return ret;
     }
     /* Bits of status */
-    enum  : uint32_t {
+    UWS_DISTINCT_FLAG_BITS(uint32_t,
         HTTP_STATUS_CALLED = 1, // used
         HTTP_WRITE_CALLED = 2, // used
         HTTP_END_CALLED = 4, // used
@@ -220,10 +221,10 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
             | HTTP_NODE_LEAVE_AFTER_BODY | HTTP_NODE_RECEIVED_FIN | HTTP_CLOSE_WHEN_IDLE
             | HTTP_NODE_CLOSE_AFTER_MESSAGE | HTTP_NODE_CLOSE_AFTER_DRAIN | HTTP_NODE_PEER_ENDED
             | HTTP_NODE_HALF_CLOSED | HTTP_NODE_RAW_READS | HTTP_NODE_SHUTDOWN_AFTER_DRAIN,
-    };
+    );
 
     /* Why reads are paused. HttpResponse::pauseReads() and resumeReads() keep the socket paused while any reason is set. */
-    enum : uint8_t {
+    UWS_DISTINCT_FLAG_BITS(uint8_t,
         /* The request body's reader is full: Bun.serve's high-water mark, node:http's req.pause(). */
         READ_PAUSE_BODY = 1,
         /* Bun.serve: a read's worth of pipelined requests is parked behind the pending response. */
@@ -232,7 +233,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         READ_PAUSE_FLOOD = 4,
         /* node:http: the JS socket stopped reading. */
         READ_PAUSE_SOCKET = 8,
-    };
+    );
 
     /* Begin a new response on this connection. Clearing the word in one go is
      * what keeps a previous response's framing or

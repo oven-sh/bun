@@ -1034,7 +1034,7 @@ pub(crate) mod serialize {
                 return dest.write_str(b")");
             }
             Component::NonTsPseudoClass(pseudo) => {
-                return serialize_pseudo_class(pseudo, dest, context);
+                return serialize_pseudo_class(pseudo, dest, context, position);
             }
             Component::PseudoElement(pseudo) => {
                 return serialize_pseudo_element(pseudo, dest, context);
@@ -1132,10 +1132,12 @@ pub(crate) mod serialize {
         Ok(())
     }
 
+    /// `position` is where the argument of `:local()` or `:global()` lands: only that argument is printed.
     fn serialize_pseudo_class(
         pseudo_class: &parser::PseudoClass,
         dest: &mut Printer,
         context: Option<&StyleContext>,
+        position: NestingPosition,
     ) -> Result<(), PrintErr> {
         match pseudo_class {
             PseudoClass::Lang { languages } => {
@@ -1268,10 +1270,12 @@ pub(crate) mod serialize {
             // https://html.spec.whatwg.org/multipage/semantics-other.html#selector-autofill
             PseudoClass::Autofill(prefix) => write_prefixed(dest, *prefix, b"autofill")?,
 
-            PseudoClass::Local { selector } => serialize_selector(selector, dest, context, false)?,
+            PseudoClass::Local { selector } => {
+                serialize_selector_impl(selector, dest, context, false, position)?
+            }
             PseudoClass::Global { selector } => {
                 let css_module = dest.css_module.take();
-                serialize_selector(selector, dest, context, false)?;
+                serialize_selector_impl(selector, dest, context, false, position)?;
                 dest.css_module = css_module;
             }
 

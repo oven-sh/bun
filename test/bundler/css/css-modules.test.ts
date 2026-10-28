@@ -951,6 +951,15 @@ describe("css modules", () => {
     });
   });
 
+  // The argument of `:global()` or `:local()` is printed where the wrapper is. In a wrapper that does not start the
+  // selector, a `&` that starts the argument takes a parent with a combinator or a type selector through `:is()`.
+  test.concurrent.each([
+    [".a .b", ".q:global(&.x)", ".q_H:is(.a_H .b_H).x", scoped("a", "b", "q")],
+    [".a .b", ":global(.dark) :local(&)", ".dark :is(.a_H .b_H)", scoped("a", "b")],
+    [".a .b", "& :global(&.x)", ".a_H .b_H :is(.a_H .b_H).x", scoped("a", "b")],
+    ["div", "& .q:global(&)", "div .q_H:is(div)", scoped("q")],
+  ])("%s { %s } prints %s", printsRule);
+
   const nested = '"composes" is not allowed inside nested selectors';
   const notSingleClass = '"composes" only works inside single class selectors';
 

@@ -55,9 +55,14 @@ impl Decoder {
 
     /// Takes the SETTINGS_HEADER_TABLE_SIZE that the peer has acknowledged.
     pub fn set_max_capacity(&mut self, max_capacity: u32) {
-        self.max_capacity = max_capacity;
         // Not every encoder says so when it grows its table. More room than it uses does no harm: its entries are the newest.
-        self.set_capacity(max_capacity);
+        let grows = max_capacity > self.max_capacity;
+        self.max_capacity = max_capacity;
+        self.set_capacity(if grows {
+            max_capacity
+        } else {
+            self.capacity.min(max_capacity)
+        });
     }
 
     /// The size of the dynamic table as §4.1 counts it.

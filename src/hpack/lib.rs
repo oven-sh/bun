@@ -195,6 +195,27 @@ mod tests {
     }
 
     #[test]
+    fn a_max_capacity_that_does_not_grow_keeps_the_capacity_the_peer_chose() {
+        // Three entries of 36 bytes.
+        let three = hex("4003782d610131 4003782d610132 4003782d610133");
+        for max_capacity in [4096, 200] {
+            let mut decoder = Decoder::new();
+            // To 100 bytes, which hold two of them.
+            assert!(decode(&mut decoder, &hex("3f45 82")).is_ok());
+            decoder.set_max_capacity(max_capacity);
+            assert!(decode(&mut decoder, &three).is_ok());
+            assert_eq!(decoder.table_size(), 72);
+            assert_eq!(decode(&mut decoder, &hex("c0")), Err(Error::Invalid));
+
+            decoder.set_max_capacity(40);
+            assert_eq!(decoder.table_size(), 36);
+            decoder.set_max_capacity(8192);
+            assert!(decode(&mut decoder, &three).is_ok());
+            assert_eq!(decoder.table_size(), 144);
+        }
+    }
+
+    #[test]
     fn memory_stays_bounded() {
         let (mut encoder, mut decoder) = (Encoder::new(), Decoder::new());
         // The table holds about ten of these, so it turns over many times. One does not fit at all.

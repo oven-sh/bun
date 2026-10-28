@@ -3121,6 +3121,33 @@ describe("HPACK (RFC 7541)", () => {
     }
   });
 
+  test.each([4096, 1024])(
+    "the ACK of headerTableSize: %d leaves the table at the smaller size the peer's encoder chose",
+    async headerTableSize => {
+      const { srv, seen, port } = await listen({ settings: { headerTableSize } });
+      const c = await RawH2.connect(port);
+      try {
+        c.sendPreface();
+        c.sendEmptySettings();
+        await c.waitFor(isSettings);
+        // This peer's encoder goes down to 0 bytes before it acknowledges the server's SETTINGS.
+        c.sendFrame(FrameType.HEADERS, 0x5, 1, Buffer.concat([Buffer.from([0x20]), requestHeaderBlock("GET")]));
+        c.sendSettingsAck();
+        c.sendFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET", insert));
+        expect((await c.waitFor(headersOrGoaway(3))).type).toBe(FrameType.HEADERS);
+        expect(seen[1]["x-a"]).toBe("1");
+        // A table of 0 bytes kept nothing of it.
+        c.sendFrame(FrameType.HEADERS, 0x5, 5, requestHeaderBlock("GET", Buffer.from([0xbe])));
+        const answer = await c.waitFor(headersOrGoaway(5));
+        expect(answer.type).toBe(FrameType.GOAWAY);
+        expect(goawayErrorCode(answer)).toBe(ErrorCode.COMPRESSION_ERROR);
+      } finally {
+        c.destroy();
+        srv.close();
+      }
+    },
+  );
+
   test("the decoder allows a larger table once the peer acknowledges session.settings()", async () => {
     const { srv, port } = await listen();
     srv.once("stream", stream => stream.session!.settings({ headerTableSize: 8192 }));

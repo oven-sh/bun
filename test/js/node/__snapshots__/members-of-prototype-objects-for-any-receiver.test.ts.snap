@@ -3642,9 +3642,9 @@ node:dgram.Socket.prototype bind("a", 1)
   throws TypeError: undefined is not an object <- every object, a number, a string, undefined
   throws TypeError: null is not an object <- null
 node:dgram.Socket.prototype connect()
-  throws RangeError ERR_SOCKET_BAD_PORT: Port should be > 0 and < 65536. Received undefined <- every receiver
+  throws RangeError ERR_SOCKET_BAD_PORT: Port should be > 0 and < 65536. Received undefined. <- every receiver
 node:dgram.Socket.prototype connect("a", 1)
-  throws RangeError ERR_SOCKET_BAD_PORT: Port should be > 0 and < 65536. Received a <- every receiver
+  throws RangeError ERR_SOCKET_BAD_PORT: Port should be > 0 and < 65536. Received type string ('a'). <- every receiver
 node:dgram.Socket.prototype disconnect()
   throws TypeError: undefined is not an object <- every object, a number, a string, undefined
   throws TypeError: null is not an object <- null

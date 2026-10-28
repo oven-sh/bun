@@ -157,7 +157,6 @@ template<typename Arguments> ALWAYS_INLINE JSC::EncodedJSValue validatePort(JSC:
     if (port.isInt32() && port.asInt32() <= 0xffff && port.asInt32() >= (allowZero.isUndefined() || allowZero.isTrue() ? 0 : 1))
         return JSValue::encode(port);
 
-    if (name.isUndefined()) name = jsString(vm, String("Port"_s));
     if (allowZero.isUndefined()) allowZero = jsBoolean(true);
 
     auto allowZero_b = allowZero.toBoolean(globalObject);

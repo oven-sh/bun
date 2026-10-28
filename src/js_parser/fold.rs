@@ -112,6 +112,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// The `import.meta.hot` methods other than `accept`, which has its own lowering.
+    fn is_import_meta_hot_method(name: &[u8]) -> bool {
+        matches!(
+            name,
+            b"decline" | b"dispose" | b"prune" | b"invalidate" | b"on" | b"off" | b"send"
+        )
+    }
+
     // EDot nodes represent a property access. This function may return an
     // expression to replace the property access with. It assumes that the
     // target of the EDot expression has already been visited.
@@ -750,6 +758,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     E::Special::HotEnabled | E::Special::HotDisabled => {
                         let enabled = p.options.features.hot_module_reloading;
+                        // With HMR off, `import.meta.hot` is `undefined`, so
+                        // `import.meta.hot?.x` keeps its JavaScript meaning and
+                        // stays as written. A call of a known method is the one
+                        // exception: it never runs, so it is dropped like the
+                        // direct form.
+                        if !enabled && identifier_opts.is_optional_chain_start() {
+                            if identifier_opts.is_method_call_callee()
+                                && (name == b"accept" || Self::is_import_meta_hot_method(name))
+                            {
+                                p.method_call_must_be_replaced_with_undefined = true;
+                                return Some(Expr {
+                                    data: js_ast::ExprData::EUndefined(E::Undefined),
+                                    loc,
+                                });
+                            }
+                            return None;
+                        }
                         if name == b"data" {
                             return Some(if enabled {
                                 Expr {
@@ -762,7 +787,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         if name == b"accept" {
                             if !enabled {
-                                if identifier_opts.is_call_target() {
+                                if identifier_opts.is_method_call_callee() {
                                     p.method_call_must_be_replaced_with_undefined = true;
                                 }
                                 return Some(Expr {
@@ -775,18 +800,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 loc,
                             });
                         }
-                        // Membership check over 7 fixed keys.
-                        let in_lookup_table = matches!(
-                            name,
-                            b"decline"
-                                | b"dispose"
-                                | b"prune"
-                                | b"invalidate"
-                                | b"on"
-                                | b"off"
-                                | b"send"
-                        );
-                        if in_lookup_table {
+                        if Self::is_import_meta_hot_method(name) {
                             if enabled {
                                 return Some(Expr::init(
                                     E::Dot {
@@ -798,7 +812,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     loc,
                                 ));
                             } else {
-                                if identifier_opts.is_call_target() {
+                                if identifier_opts.is_method_call_callee() {
                                     p.method_call_must_be_replaced_with_undefined = true;
                                 }
                                 return Some(Expr {

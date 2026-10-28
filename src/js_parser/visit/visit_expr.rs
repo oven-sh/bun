@@ -1002,13 +1002,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // A folded `"a" + "b"` is a rope whose `data` is only "a".
                         s.resolve_rope_if_needed(p.arena);
 
-                        // `import.meta.hot?.["accept"](...)`: same as the `?.` case in e_dot.
-                        if e_.optional_chain == Some(js_ast::OptionalChain::Start)
-                            && Self::is_import_meta_hot(&e_.target)
-                        {
-                            e_.optional_chain = None;
-                        }
-
                         // "a['b' + '']" => "a.b"
                         // "enum A { B = 'b' }; a[A.B]" => "a.b"
                         if p.options.features.minify_syntax
@@ -1038,6 +1031,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             return;
                         }
 
+                        // `import.meta.hot?.["x"]`: see the `?.` case in e_dot.
+                        if e_.optional_chain == Some(js_ast::OptionalChain::Start)
+                            && Self::is_import_meta_hot(&e_.target)
+                            && let Some(rewrite) = p.maybe_rewrite_property_access(
+                                expr.loc,
+                                e_.target,
+                                s.data.slice(),
+                                unwrapped.loc,
+                                Self::import_meta_hot_optional_opts(in_, is_call_target),
+                            )
+                        {
+                            *e = rewrite;
+                            return;
+                        }
+
                         // Handle property rewrites to ensure things
                         // like .e_import_identifier tracking works
                         // Reminder that this can only be done after
@@ -1048,7 +1056,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .with_is_template_tag(is_template_tag)
                                 .with_is_delete_target(is_delete_target)
                                 .with_assign_target(in_.assign_target)
-                                .with_is_property_access_target(in_.is_property_access_target);
+                                .with_is_property_access_target(in_.is_property_access_target)
+                                .with_is_method_call_callee(
+                                    in_.property_access_for_method_call_maybe_should_replace_with_undefined,
+                                );
                             if let Some(rewrite) = p.maybe_rewrite_property_access(
                                 expr.loc,
                                 e_.target,
@@ -1352,14 +1363,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
     }
-    /// A visited `import.meta.hot`. With HMR on it is the module's HMR object and never
-    /// nullish. With HMR off it is `undefined`, and the property rewrite folds the access.
+    /// A visited `import.meta.hot`: the HMR object with HMR on, `undefined` with HMR off.
     #[inline]
     fn is_import_meta_hot(target: &Expr) -> bool {
         matches!(
             target.data,
             Data::ESpecial(E::Special::HotEnabled | E::Special::HotDisabled)
         )
+    }
+
+    /// The options for the rewrite of `import.meta.hot?.x`.
+    #[inline]
+    fn import_meta_hot_optional_opts(in_: ExprIn, is_call_target: bool) -> IdentifierOpts {
+        IdentifierOpts::default()
+            .with_is_call_target(is_call_target)
+            .with_assign_target(in_.assign_target)
+            .with_is_property_access_target(in_.is_property_access_target)
+            .with_is_method_call_callee(
+                in_.property_access_for_method_call_maybe_should_replace_with_undefined,
+            )
+            .with_is_optional_chain_start(true)
     }
 
     fn e_dot(p: &mut Self, e: &mut Expr, in_: ExprIn) {
@@ -1459,29 +1482,40 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
 
-        if e_.optional_chain == Some(js_ast::OptionalChain::Start) {
-            if let Data::EIdentifier(id) = e_.target.data
-                && p.dynamic_import_namespace_locals.contains_key(&id.ref_)
-                && in_.assign_target == js_ast::AssignTarget::None
-                && !is_delete_target
-            {
-                // `ns?.foo` on an import()/require() namespace local reads `foo`.
-                if let Some(map) = p.import_items_for_namespace.get_mut(&id.ref_) {
-                    map.put(
-                        e_.name.slice(),
-                        js_ast::LocRef {
-                            loc: e_.name_loc,
-                            ref_: js_ast::Ref::NONE,
-                        },
-                    )
-                    .expect("oom");
-                    p.note_tracked_namespace_use(id.ref_);
-                }
-            } else if Self::is_import_meta_hot(&e_.target) {
-                // `import.meta.hot?.accept(...)`: the parser knows the value, so the
-                // `?.` guard is dropped and the access takes the direct rewrite below.
-                e_.optional_chain = None;
+        // `ns?.foo` on an import()/require() namespace local reads `foo`.
+        if e_.optional_chain == Some(js_ast::OptionalChain::Start)
+            && let Data::EIdentifier(id) = e_.target.data
+            && p.dynamic_import_namespace_locals.contains_key(&id.ref_)
+            && in_.assign_target == js_ast::AssignTarget::None
+            && !is_delete_target
+        {
+            if let Some(map) = p.import_items_for_namespace.get_mut(&id.ref_) {
+                map.put(
+                    e_.name.slice(),
+                    js_ast::LocRef {
+                        loc: e_.name_loc,
+                        ref_: js_ast::Ref::NONE,
+                    },
+                )
+                .expect("oom");
+                p.note_tracked_namespace_use(id.ref_);
             }
+        }
+
+        // `import.meta.hot?.x`: the parser knows the value of `import.meta.hot`, so the
+        // rewrite decides what the `?.` means instead of the printer.
+        if e_.optional_chain == Some(js_ast::OptionalChain::Start)
+            && Self::is_import_meta_hot(&e_.target)
+            && let Some(rewrite) = p.maybe_rewrite_property_access(
+                expr.loc,
+                e_.target,
+                e_.name.slice(),
+                e_.name_loc,
+                Self::import_meta_hot_optional_opts(in_, is_call_target),
+            )
+        {
+            *e = rewrite;
+            return;
         }
 
         if e_.optional_chain.is_none() {
@@ -1490,7 +1524,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .with_is_template_tag(is_template_tag)
                 .with_assign_target(in_.assign_target)
                 .with_is_delete_target(is_delete_target)
-                .with_is_property_access_target(in_.is_property_access_target);
+                .with_is_property_access_target(in_.is_property_access_target)
+                .with_is_method_call_callee(
+                    in_.property_access_for_method_call_maybe_should_replace_with_undefined,
+                );
             if let Some(_expr) = p.maybe_rewrite_property_access(
                 expr.loc,
                 e_.target,

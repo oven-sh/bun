@@ -913,21 +913,22 @@ impl AsyncPrefixExpression {
     }
 }
 
-// Packed u8 — assign_target:u2, is_delete_target:b1,
-// was_originally_identifier:b1, is_call_target:b1, _padding:u3 (LSB-first).
+// Packed u16 — assign_target:u2, then one bit per flag (LSB-first).
 // Not all-bool (assign_target is a 2-bit enum), so per PORTING.md we use a
-// transparent u8 with manual shift accessors.
+// transparent integer with manual shift accessors.
 #[repr(transparent)]
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
-pub struct IdentifierOpts(u8);
+pub struct IdentifierOpts(u16);
 
 impl IdentifierOpts {
-    const ASSIGN_TARGET_MASK: u8 = 0b0000_0011; // bits 0-1
-    const IS_DELETE_TARGET: u8 = 1 << 2;
-    const WAS_ORIGINALLY_IDENTIFIER: u8 = 1 << 3;
-    const IS_CALL_TARGET: u8 = 1 << 4;
-    const IS_TEMPLATE_TAG: u8 = 1 << 5;
-    const IS_PROPERTY_ACCESS_TARGET: u8 = 1 << 6;
+    const ASSIGN_TARGET_MASK: u16 = 0b0000_0011; // bits 0-1
+    const IS_DELETE_TARGET: u16 = 1 << 2;
+    const WAS_ORIGINALLY_IDENTIFIER: u16 = 1 << 3;
+    const IS_CALL_TARGET: u16 = 1 << 4;
+    const IS_TEMPLATE_TAG: u16 = 1 << 5;
+    const IS_PROPERTY_ACCESS_TARGET: u16 = 1 << 6;
+    const IS_METHOD_CALL_CALLEE: u16 = 1 << 7;
+    const IS_OPTIONAL_CHAIN_START: u16 = 1 << 8;
 
     #[inline]
     pub(crate) const fn assign_target(self) -> js_ast::AssignTarget {
@@ -965,8 +966,18 @@ impl IdentifierOpts {
     pub(crate) const fn is_property_access_target(self) -> bool {
         self.0 & Self::IS_PROPERTY_ACCESS_TARGET != 0
     }
+    /// See `ExprIn::property_access_for_method_call_maybe_should_replace_with_undefined`.
+    #[inline]
+    pub(crate) const fn is_method_call_callee(self) -> bool {
+        self.0 & Self::IS_METHOD_CALL_CALLEE != 0
+    }
+    /// The access is `a?.b` or `a?.[b]`. Set only when the target is `import.meta.hot`.
+    #[inline]
+    pub(crate) const fn is_optional_chain_start(self) -> bool {
+        self.0 & Self::IS_OPTIONAL_CHAIN_START != 0
+    }
 
-    // Builder-style helpers (this stays a packed u8 rather than a
+    // Builder-style helpers (this stays a packed integer rather than a
     // named-field struct).
     #[inline]
     pub(crate) const fn new() -> Self {
@@ -974,32 +985,42 @@ impl IdentifierOpts {
     }
     #[inline]
     pub(crate) const fn with_assign_target(mut self, v: js_ast::AssignTarget) -> Self {
-        self.0 = (self.0 & !Self::ASSIGN_TARGET_MASK) | (v as u8 & Self::ASSIGN_TARGET_MASK);
+        self.0 = (self.0 & !Self::ASSIGN_TARGET_MASK) | (v as u16 & Self::ASSIGN_TARGET_MASK);
         self
     }
     #[inline]
     pub(crate) const fn with_is_delete_target(mut self, v: bool) -> Self {
-        self.0 = (self.0 & !Self::IS_DELETE_TARGET) | ((v as u8) << 2);
+        self.0 = (self.0 & !Self::IS_DELETE_TARGET) | ((v as u16) << 2);
         self
     }
     #[inline]
     pub(crate) const fn with_was_originally_identifier(mut self, v: bool) -> Self {
-        self.0 = (self.0 & !Self::WAS_ORIGINALLY_IDENTIFIER) | ((v as u8) << 3);
+        self.0 = (self.0 & !Self::WAS_ORIGINALLY_IDENTIFIER) | ((v as u16) << 3);
         self
     }
     #[inline]
     pub(crate) const fn with_is_call_target(mut self, v: bool) -> Self {
-        self.0 = (self.0 & !Self::IS_CALL_TARGET) | ((v as u8) << 4);
+        self.0 = (self.0 & !Self::IS_CALL_TARGET) | ((v as u16) << 4);
         self
     }
     #[inline]
     pub(crate) const fn with_is_template_tag(mut self, v: bool) -> Self {
-        self.0 = (self.0 & !Self::IS_TEMPLATE_TAG) | ((v as u8) << 5);
+        self.0 = (self.0 & !Self::IS_TEMPLATE_TAG) | ((v as u16) << 5);
         self
     }
     #[inline]
     pub(crate) const fn with_is_property_access_target(mut self, v: bool) -> Self {
-        self.0 = (self.0 & !Self::IS_PROPERTY_ACCESS_TARGET) | ((v as u8) << 6);
+        self.0 = (self.0 & !Self::IS_PROPERTY_ACCESS_TARGET) | ((v as u16) << 6);
+        self
+    }
+    #[inline]
+    pub(crate) const fn with_is_method_call_callee(mut self, v: bool) -> Self {
+        self.0 = (self.0 & !Self::IS_METHOD_CALL_CALLEE) | ((v as u16) << 7);
+        self
+    }
+    #[inline]
+    pub(crate) const fn with_is_optional_chain_start(mut self, v: bool) -> Self {
+        self.0 = (self.0 & !Self::IS_OPTIONAL_CHAIN_START) | ((v as u16) << 8);
         self
     }
 }

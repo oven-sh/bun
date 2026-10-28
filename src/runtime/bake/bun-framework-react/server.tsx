@@ -142,22 +142,30 @@ export async function render(request: Bun.BunRequest, meta: Bake.RouteMetadata):
 export async function prerender(meta: Bake.RouteMetadata) {
   const page = getPage(meta, meta.styles);
 
-  const rscPayload = renderToPipeableStream(page, serverManifest)
-    // TODO: write a lightweight version of PassThrough
-    .pipe(new PassThrough());
+  const rscPayload = new PassThrough();
+
+  // As in `render`, a render error stops the flight render and the HTML render, so that the result settles.
+  let pipe;
+  const signal: MiniAbortSignal = { aborted: undefined, abort: null! };
+  ({ pipe, abort: signal.abort } = renderToPipeableStream(page, serverManifest, {
+    onError: err => {
+      if (signal.aborted) return;
+
+      signal.aborted = err;
+      signal.abort(err);
+      rscPayload.destroy(err);
+    },
+    filterStackFrame: () => false,
+  }));
+  pipe(rscPayload);
 
   const int = new Uint32Array(1);
   int[0] = meta.styles.length;
   let rscChunks: Array<BlobPart> = [int.buffer as ArrayBuffer, meta.styles.join("\n")];
   rscPayload.on("data", chunk => rscChunks.push(chunk));
 
-  let html;
-  try {
-    html = await renderToStaticHtml(rscPayload, meta.modules);
-  } catch (err) {
-    //console.error("ah fuck");
-    return undefined;
-  }
+  // A render error rejects here, so the build fails with the error of the component.
+  const html = await renderToStaticHtml(rscPayload, meta.modules, signal);
   const rsc = new Blob(rscChunks, { type: "text/x-component" });
 
   return {

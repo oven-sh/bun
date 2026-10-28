@@ -873,4 +873,164 @@ export default function IndexPage() {
     expect(unresolved.stderr.toString()).toContain("Cannot find module './does-not-exist'");
     expect(unresolved.exitCode).toBe(1);
   });
+
+  /** Runs `bun build --app` in `dir`. `errors` has the `error:` lines of stderr and `dist` has each file of `dist`. */
+  async function build(dir: string, entry = "./app.ts") {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--app", entry],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const out = path.join(dir, "dist");
+    const dist: Record<string, string> = {};
+    for (const file of existsSync(out) ? [...new Bun.Glob("**/*").scanSync({ cwd: out })].sort() : []) {
+      dist[normalizePath(file)] = await Bun.file(path.join(out, file)).text();
+    }
+    const errors = stderr.split("\n").filter(line => line.startsWith("error: "));
+    return { errors, stdout, exitCode, signalCode: proc.signalCode, dist };
+  }
+
+  // A framework with no dependency. A page module returns its own files and its own params.
+  const app = (pages: Record<string, string>) => ({
+    "app.ts": `
+      const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" };
+      export default { app: { framework: { fileSystemRouterTypes: [fsr] } } };
+    `,
+    "server.ts": `
+      export function prerender(meta) {
+        const files = meta.pageModule.default(meta.params);
+        return files instanceof Promise ? files.then(files => ({ files })) : { files };
+      }
+      export function getParams(meta) {
+        return meta.pageModule.getParams();
+      }
+    `,
+    ...pages,
+  });
+  // The three forms that `getParams` can give the params of a route in.
+  const shapes = {
+    "a sync iterable": (params: object[]) => `export const getParams = () => ${JSON.stringify(params)};`,
+    "an async iterable": (params: object[]) =>
+      `export async function* getParams() { yield* ${JSON.stringify(params)}; }`,
+    "a pages object": (params: object[]) => `export const getParams = () => ({ pages: ${JSON.stringify(params)} });`,
+  };
+
+  describe("a page that fails to prerender fails the build", () => {
+    // The build awaits each page, also a page whose promise is rejected before the build looks at it.
+    test.concurrent.each(Object.entries(shapes))("getParams gives %s", async (_, getParams) => {
+      using dir = tempDir(
+        "bake-production-page-throws",
+        app({
+          "routes/[id].ts": `export default () => { throw new Error("page failed"); };` + getParams([{ id: "x" }]),
+        }),
+      );
+      expect(await build(String(dir))).toEqual({
+        errors: ["error: page failed"],
+        stdout: "",
+        exitCode: 1,
+        signalCode: null,
+        dist: {},
+      });
+    });
+
+    const react = { "src/index.tsx": `export default { app: { framework: "react" } };` };
+    const clientOnly = {
+      "components/ClientOnly.tsx": `"use client";
+export default function ClientOnly() {
+  if (typeof window === "undefined") throw new Error("CLIENT_ONLY_THROW");
+  return <p>rendered on the client</p>;
+}`,
+    };
+
+    // The React framework gives the pages of `getStaticPaths` as a pages object.
+    test("a React page from getStaticPaths", async () => {
+      const dir = await tempDirWithBakeDeps("bake-production-static-paths-throw", {
+        ...react,
+        "pages/[id].tsx": `export default function Page({ params }) {
+  if (params.id === "bad") throw new Error("page failed: " + params.id);
+  return <p>{params.id}</p>;
+}
+export function getStaticPaths() {
+  return { paths: [{ params: { id: "ok" } }, { params: { id: "bad" } }], fallback: false };
+}`,
+      });
+
+      const { errors, stdout, exitCode, signalCode } = await build(dir, "./src/index.tsx");
+      // The error of the component, and not "cannot be pre-rendered to a static page".
+      expect({ errors, stdout, exitCode, signalCode }).toEqual({
+        errors: ["error: page failed: bad"],
+        stdout: "",
+        exitCode: 1,
+        signalCode: null,
+      });
+    });
+
+    // A newer react-dom (0.0.0-experimental-dc9aed36-20261027) does not call `onAllReady` after an error outside
+    // every <Suspense> boundary. The harness pins an older one, so this wraps it to do the same.
+    test("a React client component, on a react-dom that does not call onAllReady after a shell error", async () => {
+      const dir = await tempDirWithBakeDeps("bake-production-shell-error", {
+        ...react,
+        ...clientOnly,
+        "pages/index.tsx": `import ClientOnly from "../components/ClientOnly";
+export default function Page() {
+  return <main><ClientOnly /></main>;
+}`,
+      });
+      const server = path.join(dir, "node_modules", "react-dom", "server.node.js");
+      await Bun.write(path.join(dir, "node_modules", "react-dom", "server.node.real.js"), Bun.file(server));
+      await Bun.write(
+        server,
+        `const real = require("./server.node.real.js");
+module.exports = {
+  ...real,
+  renderToPipeableStream(children, options) {
+    let shellFailed = false;
+    return real.renderToPipeableStream(children, {
+      ...options,
+      onShellError(error) {
+        shellFailed = true;
+        options.onShellError?.(error);
+      },
+      onAllReady() {
+        if (!shellFailed) options.onAllReady?.();
+      },
+    });
+  },
+};`,
+      );
+
+      const { errors, stdout, exitCode, signalCode } = await build(dir, "./src/index.tsx");
+      expect({ errors, stdout, exitCode, signalCode }).toEqual({
+        errors: ["error: CLIENT_ONLY_THROW"],
+        stdout: "",
+        exitCode: 1,
+        signalCode: null,
+      });
+    });
+
+    // React recovers from an error inside a <Suspense> boundary: the page has the fallback, and the build logs the error.
+    test("but a React client component that throws inside Suspense prerenders the fallback", async () => {
+      const dir = await tempDirWithBakeDeps("bake-production-suspense-fallback", {
+        ...react,
+        ...clientOnly,
+        "pages/index.tsx": `import { Suspense } from "react";
+import ClientOnly from "../components/ClientOnly";
+export default function Page() {
+  return <main><Suspense fallback={<p>FALLBACK</p>}><ClientOnly /></Suspense></main>;
+}`,
+      });
+
+      const { errors, stdout, exitCode, signalCode, dist } = await build(dir, "./src/index.tsx");
+      expect({ errors, stdout, exitCode, signalCode }).toEqual({
+        errors: ["error: CLIENT_ONLY_THROW"],
+        stdout: "done\n",
+        exitCode: 0,
+        signalCode: null,
+      });
+      expect(dist["index.html"]).toContain("FALLBACK");
+    });
+  });
 });

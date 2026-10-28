@@ -100,15 +100,36 @@ export function renderToHtml(
 
 // Static builds can not stream suspense boundaries as they finish, but instead
 // produce a single HTML blob. The approach is otherwise similar to `renderToHtml`.
-export function renderToStaticHtml(rscPayload: Readable, bootstrapModules: readonly string[]): Promise<Blob> {
-  const stream = new StaticRscInjectionStream(rscPayload);
+export function renderToStaticHtml(
+  rscPayload: Readable,
+  bootstrapModules: readonly string[],
+  signal: MiniAbortSignal,
+): Promise<Blob> {
+  const stream = new StaticRscInjectionStream(rscPayload, signal);
   const promise = createFromNodeStream(rscPayload, createFromNodeStreamOptions);
   const Root = () => React.use(promise);
+  // React calls `onError` for each render error. An error inside a <Suspense> boundary is recoverable: the
+  // boundary renders its fallback and `onAllReady` still fires. So `onError` only collects the errors.
+  const errors: unknown[] = [];
   const { pipe } = renderToPipeableStream(<Root />, {
     bootstrapModules,
+    onError: error => void errors.push(error),
+    // An error outside every boundary leaves no HTML, and a newer React does not call `onAllReady` after it.
+    // Reject the result with the error and stop the flight render too.
+    onShellError(error) {
+      errors.length = 0;
+      stream.destroy(signal.aborted ?? error);
+      if (!signal.aborted) {
+        signal.aborted = error as Error;
+        signal.abort();
+      }
+    },
     // Only begin flowing HTML once all of it is ready. This tells React
     // to not emit the flight chunks, just the entire HTML.
-    onAllReady: () => pipe(stream),
+    onAllReady() {
+      if (!signal.aborted) for (const error of errors) console.error(error);
+      pipe(stream);
+    },
   });
   return stream.result;
 }
@@ -268,7 +289,7 @@ class StaticRscInjectionStream extends EventEmitter {
   finalize: (blob: Blob) => void;
   reject: (error: Error) => void;
 
-  constructor(rscPayload: Readable) {
+  constructor(rscPayload: Readable, signal: MiniAbortSignal) {
     super();
     const { resolve, promise, reject } = Promise.withResolvers<Blob>();
     this.result = promise;
@@ -276,6 +297,8 @@ class StaticRscInjectionStream extends EventEmitter {
     this.reject = reject;
 
     rscPayload.on("data", chunk => this.rscPayloadChunks.push(chunk));
+    // A flight error leaves no HTML. Reject with the first error, which is the one the component threw.
+    rscPayload.on("error", error => this.reject(signal.aborted ?? error));
   }
 
   write(chunk) {

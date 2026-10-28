@@ -66,21 +66,6 @@ impl Difference {
     }
 }
 
-impl std::fmt::Display for Difference {
-    #[optimize(size)]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}: `{}` at {} is `{}` at {}",
-            self.what,
-            bstr::BStr::new(&self.before.1),
-            self.before.0,
-            bstr::BStr::new(&self.after.1),
-            self.after.0
-        )
-    }
-}
-
 /// True if the text of template `e` may be formatted as CSS, GraphQL, HTML or Markdown.
 #[optimize(size)]
 pub(crate) fn is_in_another_language(e: Expr<'_>) -> bool {

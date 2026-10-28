@@ -1211,12 +1211,6 @@ pub mod O {
     pub const EVTONLY: i32 = libc::O_EVTONLY;
     #[cfg(not(target_os = "macos"))]
     pub const EVTONLY: i32 = 0;
-    // Darwin-only: fail with ELOOP if *any* path component is a symlink, not
-    // just the final one like O_NOFOLLOW. 0 elsewhere so the bit-or is a no-op.
-    #[cfg(target_os = "macos")]
-    pub const NOFOLLOW_ANY: i32 = libc::O_NOFOLLOW_ANY;
-    #[cfg(not(target_os = "macos"))]
-    pub const NOFOLLOW_ANY: i32 = 0;
 }
 // ──────────────────────────────────────────────────────────────────────────
 // `File` / `Dir` — high-level handles. Extracted to file.rs / dir.rs.
@@ -8128,11 +8122,6 @@ pub mod posix {
     #[inline]
     pub const fn s_islnk(m: u32) -> bool {
         (m & libc::S_IFMT as u32) == libc::S_IFLNK as u32
-    }
-    #[cfg(unix)]
-    #[inline]
-    pub const fn s_isdir(m: u32) -> bool {
-        (m & libc::S_IFMT as u32) == libc::S_IFDIR as u32
     }
 
     // ── signals ──

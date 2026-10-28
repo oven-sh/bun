@@ -45,10 +45,13 @@ async function expectToDecode(fixture: string, count: number) {
 // programs were given a profile too, and kept it.
 test("files written by other programs", () => expectToDecode("valid.json.gz", 622));
 
-// A name is what the generator was asked for. Not all of that shows in so small a file.
+// A name in core and rows is what the generator was asked for, and not all of that shows in so small a file. One in
+// pairs is made of what it measured in the file, but for `row`, where RGB counts as the RGBA that src/png makes of it,
+// and `maxpixels`, which is the option.
 // - core: picked with versions of src/png that each have one small mistake. Of the mistakes that were tried, those that
 //   a small valid file of the generator's can give away, two of these do.
 // - rows: the widths whose rows come nearest to 8, 16, 48, 96, 240 and 288 bytes from below, hit them, and come nearest
-//   from above, and those just above 8192 and 65,536. Some interlaced too. Five columns over and over, to stay small.
-// - pairs: picked so that many settings of the generator meet many others.
-test("files from a generator that shares nothing with write.ts", () => expectToDecode("generated.json.gz", 429));
+//   from above, and those just above 8192 and 65,536. Some interlaced too. Then Paeth under rows that are one pixel
+//   over and over from here to there, or that change in one byte, where src/png/filter.rs looks and next to that.
+// - pairs: picked so that many properties of a file meet many others.
+test("files from a generator that shares nothing with write.ts", () => expectToDecode("generated.json.gz", 617));

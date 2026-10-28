@@ -102,7 +102,7 @@ export const obeyed: Record<string, string[]> = {
 const neverEnd = ["--watch", "--hot", "--redis-preconnect"];
 
 export const needRemovedFeatures: Record<string, string[]> = themselves("--sql-preconnect");
-export const needTheBunCommandLine: Record<string, string[]> = themselves("--help -h --check --aot --aot-log-type-mismatches --debug-aot --expose-internals");
+export const needTheBunCommandLine: Record<string, string[]> = themselves("--help -h --check --runExternalCode --aot --aot-log-type-mismatches --debug-aot --expose-internals");
 const cantBeUsed = "can't be used with this executable";
 const wasLeftOut = /isn't in this executable|was not compiled into this executable/;
 const featureWasRemoved = `${cantBeUsed} because --trim removed the feature it needs`;

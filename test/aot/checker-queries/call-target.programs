@@ -1714,10 +1714,11 @@ main.ts:2 diagnostic TS1534 = TypeScriptGrammar StopsBuild
 main.ts:3 diagnostic TS1507 = TypeScriptGrammar StopsBuild
 main.ts:4 diagnostic TS1526 = TypeScriptGrammar StopsBuild
 main.ts:5 diagnostic TS1526 = TypeScriptGrammar StopsBuild
-main.ts:6 diagnostic TS1514 = TypeScriptGrammar StopsBuild
-main.ts:6 diagnostic TS1532 = TypeScriptGrammar StopsBuild
-main.ts:7 diagnostic TS1508 = TypeScriptGrammar StopsBuild
 main.ts:8 diagnostic TS1517 = TypeScriptGrammar StopsBuild
+# TypeScript 7.0 rejected these two, which are valid. TypeScript 7.1 accepts them.
+absent: main.ts:6 diagnostic TS1514 = TypeScriptGrammar StopsBuild
+absent: main.ts:6 diagnostic TS1532 = TypeScriptGrammar StopsBuild
+absent: main.ts:7 diagnostic TS1508 = TypeScriptGrammar StopsBuild
 absent: main.ts:2 diagnostic TS1534 = EarlyError StopsBuild
 absent: main.ts:3 diagnostic TS1507 = EarlyError StopsBuild
 absent: main.ts:5 diagnostic TS1526 = EarlyError StopsBuild

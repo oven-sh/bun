@@ -1,4 +1,5 @@
 import * as b from "bun-builtins-table";
+import { classesWithInspectMethod } from "./classes-with-inspect-method.ts";
 
 const marked = (mark: b.BuiltinMark, paths: readonly b.BuiltinPath[]) =>
   paths.flatMap(path => b.extend(path, { marks: [mark] }));
@@ -41,6 +42,8 @@ export default b.declarations(
   marked("IsSpy", ["bun:test.spyOn", "bun:test.jest.spyOn", "bun:test.vi.spyOn"]),
   marked("IsNotEnumerable", ["console._stdout", "console._stderr"]),
   marked("IsReplacedBySetter", ["self"]),
+  marked("IsCalledWithoutStartupLoads", ["Buffer.prototype.inspect"]),
+  marked("InstancesHaveMethodCalledWithStartupLoads", classesWithInspectMethod),
   marked("RunsWaitingJobs", ["%Expect%", "Bun.jest", "HTMLRewriter", "bun:jsc.drainMicrotasks", "bun:test"]),
 
   b.extend("process.dlopen", { loadsMachineCodeAs: "process.dlopen" }),

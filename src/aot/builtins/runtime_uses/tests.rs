@@ -340,27 +340,13 @@ fn language_lists_nothing_else() {
         .chain(table::ACCESSOR_FUNCTIONS.iter().copied())
         .chain(table::MODULE_LOADER_FUNCTIONS.iter().copied())
         .chain(table::STARTUP_FUNCTIONS.iter().copied())
+        .chain(table::FUNCTIONS_FOR_ANY_HOST_OBJECT.iter().copied())
         .chain(without_names.map(|data| data.function))
         .filter(|&function| exists_on_linux(function));
     assert_eq!(*language.functions, *sorted_unique(functions));
     let modules = language_entries().flat_map(own_modules);
     let modules = modules.chain(table::STARTUP_MODULES.iter().copied());
     assert_eq!(*language.modules, *sorted_unique(modules));
-}
-
-#[test]
-fn entry_of_other_platform_needs_nothing() {
-    let mut entries = BuiltinId::ALL.iter().copied();
-    let id = entries
-        .find(|&id| !table::exists_on(id, Platforms::WINDOWS) && own_functions(id).next().is_some())
-        .unwrap();
-    assert!(!uses_of(&[id], &[]).functions.is_empty());
-    let mentions = Mentions {
-        mentioned: &[id],
-        ..Mentions::default()
-    };
-    let on_windows = RuntimeUses::of_mentions(&mentions, Platforms::WINDOWS);
-    assert_eq!(on_windows, RuntimeUses::default());
 }
 
 #[test]

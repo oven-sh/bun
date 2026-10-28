@@ -4,6 +4,7 @@ use bun_sema::util::{FxHashSet, SharedSort};
 
 use crate::builtins::table::runtime_function;
 use crate::builtins::{Platforms, RuntimeFunction, RuntimeModule, RuntimeUses};
+use crate::compile::mentions_worker_constructor;
 use crate::load::named_loads::{
     find_library_modules_that_unknown_names_may_stand_for, loads_by_unknown_path,
 };
@@ -73,11 +74,12 @@ pub(crate) fn collect_runtime_roots(
     functions.extend(&further.lacked_before.functions);
     asks.add(further.lacked_before);
     let mut asks = asks.finish();
-    // Only what a program asks of the language alone tells what else of the language it runs.
+    // A function that comes along tells by its bindings what it runs, as the program does. A module evaluates too much for that, and what a Worker sends may be anything.
     let keeps_code_without_names = further.serves_unseen_code
         || imports_uncompiled_code
         || loads_by_unknown_path
-        || asks.has_code_of_host();
+        || asks.has_module_of_host()
+        || mentions_worker_constructor(application);
     if keeps_code_without_names {
         let uses = RuntimeUses::of_unseen_code(platform);
         host_loaded.extend(&uses.modules);

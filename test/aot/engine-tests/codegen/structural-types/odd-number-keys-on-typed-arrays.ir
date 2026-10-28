@@ -417,11 +417,11 @@ function f28 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # -- generated: f12 f13 f14
 # CHECK-LABEL: function f12 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 37, patchpoints: 9, rare instructions: 108
+# CHECK-NEXT: instructions: 37, patchpoints: 9, rare instructions: 111
 # CHECK-NEXT: end of function f12
 # CHECK-LABEL: function f13 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 65, patchpoints: 12, rare instructions: 129
+# CHECK-NEXT: instructions: 65, patchpoints: 12, rare instructions: 133
 # CHECK-NEXT: end of function f13
 # CHECK-LABEL: function f14 role=
 # CHECK: ResultWrapper

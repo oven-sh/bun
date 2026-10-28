@@ -341,6 +341,8 @@ export async function fuzz(settings: Settings): Promise<Summary> {
     try {
       const generated = sources[source](seed, bed);
       if (!generated) return void bump(counts.skipped, "no program");
+      // Whether an unhandled rejection is told in front of the immediates or behind them goes, in `bun <file>`, by whether the file is the entry point; in an executable, with --aot or without, it does not.
+      if (/\bunhandledRejection\b/.test(generated.text)) generated.standsAlone = true;
       if (generated.standsAlone && !bed.buildsAlone) return void bump(counts.skipped, "needs a build to itself");
       const avoided = knownText("program", wholeText(generated));
       if (avoided) return void (avoided.count++, bump(counts.skipped, "has a known bug in it"));

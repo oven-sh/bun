@@ -188,6 +188,8 @@ pub(super) struct FlowMemo {
     flow_node_post_super: FxHashMap<(FileId, FlowId), bool>,
     /// `finalArrayType` of an evolving array type whose element type is a union.
     final_array_types: FxHashMap<TypeId, TypeId>,
+    /// Not in tsgo. Keyed by an array mutation's flow node. See `evolved_array_at`.
+    evolved_arrays: FxHashMap<(FileId, FlowId), EvolvedArray>,
     /// Two bits per flow node of the file `settled_calls_of`. The first marks a `Flow::Call` node
     /// whose call has an entry in `effects_signatures` (settled). The second marks one whose entry
     /// is `None` (idle).
@@ -322,6 +324,23 @@ struct RunNode {
     run_start: u32,
     /// The index of the first shared node at or after this one in the run, or `u32::MAX`.
     next_shared: u32,
+}
+
+/// What a walk for a name finds at a mutation of the array it names, if from there it reaches an
+/// assignment to the name through nothing but earlier mutations and nodes that leave the name alone.
+#[derive(Copy, Clone)]
+struct EvolvedArray {
+    /// The `root_key` of the name and its declared type.
+    root: u32,
+    declared: TypeId,
+    /// The type after the mutation.
+    ty: TypeId,
+    /// How many `getTypeAtFlowNode` invocations the walk nests from the mutation on, and how many
+    /// steps it takes after it.
+    invocations: u32,
+    steps: u32,
+    /// One of the nodes after the mutation is shared.
+    passes_shared_node: bool,
 }
 
 /// `FlowLoopKey`, without the reference.
@@ -497,8 +516,8 @@ enum Pending {
     Cond(ExprId, bool),
     Switch(StmtId, u32),
     Assert(ExprId),
-    /// `a.push(x)`, `a[i] = x`
-    Mutation(ExprId),
+    /// `a.push(x)`, `a[i] = x`, its flow node, and `Walk::steps` at that node.
+    Mutation(ExprId, FlowId, u32),
     /// `x += 1`, `x++`
     Compound,
     /// `for (const k in x)`: `x` isn't null or undefined.
@@ -6558,6 +6577,11 @@ impl<'p, 's> Checker<'p, 's> {
         let mut shared_flow = FlowId::NONE;
         let (depth, crossed) = (walk.depth, walk.crossed);
         let mut incomplete = false;
+        // For `FlowMemo::evolved_arrays`. `invocations` and `passes_shared_node` of where the loop
+        // ends, if that's an entry or an assignment with a final type.
+        let mut evolved_from: Option<(u32, bool)> = None;
+        // How many of `pending` were followed by a shared node, and by a node whose effect isn't final.
+        let (mut above_shared_node, mut above_unsettled_node) = (0, 0);
         let mut ty = loop {
             walk.steps += 1;
             if walk.steps >= MAX_STEPS {
@@ -6574,6 +6598,7 @@ impl<'p, 's> Checker<'p, 's> {
                 && let Some((arrived_at, last_shared)) = self.try_to_skip(walk, flow)
             {
                 if last_shared.is_some() {
+                    above_shared_node = pending.len();
                     if let Some(known) = walk.shared_flows.get(last_shared) {
                         incomplete = known.incomplete;
                         shared_flow = FlowId::NONE;
@@ -6585,6 +6610,7 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             }
             if bound.is_shared(flow) {
+                above_shared_node = pending.len();
                 if let Some(known) = walk.shared_flows.get(flow) {
                     incomplete = known.incomplete;
                     shared_flow = FlowId::NONE;
@@ -6626,7 +6652,18 @@ impl<'p, 's> Checker<'p, 's> {
                     break self.initial_of(walk);
                 }
                 Flow::Assign { before, target } => {
-                    match self.type_at_assignment(walk, flow, target) {
+                    let follows_mutation =
+                        matches!(pending.last(), Some((Pending::Mutation(..), _)));
+                    let begun = follows_mutation.then(|| self.begin_memoizable());
+                    let at_assignment = self.type_at_assignment(walk, flow, target);
+                    if let Some(begun) = begun {
+                        if self.end_memoizable(begun).is_none() {
+                            above_unsettled_node = pending.len();
+                        } else if let AtAssignment::Type(_) = at_assignment {
+                            evolved_from = Some((0, false));
+                        }
+                    }
+                    match at_assignment {
                         AtAssignment::Type(t) => break t,
                         AtAssignment::Antecedent(then) => {
                             let is_compound = matches!(then, Pending::Compound);
@@ -6652,7 +6689,19 @@ impl<'p, 's> Checker<'p, 's> {
                     if self.is_automatic_type(walk.declared)
                         && self.is_mutation_of(&walk.reference, expr)
                     {
-                        pending.push((Pending::Mutation(expr), std::mem::take(&mut shared_flow)));
+                        if let Some(known) = self.evolved_array_at(walk, flow, depth == 0) {
+                            walk.depth += known.invocations;
+                            if walk.depth > MAX_FLOW_DEPTH {
+                                cold_path();
+                                walk.too_deep = true;
+                                break TypeId::ERROR;
+                            }
+                            walk.steps += known.steps;
+                            evolved_from = Some((known.invocations, known.passes_shared_node));
+                            break known.ty;
+                        }
+                        let then = Pending::Mutation(expr, flow, walk.steps);
+                        pending.push((then, std::mem::take(&mut shared_flow)));
                     }
                     flow = before;
                 }
@@ -6690,6 +6739,8 @@ impl<'p, 's> Checker<'p, 's> {
                     let (sig, is_cached) = self.effects_signature_and_is_cached(file, call);
                     if is_cached {
                         self.note_settled_call(file, flow, sig.is_none());
+                    } else {
+                        above_unsettled_node = pending.len();
                     }
                     if let Some(sig) = sig {
                         match self.sig_predicate(sig) {
@@ -6914,13 +6965,20 @@ impl<'p, 's> Checker<'p, 's> {
                 .push(shared_flow, FlowType { ty, incomplete });
         }
         let reference = &walk.reference;
+        let (reached, steps) = (pending.len(), walk.steps);
+        if incomplete || passed != 0 || !reference.path.is_empty() || !reference.has_key {
+            evolved_from = None;
+        }
         while let Some((then, shared_flow)) = pending.pop() {
             // A condition is applied to the finalized array type. If it narrows nothing, the array
             // stays evolving. `getTypeAtFlowArrayMutation` doesn't finalize it.
             let seen = match then {
-                Pending::Mutation(_) | Pending::Nothing => ty,
+                Pending::Mutation(..) | Pending::Nothing => ty,
                 _ => self.finalize_evolving_array(ty),
             };
+            if !matches!(then, Pending::Mutation(..)) || pending.len() < above_unsettled_node {
+                evolved_from = None;
+            }
             let narrowed = match then {
                 // Applied to the finalized array type, so the array stops evolving.
                 Pending::NonNull => {
@@ -6935,8 +6993,28 @@ impl<'p, 's> Checker<'p, 's> {
                 Pending::Switch(stmt, from) => self.narrow_by_switch(reference, seen, stmt, from),
                 Pending::Assert(call) => self.narrow_by_assertion(reference, seen, call),
                 Pending::Compound => self.base_of_literal(seen),
-                Pending::Mutation(expr) => {
-                    ty = self.after_array_mutation(file, ty, expr);
+                Pending::Mutation(expr, mutation, steps_before) => {
+                    let (after, stored) = match evolved_from {
+                        Some(_) => self.run_memoizable(|c| c.after_array_mutation(file, ty, expr)),
+                        None => (self.after_array_mutation(file, ty, expr), None),
+                    };
+                    ty = after;
+                    evolved_from = evolved_from.filter(|_| stored.is_some());
+                    if let Some((invocations, passes_shared_node)) = evolved_from {
+                        let known = EvolvedArray {
+                            root: root_key(reference.root),
+                            declared: walk.declared,
+                            ty,
+                            invocations: invocations + (reached - pending.len()) as u32,
+                            steps: steps - steps_before,
+                            passes_shared_node: passes_shared_node
+                                || pending.len() < above_shared_node,
+                        };
+                        if depth == 0 || !known.passes_shared_node {
+                            let evolved_arrays = &mut self.flow_memo.evolved_arrays;
+                            evolved_arrays.insert((file, mutation), known);
+                        }
+                    }
                     seen
                 }
             };
@@ -8056,6 +8134,30 @@ impl<'p, 's> Checker<'p, 's> {
             )),
             _ => None,
         }
+    }
+
+    /// FOR SPEED. Returns what an earlier walk for the same name found at `flow`, a mutation of the
+    /// array it names. Only the depth of the walk depends on the nodes that this one doesn't visit.
+    /// Without this, n references between n calls `a.push(x)` take n * n steps, and each step builds
+    /// a union.
+    ///
+    /// An invocation that isn't the outermost one of its walk may find a shared node in
+    /// `sharedFlows` and end there, at a lower depth. See `skip_compound_assignments`.
+    fn evolved_array_at(
+        &self,
+        walk: &Walk,
+        flow: FlowId,
+        is_outermost: bool,
+    ) -> Option<EvolvedArray> {
+        let reference = &walk.reference;
+        let known = *self.flow_memo.evolved_arrays.get(&(reference.file, flow))?;
+        let applies = known.root == root_key(reference.root)
+            && known.declared == walk.declared
+            && reference.path.is_empty()
+            && reference.has_key
+            && (is_outermost || !known.passes_shared_node)
+            && walk.steps.saturating_add(known.steps) < MAX_STEPS;
+        applies.then_some(known)
     }
 
     /// FOR SPEED. `at..end` are antecedents of one label, as indices of `Bound::flow_edges`. Returns

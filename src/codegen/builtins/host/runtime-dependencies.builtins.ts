@@ -434,6 +434,29 @@ const warningFunctions = [
 // Of native code that nothing describes, nobody knows what it emits as a warning.
 const warningFunctionsOfUndeclaredCode = [...warningPrinterFunctions, ...tickFunctions];
 
+// On Windows the object is a proxy that the function makes.
+const environmentObjectMade = (...otherUses: readonly b.HostUseSpec[]) => [
+  b.functionUsed(
+    processInternal("windowsEnv"),
+    b.calledByHost({
+      times: "Once",
+      this: globalObject,
+      args: [
+        b.nativeCell(windowsEnvironmentStorageCell),
+        b.instance("Array").holding({ element: b.string }),
+        b.nativeCell(editsWindowsEnvironmentCell),
+        b.nativeCell(coercesEnvironmentValueCell),
+        b.nativeCell(resetsEnvironmentValueCell),
+        b.symbol,
+      ],
+      result: [b.keptIn(environmentCell), ...otherUses],
+    }),
+  ),
+];
+
+// getOwnPropertyNames() of the enumerable names, then get() of each.
+const listedWithValues = b.passedTo("Object.entries", 0);
+
 const nativeCalls = [
   b.nativeCalls({
     through: ["ensureOnWarning"],
@@ -583,31 +606,13 @@ const nativeCalls = [
       "m_processEnvObject.getInitializedOnMainThread",
       "processEnvObject",
     ],
-    calls: [
-      b.functionUsed(
-        processInternal("windowsEnv"),
-        b.calledByHost({
-          times: "Once",
-          this: globalObject,
-          args: [
-            b.nativeCell(windowsEnvironmentStorageCell),
-            b.instance("Array").holding({ element: b.string }),
-            b.nativeCell(editsWindowsEnvironmentCell),
-            b.nativeCell(coercesEnvironmentValueCell),
-            b.nativeCell(resetsEnvironmentValueCell),
-            b.symbol,
-          ],
-          result: [b.keptIn(environmentCell)],
-        }),
-      ),
-    ],
+    calls: environmentObjectMade(),
     otherMentions: [
       { file: inBindings("JSEnvironmentVariableMap.cpp") },
       { file: inBindings("JSEnvironmentVariableMap.h") },
       { file: inBindings("JSPropertyIterator.cpp") },
       { file: inBindings("ZigGlobalObject.cpp"), times: 4 },
       { file: inBindings("ZigGlobalObject.h") },
-      { file: inBindings("webcore/JSWorker.cpp") },
     ],
     callers: [
       { file: inBindings("BunObject.cpp"), caller: "constructEnvObject", onBehalfOf: ["Bun.env"] },
@@ -632,6 +637,14 @@ const nativeCalls = [
         file: inBindings("JSEnvironmentVariableMap.cpp"),
         caller: "ensureSharedEnvStoreForWorker",
         onBehalfOf: workerConstructors,
+        calls: environmentObjectMade(listedWithValues),
+      },
+      // It copies the object that the thread has. It makes none.
+      {
+        file: inBindings("webcore/JSWorker.cpp"),
+        caller: "JSWorkerDOMConstructor::construct",
+        onBehalfOf: workerConstructors,
+        calls: environmentObjectMade(listedWithValues),
       },
     ],
   }),

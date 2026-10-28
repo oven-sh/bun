@@ -367,5 +367,5 @@ function f5 name="overOtherKinds" module=m0 position=2337 flags=[IsChecked, HasE
 # CHECK-NEXT: end of function f4
 # CHECK-LABEL: function {{*}}name="overOtherKinds"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 61, patchpoints: 4, rare instructions: 418, polls: 1
+# CHECK-NEXT: instructions: 61, patchpoints: 4, rare instructions: 421, polls: 1
 # CHECK-NEXT: end of function f5

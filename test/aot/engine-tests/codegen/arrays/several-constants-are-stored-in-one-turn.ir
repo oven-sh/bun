@@ -496,21 +496,21 @@ runtimefunction id=69 function=f10
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="two"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 93, patchpoints: 39, rare instructions: 102
+# CHECK-NEXT: instructions: 93, patchpoints: 39, rare instructions: 105
 # CHECK-NEXT: end of function f14
 # CHECK-LABEL: function {{*}}name="three"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 136, patchpoints: 58, rare instructions: 130
+# CHECK-NEXT: instructions: 136, patchpoints: 58, rare instructions: 133
 # CHECK-NEXT: end of function f15
 # CHECK-LABEL: function {{*}}name="bytes"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 93, patchpoints: 39, rare instructions: 102
+# CHECK-NEXT: instructions: 93, patchpoints: 39, rare instructions: 105
 # CHECK-NEXT: end of function f16
 # CHECK-LABEL: function {{*}}name="singles"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 113, patchpoints: 24, rare instructions: 217
+# CHECK-NEXT: instructions: 113, patchpoints: 24, rare instructions: 221
 # CHECK-NEXT: end of function f17
 # CHECK-LABEL: function {{*}}name="masked"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 152, patchpoints: 41, rare instructions: 100
+# CHECK-NEXT: instructions: 152, patchpoints: 41, rare instructions: 104
 # CHECK-NEXT: end of function f18

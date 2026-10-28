@@ -365,5 +365,5 @@ runtimefunction id=131088 function=f38
 # -- generated: roundALoop
 # CHECK-LABEL: function {{*}}name="roundALoop"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 370, patchpoints: 18, rare instructions: 114, polls: 4
+# CHECK-NEXT: instructions: 370, patchpoints: 18, rare instructions: 118, polls: 4
 # CHECK-NEXT: end of function f47

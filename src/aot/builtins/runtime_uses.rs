@@ -194,6 +194,7 @@ impl Collector {
         // Reading an accessor is calling its getter.
         self.add_functions(table::ACCESSOR_FUNCTIONS);
         self.add_functions(table::MODULE_LOADER_FUNCTIONS);
+        self.add_functions(table::FUNCTIONS_FOR_ANY_HOST_OBJECT);
         let functions = table::runtime_functions().iter();
         for data in functions.filter(|data| is_called_without_a_name(data.role)) {
             self.functions.set(data.function.to_wire() as usize);
@@ -486,16 +487,20 @@ impl RuntimeUses {
         collector.finish()
     }
 
-    /// Whether some of it is code of the host, which is written with all of the language and of the host at hand.
-    pub fn has_code_of_host(&self) -> bool {
+    /// Whether some of it is a module of the host, which is written with all of the language and of the host at hand.
+    pub fn has_module_of_host(&self) -> bool {
         let has_source = |module: &RuntimeModule| {
             (table::module_data(*module).flags).contains(table::ModuleFlags::HAS_SOURCE)
         };
+        self.modules.iter().any(has_source)
+    }
+
+    pub fn has_code_of_host(&self) -> bool {
         let is_of_host = |function: &RuntimeFunction| {
             let data = table::runtime_function(*function);
             data.is_some_and(|data| data.role == RuntimeFunctionRole::HostBuiltin)
         };
-        self.modules.iter().any(has_source) || self.functions.iter().any(is_of_host)
+        self.has_module_of_host() || self.functions.iter().any(is_of_host)
     }
 
     pub fn is_empty(&self) -> bool {

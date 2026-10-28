@@ -304,12 +304,11 @@ describe.skipIf(skipped)("compile/aot/servers/budgets", () => {
     async name => {
       const folder = name === "tanstack" ? tanstack : name === "typescript" ? typescript : app;
       const source = name === "tanstack" ? "serve.ts" : name === "typescript" ? "typescript-check.ts" : `${name}.ts`;
-      const code = await codeOf(folder, `./${source}`, flags);
-      const build = await buildCounted(
-        folder,
-        name === "typescript" ? `./${source}` : entryThatExitsWhenTold(folder, source),
-        flags,
-      );
+      // Side by side: where one build has work for one thread only, the other has the processors.
+      const [code, build] = await Promise.all([
+        codeOf(folder, `./${source}`, flags),
+        buildCounted(folder, name === "typescript" ? `./${source}` : entryThatExitsWhenTold(folder, source), flags),
+      ]);
       const work =
         name === "typescript"
           ? await countScript(build, folder, "2322 2345 2322\n", { warmUp: 5, units: 20 })

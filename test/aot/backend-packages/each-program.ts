@@ -1,6 +1,7 @@
 // Programs on packages from npm. A test file has a folder: its programs (<name>.ts), and the package.json and bun.lock of what they import.
 // Each program prints what it gets from the packages and ends with DONE.
 // An executable built with --aot prints what plain Bun prints, also where the project no longer lies.
+// The programs of a file are built and run side by side. The project is moved away while nobody else needs it.
 import { afterAll, expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { cpSync, mkdirSync, readdirSync, renameSync, rmSync, symlinkSync } from "node:fs";
@@ -34,6 +35,39 @@ export function testPrograms(folder: string, programs: Record<string, Program> =
   const dir = tempDir(`aot-backend-${folder}`, {});
   const project = join(String(dir), "project");
 
+  let usersOfProject = 0;
+  let isProjectAway = false;
+  const waiting: (() => void)[] = [];
+  const untilSomethingChanges = () => new Promise<void>(resolve => waiting.push(resolve));
+  const tellWhoWaits = () => waiting.splice(0).forEach(resolve => resolve());
+
+  async function withProject<T>(work: () => Promise<T>): Promise<T> {
+    while (isProjectAway) await untilSomethingChanges();
+    usersOfProject++;
+    try {
+      return await work();
+    } finally {
+      usersOfProject--;
+      tellWhoWaits();
+    }
+  }
+
+  async function withoutProject<T>(work: () => Promise<T>): Promise<T> {
+    while (isProjectAway || usersOfProject > 0) await untilSomethingChanges();
+    isProjectAway = true;
+    const movedAway = join(String(dir), "moved-away");
+    renameSync(project, movedAway);
+    mkdirSync(project);
+    try {
+      return await work();
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+      renameSync(movedAway, project);
+      isProjectAway = false;
+      tellWhoWaits();
+    }
+  }
+
   async function run(cmd: string[], env: Record<string, string | undefined> = bunEnv) {
     const { stdout, stderr, exitCode } = await runCommand(cmd, project, env);
     return { stdout, stderr, exitCode };
@@ -48,7 +82,7 @@ export function testPrograms(folder: string, programs: Record<string, Program> =
       .replace(/\/\$bunfs\/root|B:[\\/]~BUN[\\/]root/g, "<project>")
       .replace(/took [0-9.]+m?s/g, "took N ms");
 
-  describe(folder, () => {
+  describe.concurrent(folder, () => {
     afterAll(() => rmSync(String(dir), { recursive: true, force: true }), 300_000);
     beforeAll(async () => {
       cpSync(join(import.meta.dir, folder), project, { recursive: true });
@@ -74,7 +108,23 @@ export function testPrograms(folder: string, programs: Record<string, Program> =
             const env = program.withoutExceptionValidation
               ? { ...bunEnv, BUN_JSC_validateExceptionChecks: undefined }
               : bunEnv;
-            const plain = await run([bunExe(), "run", `./${name}.ts`], env);
+            const executable = join(String(dir), `${name}-${form.replaceAll(" ", "-")}`);
+            const [plain, built] = await withProject(() =>
+              Promise.all([
+                run([bunExe(), "run", `./${name}.ts`], env),
+                run([
+                  bunExe(),
+                  "build",
+                  "--compile",
+                  "--aot",
+                  ...(form === "in place" ? ["--compile-in-place"] : []),
+                  `./${name}.ts`,
+                  ...(program.given ?? []),
+                  "--outfile",
+                  executable,
+                ]),
+              ]),
+            );
             expect(plain.stdout).toContain("\nDONE");
             const expected = { stdout: steady(plain.stdout), exitCode: plain.exitCode, stderr: "" };
             const told = (ran: typeof plain) => ({
@@ -83,23 +133,11 @@ export function testPrograms(folder: string, programs: Record<string, Program> =
               stderr: ran.exitCode === plain.exitCode ? "" : ran.stderr,
             });
 
-            const executable = join(String(dir), `${name}-${form.replaceAll(" ", "-")}`);
-            const built = await run([
-              bunExe(),
-              "build",
-              "--compile",
-              "--aot",
-              ...(form === "in place" ? ["--compile-in-place"] : []),
-              `./${name}.ts`,
-              ...(program.given ?? []),
-              "--outfile",
-              executable,
-            ]);
             expect({ output: built.exitCode ? built.stdout + built.stderr : "", exitCode: built.exitCode }).toEqual({
               output: "",
               exitCode: 0,
             });
-            const compiled = await run([executable], env);
+            const compiled = await withProject(() => run([executable], env));
             if (program.differs)
               return void expect({
                 isDone: compiled.stdout.includes("\nDONE"),
@@ -109,15 +147,7 @@ export function testPrograms(folder: string, programs: Record<string, Program> =
             expect(told(compiled)).toEqual(expected);
             if (program.needsTheDisk) return;
 
-            const movedAway = join(String(dir), "moved-away");
-            renameSync(project, movedAway);
-            mkdirSync(project);
-            try {
-              expect(told(await run([executable], env))).toEqual(expected);
-            } finally {
-              rmSync(project, { recursive: true, force: true });
-              renameSync(movedAway, project);
-            }
+            expect(told(await withoutProject(() => run([executable], env)))).toEqual(expected);
           },
           600_000,
         );

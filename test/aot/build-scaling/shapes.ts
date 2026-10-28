@@ -281,6 +281,22 @@ export const shapes: Shape[] = [
       "main.ts": `${declaredConsole}function fill(x: number, all: { a: number }[]) {\n${lines(size, () => "  all.push({ a: x });")}}\nconst all: { a: number }[] = [];\nfill(all.length + 3, all);\nconsole.log(all.length);\n`,
     }),
   },
+  // The type of the list at a push follows from the pushes before it: pushes x pushes, and each step made a union of the objects so far.
+  // TypeScript checks no body with 2,000 pushes onto one list, so a list takes 1,800.
+  {
+    name: "objects that statements push onto a list without a type",
+    counted: "objects",
+    size: 900,
+    entry: "main.ts",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts":
+        declaredConsole +
+        lines(size, index => `${index % 1800 ? "" : `const all${index / 1800} = [];\n`}all${Math.floor(index / 1800)}.push({ a: ${index}, b: "x" });`) +
+        `console.log(${size ? "all0.length" : 0});\n`,
+    }),
+  },
   {
     name: "one async function of many awaits",
     counted: "awaits",

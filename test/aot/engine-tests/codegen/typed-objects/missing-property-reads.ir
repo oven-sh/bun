@@ -625,5 +625,5 @@ runtimefunction id=131091 function=f39 visibility=Private
 # CHECK-NEXT: end of function f5
 # CHECK-LABEL: function {{*}}name="sumTyped"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 131, patchpoints: 30, rare instructions: 516, polls: 1
+# CHECK-NEXT: instructions: 131, patchpoints: 30, rare instructions: 519, polls: 1
 # CHECK-NEXT: end of function f6

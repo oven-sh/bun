@@ -696,11 +696,11 @@ function f14 name="longWalk" module=m0 position=4319 flags=[HasExplicitName] len
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="sumOfFloors"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 100, patchpoints: 4, rare instructions: 26, polls: 1
+# CHECK-NEXT: instructions: 100, patchpoints: 4, rare instructions: 29, polls: 1
 # CHECK-NEXT: end of function f3
 # CHECK-LABEL: function {{*}}name="sumOfRoots"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 105, patchpoints: 4, rare instructions: 47, polls: 1
+# CHECK-NEXT: instructions: 105, patchpoints: 4, rare instructions: 53, polls: 1
 # CHECK-NEXT: end of function f4
 # CHECK-LABEL: function {{*}}name="kinds"
 # CHECK: role=Source

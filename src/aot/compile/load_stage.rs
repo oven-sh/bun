@@ -257,7 +257,7 @@ struct RuntimeLoadInputs<'c, 's> {
 // Programs that ask the same of Bun's own code share one load of it. So do programs that ask for functions of the language alone, which
 // stand in files that declare nothing for other files: each holds what it reaches of them.
 fn asks_the_same(a: &RuntimeRoots, b: &RuntimeRoots) -> bool {
-    let ask_for_the_language_alone = !a.keeps_code_without_names && !b.keeps_code_without_names;
+    let ask_for_the_language_alone = !a.asks.has_code_of_host() && !b.asks.has_code_of_host();
     (a.paths == b.paths || ask_for_the_language_alone)
         && a.host_loaded_modules == b.host_loaded_modules
         && a.modules_named_at_run_time == b.modules_named_at_run_time

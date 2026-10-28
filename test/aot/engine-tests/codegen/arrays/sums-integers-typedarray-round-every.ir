@@ -370,7 +370,7 @@ runtimefunction id=69 function=f16
 # -- generated: f0 addedFromBothEnds
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 532, patchpoints: 78, rare instructions: 711, polls: 3
+# CHECK-NEXT: instructions: 532, patchpoints: 78, rare instructions: 722, polls: 3
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="addedFromBothEnds"
 # CHECK: role=EntryChecks
@@ -378,7 +378,7 @@ runtimefunction id=69 function=f16
 # CHECK-NEXT: end of function f5
 # CHECK-LABEL: function {{*}}name="addedFromBothEnds"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 39, patchpoints: 3, rare instructions: 141
+# CHECK-NEXT: instructions: 39, patchpoints: 3, rare instructions: 144
 # CHECK-NEXT: end of function f23
 # CHECK-LABEL: function {{*}}name="addedFromBothEnds"
 # CHECK: role=GenericVersion

@@ -18,7 +18,7 @@ import { asBunInitWritesIt, typeChecker, typingsOfBun, type Checker } from "./ty
 
 export interface Program {
   text: string;
-  extension: "js" | "ts" | "mjs" | "cjs" | "mts" | "cts";
+  extension: "js" | "ts" | "mjs" | "cjs" | "mts" | "cts" | "jsx" | "tsx";
   /** Its other files, by their paths from the folder it lies in. That folder is its own then, and `text` lies there as `main.<extension>`. */
   files?: Record<string, string>;
   /** More flags for every build of it. */
@@ -416,7 +416,7 @@ export class ProductBed implements Bed {
 
   #write(folder: string, stem: string, program: Program, flags: string[]) {
     writeProgram(folder, stem, this.#written(program));
-    if (program.extension.endsWith("ts") && !flags.some(flag => flag.startsWith(besideTheProgram)) && !existsSync(join(folder, "tsconfig.json"))) writeFileSync(join(folder, "tsconfig.json"), JSON.stringify(projects["the-bed's-own"].tsconfig));
+    if (/tsx?$/.test(program.extension) && !flags.some(flag => flag.startsWith(besideTheProgram)) && !existsSync(join(folder, "tsconfig.json"))) writeFileSync(join(folder, "tsconfig.json"), JSON.stringify(projects["the-bed's-own"].tsconfig));
   }
 
   // The folder is that of one worker, which builds one thing at a time.
@@ -778,7 +778,7 @@ export function compare(bed: Bed, program: Program, plain: Run, compiled: Compil
     if (build.signal || /\bpanic(ked)?\b|ASSERTION FAILED|SHOULD NEVER BE REACHED|Segmentation fault/.test(said))
       return failure("build crash", `${build.signal ?? ""} ${normalized(/^.*(panic|ASSERTION FAILED|SHOULD NEVER BE REACHED|Segmentation fault|AOT: ).*$/m.exec(said)?.[0] ?? "")}`.trim());
     // A mutant of a typed program may not type-check, and that stops a build.
-    const refusal = program.extension.endsWith("ts") && /\berror: (TS\d+).*/.exec(said);
+    const refusal = /tsx?$/.test(program.extension) && /\berror: (TS\d+).*/.exec(said);
     if (refusal) return { kind: "skipped", why: `type error ${refusal[1]}`, refusal: refusal[0].slice("error: ".length) };
     const error = /^(front end: )?.*\berror\b.*$/im.exec(said)?.[0] ?? said.trim().split("\n")[0] ?? "";
     // testaot reports what the product calls an internal compiler error as `<Name>: <what it means>; function ..`.

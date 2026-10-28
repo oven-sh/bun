@@ -183,6 +183,8 @@ const environment = {
   // A Bun ends with the process that started it, and takes along what it started itself.
   BUN_FEATURE_FLAG_NO_ORPHANS: "1",
 };
+// A build is a user's build. With this variable, which Bun's tests run under, the compiler checks its own work between the passes.
+const { BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: __, ...environmentOfBuilds } = environment;
 let hasFailed = false;
 
 let free = jobs;
@@ -646,7 +648,7 @@ async function run(programs: Program[]): Promise<void> {
   const build = await withSlotsOfBuild(weightOf(programs), threads => {
     for (const { file, way } of programs) say((lastTaken = { file, way, state: "compiling" }));
     const cmd = command(threads);
-    return start(cmd, buildsIn, { ...environment, ...first.envOfBuild }, timeLimit(cmd, weightOf(programs)));
+    return start(cmd, buildsIn, { ...environmentOfBuilds, ...first.envOfBuild }, timeLimit(cmd, weightOf(programs)));
   });
   const remove = noteExecutable(executable);
   try {
@@ -731,7 +733,7 @@ async function run(programs: Program[]): Promise<void> {
                   other,
                 ],
                 cwd,
-                environment,
+                environmentOfBuilds,
               ),
             );
             remove = noteExecutable(other);

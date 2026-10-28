@@ -224,6 +224,16 @@ export default b.declarations(
     uses: { name: b.inspected },
     implementation: b.generic,
   }),
+  // It converts its operand to a string and puts fixed text around it.
+  b.fn("node:module.wrap", {
+    args: { script: b.any.optional },
+    returns: b.string,
+    capability: "js",
+    throws: true,
+    runsOnlyOperandCode: true,
+    uses: { script: [b.runs("ToPrimitive")] },
+    implementation: b.generic,
+  }),
   b.fn("node:module.findSourceMap", {
     args: { path: b.any.optional },
     returns: b.union(b.instance("SourceMap"), b.undefined).fresh,

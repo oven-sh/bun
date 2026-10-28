@@ -1,3 +1,4 @@
+// Env of the build: BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1
 // Env: BUN_OPTIONS=--expose-internals
 // Prints all that a program could see of what internal/primordials exports, and holds the safe classes against what walking the keys of their built-ins gives (Node's makeSafe).
 import { exposedInternals } from "bun:internal-for-testing";

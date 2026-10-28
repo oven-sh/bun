@@ -13,6 +13,8 @@ interface Framework {
   binaryFiles?: Record<string, string>;
   copiedAfterTheBuild?: [from: string, to: string][];
   directory: string;
+  /** The framework makes the folder to be copied to a server by itself, so it is served and built where no folder above it has packages. */
+  isCopiedToServerByItself?: boolean;
   entryPoint: string;
   moreEntryPoints?: string[];
   assets: string[];
@@ -34,6 +36,7 @@ const frameworks = {
       [".next/static", ".next/standalone/.next/static"],
     ],
     directory: ".next/standalone",
+    isCopiedToServerByItself: true,
     entryPoint: "./server.js",
     moreEntryPoints: [".next/server/**/*.js"],
     assets: [".next", "public", "node_modules/@img"],
@@ -251,7 +254,10 @@ export function testFramework(name: keyof typeof frameworks, form: "in place" | 
       for (const [from, to] of framework.copiedAfterTheBuild ?? [])
         cpSync(join(site, from), join(site, to), { recursive: true });
 
-      const directory = join(site, framework.directory);
+      const directory = framework.isCopiedToServerByItself
+        ? join(String(dir), "copied")
+        : join(site, framework.directory);
+      if (framework.isCopiedToServerByItself) renameSync(join(site, framework.directory), directory);
       const expected = await serve(directory, [bunExe(), framework.entryPoint], requests);
       expect(expected.join("\n")).not.toContain("Unable to connect");
 
@@ -272,6 +278,7 @@ export function testFramework(name: keyof typeof frameworks, form: "in place" | 
       ).toEqual({ output: "", exitCode: 0 });
 
       renameSync(site, join(String(dir), "moved-away"));
+      if (framework.isCopiedToServerByItself) renameSync(directory, join(String(dir), "copy-moved-away"));
       // Next's server.js calls process.chdir(__dirname).
       mkdirSync(directory, { recursive: true });
 

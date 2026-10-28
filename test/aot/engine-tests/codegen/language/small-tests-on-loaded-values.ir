@@ -259,13 +259,13 @@ function f7 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="keepPositive"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 279, patchpoints: 27, rare instructions: 386
+# CHECK-NEXT: instructions: 279, patchpoints: 27, rare instructions: 390
 # CHECK-NEXT: end of function f1
 # CHECK-LABEL: function {{*}}name="quotients"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 123, patchpoints: 13, rare instructions: 139, polls: 1
+# CHECK-NEXT: instructions: 123, patchpoints: 13, rare instructions: 143, polls: 1
 # CHECK-NEXT: end of function f2
 # CHECK-LABEL: function {{*}}name="swapsOnSign"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 79, patchpoints: 12, rare instructions: 147
+# CHECK-NEXT: instructions: 79, patchpoints: 12, rare instructions: 150
 # CHECK-NEXT: end of function f3

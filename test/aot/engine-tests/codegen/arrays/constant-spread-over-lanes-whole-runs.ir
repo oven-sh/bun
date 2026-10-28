@@ -451,9 +451,9 @@ runtimefunction id=131113 function=f12 visibility=Private
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="added"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 246, patchpoints: 31, rare instructions: 127, polls: 1
+# CHECK-NEXT: instructions: 246, patchpoints: 31, rare instructions: 130, polls: 1
 # CHECK-NEXT: end of function f8
 # CHECK-LABEL: function {{*}}name="take"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 121, patchpoints: 12, rare instructions: 582, polls: 1
+# CHECK-NEXT: instructions: 121, patchpoints: 12, rare instructions: 586, polls: 1
 # CHECK-NEXT: end of function f10

@@ -1169,5 +1169,5 @@ function f23 name="scaleDownwardFloat64" module=m0 position=4399 flags=[IsChecke
 # -- generated: f0
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 1472, patchpoints: 302, rare instructions: 4337, polls: 12
+# CHECK-NEXT: instructions: 1472, patchpoints: 302, rare instructions: 4373, polls: 12
 # CHECK-NEXT: end of function f0

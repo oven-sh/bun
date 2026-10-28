@@ -1,9 +1,10 @@
 // An executable built with --trim behaves like one built without it.
 //
 // A file of ./cases holds small programs on one subject: what stands above the first line `//// <name>` begins each of them. The
-// programs of a file that are built with the same flags are built together, twice, whole and trimmed: one entry point imports the
+// programs of a file that are built with the same flags are built together, whole and trimmed: one entry point imports the
 // program that a variable of the environment names, so Bun's own modules are compiled once for all of them. Each run is a process
-// of its own. --trim keeps what any of them reaches, so a program whose neighbor names a feature does not show that it loses that
+// of its own. What --trim removes is decided behind the compiler, so one build compiles the programs and writes both executables.
+// A program whose build is to fail is built twice. --trim keeps what any of them reaches, so a program whose neighbor names a feature does not show that it loses that
 // feature by itself, and none of them is the entry point.
 // `//@ alone` gives a program two executables of its own: it is for a program that once lost something, or that asks what an
 // entry point is asked.
@@ -165,27 +166,29 @@ class Executables {
           join(folder, "start.mjs"),
           `const programs = {\n${this.programs.map(program => `  ${JSON.stringify(this.#entryOf(program))}: () => ${loadOf(program)}(${JSON.stringify("./" + this.#entryOf(program))}),\n`).join("")}};\nawait programs[process.env.${chosen}]();\n`,
         );
-      const builds = await Promise.all(
-        [["whole"], ["trimmed", "--trim"]].map(([name, ...flags]) =>
-          inTurn(() =>
-            run(
-              [
-                bunExe(),
-                "build",
-                "--compile",
-                "--aot",
-                ...flags,
-                ...withoutDebugInformation,
-                isShared ? "start.mjs" : `program.${first.extension}`,
-                ...first.buildFlags,
-                "--outfile",
-                join(folder, name),
-              ],
-              isShared ? folder : join(folder, "0"),
-              bunEnv,
-            ),
+      const build = (name: string, flags: string[], env: typeof bunEnv) =>
+        inTurn(() =>
+          run(
+            [
+              bunExe(),
+              "build",
+              "--compile",
+              "--aot",
+              ...flags,
+              ...withoutDebugInformation,
+              isShared ? "start.mjs" : `program.${first.extension}`,
+              ...first.buildFlags,
+              "--outfile",
+              join(folder, name),
+            ],
+            isShared ? folder : join(folder, "0"),
+            env,
           ),
-        ),
+        );
+      const builds = await Promise.all(
+        first.buildError === undefined
+          ? [build("trimmed", ["--trim"], { ...bunEnv, BUN_DEBUG_TEST_UNTRIMMED_OUTFILE: join(folder, "whole") })]
+          : [build("whole", [], bunEnv), build("trimmed", ["--trim"], bunEnv)],
       );
       const isBuilt = builds.every(build => build.exitCode === 0);
       return { folder, builds, removed: (isBuilt && readRemovedFeatures(join(folder, "trimmed"))) || [] };

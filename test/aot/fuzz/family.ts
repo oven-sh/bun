@@ -54,7 +54,7 @@ export function asProgram(
   flags: string[] = [],
   plainEnvironment?: Record<string, string>,
 ): Program | undefined {
-  const extension = /^[^/]+\.([cm]?[jt]s)$/.exec(made.file)?.[1];
+  const extension = /^[^/]+\.([cm]?[jt]s|[jt]sx)$/.exec(made.file)?.[1];
   if (!extension || made.links) return;
   const renamed = (text: string) => text.replaceAll(`./${made.file}`, `./main.${extension}`);
   const files =

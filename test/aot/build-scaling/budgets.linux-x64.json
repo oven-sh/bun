@@ -65,6 +65,10 @@
       "instructions": 3.36
     }
   },
+  "objects that statements push onto a list without a type": {
+    "millionInstructions": 1970,
+    "megabytes": 140
+  },
   "one async function of many awaits": {
     "millionInstructions": 5778,
     "megabytes": 221,

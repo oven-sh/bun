@@ -1096,6 +1096,55 @@ describe("bundler", () => {
       api.expectFile("/out.js").not.toContain("import.meta.hot");
     },
   });
+  // The guarded `import.meta.hot?.x` spelling is lowered the same way as the
+  // direct one, so the callbacks and their imports are dropped in production.
+  itBundled("minify/ImportMetaHotOptionalChainTreeShaking", {
+    files: {
+      "/entry.ts": `
+        import { value } from "./other.ts";
+        import.meta.hot?.accept(() => {"FAIL";value});
+        import.meta.hot?.accept?.(() => {"FAIL";value});
+        import.meta.hot?.["accept"](() => {"FAIL";value});
+        import.meta.hot?.dispose(() => {"FAIL";value});
+        import.meta.hot?.on(() => {"FAIL";value});
+        import.meta.hot?.off(() => {"FAIL";value});
+        import.meta.hot?.send(() => {"FAIL";value});
+        import.meta.hot?.invalidate(() => {"FAIL";value});
+        import.meta.hot?.prune(() => {"FAIL";value});
+        capture(import.meta.hot?.accept());
+        capture(import.meta.hot?.data);
+        // A read that is not a call must not delete the next call.
+        const f = import.meta.hot?.accept;
+        capture(f);
+        capture("KEEP");
+        const g = import.meta.hot.dispose;
+        capture(g);
+        capture("KEEP2");
+      `,
+      "other.ts": `
+        capture("hello");
+        export const value = "hello";
+      `,
+    },
+    outfile: "/out.js",
+    capture: ['"hello"', "void 0", "{}", "f", '"KEEP"', "g", '"KEEP2"'],
+    minifySyntax: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("FAIL");
+      api.expectFile("/out.js").not.toContain("import.meta.hot");
+      api.expectFile("/out.js").not.toContain("?.");
+    },
+  });
+  itBundled("minify/ImportMetaHotOptionalChainUnknownProperty", {
+    files: {
+      "/entry.ts": `
+        import.meta.hot?.bogus();
+      `,
+    },
+    bundleErrors: {
+      "/entry.ts": ["import.meta.hot.bogus does not exist"],
+    },
+  });
   itBundled("minify/ProductionMode", {
     files: {
       "/entry.jsx": `

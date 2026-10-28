@@ -437,6 +437,40 @@ devTest("import.meta.hot.dispose cleanup", {
     await c.expectMessage("Cleaning up", "Third setup");
   },
 });
+// `import.meta.hot?.x` is the guarded spelling for code that also runs outside a
+// dev server. Under the dev server the `?.` must not change the rewrite.
+devTest("import.meta.hot with optional chaining", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { name } from "./name.ts";
+      const data = import.meta.hot?.data;
+      data.count ??= 0;
+      import.meta.hot?.dispose(() => console.log("Cleaning up"));
+      import.meta.hot?.["on"]("bun:invalidate", () => {});
+      import.meta.hot?.accept?.("./name.ts", (newModule) => {
+        console.log("Name updated: " + newModule.name);
+      });
+      import.meta.hot?.accept();
+      console.log("Initial count: " + data.count++ + " " + name);
+    `,
+    "name.ts": `
+      export const name = "Alice";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("Initial count: 0 Alice");
+    await dev.writeNoChanges("index.ts");
+    await c.expectMessage("Cleaning up", "Initial count: 1 Alice");
+    await dev.write("name.ts", `export const name = "Bob";`);
+    await c.expectMessage("Name updated: Bob");
+    await dev.writeNoChanges("index.ts");
+    await c.expectMessage("Cleaning up", "Initial count: 2 Bob");
+  },
+});
 devTest("import.meta.hot invalid usage", {
   files: {
     "index.html": emptyHtmlFile({

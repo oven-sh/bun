@@ -762,7 +762,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         if name == b"accept" {
                             if !enabled {
-                                p.method_call_must_be_replaced_with_undefined = true;
+                                // The flag deletes the next visited call, so only a
+                                // call target may set it.
+                                if identifier_opts.is_call_target() {
+                                    p.method_call_must_be_replaced_with_undefined = true;
+                                }
                                 return Some(Expr {
                                     data: js_ast::ExprData::EUndefined(E::Undefined),
                                     loc,
@@ -796,7 +800,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     loc,
                                 ));
                             } else {
-                                p.method_call_must_be_replaced_with_undefined = true;
+                                if identifier_opts.is_call_target() {
+                                    p.method_call_must_be_replaced_with_undefined = true;
+                                }
                                 return Some(Expr {
                                     data: js_ast::ExprData::EUndefined(E::Undefined),
                                     loc,

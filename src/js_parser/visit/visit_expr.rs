@@ -1002,6 +1002,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // A folded `"a" + "b"` is a rope whose `data` is only "a".
                         s.resolve_rope_if_needed(p.arena);
 
+                        // `import.meta.hot?.["accept"](...)`: same as the `?.` case in e_dot.
+                        if e_.optional_chain == Some(js_ast::OptionalChain::Start)
+                            && Self::is_import_meta_hot(&e_.target)
+                        {
+                            e_.optional_chain = None;
+                        }
+
                         // "a['b' + '']" => "a.b"
                         // "enum A { B = 'b' }; a[A.B]" => "a.b"
                         if p.options.features.minify_syntax
@@ -1345,6 +1352,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
     }
+    /// A visited `import.meta.hot`. With HMR on it is the module's HMR object and never
+    /// nullish. With HMR off it is `undefined`, and the property rewrite folds the access.
+    #[inline]
+    fn is_import_meta_hot(target: &Expr) -> bool {
+        matches!(
+            target.data,
+            Data::ESpecial(E::Special::HotEnabled | E::Special::HotDisabled)
+        )
+    }
+
     fn e_dot(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;
         let mut e_ = expr.data.e_dot().expect("infallible: variant checked");
@@ -1442,23 +1459,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
 
-        // `ns?.foo` on an import()/require() namespace local reads `foo`.
-        if e_.optional_chain == Some(js_ast::OptionalChain::Start)
-            && let Data::EIdentifier(id) = e_.target.data
-            && p.dynamic_import_namespace_locals.contains_key(&id.ref_)
-            && in_.assign_target == js_ast::AssignTarget::None
-            && !is_delete_target
-        {
-            if let Some(map) = p.import_items_for_namespace.get_mut(&id.ref_) {
-                map.put(
-                    e_.name.slice(),
-                    js_ast::LocRef {
-                        loc: e_.name_loc,
-                        ref_: js_ast::Ref::NONE,
-                    },
-                )
-                .expect("oom");
-                p.note_tracked_namespace_use(id.ref_);
+        if e_.optional_chain == Some(js_ast::OptionalChain::Start) {
+            if let Data::EIdentifier(id) = e_.target.data
+                && p.dynamic_import_namespace_locals.contains_key(&id.ref_)
+                && in_.assign_target == js_ast::AssignTarget::None
+                && !is_delete_target
+            {
+                // `ns?.foo` on an import()/require() namespace local reads `foo`.
+                if let Some(map) = p.import_items_for_namespace.get_mut(&id.ref_) {
+                    map.put(
+                        e_.name.slice(),
+                        js_ast::LocRef {
+                            loc: e_.name_loc,
+                            ref_: js_ast::Ref::NONE,
+                        },
+                    )
+                    .expect("oom");
+                    p.note_tracked_namespace_use(id.ref_);
+                }
+            } else if Self::is_import_meta_hot(&e_.target) {
+                // `import.meta.hot?.accept(...)`: the parser knows the value, so the
+                // `?.` guard is dropped and the access takes the direct rewrite below.
+                e_.optional_chain = None;
             }
         }
 

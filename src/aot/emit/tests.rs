@@ -563,7 +563,10 @@ fn too_large_program_hits_the_program_id_limit() {
 fn engine_prints_same_text() {
     let Some(engine_tool) = std::env::var_os("TESTAOT") else {
         let is_required = std::env::var_os("AOT_IR_REQUIRES_ENGINE").is_some();
-        assert!(!is_required, "TESTAOT is not set, and AOT_IR_REQUIRES_ENGINE is");
+        assert!(
+            !is_required,
+            "TESTAOT is not set, and AOT_IR_REQUIRES_ENGINE is"
+        );
         println!("SKIP: TESTAOT is not set");
         return;
     };

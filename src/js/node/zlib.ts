@@ -383,8 +383,6 @@ ZlibBase.prototype.flush = function (this: $Node.ZlibBase, kind?: number | (() =
     if (callback) this.once("end", callback);
   } else {
     if (!this.destroyed) {
-      // "2" and 2n index the same flush buffer as 2.
-      kind = kFlushBuffers[kind!]?.[kFlushFlag] ?? kind;
       const flushBound = this[kFlushBound];
       kind = checkRangesOrGetDefault(kind, "kind", flushBound[0], flushBound[1], this._defaultFullFlushFlag);
     }

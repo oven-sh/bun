@@ -4691,6 +4691,275 @@ describe("createWriteStream", () => {
   });
 });
 
+// Upstream: nodejs/node#66131 (test-fs-stream-fs-options.js), in Node v26.11.0.
+// On Windows libuv answers a close of the descriptors 0 to 2 with success and leaves them open.
+describe.skipIf(isWindows)("file streams and descriptor 0", () => {
+  type Stdin = "file" | "writable file" | "pipe" | "terminal";
+
+  // Runs `source` in a child whose stdin holds "hello", and answers what the child gave to done().
+  // Each case has a child of its own: it closes the stdin of its process, or must leave it open.
+  // The answer goes through a file, because a child on a terminal has no stdout of its own.
+  async function inChild(stdin: Stdin, source: string) {
+    using dir = tempDir("fs-stream-fd-0", { "stdin.txt": "hello" });
+    const input = join(String(dir), "stdin.txt");
+    const answer = join(String(dir), "answer.json");
+    const cmd = [
+      bunExe(),
+      "-e",
+      `const fs = require("node:fs");
+      const input = ${JSON.stringify(input)};
+      const isOpen = fd => {
+        try {
+          fs.fstatSync(fd);
+          return true;
+        } catch (e) {
+          return e.code;
+        }
+      };
+      const done = value => {
+        fs.writeFileSync(${JSON.stringify(answer)}, JSON.stringify(value));
+        process.exit(0);
+      };
+      ${source}`,
+    ];
+    let exitCode: number;
+    if (stdin === "terminal") {
+      await using terminal = new Bun.Terminal({ data() {} });
+      const proc = Bun.spawn({ cmd, env: bunEnv, terminal });
+      // One line, then the end of the input.
+      terminal.write("hello\n\x04");
+      exitCode = await proc.exited;
+    } else if (stdin === "pipe") {
+      await using proc = Bun.spawn({ cmd, env: bunEnv, stdin: "pipe", stdout: "inherit", stderr: "inherit" });
+      proc.stdin.write("hello");
+      await proc.stdin.end();
+      exitCode = await proc.exited;
+    } else {
+      const fd = openSync(input, stdin === "file" ? "r" : "r+");
+      try {
+        await using proc = Bun.spawn({ cmd, env: bunEnv, stdin: fd, stdout: "inherit", stderr: "inherit" });
+        exitCode = await proc.exited;
+      } finally {
+        closeSync(fd);
+      }
+    }
+    return {
+      answer: existsSync(answer) ? JSON.parse(readFileSync(answer, "utf8")) : "the child gave no answer",
+      input: readFileSync(input, "utf8"),
+      exitCode,
+    };
+  }
+
+  describe("a stream that owns descriptor 0 closes it", () => {
+    it.concurrent("createReadStream(null, { fd: 0 }) at the end of the file", async () => {
+      const result = await inChild(
+        "file",
+        `const stream = fs.createReadStream(null, { fd: 0 });
+        let text = "";
+        stream.on("data", chunk => (text += chunk));
+        stream.on("close", () => done({ text, fd: stream.fd, descriptor0: isOpen(0) }));`,
+      );
+      expect(result).toEqual({
+        answer: { text: "hello", fd: null, descriptor0: "EBADF" },
+        input: "hello",
+        exitCode: 0,
+      });
+    });
+
+    it.concurrent("createReadStream(null, { fd: 0 }) that is destroyed before a read", async () => {
+      const result = await inChild(
+        "file",
+        `const stream = fs.createReadStream(null, { fd: 0 });
+        stream.on("close", () => done({ fd: stream.fd, descriptor0: isOpen(0) }));
+        stream.destroy();`,
+      );
+      expect(result).toEqual({ answer: { fd: null, descriptor0: "EBADF" }, input: "hello", exitCode: 0 });
+    });
+
+    it.concurrent("createWriteStream(null, { fd: 0 }) after end()", async () => {
+      const result = await inChild(
+        "writable file",
+        `const stream = fs.createWriteStream(null, { fd: 0 });
+        stream.on("close", () => done({ fd: stream.fd, descriptor0: isOpen(0) }));
+        stream.end("J");`,
+      );
+      expect(result).toEqual({ answer: { fd: null, descriptor0: "EBADF" }, input: "Jello", exitCode: 0 });
+    });
+
+    it.concurrent("createWriteStream(null, { fd: 0, flush: true }) syncs, then closes", async () => {
+      const result = await inChild(
+        "writable file",
+        `const calls = [];
+        const spy = name => (fd, callback) => {
+          calls.push(name + " " + fd);
+          fs[name](fd, callback);
+        };
+        const stream = fs.createWriteStream(null, { fd: 0, flush: true, fs: { ...fs, fsync: spy("fsync"), close: spy("close") } });
+        stream.on("close", () => done({ calls, descriptor0: isOpen(0) }));
+        stream.end("J");`,
+      );
+      expect(result).toEqual({
+        answer: { calls: ["fsync 0", "close 0"], descriptor0: "EBADF" },
+        input: "Jello",
+        exitCode: 0,
+      });
+    });
+
+    // The open() of the stream gets the lowest free number, which is 0 after the close.
+    it.concurrent("createReadStream(path) whose own open() gets descriptor 0", async () => {
+      const result = await inChild(
+        "file",
+        `fs.closeSync(0);
+        const stream = fs.createReadStream(input);
+        let opened;
+        stream.on("open", fd => (opened = fd));
+        stream.on("close", () => done({ opened, descriptor0: isOpen(0) }));
+        stream.resume();`,
+      );
+      expect(result).toEqual({ answer: { opened: 0, descriptor0: "EBADF" }, input: "hello", exitCode: 0 });
+    });
+
+    it.concurrent("a FileHandle on descriptor 0 reads, and closes it", async () => {
+      const result = await inChild(
+        "file",
+        `fs.closeSync(0);
+        (async () => {
+          const handle = await fs.promises.open(input, "r");
+          const fd = handle.fd;
+          const { bytesRead } = await handle.read(Buffer.alloc(8), 0, 8, 0).catch(e => ({ bytesRead: e.code }));
+          await handle.close();
+          done({ fd, bytesRead, descriptor0: isOpen(0) });
+        })();`,
+      );
+      expect(result).toEqual({ answer: { fd: 0, bytesRead: 5, descriptor0: "EBADF" }, input: "hello", exitCode: 0 });
+    });
+
+    it.concurrent("the stream of a FileHandle on descriptor 0 closes the handle", async () => {
+      const result = await inChild(
+        "file",
+        `fs.closeSync(0);
+        (async () => {
+          const handle = await fs.promises.open(input, "r");
+          const stream = handle.createReadStream();
+          let text = "";
+          stream.on("data", chunk => (text += chunk));
+          stream.on("close", () => done({ text, handle: handle.fd, descriptor0: isOpen(0) }));
+        })();`,
+      );
+      expect(result).toEqual({
+        answer: { text: "hello", handle: -1, descriptor0: "EBADF" },
+        input: "hello",
+        exitCode: 0,
+      });
+    });
+
+    // process.stdin is made at its first use. Nothing is open at descriptor 0 by then, so it has no content.
+    it.concurrent("process.stdin ends when a stream has closed descriptor 0 before", async () => {
+      const result = await inChild(
+        "file",
+        `const stream = fs.createReadStream(null, { fd: 0 });
+        stream.resume();
+        stream.on("close", () => {
+          const events = [];
+          process.stdin.on("data", () => events.push("data"));
+          process.stdin.on("end", () => events.push("end"));
+          process.stdin.on("close", () => done({ events, descriptor0: isOpen(0) }));
+        });`,
+      );
+      expect(result).toEqual({ answer: { events: ["end"], descriptor0: "EBADF" }, input: "hello", exitCode: 0 });
+    });
+  });
+
+  describe("a stream that does not own descriptor 0 leaves it open", () => {
+    it.concurrent("createReadStream(null, { fd: 0, autoClose: false }) at the end of the file", async () => {
+      const result = await inChild(
+        "file",
+        `const stream = fs.createReadStream(null, { fd: 0, autoClose: false });
+        let text = "";
+        stream.on("data", chunk => (text += chunk));
+        stream.on("end", () => done({ text, fd: stream.fd, descriptor0: isOpen(0) }));`,
+      );
+      expect(result).toEqual({ answer: { text: "hello", fd: 0, descriptor0: true }, input: "hello", exitCode: 0 });
+    });
+
+    // Node's process.stdin is a net.Socket, a tty handle or a stream with autoClose: false. None closes descriptor 0
+    // at the end of the input.
+    it.concurrent.each(["file", "pipe", "terminal"] as const)("process.stdin at the end of a %s", async stdin => {
+      const result = await inChild(
+        stdin,
+        `let text = "";
+        const events = [];
+        process.stdin.on("data", chunk => (text += chunk));
+        process.stdin.on("end", () => events.push("end"));
+        process.stdin.on("close", () => done({ text, events, fd: process.stdin.fd, descriptor0: isOpen(0) }));`,
+      );
+      expect(result).toEqual({
+        answer: { text: stdin === "terminal" ? "hello\n" : "hello", events: ["end"], fd: 0, descriptor0: true },
+        input: "hello",
+        exitCode: 0,
+      });
+    });
+
+    it.concurrent.each(["file", "pipe", "terminal"] as const)("process.stdin.destroy() on a %s", async stdin => {
+      const result = await inChild(
+        stdin,
+        `process.stdin.on("close", () => done({ fd: process.stdin.fd, descriptor0: isOpen(0) }));
+        process.stdin.destroy();`,
+      );
+      expect(result).toEqual({ answer: { fd: 0, descriptor0: true }, input: "hello", exitCode: 0 });
+    });
+
+    it.concurrent.each(["file", "terminal"] as const)("tty.ReadStream(0) at the end of a %s", async stdin => {
+      const result = await inChild(
+        stdin,
+        `const stream = new (require("node:tty").ReadStream)(0);
+        let text = "";
+        stream.on("data", chunk => (text += chunk));
+        stream.on("close", () => done({ text, fd: stream.fd, descriptor0: isOpen(0) }));`,
+      );
+      expect(result).toEqual({
+        answer: { text: stdin === "terminal" ? "hello\n" : "hello", fd: 0, descriptor0: true },
+        input: "hello",
+        exitCode: 0,
+      });
+    });
+
+    it.concurrent.each(["file", "terminal"] as const)("tty.ReadStream(0).destroy() on a %s", async stdin => {
+      const result = await inChild(
+        stdin,
+        `const stream = new (require("node:tty").ReadStream)(0);
+        stream.on("close", () => done({ fd: stream.fd, descriptor0: isOpen(0) }));
+        stream.destroy();`,
+      );
+      expect(result).toEqual({ answer: { fd: 0, descriptor0: true }, input: "hello", exitCode: 0 });
+    });
+
+    // These streams write through a FileSink, which leaves the descriptor open.
+    it.concurrent.each(["file", "terminal"] as const)("tty.WriteStream(0).destroy() on a %s", async stdin => {
+      const result = await inChild(
+        stdin,
+        `const stream = new (require("node:tty").WriteStream)(0);
+        stream.on("close", () => done({ descriptor0: isOpen(0) }));
+        stream.destroy();`,
+      );
+      expect(result).toEqual({ answer: { descriptor0: true }, input: "hello", exitCode: 0 });
+    });
+
+    // With nothing open at descriptor 0 the stream gets no FileSink. The file that takes the number later is not its own.
+    it.concurrent("tty.WriteStream(0).destroy() leaves a later descriptor 0 open", async () => {
+      const result = await inChild(
+        "file",
+        `fs.closeSync(0);
+        const stream = new (require("node:tty").WriteStream)(0);
+        const later = fs.openSync(input, "r");
+        stream.on("close", () => done({ later, descriptor0: isOpen(0) }));
+        stream.destroy();`,
+      );
+      expect(result).toEqual({ answer: { later: 0, descriptor0: true }, input: "hello", exitCode: 0 });
+    });
+  });
+});
+
 describe("fs/promises", () => {
   const { exists, mkdir, readFile, rmdir, stat, writeFile } = promises;
 

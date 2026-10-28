@@ -486,7 +486,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
   class FileHandle extends EventEmitter {
     constructor(fd: number, flag?: string | number, path?: string) {
       super();
-      this[kFd] = fd ? fd : -1;
+      this[kFd] = fd == null ? -1 : fd;
       this[kRefs] = 1;
       this[kClosePromise] = null;
       this[kFlag] = flag;

@@ -1042,6 +1042,8 @@ enum StdinFdType {
     File = 0,
     Pipe = 1,
     Socket = 2,
+    /// Descriptor 0 only, and not on Windows: nothing is open there.
+    Closed = 3,
 }
 
 #[unsafe(no_mangle)]
@@ -1052,6 +1054,10 @@ extern "C" fn Bun__Process__getStdinFdType(vm: &VirtualMachine, fd: i32) -> Stdi
     let mode = match fd {
         0 => {
             rare.stdin();
+            // `stdin()` stores 0 when its fstat fails.
+            if cfg!(unix) && rare.stdin_mode == 0 {
+                return StdinFdType::Closed;
+            }
             rare.stdin_mode
         }
         1 => {

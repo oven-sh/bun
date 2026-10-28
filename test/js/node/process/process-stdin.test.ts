@@ -241,6 +241,38 @@ test.concurrent("touching stdin again after 'end' does not keep the process aliv
   expect(await stdioResult(proc)).toEqual({ stdout: "END\nEXIT\n", exitCode: 0 });
 });
 
+// Node gives a process whose descriptor 0 is not open a Readable with no content:
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/bootstrap/switches/is_main_thread.js#L239-L249
+// On Windows libuv leaves descriptor 0 open when it is closed.
+test.concurrent.skipIf(isWindows)("stdin is a Readable that has ended when descriptor 0 is not open", async () => {
+  const proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `require("node:fs").closeSync(0);
+      const stdin = process.stdin;
+      const events = [];
+      stdin.on("data", chunk => events.push("data"));
+      stdin.on("end", () => events.push("end"));
+      stdin.on("close", () => {
+        events.push("close");
+        console.log(JSON.stringify({ name: stdin.constructor.name, fd: stdin.fd, events }));
+      });`,
+    ],
+    stdin: Bun.file(import.meta.path),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, exitCode, stderr: exitCode === 0 ? undefined : stderr }).toEqual({
+    stdout: JSON.stringify({ name: "Readable", fd: 0, events: ["end", "close"] }) + "\n",
+    exitCode: 0,
+    stderr: undefined,
+  });
+});
+
 test.concurrent("'end' is not emitted when the buffer is never drained, and the process still exits", async () => {
   const proc = Bun.spawn({
     cmd: [

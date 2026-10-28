@@ -28,6 +28,8 @@ const enum BunProcessStdinFdType {
   file = 0,
   pipe = 1,
   socket = 2,
+  /** Descriptor 0 only, and not on Windows: nothing is open there. */
+  closed = 3,
 }
 
 /** `process.stdout` and `process.stderr`: a `tty.WriteStream` or an `fs.WriteStream`. */
@@ -130,6 +132,13 @@ export function getNodeWorkerStdioStream(process: NodeJS.Process, fd: number, po
 
 export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boolean, fdType: BunProcessStdinFdType) {
   $assert(fd === 0);
+  if (fdType === BunProcessStdinFdType.closed) {
+    // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/bootstrap/switches/is_main_thread.js#L239-L249
+    const ended = new (require("node:stream").Readable)({ read() {} }) as StdinStream;
+    ended.push(null);
+    ended.fd = fd;
+    return ended;
+  }
   const native: ReadableStream<Uint8Array> = Bun.stdin.stream();
   const source: $Bindgen.FileInternalReadableStreamSource = native.$bunNativePtr;
 
@@ -170,6 +179,9 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
 
   const ReadStream = isTTY ? require("node:tty").ReadStream : require("node:fs").ReadStream;
   const stream: StdinStream = new ReadStream(null, { fd, autoClose: false });
+  // Node closes fd 0 in one case only, which is not followed here: destroy() of a stdin that is a regular file.
+  // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/bootstrap/switches/is_main_thread.js#L205-L207
+  stream._destroy = require("internal/fs/streams").destroyWithoutClose;
 
   const originalOn = stream.on;
 

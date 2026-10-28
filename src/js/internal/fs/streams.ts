@@ -433,7 +433,7 @@ function close(stream: FileStream, err: Error | null | undefined, cb: ErrorCallb
     return;
   }
 
-  if (!stream.fd) {
+  if (stream.fd == null) {
     cb(err);
   } else if (stream.flush) {
     stream[kFs].fsync!(stream.fd, flushErr => {
@@ -449,6 +449,17 @@ function closeAfterSync(stream: FileStream, err: Error | null | undefined, cb: E
     cb(er || err);
   });
   stream.fd = null;
+}
+
+// The _destroy of process.stdin and of a tty stream on fd 0. In Node these are a net.Socket or a tty handle, and libuv
+// leaves the descriptors 0 to 2 open when it closes one:
+// https://github.com/nodejs/node/blob/v26.12.1/deps/uv/src/unix/stream.c#L1545-L1550
+function destroyWithoutClose(this: FileStream, err: Error | null, cb: ErrorCallback) {
+  if (this[kIsPerformingIO]) {
+    this.once(kIoDone, (er: Error | null) => cb(err || er));
+  } else {
+    cb(err);
+  }
 }
 
 function WriteStream(
@@ -945,4 +956,5 @@ export default {
   WriteStream,
   kWriteStreamFastPath,
   writableFromFileSink,
+  destroyWithoutClose,
 };

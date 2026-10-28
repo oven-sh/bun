@@ -63,6 +63,7 @@ function ReadStream(this: $Node.TTYReadStream, fd: number | null): void {
     return new ReadStream(fd) as any;
   }
   fs.ReadStream.$apply(this, ["", { fd }]);
+  if (this.fd === 0) this._destroy = fs.destroyWithoutClose;
   this.isRaw = false;
   // Only set isTTY to true if the fd is actually a TTY
   this.isTTY = isatty(fd);
@@ -156,6 +157,8 @@ function WriteStream(this: Self, fd: number): void {
 
   // Answers its `this`: the prototype below is `fs.WriteStream.prototype` itself.
   const stream = fs.WriteStream.$call(this, null, { fd, $fastPath: true, autoClose: false }) as unknown as Self;
+  // No FileSink: nothing was open at fd 0. What has the number when this stream is destroyed belongs to somebody else.
+  if (stream.fd === 0 && !stream[fs.kWriteStreamFastPath]) stream._destroy = fs.destroyWithoutClose;
   stream.columns = undefined;
   stream.rows = undefined;
   stream.isTTY = isatty(stream.fd);

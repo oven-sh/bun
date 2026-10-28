@@ -3310,6 +3310,53 @@ it.if(isPosix && !isFreeBSD)("realpath does not open what its path leads to", as
   }
 });
 
+// Linux needs one for `O_PATH`.
+it.if(isMacOS)("realpath needs no file descriptor", async () => {
+  using dir = tempDir("realpath", { "file": "" });
+  symlinkSync("loop", join(String(dir), "loop"));
+  const script = `
+    const fs = require("node:fs");
+    const { relative } = require("node:path");
+    // getcwd() needs a descriptor on macOS.
+    const cwd = process.cwd();
+    try {
+      for (;;) fs.openSync("/dev/null", "r");
+    } catch (e) {
+      console.log(e.code);
+    }
+    for (const path of ["file", "missing", "file/below", "loop"]) {
+      for (const realpath of [fs.realpathSync, fs.realpathSync.native]) {
+        try {
+          console.log(path, relative(cwd, realpath(path)));
+        } catch (e) {
+          console.log(path, e.code);
+        }
+      }
+    }
+  `;
+  await using proc = Bun.spawn({
+    cmd: ["/bin/sh", "-c", 'ulimit -n 128 && exec "$@"', "sh", bunExe(), "-e", script],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim().split("\n")).toEqual([
+    "EMFILE",
+    "file file",
+    "file file",
+    "missing ENOENT",
+    "missing ENOENT",
+    "file/below ENOTDIR",
+    "file/below ENOTDIR",
+    "loop ELOOP",
+    "loop ELOOP",
+  ]);
+  expect(exitCode).toBe(0);
+});
+
 // FreeBSD only has /dev/fd/0 to 2 unless fdescfs is mounted.
 it.if(isPosix && !isFreeBSD)("realpath leads from /dev/fd to the open file", async () => {
   using dir = tempDir("realpath", { "file": "" });

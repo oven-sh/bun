@@ -3128,10 +3128,12 @@ mod posix_impl {
             {
                 return Ok(&mut out.0[..len]);
             }
-            Ok(_) => {}
-            // A resource fork is `EPERM`. An ACL that denies only `readattr` is `EACCES`. A path that fits without its prefix is `ENOSPC`.
-            Err(err) if matches!(err.get_errno(), E::EPERM | E::EACCES | E::ENOSPC) => {}
-            Err(err) => return Err(err),
+            // `open` does not find these either, and it needs a free descriptor to say so.
+            Err(err) if matches!(err.get_errno(), E::ENOENT | E::ENOTDIR | E::ELOOP) => {
+                return Err(err);
+            }
+            // `getattrlist` can fail where `open` succeeds: `EPERM` on a resource fork, `EACCES` under an ACL that denies only `readattr`, `ENOSPC` after a prefix, `ENOTSUP` on a volume without it.
+            _ => {}
         }
         let fd = open(path, O::RDONLY | O::NONBLOCK | O::NOCTTY, 0)?;
         let _close = CloseOnDrop::new(fd);

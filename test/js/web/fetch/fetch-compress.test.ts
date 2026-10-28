@@ -243,8 +243,7 @@ describe("fetch compress option", () => {
     expect(json.decoded).toBe(payload);
   });
 
-  // libdeflate levels 10 to 12 have no zlib equivalent; they must not be
-  // clamped on a large body.
+  // libdeflate levels 10 to 12 allocate a much larger compressor per call.
   test.concurrent("gzip level 12 on a body larger than 512 KiB", async () => {
     using server = makeServer();
     const big = Buffer.alloc(600 * 1024, "abcdefghij").toString();
@@ -322,14 +321,19 @@ describe("fetch compress option", () => {
       },
     });
     const reason = new Error("stop");
-    const controller = new AbortController();
-    const pending = fetch(server.url, {
-      method: "POST",
-      body: Buffer.alloc(2 * 1024 * 1024, "abcdefghij").toString(),
-      compress: "gzip",
-      signal: controller.signal,
-    });
-    controller.abort(reason);
+    // The controller and signal go out of scope before the rejection lands.
+    const pending = (() => {
+      const controller = new AbortController();
+      const pending = fetch(server.url, {
+        method: "POST",
+        body: Buffer.alloc(2 * 1024 * 1024, "abcdefghij").toString(),
+        compress: "gzip",
+        signal: controller.signal,
+      });
+      controller.abort(reason);
+      return pending;
+    })();
+    Bun.gc(true);
     await expect(pending).rejects.toBe(reason);
     // A later request on the same server orders after anything the aborted
     // fetch could have sent.

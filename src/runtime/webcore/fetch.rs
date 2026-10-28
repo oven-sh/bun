@@ -1656,9 +1656,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
     }
 
-    // `compress` applies to buffered bodies only, and not to S3 (it signs its
-    // own header set). Commit here with Content-Encoding; `compress_then_queue`
-    // swaps the bytes in.
+    // Buffered bodies only, and not S3 (it signs its own header set).
     if let Some(compress_opt) = &compress
         && let HTTPRequestBody::AnyBlob(_) = &body
         && !url.is_s3()

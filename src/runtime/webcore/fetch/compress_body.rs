@@ -1,6 +1,5 @@
-//! `fetch({ compress })`: option parsing and one-shot compression of a buffered
-//! request body, before the HTTP thread sees it. Small bodies at a fast level
-//! compress inline on the JS thread; the rest on the work pool as a [`jsc::Job`].
+//! `fetch({ compress })`: parse the option, compress the buffered body before
+//! the HTTP thread sees it (inline when small, else on the work pool).
 
 use core::cell::RefCell;
 use core::ptr::NonNull;
@@ -40,8 +39,7 @@ pub(crate) const DEFAULT_DEFLATE_LEVEL: i32 = 6;
 pub(crate) const DEFAULT_BROTLI_QUALITY: i32 = 6;
 pub(crate) const DEFAULT_ZSTD_LEVEL: i32 = 3;
 
-/// Up to this size a fast level compresses inline: gzip-6 or zstd-3 on 64 KiB
-/// is 0.3 to 0.6 ms on the JS thread.
+/// Inline limit: gzip-6 or zstd-3 on 64 KiB is 0.3 to 0.6 ms on the JS thread.
 const INLINE_MAX_LEN: usize = 64 * 1024;
 
 bun_core::comptime_string_map! {
@@ -312,10 +310,32 @@ fn is_cheap_inline(len: usize, opt: &CompressOption) -> bool {
 pub(crate) struct PendingFetch {
     fetch_options: FetchOptions,
     promise: jsc::JSPromiseStrong,
+    global: jsc::GlobalRef,
+    /// Follows the signal during the hop; the tasklet follows it after.
+    abort_handle: jsc::AbortHandle,
 }
 
 // SAFETY: every field is used and dropped on the owning JS thread only.
 unsafe impl bun_jsc::job::JsAffine for PendingFetch {}
+
+jsc::impl_abort_handle_owner!(PendingFetch, abort_handle, |this, cause| {
+    // SAFETY: trait contract: `this` is live; JS thread.
+    if let jsc::AbortCause::Signal(reason) = cause {
+        unsafe { (*this).reject_aborted(reason) }
+    }
+});
+
+impl PendingFetch {
+    /// The body stays in place for the pool; `then` finds the promise settled.
+    fn reject_aborted(&mut self, reason: JSValue) {
+        self.abort_handle.unfollow();
+        if !self.promise.has_value() {
+            return;
+        }
+        let _dispatch = self.fetch_options.tracker.dispatch(&self.global);
+        crate::dispatch::fold(self.promise.reject(&self.global, Ok(reason)));
+    }
+}
 
 /// Work pool half of the job: the input bytes and the result.
 pub(crate) struct CompressRequestBody {
@@ -331,8 +351,8 @@ impl jsc::JobContext for CompressRequestBody {
 
     fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         if done.ticket().script_allowed() {
-            // SAFETY: the `Js` half owns the body; nothing touches it until `then`.
-            let input: &[u8] = unsafe { this.input.under_ticket(done.ticket()) };
+            // SAFETY: the `Js` half keeps the body alive; the bytes are only read.
+            let input: &[u8] = unsafe { &*this.input.as_ptr() };
             this.out = compress(input, &this.opt);
         }
         Some(done)
@@ -340,17 +360,15 @@ impl jsc::JobContext for CompressRequestBody {
 
     fn then(this: Self, js: Box<PendingFetch>, cx: &jsc::JsThread<'_>) -> JsResult<()> {
         let PendingFetch {
-            mut fetch_options,
-            mut promise,
+            fetch_options,
+            promise,
+            abort_handle,
+            ..
         } = *js;
-        // Aborted while on the pool: reject before any connection exists.
-        if let Some(sig) = &fetch_options.signal
-            && sig.aborted()
-        {
-            let reason = sig.js_reason(cx.global());
-            fetch_options.body.detach();
-            let _dispatch = fetch_options.tracker.dispatch(cx.global());
-            return promise.reject(cx.global(), Ok(reason));
+        abort_handle.unfollow();
+        // Rejected by the signal during the hop.
+        if !promise.has_value() {
+            return Ok(());
         }
         finish(cx, fetch_options, promise, this.out)
     }
@@ -392,17 +410,28 @@ pub(crate) fn compress_then_queue(
     }
     // SAFETY: `PendingFetch` owns the body for the job's whole lifetime.
     let input = unsafe { bun_jsc::JsPtr::new(NonNull::from(input)) };
+    let signal = fetch_options.signal.clone();
+    let mut pending = Box::new(PendingFetch {
+        fetch_options,
+        promise,
+        global: jsc::GlobalRef::from(cx.global()),
+        abort_handle: jsc::AbortHandle::for_owner::<PendingFetch>(),
+    });
+    if let Some(signal) = signal {
+        // SAFETY: boxed, so the address holds until `then` or the release drops it.
+        unsafe { jsc::AbortHandle::follow_owner(&mut *pending as *mut PendingFetch, signal) };
+        if !pending.promise.has_value() {
+            return Ok(());
+        }
+    }
     jsc::Job::<CompressRequestBody>::schedule(
         cx,
         CompressRequestBody {
             input,
             opt,
-            out: Ok(Vec::new()),
+            out: Err(CompressError::Failed),
         },
-        Box::new(PendingFetch {
-            fetch_options,
-            promise,
-        }),
+        pending,
     );
     Ok(())
 }

@@ -1,5 +1,4 @@
 use core::fmt;
-use core::ptr::NonNull;
 
 use bun_alloc::AllocError;
 use bun_collections::IntegerBitSet;
@@ -163,22 +162,10 @@ impl Query {
 #[derive(Default)]
 pub struct List {
     pub head: Query,
-    // BACKREF: alias into self.head.next chain
-    pub(crate) tail: Option<NonNull<Query>>,
 
     // OR
     pub next: Option<Box<List>>,
 }
-
-// SAFETY: `tail` is a self-referential backref into the `head.next` chain owned
-// by this `List` (see `and_range`); it never aliases data owned by another
-// thread, so the whole structure moves between threads as a unit (the lockfile
-// thread pool relies on this). Auto-`!Send` from `NonNull` is overly
-// conservative here.
-unsafe impl Send for List {}
-// SAFETY: `tail` is only dereferenced through `&mut self` (see `and_range`);
-// `&List` exposes no unsynchronized interior mutability.
-unsafe impl Sync for List {}
 
 impl Drop for List {
     fn drop(&mut self) {
@@ -195,34 +182,15 @@ impl Clone for List {
     fn clone(&self) -> Self {
         let mut out = List {
             head: self.head.clone(),
-            tail: None,
             next: None,
         };
-        if out.head.next.is_some() {
-            let mut tail = NonNull::from(&mut out.head);
-            // SAFETY: `tail` walks `out.head`'s exclusively-owned Box chain.
-            while let Some(next) = unsafe { tail.as_mut() }.next.as_deref_mut() {
-                tail = NonNull::from(next);
-            }
-            out.tail = Some(tail);
-        }
-
         let mut src = &self.next;
         let mut dst = &mut out.next;
         while let Some(node) = src {
             let slot = dst.insert(Box::new(List {
                 head: node.head.clone(),
-                tail: None,
                 next: None,
             }));
-            if slot.head.next.is_some() {
-                let mut tail = NonNull::from(&mut slot.head);
-                // SAFETY: `tail` walks `slot.head`'s exclusively-owned Box chain.
-                while let Some(next) = unsafe { tail.as_mut() }.next.as_deref_mut() {
-                    tail = NonNull::from(next);
-                }
-                slot.tail = Some(tail);
-            }
             src = &node.next;
             dst = &mut slot.next;
         }
@@ -320,28 +288,81 @@ impl List {
             rhs = rhs_next;
         }
     }
+}
 
-    pub(crate) fn and_range(&mut self, range: &Range) -> Result<(), AllocError> {
-        if !self.head.range.has_left() && !self.head.range.has_right() {
-            self.head.range = *range;
-            return Ok(());
+/// The end of a `Group` that is being built: where the next comparator goes.
+enum Appender<'a> {
+    /// The group is one comparator so far.
+    Head(&'a mut List),
+    Chain {
+        /// Of the first comparator of the last alternative.
+        head_range: &'a mut Range,
+        /// After the last comparator of the last alternative.
+        and_slot: &'a mut Option<Box<Query>>,
+        /// After the last alternative.
+        or_slot: &'a mut Option<Box<List>>,
+    },
+}
+
+impl<'a> Appender<'a> {
+    fn head_range(&mut self) -> &mut Range {
+        match self {
+            Appender::Head(list) => &mut list.head.range,
+            Appender::Chain { head_range, .. } => head_range,
         }
+    }
 
-        let mut tail = Box::new(Query {
+    /// One more comparator for the last alternative. An empty alternative takes `range` in place.
+    fn and_range(mut self, range: &Range) -> Self {
+        let head = self.head_range();
+        if !head.has_left() && !head.has_right() {
+            *head = *range;
+            return self;
+        }
+        let (head_range, and_slot, or_slot) = match self {
+            Appender::Head(List { head, next }) => (&mut head.range, &mut head.next, next),
+            Appender::Chain {
+                head_range,
+                and_slot,
+                or_slot,
+            } => (head_range, and_slot, or_slot),
+        };
+        let query = and_slot.insert(Box::new(Query {
             range: *range,
             next: None,
-        });
+        }));
+        Appender::Chain {
+            head_range,
+            and_slot: &mut query.next,
+            or_slot,
+        }
+    }
 
-        let tail_ptr = NonNull::from(&mut *tail);
-
-        let last_tail: &mut Query = match self.tail {
-            // SAFETY: self.tail aliases a Query owned by self.head.next chain; we hold &mut self.
-            Some(mut p) => unsafe { p.as_mut() },
-            None => &mut self.head,
+    /// One more alternative. A group of one comparator without a left side takes `range` in place.
+    #[inline] // `Group::any_of` is generic: without this, other crates call an exported copy.
+    fn or_range(mut self, range: &Range) -> Self {
+        if let Appender::Head(list) = &mut self
+            && !list.head.range.has_left()
+        {
+            list.head.range = *range;
+            return self;
+        }
+        let or_slot = match self {
+            Appender::Head(list) => &mut list.next,
+            Appender::Chain { or_slot, .. } => or_slot,
         };
-        last_tail.next = Some(tail);
-        self.tail = Some(tail_ptr);
-        Ok(())
+        let list = or_slot.insert(Box::new(List {
+            head: Query {
+                range: *range,
+                next: None,
+            },
+            next: None,
+        }));
+        Appender::Chain {
+            head_range: &mut list.head.range,
+            and_slot: &mut list.head.next,
+            or_slot: &mut list.next,
+        }
     }
 }
 
@@ -354,57 +375,29 @@ impl Flags {
     pub(crate) const SKIPPED: usize = 2;
 }
 
+#[derive(Clone)]
 pub struct Group {
     pub head: List,
-    // BACKREF: alias into self.head.next chain
-    pub(crate) tail: Option<NonNull<List>>,
     /// Borrowed view into the caller's source buffer.
     /// Stored as a raw fat pointer
     /// (parser-owned, never freed) so `Group` carries no lifetime parameter and
     /// can be embedded in lockfile types (`NpmInfo`). Only dereferenced in
-    /// `json_stringify`; caller must keep the source buffer alive for that call.
+    /// an `unsafe` block of the caller, who must keep the source buffer alive for it.
     pub input: *const [u8],
 
     pub flags: FlagsBitSet,
 }
 
-// SAFETY: `tail` is a self-referential backref into the `head.next` chain owned
-// by this `Group` (see `or_version`); `input` is a lifetime-erased borrow into
-// the caller's source buffer and is
-// only dereferenced under the same single-thread parse/stringify call. Neither
-// pointer aliases data owned by another thread, so the whole structure moves
-// between threads as a unit (the lockfile/resolver thread pool relies on this);
-// auto-`!Send` from `NonNull`/`*const` is overly conservative here.
+// SAFETY: `input` is the only field that is not `Send`. This crate never dereferences
+// it. A reader does so in its own `unsafe` block and answers for the buffer there.
 unsafe impl Send for Group {}
-// SAFETY: `tail` is only dereferenced through `&mut self` and `input` points
-// to immutable bytes; `&Group` exposes no unsynchronized interior mutability.
+// SAFETY: as for `Send`. `&Group` has no interior mutability.
 unsafe impl Sync for Group {}
-
-impl Clone for Group {
-    fn clone(&self) -> Self {
-        let mut out = Group {
-            head: self.head.clone(),
-            tail: None,
-            input: self.input,
-            flags: self.flags,
-        };
-        if out.head.next.is_some() {
-            let mut tail = NonNull::from(&mut out.head);
-            // SAFETY: `tail` walks `out.head`'s exclusively-owned Box chain.
-            while let Some(next) = unsafe { tail.as_mut() }.next.as_deref_mut() {
-                tail = NonNull::from(next);
-            }
-            out.tail = Some(tail);
-        }
-        out
-    }
-}
 
 impl Default for Group {
     fn default() -> Self {
         Self {
             head: List::default(),
-            tail: None,
             input: std::ptr::from_ref::<[u8]>(b""),
             flags: FlagsBitSet::init_empty(),
         }
@@ -420,11 +413,12 @@ impl<'a> fmt::Display for GroupFormatter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let this = self.group;
 
-        if this.tail.is_none() && this.head.tail.is_none() && !this.head.head.range.has_left() {
+        let one_node = this.head.next.is_none() && this.head.head.next.is_none();
+        if one_node && !this.head.head.range.has_left() {
             return Ok(());
         }
 
-        if this.tail.is_none() && this.head.tail.is_none() {
+        if one_node {
             return write!(f, "{}", this.head.fmt(self.buf));
         }
 
@@ -463,7 +457,6 @@ impl Group {
                     },
                     next: None,
                 },
-                tail: None,
                 next: None,
             },
             ..Default::default()
@@ -507,34 +500,14 @@ impl Group {
         self.head.eql(&rhs.head)
     }
 
-    pub(crate) fn and_range(&mut self, range: &Range) -> Result<(), AllocError> {
-        let tail: &mut List = match self.tail {
-            // SAFETY: self.tail aliases a List owned by self.head.next chain; we hold &mut self.
-            Some(mut p) => unsafe { p.as_mut() },
-            None => &mut self.head,
-        };
-        tail.and_range(range)
-    }
-
-    pub fn or_range(&mut self, range: &Range) -> Result<(), AllocError> {
-        if self.tail.is_none() && self.head.tail.is_none() && !self.head.head.range.has_left() {
-            self.head.head.range = *range;
-            return Ok(());
+    /// `a || b || ..`
+    pub fn any_of(ranges: impl IntoIterator<Item = Range>) -> Group {
+        let mut group = Group::default();
+        let mut end = Appender::Head(&mut group.head);
+        for range in ranges {
+            end = end.or_range(&range);
         }
-
-        let mut new_tail = Box::new(List::default());
-        new_tail.head.range = *range;
-
-        let new_tail_ptr = NonNull::from(&mut *new_tail);
-
-        let prev_tail: &mut List = match self.tail {
-            // SAFETY: self.tail aliases a List owned by self.head.next chain; we hold &mut self.
-            Some(mut p) => unsafe { p.as_mut() },
-            None => &mut self.head,
-        };
-        prev_tail.next = Some(new_tail);
-        self.tail = Some(new_tail_ptr);
-        Ok(())
+        group
     }
 
     #[inline]
@@ -779,9 +752,9 @@ fn parse_with(input: &[u8], sliced: SlicedString, floor: Tag) -> Result<Group, A
     let mut list = Group {
         input: std::ptr::from_ref::<[u8]>(input),
         head: List::default(),
-        tail: None,
         flags: FlagsBitSet::init_empty(),
     };
+    let mut end = Appender::Head(&mut list.head);
 
     let mut token = Token::default();
 
@@ -1014,11 +987,11 @@ fn parse_with(input: &[u8], sliced: SlicedString, floor: Tag) -> Result<Group, A
                 token.to_range(&parse_result, floor)
             };
 
-            if is_or {
-                list.or_range(&range)?;
+            end = if is_or {
+                end.or_range(&range)
             } else {
-                list.and_range(&range)?;
-            }
+                end.and_range(&range)
+            };
 
             is_or = false;
             token.wildcard = Wildcard::None;
@@ -1031,8 +1004,93 @@ fn parse_with(input: &[u8], sliced: SlicedString, floor: Tag) -> Result<Group, A
 
 #[cfg(test)]
 mod tests {
-    use super::parse;
-    use crate::SlicedString;
+    use super::{Group, parse};
+    use crate::{Range, SlicedString, Version};
+
+    fn group(text: &str) -> Group {
+        let bytes = text.as_bytes();
+        parse(bytes, SlicedString::init(bytes, bytes)).unwrap()
+    }
+
+    /// The major of the left side of each comparator, `_` where there is none: `1 2 || _ || 3`.
+    fn shape(group: &Group) -> String {
+        let alternatives = core::iter::successors(Some(&group.head), |list| list.next.as_deref());
+        let comparators = |list: &super::List| {
+            core::iter::successors(Some(&list.head), |query| query.next.as_deref())
+                .map(|query| match query.range.has_left() {
+                    true => query.range.left.version.major.to_string(),
+                    false => "_".to_owned(),
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        let alternatives: Vec<_> = alternatives.map(comparators).collect();
+        alternatives.join(" || ")
+    }
+
+    fn caret(major: u64) -> Range {
+        Range::caret(Version {
+            major,
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn chains_are_in_input_order() {
+        let cases = [
+            ("", "_"),
+            ("1.0.0", "1"),
+            ("1.0.0 || 2.0.0", "1 || 2"),
+            ("1.0.0 || 2.0.0 || 3.0.0", "1 || 2 || 3"),
+            (">=1.0.0 <2.0.0", "1 2"),
+            (">1.0.0 >2.0.0 >3.0.0", "1 2 3"),
+            ("1.0.0 || >2.0.0 >3.0.0", "1 || 2 3"),
+            (">1.0.0 >2.0.0 || 3.0.0", "1 2 || 3"),
+            ("1.0.0 - 2.0.0 || 3.0.0 - 4.0.0 >5.0.0", "1 || 3 5"),
+            (
+                ">=1.0.0 <2.0.0 <3.0.0 || >4.0.0 >5.0.0 >6.0.0 || 7.0.0",
+                "1 2 3 || 4 5 6 || 7",
+            ),
+            ("1.0.0 || latest || 3.0.0", "1 || 3"),
+            // `^latest` is a comparator without a left side. A group of only that takes the next alternative in its place,
+            ("^latest || 3.0.0", "3"),
+            // and an alternative of only that takes the next comparator in its place.
+            ("1.0.0 || ^latest >3.0.0", "1 || 3"),
+            // Anywhere else it stays.
+            (">1.0.0 ^latest >3.0.0", "1 _ 3"),
+            ("1.0.0 || >2.0.0 ^latest >3.0.0", "1 || 2 _ 3"),
+            ("1.0.0 || ^latest || 3.0.0", "1 || _ || 3"),
+            (">1.0.0 >2.0.0 || ^latest || 3.0.0", "1 2 || _ || 3"),
+            // A number that is too large makes the whole range `<0.0.0-0`.
+            ("1.0.0 || 2.0.0 || 99999999999999999999999999", "0"),
+        ];
+        for (text, expected) in cases {
+            assert_eq!(shape(&group(text)), expected, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn a_clone_is_independent() {
+        let original = group(">=1.0.0 <2.0.0 <3.0.0 || >4.0.0 >5.0.0 >6.0.0 || 7.0.0");
+        let copy = original.clone();
+        assert!(copy.eql(&original));
+        drop(original);
+        assert_eq!(shape(&copy), "1 2 3 || 4 5 6 || 7");
+    }
+
+    #[test]
+    fn any_of_is_one_alternative_per_range() {
+        assert!(Group::any_of([]).is_empty());
+        for n in 1..=4 {
+            let text = (1..=n).map(|major| format!("^{major}.0.0"));
+            let text = text.collect::<Vec<_>>().join(" || ");
+            let built = Group::any_of((1..=n).map(caret));
+            assert!(built.eql(&group(&text)), "{text:?}");
+        }
+        let [a, b, none] = [caret(1), caret(2), Range::default()];
+        assert_eq!(shape(&Group::any_of([none, a, b])), "1 || 2");
+        assert_eq!(shape(&Group::any_of([a, none, b])), "1 || _ || 2");
+    }
 
     #[test]
     fn has_skipped() {

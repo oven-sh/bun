@@ -51,6 +51,8 @@ pub(crate) mod shell;
 // cycle the `bun_bun_js` shims were papering over.
 #[path = "api.rs"]
 pub(crate) mod api;
+pub(crate) mod checker_queries_testing;
+pub(crate) mod code_resolver_testing;
 pub(crate) mod dispatch;
 pub(crate) mod hw_exports;
 #[cfg(debug_assertions)]
@@ -62,6 +64,7 @@ pub(crate) mod jsc_hooks;
 pub(crate) mod json_line_buffer;
 pub(crate) mod linear_fifo_testing;
 pub(crate) mod napi;
+pub(crate) mod removed_feature;
 #[path = "../bun.js.rs"]
 pub(crate) mod run_main;
 pub(crate) mod timer;
@@ -70,7 +73,6 @@ pub(crate) mod timer;
 use {bun_css_jsc as _, bun_install_jsc as _, bun_patch_jsc as _, bun_semver_jsc as _};
 pub(crate) mod generated_bindgen; // include!()s ${BUN_CODEGEN_DIR}/generated_bindgen_bun_runtime.rs
 pub(crate) mod generated_host_exports; // include!()s ${BUN_CODEGEN_DIR}/generated_host_exports.rs
-pub(crate) mod generated_jssink; // include!()s ${BUN_CODEGEN_DIR}/generated_jssink.rs
 
 pub(crate) mod dns_jsc;
 pub(crate) mod image;

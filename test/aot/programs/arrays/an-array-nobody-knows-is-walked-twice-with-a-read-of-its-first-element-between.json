@@ -1,0 +1,1 @@
+{ "build": ["--aot-verify-each-pass"] }

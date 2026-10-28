@@ -1387,9 +1387,7 @@ pub(crate) unsafe extern "C" fn uv_queue_work(
         (&raw mut (*req).state).write(AtomicU32::new(WorkState::Queued as u32));
     }
     // SAFETY: the loop is alive (fn contract), and this is the JS thread.
-    let cx = unsafe { loop_ref.as_ref() }
-        .global()
-        .js_thread_of_caller_no_frame();
+    let cx = unsafe { loop_ref.as_ref() }.global().js_thread_of_caller();
     // SAFETY: the request outlives the job (fn contract, see `UvWorkJob`).
     Job::<UvWorkJob>::schedule(&cx, unsafe { JsPtr::new(req_ref) }, ());
     0

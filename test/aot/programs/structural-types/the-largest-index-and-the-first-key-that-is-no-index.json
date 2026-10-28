@@ -1,0 +1,7 @@
+{
+  "skipInVariant": {
+    "validate": "push on an array of length 4294967295 adds a named property, which the table of built-ins leaves unsaid on purpose: to say it would make every push write named properties",
+    "validate-collecting": "push on an array of length 4294967295 adds a named property, which the table of built-ins leaves unsaid on purpose: to say it would make every push write named properties",
+    "validated": "push on an array of length 4294967295 adds a named property, which the table of built-ins leaves unsaid on purpose: to say it would make every push write named properties"
+  }
+}

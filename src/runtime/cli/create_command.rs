@@ -4,6 +4,7 @@ use std::io::Write as _;
 
 use crate::api::bun_process::Status;
 use crate::api::bun_process::sync as spawn_sync;
+use bun_archive::{Archiver, archiver};
 use bun_clap as clap;
 use bun_core::Progress::{Node as ProgressNode, Progress};
 use bun_core::{Global, Output, pretty_error, pretty_errorln};
@@ -11,7 +12,6 @@ use bun_core::{MutableString, strings};
 use bun_dotenv as DotEnv;
 use bun_http as HTTP;
 use bun_js_printer as JSPrinter;
-use bun_libarchive::{Archiver, archiver};
 use bun_parsers::json as JSON;
 use bun_paths::{OSPathSlice, PathBuffer};
 use bun_resolver::fs;
@@ -549,8 +549,8 @@ impl CreateCommand {
                     struct OverwriteListAppender {
                         buf: Vec<u8>,
                     }
-                    impl bun_libarchive::ArchiveAppender for OverwriteListAppender {
-                        fn append(&mut self, path: &[u8]) -> Result<&[u8], bun_libarchive::Error> {
+                    impl bun_archive::ArchiveAppender for OverwriteListAppender {
+                        fn append(&mut self, path: &[u8]) -> Result<&[u8], bun_archive::Error> {
                             self.buf.clear();
                             self.buf.extend_from_slice(path);
                             Ok(&self.buf)

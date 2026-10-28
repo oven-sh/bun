@@ -1,0 +1,1 @@
+{ "build": ["--aot-limit=MaxOptimizationRounds:0", "--aot-verify-each-pass"] }

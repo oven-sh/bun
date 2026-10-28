@@ -1,0 +1,18 @@
+//// built-ins-entries/e1.ts
+// Built ins entries, one probe of many. It prints what plain Bun prints.
+type Props = Record<string, unknown>;
+let sink = 0;
+function applyProp(node: { n: number }, key: string, value: unknown) { node.n += key.length + (typeof value === "number" ? value : 1); }
+function applyAll(node: { n: number }, props: Props) {
+  for (const [key, value] of Object.entries(props)) {
+    applyProp(node, key, value);
+  }
+}
+function findIn(block: Record<string, number>, key: string) {
+  return Object.entries(block).find(([k]) => k === key)?.[1];
+}
+const rounds = Number(process.argv[2] ?? 1000);
+const node = { n: 0 };
+const many: Props[] = [{ a: 1, b: "x", c: 3 }, { style: { x: 1 }, children: "t", key: 4, d: 5 }, JSON.parse('{"p":1,"q":2,"r":3,"s":4,"t":5}')];
+for (let i = 0; i < rounds; i++) { applyAll(node, many[i % 3]); sink += findIn({ a: 1, b: 2, c: i }, "c") ?? 0; }
+console.log(node.n, sink);

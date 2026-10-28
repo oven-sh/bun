@@ -1,0 +1,7 @@
+require of JSON: {"a":[1,"b"]}
+require of TOML: {"a":1}
+require of text: {"default":"text"}
+require of a page: refused, MODULE_NOT_FOUND
+import of JSON: {"a":[1,"b"]}
+import of a page: refused, ERR_MODULE_NOT_FOUND
+import of a database: refused, ERR_MODULE_NOT_FOUND

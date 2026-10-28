@@ -1,0 +1,7 @@
+{
+  "skipInShell": "it uses what Bun provides and the jsc shell does not: Bun.gc",
+  "skipInVariant": {
+    "collections-at-allocations": "a collection between the registrations and the wait finds the registry alive, and its callbacks run"
+  },
+  "alone": "it measures time, memory or what is collected, and that hangs on what the compiler knows about the whole executable"
+}

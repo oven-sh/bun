@@ -1,0 +1,3073 @@
+////: check
+function check(row: Row, subject: string) {
+  const expected = first(subject, row.holds, 0);
+  const found = row.pattern.exec(subject);
+  checked++;
+  if ((found ? found.index : -1) !== expected || (found !== null && (found[0] !== subject[expected] || found.length !== 1)) || row.pattern.test(subject) !== expected >= 0 || subject.search(row.pattern) !== expected)
+    wrong.push(`${row.pattern} ${JSON.stringify(subject)}: ${found ? found.index : -1} for ${expected}`);
+  const from = (subject.length * 7 + checked) % (subject.length + 1);
+  row.all.lastIndex = from;
+  const later = row.all.exec(subject);
+  const expectedLater = first(subject, row.holds, from);
+  if ((later ? later.index : -1) !== expectedLater || row.all.lastIndex !== (expectedLater < 0 ? 0 : expectedLater + 1)) wrong.push(`${row.all} ${JSON.stringify(subject)} from ${from}: ${later ? later.index : -1} for ${expectedLater}, lastIndex ${row.all.lastIndex}`);
+}
+////: edit
+function edit(regex, opt = "") {
+  let source = typeof regex === "string" ? regex : regex.source;
+  const obj = {
+    replace: (name, val) => {
+      let valSource = typeof val === "string" ? val : val.source;
+      valSource = valSource.replace(other.caret, "$1");
+      source = source.replace(name, valSource);
+      return obj;
+    },
+    getRegex: () => new RegExp(source, opt)
+  };
+  return obj;
+}
+////: lines
+try {
+  afterThrow = new RegExp("ne+ver" + boom(true));
+} catch {
+  afterThrow = new RegExp("afterthro+w");
+} finally {
+  inFinally = new RegExp("infina+lly");
+}
+////: lines-28
+function «1»(s: string): string {
+  const o = { x: 0 };
+  const re = /a/«2»;
+  (re as any).lastIndex = { valueOf: () => ((o.x = 2), 0) };
+  o.x = 1;
+  const result = s.«3»(re, "b");
+  return `${o.x} ${result}`;
+}
+////: lines-29
+function «1»(s: string): string {
+  const o = { x: 0 };
+  const re = /a/y;
+  (re as any).lastIndex = { valueOf: () => ((o.x = 2), 0) };
+  o.x = 1;
+  const result = s.«2»(re);
+  return `${o.x} ${JSON.stringify(result)}`;
+}
+////: lines-42
+function «1»(s: string): string {
+  const o = { x: 0 };
+  const re = /a/y;
+  (re as any).lastIndex = { valueOf: () => ((o.x = 2), 0) };
+  o.x = 1;
+  const result = s.«2»);
+  return `${o.x} ${result}`;
+}
+////: memo
+function memo(build) {
+  const cache = [];
+  return (indent) => {
+    const i = Math.max(0, Math.min(3, indent - 1));
+    return cache[i] ||= build(i);
+  };
+}
+////: rows
+const rows: Row[] = [
+  { pattern: /["'&<>]/, all: /["'&<>]/g, holds: inText("\"'&<>") },
+  { pattern: /[*?]/, all: /[*?]/g, holds: inText("*?") },
+  { pattern: /\d/, all: /\d/g, holds: code => code >= 48 && code <= 57 },
+  { pattern: /[A-Z]/, all: /[A-Z]/g, holds: code => code >= 65 && code <= 90 },
+  { pattern: /[a-z_]/, all: /[a-z_]/g, holds: code => (code >= 97 && code <= 122) || code === 95 },
+  { pattern: /[0-9A-Fa-f]/, all: /[0-9A-Fa-f]/g, holds: code => (code >= 48 && code <= 57) || (code >= 65 && code <= 70) || (code >= 97 && code <= 102) },
+  { pattern: /\w/, all: /\w/g, holds: code => (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || code === 95 },
+  { pattern: /[\x00-\x1f<\x7f]/, all: /[\x00-\x1f<\x7f]/g, holds: code => code <= 31 || code === 60 || code === 127 },
+  { pattern: /[^\t\x20-\x7e\x80-\xff]/, all: /[^\t\x20-\x7e\x80-\xff]/g, holds: code => code > 255 || (code !== 9 && (code < 32 || code === 127)) },
+  { pattern: /[^\x20-\x7e]/, all: /[^\x20-\x7e]/g, holds: code => code < 32 || code > 126 },
+  { pattern: /[^a-z]/, all: /[^a-z]/g, holds: code => code < 97 || code > 122 },
+  { pattern: /[^ ]/, all: /[^ ]/g, holds: code => code !== 32 },
+  { pattern: /\W/, all: /\W/g, holds: code => !((code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || code === 95) },
+  { pattern: /\D/, all: /\D/g, holds: code => code < 48 || code > 57 },
+  { pattern: /[\x80-\xff]/, all: /[\x80-\xff]/g, holds: code => code >= 128 && code <= 255 },
+  { pattern: /[^\x00-\x7f]/, all: /[^\x00-\x7f]/g, holds: code => code > 127 },
+  { pattern: /[\xe0-\xef]/, all: /[\xe0-\xef]/g, holds: code => code >= 0xe0 && code <= 0xef },
+  { pattern: /[a\xe9]/, all: /[a\xe9]/g, holds: code => code === 97 || code === 0xe9 },
+  { pattern: /\s/, all: /\s/g, holds: code => (code >= 9 && code <= 13) || code === 32 || code === 160 || code === 0x2028 },
+  { pattern: /[k]/i, all: /[k]/gi, holds: code => code === 75 || code === 107 },
+  { pattern: /[q-s]/i, all: /[q-s]/gi, holds: code => (code >= 81 && code <= 83) || (code >= 113 && code <= 115) },
+  { pattern: /[@\x00]/, all: /[@\x00]/g, holds: code => code === 64 || code === 0 },
+  { pattern: /[?\x7f]/u, all: /[?\x7f]/gu, holds: code => code === 63 || code === 127 },
+];
+//// regexp-run-time-pattern-gives-up.ts
+// Patterns built at run time that backtrack past the flat program's step limit, so the bytecode interpreter finishes the match, before and after their code is purged.
+const collect: () => void = (globalThis as any).gc ?? (() => Bun.gc(true));
+const tail = Date.now() < 0 ? "x" : "";
+
+const patterns: [string, string][] = [
+  ["(a|aa)+b", ""],
+  ["(x*)*y", ""],
+  ["(?:x+x+)+y", ""],
+  ["^(\\w+\\s?)*$", ""],
+  ["[a-z]+\\d*", ""],
+  ["(\\d+)-(\\d+)", "g"],
+];
+const subjects = ["a".repeat(26) + "c", "x".repeat(19), "word ".repeat(5) + "!", "a1-22-333", ""];
+const expressions = patterns.map(([text, flags]) => new RegExp(text + tail, flags));
+
+function showMatches(round: number): void {
+  for (const expression of expressions) {
+    for (const subject of subjects) {
+      const match = JSON.stringify(subject.match(expression));
+      const test = expression.test(subject);
+      const index = subject.search(expression);
+      console.log(`${round} ${expression} ${subject.length}: ${match} ${test} ${index}`);
+    }
+  }
+}
+
+function matchOtherPatterns(count: number): number {
+  let matched = 0;
+  for (let i = 0; i < count; i++) {
+    if (new RegExp("k" + i + "[a-z]+" + tail).test("k" + i + "word")) matched++;
+  }
+  return matched;
+}
+
+showMatches(1);
+showMatches(2);
+console.log(matchOtherPatterns(300));
+collect();
+collect();
+showMatches(3);
+
+export {};
+//// regexp-single-class-patterns.ts
+// A pattern that is one class of characters finds the first such character from wherever it is asked to begin, in subjects of every length, with the character at every place.
+type Row = { pattern: RegExp; all: RegExp; holds: (code: number) => boolean };
+const inText = (text: string) => (code: number) => text.includes(String.fromCharCode(code));
+////= rows
+const fillers = ["a", " ", "Z", "5", "\x01", "\xa0", "\xfc", "\x7f", "~", "@", "?", "\x80"];
+const marks = ['"', "<", "*", "7", "Q", "_", "f", "\x03", "\x7f", "\t", " ", "a", "\x80", "\xe3", "\xe9", "\xff", "\xa0", "k", "S", "@", "\x00", "?", "\xbf", "\xc0"];
+let checked = 0;
+const wrong: string[] = [];
+function first(subject: string, holds: (code: number) => boolean, from: number) {
+  for (let at = from; at < subject.length; at++) if (holds(subject.charCodeAt(at))) return at;
+  return -1;
+}
+////= check
+for (const row of rows) {
+  for (const filler of fillers) {
+    for (let length = 0; length <= 84; length += length < 40 ? 1 : 11) {
+      const plain = filler.repeat(length);
+      check(row, plain);
+      for (let at = 0; at < length; at += at < 36 || at > length - 19 ? 1 : 5) {
+        for (const mark of marks) {
+          if (!row.holds(mark.charCodeAt(0)) && (at + length) % 5) continue;
+          check(row, plain.slice(0, at) + mark + plain.slice(at + 1));
+        }
+      }
+    }
+  }
+}
+console.log(checked, wrong.length, wrong.slice(0, 8).join("\n"));
+
+const text = ("The <b>quick</b> brown fox & the \"lazy\" dog's tail; 12 of 345 \xe9t\xe9s\t".repeat(5) + "plain words without any of them on and on and on for a while longer than a block or two").repeat(2);
+for (const row of rows) {
+  const places: number[] = [];
+  for (const match of text.matchAll(row.all)) places.push(match.index);
+  console.log(String(row.all), places.length, places.slice(0, 5).join(), places.slice(-3).join(), text.replace(row.all, "").length, text.split(row.pattern).length, text.replace(row.pattern, "[$&]").slice(0, 12), (text + "\u4e2d").search(row.pattern), ("\u4e2d" + text).replace(row.all, "").length);
+}
+console.log(RegExp.lastMatch.length, /["'&<>]/.exec("a<b")!.input, RegExp.leftContext, RegExp.rightContext, /[*?]/y.test("a*"), /[*?]/y.test("*a"), /([*?])/.exec("a?")![1]);
+//// regexp-single-class-patterns-16-bit.ts
+// A pattern that is one class of characters, over 16-bit subjects: it finds the first such character from wherever it is asked to begin, in subjects of every length, with the character at every place.
+type Row = { pattern: RegExp; all: RegExp; holds: (code: number) => boolean };
+const inText = (text: string) => (code: number) => text.includes(String.fromCharCode(code));
+////= rows
+const fillers = ["\u4e2d", "\u0100", "\u8000", "\uffff", "\u0141", "\u2261", "\u013f", "\u0180"];
+const narrowFillers = ["a", " ", "5", "\x01", "\xfc", "~"];
+const marks = ['"', "<", "*", "7", "Q", "_", "f", "\x03", "\x7f", "\t", " ", "a", "\x80", "\xe3", "\xe9", "\xff", "\xa0", "k", "S", "@", "\x00", "?", "\xbf", "\xc0", "\u0122", "\u013c", "\u8022", "\uff3c", "\u0400"];
+let checked = 0;
+const wrong: string[] = [];
+function first(subject: string, holds: (code: number) => boolean, from: number) {
+  for (let at = from; at < subject.length; at++) if (holds(subject.charCodeAt(at))) return at;
+  return -1;
+}
+////= check
+for (const row of rows) {
+  for (const filler of narrowFillers) {
+    for (let length = 1; length <= 60; length += length < 36 ? 1 : 7) {
+      for (const wide of ["\u4e2d", "\u0122"]) {
+        for (const at of [0, length >> 1, length - 1]) check(row, filler.repeat(at) + wide + filler.repeat(length - at - 1));
+        check(row, filler.repeat(length) + "<7Q" + wide);
+      }
+    }
+  }
+  for (const filler of fillers) {
+    for (let length = 0; length <= 84; length += length < 40 ? 1 : 11) {
+      const plain = filler.repeat(length);
+      check(row, plain);
+      for (let at = 0; at < length; at += at < 36 || at > length - 19 ? 1 : 5) {
+        for (const mark of marks) {
+          if (!row.holds(mark.charCodeAt(0)) && (at + length) % 5) continue;
+          check(row, plain.slice(0, at) + mark + plain.slice(at + 1));
+        }
+      }
+    }
+  }
+}
+console.log(checked, wrong.length, wrong.slice(0, 8).join("\n"));
+
+const text = ("The <b>quick</b> brown fox & the \"lazy\" dog's tail; 12 of 345 \xe9t\xe9s\t\u4e2d\u6587 ".repeat(5) + "plain words without any of them on and on and on for a while longer than a block or two\u2261").repeat(2);
+for (const row of rows) {
+  const places: number[] = [];
+  row.all.lastIndex = 0;
+  for (const match of text.matchAll(row.all)) places.push(match.index);
+  console.log(String(row.all), places.length, places.slice(0, 5).join(), places.slice(-3).join(), text.replace(row.all, "").length, text.split(row.pattern).length, JSON.stringify(text.replace(row.pattern, "[$&]").slice(0, 12)));
+}
+//// regexp-single-range-classes.ts
+// Character classes that are a single range, at both ends of the range and just outside it, in both string widths.
+export { };
+////= escape
+const subjects: string[] = ["", "a", "z", "`", "{", "m5", "5m", "/", ":", "0", "9", "abc", "ab1", "12-34", "12-3x", "Hello World", "ABC", "a`z{", "@[", "ab", "a a", "~ !", "\x00", "\x1f ", "\x7f\x80\xff", "\u4dff\u4e00\u9fff\ua000", "\u00ff\u0100", "\u03b0\u03b1a", "\u03c9z\u03ca", "\ud7ff\ud800", "\udfff\ue000", "\ud800\udc00", "a\u0161", "\u01305", "\uff411"];
+////= show-3	"\u2028"
+show(/[a-z]/);
+show(/[a-z]+/);
+show(/^[a-z]*$/);
+show(/[a-z]{3}/);
+show(/[a-z]+?[0-9]/);
+show(/\d/);
+show(/\d+/g);
+show(/^\d{2}-\d{2}$/);
+show(/[0-9][a-z]/);
+show(/[a-z][0-9]/);
+show(/([a-z])([0-9])?/);
+show(/[A-Z][a-z]*/g);
+show(/[\x00-\x1f]/);
+show(/[\x80-\xff]+/);
+show(/[!-~]+/);
+show(/[a-a]b/);
+show(/(?:[a-z]|[0-9])+/);
+show(/[a-z](?=[0-9])/);
+show(/(?<=[a-z])[0-9]/);
+show(/[a-z]\b/);
+show(/[a-z]/i);
+show(/[a-z]+/y);
+show(/[a-z]+/u);
+show(/\d+/u);
+show(/[\u4e00-\u9fff]+/);
+show(/[\u0100-\uffff]/);
+show(/[\u03b1-\u03c9][a-z]/);
+show(/[\ud800-\udfff]/);
+show(/[\u4e00-\u9fff]+/u);
+show(/[\u{10000}-\u{10ffff}]/u);
+//// regexp-space-and-word-classes.ts
+// \s, \S, \w, \W and \b on every character of the Basic Multilingual Plane, in subjects of 8-bit and of 16-bit characters, alone and side by side in one expression.
+export { };
+function ranges(members: number[]): string {
+    const parts: string[] = [];
+    for (let i = 0; i < members.length;) {
+        let j = i;
+        while (j + 1 < members.length && members[j + 1] === members[j] + 1) ++j;
+        parts.push(i === j ? members[i].toString(16) : members[i].toString(16) + "-" + members[j].toString(16));
+        i = j + 1;
+    }
+    return parts.join(" ");
+}
+function membersOf(r: RegExp, limit: number, suffix: string): number[] {
+    const members: number[] = [];
+    for (let c = 0; c < limit; ++c) {
+        if (r.test(String.fromCharCode(c) + suffix)) members.push(c);
+    }
+    return members;
+}
+const alone: RegExp[] = [/^\s/, /^\S/, /^\w/, /^\W/, /^[\s\w]/, /^[^\s\w]/, /^\s+$/, /^\w+$/, /^\w\b/, /^\W\B/, /^\w/i, /^\W/i, /^\s/i, /^[\w-]/, /^[\s,;]/, /^(?:\s|\w)/, /^(?!\s)(?!\w)/];
+for (const r of alone) {
+    console.log(String(r), "8-bit:", ranges(membersOf(r, 0x100, "")));
+    console.log(String(r), "the same characters in a 16-bit subject:", ranges(membersOf(r, 0x100, "\u0100")));
+    console.log(String(r), "16-bit:", ranges(membersOf(r, 0x10000, "")).length < 400 ? ranges(membersOf(r, 0x10000, "")) : "not " + ranges(membersOf(new RegExp("^(?!" + r.source.slice(1) + ")", r.flags), 0x10000, "")));
+}
+const subjects: string[] = [
+    "", "a b", " a_1  b-2\t", "\xa0x\xa0", "one two  three", "　中 文﻿", "a b c", "   ​  ", "kKſs", "x中_9 中", "tab\thereé été",
+];
+const together: RegExp[] = [/\s+/g, /\S+/g, /\w+/g, /\W+/g, /\w+\s+\w+/, /\s\w|\w\s/g, /(\w+)(\s*)(\W*)/g, /\b\w/g, /\B\S/g, /^\s*(\S.*\S|\S?)\s*$/, /[\w\s]+/g, /[^\w\s]+/g, /\s*,\s*|\s+/g, /\w+/gi, /\W+/gi];
+for (const r of together)
+    console.log(String(r), subjects.map((s: string): string => JSON.stringify(s.match(r))).join(" "));
+console.log(subjects.map((s: string): string => JSON.stringify(s.trim().split(/\s+/))).join(" "));
+console.log(subjects.map((s: string): string => JSON.stringify(s.replace(/\w/g, "w").replace(/\s/g, "_"))).join(" "));
+//// regexp-start-search-char-range.ts
+// Regular expressions that start with a character or a character range, searched in strings where the match begins at every position.
+declare const console: { log(...a: unknown[]): void }
+const runs: RegExp[] = [/ab?c/, /[a-f]x/, /a|bc|d/, /[0-9][0-9]x/, /[a-z]+@/, /[a-z][a-z][a-z]!/, /[A-Z]\d/, /[b-e]{2}z/, /[x-z]{3}/, /(?:a|b|c|d)q/, /[0-9a]:/, /[\x7e-\x82]y/, /[\x7f\x80\x81]y/, /[àáâ]x/, /[\xe0-\xe5]{2}/, /[一-丅]x/, /[乾-亂]x/, /[一丁丂]x/, /[a-c]|[d-f]g/, /[!-\/]{2}#/]
+const others: RegExp[] = [/[acegi]x/, /[a-cx-z]q/, /[a-f]x/i, /[0-9a-f]{2}:/, /[aeiou][aeiou]!/, /(?:a|c|e)q/, /[\x41\xc3\x45]y/, /ab/, /a|b/, /[ab]x/]
+const pieces: string[] = ["", "a", "b", "c", "d", "e", "f", "g", "q", "x", "y", "z", "!", "#", ":", "@", "0", "5", "9", "A", "Z", "`", "{", "~", "\x7f", "\x80", "\x81", "\x82", "\x83", "\xe0", "\xe1", "\xe2", "\xe5", "\xe6", "\xc3", "\xff",
+  "一", "丁", "丂", "丅", "丆", "乾", "亀", "亂", "亃", "乡", "š", "Ā", "ſ", "⁡", "ａ"]
+const subjects: string[] = []
+for (const p of pieces) for (const tail of ["x", "y", "q", "bc", "99x", "g", ":", "!", "#", "@", "zz", "c"]) { subjects.push(p + tail); subjects.push("....." + p + tail + "..."); subjects.push("`{~\x7f" + p + p + tail) }
+for (const p of ["abc", "ac", "fx", "bbz", "xyz", "12x", "me@", "abc!", "Q7", "dq", "a:", "7:", "cdg", "&&#"]) { subjects.push(p); subjects.push("一".repeat(3) + p); subjects.push("\xe9".repeat(40) + p); subjects.push("`".repeat(70) + p + "`"); subjects.push("{".repeat(17) + p.slice(0, -1)) }
+let sum = 0, hits = 0
+function note(s: string): void { for (let i = 0; i < s.length; i++) sum = (sum * 31 + s.charCodeAt(i)) | 0 }
+let number = 0
+for (const list of [runs, others]) for (const r of list) {
+  let found = 0, where = 0
+  for (const s of subjects) { const m = r.exec(s); if (m) { found++; where += m.index; hits++; note(m.index + ":" + m[0]) } else note("-"); note(String(s.search(r)) + r.test(s) + s.replace(r, "<$&>")) }
+  console.log((list === runs ? "run " : "other ") + number++, found, where)
+}
+console.log(runs.length, others.length, subjects.length, hits, sum)
+//// regexp-start-search-char-range-untyped.js
+// Regular expressions that start with a character or a character range, searched in strings where the match begins at every position (the same program without type annotations).
+const runs = [/ab?c/, /[a-f]x/, /a|bc|d/, /[0-9][0-9]x/, /[a-z]+@/, /[a-z][a-z][a-z]!/, /[A-Z]\d/, /[b-e]{2}z/, /[x-z]{3}/, /(?:a|b|c|d)q/, /[0-9a]:/, /[\x7e-\x82]y/, /[\x7f\x80\x81]y/, /[\u00E0\u00E1\u00E2]x/, /[\xe0-\xe5]{2}/, /[\u4E00-\u4E05]x/, /[\u4E7E-\u4E82]x/, /[\u4E00\u4E01\u4E02]x/, /[a-c]|[d-f]g/, /[!-\/]{2}#/];
+const others = [/[acegi]x/, /[a-cx-z]q/, /[a-f]x/i, /[0-9a-f]{2}:/, /[aeiou][aeiou]!/, /(?:a|c|e)q/, /[\x41\xc3\x45]y/, /ab/, /a|b/, /[ab]x/];
+const pieces = [
+  "",
+  "a",
+  "b",
+  "c",
+  "d",
+  "e",
+  "f",
+  "g",
+  "q",
+  "x",
+  "y",
+  "z",
+  "!",
+  "#",
+  ":",
+  "@",
+  "0",
+  "5",
+  "9",
+  "A",
+  "Z",
+  "`",
+  "{",
+  "~",
+  "\x7F",
+  "\x80",
+  "\x81",
+  "\x82",
+  "\x83",
+  "\xE0",
+  "\xE1",
+  "\xE2",
+  "\xE5",
+  "\xE6",
+  "\xC3",
+  "\xFF",
+  "\u4E00",
+  "\u4E01",
+  "\u4E02",
+  "\u4E05",
+  "\u4E06",
+  "\u4E7E",
+  "\u4E80",
+  "\u4E82",
+  "\u4E83",
+  "\u4E61",
+  "\u0161",
+  "\u0100",
+  "\u017F",
+  "\u2061",
+  "\uFF41"
+];
+const subjects = [];
+for (const p of pieces)
+  for (const tail of ["x", "y", "q", "bc", "99x", "g", ":", "!", "#", "@", "zz", "c"]) {
+    subjects.push(p + tail);
+    subjects.push("....." + p + tail + "...");
+    subjects.push("`{~\x7F" + p + p + tail);
+  }
+for (const p of ["abc", "ac", "fx", "bbz", "xyz", "12x", "me@", "abc!", "Q7", "dq", "a:", "7:", "cdg", "&&#"]) {
+  subjects.push(p);
+  subjects.push("\u4E00".repeat(3) + p);
+  subjects.push("\xE9".repeat(40) + p);
+  subjects.push("`".repeat(70) + p + "`");
+  subjects.push("{".repeat(17) + p.slice(0, -1));
+}
+let sum = 0;
+let hits = 0;
+function note(s) {
+  for (let i = 0;i < s.length; i++)
+    sum = sum * 31 + s.charCodeAt(i) | 0;
+}
+let number = 0;
+for (const list of [runs, others])
+  for (const r of list) {
+    let found = 0, where = 0;
+    for (const s of subjects) {
+      const m = r.exec(s);
+      if (m) {
+        found++;
+        where += m.index;
+        hits++;
+        note(m.index + ":" + m[0]);
+      } else
+        note("-");
+      note(String(s.search(r)) + r.test(s) + s.replace(r, "<$&>"));
+    }
+    console.log((list === runs ? "run " : "other ") + number++, found, where);
+  }
+console.log(runs.length, others.length, subjects.length, hits, sum);
+//// regexp-start-search-class-table.ts
+// Expressions that begin with (or soon reach) a class tested by a table: where the search for the next start finds them, and where it does not.
+export { };
+function hash(h: number, n: number): number { return (Math.imul(h, 31) + n) | 0; }
+////= escape
+const subjects: string[] = ["", " ", "x", "  x", "foo(bar, baz_1); $q = 42;", "12345", "   ", "a@b c.d-e@f-g", "--- ,x ;x", "aab bcc", "a_b aXb a1b", "\xe9_x \xe0x", "tail $", "0 1 2 a", "\t\n x\r\n"];
+function show(r: RegExp): void {
+    const parts: string[] = [];
+    for (const s of subjects) {
+        for (const subject of [s, s + "\u4e2d", "\u4e2d" + s]) {
+            r.lastIndex = 0;
+            const m = subject.match(r);
+            parts.push(m === null ? "-" : (m.index === undefined ? "" : m.index + ":") + m.map((c: string | undefined): string => c === undefined ? "~" : "<" + escape(c) + ">").join(""));
+        }
+    }
+    console.log(String(r), parts.join(" "));
+}
+show(/[a-zA-Z_$][\w$]*/g);
+show(/\s+/g);
+show(/[\w.-]+@[\w-]+/g);
+show(/[A-Za-z0-9_-]{3}/g);
+show(/[ \t,;]x/g);
+show(/[^a-zA-Z0-9\s]+/g);
+show(/a[a-zA-Z_$]b/g);
+show(/[a-zA-Z_$]/);
+show(/[a-zA-Z_$]$/);
+show(/[a-zA-Z_$](?=\()/g);
+show(/([a-zA-Z_$])\1/g);
+show(/[a-zA-Z_$]+?;/g);
+show(/[a-zA-Z_$]|[0-9]/g);
+show(/\b[a-zA-Z_$]/g);
+show(/[a-zA-Z_$]/y);
+show(/[a-zA-Z_$][0-9]/gi);
+show(/[aeiouAEIOU][^aeiouAEIOU\s]/g);
+show(/\w\W/g);
+show(/\W\w/g);
+show(/\s\S/g);
+show(/\S\s/g);
+show(/[\xa0-\xff_a-z]x/g);
+show(/..[a-zA-Z_$]/g);
+show(/[a-zA-Z_$]../gs);
+//// regexp-substring-subjects.ts
+const count: (name: string) => number = (globalThis as any).aotOperationCount ?? (() => 0);
+const names = ["operationAOTRegExpTest", "operationAOTRegExpTestBoxed", "operationAOTRegExpExec", "operationAOTStringMatchRegExp", "operationAOTStringReplaceRegExpString"];
+const entries = () => names.reduce((sum, name) => sum + count(name), 0);
+
+const narrow = "let total = 12 + -345 * x9 - 0x1f; // 678 done, 90";
+const wide = "\u4e2d\u6587 " + narrow + " \u7d42 12\u5186 \u03c0";
+const number = /^-?\d+$/;
+const word = /^([a-z]+)(\d*)$/;
+const digits = /\d+/g;
+function legacy() {
+  return [RegExp.lastMatch, RegExp.$1, RegExp.leftContext, RegExp.rightContext, RegExp.input].join("|");
+}
+function tokens(source: string) {
+  const lines: string[] = [];
+  let from = 0;
+  for (let to = 0; to <= source.length; to++) {
+    if (to < source.length && source[to] !== " ") continue;
+    if (to - from > 1) {
+      const token = source.slice(from, to);
+      const isNumber = number.test(token);
+      const seen = legacy();
+      const again = source.substring(from, to);
+      const found = word.exec(again);
+      const third = source.slice(from, to);
+      const matched = third.match(word);
+      const fourth = source.slice(from, to);
+      const replaced = fourth.replace(digits, "#");
+      lines.push(`${token} ${isNumber} [${seen}] ${JSON.stringify(found)} ${found?.index} ${found?.input === token} ${JSON.stringify(matched)} ${replaced} ${replaced === fourth} [${legacy()}]`);
+    }
+    from = to + 1;
+  }
+  return lines;
+}
+console.log(tokens(narrow).join("\n"));
+console.log(tokens(wide).join("\n"));
+
+const nested = narrow.slice(4, 40).slice(8, 20).slice(1);
+console.log(JSON.stringify(nested), /^\d/.test(nested), /x9$/.test(nested.slice(0, 10)), /(\d+)\D+(\d+)/.exec(nested.slice(1))?.join());
+const group = /= (.+);/.exec(narrow)![1];
+console.log(JSON.stringify(group), /^\d+ \+/.test(group), group.replace(/[a-z]\d/, "?"), group.match(/0x[0-9a-f]+$/)?.index);
+const joined = narrow.slice(0, 9) + narrow.slice(9, 14);
+console.log(number.test(joined), /total = 1$/.test(joined), /^let/.test(joined + "!"));
+
+const before = entries();
+let hits = 0;
+for (let i = 0; i < 4000; i++) {
+  const from = i % 20;
+  if (number.test(narrow.slice(from, from + 6))) hits++;
+  if (number.test(wide.slice(from, from + 7))) hits++;
+  if (word.exec(narrow.slice(from + 12, from + 15))) hits++;
+  if (narrow.slice(from, from + 3).match(/^\d\d\d$/)) hits++;
+  if (narrow.slice(0, from + 2).replace(/[A-Z]+/g, "") !== "") hits++;
+}
+console.log(hits, entries() - before < 1200 ? "few entries" : "MANY ENTRIES");
+//// regexp-unicode-classes-and-surrogate-pairs.ts
+// Regular expressions with the u or v flag whose classes reach beyond Latin-1, matched against ASCII, Latin-1, other BMP characters on both sides of the surrogates, surrogate pairs and lone surrogates.
+export { };
+////= escape
+const subjects: string[] = [
+    "", "a", "Z9_", "x y", "\xe9t\xe9", "\xff", "\u0100b", "\u03a9\u03c9", "\u4e2d\u6587x", "\ud7ff", "\ue000", "\uff41\uff21", "\uffff",
+    "\ud835\udc00", "a\ud835\udc00b", "\ud835\udc00\ud835\udc01", "\ud83d\ude00", "x\ud83d\ude00y", "\udbff\udfff", "\ud835", "\udc00", "\ud835a", "a\udc00", "\udc00\ud835", "\ud835\ud835\udc00", "\ud835\udc00\udc00",
+    "name(", "\u540d\u524d(", "\ud835\udc00_1(", "if x", "Hello World", "\u0391\u03b2\u03b3 \u0394", "abcdef\u03a9", "abcdef\ud835\udc00", "abcdef\ud83d\ude00", "a1_:", "\u4e2d1_:", "\ud835\udc00:",
+    "axb", "\u4e2dx\ud835\udc00", "\ud835\udc00x\u03a9", "\ud83d\ude00xa", "xay", "x\u4e2dy", "x\ud835\udc00y", "xy", "x\ud835y", "a\u03a9b", "a\ud835\udc00\ud835\udc01b", "7 ", "7\ud83d\ude00", "a7", "\ud835\udc007", "\u00e9t", "_1(", "abcdef ", "\u4e2dx",
+];
+function show(r: RegExp): void {
+    const parts: string[] = [];
+    for (const subject of subjects) {
+        for (const at of r.sticky || r.global ? [0, 1, 2] : [0]) {
+            r.lastIndex = at;
+            const m = subject.match(r.global ? new RegExp(r.source, r.flags.replace("g", "y")) : r);
+            r.lastIndex = at;
+            parts.push((m === null ? "-" : m.index + ":" + m.map((c: string | undefined): string => c === undefined ? "~" : "<" + escape(c) + ">").join("")) + (r.test(subject) ? "+" + r.lastIndex : ""));
+        }
+    }
+    console.log(String(r), parts.join(" "));
+}
+show(/\p{L}/u);
+show(/\p{L}+/u);
+show(/\p{L}*$/u);
+show(/^\p{L}+$/u);
+show(/\p{L}x\p{L}/u);
+show(/\p{L}{2}/u);
+show(/\p{L}{2,3}?./u);
+show(/\p{L}+?\P{L}/u);
+show(/\P{L}/u);
+show(/\P{L}+/u);
+show(/^\P{L}*$/u);
+show(/[^\p{L}]/u);
+show(/[^\p{L}\p{N}_]+/u);
+show(/[\p{L}\p{N}_]+:/u);
+show(/[\p{L}\p{N}_]+:/v);
+show(/[\p{L}\p{N}_]+:/iu);
+show(/[\p{L}\p{M}\p{N}\p{Pc}]+/gv);
+show(/[\p{L}\p{M}\p{N}\p{Pc}]+/yv);
+show(/\p{Lu}\p{Ll}+/gu);
+show(/\p{Lu}\p{Ll}*/giu);
+show(/(?=([\p{L}_][\p{L}\p{N}_]*))\1\(/v);
+show(/(?=(\p{L}+))\1(?!\p{N})/u);
+show(/(\p{L})(\p{L})?/u);
+show(/(?:\p{L}|\p{N})+/u);
+show(/(?:\p{Lu}|\p{Ll}\p{Ll})*$/u);
+show(/(?<=\p{L})\p{N}/u);
+show(/(?<!\p{L})\p{L}/gu);
+show(/\p{L}\b/u);
+show(/\b\p{L}+\b/giu);
+show(/abcdef\p{L}/u);
+show(/abcdef\P{L}/u);
+show(/x\p{L}?y/u);
+show(/x[^\p{L}]?y/u);
+show(/\p{ID_Start}\p{ID_Continue}*/gu);
+show(/\p{Emoji}/u);
+show(/\p{Script=Han}+/u);
+show(/\p{Script=Greek}+/gu);
+show(/[\p{L}\u{1F600}-\u{1F64F}]+/u);
+show(/[^\p{Lu}\u{10000}-\u{10FFFF}]+/u);
+show(/[\p{Ll}\u{E000}-\u{10FFFF}]+/u);
+show(/[\p{L}\ud800-\udbff]+/u);
+show(/[^\p{L}\udc00-\udfff]+/u);
+show(/[\u0100-\u017f\u0400-\u04ff\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7a3\u0590-\u05ff\u0600-\u06ff\u0900-\u097f\u0e00-\u0e7f]+/u);
+show(/[^\u0100-\u017f\u0400-\u04ff\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7a3\u0590-\u05ff\u0600-\u06ff\u0900-\u097f\u0e00-\u0e7f]+/u);
+show(/[a-z\u0100-\u017f\u0391-\u03a9\u0400-\u04ff\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7a3\uf900-\ufaff\uff00-\uffef\u{1D400}-\u{1D7FF}]+/u);
+show(/[^a-z\u0100-\u017f\u0391-\u03a9\u0400-\u04ff\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7a3\uf900-\ufaff\uff00-\uffef\u{1D400}-\u{1D7FF}]+/u);
+show(/[a-z]+/u);
+show(/[a-z\xe9]+\P{L}/u);
+show(/[^a-z]+/u);
+show(/\w+\s\w+/u);
+show(/\d\W/u);
+show(/a/u);
+show(/\xe9t/u);
+show(/\u4e2d\u6587?x/u);
+show(/\uffff|\ue000|\ud7ff/u);
+show(/\u{1D400}/u);
+show(/\u{1D400}+b?/u);
+show(/\ud835/u);
+show(/\udc00/u);
+show(/\ud835\udc00/u);
+show(/a\p{L}b/u);
+show(/_\d\(/u);
+show(/./gu);
+show(/.\p{L}/su);
+console.log(escape("a\ud835\udc00b \u4e2d\u6587 x1".replace(/\p{L}+/gu, "[$&]")), escape("a\ud83d\ude00b\ud83dc".split(/\P{L}/u).join("|")), [..."ab \u03a9\u03c9 \ud835\udc00\ud835\udc01".matchAll(/\p{L}/gu)].length);
+//// regexp-unicode-classes-at-subject-end.ts
+// Classes beyond Latin-1 under the u and v flags where the subject ends: at the last character, in the middle of what the expression still needs, and at a surrogate pair or half of one.
+export { };
+////= escape
+const subjects: string[] = ["", "a", "ab", "abc", "1", "a1", "1a", "a ", " a", "\u03a9", "a\u03a9", "\u03a9a", "\u4e2d\u6587", "\ud835\udc00", "a\ud835\udc00", "\ud835\udc00a", "\ud835\udc00\ud835\udc00", "\ud83d\ude00", "a\ud83d\ude00", "\ud83d\ude00a", "\ud835", "a\ud835", "\udc00", "a\udc00", "\ud835\udc00\ud835", "\ud835\ud835\udc00", "ab\u0100", "\u0100", "1\u0100", "\u0661", "a\u0661"];
+function show(r: RegExp): void {
+    const parts: string[] = [];
+    for (const subject of subjects) {
+        for (let at = 0; at <= (r.sticky || r.global ? subject.length : 0); ++at) {
+            r.lastIndex = at;
+            const found = r.test(subject);
+            const end = r.lastIndex;
+            r.lastIndex = at;
+            const m = r.global ? null : subject.match(r);
+            parts.push((found ? "+" + end : "-") + (m === null ? "" : m.index + ":" + m.map((c: string | undefined): string => c === undefined ? "~" : "<" + escape(c) + ">").join("")));
+        }
+    }
+    console.log(String(r), parts.join(" "));
+}
+show(/\p{L}/u);
+show(/a\p{L}/u);
+show(/\p{L}\p{L}/u);
+show(/\p{L}\p{L}\p{L}/u);
+show(/\p{L}+/u);
+show(/\p{L}+$/u);
+show(/\p{L}*$/u);
+show(/^\p{L}*$/u);
+show(/\p{L}*?\p{N}/u);
+show(/\p{L}+?\p{N}?$/u);
+show(/\p{L}{2}/u);
+show(/\p{L}{2,3}/u);
+show(/\p{L}?\p{L}/u);
+show(/[^\p{L}]/u);
+show(/a[^\p{L}]/u);
+show(/[^\p{L}][^\p{L}]/u);
+show(/[^\p{L}]+$/u);
+show(/[^\p{L}]*?a/u);
+show(/(?:\p{L}|\p{N})+/u);
+show(/(\p{L})(\p{L})?/u);
+show(/(?=\p{L})./u);
+show(/(?!\p{L})./su);
+show(/\p{L}/yu);
+show(/\p{L}+/yu);
+show(/[^\p{L}]/yu);
+show(/\p{L}\p{N}/gu);
+show(/\p{L}/v);
+show(/\p{L}+[^\p{L}]/v);
+show(/\p{L}(?:\p{L}|$)/u);
+show(/\p{L}\b/u);
+//// regexp-unicode-start-at-code-points.ts
+const face = "\u{1F600}";
+const subjects = ["X" + face + "Z", face, face + face, "a" + face, face + "a", "\uD83D", "\uDE00", "\uDE00\uD83D", "x\uD83Dy\uDE00z", "plain", "caf\xe9", "\u4e2d" + face + "\u6587", ""];
+const patterns = [/a?\B|q/u, /\B/u, /(?:)\B/v, /(?!\w)(?<!\w)/u, /[^\w]?\B/u, /$|\B/u, /(?<=[^])\B/u, /\B(.?)/u, /(\B)(\B)/v, /\b|\B/u, /[\uDE00]/u, /\uDE00/u, /(?=\uDE00)/u, /(?<=\uD83D)/u, /./u, /.$/u, /\B/, /a?\B|q/, /(?=\uDE00)/];
+function show(match: RegExpMatchArray | RegExpExecArray | null) {
+  return match ? `${JSON.stringify(match)}@${match.index}` : "null";
+}
+for (const pattern of patterns) {
+  const line: string[] = [];
+  for (const subject of subjects) line.push(`${show(pattern.exec(subject))} ${pattern.test(subject)} ${show(subject.match(pattern))} ${subject.search(pattern)} ${JSON.stringify(subject.replace(pattern, "<$&>"))} ${JSON.stringify(RegExp.lastMatch)}:${RegExp.leftContext.length}`);
+  console.log(String(pattern), line.join(" | "));
+}
+const whole = "ab" + face + "cd" + face;
+for (let from = 0; from < whole.length; from++) {
+  const slice = whole.slice(from);
+  console.log(from, show(/\B/u.exec(slice)), /\B/u.test(whole.slice(from)), show(whole.slice(from).match(/[^a-z]\B|\B[^a-z]/u)), show(/\B/.exec(whole.slice(from))));
+}
+let found = 0;
+for (let turn = 0; turn < 2000; turn++) {
+  if (/a?\B|q/u.test(subjects[0])) found++;
+  if (/a?\B|q/u.exec(subjects[0])) found++;
+  if (subjects[0].match(/a?\B|q/u)) found++;
+}
+console.log(found);
+//// regexp-untyped.js
+// RegExp literals, and the string methods that take a RegExp or a string (the same program without type annotations).
+const print = (s) => console.log(s);
+////= show-5
+export function literal() {
+  return /a+(b)?/gi;
+}
+export function constants() {
+  return new RegExp("a+(b)?", "gi");
+}
+export function fromSource(s) {
+  return new RegExp(s, "g");
+}
+export function fromBoth(s, f) {
+  return new RegExp(s, f);
+}
+////= lines-7	vowels	re	by	replace
+function replaced(s, re, by) {
+  return s.replace(re, by);
+}
+function cut(s, by) {
+  return s.split(by);
+}
+function matched(s, by) {
+  return s.match(by);
+}
+function searched(s, by) {
+  return s.search(by);
+}
+////= lines-7	shout	re	f	replace
+////= lines-7	swap	a	b	replace
+////= lines-3	words	s	re	s.split
+////= lines-3	parts	s	by	s.split
+////= lines-3	found	s	re	s.match
+////= lines-3	where	s	re	s.search
+export function isGlobal(re) {
+  return re.global;
+}
+export function flagsOf(re) {
+  return re.flags;
+}
+export function sourceOf(re) {
+  return re.source;
+}
+const list = (a) => a === null ? "null" : "[" + Array.from(a, (x) => x === undefined ? "undefined" : show(x)).join() + "]" + ("index" in a ? "@" + a.index + (a.groups ? JSON.stringify(a.groups) : "") : "");
+const about = (re) => String(re) + " " + re.lastIndex + " " + [re.dotAll, re.global, re.hasIndices, re.ignoreCase, re.multiline, re.sticky, re.unicode, re.unicodeSets].map((b) => b ? 1 : 0).join("") + " " + flagsOf(re) + " " + show(sourceOf(re)) + " " + isGlobal(re);
+{
+  const a = literal(), b = literal();
+  a.lastIndex = 3;
+  a.mine = 1;
+  print([a === b, b.lastIndex, b.mine, about(a), about(b), about(constants()), Object.getPrototypeOf(a) === RegExp.prototype, a instanceof RegExp, Object.getOwnPropertyNames(a).join()].map(show).join());
+}
+function sticky(s) {
+  const re = /a/y;
+  const first = re.test(s);
+  return first + ":" + re.lastIndex + ":" + re.test(s) + ":" + re.lastIndex;
+}
+function counting(s) {
+  let n = 0;
+  for (let i = 0;i < 3; i++) {
+    const re = /a/g;
+    while (re.exec(s))
+      n++;
+  }
+  return n;
+}
+print(sticky("aab") + " " + sticky("ba") + " " + counting("banana"));
+print([/(?:)/, /\//, /[/]/, /\n/, /\u{1f600}/u, /[\p{L}--[a-z]]/v, /(?<year>\d{4})-(?<month>\d\d)/d, /\u65e5\u672c|\u00e9/, /^$/m, /./s, / /, /a|b|c/i].map(about).join(" | "));
+print([new RegExp("/"), new RegExp(`
+`), new RegExp(""), new RegExp("a", ""), new RegExp("\\d+", "y"), RegExp("x", "gimsuy"), RegExp("x"), new RegExp("\u65E5", "u"), fromSource("a.c"), fromSource(cat("a", "+")), fromSource(""), fromBoth("a", "gi"), fromBoth("a", "")].map(about).join(" | "));
+print([() => new RegExp("(", "g"), () => new RegExp("a", "gg"), () => new RegExp("a", "x"), () => new RegExp("a", "uv"), () => new RegExp("\\", ""), () => RegExp("[", ""), () => fromSource("("), () => fromSource("a{2,1}"), () => fromBoth("a", "q"), () => fromBoth("(?<a>.)(?<a>.)", ""), () => new RegExp("\\p{Foo}", "u")].map((f) => attempt(() => about(f()))).join(" | "));
+for (let round = 0;round < 3; round++)
+  print(attempt(() => about(new RegExp("(", "g"))) + " " + about(/ok/g));
+const subjects = ["", "a", "education", `The quick  brown	fox
+jumps`, "aaa", "a-b_c d", "2026-10-08 and 1999-12-31", "\u65E5\u672C\u8A9E caf\xE9", cat("ro", "pe and rope"), part("xx substring of a longer one xx", 3, 20), "$1 $& $$", "x".repeat(50) + "y"];
+const expressions = [() => /[aeiou]/, () => /[aeiou]/g, () => /\s+/, () => /\s+/g, () => /(\w)(\w)?/g, () => /(?<year>\d{4})-(?<month>\d\d)/, () => /(?<year>\d{4})-(?<month>\d\d)/g, () => /a/y, () => /a/gy, () => /(?:)/, () => /(?:)/g, () => /^/gm, () => /$/, () => /\u672c|\u00e9/g, () => /./gu, () => /(a)|(b)/g, () => /x*y/, () => /nomatch/g, () => /(\d+)/d];
+for (const s of subjects)
+  for (const make of expressions) {
+    const used = make();
+    print(show(s) + " " + String(used) + ": " + [vowels(s, make(), "_"), vowels(s, make(), ""), vowels(s, make(), "[$&|$1|$2|$`|$'|$$|$<year>|$0|$3]"), shout(s, make(), (m, ...rest) => "<" + m.toUpperCase() + rest.length + ">"), list(words(s, make())), list(s.split(make(), 2)), list(s.split(make(), 0)), list(found(s, make())), where(s, make())].map(show).join(" ") + " " + (vowels(s, used, "_"), used.lastIndex) + (found(s, used), used.lastIndex) + (where(s, used), used.lastIndex) + (words(s, used), used.lastIndex));
+  }
+for (const s of subjects)
+  for (const a of ["", "a", " ", "o", "ro", "$", "\u672C", "xx", "nomatch", s])
+    print(show(s) + " " + show(a) + ": " + [swap(s, a, "_"), swap(s, a, ""), swap(s, a, "[$&|$`|$'|$$|$1]"), swap(s, a, cat("r", "ope")), list(parts(s, a)), list(s.split(a, 2)), list(s.split(a, 0)), list(s.split(a, 4294967295)), s.replaceAll(a, "+")].map(show).join(" "));
+{
+  const re = /a/g;
+  re.lastIndex = 2;
+  print([vowels("aaaa", re, "b"), re.lastIndex].join());
+  re.lastIndex = 2;
+  print([list(found("aaaa", re)), re.lastIndex].join());
+  re.lastIndex = 2;
+  print([where("baaa", re), re.lastIndex].join());
+  const y = /a/y;
+  y.lastIndex = 1;
+  print([vowels("aaaa", y, "b"), y.lastIndex, list(found("baaa", y)), y.lastIndex, where("baaa", y), y.lastIndex].join());
+}
+{
+  const frozen = Object.freeze(/a/g);
+  print([() => vowels("aaa", frozen, "b"), () => list(found("aaa", frozen)), () => where("baa", frozen), () => list(words("bab", frozen))].map(attempt).join(" "));
+}
+{
+  const odd = /a/g;
+  odd.lastIndex = { valueOf() {
+    print("valueOf of lastIndex");
+    return 1;
+  } };
+  print([() => vowels("aaa", odd, "b"), () => list(found("aaa", odd))].map(attempt).join(" "));
+}
+{
+  const own = /a/g;
+  own.exec = function() {
+    print("own exec");
+    return null;
+  };
+  print([() => vowels("aaa", own, "b"), () => list(found("aaa", own)), () => where("aaa", own), () => list(words("bab", own)), () => own.test("a")].map(attempt).join(" "));
+}
+{
+  const own = /a/g;
+  Object.defineProperty(own, Symbol.replace, { value: () => "own replace" });
+  Object.defineProperty(own, Symbol.split, { value: () => ["own split"] });
+  Object.defineProperty(own, Symbol.match, { value: () => ["own match"] });
+  Object.defineProperty(own, Symbol.search, { value: () => -7 });
+  print([vowels("aaa", own, "b"), list(words("aaa", own)), list(found("aaa", own)), where("aaa", own)].join(" "));
+}
+{
+  const own = /a/g;
+  Object.defineProperty(own, "flags", { value: "" });
+  Object.defineProperty(own, "global", { value: false });
+  print([vowels("aaa", own, "b"), flagsOf(own), isGlobal(own), list(found("aaa", own))].join(" "));
+}
+{
+  const own = /a/;
+  Object.defineProperty(own, "flags", { value: "g" });
+  Object.defineProperty(own, "global", { value: true });
+  print([flagsOf(own), isGlobal(own)].join(" "));
+}
+
+class Sub extends RegExp {
+  exec(s) {
+    const m = super.exec(s);
+    if (m)
+      m[0] = m[0].toUpperCase();
+    return m;
+  }
+  get global() {
+    return false;
+  }
+}
+{
+  const sub = new Sub("a", "g");
+  print([vowels("aaa", sub, "[$&]"), list(found("aaa", sub)), where("baa", sub), list(words("bab", sub)), isGlobal(sub), flagsOf(sub), sourceOf(sub)].join(" "));
+}
+{
+  const re = /a/g;
+  re.compile("b", "i");
+  print(about(re) + " " + vowels("abAB", re, "_"));
+}
+print([() => shout("abc", /b/, () => {
+  throw new RangeError("mine");
+}), () => shout("abc", /b/g, () => 5), () => shout("abc", /b/, () => ({ toString() {
+  return "obj";
+} })), () => replaced("abc", /b/, 5), () => vowels("abc", /b/, undefined), () => replaced("abc", /b/, { toString() {
+  return "[$&]";
+} }), () => vowels("abc", null, "x"), () => vowels("a null b", null, "x"), () => list(cut("a1b", 1)), () => list(matched("a1b", "1")), () => searched("a1b", "1"), () => list(found("abc", undefined)), () => list(words("abc", undefined))].map(attempt).join(" | "));
+print([RegExp.$1, RegExp.lastMatch, RegExp["$`"]].map(show).join() + " " + (vowels("xaby", /a(b)/, "_"), [RegExp.$1, RegExp.lastMatch, RegExp["$`"]].map(show).join()) + " " + (found("xcdy", /c(d)/), [RegExp.$1, RegExp.lastMatch].map(show).join()) + " " + (where("xefy", /e(f)/), [RegExp.$1, RegExp.lastMatch].map(show).join()) + " " + (words("xghy", /g(h)/), [RegExp.$1, RegExp.lastMatch].map(show).join()));
+let sum = 0;
+for (let i = 0;i < 20000; i++) {
+  const s = "item " + i + ", value " + i * 7;
+  sum = (sum + s.replace(/\d+/g, "#").length + s.split(/,\s*/).length + /value (\d+)/.exec(s)[1].length + (/9/.test(s) ? 1 : 0) + s.search(/v/) + s.match(/\d/g).length) % 1000003;
+}
+print(String(sum));
+globalThis.kept = [literal, constants, fromSource, fromBoth, vowels, shout, swap, words, parts, found, where, isGlobal, flagsOf, sourceOf];
+console.log("number");
+//// regexp-very-long-non-latin1-classes.ts
+// One expression of more than sixteen thousand characters under the u flag, with a dozen classes beyond Latin-1 used hundreds of times.
+export { };
+function hash(h: number, n: number): number { return (Math.imul(h, 31) + n) | 0; }
+const long = /^(?:k000[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k001\p{Lu}\p{Script=Han}?;|k002\p{Ll}\p{Lu};|k003[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k004\p{ID_Start}[\p{P}\p{S}];|k005\p{ID_Continue}\p{ID_Start}?;|k006[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k007[\p{L}$]\p{Ll};|k008\p{Script=Han}[\p{L}$];|k009[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k010\p{N}\p{ID_Continue};|k011[\p{P}\p{S}]\p{N};|k012[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k013\p{Lu}\p{Script=Han}?;|k014\p{Ll}\p{Lu};|k015[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k016\p{ID_Start}[\p{P}\p{S}];|k017\p{ID_Continue}\p{ID_Start}?;|k018[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k019[\p{L}$]\p{Ll};|k020\p{Script=Han}[\p{L}$];|k021[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k022\p{N}\p{ID_Continue};|k023[\p{P}\p{S}]\p{N};|k024[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k025\p{Lu}\p{Script=Han}?;|k026\p{Ll}\p{Lu};|k027[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k028\p{ID_Start}[\p{P}\p{S}];|k029\p{ID_Continue}\p{ID_Start}?;|k030[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k031[\p{L}$]\p{Ll};|k032\p{Script=Han}[\p{L}$];|k033[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k034\p{N}\p{ID_Continue};|k035[\p{P}\p{S}]\p{N};|k036[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k037\p{Lu}\p{Script=Han}?;|k038\p{Ll}\p{Lu};|k039[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k040\p{ID_Start}[\p{P}\p{S}];|k041\p{ID_Continue}\p{ID_Start}?;|k042[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k043[\p{L}$]\p{Ll};|k044\p{Script=Han}[\p{L}$];|k045[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k046\p{N}\p{ID_Continue};|k047[\p{P}\p{S}]\p{N};|k048[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k049\p{Lu}\p{Script=Han}?;|k050\p{Ll}\p{Lu};|k051[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k052\p{ID_Start}[\p{P}\p{S}];|k053\p{ID_Continue}\p{ID_Start}?;|k054[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k055[\p{L}$]\p{Ll};|k056\p{Script=Han}[\p{L}$];|k057[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k058\p{N}\p{ID_Continue};|k059[\p{P}\p{S}]\p{N};|k060[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k061\p{Lu}\p{Script=Han}?;|k062\p{Ll}\p{Lu};|k063[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k064\p{ID_Start}[\p{P}\p{S}];|k065\p{ID_Continue}\p{ID_Start}?;|k066[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k067[\p{L}$]\p{Ll};|k068\p{Script=Han}[\p{L}$];|k069[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k070\p{N}\p{ID_Continue};|k071[\p{P}\p{S}]\p{N};|k072[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k073\p{Lu}\p{Script=Han}?;|k074\p{Ll}\p{Lu};|k075[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k076\p{ID_Start}[\p{P}\p{S}];|k077\p{ID_Continue}\p{ID_Start}?;|k078[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k079[\p{L}$]\p{Ll};|k080\p{Script=Han}[\p{L}$];|k081[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k082\p{N}\p{ID_Continue};|k083[\p{P}\p{S}]\p{N};|k084[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k085\p{Lu}\p{Script=Han}?;|k086\p{Ll}\p{Lu};|k087[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k088\p{ID_Start}[\p{P}\p{S}];|k089\p{ID_Continue}\p{ID_Start}?;|k090[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k091[\p{L}$]\p{Ll};|k092\p{Script=Han}[\p{L}$];|k093[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k094\p{N}\p{ID_Continue};|k095[\p{P}\p{S}]\p{N};|k096[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k097\p{Lu}\p{Script=Han}?;|k098\p{Ll}\p{Lu};|k099[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k100\p{ID_Start}[\p{P}\p{S}];|k101\p{ID_Continue}\p{ID_Start}?;|k102[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k103[\p{L}$]\p{Ll};|k104\p{Script=Han}[\p{L}$];|k105[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k106\p{N}\p{ID_Continue};|k107[\p{P}\p{S}]\p{N};|k108[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k109\p{Lu}\p{Script=Han}?;|k110\p{Ll}\p{Lu};|k111[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k112\p{ID_Start}[\p{P}\p{S}];|k113\p{ID_Continue}\p{ID_Start}?;|k114[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k115[\p{L}$]\p{Ll};|k116\p{Script=Han}[\p{L}$];|k117[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k118\p{N}\p{ID_Continue};|k119[\p{P}\p{S}]\p{N};|k120[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k121\p{Lu}\p{Script=Han}?;|k122\p{Ll}\p{Lu};|k123[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k124\p{ID_Start}[\p{P}\p{S}];|k125\p{ID_Continue}\p{ID_Start}?;|k126[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k127[\p{L}$]\p{Ll};|k128\p{Script=Han}[\p{L}$];|k129[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k130\p{N}\p{ID_Continue};|k131[\p{P}\p{S}]\p{N};|k132[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k133\p{Lu}\p{Script=Han}?;|k134\p{Ll}\p{Lu};|k135[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k136\p{ID_Start}[\p{P}\p{S}];|k137\p{ID_Continue}\p{ID_Start}?;|k138[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k139[\p{L}$]\p{Ll};|k140\p{Script=Han}[\p{L}$];|k141[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k142\p{N}\p{ID_Continue};|k143[\p{P}\p{S}]\p{N};|k144[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k145\p{Lu}\p{Script=Han}?;|k146\p{Ll}\p{Lu};|k147[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k148\p{ID_Start}[\p{P}\p{S}];|k149\p{ID_Continue}\p{ID_Start}?;|k150[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k151[\p{L}$]\p{Ll};|k152\p{Script=Han}[\p{L}$];|k153[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k154\p{N}\p{ID_Continue};|k155[\p{P}\p{S}]\p{N};|k156[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k157\p{Lu}\p{Script=Han}?;|k158\p{Ll}\p{Lu};|k159[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k160\p{ID_Start}[\p{P}\p{S}];|k161\p{ID_Continue}\p{ID_Start}?;|k162[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k163[\p{L}$]\p{Ll};|k164\p{Script=Han}[\p{L}$];|k165[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k166\p{N}\p{ID_Continue};|k167[\p{P}\p{S}]\p{N};|k168[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k169\p{Lu}\p{Script=Han}?;|k170\p{Ll}\p{Lu};|k171[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k172\p{ID_Start}[\p{P}\p{S}];|k173\p{ID_Continue}\p{ID_Start}?;|k174[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k175[\p{L}$]\p{Ll};|k176\p{Script=Han}[\p{L}$];|k177[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k178\p{N}\p{ID_Continue};|k179[\p{P}\p{S}]\p{N};|k180[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k181\p{Lu}\p{Script=Han}?;|k182\p{Ll}\p{Lu};|k183[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k184\p{ID_Start}[\p{P}\p{S}];|k185\p{ID_Continue}\p{ID_Start}?;|k186[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k187[\p{L}$]\p{Ll};|k188\p{Script=Han}[\p{L}$];|k189[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k190\p{N}\p{ID_Continue};|k191[\p{P}\p{S}]\p{N};|k192[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k193\p{Lu}\p{Script=Han}?;|k194\p{Ll}\p{Lu};|k195[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k196\p{ID_Start}[\p{P}\p{S}];|k197\p{ID_Continue}\p{ID_Start}?;|k198[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k199[\p{L}$]\p{Ll};|k200\p{Script=Han}[\p{L}$];|k201[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k202\p{N}\p{ID_Continue};|k203[\p{P}\p{S}]\p{N};|k204[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k205\p{Lu}\p{Script=Han}?;|k206\p{Ll}\p{Lu};|k207[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k208\p{ID_Start}[\p{P}\p{S}];|k209\p{ID_Continue}\p{ID_Start}?;|k210[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k211[\p{L}$]\p{Ll};|k212\p{Script=Han}[\p{L}$];|k213[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k214\p{N}\p{ID_Continue};|k215[\p{P}\p{S}]\p{N};|k216[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k217\p{Lu}\p{Script=Han}?;|k218\p{Ll}\p{Lu};|k219[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k220\p{ID_Start}[\p{P}\p{S}];|k221\p{ID_Continue}\p{ID_Start}?;|k222[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k223[\p{L}$]\p{Ll};|k224\p{Script=Han}[\p{L}$];|k225[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k226\p{N}\p{ID_Continue};|k227[\p{P}\p{S}]\p{N};|k228[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k229\p{Lu}\p{Script=Han}?;|k230\p{Ll}\p{Lu};|k231[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k232\p{ID_Start}[\p{P}\p{S}];|k233\p{ID_Continue}\p{ID_Start}?;|k234[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k235[\p{L}$]\p{Ll};|k236\p{Script=Han}[\p{L}$];|k237[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k238\p{N}\p{ID_Continue};|k239[\p{P}\p{S}]\p{N};|k240[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k241\p{Lu}\p{Script=Han}?;|k242\p{Ll}\p{Lu};|k243[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k244\p{ID_Start}[\p{P}\p{S}];|k245\p{ID_Continue}\p{ID_Start}?;|k246[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k247[\p{L}$]\p{Ll};|k248\p{Script=Han}[\p{L}$];|k249[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k250\p{N}\p{ID_Continue};|k251[\p{P}\p{S}]\p{N};|k252[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k253\p{Lu}\p{Script=Han}?;|k254\p{Ll}\p{Lu};|k255[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k256\p{ID_Start}[\p{P}\p{S}];|k257\p{ID_Continue}\p{ID_Start}?;|k258[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k259[\p{L}$]\p{Ll};|k260\p{Script=Han}[\p{L}$];|k261[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k262\p{N}\p{ID_Continue};|k263[\p{P}\p{S}]\p{N};|k264[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k265\p{Lu}\p{Script=Han}?;|k266\p{Ll}\p{Lu};|k267[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k268\p{ID_Start}[\p{P}\p{S}];|k269\p{ID_Continue}\p{ID_Start}?;|k270[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k271[\p{L}$]\p{Ll};|k272\p{Script=Han}[\p{L}$];|k273[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k274\p{N}\p{ID_Continue};|k275[\p{P}\p{S}]\p{N};|k276[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k277\p{Lu}\p{Script=Han}?;|k278\p{Ll}\p{Lu};|k279[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k280\p{ID_Start}[\p{P}\p{S}];|k281\p{ID_Continue}\p{ID_Start}?;|k282[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k283[\p{L}$]\p{Ll};|k284\p{Script=Han}[\p{L}$];|k285[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k286\p{N}\p{ID_Continue};|k287[\p{P}\p{S}]\p{N};|k288[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k289\p{Lu}\p{Script=Han}?;|k290\p{Ll}\p{Lu};|k291[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k292\p{ID_Start}[\p{P}\p{S}];|k293\p{ID_Continue}\p{ID_Start}?;|k294[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k295[\p{L}$]\p{Ll};|k296\p{Script=Han}[\p{L}$];|k297[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k298\p{N}\p{ID_Continue};|k299[\p{P}\p{S}]\p{N};|k300[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k301\p{Lu}\p{Script=Han}?;|k302\p{Ll}\p{Lu};|k303[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k304\p{ID_Start}[\p{P}\p{S}];|k305\p{ID_Continue}\p{ID_Start}?;|k306[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k307[\p{L}$]\p{Ll};|k308\p{Script=Han}[\p{L}$];|k309[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k310\p{N}\p{ID_Continue};|k311[\p{P}\p{S}]\p{N};|k312[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k313\p{Lu}\p{Script=Han}?;|k314\p{Ll}\p{Lu};|k315[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k316\p{ID_Start}[\p{P}\p{S}];|k317\p{ID_Continue}\p{ID_Start}?;|k318[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k319[\p{L}$]\p{Ll};|k320\p{Script=Han}[\p{L}$];|k321[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k322\p{N}\p{ID_Continue};|k323[\p{P}\p{S}]\p{N};|k324[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k325\p{Lu}\p{Script=Han}?;|k326\p{Ll}\p{Lu};|k327[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k328\p{ID_Start}[\p{P}\p{S}];|k329\p{ID_Continue}\p{ID_Start}?;|k330[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k331[\p{L}$]\p{Ll};|k332\p{Script=Han}[\p{L}$];|k333[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k334\p{N}\p{ID_Continue};|k335[\p{P}\p{S}]\p{N};|k336[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k337\p{Lu}\p{Script=Han}?;|k338\p{Ll}\p{Lu};|k339[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k340\p{ID_Start}[\p{P}\p{S}];|k341\p{ID_Continue}\p{ID_Start}?;|k342[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k343[\p{L}$]\p{Ll};|k344\p{Script=Han}[\p{L}$];|k345[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k346\p{N}\p{ID_Continue};|k347[\p{P}\p{S}]\p{N};|k348[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k349\p{Lu}\p{Script=Han}?;|k350\p{Ll}\p{Lu};|k351[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k352\p{ID_Start}[\p{P}\p{S}];|k353\p{ID_Continue}\p{ID_Start}?;|k354[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k355[\p{L}$]\p{Ll};|k356\p{Script=Han}[\p{L}$];|k357[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k358\p{N}\p{ID_Continue};|k359[\p{P}\p{S}]\p{N};|k360[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k361\p{Lu}\p{Script=Han}?;|k362\p{Ll}\p{Lu};|k363[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k364\p{ID_Start}[\p{P}\p{S}];|k365\p{ID_Continue}\p{ID_Start}?;|k366[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k367[\p{L}$]\p{Ll};|k368\p{Script=Han}[\p{L}$];|k369[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k370\p{N}\p{ID_Continue};|k371[\p{P}\p{S}]\p{N};|k372[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k373\p{Lu}\p{Script=Han}?;|k374\p{Ll}\p{Lu};|k375[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k376\p{ID_Start}[\p{P}\p{S}];|k377\p{ID_Continue}\p{ID_Start}?;|k378[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k379[\p{L}$]\p{Ll};|k380\p{Script=Han}[\p{L}$];|k381[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k382\p{N}\p{ID_Continue};|k383[\p{P}\p{S}]\p{N};|k384[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k385\p{Lu}\p{Script=Han}?;|k386\p{Ll}\p{Lu};|k387[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k388\p{ID_Start}[\p{P}\p{S}];|k389\p{ID_Continue}\p{ID_Start}?;|k390[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k391[\p{L}$]\p{Ll};|k392\p{Script=Han}[\p{L}$];|k393[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k394\p{N}\p{ID_Continue};|k395[\p{P}\p{S}]\p{N};|k396[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k397\p{Lu}\p{Script=Han}?;|k398\p{Ll}\p{Lu};|k399[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k400\p{ID_Start}[\p{P}\p{S}];|k401\p{ID_Continue}\p{ID_Start}?;|k402[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k403[\p{L}$]\p{Ll};|k404\p{Script=Han}[\p{L}$];|k405[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k406\p{N}\p{ID_Continue};|k407[\p{P}\p{S}]\p{N};|k408[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k409\p{Lu}\p{Script=Han}?;|k410\p{Ll}\p{Lu};|k411[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k412\p{ID_Start}[\p{P}\p{S}];|k413\p{ID_Continue}\p{ID_Start}?;|k414[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k415[\p{L}$]\p{Ll};|k416\p{Script=Han}[\p{L}$];|k417[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k418\p{N}\p{ID_Continue};|k419[\p{P}\p{S}]\p{N};|k420[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k421\p{Lu}\p{Script=Han}?;|k422\p{Ll}\p{Lu};|k423[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k424\p{ID_Start}[\p{P}\p{S}];|k425\p{ID_Continue}\p{ID_Start}?;|k426[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k427[\p{L}$]\p{Ll};|k428\p{Script=Han}[\p{L}$];|k429[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k430\p{N}\p{ID_Continue};|k431[\p{P}\p{S}]\p{N};|k432[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k433\p{Lu}\p{Script=Han}?;|k434\p{Ll}\p{Lu};|k435[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k436\p{ID_Start}[\p{P}\p{S}];|k437\p{ID_Continue}\p{ID_Start}?;|k438[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k439[\p{L}$]\p{Ll};|k440\p{Script=Han}[\p{L}$];|k441[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k442\p{N}\p{ID_Continue};|k443[\p{P}\p{S}]\p{N};|k444[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k445\p{Lu}\p{Script=Han}?;|k446\p{Ll}\p{Lu};|k447[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k448\p{ID_Start}[\p{P}\p{S}];|k449\p{ID_Continue}\p{ID_Start}?;|k450[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k451[\p{L}$]\p{Ll};|k452\p{Script=Han}[\p{L}$];|k453[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k454\p{N}\p{ID_Continue};|k455[\p{P}\p{S}]\p{N};|k456[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k457\p{Lu}\p{Script=Han}?;|k458\p{Ll}\p{Lu};|k459[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k460\p{ID_Start}[\p{P}\p{S}];|k461\p{ID_Continue}\p{ID_Start}?;|k462[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k463[\p{L}$]\p{Ll};|k464\p{Script=Han}[\p{L}$];|k465[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k466\p{N}\p{ID_Continue};|k467[\p{P}\p{S}]\p{N};|k468[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k469\p{Lu}\p{Script=Han}?;|k470\p{Ll}\p{Lu};|k471[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k472\p{ID_Start}[\p{P}\p{S}];|k473\p{ID_Continue}\p{ID_Start}?;|k474[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k475[\p{L}$]\p{Ll};|k476\p{Script=Han}[\p{L}$];|k477[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k478\p{N}\p{ID_Continue};|k479[\p{P}\p{S}]\p{N};|k480[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k481\p{Lu}\p{Script=Han}?;|k482\p{Ll}\p{Lu};|k483[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k484\p{ID_Start}[\p{P}\p{S}];|k485\p{ID_Continue}\p{ID_Start}?;|k486[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k487[\p{L}$]\p{Ll};|k488\p{Script=Han}[\p{L}$];|k489[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k490\p{N}\p{ID_Continue};|k491[\p{P}\p{S}]\p{N};|k492[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k493\p{Lu}\p{Script=Han}?;|k494\p{Ll}\p{Lu};|k495[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k496\p{ID_Start}[\p{P}\p{S}];|k497\p{ID_Continue}\p{ID_Start}?;|k498[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k499[\p{L}$]\p{Ll};|k500\p{Script=Han}[\p{L}$];|k501[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k502\p{N}\p{ID_Continue};|k503[\p{P}\p{S}]\p{N};|k504[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k505\p{Lu}\p{Script=Han}?;|k506\p{Ll}\p{Lu};|k507[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k508\p{ID_Start}[\p{P}\p{S}];|k509\p{ID_Continue}\p{ID_Start}?;|k510[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k511[\p{L}$]\p{Ll};|k512\p{Script=Han}[\p{L}$];|k513[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k514\p{N}\p{ID_Continue};|k515[\p{P}\p{S}]\p{N};|k516[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k517\p{Lu}\p{Script=Han}?;|k518\p{Ll}\p{Lu};|k519[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k520\p{ID_Start}[\p{P}\p{S}];|k521\p{ID_Continue}\p{ID_Start}?;|k522[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k523[\p{L}$]\p{Ll};|k524\p{Script=Han}[\p{L}$];|k525[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k526\p{N}\p{ID_Continue};|k527[\p{P}\p{S}]\p{N};|k528[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k529\p{Lu}\p{Script=Han}?;|k530\p{Ll}\p{Lu};|k531[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k532\p{ID_Start}[\p{P}\p{S}];|k533\p{ID_Continue}\p{ID_Start}?;|k534[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k535[\p{L}$]\p{Ll};|k536\p{Script=Han}[\p{L}$];|k537[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k538\p{N}\p{ID_Continue};|k539[\p{P}\p{S}]\p{N};|k540[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k541\p{Lu}\p{Script=Han}?;|k542\p{Ll}\p{Lu};|k543[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k544\p{ID_Start}[\p{P}\p{S}];|k545\p{ID_Continue}\p{ID_Start}?;|k546[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k547[\p{L}$]\p{Ll};|k548\p{Script=Han}[\p{L}$];|k549[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k550\p{N}\p{ID_Continue};|k551[\p{P}\p{S}]\p{N};|k552[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k553\p{Lu}\p{Script=Han}?;|k554\p{Ll}\p{Lu};|k555[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k556\p{ID_Start}[\p{P}\p{S}];|k557\p{ID_Continue}\p{ID_Start}?;|k558[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k559[\p{L}$]\p{Ll};|k560\p{Script=Han}[\p{L}$];|k561[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k562\p{N}\p{ID_Continue};|k563[\p{P}\p{S}]\p{N};|k564[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k565\p{Lu}\p{Script=Han}?;|k566\p{Ll}\p{Lu};|k567[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k568\p{ID_Start}[\p{P}\p{S}];|k569\p{ID_Continue}\p{ID_Start}?;|k570[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k571[\p{L}$]\p{Ll};|k572\p{Script=Han}[\p{L}$];|k573[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k574\p{N}\p{ID_Continue};|k575[\p{P}\p{S}]\p{N};|k576[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k577\p{Lu}\p{Script=Han}?;|k578\p{Ll}\p{Lu};|k579[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k580\p{ID_Start}[\p{P}\p{S}];|k581\p{ID_Continue}\p{ID_Start}?;|k582[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k583[\p{L}$]\p{Ll};|k584\p{Script=Han}[\p{L}$];|k585[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k586\p{N}\p{ID_Continue};|k587[\p{P}\p{S}]\p{N};|k588[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k589\p{Lu}\p{Script=Han}?;|k590\p{Ll}\p{Lu};|k591[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k592\p{ID_Start}[\p{P}\p{S}];|k593\p{ID_Continue}\p{ID_Start}?;|k594[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k595[\p{L}$]\p{Ll};|k596\p{Script=Han}[\p{L}$];|k597[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k598\p{N}\p{ID_Continue};|k599[\p{P}\p{S}]\p{N};|k600[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k601\p{Lu}\p{Script=Han}?;|k602\p{Ll}\p{Lu};|k603[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k604\p{ID_Start}[\p{P}\p{S}];|k605\p{ID_Continue}\p{ID_Start}?;|k606[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k607[\p{L}$]\p{Ll};|k608\p{Script=Han}[\p{L}$];|k609[\p{Script=Greek}\p{Script=Cyrillic}]+[\p{L}\p{N}_]?;|k610\p{N}\p{ID_Continue};|k611[\p{P}\p{S}]\p{N};|k612[\p{L}\p{N}_]+[\p{L}\p{M}\p{N}\p{Pc}];|k613\p{Lu}\p{Script=Han}?;|k614\p{Ll}\p{Lu};|k615[\p{L}\p{M}\p{N}\p{Pc}]+[^\p{L}];|k616\p{ID_Start}[\p{P}\p{S}];|k617\p{ID_Continue}\p{ID_Start}?;|k618[^\p{L}]+[\p{Script=Greek}\p{Script=Cyrillic}];|k619[\p{L}$]\p{Ll};)$/u;
+const samples: string[] = ["a", "Z", "9", "_", "$", " ", "-", "\u03a9", "\u03c9", "\u0416", "\u4e2d", "\u0661", "\u0301", "\ud835\udc00", "\ud83d\ude00", "\ud835", "\u203f", "\uff21"];
+console.log(long.source.length);
+for (let k = 0; k < 620; k += 7) {
+    const head = "k" + String(k).padStart(3, "0");
+    let h = 0, found = 0;
+    for (const a of samples) {
+        for (const b of samples) {
+            for (const subject of [head + a + ";", head + a + b + ";", head + a + a + b + ";", head + a + b]) {
+                const is = long.test(subject);
+                if (is) ++found;
+                h = hash(h, is ? 1 : 2);
+            }
+        }
+    }
+    console.log(head, found, h);
+}
+//// regexp-word-boundaries-known-chars.ts
+// Word boundaries next to terms whose characters are all word characters or all other characters, next to look-alikes where that is not known.
+export { };
+////= escape
+const narrow: string[] = ["", "foo", "foo bar", "xfoo", "foox", "xfoox", " foo ", "-foo-", "a", "-", "a-", "-a", "a-a", "-a-", "ab", "a b", "ab-cd", "abcd-", "c-ab", "if", "elsewhere", "for-", "-x ", "x", "xy", "y", "-y", "y-", "y-z", "yx-", "aab", "aa-", "--a", "aa--", "aaa", "ac", "bc-", "-c", "ca", "c-", "+c-d", "a+c", "ab ", "-+a", "a1_", "12 34", "a-a", "barfoobar", "foobar", "k", "s", "K", "S", "k ", " s"];
+const wide: string[] = ["\u212a", "\u017f", "a\u212a", "\u212aa", "\u017f ", " \u017f", "foo\u4e2d", "\u4e2dfoo", "\u4e2d", "a\u4e2d-", "\u00e9a", "a\u00e9", "\ud835\udc00a", "a\ud835\udc00", "k\u212a", "s\u017f-"];
+function show(r: RegExp): void {
+    const parts: string[] = [];
+    for (const subject of narrow.concat(narrow.map((s: string): string => s + " \u0100"), wide)) {
+        r.lastIndex = 0;
+        const m = subject.match(r);
+        parts.push(m === null ? "-" : (m.index === undefined ? "" : m.index + ":") + m.map((c: string | undefined): string => c === undefined ? "~" : "<" + escape(c) + ">").join(""));
+    }
+    console.log(String(r), parts.join(" "));
+}
+show(/\bfoo\b/);
+show(/\bfoo/);
+show(/foo\b/);
+show(/\Bfoo/);
+show(/foo\B/);
+show(/\Bfoo\B/);
+show(/\b-/);
+show(/-\b/);
+show(/\B-/);
+show(/-\B/);
+show(/\b\w+\b/g);
+show(/\b\d+\b/g);
+show(/\w+\b/);
+show(/\w*\b/);
+show(/\b\w*/);
+show(/\W+\b/);
+show(/\b\W+/);
+show(/\W\B/);
+show(/\B\W/);
+show(/\b(?:if|else|for)\b/);
+show(/\b(if|else|for)\b/g);
+show(/\b(?:if|-x|for)\b/);
+show(/\b(?:if|else|)\b/);
+show(/(?:a|b)\b/);
+show(/(?:a|-)\b/);
+show(/(?:a|-)\B/);
+show(/\b(?:a|-)/);
+show(/\B(?:a|-)/);
+show(/(?:ab|cd)+\b/);
+show(/(?:ab|c-)+\b/);
+show(/\b(?:ab|cd)*x/);
+show(/\b(?:ab|-d)*x/);
+show(/x?\by/);
+show(/-?\by/);
+show(/x?\b-/);
+show(/y\bx?/);
+show(/y\b-?/);
+show(/y\b-?z/);
+show(/y\bx?-/);
+show(/a*\bb/);
+show(/a*?\bb/);
+show(/a*\b-/);
+show(/-*\ba/);
+show(/a+\b-+/);
+show(/a+\B-+/);
+show(/a+\Ba+/);
+show(/a\b\bb/);
+show(/a\b\b-/);
+show(/a\B\Bb/);
+show(/a\b\B-/);
+show(/[ab]c\b/);
+show(/[ab]c\b-/);
+show(/[a-]c\b/);
+show(/c[a-]\b/);
+show(/c[a-]\B/);
+show(/\b[ab]c/);
+show(/\b[a-]c/);
+show(/\bc[a-]/);
+show(/[-+]c\b[-+]d/);
+show(/[ab][-+]\bc/);
+show(/[ab]{2}\b/);
+show(/[-+]{2}\b/);
+show(/\b[ab]{2}/);
+show(/\b[-+]{2}/);
+show(/[^a]\b/);
+show(/[^\w]\b/);
+show(/[^\w-]\ba/);
+show(/\b[^\w-]/);
+show(/[^-]\b/);
+show(/.\b/);
+show(/\b./);
+show(/^\bfoo/);
+show(/foo\b$/);
+show(/^\b/);
+show(/\b$/);
+show(/^\B/);
+show(/\B$/);
+show(/^\b-/);
+show(/-\b$/);
+show(/^\B-/);
+show(/-\B$/);
+show(/(?=a)\b/);
+show(/\b(?=a)/);
+show(/\b(?!a)\w/);
+show(/(?<=a)\b/);
+show(/(?<=a)\b-/);
+show(/(?<=\ba)b/);
+show(/(?<=a\b)-/);
+show(/(?<!\bfoo)bar\b/);
+show(/(a)\b(-)/);
+show(/(a)?\b(-)?/);
+show(/(a|-)\b\1/);
+show(/(\w)\b\W\b\1/);
+show(/\bfoo\b/i);
+show(/\bfoo\b/u);
+show(/\bfoo\b/iu);
+show(/\bk\b/iu);
+show(/\bs\b/iu);
+show(/k\b/iu);
+show(/\bk/iu);
+show(/\w\b/iu);
+show(/\b\w/iu);
+show(/\W\b/iu);
+show(/\b\W/iu);
+show(/\w\B/iu);
+show(/[a-z]\b/iu);
+show(/\b[a-z]/iu);
+show(/\p{L}\b/u);
+show(/\b\p{L}/u);
+show(/\p{L}+\b/gu);
+show(/\bfoo\b/y);
+show(/\bfoo\b/gm);
+show(/\bfoo\b/s);
+show(/\bfoo\b/v);
+//// regexps-8-bit-and-16-bit.ts
+// Regular expression literals of every kind of syntax, each matched against 8-bit and 16-bit strings.
+const any = (x: unknown): any => x;
+function show(v: unknown): string {
+  if (v === null) return "null";
+  if (v === undefined) return "undefined";
+  if (Array.isArray(v)) {
+    const m = any(v);
+    let s = "[" + v.map(show).join(",") + "]";
+    if (typeof m.index === "number") s += "@" + m.index;
+    if (m.groups) s += JSON.stringify(m.groups);
+    if (m.indices) s += JSON.stringify(m.indices);
+    return s;
+  }
+  if (typeof v === "string") return JSON.stringify(v).replace(/[^\x20-\x7e]/g, c => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"));
+  return String(v);
+}
+function say(what: string, f: () => unknown) {
+  let r: string;
+  try { r = show(f()); } catch (e) { r = "throws " + any(e).constructor.name + ": " + any(e).message; }
+  console.log(what + ": " + r);
+}
+const wide = (s: string) => (s + "一").slice(0, -1);
+function both(what: string, re: RegExp, ...subjects: string[]) {
+  for (const s of subjects) {
+    say(what + " 8", () => { re.lastIndex = 0; return re.exec(s); });
+    say(what + " 16", () => { re.lastIndex = 0; return re.exec(wide(s)); });
+  }
+}
+
+both("literal", /abc/, "xxabcxx", "ab", "");
+both("class", /[a-c]+[^a-c]/, "xxabcabz", "abc");
+both("escapes", /\d+\s\w+\b\W/, "a 12 ab! ", "12ab");
+both("alternatives", /^(?:foo|bar|bazaar)$/, "foo", "bazaar", "baz");
+both("anchored words", /^(?:get|set|has|delete)[A-Z]/, "getX", "deleteY", "putZ");
+both("greedy", /a(.*)b(.*)c/, "a1b2b3c4c");
+both("lazy", /a(.*?)b(.*?)c/, "a1b2b3c4c");
+both("counted", /^(\d{2,4})-(\d{1,}?)-(\d{0,2})$/, "123-45-6", "1-2-3", "12345-6-7");
+both("nested groups", /((a)|(b))+(c)?/, "abab", "abc", "c");
+both("named groups", /(?<year>\d{4})-(?<month>\d\d)/, "on 2026-10-01", "2026");
+both("backreference", /(['"])(.*?)\1/, "say 'it' \"now\"", "'open");
+both("named backreference", /(?<q>a|b)x\k<q>/, "axb bxb", "axb");
+both("lookahead", /\w+(?=;)(?!;;)/, "ab; cd;;", "ab");
+both("negative lookahead", /^(?!.*secret).*$/, "public", "a secret");
+both("lookbehind", /(?<=\$)\d+(?<!0)/, "cost $120 $125", "125");
+both("ignore case", /straSSe|ÀB/i, "STRASSE", "àb", "ab");
+both("multiline", /^b.$/m, "ab\nbc\ncd", "ab");
+both("dot all", /a.b/s, "a\nb", "a b");
+both("not dot all", /a.b/, "a\nb", "a\rb", "a-b");
+both("empty match", /x*/, "aaa", "");
+both("empty alternative", /a(?:|b)c/, "ac", "abc", "abbc");
+both("has indices", /(a)(?<n>b)?/d, "xab", "xa");
+both("latin-1", /[\xe0-\xff]+/, "caf\xe9s", "cafes");
+both("backtracking", /^(a+)+b$/, "aaaaaaaaaaaab", "aaaaaaaaaaaaaaaaaac");
+both("long alternation", /\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/, "it is eleven", "elevens");
+
+say("wide literal", () => /一二/.exec("x一二y"));
+say("wide class", () => /[一-鿿]+/.exec("ab一二三cd"));
+say("wide negated class", () => /[^一-鿿]+/.exec("一ab二"));
+say("wide ignore case", () => [/σ/i.exec("Σ"), /Σ/i.exec("ς"), /K/i.exec("k"), /k/i.exec("K")]);
+say("wide backreference", () => /(一+)x\1/.exec("一一x一一一"));
+say("wide backreference, ignoring case", () => /(σ+)x\1/i.exec("σΣxΣσ"));
+say("a pair is two characters", () => [/^.$/.test("\u{1f600}"), /^..$/.test("\u{1f600}"), /\ud83d/.exec("\u{1f600}")]);
+
+both("u literal", /a\u{62}c/u, "xabc", "ab");
+both("u class", /[a-c\u{1f600}-\u{1f64f}]+/u, "xxabz", "z");
+both("u property", /\p{Lu}\p{Ll}+/u, "say Hello", "hello");
+both("u negated property", /\P{L}+/u, "ab12cd", "abcd");
+both("u ignore case", /straße|k/iu, "STRASSE", "STRAßE", "K");
+both("u named group", /(?<w>\p{L}+)-\k<w>/u, "ab-ab", "ab-ac");
+both("u lookbehind", /(?<=\p{Lu})\d/u, "a1B2", "a1");
+const pairs = "a\u{1f600}b\u{1f64f}\u{1f600}c";
+say("u dot", () => [/^.$/u.test("\u{1f600}"), /^..$/u.test("\u{1f600}"), /a.b/u.exec(pairs)]);
+say("u class with pairs", () => /[\u{1f600}-\u{1f64f}]+/u.exec(pairs + pairs));
+say("u negated class with pairs", () => /[^a-c]+/u.exec(pairs));
+say("u counted pairs", () => /\u{1f600}{2,3}/u.exec("x\u{1f600}\u{1f600}\u{1f600}\u{1f600}"));
+say("u greedy then backtrack", () => /^(.*)\u{1f600}(.*)$/u.exec(pairs));
+say("u lazy", () => /^(.*?)\u{1f600}(.*?)$/u.exec(pairs));
+say("u emoji property", () => "a\u{1f600}1❤b".match(/\p{Extended_Pictographic}/gu));
+say("u script", () => "ab一二あЖ".match(/\p{Script=Han}+|\p{Script=Cyrillic}/gu));
+say("u astral letters", () => /\p{L}+/u.exec("1\u{10400}\u{10428}\u{20000}2"));
+say("u astral ignore case", () => [/\u{10400}/iu.exec("\u{10428}"), /[\u{10400}-\u{10410}]/iu.exec("x\u{10430}")]);
+say("u backreference to a pair", () => /(\u{1f600}+)-\1/u.exec("\u{1f600}\u{1f600}-\u{1f600}\u{1f600}\u{1f600}"));
+say("u backreference, ignoring case", () => /(\u{10400})-\1/iu.exec("\u{10400}-\u{10428}"));
+say("u lookbehind over pairs", () => [/(?<=\u{1f600})b/u.exec(pairs), /(?<=^.{3})./u.exec(pairs), /(?<!\u{1f64f})\u{1f600}/u.exec(pairs)]);
+say("u word boundary", () => /\b\w+\b/u.exec("\u{1f600}ab\u{1f600}"));
+
+const lead = "\ud83d", trail = "\ude00";
+say("u lone lead at the end", () => [/.$/u.exec("a" + lead), /^.$/u.test(lead), /\ud83d/u.exec("a" + lead)]);
+say("u lone trail at the start", () => [/^./u.exec(trail + "a"), /^.$/u.test(trail), /\ude00/u.exec(trail + "a")]);
+say("u lone lead inside", () => /a(.)b/u.exec("a" + lead + "b"));
+say("u lone trail inside", () => /a(.)b/u.exec("a" + trail + "b"));
+say("u two leads", () => /^(.)(.)$/u.exec(lead + lead));
+say("u trail then lead", () => /^(.)(.)$/u.exec(trail + lead));
+say("u a lead does not match in a pair", () => [/\ud83d/u.exec("\u{1f600}"), /\ude00/u.exec("\u{1f600}"), /[\ud83d]/u.exec("\u{1f600}"), /[^\ud83d]/u.exec("\u{1f600}")]);
+say("u starting inside a pair", () => { const re = /./gu; re.lastIndex = 1; const m = re.exec("\u{1f600}a"); return [m, re.lastIndex]; });
+say("u sticky inside a pair", () => { const re = /./uy; re.lastIndex = 1; const m = re.exec("\u{1f600}a"); return [m, re.lastIndex]; });
+say("u sticky trail inside a pair", () => { const re = /\ude00/uy; re.lastIndex = 1; return [re.exec("\u{1f600}a"), re.lastIndex]; });
+say("u empty matches step over pairs", () => "\u{1f600}a\u{1f600}".replace(/(?:)/gu, "-"));
+say("empty matches do not", () => "\u{1f600}a".replace(/(?:)/g, "-"));
+
+both("v class", /[\p{L}--[a-c]]+/v, "abcdef", "abc");
+both("v intersection", /[\p{L}&&\p{ASCII}]+/v, "\xe9ab\xe9", "\xe9");
+say("v strings", () => /^[\q{abc|d}x]$/v.exec("abc"));
+say("v pairs", () => /[\p{Emoji_Presentation}--\u{1f600}]+/v.exec("\u{1f600}\u{1f601}\u{1f602}a"));
+say("v emoji sequences", () => "\u{1f1fa}\u{1f1f8} 1️⃣".match(/\p{RGI_Emoji}/gv));
+
+for (const [name, s] of [["8", "a1b22c333"], ["16", wide("a1b22c333")], ["pairs", "a1\u{1f600}22\u{1f600}333"]] as const) {
+  say("match all " + name, () => [...s.matchAll(/\d+/g)].map(m => m[0] + "@" + m.index));
+  say("match all u " + name, () => [...s.matchAll(/\P{N}+/gu)].map(m => m[0] + "@" + m.index));
+  say("replace " + name, () => s.replace(/(\d)(\d*)/g, "<$2$1>"));
+  say("replace with a function " + name, () => s.replace(/\D/gu, (c, at) => "[" + c.length + "@" + at + "]"));
+  say("split " + name, () => s.split(/\d+/));
+  say("split u " + name, () => s.split(/(?:)/u));
+  say("search " + name, () => [s.search(/\d{3}/), s.search(/x/u)]);
+  say("test, global " + name, () => { const re = /\d/g; const r = []; while (re.test(s)) r.push(re.lastIndex); return r; });
+  say("sticky " + name, () => { const re = /\D\d+/uy; const r = []; let m; while ((m = re.exec(s))) r.push(m[0]); return [r, re.lastIndex]; });
+}
+
+say("constructed", () => [new RegExp("\\p{Lu}\\p{Ll}+", "u").exec("say Hello"), new RegExp("^.$", "u").test("\u{1f600}"), new RegExp("[a-c]+[^a-c]").exec(wide("xxabcabz"))]);
+say("constructed, not in the program", () => [new RegExp("\\p{Ll}" + "{3}", "u").exec("ABcdeF"), new RegExp("^" + ".." + "$", "u").test("\u{1f600}\u{1f600}")]);
+
+say("many times", () => {
+  let n = 0;
+  const subjects = ["plain", wide("plain"), "with \u{1f600}", "一二", lead, ""];
+  for (let i = 0; i < 2000; i++) {
+    const s = subjects[i % subjects.length];
+    if (/^\p{L}+$/u.test(s)) n += 1;
+    if (/\p{Extended_Pictographic}/u.test(s)) n += 10;
+    if (/^.{0,5}$/u.test(s)) n += 100;
+    if (/[^\x00-\x7f]/.test(s)) n += 1000;
+  }
+  return n;
+});
+//// regexps-as-constants-and-receivers.ts
+// A RegExp literal is an object wherever it stands: a constant of the module that is made when it is first read, the receiver of a method, an argument. `new RegExp` likewise, or it throws.
+
+const WORD = /\w+/g;
+const DIGITS = /^\d+$/;
+const STICKY = /a/y;
+const NAMED = /(?<first>\w)(?<rest>\w*)/;
+const BUILT = new RegExp("[aeiou]", "gi");
+const ONLY_IN_A_FUNCTION = /z+/;
+const ONLY_IN_TWO_FUNCTIONS = /q(u)/;
+const lines: string[] = [];
+function say(...parts: unknown[]) { lines.push(parts.map(String).join(" ")); }
+
+function count(text: string): number { return (text.match(WORD) ?? []).length; }
+function isNumber(text: string): boolean { return DIGITS.test(text); }
+function isNumberByLiteral(text: string): boolean { return /^\d+$/.test(text); }
+function clean(text: string): string { return text.replace(/\s+/g, " ").replace(/^ | $/g, ""); }
+function parts(text: string): string[] { return text.split(/,\s*/); }
+function first(text: string): string | undefined { const m = /(\w)(\w*)/.exec(text); return m ? m[1] : undefined; }
+function fresh(): RegExp { return /a/g; }
+function source(): string { return /x+y*/i.source + "/" + /x+y*/i.flags; }
+function vowels(text: string): number { BUILT.lastIndex = 0; let n = 0; while (BUILT.test(text)) n++; return n; }
+function build(pattern: string, flags?: string): string { try { return String(new RegExp(pattern, flags)); } catch (error) { return (error as Error).name; } }
+function zs(text: string): number { return ONLY_IN_A_FUNCTION.exec(text)?.[0].length ?? 0; }
+function q(text: string): boolean { return ONLY_IN_TWO_FUNCTIONS.test(text); }
+function u(text: string): string | undefined { return ONLY_IN_TWO_FUNCTIONS.exec(text)?.[1]; }
+function walk(text: string): number[] { const found: number[] = []; const re = /b/g; while (re.exec(text)) found.push(re.lastIndex); return found; }
+
+say(count("a bc def"), count(""), isNumber("123"), isNumber("12a"), isNumberByLiteral("7"), isNumberByLiteral("x"));
+say(JSON.stringify(clean("  a   b  ")), parts("a, b,c").join("|"), first("hello"), first("!!"));
+say(fresh() === fresh(), fresh().global, fresh().lastIndex, source());
+say(vowels("education"), vowels("rhythm"), build("a+", "g"), build("("), build("a", "zz"));
+say(walk("abcabcb").join());
+say(zs("pizzza"), zs("none"), q("queue"), q("k"), u("quit"), u("k"));
+STICKY.lastIndex = 1;
+say(STICKY.test("ba"), STICKY.lastIndex, STICKY.test("ba"), STICKY.lastIndex);
+const named = NAMED.exec("word");
+say(named?.groups?.first, named?.groups?.rest, named?.index);
+say(WORD instanceof RegExp, typeof DIGITS, Object.prototype.toString.call(BUILT), WORD.flags, String(NAMED));
+let total = 0;
+for (let i = 0; i < 2000; i++) total += count("a b c " + i) + (isNumber(String(i)) ? 1 : 0) + (isNumberByLiteral("x" + i) ? 1 : 0) + clean("  x  y ").length + parts("a, b,c").length + (first("hello")?.length ?? 0);
+say(total);
+console.log(lines.join("\n"));
+//// regexps-assembled-vs-equal-literals.ts
+// Regular expressions that are put together out of texts when a module is loaded, beside literals of the same text.
+interface Edit {
+  replace(name: string | RegExp, value: string | RegExp): Edit;
+  getRegex(): RegExp;
+}
+
+function edit(source: string | RegExp, flags = ""): Edit {
+  let text = typeof source === "string" ? source : source.source;
+  const self: Edit = {
+    replace(name: string | RegExp, value: string | RegExp) {
+      let put = typeof value === "string" ? value : value.source;
+      put = put.replace(/(^|[^\[])\^/g, "$1");
+      text = text.replace(name, put);
+      return self;
+    },
+    getRegex() {
+      return new RegExp(text, flags);
+    },
+  };
+  return self;
+}
+
+const bullet = /(?:[*+-]|\d{1,9}[.)])/;
+const listItem = edit(/^( {0,3}bull)([ \t][^\n]+?)?(?:\n|$)/)
+  .replace(/bull/g, bullet)
+  .getRegex();
+const heading = edit("^ {0,3}(#{1,6})(?=\\s|$)(.*)(?:\\n+|$)").getRegex();
+const words = ["alpha", "beta", "gamma"];
+const anyWord = new RegExp("\\b(?:" + words.join("|") + ")\\b", "gi");
+const sameAsLiteral = new RegExp("a+b", "g");
+const literal = /a+b/g;
+
+console.log(listItem.source, listItem.flags);
+console.log(JSON.stringify(listItem.exec("  12. item\nrest")?.slice(0, 3)));
+console.log(JSON.stringify(heading.exec("## title\n\nbody")?.slice(1, 3)));
+console.log(JSON.stringify("Alpha and GAMMA, not alphabet".match(anyWord)));
+console.log("caab aab".replace(sameAsLiteral, "<$&>"), "caab aab".replace(literal, "[$&]"));
+console.log(sameAsLiteral.source === literal.source, sameAsLiteral.flags === literal.flags, sameAsLiteral === (literal as RegExp));
+//// regexps-from-string-literals-1-untyped.js
+// Regular expressions that a program builds from string literals at load time, as the packages marked and wrap-ansi do (the same program without type annotations).
+class Unused {
+}
+function make(text) {
+  return Array.from(text).join("");
+}
+const other = { caret: /(^|[^\[])\^/g };
+////= edit
+const bullet = /(?:[*+-]|\d{1,9}[.)])/;
+const heading = edit(/^bull hea+dingcode$/).replace(/bull/g, bullet).replace("code", /(?: {4}| {0,3}\t)/).getRegex();
+const twice = edit("^fi+rstbullsecondbull", "gi").replace(/bull/g, bullet).getRegex();
+const caret = edit(/ca+ret(x)inner/).replace("inner", /^[^y]/).getRegex();
+const nested = edit(/neste+dinner/, "m").replace("inner", heading).getRegex();
+const SET = new Set(["a", "b", "a"]);
+const joined = new RegExp(`[${[...SET].join("")}]joi+ned`);
+const dollar = new RegExp("do+llarX-Y-Z-W".replace("X", "$$&").replace(/Y/, "a$&".replace("$&", "a")).replace(/(Z)/, "$$").replace(/(W)|(V)/, "$2b"));
+const repeated = new RegExp("repea+t".concat(" ab".repeat(3), " ", String(Math.min(3, 7))));
+const table = { first: "fro+m", second: { third: "object" }, list: ["x", 7] };
+const fromObject = new RegExp(table.first + table.second.third + table.list[1]);
+const holder = { prefix: "metho+d", build(a, b) {
+  return new RegExp([this.prefix, a, b].join(":"));
+} };
+const byMethod = holder.build("x", "y");
+const factory = (indent) => new RegExp(`^ {0,${Math.min(3, indent - 1)}}facto+ry`);
+const made = factory(3);
+const slashed = new RegExp("sla+sh</?x");
+const reused = edit(/reu+sed:inner[/]/).replace("inner", slashed).getRegex();
+////= memo
+const indented = memo((i) => new RegExp(`^ {0,${i}}me+mo`));
+function boom(when) {
+  if (when)
+    throw new Error("boom");
+  return "x";
+}
+let inTry;
+let afterThrow;
+let inFinally;
+try {
+  inTry = new RegExp("intry+" + boom(false));
+} catch {
+  inTry = /never1/;
+}
+////= lines
+const fromCall = new RegExp(make("fromca+ll"));
+const byFunction = new RegExp("byfu+nctionx".replace("x", (m) => m.toUpperCase()));
+const named = new RegExp("na+X".replace(/(?<n>X)/, "med"));
+const time = new RegExp("ti+me".slice(0, Date.now() > 0 ? 5 : 1));
+const out = [heading.source, heading.flags, twice.source, twice.flags, caret.source, nested.source, nested.flags, joined.source, dollar.source, repeated.source, fromObject.source, byMethod.source, made.source, factory(1).source, factory(9).source, fromCall.source, byFunction.source, named.source, time.source];
+out.push(heading.test(make("12. heaading    ")), twice.test(make("FIIRST*SECOND9)")), caret.test(make("caaretxz")), nested.test(make("nesteed")), joined.test(make("bjoiined")), dollar.test(make("dollar")), repeated.test(make("repeaat ab ab ab 3")), fromObject.test(make("froomobject7")), byMethod.test(make("methood:x:y")), made.test(make("  factoory")), factory(1).test(make(" factoory")), fromCall.test(make("fromcaall")), byFunction.test(make("byfuunctionX")), named.test(make("naamed")), time.test(make("tiime")), typeof Unused);
+out.push(slashed.source, reused.source, indented(make("ab").length).source, indented(0).source, indented(99).source, indented(3) === indented(3), inTry.source, afterThrow.source, inFinally?.source, reused.test(make("reuused:slaash</x/")), indented(2).test(make(" meemo")));
+console.log(out.map(String).join(" | "));
+//// regexps-from-string-literals-2-untyped.js
+// Regular expressions that a program builds from string literals at load time, as the packages marked and wrap-ansi do (second part) (the same program without type annotations).
+class Unused {
+}
+function make(text) {
+  return Array.from(text).join("");
+}
+const other = { caret: /(^|[^\[])\^/g };
+////= edit
+const bullet = /(?:[*+-]|\d{1,9}[.)])/;
+const heading = edit(/^bull hea+dingcode$/).replace(/bull/g, bullet).replace("code", /(?: {4}| {0,3}\t)/).getRegex();
+const twice = edit("^fi+rstbullsecondbull", "gi").replace(/bull/g, bullet).getRegex();
+const caret = edit(/ca+ret(x)inner/).replace("inner", /^[^y]/).getRegex();
+const nested = edit(/neste+dinner/, "m").replace("inner", heading).getRegex();
+const SET = new Set(["a", "b", "a"]);
+const joined = new RegExp(`[${[...SET].join("")}]joi+ned`);
+const dollar = new RegExp("do+llarX-Y-Z-W".replace("X", "$$&").replace(/Y/, "a$&".replace("$&", "a")).replace(/(Z)/, "$$").replace(/(W)|(V)/, "$2b"));
+const repeated = new RegExp("repea+t".concat(" ab".repeat(3), " ", String(Math.min(3, 7))));
+const table = { first: "fro+m", second: { third: "object" }, list: ["x", 7] };
+const fromObject = new RegExp(table.first + table.second.third + table.list[1]);
+const holder = { prefix: "metho+d", build(a, b) {
+  return new RegExp([this.prefix, a, b].join(":"));
+} };
+const byMethod = holder.build("x", "y");
+const factory = (indent) => new RegExp(`^ {0,${Math.min(3, indent - 1)}}facto+ry`);
+const made = factory(3);
+const slashed = new RegExp("sla+sh</?x");
+const reused = edit(/reu+sed:inner[/]/).replace("inner", slashed).getRegex();
+////= memo
+const indented = memo((i) => new RegExp(`^ {0,${i}}me+mo`));
+function boom(when) {
+  if (when)
+    throw new Error("boom");
+  return "x";
+}
+let inTry;
+let afterThrow;
+let inFinally;
+try {
+  inTry = new RegExp("intry+" + boom(false));
+} catch {
+  inTry = /never1/;
+}
+////= lines
+const fromCall = new RegExp(make("fromca+ll"));
+const byFunction = new RegExp("byfu+nctionx".replace("x", (m) => m.toUpperCase()));
+const named = new RegExp("na+X".replace(/(?<n>X)/, "med"));
+const time = new RegExp("ti+me".slice(0, Date.now() > 0 ? 5 : 1));
+const typeOfHost = new RegExp("ty+pe" + typeof globalThis);
+const year = new RegExp("ye+ar" + new Date(0).getUTCFullYear());
+const locale = new RegExp("lo+cale" + "b".localeCompare("a"));
+const chance = new RegExp("cha+nce" + Math.floor(Math.random()));
+function given(text) {
+  return new RegExp("gi+ven" + text);
+}
+const fromRun = given(String(typeof globalThis).slice(0, 0) + make("ab"));
+const out = [typeOfHost.source, year.source, locale.source, chance.source, fromRun.source, typeOfHost.test(make("typeobject")), year.test(make("yeear1970")), locale.test(make("locale1")), chance.test(make("chance1")), fromRun.test(make("givenab")), heading.source, heading.flags, twice.source, twice.flags, caret.source, nested.source, nested.flags, joined.source, dollar.source, repeated.source, fromObject.source, byMethod.source, made.source, factory(1).source, factory(9).source, fromCall.source, byFunction.source, named.source, time.source];
+out.push(heading.test(make("12. heaading    ")), twice.test(make("FIIRST*SECOND9)")), caret.test(make("caaretxz")), nested.test(make("nesteed")), joined.test(make("bjoiined")), dollar.test(make("dollar")), repeated.test(make("repeaat ab ab ab 3")), fromObject.test(make("froomobject7")), byMethod.test(make("methood:x:y")), made.test(make("  factoory")), factory(1).test(make(" factoory")), fromCall.test(make("fromcaall")), byFunction.test(make("byfuunctionX")), named.test(make("naamed")), time.test(make("tiime")), typeof Unused);
+out.push(slashed.source, reused.source, indented(make("ab").length).source, indented(0).source, indented(99).source, indented(3) === indented(3), inTry.source, afterThrow.source, inFinally?.source, reused.test(make("reuused:slaash</x/")), indented(2).test(make(" meemo")));
+console.log(out.map(String).join(" | "));
+//// regexps-in-dead-branches.ts
+// The source of a regular expression literal is kept where live code uses it, whatever becomes of literals in branches that are cut.
+declare const console: { log(...args: unknown[]): void }
+const never: boolean = false as const
+function clean(s: string): string {
+  if (never) return s.replace(/sourceOfExpressionInDeadBranch\d+/g, "")
+  return s.replace(/sourceOfLiveExpression\d+/g, "<>")
+}
+const live = /anotherLive(Expression)?/y
+console.log(clean("a sourceOfLiveExpression12 b"), live.source, live.flags, String(/writtenOut[a-z]+/giu), new RegExp("made" + "AtRunTime", "s").source)
+//// repeat-and-pad-untyped.js
+// `repeat()`, `padStart()` and `padEnd()`: short results, long results and errors (the same program without type annotations).
+const print = (s) => console.log(s);
+////= show-5
+////= lines-3	repeated	s	n	s.repeat
+export function repeatedByInteger(s, n) {
+  return s.repeat(n & 7);
+}
+////= lines-3	paddedAtEnd	s	n	s.padEnd
+////= lines-3	paddedAtStart	s	n	s.padStart
+export function filledAtEnd(s, n, f) {
+  return s.padEnd(n, `${f}`);
+}
+export function filledAtStart(s, n, f) {
+  return s.padStart(n, `${f}`);
+}
+////= lines-7	withAnyFiller	n	f	padEnd
+////= lines-3	withAnyCount	s	n	s.repeat
+export function indented(lines, width) {
+  let out = "";
+  for (let j = 0;j < lines.length; j++)
+    out += "  ".repeat(j & 3) + lines[j].padEnd(width) + "|" + String(j).padStart(3, "0") + `
+`;
+  return out;
+}
+export function indentedByAnything(lines, width, filler) {
+  let out = "";
+  for (let j = 0;j < lines.length; j++)
+    out += "  ".repeat(width) + lines[j].padEnd(width, filler) + `
+`;
+  return out;
+}
+function brief(f) {
+  let s;
+  try {
+    s = f();
+  } catch (e) {
+    return "throws " + e.name + ": " + e.message;
+  }
+  if (s.length <= 24)
+    return show(s);
+  let sum = 0;
+  for (let i = 0;i < s.length; i++)
+    sum = sum * 31 + s.charCodeAt(i) | 0;
+  return s.length + ":" + show(s.slice(0, 5)) + ".." + show(s.slice(-5)) + ":" + sum;
+}
+const box = "\u2500";
+const pair = "\uD83D\uDE00";
+const numbers = [0, 1, 2, 3, 7, 8, 9, 100, 1023, 1024, 1025, 5000, -1, -0, -0.5, 0.5, 1.9, 2.5, -1.5, NaN, 1 / 0, -1 / 0, 2147483648, 4294967296, 4294967298, 9007199254740992, 1000000000000000000000, -2147483648, -9223372036854776000, 9223372036854776000, 18446744073709552000];
+const strings = ["", "a", "ab", "abcdefgh", "abcdefghi", box, "a" + box, pair, cat("ro", "pe"), cat(box, "x"), part("xxsubxx", 2, 5), part("x" + box + box + "x", 1, 3), "y".repeat(512), "z".repeat(1024), "w".repeat(1025)];
+for (const s of strings)
+  print(brief(() => s) + " repeat: " + numbers.map((n) => brief(() => repeated(s, n))).join(" "));
+for (const s of strings)
+  print(brief(() => s) + " padEnd: " + numbers.map((n) => brief(() => paddedAtEnd(s, n))).join(" "));
+for (const s of strings)
+  print(brief(() => s) + " padStart: " + numbers.map((n) => brief(() => paddedAtStart(s, n))).join(" "));
+const fillers = ["", " ", "x", "xy", "0123456789", box, box + "=", pair, cat("r", "p"), part("--fill--", 2, 6), "f".repeat(2000)];
+for (const f of fillers)
+  print(brief(() => f) + " fills: " + ["", "a", box, "abc"].map((s) => [0, 1, 2, 3, 4, 5, 8, 11, 1024, 1025, NaN, 1 / 0].map((n) => brief(() => filledAtEnd(s, n, f)) + "/" + brief(() => filledAtStart(s, n, f))).join(" ")).join(" ; "));
+for (let n = 0;n < 10; n++)
+  print(show(repeatedByInteger("ab", n)) + show(repeatedByInteger(box, n)));
+{
+  const s = cat("same", "one");
+  print(String(paddedAtEnd(s, 3) === s) + (repeated(s, 1) === s) + (filledAtStart(s, 100, "") === s) + " " + paddedAtEnd("k", 3).length + new Map([[paddedAtEnd("k", 3), 1]]).get("k  ") + { aaa: 7 }[repeated("a", 3)] + " " + (repeated("ab", 2) + paddedAtStart("c", 2)).toUpperCase() + repeated("ab", 3).indexOf("ba") + paddedAtEnd(box, 4).charCodeAt(3));
+}
+print(show(indented(["one", box + "two", "", "a long line that is longer than the width", "five"], 8)));
+print([undefined, null, 5, "", "ab", { toString() {
+  return "<>";
+} }, true].map((f) => brief(() => withAnyFiller("s", 6, f))).join(" ") + " " + ["3", null, undefined, true, { valueOf() {
+  return 2;
+} }, "x", [2], 2n, Symbol.iterator].map((n) => brief(() => withAnyCount("ab", n))).join(" "));
+print(show(indentedByAnything(["a", "bc"], 3, "-")) + " " + show(indentedByAnything(["a"], "2", 7)));
+print(attempt(() => repeated(undefined, 2)) + " " + attempt(() => paddedAtEnd(null, 2)) + " " + attempt(() => filledAtStart(undefined, 2, "x")));
+globalThis.kept = [repeated, repeatedByInteger, paddedAtEnd, paddedAtStart, filledAtEnd, filledAtStart, withAnyFiller, withAnyCount, indented, indentedByAnything];
+console.log("number");
+//// replace-named-groups-callback.js
+// With named groups the replacement function receives one more argument: an object that replace and replaceAll allocate.
+function swap(match, year, month, offset, whole, groups) {
+  return groups.month + "/" + groups.year
+}
+console.log("2024-05 2025-06".replace(/(?<year>\d+)-(?<month>\d+)/, swap))
+console.log("2024-05 2025-06".replace(/(?<year>\d+)-(?<month>\d+)/g, swap))
+console.log("2024-05 2025-06".replaceAll(/(?<year>\d+)-(?<month>\d+)/g, swap))
+
+function describeLast(...args) {
+  const last = args[args.length - 1]
+  return "[" + args.length + " " + typeof last + " " + (typeof last === "object" ? Object.getPrototypeOf(last) + " " + Object.keys(last) + " " + JSON.stringify(last) : last) + "]"
+}
+console.log("ab".replace(/(?<first>a)(?<second>x)?/, describeLast))
+console.log("ab".replaceAll(/(?<letter>[ab])/g, describeLast))
+console.log("ab".replace(/(a)(x)?/, describeLast))
+console.log("ab".replace("a", describeLast))
+console.log("abab".replaceAll("b", describeLast))
+
+const kept = []
+function keep(match, letter, offset, whole, groups) {
+  groups.offset = offset
+  kept.push(groups)
+  return letter.toUpperCase()
+}
+console.log("abc".replace(/(?<letter>[a-c])/g, keep), kept.length, kept[0] === kept[1], JSON.stringify(kept))
+
+let total = 0
+for (let i = 0; i < 200; i++)
+  "k1=v1;k2=v2".replace(/(?<key>\w+)=(?<value>\w+)/g, (match, key, value, offset, whole, groups) => { total += groups.key.length + groups.value.length + offset; return "" })
+console.log(total)
+
+class Loud extends RegExp {
+  exec(string) {
+    const result = super.exec(string)
+    if (result) result.groups = { shout: result[0].toUpperCase() }
+    return result
+  }
+}
+console.log("abc".replace(new Loud("b"), (match, offset, whole, groups) => groups.shout + offset))
+console.log(RegExp.prototype[Symbol.replace].call(/(?<x>b)/, "abc", (match, x, offset, whole, groups) => "<" + groups.x + ">"))
+//// replace-no-match-16-bit.ts
+const count: (name: string) => number = (globalThis as any).aotOperationCount ?? (() => 0);
+const entries = () => count("operationAOTStringReplaceRegExpString");
+
+const separators = /\u2028|\u2029/g;
+const first = /(\d+)\u5186/;
+function clean(text: string) {
+  return text.replace(separators, " ");
+}
+function price(text: string) {
+  return text.replace(first, "<$1>");
+}
+const subjects = ["", "plain", "caf\xe9", "\u4e2d\u6587", "a\u2028b", "\u2029", "\u4e2d\u2028\u6587\u2029", "100\u5186", "\u7d04 250\u5186 \u3068 30\u5186", "x".repeat(40) + "\u4e2d", "\ud83d\ude00 5\u5186"];
+for (const subject of subjects) {
+  separators.lastIndex = 3;
+  const cleaned = clean(subject);
+  console.log(JSON.stringify(cleaned), cleaned === subject, separators.lastIndex, JSON.stringify(price(subject)), JSON.stringify(RegExp.lastMatch), JSON.stringify(RegExp.$1));
+}
+const rope = "\u4e2d" + subjects[1] + String(subjects.length);
+console.log(JSON.stringify(clean(rope)), JSON.stringify(clean(rope.slice(1))), JSON.stringify(price(rope + "\u5186")));
+
+const wide = "\u250c" + "\u2500".repeat(30) + "\u2510 text";
+const before = entries();
+let kept = 0;
+for (let i = 0; i < 4000; i++) {
+  if (clean(wide) === wide) kept++;
+  if (price(wide) === wide) kept++;
+}
+console.log(kept, entries() - before < 400 ? "few entries" : "MANY ENTRIES");
+//// replace-with-literal-text-patterns.ts
+// text.replace(/&/g, "&amp;"): patterns that are one character or one literal text, with everything a program can observe around the call.
+const lines: string[] = [];
+function show(label: string, value: unknown): void {
+  lines.push(label + ": " + (typeof value === "string" ? JSON.stringify(value) : String(value)));
+}
+function statics(): string {
+  const legacy = RegExp as unknown as Record<string, string>;
+  return JSON.stringify([legacy["lastMatch"], legacy["leftContext"], legacy["rightContext"], legacy["input"], legacy["$1"]]);
+}
+function rope(a: string, b: string): string {
+  return a + "-0123456789012345678901234567890123456789-" + b;
+}
+const wide = "Ж & Ж & z";
+const subjects: string[] = [
+  "", "&", "&&", "a", "a&", "&a", "a&b", "a & b & c", "nothing to see here at all, truly nothing",
+  "R&D fast eco R&D light eco modern R&D", "eco", "ecoeco", "ec", "eceo eco", "<b>bold</b> & \"quoted\"",
+  rope("left & side", "right"), rope("left", "right & side"), rope("eco", "eco"), rope("plain", "plain"),
+  "xx a&b eco yy".substring(3, 10), "0123456789 nothing here 0123456789".substring(5, 25),
+  wide, "ЖЖ", wide.substring(2), "line\n&\nline",
+];
+
+/x(y)/.exec("xy");
+for (const text of subjects) {
+  show("subject", text);
+  const one = text.replace(/&/g, "&amp;");
+  show("  one character", one); show("  same", one === text); show("  statics", statics());
+  const word = text.replace(/eco/g, "green");
+  show("  one word", word); show("  same", word === text); show("  statics", statics());
+  show("  first only", text.replace(/&/, "+")); show("  statics", statics());
+  show("  first word only", text.replace(/eco/, "")); 
+  show("  removed", text.replace(/&/g, ""));
+  show("  dollar", text.replace(/&/g, "[$&]")); show("  two dollars", text.replace(/&/g, "$$")); show("  before", text.replace(/eco/g, "$`"));
+  show("  wide replacement", text.replace(/&/g, "Ж")); show("  wide pattern", text.replace(/Ж/g, "Zh"));
+  show("  longer", text.replace(/&/g, "0123456789012345678901234567890123456789"));
+  show("  escaped", text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"));
+  show("  i", text.replace(/ECO/gi, "E")); show("  m", text.replace(/&/gm, "M")); show("  s", text.replace(/&/gs, "S"));
+  show("  u", text.replace(/&/gu, "U")); show("  v", text.replace(/&/gv, "V")); show("  d", text.replace(/&/dg, "D"));
+  show("  y", text.replace(/&/y, "Y")); show("  gy", text.replace(/&/gy, "Y")); show("  all", text.replaceAll(/&/g, "A"));
+  show("  statics", statics());
+}
+
+function digest(text: string): string {
+  let sum = 0;
+  for (let i = 0; i < text.length; i++) sum = (sum * 31 + text.charCodeAt(i)) % 1000003;
+  return text.length + " " + sum + " " + JSON.stringify(text.slice(0, 20)) + " " + JSON.stringify(text.slice(-20));
+}
+for (const count of [1, 2, 3, 15, 16, 17, 31, 32, 33, 34, 64, 65, 1000, 40000]) {
+  const spread = "a&".repeat(count), tight = "&".repeat(count), words = "eco ".repeat(count), run = "a".repeat(count);
+  show("spread " + count, digest(spread.replace(/&/g, "&amp;"))); show("  statics", digest(statics()));
+  show("tight " + count, digest(tight.replace(/&/g, "<>")));
+  show("same length " + count, digest(tight.replace(/&/g, "+")));
+  show("shorter " + count, digest(words.replace(/eco/g, "e"))); show("  statics", digest(statics()));
+  show("much longer " + count, digest(words.replace(/eco/g, "green and a good deal more")));
+  show("overlapping " + count, digest(run.replace(/aa/g, "b")));
+  show("ends " + count, digest(("&" + run + "&").replace(/&/g, "[]")));
+  show("whole " + count, digest(run.replace(new RegExp(run, "g"), "z")));
+}
+show("one character out", "eco".replace(/eco/g, "e")); show("two out", "ecoeco".replace(/eco/g, "e"));
+show("high Latin-1", "caf\u00e9 & cr\u00e8me".replace(/\u00e9/g, "e").replace(/&/g, "\u00a7"));
+
+const kept = /&/g;
+for (const start of [0, 1, 5, 100, -1, 1.5]) {
+  kept.lastIndex = start;
+  show("from " + start, "a&b&c".replace(kept, "+")); show("  lastIndex", kept.lastIndex);
+  kept.lastIndex = start;
+  show("miss from " + start, "abc".replace(kept, "+")); show("  lastIndex", kept.lastIndex);
+}
+const single = /&/;
+single.lastIndex = 3;
+show("not global", "a&b&c".replace(single, "+")); show("  lastIndex", single.lastIndex);
+show("not global, miss", "abc".replace(single, "+")); show("  lastIndex", single.lastIndex);
+
+const odd = /&/g;
+let asked = 0;
+(odd as unknown as { lastIndex: unknown }).lastIndex = { valueOf() { asked++; return 1; } };
+show("lastIndex an object", "a&b".replace(odd, "+")); show("  asked", asked); show("  lastIndex", odd.lastIndex);
+(odd as unknown as { lastIndex: unknown }).lastIndex = "2";
+show("lastIndex a string", "abc".replace(odd, "+")); show("  lastIndex", odd.lastIndex);
+
+for (const text of ["a&b", "abc"]) {
+  const frozen = Object.freeze(/&/g);
+  try { show("frozen", text.replace(frozen, "+")); } catch (error) { show("frozen throws", (error as Error).constructor.name); }
+  const fixed = /&/g;
+  Object.defineProperty(fixed, "lastIndex", { writable: false, value: 0 });
+  try { show("fixed lastIndex", text.replace(fixed, "+")); } catch (error) { show("fixed lastIndex throws", (error as Error).constructor.name); }
+  const fixedSingle = /&/;
+  Object.defineProperty(fixedSingle, "lastIndex", { writable: false, value: 0 });
+  try { show("fixed lastIndex, not global", text.replace(fixedSingle, "+")); } catch (error) { show("throws", (error as Error).constructor.name); }
+}
+
+class Louder extends RegExp {
+  override exec(text: string): RegExpExecArray | null { lines.push("Louder.exec " + JSON.stringify(text)); return super.exec(text); }
+}
+show("subclass", "a&b".replace(new Louder("&", "g"), "+"));
+const own = /&/g;
+(own as unknown as { exec: unknown }).exec = function (this: RegExp, text: string) { lines.push("own exec"); return RegExp.prototype.exec.call(this, text); };
+show("own exec", "a&b".replace(own, "+")); show("own exec, miss", "abc".replace(own, "+"));
+const extra = /&/g;
+(extra as unknown as { note: number }).note = 1;
+show("own property", "a&b".replace(extra, "+")); show("own property, miss", "abc".replace(extra, "+"));
+
+console.log(lines.join("\n"));
+//// replace-with-odd-last-index.ts
+// `replace`, `replaceAll`, `split`, `match` and `search` with a RegExp whose `lastIndex` is an object, not an integer, out of range or read-only: the conversion runs user code when the specification says so, what that code stores is visible after the call, and a store to `lastIndex` that fails throws a TypeError.
+const log: string[] = [];
+
+////= attempt-4	JSON.stringify(action()) ?? "undefined"
+
+function describeLastIndex(re: RegExp): string {
+  const value: unknown = (re as any).lastIndex;
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  return typeof value === "string" ? JSON.stringify(value) : value === null ? "null" : typeof value;
+}
+
+function takeLog(): string {
+  return log.splice(0).join("+") || "nothing";
+}
+
+const methods: [string, (s: string, re: RegExp) => unknown][] = [
+  ["replace with a string", (s, re) => s.replace(re, "b")],
+  ["replace with a pattern", (s, re) => s.replace(re, "[$&]")],
+  ["replace with a function", (s, re) => s.replace(re, found => `<${found}>`)],
+  ["replaceAll with a string", (s, re) => s.replaceAll(re, "b")],
+  ["replaceAll with a function", (s, re) => s.replaceAll(re, found => `<${found}>`)],
+  ["split", (s, re) => s.split(re)],
+  ["split with a limit", (s, re) => s.split(re, 2)],
+  ["match", (s, re) => s.match(re)],
+  ["search", (s, re) => s.search(re)],
+];
+
+const literals: [string, () => RegExp][] = [
+  ["/a/", () => /a/],
+  ["/a/g", () => /a/g],
+  ["/a/y", () => /a/y],
+  ["/a/gy", () => /a/gy],
+];
+
+const oddValues: [string, () => unknown][] = [
+  ["valueOf returns 0", () => ({ valueOf: () => (log.push("read"), 0) })],
+  ["valueOf returns 1", () => ({ valueOf: () => (log.push("read"), 1) })],
+  ["valueOf returns 9", () => ({ valueOf: () => (log.push("read"), 9) })],
+  ["toString returns 2", () => ({ toString: () => (log.push("read"), "2") })],
+  ["valueOf throws", () => ({ valueOf: () => { log.push("read"); throw new RangeError("from valueOf"); } })],
+  ["text 1", () => "1"],
+  ["text x", () => "x"],
+  ["null", () => null],
+  ["undefined", () => undefined],
+  ["true", () => true],
+  ["symbol", () => Symbol.iterator],
+  ["bigint", () => 1n],
+  ["-1", () => -1],
+  ["-0", () => -0],
+  ["1.5", () => 1.5],
+  ["NaN", () => NaN],
+  ["Infinity", () => Infinity],
+  ["4", () => 4],
+  ["5", () => 5],
+  ["2 ** 31", () => 2 ** 31],
+  ["2 ** 32 + 1", () => 2 ** 32 + 1],
+  ["2 ** 53", () => 2 ** 53],
+];
+
+for (const [methodName, method] of methods) {
+  console.log(methodName);
+  for (const [valueName, createValue] of oddValues) {
+    const cells = literals.map(([source, create]) => {
+      const re = create();
+      (re as any).lastIndex = createValue();
+      return `${source} ${attempt(() => method("aaba", re))} ran ${takeLog()} left ${describeLastIndex(re)}`;
+    });
+    console.log(`  ${valueName}: ${cells.join(" | ")}`);
+  }
+}
+
+////= lines-28	storeDuringReplaceWithString	y	replace
+////= lines-42	storeDuringReplaceWithFunction	replace(re, found => found + o.x
+////= lines-28	storeDuringReplaceAll	gy	replaceAll
+////= lines-29	storeDuringSplit	split
+////= lines-29	storeDuringMatch	match
+////= lines-42	storeDuringSearch	search(re
+console.log("a store by valueOf is visible after the call");
+for (const s of ["aaba", "baab", ""]) {
+  console.log(
+    `  ${JSON.stringify(s)}:`,
+    [storeDuringReplaceWithString, storeDuringReplaceWithFunction, storeDuringReplaceAll, storeDuringSplit, storeDuringMatch, storeDuringSearch].map(run => run(s)).join(" | "),
+  );
+}
+
+function storeToArrayDuringReplace(s: string): string {
+  const list = [1, 2, 3];
+  const re = /a/y;
+  (re as any).lastIndex = { valueOf: () => (list.push(4), (list[0] = 10), 1) };
+  const before = list[0] + list.length;
+  const result = s.replace(re, "b");
+  return `${before} ${list[0] + list.length} ${result} ${re.lastIndex}`;
+}
+let moduleCounter = 0;
+function storeToVariableDuringReplace(s: string): string {
+  const re = /a/y;
+  (re as any).lastIndex = { valueOf: () => moduleCounter++ };
+  const before = moduleCounter;
+  const result = s.replace(re, "b");
+  return `${before} ${moduleCounter} ${result} ${re.lastIndex}`;
+}
+console.log("  other locations:", storeToArrayDuringReplace("aaba"), "|", storeToVariableDuringReplace("aaba"), "|", storeToVariableDuringReplace("aaba"), "|", storeToVariableDuringReplace("aaba"));
+
+function replaceStickyFrom(s: string, lastIndex: number): string {
+  const re = /a/y;
+  re.lastIndex = lastIndex;
+  const result = s.replace(re, "b");
+  return `${result} ${re.lastIndex}`;
+}
+console.log("a sticky literal with a numeric lastIndex");
+for (const lastIndex of [0, 1, 2, 3, 4, 5, 100, -1, -0, 0.5, 1.5, NaN, Infinity, -Infinity, 2 ** 31, 2 ** 32 + 1]) {
+  console.log(`  ${Object.is(lastIndex, -0) ? "-0" : lastIndex}: ${replaceStickyFrom("aaba", lastIndex)} | ${replaceStickyFrom("中aab", lastIndex)}`);
+}
+function replaceStickyRepeatedly(s: string): string {
+  const re = /a/y;
+  const steps: string[] = [];
+  for (let step = 0; step < 5; step++) steps.push(`${s.replace(re, "b")} ${re.lastIndex}`);
+  return steps.join(", ");
+}
+console.log("  repeated:", replaceStickyRepeatedly("aaba"));
+
+function fix(re: RegExp, value: number): RegExp {
+  return Object.defineProperty(re, "lastIndex", { writable: false, value });
+}
+function searchReadOnly(s: string, value: number): number {
+  const re = /a/;
+  Object.defineProperty(re, "lastIndex", { writable: false, value });
+  return s.search(re);
+}
+console.log("a read-only lastIndex");
+console.log("  search in one function:", attempt(() => searchReadOnly("ba", 1)), attempt(() => searchReadOnly("ba", 0)), attempt(() => searchReadOnly("bb", 1)), attempt(() => searchReadOnly("bb", 0)));
+for (const [methodName, method] of methods) {
+  const cells: string[] = [];
+  for (const [source, create] of literals) {
+    for (const value of [0, 1]) {
+      const re = fix(create(), value);
+      cells.push(`${source} at ${value} ${attempt(() => method("aaba", re))} ${attempt(() => method("bbb", re))} left ${describeLastIndex(re)}`);
+    }
+  }
+  console.log(`  ${methodName}: ${cells.join(" | ")}`);
+}
+console.log("a frozen RegExp");
+for (const [methodName, method] of methods) {
+  console.log(`  ${methodName}: ${literals.map(([source, create]) => `${source} ${attempt(() => method("aaba", Object.freeze(create())))}`).join(" | ")}`);
+}
+
+export {};
+//// rope-and-substring-reads.ts
+type Make = () => string;
+
+function fromUnits(units: number[]): string {
+  return String.fromCharCode(...units);
+}
+
+function flatten(text: string): string {
+  Symbol(text);
+  return text;
+}
+
+function unitsOf(text: string | undefined): string {
+  if (text === undefined) return "undefined";
+  let units = "[";
+  for (let i = 0; i < text.length; i++) units += (i ? " " : "") + text.charCodeAt(i).toString(16);
+  return units + "]";
+}
+
+const narrowUnits: number[] = [];
+for (let i = 0; i < 48; i++) narrowUnits.push(i % 11 === 10 ? 0xe9 : 0x61 + (i % 26));
+const narrowTailUnits: number[] = [];
+for (let i = 0; i < 40; i++) narrowTailUnits.push(0x30 + (i % 10));
+
+const loneTrail = 0xdc00;
+const loneLead = 0xd800;
+const lead = 0xd83d;
+const trail = 0xde00;
+const wideUnits: number[] = [loneTrail, 0x61, lead, trail, 0x4e00, 0xe9, lead, 0x62];
+for (let i = 0; i < 30; i++) wideUnits.push(i % 7 === 6 ? 0x3042 + i : 0x41 + i);
+wideUnits.push(lead, trail, 0x7a, lead);
+const wideTailUnits: number[] = [trail, 0x63, 0x4e8c];
+for (let i = 0; i < 30; i++) wideTailUnits.push(0x0391 + i);
+wideTailUnits.push(loneLead);
+
+const makers: [string, Make][] = [
+  ["flat 8-bit", () => fromUnits(narrowUnits)],
+  ["flat 16-bit", () => fromUnits(wideUnits)],
+  ["rope 8-bit", () => fromUnits(narrowUnits) + fromUnits(narrowTailUnits)],
+  ["rope 16-bit", () => fromUnits(wideUnits) + fromUnits(wideTailUnits)],
+  ["rope 8-bit then 16-bit", () => fromUnits(narrowUnits) + fromUnits(wideTailUnits)],
+  ["rope 16-bit then 8-bit", () => fromUnits(wideUnits) + fromUnits(narrowUnits)],
+  ["rope of three", () => fromUnits(narrowUnits) + fromUnits(wideUnits) + fromUnits(wideTailUnits)],
+  ["rope of ropes", () => fromUnits(narrowUnits) + fromUnits(narrowTailUnits) + (fromUnits(wideUnits) + fromUnits(wideTailUnits))],
+  ["substring 8-bit", () => fromUnits(narrowUnits).slice(3, 40)],
+  ["substring 16-bit", () => fromUnits(wideUnits).slice(3, wideUnits.length - 2)],
+  ["substring 16-bit with Latin-1 units only", () => fromUnits(wideUnits).slice(8, 14)],
+  ["substring of a substring 8-bit", () => fromUnits(narrowUnits).slice(2, 44).slice(5, 30)],
+  ["substring of a substring 16-bit", () => fromUnits(wideUnits).slice(1, 40).slice(1, 20)],
+  ["substring of a rope", () => (fromUnits(narrowUnits) + fromUnits(wideTailUnits)).slice(40, 60)],
+  ["substring across a surrogate pair of a rope", () => (fromUnits(wideUnits) + fromUnits(wideTailUnits)).slice(wideUnits.length - 1, wideUnits.length + 1)],
+  ["substring of one 8-bit unit", () => fromUnits(narrowUnits).slice(10, 11)],
+  ["substring of one 16-bit unit", () => fromUnits(wideUnits).slice(2, 3)],
+  ["empty substring", () => fromUnits(wideUnits).slice(5, 5)],
+];
+
+function indexesOf(text: string): number[] {
+  return [-1, 0, text.length - 1, text.length, NaN, 1e20];
+}
+
+function readsOfFreshStrings(make: Make, index: number): string {
+  return [
+    make().charCodeAt(index),
+    make().codePointAt(index),
+    unitsOf(make().at(index)),
+    unitsOf(make()[index]),
+    unitsOf(make().slice(index)),
+    unitsOf(make().slice(0, index)),
+    unitsOf(make().slice(index, index + 2)),
+  ].join(" ");
+}
+
+function readsOfOneString(text: string, index: number): string {
+  return [
+    text.charCodeAt(index),
+    text.codePointAt(index),
+    unitsOf(text.at(index)),
+    unitsOf(text[index]),
+    unitsOf(text.slice(index)),
+    unitsOf(text.slice(0, index)),
+    unitsOf(text.slice(index, index + 2)),
+  ].join(" ");
+}
+
+function readsAtEveryIndex(text: string): string {
+  let unitSum = 0;
+  let pointSum = 0;
+  let fromEnd = "";
+  let elements = "";
+  let pairs = 0;
+  for (let i = 0; i < text.length; i++) {
+    unitSum += text.charCodeAt(i);
+    pointSum += text.codePointAt(i) ?? -1;
+    fromEnd += text.at(-1 - i);
+    elements += text[i];
+    pairs += text.slice(i, i + 2).length;
+  }
+  return [unitSum, pointSum, unitsOf(fromEnd), elements === text, pairs].join(" ");
+}
+
+function describe(text: string): string {
+  const lines = [text.length + " " + readsAtEveryIndex(text)];
+  for (const index of indexesOf(text)) lines.push(readsOfOneString(text, index));
+  return lines.join("\n");
+}
+
+for (const [name, make] of makers) {
+  console.log(name);
+  for (const index of indexesOf(make())) {
+    const fresh = readsOfFreshStrings(make, index);
+    console.log(index, fresh, fresh === readsOfOneString(make(), index));
+  }
+  console.log(readsAtEveryIndex(make()));
+}
+
+function readsAroundKeyUse(text: string, table: Record<string, number>): string {
+  const last = text.length - 1;
+  const before = [text.charCodeAt(0), text.charCodeAt(last), text.codePointAt(1), unitsOf(text.at(-1)), unitsOf(text[1]), unitsOf(text.slice(1, 4))].join(" ");
+  table[text] = last;
+  const after = [text.charCodeAt(0), text.charCodeAt(last), text.codePointAt(1), unitsOf(text.at(-1)), unitsOf(text[1]), unitsOf(text.slice(1, 4))].join(" ");
+  return [before === after, table[text], after].join(" ");
+}
+
+function sumWithKeyUseInLoop(text: string, table: Record<string, number>): number {
+  let sum = 0;
+  for (let i = 0; i < text.length; i++) {
+    sum += text.charCodeAt(i);
+    if (i === 2) table[text] = i;
+    sum += text.codePointAt(i) ?? 0;
+  }
+  return sum;
+}
+
+console.log("used as a property key between reads");
+for (const [name, make] of makers) {
+  if (!make().length) continue;
+  console.log(name, readsAroundKeyUse(make(), {}), readsAroundKeyUse(flatten(make()), {}), sumWithKeyUseInLoop(make(), {}), sumWithKeyUseInLoop(flatten(make()), {}));
+}
+
+function keyUnits(seed: number): number[] {
+  const units: number[] = [];
+  for (let i = 0; i < 12; i++) units.push(0x61 + ((i * 7 + seed) % 26));
+  return units;
+}
+
+function substringOfBaseNarrowedTo8Bit(units: number[], table: Record<string, number>): string {
+  table[fromUnits(units)] = 1;
+  const base = flatten(flatten(fromUnits([...units, 0x4e00])).slice(0, units.length));
+  const part = base.slice(1, 9);
+  if (table[base] !== 1) throw new Error("the base is not a key of the table");
+  return part;
+}
+
+function substringOfBaseWidenedTo16Bit(units: number[], table: Record<string, number>): string {
+  table[flatten(flatten(fromUnits([...units, 0x4e00])).slice(0, units.length))] = 1;
+  const base = fromUnits(units);
+  const part = base.slice(1, 9);
+  if (table[base] !== 1) throw new Error("the base is not a key of the table");
+  return part;
+}
+
+console.log("substrings of a base whose characters changed width");
+for (let seed = 0; seed < 4; seed++) {
+  const expected = describe(fromUnits(keyUnits(seed).slice(1, 9)));
+  console.log(seed, describe(substringOfBaseNarrowedTo8Bit(keyUnits(seed), {})) === expected, describe(substringOfBaseWidenedTo16Bit(keyUnits(seed + 13), {})) === describe(fromUnits(keyUnits(seed + 13).slice(1, 9))));
+  console.log(expected);
+}
+
+function sumWithCollectionInLoop(text: string): number {
+  let sum = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (i === 3) Bun.gc(true);
+    sum += text.charCodeAt(i) + (text.codePointAt(i) ?? 0);
+  }
+  return sum;
+}
+
+function sumWithoutCollection(text: string): number {
+  let sum = 0;
+  for (let i = 0; i < text.length; i++) sum += text.charCodeAt(i) + (text.codePointAt(i) ?? 0);
+  return sum;
+}
+
+console.log("after a collection");
+const retained = makers.map(([, make]) => make());
+Bun.gc(true);
+for (let i = 0; i < makers.length; i++) {
+  const [name, make] = makers[i];
+  const first = describe(retained[i]);
+  Bun.gc(true);
+  console.log(name, first === describe(make()), describe(retained[i]) === first, sumWithCollectionInLoop(make()) === sumWithoutCollection(make()));
+}
+//// rope-slow-paths.js
+// Reads, comparisons and searches on ropes of 3 and 70,000 pieces agree with the same operations on flat strings.
+function digest(text) {
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) hash = (hash * 31 + text.charCodeAt(i)) | 0;
+  return text.length + ":" + hash;
+}
+function concatenate(pieces) {
+  let text = "";
+  for (let i = 0; i < pieces.length; i++) text += pieces[i];
+  return text;
+}
+function threePieces(a, b, c) {
+  return a + b + c;
+}
+function flat(text) {
+  return Array.from({ length: text.length }, (_, i) => text[i]).join("");
+}
+function repeated(count, piece, wide) {
+  const pieces = [];
+  for (let i = 0; i < count; i++) pieces.push(i === wide ? "日" : piece + (i % 10));
+  return pieces;
+}
+const manyNarrow = repeated(70000, "a", -1);
+const manyWide = repeated(70000, "b", 35000);
+const sources = {
+  "three narrow": () => threePieces("alpha-", "beta-", "gamma"),
+  "three wide": () => threePieces("alpha-", "日本-", "gamma"),
+  "three with empty": () => threePieces("", "middle", ""),
+  "many narrow": () => concatenate(manyNarrow),
+  "many wide": () => concatenate(manyWide),
+  "substring of rope": () => threePieces("prefix-", concatenate(manyWide), "-suffix").substring(3, 69990),
+  "rope of substrings": () => threePieces("alpha-beta".substring(2, 7), "日本語".substring(1), "gamma".substring(0, 0)),
+};
+const flats = {};
+for (const name in sources) flats[name] = flat(sources[name]());
+function positionsOf(length) {
+  if (length > 1000) return [0, length >> 1, length - 1, length, -1, NaN];
+  return [0, 1, 2, length >> 1, length - 1, length, length + 1, -1, -length, NaN, 2.5, Infinity, -Infinity];
+}
+function readsOf(make, length) {
+  const lines = [];
+  for (const position of positionsOf(length)) {
+    lines.push(["charCodeAt", position, make().charCodeAt(position)]);
+    lines.push(["at", position, make().at(position)]);
+    lines.push(["startsWith", position, make().startsWith("a", position), make().startsWith("", position)]);
+    lines.push(["indexOf", position, make().indexOf("a", position), make().indexOf("5-g", position), make().indexOf("日", position), make().indexOf("", position)]);
+    lines.push(["substring", position, digest(make().substring(position)), digest(make().substring(1, position)), digest(make().substring(position, position))]);
+  }
+  return lines.map(line => line.join(" ")).join("\n");
+}
+function comparisonsOf(make, other) {
+  const changed = other.slice(0, -1) + "~";
+  return [
+    make() === other, make() !== other, make() === make(), make() === changed, make() === other + "x",
+    make() < other, make() > other, make() <= other, make() < changed, changed < make(), make() < "", "" < make(), make() < make(),
+    make() < other + "x", make() + "x" > other,
+  ].join(" ");
+}
+for (const name in sources) {
+  const make = sources[name];
+  const other = flats[name];
+  const onRope = readsOf(make, other.length);
+  const onFlat = readsOf(() => other, other.length);
+  console.log(name, digest(make()), onRope === onFlat ? "same reads" : "different reads");
+  console.log(onRope.length > 2000 ? digest(onRope) : onRope);
+  console.log(comparisonsOf(make, other));
+  console.log(comparisonsOf(() => other, other));
+}
+const empty = () => threePieces("", "", "");
+console.log(empty() === "", empty().length, empty().charCodeAt(0), empty().indexOf(""), empty().indexOf("", 5), empty().startsWith(""), empty().startsWith("", 5), empty().substring(0, 5) === "");
+console.log(threePieces("a￿", "b", "") < threePieces("a\ud83d", "\ude00", ""), threePieces("ÿ", "", "x") < threePieces("Ā", "", ""));
+//// ropes-and-conversions-by-stub.ts
+// Ropes of two and three strings, int32 to string, letter case, decimal digits: what the string stubs answer themselves, and where they must call C++.
+// Only the jsc shell can count. Elsewhere the program checks the answers alone.
+const shellCount: ((name: string) => number | null) | undefined = (globalThis as any).aotOperationCount;
+const counts = shellCount !== undefined && shellCount("operationAOTConcat") !== null;
+function count(name: string): number {
+  return counts ? shellCount!(name)! : 0;
+}
+function reportCalls(what: string, calls: number, low: number, high: number): void {
+  const isExpected = !counts || (calls >= low && calls <= high);
+  console.log(what + ": " + (isExpected ? "as expected" : calls + " calls, expected " + low + " to " + high));
+}
+
+////= lines-10	concatenateTwo	a	b	string
+function concatenateThree(a: string, b: string, c: string): string {
+  return a + b + c;
+}
+function asSubstring(text: string): string {
+  return ("-" + text + "-").slice(1, -1);
+}
+function toLower(text: string): string {
+  return text.toLowerCase();
+}
+function toUpper(text: string): string {
+  return text.toUpperCase();
+}
+function integerToString(value: number): string {
+  return String(value | 0);
+}
+function numberToString(value: number): string {
+  return String(value);
+}
+function asNumber(text: string): number {
+  return Number(text);
+}
+function parsed(text: string): number {
+  return parseInt(text);
+}
+function parsedInDecimal(text: string): number {
+  return parseInt(text, 10);
+}
+function parsedInHexadecimal(text: string): number {
+  return parseInt(text, 16);
+}
+function parsedInRadix(text: string, radix: number): number {
+  return parseInt(text, radix);
+}
+function show(value: number): string {
+  return Object.is(value, -0) ? "-0" : String(value);
+}
+function codePoints(text: string): string {
+  return text.length + ":" + Array.from(text, character => character.codePointAt(0)!.toString(16)).join(".");
+}
+
+const [left, right, latinLeft, wideRight, one, two, three, plain, wide, digits, wideText]: string[] = JSON.parse(
+  '["left-", "right", "léft-", "r中ght", "one,", "two,", "three", "plain", "wā中", "0123456789abcdef", "中文ābcdef"]',
+);
+const rounds: number = JSON.parse("10000");
+
+function checkRopes(): void {
+  const operands: { create: () => string; characters: string[] }[] = [
+    { create: () => "", characters: [] },
+    { create: () => plain, characters: Array.from("plain") },
+    { create: () => wide, characters: Array.from("wā中") },
+    { create: () => concatenateTwo(left, right), characters: Array.from("left-right") },
+    { create: () => concatenateTwo(latinLeft, wideRight), characters: Array.from("léft-r中ght") },
+    { create: () => concatenateThree(one, two, three), characters: Array.from("one,two,three") },
+    { create: () => digits.slice(3, 12), characters: Array.from("3456789ab") },
+    { create: () => wideText.slice(1, 6), characters: Array.from("文ābcd") },
+  ];
+  let checked = 0;
+  let checksum = 0;
+  let wrong = "";
+  function check(what: string, text: string, expected: string[]): void {
+    const length = text.length;
+    const characters = Array.from(text);
+    let isSame = length === expected.length && characters.length === expected.length;
+    for (let i = 0; isSame && i < expected.length; i++) isSame = characters[i] === expected[i];
+    if (!isSame) wrong += " " + what;
+    for (const character of characters) checksum = (checksum * 31 + character.charCodeAt(0)) | 0;
+    checked++;
+  }
+  for (let i = 0; i < operands.length; i++) {
+    for (let j = 0; j < operands.length; j++) {
+      const a = operands[i];
+      const b = operands[j];
+      check(i + "+" + j, concatenateTwo(a.create(), b.create()), [...a.characters, ...b.characters]);
+      for (let k = 0; k < operands.length; k++) {
+        const c = operands[k];
+        const expected = [...a.characters, ...b.characters, ...c.characters];
+        check(i + "+" + j + "+" + k, concatenateThree(a.create(), b.create(), c.create()), expected);
+      }
+    }
+  }
+  console.log("ropes: " + checked + " checked, checksum " + checksum + ", wrong:" + (wrong || " none"));
+
+  const nonEmpty: string[] = [left, right, latinLeft, wideRight, one, two, three, plain];
+  const latest: string[] = new Array<string>(64).fill("");
+  const before = count("operationAOTConcat");
+  for (let i = 0; i < rounds; i++) latest[i & 63] = concatenateTwo(nonEmpty[i & 7], nonEmpty[(i + 3) & 7]);
+  reportCalls("ropes of non-empty strings are allocated without C++", count("operationAOTConcat") - before, 0, 100);
+  console.log("latest ropes: " + codePoints(latest[0]) + " " + codePoints(latest[63]) + " " + latest.join("").length);
+}
+
+function checkLengthLimit(): void {
+  const powers: string[] = ["x"];
+  for (let k = 1; k <= 30; k++) powers.push(concatenateTwo(powers[k - 1], powers[k - 1]));
+  const big = powers[30];
+  const half = powers[29];
+  let almostBig = "";
+  for (let k = 0; k < 30; k++) almostBig = concatenateTwo(almostBig, powers[k]);
+  const longest = concatenateTwo(big, almostBig);
+  function attempt(what: string, run: () => string): void {
+    let outcome: string;
+    try {
+      outcome = "length " + run().length;
+    } catch (error) {
+      outcome = error instanceof RangeError ? "RangeError" : "another error";
+    }
+    console.log(what + ": " + outcome);
+  }
+  attempt("2^30 + 2^30", () => concatenateTwo(big, big));
+  attempt("2^30 + (2^30 - 1)", () => concatenateTwo(big, almostBig));
+  attempt("longest + empty", () => concatenateTwo(longest, ""));
+  attempt("empty + longest", () => concatenateTwo("", longest));
+  attempt("longest + 1", () => concatenateTwo(longest, "y"));
+  attempt("1 + longest", () => concatenateTwo("y", longest));
+  attempt("2^29 + 2^29 + 2^30", () => concatenateThree(half, half, big));
+  attempt("2^30 + 2^30 + empty", () => concatenateThree(big, big, ""));
+  attempt("2^30 + (2^30 - 1) + empty", () => concatenateThree(big, almostBig, ""));
+  attempt("2^30 + (2^30 - 1) + 1", () => concatenateThree(big, almostBig, "y"));
+  attempt("empty + empty + empty", () => concatenateThree("", "", ""));
+}
+
+function checkIntegers(): void {
+  const integers: number[] = [-1, 0, 9, 10, 255, 256, 1023, 1024, 65536, 2 ** 31 - 1, -(2 ** 31)];
+  for (let round = 0; round < 2; round++)
+    console.log("integers: " + integers.map(value => integerToString(value) + " " + numberToString(value)).join(", "));
+
+  const repeated: number = JSON.parse("65536");
+  let total = 0;
+  const before = count("operationAOTIntToString");
+  for (let i = 0; i < rounds; i++) total += integerToString(repeated).length;
+  reportCalls("an integer converted before comes from the cache", count("operationAOTIntToString") - before, 0, 100);
+  console.log("digits written: " + total);
+}
+
+function checkLetterCase(): void {
+  const [lowerBase, mixedBase, upperBase]: string[] = JSON.parse('["--lowercase--", "--LowerCase--", "--UPPERCASE--"]');
+  const texts: string[] = ["abc", "ABC", "aBc", "straße", "İ", "", "@[`{\u007f", "àÿµ", wideText.slice(3, 8)];
+  for (const base of [lowerBase, mixedBase, upperBase]) texts.push(base.slice(2, 11), base.slice(2, 5));
+  for (const text of texts) console.log(codePoints(text) + " | " + codePoints(toLower(text)) + " | " + codePoints(toUpper(text)));
+
+  const toLowerPairs: string[][] = [["A", "a"], ["Z", "z"], ["@", "@"], ["[", "["], ["À", "à"]];
+  const toUpperPairs: string[][] = [["a", "A"], ["z", "Z"], ["`", "`"], ["{", "{"], ["à", "À"]];
+  let wrong = 0;
+  for (let length = 1; length <= 17; length++) {
+    for (let at = 0; at < length; at++) {
+      for (const [from, to] of toLowerPairs) {
+        const head = "a".repeat(at);
+        const tail = "a".repeat(length - at - 1);
+        if (toLower(asSubstring(head + from + tail)) !== head + to + tail) wrong++;
+      }
+      for (const [from, to] of toUpperPairs) {
+        const head = "A".repeat(at);
+        const tail = "A".repeat(length - at - 1);
+        if (toUpper(asSubstring(head + from + tail)) !== head + to + tail) wrong++;
+      }
+    }
+  }
+  console.log("one other character at every position of 1 to 17: " + wrong + " wrong");
+
+  const operation = "operationAOTStringToLowerCase";
+  const flat: string = JSON.parse('"already lower case, 0123456789"');
+  const substring = asSubstring(flat);
+  let total = 0;
+  let before = count(operation);
+  for (let i = 0; i < rounds; i++) total += toLower(flat).length + toLower(substring).length;
+  reportCalls("a lower-case string is its own lower case without C++", count(operation) - before, 0, 0);
+
+  const mixed = "aBc".repeat(100);
+  before = count(operation);
+  for (let i = 0; i < 100; i++) total += toLower(mixed.slice(3 * i, 3 * i + 3)) === "abc" ? 1 : 0;
+  reportCalls("each new mixed-case string is converted by C++", count(operation) - before, 100, 100);
+
+  const repeatedText = mixed.slice(0, 3);
+  before = count(operation);
+  for (let i = 0; i < rounds; i++) total += toLower(repeatedText) === "abc" ? 1 : 0;
+  reportCalls("a mixed-case string converted before comes from the cache", count(operation) - before, 1, 100);
+  console.log("letter case total: " + total);
+}
+
+function checkDigits(): void {
+  const numerals: string[] = ["0", "007", "9".repeat(15), "9".repeat(16), "1e3", " 1", "-1", "", "1/", "1:"];
+  const radixes: number[] = [0, 10, 16];
+  for (const numeral of numerals) {
+    for (const text of [numeral, asSubstring(numeral)]) {
+      const values = [asNumber(text), parsed(text), parsedInDecimal(text), parsedInHexadecimal(text)];
+      for (const radix of radixes) values.push(parsedInRadix(text, radix));
+      console.log(JSON.stringify(text) + ": " + values.map(show).join(" "));
+    }
+  }
+}
+
+checkRopes();
+checkLengthLimit();
+checkIntegers();
+checkLetterCase();
+checkDigits();
+//// ropes-appended-to-a-text-that-grows.ts
+// `text += rope`: a string that was joined and never read is still a rope when it is appended. Ropes of two and three pieces, of every length round the widths in which characters are copied,
+// with pieces that are ropes or pieces of other strings themselves, with 16-bit pieces, into an empty text and into one that is nearly full, and the same rope again and again.
+const lines: string[] = [];
+const hide = <T,>(value: T): T => new CustomEvent("x", { detail: value }).detail;
+const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".repeat(40);
+const flat = (length: number, from = 0): string => hide(Buffer.from(letters.slice(from, from + length)).toString("latin1"));
+const join2 = (a: string, b: string): string => hide(a) + hide(b);
+const join3 = (a: string, b: string, c: string): string => hide(a) + hide(b) + hide(c);
+function checksum(text: string): string {
+  let sum = 0;
+  for (let i = 0; i < text.length; i++) sum = (sum * 31 + text.charCodeAt(i)) | 0;
+  return text.length + ":" + (sum >>> 0).toString(36);
+}
+function appended(start: string, pieces: string[]): string {
+  let text = start;
+  for (const piece of pieces) text += piece;
+  return text;
+}
+function framed(id: number, title: string, price: number): string {
+  let text = "";
+  for (let i = 0; i < 3; i++) text += `${id},${title},${price}\n`;
+  return text;
+}
+
+const lengths = [1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 18, 31, 32, 33, 47, 48, 49, 63, 64, 65, 100, 127, 128, 129, 255, 256, 257, 600];
+for (const a of lengths) {
+  for (const b of [1, 2, 7, 8, 16, 17, 33, 200]) {
+    const two = join2(flat(a), flat(b, 5));
+    const three = join3(flat(b, 9), flat(a, 3), flat(1 + (a + b) % 19, 11));
+    lines.push(`${a} ${b} ${checksum(appended("<", [two, ">"]))} ${checksum(appended("<", [three, two, three]))} ${checksum(appended("", [two, three]))} ${checksum(framed(a, two, b))}`);
+    if (appended("<", [two, three]) !== "<" + letters.slice(0, a) + letters.slice(5, 5 + b) + letters.slice(9, 9 + b) + letters.slice(3, 3 + a) + letters.slice(11, 12 + (a + b) % 19)) lines.push("WRONG TEXT " + a + " " + b);
+  }
+}
+
+// Pieces that are no flat 8-bit strings.
+const nested = join2(join2(flat(3), flat(4, 1)), join3(flat(2, 2), join2(flat(5, 3), flat(1, 4)), flat(6, 5)));
+const deep = [1, 2, 3, 4, 5, 6, 7, 8, 9].reduce((text, n) => join2(text, flat(n, n)), flat(2));
+const pieceOfFlat = join2(hide(flat(40)).slice(3, 21), hide(flat(40, 7)).substring(30));
+const wide = join2(flat(4), hide("Жя"));
+const wideFirst = join3(hide("日本"), flat(9), flat(2));
+const narrowTextInWideString = join2(hide("Жabcdefgh").slice(1), flat(3));
+const single = join3(hide("x"), hide("y"), hide("z"));
+for (const [name, rope] of Object.entries({ nested, deep, pieceOfFlat, wide, wideFirst, narrowTextInWideString, single })) {
+  lines.push(`${name} ${appended("[", [rope, "]"])} ${appended("", [rope])} ${appended("[", [rope, rope, rope])} ${checksum(framed(1, rope, 2))}`);
+}
+
+// The rope is still what it was, and may be read afterwards.
+const kept = join2(flat(12), flat(5, 20));
+const before = appended("a", [kept, kept]);
+lines.push(before, kept, String(kept.length), kept.charAt(13), appended("b", [kept]), String(kept === letters.slice(0, 12) + letters.slice(20, 25)));
+
+// A text that grows past every capacity while ropes are appended.
+let long = "start";
+const unit = join3(flat(13), flat(21, 1), flat(8, 2));
+for (let i = 0; i < 3000; i++) long += i % 7 === 0 ? join2(flat(1 + (i % 29)), flat(1 + (i % 13), 3)) : unit;
+lines.push(checksum(long));
+
+// Many times over the same objects, as a server does for each request.
+type Product = { id: number; title: string; priceCents: number };
+const products: Product[] = [];
+for (let i = 0; i < 40; i++) products.push({ id: i + 1, title: join2("Product ", String(i + 1)), priceCents: 100 + i * 7 });
+let total = 0;
+const turns = Number(process.argv[2] ?? 200);
+let last = "";
+for (let turn = 0; turn < turns; turn++) {
+  let text = "id,title,priceCents\n";
+  for (const product of products) text += `${product.id},${product.title},${product.priceCents}\n`;
+  total += text.length;
+  last = text;
+}
+lines.push(String(total), checksum(last), last.slice(0, 60));
+console.log(lines.join("\n"));
+//// ropes-as-subjects-of-literals.ts
+// Literals matched against subjects that are ropes: concatenations and pieces of other strings, of 8 and of 16 bits, that match and that do not; with the flags g and y, whose lastIndex counts;
+// with groups; and what RegExp keeps of the last match.
+const lines: string[] = [];
+const hide = <T,>(value: T): T => new CustomEvent("x", { detail: value }).detail as T;
+const invalid = /[^\t\x20-\x7e\x80-\xff]/, token = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/, pair = /(\w+)=(\w*)/, every = /a+/g, sticky = /b+/y, named = /(?<key>[a-z]+):(?<value>\d+)/, wide = /[α-ω]+/u;
+const heads: string[] = hide(["text/", "key", "aa", "bbb", "x\u0001", "αβ", "", "name:"]), tails: string[] = hide(["plain; charset=utf-8", "=value", "baab", "bcb", "y", "γδ z", "", "42 more"]);
+const long: string = hide("0123456789 key=value aaa bbb name:7 αβγ and a long tail so that a piece of it stays a piece");
+function show(value: unknown): string { return value === null ? "null" : JSON.stringify(value); }
+function all(subject: () => string, label: string) {
+  const row: string[] = [];
+  row.push(show(invalid.exec(subject()) !== null), show(invalid.test(subject())), show(token.test(subject())), show(token.exec(subject())));
+  const m = pair.exec(subject()); row.push(show(m && [m.index, m.input.length, ...m]), show(RegExp.$1), show(RegExp.lastMatch));
+  every.lastIndex = 0; row.push(show(every.exec(subject())), String(every.lastIndex), show(every.exec(subject())), String(every.lastIndex), show(every.test(subject())), String(every.lastIndex));
+  sticky.lastIndex = 0; row.push(show(sticky.test(subject())), String(sticky.lastIndex), show(sticky.exec(subject())), String(sticky.lastIndex));
+  sticky.lastIndex = 2; row.push(show(sticky.exec(subject())), String(sticky.lastIndex));
+  const n = named.exec(subject()); row.push(show(n && n.groups && [n.groups.key, n.groups.value]), show(wide.exec(subject())), show(wide.test(subject())));
+  row.push(String(subject().search(pair)), show(subject().match(pair)), show(subject().match(every)));
+  lines.push(label + ": " + row.join(" "));
+}
+for (let i = 0; i < heads.length; i++)
+  for (let j = 0; j < tails.length; j++) all(() => heads[i]! + tails[j]!, "joined " + i + " " + j);
+for (let from = 0; from < 60; from += 7) all(() => long.slice(from, from + 30), "piece " + from);
+for (let i = 0; i < heads.length; i++) all(() => heads[i]! + long.slice(8, 40) + tails[i]!, "three " + i);
+
+let count = 0;
+const which = Number(process.argv[2] ?? -1), rounds = Number(process.argv[3] ?? 0);
+const type: string = hide("text/html"), charset: string = hide("; charset=utf-8");
+for (let i = 0; i < rounds; i++) {
+  switch (which) {
+  case 0: if (invalid.exec(type + charset) !== null) count++; break;
+  case 1: if (invalid.test(type + charset)) count++; break;
+  case 2: if (token.test(type + charset)) count++; break;
+  case 3: { const m = pair.exec(type + charset); if (m) count += m[1]!.length; break; }
+  case 4: if ((type + charset).length) count++; break;
+  case 5: if (invalid.test(long.slice(3, 40))) count++; break;
+  }
+}
+lines.push("count " + count);
+console.log(lines.join("\n"));
+//// runs-of-a-character-class-replaced.ts
+// s.replace(/[class]+/g, "constant"): global patterns that are one character class, repeated or not, alone and in chains. Each is checked against a loop that walks the string with a predicate, and RegExp's legacy static properties against the same pattern given to replace through a variable that is used twice. Patterns that are not of that form stand beside them.
+const report: string[] = [];
+let wrong = 0;
+const legacy = RegExp as unknown as Record<string, string>;
+function left(): string {
+  return [legacy.lastMatch, legacy.input, legacy.leftContext, legacy.rightContext].join("│");
+}
+function byHand(text: string, isMember: (code: number) => boolean, inserted: string, joinsRuns: boolean): string {
+  let out = "";
+  let wasMember = false;
+  for (let i = 0; i < text.length; i++) {
+    const member = isMember(text.charCodeAt(i));
+    if (!member) out += text[i];
+    else if (!joinsRuns || !wasMember) out += inserted;
+    wasMember = member;
+  }
+  return out;
+}
+const isHex = (c: number) => (c >= 48 && c <= 57) || (c >= 97 && c <= 102);
+const isBlank = (c: number) => (c >= 9 && c <= 13) || c === 32 || c === 160 || c === 0xfeff || c === 0x2003;
+const isWordly = (c: number) => (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || c === 95 || (c >= 97 && c <= 122);
+const isVowel = (c: number) => "aeiou".includes(String.fromCharCode(c));
+
+const hexRuns = /[0-9a-f]+/g;
+const cases: [string, (text: string) => string, (text: string) => string][] = [
+  ["hex runs", text => text.replace(hexRuns, "H"), text => byHand(text, isHex, "H", true)],
+  ["blank runs", text => text.replace(/\s+/g, "·"), text => byHand(text, isBlank, "·", true)],
+  ["each blank", text => text.replace(/\s/g, ""), text => byHand(text, isBlank, "", false)],
+  ["not wordly", text => text.replace(/\W+/g, "_"), text => byHand(text, c => !isWordly(c), "_", true)],
+  ["wordly", text => text.replace(/\w+/g, "word"), text => byHand(text, isWordly, "word", true)],
+  ["vowels", text => text.replace(/[aeiou]/g, "()"), text => byHand(text, isVowel, "()", false)],
+  ["not vowels", text => text.replace(/[^aeiou]+/g, "-"), text => byHand(text, c => !isVowel(c), "-", true)],
+  ["one letter", text => text.replace(/l+/g, "L"), text => byHand(text, c => c === 108, "L", true)],
+  ["all but line ends", text => text.replace(/.+/g, "line"), text => byHand(text, c => c !== 10 && c !== 13 && c !== 0x2028 && c !== 0x2029, "line", true)],
+  ["then another", text => text.replace(/[0-9a-f]+/g, "<H>").replace(/\s+/g, "<S>"), text => byHand(byHand(text, isHex, "<H>", true), isBlank, "<S>", true)],
+  ["a gap ahead of runs", text => text.replace(/l/g, "").replace(/o+/g, "0"), text => byHand(byHand(text, c => c === 108, "", false), c => c === 111, "0", true)],
+  ["classes that overlap", text => text.replace(/[a-h]+/g, "{1}").replace(/[e-p]+/g, "{2}").replace(/\d/g, "n"), text => byHand(byHand(byHand(text, c => c >= 97 && c <= 104, "{1}", true), c => c >= 101 && c <= 112, "{2}", true), c => c >= 48 && c <= 57, "n", false)],
+];
+const texts = ["", "plain", "f", "cafe babe 2026", "hello  world\t\tfolloow\n\nlines  ", "A1-b2_C3 d4!", "olé   olé 99", "世界 12 ab   cd", "e".repeat(75) + "X" + "7".repeat(75), "lollol oollo"];
+for (let turn = 0; turn < 3; turn++)
+  for (const [name, replaced, expected] of cases)
+    for (const text of texts) {
+      const made = replaced(text);
+      if (made !== expected(text)) {
+        wrong++;
+        report.push("WRONG " + name + " " + JSON.stringify(text));
+      }
+    }
+
+function throughAVariable(text: string, pattern: RegExp, inserted: string): string {
+  return pattern.global ? text.replace(pattern, inserted) : text;
+}
+for (const text of texts) {
+  /^mark$/.test("mark");
+  const direct = text.replace(/[0-9a-f]+/g, "H");
+  const after = left();
+  /^mark$/.test("mark");
+  if (direct !== throughAVariable(text, /[0-9a-f]+/g, "H") || after !== left()) wrong++;
+  if (text.length < 20) report.push(direct + " " + after);
+}
+function otherForms(text: string): string {
+  return [text.replace(/[0-9]*/g, "#"), text.replace(/[0-9]+?/g, "#"), text.replace(/[0-9]{2}/g, "#"), text.replace(/([0-9])+/g, "#"), text.replace(/[0-9]+$/g, "#"), text.replace(/[0-9]+|y/g, "#"), text.replace(/[0-9]+/, "#"), text.replace(/[x-z]+/gi, "#"), text.replace(/[0-9]+/g, "<$&>"), text.replace(/\by/g, "#"), text.replace(/[\d-]+/g, "#"), text.replace(/[-y]+/g, "#")].join(" ");
+}
+report.push(otherForms("2026-10-17 xYz y12"), String(hexRuns.lastIndex), "wrong " + wrong);
+console.log(report.join("\n"));
+//// runs-that-cross-sixteen-characters.ts
+// Runs of a character class at every place round the sixteenth, thirty-second and forty-eighth character of a text: every length from 0 to 70, every start and every length of a single run, and texts woven from two periods. Classes of one to four ranges, of more than four, and their complements; checked against a loop with a predicate.
+const report: string[] = [];
+let wrong = 0;
+const legacy = RegExp as unknown as Record<string, string>;
+function byHand(text: string, members: string, isComplement: boolean, inserted: string, joinsRuns: boolean): string {
+  let out = "";
+  let wasMember = false;
+  for (const character of text) {
+    const member = members.includes(character) !== isComplement;
+    if (!member) out += character;
+    else if (!joinsRuns || !wasMember) out += inserted;
+    wasMember = member;
+  }
+  return out;
+}
+const upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const checks: [(text: string) => string, (text: string) => string][] = [
+  [text => text.replace(/[A-Z]+/g, "^"), text => byHand(text, upper, false, "^", true)],
+  [text => text.replace(/[A-Z]/g, "^"), text => byHand(text, upper, false, "^", false)],
+  [text => text.replace(/[^A-Z]+/g, "v"), text => byHand(text, upper, true, "v", true)],
+  [text => text.replace(/[A-C.K-M_]+/g, "four"), text => byHand(text, "ABC.KLM_", false, "four", true)],
+  [text => text.replace(/[ACEGI]+/g, "5"), text => byHand(text, "ACEGI", false, "5", true)],
+  [text => text.replace(/[^ACEGI]+/g, ""), text => byHand(text, "ACEGI", true, "", true)],
+  [text => text.replace(/[^]+/g, "*"), text => (text ? "*" : "")],
+  [text => text.replace(/[]+/g, "!"), text => text],
+];
+function verify(text: string): void {
+  for (const [replaced, expected] of checks) if (replaced(text) !== expected(text)) wrong++;
+}
+let texts = 0;
+for (let length = 0; length <= 70; length += length < 50 ? 1 : 5)
+  for (let start = 0; start <= length; start++)
+    for (const size of [0, 1, 2, 15, 16, 17, 33]) {
+      if (start + size > length) break;
+      verify(".".repeat(start) + "K".repeat(size) + "_".repeat(length - start - size));
+      texts++;
+    }
+for (let first = 1; first <= 9; first++)
+  for (let second = 1; second <= 7; second += 2) {
+    let text = "";
+    for (let i = 0; i < 67; i++) text += i % first === 0 ? "A" : i % second === 0 ? "m" : (i * first) % 5 === 0 ? "G" : ".";
+    verify(text);
+    texts++;
+  }
+report.push(texts + " texts, wrong " + wrong);
+for (const text of ["ABCDEFGHIJKLMNOP", "ABCDEFGHIJKLMNOPQ", "aBCDEFGHIJKLMNOPQ", "ABCDEFGHIJKLMNOp", "ABCDEFGHIJKLMNOPqRSTUVWXYZABCDEFG", "a".repeat(15) + "Z", "a".repeat(16) + "Z", "a".repeat(15) + "YZ" + "a".repeat(15) + "YZ", "Z" + "a".repeat(30) + "Z"]) {
+  const made = text.replace(/[A-Z]+/g, "^");
+  report.push(made + " " + [legacy.lastMatch, legacy.leftContext.length, legacy.rightContext.length].join());
+}
+console.log(report.join("\n"));
+//// same-strings-at-many-sites.ts
+// The same string constants written at many places of a program: in functions that run once and often, in loops and outside them, first asked for by one road and then by
+// another, as keys, as parts of other strings, across collections. One text is one value wherever it is written.
+const lines: string[] = [];
+const collect: () => void = (globalThis as any).gc ?? (() => (globalThis as any).Bun.gc(true));
+function all0(): string[] { return ["north-west", "south-east", "a longer piece of text that is no name", "käse", "日本語の文字列", "x1", "with \"quotes\" inside", "tab\tand\nnewline"]; }
+function all1(): string[] { return ["north-west", "south-east", "a longer piece of text that is no name", "käse", "日本語の文字列", "x1", "with \"quotes\" inside", "tab\tand\nnewline"]; }
+function all2(): string[] { return ["north-west", "south-east", "a longer piece of text that is no name", "käse", "日本語の文字列", "x1", "with \"quotes\" inside", "tab\tand\nnewline"]; }
+function all3(): string[] { return ["north-west", "south-east", "a longer piece of text that is no name", "käse", "日本語の文字列", "x1", "with \"quotes\" inside", "tab\tand\nnewline"]; }
+function all4(): string[] { return ["north-west", "south-east", "a longer piece of text that is no name", "käse", "日本語の文字列", "x1", "with \"quotes\" inside", "tab\tand\nnewline"]; }
+function all5(): string[] { return ["north-west", "south-east", "a longer piece of text that is no name", "käse", "日本語の文字列", "x1", "with \"quotes\" inside", "tab\tand\nnewline"]; }
+function all6(): string[] { return ["north-west", "south-east", "a longer piece of text that is no name", "käse", "日本語の文字列", "x1", "with \"quotes\" inside", "tab\tand\nnewline"]; }
+function all7(): string[] { return ["north-west", "south-east", "a longer piece of text that is no name", "käse", "日本語の文字列", "x1", "with \"quotes\" inside", "tab\tand\nnewline"]; }
+function all8(): string[] { return ["north-west", "south-east", "a longer piece of text that is no name", "käse", "日本語の文字列", "x1", "with \"quotes\" inside", "tab\tand\nnewline"]; }
+function pick0(i: number): string { switch (i & 7) { case 0: return "north-west"; case 1: return "south-east"; case 2: return "a longer piece of text that is no name"; case 3: return "käse"; case 4: return "日本語の文字列"; case 5: return "x1"; case 6: return "with \"quotes\" inside"; default: return "tab\tand\nnewline"; } }
+function pick1(i: number): string { switch (i & 7) { case 0: return "north-west"; case 1: return "south-east"; case 2: return "a longer piece of text that is no name"; case 3: return "käse"; case 4: return "日本語の文字列"; case 5: return "x1"; case 6: return "with \"quotes\" inside"; default: return "tab\tand\nnewline"; } }
+function pick2(i: number): string { switch (i & 7) { case 0: return "north-west"; case 1: return "south-east"; case 2: return "a longer piece of text that is no name"; case 3: return "käse"; case 4: return "日本語の文字列"; case 5: return "x1"; case 6: return "with \"quotes\" inside"; default: return "tab\tand\nnewline"; } }
+function pick3(i: number): string { switch (i & 7) { case 0: return "north-west"; case 1: return "south-east"; case 2: return "a longer piece of text that is no name"; case 3: return "käse"; case 4: return "日本語の文字列"; case 5: return "x1"; case 6: return "with \"quotes\" inside"; default: return "tab\tand\nnewline"; } }
+function pick4(i: number): string { switch (i & 7) { case 0: return "north-west"; case 1: return "south-east"; case 2: return "a longer piece of text that is no name"; case 3: return "käse"; case 4: return "日本語の文字列"; case 5: return "x1"; case 6: return "with \"quotes\" inside"; default: return "tab\tand\nnewline"; } }
+function pick5(i: number): string { switch (i & 7) { case 0: return "north-west"; case 1: return "south-east"; case 2: return "a longer piece of text that is no name"; case 3: return "käse"; case 4: return "日本語の文字列"; case 5: return "x1"; case 6: return "with \"quotes\" inside"; default: return "tab\tand\nnewline"; } }
+function pick6(i: number): string { switch (i & 7) { case 0: return "north-west"; case 1: return "south-east"; case 2: return "a longer piece of text that is no name"; case 3: return "käse"; case 4: return "日本語の文字列"; case 5: return "x1"; case 6: return "with \"quotes\" inside"; default: return "tab\tand\nnewline"; } }
+function pick7(i: number): string { switch (i & 7) { case 0: return "north-west"; case 1: return "south-east"; case 2: return "a longer piece of text that is no name"; case 3: return "käse"; case 4: return "日本語の文字列"; case 5: return "x1"; case 6: return "with \"quotes\" inside"; default: return "tab\tand\nnewline"; } }
+function pick8(i: number): string { switch (i & 7) { case 0: return "north-west"; case 1: return "south-east"; case 2: return "a longer piece of text that is no name"; case 3: return "käse"; case 4: return "日本語の文字列"; case 5: return "x1"; case 6: return "with \"quotes\" inside"; default: return "tab\tand\nnewline"; } }
+function inLoop(n: number): number { let total = 0; const seen = new Map<string, number>(); for (let i = 0; i < n; i++) { const key = i & 1 ? "north-west" : "south-east"; seen.set(key, (seen.get(key) ?? 0) + 1); total += key.length + "a longer piece of text that is no name".length; } return total + seen.size; }
+const everyAll = [all0, all1, all2, all3, all4, all5, all6, all7, all8];
+const everyPick = [pick0, pick1, pick2, pick3, pick4, pick5, pick6, pick7, pick8];
+lines.push("in a loop first " + inLoop(1000));
+const first = all0();
+for (const all of everyAll) { const made = all(); lines.push(made.map((text, k) => (text === first[k] && Object.is(text, first[k]) ? "same" : "OTHER") + ":" + text.length).join(" ")); }
+let joined = ""; for (let round = 0; round < 3; round++) for (const pick of everyPick) for (let i = 0; i < 8; i++) joined += pick(i).charCodeAt(0).toString(36);
+lines.push(joined.length + " " + joined.slice(0, 48));
+const record: Record<string, number> = {}; for (const all of everyAll) for (const text of all()) record[text] = (record[text] ?? 0) + 1;
+lines.push(Object.keys(record).map(key => JSON.stringify(key) + "=" + record[key]).join(" "));
+const garbage: unknown[] = []; for (let i = 0; i < 200000; i++) { garbage[i & 1023] = { i, text: "g" + i }; }
+collect();
+for (const all of everyAll) { const made = all(); lines.push("after a collection " + made.every((text, k) => text === first[k]) + " " + made.join("|").length); }
+lines.push("in a loop again " + inLoop(1000) + " " + garbage.length);
+const set = new Set<string>(); for (const pick of everyPick) for (let i = 0; i < 8; i++) set.add(pick(i)); lines.push("distinct " + set.size);
+lines.push(["north-west", "south-east", "a longer piece of text that is no name", "käse", "日本語の文字列", "x1", "with \"quotes\" inside", "tab\tand\nnewline"].map(text => text + "!").join(","));
+console.log(lines.join("\n"));
+//// search-and-substring-string-forms.ts
+type Subject = { name: string; make: () => string }
+
+function flatten(text: string): string {
+  text.charCodeAt(0)
+  return text
+}
+
+function createSubjects(label: string, literal: string, left: string, right: string): Subject[] {
+  return [
+    { name: `${label} literal`, make: () => literal },
+    { name: `${label} flat`, make: () => flatten(left + right) },
+    { name: `${label} substring of literal`, make: () => literal.slice(2, literal.length - 2) },
+    { name: `${label} substring of flat`, make: () => flatten(left + right).slice(3, -4) },
+    { name: `${label} substring of substring`, make: () => flatten(left + right).slice(3, -4).slice(2, -3) },
+    { name: `${label} rope`, make: () => left + right },
+  ]
+}
+
+const narrowLeft = 'abcabd-needle-tail-'.repeat(3)
+const narrowRight = 'xyz-abcabd-needle-end-'.repeat(2)
+const wideLeft = 'aΔbcabd-needle-tail-'.repeat(3)
+const wideRight = 'xyz-abcabd-needle-Δb-end-'.repeat(2)
+
+const subjects: Subject[] = [
+  ...createSubjects('narrow', 'abcabd-needle-tail-abcabd-needle-end', narrowLeft, narrowRight),
+  ...createSubjects('wide', 'aΔbcabd-needle-tail-abcabd-Δb-end', wideLeft, wideRight),
+  { name: 'empty', make: () => '' },
+]
+
+const needles: Subject[] = [
+  { name: 'flat needle', make: () => flatten('need' + 'le') },
+  { name: 'substring needle', make: () => flatten('--needle--' + narrowLeft).slice(2, 8) },
+  { name: 'rope needle', make: () => 'abcabd-needle-tail-abcabd-needle-tail-abcabd-' + 'needle-tail-abcabd-needle-tail-abcabd-needle' },
+  { name: 'wide needle', make: () => flatten('Δ' + 'b') },
+  { name: 'absent needle', make: () => flatten('abs' + 'ent') },
+  { name: 'empty needle', make: () => '' },
+]
+
+function createStarts(length: number): number[] {
+  return [0, 3, length, length + 1, -1, NaN]
+}
+
+function searchLiteralsFromStart(text: string): string {
+  return [text.indexOf('n'), text.includes('n'), text.indexOf('abd'), text.includes('abd')].join(' ')
+}
+
+function searchLiteralsFrom(text: string, start: number): string {
+  return [text.indexOf('n', start), text.includes('n', start), text.indexOf('abd', start), text.includes('abd', start)].join(' ')
+}
+
+function searchStringFromStart(text: string, needle: string): string {
+  return `${text.indexOf(needle)} ${text.includes(needle)}`
+}
+
+function searchStringFrom(text: string, needle: string, start: number): string {
+  return `${text.indexOf(needle, start)} ${text.includes(needle, start)}`
+}
+
+function describe(text: string): string {
+  return `${JSON.stringify(text)} ${text.length} ${text.indexOf('b')} ${text.indexOf('abd')} ${text.includes('needle')}`
+}
+
+function slice(text: string, from: number, to: number): string {
+  return text.slice(from, to)
+}
+
+function substring(text: string, from: number, to: number): string {
+  return text.substring(from, to)
+}
+
+function substr(text: string, from: number, to: number): string {
+  return text.substr(from, to)
+}
+
+function checkSearches(subject: Subject): void {
+  const length = subject.make().length
+  console.log(subject.name, 'literals', searchLiteralsFromStart(subject.make()))
+  for (const start of createStarts(length)) console.log(subject.name, 'literals from', start, searchLiteralsFrom(subject.make(), start))
+  for (const needle of needles) {
+    console.log(subject.name, needle.name, searchStringFromStart(subject.make(), needle.make()))
+    for (const start of createStarts(length)) console.log(subject.name, needle.name, 'from', start, searchStringFrom(subject.make(), needle.make(), start))
+  }
+}
+
+function checkSubstrings(subject: Subject): void {
+  const length = subject.make().length
+  const bounds = [-1, 0, 1, 2, length - 1, length, length + 1]
+  for (const from of bounds) {
+    for (const to of bounds) {
+      console.log(subject.name, 'slice', from, to, describe(slice(subject.make(), from, to)))
+      console.log(subject.name, 'substring', from, to, describe(substring(subject.make(), from, to)))
+      console.log(subject.name, 'substr', from, to, describe(substr(subject.make(), from, to)))
+    }
+  }
+}
+
+function checkSearchesInsideRange(): void {
+  const base = flatten('xx-needle-' + 'yy-needle-zz')
+  const cut = base.slice(0, 6)
+  console.log('straddles end', cut.indexOf('needle'), cut.includes('needle'), cut.indexOf('d'), cut.includes('d'))
+  console.log('straddles end at run time', cut.indexOf(flatten('need' + 'le')), cut.includes(flatten('need' + 'le')))
+  const inner = base.slice(3, 12).slice(1, 5)
+  console.log('straddles both ends', JSON.stringify(inner), inner.indexOf('needle'), inner.indexOf('n'), inner.indexOf('ee'), inner.indexOf('y'))
+  console.log('only before start', base.indexOf('xx', 1), base.includes('xx', 1), base.indexOf('x', 2), base.indexOf(flatten('x' + 'x'), 1))
+  console.log('empty needle', cut.indexOf(''), cut.indexOf('', 3), cut.indexOf('', 6), cut.indexOf('', 7), cut.includes('', 7))
+}
+
+function checkSwappedBounds(): void {
+  const text = flatten('abcdef' + 'ghijkl')
+  console.log('slice swapped', JSON.stringify(slice(text, 5, 2)), slice(text, 5, 2).length)
+  console.log('substring swapped', JSON.stringify(substring(text, 5, 2)), substring(text, 5, 2).length)
+  const wide = flatten('Δbcdef' + 'ghijkΔ')
+  console.log('one wide unit', JSON.stringify(slice(wide, 0, 1)), JSON.stringify(slice(wide, 1, 2)))
+}
+
+function createBase(index: number): string {
+  return flatten(`base-${index}-` + 'abcdefghijklmnopqrstuvwxyz')
+}
+
+function checkManySubstrings(): void {
+  const retained: string[] = []
+  let total = 0
+  for (let index = 0; index < 200_000; index++) {
+    const cut = createBase(index).slice(5, -3)
+    total += cut.length
+    if (index % 1_000 === 0) retained.push(cut)
+    if ((index + 1) % 50_000 === 0) Bun.gc(true)
+  }
+  Bun.gc(true)
+  let found = 0
+  for (const cut of retained) {
+    if (cut.indexOf('wxyz') === -1 && cut.indexOf('uvw') === cut.length - 3) found++
+  }
+  console.log('many substrings', total, retained.length, found, retained[7], retained[retained.length - 1])
+}
+
+for (const subject of subjects) {
+  checkSearches(subject)
+  checkSubstrings(subject)
+}
+checkSearchesInsideRange()
+checkSwappedBounds()
+checkManySubstrings()
+//// search-untyped.js
+// `indexOf`, `includes`, `lastIndexOf`, `startsWith` and `endsWith` (the same program without type annotations).
+const print = (s) => console.log(s);
+////= show-5
+const makers = [
+  () => "The quick brown fox",
+  () => "",
+  () => "x",
+  () => "caf\xE9 \xDF\xFF\xB5 au lait",
+  () => "\u65E5\u672C\u8A9E\u306E text",
+  () => "a\uD83D\uDE00b\uD83D",
+  () => cat("The quick ", "brown fox"),
+  () => cat("abc", "\u65E5\u672C"),
+  () => cat3("one", " two ", "three"),
+  () => flattened(cat("The quick ", "brown fox")),
+  () => part("xxThe quick brown foxxx", 2, 21),
+  () => part("xx\u65E5\u672C\u8A9E\u306E textxx", 2, 11),
+  () => part(part("xxThe quick brown foxxx", 2, 21), 4, 15),
+  () => part(cat("xxThe quick ", "brown foxxx"), 2, 21),
+  () => flattened(part("xxThe quick brown foxxx", 2, 21)),
+  () => cat("a".repeat(200), "b".repeat(200) + "z" + "c".repeat(10)),
+  () => cat("\u65E5".repeat(200), "b".repeat(200) + "z"),
+  () => "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab",
+  () => "abababababababababababababababababababababababababababababababc"
+];
+const needles = [
+  () => "",
+  () => "x",
+  () => "o",
+  () => "T",
+  () => "fox",
+  () => "The",
+  () => "quick",
+  () => " ",
+  () => "brown fox",
+  () => "The quick brown fox",
+  () => "The quick brown fox!",
+  () => "\xE9",
+  () => "\xFF\xB5",
+  () => "\u65E5",
+  () => "\u672C\u8A9E",
+  () => "\uD83D",
+  () => "\uDE00b",
+  () => "text",
+  () => "z",
+  () => "bz",
+  () => "zc",
+  () => "ab",
+  () => "aab",
+  () => "ababc",
+  () => "aaaaaaaaab",
+  () => "abababababc",
+  () => cat("f", "ox"),
+  () => cat("qu", "ick"),
+  () => part("xfoxx", 1, 4),
+  () => cat("\u672C", "\u8A9E"),
+  () => "undefined",
+  () => "null"
+];
+const positions = [0, 1, 4, 16, 17, 18, 19, 20, 100, 399, 400, 401, -1, -100, 0.5, 16.9, NaN, 1 / 0, -1 / 0, 2147483648, -2147483649, 1000000000000000000000, -0];
+////= lines-3	indexOf1	s	x	s.indexOf
+////= lines-7	indexOf2	x	p	indexOf
+////= lines-3	includes1	s	x	s.includes
+////= lines-7	includes2	x	p	includes
+////= lines-3	lastIndexOf1	s	x	s.lastIndexOf
+////= lines-7	lastIndexOf2	x	p	lastIndexOf
+export function lastIndexOfMasked(s, x, p) {
+  return s.lastIndexOf(x, p & 31) * 100 + s.lastIndexOf(x, -(p & 31));
+}
+////= lines-3	startsWith1	s	x	s.startsWith
+////= lines-7	startsWith2	x	p	startsWith
+////= lines-3	endsWith1	s	x	s.endsWith
+////= lines-7	endsWith2	x	p	endsWith
+export function searchKnown(s, x) {
+  const a = s, b = x;
+  return a.indexOf(b) + (a.includes(b) ? 1000 : 0) + 7 * a.lastIndexOf(b);
+}
+export function startsWithKnown(s, x) {
+  const a = s, b = x;
+  return a.startsWith(b);
+}
+export function endsWithKnown(s, x) {
+  const a = s, b = x;
+  return a.endsWith(b);
+}
+////= lines-15	indexOfCharacter	s	s.indexOf	"o"
+////= lines-15	includesCharacter	s	s.includes	"z"
+////= lines-15	lastIndexOfCharacter	s	s.lastIndexOf	"o"
+export function charactersFrom(s, p) {
+  return s.indexOf("o", p) + "," + s.includes(" ", p) + "," + s.lastIndexOf("o", p & 31) + "," + s.indexOf("\xE9", p) + "," + s.indexOf("\u65E5", p) + "," + s.indexOf("", p) + "," + s.lastIndexOf("", p & 31);
+}
+export function startsWithText(s) {
+  return "" + s.startsWith("The") + s.startsWith("The quick brown fox") + s.startsWith("") + s.startsWith("x") + s.endsWith("fox") + s.endsWith("x") + s.endsWith("") + s.startsWith("quick", 4) + s.endsWith("quick", 9) + s.startsWith("The quick brown fox jumps over the lazy dog and runs away") + s.startsWith("\u65E5") + s.endsWith("\xB5 au lait");
+}
+////= lines-3	indexOfAnything	s	x	s.indexOf
+export function searchAnything(s, x, p) {
+  return show(s.indexOf(x, p)) + show(s.includes(x, p)) + show(s.lastIndexOf(x, p)) + show(s.startsWith(x, p)) + show(s.endsWith(x, p));
+}
+for (let m = 0;m < makers.length; m++) {
+  const make = makers[m];
+  let line = m + " " + make().length + ":";
+  for (const needle of needles)
+    line += " " + indexOf1(make(), needle()) + "," + includes1(make(), needle()) + "," + lastIndexOf1(make(), needle()) + "," + startsWith1(make(), needle()) + "," + endsWith1(make(), needle()) + "," + searchKnown(make(), needle()) + startsWithKnown(make(), needle()) + endsWithKnown(make(), needle());
+  print(line);
+  print(" " + indexOfCharacter(make()) + " " + includesCharacter(make()) + " " + lastIndexOfCharacter(make()) + " " + startsWithText(make()));
+  let t = 0;
+  line = "";
+  for (const p of positions) {
+    line += " " + charactersFrom(make(), p);
+    for (const needle of needles) {
+      t = (t * 7 + indexOf2(make(), needle(), p) + 3 * lastIndexOf2(make(), needle(), p) + lastIndexOfMasked(make(), needle(), p) + (includes2(make(), needle(), p) ? 11 : 0) + (startsWith2(make(), needle(), p) ? 13 : 0) + (endsWith2(make(), needle(), p) ? 17 : 0) + 1000) % 1000003;
+    }
+  }
+  print(line);
+  print(" with positions " + t);
+  line = "";
+  for (const [x, p] of [["o", 1], [undefined, undefined], ["o", undefined], [null, 0], [1, 0], ["", "2"], [{ toString() {
+    return "fox";
+  } }, { valueOf() {
+    return 2;
+  } }], [["o"], null], [true, 0], ["o", "x"], ["o", NaN]])
+    line += " " + searchAnything(make(), x, p);
+  print(line);
+}
+print(show(indexOf1("undefined and null", undefined)) + show(includes1("undefined and null", null)) + show(lastIndexOf1("x", undefined)) + show(startsWith1("undefined", undefined)) + show(endsWith1("is null", null)));
+for (const nil of [undefined, null]) {
+  const s = nil;
+  print(attempt(() => indexOf1(s, "a")) + attempt(() => includes1(s, "a")) + attempt(() => lastIndexOf1(s, "a")) + attempt(() => startsWith1(s, "a")) + attempt(() => endsWith1(s, "a")) + attempt(() => indexOfCharacter(s)) + attempt(() => startsWithText(s)) + attempt(() => indexOfAnything(nil, "a")));
+}
+print(attempt(() => searchAnything("a/b/", /b/, 0)) + attempt(() => "a/b/".indexOf(/b/)) + attempt(() => "a/b/".includes(/b/)) + attempt(() => "a/b/".startsWith(/a/)) + attempt(() => "a/b/".endsWith(/b/)));
+print(attempt(() => indexOfAnything("abc", Symbol("b"))) + attempt(() => indexOfAnything([1, "b", 3], "b")) + attempt(() => indexOfAnything(new String("abc"), "c")) + attempt(() => indexOfAnything({ indexOf() {
+  return "mine";
+} }, "c")));
+let order = "";
+print(show("abcabc".indexOf({ toString() {
+  order += "x";
+  return "c";
+} }, { valueOf() {
+  order += "p";
+  return 3;
+} })) + order);
+globalThis.kept = [indexOfCharacter, includesCharacter, lastIndexOfCharacter, indexOf1, includes1, lastIndexOf1, searchKnown, startsWithKnown, endsWithKnown, startsWithText, indexOfAnything];
+console.log("number");
+//// searches-in-unicode-mode-pass-over-ascii.ts
+// Literals with the flags u and v whose matches begin with a character of a known set, on subjects where 0 to 69 ASCII characters stand in front of a pair, half a pair or a character of 8 or 16 bits.
+const patterns: [string, RegExp][] = [
+  ["invisible", /[\p{Cf}\p{Variation_Selector}]/gu],
+  ["format", /\p{Cf}/gu],
+  ["not ascii", /\P{ASCII}/gu],
+  ["negated ascii", /[^\x00-\x7F]/gu],
+  ["runs of negated ascii", /[^\x00-\x7F]+/gu],
+  ["faces", /[\u{1F600}-\u{1F64F}]/gu],
+  ["one face", /\u{1F600}/gu],
+  ["emoji", /\p{Emoji_Presentation}/gu],
+  ["tags and an optional letter", /[\u200B-\u200F\u{E0000}-\u{E0FFF}]x?/gu],
+  ["lone leads", /[\uD800-\uDBFF]/gu],
+  ["lone trails", /[\uDC00-\uDFFF]/gu],
+  ["any surrogate", /[\uD800-\uDFFF]/gu],
+  ["one lone lead", /\uDB40/gu],
+  ["one lone trail", /\uDC01/gu],
+  ["ascii alone", /[xyz]/gu],
+  ["ascii, then a letter", /[xyz]\p{L}/gu],
+  ["ascii, then anything", /[xyz]./gu],
+  ["ascii, then anything, with newlines", /[xyz]./gsu],
+  ["kelvin", /k/giu],
+  ["long s", /[k]s/giu],
+  ["upper case without regard to case", /\p{Lu}/giu],
+  ["either of two", /(?:\u00E9|\u{1F600})+/gu],
+  ["a space of no width or a letter", /\u200B|x/gu],
+  ["a face or a letter", /\u{1F600}|x/gu],
+  ["behind a lookahead", /(?=\u200B)./gu],
+  ["behind a negative lookahead", /(?!x)[^\x00-\x60]/gu],
+  ["behind a lookbehind", /(?<=a)[^\x00-\x7F]/gu],
+  ["a captured face", /([\u{1F600}-\u{1F64F}])(.?)/gu],
+  ["a letter at a word's start", /\b\p{L}/gu],
+  ["not at a word's border", /\B[^\x00-\x7F]/gu],
+  ["two of a class", /[\u00AD\u{E0001}]{2}/gu],
+  ["a class, then the end", /[\u00AD\u{E0001}]$/gu],
+  ["a class at a line's end", /[\u00AD\u{E0001}]$/gmu],
+  ["a class behind a line's start", /^[\u00AD\u{E0001}]/gmu],
+  ["a lazy run", /[^\x00-\x7F]+?b/gu],
+  ["a reference back", /([^\x00-\x7F])\1/gu],
+  ["not global", /[\p{Cf}\p{Variation_Selector}]/u],
+  ["sets", /[\p{Cf}--\u00AD]/gv],
+  ["emoji of several characters", /\p{RGI_Emoji}/gv],
+  ["negated in sets", /[^\p{ASCII}]/gv],
+  ["no flag: wide ranges", /[\u00AD\u0300-\u036F\u2000-\u2FFF]/g],
+  ["no flag: negated ascii", /[^\x00-\x7F]/g],
+  ["no flag: surrogates", /[\uD800-\uDFFF]/g],
+  ["no flag: wide ranges, then a letter", /[\u00AD\u0300-\u036F\u2000-\uFFFF]b/g],
+];
+const pieces = ["", "\u00AD", "\u200B", "\u{E0001}", "\u{E0001}\u{E0001}", "\u00AD\u{E0001}", "\uD800", "\uDC00", "\uDC00\uD800", "\uDB40", "\uDB40x", "\uDB40\uDC01x", "\uDC01", "\u{1F600}", "\u{1F600}\u{1F600}", "x\u{1F600}",
+  "\u{1F600}x", "\u00E9", "\u65E5\u672C", "x", "x\u00E9", "x\u{1D400}", "x\n", "K", "\u212A", "\u212As", "k\u017F", "\u{1F468}\u200D\u{1F469}", "\u00AD\n", "\n\u00AD", "\u{10FFFF}", "\uFFFF", "\u0080", "\u007F", "\u00E9\u00E9"];
+function mix(hash: number, text: string): number {
+  for (let i = 0; i < text.length; i++) hash = (Math.imul(hash, 31) + text.charCodeAt(i)) | 0;
+  return (Math.imul(hash, 31) + 7) | 0;
+}
+const lines: string[] = [];
+for (const [name, pattern] of patterns) {
+  const row: string[] = [];
+  for (const piece of pieces) {
+    let hash = 0;
+    for (let before = 0; before < 70; before += before < 36 ? 1 : 11) {
+      for (const wide of [false, true]) {
+        const subject = (wide ? "\u0100" : "") + "a".repeat(before) + piece + "b".repeat(19) + piece + "c".repeat(before >> 1);
+        pattern.lastIndex = 0;
+        hash = mix(hash, subject.replace(pattern, "_"));
+        hash = mix(hash, String(subject.search(pattern)));
+        hash = mix(hash, String(subject.split(pattern).length));
+        pattern.lastIndex = 0;
+        for (let from = Math.max(0, before - 2); from <= before + piece.length + 2 && from <= subject.length; from++) {
+          pattern.lastIndex = from;
+          const found = pattern.exec(subject);
+          hash = mix(hash, found ? found.index + ":" + found.join(",") + ":" + pattern.lastIndex : "none");
+        }
+        pattern.lastIndex = 0;
+        hash = mix(hash, String(pattern.test(subject)));
+        pattern.lastIndex = 0;
+      }
+    }
+    row.push((hash >>> 0).toString(36));
+  }
+  lines.push(name + ": " + row.join(" "));
+}
+console.log(lines.join("\n"));
+//// searches-that-go-back-over-the-same-places-in-patterns-out-of-run-time-text.js
+// A pattern made at run time whose search goes back over the same places again and again answers what plain Bun answers: the same match, the same groups, and no match where plain Bun gives the match up.
+const nothing = String(Date.now()).slice(99);
+function show(name, source, flags, subject) {
+  const match = new RegExp(source + nothing, flags).exec(subject + nothing);
+  console.log(name, match === null ? "no match" : [match.index, match[0].length, ...match.slice(1).map(group => (group === undefined ? "-" : group.length))].join(" "));
+}
+const command = "echo foo | grep bar > baz.txt; cat qux.log; ".repeat(28);
+show("five stars, none", "^.*foo.*bar.*baz.*qux.*quux.*$", "", command);
+show("five stars", "^.*foo.*bar.*baz.*qux.*log.*$", "", command);
+show("five stars, not anchored", ".*foo.*bar.*baz.*qux.*quux.*", "", command);
+show("five stars on the second line", "^.*foo.*bar.*baz.*qux.*quux.*$", "m", command + "\n" + command + "quux\n" + command);
+show("five stars from the middle of a line", ".*bar.*baz.*qux.*foo.*quux.*", "s", command + "\n" + command);
+show("lazy stars", "(.*?),(.*?),(.*?),(.*?);", "", "ab,".repeat(150));
+show("lazy stars that match", "(.*?),(.*?),(.*?),(.*?);", "", "ab,".repeat(150) + ";");
+show("stars in optional groups", "^(?:.*/)?(?:.*/)?(?:.*/)?(?:.*/)?end$", "", "a/".repeat(120) + "x");
+show("stars in optional groups that match", "^(.*/)?(.*/)?(.*/)?(.*/)?end$", "", "a/".repeat(120) + "end");
+show("words", "^(?:\\w+\\s*)+;$", "", "alpha beta gamma delta eps");
+show("words that match", "^(\\w+\\s*)+;$", "", "alpha beta gamma delta eps;");
+show("assignments", "(?:\\w+=\\S*\\s+)*end$", "", "A=k ".repeat(600) + "no");
+show("turns that may take nothing", "^(a*)*b$", "", "a".repeat(22) + "c");
+show("turns that may take nothing, lazy", "^(?:a*?|b)*?c$", "", "a".repeat(20) + "d");
+show("turns that may take nothing in turns that may take nothing", "^(?:(?:a*)*b?)*c$", "", "a".repeat(14) + "d");
+show("counted turns", "^(?:a+){2,}b$", "", "a".repeat(22) + "c");
+show("a group that is referred to", "^(a+)+\\1b$", "", "a".repeat(20) + "c");
+show("a lookahead", "^(?=(a+)+b)a*", "", "a".repeat(22) + "c");
+show("alternatives", "^(?:a|aa|aaa)+b$", "", "a".repeat(26) + "c");
+// Plain Bun gives a match up at the hundred millionth turn that the groups of a pattern begin.
+for (let count = 20; count <= 28; count++) show("a match behind " + count, "^(?:(a+)+b|a+c)$", "", "a".repeat(count) + "c");
+for (let count = 30; count <= 37; count++) show("another behind " + count, "(?:a|aa)+b|c", "", "a".repeat(count) + "c");
+for (let count = 24; count <= 28; count++) show("behind turns that are counted, " + count, "^(?:(?:a+){2,}b|a+c)$", "", "a".repeat(count) + "c");
+for (let count = 24; count <= 28; count++) show("behind a lookahead, " + count, "^(?:(?=(a+)+b)a|a+c)$", "", "a".repeat(count) + "c");
+show("two to five turns", "^(?:a+){2,5}b$", "", "a".repeat(60) + "c");
+show("a lookahead that must fail", "^(?!(a+)+b)a+c$", "", "a".repeat(22) + "c");
+show("behind a lookbehind", "(?<=x)(a+)+b", "", "x" + "a".repeat(22) + "c");
+show("behind a lookbehind that must fail", "(?<!y|zz)(a+)+b", "", "x" + "a".repeat(22) + "c");
+for (let count = 25; count <= 28; count++) show("a match behind a lookbehind, " + count, "^x(?:(?<=^x)(a+)+b|a+c)$", "", "x" + "a".repeat(count) + "c");
+// These can match at the end of the subject alone, and the search begins there: no turn is taken at an earlier place.
+show("only at the end, after a lookahead that must fail", "(?!(?:.|a)*c)$", "u", "α" + "a".repeat(30));
+show("only at the end, behind a lookbehind", "(?<=.)(?!(?:a|a)*c)$", "u", "α" + "a".repeat(30));
+show("only at the end, a class that takes pairs", "(?!(?:[^x]|a)+c)$", "u", "α" + "a".repeat(34));
+show("only at the end, behind a pair", "(?<=.)(?!(?:a|a)*c)$", "u", "a".repeat(30) + "😀");
+for (let count = 25; count <= 28; count++) show("up to ninety-nine turns, " + count, "(?:a|a){0,99}c|a+", "", "a".repeat(count));
+for (let count = 25; count <= 28; count++) show("three to two hundred turns, as few as may be, " + count, "(?:a|a){3,200}?c|a+", "", "a".repeat(count));
+for (let count = 25; count <= 28; count++) show("a group that ignores case, " + count, "(?i:a|A)*c|a+", "", "a".repeat(count));
+for (let count = 25; count <= 28; count++) show("an alternative that ignores case, " + count, "(?:a|(?i:A))*(?-i:c)|a+", "i", "a".repeat(count));
+show("a group where the dot takes line ends", "^(?s:.+)+(?-s:.)x$", "", "ab\n".repeat(9) + "y");
+//// searches-that-plain-bun-gives-up-are-answered-at-once-in-patterns-out-of-run-time-text.js
+// A pattern made at run time whose search doubles with every character of the subject: plain Bun gives the match up at the hundred millionth turn of a group, after seconds.
+// The compiled program gives up at the same length of the subject, and at once: it does not make the same search from the same place twice. That holds where the pattern refers to a group,
+// looks behind with groups and runs, has characters beyond the BMP, and where the subject has them.
+const nothing = String(Date.now()).slice(99);
+const face = "\u{1f600}";
+const rows = [
+  ["a reference to a group in front of the turns", "(a)(?:\\1{2}|aa)*c|a+", "", count => "a".repeat(count)],
+  ["a reference to the group that takes the turns", "(a|a)*\\1c|a+", "", count => "a".repeat(count)],
+  ["a reference that is taken as seldom as may be", "(a)(?:\\1*?a|a)*c|a+", "", count => "a".repeat(count)],
+  ["references to two groups", "(a)(b?)(?:\\1\\2|a)*c|a+", "", count => "a".repeat(count)],
+  ["a reference that ignores case", "(a)(?:\\1|A)*c|a+", "i", count => "a".repeat(count)],
+  ["a text between quotes", "(['\"])(?:(?!\\1).|\\\\.|a)*\\1c|.+", "", count => "'" + "a".repeat(count)],
+  ["a character beyond the BMP", "(?:" + face + "|" + face + ")*c|" + face + "+", "u", count => face.repeat(count)],
+  ["a class with a character beyond the BMP", "(?:[" + face + "a]|" + face + ")*c|.+", "u", count => face.repeat(count)],
+  ["a dot behind a pair", "(?:.|a)*c|.+", "u", count => face + "a".repeat(count)],
+  ["a dot on pairs", "(?:.|.)*c|.+", "u", count => face.repeat(count)],
+  ["a negated class in front of a pair", "(?:[^x]|a)*c|.+", "u", count => "a".repeat(count) + face],
+  ["properties on pairs", "(?:\\P{L}|\\p{Emoji})*c|.+", "u", count => face.repeat(count)],
+  ["half a pair", "(?:\\ud83d|\\ud83d)*c|.+", "u", count => "\ud83d".repeat(count)],
+  ["a difference of classes in front of a pair", "(?:[\\p{L}--[b]]|a)*c|.+", "v", count => "a".repeat(count) + face],
+  ["a lookbehind with a group", "a+(?<=c(?:a|a)*)|a+", "", count => "a".repeat(count)],
+  ["a lookbehind with a run behind turns", "(?:a|a)*(?<=b+)c|a+", "", count => "a".repeat(count)],
+  ["a lookbehind that must fail, with a group", "(?:a|a)*(?<!(?:a|b)+)c|a+", "", count => "a".repeat(count)],
+];
+for (const [name, source, flags, subject] of rows) {
+  const answers = [];
+  let slowest = 0;
+  for (let count = 20; count <= 32; count++) {
+    const began = performance.now();
+    const match = new RegExp(source + nothing, flags).exec(subject(count) + nothing);
+    slowest = Math.max(slowest, performance.now() - began);
+    answers.push(match === null ? "-" : match[0].length);
+  }
+  if (process.argv[2] === "show") console.log(Math.round(slowest) + " ms");
+  console.log(name + ":", answers.join(" "), slowest < 1000 ? "each within a second" : "one took " + Math.round(slowest) + " ms");
+}
+//// segmenter.ts
+// `Intl.Segmenter`: iterations that finish, stop early, interleave and nest, and `containing()`.
+const print = (s: string) => console.log(s);
+////= show-6
+function cat(a: string, b: string): string { return a + b; }
+function cat3(a: string, b: string, c: string): string { return `${a}${b}${c}`; }
+function part(s: string, from: number, to: number): string { return s.slice(from, to); }
+function flattened(s: string): string { s.charCodeAt(0); return s; }
+const collect: () => void = typeof (globalThis as any).gc === "function" ? (globalThis as any).gc : () => {};
+const graphemes = new Intl.Segmenter(), words = new Intl.Segmenter("en", { granularity: "word" }), sentences = new Intl.Segmenter("en", { granularity: "sentence" });
+function piece(d: Intl.SegmentData | undefined): string { return d === undefined ? "-" : show(d.segment) + "@" + d.index + (d.isWordLike === undefined ? "" : d.isWordLike ? "w" : "n") + (d.input.length); }
+export function all(seg: Intl.Segmenter, s: string): string { let out = ""; for (const d of seg.segment(s)) out += piece(d) + " "; return out; }
+export function first(seg: Intl.Segmenter, s: string, n: number): string { let out = ""; for (const d of seg.segment(s)) { if (n-- <= 0) break; out += piece(d) + " "; } return out; }
+export function nested(seg: Intl.Segmenter, a: string, b: string, c: string): string { let out = ""; for (const x of seg.segment(a)) for (const y of seg.segment(b)) for (const z of seg.segment(c)) out += x.segment + y.segment + z.segment + ","; return out; }
+export function interleaved(seg: Intl.Segmenter, a: string, b: string): string { const i = seg.segment(a)[Symbol.iterator](), j = seg.segment(b)[Symbol.iterator](), k = seg.segment(a)[Symbol.iterator](); let out = ""; for (let n = 0; n < 7; n++) { const x = i.next(), y = j.next(); out += (x.done ? "." : x.value.segment) + (y.done ? "." : y.value.segment); if (n & 1) { const z = k.next(); out += z.done ? "." : z.value.segment; } out += " "; } return out; }
+export function sameSegments(seg: Intl.Segmenter, s: string): string { const segments = seg.segment(s); const i = segments[Symbol.iterator](), j = segments[Symbol.iterator](); let out = piece(segments.containing(1)) + " "; out += piece(i.next().value) + piece(i.next().value) + " " + piece(segments.containing(0)) + " " + piece(j.next().value) + piece(i.next().value) + " " + piece(segments.containing(s.length - 1)) + piece(segments.containing(s.length)) + piece(segments.containing(-1)); return out + " " + [...segments].length + [...segments].length; }
+export function afterTheEnd(seg: Intl.Segmenter, s: string): string { const i = seg.segment(s)[Symbol.iterator](); let n = 0; while (!i.next().done) n++; const other = all(seg, "xy"); return n + String(i.next().done) + String(i.next().value) + String(i.next().done) + " " + other + String(i.next().done); }
+const texts = ["", "a", "abc", "café", "éa", "日本語", "a\u{1f600}b", "\u{1f468}‍\u{1f469}‍\u{1f467}!", "\ud83d", cat("ab", "cd"), part("xx日yxx", 2, 4), "Hello, world. It is 3.5 km! Yes?"];
+for (const s of texts) print(show(s) + ": " + all(graphemes, s) + "| " + first(graphemes, s, 2) + "| " + afterTheEnd(graphemes, s) + (s.length ? " | " + sameSegments(graphemes, s) : ""));
+print(all(words, texts[11]!)); print(all(sentences, texts[11]!)); print(sameSegments(words, texts[11]!)); print(first(words, "one two three", 3) + "| " + all(words, "日本語の文"));
+print(nested(graphemes, "ab", "日本", "xy")); print(interleaved(graphemes, "abc", "日本語文字")); print(interleaved(words, "a b", "c d e f"));
+// What was given back is handed out again, for another text, when the old text is gone.
+{ let sum = 0; for (let round = 0; round < 300; round++) { const s = "r" + round + (round & 1 ? "日" : "") + "x".repeat(round & 31); let n = 0; for (const d of graphemes.segment(s)) n += d.segment.length + d.index; sum = (sum * 31 + n) | 0; if (round % 50 === 0) collect(); if (round % 7 === 0) first(graphemes, s, 1); } print("sum " + sum); }
+// Iterators that outlive what made them.
+{ const kept: Iterator<Intl.SegmentData>[] = []; for (let i = 0; i < 20; i++) kept.push(new Intl.Segmenter().segment("k" + i + "éz")[Symbol.iterator]()); collect(); const garbage: string[] = []; for (let i = 0; i < 5000; i++) garbage.push("g" + i); collect(); print(kept.map((k) => { let out = ""; for (let r = k.next(); !r.done; r = k.next()) out += r.value.segment; return out; }).join() + " " + garbage.length); }
+print([...graphemes.segment("áb")].map(piece).join() + " " + Array.from(words.segment("x y"), piece).join() + " " + attempt(() => (graphemes.segment as any).call({}, "x")) + " " + attempt(() => graphemes.segment(Symbol() as any)) + " " + [...(graphemes as any).segment(12)].map(piece).join() + [...(graphemes as any).segment(undefined)].length);
+(globalThis as any).kept = [all, first, nested, interleaved, sameSegments, afterTheEnd]; console.log("number");
+//// segmenter-untyped.js
+// `Intl.Segmenter`: iterations that finish, stop early, interleave and nest, and `containing()` (the same program without type annotations).
+const print = (s) => console.log(s);
+////= show-5
+const collect = typeof globalThis.gc === "function" ? globalThis.gc : () => {};
+const graphemes = new Intl.Segmenter;
+const words = new Intl.Segmenter("en", { granularity: "word" });
+const sentences = new Intl.Segmenter("en", { granularity: "sentence" });
+function piece(d) {
+  return d === undefined ? "-" : show(d.segment) + "@" + d.index + (d.isWordLike === undefined ? "" : d.isWordLike ? "w" : "n") + d.input.length;
+}
+export function all(seg, s) {
+  let out = "";
+  for (const d of seg.segment(s))
+    out += piece(d) + " ";
+  return out;
+}
+export function first(seg, s, n) {
+  let out = "";
+  for (const d of seg.segment(s)) {
+    if (n-- <= 0)
+      break;
+    out += piece(d) + " ";
+  }
+  return out;
+}
+export function nested(seg, a, b, c) {
+  let out = "";
+  for (const x of seg.segment(a))
+    for (const y of seg.segment(b))
+      for (const z of seg.segment(c))
+        out += x.segment + y.segment + z.segment + ",";
+  return out;
+}
+export function interleaved(seg, a, b) {
+  const i = seg.segment(a)[Symbol.iterator](), j = seg.segment(b)[Symbol.iterator](), k = seg.segment(a)[Symbol.iterator]();
+  let out = "";
+  for (let n = 0;n < 7; n++) {
+    const x = i.next(), y = j.next();
+    out += (x.done ? "." : x.value.segment) + (y.done ? "." : y.value.segment);
+    if (n & 1) {
+      const z = k.next();
+      out += z.done ? "." : z.value.segment;
+    }
+    out += " ";
+  }
+  return out;
+}
+export function sameSegments(seg, s) {
+  const segments = seg.segment(s);
+  const i = segments[Symbol.iterator](), j = segments[Symbol.iterator]();
+  let out = piece(segments.containing(1)) + " ";
+  out += piece(i.next().value) + piece(i.next().value) + " " + piece(segments.containing(0)) + " " + piece(j.next().value) + piece(i.next().value) + " " + piece(segments.containing(s.length - 1)) + piece(segments.containing(s.length)) + piece(segments.containing(-1));
+  return out + " " + [...segments].length + [...segments].length;
+}
+export function afterTheEnd(seg, s) {
+  const i = seg.segment(s)[Symbol.iterator]();
+  let n = 0;
+  while (!i.next().done)
+    n++;
+  const other = all(seg, "xy");
+  return n + String(i.next().done) + String(i.next().value) + String(i.next().done) + " " + other + String(i.next().done);
+}
+const texts = ["", "a", "abc", "caf\xE9", "e\u0301a", "\u65E5\u672C\u8A9E", "a\uD83D\uDE00b", "\uD83D\uDC68\u200D\uD83D\uDC69\u200D\uD83D\uDC67!", "\uD83D", cat("ab", "cd"), part("xx\u65E5yxx", 2, 4), "Hello, world. It is 3.5 km! Yes?"];
+for (const s of texts)
+  print(show(s) + ": " + all(graphemes, s) + "| " + first(graphemes, s, 2) + "| " + afterTheEnd(graphemes, s) + (s.length ? " | " + sameSegments(graphemes, s) : ""));
+print(all(words, texts[11]));
+print(all(sentences, texts[11]));
+print(sameSegments(words, texts[11]));
+print(first(words, "one two three", 3) + "| " + all(words, "\u65E5\u672C\u8A9E\u306E\u6587"));
+print(nested(graphemes, "ab", "\u65E5\u672C", "xy"));
+print(interleaved(graphemes, "abc", "\u65E5\u672C\u8A9E\u6587\u5B57"));
+print(interleaved(words, "a b", "c d e f"));
+{
+  let sum = 0;
+  for (let round = 0;round < 300; round++) {
+    const s = "r" + round + (round & 1 ? "\u65E5" : "") + "x".repeat(round & 31);
+    let n = 0;
+    for (const d of graphemes.segment(s))
+      n += d.segment.length + d.index;
+    sum = sum * 31 + n | 0;
+    if (round % 50 === 0)
+      collect();
+    if (round % 7 === 0)
+      first(graphemes, s, 1);
+  }
+  print("sum " + sum);
+}
+{
+  const kept = [];
+  for (let i = 0;i < 20; i++)
+    kept.push(new Intl.Segmenter().segment("k" + i + "\xE9z")[Symbol.iterator]());
+  collect();
+  const garbage = [];
+  for (let i = 0;i < 5000; i++)
+    garbage.push("g" + i);
+  collect();
+  print(kept.map((k) => {
+    let out = "";
+    for (let r = k.next();!r.done; r = k.next())
+      out += r.value.segment;
+    return out;
+  }).join() + " " + garbage.length);
+}
+print([...graphemes.segment("a\u0301b")].map(piece).join() + " " + Array.from(words.segment("x y"), piece).join() + " " + attempt(() => graphemes.segment.call({}, "x")) + " " + attempt(() => graphemes.segment(Symbol())) + " " + [...graphemes.segment(12)].map(piece).join() + [...graphemes.segment(undefined)].length);
+globalThis.kept = [all, first, nested, interleaved, sameSegments, afterTheEnd];
+console.log("number");
+//// short-strings-compared-in-loop.ts
+// Two strings of the same length that are not one cell, compared in a loop: every length from 0 to 20, the same text, and a difference at each place.
+function text(length: number, changed: number, wide: boolean): string {
+  let made = "";
+  for (let i = 0; i < length; i++) made += String.fromCharCode((i === changed ? 65 : 97 + (i % 26)) + (wide && i === 0 ? 0x400 : 0));
+  return made;
+}
+const left: string[] = [], right: string[] = [], expected: boolean[] = [];
+for (const wide of [false, true]) {
+  for (let length = 0; length <= 20; length++) {
+    for (let changed = -1; changed < length; changed++) {
+      left.push(text(length, -1, wide)); right.push(text(length, changed, wide)); expected.push(changed < 0);
+    }
+  }
+}
+function count(a: string[], b: string[]): number { let same = 0; for (let i = 0; i < a.length; i++) if (a[i] === b[i]) same += 1; return same; }
+function wrong(a: string[], b: string[]): number { let bad = 0; for (let i = 0; i < a.length; i++) if ((a[i] === b[i]) !== expected[i]) bad += 1; return bad; }
+function unlike(a: string[], b: string[]): number { let other = 0; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) other += 1; return other; }
+console.log(left.length, count(left, right), wrong(left, right), unlike(left, right), count(left, left), count(right, left));
+const sliced: string[] = left.map(one => ("<" + one + ">").slice(1, -1));
+const joined: string[] = left.map(one => one.slice(0, one.length >> 1) + one.slice(one.length >> 1));
+console.log(count(left, sliced), count(sliced, joined), wrong(joined, right), wrong(sliced, right));
+const starts: boolean[] = []; for (let i = 0; i < left.length; i++) starts.push(("x" + left[i] + "y").startsWith("x" + right[i]));
+console.log(starts.filter(Boolean).length, [count, wrong, unlike].map(one => one.name).join());

@@ -1,0 +1,7 @@
+function {
+  a: 1,
+}
+internal/util/inspect throws undefined throws throws
+internal/http throws undefined throws throws
+internal/streams/state throws undefined throws throws
+node:path object object object object

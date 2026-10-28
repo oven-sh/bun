@@ -52,7 +52,8 @@ use crate::webcore::ReadableStream;
 use crate::webcore::readable_stream::Source as ReadableStreamPtr;
 use crate::webcore::readable_stream::Strong as ReadableStreamStrong;
 use crate::webcore::s3::multipart::State as MultiPartUploadState;
-use crate::webcore::streams::{NetworkSink, NetworkSinkJSSink};
+use crate::webcore::sink::ReadableSinkController;
+use crate::webcore::streams::NetworkSink;
 use bun_collections::IntegerBitSet;
 use bun_io::KeepAlive;
 use bun_io::StreamBuffer;
@@ -173,6 +174,7 @@ pub(crate) fn delete(
     )
 }
 
+#[inline(never)]
 pub(crate) fn list_objects(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
@@ -180,6 +182,7 @@ pub(crate) fn list_objects(
     callback: fn(S3ListObjectsResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
 ) -> JsResult<()> {
+    bun_removable_features::removable_definition!(S3Client, list_objects);
     let mut search_params: Vec<u8> = Vec::<u8>::default();
 
     let _ = search_params.append_slice(b"?"); // OOM/capacity: fire-and-forget
@@ -541,8 +544,6 @@ pub(crate) fn writable_stream(
     // SAFETY: heap-allocated and refcounted; it leaves its context when it finishes or drops.
     unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, cx.context()) };
 
-    // Heap-allocate; `JSSink<NetworkSink>` is layout-
-    // compatible (`{ sink: NetworkSink }`) so the cast in `to_sink()` is just a pointer reinterpret.
     let response_stream: *mut NetworkSink =
         bun_core::heap::into_raw(NetworkSink::new(NetworkSink {
             // SAFETY: adopts one of `task_ptr`'s two initial refs (released in `detach_writable`).
@@ -945,11 +946,9 @@ pub(crate) fn upload_stream(
     let ctx = unsafe { &mut *ctx_ptr };
     task.callback_context.set(ctx_ptr.cast::<c_void>());
 
-    // Heap-allocate; `JSSink<NetworkSink>` is layout-
-    // compatible (`{ sink: NetworkSink }`) so the cast in `to_sink()` is just a pointer reinterpret.
     // Ownership stays with `ctx.sink` (freed in `detach_sink`); the JS
-    // controller created by `assign_to_stream` detaches (`m_sinkPtr = null`)
-    // via `controller.end()/close()` before GC so its destructor never calls
+    // controller created by `assign_to_stream` detaches via
+    // `controller.end()/close()` before GC so its `Drop` never calls
     // `finalize` on this allocation.
     let sink: &mut NetworkSink = Box::leak(NetworkSink::new(NetworkSink {
         // SAFETY: `task_ptr` is live; the sink's ref is released in `detach_writable`.
@@ -1036,7 +1035,7 @@ pub(crate) fn upload_stream(
     }
 
     // The controller cell is installed into `sink.source` by `assign_to_stream`.
-    let assignment_result: JSValue = NetworkSinkJSSink::assign_to_stream(
+    let assignment_result: JSValue = ReadableSinkController::assign_to_stream(
         cx.global(),
         readable_stream.value,
         NonNull::from(sink),
@@ -1091,6 +1090,7 @@ pub(crate) fn upload_stream(
 }
 
 /// download a file from s3 chunk by chunk aka streaming (used on readableStream)
+#[inline(never)]
 fn download_stream(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
@@ -1106,6 +1106,7 @@ fn download_stream(
     ),
     callback_context: *mut c_void,
 ) -> *mut S3HttpDownloadStreamingTask {
+    bun_removable_features::removable_definition!(S3Client, download_stream);
     if s3_simple_request::nothing_new_leaves(context) {
         callback(
             &MutableString::default(),

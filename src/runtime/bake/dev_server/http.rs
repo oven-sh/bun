@@ -281,7 +281,7 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
         return not_found(resp);
     }
     let hex = &route_id[route_id.len() - min_len..][..::core::mem::size_of::<u64>() * 2];
-    let Some(id) = parse_hex_to_int::<u64>(hex) else {
+    let Some(id) = parse_hex_to_u64(hex) else {
         return not_found(resp);
     };
 
@@ -341,7 +341,7 @@ fn on_asset_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
         return not_found(resp);
     }
     let hex = &param[..::core::mem::size_of::<u64>() * 2];
-    let Some(hash) = parse_hex_to_int::<u64>(hex) else {
+    let Some(hash) = parse_hex_to_u64(hex) else {
         return not_found(resp);
     };
     debug_log!("onAssetRequest {} {}", hash, bstr::BStr::new(param));
@@ -352,7 +352,7 @@ fn on_asset_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     StaticRoute::on(asset.this_ptr(), resp);
 }
 
-pub(super) use bun_core::fmt::parse_hex_to_int;
+pub(super) use bun_core::fmt::parse_hex_to_u64;
 
 fn on_src_request(_dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     if req.header(b"open-in-editor").is_none() {

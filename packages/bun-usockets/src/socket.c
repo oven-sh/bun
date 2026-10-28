@@ -343,7 +343,7 @@ static struct us_socket_t *us_internal_socket_close_and_notify(struct us_socket_
         /* A candidate of a us_connecting_socket_t is held through that, which hears
          * on_connecting_error once every candidate has failed. */
 
-        us_internal_ssl_detach(s);
+        if (s->group->loop->data.ssl_data) us_internal_ssl_detach(s);
 
         /* Link this socket to the close-list and let it be deleted after this iteration */
         s->next = loop->data.closed_head;

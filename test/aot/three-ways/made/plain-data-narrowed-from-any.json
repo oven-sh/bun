@@ -1,0 +1,4 @@
+{
+ "a_member_is_missing": "alone: THROWN: TypeError: undefined is not an object (evaluating 'undefined.length')",
+ "no_object": "alone: THROWN: TypeError: null is not an object (evaluating 'null.count')"
+}

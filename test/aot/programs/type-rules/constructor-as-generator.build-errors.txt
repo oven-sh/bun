@@ -1,0 +1,1 @@
+error: TS1368: Class constructor may not be a generator.

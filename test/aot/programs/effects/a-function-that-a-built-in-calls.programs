@@ -1,0 +1,308 @@
+////: scene
+function scene() {
+  class Held {}
+  const held = new Held();
+  «1»
+  const descriptor = { value: true };
+  const descriptors = { size: descriptor };
+  Object.defineProperties(held, descriptors);
+  console.log("ran", «2»);
+  function hook() {
+    ++«2»;
+    «3»
+    return { next: «4» };
+  }
+  «5»
+  try {
+    «6»;
+  } catch (error) {}
+  console.log("ran", «2»);
+  «7»
+}
+for (let i = 0; i < 2; i++) {
+  scene();
+}
+////: every-caller
+let ran = 0;
+console.log("object from entries, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»	held[Symbol.iterator] = hook;	Object.fromEntries(held)	«3»
+}
+console.log("object from entries, a field");
+{
+////= scene	const box = { ran: 0 };	box.ran	«1»	«2»	held[Symbol.iterator] = hook;	Object.fromEntries(held)	«3»
+}
+console.log("object from entries, a module variable");
+{
+////= scene	ran = 0;	ran	«1»	«2»	held[Symbol.iterator] = hook;	Object.fromEntries(held)	«3»
+}
+console.log("object from entries, an element");
+{
+////= scene	const list = [0];	list[0]	«1»	«2»	held[Symbol.iterator] = hook;	Object.fromEntries(held)	«3»
+}
+console.log("array from, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»	held[Symbol.iterator] = hook;	Array.from(held)	«3»
+}
+console.log("new map, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»	held[Symbol.iterator] = hook;	new Map(held)	«3»
+}
+console.log("new map, a field");
+{
+////= scene	const box = { ran: 0 };	box.ran	«1»	«2»	held[Symbol.iterator] = hook;	new Map(held)	«3»
+}
+console.log("new map, a module variable");
+{
+////= scene	ran = 0;	ran	«1»	«2»	held[Symbol.iterator] = hook;	new Map(held)	«3»
+}
+console.log("new map, an element");
+{
+////= scene	const list = [0];	list[0]	«1»	«2»	held[Symbol.iterator] = hook;	new Map(held)	«3»
+}
+console.log("new set, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»	held[Symbol.iterator] = hook;	new Set(held)	«3»
+}
+console.log("new weak set, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»	held[Symbol.iterator] = hook;	new WeakSet(held)	«3»
+}
+console.log("new uint8 array, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»	held[Symbol.iterator] = hook;	new Uint8Array(held)	«3»
+}
+console.log("promise all, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»	held[Symbol.iterator] = hook;	Promise.all(held).catch(() => {})	«3»
+}
+console.log("a spread, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»	held[Symbol.iterator] = hook;	[...held]	«3»
+}
+console.log("a spread into math max, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»	held[Symbol.iterator] = hook;	Math.max(...held)	«3»
+}
+console.log("a pattern, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»	held[Symbol.iterator] = hook;	const [first] = held	«3»
+}
+console.log("for of, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»	held[Symbol.iterator] = hook;	for (const each of held) console.log(each)	«3»
+}
+console.log("a template, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»	held[Symbol.toPrimitive] = hook;	`${held}`	«3»
+}
+console.log("string, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»	held["toString"] = hook;	String(held)	«3»
+}
+console.log("number, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»	held["valueOf"] = hook;	Number(held)	«3»
+}
+console.log("an addition, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»	held["valueOf"] = hook;	held + 1	«3»
+}
+console.log("json stringify, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»	held["toJSON"] = hook;	JSON.stringify(held)	«3»
+}
+console.log("json stringify, a field");
+{
+////= scene	const box = { ran: 0 };	box.ran	«1»	«2»	held["toJSON"] = hook;	JSON.stringify(held)	«3»
+}
+console.log("json stringify, a module variable");
+{
+////= scene	ran = 0;	ran	«1»	«2»	held["toJSON"] = hook;	JSON.stringify(held)	«3»
+}
+console.log("json stringify, an element");
+{
+////= scene	const list = [0];	list[0]	«1»	«2»	held["toJSON"] = hook;	JSON.stringify(held)	«3»
+}
+console.log("instanceof, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»	held[Symbol.hasInstance] = hook;	({}) instanceof held	«3»
+}
+console.log("string replace, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»	held[Symbol.replace] = hook;	"text".replace(held, "")	«3»
+}
+console.log("string split, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»	held[Symbol.split] = hook;	"text".split(held)	«3»
+}
+console.log("array map, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»		[1].map(hook)	«3»
+}
+console.log("array map, a field");
+{
+////= scene	const box = { ran: 0 };	box.ran	«1»	«2»		[1].map(hook)	«3»
+}
+console.log("array map, a module variable");
+{
+////= scene	ran = 0;	ran	«1»	«2»		[1].map(hook)	«3»
+}
+console.log("array map, an element");
+{
+////= scene	const list = [0];	list[0]	«1»	«2»		[1].map(hook)	«3»
+}
+console.log("array for each, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»		[1].forEach(hook)	«3»
+}
+console.log("array sort, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»		[2, 1].sort(hook)	«3»
+}
+console.log("array find, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»		[1].find(hook)	«3»
+}
+console.log("array reduce, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»		[1, 2].reduce(hook)	«3»
+}
+console.log("array from with a mapper, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»		Array.from([1], hook)	«3»
+}
+console.log("replace with a function, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»		"text".replace("t", hook)	«3»
+}
+console.log("json parse, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»		JSON.parse("1", hook)	«3»
+}
+console.log("reflect apply, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»		Reflect.apply(hook, undefined, [])	«3»
+}
+console.log("function call, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»		hook.call(undefined)	«3»
+}
+console.log("function apply, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»		hook.apply(undefined, [])	«3»
+}
+console.log("a bound function, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»		hook.bind(undefined)()	«3»
+}
+console.log("a proxy trap, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»		new Proxy({}, { get: hook }).member	«3»
+}
+console.log("a getter read by object assign, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»	Object.defineProperty(held, "member", { get: hook, enumerable: true });	Object.assign({}, held)	«3»
+}
+console.log("a getter read by object assign, a field");
+{
+////= scene	const box = { ran: 0 };	box.ran	«1»	«2»	Object.defineProperty(held, "member", { get: hook, enumerable: true });	Object.assign({}, held)	«3»
+}
+console.log("a getter read by object assign, a module variable");
+{
+////= scene	ran = 0;	ran	«1»	«2»	Object.defineProperty(held, "member", { get: hook, enumerable: true });	Object.assign({}, held)	«3»
+}
+console.log("a getter read by object assign, an element");
+{
+////= scene	const list = [0];	list[0]	«1»	«2»	Object.defineProperty(held, "member", { get: hook, enumerable: true });	Object.assign({}, held)	«3»
+}
+console.log("a getter read by object entries, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»	Object.defineProperty(held, "member", { get: hook, enumerable: true });	Object.entries(held)	«3»
+}
+console.log("a getter read by a spread, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»	Object.defineProperty(held, "member", { get: hook, enumerable: true });	({ ...held })	«3»
+}
+console.log("map for each, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»		new Map([[1, 1]]).forEach(hook)	«3»
+}
+console.log("set for each, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»		new Set([1]).forEach(hook)	«3»
+}
+console.log("a typed array map, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»		new Uint8Array(1).map(hook)	«3»
+}
+console.log("a new promise, a captured variable");
+{
+////= scene	let ran = 0;	ran	«1»	«2»		new Promise(hook).catch(() => {})	«3»
+}
+//// a-function-that-a-built-in-calls-for-an-iterator-raises-a-captured-variable-and-ends-in-a-name-nobody-declares.js
+// Object.fromEntries asks an object for its iterator. The function that answers adds one to a captured variable, which the caller prints in front of the call and behind it.
+////= scene	let ran = 0;	ran		missing	held[Symbol.iterator] = hook;	Object.fromEntries(held)	
+//// a-function-that-a-built-in-calls-for-an-iterator-raises-a-captured-variable-and-ends-in-a-variable-in-its-dead-zone.js
+// Object.fromEntries asks an object for its iterator. The function that answers adds one to a captured variable, which the caller prints in front of the call and behind it.
+////= scene	let ran = 0;	ran		later	held[Symbol.iterator] = hook;	Object.fromEntries(held)	let later = 1;
+//// a-function-that-a-built-in-calls-for-an-iterator-raises-a-captured-variable-and-ends-in-a-call-of-undefined.js
+// Object.fromEntries asks an object for its iterator. The function that answers adds one to a captured variable, which the caller prints in front of the call and behind it.
+////= scene	let ran = 0;	ran	const nothing = undefined;	nothing()	held[Symbol.iterator] = hook;	Object.fromEntries(held)	
+//// a-function-that-a-built-in-calls-for-an-iterator-raises-a-captured-variable-and-ends-in-a-member-of-null.js
+// Object.fromEntries asks an object for its iterator. The function that answers adds one to a captured variable, which the caller prints in front of the call and behind it.
+////= scene	let ran = 0;	ran	const none = null;	none.member	held[Symbol.iterator] = hook;	Object.fromEntries(held)	
+//// a-function-that-a-built-in-calls-for-an-iterator-raises-a-captured-variable-and-ends-in-a-bigint-plus-a-number.js
+// Object.fromEntries asks an object for its iterator. The function that answers adds one to a captured variable, which the caller prints in front of the call and behind it.
+////= scene	let ran = 0;	ran	const big = 1n;	big + 1	held[Symbol.iterator] = hook;	Object.fromEntries(held)	
+//// a-function-that-a-built-in-calls-for-an-iterator-raises-a-captured-variable-and-ends-in-a-recursion-without-end.js
+// Object.fromEntries asks an object for its iterator. The function that answers adds one to a captured variable, which the caller prints in front of the call and behind it.
+////= scene	let ran = 0;	ran	function deep() { return deep() + 1; }	deep()	held[Symbol.iterator] = hook;	Object.fromEntries(held)	
+//// a-function-that-a-built-in-calls-for-an-iterator-raises-a-captured-variable-and-ends-in-a-throw.js
+// Object.fromEntries asks an object for its iterator. The function that answers adds one to a captured variable, which the caller prints in front of the call and behind it.
+////= scene	let ran = 0;	ran		(() => { throw new Error(); })()	held[Symbol.iterator] = hook;	Object.fromEntries(held)	
+//// a-function-that-a-built-in-calls-for-an-iterator-raises-a-captured-variable-and-ends-in-an-iterator-that-is-done-at-once.js
+// Object.fromEntries asks an object for its iterator. The function that answers adds one to a captured variable, which the caller prints in front of the call and behind it.
+////= scene	let ran = 0;	ran		() => ({ done: true })	held[Symbol.iterator] = hook;	Object.fromEntries(held)	
+//// a-function-that-a-built-in-calls-for-an-iterator-raises-a-captured-variable-and-ends-in-a-number-for-the-next-method.js
+// Object.fromEntries asks an object for its iterator. The function that answers adds one to a captured variable, which the caller prints in front of the call and behind it.
+////= scene	let ran = 0;	ran		1	held[Symbol.iterator] = hook;	Object.fromEntries(held)	
+//// a-function-that-a-built-in-calls-for-an-iterator-raises-a-module-variable-and-ends-in-a-name-nobody-declares.js
+// Object.fromEntries asks an object for its iterator. The function that answers adds one to a module variable, which the caller prints in front of the call and behind it.
+let ran = 0;
+////= scene	ran = 0;	ran		missing	held[Symbol.iterator] = hook;	Object.fromEntries(held)	
+//// a-function-that-a-built-in-calls-for-an-iterator-raises-a-module-variable-and-ends-in-a-throw.js
+// Object.fromEntries asks an object for its iterator. The function that answers adds one to a module variable, which the caller prints in front of the call and behind it.
+let ran = 0;
+////= scene	ran = 0;	ran		(() => { throw new Error(); })()	held[Symbol.iterator] = hook;	Object.fromEntries(held)	
+//// a-function-that-a-built-in-calls-for-an-iterator-raises-a-module-variable-and-ends-in-an-iterator-that-is-done-at-once.js
+// Object.fromEntries asks an object for its iterator. The function that answers adds one to a module variable, which the caller prints in front of the call and behind it.
+let ran = 0;
+////= scene	ran = 0;	ran		() => ({ done: true })	held[Symbol.iterator] = hook;	Object.fromEntries(held)	
+//// a-function-that-a-built-in-calls-whichever-it-is-raises-a-count-and-ends-in-a-name-nobody-declares.js
+// Each block hands a function to another built-in or operator. The function adds one to a count, which the caller prints in front of the call and behind it.
+////= every-caller		missing	
+//// a-function-that-a-built-in-calls-whichever-it-is-raises-a-count-and-ends-in-a-variable-in-its-dead-zone.js
+// Each block hands a function to another built-in or operator. The function adds one to a count, which the caller prints in front of the call and behind it.
+////= every-caller		later	let later = 1;
+//// a-function-that-a-built-in-calls-whichever-it-is-raises-a-count-and-ends-in-a-call-of-undefined.js
+// Each block hands a function to another built-in or operator. The function adds one to a count, which the caller prints in front of the call and behind it.
+////= every-caller	const nothing = undefined;	nothing()	
+//// a-function-that-a-built-in-calls-whichever-it-is-raises-a-count-and-ends-in-a-member-of-null.js
+// Each block hands a function to another built-in or operator. The function adds one to a count, which the caller prints in front of the call and behind it.
+////= every-caller	const none = null;	none.member	
+//// a-function-that-a-built-in-calls-whichever-it-is-raises-a-count-and-ends-in-a-bigint-plus-a-number.js
+// Each block hands a function to another built-in or operator. The function adds one to a count, which the caller prints in front of the call and behind it.
+////= every-caller	const big = 1n;	big + 1	
+//// a-function-that-a-built-in-calls-whichever-it-is-raises-a-count-and-ends-in-a-recursion-without-end.js
+// Each block hands a function to another built-in or operator. The function adds one to a count, which the caller prints in front of the call and behind it.
+////= every-caller	function deep() { return deep() + 1; }	deep()	
+//// a-function-that-a-built-in-calls-whichever-it-is-raises-a-count-and-ends-in-a-throw.js
+// Each block hands a function to another built-in or operator. The function adds one to a count, which the caller prints in front of the call and behind it.
+////= every-caller		(() => { throw new Error(); })()	
+//// a-function-that-a-built-in-calls-whichever-it-is-raises-a-count-and-ends-in-an-iterator-that-is-done-at-once.js
+// Each block hands a function to another built-in or operator. The function adds one to a count, which the caller prints in front of the call and behind it.
+////= every-caller		() => ({ done: true })	
+//// a-function-that-a-built-in-calls-whichever-it-is-raises-a-count-and-ends-in-a-number-for-the-next-method.js
+// Each block hands a function to another built-in or operator. The function adds one to a count, which the caller prints in front of the call and behind it.
+////= every-caller		1	

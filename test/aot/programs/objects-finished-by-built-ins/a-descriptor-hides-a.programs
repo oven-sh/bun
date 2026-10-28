@@ -1,0 +1,437 @@
+////: lines
+interface «1» {
+  name: string;
+  «2»: number;
+  «3»(): string;
+}
+//// a-descriptor-hides-a-member-and-forbids-stores.ts
+"use strict";
+interface Entry {
+  id: number;
+  secret: string;
+  note: string;
+}
+function build(): Entry {
+  return Object.defineProperty(
+    Object.defineProperty({ note: "n" }, "secret", { value: "s", enumerable: false, writable: true, configurable: true }),
+    "id",
+    { value: 1, enumerable: true, writable: false, configurable: false },
+  ) as unknown as Entry;
+}
+function show(entry: Entry) {
+  return entry.id + entry.secret + entry.note + ":" + Object.keys(entry).join() + ":" + JSON.stringify(entry);
+}
+const entry = build();
+console.log(show(entry));
+const failures: string[] = [];
+for (const attempt of [() => void (entry.id = 2), () => void delete (entry as { id?: number }).id, () => void (entry.secret = "t")]) {
+  try {
+    attempt();
+    failures.push("fine");
+  } catch (error) {
+    failures.push((error as Error).constructor.name);
+  }
+}
+console.log(failures.join(), show(entry), Object.propertyIsEnumerable.call(entry, "secret"));
+//// a-member-is-left-to-the-prototype.ts
+////= lines	Animal	legs	speak
+const base = {
+  legs: 4,
+  speak(this: Animal) {
+    return this.name + " on " + this.legs;
+  },
+};
+function build(name: string): Animal {
+  return Object.setPrototypeOf({ name }, base) as unknown as Animal;
+}
+function describe(animal: Animal) {
+  return animal.speak() + "/" + animal.legs + "/" + Object.keys(animal).join() + "/" + Object.hasOwn(animal, "legs");
+}
+const cat = build("cat");
+const bird = build("bird");
+bird.legs = 2;
+console.log(describe(cat), describe(bird));
+base.legs = 6;
+console.log(describe(cat), describe(bird), Object.getPrototypeOf(cat) === base);
+delete (bird as { legs?: number }).legs;
+console.log(describe(bird));
+//// a-required-member-never-comes.ts
+////= lines	Person	age	greet
+function build(given: object): Person {
+  return Object.assign({ age: 7 }, given) as unknown as Person;
+}
+function read(person: Person) {
+  return [person.name, person.age, typeof person.greet, "name" in person, Object.hasOwn(person, "greet")].join();
+}
+const bare = build({});
+const whole = build({ name: "Ada", greet: () => "hello" });
+console.log(read(bare), Object.keys(bare).join(), JSON.stringify(bare));
+console.log(read(whole), Object.keys(whole).join(), whole.greet());
+let failure = "none";
+try {
+  bare.greet();
+} catch (error) {
+  failure = (error as Error).constructor.name;
+}
+console.log(failure);
+//// a-setter-of-the-literal-sees-the-object-half-made.ts
+interface Form {
+  first: string;
+  second: string;
+  third: string;
+}
+const seen: string[] = [];
+function build(): Form {
+  return Object.assign(
+    {
+      first: "1",
+      set probe(value: string) {
+        const form = this as unknown as Form;
+        seen.push([value, form.first, form.second, form.third, "second" in form, "third" in form, Object.keys(form).join("+")].join());
+      },
+    },
+    { second: "2", probe: "a" },
+    { third: "3", probe: "b" },
+  ) as unknown as Form;
+}
+const form = build();
+console.log(seen.join(" | "));
+console.log(form.first + form.second + form.third, Object.keys(form).join());
+let failure = "none";
+let half: Form | undefined;
+try {
+  Object.assign(
+    {
+      first: "1",
+      set keep(_: number) {
+        half = this as unknown as Form;
+      },
+    },
+    { keep: 0, second: "2" },
+    {
+      get third(): string {
+        throw new RangeError("no third");
+      },
+    },
+  ) as unknown as Form;
+} catch (error) {
+  failure = (error as Error).message;
+}
+console.log(failure, half!.first, half!.second, half!.third, Object.keys(half!).join());
+//// an-accessor-comes-by-its-descriptor.ts
+////= lines	Counter	step	label
+let reads = 0;
+const definition = {
+  get name() {
+    reads++;
+    return "n" + reads;
+  },
+  step: 2,
+};
+function build(): Counter {
+  return Object.defineProperties({ label: () => "counter" }, Object.getOwnPropertyDescriptors(definition)) as unknown as Counter;
+}
+function describe(counter: Counter) {
+  return counter.name + ":" + counter.step + ":" + counter.label();
+}
+const counter = build();
+console.log(describe(counter), describe(counter), reads);
+console.log(typeof Object.getOwnPropertyDescriptor(counter, "name")!.get, Object.getOwnPropertyDescriptor(counter, "step")!.value);
+let failure = "none";
+try {
+  "use strict";
+  (function () {
+    "use strict";
+    counter.name = "stored";
+  })();
+} catch (error) {
+  failure = (error as Error).constructor.name;
+}
+console.log(failure, counter.name, reads);
+//// built-ins-store-under-a-fixed-name-into-instances-whose-field-holds-another-kind.ts
+// Built-in functions that store under a fixed name into whatever object they are handed or make with a constructor they are handed.
+const lines: string[] = [];
+const say = (text: string): void => { lines.push(text); };
+const show = (value: unknown): string => (typeof value === "string" ? JSON.stringify(value) : typeof value === "function" ? "function" : String(value));
+function attempt(label: string, run: () => void): void {
+  try {
+    run();
+  } catch (error) {
+    say(label + " threw " + (error as Error).name);
+  }
+}
+
+class Counted {
+  first = 1;
+  length = "seven";
+  last = 3;
+  describe(): string {
+    return this.first + " " + this.length.toUpperCase() + " " + this.last;
+  }
+}
+class Cursor {
+  first = 1;
+  lastIndex = "start";
+  flags = "g";
+  last = 3;
+  exec(_text: string): null {
+    return null;
+  }
+  describe(): string {
+    return this.first + " " + this.lastIndex.toUpperCase() + " " + this.last;
+  }
+}
+class Traced {
+  first = 1;
+  stack = 2.5;
+  last = 3;
+  describe(): string {
+    return this.first + " " + (this.stack + 1) + " " + this.last;
+  }
+}
+class Listed {
+  first = 1.5;
+  length = 2.5;
+  last = 3.5;
+  total(): number {
+    return this.first + this.length + this.last;
+  }
+}
+
+function look(label: string, object: { describe(): string }): void {
+  attempt(label, () => say(label + ": " + object.describe()));
+}
+
+const events: [string, () => void][] = [
+  ["Array.from", () => { const made = (Array.from as Function).call(Counted, [1, 2]) as unknown as Counted; look("from", made); say(show(made.length) + " " + Object.keys(made).join()); }],
+  ["Array.of", () => { const made = (Array.of as Function).call(Counted, 1, 2, 3) as unknown as Counted; look("of", made); say(show(made.length) + " " + Object.keys(made).join()); }],
+  ["push", () => { const o = new Counted(); Array.prototype.push.call(o, 9); look("push", o); say(show(o.length) + " " + Object.keys(o).join()); }],
+  ["pop", () => { const o = new Counted(); Array.prototype.pop.call(o); look("pop", o); say(show(o.length)); }],
+  ["species", () => {
+    const list = [1, 2, 3];
+    (list as unknown as { constructor: unknown }).constructor = { [Symbol.species]: Counted };
+    const made = list.map(x => x * 2) as unknown as Counted;
+    look("map", made);
+    say(show(made.length) + " " + Object.keys(made).join());
+    const sliced = list.slice(1) as unknown as Counted;
+    look("slice", sliced);
+    say(show(sliced.length) + " " + Object.keys(sliced).join());
+  }],
+  ["match", () => { const o = new Cursor(); RegExp.prototype[Symbol.match].call(o as unknown as RegExp, "text"); look("match", o); say(show(o.lastIndex)); }],
+  ["replace", () => { const o = new Cursor(); RegExp.prototype[Symbol.replace].call(o as unknown as RegExp, "text", () => "x"); look("replace", o); say(show(o.lastIndex)); }],
+  ["search", () => { const o = new Cursor(); RegExp.prototype[Symbol.search].call(o as unknown as RegExp, "text"); look("search", o); say(show(o.lastIndex)); }],
+  ["capture", () => { const o = new Traced(); (Error as unknown as { captureStackTrace(o: object): void }).captureStackTrace(o); attempt("capture", () => say("capture: " + typeof o.stack + " " + o.first + " " + o.last + " " + Object.keys(o).join())); }],
+  ["listed", () => { const o = new Listed(); Array.prototype.push.call(o, "x"); say("listed: " + o.total() + " " + show(o.length)); const p = new Listed(); Array.prototype.fill.call(p, 1); say("filled: " + p.total()); }],
+  ["listed-from", () => { const made = (Array.from as Function).call(Listed, { length: 3 }) as unknown as Listed; say("listed from: " + made.total() + " " + show(made.length)); }],
+];
+
+const chosen = events;
+for (let turn = 0; turn < 3; turn++) {
+  for (const [name, run] of chosen) attempt(name, run);
+  look("plain", new Counted());
+  look("plain", new Cursor());
+  look("plain", new Traced());
+  say("plain " + new Listed().total());
+}
+console.log(lines.join("\n"));
+//// defaults-a-definition-and-a-second-literal-make-one-object.ts
+interface Gadget {
+  name: string;
+  run(input: string): string;
+  isEnabled(): boolean;
+  isReadOnly(): boolean;
+  label(): string;
+}
+type Definition = { name: string; run(input: string): string; isEnabled?(): boolean; isReadOnly?(): boolean };
+const DEFAULTS = { isEnabled: () => true, isReadOnly: () => false };
+
+function build<D extends Definition>(definition: D): Gadget {
+  const facing = {
+    run(input: string) {
+      return definition.run(input) + "!";
+    },
+  };
+  const built: Gadget = Object.assign(
+    Object.defineProperties({ ...DEFAULTS, label: () => definition.name }, Object.getOwnPropertyDescriptors(definition)),
+    facing,
+  ) as unknown as Gadget;
+  return built;
+}
+
+function matches(gadget: Gadget, name: string) {
+  return gadget.name === name;
+}
+
+const gadgets = [build({ name: "a", run: text => text }), build({ name: "b", run: text => text + text, isReadOnly: () => true })];
+let hits = 0;
+for (let turn = 0; turn < 1000; turn++) for (const gadget of gadgets) if (matches(gadget, "b") && gadget.isReadOnly()) hits++;
+console.log(hits, gadgets.map(gadget => gadget.label() + gadget.run("x") + gadget.isEnabled()).join());
+//// frozen-sealed-and-closed-at-birth.ts
+"use strict";
+interface Point {
+  x: number;
+  y?: number;
+}
+const frozen = Object.freeze({ x: 1 }) as unknown as Point;
+const sealed = Object.seal({ x: 2 }) as unknown as Point;
+const closed = Object.preventExtensions({ x: 3 }) as unknown as Point;
+function attempt(point: Point) {
+  const outcome: string[] = [];
+  for (const store of [() => void (point.x = 9), () => void (point.y = 8), () => void delete (point as { x?: number }).x]) {
+    try {
+      store();
+      outcome.push("fine");
+    } catch (error) {
+      outcome.push((error as Error).constructor.name);
+    }
+  }
+  return outcome.join() + ":" + JSON.stringify(point) + ":" + point.y;
+}
+console.log(attempt(frozen), Object.isFrozen(frozen));
+console.log(attempt(sealed), Object.isSealed(sealed), Object.isFrozen(sealed));
+console.log(attempt(closed), Object.isExtensible(closed));
+//// keys-keep-the-order-in-which-they-came.ts
+interface Settings {
+  alpha: number;
+  beta: number;
+  gamma: number;
+  delta?: number;
+}
+function build(late: { alpha: number }): Settings {
+  return Object.assign({ gamma: 3 }, { beta: 2 }, late) as unknown as Settings;
+}
+const settings = build({ alpha: 1 });
+console.log(Object.keys(settings).join(), JSON.stringify(settings));
+const seen: string[] = [];
+for (const key in settings) seen.push(key);
+console.log(seen.join(), Object.entries(settings).join("|"));
+settings.delta = 4;
+delete (settings as { beta?: number }).beta;
+settings.beta = 5;
+console.log(Object.keys(settings).join(), JSON.stringify({ ...settings }), settings.alpha + settings.beta + settings.gamma);
+//// many-objects-are-finished-while-the-collector-runs.ts
+"use strict";
+interface Part {
+  label: string;
+  size: number;
+}
+interface Gadget {
+  name: string;
+  parts: Part[];
+  owner: Gadget | null;
+  weight: number;
+  count: number;
+  ready: boolean;
+  note: string;
+  extra: Part;
+}
+function born(step: number): Gadget {
+  return Object.assign({ name: "g" + step }, step % 3 ? { weight: step / 2 } : {}) as unknown as Gadget;
+}
+function finish(gadget: Gadget, step: number, previous: Gadget | null) {
+  switch (step % 5) {
+    case 0:
+      Object.assign(gadget, { parts: [{ label: "p" + step, size: step }], owner: previous });
+      break;
+    case 1:
+      Object.defineProperty(gadget, "count", { value: step, enumerable: true, writable: true, configurable: true });
+      break;
+    case 2:
+      Object.defineProperties(gadget, {
+        ready: { value: step % 2 === 0, enumerable: true, writable: true, configurable: true },
+        note: { value: "n" + step, enumerable: true, writable: true, configurable: true },
+      });
+      break;
+    case 3:
+      gadget.extra = { label: "x" + step, size: -step };
+      gadget.owner = previous;
+      break;
+  }
+}
+function describe(gadget: Gadget): string {
+  const parts = gadget.parts as Part[] | undefined;
+  const owner = gadget.owner as Gadget | null | undefined;
+  const extra = gadget.extra as Part | undefined;
+  return [
+    gadget.name,
+    parts ? parts.length + parts[0].label + parts[0].size : "-",
+    owner === undefined ? "-" : owner === null ? "null" : owner.name,
+    gadget.weight,
+    gadget.count,
+    gadget.ready,
+    gadget.note,
+    extra ? extra.label + extra.size : "-",
+    Object.keys(gadget).join("."),
+  ].join("|");
+}
+function hash(text: string, seed: number): number {
+  let value = seed;
+  for (let index = 0; index < text.length; index++) value = (Math.imul(value, 31) + text.charCodeAt(index)) | 0;
+  return value;
+}
+const ringSize = 2048;
+const delay = 700;
+const ring: (Gadget | undefined)[] = new Array(ringSize).fill(undefined);
+let garbage: unknown[] = [];
+let sum = 17;
+for (let step = 0; step < 40000; step++) {
+  ring[step % ringSize] = born(step);
+  if (step >= delay) {
+    const late = step - delay;
+    finish(ring[late % ringSize]!, late, late ? ring[(late - 1) % ringSize]! : null);
+  }
+  garbage.push({ step, text: "t" + step, list: [step, step + 1] });
+  if (garbage.length > 300) garbage = [];
+  if (step % 4096 === 4095) Bun.gc(true);
+  else if (step % 1024 === 1023) Bun.gc(false);
+  if (step % 997 === 0) {
+    for (let index = 0; index < ringSize; index += 37) {
+      const gadget = ring[index];
+      if (gadget) sum = hash(describe(gadget), sum);
+    }
+  }
+}
+Bun.gc(true);
+for (const gadget of ring) sum = hash(describe(gadget!), sum);
+console.log(sum, describe(ring[5]!), describe(ring[6]!), describe(ring[7]!), describe(ring[8]!), describe(ring[9]!));
+//// the-first-declared-type-on-the-way-out-and-names-beyond-it.ts
+interface Narrow {
+  a: number;
+}
+interface Wide {
+  a: number;
+  b: number;
+  c?: number;
+}
+function build(extra: object) {
+  const wide: Wide = Object.assign({ a: 1, z: 26 }, extra) as unknown as Narrow as unknown as Wide;
+  return wide;
+}
+function total(wide: Wide) {
+  return wide.a + wide.b + (wide.c ?? 0);
+}
+function first(narrow: Narrow) {
+  return narrow.a;
+}
+const one = build({ b: 2 });
+const two = build({ b: 2, c: 3, y: 25 });
+console.log(total(one), total(two), first(one), first(two), Object.keys(one).join(), Object.keys(two).join());
+console.log((one as unknown as { z: number }).z, (two as unknown as { y: number }).y, JSON.stringify([one, two]));
+//// the-function-only-has-the-name-of-the-built-in.ts
+interface Pair {
+  left: number;
+  right: number;
+}
+function build(): Pair[] {
+  const Object = {
+    assign(target: object, source: object) {
+      return { ...source, left: -1, target };
+    },
+  };
+  return [Object.assign({ left: 1 }, { right: 2 }) as unknown as Pair];
+}
+function sum(pair: Pair) {
+  return pair.left + pair.right;
+}
+const [pair] = build();
+console.log(sum(pair), Object.keys(pair).join(), JSON.stringify(pair));

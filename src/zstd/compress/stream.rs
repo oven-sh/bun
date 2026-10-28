@@ -11,7 +11,7 @@ use super::params::{
     resolve_enable_ldm, resolve_row_match_finder_mode,
 };
 use crate::error::{Error, Result};
-use crate::util::{SliceExt, try_copy};
+use crate::util::{SliceExt, append, try_copy};
 use crate::{InBuffer, OutBuffer};
 
 /// `ZSTD_EndDirective`
@@ -64,12 +64,10 @@ impl Default for CCtx {
 }
 
 /// `ZSTD_limitCopy`
-fn limit_copy(dst: &mut [u8], src: &[u8]) -> usize {
+fn limit_copy(dst: &mut [u8], src: &[u8]) -> Result<usize> {
     let length = dst.len().min(src.len());
-    if let (Some(dst), Some(src)) = (dst.get_mut(..length), src.get(..length)) {
-        dst.copy_from_slice(src);
-    }
-    length
+    dst.write_at(0, src.sub(..length)?)?;
+    Ok(length)
 }
 
 /// Gives `buffer` room for `new_size` bytes instead of `size`, none of which is touched.
@@ -86,13 +84,13 @@ fn resize_buffer(buffer: &mut Vec<u8>, size: &mut usize, new_size: usize) -> Res
     Ok(())
 }
 
-/// Writes `src` at `pos`, which is at most the length of `buffer`, over what is there and beyond.
+/// Writes `src` at `pos`, which is at most the length of `buffer`, over what is there and beyond, for which it has the
+/// capacity.
 fn write_or_append(buffer: &mut Vec<u8>, pos: usize, src: &[u8]) -> Result<()> {
     let over = buffer.sub_mut(pos..)?;
     let (first, rest) = src.split_at_checked(over.len()).unwrap_or((src, &[]));
     over.write_at(0, first)?;
-    buffer.extend_from_slice(rest);
-    Ok(())
+    append(buffer, rest)
 }
 
 impl CCtx {
@@ -388,7 +386,7 @@ impl CCtx {
                     let flushed = limit_copy(
                         output.dst.sub_mut(op..)?,
                         self.out_buff.span(self.out_buff_flushed_size, to_flush)?,
-                    );
+                    )?;
                     op += flushed;
                     self.out_buff_flushed_size += flushed;
                     if to_flush != flushed {

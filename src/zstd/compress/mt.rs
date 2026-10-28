@@ -24,7 +24,7 @@ use super::stream::EndDirective;
 use crate::common::ZSTD_BLOCKSIZE_MAX;
 use crate::common::xxhash::Xxh64;
 use crate::error::{Error, Result};
-use crate::util::{BUG, SliceExt, try_copy};
+use crate::util::{BUG, SliceExt, append, try_copy};
 use crate::{InBuffer, OutBuffer};
 
 /// `SerialState`: what has to see the input in order.
@@ -93,7 +93,7 @@ impl SerialState {
             let (over, beyond) = src.split_at(written.len().min(src.len()));
             written.write_at(0, over)?;
             (self.round_buff.try_reserve(beyond.len())).map_err(|_| Error::MemoryAllocation)?;
-            self.round_buff.extend_from_slice(beyond);
+            append(&mut self.round_buff, beyond)?;
             (self.ldm_state.window).update(
                 BufId::InBuff.start() + round_pos,
                 BufId::InBuff,
@@ -766,8 +766,7 @@ impl MtCtx {
             let filled = self.in_buff.len() - self.in_buff_prefix_size;
             let to_load = (input.src.len() - input.pos).min(self.target_section_size - filled);
             self.reserve_input(to_load)?;
-            self.in_buff
-                .extend_from_slice(input.src.span(input.pos, to_load)?);
+            append(&mut self.in_buff, input.src.span(input.pos, to_load)?)?;
             input.pos += to_load;
             forward_input_progress = to_load > 0;
         }

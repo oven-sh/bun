@@ -95,7 +95,12 @@ impl<T> SliceExt<T> for [T] {
         if src_end > self.len() || dst_end > self.len() {
             return Err(BUG);
         }
-        self.copy_within(src..src_end, dst);
+        let size = size_of::<T>();
+        if dst >= src_end && is_slow_to_copy((dst - src) * size, len * size) {
+            move_in_parts(self, src, dst, len);
+        } else {
+            self.copy_within(src..src_end, dst);
+        }
         Ok(())
     }
 
@@ -104,9 +109,72 @@ impl<T> SliceExt<T> for [T] {
     where
         T: Copy,
     {
-        self.span_mut(start, from.len())?.copy_from_slice(from);
-        Ok(())
+        copy(self.span_mut(start, from.len())?, from)
     }
+}
+
+/// `to.copy_from_slice(from)`
+#[inline(always)]
+pub(crate) fn copy<T: Copy>(to: &mut [T], from: &[T]) -> Result<()> {
+    if to.len() != from.len() {
+        return Err(BUG);
+    }
+    let distance = to.as_ptr().addr().wrapping_sub(from.as_ptr().addr());
+    if is_slow_to_copy(distance, size_of_val(from)) {
+        copy_in_parts(to, from);
+    } else {
+        to.copy_from_slice(from);
+    }
+    Ok(())
+}
+
+/// glibc 2.39 copies more than 2112 bytes at once with `rep movsb`, which takes up to 25 times as long on Zen 4
+/// if the destination is a little further into its page than the source:
+/// <https://sourceware.org/bugzilla/show_bug.cgi?id=30994>.
+const MAX_COPY: usize = 2048;
+
+/// Whether `size` bytes are, at once, to `distance` bytes after where they are.
+#[inline(always)]
+fn is_slow_to_copy(distance: usize, size: usize) -> bool {
+    cfg!(all(target_arch = "x86_64", target_env = "gnu"))
+        && size > MAX_COPY
+        && distance.wrapping_sub(1) % 4096 < 127
+}
+
+#[cold]
+#[inline(never)]
+fn copy_in_parts<T: Copy>(to: &mut [T], from: &[T]) {
+    let part = (MAX_COPY / size_of::<T>()).max(1);
+    for (to, from) in to.chunks_mut(part).zip(from.chunks(part)) {
+        to.copy_from_slice(from);
+    }
+}
+
+/// `slice.copy_within(src..src + len, dst)`, which is in it and starts no earlier than the source ends.
+#[cold]
+#[inline(never)]
+fn move_in_parts<T: Copy>(slice: &mut [T], src: usize, dst: usize, len: usize) {
+    let part = (MAX_COPY / size_of::<T>()).max(1);
+    for done in (0..len).step_by(part) {
+        let end = src + (done + part).min(len);
+        slice.copy_within(src + done..end, dst + done);
+    }
+}
+
+/// `to.extend_from_slice(from)`, without a new allocation.
+#[inline]
+pub(crate) fn append(to: &mut Vec<u8>, from: &[u8]) -> Result<()> {
+    if from.len() > to.capacity() - to.len() {
+        return Err(BUG);
+    }
+    let distance = (to.as_ptr_range().end.addr()).wrapping_sub(from.as_ptr().addr());
+    if is_slow_to_copy(distance, from.len()) {
+        from.chunks(MAX_COPY)
+            .for_each(|part| to.extend_from_slice(part));
+    } else {
+        to.extend_from_slice(from);
+    }
+    Ok(())
 }
 
 #[inline(always)]
@@ -171,6 +239,44 @@ pub(crate) fn try_copy(bytes: &[u8]) -> Result<Vec<u8>> {
     let mut vec = Vec::new();
     vec.try_reserve_exact(bytes.len())
         .map_err(|_| Error::MemoryAllocation)?;
-    vec.extend_from_slice(bytes);
+    append(&mut vec, bytes)?;
     Ok(vec)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn long_copies_are_whole_at_every_distance() -> Result<()> {
+        const PAGE: usize = 4096;
+        // Miri takes its time. The distances that are slow come first.
+        let step = if cfg!(miri) { 61 } else { 1 };
+        let from: Vec<u8> = (0..2 * MAX_COPY + 77).map(|i| (i % 251) as u8).collect();
+        let mut to = vec![0; 3 * PAGE + from.len() + 1];
+        // As far into its page as `from`.
+        let base = PAGE + from.as_ptr().addr() % PAGE - to.as_ptr().addr() % PAGE;
+        for start in (base..base + PAGE).step_by(step) {
+            to.write_at(start, &from)?;
+            assert!(*to.span(start, from.len())? == *from);
+            assert_eq!((to.at(start - 1)?, to.at(start + from.len())?), (0, 0));
+            to.fill(0);
+
+            let mut vec = vec![0; start];
+            vec.reserve(from.len());
+            assert_eq!(append(&mut vec, to.sub(..from.len() + PAGE)?), Err(BUG));
+            append(&mut vec, &from)?;
+            assert!(*vec.sub(start..)? == *from);
+        }
+        let mut within = from.repeat(3);
+        let len = MAX_COPY + 9;
+        for distance in (PAGE..PAGE + 200).chain(len..PAGE).step_by(step) {
+            let expected = within.span(5, len)?.to_vec();
+            within.move_within(5, 5 + distance, len)?;
+            assert!(*within.span(5 + distance, len)? == *expected);
+            within.clear();
+            (0..3).for_each(|_| within.extend_from_slice(&from));
+        }
+        Ok(())
+    }
 }

@@ -933,13 +933,11 @@ impl ShellSubprocess {
         let cmd = unsafe { handle.cmd_mut() };
         cmd.base.interrupted |= interrupted;
         let y = cmd.on_exit(code.into());
-        if interrupted {
-            // The Ctrl+C went to every process of the job: a builtin is not one, so it is stopped here.
-            handle.interp.stop(sh::interpreter::StopCause::Interrupted);
-        }
         // May free `*this`.
         y.run(&handle.interp);
         if interrupted {
+            // The Ctrl+C went to every process of the job: a builtin is not one, so it is stopped here.
+            handle.interp.stop(sh::interpreter::StopCause::Interrupted);
             handle.interp.drain_cancelled();
         }
     }

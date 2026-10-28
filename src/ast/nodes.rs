@@ -179,12 +179,15 @@ impl StoreStr {
         len: 0,
     };
 
+    /// The most bytes one `StoreStr` holds.
+    pub const MAX_LEN: usize = u32::MAX as usize;
+
     /// Wrap an arena-owned (or `'static`) slice. Safe: no lifetime is forged;
     /// the pointer is stored raw and re-borrowed under the `StoreRef` contract
     /// (valid until the owning arena resets).
     #[inline]
     pub const fn new(s: &[u8]) -> Self {
-        debug_assert!(s.len() <= u32::MAX as usize);
+        debug_assert!(s.len() <= Self::MAX_LEN);
         // SAFETY: `&[u8]` always has a non-null data pointer.
         let ptr = unsafe { NonNull::new_unchecked(s.as_ptr().cast_mut()) };
         StoreStr {
@@ -308,6 +311,57 @@ impl core::hash::Hash for StoreStr {
 impl core::fmt::Debug for StoreStr {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         bstr::BStr::new(self.slice()).fmt(f)
+    }
+}
+
+/// Returned by [`StoreStr::check_len`] once it has logged the error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StringTooLarge;
+
+impl StoreStr {
+    /// [`Self::MAX_LEN`], lowered by [`bun_core::STRING_ALLOCATION_LIMIT`] so tests reach it.
+    #[inline]
+    pub fn max_len() -> usize {
+        Self::max_len_within(
+            bun_core::STRING_ALLOCATION_LIMIT.load(core::sync::atomic::Ordering::Relaxed),
+        )
+    }
+
+    #[inline]
+    fn max_len_within(process_limit: usize) -> usize {
+        process_limit.min(Self::MAX_LEN)
+    }
+
+    /// Producers of a string that no source file bounds call this before storing it.
+    #[inline]
+    pub fn check_len(
+        len: usize,
+        what: &str,
+        log: &mut crate::Log,
+        source: Option<&crate::Source>,
+        loc: crate::Loc,
+    ) -> Result<(), StringTooLarge> {
+        if len <= Self::max_len() {
+            return Ok(());
+        }
+        Self::too_large(len, what, log, source, loc)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn too_large(
+        len: usize,
+        what: &str,
+        log: &mut crate::Log,
+        source: Option<&crate::Source>,
+        loc: crate::Loc,
+    ) -> Result<(), StringTooLarge> {
+        log.add_error_fmt(
+            source,
+            loc,
+            format_args!("{what} is too large ({len} bytes, 4 GiB maximum)"),
+        );
+        Err(StringTooLarge)
     }
 }
 
@@ -1221,3 +1275,35 @@ pub mod math {
 // ─── from bun_bundler::v2::MangledProps ─────────────────────────────────────
 // LIFETIMES.tsv: value slices point into the parser arena → `StoreStr`
 // (arena-owned, no `'bump` cascade).
+
+#[cfg(test)]
+mod store_str_check_len_tests {
+    use super::*;
+
+    /// The result of one check, and the text of each message it logged.
+    fn check(len: usize) -> (Result<(), StringTooLarge>, Vec<Vec<u8>>) {
+        let mut log = crate::Log::default();
+        let result = StoreStr::check_len(len, "Macro result", &mut log, None, crate::Loc::EMPTY);
+        let logged = log.msgs.iter().map(|msg| msg.data.text.to_vec()).collect();
+        (result, logged)
+    }
+
+    // Nothing in this test binary lowers the process string limit.
+    #[test]
+    fn the_longest_string_passes_and_one_more_byte_is_one_error() {
+        assert_eq!(check(4294967295), (Ok(()), vec![]));
+        assert_eq!(
+            check(4294967296),
+            (
+                Err(StringTooLarge),
+                vec![b"Macro result is too large (4294967296 bytes, 4 GiB maximum)".to_vec()]
+            )
+        );
+    }
+
+    #[test]
+    fn the_process_limit_lowers_the_limit_and_never_raises_it() {
+        assert_eq!(StoreStr::max_len_within(65536), 65536);
+        assert_eq!(StoreStr::max_len_within(usize::MAX), 4294967295);
+    }
+}

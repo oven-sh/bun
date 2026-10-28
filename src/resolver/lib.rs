@@ -1160,10 +1160,15 @@ pub mod fs {
             // Cache miss: read the directory entries. The entries of a
             // probe-only listing are named after the lookups that probed
             // them, not after the directory, so they are not carried over.
-            let prev = in_place.filter(|p| unsafe { (**p).complete }).map(|p| {
-                // SAFETY: BSSMap-owned, no aliasing here (entries_mutex held).
-                unsafe { &mut (*p).data }
-            });
+            let prev = in_place
+                .filter(|p| {
+                    // SAFETY: BSSMap-owned, no aliasing here (entries_mutex held).
+                    unsafe { (**p).complete }
+                })
+                .map(|p| {
+                    // SAFETY: BSSMap-owned, no aliasing here (entries_mutex held).
+                    unsafe { &mut (*p).data }
+                });
             let mut entries = match self.readdir(store_fd, prev, dir, generation, handle, iterator)
             {
                 Ok(e) => e,

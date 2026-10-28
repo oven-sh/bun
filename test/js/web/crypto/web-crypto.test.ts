@@ -1389,10 +1389,10 @@ describe("HMAC key length that is not a multiple of 8", () => {
       "decapsulateKey",
       "decapsulateBits",
     ])) as CryptoKeyPair;
-    const results: Record<number, unknown> = {};
-    for (const length of [256, 252, 249, 248, 264]) {
+    const results: Record<string, unknown> = {};
+    for (const length of [undefined, 256, 255, 252, 249, 248, 257, 264]) {
       const hmac = { name: "HMAC", hash: "SHA-256", length };
-      results[length] = {
+      results[length ?? "no length"] = {
         supports: ["encapsulateKey", "decapsulateKey"].map(operation =>
           subtleCrypto.supports(operation, "ML-KEM-768", hmac),
         ),
@@ -1401,7 +1401,7 @@ describe("HMAC key length that is not a multiple of 8", () => {
             const back = await subtle.decapsulateKey("ML-KEM-768", privateKey, ciphertext, hmac, true, ["sign"]);
             // The key is the shared secret with the bits past the length cleared.
             const secret = new Uint8Array(await subtle.decapsulateBits("ML-KEM-768", privateKey, ciphertext));
-            secret[31] &= 0xff << (256 - length);
+            secret[31] &= 0xff << (256 - (length ?? 256));
             const keys = [hex(await subtle.exportKey("raw", sharedKey)), hex(await subtle.exportKey("raw", back))];
             return [
               (sharedKey.algorithm as HmacKeyAlgorithm).length,
@@ -1414,10 +1414,13 @@ describe("HMAC key length that is not a multiple of 8", () => {
       };
     }
     expect(results).toEqual({
+      "no length": { supports: [true, true], encapsulate: [256, 256, true] },
       256: { supports: [true, true], encapsulate: [256, 256, true] },
+      255: { supports: [true, true], encapsulate: [255, 255, true] },
       252: { supports: [true, true], encapsulate: [252, 252, true] },
       249: { supports: [true, true], encapsulate: [249, 249, true] },
       248: { supports: [false, false], encapsulate: "DataError" },
+      257: { supports: [false, false], encapsulate: "DataError" },
       264: { supports: [false, false], encapsulate: "DataError" },
     });
   });
@@ -1468,6 +1471,8 @@ describe("HMAC key length that is not a multiple of 8", () => {
     });
   });
 
+  // The unwrapKey rows are those of testNonByteLengthWrapUnwrap in Node v26.12.1's
+  // test/parallel/test-webcrypto-wrap-unwrap.js. That file fails here on an unrelated message.
   it("unwrapKey and KeyObject.toCryptoKey take the length", async () => {
     const { subtle } = crypto;
     const hmac = (length?: number) => ({ name: "HMAC", hash: "SHA-256", length });

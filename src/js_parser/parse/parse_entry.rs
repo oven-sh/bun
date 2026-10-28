@@ -650,8 +650,7 @@ impl<'a> Parser<'a> {
         }
 
         p.apply_jsx_pragmas();
-        // Symbol use counts are unavailable, so "any JSX parsed?" is the proxy.
-        // The records follow the order of the imports that the visit pass emits.
+        // No symbol use counts here: one record per import the visit pass emits, in its order.
         if p.options.jsx.parse
             && p.options.features.auto_import_jsx
             && p.options.jsx.runtime == options::JSX::Runtime::Automatic

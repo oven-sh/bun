@@ -2127,6 +2127,33 @@ test("runtime transpiler does not collapse single-return arrow bodies", async ()
   expect(exitCode).toBe(0);
 });
 
+// HMR is off in the runtime transpiler, so `import.meta.hot?.x` folds like `import.meta.hot.x`.
+test("runtime transpiler drops an import.meta.hot?.method call and its callback", async () => {
+  using dir = tempDir("import-meta-hot-optional", {
+    "index.ts": /* ts */ `
+      import.meta.hot?.accept(() => console.log("FAIL"));
+      import.meta.hot?.dispose(() => console.log("FAIL"));
+      const accept = import.meta.hot?.accept;
+      console.log("after read", accept, import.meta.hot?.data);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "after read undefined {}\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 // `Bun.Transpiler` prints through the same path as `bun build --no-bundle`.
 // The exports keep their names and take every one-character name the minifier
 // can produce, so the import and the parameter each need a longer name.

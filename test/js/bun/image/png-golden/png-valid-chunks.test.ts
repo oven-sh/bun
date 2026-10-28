@@ -39,7 +39,10 @@ const iccp = (name: string, data = profile, options?: zlib.ZlibOptions) =>
 /** An Exif block that says which way up the picture is. That turns a JPEG. Not a PNG. */
 const orientation = (way: number) => bytes("MM\0*", u32(8), [0, 1, 1, 18, 0, 3], u32(1), [0, way, 0, 0], u32(0));
 
-/** The data of valid chunks that do not depend on the kind of image, by where they may be. */
+/**
+ * The data of chunks that do not depend on the kind of image, by where they may be. Valid, but for a language tag that
+ * is too long to be one, and for the public names that nobody registered.
+ */
 const anyImage = {
   beforePalette: {
     cHRM: [u32(31270, 32900, 64000, 33000, 30000, 60000, 15000, 6000)],
@@ -60,15 +63,15 @@ const anyImage = {
     pCAL: [bytes("name\0", u32(0, 255), [0, 2], "unit\0", "0\0", "1")],
     sCAL: [bytes([1], "1.5\0", "2")],
     sTER: [[0], [1]],
-  },
-  anywhere: {
-    tIME: [[7, 208, 2, 29, 23, 59, 60]],
     eXIf: [
       bytes("MM\0*", u32(8), [0, 0]),
       bytes("II*\0", [8, 0, 0, 0, 0, 0]),
       ...[2, 3, 4, 5, 6, 7, 8].map(orientation),
       bytes("II*\0", [8, 0, 0, 0, 1, 0, 18, 1, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0]),
     ],
+  },
+  anywhere: {
+    tIME: [[7, 208, 2, 29, 23, 59, 60]],
     tEXt: [
       bytes("Title\0", "text"),
       bytes("k\0"),
@@ -149,23 +152,31 @@ describe.each(pictures)("%s", (_, format, interlaced) => {
     for (const [group, where] of places) {
       for (const [type, all] of Object.entries(group)) {
         for (const [i, one] of all.entries()) {
-          for (const place of where) cases.push(withChunks(`${type} ${i} ${place}`, { [place]: [one] }));
+          // mDCV may not be without cICP.
+          const chunks = type === "mDCV" ? [beforePalette.cICP[0], one] : [one];
+          for (const place of where) cases.push(withChunks(`${type} ${i} ${place}`, { [place]: chunks }));
         }
       }
     }
     expect(await mistakes(cases)).toEqual([]);
   });
 
+  // Until the third edition it could be there, so there are such files.
+  test("eXIf behind the image", async () => {
+    const cases = beforeData.eXIf.map((one, i) => withChunks(`${i}`, { afterData: [one] }));
+    expect(await mistakes(cases)).toEqual([]);
+  });
+
   test("all of them at once", async () => {
     const first = (group: Chunks, except?: string) =>
       Object.entries(group).flatMap(([type, all]) => (type === except ? [] : [all[0]]));
-    const { tIME, eXIf, ...others } = anywhere;
+    const { tIME, ...others } = anywhere;
     const repeatable = Object.values(others).flat();
     // sRGB and iCCP exclude each other.
     const layout = (colorSpace: Buffer): Layout => ({
       beforePalette: [...first(own.beforePalette, "sRGB"), colorSpace, ...repeatable],
       beforeData: [...first(own.afterPalette), ...first(beforeData), tIME[0], ...repeatable],
-      afterData: [...repeatable, eXIf[0]],
+      afterData: repeatable,
     });
     const cases = [
       withChunks("with sRGB", layout(beforePalette.sRGB[0])),

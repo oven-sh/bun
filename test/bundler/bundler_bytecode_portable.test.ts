@@ -517,10 +517,10 @@ describe("bytecode cache portability", () => {
           },
         },
         "bun build --bytecode libraries.js": {
-          "js": "84d5da09f052c8783176d14fb41875e7117ba5d194c540734fff3f314510b60c",
+          "js": "fc7d872b6b50cd0fca6d88fd803d0bc91e2c375d7d961ae2494d0bc03b9a7c7d",
           "jsc": {
             "bytes": 21177776,
-            "sha256": "395eea87397dbfac88e24315b168a840d0b262d39f09080343911d6b1b7abb1c",
+            "sha256": "9e39d9d993c9d0b29a9ec50d113a254113022b47dd20f23f359d0a2d5ac7bb86",
           },
         },
         "bun build --bytecode lodash/lodash.js": {

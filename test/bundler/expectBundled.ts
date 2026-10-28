@@ -420,7 +420,7 @@ export interface BundlerTestRunOptions {
   bunArgs?: string[];
   /** match exact stdout */
   stdout?: string | RegExp;
-  stderr?: string;
+  stderr?: string | RegExp;
   /** partial match stdout (toContain()) */
   partialStdout?: string;
   /** match exact error message, example "ReferenceError: bar is not defined" */

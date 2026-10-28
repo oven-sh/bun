@@ -1337,15 +1337,16 @@ describe("bundler", () => {
   });
 
   // A bundled CommonJS file hands the live namespace on as its
-  // `module.exports`, so ES module output converts one too. Only the bundle
-  // runs here: `bun run` of these files reads every export of the namespace
-  // when it converts `wrap.cjs`, and throws on `n`.
+  // `module.exports`, so ES module output converts one too. The default import
+  // is the `default` export of that namespace, as for the external import
+  // above. Only the bundle runs here: `bun run` of these files reads every
+  // export of the namespace when it converts `wrap.cjs`, and throws on `n`.
   itBundled("cjs/__toESM_require_cycle_through_bundled_cjs", {
     files: {
       "/plugin.ts": /* ts */ `
         import Host, { n } from "./wrap.cjs";
         export function report() {
-          return typeof Host + " " + n;
+          return Host.kind + " " + n;
         }
       `,
       "/wrap.cjs": /* js */ `
@@ -1364,7 +1365,7 @@ describe("bundler", () => {
     },
     run: {
       file: "/host.mjs",
-      stdout: "object 1",
+      stdout: "default 1",
     },
   });
 

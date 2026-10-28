@@ -722,10 +722,10 @@ impl<'p, 's> Checker<'p, 's> {
         let q = Query::Expr(file, e);
         // FOR SPEED, as in `enter`: search the stack only if a query on it shares this one's hash
         // bucket.
-        if self.in_progress[(crate::util::fx_hash(&q) >> 54) as usize] == 0 {
+        if !self.may_be_in_flight(q) {
             return None;
         }
-        let first = self.stack.iter().rposition(|&it| it == q)?;
+        let first = self.positions_of(q).next()?;
         let pushed_at = self.flow_loop_pushed_since(first)?;
         let is_checked_once = !is_rechecked && self.is_rechecking();
         // Hides the first visit from `enter`, which still fails when time, native stack or query

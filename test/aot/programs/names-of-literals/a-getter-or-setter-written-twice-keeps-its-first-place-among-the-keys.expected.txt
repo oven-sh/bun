@@ -1,0 +1,8 @@
+a setter, a value, the setter again: a,b
+a getter, a value, the getter again: a,b
+a getter, a value, the setter: a,b
+a setter, a getter of another name, the setter again: a,b
+a value, a value, a getter over the first: a,b
+a getter, a value, a value over the getter: a,b
+a method, a value, the method again: a,b
+in a class: length,name,prototype,a,b

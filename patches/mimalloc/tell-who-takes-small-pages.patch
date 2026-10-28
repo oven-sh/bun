@@ -1,0 +1,44 @@
+Tell the keeper of address space about fresh small pages.
+
+may_take() is asked about pages of blocks larger than those of a small page,
+and can refuse them. Small pages are refused to nobody: most who ask for small
+blocks cannot go on without them. So what the embedder lets go of for one
+request that cannot fail goes to every thread that makes small blocks, sixteen
+small pages to the MiB, and the embedder does not hear who took it.
+
+will_take_small_page() is called before a fresh small page is taken, out of an
+arena or from the system. It refuses nothing.
+
+--- a/include/mimalloc.h
++++ b/include/mimalloc.h
+@@ -211,12 +211,15 @@
+ // `make_room` is asked when a request has found no memory; true says to look again. `attempt` counts from 0 for each request.
+ // `begin_request_that_cannot_fail` is called on the thread of a request that cannot fail and has found no memory, which then
+ // asks once more; `end_request_that_cannot_fail` behind that.
+-#define MI_ASKS_ADDRESS_SPACE_KEEPER  2
++// `will_take_small_page` is called before a fresh small page is taken, out of an arena or from the system. It refuses nothing,
++// and asks nothing of mimalloc but what `may_take` may ask.
++#define MI_ASKS_ADDRESS_SPACE_KEEPER  3
+ typedef struct mi_address_space_keeper_s {
+   bool (*may_take)(size_t size);
+   bool (*make_room)(size_t size, size_t attempt);
+   void (*begin_request_that_cannot_fail)(void);
+   void (*end_request_that_cannot_fail)(void);
++  void (*will_take_small_page)(void);
+ } mi_address_space_keeper_t;
+ mi_decl_export void mi_register_address_space_keeper(const mi_address_space_keeper_t* keeper) mi_attr_noexcept;
+ // A word of the embedder's own in the record that mimalloc keeps for this thread, zero at first. NULL on a thread that has not allocated yet.
+--- a/src/arena.c
++++ b/src/arena.c
+@@ -1047,7 +1047,10 @@
+   // What a piece has left in an arena counts as taken, as what one has left to the system does.
+   // Asked here, where no lock is held: the keeper may take a piece out of the arenas before it answers.
+   const mi_address_space_keeper_t* const keeper = _mi_address_space_keeper();
+-  if mi_unlikely(keeper != NULL && theap->tld->is_allocating_page_of_large_blocks && _mi_theap_heap(theap)->exclusive_arena == NULL && !keeper->may_take(mi_size_of_slices(slice_count))) return NULL;
++  if mi_unlikely(keeper != NULL && _mi_theap_heap(theap)->exclusive_arena == NULL) {
++    if (!theap->tld->is_allocating_page_of_large_blocks) { keeper->will_take_small_page(); }
++    else if (!keeper->may_take(mi_size_of_slices(slice_count))) return NULL;
++  }
+ 
+   const bool os_align           = (block_alignment > MI_PAGE_MAX_OVERALLOC_ALIGN);
+   const bool singleton          = (os_align || block_size > MI_LARGE_MAX_OBJ_SIZE);

@@ -58,6 +58,22 @@ unsafe extern "C" {
     pub fn mi_realloc_aligned(p: *mut c_void, newsize: usize, alignment: usize) -> *mut c_void;
 }
 
+// patches/mimalloc/entry-points-that-use-address-space-kept-aside.patch. As the functions without
+// `must`, but a request that has found no memory asks once more as one that cannot fail.
+unsafe extern "C" {
+    /// No preconditions; returns null on failure.
+    pub safe fn mi_must_malloc(size: usize) -> *mut c_void;
+    /// No preconditions; returns null on failure.
+    pub safe fn mi_must_zalloc(size: usize) -> *mut c_void;
+    pub fn mi_must_realloc(p: *mut c_void, newsize: usize) -> *mut c_void;
+    /// No preconditions; returns null on failure.
+    pub safe fn mi_must_malloc_aligned(size: usize, alignment: usize) -> *mut c_void;
+    /// No preconditions; returns null on failure.
+    pub safe fn mi_must_zalloc_aligned(size: usize, alignment: usize) -> *mut c_void;
+    pub fn mi_must_realloc_aligned(p: *mut c_void, newsize: usize, alignment: usize)
+    -> *mut c_void;
+}
+
 bun_opaque::opaque_ffi! {
     /// Opaque mimalloc heap handle (`mi_heap_t`).
     pub struct Heap;
@@ -154,12 +170,15 @@ pub enum Option {
     page_commit_on_demand = 40,
     page_max_reclaim = 41,
     page_cross_thread_max_reclaim = 42,
+    purge_holes = 50,
+    hand_out_last_freed = 56,
 }
 
 unsafe extern "C" {
     // `mi_option_*` take only by-value `#[repr(C)]` enum + scalar args and
     // mutate mimalloc-internal global state; no pointer invariants → `safe fn`.
     pub safe fn mi_option_set(option: Option, value: c_long);
+    pub safe fn mi_option_set_default(option: Option, value: c_long);
     pub fn mi_malloc_usable_size(p: *const c_void) -> usize;
     pub fn mi_free_size(p: *mut c_void, size: usize);
     pub fn mi_free_size_aligned(p: *mut c_void, size: usize, alignment: usize);
@@ -192,6 +211,26 @@ pub fn mi_zalloc_auto_align(size: usize, align: usize) -> *mut c_void {
         mi_zalloc_aligned(size, align)
     } else {
         mi_zalloc(size)
+    }
+}
+
+/// [`mi_malloc_auto_align`] through the `must` entry points. No preconditions; null on failure.
+#[inline(always)]
+pub fn mi_must_malloc_auto_align(size: usize, align: usize) -> *mut c_void {
+    if must_use_aligned_alloc(align) {
+        mi_must_malloc_aligned(size, align)
+    } else {
+        mi_must_malloc(size)
+    }
+}
+
+/// Zeroing variant of [`mi_must_malloc_auto_align`]. No preconditions; null on failure.
+#[inline(always)]
+pub fn mi_must_zalloc_auto_align(size: usize, align: usize) -> *mut c_void {
+    if must_use_aligned_alloc(align) {
+        mi_must_zalloc_aligned(size, align)
+    } else {
+        mi_must_zalloc(size)
     }
 }
 

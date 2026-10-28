@@ -1,0 +1,1 @@
+{ "skipInShell": "it asks for objects of the host, which the jsc shell does not provide", "skipInVariant": { "trimmed-runtime": "the text it evaluates reads getters that the source never names, process.connected among them: --trim removes them, and they throw" } }

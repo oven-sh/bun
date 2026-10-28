@@ -1,0 +1,18 @@
+# Bun.plugin(input)
+# A plugin is handed the loader and answers the text of modules, which run with require and import in their hands: such code changes the realm behind the analysis
+# RUN: valueflow-why flag=h5 flag=h19
+# CHECK: flag=h5
+# CHECK-NOT: not held
+# CHECK: flag=h19
+# CHECK-NEXT: by Call f0 v3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Builtin builtin=BunPlugin
+    v3 = Call v2, -, v1
+    Return
+}

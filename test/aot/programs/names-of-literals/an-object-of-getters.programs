@@ -1,0 +1,133 @@
+//// an-object-of-getters-is-built-over-the-names-of-a-literal.js
+// A loop over the names of a literal defines a getter under each; each getter keeps its own name and its own state.
+const lines = [];
+const source = { HOME: "/home", PORT: "80", DEBUG: undefined, NAME: "model" };
+function getterFor(key, parse, unread) {
+  let lastRaw = unread;
+  let lastParsed;
+  let parses = 0;
+  return () => {
+    const raw = source[key];
+    if (raw !== lastRaw) {
+      lastParsed = parse(raw) + ":" + ++parses;
+      lastRaw = raw;
+    }
+    return lastParsed;
+  };
+}
+function build(shape) {
+  const accessor = {};
+  for (const key of Object.keys(shape)) Object.defineProperty(accessor, key, { get: getterFor(key, shape[key], accessor), configurable: true, enumerable: key !== "DEBUG" });
+  return accessor;
+}
+const asText = raw => String(raw);
+const asNumber = raw => Number(raw) + 1;
+const asFlag = raw => raw === "1";
+const settings = build({ HOME: asText, PORT: asNumber, DEBUG: asFlag, NAME: asText });
+lines.push(settings.HOME, settings.PORT, settings.DEBUG, settings.NAME, settings.HOME);
+source.PORT = "8080";
+source.DEBUG = "1";
+lines.push(settings.PORT, settings.DEBUG, settings.PORT, String(settings.MISSING));
+lines.push(Object.keys(settings).join(), Object.getOwnPropertyNames(settings).join(), JSON.stringify(settings));
+Object.defineProperty(settings, "HOME", { get: () => "redefined" });
+lines.push(settings.HOME);
+delete settings.NAME;
+lines.push(String(settings.NAME), "NAME" in settings);
+try {
+  "use strict";
+  settings.PORT = 1;
+  lines.push("the store is ignored: " + settings.PORT);
+} catch (error) {
+  lines.push(error.constructor.name);
+}
+const second = build({ HOME: asFlag });
+lines.push(second.HOME, settings.HOME, Object.getOwnPropertyDescriptor(second, "HOME").get === Object.getOwnPropertyDescriptor(second, "HOME").get);
+console.log(lines.join("\n"));
+//// functions-under-well-known-symbols.js
+// Methods, getters and functions under well-known symbols, in literals and in classes: the property `name` and its attributes, what the console calls them, what the frames of a getter, a generator and an async method are called; each literal makes a function of its own, whose name can be deleted and defined anew without a trace in the next one.
+function frames(e) { return e.stack.split("\n").slice(1, 3).map(l => l.trim().replace(/\(.*[\\/]/, "(").replace(/at .*[\\/]/, "at ")).join(" | "); }
+const literal = { [Symbol.dispose]() { const e = new Error("x"); return e; }, get [Symbol.toStringTag]() { return "T" + frames(new Error("g")); }, async [Symbol.asyncDispose]() { const e = new Error("a"); return e; }, *[Symbol.iterator]() { yield new Error("i"); }, [Symbol.toPrimitive]: function () { const e = new Error("p"); return e; }, [Symbol.hasInstance]: () => { const e = new Error("h"); return e; } };
+class C { [Symbol.dispose]() { const e = new Error("x"); return e; } static [Symbol.hasInstance]() { const e = new Error("s"); return e; } get [Symbol.toStringTag]() { return "C"; } }
+console.log(literal[Symbol.dispose].name, "|", Object.getOwnPropertyDescriptor(literal, Symbol.toStringTag).get.name, "|", literal[Symbol.asyncDispose].name, "|", literal[Symbol.iterator].name, "|", literal[Symbol.toPrimitive].name, "|", literal[Symbol.hasInstance].name);
+console.log(C.prototype[Symbol.dispose].name, "|", C[Symbol.hasInstance].name, "|", Object.getOwnPropertyDescriptor(C.prototype, Symbol.toStringTag).get.name);
+console.log(JSON.stringify(Object.getOwnPropertyDescriptor(literal[Symbol.dispose], "name")), Reflect.ownKeys(literal[Symbol.dispose]).join(), Reflect.ownKeys(C.prototype[Symbol.dispose]).join());
+console.log(literal[Symbol.toStringTag]);
+console.log(frames([...literal][0]));
+literal[Symbol.asyncDispose]().then(e => console.log(frames(e)));
+console.log(Bun.inspect(literal[Symbol.dispose]), Bun.inspect(C.prototype[Symbol.dispose]), Bun.inspect({ [Symbol.dispose]() {} }));
+console.log(String(literal[Symbol.dispose]).slice(0, 16), literal[Symbol.dispose].toString === Function.prototype.toString);
+const two = () => ({ [Symbol.dispose]() {} }); console.log(two()[Symbol.dispose] === two()[Symbol.dispose], two()[Symbol.dispose].name);
+const f = two()[Symbol.dispose]; console.log(delete f.name, f.name, Object.hasOwn(f, "name")); Object.defineProperty(f, "name", { value: "renamed" }); console.log(f.name, two()[Symbol.dispose].name);
+for (let round = 0; round < 50; round++) { const o = two(); if (o[Symbol.dispose].name !== "[Symbol.dispose]" || Bun.inspect(o[Symbol.dispose]) !== "[Function]") console.log("wrong in round", round); }
+const shadow = (Symbol => ({ [Symbol.dispose]() {} }))({ dispose: "mine" }); console.log(Reflect.ownKeys(shadow).map(String).join(), shadow.mine.name, Bun.inspect(shadow.mine));
+//// the-names-of-a-literal-are-listed-and-read-back.js
+// Object.keys, getOwnPropertyNames and Reflect.ownKeys of literals: with names added, deleted, redefined, hidden, computed, copied, inherited, and in other hands.
+const lines = [];
+const show = (label, object) => {
+  const parts = [];
+  for (const key of Object.keys(object)) parts.push(key + "=" + typeof object[key]);
+  lines.push(label + ": " + parts.join() + " | " + Object.getOwnPropertyNames(object).join() + " | " + Reflect.ownKeys(object).map(String).join());
+};
+const plain = { run: () => "run", stop: () => "stop", limit: 3 };
+show("plain", plain);
+for (const key of Object.keys(plain)) lines.push(typeof plain[key] === "function" ? plain[key]() : plain[key] + 1);
+
+const grown = { first: 1 };
+grown.second = "two";
+grown["third"] = () => 3;
+show("grown", grown);
+
+const shrunk = { kept: 1, dropped: 2 };
+delete shrunk.dropped;
+show("shrunk", shrunk);
+
+const hidden = { seen: 1 };
+Object.defineProperty(hidden, "unseen", { value: () => "unseen", enumerable: false });
+Object.defineProperty(hidden, "computed", { get: () => "got", enumerable: true });
+show("hidden", hidden);
+lines.push(hidden.unseen(), hidden.computed);
+
+const mark = Symbol("mark");
+const marked = { [mark]: 1, named: 2, 7: "seven", "08": "text" };
+show("marked", marked);
+
+const name = "made" + lines.length;
+const byText = { fixed: 1 };
+byText[name] = () => "made at run time";
+show("byText", byText);
+for (const key of Object.keys(byText)) if (typeof byText[key] === "function") lines.push(byText[key]());
+
+const copied = { own: 1 };
+Object.assign(copied, plain, { extra: () => "extra" });
+show("copied", copied);
+const spread = { ...plain, more: 1 };
+show("spread", spread);
+
+const above = { inherited: () => "inherited" };
+const below = Object.create(above);
+below.own = () => "own";
+show("below", below);
+const literalBelow = { __proto__: above, mine: 1 };
+show("literalBelow", literalBelow);
+for (const key in literalBelow) lines.push("in " + key);
+
+const handedOut = { before: 1 };
+new Function("object", "object.added = () => 'added by evaluated text'; delete object.before;")(handedOut);
+show("handedOut", handedOut);
+for (const key of Object.keys(handedOut)) lines.push(handedOut[key]());
+
+function fill(target, names) {
+  for (const key of names) target[key] = () => key;
+  return target;
+}
+const filled = fill({}, Object.keys(plain));
+show("filled", filled);
+lines.push(filled.run(), filled.stop(), filled.limit());
+
+const frozen = Object.freeze({ a: 1, b: 2 });
+show("frozen", frozen);
+const watched = new Proxy({ real: 1 }, { ownKeys: () => ["real", "made up"], getOwnPropertyDescriptor: () => ({ value: 1, enumerable: true, configurable: true }) });
+show("watched", watched);
+show("array", ["x", "y"]);
+show("text", Object("ab"));
+console.log(lines.join("\n"));

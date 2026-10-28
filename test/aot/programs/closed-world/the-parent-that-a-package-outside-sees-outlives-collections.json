@@ -1,0 +1,1 @@
+{"build": ["--external", "outside-package", "--external", "second-package"], "skipInShell": "it loads external packages through the loader of Bun, which the jsc shell does not have"}

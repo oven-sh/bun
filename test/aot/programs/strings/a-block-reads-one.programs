@@ -1,0 +1,3037 @@
+////: lines-22
+function «1»(s: string, count: number): string {
+  let out = "";
+  for (let n = 0; n < count; n++) {
+    const i = n % 7;
+    const j = n % 11;
+    out += s.«2»(«3», «4»);
+  }
+  return out;
+}
+////: lines-30
+function «1»(s: string): string {
+  let out = "[";
+  out += s.slice(3, «2»);
+  out += "]";
+  out += s.«3»(«4», «5»);
+  return out;
+}
+////: lines-38
+function «1»(first: string, text: string, «2»: number): string {
+  let out = first;
+  for (let i = 0; i < 3; i++) {
+    const label = i & 1 ? text + "x" : "off";
+    if (i === «3»;
+    out += "<" + label + ">";
+  }
+  return out;
+}
+////: lines-41
+function «1»(first: string, text: string, times: number): string {
+  let out = first;
+  for (let i = 0; i < times; i++) {
+    const noisyObject = { toString() { log.push("converted " + i); return "o"; } };
+    out += «2»;
+  }
+  return out;
+}
+////: show-4
+function show(label: string, text: string): void {
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) hash = (hash * 31 + text.charCodeAt(i)) | 0;
+  console.log(label, text.length, hash, JSON.stringify(text.«1»)));
+}
+//// a-block-reads-one-started-string-and-starts-another.js
+// The block behind the two tests reads the string that the first return ends, so it gets a copy of that string's start; and it starts a string of its own, which the second return ends.
+function join(n, a, b) {
+  const first = n + ":";
+  if (a) {
+    if (b) return first + n;
+  }
+  const whole = first + n;
+  const second = n + "-";
+  if (b) return second + n;
+  return whole;
+}
+for (let n = 0; n < 3; n++) for (const a of [true, false]) for (const b of [true, false]) console.log(join(n, a, b));
+//// a-conversion-is-remembered-for-one-string-only.js
+// What the conversion of a string gave is remembered by the string itself. A string that dies leaves its place to another string, which has another text: the answer for the first says nothing about the second.
+const lines = [];
+const say = (...parts) => lines.push(parts.join(" "));
+const collect = typeof Bun === "object" ? () => Bun.gc(true) : () => {};
+const hide = (0, eval)("(value) => value");
+
+const heads = ["Content", "ACCEPT", "x", "Set", "IF", "Last", "www", "Transfer", "ETag", "Üb"];
+const tails = ["Type", "ENCODING", "powered-by", "Cookie", "None-Match", "Modified", "Authenticate", "Encoding", "", "er"];
+function make(round, index) {
+    // A flat string of its own each time.
+    return hide((heads[(index + round) % heads.length] + "-" + tails[(index * 3 + round) % tails.length] + (round % 7)).split("").join(""));
+}
+function slowly(text, isLower) {
+    let result = "";
+    for (const letter of text) {
+        const unit = letter.charCodeAt(0);
+        if (isLower && unit >= 65 && unit <= 90)
+            result += String.fromCharCode(unit + 32);
+        else if (!isLower && unit >= 97 && unit <= 122)
+            result += String.fromCharCode(unit - 32);
+        else if (unit === 0xdc && isLower)
+            result += "ü";
+        else
+            result += letter;
+    }
+    return result;
+}
+
+let wrong = 0;
+let sum = 0;
+for (let round = 0; round < 400; round++) {
+    const kept = [];
+    for (let index = 0; index < 300; index++) {
+        const text = make(round, index);
+        // The same string twice, both ways, so that the second question finds what the first left.
+        const lower = text.toLowerCase();
+        const upper = text.toUpperCase();
+        if (lower !== text.toLowerCase() || upper !== text.toUpperCase() || lower !== slowly(text, true) || (text.charCodeAt(0) < 128 && upper !== slowly(text, false)))
+            wrong++;
+        sum += lower.length + upper.charCodeAt(0);
+        if (index % 50 === 0)
+            kept.push(text, lower, upper);
+    }
+    if (round % 20 === 0) {
+        collect();
+        // What is kept answers as before.
+        for (let index = 0; index < kept.length; index += 3) {
+            if (kept[index].toLowerCase() !== kept[index + 1] || kept[index].toUpperCase() !== kept[index + 2])
+                wrong++;
+        }
+    }
+}
+say("wrong", wrong, "sum", sum);
+
+// One string, asked again and again, between collections.
+const name = hide(["Content", "Length"].join("-"));
+let same = 0;
+for (let turn = 0; turn < 2000; turn++) {
+    if (name.toLowerCase() === "content-length" && name.toUpperCase() === "CONTENT-LENGTH")
+        same++;
+    if (turn % 500 === 0)
+        collect();
+}
+say("same", same);
+
+// Ropes, wide strings, strings that stay as they are, the empty string, one letter.
+for (const text of [hide("Ab") + hide("Cd"), hide("Ω") + "Mega", "already lower", "ALREADY UPPER", "", "Q", "q", "İstanbul", "ß"]) {
+    for (let turn = 0; turn < 3; turn++)
+        say(JSON.stringify(text), JSON.stringify(text.toLowerCase()), JSON.stringify(text.toUpperCase()));
+}
+console.log(lines.join("\n"));
+//// a-literal-looked-for-backward-from-the-start.ts
+const word = process.argv.length > 99 ? "never" : ".ts";
+const texts: string[] = ["", ".", "..", ".t", ".ts", ".tsx", "ts", "x.ts", "t.", "é.ts", ".é", "日本", ".日本", "日.", "x".repeat(40) + ".ts", ".ts" + "x".repeat(40)];
+const ropes: string[] = [word + texts[5], texts[1] + word, texts[11] + word, word + texts[11], texts[0] + word];
+const slices: string[] = [(word + "xyz").slice(0, 3), ("ab" + word).slice(2), ("ab" + word).slice(1), (texts[12] + word).slice(0, 2), (word + word).slice(3, 4)];
+const all = texts.concat(ropes, slices);
+
+let digest = 0;
+const wrong: string[] = [];
+function check(name: string, index: number, found: number, starts: boolean): void {
+  if (found !== (starts ? 0 : -1)) wrong.push(`${name} ${index} ${found}`);
+  digest = (digest * 31 + found + 2) | 0;
+}
+for (let round = 0; round < 3; round++) {
+  for (let i = 0; i < all.length; i++) {
+    const text = all[i];
+    check("dot", i, text.lastIndexOf(".", 0), text.startsWith("."));
+    check("two", i, text.lastIndexOf(".t", 0), text.startsWith(".t"));
+    check("three", i, text.lastIndexOf(".ts", 0), text.startsWith(".ts"));
+    check("empty", i, text.lastIndexOf("", 0), true);
+    check("latin", i, text.lastIndexOf("é", 0), text.startsWith("é"));
+    check("wide", i, text.lastIndexOf("日", 0), text.startsWith("日"));
+    check("mixed", i, text.lastIndexOf(".日", 0), text.startsWith(".日"));
+    check("long", i, text.lastIndexOf("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.", 0), text.startsWith("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx."));
+    check("negative", i, text.lastIndexOf(".", -5), text.startsWith("."));
+    check("nan", i, text.lastIndexOf(".", -0), text.startsWith("."));
+    digest = (digest * 31 + text.lastIndexOf(".", 1) + text.lastIndexOf(".ts", 2) * 3 + text.lastIndexOf(".") * 5 + text.indexOf(".", 0) * 7 + text.indexOf(".ts", 0) * 11 + text.indexOf("", 0) * 13) | 0;
+    if (text.lastIndexOf(".", 0) === 0) digest ^= 1;
+    if (text.lastIndexOf(".ts", 0) !== 0) digest ^= 2;
+    if (text.lastIndexOf(".ts", 0) >= 0) digest ^= 4;
+  }
+}
+console.log(all.length, digest, wrong.length, wrong.slice(0, 8).join("|"));
+//// a-pattern-out-of-run-time-text-finds-the-match-behind-fifty-million-turns-of-a-group.js
+// The first alternative fails only behind more than fifty million turns of its group, fewer than the hundred million at which plain Bun gives a match up. The second matches at once.
+// The texts are not known when the program is built, so the patterns are compiled when the program runs.
+const nothing = String(Date.now()).slice(99);
+for (const [text, length] of [["(?:a|a)*c|a+", 26], ["(a*)*c|a+", 27], ["(?:a||a)*c|a+", 26], ["(a+)+c|a+", 27]]) {
+  const match = new RegExp(text + nothing).exec("a".repeat(length));
+  console.log(text, length, match === null ? "null" : match[0].length);
+}
+//// a-pattern-out-of-run-time-text-gives-a-match-up-at-the-turn-at-which-plain-bun-does.js
+// Plain Bun gives a match up, and answers that there is none, at the hundred millionth turn that the groups of a pattern begin in one match. A pattern made at run time does so at the same turn: not one earlier, which would
+// lose a match that plain Bun finds, and not much later, which would go on for hours where plain Bun ends.
+const nothing = String(Date.now()).slice(99);
+// The turns double with each character.
+for (const [text, flags] of [["(?:a|a)*c|a+", ""], ["(?<=^|b)(?:a|a)*c|a+", ""]]) {
+  const match = new RegExp(text + nothing, flags).exec("a".repeat(27));
+  console.log(text, 27, match === null ? "null" : match[0].length);
+}
+// The turns grow with the square of the number of words: every `k` is a place to start at, and from each the inner group takes a turn for every word behind it.
+const words = new RegExp("(?<!q)(?:\\n|\\bk\\s+(?:\\w+=\\S*\\s+)*)end" + nothing);
+for (const count of [14140, 14141]) console.log("words", count, words.test("k" + " A=k".repeat(count) + "\nno\nend"));
+//// a-pattern-out-of-run-time-text-goes-on-behind-a-hundred-million-steps-back.js
+// The first alternative fails behind more than a hundred million steps back over runs of single characters, which no limit of plain Bun counts; the second matches at once.
+const nothing = String(Date.now()).slice(99);
+const match = new RegExp("a*a*a*a*a*a*c|a+" + nothing).exec("a".repeat(102));
+console.log(match === null ? "null" : match[0].length);
+//// a-pattern-out-of-run-time-text-splits-a-subject-where-each-place-takes-millions-of-turns.js
+// split() asks the pattern at every place of the subject. At some of them the answer comes only behind tens of millions of turns of the groups.
+const nothing = String(Date.now()).slice(99);
+const text = "\\udbff{0}[^\\ud83d\\ude00]|(?<n1>(?!\\ud83d\\ude00??\\b)()*|\\2*)?(?:.[^\\ud83d\\ude00]{1,3}?(?:[\\ud83d\\ude00-\\ud83d\\ude4f]{2,4}){0,3}|\\udfff{0})*\\w?\\udfff";
+const subject =
+  "\ud800퟿𝟿a\ud83d\ud800\ud835퟿\udc00😀a￿￿\udc00￿\udc00Ā￿\ud800a퟿🟿\ud83d🐀aĀ\ud835\udbff\ude00\ud835aa\ud835퟿\udc00\ude00aĀa\udc00😀Ā\ud83da\ud835퟿퟿\ud800￿￿a\ude00\ude00";
+console.log(subject.split(new RegExp(text + nothing, "v")).length);
+//// a-pattern-out-of-run-time-text-that-takes-nearly-all-the-turns-a-match-may-have-is-not-ten-times-as-slow-a-turn.js
+// Plain Bun gives a match up at the hundred millionth turn that the groups of a pattern begin. A pattern made at run time goes that far too, and at a like pace all the way: what it does behind the first
+// fifty million turns may cost a few times as much a turn as what it does before them, not ten times.
+const nothing = String(Date.now()).slice(99);
+// The turns grow with the square of the number of words: every `k` is a place to start at, and from each the inner group takes a turn for every word behind it.
+const words = new RegExp("(?:\\n|\\bk\\s+(?:\\w+=\\S*\\s+)*)end" + nothing);
+function fastestOf(runs, count) {
+  const subject = "k" + " A=k".repeat(count) + "\nno\nend";
+  let fastest = Infinity;
+  for (let run = 0; run < runs; run++) {
+    const began = performance.now();
+    if (!words.test(subject)) console.log("no match at", count);
+    fastest = Math.min(fastest, performance.now() - began);
+  }
+  return fastest;
+}
+// 9,900 words: 49 million turns. 14,140 words: 99.98 million.
+const half = fastestOf(3, 9900), whole = fastestOf(2, 14140);
+console.log(whole < half * 10 ? "twice the turns in under ten times the time" : "twice the turns took over ten times the time");
+//// a-pattern-out-of-run-time-text-with-a-lookbehind-finds-the-match-behind-fifty-million-turns-of-a-group.js
+// As its neighbor without a lookbehind, with what not every matcher of patterns made at run time takes: a lookbehind, modifiers, a set of the flag v, a property, pairs of surrogates in unicode mode.
+const nothing = String(Date.now()).slice(99);
+for (const [text, flags, unit, length] of [
+  ["(?<=^|b)(?:a|a)*c|a+", "", "a", 26],
+  ["(?i:a|a)*c|a+", "", "a", 26],
+  ["(?:[a--b]|a)*c|a+", "v", "a", 26],
+  ["(?:\\p{L}|a)*\\d|a+", "u", "a", 26],
+  ["(?:\\u{1F600}|\\u{1F600})*c|(?:\\u{1F600})+", "u", "\u{1F600}", 26],
+]) {
+  const match = new RegExp(text + nothing, flags).exec(unit.repeat(length));
+  console.log(text, flags, length, match === null ? "null" : match[0].length);
+}
+//// a-piece-cut-behind-a-search.ts
+const hidden = new Function("v", "return v") as <V>(v: V) => V;
+
+function extensionOf(path: string): string | undefined {
+  const at = path.lastIndexOf(".d.");
+  return at >= 0 ? path.substring(at) : undefined;
+}
+function pieceAndNumber(text: string, from: number, to: number): [string, number] {
+  const piece = text.slice(from, to);
+  return [piece, Number(piece)];
+}
+function pieceAndTest(text: string, from: number, to: number): [string, boolean] {
+  const piece = text.slice(from, to);
+  return [piece, piece === "ab"];
+}
+function twoSearches(path: string): number {
+  return path.lastIndexOf(".d.") * 1000 + path.lastIndexOf("/");
+}
+function pieceOfPiece(text: string, from: number, to: number, inner: number): [string, boolean] {
+  const outer = text.slice(from, to);
+  return [outer, outer.slice(inner) === "ab"];
+}
+
+const wrong: string[] = [];
+let digest = 0;
+function note(name: string, got: unknown, expected: unknown): void {
+  const a = JSON.stringify(got) ?? "undefined", b = JSON.stringify(expected) ?? "undefined";
+  if (a !== b) wrong.push(`${name}: ${a} | ${b}`);
+  for (let i = 0; i < a.length; i++) digest = (digest * 31 + a.charCodeAt(i)) | 0;
+}
+
+const folders = ["/src/compiler/", "/très/loin/là-bas/", "/日本語/のフォルダ/"];
+const names = ["checker", "lib.es2023.collection", "a", "x".repeat(300), "ab"];
+const endings = [".d.ts", ".d.mts", ".ts", ".d.css.ts", ".d.", "", ".D.ts"];
+for (const folder of folders) {
+  for (const name of names) {
+    for (const ending of endings) {
+      const flat = hidden(`${folder}${name}${ending}`.split("").join(""));
+      const rope = hidden(hidden(folder) + hidden(name)) + hidden(ending);
+      const padded = hidden("0123456789".repeat(4) + flat + "0123456789".repeat(4));
+      const piece = hidden(padded.slice(40, 40 + flat.length));
+      const pieceOfRope = hidden((hidden("<<<<<<<<<<<<<<<<<<<<") + rope + hidden(">>>>>>>>>>>>>>>>>>>>")).slice(20, 20 + flat.length));
+      const at = flat.lastIndexOf(".d.");
+      const expected = at >= 0 ? flat.substring(at) : undefined;
+      for (const [kind, text] of [["flat", flat], ["rope", rope], ["piece", piece], ["piece of a rope", pieceOfRope]] as const) {
+        note(`extension, ${kind}`, extensionOf(text), expected);
+        note(`searches, ${kind}`, twoSearches(text), at * 1000 + flat.lastIndexOf("/"));
+        note(`again, ${kind}`, extensionOf(text), expected);
+      }
+    }
+  }
+}
+
+const digits = ["0012.5ab", "  42  ab", "1e3xxab", "abab", "٣٤ab", "-0ab"];
+for (const head of digits) {
+  const flat = hidden(head.split("").join(""));
+  const rope = hidden(hidden(head.slice(0, 3)) + hidden("")) + hidden(head.slice(3));
+  const long = hidden(hidden("#".repeat(30)) + hidden(head) + hidden("#".repeat(30)));
+  for (let from = 0; from <= flat.length; from++) {
+    for (let to = from; to <= flat.length; to++) {
+      const piece = flat.substring(from, to);
+      for (const [kind, text, shift] of [["flat", flat, 0], ["rope", rope, 0], ["long rope", long, 30]] as const) {
+        note(`number, ${kind}`, pieceAndNumber(text, from + shift, to + shift), [piece, Number(piece)]);
+        note(`test, ${kind}`, pieceAndTest(text, from + shift, to + shift), [piece, piece === "ab"]);
+        for (let inner = 0; inner <= piece.length; inner++)
+          note(`piece of a piece, ${kind}`, pieceOfPiece(text, from + shift, to + shift, inner), [piece, piece.substring(inner) === "ab"]);
+      }
+    }
+  }
+}
+
+console.log(digest, wrong.length, wrong.slice(0, 5).join("\n"));
+//// a-piece-of-a-string-is-compared-again-and-again.js
+// A piece of a longer string (slice, substring, split, a match) compared with === and !== against equal and unequal strings of the same and of other lengths, again and again; and what the piece is worth afterwards as a key, a part of a longer string, a receiver.
+const pad = process.argv.length > 99 ? " " : "";
+const query = "status=open&limit=25&owner=café&sign=世界&empty=&status=done" + pad;
+const pieceOf = (from, to) => query.slice(from, to);
+const statuses = ["done", "open", "late", "open", "opened", "ope", "", "OPEN", "open" + pad];
+function count(status) { let hits = 0; for (let round = 0; round < 50; round++) for (const other of statuses) if (other === status) hits++; return hits; }
+function countUnequal(status) { let hits = 0; for (let round = 0; round < 50; round++) for (const other of statuses) if (other !== status) hits++; return hits; }
+console.log(count(pieceOf(7, 11)), countUnequal(pieceOf(7, 11)), count(pieceOf(58, 62)), count(pieceOf(7, 10)), count(pieceOf(7, 7)), count(pieceOf(0, 6)));
+const open = pieceOf(7, 11);
+console.log(open === "open", "open" === open, open === "done", open !== "open", open == "open", Object.is(open, "open"), open === pieceOf(7, 11), pieceOf(7, 11) === pieceOf(7, 11), pieceOf(7, 11) === pieceOf(58, 62));
+console.log(open.length, open.charCodeAt(1), open[3], open + "!", `<${open}>`, open.toUpperCase(), open.indexOf("e"), JSON.stringify({ [open]: open }), new Map([["open", 1]]).get(open), new Set(["open"]).has(open), { open: 2 }[open], open.localeCompare("open"), [..."open"].join() === [...open].join());
+const accented = query.slice(27, 31), wide = query.slice(37, 39);
+console.log(accented === "café", accented === "cafe", accented === "cafè", wide === "世界", wide === "世世", wide === "ab", accented.length, wide.length, accented + wide, wide.charCodeAt(1));
+const narrowInWide = ("世open界" + pad).slice(1, 5);
+console.log(narrowInWide === "open", "open" === narrowInWide, narrowInWide === "done", narrowInWide === open, narrowInWide + "|" + open, narrowInWide.length, new Map([["open", 1]]).get(narrowInWide));
+const parts = query.split("&").map(part => part.split("="));
+console.log(parts.filter(([name]) => name === "status").map(([, value]) => value).join(), parts.filter(([, value]) => value === "").length, parts.find(([name]) => name === "limit")[1] === "25");
+const matched = /owner=([^&]*)/.exec(query)[1];
+console.log(matched === "café", matched === accented, matched.length);
+const rope = "op" + String(process.argv.length > 99 ? "x" : "en");
+console.log(rope === open, open === rope, rope === "open", pieceOf(7, 11) === rope, (rope + "") === pieceOf(7, 11));
+let kept = []; for (let i = 0; i < 2000; i++) { const piece = query.slice(7 + (i & 1) * 51, 11 + (i & 1) * 51); if (piece === "open" || piece === "done") kept.push(piece); if (kept.length > 64) kept = kept.slice(32); }
+console.log(kept.length, kept[0], kept[1], kept.at(-1));
+//// a-repeated-group-that-can-match-nothing-finds-the-match-behind-a-stretch-it-divides-in-many-ways.js
+// Each pattern repeats a group whose body can match the empty string. Each subject begins with a stretch that the group can divide among its turns in many ways, none of which leads to a match. The match lies behind the stretch.
+const literals = [
+  /([^0]*)+1$/,
+  /(?:[^0]*)+1$/,
+  /(?<run>[^0]*)+1$/,
+  /([^0]*)*1$/,
+  /([^0]*?)+1$/,
+  /([^0]*)+?1$/,
+  /([^0]*?)*?1$/,
+  /([^0]?)+1$/,
+  /([^0]{0,2}){2,}1$/,
+  /([^0]*){1,9}1$/,
+  /((?:[^0]*)+)1$/,
+  /([^0]|)+1$/,
+  /(|[^0])+1$/,
+  /([^0]*|1)+1$/,
+  /([^0]*\b)+1$/,
+  /([^0]*(?=.|$))+1$/s,
+  /([^0]*)+\S$/,
+  /\S([^0]*)+\S$/,
+  /\S{1,3}([^0]*)+\S$/,
+  /\b([^0]*)+\S$/,
+  /[^0]*\S{1,3}([^0]*)+\S$/,
+  /\b[^0]*\S{1,3}([^0]*)+\S$/gs,
+  /\b[^0]*\S{1,3}([^0]*)+\S$/iu,
+  /([^0]*)+\1 ?1$/,
+  /(?<=(\S*)+) 1+$/,
+  /(\D*\d?)+ 1$/,
+];
+const nothing = String(Date.now()).slice(99);
+const madeAtRunTime = literals.map(literal => new RegExp("(?:)" + literal.source + nothing, literal.flags));
+
+function show(match) {
+  return match === null ? "-" : match.index + ":" + Array.from(match, part => (part === undefined ? "~" : part.length)).join(",");
+}
+
+const fills = ["1", "±", "ı", "丱", "1丱", "±1 "];
+for (const patterns of [literals, madeAtRunTime]) {
+  for (const pattern of patterns) {
+    const line = [];
+    for (const fill of fills) {
+      for (const turns of [0, 1, 2, 3, 5, 8, 10]) {
+        const stretch = fill.repeat(turns).slice(0, turns);
+        for (const subject of [stretch + "0 " + fill + "11", stretch + "10\n" + fill + " 1", stretch + "0"]) {
+          pattern.lastIndex = 0;
+          const match = pattern.exec(subject);
+          pattern.lastIndex = 0;
+          line.push(show(match) + (pattern.test(subject) === (match !== null) ? "" : " test differs") + (subject.search(pattern) === (match === null ? -1 : match.index) ? "" : " search differs"));
+          pattern.lastIndex = 0;
+          line.push(subject.replace(pattern, "<$1>").length + "," + subject.split(pattern, 4).length);
+        }
+      }
+    }
+    console.log(String(pattern), line.join(" "));
+  }
+}
+//// a-run-gives-back-for-the-assertion-of-the-next-turn.js
+// A greedy run at the end of one alternative of a repeated group; another alternative of the group is an assertion alone.
+// Where the run has taken all it can, the assertion of the next turn fails; one character back it holds. So the run has to give back.
+const show = match => (match === null ? "null" : match.index + " " + JSON.stringify(Array.from(match)));
+console.log(show(/^(?:-b*|\b){2}/.exec("-ba")));
+console.log(show(/(?:\nb*|\b){3}/.exec("\nba")));
+console.log(show(/^(?:-b*|(?!a)){2}/.exec("-ba")));
+console.log(show(/^(?:-b*|(?<=-b)){2}/.exec("-bb")));
+console.log(show(/^(?:-(?:b)*|\b){2}/.exec("-ba")));
+console.log(show(/^(?:-(b)*|\b){2}/.exec("-ba")));
+console.log(show(/^(?:-[a-c]+|\b)+,/.exec("-abc,")));
+console.log(show(/^(?:\w+|\b-|\B)+?$/.exec("ab-cd")));
+console.log("key=value".replace(/^(?:\w*|\b)+=/, "<$&>"));
+console.log("-ba".replace(/^(?:-b*|\b){2}/, "<$&>"), /^(?:-b*|\b){2}/.test("-ba"), "-ba".search(/^(?:-b*|\b){2}/));
+//// a-search-finds-what-the-pattern-tried-at-one-place-after-another-finds.js
+// Every match of these patterns holds some text, or seems to. Each is searched for in subjects where that text is absent, at the start, at the end,
+// parted by a surrogate pair, in the other case, too far behind the start, there twice. The answer is held to that of the same pattern with the flag y,
+// tried at one place after another as RegExpBuiltinExec does.
+
+const say = typeof console === "object" ? text => console.log(text) : print;
+
+const pair = String.fromCodePoint(0x1f600);
+const otherPair = String.fromCodePoint(0x1f64f);
+const lead = pair[0];
+const trail = pair[1];
+const longS = String.fromCharCode(0x17f);
+const kelvin = String.fromCharCode(0x212a);
+const micro = String.fromCharCode(0xb5);
+const mu = String.fromCharCode(0x3bc);
+const eAcute = String.fromCharCode(0xe9);
+const eAcuteUpper = String.fromCharCode(0xc9);
+
+// [pattern, pieces that fit or nearly fit]
+const rows = [
+  [
+    /\b([a-z0-9-]{1,64}@[a-z0-9-]+\.example\.invalid)\b/i,
+    [
+      "ab-1@host.example.invalid",
+      "AB@H.EXAMPLE.INVALID",
+      "ab@host.example.invalif",
+      "ab.example.invalid",
+      "@h.example.invalid",
+      "a@.example.invalid",
+    ],
+  ],
+  [
+    /[a-z]{1,64}@/,
+    ["a@", "@", "abc@", "A@", "a".repeat(63) + "@", "a".repeat(64) + "@", "a".repeat(65) + "@", "a".repeat(130) + "@"],
+  ],
+  [/[a-z]{1,64}?@/, ["a@", "a".repeat(64) + "@", "a".repeat(66) + "@"]],
+  [/[a-z]{2,5}@[a-z]/g, ["a@b", "ab@c", "abcdefg@h", "ab@", "ab@@c"]],
+  [/\d+:\/\/\w+/, ["1://a", "12:/a", "12://", "://a", "9:// 8://b"]],
+  [/\w+\.example\.com/, ["a.example.com", "a.example.co", ".example.com", "a.EXAMPLE.com", "a.example.example.com"]],
+  [/\w+\.example\.com/i, ["a.example.com", "a.EXAMPLE.COM", "A.eXaMpLe.CoM", "a.example" + kelvin + "com"]],
+  [/\w*#/, ["#", "a#", "a"]],
+  [/x*y*#z/, ["#z", "xy#z", "xxyy#", "#"]],
+  [/[a-z]+@[a-z]+/, ["a@b", "ab cd@ef", "@b", "a@", "a@@b", "a b@c d@e", "A@b"]],
+  [/[a-z]{3,}@/, ["ab@", "abc@", "ab@abc@", "a b@abcd@", "abc @"]],
+  [/(?:[a-z]+-)*[a-z]+@x/, ["a@x", "a-b@x", "a--b@x", "-a@x", "a-b-c@x", "a b-c@x"]],
+  [/(?:ab|cd)+=\d/, ["ab=1", "abcd=2", "abc=3", "xab=4", "ab =5", "cdab=6"]],
+  [/(\w)\1*:x/, ["a:x", "aa:x", "ab:x", "b aa:x"]],
+  [/(?<=\s)\w+:x/, [" a:x", "a:x", "b a:x", "  ab:x"]],
+  [/(?<!-)\b\w+:x/, ["a:x", "-a:x", "b-a:x", "a a:x"]],
+  [/[^\s:]+:x/, ["a:x", " :x", "a b:x", pair + ":x", "a" + pair + "b:x", lead + ":x"]],
+  [/[^\s:]+:x/u, ["a:x", "a b:x", pair + ":x", "a" + pair + "b:x", " " + pair + ":x", lead + ":x", trail + ":x"]],
+  [/\w+?:x/, ["a:x", "ab:x", "a b:x"]],
+  [/\w+\s*=\s*\d/, ["a=1", "a = 1", "a  =2", "a b = 3", "= 4", "a\n=\n5"]],
+  [/[a-z]+\d*#/i, ["a#", "A1#", "a12#", "1#", "a 1#", "a1 b2#"]],
+  [/.+;x/, ["a;x", ";x", "a\nb;x", "a;b;x"]],
+  [/^a|\w+@x/, ["a", "b@x", "ab@x", "c b@x", " a"]],
+  [/\w+@x|\w+#y/, ["a@x", "a#y", "a@y", "b a#y"]],
+  [/[a-z]{2}[a-z]*@@/, ["ab@@", "a@@", "a@@ab@@", "abc@ @@", "ab@@@"]],
+  [/(?:foo@|bar)baz/, ["foo@baz", "barbaz", "foobaz", "bar@baz"]],
+  [/a(?:@)?b/, ["ab", "a@b", "a@@b"]],
+  [/a@*b/, ["ab", "a@b", "a@@@b"]],
+  [/a@{0,3}b/, ["ab", "a@@@b", "a@@@@b"]],
+  [/a@{2,3}b/, ["a@b", "a@@b", "a@@@b", "a@@@@b"]],
+  [/(?:@|)x/, ["x", "@x"]],
+  [/x|y@/, ["x", "y@", "y", "@"]],
+  [/\w+=|\w+:/, ["a=", "a:", "a", "=", "ab:c="]],
+  [/(?:key|word|name)\s*[=:]\s*(\S+)/i, ["key=1", "WORD : two", "name", "name=", "keyword:3"]],
+  [/(?:a|b@)+c/, ["ac", "b@c", "ab@ac", "bc", "b@"]],
+  [/(?:ab@){2,3}/, ["ab@", "ab@ab@", "ab@ab@ab@ab@"]],
+  [/(?:[a-z]@){2}!/, ["a@b@!", "a@!", "a@b@"]],
+  [/(a+|b)\1@/, ["aa@", "bb@", "a@", "aaaa@", "ab@"]],
+  [/(x*)\1{2}@end/, ["@end", "xxx@end", "xx@end", "xxxxxx@en"]],
+  [/(?<q>['"])[^'"]*\k<q>;/, ["'a';", '"";', "'a\";", "'a'"]],
+  [/(?=.*@)\w+/, ["ab @", "ab", "@"]],
+  [/\w+(?=@)/, ["ab@", "ab", "@"]],
+  [/\w+(?!@)/, ["ab@", "a@", "ab"]],
+  [/a(?!@)/, ["a", "a@", "a@a"]],
+  [/(?<=@)\w+/, ["@ab", "ab", "@"]],
+  [/(?<!@)\b\w+/, ["@ab", "ab", "@a b"]],
+  [/(?<=#[a-z]{0,3})%/, ["#%", "#abc%", "#abcd%", "%"]],
+  [/^a@|b#/, ["a@", "b#", "xa@", "a#"]],
+  [/^a@|^b#/, ["a@", "b#", "xa@"]],
+  [/^@/m, ["@", "\n@", "a@"]],
+  [/(?:^|,)x@/, ["x@", ",x@", "ax@"]],
+  [/[a-z]+@$/, ["a@", "a@ ", "a@\n"]],
+  [/[a-z]+@$/m, ["a@", "a@ ", "a@\nb"]],
+  [/@[a-z]{3}$/, ["@abc", "@abcd", "@ab"]],
+  [/.*@.*/, ["a@b", "@", "a\n@\nb"]],
+  [/^.*foo@.*$/m, ["a foo@ b", "foo@", "fo@"]],
+  [/.+@/s, ["a@", "\n@", "@"]],
+  [/[^@]+@[^@]+/, ["a@b", "@b", "a@", "a@@b"]],
+  [/[^a]{1,3}~/, ["b~", "a~", "bbbb~", "~"]],
+  [/[\s\S]{0,4}\|/, ["|", "abcd|", "abcdef|"]],
+  [/\S{3}\t/, ["abc\t", "ab\t", "abcd\t"]],
+  [/(?i:ab)@c/, ["ab@c", "AB@c", "ab@C"]],
+  [/a(?-i:B)@/i, ["aB@", "AB@", "ab@"]],
+  [/[a-z]+Q/, ["aQ", "aq", "Q"]],
+  [/[a-z]+q/i, ["aQ", "aq", "AQ", "q"]],
+  [/\d+sk@/iu, ["1sk@", "1SK@", "1" + longS + kelvin + "@", "1s@"]],
+  [/\d+sk@/i, ["1sk@", "1SK@", "1" + longS + kelvin + "@"]],
+  [/x{1,3}kelvin/iu, ["xkelvin", "xx" + kelvin + "elvin", "xxxxKELVIN", "xelvin"]],
+  [/\d\xb5@/iu, ["1" + micro + "@", "1" + mu + "@", "1@"]],
+  [/\d\xe9@/i, ["1" + eAcute + "@", "1" + eAcuteUpper + "@", "1e@"]],
+  [
+    /.{1,3}@/u,
+    [
+      "a@",
+      pair + "@",
+      pair + pair + pair + "@",
+      pair + pair + pair + pair + "@",
+      "a" + pair + "b" + pair + "@",
+      trail + "@",
+      lead + "@",
+      "@",
+    ],
+  ],
+  [/.{1,3}@/, ["a@", pair + "@", pair + pair + "@", "abcd@"]],
+  [
+    /[\u{1f600}-\u{1f64f}]{1,3}@x/u,
+    [pair + "@x", pair + otherPair + pair + "@x", pair + pair + pair + pair + "@x", lead + "@x", trail + "@x", "@x"],
+  ],
+  [
+    /[\u{1f600}-\u{1f64f}a]{2}#/u,
+    [pair + "a#", "a" + pair + "#", pair + pair + "#", "aa#", "a#", pair + pair + pair + "#"],
+  ],
+  [/\u{1f600}+!/u, [pair + "!", pair + pair + "!", lead + "!", trail + "!", "!"]],
+  [/[^\u{1f600}]{2}!/u, ["ab!", otherPair + "a!", pair + "a!", otherPair + otherPair + "!", trail + "a!"]],
+  [/\P{L}{2}%/u, ["12%", pair + "1%", "a1%", pair + pair + "%"]],
+  [/a\u{1f600}?b;/u, ["ab;", "a" + pair + "b;", "a" + lead + "b;"]],
+  [/ab;/u, ["ab;", "a" + pair + "b;", "a" + trail + "b;"]],
+  [/ab;/, ["ab;", "a" + pair + "b;", "AB;"]],
+  [/\ud83d@/, [lead + "@", pair + "@", "@"]],
+  [/\ud83d@/u, [lead + "@", pair + "@", "@"]],
+  [/\ude00@/u, [trail + "@", pair + "@", lead + trail + "@"]],
+  [/\B@|aa/u, ["@", "a@", pair + "@", "aa"]],
+  [/[\q{ab|c}]@/v, ["ab@", "c@", "b@", "a@"]],
+  [/[\q{ab|c|}]@/v, ["ab@", "@", "a@"]],
+  [/\p{RGI_Emoji}{1,2}@/v, [pair + "@", pair + pair + pair + "@", "a@"]],
+  [/[[a-z]--[aeiou]]+@/v, ["bcd@", "a@", "ba@"]],
+  [/[a-z]+@/y, ["a@", "1a@"]],
+  [/[a-z]+@/gy, ["a@", "1a@", "a@b@"]],
+  [/(?:)@?/, ["@", ""]],
+  [/[]@/, ["@"]],
+  [/[^]@/, ["a@", "@", "\n@"]],
+  [/a{0}@b/, ["@b", "a@b"]],
+  [/(?:a{40}){2}@/, ["a".repeat(80) + "@", "a".repeat(79) + "@", "a".repeat(81) + "@"]],
+  [/(?:[a-c]{1,3}){1,3}@/, ["abc@", "a".repeat(9) + "@", "a".repeat(10) + "@", "a".repeat(14) + "@"]],
+  [/((((((((((((((((((((((((((a@))))))))))))))))))))))))))/, ["a@", "a"]],
+  [/-{5}BEGIN [A-Z ]+-{5}/, ["-----BEGIN A B-----", "----BEGIN A-----", "-----BEGIN -----", "-----begin A-----"]],
+  [/\b[A-Za-z0-9_]{4}-[A-Za-z0-9_]{4}\b/, ["abcd-efgh", "abc-defg", "abcde-fghi", "abcd-efg"]],
+  [/"[^"\n]*":\s*\[/, ['"a": [', '"":[', '"a" [', '"a":']],
+  [/<([a-z]+)>[^<]*<\/\1>/, ["<a>x</a>", "<a>x</b>", "<a></a>", "<a>x<a>"]],
+  [/\$\{[^}]*\}/, ["${a}", "${}", "$a}", "${a"]],
+  [/[0-9a-f]{8}-[0-9a-f]{4}/i, ["0123abcd-89EF", "0123abc-89ef", "0123abcd_89ef"]],
+  [/^(?i:get|put) \/[a-z]+ @1$/, ["get /a @1", "PUT /ab @1", "xget /a @1", "get /a @2"]],
+  [/^(?i:a)#|b+%/, ["a#", "A#", "xa#", "b%", "a#b%", "xbb%"]],
+  [/^(?i:a)+$|b+$/, ["a", "Aa", "b", "ab", "xa", "abb"]],
+  [/[ \t]+$/, [" ", " \t ", " a", "a  "]],
+  [/^[ \t]+|[ \t]+$/g, [" ", " a ", "  a", "a  ", " a b  "]],
+  [
+    /^[ \t\xa0\u2003\ufeff]+|[ \t\xa0\u2003\ufeff]+$/g,
+    [" ", " a ", "a " + String.fromCharCode(0x2003), String.fromCharCode(0xa0) + "a" + String.fromCharCode(0xfeff, 32)],
+  ],
+  [/[\s,]+$/, [",", ", ,", ",a", "a,\n"]],
+  [/\d+px$/, ["1px", "12px", "1px ", "px", "1p"]],
+  [/\w+@\w+$/, ["a@b", "a@b ", "a@", "x a@b"]],
+  [/(?:ab|c)+$/, ["ab", "cab", "abx", "xabc"]],
+  [/(a|b)\1$/, ["aa", "ab", "bb", "aab"]],
+  [/x*$/, ["x", "xx", "xa", ""]],
+  [/[^a]+$/u, ["b", pair, "a" + pair, pair + "a", "a" + trail, "a" + lead + "b"]],
+  [/[\u{1f600}x]+$/u, [pair, "x" + pair, pair + "x", lead, trail + "x", "a" + pair]],
+  [/.+$/, ["a", "a\nb", "a\n"]],
+  [/.+$/s, ["a", "a\nb", "\n"]],
+  [/\S+\s*$/, ["a", "a  ", "a b ", " "]],
+  [/(?<=a)b+$/, ["ab", "abb", "bb", "cb", "ab "]],
+  [/\bfoo\d*$/i, ["foo", "FOO12", "xfoo", "foo1a"]],
+  [/[a-z]+$/m, ["a", "a\n1", "1\na"]],
+  [/a+$|b+$/, ["a", "b", "ab", "ba", "a "]],
+  [/a+$|b/, ["a", "b", "ab ", "a "]],
+  [/^a+$|b+$/, ["a", "b", "ab", "xa", "aab"]],
+  [/(?=[a-z]+$)\w+$/, ["ab", "a1", "1a"]],
+  [/[a-z]*(?!x)$/, ["ab", "", "1"]],
+];
+
+const fillers = [
+  "",
+  " ",
+  "x",
+  "0123456789abcde",
+  "0123456789abcdefg",
+  "the quick brown fox jumps over the lazy dog ",
+  "z".repeat(70),
+];
+const wideFillers = [
+  pair,
+  lead,
+  trail,
+  "a" + pair + " " + otherPair + " ",
+  String.fromCharCode(0x3b1) + " ",
+  ("w " + pair).repeat(9),
+];
+const narrowFillers = [micro + " ", (eAcute + "n ").repeat(12)];
+
+function subjectsOf(pieces) {
+  const subjects = new Set(fillers);
+  for (const piece of pieces) {
+    for (const filler of fillers) {
+      subjects.add(piece + filler);
+      subjects.add(filler + piece);
+    }
+    for (const filler of [fillers[1], fillers[3], fillers[5], fillers[6], ...wideFillers, ...narrowFillers]) {
+      subjects.add(filler + piece + filler);
+      subjects.add(filler + piece + filler + pieces[0] + filler);
+    }
+    subjects.add(fillers[5] + piece.toUpperCase() + fillers[1]);
+    subjects.add(wideFillers[3] + piece.toUpperCase());
+    if (piece.length > 1) {
+      const half = piece.length >> 1;
+      subjects.add(piece.slice(0, half) + pair + piece.slice(half));
+      subjects.add(fillers[5] + piece.slice(0, half) + fillers[5] + piece.slice(half));
+    }
+  }
+  return [...subjects];
+}
+
+function startsOf(subject) {
+  const starts = new Set([0, 1, 2, subject.length >> 1, subject.length - 1, subject.length]);
+  return [...starts].filter(start => start >= 0 && start <= subject.length);
+}
+
+function describe(match, lastIndex) {
+  if (!match) return "null " + lastIndex;
+  return (
+    match.index +
+    " " +
+    lastIndex +
+    " " +
+    JSON.stringify(Array.from(match)) +
+    (match.groups ? JSON.stringify(match.groups) : "")
+  );
+}
+
+// What the pattern with the flag y finds at each place of the subject, and from there what a search from any place finds.
+class PlaceByPlace {
+  constructor(pattern, subject) {
+    const tried = new RegExp(pattern.source, pattern.flags.replace(/[gy]/g, "") + "y");
+    this.subject = subject;
+    this.isSticky = pattern.sticky;
+    this.isUnicode = pattern.unicode || pattern.unicodeSets;
+    this.matches = [];
+    for (let at = 0; at <= subject.length; ++at) {
+      tried.lastIndex = at;
+      this.matches.push(tried.exec(subject));
+    }
+  }
+
+  behind(at) {
+    const unit = this.subject.charCodeAt(at);
+    const next = this.subject.charCodeAt(at + 1);
+    return at + (this.isUnicode && unit >= 0xd800 && unit <= 0xdbff && next >= 0xdc00 && next <= 0xdfff ? 2 : 1);
+  }
+
+  from(start) {
+    for (let at = start; at <= this.subject.length; at = this.behind(at)) {
+      if (this.matches[at] || this.isSticky) return this.matches[at];
+    }
+    return null;
+  }
+
+  replaced() {
+    let result = "";
+    let copied = 0;
+    for (let from = 0; from <= this.subject.length; ) {
+      const match = this.from(from);
+      if (!match) break;
+      result += this.subject.slice(copied, match.index) + "[" + match[0].length + "]";
+      copied = match.index + match[0].length;
+      from = match[0].length ? copied : this.behind(copied);
+    }
+    return result + this.subject.slice(copied);
+  }
+}
+
+let hash = 0;
+let searches = 0;
+let found = 0;
+const differences = [];
+
+function note(text) {
+  for (let i = 0; i < text.length; ++i) hash = (Math.imul(hash, 31) + text.charCodeAt(i)) | 0;
+}
+
+function hold(what, pattern, subject, start, answer, expected) {
+  ++searches;
+  note(answer);
+  if (answer !== expected && differences.length < 20)
+    differences.push(`${what} ${pattern} on ${JSON.stringify(subject)} from ${start}: ${answer}, expected ${expected}`);
+}
+
+function run(pattern, subject, expected) {
+  const whole = expected.from(0);
+  if (!pattern.global && !pattern.sticky) {
+    /(marker)/.exec("a marker");
+    hold("exec", pattern, subject, 0, describe(pattern.exec(subject), 0), describe(whole, 0));
+    hold("test", pattern, subject, 0, String(pattern.test(subject)), String(!!whole));
+    hold("search", pattern, subject, 0, String(subject.search(pattern)), String(whole ? whole.index : -1));
+    if (!whole)
+      hold("statics", pattern, subject, 0, RegExp.lastMatch + RegExp.$1 + RegExp.leftContext, "markermarkera ");
+    found += !!whole;
+    return;
+  }
+  for (const start of startsOf(subject)) {
+    const match = expected.from(start);
+    pattern.lastIndex = start;
+    const answer = pattern.exec(subject);
+    hold(
+      "exec",
+      pattern,
+      subject,
+      start,
+      describe(answer, pattern.lastIndex),
+      describe(match, match ? match.index + match[0].length : 0),
+    );
+  }
+  pattern.lastIndex = 0;
+  if (!pattern.sticky)
+    hold(
+      "replace",
+      pattern,
+      subject,
+      0,
+      subject.replace(pattern, text => "[" + text.length + "]"),
+      expected.replaced(),
+    );
+}
+
+for (const [pattern, pieces] of rows) {
+  const made = new RegExp(pattern.source, pattern.flags);
+  const walking = new RegExp(pattern.source, pattern.flags.replace("g", "") + "g");
+  for (const subject of subjectsOf(pieces)) {
+    const expected = new PlaceByPlace(pattern, subject);
+    run(pattern, subject, expected);
+    run(made, subject, expected);
+    run(walking, subject, expected);
+  }
+}
+
+for (const difference of differences) say(difference);
+say(
+  `${rows.length} patterns, ${searches} searches, ${found} found, ${differences.length ? "DIFFERENT" : "same"}, ${hash >>> 0}`,
+);
+if (differences.length) throw new Error("a search differs from the pattern tried at one place after another");
+//// a-search-in-unicode-mode-passes-over-ascii-many-characters-at-a-time.ts
+// A literal with the flag u whose matches begin with a character outside ASCII: on a subject of 16-bit characters that is nearly all ASCII the search takes a fraction of the time it takes where every character has to be tested.
+const invisible = /[\p{Cf}\p{Variation_Selector}]/gu;
+const length = 400000;
+const ascii = "\u4e00" + "the quick brown fox ".repeat(length / 20);
+let tested = "";
+for (let i = 0; i <= length; i += 100) tested += "\u4e00\u4e8c\u4e09\u56db\u4e94\u516d\u4e03\u516b\u4e5d\u5341".repeat(10);
+function fastestOf(runs: number, subject: string): number {
+  let fastest = Infinity;
+  for (let run = 0; run < runs; run++) {
+    const began = performance.now();
+    if (subject.replace(invisible, "").length !== subject.length) console.log("a match in", subject.length);
+    fastest = Math.min(fastest, performance.now() - began);
+  }
+  return fastest / subject.length;
+}
+const passedOver = fastestOf(20, ascii), one = fastestOf(20, tested);
+console.log(passedOver * 5 < one ? "ASCII is passed over in under a fifth of the time of a test" : "ASCII takes over a fifth of the time of a test");
+//// a-short-text-searched-forward-and-backward.ts
+const texts: string[] = [
+  "",
+  "a",
+  "aa",
+  "ab",
+  "aab",
+  "abab",
+  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab",
+  "/home/user/project/node_modules/package/lib/index.d.ts",
+  "src/compiler/checker.ts",
+  "a.b.c.d.e.f.g.h.i.j.k.l.m.n.o.p.q.r.s.t.u.v.w.x.y.z",
+  "no separator here at all, only words and a comma",
+  "日本語のテキストと日本語",
+  "mixed 日本 and latin 日本",
+  "é".repeat(20) + "è",
+];
+const needles: string[] = ["", "a", "b", "aa", "ab", "aab", "ba", "/", ".", ".d.", ".ts", "/node_modules/", "node", "日", "日本", "日本語", "本語", "è", "éè", "éé", " and", "z", "y.z", "x".repeat(70)];
+const positions: number[] = [-3, 0, 1, 2, 3, 7, 8, 9, 15, 16, 17, 31, 33, 52, 53, 54, 55, 100];
+
+function slowIndexOf(text: string, other: string, from: number): number {
+  const start = Math.min(Math.max(from, 0), text.length);
+  for (let i = start; i + other.length <= text.length; i++) {
+    let same = true;
+    for (let k = 0; k < other.length && same; k++) same = text.charCodeAt(i + k) === other.charCodeAt(k);
+    if (same) return i;
+  }
+  return -1;
+}
+function slowLastIndexOf(text: string, other: string, from: number): number {
+  const start = Math.min(Math.max(from, 0), text.length - other.length);
+  for (let i = start; i >= 0; i--) {
+    let same = true;
+    for (let k = 0; k < other.length && same; k++) same = text.charCodeAt(i + k) === other.charCodeAt(k);
+    if (same) return i;
+  }
+  return -1;
+}
+function search(text: string, other: string, wrong: string[]): number {
+  let digest = 0;
+  for (let p = 0; p < positions.length; p++) {
+    const from = positions[p];
+    const forward = text.indexOf(other, from);
+    const backward = text.lastIndexOf(other, from);
+    if (forward !== slowIndexOf(text, other, from)) wrong.push(`indexOf ${JSON.stringify(text)} ${JSON.stringify(other)} ${from}: ${forward}`);
+    if (backward !== slowLastIndexOf(text, other, from)) wrong.push(`lastIndexOf ${JSON.stringify(text)} ${JSON.stringify(other)} ${from}: ${backward}`);
+    digest = (digest * 33 + forward * 3 + backward) | 0;
+  }
+  const first = text.indexOf(other);
+  const last = text.lastIndexOf(other);
+  if (first !== slowIndexOf(text, other, 0) || last !== slowLastIndexOf(text, other, text.length)) wrong.push(`whole ${JSON.stringify(text)} ${JSON.stringify(other)}`);
+  if (text.includes(other) !== first >= 0) wrong.push(`includes ${JSON.stringify(text)} ${JSON.stringify(other)}`);
+  return (digest * 33 + first * 3 + last) | 0;
+}
+function literals(text: string): string {
+  return [
+    text.indexOf("/"),
+    text.lastIndexOf("/"),
+    text.indexOf("."),
+    text.lastIndexOf("."),
+    text.lastIndexOf(".", 10),
+    text.lastIndexOf(".", -1),
+    text.lastIndexOf("a", -1),
+    text.indexOf(".d."),
+    text.lastIndexOf(".d."),
+    text.lastIndexOf(".d.", 20),
+    text.indexOf("/node_modules/"),
+    text.lastIndexOf("/node_modules/"),
+    text.indexOf("日本", 1),
+    text.lastIndexOf("日本"),
+    text.lastIndexOf("日本", 3),
+    text.indexOf("ab", 1),
+    text.lastIndexOf("ab", 1),
+    text.indexOf("", 4),
+    text.lastIndexOf("", 4),
+  ].join(",");
+}
+
+const wrong: string[] = [];
+let digest = 0;
+for (let round = 0; round < 3; round++) {
+  for (const text of texts) {
+    const rope = round ? text.slice(0, text.length >> 1) + text.slice(text.length >> 1) : text;
+    for (const other of needles) digest = (digest * 31 + search(rope, other, wrong)) | 0;
+  }
+}
+console.log(digest, wrong.length, wrong.slice(0, 6).join(" | "));
+for (const text of texts) console.log(literals(text));
+//// a-string-used-with-itself.js
+// One value in both places of an operation on strings: compared with itself, looked for in itself, cut by itself.
+function report(name, S) {
+    const lines = [
+        S <= S, S >= S, S < S, S > S, S === S, S == S, S !== S, S != S, Object.is(S, S),
+        S.startsWith(S), S.endsWith(S), S.includes(S), S.indexOf(S), S.lastIndexOf(S), S.search(S), S.localeCompare(S),
+        JSON.stringify(S.split(S)), JSON.stringify(S.replace(S, S)), JSON.stringify(S.replaceAll(S, S)), JSON.stringify(S.concat(S)), JSON.stringify(S + S), JSON.stringify(`${S}${S}`),
+        S.startsWith(S, 1), S.endsWith(S, 1), S.indexOf(S, 1), S.lastIndexOf(S, 0), JSON.stringify(S.padStart(3, S)), JSON.stringify(S.padEnd(3, S)),
+    ];
+    console.log(name, lines.join(" "));
+}
+
+// A value that nothing else names.
+const k1 = "a"; console.log(k1 <= k1);
+const k2 = "a"; console.log(k2 >= k2);
+const k3 = "a"; console.log(k3 < k3);
+const k4 = "a"; console.log(k4 > k4);
+const k5 = "a"; console.log(k5 === k5);
+const k6 = "a"; console.log(k6 == k6);
+const k7 = "a"; console.log(k7 !== k7);
+const k8 = "a"; console.log(k8.startsWith(k8));
+const k9 = "a"; console.log(k9.endsWith(k9));
+const k10 = "a"; console.log(k10.includes(k10));
+const k11 = "a"; console.log(k11.indexOf(k11));
+const k12 = "a"; console.log(k12.lastIndexOf(k12));
+const k13 = "a"; console.log(JSON.stringify(k13.split(k13)));
+const k14 = "a"; console.log(k14.replace(k14, k14));
+const k15 = "a"; console.log(k15.localeCompare(k15));
+const k16 = "a"; console.log(k16 + k16);
+const k17 = "a"; console.log(k17.concat(k17));
+const k18 = "ab"; console.log(k18 <= k18);
+const k19 = "ab"; console.log(k19 >= k19);
+const k20 = "ab"; console.log(k20 < k20);
+const k21 = "ab"; console.log(k21 > k21);
+const k22 = "ab"; console.log(k22 === k22);
+const k23 = "ab"; console.log(k23 == k23);
+const k24 = "ab"; console.log(k24 !== k24);
+const k25 = "ab"; console.log(k25.startsWith(k25));
+const k26 = "ab"; console.log(k26.endsWith(k26));
+const k27 = "ab"; console.log(k27.includes(k27));
+const k28 = "ab"; console.log(k28.indexOf(k28));
+const k29 = "ab"; console.log(k29.lastIndexOf(k29));
+const k30 = "ab"; console.log(JSON.stringify(k30.split(k30)));
+const k31 = "ab"; console.log(k31.replace(k31, k31));
+const k32 = "ab"; console.log(k32.localeCompare(k32));
+const k33 = "ab"; console.log(k33 + k33);
+const k34 = "ab"; console.log(k34.concat(k34));
+const k35 = ""; console.log(k35 <= k35);
+const k36 = ""; console.log(k36 >= k36);
+const k37 = ""; console.log(k37 < k37);
+const k38 = ""; console.log(k38 > k38);
+const k39 = ""; console.log(k39 === k39);
+const k40 = ""; console.log(k40 == k40);
+const k41 = ""; console.log(k41 !== k41);
+const k42 = ""; console.log(k42.startsWith(k42));
+const k43 = ""; console.log(k43.endsWith(k43));
+const k44 = ""; console.log(k44.includes(k44));
+const k45 = ""; console.log(k45.indexOf(k45));
+const k46 = ""; console.log(k46.lastIndexOf(k46));
+const k47 = ""; console.log(JSON.stringify(k47.split(k47)));
+const k48 = ""; console.log(k48.replace(k48, k48));
+const k49 = ""; console.log(k49.localeCompare(k49));
+const k50 = ""; console.log(k50 + k50);
+const k51 = ""; console.log(k51.concat(k51));
+const k52 = "\u03b1"; console.log(k52 <= k52);
+const k53 = "\u03b1"; console.log(k53 >= k53);
+const k54 = "\u03b1"; console.log(k54 < k54);
+const k55 = "\u03b1"; console.log(k55 > k55);
+const k56 = "\u03b1"; console.log(k56 === k56);
+const k57 = "\u03b1"; console.log(k57 == k57);
+const k58 = "\u03b1"; console.log(k58 !== k58);
+const k59 = "\u03b1"; console.log(k59.startsWith(k59));
+const k60 = "\u03b1"; console.log(k60.endsWith(k60));
+const k61 = "\u03b1"; console.log(k61.includes(k61));
+const k62 = "\u03b1"; console.log(k62.indexOf(k62));
+const k63 = "\u03b1"; console.log(k63.lastIndexOf(k63));
+const k64 = "\u03b1"; console.log(JSON.stringify(k64.split(k64)));
+const k65 = "\u03b1"; console.log(k65.replace(k65, k65));
+const k66 = "\u03b1"; console.log(k66.localeCompare(k66));
+const k67 = "\u03b1"; console.log(k67 + k67);
+const k68 = "\u03b1"; console.log(k68.concat(k68));
+let l0 = "a"; console.log(l0 <= l0);
+let l1 = "a"; console.log(l1 >= l1);
+let l2 = "a"; console.log(l2 < l2);
+let l3 = "a"; console.log(l3 > l3);
+
+const one = "a";
+console.log("const one", one <= one, one >= one, one < one, one > one, one === one, one == one, one !== one, one != one);
+console.log(one.startsWith(one), one.endsWith(one), one.includes(one), one.indexOf(one), one.lastIndexOf(one), one.localeCompare(one), JSON.stringify(one.split(one)), one.replace(one, one), one.concat(one), one + one);
+let other = "b";
+console.log("let one", other <= other, other >= other, other < other, other > other, other === other, other.startsWith(other), other.indexOf(other), JSON.stringify(other.split(other)));
+const two = "ab";
+console.log("const two", two <= two, two >= two, two < two, two > two, two === two, two.startsWith(two), two.endsWith(two), two.includes(two), two.indexOf(two), two.lastIndexOf(two), JSON.stringify(two.split(two)), two.replace(two, two));
+const empty = "";
+console.log("empty", empty <= empty, empty >= empty, empty < empty, empty > empty, empty === empty, empty.startsWith(empty), empty.endsWith(empty), empty.includes(empty), empty.indexOf(empty), empty.lastIndexOf(empty), JSON.stringify(empty.split(empty)));
+const wide = "α";
+console.log("two bytes", wide <= wide, wide >= wide, wide < wide, wide > wide, wide === wide, wide.startsWith(wide), wide.indexOf(wide), JSON.stringify(wide.split(wide)));
+const pair = "😀";
+console.log("a pair", pair <= pair, pair < pair, pair.indexOf(pair), pair.at(0) <= pair.at(0), pair[1] >= pair[1]);
+
+// One character that a computation gives.
+const text = "xyz";
+const at = text.at(1), charAt = text.charAt(1), index = text[1], cut = text.slice(1, 2), normalized = "y".normalize();
+console.log(at <= at, at < at, charAt <= charAt, charAt > charAt, index <= index, index >= index, cut <= cut, cut < cut, normalized <= normalized, normalized > normalized);
+
+if (one <= one) console.log("taken"); else console.log("not taken");
+if (one < one) console.log("taken"); else console.log("not taken");
+for (let i = 0; i < 3 && one >= one; i++) console.log(i, one > one ? "above" : "not above");
+
+for (const [name, S] of [["a", "a"], ["ab", "ab"], ["empty", ""], ["alpha", "α"], ["pair", "😀"], ["dot", "."], ["dollar", "$&"]]) report(name, S);
+//// a-subject-without-the-text-that-every-match-holds-is-not-tried-place-by-place.ts
+// Every match of these patterns holds a character or a text that stands behind a run of many characters. In a subject without it no place is tried. Each is timed against itself with one more alternative,
+// a run longer than any in the subject, which holds nothing in particular: that one has to be tried place by place.
+const nothing = String(Date.now()).slice(99);
+const words = "the worker-7 finished job 8123 in 41 ms with status ok and no retries left ".repeat(1500) + "end";
+const searches: [string, RegExp, RegExp][] = [
+  ["a literal, a character behind a bounded run:", /\b([a-z0-9-]{1,64}@[a-z0-9-]+)\b/i, /\b([a-z0-9-]{1,64}@[a-z0-9-]+)\b|[a-z0-9-]{70}/i],
+  ["a literal, a text behind two runs:", /\b([a-z0-9-]+\.[a-z0-9-]+\.example\.invalid)\b/i, /\b([a-z0-9-]+\.[a-z0-9-]+\.example\.invalid)\b|[a-z0-9-]{70}/i],
+  ["a literal, one of two signs behind a word:", /\b[a-z]+\s*[=#]\s*(\S+)/i, /\b[a-z]+\s*[=#]\s*(\S+)|[a-z]{70}/i],
+  ["a literal in unicode mode, a character behind a bounded run:", /\b([\p{L}\p{N}-]{1,64}@[a-z0-9-]+)\b/u, /\b([\p{L}\p{N}-]{1,64}@[a-z0-9-]+)\b|[\p{L}\p{N}-]{70}/u],
+  ["a literal, a run that has to reach the end:", /[ \t\r\n\xa0\u2003\ufeff]+$/, /[ \t\r\n\xa0\u2003\ufeff]+$|[a-z0-9-]{70}/],
+  ["a literal, a run at the start or one that has to reach the end:", /^[ \t\r\n\xa0\u2003\ufeff]+|[ \t\r\n\xa0\u2003\ufeff]+$/, /^[ \t\r\n\xa0\u2003\ufeff]+|[ \t\r\n\xa0\u2003\ufeff]+$|[a-z0-9-]{70}/],
+  ["run-time text, a run that has to reach the end:", new RegExp("[ \\t\\xa0]+$" + nothing), new RegExp("[ \\t\\xa0]+$|[a-z0-9-]{70}" + nothing)],
+  ["run-time text, a character behind a bounded run:", new RegExp("\\b([a-z0-9-]{1,63}@[a-z0-9-]+)\\b" + nothing, "i"), new RegExp("\\b([a-z0-9-]{1,63}@[a-z0-9-]+)\\b|[a-z0-9-]{70}" + nothing, "i")],
+  ["run-time text, a text behind two runs:", new RegExp("\\b([a-z0-9-]+\\.[a-z0-9-]+\\.example\\.test)\\b" + nothing, "i"), new RegExp("\\b([a-z0-9-]+\\.[a-z0-9-]+\\.example\\.test)\\b|[a-z0-9-]{70}" + nothing, "i")],
+  ["run-time text that looks back over a group, a character behind a run:", new RegExp("(?<!(?:x|y)+z)\\b([a-z0-9-]{1,64}@[a-z0-9-]+)\\b" + nothing, "i"), new RegExp("(?<!(?:x|y)+z)\\b([a-z0-9-]{1,64}@[a-z0-9-]+)\\b|[a-z0-9-]{70}" + nothing, "i")],
+];
+function fastestOf(runs: number, pattern: RegExp, subject: string): number {
+  let fastest = Infinity;
+  for (let run = 0; run < runs; run++) {
+    const began = performance.now();
+    if (pattern.test(subject)) console.log("found");
+    fastest = Math.min(fastest, performance.now() - began);
+  }
+  return fastest;
+}
+for (const subject of [words, "\u4e00 " + words]) {
+  for (const [name, pattern, triedEverywhere] of searches)
+    console.log(name, fastestOf(12, pattern, subject) * 6 < fastestOf(4, triedEverywhere, subject) ? "no place is tried" : "as slow as a try at every place");
+}
+//// a-text-a-colon-and-a-number-of-one-object-are-joined-once-each.ts
+// `item.name + ":" + item.count` joins each of its three parts once, also where the object comes out of a field that may hold undefined.
+class Item {
+  name: string;
+  count: number;
+
+  constructor(name: string, count: number) {
+    this.name = name;
+    this.count = count;
+  }
+}
+
+class Special extends Item {
+  extra: boolean;
+
+  constructor(name: string, count: number, extra: boolean) {
+    super(name, count);
+    this.extra = extra;
+  }
+}
+
+class Box<T> {
+  value: T;
+
+  constructor(value: T) {
+    this.value = value;
+  }
+}
+
+function summarize(box: Box<Item | undefined>): string {
+  const item = box.value;
+  return item === undefined ? "empty" : item.name + ":" + item.count;
+}
+
+const optional = new Box<Item | undefined>(undefined);
+console.log(summarize(optional));
+optional.value = new Item("first", 1);
+console.log(summarize(optional));
+optional.value = new Special("second", 2, true);
+console.log(summarize(optional));
+//// a-text-in-one-piece-is-compared-with-a-text-just-put-together.js
+// `===` between a text that lies in one piece and a text that was just put together, in every shape that putting together gives.
+const part = JSON.parse('["text/html","; charset=","utf-8","W/\\"","d-","abcDEF0123456789+/","\\"","","é","日本","x"]');
+const flat = text => JSON.parse(JSON.stringify(text));
+const shapes = [
+  () => part[0] + part[1] + part[2],
+  () => (part[0] + part[1]) + part[2],
+  () => part[0] + (part[1] + part[2]),
+  () => `${part[3]}${part[4]}${part[5]}${part[6]}`,
+  () => part[3] + part[4] + part[5] + part[6] + part[7],
+  () => part[7] + part[0] + part[7],
+  () => { let s = ""; for (let i = 0; i < 40; i++) s += part[10]; return s; },
+  () => { let s = ""; for (let i = 0; i < 40; i++) s = part[10] + s; return s; },
+  () => { let s = part[0]; for (let i = 0; i < 12; i++) s = s + part[1] + s.length; return s; },
+  () => (part[0] + part[1] + part[2]).slice(3, 20) + part[2],
+  () => part[5].slice(2, 9) + part[5].slice(9) + part[0].slice(1),
+  () => part[0] + part[8] + part[2],
+  () => part[0] + part[9] + part[2],
+  () => part[9] + part[9],
+  () => part[0].repeat(30) + part[1],
+  () => [part[0], part[1], part[2]].join("") + part[10],
+];
+function same(a, b) { return a === b; }
+function differs(a, b) { return a !== b; }
+function remembered(holder, value) { if (holder.last !== value) { holder.last = value; return 1; } return 0; }
+const out = [];
+for (let round = 0; round < 8; round++) {
+  out.length = 0;
+  shapes.forEach((make, n) => {
+    const text = flat(make());
+    const changed = [0, 1, text.length >> 1, text.length - 1].map(at => flat(text.slice(0, at) + (text[at] === "~" ? "!" : "~") + text.slice(at + 1)));
+    const line = [same(make(), text), same(text, make()), same(make(), make()), differs(make(), text), ...changed.map(other => same(make(), other)), ...changed.map(other => same(other, make())), same(make(), text + part[10]), same(make() + part[10], text), same(make(), flat(text.slice(1))), same(make().slice(1), flat(text.slice(1)))];
+    const holder = { last: text }; const met = remembered(holder, make()) + remembered(holder, make()) + remembered(holder, changed[2]) + remembered(holder, make());
+    const used = make(); const wasEqual = same(used, text);
+    out.push(n + ":" + line.map(Number).join("") + met + Number(wasEqual) + used.length + used.charCodeAt(used.length - 1) + (used === text) + (used + "!" === text + "!") + new Map([[text, 1]]).has(used) + ({ [text]: 1 })[used]);
+  });
+}
+console.log(out.join("\n"));
+//// a-text-is-read-between-and-behind-its-appends.js
+// A text that is built by appending is read, by position and as a whole, in loops between its appends and behind them: each read sees what has been appended so far.
+function codes(count, wide) {
+  let text = "";
+  for (let k = 0; k < count; k++) text += String.fromCharCode((wide && k % 7 === 3 ? 0x4e00 : 65) + (k & 15));
+  let sum = 0;
+  for (let k = 0; k < text.length; k++) sum = (sum * 31 + text.charCodeAt(k)) | 0;
+  return sum + ":" + text.length;
+}
+function between(count) {
+  let text = "";
+  let sum = 0;
+  for (let k = 0; k < count; k++) {
+    text += "ab" + k;
+    for (let j = 0; j < text.length; j += 3) sum = (sum + text.charCodeAt(j)) | 0;
+  }
+  return sum + ":" + text.length;
+}
+function rarely(count) {
+  let text = "";
+  let sum = 0;
+  for (let k = 0; k < count; k++) {
+    text += k;
+    let j = k % 50 === 49 ? 0 : text.length;
+    while (j < text.length) sum = (sum + text.charCodeAt(j++)) | 0;
+  }
+  return sum + ":" + text.length;
+}
+function kept(count) {
+  let text = "";
+  const seen = [];
+  for (let k = 0; k < count; k++) {
+    text += String.fromCharCode(97 + (k % 26));
+    if (k % 5 === 0) seen.push(text);
+    if (k % 5 === 1) seen.push(text, text);
+  }
+  let same = 0;
+  for (let k = 1; k < seen.length; k++) if (seen[k] === seen[k - 1]) same++;
+  return seen.join("|").length + ":" + same + ":" + seen[seen.length - 1];
+}
+function twice(count) {
+  let left = "";
+  let right = "";
+  let sum = 0;
+  for (let k = 0; k < count; k++) {
+    left += "l" + k;
+    right += "r";
+    for (let j = 0; j < right.length; j++) sum = (sum + left.charCodeAt(j) + right.charCodeAt(j)) | 0;
+  }
+  return sum + ":" + left.length + ":" + right.length;
+}
+function again(rounds, count) {
+  let sum = 0;
+  for (let r = 0; r < rounds; r++) {
+    let text = "";
+    for (let k = 0; k < count + r; k++) text += String.fromCharCode(48 + ((k + r) % 10));
+    for (let k = 0; k < text.length; k++) sum = (sum + text.charCodeAt(k) * (k + 1)) | 0;
+    if (r % 3 === 0) text += "tail";
+    for (let k = text.length - 1; k >= 0; k -= 2) sum = (sum ^ text.charCodeAt(k)) | 0;
+  }
+  return sum;
+}
+for (let round = 0; round < 3; round++) {
+  for (const count of [0, 1, 2, 15, 16, 17, 64, 1000, 70000]) console.log(count, codes(count, false), codes(count, true));
+  for (const count of [0, 1, 7, 200]) console.log(count, between(count), rarely(count * 10), kept(count), twice(count), again(count % 9, count));
+}
+//// a-text-looked-for-at-one-position.ts
+const texts: string[] = ["", "a", "ab", "abc", "abcabc", "/usr/lib/node.d.ts", ".", ".ts", "..", "é", "éa", "日本語", "日本", "a日本", "x".repeat(40), "x".repeat(39) + "y"];
+const left = "/usr/";
+const ropes: string[] = [left + texts[3] + texts[4], texts[11] + left + texts[2], texts[14] + texts[15]];
+const all = texts.concat(ropes);
+
+function startsWithByLastIndexOf(text: string, prefix: string): boolean {
+  return text.lastIndexOf(prefix, 0) === 0;
+}
+function endsWithByIndexOf(text: string, suffix: string): boolean {
+  const expected = text.length - suffix.length;
+  return expected >= 0 && text.indexOf(suffix, expected) === expected;
+}
+
+let rows = 0;
+let digest = 0;
+const wrong: string[] = [];
+for (let i = 0; i < all.length; i++) {
+  for (let j = 0; j < all.length; j++) {
+    const text = all[i];
+    const other = all[j];
+    const starts = text.startsWith(other);
+    const ends = text.endsWith(other);
+    if (starts !== startsWithByLastIndexOf(text, other)) wrong.push(`start ${i} ${j}`);
+    if (ends !== endsWithByIndexOf(text, other)) wrong.push(`end ${i} ${j}`);
+    if (starts !== (text.slice(0, other.length) === other)) wrong.push(`slice ${i} ${j}`);
+    for (const position of [-1, 0, 1, 2, 5, 39, 40, 41, 1000]) {
+      const at = text.startsWith(other, position);
+      const clamped = Math.min(Math.max(position, 0), text.length);
+      if (at !== (text.slice(clamped, clamped + other.length) === other)) wrong.push(`at ${i} ${j} ${position}`);
+      const until = text.endsWith(other, position);
+      if (until !== (clamped >= other.length && text.slice(clamped - other.length, clamped) === other)) wrong.push(`until ${i} ${j} ${position}`);
+      digest = (digest * 31 + (at ? 1 : 0) + (until ? 2 : 0)) | 0;
+      rows++;
+    }
+    digest = (digest * 31 + (starts ? 1 : 0) + (ends ? 2 : 0)) | 0;
+  }
+}
+console.log(rows, digest, wrong.length, wrong.slice(0, 8).join("|"));
+
+for (const text of all) {
+  console.log(
+    JSON.stringify(text.length > 12 ? text.slice(0, 12) : text),
+    text.lastIndexOf(".", 0),
+    text.lastIndexOf("", 0),
+    text.lastIndexOf("a", 0),
+    text.lastIndexOf("ab", 0),
+    text.lastIndexOf("ab", -5),
+    text.lastIndexOf("/usr/", 0),
+    text.lastIndexOf("日", 0),
+    text.lastIndexOf("日本", 0),
+    text.lastIndexOf("é", 0),
+    text.lastIndexOf("é", -1),
+    text.lastIndexOf("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", 0),
+    text.lastIndexOf(".", 1),
+    text.lastIndexOf("a", NaN),
+    text.lastIndexOf("ab", 3),
+  );
+}
+//// a-text-made-in-either-arm-grows-in-a-try-whose-catch-reads-it.ts
+// An object is made in either arm of a test, with a text of the same form in one field: a constant and a number. The text grows inside a try, and the catch reads
+// the field: as it was made where the call in front of the append throws, grown where the call behind it does.
+type Row = { n: number; t: string };
+
+function refuse(at: number, when: number): void {
+  if (at % 4 === when) throw new Error("refused " + at);
+}
+
+function objects(at: number): number | string {
+  let it: Row;
+  if (at % 3) it = { n: at, t: "t" + at };
+  else it = { n: at + 10, t: "t" + (at + 10) };
+  try {
+    it.t += "y";
+    refuse(at, 3);
+    return it.n;
+  } catch {
+    return it.t;
+  }
+}
+
+function objectsRefusedFirst(at: number): number | string {
+  let it: Row;
+  if (at % 3) it = { n: at, t: "t" + at };
+  else it = { n: at + 10, t: "t" + (at + 10) };
+  try {
+    refuse(at, 2);
+    it.t += "y";
+    refuse(at, 3);
+    return it.n;
+  } catch {
+    return it.t;
+  }
+}
+
+function pairs(at: number): number | string {
+  const it: [number, string] = at % 2 ? [at, "t" + at] : [at + 10, "t" + (at + 10)];
+  try {
+    it[1] += "y";
+    refuse(at, 1);
+    return it[0];
+  } catch {
+    return it[1].length + it[0] + it[1];
+  }
+}
+
+function leftByFinally(at: number, seen: (number | string)[]): void {
+  let it: Row;
+  if (at % 3) it = { n: at, t: "t" + at };
+  else it = { n: at + 10, t: "t" + (at + 10) };
+  try {
+    it.t += "y";
+    refuse(at, 0);
+    seen.push(it.n);
+  } finally {
+    seen.push(it.t);
+  }
+}
+
+class Line {
+  constructor(
+    public n: number,
+    public t: string,
+  ) {}
+}
+
+function instances(at: number): number | string {
+  const it = at % 2 ? new Line(at, "t" + at) : new Line(at + 10, "t" + (at + 10));
+  try {
+    it.t += "y";
+    refuse(at, 2);
+    return it.n;
+  } catch {
+    return it.t;
+  }
+}
+
+function oneTryInAnother(at: number): string {
+  let it: Row;
+  if (at % 3) it = { n: at, t: "t" + at };
+  else it = { n: at + 10, t: "t" + (at + 10) };
+  try {
+    it.t += "x";
+    try {
+      it.t += "y";
+      refuse(at, 1);
+    } catch {
+      it.t += "!";
+      refuse(at + 1, 2);
+    }
+    refuse(at, 3);
+    return "left " + it.n;
+  } catch {
+    return "outer " + it.t;
+  }
+}
+
+function* steps(at: number): Generator<string, void, unknown> {
+  const it = at % 2 ? { t: "t" + at } : { t: "t" + (at + 10) };
+  try {
+    it.t += "y";
+    yield "in";
+    refuse(at, 1);
+  } catch {
+    yield it.t;
+  }
+}
+
+async function later(at: number): Promise<string> {
+  const it = at % 2 ? { t: "t" + at } : { t: "t" + (at + 10) };
+  try {
+    it.t += "y";
+    await null;
+    refuse(at, 3);
+    return "fine";
+  } catch {
+    return it.t;
+  }
+}
+
+const seen: (number | string)[] = [];
+for (let at = 0; at < 9; at++) {
+  seen.push(objects(at), objectsRefusedFirst(at), pairs(at), instances(at), oneTryInAnother(at), ...steps(at), await later(at));
+  try {
+    leftByFinally(at, seen);
+  } catch (error) {
+    seen.push((error as Error).message);
+  }
+}
+console.log(seen.join());
+
+// The same in the loop itself, where nothing throws.
+const quiet: (number | string)[] = [];
+for (let at = 0; at < 9; at++) {
+  let it: Row;
+  if (at % 3) it = { n: at, t: "t" + at };
+  else it = { n: at + 10, t: "t" + (at + 10) };
+  try {
+    it.t += "y";
+    quiet.push(it.n);
+  } catch {
+    quiet.push(it.t);
+  }
+}
+console.log(quiet.join());
+//// a-text-takes-the-place-of-what-a-pattern-finds.ts
+// String.prototype.replace with a RegExp and a text, where the RegExp matches: every form of the replacement, of the subject and of the RegExp.
+const shown = (text: string): string => JSON.stringify(text);
+const face = String.fromCodePoint(0x1f600);
+const line = "2026-01-02 10:11:12 info worker-7 finished job 8123 in 41 ms, told ann@host.example";
+
+function pieceOf(text: string, start: number, end: number): string {
+  return text.substring(start, end);
+}
+
+////= lines-10	joined	first	second	string
+
+const subjects: string[] = [
+  line,
+  "",
+  "a",
+  "aaa",
+  "  padded  ",
+  "ann@host bob@home",
+  "x" + face + "y" + face,
+  face,
+  "\u00e9t\u00e9 \u00e0 la mer",
+  "\u0436\u0436 ann@host \u0436",
+  pieceOf("0123456789 " + line + " 0123456789", 11, 11 + line.length),
+  pieceOf(line + line, 20, 100),
+  joined(line.slice(0, 40), line.slice(40)),
+  joined("ann@", "host"),
+];
+
+const replacements: string[] = [
+  "",
+  "-",
+  "[it]",
+  "$&",
+  "<$&>",
+  "$1",
+  "$2$1",
+  "$`",
+  "$'",
+  "$$",
+  "$",
+  "$0",
+  "$3",
+  "$10",
+  "$01",
+  "$<name>",
+  "$<none>",
+  "$<",
+  "\u0436",
+  face,
+  "$1" + face + "$&",
+];
+
+const patterns: RegExp[] = [
+  /\b([a-z0-9-]+)@([a-z0-9-]+)/,
+  /\b([a-z0-9-]+)@([a-z0-9-]+)/g,
+  /\b([a-z0-9-]+)@([a-z0-9-]+)/i,
+  /(?<name>[a-z]+)@(?<host>[a-z]+)/,
+  /(?<name>[a-z]+)@(?<host>[a-z]+)/g,
+  /(?:(?<name>ann)|(?<name>bob))@/g,
+  /^\s+/,
+  /\s+$/,
+  /\s+/g,
+  /^\s*(.*?)\s*$/,
+  /a*/,
+  /a*/g,
+  /(?:)/,
+  /(?:)/g,
+  /(?:)/gu,
+  /x*/gu,
+  /./gu,
+  /./g,
+  /.$/u,
+  /[^]/gv,
+  /(a)|(b)/g,
+  /(z)?a/g,
+  /\d+/g,
+  /\d{4,}/g,
+  /(\d+)-(\d+)-(\d+)/,
+  /told/,
+  /told/g,
+  /a/g,
+  /a/,
+  /@/g,
+  /\u0436/g,
+  /\u0436+/,
+  /(?<=@)[a-z]+/g,
+  /(?<!\d)\d\d(?!\d)/g,
+  /$/,
+  /$/g,
+  /^/gm,
+  /\b/g,
+  /(((((((((((a)))))))))))/,
+];
+
+let answers = 0;
+for (const pattern of patterns) {
+  for (const subject of subjects) {
+    const row: string[] = [];
+    for (const replacement of replacements) {
+      pattern.lastIndex = 3;
+      row.push(shown(subject.replace(pattern, replacement)) + "@" + pattern.lastIndex);
+      answers++;
+    }
+    console.log(String(pattern), shown(subject), row.join(" "));
+  }
+}
+console.log(answers, "answers");
+
+// What the last match leaves behind.
+const legacy = RegExp as unknown as Record<string, string>;
+function leftBehind(): string {
+  return [legacy["$&"], legacy["$1"], legacy["$2"], legacy["$`"], legacy["$'"], legacy["$_"]]
+    .map(text => shown(text!))
+    .join(" ");
+}
+for (const pattern of [/(\w+)@(\w+)/, /(\w+)@(\w+)/g, /told/, /told/g, /(\d)(\d)/g, /^(\d+)/]) {
+  console.log(String(pattern), shown(line.replace(pattern, "#")), leftBehind());
+  console.log(String(pattern), shown(line.replace(pattern, "$2")), leftBehind());
+  console.log(String(pattern), shown(line.replace(pattern, "")), leftBehind());
+}
+
+// A RegExp that is not as it was made.
+const sticky = /\d+/y;
+sticky.lastIndex = 5;
+console.log(shown(line.replace(sticky, "#")), sticky.lastIndex);
+console.log(shown(line.replace(sticky, "#")), sticky.lastIndex);
+const stickyAndGlobal = /\d+-?/gy;
+stickyAndGlobal.lastIndex = 5;
+console.log(shown(line.replace(stickyAndGlobal, "#")), stickyAndGlobal.lastIndex);
+
+const frozen = Object.freeze(/\d+/g);
+try {
+  console.log(shown(line.replace(frozen, "#")));
+} catch (error) {
+  console.log("frozen and global:", (error as Error).name);
+}
+const frozenOnce = Object.freeze(/\d+/);
+console.log(shown(line.replace(frozenOnce, "#")), frozenOnce.lastIndex);
+
+const withOwnExec = /\d+/g;
+let calls = 0;
+(withOwnExec as { exec: (text: string) => RegExpExecArray | null }).exec = function (this: RegExp, text: string) {
+  calls++;
+  return calls > 2 ? null : RegExp.prototype.exec.call(this, text);
+};
+console.log(shown(line.replace(withOwnExec, "#")), calls);
+
+class Louder extends RegExp {
+  [Symbol.replace](text: string, replacement: string | ((found: string, ...rest: any[]) => string)): string {
+    return super[Symbol.replace](text, replacement as string).toUpperCase();
+  }
+}
+console.log(shown(line.replace(new Louder("told|info", "g"), "<$&>")));
+
+const odd = /\d+/g;
+(odd as unknown as { lastIndex: unknown }).lastIndex = {
+  valueOf() {
+    console.log("lastIndex is asked for");
+    return 2;
+  },
+};
+console.log(shown(line.replace(odd, "#")), odd.lastIndex);
+
+// Many matches, long subjects.
+const long = (line + "\n").repeat(400);
+console.log(
+  long.replace(/\d+/g, "#").length,
+  long.replace(/\d+/g, "").length,
+  long.replace(/(\d)(\d)/g, "$2$1").length,
+  long.replace(/\n/g, "\r\n").length,
+);
+console.log(
+  long.replace(/example\n$/, "!").length,
+  long.replace(/(example)\n$/, "$1!").slice(-12),
+  long.replace(/^2026/, "").length,
+  long.replace(/\n$/, "").length,
+);
+const wide = (line + "\u0436\n").repeat(400);
+console.log(
+  wide.replace(/\d+/g, "#").length,
+  wide.replace(/\u0436\n$/, "").length,
+  wide.replace(/(\u0436)\n/g, "$1$1").length,
+  shown(wide.replace(/(\u0436)\n$/, "<$1>").slice(-8)),
+);
+//// a-text-that-is-read-cut-back-and-joined-with-objects-while-it-grows.ts
+// The text is read in the middle of its growth, cut back by a throw, and goes on growing.
+////= hash
+
+const kept: string[] = [];
+function readWhileGrowing(rounds: number, piece: string): string {
+  let out = "";
+  for (let i = 0; i < rounds; i++) {
+    out += piece;
+    out += i;
+    if (i % 7 === 3) kept.push(out);
+    out += ",";
+  }
+  return out;
+}
+
+function failsAt(i: number, at: number): string {
+  if (i === at) throw new RangeError("at " + i);
+  return "<" + i + ">";
+}
+
+function cutBackByThrow(rounds: number, at: number): string {
+  let out = "start";
+  for (let i = 0; i < rounds; i++) {
+    try {
+      out += "a" + failsAt(i, at) + "b";
+      out += i;
+    } catch (error) {
+      out += "!" + (error as Error).message;
+    }
+  }
+  return out;
+}
+
+class Talker {
+  said = 0;
+  constructor(public name: string) {}
+  toString(): string {
+    this.said++;
+    let out = "";
+    for (let i = 0; i < this.said; i++) out += this.name + i;
+    return out;
+  }
+  valueOf(): number {
+    return this.said * 1000;
+  }
+}
+
+function withObjects(rounds: number, talker: Talker, thrower: { toString(): string }): string {
+  let out = "";
+  for (let i = 0; i < rounds; i++) {
+    out += talker;
+    out += `${talker}`;
+    out += String(talker);
+    out += "/";
+    try {
+      out += "before" + thrower;
+    } catch {
+      out += "caught";
+    }
+  }
+  return out;
+}
+
+function withPrimitiveHook(rounds: number): string {
+  let calls: string[] = [];
+  const hooked = {
+    [Symbol.toPrimitive](hint: string) {
+      calls.push(hint);
+      let inner = "";
+      for (let i = 0; i < calls.length; i++) inner += hint + i;
+      return inner;
+    },
+  };
+  let out = "";
+  for (let i = 0; i < rounds; i++) {
+    out += hooked;
+    out += `${hooked}`;
+    out += ";";
+  }
+  return out + calls.join();
+}
+
+function withBigAndSymbol(): string {
+  let out = "";
+  for (let i = 0; i < 5; i++) {
+    out += 12345678901234567890123456789012345678901234567890n * BigInt(i);
+    out += String(Symbol("mark" + i));
+    try {
+      out += (Symbol("thrown") as unknown as string);
+    } catch (error) {
+      out += (error as Error).constructor.name;
+    }
+  }
+  return out;
+}
+
+function grownByLongPieces(rounds: number): number {
+  const long = "L".repeat(70000);
+  const wide = "中".repeat(3);
+  let out = "";
+  let sum = 0;
+  for (let i = 0; i < rounds; i++) {
+    out += long;
+    out += i;
+    out += wide;
+    out += "tail";
+    if (i % 3 === 1) sum = (sum + hash(out)) >>> 0;
+  }
+  return (sum + hash(out)) >>> 0;
+}
+
+for (const rounds of [0, 1, 2, 5, 20, 100, 1000]) {
+  for (const piece of ["", "p", "piece of sixteen", "a piece that is longer than sixteen characters", "\xe9", "中"]) {
+    kept.length = 0;
+    const text = readWhileGrowing(rounds, piece);
+    let sum = hash(text);
+    for (const earlier of kept) sum = (sum + hash(earlier)) >>> 0;
+    console.log(rounds, piece.length, text.length, kept.length, sum);
+  }
+}
+for (const at of [-1, 0, 1, 5, 19]) console.log(cutBackByThrow(20, at));
+console.log(hash(withObjects(12, new Talker("t"), { toString() { throw new Error("no"); } })), withObjects(2, new Talker("u"), { toString() { throw new Error("no"); } }));
+console.log(withPrimitiveHook(3), hash(withPrimitiveHook(40)));
+console.log(withBigAndSymbol());
+console.log(grownByLongPieces(1), grownByLongPieces(7), grownByLongPieces(40));
+//// a-text-too-long-that-nobody-reads.ts
+// A text grows past the longest text there can be, and nobody reads it. The error comes all the same.
+function repeat(piece: string, count: number): string {
+  let text = "";
+  for (let i = 0; i < count; i++) text += piece;
+  return text;
+}
+const big = repeat("M", 1 << 20);
+function tries(): string {
+  try {
+    repeat(big, 4096);
+    return "no error";
+  } catch (error) {
+    return (error as Error).constructor.name;
+  }
+}
+let seen = "";
+for (let turn = 0; turn < 3; turn++) seen += tries() + " ";
+console.log(seen);
+//// adjacent-strings.ts
+// The texts of a program's strings lie in one pool in the executable. Whatever stands between them there, each string is what the source says, also where one is the end or a part of another.
+declare const console: { log(...args: unknown[]): void }
+const parts = ["firstHalfOfAWord", "secondHalfOfAWord", "HalfOfAWord", "OfAWord", "Word", "d", "", "first", "firstHalf", "été", "étéHalf", "日本", "日本語"]
+const record: Record<string, number> = { firstHalfOfAWord: 1, secondHalfOfAWord: 2, HalfOfAWord: 3, Word: 4 }
+for (const part of parts) console.log(JSON.stringify(part), part.length, record[part] ?? "none", part === "Word", part.endsWith("Word"), part.startsWith("first"), part + "|")
+console.log(parts.join(""), Object.keys(record).join(""))
+//// alternations-out-of-run-time-text-answer-as-in-plain-bun.ts
+// Thousands of patterns with alternations, put together at run time out of a seeded generator, so that none of them is known to the build: lists of words that share first letters and lists that do not,
+// nested groups, captures, optional and repeated groups, classes, anchors, lookaheads, back references, with and without the flag i, against subjects of narrow and of wide characters.
+// Which alternative wins, where the match lies and what every group holds is printed as a sum for every two hundred patterns. The output is that of plain Bun.
+// No alternative is written empty: on a repeated group with an empty alternative, as in /(|[^b]??|)+/ inside a longer pattern, plain Bun misses matches that ECMAScript has and that the compiled program finds.
+let seed = 12345 + (typeof process === "object" ? process.argv.length - process.argv.length : 0);
+function random(limit: number): number {
+  seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
+  return (seed >>> 8) % limit;
+}
+function pick(list: string[]): string {
+  return list[random(list.length)];
+}
+const letters = ["a", "b", "c", "A", "B", "x", "é", "Ж", "1", "_", " "];
+const classes = ["[ab]", "[^a]", "[a-c]", "\\w", "\\d", "\\s", ".", "[\\u200b\\u0416]", "[^\\u0416b]", "[A-Cx]"];
+const quantifiers = ["", "", "", "", "?", "*", "+", "??", "*?", "+?", "{2}", "{1,2}", "{0,2}?"];
+function word(): string {
+  let text = "";
+  for (let i = 1 + random(4); i > 0; i--) text += pick(letters);
+  return text;
+}
+function spacedWord(): string {
+  return [...word()].join("[\\u200b_]*");
+}
+function atom(depth: number, groups: { count: number }): string {
+  switch (random(depth > 0 ? 12 : 7)) {
+    case 0: case 1: case 2: return pick(letters);
+    case 3: case 4: return pick(classes);
+    case 5: return word();
+    case 6: return pick(["^", "$", "\\b", "\\B"]);
+    case 7: return "(?:" + disjunction(depth - 1, groups) + ")";
+    case 8: groups.count++; return "(" + disjunction(depth - 1, groups) + ")";
+    case 9: return pick(["(?=", "(?!"]) + disjunction(depth - 1, groups) + ")";
+    case 10: return groups.count ? "\\" + (1 + random(groups.count)) : pick(letters);
+    default: return "(?:" + disjunction(depth - 1, groups) + ")";
+  }
+}
+function alternative(depth: number, groups: { count: number }): string {
+  let text = "";
+  for (let i = 1 + random(3); i > 0; i--) {
+    const piece = atom(depth, groups);
+    const isAssertion = piece === "^" || piece === "$" || piece === "\\b" || piece === "\\B" || piece.startsWith("(?=") || piece.startsWith("(?!");
+    text += piece.length > 1 && !piece.startsWith("(") && !piece.startsWith("[") && !piece.startsWith("\\") ? piece : piece + (isAssertion ? "" : pick(quantifiers));
+  }
+  return text;
+}
+function disjunction(depth: number, groups: { count: number }): string {
+  const kind = random(6);
+  const count = kind === 0 ? 1 : kind === 1 ? 2 : kind === 2 ? 3 + random(3) : kind === 3 ? 8 + random(30) : 1 + random(4);
+  const list: string[] = [];
+  for (let i = 0; i < count; i++) list.push(kind === 3 ? (random(2) ? word() : spacedWord()) : alternative(depth, groups));
+  return list.join("|");
+}
+function subject(): string {
+  let text = "";
+  for (let i = random(24); i > 0; i--) text += random(8) ? pick(letters) : pick(["​", "ab", "abc", "\n", "xA"]);
+  return text;
+}
+let sum = 0;
+let made = 0;
+const lines: string[] = [];
+for (let round = 0; round < 6000; round++) {
+  const source = disjunction(2, { count: 0 });
+  const flags = pick(["", "i", "g", "gi", "m", "y", "s"]);
+  let pattern: RegExp;
+  try {
+    pattern = new RegExp(source, flags);
+  } catch {
+    sum = (sum * 31 + 7) | 0;
+    continue;
+  }
+  made++;
+  for (let i = 0; i < 4; i++) {
+    const text = subject();
+    pattern.lastIndex = random(3);
+    const match = pattern.exec(text);
+    if (!match) {
+      sum = (sum * 31 + 1) | 0;
+      continue;
+    }
+    sum = (sum * 31 + match.index + 2) | 0;
+    for (const group of match) sum = (sum * 31 + (group === undefined ? 3 : group.length * 5 + (group.charCodeAt(0) | 0))) | 0;
+    sum = (sum * 31 + text.replace(pattern, "<$&>").length) | 0;
+  }
+  if (round % 200 === 199) lines.push(round + 1 + " " + sum);
+}
+console.log(made);
+console.log(lines.join("\n"));
+//// anything-compared-with-the-empty-string.ts
+const launder = new Function("value", "return value") as <V>(value: V) => V;
+
+class Named {
+  name: string;
+  nickname: string | undefined;
+  note: string | null;
+  anything: unknown;
+  constructor(name: string, nickname: string | undefined, note: string | null, anything: unknown) {
+    this.name = name;
+    this.nickname = nickname;
+    this.note = note;
+    this.anything = anything;
+  }
+}
+
+const long = "abcdefghijklmnopqrstuvwxyz".repeat(3);
+const texts: string[] = [
+  "",
+  "a",
+  " ",
+  "\0",
+  "ab",
+  long,
+  long.slice(5, 5),
+  long.slice(5, 6),
+  long.substring(40),
+  long.substring(long.length),
+  "é",
+  "中",
+  "中".slice(1),
+  "" + "",
+  ["", ""].join(""),
+  String(launder("")) + launder(""),
+  launder("x") + launder(""),
+  launder(long) + launder(long),
+  launder("").concat(launder("")),
+  " ".trim(),
+  "abc".replace("abc", ""),
+  String.fromCharCode(),
+  new String("").valueOf(),
+  `${launder("")}`,
+];
+const others: unknown[] = [undefined, null, 0, -0, NaN, false, true, 1, 0n, [], [""], {}, new String(""), Symbol.iterator, () => "", { toString: () => "" }];
+
+function ofTypedFields(one: Named): string {
+  let said = "";
+  said += one.name === "" ? "E" : "n";
+  said += one.name !== "" ? "n" : "E";
+  said += "" === one.name ? "E" : "n";
+  said += one.nickname === "" ? "E" : "n";
+  said += one.nickname !== "" ? "n" : "E";
+  said += one.note === "" ? "E" : "n";
+  said += one.note !== "" ? "n" : "E";
+  said += one.anything === "" ? "E" : "n";
+  said += one.anything !== "" ? "n" : "E";
+  const isEmpty = one.nickname === "";
+  const isNot = one.anything !== "";
+  said += String(isEmpty) + String(isNot);
+  switch (one.nickname) {
+    case "":
+      said += "|empty";
+      break;
+    case "a":
+      said += "|a";
+      break;
+    case undefined:
+      said += "|undefined";
+      break;
+    default:
+      said += "|other";
+  }
+  switch (one.anything) {
+    case "":
+      said += "|empty";
+      break;
+    case 0:
+      said += "|zero";
+      break;
+    default:
+      said += "|other";
+  }
+  return said;
+}
+
+function loosely(value: unknown): string {
+  return (value == "" ? "E" : "n") + (value != "" ? "n" : "E") + ("" == value ? "E" : "n");
+}
+
+const lines: string[] = [];
+for (let round = 0; round < 3; round++) {
+  for (let i = 0; i < texts.length; i++) {
+    const text = launder(texts[i]);
+    const one = launder(new Named(text, i % 3 === 0 ? undefined : text, i % 4 === 0 ? null : text, i % 5 === 0 ? i : text));
+    const line = i + " " + text.length + " " + ofTypedFields(one) + " " + loosely(text);
+    if (round === 2) lines.push(line);
+  }
+  for (let i = 0; i < others.length; i++) {
+    const one = launder(new Named("x", undefined, null, launder(others[i])));
+    const line = "other " + i + " " + ofTypedFields(one) + " " + loosely(others[i]);
+    if (round === 2) lines.push(line);
+  }
+}
+console.log(lines.join("\n"));
+//// append-by-host-failure.ts
+// A conversion that throws inside Bun.escapeHTML leaves the built string as it was before that append.
+function fragile(throwOnCall: number): any {
+  let calls = 0;
+  return {
+    toString() {
+      if (++calls === throwOnCall) throw new RangeError("conversion " + calls);
+      return "<" + calls + ">";
+    },
+  };
+}
+function appendStatements(value: any): string {
+  let html = "";
+  try {
+    for (let round = 1; round <= 5; round++) {
+      html += "[" + round + "]";
+      html += Bun.escapeHTML(value);
+    }
+  } catch (e) {
+    console.log("caught", (e as Error).message, html);
+  }
+  return html;
+}
+function appendInOneStatement(value: any): string {
+  let html = "start";
+  try {
+    for (let round = 1; round <= 5; round++) html += "<p>" + round + Bun.escapeHTML(value) + "</p>";
+  } catch (e) {
+    console.log("caught", (e as Error).message, html);
+  }
+  return html;
+}
+function appendWide(value: any): string {
+  let html = "日本";
+  try {
+    for (let round = 1; round <= 5; round++) {
+      html += "&" + round;
+      html += Bun.escapeHTML(value);
+    }
+  } catch (e) {
+    console.log("caught", (e as Error).message, html);
+  }
+  return html + "|after";
+}
+function template(value: any): string {
+  try {
+    return `<a>${Bun.escapeHTML(value)}</a>`;
+  } catch (e) {
+    return "template " + (e as Error).message;
+  }
+}
+console.log(appendStatements(fragile(3)));
+console.log(appendInOneStatement(fragile(3)));
+console.log(appendWide(fragile(3)));
+console.log(appendStatements(fragile(1)));
+console.log(appendStatements(fragile(9)));
+console.log(template(fragile(1)));
+console.log(template(fragile(2)));
+//// append-escaped-html.ts
+// Bun.escapeHTML called through a constant in the middle of a concatenation.
+const escape = Bun.escapeHTML;
+const log: string[] = [];
+////= show-4	length <= 100 ? text : text.slice(0, 40) + ".." + text.slice(-40
+const texts = [
+  "", "a", "&", "<", ">", '"', "'", "a&b", "<b>bold</b>", `"quoted" & 'single'`, "plain text without anything to escape",
+  "0123456789abcde", "0123456789abcdef", "0123456789abcdef0", "0123456789abcde&", "&123456789abcdef0123456789abcdef", "x".repeat(31) + "<", "x".repeat(64) + ">" + "y".repeat(64),
+  "café & crème", "ÿ<ÿ", "日本語", "日<本>&語", "😀&", "\ud83d<", "<".repeat(500), "z".repeat(5000), ("w".repeat(99) + "&").repeat(40), "—&".repeat(200),
+];
+function link(href: string, label: string): string {
+  return `<a href="${escape(href)}">${escape(label)}</a>`;
+}
+function list(items: string[]): string {
+  let html = "<ul>";
+  for (const item of items) html += "<li>" + escape(item) + "</li>";
+  return html + "</ul>";
+}
+function mixed(text: string, n: number, missing: string | undefined): string {
+  let html = "";
+  html += escape(text.slice(1)) + `<i>${n}</i>`;
+  html += escape(text) + escape(text + "&");
+  return `${html}|${escape(missing as string)}|${escape(n as any)}|${escape("a<b")}`;
+}
+function page(items: string[]): string {
+  return `<body>${list(items)}${items.length ? link(items[0]!, items[items.length - 1]!) : ""}</body>`;
+}
+for (const text of texts) {
+  show("link", link(text, text));
+  show("mixed", mixed(text, text.length, text.length % 2 ? undefined : text));
+  show("same", String(link(text, "x") === '<a href="' + Bun.escapeHTML(text) + '">x</a>'));
+}
+const long = ("y".repeat(1000) + "&").repeat(2100);
+show("long", link(long, "short"));
+show("long", link("short", long));
+show("long", mixed(long, 1, long));
+function emitted(text: string): string {
+  let html = "";
+  let from = 0;
+  const emit = (markup: string, end: number) => {
+    html += escape(text.slice(from, end - 1)) + markup;
+    from = end;
+  };
+  for (let at = 0; at < text.length; at++) {
+    if (text[at] === "`") emit(`<code>${escape(text.slice(at, at + 2))}</code>`, at + 1);
+    else if (text[at] === "[") emit(`<a href="${escape(text.slice(at + 1, at + 4))}" rel="x">${escape(text.slice(at + 2, at + 6))}</a>`, at + 1);
+  }
+  return html + escape(text.slice(from));
+}
+for (const text of texts) show("emitted", emitted(text + "`<&>` and [\"'x'\"] " + text));
+show("emitted", emitted(long.slice(0, 1100000) + "`" + long));
+show("list", list(texts));
+show("page", page(texts));
+show("page", page([]));
+
+const talker = { toString() { log.push("toString"); return "<t>"; }, valueOf() { log.push("valueOf"); return "<v>"; } };
+function loose(value: unknown): string {
+  return `[${escape(value as any)}]` + escape(value as any) + "!";
+}
+show("loose", loose(talker));
+show("loose", loose(12.5));
+show("loose", loose(null));
+show("loose", loose(true));
+show("log", log.join(","));
+
+const original = Bun.escapeHTML;
+(Bun as any).escapeHTML = (text: string) => {
+  log.push("replaced " + text);
+  return talker;
+};
+show("still the original", link("<", ">"));
+const replaced: (text: string) => any = Bun.escapeHTML;
+function other(text: string): string {
+  return `(${replaced(text)})` + replaced(text + "2") + ".";
+}
+log.length = 0;
+show("replaced", other("<x>"));
+show("log", log.join(","));
+(Bun as any).escapeHTML = original;
+show("restored", other("<y>") + link("&", "&"));
+//// append-length-limit.ts
+// Strings over 2^31 - 1 characters: the RangeError comes from the same concatenation as in plain Bun, with the same side effects before it.
+const log: string[] = [];
+////= doubled
+const powers: string[] = [];
+for (let k = 0; k <= 30; k++) powers.push(doubled(k));
+const big = powers[30]!;
+const half = powers[29]!;
+
+function noisy(label: string, text: string): string {
+  log.push(label);
+  return text;
+}
+function attempt(label: string, run: () => string): void {
+  log.length = 0;
+  let outcome: string;
+  try {
+    outcome = "length " + run().length;
+  } catch (error) {
+    outcome = (error as Error).name + ": " + (error as Error).message;
+  }
+  console.log(label, outcome, log.join(","));
+}
+
+function wrap(label: string, text: string, times: number): string {
+  let html = "<w>";
+  for (let i = 0; i < times; i++) {
+    log.push(label + i);
+    html += `[${text}]`;
+  }
+  return html + "</w>";
+}
+function pair(a: string, b: string): string {
+  return `${noisy("a", a)}${wrap("p", b, 1)}${noisy("c", "c")}`;
+}
+function nested(a: string, b: string, times: number): string {
+  return `<n>${noisy("first", a)}${wrap("n", b, times)}${noisy("last", "!")}</n>`;
+}
+function conditional(a: string, b: string, flag: boolean): string {
+  return `<c>${a}${flag ? `(${wrap("t", b, 1)})` : `{${noisy("f", b)}}`}${noisy("end", ".")}</c>`;
+}
+function everyPower(from: number): string {
+  let text = "";
+  for (let k = from; k <= 30; k++) text += powers[k]!;
+  return text;
+}
+
+attempt("small", () => pair("a", "b"));
+attempt("half half", () => pair(half, half));
+attempt("big half", () => pair(big, half));
+attempt("big big", () => pair(big, big));
+attempt("inner alone", () => nested("a", big, 2));
+attempt("inner alone 3", () => nested("a", big, 3));
+attempt("outer only", () => nested(big, half, 1));
+attempt("outer only 2", () => nested(big, half, 2));
+attempt("conditional true", () => conditional(big, big, true));
+attempt("conditional false", () => conditional(big, big, false));
+attempt("conditional fits", () => conditional(half, half, true));
+attempt("every power", () => everyPower(0));
+attempt("every power and one", () => everyPower(0) + "y");
+attempt("every power in a template", () => `${everyPower(0)}${noisy("after", "")}`);
+attempt("one too many in a template", () => `${everyPower(0)}${noisy("after", "z")}`);
+attempt("after all that", () => nested("a", "b", 3));
+console.log(nested("a", "b", 2), conditional("p", "q", true), conditional("p", "q", false));
+//// append-nested-strings.ts
+// A string that is built only to become a part of a longer string: the arms of a conditional, the string of an inner loop, a conditional inside an arm.
+// Each function has a neighbor in which building it in place could be seen: the longer string is read in between, an object is converted in front of it, an arm throws.
+const log: string[] = [];
+
+function armsOfConditional(names: string[], extra: string): string {
+  let out = "";
+  for (let i = 0; i < names.length; i++) out += `<li class="${i & 1 ? "a " + extra + " b" : "off"}">${names[i]}</li>`;
+  return out;
+}
+
+function conditionalIsLastPart(names: string[]): string {
+  let out = "";
+  for (let i = 0; i < names.length; i++) out += i ? "," + names[i] : names[i];
+  return out;
+}
+
+function stringOfInnerLoop(rows: string[][]): string {
+  let out = "<table>";
+  for (const cells of rows) {
+    let row = "";
+    for (const cell of cells) row += "<td>" + cell + "</td>";
+    out += "<tr>" + row + "</tr>";
+  }
+  return out + "</table>";
+}
+
+function twoConditionals(names: string[], first: boolean, second: boolean): string {
+  let out = "";
+  for (const name of names) out += `<${first ? "x-" + name : "div"}|${name.length}|${second ? name + "!" : "none"}>`;
+  return out;
+}
+
+function conditionalInsideArm(names: string[]): string {
+  let out = "";
+  for (let i = 0; i < names.length; i++) out += i % 3 ? "[" + (i % 2 ? "odd " + names[i] : "even") + "]" : "third";
+  return out;
+}
+
+function partsOfEveryKind(values: (number | boolean | null | undefined | bigint | string)[]): string {
+  let out = "";
+  for (let i = 0; i < values.length; i++) out += `${i}:${values[i]}:${i & 1 ? values[i] + "/" + i : "-"};`;
+  return out;
+}
+
+function armReadsLongerString(names: string[]): string {
+  let out = "";
+  for (let i = 0; i < names.length; i++) out += "<" + (i & 1 ? "at " + out.length : "off") + ">";
+  return out;
+}
+
+function laterPartReadsLongerString(names: string[]): string {
+  let out = "";
+  for (let i = 0; i < names.length; i++) out += "<" + (i & 1 ? "a " + names[i] : "off") + "|" + out.length + ">";
+  return out;
+}
+
+function objectInFront(names: string[]): string {
+  let out = "";
+  for (let i = 0; i < names.length; i++) {
+    const noisy = { toString() { log.push("converted " + i); return "o" + i; } };
+    out += `${noisy}${i & 1 ? (log.push("arm " + i), "a " + names[i]) : "off"};`;
+  }
+  return out;
+}
+
+function armThrows(names: string[]): string {
+  let out = "";
+  for (let i = 0; i < names.length; i++) {
+    try {
+      out += "<" + (i % 3 === 2 ? "bad " + fail(names[i]) : "ok " + names[i]) + ">";
+    } catch (error) {
+      out += "(" + (error as Error).message + ")";
+    }
+  }
+  return out;
+}
+
+function fail(name: string): string {
+  throw new Error("no " + name);
+}
+
+function laterPartThrows(names: string[]): string {
+  let out = "";
+  for (let i = 0; i < names.length; i++) {
+    try {
+      out += "<" + (i & 1 ? "a " + names[i] : "off") + "|" + (i % 3 === 2 ? fail(names[i]) : names[i]) + ">";
+    } catch {
+      out += "?";
+    }
+  }
+  return out;
+}
+
+function beginsAgainInInnerLoop(rows: string[][]): string {
+  let out = "";
+  for (const cells of rows) {
+    let row = "";
+    for (const cell of cells) {
+      if (cell === "reset") row = "z";
+      row += cell;
+    }
+    out += "[" + row + "]";
+  }
+  return out;
+}
+
+function carriedBesideLongerString(names: string[]): string {
+  let out = "";
+  let previous = "x";
+  for (const name of names) {
+    out += "<" + previous + ">";
+    previous = "y" + name;
+  }
+  return out + previous;
+}
+
+function nestedStringReadTwice(names: string[]): string {
+  let out = "";
+  let longest = "";
+  for (let i = 0; i < names.length; i++) {
+    const label = i & 1 ? "a " + names[i] : "off";
+    out += label;
+    if (label.length > longest.length) longest = label;
+  }
+  return out + "|" + longest;
+}
+
+function leavesLoopInArm(names: string[]): string {
+  let out = "";
+  for (let i = 0; i < names.length; i++) {
+    let label: string;
+    if (names[i] === "stop") break;
+    else if (i & 1) label = "a " + names[i];
+    else label = "off";
+    out += "<" + label + ">";
+  }
+  return out;
+}
+
+const names = ["alpha", "beta", "gamma", "delta", "épsilon", "ζήτα", "eta"];
+const rows = [["a", "b"], [], ["c"], ["d", "reset", "e", "f"], ["ж", "reset"]];
+for (let round = 0; round < 3; round++) {
+  console.log(armsOfConditional(names, "c" + round));
+  console.log(armsOfConditional([], "none"));
+  console.log(conditionalIsLastPart(names));
+  console.log(stringOfInnerLoop(rows));
+  console.log(twoConditionals(names, round === 0, round === 1));
+  console.log(conditionalInsideArm(names));
+  console.log(partsOfEveryKind([1, -0, 1.5, NaN, true, null, undefined, 12n, "s", 1e21]));
+  console.log(armReadsLongerString(names));
+  console.log(laterPartReadsLongerString(names));
+  console.log(objectInFront(names.slice(0, 3)), log.splice(0).join(","));
+  console.log(armThrows(names));
+  console.log(laterPartThrows(names));
+  console.log(beginsAgainInInnerLoop(rows));
+  console.log(carriedBesideLongerString(names));
+  console.log(nestedStringReadTwice(names));
+  console.log(leavesLoopInArm(["one", "two", "three", "stop", "four"]));
+}
+//// append-nested-strings-length-limit.ts
+// A string built only to become a part of a longer string, where the longer string passes 2^31 - 1 characters:
+// the RangeError comes from the same concatenation as in plain Bun, with the same side effects before it, and is caught by the same catch.
+const log: string[] = [];
+////= doubled
+const big = doubled(30);
+const half = doubled(29);
+
+function noisy(label: string, text: string): string {
+  log.push(label);
+  return text;
+}
+////= attempt-3	result	result.length < 20 ? result : "length " + result.length	","
+
+function nothingAfterArm(first: string, text: string, times: number): string {
+  let out = first;
+  for (let i = 0; i < times; i++) out += "<" + (i & 1 ? text + "x" : "off") + ">";
+  return out;
+}
+
+function callAfterArm(first: string, text: string, times: number): string {
+  let out = first;
+  for (let i = 0; i < times; i++) out += "<" + (i & 1 ? text + "x" : "off") + noisy("after " + i, ">");
+  return out;
+}
+
+function conversionAfterArm(first: string, text: string, values: (string | undefined | number)[]): string {
+  let out = first;
+  for (let i = 0; i < values.length; i++) out += `<${i & 1 ? text + "x" : "off"}|${values[i]}>`;
+  return out;
+}
+
+////= lines-41	objectConvertedAfterArm	`<${i & 1 ? text + "x" : "off"}|${noisyObject}>`
+
+////= lines-41	objectConvertedInArm	"<" + (i & 1 ? text + noisyObject : "off") + ">"
+
+function callInArm(first: string, text: string, times: number): string {
+  let out = first;
+  for (let i = 0; i < times; i++) out += "<" + (i & 1 ? noisy("arm " + i, text) + "x" : "off") + ">";
+  return out;
+}
+
+function callInInnerLoop(first: string, text: string, times: number): string {
+  let out = first;
+  for (let i = 0; i < 2; i++) {
+    let row = "";
+    for (let j = 0; j < times; j++) row += noisy("cell " + i + j, text);
+    out += "[" + row + "]";
+  }
+  return out;
+}
+
+function storeInInnerLoop(first: string, text: string, times: number, seen: number[]): string {
+  let out = first;
+  for (let i = 0; i < 2; i++) {
+    let row = "";
+    for (let j = 0; j < times; j++) {
+      row += text;
+      seen[0] = i * 10 + j;
+    }
+    out += "[" + row + "]";
+  }
+  return out;
+}
+
+////= lines-38	leavesAfterArm	leaveAt	leaveAt) return "left at " + i
+
+////= lines-38	skipsAfterArm	skipAt	skipAt) continue
+
+function armInItsOwnTry(first: string, text: string, times: number): string {
+  let out = first;
+  for (let i = 0; i < times; i++) {
+    let label: string;
+    try {
+      label = i & 1 ? text + "x" : "off";
+    } catch {
+      label = "caught";
+      log.push("caught in the arm " + i);
+    }
+    out += "<" + label + ">";
+  }
+  return out;
+}
+
+function counterSeenByCatch(first: string, text: string, times: number): string {
+  let out = first;
+  let j = 0;
+  try {
+    for (let i = 0; i < 2; i++) {
+      let row = "";
+      for (j = 0; j < times; j++) row += text;
+      out += "[" + row + "]";
+    }
+  } catch (error) {
+    return (error as Error).name + " at " + j;
+  }
+  return out;
+}
+
+const seen = [-1];
+attempt("nothing after the arm, fits", () => nothingAfterArm(half, half, 2));
+attempt("nothing after the arm", () => nothingAfterArm(big, big, 2));
+attempt("a call after the arm, fits", () => callAfterArm(half, half, 2));
+attempt("a call after the arm", () => callAfterArm(big, big, 2));
+attempt("a conversion after the arm, fits", () => conversionAfterArm(half, half, [1, undefined]));
+attempt("a conversion after the arm", () => conversionAfterArm(big, big, [1, undefined]));
+attempt("an object converted after the arm", () => objectConvertedAfterArm(big, big, 2));
+attempt("an object converted in the arm, fits", () => objectConvertedInArm(half, half, 2));
+attempt("an object converted in the arm", () => objectConvertedInArm(big, big, 2));
+attempt("a call in the arm", () => callInArm(big, big, 2));
+attempt("a call in the inner loop, fits", () => callInInnerLoop("a", "b", 2));
+attempt("a call in the inner loop", () => callInInnerLoop(big, half, 2));
+attempt("a store in the inner loop", () => storeInInnerLoop(big, half, 2, seen) + seen[0]);
+console.log("stored", seen[0]);
+attempt("leaves after the arm", () => leavesAfterArm(big, big, 1));
+attempt("does not leave", () => leavesAfterArm(big, big, 5));
+attempt("skips after the arm", () => skipsAfterArm(big, big, 1));
+attempt("the arm in its own try", () => armInItsOwnTry(big, big, 2));
+attempt("the counter seen by the catch", () => counterSeenByCatch(big, half, 2));
+attempt("after all that", () => callAfterArm("a", "b", 3));
+//// append-pieces-chosen-by-conditions.js
+// Strings chosen by a condition are pieces of a template that is itself chosen by a condition and then concatenated.
+function describe(item, colors) {
+  const kind = item.isClass ? "a-class" : "a-function";
+  const color = item.isClass ? colors.classes : colors.functions;
+  const first = item.isAsync ? `async ` : "";
+  const second = item.isGenerator ? `*` : "";
+  const label = item.isClass ? `[class ${item.name}]` : `[${first}${second}function ${item.name}]`;
+  return `<i class="${kind}" style="${color}">` + label + "</i>";
+}
+console.log(describe({ name: "f", isAsync: true }, { classes: "red", functions: "blue" }));
+console.log(describe({ name: "C", isClass: true }, { classes: "red", functions: "blue" }));
+console.log(describe({ name: "g", isGenerator: true }, { classes: "red", functions: "blue" }));
+console.log(describe({ name: "h", isAsync: true, isGenerator: true }, { classes: "red" }));
+console.log(describe({}, {}));
+//// append-pieces-of-wide-texts.ts
+// Pieces of a text that holds a character outside Latin-1 are appended in loops, as they are and escaped: the pieces that are Latin-1 themselves, those that are not, and the texts whole. The answers are plain Bun's.
+const escape = Bun.escapeHTML;
+////= show-4	length <= 120 ? text : text.slice(0, 50) + ".." + text.slice(-50
+function pieces(text: string, size: number): string {
+  let out = "";
+  for (let at = 0; at < text.length; at += size) out += "[" + text.slice(at, at + size) + "]";
+  return out;
+}
+function escapedPieces(text: string, size: number): string {
+  let out = "";
+  for (let at = 0; at < text.length; at += size) out += "<i>" + escape(text.slice(at, at + size)) + "</i>";
+  return out;
+}
+function escapedWords(text: string): string {
+  let out = "";
+  for (const word of text.split(" ")) out += escape(word) + "|";
+  return out;
+}
+function words(text: string): string {
+  let out = "";
+  for (const word of text.split(" ")) out += word + "|";
+  return out;
+}
+function whole(texts: string[]): string {
+  let out = "";
+  for (const text of texts) out += escape(text) + "," + text + ";";
+  return out;
+}
+const texts: string[] = [
+  "plain words <b>and</b> 'marks' & \"more\" 東京",
+  "東京 at the start, café & crème after it",
+  "one 😀 pair, a lone \ud83d half & another \ude00 half",
+  "ÿþý <Latin-1> only until here: 語",
+  "語",
+  "a語",
+  "<語>",
+  "0123456789abcdef".repeat(20) + "&語" + "0123456789abcdef".repeat(20),
+];
+for (const text of texts) {
+  for (const size of [1, 2, 3, 7, 16, 33, 1000]) {
+    show("pieces " + size, pieces(text, size));
+    show("escaped pieces " + size, escapedPieces(text, size));
+  }
+  show("words", words(text));
+  show("escaped words", escapedWords(text));
+  show("a slice of a slice", escapedPieces(text.slice(1, -1), 5));
+  show("a rope", escapedPieces(text + "|" + text, 9));
+}
+show("whole", whole(texts));
+let total = 0;
+for (let round = 0; round < 3000; round++) {
+  total += escapedPieces("round " + round + " <of> many & 東京 " + (round % 5 ? "" : "😀"), 4).length + words("a b " + round + " 語").length;
+  if (round % 1000 === 0) Bun.gc(true);
+}
+console.log(total);
+//// append-slices-and-conversions.ts
+////= show-4	slice(0, 24)), JSON.stringify(text.slice(-24
+
+////= lines-22	appendSlices	slice	i	j
+////= lines-22	appendSubstrings	substring	j	i
+function appendNumbers(count: number): string {
+  let out = "";
+  for (let n = 0; n < count; n++) out += String(n * 37 - 1000);
+  return out;
+}
+function appendFractions(count: number): string {
+  let out = "";
+  for (let n = 0; n < count; n++) out += String(n / 4);
+  return out;
+}
+
+let other = "";
+const noisy = {
+  toString(): string {
+    other += "x";
+    return "<" + other.length + ">";
+  },
+};
+function appendObjects(o: { toString(): string }, count: number): string {
+  let out = "";
+  for (let n = 0; n < count; n++) out += String(o);
+  return out;
+}
+////= lines-30	appendBackwardSlice	1	slice	1	3
+////= lines-30	appendOpenEndedSlice	undefined	substring	3	undefined
+function appendSymbol(value: symbol | string): string {
+  let out = "a";
+  out += String(value);
+  out += "b";
+  return out;
+}
+function appendRegisteredSymbol(): string {
+  let out = "a";
+  out += String(Symbol.for("registered"));
+  out += "b";
+  return out;
+}
+function appendUntilThrow(o: { toString(): string }): string {
+  let out = "kept";
+  try {
+    out += "-more";
+    out += String(o);
+    out += "-not reached";
+  } catch (error) {
+    out += "|" + (error as Error).message;
+  }
+  return out;
+}
+
+const latin = "abcdefghijklmnop";
+const wide = "abcdefg日本語hijklm";
+const rope = latin + String(latin.length) + wide.slice(0, 4);
+const view = ("<<" + latin + latin + ">>").slice(2, -2);
+
+show("slices", appendSlices(latin, 10000));
+show("substrings", appendSubstrings(latin, 10000));
+show("wide slices", appendSlices(wide, 10000));
+show("wide substrings", appendSubstrings(wide, 10000));
+show("rope slices", appendSlices(rope, 10000));
+show("rope substrings", appendSubstrings(rope, 10000));
+show("view slices", appendSlices(view, 10000));
+show("view substrings", appendSubstrings(view, 10000));
+show("numbers", appendNumbers(10000));
+show("fractions", appendFractions(10000));
+show("objects", appendObjects(noisy, 10000));
+show("other", other);
+
+console.log(appendBackwardSlice(latin), appendBackwardSlice(wide));
+console.log(appendOpenEndedSlice(latin), appendOpenEndedSlice(wide));
+console.log(appendSymbol(Symbol("s")), appendSymbol("text"), appendRegisteredSymbol());
+console.log(appendUntilThrow({ toString(): string { throw new Error("no text"); } }));
+console.log(appendUntilThrow({ toString(): string { return "fine"; } }));
+
+export {};
+//// appends-of-every-length.js
+const pieces = [];
+for (let length = 0; length <= 300; length++) pieces.push("abcdefghijklmnopqrstuvwxyz0123456789".repeat(9).slice(0, length));
+pieces.push("é".repeat(5), "中文", "x" + "y".repeat(70000), ("r" + process.argv.length) + ("s" + process.argv.length));
+function join(a, b, c) { return "<" + a + "|" + b + "|" + c + ">"; }
+let sum = 0, text = "";
+for (let i = 0; i < pieces.length; i++) {
+  const joined = join(pieces[i], pieces[(i * 7 + 3) % pieces.length], pieces[pieces.length - 1 - i]);
+  sum = (sum * 31 + joined.length) % 1000003;
+  for (let k = 0; k < joined.length; k += 97) sum = (sum * 33 + joined.charCodeAt(k)) % 1000003;
+  if (i % 50 === 0) text += `${pieces[i]}:${joined.length};`;
+}
+let long = "";
+for (let i = 0; i < 400; i++) long = `${long}${pieces[i % 40]}-`;
+console.log(sum, text.length, long.length, long.slice(-40));
+//// arguments-of-a-built-in-method-fail-their-tests.ts
+// `text.substring(start, end)` over variables of a closure that untyped code also fills. The method is read before its arguments, and only the paths behind a failed test of an argument call it by value:
+// on each of them it is the built-in method, with the receiver and the arguments that plain Bun hands it.
+function createScanner(initial: string) {
+  var text: string = initial, pos: number = 0, end: number = initial.length, start: number = 0;
+  return {
+    setText(t: string): void { text = t; pos = 0; end = t.length; },
+    setStart(p: number): void { start = p; },
+    setPos(p: number): void { pos = p; },
+    word(): string {
+      while (pos < end) { const ch = text.charCodeAt(pos); if (ch >= 97 && ch <= 122) pos++; else break; }
+      return text.substring(start, pos);
+    },
+    cut(): string { return text.slice(start, pos) + "|" + text.indexOf("a", start) + "|" + text.padEnd(pos, "."); },
+  };
+}
+const parsed: any = JSON.parse('{"text":"alpha beta","zero":0,"two":"2","none":null}');
+const scanner = createScanner("none");
+let length = 0;
+for (let turn = 0; turn < 20000; ++turn) {
+  scanner.setText(parsed.text);
+  scanner.setStart(parsed.zero);
+  length = (length + scanner.word().length + scanner.cut().length) | 0;
+}
+console.log(length);
+
+const loose: any = scanner;
+const log: string[] = [];
+const counted = (name: string, value: number) => ({ valueOf() { log.push(name); return value; } });
+loose.setStart(parsed.two); console.log(scanner.word(), scanner.cut());
+loose.setStart(parsed.none); console.log(scanner.word(), scanner.cut());
+loose.setStart(undefined); console.log(scanner.word(), scanner.cut());
+loose.setStart(counted("start", 1)); console.log(scanner.word(), scanner.cut(), log.join());
+loose.setStart(0); loose.setPos(counted("pos", 3)); console.log(scanner.word(), log.join());
+loose.setStart(counted("start", 1)); loose.setPos("4"); console.log(scanner.word(), scanner.cut(), log.join());
+loose.setText({ length: 3, charCodeAt() { return 0; }, substring(a: unknown, b: unknown) { return "own substring " + String(a) + " " + String(b); }, slice() { return "own slice"; }, indexOf() { return -2; }, padEnd() { return "own padEnd"; } });
+loose.setStart(1); console.log(scanner.word(), scanner.cut());
+loose.setText(12345); try { console.log(scanner.word()); } catch (error) { console.log((error as Error).constructor.name); }
+//// atom-order-and-private-names.ts
+// A string that is both a property name and a constant in the source, and an equal string built at run time, are one key and equal strings whichever is interned first.
+const print = (s: string) => console.log(s);
+////= show-6
+function cat(a: string, b: string): string { return a + b; }
+function cat3(a: string, b: string, c: string): string { return `${a}${b}${c}`; }
+function part(s: string, from: number, to: number): string { return s.slice(from, to); }
+function flattened(s: string): string { s.charCodeAt(0); return s; }
+
+const unseen = (f: any): any => new Function("f", "return (...a) => f(...a)")(f);
+// Nothing the compiler can fold.
+const made = (...parts: string[]): string => parts.map(p => String.fromCharCode(...[...p].map(c => c.charCodeAt(0)))).join("");
+interface First { madeFirstAlpha: number; madeFirstBeta: string }
+interface Later { constantFirstAlpha: number; constantFirstBeta: string }
+export function equalOutside(a: string, b: string): boolean { return a === b; }
+export function equalInLoop(a: string, b: string): number { let n = 0; for (let i = 0; i < 3; i++) if (a === b) n++; return n; }
+export function isAlpha(a: string): string { return (a === "madeFirstAlpha") + "," + (a === "constantFirstAlpha") + "," + ("madeFirstAlpha" === a); }
+export function which(a: string): number { switch (a) { case "madeFirstAlpha": return 1; case "madeFirstBeta": return 2; case "constantFirstAlpha": return 3; case "constantFirstBeta": return 4; default: return 0; } }
+export function readFirst(o: First): string { return o.madeFirstAlpha + o.madeFirstBeta; }
+export function readLater(o: Later): string { return o.constantFirstAlpha + o.constantFirstBeta; }
+export function readByKey(o: any, k: string): unknown { return o[k]; }
+export function hasKey(o: any, k: string): boolean { return k in o; }
+function look(label: string, constants: string[], computed: string[], typed: any, read: (o: any) => string): void {
+    const parsed = JSON.parse("{" + computed.map((k, i) => JSON.stringify(k) + ":" + (i ? '"p"' : "7")).join() + "}");
+    const byKey: any = {}; computed.forEach((k, i) => { byKey[k] = i ? "k" : 5; });
+    const map = new Map<string, number>(); const set = new Set<string>();
+    constants.forEach((c, i) => { map.set(c, i); set.add(c); }); computed.forEach((k, i) => { map.set(k, i + 10); set.add(k); });
+    const out: unknown[] = [];
+    for (let i = 0; i < constants.length; i++) {
+        const c = constants[i], k = computed[i], own = Object.keys(parsed)[i], ownTyped = Object.keys(typed)[i];
+        for (const [x, y] of [[c, k], [k, c], [c, own], [own, k], [c, ownTyped], [ownTyped, own]])
+            out.push(unseen(equalOutside)(x, y), unseen(equalInLoop)(x, y), equalOutside(x, y), x == y, Object.is(x, y));
+        out.push(unseen(isAlpha)(k), unseen(which)(k), unseen(which)(own), unseen(which)(c));
+        for (const o of [parsed, byKey, typed]) out.push(unseen(readByKey)(o, c), unseen(readByKey)(o, k), unseen(readByKey)(o, own), unseen(hasKey)(o, c), unseen(hasKey)(o, k), Object.hasOwn(o, c), Object.hasOwn(o, k));
+    }
+    out.push(unseen(read)(typed), unseen(read)(parsed), unseen(read)(byKey), map.size, set.size, [...map.values()].join("/"), Object.keys({ ...parsed, ...typed, ...byKey }).length);
+    print(label + ": " + out.join());
+}
+// The string created at run time becomes an atom first: as a key of an object, and through JSON.parse. No constant with that text has been requested yet: these two functions are the first to do so.
+const early = [made("made", "First", "Alpha"), made("madeFirst", "Beta")];
+const warm: any = {}; for (const k of early) warm[k] = 1; JSON.parse('{"madeFirstAlpha":1,"madeFirstBeta":2}');
+function firstConstants(): string[] { return ["madeFirstAlpha", "madeFirstBeta"]; }
+function firstObject(): First { return { madeFirstAlpha: 1, madeFirstBeta: "t" }; }
+look("made first", unseen(firstConstants)(), early, unseen(firstObject)(), readFirst);
+// The other order.
+function laterConstants(): string[] { return ["constantFirstAlpha", "constantFirstBeta"]; }
+function laterObject(): Later { return { constantFirstAlpha: 1, constantFirstBeta: "t" }; }
+const constants = unseen(laterConstants)(), object = unseen(laterObject)();
+look("constant first", constants, [made("constant", "FirstAlpha"), made("constantFirst", "Beta")], object, readLater);
+
+// Private names.
+class Keeps { #hidden = 1; hidden = 2; static has(o: object): boolean { return #hidden in o; } get(): number { return this.#hidden; } set(v: number): void { this.#hidden = v; } }
+class Other { #hidden = 3; static has(o: object): boolean { return #hidden in o; } get(): number { return this.#hidden; } }
+const keeps = new Keeps(), other = new Other(); keeps.set(5);
+const seen: string[] = [];
+const proxy = new Proxy(keeps, { has(t, k) { seen.push("has " + String(k)); return k in t; }, get(t, k, r) { seen.push("get " + String(k)); return Reflect.get(t, k, t); }, ownKeys(t) { seen.push("ownKeys"); return Reflect.ownKeys(t); } });
+print([Object.keys(keeps), JSON.stringify(keeps), Reflect.ownKeys(keeps).length, Object.getOwnPropertyNames(keeps), Object.getOwnPropertySymbols(keeps).length, Keeps.has(keeps), Keeps.has(other), Other.has(other), Other.has(keeps), keeps.get(), other.get(), "hidden" in keeps, "#hidden" in keeps,
+    Reflect.ownKeys(keeps).some(k => String(k).includes("#")), Object.keys({ ...keeps }), attempt(() => Keeps.prototype.get.call(other)), attempt(() => (proxy as any).hidden), attempt(() => (proxy as Keeps).get()), Object.keys(proxy), seen.join("/")].join(" | "));
+for (const k in keeps) print("for in: " + k);
+(globalThis as any).kept = [equalOutside, equalInLoop, isAlpha, which, readFirst, readLater, readByKey, hasKey]; console.log("number");
+//// atom-order-and-private-names-untyped.js
+// A string that is both a property name and a constant in the source, and an equal string built at run time, are one key and equal strings whichever is interned first (the same program without type annotations).
+class Keeps {
+  #hidden = 1;
+  hidden = 2;
+  static has(o) {
+    return #hidden in o;
+  }
+  get() {
+    return this.#hidden;
+  }
+  set(v) {
+    this.#hidden = v;
+  }
+}
+
+class Other {
+  #hidden = 3;
+  static has(o) {
+    return #hidden in o;
+  }
+  get() {
+    return this.#hidden;
+  }
+}
+const print = (s) => console.log(s);
+////= show-5
+const unseen = (f) => new Function("f", "return (...a) => f(...a)")(f);
+const made = (...parts) => parts.map((p) => String.fromCharCode(...[...p].map((c) => c.charCodeAt(0)))).join("");
+////= lines-33	equalOutside
+export function equalInLoop(a, b) {
+  let n = 0;
+  for (let i = 0;i < 3; i++)
+    if (a === b)
+      n++;
+  return n;
+}
+export function isAlpha(a) {
+  return (a === "madeFirstAlpha") + "," + (a === "constantFirstAlpha") + "," + (a === "madeFirstAlpha");
+}
+export function which(a) {
+  switch (a) {
+    case "madeFirstAlpha":
+      return 1;
+    case "madeFirstBeta":
+      return 2;
+    case "constantFirstAlpha":
+      return 3;
+    case "constantFirstBeta":
+      return 4;
+    default:
+      return 0;
+  }
+}
+export function readFirst(o) {
+  return o.madeFirstAlpha + o.madeFirstBeta;
+}
+export function readLater(o) {
+  return o.constantFirstAlpha + o.constantFirstBeta;
+}
+export function readByKey(o, k) {
+  return o[k];
+}
+export function hasKey(o, k) {
+  return k in o;
+}
+function look(label, constants, computed, typed, read) {
+  const parsed = JSON.parse("{" + computed.map((k, i) => JSON.stringify(k) + ":" + (i ? '"p"' : "7")).join() + "}");
+  const byKey = {};
+  computed.forEach((k, i) => {
+    byKey[k] = i ? "k" : 5;
+  });
+  const map = new Map;
+  const set = new Set;
+  constants.forEach((c, i) => {
+    map.set(c, i);
+    set.add(c);
+  });
+  computed.forEach((k, i) => {
+    map.set(k, i + 10);
+    set.add(k);
+  });
+  const out = [];
+  for (let i = 0;i < constants.length; i++) {
+    const c = constants[i], k = computed[i], own = Object.keys(parsed)[i], ownTyped = Object.keys(typed)[i];
+    for (const [x, y] of [[c, k], [k, c], [c, own], [own, k], [c, ownTyped], [ownTyped, own]])
+      out.push(unseen(equalOutside)(x, y), unseen(equalInLoop)(x, y), equalOutside(x, y), x == y, Object.is(x, y));
+    out.push(unseen(isAlpha)(k), unseen(which)(k), unseen(which)(own), unseen(which)(c));
+    for (const o of [parsed, byKey, typed])
+      out.push(unseen(readByKey)(o, c), unseen(readByKey)(o, k), unseen(readByKey)(o, own), unseen(hasKey)(o, c), unseen(hasKey)(o, k), Object.hasOwn(o, c), Object.hasOwn(o, k));
+  }
+  out.push(unseen(read)(typed), unseen(read)(parsed), unseen(read)(byKey), map.size, set.size, [...map.values()].join("/"), Object.keys({ ...parsed, ...typed, ...byKey }).length);
+  print(label + ": " + out.join());
+}
+const early = [made("made", "First", "Alpha"), made("madeFirst", "Beta")];
+const warm = {};
+for (const k of early)
+  warm[k] = 1;
+JSON.parse('{"madeFirstAlpha":1,"madeFirstBeta":2}');
+function firstConstants() {
+  return ["madeFirstAlpha", "madeFirstBeta"];
+}
+function firstObject() {
+  return { madeFirstAlpha: 1, madeFirstBeta: "t" };
+}
+look("made first", unseen(firstConstants)(), early, unseen(firstObject)(), readFirst);
+function laterConstants() {
+  return ["constantFirstAlpha", "constantFirstBeta"];
+}
+function laterObject() {
+  return { constantFirstAlpha: 1, constantFirstBeta: "t" };
+}
+const constants = unseen(laterConstants)();
+const object = unseen(laterObject)();
+look("constant first", constants, [made("constant", "FirstAlpha"), made("constantFirst", "Beta")], object, readLater);
+const keeps = new Keeps;
+const other = new Other;
+keeps.set(5);
+const seen = [];
+const proxy = new Proxy(keeps, { has(t, k) {
+  seen.push("has " + String(k));
+  return k in t;
+}, get(t, k, r) {
+  seen.push("get " + String(k));
+  return Reflect.get(t, k, t);
+}, ownKeys(t) {
+  seen.push("ownKeys");
+  return Reflect.ownKeys(t);
+} });
+print([
+  Object.keys(keeps),
+  JSON.stringify(keeps),
+  Reflect.ownKeys(keeps).length,
+  Object.getOwnPropertyNames(keeps),
+  Object.getOwnPropertySymbols(keeps).length,
+  Keeps.has(keeps),
+  Keeps.has(other),
+  Other.has(other),
+  Other.has(keeps),
+  keeps.get(),
+  other.get(),
+  "hidden" in keeps,
+  "#hidden" in keeps,
+  Reflect.ownKeys(keeps).some((k) => String(k).includes("#")),
+  Object.keys({ ...keeps }),
+  attempt(() => Keeps.prototype.get.call(other)),
+  attempt(() => proxy.hidden),
+  attempt(() => proxy.get()),
+  Object.keys(proxy),
+  seen.join("/")
+].join(" | "));
+for (const k in keeps)
+  print("for in: " + k);
+globalThis.kept = [equalOutside, equalInLoop, isAlpha, which, readFirst, readLater, readByKey, hasKey];
+console.log("number");
+//// atomic-group-idiom-character-class.ts
+// The atomic-group idioms `(?=([C]*))\N` and `(?=([C]+))\N` over a character class.
+declare const console: { log(...args: unknown[]): void }
+const expressions: RegExp[] = [
+  /(?=([ab]*))\1c/, /(?=([ab]+))\1c/, /(?=([ab]*))\1c/i, /(?=([ab]+))\1c/u, /(?=([ab]*))\1c/iu, /(?=([ab]+))\1c/giu, /(?=([ab]*))\1c/y, /(?=([ab]+))\1c/gy, /(?=([ab]*))\1c/v, /(?=([ab]+))\1c/d,
+  /(?=([^ab]*))\1a/, /(?=([^ab]+))\1a/, /(?=([^ab]*))\1a/u, /(?=([^ab]+))\1a/iu, /(?=(\s*))\1x/, /(?=(\s+))\1x/u, /(?=(\w*))\1!/, /(?=(\w+))\1!/iu, /(?=(\W+))\1a/u, /(?=(\d*))\1\./, /(?=(\D+))\1\d/u, /(?=(.*))\1$/, /(?=(.+))\1$/su, /(?=(.*))\1\n/u, /(?=([^]*))\1$/, /(?=([^]+))\1/u,
+  /(?=([\u{1f600}-\u{1f64f}]*))\1a/u, /(?=([\u{1f600}-\u{1f64f}]+))\1a/u, /(?=([a\u{1f600}-\u{1f64f}]*))\1b/u, /(?=([a\u{1f600}-\u{1f64f}]+))\1b/iu, /(?=([^\u{1f600}-\u{1f64f}]+))\1\u{1f600}/u, /(?=([\ud83d]*))\1a/, /(?=([😀]+))\1a/, /(?=([\ud800-\udfff]+))\1a/u, /(?=(\p{L}*))\1\p{N}/u, /(?=(\p{Lu}+))\1\p{Ll}/u, /(?=(\P{L}+))\1\p{L}/u, /(?=([\p{L}--[a-z]]+))\1a/v,
+  /(?=([\u0430-\u044f]+))\1!/i, /(?=([\u{430}-\u{44f}]+))\1!/iu, /(?=([k\u{212a}]+))\1s/iu, /(?=([\u00dfs]+))\1t/i, /(?=([\u00e9\u00e8]*))\1x/i,
+  /x(?=([ab]*))\1cde/, /xy(?=([ab]+))\1cde/u, /(?=([ab]*))\1cdefgh/, /x(?=([ab]*))\1c(?=([de]*))\2f/, /x(?=([ab]+))\1c(?=([ab]+))\2c(?=([ab]*))\3$/u, /(?=([ab]*))\1(?=([cd]*))\2(?=([ab]*))\3e/, /(?=([ab]*))\1[ab]/, /(?=([ab]+))\1[ab]/u, /(?=([ab]*))\1(?:c|$)/,
+  /(?:(?=([ab]+))\1c)+d/, /(?:(?=([ab]*))\1c)*d/u, /(?:x(?=([ab]*))\1y){2,3}/, /(?:(?=([ab]+))\1c|ab)+/, /(?:(?=([ab]+))\1c|(a)b)+?$/, /((?=([ab]+))\2c)\1/, /(?=([ab]+))\1c|(?=([ab]+))\2d/, /^(?:(?=([ab]*))\1c|(?=([ab]*))\2d|.)*$/, /(z)?(?=([ab]+))\2c\1/, /(?=([ab]+))\1c\1/, /(?=([ab]+))\1(c)\2\1/i,
+  /(?=(?=([ab]*))\1c)a/, /(?!(?=([ab]*))\1c)a/, /(?<=x)(?=([ab]*))\1c/, /(?<=(?=([ab]*))\1)c/, /(?<!(?=([ab]+))\1)c/, /(?<=x(?=([ab]*))\1)c/u, /(?=((?=([ab]*))\2c))\1d/,
+  /(?=([ab]*?))\1c/, /(?=([ab]{2,}))\1c/, /(?=([ab]{0,3}))\1c/, /(?=([ab]?))\1c/, /(?=([ab]))\1c/, /(?=([ab]*c))\1d/, /(?=(c[ab]*))\1d/, /(?=([ab][cd]*))\1e/, /(?=([ab][ab]*))\1c/, /(?=([ab]+[ab]*))\1c/, /(?=([ab]*|c))\1d/, /(?=(?:[ab]*))c/, /(?=([ab]*))\1*c/, /(?=([ab]*))\1?c/, /(?=([ab]*))(?:)\1c/, /(?=([ab]*))c\1/, /(?=([ab]*)){2}\1c/, /(?=(?<n>[ab]*))\k<n>c/, /(?=(?<n>[ab]+))\1c/u,
+]
+const F = String.fromCodePoint, G = F(0x1f600), H = F(0x1f64f), L = F(0xd83d), T = F(0xde00)
+const subjects: string[] = ["", "a", "b", "c", "ab", "abc", "ABC", "aabbc", "abab", "ababc ababd", "xabcde", "xyabcde", "xcde", "xabcdef", "xabcabcab", "xcabc", "abcdabe", "cd", "abcabcd", "cccd", "xaby", "xabyxyxbay", "xyxy", "abcab", "abcabc", "zabcz", "abcc", "abCcAB", "  x", "\t\n x", "x", "word!", "!", "__9!", "12.5", ".", "abc1", "line\nnext", "\n", "a\nb\n",
+  G + "a", G + H + "a", "a" + G + "b", G + "aA" + H + "B", "xyz" + G, L + "a", L + L + "a", T + "a", L + T + "a", T + L + "a", "a" + L, G + L + "a", L + G + "a", "x" + T, F(0x430, 0x431) + "!", F(0x410, 0x44f) + "!", F(0x212a) + "ks", "KkS", F(0xdf) + "sst", "SST", F(0xe9, 0xc9, 0xe8) + "x", F(0x416) + "1", "Abc", "ABc", "123a", F(0x1d400) + "7", F(0x416) + "a", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab", "abababababababababababababababababababababababababababababababababc"]
+function show(m: RegExpExecArray | null): string { return m === null ? "-" : m.index + ":" + JSON.stringify(Array.from(m)) }
+let rows = 0
+for (let e = 0; e < expressions.length; e++) {
+  const r = expressions[e]
+  let line = ""
+  for (const s of subjects) {
+    r.lastIndex = 0
+    const first = show(r.exec(s)), at = r.lastIndex
+    const second = r.global || r.sticky ? show(r.exec(s)) : ""
+    r.lastIndex = 1
+    const third = r.global || r.sticky ? show(r.exec(s)) : ""
+    r.lastIndex = 0
+    line += " " + first + (at ? "@" + at : "") + second + third + "|" + JSON.stringify(s.replace(r, "<$&,$1,$2>")) + (r.test(s) ? "t" : "f") + s.search(r) + "," + s.split(r).length
+    r.lastIndex = 0
+  }
+  rows++
+  console.log(e + " /" + r.flags + " ->" + line)
+}
+console.log(rows + " rows")
+//// atomic-group-idiom-character-class-untyped.js
+// The atomic-group idioms `(?=([C]*))\N` and `(?=([C]+))\N` over a character class (the same program without type annotations).
+const expressions = [
+  /(?=([ab]*))\1c/,
+  /(?=([ab]+))\1c/,
+  /(?=([ab]*))\1c/i,
+  /(?=([ab]+))\1c/u,
+  /(?=([ab]*))\1c/iu,
+  /(?=([ab]+))\1c/giu,
+  /(?=([ab]*))\1c/y,
+  /(?=([ab]+))\1c/gy,
+  /(?=([ab]*))\1c/v,
+  /(?=([ab]+))\1c/d,
+  /(?=([^ab]*))\1a/,
+  /(?=([^ab]+))\1a/,
+  /(?=([^ab]*))\1a/u,
+  /(?=([^ab]+))\1a/iu,
+  /(?=(\s*))\1x/,
+  /(?=(\s+))\1x/u,
+  /(?=(\w*))\1!/,
+  /(?=(\w+))\1!/iu,
+  /(?=(\W+))\1a/u,
+  /(?=(\d*))\1\./,
+  /(?=(\D+))\1\d/u,
+  /(?=(.*))\1$/,
+  /(?=(.+))\1$/su,
+  /(?=(.*))\1\n/u,
+  /(?=([^]*))\1$/,
+  /(?=([^]+))\1/u,
+  /(?=([\u{1f600}-\u{1f64f}]*))\1a/u,
+  /(?=([\u{1f600}-\u{1f64f}]+))\1a/u,
+  /(?=([a\u{1f600}-\u{1f64f}]*))\1b/u,
+  /(?=([a\u{1f600}-\u{1f64f}]+))\1b/iu,
+  /(?=([^\u{1f600}-\u{1f64f}]+))\1\u{1f600}/u,
+  /(?=([\ud83d]*))\1a/,
+  /(?=([\uD83D\uDE00]+))\1a/,
+  /(?=([\ud800-\udfff]+))\1a/u,
+  /(?=(\p{L}*))\1\p{N}/u,
+  /(?=(\p{Lu}+))\1\p{Ll}/u,
+  /(?=(\P{L}+))\1\p{L}/u,
+  /(?=([\p{L}--[a-z]]+))\1a/v,
+  /(?=([\u0430-\u044f]+))\1!/i,
+  /(?=([\u{430}-\u{44f}]+))\1!/iu,
+  /(?=([k\u{212a}]+))\1s/iu,
+  /(?=([\u00dfs]+))\1t/i,
+  /(?=([\u00e9\u00e8]*))\1x/i,
+  /x(?=([ab]*))\1cde/,
+  /xy(?=([ab]+))\1cde/u,
+  /(?=([ab]*))\1cdefgh/,
+  /x(?=([ab]*))\1c(?=([de]*))\2f/,
+  /x(?=([ab]+))\1c(?=([ab]+))\2c(?=([ab]*))\3$/u,
+  /(?=([ab]*))\1(?=([cd]*))\2(?=([ab]*))\3e/,
+  /(?=([ab]*))\1[ab]/,
+  /(?=([ab]+))\1[ab]/u,
+  /(?=([ab]*))\1(?:c|$)/,
+  /(?:(?=([ab]+))\1c)+d/,
+  /(?:(?=([ab]*))\1c)*d/u,
+  /(?:x(?=([ab]*))\1y){2,3}/,
+  /(?:(?=([ab]+))\1c|ab)+/,
+  /(?:(?=([ab]+))\1c|(a)b)+?$/,
+  /((?=([ab]+))\2c)\1/,
+  /(?=([ab]+))\1c|(?=([ab]+))\2d/,
+  /^(?:(?=([ab]*))\1c|(?=([ab]*))\2d|.)*$/,
+  /(z)?(?=([ab]+))\2c\1/,
+  /(?=([ab]+))\1c\1/,
+  /(?=([ab]+))\1(c)\2\1/i,
+  /(?=(?=([ab]*))\1c)a/,
+  /(?!(?=([ab]*))\1c)a/,
+  /(?<=x)(?=([ab]*))\1c/,
+  /(?<=(?=([ab]*))\1)c/,
+  /(?<!(?=([ab]+))\1)c/,
+  /(?<=x(?=([ab]*))\1)c/u,
+  /(?=((?=([ab]*))\2c))\1d/,
+  /(?=([ab]*?))\1c/,
+  /(?=([ab]{2,}))\1c/,
+  /(?=([ab]{0,3}))\1c/,
+  /(?=([ab]?))\1c/,
+  /(?=([ab]))\1c/,
+  /(?=([ab]*c))\1d/,
+  /(?=(c[ab]*))\1d/,
+  /(?=([ab][cd]*))\1e/,
+  /(?=([ab][ab]*))\1c/,
+  /(?=([ab]+[ab]*))\1c/,
+  /(?=([ab]*|c))\1d/,
+  /(?=(?:[ab]*))c/,
+  /(?=([ab]*))\1*c/,
+  /(?=([ab]*))\1?c/,
+  /(?=([ab]*))(?:)\1c/,
+  /(?=([ab]*))c\1/,
+  /(?=([ab]*)){2}\1c/,
+  /(?=(?<n>[ab]*))\k<n>c/,
+  /(?=(?<n>[ab]+))\1c/u
+];
+const F = String.fromCodePoint;
+const G = F(128512);
+const H = F(128591);
+const L = F(55357);
+const T = F(56832);
+const subjects = [
+  "",
+  "a",
+  "b",
+  "c",
+  "ab",
+  "abc",
+  "ABC",
+  "aabbc",
+  "abab",
+  "ababc ababd",
+  "xabcde",
+  "xyabcde",
+  "xcde",
+  "xabcdef",
+  "xabcabcab",
+  "xcabc",
+  "abcdabe",
+  "cd",
+  "abcabcd",
+  "cccd",
+  "xaby",
+  "xabyxyxbay",
+  "xyxy",
+  "abcab",
+  "abcabc",
+  "zabcz",
+  "abcc",
+  "abCcAB",
+  "  x",
+  `	
+ x`,
+  "x",
+  "word!",
+  "!",
+  "__9!",
+  "12.5",
+  ".",
+  "abc1",
+  `line
+next`,
+  `
+`,
+  `a
+b
+`,
+  G + "a",
+  G + H + "a",
+  "a" + G + "b",
+  G + "aA" + H + "B",
+  "xyz" + G,
+  L + "a",
+  L + L + "a",
+  T + "a",
+  L + T + "a",
+  T + L + "a",
+  "a" + L,
+  G + L + "a",
+  L + G + "a",
+  "x" + T,
+  F(1072, 1073) + "!",
+  F(1040, 1103) + "!",
+  F(8490) + "ks",
+  "KkS",
+  F(223) + "sst",
+  "SST",
+  F(233, 201, 232) + "x",
+  F(1046) + "1",
+  "Abc",
+  "ABc",
+  "123a",
+  F(119808) + "7",
+  F(1046) + "a",
+  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab",
+  "abababababababababababababababababababababababababababababababababc"
+];
+function show(m) {
+  return m === null ? "-" : m.index + ":" + JSON.stringify(Array.from(m));
+}
+let rows = 0;
+for (let e = 0;e < expressions.length; e++) {
+  const r = expressions[e];
+  let line = "";
+  for (const s of subjects) {
+    r.lastIndex = 0;
+    const first = show(r.exec(s)), at = r.lastIndex;
+    const second = r.global || r.sticky ? show(r.exec(s)) : "";
+    r.lastIndex = 1;
+    const third = r.global || r.sticky ? show(r.exec(s)) : "";
+    r.lastIndex = 0;
+    line += " " + first + (at ? "@" + at : "") + second + third + "|" + JSON.stringify(s.replace(r, "<$&,$1,$2>")) + (r.test(s) ? "t" : "f") + s.search(r) + "," + s.split(r).length;
+    r.lastIndex = 0;
+  }
+  rows++;
+  console.log(e + " /" + r.flags + " ->" + line);
+}
+console.log(rows + " rows");
+//// atomic-group-idiom-long-regexps.ts
+// The atomic-group idiom `(?=(X))\1` inside very long regular expressions.
+declare const console: { log(...args: unknown[]): void }
+function long(text: string, flags: string): RegExp { return new RegExp(text + "|[" + "a".repeat(17000) + "]{9}~~", flags) }
+const expressions: RegExp[] = [
+  long("(?=([abd-fx-z0-9_]*))\\1!", ""), long("(?=([abd-fx-z0-9_]+))\\1!", ""), long("(?=([abd-fx-z0-9_]+))\\1!", "i"), long("(?=([abd-fx-z0-9_]+))\\1!", "u"), long("(?=([abd-fx-z0-9_]*))\\1!", "iu"), long("(?=([abd-fx-z0-9_]+))\\1!", "giu"), long("(?=([abd-fx-z0-9_]+))\\1!", "y"), long("(?=([abd-fx-z0-9_]*))\\1!", "v"),
+  long("(?=([^abd-fx-z0-9_]*))\\1a", ""), long("(?=([^abd-fx-z0-9_]+))\\1a", ""), long("(?=([^abd-fx-z0-9_]+))\\1a", "u"), long("(?=([^abd-fx-z0-9_]*))\\1a", "iu"), long("(?=([^abd-fx-z0-9_]+))\\1a", "giu"), long("(?=([^abd-fx-z0-9_]+))\\1a", "v"),
+  long("(?=([\\w$.-]+))\\1;", ""), long("(?=([\\w$.-]*))\\1;", "u"), long("(?=([\\w$.-]+))\\1;", "iu"), long("(?=([^\\s\"'(\\[{<]+))\\1\\s", ""), long("(?=([^\\s\"'(\\[{<]+))\\1\\s", "u"), long("(?=([^\\s\"'(\\[{<]*))\\1\\s", "giu"),
+  long("(?=([a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]*))\\1X", "u"), long("(?=([a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]+))\\1X", "u"), long("(?=([a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]+))\\1X", "iu"), long("(?=([a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]+))\\1X", "giu"), long("(?=([a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]*))\\1X", "v"),
+  long("(?=([^a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]*))\\1_", "u"), long("(?=([^a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]+))\\1_", "u"), long("(?=([^a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]+))\\1_", "iu"), long("(?=([^a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]+))\\1\\u{1f600}", "u"),
+  long("(?=([\\p{L}\\d_]+))\\1!", "u"), long("(?=([\\p{L}\\d_]*))\\1!", "iu"), long("(?=([^\\p{L}\\d_]+))\\1a", "u"), long("(?=([\\ud83d\\ude00ab0-9]+))\\1a", ""), long("(?=([\\ud83d\\ude00ab0-9]*))\\1X", ""), long("(?=([^\\ud83d\\ude00ab0-9]+))\\1a", ""),
+  long("y(?=([abd-fx-z0-9_]+))\\1!", ""), long("y(?=([abd-fx-z0-9_]+))\\1!", "u"), long("xy(?=([abd-fx-z0-9_]*))\\1!!", "iu"), long("\\u{1f600}(?=([a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]+))\\1X", "u"), long(".(?=([a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]+))\\1X", "u"), long("..(?=([^a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]+))\\1_", "u"),
+  long("(?=([abd-fx-z0-9_]+))\\1-(?=([abd-fx-z0-9_]*))\\2;", ""), long("(?=([abd-fx-z0-9_]+))\\1-(?=([abd-fx-z0-9_]*))\\2;", "u"), long("(?=([abd-fx-z0-9_]+))\\1-(?=([^abd-fx-z0-9_]+))\\2a", "iu"), long("(?=([a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]+))\\1-(?=([a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]+))\\2;", "u"), long("(?=([\\w$.-]+))\\1 (?=([abd-fx-z0-9_]+))\\2!", "giu"),
+  long("(?:(?=([abd-fx-z0-9_]+))\\1|q)z", ""), long("(?:(?=([abd-fx-z0-9_]+))\\1!|q)z", "u"), long("(?:(?=([abd-fx-z0-9_]*))\\1!|(?=([\\w$.-]+))\\2;)+", "u"), long("(?:(?=([a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]+))\\1X|.)+$", "u"), long("(z)?(?=([abd-fx-z0-9_]+))\\2(!)?;", "iu"), long("^(?:(?=([^\\s\"'(\\[{<]+))\\1\\s)*$", "u"),
+]
+const F = String.fromCodePoint, G = F(0x1f600), H = F(0x1f64f), L = F(0xd83d), T = F(0xde00), Z = F(0x436)
+const subjects: string[] = ["", "a", "!", "ab!", "AB!", "ab", "c!", "abc!", "ab09_z!", "ab09_z", "  a", "--a", "cca", "CCa", "a.b-c;", "$;", ";", "a.b c", "word next", "word", "(x y", "y12_ab!", "yab", "xyab!!", "xy!!", "xyab!", "ab-xy;", "ab-;", "ab-", "-;", "ab---a", "ab-cca", "a.b ab!", "a.b ab", "qz", "abz", "ab!z", "z", "ab!a.b;ab!", "zab!;", "ab;", "zab;", "one two three ", "one two three", "one (two ",
+  G + "X", G + H + "X", "a" + G + "_" + Z + "X", "A" + G + "x", G, G + "a", L + "X", "a" + L + "X", "a" + L, "_" + L, "_" + T + "X", T + "X", L + T + "X", T + L + "X", G + L + "X", L + G + "X", G + L, "x" + L + "_", L + "_", T + "_", "x" + G + "_", "xx" + L, "x" + L + G, "dd" + G, L + G, G + G + "X", G + "a" + G + "X", "q" + G + "X", L + "a" + "X", "qq" + L + "x_", G + G + "-" + H + ";", G + "-" + L + ";", Z + "7_!", Z + L + "!", L + "a", T + "a", L + L + "a", "ab" + L + "9a", L + "9X", "x" + Z + "a", G + "X" + L + "aX", "aX" + L, Z + Z + " " + G + " ",
+  "ab09_zab09_zab09_zab09_zab09_zab09_zab09_zab09_zab09_zab09_zab09_zab09_z!", "ab09_zab09_zab09_zab09_zab09_zab09_zab09_zab09_zab09_zab09_zab09_zab09_z", "aaaaaaaaa~", "aaaaaaaaa~~", "xaaaaaaaaaa~~y"]
+function show(m: RegExpExecArray | null): string { return m === null ? "-" : m.index + ":" + JSON.stringify(Array.from(m)) }
+function sum(s: string): number { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h }
+let rows = 0
+for (let e = 0; e < expressions.length; e++) {
+  const r = expressions[e]
+  let line = ""
+  for (const s of subjects) {
+    r.lastIndex = 0
+    const first = show(r.exec(s)), at = r.lastIndex
+    const second = r.global || r.sticky ? show(r.exec(s)) : ""
+    r.lastIndex = 1
+    const third = r.global || r.sticky ? show(r.exec(s)) : ""
+    r.lastIndex = 0
+    line += " " + first + (at ? "@" + at : "") + second + third + "|" + JSON.stringify(s.replace(r, "<$&,$1,$2>")) + (r.test(s) ? "t" : "f") + s.search(r) + "," + s.split(r).length
+    r.lastIndex = 0
+  }
+  rows++
+  console.log(e + " /" + r.flags + " " + r.source.length + " " + sum(r.source) + " " + sum(String(r)) + " ->" + line)
+}
+console.log(rows + " rows")

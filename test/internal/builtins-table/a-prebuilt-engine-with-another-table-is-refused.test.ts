@@ -9,12 +9,11 @@ import { engineDirectory, engineFiles as generated } from "./engine-files.ts";
 const bunRoot = resolve(import.meta.dir, "..", "..", "..");
 const schemas = globAllSources().bindgen;
 
-// Each test runs the generator once. A run writes into its --codegen-path and nowhere else, and each test has folders of its own, so the
-// four runs overlap. With AddressSanitizer one run takes about a minute by itself, and four at once take as long as four in a row on a
-// machine with few free CPUs. So there a run has the time that the four tests had one after the other.
-const limitOfRun = isASAN ? 4 * 120_000 : 120_000;
-// A concurrent test that runs out of time does not end what it started. So the run has the shorter limit, and its test reports the end.
-const limitOfTest = limitOfRun + 10_000;
+// The four runs overlap: each test has folders of its own, and a run writes into its --codegen-path only.
+// With AddressSanitizer one run takes about a minute by itself and longer beside three others.
+const limitOfTest = isASAN ? 240_000 : 120_000;
+// bun test does not end the child of a concurrent test that times out. So the run ends first, and its test reports that.
+const limitOfRun = limitOfTest - 10_000;
 
 interface Generated {
   exitCode: number;
@@ -63,9 +62,7 @@ test.skipIf(generated === undefined).concurrent(
   async () => {
     const { root, generatedCopy, codegen } = copyOfEngine();
     using _ = root;
-    const { exitCode, errors } = await generateAgainst(generatedCopy, codegen);
-    expect(errors).toEqual([]);
-    expect(exitCode).toBe(0);
+    expect(await generateAgainst(generatedCopy, codegen)).toEqual({ errors: [], exitCode: 0 });
   },
   limitOfTest,
 );
@@ -78,15 +75,19 @@ test.skipIf(generated === undefined).concurrent(
     const ids = join(generatedCopy, "AOTBuiltinIDs.h");
     const text = readFileSync(ids, "utf8");
     const line = /inline constexpr NamedTableID<BuiltinID> ArrayPrototypePush \{ (\d+) \};/.exec(text)!;
-    const lineNumber = text.slice(0, line.index).split("\n").length;
+    // The generator trims the text before it numbers the lines.
+    const lineNumber = text.slice(0, line.index).trimStart().split("\n").length;
     const moved = `inline constexpr NamedTableID<BuiltinID> ArrayPrototypePush { ${Number(line[1]) + 1} };`;
     writeFileSync(ids, text.replace(line[0], moved));
-    const { exitCode, errors } = await generateAgainst(generatedCopy, codegen);
-    expect(errors).toEqual([
-      `error: ${ids}: line ${lineNumber} is \`${moved}\`, and this tree writes \`${line[0]}\``,
-      expect.stringContaining("another list of the built-ins"),
-    ]);
-    expect(exitCode).toBe(1);
+    expect(await generateAgainst(generatedCopy, codegen)).toEqual({
+      errors: [
+        `error: ${ids}: line ${lineNumber} is \`${moved}\`, and this tree writes \`${line[0]}\``,
+        "this WebKit was compiled with another list of the built-ins that its own code names than the one this tree declares: " +
+          "a change to an entry that the engine declares or that aot/builtins/host-roles.builtins.ts lists needs a build of WebKit. " +
+          "Build with --webkit=local, or pin a release of WebKit that was built from this tree's declarations",
+      ],
+      exitCode: 1,
+    });
   },
   limitOfTest,
 );
@@ -98,11 +99,9 @@ test.skipIf(generated === undefined).concurrent(
     using _ = root;
     const fromOtherNatives = "// Written from other natives.\n";
     writeFileSync(join(generatedCopy, "AOTBuiltinTableBuiltins.cpp"), fromOtherNatives);
-    const { exitCode, errors } = await generateAgainst(generatedCopy, codegen);
-    expect(errors).toEqual([]);
+    expect(await generateAgainst(generatedCopy, codegen)).toEqual({ errors: [], exitCode: 0 });
     // This tree writes another text under that name: a comparison would have refused the engine.
     expect(readFileSync(join(codegen, "AOTBuiltinTableBuiltins.cpp"), "utf8")).not.toBe(fromOtherNatives);
-    expect(exitCode).toBe(0);
   },
   limitOfTest,
 );
@@ -126,11 +125,9 @@ test.skipIf(generated === undefined).concurrent(
         .replace(member, `    aMethodNobodyHasYet: { ...find, args: { lineOffset: b.any } },\n${member}`),
     });
     const sources = schemas.map(path => (path === schema ? join(String(changed), "sourcemap.bind.ts") : path));
-    const { exitCode, errors } = await generateAgainst(generatedCopy, codegen, sources);
-    expect(errors).toEqual([]);
+    expect(await generateAgainst(generatedCopy, codegen, sources)).toEqual({ errors: [], exitCode: 0 });
     const names = readFileSync(join(codegen, "AOTBuiltinTableNames.cpp"), "utf8");
     expect(names.match(/\baMethodNobodyHasYet\b/g)).toEqual(["aMethodNobodyHasYet"]);
-    expect(exitCode).toBe(0);
   },
   limitOfTest,
 );

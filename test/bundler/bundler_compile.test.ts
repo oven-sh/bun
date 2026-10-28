@@ -655,6 +655,52 @@ describe("bundler", () => {
     outfile: "dist/out",
     run: { stdout: "Hello, world!\nWorker loaded!\n", file: "dist/out", setCwd: true },
   });
+  // The embedded names start at the default root: the directory that all 9 entry points share, `src/`.
+  // With `--root .` they start at the working directory.
+  const manyWorkers = Array.from({ length: 8 }, (_, i) => `./src/workers/w${i}.ts`);
+  for (const [id, root, specifier] of [
+    ["compile/WorkerURLManyEntryPoints", undefined, `new URL("./workers/w0.ts", import.meta.url)`],
+    ["compile/WorkerRelativePathManyEntryPointsRoot", "/", `"./src/workers/w0.ts"`],
+  ] as const) {
+    itBundled(id, {
+      backend: "cli",
+      compile: true,
+      root,
+      files: {
+        "/src/entry.ts": /* js */ `
+          import {rmSync} from 'fs';
+          // Verify we're not just importing from the filesystem
+          rmSync("./src/workers", {recursive: true, force: true});
+          console.log("Hello, world!");
+          new Worker(${specifier});
+        `,
+        ...Object.fromEntries(manyWorkers.map((name, i) => [name.slice(1), `console.log("Worker ${i} loaded!");`])),
+      },
+      entryPointsRaw: ["./src/entry.ts", ...manyWorkers],
+      outfile: "dist/out",
+      run: { stdout: "Hello, world!\nWorker 0 loaded!\n", file: "dist/out", setCwd: true },
+    });
+  }
+  // `cli/` is not the default root when an entry point is the file `cli.ts`.
+  itBundled("compile/WorkerRelativePathInDirectoryNamedLikeEntryPoint", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/cli.ts": /* js */ `
+        import {rmSync} from 'fs';
+        // Verify we're not just importing from the filesystem
+        rmSync("./cli", {recursive: true, force: true});
+        console.log("Hello, world!");
+        new Worker("./cli/worker.ts");
+      `,
+      "/cli/worker.ts": /* js */ `
+        console.log("Worker loaded!");
+    `.trim(),
+    },
+    entryPointsRaw: ["./cli.ts", "./cli/worker.ts"],
+    outfile: "dist/out",
+    run: { stdout: "Hello, world!\nWorker loaded!\n", file: "dist/out", setCwd: true },
+  });
   itBundled("compile/WorkerRelativePathTSExtensionBytecode", {
     backend: "cli",
     compile: true,

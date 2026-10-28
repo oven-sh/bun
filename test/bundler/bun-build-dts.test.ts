@@ -140,4 +140,38 @@ export function join(first: string, second: string): string {
     expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
     expect(readdirSync(join(String(dir), "out"))).toEqual(["index.js"]);
   });
+
+  const parts = (count: number) => Array.from({ length: count }, (_, i) => `part${i}`);
+
+  test("9 entry points in one folder: every file at the top of --outdir", async () => {
+    using dir = tempDir("build-dts-nine-entry-points", {
+      "tsconfig.json": project["tsconfig.json"],
+      "package.json": project["package.json"],
+      ...Object.fromEntries(parts(9).map(name => [`src/${name}.ts`, `export const ${name}: string = "${name}";\n`])),
+    });
+    const entryPoints = parts(9).map(name => `./src/${name}.ts`);
+    const built = await bun(String(dir), "build", ...entryPoints, "--outdir", "out", "--dts");
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(readdirSync(join(String(dir), "out")).sort()).toEqual(
+      parts(9).flatMap(name => [`${name}.aot.ts`, `${name}.d.ts`, `${name}.js`]),
+    );
+  });
+
+  test("a source outside the folder of 9 entry points gets what it gets outside the folder of 2", async () => {
+    async function build(count: number) {
+      using dir = tempDir("build-dts-source-outside-the-root", {
+        "tsconfig.json": project["tsconfig.json"],
+        "package.json": project["package.json"],
+        "src/shared.ts": `export const shared: string = "shared";\n`,
+        ...Object.fromEntries(
+          parts(count).map(name => [`src/parts/${name}.ts`, `export { shared } from "../shared";\n`]),
+        ),
+      });
+      const entryPoints = parts(count).map(name => `./src/parts/${name}.ts`);
+      const built = await bun(String(dir), "build", ...entryPoints, "--outdir", "out", "--dts");
+      return { stderr: built.stderr.replaceAll(String(dir), "<dir>"), exitCode: built.exitCode };
+    }
+    const [two, nine] = await Promise.all([build(2), build(9)]);
+    expect(nine).toEqual(two);
+  });
 });

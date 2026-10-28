@@ -24150,6 +24150,23 @@ describe.concurrent("--check", () => {
     },
   );
 
+  // A root-relative path is under the page's directory first, then under the cwd. A bare
+  // path is next to the page.
+  test("bun --check finds the scripts of a page in a subdirectory", async () => {
+    using dir = project({
+      "web/index.html": `<!doctype html>\n<script type="module" src="/src/main.ts"></script>\n<script type="module" src="app.ts"></script>\n<script type="module" src="/shared.ts"></script>\n`,
+      "web/src/main.ts": `export const a: number = "1";\n`,
+      "web/app.ts": `export const b: number = "2";\n`,
+      "shared.ts": `export const c: number = "3";\n`,
+    });
+    const { stderr, exitCode } = await run(String(dir), ["--check", "web/index.html"]);
+    expect(stderr).toContain(`web/src/main.ts(1,14): error TS2322`);
+    expect(stderr).toContain(`web/app.ts(1,14): error TS2322`);
+    expect(stderr).toContain(`shared.ts(1,14): error TS2322`);
+    expect(stderr).not.toContain("TS6053");
+    expect(exitCode).toBe(1);
+  });
+
   // Every page that's served is checked, including the ones a glob matches.
   test.each([
     [["index.html", "about.html"]],

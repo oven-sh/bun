@@ -167,7 +167,8 @@ pub fn scan_import_records(
 }
 
 /// True for an HTML URL that names a file under the project root: one leading `/`.
-/// `//host/path` is protocol-relative and stays a URL.
+/// `//host/path` is protocol-relative and reaches the resolver as written, which
+/// marks it external.
 pub fn is_root_relative_url(url: &[u8]) -> bool {
     url.len() > 1 && url[0] == b'/' && url[1] != b'/'
 }
@@ -179,37 +180,65 @@ pub fn rebase_root_relative_url<'r>(root: &'r [u8], url: &[u8]) -> &'r [u8] {
     resolve_path::join_abs_string::<platform::Auto>(root, &[&url[1..]])
 }
 
-/// A root-relative HTML URL and the directories the bundler looks it up under, in
-/// order: the project root, then the process cwd when that is a different directory
-/// (an entry point under `public/` whose `/src/app.tsx` lives beside `public/`).
-pub struct RootRelativeUrl<'a> {
-    url: &'a [u8],
-    project_root: &'a [u8],
-    /// The cwd candidate. `None` once used, or when the cwd is the project root.
-    cwd: Option<&'static [u8]>,
+/// The directories a root-relative HTML URL is looked up under, in order: the project
+/// root (`root_dir` when the front end set one, else the directory of the HTML file
+/// `importer`), then `cwd` when that is a different directory (an entry point under
+/// `public/` whose `/src/app.tsx` lives beside `public/`).
+pub fn root_relative_bases<'a>(
+    importer: &'a [u8],
+    root_dir: &'a [u8],
+    cwd: &'a [u8],
+) -> (&'a [u8], Option<&'a [u8]>) {
+    let root = if root_dir.is_empty() {
+        resolve_path::dirname::<platform::Auto>(importer)
+    } else {
+        root_dir
+    };
+    (
+        root,
+        (strip_trailing_sep(cwd) != strip_trailing_sep(root)).then_some(cwd),
+    )
 }
 
-impl<'a> RootRelativeUrl<'a> {
-    pub fn init(url: &'a [u8], project_root: &'a [u8]) -> Self {
-        let cwd = bun_core::top_level_dir();
-        let cwd = (strip_trailing_sep(cwd) != strip_trailing_sep(project_root)).then_some(cwd);
-        Self {
-            url,
-            project_root,
-            cwd,
+/// A root-relative HTML URL of an import record, rebased onto each base of
+/// `root_relative_bases`. The bundler looks the record up under `under_root` first.
+pub struct RootRelativeUrl<'r> {
+    under_root: &'r [u8],
+    /// `None` when the cwd is the project root, or once `take_cwd_retry` used it.
+    under_cwd: Option<&'r [u8]>,
+}
+
+impl<'r> RootRelativeUrl<'r> {
+    /// `None` unless `record` (an import of the HTML file `importer`) was written with
+    /// one leading `/`. The rebased paths are copied into `arena`.
+    pub fn of_record(
+        record: &ImportRecord,
+        importer: &[u8],
+        root_dir: &[u8],
+        arena: &'r bun_alloc::Arena,
+    ) -> Option<Self> {
+        let url = record.original_path;
+        if !is_root_relative_url(url) {
+            return None;
         }
+        let (root, cwd) = root_relative_bases(importer, root_dir, bun_core::top_level_dir());
+        Some(Self {
+            under_root: arena.alloc_slice_copy(rebase_root_relative_url(root, url)),
+            under_cwd: cwd.map(|cwd| &*arena.alloc_slice_copy(rebase_root_relative_url(cwd, url))),
+        })
     }
 
-    /// `<project root>/<url>`, copied into `arena`.
-    pub fn rebase_onto_project_root<'r>(&self, arena: &'r bun_alloc::Arena) -> &'r [u8] {
-        arena.alloc_slice_copy(rebase_root_relative_url(self.project_root, self.url))
+    pub fn under_root(&self) -> &'r [u8] {
+        self.under_root
     }
 
-    /// `<cwd>/<url>`, copied into `arena`. `None` after the first call, or when the cwd is
-    /// the project root.
-    pub fn rebase_onto_cwd<'r>(&mut self, arena: &'r bun_alloc::Arena) -> Option<&'r [u8]> {
-        let cwd = self.cwd.take()?;
-        Some(arena.alloc_slice_copy(rebase_root_relative_url(cwd, self.url)))
+    pub fn under_cwd(&self) -> Option<&'r [u8]> {
+        self.under_cwd
+    }
+
+    /// The cwd candidate, once: the path to resolve after `under_root` is not found.
+    pub fn take_cwd_retry(&mut self) -> Option<&'r [u8]> {
+        self.under_cwd.take()
     }
 }
 

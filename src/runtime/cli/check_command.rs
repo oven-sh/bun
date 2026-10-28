@@ -870,16 +870,26 @@ fn imports_of_page(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
     let records = bun_bundler::html_scanner::scan_import_records(&mut log, &source);
     let directory = resolve_path::dirname::<Auto>(&page);
     let is_url = |path: &[u8]| path.starts_with(b"//") || bun_core::strings::contains(path, b"://");
-    // `bun ./index.html` serves the page with the cwd as the project root, so `/src/main.tsx`
-    // is `<cwd>/src/main.tsx`.
+    // The same lookup as the bundler's: `/src/main.tsx` is under the page's directory, else
+    // under the cwd.
+    let root_relative = |url: &[u8]| {
+        use bun_bundler::html_scanner::{rebase_root_relative_url, root_relative_bases};
+        let (root, cwd) = root_relative_bases(&page, b"", cwd);
+        let under_root = rebase_root_relative_url(root, url).to_vec();
+        match cwd {
+            Some(cwd) if !bun_sys::exists(&under_root) => {
+                rebase_root_relative_url(cwd, url).to_vec()
+            }
+            _ => under_root,
+        }
+    };
     (records.unwrap_or_default().iter())
-        .map(|record| record.path.text())
-        .filter(|path| !is_url(path))
-        .map(|path| {
-            if bun_bundler::html_scanner::is_root_relative_url(path) {
-                bun_bundler::html_scanner::rebase_root_relative_url(cwd, path).to_vec()
+        .filter(|record| !is_url(record.path.text()))
+        .map(|record| {
+            if bun_bundler::html_scanner::is_root_relative_url(record.original_path) {
+                root_relative(record.original_path)
             } else {
-                resolve_path::join_abs_string::<Auto>(directory, &[path]).to_vec()
+                resolve_path::join_abs_string::<Auto>(directory, &[record.path.text()]).to_vec()
             }
         })
         .collect()

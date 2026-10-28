@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -1158,8 +1158,77 @@ body {
     },
   });
 
-  // `//host/path` is a protocol-relative URL, not a file under the project root.
-  itBundled("html/protocol-relative-url-stays-external", {
+  // `--root` moves the base. It differs from the entry directory and from the cwd here,
+  // and each of the three holds a different favicon.
+  itBundled("html/absolute-paths-root-option", {
+    outdir: "out/",
+    root: "/assets",
+    entryNaming: "[name].[ext]",
+    files: {
+      "/site/index.html": `<!DOCTYPE html><html><head><link rel="icon" href="/favicon.png"></head></html>`,
+      "/site/favicon.png": "site favicon",
+      "/assets/favicon.png": "root favicon",
+      "/favicon.png": "cwd favicon",
+    },
+    entryPoints: ["/site/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      const icon = html.match(/href="\.\/(favicon-[a-z0-9]+\.png)"/);
+      expect(icon).not.toBeNull();
+      expect(api.readFile("out/" + icon![1])).toBe("root favicon");
+    },
+  });
+
+  // An onResolve plugin that declines sends the record through the default resolver,
+  // which applies the same lookup.
+  itBundled("html/absolute-paths-plugin-declines", {
+    outdir: "out/",
+    files: {
+      "/site/index.html": `<!DOCTYPE html><html><head><link rel="icon" href="/favicon.png"><script type="module" src="/src/app.ts"></script></head></html>`,
+      "/site/favicon.png": "site favicon",
+      "/src/app.ts": "console.log('App loaded')",
+      "/favicon.png": "cwd favicon, must not be used",
+    },
+    entryPoints: ["/site/index.html"],
+    plugins(builder) {
+      builder.onResolve({ filter: /favicon|app/ }, args => {
+        expect(args.path).toMatch(/^\/(favicon\.png|src\/app\.ts)$/);
+        return undefined;
+      });
+    },
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      const icon = html.match(/href="\.\/(favicon-[a-z0-9]+\.png)"/);
+      expect(icon).not.toBeNull();
+      expect(api.readFile("out/" + icon![1])).toBe("site favicon");
+      const script = html.match(/src="\.\/(index-[a-z0-9]+\.js)"/);
+      expect(script).not.toBeNull();
+      expect(api.readFile("out/" + script![1])).toContain("App loaded");
+    },
+  });
+
+  // A wildcard external matches the URL as written, before any file lookup.
+  itBundled("html/absolute-paths-external-wildcard", {
+    outdir: "out/",
+    external: ["/assets/*"],
+    files: {
+      "/site/index.html": `<!DOCTYPE html><html><head><script src="/assets/lib.js"></script><link rel="stylesheet" href="/static/app.css"></head></html>`,
+      "/site/assets/lib.js": "console.log('must stay external')",
+      "/site/static/app.css": "body { margin: 0; }",
+    },
+    entryPoints: ["/site/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      expect(html).toContain(`<script src="/assets/lib.js"></script>`);
+      expect(html).not.toContain("/static/app.css");
+      expect(html).toMatch(/href="\.\/[^"]+\.css"/);
+    },
+  });
+
+  // `//host/path` is a protocol-relative URL, not a file under the project root. Before
+  // this lookup existed, the scanner joined it with the cwd and the build failed with
+  // `Could not resolve: "/host/path"`.
+  itBundled("html/protocol-relative-url-is-implicitly-external", {
     outdir: "out/",
     files: {
       "/site/index.html": `<!DOCTYPE html><html><head><script src="//cdn.example.com/lib.js"></script><script type="module" src="./app.ts"></script></head></html>`,
@@ -1187,13 +1256,19 @@ body {
       "site/index.html": `<!DOCTYPE html><html><head><link rel="icon" href="/favicon.png"><script type="module" src="./main.ts"></script></head></html>`,
       "site/main.ts": `console.log("hi");`,
       "site/favicon.png": "site favicon",
+      "assets/favicon.png": "root favicon",
       "favicon.png": "cwd favicon, must not be used",
       "build.ts": `
-        const [entry, outdir, mode] = process.argv.slice(2);
+        const [entry, outdir, mode, arg] = process.argv.slice(2);
         const seen: string[] = [];
         const config: Bun.BuildConfig = { entrypoints: [entry], outdir };
-        if (mode === "root") config.root = entry.slice(0, entry.lastIndexOf("/"));
+        if (mode === "root") config.root = arg;
         if (mode === "external") config.external = ["/favicon.png"];
+        if (mode === "files") {
+          // The page is on disk under public/. Its script is an in-memory file under the cwd.
+          config.entrypoints = [arg + "/public/index.html"];
+          config.files = { [arg + "/src/app.ts"]: "console.log('in-memory app')" };
+        }
         if (mode === "plugin") {
           config.plugins = [{
             name: "log",
@@ -1208,12 +1283,15 @@ body {
         const result = await Bun.build(config);
         const html = await result.outputs.find(o => o.path.endsWith(".html"))!.text();
         const icon = result.outputs.find(o => o.path.endsWith(".png"));
+        const script = result.outputs.find(o => o.path.endsWith(".js"));
         console.log(JSON.stringify({
           href: html.match(/rel="icon" href="([^"]*)"/)?.[1],
           icon: icon ? await icon.text() : null,
           seen,
+          ...(mode === "files" && { script: await script!.text() }),
         }));
       `,
+      "public/index.html": `<!DOCTYPE html><html><head><script type="module" src="/src/app.ts"></script></head></html>`,
     };
 
     async function build(cwd: string, args: string[]) {
@@ -1245,24 +1323,44 @@ body {
       expect(fromSite.stdout).toBe(fromProject.stdout);
     });
 
+    // root, the entry directory and the cwd are three different directories here, each
+    // with its own favicon. root wins.
     test.concurrent("the root option is the base for /favicon.png", async () => {
       using dir = tempDir("html-root-relative", files);
-      const { stdout, stderr, exitCode } = await build(String(dir), [
-        "build.ts",
+      const { stdout, stderr, exitCode } = await build(`${dir}/site`, [
+        "../build.ts",
         `${dir}/site/index.html`,
         `${dir}/out`,
         "root",
+        `${dir}/assets`,
       ]);
       expect(stderr).toBe("");
       expect(JSON.parse(stdout)).toEqual({
-        href: expect.stringMatching(/^\.\/favicon-[a-z0-9]+\.png$/),
-        icon: "site favicon",
+        href: expect.stringMatching(/^\.\.\/\.\.\/favicon-[a-z0-9]+\.png$/),
+        icon: "root favicon",
         seen: [],
       });
       expect(exitCode).toBe(0);
     });
 
-    test.concurrent("external matches the URL as written and keeps it in the output", async () => {
+    // The file under the cwd can be an in-memory `files` entry.
+    test.concurrent("the cwd fallback reads the files map", async () => {
+      using dir = tempDir("html-root-relative", files);
+      const { stdout, stderr, exitCode } = await build(String(dir), [
+        "build.ts",
+        "",
+        `${dir}/out`,
+        "files",
+        String(dir),
+      ]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ icon: null, seen: [], script: expect.stringContaining("in-memory app") });
+      expect(exitCode).toBe(0);
+    });
+
+    // An exact `external` entry is stored as an absolute path. On Windows `/favicon.png`
+    // becomes a drive path there, so only the wildcard form matches on Windows.
+    test.skipIf(isWindows)("external matches the URL as written and keeps it in the output", async () => {
       using dir = tempDir("html-root-relative", files);
       const { stdout, stderr, exitCode } = await build(String(dir), [
         "build.ts",

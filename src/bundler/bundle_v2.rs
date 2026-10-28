@@ -2689,34 +2689,35 @@ pub mod bv2_impl {
             // Same as in `resolve_import_records`: a root-relative HTML URL is looked up
             // under the project root, then under the cwd.
             let mut specifier: &[u8] = &import_record.specifier;
-            let mut root_relative = None;
-            if self.graph.input_files.items_loader()[import_record.importer_source_index as usize]
+            let mut root_relative = if self.graph.input_files.items_loader()
+                [import_record.importer_source_index as usize]
                 == Loader::Html
-                && crate::html_scanner::is_root_relative_url(
-                    self.graph.ast.items_import_records()
-                        [import_record.importer_source_index as usize]
-                        .as_slice()[import_record.import_record_index as usize]
-                        .original_path,
-                )
             {
-                // SAFETY: see `transpiler` note above.
-                let transpiler = unsafe { &*transpiler };
-                if transpiler.resolver.is_user_external(specifier) {
-                    return;
-                }
-                let url = crate::html_scanner::RootRelativeUrl::init(
-                    specifier,
-                    transpiler.options.project_root(),
-                );
-                specifier = url.rebase_onto_project_root(self.arena());
-                root_relative = Some(url);
+                crate::html_scanner::RootRelativeUrl::of_record(
+                    &self.graph.ast.items_import_records()
+                        [import_record.importer_source_index as usize]
+                        .as_slice()[import_record.import_record_index as usize],
+                    &import_record.source_file,
+                    // SAFETY: see `transpiler` note above.
+                    &unsafe { &*transpiler }.options.root_dir,
+                    self.arena(),
+                )
+            } else {
+                None
+            };
+            if let Some(url) = &root_relative {
+                specifier = url.under_root();
             }
 
             // Check the FileMap first for in-memory files
             if let Some(file_map) = self.file_map {
-                if let Some(_file_map_result) =
-                    file_map.resolve(self.arena(), &import_record.source_file, specifier)
-                {
+                let file_map_result = file_map
+                    .resolve(self.arena(), &import_record.source_file, specifier)
+                    .or_else(|| {
+                        let under_cwd = root_relative.as_ref()?.under_cwd()?;
+                        file_map.resolve(self.arena(), &import_record.source_file, under_cwd)
+                    });
+                if let Some(_file_map_result) = file_map_result {
                     let file_map_result = _file_map_result;
                     let mut path_primary = file_map_result.path_pair.primary;
                     // reshaped for borrowck — `get_or_put` borrows `*self` mutably via
@@ -2785,6 +2786,15 @@ pub mod bv2_impl {
                 }
             }
 
+            // SAFETY: see `transpiler` note above.
+            if root_relative.is_some()
+                && unsafe { &*transpiler }
+                    .resolver
+                    .is_user_external(&import_record.specifier)
+            {
+                return;
+            }
+
             let mut had_busted_dir_cache = false;
             let resolve_result = loop {
                 // SAFETY: see `transpiler` note above.
@@ -2811,9 +2821,8 @@ pub mod bv2_impl {
                                     continue;
                                 }
                             }
-                            if let Some(under_cwd) = root_relative
-                                .as_mut()
-                                .and_then(|url| url.rebase_onto_cwd(self.arena()))
+                            if let Some(under_cwd) =
+                                root_relative.as_mut().and_then(|url| url.take_cwd_retry())
                             {
                                 specifier = under_cwd;
                                 had_busted_dir_cache = false;
@@ -6927,26 +6936,29 @@ pub mod bv2_impl {
                 // rebased path, then the same path under the process cwd when the
                 // project root has no such file.
                 let mut specifier: &'a [u8] = import_record.path.text;
-                let mut root_relative = None;
-                if loader == Loader::Html
-                    && crate::html_scanner::is_root_relative_url(import_record.original_path)
-                {
-                    if transpiler.resolver.is_user_external(specifier) {
-                        continue;
-                    }
-                    let url = crate::html_scanner::RootRelativeUrl::init(
-                        specifier,
-                        transpiler.options.project_root(),
-                    );
-                    specifier = url.rebase_onto_project_root(self.arena());
-                    root_relative = Some(url);
+                let mut root_relative = if loader == Loader::Html {
+                    crate::html_scanner::RootRelativeUrl::of_record(
+                        import_record,
+                        source.path.text,
+                        &transpiler.options.root_dir,
+                        self.arena(),
+                    )
+                } else {
+                    None
+                };
+                if let Some(url) = &root_relative {
+                    specifier = url.under_root();
                 }
 
                 // Check the FileMap first for in-memory files
                 if let Some(file_map) = self.file_map {
-                    if let Some(_file_map_result) =
-                        file_map.resolve(self.arena(), source.path.text, specifier)
-                    {
+                    let file_map_result = file_map
+                        .resolve(self.arena(), source.path.text, specifier)
+                        .or_else(|| {
+                            let under_cwd = root_relative.as_ref()?.under_cwd()?;
+                            file_map.resolve(self.arena(), source.path.text, under_cwd)
+                        });
+                    if let Some(_file_map_result) = file_map_result {
                         let mut file_map_result = _file_map_result;
                         let mut path_primary = file_map_result.path_pair.primary;
                         let import_record_loader = import_record.loader.unwrap_or_else(|| {
@@ -7001,6 +7013,14 @@ pub mod bv2_impl {
                     }
                 }
 
+                if root_relative.is_some()
+                    && transpiler
+                        .resolver
+                        .is_user_external(import_record.path.text)
+                {
+                    continue;
+                }
+
                 let mut had_busted_dir_cache = false;
                 let resolve_result: _resolver::Result<'a> = 'inner: loop {
                     match transpiler.resolver.resolve_with_framework(
@@ -7044,9 +7064,8 @@ pub mod bv2_impl {
                                         }
                                     }
                                 }
-                                if let Some(under_cwd) = root_relative
-                                    .as_mut()
-                                    .and_then(|url| url.rebase_onto_cwd(self.arena()))
+                                if let Some(under_cwd) =
+                                    root_relative.as_mut().and_then(|url| url.take_cwd_retry())
                                 {
                                     specifier = under_cwd;
                                     had_busted_dir_cache = false;

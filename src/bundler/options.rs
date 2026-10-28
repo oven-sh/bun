@@ -1440,7 +1440,7 @@ impl<'a> BundleOptions<'a> {
         }
     }
 
-    /// The directory that output paths and root-relative HTML URLs are relative to:
+    /// The directory that the paths of the HTML import manifest are relative to:
     /// `root_dir` (`--root`, else the entry points' common directory) when a front end
     /// set one, otherwise the process cwd.
     pub fn project_root(&self) -> &[u8] {

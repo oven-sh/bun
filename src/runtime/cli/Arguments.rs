@@ -761,7 +761,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--format <STR>                   Specifies the module format to build to. \"esm\", \"cjs\" and \"iife\" are supported. Defaults to \"esm\", or \"cjs\" with --bytecode."
         ),
         parse_param!(
-            "--root <STR>                     Root directory used for multiple entry points"
+            "--root <STR>                     Root directory of the project. Default: the directory common to all entry points"
         ),
         parse_param!("--splitting                      Enable code splitting"),
         parse_param!(

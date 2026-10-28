@@ -34,9 +34,11 @@ export const lshpack: Dependency = {
   }),
 
   // hencs[65536]/hdecs[65536] (768 KB of .rodata) are pure functions of the
-  // 257-entry encode_table. Declare them in .bss and fill on first init
-  // (~250 us once); the hot-path lookup is unchanged.
-  patches: ["patches/lshpack/bss-huff-tables.patch"],
+  // 257-entry encode_table. Build them at the first init (~250 us once) in
+  // memory allocated then; the hot-path lookup is unchanged. They are not
+  // zero-filled data of the executable (.bss): that has to stay smaller than a
+  // transparent huge page (test/internal/zero-filled-data-below-a-huge-page.test.ts).
+  patches: ["patches/lshpack/lazy-huff-tables.patch"],
 
   build: cfg => {
     // <sys/queue.h> ships with glibc and BSD libc but not musl or win32.
@@ -55,10 +57,10 @@ export const lshpack: Dependency = {
         ...lsxpackDefines,
         XXH_HEADER_NAME: "xxhash.h",
         // lshpack.c defaults LS_HPACK_USE_LARGE_TABLES=1 internally; setting
-        // it here is purely defensive so the bss-huff-tables patch can't be
+        // it here is purely defensive so the lazy-huff-tables patch can't be
         // silently disabled by a future upstream change to the default.
         LS_HPACK_USE_LARGE_TABLES: 1,
-        LS_HPACK_BSS_LARGE_TABLES: 1,
+        LS_HPACK_LAZY_LARGE_TABLES: 1,
       },
     };
     if (cfg.windows) spec.cflags = ["-w"];

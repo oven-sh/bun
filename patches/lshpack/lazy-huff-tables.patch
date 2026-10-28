@@ -1,20 +1,23 @@
---- a/lshpack.c	2026-05-02 06:41:46.290110113 +0000
-+++ b/lshpack.c	2026-05-02 06:42:07.599902350 +0000
-@@ -53,6 +53,103 @@
+--- a/lshpack.c	2026-10-28 13:31:41.835028034 +0000
++++ b/lshpack.c	2026-10-28 13:38:15.655042428 +0000
+@@ -52,6 +52,116 @@
  
  #include "huff-tables.h"
  
-+#if LS_HPACK_USE_LARGE_TABLES && LS_HPACK_BSS_LARGE_TABLES
++#if LS_HPACK_USE_LARGE_TABLES && LS_HPACK_LAZY_LARGE_TABLES
 +/* Bun: hencs[65536] (512 KB) and hdecs[65536] (256 KB) are pure functions of
-+ * encode_table[257]. Declare them in .bss instead of .rodata and fill once on
-+ * first lshpack/lsqpack init — ~250 us, identical hot-path lookup afterwards.
-+ * Non-static so lsqpack.c can extern the same arrays instead of carrying its
++ * encode_table[257]. They are left out of .rodata, and built once, at the
++ * first lshpack/lsqpack init, in memory that is allocated then: ~250 us,
++ * identical hot-path lookup afterwards. As zero-filled data of the executable
++ * (.bss) they made it large enough for a transparent huge page.
++ * Non-static so lsqpack.c can use the same tables instead of carrying its
 + * own copy. */
 +struct henc { unsigned lens; uint32_t code; };
 +struct hdec { uint8_t lens; uint8_t out[3]; };
-+struct henc hencs[65536];
-+struct hdec hdecs[65536];
-+static int hpack_huff_tables_ready;
++struct lshpack_huff_tables { struct henc encs[65536]; struct hdec decs[65536]; };
++struct lshpack_huff_tables *lshpack_huff_tables;
++#define hencs (__atomic_load_n(&lshpack_huff_tables, __ATOMIC_RELAXED)->encs)
++#define hdecs (__atomic_load_n(&lshpack_huff_tables, __ATOMIC_RELAXED)->decs)
 +
 +#if __BYTE_ORDER == __LITTLE_ENDIAN
 +#define HENC_I(i,j) (((j)<<8)|(i))
@@ -25,12 +28,17 @@
 +void
 +lshpack_huff_tables_init (void)
 +{
-+    /* Init is idempotent (every thread writes the same values), so a race only
-+     * does redundant work — but the release/acquire pair ensures the table
-+     * stores are visible before any later encode/decode load on another
-+     * thread sees ready==1. */
-+    if (__atomic_load_n(&hpack_huff_tables_ready, __ATOMIC_ACQUIRE))
++    struct lshpack_huff_tables *tables, *none = NULL;
++    struct { uint8_t bits, sym; } *lut;
++
++    if (__atomic_load_n(&lshpack_huff_tables, __ATOMIC_ACQUIRE))
 +        return;
++
++    /* Both start zeroed: an entry of decs that stays zero takes the slow path. */
++    tables = calloc(1, sizeof(*tables));
++    lut = calloc(1 << 15, sizeof(*lut));
++    if (!tables || !lut)
++        abort();
 +
 +    /* hencs: combine two encode_table entries. {64,0} marks pairs whose
 +     * combined width overflows 32 bits (handled by the slow loop). */
@@ -41,7 +49,7 @@
 +        for (unsigned j = 0; j < 256; ++j)
 +        {
 +            const unsigned bj = encode_table[j].bits;
-+            struct henc *h = &hencs[HENC_I(i, j)];
++            struct henc *h = &tables->encs[HENC_I(i, j)];
 +            if (bi + bj <= 32)
 +            {
 +                h->lens = bi + bj;
@@ -58,7 +66,6 @@
 +    /* hdecs: for each 16-bit prefix, decode up to 3 symbols using a 15-bit
 +     * direct LUT built from encode_table (codes <= 15 bits cover the common
 +     * ASCII set; longer codes fall through to the slow path with lens==0). */
-+    static struct { uint8_t bits, sym; } lut[1 << 15];
 +    for (unsigned sym = 0; sym < 256; ++sym)
 +    {
 +        const unsigned b = encode_table[sym].bits;
@@ -89,49 +96,55 @@
 +        }
 +        if (n)
 +        {
-+            hdecs[idx].lens = (uint8_t)(((16 - bits_left) << 2) | n);
-+            hdecs[idx].out[0] = out[0];
-+            hdecs[idx].out[1] = out[1];
-+            hdecs[idx].out[2] = out[2];
++            tables->decs[idx].lens = (uint8_t)(((16 - bits_left) << 2) | n);
++            tables->decs[idx].out[0] = out[0];
++            tables->decs[idx].out[1] = out[1];
++            tables->decs[idx].out[2] = out[2];
 +        }
-+        /* else: leave zeroed (.bss) — lens==0 triggers slow path */
++        /* else: leave zeroed — lens==0 triggers slow path */
 +    }
++    free(lut);
 +
-+    __atomic_store_n(&hpack_huff_tables_ready, 1, __ATOMIC_RELEASE);
++    /* Two threads can get here at once, and each has built the same tables.
++     * The first to publish keeps its own; a later encode/decode load on any
++     * thread comes after that thread's own call returned, so it sees them. */
++    if (!__atomic_compare_exchange_n(&lshpack_huff_tables, &none, tables, 0,
++                                     __ATOMIC_RELEASE, __ATOMIC_ACQUIRE))
++        free(tables);
 +}
 +#endif
 +
  #define HPACK_STATIC_TABLE_SIZE   61
  #define INITIAL_DYNAMIC_TABLE_SIZE  4096
  
-@@ -291,6 +384,9 @@
+@@ -290,6 +400,9 @@
  int
  lshpack_enc_init (struct lshpack_enc *enc)
  {
-+#if LS_HPACK_USE_LARGE_TABLES && LS_HPACK_BSS_LARGE_TABLES
++#if LS_HPACK_USE_LARGE_TABLES && LS_HPACK_LAZY_LARGE_TABLES
 +    lshpack_huff_tables_init();
 +#endif
      struct lshpack_double_enc_head *buckets;
      unsigned nbits = 2;
      unsigned i;
-@@ -1270,6 +1366,9 @@
+@@ -1269,6 +1382,9 @@
  void
  lshpack_dec_init (struct lshpack_dec *dec)
  {
-+#if LS_HPACK_USE_LARGE_TABLES && LS_HPACK_BSS_LARGE_TABLES
++#if LS_HPACK_USE_LARGE_TABLES && LS_HPACK_LAZY_LARGE_TABLES
 +    lshpack_huff_tables_init();
 +#endif
      memset(dec, 0, sizeof(*dec));
      dec->hpd_max_capacity = INITIAL_DYNAMIC_TABLE_SIZE;
      dec->hpd_cur_max_capacity = INITIAL_DYNAMIC_TABLE_SIZE;
---- a/huff-tables.h	2026-05-02 06:41:46.300110018 +0000
-+++ b/huff-tables.h	2026-05-02 06:42:07.509903227 +0000
+--- a/huff-tables.h	2026-10-28 13:31:41.843028034 +0000
++++ b/huff-tables.h	2026-10-28 13:32:33.559029924 +0000
 @@ -266,7 +266,7 @@
  };
  
  
 -#if LS_HPACK_USE_LARGE_TABLES
-+#if LS_HPACK_USE_LARGE_TABLES && !LS_HPACK_BSS_LARGE_TABLES
++#if LS_HPACK_USE_LARGE_TABLES && !LS_HPACK_LAZY_LARGE_TABLES
  #if __BYTE_ORDER == __LITTLE_ENDIAN
  #define I(i,j) ((j<<8)|i)
  #else
@@ -140,7 +153,7 @@
  
  
 -#if LS_HPACK_USE_LARGE_TABLES
-+#if LS_HPACK_USE_LARGE_TABLES && !LS_HPACK_BSS_LARGE_TABLES
++#if LS_HPACK_USE_LARGE_TABLES && !LS_HPACK_LAZY_LARGE_TABLES
  static const struct hdec { uint8_t lens; uint8_t out[3]; } hdecs[] =
  {
  /*

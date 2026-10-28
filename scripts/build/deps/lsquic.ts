@@ -187,7 +187,7 @@ export const lsquic: Dependency = {
         // lsqpack.c defaults LS_QPACK_USE_LARGE_TABLES=1 internally; setting
         // it here is defensive (mirrors lshpack.ts).
         LS_QPACK_USE_LARGE_TABLES: 1,
-        LS_HPACK_BSS_LARGE_TABLES: 1,
+        LS_HPACK_LAZY_LARGE_TABLES: 1,
         LSQPACK_ENC_LOGGER_HEADER: "lsquic_qpack_enc_logger.h",
         LSQPACK_DEC_LOGGER_HEADER: "lsquic_qpack_dec_logger.h",
         LSQUIC_DEBUG_NEXT_ADV_TICK: 0,

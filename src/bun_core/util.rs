@@ -3730,6 +3730,20 @@ fn argv_view_init() {
     unsafe { ARGV.write(view) };
 }
 
+/// Read startup flags before stdio exists, without running NODE_OPTIONS diagnostics.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub(crate) fn startup_args_any(predicate: impl Fn(&[u8]) -> bool) -> bool {
+    if argv_storage().iter().any(|arg| predicate(arg.as_bytes())) {
+        return true;
+    }
+    let Some(options) = crate::env_var::BUN_OPTIONS.get() else {
+        return false;
+    };
+    let mut args = vec![ZBox::default()];
+    append_options_env(options, &mut args);
+    args.iter().skip(1).any(|arg| predicate(arg.as_bytes()))
+}
+
 #[inline]
 fn argv_view() -> &'static [&'static ZStr] {
     ARGV_INIT.call_once(argv_view_init);
@@ -3851,6 +3865,15 @@ pub fn injected_argv_argc() -> usize {
 pub trait OptionsEnvArg {
     fn from_slice(s: &[u8]) -> Self;
     fn from_buf(buf: Vec<u8>) -> Self;
+}
+
+impl OptionsEnvArg for ZBox {
+    fn from_slice(s: &[u8]) -> Self {
+        Self::from_bytes(s)
+    }
+    fn from_buf(buf: Vec<u8>) -> Self {
+        Self::from_vec(buf)
+    }
 }
 
 /// Leaked-allocation arm of `append_options_env` (process-lifetime argv

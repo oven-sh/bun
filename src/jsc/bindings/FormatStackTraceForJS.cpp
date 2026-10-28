@@ -882,6 +882,23 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsInsideNodeModules, (JSC::JSGlobalObject * g
 
     JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
         using CodeType = JSC::StackVisitor::Frame::CodeType;
+#if ENABLE(AOT)
+        // A frame of `bun build --compile --aot` has no CodeBlock. The build recorded its position, so no source map applies at run time.
+        if (visitor->isCompiledFrame()) [[unlikely]] {
+            JSC::AOT::FunctionDescription description(visitor->compiledFrame().function);
+            if (description.builtinKind() != JSC::AOT::StackTraceBuiltinKind::None)
+                return WTF::IterationStatus::Continue;
+            if (listed++ >= limit)
+                return WTF::IterationStatus::Done;
+            if (description.isInRuntimeModule())
+                return WTF::IterationStatus::Continue;
+            String sourceURL = Zig::sourceURL(visitor);
+            if (sourceURL.startsWith("node:"_s))
+                return WTF::IterationStatus::Continue;
+            isInside = isInNodeModules(sourceURL);
+            return WTF::IterationStatus::Done;
+        }
+#endif
         switch (visitor->codeType()) {
         case CodeType::Native:
             return WTF::IterationStatus::Continue;

@@ -390,6 +390,8 @@ builtin-modules/the-process-object-is-whole-at-the-first-statement
 builtin-modules/the-runtime-fills-lists-and-objects-that-it-has-made-itself
 builtin-modules/the-text-of-a-buffer-with-every-kind-of-receiver-encoding-and-bound
 builtin-modules/unused-next-tick-read-beside-other-entry-points
+builtin-modules/url-parse-lists-four-frames-to-find-a-package
+builtin-modules/url-parse-warns-for-the-application-and-not-for-a-package
 bundler-features/a-call-marked-as-pure-that-the-build-keeps-stands-between-a-declaration-and-its-return
 bundler-features/a-flag-that-is-on-chooses-the-value-of-a-variable-that-is-returned-later
 bundler-features/a-flag-that-is-on-chooses-what-a-return-makes-of-a-variable

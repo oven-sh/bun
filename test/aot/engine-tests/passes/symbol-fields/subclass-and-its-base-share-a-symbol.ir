@@ -351,6 +351,6 @@ runtimefunction id=131091 function=f33 visibility=Private
 # CHECK-LABEL: function f10 role=
 # CHECK: Source
 # CHECK-NEXT: BB#0: ; frequency = 1.000000
-# CHECK-NEXT: Int64 b@19 = Const64(-562949953420312, v0:Integer)
-# CHECK-NEXT: Void b@20 = Return($-562949953420312(b@19), Terminal)
+# CHECK-NEXT: Int32 b@19 = Const32(1000, v0:Integer)
+# CHECK-NEXT: Void b@20 = Return($1000(b@19), Terminal)
 # CHECK-NEXT: end of function f10

@@ -1497,12 +1497,7 @@ runtimefunction id=131072 function=f55 visibility=Private
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: object = GetConstructPrototype v0 layout=L0
 # CHECK-NEXT: v2: object ~ L0 = NewObject v1 layout=L0 allocationSite=27 allocationClass=0
-# CHECK-NEXT: v3: boolean ~ true = TypeTest v2 testedType=L0
-# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2(| 0)
-# CHECK-NEXT: b1(v4: L0):
-# CHECK-NEXT: Return v4
-# CHECK-NEXT: b2(v5: object) frequency=Unlikely:
-# CHECK-NEXT: Return v5
+# CHECK-NEXT: Return v2
 # CHECK-NEXT: }
 # CHECK-LABEL: function f15 module=
 # CHECK: m0 position=2370 kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|null|string|function|L2|L5|builtin(MathMax)|Array<number> flags=[IsExpected]}, {type=number flags=[IsExpected]}] results=[{type=undefined}] functionTypes=[f28] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

@@ -2476,14 +2476,7 @@ runtimefunction id=131072 function=f33 visibility=Private
 # CHECK-NEXT: Return v8
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="takeTickObject"
-# CHECK: module=m12 position=3575 role=Library flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|L13 site=w88 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|L9 site=w89 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f25] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|L13):
-# CHECK-NEXT: v1: L13 = RequireObjectCoercible v0 name="shown"
-# CHECK-NEXT: v2: undefined|L9 = GetSlot v1 key="shown" receivers=[L13] level=Proven accessSite=202
-# CHECK-NEXT: v3: undefined = Undefined
-# CHECK-NEXT: PutSlot v1, -, v3 key="shown" receivers=[L13] level=Proven accessSite=203
-# CHECK-NEXT: Return v2
-# CHECK-NEXT: }
+# CHECK: module=m12 position=3575 role=Library flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|L13 site=w88 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|L9 site=w89 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f25] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="pushWithList"
 # CHECK: module=m12 position=3849 role=Library flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|function site=w90 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=Array<anything, proven, pristine[Storage, Names, Dense]> site=w91 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L14 site=w92 flags=[IsExpected, OmitsNull]}] results=[{type=undefined}] functionTypes=[f62] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|function, v1: Array<anything, proven, pristine[Storage, Names, Dense]>, v2: anything ~ undefined|null|L14):

@@ -215,96 +215,72 @@ function f4 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v11: 300 = Integer integer=300
 # CHECK-NEXT: v12: boolean = Less v9, v11
-# CHECK-NEXT: Branch v12 -> taken b2(| 0), notTaken b19()
+# CHECK-NEXT: Branch v12 -> taken b2(| 0), notTaken b16()
 # CHECK-NEXT: b2(v13: int[0, 299]):
 # CHECK-NEXT: v14: null|object = GetSuperBase v1
 # CHECK-NEXT: v15: builtin(Object) = AssumeType v14 provenType=builtin(Object)
 # CHECK-NEXT: v16: object ~ L0 = SuperConstruct v15, v1, v3 layout=L0 accessSite=8 callees=[builtin(Object)]
-# CHECK-NEXT: v17: boolean ~ true = TypeTest v16 testedType=L0
-# CHECK-NEXT: Branch v17 -> taken b3(| 0), notTaken b4(| 0)
-# CHECK-NEXT: b3(v18: L0):
-# CHECK-NEXT: v19: undefined = Undefined
-# CHECK-NEXT: PropDefine v18, v19 key="tag" accessSite=11 receivers=[L0, ..]
-# CHECK-NEXT: PropSet v18, v13 key="tag" accessSite=10 receivers=[L0, ..]
-# CHECK-NEXT: Jump -> next b5()
-# CHECK-NEXT: b4(v22: object) frequency=Unlikely:
-# CHECK-NEXT: v23: undefined = CallDirect v22 function=f2 accessSite=9 [isNeverInlined]
-# CHECK-NEXT: PropSet v22, v13 key="tag" accessSite=10
-# CHECK-NEXT: Jump -> next b5()
-# CHECK-NEXT: b5():
-# CHECK-NEXT: v25: boolean ~ false = StrictEq v16, v3
-# CHECK-NEXT: Branch v25 -> taken b6(), notTaken b7()
+# CHECK-NEXT: v17: undefined = Undefined
+# CHECK-NEXT: PropDefine v16, v17 key="tag" accessSite=11
+# CHECK-NEXT: PropSet v16, v13 key="tag" accessSite=10
+# CHECK-NEXT: v20: boolean ~ false = StrictEq v16, v3
+# CHECK-NEXT: Branch v20 -> taken b3(), notTaken b4()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v21: int[1, 601] = Increment v7
+# CHECK-NEXT: Jump -> next b5(v21)
+# CHECK-NEXT: b4():
+# CHECK-NEXT: Jump -> next b5(v7)
+# CHECK-NEXT: b5(v22: int[0, 601]):
+# CHECK-NEXT: v23: anything ~ int = PropGet v16 key="tag" accessSite=1
+# CHECK-NEXT: v24: undefined|int ~ int = AssumeType v23 provenType=undefined|int
+# CHECK-NEXT: v25: number ~ int|whole = Add v8, v24
+# CHECK-NEXT: v26: int|whole = AssumeType v25 provenType=int|whole
+# CHECK-NEXT: v27: builtin(Object) = Builtin builtin=Object
+# CHECK-NEXT: v28: Array<L1, Contiguous> = NewArray v3 contents=L1 allocationSite=2 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v29: Array<L1, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v28 provenType=Array<L1, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v30: anything = CallBuiltin -, v27, v29, v1 overload=ReflectConstruct/1 accessSite=2 [isDoneInPlace]
+# CHECK-NEXT: v31: object = AssumeType v30 provenType=object
+# CHECK-NEXT: v32: boolean = StrictEq v31, v3
+# CHECK-NEXT: Branch v32 -> taken b6(), notTaken b7()
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v26: int[1, 601] = Increment v7
-# CHECK-NEXT: Jump -> next b8(v26)
+# CHECK-NEXT: v33: int[1, 602] = Increment v22
+# CHECK-NEXT: Jump -> next b8(v33)
 # CHECK-NEXT: b7():
-# CHECK-NEXT: Jump -> next b8(v7)
-# CHECK-NEXT: b8(v27: int[0, 601]):
-# CHECK-NEXT: v28: anything ~ int = PropGet v16 key="tag" accessSite=1
-# CHECK-NEXT: v29: undefined|int ~ int = AssumeType v28 provenType=undefined|int
-# CHECK-NEXT: v30: number ~ int|whole = Add v8, v29
-# CHECK-NEXT: v31: int|whole = AssumeType v30 provenType=int|whole
-# CHECK-NEXT: v32: builtin(Object) = Builtin builtin=Object
-# CHECK-NEXT: v33: Array<L1, Contiguous> = NewArray v3 contents=L1 allocationSite=2 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v34: Array<L1, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v33 provenType=Array<L1, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v35: anything = CallBuiltin -, v32, v34, v1 overload=ReflectConstruct/1 accessSite=2 [isDoneInPlace]
-# CHECK-NEXT: v36: object = AssumeType v35 provenType=object
-# CHECK-NEXT: v37: boolean = StrictEq v36, v3
-# CHECK-NEXT: Branch v37 -> taken b9(), notTaken b10()
-# CHECK-NEXT: b9():
-# CHECK-NEXT: v38: int[1, 602] = Increment v27
-# CHECK-NEXT: Jump -> next b11(v38)
+# CHECK-NEXT: Jump -> next b8(v22)
+# CHECK-NEXT: b8(v34: int[0, 602]):
+# CHECK-NEXT: v35: boolean = TypeTest v31 testedType=L0
+# CHECK-NEXT: Branch v35 -> taken b9(| 0), notTaken b12()
+# CHECK-NEXT: b9(v36: L0):
+# CHECK-NEXT: v37: boolean = HasLayoutPrototype v36
+# CHECK-NEXT: Branch v37 -> taken b10(), notTaken b11()
 # CHECK-NEXT: b10():
-# CHECK-NEXT: Jump -> next b11(v27)
-# CHECK-NEXT: b11(v39: int[0, 602]):
-# CHECK-NEXT: v40: boolean = TypeTest v36 testedType=L0
-# CHECK-NEXT: Branch v40 -> taken b12(| 0), notTaken b15()
-# CHECK-NEXT: b12(v41: L0):
-# CHECK-NEXT: v42: boolean = HasLayoutPrototype v41
-# CHECK-NEXT: Branch v42 -> taken b13(), notTaken b14()
+# CHECK-NEXT: Jump -> next b13()
+# CHECK-NEXT: b11() frequency=Unlikely:
+# CHECK-NEXT: v38: object = GetClassPrototype v1 layout=L0
+# CHECK-NEXT: v39: boolean = HasInPrototypeChain v31, v38
+# CHECK-NEXT: Branch v39 -> taken b13(), notTaken b14()
+# CHECK-NEXT: b12():
+# CHECK-NEXT: v40: object = GetClassPrototype v1 layout=L0
+# CHECK-NEXT: v41: boolean = HasInPrototypeChain v31, v40
+# CHECK-NEXT: Branch v41 -> taken b13(), notTaken b14()
 # CHECK-NEXT: b13():
-# CHECK-NEXT: Jump -> next b16()
-# CHECK-NEXT: b14() frequency=Unlikely:
-# CHECK-NEXT: v43: object = GetClassPrototype v1 layout=L0
-# CHECK-NEXT: v44: boolean = HasInPrototypeChain v36, v43
-# CHECK-NEXT: Branch v44 -> taken b16(), notTaken b17()
-# CHECK-NEXT: b15():
-# CHECK-NEXT: v45: object = GetClassPrototype v1 layout=L0
-# CHECK-NEXT: v46: boolean = HasInPrototypeChain v36, v45
-# CHECK-NEXT: Branch v46 -> taken b16(), notTaken b17()
+# CHECK-NEXT: v42: int|whole = Increment v26
+# CHECK-NEXT: Jump -> next b15(v42)
+# CHECK-NEXT: b14():
+# CHECK-NEXT: Jump -> next b15(v26)
+# CHECK-NEXT: b15(v43: int|whole):
+# CHECK-NEXT: v44: int[1, 300] = Increment v13
+# CHECK-NEXT: v45: fact = Specified
+# CHECK-NEXT: v46: int[0, 600] = AssumeType v34, v45 provenType=int[0, 600]
+# CHECK-NEXT: Jump -> next b1(v46, v43, v44)
 # CHECK-NEXT: b16():
-# CHECK-NEXT: v47: int|whole = Increment v31
-# CHECK-NEXT: Jump -> next b18(v47)
-# CHECK-NEXT: b17():
-# CHECK-NEXT: Jump -> next b18(v31)
-# CHECK-NEXT: b18(v48: int|whole):
-# CHECK-NEXT: v49: int[1, 300] = Increment v13
-# CHECK-NEXT: v50: fact = Specified
-# CHECK-NEXT: v51: int[0, 600] = AssumeType v39, v50 provenType=int[0, 600]
-# CHECK-NEXT: Jump -> next b1(v51, v48, v49)
-# CHECK-NEXT: b19():
-# CHECK-NEXT: v52: L1 = CallBuiltin -, v3 overload=Object/7 accessSite=5
-# CHECK-NEXT: v53: boolean = StrictEq v52, v3
-# CHECK-NEXT: v54: L1 = CallBuiltin -, v3 overload=Object/0 accessSite=6
-# CHECK-NEXT: v55: boolean = StrictEq v54, v3
-# CHECK-NEXT: v56: undefined = CallBuiltin -, v7, v8, v53, v55 overload=ConsoleLog/0 accessSite=7
-# CHECK-NEXT: v57: undefined = Undefined
-# CHECK-NEXT: Return v57
+# CHECK-NEXT: v47: L1 = CallBuiltin -, v3 overload=Object/7 accessSite=5
+# CHECK-NEXT: v48: boolean = StrictEq v47, v3
+# CHECK-NEXT: v49: L1 = CallBuiltin -, v3 overload=Object/0 accessSite=6
+# CHECK-NEXT: v50: boolean = StrictEq v49, v3
+# CHECK-NEXT: v51: undefined = CallBuiltin -, v7, v8, v48, v50 overload=ConsoleLog/0 accessSite=7
+# CHECK-NEXT: v52: undefined = Undefined
+# CHECK-NEXT: Return v52
 # CHECK-NEXT: }
 # CHECK-LABEL: function f2 module=
-# CHECK: m0 position=164 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler, IsExpected]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: anything ~ L0):
-# CHECK-NEXT: v1: object ~ L0 = AssumeType v0 provenType=object
-# CHECK-NEXT: v2: boolean ~ true = TypeTest v1 testedType=L0
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2(| 0)
-# CHECK-NEXT: b1(v3: L0):
-# CHECK-NEXT: v4: undefined = Undefined
-# CHECK-NEXT: PropDefine v3, v4 key="tag" accessSite=11 receivers=[L0, ..]
-# CHECK-NEXT: v6: undefined = Undefined
-# CHECK-NEXT: Return v6
-# CHECK-NEXT: b2(v7: object) frequency=Unlikely:
-# CHECK-NEXT: v8: undefined = Undefined
-# CHECK-NEXT: PropDefine v7, v8 key="tag" accessSite=11
-# CHECK-NEXT: v10: undefined = Undefined
-# CHECK-NEXT: Return v10
-# CHECK-NEXT: }
+# CHECK: m0 position=164 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler, IsExpected]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode]

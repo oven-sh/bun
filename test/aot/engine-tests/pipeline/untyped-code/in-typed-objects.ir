@@ -2944,53 +2944,49 @@ runtimefunction id=131091 function=f80 visibility=Private
 # CHECK-NEXT: b2(v6: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v8: boolean = Less v6, v2
-# CHECK-NEXT: Branch v8 -> taken b3(| 0), notTaken b16()
+# CHECK-NEXT: Branch v8 -> taken b3(| 0), notTaken b14()
 # CHECK-NEXT: b3(v9: int[0, 4294967294]):
 # CHECK-NEXT: v10: boolean = HasArrayElement v1, v9 arrayStorage=Contiguous level=Proven accessSite=173 [keyIsIntegral]
-# CHECK-NEXT: Branch v10 -> taken b4(), notTaken b14()
+# CHECK-NEXT: Branch v10 -> taken b4(), notTaken b12()
 # CHECK-NEXT: b4():
 # CHECK-NEXT: v11: int[0, 4294967294] ~ int[0, 2147483647] = Upcast v9 castType=int[0, 9007199254740990]
 # CHECK-NEXT: v12: undefined|null|1|string = GetArrayElement v1, v11 arrayStorage=Contiguous level=Proven accessSite=174 [keyIsIntegral]
 # CHECK-NEXT: Jump -> next b5()
 # CHECK-NEXT: b5() handler=b6():
 # CHECK-NEXT: v13: string = CallDirect v12 function=f2 accessSite=170
-# CHECK-NEXT: Jump -> next b9(v13)
+# CHECK-NEXT: Jump -> next b7(v13)
 # CHECK-NEXT: b6() role=CatchHandler:
 # CHECK-NEXT: v14: anything = CatchValue
 # CHECK-NEXT: v15: anything ~ undefined|null|Error = Upcast v14 castType=anything
 # CHECK-NEXT: v16: anything = PropGet v15 key="name" accessSite=171
-# CHECK-NEXT: v17: boolean = TypeTest v16 testedType=undefined|null|string
-# CHECK-NEXT: Branch v17 -> taken b7(| 0), notTaken b8(| 0)
-# CHECK-NEXT: b7(v18: undefined|null|string):
-# CHECK-NEXT: Jump -> next b9(v18)
-# CHECK-NEXT: b8(v19: boolean|number|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b9(v19)
-# CHECK-NEXT: b9(v20: anything ~ undefined|null|string):
-# CHECK-NEXT: v21: boolean = IsPristine v3 builtinClass=Array aspects=[Storage]
-# CHECK-NEXT: Branch v21 -> taken b10(| 0), notTaken b13()
-# CHECK-NEXT: b10(v22: guard):
-# CHECK-NEXT: v23: boolean = HasArrayStorage v3 arrayStorage=Contiguous [isWritable]
-# CHECK-NEXT: Branch v23 -> taken b11(| 0), notTaken b13()
-# CHECK-NEXT: b11(v24: guard):
-# CHECK-NEXT: v25: boolean = IsInBounds v3, v11
-# CHECK-NEXT: Branch v25 -> taken b12(| 0), notTaken b13()
-# CHECK-NEXT: b12(v26: guard):
-# CHECK-NEXT: v27: guard = AllGuards v22, v24, v26
-# CHECK-NEXT: PutArrayElement v3, v11, v20, v27 arrayStorage=Contiguous level=Expected accessSite=176 [keyIsIntegral, isInBounds]
-# CHECK-NEXT: Jump -> next b15()
-# CHECK-NEXT: b13() frequency=Rare:
-# CHECK-NEXT: ElemDefine v3, v11, v20 accessSite=176
-# CHECK-NEXT: v30: int[1, 4294967295] = Increment v9
-# CHECK-NEXT: Jump -> next b1(v30)
-# CHECK-NEXT: b14() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b15()
-# CHECK-NEXT: b15():
-# CHECK-NEXT: v31: int[1, 4294967295] = Increment v9
-# CHECK-NEXT: Jump -> next b2(v31)
-# CHECK-NEXT: b16():
-# CHECK-NEXT: v32: fact = Specified
-# CHECK-NEXT: v33: Array<anything, proven, pristine[Storage, Names, Dense]> = AssumeType v3, v32 provenType=Array<anything, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Return v33
+# CHECK-NEXT: v17: anything ~ undefined|null|string = Expect v16 expectedType=undefined|null|string
+# CHECK-NEXT: Jump -> next b7(v17)
+# CHECK-NEXT: b7(v18: anything ~ undefined|null|string):
+# CHECK-NEXT: v19: boolean = IsPristine v3 builtinClass=Array aspects=[Storage]
+# CHECK-NEXT: Branch v19 -> taken b8(| 0), notTaken b11()
+# CHECK-NEXT: b8(v20: guard):
+# CHECK-NEXT: v21: boolean = HasArrayStorage v3 arrayStorage=Contiguous [isWritable]
+# CHECK-NEXT: Branch v21 -> taken b9(| 0), notTaken b11()
+# CHECK-NEXT: b9(v22: guard):
+# CHECK-NEXT: v23: boolean = IsInBounds v3, v11
+# CHECK-NEXT: Branch v23 -> taken b10(| 0), notTaken b11()
+# CHECK-NEXT: b10(v24: guard):
+# CHECK-NEXT: v25: guard = AllGuards v20, v22, v24
+# CHECK-NEXT: PutArrayElement v3, v11, v18, v25 arrayStorage=Contiguous level=Expected accessSite=176 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: Jump -> next b13()
+# CHECK-NEXT: b11() frequency=Rare:
+# CHECK-NEXT: ElemDefine v3, v11, v18 accessSite=176
+# CHECK-NEXT: v28: int[1, 4294967295] = Increment v9
+# CHECK-NEXT: Jump -> next b1(v28)
+# CHECK-NEXT: b12() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b13()
+# CHECK-NEXT: b13():
+# CHECK-NEXT: v29: int[1, 4294967295] = Increment v9
+# CHECK-NEXT: Jump -> next b2(v29)
+# CHECK-NEXT: b14():
+# CHECK-NEXT: v30: fact = Specified
+# CHECK-NEXT: v31: Array<anything, proven, pristine[Storage, Names, Dense]> = AssumeType v3, v30 provenType=Array<anything, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Return v31
 # CHECK-NEXT: }
 # CHECK-LABEL: function f28 module=
 # CHECK: m0 position=1232 kind=Arrow flags=[IsChecked] length=1 captures=[{type=undefined|null|boolean|number|string|object}] thisType={type=anything} parameters=[{type=undefined|int|string|@@iterator|@@toStringTag site=w40 flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean site=w41}] functionTypes=[f39] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

@@ -1,14 +1,13 @@
-# The text is a string as long as the check in front of it stands, and what is written in place of the object goes into both versions. So it asks: the typed blocks know the answer, the copy makes the object
+# Of the text behind a check a string is only expected. So what is written in place of the object asks: a string is scanned, and for anything else the object is made
 # Where the check admits no string, the way of a string stays whole until the check is settled
 # FORM: Prepared optimizing
 # RUN: pass AddGenericVersion
-# STATISTIC: GenericVersionsCreated = 2
-# STATISTIC: ChecksReplacedByGuards = 3
+# STATISTIC: ChecksReplacedByGuards = 5
 # STATISTIC: URLsLeftUnbuilt = 3
 
 module m0 path="main.ts" displayPath="main.ts"
 
-function f0 name="textBehindCheckWithExit" parameters=[{type=anything}] results=[{type=string}] {
+function f0 name="textBehindCheck" parameters=[{type=anything}] results=[{type=string}] {
     v1 = Check v0 expectedType=string
     v2 = Builtin builtin=URLSearchParams
     v3 = Construct v2, -, v1
@@ -19,15 +18,14 @@ function f0 name="textBehindCheckWithExit" parameters=[{type=anything}] results=
     v8 = Add v7, v7
     v9 = AssumeType v8 provenType=string
     Return v9
-# CHECK: [[typed]]: string = Upcast
-# CHECK: : true = TypeTest [[typed]] testedType=string
-# CHECK: = CallBuiltin -, {{*}} overload=CompilerHelpersScanPlainQuery/0
-# CHECK: [[other]]: undefined|null|boolean|number|symbol|bigint|object = Expect
-# CHECK: : false = TypeTest [[other]] testedType=string
-# CHECK-NOT: CompilerHelpersScanPlainQuery
+# CHECK: [[expectedText]]: anything ~ string = Expect {{*}} expectedType=string
+# CHECK-NOT: = CallBuiltin -, [[expectedText]] overload=CompilerHelpersScanPlainQuery/0
+# CHECK: = Construct {{*}}, -, [[expectedText]]
+# CHECK: ([[plainText]]: string):
+# CHECK-NEXT: = CallBuiltin -, [[plainText]] overload=CompilerHelpersScanPlainQuery/0
 }
 
-function f1 name="textBehindCheckWithoutExit" parameters=[{type=anything}, {type=anything}] results=[{type=string}] {
+function f1 name="textBehindCheckUnderHandler" parameters=[{type=anything}, {type=anything}] results=[{type=string}] {
     v2 = Check v0 expectedType=Array
     v3 = IteratorOpen v2
     Jump -> next b1()

@@ -504,21 +504,29 @@ function f2 name="brief" module=m0 position=253 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: b4(v6: "number"|"undefined"):
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: b5(v7: null|boolean|object):
-# CHECK-NEXT: v8: null|boolean|object ~ null|object = Upcast v7 castType=null|boolean|string|symbol|bigint|object
-# CHECK-NEXT: v9: boolean = TypeTest v8 testedType=L1
-# CHECK-NEXT: Branch v9 -> taken b6(| 0), notTaken b8()
+# CHECK-NEXT: v8: null|boolean|object ~ L1 = Upcast v7 castType=null|boolean|string|symbol|bigint|object
+# CHECK-NEXT: v9: boolean ~ true = TypeTest v8 testedType=L1
+# CHECK-NEXT: Branch v9 -> taken b6(| 0), notTaken b7()
 # CHECK-NEXT: b6(v10: L1):
 # CHECK-NEXT: v11: int[-2147483643, 2147483647] = GetSlot v10 key="k7" receivers=[L1] level=Expected accessSite=21
 # CHECK-NEXT: v12: int[-2147483643, 2147483647] = GetSlot v10 key="k149" receivers=[L1] level=Expected accessSite=22
-# CHECK-NEXT: Jump -> next b7(v11, v12)
-# CHECK-NEXT: b7(v13: anything ~ int[-2147483643, 2147483647], v14: anything ~ int[-2147483643, 2147483647]):
-# CHECK-NEXT: v15: number|string|bigint ~ int[-4294967286, 4294967294] = Add v13, v14
-# CHECK-NEXT: v16: string = CallBuiltin -, v15 overload=String/0 accessSite=23 @0 tail
-# CHECK-NEXT: Return v16
-# CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v17: anything = PropGet v8 key="k7" accessSite=21 receivers=[L1, ..]
-# CHECK-NEXT: v18: anything = PropGet v8 key="k149" accessSite=22 receivers=[L1, ..]
-# CHECK-NEXT: Jump -> next b7(v17, v18)
+# CHECK-NEXT: Jump -> next b8(v11, v12)
+# CHECK-NEXT: b7() frequency=Unlikely:
+# CHECK-NEXT: v13: anything ~ int[-2147483643, 2147483647] = PropGet v8 key="k7" accessSite=21 receivers=[L1, ..]
+# CHECK-NEXT: v14: anything ~ int[-2147483643, 2147483647] = PropGet v8 key="k149" accessSite=22 receivers=[L1, ..]
+# CHECK-NEXT: v15: boolean ~ true = TypeTest v13 testedType=i32
+# CHECK-NEXT: Branch v15 -> taken b10(| 0), notTaken b9()
+# CHECK-NEXT: b8(v16: i32 ~ int[-2147483643, 2147483647], v17: i32 ~ int[-2147483643, 2147483647]):
+# CHECK-NEXT: v18: int[-4294967296, 4294967294] ~ int[-4294967286, 4294967294] = Add v16, v17
+# CHECK-NEXT: v19: string = CallBuiltin -, v18 overload=String/0 accessSite=23 @0 tail
+# CHECK-NEXT: Return v19
+# CHECK-NEXT: b9() frequency=Rare:
+# CHECK-NEXT: v20: number|string|bigint ~ int[-4294967286, 4294967294] = Add v13, v14
+# CHECK-NEXT: v21: string = CallBuiltin -, v20 overload=String/0 accessSite=23 @0 tail
+# CHECK-NEXT: Return v21
+# CHECK-NEXT: b10(v22: i32 ~ int[-2147483643, 2147483647]):
+# CHECK-NEXT: v23: boolean ~ true = TypeTest v14 testedType=i32
+# CHECK-NEXT: Branch v23 -> taken b8(v22 | 0), notTaken b9()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="pick"
 # CHECK: module=m0 position=163 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w1}] results=[{type=undefined|null|boolean|number|object}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{original=0}]} {

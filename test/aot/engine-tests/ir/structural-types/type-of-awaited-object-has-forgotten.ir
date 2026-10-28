@@ -228,28 +228,48 @@ function f35 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="attempt"
-# CHECK: module=m0 position=1892 role=CoroutineRamp flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=2 thisType={type=undefined} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}, {type=f17|f18 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Promise<undefined, proven, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{kind=AsyncFunction ramp=f3 body=f43 promiseType=Promise worker=f43} inlineFrames=[{}, {callee=f43 callPosition=1892 module=m0}] {
+# CHECK: module=m0 position=1892 role=CoroutineRamp flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=2 thisType={type=undefined} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}, {type=f17|f18 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Promise<undefined, proven, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{kind=AsyncFunction ramp=f3 body=f43 promiseType=Promise worker=f43} inlineFrames=[{}, {callee=f43 callPosition=1892 module=m0}, {callee=f18 callPosition=4294967295 parent=1 module=m0}, {callee=f17 callPosition=4294967295 parent=1 module=m0}, {callee=f39 callPosition=2690 parent=3 isTailCall=true module=m0}, {callee=f37 callPosition=2690 parent=3 isTailCall=true module=m0}, {callee=f40 callPosition=2779 parent=2 isTailCall=true module=m0}, {callee=f38 callPosition=2779 parent=2 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: undefined, v1: string, v2: f17|f18):
 # CHECK-NEXT: v3: boolean = TypeTest v2 testedType=f17
-# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2(| 0)
-# CHECK-NEXT: b1(v4: f17) handler=b4():
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b5(| 0)
+# CHECK-NEXT: b1(v4: f17):
 # CHECK-NEXT: v5: anything ~ undefined|null|function = GetCapture v4 function=f17
-# CHECK-NEXT: v6: Promise<anything, proven, pristine[Storage, Names]> = CallDirect v5 function=f17 accessSite=5
-# CHECK-NEXT: Jump -> next b3()
-# CHECK-NEXT: b2(v7: f18) handler=b4():
-# CHECK-NEXT: v8: anything ~ undefined|null|function = GetCapture v7 function=f18
-# CHECK-NEXT: v9: Promise<anything, proven, pristine[Storage, Names]> = CallDirect v8 function=f18 accessSite=5
-# CHECK-NEXT: Jump -> next b3()
-# CHECK-NEXT: b3():
-# CHECK-NEXT: Jump -> next b5()
-# CHECK-NEXT: b4() role=CatchHandler:
-# CHECK-NEXT: Jump -> next b5()
-# CHECK-NEXT: b5():
-# CHECK-NEXT: v10: undefined = Undefined
-# CHECK-NEXT: v11: Promise = NewPromise
-# CHECK-NEXT: ResolvePromise v11, v10
-# CHECK-NEXT: v13: Promise<undefined, proven, pristine[Storage, Names]> = AssumeType v11 provenType=Promise<undefined, proven, pristine[Storage, Names]>
-# CHECK-NEXT: Return v13
+# CHECK-NEXT: v6: boolean ~ true = TypeTest v5 testedType=undefined|null|function
+# CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v7: undefined|null|function) handler=b10():
+# CHECK-NEXT: v8: Promise = NewPromise
+# CHECK-NEXT: v9: anything = CallDirect v7, v8 function=f44
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b3() frequency=Unlikely handler=b10():
+# CHECK-NEXT: v10: Promise = NewPromise
+# CHECK-NEXT: v11: anything = CallDirect v5, v10 function=f46
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: Jump -> next b9()
+# CHECK-NEXT: b5(v12: f18):
+# CHECK-NEXT: v13: anything ~ undefined|null|function = GetCapture v12 function=f18
+# CHECK-NEXT: v14: boolean ~ true = TypeTest v13 testedType=undefined|null|function
+# CHECK-NEXT: Branch v14 -> taken b6(| 0), notTaken b7()
+# CHECK-NEXT: b6(v15: undefined|null|function) handler=b10():
+# CHECK-NEXT: v16: Promise = NewPromise
+# CHECK-NEXT: v17: anything = CallDirect v15, v16 function=f45
+# CHECK-NEXT: Jump -> next b8()
+# CHECK-NEXT: b7() frequency=Unlikely handler=b10():
+# CHECK-NEXT: v18: Promise = NewPromise
+# CHECK-NEXT: v19: anything = CallDirect v13, v18 function=f47
+# CHECK-NEXT: Jump -> next b8()
+# CHECK-NEXT: b8():
+# CHECK-NEXT: Jump -> next b9()
+# CHECK-NEXT: b9():
+# CHECK-NEXT: Jump -> next b11()
+# CHECK-NEXT: b10() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b11()
+# CHECK-NEXT: b11():
+# CHECK-NEXT: v20: undefined = Undefined
+# CHECK-NEXT: v21: Promise = NewPromise
+# CHECK-NEXT: ResolvePromise v21, v20
+# CHECK-NEXT: v23: Promise<undefined, proven, pristine[Storage, Names]> = AssumeType v21 provenType=Promise<undefined, proven, pristine[Storage, Names]>
+# CHECK-NEXT: Return v23
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Sneaky"
 # CHECK: module=m0 position=598 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L1 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {

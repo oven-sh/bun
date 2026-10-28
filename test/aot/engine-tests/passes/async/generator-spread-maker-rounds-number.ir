@@ -307,26 +307,23 @@ runtimefunction id=70 function=f6 visibility=Private
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="next"
-# CHECK: module=m1 position=25 kind=Method role=ResultWrapper flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=70 thisType={type=Generator flags=[IsExpected]} parameters=[{type=anything}] results=[{type=object}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f17 layout=L(IteratorResult)} {
-# CHECK-NEXT: b0(v0: anything, v1: anything):
-# CHECK-NEXT: v2: undefined = CallDirect v0, v1 function=f17
-# CHECK-NEXT: v3: i32 = ResultAt v2
-# CHECK-NEXT: v4: object|unspecified = ResultAt v2 index=1
-# CHECK-NEXT: v5: anything|unspecified = ResultAt v2 index=2
-# CHECK-NEXT: v6: boolean|unspecified = ResultAt v2 index=3
-# CHECK-NEXT: Switch v3 cases=[1] -> case b1(), otherwise b2()
+# CHECK: module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=70 thisType={type=Generator flags=[IsExpected]} parameters=[{type=anything}] results=[{type=object}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+# CHECK-NEXT: b0(v0: anything ~ Generator, v1: anything):
+# CHECK-NEXT: v2: undefined = StepGenerator v0, v1 check=IsGenerator
+# CHECK-NEXT: v3: anything = ResultAt v2
+# CHECK-NEXT: v4: int[0, 2] = ResultAt v2 index=1
+# CHECK-NEXT: v5: 2 = Integer integer=2
+# CHECK-NEXT: v6: boolean = StrictEq v4, v5
+# CHECK-NEXT: Branch v6 -> taken b1(), notTaken b2(| 0)
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v7: fact = Specified
-# CHECK-NEXT: v8: object = AssumeType v4, v7 provenType=object
-# CHECK-NEXT: Jump -> next b3(v8)
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v9: fact = Specified
-# CHECK-NEXT: v10: anything = AssumeType v5, v9 provenType=anything
-# CHECK-NEXT: v11: boolean = AssumeType v6, v9 provenType=boolean
-# CHECK-NEXT: v12: L(IteratorResult) = NewObject -, v10, v11 layout=L(IteratorResult) fields=[0, 1]
-# CHECK-NEXT: Jump -> next b3(v12)
-# CHECK-NEXT: b3(v13: object):
-# CHECK-NEXT: Return v13
+# CHECK-NEXT: v7: anything = ResumeGenerator v0, v1
+# CHECK-NEXT: v8: object = AssumeType v7 provenType=object
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: b2(v9: int[0, 1]):
+# CHECK-NEXT: v10: 1 = Integer integer=1
+# CHECK-NEXT: v11: boolean = StrictEq v9, v10
+# CHECK-NEXT: v12: L(IteratorResult) = NewObject -, v3, v11 layout=L(IteratorResult) fields=[0, 1]
+# CHECK-NEXT: Return v12
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="use4"
 # CHECK: module=m0 position=254 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string site=w1}, {type=int[0, 2] site=w2}] results=[{type=string site=w3 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1 parameterMap=[{original=0}, {original=1}]}
@@ -524,29 +521,4 @@ runtimefunction id=70 function=f6 visibility=Private
 # CHECK-NEXT: v36: "" = String string=""
 # CHECK-NEXT: v37: string = CallBuiltin v3, v36 overload=ArrayPrototypeJoin/0 accessSite=8 @0 tail
 # CHECK-NEXT: Return v37
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="next"
-# CHECK: module=m1 position=25 kind=Method role=ResultWorker flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=70 thisType={type=Generator flags=[IsExpected]} parameters=[{type=anything}] results=[{type=i32}, {type=object|unspecified}, {type=anything|unspecified}, {type=boolean|unspecified}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f6 parameterMap=[{original=0}, {original=1}]} creator=ResultWorker{origin=f6} {
-# CHECK-NEXT: b0(v0: anything ~ Generator, v1: anything):
-# CHECK-NEXT: v2: undefined = StepGenerator v0, v1 check=IsGenerator
-# CHECK-NEXT: v3: anything = ResultAt v2
-# CHECK-NEXT: v4: int[0, 2] = ResultAt v2 index=1
-# CHECK-NEXT: v5: 2 = Integer integer=2
-# CHECK-NEXT: v6: boolean = StrictEq v4, v5
-# CHECK-NEXT: Branch v6 -> taken b1(), notTaken b2(| 0)
-# CHECK-NEXT: b1():
-# CHECK-NEXT: v7: anything = ResumeGenerator v0, v1
-# CHECK-NEXT: v8: object = AssumeType v7 provenType=object
-# CHECK-NEXT: v9: 1 = Integer integer=1
-# CHECK-NEXT: v10: anything|unspecified = Unspecified valueType=anything
-# CHECK-NEXT: v11: boolean|unspecified = Unspecified valueType=boolean
-# CHECK-NEXT: v12: undefined = Results v9, v8, v10, v11
-# CHECK-NEXT: Return v12
-# CHECK-NEXT: b2(v13: int[0, 1]):
-# CHECK-NEXT: v14: 1 = Integer integer=1
-# CHECK-NEXT: v15: boolean = StrictEq v13, v14
-# CHECK-NEXT: v16: 2 = Integer integer=2
-# CHECK-NEXT: v17: object|unspecified = Unspecified valueType=object
-# CHECK-NEXT: v18: undefined = Results v16, v17, v3, v15
-# CHECK-NEXT: Return v18
 # CHECK-NEXT: }

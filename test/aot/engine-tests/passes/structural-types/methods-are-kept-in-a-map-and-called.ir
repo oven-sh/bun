@@ -305,7 +305,7 @@ function f64 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function f24 module=
-# CHECK: m0 position=2577 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=string site=w39 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f57] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f10 callPosition=4294967295 module=m0}, {callee=f67 callPosition=657 parent=1 isTailCall=true module=m0}] {
+# CHECK: m0 position=2577 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=string site=w39 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f57] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: Map<"bump"|"storeCount", undefined|f9|f10, proven, pristine[Storage, Names]> = GetModuleVariable variable=g0
 # CHECK-NEXT: v1: anything = CollectionTable v0
@@ -317,25 +317,27 @@ function f64 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v7: boolean = ResultAt v6
 # CHECK-NEXT: v8: int[0, 2147483647] = ResultAt v6 index=1
 # CHECK-NEXT: v9: undefined|f9|f10 = ResultAt v6 index=3
-# CHECK-NEXT: Branch v7 -> taken b2(), notTaken b7()
+# CHECK-NEXT: Branch v7 -> taken b2(), notTaken b8()
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v10: anything = CollectionTable v0
 # CHECK-NEXT: v11: 1 = Integer integer=1
 # CHECK-NEXT: v12: int[1, 2147483648] = Add v8, v11
 # CHECK-NEXT: v13: boolean = TypeTest v9 testedType=f10
 # CHECK-NEXT: Branch v13 -> taken b3(), notTaken b4(| 0)
-# CHECK-NEXT: b3() frequency=Unlikely handler=b5():
+# CHECK-NEXT: b3() handler=b6():
 # CHECK-NEXT: v14: undefined = Undefined
-# CHECK-NEXT: v15: never = PropGet v14 key="count" accessSite=12
-# CHECK-NEXT: Unreachable
-# CHECK-NEXT: b4(v16: undefined|f9) frequency=Unlikely handler=b5():
+# CHECK-NEXT: v15: anything ~ number = CallDirect v14 function=f10 accessSite=16
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: b4(v16: undefined|f9) frequency=Unlikely handler=b6():
 # CHECK-NEXT: v17: anything = Call v16 calleeName="f" accessSite=16 callees=[f9, f10]
-# CHECK-NEXT: Jump -> next b6()
-# CHECK-NEXT: b5() role=CatchHandler:
-# CHECK-NEXT: Jump -> next b6()
-# CHECK-NEXT: b6():
-# CHECK-NEXT: Jump -> next b1(v10, v12)
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: b5():
+# CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: b6() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b7()
 # CHECK-NEXT: b7():
+# CHECK-NEXT: Jump -> next b1(v10, v12)
+# CHECK-NEXT: b8():
 # CHECK-NEXT: v18: "" = String string="" @0 tail
 # CHECK-NEXT: Return v18
 # CHECK-NEXT: }
@@ -344,7 +346,7 @@ function f64 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b0(v0: L1):
 # CHECK-NEXT: v1: undefined = Undefined
 # CHECK-NEXT: v2: number = Increment v1
-# CHECK-NEXT: PropSet v0, v2 key="count" accessSite=13 receivers=[]
+# CHECK-NEXT: PropSet v0, v2 key="count" accessSite=13
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="bump"

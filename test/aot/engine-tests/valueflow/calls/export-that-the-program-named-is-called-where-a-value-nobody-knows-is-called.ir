@@ -1,5 +1,5 @@
 # vm = require("node:vm"); taken = input(vm.run); taken("1")
-# The program hands an export of the library to a callee nobody knows, and calls a value nobody knows. No node lists the export beside that value, which may be the export all the same.
+# The program takes an export off a module of the library by its name, hands it to a callee nobody knows, and calls a value nobody knows. No node lists the export beside that value, which may be the export all the same.
 # So the export is called by seen code, and the evaluator that it calls raises its event.
 # evaluator-called-in-function-of-library-that-only-native-code-enters.ir has a function that the program never holds
 # RUN: valueflow-solve calls

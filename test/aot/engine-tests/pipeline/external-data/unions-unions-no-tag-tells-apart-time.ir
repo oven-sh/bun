@@ -1593,7 +1593,7 @@ runtimefunction id=131110 function=f18
 # CHECK-NEXT: v64: " levels" = String string=" levels"
 # CHECK-NEXT: v65: "taken, " = String string="taken, "
 # CHECK-NEXT: v66: string = Strcat v65, v53, v64
-# CHECK-NEXT: Jump -> next b36(v66)
+# CHECK-NEXT: Jump -> next b35(v66)
 # CHECK-NEXT: b32() frequency=Unlikely handler=b34():
 # CHECK-NEXT: v67: anything ~ undefined|null|boolean|number|string|object = PropGet v55 key="left" accessSite=7 receivers=[L0, ..]
 # CHECK-NEXT: Jump -> next b33(v67)
@@ -1604,47 +1604,34 @@ runtimefunction id=131110 function=f18
 # CHECK-NEXT: v70: anything = CatchValue
 # CHECK-NEXT: v71: anything ~ undefined|null|number|string|symbol|bigint|object = Upcast v70 castType=anything
 # CHECK-NEXT: v72: anything = PropGet v71 key="name" accessSite=13
-# CHECK-NEXT: v73: boolean = TypeTest v72 testedType=undefined|null|string
-# CHECK-NEXT: Branch v73 -> taken b35(| 0), notTaken b40(| 0)
-# CHECK-NEXT: b35(v74: undefined|null|string):
-# CHECK-NEXT: Jump -> next b36(v74)
-# CHECK-NEXT: b36(v75: undefined|null|string):
-# CHECK-NEXT: v76: ": " = String string=": "
-# CHECK-NEXT: v77: string = Strcat v0, v76, v75
-# CHECK-NEXT: v78: number = CallBuiltin overload=DateNow/0 accessSite=18
-# CHECK-NEXT: v79: number = Sub v78, v2
-# CHECK-NEXT: v80: 10000 = Integer integer=10000
-# CHECK-NEXT: v81: boolean = Greater v79, v80
-# CHECK-NEXT: Branch v81 -> taken b37(), notTaken b38()
-# CHECK-NEXT: b37():
-# CHECK-NEXT: v82: " TOO SLOW" = String string=" TOO SLOW"
-# CHECK-NEXT: Jump -> next b39(v82)
-# CHECK-NEXT: b38():
-# CHECK-NEXT: v83: "" = String string=""
-# CHECK-NEXT: Jump -> next b39(v83)
-# CHECK-NEXT: b39(v84: ""|" TOO SLOW"):
-# CHECK-NEXT: v85: string = Add v77, v84
-# CHECK-NEXT: v86: undefined = CallBuiltin -, v85 overload=ConsoleLog/0 accessSite=19
-# CHECK-NEXT: v87: undefined = Undefined
-# CHECK-NEXT: Return v87
-# CHECK-NEXT: b40(v88: boolean|number|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v89: ": " = String string=": "
-# CHECK-NEXT: v90: string = Add v0, v89
-# CHECK-NEXT: v91: string = Add v90, v88
-# CHECK-NEXT: v92: number = CallBuiltin overload=DateNow/0 accessSite=18
-# CHECK-NEXT: v93: number = Sub v92, v2
-# CHECK-NEXT: v94: 10000 = Integer integer=10000
-# CHECK-NEXT: v95: boolean = Greater v93, v94
-# CHECK-NEXT: Branch v95 -> taken b41(), notTaken b42()
-# CHECK-NEXT: b41() frequency=Unlikely:
-# CHECK-NEXT: v96: " TOO SLOW" = String string=" TOO SLOW"
-# CHECK-NEXT: Jump -> next b43(v96)
-# CHECK-NEXT: b42() frequency=Unlikely:
-# CHECK-NEXT: v97: "" = String string=""
-# CHECK-NEXT: Jump -> next b43(v97)
-# CHECK-NEXT: b43(v98: ""|" TOO SLOW") frequency=Unlikely:
-# CHECK-NEXT: v99: string = Add v91, v98
-# CHECK-NEXT: v100: undefined = CallBuiltin -, v99 overload=ConsoleLog/0 accessSite=19
-# CHECK-NEXT: v101: undefined = Undefined
-# CHECK-NEXT: Return v101
+# CHECK-NEXT: v73: anything ~ undefined|null|string = Expect v72 expectedType=undefined|null|string
+# CHECK-NEXT: Jump -> next b35(v73)
+# CHECK-NEXT: b35(v74: anything ~ undefined|null|string):
+# CHECK-NEXT: v75: ": " = String string=": "
+# CHECK-NEXT: v76: string = Add v0, v75
+# CHECK-NEXT: v77: boolean = TypeTest v74 testedType=string
+# CHECK-NEXT: Branch v77 -> taken b36(| 0), notTaken b37(| 0)
+# CHECK-NEXT: b36(v78: string):
+# CHECK-NEXT: v79: string = Add v76, v78
+# CHECK-NEXT: Jump -> next b38(v79)
+# CHECK-NEXT: b37(v80: undefined|null|boolean|number|symbol|bigint|object ~ undefined|null) frequency=Rare:
+# CHECK-NEXT: v81: string = Add v76, v80
+# CHECK-NEXT: Jump -> next b38(v81)
+# CHECK-NEXT: b38(v82: string):
+# CHECK-NEXT: v83: number = CallBuiltin overload=DateNow/0 accessSite=18
+# CHECK-NEXT: v84: number = Sub v83, v2
+# CHECK-NEXT: v85: 10000 = Integer integer=10000
+# CHECK-NEXT: v86: boolean = Greater v84, v85
+# CHECK-NEXT: Branch v86 -> taken b39(), notTaken b40()
+# CHECK-NEXT: b39():
+# CHECK-NEXT: v87: " TOO SLOW" = String string=" TOO SLOW"
+# CHECK-NEXT: Jump -> next b41(v87)
+# CHECK-NEXT: b40():
+# CHECK-NEXT: v88: "" = String string=""
+# CHECK-NEXT: Jump -> next b41(v88)
+# CHECK-NEXT: b41(v89: ""|" TOO SLOW"):
+# CHECK-NEXT: v90: string = Add v82, v89
+# CHECK-NEXT: v91: undefined = CallBuiltin -, v90 overload=ConsoleLog/0 accessSite=19
+# CHECK-NEXT: v92: undefined = Undefined
+# CHECK-NEXT: Return v92
 # CHECK-NEXT: }

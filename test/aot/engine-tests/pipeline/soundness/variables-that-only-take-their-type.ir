@@ -1055,27 +1055,16 @@ function f58 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v2: 8 = Integer integer=8
 # CHECK-NEXT: v3: env L2 = GetCapture v1 function=f25
 # CHECK-NEXT: v4: undefined|int = GetEnvironmentField v3 layout=L2
-# CHECK-NEXT: v5: boolean = TypeTest v4 testedType=number
-# CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v6: int):
-# CHECK-NEXT: v7: i32 = BitOr v4, v2
-# CHECK-NEXT: PutEnvironmentField v3, v7 layout=L2
-# CHECK-NEXT: v9: f27 = GetSlot v0 key="context" receivers=[L4] level=Proven accessSite=193
-# CHECK-NEXT: v10: number = Call v9, v0 calleeKey="context" calleeName="walker.context" accessSite=194 callees=[f27] @0:2 tail
+# CHECK-NEXT: v5: undefined|int ~ int = Expect v4 expectedType=number
+# CHECK-NEXT: v6: i32 = BitOr v4, v2
 # CHECK-NEXT: PutEnvironmentField v3, v6 layout=L2
-# CHECK-NEXT: Jump -> next b3(v10)
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v12: undefined = Undefined
-# CHECK-NEXT: v13: i32 = BitOr v4, v2
-# CHECK-NEXT: PutEnvironmentField v3, v13 layout=L2
-# CHECK-NEXT: v15: number = CallDirect function=f30 accessSite=192 [isNeverInlined]
-# CHECK-NEXT: PutEnvironmentField v3, v12 layout=L2
-# CHECK-NEXT: Jump -> next b3(v15)
-# CHECK-NEXT: b3(v17: number):
-# CHECK-NEXT: v18: f27 = GetSlot v0 key="context" receivers=[L4] level=Proven accessSite=174
-# CHECK-NEXT: v19: number = Call v18, v0 calleeKey="context" calleeName="walker.context" accessSite=175 callees=[f27]
-# CHECK-NEXT: v20: number = Add v17, v19
-# CHECK-NEXT: Return v20
+# CHECK-NEXT: v8: f27 = GetSlot v0 key="context" receivers=[L4] level=Proven accessSite=193
+# CHECK-NEXT: v9: number = Call v8, v0 calleeKey="context" calleeName="walker.context" accessSite=194 callees=[f27] @0:2 tail
+# CHECK-NEXT: PutEnvironmentField v3, v5 layout=L2
+# CHECK-NEXT: v11: f27 = GetSlot v0 key="context" receivers=[L4] level=Proven accessSite=174
+# CHECK-NEXT: v12: number = Call v11, v0 calleeKey="context" calleeName="walker.context" accessSite=175 callees=[f27]
+# CHECK-NEXT: v13: number = Add v9, v12
+# CHECK-NEXT: Return v13
 # CHECK-NEXT: }
 # CHECK-LABEL: function f7 module=
 # CHECK: m0 position=6093 kind=Arrow flags=[IsChecked] captures=[{type=L4 site=w106 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number site=w110}] functionTypes=[f57] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -1169,71 +1158,6 @@ function f58 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b0(v0: f25, v1: anything, v2: anything, v3: anything) frequency=Rare:
 # CHECK-NEXT: v4: object = NewRuntimeError runtimeError=LeftOutOfExecutable
 # CHECK-NEXT: Throw v4
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="inside"
-# CHECK: module=m0 position=5210 role=CalleeVersion flags=[IsChecked, HasExplicitName] length=2 captures=[{type=env L2 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=int[1, 16] site=w153}, {type=f6|f7|f8|f30}] results=[{type=anything site=w155}] functionTypes=[f50] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f25 parameter=1073741826 parameterMap=[{original=0}, {original=1}, {original=2}]} creator=Version{provenVersion=f25} inlineFrames=[{}, {callee=f30 callPosition=4294967295 module=m0}, {callee=f7 callPosition=4294967295 module=m0}] {
-# CHECK-NEXT: b0(v0: env L2, v1: int[1, 16], v2: f6|f7|f8|f30):
-# CHECK-NEXT: v3: undefined|int = GetEnvironmentField v0 layout=L2
-# CHECK-NEXT: v4: boolean = TypeTest v3 testedType=number
-# CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b9()
-# CHECK-NEXT: b1(v5: int):
-# CHECK-NEXT: v6: i32 = BitOr v3, v1
-# CHECK-NEXT: PutEnvironmentField v0, v6 layout=L2
-# CHECK-NEXT: v8: boolean = TypeTest v2 testedType=f6
-# CHECK-NEXT: Branch v8 -> taken b2(), notTaken b3(| 0)
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v9: number = CallDirect function=f6 accessSite=192
-# CHECK-NEXT: Jump -> next b8(v9)
-# CHECK-NEXT: b3(v10: f7|f8|f30):
-# CHECK-NEXT: v11: boolean = TypeTest v10 testedType=f7
-# CHECK-NEXT: Branch v11 -> taken b4(| 0), notTaken b5(| 0)
-# CHECK-NEXT: b4(v12: f7):
-# CHECK-NEXT: v13: L4 = GetCapture v12 function=f7
-# CHECK-NEXT: v14: f27 = GetSlot v13 key="context" receivers=[L4] level=Proven accessSite=176
-# CHECK-NEXT: v15: number = Call v14, v13 calleeKey="context" calleeName="other.context" accessSite=177 callees=[f27] @0:2 tail
-# CHECK-NEXT: Jump -> next b8(v15)
-# CHECK-NEXT: b5(v16: f8|f30):
-# CHECK-NEXT: v17: boolean = TypeTest v16 testedType=f8
-# CHECK-NEXT: Branch v17 -> taken b6(), notTaken b7()
-# CHECK-NEXT: b6() frequency=Rare:
-# CHECK-NEXT: v18: anything = CallDirect function=f8 accessSite=192
-# CHECK-NEXT: Jump -> next b8(v18)
-# CHECK-NEXT: b7():
-# CHECK-NEXT: v19: L4 = GetModuleVariable variable=g2
-# CHECK-NEXT: v20: f27 = GetSlot v19 key="context" receivers=[L4] level=Proven accessSite=193
-# CHECK-NEXT: v21: number = Call v20, v19 calleeKey="context" calleeName="walker.context" accessSite=194 callees=[f27] @0:1 tail
-# CHECK-NEXT: Jump -> next b8(v21)
-# CHECK-NEXT: b8(v22: anything ~ number):
-# CHECK-NEXT: PutEnvironmentField v0, v5 layout=L2
-# CHECK-NEXT: Return v22
-# CHECK-NEXT: b9() frequency=Unlikely:
-# CHECK-NEXT: v24: i32 = BitOr v3, v1
-# CHECK-NEXT: PutEnvironmentField v0, v24 layout=L2
-# CHECK-NEXT: v26: boolean = TypeTest v2 testedType=f6
-# CHECK-NEXT: Branch v26 -> taken b10(), notTaken b11(| 0)
-# CHECK-NEXT: b10() frequency=Unlikely:
-# CHECK-NEXT: v27: number = CallDirect function=f6 accessSite=192 [isNeverInlined]
-# CHECK-NEXT: Jump -> next b16(v27)
-# CHECK-NEXT: b11(v28: f7|f8|f30) frequency=Unlikely:
-# CHECK-NEXT: v29: boolean = TypeTest v28 testedType=f7
-# CHECK-NEXT: Branch v29 -> taken b12(| 0), notTaken b13(| 0)
-# CHECK-NEXT: b12(v30: f7) frequency=Unlikely:
-# CHECK-NEXT: v31: L4 = GetCapture v30 function=f7
-# CHECK-NEXT: v32: number = CallDirect v31 function=f7 accessSite=192 [isNeverInlined]
-# CHECK-NEXT: Jump -> next b16(v32)
-# CHECK-NEXT: b13(v33: f8|f30) frequency=Unlikely:
-# CHECK-NEXT: v34: boolean = TypeTest v33 testedType=f8
-# CHECK-NEXT: Branch v34 -> taken b14(), notTaken b15()
-# CHECK-NEXT: b14() frequency=Rare:
-# CHECK-NEXT: v35: anything = CallDirect function=f8 accessSite=192 [isNeverInlined]
-# CHECK-NEXT: Jump -> next b16(v35)
-# CHECK-NEXT: b15() frequency=Unlikely:
-# CHECK-NEXT: v36: number = CallDirect function=f30 accessSite=192 [isNeverInlined]
-# CHECK-NEXT: Jump -> next b16(v36)
-# CHECK-NEXT: b16(v37: anything) frequency=Unlikely:
-# CHECK-NEXT: v38: undefined = Undefined
-# CHECK-NEXT: PutEnvironmentField v0, v38 layout=L2
-# CHECK-NEXT: Return v37
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="createWalker"
 # CHECK: module=m0 position=5037 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} results=[{type=L4 site=w14 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f4} {

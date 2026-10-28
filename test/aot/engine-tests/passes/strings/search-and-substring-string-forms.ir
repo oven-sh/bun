@@ -251,7 +251,7 @@ function f30 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Jump -> next b5(v15)
 # CHECK-NEXT: b5(v16: undefined|L0):
 # CHECK-NEXT: v17: f2 = GetModuleVariable variable=g1
-# CHECK-NEXT: v18: undefined|null|Array<number> = Call v17, -, v6 calleeName="createStarts" accessSite=6 callees=[f2]
+# CHECK-NEXT: v18: undefined|null|Array<number> = Call v17, -, v6 calleeName="createStarts" accessSite=6 callees=[f2, ..]
 # CHECK-NEXT: v19: Array<number> = RequireObjectCoercible v18 nullishAccess=Iterate
 # CHECK-NEXT: v20: boolean = IsPristine v19 builtinClass=Array aspects=[Names]
 # CHECK-NEXT: Branch v20 -> taken b7(), notTaken b6()

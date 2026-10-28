@@ -293,7 +293,7 @@ function f29 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Jump -> next b29(v101) @0:2 tail
 # CHECK-NEXT: b29(v102: undefined|string ~ string) handler=b30():
 # CHECK-NEXT: v103: undefined|null|string = Call v38, -, v102 calleeName="show" accessSite=6 callees=[f1]
-# CHECK-NEXT: Jump -> next b33()
+# CHECK-NEXT: Jump -> next b31()
 # CHECK-NEXT: b30() role=CatchHandler:
 # CHECK-NEXT: v104: anything = CatchValue
 # CHECK-NEXT: v105: "threw " = String string="threw "
@@ -301,27 +301,12 @@ function f29 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v107: boolean = HasInPrototypeChain v104, v106
 # CHECK-NEXT: v108: anything ~ undefined|null|Error = Upcast v104 castType=anything
 # CHECK-NEXT: v109: anything = PropGet v108 key="constructor" accessSite=8
-# CHECK-NEXT: v110: boolean = TypeTest v109 testedType=undefined|null|function
-# CHECK-NEXT: Branch v110 -> taken b31(| 0), notTaken b35(| 0)
-# CHECK-NEXT: b31(v111: undefined|null|function):
-# CHECK-NEXT: v112: function = RequireObjectCoercible v111 name="name"
-# CHECK-NEXT: v113: anything = PropGet v112 key="name" accessSite=9
-# CHECK-NEXT: v114: boolean = TypeTest v113 testedType=undefined|null|string
-# CHECK-NEXT: Branch v114 -> taken b32(| 0), notTaken b34(| 0)
-# CHECK-NEXT: b32(v115: undefined|null|string):
-# CHECK-NEXT: v116: string = Add v105, v115
-# CHECK-NEXT: Jump -> next b33()
-# CHECK-NEXT: b33():
-# CHECK-NEXT: Jump -> next b37()
-# CHECK-NEXT: b34(v117: boolean|number|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b36(v117)
-# CHECK-NEXT: b35(v118: boolean|number|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v119: anything = PropGet v118 key="name" accessSite=9
-# CHECK-NEXT: v120: anything ~ undefined|null|string = Expect v119 expectedType=undefined|null|string
-# CHECK-NEXT: Jump -> next b36(v120)
-# CHECK-NEXT: b36(v121: anything) frequency=Unlikely:
-# CHECK-NEXT: v122: string = Add v105, v121
-# CHECK-NEXT: Jump -> next b37()
-# CHECK-NEXT: b37():
+# CHECK-NEXT: v110: anything ~ undefined|null|function = Expect v109 expectedType=undefined|null|function
+# CHECK-NEXT: v111: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v110 name="name"
+# CHECK-NEXT: v112: anything = PropGet v111 key="name" accessSite=9
+# CHECK-NEXT: v113: anything ~ undefined|null|string = Expect v112 expectedType=undefined|null|string
+# CHECK-NEXT: v114: string = Add v105, v113
+# CHECK-NEXT: Jump -> next b31()
+# CHECK-NEXT: b31():
 # CHECK-NEXT: Jump -> next b1(v52, v53)
 # CHECK-NEXT: }

@@ -324,14 +324,12 @@ function f36 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: TestAndBranch v12 -> taken b6(| 0), notTaken b7(| 0)
 # CHECK-NEXT: b6(v13: string @Cell):
 # CHECK-NEXT: v14: undefined|string @JSValue = StringRangeCharacterOrUndefined v13, -, -, v1
-# CHECK-NEXT: Jump -> next b9(v14)
+# CHECK-NEXT: Jump -> next b8(v14)
 # CHECK-NEXT: b7(v15: Object @Cell) frequency=Unlikely:
 # CHECK-NEXT: v16: anything @JSValue = ElemGet v15, v1 accessSite=13 [keyIsIntegral]
 # CHECK-NEXT: Jump -> next b8(v16)
 # CHECK-NEXT: b8(v17: anything @JSValue):
 # CHECK-NEXT: Return v17
-# CHECK-NEXT: b9(v18: undefined|null|string @JSValue):
-# CHECK-NEXT: Return v18
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="width"
 # CHECK: module=m0 position=1364 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string|Object flags=[OmitsNull, OmitsUndefined]}, {type=int[0, 6]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -343,15 +341,16 @@ function f36 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Jump -> next b3(v4)
 # CHECK-NEXT: b2(v5: Object @Cell) frequency=Unlikely:
 # CHECK-NEXT: v6: anything @JSValue = ElemGet v5, v1 accessSite=14 [keyIsIntegral]
-# CHECK-NEXT: v7: anything @JSValue = Upcast v6 castType=anything
-# CHECK-NEXT: v8: boolean @Boolean = TypeTest v7 testedType=undefined|null|string
-# CHECK-NEXT: TestAndBranch v8 -> taken b3(| 0), notTaken b4(| 0)
-# CHECK-NEXT: b3(v9: undefined|null|string @JSValue):
-# CHECK-NEXT: v10: string @JSValue = RequireObjectCoercible v9 name="length"
+# CHECK-NEXT: Jump -> next b3(v6)
+# CHECK-NEXT: b3(v7: anything @JSValue):
+# CHECK-NEXT: v8: boolean|number|string|symbol|bigint|object @JSValue = RequireObjectCoercible v7 name="length"
+# CHECK-NEXT: v9: boolean @Boolean = TypeTest v8 testedType=string
+# CHECK-NEXT: TestAndBranch v9 -> taken b4(| 0), notTaken b5(| 0)
+# CHECK-NEXT: b4(v10: string @Cell):
 # CHECK-NEXT: v11: int[0, 2147483647] @Int32 = GetStringLength v10
 # CHECK-NEXT: Return v11
-# CHECK-NEXT: b4(v12: boolean|number|symbol|bigint|object @JSValue) frequency=Unlikely:
-# CHECK-NEXT: v13: anything @JSValue = PropGet v12 key="length" accessSite=15 siteCache=7
+# CHECK-NEXT: b5(v12: boolean|number|symbol|bigint|object @JSValue) frequency=Rare:
+# CHECK-NEXT: v13: anything @JSValue = PropGet v12 key="length" accessSite=15 siteCache=5
 # CHECK-NEXT: v14: undefined|number @JSValue = AssumeType v13 provenType=undefined|number
 # CHECK-NEXT: v15: undefined|number @JSValue = Expect v14 expectedType=number
 # CHECK-NEXT: Return v15
@@ -385,129 +384,83 @@ function f36 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK: module=m0 position=897 role=CalleeVersion flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}, {type=f6|f17|f19}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f5 parameter=1073741825 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f5}
 # CHECK-LABEL: function {{*}}name="attempt"
 # CHECK: module=m0 position=897 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=f6|f17|f19 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f5 parameterMap=[{original=1}]} inlineFrames=[{}, {callee=f19 callPosition=4294967295 module=m0}, {callee=f17 callPosition=4294967295 module=m0}] {
-# CHECK-NEXT: b0(v1: f6|f17|f19 @Cell):
-# CHECK-NEXT: v2: f1 @Cell = GetModuleVariable variable=g0
-# CHECK-NEXT: v3: boolean @Boolean = TypeTest v1 testedType=f17
-# CHECK-NEXT: TestAndBranch v3 -> taken b1(), notTaken b2(| 0)
+# CHECK-NEXT: b0(v0: f6|f17|f19 @Cell):
+# CHECK-NEXT: v1: f1 @Cell = GetModuleVariable variable=g0
+# CHECK-NEXT: v2: boolean @Boolean = TypeTest v0 testedType=f17
+# CHECK-NEXT: TestAndBranch v2 -> taken b1(), notTaken b2(| 0)
 # CHECK-NEXT: b1() handler=b6():
-# CHECK-NEXT: v4: undefined @Void = CallDirect function=f38
-# CHECK-NEXT: v5: anything @JSValue = ResultAt v4
-# CHECK-NEXT: v6: string @Cell = ResultAt v4 index=1
-# CHECK-NEXT: v7: string @Cell = ResultAt v4 index=2
-# CHECK-NEXT: v8: Array<string, proven, pristine[Storage, Names, Dense]> @Cell = ResultAt v4 index=3
-# CHECK-NEXT: v9: Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, Contiguous> @Cell = NewArray v5, v6, v7, v8 contents=undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]> allocationSite=9 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v10: Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v9 provenType=Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Jump -> next b5(v10)
-# CHECK-NEXT: b2(v11: f6|f19 @Cell):
-# CHECK-NEXT: v12: boolean @Boolean = TypeTest v11 testedType=f19
-# CHECK-NEXT: TestAndBranch v12 -> taken b3(), notTaken b4(| 0)
+# CHECK-NEXT: v3: undefined @Void = CallDirect function=f38
+# CHECK-NEXT: v4: anything @JSValue = ResultAt v3
+# CHECK-NEXT: v5: string @Cell = ResultAt v3 index=1
+# CHECK-NEXT: v6: string @Cell = ResultAt v3 index=2
+# CHECK-NEXT: v7: Array<string, proven, pristine[Storage, Names, Dense]> @Cell = ResultAt v3 index=3
+# CHECK-NEXT: v8: Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, Contiguous> @Cell = NewArray v4, v5, v6, v7 contents=undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]> allocationSite=9 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v9: Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v8 provenType=Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Jump -> next b5(v9)
+# CHECK-NEXT: b2(v10: f6|f19 @Cell):
+# CHECK-NEXT: v11: boolean @Boolean = TypeTest v10 testedType=f19
+# CHECK-NEXT: TestAndBranch v11 -> taken b3(), notTaken b4(| 0)
 # CHECK-NEXT: b3() handler=b6():
-# CHECK-NEXT: v13: undefined @Void = CallDirect function=f39
-# CHECK-NEXT: v14: anything @JSValue = ResultAt v13
-# CHECK-NEXT: v15: string @Cell = ResultAt v13 index=1
-# CHECK-NEXT: v16: undefined|number @OptionalDouble = ResultAt v13 index=2
-# CHECK-NEXT: v17: Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, Contiguous> @Cell = NewArray v14, v15, v16 contents=undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]> allocationSite=10 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v18: Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v17 provenType=Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Jump -> next b5(v18)
-# CHECK-NEXT: b4(v19: f6 @Cell) frequency=Unlikely handler=b6():
-# CHECK-NEXT: v20: undefined|null|Array<undefined|null|number|string> @JSValue = Call v19 calleeName="run" accessSite=16 callees=[f6, f17, f19]
-# CHECK-NEXT: v21: Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> @JSValue = AssumeType v20 provenType=Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Jump -> next b5(v21)
-# CHECK-NEXT: b5(v22: Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell) handler=b6():
-# CHECK-NEXT: v23: undefined|null|string @JSValue = Call v2, -, v22 calleeName="show" accessSite=17 callees=[f1]
-# CHECK-NEXT: Jump -> next b9()
+# CHECK-NEXT: v12: undefined @Void = CallDirect function=f39
+# CHECK-NEXT: v13: anything @JSValue = ResultAt v12
+# CHECK-NEXT: v14: string @Cell = ResultAt v12 index=1
+# CHECK-NEXT: v15: undefined|number @OptionalDouble = ResultAt v12 index=2
+# CHECK-NEXT: v16: Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, Contiguous> @Cell = NewArray v13, v14, v15 contents=undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]> allocationSite=10 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v17: Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v16 provenType=Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Jump -> next b5(v17)
+# CHECK-NEXT: b4(v18: f6 @Cell) frequency=Unlikely handler=b6():
+# CHECK-NEXT: v19: undefined|null|Array<undefined|null|number|string> @JSValue = Call v18 calleeName="run" accessSite=16 callees=[f6, f17, f19]
+# CHECK-NEXT: v20: Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> @JSValue = AssumeType v19 provenType=Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Jump -> next b5(v20)
+# CHECK-NEXT: b5(v21: Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell) handler=b6():
+# CHECK-NEXT: v22: undefined|null|string @JSValue = Call v1, -, v21 calleeName="show" accessSite=17 callees=[f1]
+# CHECK-NEXT: Jump -> next b7()
 # CHECK-NEXT: b6() role=CatchHandler:
-# CHECK-NEXT: v24: anything @JSValue = CatchValue
-# CHECK-NEXT: v25: "threw " @Cell = String string="threw "
-# CHECK-NEXT: v26: builtin(ErrorPrototype) @Cell = Builtin builtin=ErrorPrototype
-# CHECK-NEXT: v27: boolean @Boolean = HasInPrototypeChain v24, v26
-# CHECK-NEXT: v28: anything @JSValue = Upcast v24 castType=anything
-# CHECK-NEXT: v29: anything @JSValue = PropGet v28 key="constructor" accessSite=19 siteCache=8
-# CHECK-NEXT: v30: boolean @Boolean = TypeTest v29 testedType=undefined|null|function
-# CHECK-NEXT: TestAndBranch v30 -> taken b7(| 0), notTaken b11(| 0)
-# CHECK-NEXT: b7(v31: undefined|null|function @JSValue):
-# CHECK-NEXT: v32: function @JSValue = RequireObjectCoercible v31 name="name"
-# CHECK-NEXT: v33: anything @JSValue = PropGet v32 key="name" accessSite=20 siteCache=9
-# CHECK-NEXT: v34: boolean @Boolean = TypeTest v33 testedType=undefined|null|string
-# CHECK-NEXT: TestAndBranch v34 -> taken b8(| 0), notTaken b10(| 0)
-# CHECK-NEXT: b8(v35: undefined|null|string @JSValue):
-# CHECK-NEXT: v36: string @Cell = Add v25, v35 form=StringAndPrimitive
-# CHECK-NEXT: Jump -> next b9()
-# CHECK-NEXT: b9():
-# CHECK-NEXT: v37: undefined @JSValue = Undefined
-# CHECK-NEXT: Return v37
-# CHECK-NEXT: b10(v38: boolean|number|symbol|bigint|object @JSValue) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b12(v38)
-# CHECK-NEXT: b11(v39: boolean|number|string|symbol|bigint|object @JSValue) frequency=Unlikely:
-# CHECK-NEXT: v40: anything @JSValue = PropGet v39 key="name" accessSite=20 siteCache=10
-# CHECK-NEXT: v41: anything @JSValue = Expect v40 expectedType=undefined|null|string
-# CHECK-NEXT: Jump -> next b12(v41)
-# CHECK-NEXT: b12(v42: anything @JSValue) frequency=Unlikely:
-# CHECK-NEXT: v43: string @JSValue = Add v25, v42 form=Generic
-# CHECK-NEXT: v44: undefined @JSValue = Undefined
-# CHECK-NEXT: Return v44
+# CHECK-NEXT: v23: anything @JSValue = CatchValue
+# CHECK-NEXT: v24: undefined @JSValue = CallDirect v23 function=f49
+# CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: b7():
+# CHECK-NEXT: v25: undefined @JSValue = Undefined
+# CHECK-NEXT: Return v25
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="attempt"
 # CHECK: module=m0 position=897 role=CalleeVersion flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=f6|f17|f19}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f5 parameter=1073741825 parameterMap=[{original=1}]} creator=Version{provenVersion=f5} inlineFrames=[{}, {callee=f19 callPosition=4294967295 module=m0}, {callee=f17 callPosition=4294967295 module=m0}] {
-# CHECK-NEXT: b0(v1: f6|f17|f19 @Cell):
-# CHECK-NEXT: v2: f1 @Cell = GetModuleVariable variable=g0
-# CHECK-NEXT: v3: boolean @Boolean = TypeTest v1 testedType=f17
-# CHECK-NEXT: TestAndBranch v3 -> taken b1(), notTaken b2(| 0)
+# CHECK-NEXT: b0(v0: f6|f17|f19 @Cell):
+# CHECK-NEXT: v1: f1 @Cell = GetModuleVariable variable=g0
+# CHECK-NEXT: v2: boolean @Boolean = TypeTest v0 testedType=f17
+# CHECK-NEXT: TestAndBranch v2 -> taken b1(), notTaken b2(| 0)
 # CHECK-NEXT: b1() handler=b6():
-# CHECK-NEXT: v4: undefined @Void = CallDirect function=f38
-# CHECK-NEXT: v5: anything @JSValue = ResultAt v4
-# CHECK-NEXT: v6: string @Cell = ResultAt v4 index=1
-# CHECK-NEXT: v7: string @Cell = ResultAt v4 index=2
-# CHECK-NEXT: v8: Array<string, proven, pristine[Storage, Names, Dense]> @Cell = ResultAt v4 index=3
-# CHECK-NEXT: v9: Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, Contiguous> @Cell = NewArray v5, v6, v7, v8 contents=undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]> allocationSite=9 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v10: Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v9 provenType=Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Jump -> next b5(v10)
-# CHECK-NEXT: b2(v11: f6|f19 @Cell):
-# CHECK-NEXT: v12: boolean @Boolean = TypeTest v11 testedType=f19
-# CHECK-NEXT: TestAndBranch v12 -> taken b3(), notTaken b4(| 0)
+# CHECK-NEXT: v3: undefined @Void = CallDirect function=f38
+# CHECK-NEXT: v4: anything @JSValue = ResultAt v3
+# CHECK-NEXT: v5: string @Cell = ResultAt v3 index=1
+# CHECK-NEXT: v6: string @Cell = ResultAt v3 index=2
+# CHECK-NEXT: v7: Array<string, proven, pristine[Storage, Names, Dense]> @Cell = ResultAt v3 index=3
+# CHECK-NEXT: v8: Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, Contiguous> @Cell = NewArray v4, v5, v6, v7 contents=undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]> allocationSite=9 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v9: Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v8 provenType=Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Jump -> next b5(v9)
+# CHECK-NEXT: b2(v10: f6|f19 @Cell):
+# CHECK-NEXT: v11: boolean @Boolean = TypeTest v10 testedType=f19
+# CHECK-NEXT: TestAndBranch v11 -> taken b3(), notTaken b4(| 0)
 # CHECK-NEXT: b3() handler=b6():
-# CHECK-NEXT: v13: undefined @Void = CallDirect function=f39
-# CHECK-NEXT: v14: anything @JSValue = ResultAt v13
-# CHECK-NEXT: v15: string @Cell = ResultAt v13 index=1
-# CHECK-NEXT: v16: undefined|number @OptionalDouble = ResultAt v13 index=2
-# CHECK-NEXT: v17: Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, Contiguous> @Cell = NewArray v14, v15, v16 contents=undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]> allocationSite=10 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v18: Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v17 provenType=Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Jump -> next b5(v18)
-# CHECK-NEXT: b4(v19: f6 @Cell) frequency=Unlikely handler=b6():
-# CHECK-NEXT: v20: undefined|null|Array<undefined|null|number|string> @JSValue = Call v19 calleeName="run" accessSite=16 callees=[f6, f17, f19]
-# CHECK-NEXT: v21: Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> @JSValue = AssumeType v20 provenType=Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Jump -> next b5(v21)
-# CHECK-NEXT: b5(v22: Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell) handler=b6():
-# CHECK-NEXT: v23: undefined|null|string @JSValue = Call v2, -, v22 calleeName="show" accessSite=17 callees=[f1]
-# CHECK-NEXT: Jump -> next b9()
+# CHECK-NEXT: v12: undefined @Void = CallDirect function=f39
+# CHECK-NEXT: v13: anything @JSValue = ResultAt v12
+# CHECK-NEXT: v14: string @Cell = ResultAt v12 index=1
+# CHECK-NEXT: v15: undefined|number @OptionalDouble = ResultAt v12 index=2
+# CHECK-NEXT: v16: Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, Contiguous> @Cell = NewArray v13, v14, v15 contents=undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]> allocationSite=10 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v17: Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v16 provenType=Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Jump -> next b5(v17)
+# CHECK-NEXT: b4(v18: f6 @Cell) frequency=Unlikely handler=b6():
+# CHECK-NEXT: v19: undefined|null|Array<undefined|null|number|string> @JSValue = Call v18 calleeName="run" accessSite=16 callees=[f6, f17, f19]
+# CHECK-NEXT: v20: Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> @JSValue = AssumeType v19 provenType=Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Jump -> next b5(v20)
+# CHECK-NEXT: b5(v21: Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell) handler=b6():
+# CHECK-NEXT: v22: undefined|null|string @JSValue = Call v1, -, v21 calleeName="show" accessSite=17 callees=[f1]
+# CHECK-NEXT: Jump -> next b7()
 # CHECK-NEXT: b6() role=CatchHandler:
-# CHECK-NEXT: v24: anything @JSValue = CatchValue
-# CHECK-NEXT: v25: "threw " @Cell = String string="threw "
-# CHECK-NEXT: v26: builtin(ErrorPrototype) @Cell = Builtin builtin=ErrorPrototype
-# CHECK-NEXT: v27: boolean @Boolean = HasInPrototypeChain v24, v26
-# CHECK-NEXT: v28: anything @JSValue = Upcast v24 castType=anything
-# CHECK-NEXT: v29: anything @JSValue = PropGet v28 key="constructor" accessSite=19 siteCache=11
-# CHECK-NEXT: v30: boolean @Boolean = TypeTest v29 testedType=undefined|null|function
-# CHECK-NEXT: TestAndBranch v30 -> taken b7(| 0), notTaken b11(| 0)
-# CHECK-NEXT: b7(v31: undefined|null|function @JSValue):
-# CHECK-NEXT: v32: function @JSValue = RequireObjectCoercible v31 name="name"
-# CHECK-NEXT: v33: anything @JSValue = PropGet v32 key="name" accessSite=20 siteCache=12
-# CHECK-NEXT: v34: boolean @Boolean = TypeTest v33 testedType=undefined|null|string
-# CHECK-NEXT: TestAndBranch v34 -> taken b8(| 0), notTaken b10(| 0)
-# CHECK-NEXT: b8(v35: undefined|null|string @JSValue):
-# CHECK-NEXT: v36: string @Cell = Add v25, v35 form=StringAndPrimitive
-# CHECK-NEXT: Jump -> next b9()
-# CHECK-NEXT: b9():
-# CHECK-NEXT: v37: undefined @JSValue = Undefined
-# CHECK-NEXT: Return v37
-# CHECK-NEXT: b10(v38: boolean|number|symbol|bigint|object @JSValue) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b12(v38)
-# CHECK-NEXT: b11(v39: boolean|number|string|symbol|bigint|object @JSValue) frequency=Unlikely:
-# CHECK-NEXT: v40: anything @JSValue = PropGet v39 key="name" accessSite=20 siteCache=13
-# CHECK-NEXT: v41: anything @JSValue = Expect v40 expectedType=undefined|null|string
-# CHECK-NEXT: Jump -> next b12(v41)
-# CHECK-NEXT: b12(v42: anything @JSValue) frequency=Unlikely:
-# CHECK-NEXT: v43: string @JSValue = Add v25, v42 form=Generic
-# CHECK-NEXT: v44: undefined @JSValue = Undefined
-# CHECK-NEXT: Return v44
+# CHECK-NEXT: v23: anything @JSValue = CatchValue
+# CHECK-NEXT: v24: undefined @JSValue = CallDirect v23 function=f49
+# CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: b7():
+# CHECK-NEXT: v25: undefined @JSValue = Undefined
+# CHECK-NEXT: Return v25
 # CHECK-NEXT: }

@@ -494,24 +494,8 @@ runtimefunction id=131091 function=f34 visibility=Private
 # CHECK: m0 position=1151 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|string site=w29 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w30 flags=[IsExpected]}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: undefined|string):
 # CHECK-NEXT: v1: anything ~ undefined|null|function = GetModuleVariable variable=g0
-# CHECK-NEXT: v2: boolean ~ true = TypeTest v1 testedType=undefined|null|function|absent
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2(| 0)
-# CHECK-NEXT: b1(v3: undefined|null|function):
-# CHECK-NEXT: v4: anything = Call v3, -, v0 calleeName="counted" accessSite=25
-# CHECK-NEXT: ReturnCall v4 casts=[{declared={type=number site=w39 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w30 flags=[IsExpected]} resolution=Nothing}]
-# CHECK-NEXT: b2(v5: boolean|number|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v6: anything = Call v5, -, v0 calleeName="counted" accessSite=25 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v6
+# CHECK-NEXT: v2: anything = Call v1, -, v0 calleeName="counted" accessSite=25
+# CHECK-NEXT: ReturnCall v2
 # CHECK-NEXT: }
 # CHECK-LABEL: function f5 module=
-# CHECK: m0 position=1258 kind=Arrow role=EntryChecks flags=[IsChecked] length=2 captures=[{type=Array<anything, proven, pristine[Storage, Names, Dense]> site=w26 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} parameters=[{type=undefined|string site=w32 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w33 flags=[IsExpected]}] results=[{type=number site=w34 flags=[IsExpected]}] functionTypes=[f12] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f36 fallback=f37} {
-# CHECK-NEXT: b0(v0: Array<anything, proven, pristine[Storage, Names, Dense]>, v1: undefined|string, v2: anything ~ number):
-# CHECK-NEXT: v3: boolean ~ true = TypeTest v2 testedType=number
-# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v4: number):
-# CHECK-NEXT: v5: anything ~ number = CallDirect v0, v1, v4 function=f36
-# CHECK-NEXT: ReturnCall v5 requirement=Allowed
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v6: anything ~ number = CallDirect v0, v1, v2 function=f37
-# CHECK-NEXT: ReturnCall v6 requirement=Allowed
-# CHECK-NEXT: }
+# CHECK: m0 position=1258 kind=Arrow role=EntryChecks flags=[IsChecked] length=2 captures=[{type=Array<anything, proven, pristine[Storage, Names, Dense]> site=w26 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} parameters=[{type=undefined|string site=w32 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w33 flags=[IsExpected]}] results=[{type=number site=w34 flags=[IsExpected]}] functionTypes=[f12] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f36 fallback=f37}

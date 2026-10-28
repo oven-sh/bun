@@ -900,12 +900,6 @@ function f99 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v13: string = CallBuiltin v2 overload=ArrayPrototypeJoin/0 accessSite=19
 # CHECK-NEXT: v14: f17|f19|f21|f23|f25|f27|f29|f31 = GetSlot v8 key="wasNoticed" receivers=[L2] level=Proven accessSite=20
 # CHECK-NEXT: v15: anything = Call v14, v8 calleeKey="wasNoticed" calleeName="change.wasNoticed" accessSite=21 callees=[f17, f19, f21, f23, f25, f27, f29, f31]
-# CHECK-NEXT: v16: boolean = TypeTest v15 testedType=boolean
-# CHECK-NEXT: Branch v16 -> taken b1(), notTaken b2()
-# CHECK-NEXT: b1():
-# CHECK-NEXT: v17: "the stream is what the prototypes ask for" = String string="the stream is what the prototypes ask for"
-# CHECK-NEXT: Return v17
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v18: "the stream is what the prototypes ask for" = String string="the stream is what the prototypes ask for"
-# CHECK-NEXT: Return v18
+# CHECK-NEXT: v16: "the stream is what the prototypes ask for" = String string="the stream is what the prototypes ask for"
+# CHECK-NEXT: Return v16
 # CHECK-NEXT: }

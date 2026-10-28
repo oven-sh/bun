@@ -446,19 +446,19 @@ function f5 name="counters" module=m0 position=2596 flags=[IsChecked, HasExplici
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="overWords"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 101, patchpoints: 17, rare instructions: 663, polls: 2
+# CHECK-NEXT: instructions: 100, patchpoints: 17, rare instructions: 799, polls: 2
 # CHECK-NEXT: end of function f1
 # CHECK-LABEL: function {{*}}name="products"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 166, patchpoints: 29, rare instructions: 559, polls: 2
+# CHECK-NEXT: instructions: 159, patchpoints: 26, rare instructions: 498, polls: 2
 # CHECK-NEXT: end of function f2
 # CHECK-LABEL: function {{*}}name="runningSum"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 250, patchpoints: 44, rare instructions: 442, polls: 2
+# CHECK-NEXT: instructions: 240, patchpoints: 44, rare instructions: 425, polls: 2
 # CHECK-NEXT: end of function f10
 # CHECK-LABEL: function {{*}}name="lengths"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 37, patchpoints: 5, rare instructions: 206, polls: 1
+# CHECK-NEXT: instructions: 37, patchpoints: 5, rare instructions: 137, polls: 1
 # CHECK-NEXT: end of function f4
 # CHECK-LABEL: function {{*}}name="counters"
 # CHECK: role=Source

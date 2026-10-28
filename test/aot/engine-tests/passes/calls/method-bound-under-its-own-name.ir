@@ -2287,13 +2287,13 @@ runtimefunction id=12 function=f102
 # CHECK-NEXT: v12: boolean = TypeTest v10 testedType=f54
 # CHECK-NEXT: Branch v12 -> taken b4(| 0), notTaken b5()
 # CHECK-NEXT: b4(v13: f54):
-# CHECK-NEXT: v14: f184 = NewClosure v4, v13 function=f184
+# CHECK-NEXT: v14: f185 = NewClosure v4, v13 function=f185
 # CHECK-NEXT: Jump -> next b6(v14)
 # CHECK-NEXT: b5() frequency=Unlikely:
 # CHECK-NEXT: v15: function = CallBuiltin v10, v4 overload=FunctionPrototypeBind/0 builtinCallForm=AnyReceiver accessSite=265
 # CHECK-NEXT: Jump -> next b6(v15)
-# CHECK-NEXT: b6(v16: function|f184 ~ f184):
-# CHECK-NEXT: v17: function ~ f184 = AssumeType v16 provenType=function
+# CHECK-NEXT: b6(v16: function|f185 ~ f185):
+# CHECK-NEXT: v17: function ~ f185 = AssumeType v16 provenType=function
 # CHECK-NEXT: v18: boolean = AreMembersUnchanged conditions=[{kind=MemberNotHidden layout=L6 key="run"}]
 # CHECK-NEXT: Branch v18 -> taken b7(), notTaken b8()
 # CHECK-NEXT: b7():
@@ -2523,13 +2523,13 @@ runtimefunction id=12 function=f102
 # CHECK-NEXT: v19: boolean = TypeTest v16 testedType=f37
 # CHECK-NEXT: Branch v19 -> taken b8(), notTaken b9()
 # CHECK-NEXT: b8():
-# CHECK-NEXT: v20: f161 = NewClosure v6 function=f161
+# CHECK-NEXT: v20: f162 = NewClosure v6 function=f162
 # CHECK-NEXT: Jump -> next b10(v20)
 # CHECK-NEXT: b9() frequency=Unlikely:
 # CHECK-NEXT: v21: function = CallBuiltin v16, v6 overload=FunctionPrototypeBind/0 accessSite=314
 # CHECK-NEXT: Jump -> next b10(v21)
-# CHECK-NEXT: b10(v22: function|f161 ~ f161):
-# CHECK-NEXT: v23: function ~ f161 = AssumeType v22 provenType=function
+# CHECK-NEXT: b10(v22: function|f162 ~ f162):
+# CHECK-NEXT: v23: function ~ f162 = AssumeType v22 provenType=function
 # CHECK-NEXT: PutSlot v6, -, v23 key="run" receivers=[L15] level=Proven accessSite=315
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: }
@@ -2654,7 +2654,7 @@ runtimefunction id=12 function=f102
 # CHECK-NEXT: Return v12
 # CHECK-NEXT: }
 # CHECK-LABEL: function f46 module=
-# CHECK: m0 position=5259 kind=Arrow thisType={type=anything} results=[{type=undefined|null|L17}] functionTypes=[f82] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f170 callPosition=4294967295 isConstruction=true module=m0}, {callee=f110 callPosition=4294967295 parent=1 isConstruction=true module=m0}] {
+# CHECK: m0 position=5259 kind=Arrow thisType={type=anything} results=[{type=undefined|null|L17}] functionTypes=[f82] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f171 callPosition=4294967295 isConstruction=true module=m0}, {callee=f110 callPosition=4294967295 parent=1 isConstruction=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 1 = Integer integer=1
 # CHECK-NEXT: v1: 0 = Integer
@@ -2671,7 +2671,7 @@ runtimefunction id=12 function=f102
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: b3():
 # CHECK-NEXT: v9: function = CallBuiltin v4, v2 overload=FunctionPrototypeBind/0 builtinCallForm=AnyReceiver accessSite=234
-# CHECK-NEXT: PropSet v2, v9 key="run" accessSite=235 receivers=[L0, ..]
+# CHECK-NEXT: PropSet v2, v9 key="run" accessSite=235
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
 # CHECK-LABEL: function f47 module=
@@ -2760,7 +2760,7 @@ runtimefunction id=12 function=f102
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function f50 module=
-# CHECK: m0 position=6377 kind=Arrow thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f88] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f176 callPosition=4294967295 isConstruction=true module=m0}, {callee=f146 callPosition=4294967295 parent=1 isConstruction=true module=m0}] {
+# CHECK: m0 position=6377 kind=Arrow thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f88] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f177 callPosition=4294967295 isConstruction=true module=m0}, {callee=f146 callPosition=4294967295 parent=1 isConstruction=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: L18 = NewObject layout=L18 allocationClass=18
 # CHECK-NEXT: v1: 2 = Integer integer=2
@@ -2954,18 +2954,18 @@ runtimefunction id=12 function=f102
 # CHECK-NEXT: ReturnCall v2 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="fromGetter"
-# CHECK: module=m0 position=3296 role=GenericEntrypoint flags=[HasThis] captures=[{type=f182}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f182} creator=Entrypoint{target=f182 arguments=Registers} inlineFrames=[{}, {callee=f182 callPosition=3296 isTailCall=true module=m0}, {callee=f53 callPosition=3296 parent=1 isTailCall=true module=m0}] {
-# CHECK-NEXT: b0(v0: f182, v1: anything):
-# CHECK-NEXT: v2: anything ~ L5 = GetCapture v0 function=f182
+# CHECK: module=m0 position=3296 role=GenericEntrypoint flags=[HasThis] captures=[{type=f183}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f183} creator=Entrypoint{target=f183 arguments=Registers} inlineFrames=[{}, {callee=f183 callPosition=3296 isTailCall=true module=m0}, {callee=f53 callPosition=3296 parent=1 isTailCall=true module=m0}] {
+# CHECK-NEXT: b0(v0: f183, v1: anything):
+# CHECK-NEXT: v2: anything ~ L5 = GetCapture v0 function=f183
 # CHECK-NEXT: v3: fact = Entered function=f53 @3296:1 tail
 # CHECK-NEXT: v4: L5 = AssumeType v2, v3 provenType=L5
 # CHECK-NEXT: v5: int[-2147483643, 2147483647] = GetSlot v4 key="count" receivers=[L5] level=Proven accessSite=338
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="first"
-# CHECK: module=m0 position=3573 role=GenericEntrypoint flags=[HasThis] captures=[{type=f184}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f184} creator=Entrypoint{target=f184 arguments=Registers} inlineFrames=[{}, {callee=f184 callPosition=3573 isTailCall=true module=m0}, {callee=f54 callPosition=3573 parent=1 isTailCall=true module=m0}] {
-# CHECK-NEXT: b0(v0: f184, v1: anything):
-# CHECK-NEXT: v2: anything ~ undefined|L6 = GetCapture v0 function=f184
+# CHECK: module=m0 position=3573 role=GenericEntrypoint flags=[HasThis] captures=[{type=f185}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f185} creator=Entrypoint{target=f185 arguments=Registers} inlineFrames=[{}, {callee=f185 callPosition=3573 isTailCall=true module=m0}, {callee=f54 callPosition=3573 parent=1 isTailCall=true module=m0}] {
+# CHECK-NEXT: b0(v0: f185, v1: anything):
+# CHECK-NEXT: v2: anything ~ undefined|L6 = GetCapture v0 function=f185
 # CHECK-NEXT: v3: fact = Entered function=f54 @3573:1 tail
 # CHECK-NEXT: v4: undefined|L6 = AssumeType v2, v3 provenType=undefined|L6
 # CHECK-NEXT: v5: "first " = String string="first "

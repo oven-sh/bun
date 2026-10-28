@@ -1,4 +1,5 @@
 # FORM: AsRead
+# OPTIONS: disable=pass:InlineCalls
 # RUN: lower-to-b3 optimized f12
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
 
@@ -182,66 +183,90 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-LABEL: function f12 role=
 # CHECK: Source
 # CHECK-NEXT: BB#0: ; frequency = 1.000000
+# CHECK-NEXT: Int64 b@10 = ArgumentReg(%r13)
+# CHECK-NEXT: Int64 b@21 = Load(b@10, offset = 8040, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v2:String)
+# CHECK-NEXT: Int64 b@22 = Load(b@21, offset = 8, ControlDependent|Reads:AOTInstance_stringCells, v2:String)
+# CHECK-NEXT: Void b@24 = Branch(b@22, Terminal, v2:String)
+# CHECK-NEXT: Successors: Then:#3, Else:Rare:#4
+# CHECK-NEXT: BB#3: ; frequency = 0.999023
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Void b@25 = Upsilon(b@22, ^30, WritesLocalState, v2:String)
+# CHECK-NEXT: Void b@26 = Jump(Terminal, v2:String)
+# CHECK-NEXT: Successors: #5
+# CHECK-NEXT: BB#5: ; frequency = 1.000000
+# CHECK-NEXT: Predecessors: #4, #3
+# CHECK-NEXT: Int64 b@30 = Phi(ReadsLocalState, v2:String)
 # CHECK-NEXT: Int64 b@18 = ArgumentReg(%rdi)
-# CHECK-NEXT: Int32 b@26 = Load(b@18, offset = 12, ControlDependent|ReadsImmutable|Reads:AOTObject_shapeWord, v2:TypeTest)
-# CHECK-NEXT: Int32 b@27 = Const32(6, v2:TypeTest)
-# CHECK-NEXT: Int32 b@28 = Add(b@26, $6(b@27), v2:TypeTest)
-# CHECK-NEXT: Int32 b@29 = Const32(3, v2:TypeTest)
-# CHECK-NEXT: Int32 b@30 = Below(b@28, $3(b@29), v2:TypeTest)
-# CHECK-NEXT: Void b@31 = Branch(b@30, Terminal, v2:TypeTest)
-# CHECK-NEXT: Successors: Then:#1, Else:Unlikely:#2
-# CHECK-NEXT: BB#1: ; frequency = 0.984615
-# CHECK-NEXT: Predecessors: #0
-# CHECK-NEXT: Int64 b@32 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x1, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}, v4:String)
-# CHECK-NEXT: Int32 b@33 = Load(b@18, offset = 8, ControlDependent|Reads:OrderWords, v5:PutSlotOrAdd)
-# CHECK-NEXT: Int32 b@35 = Const32(65536, v5:PutSlotOrAdd)
-# CHECK-NEXT: Int32 b@36 = Equal(b@33, $65536(b@35), v5:PutSlotOrAdd)
-# CHECK-NEXT: Void b@41 = Branch(b@36, Terminal, v5:PutSlotOrAdd)
-# CHECK-NEXT: Successors: Then:#10, Else:Unlikely:#6
-# CHECK-NEXT: BB#10: ; frequency = 0.926697
-# CHECK-NEXT: Predecessors: #1
-# CHECK-NEXT: Int32 b@37 = Const32(-4, v5:PutSlotOrAdd)
-# CHECK-NEXT: Int32 b@38 = Equal(b@26, $-4(b@37), v5:PutSlotOrAdd)
-# CHECK-NEXT: Void b@83 = Branch(b@38, Terminal, v5:PutSlotOrAdd)
-# CHECK-NEXT: Successors: Then:#3, Else:Unlikely:#6
-# CHECK-NEXT: BB#3: ; frequency = 0.872185
-# CHECK-NEXT: Predecessors: #10
-# CHECK-NEXT: Int32 b@40 = Const32(98304, v5:PutSlotOrAdd)
-# CHECK-NEXT: Void b@42 = Store($98304(b@40), b@18, offset = 8, ControlDependent|Writes:OrderWords, v5:PutSlotOrAdd)
-# CHECK-NEXT: Void b@43 = Jump(Terminal, v5:PutSlotOrAdd)
-# CHECK-NEXT: Successors: #8
-# CHECK-NEXT: BB#8: ; frequency = 0.984615
-# CHECK-NEXT: Predecessors: #6, #9, #3
-# CHECK-NEXT: Int64 b@62 = Patchpoint(runsWithoutFrame, resultConstraints = SomeRegister, v5:PutSlotOrAdd)
-# CHECK-NEXT: Int64 b@71 = ZExt32(b@28, v5:PutSlotOrAdd)
-# CHECK-NEXT: Int64 b@72 = Add(b@62, b@71, v5:PutSlotOrAdd)
-# CHECK-NEXT: Int32 b@73 = Load8Z(b@72, ControlDependent|ReadsImmutable|Reads:AOTImage_tables, v5:PutSlotOrAdd)
-# CHECK-NEXT: Int64 b@74 = ZExt32(b@73, v5:PutSlotOrAdd)
-# CHECK-NEXT: Int64 b@75 = Add(b@18, b@74, v5:PutSlotOrAdd)
-# CHECK-NEXT: Void b@76 = Store(b@32, b@75, offset = 16, ControlDependent|Writes:ObjectFields.11, v5:PutSlotOrAdd)
-# CHECK-NEXT: Void b@77 = Patchpoint(b@18:SomeRegister, resultConstraints = WarmAny, ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, RuntimeState}|Reads:{collectorState, argumentBuffer, ObjectFields.11, AOTExtension_granuleBits, OrderWords, AllocatorState}, v5:PutSlotOrAdd)
-# CHECK-NEXT: Void b@79 = Return(Terminal)
-# CHECK-NEXT: BB#6: ; frequency = 0.112430
-# CHECK-NEXT: Predecessors: #1, #10
-# CHECK-NEXT: Int64 b@63 = Patchpoint(runsWithoutFrame, resultConstraints = SomeRegister, v5:PutSlotOrAdd)
-# CHECK-NEXT: Int64 b@47 = ZExt32(b@28, v5:PutSlotOrAdd)
-# CHECK-NEXT: Int64 b@48 = Add(b@63, b@47, v5:PutSlotOrAdd)
-# CHECK-NEXT: Int32 b@49 = Load8Z(b@48, ControlDependent|ReadsImmutable|Reads:AOTImage_tables, v5:PutSlotOrAdd)
-# CHECK-NEXT: Int64 b@50 = ZExt32(b@49, v5:PutSlotOrAdd)
-# CHECK-NEXT: Int64 b@51 = Add(b@18, b@50, v5:PutSlotOrAdd)
-# CHECK-NEXT: Int64 b@52 = Load(b@51, offset = 16, ControlDependent|Reads:ObjectFields.11, v5:PutSlotOrAdd)
-# CHECK-NEXT: Void b@55 = Branch(b@52, Terminal, v5:PutSlotOrAdd)
-# CHECK-NEXT: Successors: Then:#8, Else:Unlikely:#9
-# CHECK-NEXT: BB#9: ; frequency = 0.022486
+# CHECK-NEXT: Int32 b@33 = Load(b@18, offset = 12, ControlDependent|ReadsImmutable|Reads:AOTObject_shapeWord, v3:TypeTest)
+# CHECK-NEXT: Int32 b@34 = Const32(6, v3:TypeTest)
+# CHECK-NEXT: Int32 b@35 = Add(b@33, $6(b@34), v3:TypeTest)
+# CHECK-NEXT: Int32 b@36 = Const32(3, v3:TypeTest)
+# CHECK-NEXT: Int32 b@37 = Below(b@35, $3(b@36), v3:TypeTest)
+# CHECK-NEXT: Void b@38 = Branch(b@37, Terminal, v3:TypeTest)
+# CHECK-NEXT: Successors: Then:#6, Else:Rare:#1
+# CHECK-NEXT: BB#6: ; frequency = 0.999023
+# CHECK-NEXT: Predecessors: #5
+# CHECK-NEXT: Int32 b@39 = Load(b@18, offset = 8, ControlDependent|Reads:OrderWords, v5:PutSlotOrAdd)
+# CHECK-NEXT: Int32 b@41 = Const32(65536, v5:PutSlotOrAdd)
+# CHECK-NEXT: Int32 b@42 = Equal(b@39, $65536(b@41), v5:PutSlotOrAdd)
+# CHECK-NEXT: Void b@47 = Branch(b@42, Terminal, v5:PutSlotOrAdd)
+# CHECK-NEXT: Successors: Then:#14, Else:Unlikely:#10
+# CHECK-NEXT: BB#14: ; frequency = 0.940257
 # CHECK-NEXT: Predecessors: #6
-# CHECK-NEXT: Int64 b@56 = Const64(16, v5:PutSlotOrAdd)
-# CHECK-NEXT: Int64 b@64 = Add(b@50, $16(b@56), v5:PutSlotOrAdd)
-# CHECK-NEXT: Void b@65 = Patchpoint(b@18:Register(%rsi), b@64:Register(%rdx), resultConstraints = WarmAny, ControlDependent|Writes:{ObjectFields.11, AOTExtension_granuleBits, AOTSlimClosure_word, JSCell_header, OrderWords, JSObject_butterfly, AllocatorState, RuntimeState}|Reads:{argumentBuffer, ObjectFields.11, AOTExtension_granuleBits, OrderWords, AllocatorState}, v5:PutSlotOrAdd)
-# CHECK-NEXT: Void b@66 = Jump(Terminal, v5:PutSlotOrAdd)
-# CHECK-NEXT: Successors: #8
-# CHECK-NEXT: BB#2: ; frequency = 0.015385
+# CHECK-NEXT: Int32 b@43 = Const32(-4, v5:PutSlotOrAdd)
+# CHECK-NEXT: Int32 b@44 = Equal(b@33, $-4(b@43), v5:PutSlotOrAdd)
+# CHECK-NEXT: Void b@89 = Branch(b@44, Terminal, v5:PutSlotOrAdd)
+# CHECK-NEXT: Successors: Then:#7, Else:Unlikely:#10
+# CHECK-NEXT: BB#7: ; frequency = 0.884948
+# CHECK-NEXT: Predecessors: #14
+# CHECK-NEXT: Int32 b@46 = Const32(98304, v5:PutSlotOrAdd)
+# CHECK-NEXT: Void b@48 = Store($98304(b@46), b@18, offset = 8, ControlDependent|Writes:OrderWords, v5:PutSlotOrAdd)
+# CHECK-NEXT: Void b@49 = Jump(Terminal, v5:PutSlotOrAdd)
+# CHECK-NEXT: Successors: #12
+# CHECK-NEXT: BB#12: ; frequency = 0.999023
+# CHECK-NEXT: Predecessors: #10, #13, #7
+# CHECK-NEXT: Int64 b@68 = Patchpoint(runsWithoutFrame, resultConstraints = SomeRegister, v5:PutSlotOrAdd)
+# CHECK-NEXT: Int64 b@77 = ZExt32(b@35, v5:PutSlotOrAdd)
+# CHECK-NEXT: Int64 b@78 = Add(b@68, b@77, v5:PutSlotOrAdd)
+# CHECK-NEXT: Int32 b@79 = Load8Z(b@78, ControlDependent|ReadsImmutable|Reads:AOTImage_tables, v5:PutSlotOrAdd)
+# CHECK-NEXT: Int64 b@80 = ZExt32(b@79, v5:PutSlotOrAdd)
+# CHECK-NEXT: Int64 b@81 = Add(b@18, b@80, v5:PutSlotOrAdd)
+# CHECK-NEXT: Void b@82 = Store(b@30, b@81, offset = 16, ControlDependent|Writes:ObjectFields.11, v5:PutSlotOrAdd)
+# CHECK-NEXT: Void b@83 = Patchpoint(b@18:SomeRegister, resultConstraints = WarmAny, ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, RuntimeState}|Reads:{collectorState, argumentBuffer, ObjectFields.11, AOTExtension_granuleBits, OrderWords, AllocatorState}, v5:PutSlotOrAdd)
+# CHECK-NEXT: Void b@84 = Jump(Terminal)
+# CHECK-NEXT: Successors: #2
+# CHECK-NEXT: BB#2: ; frequency = 1.000000
+# CHECK-NEXT: Predecessors: #1, #12
+# CHECK-NEXT: Void b@88 = Return(Terminal)
+# CHECK-NEXT: BB#10: ; frequency = 0.114075
+# CHECK-NEXT: Predecessors: #6, #14
+# CHECK-NEXT: Int64 b@69 = Patchpoint(runsWithoutFrame, resultConstraints = SomeRegister, v5:PutSlotOrAdd)
+# CHECK-NEXT: Int64 b@53 = ZExt32(b@35, v5:PutSlotOrAdd)
+# CHECK-NEXT: Int64 b@54 = Add(b@69, b@53, v5:PutSlotOrAdd)
+# CHECK-NEXT: Int32 b@55 = Load8Z(b@54, ControlDependent|ReadsImmutable|Reads:AOTImage_tables, v5:PutSlotOrAdd)
+# CHECK-NEXT: Int64 b@56 = ZExt32(b@55, v5:PutSlotOrAdd)
+# CHECK-NEXT: Int64 b@57 = Add(b@18, b@56, v5:PutSlotOrAdd)
+# CHECK-NEXT: Int64 b@58 = Load(b@57, offset = 16, ControlDependent|Reads:ObjectFields.11, v5:PutSlotOrAdd)
+# CHECK-NEXT: Void b@61 = Branch(b@58, Terminal, v5:PutSlotOrAdd)
+# CHECK-NEXT: Successors: Then:#12, Else:Unlikely:#13
+# CHECK-NEXT: BB#13: ; frequency = 0.006710
+# CHECK-NEXT: Predecessors: #10
+# CHECK-NEXT: Int64 b@62 = Const64(16, v5:PutSlotOrAdd)
+# CHECK-NEXT: Int64 b@70 = Add(b@56, $16(b@62), v5:PutSlotOrAdd)
+# CHECK-NEXT: Void b@71 = Patchpoint(b@18:Register(%rsi), b@70:Register(%rdx), resultConstraints = WarmAny, ControlDependent|Writes:{ObjectFields.11, AOTExtension_granuleBits, AOTSlimClosure_word, JSCell_header, OrderWords, JSObject_butterfly, AllocatorState, RuntimeState}|Reads:{argumentBuffer, ObjectFields.11, AOTExtension_granuleBits, OrderWords, AllocatorState}, v5:PutSlotOrAdd)
+# CHECK-NEXT: Void b@72 = Jump(Terminal, v5:PutSlotOrAdd)
+# CHECK-NEXT: Successors: #12
+# CHECK-NEXT: BB#1: ; frequency = 0.000977
+# CHECK-NEXT: Predecessors: #5
+# CHECK-NEXT: Void b@85 = Patchpoint(b@18:Register(%rax), b@30:Register(%rsi), resultConstraints = WarmAny, ExitsSideways|ControlDependent|Writes:{collectorState, ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState, StringStorage, StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState}|Reads:Top, v7:PropDefine)
+# CHECK-NEXT: Void b@86 = Jump(Terminal)
+# CHECK-NEXT: Successors: #2
+# CHECK-NEXT: BB#4: ; frequency = 0.000977
 # CHECK-NEXT: Predecessors: #0
-# CHECK-NEXT: Int64 b@80 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x1, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}, v8:String)
-# CHECK-NEXT: Void b@81 = Patchpoint(b@18:Register(%rax), b@80:Register(%rsi), resultConstraints = WarmAny, ExitsSideways|ControlDependent|Writes:{collectorState, ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState, StringStorage, StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState}|Reads:Top, v9:PropDefine)
-# CHECK-NEXT: Void b@82 = Return(Terminal)
+# CHECK-NEXT: Int64 b@27 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x1, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}, v2:String)
+# CHECK-NEXT: Void b@28 = Upsilon(b@27, ^30, WritesLocalState, v2:String)
+# CHECK-NEXT: Void b@29 = Jump(Terminal, v2:String)
+# CHECK-NEXT: Successors: #5
+# CHECK-NEXT: Known properties:
+# CHECK-NEXT: b@10: dereferenceableBytes = 409600
 # CHECK-NEXT: end of function f12

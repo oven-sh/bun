@@ -989,7 +989,7 @@ runtimefunction id=131091 function=f84 visibility=Private
 # CHECK-NEXT: b3(v11: number|"empty"|Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>) handler=b4():
 # CHECK-NEXT: v12: undefined|null|string = Call v4, -, v11 calleeName="show" accessSite=22 callees=[f1]
 # CHECK-NEXT: v13: string = Add v3, v12
-# CHECK-NEXT: Jump -> next b7(v13)
+# CHECK-NEXT: Jump -> next b5(v13)
 # CHECK-NEXT: b4() role=CatchHandler:
 # CHECK-NEXT: v14: anything = CatchValue
 # CHECK-NEXT: v15: " threw " = String string=" threw "
@@ -998,34 +998,17 @@ runtimefunction id=131091 function=f84 visibility=Private
 # CHECK-NEXT: v18: boolean = HasInPrototypeChain v14, v17
 # CHECK-NEXT: v19: anything ~ undefined|null|Error = Upcast v14 castType=anything
 # CHECK-NEXT: v20: anything = PropGet v19 key="constructor" accessSite=24
-# CHECK-NEXT: v21: boolean = TypeTest v20 testedType=undefined|null|function
-# CHECK-NEXT: Branch v21 -> taken b5(| 0), notTaken b9(| 0)
-# CHECK-NEXT: b5(v22: undefined|null|function):
-# CHECK-NEXT: v23: function = RequireObjectCoercible v22 name="name"
-# CHECK-NEXT: v24: anything = PropGet v23 key="name" accessSite=25
-# CHECK-NEXT: v25: boolean = TypeTest v24 testedType=undefined|null|string
-# CHECK-NEXT: Branch v25 -> taken b6(| 0), notTaken b8(| 0)
-# CHECK-NEXT: b6(v26: undefined|null|string):
-# CHECK-NEXT: v27: string = Add v16, v26
-# CHECK-NEXT: Jump -> next b7(v27)
-# CHECK-NEXT: b7(v28: string):
-# CHECK-NEXT: v29: " | " = String string=" | "
-# CHECK-NEXT: v30: string = Add v28, v29
-# CHECK-NEXT: v31: absent = GetModuleVariable variable=g3
-# CHECK-NEXT: v32: never = CheckInitialized v31 name="log"
-# CHECK-NEXT: Unreachable
-# CHECK-NEXT: b8(v33: boolean|number|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b10(v33)
-# CHECK-NEXT: b9(v34: boolean|number|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v35: anything = PropGet v34 key="name" accessSite=25
-# CHECK-NEXT: v36: anything ~ undefined|null|string = Expect v35 expectedType=undefined|null|string
-# CHECK-NEXT: Jump -> next b10(v36)
-# CHECK-NEXT: b10(v37: anything) frequency=Unlikely:
-# CHECK-NEXT: v38: string = Add v16, v37
-# CHECK-NEXT: v39: " | " = String string=" | "
-# CHECK-NEXT: v40: string = Add v38, v39
-# CHECK-NEXT: v41: absent = GetModuleVariable variable=g3
-# CHECK-NEXT: v42: never = CheckInitialized v41 name="log"
+# CHECK-NEXT: v21: anything ~ undefined|null|function = Expect v20 expectedType=undefined|null|function
+# CHECK-NEXT: v22: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v21 name="name"
+# CHECK-NEXT: v23: anything = PropGet v22 key="name" accessSite=25
+# CHECK-NEXT: v24: anything ~ undefined|null|string = Expect v23 expectedType=undefined|null|string
+# CHECK-NEXT: v25: string = Add v16, v24
+# CHECK-NEXT: Jump -> next b5(v25)
+# CHECK-NEXT: b5(v26: string):
+# CHECK-NEXT: v27: " | " = String string=" | "
+# CHECK-NEXT: v28: string = Add v26, v27
+# CHECK-NEXT: v29: absent = GetModuleVariable variable=g3
+# CHECK-NEXT: v30: never = CheckInitialized v29 name="log"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="numbersThenAText"
@@ -1086,7 +1069,7 @@ runtimefunction id=131091 function=f84 visibility=Private
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function f14 module=
-# CHECK: m0 position=3141 kind=Arrow role=ResultWrapper flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|string site=w28 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> site=w29 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f38] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f90} inlineFrames=[{}, {callee=f90 callPosition=3141 module=m0}, {callee=f128 callPosition=4294967295 parent=1 module=m4}, {callee=f127 callPosition=5210 parent=2 module=m12}, {callee=f84 callPosition=2337 parent=3 module=m12}] {
+# CHECK: m0 position=3141 kind=Arrow role=ResultWrapper flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|string site=w28 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> site=w29 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f38] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f90} inlineFrames=[{}, {callee=f90 callPosition=3141 module=m0}, {callee=f128 callPosition=4294967295 parent=1 module=m4}, {callee=f127 callPosition=5210 parent=2 module=m12}, {callee=f84 callPosition=2337 parent=3 module=m12}, {callee=f82 callPosition=4294967295 parent=4 isTailCall=true module=m12}] {
 # CHECK-NEXT: b0(v0: undefined|string) frequency=Rare:
 # CHECK-NEXT: v1: Array<never> = NewArray contents=never allocationSite=47 [contentsAreProven]
 # CHECK-NEXT: v2: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v1 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
@@ -1094,10 +1077,13 @@ runtimefunction id=131091 function=f84 visibility=Private
 # CHECK-NEXT: v4: undefined = Undefined
 # CHECK-NEXT: v5: int[0, 4294967295] = CallBuiltin v2 overload=ArrayPrototypeLength/0 accessSite=49
 # CHECK-NEXT: v6: int[0, 4294967295] = CallDirect v3, v5 function=f78 accessSite=50
-# CHECK-NEXT: v7: "" = String string=""
-# CHECK-NEXT: v8: Array = NewArrayWithCapacity v6, v2 allocationSite=57
-# CHECK-NEXT: v9: undefined|null|string = CallDirect v7, v4 function=f129 accessSite=51 @0:4 tail
-# CHECK-NEXT: Unreachable
+# CHECK-NEXT: v7: Array = NewArrayWithCapacity v6, v2 allocationSite=57
+# CHECK-NEXT: v8: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() frequency=Rare:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: StringBuilderAppend v8, v4
+# CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: }
 # CHECK-LABEL: function f15 module=
 # CHECK: m0 position=3276 kind=Arrow role=ResultWrapper flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|string site=w30 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> site=w31 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f39] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f91} {

@@ -2270,33 +2270,32 @@ runtimefunction id=131091 function=f52 visibility=Private
 # CHECK-NEXT: b0(v0: anything, v1: anything):
 # CHECK-NEXT: v2: object = GetConstructPrototype v0 layout=L1
 # CHECK-NEXT: v3: object ~ L1|L2 = NewObject v2 layout=L1 allocationSite=29 allocationClass=1
-# CHECK-NEXT: v4: boolean ~ true = TypeTest v3 testedType=L1|L2
-# CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b7(| 0)
-# CHECK-NEXT: b1(v5: L1|L2):
-# CHECK-NEXT: v6: 1 = Integer integer=1
-# CHECK-NEXT: PutSlotOrAdd v5, -, v6 key="x" receivers=[L1, L2] level=Proven accessSite=96
-# CHECK-NEXT: v8: boolean = HasLayoutPrototype v5
-# CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b6()
+# CHECK-NEXT: v4: 1 = Integer integer=1
+# CHECK-NEXT: v5: boolean ~ true = TypeTest v3 testedType=L1|L2
+# CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b6()
+# CHECK-NEXT: b1(v6: L1|L2):
+# CHECK-NEXT: PutSlotOrAdd v6, -, v4 key="x" receivers=[L1, L2] level=Expected accessSite=96
+# CHECK-NEXT: v8: boolean = HasLayoutPrototype v6
+# CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b7()
 # CHECK-NEXT: b2(v9: guard):
-# CHECK-NEXT: v10: boolean = HasNoFieldOutsideSlot v5, v9
-# CHECK-NEXT: Branch v10 -> taken b3(| 0), notTaken b6()
+# CHECK-NEXT: v10: boolean = HasNoFieldOutsideSlot v6, v9
+# CHECK-NEXT: Branch v10 -> taken b3(| 0), notTaken b7()
 # CHECK-NEXT: b3(v11: guard):
 # CHECK-NEXT: v12: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L2}, {kind=MemberPassedByStores layout=L1 key="y"}, {kind=MemberPassedByStores layout=L2 key="y"}]
-# CHECK-NEXT: Branch v12 -> taken b4(| 0), notTaken b6()
+# CHECK-NEXT: Branch v12 -> taken b4(| 0), notTaken b7()
 # CHECK-NEXT: b4(v13: guard):
 # CHECK-NEXT: v14: boolean = TypeTest v1 testedType=int[-2147483643, 2147483647]
-# CHECK-NEXT: Branch v14 -> taken b5(| 0), notTaken b6()
+# CHECK-NEXT: Branch v14 -> taken b5(| 0), notTaken b7()
 # CHECK-NEXT: b5(v15: int[-2147483643, 2147483647]):
 # CHECK-NEXT: v16: guard = AllGuards v9, v11, v13
-# CHECK-NEXT: PutSlotOrAdd v5, v16, v15 key="y" receivers=[L1, L2] level=Expected accessSite=89
-# CHECK-NEXT: Return v5
+# CHECK-NEXT: PutSlotOrAdd v6, v16, v15 key="y" receivers=[L1, L2] level=Expected accessSite=89
+# CHECK-NEXT: Return v6
 # CHECK-NEXT: b6() frequency=Unlikely:
-# CHECK-NEXT: PropSet v5, v1 key="y" accessSite=89 receivers=[L1, ..]
-# CHECK-NEXT: Return v5
-# CHECK-NEXT: b7(v19: object) frequency=Unlikely:
-# CHECK-NEXT: v20: undefined = CallDirect v19 function=f14 accessSite=88 [isNeverInlined]
-# CHECK-NEXT: PropSet v19, v1 key="y" accessSite=89 receivers=[L1, ..]
-# CHECK-NEXT: Return v19
+# CHECK-NEXT: PropDefine v3, v4 key="x" accessSite=96
+# CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: b7() frequency=Unlikely:
+# CHECK-NEXT: PropSet v3, v1 key="y" accessSite=89
+# CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="kind"
 # CHECK: module=m0 position=468 kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
@@ -2310,15 +2309,15 @@ runtimefunction id=131091 function=f52 visibility=Private
 # CHECK-NEXT: v3: null|object = GetSuperBase v0
 # CHECK-NEXT: v4: f5 = AssumeType v3 provenType=f5
 # CHECK-NEXT: v5: object ~ L2 = SuperConstructList v4, v1, v2 layout=L2 accessSite=90 callees=[f5]
-# CHECK-NEXT: v6: boolean ~ true = TypeTest v5 testedType=L2
-# CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b2(| 0)
-# CHECK-NEXT: b1(v7: L2):
-# CHECK-NEXT: v8: 3 = Integer integer=3
-# CHECK-NEXT: PutSlotOrAdd v7, -, v8 key="z" receivers=[L2] level=Proven accessSite=97
-# CHECK-NEXT: Return v7
-# CHECK-NEXT: b2(v10: object) frequency=Unlikely:
-# CHECK-NEXT: v11: undefined = CallDirect v10 function=f15 accessSite=91 [isNeverInlined]
-# CHECK-NEXT: Return v10
+# CHECK-NEXT: v6: 3 = Integer integer=3
+# CHECK-NEXT: v7: boolean ~ true = TypeTest v5 testedType=L2
+# CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v8: L2):
+# CHECK-NEXT: PutSlotOrAdd v8, -, v6 key="z" receivers=[L2] level=Expected accessSite=97
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: b2() frequency=Unlikely:
+# CHECK-NEXT: PropDefine v5, v6 key="z" accessSite=97
+# CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function f9 module=
 # CHECK: m0 position=894 thisType={type=anything} results=[{type=undefined}] functionTypes=[f19] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
@@ -2333,39 +2332,9 @@ runtimefunction id=131091 function=f52 visibility=Private
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function f14 module=
-# CHECK: m0 position=420 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L1|L2 flags=[IsFromCompiler, IsExpected]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: anything ~ L1|L2):
-# CHECK-NEXT: v1: object ~ L1|L2 = AssumeType v0 provenType=object
-# CHECK-NEXT: v2: boolean ~ true = TypeTest v1 testedType=L1|L2
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2(| 0)
-# CHECK-NEXT: b1(v3: L1|L2):
-# CHECK-NEXT: v4: 1 = Integer integer=1
-# CHECK-NEXT: PutSlotOrAdd v3, -, v4 key="x" receivers=[L1, L2] level=Proven accessSite=96
-# CHECK-NEXT: v6: undefined = Undefined
-# CHECK-NEXT: Return v6
-# CHECK-NEXT: b2(v7: object) frequency=Unlikely:
-# CHECK-NEXT: v8: 1 = Integer integer=1
-# CHECK-NEXT: PropDefine v7, v8 key="x" accessSite=96
-# CHECK-NEXT: v10: undefined = Undefined
-# CHECK-NEXT: Return v10
-# CHECK-NEXT: }
+# CHECK: m0 position=420 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L1|L2 flags=[IsFromCompiler, IsExpected]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function f15 module=
-# CHECK: m0 position=503 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L2 flags=[IsFromCompiler, IsExpected]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: anything ~ L2):
-# CHECK-NEXT: v1: object ~ L2 = AssumeType v0 provenType=object
-# CHECK-NEXT: v2: boolean ~ true = TypeTest v1 testedType=L2
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2(| 0)
-# CHECK-NEXT: b1(v3: L2):
-# CHECK-NEXT: v4: 3 = Integer integer=3
-# CHECK-NEXT: PutSlotOrAdd v3, -, v4 key="z" receivers=[L2] level=Proven accessSite=97
-# CHECK-NEXT: v6: undefined = Undefined
-# CHECK-NEXT: Return v6
-# CHECK-NEXT: b2(v7: object) frequency=Unlikely:
-# CHECK-NEXT: v8: 3 = Integer integer=3
-# CHECK-NEXT: PropDefine v7, v8 key="z" accessSite=97
-# CHECK-NEXT: v10: undefined = Undefined
-# CHECK-NEXT: Return v10
-# CHECK-NEXT: }
+# CHECK: m0 position=503 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L2 flags=[IsFromCompiler, IsExpected]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="next"
 # CHECK: module=m1 kind=Method role=ResultWrapper flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=ArrayIterator flags=[IsExpected]} results=[{type=L(IteratorResult)}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f73 layout=L(IteratorResult)} {
 # CHECK-NEXT: b0(v0: anything):
@@ -2444,46 +2413,48 @@ runtimefunction id=131091 function=f52 visibility=Private
 # CHECK-NEXT: v3: anything = GetArgument argumentIndex=1
 # CHECK-NEXT: v4: object = GetConstructPrototype v2 layout=L1
 # CHECK-NEXT: v5: object ~ L1|L2 = NewObject v4 layout=L1 allocationSite=29 allocationClass=1
-# CHECK-NEXT: v6: boolean ~ true = TypeTest v5 testedType=L1|L2
-# CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b7(| 0)
-# CHECK-NEXT: b1(v7: L1|L2):
-# CHECK-NEXT: v8: 1 = Integer integer=1
-# CHECK-NEXT: PutSlotOrAdd v7, -, v8 key="x" receivers=[L1, L2] level=Proven accessSite=96
-# CHECK-NEXT: v10: boolean = HasLayoutPrototype v7
-# CHECK-NEXT: Branch v10 -> taken b2(| 0), notTaken b6()
+# CHECK-NEXT: v6: 1 = Integer integer=1
+# CHECK-NEXT: v7: boolean ~ true = TypeTest v5 testedType=L1|L2
+# CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b7()
+# CHECK-NEXT: b1(v8: L1|L2):
+# CHECK-NEXT: PutSlotOrAdd v8, -, v6 key="x" receivers=[L1, L2] level=Expected accessSite=96
+# CHECK-NEXT: v10: boolean = HasLayoutPrototype v8
+# CHECK-NEXT: Branch v10 -> taken b2(| 0), notTaken b8()
 # CHECK-NEXT: b2(v11: guard):
-# CHECK-NEXT: v12: boolean = HasNoFieldOutsideSlot v7, v11
-# CHECK-NEXT: Branch v12 -> taken b3(| 0), notTaken b6()
+# CHECK-NEXT: v12: boolean = HasNoFieldOutsideSlot v8, v11
+# CHECK-NEXT: Branch v12 -> taken b3(| 0), notTaken b8()
 # CHECK-NEXT: b3(v13: guard):
 # CHECK-NEXT: v14: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L2}, {kind=MemberPassedByStores layout=L1 key="y"}, {kind=MemberPassedByStores layout=L2 key="y"}]
-# CHECK-NEXT: Branch v14 -> taken b4(| 0), notTaken b6()
+# CHECK-NEXT: Branch v14 -> taken b4(| 0), notTaken b8()
 # CHECK-NEXT: b4(v15: guard):
 # CHECK-NEXT: v16: boolean = TypeTest v3 testedType=int[-2147483643, 2147483647]
-# CHECK-NEXT: Branch v16 -> taken b5(| 0), notTaken b6()
+# CHECK-NEXT: Branch v16 -> taken b5(| 0), notTaken b8()
 # CHECK-NEXT: b5(v17: int[-2147483643, 2147483647]):
 # CHECK-NEXT: v18: guard = AllGuards v11, v13, v15
-# CHECK-NEXT: PutSlotOrAdd v7, v18, v17 key="y" receivers=[L1, L2] level=Expected accessSite=89
+# CHECK-NEXT: PutSlotOrAdd v8, v18, v17 key="y" receivers=[L1, L2] level=Expected accessSite=89
+# CHECK-NEXT: v20: boolean ~ true = TypeTest v8 testedType=L2
+# CHECK-NEXT: Branch v20 -> taken b6(| 0), notTaken b10()
+# CHECK-NEXT: b6(v21: L2):
+# CHECK-NEXT: v22: 3 = Integer integer=3
+# CHECK-NEXT: PutSlotOrAdd v21, -, v22 key="z" receivers=[L2] level=Expected accessSite=97
+# CHECK-NEXT: Return v21
+# CHECK-NEXT: b7() frequency=Unlikely:
+# CHECK-NEXT: PropDefine v5, v6 key="x" accessSite=96
 # CHECK-NEXT: Jump -> next b8()
-# CHECK-NEXT: b6() frequency=Unlikely:
-# CHECK-NEXT: PropSet v7, v3 key="y" accessSite=89 receivers=[L1, ..]
-# CHECK-NEXT: Jump -> next b8()
-# CHECK-NEXT: b7(v21: object) frequency=Unlikely:
-# CHECK-NEXT: v22: undefined = CallDirect v21 function=f14 accessSite=88 [isNeverInlined]
-# CHECK-NEXT: PropSet v21, v3 key="y" accessSite=89 receivers=[L1, ..]
-# CHECK-NEXT: Jump -> next b8()
-# CHECK-NEXT: b8():
-# CHECK-NEXT: v24: object ~ L2 = Upcast v5 castType=object
-# CHECK-NEXT: v25: boolean ~ true = TypeTest v24 testedType=L2
-# CHECK-NEXT: Branch v25 -> taken b9(| 0), notTaken b10(| 0)
-# CHECK-NEXT: b9(v26: L2):
-# CHECK-NEXT: v27: 3 = Integer integer=3
-# CHECK-NEXT: PutSlotOrAdd v26, -, v27 key="z" receivers=[L2] level=Proven accessSite=97
-# CHECK-NEXT: Jump -> next b11() @503 tail
-# CHECK-NEXT: b10(v29: object) frequency=Unlikely:
-# CHECK-NEXT: v30: undefined = CallDirect v29 function=f15 accessSite=91 [isNeverInlined]
-# CHECK-NEXT: Jump -> next b11() @503 tail
-# CHECK-NEXT: b11():
-# CHECK-NEXT: Return v24
+# CHECK-NEXT: b8() frequency=Unlikely:
+# CHECK-NEXT: PropSet v5, v3 key="y" accessSite=89
+# CHECK-NEXT: v26: object ~ L2 = Upcast v5 castType=object
+# CHECK-NEXT: v27: boolean ~ true = TypeTest v26 testedType=L2
+# CHECK-NEXT: Branch v27 -> taken b9(| 0), notTaken b10()
+# CHECK-NEXT: b9(v28: L2) frequency=Unlikely:
+# CHECK-NEXT: v29: 3 = Integer integer=3
+# CHECK-NEXT: PutSlotOrAdd v28, -, v29 key="z" receivers=[L2] level=Expected accessSite=97
+# CHECK-NEXT: Return v28
+# CHECK-NEXT: b10() frequency=Unlikely:
+# CHECK-NEXT: v31: object ~ L2 = Upcast v5 castType=object
+# CHECK-NEXT: v32: 3 = Integer integer=3
+# CHECK-NEXT: PropDefine v31, v32 key="z" accessSite=97
+# CHECK-NEXT: Return v31
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="next"
 # CHECK: module=m1 kind=Method role=ResultWorker flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=ArrayIterator flags=[IsExpected]} results=[{type=anything}, {type=boolean}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f42 parameterMap=[{original=0}]} creator=ResultWorker{origin=f42} {

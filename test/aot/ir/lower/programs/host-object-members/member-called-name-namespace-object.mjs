@@ -44,48 +44,49 @@ console.log(hand(util).inspect({ a: [1, 2] }), hand(path).posix.basename("/a/b.j
 // CHECK-NEXT: v23 = ModuleNamespace module=[[m_4]]
 // CHECK-NEXT: v24 = Convert v23 declared={type=undefined|null|object flags=[IsExpected]}
 // CHECK-NEXT: v25 = PropGet v24 key="isBuiltin"
-// CHECK-NEXT: v26 = String string="node:os"
-// CHECK-NEXT: v27 = Call v25, v24, v26 calleeKey="isBuiltin" calleeName="moduleOfNode.isBuiltin"
-// CHECK-NEXT: v28 = Convert v27 declared={type=boolean flags=[IsExpected]}
-// CHECK-NEXT: v29 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v30 = CheckInitialized v29 name="cpus"
-// CHECK-NEXT: v31 = Convert v30 declared={type=builtin(NodeOsCpus) flags=[IsExpected]}
-// CHECK-NEXT: v32 = ModuleNamespace module=[[m_6]]
-// CHECK-NEXT: v33 = Convert v32 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: v34 = Call v31, v33 calleeName="os.cpus"
-// CHECK-NEXT: v35 = Convert v34 declared={type=undefined|null|Array<undefined|null|[[L_7]]> flags=[IsExpected]}
-// CHECK-NEXT: v36 = PropGet v35 key="length"
-// CHECK-NEXT: v37 = Convert v36 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v38 = TypeOf v37
-// CHECK-NEXT: v39 = Call v4, v2, v13, v22, v28, v38 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v40 = NewClosure function=[[f_8]]
-// CHECK-NEXT: v41 = Convert v40 declared={type=undefined|null|[[f_9]] flags=[IsExpected]}
-// CHECK-NEXT: v42 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v43 = PropGet v42 key="console" [isFreeName]
-// CHECK-NEXT: v44 = Convert v43 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v45 = PropGet v44 key="log"
-// CHECK-NEXT: v46 = Convert v45 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v47 = ModuleNamespace module=[[m_3]]
-// CHECK-NEXT: v48 = Convert v47 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: v49 = Call v41, -, v48 calleeName="hand"
-// CHECK-NEXT: v50 = Convert v49 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: v51 = PropGet v50 key="inspect"
-// CHECK-NEXT: v52 = Convert v51 declared={type=undefined|null|function flags=[IsExpected]}
-// CHECK-NEXT: v53 = Data data=[[d_10]]
-// CHECK-NEXT: v54 = Call v52, v50, v53 calleeKey="inspect" calleeName="inspect"
-// CHECK-NEXT: v55 = ModuleNamespace module=[[m_2]]
-// CHECK-NEXT: v56 = Convert v55 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: v57 = Call v41, -, v56 calleeName="hand"
-// CHECK-NEXT: v58 = Convert v57 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: v59 = PropGet v58 key="posix"
-// CHECK-NEXT: v60 = Convert v59 declared={type=undefined|null|[[L_11]] flags=[IsExpected]}
-// CHECK-NEXT: v61 = PropGet v60 key="basename"
-// CHECK-NEXT: v62 = Convert v61 declared={type=undefined|null|function flags=[IsExpected]}
-// CHECK-NEXT: v63 = String string="/a/b.js"
-// CHECK-NEXT: v64 = Call v62, v60, v63 calleeKey="basename" calleeName="basename"
-// CHECK-NEXT: v65 = Call v46, v44, v54, v64 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v66 = Undefined
-// CHECK-NEXT: Return v66
+// CHECK-NEXT: v26 = Convert v25 declared={type=builtin(NodeModuleIsBuiltin) flags=[IsExpected]}
+// CHECK-NEXT: v27 = String string="node:os"
+// CHECK-NEXT: v28 = Call v26, v24, v27 calleeKey="isBuiltin" calleeName="moduleOfNode.isBuiltin"
+// CHECK-NEXT: v29 = Convert v28 declared={type=boolean flags=[IsExpected]}
+// CHECK-NEXT: v30 = GetModuleVariable variable=[[g_5]]
+// CHECK-NEXT: v31 = CheckInitialized v30 name="cpus"
+// CHECK-NEXT: v32 = Convert v31 declared={type=builtin(NodeOsCpus) flags=[IsExpected]}
+// CHECK-NEXT: v33 = ModuleNamespace module=[[m_6]]
+// CHECK-NEXT: v34 = Convert v33 declared={type=undefined|null|object flags=[IsExpected]}
+// CHECK-NEXT: v35 = Call v32, v34 calleeName="os.cpus"
+// CHECK-NEXT: v36 = Convert v35 declared={type=undefined|null|Array<undefined|null|[[L_7]]> flags=[IsExpected]}
+// CHECK-NEXT: v37 = PropGet v36 key="length"
+// CHECK-NEXT: v38 = Convert v37 declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: v39 = TypeOf v38
+// CHECK-NEXT: v40 = Call v4, v2, v13, v22, v29, v39 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: v41 = NewClosure function=[[f_8]]
+// CHECK-NEXT: v42 = Convert v41 declared={type=undefined|null|[[f_9]] flags=[IsExpected]}
+// CHECK-NEXT: v43 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v44 = PropGet v43 key="console" [isFreeName]
+// CHECK-NEXT: v45 = Convert v44 declared={type=builtin(Console) flags=[IsExpected]}
+// CHECK-NEXT: v46 = PropGet v45 key="log"
+// CHECK-NEXT: v47 = Convert v46 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+// CHECK-NEXT: v48 = ModuleNamespace module=[[m_3]]
+// CHECK-NEXT: v49 = Convert v48 declared={type=undefined|null|object flags=[IsExpected]}
+// CHECK-NEXT: v50 = Call v42, -, v49 calleeName="hand"
+// CHECK-NEXT: v51 = Convert v50 declared={type=undefined|null|object flags=[IsExpected]}
+// CHECK-NEXT: v52 = PropGet v51 key="inspect"
+// CHECK-NEXT: v53 = Convert v52 declared={type=undefined|null|function flags=[IsExpected]}
+// CHECK-NEXT: v54 = Data data=[[d_10]]
+// CHECK-NEXT: v55 = Call v53, v51, v54 calleeKey="inspect" calleeName="inspect"
+// CHECK-NEXT: v56 = ModuleNamespace module=[[m_2]]
+// CHECK-NEXT: v57 = Convert v56 declared={type=undefined|null|object flags=[IsExpected]}
+// CHECK-NEXT: v58 = Call v42, -, v57 calleeName="hand"
+// CHECK-NEXT: v59 = Convert v58 declared={type=undefined|null|object flags=[IsExpected]}
+// CHECK-NEXT: v60 = PropGet v59 key="posix"
+// CHECK-NEXT: v61 = Convert v60 declared={type=undefined|null|[[L_11]] flags=[IsExpected]}
+// CHECK-NEXT: v62 = PropGet v61 key="basename"
+// CHECK-NEXT: v63 = Convert v62 declared={type=undefined|null|function flags=[IsExpected]}
+// CHECK-NEXT: v64 = String string="/a/b.js"
+// CHECK-NEXT: v65 = Call v63, v61, v64 calleeKey="basename" calleeName="basename"
+// CHECK-NEXT: v66 = Call v47, v45, v55, v65 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: v67 = Undefined
+// CHECK-NEXT: Return v67
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="hand"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=undefined|null|object flags=[IsExpected]}] functionTypes={{*}}[[f_9]]] {

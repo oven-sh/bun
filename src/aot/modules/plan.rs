@@ -126,6 +126,8 @@ pub(super) struct Plan {
     keeps_module_object: Vec<bool>,
     names_way_to_module_objects: Vec<bool>,
     ways_not_followed_out_of_sight: WaysBetweenModuleObjects,
+    ways_followed_for_their_names: WaysBetweenModuleObjects,
+    lets_process_out_of_sight: bool,
     /// A `require` of a file may run before the loader has come to a CommonJS file, and code names a way between module objects: whether one did says which file has the id ".".
     is_first_require_seen: bool,
     is_namespace_seen: Vec<bool>,
@@ -151,6 +153,8 @@ impl Plan {
             keeps_module_object: vec![false; order.numbers.len()],
             names_way_to_module_objects: vec![false; order.numbers.len()],
             ways_not_followed_out_of_sight: WaysBetweenModuleObjects::default(),
+            ways_followed_for_their_names: WaysBetweenModuleObjects::default(),
+            lets_process_out_of_sight: false,
             is_first_require_seen: false,
             is_namespace_seen: vec![false; order.numbers.len()],
             is_marker_stored: vec![false; order.numbers.len()],
@@ -562,6 +566,24 @@ impl ModuleGraph {
 
     pub fn set_ways_not_followed_out_of_sight(&mut self, ways: WaysBetweenModuleObjects) {
         self.plan.ways_not_followed_out_of_sight = ways;
+    }
+
+    /// A module object goes where nothing follows it, and these are followed from there because a file names them: whether anybody reads them of a module object is the engine's to say.
+    pub fn ways_followed_for_their_names(&self) -> WaysBetweenModuleObjects {
+        self.plan.ways_followed_for_their_names
+    }
+
+    pub fn set_ways_followed_for_their_names(&mut self, ways: WaysBetweenModuleObjects) {
+        self.plan.ways_followed_for_their_names = ways;
+    }
+
+    /// `process` goes where nothing follows it, and the main module has no module object.
+    pub fn lets_process_out_of_sight(&self) -> bool {
+        self.plan.lets_process_out_of_sight
+    }
+
+    pub fn set_lets_process_out_of_sight(&mut self, lets: bool) {
+        self.plan.lets_process_out_of_sight = lets;
     }
 
     pub fn set_names_way_to_module_objects(&mut self, module: ModuleRef) {

@@ -77,42 +77,20 @@ function f1 name="ofNothing" module=m0 position=3784 flags=[IsChecked, HasExplic
 # CHECK-NEXT: b0():
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: Jump -> next b2()
-# CHECK-NEXT: b2():
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: Jump -> next b3()
-# CHECK-NEXT: b3() handler=b4():
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2() handler=b3():
 # CHECK-NEXT: v2: builtin(GlobalThis) = Builtin builtin=GlobalThis
 # CHECK-NEXT: v3: anything = PropGet v2 key="nothing" accessSite=3 [isFreeName]
 # CHECK-NEXT: v4: anything ~ undefined|null|number|string|symbol|bigint|L0 = Upcast v3 castType=anything
 # CHECK-NEXT: v5: anything = PropGet v4 key="x" accessSite=4
 # CHECK-NEXT: v6: string = CallBuiltin -, v5 overload=String/0 builtinCallForm=AnyReceiver accessSite=5
-# CHECK-NEXT: Jump -> next b6()
-# CHECK-NEXT: b4() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b3() role=CatchHandler:
 # CHECK-NEXT: v7: anything = CatchValue
 # CHECK-NEXT: v8: anything ~ undefined|null|number|string|symbol|bigint|object = Upcast v7 castType=anything
 # CHECK-NEXT: v9: anything = PropGet v8 key="name" accessSite=6
-# CHECK-NEXT: v10: boolean = TypeTest v9 testedType=undefined|null|string
-# CHECK-NEXT: Branch v10 -> taken b5(), notTaken b7(| 0)
-# CHECK-NEXT: b5():
-# CHECK-NEXT: Jump -> next b6()
-# CHECK-NEXT: b6():
-# CHECK-NEXT: Jump -> next b2()
-# CHECK-NEXT: b7(v11: boolean|number|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b8(v11)
-# CHECK-NEXT: b8(v12: boolean|number|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v13: boolean = TypeTest v12 testedType=undefined|null|string
-# CHECK-NEXT: Branch v13 -> taken b9(), notTaken b10()
-# CHECK-NEXT: b9() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b4():
 # CHECK-NEXT: Jump -> next b1()
-# CHECK-NEXT: b10() frequency=Unlikely:
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: Jump -> next b11()
-# CHECK-NEXT: b11() frequency=Unlikely handler=b4():
-# CHECK-NEXT: v15: builtin(GlobalThis) = Builtin builtin=GlobalThis
-# CHECK-NEXT: v16: anything = PropGet v15 key="nothing" accessSite=3 [isFreeName]
-# CHECK-NEXT: v17: anything ~ undefined|null|number|string|symbol|bigint|L0 = Upcast v16 castType=anything
-# CHECK-NEXT: v18: anything = PropGet v17 key="x" accessSite=4
-# CHECK-NEXT: v19: string = CallBuiltin -, v18 overload=String/0 builtinCallForm=AnyReceiver accessSite=5
-# CHECK-NEXT: Jump -> next b8(v19)
 # CHECK-NEXT: }

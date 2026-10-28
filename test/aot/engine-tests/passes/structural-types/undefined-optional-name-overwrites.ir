@@ -674,7 +674,7 @@ runtimefunction id=131091 function=f44 visibility=Private
 # -- generated: f0 f16
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 497, patchpoints: 90, rare instructions: 874, polls: 3
+# CHECK-NEXT: instructions: 497, patchpoints: 90, rare instructions: 794, polls: 3
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function f16 role=
 # CHECK: Source

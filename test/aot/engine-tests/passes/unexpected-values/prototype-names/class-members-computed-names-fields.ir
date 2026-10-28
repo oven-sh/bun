@@ -309,14 +309,9 @@ function f13 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b7() frequency=Unlikely:
 # CHECK-NEXT: v10: anything = SuperGet v0, v0 key="type"
 # CHECK-NEXT: v11: undefined|int|f6 = AssumeType v10 provenType=undefined|int|f6
-# CHECK-NEXT: v12: undefined|int|f6 ~ 1 = Upcast v11 castType=undefined|int|f6
-# CHECK-NEXT: v13: boolean ~ true = TypeTest v12 testedType=number
-# CHECK-NEXT: Branch v13 -> taken b8(| 0), notTaken b9(| 0)
-# CHECK-NEXT: b8(v14: int ~ 1):
-# CHECK-NEXT: Return v14
-# CHECK-NEXT: b9(v15: undefined|f6) frequency=Unlikely:
-# CHECK-NEXT: v16: undefined|f6 ~ undefined = Expect v15 expectedType=anything|absent
-# CHECK-NEXT: Return v16
+# CHECK-NEXT: Jump -> next b8(v11)
+# CHECK-NEXT: b8(v12: undefined|int|f6 ~ 1):
+# CHECK-NEXT: Return v12
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="state"
 # CHECK: module=m0 position=1187 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0 site=w9 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w10 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f10 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {

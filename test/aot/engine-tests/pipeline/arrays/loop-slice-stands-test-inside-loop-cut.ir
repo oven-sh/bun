@@ -1461,60 +1461,59 @@ runtimefunction id=131091 function=f9 visibility=Private
 # CHECK-NEXT: Branch v5 -> taken b1(), notTaken b11()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v6: anything ~ undefined|null|Array = Expect v2 expectedType=undefined|null|Array
-# CHECK-NEXT: v7: anything = PropGet v6 key="length" accessSite=12
-# CHECK-NEXT: v8: anything ~ number = Expect v7 expectedType=number
-# CHECK-NEXT: v9: int[0, 9007199254740991] = ToLength v8
-# CHECK-NEXT: v10: 0 = Integer
-# CHECK-NEXT: Jump -> next b2(v4, v10)
-# CHECK-NEXT: b2(v11: int[0, 4294967295], v12: int[0, 9007199254740991] ~ int[0, 2147483648]):
+# CHECK-NEXT: v7: boolean|number|string|symbol|bigint|object ~ Array = RequireObjectCoercible v6 name="length"
+# CHECK-NEXT: v8: anything = PropGet v7 key="length" accessSite=12
+# CHECK-NEXT: v9: anything ~ number = Expect v8 expectedType=number
+# CHECK-NEXT: v10: int[0, 9007199254740991] = ToLength v9
+# CHECK-NEXT: v11: 0 = Integer
+# CHECK-NEXT: Jump -> next b2(v4, v11)
+# CHECK-NEXT: b2(v12: int[0, 4294967295], v13: int[0, 9007199254740991] ~ int[0, 2147483648]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v14: boolean = Less v12, v9
-# CHECK-NEXT: Branch v14 -> taken b3(| 0), notTaken b10()
-# CHECK-NEXT: b3(v15: int[0, 9007199254740990] ~ int[0, 2147483647]):
-# CHECK-NEXT: v16: boolean = ElemHas v6, v15 accessSite=13 [keyIsIntegral]
-# CHECK-NEXT: Branch v16 -> taken b4(), notTaken b8()
+# CHECK-NEXT: v15: boolean = Less v13, v10
+# CHECK-NEXT: Branch v15 -> taken b3(| 0), notTaken b10()
+# CHECK-NEXT: b3(v16: int[0, 9007199254740990] ~ int[0, 2147483647]):
+# CHECK-NEXT: v17: boolean = ElemHas v7, v16 accessSite=13 [keyIsIntegral]
+# CHECK-NEXT: Branch v17 -> taken b4(), notTaken b8()
 # CHECK-NEXT: b4():
-# CHECK-NEXT: v17: Array = RequireObjectCoercible v0 name="length"
-# CHECK-NEXT: v18: int[0, 4294967295] = CallBuiltin v17 overload=ArrayPrototypeLength/0 accessSite=14
-# CHECK-NEXT: v19: boolean = GreaterEq v11, v18
-# CHECK-NEXT: Branch v19 -> taken b5(), notTaken b6()
+# CHECK-NEXT: v18: Array = RequireObjectCoercible v0 name="length"
+# CHECK-NEXT: v19: int[0, 4294967295] = CallBuiltin v18 overload=ArrayPrototypeLength/0 accessSite=14
+# CHECK-NEXT: v20: boolean = GreaterEq v12, v19
+# CHECK-NEXT: Branch v20 -> taken b5(), notTaken b6()
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v20: Array = AssumeType v0 provenType=Array [isWordOfFrontEnd]
-# CHECK-NEXT: GrowNewArray v20, v11
+# CHECK-NEXT: GrowNewArray v18, v12
 # CHECK-NEXT: Jump -> next b7()
 # CHECK-NEXT: b6():
 # CHECK-NEXT: Jump -> next b7()
 # CHECK-NEXT: b7():
-# CHECK-NEXT: v22: anything = ElemGet v6, v15 accessSite=15 [keyIsIntegral]
-# CHECK-NEXT: v23: undefined = CallDirect v0, v11, v22 function=f4 accessSite=16
+# CHECK-NEXT: v22: anything = ElemGet v7, v16 accessSite=15 [keyIsIntegral]
+# CHECK-NEXT: v23: undefined = CallDirect v18, v12, v22 function=f4 accessSite=16
 # CHECK-NEXT: v24: 1 = Integer integer=1
-# CHECK-NEXT: v25: int[1, 4294967296] = Add v11, v24
+# CHECK-NEXT: v25: int[1, 4294967296] = Add v12, v24
 # CHECK-NEXT: v26: 0 = Integer
 # CHECK-NEXT: v27: int[0, 4294967295] = URShift v25, v26
 # CHECK-NEXT: Jump -> next b9(v27)
 # CHECK-NEXT: b8():
-# CHECK-NEXT: Jump -> next b9(v11)
+# CHECK-NEXT: Jump -> next b9(v12)
 # CHECK-NEXT: b9(v28: int[0, 4294967295]):
-# CHECK-NEXT: v29: int[1, 9007199254740991] ~ int[1, 2147483648] = Increment v15
+# CHECK-NEXT: v29: int[1, 9007199254740991] ~ int[1, 2147483648] = Increment v16
 # CHECK-NEXT: Jump -> next b2(v28, v29)
 # CHECK-NEXT: b10():
-# CHECK-NEXT: Return v11
+# CHECK-NEXT: Return v12
 # CHECK-NEXT: b11():
 # CHECK-NEXT: v30: Array = RequireObjectCoercible v0 name="length"
 # CHECK-NEXT: v31: int[0, 4294967295] = CallBuiltin v30 overload=ArrayPrototypeLength/0 accessSite=17
 # CHECK-NEXT: v32: boolean = GreaterEq v4, v31
 # CHECK-NEXT: Branch v32 -> taken b12(), notTaken b13()
 # CHECK-NEXT: b12():
-# CHECK-NEXT: v33: Array = AssumeType v0 provenType=Array [isWordOfFrontEnd]
-# CHECK-NEXT: GrowNewArray v33, v4
+# CHECK-NEXT: GrowNewArray v30, v4
 # CHECK-NEXT: Jump -> next b13()
 # CHECK-NEXT: b13():
-# CHECK-NEXT: v35: undefined = CallDirect v0, v4, v2 function=f4 accessSite=18
-# CHECK-NEXT: v36: 1 = Integer integer=1
-# CHECK-NEXT: v37: int[1, 4294967296] = Add v4, v36
-# CHECK-NEXT: v38: 0 = Integer
-# CHECK-NEXT: v39: int[0, 4294967295] = URShift v37, v38
-# CHECK-NEXT: Return v39
+# CHECK-NEXT: v34: undefined = CallDirect v30, v4, v2 function=f4 accessSite=18
+# CHECK-NEXT: v35: 1 = Integer integer=1
+# CHECK-NEXT: v36: int[1, 4294967296] = Add v4, v35
+# CHECK-NEXT: v37: 0 = Integer
+# CHECK-NEXT: v38: int[0, 4294967295] = URShift v36, v37
+# CHECK-NEXT: Return v38
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="joinedText"
 # CHECK: module=m1 position=1819 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=string site=w8 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

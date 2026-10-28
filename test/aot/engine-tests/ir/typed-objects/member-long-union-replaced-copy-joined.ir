@@ -291,30 +291,22 @@ runtimefunction id=69 function=f7
 # CHECK-NEXT: v2: anything ~ undefined|null|"s0"|"s1"|"s10"|"s11"|"s12"|"s13"|"s2"|"s3"|"s4"|"s5"|"s6"|"s7"|"s8"|"s9" = GetSlotOrUndefined v1 key="state" receivers=[L0, L1, L2, L3, L4, L5, L6, L7, L8, L9, L10, L11, L12, L13] level=Proven accessSite=9
 # CHECK-NEXT: v3: "s3" = String string="s3"
 # CHECK-NEXT: v4: boolean = StrictEq v2, v3
-# CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b4()
+# CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b2(v1)
 # CHECK-NEXT: b1(v5: "s3"):
 # CHECK-NEXT: v6: L3 = NarrowByField v1, v5 key="state"
 # CHECK-NEXT: v7: L3 = NewObject layout=L3 allocationSite=4 allocationClass=3
 # CHECK-NEXT: v8: boolean = TryCopyFields v7, v6 layout=L3
-# CHECK-NEXT: Branch v8 -> taken b3(), notTaken b2()
-# CHECK-NEXT: b2() frequency=Rare:
-# CHECK-NEXT: CopyDataProperties v7, v6
-# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: Branch v8 -> taken b3(), notTaken b4()
+# CHECK-NEXT: b2(v9: L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13):
+# CHECK-NEXT: Return v9
 # CHECK-NEXT: b3():
 # CHECK-NEXT: v10: true = Boolean boolean=true
 # CHECK-NEXT: PutSlotOrAdd v7, -, v10 key="saving" receivers=[L3] level=Proven accessSite=10
 # CHECK-NEXT: v12: L3 = FinishObject v7
-# CHECK-NEXT: Jump -> next b6(v12)
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v13: boolean = TypeTest v1 testedType=undefined|null|L0|L1|L2|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13
-# CHECK-NEXT: Branch v13 -> taken b5(| 0), notTaken b7(| 0)
-# CHECK-NEXT: b5(v14: L0|L1|L2|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13):
-# CHECK-NEXT: Jump -> next b6(v14)
-# CHECK-NEXT: b6(v15: object):
-# CHECK-NEXT: v16: L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13 = AssumeType v15 provenType=undefined|null|L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13
-# CHECK-NEXT: Return v16
-# CHECK-NEXT: b7(v17: L3) frequency=Unlikely:
-# CHECK-NEXT: Return v17
+# CHECK-NEXT: Jump -> next b2(v12)
+# CHECK-NEXT: b4() frequency=Rare:
+# CHECK-NEXT: CopyDataProperties v7, v6
+# CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="next"
 # CHECK: module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=ArrayIterator flags=[IsExpected]} results=[{type=L(IteratorResult)}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {

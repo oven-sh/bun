@@ -753,23 +753,9 @@ runtimefunction id=131091 function=f69 visibility=Private
 # CHECK-NEXT: v3: L4|L5|L6 = RequireObjectCoercible v0
 # CHECK-NEXT: v4: anything = ElemGet v3, v1 accessSite=6 receivers=[L4, L5, L6]
 # CHECK-NEXT: v5: undefined|number|bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = AssumeType v4 provenType=undefined|number|bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
-# CHECK-NEXT: v6: boolean = TypeTest v5 testedType=number
-# CHECK-NEXT: Branch v6 -> taken b3(| 0), notTaken b1()
-# CHECK-NEXT: b1() frequency=Unlikely:
-# CHECK-NEXT: v7: boolean = TypeTest v5 testedType=undefined|number
-# CHECK-NEXT: Branch v7 -> taken b2(| 0), notTaken b5(| 0)
-# CHECK-NEXT: b2(v8: undefined|number):
-# CHECK-NEXT: v9: boolean = TypeTest v8 testedType=number
-# CHECK-NEXT: Branch v9 -> taken b3(| 0), notTaken b4()
-# CHECK-NEXT: b3(v10: number):
-# CHECK-NEXT: Return v10
-# CHECK-NEXT: b4() frequency=Unlikely:
-# CHECK-NEXT: v11: undefined = Undefined
-# CHECK-NEXT: Jump -> next b6(v11)
-# CHECK-NEXT: b5(v12: bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b6(v12)
-# CHECK-NEXT: b6(v13: undefined|bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) ~ undefined) frequency=Unlikely:
-# CHECK-NEXT: Return v13
+# CHECK-NEXT: v6: undefined|number|bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) ~ undefined|number = Expect v5 expectedType=undefined|number
+# CHECK-NEXT: v7: undefined|number|bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) ~ number = Expect v6 expectedType=number
+# CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Board"
 # CHECK: module=m0 position=2517 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
@@ -790,25 +776,9 @@ runtimefunction id=131091 function=f69 visibility=Private
 # CHECK-NEXT: v3: L4|L5|L6 = RequireObjectCoercible v2
 # CHECK-NEXT: v4: anything = ElemGet v3, v1 accessSite=6 receivers=[L4, L5, L6]
 # CHECK-NEXT: v5: undefined|number|bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = AssumeType v4 provenType=undefined|number|bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
-# CHECK-NEXT: v6: boolean = TypeTest v5 testedType=number
-# CHECK-NEXT: Branch v6 -> taken b3(| 0), notTaken b1()
-# CHECK-NEXT: b1() frequency=Unlikely:
-# CHECK-NEXT: v7: boolean = TypeTest v5 testedType=undefined|number
-# CHECK-NEXT: Branch v7 -> taken b2(| 0), notTaken b5(| 0)
-# CHECK-NEXT: b2(v8: undefined|number):
-# CHECK-NEXT: v9: boolean = TypeTest v8 testedType=number
-# CHECK-NEXT: Branch v9 -> taken b3(| 0), notTaken b4()
-# CHECK-NEXT: b3(v10: number):
-# CHECK-NEXT: Jump -> next b7(v10) @0 tail
-# CHECK-NEXT: b4() frequency=Unlikely:
-# CHECK-NEXT: v11: undefined = Undefined
-# CHECK-NEXT: Jump -> next b6(v11)
-# CHECK-NEXT: b5(v12: bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b6(v12)
-# CHECK-NEXT: b6(v13: undefined|bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) ~ undefined) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b7(v13) @0 tail
-# CHECK-NEXT: b7(v14: undefined|number|bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) ~ number):
-# CHECK-NEXT: Return v14
+# CHECK-NEXT: v6: undefined|number|bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) ~ undefined|number = Expect v5 expectedType=undefined|number
+# CHECK-NEXT: v7: undefined|number|bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) ~ number = Expect v6 expectedType=number
+# CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function f23 module=
 # CHECK: m0 position=1754 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function site=w51 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=undefined|null|object site=w53 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined|number|bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)}] functionTypes=[f51] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f71 fallback=f72} {
@@ -829,18 +799,17 @@ runtimefunction id=131091 function=f69 visibility=Private
 # CHECK-NEXT: v1: Object = GetSlot v0 key="scores" receivers=[L0] level=Proven accessSite=12
 # CHECK-NEXT: v2: anything = PropGet v1 key="guest" accessSite=13
 # CHECK-NEXT: v3: undefined|number|bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = AssumeType v2 provenType=undefined|number|bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
-# CHECK-NEXT: v4: boolean = TypeTest v3 testedType=undefined|number
-# CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b2(| 0)
-# CHECK-NEXT: b1(v5: undefined|number):
-# CHECK-NEXT: v6: number = Increment v5
-# CHECK-NEXT: PropSet v1, v6 key="guest" accessSite=14
-# CHECK-NEXT: Jump -> next b3(v6) @0 tail
-# CHECK-NEXT: b2(v8: bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)) frequency=Unlikely:
-# CHECK-NEXT: v9: number|bigint = Increment v8
-# CHECK-NEXT: PropSet v1, v9 key="guest" accessSite=14
-# CHECK-NEXT: Jump -> next b3(v9) @0 tail
-# CHECK-NEXT: b3(v11: number|bigint ~ number):
-# CHECK-NEXT: Return v11
+# CHECK-NEXT: v4: undefined|number|bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) ~ undefined|number = Expect v3 expectedType=undefined|number
+# CHECK-NEXT: v5: boolean = TypeTest v4 testedType=number
+# CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b2(| 0)
+# CHECK-NEXT: b1(v6: number):
+# CHECK-NEXT: v7: number = Increment v6
+# CHECK-NEXT: PropSet v1, v7 key="guest" accessSite=14
+# CHECK-NEXT: Return v7
+# CHECK-NEXT: b2(v9: undefined|bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) ~ undefined) frequency=Rare:
+# CHECK-NEXT: v10: number|bigint ~ number = Increment v9
+# CHECK-NEXT: PropSet v1, v10 key="guest" accessSite=14
+# CHECK-NEXT: Return v10
 # CHECK-NEXT: }
 # CHECK-LABEL: function f30 module=
 # CHECK: m0 position=2945 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=string site=w69 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f59] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

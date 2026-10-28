@@ -238,5 +238,5 @@ function f4 module=m0 position=198 kind=Initializer flags=[HasThis, IsChecked, I
 # -- generated: flagsOf
 # CHECK-LABEL: function {{*}}name="flagsOf"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 39, patchpoints: 0, rare instructions: 234
+# CHECK-NEXT: instructions: 40, patchpoints: 0, rare instructions: 114
 # CHECK-NEXT: end of function f1

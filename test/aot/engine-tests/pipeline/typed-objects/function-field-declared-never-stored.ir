@@ -305,28 +305,15 @@ runtimefunction id=44 function=f8
 # CHECK-NEXT: v2: string = TypeOf v0
 # CHECK-NEXT: v3: " " = String string=" "
 # CHECK-NEXT: v4: string = Add v2, v3
-# CHECK-NEXT: v5: builtin(StringPrototypeIncludes) = Builtin builtin=StringPrototypeIncludes
-# CHECK-NEXT: v6: "=>" = String string="=>"
-# CHECK-NEXT: v7: anything = Call v5, v1, v6 calleeKey="includes" calleeName="text.includes" accessSite=3 callees=[]
-# CHECK-NEXT: v8: boolean = TypeTest v7 testedType=boolean
-# CHECK-NEXT: Branch v8 -> taken b1(| 0), notTaken b4(| 0)
-# CHECK-NEXT: b1(v9: boolean):
-# CHECK-NEXT: Branch v9 -> taken b2(), notTaken b3(v1)
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v10: "a function" = String string="a function"
-# CHECK-NEXT: Jump -> next b3(v10)
-# CHECK-NEXT: b3(v11: string):
-# CHECK-NEXT: v12: string = Add v4, v11
-# CHECK-NEXT: Return v12
-# CHECK-NEXT: b4(v13: undefined|null|number|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v14: boolean = ToBoolean v13
-# CHECK-NEXT: Branch v14 -> taken b5(), notTaken b6(v1)
-# CHECK-NEXT: b5() frequency=Unlikely:
-# CHECK-NEXT: v15: "a function" = String string="a function"
-# CHECK-NEXT: Jump -> next b6(v15)
-# CHECK-NEXT: b6(v16: string) frequency=Unlikely:
-# CHECK-NEXT: v17: string = Add v4, v16
-# CHECK-NEXT: Return v17
+# CHECK-NEXT: v5: "=>" = String string="=>"
+# CHECK-NEXT: v6: boolean = CallBuiltin v1, v5 overload=StringPrototypeIncludes/1 accessSite=3
+# CHECK-NEXT: Branch v6 -> taken b1(), notTaken b2(v1)
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v7: "a function" = String string="a function"
+# CHECK-NEXT: Jump -> next b2(v7)
+# CHECK-NEXT: b2(v8: string):
+# CHECK-NEXT: v9: string = Add v4, v8
+# CHECK-NEXT: Return v9
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="probe"
 # CHECK: module=m0 position=568 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0 site=w1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f8 callPosition=4294967295 module=m1}] {

@@ -3333,12 +3333,7 @@ runtimefunction id=131091 function=f48 visibility=Private
 # CHECK: module=m0 position=2694 kind=Arrow flags=[IsChecked] captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=i32 site=w84 flags=[IsExpected]}] functionTypes=[f26] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: env L1):
 # CHECK-NEXT: v1: anything ~ i32 = GetEnvironmentField v0 layout=L1
-# CHECK-NEXT: v2: boolean ~ true = TypeTest v1 testedType=i32|absent
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2(| 0)
-# CHECK-NEXT: b1(v3: i32):
-# CHECK-NEXT: Return v3
-# CHECK-NEXT: b2(v4: anything) frequency=Unlikely:
-# CHECK-NEXT: Return v4
+# CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="paint"
 # CHECK: module=m0 position=1364 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=L0 site=w1 flags=[OmitsNull, OmitsUndefined]}, {type=i32 site=w2}, {type=i32 site=w3}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameterMap=[{original=0}, {original=1}, {original=2}]} {

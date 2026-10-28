@@ -197,82 +197,42 @@ runtimefunction id=69 function=f2
 # CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f4 callPosition=302 parent=1 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "remote" = String string="remote"
-# CHECK-NEXT: v1: "default" = String string="default"
-# CHECK-NEXT: v2: "override" = String string="override"
-# CHECK-NEXT: v3: L2 = NewObject -, v0, v1, v2 layout=L2 fields=[0, 1, 2] allocationSite=1 allocationClass=2
-# CHECK-NEXT: v4: L2 = FinishObject v3
-# CHECK-NEXT: v5: null = Null
-# CHECK-NEXT: v6: L0 = NewObject -, v5 layout=L0 fields=[0] allocationSite=2 storage=Frame allocationClass=0
-# CHECK-NEXT: v7: "second" = String string="second"
-# CHECK-NEXT: v8: "constructor" = String string="constructor"
-# CHECK-NEXT: v9: "third" = String string="third"
-# CHECK-NEXT: v10: "first" = String string="first"
-# CHECK-NEXT: v11: "second" = String string="second"
-# CHECK-NEXT: v12: "constructor" = String string="constructor"
-# CHECK-NEXT: v13: "missing" = String string="missing"
-# CHECK-NEXT: v14: 0 = Integer
-# CHECK-NEXT: Jump -> next b1(v14)
-# CHECK-NEXT: b1(v15: int[0, 7]):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v17: 7 = Integer integer=7
-# CHECK-NEXT: v18: boolean = Less v15, v17
-# CHECK-NEXT: Branch v18 -> taken b2(| 0), notTaken b15()
-# CHECK-NEXT: b2(v19: int[0, 6]):
-# CHECK-NEXT: Switch v19 cases=[0, 1, 2, 3, 4, 5] -> case b3(v7), case b3(v8), case b3(v9), case b3(v10), case b3(v11), case b3(v12), otherwise b3(v13)
-# CHECK-NEXT: b3(v20: "constructor"|"first"|"missing"|"second"|"third"):
-# CHECK-NEXT: v21: 1 = Integer integer=1
-# CHECK-NEXT: v22: int[1, 7] = Add v19, v21
-# CHECK-NEXT: v23: anything = ElemGet v4, v20 accessSite=9 receivers=[L2]
-# CHECK-NEXT: v24: undefined|string|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = AssumeType v23 provenType=undefined|string|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
-# CHECK-NEXT: v25: boolean = TypeTest v24 testedType=undefined|null|string
-# CHECK-NEXT: Branch v25 -> taken b4(| 0), notTaken b10()
-# CHECK-NEXT: b4(v26: undefined|string):
-# CHECK-NEXT: v27: "third" = String string="third"
-# CHECK-NEXT: v28: boolean = StrictEq v20, v27
-# CHECK-NEXT: v29: boolean = LogicalNot v28
-# CHECK-NEXT: v30: "remote" = String string="remote"
-# CHECK-NEXT: v31: boolean = StrictEq v26, v30
-# CHECK-NEXT: Branch v31 -> taken b5(| 0), notTaken b6()
-# CHECK-NEXT: b5(v32: "remote"):
-# CHECK-NEXT: PutSlot v6, -, v29 key="lastServed" receivers=[L0] level=Proven accessSite=10
-# CHECK-NEXT: Jump -> next b9(v29, v32)
-# CHECK-NEXT: b6():
-# CHECK-NEXT: v34: null|boolean = GetSlot v6 key="lastServed" receivers=[L0] level=Proven accessSite=11
-# CHECK-NEXT: v35: boolean = TypeTest v34 testedType=null
-# CHECK-NEXT: Branch v35 -> taken b7(), notTaken b8()
-# CHECK-NEXT: b7():
-# CHECK-NEXT: v36: "disabled" = String string="disabled"
-# CHECK-NEXT: Jump -> next b9(v29, v36)
-# CHECK-NEXT: b8():
-# CHECK-NEXT: v37: fact = Specified
-# CHECK-NEXT: v38: boolean = AssumeType v34, v37 provenType=boolean
-# CHECK-NEXT: v39: "kept" = String string="kept"
-# CHECK-NEXT: Jump -> next b9(v38, v39)
-# CHECK-NEXT: b9(v40: boolean, v41: "disabled"|"kept"|"remote"):
-# CHECK-NEXT: Jump -> next b14(v40, v41)
-# CHECK-NEXT: b10() frequency=Unlikely:
-# CHECK-NEXT: v42: "third" = String string="third"
-# CHECK-NEXT: v43: boolean = StrictEq v20, v42
-# CHECK-NEXT: v44: boolean = LogicalNot v43
-# CHECK-NEXT: v45: null|boolean = GetSlot v6 key="lastServed" receivers=[L0] level=Proven accessSite=11
-# CHECK-NEXT: v46: boolean = TypeTest v45 testedType=null
-# CHECK-NEXT: Branch v46 -> taken b11(), notTaken b12()
-# CHECK-NEXT: b11() frequency=Unlikely:
-# CHECK-NEXT: v47: "disabled" = String string="disabled"
-# CHECK-NEXT: Jump -> next b13(v44, v47)
-# CHECK-NEXT: b12() frequency=Unlikely:
-# CHECK-NEXT: v48: fact = Specified
-# CHECK-NEXT: v49: boolean = AssumeType v45, v48 provenType=boolean
-# CHECK-NEXT: v50: "kept" = String string="kept"
-# CHECK-NEXT: Jump -> next b13(v49, v50)
-# CHECK-NEXT: b13(v51: boolean, v52: "disabled"|"kept") frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b14(v51, v52)
-# CHECK-NEXT: b14(v53: boolean, v54: "disabled"|"kept"|"remote"):
-# CHECK-NEXT: v55: undefined = CallBuiltin -, v20, v53, v54 overload=ConsoleLog/0 accessSite=8
-# CHECK-NEXT: Jump -> next b1(v22)
-# CHECK-NEXT: b15():
-# CHECK-NEXT: v56: undefined = Undefined
-# CHECK-NEXT: Return v56
+# CHECK-NEXT: v1: "second" = String string="second"
+# CHECK-NEXT: v2: "constructor" = String string="constructor"
+# CHECK-NEXT: v3: "third" = String string="third"
+# CHECK-NEXT: v4: "first" = String string="first"
+# CHECK-NEXT: v5: true = Boolean boolean=true
+# CHECK-NEXT: v6: "disabled" = String string="disabled"
+# CHECK-NEXT: v7: undefined = CallBuiltin -, v1, v5, v6 overload=ConsoleLog/0 accessSite=8
+# CHECK-NEXT: v8: true = Boolean boolean=true
+# CHECK-NEXT: v9: "disabled" = String string="disabled"
+# CHECK-NEXT: v10: undefined = CallBuiltin -, v2, v8, v9 overload=ConsoleLog/0 accessSite=8
+# CHECK-NEXT: v11: false = Boolean
+# CHECK-NEXT: v12: "disabled" = String string="disabled"
+# CHECK-NEXT: v13: undefined = CallBuiltin -, v3, v11, v12 overload=ConsoleLog/0 accessSite=8
+# CHECK-NEXT: v14: true = Boolean boolean=true
+# CHECK-NEXT: v15: undefined = CallBuiltin -, v4, v14, v0 overload=ConsoleLog/0 accessSite=8
+# CHECK-NEXT: v16: true = Upcast v14 castType=null|boolean
+# CHECK-NEXT: v17: fact = Specified
+# CHECK-NEXT: v18: true = AssumeType v16, v17 provenType=boolean
+# CHECK-NEXT: v19: "kept" = String string="kept"
+# CHECK-NEXT: v20: "kept" = Upcast v19 castType="disabled"|"kept"
+# CHECK-NEXT: v21: "second" = String string="second"
+# CHECK-NEXT: v22: undefined = CallBuiltin -, v21, v18, v20 overload=ConsoleLog/0 accessSite=8
+# CHECK-NEXT: v23: fact = Specified
+# CHECK-NEXT: v24: true = AssumeType v16, v23 provenType=boolean
+# CHECK-NEXT: v25: "kept" = String string="kept"
+# CHECK-NEXT: v26: "kept" = Upcast v25 castType="disabled"|"kept"
+# CHECK-NEXT: v27: "constructor" = String string="constructor"
+# CHECK-NEXT: v28: undefined = CallBuiltin -, v27, v24, v26 overload=ConsoleLog/0 accessSite=8
+# CHECK-NEXT: v29: fact = Specified
+# CHECK-NEXT: v30: true = AssumeType v16, v29 provenType=boolean
+# CHECK-NEXT: v31: "kept" = String string="kept"
+# CHECK-NEXT: v32: "kept" = Upcast v31 castType="disabled"|"kept"
+# CHECK-NEXT: v33: "missing" = String string="missing"
+# CHECK-NEXT: v34: undefined = CallBuiltin -, v33, v30, v32 overload=ConsoleLog/0 accessSite=8
+# CHECK-NEXT: v35: undefined = Undefined
+# CHECK-NEXT: Return v35
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="next"
 # CHECK: module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=ArrayIterator flags=[IsExpected]} results=[{type=L(IteratorResult)}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {

@@ -574,7 +574,7 @@ runtimefunction id=131091 function=f22 visibility=Private
 # CHECK-NEXT: end of function f2
 # CHECK-LABEL: function {{*}}name="uses"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 444, patchpoints: 34, rare instructions: 20
+# CHECK-NEXT: instructions: 302, patchpoints: 15, rare instructions: 14
 # CHECK-NEXT: end of function f24
 # CHECK-LABEL: function {{*}}name="uses"
 # CHECK: role=GenericVersion

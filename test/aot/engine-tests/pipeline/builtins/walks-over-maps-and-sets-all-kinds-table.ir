@@ -4029,58 +4029,57 @@ runtimefunction id=131091 function=f88 visibility=Private
 # CHECK-NEXT: v8: 0 = Integer
 # CHECK-NEXT: v9: stringbuilder = StringBuilderBegin
 # CHECK-NEXT: Jump -> next b1(v8, v7)
-# CHECK-NEXT: b1(v10: int[0, 4294967295] ~ 0, v11: int[0, 4294967295] ~ 0):
-# CHECK-NEXT: Jump -> next b2(v10, v11)
-# CHECK-NEXT: b2(v12: int[0, 4294967295], v13: int[0, 4294967295]):
+# CHECK-NEXT: b1(v10: int[0, 4294967295], v11: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v15: boolean = Less v13, v6
-# CHECK-NEXT: Branch v15 -> taken b3(| 0), notTaken b15()
-# CHECK-NEXT: b3(v16: int[0, 4294967294]):
-# CHECK-NEXT: v17: int[0, 4294967294] = Sub v16, v7
-# CHECK-NEXT: v18: boolean = HasArrayElement v1, v16 level=Proven accessSite=309 [keyIsIntegral]
-# CHECK-NEXT: Branch v18 -> taken b4(), notTaken b14()
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v19: anything = GetArrayElement v1, v16 level=Proven accessSite=310 [keyIsIntegral]
-# CHECK-NEXT: v20: boolean = TypeTest v19 testedType=string
-# CHECK-NEXT: Branch v20 -> taken b5(| 0), notTaken b6(| 0)
-# CHECK-NEXT: b5(v21: string):
-# CHECK-NEXT: Jump -> next b7(v21)
-# CHECK-NEXT: b6(v22: undefined|null|boolean|number|symbol|bigint|object):
-# CHECK-NEXT: v23: undefined = Undefined @0:7 tail
-# CHECK-NEXT: v24: undefined|string = CallBuiltin -, v22, v23 overload=JSONStringify/0 accessSite=251 @0:7 tail
-# CHECK-NEXT: Jump -> next b7(v24)
-# CHECK-NEXT: b7(v25: undefined|string):
-# CHECK-NEXT: Jump -> next b8(v12)
-# CHECK-NEXT: b8(v26: int[0, 4294967295]):
+# CHECK-NEXT: v13: boolean = Less v11, v6
+# CHECK-NEXT: Branch v13 -> taken b2(| 0), notTaken b15()
+# CHECK-NEXT: b2(v14: int[0, 4294967294]):
+# CHECK-NEXT: v15: int[0, 4294967294] = Sub v14, v7
+# CHECK-NEXT: v16: boolean = HasArrayElement v1, v14 level=Proven accessSite=309 [keyIsIntegral]
+# CHECK-NEXT: Branch v16 -> taken b3(), notTaken b13()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v17: anything = GetArrayElement v1, v14 level=Proven accessSite=310 [keyIsIntegral]
+# CHECK-NEXT: v18: boolean = TypeTest v17 testedType=string
+# CHECK-NEXT: Branch v18 -> taken b4(| 0), notTaken b5(| 0)
+# CHECK-NEXT: b4(v19: string):
+# CHECK-NEXT: Jump -> next b6(v19)
+# CHECK-NEXT: b5(v20: undefined|null|boolean|number|symbol|bigint|object):
+# CHECK-NEXT: v21: undefined = Undefined @0:7 tail
+# CHECK-NEXT: v22: undefined|string = CallBuiltin -, v20, v21 overload=JSONStringify/0 accessSite=251 @0:7 tail
+# CHECK-NEXT: Jump -> next b6(v22)
+# CHECK-NEXT: b6(v23: undefined|string):
+# CHECK-NEXT: Jump -> next b7(v10)
+# CHECK-NEXT: b7(v24: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v28: boolean = Less v26, v17
-# CHECK-NEXT: Branch v28 -> taken b9(| 0), notTaken b10()
-# CHECK-NEXT: b9(v29: int[0, 4294967293]):
+# CHECK-NEXT: v26: boolean = Less v24, v15
+# CHECK-NEXT: Branch v26 -> taken b8(| 0), notTaken b9()
+# CHECK-NEXT: b8(v27: int[0, 4294967293]):
 # CHECK-NEXT: StringBuilderAppend v9, v5
-# CHECK-NEXT: v31: int[1, 4294967294] = Increment v29
-# CHECK-NEXT: Jump -> next b8(v31)
+# CHECK-NEXT: v29: int[1, 4294967294] = Increment v27
+# CHECK-NEXT: Jump -> next b7(v29)
+# CHECK-NEXT: b9():
+# CHECK-NEXT: v30: boolean = TypeTest v23 testedType=undefined
+# CHECK-NEXT: Branch v30 -> taken b10(), notTaken b11(| 0)
 # CHECK-NEXT: b10():
-# CHECK-NEXT: v32: boolean = TypeTest v25 testedType=undefined
-# CHECK-NEXT: Branch v32 -> taken b11(), notTaken b12(| 0)
-# CHECK-NEXT: b11():
-# CHECK-NEXT: v33: "" = String string=""
-# CHECK-NEXT: Jump -> next b13(v33)
-# CHECK-NEXT: b12(v34: string):
-# CHECK-NEXT: Jump -> next b13(v34)
-# CHECK-NEXT: b13(v35: string):
-# CHECK-NEXT: StringBuilderAppend v9, v35
-# CHECK-NEXT: v37: int[1, 4294967295] = Increment v16
-# CHECK-NEXT: Jump -> next b2(v26, v37)
-# CHECK-NEXT: b14() frequency=Rare:
-# CHECK-NEXT: v38: int[1, 4294967295] = Increment v16
-# CHECK-NEXT: Jump -> next b1(v12, v38)
+# CHECK-NEXT: v31: "" = String string=""
+# CHECK-NEXT: Jump -> next b12(v31)
+# CHECK-NEXT: b11(v32: string):
+# CHECK-NEXT: Jump -> next b12(v32)
+# CHECK-NEXT: b12(v33: string):
+# CHECK-NEXT: StringBuilderAppend v9, v33
+# CHECK-NEXT: Jump -> next b14(v24)
+# CHECK-NEXT: b13() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b14(v10)
+# CHECK-NEXT: b14(v35: int[0, 4294967295]):
+# CHECK-NEXT: v36: int[1, 4294967295] = Increment v14
+# CHECK-NEXT: Jump -> next b1(v35, v36)
 # CHECK-NEXT: b15():
-# CHECK-NEXT: v39: string = StringBuilderFinish v9 @0:4 tail
-# CHECK-NEXT: v40: string = CallDirect v39, v5, v12, v6 function=f86 accessSite=341 @0:4 tail
-# CHECK-NEXT: v41: string = Add v4, v40
-# CHECK-NEXT: v42: int[0, 4294967295] = CallBuiltin v2, v41 overload=ArrayPrototypePush/0 accessSite=169
-# CHECK-NEXT: v43: undefined = Undefined
-# CHECK-NEXT: Return v43
+# CHECK-NEXT: v37: string = StringBuilderFinish v9 @0:4 tail
+# CHECK-NEXT: v38: string = CallDirect v37, v5, v10, v6 function=f86 accessSite=341 @0:4 tail
+# CHECK-NEXT: v39: string = Add v4, v38
+# CHECK-NEXT: v40: int[0, 4294967295] = CallBuiltin v2, v39 overload=ArrayPrototypePush/0 accessSite=169
+# CHECK-NEXT: v41: undefined = Undefined
+# CHECK-NEXT: Return v41
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="show"
 # CHECK: module=m0 position=530 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=string site=w2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -4566,39 +4565,29 @@ runtimefunction id=131091 function=f88 visibility=Private
 # CHECK-NEXT: b0(v0: f26, v1: anything, v2: anything, v3: anything):
 # CHECK-NEXT: v4: anything ~ L0 = Upcast v1 castType=anything @6883 tail
 # CHECK-NEXT: v5: boolean ~ true = TypeTest v4 testedType=L0
-# CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b7()
+# CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v6: L0):
 # CHECK-NEXT: v7: fact = Entered function=f103 @6883:1 tail
 # CHECK-NEXT: v8: anything ~ number = PropGet v6 key="sets" accessSite=246 receivers=[L0, ..]
 # CHECK-NEXT: v9: boolean ~ true = TypeTest v8 testedType=number
-# CHECK-NEXT: Branch v9 -> taken b2(| 0), notTaken b3(| 0)
-# CHECK-NEXT: b2(v10: number):
-# CHECK-NEXT: v11: number = Increment v10
-# CHECK-NEXT: PropSet v6, v11 key="sets" accessSite=247 receivers=[L0, ..]
-# CHECK-NEXT: Jump -> next b5()
-# CHECK-NEXT: b3(v13: undefined|null|boolean|string|symbol|bigint|object) frequency=Rare:
-# CHECK-NEXT: v14: number|bigint = Increment v13
-# CHECK-NEXT: v15: boolean = TypeTest v14 testedType=number
-# CHECK-NEXT: Branch v15 -> taken b4(| 0), notTaken b6(| 0)
-# CHECK-NEXT: b4(v16: number) frequency=Rare:
-# CHECK-NEXT: PropSet v6, v16 key="sets" accessSite=247 receivers=[L0, ..]
-# CHECK-NEXT: Jump -> next b5()
-# CHECK-NEXT: b5():
-# CHECK-NEXT: v18: f25 = GetModuleVariable fact=v7 variable=g7
-# CHECK-NEXT: v19: null|object = GetSuperBase v18 homeKind=ClassPrototype
-# CHECK-NEXT: v20: anything = SuperGet v19, v6 key="set" accessSite=248
-# CHECK-NEXT: v21: anything = Call v20, v6, v2, v3 calleeName="super.set" accessSite=249 callees=[builtin(TypedArrayPrototypeSet), builtin(MapPrototypeSet), builtin(WeakMapPrototypeSet), builtin(WebAssemblyTablePrototypeSet), ..]
-# CHECK-NEXT: ReturnCall v21 casts=[{declared={type=undefined|null|L0 site=w203 flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|L0 site=w124 flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}]
-# CHECK-NEXT: b6(v22: bigint) frequency=Unlikely:
-# CHECK-NEXT: PropSet v6, v22 key="sets" accessSite=247 receivers=[L0, ..]
-# CHECK-NEXT: v24: f25 = GetModuleVariable fact=v7 variable=g7
-# CHECK-NEXT: v25: null|object = GetSuperBase v24 homeKind=ClassPrototype
-# CHECK-NEXT: v26: anything = SuperGet v25, v6 key="set" accessSite=248
-# CHECK-NEXT: v27: anything = Call v26, v6, v2, v3 calleeName="super.set" accessSite=249 callees=[builtin(TypedArrayPrototypeSet), builtin(MapPrototypeSet), builtin(WeakMapPrototypeSet), builtin(WebAssemblyTablePrototypeSet), ..] [isNeverInlined]
-# CHECK-NEXT: ReturnCall v27 casts=[{declared={type=undefined|null|L0 site=w203 flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|L0 site=w124 flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}]
-# CHECK-NEXT: b7() frequency=Unlikely:
-# CHECK-NEXT: v28: anything ~ undefined|null|L0 = CallDirect v4, v2, v3 function=f117
-# CHECK-NEXT: ReturnCall v28
+# CHECK-NEXT: Branch v9 -> taken b3(| 0), notTaken b5(| 0)
+# CHECK-NEXT: b2() frequency=Unlikely:
+# CHECK-NEXT: v10: anything ~ undefined|null|L0 = CallDirect v4, v2, v3 function=f117
+# CHECK-NEXT: ReturnCall v10
+# CHECK-NEXT: b3(v11: number):
+# CHECK-NEXT: v12: number = Increment v11
+# CHECK-NEXT: PropSet v6, v12 key="sets" accessSite=247
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v14: f25 = GetModuleVariable fact=v7 variable=g7
+# CHECK-NEXT: v15: null|object = GetSuperBase v14 homeKind=ClassPrototype
+# CHECK-NEXT: v16: anything = SuperGet v15, v6 key="set" accessSite=248
+# CHECK-NEXT: v17: anything = Call v16, v6, v2, v3 calleeName="super.set" accessSite=249 callees=[builtin(TypedArrayPrototypeSet), builtin(MapPrototypeSet), builtin(WeakMapPrototypeSet), builtin(WebAssemblyTablePrototypeSet), ..]
+# CHECK-NEXT: ReturnCall v17 casts=[{declared={type=undefined|null|L0 site=w203 flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|L0 site=w124 flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}]
+# CHECK-NEXT: b5(v18: undefined|null|boolean|string|symbol|bigint|object) frequency=Rare:
+# CHECK-NEXT: v19: number|bigint = Increment v18
+# CHECK-NEXT: PropSet v6, v19 key="sets" accessSite=247
+# CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="throw"
 # CHECK: module=m6 position=1077 kind=Method role=ResultWorker flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=92 thisType={type=Generator flags=[IsExpected]} parameters=[{type=anything}] results=[{type=i32}, {type=object|unspecified}, {type=anything|unspecified}, {type=boolean|unspecified}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f55 parameterMap=[{original=0}, {original=1}]} creator=ResultWorker{origin=f55} {

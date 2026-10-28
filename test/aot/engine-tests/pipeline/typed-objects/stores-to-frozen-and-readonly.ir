@@ -237,16 +237,10 @@ function f53 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v6: "TypeError " = String string="TypeError "
 # CHECK-NEXT: v7: anything ~ undefined|null|TypeError = Upcast v3 castType=anything
 # CHECK-NEXT: v8: anything = PropGet v7 key="message" accessSite=11
-# CHECK-NEXT: v9: boolean = TypeTest v8 testedType=undefined|null|string
-# CHECK-NEXT: Branch v9 -> taken b3(| 0), notTaken b4(| 0)
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v10: undefined = Undefined
-# CHECK-NEXT: Return v10
-# CHECK-NEXT: b3(v11: undefined|null|string):
-# CHECK-NEXT: v12: string = Add v6, v11
+# CHECK-NEXT: v9: anything ~ undefined|null|string = Expect v8 expectedType=undefined|null|string
+# CHECK-NEXT: v10: string = Add v6, v9
 # CHECK-NEXT: Jump -> next b2()
-# CHECK-NEXT: b4(v13: boolean|number|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v14: string = Add v6, v13
-# CHECK-NEXT: v15: undefined = Undefined
-# CHECK-NEXT: Return v15
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v11: undefined = Undefined
+# CHECK-NEXT: Return v11
 # CHECK-NEXT: }

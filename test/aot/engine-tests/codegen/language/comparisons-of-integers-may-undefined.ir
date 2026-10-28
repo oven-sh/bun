@@ -480,7 +480,7 @@ function f5 name="throughItsOwnLength" module=m0 position=2114 flags=[IsChecked,
 # -- generated: relations bytes signs signsOfNumbers throughItsOwnLength
 # CHECK-LABEL: function {{*}}name="relations"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 162, patchpoints: 18, rare instructions: 346, polls: 1
+# CHECK-NEXT: instructions: 139, patchpoints: 18, rare instructions: 223, polls: 1
 # CHECK-NEXT: end of function f1
 # CHECK-LABEL: function {{*}}name="bytes"
 # CHECK: role=Source

@@ -748,29 +748,23 @@ function f88 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v4: anything ~ undefined|null|function = GetCapture v3 function=f22
 # CHECK-NEXT: v5: anything ~ undefined|number = CallDirect v4 function=f22 accessSite=5
 # CHECK-NEXT: v6: boolean ~ true = TypeTest v5 testedType=undefined|null|boolean|number|string|symbol|bigint
-# CHECK-NEXT: Branch v6 -> taken b6(), notTaken b2(| 0)
+# CHECK-NEXT: Branch v6 -> taken b5(), notTaken b2(| 0)
 # CHECK-NEXT: b2(v7: object) frequency=Rare handler=b4():
 # CHECK-NEXT: v8: string = ToString v7 calledBuiltin=String
-# CHECK-NEXT: Jump -> next b6()
+# CHECK-NEXT: Jump -> next b5()
 # CHECK-NEXT: b3(v9: f39) handler=b4():
 # CHECK-NEXT: v10: anything ~ undefined|null|function = GetCapture v9 function=f39
 # CHECK-NEXT: v11: boolean = CallDirect v10 function=f39 accessSite=5
-# CHECK-NEXT: Jump -> next b6()
+# CHECK-NEXT: Jump -> next b5()
 # CHECK-NEXT: b4() role=CatchHandler:
 # CHECK-NEXT: v12: anything = CatchValue
 # CHECK-NEXT: v13: "throws " = String string="throws "
 # CHECK-NEXT: v14: anything ~ undefined|null|Error = Upcast v12 castType=anything
 # CHECK-NEXT: v15: anything = PropGet v14 key="name" accessSite=7
-# CHECK-NEXT: v16: boolean = TypeTest v15 testedType=undefined|null|string
-# CHECK-NEXT: Branch v16 -> taken b5(| 0), notTaken b7(| 0)
-# CHECK-NEXT: b5(v17: undefined|null|string):
-# CHECK-NEXT: v18: string = Add v13, v17
-# CHECK-NEXT: Jump -> next b6()
-# CHECK-NEXT: b6():
-# CHECK-NEXT: v19: undefined = Undefined
-# CHECK-NEXT: Return v19
-# CHECK-NEXT: b7(v20: boolean|number|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v21: string = Add v13, v20
-# CHECK-NEXT: v22: undefined = Undefined
-# CHECK-NEXT: Return v22
+# CHECK-NEXT: v16: anything ~ undefined|null|string = Expect v15 expectedType=undefined|null|string
+# CHECK-NEXT: v17: string = Add v13, v16
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v18: undefined = Undefined
+# CHECK-NEXT: Return v18
 # CHECK-NEXT: }

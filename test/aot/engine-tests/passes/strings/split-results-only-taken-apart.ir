@@ -214,34 +214,30 @@ function f14 name="between" module=m0 position=3754 flags=[IsGenerator, HasThis,
 # CHECK-NEXT: v5: 0 = Integer
 # CHECK-NEXT: v6: "w" = String string="w"
 # CHECK-NEXT: v7: boolean = HasArrayStorage v4 arrayStorage=Contiguous [isWritable]
-# CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b3()
+# CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b4()
 # CHECK-NEXT: b1(v8: guard):
 # CHECK-NEXT: PutArrayElement v4, v5, v6, v8 arrayStorage=Contiguous level=Expected accessSite=27 [keyIsIntegral]
 # CHECK-NEXT: v10: boolean = HasArrayStorage v4 arrayStorage=Contiguous [isWritable]
-# CHECK-NEXT: Branch v10 -> taken b2(| 0), notTaken b4()
+# CHECK-NEXT: Branch v10 -> taken b2(| 0), notTaken b5()
 # CHECK-NEXT: b2(v11: guard):
 # CHECK-NEXT: v12: 0 = Integer
 # CHECK-NEXT: v13: undefined|string = GetArrayElement v4, v12, v11 arrayStorage=Contiguous level=Expected accessSite=28 [keyIsIntegral]
 # CHECK-NEXT: v14: 1 = Integer integer=1
 # CHECK-NEXT: v15: undefined|string = GetArrayElement v4, v14, v11 arrayStorage=Contiguous level=Expected accessSite=29 [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b5(v13, v15)
-# CHECK-NEXT: b3() frequency=Rare:
-# CHECK-NEXT: ElemSet v4, v5, v6 accessSite=27 [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: Jump -> next b3(v13, v15)
+# CHECK-NEXT: b3(v16: undefined|string, v17: undefined|string):
+# CHECK-NEXT: v18: number|string|bigint = Add v16, v17
+# CHECK-NEXT: v19: number|string|bigint ~ string = Expect v18 expectedType=undefined|null|string
+# CHECK-NEXT: Return v19
 # CHECK-NEXT: b4() frequency=Rare:
-# CHECK-NEXT: v17: 0 = Integer
-# CHECK-NEXT: v18: undefined|string = ElemGet v4, v17 accessSite=28 [keyIsIntegral]
-# CHECK-NEXT: v19: 1 = Integer integer=1
-# CHECK-NEXT: v20: undefined|string = ElemGet v4, v19 accessSite=29 [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b5(v18, v20)
-# CHECK-NEXT: b5(v21: undefined|string, v22: undefined|string):
-# CHECK-NEXT: v23: number|string|bigint = Add v21, v22
-# CHECK-NEXT: v24: boolean = TypeTest v23 testedType=undefined|null|string
-# CHECK-NEXT: Branch v24 -> taken b6(| 0), notTaken b7(| 0)
-# CHECK-NEXT: b6(v25: string):
-# CHECK-NEXT: Return v25
-# CHECK-NEXT: b7(v26: number|bigint) frequency=Unlikely:
-# CHECK-NEXT: Return v26
+# CHECK-NEXT: ElemSet v4, v5, v6 accessSite=27 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: b5() frequency=Rare:
+# CHECK-NEXT: v21: 0 = Integer
+# CHECK-NEXT: v22: undefined|string = ElemGet v4, v21 accessSite=28 [keyIsIntegral]
+# CHECK-NEXT: v23: 1 = Integer integer=1
+# CHECK-NEXT: v24: undefined|string = ElemGet v4, v23 accessSite=29 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b3(v22, v24)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="limited"
 # CHECK: module=m0 position=3115 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

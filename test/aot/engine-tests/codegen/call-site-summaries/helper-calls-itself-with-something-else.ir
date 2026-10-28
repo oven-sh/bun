@@ -439,14 +439,13 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v4: fact = Specified
 # CHECK-NEXT: v5: L0 = AssumeType v1, v4 provenType=L0
-# CHECK-NEXT: v6: L0 = Expect v5 expectedType=undefined|null|L0
-# CHECK-NEXT: Return v6
+# CHECK-NEXT: Return v5
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v7: fact = Specified
-# CHECK-NEXT: v8: undefined|L1 = AssumeType v1, v7 provenType=undefined|L1
-# CHECK-NEXT: v9: L1 = RequireObjectCoercible v8 name="left"
-# CHECK-NEXT: v10: L0|L1 = GetSlot v9 key="left" receivers=[L1] level=Proven accessSite=24
-# CHECK-NEXT: Jump -> next b1(v10)
+# CHECK-NEXT: v6: fact = Specified
+# CHECK-NEXT: v7: undefined|L1 = AssumeType v1, v6 provenType=undefined|L1
+# CHECK-NEXT: v8: L1 = RequireObjectCoercible v7 name="left"
+# CHECK-NEXT: v9: L0|L1 = GetSlot v8 key="left" receivers=[L1] level=Proven accessSite=24
+# CHECK-NEXT: Jump -> next b1(v9)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="sum"
 # CHECK: module=m0 position=355 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|L0|L1 site=w2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -455,21 +454,21 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v2: fact = Specified
-# CHECK-NEXT: v3: undefined|L0 = AssumeType v0, v2 provenType=undefined|L0
-# CHECK-NEXT: v4: L0 = RequireObjectCoercible v3 name="value"
-# CHECK-NEXT: v5: int|whole = GetSlot v4 key="value" receivers=[L0] level=Proven accessSite=26
-# CHECK-NEXT: Jump -> next b3(v5)
+# CHECK-NEXT: v3: L0 = AssumeType v0, v2 provenType=L0
+# CHECK-NEXT: v4: int|whole = GetSlot v3 key="value" receivers=[L0] level=Proven accessSite=26
+# CHECK-NEXT: Jump -> next b3(v4)
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v6: fact = Specified
-# CHECK-NEXT: v7: undefined|L1 = AssumeType v0, v6 provenType=undefined|L1
-# CHECK-NEXT: v8: L1 = RequireObjectCoercible v7 name="left"
-# CHECK-NEXT: v9: L0|L1 = GetSlot v8 key="left" receivers=[L1] level=Proven accessSite=27
-# CHECK-NEXT: v10: number = CallDirect v9 function=f2 accessSite=28 [isNeverInlined]
-# CHECK-NEXT: v11: int|whole = AssumeType v10 provenType=undefined|int|whole
-# CHECK-NEXT: v12: L0|L1 = GetSlot v8 key="right" receivers=[L1] level=Proven accessSite=29
-# CHECK-NEXT: v13: number = CallDirect v12 function=f2 accessSite=30 [isNeverInlined]
-# CHECK-NEXT: v14: int|whole = AssumeType v13 provenType=undefined|int|whole
-# CHECK-NEXT: v15: int|whole = Add v11, v14
+# CHECK-NEXT: v5: fact = Specified
+# CHECK-NEXT: v6: undefined|L1 = AssumeType v0, v5 provenType=undefined|L1
+# CHECK-NEXT: v7: L1 = RequireObjectCoercible v6 name="left"
+# CHECK-NEXT: v8: L0|L1 = GetSlot v7 key="left" receivers=[L1] level=Proven accessSite=27
+# CHECK-NEXT: v9: number = CallDirect v8 function=f2 accessSite=28 [isNeverInlined]
+# CHECK-NEXT: v10: int|whole = AssumeType v9 provenType=undefined|int|whole
+# CHECK-NEXT: v11: L0|L1 = GetSlot v7 key="right" receivers=[L1] level=Proven accessSite=29
+# CHECK-NEXT: v12: number = CallDirect v11 function=f2 accessSite=30 [isNeverInlined]
+# CHECK-NEXT: v13: int|whole = AssumeType v12 provenType=undefined|int|whole
+# CHECK-NEXT: v14: int|whole = Add v10, v13
+# CHECK-NEXT: v15: int|whole = AssumeType v14 provenType=undefined|int|whole
 # CHECK-NEXT: Jump -> next b3(v15)
 # CHECK-NEXT: b3(v16: int|whole):
 # CHECK-NEXT: Return v16

@@ -317,66 +317,71 @@ runtimefunction id=69 function=f3
 # CHECK-NEXT: b3():
 # CHECK-NEXT: v11: 0 = Integer
 # CHECK-NEXT: v12: undefined|@@iterator|Array<Array<int[5, 7], proven, Int32, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = GetArrayElement v4, v11 arrayStorage=Contiguous level=Proven accessSite=10 [keyIsIntegral]
-# CHECK-NEXT: v13: boolean ~ true = TypeTest v12 testedType=undefined|null|Array<undefined|null|Array<number>>
-# CHECK-NEXT: Branch v13 -> taken b4(| 0), notTaken b10(| 0)
-# CHECK-NEXT: b4(v14: undefined|Array<Array<int[5, 7], proven, Int32, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>):
-# CHECK-NEXT: v15: 0 = Integer
-# CHECK-NEXT: v16: Array<Array<int[5, 7], proven, Int32, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = RequireObjectCoercible v14
-# CHECK-NEXT: v17: boolean = IsInBounds v16, v15
-# CHECK-NEXT: Branch v17 -> taken b5(| 0), notTaken b6()
-# CHECK-NEXT: b5(v18: guard):
-# CHECK-NEXT: v19: Array<int[5, 7], proven, Int32, pristine[Storage, Names, Dense]> = GetArrayElement v16, v15, v18 arrayStorage=Contiguous level=Proven accessSite=11 [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v20: 1 = Integer integer=1
-# CHECK-NEXT: v21: boolean = IsInBounds v19, v20
-# CHECK-NEXT: Branch v21 -> taken b7(| 0), notTaken b8(v19)
+# CHECK-NEXT: v13: undefined|@@iterator|Array<Array<int[5, 7], proven, Int32, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> ~ undefined|Array<Array<int[5, 7], proven, Int32, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = Expect v12 expectedType=undefined|null|Array<undefined|null|Array<number>>
+# CHECK-NEXT: v14: 0 = Integer
+# CHECK-NEXT: v15: @@iterator|Array<Array<int[5, 7], proven, Int32, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> ~ Array<Array<int[5, 7], proven, Int32, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = RequireObjectCoercible v13
+# CHECK-NEXT: v16: boolean ~ true = TypeTest v15 testedType=Array
+# CHECK-NEXT: Branch v16 -> taken b4(| 0), notTaken b7(| 0)
+# CHECK-NEXT: b4(v17: Array<Array<int[5, 7], proven, Int32, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v18: boolean = IsInBounds v17, v14
+# CHECK-NEXT: Branch v18 -> taken b5(| 0), notTaken b6()
+# CHECK-NEXT: b5(v19: guard):
+# CHECK-NEXT: v20: Array<int[5, 7], proven, Int32, pristine[Storage, Names, Dense]> = GetArrayElement v17, v14, v19 arrayStorage=Contiguous level=Proven accessSite=11 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: Jump -> next b8(v20)
 # CHECK-NEXT: b6() frequency=Rare:
-# CHECK-NEXT: v22: undefined|Array<int[5, 7], proven, Int32, pristine[Storage, Names, Dense]> = GetArrayElement v16, v15 arrayStorage=Contiguous level=Proven accessSite=11 [keyIsIntegral]
-# CHECK-NEXT: v23: Array<int[5, 7], proven, Int32, pristine[Storage, Names, Dense]> = RequireObjectCoercible v22
-# CHECK-NEXT: Jump -> next b8(v23)
-# CHECK-NEXT: b7(v24: guard):
-# CHECK-NEXT: v25: int[5, 7] = GetArrayElement v19, v20, v24 arrayStorage=Int32 level=Proven accessSite=15 [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v26: 1 = Integer integer=1
-# CHECK-NEXT: v27: int[4, 6] = Sub v25, v26
-# CHECK-NEXT: v28: undefined = CallBuiltin -, v27 overload=ConsoleLog/0 accessSite=16
-# CHECK-NEXT: Jump -> next b9()
-# CHECK-NEXT: b8(v29: Array<int[5, 7], proven, Int32, pristine[Storage, Names, Dense]>) frequency=Rare:
-# CHECK-NEXT: v30: 1 = Integer integer=1
-# CHECK-NEXT: v31: undefined|int[5, 7] = GetArrayElement v29, v30 arrayStorage=Int32 level=Proven accessSite=15 [keyIsIntegral]
-# CHECK-NEXT: v32: undefined|int[5, 7] ~ int[5, 7] = Expect v31 expectedType=number
-# CHECK-NEXT: v33: 1 = Integer integer=1
-# CHECK-NEXT: v34: number ~ int[4, 6] = Sub v32, v33
-# CHECK-NEXT: v35: undefined = CallBuiltin -, v34 overload=ConsoleLog/0 accessSite=16
-# CHECK-NEXT: Jump -> next b9()
-# CHECK-NEXT: b9():
-# CHECK-NEXT: v36: undefined = Undefined
-# CHECK-NEXT: Return v36
-# CHECK-NEXT: b10(v37: @@iterator) frequency=Unlikely:
-# CHECK-NEXT: v38: 0 = Integer
-# CHECK-NEXT: v39: anything = ElemGet v37, v38 accessSite=11 [keyIsIntegral]
-# CHECK-NEXT: v40: undefined|null|boolean|number|string|symbol|bigint|Array<int[5, 7], proven, Int32, pristine[Storage, Names, Dense]> = AssumeType v39 provenType=undefined|null|boolean|number|string|symbol|bigint|Array<int[5, 7], proven, Int32, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v41: 1 = Integer integer=1
-# CHECK-NEXT: v42: boolean|number|string|symbol|bigint|Array<int[5, 7], proven, Int32, pristine[Storage, Names, Dense]> = RequireObjectCoercible v40
-# CHECK-NEXT: v43: boolean = TypeTest v42 testedType=Array
-# CHECK-NEXT: Branch v43 -> taken b11(| 0), notTaken b12(| 0)
-# CHECK-NEXT: b11(v44: Array<int[5, 7], proven, Int32, pristine[Storage, Names, Dense]>) frequency=Unlikely:
-# CHECK-NEXT: v45: undefined|int[5, 7] = GetArrayElement v44, v41 arrayStorage=Int32 level=Proven accessSite=15 [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b15(v45)
-# CHECK-NEXT: b12(v46: boolean|number|string|symbol|bigint) frequency=Unlikely:
-# CHECK-NEXT: v47: boolean = TypeTest v46 testedType=string
-# CHECK-NEXT: Branch v47 -> taken b13(| 0), notTaken b14(| 0)
-# CHECK-NEXT: b13(v48: string) frequency=Unlikely:
-# CHECK-NEXT: v49: undefined|string = ElemGet v48, v41 accessSite=15 [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b15(v49)
-# CHECK-NEXT: b14(v50: boolean|number|symbol|bigint) frequency=Unlikely:
-# CHECK-NEXT: v51: anything = ElemGet v50, v41 accessSite=15 [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b15(v51)
-# CHECK-NEXT: b15(v52: anything) frequency=Unlikely:
-# CHECK-NEXT: v53: anything ~ int[5, 7] = Expect v52 expectedType=number
-# CHECK-NEXT: v54: 1 = Integer integer=1
-# CHECK-NEXT: v55: number ~ int[4, 6] = Sub v53, v54
-# CHECK-NEXT: v56: undefined = CallBuiltin -, v55 overload=ConsoleLog/0 accessSite=16
-# CHECK-NEXT: v57: undefined = Undefined
-# CHECK-NEXT: Return v57
+# CHECK-NEXT: v21: undefined|Array<int[5, 7], proven, Int32, pristine[Storage, Names, Dense]> = GetArrayElement v17, v14 arrayStorage=Contiguous level=Proven accessSite=11 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b11(v21)
+# CHECK-NEXT: b7(v22: @@iterator) frequency=Unlikely:
+# CHECK-NEXT: v23: anything = ElemGet v22, v14 accessSite=11 [keyIsIntegral]
+# CHECK-NEXT: v24: undefined|null|boolean|number|string|symbol|bigint|Array<int[5, 7], proven, Int32, pristine[Storage, Names, Dense]> = AssumeType v23 provenType=undefined|null|boolean|number|string|symbol|bigint|Array<int[5, 7], proven, Int32, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v25: boolean = TypeTest v24 testedType=undefined|null|Array<int[5, 7]>
+# CHECK-NEXT: Branch v25 -> taken b8(| 0), notTaken b10(| 0)
+# CHECK-NEXT: b8(v26: undefined|null|Array<int[5, 7], proven, Int32, pristine[Storage, Names, Dense]> ~ Array<int[5, 7], proven, Int32, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v27: 1 = Integer integer=1
+# CHECK-NEXT: v28: Array<int[5, 7], proven, Int32, pristine[Storage, Names, Dense]> = RequireObjectCoercible v26
+# CHECK-NEXT: v29: boolean = IsInBounds v28, v27
+# CHECK-NEXT: Branch v29 -> taken b9(| 0), notTaken b13(v28)
+# CHECK-NEXT: b9(v30: guard):
+# CHECK-NEXT: v31: int[5, 7] = GetArrayElement v28, v27, v30 arrayStorage=Int32 level=Proven accessSite=15 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: Jump -> next b17(v31)
+# CHECK-NEXT: b10(v32: boolean|number|string|symbol|bigint) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b11(v32)
+# CHECK-NEXT: b11(v33: undefined|boolean|number|string|symbol|bigint|Array<int[5, 7], proven, Int32, pristine[Storage, Names, Dense]> ~ undefined|Array<int[5, 7], proven, Int32, pristine[Storage, Names, Dense]>) frequency=Rare:
+# CHECK-NEXT: v34: boolean|number|string|symbol|bigint|Array<int[5, 7], proven, Int32, pristine[Storage, Names, Dense]> ~ Array<int[5, 7], proven, Int32, pristine[Storage, Names, Dense]> = RequireObjectCoercible v33
+# CHECK-NEXT: v35: boolean ~ true = TypeTest v34 testedType=Array
+# CHECK-NEXT: Branch v35 -> taken b12(| 0), notTaken b14(| 0)
+# CHECK-NEXT: b12(v36: Array<int[5, 7], proven, Int32, pristine[Storage, Names, Dense]>) frequency=Rare:
+# CHECK-NEXT: Jump -> next b13(v36)
+# CHECK-NEXT: b13(v37: Array<int[5, 7], proven, Int32, pristine[Storage, Names, Dense]>) frequency=Rare:
+# CHECK-NEXT: v38: 1 = Integer integer=1
+# CHECK-NEXT: v39: undefined|int[5, 7] = GetArrayElement v37, v38 arrayStorage=Int32 level=Proven accessSite=15 [keyIsIntegral]
+# CHECK-NEXT: v40: undefined|int[5, 7] ~ int[5, 7] = Expect v39 expectedType=number
+# CHECK-NEXT: Jump -> next b18(v40)
+# CHECK-NEXT: b14(v41: boolean|number|string|symbol|bigint) frequency=Unlikely:
+# CHECK-NEXT: v42: boolean = TypeTest v41 testedType=string
+# CHECK-NEXT: Branch v42 -> taken b15(| 0), notTaken b16(| 0)
+# CHECK-NEXT: b15(v43: string) frequency=Unlikely:
+# CHECK-NEXT: v44: 1 = Integer integer=1
+# CHECK-NEXT: v45: undefined|string = ElemGet v43, v44 accessSite=15 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b18(v45)
+# CHECK-NEXT: b16(v46: boolean|number|symbol|bigint) frequency=Unlikely:
+# CHECK-NEXT: v47: 1 = Integer integer=1
+# CHECK-NEXT: v48: anything = ElemGet v46, v47 accessSite=15 [keyIsIntegral]
+# CHECK-NEXT: v49: boolean = TypeTest v48 testedType=i32
+# CHECK-NEXT: Branch v49 -> taken b17(| 0), notTaken b18(v48)
+# CHECK-NEXT: b17(v50: i32 ~ int[5, 7]):
+# CHECK-NEXT: v51: 1 = Integer integer=1
+# CHECK-NEXT: v52: int[-2147483649, 2147483646] ~ int[4, 6] = Sub v50, v51
+# CHECK-NEXT: v53: undefined = CallBuiltin -, v52 overload=ConsoleLog/0 accessSite=16
+# CHECK-NEXT: Jump -> next b19()
+# CHECK-NEXT: b18(v54: anything ~ int[5, 7]) frequency=Rare:
+# CHECK-NEXT: v55: 1 = Integer integer=1
+# CHECK-NEXT: v56: number ~ int[4, 6] = Sub v54, v55
+# CHECK-NEXT: v57: undefined = CallBuiltin -, v56 overload=ConsoleLog/0 accessSite=16
+# CHECK-NEXT: Jump -> next b19()
+# CHECK-NEXT: b19():
+# CHECK-NEXT: v58: undefined = Undefined
+# CHECK-NEXT: Return v58
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="scene"
 # CHECK: module=m0 position=186 role=GenericVersion flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|Array<number>> site=w1 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{original=0}]} creator=Version{provenVersion=f5} {

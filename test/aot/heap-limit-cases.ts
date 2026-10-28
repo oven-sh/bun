@@ -754,7 +754,7 @@ if (way === "objects in a try") {
       "program.ts": `import { Worker } from "node:worker_threads";
 const worker = new Worker("./parent.ts");
 worker.on("message", (said: string) => console.log(said));
-worker.on("error", (error: Error) => console.log("the parent ends with:", error.name));
+worker.on("error", (error: Error) => console.log("the parent ends with:", error.name, error.message, String(error.stack).split("\\n").slice(0, 3).join(" | ")));
 worker.on("exit", (code: number) => console.log("the parent: exit", code));
 `,
       "parent.ts": `import { Worker, parentPort } from "node:worker_threads";

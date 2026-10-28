@@ -396,16 +396,9 @@ function f21 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v5: null|object = GetSuperBase v3
 # CHECK-NEXT: v6: f2 = AssumeType v5 provenType=f2
 # CHECK-NEXT: v7: object ~ L8 = SuperConstruct v6, v4, v2 layout=L8 accessSite=38 callees=[f2]
-# CHECK-NEXT: v8: boolean ~ true = TypeTest v7 testedType=L8
-# CHECK-NEXT: Branch v8 -> taken b1(| 0), notTaken b2(| 0)
-# CHECK-NEXT: b1(v9: L8):
-# CHECK-NEXT: PropSet v9, v2 key="n" accessSite=39 receivers=[]
-# CHECK-NEXT: v11: undefined = Undefined
-# CHECK-NEXT: Return v11
-# CHECK-NEXT: b2(v12: object) frequency=Unlikely:
-# CHECK-NEXT: PropSet v12, v2 key="n" accessSite=39 receivers=[]
-# CHECK-NEXT: v14: undefined = Undefined
-# CHECK-NEXT: Return v14
+# CHECK-NEXT: PropSet v7, v2 key="n" accessSite=39
+# CHECK-NEXT: v9: undefined = Undefined
+# CHECK-NEXT: Return v9
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="WithInitializer"
 # CHECK: module=m0 position=1575 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget, IsChecked] captures=[{type=f3}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3} creator=Entrypoint{target=f3 arguments=Registers takesNewTarget=true} {

@@ -505,7 +505,7 @@ runtimefunction id=131091 function=f30 visibility=Private
 # -- generated: map
 # CHECK-LABEL: function {{*}}name="map"
 # CHECK: role=Library
-# CHECK-NEXT: instructions: 106, patchpoints: 9, rare instructions: 92, polls: 2
+# CHECK-NEXT: instructions: 95, patchpoints: 9, rare instructions: 74, polls: 2
 # CHECK-NEXT: end of function f19
 # CHECK-LABEL: function {{*}}name="map"
 # CHECK: role=GenericEntrypoint

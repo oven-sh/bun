@@ -323,54 +323,38 @@ function f43 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v94: " big" = String string=" big"
 # CHECK-NEXT: v95: string = Add v93, v94
 # CHECK-NEXT: v96: boolean ~ true = TypeTest v92 testedType=i32
-# CHECK-NEXT: Branch v96 -> taken b27(| 0), notTaken b31()
-# CHECK-NEXT: b27(v97: int[-1, 2147483647]):
-# CHECK-NEXT: v98: i32 = CallDirect v97 function=f47
-# CHECK-NEXT: Switch v98 cases=[1] -> case b28(), otherwise b29()
-# CHECK-NEXT: b28():
-# CHECK-NEXT: Jump -> next b30()
+# CHECK-NEXT: Branch v96 -> taken b27(), notTaken b28()
+# CHECK-NEXT: b27():
+# CHECK-NEXT: Jump -> next b29()
+# CHECK-NEXT: b28() frequency=Unlikely handler=b30():
+# CHECK-NEXT: v97: Array<undefined|boolean|string, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v92 function=f46 @3533:3 tail
+# CHECK-NEXT: Jump -> next b29()
 # CHECK-NEXT: b29():
-# CHECK-NEXT: Jump -> next b30()
-# CHECK-NEXT: b30():
-# CHECK-NEXT: Jump -> next b32()
-# CHECK-NEXT: b31() frequency=Unlikely handler=b33():
-# CHECK-NEXT: v100: Array<undefined|boolean|string, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v92 function=f46 @3533:3 tail
-# CHECK-NEXT: Jump -> next b32()
-# CHECK-NEXT: b32():
-# CHECK-NEXT: Jump -> next b35()
-# CHECK-NEXT: b33() role=CatchHandler:
-# CHECK-NEXT: v101: anything = CatchValue
-# CHECK-NEXT: v102: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
-# CHECK-NEXT: v103: boolean = HasInPrototypeChain v101, v102
-# CHECK-NEXT: v104: anything ~ undefined|null|Error = Upcast v101 castType=anything
-# CHECK-NEXT: v105: anything = PropGet v104 key="constructor" accessSite=13
-# CHECK-NEXT: v106: boolean = TypeTest v105 testedType=undefined|null|function
-# CHECK-NEXT: Branch v106 -> taken b34(| 0), notTaken b36(| 0)
-# CHECK-NEXT: b34(v107: undefined|null|function):
-# CHECK-NEXT: v108: function = RequireObjectCoercible v107 name="name"
-# CHECK-NEXT: v109: anything = PropGet v108 key="name" accessSite=14
-# CHECK-NEXT: Jump -> next b35()
-# CHECK-NEXT: b35():
-# CHECK-NEXT: Jump -> next b37()
-# CHECK-NEXT: b36(v110: boolean|number|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v111: anything = PropGet v110 key="name" accessSite=14
-# CHECK-NEXT: Jump -> next b37()
-# CHECK-NEXT: b37():
+# CHECK-NEXT: Jump -> next b31()
+# CHECK-NEXT: b30() role=CatchHandler:
+# CHECK-NEXT: v98: anything = CatchValue
+# CHECK-NEXT: v99: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
+# CHECK-NEXT: v100: boolean = HasInPrototypeChain v98, v99
+# CHECK-NEXT: v101: anything ~ undefined|null|Error = Upcast v98 castType=anything
+# CHECK-NEXT: v102: anything = PropGet v101 key="constructor" accessSite=13
+# CHECK-NEXT: v103: anything ~ undefined|null|function = Expect v102 expectedType=undefined|null|function
+# CHECK-NEXT: v104: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v103 name="name"
+# CHECK-NEXT: v105: anything = PropGet v104 key="name" accessSite=14
+# CHECK-NEXT: Jump -> next b31()
+# CHECK-NEXT: b31():
 # CHECK-NEXT: Jump -> next b20(v88, v90)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="isBig"
 # CHECK: module=m0 position=1923 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: i32):
 # CHECK-NEXT: v1: undefined = Undefined
-# CHECK-NEXT: Switch v0 cases=[0, 1, 2] -> case b1(), case b1(), case b2(), otherwise b4()
+# CHECK-NEXT: Switch v0 cases=[0, 1, 2] -> case b1(), case b1(), case b2(), otherwise b3(v1)
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v2: false = Boolean
 # CHECK-NEXT: Jump -> next b3(v2)
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v3: true = Boolean boolean=true
 # CHECK-NEXT: Jump -> next b3(v3)
-# CHECK-NEXT: b3(v4: boolean):
+# CHECK-NEXT: b3(v4: undefined|boolean ~ boolean):
 # CHECK-NEXT: Return v4
-# CHECK-NEXT: b4():
-# CHECK-NEXT: Return v1
 # CHECK-NEXT: }

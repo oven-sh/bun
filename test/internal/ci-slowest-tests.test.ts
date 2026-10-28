@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { isPhaseGroupHeader } from "../../scripts/ci-log-phase.mjs";
 import { parseLog } from "../../scripts/ci-slowest-tests";
-import { parseLog as parseDurations } from "../../scripts/update-test-durations.mjs";
+import { entryOfProgram, parseLog as parseDurations } from "../../scripts/update-test-durations.mjs";
 
 // Buildkite prefixes each line with an APC timestamp: ESC `_bk;t=<ms>` BEL.
 const bk = (ts: number, body: string) => `\x1b_bk;t=${ts}\x07${body}`;
@@ -210,9 +210,8 @@ describe("scripts/update-test-durations.mjs parseLog", () => {
     ]);
   });
 
-  test("does not charge the programs compiled ahead of time to the preceding test, and times the long ones by what they say", () => {
-    // A program's line says what it took: its own build or its share of one,
-    // and its run. The short ones stay out of the table and are dealt out evenly.
+  test("does not charge the programs compiled ahead of time to the preceding test, and times them by what they say", () => {
+    // A program's line says what it took: its own build or its share of one, and its run.
     const log = [
       bk(0, `--- ${gray("[1/5]")} test/last-serial.test.ts`),
       bk(700, `--- Running 3 programs compiled ahead of time (4-wide)`),
@@ -225,6 +224,8 @@ describe("scripts/update-test-durations.mjs parseLog", () => {
 
     expect(parseDurations(log)).toEqual([
       ["test/last-serial.test.ts", 700],
+      ["test/aot/parallel/a.ts", 1414],
+      ["test/aot/parallel/b/main.ts", 2999],
       ["test/aot/parallel/workers/c.mjs", 9710],
       ["vendor/x/package.json", 200],
     ]);
@@ -232,5 +233,12 @@ describe("scripts/update-test-durations.mjs parseLog", () => {
       "test/last-serial.test.ts": 700,
       "vendor/x/package.json": 200,
     });
+  });
+
+  test("a program compiled ahead of time has an entry once it took long, and keeps it", () => {
+    expect(entryOfProgram({ default: 400, asan: 2100 }, undefined)).toBeUndefined();
+    expect(entryOfProgram({ default: 900, asan: 4000 }, undefined)).toEqual({ default: 900, asan: 4000 });
+    // It shares a build since it has the entry, and takes little there.
+    expect(entryOfProgram({ default: 300, asan: 1200 }, { default: 900 })).toEqual({ default: 900 });
   });
 });

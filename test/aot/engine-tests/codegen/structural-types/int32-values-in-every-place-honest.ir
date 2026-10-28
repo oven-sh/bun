@@ -679,38 +679,38 @@ function f31 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b0(v0: anything, v1: int[-2147483648, 1], v2: int[0, 2147483647]):
 # CHECK-NEXT: v3: f7 = AssumeType v0 provenType=f7
 # CHECK-NEXT: v4: boolean = AreMembersUnchanged conditions=[{layout=L1 side=Static key="prototype"}]
-# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b2()
+# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b4()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v5: f7 = GetModuleVariable variable=g8
 # CHECK-NEXT: v6: anything = PropGet v5 key="made" accessSite=36
 # CHECK-NEXT: v7: L1 = NewObject -, v1 layout=L1 fields=[0] allocationSite=16 allocationClass=1 [listsOnlyStoredValues]
-# CHECK-NEXT: Jump -> next b3(v7, v6)
-# CHECK-NEXT: b2() frequency=Rare:
-# CHECK-NEXT: v8: object = GetConstructPrototype v3 layout=L1
-# CHECK-NEXT: v9: object ~ L1 = NewObject v8 layout=L1 allocationSite=16 allocationClass=1
-# CHECK-NEXT: v10: L1 = AssumeType v9 provenType=L1
-# CHECK-NEXT: PutSlotOrAdd v10, -, v1 key="line" receivers=[L1] level=Proven accessSite=35
-# CHECK-NEXT: v12: f7 = GetModuleVariable variable=g8
-# CHECK-NEXT: v13: anything = PropGet v12 key="made" accessSite=36
-# CHECK-NEXT: Jump -> next b3(v10, v13)
-# CHECK-NEXT: b3(v14: L1, v15: anything):
-# CHECK-NEXT: v16: undefined|int = AssumeType v15 provenType=undefined|int
-# CHECK-NEXT: v17: boolean = TypeTest v16 testedType=i32
-# CHECK-NEXT: Branch v17 -> taken b4(| 0), notTaken b5()
-# CHECK-NEXT: b4(v18: i32):
-# CHECK-NEXT: v19: 1 = Integer integer=1
-# CHECK-NEXT: v20: int[-2147483647, 2147483648] = Add v18, v19
-# CHECK-NEXT: v21: 0 = Integer
-# CHECK-NEXT: v22: i32 = BitOr v20, v21
-# CHECK-NEXT: PutModuleVariable v22 variable=g10
-# CHECK-NEXT: Return v14
-# CHECK-NEXT: b5() frequency=Unlikely:
-# CHECK-NEXT: v24: 1 = Integer integer=1
-# CHECK-NEXT: v25: number = Add v16, v24
+# CHECK-NEXT: Jump -> next b2(v7, v6)
+# CHECK-NEXT: b2(v8: L1, v9: anything):
+# CHECK-NEXT: v10: undefined|int = AssumeType v9 provenType=undefined|int
+# CHECK-NEXT: v11: undefined|int ~ i32 = Expect v10 expectedType=i32
+# CHECK-NEXT: v12: 1 = Integer integer=1
+# CHECK-NEXT: v13: boolean ~ true = TypeTest v11 testedType=i32
+# CHECK-NEXT: Branch v13 -> taken b3(| 0), notTaken b5()
+# CHECK-NEXT: b3(v14: i32):
+# CHECK-NEXT: v15: int[-2147483647, 2147483648] = Add v14, v12
+# CHECK-NEXT: v16: 0 = Integer
+# CHECK-NEXT: v17: i32 = BitOr v15, v16
+# CHECK-NEXT: PutModuleVariable v17 variable=g10
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: b4() frequency=Rare:
+# CHECK-NEXT: v19: object = GetConstructPrototype v3 layout=L1
+# CHECK-NEXT: v20: object ~ L1 = NewObject v19 layout=L1 allocationSite=16 allocationClass=1
+# CHECK-NEXT: v21: L1 = AssumeType v20 provenType=L1
+# CHECK-NEXT: PutSlotOrAdd v21, -, v1 key="line" receivers=[L1] level=Proven accessSite=35
+# CHECK-NEXT: v23: f7 = GetModuleVariable variable=g8
+# CHECK-NEXT: v24: anything = PropGet v23 key="made" accessSite=36
+# CHECK-NEXT: Jump -> next b2(v21, v24)
+# CHECK-NEXT: b5() frequency=Rare:
+# CHECK-NEXT: v25: number ~ int[-2147483647, 2147483648] = Add v11, v12
 # CHECK-NEXT: v26: 0 = Integer
 # CHECK-NEXT: v27: i32 = BitOr v25, v26
 # CHECK-NEXT: PutModuleVariable v27 variable=g10
-# CHECK-NEXT: Return v14
+# CHECK-NEXT: Return v8
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="distance"
 # CHECK: module=m0 position=1979 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L1 site=w24} parameters=[{type=L1 site=w23 flags=[OmitsNull, OmitsUndefined]}] results=[{type=i32 site=w25 flags=[IsInt32Promise]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

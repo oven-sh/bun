@@ -1187,8 +1187,10 @@ async function differsTogether(folder: string, texts: string[], extension: strin
   // A run that is stopped at a limit says nothing about the programs behind the one it was stopped in. It gets more time once.
   const wasStopped = (ran: { compiled: Map<number, Ended>; plain: Map<number, Ended> }) =>
     isLimit(ran.compiled.get(0)!) || isLimit(ran.plain.get(0)!);
-  const howItWasStopped = (ran: { plain: Map<number, Ended> }) =>
-    isLimit(ran.plain.get(0)!) ? "bun run is stopped" : "only the executable is stopped";
+  const howItWasStopped = (ran: { compiled: Map<number, Ended>; plain: Map<number, Ended> }) =>
+    isLimit(ran.plain.get(0)!)
+      ? "bun run is stopped"
+      : `only the executable is stopped, by ${ran.compiled.get(0)!.end},`;
   const runBoth = async () => {
     const ran = await runTogether(folder, [0], extension, texts.length);
     return wasStopped(ran) ? await runTogether(folder, [0], extension, texts.length, 8) : ran;
@@ -1441,11 +1443,11 @@ async function askAmongNeighbors(text: string, extension: string, add: (kind: st
   let difference = await ask(before, behind);
   if (typeof difference === "string") {
     add(`${difference} at a limit among the neighbors`);
-    if (difference === "only the executable is stopped")
-      keepFind("limit", "among the neighbors", {
+    if (difference.startsWith("only the executable"))
+      keepFind("limit", `among the neighbors: ${difference}`, {
         ["program" + extension]: text,
         "neighbors.txt": listed([...before, text, ...behind]),
-        "report.txt": `limit\n${bun} build --compile --aot ${buildFlags.join(" ")}\nONLY THE EXECUTABLE IS STOPPED AT A LIMIT, with 8 times the time too: one entry point imports the ${before.length + 1 + behind.length} programs of neighbors.txt in that order with import statements, and the program is number ${before.length}\n`,
+        "report.txt": `limit\n${bun} build --compile --aot ${buildFlags.join(" ")}\n${difference} with 8 times the time too, and bun run is not: one entry point imports the ${before.length + 1 + behind.length} programs of neighbors.txt in that order with import statements, and the program is number ${before.length}\n`,
       });
     difference = undefined;
   } else if (difference && withoutLayout(difference.compiled) === withoutLayout(difference.plain)) {

@@ -544,5 +544,5 @@ runtimefunction id=131091 function=f18 visibility=Private
 # -- generated: read
 # CHECK-LABEL: function {{*}}name="read"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 441, patchpoints: 30, rare instructions: 209, polls: 2
+# CHECK-NEXT: instructions: 399, patchpoints: 27, rare instructions: 202, polls: 2
 # CHECK-NEXT: end of function f1

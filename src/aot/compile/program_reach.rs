@@ -1650,6 +1650,8 @@ struct Walk<'a, 's> {
     out_of_sight: FxHashSet<ModuleRef>,
     // One that `children` or `parent` has led to, or that a binding holds, goes there too.
     lets_related_object_out_of_sight: bool,
+    // `process` goes where nothing follows it, under an entry point that has a module object.
+    lets_process_out_of_sight: bool,
     // The files that only test their own `module.parent`. There is one to find where the files that require them have objects.
     tests_own_parent: FxHashSet<ModuleRef>,
     // The files in which reached code names a way from one such object to another.
@@ -1771,6 +1773,7 @@ impl<'a, 's> Walk<'a, 's> {
             follows_parents: false,
             out_of_sight: FxHashSet::default(),
             lets_related_object_out_of_sight: false,
+            lets_process_out_of_sight: false,
             tests_own_parent: FxHashSet::default(),
             files_naming_ways: Vec::new(),
             required: FxHashSet::default(),
@@ -2324,6 +2327,32 @@ impl<'a, 's> Walk<'a, 's> {
         }
     }
 
+    // Along which of the two a round that follows them from the objects out of sight keeps more than this one has kept.
+    fn find_ways_that_lead_on_out_of_sight(&mut self) -> WaysBetweenModuleObjects {
+        // Which object it is is not known, or the run time does not keep track of who has required whom.
+        if self.lets_related_object_out_of_sight || self.files_naming_ways.is_empty() {
+            let is_some = self.lets_related_object_out_of_sight || !self.out_of_sight.is_empty();
+            return WaysBetweenModuleObjects {
+                children: is_some,
+                parent: is_some,
+            };
+        }
+        let out_of_sight: Vec<ModuleRef> = self.out_of_sight.iter().copied().collect();
+        let mut leads_on = WaysBetweenModuleObjects::default();
+        for module in out_of_sight {
+            let (required, requirers) = (
+                self.find_required_modules(module),
+                self.find_requirers(module),
+            );
+            let is_new = |related: &ModuleRef| {
+                self.find_module(*related).is_some() && !self.out_of_sight.contains(related)
+            };
+            leads_on.children |= required.iter().any(is_new);
+            leads_on.parent |= requirers.iter().any(is_new);
+        }
+        leads_on
+    }
+
     fn find_commonjs_main(&self) -> Option<FileId> {
         let entry_points = self.input.sources.entry_points();
         self.input.graph.find_commonjs_main(entry_points)
@@ -2437,6 +2466,15 @@ impl<'a, 's> Walk<'a, 's> {
         {
             return;
         }
+        // Whether anybody reads `mainModule` there the engine says.
+        let object_use = match object_use {
+            ModuleObjectUse::HolderHandedOn if !self.input.reads_main_module_without_its_name => {
+                self.lets_process_out_of_sight = true;
+                return;
+            }
+            ModuleObjectUse::HolderHandedOn => ModuleObjectUse::HandedOn,
+            _ => object_use,
+        };
         let (follows_children, follows_parents) = match object_use {
             // The run time says which file has the id ".", and it keeps track in a program that names a way.
             ModuleObjectUse::Field(ModuleField::Id) if self.find_commonjs_main().is_none() => {
@@ -2462,7 +2500,7 @@ impl<'a, 's> Walk<'a, 's> {
                 let read = self.input.ways_read_out_of_sight;
                 (read.children, read.parent)
             }
-            ModuleObjectUse::HandedOn => (false, false),
+            ModuleObjectUse::HandedOn | ModuleObjectUse::HolderHandedOn => (false, false),
         };
         let follows_more = (follows_children && !self.follows_children)
             || (follows_parents && !self.follows_parents);
@@ -2802,6 +2840,10 @@ pub(crate) struct ReachedModules {
     pub naming_ways: Vec<ModuleRef>,
     // A module object goes where nothing follows it, and nothing has been kept for whoever reads these there.
     pub ways_not_followed_out_of_sight: WaysBetweenModuleObjects,
+    // A module object goes where nothing follows it, and these are followed from there because a file names them.
+    pub ways_followed_for_their_names: WaysBetweenModuleObjects,
+    // `process` goes where nothing follows it, and nothing has been kept for whoever reads `mainModule` there.
+    pub lets_process_out_of_sight: bool,
     // Modules that are written inside a file and that nothing calls.
     pub left_out_inner_modules: Vec<ModuleRef>,
     required: FxHashSet<(ModuleRef, ModuleRef)>,
@@ -2833,8 +2875,71 @@ fn leave_out_texts_of_left_out_files(sources: &Sources, files: &mut Vec<FileId>)
     }
 }
 
-// What of the program nothing that it can run refers to, found the way a bundler finds it: by bindings, never by what a value is.
+// A file that is compiled names a member `children` or `parent`, of whatever object.
+fn find_ways_named(files: &Files<'_>, left_out: &[FileId]) -> WaysBetweenModuleObjects {
+    let parent = files.atoms.lookup(b"parent");
+    let mut named = WaysBetweenModuleObjects::default();
+    let mut note = |name: Atom| {
+        named.children |= name == known::children;
+        named.parent |= Some(name) == parent;
+        named.children && named.parent
+    };
+    for &file in files.compiled_files() {
+        if left_out.contains(&file) {
+            continue;
+        }
+        let hir = files.hir(file);
+        let members = hir.exprs.iter();
+        let members = members.filter_map(|expression| match expression.kind {
+            ExprKind::Dot { name, .. } => Some(name),
+            _ => None,
+        });
+        let taken_apart = hir.pat_props.iter();
+        let taken_apart = taken_apart.filter_map(|property| property.key.name());
+        if members.chain(taken_apart).any(&mut note) {
+            break;
+        }
+    }
+    named
+}
+
+// Whether anybody reads `children` or `parent` of a module object that is out of sight is the engine's to say, behind its flow analysis, and what it says may start the build over.
+// Where a file names the member the engine most often says yes, so the way is followed at once.
 pub(crate) fn find_left_out_code(
+    input: &ProgramReachInput<'_, '_>,
+    ways_named_that_nobody_reads: WaysBetweenModuleObjects,
+    in_parallel: InParallel<'_>,
+) -> (LeftOutCode, ReachedModules) {
+    let found = find_left_out_code_following(input, in_parallel);
+    let not_followed = found.1.ways_not_followed_out_of_sight;
+    let is_asked = WaysBetweenModuleObjects {
+        children: not_followed.children && !ways_named_that_nobody_reads.children,
+        parent: not_followed.parent && !ways_named_that_nobody_reads.parent,
+    };
+    if is_asked.is_empty() {
+        return found;
+    }
+    let named = find_ways_named(input.files, &found.0.files);
+    let followed = WaysBetweenModuleObjects {
+        children: is_asked.children && named.children,
+        parent: is_asked.parent && named.parent,
+    };
+    if followed.is_empty() {
+        return found;
+    }
+    let mut ways_read_out_of_sight = input.ways_read_out_of_sight;
+    ways_read_out_of_sight.add(followed);
+    let input = ProgramReachInput {
+        ways_read_out_of_sight,
+        ..*input
+    };
+    let mut found = find_left_out_code_following(&input, in_parallel);
+    found.1.ways_followed_for_their_names = followed;
+    found
+}
+
+// What of the program nothing that it can run refers to, found the way a bundler finds it: by bindings, never by what a value is.
+fn find_left_out_code_following(
     input: &ProgramReachInput<'_, '_>,
     in_parallel: InParallel<'_>,
 ) -> (LeftOutCode, ReachedModules) {
@@ -2903,13 +3008,13 @@ pub(crate) fn find_left_out_code(
         .filter(is_evaluated)
         .collect();
     reached_modules.required = take(&mut walk.required);
+    let leads_on = walk.find_ways_that_lead_on_out_of_sight();
     reached_modules.naming_ways = take(&mut walk.files_naming_ways);
-    let is_some_out_of_sight =
-        !walk.out_of_sight.is_empty() || walk.lets_related_object_out_of_sight;
+    reached_modules.lets_process_out_of_sight = walk.lets_process_out_of_sight;
     let read = input.ways_read_out_of_sight;
     reached_modules.ways_not_followed_out_of_sight = WaysBetweenModuleObjects {
-        children: is_some_out_of_sight && !walk.follows_children && !read.children,
-        parent: is_some_out_of_sight && !walk.follows_parents && !read.parent,
+        children: leads_on.children && !walk.follows_children && !read.children,
+        parent: leads_on.parent && !walk.follows_parents && !read.parent,
     };
     for enumeration in walk.files_reading_members.keys() {
         let declarations = &mut left_out.declarations;

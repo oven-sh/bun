@@ -2643,12 +2643,7 @@ runtimefunction id=65580 function=f52
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: object = GetConstructPrototype v0 layout=L0
 # CHECK-NEXT: v2: object ~ L0 = NewObject v1 layout=L0 allocationSite=83 allocationClass=0
-# CHECK-NEXT: v3: boolean ~ true = TypeTest v2 testedType=L0|L1
-# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2(| 0)
-# CHECK-NEXT: b1(v4: L0|L1 ~ L0):
-# CHECK-NEXT: Return v4
-# CHECK-NEXT: b2(v5: object) frequency=Unlikely:
-# CHECK-NEXT: Return v5
+# CHECK-NEXT: Return v2
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="arrow"
 # CHECK: module=m0 position=520 kind=Arrow thisType={type=anything} results=[{type=1}] functionTypes=[f24] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {

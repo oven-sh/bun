@@ -1278,65 +1278,46 @@ runtimefunction id=131091 function=f71 visibility=Private
 # CHECK-NEXT: v4: 0 = Integer
 # CHECK-NEXT: v5: 0 = Integer
 # CHECK-NEXT: Jump -> next b1(v4, v5)
-# CHECK-NEXT: b1(v6: int|whole ~ 0, v7: int|whole ~ 0):
-# CHECK-NEXT: Jump -> next b2(v6, v7)
-# CHECK-NEXT: b2(v8: int|whole ~ 0, v9: int|whole ~ 0):
-# CHECK-NEXT: Jump -> next b3(v8, v9)
-# CHECK-NEXT: b3(v10: int|whole, v11: int|whole ~ int[0, 2147483648]):
+# CHECK-NEXT: b1(v6: int|whole ~ 0, v7: int[0, 2147483647] ~ 0):
+# CHECK-NEXT: v8: boolean = TypeTest v2 testedType=i32
+# CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b6(v6, v7)
+# CHECK-NEXT: b2(v9: i32):
+# CHECK-NEXT: Jump -> next b3(v6, v7)
+# CHECK-NEXT: b3(v10: int|whole, v11: int[0, 2147483647]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v13: int|whole ~ int[0, 2147483647] = Upcast v11 castType=int|whole
-# CHECK-NEXT: v14: boolean = Less v13, v2
-# CHECK-NEXT: Branch v14 -> taken b4(), notTaken b18(v10)
-# CHECK-NEXT: b4():
+# CHECK-NEXT: v13: boolean = Less v11, v9
+# CHECK-NEXT: Branch v13 -> taken b4(| 0), notTaken b11(v10)
+# CHECK-NEXT: b4(v14: int[0, 2147483646]):
 # CHECK-NEXT: v15: Array<i32|double, proven, Contiguous, pristine[Storage, Names]> = RequireObjectCoercible v3
-# CHECK-NEXT: v16: boolean = IsElementPresent v15, v13 arrayStorage=Contiguous [keyIsIntegral]
-# CHECK-NEXT: Branch v16 -> taken b5(| 0), notTaken b6(v10, v13)
+# CHECK-NEXT: v16: boolean = IsElementPresent v15, v14 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: Branch v16 -> taken b5(| 0), notTaken b8(v10, v14, v15)
 # CHECK-NEXT: b5(v17: guard):
-# CHECK-NEXT: v18: i32|double = GetArrayElement v15, v13, v17 arrayStorage=Contiguous level=Proven accessSite=59 [keyIsIntegral, isPresent]
-# CHECK-NEXT: v19: boolean = Call v0, -, v18 calleeName="f" accessSite=60 callees=[f34]
-# CHECK-NEXT: Jump -> next b9(v10, v13)
-# CHECK-NEXT: b6(v20: int|whole, v21: int|whole ~ int[0, 2147483647]) frequency=Rare:
-# CHECK-NEXT: v22: undefined|i32|double = GetArrayElement v15, v21 arrayStorage=Contiguous level=Proven accessSite=59 [keyIsIntegral]
-# CHECK-NEXT: v23: boolean = TypeTest v22 testedType=number
-# CHECK-NEXT: Branch v23 -> taken b7(| 0), notTaken b17()
-# CHECK-NEXT: b7(v24: i32|double) frequency=Rare:
-# CHECK-NEXT: v25: boolean = Call v0, -, v24 calleeName="f" accessSite=60 callees=[f34]
-# CHECK-NEXT: v26: boolean ~ true = TypeTest v21 testedType=int[0, 2147483647]
-# CHECK-NEXT: Branch v26 -> taken b8(| 0), notTaken b12(| 0)
-# CHECK-NEXT: b8(v27: int[0, 2147483647]) frequency=Rare:
-# CHECK-NEXT: Jump -> next b9(v20, v27)
-# CHECK-NEXT: b9(v28: int|whole, v29: int|whole ~ int[0, 2147483647]):
-# CHECK-NEXT: v30: int|whole = Increment v28
-# CHECK-NEXT: v31: boolean ~ true = TypeTest v29 testedType=i32
-# CHECK-NEXT: Branch v31 -> taken b10(| 0), notTaken b11(| 0)
-# CHECK-NEXT: b10(v32: i32 ~ int[0, 2147483647]):
-# CHECK-NEXT: v33: int[-2147483647, 2147483648] ~ int[1, 2147483648] = Increment v32
-# CHECK-NEXT: Jump -> next b3(v30, v33)
-# CHECK-NEXT: b11(v34: int|whole) frequency=Rare:
-# CHECK-NEXT: Jump -> next b13(v34, v30)
-# CHECK-NEXT: b12(v35: int|whole) frequency=Rare:
-# CHECK-NEXT: v36: int|whole = Increment v20
-# CHECK-NEXT: Jump -> next b13(v35, v36)
-# CHECK-NEXT: b13(v37: int|whole, v38: int|whole) frequency=Rare:
-# CHECK-NEXT: v39: int|whole = Increment v37
-# CHECK-NEXT: v40: boolean = TypeTest v39 testedType=int[0, 2147483648]
-# CHECK-NEXT: Branch v40 -> taken b14(| 0), notTaken b15()
-# CHECK-NEXT: b14(v41: int[0, 2147483648]) frequency=Rare:
-# CHECK-NEXT: Jump -> next b2(v38, v41)
-# CHECK-NEXT: b15() frequency=Rare:
+# CHECK-NEXT: v18: i32|double = GetArrayElement v15, v14, v17 arrayStorage=Contiguous level=Proven accessSite=59 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v19: boolean = Call v0, -, v18 calleeName="f" accessSite=60 callees=[f34, ..]
+# CHECK-NEXT: v20: int|whole = Increment v10
+# CHECK-NEXT: v21: int[1, 2147483647] = Increment v14
+# CHECK-NEXT: Jump -> next b3(v20, v21)
+# CHECK-NEXT: b6(v22: int|whole ~ 0, v23: int|whole ~ 0) frequency=Rare:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v43: boolean = Less v39, v2
-# CHECK-NEXT: Branch v43 -> taken b16(), notTaken b18(v38)
-# CHECK-NEXT: b16() frequency=Rare:
-# CHECK-NEXT: Jump -> next b6(v38, v39)
-# CHECK-NEXT: b17() frequency=Rare:
-# CHECK-NEXT: v44: undefined = Undefined
-# CHECK-NEXT: v45: boolean = Call v0, -, v44 calleeName="f" accessSite=60 callees=[f34] [isNeverInlined]
-# CHECK-NEXT: v46: int|whole = Increment v20
-# CHECK-NEXT: v47: int|whole ~ int[1, 2147483648] = Increment v21
-# CHECK-NEXT: Jump -> next b1(v46, v47)
-# CHECK-NEXT: b18(v48: int|whole):
-# CHECK-NEXT: Return v48
+# CHECK-NEXT: v25: boolean = Less v23, v2
+# CHECK-NEXT: Branch v25 -> taken b7(), notTaken b11(v22)
+# CHECK-NEXT: b7() frequency=Rare:
+# CHECK-NEXT: v26: Array<i32|double, proven, Contiguous, pristine[Storage, Names]> = RequireObjectCoercible v3
+# CHECK-NEXT: Jump -> next b8(v22, v23, v26)
+# CHECK-NEXT: b8(v27: int|whole, v28: int|whole ~ int[0, 2147483646], v29: Array<i32|double, proven, Contiguous, pristine[Storage, Names]>) frequency=Rare:
+# CHECK-NEXT: v30: undefined|i32|double = GetArrayElement v29, v28 arrayStorage=Contiguous level=Proven accessSite=59 [keyIsIntegral]
+# CHECK-NEXT: v31: undefined|i32|double ~ i32|double = Expect v30 expectedType=number
+# CHECK-NEXT: v32: boolean = Call v0, -, v31 calleeName="f" accessSite=60 callees=[f34, ..]
+# CHECK-NEXT: v33: int|whole = Increment v27
+# CHECK-NEXT: v34: int|whole ~ int[1, 2147483647] = Increment v28
+# CHECK-NEXT: v35: boolean ~ true = TypeTest v34 testedType=int[0, 2147483647]
+# CHECK-NEXT: Branch v35 -> taken b9(| 0), notTaken b10()
+# CHECK-NEXT: b9(v36: int[0, 2147483647] ~ int[1, 2147483647]) frequency=Rare:
+# CHECK-NEXT: Jump -> next b1(v33, v36)
+# CHECK-NEXT: b10() frequency=Rare:
+# CHECK-NEXT: Jump -> next b6(v33, v34)
+# CHECK-NEXT: b11(v37: int|whole):
+# CHECK-NEXT: Return v37
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="tests"
 # CHECK: module=m0 position=2010 role=GenericVersion flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=f34 site=w55 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Array<number> site=w56 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=number site=w57}] results=[{type=int|whole site=w58}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f17 parameterMap=[{original=0}, {original=1}, {original=2}]} creator=Version{provenVersion=f73} {

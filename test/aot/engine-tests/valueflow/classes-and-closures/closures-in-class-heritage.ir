@@ -517,59 +517,56 @@ runtimefunction id=131091 function=f63 visibility=Private
 # CHECK-NEXT: v86: boolean = StrictEq v85, v54
 # CHECK-NEXT: Jump -> next b13(v86)
 # CHECK-NEXT: b13(v87: boolean):
-# CHECK-NEXT: v88: int[0, 4294967294] ~ int[0, 2147483647] = Upcast v53 castType=int[0, 9007199254740990]
-# CHECK-NEXT: v89: boolean = IsPristine v46 builtinClass=Array aspects=[Storage]
-# CHECK-NEXT: Branch v89 -> taken b14(| 0), notTaken b17()
-# CHECK-NEXT: b14(v90: guard):
-# CHECK-NEXT: v91: boolean = HasArrayStorage v46 arrayStorage=Contiguous [isWritable]
-# CHECK-NEXT: Branch v91 -> taken b15(| 0), notTaken b17()
-# CHECK-NEXT: b15(v92: guard):
-# CHECK-NEXT: v93: boolean = IsInBounds v46, v88
-# CHECK-NEXT: Branch v93 -> taken b16(| 0), notTaken b17()
-# CHECK-NEXT: b16(v94: guard):
-# CHECK-NEXT: v95: guard = AllGuards v90, v92, v94
-# CHECK-NEXT: PutArrayElement v46, v88, v87, v95 arrayStorage=Contiguous level=Expected accessSite=23 [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v97: int[1, 4294967295] ~ int[1, 2147483648] = Increment v88
-# CHECK-NEXT: Jump -> next b3(v97)
+# CHECK-NEXT: v88: boolean = IsPristine v46 builtinClass=Array aspects=[Storage]
+# CHECK-NEXT: Branch v88 -> taken b14(| 0), notTaken b17()
+# CHECK-NEXT: b14(v89: guard):
+# CHECK-NEXT: v90: boolean = HasArrayStorage v46 arrayStorage=Contiguous [isWritable]
+# CHECK-NEXT: Branch v90 -> taken b15(| 0), notTaken b17()
+# CHECK-NEXT: b15(v91: guard):
+# CHECK-NEXT: v92: boolean = IsInBounds v46, v54
+# CHECK-NEXT: Branch v92 -> taken b16(| 0), notTaken b17()
+# CHECK-NEXT: b16(v93: guard):
+# CHECK-NEXT: v94: guard = AllGuards v89, v91, v93
+# CHECK-NEXT: PutArrayElement v46, v54, v87, v94 arrayStorage=Contiguous level=Expected accessSite=23 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v96: int[1, 4294967295] ~ int[1, 2147483648] = Increment v54
+# CHECK-NEXT: Jump -> next b3(v96)
 # CHECK-NEXT: b17() frequency=Unlikely:
-# CHECK-NEXT: ElemDefine v46, v88, v87 accessSite=23
+# CHECK-NEXT: ElemDefine v46, v54, v87 accessSite=23
 # CHECK-NEXT: Jump -> next b25()
 # CHECK-NEXT: b18() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b20()
 # CHECK-NEXT: b19() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b20()
 # CHECK-NEXT: b20() frequency=Unlikely:
-# CHECK-NEXT: v99: false = Boolean
-# CHECK-NEXT: v100: int[0, 4294967294] ~ int[0, 2147483647] = Upcast v53 castType=int[0, 9007199254740990]
-# CHECK-NEXT: v101: boolean = IsPristine v46 builtinClass=Array aspects=[Storage]
-# CHECK-NEXT: Branch v101 -> taken b21(| 0), notTaken b24()
-# CHECK-NEXT: b21(v102: guard) frequency=Unlikely:
-# CHECK-NEXT: v103: boolean = HasArrayStorage v46 arrayStorage=Contiguous [isWritable]
-# CHECK-NEXT: Branch v103 -> taken b22(| 0), notTaken b24()
-# CHECK-NEXT: b22(v104: guard) frequency=Unlikely:
-# CHECK-NEXT: v105: boolean = IsInBounds v46, v100
-# CHECK-NEXT: Branch v105 -> taken b23(| 0), notTaken b24()
-# CHECK-NEXT: b23(v106: guard) frequency=Unlikely:
-# CHECK-NEXT: v107: guard = AllGuards v102, v104, v106
-# CHECK-NEXT: PutArrayElement v46, v100, v99, v107 arrayStorage=Contiguous level=Expected accessSite=23 [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v109: int[1, 4294967295] ~ int[1, 2147483648] = Increment v100
-# CHECK-NEXT: Jump -> next b2(v109)
+# CHECK-NEXT: v98: false = Boolean
+# CHECK-NEXT: v99: boolean = IsPristine v46 builtinClass=Array aspects=[Storage]
+# CHECK-NEXT: Branch v99 -> taken b21(| 0), notTaken b24()
+# CHECK-NEXT: b21(v100: guard) frequency=Unlikely:
+# CHECK-NEXT: v101: boolean = HasArrayStorage v46 arrayStorage=Contiguous [isWritable]
+# CHECK-NEXT: Branch v101 -> taken b22(| 0), notTaken b24()
+# CHECK-NEXT: b22(v102: guard) frequency=Unlikely:
+# CHECK-NEXT: v103: boolean = IsInBounds v46, v54
+# CHECK-NEXT: Branch v103 -> taken b23(| 0), notTaken b24()
+# CHECK-NEXT: b23(v104: guard) frequency=Unlikely:
+# CHECK-NEXT: v105: guard = AllGuards v100, v102, v104
+# CHECK-NEXT: PutArrayElement v46, v54, v98, v105 arrayStorage=Contiguous level=Expected accessSite=23 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v107: int[1, 4294967295] ~ int[1, 2147483648] = Increment v54
+# CHECK-NEXT: Jump -> next b2(v107)
 # CHECK-NEXT: b24() frequency=Rare:
-# CHECK-NEXT: ElemDefine v46, v100, v99 accessSite=23
+# CHECK-NEXT: ElemDefine v46, v54, v98 accessSite=23
 # CHECK-NEXT: Jump -> next b25()
 # CHECK-NEXT: b25() frequency=Unlikely:
-# CHECK-NEXT: v111: int[0, 4294967294] ~ int[0, 2147483647] = Upcast v53 castType=int[0, 4294967294]
-# CHECK-NEXT: v112: int[1, 4294967295] ~ int[1, 2147483648] = Increment v111
-# CHECK-NEXT: Jump -> next b1(v112)
+# CHECK-NEXT: v109: int[1, 4294967295] ~ int[1, 2147483648] = Increment v54
+# CHECK-NEXT: Jump -> next b1(v109)
 # CHECK-NEXT: b26() frequency=Unlikely:
-# CHECK-NEXT: v113: undefined = Undefined
-# CHECK-NEXT: v114: never = Call v113 calleeName="probe" accessSite=15 callees=[f19]
+# CHECK-NEXT: v110: undefined = Undefined
+# CHECK-NEXT: v111: never = Call v110 calleeName="probe" accessSite=15 callees=[f19]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b27():
-# CHECK-NEXT: v115: fact = Specified
-# CHECK-NEXT: v116: Array<boolean, proven, pristine[Storage, Names, Dense]> = AssumeType v46, v115 provenType=Array<boolean, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v117: string = CallBuiltin v116 overload=ArrayPrototypeJoin/0 accessSite=14 @0 tail
-# CHECK-NEXT: Return v117
+# CHECK-NEXT: v112: fact = Specified
+# CHECK-NEXT: v113: Array<boolean, proven, pristine[Storage, Names, Dense]> = AssumeType v46, v112 provenType=Array<boolean, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v114: string = CallBuiltin v113 overload=ArrayPrototypeJoin/0 accessSite=14 @0 tail
+# CHECK-NEXT: Return v114
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="set"
 # CHECK: module=m0 position=597 kind=Arrow captures=[{type=env L5 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f33] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]

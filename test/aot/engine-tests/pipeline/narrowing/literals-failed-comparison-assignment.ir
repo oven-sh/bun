@@ -628,68 +628,59 @@ runtimefunction id=69 function=f8
 # CHECK-NEXT: Jump -> next b1(v2)
 # CHECK-NEXT: b1(v3: int[0, 4294967295] ~ 0):
 # CHECK-NEXT: Jump -> next b2(v3)
-# CHECK-NEXT: b2(v4: int[0, 4294967295] ~ 0):
-# CHECK-NEXT: Jump -> next b3(v4)
-# CHECK-NEXT: b3(v5: int[0, 4294967295]):
+# CHECK-NEXT: b2(v4: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v7: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v8: boolean = Less v5, v7
-# CHECK-NEXT: Branch v8 -> taken b4(| 0), notTaken b14()
-# CHECK-NEXT: b4(v9: int[0, 4294967294]):
-# CHECK-NEXT: v10: boolean = IsInBounds v0, v9
-# CHECK-NEXT: Branch v10 -> taken b5(| 0), notTaken b11()
-# CHECK-NEXT: b5(v11: guard):
-# CHECK-NEXT: v12: int[1, 5] = GetArrayElement v0, v9, v11 arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v13: 1 = Integer integer=1
-# CHECK-NEXT: v14: int[1, 4294967295] = Add v9, v13
-# CHECK-NEXT: v15: env L0 = GetCapture v1 function=f5
-# CHECK-NEXT: v16: fact = Entered function=f12 @1291:1 tail
-# CHECK-NEXT: v17: 2 = Integer integer=2
-# CHECK-NEXT: v18: int[0, 1] = Mod v12, v17
-# CHECK-NEXT: v19: 0 = Integer
-# CHECK-NEXT: v20: boolean = StrictEq v18, v19
-# CHECK-NEXT: Branch v20 -> taken b6(), notTaken b7()
+# CHECK-NEXT: v6: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v7: boolean = Less v4, v6
+# CHECK-NEXT: Branch v7 -> taken b3(| 0), notTaken b11()
+# CHECK-NEXT: b3(v8: int[0, 4294967294]):
+# CHECK-NEXT: v9: boolean = IsInBounds v0, v8
+# CHECK-NEXT: Branch v9 -> taken b4(| 0), notTaken b10()
+# CHECK-NEXT: b4(v10: guard):
+# CHECK-NEXT: v11: int[1, 5] = GetArrayElement v0, v8, v10 arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v12: 1 = Integer integer=1
+# CHECK-NEXT: v13: int[1, 4294967295] = Add v8, v12
+# CHECK-NEXT: v14: env L0 = GetCapture v1 function=f5
+# CHECK-NEXT: v15: fact = Entered function=f12 @1291:1 tail
+# CHECK-NEXT: v16: 2 = Integer integer=2
+# CHECK-NEXT: v17: int[0, 1] = Mod v11, v16
+# CHECK-NEXT: v18: 0 = Integer
+# CHECK-NEXT: v19: boolean = StrictEq v17, v18
+# CHECK-NEXT: Branch v19 -> taken b5(), notTaken b6()
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v20: true = Boolean boolean=true
+# CHECK-NEXT: PutEnvironmentField v14, v20 layout=L0
+# CHECK-NEXT: Jump -> next b6()
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v21: true = Boolean boolean=true
-# CHECK-NEXT: PutEnvironmentField v15, v21 layout=L0
-# CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: v22: int|whole|unspecified = GetEnvironmentField v14 layout=L0 field=1 [mayPrecedeItsStore]
+# CHECK-NEXT: v23: int|whole = AssumeType v22, v15 provenType=int|whole
+# CHECK-NEXT: v24: int|whole = Increment v23
+# CHECK-NEXT: PutEnvironmentField v14, v24 layout=L0 field=1
+# CHECK-NEXT: v26: 2 = Integer integer=2
+# CHECK-NEXT: v27: int[0, 1] = Mod v11, v26
+# CHECK-NEXT: v28: 0 = Integer
+# CHECK-NEXT: v29: boolean = StrictEq v27, v28
+# CHECK-NEXT: Branch v29 -> taken b7(), notTaken b8()
 # CHECK-NEXT: b7():
-# CHECK-NEXT: v23: int|whole|unspecified = GetEnvironmentField v15 layout=L0 field=1 [mayPrecedeItsStore]
-# CHECK-NEXT: v24: int|whole = AssumeType v23, v16 provenType=int|whole
-# CHECK-NEXT: v25: int|whole = Increment v24
-# CHECK-NEXT: PutEnvironmentField v15, v25 layout=L0 field=1
-# CHECK-NEXT: v27: 2 = Integer integer=2
-# CHECK-NEXT: v28: int[0, 1] = Mod v12, v27
-# CHECK-NEXT: v29: 0 = Integer
-# CHECK-NEXT: v30: boolean = StrictEq v28, v29
-# CHECK-NEXT: Branch v30 -> taken b8(), notTaken b9()
+# CHECK-NEXT: v30: "even" = String string="even"
+# CHECK-NEXT: Jump -> next b9(v30)
 # CHECK-NEXT: b8():
-# CHECK-NEXT: v31: "even" = String string="even"
-# CHECK-NEXT: Jump -> next b10(v31)
-# CHECK-NEXT: b9():
-# CHECK-NEXT: v32: "odd" = String string="odd"
-# CHECK-NEXT: Jump -> next b10(v32)
-# CHECK-NEXT: b10(v33: "even"|"odd"):
-# CHECK-NEXT: PutEnvironmentField v15, v33 layout=L0 field=2
-# CHECK-NEXT: Jump -> next b3(v14)
-# CHECK-NEXT: b11() frequency=Rare:
-# CHECK-NEXT: v35: undefined|int[1, 5] = GetArrayElement v0, v9 arrayStorage=Int32 level=Proven [keyIsIntegral]
-# CHECK-NEXT: v36: 1 = Integer integer=1
-# CHECK-NEXT: v37: int[1, 4294967295] = Add v9, v36
-# CHECK-NEXT: v38: boolean = TypeTest v35 testedType=number
-# CHECK-NEXT: Branch v38 -> taken b12(| 0), notTaken b13()
-# CHECK-NEXT: b12(v39: int[1, 5]) frequency=Rare:
-# CHECK-NEXT: v40: env L0 = GetCapture v1 function=f5
-# CHECK-NEXT: v41: undefined = CallDirect v40, v39 function=f12 accessSite=24
-# CHECK-NEXT: Jump -> next b2(v37)
-# CHECK-NEXT: b13() frequency=Rare:
-# CHECK-NEXT: v42: undefined = Undefined
-# CHECK-NEXT: v43: env L0 = GetCapture v1 function=f5
-# CHECK-NEXT: v44: undefined = CallDirect v43, v42 function=f5 accessSite=24 [isNeverInlined]
-# CHECK-NEXT: Jump -> next b1(v37)
-# CHECK-NEXT: b14():
-# CHECK-NEXT: v45: undefined = Undefined
-# CHECK-NEXT: Return v45
+# CHECK-NEXT: v31: "odd" = String string="odd"
+# CHECK-NEXT: Jump -> next b9(v31)
+# CHECK-NEXT: b9(v32: "even"|"odd"):
+# CHECK-NEXT: PutEnvironmentField v14, v32 layout=L0 field=2
+# CHECK-NEXT: Jump -> next b2(v13)
+# CHECK-NEXT: b10() frequency=Rare:
+# CHECK-NEXT: v34: undefined|int[1, 5] = GetArrayElement v0, v8 arrayStorage=Int32 level=Proven [keyIsIntegral]
+# CHECK-NEXT: v35: 1 = Integer integer=1
+# CHECK-NEXT: v36: int[1, 4294967295] = Add v8, v35
+# CHECK-NEXT: v37: undefined|int[1, 5] ~ int[1, 5] = Expect v34 expectedType=number
+# CHECK-NEXT: v38: env L0 = GetCapture v1 function=f5
+# CHECK-NEXT: v39: undefined = CallDirect v38, v37 function=f5 accessSite=24
+# CHECK-NEXT: Jump -> next b1(v36)
+# CHECK-NEXT: b11():
+# CHECK-NEXT: v40: undefined = Undefined
+# CHECK-NEXT: Return v40
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="isGate"
 # CHECK: module=m0 position=383 role=EntryChecks flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|"alpha"|"beta"|"delta"|"epsilon"|"eta"|"gamma"|"theta"|"zeta" site=w5 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=boolean site=w6}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f10 fallback=f13} {
@@ -726,97 +717,89 @@ runtimefunction id=69 function=f8
 # CHECK-NEXT: Jump -> next b1(v5)
 # CHECK-NEXT: b1(v6: int[0, 4294967295] ~ 0):
 # CHECK-NEXT: Jump -> next b2(v6)
-# CHECK-NEXT: b2(v7: int[0, 4294967295] ~ 0):
-# CHECK-NEXT: Jump -> next b3(v7)
-# CHECK-NEXT: b3(v8: int[0, 4294967295]):
+# CHECK-NEXT: b2(v7: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v10: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v11: boolean = Less v8, v10
-# CHECK-NEXT: Branch v11 -> taken b4(| 0), notTaken b14()
-# CHECK-NEXT: b4(v12: int[0, 4294967294]):
-# CHECK-NEXT: v13: boolean = IsInBounds v0, v12
-# CHECK-NEXT: Branch v13 -> taken b5(| 0), notTaken b11()
-# CHECK-NEXT: b5(v14: guard):
-# CHECK-NEXT: v15: int[1, 5] = GetArrayElement v0, v12, v14 arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v16: 1 = Integer integer=1
-# CHECK-NEXT: v17: int[1, 4294967295] = Add v12, v16
-# CHECK-NEXT: v18: fact = Entered function=f12 @1291:2 tail
-# CHECK-NEXT: v19: 2 = Integer integer=2
-# CHECK-NEXT: v20: int[0, 1] = Mod v15, v19
-# CHECK-NEXT: v21: 0 = Integer
-# CHECK-NEXT: v22: boolean = StrictEq v20, v21
-# CHECK-NEXT: Branch v22 -> taken b6(), notTaken b7()
+# CHECK-NEXT: v9: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v10: boolean = Less v7, v9
+# CHECK-NEXT: Branch v10 -> taken b3(| 0), notTaken b11()
+# CHECK-NEXT: b3(v11: int[0, 4294967294]):
+# CHECK-NEXT: v12: boolean = IsInBounds v0, v11
+# CHECK-NEXT: Branch v12 -> taken b4(| 0), notTaken b10()
+# CHECK-NEXT: b4(v13: guard):
+# CHECK-NEXT: v14: int[1, 5] = GetArrayElement v0, v11, v13 arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v15: 1 = Integer integer=1
+# CHECK-NEXT: v16: int[1, 4294967295] = Add v11, v15
+# CHECK-NEXT: v17: fact = Entered function=f12 @1291:2 tail
+# CHECK-NEXT: v18: 2 = Integer integer=2
+# CHECK-NEXT: v19: int[0, 1] = Mod v14, v18
+# CHECK-NEXT: v20: 0 = Integer
+# CHECK-NEXT: v21: boolean = StrictEq v19, v20
+# CHECK-NEXT: Branch v21 -> taken b5(), notTaken b6()
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v22: true = Boolean boolean=true
+# CHECK-NEXT: PutEnvironmentField v4, v22 layout=L0
+# CHECK-NEXT: Jump -> next b6()
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v23: true = Boolean boolean=true
-# CHECK-NEXT: PutEnvironmentField v4, v23 layout=L0
-# CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: v24: int|whole|unspecified = GetEnvironmentField v4 layout=L0 field=1 [mayPrecedeItsStore]
+# CHECK-NEXT: v25: int|whole = AssumeType v24, v17 provenType=int|whole
+# CHECK-NEXT: v26: int|whole = Increment v25
+# CHECK-NEXT: PutEnvironmentField v4, v26 layout=L0 field=1
+# CHECK-NEXT: v28: 2 = Integer integer=2
+# CHECK-NEXT: v29: int[0, 1] = Mod v14, v28
+# CHECK-NEXT: v30: 0 = Integer
+# CHECK-NEXT: v31: boolean = StrictEq v29, v30
+# CHECK-NEXT: Branch v31 -> taken b7(), notTaken b8()
 # CHECK-NEXT: b7():
-# CHECK-NEXT: v25: int|whole|unspecified = GetEnvironmentField v4 layout=L0 field=1 [mayPrecedeItsStore]
-# CHECK-NEXT: v26: int|whole = AssumeType v25, v18 provenType=int|whole
-# CHECK-NEXT: v27: int|whole = Increment v26
-# CHECK-NEXT: PutEnvironmentField v4, v27 layout=L0 field=1
-# CHECK-NEXT: v29: 2 = Integer integer=2
-# CHECK-NEXT: v30: int[0, 1] = Mod v15, v29
-# CHECK-NEXT: v31: 0 = Integer
-# CHECK-NEXT: v32: boolean = StrictEq v30, v31
-# CHECK-NEXT: Branch v32 -> taken b8(), notTaken b9()
+# CHECK-NEXT: v32: "even" = String string="even"
+# CHECK-NEXT: Jump -> next b9(v32)
 # CHECK-NEXT: b8():
-# CHECK-NEXT: v33: "even" = String string="even"
-# CHECK-NEXT: Jump -> next b10(v33)
-# CHECK-NEXT: b9():
-# CHECK-NEXT: v34: "odd" = String string="odd"
-# CHECK-NEXT: Jump -> next b10(v34)
-# CHECK-NEXT: b10(v35: "even"|"odd"):
-# CHECK-NEXT: PutEnvironmentField v4, v35 layout=L0 field=2
-# CHECK-NEXT: Jump -> next b3(v17)
-# CHECK-NEXT: b11() frequency=Rare:
-# CHECK-NEXT: v37: undefined|int[1, 5] = GetArrayElement v0, v12 arrayStorage=Int32 level=Proven [keyIsIntegral]
-# CHECK-NEXT: v38: 1 = Integer integer=1
-# CHECK-NEXT: v39: int[1, 4294967295] = Add v12, v38
-# CHECK-NEXT: v40: boolean = TypeTest v37 testedType=number
-# CHECK-NEXT: Branch v40 -> taken b12(| 0), notTaken b13()
-# CHECK-NEXT: b12(v41: int[1, 5]) frequency=Rare:
-# CHECK-NEXT: v42: undefined = CallDirect v4, v41 function=f12 accessSite=24
-# CHECK-NEXT: Jump -> next b2(v39)
-# CHECK-NEXT: b13() frequency=Rare:
-# CHECK-NEXT: v43: undefined = Undefined
-# CHECK-NEXT: v44: undefined = CallDirect v4, v43 function=f5 accessSite=24 [isNeverInlined]
-# CHECK-NEXT: Jump -> next b1(v39)
-# CHECK-NEXT: b14():
-# CHECK-NEXT: v45: boolean = GetEnvironmentField v4 layout=L0
-# CHECK-NEXT: Branch v45 -> taken b15(), notTaken b16()
+# CHECK-NEXT: v33: "odd" = String string="odd"
+# CHECK-NEXT: Jump -> next b9(v33)
+# CHECK-NEXT: b9(v34: "even"|"odd"):
+# CHECK-NEXT: PutEnvironmentField v4, v34 layout=L0 field=2
+# CHECK-NEXT: Jump -> next b2(v16)
+# CHECK-NEXT: b10() frequency=Rare:
+# CHECK-NEXT: v36: undefined|int[1, 5] = GetArrayElement v0, v11 arrayStorage=Int32 level=Proven [keyIsIntegral]
+# CHECK-NEXT: v37: 1 = Integer integer=1
+# CHECK-NEXT: v38: int[1, 4294967295] = Add v11, v37
+# CHECK-NEXT: v39: undefined|int[1, 5] ~ int[1, 5] = Expect v36 expectedType=number
+# CHECK-NEXT: v40: undefined = CallDirect v4, v39 function=f5 accessSite=24
+# CHECK-NEXT: Jump -> next b1(v38)
+# CHECK-NEXT: b11():
+# CHECK-NEXT: v41: boolean = GetEnvironmentField v4 layout=L0
+# CHECK-NEXT: Branch v41 -> taken b12(), notTaken b13()
+# CHECK-NEXT: b12():
+# CHECK-NEXT: v42: "found" = String string="found"
+# CHECK-NEXT: Jump -> next b14(v42)
+# CHECK-NEXT: b13():
+# CHECK-NEXT: v43: "missing" = String string="missing"
+# CHECK-NEXT: Jump -> next b14(v43)
+# CHECK-NEXT: b14(v44: "found"|"missing"):
+# CHECK-NEXT: v45: int|whole = GetEnvironmentField v4 layout=L0 field=1
+# CHECK-NEXT: v46: 0 = Integer
+# CHECK-NEXT: v47: boolean = StrictEq v45, v46
+# CHECK-NEXT: Branch v47 -> taken b15(), notTaken b16()
 # CHECK-NEXT: b15():
-# CHECK-NEXT: v46: "found" = String string="found"
-# CHECK-NEXT: Jump -> next b17(v46)
+# CHECK-NEXT: v48: "empty" = String string="empty"
+# CHECK-NEXT: Jump -> next b17(v48)
 # CHECK-NEXT: b16():
-# CHECK-NEXT: v47: "missing" = String string="missing"
-# CHECK-NEXT: Jump -> next b17(v47)
-# CHECK-NEXT: b17(v48: "found"|"missing"):
-# CHECK-NEXT: v49: int|whole = GetEnvironmentField v4 layout=L0 field=1
-# CHECK-NEXT: v50: 0 = Integer
-# CHECK-NEXT: v51: boolean = StrictEq v49, v50
-# CHECK-NEXT: Branch v51 -> taken b18(), notTaken b19()
+# CHECK-NEXT: v49: "some " = String string="some "
+# CHECK-NEXT: v50: string = Add v49, v45
+# CHECK-NEXT: Jump -> next b17(v50)
+# CHECK-NEXT: b17(v51: string):
+# CHECK-NEXT: v52: " " = String string=" "
+# CHECK-NEXT: v53: " " = String string=" "
+# CHECK-NEXT: v54: string = Strcat v44, v52, v51, v53
+# CHECK-NEXT: v55: "even"|"none"|"odd" = GetEnvironmentField v4 layout=L0 field=2
+# CHECK-NEXT: v56: "none" = String string="none"
+# CHECK-NEXT: v57: boolean = StrictEq v55, v56
+# CHECK-NEXT: Branch v57 -> taken b18(), notTaken b19(v55)
 # CHECK-NEXT: b18():
-# CHECK-NEXT: v52: "empty" = String string="empty"
-# CHECK-NEXT: Jump -> next b20(v52)
-# CHECK-NEXT: b19():
-# CHECK-NEXT: v53: "some " = String string="some "
-# CHECK-NEXT: v54: string = Add v53, v49
-# CHECK-NEXT: Jump -> next b20(v54)
-# CHECK-NEXT: b20(v55: string):
-# CHECK-NEXT: v56: " " = String string=" "
-# CHECK-NEXT: v57: " " = String string=" "
-# CHECK-NEXT: v58: string = Strcat v48, v56, v55, v57
-# CHECK-NEXT: v59: "even"|"none"|"odd" = GetEnvironmentField v4 layout=L0 field=2
-# CHECK-NEXT: v60: "none" = String string="none"
-# CHECK-NEXT: v61: boolean = StrictEq v59, v60
-# CHECK-NEXT: Branch v61 -> taken b21(), notTaken b22(v59)
-# CHECK-NEXT: b21():
-# CHECK-NEXT: v62: "nothing" = String string="nothing"
-# CHECK-NEXT: Jump -> next b22(v62)
-# CHECK-NEXT: b22(v63: "even"|"none"|"nothing"|"odd"):
-# CHECK-NEXT: v64: string = Add v58, v63
-# CHECK-NEXT: Return v64
+# CHECK-NEXT: v58: "nothing" = String string="nothing"
+# CHECK-NEXT: Jump -> next b19(v58)
+# CHECK-NEXT: b19(v59: "even"|"none"|"nothing"|"odd"):
+# CHECK-NEXT: v60: string = Add v54, v59
+# CHECK-NEXT: Return v60
 # CHECK-NEXT: }
 # CHECK-LABEL: function f5 module=
 # CHECK: m0 position=1291 kind=Arrow role=EntryChecks flags=[IsChecked] length=1 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=number site=w36 flags=[IsExpected]}] results=[{type=undefined}] functionTypes=[f7] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f12 fallback=f15} {
@@ -989,7 +972,7 @@ runtimefunction id=69 function=f8
 # CHECK: module=m1 kind=Method role=ResultWorker flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=ArrayIterator flags=[IsExpected]} results=[{type=anything}, {type=boolean}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f8 parameterMap=[{original=0}]} creator=ResultWorker{origin=f8} {
 # CHECK-NEXT: b0(v0: anything ~ ArrayIterator):
 # CHECK-NEXT: v1: boolean = HasJSType v0 first=5 last=5
-# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b16()
+# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b25()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v2: object ~ ArrayIterator = AssumeType v0 provenType=object [isWordOfFrontEnd]
 # CHECK-NEXT: v3: anything = GetInternalField v2
@@ -999,7 +982,7 @@ runtimefunction id=69 function=f8
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v6: true = Boolean boolean=true
 # CHECK-NEXT: v7: undefined = Undefined
-# CHECK-NEXT: Jump -> next b15(v6, v7)
+# CHECK-NEXT: Jump -> next b24(v6, v7)
 # CHECK-NEXT: b3():
 # CHECK-NEXT: v8: anything = GetInternalField v2 index=1
 # CHECK-NEXT: v9: object ~ Array = AssumeType v8 provenType=object
@@ -1011,51 +994,81 @@ runtimefunction id=69 function=f8
 # CHECK-NEXT: Jump -> next b7(v12)
 # CHECK-NEXT: b5():
 # CHECK-NEXT: v13: boolean ~ true = TypeTest v9 testedType=Array
-# CHECK-NEXT: Branch v13 -> taken b6(| 0), notTaken b8()
+# CHECK-NEXT: Branch v13 -> taken b6(| 0), notTaken b15()
 # CHECK-NEXT: b6(v14: Array):
 # CHECK-NEXT: v15: int[0, 4294967295] = CallBuiltin v14 overload=ArrayPrototypeLength/0
 # CHECK-NEXT: Jump -> next b7(v15)
 # CHECK-NEXT: b7(v16: int[0, 17179869184]):
-# CHECK-NEXT: v17: boolean = Less v3, v16
-# CHECK-NEXT: Branch v17 -> taken b9(), notTaken b14()
-# CHECK-NEXT: b8() frequency=Unlikely:
-# CHECK-NEXT: v18: anything = PropGet v9 key="length"
-# CHECK-NEXT: v19: int[0, 9007199254740991] = ToLength v18
-# CHECK-NEXT: v20: boolean = Less v3, v19
-# CHECK-NEXT: Branch v20 -> taken b9(), notTaken b14()
+# CHECK-NEXT: v17: boolean = TypeTest v3 testedType=number
+# CHECK-NEXT: Branch v17 -> taken b8(| 0), notTaken b16(v16)
+# CHECK-NEXT: b8(v18: number):
+# CHECK-NEXT: v19: boolean = Less v18, v16
+# CHECK-NEXT: Branch v19 -> taken b9(), notTaken b23()
 # CHECK-NEXT: b9():
-# CHECK-NEXT: v21: 1 = Integer integer=1
-# CHECK-NEXT: v22: number|string|bigint = Add v3, v21
-# CHECK-NEXT: v23: number|string|bigint = PutInternalField v2, v22
-# CHECK-NEXT: v24: anything = GetInternalField v2 index=2
-# CHECK-NEXT: v25: 0 = Integer
-# CHECK-NEXT: v26: boolean = StrictEq v24, v25
-# CHECK-NEXT: Branch v26 -> taken b10(), notTaken b11()
+# CHECK-NEXT: v20: 1 = Integer integer=1
+# CHECK-NEXT: v21: number = Add v18, v20
+# CHECK-NEXT: v22: number = PutInternalField v2, v21
+# CHECK-NEXT: v23: anything = GetInternalField v2 index=2
+# CHECK-NEXT: v24: 0 = Integer
+# CHECK-NEXT: v25: boolean = StrictEq v23, v24
+# CHECK-NEXT: Branch v25 -> taken b10(), notTaken b11()
 # CHECK-NEXT: b10():
-# CHECK-NEXT: v27: false = Boolean
-# CHECK-NEXT: Jump -> next b15(v27, v3)
+# CHECK-NEXT: v26: false = Boolean
+# CHECK-NEXT: Jump -> next b24(v26, v18)
 # CHECK-NEXT: b11():
-# CHECK-NEXT: v28: anything = ElemGet v9, v3
-# CHECK-NEXT: v29: 2 = Integer integer=2
-# CHECK-NEXT: v30: boolean = StrictEq v24, v29
-# CHECK-NEXT: Branch v30 -> taken b12(), notTaken b13()
-# CHECK-NEXT: b12():
-# CHECK-NEXT: v31: Array = NewArray v3, v28 contents=anything
-# CHECK-NEXT: v32: false = Boolean
-# CHECK-NEXT: Jump -> next b15(v32, v31)
-# CHECK-NEXT: b13():
-# CHECK-NEXT: v33: false = Boolean
-# CHECK-NEXT: Jump -> next b15(v33, v28)
-# CHECK-NEXT: b14():
-# CHECK-NEXT: v34: -1 = Integer integer=-1
-# CHECK-NEXT: v35: -1 = PutInternalField v2, v34
-# CHECK-NEXT: v36: true = Boolean boolean=true
-# CHECK-NEXT: v37: undefined = Undefined
-# CHECK-NEXT: Jump -> next b15(v36, v37)
-# CHECK-NEXT: b15(v38: boolean, v39: anything):
-# CHECK-NEXT: v40: undefined = Results v39, v38
-# CHECK-NEXT: Return v40
-# CHECK-NEXT: b16():
-# CHECK-NEXT: v41: never = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance"
+# CHECK-NEXT: v27: boolean ~ true = TypeTest v9 testedType=Array
+# CHECK-NEXT: Branch v27 -> taken b12(| 0), notTaken b14()
+# CHECK-NEXT: b12(v28: Array):
+# CHECK-NEXT: v29: boolean = IsPristine v28 builtinClass=Array aspects=[Storage, Names]
+# CHECK-NEXT: Branch v29 -> taken b13(| 0), notTaken b14()
+# CHECK-NEXT: b13(v30: guard):
+# CHECK-NEXT: v31: anything = GetArrayElement v28, v18, v30 level=Expected
+# CHECK-NEXT: Jump -> next b20(v23, v31)
+# CHECK-NEXT: b14() frequency=Unlikely:
+# CHECK-NEXT: v32: anything = ElemGet v9, v18
+# CHECK-NEXT: Jump -> next b20(v23, v32)
+# CHECK-NEXT: b15() frequency=Unlikely:
+# CHECK-NEXT: v33: anything = PropGet v9 key="length"
+# CHECK-NEXT: v34: int[0, 9007199254740991] = ToLength v33
+# CHECK-NEXT: Jump -> next b16(v34)
+# CHECK-NEXT: b16(v35: int[0, 9007199254740991] ~ int[0, 17179869184]) frequency=Unlikely:
+# CHECK-NEXT: v36: boolean = Less v3, v35
+# CHECK-NEXT: Branch v36 -> taken b17(), notTaken b23()
+# CHECK-NEXT: b17() frequency=Unlikely:
+# CHECK-NEXT: v37: 1 = Integer integer=1
+# CHECK-NEXT: v38: number|string|bigint = Add v3, v37
+# CHECK-NEXT: v39: number|string|bigint = PutInternalField v2, v38
+# CHECK-NEXT: v40: anything = GetInternalField v2 index=2
+# CHECK-NEXT: v41: 0 = Integer
+# CHECK-NEXT: v42: boolean = StrictEq v40, v41
+# CHECK-NEXT: Branch v42 -> taken b18(), notTaken b19()
+# CHECK-NEXT: b18() frequency=Unlikely:
+# CHECK-NEXT: v43: false = Boolean
+# CHECK-NEXT: Jump -> next b24(v43, v3)
+# CHECK-NEXT: b19() frequency=Unlikely:
+# CHECK-NEXT: v44: anything = ElemGet v9, v3
+# CHECK-NEXT: Jump -> next b20(v40, v44)
+# CHECK-NEXT: b20(v45: anything, v46: anything):
+# CHECK-NEXT: v47: 2 = Integer integer=2
+# CHECK-NEXT: v48: boolean = StrictEq v45, v47
+# CHECK-NEXT: Branch v48 -> taken b21(), notTaken b22()
+# CHECK-NEXT: b21():
+# CHECK-NEXT: v49: Array = NewArray v3, v46 contents=anything
+# CHECK-NEXT: v50: false = Boolean
+# CHECK-NEXT: Jump -> next b24(v50, v49)
+# CHECK-NEXT: b22():
+# CHECK-NEXT: v51: false = Boolean
+# CHECK-NEXT: Jump -> next b24(v51, v46)
+# CHECK-NEXT: b23():
+# CHECK-NEXT: v52: -1 = Integer integer=-1
+# CHECK-NEXT: v53: -1 = PutInternalField v2, v52
+# CHECK-NEXT: v54: true = Boolean boolean=true
+# CHECK-NEXT: v55: undefined = Undefined
+# CHECK-NEXT: Jump -> next b24(v54, v55)
+# CHECK-NEXT: b24(v56: boolean, v57: anything):
+# CHECK-NEXT: v58: undefined = Results v57, v56
+# CHECK-NEXT: Return v58
+# CHECK-NEXT: b25():
+# CHECK-NEXT: v59: never = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }

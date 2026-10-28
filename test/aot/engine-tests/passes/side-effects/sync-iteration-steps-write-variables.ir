@@ -747,21 +747,22 @@ runtimefunction id=92 function=f42 visibility=Private
 # CHECK-NEXT: v3: int|whole = Increment v2
 # CHECK-NEXT: PutModuleVariable v3 variable=g3
 # CHECK-NEXT: v5: anything ~ number = GetEnvironmentField v0 layout=L3 [leansOnEntryOfBody]
-# CHECK-NEXT: v6: boolean ~ true = TypeTest v5 testedType=number|absent
-# CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b2(| 0)
+# CHECK-NEXT: v6: boolean ~ true = TypeTest v5 testedType=number
+# CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b3(| 0)
 # CHECK-NEXT: b1(v7: number):
 # CHECK-NEXT: v8: number = ToNumeric v7
-# CHECK-NEXT: v9: int|whole = AssumeType v8 provenType=int|whole
-# CHECK-NEXT: Jump -> next b3(v9)
-# CHECK-NEXT: b2(v10: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v11: number|bigint = ToNumeric v10
-# CHECK-NEXT: v12: number|bigint ~ int|whole = Expect v11 expectedType=int|whole
-# CHECK-NEXT: v13: int|whole = AssumeType v12 provenType=int|whole
-# CHECK-NEXT: Jump -> next b3(v13)
-# CHECK-NEXT: b3(v14: int|whole):
-# CHECK-NEXT: v15: false = Boolean
-# CHECK-NEXT: v16: L8 = NewObject -, v15, v14 layout=L8 fields=[0, 1] allocationSite=39 allocationClass=4
-# CHECK-NEXT: Return v16
+# CHECK-NEXT: v9: number ~ int|whole = Expect v8 expectedType=int|whole
+# CHECK-NEXT: v10: int|whole = AssumeType v9 provenType=int|whole
+# CHECK-NEXT: Jump -> next b2(v10)
+# CHECK-NEXT: b2(v11: int|whole):
+# CHECK-NEXT: v12: false = Boolean
+# CHECK-NEXT: v13: L8 = NewObject -, v12, v11 layout=L8 fields=[0, 1] allocationSite=39 allocationClass=4
+# CHECK-NEXT: Return v13
+# CHECK-NEXT: b3(v14: undefined|null|boolean|string|symbol|bigint|object) frequency=Rare:
+# CHECK-NEXT: v15: number|bigint = ToNumeric v14
+# CHECK-NEXT: v16: number|bigint ~ int|whole = Expect v15 expectedType=int|whole
+# CHECK-NEXT: v17: int|whole = AssumeType v16 provenType=int|whole
+# CHECK-NEXT: Jump -> next b2(v17)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="next"
 # CHECK: module=m0 position=741 kind=Method flags=[IsChecked, HasExplicitName] captures=[{type=env L4 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|L8|L10|L12|L14|L15|L17 site=w118 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f34] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
@@ -843,17 +844,20 @@ runtimefunction id=92 function=f42 visibility=Private
 # CHECK-NEXT: v2: int|whole = Increment v1
 # CHECK-NEXT: PutModuleVariable v2 variable=g3
 # CHECK-NEXT: v4: anything ~ number = GetEnvironmentField v0 layout=L3
-# CHECK-NEXT: v5: boolean ~ true = TypeTest v4 testedType=number|absent
-# CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b2(| 0)
+# CHECK-NEXT: v5: boolean ~ true = TypeTest v4 testedType=number
+# CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b3(| 0)
 # CHECK-NEXT: b1(v6: number):
 # CHECK-NEXT: v7: number = ToNumeric v6
-# CHECK-NEXT: v8: int|whole = AssumeType v7 provenType=int|whole
-# CHECK-NEXT: Return v8
-# CHECK-NEXT: b2(v9: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v10: number|bigint = ToNumeric v9
-# CHECK-NEXT: v11: number|bigint ~ int|whole = Expect v10 expectedType=int|whole
-# CHECK-NEXT: v12: int|whole = AssumeType v11 provenType=int|whole
-# CHECK-NEXT: Return v12
+# CHECK-NEXT: v8: number ~ int|whole = Expect v7 expectedType=int|whole
+# CHECK-NEXT: v9: int|whole = AssumeType v8 provenType=int|whole
+# CHECK-NEXT: Jump -> next b2(v9)
+# CHECK-NEXT: b2(v10: int|whole):
+# CHECK-NEXT: Return v10
+# CHECK-NEXT: b3(v11: undefined|null|boolean|string|symbol|bigint|object) frequency=Rare:
+# CHECK-NEXT: v12: number|bigint = ToNumeric v11
+# CHECK-NEXT: v13: number|bigint ~ int|whole = Expect v12 expectedType=int|whole
+# CHECK-NEXT: v14: int|whole = AssumeType v13 provenType=int|whole
+# CHECK-NEXT: Jump -> next b2(v14)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="next"
 # CHECK: module=m0 position=4134 kind=Method role=ResultWorker flags=[IsChecked, HasExplicitName] captures=[{type=env L2 flags=[IsFromCompiler]}, {type=env L5 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=boolean}, {type=int|whole}] functionTypes=[f35] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f29 parameterMap=[{original=0}, {original=1}]} creator=ResultWorker{origin=f29}

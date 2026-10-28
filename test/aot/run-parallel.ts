@@ -4,7 +4,6 @@
 //   bun test/aot/run-parallel.ts --jobs=4 --files-from=<a file with one path a line>      as scripts/runner.node.ts starts it
 //   --no-erased       leaves out the second build, see below
 //   --root=<folder>   the programs lie under that folder, not under ./parallel
-//   --one-program=all the first build too is one program with many entry points, see below
 //   --memory=<MB>     what all that runs at once may hold together. Without it: seven eighths of what the machine has available at the start
 //
 // A program with a TypeScript file is built twice, the second time with --aot-erase-types: types never change what a program prints.
@@ -115,6 +114,13 @@ const writesToBuiltIn = new RegExp(
 );
 // So does whoever lets one of these stand as a value: all that hangs on it is out of the compiler's sight.
 const handsOutObjectOfHost = /(?<![.\w$"'`:])(?:globalThis|process|Bun)\b(?!\s*\??\.\s*[A-Za-z_$])(?!["'`:])/;
+// And whoever was seen to take long, which no text tells: the table by which the shards are dealt lists only such programs.
+const tests = resolve(import.meta.dir, "..");
+const takesLong = new Set(
+  Object.keys(JSON.parse(readFileSync(join(tests, "expected-durations.json"), "utf8")))
+    .filter(path => path.startsWith("aot/"))
+    .map(path => join(tests, path)),
+);
 /** Asks the file and the files that it names by relative paths, and those that they name. */
 function someFileOf(path: string, holds: (text: string) => boolean) {
   const paths = [path];
@@ -133,7 +139,7 @@ function someFileOf(path: string, holds: (text: string) => boolean) {
 }
 const saysWhatWasLeftOut = /was not compiled into this executable|the compiler couldn't tell at build time/;
 const sharesLibrary = ({ weight, output, way, writesToBuiltIn }: Program) =>
-  output === undefined && (weight > 1 || (!writesToBuiltIn && (way === "erased" || firstBuildIsOneProgram)));
+  output === undefined && (weight > 1 || (!writesToBuiltIn && way === "erased"));
 const weightOf = (programs: Program[]) =>
   programs.reduce(
     (sum, program) => sum + (sharesLibrary(program) ? 1 : program.weight),
@@ -145,7 +151,6 @@ const longestTextShown = 16 * 1024;
 const option = (name: string) =>
   process.argv.find(argument => argument.startsWith(`--${name}=`))?.slice(name.length + 3);
 const root = resolve(option("root") ?? join(import.meta.dir, "parallel"));
-const firstBuildIsOneProgram = option("one-program") === "all";
 const listed = option("files-from");
 const files = listed
   ? readFileSync(listed, "utf8").split(/\r?\n/).filter(Boolean)
@@ -488,7 +493,7 @@ function read(file: string): Program {
     erasedIsAsPlain: lines("Erased types").includes("as plain Bun"),
     isBuiltErased: !lines("Erased types").some(line => line.startsWith("not built")),
     isAlone: lines("Alone").length > 0,
-    weight: namesModules || someFileOf(path, text => handsOutObjectOfHost.test(text)) ? 8 : 1,
+    weight: namesModules || takesLong.has(path) || someFileOf(path, text => handsOutObjectOfHost.test(text)) ? 8 : 1,
     namesModules,
     writesToBuiltIn: writesToBuiltIn.test(text),
     exitCode: Number(lines("Exit code")[0] ?? 0),
@@ -537,9 +542,12 @@ let executables = 0;
 const nextExecutable = (name: string) =>
   join(folder, `${name}-${executables++}${process.platform === "win32" ? ".exe" : ""}`);
 
-/** As it stands in the comment Output. What is stored names the files of an executable as they are named elsewhere than on Windows. */
+/**
+ * As it stands in the comment Output. What is stored names the files of an executable as they are named elsewhere than on Windows.
+ * What an option of the engine logs goes through the C library, which on Windows ends a line with a carriage return and a line feed.
+ */
 const asText = ({ exitCode, stdout, stderr }: ReturnType<typeof compared>) =>
-  (stdout + (exitCode ? `exit code ${exitCode}\n${stderr}\n` : stderr)).replace(
+  (stdout + (exitCode ? `exit code ${exitCode}\n${stderr}\n` : stderr.replaceAll("\r\n", "\n"))).replace(
     /B:\\~BUN\\root[^\s'":]*/g,
     path => "/$bunfs/root" + path.slice(12).replaceAll("\\", "/"),
   );
@@ -693,7 +701,8 @@ async function run(programs: Program[]): Promise<void> {
       if (found !== times) unmet.push(`the build prints ${found} x ${line}, not ${times} x`);
     }
     if (unmet.length) return fail(first, "compile", unmet.join("; "), build.output);
-    const compileMs = Math.round(build.ms / programs.length);
+    // Of the time of a build each program has the share that its code has of all the code: a program says how much it has when it starts.
+    const codeBytes = programs.map(() => Promise.withResolvers<number>());
     await Promise.all(
       programs.map(async (program, index) => {
         const env = {
@@ -751,6 +760,9 @@ async function run(programs: Program[]): Promise<void> {
             ...program.envOfExecutable,
           }),
         );
+        codeBytes[index].resolve(
+          Number(/^\[aot\] image: \d+ bytes, (\d+) of code/m.exec(compiled.output.stderr)?.[1] ?? 0),
+        );
         if (compiled.output.overLimit)
           return fail(program, "run", `it ended by ${describeEnd(compiled.output)}`, compiled.output);
         const written = counts ? readdirSync(folder).filter(name => name.startsWith(counts)) : [];
@@ -771,9 +783,11 @@ async function run(programs: Program[]): Promise<void> {
         );
         const unmet = counts ? unmetBounds(counted, program.counts, "executable") : [];
         if (unmet.length) return fail(program, "count", unmet.join("; "), compiled.output, plain?.output);
+        const ofEach = await Promise.all(codeBytes.map(({ promise }) => promise));
+        const ofAll = ofEach.reduce((sum, bytes) => sum + bytes, 0);
         const passes = {
           state: "pass",
-          compileMs,
+          compileMs: Math.round(build.ms * (ofAll ? ofEach[index] / ofAll : 1 / programs.length)),
           runMs: compiled.ms,
           buildMB: build.peakMB,
           runMB: Math.max(compiled.peakMB, plain?.peakMB ?? 0),

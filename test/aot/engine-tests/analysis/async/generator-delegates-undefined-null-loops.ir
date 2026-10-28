@@ -1219,7 +1219,7 @@ runtimefunction id=86 function=f16 visibility=Private
 # CHECK-NEXT: b6() handler=b17():
 # CHECK-NEXT: v18: "ends" = String string="ends"
 # CHECK-NEXT: v19: undefined = CallBuiltin -, v0, v18 overload=ConsoleLog/0 accessSite=39
-# CHECK-NEXT: Jump -> next b19()
+# CHECK-NEXT: Jump -> next b20()
 # CHECK-NEXT: b7():
 # CHECK-NEXT: Jump -> next b8(v7)
 # CHECK-NEXT: b8(v20: anything) handler=b9():
@@ -1258,19 +1258,18 @@ runtimefunction id=86 function=f16 visibility=Private
 # CHECK-NEXT: v35: "throws" = String string="throws"
 # CHECK-NEXT: v36: anything ~ undefined|null|Error = Upcast v34 castType=anything
 # CHECK-NEXT: v37: anything = PropGet v36 key="name" accessSite=45
-# CHECK-NEXT: v38: boolean = TypeTest v37 testedType=undefined|null|string
-# CHECK-NEXT: Branch v38 -> taken b18(| 0), notTaken b20(| 0)
-# CHECK-NEXT: b18(v39: undefined|null|string):
-# CHECK-NEXT: v40: undefined = CallBuiltin -, v0, v35, v39 overload=ConsoleLog/0 accessSite=46
-# CHECK-NEXT: Jump -> next b19()
-# CHECK-NEXT: b19():
-# CHECK-NEXT: v41: undefined = Undefined
-# CHECK-NEXT: Return v41
-# CHECK-NEXT: b20(v42: boolean|number|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v43: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v44: undefined = CallBuiltin v43, v0, v35, v42 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=46
-# CHECK-NEXT: v45: undefined = Undefined
-# CHECK-NEXT: Return v45
+# CHECK-NEXT: v38: anything ~ undefined|null|string = Expect v37 expectedType=undefined|null|string
+# CHECK-NEXT: v39: boolean ~ true = TypeTest v38 testedType=undefined|null|boolean|number|string|symbol
+# CHECK-NEXT: Branch v39 -> taken b18(| 0), notTaken b19(| 0)
+# CHECK-NEXT: b18(v40: undefined|null|boolean|number|string|symbol ~ undefined|null|string):
+# CHECK-NEXT: v41: undefined = CallBuiltin -, v0, v35, v40 overload=ConsoleLog/0 accessSite=46
+# CHECK-NEXT: Jump -> next b20()
+# CHECK-NEXT: b19(v42: bigint|object) frequency=Rare:
+# CHECK-NEXT: v43: undefined = CallBuiltin -, v0, v35, v42 overload=ConsoleLog/1 accessSite=46
+# CHECK-NEXT: Jump -> next b20()
+# CHECK-NEXT: b20():
+# CHECK-NEXT: v44: undefined = Undefined
+# CHECK-NEXT: Return v44
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="loopBehind"
 # CHECK: module=m0 position=578 role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=undefined} parameters=[{type=undefined|null|Array<number> site=w4 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=Generator<anything, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f5 body=f20 promiseParameter=3}

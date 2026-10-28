@@ -331,14 +331,9 @@ function f144 module=m0 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-NEXT: v8: "threw " = String string="threw "
 # CHECK-NEXT: v9: anything ~ undefined|null|Error = Upcast v7 castType=anything
 # CHECK-NEXT: v10: anything = PropGet v9 key="name" accessSite=7
-# CHECK-NEXT: v11: boolean = TypeTest v10 testedType=undefined|null|string
-# CHECK-NEXT: Branch v11 -> taken b5(| 0), notTaken b6(| 0)
-# CHECK-NEXT: b5(v12: undefined|null|string):
-# CHECK-NEXT: v13: string = Add v8, v12
-# CHECK-NEXT: Return v13
-# CHECK-NEXT: b6(v14: boolean|number|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v15: string = Add v8, v14
-# CHECK-NEXT: Return v15
+# CHECK-NEXT: v11: anything ~ undefined|null|string = Expect v10 expectedType=undefined|null|string
+# CHECK-NEXT: v12: string = Add v8, v11
+# CHECK-NEXT: Return v12
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="row"
 # CHECK: module=m0 position=325 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}, {type=f31|f32 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
@@ -412,9 +407,27 @@ function f144 module=m0 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-NEXT: Throw v2
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="row"
-# CHECK: module=m0 position=325 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=f31|f32 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f2 parameterMap=[{original=1}]} {
+# CHECK: module=m0 position=325 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=f31|f32 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f2 parameterMap=[{original=1}]} inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}] {
 # CHECK-NEXT: b0(v1: f31|f32):
-# CHECK-NEXT: v2: string = CallDirect v1 function=f1 accessSite=8
-# CHECK-NEXT: v3: undefined = Undefined
-# CHECK-NEXT: Return v3
+# CHECK-NEXT: v2: boolean = TypeTest v1 testedType=f32
+# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2(| 0)
+# CHECK-NEXT: b1() handler=b4():
+# CHECK-NEXT: v3: string = CallDirect function=f32 accessSite=5
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b2(v4: f31) frequency=Unlikely handler=b4():
+# CHECK-NEXT: v5: undefined|null|string = Call v4 calleeName="f" accessSite=5 callees=[f31, f32]
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: b4() role=CatchHandler:
+# CHECK-NEXT: v6: anything = CatchValue
+# CHECK-NEXT: v7: "threw " = String string="threw "
+# CHECK-NEXT: v8: anything ~ undefined|null|Error = Upcast v6 castType=anything
+# CHECK-NEXT: v9: anything = PropGet v8 key="name" accessSite=7
+# CHECK-NEXT: v10: anything ~ undefined|null|string = Expect v9 expectedType=undefined|null|string
+# CHECK-NEXT: v11: string = Add v7, v10
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v12: undefined = Undefined
+# CHECK-NEXT: Return v12
 # CHECK-NEXT: }

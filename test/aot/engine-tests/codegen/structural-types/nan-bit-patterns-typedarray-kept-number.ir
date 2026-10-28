@@ -382,5 +382,5 @@ runtimefunction id=69 function=f44
 # -- generated: show
 # CHECK-LABEL: function {{*}}name="show"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 63, patchpoints: 8, rare instructions: 47
+# CHECK-NEXT: instructions: 63, patchpoints: 8, rare instructions: 40
 # CHECK-NEXT: end of function f50

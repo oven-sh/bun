@@ -1039,10 +1039,9 @@ runtimefunction id=69 function=f7
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="opaqueBox"
-# CHECK: module=m0 position=333 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L0 site=w3 flags=[OmitsNull, OmitsUndefined]}, {type=i32 site=w4}] results=[{type=L0 site=w5 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=333 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L0 site=w3 flags=[OmitsNull, OmitsUndefined]}, {type=i32 site=w4}] results=[{type=L0 site=w5 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: L0, v1: i32):
-# CHECK-NEXT: v2: L0 = CallDirect v0 function=f13
-# CHECK-NEXT: ReturnCall v2 requirement=Allowed
+# CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="fold"
 # CHECK: module=m0 position=386 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean|number|string|L0}] results=[{type=i32 site=w6}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -1072,9 +1071,9 @@ runtimefunction id=69 function=f7
 # CHECK-LABEL: function {{*}}name="Box"
 # CHECK: module=m0 position=215 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w11}, {type=null site=w12 flags=[OmitsUndefined]}] results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0
 # CHECK-LABEL: function {{*}}name="next"
-# CHECK: module=m1 kind=Method role=ResultWrapper flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=ArrayIterator flags=[IsExpected]} results=[{type=L(IteratorResult)}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f14 layout=L(IteratorResult)} {
+# CHECK: module=m1 kind=Method role=ResultWrapper flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=ArrayIterator flags=[IsExpected]} results=[{type=L(IteratorResult)}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f13 layout=L(IteratorResult)} {
 # CHECK-NEXT: b0(v0: anything):
-# CHECK-NEXT: v1: undefined = CallDirect v0 function=f14
+# CHECK-NEXT: v1: undefined = CallDirect v0 function=f13
 # CHECK-NEXT: v2: anything = ResultAt v1
 # CHECK-NEXT: v3: boolean = ResultAt v1 index=1
 # CHECK-NEXT: v4: L(IteratorResult) = NewObject -, v2, v3 layout=L(IteratorResult) fields=[0, 1]
@@ -1103,19 +1102,7 @@ runtimefunction id=69 function=f7
 # CHECK-NEXT: Return v11
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Box"
-# CHECK: module=m0 position=215 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, IsChecked, HasExplicitName] length=2 thisType={type=L0} parameters=[{type=number site=w11}, {type=null site=w12 flags=[OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f5 parameterMap=[{}, {original=0}, {original=1}, {original=2}]} creator=Version{provenVersion=f5} constructedClass=L0 inlineFrames=[{}, {callee=f6 callPosition=4294967295 module=m0}] {
-# CHECK-NEXT: b0(v0: L0, v1: anything, v2: number, v3: null):
-# CHECK-NEXT: v4: 0 = Integer
-# CHECK-NEXT: PutSlot v0, -, v4 key="n" receivers=[L0] level=Proven accessSite=46
-# CHECK-NEXT: PutSlot v0, -, v2 key="n" receivers=[L0] level=Proven accessSite=44
-# CHECK-NEXT: v7: undefined = Undefined
-# CHECK-NEXT: Return v7
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="opaqueBox"
-# CHECK: module=m0 position=333 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L0 site=w3 flags=[OmitsNull, OmitsUndefined]}] results=[{type=L0 site=w5 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f2 parameterMap=[{original=0}]} {
-# CHECK-NEXT: b0(v0: L0):
-# CHECK-NEXT: Return v0
-# CHECK-NEXT: }
+# CHECK: module=m0 position=215 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, IsChecked, HasExplicitName] length=2 thisType={type=L0} parameters=[{type=number site=w11}, {type=null site=w12 flags=[OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f5 parameterMap=[{}, {original=0}, {original=1}, {original=2}]} creator=Version{provenVersion=f5} constructedClass=L0
 # CHECK-LABEL: function {{*}}name="next"
 # CHECK: module=m1 kind=Method role=ResultWorker flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=ArrayIterator flags=[IsExpected]} results=[{type=anything}, {type=boolean}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f7 parameterMap=[{original=0}]} creator=ResultWorker{origin=f7} {
 # CHECK-NEXT: b0(v0: anything ~ ArrayIterator):

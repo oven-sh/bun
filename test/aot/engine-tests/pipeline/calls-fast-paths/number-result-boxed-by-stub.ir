@@ -1794,17 +1794,10 @@ runtimefunction id=131091 function=f28 visibility=Private
 # CHECK-LABEL: function {{*}}name="plusOneOrNaN"
 # CHECK: module=m0 position=906 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|number site=w16}] results=[{type=number site=w17}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: undefined|number):
-# CHECK-NEXT: v1: boolean = TypeTest v0 testedType=number
-# CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v2: number):
-# CHECK-NEXT: v3: 1 = Integer integer=1
-# CHECK-NEXT: v4: number = Add v2, v3
-# CHECK-NEXT: Return v4
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v5: undefined = Undefined
-# CHECK-NEXT: v6: 1 = Integer integer=1
-# CHECK-NEXT: v7: number = Add v5, v6
-# CHECK-NEXT: Return v7
+# CHECK-NEXT: v1: undefined|number ~ number = Expect v0 expectedType=number
+# CHECK-NEXT: v2: 1 = Integer integer=1
+# CHECK-NEXT: v3: number = Add v1, v2
+# CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="show"
 # CHECK: module=m0 position=1093 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|boolean|number|string|object}] results=[{type=string site=w19 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -1903,15 +1896,15 @@ runtimefunction id=131091 function=f28 visibility=Private
 # CHECK-NEXT: Jump -> next b8(v20)
 # CHECK-NEXT: b8(v21: null|boolean|number|string|object ~ null|L1):
 # CHECK-NEXT: v22: null|boolean|number|string|object ~ null|L1 = Upcast v21 castType=anything
-# CHECK-NEXT: v23: boolean ~ true = TypeTest v22 testedType=undefined|null|L1
-# CHECK-NEXT: Branch v23 -> taken b9(| 0), notTaken b10(| 0)
-# CHECK-NEXT: b9(v24: null|L1):
-# CHECK-NEXT: v25: L1 = RequireObjectCoercible v24 name="x"
-# CHECK-NEXT: v26: number = GetSlot v25 key="x" receivers=[L1] level=Proven accessSite=47
+# CHECK-NEXT: v23: boolean|number|string|object ~ L1 = RequireObjectCoercible v22 name="x"
+# CHECK-NEXT: v24: boolean ~ true = TypeTest v23 testedType=L1
+# CHECK-NEXT: Branch v24 -> taken b9(| 0), notTaken b10()
+# CHECK-NEXT: b9(v25: L1):
+# CHECK-NEXT: v26: number = GetSlot v25 key="x" receivers=[L1] level=Expected accessSite=47
 # CHECK-NEXT: Return v26
-# CHECK-NEXT: b10(v27: boolean|number|string|object) frequency=Unlikely:
-# CHECK-NEXT: v28: anything = PropGet v27 key="x" accessSite=47
-# CHECK-NEXT: Return v28
+# CHECK-NEXT: b10() frequency=Rare:
+# CHECK-NEXT: v27: anything ~ number = PropGet v23 key="x" accessSite=47
+# CHECK-NEXT: Return v27
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="pick"
 # CHECK: module=m0 position=660 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w12}] results=[{type=number site=w13}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f5 parameterMap=[{original=0}]} {
@@ -2145,19 +2138,10 @@ runtimefunction id=131091 function=f28 visibility=Private
 # CHECK: module=m0 position=906 role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f7}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f7} creator=Entrypoint{target=f7 arguments=Registers} inlineFrames=[{}, {callee=f7 callPosition=906 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f7, v1: anything, v2: anything):
 # CHECK-NEXT: v3: undefined|number = AssumeType v2 provenType=undefined|number
-# CHECK-NEXT: v4: boolean = TypeTest v3 testedType=number
-# CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v5: number):
-# CHECK-NEXT: v6: 1 = Integer integer=1
-# CHECK-NEXT: v7: number = Add v5, v6
-# CHECK-NEXT: Jump -> next b3(v7) @906 tail
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v8: undefined = Undefined
-# CHECK-NEXT: v9: 1 = Integer integer=1
-# CHECK-NEXT: v10: number = Add v8, v9
-# CHECK-NEXT: Jump -> next b3(v10) @906 tail
-# CHECK-NEXT: b3(v11: number):
-# CHECK-NEXT: Return v11
+# CHECK-NEXT: v4: undefined|number ~ number = Expect v3 expectedType=number
+# CHECK-NEXT: v5: 1 = Integer integer=1
+# CHECK-NEXT: v6: number = Add v4, v5
+# CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="show"
 # CHECK: module=m0 position=1093 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f8}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f8} creator=Entrypoint{target=f8 arguments=Registers}

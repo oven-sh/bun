@@ -1,6 +1,7 @@
 # Functions with a written result type call, in tail position, a function value that nobody knows. A chain of such calls of any length runs in constant space, and its result is tested once,
 # by whoever receives it, against the type written on the function that was called from outside. A call that is no tail call is tested like any other, however deep in such a chain it is made.
 # FORM: AsRead
+# OPTIONS: disable=pass:InlineCalls
 # RUN: lower-to-air size f7
 # REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
 

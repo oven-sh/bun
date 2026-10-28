@@ -2004,50 +2004,33 @@ runtimefunction id=92 function=f73 visibility=Private
 # CHECK-NEXT: v2: anything = Call v1 calleeName="run" accessSite=64 callees=[f25, f26, f27, f28, f29, f30, f31, f32, f33, f34, f35]
 # CHECK-NEXT: v3: undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|string, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = AssumeType v2 provenType=undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|string, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v4: undefined|string = CallDirect v3 function=f1 accessSite=65
-# CHECK-NEXT: Jump -> next b10(v4)
+# CHECK-NEXT: Jump -> next b5(v4)
 # CHECK-NEXT: b1() role=CatchHandler:
 # CHECK-NEXT: v5: anything = CatchValue
-# CHECK-NEXT: v6: "threw " = String string="threw "
-# CHECK-NEXT: v7: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
-# CHECK-NEXT: v8: boolean = HasInPrototypeChain v5, v7
-# CHECK-NEXT: Branch v8 -> taken b2(), notTaken b8()
+# CHECK-NEXT: v6: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
+# CHECK-NEXT: v7: boolean = HasInPrototypeChain v5, v6
+# CHECK-NEXT: Branch v7 -> taken b2(), notTaken b3()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v9: anything ~ undefined|null|Error = Upcast v5 castType=anything
-# CHECK-NEXT: v10: anything = PropGet v9 key="constructor" accessSite=67
-# CHECK-NEXT: v11: boolean = TypeTest v10 testedType=undefined|null|function
-# CHECK-NEXT: Branch v11 -> taken b3(| 0), notTaken b6(| 0)
-# CHECK-NEXT: b3(v12: undefined|null|function):
-# CHECK-NEXT: v13: function = RequireObjectCoercible v12 name="name"
-# CHECK-NEXT: v14: anything = PropGet v13 key="name" accessSite=68
-# CHECK-NEXT: v15: boolean = TypeTest v14 testedType=undefined|null|string
-# CHECK-NEXT: Branch v15 -> taken b4(| 0), notTaken b5(| 0)
-# CHECK-NEXT: b4(v16: undefined|null|string):
-# CHECK-NEXT: Jump -> next b9(v16)
-# CHECK-NEXT: b5(v17: boolean|number|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b7(v17)
-# CHECK-NEXT: b6(v18: boolean|number|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v19: anything = PropGet v18 key="name" accessSite=68
-# CHECK-NEXT: v20: anything ~ undefined|null|string = Expect v19 expectedType=undefined|null|string
-# CHECK-NEXT: Jump -> next b7(v20)
-# CHECK-NEXT: b7(v21: anything) frequency=Unlikely:
-# CHECK-NEXT: v22: string = Add v6, v21
-# CHECK-NEXT: v23: " -> " = String string=" -> "
-# CHECK-NEXT: v24: string = Strcat v0, v23, v22
-# CHECK-NEXT: v25: undefined = CallBuiltin -, v24 overload=ConsoleLog/0 accessSite=72
-# CHECK-NEXT: v26: undefined = Undefined
-# CHECK-NEXT: Return v26
-# CHECK-NEXT: b8():
-# CHECK-NEXT: v27: undefined|string = CallDirect v5 function=f1 accessSite=69
-# CHECK-NEXT: Jump -> next b9(v27)
-# CHECK-NEXT: b9(v28: undefined|null|string):
-# CHECK-NEXT: v29: string = Add v6, v28
-# CHECK-NEXT: Jump -> next b10(v29)
-# CHECK-NEXT: b10(v30: undefined|string):
-# CHECK-NEXT: v31: " -> " = String string=" -> "
-# CHECK-NEXT: v32: string = Strcat v0, v31, v30
-# CHECK-NEXT: v33: undefined = CallBuiltin -, v32 overload=ConsoleLog/0 accessSite=72
-# CHECK-NEXT: v34: undefined = Undefined
-# CHECK-NEXT: Return v34
+# CHECK-NEXT: v8: anything ~ undefined|null|Error = Upcast v5 castType=anything
+# CHECK-NEXT: v9: anything = PropGet v8 key="constructor" accessSite=67
+# CHECK-NEXT: v10: anything ~ undefined|null|function = Expect v9 expectedType=undefined|null|function
+# CHECK-NEXT: v11: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v10 name="name"
+# CHECK-NEXT: v12: anything = PropGet v11 key="name" accessSite=68
+# CHECK-NEXT: v13: anything ~ undefined|null|string = Expect v12 expectedType=undefined|null|string
+# CHECK-NEXT: Jump -> next b4(v13)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v14: undefined|string = CallDirect v5 function=f1 accessSite=69
+# CHECK-NEXT: Jump -> next b4(v14)
+# CHECK-NEXT: b4(v15: anything ~ undefined|null|string):
+# CHECK-NEXT: v16: "threw " = String string="threw "
+# CHECK-NEXT: v17: string = Add v16, v15
+# CHECK-NEXT: Jump -> next b5(v17)
+# CHECK-NEXT: b5(v18: undefined|string):
+# CHECK-NEXT: v19: " -> " = String string=" -> "
+# CHECK-NEXT: v20: string = Strcat v0, v19, v18
+# CHECK-NEXT: v21: undefined = CallBuiltin -, v20 overload=ConsoleLog/0 accessSite=72
+# CHECK-NEXT: v22: undefined = Undefined
+# CHECK-NEXT: Return v22
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Countdown"
 # CHECK: module=m0 position=1297 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[0, 3] site=w16}] results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 inlineFrames=[{}, {callee=f36 callPosition=4294967295 module=m0}] {
@@ -2413,50 +2396,33 @@ runtimefunction id=92 function=f73 visibility=Private
 # CHECK-NEXT: v2: anything = Call v1 calleeName="run" accessSite=64 callees=[f25, f26, f27, f28, f29, f30, f31, f32, f33, f34, f35]
 # CHECK-NEXT: v3: undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|string, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = AssumeType v2 provenType=undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|string, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v4: undefined|string = CallDirect v3 function=f1 accessSite=65
-# CHECK-NEXT: Jump -> next b10(v4)
+# CHECK-NEXT: Jump -> next b5(v4)
 # CHECK-NEXT: b1() role=CatchHandler:
 # CHECK-NEXT: v5: anything = CatchValue
-# CHECK-NEXT: v6: "threw " = String string="threw "
-# CHECK-NEXT: v7: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
-# CHECK-NEXT: v8: boolean = HasInPrototypeChain v5, v7
-# CHECK-NEXT: Branch v8 -> taken b2(), notTaken b8()
+# CHECK-NEXT: v6: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
+# CHECK-NEXT: v7: boolean = HasInPrototypeChain v5, v6
+# CHECK-NEXT: Branch v7 -> taken b2(), notTaken b3()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v9: anything ~ undefined|null|Error = Upcast v5 castType=anything
-# CHECK-NEXT: v10: anything = PropGet v9 key="constructor" accessSite=67
-# CHECK-NEXT: v11: boolean = TypeTest v10 testedType=undefined|null|function
-# CHECK-NEXT: Branch v11 -> taken b3(| 0), notTaken b6(| 0)
-# CHECK-NEXT: b3(v12: undefined|null|function):
-# CHECK-NEXT: v13: function = RequireObjectCoercible v12 name="name"
-# CHECK-NEXT: v14: anything = PropGet v13 key="name" accessSite=68
-# CHECK-NEXT: v15: boolean = TypeTest v14 testedType=undefined|null|string
-# CHECK-NEXT: Branch v15 -> taken b4(| 0), notTaken b5(| 0)
-# CHECK-NEXT: b4(v16: undefined|null|string):
-# CHECK-NEXT: Jump -> next b9(v16)
-# CHECK-NEXT: b5(v17: boolean|number|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b7(v17)
-# CHECK-NEXT: b6(v18: boolean|number|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v19: anything = PropGet v18 key="name" accessSite=68
-# CHECK-NEXT: v20: anything ~ undefined|null|string = Expect v19 expectedType=undefined|null|string
-# CHECK-NEXT: Jump -> next b7(v20)
-# CHECK-NEXT: b7(v21: anything) frequency=Unlikely:
-# CHECK-NEXT: v22: string = Add v6, v21
-# CHECK-NEXT: v23: " -> " = String string=" -> "
-# CHECK-NEXT: v24: string = Strcat v0, v23, v22
-# CHECK-NEXT: v25: undefined = CallBuiltin -, v24 overload=ConsoleLog/0 accessSite=72
-# CHECK-NEXT: v26: undefined = Undefined
-# CHECK-NEXT: Return v26
-# CHECK-NEXT: b8():
-# CHECK-NEXT: v27: undefined|string = CallDirect v5 function=f1 accessSite=69
-# CHECK-NEXT: Jump -> next b9(v27)
-# CHECK-NEXT: b9(v28: undefined|null|string):
-# CHECK-NEXT: v29: string = Add v6, v28
-# CHECK-NEXT: Jump -> next b10(v29)
-# CHECK-NEXT: b10(v30: undefined|string):
-# CHECK-NEXT: v31: " -> " = String string=" -> "
-# CHECK-NEXT: v32: string = Strcat v0, v31, v30
-# CHECK-NEXT: v33: undefined = CallBuiltin -, v32 overload=ConsoleLog/0 accessSite=72
-# CHECK-NEXT: v34: undefined = Undefined
-# CHECK-NEXT: Return v34
+# CHECK-NEXT: v8: anything ~ undefined|null|Error = Upcast v5 castType=anything
+# CHECK-NEXT: v9: anything = PropGet v8 key="constructor" accessSite=67
+# CHECK-NEXT: v10: anything ~ undefined|null|function = Expect v9 expectedType=undefined|null|function
+# CHECK-NEXT: v11: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v10 name="name"
+# CHECK-NEXT: v12: anything = PropGet v11 key="name" accessSite=68
+# CHECK-NEXT: v13: anything ~ undefined|null|string = Expect v12 expectedType=undefined|null|string
+# CHECK-NEXT: Jump -> next b4(v13)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v14: undefined|string = CallDirect v5 function=f1 accessSite=69
+# CHECK-NEXT: Jump -> next b4(v14)
+# CHECK-NEXT: b4(v15: anything ~ undefined|null|string):
+# CHECK-NEXT: v16: "threw " = String string="threw "
+# CHECK-NEXT: v17: string = Add v16, v15
+# CHECK-NEXT: Jump -> next b5(v17)
+# CHECK-NEXT: b5(v18: undefined|string):
+# CHECK-NEXT: v19: " -> " = String string=" -> "
+# CHECK-NEXT: v20: string = Strcat v0, v19, v18
+# CHECK-NEXT: v21: undefined = CallBuiltin -, v20 overload=ConsoleLog/0 accessSite=72
+# CHECK-NEXT: v22: undefined = Undefined
+# CHECK-NEXT: Return v22
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Countdown"
 # CHECK: module=m0 position=1297 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget, IsChecked] length=1 captures=[{type=f12}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f12} creator=Entrypoint{target=f12 arguments=Registers takesNewTarget=true} {

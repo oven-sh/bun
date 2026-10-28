@@ -779,9 +779,9 @@ runtimefunction id=131091 function=f28 visibility=Private
 # CHECK-NEXT: end of function f3
 # CHECK-LABEL: function {{*}}name="typedView"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 60, patchpoints: 10, rare instructions: 132
+# CHECK-NEXT: instructions: 51, patchpoints: 10, rare instructions: 81
 # CHECK-NEXT: end of function f30
 # CHECK-LABEL: function {{*}}name="typedView"
 # CHECK: role=GenericVersion
-# CHECK-NEXT: instructions: 46, patchpoints: 19
+# CHECK-NEXT: instructions: 44, patchpoints: 19
 # CHECK-NEXT: end of function f31

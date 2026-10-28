@@ -932,41 +932,7 @@ runtimefunction id=69 function=f21
 # CHECK-NEXT: ReturnCall v5 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function f17 module=
-# CHECK: m1 position=72 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L1 flags=[IsFromCompiler]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: L1):
-# CHECK-NEXT: v1: 0 = Integer
-# CHECK-NEXT: v2: boolean = HasNoFieldOutsideSlot v0 [mayMeetUnfinishedObject]
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b3()
-# CHECK-NEXT: b1(v3: guard):
-# CHECK-NEXT: v4: boolean = IsNotFrozen v0, v3
-# CHECK-NEXT: Branch v4 -> taken b2(| 0), notTaken b3()
-# CHECK-NEXT: b2(v5: guard):
-# CHECK-NEXT: v6: guard = AllGuards v3, v5
-# CHECK-NEXT: PutSlot v0, v6, v1 key="up" receivers=[L1] level=Expected accessSite=132
-# CHECK-NEXT: v8: 0 = Integer
-# CHECK-NEXT: PutSlot v0, v5, v8 key="down" receivers=[L1] level=Expected accessSite=133
-# CHECK-NEXT: v10: 0 = Integer
-# CHECK-NEXT: v11: guard = AllGuards v3, v5
-# CHECK-NEXT: PutSlot v0, v11, v10 key="any" receivers=[L1] level=Expected accessSite=134
-# CHECK-NEXT: FinishBirth v0
-# CHECK-NEXT: v13: 0 = Integer
-# CHECK-NEXT: PutSlot v0, v5, v13 key="other" receivers=[L1] level=Expected accessSite=135
-# CHECK-NEXT: Jump -> next b4()
-# CHECK-NEXT: b3() frequency=Rare:
-# CHECK-NEXT: TryFinishBirth v0
-# CHECK-NEXT: PropDefine v0, v1 key="up" accessSite=132 receivers=[L1]
-# CHECK-NEXT: v16: 0 = Integer
-# CHECK-NEXT: PropDefine v0, v16 key="down" accessSite=133 receivers=[L1]
-# CHECK-NEXT: v18: 0 = Integer
-# CHECK-NEXT: PropDefine v0, v18 key="any" accessSite=134 receivers=[L1]
-# CHECK-NEXT: TryFinishBirth v0
-# CHECK-NEXT: v20: 0 = Integer
-# CHECK-NEXT: PropDefine v0, v20 key="other" accessSite=135 receivers=[L1]
-# CHECK-NEXT: Jump -> next b4()
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v22: undefined = Undefined
-# CHECK-NEXT: Return v22
-# CHECK-NEXT: }
+# CHECK: m1 position=72 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L1 flags=[IsFromCompiler]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="subtractAnySign"
 # CHECK: module=m1 position=689 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L1 site=w11 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w12}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f8 parameterMap=[{original=0}, {original=1}]} {
 # CHECK-NEXT: b0(v0: L1, v1: number):

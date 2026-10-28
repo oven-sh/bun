@@ -138,7 +138,7 @@ pub(super) struct SharedByLoads {
     parsed: Run<'static>,
     atoms: Interner<'static>,
     /// Behind the two, which borrow it.
-    _session: Box<Session>,
+    session: Box<Session>,
 }
 
 thread_local! {
@@ -156,7 +156,7 @@ impl SharedByLoads {
         SharedByLoads {
             parsed: Run::of_compile_builds(borrowed, atoms, is_in_archive_of_bun),
             atoms,
-            _session: session,
+            session,
         }
     }
 
@@ -179,6 +179,15 @@ impl SharedByLoads {
                 *kept = Some(shared);
             }
         });
+    }
+
+    /// For whoever drops the sessions of a load. `None`: a load still reads it.
+    pub(super) fn into_session(shared: Arc<SharedByLoads>) -> Option<Session> {
+        let SharedByLoads {
+            parsed, session, ..
+        } = Arc::into_inner(shared)?;
+        drop(parsed);
+        Some(*session)
     }
 
     fn of_running_build(options: &Options<'_>) -> Option<Arc<SharedByLoads>> {
@@ -323,14 +332,17 @@ impl<'a> Build<'a> {
         let application_session = sessions.application;
         let shared_by_loads = SharedByLoads::of_running_build(options);
         let atoms = match &shared_by_loads {
-            Some(shared) => shared.atoms,
+            Some(shared) => shared.atoms.for_files_of(application_session),
             None => Interner::new_in(application_session),
         };
         #[cfg(any(test, feature = "test_support"))]
         let shared_by_builds =
             SharedByBuilds::serves(options).then(SharedByBuilds::of_test_program);
         #[cfg(any(test, feature = "test_support"))]
-        let atoms = shared_by_builds.map_or(atoms, |shared| shared.atoms);
+        let atoms = shared_by_builds.map_or(atoms, |shared| {
+            shared.atoms.for_files_of(application_session)
+        });
+        debug_assert!(core::ptr::eq(atoms.session(), application_session));
         let builtin_names = BuiltinNames::new(&atoms);
         let archive = Archive::embedded();
         let runtime_modules = create_runtime_modules(archive, options);

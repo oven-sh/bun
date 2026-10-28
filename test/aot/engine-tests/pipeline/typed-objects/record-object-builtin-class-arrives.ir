@@ -278,7 +278,7 @@ function f27 module=m1 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v36: 400 = Integer integer=400
 # CHECK-NEXT: v37: boolean = Less v33, v36
-# CHECK-NEXT: Branch v37 -> taken b3(| 0), notTaken b42()
+# CHECK-NEXT: Branch v37 -> taken b3(| 0), notTaken b37()
 # CHECK-NEXT: b3(v38: int[0, 399]):
 # CHECK-NEXT: v39: 0 = Integer
 # CHECK-NEXT: v40: string = Add v34, v39
@@ -358,7 +358,7 @@ function f27 module=m1 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b23():
 # CHECK-NEXT: Jump -> next b24()
 # CHECK-NEXT: b24() handler=b31():
-# CHECK-NEXT: Jump -> next b38()
+# CHECK-NEXT: Jump -> next b33()
 # CHECK-NEXT: b25() frequency=Rare handler=b30():
 # CHECK-NEXT: v85: anything = PropGet v83 key="size" accessSite=27
 # CHECK-NEXT: Jump -> next b26()
@@ -384,42 +384,27 @@ function f27 module=m1 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v94: anything = PropGet v93 key="constructor" accessSite=29
 # CHECK-NEXT: Jump -> next b32(v94)
 # CHECK-NEXT: b32(v95: anything):
-# CHECK-NEXT: v96: boolean = TypeTest v95 testedType=undefined|null|function
-# CHECK-NEXT: Branch v96 -> taken b33(| 0), notTaken b36(| 0)
-# CHECK-NEXT: b33(v97: undefined|null|function):
-# CHECK-NEXT: v98: function = RequireObjectCoercible v97 name="name"
-# CHECK-NEXT: v99: anything = PropGet v98 key="name" accessSite=30
-# CHECK-NEXT: v100: boolean = TypeTest v99 testedType=undefined|null|string
-# CHECK-NEXT: Branch v100 -> taken b34(| 0), notTaken b35(| 0)
-# CHECK-NEXT: b34(v101: undefined|null|string):
-# CHECK-NEXT: v102: " count " = String string=" count "
-# CHECK-NEXT: v103: 0 = Integer
-# CHECK-NEXT: v104: string = Strcat v101, v102, v103
-# CHECK-NEXT: Jump -> next b38()
-# CHECK-NEXT: b35(v105: boolean|number|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b37(v105)
-# CHECK-NEXT: b36(v106: boolean|number|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v107: anything = PropGet v106 key="name" accessSite=30
-# CHECK-NEXT: v108: anything ~ undefined|null|string = Expect v107 expectedType=undefined|null|string
-# CHECK-NEXT: Jump -> next b37(v108)
-# CHECK-NEXT: b37(v109: anything) frequency=Unlikely:
-# CHECK-NEXT: v110: " count " = String string=" count "
-# CHECK-NEXT: v111: string = Add v109, v110
-# CHECK-NEXT: v112: 0 = Integer
-# CHECK-NEXT: v113: string = Add v111, v112
-# CHECK-NEXT: Jump -> next b38()
-# CHECK-NEXT: b38():
-# CHECK-NEXT: v114: 395 = Integer integer=395
-# CHECK-NEXT: v115: boolean = Greater v38, v114
-# CHECK-NEXT: Branch v115 -> taken b39(), notTaken b40()
-# CHECK-NEXT: b39():
-# CHECK-NEXT: Jump -> next b41()
-# CHECK-NEXT: b40():
-# CHECK-NEXT: Jump -> next b41()
-# CHECK-NEXT: b41():
-# CHECK-NEXT: v116: int[1, 400] = Increment v38
-# CHECK-NEXT: Jump -> next b2(v116, v49)
-# CHECK-NEXT: b42():
+# CHECK-NEXT: v96: anything ~ undefined|null|function = Expect v95 expectedType=undefined|null|function
+# CHECK-NEXT: v97: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v96 name="name"
+# CHECK-NEXT: v98: anything = PropGet v97 key="name" accessSite=30
+# CHECK-NEXT: v99: anything ~ undefined|null|string = Expect v98 expectedType=undefined|null|string
+# CHECK-NEXT: v100: " count " = String string=" count "
+# CHECK-NEXT: v101: string = Add v99, v100
+# CHECK-NEXT: v102: 0 = Integer
+# CHECK-NEXT: v103: string = Add v101, v102
+# CHECK-NEXT: Jump -> next b33()
+# CHECK-NEXT: b33():
+# CHECK-NEXT: v104: 395 = Integer integer=395
+# CHECK-NEXT: v105: boolean = Greater v38, v104
+# CHECK-NEXT: Branch v105 -> taken b34(), notTaken b35()
+# CHECK-NEXT: b34():
+# CHECK-NEXT: Jump -> next b36()
+# CHECK-NEXT: b35():
+# CHECK-NEXT: Jump -> next b36()
+# CHECK-NEXT: b36():
+# CHECK-NEXT: v106: int[1, 400] = Increment v38
+# CHECK-NEXT: Jump -> next b2(v106, v49)
+# CHECK-NEXT: b37():
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: Jump -> next b42()
+# CHECK-NEXT: Jump -> next b37()
 # CHECK-NEXT: }

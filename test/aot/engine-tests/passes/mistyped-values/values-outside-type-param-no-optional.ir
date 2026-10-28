@@ -230,217 +230,95 @@ function f13 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v31: L2 @Cell = NewObject -, v30 layout=L2 fields=[0] allocationSite=5 allocation=3 allocationClass=2
 # CHECK-NEXT: v32: anything @JSValue = Call v1, -, v31 calleeName="nameOf" accessSite=8 callees=[f2]
 # CHECK-NEXT: v33: undefined|int @JSValue = AssumeType v32 provenType=undefined|int
-# CHECK-NEXT: v34: boolean @Boolean = TypeTest v33 testedType=undefined|null|string
-# CHECK-NEXT: TestAndBranch v34 -> taken b2(| 0), notTaken b10(| 0)
-# CHECK-NEXT: b2(v35: undefined @JSValue):
-# CHECK-NEXT: v36: undefined @JSValue = Upcast v35 castType=undefined|null|string
-# CHECK-NEXT: Jump -> next b3()
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v37: builtin(Map) @Cell = Builtin builtin=Map
-# CHECK-NEXT: v38: undefined @JSValue = Undefined
-# CHECK-NEXT: v39: Map<never, never> @Cell = CallInline -, v38 inlineBuiltin=NewMap overload=Map/1 accessSite=9
+# CHECK-NEXT: v34: undefined|int @JSValue = Expect v33 expectedType=undefined|null|string
+# CHECK-NEXT: v35: builtin(Map) @Cell = Builtin builtin=Map
+# CHECK-NEXT: v36: undefined @JSValue = Undefined
+# CHECK-NEXT: v37: Map<never, never> @Cell = CallInline -, v36 inlineBuiltin=NewMap overload=Map/1 accessSite=9
+# CHECK-NEXT: v38: Map<never, never, proven, pristine[Storage, Names]> @Cell = AssumeType v37 provenType=Map<never, never, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v39: Map<never, never, proven, pristine[Storage, Names]> @Cell = Upcast v38 castType=undefined|null|Map
 # CHECK-NEXT: v40: Map<never, never, proven, pristine[Storage, Names]> @Cell = AssumeType v39 provenType=Map<never, never, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v41: Map<never, never, proven, pristine[Storage, Names]> @Cell = Upcast v40 castType=undefined|null|Map
-# CHECK-NEXT: v42: Map<never, never, proven, pristine[Storage, Names]> @Cell = AssumeType v41 provenType=Map<never, never, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v43: anything @JSValue = Call v1, -, v42 calleeName="nameOf" accessSite=10 callees=[f2]
-# CHECK-NEXT: v44: undefined|int @JSValue = AssumeType v43 provenType=undefined|int
-# CHECK-NEXT: v45: boolean @Boolean = TypeTest v44 testedType=undefined|null|string
-# CHECK-NEXT: TestAndBranch v45 -> taken b4(| 0), notTaken b9(| 0)
-# CHECK-NEXT: b4(v46: undefined @JSValue):
-# CHECK-NEXT: v47: undefined @JSValue = Upcast v46 castType=undefined|null|string
-# CHECK-NEXT: Jump -> next b5()
-# CHECK-NEXT: b5():
-# CHECK-NEXT: v48: "text" @JSValue = String string="text"
-# CHECK-NEXT: v49: anything @JSValue = Call v1, -, v48 calleeName="nameOf" accessSite=11 callees=[f2]
-# CHECK-NEXT: v50: undefined|int @JSValue = AssumeType v49 provenType=undefined|int
-# CHECK-NEXT: v51: boolean @Boolean = TypeTest v50 testedType=undefined|null|string
-# CHECK-NEXT: TestAndBranch v51 -> taken b6(| 0), notTaken b8(| 0)
-# CHECK-NEXT: b6(v52: undefined @JSValue):
-# CHECK-NEXT: v53: undefined @JSValue = Upcast v52 castType=undefined|null|string
-# CHECK-NEXT: Jump -> next b7()
-# CHECK-NEXT: b7():
-# CHECK-NEXT: v54: undefined @JSValue = CallBuiltin -, v36, v47, v53 overload=ConsoleLog/0 accessSite=12
-# CHECK-NEXT: v55: builtin(Object) @Cell = Builtin builtin=Object
-# CHECK-NEXT: v56: builtin(ObjectCreate) @Cell = Builtin builtin=ObjectCreate
-# CHECK-NEXT: v57: f5 @Cell = NewClosure function=f5 allocationSite=6 closureForm=Slim
-# CHECK-NEXT: v58: L1 @Cell = NewObject -, v57 layout=L1 fields=[0] allocationSite=7 allocation=2 allocationClass=1
-# CHECK-NEXT: v59: L1 @JSValue = FinishObject v58
-# CHECK-NEXT: TryCallInline -, v59 inlineBuiltin=ObjectCreate overload=ObjectCreate/0 -> done b16(), miss b17()
-# CHECK-NEXT: b8(v60: int @JSValue) frequency=Unlikely:
-# CHECK-NEXT: v61: int @JSValue = Expect v60 expectedType=anything|absent
-# CHECK-NEXT: Jump -> next b13(v36, v47, v61)
-# CHECK-NEXT: b9(v62: int @JSValue) frequency=Unlikely:
-# CHECK-NEXT: v63: int @JSValue = Expect v62 expectedType=anything|absent
-# CHECK-NEXT: Jump -> next b12(v36, v63)
-# CHECK-NEXT: b10(v64: int @JSValue) frequency=Unlikely:
-# CHECK-NEXT: v65: int @JSValue = Expect v64 expectedType=anything|absent
-# CHECK-NEXT: Jump -> next b11()
-# CHECK-NEXT: b11() frequency=Unlikely:
-# CHECK-NEXT: v66: builtin(Map) @Cell = Builtin builtin=Map
-# CHECK-NEXT: v67: undefined @JSValue = Undefined
-# CHECK-NEXT: v68: Map<never, never> @Cell = CallInline -, v67 inlineBuiltin=NewMap overload=Map/1 accessSite=9
-# CHECK-NEXT: v69: Map<never, never, proven, pristine[Storage, Names]> @Cell = AssumeType v68 provenType=Map<never, never, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v70: Map<never, never, proven, pristine[Storage, Names]> @Cell = Upcast v69 castType=undefined|null|Map
-# CHECK-NEXT: v71: Map<never, never, proven, pristine[Storage, Names]> @Cell = AssumeType v70 provenType=Map<never, never, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v72: anything @JSValue = Call v1, -, v71 calleeName="nameOf" accessSite=10 callees=[f2] [isNeverInlined]
-# CHECK-NEXT: v73: undefined|int @JSValue = AssumeType v72 provenType=undefined|int
-# CHECK-NEXT: v74: undefined|int @JSValue = Expect v73 expectedType=undefined|null|string
-# CHECK-NEXT: Jump -> next b12(v65, v74)
-# CHECK-NEXT: b12(v75: undefined|int @JSValue, v76: undefined|int @JSValue) frequency=Unlikely:
-# CHECK-NEXT: v77: "text" @JSValue = String string="text"
-# CHECK-NEXT: v78: anything @JSValue = Call v1, -, v77 calleeName="nameOf" accessSite=11 callees=[f2] [isNeverInlined]
-# CHECK-NEXT: v79: undefined|int @JSValue = AssumeType v78 provenType=undefined|int
-# CHECK-NEXT: v80: undefined|int @JSValue = Expect v79 expectedType=undefined|null|string
-# CHECK-NEXT: Jump -> next b13(v75, v76, v80)
-# CHECK-NEXT: b13(v81: undefined|int @JSValue, v82: undefined|int @JSValue, v83: undefined|int @JSValue) frequency=Unlikely:
-# CHECK-NEXT: v84: undefined @JSValue = CallBuiltin -, v81, v82, v83 overload=ConsoleLog/0 accessSite=12
-# CHECK-NEXT: v85: builtin(Object) @Cell = Builtin builtin=Object
-# CHECK-NEXT: v86: builtin(ObjectCreate) @Cell = Builtin builtin=ObjectCreate
-# CHECK-NEXT: v87: f5 @Cell = NewClosure function=f5 allocationSite=6 closureForm=Slim
-# CHECK-NEXT: v88: L1 @Cell = NewObject -, v87 layout=L1 fields=[0] allocationSite=7 allocation=2 allocationClass=1
-# CHECK-NEXT: v89: L1 @JSValue = FinishObject v88
-# CHECK-NEXT: TryCallInline -, v89 inlineBuiltin=ObjectCreate overload=ObjectCreate/0 -> done b14(), miss b15()
-# CHECK-NEXT: b14(v90: Object @Cell) frequency=Unlikely:
-# CHECK-NEXT: v91: Object @Cell = AssumeType v90 provenType=Object
-# CHECK-NEXT: v92: undefined @Void = Undefined
-# CHECK-NEXT: v93: Object @Cell = Upcast v91 castType=anything
-# CHECK-NEXT: v94: Object @Cell = AssumeType v93 provenType=Object
-# CHECK-NEXT: v95: Object @Cell = AssumeType v94 provenType=Object
-# CHECK-NEXT: v96: builtin(GlobalThis) @Cell = Builtin builtin=GlobalThis
-# CHECK-NEXT: v97: builtin(Console) @Cell = Builtin builtin=Console
-# CHECK-NEXT: v98: builtin(Console) @Cell = AssumeType v97 provenType=builtin(Console)
-# CHECK-NEXT: v99: builtin(Console) @Cell = Upcast v98 castType=anything
-# CHECK-NEXT: v100: builtin(Console) @Cell = AssumeType v99 provenType=builtin(Console)
-# CHECK-NEXT: v101: builtin(ConsoleLog) @Cell = Builtin builtin=ConsoleLog
-# CHECK-NEXT: v102: builtin(ConsoleLog) @Cell = AssumeType v101 provenType=builtin(ConsoleLog)
-# CHECK-NEXT: v103: builtin(ConsoleLog) @Cell = Upcast v102 castType=anything
-# CHECK-NEXT: v104: builtin(ConsoleLog) @Cell = AssumeType v103 provenType=builtin(ConsoleLog)
-# CHECK-NEXT: v105: f6 @Cell = NewClosure function=f6 allocationSite=9 closureForm=Slim
-# CHECK-NEXT: v106: L1 @Cell = NewObject -, v105 layout=L1 fields=[0] allocationSite=10 allocation=2 allocationClass=1
-# CHECK-NEXT: v107: L1 @Cell = FinishObject v106
-# CHECK-NEXT: v108: int[1, 9] @JSValue = Call v2, -, v107 calleeName="start" accessSite=15 callees=[f3] [isNeverInlined]
-# CHECK-NEXT: v109: int[1, 9] @Int32 = AssumeType v108 provenType=int[1, 9]
-# CHECK-NEXT: v110: int[1, 9] @Int32 = AssumeType v109 provenType=number
-# CHECK-NEXT: v111: int[1, 9] @Int32 = AssumeType v110 provenType=int
-# CHECK-NEXT: v112: int[1, 9] @JSValue = Call v2, -, v95 calleeName="start" accessSite=16 callees=[f3] [isNeverInlined]
-# CHECK-NEXT: v113: int[1, 9] @Int32 = AssumeType v112 provenType=int[1, 9]
-# CHECK-NEXT: v114: int[1, 9] @Int32 = AssumeType v113 provenType=number
-# CHECK-NEXT: v115: int[1, 9] @Int32 = AssumeType v114 provenType=int
-# CHECK-NEXT: v116: f7 @Cell = NewClosure function=f7 allocationSite=11 allocation=0
-# CHECK-NEXT: v117: f7 @Cell = NewClass v116 layout=L0 request=4
-# CHECK-NEXT: PutModuleVariable v117 variable=g0
-# CHECK-NEXT: v119: f7 @Cell = FinishClass v117 layout=L0
-# CHECK-NEXT: v120: anything @JSValue = Construct v119 accessSite=17 callees=[f7]
-# CHECK-NEXT: v121: L0 @JSValue = AssumeType v120 provenType=L0
-# CHECK-NEXT: v122: L0 @JSValue = AssumeType v121 provenType=undefined|null|L0
-# CHECK-NEXT: v123: L0 @JSValue = AssumeType v122 provenType=L0
-# CHECK-NEXT: v124: int[1, 9] @JSValue = Call v2, -, v123 calleeName="start" accessSite=18 callees=[f3] [isNeverInlined]
-# CHECK-NEXT: v125: int[1, 9] @Int32 = AssumeType v124 provenType=int[1, 9]
-# CHECK-NEXT: v126: int[1, 9] @Int32 = AssumeType v125 provenType=number
-# CHECK-NEXT: v127: int[1, 9] @Int32 = AssumeType v126 provenType=int
-# CHECK-NEXT: v128: undefined @JSValue = CallBuiltin -, v111, v115, v127 overload=ConsoleLog/0 accessSite=19
-# CHECK-NEXT: v129: undefined @JSValue = Undefined
-# CHECK-NEXT: Return v129
-# CHECK-NEXT: b15() frequency=Rare:
-# CHECK-NEXT: v130: Object @JSValue = CallBuiltin -, v89 overload=ObjectCreate/0
-# CHECK-NEXT: Jump -> next b14(v130)
-# CHECK-NEXT: b16(v131: Object @Cell):
-# CHECK-NEXT: v132: Object @Cell = AssumeType v131 provenType=Object
-# CHECK-NEXT: v133: undefined @Void = Undefined
-# CHECK-NEXT: v134: Object @Cell = Upcast v132 castType=anything
-# CHECK-NEXT: v135: Object @Cell = AssumeType v134 provenType=Object
-# CHECK-NEXT: v136: Object @Cell = AssumeType v135 provenType=Object
-# CHECK-NEXT: v137: builtin(GlobalThis) @Cell = Builtin builtin=GlobalThis
-# CHECK-NEXT: v138: builtin(Console) @Cell = Builtin builtin=Console
-# CHECK-NEXT: v139: builtin(Console) @Cell = AssumeType v138 provenType=builtin(Console)
-# CHECK-NEXT: v140: builtin(Console) @Cell = Upcast v139 castType=anything
-# CHECK-NEXT: v141: builtin(Console) @Cell = AssumeType v140 provenType=builtin(Console)
-# CHECK-NEXT: v142: builtin(ConsoleLog) @Cell = Builtin builtin=ConsoleLog
-# CHECK-NEXT: v143: builtin(ConsoleLog) @Cell = AssumeType v142 provenType=builtin(ConsoleLog)
-# CHECK-NEXT: v144: builtin(ConsoleLog) @Cell = Upcast v143 castType=anything
-# CHECK-NEXT: v145: builtin(ConsoleLog) @Cell = AssumeType v144 provenType=builtin(ConsoleLog)
-# CHECK-NEXT: v146: f6 @Cell = NewClosure function=f6 allocationSite=9 closureForm=Slim
-# CHECK-NEXT: v147: L1 @Cell = NewObject -, v146 layout=L1 fields=[0] allocationSite=10 allocation=2 allocationClass=1
-# CHECK-NEXT: v148: L1 @Cell = FinishObject v147
-# CHECK-NEXT: v149: int[1, 9] @JSValue = Call v2, -, v148 calleeName="start" accessSite=15 callees=[f3]
-# CHECK-NEXT: v150: int[1, 9] @Int32 = AssumeType v149 provenType=int[1, 9]
-# CHECK-NEXT: v151: int[1, 9] @Int32 = AssumeType v150 provenType=number
-# CHECK-NEXT: v152: int[1, 9] @Int32 = AssumeType v151 provenType=int
-# CHECK-NEXT: v153: int[1, 9] @JSValue = Call v2, -, v136 calleeName="start" accessSite=16 callees=[f3]
-# CHECK-NEXT: v154: int[1, 9] @Int32 = AssumeType v153 provenType=int[1, 9]
-# CHECK-NEXT: v155: int[1, 9] @Int32 = AssumeType v154 provenType=number
-# CHECK-NEXT: v156: int[1, 9] @Int32 = AssumeType v155 provenType=int
-# CHECK-NEXT: v157: f7 @Cell = NewClosure function=f7 allocationSite=11 allocation=0
-# CHECK-NEXT: v158: f7 @Cell = NewClass v157 layout=L0 request=4
-# CHECK-NEXT: PutModuleVariable v158 variable=g0
-# CHECK-NEXT: v160: f7 @Cell = FinishClass v158 layout=L0
-# CHECK-NEXT: v161: anything @JSValue = Construct v160 accessSite=17 callees=[f7]
-# CHECK-NEXT: v162: L0 @JSValue = AssumeType v161 provenType=L0
-# CHECK-NEXT: v163: L0 @JSValue = AssumeType v162 provenType=undefined|null|L0
-# CHECK-NEXT: v164: L0 @JSValue = AssumeType v163 provenType=L0
-# CHECK-NEXT: v165: int[1, 9] @JSValue = Call v2, -, v164 calleeName="start" accessSite=18 callees=[f3]
-# CHECK-NEXT: v166: int[1, 9] @Int32 = AssumeType v165 provenType=int[1, 9]
-# CHECK-NEXT: v167: int[1, 9] @Int32 = AssumeType v166 provenType=number
-# CHECK-NEXT: v168: int[1, 9] @Int32 = AssumeType v167 provenType=int
-# CHECK-NEXT: v169: undefined @JSValue = CallBuiltin -, v152, v156, v168 overload=ConsoleLog/0 accessSite=19
-# CHECK-NEXT: v170: undefined @JSValue = Undefined
-# CHECK-NEXT: Return v170
-# CHECK-NEXT: b17() frequency=Rare:
-# CHECK-NEXT: v171: Object @JSValue = CallBuiltin -, v59 overload=ObjectCreate/0
-# CHECK-NEXT: Jump -> next b16(v171)
+# CHECK-NEXT: v41: anything @JSValue = Call v1, -, v40 calleeName="nameOf" accessSite=10 callees=[f2]
+# CHECK-NEXT: v42: undefined|int @JSValue = AssumeType v41 provenType=undefined|int
+# CHECK-NEXT: v43: undefined|int @JSValue = Expect v42 expectedType=undefined|null|string
+# CHECK-NEXT: v44: "text" @JSValue = String string="text"
+# CHECK-NEXT: v45: anything @JSValue = Call v1, -, v44 calleeName="nameOf" accessSite=11 callees=[f2]
+# CHECK-NEXT: v46: undefined|int @JSValue = AssumeType v45 provenType=undefined|int
+# CHECK-NEXT: v47: undefined|int @JSValue = Expect v46 expectedType=undefined|null|string
+# CHECK-NEXT: v48: undefined @JSValue = CallBuiltin -, v34, v43, v47 overload=ConsoleLog/0 accessSite=12
+# CHECK-NEXT: v49: builtin(Object) @Cell = Builtin builtin=Object
+# CHECK-NEXT: v50: builtin(ObjectCreate) @Cell = Builtin builtin=ObjectCreate
+# CHECK-NEXT: v51: f5 @Cell = NewClosure function=f5 allocationSite=6 closureForm=Slim
+# CHECK-NEXT: v52: L1 @Cell = NewObject -, v51 layout=L1 fields=[0] allocationSite=7 allocation=2 allocationClass=1
+# CHECK-NEXT: v53: L1 @JSValue = FinishObject v52
+# CHECK-NEXT: TryCallInline -, v53 inlineBuiltin=ObjectCreate overload=ObjectCreate/0 -> done b2(), miss b3()
+# CHECK-NEXT: b2(v54: Object @Cell):
+# CHECK-NEXT: v55: Object @Cell = AssumeType v54 provenType=Object
+# CHECK-NEXT: v56: undefined @Void = Undefined
+# CHECK-NEXT: v57: Object @Cell = Upcast v55 castType=anything
+# CHECK-NEXT: v58: Object @Cell = AssumeType v57 provenType=Object
+# CHECK-NEXT: v59: Object @Cell = AssumeType v58 provenType=Object
+# CHECK-NEXT: v60: builtin(GlobalThis) @Cell = Builtin builtin=GlobalThis
+# CHECK-NEXT: v61: builtin(Console) @Cell = Builtin builtin=Console
+# CHECK-NEXT: v62: builtin(Console) @Cell = AssumeType v61 provenType=builtin(Console)
+# CHECK-NEXT: v63: builtin(Console) @Cell = Upcast v62 castType=anything
+# CHECK-NEXT: v64: builtin(Console) @Cell = AssumeType v63 provenType=builtin(Console)
+# CHECK-NEXT: v65: builtin(ConsoleLog) @Cell = Builtin builtin=ConsoleLog
+# CHECK-NEXT: v66: builtin(ConsoleLog) @Cell = AssumeType v65 provenType=builtin(ConsoleLog)
+# CHECK-NEXT: v67: builtin(ConsoleLog) @Cell = Upcast v66 castType=anything
+# CHECK-NEXT: v68: builtin(ConsoleLog) @Cell = AssumeType v67 provenType=builtin(ConsoleLog)
+# CHECK-NEXT: v69: f6 @Cell = NewClosure function=f6 allocationSite=9 closureForm=Slim
+# CHECK-NEXT: v70: L1 @Cell = NewObject -, v69 layout=L1 fields=[0] allocationSite=10 allocation=2 allocationClass=1
+# CHECK-NEXT: v71: L1 @Cell = FinishObject v70
+# CHECK-NEXT: v72: int[1, 9] @JSValue = Call v2, -, v71 calleeName="start" accessSite=15 callees=[f3]
+# CHECK-NEXT: v73: int[1, 9] @Int32 = AssumeType v72 provenType=int[1, 9]
+# CHECK-NEXT: v74: int[1, 9] @Int32 = AssumeType v73 provenType=number
+# CHECK-NEXT: v75: int[1, 9] @Int32 = AssumeType v74 provenType=int
+# CHECK-NEXT: v76: int[1, 9] @JSValue = Call v2, -, v59 calleeName="start" accessSite=16 callees=[f3]
+# CHECK-NEXT: v77: int[1, 9] @Int32 = AssumeType v76 provenType=int[1, 9]
+# CHECK-NEXT: v78: int[1, 9] @Int32 = AssumeType v77 provenType=number
+# CHECK-NEXT: v79: int[1, 9] @Int32 = AssumeType v78 provenType=int
+# CHECK-NEXT: v80: f7 @Cell = NewClosure function=f7 allocationSite=11 allocation=0
+# CHECK-NEXT: v81: f7 @Cell = NewClass v80 layout=L0 request=4
+# CHECK-NEXT: PutModuleVariable v81 variable=g0
+# CHECK-NEXT: v83: f7 @Cell = FinishClass v81 layout=L0
+# CHECK-NEXT: v84: anything @JSValue = Construct v83 accessSite=17 callees=[f7]
+# CHECK-NEXT: v85: L0 @JSValue = AssumeType v84 provenType=L0
+# CHECK-NEXT: v86: L0 @JSValue = AssumeType v85 provenType=undefined|null|L0
+# CHECK-NEXT: v87: L0 @JSValue = AssumeType v86 provenType=L0
+# CHECK-NEXT: v88: int[1, 9] @JSValue = Call v2, -, v87 calleeName="start" accessSite=18 callees=[f3]
+# CHECK-NEXT: v89: int[1, 9] @Int32 = AssumeType v88 provenType=int[1, 9]
+# CHECK-NEXT: v90: int[1, 9] @Int32 = AssumeType v89 provenType=number
+# CHECK-NEXT: v91: int[1, 9] @Int32 = AssumeType v90 provenType=int
+# CHECK-NEXT: v92: undefined @JSValue = CallBuiltin -, v75, v79, v91 overload=ConsoleLog/0 accessSite=19
+# CHECK-NEXT: v93: undefined @JSValue = Undefined
+# CHECK-NEXT: Return v93
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: v94: Object @JSValue = CallBuiltin -, v53 overload=ObjectCreate/0
+# CHECK-NEXT: Jump -> next b2(v94)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="twice"
 # CHECK: module=m0 position=184 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w0 flags=[IsExpected]}] results=[{type=number site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: anything @JSValue):
-# CHECK-NEXT: v1: undefined|string|L3 @JSValue = AssumeType v0 provenType=undefined|string|L3
-# CHECK-NEXT: v2: false @Boolean = TypeTest v1 testedType=number
-# CHECK-NEXT: TestAndBranch v2 -> taken b1(| 0), notTaken b2(| 0)
-# CHECK-NEXT: b1(v3: never @JSValue):
-# CHECK-NEXT: Unreachable
-# CHECK-NEXT: b2(v4: undefined|string|L3 @JSValue) frequency=Unlikely:
-# CHECK-NEXT: v5: undefined|string|L3 @JSValue = Expect v4 expectedType=anything|absent
-# CHECK-NEXT: Jump -> next b3()
-# CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b4()
-# CHECK-NEXT: b4() frequency=Unlikely:
-# CHECK-NEXT: v6: 2 @Double = Integer integer=2
-# CHECK-NEXT: v7: number @Double = Mul v5, v6 form=NumberAndValue
-# CHECK-NEXT: v8: number @Double = AssumeType v7 provenType=number
-# CHECK-NEXT: Return v8
+# CHECK-NEXT: v4: undefined|string|L3 @JSValue = AssumeType v0 provenType=undefined|string|L3
+# CHECK-NEXT: v1: undefined|string|L3 @JSValue = Expect v4 expectedType=number
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v2: 2 @Double = Integer integer=2
+# CHECK-NEXT: v3: number @Double = Mul v1, v2 form=NumberAndValue
+# CHECK-NEXT: v5: number @Double = AssumeType v3 provenType=number
+# CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="nameOf"
 # CHECK: module=m0 position=354 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L2 site=w2 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=w3 flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: anything @JSValue):
-# CHECK-NEXT: v1: "text"|L2|Map<never, never, proven, pristine[Storage, Names]> @JSValue = AssumeType v0 provenType="text"|L2|Map<never, never, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v2: boolean @Boolean = TypeTest v1 testedType=undefined|null|L2
-# CHECK-NEXT: TestAndBranch v2 -> taken b1(| 0), notTaken b6(| 0)
-# CHECK-NEXT: b1(v3: L2 @JSValue):
-# CHECK-NEXT: v4: L2 @JSValue = Upcast v3 castType=undefined|null|L2
-# CHECK-NEXT: Jump -> next b2()
-# CHECK-NEXT: b2():
-# CHECK-NEXT: Jump -> next b3()
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v5: int[-2147483643, 2147483647] @JSValue = PropGet v4 key="name" accessSite=20 receivers=[L2, ..]
-# CHECK-NEXT: v6: int[-2147483643, 2147483647] @JSValue = AssumeType v5 provenType=undefined|int
-# CHECK-NEXT: v7: false @Boolean = TypeTest v6 testedType=undefined|null|string
-# CHECK-NEXT: TestAndBranch v7 -> taken b4(| 0), notTaken b5(| 0)
-# CHECK-NEXT: b4(v8: never @JSValue):
-# CHECK-NEXT: Unreachable
-# CHECK-NEXT: b5(v9: int[-2147483643, 2147483647] @JSValue) frequency=Unlikely:
-# CHECK-NEXT: v10: int[-2147483643, 2147483647] @JSValue = Expect v9 expectedType=anything|absent
-# CHECK-NEXT: Jump -> next b9(v10)
-# CHECK-NEXT: b6(v11: "text"|Map<never, never, proven, pristine[Storage, Names]> @JSValue) frequency=Unlikely:
-# CHECK-NEXT: v12: "text"|Map<never, never, proven, pristine[Storage, Names]> @JSValue = Expect v11 expectedType=anything|absent
-# CHECK-NEXT: Jump -> next b7()
-# CHECK-NEXT: b7() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b8()
-# CHECK-NEXT: b8() frequency=Unlikely:
-# CHECK-NEXT: v13: anything @JSValue = PropGet v12 key="name" accessSite=20 receivers=[L2, ..]
-# CHECK-NEXT: v14: undefined|int @JSValue = AssumeType v13 provenType=undefined|int
-# CHECK-NEXT: v15: undefined|int @JSValue = Expect v14 expectedType=undefined|null|string
-# CHECK-NEXT: Jump -> next b9(v15)
-# CHECK-NEXT: b9(v16: undefined|int @JSValue) frequency=Unlikely:
-# CHECK-NEXT: Return v16
+# CHECK-NEXT: v4: "text"|L2|Map<never, never, proven, pristine[Storage, Names]> @JSValue = AssumeType v0 provenType="text"|L2|Map<never, never, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v3: "text"|L2|Map<never, never, proven, pristine[Storage, Names]> @JSValue = Expect v4 expectedType=undefined|null|L2
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v1: anything @JSValue = PropGet v3 key="name" accessSite=20 siteCache=0
+# CHECK-NEXT: v5: undefined|int @JSValue = AssumeType v1 provenType=undefined|int
+# CHECK-NEXT: v2: undefined|int @JSValue = Expect v5 expectedType=undefined|null|string
+# CHECK-NEXT: Return v2
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="start"
 # CHECK: module=m0 position=547 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0|L1|Object site=w4 flags=[OmitsNull, OmitsUndefined]}] results=[{type=int[1, 9] site=w5}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

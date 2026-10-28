@@ -808,7 +808,7 @@ runtimefunction id=131091 function=f36 visibility=Private
 # -- generated: filter
 # CHECK-LABEL: function {{*}}name="filter"
 # CHECK: role=Library
-# CHECK-NEXT: instructions: 109, patchpoints: 9, rare instructions: 139, polls: 1
+# CHECK-NEXT: instructions: 100, patchpoints: 9, rare instructions: 80, polls: 1
 # CHECK-NEXT: end of function f28
 # CHECK-LABEL: function {{*}}name="filter"
 # CHECK: role=GenericEntrypoint

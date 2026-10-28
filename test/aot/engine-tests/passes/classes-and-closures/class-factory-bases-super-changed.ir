@@ -558,22 +558,7 @@ function f40 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Jump -> next b13(v40)
 # CHECK-NEXT: }
 # CHECK-LABEL: function f24 module=
-# CHECK: m0 position=347 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L4 flags=[IsFromCompiler, IsExpected]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: anything @JSValue):
-# CHECK-NEXT: v1: object @JSValue = AssumeType v0 provenType=object
-# CHECK-NEXT: v2: boolean @Boolean = TypeTest v1 testedType=L4
-# CHECK-NEXT: TestAndBranch v2 -> taken b1(| 0), notTaken b2(| 0)
-# CHECK-NEXT: b1(v3: L4 @Cell):
-# CHECK-NEXT: v4: 1 @OptionalInt64 = Integer integer=1
-# CHECK-NEXT: PutSlotOrAdd v3, -, v4 key="own" receivers=[L4] level=Proven accessSite=44 fieldAccess=5
-# CHECK-NEXT: v6: undefined @JSValue = Undefined
-# CHECK-NEXT: Return v6
-# CHECK-NEXT: b2(v7: object @Cell) frequency=Unlikely:
-# CHECK-NEXT: v8: 1 @JSValue = Integer integer=1
-# CHECK-NEXT: PropDefine v7, v8 key="own" accessSite=44
-# CHECK-NEXT: v10: undefined @JSValue = Undefined
-# CHECK-NEXT: Return v10
-# CHECK-NEXT: }
+# CHECK: m0 position=347 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L4 flags=[IsFromCompiler, IsExpected]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="Point"
 # CHECK: module=m0 position=221 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget] captures=[{type=f4}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers takesNewTarget=true} {
 # CHECK-NEXT: b0(v0: f4 @Cell, v1: anything @JSValue, v2: anything @JSValue):

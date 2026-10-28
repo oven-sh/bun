@@ -416,5 +416,5 @@ function f23 module=m1 kind=Module role=Library flags=[IsChecked] thisType={type
 # -- generated: sweep
 # CHECK-LABEL: function {{*}}name="sweep"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 206, patchpoints: 42, rare instructions: 443, polls: 24
+# CHECK-NEXT: instructions: 108, patchpoints: 19, rare instructions: 159, polls: 3
 # CHECK-NEXT: end of function f7

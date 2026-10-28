@@ -66,6 +66,8 @@ pub struct LoadOptions {
     pub reads_main_module_without_its_name: bool,
     /// An earlier compile of the same program read them, by the word of the engine, where a module object goes where the front end does not follow it.
     pub ways_read_out_of_sight: WaysBetweenModuleObjects,
+    /// An earlier compile of the same program followed them because a file names them, and nobody reads them of a module object, by the word of the engine.
+    pub ways_named_that_nobody_reads: WaysBetweenModuleObjects,
 }
 
 /// The members of a module object that lead to other module objects.
@@ -78,6 +80,11 @@ pub struct WaysBetweenModuleObjects {
 impl WaysBetweenModuleObjects {
     pub fn is_empty(self) -> bool {
         !self.children && !self.parent
+    }
+
+    pub fn add(&mut self, more: WaysBetweenModuleObjects) {
+        self.children |= more.children;
+        self.parent |= more.parent;
     }
 }
 
@@ -146,6 +153,7 @@ impl LoadOptions {
             keeps_library_code_without_names: false,
             reads_main_module_without_its_name: false,
             ways_read_out_of_sight: WaysBetweenModuleObjects::default(),
+            ways_named_that_nobody_reads: WaysBetweenModuleObjects::default(),
         }
     }
 }

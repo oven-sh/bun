@@ -470,61 +470,35 @@ runtimefunction id=69 function=f62
 # CHECK-NEXT: PropSet v9, v3 key="length" accessSite=24
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: b3():
-# CHECK-NEXT: Jump -> next b10()
+# CHECK-NEXT: Jump -> next b5()
 # CHECK-NEXT: b4() role=CatchHandler:
 # CHECK-NEXT: v11: anything = CatchValue
 # CHECK-NEXT: v12: "throws " = String string="throws "
 # CHECK-NEXT: v13: anything ~ undefined|null|Error = Upcast v11 castType=anything
 # CHECK-NEXT: v14: anything = PropGet v13 key="constructor" accessSite=14
-# CHECK-NEXT: v15: boolean = TypeTest v14 testedType=undefined|null|function
-# CHECK-NEXT: Branch v15 -> taken b5(| 0), notTaken b8(| 0)
-# CHECK-NEXT: b5(v16: undefined|null|function):
-# CHECK-NEXT: v17: function = RequireObjectCoercible v16 name="name"
-# CHECK-NEXT: v18: anything = PropGet v17 key="name" accessSite=15
-# CHECK-NEXT: v19: boolean = TypeTest v18 testedType=undefined|null|string
-# CHECK-NEXT: Branch v19 -> taken b6(| 0), notTaken b7(| 0)
-# CHECK-NEXT: b6(v20: undefined|null|string):
-# CHECK-NEXT: v21: string = Add v12, v20
-# CHECK-NEXT: Jump -> next b10()
-# CHECK-NEXT: b7(v22: boolean|number|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b9(v22)
-# CHECK-NEXT: b8(v23: boolean|number|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v24: anything = PropGet v23 key="name" accessSite=15
-# CHECK-NEXT: v25: anything ~ undefined|null|string = Expect v24 expectedType=undefined|null|string
-# CHECK-NEXT: Jump -> next b9(v25)
-# CHECK-NEXT: b9(v26: anything) frequency=Unlikely:
-# CHECK-NEXT: v27: string = Add v12, v26
-# CHECK-NEXT: Jump -> next b10()
-# CHECK-NEXT: b10() handler=b11():
-# CHECK-NEXT: v28: null = Null
-# CHECK-NEXT: PropSet v1, v28 key="prototype" accessSite=25
-# CHECK-NEXT: Jump -> next b17()
-# CHECK-NEXT: b11() role=CatchHandler:
-# CHECK-NEXT: v30: anything = CatchValue
-# CHECK-NEXT: v31: "throws " = String string="throws "
-# CHECK-NEXT: v32: anything ~ undefined|null|Error = Upcast v30 castType=anything
-# CHECK-NEXT: v33: anything = PropGet v32 key="constructor" accessSite=14
-# CHECK-NEXT: v34: boolean = TypeTest v33 testedType=undefined|null|function
-# CHECK-NEXT: Branch v34 -> taken b12(| 0), notTaken b15(| 0)
-# CHECK-NEXT: b12(v35: undefined|null|function):
-# CHECK-NEXT: v36: function = RequireObjectCoercible v35 name="name"
-# CHECK-NEXT: v37: anything = PropGet v36 key="name" accessSite=15
-# CHECK-NEXT: v38: boolean = TypeTest v37 testedType=undefined|null|string
-# CHECK-NEXT: Branch v38 -> taken b13(| 0), notTaken b14(| 0)
-# CHECK-NEXT: b13(v39: undefined|null|string):
-# CHECK-NEXT: v40: string = Add v31, v39
-# CHECK-NEXT: Jump -> next b17()
-# CHECK-NEXT: b14(v41: boolean|number|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b16(v41)
-# CHECK-NEXT: b15(v42: boolean|number|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v43: anything = PropGet v42 key="name" accessSite=15
-# CHECK-NEXT: v44: anything ~ undefined|null|string = Expect v43 expectedType=undefined|null|string
-# CHECK-NEXT: Jump -> next b16(v44)
-# CHECK-NEXT: b16(v45: anything) frequency=Unlikely:
-# CHECK-NEXT: v46: string = Add v31, v45
-# CHECK-NEXT: Jump -> next b17()
-# CHECK-NEXT: b17():
-# CHECK-NEXT: v47: string = CallDirect v1 function=f2 accessSite=28
-# CHECK-NEXT: v48: undefined = Undefined
-# CHECK-NEXT: Return v48
+# CHECK-NEXT: v15: anything ~ undefined|null|function = Expect v14 expectedType=undefined|null|function
+# CHECK-NEXT: v16: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v15 name="name"
+# CHECK-NEXT: v17: anything = PropGet v16 key="name" accessSite=15
+# CHECK-NEXT: v18: anything ~ undefined|null|string = Expect v17 expectedType=undefined|null|string
+# CHECK-NEXT: v19: string = Add v12, v18
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: b5() handler=b6():
+# CHECK-NEXT: v20: null = Null
+# CHECK-NEXT: PropSet v1, v20 key="prototype" accessSite=25
+# CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: b6() role=CatchHandler:
+# CHECK-NEXT: v22: anything = CatchValue
+# CHECK-NEXT: v23: "throws " = String string="throws "
+# CHECK-NEXT: v24: anything ~ undefined|null|Error = Upcast v22 castType=anything
+# CHECK-NEXT: v25: anything = PropGet v24 key="constructor" accessSite=14
+# CHECK-NEXT: v26: anything ~ undefined|null|function = Expect v25 expectedType=undefined|null|function
+# CHECK-NEXT: v27: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v26 name="name"
+# CHECK-NEXT: v28: anything = PropGet v27 key="name" accessSite=15
+# CHECK-NEXT: v29: anything ~ undefined|null|string = Expect v28 expectedType=undefined|null|string
+# CHECK-NEXT: v30: string = Add v23, v29
+# CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: b7():
+# CHECK-NEXT: v31: string = CallDirect v1 function=f2 accessSite=28
+# CHECK-NEXT: v32: undefined = Undefined
+# CHECK-NEXT: Return v32
 # CHECK-NEXT: }

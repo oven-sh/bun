@@ -652,12 +652,13 @@ runtimefunction id=131091 function=f66 visibility=Private
 # CHECK-NEXT: b0(v0: undefined|string @JSValue, v1: undefined|string @JSValue, v2: undefined|string @JSValue):
 # CHECK-NEXT: v3: number|string|bigint @JSValue = Add v0, v1 form=Generic
 # CHECK-NEXT: v4: number|string|bigint @JSValue = Add v3, v2 form=Generic
-# CHECK-NEXT: Return v4
+# CHECK-NEXT: v5: number|string|bigint @JSValue = Expect v4 expectedType=undefined|null|string
+# CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="spreadIntoSum"
 # CHECK: module=m0 position=699 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> site=w11 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w12}] functionTypes=[f32] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: undefined|Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> @JSValue):
-# CHECK-NEXT: v1: number @JSValue = CallDirect function=f116
+# CHECK-NEXT: v1: number @JSValue = CallDirect function=f115
 # CHECK-NEXT: ReturnCall v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="downBySpread"
@@ -666,7 +667,7 @@ runtimefunction id=131091 function=f66 visibility=Private
 # CHECK-NEXT: v2: boolean @Boolean = TypeTest v1 testedType=number
 # CHECK-NEXT: TestAndBranch v2 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v3: number @Double):
-# CHECK-NEXT: v4: number @JSValue = CallDirect v3 function=f120
+# CHECK-NEXT: v4: number @JSValue = CallDirect v3 function=f119
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: b2() frequency=Unlikely:
 # CHECK-NEXT: v5: anything @JSValue = CallDirect v0, v1 function=f77
@@ -678,7 +679,7 @@ runtimefunction id=131091 function=f66 visibility=Private
 # CHECK-NEXT: v2: boolean @Boolean = TypeTest v1 testedType=number
 # CHECK-NEXT: TestAndBranch v2 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v3: number @Double):
-# CHECK-NEXT: v4: number @JSValue = CallDirect v3 function=f121
+# CHECK-NEXT: v4: number @JSValue = CallDirect v3 function=f120
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: b2() frequency=Unlikely:
 # CHECK-NEXT: v5: number @JSValue = CallDirect v0, v1 function=f78
@@ -690,7 +691,7 @@ runtimefunction id=131091 function=f66 visibility=Private
 # CHECK-NEXT: v2: boolean @Boolean = TypeTest v1 testedType=number
 # CHECK-NEXT: TestAndBranch v2 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v3: number @Double):
-# CHECK-NEXT: v4: number @JSValue = CallDirect v3 function=f122
+# CHECK-NEXT: v4: number @JSValue = CallDirect v3 function=f121
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: b2() frequency=Unlikely:
 # CHECK-NEXT: v5: anything @JSValue = CallDirect v0, v1 function=f79
@@ -702,7 +703,7 @@ runtimefunction id=131091 function=f66 visibility=Private
 # CHECK-NEXT: v2: boolean @Boolean = TypeTest v1 testedType=undefined|null|string
 # CHECK-NEXT: TestAndBranch v2 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v3: undefined|null|string @JSValue):
-# CHECK-NEXT: v4: string @JSValue = CallDirect v3 function=f123
+# CHECK-NEXT: v4: string @JSValue = CallDirect v3 function=f122
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: b2() frequency=Unlikely:
 # CHECK-NEXT: v5: string @JSValue = CallDirect v0, v1 function=f80
@@ -714,7 +715,7 @@ runtimefunction id=131091 function=f66 visibility=Private
 # CHECK-NEXT: v2: boolean @Boolean = TypeTest v1 testedType=undefined|null|string
 # CHECK-NEXT: TestAndBranch v2 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v3: undefined|null|string @JSValue):
-# CHECK-NEXT: v4: string @JSValue = CallDirect v3 function=f124
+# CHECK-NEXT: v4: string @JSValue = CallDirect v3 function=f123
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: b2() frequency=Unlikely:
 # CHECK-NEXT: v5: string @JSValue = CallDirect v0, v1 function=f81
@@ -723,7 +724,7 @@ runtimefunction id=131091 function=f66 visibility=Private
 # CHECK-LABEL: function {{*}}name="viaForwarder"
 # CHECK: module=m0 position=3271 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w29}, {type=number site=w30 flags=[IsExpected]}] results=[{type=number site=w31}] functionTypes=[f48] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: number @Double, v1: anything @JSValue):
-# CHECK-NEXT: v2: number @JSValue = CallDirect function=f117 @3271 tail
+# CHECK-NEXT: v2: number @JSValue = CallDirect function=f116 @3271 tail
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="spreadIntoThrower"
@@ -750,13 +751,13 @@ runtimefunction id=131091 function=f66 visibility=Private
 # CHECK-LABEL: function {{*}}name="throughTwo"
 # CHECK: module=m0 position=1257 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> site=w54 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w55}] functionTypes=[f38] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell):
-# CHECK-NEXT: v1: number @JSValue = CallDirect function=f118
+# CHECK-NEXT: v1: number @JSValue = CallDirect function=f117
 # CHECK-NEXT: ReturnCall v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="viaClosure"
 # CHECK: module=m0 position=1390 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> site=w56 flags=[OmitsNull, OmitsUndefined]}, {type=2 site=w57}] results=[{type=number site=w58}] functionTypes=[f40] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell, v1: 2 @Int32):
-# CHECK-NEXT: v2: number @JSValue = CallDirect v1 function=f119
+# CHECK-NEXT: v2: number @JSValue = CallDirect v1 function=f118
 # CHECK-NEXT: ReturnCall v2
 # CHECK-NEXT: }
 # CHECK-LABEL: function f23 module=
@@ -765,7 +766,7 @@ runtimefunction id=131091 function=f66 visibility=Private
 # CHECK-NEXT: v2: boolean @Boolean = TypeTest v1 testedType=number
 # CHECK-NEXT: TestAndBranch v2 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v3: int|whole|string|L0 @JSValue = CallDirect v0 function=f126
+# CHECK-NEXT: v3: int|whole|string|L0 @JSValue = CallDirect v0 function=f125
 # CHECK-NEXT: ReturnCall v3
 # CHECK-NEXT: b2() frequency=Unlikely:
 # CHECK-NEXT: v4: int|whole|string|L0 @JSValue = CallDirect v0, v1 function=f84
@@ -844,7 +845,7 @@ runtimefunction id=131091 function=f66 visibility=Private
 # CHECK-LABEL: function {{*}}name="spreadIntoSum"
 # CHECK: module=m0 position=699 role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f4}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f4 @Cell, v1: anything @JSValue, v2: anything @JSValue):
-# CHECK-NEXT: v3: number @JSValue = CallDirect function=f116
+# CHECK-NEXT: v3: number @JSValue = CallDirect function=f115
 # CHECK-NEXT: ReturnCall v3 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="downBySpread"
@@ -883,7 +884,7 @@ runtimefunction id=131091 function=f66 visibility=Private
 # CHECK-NEXT: ReturnCall v5 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="viaForwarder"
-# CHECK: module=m0 position=3271 role=GenericEntrypoint flags=[HasThis, IsChecked] length=2 captures=[{type=f11}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f11} creator=Entrypoint{target=f11 arguments=Registers} inlineFrames=[{}, {callee=f117 callPosition=3271 isTailCall=true module=m0}] {
+# CHECK: module=m0 position=3271 role=GenericEntrypoint flags=[HasThis, IsChecked] length=2 captures=[{type=f11}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f11} creator=Entrypoint{target=f11 arguments=Registers} inlineFrames=[{}, {callee=f116 callPosition=3271 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f11 @Cell, v1: anything @JSValue, v2: anything @JSValue, v3: anything @JSValue):
 # CHECK-NEXT: v4: undefined @JSValue = Undefined
 # CHECK-NEXT: v5: undefined @JSValue = Undefined
@@ -916,14 +917,14 @@ runtimefunction id=131091 function=f66 visibility=Private
 # CHECK-LABEL: function {{*}}name="throughTwo"
 # CHECK: module=m0 position=1257 role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f21}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f21} creator=Entrypoint{target=f21 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f21 @Cell, v1: anything @JSValue, v2: anything @JSValue):
-# CHECK-NEXT: v3: number @JSValue = CallDirect function=f118
+# CHECK-NEXT: v3: number @JSValue = CallDirect function=f117
 # CHECK-NEXT: ReturnCall v3 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="viaClosure"
 # CHECK: module=m0 position=1390 role=GenericEntrypoint flags=[HasThis, IsChecked] length=2 captures=[{type=f22}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f22} creator=Entrypoint{target=f22 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f22 @Cell, v1: anything @JSValue, v2: anything @JSValue, v3: anything @JSValue):
 # CHECK-NEXT: v4: 2 @JSValue = AssumeType v3 provenType=2
-# CHECK-NEXT: v5: number @JSValue = CallDirect v4 function=f119
+# CHECK-NEXT: v5: number @JSValue = CallDirect v4 function=f118
 # CHECK-NEXT: ReturnCall v5 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="spreadIntoSum"
@@ -942,7 +943,7 @@ runtimefunction id=131091 function=f66 visibility=Private
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="throughTwo"
-# CHECK: module=m0 position=1257 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} results=[{type=number site=w55}] functionTypes=[f38] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f21} inlineFrames=[{}, {callee=f116 callPosition=4294967295 isTailCall=true module=m0}] {
+# CHECK: module=m0 position=1257 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} results=[{type=number site=w55}] functionTypes=[f38] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f21} inlineFrames=[{}, {callee=f115 callPosition=4294967295 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v1: f1 @Cell = GetModuleVariable variable=g0
 # CHECK-NEXT: v2: number @JSValue = Call v1 calleeName="sum3" accessSite=9 callees=[f1]

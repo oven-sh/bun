@@ -673,18 +673,12 @@ runtimefunction id=131072 function=f303 visibility=Private
 # CHECK-NEXT: v8: anything = GetGlobalBinding key="innerWidth" level=Expected accessSite=21 [seesScriptBindings, isForTypeOf]
 # CHECK-NEXT: v9: undefined|int = AssumeType v8 provenType=undefined|int
 # CHECK-NEXT: v10: boolean = TypeTest v9 testedType=number
-# CHECK-NEXT: Branch v10 -> taken b2(), notTaken b4()
+# CHECK-NEXT: Branch v10 -> taken b2(), notTaken b3()
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v11: anything = GetGlobalBinding key="innerWidth" level=Expected accessSite=22 [seesScriptBindings]
-# CHECK-NEXT: v12: undefined|int = AssumeType v11 provenType=undefined|int
-# CHECK-NEXT: v13: boolean = TypeTest v12 testedType=number
-# CHECK-NEXT: Branch v13 -> taken b4(), notTaken b3()
-# CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b5()
-# CHECK-NEXT: b4():
-# CHECK-NEXT: Jump -> next b5()
-# CHECK-NEXT: b5():
-# CHECK-NEXT: v14: boolean = Call v6 calleeName="inBrowser" accessSite=5 callees=[f2]
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v12: boolean = Call v6 calleeName="inBrowser" accessSite=5 callees=[f2]
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="titleOr"
@@ -702,13 +696,10 @@ runtimefunction id=131072 function=f303 visibility=Private
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v4: anything = GetGlobalBinding key="innerWidth" level=Expected accessSite=22 [seesScriptBindings]
 # CHECK-NEXT: v5: undefined|int = AssumeType v4 provenType=undefined|int
-# CHECK-NEXT: v6: boolean = TypeTest v5 testedType=number
-# CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b3()
-# CHECK-NEXT: b2(v7: int):
+# CHECK-NEXT: Jump -> next b2(v5)
+# CHECK-NEXT: b2(v6: undefined|int):
+# CHECK-NEXT: v7: undefined|int ~ int = Expect v6 expectedType=number
 # CHECK-NEXT: Return v7
-# CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v8: undefined = Undefined
-# CHECK-NEXT: Return v8
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="show"
 # CHECK: module=m0 position=623 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string site=w10 flags=[OmitsNull, OmitsUndefined]}, {type=f19|f20|f26 site=w11 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
@@ -754,12 +745,7 @@ runtimefunction id=131072 function=f303 visibility=Private
 # CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
 # CHECK-NEXT: v3: null|object = GetSuperBase v0
 # CHECK-NEXT: v4: object ~ L0 = SuperConstructList v3, v1, v2 layout=L0 accessSite=41
-# CHECK-NEXT: v5: boolean ~ true = TypeTest v4 testedType=L0
-# CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b2(| 0)
-# CHECK-NEXT: b1(v6: L0):
-# CHECK-NEXT: Return v6
-# CHECK-NEXT: b2(v7: object) frequency=Unlikely:
-# CHECK-NEXT: Return v7
+# CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="return"
 # CHECK: module=m2 position=548 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=86 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
@@ -788,12 +774,7 @@ runtimefunction id=131072 function=f303 visibility=Private
 # CHECK-NEXT: v2: anything = GetArgument
 # CHECK-NEXT: v3: null|object = GetSuperBase v0
 # CHECK-NEXT: v4: object ~ L0 = ConstructSuperForwardVarargs v3, v2 layout=L0 firstArgument=1 accessSite=41
-# CHECK-NEXT: v5: boolean ~ true = TypeTest v4 testedType=L0
-# CHECK-NEXT: Branch v5 -> taken b1(), notTaken b2()
-# CHECK-NEXT: b1():
 # CHECK-NEXT: Return v4
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b1() @2048 tail
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="show"
 # CHECK: module=m0 position=623 role=CalleeVersion flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=f19|f20|f26}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f7 parameter=1073741825 parameterMap=[{original=1}]} creator=Version{provenVersion=f7} inlineFrames=[{}, {callee=f26 callPosition=4294967295 module=m0}] {

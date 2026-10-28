@@ -4637,7 +4637,7 @@ runtimefunction id=65580 function=f29
 # CHECK-NEXT: Branch v46 -> taken b17(), notTaken b12()
 # CHECK-NEXT: b12():
 # CHECK-NEXT: v47: 2 = Integer integer=2
-# CHECK-NEXT: v48: anything = GetArrayElement v1, v47, v37 level=Expected accessSite=696 [keyIsIntegral]
+# CHECK-NEXT: v48: anything = ElemGet v1, v47 accessSite=696 [keyIsIntegral]
 # CHECK-NEXT: Jump -> next b16(v48)
 # CHECK-NEXT: b13() frequency=Unlikely:
 # CHECK-NEXT: v49: anything = ElemGet v1, v35 accessSite=692 [keyIsIntegral]

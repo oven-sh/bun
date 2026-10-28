@@ -189,14 +189,8 @@ function f1 name="describe" module=m0 position=560 flags=[IsChecked, HasExplicit
 # CHECK-NEXT: v3: "two" = String string="two"
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: b4():
-# CHECK-NEXT: v4: boolean = TypeTest v0 testedType=number
-# CHECK-NEXT: Branch v4 -> taken b5(| 0), notTaken b6(| 0)
-# CHECK-NEXT: b5(v5: number):
-# CHECK-NEXT: v6: "number " = String string="number "
-# CHECK-NEXT: v7: string = Add v6, v5
-# CHECK-NEXT: Return v7
-# CHECK-NEXT: b6(v8: bigint) frequency=Unlikely:
-# CHECK-NEXT: v9: "number " = String string="number "
-# CHECK-NEXT: v10: string = Add v9, v8
-# CHECK-NEXT: Return v10
+# CHECK-NEXT: v4: number|bigint ~ number = Expect v0 expectedType=number
+# CHECK-NEXT: v5: "number " = String string="number "
+# CHECK-NEXT: v6: string = Add v5, v4
+# CHECK-NEXT: Return v6
 # CHECK-NEXT: }

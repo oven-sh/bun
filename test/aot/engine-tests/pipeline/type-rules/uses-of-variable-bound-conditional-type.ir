@@ -4572,24 +4572,169 @@ runtimefunction id=65580 function=f153
 runtimefunction id=131091 function=f223 visibility=Private
 # -- generated: element destructured fromTuple reassigned chained lengthOf logical template added defaulted isArray held f28 f30 f31 f32 f33 f34 f35 f36 f37 f38 f39 f41 f42 f43 f45 f46 f47 f48 f49 f50 f51 f52 f54 f55 f56 f57 f58 f59 f60 f63 f65 f66 f67 f68 f69 f70 f71 f72 f73 f75 f76 f77 f78 f79 f80 f81 f82 f83 f84 f85 f154
 # CHECK-LABEL: function {{*}}name="element"
-# CHECK: module=m0 position=966 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L1 site=w4}, {type=Array<"a"|L3, proven, pristine[Storage, Names, Dense]> site=w5 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w6 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=966 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L1 site=w4}, {type=Array<"a"|L3, proven, pristine[Storage, Names, Dense]> site=w5 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w6 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: L1, v1: Array<"a"|L3, proven, pristine[Storage, Names, Dense]>):
-# CHECK-NEXT: v2: string = CallDirect v1 function=f335
-# CHECK-NEXT: ReturnCall v2
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: v3: boolean = HasArrayStorage v1 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b3()
+# CHECK-NEXT: b1(v4: guard):
+# CHECK-NEXT: v5: boolean = IsInBounds v1, v2
+# CHECK-NEXT: Branch v5 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v6: guard):
+# CHECK-NEXT: v7: guard = AllGuards v4, v6
+# CHECK-NEXT: v8: "a"|L3 = GetArrayElement v1, v2, v7 arrayStorage=Contiguous level=Expected accessSite=32 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: Jump -> next b4(v8)
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: v9: undefined|"a"|L3 = ElemGet v1, v2 accessSite=32 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b4(v9)
+# CHECK-NEXT: b4(v10: undefined|"a"|L3 ~ "a"|L3):
+# CHECK-NEXT: v11: undefined|"a"|L3 ~ undefined = Expect v10 expectedType=undefined|null|Array<number>
+# CHECK-NEXT: v12: string = TypeOf v11
+# CHECK-NEXT: v13: " " = String string=" "
+# CHECK-NEXT: v14: string = Add v12, v13
+# CHECK-NEXT: v15: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v15, v14
+# CHECK-NEXT: v17: i32 = StringBuilderCheckpoint v15
+# CHECK-NEXT: v18: i32 = StringBuilderCheckpoint v15
+# CHECK-NEXT: v19: boolean ~ true = TypeTest v11 testedType=undefined
+# CHECK-NEXT: Branch v19 -> taken b5(), notTaken b6(| 0)
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v20: buildercursor = StringBuilderReserve v15 size=128
+# CHECK-NEXT: Jump -> next b11(v20)
+# CHECK-NEXT: b6(v21: "a"|L3):
+# CHECK-NEXT: v22: boolean = TypeTest v21 testedType=object
+# CHECK-NEXT: Branch v22 -> taken b7(| 0), notTaken b9()
+# CHECK-NEXT: b7(v23: L3):
+# CHECK-NEXT: v24: int[0, 2] = CallDirect v23, v15 function=f251 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v24 cases=[1] -> case b8(), otherwise b9()
+# CHECK-NEXT: b8():
+# CHECK-NEXT: v25: buildercursor = StringBuilderReserve v15 size=128
+# CHECK-NEXT: Jump -> next b10(v25)
+# CHECK-NEXT: b9() frequency=Rare:
+# CHECK-NEXT: v26: buildercursor = StringBuilderReserve v15 size=128
+# CHECK-NEXT: Jump -> next b10(v26)
+# CHECK-NEXT: b10(v27: buildercursor):
+# CHECK-NEXT: Jump -> next b11(v27)
+# CHECK-NEXT: b11(v28: buildercursor):
+# CHECK-NEXT: StringBuilderCommit v15, v28
+# CHECK-NEXT: v30: i32 = StringBuilderCheckpoint v15
+# CHECK-NEXT: v31: boolean = StrictEq v18, v30
+# CHECK-NEXT: Branch v31 -> taken b12(), notTaken b13()
+# CHECK-NEXT: b12() frequency=Rare:
+# CHECK-NEXT: StringBuilderRollBack v15, v17
+# CHECK-NEXT: v33: undefined = Undefined
+# CHECK-NEXT: v34: undefined|string = CallBuiltin -, v11, v33 overload=JSONStringify/0 accessSite=29
+# CHECK-NEXT: Jump -> next b14(v34)
+# CHECK-NEXT: b13():
+# CHECK-NEXT: v35: "" = String string=""
+# CHECK-NEXT: Jump -> next b14(v35)
+# CHECK-NEXT: b14(v36: undefined|string ~ ""):
+# CHECK-NEXT: StringBuilderAppend v15, v36
+# CHECK-NEXT: v38: string = StringBuilderFinish v15
+# CHECK-NEXT: Return v38
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="destructured"
-# CHECK: module=m0 position=1076 role=ParameterWrapper flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L1 site=w7}, {type=L2 site=w8 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w9 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ParameterWrapper{body=f228 parameter=1} inlineFrames=[{}, {callee=f228 callPosition=1076 module=m0}, {callee=f228 callPosition=4294967295 isTailCall=true module=m0}] {
+# CHECK: module=m0 position=1076 role=ParameterWrapper flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L1 site=w7}, {type=L2 site=w8 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w9 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ParameterWrapper{body=f228 parameter=1} inlineFrames=[{}, {callee=f228 callPosition=1076 module=m0}, {callee=f228 callPosition=4294967295 isTailCall=true module=m0}, {callee=f1 callPosition=4294967295 parent=2 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: L1, v1: L2):
 # CHECK-NEXT: v2: "a"|L3|Array<1, proven, pristine[Storage, Names, Dense]> = GetSlot v1 key="held" receivers=[L2] level=Proven accessSite=34
 # CHECK-NEXT: v3: "a"|L3 = AssumeType v2 provenType="a"|L3
-# CHECK-NEXT: v4: string = CallDirect v3 function=f1 accessSite=35 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v4 casts=[{declared={type=string} resolution=Assume}]
+# CHECK-NEXT: v4: string = TypeOf v3
+# CHECK-NEXT: v5: " " = String string=" "
+# CHECK-NEXT: v6: string = Add v4, v5
+# CHECK-NEXT: v7: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v7, v6
+# CHECK-NEXT: v9: i32 = StringBuilderCheckpoint v7
+# CHECK-NEXT: v10: i32 = StringBuilderCheckpoint v7
+# CHECK-NEXT: v11: boolean = TypeTest v3 testedType=object
+# CHECK-NEXT: Branch v11 -> taken b1(| 0), notTaken b3()
+# CHECK-NEXT: b1(v12: L3):
+# CHECK-NEXT: v13: int[0, 2] = CallDirect v12, v7 function=f251 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v13 cases=[1] -> case b2(), otherwise b3()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v14: buildercursor = StringBuilderReserve v7 size=128
+# CHECK-NEXT: Jump -> next b4(v14)
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: v15: buildercursor = StringBuilderReserve v7 size=128
+# CHECK-NEXT: Jump -> next b4(v15)
+# CHECK-NEXT: b4(v16: buildercursor):
+# CHECK-NEXT: StringBuilderCommit v7, v16
+# CHECK-NEXT: v18: i32 = StringBuilderCheckpoint v7
+# CHECK-NEXT: v19: boolean = StrictEq v10, v18
+# CHECK-NEXT: Branch v19 -> taken b5(), notTaken b6()
+# CHECK-NEXT: b5() frequency=Rare:
+# CHECK-NEXT: StringBuilderRollBack v7, v9
+# CHECK-NEXT: v21: undefined = Undefined
+# CHECK-NEXT: v22: undefined|string = CallBuiltin -, v3, v21 overload=JSONStringify/0 accessSite=29
+# CHECK-NEXT: Jump -> next b7(v22)
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v23: "" = String string=""
+# CHECK-NEXT: Jump -> next b7(v23)
+# CHECK-NEXT: b7(v24: undefined|string ~ ""):
+# CHECK-NEXT: StringBuilderAppend v7, v24
+# CHECK-NEXT: v26: string = StringBuilderFinish v7
+# CHECK-NEXT: Return v26
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="fromTuple"
-# CHECK: module=m0 position=1200 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L1 site=w10}, {type=Array<"a"|L3, proven, pristine[Storage, Names, Dense]> site=w11 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w12 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=1200 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L1 site=w10}, {type=Array<"a"|L3, proven, pristine[Storage, Names, Dense]> site=w11 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w12 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: L1, v1: Array<"a"|L3, proven, pristine[Storage, Names, Dense]>):
-# CHECK-NEXT: v2: string = CallDirect v1 function=f336
-# CHECK-NEXT: ReturnCall v2
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: v3: boolean = HasArrayStorage v1 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b3()
+# CHECK-NEXT: b1(v4: guard):
+# CHECK-NEXT: v5: boolean = IsInBounds v1, v2
+# CHECK-NEXT: Branch v5 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v6: guard):
+# CHECK-NEXT: v7: guard = AllGuards v4, v6
+# CHECK-NEXT: v8: "a"|L3 = GetArrayElement v1, v2, v7 arrayStorage=Contiguous level=Expected [keyIsIntegral, isInBounds, storageIsUndecided]
+# CHECK-NEXT: Jump -> next b4(v8)
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: v9: undefined|"a"|L3 = ElemGet v1, v2 [keyIsIntegral, storageIsUndecided]
+# CHECK-NEXT: Jump -> next b4(v9)
+# CHECK-NEXT: b4(v10: undefined|"a"|L3 ~ "a"|L3):
+# CHECK-NEXT: v11: undefined|"a"|L3 ~ undefined = Expect v10 expectedType=undefined|null|Array<number>
+# CHECK-NEXT: v12: string = TypeOf v11
+# CHECK-NEXT: v13: " " = String string=" "
+# CHECK-NEXT: v14: string = Add v12, v13
+# CHECK-NEXT: v15: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v15, v14
+# CHECK-NEXT: v17: i32 = StringBuilderCheckpoint v15
+# CHECK-NEXT: v18: i32 = StringBuilderCheckpoint v15
+# CHECK-NEXT: v19: boolean ~ true = TypeTest v11 testedType=undefined
+# CHECK-NEXT: Branch v19 -> taken b5(), notTaken b6(| 0)
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v20: buildercursor = StringBuilderReserve v15 size=128
+# CHECK-NEXT: Jump -> next b11(v20)
+# CHECK-NEXT: b6(v21: "a"|L3):
+# CHECK-NEXT: v22: boolean = TypeTest v21 testedType=object
+# CHECK-NEXT: Branch v22 -> taken b7(| 0), notTaken b9()
+# CHECK-NEXT: b7(v23: L3):
+# CHECK-NEXT: v24: int[0, 2] = CallDirect v23, v15 function=f251 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v24 cases=[1] -> case b8(), otherwise b9()
+# CHECK-NEXT: b8():
+# CHECK-NEXT: v25: buildercursor = StringBuilderReserve v15 size=128
+# CHECK-NEXT: Jump -> next b10(v25)
+# CHECK-NEXT: b9() frequency=Rare:
+# CHECK-NEXT: v26: buildercursor = StringBuilderReserve v15 size=128
+# CHECK-NEXT: Jump -> next b10(v26)
+# CHECK-NEXT: b10(v27: buildercursor):
+# CHECK-NEXT: Jump -> next b11(v27)
+# CHECK-NEXT: b11(v28: buildercursor):
+# CHECK-NEXT: StringBuilderCommit v15, v28
+# CHECK-NEXT: v30: i32 = StringBuilderCheckpoint v15
+# CHECK-NEXT: v31: boolean = StrictEq v18, v30
+# CHECK-NEXT: Branch v31 -> taken b12(), notTaken b13()
+# CHECK-NEXT: b12() frequency=Rare:
+# CHECK-NEXT: StringBuilderRollBack v15, v17
+# CHECK-NEXT: v33: undefined = Undefined
+# CHECK-NEXT: v34: undefined|string = CallBuiltin -, v11, v33 overload=JSONStringify/0 accessSite=29
+# CHECK-NEXT: Jump -> next b14(v34)
+# CHECK-NEXT: b13():
+# CHECK-NEXT: v35: "" = String string=""
+# CHECK-NEXT: Jump -> next b14(v35)
+# CHECK-NEXT: b14(v36: undefined|string ~ ""):
+# CHECK-NEXT: StringBuilderAppend v15, v36
+# CHECK-NEXT: v38: string = StringBuilderFinish v15
+# CHECK-NEXT: Return v38
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="reassigned"
 # CHECK: module=m0 position=1596 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=L1 site=w19}, {type="a"|L3 site=w20}, {type=null|"b" site=w21}] results=[{type=string site=w22 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 isTailCall=true module=m0}] {
@@ -4605,66 +4750,65 @@ runtimefunction id=131091 function=f223 visibility=Private
 # CHECK-LABEL: function {{*}}name="chained"
 # CHECK: module=m0 position=1855 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L1 site=w26}, {type=null|"abc"|L3|Array<1, proven, pristine[Storage, Names, Dense]> site=w27}] results=[{type=string site=w28 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: L1, v1: null|"abc"|L3|Array<1, proven, pristine[Storage, Names, Dense]>):
-# CHECK-NEXT: v2: boolean = TypeTest v1 testedType=undefined|null|Array<number>
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b5(| 0)
-# CHECK-NEXT: b1(v3: null|Array<1, proven, pristine[Storage, Names, Dense]>):
-# CHECK-NEXT: v4: boolean = TypeTest v3 testedType=undefined|null
-# CHECK-NEXT: Branch v4 -> taken b2(), notTaken b3(| 0)
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v5: undefined = Undefined
-# CHECK-NEXT: Jump -> next b4(v5)
-# CHECK-NEXT: b3(v6: Array<1, proven, pristine[Storage, Names, Dense]>):
-# CHECK-NEXT: v7: int[0, 4294967295] = CallBuiltin v6 overload=ArrayPrototypeLength/0 accessSite=41
-# CHECK-NEXT: Jump -> next b4(v7)
-# CHECK-NEXT: b4(v8: undefined|int[0, 4294967295]):
-# CHECK-NEXT: v9: string = TypeOf v8
-# CHECK-NEXT: v10: " " = String string=" "
-# CHECK-NEXT: v11: undefined = Undefined
-# CHECK-NEXT: v12: undefined|string = CallBuiltin -, v8, v11 overload=JSONStringify/0 accessSite=29
-# CHECK-NEXT: v13: string = Strcat v9, v10, v12
-# CHECK-NEXT: Return v13
-# CHECK-NEXT: b5(v14: "abc"|L3) frequency=Unlikely:
-# CHECK-NEXT: v15: boolean = TypeTest v14 testedType="abc"
-# CHECK-NEXT: Branch v15 -> taken b6(), notTaken b7()
+# CHECK-NEXT: v2: null|"abc"|L3|Array<1, proven, pristine[Storage, Names, Dense]> ~ null|Array<1, proven, pristine[Storage, Names, Dense]> = Expect v1 expectedType=undefined|null|Array<number>
+# CHECK-NEXT: v3: boolean = TypeTest v2 testedType=undefined|null
+# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b2(| 0)
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v4: undefined = Undefined
+# CHECK-NEXT: Jump -> next b8(v4)
+# CHECK-NEXT: b2(v5: "abc"|L3|Array<1, proven, pristine[Storage, Names, Dense]> ~ Array<1, proven, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v6: boolean ~ true = TypeTest v5 testedType=Array
+# CHECK-NEXT: Branch v6 -> taken b3(| 0), notTaken b4(| 0)
+# CHECK-NEXT: b3(v7: Array<1, proven, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v8: int[0, 4294967295] = CallBuiltin v7 overload=ArrayPrototypeLength/0 accessSite=41
+# CHECK-NEXT: Jump -> next b7(v8)
+# CHECK-NEXT: b4(v9: "abc"|L3) frequency=Unlikely:
+# CHECK-NEXT: v10: boolean = TypeTest v9 testedType="abc"
+# CHECK-NEXT: Branch v10 -> taken b5(), notTaken b6()
+# CHECK-NEXT: b5() frequency=Unlikely:
+# CHECK-NEXT: v11: 3 = Integer integer=3
+# CHECK-NEXT: Jump -> next b7(v11)
 # CHECK-NEXT: b6() frequency=Unlikely:
-# CHECK-NEXT: v16: 3 = Integer integer=3
-# CHECK-NEXT: Jump -> next b8(v16)
-# CHECK-NEXT: b7() frequency=Unlikely:
+# CHECK-NEXT: v12: undefined = Undefined
+# CHECK-NEXT: Jump -> next b7(v12)
+# CHECK-NEXT: b7(v13: undefined|int[0, 4294967295] ~ int[0, 4294967295]):
+# CHECK-NEXT: Jump -> next b8(v13)
+# CHECK-NEXT: b8(v14: undefined|int[0, 4294967295]):
+# CHECK-NEXT: v15: string = TypeOf v14
+# CHECK-NEXT: v16: " " = String string=" "
 # CHECK-NEXT: v17: undefined = Undefined
-# CHECK-NEXT: Jump -> next b8(v17)
-# CHECK-NEXT: b8(v18: undefined|3) frequency=Unlikely:
-# CHECK-NEXT: v19: string = CallDirect v18 function=f1 accessSite=42 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v19 casts=[{declared={type=string} resolution=Assume}]
+# CHECK-NEXT: v18: undefined|string = CallBuiltin -, v14, v17 overload=JSONStringify/0 accessSite=29
+# CHECK-NEXT: v19: string = Strcat v15, v16, v18
+# CHECK-NEXT: Return v19
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="lengthOf"
-# CHECK: module=m0 position=1970 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L1 site=w29}, {type="abc"|L3|Array<1, proven, pristine[Storage, Names, Dense]> site=w30}] results=[{type=string site=w31 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 isTailCall=true module=m0}] {
+# CHECK: module=m0 position=1970 role=ParameterWrapper flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L1 site=w29}, {type="abc"|L3|Array<1, proven, pristine[Storage, Names, Dense]> site=w30}] results=[{type=string site=w31 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ParameterWrapper{body=f229 parameter=1} inlineFrames=[{}, {callee=f229 callPosition=1970 module=m0}, {callee=f229 callPosition=4294967295 isTailCall=true module=m0}, {callee=f1 callPosition=4294967295 parent=2 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: L1, v1: "abc"|L3|Array<1, proven, pristine[Storage, Names, Dense]>):
-# CHECK-NEXT: v2: boolean = TypeTest v1 testedType=undefined|null|Array<number>
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2(| 0)
-# CHECK-NEXT: b1(v3: Array<1, proven, pristine[Storage, Names, Dense]>):
-# CHECK-NEXT: v4: int[0, 4294967295] = CallBuiltin v3 overload=ArrayPrototypeLength/0 accessSite=43
-# CHECK-NEXT: v5: string = TypeOf v4
-# CHECK-NEXT: v6: " " = String string=" "
-# CHECK-NEXT: v7: undefined = Undefined
-# CHECK-NEXT: v8: undefined|string = CallBuiltin -, v4, v7 overload=JSONStringify/0 accessSite=29
-# CHECK-NEXT: v9: string = Strcat v5, v6, v8
-# CHECK-NEXT: Return v9
-# CHECK-NEXT: b2(v10: "abc"|L3) frequency=Unlikely:
-# CHECK-NEXT: v11: boolean = TypeTest v10 testedType="abc"
-# CHECK-NEXT: Branch v11 -> taken b3(), notTaken b4()
+# CHECK-NEXT: v2: "abc"|L3|Array<1, proven, pristine[Storage, Names, Dense]> ~ Array<1, proven, pristine[Storage, Names, Dense]> = Expect v1 expectedType=undefined|null|Array<number>
+# CHECK-NEXT: v3: boolean ~ true = TypeTest v2 testedType=Array
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+# CHECK-NEXT: b1(v4: Array<1, proven, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v5: int[0, 4294967295] = CallBuiltin v4 overload=ArrayPrototypeLength/0 accessSite=43
+# CHECK-NEXT: Jump -> next b5(v5)
+# CHECK-NEXT: b2(v6: "abc"|L3) frequency=Unlikely:
+# CHECK-NEXT: v7: boolean = TypeTest v6 testedType="abc"
+# CHECK-NEXT: Branch v7 -> taken b3(), notTaken b4()
 # CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v12: 3 = Integer integer=3
-# CHECK-NEXT: Jump -> next b5(v12)
+# CHECK-NEXT: v8: 3 = Integer integer=3
+# CHECK-NEXT: Jump -> next b5(v8)
 # CHECK-NEXT: b4() frequency=Unlikely:
+# CHECK-NEXT: v9: undefined = Undefined
+# CHECK-NEXT: Jump -> next b5(v9)
+# CHECK-NEXT: b5(v10: undefined|int[0, 4294967295] ~ int[0, 4294967295]):
+# CHECK-NEXT: v11: string = TypeOf v10
+# CHECK-NEXT: v12: " " = String string=" "
 # CHECK-NEXT: v13: undefined = Undefined
-# CHECK-NEXT: Jump -> next b5(v13)
-# CHECK-NEXT: b5(v14: undefined|3) frequency=Unlikely:
-# CHECK-NEXT: v15: undefined|3 ~ 3 = Expect v14 expectedType=number
-# CHECK-NEXT: v16: string = CallDirect v15 function=f1 accessSite=44 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v16 casts=[{declared={type=string} resolution=Assume}]
+# CHECK-NEXT: v14: undefined|string = CallBuiltin -, v10, v13 overload=JSONStringify/0 accessSite=29
+# CHECK-NEXT: v15: string = Strcat v11, v12, v14
+# CHECK-NEXT: Return v15
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="logical"
-# CHECK: module=m0 position=2248 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L1 site=w36}, {type=""|"a"|L3 site=w37}] results=[{type=string site=w38 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=2248 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L1 site=w36}, {type=""|"a"|L3 site=w37}] results=[{type=string site=w38 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 isTailCall=true module=m0}, {callee=f251 callPosition=4294967295 parent=1}] {
 # CHECK-NEXT: b0(v0: L1, v1: ""|"a"|L3):
 # CHECK-NEXT: v2: boolean = ToBoolean v1
 # CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()
@@ -4673,9 +4817,55 @@ runtimefunction id=131091 function=f223 visibility=Private
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v4: "empty" = String string="empty"
 # CHECK-NEXT: Jump -> next b3(v4)
-# CHECK-NEXT: b3(v5: "a"|"empty"|L3):
-# CHECK-NEXT: v6: string = CallDirect v5 function=f1 accessSite=46 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v6 casts=[{declared={type=string} resolution=Assume}]
+# CHECK-NEXT: b3(v5: "a"|"empty"|L3 ~ "empty"):
+# CHECK-NEXT: v6: string = TypeOf v5
+# CHECK-NEXT: v7: " " = String string=" "
+# CHECK-NEXT: v8: string = Add v6, v7
+# CHECK-NEXT: v9: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v9, v8
+# CHECK-NEXT: v11: i32 = StringBuilderCheckpoint v9
+# CHECK-NEXT: v12: i32 = StringBuilderCheckpoint v9
+# CHECK-NEXT: v13: boolean ~ false = TypeTest v5 testedType=object
+# CHECK-NEXT: Branch v13 -> taken b4(| 0), notTaken b8()
+# CHECK-NEXT: b4(v14: L3):
+# CHECK-NEXT: v15: boolean = JSONHasStackSpace
+# CHECK-NEXT: Branch v15 -> taken b5(), notTaken b8()
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v16: boolean = ShapeTest v14 layouts=[L3]
+# CHECK-NEXT: Branch v16 -> taken b6(| 0), notTaken b8()
+# CHECK-NEXT: b6(v17: guard):
+# CHECK-NEXT: v18: boolean = HasKeyOrder v14, v17 layout=L3 fields=[0]
+# CHECK-NEXT: Branch v18 -> taken b7(| 0), notTaken b8()
+# CHECK-NEXT: b7(v19: guard):
+# CHECK-NEXT: v20: guard = AllGuards v17, v19
+# CHECK-NEXT: v21: int[-2147483643, 2147483647] = GetSlot v14, v20 key="x" receivers=[L3] level=Expected
+# CHECK-NEXT: v22: buildercursor = StringBuilderReserve v9 size=128
+# CHECK-NEXT: v23: buildercursor = JSONAppendKey v9, v22 string="x" [opensObject]
+# CHECK-NEXT: v24: buildercursor = JSONAppendInteger v9, v23, v21
+# CHECK-NEXT: v25: buildercursor = JSONAppendToken v9, v24 jsonToken=CloseObject
+# CHECK-NEXT: StringBuilderCommit v9, v25
+# CHECK-NEXT: v27: buildercursor = StringBuilderReserve v9 size=128
+# CHECK-NEXT: Jump -> next b9(v27)
+# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: v28: buildercursor = StringBuilderReserve v9 size=128
+# CHECK-NEXT: Jump -> next b9(v28)
+# CHECK-NEXT: b9(v29: buildercursor):
+# CHECK-NEXT: StringBuilderCommit v9, v29
+# CHECK-NEXT: v31: i32 = StringBuilderCheckpoint v9
+# CHECK-NEXT: v32: boolean = StrictEq v12, v31
+# CHECK-NEXT: Branch v32 -> taken b10(), notTaken b11()
+# CHECK-NEXT: b10() frequency=Rare:
+# CHECK-NEXT: StringBuilderRollBack v9, v11
+# CHECK-NEXT: v34: undefined = Undefined
+# CHECK-NEXT: v35: undefined|string = CallBuiltin -, v5, v34 overload=JSONStringify/0 accessSite=29
+# CHECK-NEXT: Jump -> next b12(v35)
+# CHECK-NEXT: b11():
+# CHECK-NEXT: v36: "" = String string=""
+# CHECK-NEXT: Jump -> next b12(v36)
+# CHECK-NEXT: b12(v37: undefined|string ~ ""):
+# CHECK-NEXT: StringBuilderAppend v9, v37
+# CHECK-NEXT: v39: string = StringBuilderFinish v9
+# CHECK-NEXT: Return v39
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="template"
 # CHECK: module=m0 position=2366 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L1 site=w39}, {type="a"|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> site=w40}] results=[{type=string site=w41 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -4692,35 +4882,88 @@ runtimefunction id=131091 function=f223 visibility=Private
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="defaulted"
-# CHECK: module=m0 position=2969 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L1 site=w55}, {type=undefined|"a"|L3 site=w56}] results=[{type=string site=w57 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 isTailCall=true module=m0}] {
+# CHECK: module=m0 position=2969 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L1 site=w55}, {type=undefined|"a"|L3 site=w56}] results=[{type=string site=w57 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 isTailCall=true module=m0}, {callee=f251 callPosition=4294967295 parent=1}] {
 # CHECK-NEXT: b0(v0: L1, v1: undefined|"a"|L3):
 # CHECK-NEXT: v2: boolean = TypeTest v1 testedType=undefined
 # CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2(| 0)
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v3: undefined = Undefined
-# CHECK-NEXT: v4: string = TypeOf v3
-# CHECK-NEXT: v5: " " = String string=" "
-# CHECK-NEXT: v6: undefined = Undefined
-# CHECK-NEXT: v7: undefined|string = CallBuiltin -, v3, v6 overload=JSONStringify/0 accessSite=29
-# CHECK-NEXT: v8: string = Strcat v4, v5, v7
-# CHECK-NEXT: Return v8
-# CHECK-NEXT: b2(v9: "a"|L3) frequency=Unlikely:
-# CHECK-NEXT: v10: string = CallDirect v9 function=f1 accessSite=54 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v10 casts=[{declared={type=string} resolution=Assume}]
+# CHECK-NEXT: Jump -> next b3(v3)
+# CHECK-NEXT: b2(v4: "a"|L3):
+# CHECK-NEXT: Jump -> next b3(v4)
+# CHECK-NEXT: b3(v5: undefined|"a"|L3):
+# CHECK-NEXT: v6: undefined|"a"|L3 ~ undefined = Expect v5 expectedType=undefined|null|Array<number>
+# CHECK-NEXT: v7: string = TypeOf v6
+# CHECK-NEXT: v8: " " = String string=" "
+# CHECK-NEXT: v9: string = Add v7, v8
+# CHECK-NEXT: v10: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v10, v9
+# CHECK-NEXT: v12: i32 = StringBuilderCheckpoint v10
+# CHECK-NEXT: v13: i32 = StringBuilderCheckpoint v10
+# CHECK-NEXT: v14: boolean ~ true = TypeTest v6 testedType=undefined
+# CHECK-NEXT: Branch v14 -> taken b4(), notTaken b5(| 0)
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v15: buildercursor = StringBuilderReserve v10 size=128
+# CHECK-NEXT: Jump -> next b12(v15)
+# CHECK-NEXT: b5(v16: "a"|L3):
+# CHECK-NEXT: v17: boolean = TypeTest v16 testedType=object
+# CHECK-NEXT: Branch v17 -> taken b6(| 0), notTaken b10()
+# CHECK-NEXT: b6(v18: L3):
+# CHECK-NEXT: v19: boolean = JSONHasStackSpace
+# CHECK-NEXT: Branch v19 -> taken b7(), notTaken b10()
+# CHECK-NEXT: b7():
+# CHECK-NEXT: v20: boolean = ShapeTest v18 layouts=[L3]
+# CHECK-NEXT: Branch v20 -> taken b8(| 0), notTaken b10()
+# CHECK-NEXT: b8(v21: guard):
+# CHECK-NEXT: v22: boolean = HasKeyOrder v18, v21 layout=L3 fields=[0]
+# CHECK-NEXT: Branch v22 -> taken b9(| 0), notTaken b10()
+# CHECK-NEXT: b9(v23: guard):
+# CHECK-NEXT: v24: guard = AllGuards v21, v23
+# CHECK-NEXT: v25: int[-2147483643, 2147483647] = GetSlot v18, v24 key="x" receivers=[L3] level=Expected
+# CHECK-NEXT: v26: buildercursor = StringBuilderReserve v10 size=128
+# CHECK-NEXT: v27: buildercursor = JSONAppendKey v10, v26 string="x" [opensObject]
+# CHECK-NEXT: v28: buildercursor = JSONAppendInteger v10, v27, v25
+# CHECK-NEXT: v29: buildercursor = JSONAppendToken v10, v28 jsonToken=CloseObject
+# CHECK-NEXT: StringBuilderCommit v10, v29
+# CHECK-NEXT: v31: buildercursor = StringBuilderReserve v10 size=128
+# CHECK-NEXT: Jump -> next b11(v31)
+# CHECK-NEXT: b10() frequency=Rare:
+# CHECK-NEXT: v32: buildercursor = StringBuilderReserve v10 size=128
+# CHECK-NEXT: Jump -> next b11(v32)
+# CHECK-NEXT: b11(v33: buildercursor):
+# CHECK-NEXT: Jump -> next b12(v33)
+# CHECK-NEXT: b12(v34: buildercursor):
+# CHECK-NEXT: StringBuilderCommit v10, v34
+# CHECK-NEXT: v36: i32 = StringBuilderCheckpoint v10
+# CHECK-NEXT: v37: boolean = StrictEq v13, v36
+# CHECK-NEXT: Branch v37 -> taken b13(), notTaken b14()
+# CHECK-NEXT: b13() frequency=Rare:
+# CHECK-NEXT: StringBuilderRollBack v10, v12
+# CHECK-NEXT: v39: undefined = Undefined
+# CHECK-NEXT: v40: undefined|string = CallBuiltin -, v6, v39 overload=JSONStringify/0 accessSite=29
+# CHECK-NEXT: Jump -> next b15(v40)
+# CHECK-NEXT: b14():
+# CHECK-NEXT: v41: "" = String string=""
+# CHECK-NEXT: Jump -> next b15(v41)
+# CHECK-NEXT: b15(v42: undefined|string ~ ""):
+# CHECK-NEXT: StringBuilderAppend v10, v42
+# CHECK-NEXT: v44: string = StringBuilderFinish v10
+# CHECK-NEXT: Return v44
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="isArray"
-# CHECK: module=m0 position=3102 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L1 site=w58}, {type="a"|L3|Array<1, proven, pristine[Storage, Names, Dense]> site=w59}] results=[{type=undefined|null|string site=w60 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=3102 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L1 site=w58}, {type="a"|L3|Array<1, proven, pristine[Storage, Names, Dense]> site=w59}] results=[{type=undefined|null|string site=w60 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: L1, v1: "a"|L3|Array<1, proven, pristine[Storage, Names, Dense]>):
-# CHECK-NEXT: v2: boolean = TypeTest v1 testedType=undefined|null|Array<number>
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v3: Array<1, proven, pristine[Storage, Names, Dense]>):
-# CHECK-NEXT: v4: "array " = String string="array "
-# CHECK-NEXT: v5: int[0, 4294967295] = CallBuiltin v3 overload=ArrayPrototypeLength/0 accessSite=56
-# CHECK-NEXT: v6: string = Add v4, v5
-# CHECK-NEXT: Return v6
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v7: string = CallDirect v1 function=f1 accessSite=57 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v7 casts=[{declared={type=undefined|null|string site=w162 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string site=w60 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}]
+# CHECK-NEXT: v2: "a"|L3|Array<1, proven, pristine[Storage, Names, Dense]> ~ Array<1, proven, pristine[Storage, Names, Dense]> = Expect v1 expectedType=undefined|null|Array<number>
+# CHECK-NEXT: v3: boolean ~ true = TypeTest v2 testedType=Array
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+# CHECK-NEXT: b1(v4: Array<1, proven, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v5: int[0, 4294967295] = CallBuiltin v4 overload=ArrayPrototypeLength/0 accessSite=56
+# CHECK-NEXT: v6: "array " = String string="array "
+# CHECK-NEXT: v7: string = Add v6, v5
+# CHECK-NEXT: Return v7
+# CHECK-NEXT: b2(v8: "a"|L3) frequency=Rare:
+# CHECK-NEXT: v9: string = CallDirect v8 function=f1 accessSite=57
+# CHECK-NEXT: ReturnCall v9 casts=[{declared={type=undefined|null|string site=w162 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string site=w60 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="held"
 # CHECK: module=m0 position=3859 kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0 site=w79} results=[{type="a"|L3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -4729,72 +4972,202 @@ runtimefunction id=131091 function=f223 visibility=Private
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function f28 module=
-# CHECK: m0 position=3921 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w80 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f93] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f2 callPosition=4294967295 isTailCall=true module=m0}, {callee=f227 callPosition=850 parent=1 module=m0}, {callee=f227 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
+# CHECK: m0 position=3921 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w80 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f93] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f2 callPosition=4294967295 isTailCall=true module=m0}, {callee=f227 callPosition=850 parent=1 module=m0}, {callee=f227 callPosition=4294967295 parent=1 isTailCall=true module=m0}, {callee=f1 callPosition=4294967295 parent=3 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "a" = String string="a"
-# CHECK-NEXT: v1: string = CallDirect v0 function=f1 accessSite=31 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v1 casts=[{declared={type=string} resolution=Assume}, {declared={type=undefined|null|string site=w170 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string site=w80 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}]
+# CHECK-NEXT: v1: string = TypeOf v0
+# CHECK-NEXT: v2: " " = String string=" "
+# CHECK-NEXT: v3: undefined = Undefined
+# CHECK-NEXT: v4: undefined|string = CallBuiltin -, v0, v3 overload=JSONStringify/0 accessSite=29
+# CHECK-NEXT: v5: string = Strcat v1, v2, v4
+# CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function f30 module=
-# CHECK: m0 position=3989 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w82 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f95] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f2 callPosition=4294967295 isTailCall=true module=m0}, {callee=f227 callPosition=850 parent=1 module=m0}, {callee=f227 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
+# CHECK: m0 position=3989 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w82 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f95] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f2 callPosition=4294967295 isTailCall=true module=m0}, {callee=f227 callPosition=850 parent=1 module=m0}, {callee=f227 callPosition=4294967295 parent=1 isTailCall=true module=m0}, {callee=f1 callPosition=4294967295 parent=3 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 2 = Integer integer=2
 # CHECK-NEXT: v1: L3 = NewObject -, v0 layout=L3 fields=[0] allocationSite=145 allocationClass=3
-# CHECK-NEXT: v2: string = CallDirect v1 function=f1 accessSite=31 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v2 casts=[{declared={type=string} resolution=Assume}, {declared={type=undefined|null|string site=w172 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string site=w82 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}]
+# CHECK-NEXT: v2: string = TypeOf v1
+# CHECK-NEXT: v3: " " = String string=" "
+# CHECK-NEXT: v4: string = Add v2, v3
+# CHECK-NEXT: v5: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v5, v4
+# CHECK-NEXT: v7: i32 = StringBuilderCheckpoint v5
+# CHECK-NEXT: v8: i32 = StringBuilderCheckpoint v5
+# CHECK-NEXT: v9: int[0, 2] = CallDirect v1, v5 function=f251 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v9 cases=[1] -> case b1(), otherwise b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v10: buildercursor = StringBuilderReserve v5 size=128
+# CHECK-NEXT: Jump -> next b3(v10)
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: v11: buildercursor = StringBuilderReserve v5 size=128
+# CHECK-NEXT: Jump -> next b3(v11)
+# CHECK-NEXT: b3(v12: buildercursor):
+# CHECK-NEXT: StringBuilderCommit v5, v12
+# CHECK-NEXT: v14: i32 = StringBuilderCheckpoint v5
+# CHECK-NEXT: v15: boolean = StrictEq v8, v14
+# CHECK-NEXT: Branch v15 -> taken b4(), notTaken b5()
+# CHECK-NEXT: b4() frequency=Rare:
+# CHECK-NEXT: StringBuilderRollBack v5, v7
+# CHECK-NEXT: v17: undefined = Undefined
+# CHECK-NEXT: v18: undefined|string = CallBuiltin -, v1, v17 overload=JSONStringify/0 accessSite=29
+# CHECK-NEXT: Jump -> next b6(v18)
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v19: "" = String string=""
+# CHECK-NEXT: Jump -> next b6(v19)
+# CHECK-NEXT: b6(v20: undefined|string ~ ""):
+# CHECK-NEXT: StringBuilderAppend v5, v20
+# CHECK-NEXT: v22: string = StringBuilderFinish v5
+# CHECK-NEXT: Return v22
 # CHECK-NEXT: }
 # CHECK-LABEL: function f31 module=
-# CHECK: m0 position=4049 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w83 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f96] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=4049 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w83 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f96] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f3 callPosition=4294967295 isTailCall=true module=m0}, {callee=f1 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "a" = String string="a"
-# CHECK-NEXT: v1: Array<"a", Contiguous> = NewArray v0 contents="a" allocationSite=71 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v2: Array<"a", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v1 provenType=Array<"a", proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v3: string = CallDirect v2 function=f335 accessSite=76 @0 tail
-# CHECK-NEXT: Return v3
+# CHECK-NEXT: v1: "a" = Expect v0 expectedType=undefined|null|Array<number>
+# CHECK-NEXT: v2: string = TypeOf v1
+# CHECK-NEXT: v3: " " = String string=" "
+# CHECK-NEXT: v4: undefined = Undefined
+# CHECK-NEXT: v5: undefined|string = CallBuiltin -, v1, v4 overload=JSONStringify/0 accessSite=29
+# CHECK-NEXT: v6: string = Strcat v2, v3, v5
+# CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function f32 module=
-# CHECK: m0 position=4077 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w84 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f97] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=4077 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w84 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f97] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f3 callPosition=4294967295 isTailCall=true module=m0}, {callee=f1 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 2 = Integer integer=2
 # CHECK-NEXT: v1: L3 = NewObject -, v0 layout=L3 fields=[0] allocationSite=146 allocationClass=3
-# CHECK-NEXT: v2: Array<L3> = NewArray v1 contents=L3 allocationSite=72 storage=Frame
-# CHECK-NEXT: v3: Array<L3, proven, pristine[Storage, Names, Dense]> = AssumeType v2 provenType=Array<L3, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v4: string = CallDirect v3 function=f335 accessSite=77 @0 tail
-# CHECK-NEXT: Return v4
+# CHECK-NEXT: v2: string = TypeOf v1
+# CHECK-NEXT: v3: " " = String string=" "
+# CHECK-NEXT: v4: string = Add v2, v3
+# CHECK-NEXT: v5: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v5, v4
+# CHECK-NEXT: v7: i32 = StringBuilderCheckpoint v5
+# CHECK-NEXT: v8: i32 = StringBuilderCheckpoint v5
+# CHECK-NEXT: v9: int[0, 2] = CallDirect v1, v5 function=f251 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v9 cases=[1] -> case b1(), otherwise b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v10: buildercursor = StringBuilderReserve v5 size=128
+# CHECK-NEXT: Jump -> next b3(v10)
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: v11: buildercursor = StringBuilderReserve v5 size=128
+# CHECK-NEXT: Jump -> next b3(v11)
+# CHECK-NEXT: b3(v12: buildercursor):
+# CHECK-NEXT: StringBuilderCommit v5, v12
+# CHECK-NEXT: v14: i32 = StringBuilderCheckpoint v5
+# CHECK-NEXT: v15: boolean = StrictEq v8, v14
+# CHECK-NEXT: Branch v15 -> taken b4(), notTaken b5()
+# CHECK-NEXT: b4() frequency=Rare:
+# CHECK-NEXT: StringBuilderRollBack v5, v7
+# CHECK-NEXT: v17: undefined = Undefined
+# CHECK-NEXT: v18: undefined|string = CallBuiltin -, v1, v17 overload=JSONStringify/0 accessSite=29
+# CHECK-NEXT: Jump -> next b6(v18)
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v19: "" = String string=""
+# CHECK-NEXT: Jump -> next b6(v19)
+# CHECK-NEXT: b6(v20: undefined|string ~ ""):
+# CHECK-NEXT: StringBuilderAppend v5, v20
+# CHECK-NEXT: v22: string = StringBuilderFinish v5
+# CHECK-NEXT: Return v22
 # CHECK-NEXT: }
 # CHECK-LABEL: function f33 module=
-# CHECK: m0 position=4136 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w85 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f98] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f4 callPosition=4294967295 isTailCall=true module=m0}, {callee=f228 callPosition=1076 parent=1 module=m0}, {callee=f228 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
+# CHECK: m0 position=4136 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w85 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f98] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f4 callPosition=4294967295 isTailCall=true module=m0}, {callee=f228 callPosition=1076 parent=1 module=m0}, {callee=f228 callPosition=4294967295 parent=1 isTailCall=true module=m0}, {callee=f1 callPosition=4294967295 parent=3 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "a" = String string="a"
-# CHECK-NEXT: v1: string = CallDirect v0 function=f1 accessSite=35 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v1 casts=[{declared={type=string} resolution=Assume}, {declared={type=undefined|null|string site=w175 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string site=w85 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}]
+# CHECK-NEXT: v1: string = TypeOf v0
+# CHECK-NEXT: v2: " " = String string=" "
+# CHECK-NEXT: v3: undefined = Undefined
+# CHECK-NEXT: v4: undefined|string = CallBuiltin -, v0, v3 overload=JSONStringify/0 accessSite=29
+# CHECK-NEXT: v5: string = Strcat v1, v2, v4
+# CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function f34 module=
-# CHECK: m0 position=4177 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w86 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f99] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f4 callPosition=4294967295 isTailCall=true module=m0}, {callee=f228 callPosition=1076 parent=1 module=m0}, {callee=f228 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
+# CHECK: m0 position=4177 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w86 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f99] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f4 callPosition=4294967295 isTailCall=true module=m0}, {callee=f228 callPosition=1076 parent=1 module=m0}, {callee=f228 callPosition=4294967295 parent=1 isTailCall=true module=m0}, {callee=f1 callPosition=4294967295 parent=3 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 2 = Integer integer=2
 # CHECK-NEXT: v1: L3 = NewObject -, v0 layout=L3 fields=[0] allocationSite=147 allocationClass=3
-# CHECK-NEXT: v2: string = CallDirect v1 function=f1 accessSite=35 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v2 casts=[{declared={type=string} resolution=Assume}, {declared={type=undefined|null|string site=w176 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string site=w86 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}]
+# CHECK-NEXT: v2: string = TypeOf v1
+# CHECK-NEXT: v3: " " = String string=" "
+# CHECK-NEXT: v4: string = Add v2, v3
+# CHECK-NEXT: v5: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v5, v4
+# CHECK-NEXT: v7: i32 = StringBuilderCheckpoint v5
+# CHECK-NEXT: v8: i32 = StringBuilderCheckpoint v5
+# CHECK-NEXT: v9: int[0, 2] = CallDirect v1, v5 function=f251 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v9 cases=[1] -> case b1(), otherwise b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v10: buildercursor = StringBuilderReserve v5 size=128
+# CHECK-NEXT: Jump -> next b3(v10)
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: v11: buildercursor = StringBuilderReserve v5 size=128
+# CHECK-NEXT: Jump -> next b3(v11)
+# CHECK-NEXT: b3(v12: buildercursor):
+# CHECK-NEXT: StringBuilderCommit v5, v12
+# CHECK-NEXT: v14: i32 = StringBuilderCheckpoint v5
+# CHECK-NEXT: v15: boolean = StrictEq v8, v14
+# CHECK-NEXT: Branch v15 -> taken b4(), notTaken b5()
+# CHECK-NEXT: b4() frequency=Rare:
+# CHECK-NEXT: StringBuilderRollBack v5, v7
+# CHECK-NEXT: v17: undefined = Undefined
+# CHECK-NEXT: v18: undefined|string = CallBuiltin -, v1, v17 overload=JSONStringify/0 accessSite=29
+# CHECK-NEXT: Jump -> next b6(v18)
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v19: "" = String string=""
+# CHECK-NEXT: Jump -> next b6(v19)
+# CHECK-NEXT: b6(v20: undefined|string ~ ""):
+# CHECK-NEXT: StringBuilderAppend v5, v20
+# CHECK-NEXT: v22: string = StringBuilderFinish v5
+# CHECK-NEXT: Return v22
 # CHECK-NEXT: }
 # CHECK-LABEL: function f35 module=
-# CHECK: m0 position=4246 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w87 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f100] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=4246 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w87 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f100] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f5 callPosition=4294967295 isTailCall=true module=m0}, {callee=f1 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "a" = String string="a"
-# CHECK-NEXT: v1: Array<"a", Contiguous> = NewArray v0 contents="a" allocationSite=75 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v2: Array<"a", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v1 provenType=Array<"a", proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v3: string = CallDirect v2 function=f336 accessSite=80 @0 tail
-# CHECK-NEXT: Return v3
+# CHECK-NEXT: v1: "a" = Expect v0 expectedType=undefined|null|Array<number>
+# CHECK-NEXT: v2: string = TypeOf v1
+# CHECK-NEXT: v3: " " = String string=" "
+# CHECK-NEXT: v4: undefined = Undefined
+# CHECK-NEXT: v5: undefined|string = CallBuiltin -, v1, v4 overload=JSONStringify/0 accessSite=29
+# CHECK-NEXT: v6: string = Strcat v2, v3, v5
+# CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function f36 module=
-# CHECK: m0 position=4276 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w88 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f101] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=4276 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w88 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f101] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f5 callPosition=4294967295 isTailCall=true module=m0}, {callee=f1 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 2 = Integer integer=2
 # CHECK-NEXT: v1: L3 = NewObject -, v0 layout=L3 fields=[0] allocationSite=148 allocationClass=3
-# CHECK-NEXT: v2: Array<L3> = NewArray v1 contents=L3 allocationSite=76 storage=Frame
-# CHECK-NEXT: v3: Array<L3, proven, pristine[Storage, Names, Dense]> = AssumeType v2 provenType=Array<L3, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v4: string = CallDirect v3 function=f336 accessSite=81 @0 tail
-# CHECK-NEXT: Return v4
+# CHECK-NEXT: v2: string = TypeOf v1
+# CHECK-NEXT: v3: " " = String string=" "
+# CHECK-NEXT: v4: string = Add v2, v3
+# CHECK-NEXT: v5: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v5, v4
+# CHECK-NEXT: v7: i32 = StringBuilderCheckpoint v5
+# CHECK-NEXT: v8: i32 = StringBuilderCheckpoint v5
+# CHECK-NEXT: v9: int[0, 2] = CallDirect v1, v5 function=f251 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v9 cases=[1] -> case b1(), otherwise b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v10: buildercursor = StringBuilderReserve v5 size=128
+# CHECK-NEXT: Jump -> next b3(v10)
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: v11: buildercursor = StringBuilderReserve v5 size=128
+# CHECK-NEXT: Jump -> next b3(v11)
+# CHECK-NEXT: b3(v12: buildercursor):
+# CHECK-NEXT: StringBuilderCommit v5, v12
+# CHECK-NEXT: v14: i32 = StringBuilderCheckpoint v5
+# CHECK-NEXT: v15: boolean = StrictEq v8, v14
+# CHECK-NEXT: Branch v15 -> taken b4(), notTaken b5()
+# CHECK-NEXT: b4() frequency=Rare:
+# CHECK-NEXT: StringBuilderRollBack v5, v7
+# CHECK-NEXT: v17: undefined = Undefined
+# CHECK-NEXT: v18: undefined|string = CallBuiltin -, v1, v17 overload=JSONStringify/0 accessSite=29
+# CHECK-NEXT: Jump -> next b6(v18)
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v19: "" = String string=""
+# CHECK-NEXT: Jump -> next b6(v19)
+# CHECK-NEXT: b6(v20: undefined|string ~ ""):
+# CHECK-NEXT: StringBuilderAppend v5, v20
+# CHECK-NEXT: v22: string = StringBuilderFinish v5
+# CHECK-NEXT: Return v22
 # CHECK-NEXT: }
 # CHECK-LABEL: function f37 module=
 # CHECK: m0 position=4333 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w89 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f102] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -4802,7 +5175,7 @@ runtimefunction id=131091 function=f223 visibility=Private
 # CHECK-NEXT: v0: "a" = String string="a"
 # CHECK-NEXT: v1: Array<"a", Contiguous> = NewArray v0 contents="a" allocationSite=77 storage=Frame arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v2: Array<"a", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v1 provenType=Array<"a", proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v3: string = CallDirect v2 function=f337 accessSite=82 @0 tail
+# CHECK-NEXT: v3: string = CallDirect v2 function=f336 accessSite=82 @0 tail
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function f38 module=
@@ -4812,7 +5185,7 @@ runtimefunction id=131091 function=f223 visibility=Private
 # CHECK-NEXT: v1: L3 = NewObject -, v0 layout=L3 fields=[0] allocationSite=149 allocationClass=3
 # CHECK-NEXT: v2: Array<L3> = NewArray v1 contents=L3 allocationSite=78 storage=Frame
 # CHECK-NEXT: v3: Array<L3, proven, pristine[Storage, Names, Dense]> = AssumeType v2 provenType=Array<L3, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v4: string = CallDirect v3 function=f337 accessSite=83 @0 tail
+# CHECK-NEXT: v4: string = CallDirect v3 function=f336 accessSite=83 @0 tail
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f39 module=
@@ -4860,11 +5233,15 @@ runtimefunction id=131091 function=f223 visibility=Private
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function f45 module=
-# CHECK: m0 position=4665 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w97 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f110] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f10 callPosition=4294967295 isTailCall=true module=m0}] {
+# CHECK: m0 position=4665 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w97 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f110] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f10 callPosition=4294967295 isTailCall=true module=m0}, {callee=f1 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 3 = Integer integer=3
-# CHECK-NEXT: v1: string = CallDirect v0 function=f1 accessSite=42 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v1 casts=[{declared={type=string} resolution=Assume}, {declared={type=undefined|null|string site=w187 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string site=w97 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}]
+# CHECK-NEXT: v1: string = TypeOf v0
+# CHECK-NEXT: v2: " " = String string=" "
+# CHECK-NEXT: v3: undefined = Undefined
+# CHECK-NEXT: v4: undefined|string = CallBuiltin -, v0, v3 overload=JSONStringify/0 accessSite=29
+# CHECK-NEXT: v5: string = Strcat v1, v2, v4
+# CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function f46 module=
 # CHECK: m0 position=4693 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w98 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f111] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f10 callPosition=4294967295 isTailCall=true module=m0}, {callee=f1 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
@@ -4889,21 +5266,29 @@ runtimefunction id=131091 function=f223 visibility=Private
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function f48 module=
-# CHECK: m0 position=4746 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w100 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f113] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f10 callPosition=4294967295 isTailCall=true module=m0}] {
+# CHECK: m0 position=4746 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w100 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f113] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f10 callPosition=4294967295 isTailCall=true module=m0}, {callee=f1 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: undefined = Undefined
-# CHECK-NEXT: v1: string = CallDirect v0 function=f1 accessSite=42 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v1 casts=[{declared={type=string} resolution=Assume}, {declared={type=undefined|null|string site=w190 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string site=w100 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}]
+# CHECK-NEXT: v1: string = TypeOf v0
+# CHECK-NEXT: v2: " " = String string=" "
+# CHECK-NEXT: v3: undefined = Undefined
+# CHECK-NEXT: v4: undefined|string = CallBuiltin -, v0, v3 overload=JSONStringify/0 accessSite=29
+# CHECK-NEXT: v5: string = Strcat v1, v2, v4
+# CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function f49 module=
-# CHECK: m0 position=4799 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w101 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f114] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f11 callPosition=4294967295 isTailCall=true module=m0}] {
+# CHECK: m0 position=4799 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w101 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f114] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f11 callPosition=4294967295 isTailCall=true module=m0}, {callee=f229 callPosition=1970 parent=1 module=m0}, {callee=f229 callPosition=4294967295 parent=1 isTailCall=true module=m0}, {callee=f1 callPosition=4294967295 parent=3 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 3 = Integer integer=3
-# CHECK-NEXT: v1: string = CallDirect v0 function=f1 accessSite=44 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v1 casts=[{declared={type=string} resolution=Assume}, {declared={type=undefined|null|string site=w191 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string site=w101 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}]
+# CHECK-NEXT: v1: string = TypeOf v0
+# CHECK-NEXT: v2: " " = String string=" "
+# CHECK-NEXT: v3: undefined = Undefined
+# CHECK-NEXT: v4: undefined|string = CallBuiltin -, v0, v3 overload=JSONStringify/0 accessSite=29
+# CHECK-NEXT: v5: string = Strcat v1, v2, v4
+# CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function f50 module=
-# CHECK: m0 position=4828 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w102 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f115] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f11 callPosition=4294967295 isTailCall=true module=m0}, {callee=f1 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
+# CHECK: m0 position=4828 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w102 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f115] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f11 callPosition=4294967295 isTailCall=true module=m0}, {callee=f229 callPosition=1970 parent=1 module=m0}, {callee=f229 callPosition=4294967295 parent=1 isTailCall=true module=m0}, {callee=f1 callPosition=4294967295 parent=3 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 1 = Integer integer=1
 # CHECK-NEXT: v1: string = TypeOf v0
@@ -4914,12 +5299,16 @@ runtimefunction id=131091 function=f223 visibility=Private
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function f51 module=
-# CHECK: m0 position=4855 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w103 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f116] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f11 callPosition=4294967295 isTailCall=true module=m0}] {
+# CHECK: m0 position=4855 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w103 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f116] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f11 callPosition=4294967295 isTailCall=true module=m0}, {callee=f229 callPosition=1970 parent=1 module=m0}, {callee=f229 callPosition=4294967295 parent=1 isTailCall=true module=m0}, {callee=f1 callPosition=4294967295 parent=3 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: undefined = Undefined
 # CHECK-NEXT: v1: undefined = Expect v0 expectedType=number
-# CHECK-NEXT: v2: string = CallDirect v1 function=f1 accessSite=44 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v2 casts=[{declared={type=string} resolution=Assume}, {declared={type=undefined|null|string site=w193 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string site=w103 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}]
+# CHECK-NEXT: v2: string = TypeOf v1
+# CHECK-NEXT: v3: " " = String string=" "
+# CHECK-NEXT: v4: undefined = Undefined
+# CHECK-NEXT: v5: undefined|string = CallBuiltin -, v1, v4 overload=JSONStringify/0 accessSite=29
+# CHECK-NEXT: v6: string = Strcat v2, v3, v5
+# CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function f52 module=
 # CHECK: m0 position=4912 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w104 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f117] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f12 callPosition=4294967295 isTailCall=true module=m0}, {callee=f1 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
@@ -4933,26 +5322,64 @@ runtimefunction id=131091 function=f223 visibility=Private
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function f54 module=
-# CHECK: m0 position=5010 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w106 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f119] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f13 callPosition=4294967295 isTailCall=true module=m0}] {
+# CHECK: m0 position=5010 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w106 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f119] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f13 callPosition=4294967295 isTailCall=true module=m0}, {callee=f1 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "a" = String string="a"
-# CHECK-NEXT: v1: string = CallDirect v0 function=f1 accessSite=46 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v1 casts=[{declared={type=string} resolution=Assume}, {declared={type=undefined|null|string site=w196 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string site=w106 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}]
+# CHECK-NEXT: v1: string = TypeOf v0
+# CHECK-NEXT: v2: " " = String string=" "
+# CHECK-NEXT: v3: undefined = Undefined
+# CHECK-NEXT: v4: undefined|string = CallBuiltin -, v0, v3 overload=JSONStringify/0 accessSite=29
+# CHECK-NEXT: v5: string = Strcat v1, v2, v4
+# CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function f55 module=
-# CHECK: m0 position=5036 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w107 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f120] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f13 callPosition=4294967295 isTailCall=true module=m0}] {
+# CHECK: m0 position=5036 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w107 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f120] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f13 callPosition=4294967295 isTailCall=true module=m0}, {callee=f1 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "empty" = String string="empty"
-# CHECK-NEXT: v1: string = CallDirect v0 function=f1 accessSite=46 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v1 casts=[{declared={type=string} resolution=Assume}, {declared={type=undefined|null|string site=w197 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string site=w107 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}]
+# CHECK-NEXT: v1: string = TypeOf v0
+# CHECK-NEXT: v2: " " = String string=" "
+# CHECK-NEXT: v3: undefined = Undefined
+# CHECK-NEXT: v4: undefined|string = CallBuiltin -, v0, v3 overload=JSONStringify/0 accessSite=29
+# CHECK-NEXT: v5: string = Strcat v1, v2, v4
+# CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function f56 module=
-# CHECK: m0 position=5061 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w108 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f121] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f13 callPosition=4294967295 isTailCall=true module=m0}] {
+# CHECK: m0 position=5061 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w108 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f121] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f13 callPosition=4294967295 isTailCall=true module=m0}, {callee=f1 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 2 = Integer integer=2
 # CHECK-NEXT: v1: L3 = NewObject -, v0 layout=L3 fields=[0] allocationSite=87 allocationClass=3
-# CHECK-NEXT: v2: string = CallDirect v1 function=f1 accessSite=46 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v2 casts=[{declared={type=string} resolution=Assume}, {declared={type=undefined|null|string site=w198 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string site=w108 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}]
+# CHECK-NEXT: v2: string = TypeOf v1
+# CHECK-NEXT: v3: " " = String string=" "
+# CHECK-NEXT: v4: string = Add v2, v3
+# CHECK-NEXT: v5: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v5, v4
+# CHECK-NEXT: v7: i32 = StringBuilderCheckpoint v5
+# CHECK-NEXT: v8: i32 = StringBuilderCheckpoint v5
+# CHECK-NEXT: v9: int[0, 2] = CallDirect v1, v5 function=f251 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v9 cases=[1] -> case b1(), otherwise b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v10: buildercursor = StringBuilderReserve v5 size=128
+# CHECK-NEXT: Jump -> next b3(v10)
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: v11: buildercursor = StringBuilderReserve v5 size=128
+# CHECK-NEXT: Jump -> next b3(v11)
+# CHECK-NEXT: b3(v12: buildercursor):
+# CHECK-NEXT: StringBuilderCommit v5, v12
+# CHECK-NEXT: v14: i32 = StringBuilderCheckpoint v5
+# CHECK-NEXT: v15: boolean = StrictEq v8, v14
+# CHECK-NEXT: Branch v15 -> taken b4(), notTaken b5()
+# CHECK-NEXT: b4() frequency=Rare:
+# CHECK-NEXT: StringBuilderRollBack v5, v7
+# CHECK-NEXT: v17: undefined = Undefined
+# CHECK-NEXT: v18: undefined|string = CallBuiltin -, v1, v17 overload=JSONStringify/0 accessSite=29
+# CHECK-NEXT: Jump -> next b6(v18)
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v19: "" = String string=""
+# CHECK-NEXT: Jump -> next b6(v19)
+# CHECK-NEXT: b6(v20: undefined|string ~ ""):
+# CHECK-NEXT: StringBuilderAppend v5, v20
+# CHECK-NEXT: v22: string = StringBuilderFinish v5
+# CHECK-NEXT: Return v22
 # CHECK-NEXT: }
 # CHECK-LABEL: function f57 module=
 # CHECK: m0 position=5114 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w109 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f122] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f14 callPosition=4294967295 isTailCall=true module=m0}] {
@@ -4992,30 +5419,65 @@ runtimefunction id=131091 function=f223 visibility=Private
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function f65 module=
-# CHECK: m0 position=5427 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w117 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f130] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=5427 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w117 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f130] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f18 callPosition=4294967295 isTailCall=true module=m0}, {callee=f1 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "a" = String string="a"
-# CHECK-NEXT: v1: Array<undefined|"a"|L3> = NewArray v0 contents=undefined|"a"|L3 storage=Frame
-# CHECK-NEXT: v2: Array<undefined|"a"|L3, proven, pristine[Storage, Names, Dense]> = AssumeType v1 provenType=Array<undefined|"a"|L3, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v3: string = CallDirect v2 function=f338 accessSite=110 @0 tail
-# CHECK-NEXT: Return v3
+# CHECK-NEXT: v1: "a" = Expect v0 expectedType=undefined|null|Array<number>
+# CHECK-NEXT: v2: string = TypeOf v1
+# CHECK-NEXT: v3: " " = String string=" "
+# CHECK-NEXT: v4: undefined = Undefined
+# CHECK-NEXT: v5: undefined|string = CallBuiltin -, v1, v4 overload=JSONStringify/0 accessSite=29
+# CHECK-NEXT: v6: string = Strcat v2, v3, v5
+# CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function f66 module=
-# CHECK: m0 position=5450 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w118 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f131] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=5450 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w118 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f131] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f18 callPosition=4294967295 isTailCall=true module=m0}, {callee=f1 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 2 = Integer integer=2
 # CHECK-NEXT: v1: L3 = NewObject -, v0 layout=L3 fields=[0] allocationSite=92 allocationClass=3
-# CHECK-NEXT: v2: Array<undefined|"a"|L3> = NewArray v1 contents=undefined|"a"|L3 storage=Frame
-# CHECK-NEXT: v3: Array<undefined|"a"|L3, proven, pristine[Storage, Names, Dense]> = AssumeType v2 provenType=Array<undefined|"a"|L3, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v4: string = CallDirect v3 function=f338 accessSite=111 @0 tail
-# CHECK-NEXT: Return v4
+# CHECK-NEXT: v2: string = TypeOf v1
+# CHECK-NEXT: v3: " " = String string=" "
+# CHECK-NEXT: v4: string = Add v2, v3
+# CHECK-NEXT: v5: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v5, v4
+# CHECK-NEXT: v7: i32 = StringBuilderCheckpoint v5
+# CHECK-NEXT: v8: i32 = StringBuilderCheckpoint v5
+# CHECK-NEXT: v9: int[0, 2] = CallDirect v1, v5 function=f251 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v9 cases=[1] -> case b1(), otherwise b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v10: buildercursor = StringBuilderReserve v5 size=128
+# CHECK-NEXT: Jump -> next b3(v10)
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: v11: buildercursor = StringBuilderReserve v5 size=128
+# CHECK-NEXT: Jump -> next b3(v11)
+# CHECK-NEXT: b3(v12: buildercursor):
+# CHECK-NEXT: StringBuilderCommit v5, v12
+# CHECK-NEXT: v14: i32 = StringBuilderCheckpoint v5
+# CHECK-NEXT: v15: boolean = StrictEq v8, v14
+# CHECK-NEXT: Branch v15 -> taken b4(), notTaken b5()
+# CHECK-NEXT: b4() frequency=Rare:
+# CHECK-NEXT: StringBuilderRollBack v5, v7
+# CHECK-NEXT: v17: undefined = Undefined
+# CHECK-NEXT: v18: undefined|string = CallBuiltin -, v1, v17 overload=JSONStringify/0 accessSite=29
+# CHECK-NEXT: Jump -> next b6(v18)
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v19: "" = String string=""
+# CHECK-NEXT: Jump -> next b6(v19)
+# CHECK-NEXT: b6(v20: undefined|string ~ ""):
+# CHECK-NEXT: StringBuilderAppend v5, v20
+# CHECK-NEXT: v22: string = StringBuilderFinish v5
+# CHECK-NEXT: Return v22
 # CHECK-NEXT: }
 # CHECK-LABEL: function f67 module=
-# CHECK: m0 position=5501 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w119 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f132] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f19 callPosition=4294967295 isTailCall=true module=m0}] {
+# CHECK: m0 position=5501 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w119 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f132] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f19 callPosition=4294967295 isTailCall=true module=m0}, {callee=f1 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "a" = String string="a"
-# CHECK-NEXT: v1: string = CallDirect v0 function=f1 accessSite=54 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v1 casts=[{declared={type=string} resolution=Assume}, {declared={type=undefined|null|string site=w209 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string site=w119 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}]
+# CHECK-NEXT: v1: string = TypeOf v0
+# CHECK-NEXT: v2: " " = String string=" "
+# CHECK-NEXT: v3: undefined = Undefined
+# CHECK-NEXT: v4: undefined|string = CallBuiltin -, v0, v3 overload=JSONStringify/0 accessSite=29
+# CHECK-NEXT: v5: string = Strcat v1, v2, v4
+# CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function f68 module=
 # CHECK: m0 position=5529 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w120 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f133] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f19 callPosition=4294967295 isTailCall=true module=m0}, {callee=f1 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
@@ -5029,19 +5491,53 @@ runtimefunction id=131091 function=f223 visibility=Private
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function f69 module=
-# CHECK: m0 position=5552 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w121 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f134] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f19 callPosition=4294967295 isTailCall=true module=m0}] {
+# CHECK: m0 position=5552 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w121 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f134] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f19 callPosition=4294967295 isTailCall=true module=m0}, {callee=f1 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 2 = Integer integer=2
 # CHECK-NEXT: v1: L3 = NewObject -, v0 layout=L3 fields=[0] allocationSite=93 allocationClass=3
-# CHECK-NEXT: v2: string = CallDirect v1 function=f1 accessSite=54 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v2 casts=[{declared={type=string} resolution=Assume}, {declared={type=undefined|null|string site=w211 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string site=w121 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}]
+# CHECK-NEXT: v2: string = TypeOf v1
+# CHECK-NEXT: v3: " " = String string=" "
+# CHECK-NEXT: v4: string = Add v2, v3
+# CHECK-NEXT: v5: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v5, v4
+# CHECK-NEXT: v7: i32 = StringBuilderCheckpoint v5
+# CHECK-NEXT: v8: i32 = StringBuilderCheckpoint v5
+# CHECK-NEXT: v9: int[0, 2] = CallDirect v1, v5 function=f251 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v9 cases=[1] -> case b1(), otherwise b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v10: buildercursor = StringBuilderReserve v5 size=128
+# CHECK-NEXT: Jump -> next b3(v10)
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: v11: buildercursor = StringBuilderReserve v5 size=128
+# CHECK-NEXT: Jump -> next b3(v11)
+# CHECK-NEXT: b3(v12: buildercursor):
+# CHECK-NEXT: StringBuilderCommit v5, v12
+# CHECK-NEXT: v14: i32 = StringBuilderCheckpoint v5
+# CHECK-NEXT: v15: boolean = StrictEq v8, v14
+# CHECK-NEXT: Branch v15 -> taken b4(), notTaken b5()
+# CHECK-NEXT: b4() frequency=Rare:
+# CHECK-NEXT: StringBuilderRollBack v5, v7
+# CHECK-NEXT: v17: undefined = Undefined
+# CHECK-NEXT: v18: undefined|string = CallBuiltin -, v1, v17 overload=JSONStringify/0 accessSite=29
+# CHECK-NEXT: Jump -> next b6(v18)
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v19: "" = String string=""
+# CHECK-NEXT: Jump -> next b6(v19)
+# CHECK-NEXT: b6(v20: undefined|string ~ ""):
+# CHECK-NEXT: StringBuilderAppend v5, v20
+# CHECK-NEXT: v22: string = StringBuilderFinish v5
+# CHECK-NEXT: Return v22
 # CHECK-NEXT: }
 # CHECK-LABEL: function f70 module=
-# CHECK: m0 position=5606 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w122 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f135] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f20 callPosition=4294967295 isTailCall=true module=m0}] {
+# CHECK: m0 position=5606 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w122 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f135] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f20 callPosition=4294967295 isTailCall=true module=m0}, {callee=f1 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "a" = String string="a"
-# CHECK-NEXT: v1: string = CallDirect v0 function=f1 accessSite=57 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v1 casts=[{declared={type=undefined|null|string site=w162 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string site=w60 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string site=w212 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string site=w122 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}]
+# CHECK-NEXT: v1: string = TypeOf v0
+# CHECK-NEXT: v2: " " = String string=" "
+# CHECK-NEXT: v3: undefined = Undefined
+# CHECK-NEXT: v4: undefined|string = CallBuiltin -, v0, v3 overload=JSONStringify/0 accessSite=29
+# CHECK-NEXT: v5: string = Strcat v1, v2, v4
+# CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function f71 module=
 # CHECK: m0 position=5632 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w123 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f136] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f20 callPosition=4294967295 isTailCall=true module=m0}] {
@@ -5050,12 +5546,42 @@ runtimefunction id=131091 function=f223 visibility=Private
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function f72 module=
-# CHECK: m0 position=5658 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w124 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f137] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f20 callPosition=4294967295 isTailCall=true module=m0}] {
+# CHECK: m0 position=5658 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w124 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f137] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f20 callPosition=4294967295 isTailCall=true module=m0}, {callee=f1 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 2 = Integer integer=2
 # CHECK-NEXT: v1: L3 = NewObject -, v0 layout=L3 fields=[0] allocationSite=95 allocationClass=3
-# CHECK-NEXT: v2: string = CallDirect v1 function=f1 accessSite=57 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v2 casts=[{declared={type=undefined|null|string site=w162 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string site=w60 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string site=w214 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string site=w124 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}]
+# CHECK-NEXT: v2: string = TypeOf v1
+# CHECK-NEXT: v3: " " = String string=" "
+# CHECK-NEXT: v4: string = Add v2, v3
+# CHECK-NEXT: v5: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v5, v4
+# CHECK-NEXT: v7: i32 = StringBuilderCheckpoint v5
+# CHECK-NEXT: v8: i32 = StringBuilderCheckpoint v5
+# CHECK-NEXT: v9: int[0, 2] = CallDirect v1, v5 function=f251 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v9 cases=[1] -> case b1(), otherwise b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v10: buildercursor = StringBuilderReserve v5 size=128
+# CHECK-NEXT: Jump -> next b3(v10)
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: v11: buildercursor = StringBuilderReserve v5 size=128
+# CHECK-NEXT: Jump -> next b3(v11)
+# CHECK-NEXT: b3(v12: buildercursor):
+# CHECK-NEXT: StringBuilderCommit v5, v12
+# CHECK-NEXT: v14: i32 = StringBuilderCheckpoint v5
+# CHECK-NEXT: v15: boolean = StrictEq v8, v14
+# CHECK-NEXT: Branch v15 -> taken b4(), notTaken b5()
+# CHECK-NEXT: b4() frequency=Rare:
+# CHECK-NEXT: StringBuilderRollBack v5, v7
+# CHECK-NEXT: v17: undefined = Undefined
+# CHECK-NEXT: v18: undefined|string = CallBuiltin -, v1, v17 overload=JSONStringify/0 accessSite=29
+# CHECK-NEXT: Jump -> next b6(v18)
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v19: "" = String string=""
+# CHECK-NEXT: Jump -> next b6(v19)
+# CHECK-NEXT: b6(v20: undefined|string ~ ""):
+# CHECK-NEXT: StringBuilderAppend v5, v20
+# CHECK-NEXT: v22: string = StringBuilderFinish v5
+# CHECK-NEXT: Return v22
 # CHECK-NEXT: }
 # CHECK-LABEL: function f73 module=
 # CHECK: m0 position=5711 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w125 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f138] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f21 callPosition=4294967295 isTailCall=true module=m0}] {
@@ -5064,46 +5590,110 @@ runtimefunction id=131091 function=f223 visibility=Private
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function f75 module=
-# CHECK: m0 position=5765 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w127 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f140] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f21 callPosition=4294967295 isTailCall=true module=m0}] {
+# CHECK: m0 position=5765 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w127 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f140] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f21 callPosition=4294967295 isTailCall=true module=m0}, {callee=f1 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 2 = Integer integer=2
 # CHECK-NEXT: v1: L3 = NewObject -, v0 layout=L3 fields=[0] allocationSite=97 allocationClass=3
-# CHECK-NEXT: v2: string = CallDirect v1 function=f1 accessSite=58 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v2 casts=[{declared={type=string} resolution=Assume}, {declared={type=undefined|null|string site=w217 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string site=w127 flags=[OmitsNull, OmitsUndefined]} resolution=Nothing}]
+# CHECK-NEXT: v2: string = TypeOf v1
+# CHECK-NEXT: v3: " " = String string=" "
+# CHECK-NEXT: v4: string = Add v2, v3
+# CHECK-NEXT: v5: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v5, v4
+# CHECK-NEXT: v7: i32 = StringBuilderCheckpoint v5
+# CHECK-NEXT: v8: i32 = StringBuilderCheckpoint v5
+# CHECK-NEXT: v9: int[0, 2] = CallDirect v1, v5 function=f251 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v9 cases=[1] -> case b1(), otherwise b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v10: buildercursor = StringBuilderReserve v5 size=128
+# CHECK-NEXT: Jump -> next b3(v10)
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: v11: buildercursor = StringBuilderReserve v5 size=128
+# CHECK-NEXT: Jump -> next b3(v11)
+# CHECK-NEXT: b3(v12: buildercursor):
+# CHECK-NEXT: StringBuilderCommit v5, v12
+# CHECK-NEXT: v14: i32 = StringBuilderCheckpoint v5
+# CHECK-NEXT: v15: boolean = StrictEq v8, v14
+# CHECK-NEXT: Branch v15 -> taken b4(), notTaken b5()
+# CHECK-NEXT: b4() frequency=Rare:
+# CHECK-NEXT: StringBuilderRollBack v5, v7
+# CHECK-NEXT: v17: undefined = Undefined
+# CHECK-NEXT: v18: undefined|string = CallBuiltin -, v1, v17 overload=JSONStringify/0 accessSite=29
+# CHECK-NEXT: Jump -> next b6(v18)
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v19: "" = String string=""
+# CHECK-NEXT: Jump -> next b6(v19)
+# CHECK-NEXT: b6(v20: undefined|string ~ ""):
+# CHECK-NEXT: StringBuilderAppend v5, v20
+# CHECK-NEXT: v22: string = StringBuilderFinish v5
+# CHECK-NEXT: Return v22
 # CHECK-NEXT: }
 # CHECK-LABEL: function f76 module=
-# CHECK: m0 position=5818 kind=Arrow role=ResultWrapper flags=[IsChecked] thisType={type=anything} results=[{type=Array<"a"|L3, proven, Contiguous, pristine[Storage, Names, Dense]> site=w128 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f141] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f343} {
+# CHECK: m0 position=5818 kind=Arrow role=ResultWrapper flags=[IsChecked] thisType={type=anything} results=[{type=Array<"a"|L3, proven, Contiguous, pristine[Storage, Names, Dense]> site=w128 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f141] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f341} {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: "a" = CallDirect function=f343
+# CHECK-NEXT: v0: "a" = CallDirect function=f341
 # CHECK-NEXT: v1: Array<"a"|L3, Contiguous> = NewArray v0 contents="a"|L3 allocationSite=98 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v2: Array<"a"|L3, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v1 provenType=Array<"a"|L3, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
 # CHECK-LABEL: function f77 module=
-# CHECK: m0 position=5849 kind=Arrow role=ResultWrapper flags=[IsChecked] thisType={type=anything} results=[{type=Array<"a"|L3, proven, Contiguous, pristine[Storage, Names, Dense]> site=w129 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f142] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f344} {
+# CHECK: m0 position=5849 kind=Arrow role=ResultWrapper flags=[IsChecked] thisType={type=anything} results=[{type=Array<"a"|L3, proven, Contiguous, pristine[Storage, Names, Dense]> site=w129 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f142] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f342} {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: L3 = CallDirect function=f344
+# CHECK-NEXT: v0: L3 = CallDirect function=f342
 # CHECK-NEXT: v1: Array<"a"|L3, Contiguous> = NewArray v0 contents="a"|L3 allocationSite=99 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v2: Array<"a"|L3, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v1 provenType=Array<"a"|L3, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
 # CHECK-LABEL: function f78 module=
-# CHECK: m0 position=5904 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=string site=w130 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f143] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f26 callPosition=4294967295 isTailCall=true module=m0}, {callee=f252 callPosition=4294967295 isConstruction=true module=m0}, {callee=f87 callPosition=4294967295 parent=2 module=m0}] {
+# CHECK: m0 position=5904 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=string site=w130 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f143] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f26 callPosition=4294967295 isTailCall=true module=m0}, {callee=f253 callPosition=4294967295 isConstruction=true module=m0}, {callee=f87 callPosition=4294967295 parent=2 module=m0}, {callee=f1 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "a" = String string="a"
-# CHECK-NEXT: v1: string = CallDirect v0 function=f1 accessSite=71 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v1 casts=[{declared={type=string} resolution=Assume}, {declared={type=undefined|null|string site=w218 flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string site=w130 flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=string} resolution=Assume}]
+# CHECK-NEXT: v1: string = TypeOf v0
+# CHECK-NEXT: v2: " " = String string=" "
+# CHECK-NEXT: v3: undefined = Undefined
+# CHECK-NEXT: v4: undefined|string = CallBuiltin -, v0, v3 overload=JSONStringify/0 accessSite=29
+# CHECK-NEXT: v5: string = Strcat v1, v2, v4
+# CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function f79 module=
-# CHECK: m0 position=5940 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=string site=w131 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f144] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f26 callPosition=4294967295 isTailCall=true module=m0}, {callee=f252 callPosition=4294967295 isConstruction=true module=m0}, {callee=f87 callPosition=4294967295 parent=2 module=m0}] {
+# CHECK: m0 position=5940 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=string site=w131 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f144] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f26 callPosition=4294967295 isTailCall=true module=m0}, {callee=f253 callPosition=4294967295 isConstruction=true module=m0}, {callee=f87 callPosition=4294967295 parent=2 module=m0}, {callee=f1 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 2 = Integer integer=2
 # CHECK-NEXT: v1: L3 = NewObject -, v0 layout=L3 fields=[0] allocationSite=101 allocationClass=3
-# CHECK-NEXT: v2: string = CallDirect v1 function=f1 accessSite=71 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v2 casts=[{declared={type=string} resolution=Assume}, {declared={type=undefined|null|string site=w219 flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string site=w131 flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=string} resolution=Assume}]
+# CHECK-NEXT: v2: string = TypeOf v1
+# CHECK-NEXT: v3: " " = String string=" "
+# CHECK-NEXT: v4: string = Add v2, v3
+# CHECK-NEXT: v5: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v5, v4
+# CHECK-NEXT: v7: i32 = StringBuilderCheckpoint v5
+# CHECK-NEXT: v8: i32 = StringBuilderCheckpoint v5
+# CHECK-NEXT: v9: int[0, 2] = CallDirect v1, v5 function=f251 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v9 cases=[1] -> case b1(), otherwise b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v10: buildercursor = StringBuilderReserve v5 size=128
+# CHECK-NEXT: Jump -> next b3(v10)
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: v11: buildercursor = StringBuilderReserve v5 size=128
+# CHECK-NEXT: Jump -> next b3(v11)
+# CHECK-NEXT: b3(v12: buildercursor):
+# CHECK-NEXT: StringBuilderCommit v5, v12
+# CHECK-NEXT: v14: i32 = StringBuilderCheckpoint v5
+# CHECK-NEXT: v15: boolean = StrictEq v8, v14
+# CHECK-NEXT: Branch v15 -> taken b4(), notTaken b5()
+# CHECK-NEXT: b4() frequency=Rare:
+# CHECK-NEXT: StringBuilderRollBack v5, v7
+# CHECK-NEXT: v17: undefined = Undefined
+# CHECK-NEXT: v18: undefined|string = CallBuiltin -, v1, v17 overload=JSONStringify/0 accessSite=29
+# CHECK-NEXT: Jump -> next b6(v18)
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v19: "" = String string=""
+# CHECK-NEXT: Jump -> next b6(v19)
+# CHECK-NEXT: b6(v20: undefined|string ~ ""):
+# CHECK-NEXT: StringBuilderAppend v5, v20
+# CHECK-NEXT: v22: string = StringBuilderFinish v5
+# CHECK-NEXT: Return v22
 # CHECK-NEXT: }
 # CHECK-LABEL: function f80 module=
-# CHECK: m0 position=5982 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|"a"|L3}] functionTypes=[f145] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f27 callPosition=4294967295 module=m0}, {callee=f252 callPosition=4294967295 isConstruction=true module=m0}, {callee=f87 callPosition=4294967295 parent=2 module=m0}] {
+# CHECK: m0 position=5982 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|"a"|L3}] functionTypes=[f145] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f27 callPosition=4294967295 module=m0}, {callee=f253 callPosition=4294967295 isConstruction=true module=m0}, {callee=f87 callPosition=4294967295 parent=2 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "a" = String string="a"
 # CHECK-NEXT: Return v0
@@ -5158,9 +5748,9 @@ runtimefunction id=131091 function=f223 visibility=Private
 # CHECK-NEXT: ReturnCall v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f154 module=
-# CHECK: m1 position=25259 kind=Method role=ResultWrapper flags=[IsChecked] length=4 enclosingRuntimeFunction=65574 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|string site=w226 flags=[IsExpected, OmitsNull]}, {type=undefined|null|Array<undefined|null|string> site=w227 flags=[IsExpected, OmitsNull]}, {type=undefined|null|function site=w228 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=f158 site=w229 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f345} {
+# CHECK: m1 position=25259 kind=Method role=ResultWrapper flags=[IsChecked] length=4 enclosingRuntimeFunction=65574 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|string site=w226 flags=[IsExpected, OmitsNull]}, {type=undefined|null|Array<undefined|null|string> site=w227 flags=[IsExpected, OmitsNull]}, {type=undefined|null|function site=w228 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=f158 site=w229 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f343} {
 # CHECK-NEXT: b0(v0: anything, v1: anything, v2: anything, v3: anything):
-# CHECK-NEXT: v4: undefined = CallDirect v0, v1, v2, v3 function=f345
+# CHECK-NEXT: v4: undefined = CallDirect v0, v1, v2, v3 function=f343
 # CHECK-NEXT: v5: env L6 = ResultAt v4
 # CHECK-NEXT: v6: builtin(Process) = ResultAt v4 index=1
 # CHECK-NEXT: v7: f157 = ResultAt v4 index=2
@@ -5170,65 +5760,7 @@ runtimefunction id=131091 function=f223 visibility=Private
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="destructured"
 # CHECK: module=m0 position=1076 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L1 site=w7}, {type="a"|L3}] results=[{type=string site=w9 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameterMap=[{original=0}, {}]}
+# CHECK-LABEL: function {{*}}name="lengthOf"
+# CHECK: module=m0 position=1970 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L1 site=w29}, {type=f1}, {type=undefined|number}] results=[{type=string site=w31 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f11 parameterMap=[{original=0}, {}, {}]}
 # CHECK-LABEL: function {{*}}name="held"
 # CHECK: module=m0 position=3859 kind=Getter role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f27}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f27} creator=Entrypoint{target=f27 arguments=Registers}
-# CHECK-LABEL: function {{*}}name="element"
-# CHECK: module=m0 position=966 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<"a"|L3, proven, pristine[Storage, Names, Dense]> site=w5 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w6 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f3 parameterMap=[{original=1}]} inlineFrames=[{}, {callee=f1 callPosition=4294967295 isTailCall=true module=m0}] {
-# CHECK-NEXT: b0(v1: Array<"a"|L3, proven, pristine[Storage, Names, Dense]>):
-# CHECK-NEXT: v2: 0 = Integer
-# CHECK-NEXT: v3: boolean = HasArrayStorage v1 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b3()
-# CHECK-NEXT: b1(v4: guard):
-# CHECK-NEXT: v5: boolean = IsInBounds v1, v2
-# CHECK-NEXT: Branch v5 -> taken b2(| 0), notTaken b3()
-# CHECK-NEXT: b2(v6: guard):
-# CHECK-NEXT: v7: guard = AllGuards v4, v6
-# CHECK-NEXT: v8: "a"|L3 = GetArrayElement v1, v2, v7 arrayStorage=Contiguous level=Expected accessSite=32 [keyIsIntegral, isInBounds]
-# CHECK-NEXT: Jump -> next b5(v8)
-# CHECK-NEXT: b3() frequency=Rare:
-# CHECK-NEXT: v9: undefined|"a"|L3 = ElemGet v1, v2 accessSite=32 [keyIsIntegral]
-# CHECK-NEXT: v10: undefined|"a"|L3 ~ "a"|L3 = Upcast v9 castType=undefined|"a"|L3
-# CHECK-NEXT: v11: boolean ~ false = TypeTest v10 testedType=undefined|null|Array<number>
-# CHECK-NEXT: Branch v11 -> taken b4(), notTaken b5(| 0)
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v12: undefined = Undefined
-# CHECK-NEXT: v13: string = TypeOf v12
-# CHECK-NEXT: v14: " " = String string=" "
-# CHECK-NEXT: v15: undefined = Undefined
-# CHECK-NEXT: v16: undefined|string = CallBuiltin -, v12, v15 overload=JSONStringify/0 accessSite=29
-# CHECK-NEXT: v17: string = Strcat v13, v14, v16
-# CHECK-NEXT: Return v17
-# CHECK-NEXT: b5(v18: "a"|L3) frequency=Unlikely:
-# CHECK-NEXT: v19: string = CallDirect v18 function=f1 accessSite=33 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v19 casts=[{declared={type=string} resolution=Assume}]
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="fromTuple"
-# CHECK: module=m0 position=1200 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<"a"|L3, proven, pristine[Storage, Names, Dense]> site=w11 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w12 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f5 parameterMap=[{original=1}]} inlineFrames=[{}, {callee=f1 callPosition=4294967295 isTailCall=true module=m0}] {
-# CHECK-NEXT: b0(v1: Array<"a"|L3, proven, pristine[Storage, Names, Dense]>):
-# CHECK-NEXT: v2: 0 = Integer
-# CHECK-NEXT: v3: boolean = HasArrayStorage v1 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b3()
-# CHECK-NEXT: b1(v4: guard):
-# CHECK-NEXT: v5: boolean = IsInBounds v1, v2
-# CHECK-NEXT: Branch v5 -> taken b2(| 0), notTaken b3()
-# CHECK-NEXT: b2(v6: guard):
-# CHECK-NEXT: v7: guard = AllGuards v4, v6
-# CHECK-NEXT: v8: "a"|L3 = GetArrayElement v1, v2, v7 arrayStorage=Contiguous level=Expected [keyIsIntegral, isInBounds, storageIsUndecided]
-# CHECK-NEXT: Jump -> next b5(v8)
-# CHECK-NEXT: b3() frequency=Rare:
-# CHECK-NEXT: v9: undefined|"a"|L3 = ElemGet v1, v2 [keyIsIntegral, storageIsUndecided]
-# CHECK-NEXT: v10: undefined|"a"|L3 ~ "a"|L3 = Upcast v9 castType=undefined|"a"|L3
-# CHECK-NEXT: v11: boolean ~ false = TypeTest v10 testedType=undefined|null|Array<number>
-# CHECK-NEXT: Branch v11 -> taken b4(), notTaken b5(| 0)
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v12: undefined = Undefined
-# CHECK-NEXT: v13: string = TypeOf v12
-# CHECK-NEXT: v14: " " = String string=" "
-# CHECK-NEXT: v15: undefined = Undefined
-# CHECK-NEXT: v16: undefined|string = CallBuiltin -, v12, v15 overload=JSONStringify/0 accessSite=29
-# CHECK-NEXT: v17: string = Strcat v13, v14, v16
-# CHECK-NEXT: Return v17
-# CHECK-NEXT: b5(v18: "a"|L3) frequency=Unlikely:
-# CHECK-NEXT: v19: string = CallDirect v18 function=f1 accessSite=36 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v19 casts=[{declared={type=string} resolution=Assume}]
-# CHECK-NEXT: }

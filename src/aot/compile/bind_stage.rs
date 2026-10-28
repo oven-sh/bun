@@ -27,6 +27,8 @@ fn finish_modules(graph: &mut ModuleGraph, reached: &ReachedModules) {
         graph.set_names_way_to_module_objects(module);
     }
     graph.set_ways_not_followed_out_of_sight(reached.ways_not_followed_out_of_sight);
+    graph.set_ways_followed_for_their_names(reached.ways_followed_for_their_names);
+    graph.set_lets_process_out_of_sight(reached.lets_process_out_of_sight);
     graph.leave_out_inner_modules(&reached.left_out_inner_modules);
     graph.limit_requests(|referrer, request| reached.keeps_request(referrer, request));
 }
@@ -127,7 +129,8 @@ impl Build<'_> {
                         .reads_main_module_without_its_name,
                     ways_read_out_of_sight: self.options.load.ways_read_out_of_sight,
                 };
-                let (left_out, reached) = find_left_out_code(&input, &in_parallel);
+                let nobody_reads = self.options.load.ways_named_that_nobody_reads;
+                let (left_out, reached) = find_left_out_code(&input, nobody_reads, &in_parallel);
                 finish_modules(&mut graph, &reached);
                 graph.leave_out_files(&left_out.files, &in_parallel);
                 graph.limit_exports(&in_parallel, &|file, export| {

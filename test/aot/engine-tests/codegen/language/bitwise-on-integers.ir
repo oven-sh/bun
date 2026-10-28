@@ -271,7 +271,7 @@ function f10 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: end of function f1
 # CHECK-LABEL: function {{*}}name="masks"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 312, patchpoints: 12, rare instructions: 192, polls: 1
+# CHECK-NEXT: instructions: 293, patchpoints: 11, rare instructions: 125, polls: 1
 # CHECK-NEXT: end of function f12
 # CHECK-LABEL: function {{*}}name="masks"
 # CHECK: role=GenericVersion
@@ -283,7 +283,7 @@ function f10 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: end of function f2
 # CHECK-LABEL: function {{*}}name="tested"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 36, patchpoints: 4, rare instructions: 90, polls: 1
+# CHECK-NEXT: instructions: 35, patchpoints: 3, rare instructions: 86, polls: 1
 # CHECK-NEXT: end of function f13
 # CHECK-LABEL: function {{*}}name="tested"
 # CHECK: role=GenericVersion
@@ -295,7 +295,7 @@ function f10 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: end of function f3
 # CHECK-LABEL: function {{*}}name="flags"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 36, patchpoints: 3, rare instructions: 117, polls: 2
+# CHECK-NEXT: instructions: 38, patchpoints: 3, rare instructions: 57, polls: 2
 # CHECK-NEXT: end of function f14
 # CHECK-LABEL: function {{*}}name="flags"
 # CHECK: role=GenericVersion

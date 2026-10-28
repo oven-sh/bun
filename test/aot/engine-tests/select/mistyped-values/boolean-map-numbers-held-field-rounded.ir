@@ -856,15 +856,11 @@ runtimefunction id=70 function=f16 visibility=Private
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v2: guard):
 # CHECK-NEXT: v3: undefined|null ~ undefined = GetSlot v0, v2 key="held" receivers=[L3] level=Expected accessSite=54
-# CHECK-NEXT: Jump -> next b4(v3)
+# CHECK-NEXT: Return v3
 # CHECK-NEXT: b2() frequency=Rare:
 # CHECK-NEXT: v4: anything ~ undefined = PropGet v0 key="held" accessSite=54 receivers=[L3]
-# CHECK-NEXT: v5: boolean ~ false = TypeTest v4 testedType=number
-# CHECK-NEXT: Branch v5 -> taken b3(| 0), notTaken b4(| 0)
-# CHECK-NEXT: b3(v6: number) frequency=Rare:
-# CHECK-NEXT: Return v6
-# CHECK-NEXT: b4(v7: undefined|null|boolean|string|symbol|bigint|object ~ undefined):
-# CHECK-NEXT: Return v7
+# CHECK-NEXT: v5: anything ~ number = Expect v4 expectedType=number
+# CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="next"
 # CHECK: module=m1 kind=Method role=ResultWrapper flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=ArrayIterator flags=[IsExpected]} results=[{type=L(IteratorResult)}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f27 layout=L(IteratorResult)} {
@@ -1049,7 +1045,7 @@ runtimefunction id=70 function=f16 visibility=Private
 # CHECK-NEXT: v27: undefined|boolean ~ undefined = Expect v26 expectedType=undefined|number
 # CHECK-NEXT: v28: boolean ~ true = TypeTest v27 testedType=undefined
 # CHECK-NEXT: Branch v28 -> taken b8(), notTaken b9(| 0)
-# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: b8():
 # CHECK-NEXT: v29: undefined = Undefined
 # CHECK-NEXT: Jump -> next b10(v29)
 # CHECK-NEXT: b9(v30: boolean) frequency=Rare handler=b26():
@@ -1059,7 +1055,7 @@ runtimefunction id=70 function=f16 visibility=Private
 # CHECK-NEXT: v34: L3 = FinishObject v32
 # CHECK-NEXT: v35: anything ~ number = CallDirect v34 function=f6 accessSite=27 [calleeIsPredicted]
 # CHECK-NEXT: Jump -> next b10(v35)
-# CHECK-NEXT: b10(v36: anything ~ number) frequency=Rare handler=b26():
+# CHECK-NEXT: b10(v36: anything ~ undefined) frequency=Rare handler=b26():
 # CHECK-NEXT: v37: -3 = Integer integer=-3
 # CHECK-NEXT: v38: boolean = Eq v36, v37
 # CHECK-NEXT: v39: undefined = CallDirect v38 function=f2 accessSite=28

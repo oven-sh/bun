@@ -845,5 +845,5 @@ runtimefunction id=131091 function=f95 visibility=Private
 # -- generated: carried
 # CHECK-LABEL: function {{*}}name="carried"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 148, patchpoints: 8, rare instructions: 135, polls: 2
+# CHECK-NEXT: instructions: 149, patchpoints: 8, rare instructions: 139, polls: 2
 # CHECK-NEXT: end of function f11

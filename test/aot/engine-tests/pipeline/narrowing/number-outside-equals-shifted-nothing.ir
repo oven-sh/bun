@@ -235,144 +235,105 @@ function f4 module=m0 position=546 kind=Arrow flags=[IsChecked] captures=[{type=
 # CHECK-NEXT: b0(v0: int[0, 8]):
 # CHECK-NEXT: ValidateType v0 validatedType=int
 # CHECK-NEXT: v2: anything ~ undefined|null|Array<number> = GetModuleVariable variable=g0
-# CHECK-NEXT: v3: boolean ~ true = TypeTest v2 testedType=undefined|null|absent|Array<number>
-# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b10(| 0)
-# CHECK-NEXT: b1(v4: undefined|null|Array<number>):
-# CHECK-NEXT: ValidateType v2 validatedType=undefined|null|absent|Array<number>
-# CHECK-NEXT: v6: Array<number> = RequireObjectCoercible v4
-# CHECK-NEXT: v7: boolean = HasArrayStorage v6 arrayStorage=Double
-# CHECK-NEXT: Branch v7 -> taken b2(| 0), notTaken b4()
-# CHECK-NEXT: b2(v8: guard):
-# CHECK-NEXT: v9: boolean = IsElementPresent v6, v0, v8 arrayStorage=Double [keyIsIntegral]
-# CHECK-NEXT: Branch v9 -> taken b3(| 0), notTaken b5()
-# CHECK-NEXT: b3(v10: guard):
-# CHECK-NEXT: v11: guard = AllGuards v8, v10
-# CHECK-NEXT: v12: boolean = HasArrayStorage v6 arrayStorage=Double
+# CHECK-NEXT: v3: boolean|number|string|symbol|bigint|object ~ Array<number> = RequireObjectCoercible v2
+# CHECK-NEXT: v4: boolean ~ true = TypeTest v3 testedType=Array<number>
+# CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b5()
+# CHECK-NEXT: b1(v5: Array<number>):
+# CHECK-NEXT: v6: boolean = HasArrayStorage v5 arrayStorage=Double
+# CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b8()
+# CHECK-NEXT: b2(v7: guard):
+# CHECK-NEXT: v8: boolean = IsElementPresent v5, v0, v7 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: Branch v8 -> taken b3(| 0), notTaken b5()
+# CHECK-NEXT: b3(v9: guard):
+# CHECK-NEXT: ValidateSameValue v5, v3
+# CHECK-NEXT: v11: guard = AllGuards v7, v9
+# CHECK-NEXT: v12: boolean = HasArrayStorage v5 arrayStorage=Double
 # CHECK-NEXT: v13: true = Boolean boolean=true
 # CHECK-NEXT: ValidateSameValue v12, v13
-# CHECK-NEXT: v15: boolean = IsElementPresent v6, v0, v8 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: v15: boolean = IsElementPresent v5, v0, v7 arrayStorage=Double [keyIsIntegral]
 # CHECK-NEXT: v16: true = Boolean boolean=true
 # CHECK-NEXT: ValidateSameValue v15, v16
-# CHECK-NEXT: v18: number = GetArrayElement v6, v0, v11 arrayStorage=Double level=Expected accessSite=7 [keyIsIntegral, isPresent]
-# CHECK-NEXT: ValidateType v18 validatedType=number
-# CHECK-NEXT: v20: 0 = Integer
-# CHECK-NEXT: v21: int[0, 4294967295] = URShift v18, v20
-# CHECK-NEXT: v22: boolean = StrictEq v21, v18
-# CHECK-NEXT: Branch v22 -> taken b7(| 1), notTaken b8()
-# CHECK-NEXT: b4() frequency=Rare:
-# CHECK-NEXT: ConvertToDoubleStorage v6
-# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: v18: number = GetArrayElement v5, v0, v11 arrayStorage=Double level=Expected accessSite=7 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v19: 0 = Integer
+# CHECK-NEXT: v20: int[0, 4294967295] = URShift v18, v19
+# CHECK-NEXT: v21: boolean = StrictEq v20, v18
+# CHECK-NEXT: Branch v21 -> taken b4(| 1), notTaken b7()
+# CHECK-NEXT: b4(v22: int[0, 4294967295]|whole):
+# CHECK-NEXT: v23: string = CallBuiltin -, v22 overload=String/0 accessSite=9 @0 tail
+# CHECK-NEXT: ValidateType v23 validatedType=string
+# CHECK-NEXT: Return v23
 # CHECK-NEXT: b5() frequency=Rare:
-# CHECK-NEXT: v24: anything ~ undefined|number = ElemGet v6, v0 accessSite=7 [keyIsIntegral]
-# CHECK-NEXT: v25: boolean = TypeTest v24 testedType=number
-# CHECK-NEXT: Branch v25 -> taken b6(| 0), notTaken b9(| 0)
-# CHECK-NEXT: b6(v26: number) frequency=Rare:
-# CHECK-NEXT: ValidateType v24 validatedType=number
-# CHECK-NEXT: v28: 0 = Integer
-# CHECK-NEXT: v29: int[0, 4294967295] = URShift v26, v28
-# CHECK-NEXT: v30: boolean = StrictEq v29, v26
-# CHECK-NEXT: Branch v30 -> taken b7(| 1), notTaken b8()
-# CHECK-NEXT: b7(v31: int[0, 4294967295]|whole):
+# CHECK-NEXT: v25: anything ~ undefined|number = ElemGet v3, v0 accessSite=7 [keyIsIntegral]
+# CHECK-NEXT: v26: anything ~ number = Expect v25 expectedType=number
+# CHECK-NEXT: v27: 0 = Integer
+# CHECK-NEXT: v28: int[0, 4294967295] = URShift v26, v27
+# CHECK-NEXT: v29: boolean = StrictEq v28, v26
+# CHECK-NEXT: Branch v29 -> taken b6(| 1), notTaken b7()
+# CHECK-NEXT: b6(v30: int[0, 4294967295]|whole) frequency=Rare:
+# CHECK-NEXT: v31: number = CallDirect v30 function=f3 accessSite=8
 # CHECK-NEXT: v32: string = CallBuiltin -, v31 overload=String/0 accessSite=9 @0 tail
 # CHECK-NEXT: ValidateType v32 validatedType=string
 # CHECK-NEXT: Return v32
-# CHECK-NEXT: b8():
+# CHECK-NEXT: b7():
 # CHECK-NEXT: v34: "-" = String string="-"
 # CHECK-NEXT: Return v34
-# CHECK-NEXT: b9(v35: undefined|null|boolean|string|symbol|bigint|object ~ undefined) frequency=Unlikely:
-# CHECK-NEXT: v36: undefined|null|boolean|string|symbol|bigint|object ~ undefined = Expect v35 expectedType=anything|absent
-# CHECK-NEXT: Jump -> next b11(v36)
-# CHECK-NEXT: b10(v37: boolean|number|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v38: boolean|number|string|symbol|bigint|object = Upcast v37 castType=boolean|number|string|symbol|bigint|object
-# CHECK-NEXT: v39: anything = ElemGet v38, v0 accessSite=7 [keyIsIntegral]
-# CHECK-NEXT: v40: anything ~ number = Expect v39 expectedType=number
-# CHECK-NEXT: Jump -> next b11(v40)
-# CHECK-NEXT: b11(v41: anything ~ undefined|number) frequency=Unlikely:
-# CHECK-NEXT: v42: 0 = Integer
-# CHECK-NEXT: v43: int[0, 4294967295] = URShift v41, v42
-# CHECK-NEXT: v44: boolean = StrictEq v43, v41
-# CHECK-NEXT: Branch v44 -> taken b12(| 1), notTaken b13()
-# CHECK-NEXT: b12(v45: int[0, 4294967295]|whole) frequency=Unlikely:
-# CHECK-NEXT: v46: number = CallDirect v45 function=f3 accessSite=8 [isNeverInlined]
-# CHECK-NEXT: v47: string = CallBuiltin -, v46 overload=String/0 accessSite=9 @0 tail
-# CHECK-NEXT: ValidateType v47 validatedType=string
-# CHECK-NEXT: Return v47
-# CHECK-NEXT: b13() frequency=Unlikely:
-# CHECK-NEXT: v49: "-" = String string="-"
-# CHECK-NEXT: Return v49
+# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: ConvertToDoubleStorage v5
+# CHECK-NEXT: Jump -> next b5()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="twice"
 # CHECK: module=m0 position=409 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[0, 8] site=w3}] results=[{type=string site=w4 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f4 callPosition=4294967295 module=m0}] {
 # CHECK-NEXT: b0(v0: int[0, 8]):
 # CHECK-NEXT: ValidateType v0 validatedType=int
 # CHECK-NEXT: v2: anything ~ undefined|null|Array<number> = GetModuleVariable variable=g0
-# CHECK-NEXT: v3: boolean ~ true = TypeTest v2 testedType=undefined|null|absent|Array<number>
-# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b10(| 0)
-# CHECK-NEXT: b1(v4: undefined|null|Array<number>):
-# CHECK-NEXT: ValidateType v2 validatedType=undefined|null|absent|Array<number>
-# CHECK-NEXT: v6: Array<number> = RequireObjectCoercible v4
-# CHECK-NEXT: v7: boolean = HasArrayStorage v6 arrayStorage=Double
-# CHECK-NEXT: Branch v7 -> taken b2(| 0), notTaken b4()
-# CHECK-NEXT: b2(v8: guard):
-# CHECK-NEXT: v9: boolean = IsElementPresent v6, v0, v8 arrayStorage=Double [keyIsIntegral]
-# CHECK-NEXT: Branch v9 -> taken b3(| 0), notTaken b5()
-# CHECK-NEXT: b3(v10: guard):
-# CHECK-NEXT: v11: guard = AllGuards v8, v10
-# CHECK-NEXT: v12: boolean = HasArrayStorage v6 arrayStorage=Double
+# CHECK-NEXT: v3: boolean|number|string|symbol|bigint|object ~ Array<number> = RequireObjectCoercible v2
+# CHECK-NEXT: v4: boolean ~ true = TypeTest v3 testedType=Array<number>
+# CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b5()
+# CHECK-NEXT: b1(v5: Array<number>):
+# CHECK-NEXT: v6: boolean = HasArrayStorage v5 arrayStorage=Double
+# CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b8()
+# CHECK-NEXT: b2(v7: guard):
+# CHECK-NEXT: v8: boolean = IsElementPresent v5, v0, v7 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: Branch v8 -> taken b3(| 0), notTaken b5()
+# CHECK-NEXT: b3(v9: guard):
+# CHECK-NEXT: ValidateSameValue v5, v3
+# CHECK-NEXT: v11: guard = AllGuards v7, v9
+# CHECK-NEXT: v12: boolean = HasArrayStorage v5 arrayStorage=Double
 # CHECK-NEXT: v13: true = Boolean boolean=true
 # CHECK-NEXT: ValidateSameValue v12, v13
-# CHECK-NEXT: v15: boolean = IsElementPresent v6, v0, v8 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: v15: boolean = IsElementPresent v5, v0, v7 arrayStorage=Double [keyIsIntegral]
 # CHECK-NEXT: v16: true = Boolean boolean=true
 # CHECK-NEXT: ValidateSameValue v15, v16
-# CHECK-NEXT: v18: number = GetArrayElement v6, v0, v11 arrayStorage=Double level=Expected accessSite=10 [keyIsIntegral, isPresent]
-# CHECK-NEXT: ValidateType v18 validatedType=number
-# CHECK-NEXT: v20: 0 = Integer
-# CHECK-NEXT: v21: int[0, 4294967295] = URShift v18, v20
-# CHECK-NEXT: v22: boolean = StrictEq v21, v18
-# CHECK-NEXT: Branch v22 -> taken b7(| 1), notTaken b8()
-# CHECK-NEXT: b4() frequency=Rare:
-# CHECK-NEXT: ConvertToDoubleStorage v6
-# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: v18: number = GetArrayElement v5, v0, v11 arrayStorage=Double level=Expected accessSite=10 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v19: 0 = Integer
+# CHECK-NEXT: v20: int[0, 4294967295] = URShift v18, v19
+# CHECK-NEXT: v21: boolean = StrictEq v20, v18
+# CHECK-NEXT: Branch v21 -> taken b4(| 1), notTaken b7()
+# CHECK-NEXT: b4(v22: int[0, 4294967295]|whole):
+# CHECK-NEXT: v23: string = CallBuiltin -, v22 overload=String/0 accessSite=12 @0 tail
+# CHECK-NEXT: ValidateType v23 validatedType=string
+# CHECK-NEXT: Return v23
 # CHECK-NEXT: b5() frequency=Rare:
-# CHECK-NEXT: v24: anything ~ undefined|number = ElemGet v6, v0 accessSite=10 [keyIsIntegral]
-# CHECK-NEXT: v25: boolean = TypeTest v24 testedType=number
-# CHECK-NEXT: Branch v25 -> taken b6(| 0), notTaken b9(| 0)
-# CHECK-NEXT: b6(v26: number) frequency=Rare:
-# CHECK-NEXT: ValidateType v24 validatedType=number
-# CHECK-NEXT: v28: 0 = Integer
-# CHECK-NEXT: v29: int[0, 4294967295] = URShift v26, v28
-# CHECK-NEXT: v30: boolean = StrictEq v29, v26
-# CHECK-NEXT: Branch v30 -> taken b7(| 1), notTaken b8()
-# CHECK-NEXT: b7(v31: int[0, 4294967295]|whole):
-# CHECK-NEXT: v32: string = CallBuiltin -, v31 overload=String/0 accessSite=12 @0 tail
-# CHECK-NEXT: ValidateType v32 validatedType=string
-# CHECK-NEXT: Return v32
-# CHECK-NEXT: b8():
-# CHECK-NEXT: v34: "-" = String string="-"
-# CHECK-NEXT: Return v34
-# CHECK-NEXT: b9(v35: undefined|null|boolean|string|symbol|bigint|object ~ undefined) frequency=Unlikely:
-# CHECK-NEXT: v36: undefined|null|boolean|string|symbol|bigint|object ~ undefined = Expect v35 expectedType=anything|absent
-# CHECK-NEXT: Jump -> next b11(v36)
-# CHECK-NEXT: b10(v37: boolean|number|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v38: boolean|number|string|symbol|bigint|object = Upcast v37 castType=boolean|number|string|symbol|bigint|object
-# CHECK-NEXT: v39: anything = ElemGet v38, v0 accessSite=10 [keyIsIntegral]
-# CHECK-NEXT: v40: anything ~ number = Expect v39 expectedType=number
-# CHECK-NEXT: Jump -> next b11(v40)
-# CHECK-NEXT: b11(v41: anything ~ undefined|number) frequency=Unlikely:
-# CHECK-NEXT: v42: 0 = Integer
-# CHECK-NEXT: v43: int[0, 4294967295] = URShift v41, v42
-# CHECK-NEXT: v44: 0 = Integer
-# CHECK-NEXT: v45: int[0, 4294967295] = URShift v41, v44
-# CHECK-NEXT: v46: boolean = StrictEq v45, v41
-# CHECK-NEXT: Branch v46 -> taken b12(| 1), notTaken b13()
-# CHECK-NEXT: b12(v47: int[0, 4294967295]|whole) frequency=Unlikely:
-# CHECK-NEXT: v48: number = CallDirect v47 function=f4 accessSite=11 [isNeverInlined]
-# CHECK-NEXT: v49: string = CallBuiltin -, v48 overload=String/0 accessSite=12 @0 tail
-# CHECK-NEXT: ValidateType v49 validatedType=string
-# CHECK-NEXT: Return v49
-# CHECK-NEXT: b13() frequency=Unlikely:
-# CHECK-NEXT: v51: "-" = String string="-"
-# CHECK-NEXT: Return v51
+# CHECK-NEXT: v25: anything ~ undefined|number = ElemGet v3, v0 accessSite=10 [keyIsIntegral]
+# CHECK-NEXT: v26: anything ~ number = Expect v25 expectedType=number
+# CHECK-NEXT: v27: 0 = Integer
+# CHECK-NEXT: v28: int[0, 4294967295] = URShift v26, v27
+# CHECK-NEXT: v29: anything ~ number = Upcast v25 castType=anything
+# CHECK-NEXT: v30: 0 = Integer
+# CHECK-NEXT: v31: int[0, 4294967295] = URShift v29, v30
+# CHECK-NEXT: v32: boolean = StrictEq v31, v29
+# CHECK-NEXT: Branch v32 -> taken b6(| 1), notTaken b7()
+# CHECK-NEXT: b6(v33: int[0, 4294967295]|whole) frequency=Rare:
+# CHECK-NEXT: v34: number = CallDirect v33 function=f4 accessSite=11
+# CHECK-NEXT: v35: string = CallBuiltin -, v34 overload=String/0 accessSite=12 @0 tail
+# CHECK-NEXT: ValidateType v35 validatedType=string
+# CHECK-NEXT: Return v35
+# CHECK-NEXT: b7():
+# CHECK-NEXT: v37: "-" = String string="-"
+# CHECK-NEXT: Return v37
+# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: ConvertToDoubleStorage v5
+# CHECK-NEXT: Jump -> next b5()
 # CHECK-NEXT: }
 # CHECK-LABEL: function f3 module=
 # CHECK: m0 position=380 kind=Arrow flags=[IsChecked] captures=[{type=number site=w8}] thisType={type=anything} results=[{type=number site=w10}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

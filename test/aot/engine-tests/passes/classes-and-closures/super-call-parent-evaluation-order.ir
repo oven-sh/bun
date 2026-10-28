@@ -541,17 +541,11 @@ function f33 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="DerivedPlain"
 # CHECK: module=m0 position=277 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
-# CHECK-NEXT: b0(v0: function, v1: anything):
+# CHECK-NEXT: b0(v0: function, v1: anything) frequency=Unlikely:
 # CHECK-NEXT: v2: null|object = GetSuperBase v0
 # CHECK-NEXT: v3: object ~ L1 = SuperConstruct v2, v1 layout=L1 accessSite=18 callees=[f5, ..]
-# CHECK-NEXT: v4: boolean ~ true = TypeTest v3 testedType=L1
-# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b2()
-# CHECK-NEXT: b1() frequency=Unlikely:
-# CHECK-NEXT: v5: object = NewRuntimeError runtimeError=UninitializedThis
-# CHECK-NEXT: Throw v5
-# CHECK-NEXT: b2() frequency=Rare:
-# CHECK-NEXT: v6: object = NewRuntimeError runtimeError=UninitializedThis
-# CHECK-NEXT: Throw v6
+# CHECK-NEXT: v4: object = NewRuntimeError runtimeError=UninitializedThis
+# CHECK-NEXT: Throw v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f7 module=
 # CHECK: m0 position=354 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f21] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

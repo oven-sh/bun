@@ -3577,7 +3577,7 @@ runtimefunction id=69 function=f179
 # CHECK-LABEL: function {{*}}name="fresh"
 # CHECK: module=m0 position=1637 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=int|whole site=w27}, {type=f12}, {type=int|whole}, {type=int|whole}] results=[{type=int|whole site=w29}] capabilities=[MayBeCloned, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f12 parameterMap=[{original=0}, {}, {}, {}]}
 # CHECK-LABEL: function {{*}}name="anyValue"
-# CHECK: module=m0 position=6652 role=GenericEntrypoint flags=[HasThis, IsChecked] length=2 captures=[{type=f30}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f30} creator=Entrypoint{target=f30 arguments=Registers} inlineFrames=[{}, {callee=f287 callPosition=6652 isTailCall=true module=m0}] {
+# CHECK: module=m0 position=6652 role=GenericEntrypoint flags=[HasThis, IsChecked] length=2 captures=[{type=f30}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f30} creator=Entrypoint{target=f30 arguments=Registers} inlineFrames=[{}, {callee=f287 callPosition=6652 isTailCall=true module=m0}, {callee=f287 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f30, v1: anything, v2: anything, v3: anything):
 # CHECK-NEXT: v4: int|whole = AssumeType v2 provenType=int|whole
 # CHECK-NEXT: v5: 0 = Integer
@@ -3589,8 +3589,17 @@ runtimefunction id=69 function=f179
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v8: 1 = Integer integer=1
 # CHECK-NEXT: v9: int|whole = Sub v4, v8
-# CHECK-NEXT: v10: int = CallDirect v9 function=f287 accessSite=80
-# CHECK-NEXT: ReturnCall v10 casts=[{declared={type=int} resolution=Assume}]
+# CHECK-NEXT: v10: 0 = Integer
+# CHECK-NEXT: v11: boolean = StrictEq v9, v10
+# CHECK-NEXT: Branch v11 -> taken b3(), notTaken b4()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v12: 0 = Integer
+# CHECK-NEXT: Return v12
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v13: 1 = Integer integer=1
+# CHECK-NEXT: v14: int|whole = Sub v9, v13
+# CHECK-NEXT: v15: int = CallDirect v14 function=f287 accessSite=80 [isNeverInlined]
+# CHECK-NEXT: ReturnCall v15 casts=[{declared={type=int} resolution=Assume}, {declared={type=int} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="C"
 # CHECK: module=m0 position=4850 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget, IsChecked] captures=[{type=f40}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f40} creator=Entrypoint{target=f40 arguments=Registers takesNewTarget=true} {

@@ -95,6 +95,16 @@ export function family(title: string, members: Member[]): Drawn {
   };
 }
 
+/** A list without an end: member n is made when seed n is drawn. */
+export function endless(title: string, memberAt: (index: number) => Member): Drawn {
+  return (seed, bed) => {
+    if (bed.name !== "product") return;
+    const member = memberAt(seed);
+    if (notHeldToPlainBun.some(name => member[name])) return;
+    return drawn(bed, seed, asProgram(member.make(), member.flags, member.plainEnv), member.name, title);
+  };
+}
+
 /** A table too long to write down: a module that counts its programs and makes the one at an index. */
 export function table(
   title: string,

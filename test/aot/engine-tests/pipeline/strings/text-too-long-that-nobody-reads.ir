@@ -220,21 +220,9 @@ function f2 name="tries" module=m0 position=276 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: v12: anything = CatchValue
 # CHECK-NEXT: v13: anything ~ undefined|null|Error = Upcast v12 castType=anything
 # CHECK-NEXT: v14: anything = PropGet v13 key="constructor" accessSite=6
-# CHECK-NEXT: v15: boolean = TypeTest v14 testedType=undefined|null|function
-# CHECK-NEXT: Branch v15 -> taken b5(| 0), notTaken b8(| 0)
-# CHECK-NEXT: b5(v16: undefined|null|function):
-# CHECK-NEXT: v17: function = RequireObjectCoercible v16 name="name"
-# CHECK-NEXT: v18: anything = PropGet v17 key="name" accessSite=7
-# CHECK-NEXT: v19: boolean = TypeTest v18 testedType=undefined|null|string
-# CHECK-NEXT: Branch v19 -> taken b6(| 0), notTaken b7(| 0)
-# CHECK-NEXT: b6(v20: undefined|null|string):
-# CHECK-NEXT: Return v20
-# CHECK-NEXT: b7(v21: boolean|number|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b9(v21)
-# CHECK-NEXT: b8(v22: boolean|number|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v23: anything = PropGet v22 key="name" accessSite=7
-# CHECK-NEXT: v24: anything ~ undefined|null|string = Expect v23 expectedType=undefined|null|string
-# CHECK-NEXT: Jump -> next b9(v24)
-# CHECK-NEXT: b9(v25: anything) frequency=Unlikely:
-# CHECK-NEXT: Return v25
+# CHECK-NEXT: v15: anything ~ undefined|null|function = Expect v14 expectedType=undefined|null|function
+# CHECK-NEXT: v16: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v15 name="name"
+# CHECK-NEXT: v17: anything = PropGet v16 key="name" accessSite=7
+# CHECK-NEXT: v18: anything ~ undefined|null|string = Expect v17 expectedType=undefined|null|string
+# CHECK-NEXT: Return v18
 # CHECK-NEXT: }

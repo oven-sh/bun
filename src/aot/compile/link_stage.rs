@@ -186,6 +186,8 @@ impl Build<'_> {
             has_commonjs_entry_point: (program.entries.iter())
                 .any(|entry| program.modules[entry.module.index()].kind == ModuleKind::CommonJs),
             ways_not_followed_out_of_sight: application_graph.ways_not_followed_out_of_sight(),
+            ways_followed_for_their_names: application_graph.ways_followed_for_their_names(),
+            lets_process_out_of_sight: application_graph.lets_process_out_of_sight(),
             writes_preload,
             held_library_code: core::mem::take(&mut self.held_library_code),
             program,

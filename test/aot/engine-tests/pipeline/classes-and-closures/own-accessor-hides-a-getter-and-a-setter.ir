@@ -649,13 +649,7 @@ runtimefunction id=69 function=f32
 # CHECK-NEXT: b2() frequency=Rare:
 # CHECK-NEXT: v4: anything ~ int = PropGet v0 key="held" accessSite=37 receivers=[L0]
 # CHECK-NEXT: v5: undefined|int ~ int = AssumeType v4 provenType=undefined|int
-# CHECK-NEXT: v6: boolean ~ true = TypeTest v5 testedType=number
-# CHECK-NEXT: Branch v6 -> taken b3(| 0), notTaken b4()
-# CHECK-NEXT: b3(v7: int) frequency=Rare:
-# CHECK-NEXT: Return v7
-# CHECK-NEXT: b4() frequency=Unlikely:
-# CHECK-NEXT: v8: undefined = Undefined
-# CHECK-NEXT: Return v8
+# CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="size"
 # CHECK: module=m0 position=315 kind=Setter role=EntryChecks flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L0 site=w11} parameters=[{type=number site=w10 flags=[IsExpected]}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f34 fallback=f36} {
@@ -809,19 +803,11 @@ runtimefunction id=69 function=f32
 # CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v4: guard):
 # CHECK-NEXT: v5: int = GetSlot v2, v4 key="held" receivers=[L0] level=Expected accessSite=37 [holdsDeclaredType]
-# CHECK-NEXT: Jump -> next b5(v5) @272 tail
+# CHECK-NEXT: Return v5
 # CHECK-NEXT: b2() frequency=Rare:
 # CHECK-NEXT: v6: anything ~ int = PropGet v2 key="held" accessSite=37 receivers=[L0]
 # CHECK-NEXT: v7: undefined|int ~ int = AssumeType v6 provenType=undefined|int
-# CHECK-NEXT: v8: boolean ~ true = TypeTest v7 testedType=number
-# CHECK-NEXT: Branch v8 -> taken b3(| 0), notTaken b4()
-# CHECK-NEXT: b3(v9: int) frequency=Rare:
-# CHECK-NEXT: Return v9
-# CHECK-NEXT: b4() frequency=Unlikely:
-# CHECK-NEXT: v10: undefined = Undefined
-# CHECK-NEXT: Jump -> next b5(v10) @272 tail
-# CHECK-NEXT: b5(v11: undefined|int ~ int):
-# CHECK-NEXT: Return v11
+# CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="size"
 # CHECK: module=m0 position=315 kind=Setter role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f4}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers} inlineFrames=[{}, {callee=f4 callPosition=315 isTailCall=true module=m0}, {callee=f36 callPosition=315 parent=1 isTailCall=true module=m0}, {callee=f34 callPosition=315 parent=1 isTailCall=true module=m0}] {

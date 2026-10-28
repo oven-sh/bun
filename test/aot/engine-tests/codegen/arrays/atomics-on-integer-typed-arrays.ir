@@ -1417,30 +1417,18 @@ runtimefunction id=69 function=f45
 # CHECK-NEXT: v8: string = CallBuiltin -, v3 overload=String/0 accessSite=95
 # CHECK-NEXT: Jump -> next b3(v8)
 # CHECK-NEXT: b3(v9: string):
-# CHECK-NEXT: Jump -> next b10(v9) @0 tail
+# CHECK-NEXT: Jump -> next b5(v9) @0 tail
 # CHECK-NEXT: b4() role=CatchHandler:
 # CHECK-NEXT: v10: anything = CatchValue
 # CHECK-NEXT: v11: anything ~ undefined|null|Error = Upcast v10 castType=anything
 # CHECK-NEXT: v12: anything = PropGet v11 key="constructor" accessSite=96
-# CHECK-NEXT: v13: boolean = TypeTest v12 testedType=undefined|null|function
-# CHECK-NEXT: Branch v13 -> taken b5(| 0), notTaken b8(| 0)
-# CHECK-NEXT: b5(v14: undefined|null|function):
-# CHECK-NEXT: v15: function = RequireObjectCoercible v14 name="name"
-# CHECK-NEXT: v16: anything = PropGet v15 key="name" accessSite=97
-# CHECK-NEXT: v17: boolean = TypeTest v16 testedType=undefined|null|string
-# CHECK-NEXT: Branch v17 -> taken b6(| 0), notTaken b7(| 0)
-# CHECK-NEXT: b6(v18: undefined|null|string):
-# CHECK-NEXT: Jump -> next b10(v18) @0 tail
-# CHECK-NEXT: b7(v19: boolean|number|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b9(v19)
-# CHECK-NEXT: b8(v20: boolean|number|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v21: anything = PropGet v20 key="name" accessSite=97
-# CHECK-NEXT: v22: anything ~ undefined|null|string = Expect v21 expectedType=undefined|null|string
-# CHECK-NEXT: Jump -> next b9(v22)
-# CHECK-NEXT: b9(v23: anything) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b10(v23) @0 tail
-# CHECK-NEXT: b10(v24: anything ~ undefined|null|string):
-# CHECK-NEXT: Return v24
+# CHECK-NEXT: v13: anything ~ undefined|null|function = Expect v12 expectedType=undefined|null|function
+# CHECK-NEXT: v14: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v13 name="name"
+# CHECK-NEXT: v15: anything = PropGet v14 key="name" accessSite=97
+# CHECK-NEXT: v16: anything ~ undefined|null|string = Expect v15 expectedType=undefined|null|string
+# CHECK-NEXT: Jump -> next b5(v16) @0 tail
+# CHECK-NEXT: b5(v17: anything ~ undefined|null|string):
+# CHECK-NEXT: Return v17
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="loads"
 # CHECK: module=m0 position=3057 role=GenericVersion flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Int32Array site=w36 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=number site=w37 flags=[IsExpected]}] results=[{type=undefined|null|string site=w38 flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f11 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f54} {

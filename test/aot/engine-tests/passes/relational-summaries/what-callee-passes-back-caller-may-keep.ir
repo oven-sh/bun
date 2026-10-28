@@ -400,64 +400,34 @@ function f48 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v1: Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v0 provenType=Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: PutModuleVariable v1 variable=g9
 # CHECK-NEXT: v3: 0 = Integer
-# CHECK-NEXT: v4: 0 = Integer
-# CHECK-NEXT: Jump -> next b1(v3, v4)
-# CHECK-NEXT: b1(v5: number ~ 0, v6: int[0, 270] ~ 0):
-# CHECK-NEXT: Jump -> next b2(v5, v6)
-# CHECK-NEXT: b2(v7: number, v8: int[0, 270]):
-# CHECK-NEXT: v9: int = AssumeType v7 provenType=int
+# CHECK-NEXT: Jump -> next b1(v3)
+# CHECK-NEXT: b1(v4: int[0, 270]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v11: 270 = Integer integer=270
-# CHECK-NEXT: v12: boolean = Less v8, v11
-# CHECK-NEXT: Branch v12 -> taken b3(| 0), notTaken b10()
-# CHECK-NEXT: b3(v13: int[0, 269]):
-# CHECK-NEXT: Jump -> next b4(v13, v9)
-# CHECK-NEXT: b4(v14: int[0, 269], v15: int):
-# CHECK-NEXT: v16: anything ~ number = CallDirect v14 function=f10 accessSite=0
-# CHECK-NEXT: v17: boolean ~ true = TypeTest v16 testedType=number
-# CHECK-NEXT: Branch v17 -> taken b5(| 0), notTaken b6(| 0)
-# CHECK-NEXT: b5(v18: number):
-# CHECK-NEXT: v19: number = Add v15, v18
-# CHECK-NEXT: v20: int[1, 270] = Increment v14
-# CHECK-NEXT: Jump -> next b2(v19, v20)
-# CHECK-NEXT: b6(v21: undefined|null|boolean|string|symbol|bigint|object) frequency=Rare:
-# CHECK-NEXT: v22: number|string|bigint = Add v15, v21
-# CHECK-NEXT: v23: int[1, 270] = Increment v14
-# CHECK-NEXT: v24: boolean = TypeTest v22 testedType=number
-# CHECK-NEXT: Branch v24 -> taken b7(| 0), notTaken b8()
-# CHECK-NEXT: b7(v25: number) frequency=Rare:
-# CHECK-NEXT: Jump -> next b1(v25, v23)
-# CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v26: fact = Specified
-# CHECK-NEXT: v27: int = AssumeType v22, v26 provenType=int
+# CHECK-NEXT: v6: 270 = Integer integer=270
+# CHECK-NEXT: v7: boolean = Less v4, v6
+# CHECK-NEXT: Branch v7 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v8: int[0, 269]):
+# CHECK-NEXT: v9: number = CallDirect v8 function=f10 accessSite=0
+# CHECK-NEXT: v10: int[1, 270] = Increment v8
+# CHECK-NEXT: Jump -> next b1(v10)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v11: f6 = GetModuleVariable variable=g5
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b4():
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v29: 270 = Integer integer=270
-# CHECK-NEXT: v30: boolean = Less v23, v29
-# CHECK-NEXT: Branch v30 -> taken b9(| 0), notTaken b10()
-# CHECK-NEXT: b9(v31: int[1, 269]) frequency=Rare:
-# CHECK-NEXT: Jump -> next b4(v31, v27)
-# CHECK-NEXT: b10():
-# CHECK-NEXT: v32: f6 = GetModuleVariable variable=g5
-# CHECK-NEXT: Jump -> next b11()
-# CHECK-NEXT: b11():
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v34: L1 = NewObject layout=L1 allocationSite=3 allocationClass=1
-# CHECK-NEXT: v35: L1 = FinishObject v34
-# CHECK-NEXT: v36: L1 = NewObject layout=L1 allocationSite=4 allocationClass=1
-# CHECK-NEXT: v37: L1 = FinishObject v36
-# CHECK-NEXT: v38: undefined|null|Array = Call v32, -, v35, v37 calleeName="pairUp" accessSite=2 callees=[f6]
-# CHECK-NEXT: Jump -> next b11()
+# CHECK-NEXT: v13: L1 = NewObject layout=L1 allocationSite=3 allocationClass=1
+# CHECK-NEXT: v14: L1 = FinishObject v13
+# CHECK-NEXT: v15: L1 = NewObject layout=L1 allocationSite=4 allocationClass=1
+# CHECK-NEXT: v16: L1 = FinishObject v15
+# CHECK-NEXT: v17: undefined|null|Array = Call v11, -, v14, v16 calleeName="pairUp" accessSite=2 callees=[f6]
+# CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="wrap"
-# CHECK: module=m0 position=779 role=ResultWrapper flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0|L1|f20|f21}] results=[{type=L0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f50 layout=L0} inlineFrames=[{}, {callee=f50 callPosition=779 module=m0}] {
-# CHECK-NEXT: b0(v0: L0|L1|f20|f21):
-# CHECK-NEXT: v1: L0 = NewObject -, v0 layout=L0 fields=[0] allocationSite=5 allocationClass=0
-# CHECK-NEXT: Return v1
-# CHECK-NEXT: }
+# CHECK: module=m0 position=779 role=ResultWrapper flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0|L1|f20|f21}] results=[{type=L0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f50 layout=L0}
 # CHECK-LABEL: function {{*}}name="wrapTwice"
-# CHECK: module=m0 position=839 role=ResultWrapper flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=f21}] results=[{type=L0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f73 layout=L0} {
+# CHECK: module=m0 position=839 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=f21}] results=[{type=L0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f4 callPosition=4294967295 isTailCall=true module=m0}, {callee=f4 callPosition=4294967295 module=m0}, {callee=f50 callPosition=779 parent=2 module=m0}, {callee=f50 callPosition=779 parent=1 module=m0}] {
 # CHECK-NEXT: b0(v0: f21):
-# CHECK-NEXT: v1: L0 = CallDirect v0 function=f73
+# CHECK-NEXT: v1: L0 = NewObject -, v0 layout=L0 fields=[0] allocationSite=5 allocationClass=0
 # CHECK-NEXT: v2: L0 = NewObject -, v1 layout=L0 fields=[0] allocationSite=5 allocationClass=0
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
@@ -490,10 +460,4 @@ function f48 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v3: L0|L1|f20|f21 = AssumeType v2 provenType=L0|L1|f20|f21
 # CHECK-NEXT: v4: L0 = NewObject -, v3 layout=L0 fields=[0] allocationSite=5 allocationClass=0
 # CHECK-NEXT: Return v4
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="wrapTwice"
-# CHECK: module=m0 position=839 role=ResultWorker flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=f21}] results=[{type=L0}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f5 parameterMap=[{original=0}]} creator=ResultWorker{origin=f5} inlineFrames=[{}, {callee=f4 callPosition=4294967295 isTailCall=true module=m0}, {callee=f4 callPosition=4294967295 module=m0}, {callee=f50 callPosition=779 parent=2 module=m0}, {callee=f50 callPosition=779 parent=1 module=m0}] {
-# CHECK-NEXT: b0(v0: f21):
-# CHECK-NEXT: v1: L0 = NewObject -, v0 layout=L0 fields=[0] allocationSite=5 allocationClass=0
-# CHECK-NEXT: Return v1
 # CHECK-NEXT: }

@@ -1044,7 +1044,8 @@ runtimefunction id=131091 function=f19 visibility=Private
 # CHECK-NEXT: Jump -> next b2()
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v5: string|symbol("unset")@m0:14 @Cell = GetModuleVariable variable=g2
-# CHECK-NEXT: Return v5
+# CHECK-NEXT: v6: string|symbol("unset")@m0:14 @Cell = Expect v5 expectedType=undefined|null|string
+# CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Speller"
 # CHECK: module=m0 position=617 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {

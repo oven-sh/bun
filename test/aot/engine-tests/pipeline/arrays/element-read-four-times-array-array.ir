@@ -317,102 +317,62 @@ runtimefunction id=69 function=f2
 # CHECK: module=m0 position=174 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|boolean|number|string|object}] results=[{type=boolean site=w0}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: undefined|null|boolean|number|string|object):
 # CHECK-NEXT: v1: boolean = CallBuiltin -, v0 overload=ArrayIsArray/0 accessSite=6
-# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b20()
+# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b13()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v2: boolean = TypeTest v0 testedType=undefined|null|Array
-# CHECK-NEXT: Branch v2 -> taken b2(| 0), notTaken b13(| 0)
-# CHECK-NEXT: b2(v3: undefined|null|Array):
-# CHECK-NEXT: v4: 0 = Integer
-# CHECK-NEXT: v5: Array = RequireObjectCoercible v3
-# CHECK-NEXT: v6: boolean = IsPristine v5 builtinClass=Array aspects=[Storage]
-# CHECK-NEXT: Branch v6 -> taken b3(| 0), notTaken b7()
-# CHECK-NEXT: b3(v7: guard):
-# CHECK-NEXT: v8: anything = GetArrayElement v5, v4, v7 level=Expected accessSite=7 [keyIsIntegral]
-# CHECK-NEXT: v9: boolean = TypeTest v8 testedType=function
-# CHECK-NEXT: Branch v9 -> taken b20(), notTaken b4()
+# CHECK-NEXT: v2: undefined|null|boolean|number|string|object ~ undefined|null|Array = Expect v0 expectedType=undefined|null|Array
+# CHECK-NEXT: v3: 0 = Integer
+# CHECK-NEXT: v4: boolean|number|string|object ~ Array = RequireObjectCoercible v2
+# CHECK-NEXT: v5: boolean ~ true = TypeTest v4 testedType=Array
+# CHECK-NEXT: Branch v5 -> taken b2(| 0), notTaken b7()
+# CHECK-NEXT: b2(v6: Array):
+# CHECK-NEXT: v7: boolean = IsPristine v6 builtinClass=Array aspects=[Storage]
+# CHECK-NEXT: Branch v7 -> taken b3(| 0), notTaken b7()
+# CHECK-NEXT: b3(v8: guard):
+# CHECK-NEXT: v9: anything = GetArrayElement v6, v3, v8 level=Expected accessSite=7 [keyIsIntegral]
+# CHECK-NEXT: v10: boolean = TypeTest v9 testedType=function
+# CHECK-NEXT: Branch v10 -> taken b13(), notTaken b4()
 # CHECK-NEXT: b4():
-# CHECK-NEXT: v10: boolean = TypeTest v8 testedType=null|object
-# CHECK-NEXT: Branch v10 -> taken b5(), notTaken b20()
+# CHECK-NEXT: v11: boolean = TypeTest v9 testedType=null|object
+# CHECK-NEXT: Branch v11 -> taken b5(), notTaken b13()
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v11: fact = Specified
-# CHECK-NEXT: v12: undefined|null|Array = AssumeType v0, v11 provenType=undefined|null|Array
-# CHECK-NEXT: v13: 0 = Integer
-# CHECK-NEXT: v14: Array = RequireObjectCoercible v12
-# CHECK-NEXT: v15: anything = GetArrayElement v14, v13, v7 level=Expected accessSite=8 [keyIsIntegral]
-# CHECK-NEXT: v16: boolean = TypeTest v15 testedType=null
-# CHECK-NEXT: Branch v16 -> taken b20(), notTaken b6()
+# CHECK-NEXT: v12: 0 = Integer
+# CHECK-NEXT: v13: anything = GetArrayElement v6, v12, v8 level=Expected accessSite=8 [keyIsIntegral]
+# CHECK-NEXT: v14: boolean = TypeTest v13 testedType=null
+# CHECK-NEXT: Branch v14 -> taken b13(), notTaken b6()
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v17: 0 = Integer
-# CHECK-NEXT: v18: anything = ElemGet v14, v17 accessSite=9 [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b11(v18)
+# CHECK-NEXT: v15: 0 = Integer
+# CHECK-NEXT: v16: anything = ElemGet v6, v15 accessSite=9 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b11(v16)
 # CHECK-NEXT: b7() frequency=Rare:
-# CHECK-NEXT: v19: anything = ElemGet v5, v4 accessSite=7 [keyIsIntegral]
-# CHECK-NEXT: v20: boolean = TypeTest v19 testedType=function
-# CHECK-NEXT: Branch v20 -> taken b20(), notTaken b8()
+# CHECK-NEXT: v17: anything = ElemGet v4, v3 accessSite=7 [keyIsIntegral]
+# CHECK-NEXT: v18: boolean = TypeTest v17 testedType=function
+# CHECK-NEXT: Branch v18 -> taken b13(), notTaken b8()
 # CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v21: boolean = TypeTest v19 testedType=null|object
-# CHECK-NEXT: Branch v21 -> taken b9(), notTaken b20()
+# CHECK-NEXT: v19: boolean = TypeTest v17 testedType=null|object
+# CHECK-NEXT: Branch v19 -> taken b9(), notTaken b13()
 # CHECK-NEXT: b9() frequency=Rare:
-# CHECK-NEXT: v22: fact = Specified
-# CHECK-NEXT: v23: undefined|null|Array = AssumeType v0, v22 provenType=undefined|null|Array
-# CHECK-NEXT: v24: 0 = Integer
-# CHECK-NEXT: v25: Array = RequireObjectCoercible v23
-# CHECK-NEXT: v26: anything = ElemGet v25, v24 accessSite=8 [keyIsIntegral]
-# CHECK-NEXT: v27: boolean = TypeTest v26 testedType=null
-# CHECK-NEXT: Branch v27 -> taken b20(), notTaken b10()
+# CHECK-NEXT: v20: 0 = Integer
+# CHECK-NEXT: v21: anything = ElemGet v4, v20 accessSite=8 [keyIsIntegral]
+# CHECK-NEXT: v22: boolean = TypeTest v21 testedType=null
+# CHECK-NEXT: Branch v22 -> taken b13(), notTaken b10()
 # CHECK-NEXT: b10() frequency=Rare:
-# CHECK-NEXT: v28: 0 = Integer
-# CHECK-NEXT: v29: anything = ElemGet v25, v28 accessSite=9 [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b11(v29)
-# CHECK-NEXT: b11(v30: anything):
-# CHECK-NEXT: v31: anything ~ undefined|null|object = Upcast v30 castType=anything
-# CHECK-NEXT: v32: boolean = PropHas v31 key="k" accessSite=10
-# CHECK-NEXT: Branch v32 -> taken b12(), notTaken b20()
+# CHECK-NEXT: v23: 0 = Integer
+# CHECK-NEXT: v24: anything = ElemGet v4, v23 accessSite=9 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b11(v24)
+# CHECK-NEXT: b11(v25: anything):
+# CHECK-NEXT: v26: boolean = PropHas v25 key="k" accessSite=10
+# CHECK-NEXT: Branch v26 -> taken b12(), notTaken b13()
 # CHECK-NEXT: b12():
-# CHECK-NEXT: v33: fact = Specified
-# CHECK-NEXT: v34: undefined|null|Array = AssumeType v0, v33 provenType=undefined|null|Array
-# CHECK-NEXT: v35: 0 = Integer
-# CHECK-NEXT: v36: Array = RequireObjectCoercible v34
-# CHECK-NEXT: v37: anything = ElemGet v36, v35 accessSite=11 [keyIsIntegral]
-# CHECK-NEXT: v38: anything ~ undefined|null|number|string|symbol|bigint|object = Upcast v37 castType=anything
-# CHECK-NEXT: v39: anything = PropGet v38 key="k" accessSite=12
-# CHECK-NEXT: v40: boolean = TypeTest v39 testedType=string
-# CHECK-NEXT: Jump -> next b21(v40)
-# CHECK-NEXT: b13(v41: boolean|number|string|object) frequency=Unlikely:
-# CHECK-NEXT: v42: 0 = Integer
-# CHECK-NEXT: v43: boolean|number|string|object ~ Array = Upcast v41 castType=boolean|number|string|object
-# CHECK-NEXT: v44: anything = ElemGet v43, v42 accessSite=7 [keyIsIntegral]
-# CHECK-NEXT: v45: boolean = TypeTest v44 testedType=function
-# CHECK-NEXT: Branch v45 -> taken b18(), notTaken b14()
-# CHECK-NEXT: b14() frequency=Unlikely:
-# CHECK-NEXT: v46: boolean = TypeTest v44 testedType=null|object
-# CHECK-NEXT: Branch v46 -> taken b15(), notTaken b18()
-# CHECK-NEXT: b15() frequency=Unlikely:
-# CHECK-NEXT: v47: 0 = Integer
-# CHECK-NEXT: v48: anything = ElemGet v43, v47 accessSite=8 [keyIsIntegral]
-# CHECK-NEXT: v49: boolean = TypeTest v48 testedType=null
-# CHECK-NEXT: Branch v49 -> taken b18(), notTaken b16()
-# CHECK-NEXT: b16() frequency=Unlikely:
-# CHECK-NEXT: v50: 0 = Integer
-# CHECK-NEXT: v51: anything = ElemGet v43, v50 accessSite=9 [keyIsIntegral]
-# CHECK-NEXT: v52: boolean = PropHas v51 key="k" accessSite=10
-# CHECK-NEXT: Branch v52 -> taken b17(), notTaken b18()
-# CHECK-NEXT: b17() frequency=Unlikely:
-# CHECK-NEXT: v53: 0 = Integer
-# CHECK-NEXT: v54: anything = ElemGet v43, v53 accessSite=11 [keyIsIntegral]
-# CHECK-NEXT: v55: anything = PropGet v54 key="k" accessSite=12
-# CHECK-NEXT: v56: boolean = TypeTest v55 testedType=string
-# CHECK-NEXT: Jump -> next b19(v56)
-# CHECK-NEXT: b18() frequency=Unlikely:
-# CHECK-NEXT: v57: false = Boolean
-# CHECK-NEXT: Jump -> next b19(v57)
-# CHECK-NEXT: b19(v58: boolean) frequency=Unlikely:
-# CHECK-NEXT: Return v58
-# CHECK-NEXT: b20():
-# CHECK-NEXT: v59: false = Boolean
-# CHECK-NEXT: Jump -> next b21(v59)
-# CHECK-NEXT: b21(v60: boolean):
-# CHECK-NEXT: Return v60
+# CHECK-NEXT: v27: 0 = Integer
+# CHECK-NEXT: v28: anything = ElemGet v4, v27 accessSite=11 [keyIsIntegral]
+# CHECK-NEXT: v29: anything = PropGet v28 key="k" accessSite=12
+# CHECK-NEXT: v30: boolean = TypeTest v29 testedType=string
+# CHECK-NEXT: Jump -> next b14(v30)
+# CHECK-NEXT: b13():
+# CHECK-NEXT: v31: false = Boolean
+# CHECK-NEXT: Jump -> next b14(v31)
+# CHECK-NEXT: b14(v32: boolean):
+# CHECK-NEXT: Return v32
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="next"
 # CHECK: module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=ArrayIterator flags=[IsExpected]} results=[{type=L(IteratorResult)}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {

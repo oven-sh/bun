@@ -279,44 +279,70 @@ function f37 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v2: enumerator = ForInOpen v0
 # CHECK-NEXT: v3: 0 = Integer
 # CHECK-NEXT: Jump -> next b1(v1, v3)
-# CHECK-NEXT: b1(v4: int|whole, v5: int[0, 8589934591]):
+# CHECK-NEXT: b1(v4: int|whole ~ 0, v5: int[0, 8589934591] ~ 0):
+# CHECK-NEXT: Jump -> next b2(v4, v5)
+# CHECK-NEXT: b2(v6: int|whole ~ 0, v7: int[0, 8589934591]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v7: undefined = ForInStep v2, v0 position=v5
-# CHECK-NEXT: v8: int[0, 8589934590] = ResultAt v7 index=2
-# CHECK-NEXT: v9: 1 = Integer integer=1
-# CHECK-NEXT: v10: int[1, 8589934591] = Add v8, v9
-# CHECK-NEXT: v11: string = ResultAt v7 index=1
-# CHECK-NEXT: v12: boolean = IsEnumeratorCurrent v2, v0, v8
-# CHECK-NEXT: Branch v12 -> taken b2(| 0), notTaken b3()
-# CHECK-NEXT: b2(v13: guard):
-# CHECK-NEXT: v14: anything = EnumeratorGetByVal v0, v11, v2, v8, v13
-# CHECK-NEXT: Jump -> next b4(v14)
-# CHECK-NEXT: b3() frequency=Rare:
-# CHECK-NEXT: v15: anything = ElemGet v0, v11 accessSite=11
-# CHECK-NEXT: Jump -> next b4(v15)
-# CHECK-NEXT: b4(v16: anything):
+# CHECK-NEXT: v9: undefined = ForInStep v2, v0 position=v7
+# CHECK-NEXT: v10: int[0, 8589934590] = ResultAt v9 index=2
+# CHECK-NEXT: v11: 1 = Integer integer=1
+# CHECK-NEXT: v12: int[1, 8589934591] = Add v10, v11
+# CHECK-NEXT: v13: string = ResultAt v9 index=1
+# CHECK-NEXT: v14: boolean = IsEnumeratorCurrent v2, v0, v10
+# CHECK-NEXT: Branch v14 -> taken b3(| 0), notTaken b9()
+# CHECK-NEXT: b3(v15: guard):
+# CHECK-NEXT: v16: anything = EnumeratorGetByVal v0, v13, v2, v10, v15
 # CHECK-NEXT: v17: undefined|string|L1|L2|f9|f11|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = AssumeType v16 provenType=undefined|string|L1|L2|f9|f11|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
-# CHECK-NEXT: v18: boolean = TypeTest v17 testedType=undefined|null|L1
-# CHECK-NEXT: Branch v18 -> taken b5(| 0), notTaken b6(| 0)
-# CHECK-NEXT: b5(v19: undefined|L1):
-# CHECK-NEXT: v20: L1 = RequireObjectCoercible v19 name="legs"
-# CHECK-NEXT: v21: undefined = Undefined
-# CHECK-NEXT: v22: number = Add v4, v21
-# CHECK-NEXT: v23: int|whole = AssumeType v22 provenType=int|whole
-# CHECK-NEXT: Jump -> next b1(v23, v10)
-# CHECK-NEXT: b6(v24: string|L2|f9|f11|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)) frequency=Unlikely:
-# CHECK-NEXT: v25: boolean = TypeTest v24 testedType=L2
-# CHECK-NEXT: Branch v25 -> taken b7(), notTaken b8(| 0)
+# CHECK-NEXT: v18: undefined|string|L1|L2|f9|f11|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) ~ undefined|L1 = Expect v17 expectedType=undefined|null|L1
+# CHECK-NEXT: v19: string|L1|L2|f9|f11|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) ~ L1 = RequireObjectCoercible v18 name="legs"
+# CHECK-NEXT: v20: boolean ~ true = TypeTest v19 testedType=L1
+# CHECK-NEXT: Branch v20 -> taken b6(), notTaken b4()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v21: boolean ~ true = TypeTest v19 testedType=L1|L2
+# CHECK-NEXT: Branch v21 -> taken b5(| 0), notTaken b14(| 0)
+# CHECK-NEXT: b5(v22: L1|L2 ~ L1):
+# CHECK-NEXT: v23: boolean ~ true = TypeTest v22 testedType=L1
+# CHECK-NEXT: Branch v23 -> taken b6(), notTaken b7()
+# CHECK-NEXT: b6():
+# CHECK-NEXT: Jump -> next b8()
 # CHECK-NEXT: b7() frequency=Unlikely:
-# CHECK-NEXT: v26: undefined = Undefined
-# CHECK-NEXT: Jump -> next b9(v26)
-# CHECK-NEXT: b8(v27: string|f9|f11|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)) frequency=Unlikely:
-# CHECK-NEXT: v28: anything = PropGet v27 key="legs" accessSite=12
-# CHECK-NEXT: Jump -> next b9(v28)
-# CHECK-NEXT: b9(v29: anything ~ number) frequency=Unlikely:
-# CHECK-NEXT: v30: number|string|bigint ~ number = Add v4, v29
-# CHECK-NEXT: v31: int|whole = AssumeType v30 provenType=int|whole
-# CHECK-NEXT: Jump -> next b1(v31, v10)
+# CHECK-NEXT: Jump -> next b8()
+# CHECK-NEXT: b8():
+# CHECK-NEXT: v24: undefined = Undefined
+# CHECK-NEXT: v25: number = Add v6, v24
+# CHECK-NEXT: v26: int|whole = AssumeType v25 provenType=int|whole
+# CHECK-NEXT: Jump -> next b2(v26, v12)
+# CHECK-NEXT: b9() frequency=Rare:
+# CHECK-NEXT: v27: anything = ElemGet v0, v13 accessSite=11
+# CHECK-NEXT: v28: undefined|string|L1|L2|f9|f11|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = AssumeType v27 provenType=undefined|string|L1|L2|f9|f11|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
+# CHECK-NEXT: v29: undefined|string|L1|L2|f9|f11|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) ~ undefined|L1 = Expect v28 expectedType=undefined|null|L1
+# CHECK-NEXT: v30: string|L1|L2|f9|f11|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) ~ L1 = RequireObjectCoercible v29 name="legs"
+# CHECK-NEXT: v31: boolean ~ true = TypeTest v30 testedType=L1|L2
+# CHECK-NEXT: Branch v31 -> taken b10(| 0), notTaken b14(| 0)
+# CHECK-NEXT: b10(v32: L1|L2 ~ L1) frequency=Unlikely:
+# CHECK-NEXT: v33: boolean ~ true = TypeTest v32 testedType=L1
+# CHECK-NEXT: Branch v33 -> taken b11(), notTaken b12()
+# CHECK-NEXT: b11() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b13()
+# CHECK-NEXT: b12() frequency=Rare:
+# CHECK-NEXT: Jump -> next b13()
+# CHECK-NEXT: b13() frequency=Unlikely:
+# CHECK-NEXT: v34: undefined = Undefined
+# CHECK-NEXT: Jump -> next b16(v34)
+# CHECK-NEXT: b14(v35: string|f9|f11|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)) frequency=Rare:
+# CHECK-NEXT: v36: anything = PropGet v35 key="legs" accessSite=12
+# CHECK-NEXT: v37: boolean = TypeTest v36 testedType=number
+# CHECK-NEXT: Branch v37 -> taken b15(| 0), notTaken b16(| 0)
+# CHECK-NEXT: b15(v38: number) frequency=Unlikely:
+# CHECK-NEXT: v39: number = Add v6, v38
+# CHECK-NEXT: v40: int|whole = AssumeType v39 provenType=int|whole
+# CHECK-NEXT: Jump -> next b17(v40)
+# CHECK-NEXT: b16(v41: undefined|null|boolean|string|symbol|bigint|object ~ undefined) frequency=Unlikely:
+# CHECK-NEXT: v42: number|string|bigint ~ number = Add v6, v41
+# CHECK-NEXT: v43: int|whole = AssumeType v42 provenType=int|whole
+# CHECK-NEXT: Jump -> next b17(v43)
+# CHECK-NEXT: b17(v44: int|whole) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b1(v44, v12)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="attempt"
 # CHECK: module=m0 position=947 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}, {type=f15 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]

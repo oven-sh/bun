@@ -1095,7 +1095,7 @@ function f18 name="notANumberBound" module=m0 position=3205 flags=[IsChecked, Ha
 # CHECK-NEXT: end of function f4
 # CHECK-LABEL: function {{*}}name="blurred"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 161, patchpoints: 43, rare instructions: 297
+# CHECK-NEXT: instructions: 163, patchpoints: 43, rare instructions: 295
 # CHECK-NEXT: end of function f5
 # CHECK-LABEL: function {{*}}name="counterIsSetBack"
 # CHECK: role=Source

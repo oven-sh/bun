@@ -124,7 +124,7 @@ function f3 module=m0 role=Signature thisType={type=anything} results=[{type=any
 function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 # -- generated: f0 threeInARow
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f6 callPosition=855 parent=1 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "{\"list\":[0,1,2,3,4,5,6,7],\"odd\":[1.5,-1,-0,null,\"2\",61,62,63,64,4294967295,4294967296,1e300]}" = String string="{\"list\":[0,1,2,3,4,5,6,7],\"odd\":[1.5,-1,-0,null,\"2\",61,62,63,64,4294967295,4294967296,1e300]}"
 # CHECK-NEXT: v1: undefined = Undefined
@@ -178,67 +178,76 @@ function f4 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: b10(v39: guard):
 # CHECK-NEXT: v40: guard = AllGuards v37, v39
 # CHECK-NEXT: v41: number = GetArrayElement v35, v33, v40 arrayStorage=Double level=Expected accessSite=6 [keyIsIntegral, isPresent]
-# CHECK-NEXT: v42: anything ~ undefined|null|string = CallDirect v6, v41 function=f6 @855:1 tail
-# CHECK-NEXT: v43: anything ~ string = Expect v42 expectedType=string
-# CHECK-NEXT: v44: boolean ~ true = TypeTest v43 testedType=string
-# CHECK-NEXT: Branch v44 -> taken b11(), notTaken b15(| 0)
+# CHECK-NEXT: v42: undefined|string = GetArrayElement v6, v41 arrayStorage=Contiguous level=Proven accessSite=12
+# CHECK-NEXT: v43: 1 = Integer integer=1
+# CHECK-NEXT: v44: number = Add v41, v43
+# CHECK-NEXT: v45: undefined|string = GetArrayElement v6, v44 arrayStorage=Contiguous level=Proven accessSite=13
+# CHECK-NEXT: v46: number|string|bigint = Add v42, v45
+# CHECK-NEXT: v47: 2 = Integer integer=2
+# CHECK-NEXT: v48: number = Add v41, v47
+# CHECK-NEXT: v49: undefined|string = GetArrayElement v6, v48 arrayStorage=Contiguous level=Proven accessSite=14
+# CHECK-NEXT: v50: number|string|bigint = Add v46, v49
+# CHECK-NEXT: v51: number|string|bigint ~ string = Expect v50 expectedType=undefined|null|string
+# CHECK-NEXT: v52: number|string|bigint ~ string = Upcast v51 castType=anything
+# CHECK-NEXT: v53: boolean ~ true = TypeTest v52 testedType=string
+# CHECK-NEXT: Branch v53 -> taken b11(), notTaken b15(| 0)
 # CHECK-NEXT: b11():
-# CHECK-NEXT: v45: anything = PropGet v3 key="list" accessSite=9
-# CHECK-NEXT: v46: anything ~ undefined|null|Array<number> = Upcast v45 castType=anything
-# CHECK-NEXT: v47: 7 = Integer integer=7
-# CHECK-NEXT: v48: int[0, 7] = BitAnd v32, v47
-# CHECK-NEXT: v49: boolean = TypeTest v46 testedType=Array<number>
-# CHECK-NEXT: Branch v49 -> taken b12(| 0), notTaken b19(v46, v48, v32)
-# CHECK-NEXT: b12(v50: Array<number>):
-# CHECK-NEXT: v51: boolean = HasArrayStorage v50 arrayStorage=Double
-# CHECK-NEXT: Branch v51 -> taken b13(| 0), notTaken b19(v50, v48, v32)
-# CHECK-NEXT: b13(v52: guard):
-# CHECK-NEXT: v53: boolean = IsElementPresent v50, v48, v52 arrayStorage=Double [keyIsIntegral]
-# CHECK-NEXT: Branch v53 -> taken b14(| 0), notTaken b19(v50, v48, v32)
-# CHECK-NEXT: b14(v54: guard):
-# CHECK-NEXT: v55: guard = AllGuards v52, v54
-# CHECK-NEXT: v56: number = GetArrayElement v50, v48, v55 arrayStorage=Double level=Expected accessSite=10 [keyIsIntegral, isPresent]
-# CHECK-NEXT: v57: number = Call v21, -, v19, v56 calleeName="twoOfAView" accessSite=11 callees=[f2]
-# CHECK-NEXT: v58: int[1, 2147483648] = Increment v32
-# CHECK-NEXT: Jump -> next b5(v58)
-# CHECK-NEXT: b15(v59: undefined|null|boolean|number|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b18(v59, v32)
-# CHECK-NEXT: b16(v60: int|whole ~ int[0, 2147483647], v61: anything ~ undefined|null|Array<number>) frequency=Rare:
-# CHECK-NEXT: v62: int[0, 7] = BitAnd v60, v30
-# CHECK-NEXT: Jump -> next b17(v62, v60, v61)
-# CHECK-NEXT: b17(v63: int[0, 7], v64: int|whole ~ int[0, 2147483647], v65: anything ~ undefined|null|Array<number>) frequency=Rare:
-# CHECK-NEXT: v66: anything ~ undefined|number = ElemGet v65, v63 accessSite=6 [keyIsIntegral]
-# CHECK-NEXT: v67: anything ~ number = Upcast v66 castType=anything
-# CHECK-NEXT: v68: anything ~ undefined|null|string = CallDirect v6, v67 function=f1 accessSite=7
-# CHECK-NEXT: v69: anything ~ string = Expect v68 expectedType=string
-# CHECK-NEXT: Jump -> next b18(v69, v64)
-# CHECK-NEXT: b18(v70: anything ~ string, v71: int|whole ~ int[0, 2147483647]) frequency=Rare:
-# CHECK-NEXT: v72: anything = PropGet v70 key="length" accessSite=8
-# CHECK-NEXT: v73: anything = PropGet v3 key="list" accessSite=9
-# CHECK-NEXT: v74: anything ~ undefined|null|Array<number> = Upcast v73 castType=anything
-# CHECK-NEXT: v75: 7 = Integer integer=7
-# CHECK-NEXT: v76: int[0, 7] = BitAnd v71, v75
-# CHECK-NEXT: Jump -> next b19(v74, v76, v71)
-# CHECK-NEXT: b19(v77: anything ~ undefined|null|Array<number>, v78: int[0, 7], v79: int|whole ~ int[0, 2147483647]) frequency=Rare:
-# CHECK-NEXT: v80: anything ~ undefined|number = ElemGet v77, v78 accessSite=10 [keyIsIntegral]
-# CHECK-NEXT: v81: anything ~ number = Upcast v80 castType=anything
-# CHECK-NEXT: v82: number = Call v21, -, v19, v81 calleeName="twoOfAView" accessSite=11 callees=[f2]
-# CHECK-NEXT: v83: int|whole ~ int[1, 2147483648] = Increment v79
-# CHECK-NEXT: v84: boolean ~ true = TypeTest v83 testedType=int[0, 2147483648]
-# CHECK-NEXT: Branch v84 -> taken b20(| 0), notTaken b21()
-# CHECK-NEXT: b20(v85: int[0, 2147483648] ~ int[1, 2147483648]) frequency=Rare:
-# CHECK-NEXT: Jump -> next b4(v85)
+# CHECK-NEXT: v54: anything = PropGet v3 key="list" accessSite=9
+# CHECK-NEXT: v55: anything ~ undefined|null|Array<number> = Upcast v54 castType=anything
+# CHECK-NEXT: v56: 7 = Integer integer=7
+# CHECK-NEXT: v57: int[0, 7] = BitAnd v32, v56
+# CHECK-NEXT: v58: boolean = TypeTest v55 testedType=Array<number>
+# CHECK-NEXT: Branch v58 -> taken b12(| 0), notTaken b19(v55, v57, v32)
+# CHECK-NEXT: b12(v59: Array<number>):
+# CHECK-NEXT: v60: boolean = HasArrayStorage v59 arrayStorage=Double
+# CHECK-NEXT: Branch v60 -> taken b13(| 0), notTaken b19(v59, v57, v32)
+# CHECK-NEXT: b13(v61: guard):
+# CHECK-NEXT: v62: boolean = IsElementPresent v59, v57, v61 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: Branch v62 -> taken b14(| 0), notTaken b19(v59, v57, v32)
+# CHECK-NEXT: b14(v63: guard):
+# CHECK-NEXT: v64: guard = AllGuards v61, v63
+# CHECK-NEXT: v65: number = GetArrayElement v59, v57, v64 arrayStorage=Double level=Expected accessSite=10 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v66: number = Call v21, -, v19, v65 calleeName="twoOfAView" accessSite=11 callees=[f2]
+# CHECK-NEXT: v67: int[1, 2147483648] = Increment v32
+# CHECK-NEXT: Jump -> next b5(v67)
+# CHECK-NEXT: b15(v68: number|bigint) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b18(v68, v32)
+# CHECK-NEXT: b16(v69: int|whole ~ int[0, 2147483647], v70: anything ~ undefined|null|Array<number>) frequency=Rare:
+# CHECK-NEXT: v71: int[0, 7] = BitAnd v69, v30
+# CHECK-NEXT: Jump -> next b17(v71, v69, v70)
+# CHECK-NEXT: b17(v72: int[0, 7], v73: int|whole ~ int[0, 2147483647], v74: anything ~ undefined|null|Array<number>) frequency=Rare:
+# CHECK-NEXT: v75: anything ~ undefined|number = ElemGet v74, v72 accessSite=6 [keyIsIntegral]
+# CHECK-NEXT: v76: anything ~ number = Upcast v75 castType=anything
+# CHECK-NEXT: v77: anything ~ undefined|null|string = CallDirect v6, v76 function=f1 accessSite=7
+# CHECK-NEXT: v78: anything ~ string = Expect v77 expectedType=string
+# CHECK-NEXT: Jump -> next b18(v78, v73)
+# CHECK-NEXT: b18(v79: anything ~ string, v80: int|whole ~ int[0, 2147483647]) frequency=Rare:
+# CHECK-NEXT: v81: anything = PropGet v79 key="length" accessSite=8
+# CHECK-NEXT: v82: anything = PropGet v3 key="list" accessSite=9
+# CHECK-NEXT: v83: anything ~ undefined|null|Array<number> = Upcast v82 castType=anything
+# CHECK-NEXT: v84: 7 = Integer integer=7
+# CHECK-NEXT: v85: int[0, 7] = BitAnd v80, v84
+# CHECK-NEXT: Jump -> next b19(v83, v85, v80)
+# CHECK-NEXT: b19(v86: anything ~ undefined|null|Array<number>, v87: int[0, 7], v88: int|whole ~ int[0, 2147483647]) frequency=Rare:
+# CHECK-NEXT: v89: anything ~ undefined|number = ElemGet v86, v87 accessSite=10 [keyIsIntegral]
+# CHECK-NEXT: v90: anything ~ number = Upcast v89 castType=anything
+# CHECK-NEXT: v91: number = Call v21, -, v19, v90 calleeName="twoOfAView" accessSite=11 callees=[f2]
+# CHECK-NEXT: v92: int|whole ~ int[1, 2147483648] = Increment v88
+# CHECK-NEXT: v93: boolean ~ true = TypeTest v92 testedType=int[0, 2147483648]
+# CHECK-NEXT: Branch v93 -> taken b20(| 0), notTaken b21()
+# CHECK-NEXT: b20(v94: int[0, 2147483648] ~ int[1, 2147483648]) frequency=Rare:
+# CHECK-NEXT: Jump -> next b4(v94)
 # CHECK-NEXT: b21() frequency=Rare:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v87: int|whole ~ int[1, 2147483647] = Upcast v83 castType=int|whole
-# CHECK-NEXT: v88: anything = PropGet v3 key="list" accessSite=5
-# CHECK-NEXT: v89: boolean ~ true = TypeTest v87 testedType=int[0, 2147483647]
-# CHECK-NEXT: Branch v89 -> taken b22(| 0), notTaken b23()
-# CHECK-NEXT: b22(v90: int[0, 2147483647] ~ int[1, 2147483647]) frequency=Rare:
-# CHECK-NEXT: Jump -> next b6(v90, v88)
+# CHECK-NEXT: v96: int|whole ~ int[1, 2147483647] = Upcast v92 castType=int|whole
+# CHECK-NEXT: v97: anything = PropGet v3 key="list" accessSite=5
+# CHECK-NEXT: v98: boolean ~ true = TypeTest v96 testedType=int[0, 2147483647]
+# CHECK-NEXT: Branch v98 -> taken b22(| 0), notTaken b23()
+# CHECK-NEXT: b22(v99: int[0, 2147483647] ~ int[1, 2147483647]) frequency=Rare:
+# CHECK-NEXT: Jump -> next b6(v99, v97)
 # CHECK-NEXT: b23() frequency=Rare:
-# CHECK-NEXT: v91: anything ~ undefined|null|Array<number> = Upcast v88 castType=anything
-# CHECK-NEXT: Jump -> next b16(v87, v91)
+# CHECK-NEXT: v100: anything ~ undefined|null|Array<number> = Upcast v97 castType=anything
+# CHECK-NEXT: Jump -> next b16(v96, v100)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="threeInARow"
 # CHECK: module=m0 position=855 role=EntryChecks flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> site=w3 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w4 flags=[IsExpected]}] results=[{type=undefined|null|string site=w5 flags=[IsExpected, OmitsNull, OmitsUndefined]}] functionTypes=[f3] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f6 fallback=f7} {

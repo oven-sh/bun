@@ -585,7 +585,7 @@ mod tests {
             let whole = runtime.read(path).unwrap();
             let part = runtime.read_part_seen_by_every_file(path).unwrap();
             assert_eq!(whole.len(), part.len(), "{name}");
-            let lines = |text: &[u8]| text.iter().filter(|&&byte| byte == b'\n').count();
+            let lines = |text: &[u8]| strings::count_char(text, b'\n');
             assert_eq!(lines(&whole), lines(&part), "{name}");
             let [whole, part] = [&whole, &part]
                 .map(|text| parse_for_compile(session.arena(), &options, text, &atoms));

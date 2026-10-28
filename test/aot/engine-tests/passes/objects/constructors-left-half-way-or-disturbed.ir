@@ -207,7 +207,7 @@ function f12 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Derived"
 # CHECK: module=m0 position=2285 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w13 flags=[IsExpected]}, {type=number site=w14 flags=[IsExpected]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 inlineFrames=[{}, {callee=f5 callPosition=4294967295 isConstruction=true module=m0}] {
-# CHECK-NEXT: b0(v0: function, v1: anything, v2: anything ~ number, v3: anything ~ number):
+# CHECK-NEXT: b0(v0: function, v1: anything, v2: anything ~ number, v3: anything ~ number) frequency=Unlikely:
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Looping"

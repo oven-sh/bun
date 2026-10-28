@@ -131,6 +131,8 @@ pub struct Compilation {
     reads_main_module_without_its_name: bool,
     /// A program reads them, by the word of the engine, and lets a module object go where the front end has not followed them.
     ways_read_out_of_sight: WaysBetweenModuleObjects,
+    /// No program reads them, by the word of the engine, and the front end has followed them because a file names them.
+    ways_named_that_nobody_reads: WaysBetweenModuleObjects,
 }
 
 /// What the files that were loaded say about the code that their Workers start from. The later one holds of two loads together.
@@ -343,7 +345,9 @@ struct FrontEndOutput {
     held_library_code: HeldLibraryCode,
     names_way_to_module_objects: bool,
     has_commonjs_entry_point: bool,
+    lets_process_out_of_sight: bool,
     ways_not_followed_out_of_sight: WaysBetweenModuleObjects,
+    ways_followed_for_their_names: WaysBetweenModuleObjects,
 }
 
 impl FrontEndOutput {
@@ -672,9 +676,9 @@ fn find_library_code_lacked(
 }
 
 // An executable keeps track of which file is the main module where the front end has seen somebody ask.
-// Code that the build does not see counts as reading all that it can get at, and is handed no module object of the program.
-fn reads_main_module(found: FlowFindings<'_>) -> bool {
-    found.unseen_code.is_empty()
+// Code that the build does not see counts as reading all that it can get at, and is handed no module object of the program. Beside such code a read counts where code of the program lets `process` go out of sight.
+fn reads_main_module(found: FlowFindings<'_>, lets_process_out_of_sight: bool) -> bool {
+    (found.unseen_code.is_empty() || lets_process_out_of_sight)
         && found.builtins_used.iter().any(|record| {
             record.uses.contains(BuiltinUse::READ)
                 && builtin_of(record.builtin).map(table::canonical_id)
@@ -696,6 +700,18 @@ fn find_ways_read_out_of_sight(
     WaysBetweenModuleObjects {
         children: not_followed.children && is_used(BuiltinId::ModuleObjectChildren),
         parent: not_followed.parent && is_used(BuiltinId::ModuleObjectParent),
+    }
+}
+
+// A name in a file is a guess at what the engine knows.
+fn find_ways_named_that_nobody_reads(
+    found: FlowFindings<'_>,
+    followed_for_their_names: WaysBetweenModuleObjects,
+) -> WaysBetweenModuleObjects {
+    let read = find_ways_read_out_of_sight(found, followed_for_their_names);
+    WaysBetweenModuleObjects {
+        children: followed_for_their_names.children && !read.children,
+        parent: followed_for_their_names.parent && !read.parent,
     }
 }
 
@@ -773,6 +789,7 @@ fn find_load_options_with_what_engine_found(
         &compiled.library_code_lacked,
         compiled.reads_main_module_without_its_name,
         compiled.ways_read_out_of_sight,
+        compiled.ways_named_that_nobody_reads,
     )
 }
 
@@ -781,12 +798,16 @@ fn find_load_options_with(
     library_code_lacked: &RuntimeUses,
     reads_main_module_without_its_name: bool,
     ways_read_out_of_sight: WaysBetweenModuleObjects,
+    ways_named_that_nobody_reads: WaysBetweenModuleObjects,
 ) -> Option<LoadOptions> {
     let mut load = find_load_options_with_library_code_lacked(options, library_code_lacked);
     if !ways_read_out_of_sight.is_empty() && !options.aot.checks_only {
         let load = load.get_or_insert_with(|| options.load.clone());
-        load.ways_read_out_of_sight.children |= ways_read_out_of_sight.children;
-        load.ways_read_out_of_sight.parent |= ways_read_out_of_sight.parent;
+        load.ways_read_out_of_sight.add(ways_read_out_of_sight);
+    }
+    if !ways_named_that_nobody_reads.is_empty() && !options.aot.checks_only {
+        let load = load.get_or_insert_with(|| options.load.clone());
+        (load.ways_named_that_nobody_reads).add(ways_named_that_nobody_reads);
     }
     if reads_main_module_without_its_name
         && !options.load.reads_main_module_without_its_name
@@ -1212,8 +1233,8 @@ fn add_program(first: &mut Compilation, program: Compilation) {
     first.started_workers.add(program.started_workers);
     first.library_code_lacked.add(&program.library_code_lacked);
     first.reads_main_module_without_its_name |= program.reads_main_module_without_its_name;
-    first.ways_read_out_of_sight.children |= program.ways_read_out_of_sight.children;
-    first.ways_read_out_of_sight.parent |= program.ways_read_out_of_sight.parent;
+    (first.ways_read_out_of_sight).add(program.ways_read_out_of_sight);
+    (first.ways_named_that_nobody_reads).add(program.ways_named_that_nobody_reads);
 }
 
 fn compile_written_entry_points(
@@ -1310,6 +1331,8 @@ fn compile_program_at_each_entry_point(
                             program.library_code_lacked = RuntimeUses::default();
                             program.reads_main_module_without_its_name = false;
                             program.ways_read_out_of_sight = WaysBetweenModuleObjects::default();
+                            program.ways_named_that_nobody_reads =
+                                WaysBetweenModuleObjects::default();
                             programs[index] = Some(program);
                         }
                     }
@@ -1492,6 +1515,15 @@ fn compile_programs<'a>(
             return Err(build.finish::<()>(Err(Stage::Any), log).unwrap_err());
         }
     }
+    // A further load of a program that holds them all is spared little by what this load has parsed: that goes with the sessions of the load.
+    let holds_startup_modules = |output: &FrontEndOutput| {
+        let mut modules = table::STARTUP_MODULES.iter();
+        modules.all(|&module| output.held_library_code.holds_module(module))
+    };
+    if (outputs.iter()).all(|(_, output)| holds_startup_modules(output)) {
+        let session = SharedByLoads::take().and_then(SharedByLoads::into_session);
+        build.retired_sessions.extend(session);
+    }
     let mut compiled = Vec::with_capacity(outputs.len());
     let mut library_code_lacked = Vec::with_capacity(outputs.len());
     for (place, output) in outputs {
@@ -1515,13 +1547,17 @@ fn compile_programs<'a>(
         };
         let (held, platform) = (&output.held_library_code, build.platform);
         let lacks_main_module = output.lacks_main_module();
+        let lets_process_out_of_sight = output.lets_process_out_of_sight;
         let ways_not_followed = output.ways_not_followed_out_of_sight;
+        let ways_followed = output.ways_followed_for_their_names;
         // A program that is compiled again, with what the engine has found: nothing is made of it now.
         let goes_on = |found: FlowFindings<'_>| {
             let lacked = find_library_code_lacked(found, held, platform);
-            let reads_main_module = lacks_main_module && reads_main_module(found);
+            let reads_main_module =
+                lacks_main_module && reads_main_module(found, lets_process_out_of_sight);
             let ways = find_ways_read_out_of_sight(found, ways_not_followed);
-            find_load_options_with(own, &lacked, reads_main_module, ways).is_none()
+            let nobody_reads = find_ways_named_that_nobody_reads(found, ways_followed);
+            find_load_options_with(own, &lacked, reads_main_module, ways, nobody_reads).is_none()
         };
         let engine = build.run_engine(bytes, &engine_options, &output, &goes_on);
         let lacked = find_library_code_lacked(engine.flow_findings(), held, platform);
@@ -1597,16 +1633,21 @@ fn compile_programs<'a>(
         .into_iter()
         .zip(library_code_lacked)
         .map(|((place, engine, output), library_code_lacked)| {
-            let reads_main_module_without_its_name =
-                output.lacks_main_module() && reads_main_module(engine.flow_findings());
+            let reads_main_module_without_its_name = output.lacks_main_module()
+                && reads_main_module(engine.flow_findings(), output.lets_process_out_of_sight);
             let ways_read_out_of_sight = find_ways_read_out_of_sight(
                 engine.flow_findings(),
                 output.ways_not_followed_out_of_sight,
+            );
+            let ways_named_that_nobody_reads = find_ways_named_that_nobody_reads(
+                engine.flow_findings(),
+                output.ways_followed_for_their_names,
             );
             let (_, summary) = output.into_parts(statistics.clone());
             let compilation = Compilation {
                 reads_main_module_without_its_name,
                 ways_read_out_of_sight,
+                ways_named_that_nobody_reads,
                 engine,
                 summary,
                 further_programs: Vec::new(),

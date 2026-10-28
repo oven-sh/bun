@@ -598,102 +598,69 @@ function f18 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK: module=m0 position=971 role=ResultWorker flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[0, 3]}] results=[{type=undefined|string}, {type=undefined|string}, {type=undefined|string}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{original=0}]} creator=ResultWorker{origin=f1} {
 # CHECK-NEXT: b0(v0: int[0, 3]):
 # CHECK-NEXT: v1: anything ~ undefined|null|Array<undefined|null|string> = GetModuleVariable variable=g1
-# CHECK-NEXT: v2: boolean ~ true = TypeTest v1 testedType=undefined|null|absent|Array<undefined|null|string>
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b10(| 0)
-# CHECK-NEXT: b1(v3: undefined|null|Array<undefined|null|string>):
-# CHECK-NEXT: v4: 3 = Integer integer=3
-# CHECK-NEXT: v5: int[0, 3] = BitAnd v0, v4
-# CHECK-NEXT: v6: Array<undefined|null|string> = RequireObjectCoercible v3
+# CHECK-NEXT: v2: 3 = Integer integer=3
+# CHECK-NEXT: v3: int[0, 3] = BitAnd v0, v2
+# CHECK-NEXT: v4: boolean|number|string|symbol|bigint|object ~ Array<undefined|null|string> = RequireObjectCoercible v1
+# CHECK-NEXT: v5: boolean ~ true = TypeTest v4 testedType=Array<undefined|null|string>
+# CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b6()
+# CHECK-NEXT: b1(v6: Array<undefined|null|string>):
 # CHECK-NEXT: v7: boolean = HasArrayStorage v6 arrayStorage=Contiguous
 # CHECK-NEXT: Branch v7 -> taken b2(| 0), notTaken b6()
 # CHECK-NEXT: b2(v8: guard):
-# CHECK-NEXT: v9: boolean = IsElementPresent v6, v5, v8 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: v9: boolean = IsElementPresent v6, v3, v8 arrayStorage=Contiguous [keyIsIntegral]
 # CHECK-NEXT: Branch v9 -> taken b3(| 0), notTaken b6()
 # CHECK-NEXT: b3(v10: guard):
 # CHECK-NEXT: v11: guard = AllGuards v8, v10
-# CHECK-NEXT: v12: anything ~ undefined|null|string = GetArrayElement v6, v5, v11 arrayStorage=Contiguous level=Expected accessSite=68 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v12: anything ~ undefined|null|string = GetArrayElement v6, v3, v11 arrayStorage=Contiguous level=Expected accessSite=68 [keyIsIntegral, isPresent]
 # CHECK-NEXT: v13: undefined|null|string = AssumeType v12 provenType=undefined|null|string
-# CHECK-NEXT: v14: fact = Specified
-# CHECK-NEXT: v15: undefined|null|Array<undefined|null|string> = AssumeType v1, v14 provenType=undefined|null|Array<undefined|null|string>
-# CHECK-NEXT: v16: 1 = Integer integer=1
-# CHECK-NEXT: v17: int[1, 4] = Add v0, v16
-# CHECK-NEXT: v18: 3 = Integer integer=3
-# CHECK-NEXT: v19: int[0, 3] = BitAnd v17, v18
-# CHECK-NEXT: v20: Array<undefined|null|string> = RequireObjectCoercible v15
-# CHECK-NEXT: v21: boolean = IsElementPresent v20, v19, v8 arrayStorage=Contiguous [keyIsIntegral]
-# CHECK-NEXT: Branch v21 -> taken b4(| 0), notTaken b7(v13, v19, v20)
-# CHECK-NEXT: b4(v22: guard):
-# CHECK-NEXT: v23: guard = AllGuards v8, v22
-# CHECK-NEXT: v24: anything ~ undefined|null|string = GetArrayElement v20, v19, v23 arrayStorage=Contiguous level=Expected accessSite=69 [keyIsIntegral, isPresent]
-# CHECK-NEXT: v25: undefined|null|string = AssumeType v24 provenType=undefined|null|string
-# CHECK-NEXT: v26: 2 = Integer integer=2
-# CHECK-NEXT: v27: int[2, 5] = Add v0, v26
-# CHECK-NEXT: v28: 3 = Integer integer=3
-# CHECK-NEXT: v29: int[0, 3] = BitAnd v27, v28
-# CHECK-NEXT: v30: boolean = IsElementPresent v20, v29, v8 arrayStorage=Contiguous [keyIsIntegral]
-# CHECK-NEXT: Branch v30 -> taken b5(| 0), notTaken b8(v13, v25, v29, v20)
-# CHECK-NEXT: b5(v31: guard):
-# CHECK-NEXT: v32: guard = AllGuards v8, v31
-# CHECK-NEXT: v33: anything ~ undefined|null|string = GetArrayElement v20, v29, v32 arrayStorage=Contiguous level=Expected accessSite=70 [keyIsIntegral, isPresent]
-# CHECK-NEXT: v34: undefined|null|string = AssumeType v33 provenType=undefined|null|string
-# CHECK-NEXT: Jump -> next b9(v13, v25, v34)
+# CHECK-NEXT: v14: 1 = Integer integer=1
+# CHECK-NEXT: v15: int[1, 4] = Add v0, v14
+# CHECK-NEXT: v16: 3 = Integer integer=3
+# CHECK-NEXT: v17: int[0, 3] = BitAnd v15, v16
+# CHECK-NEXT: v18: boolean = IsElementPresent v6, v17, v8 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: Branch v18 -> taken b4(| 0), notTaken b7(v13, v17)
+# CHECK-NEXT: b4(v19: guard):
+# CHECK-NEXT: v20: guard = AllGuards v8, v19
+# CHECK-NEXT: v21: anything ~ undefined|null|string = GetArrayElement v6, v17, v20 arrayStorage=Contiguous level=Expected accessSite=69 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v22: undefined|null|string = AssumeType v21 provenType=undefined|null|string
+# CHECK-NEXT: v23: 2 = Integer integer=2
+# CHECK-NEXT: v24: int[2, 5] = Add v0, v23
+# CHECK-NEXT: v25: 3 = Integer integer=3
+# CHECK-NEXT: v26: int[0, 3] = BitAnd v24, v25
+# CHECK-NEXT: v27: boolean = IsElementPresent v6, v26, v8 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: Branch v27 -> taken b5(| 0), notTaken b8(v13, v22, v26)
+# CHECK-NEXT: b5(v28: guard):
+# CHECK-NEXT: v29: guard = AllGuards v8, v28
+# CHECK-NEXT: v30: anything ~ undefined|null|string = GetArrayElement v6, v26, v29 arrayStorage=Contiguous level=Expected accessSite=70 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v31: undefined|null|string = AssumeType v30 provenType=undefined|null|string
+# CHECK-NEXT: Jump -> next b9(v13, v22, v31)
 # CHECK-NEXT: b6() frequency=Rare:
-# CHECK-NEXT: v35: anything ~ undefined|null|string = ElemGet v6, v5 accessSite=68 [keyIsIntegral]
-# CHECK-NEXT: v36: undefined|null|string = AssumeType v35 provenType=undefined|null|string
-# CHECK-NEXT: v37: fact = Specified
-# CHECK-NEXT: v38: undefined|null|Array<undefined|null|string> = AssumeType v1, v37 provenType=undefined|null|Array<undefined|null|string>
-# CHECK-NEXT: v39: 1 = Integer integer=1
-# CHECK-NEXT: v40: int[1, 4] = Add v0, v39
-# CHECK-NEXT: v41: 3 = Integer integer=3
-# CHECK-NEXT: v42: int[0, 3] = BitAnd v40, v41
-# CHECK-NEXT: v43: Array<undefined|null|string> = RequireObjectCoercible v38
-# CHECK-NEXT: Jump -> next b7(v36, v42, v43)
-# CHECK-NEXT: b7(v44: undefined|null|string, v45: int[0, 3], v46: Array<undefined|null|string>) frequency=Rare:
-# CHECK-NEXT: v47: anything ~ undefined|null|string = ElemGet v46, v45 accessSite=69 [keyIsIntegral]
-# CHECK-NEXT: v48: undefined|null|string = AssumeType v47 provenType=undefined|null|string
-# CHECK-NEXT: v49: fact = Specified
-# CHECK-NEXT: v50: undefined|null|Array<undefined|null|string> = AssumeType v1, v49 provenType=undefined|null|Array<undefined|null|string>
-# CHECK-NEXT: v51: 2 = Integer integer=2
-# CHECK-NEXT: v52: int[2, 5] = Add v0, v51
-# CHECK-NEXT: v53: 3 = Integer integer=3
-# CHECK-NEXT: v54: int[0, 3] = BitAnd v52, v53
-# CHECK-NEXT: v55: Array<undefined|null|string> = RequireObjectCoercible v50
-# CHECK-NEXT: Jump -> next b8(v44, v48, v54, v55)
-# CHECK-NEXT: b8(v56: undefined|null|string, v57: undefined|null|string, v58: int[0, 3], v59: Array<undefined|null|string>) frequency=Rare:
-# CHECK-NEXT: v60: anything ~ undefined|null|string = ElemGet v59, v58 accessSite=70 [keyIsIntegral]
-# CHECK-NEXT: v61: undefined|null|string = AssumeType v60 provenType=undefined|null|string
-# CHECK-NEXT: Jump -> next b9(v56, v57, v61)
-# CHECK-NEXT: b9(v62: undefined|null|string, v63: undefined|null|string, v64: undefined|null|string):
-# CHECK-NEXT: v65: undefined|string = AssumeType v62 provenType=undefined|string
-# CHECK-NEXT: v66: undefined|string = AssumeType v63 provenType=undefined|string
-# CHECK-NEXT: v67: undefined|string = AssumeType v64 provenType=undefined|string
-# CHECK-NEXT: v68: undefined = Results v65, v66, v67
-# CHECK-NEXT: Return v68
-# CHECK-NEXT: b10(v69: boolean|number|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v70: 3 = Integer integer=3
-# CHECK-NEXT: v71: int[0, 3] = BitAnd v0, v70
-# CHECK-NEXT: v72: boolean|number|string|symbol|bigint|object = Upcast v69 castType=boolean|number|string|symbol|bigint|object
-# CHECK-NEXT: v73: anything = ElemGet v72, v71 accessSite=68 [keyIsIntegral]
-# CHECK-NEXT: v74: undefined|null|string = AssumeType v73 provenType=undefined|null|string
-# CHECK-NEXT: v75: 1 = Integer integer=1
-# CHECK-NEXT: v76: int[1, 4] = Add v0, v75
-# CHECK-NEXT: v77: 3 = Integer integer=3
-# CHECK-NEXT: v78: int[0, 3] = BitAnd v76, v77
-# CHECK-NEXT: v79: boolean|number|string|symbol|bigint|object ~ Array<undefined|null|string> = RequireObjectCoercible v1
-# CHECK-NEXT: v80: anything ~ undefined|null|string = ElemGet v79, v78 accessSite=69 [keyIsIntegral]
-# CHECK-NEXT: v81: undefined|null|string = AssumeType v80 provenType=undefined|null|string
-# CHECK-NEXT: v82: 2 = Integer integer=2
-# CHECK-NEXT: v83: int[2, 5] = Add v0, v82
-# CHECK-NEXT: v84: 3 = Integer integer=3
-# CHECK-NEXT: v85: int[0, 3] = BitAnd v83, v84
-# CHECK-NEXT: v86: anything ~ undefined|null|string = ElemGet v79, v85 accessSite=70 [keyIsIntegral]
-# CHECK-NEXT: v87: undefined|null|string = AssumeType v86 provenType=undefined|null|string
-# CHECK-NEXT: v88: undefined|null|string ~ undefined|string = Expect v74 expectedType=undefined|string
-# CHECK-NEXT: v89: undefined|null|string ~ undefined|string = Expect v81 expectedType=undefined|string
-# CHECK-NEXT: v90: undefined|null|string ~ undefined|string = Expect v87 expectedType=undefined|string
-# CHECK-NEXT: v91: undefined|string = AssumeType v88 provenType=undefined|string
-# CHECK-NEXT: v92: undefined|string = AssumeType v89 provenType=undefined|string
-# CHECK-NEXT: v93: undefined|string = AssumeType v90 provenType=undefined|string
-# CHECK-NEXT: v94: undefined = Results v91, v92, v93
-# CHECK-NEXT: Return v94
+# CHECK-NEXT: v32: anything ~ undefined|null|string = ElemGet v4, v3 accessSite=68 [keyIsIntegral]
+# CHECK-NEXT: v33: undefined|null|string = AssumeType v32 provenType=undefined|null|string
+# CHECK-NEXT: v34: 1 = Integer integer=1
+# CHECK-NEXT: v35: int[1, 4] = Add v0, v34
+# CHECK-NEXT: v36: 3 = Integer integer=3
+# CHECK-NEXT: v37: int[0, 3] = BitAnd v35, v36
+# CHECK-NEXT: Jump -> next b7(v33, v37)
+# CHECK-NEXT: b7(v38: undefined|null|string, v39: int[0, 3]) frequency=Rare:
+# CHECK-NEXT: v40: anything ~ undefined|null|string = ElemGet v4, v39 accessSite=69 [keyIsIntegral]
+# CHECK-NEXT: v41: undefined|null|string = AssumeType v40 provenType=undefined|null|string
+# CHECK-NEXT: v42: 2 = Integer integer=2
+# CHECK-NEXT: v43: int[2, 5] = Add v0, v42
+# CHECK-NEXT: v44: 3 = Integer integer=3
+# CHECK-NEXT: v45: int[0, 3] = BitAnd v43, v44
+# CHECK-NEXT: Jump -> next b8(v38, v41, v45)
+# CHECK-NEXT: b8(v46: undefined|null|string, v47: undefined|null|string, v48: int[0, 3]) frequency=Rare:
+# CHECK-NEXT: v49: anything ~ undefined|null|string = ElemGet v4, v48 accessSite=70 [keyIsIntegral]
+# CHECK-NEXT: v50: undefined|null|string = AssumeType v49 provenType=undefined|null|string
+# CHECK-NEXT: Jump -> next b9(v46, v47, v50)
+# CHECK-NEXT: b9(v51: undefined|null|string, v52: undefined|null|string, v53: undefined|null|string):
+# CHECK-NEXT: v54: undefined|null|string ~ undefined|string = Expect v51 expectedType=undefined|string
+# CHECK-NEXT: v55: undefined|null|string ~ undefined|string = Expect v52 expectedType=undefined|string
+# CHECK-NEXT: v56: undefined|null|string ~ undefined|string = Expect v53 expectedType=undefined|string
+# CHECK-NEXT: v57: undefined|string = AssumeType v54 provenType=undefined|string
+# CHECK-NEXT: v58: undefined|string = AssumeType v55 provenType=undefined|string
+# CHECK-NEXT: v59: undefined|string = AssumeType v56 provenType=undefined|string
+# CHECK-NEXT: v60: undefined = Results v57, v58, v59
+# CHECK-NEXT: Return v60
 # CHECK-NEXT: }

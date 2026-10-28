@@ -2900,7 +2900,7 @@ runtimefunction id=131091 function=f21 visibility=Private
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="show"
-# CHECK: module=m0 position=267 kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=string site=w17 flags=[OmitsNull, OmitsUndefined]}, {type=L1|L2|L3|L4|L5|L7|L8|L9|L10|L11|L14|L16|L18|L21|L23|L24|L25|L26|Object site=w18 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w19}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f14 callPosition=4294967295 module=m3}, {callee=f48 callPosition=4294967295 module=m4}, {callee=f32 callPosition=4294967295}, {callee=f38 callPosition=4294967295}, {callee=f42 callPosition=4294967295}, {callee=f41 callPosition=4294967295}, {callee=f36 callPosition=4294967295}, {callee=f48 callPosition=2337 parent=2 module=m4}, {callee=f21 callPosition=2337 parent=8 module=m4}, {callee=f21 callPosition=5210 parent=1 module=m4}, {callee=f19 callPosition=4294967295 parent=9 isTailCall=true module=m4}, {callee=f18 callPosition=4294967295 parent=9 module=m4}] {
+# CHECK: module=m0 position=267 kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=string site=w17 flags=[OmitsNull, OmitsUndefined]}, {type=L1|L2|L3|L4|L5|L7|L8|L9|L10|L11|L14|L16|L18|L21|L23|L24|L25|L26|Object site=w18 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w19}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f14 callPosition=4294967295 module=m3}, {callee=f47 callPosition=4294967295 module=m4}, {callee=f31 callPosition=4294967295}, {callee=f37 callPosition=4294967295}, {callee=f41 callPosition=4294967295}, {callee=f40 callPosition=4294967295}, {callee=f35 callPosition=4294967295}, {callee=f47 callPosition=2337 parent=2 module=m4}, {callee=f21 callPosition=2337 parent=8 module=m4}, {callee=f21 callPosition=5210 parent=1 module=m4}, {callee=f19 callPosition=4294967295 parent=9 isTailCall=true module=m4}, {callee=f18 callPosition=4294967295 parent=9 module=m4}] {
 # CHECK-NEXT: b0(v0: string, v1: L1|L2|L3|L4|L5|L7|L8|L9|L10|L11|L14|L16|L18|L21|L23|L24|L25|L26|Object):
 # CHECK-NEXT: v2: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g0
 # CHECK-NEXT: v3: " | " = String string=" | "
@@ -3067,7 +3067,7 @@ runtimefunction id=131091 function=f21 visibility=Private
 # CHECK-NEXT: v113: boolean = ShapeTest v1 layouts=[L5]
 # CHECK-NEXT: Branch v113 -> taken b35(), notTaken b37()
 # CHECK-NEXT: b35():
-# CHECK-NEXT: v114: int[0, 2] = CallDirect v1, v5 function=f33 calledBuiltin=JSONStringify
+# CHECK-NEXT: v114: int[0, 2] = CallDirect v1, v5 function=f32 calledBuiltin=JSONStringify
 # CHECK-NEXT: Switch v114 cases=[1] -> case b36(), otherwise b43()
 # CHECK-NEXT: b36():
 # CHECK-NEXT: v115: buildercursor = StringBuilderReserve v5 size=128
@@ -3076,7 +3076,7 @@ runtimefunction id=131091 function=f21 visibility=Private
 # CHECK-NEXT: v116: boolean = ShapeTest v1 layouts=[L7]
 # CHECK-NEXT: Branch v116 -> taken b38(), notTaken b40()
 # CHECK-NEXT: b38():
-# CHECK-NEXT: v117: int[0, 2] = CallDirect v1, v5 function=f35 calledBuiltin=JSONStringify
+# CHECK-NEXT: v117: int[0, 2] = CallDirect v1, v5 function=f34 calledBuiltin=JSONStringify
 # CHECK-NEXT: Switch v117 cases=[1] -> case b39(), otherwise b43()
 # CHECK-NEXT: b39():
 # CHECK-NEXT: v118: buildercursor = StringBuilderReserve v5 size=128
@@ -3085,7 +3085,7 @@ runtimefunction id=131091 function=f21 visibility=Private
 # CHECK-NEXT: v119: boolean = ShapeTest v1 layouts=[L9]
 # CHECK-NEXT: Branch v119 -> taken b41(), notTaken b43()
 # CHECK-NEXT: b41():
-# CHECK-NEXT: v120: int[0, 2] = CallDirect v1, v5 function=f37 calledBuiltin=JSONStringify
+# CHECK-NEXT: v120: int[0, 2] = CallDirect v1, v5 function=f36 calledBuiltin=JSONStringify
 # CHECK-NEXT: Switch v120 cases=[1] -> case b42(), otherwise b43()
 # CHECK-NEXT: b42():
 # CHECK-NEXT: v121: buildercursor = StringBuilderReserve v5 size=128
@@ -3228,16 +3228,44 @@ runtimefunction id=131091 function=f21 visibility=Private
 # CHECK-NEXT: Throw v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="next"
-# CHECK: module=m2 kind=Method role=ResultWrapper flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=ArrayIterator flags=[IsExpected]} results=[{type=L(IteratorResult)}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f50 layout=L(IteratorResult)} {
+# CHECK: module=m2 kind=Method role=ResultWrapper flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=ArrayIterator flags=[IsExpected]} results=[{type=L(IteratorResult)}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f49 layout=L(IteratorResult)} {
 # CHECK-NEXT: b0(v0: anything):
-# CHECK-NEXT: v1: undefined = CallDirect v0 function=f50
+# CHECK-NEXT: v1: undefined = CallDirect v0 function=f49
 # CHECK-NEXT: v2: anything = ResultAt v1
 # CHECK-NEXT: v3: boolean = ResultAt v1 index=1
 # CHECK-NEXT: v4: L(IteratorResult) = NewObject -, v2, v3 layout=L(IteratorResult) fields=[0, 1]
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="throws"
-# CHECK: module=m0 position=4168 role=ResultWrapper flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean site=w10}] results=[{type=L9 site=w11 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3 parameterMap=[{original=0}]} creator=ResultWrapper{worker=f26}
+# CHECK: module=m0 position=4168 role=ResultWrapper flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean site=w10}] results=[{type=L9 site=w11 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3 parameterMap=[{original=0}]} creator=ResultWrapper{worker=f50} {
+# CHECK-NEXT: b0(v0: boolean):
+# CHECK-NEXT: v1: undefined = CallDirect v0 function=f50
+# CHECK-NEXT: v2: i32 = ResultAt v1
+# CHECK-NEXT: v3: unspecified|L9 = ResultAt v1 index=1
+# CHECK-NEXT: v4: int[-2147483643, 2147483647]|unspecified = ResultAt v1 index=2
+# CHECK-NEXT: v5: 3|unspecified = ResultAt v1 index=3
+# CHECK-NEXT: v6: undefined|null|number|unspecified|L13 = ResultAt v1 index=4
+# CHECK-NEXT: Switch v2 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v7: fact = Specified
+# CHECK-NEXT: v8: L9 = AssumeType v3, v7 provenType=L9
+# CHECK-NEXT: Jump -> next b4(v8)
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v9: fact = Specified
+# CHECK-NEXT: v10: int[-2147483643, 2147483647] = AssumeType v4, v9 provenType=int[-2147483643, 2147483647]
+# CHECK-NEXT: v11: 3 = AssumeType v5, v9 provenType=3
+# CHECK-NEXT: v12: L9 = NewObject -, v10, v11 layout=L9 fields=[0, 2] allocationSite=64 allocationClass=8
+# CHECK-NEXT: Jump -> next b4(v12)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v13: fact = Specified
+# CHECK-NEXT: v14: int[-2147483643, 2147483647] = AssumeType v4, v13 provenType=int[-2147483643, 2147483647]
+# CHECK-NEXT: v15: undefined|null|number|L13 = AssumeType v6, v13 provenType=undefined|null|number|L13
+# CHECK-NEXT: v16: 3 = AssumeType v5, v13 provenType=3
+# CHECK-NEXT: v17: L9 = NewObject -, v14, v15, v16 layout=L9 fields=[0, 1, 2] allocationSite=64 allocationClass=8
+# CHECK-NEXT: Jump -> next b4(v17)
+# CHECK-NEXT: b4(v18: L9):
+# CHECK-NEXT: Return v18
+# CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="throws"
 # CHECK: module=m0 position=4168 role=GenericVersion flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean site=w10 flags=[IsExpected]}] results=[{type=L9 site=w11 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3 parameterMap=[{original=0}]} creator=Version{provenVersion=f23}
 # CHECK-LABEL: function {{*}}name="three"
@@ -3286,40 +3314,6 @@ runtimefunction id=131091 function=f21 visibility=Private
 # CHECK-NEXT: v31: 5|unspecified = Unspecified valueType=5
 # CHECK-NEXT: v32: undefined = Results v27, v28, v29, v30, v31
 # CHECK-NEXT: Return v32
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="throws"
-# CHECK: module=m0 position=4168 role=ResultWorker flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean site=w10}] results=[{type=i32}, {type=unspecified|L9}, {type=int[-2147483643, 2147483647]|unspecified}, {type=3|unspecified}, {type=undefined|null|number|unspecified|L13}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f23 parameterMap=[{original=0}]} creator=ResultWorker{origin=f23} {
-# CHECK-NEXT: b0(v0: boolean):
-# CHECK-NEXT: v1: 1 = Integer integer=1
-# CHECK-NEXT: Branch v0 -> taken b1(), notTaken b4()
-# CHECK-NEXT: b1() frequency=Rare:
-# CHECK-NEXT: v2: anything = CallDirect function=f9 accessSite=149
-# CHECK-NEXT: v3: boolean = TypeTest v2 testedType=undefined|null|number|L13
-# CHECK-NEXT: Branch v3 -> taken b2(| 0), notTaken b3(| 0)
-# CHECK-NEXT: b2(v4: undefined|null|number|L13):
-# CHECK-NEXT: v5: 3 = Integer integer=3
-# CHECK-NEXT: v6: 4 = Integer integer=4
-# CHECK-NEXT: v7: unspecified|L9 = Unspecified valueType=L9
-# CHECK-NEXT: v8: undefined = Results v6, v7, v1, v5, v4
-# CHECK-NEXT: Return v8
-# CHECK-NEXT: b3(v9: boolean|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v10: 3 = Integer integer=3
-# CHECK-NEXT: v11: 0 = Integer
-# CHECK-NEXT: v12: L9 = NewObject -, v1, v11, v10 layout=L9 fields=[0, 1, 2] allocationSite=64 allocationClass=8
-# CHECK-NEXT: PropDefine v12, v9 key="b" accessSite=150 receivers=[L9]
-# CHECK-NEXT: v14: 1 = Integer integer=1
-# CHECK-NEXT: v15: int[-2147483643, 2147483647]|unspecified = Unspecified valueType=int[-2147483643, 2147483647]
-# CHECK-NEXT: v16: 3|unspecified = Unspecified valueType=3
-# CHECK-NEXT: v17: undefined|null|number|unspecified|L13 = Unspecified valueType=undefined|null|number|L13
-# CHECK-NEXT: v18: undefined = Results v14, v12, v15, v16, v17
-# CHECK-NEXT: Return v18
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v19: 3 = Integer integer=3
-# CHECK-NEXT: v20: 2 = Integer integer=2
-# CHECK-NEXT: v21: unspecified|L9 = Unspecified valueType=L9
-# CHECK-NEXT: v22: undefined|null|number|unspecified|L13 = Unspecified valueType=undefined|null|number|L13
-# CHECK-NEXT: v23: undefined = Results v20, v21, v1, v19, v22
-# CHECK-NEXT: Return v23
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="next"
 # CHECK: module=m2 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] enclosingRuntimeFunction=69 captures=[{type=f13}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f13} creator=Entrypoint{target=f13 arguments=Registers} {
@@ -3441,4 +3435,44 @@ runtimefunction id=131091 function=f21 visibility=Private
 # CHECK-NEXT: b25():
 # CHECK-NEXT: v59: never = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance"
 # CHECK-NEXT: Unreachable
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="throws"
+# CHECK: module=m0 position=4168 role=ResultWorker flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean site=w10}] results=[{type=i32}, {type=unspecified|L9}, {type=int[-2147483643, 2147483647]|unspecified}, {type=3|unspecified}, {type=undefined|null|number|unspecified|L13}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f23 parameterMap=[{original=0}]} creator=ResultWorker{origin=f23} {
+# CHECK-NEXT: b0(v0: boolean):
+# CHECK-NEXT: v1: 1 = Integer integer=1
+# CHECK-NEXT: Branch v0 -> taken b1(), notTaken b4()
+# CHECK-NEXT: b1() frequency=Rare:
+# CHECK-NEXT: v2: anything = CallDirect function=f9 accessSite=149
+# CHECK-NEXT: v3: anything ~ undefined|null|number|L13 = Expect v2 expectedType=undefined|null|number|L13
+# CHECK-NEXT: v4: boolean ~ true = TypeTest v3 testedType=undefined|null|number|L13
+# CHECK-NEXT: Branch v4 -> taken b2(| 0), notTaken b3(| 0)
+# CHECK-NEXT: b2(v5: undefined|null|number|L13):
+# CHECK-NEXT: v6: undefined|null|number|L13 = Upcast v5 castType=undefined|null|number|unspecified|L13
+# CHECK-NEXT: v7: 1 = Upcast v1 castType=int[-2147483643, 2147483647]
+# CHECK-NEXT: v8: 3 = Integer integer=3
+# CHECK-NEXT: v9: 4 = Integer integer=4
+# CHECK-NEXT: v10: unspecified|L9 = Unspecified valueType=L9
+# CHECK-NEXT: v11: fact = Specified
+# CHECK-NEXT: v12: undefined|null|number|L13 = AssumeType v6, v11 provenType=undefined|null|number|L13
+# CHECK-NEXT: v13: undefined = Results v9, v10, v7, v8, v12
+# CHECK-NEXT: Return v13
+# CHECK-NEXT: b3(v14: boolean|string|symbol|bigint|object) frequency=Rare:
+# CHECK-NEXT: v15: L9 = NewObject -, v1 layout=L9 fields=[0] allocationSite=64 allocationClass=8
+# CHECK-NEXT: PropDefine v15, v14 key="b" accessSite=150
+# CHECK-NEXT: v17: 3 = Integer integer=3
+# CHECK-NEXT: PropDefine v15, v17 key="c" accessSite=151 receivers=[L9]
+# CHECK-NEXT: v19: 1 = Integer integer=1
+# CHECK-NEXT: v20: int[-2147483643, 2147483647]|unspecified = Unspecified valueType=int[-2147483643, 2147483647]
+# CHECK-NEXT: v21: 3|unspecified = Unspecified valueType=3
+# CHECK-NEXT: v22: undefined|null|number|unspecified|L13 = Unspecified valueType=undefined|null|number|L13
+# CHECK-NEXT: v23: undefined = Results v19, v15, v20, v21, v22
+# CHECK-NEXT: Return v23
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v24: 1 = Upcast v1 castType=int[-2147483643, 2147483647]
+# CHECK-NEXT: v25: 3 = Integer integer=3
+# CHECK-NEXT: v26: 2 = Integer integer=2
+# CHECK-NEXT: v27: unspecified|L9 = Unspecified valueType=L9
+# CHECK-NEXT: v28: undefined|null|number|unspecified|L13 = Unspecified valueType=undefined|null|number|L13
+# CHECK-NEXT: v29: undefined = Results v26, v27, v24, v25, v28
+# CHECK-NEXT: Return v29
 # CHECK-NEXT: }

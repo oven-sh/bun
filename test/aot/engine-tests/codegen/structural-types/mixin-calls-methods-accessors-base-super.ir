@@ -332,7 +332,7 @@ function f15 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f16 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f15]
 # -- generated: f0 describe Louder Base twice label kind f7 f11 f12
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f6 callPosition=4294967295 module=m0}, {callee=f33 callPosition=4294967295 isConstruction=true module=m0}, {callee=f33 callPosition=4294967295 isConstruction=true module=m0}, {callee=f6 callPosition=4294967295 module=m0}, {callee=f33 callPosition=4294967295 isConstruction=true module=m0}, {callee=f33 callPosition=4294967295 isConstruction=true module=m0}, {callee=f12 callPosition=4294967295 parent=5 module=m0}, {callee=f28 callPosition=4294967295 parent=5 isConstruction=true module=m0}, {callee=f12 callPosition=4294967295 parent=3 module=m0}, {callee=f28 callPosition=4294967295 parent=3 isConstruction=true module=m0}, {callee=f12 callPosition=4294967295 parent=2 module=m0}, {callee=f28 callPosition=4294967295 parent=2 isConstruction=true module=m0}, {callee=f12 callPosition=4294967295 parent=6 module=m0}, {callee=f28 callPosition=4294967295 parent=6 isConstruction=true module=m0}, {callee=f11 callPosition=4294967295 parent=8 module=m0}, {callee=f11 callPosition=4294967295 parent=10 module=m0}, {callee=f11 callPosition=4294967295 parent=12 module=m0}, {callee=f11 callPosition=4294967295 parent=14 module=m0}] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f6 callPosition=4294967295 module=m0}, {callee=f33 callPosition=4294967295 isConstruction=true module=m0}, {callee=f33 callPosition=4294967295 isConstruction=true module=m0}, {callee=f6 callPosition=4294967295 module=m0}, {callee=f33 callPosition=4294967295 isConstruction=true module=m0}, {callee=f33 callPosition=4294967295 isConstruction=true module=m0}, {callee=f12 callPosition=4294967295 parent=6 module=m0}, {callee=f28 callPosition=4294967295 parent=6 isConstruction=true module=m0}, {callee=f12 callPosition=4294967295 parent=5 module=m0}, {callee=f28 callPosition=4294967295 parent=5 isConstruction=true module=m0}, {callee=f12 callPosition=4294967295 parent=3 module=m0}, {callee=f28 callPosition=4294967295 parent=3 isConstruction=true module=m0}, {callee=f12 callPosition=4294967295 parent=2 module=m0}, {callee=f28 callPosition=4294967295 parent=2 isConstruction=true module=m0}, {callee=f11 callPosition=4294967295 parent=14 module=m0}, {callee=f11 callPosition=4294967295 parent=12 module=m0}, {callee=f11 callPosition=4294967295 parent=10 module=m0}, {callee=f11 callPosition=4294967295 parent=8 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: f3 = GetModuleVariable variable=g0
 # CHECK-NEXT: v1: f3 = FinishClass v0 layout=L0
@@ -365,7 +365,7 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Jump -> next b7(v20)
 # CHECK-NEXT: b5(v21: undefined|f8):
 # CHECK-NEXT: v22: boolean = TypeTest v21 testedType=f8
-# CHECK-NEXT: Branch v22 -> taken b6(| 0), notTaken b31()
+# CHECK-NEXT: Branch v22 -> taken b6(| 0), notTaken b32()
 # CHECK-NEXT: b6(v23: f8):
 # CHECK-NEXT: v24: f7 = GetCapture v23 function=f8
 # CHECK-NEXT: v25: int|whole = CallDirect v24, v14 function=f8 accessSite=9
@@ -386,7 +386,7 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Jump -> next b11(v36)
 # CHECK-NEXT: b9(v37: undefined|f10):
 # CHECK-NEXT: v38: boolean = TypeTest v37 testedType=f10
-# CHECK-NEXT: Branch v38 -> taken b10(| 0), notTaken b30()
+# CHECK-NEXT: Branch v38 -> taken b10(| 0), notTaken b31()
 # CHECK-NEXT: b10(v39: f10):
 # CHECK-NEXT: v40: f7 = GetCapture v39 function=f10
 # CHECK-NEXT: v41: string = CallDirect v40, v2 function=f10 accessSite=12
@@ -423,7 +423,7 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Jump -> next b18(v63)
 # CHECK-NEXT: b16(v64: undefined|f8):
 # CHECK-NEXT: v65: boolean = TypeTest v64 testedType=f8
-# CHECK-NEXT: Branch v65 -> taken b17(| 0), notTaken b29()
+# CHECK-NEXT: Branch v65 -> taken b17(| 0), notTaken b30()
 # CHECK-NEXT: b17(v66: f8):
 # CHECK-NEXT: v67: f7 = GetCapture v66 function=f8
 # CHECK-NEXT: v68: int|whole = CallDirect v67, v59 function=f8 accessSite=20
@@ -465,7 +465,7 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Jump -> next b25(v95)
 # CHECK-NEXT: b23(v96: undefined|f10):
 # CHECK-NEXT: v97: boolean = TypeTest v96 testedType=f10
-# CHECK-NEXT: Branch v97 -> taken b24(| 0), notTaken b32()
+# CHECK-NEXT: Branch v97 -> taken b24(| 0), notTaken b29()
 # CHECK-NEXT: b24(v98: f10):
 # CHECK-NEXT: v99: f7 = GetCapture v98 function=f10
 # CHECK-NEXT: v100: string = CallDirect v99, v47 function=f10 accessSite=24
@@ -497,21 +497,21 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v120: undefined = Undefined
 # CHECK-NEXT: Return v120
 # CHECK-NEXT: b29() frequency=Unlikely:
-# CHECK-NEXT: v121: undefined = Undefined
-# CHECK-NEXT: v122: never = Call v121, v59 calleeKey="twice" calleeName="twice" accessSite=20 callees=[f4, f8, ..]
+# CHECK-NEXT: StringBuilderDiscard v71
+# CHECK-NEXT: v122: undefined = Undefined
+# CHECK-NEXT: v123: never = Call v122, v47 calleeKey="kind" calleeName="Twice.kind" accessSite=24 callees=[f6, f10]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b30() frequency=Unlikely:
-# CHECK-NEXT: v123: undefined = Undefined
-# CHECK-NEXT: v124: never = Call v123, v2 calleeKey="kind" calleeName="Made.kind" accessSite=12 callees=[f6, f10]
+# CHECK-NEXT: v124: undefined = Undefined
+# CHECK-NEXT: v125: never = Call v124, v59 calleeKey="twice" calleeName="twice" accessSite=20 callees=[f4, f8, ..]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b31() frequency=Unlikely:
-# CHECK-NEXT: v125: undefined = Undefined
-# CHECK-NEXT: v126: never = Call v125, v14 calleeKey="twice" calleeName="made.twice" accessSite=9 callees=[f4, f8, ..]
+# CHECK-NEXT: v126: undefined = Undefined
+# CHECK-NEXT: v127: never = Call v126, v2 calleeKey="kind" calleeName="Made.kind" accessSite=12 callees=[f6, f10]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b32() frequency=Unlikely:
-# CHECK-NEXT: StringBuilderDiscard v71
 # CHECK-NEXT: v128: undefined = Undefined
-# CHECK-NEXT: v129: never = Call v128, v47 calleeKey="kind" calleeName="Twice.kind" accessSite=24 callees=[f6, f10]
+# CHECK-NEXT: v129: never = Call v128, v14 calleeKey="twice" calleeName="made.twice" accessSite=9 callees=[f4, f8, ..]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="describe"
@@ -551,17 +551,10 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v1: f7 = AssumeType v0 provenType=f7
 # CHECK-NEXT: v2: object = GetConstructPrototype v1 layout=L0
 # CHECK-NEXT: v3: object ~ L0|L1 = NewObject v2 layout=L0 allocationSite=10 allocationClass=0
-# CHECK-NEXT: v4: boolean ~ true = TypeTest v3 testedType=L0|L1
-# CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b2(| 0)
-# CHECK-NEXT: b1(v5: L0|L1):
-# CHECK-NEXT: v6: 2 = Integer integer=2
-# CHECK-NEXT: PropDefine v5, v6 key="n" accessSite=44
-# CHECK-NEXT: TryFinishBirth v5
-# CHECK-NEXT: Return v5
-# CHECK-NEXT: b2(v8: object) frequency=Unlikely:
-# CHECK-NEXT: v9: undefined = CallDirect v8 function=f11 accessSite=33 [isNeverInlined]
-# CHECK-NEXT: TryFinishBirth v8
-# CHECK-NEXT: Return v8
+# CHECK-NEXT: v4: 2 = Integer integer=2
+# CHECK-NEXT: PropDefine v3, v4 key="n" accessSite=44
+# CHECK-NEXT: TryFinishBirth v3
+# CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="twice"
 # CHECK: module=m0 position=223 kind=Method role=EntryChecks flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1 site=w5 flags=[IsExpected]} results=[{type=int|whole site=w6}] functionTypes=[f13] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f18 fallback=f22} {
@@ -601,15 +594,15 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v5: null|object = GetSuperBase v3
 # CHECK-NEXT: v6: f3|f7 = AssumeType v5 provenType=f3|f7
 # CHECK-NEXT: v7: object ~ L1 = SuperConstructList v6, v4, v2 layout=L1 accessSite=36 callees=[f3, f7]
-# CHECK-NEXT: v8: boolean ~ true = TypeTest v7 testedType=L1
-# CHECK-NEXT: Branch v8 -> taken b1(| 0), notTaken b2(| 0)
-# CHECK-NEXT: b1(v9: L1):
-# CHECK-NEXT: v10: 1 = Integer integer=1
-# CHECK-NEXT: PutSlotOrAdd v9, -, v10 key="extra" receivers=[L1] level=Proven accessSite=45
-# CHECK-NEXT: Return v9
-# CHECK-NEXT: b2(v12: object) frequency=Unlikely:
-# CHECK-NEXT: v13: undefined = CallDirect v12 function=f12 accessSite=37 [isNeverInlined]
-# CHECK-NEXT: Return v12
+# CHECK-NEXT: v8: 1 = Integer integer=1
+# CHECK-NEXT: v9: boolean ~ true = TypeTest v7 testedType=L1
+# CHECK-NEXT: Branch v9 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v10: L1):
+# CHECK-NEXT: PutSlotOrAdd v10, -, v8 key="extra" receivers=[L1] level=Expected accessSite=45
+# CHECK-NEXT: Return v10
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: PropDefine v7, v8 key="extra" accessSite=45
+# CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="twice"
 # CHECK: module=m0 position=472 kind=Method role=EntryChecks flags=[HasThis, IsChecked, HasExplicitName] captures=[{type=f7 flags=[IsFromCompiler]}] thisType={type=L1 site=w26 flags=[IsExpected]} results=[{type=int|whole site=w27}] functionTypes=[f14] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f20 fallback=f24} {
@@ -672,41 +665,9 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f11 module=
-# CHECK: m0 position=205 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0|L1 flags=[IsFromCompiler, IsExpected]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: anything ~ L0|L1):
-# CHECK-NEXT: v1: object ~ L0|L1 = AssumeType v0 provenType=object
-# CHECK-NEXT: v2: boolean ~ true = TypeTest v1 testedType=L0|L1
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2(| 0)
-# CHECK-NEXT: b1(v3: L0|L1):
-# CHECK-NEXT: v4: 2 = Integer integer=2
-# CHECK-NEXT: PropDefine v3, v4 key="n" accessSite=44
-# CHECK-NEXT: TryFinishBirth v3
-# CHECK-NEXT: v6: undefined = Undefined
-# CHECK-NEXT: Return v6
-# CHECK-NEXT: b2(v7: object) frequency=Unlikely:
-# CHECK-NEXT: v8: 2 = Integer integer=2
-# CHECK-NEXT: PropDefine v7, v8 key="n" accessSite=44
-# CHECK-NEXT: TryFinishBirth v7
-# CHECK-NEXT: v10: undefined = Undefined
-# CHECK-NEXT: Return v10
-# CHECK-NEXT: }
+# CHECK: m0 position=205 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0|L1 flags=[IsFromCompiler, IsExpected]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function f12 module=
-# CHECK: m0 position=430 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L1 flags=[IsFromCompiler, IsExpected]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: anything ~ L1):
-# CHECK-NEXT: v1: object ~ L1 = AssumeType v0 provenType=object
-# CHECK-NEXT: v2: boolean ~ true = TypeTest v1 testedType=L1
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2(| 0)
-# CHECK-NEXT: b1(v3: L1):
-# CHECK-NEXT: v4: 1 = Integer integer=1
-# CHECK-NEXT: PutSlotOrAdd v3, -, v4 key="extra" receivers=[L1] level=Proven accessSite=45
-# CHECK-NEXT: v6: undefined = Undefined
-# CHECK-NEXT: Return v6
-# CHECK-NEXT: b2(v7: object) frequency=Unlikely:
-# CHECK-NEXT: v8: 1 = Integer integer=1
-# CHECK-NEXT: PropDefine v7, v8 key="extra" accessSite=45
-# CHECK-NEXT: v10: undefined = Undefined
-# CHECK-NEXT: Return v10
-# CHECK-NEXT: }
+# CHECK: m0 position=430 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L1 flags=[IsFromCompiler, IsExpected]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="twice"
 # CHECK: module=m0 position=223 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0|L1 site=w5} results=[{type=int|whole site=w6}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameterMap=[{original=0}]} {
 # CHECK-NEXT: b0(v0: L0|L1):

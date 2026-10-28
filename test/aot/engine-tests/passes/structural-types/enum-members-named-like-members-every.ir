@@ -744,32 +744,24 @@ runtimefunction id=131091 function=f55 visibility=Private
 # CHECK-NEXT: b4(v13: int[0, 4294967295] @Int64):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v15: boolean @Boolean = Less v13, v10 form=Integers
-# CHECK-NEXT: TestAndBranch v15 -> taken b5(| 0), notTaken b12()
+# CHECK-NEXT: TestAndBranch v15 -> taken b5(| 0), notTaken b9()
 # CHECK-NEXT: b5(v16: int[0, 4294967294] @Int64):
 # CHECK-NEXT: v17: boolean @Boolean = HasArrayElement v9, v16 arrayStorage=Contiguous level=Proven accessSite=57 [keyIsIntegral]
-# CHECK-NEXT: TestAndBranch v17 -> taken b6(), notTaken b10()
+# CHECK-NEXT: TestAndBranch v17 -> taken b6(), notTaken b7()
 # CHECK-NEXT: b6():
 # CHECK-NEXT: v18: int[0, 4294967294] @Int64 = Upcast v16 castType=int[0, 9007199254740990]
 # CHECK-NEXT: v19: undefined|"__proto__"|"length"|"toString" @JSValue = GetArrayElement v9, v18 arrayStorage=Contiguous level=Proven accessSite=58 [keyIsIntegral]
 # CHECK-NEXT: v20: anything @JSValue = ElemGet v7, v19 accessSite=55
-# CHECK-NEXT: v21: undefined|null|int|builtin(FunctionPrototype)|builtin(ObjectPrototype)|builtin(ObjectPrototypeToString) @JSValue = AssumeType v20 provenType=undefined|null|int|builtin(FunctionPrototype)|builtin(ObjectPrototype)|builtin(ObjectPrototypeToString)
-# CHECK-NEXT: v22: boolean @Boolean = TypeTest v21 testedType=undefined|null|number|string
-# CHECK-NEXT: TestAndBranch v22 -> taken b7(), notTaken b8()
-# CHECK-NEXT: b7():
-# CHECK-NEXT: Jump -> next b9()
-# CHECK-NEXT: b8() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b9()
+# CHECK-NEXT: Jump -> next b8()
+# CHECK-NEXT: b7() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b8()
+# CHECK-NEXT: b8():
+# CHECK-NEXT: v21: int[1, 4294967295] @Int64 = Increment v16 form=Integers
+# CHECK-NEXT: Jump -> next b4(v21)
 # CHECK-NEXT: b9():
-# CHECK-NEXT: Jump -> next b11()
-# CHECK-NEXT: b10() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b11()
-# CHECK-NEXT: b11():
-# CHECK-NEXT: v23: int[1, 4294967295] @Int64 = Increment v16 form=Integers
-# CHECK-NEXT: Jump -> next b4(v23)
-# CHECK-NEXT: b12():
-# CHECK-NEXT: v24: fact @Void = Specified
-# CHECK-NEXT: v25: Array<undefined|null|int|builtin(FunctionPrototype)|builtin(ObjectPrototype)|builtin(ObjectPrototypeToString), proven, pristine[Storage, Names, Dense]> @Cell = AssumeType v11, v24 provenType=Array<undefined|null|int|builtin(FunctionPrototype)|builtin(ObjectPrototype)|builtin(ObjectPrototypeToString), proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Return v25
+# CHECK-NEXT: v22: fact @Void = Specified
+# CHECK-NEXT: v23: Array<undefined|null|int|builtin(FunctionPrototype)|builtin(ObjectPrototype)|builtin(ObjectPrototypeToString), proven, pristine[Storage, Names, Dense]> @Cell = AssumeType v11, v22 provenType=Array<undefined|null|int|builtin(FunctionPrototype)|builtin(ObjectPrototype)|builtin(ObjectPrototypeToString), proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Return v23
 # CHECK-NEXT: }
 # CHECK-LABEL: function f21 module=
 # CHECK: m0 position=730 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]> site=w36 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w37 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f25] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f48 callPosition=4294967295 parent=1 module=m2}] {
@@ -827,7 +819,7 @@ runtimefunction id=131091 function=f55 visibility=Private
 # CHECK-LABEL: function {{*}}name="attempt"
 # CHECK: module=m0 position=793 role=CalleeVersion flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string site=w5 flags=[OmitsNull, OmitsUndefined]}, {type=f7|f9|f17|f18|f20}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameter=1073741825 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f4} {
 # CHECK-NEXT: b0(v0: string @Cell, v1: f7|f9|f17|f18|f20 @Cell):
-# CHECK-NEXT: Jump -> next b8()
+# CHECK-NEXT: Jump -> next b5()
 # CHECK-NEXT: b1() role=CatchHandler:
 # CHECK-NEXT: v5: anything @JSValue = CatchValue
 # CHECK-NEXT: v6: "threw" @JSValue = String string="threw"
@@ -835,33 +827,24 @@ runtimefunction id=131091 function=f55 visibility=Private
 # CHECK-NEXT: v8: boolean @Boolean = HasInPrototypeChain v5, v7
 # CHECK-NEXT: v9: anything @JSValue = Upcast v5 castType=anything
 # CHECK-NEXT: v10: anything @JSValue = PropGet v9 key="constructor" accessSite=37 siteCache=1
-# CHECK-NEXT: v11: boolean @Boolean = TypeTest v10 testedType=undefined|null|function
-# CHECK-NEXT: TestAndBranch v11 -> taken b2(| 0), notTaken b6(| 0)
-# CHECK-NEXT: b2(v12: undefined|null|function @JSValue):
-# CHECK-NEXT: v13: function @JSValue = RequireObjectCoercible v12 name="name"
-# CHECK-NEXT: v14: anything @JSValue = PropGet v13 key="name" accessSite=38 siteCache=2
-# CHECK-NEXT: v15: boolean @Boolean = TypeTest v14 testedType=undefined|null|string
-# CHECK-NEXT: TestAndBranch v15 -> taken b3(| 0), notTaken b5(| 0)
-# CHECK-NEXT: b3(v16: undefined|null|string @JSValue):
-# CHECK-NEXT: v17: undefined @JSValue = CallBuiltin -, v0, v6, v16 overload=ConsoleLog/0 accessSite=39
-# CHECK-NEXT: Jump -> next b4()
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v18: undefined @JSValue = Undefined
-# CHECK-NEXT: Return v18
-# CHECK-NEXT: b5(v19: boolean|number|symbol|bigint|object @JSValue) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b7(v19)
-# CHECK-NEXT: b6(v20: boolean|number|string|symbol|bigint|object @JSValue) frequency=Unlikely:
-# CHECK-NEXT: v21: anything @JSValue = PropGet v20 key="name" accessSite=38 siteCache=3
-# CHECK-NEXT: v22: anything @JSValue = Expect v21 expectedType=undefined|null|string
-# CHECK-NEXT: Jump -> next b7(v22)
-# CHECK-NEXT: b7(v23: anything @JSValue) frequency=Unlikely:
-# CHECK-NEXT: v24: builtin(Console) @Cell = Builtin builtin=Console
-# CHECK-NEXT: v25: undefined @JSValue = CallBuiltin v24, v0, v6, v23 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=39
-# CHECK-NEXT: v26: undefined @JSValue = Undefined
-# CHECK-NEXT: Return v26
-# CHECK-NEXT: b8() handler=b1():
+# CHECK-NEXT: v11: anything @JSValue = Expect v10 expectedType=undefined|null|function
+# CHECK-NEXT: v12: boolean|number|string|symbol|bigint|object @JSValue = RequireObjectCoercible v11 name="name"
+# CHECK-NEXT: v13: anything @JSValue = PropGet v12 key="name" accessSite=38 siteCache=2
+# CHECK-NEXT: v14: anything @JSValue = Expect v13 expectedType=undefined|null|string
+# CHECK-NEXT: v15: boolean @Boolean = TypeTest v14 testedType=undefined|null|boolean|number|string|symbol
+# CHECK-NEXT: TestAndBranch v15 -> taken b3(| 0), notTaken b4(| 0)
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v16: undefined @JSValue = Undefined
+# CHECK-NEXT: Return v16
+# CHECK-NEXT: b3(v17: undefined|null|boolean|number|string|symbol @JSValue):
+# CHECK-NEXT: v18: undefined @JSValue = CallBuiltin -, v0, v6, v17 overload=ConsoleLog/0 accessSite=39
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b4(v19: bigint|object @JSValue) frequency=Rare:
+# CHECK-NEXT: v20: undefined @JSValue = CallBuiltin -, v0, v6, v19 overload=ConsoleLog/1 accessSite=39
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b5() handler=b1():
 # CHECK-NEXT: v2: anything @JSValue = Call v1 calleeName="run" accessSite=32 callees=[f7, f9, f17, f18, f20]
 # CHECK-NEXT: v3: undefined|string|Array<undefined|null|int|string|builtin(FunctionPrototype)|builtin(ObjectPrototype)|builtin(ObjectPrototypeToString), proven, pristine[Storage, Names, Dense]> @JSValue = AssumeType v2 provenType=undefined|string|Array<undefined|null|int|string|builtin(FunctionPrototype)|builtin(ObjectPrototype)|builtin(ObjectPrototypeToString), proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v4: undefined|string @JSValue = CallDirect v3 function=f1 accessSite=33
-# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: Jump -> next b2()
 # CHECK-NEXT: }

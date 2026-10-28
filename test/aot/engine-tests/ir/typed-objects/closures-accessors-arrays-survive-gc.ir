@@ -239,48 +239,48 @@ function f15 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v1: 0 = Integer
 # CHECK-NEXT: v2: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
 # CHECK-NEXT: v3: boolean = Less v1, v2
-# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b4()
+# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b3()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v4: boolean = IsInBounds v0, v1
-# CHECK-NEXT: Branch v4 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: Branch v4 -> taken b2(| 0), notTaken b12()
 # CHECK-NEXT: b2(v5: guard):
 # CHECK-NEXT: v6: L2|L3 = GetArrayElement v0, v1, v5 arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds]
-# CHECK-NEXT: Jump -> next b5(v6)
-# CHECK-NEXT: b3() frequency=Rare:
-# CHECK-NEXT: v7: undefined|L2|L3 = GetArrayElement v0, v1 arrayStorage=Contiguous level=Proven [keyIsIntegral]
-# CHECK-NEXT: v8: undefined|L2|L3 ~ undefined|L2 = Upcast v7 castType=anything
-# CHECK-NEXT: v9: L2|L3 ~ L2 = RequireObjectCoercible v8 name="value"
-# CHECK-NEXT: Jump -> next b7(v9)
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v10: undefined = Undefined
-# CHECK-NEXT: Jump -> next b5(v10)
-# CHECK-NEXT: b5(v11: undefined|L2|L3):
-# CHECK-NEXT: v12: undefined|L2|L3 ~ undefined|L2 = Upcast v11 castType=anything
-# CHECK-NEXT: v13: L2|L3 ~ L2 = RequireObjectCoercible v12 name="value"
-# CHECK-NEXT: v14: boolean = IsSlotFilled v13 key="value" receivers=[L2, L3] level=Expected
-# CHECK-NEXT: Branch v14 -> taken b6(| 0), notTaken b7(v13)
-# CHECK-NEXT: b6(v15: guard):
-# CHECK-NEXT: v16: function|f4 = GetSlotGetter v13, v15 key="value" receivers=[L2, L3] level=Expected
-# CHECK-NEXT: v17: anything ~ int[-2147483643, 2147483647] = Call v16, v13 accessSite=14
-# CHECK-NEXT: v18: boolean ~ true = TypeTest v13 testedType=L2
-# CHECK-NEXT: Branch v18 -> taken b11(), notTaken b10()
-# CHECK-NEXT: b7(v19: L2|L3 ~ L2) frequency=Rare:
-# CHECK-NEXT: v20: anything ~ int[-2147483643, 2147483647] = PropGet v19 key="value" accessSite=14 receivers=[L2, L3]
-# CHECK-NEXT: v21: boolean ~ true = TypeTest v19 testedType=L2
-# CHECK-NEXT: Branch v21 -> taken b8(), notTaken b12()
+# CHECK-NEXT: Jump -> next b4(v6)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v7: undefined = Undefined
+# CHECK-NEXT: Jump -> next b4(v7)
+# CHECK-NEXT: b4(v8: undefined|L2|L3):
+# CHECK-NEXT: v9: undefined|L2|L3 ~ undefined|L2 = Upcast v8 castType=anything
+# CHECK-NEXT: v10: L2|L3 ~ L2 = RequireObjectCoercible v9 name="value"
+# CHECK-NEXT: v11: boolean = IsSlotFilled v10 key="value" receivers=[L2, L3] level=Expected
+# CHECK-NEXT: Branch v11 -> taken b5(| 0), notTaken b6(v10)
+# CHECK-NEXT: b5(v12: guard):
+# CHECK-NEXT: v13: function|f4 = GetSlotGetter v10, v12 key="value" receivers=[L2, L3] level=Expected
+# CHECK-NEXT: v14: anything ~ int[-2147483643, 2147483647] = Call v13, v10 accessSite=14
+# CHECK-NEXT: v15: boolean ~ true = TypeTest v10 testedType=L2
+# CHECK-NEXT: Branch v15 -> taken b10(), notTaken b9()
+# CHECK-NEXT: b6(v16: L2|L3 ~ L2) frequency=Rare:
+# CHECK-NEXT: v17: anything ~ int[-2147483643, 2147483647] = PropGet v16 key="value" accessSite=14 receivers=[L2, L3]
+# CHECK-NEXT: v18: boolean ~ true = TypeTest v16 testedType=L2
+# CHECK-NEXT: Branch v18 -> taken b7(), notTaken b11()
+# CHECK-NEXT: b7() frequency=Rare:
+# CHECK-NEXT: v19: boolean ~ true = TypeTest v17 testedType=int[-2147483643, 2147483647]
+# CHECK-NEXT: Branch v19 -> taken b8(), notTaken b11()
 # CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v22: boolean ~ true = TypeTest v20 testedType=int[-2147483643, 2147483647]
-# CHECK-NEXT: Branch v22 -> taken b9(), notTaken b12()
-# CHECK-NEXT: b9() frequency=Rare:
-# CHECK-NEXT: Jump -> next b11()
-# CHECK-NEXT: b10() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b11()
-# CHECK-NEXT: b11():
-# CHECK-NEXT: v23: undefined = Undefined
-# CHECK-NEXT: v24: never = RequireObjectCoercible v23 name="length"
+# CHECK-NEXT: Jump -> next b10()
+# CHECK-NEXT: b9() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b10()
+# CHECK-NEXT: b10():
+# CHECK-NEXT: v20: undefined = Undefined
+# CHECK-NEXT: v21: never = RequireObjectCoercible v20 name="length"
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b11() frequency=Rare:
+# CHECK-NEXT: v22: undefined = Undefined
+# CHECK-NEXT: v23: never = PropGet v22 key="length" accessSite=16 receivers=[]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b12() frequency=Rare:
-# CHECK-NEXT: v25: undefined = Undefined
-# CHECK-NEXT: v26: never = PropGet v25 key="length" accessSite=16 receivers=[]
-# CHECK-NEXT: Unreachable
+# CHECK-NEXT: v24: undefined|L2|L3 = GetArrayElement v0, v1 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+# CHECK-NEXT: v25: undefined|L2|L3 ~ undefined|L2 = Upcast v24 castType=anything
+# CHECK-NEXT: v26: L2|L3 ~ L2 = RequireObjectCoercible v25 name="value"
+# CHECK-NEXT: Jump -> next b6(v26)
 # CHECK-NEXT: }

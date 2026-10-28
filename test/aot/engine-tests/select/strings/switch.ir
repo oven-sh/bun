@@ -700,7 +700,7 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # -- generated: kind kindOfUnit
 # CHECK-LABEL: function {{*}}name="kind"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 160, patchpoints: 12, rare instructions: 3
+# CHECK-NEXT: instructions: 172, patchpoints: 15
 # CHECK-NEXT: end of function f1
 # CHECK-LABEL: function {{*}}name="kindOfUnit"
 # CHECK: role=Source

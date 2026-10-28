@@ -283,17 +283,7 @@ runtimefunction id=69 function=f4
 # CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="codeOf"
-# CHECK: module=m0 position=244 kind=Method role=EntryChecks flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w3 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=int site=w4}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f6 fallback=f7} {
-# CHECK-NEXT: b0(v0: anything ~ undefined|null|L0):
-# CHECK-NEXT: v1: boolean = TypeTest v0 testedType=L0
-# CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v2: L0):
-# CHECK-NEXT: v3: int = CallDirect v2 function=f6
-# CHECK-NEXT: ReturnCall v3 requirement=Allowed
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v4: int = CallDirect v0 function=f7
-# CHECK-NEXT: ReturnCall v4 requirement=Allowed
-# CHECK-NEXT: }
+# CHECK: module=m0 position=244 kind=Method role=EntryChecks flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w3 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=int site=w4}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f6 fallback=f7}
 # CHECK-LABEL: function f3 module=
 # CHECK: m0 position=221 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: L0):
@@ -380,19 +370,9 @@ runtimefunction id=69 function=f4
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="codeOf"
-# CHECK: module=m0 position=244 kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0 site=w3}] results=[{type=int site=w4}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameterMap=[{original=0}]} {
-# CHECK-NEXT: b0(v0: L0):
-# CHECK-NEXT: v1: int = GetSlot v0 key=#"#code"@L0 receivers=[L0] level=Proven accessSite=19
-# CHECK-NEXT: Return v1
-# CHECK-NEXT: }
+# CHECK: module=m0 position=244 kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0 site=w3}] results=[{type=int site=w4}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameterMap=[{original=0}]}
 # CHECK-LABEL: function {{*}}name="codeOf"
-# CHECK: module=m0 position=244 kind=Method role=GenericVersion flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w3 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=int site=w4}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameterMap=[{original=0}]} creator=Version{provenVersion=f6} {
-# CHECK-NEXT: b0(v0: anything) frequency=Unlikely:
-# CHECK-NEXT: v1: classtoken = GetModuleVariable variable=g1
-# CHECK-NEXT: v2: anything = PrivateGet v0, v1 layout=L0 field=1 accessSite=19
-# CHECK-NEXT: v3: int = AssumeType v2 provenType=int
-# CHECK-NEXT: Return v3
-# CHECK-NEXT: }
+# CHECK: module=m0 position=244 kind=Method role=GenericVersion flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w3 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=int site=w4}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameterMap=[{original=0}]} creator=Version{provenVersion=f6}
 # CHECK-LABEL: function {{*}}name="next"
 # CHECK: module=m1 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] enclosingRuntimeFunction=69 captures=[{type=f4}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f4, v1: anything):

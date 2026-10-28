@@ -1,7 +1,9 @@
 use super::super::{ModuleField, ModuleObjectOwner, ModuleObjectUse};
 use super::*;
 use ModuleObjectOwner::{EntryPoint, OwnFile, Related};
-use ModuleObjectUse::{Children, Field, HandedOn, Object, Parent, ParentTested, Tested};
+use ModuleObjectUse::{
+    Children, Field, HandedOn, HolderHandedOn, Object, Parent, ParentTested, Tested,
+};
 
 type Mention = (&'static str, ModuleObjectOwner, ModuleObjectUse);
 
@@ -201,12 +203,19 @@ fn the_main_module_without_its_name() {
     assert_mentions("f(require);", &[("require", EntryPoint, HandedOn)]);
     assert_mentions("x = [require];", &[("require", EntryPoint, HandedOn)]);
     for source in [
+        "Object.getPrototypeOf(require);",
+        "Reflect.getPrototypeOf(require).main;",
+        "require.__proto__.main;",
+    ] {
+        assert_mentions(source, &[("require", EntryPoint, HandedOn)]);
+    }
+    for source in [
         "process.pid; f(process);",
         "Object.entries(process);",
         "x = { ...process };",
         "for (const key in process) {}",
     ] {
-        assert_mentions(source, &[("process", EntryPoint, HandedOn)]);
+        assert_mentions(source, &[("process", EntryPoint, HolderHandedOn)]);
     }
     for source in [
         "require[key] = 1;",

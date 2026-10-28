@@ -432,36 +432,58 @@ function f52 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: env L1 = NewObject layout=L1 allocationSite=14
 # CHECK-NEXT: v1: f15 = NewClosure v0 function=f15 allocationSite=15
-# CHECK-NEXT: v2: undefined = CallDirect v1 function=f84 accessSite=3
+# CHECK-NEXT: v2: undefined = CallDirect v1 function=f80 accessSite=3
 # CHECK-NEXT: v3: number = Call v1 calleeName="a" accessSite=4 callees=[f15]
 # CHECK-NEXT: ReturnCall v3 casts=[{declared={type=number site=w23} resolution=Nothing}, {declared={type=number site=w2} resolution=Nothing}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="arrow"
-# CHECK: module=m0 position=722 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=w5}] functionTypes=[f42] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f19 callPosition=4294967295 isTailCall=true module=m0}, {callee=f18 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
-# CHECK-NEXT: b0() frequency=Rare:
+# CHECK: module=m0 position=722 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=w5}] functionTypes=[f42] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f19 callPosition=4294967295 isTailCall=true module=m0}, {callee=f13 callPosition=4294967295 module=m0}, {callee=f18 callPosition=4294967295 parent=1 isTailCall=true module=m0}, {callee=f19 callPosition=4294967295 parent=2 module=m0}] {
+# CHECK-NEXT: b0():
 # CHECK-NEXT: v0: env L2 = NewObject layout=L2 allocationSite=17 storage=Frame
-# CHECK-NEXT: v1: f19 = NewClosure v0 function=f19 allocationSite=19 storage=Frame
-# CHECK-NEXT: v2: undefined = CallDirect v1 function=f84 accessSite=5
-# CHECK-NEXT: v3: absent = GetEnvironmentField v0 layout=L2
-# CHECK-NEXT: v4: never = CheckInitialized v3 name="w"
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() frequency=Rare handler=b2():
+# CHECK-NEXT: v1: number = CallDirect v0 function=f18 accessSite=21 @0:4 tail
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b2() role=CatchHandler:
+# CHECK-NEXT: v2: anything = CatchValue
+# CHECK-NEXT: v3: anything ~ undefined|null|Error = Upcast v2 castType=anything
+# CHECK-NEXT: v4: anything = PropGet v3 key="constructor" accessSite=19
+# CHECK-NEXT: v5: anything ~ undefined|null|function = Expect v4 expectedType=undefined|null|function
+# CHECK-NEXT: v6: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v5 name="name"
+# CHECK-NEXT: v7: anything = PropGet v6 key="name" accessSite=20
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: v8: absent = GetEnvironmentField v0 layout=L2
+# CHECK-NEXT: v9: never = CheckInitialized v8 name="w"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="method"
-# CHECK: module=m0 position=851 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=w6}] functionTypes=[f45] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f21 callPosition=4294967295 isTailCall=true module=m0}, {callee=f20 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
-# CHECK-NEXT: b0() frequency=Rare:
+# CHECK: module=m0 position=851 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=w6}] functionTypes=[f45] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f21 callPosition=4294967295 isTailCall=true module=m0}, {callee=f13 callPosition=4294967295 module=m0}, {callee=f20 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
+# CHECK-NEXT: b0():
 # CHECK-NEXT: v0: env L3 = NewObject layout=L3 allocationSite=20
-# CHECK-NEXT: v1: f21 = NewClosure v0 function=f21 allocationSite=22
-# CHECK-NEXT: v2: L9 = NewObject -, v1 layout=L9 fields=[0] allocationSite=23 storage=Frame allocationClass=1
-# CHECK-NEXT: v3: L9 = FinishObject v2
-# CHECK-NEXT: v4: f22 = NewClosure v3 function=f22 allocationSite=24 storage=Frame
-# CHECK-NEXT: v5: undefined = CallDirect v4 function=f84 accessSite=7
-# CHECK-NEXT: v6: env L3 = GetCapture v1 function=f21
-# CHECK-NEXT: v7: absent = GetEnvironmentField v6 layout=L3
-# CHECK-NEXT: v8: never = CheckInitialized v7 name="v"
+# CHECK-NEXT: v2: f21 = NewClosure v0 function=f21 allocationSite=22
+# CHECK-NEXT: v3: L9 = NewObject -, v2 layout=L9 fields=[0] allocationSite=23 storage=Frame allocationClass=1
+# CHECK-NEXT: v4: L9 = FinishObject v3
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() handler=b2():
+# CHECK-NEXT: v5: number = CallDirect v4 function=f22 accessSite=18
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b2() role=CatchHandler:
+# CHECK-NEXT: v6: anything = CatchValue
+# CHECK-NEXT: v7: anything ~ undefined|null|Error = Upcast v6 castType=anything
+# CHECK-NEXT: v8: anything = PropGet v7 key="constructor" accessSite=19
+# CHECK-NEXT: v9: anything ~ undefined|null|function = Expect v8 expectedType=undefined|null|function
+# CHECK-NEXT: v10: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v9 name="name"
+# CHECK-NEXT: v11: anything = PropGet v10 key="name" accessSite=20
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: v12: env L3 = GetCapture v2 function=f21
+# CHECK-NEXT: v14: absent = GetEnvironmentField v12 layout=L3
+# CHECK-NEXT: v15: never = CheckInitialized v14 name="v"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="classField"
-# CHECK: module=m0 position=1124 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=w8}] functionTypes=[f48] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f77 callPosition=4294967295 isConstruction=true module=m0}] {
+# CHECK: module=m0 position=1124 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=w8}] functionTypes=[f48] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f74 callPosition=4294967295 isConstruction=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: env L4 = NewObject layout=L4 allocationSite=25
 # CHECK-NEXT: v2: f24 = NewClosure v0 function=f24 allocationSite=27
@@ -493,15 +515,26 @@ function f52 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: ReturnCall v3 casts=[{declared={type=boolean site=w45} resolution=Nothing}, {declared={type=boolean site=w11} resolution=Nothing}, {declared={type=boolean} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="cycleEarly"
-# CHECK: module=m0 position=1690 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=12 site=w12}] functionTypes=[f51] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=1690 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=12 site=w12}] functionTypes=[f51] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f13 callPosition=4294967295 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: env L7 = NewObject layout=L7 allocationSite=31 storage=Frame
-# CHECK-NEXT: v1: f30 = NewClosure v0 function=f30 allocationSite=34 storage=Frame
-# CHECK-NEXT: v2: undefined = CallDirect v1 function=f84 accessSite=13
-# CHECK-NEXT: v3: 12 = Integer integer=12
-# CHECK-NEXT: PutEnvironmentField v0, v3 layout=L7 field=2
-# CHECK-NEXT: v5: 12 = CallDirect v0 function=f83 accessSite=14 @0 tail
-# CHECK-NEXT: Return v5
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() handler=b2():
+# CHECK-NEXT: v1: 12 = CallDirect v0 function=f30 accessSite=18
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b2() role=CatchHandler:
+# CHECK-NEXT: v2: anything = CatchValue
+# CHECK-NEXT: v3: anything ~ undefined|null|Error = Upcast v2 castType=anything
+# CHECK-NEXT: v4: anything = PropGet v3 key="constructor" accessSite=19
+# CHECK-NEXT: v5: anything ~ undefined|null|function = Expect v4 expectedType=undefined|null|function
+# CHECK-NEXT: v6: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v5 name="name"
+# CHECK-NEXT: v7: anything = PropGet v6 key="name" accessSite=20
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v8: 12 = Integer integer=12
+# CHECK-NEXT: PutEnvironmentField v0, v8 layout=L7 field=2
+# CHECK-NEXT: v10: 12 = CallDirect v0 function=f79 accessSite=14 @0 tail
+# CHECK-NEXT: Return v10
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="varEarly"
 # CHECK: module=m0 position=1909 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=string site=w13 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f52] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f31 callPosition=4294967295 module=m0}] {
@@ -511,9 +544,10 @@ function f52 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="early"
-# CHECK: module=m0 position=755 kind=Arrow flags=[IsChecked] captures=[{type=env L2 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=number site=w27}] functionTypes=[f41] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f18 callPosition=4294967295 isTailCall=true module=m0}] {
-# CHECK-NEXT: b0(v0: env L2) frequency=Rare:
-# CHECK-NEXT: v2: absent = GetEnvironmentField v0 layout=L2
+# CHECK: module=m0 position=755 kind=Arrow flags=[IsChecked] captures=[{type=f18 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=number site=w27}] functionTypes=[f41] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f18 callPosition=4294967295 isTailCall=true module=m0}] {
+# CHECK-NEXT: b0(v0: f18) frequency=Rare:
+# CHECK-NEXT: v1: env L2 = GetCapture v0 function=f18
+# CHECK-NEXT: v2: absent = GetEnvironmentField v1 layout=L2
 # CHECK-NEXT: v3: never = CheckInitialized v2 name="w"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
@@ -548,7 +582,7 @@ function f52 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-LABEL: function f30 module=
 # CHECK: m0 position=1861 kind=Arrow flags=[IsChecked] captures=[{type=env L7 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=12 site=w51}] functionTypes=[f50] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: env L7):
-# CHECK-NEXT: v1: 12 = CallDirect v0 function=f83 accessSite=27
+# CHECK-NEXT: v1: 12 = CallDirect v0 function=f79 accessSite=27
 # CHECK-NEXT: ReturnCall v1 casts=[{declared={type=number site=w63} resolution=Nothing}, {declared={type=number site=w51} resolution=Nothing}, {declared={type=12} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function f32 module=
@@ -595,14 +629,6 @@ function f52 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b0(v0: f12, v1: anything):
 # CHECK-NEXT: v2: string = CallDirect function=f12
 # CHECK-NEXT: ReturnCall v2 requirement=Allowed
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="early"
-# CHECK: module=m0 position=755 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f19}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f19} creator=Entrypoint{target=f19 arguments=Registers} inlineFrames=[{}, {callee=f19 callPosition=755 isTailCall=true module=m0}, {callee=f18 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
-# CHECK-NEXT: b0(v0: f19, v1: anything) frequency=Rare:
-# CHECK-NEXT: v2: env L2 = GetCapture v0 function=f19
-# CHECK-NEXT: v4: absent = GetEnvironmentField v2 layout=L2
-# CHECK-NEXT: v5: never = CheckInitialized v4 name="w"
-# CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="C"
 # CHECK: module=m0 position=1154 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget, IsChecked] captures=[{type=f24}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f24} creator=Entrypoint{target=f24 arguments=Registers takesNewTarget=true} {

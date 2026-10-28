@@ -213,13 +213,9 @@ function f28 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # -- generated: Token
 # CHECK-LABEL: function {{*}}name="Token"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 89, patchpoints: 17, rare instructions: 18
+# CHECK-NEXT: instructions: 68, patchpoints: 11, rare instructions: 19
 # CHECK-NEXT: end of function f4
 # CHECK-LABEL: function {{*}}name="Token"
 # CHECK: role=GenericEntrypoint
-# CHECK-NEXT: instructions: 6, patchpoints: 1
+# CHECK-NEXT: instructions: 78, patchpoints: 11, rare instructions: 20
 # CHECK-NEXT: end of function f31
-# CHECK-LABEL: function {{*}}name="Token"
-# CHECK: role=AllocatedThisVersion
-# CHECK-NEXT: instructions: 79, patchpoints: 15, rare instructions: 15
-# CHECK-NEXT: end of function f33

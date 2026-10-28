@@ -659,65 +659,63 @@ runtimefunction id=131091 function=f94 visibility=Private
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function f13 module=
-# CHECK: m0 position=2311 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|L6|L7|L8|L9 flags=[IsExpected]}] functionTypes=[f40] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f67 callPosition=4294967295 isTailCall=true module=m5}, {callee=f112 callPosition=4294967295 isConstruction=true module=m0}, {callee=f110 callPosition=4294967295 parent=2 isConstruction=true module=m0}] {
+# CHECK: m0 position=2311 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|L6|L7|L8|L9 flags=[IsExpected]}] functionTypes=[f40] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f67 callPosition=4294967295 isTailCall=true module=m5}, {callee=f112 callPosition=4294967295 isConstruction=true module=m0}, {callee=f110 callPosition=4294967295 parent=2 isConstruction=true module=m0}, {callee=f101 callPosition=25 parent=1 module=m5}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: Generator<undefined|null|string, pristine[Storage, Names]> = GetModuleVariable variable=g7
 # CHECK-NEXT: v1: absent|f7 = GetModuleVariable variable=g3
 # CHECK-NEXT: v2: boolean = TypeTest v1 testedType=absent
-# CHECK-NEXT: Branch v2 -> taken b2(), notTaken b1()
-# CHECK-NEXT: b1():
-# CHECK-NEXT: v3: L2 = NewObject layout=L2 allocationClass=1
-# CHECK-NEXT: v4: undefined = CallDirect v0, v3 function=f101
-# CHECK-NEXT: v5: i32 = ResultAt v4
-# CHECK-NEXT: v6: object|unspecified = ResultAt v4 index=1
-# CHECK-NEXT: v7: anything|unspecified = ResultAt v4 index=2
-# CHECK-NEXT: v8: boolean|unspecified = ResultAt v4 index=3
-# CHECK-NEXT: Switch v5 cases=[1] -> case b3(), otherwise b4()
-# CHECK-NEXT: b2() frequency=Rare:
-# CHECK-NEXT: v9: f7 = CallDirect function=f99
-# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1() frequency=Rare:
+# CHECK-NEXT: v3: f7 = CallDirect function=f99
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v4: L2 = NewObject layout=L2 allocationClass=1
+# CHECK-NEXT: v5: undefined = StepGenerator v0, v4 check=None
+# CHECK-NEXT: v6: anything = ResultAt v5
+# CHECK-NEXT: v7: int[0, 2] = ResultAt v5 index=1
+# CHECK-NEXT: v8: 2 = Integer integer=2
+# CHECK-NEXT: v9: boolean = StrictEq v7, v8
+# CHECK-NEXT: Branch v9 -> taken b3(), notTaken b4(| 0)
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v10: fact = Specified
-# CHECK-NEXT: v11: object = AssumeType v6, v10 provenType=object
+# CHECK-NEXT: v10: anything = ResumeGenerator v0, v4
+# CHECK-NEXT: v11: object = AssumeType v10 provenType=object
 # CHECK-NEXT: Jump -> next b5(v11)
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v12: fact = Specified
-# CHECK-NEXT: v13: anything = AssumeType v7, v12 provenType=anything
-# CHECK-NEXT: v14: boolean = AssumeType v8, v12 provenType=boolean
-# CHECK-NEXT: v15: L(IteratorResult) = NewObject -, v13, v14 layout=L(IteratorResult) fields=[0, 1]
+# CHECK-NEXT: b4(v12: int[0, 1]):
+# CHECK-NEXT: v13: 1 = Integer integer=1
+# CHECK-NEXT: v14: boolean = StrictEq v12, v13
+# CHECK-NEXT: v15: L(IteratorResult) = NewObject -, v6, v14 layout=L(IteratorResult) fields=[0, 1]
 # CHECK-NEXT: Jump -> next b5(v15)
 # CHECK-NEXT: b5(v16: object):
 # CHECK-NEXT: v17: object ~ L6|L7|L8|L9 = Upcast v16 castType=object
 # CHECK-NEXT: Return v17
 # CHECK-NEXT: }
 # CHECK-LABEL: function f15 module=
-# CHECK: m0 position=2418 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|L6|L7|L8|L9 flags=[IsExpected]}] functionTypes=[f42] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f67 callPosition=4294967295 isTailCall=true module=m5}, {callee=f115 callPosition=4294967295 isConstruction=true module=m0}, {callee=f34 callPosition=4294967295 parent=2 module=m0}, {callee=f110 callPosition=4294967295 parent=2 isConstruction=true module=m0}] {
+# CHECK: m0 position=2418 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|L6|L7|L8|L9 flags=[IsExpected]}] functionTypes=[f42] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f67 callPosition=4294967295 isTailCall=true module=m5}, {callee=f115 callPosition=4294967295 isConstruction=true module=m0}, {callee=f34 callPosition=4294967295 parent=2 module=m0}, {callee=f110 callPosition=4294967295 parent=2 isConstruction=true module=m0}, {callee=f101 callPosition=25 parent=1 module=m5}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: Generator<undefined|null|string, pristine[Storage, Names]> = GetModuleVariable variable=g8
 # CHECK-NEXT: v1: absent|f11 = GetModuleVariable variable=g5
 # CHECK-NEXT: v2: boolean = TypeTest v1 testedType=absent
-# CHECK-NEXT: Branch v2 -> taken b2(), notTaken b1()
-# CHECK-NEXT: b1():
-# CHECK-NEXT: v3: "eight" = String string="eight"
-# CHECK-NEXT: v4: L4 = NewObject -, v3 layout=L4 fields=[0] allocationClass=2 [listsOnlyStoredValues]
-# CHECK-NEXT: v5: undefined = CallDirect v0, v4 function=f101
-# CHECK-NEXT: v6: i32 = ResultAt v5
-# CHECK-NEXT: v7: object|unspecified = ResultAt v5 index=1
-# CHECK-NEXT: v8: anything|unspecified = ResultAt v5 index=2
-# CHECK-NEXT: v9: boolean|unspecified = ResultAt v5 index=3
-# CHECK-NEXT: Switch v6 cases=[1] -> case b3(), otherwise b4()
-# CHECK-NEXT: b2() frequency=Rare:
-# CHECK-NEXT: v10: f11 = CallDirect function=f100
-# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1() frequency=Rare:
+# CHECK-NEXT: v3: f11 = CallDirect function=f100
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v4: "eight" = String string="eight"
+# CHECK-NEXT: v5: L4 = NewObject -, v4 layout=L4 fields=[0] allocationClass=2 [listsOnlyStoredValues]
+# CHECK-NEXT: v6: undefined = StepGenerator v0, v5 check=None
+# CHECK-NEXT: v7: anything = ResultAt v6
+# CHECK-NEXT: v8: int[0, 2] = ResultAt v6 index=1
+# CHECK-NEXT: v9: 2 = Integer integer=2
+# CHECK-NEXT: v10: boolean = StrictEq v8, v9
+# CHECK-NEXT: Branch v10 -> taken b3(), notTaken b4(| 0)
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v11: fact = Specified
-# CHECK-NEXT: v12: object = AssumeType v7, v11 provenType=object
+# CHECK-NEXT: v11: anything = ResumeGenerator v0, v5
+# CHECK-NEXT: v12: object = AssumeType v11 provenType=object
 # CHECK-NEXT: Jump -> next b5(v12)
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v13: fact = Specified
-# CHECK-NEXT: v14: anything = AssumeType v8, v13 provenType=anything
-# CHECK-NEXT: v15: boolean = AssumeType v9, v13 provenType=boolean
-# CHECK-NEXT: v16: L(IteratorResult) = NewObject -, v14, v15 layout=L(IteratorResult) fields=[0, 1]
+# CHECK-NEXT: b4(v13: int[0, 1]):
+# CHECK-NEXT: v14: 1 = Integer integer=1
+# CHECK-NEXT: v15: boolean = StrictEq v13, v14
+# CHECK-NEXT: v16: L(IteratorResult) = NewObject -, v7, v15 layout=L(IteratorResult) fields=[0, 1]
 # CHECK-NEXT: Jump -> next b5(v16)
 # CHECK-NEXT: b5(v17: object):
 # CHECK-NEXT: v18: object ~ L6|L7|L8|L9 = Upcast v17 castType=object

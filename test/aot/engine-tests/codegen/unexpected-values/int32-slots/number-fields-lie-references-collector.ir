@@ -380,7 +380,7 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="check"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 170, patchpoints: 12, rare instructions: 257
+# CHECK-NEXT: instructions: 170, patchpoints: 12, rare instructions: 246
 # CHECK-NEXT: end of function f2
 # CHECK-LABEL: function {{*}}name="fill"
 # CHECK: role=Source

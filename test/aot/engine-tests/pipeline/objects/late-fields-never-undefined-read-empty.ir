@@ -877,7 +877,7 @@ runtimefunction id=69 function=f15
 # CHECK-NEXT: Jump -> next b5(v14)
 # CHECK-NEXT: b5(v15: int[0, 1]):
 # CHECK-NEXT: v16: boolean = ToBoolean v15
-# CHECK-NEXT: Branch v16 -> taken b6(), notTaken b16()
+# CHECK-NEXT: Branch v16 -> taken b6(), notTaken b14()
 # CHECK-NEXT: b6():
 # CHECK-NEXT: v17: boolean = TypeTest v1 testedType=L0
 # CHECK-NEXT: Branch v17 -> taken b7(| 0), notTaken b12(| 0)
@@ -892,7 +892,7 @@ runtimefunction id=69 function=f15
 # CHECK-NEXT: Branch v22 -> taken b10(), notTaken b11()
 # CHECK-NEXT: b10():
 # CHECK-NEXT: v23: undefined = Undefined
-# CHECK-NEXT: Jump -> next b15(v23)
+# CHECK-NEXT: Jump -> next b13(v23)
 # CHECK-NEXT: b11() frequency=Rare:
 # CHECK-NEXT: v24: anything = PropGet v18 key="objectFlags" accessSite=146 receivers=[L0]
 # CHECK-NEXT: Jump -> next b13(v24)
@@ -900,76 +900,18 @@ runtimefunction id=69 function=f15
 # CHECK-NEXT: v26: anything = PropGet v25 key="objectFlags" accessSite=146
 # CHECK-NEXT: Jump -> next b13(v26)
 # CHECK-NEXT: b13(v27: anything ~ undefined):
-# CHECK-NEXT: v28: boolean ~ false = TypeTest v27 testedType=number
-# CHECK-NEXT: Branch v28 -> taken b14(| 0), notTaken b15(| 0)
-# CHECK-NEXT: b14(v29: number):
-# CHECK-NEXT: Jump -> next b17(v29)
-# CHECK-NEXT: b15(v30: undefined|null|boolean|string|symbol|bigint|object ~ undefined) frequency=Unlikely:
+# CHECK-NEXT: v28: anything ~ number = Expect v27 expectedType=number
+# CHECK-NEXT: Jump -> next b15(v28)
+# CHECK-NEXT: b14():
+# CHECK-NEXT: v29: 0 = Integer
+# CHECK-NEXT: Jump -> next b15(v29)
+# CHECK-NEXT: b15(v30: anything ~ number):
 # CHECK-NEXT: Return v30
-# CHECK-NEXT: b16():
-# CHECK-NEXT: v31: 0 = Integer
-# CHECK-NEXT: Jump -> next b17(v31)
-# CHECK-NEXT: b17(v32: number ~ 0):
-# CHECK-NEXT: Return v32
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="readAnyway"
-# CHECK: module=m0 position=755 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|L0|Object site=w8 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w9 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|L0|Object):
-# CHECK-NEXT: v1: L0|Object = RequireObjectCoercible v0 name="objectFlags"
-# CHECK-NEXT: v2: boolean = TypeTest v1 testedType=L0
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b6(| 0)
-# CHECK-NEXT: b1(v3: L0):
-# CHECK-NEXT: v4: boolean = HasLayoutPrototype v3
-# CHECK-NEXT: Branch v4 -> taken b2(| 0), notTaken b5()
-# CHECK-NEXT: b2(v5: guard):
-# CHECK-NEXT: v6: boolean = HasNoExtraProperties v3, v5
-# CHECK-NEXT: Branch v6 -> taken b3(), notTaken b5()
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v7: boolean = AreMembersUnchanged conditions=[{layout=L0 key="objectFlags"}]
-# CHECK-NEXT: Branch v7 -> taken b4(), notTaken b5()
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v8: undefined = Undefined
-# CHECK-NEXT: Jump -> next b9(v8)
-# CHECK-NEXT: b5() frequency=Rare:
-# CHECK-NEXT: v9: anything = PropGet v3 key="objectFlags" accessSite=147 receivers=[L0]
-# CHECK-NEXT: Jump -> next b7(v9)
-# CHECK-NEXT: b6(v10: Object) frequency=Unlikely:
-# CHECK-NEXT: v11: anything = PropGet v10 key="objectFlags" accessSite=147
-# CHECK-NEXT: Jump -> next b7(v11)
-# CHECK-NEXT: b7(v12: anything ~ undefined):
-# CHECK-NEXT: v13: boolean ~ false = TypeTest v12 testedType=number
-# CHECK-NEXT: Branch v13 -> taken b8(| 0), notTaken b9(| 0)
-# CHECK-NEXT: b8(v14: number):
-# CHECK-NEXT: Return v14
-# CHECK-NEXT: b9(v15: undefined|null|boolean|string|symbol|bigint|object ~ undefined) frequency=Unlikely:
-# CHECK-NEXT: Return v15
-# CHECK-NEXT: }
+# CHECK: module=m0 position=755 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|L0|Object site=w8 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w9 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="targetOf"
-# CHECK: module=m0 position=839 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|L0 site=w10 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L0 site=w11 flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|L0):
-# CHECK-NEXT: v1: L0 = RequireObjectCoercible v0 name="target"
-# CHECK-NEXT: v2: boolean = HasLayoutPrototype v1
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b4()
-# CHECK-NEXT: b1(v3: guard):
-# CHECK-NEXT: v4: boolean = HasNoExtraProperties v1, v3
-# CHECK-NEXT: Branch v4 -> taken b2(), notTaken b4()
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v5: boolean = AreMembersUnchanged conditions=[{layout=L0 key="target"}]
-# CHECK-NEXT: Branch v5 -> taken b3(), notTaken b4()
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v6: undefined = Undefined
-# CHECK-NEXT: Jump -> next b5(v6)
-# CHECK-NEXT: b4() frequency=Rare:
-# CHECK-NEXT: v7: anything = PropGet v1 key="target" accessSite=148 receivers=[L0]
-# CHECK-NEXT: v8: undefined|null|int|string|L0 = AssumeType v7 provenType=undefined|null|int|string|L0
-# CHECK-NEXT: v9: undefined|null|int|string|L0 ~ undefined = Upcast v8 castType=undefined|null|int|string|L0
-# CHECK-NEXT: v10: boolean ~ true = TypeTest v9 testedType=undefined|null|L0
-# CHECK-NEXT: Branch v10 -> taken b5(| 0), notTaken b6(| 0)
-# CHECK-NEXT: b5(v11: undefined|null|L0 ~ undefined):
-# CHECK-NEXT: Return v11
-# CHECK-NEXT: b6(v12: int|string) frequency=Unlikely:
-# CHECK-NEXT: Return v12
-# CHECK-NEXT: }
+# CHECK: module=m0 position=839 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|L0 site=w10 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L0 site=w11 flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="nameOf"
 # CHECK: module=m0 position=916 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|L0|Object site=w12 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined|string site=w13 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: anything ~ undefined|L0|Object):

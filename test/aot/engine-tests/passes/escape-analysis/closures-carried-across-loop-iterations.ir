@@ -356,63 +356,67 @@ function f19 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Jump -> next b1(v1, v2, v3, v4)
 # CHECK-NEXT: b1(v5: undefined|f8 ~ undefined, v6: undefined|f8 ~ undefined, v7: number ~ 0, v8: int|whole ~ 0):
 # CHECK-NEXT: Jump -> next b2(v5, v6, v7, v8)
-# CHECK-NEXT: b2(v9: undefined|f8, v10: undefined|f8, v11: number, v12: int|whole):
-# CHECK-NEXT: v13: int = AssumeType v11 provenType=int
+# CHECK-NEXT: b2(v9: undefined|f8 ~ undefined, v10: undefined|f8 ~ undefined, v11: number ~ 0, v12: int|whole ~ 0):
+# CHECK-NEXT: Jump -> next b3(v9, v10, v11, v12)
+# CHECK-NEXT: b3(v13: undefined|f8, v14: undefined|f8, v15: number, v16: int|whole):
+# CHECK-NEXT: v17: int = AssumeType v15 provenType=int
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v15: 3 = Integer integer=3
-# CHECK-NEXT: v16: int|whole = Mul v12, v15
-# CHECK-NEXT: v17: 1 = Integer integer=1
-# CHECK-NEXT: v18: int|whole = Add v16, v17
-# CHECK-NEXT: v19: f8 = NewClosure v18 function=f8 allocationSite=7
-# CHECK-NEXT: v20: boolean = ToBoolean v10
-# CHECK-NEXT: Branch v20 -> taken b3(| 0), notTaken b12()
-# CHECK-NEXT: b3(v21: f8):
-# CHECK-NEXT: v22: number = Call v21 calleeName="beforeLast" accessSite=14 callees=[f8]
-# CHECK-NEXT: v23: 100 = Integer integer=100
-# CHECK-NEXT: v24: number = Mul v22, v23
-# CHECK-NEXT: v25: anything = Call v9 calleeName="last" accessSite=15 callees=[f8]
-# CHECK-NEXT: v26: boolean = TypeTest v25 testedType=number
-# CHECK-NEXT: Branch v26 -> taken b4(| 0), notTaken b5(| 0)
-# CHECK-NEXT: b4(v27: number):
-# CHECK-NEXT: v28: number = Add v24, v27
-# CHECK-NEXT: v29: number = Add v13, v28
-# CHECK-NEXT: Jump -> next b13(v29)
-# CHECK-NEXT: b5(v30: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b6(v9, v12, v13, v19, v24, v30)
-# CHECK-NEXT: b6(v31: undefined|f8, v32: int|whole, v33: int, v34: f8, v35: number, v36: anything) frequency=Unlikely:
-# CHECK-NEXT: v37: number|string|bigint = Add v35, v36
-# CHECK-NEXT: v38: number|string|bigint = Add v33, v37
-# CHECK-NEXT: Jump -> next b7(v31, v32, v34)
-# CHECK-NEXT: b7(v39: undefined|f8, v40: int|whole, v41: f8) frequency=Unlikely:
-# CHECK-NEXT: v42: int|whole = Increment v40
-# CHECK-NEXT: v43: boolean = TypeTest v38 testedType=number
-# CHECK-NEXT: Branch v43 -> taken b8(| 0), notTaken b9()
-# CHECK-NEXT: b8(v44: number) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b1(v41, v39, v44, v42)
-# CHECK-NEXT: b9() frequency=Unlikely:
-# CHECK-NEXT: v45: fact = Specified
-# CHECK-NEXT: v46: int = AssumeType v38, v45 provenType=int
+# CHECK-NEXT: v19: 3 = Integer integer=3
+# CHECK-NEXT: v20: int|whole = Mul v16, v19
+# CHECK-NEXT: v21: 1 = Integer integer=1
+# CHECK-NEXT: v22: int|whole = Add v20, v21
+# CHECK-NEXT: v23: f8 = NewClosure v22 function=f8 allocationSite=7
+# CHECK-NEXT: v24: boolean = ToBoolean v14
+# CHECK-NEXT: Branch v24 -> taken b4(| 0), notTaken b12()
+# CHECK-NEXT: b4(v25: f8):
+# CHECK-NEXT: v26: number = Call v25 calleeName="beforeLast" accessSite=14 callees=[f8]
+# CHECK-NEXT: v27: 100 = Integer integer=100
+# CHECK-NEXT: v28: number = Mul v26, v27
+# CHECK-NEXT: v29: anything = Call v13 calleeName="last" accessSite=15 callees=[f8]
+# CHECK-NEXT: v30: anything ~ number = Expect v29 expectedType=number
+# CHECK-NEXT: v31: boolean ~ true = TypeTest v30 testedType=number
+# CHECK-NEXT: Branch v31 -> taken b5(| 0), notTaken b6(| 0)
+# CHECK-NEXT: b5(v32: number):
+# CHECK-NEXT: v33: number = Add v28, v32
+# CHECK-NEXT: v34: number = Add v17, v33
+# CHECK-NEXT: Jump -> next b13(v34)
+# CHECK-NEXT: b6(v35: undefined|null|boolean|string|symbol|bigint|object) frequency=Rare:
+# CHECK-NEXT: v36: number|string|bigint = Add v28, v35
+# CHECK-NEXT: v37: number|string|bigint = Add v17, v36
+# CHECK-NEXT: Jump -> next b7(v13, v16, v23)
+# CHECK-NEXT: b7(v38: undefined|f8 ~ f8, v39: int|whole, v40: f8) frequency=Rare:
+# CHECK-NEXT: v41: int|whole = Increment v39
+# CHECK-NEXT: v42: boolean = TypeTest v37 testedType=number
+# CHECK-NEXT: Branch v42 -> taken b8(| 0), notTaken b9()
+# CHECK-NEXT: b8(v43: number) frequency=Rare:
+# CHECK-NEXT: Jump -> next b1(v40, v38, v43, v41)
+# CHECK-NEXT: b9() frequency=Rare:
+# CHECK-NEXT: v44: fact = Specified
+# CHECK-NEXT: v45: int = AssumeType v37, v44 provenType=int
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v48: 3 = Integer integer=3
-# CHECK-NEXT: v49: int|whole = Mul v42, v48
-# CHECK-NEXT: v50: 1 = Integer integer=1
-# CHECK-NEXT: v51: int|whole = Add v49, v50
-# CHECK-NEXT: v52: f8 = NewClosure v51 function=f8 allocationSite=7
-# CHECK-NEXT: v53: boolean = ToBoolean v39
-# CHECK-NEXT: Branch v53 -> taken b10(| 0), notTaken b11()
-# CHECK-NEXT: b10(v54: f8) frequency=Unlikely:
-# CHECK-NEXT: v55: number = Call v54 calleeName="beforeLast" accessSite=14 callees=[f8] [isNeverInlined]
-# CHECK-NEXT: v56: 100 = Integer integer=100
-# CHECK-NEXT: v57: number = Mul v55, v56
-# CHECK-NEXT: v58: number = Call v41 calleeName="last" accessSite=15 callees=[f8] [isNeverInlined]
-# CHECK-NEXT: Jump -> next b6(v41, v42, v46, v52, v57, v58)
-# CHECK-NEXT: b11() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b7(v41, v42, v52)
+# CHECK-NEXT: v47: 3 = Integer integer=3
+# CHECK-NEXT: v48: int|whole = Mul v41, v47
+# CHECK-NEXT: v49: 1 = Integer integer=1
+# CHECK-NEXT: v50: int|whole = Add v48, v49
+# CHECK-NEXT: v51: f8 = NewClosure v50 function=f8 allocationSite=7
+# CHECK-NEXT: v52: boolean ~ true = ToBoolean v38
+# CHECK-NEXT: Branch v52 -> taken b10(| 0), notTaken b11()
+# CHECK-NEXT: b10(v53: f8) frequency=Rare:
+# CHECK-NEXT: v54: number = Call v53 calleeName="beforeLast" accessSite=14 callees=[f8]
+# CHECK-NEXT: v55: 100 = Integer integer=100
+# CHECK-NEXT: v56: number = Mul v54, v55
+# CHECK-NEXT: v57: number = Call v40 calleeName="last" accessSite=15 callees=[f8]
+# CHECK-NEXT: v58: number = Add v56, v57
+# CHECK-NEXT: v59: number = Add v45, v58
+# CHECK-NEXT: v60: int|whole = Increment v41
+# CHECK-NEXT: Jump -> next b2(v51, v40, v59, v60)
+# CHECK-NEXT: b11() frequency=Rare:
+# CHECK-NEXT: Jump -> next b7(v40, v41, v51)
 # CHECK-NEXT: b12():
-# CHECK-NEXT: Jump -> next b13(v13)
-# CHECK-NEXT: b13(v59: number):
-# CHECK-NEXT: v60: int|whole = Increment v12
-# CHECK-NEXT: Jump -> next b2(v19, v9, v59, v60)
+# CHECK-NEXT: Jump -> next b13(v17)
+# CHECK-NEXT: b13(v61: number):
+# CHECK-NEXT: v62: int|whole = Increment v16
+# CHECK-NEXT: Jump -> next b3(v23, v13, v61, v62)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="calledAheadOfItsNextBirth"
 # CHECK: module=m0 position=815 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f3} {

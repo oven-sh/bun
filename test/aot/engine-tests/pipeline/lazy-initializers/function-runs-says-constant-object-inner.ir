@@ -3311,10 +3311,10 @@ runtimefunction id=65574 function=f41
 runtimefunction id=65580 function=f40
 # -- generated: f0 sure isHolder same nameOf aNumberInAList aNumberWhoseReadsDoNotThrow aStringInAList nullInAList undefinedInAList anotherClassInAList aPredicate aTypeArgumentBetween aField aMap anAsyncFunctionHoldsIt aBooleanAndABigInt Other f19 f20 add f22 f23 f24 f25 f26 f27 f28 f29 f32 f33 f41 return steps later
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module role=CoroutineRamp flags=[IsAsync, IsChecked] thisType={type=anything} results=[{type=Promise}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{kind=AsyncFunction ramp=f0 body=f105 entryWithoutPromise=f105 promiseType=Promise promiseParameter=0} {
+# CHECK: m0 kind=Module role=CoroutineRamp flags=[IsAsync, IsChecked] thisType={type=anything} results=[{type=Promise}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{kind=AsyncFunction ramp=f0 body=f106 entryWithoutPromise=f106 promiseType=Promise promiseParameter=0} {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: Promise = NewPromise
-# CHECK-NEXT: v1: anything = CallDirect v0 function=f105
+# CHECK-NEXT: v1: anything = CallDirect v0 function=f106
 # CHECK-NEXT: v2: Promise = AssumeType v1 provenType=Promise
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
@@ -3346,14 +3346,10 @@ runtimefunction id=65580 function=f40
 # CHECK-NEXT: Jump -> next b3(v3)
 # CHECK-NEXT: b2(v4: boolean|number|string|symbol|bigint|object ~ number|string|symbol|bigint|object):
 # CHECK-NEXT: v5: anything = PropGet v4 key="name" accessSite=63
-# CHECK-NEXT: v6: boolean = TypeTest v5 testedType=undefined|null|string
-# CHECK-NEXT: Branch v6 -> taken b4(| 0), notTaken b5(| 0)
-# CHECK-NEXT: b3(v7: undefined|null|string):
+# CHECK-NEXT: v6: anything ~ undefined|null|string = Expect v5 expectedType=undefined|null|string
+# CHECK-NEXT: Jump -> next b3(v6)
+# CHECK-NEXT: b3(v7: anything ~ undefined|null|string):
 # CHECK-NEXT: Return v7
-# CHECK-NEXT: b4(v8: undefined|null|string):
-# CHECK-NEXT: Jump -> next b3(v8)
-# CHECK-NEXT: b5(v9: boolean|number|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: Return v9
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="aNumberInAList"
 # CHECK: module=m0 position=538 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}] {
@@ -3448,7 +3444,7 @@ runtimefunction id=65580 function=f40
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="anotherClassInAList"
-# CHECK: module=m0 position=2664 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f125 callPosition=4294967295 isConstruction=true module=m0}, {callee=f34 callPosition=4294967295 parent=2 module=m0}] {
+# CHECK: module=m0 position=2664 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f127 callPosition=4294967295 isConstruction=true module=m0}, {callee=f34 callPosition=4294967295 parent=2 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 0 = Integer
 # CHECK-NEXT: PutModuleVariable v0 variable=g39
@@ -3580,7 +3576,7 @@ runtimefunction id=65580 function=f40
 # CHECK-NEXT: PutModuleVariable v5 variable=g58
 # CHECK-NEXT: v7: undefined = Undefined
 # CHECK-NEXT: v8: Promise = NewPromise
-# CHECK-NEXT: v9: anything = CallDirect v7, v8 function=f107
+# CHECK-NEXT: v9: anything = CallDirect v7, v8 function=f108
 # CHECK-NEXT: v10: Promise<int, proven, pristine[Storage, Names]> = AssumeType v9 provenType=Promise<int, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v11: f32 = NewClosure function=f32 allocationSite=50 [isHeldByClosureTable]
 # CHECK-NEXT: v12: Promise = CallBuiltin v10, v11 overload=PromisePrototypeThen/1 accessSite=209 @0 tail
@@ -3638,20 +3634,18 @@ runtimefunction id=65580 function=f40
 # CHECK-NEXT: Branch v3 -> taken b1(), notTaken b2(| 0)
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v4: undefined = Undefined
-# CHECK-NEXT: Jump -> next b4(v4)
+# CHECK-NEXT: Jump -> next b3(v4)
 # CHECK-NEXT: b2(v5: boolean|number|string|symbol|bigint|object ~ number|string|symbol|bigint|object):
 # CHECK-NEXT: v6: anything = PropGet v5 key="name" accessSite=63
-# CHECK-NEXT: v7: boolean = TypeTest v6 testedType=undefined|null|string
-# CHECK-NEXT: Branch v7 -> taken b3(| 0), notTaken b5(| 0)
-# CHECK-NEXT: b3(v8: undefined|null|string):
-# CHECK-NEXT: Jump -> next b4(v8)
-# CHECK-NEXT: b4(v9: undefined|null|string):
+# CHECK-NEXT: v7: anything ~ undefined|null|string = Expect v6 expectedType=undefined|null|string
+# CHECK-NEXT: v8: boolean ~ true = TypeTest v7 testedType=undefined|null|boolean|number|string|symbol @0 tail
+# CHECK-NEXT: Branch v8 -> taken b3(| 0), notTaken b4(| 0) @0 tail
+# CHECK-NEXT: b3(v9: undefined|null|boolean|number|string|symbol ~ undefined|null|string):
 # CHECK-NEXT: v10: undefined = CallBuiltin -, v1, v9 overload=ConsoleLog/0 accessSite=232 @0 tail
 # CHECK-NEXT: Return v10
-# CHECK-NEXT: b5(v11: boolean|number|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v12: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v13: undefined = CallBuiltin v12, v1, v11 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=232 @0 tail
-# CHECK-NEXT: Return v13
+# CHECK-NEXT: b4(v11: bigint|object) frequency=Rare:
+# CHECK-NEXT: v12: undefined = CallBuiltin -, v1, v11 overload=ConsoleLog/1 accessSite=232 @0 tail
+# CHECK-NEXT: Return v12
 # CHECK-NEXT: }
 # CHECK-LABEL: function f20 module=
 # CHECK: m0 position=771 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -3755,9 +3749,9 @@ runtimefunction id=65580 function=f40
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="steps"
-# CHECK: module=m0 position=5071 role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] thisType={type=undefined} results=[{type=Generator<undefined|null|object, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f30 body=f106 promiseParameter=2}
+# CHECK: module=m0 position=5071 role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] thisType={type=undefined} results=[{type=Generator<undefined|null|object, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f30 body=f107 promiseParameter=2}
 # CHECK-LABEL: function {{*}}name="later"
-# CHECK: module=m0 position=5594 role=CoroutineRamp flags=[IsAsync, HasThis, IsChecked, HasExplicitName] thisType={type=undefined} results=[{type=Promise<int, proven, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{kind=AsyncFunction ramp=f31 body=f107 entryWithoutPromise=f107 promiseType=Promise promiseParameter=1}
+# CHECK: module=m0 position=5594 role=CoroutineRamp flags=[IsAsync, HasThis, IsChecked, HasExplicitName] thisType={type=undefined} results=[{type=Promise<int, proven, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{kind=AsyncFunction ramp=f31 body=f108 entryWithoutPromise=f108 promiseType=Promise promiseParameter=1}
 # CHECK-LABEL: function f32 module=
 # CHECK: m0 position=5730 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|object site=w83 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined}] functionTypes=[f36] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|object):
@@ -3814,9 +3808,9 @@ runtimefunction id=65580 function=f40
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f41 module=
-# CHECK: m1 position=25259 kind=Method role=ResultWrapper flags=[IsChecked] length=4 enclosingRuntimeFunction=65574 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|string site=w100 flags=[IsExpected, OmitsNull]}, {type=undefined|null|Array<undefined|null|string> site=w101 flags=[IsExpected, OmitsNull]}, {type=undefined|null|function site=w102 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=f45 site=w103 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f154} {
+# CHECK: m1 position=25259 kind=Method role=ResultWrapper flags=[IsChecked] length=4 enclosingRuntimeFunction=65574 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|string site=w100 flags=[IsExpected, OmitsNull]}, {type=undefined|null|Array<undefined|null|string> site=w101 flags=[IsExpected, OmitsNull]}, {type=undefined|null|function site=w102 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=f45 site=w103 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f156} {
 # CHECK-NEXT: b0(v0: anything, v1: anything, v2: anything, v3: anything):
-# CHECK-NEXT: v4: undefined = CallDirect v0, v1, v2, v3 function=f154
+# CHECK-NEXT: v4: undefined = CallDirect v0, v1, v2, v3 function=f156
 # CHECK-NEXT: v5: env L18 = ResultAt v4
 # CHECK-NEXT: v6: builtin(Process) = ResultAt v4 index=1
 # CHECK-NEXT: v7: f44 = ResultAt v4 index=2
@@ -3825,9 +3819,9 @@ runtimefunction id=65580 function=f40
 # CHECK-NEXT: Return v9
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="return"
-# CHECK: module=m3 position=548 kind=Method role=ResultWrapper flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=86 thisType={type=Generator flags=[IsExpected]} parameters=[{type=anything}] results=[{type=object}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f157 layout=L(IteratorResult)} {
+# CHECK: module=m3 position=548 kind=Method role=ResultWrapper flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=86 thisType={type=Generator flags=[IsExpected]} parameters=[{type=anything}] results=[{type=object}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f159 layout=L(IteratorResult)} {
 # CHECK-NEXT: b0(v0: anything, v1: anything):
-# CHECK-NEXT: v2: undefined = CallDirect v0, v1 function=f157
+# CHECK-NEXT: v2: undefined = CallDirect v0, v1 function=f159
 # CHECK-NEXT: v3: i32 = ResultAt v2
 # CHECK-NEXT: v4: object|unspecified = ResultAt v2 index=1
 # CHECK-NEXT: v5: anything|unspecified = ResultAt v2 index=2
@@ -3847,7 +3841,7 @@ runtimefunction id=65580 function=f40
 # CHECK-NEXT: Return v13
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="steps"
-# CHECK: module=m0 position=5071 role=CoroutineBody flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] thisType={type=undefined} parameters=[{type=Generator}] results=[{type=anything}] derivation={source=f30 parameterMap=[{original=0}, {original=1}, {}]} creator=Coroutine{ramp=f30 body=f106 promiseParameter=2} {
+# CHECK: module=m0 position=5071 role=CoroutineBody flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] thisType={type=undefined} parameters=[{type=Generator}] results=[{type=anything}] derivation={source=f30 parameterMap=[{original=0}, {original=1}, {}]} creator=Coroutine{ramp=f30 body=f107 promiseParameter=2} {
 # CHECK-NEXT: b0(v0: undefined, v1: function, v2: Generator):
 # CHECK-NEXT: v3: boolean = IsGeneratorRunning v2
 # CHECK-NEXT: Branch v3 -> taken b4(), notTaken b1()
@@ -3897,7 +3891,7 @@ runtimefunction id=65580 function=f40
 # CHECK-NEXT: Return v27
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="later"
-# CHECK: module=m0 position=5594 role=CoroutineBody flags=[IsAsync, HasThis, IsChecked, HasExplicitName] thisType={type=undefined} parameters=[{type=undefined|Promise}] results=[{type=anything}] derivation={source=f31 parameterMap=[{original=0}, {}]} creator=Coroutine{kind=AsyncFunction ramp=f31 body=f107 entryWithoutPromise=f107 promiseType=Promise promiseParameter=1} {
+# CHECK: module=m0 position=5594 role=CoroutineBody flags=[IsAsync, HasThis, IsChecked, HasExplicitName] thisType={type=undefined} parameters=[{type=undefined|Promise}] results=[{type=anything}] derivation={source=f31 parameterMap=[{original=0}, {}]} creator=Coroutine{kind=AsyncFunction ramp=f31 body=f108 entryWithoutPromise=f108 promiseType=Promise promiseParameter=1} {
 # CHECK-NEXT: b0(v0: undefined, v1: undefined|Promise):
 # CHECK-NEXT: v2: int|whole = GetModuleVariable variable=g47
 # CHECK-NEXT: v3: 7 = Integer integer=7

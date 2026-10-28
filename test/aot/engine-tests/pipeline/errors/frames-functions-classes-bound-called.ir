@@ -723,21 +723,21 @@ runtimefunction id=131091 function=f65 visibility=Private
 # CHECK-NEXT: v7: 0 @Int32 = Integer
 # CHECK-NEXT: v8: int[0, 4294967295] @Int64 = URShift v6, v7 form=Numbers
 # CHECK-NEXT: v9: boolean @Boolean = Greater v6, v8 form=Integers
-# CHECK-NEXT: TestAndBranch v9 -> taken b1(| 0, 1), notTaken b2()
-# CHECK-NEXT: b1(v10: int[1, 4294967295] @Int64, v11: int[0, 4294967294] @Int64) frequency=Rare:
-# CHECK-NEXT: v12: int[-4294967293, 4294967295] @Int64 = Sub v10, v11 form=Integers
-# CHECK-NEXT: Jump -> next b3(v12)
+# CHECK-NEXT: TestAndBranch v9 -> taken b1(| 1), notTaken b2()
+# CHECK-NEXT: b1(v10: int[0, 4294967294] @Int64) frequency=Rare:
+# CHECK-NEXT: v11: int[-4294967294, 4294967295] @Int64 = Sub v6, v10 form=Integers
+# CHECK-NEXT: Jump -> next b3(v11)
 # CHECK-NEXT: b2() frequency=Rare:
-# CHECK-NEXT: v13: 0 @Int64 = Integer
-# CHECK-NEXT: Jump -> next b3(v13)
-# CHECK-NEXT: b3(v14: int[-4294967293, 4294967295] @Int64) frequency=Rare:
-# CHECK-NEXT: v15: Array @Cell = NewArrayWithCapacity v14, v5 allocationSite=11
-# CHECK-NEXT: v16: int[-4294967295, 4294967295] @Int64 = Sub v8, v8 form=Integers
-# CHECK-NEXT: v17: boolean @Boolean = ElemHas v5, v8 accessSite=50 [keyIsIntegral]
-# CHECK-NEXT: v18: undefined|string @JSValue = ElemGet v5, v8 accessSite=51 [keyIsIntegral]
-# CHECK-NEXT: v19: string @Cell = CallDirect v18 function=f23 accessSite=54 [calleeIsPredicted]
-# CHECK-NEXT: v20: undefined @JSValue = Undefined
-# CHECK-NEXT: v21: never @JSValue = Call v20, v20, v19, v16 accessSite=57
+# CHECK-NEXT: v12: 0 @Int64 = Integer
+# CHECK-NEXT: Jump -> next b3(v12)
+# CHECK-NEXT: b3(v13: int[-4294967294, 4294967295] @Int64) frequency=Rare:
+# CHECK-NEXT: v14: Array @Cell = NewArrayWithCapacity v13, v5 allocationSite=11
+# CHECK-NEXT: v15: int[-4294967295, 4294967295] @Int64 = Sub v8, v8 form=Integers
+# CHECK-NEXT: v16: boolean @Boolean = ElemHas v5, v8 accessSite=50 [keyIsIntegral]
+# CHECK-NEXT: v17: undefined|string @JSValue = ElemGet v5, v8 accessSite=51 [keyIsIntegral]
+# CHECK-NEXT: v18: string @Cell = CallDirect v17 function=f23 accessSite=54 [calleeIsPredicted]
+# CHECK-NEXT: v19: undefined @JSValue = Undefined
+# CHECK-NEXT: v20: never @JSValue = Call v19, v19, v18, v15 accessSite=57
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f23 module=

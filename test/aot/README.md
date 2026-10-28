@@ -28,9 +28,9 @@ that runs and is red for a file that nothing reaches.
 - **This folder has no steps of its own.** The `test-bun` shards of every platform run all of it on every pull request, under the
   rules of every other test: the same retries, the same time limits, and a red holds up the merge. What a pull request touches
   decides nothing.
-- **A program that compiles all of Bun's library in a checking mode lies under `library-sweeps/`**, not under `parallel/`: each takes
-  minutes of processor time. `scripts/rust-test.ts` hands them to `run-parallel.ts` in the step `cargo-test`, which has sixteen
-  processors and which no shard of the tests waits for: `bun test/aot/run-parallel.ts --root=test/aot/library-sweeps test/aot/library-sweeps/*.[jt]s`.
+- **A program that compiles all of Bun's library, or much of it in a checking mode, lies under `library-sweeps/`**, not under `parallel/`:
+  each takes from half a minute to minutes of processor time. `scripts/rust-test.ts` hands them to `run-parallel.ts` in the step `cargo-test`, which has sixteen
+  processors and which no shard of the tests waits for: `bun test/aot/run-parallel.ts --root=test/aot/library-sweeps test/aot/library-sweeps/*.*[jt]s`.
 - **A program under `parallel/` is dealt out like a test file**: by its path, the number of the shard and the number of shards
   (`getRelevantTests()` in `scripts/runner.node.ts`), never by the commit. `run-parallel.ts` builds the programs of a shard 64 to an
   executable. They have no lines in `test/expected-durations.json`: what the log says of a program is a share of its build's time.

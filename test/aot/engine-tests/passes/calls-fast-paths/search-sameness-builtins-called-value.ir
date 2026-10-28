@@ -666,75 +666,72 @@ runtimefunction id=131091 function=f67 visibility=Private
 # CHECK-NEXT: v125: int[0, 4294967294] ~ int[0, 2147483647] = Upcast v124 castType=int[0, 9007199254740990]
 # CHECK-NEXT: v126: undefined|null|boolean|number|string|bigint|@@iterator|symbol("s")@m0:6|symbol("s")@m0:27|L2|f4|Array<never, proven, pristine[Storage, Names, Dense]>|Number|String = GetArrayElement v102, v125 arrayStorage=Contiguous level=Proven accessSite=48 [keyIsIntegral]
 # CHECK-NEXT: v127: anything ~ undefined|null|"0"|"1" = Call v116, v117, v126, v125, v102 accessSite=49
-# CHECK-NEXT: v128: int[0, 4294967294] ~ int[0, 2147483647] = Upcast v124 castType=int[0, 9007199254740990]
-# CHECK-NEXT: v129: int[1, 4294967295] ~ int[1, 2147483648] = Increment v128
-# CHECK-NEXT: Jump -> next b3(v129)
+# CHECK-NEXT: v128: int[1, 4294967295] ~ int[1, 2147483648] = Increment v125
+# CHECK-NEXT: Jump -> next b3(v128)
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v130: int[0, 4294967295] = CallBuiltin v102 overload=ArrayPrototypeLength/0 accessSite=46
-# CHECK-NEXT: v131: Array = NewArrayLike v130, v102
-# CHECK-NEXT: v132: 0 = Integer
-# CHECK-NEXT: v133: boolean = TypeTest v12 testedType=function
-# CHECK-NEXT: Branch v133 -> taken b6(| 0), notTaken b11(v132 | 0)
-# CHECK-NEXT: b6(v134: function|builtin(Object)|builtin(IsNaN)|builtin(ObjectIs)|builtin(ArrayPrototypeIncludes)|builtin(ArrayPrototypeIndexOf)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)):
-# CHECK-NEXT: v135: builtin(Object)|builtin(IsNaN)|builtin(ObjectIs)|builtin(ObjectPrototype)|builtin(ArrayPrototypeIncludes)|builtin(ArrayPrototypeIndexOf)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = AssumeType v134 provenType=builtin(Object)|builtin(IsNaN)|builtin(ObjectIs)|builtin(ObjectPrototype)|builtin(ArrayPrototypeIncludes)|builtin(ArrayPrototypeIndexOf)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
-# CHECK-NEXT: Jump -> next b7(v132)
-# CHECK-NEXT: b7(v136: int[0, 4294967295] ~ int[0, 2147483648]):
+# CHECK-NEXT: v129: int[0, 4294967295] = CallBuiltin v102 overload=ArrayPrototypeLength/0 accessSite=46
+# CHECK-NEXT: v130: Array = NewArrayLike v129, v102
+# CHECK-NEXT: v131: 0 = Integer
+# CHECK-NEXT: v132: boolean = TypeTest v12 testedType=function
+# CHECK-NEXT: Branch v132 -> taken b6(| 0), notTaken b11(v131 | 0)
+# CHECK-NEXT: b6(v133: function|builtin(Object)|builtin(IsNaN)|builtin(ObjectIs)|builtin(ArrayPrototypeIncludes)|builtin(ArrayPrototypeIndexOf)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)):
+# CHECK-NEXT: v134: builtin(Object)|builtin(IsNaN)|builtin(ObjectIs)|builtin(ObjectPrototype)|builtin(ArrayPrototypeIncludes)|builtin(ArrayPrototypeIndexOf)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = AssumeType v133 provenType=builtin(Object)|builtin(IsNaN)|builtin(ObjectIs)|builtin(ObjectPrototype)|builtin(ArrayPrototypeIncludes)|builtin(ArrayPrototypeIndexOf)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
+# CHECK-NEXT: Jump -> next b7(v131)
+# CHECK-NEXT: b7(v135: int[0, 4294967295] ~ int[0, 2147483648]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v138: boolean = Less v136, v130
-# CHECK-NEXT: Branch v138 -> taken b8(| 0), notTaken b10()
-# CHECK-NEXT: b8(v139: int[0, 4294967294] ~ int[0, 2147483648]):
-# CHECK-NEXT: v140: int[0, 4294967294] ~ int[0, 2147483647] = Upcast v139 castType=int[0, 9007199254740990]
-# CHECK-NEXT: v141: undefined|null|boolean|number|string|bigint|@@iterator|symbol("s")@m0:6|symbol("s")@m0:27|L2|f4|Array<never, proven, pristine[Storage, Names, Dense]>|Number|String = GetArrayElement v102, v140 arrayStorage=Contiguous level=Proven accessSite=48 [keyIsIntegral]
-# CHECK-NEXT: v142: anything = PropGet v135 key="call" accessSite=44
-# CHECK-NEXT: v143: undefined|builtin(FunctionPrototypeCall) = AssumeType v142 provenType=undefined|builtin(FunctionPrototypeCall)
-# CHECK-NEXT: v144: boolean = TypeTest v143 testedType=builtin(FunctionPrototypeCall) @0:3 tail
-# CHECK-NEXT: Branch v144 -> taken b9(), notTaken b17(v134, v141) @0:3 tail
+# CHECK-NEXT: v137: boolean = Less v135, v129
+# CHECK-NEXT: Branch v137 -> taken b8(| 0), notTaken b10()
+# CHECK-NEXT: b8(v138: int[0, 4294967294] ~ int[0, 2147483648]):
+# CHECK-NEXT: v139: int[0, 4294967294] ~ int[0, 2147483647] = Upcast v138 castType=int[0, 9007199254740990]
+# CHECK-NEXT: v140: undefined|null|boolean|number|string|bigint|@@iterator|symbol("s")@m0:6|symbol("s")@m0:27|L2|f4|Array<never, proven, pristine[Storage, Names, Dense]>|Number|String = GetArrayElement v102, v139 arrayStorage=Contiguous level=Proven accessSite=48 [keyIsIntegral]
+# CHECK-NEXT: v141: anything = PropGet v134 key="call" accessSite=44
+# CHECK-NEXT: v142: undefined|builtin(FunctionPrototypeCall) = AssumeType v141 provenType=undefined|builtin(FunctionPrototypeCall)
+# CHECK-NEXT: v143: boolean = TypeTest v142 testedType=builtin(FunctionPrototypeCall) @0:3 tail
+# CHECK-NEXT: Branch v143 -> taken b9(), notTaken b17(v133, v140) @0:3 tail
 # CHECK-NEXT: b9():
-# CHECK-NEXT: v145: undefined = Undefined
-# CHECK-NEXT: v146: anything = Call v134, v145, v141 accessSite=45 @0:3 tail
-# CHECK-NEXT: v147: int[0, 4294967294] ~ int[0, 2147483647] = Upcast v139 castType=int[0, 9007199254740990]
-# CHECK-NEXT: v148: int[1, 4294967295] ~ int[1, 2147483648] = Increment v147
-# CHECK-NEXT: Jump -> next b7(v148)
+# CHECK-NEXT: v144: undefined = Undefined
+# CHECK-NEXT: v145: anything = Call v133, v144, v140 accessSite=45 @0:3 tail
+# CHECK-NEXT: v146: int[1, 4294967295] ~ int[1, 2147483648] = Increment v139
+# CHECK-NEXT: Jump -> next b7(v146)
 # CHECK-NEXT: b10():
 # CHECK-NEXT: Jump -> next b2(v113)
-# CHECK-NEXT: b11(v149: int[0, 4294967295] ~ 0, v150: undefined|builtin(ObjectPrototype)) frequency=Rare:
+# CHECK-NEXT: b11(v147: int[0, 4294967295] ~ 0, v148: undefined|builtin(ObjectPrototype)) frequency=Rare:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v152: boolean = Less v149, v130
-# CHECK-NEXT: Branch v152 -> taken b12(| 0), notTaken b19()
-# CHECK-NEXT: b12(v153: int[0, 4294967294] ~ 0) frequency=Rare:
-# CHECK-NEXT: v154: undefined|null|boolean|number|string|bigint|@@iterator|symbol("s")@m0:6|symbol("s")@m0:27|L2|f4|Array<never, proven, pristine[Storage, Names, Dense]>|Number|String = GetArrayElement v102, v153 arrayStorage=Contiguous level=Proven accessSite=48 [keyIsIntegral]
-# CHECK-NEXT: v155: undefined = Undefined
-# CHECK-NEXT: v156: builtin(ObjectPrototype) = RequireObjectCoercible v150 name="call"
-# CHECK-NEXT: v157: anything = PropGet v156 key="call" accessSite=44
-# CHECK-NEXT: v158: undefined|builtin(FunctionPrototypeCall) = AssumeType v157 provenType=undefined|builtin(FunctionPrototypeCall)
-# CHECK-NEXT: v159: anything = Call v158, v156, v155, v154 calleeKey="call" calleeName="indexOf.call" accessSite=45 callees=[builtin(FunctionPrototypeCall)] @0:3 tail
-# CHECK-NEXT: v160: int[1, 4294967295] ~ 1 = Increment v153
-# CHECK-NEXT: v161: boolean = TypeTest v12 testedType=function
-# CHECK-NEXT: Branch v161 -> taken b13(| 0), notTaken b11(v160 | 0)
-# CHECK-NEXT: b13(v162: function|builtin(Object)|builtin(IsNaN)|builtin(ObjectIs)|builtin(ArrayPrototypeIncludes)|builtin(ArrayPrototypeIndexOf)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)) frequency=Unlikely:
-# CHECK-NEXT: v163: builtin(Object)|builtin(IsNaN)|builtin(ObjectIs)|builtin(ObjectPrototype)|builtin(ArrayPrototypeIncludes)|builtin(ArrayPrototypeIndexOf)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = AssumeType v162 provenType=builtin(Object)|builtin(IsNaN)|builtin(ObjectIs)|builtin(ObjectPrototype)|builtin(ArrayPrototypeIncludes)|builtin(ArrayPrototypeIndexOf)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
-# CHECK-NEXT: Jump -> next b14(v160)
-# CHECK-NEXT: b14(v164: int[1, 4294967295] ~ int[1, 2147483648]) frequency=Unlikely:
+# CHECK-NEXT: v150: boolean = Less v147, v129
+# CHECK-NEXT: Branch v150 -> taken b12(| 0), notTaken b19()
+# CHECK-NEXT: b12(v151: int[0, 4294967294] ~ 0) frequency=Rare:
+# CHECK-NEXT: v152: undefined|null|boolean|number|string|bigint|@@iterator|symbol("s")@m0:6|symbol("s")@m0:27|L2|f4|Array<never, proven, pristine[Storage, Names, Dense]>|Number|String = GetArrayElement v102, v151 arrayStorage=Contiguous level=Proven accessSite=48 [keyIsIntegral]
+# CHECK-NEXT: v153: undefined = Undefined
+# CHECK-NEXT: v154: builtin(ObjectPrototype) = RequireObjectCoercible v148 name="call"
+# CHECK-NEXT: v155: anything = PropGet v154 key="call" accessSite=44
+# CHECK-NEXT: v156: undefined|builtin(FunctionPrototypeCall) = AssumeType v155 provenType=undefined|builtin(FunctionPrototypeCall)
+# CHECK-NEXT: v157: anything = Call v156, v154, v153, v152 calleeKey="call" calleeName="indexOf.call" accessSite=45 callees=[builtin(FunctionPrototypeCall)] @0:3 tail
+# CHECK-NEXT: v158: int[1, 4294967295] ~ 1 = Increment v151
+# CHECK-NEXT: v159: boolean = TypeTest v12 testedType=function
+# CHECK-NEXT: Branch v159 -> taken b13(| 0), notTaken b11(v158 | 0)
+# CHECK-NEXT: b13(v160: function|builtin(Object)|builtin(IsNaN)|builtin(ObjectIs)|builtin(ArrayPrototypeIncludes)|builtin(ArrayPrototypeIndexOf)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)) frequency=Unlikely:
+# CHECK-NEXT: v161: builtin(Object)|builtin(IsNaN)|builtin(ObjectIs)|builtin(ObjectPrototype)|builtin(ArrayPrototypeIncludes)|builtin(ArrayPrototypeIndexOf)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = AssumeType v160 provenType=builtin(Object)|builtin(IsNaN)|builtin(ObjectIs)|builtin(ObjectPrototype)|builtin(ArrayPrototypeIncludes)|builtin(ArrayPrototypeIndexOf)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
+# CHECK-NEXT: Jump -> next b14(v158)
+# CHECK-NEXT: b14(v162: int[1, 4294967295] ~ int[1, 2147483648]) frequency=Unlikely:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v166: boolean = Less v164, v130
-# CHECK-NEXT: Branch v166 -> taken b15(| 0), notTaken b18()
-# CHECK-NEXT: b15(v167: int[1, 4294967294] ~ int[1, 2147483648]) frequency=Unlikely:
-# CHECK-NEXT: v168: int[1, 4294967294] ~ int[1, 2147483647] = Upcast v167 castType=int[0, 9007199254740990]
-# CHECK-NEXT: v169: undefined|null|boolean|number|string|bigint|@@iterator|symbol("s")@m0:6|symbol("s")@m0:27|L2|f4|Array<never, proven, pristine[Storage, Names, Dense]>|Number|String = GetArrayElement v102, v168 arrayStorage=Contiguous level=Proven accessSite=48 [keyIsIntegral]
-# CHECK-NEXT: v170: anything = PropGet v163 key="call" accessSite=44
-# CHECK-NEXT: v171: undefined|builtin(FunctionPrototypeCall) = AssumeType v170 provenType=undefined|builtin(FunctionPrototypeCall)
-# CHECK-NEXT: v172: boolean = TypeTest v171 testedType=builtin(FunctionPrototypeCall) @0:3 tail
-# CHECK-NEXT: Branch v172 -> taken b16(), notTaken b17(v162, v169) @0:3 tail
+# CHECK-NEXT: v164: boolean = Less v162, v129
+# CHECK-NEXT: Branch v164 -> taken b15(| 0), notTaken b18()
+# CHECK-NEXT: b15(v165: int[1, 4294967294] ~ int[1, 2147483648]) frequency=Unlikely:
+# CHECK-NEXT: v166: int[1, 4294967294] ~ int[1, 2147483647] = Upcast v165 castType=int[0, 9007199254740990]
+# CHECK-NEXT: v167: undefined|null|boolean|number|string|bigint|@@iterator|symbol("s")@m0:6|symbol("s")@m0:27|L2|f4|Array<never, proven, pristine[Storage, Names, Dense]>|Number|String = GetArrayElement v102, v166 arrayStorage=Contiguous level=Proven accessSite=48 [keyIsIntegral]
+# CHECK-NEXT: v168: anything = PropGet v161 key="call" accessSite=44
+# CHECK-NEXT: v169: undefined|builtin(FunctionPrototypeCall) = AssumeType v168 provenType=undefined|builtin(FunctionPrototypeCall)
+# CHECK-NEXT: v170: boolean = TypeTest v169 testedType=builtin(FunctionPrototypeCall) @0:3 tail
+# CHECK-NEXT: Branch v170 -> taken b16(), notTaken b17(v160, v167) @0:3 tail
 # CHECK-NEXT: b16() frequency=Unlikely:
-# CHECK-NEXT: v173: undefined = Undefined
-# CHECK-NEXT: v174: anything = Call v162, v173, v169 accessSite=45 @0:3 tail
-# CHECK-NEXT: v175: int[1, 4294967294] ~ int[1, 2147483647] = Upcast v167 castType=int[0, 9007199254740990]
-# CHECK-NEXT: v176: int[2, 4294967295] ~ int[2, 2147483648] = Increment v175
-# CHECK-NEXT: Jump -> next b14(v176)
-# CHECK-NEXT: b17(v177: function|builtin(Object)|builtin(IsNaN)|builtin(ObjectIs)|builtin(ArrayPrototypeIncludes)|builtin(ArrayPrototypeIndexOf)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf), v178: undefined|null|boolean|number|string|bigint|@@iterator|symbol("s")@m0:6|symbol("s")@m0:27|L2|f4|Array<never, proven, pristine[Storage, Names, Dense]>|Number|String) frequency=Unlikely:
-# CHECK-NEXT: v179: undefined = Undefined @0:3 tail
-# CHECK-NEXT: v180: undefined = Undefined
-# CHECK-NEXT: v181: never = Call v179, v177, v180, v178 calleeKey="call" calleeName="indexOf.call" accessSite=45 callees=[builtin(FunctionPrototypeCall)] @0:3 tail
+# CHECK-NEXT: v171: undefined = Undefined
+# CHECK-NEXT: v172: anything = Call v160, v171, v167 accessSite=45 @0:3 tail
+# CHECK-NEXT: v173: int[2, 4294967295] ~ int[2, 2147483648] = Increment v166
+# CHECK-NEXT: Jump -> next b14(v173)
+# CHECK-NEXT: b17(v174: function|builtin(Object)|builtin(IsNaN)|builtin(ObjectIs)|builtin(ArrayPrototypeIncludes)|builtin(ArrayPrototypeIndexOf)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf), v175: undefined|null|boolean|number|string|bigint|@@iterator|symbol("s")@m0:6|symbol("s")@m0:27|L2|f4|Array<never, proven, pristine[Storage, Names, Dense]>|Number|String) frequency=Unlikely:
+# CHECK-NEXT: v176: undefined = Undefined @0:3 tail
+# CHECK-NEXT: v177: undefined = Undefined
+# CHECK-NEXT: v178: never = Call v176, v174, v177, v175 calleeKey="call" calleeName="indexOf.call" accessSite=45 callees=[builtin(FunctionPrototypeCall)] @0:3 tail
 # CHECK-NEXT: Unreachable @0:3 tail
 # CHECK-NEXT: b18() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b20()

@@ -47,19 +47,28 @@ export const whyNoNativeTests =
 export async function runTool(cmd: string[], cwd?: string) {
   await using child = Bun.spawn({ cmd, cwd, env: toolEnv, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-  return { lines: stdout.split(/\r?\n/).filter(line => line !== ""), stderr, exitCode };
+  const everyLine = stdout.split(/\r?\n/);
+  return { lines: everyLine.filter(line => line !== ""), everyLine, stderr, exitCode };
 }
 export const run = (...args: string[]) => runTool([testaot!, ...args]);
 
-/** A FAIL line names the pattern that matched nothing. This prints the start of what each command of the file printed. */
+/**
+ * A FAIL line names the pattern that matched nothing, and some name the line of the output that it was held against.
+ * This prints the start of what each command of the file printed, and the lines around those.
+ */
 async function printOutputOfFailedTests(lines: string[], cwd?: string) {
   const files = new Set(lines.flatMap(line => line.match(/^FAIL (.+?\.ir):\d+: /)?.[1] ?? []));
   for (const file of [...files].slice(0, 8)) {
-    const { lines: printed, stderr } = await runTool([testaot!, "run", file, "--show-output"], cwd);
-    let left = 0;
-    const shown = printed.filter(line => {
-      if (line.startsWith("OUTPUT ")) left = 21;
-      return left-- > 0;
+    const named = lines
+      .filter(line => line.startsWith(`FAIL ${file}:`))
+      .flatMap(line => /\boutput line (\d+) /.exec(line)?.[1] ?? [])
+      .map(Number);
+    const { everyLine, stderr } = await runTool([testaot!, "run", file, "--show-output"], cwd);
+    let at = Infinity;
+    const shown = everyLine.flatMap(line => {
+      at = line.startsWith("OUTPUT ") ? 0 : at + 1;
+      if (at <= 20) return [line];
+      return named.some(number => Math.abs(at - number) <= 8) ? [`${at}: ${line}`] : [];
     });
     console.error([...shown, stderr].join("\n"));
   }

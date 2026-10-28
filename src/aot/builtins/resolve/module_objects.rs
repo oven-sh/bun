@@ -168,6 +168,13 @@ impl Resolver<'_, '_> {
             && !member.is_some_and(|member| self.is_deleted(member))
     }
 
+    // `require.__proto__`: `find_prototype_asked_for` says what stands there.
+    fn is_asked_for_prototype(&self, object: ExprId) -> bool {
+        let member = self.find_member_of(object);
+        let id = member.and_then(|member| mentioned_id(self.state(member)));
+        id.map(table::canonical_id) == Some(BuiltinId::ObjectPrototype__proto__)
+    }
+
     fn is_plain_read(&self, member: ExprId) -> bool {
         !self.input.bound.is_write_access(self.input.hir, member) && !self.is_deleted(member)
     }
@@ -245,7 +252,9 @@ impl Resolver<'_, '_> {
         match self.classify_use(e) {
             MentionUse::Aliased => None,
             MentionUse::Holder if self.is_answered_without_object(e, owner) => None,
-            _ if self.goes_out_of_sight(e) => Some(ModuleObjectUse::HandedOn),
+            _ if self.goes_out_of_sight(e) || self.is_asked_for_prototype(e) => {
+                Some(ModuleObjectUse::HandedOn)
+            }
             _ => Some(ModuleObjectUse::Object),
         }
     }
@@ -303,10 +312,18 @@ impl Resolver<'_, '_> {
             BuiltinId::ModuleRequireMain | BuiltinId::ProcessMainModule => {
                 ModuleObjectOwner::EntryPoint
             }
-            // Whoever is handed a `require` or `process` reads any member of it, `main` and `mainModule` among them.
-            BuiltinId::ModuleRequire | BuiltinId::Process => {
-                return matches!(self.classify_use(e), MentionUse::Exposed)
+            // Whoever is handed a `require` reads any member of it, `main` among them.
+            BuiltinId::ModuleRequire => {
+                let is_handed_on = matches!(self.classify_use(e), MentionUse::Exposed);
+                return (is_handed_on || self.is_asked_for_prototype(e))
                     .then_some((ModuleObjectOwner::EntryPoint, ModuleObjectUse::HandedOn));
+            }
+            BuiltinId::Process => {
+                let found = (
+                    ModuleObjectOwner::EntryPoint,
+                    ModuleObjectUse::HolderHandedOn,
+                );
+                return matches!(self.classify_use(e), MentionUse::Exposed).then_some(found);
             }
             id @ (BuiltinId::ModuleObjectChildren | BuiltinId::ModuleObjectParent) => {
                 return self.find_use_of_member(e, id);

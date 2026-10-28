@@ -3027,7 +3027,7 @@ runtimefunction id=65580 function=f37
 # CHECK-NEXT: b1(v4: undefined|null|Array<number>):
 # CHECK-NEXT: v5: env L1 = NewObject -, v1 layout=L1 fields=[0] allocationSite=3
 # CHECK-NEXT: v6: f23 = NewClosure v5 function=f23 allocationSite=4 storage=Frame
-# CHECK-NEXT: v7: undefined = CallDirect v4, v6 function=f101 @782:1 tail
+# CHECK-NEXT: v7: undefined = CallDirect v4, v6 function=f159 @782:1 tail
 # CHECK-NEXT: Jump -> next b3(v5)
 # CHECK-NEXT: b2() frequency=Unlikely:
 # CHECK-NEXT: v8: env L1 = NewObject -, v1 layout=L1 fields=[0] allocationSite=3
@@ -3037,12 +3037,7 @@ runtimefunction id=65580 function=f37
 # CHECK-NEXT: b3(v11: env L1):
 # CHECK-NEXT: v12: anything ~ number = GetEnvironmentField v11 layout=L1
 # CHECK-NEXT: ReleaseEnvironment v11
-# CHECK-NEXT: v13: boolean ~ true = TypeTest v12 testedType=number|absent
-# CHECK-NEXT: Branch v13 -> taken b4(| 0), notTaken b5(| 0)
-# CHECK-NEXT: b4(v14: number):
-# CHECK-NEXT: Return v14
-# CHECK-NEXT: b5(v15: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: Return v15
+# CHECK-NEXT: Return v12
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="maxOf"
 # CHECK: module=m0 position=1363 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|boolean|number|string|object}] results=[{type=number site=w7 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f4 callPosition=4294967295 module=m0}] {
@@ -3054,7 +3049,7 @@ runtimefunction id=65580 function=f37
 # CHECK-NEXT: b1(v4: undefined|null|Array<number>):
 # CHECK-NEXT: v5: env L2 = NewObject -, v1 layout=L2 fields=[0] allocationSite=5
 # CHECK-NEXT: v6: f24 = NewClosure v5 function=f24 allocationSite=6 storage=Frame
-# CHECK-NEXT: v7: undefined = CallDirect v4, v6 function=f101 @782:1 tail
+# CHECK-NEXT: v7: undefined = CallDirect v4, v6 function=f160 @782:1 tail
 # CHECK-NEXT: Jump -> next b3(v5)
 # CHECK-NEXT: b2() frequency=Unlikely:
 # CHECK-NEXT: v8: env L2 = NewObject -, v1 layout=L2 fields=[0] allocationSite=5
@@ -3064,12 +3059,7 @@ runtimefunction id=65580 function=f37
 # CHECK-NEXT: b3(v11: env L2):
 # CHECK-NEXT: v12: anything ~ number = GetEnvironmentField v11 layout=L2
 # CHECK-NEXT: ReleaseEnvironment v11
-# CHECK-NEXT: v13: boolean ~ true = TypeTest v12 testedType=number|absent
-# CHECK-NEXT: Branch v13 -> taken b4(| 0), notTaken b5(| 0)
-# CHECK-NEXT: b4(v14: number):
-# CHECK-NEXT: Return v14
-# CHECK-NEXT: b5(v15: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: Return v15
+# CHECK-NEXT: Return v12
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="countOf"
 # CHECK: module=m0 position=1480 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|boolean|number|string|object}] results=[{type=int|whole site=w8}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f4 callPosition=4294967295 module=m0}] {
@@ -3079,9 +3069,8 @@ runtimefunction id=65580 function=f37
 # CHECK-NEXT: v3: boolean ~ true = TypeTest v2 testedType=undefined|null|Array<number>
 # CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v4: undefined|null|Array<number>):
-# CHECK-NEXT: v5: env L3 = NewObject -, v1 layout=L3 fields=[0] allocationSite=7
-# CHECK-NEXT: v6: f25 = NewClosure v5 function=f25 allocationSite=8 storage=Frame
-# CHECK-NEXT: v7: undefined = CallDirect v4, v6 function=f101 @782:1 tail
+# CHECK-NEXT: v5: env L3 = NewObject -, v1 layout=L3 fields=[0] allocationSite=7 storage=Frame
+# CHECK-NEXT: v7: undefined = CallDirect v4, v5 function=f161 @782:1 tail
 # CHECK-NEXT: Jump -> next b3(v5)
 # CHECK-NEXT: b2() frequency=Unlikely:
 # CHECK-NEXT: v8: env L3 = NewObject -, v1 layout=L3 fields=[0] allocationSite=7
@@ -3090,7 +3079,6 @@ runtimefunction id=65580 function=f37
 # CHECK-NEXT: Jump -> next b3(v8)
 # CHECK-NEXT: b3(v11: env L3):
 # CHECK-NEXT: v12: int|whole = GetEnvironmentField v11 layout=L3
-# CHECK-NEXT: ReleaseEnvironment v11
 # CHECK-NEXT: Return v12
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="isId"
@@ -3129,11 +3117,15 @@ runtimefunction id=65580 function=f37
 # CHECK-NEXT: v5: boolean = StrictEq v3, v4
 # CHECK-NEXT: Branch v5 -> taken b2(), notTaken b3()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v6: "a" = String string="a"
-# CHECK-NEXT: Return v6
+# CHECK-NEXT: v6: L4|L5|L6 ~ L4 = Expect v2 expectedType=undefined|null|L4
+# CHECK-NEXT: v7: fact = Specified
+# CHECK-NEXT: v8: L4|L6 ~ L4 = AssumeType v6, v7 provenType=L4|L6
+# CHECK-NEXT: v9: "a"|"s" = GetSlot v8 key="text" receivers=[L4, L6] level=Proven accessSite=59
+# CHECK-NEXT: v10: "a"|"s" ~ "a" = Upcast v9 castType=undefined|"a"|"s"
+# CHECK-NEXT: Return v10
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v7: undefined = Undefined
-# CHECK-NEXT: Return v7
+# CHECK-NEXT: v11: undefined = Undefined
+# CHECK-NEXT: Return v11
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="guardThatTests"
 # CHECK: module=m0 position=2335 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|L4|L5|L6 site=w16 flags=[OmitsNull]}] results=[{type=undefined|string site=w17 flags=[OmitsNull]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f10 callPosition=4294967295 module=m0}] {
@@ -3147,11 +3139,15 @@ runtimefunction id=65580 function=f37
 # CHECK-NEXT: v5: boolean = StrictEq v3, v4
 # CHECK-NEXT: Branch v5 -> taken b2(), notTaken b3()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v6: "a" = String string="a"
-# CHECK-NEXT: Return v6
+# CHECK-NEXT: v6: L4|L5|L6 ~ L4 = Expect v2 expectedType=undefined|null|L4
+# CHECK-NEXT: v7: fact = Specified
+# CHECK-NEXT: v8: L4|L6 ~ L4 = AssumeType v6, v7 provenType=L4|L6
+# CHECK-NEXT: v9: "a"|"s" = GetSlot v8 key="text" receivers=[L4, L6] level=Proven accessSite=61
+# CHECK-NEXT: v10: "a"|"s" ~ "a" = Upcast v9 castType=undefined|null|string
+# CHECK-NEXT: Return v10
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v7: undefined = Undefined
-# CHECK-NEXT: Return v7
+# CHECK-NEXT: v11: undefined = Undefined
+# CHECK-NEXT: Return v11
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="optionalChain"
 # CHECK: module=m0 position=2464 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|L4|L5|L6 site=w18 flags=[OmitsNull]}] results=[{type=undefined|string site=w19 flags=[OmitsNull]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -3164,47 +3160,52 @@ runtimefunction id=65580 function=f37
 # CHECK-NEXT: v5: boolean = StrictEq v3, v4
 # CHECK-NEXT: Branch v5 -> taken b2(), notTaken b3()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v6: fact = Specified
-# CHECK-NEXT: v7: undefined|L4 = AssumeType v0, v6 provenType=undefined|L4
-# CHECK-NEXT: v8: L4 = RequireObjectCoercible v7 name="text"
-# CHECK-NEXT: v9: "a" = String string="a"
-# CHECK-NEXT: Return v9
+# CHECK-NEXT: v6: undefined|L4|L5|L6 ~ undefined|L4 = Expect v0 expectedType=undefined|null|L4
+# CHECK-NEXT: v7: L4|L5|L6 ~ L4 = RequireObjectCoercible v6 name="text"
+# CHECK-NEXT: v8: fact = Specified
+# CHECK-NEXT: v9: L4|L6 ~ L4 = AssumeType v7, v8 provenType=L4|L6
+# CHECK-NEXT: v10: "a"|"s" = GetSlot v9 key="text" receivers=[L4, L6] level=Proven accessSite=63
+# CHECK-NEXT: v11: "a"|"s" ~ "a" = Upcast v10 castType=undefined|null|string
+# CHECK-NEXT: Return v11
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v10: undefined = Undefined
-# CHECK-NEXT: Return v10
+# CHECK-NEXT: v12: undefined = Undefined
+# CHECK-NEXT: Return v12
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="kindInVariable"
 # CHECK: module=m0 position=2590 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=null|L4|L5|L6 site=w20 flags=[OmitsUndefined]}] results=[{type=undefined|string site=w21 flags=[OmitsNull]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: null|L4|L5|L6):
 # CHECK-NEXT: v1: boolean = ToBoolean v0
-# CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b8()
+# CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b6()
 # CHECK-NEXT: b1(v2: L4|L5|L6):
 # CHECK-NEXT: v3: int[9, 80] = GetSlot v2 key="kind" receivers=[L4, L5, L6] level=Proven accessSite=64
 # CHECK-NEXT: v4: 80 = Integer integer=80
 # CHECK-NEXT: v5: boolean = StrictEq v3, v4
 # CHECK-NEXT: Branch v5 -> taken b2(), notTaken b3(| 0)
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v6: "a" = String string="a"
-# CHECK-NEXT: Return v6
-# CHECK-NEXT: b3(v7: int[9, 79]):
-# CHECK-NEXT: v8: boolean = TypeTest v7 testedType=int[9, 11]
-# CHECK-NEXT: Branch v8 -> taken b4(| 0), notTaken b7()
-# CHECK-NEXT: b4(v9: int[9, 11]):
-# CHECK-NEXT: v10: 11 = Integer integer=11
-# CHECK-NEXT: v11: boolean = StrictEq v9, v10
-# CHECK-NEXT: Branch v11 -> taken b5(), notTaken b6()
+# CHECK-NEXT: v6: L4|L5|L6 ~ L4 = Expect v2 expectedType=undefined|null|L4
+# CHECK-NEXT: v7: fact = Specified
+# CHECK-NEXT: v8: L4|L6 ~ L4 = AssumeType v6, v7 provenType=L4|L6
+# CHECK-NEXT: v9: "a"|"s" = GetSlot v8 key="text" receivers=[L4, L6] level=Proven accessSite=65
+# CHECK-NEXT: v10: "a"|"s" ~ "a" = Upcast v9 castType=undefined|null|string
+# CHECK-NEXT: Return v10
+# CHECK-NEXT: b3(v11: int[9, 79]):
+# CHECK-NEXT: v12: int[9, 79] ~ int[9, 11] = Expect v11 expectedType=int[9, 11]
+# CHECK-NEXT: v13: 11 = Integer integer=11
+# CHECK-NEXT: v14: boolean = StrictEq v12, v13
+# CHECK-NEXT: Branch v14 -> taken b4(), notTaken b5()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v15: L4|L5|L6 ~ L6 = Expect v2 expectedType=undefined|null|L6
+# CHECK-NEXT: v16: fact = Specified
+# CHECK-NEXT: v17: L4|L6 ~ L6 = AssumeType v15, v16 provenType=L4|L6
+# CHECK-NEXT: v18: "a"|"s" = GetSlot v17 key="text" receivers=[L4, L6] level=Proven accessSite=66
+# CHECK-NEXT: v19: "a"|"s" ~ "s" = Upcast v18 castType=undefined|null|string
+# CHECK-NEXT: Return v19
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v12: "s" = String string="s"
-# CHECK-NEXT: Return v12
+# CHECK-NEXT: v20: undefined = Undefined
+# CHECK-NEXT: Return v20
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v13: undefined = Undefined
-# CHECK-NEXT: Return v13
-# CHECK-NEXT: b7() frequency=Unlikely:
-# CHECK-NEXT: v14: undefined = Undefined
-# CHECK-NEXT: Return v14
-# CHECK-NEXT: b8():
-# CHECK-NEXT: v15: undefined = Undefined
-# CHECK-NEXT: Return v15
+# CHECK-NEXT: v21: undefined = Undefined
+# CHECK-NEXT: Return v21
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="throughAny"
 # CHECK: module=m0 position=2811 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|L4|L5|L6}] results=[{type=undefined|string site=w22 flags=[OmitsNull]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -3235,11 +3236,15 @@ runtimefunction id=65580 function=f37
 # CHECK-NEXT: v6: boolean = StrictEq v4, v5
 # CHECK-NEXT: Branch v6 -> taken b2(), notTaken b3()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v7: "a" = String string="a"
-# CHECK-NEXT: Return v7
+# CHECK-NEXT: v7: L4|L5|L6 ~ L4 = Expect v3 expectedType=undefined|null|L4
+# CHECK-NEXT: v8: fact = Specified
+# CHECK-NEXT: v9: L4|L6 ~ L4 = AssumeType v7, v8 provenType=L4|L6
+# CHECK-NEXT: v10: "a"|"s" = GetSlot v9 key="text" receivers=[L4, L6] level=Proven accessSite=71
+# CHECK-NEXT: v11: "a"|"s" ~ "a" = Upcast v10 castType=undefined|"a"|"s"
+# CHECK-NEXT: Return v11
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v8: undefined = Undefined
-# CHECK-NEXT: Return v8
+# CHECK-NEXT: v12: undefined = Undefined
+# CHECK-NEXT: Return v12
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="createdTail"
 # CHECK: module=m0 position=3930 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L7 site=w26 flags=[OmitsUndefined]}] results=[{type=Object}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -3362,9 +3367,9 @@ runtimefunction id=65580 function=f37
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function f38 module=
-# CHECK: m1 position=25259 kind=Method role=ResultWrapper flags=[IsChecked] length=4 enclosingRuntimeFunction=65574 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|string site=w101 flags=[IsExpected, OmitsNull]}, {type=undefined|null|Array<undefined|null|string> site=w102 flags=[IsExpected, OmitsNull]}, {type=undefined|null|function site=w103 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=f42 site=w104 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f163} {
+# CHECK: m1 position=25259 kind=Method role=ResultWrapper flags=[IsChecked] length=4 enclosingRuntimeFunction=65574 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|string site=w101 flags=[IsExpected, OmitsNull]}, {type=undefined|null|Array<undefined|null|string> site=w102 flags=[IsExpected, OmitsNull]}, {type=undefined|null|function site=w103 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=f42 site=w104 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f166} {
 # CHECK-NEXT: b0(v0: anything, v1: anything, v2: anything, v3: anything):
-# CHECK-NEXT: v4: undefined = CallDirect v0, v1, v2, v3 function=f163
+# CHECK-NEXT: v4: undefined = CallDirect v0, v1, v2, v3 function=f166
 # CHECK-NEXT: v5: env L11 = ResultAt v4
 # CHECK-NEXT: v6: builtin(Process) = ResultAt v4 index=1
 # CHECK-NEXT: v7: f41 = ResultAt v4 index=2
@@ -3390,14 +3395,8 @@ runtimefunction id=65580 function=f37
 # CHECK-NEXT: v8: anything ~ number = AwaitCallBySavingFrame v2, v4, v3, v3 function=f114 numberOfHeld=1 @325:1 tail
 # CHECK-NEXT: Jump -> next b3(v8)
 # CHECK-NEXT: b3(v9: anything ~ number):
-# CHECK-NEXT: v10: boolean ~ true = TypeTest v9 testedType=number
-# CHECK-NEXT: Branch v10 -> taken b4(| 0), notTaken b5(| 0)
-# CHECK-NEXT: b4(v11: number):
-# CHECK-NEXT: v12: anything = ReturnAsyncResult v2, v11
-# CHECK-NEXT: Return v12
-# CHECK-NEXT: b5(v13: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v14: anything = ReturnAsyncResult v2, v13
-# CHECK-NEXT: Return v14
+# CHECK-NEXT: v10: anything = ReturnAsyncResult v2, v9
+# CHECK-NEXT: Return v10
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="awaits"
 # CHECK: module=m0 position=493 role=CoroutineBody flags=[IsAsync, HasThis, IsChecked, HasExplicitName] thisType={type=undefined} parameters=[{type=undefined|Promise}] results=[{type=anything}] derivation={source=f3 parameterMap=[{original=0}, {}]} creator=Coroutine{kind=AsyncFunction ramp=f3 body=f111 entryWithoutPromise=f111 promiseType=Promise promiseParameter=1} inlineFrames=[{}, {callee=f2 callPosition=4294967295 module=m0}] {
@@ -3497,54 +3496,49 @@ runtimefunction id=65580 function=f37
 # CHECK-NEXT: v4: boolean = StrictEq v2, v3
 # CHECK-NEXT: Branch v4 -> taken b2(), notTaken b1()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v5: anything ~ undefined|null|string = GetModuleVariable variable=g21
-# CHECK-NEXT: v6: "all" = String string="all"
-# CHECK-NEXT: v7: boolean = StrictEq v5, v6
-# CHECK-NEXT: Branch v7 -> taken b2(), notTaken b3()
+# CHECK-NEXT: v5: "all" = String string="all"
+# CHECK-NEXT: v6: boolean = StrictEq v2, v5
+# CHECK-NEXT: Branch v6 -> taken b2(), notTaken b3()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v8: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v9: builtin(ConsoleLog) = Builtin builtin=ConsoleLog
-# CHECK-NEXT: v10: "awaits" = String string="awaits"
-# CHECK-NEXT: v11: undefined = Undefined
-# CHECK-NEXT: v12: anything ~ number = AwaitCallBySavingFrame v1, v11, v9, v8 function=f111 numberOfHeld=2 accessSite=106
-# CHECK-NEXT: v13: undefined = CallBuiltin v8, v10, v12 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=107
+# CHECK-NEXT: v7: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v8: builtin(ConsoleLog) = Builtin builtin=ConsoleLog
+# CHECK-NEXT: v9: "awaits" = String string="awaits"
+# CHECK-NEXT: v10: undefined = Undefined
+# CHECK-NEXT: v11: anything ~ number = AwaitCallBySavingFrame v1, v10, v8, v7 function=f111 numberOfHeld=2 accessSite=106
+# CHECK-NEXT: v12: undefined = CallBuiltin v7, v9, v11 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=107
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v14: anything ~ undefined|null|string = GetModuleVariable variable=g21
-# CHECK-NEXT: v15: "callbacks" = String string="callbacks"
-# CHECK-NEXT: v16: boolean = StrictEq v14, v15
-# CHECK-NEXT: Branch v16 -> taken b5(), notTaken b4()
+# CHECK-NEXT: v13: "callbacks" = String string="callbacks"
+# CHECK-NEXT: v14: boolean = StrictEq v2, v13
+# CHECK-NEXT: Branch v14 -> taken b5(), notTaken b4()
 # CHECK-NEXT: b4():
-# CHECK-NEXT: v17: anything ~ undefined|null|string = GetModuleVariable variable=g21
-# CHECK-NEXT: v18: "all" = String string="all"
-# CHECK-NEXT: v19: boolean = StrictEq v17, v18
-# CHECK-NEXT: Branch v19 -> taken b5(), notTaken b6()
+# CHECK-NEXT: v15: "all" = String string="all"
+# CHECK-NEXT: v16: boolean = StrictEq v2, v15
+# CHECK-NEXT: Branch v16 -> taken b5(), notTaken b6()
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v20: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v21: "callbacks" = String string="callbacks"
-# CHECK-NEXT: v22: anything ~ number = CallDirect function=f8 accessSite=110
-# CHECK-NEXT: v23: undefined = CallBuiltin v20, v21, v22 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=111
+# CHECK-NEXT: v17: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v18: "callbacks" = String string="callbacks"
+# CHECK-NEXT: v19: anything ~ number = CallDirect function=f8 accessSite=110
+# CHECK-NEXT: v20: undefined = CallBuiltin v17, v18, v19 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=111
 # CHECK-NEXT: Jump -> next b6()
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v24: anything ~ undefined|null|string = GetModuleVariable variable=g21
-# CHECK-NEXT: v25: "rest" = String string="rest"
-# CHECK-NEXT: v26: boolean = StrictEq v24, v25
-# CHECK-NEXT: Branch v26 -> taken b8(), notTaken b7()
+# CHECK-NEXT: v21: "rest" = String string="rest"
+# CHECK-NEXT: v22: boolean = StrictEq v2, v21
+# CHECK-NEXT: Branch v22 -> taken b8(), notTaken b7()
 # CHECK-NEXT: b7():
-# CHECK-NEXT: v27: anything ~ undefined|null|string = GetModuleVariable variable=g21
-# CHECK-NEXT: v28: "all" = String string="all"
-# CHECK-NEXT: v29: boolean = StrictEq v27, v28
-# CHECK-NEXT: Branch v29 -> taken b8(), notTaken b9()
+# CHECK-NEXT: v23: "all" = String string="all"
+# CHECK-NEXT: v24: boolean = StrictEq v2, v23
+# CHECK-NEXT: Branch v24 -> taken b8(), notTaken b9()
 # CHECK-NEXT: b8():
-# CHECK-NEXT: v30: "rest" = String string="rest"
-# CHECK-NEXT: v31: number = CallDirect function=f17 accessSite=114
-# CHECK-NEXT: v32: int|whole = CallDirect function=f20 accessSite=115
-# CHECK-NEXT: v33: undefined = CallBuiltin -, v30, v31, v32 overload=ConsoleLog/0 accessSite=116
+# CHECK-NEXT: v25: "rest" = String string="rest"
+# CHECK-NEXT: v26: number = CallDirect function=f17 accessSite=114
+# CHECK-NEXT: v27: int|whole = CallDirect function=f20 accessSite=115
+# CHECK-NEXT: v28: undefined = CallBuiltin -, v25, v26, v27 overload=ConsoleLog/0 accessSite=116
 # CHECK-NEXT: Jump -> next b9()
 # CHECK-NEXT: b9():
-# CHECK-NEXT: v34: undefined = Undefined
-# CHECK-NEXT: v35: anything = ReturnAsyncResult v1, v34
-# CHECK-NEXT: Return v35
+# CHECK-NEXT: v29: undefined = Undefined
+# CHECK-NEXT: v30: anything = ReturnAsyncResult v1, v29
+# CHECK-NEXT: Return v30
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="load"
 # CHECK: module=m0 position=325 role=CoroutineBody flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=1 thisType={type=undefined} parameters=[{type=number site=w0}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f100 parameterMap=[{original=0}, {original=1}, {}]} creator=Coroutine{kind=AsyncFunction ramp=f100 body=f113 entryWithoutPromise=f113 promiseType=Promise promiseParameter=2} {

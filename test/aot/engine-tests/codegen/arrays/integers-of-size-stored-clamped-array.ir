@@ -455,44 +455,35 @@ runtimefunction id=69 function=f4
 # CHECK-NEXT: Jump -> next b1(v4)
 # CHECK-NEXT: b1(v5: int[0, 4294967295] ~ 0):
 # CHECK-NEXT: Jump -> next b2(v5)
-# CHECK-NEXT: b2(v6: int[0, 4294967295] ~ 0):
-# CHECK-NEXT: Jump -> next b3(v6)
-# CHECK-NEXT: b3(v7: int[0, 4294967295] ~ int[0, 2147483648]):
+# CHECK-NEXT: b2(v6: int[0, 4294967295] ~ int[0, 2147483648]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v9: int[0, 4294967295] ~ int[0, 2147483647] = Upcast v7 castType=int|whole
-# CHECK-NEXT: v10: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0 accessSite=31
-# CHECK-NEXT: v11: boolean = Less v9, v10
-# CHECK-NEXT: Branch v11 -> taken b4(| 0), notTaken b11()
-# CHECK-NEXT: b4(v12: int[0, 4294967294] ~ int[0, 2147483647]):
-# CHECK-NEXT: v13: boolean = IsInBounds v0, v12
-# CHECK-NEXT: Branch v13 -> taken b5(| 0), notTaken b7()
-# CHECK-NEXT: b5(v14: guard):
-# CHECK-NEXT: v15: int[-9007199254740992, 9007199254740992]|double = GetArrayElement v0, v12, v14 arrayStorage=Contiguous level=Proven accessSite=32 [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v16: boolean = IsInsideView v1, v12 typedArrayType=3 [keyIsIntegral]
-# CHECK-NEXT: Branch v16 -> taken b6(| 0), notTaken b9(v15)
-# CHECK-NEXT: b6(v17: guard):
-# CHECK-NEXT: PutTypedArrayElement v1, v12, v15, v17 typedArrayType=3 level=Proven accessSite=33 [keyIsIntegral, isInsideView]
-# CHECK-NEXT: v19: int[1, 4294967295] ~ int[1, 2147483648] = Increment v12
-# CHECK-NEXT: Jump -> next b3(v19)
-# CHECK-NEXT: b7() frequency=Rare:
-# CHECK-NEXT: v20: undefined|int[-9007199254740992, 9007199254740992]|double = GetArrayElement v0, v12 arrayStorage=Contiguous level=Proven accessSite=32 [keyIsIntegral]
-# CHECK-NEXT: v21: boolean = TypeTest v20 testedType=number
-# CHECK-NEXT: Branch v21 -> taken b8(| 0), notTaken b10()
-# CHECK-NEXT: b8(v22: int[-9007199254740992, 9007199254740992]|double) frequency=Rare:
-# CHECK-NEXT: Jump -> next b9(v22)
-# CHECK-NEXT: b9(v23: int[-9007199254740992, 9007199254740992]|double) frequency=Rare:
-# CHECK-NEXT: PutTypedArrayElement v1, v12, v23 typedArrayType=3 level=Proven accessSite=33 [keyIsIntegral]
-# CHECK-NEXT: v25: int[1, 4294967295] ~ int[1, 2147483648] = Increment v12
-# CHECK-NEXT: Jump -> next b2(v25)
-# CHECK-NEXT: b10() frequency=Rare:
-# CHECK-NEXT: v26: undefined = Undefined
-# CHECK-NEXT: ElemSet v1, v12, v26 accessSite=33 [keyIsIntegral]
-# CHECK-NEXT: v28: int[1, 4294967295] ~ int[1, 2147483648] = Increment v12
-# CHECK-NEXT: Jump -> next b1(v28)
-# CHECK-NEXT: b11():
-# CHECK-NEXT: v29: " " = String string=" "
-# CHECK-NEXT: v30: string = CallBuiltin v1, v29 overload=TypedArrayPrototypeJoin/0 accessSite=35 @0 tail
-# CHECK-NEXT: Return v30
+# CHECK-NEXT: v8: int[0, 4294967295] ~ int[0, 2147483647] = Upcast v6 castType=int|whole
+# CHECK-NEXT: v9: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0 accessSite=31
+# CHECK-NEXT: v10: boolean = Less v8, v9
+# CHECK-NEXT: Branch v10 -> taken b3(| 0), notTaken b8()
+# CHECK-NEXT: b3(v11: int[0, 4294967294] ~ int[0, 2147483647]):
+# CHECK-NEXT: v12: boolean = IsInBounds v0, v11
+# CHECK-NEXT: Branch v12 -> taken b4(| 0), notTaken b6()
+# CHECK-NEXT: b4(v13: guard):
+# CHECK-NEXT: v14: int[-9007199254740992, 9007199254740992]|double = GetArrayElement v0, v11, v13 arrayStorage=Contiguous level=Proven accessSite=32 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v15: boolean = IsInsideView v1, v11 typedArrayType=3 [keyIsIntegral]
+# CHECK-NEXT: Branch v15 -> taken b5(| 0), notTaken b7(v14)
+# CHECK-NEXT: b5(v16: guard):
+# CHECK-NEXT: PutTypedArrayElement v1, v11, v14, v16 typedArrayType=3 level=Expected accessSite=33 [keyIsIntegral, isInsideView]
+# CHECK-NEXT: v18: int[1, 4294967295] ~ int[1, 2147483648] = Increment v11
+# CHECK-NEXT: Jump -> next b2(v18)
+# CHECK-NEXT: b6() frequency=Rare:
+# CHECK-NEXT: v19: undefined|int[-9007199254740992, 9007199254740992]|double = GetArrayElement v0, v11 arrayStorage=Contiguous level=Proven accessSite=32 [keyIsIntegral]
+# CHECK-NEXT: v20: undefined|int[-9007199254740992, 9007199254740992]|double ~ int[-9007199254740992, 9007199254740992]|double = Expect v19 expectedType=number
+# CHECK-NEXT: Jump -> next b7(v20)
+# CHECK-NEXT: b7(v21: undefined|int[-9007199254740992, 9007199254740992]|double ~ int[-9007199254740992, 9007199254740992]|double) frequency=Rare:
+# CHECK-NEXT: ElemSet v1, v11, v21 accessSite=33 [keyIsIntegral]
+# CHECK-NEXT: v23: int[1, 4294967295] ~ int[1, 2147483648] = Increment v11
+# CHECK-NEXT: Jump -> next b1(v23)
+# CHECK-NEXT: b8():
+# CHECK-NEXT: v24: " " = String string=" "
+# CHECK-NEXT: v25: string = CallBuiltin v1, v24 overload=TypedArrayPrototypeJoin/0 accessSite=35 @0 tail
+# CHECK-NEXT: Return v25
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="next"
 # CHECK: module=m1 kind=Method role=ResultWrapper flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=ArrayIterator flags=[IsExpected]} results=[{type=L(IteratorResult)}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f12 layout=L(IteratorResult)} {
@@ -515,34 +506,33 @@ runtimefunction id=69 function=f4
 # CHECK-NEXT: Jump -> next b2(v5)
 # CHECK-NEXT: b2(v6: int[0, 4294967296] ~ int[0, 2147483648]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v8: int[0, 4294967296] ~ int[0, 2147483647] = Upcast v6 castType=int|whole
-# CHECK-NEXT: v9: int[0, 4294967296] = CallBuiltin v3 overload=TypedArrayPrototypeLength/0 accessSite=19
-# CHECK-NEXT: v10: boolean = Less v8, v9
-# CHECK-NEXT: Branch v10 -> taken b3(| 0), notTaken b8()
-# CHECK-NEXT: b3(v11: int[0, 4294967295] ~ int[0, 2147483647]):
-# CHECK-NEXT: v12: boolean = IsInsideView v3, v11 typedArrayType=6 [keyIsIntegral]
-# CHECK-NEXT: Branch v12 -> taken b4(| 0), notTaken b6()
-# CHECK-NEXT: b4(v13: guard):
-# CHECK-NEXT: v14: i32 = GetTypedArrayElement v3, v11, v13 typedArrayType=6 level=Proven accessSite=20 [keyIsIntegral, isInsideView]
-# CHECK-NEXT: v15: i32 = BitOr v14, v1
-# CHECK-NEXT: v16: boolean = IsInsideView v4, v11 typedArrayType=3 [keyIsIntegral]
-# CHECK-NEXT: Branch v16 -> taken b5(| 0), notTaken b7(v15)
-# CHECK-NEXT: b5(v17: guard):
-# CHECK-NEXT: PutTypedArrayElement v4, v11, v15, v17 typedArrayType=3 level=Proven accessSite=21 [keyIsIntegral, isInsideView]
-# CHECK-NEXT: v19: int[1, 4294967296] ~ int[1, 2147483648] = Increment v11
-# CHECK-NEXT: Jump -> next b2(v19)
+# CHECK-NEXT: v8: int[0, 4294967296] = CallBuiltin v3 overload=TypedArrayPrototypeLength/0 accessSite=19
+# CHECK-NEXT: v9: boolean = Less v6, v8
+# CHECK-NEXT: Branch v9 -> taken b3(| 0), notTaken b8()
+# CHECK-NEXT: b3(v10: int[0, 4294967295] ~ int[0, 2147483647]):
+# CHECK-NEXT: v11: boolean = IsInsideView v3, v10 typedArrayType=6 [keyIsIntegral]
+# CHECK-NEXT: Branch v11 -> taken b4(| 0), notTaken b6()
+# CHECK-NEXT: b4(v12: guard):
+# CHECK-NEXT: v13: i32 = GetTypedArrayElement v3, v10, v12 typedArrayType=6 level=Proven accessSite=20 [keyIsIntegral, isInsideView]
+# CHECK-NEXT: v14: i32 = BitOr v13, v1
+# CHECK-NEXT: v15: boolean = IsInsideView v4, v10 typedArrayType=3 [keyIsIntegral]
+# CHECK-NEXT: Branch v15 -> taken b5(| 0), notTaken b7(v14)
+# CHECK-NEXT: b5(v16: guard):
+# CHECK-NEXT: PutTypedArrayElement v4, v10, v14, v16 typedArrayType=3 level=Proven accessSite=21 [keyIsIntegral, isInsideView]
+# CHECK-NEXT: v18: int[1, 4294967296] ~ int[1, 2147483648] = Increment v10
+# CHECK-NEXT: Jump -> next b2(v18)
 # CHECK-NEXT: b6() frequency=Rare:
-# CHECK-NEXT: v20: undefined|i32 = GetTypedArrayElement v3, v11 typedArrayType=6 level=Proven accessSite=20 [keyIsIntegral]
-# CHECK-NEXT: v21: i32 = BitOr v20, v1
-# CHECK-NEXT: Jump -> next b7(v21)
-# CHECK-NEXT: b7(v22: i32) frequency=Rare:
-# CHECK-NEXT: PutTypedArrayElement v4, v11, v22 typedArrayType=3 level=Proven accessSite=21 [keyIsIntegral]
-# CHECK-NEXT: v24: int[1, 4294967296] ~ int[1, 2147483648] = Increment v11
-# CHECK-NEXT: Jump -> next b1(v24)
+# CHECK-NEXT: v19: undefined|i32 = GetTypedArrayElement v3, v10 typedArrayType=6 level=Proven accessSite=20 [keyIsIntegral]
+# CHECK-NEXT: v20: i32 = BitOr v19, v1
+# CHECK-NEXT: Jump -> next b7(v20)
+# CHECK-NEXT: b7(v21: i32) frequency=Rare:
+# CHECK-NEXT: PutTypedArrayElement v4, v10, v21 typedArrayType=3 level=Proven accessSite=21 [keyIsIntegral]
+# CHECK-NEXT: v23: int[1, 4294967296] ~ int[1, 2147483648] = Increment v10
+# CHECK-NEXT: Jump -> next b1(v23)
 # CHECK-NEXT: b8():
-# CHECK-NEXT: v25: " " = String string=" "
-# CHECK-NEXT: v26: string = CallBuiltin v4, v25 overload=TypedArrayPrototypeJoin/0 accessSite=23 @0 tail
-# CHECK-NEXT: Return v26
+# CHECK-NEXT: v24: " " = String string=" "
+# CHECK-NEXT: v25: string = CallBuiltin v4, v24 overload=TypedArrayPrototypeJoin/0 accessSite=23 @0 tail
+# CHECK-NEXT: Return v25
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="storeSums"
 # CHECK: module=m0 position=779 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w6}] results=[{type=string site=w7 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameterMap=[{original=0}]} {
@@ -556,34 +546,33 @@ runtimefunction id=69 function=f4
 # CHECK-NEXT: Jump -> next b2(v5)
 # CHECK-NEXT: b2(v6: int[0, 4294967296] ~ int[0, 2147483648]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v8: int[0, 4294967296] ~ int[0, 2147483647] = Upcast v6 castType=int|whole
-# CHECK-NEXT: v9: int[0, 4294967296] = CallBuiltin v3 overload=TypedArrayPrototypeLength/0 accessSite=24
-# CHECK-NEXT: v10: boolean = Less v8, v9
-# CHECK-NEXT: Branch v10 -> taken b3(| 0), notTaken b8()
-# CHECK-NEXT: b3(v11: int[0, 4294967295] ~ int[0, 2147483647]):
-# CHECK-NEXT: v12: boolean = IsInsideView v3, v11 typedArrayType=6 [keyIsIntegral]
-# CHECK-NEXT: Branch v12 -> taken b4(| 0), notTaken b6()
-# CHECK-NEXT: b4(v13: guard):
-# CHECK-NEXT: v14: i32 = GetTypedArrayElement v3, v11, v13 typedArrayType=6 level=Proven accessSite=25 [keyIsIntegral, isInsideView]
-# CHECK-NEXT: v15: number = Add v14, v1
-# CHECK-NEXT: v16: boolean = IsInsideView v4, v11 typedArrayType=3 [keyIsIntegral]
-# CHECK-NEXT: Branch v16 -> taken b5(| 0), notTaken b7(v15)
-# CHECK-NEXT: b5(v17: guard):
-# CHECK-NEXT: PutTypedArrayElement v4, v11, v15, v17 typedArrayType=3 level=Proven accessSite=26 [keyIsIntegral, isInsideView]
-# CHECK-NEXT: v19: int[1, 4294967296] ~ int[1, 2147483648] = Increment v11
-# CHECK-NEXT: Jump -> next b2(v19)
+# CHECK-NEXT: v8: int[0, 4294967296] = CallBuiltin v3 overload=TypedArrayPrototypeLength/0 accessSite=24
+# CHECK-NEXT: v9: boolean = Less v6, v8
+# CHECK-NEXT: Branch v9 -> taken b3(| 0), notTaken b8()
+# CHECK-NEXT: b3(v10: int[0, 4294967295] ~ int[0, 2147483647]):
+# CHECK-NEXT: v11: boolean = IsInsideView v3, v10 typedArrayType=6 [keyIsIntegral]
+# CHECK-NEXT: Branch v11 -> taken b4(| 0), notTaken b6()
+# CHECK-NEXT: b4(v12: guard):
+# CHECK-NEXT: v13: i32 = GetTypedArrayElement v3, v10, v12 typedArrayType=6 level=Proven accessSite=25 [keyIsIntegral, isInsideView]
+# CHECK-NEXT: v14: number = Add v13, v1
+# CHECK-NEXT: v15: boolean = IsInsideView v4, v10 typedArrayType=3 [keyIsIntegral]
+# CHECK-NEXT: Branch v15 -> taken b5(| 0), notTaken b7(v14)
+# CHECK-NEXT: b5(v16: guard):
+# CHECK-NEXT: PutTypedArrayElement v4, v10, v14, v16 typedArrayType=3 level=Proven accessSite=26 [keyIsIntegral, isInsideView]
+# CHECK-NEXT: v18: int[1, 4294967296] ~ int[1, 2147483648] = Increment v10
+# CHECK-NEXT: Jump -> next b2(v18)
 # CHECK-NEXT: b6() frequency=Rare:
-# CHECK-NEXT: v20: undefined|i32 = GetTypedArrayElement v3, v11 typedArrayType=6 level=Proven accessSite=25 [keyIsIntegral]
-# CHECK-NEXT: v21: number = Add v20, v1
-# CHECK-NEXT: Jump -> next b7(v21)
-# CHECK-NEXT: b7(v22: number) frequency=Rare:
-# CHECK-NEXT: PutTypedArrayElement v4, v11, v22 typedArrayType=3 level=Proven accessSite=26 [keyIsIntegral]
-# CHECK-NEXT: v24: int[1, 4294967296] ~ int[1, 2147483648] = Increment v11
-# CHECK-NEXT: Jump -> next b1(v24)
+# CHECK-NEXT: v19: undefined|i32 = GetTypedArrayElement v3, v10 typedArrayType=6 level=Proven accessSite=25 [keyIsIntegral]
+# CHECK-NEXT: v20: number = Add v19, v1
+# CHECK-NEXT: Jump -> next b7(v20)
+# CHECK-NEXT: b7(v21: number) frequency=Rare:
+# CHECK-NEXT: PutTypedArrayElement v4, v10, v21 typedArrayType=3 level=Proven accessSite=26 [keyIsIntegral]
+# CHECK-NEXT: v23: int[1, 4294967296] ~ int[1, 2147483648] = Increment v10
+# CHECK-NEXT: Jump -> next b1(v23)
 # CHECK-NEXT: b8():
-# CHECK-NEXT: v25: " " = String string=" "
-# CHECK-NEXT: v26: string = CallBuiltin v4, v25 overload=TypedArrayPrototypeJoin/0 accessSite=28 @0 tail
-# CHECK-NEXT: Return v26
+# CHECK-NEXT: v24: " " = String string=" "
+# CHECK-NEXT: v25: string = CallBuiltin v4, v24 overload=TypedArrayPrototypeJoin/0 accessSite=28 @0 tail
+# CHECK-NEXT: Return v25
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="storeWords"
 # CHECK: module=m0 position=638 role=GenericVersion flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w4 flags=[IsExpected]}] results=[{type=string site=w5 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{original=0}]} creator=Version{provenVersion=f6}

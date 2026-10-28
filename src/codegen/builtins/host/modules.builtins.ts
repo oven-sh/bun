@@ -215,6 +215,15 @@ export default b.declarations(
   }),
   b.inherits("node:module.prototype", "Object.prototype"),
   objectsMadeByNativeModuleMacro.flatMap(path => b.inherits(path, "Object.prototype")),
+  // It looks at a string. For anything else the answer is false.
+  b.fn("node:module.isBuiltin", {
+    args: { name: b.any.optional },
+    returns: b.bool,
+    capability: "heap",
+    throws: true,
+    uses: { name: b.inspected },
+    implementation: b.generic,
+  }),
   b.fn("node:module.findSourceMap", {
     args: { path: b.any.optional },
     returns: b.union(b.instance("SourceMap"), b.undefined).fresh,

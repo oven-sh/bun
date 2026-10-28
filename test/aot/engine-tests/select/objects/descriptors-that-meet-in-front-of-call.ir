@@ -683,17 +683,12 @@ runtimefunction id=131091 function=f63 visibility=Private
 # CHECK-NEXT: Return v12
 # CHECK-NEXT: b8() role=CatchHandler:
 # CHECK-NEXT: v13: anything @JSValue = CatchValue
-# CHECK-NEXT: v14: "threw " @Cell = String string="threw "
+# CHECK-NEXT: v14: "threw " @JSValue = String string="threw "
 # CHECK-NEXT: v15: anything @JSValue = Upcast v13 castType=anything
 # CHECK-NEXT: v16: anything @JSValue = PropGet v15 key="name" accessSite=28 siteCache=0
-# CHECK-NEXT: v17: boolean @Boolean = TypeTest v16 testedType=undefined|null|string
-# CHECK-NEXT: TestAndBranch v17 -> taken b9(| 0), notTaken b10(| 0)
-# CHECK-NEXT: b9(v18: undefined|null|string @JSValue):
-# CHECK-NEXT: v19: string @Cell = Add v14, v18 form=StringAndPrimitive
-# CHECK-NEXT: Return v19
-# CHECK-NEXT: b10(v20: boolean|number|symbol|bigint|object @JSValue) frequency=Unlikely:
-# CHECK-NEXT: v21: string @JSValue = Add v14, v20 form=Generic
-# CHECK-NEXT: Return v21
+# CHECK-NEXT: v17: anything @JSValue = Expect v16 expectedType=undefined|null|string
+# CHECK-NEXT: v18: string @JSValue = Add v14, v17 form=Generic
+# CHECK-NEXT: Return v18
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="getters"
 # CHECK: module=m0 position=617 flags=[IsChecked, HasExplicitName] length=5 thisType={type=anything} parameters=[{type=L0|L2 site=w3 flags=[OmitsNull, OmitsUndefined]}, {type=7|"c"|"d"|"x" site=w4 flags=[OmitsNull, OmitsUndefined]}, {type=boolean site=w5}, {type=null|"text"|f18|f24}] results=[{type=L0|L2 site=w6 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f2 parameterMap=[{original=0}, {original=1}, {original=2}, {original=4}]} {

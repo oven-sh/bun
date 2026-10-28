@@ -2156,65 +2156,39 @@ runtimefunction id=131091 function=f36 visibility=Private
 # CHECK: module=m0 position=1313 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=Array<undefined|number, proven, pristine[Storage]> site=w34 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f27 callPosition=4294967295 isTailCall=true module=m1}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: anything ~ f27 = GetModuleVariable variable=g0
-# CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=f27
-# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2(| 0)
+# CHECK-NEXT: v1: fractional = Double number=0.5
+# CHECK-NEXT: v2: 1 = Integer integer=1
+# CHECK-NEXT: v3: 2 = Integer integer=2
+# CHECK-NEXT: v4: fractional = Double number=3.25
+# CHECK-NEXT: v5: 4 = Integer integer=4
+# CHECK-NEXT: v6: Array<undefined|number> = NewArray v1, v2, v3, v4, v5 contents=undefined|number allocationSite=23
+# CHECK-NEXT: v7: Array<undefined|number, proven, pristine[Storage]> = AssumeType v6 provenType=Array<undefined|number, proven, pristine[Storage]>
+# CHECK-NEXT: v8: boolean = IsClosureOf v0 function=f27
+# CHECK-NEXT: Branch v8 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v2: fractional = Double number=0.5
-# CHECK-NEXT: v3: 1 = Integer integer=1
-# CHECK-NEXT: v4: 2 = Integer integer=2
-# CHECK-NEXT: v5: fractional = Double number=3.25
-# CHECK-NEXT: v6: 4 = Integer integer=4
-# CHECK-NEXT: v7: Array<undefined|number> = NewArray v2, v3, v4, v5, v6 contents=undefined|number allocationSite=23
-# CHECK-NEXT: v8: Array<undefined|number, proven, pristine[Storage]> = AssumeType v7 provenType=Array<undefined|number, proven, pristine[Storage]>
-# CHECK-NEXT: Return v8
-# CHECK-NEXT: b2(v9: anything) frequency=Unlikely:
-# CHECK-NEXT: v10: fractional = Double number=0.5
-# CHECK-NEXT: v11: 1 = Integer integer=1
-# CHECK-NEXT: v12: 2 = Integer integer=2
-# CHECK-NEXT: v13: fractional = Double number=3.25
-# CHECK-NEXT: v14: 4 = Integer integer=4
-# CHECK-NEXT: v15: Array<undefined|number> = NewArray v10, v11, v12, v13, v14 contents=undefined|number allocationSite=23
-# CHECK-NEXT: v16: Array<undefined|number, proven, pristine[Storage]> = AssumeType v15 provenType=Array<undefined|number, proven, pristine[Storage]>
-# CHECK-NEXT: v17: boolean = IsClosureOf v9 function=f27
-# CHECK-NEXT: Branch v17 -> taken b3(), notTaken b4()
-# CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v18: Array<undefined|number|string, proven, pristine[Storage]>|Uint8Array<anything, pristine[Storage, Names]> = CallDirect v16 function=f27 accessSite=76 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v18 casts=[{declared={type=Array<undefined|number, proven, pristine[Storage]>} resolution=Assume}]
-# CHECK-NEXT: b4() frequency=Rare:
-# CHECK-NEXT: v19: anything = Call v9, -, v16 calleeName="launder" accessSite=76 callees=[f27] [isNeverInlined]
-# CHECK-NEXT: ReturnCall v19 casts=[{declared={type=Array<undefined|number, proven, pristine[Storage]>} resolution=Assume}]
+# CHECK-NEXT: Return v7
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: v9: anything ~ Array<undefined|number|string, proven, pristine[Storage]>|Uint8Array<anything, pristine[Storage, Names]> = Call v0, -, v7 calleeName="launder" accessSite=76 callees=[f27, ..]
+# CHECK-NEXT: ReturnCall v9 casts=[{declared={type=Array<undefined|number, proven, pristine[Storage]>} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="makeIntegers"
 # CHECK: module=m0 position=1388 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=Array<undefined|number, proven, pristine[Storage]> site=w35 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f21] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f27 callPosition=4294967295 isTailCall=true module=m1}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: anything ~ f27 = GetModuleVariable variable=g0
-# CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=f27
-# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2(| 0)
+# CHECK-NEXT: v1: 1 = Integer integer=1
+# CHECK-NEXT: v2: 2 = Integer integer=2
+# CHECK-NEXT: v3: 3 = Integer integer=3
+# CHECK-NEXT: v4: 4 = Integer integer=4
+# CHECK-NEXT: v5: 0 = Integer
+# CHECK-NEXT: v6: Array<undefined|number> = NewArray v1, v2, v3, v4, v5 contents=undefined|number allocationSite=24
+# CHECK-NEXT: v7: Array<undefined|number, proven, pristine[Storage]> = AssumeType v6 provenType=Array<undefined|number, proven, pristine[Storage]>
+# CHECK-NEXT: v8: boolean = IsClosureOf v0 function=f27
+# CHECK-NEXT: Branch v8 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v2: 1 = Integer integer=1
-# CHECK-NEXT: v3: 2 = Integer integer=2
-# CHECK-NEXT: v4: 3 = Integer integer=3
-# CHECK-NEXT: v5: 4 = Integer integer=4
-# CHECK-NEXT: v6: 0 = Integer
-# CHECK-NEXT: v7: Array<undefined|number> = NewArray v2, v3, v4, v5, v6 contents=undefined|number allocationSite=24
-# CHECK-NEXT: v8: Array<undefined|number, proven, pristine[Storage]> = AssumeType v7 provenType=Array<undefined|number, proven, pristine[Storage]>
-# CHECK-NEXT: Return v8
-# CHECK-NEXT: b2(v9: anything) frequency=Unlikely:
-# CHECK-NEXT: v10: 1 = Integer integer=1
-# CHECK-NEXT: v11: 2 = Integer integer=2
-# CHECK-NEXT: v12: 3 = Integer integer=3
-# CHECK-NEXT: v13: 4 = Integer integer=4
-# CHECK-NEXT: v14: 0 = Integer
-# CHECK-NEXT: v15: Array<undefined|number> = NewArray v10, v11, v12, v13, v14 contents=undefined|number allocationSite=24
-# CHECK-NEXT: v16: Array<undefined|number, proven, pristine[Storage]> = AssumeType v15 provenType=Array<undefined|number, proven, pristine[Storage]>
-# CHECK-NEXT: v17: boolean = IsClosureOf v9 function=f27
-# CHECK-NEXT: Branch v17 -> taken b3(), notTaken b4()
-# CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v18: Array<undefined|number|string, proven, pristine[Storage]>|Uint8Array<anything, pristine[Storage, Names]> = CallDirect v16 function=f27 accessSite=77 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v18 casts=[{declared={type=Array<undefined|number, proven, pristine[Storage]>} resolution=Assume}]
-# CHECK-NEXT: b4() frequency=Rare:
-# CHECK-NEXT: v19: anything = Call v9, -, v16 calleeName="launder" accessSite=77 callees=[f27] [isNeverInlined]
-# CHECK-NEXT: ReturnCall v19 casts=[{declared={type=Array<undefined|number, proven, pristine[Storage]>} resolution=Assume}]
+# CHECK-NEXT: Return v7
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: v9: anything ~ Array<undefined|number|string, proven, pristine[Storage]>|Uint8Array<anything, pristine[Storage, Names]> = Call v0, -, v7 calleeName="launder" accessSite=77 callees=[f27, ..]
+# CHECK-NEXT: ReturnCall v9 casts=[{declared={type=Array<undefined|number, proven, pristine[Storage]>} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="makeWithHole"
 # CHECK: module=m0 position=1459 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=Array<undefined|number, proven, pristine[Storage]> site=w36 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f22] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f27 callPosition=4294967295 isTailCall=true module=m1}] {
@@ -2229,51 +2203,32 @@ runtimefunction id=131091 function=f36 visibility=Private
 # CHECK-NEXT: v7: 2 = Integer integer=2
 # CHECK-NEXT: v8: boolean = ElemDelete v6, v7 accessSite=78 [keyIsIntegral]
 # CHECK-NEXT: v9: anything ~ f27 = GetModuleVariable variable=g0
-# CHECK-NEXT: v10: boolean ~ true = TypeTest v9 testedType=f27
-# CHECK-NEXT: Branch v10 -> taken b1(), notTaken b2(| 0)
+# CHECK-NEXT: v10: boolean = IsClosureOf v9 function=f27
+# CHECK-NEXT: Branch v10 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: Return v6
-# CHECK-NEXT: b2(v11: anything) frequency=Unlikely:
-# CHECK-NEXT: v12: boolean = IsClosureOf v11 function=f27
-# CHECK-NEXT: Branch v12 -> taken b3(), notTaken b4()
-# CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v13: Array<undefined|number|string, proven, pristine[Storage]>|Uint8Array<anything, pristine[Storage, Names]> = CallDirect v6 function=f27 accessSite=79 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v13 casts=[{declared={type=Array<undefined|number, proven, pristine[Storage]>} resolution=Assume}]
-# CHECK-NEXT: b4() frequency=Rare:
-# CHECK-NEXT: v14: anything = Call v11, -, v6 calleeName="launder" accessSite=79 callees=[f27] [isNeverInlined]
-# CHECK-NEXT: ReturnCall v14 casts=[{declared={type=Array<undefined|number, proven, pristine[Storage]>} resolution=Assume}]
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: v11: anything ~ Array<undefined|number|string, proven, pristine[Storage]>|Uint8Array<anything, pristine[Storage, Names]> = Call v9, -, v6 calleeName="launder" accessSite=79 callees=[f27, ..]
+# CHECK-NEXT: ReturnCall v11 casts=[{declared={type=Array<undefined|number, proven, pristine[Storage]>} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="makeWithNaN"
 # CHECK: module=m0 position=1567 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=Array<undefined|number, proven, pristine[Storage]> site=w37 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f23] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f27 callPosition=4294967295 isTailCall=true module=m1}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: anything ~ f27 = GetModuleVariable variable=g0
-# CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=f27
-# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2(| 0)
+# CHECK-NEXT: v1: whole = Double number=NaN
+# CHECK-NEXT: v2: 1 = Integer integer=1
+# CHECK-NEXT: v3: whole = Double number=NaN
+# CHECK-NEXT: v4: 3 = Integer integer=3
+# CHECK-NEXT: v5: fractional = Double number=2.5
+# CHECK-NEXT: v6: Array<undefined|number> = NewArray v1, v2, v3, v4, v5 contents=undefined|number allocationSite=26
+# CHECK-NEXT: v7: Array<undefined|number, proven, pristine[Storage]> = AssumeType v6 provenType=Array<undefined|number, proven, pristine[Storage]>
+# CHECK-NEXT: v8: boolean = IsClosureOf v0 function=f27
+# CHECK-NEXT: Branch v8 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v2: whole = Double number=NaN
-# CHECK-NEXT: v3: 1 = Integer integer=1
-# CHECK-NEXT: v4: whole = Double number=NaN
-# CHECK-NEXT: v5: 3 = Integer integer=3
-# CHECK-NEXT: v6: fractional = Double number=2.5
-# CHECK-NEXT: v7: Array<undefined|number> = NewArray v2, v3, v4, v5, v6 contents=undefined|number allocationSite=26
-# CHECK-NEXT: v8: Array<undefined|number, proven, pristine[Storage]> = AssumeType v7 provenType=Array<undefined|number, proven, pristine[Storage]>
-# CHECK-NEXT: Return v8
-# CHECK-NEXT: b2(v9: anything) frequency=Unlikely:
-# CHECK-NEXT: v10: whole = Double number=NaN
-# CHECK-NEXT: v11: 1 = Integer integer=1
-# CHECK-NEXT: v12: whole = Double number=NaN
-# CHECK-NEXT: v13: 3 = Integer integer=3
-# CHECK-NEXT: v14: fractional = Double number=2.5
-# CHECK-NEXT: v15: Array<undefined|number> = NewArray v10, v11, v12, v13, v14 contents=undefined|number allocationSite=26
-# CHECK-NEXT: v16: Array<undefined|number, proven, pristine[Storage]> = AssumeType v15 provenType=Array<undefined|number, proven, pristine[Storage]>
-# CHECK-NEXT: v17: boolean = IsClosureOf v9 function=f27
-# CHECK-NEXT: Branch v17 -> taken b3(), notTaken b4()
-# CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v18: Array<undefined|number|string, proven, pristine[Storage]>|Uint8Array<anything, pristine[Storage, Names]> = CallDirect v16 function=f27 accessSite=80 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v18 casts=[{declared={type=Array<undefined|number, proven, pristine[Storage]>} resolution=Assume}]
-# CHECK-NEXT: b4() frequency=Rare:
-# CHECK-NEXT: v19: anything = Call v9, -, v16 calleeName="launder" accessSite=80 callees=[f27] [isNeverInlined]
-# CHECK-NEXT: ReturnCall v19 casts=[{declared={type=Array<undefined|number, proven, pristine[Storage]>} resolution=Assume}]
+# CHECK-NEXT: Return v7
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: v9: anything ~ Array<undefined|number|string, proven, pristine[Storage]>|Uint8Array<anything, pristine[Storage, Names]> = Call v0, -, v7 calleeName="launder" accessSite=80 callees=[f27, ..]
+# CHECK-NEXT: ReturnCall v9 casts=[{declared={type=Array<undefined|number, proven, pristine[Storage]>} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="makeWithNamedNaN"
 # CHECK: module=m0 position=1643 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=Array<undefined|number, proven, pristine[Storage]> site=w38 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f24] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f27 callPosition=4294967295 isTailCall=true module=m1}] {
@@ -2294,19 +2249,13 @@ runtimefunction id=131091 function=f36 visibility=Private
 # CHECK-NEXT: v13: 80 = Integer integer=80
 # CHECK-NEXT: PropSet v6, v13 key="Infinity" accessSite=84
 # CHECK-NEXT: v15: anything ~ f27 = GetModuleVariable variable=g0
-# CHECK-NEXT: v16: boolean ~ true = TypeTest v15 testedType=f27
-# CHECK-NEXT: Branch v16 -> taken b1(), notTaken b2(| 0)
+# CHECK-NEXT: v16: boolean = IsClosureOf v15 function=f27
+# CHECK-NEXT: Branch v16 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: Return v6
-# CHECK-NEXT: b2(v17: anything) frequency=Unlikely:
-# CHECK-NEXT: v18: boolean = IsClosureOf v17 function=f27
-# CHECK-NEXT: Branch v18 -> taken b3(), notTaken b4()
-# CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v19: Array<undefined|number|string, proven, pristine[Storage]>|Uint8Array<anything, pristine[Storage, Names]> = CallDirect v6 function=f27 accessSite=85 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v19 casts=[{declared={type=Array<undefined|number, proven, pristine[Storage]>} resolution=Assume}]
-# CHECK-NEXT: b4() frequency=Rare:
-# CHECK-NEXT: v20: anything = Call v17, -, v6 calleeName="launder" accessSite=85 callees=[f27] [isNeverInlined]
-# CHECK-NEXT: ReturnCall v20 casts=[{declared={type=Array<undefined|number, proven, pristine[Storage]>} resolution=Assume}]
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: v17: anything ~ Array<undefined|number|string, proven, pristine[Storage]>|Uint8Array<anything, pristine[Storage, Names]> = Call v15, -, v6 calleeName="launder" accessSite=85 callees=[f27, ..]
+# CHECK-NEXT: ReturnCall v17 casts=[{declared={type=Array<undefined|number, proven, pristine[Storage]>} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function f19 module=
 # CHECK: m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f25]
@@ -2422,10 +2371,10 @@ runtimefunction id=131091 function=f36 visibility=Private
 # CHECK: module=m0 position=708 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<undefined|number, proven, pristine[Storage]> site=w18 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w19}] results=[{type=number site=w20 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f6 parameterMap=[{original=0}, {original=1}]} {
 # CHECK-NEXT: b0(v0: Array<undefined|number, proven, pristine[Storage]>, v1: number):
 # CHECK-NEXT: v2: boolean = IsPristine v0 builtinClass=Array aspects=[Names]
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b9()
+# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b8()
 # CHECK-NEXT: b1(v3: guard):
 # CHECK-NEXT: v4: boolean = HasArrayStorage v0 arrayStorage=Double [isWritable]
-# CHECK-NEXT: Branch v4 -> taken b2(| 0), notTaken b8()
+# CHECK-NEXT: Branch v4 -> taken b2(| 0), notTaken b7()
 # CHECK-NEXT: b2(v5: guard):
 # CHECK-NEXT: v6: guard = AllGuards v3, v5
 # CHECK-NEXT: PutArrayElement v0, v1, v1, v6 arrayStorage=Double level=Expected accessSite=64
@@ -2442,20 +2391,15 @@ runtimefunction id=131091 function=f36 visibility=Private
 # CHECK-NEXT: Jump -> next b6(v15)
 # CHECK-NEXT: b5() frequency=Rare:
 # CHECK-NEXT: v16: undefined|number = ElemGet v0, v9 accessSite=65
-# CHECK-NEXT: v17: undefined|number ~ number = Upcast v16 castType=undefined|number
-# CHECK-NEXT: v18: boolean ~ true = TypeTest v17 testedType=number
-# CHECK-NEXT: Branch v18 -> taken b6(| 0), notTaken b7()
-# CHECK-NEXT: b6(v19: number):
-# CHECK-NEXT: Return v19
-# CHECK-NEXT: b7() frequency=Unlikely:
-# CHECK-NEXT: v20: undefined = Undefined
-# CHECK-NEXT: Return v20
-# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: Jump -> next b6(v16)
+# CHECK-NEXT: b6(v17: undefined|number ~ number):
+# CHECK-NEXT: Return v17
+# CHECK-NEXT: b7() frequency=Rare:
 # CHECK-NEXT: ConvertToDoubleStorage v0
-# CHECK-NEXT: Jump -> next b9()
-# CHECK-NEXT: b9() frequency=Rare:
-# CHECK-NEXT: v22: anything ~ number = CallDirect v0, v1 function=f53 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v22 requirement=Allowed
+# CHECK-NEXT: Jump -> next b8()
+# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: v19: anything ~ number = CallDirect v0, v1 function=f53 [isNeverInlined]
+# CHECK-NEXT: ReturnCall v19 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="readText"
 # CHECK: module=m0 position=810 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<string, proven, pristine[Storage]> site=w21 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w22}] results=[{type=undefined|string site=w23 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f7 parameterMap=[{original=0}, {original=1}]} {

@@ -114,5 +114,5 @@ function f1 name="read" module=m0 position=39 flags=[IsChecked, HasExplicitName]
 # CALLS-NOT: = Patchpoint({{*}}:JSONSourceAbandon)
 # CALLS-LABEL: end of function
 # The counts hold calls, whose moves follow the calling convention: not for Windows.
-# X64: instructions: 53, patchpoints: 13, rare instructions: 2
-# ARM64: instructions: 60, patchpoints: 13, rare instructions: 2
+# X64: instructions: 44, patchpoints: 8, rare instructions: 8
+# ARM64: instructions: 53, patchpoints: 8, rare instructions: 9

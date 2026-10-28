@@ -477,7 +477,8 @@ export class ProductBed implements Bed {
       const file = home === folder ? entryOf("program", program) : `main.${program.extension}`;
       this.#layBeside(folder, flags);
       this.#write(folder, "program", program, flags);
-      const plain = await spawned([this.bun, "run", file], home, this.options.runSeconds, program.plainEnvironment, this.options.memory, true);
+      // Not `bun run`: that adds variables of its own (npm_..) to what the program sees.
+      const plain = await spawned([this.bun, `./${file}`], home, this.options.runSeconds, program.plainEnvironment, this.options.memory, true);
       const early = unusable(this, plain);
       if (early) return [{ plain, verdict: early }];
       rmSync(executable, { force: true });
@@ -485,7 +486,7 @@ export class ProductBed implements Bed {
       const compiled: Compiled = existsSync(executable) && build.exitCode === 0 ? { build, run: await this.#run(home, [executable], flags) } : { build };
       let verdict = compare(this, program, plain, compiled);
       for (let again = 0; again < 40 && program.plainWavers && compiled.run && (verdict.kind === "different output" || verdict.kind === "different exit code"); again++) {
-        const other = await spawned([this.bun, "run", file], home, this.options.runSeconds, undefined, this.options.memory, true);
+        const other = await spawned([this.bun, `./${file}`], home, this.options.runSeconds, undefined, this.options.memory, true);
         if (other.stdout === compiled.run.stdout && other.exitCode === compiled.run.exitCode) verdict = { kind: "skipped", why: program.plainWavers };
       }
       return [{ plain, compiled, verdict: this.#judged(program, flags, verdict) }];
@@ -559,7 +560,7 @@ ${table}if (isMainThread) {
     const all = programs.map((_, index) => index);
     this.#writeModules(folder, programs, flags);
     entry(all);
-    const plains = (await inParallel(all, 4, index => spawned([this.bun, "run", "main.js", String(index)], folder, this.options.runSeconds, undefined, this.options.memory, true))).map(run => this.#inAnyOrder(run));
+    const plains = (await inParallel(all, 4, index => spawned([this.bun, "./main.js", String(index)], folder, this.options.runSeconds, undefined, this.options.memory, true))).map(run => this.#inAnyOrder(run));
     for (const index of all) {
       const early = unusable(this, plains[index]);
       if (early) results[index] = { plain: plains[index], verdict: early };

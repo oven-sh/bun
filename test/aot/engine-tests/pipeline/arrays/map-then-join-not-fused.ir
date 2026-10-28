@@ -1702,65 +1702,53 @@ runtimefunction id=131091 function=f21 visibility=Private
 # CHECK-NEXT: v4: 0 = Integer
 # CHECK-NEXT: v5: stringbuilder = StringBuilderBegin
 # CHECK-NEXT: Jump -> next b1(v4, v3)
-# CHECK-NEXT: b1(v6: int[0, 4294967295] ~ 0, v7: int[0, 4294967295] ~ 0):
-# CHECK-NEXT: Jump -> next b2(v6, v7)
-# CHECK-NEXT: b2(v8: int[0, 4294967295], v9: int[0, 4294967295]):
+# CHECK-NEXT: b1(v6: int[0, 4294967295], v7: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v11: boolean = Less v9, v2
-# CHECK-NEXT: Branch v11 -> taken b3(| 0), notTaken b15()
-# CHECK-NEXT: b3(v12: int[0, 4294967294]):
-# CHECK-NEXT: v13: int[0, 4294967294] = Sub v12, v3
-# CHECK-NEXT: v14: boolean = HasArrayElement v0, v12 arrayStorage=Contiguous level=Proven accessSite=68 [keyIsIntegral]
-# CHECK-NEXT: Branch v14 -> taken b4(), notTaken b13()
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v15: boolean = IsInBounds v0, v12
-# CHECK-NEXT: Branch v15 -> taken b5(| 0), notTaken b9()
-# CHECK-NEXT: b5(v16: guard):
-# CHECK-NEXT: v17: L0 = GetArrayElement v0, v12, v16 arrayStorage=Contiguous level=Proven accessSite=69 [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v18: "<li class=\"item-of-a-list\">" = String string="<li class=\"item-of-a-list\">"
-# CHECK-NEXT: v19: string = GetSlot v17 key="name" receivers=[L0] level=Proven accessSite=45
-# CHECK-NEXT: v20: "</li>" = String string="</li>"
-# CHECK-NEXT: v21: string = Strcat v18, v19, v20
-# CHECK-NEXT: Jump -> next b6(v8)
-# CHECK-NEXT: b6(v22: int[0, 4294967295]):
+# CHECK-NEXT: v9: boolean = Less v7, v2
+# CHECK-NEXT: Branch v9 -> taken b2(| 0), notTaken b12()
+# CHECK-NEXT: b2(v10: int[0, 4294967294]):
+# CHECK-NEXT: v11: int[0, 4294967294] = Sub v10, v3
+# CHECK-NEXT: v12: boolean = HasArrayElement v0, v10 arrayStorage=Contiguous level=Proven accessSite=68 [keyIsIntegral]
+# CHECK-NEXT: Branch v12 -> taken b3(), notTaken b10()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v13: boolean = IsInBounds v0, v10
+# CHECK-NEXT: Branch v13 -> taken b4(| 0), notTaken b5()
+# CHECK-NEXT: b4(v14: guard):
+# CHECK-NEXT: v15: L0 = GetArrayElement v0, v10, v14 arrayStorage=Contiguous level=Proven accessSite=69 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v16: "<li class=\"item-of-a-list\">" = String string="<li class=\"item-of-a-list\">"
+# CHECK-NEXT: v17: string = GetSlot v15 key="name" receivers=[L0] level=Proven accessSite=45
+# CHECK-NEXT: v18: "</li>" = String string="</li>"
+# CHECK-NEXT: v19: string = Strcat v16, v17, v18
+# CHECK-NEXT: Jump -> next b6(v19)
+# CHECK-NEXT: b5() frequency=Rare:
+# CHECK-NEXT: v20: undefined|L0 = GetArrayElement v0, v10 arrayStorage=Contiguous level=Proven accessSite=69 [keyIsIntegral]
+# CHECK-NEXT: v21: string = CallDirect v20 function=f6 accessSite=72 [calleeIsPredicted]
+# CHECK-NEXT: Jump -> next b6(v21)
+# CHECK-NEXT: b6(v22: string):
+# CHECK-NEXT: Jump -> next b7(v6)
+# CHECK-NEXT: b7(v23: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v24: boolean = Less v22, v13
-# CHECK-NEXT: Branch v24 -> taken b7(| 0), notTaken b8()
-# CHECK-NEXT: b7(v25: int[0, 4294967293]):
+# CHECK-NEXT: v25: boolean = Less v23, v11
+# CHECK-NEXT: Branch v25 -> taken b8(| 0), notTaken b9()
+# CHECK-NEXT: b8(v26: int[0, 4294967293]):
 # CHECK-NEXT: StringBuilderAppend v5, v1
-# CHECK-NEXT: v27: int[1, 4294967294] = Increment v25
-# CHECK-NEXT: Jump -> next b6(v27)
-# CHECK-NEXT: b8():
-# CHECK-NEXT: StringBuilderAppend v5, v21
-# CHECK-NEXT: v29: int[1, 4294967295] = Increment v12
-# CHECK-NEXT: Jump -> next b2(v22, v29)
-# CHECK-NEXT: b9() frequency=Rare:
-# CHECK-NEXT: v30: undefined|L0 = GetArrayElement v0, v12 arrayStorage=Contiguous level=Proven accessSite=69 [keyIsIntegral]
-# CHECK-NEXT: v31: string = CallDirect v30 function=f6 accessSite=72 [calleeIsPredicted]
-# CHECK-NEXT: Jump -> next b10(v8)
-# CHECK-NEXT: b10(v32: int[0, 4294967295]) frequency=Unlikely:
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v34: boolean = Less v32, v13
-# CHECK-NEXT: Branch v34 -> taken b11(| 0), notTaken b12()
-# CHECK-NEXT: b11(v35: int[0, 4294967293]) frequency=Unlikely:
-# CHECK-NEXT: StringBuilderAppend v5, v1
-# CHECK-NEXT: v37: int[1, 4294967294] = Increment v35
-# CHECK-NEXT: Jump -> next b10(v37)
-# CHECK-NEXT: b12() frequency=Unlikely:
-# CHECK-NEXT: StringBuilderAppend v5, v31
-# CHECK-NEXT: Jump -> next b14(v32)
-# CHECK-NEXT: b13() frequency=Rare:
-# CHECK-NEXT: Jump -> next b14(v8)
-# CHECK-NEXT: b14(v39: int[0, 4294967295]) frequency=Unlikely:
-# CHECK-NEXT: v40: int[1, 4294967295] = Increment v12
-# CHECK-NEXT: Jump -> next b1(v39, v40)
-# CHECK-NEXT: b15():
-# CHECK-NEXT: v41: string = StringBuilderFinish v5 @0:4 tail
-# CHECK-NEXT: v42: string = CallDirect v41, v1, v8, v2 function=f19 accessSite=100 @0:4 tail
-# CHECK-NEXT: v43: "</ul>" = String string="</ul>"
-# CHECK-NEXT: v44: "<ul>" = String string="<ul>"
-# CHECK-NEXT: v45: string = Strcat v44, v42, v43
-# CHECK-NEXT: Return v45
+# CHECK-NEXT: v28: int[1, 4294967294] = Increment v26
+# CHECK-NEXT: Jump -> next b7(v28)
+# CHECK-NEXT: b9():
+# CHECK-NEXT: StringBuilderAppend v5, v22
+# CHECK-NEXT: Jump -> next b11(v23)
+# CHECK-NEXT: b10() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b11(v6)
+# CHECK-NEXT: b11(v30: int[0, 4294967295]):
+# CHECK-NEXT: v31: int[1, 4294967295] = Increment v10
+# CHECK-NEXT: Jump -> next b1(v30, v31)
+# CHECK-NEXT: b12():
+# CHECK-NEXT: v32: string = StringBuilderFinish v5 @0:4 tail
+# CHECK-NEXT: v33: string = CallDirect v32, v1, v6, v2 function=f19 accessSite=100 @0:4 tail
+# CHECK-NEXT: v34: "</ul>" = String string="</ul>"
+# CHECK-NEXT: v35: "<ul>" = String string="<ul>"
+# CHECK-NEXT: v36: string = Strcat v35, v33, v34
+# CHECK-NEXT: Return v36
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="unknownCallback"
 # CHECK: module=m0 position=922 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]> site=w6 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w7 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f14 callPosition=4294967295 module=m1}, {callee=f28 callPosition=4294967295 module=m2}, {callee=f28 callPosition=2337 parent=2 module=m2}, {callee=f21 callPosition=2337 parent=3 module=m2}, {callee=f21 callPosition=5210 parent=1 module=m2}, {callee=f18 callPosition=4294967295 parent=4 module=m2}, {callee=f8 callPosition=4294967295 parent=5 calleeIsPredicted=true module=m0}, {callee=f6 callPosition=4294967295 parent=5 calleeIsPredicted=true module=m0}] {
@@ -1782,81 +1770,69 @@ runtimefunction id=131091 function=f21 visibility=Private
 # CHECK-NEXT: v10: 0 = Integer
 # CHECK-NEXT: v11: stringbuilder = StringBuilderBegin
 # CHECK-NEXT: Jump -> next b4(v10, v9)
-# CHECK-NEXT: b4(v12: int[0, 4294967295] ~ 0, v13: int[0, 4294967295] ~ 0):
-# CHECK-NEXT: Jump -> next b5(v12, v13)
-# CHECK-NEXT: b5(v14: int[0, 4294967295], v15: int[0, 4294967295]):
+# CHECK-NEXT: b4(v12: int[0, 4294967295], v13: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v17: boolean = Less v15, v8
-# CHECK-NEXT: Branch v17 -> taken b6(| 0), notTaken b24()
-# CHECK-NEXT: b6(v18: int[0, 4294967294]):
-# CHECK-NEXT: v19: int[0, 4294967294] = Sub v18, v9
-# CHECK-NEXT: v20: boolean = HasArrayElement v0, v18 arrayStorage=Contiguous level=Proven accessSite=68 [keyIsIntegral]
-# CHECK-NEXT: Branch v20 -> taken b7(), notTaken b22()
-# CHECK-NEXT: b7():
-# CHECK-NEXT: v21: boolean = IsInBounds v0, v18
-# CHECK-NEXT: Branch v21 -> taken b8(| 0), notTaken b15()
-# CHECK-NEXT: b8(v22: guard):
-# CHECK-NEXT: v23: L0 = GetArrayElement v0, v18, v22 arrayStorage=Contiguous level=Proven accessSite=69 [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v24: boolean = TypeTest v6 testedType=f6
-# CHECK-NEXT: Branch v24 -> taken b9(), notTaken b10()
+# CHECK-NEXT: v15: boolean = Less v13, v8
+# CHECK-NEXT: Branch v15 -> taken b5(| 0), notTaken b21()
+# CHECK-NEXT: b5(v16: int[0, 4294967294]):
+# CHECK-NEXT: v17: int[0, 4294967294] = Sub v16, v9
+# CHECK-NEXT: v18: boolean = HasArrayElement v0, v16 arrayStorage=Contiguous level=Proven accessSite=68 [keyIsIntegral]
+# CHECK-NEXT: Branch v18 -> taken b6(), notTaken b19()
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v19: boolean = IsInBounds v0, v16
+# CHECK-NEXT: Branch v19 -> taken b7(| 0), notTaken b11()
+# CHECK-NEXT: b7(v20: guard):
+# CHECK-NEXT: v21: L0 = GetArrayElement v0, v16, v20 arrayStorage=Contiguous level=Proven accessSite=69 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v22: boolean = TypeTest v6 testedType=f6
+# CHECK-NEXT: Branch v22 -> taken b8(), notTaken b9()
+# CHECK-NEXT: b8():
+# CHECK-NEXT: v23: "<li class=\"item-of-a-list\">" = String string="<li class=\"item-of-a-list\">"
+# CHECK-NEXT: v24: string = GetSlot v21 key="name" receivers=[L0] level=Proven accessSite=45
+# CHECK-NEXT: v25: "</li>" = String string="</li>"
+# CHECK-NEXT: v26: string = Strcat v23, v24, v25
+# CHECK-NEXT: Jump -> next b10(v26)
 # CHECK-NEXT: b9():
-# CHECK-NEXT: v25: "<li class=\"item-of-a-list\">" = String string="<li class=\"item-of-a-list\">"
-# CHECK-NEXT: v26: string = GetSlot v23 key="name" receivers=[L0] level=Proven accessSite=45
-# CHECK-NEXT: v27: "</li>" = String string="</li>"
-# CHECK-NEXT: v28: string = Strcat v25, v26, v27
-# CHECK-NEXT: Jump -> next b11(v28)
-# CHECK-NEXT: b10():
-# CHECK-NEXT: v29: string = CallDirect v23 function=f6 accessSite=47 @0:7 tail
-# CHECK-NEXT: Jump -> next b11(v29)
-# CHECK-NEXT: b11(v30: string):
-# CHECK-NEXT: Jump -> next b12(v14)
-# CHECK-NEXT: b12(v31: int[0, 4294967295]):
+# CHECK-NEXT: v27: string = CallDirect v21 function=f6 accessSite=47 @0:7 tail
+# CHECK-NEXT: Jump -> next b10(v27)
+# CHECK-NEXT: b10(v28: string):
+# CHECK-NEXT: Jump -> next b15(v28)
+# CHECK-NEXT: b11() frequency=Rare:
+# CHECK-NEXT: v29: undefined|L0 = GetArrayElement v0, v16 arrayStorage=Contiguous level=Proven accessSite=69 [keyIsIntegral]
+# CHECK-NEXT: v30: boolean = TypeTest v6 testedType=f6
+# CHECK-NEXT: Branch v30 -> taken b12(), notTaken b13()
+# CHECK-NEXT: b12() frequency=Rare:
+# CHECK-NEXT: v31: string = CallDirect v29 function=f6 accessSite=72 [calleeIsPredicted]
+# CHECK-NEXT: Jump -> next b14(v31)
+# CHECK-NEXT: b13() frequency=Rare:
+# CHECK-NEXT: v32: string = CallDirect v29 function=f8 accessSite=72 [calleeIsPredicted]
+# CHECK-NEXT: Jump -> next b14(v32)
+# CHECK-NEXT: b14(v33: string) frequency=Rare:
+# CHECK-NEXT: Jump -> next b15(v33)
+# CHECK-NEXT: b15(v34: string):
+# CHECK-NEXT: Jump -> next b16(v12)
+# CHECK-NEXT: b16(v35: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v33: boolean = Less v31, v19
-# CHECK-NEXT: Branch v33 -> taken b13(| 0), notTaken b14()
-# CHECK-NEXT: b13(v34: int[0, 4294967293]):
+# CHECK-NEXT: v37: boolean = Less v35, v17
+# CHECK-NEXT: Branch v37 -> taken b17(| 0), notTaken b18()
+# CHECK-NEXT: b17(v38: int[0, 4294967293]):
 # CHECK-NEXT: StringBuilderAppend v11, v7
-# CHECK-NEXT: v36: int[1, 4294967294] = Increment v34
-# CHECK-NEXT: Jump -> next b12(v36)
-# CHECK-NEXT: b14():
-# CHECK-NEXT: StringBuilderAppend v11, v30
-# CHECK-NEXT: v38: int[1, 4294967295] = Increment v18
-# CHECK-NEXT: Jump -> next b5(v31, v38)
-# CHECK-NEXT: b15() frequency=Rare:
-# CHECK-NEXT: v39: undefined|L0 = GetArrayElement v0, v18 arrayStorage=Contiguous level=Proven accessSite=69 [keyIsIntegral]
-# CHECK-NEXT: v40: boolean = TypeTest v6 testedType=f6
-# CHECK-NEXT: Branch v40 -> taken b16(), notTaken b17()
-# CHECK-NEXT: b16() frequency=Rare:
-# CHECK-NEXT: v41: string = CallDirect v39 function=f6 accessSite=72 [calleeIsPredicted]
-# CHECK-NEXT: Jump -> next b18(v41)
-# CHECK-NEXT: b17() frequency=Rare:
-# CHECK-NEXT: v42: string = CallDirect v39 function=f8 accessSite=72 [calleeIsPredicted]
-# CHECK-NEXT: Jump -> next b18(v42)
-# CHECK-NEXT: b18(v43: string) frequency=Rare:
-# CHECK-NEXT: Jump -> next b19(v14)
-# CHECK-NEXT: b19(v44: int[0, 4294967295]) frequency=Unlikely:
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v46: boolean = Less v44, v19
-# CHECK-NEXT: Branch v46 -> taken b20(| 0), notTaken b21()
-# CHECK-NEXT: b20(v47: int[0, 4294967293]) frequency=Unlikely:
-# CHECK-NEXT: StringBuilderAppend v11, v7
-# CHECK-NEXT: v49: int[1, 4294967294] = Increment v47
-# CHECK-NEXT: Jump -> next b19(v49)
-# CHECK-NEXT: b21() frequency=Unlikely:
-# CHECK-NEXT: StringBuilderAppend v11, v43
-# CHECK-NEXT: Jump -> next b23(v44)
-# CHECK-NEXT: b22() frequency=Rare:
-# CHECK-NEXT: Jump -> next b23(v14)
-# CHECK-NEXT: b23(v51: int[0, 4294967295]) frequency=Unlikely:
-# CHECK-NEXT: v52: int[1, 4294967295] = Increment v18
-# CHECK-NEXT: Jump -> next b4(v51, v52)
-# CHECK-NEXT: b24():
-# CHECK-NEXT: v53: string = StringBuilderFinish v11 @0:4 tail
-# CHECK-NEXT: v54: string = CallDirect v53, v7, v14, v8 function=f19 accessSite=100 @0:4 tail
-# CHECK-NEXT: v55: "</ul>" = String string="</ul>"
-# CHECK-NEXT: v56: "<ul>" = String string="<ul>"
-# CHECK-NEXT: v57: string = Strcat v56, v54, v55
-# CHECK-NEXT: Return v57
+# CHECK-NEXT: v40: int[1, 4294967294] = Increment v38
+# CHECK-NEXT: Jump -> next b16(v40)
+# CHECK-NEXT: b18():
+# CHECK-NEXT: StringBuilderAppend v11, v34
+# CHECK-NEXT: Jump -> next b20(v35)
+# CHECK-NEXT: b19() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b20(v12)
+# CHECK-NEXT: b20(v42: int[0, 4294967295]):
+# CHECK-NEXT: v43: int[1, 4294967295] = Increment v16
+# CHECK-NEXT: Jump -> next b4(v42, v43)
+# CHECK-NEXT: b21():
+# CHECK-NEXT: v44: string = StringBuilderFinish v11 @0:4 tail
+# CHECK-NEXT: v45: string = CallDirect v44, v7, v12, v8 function=f19 accessSite=100 @0:4 tail
+# CHECK-NEXT: v46: "</ul>" = String string="</ul>"
+# CHECK-NEXT: v47: "<ul>" = String string="<ul>"
+# CHECK-NEXT: v48: string = Strcat v47, v45, v46
+# CHECK-NEXT: Return v48
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="separatorOfAnyKind"
 # CHECK: module=m0 position=1105 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]> site=w8 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|1|"-"}] results=[{type=string site=w9 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

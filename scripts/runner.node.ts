@@ -273,9 +273,12 @@ const withSymbols = (execPath: string) =>
   [...strippedBuns].find(([, stripped]) => stripped === execPath)?.[0] ?? execPath;
 const bunFor = (execPath: string, testPath: string) =>
   (buildsManyExecutables(testPath) && strippedBuns.get(execPath)) || execPath;
+// With AddressSanitizer what has failed is tried again with the debug information: a report then names files and lines, and inlined functions too are held against test/leaksan.supp.
+const bunForTry = (execPath: string, testPath: string, attempt: number) =>
+  attempt > 1 && basename(execPath).includes("asan") ? execPath : bunFor(execPath, testPath);
 // What a program under test/aot/parallel takes of a shard: its part of a build that it shares with others, and two runs.
-// One that takes three seconds or more, as most that are built alone with much of Bun's library do, has an entry in expected-durations.json.
-const aotProgramCostMs = 800;
+// One that took 0.7 s or more has an entry in expected-durations.json.
+const aotProgramCostMs = 300;
 const spawnTimeout = 5_000;
 const spawnBunTimeout = 20_000; // when running with ASAN/LSAN bun can take a bit longer to exit, not a bug.
 const testTimeout = 3 * 60_000;
@@ -1154,10 +1157,11 @@ async function runTests(): Promise<TestResult[]> {
           concurrent,
         );
       } else {
+        let attempt = 0;
         return runTest(
           title,
           async () =>
-            spawnBunTest(bunFor(execPath, testPath), join("test", testPath), {
+            spawnBunTest(bunForTry(execPath, testPath, ++attempt), join("test", testPath), {
               cwd,
               stdout: concurrent ? () => {} : pipeTestStdout(process.stdout),
               stderr: concurrent ? () => {} : pipeTestStdout(process.stderr),
@@ -1346,13 +1350,7 @@ async function runTests(): Promise<TestResult[]> {
       let unfinishedLine = "";
       let unexpectedLine: string | undefined;
       const { error, exitCode, crashes } = await spawnBun(bunFor(execPath, "aot/"), {
-        args: [
-          aotDriver,
-          `--jobs=${aotWidth}`,
-          `--files-from=${list}`,
-          // Linux on x64 asks each program as it is when it is built alone. The others ask what differs there, which is not what the compiler knows about a program.
-          ...(isLinux && isX64 && !basename(execPath).includes("asan") ? [] : ["--one-program=all"]),
-        ],
+        args: [aotDriver, `--jobs=${aotWidth}`, `--files-from=${list}`],
         cwd,
         timeout: Math.max(60_000, Math.min(60 * 60_000, jobBudgetMs() - 5 * 60_000)),
         idleTimeout: 4 * 60_000,
@@ -3134,7 +3132,7 @@ async function unpackStrippedBun(releasePath: string, profileZipPath: string, ex
     .filter(filename => /^bun.*\.zip$/i.test(filename))
     .map(filename => join(releasePath, filename))
     .find(path => path !== profileZipPath);
-  if (!zipPath) return;
+  if (!zipPath) return removeDebugInformation(execPath);
   const unpacked = join(await unzip(zipPath), basename(zipPath, ".zip"), "bun");
   if (!existsSync(unpacked)) return;
   const stripped = join(dirname(execPath), "bun-stripped");
@@ -3142,6 +3140,23 @@ async function unpackStrippedBun(releasePath: string, profileZipPath: string, ex
   chmodSync(stripped, 0o755);
   rmSync(dirname(dirname(unpacked)), { recursive: true, force: true });
   if (getRevision(stripped) === getRevision(execPath)) strippedBuns.set(execPath, stripped);
+}
+
+/**
+ * A link with AddressSanitizer uploads one archive, with the debug information, which is more than half of the file.
+ * A process that ends with something to hold against test/leaksan.supp starts a symbolizer, and that begins by unpacking
+ * all the debug information of the executable: seconds for each run of a program of one line. The file names functions,
+ * so the table of symbols stays.
+ */
+function removeDebugInformation(execPath: string): void {
+  const strip = which(["llvm-strip", "strip"]);
+  if (!strip) return;
+  const stripped = join(dirname(execPath), `${basename(execPath)}-stripped`);
+  const { status } = spawnSync(strip, ["--strip-debug", "-o", stripped, execPath], {
+    stdio: "inherit",
+    timeout: 120_000,
+  });
+  if (status === 0 && getRevision(stripped) === getRevision(execPath)) strippedBuns.set(execPath, stripped);
 }
 
 function getRevision(execPath: string): string {

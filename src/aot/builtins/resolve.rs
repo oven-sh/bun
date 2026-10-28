@@ -114,6 +114,8 @@ pub enum ModuleObjectUse {
     Object,
     /// The object, or the list of them, goes where nothing follows it. Whoever gets it reads any member, `parent` and `children` among them.
     HandedOn,
+    /// `process` goes where nothing follows it. Whoever gets it may read `mainModule` there.
+    HolderHandedOn,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

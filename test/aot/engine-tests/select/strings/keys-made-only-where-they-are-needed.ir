@@ -844,12 +844,12 @@ runtimefunction id=131091 function=f38 visibility=Private
 # CHECK-NEXT: b0(v0: undefined|L3 @JSValue):
 # CHECK-NEXT: v1: L3 @JSValue = RequireObjectCoercible v0 name="counts"
 # CHECK-NEXT: v2: boolean @Boolean = HasBirthFieldsFilled v1
-# CHECK-NEXT: TestAndBranch v2 -> taken b1(| 0), notTaken b3()
+# CHECK-NEXT: TestAndBranch v2 -> taken b1(| 0), notTaken b4()
 # CHECK-NEXT: b1(v3: guard @Void):
 # CHECK-NEXT: v4: undefined|null|Map<undefined|null|string, number> @JSValue = GetSlot v1, v3 key="counts" receivers=[L3] level=Expected accessSite=34 fieldAccess=1
 # CHECK-NEXT: v5: Map<undefined|null|string, number> @JSValue = AssumeType v4 provenType=object
 # CHECK-NEXT: v6: boolean @Boolean = IsPristine v5 builtinClass=Map aspects=[Names]
-# CHECK-NEXT: TestAndBranch v6 -> taken b2(), notTaken b4(v5)
+# CHECK-NEXT: TestAndBranch v6 -> taken b2(), notTaken b5(v5)
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v7: int[0, 2147483647] @Int32 = CallInline v5 inlineBuiltin=MapSize overload=MapPrototypeSize/0 accessSite=35
 # CHECK-NEXT: v8: "," @Cell = String string=","
@@ -861,71 +861,43 @@ runtimefunction id=131091 function=f38 visibility=Private
 # CHECK-NEXT: v14: Array<Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v13 provenType=Array<Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v15: Map<undefined|null|string, number> @JSValue = AssumeType v4 provenType=object
 # CHECK-NEXT: v16: undefined @JSValue = CallDirect v14, v15 function=f41 [isNeverInlined]
-# CHECK-NEXT: Jump -> next b6(v12, v14)
-# CHECK-NEXT: b3() frequency=Rare:
-# CHECK-NEXT: v17: anything @JSValue = PropGet v1 key="counts" accessSite=34 receivers=[L3]
-# CHECK-NEXT: v18: object @JSValue = AssumeType v17 provenType=object
-# CHECK-NEXT: Jump -> next b4(v18)
-# CHECK-NEXT: b4(v19: object @JSValue) frequency=Rare:
-# CHECK-NEXT: v20: anything @JSValue = PropGet v19 key="size" accessSite=35 siteCache=0
-# CHECK-NEXT: v21: undefined|number @JSValue = AssumeType v20 provenType=undefined|number
-# CHECK-NEXT: v22: boolean @Boolean = TypeTest v21 testedType=number
-# CHECK-NEXT: TestAndBranch v22 -> taken b5(| 0), notTaken b7()
-# CHECK-NEXT: b5(v23: number @Double) frequency=Rare:
-# CHECK-NEXT: v24: "," @Cell = String string=","
-# CHECK-NEXT: v25: Set<never, proven, pristine[Storage, Names]> @Cell = GetSlot v1 key="present" receivers=[L3] level=Proven accessSite=36 fieldAccess=2
-# CHECK-NEXT: v26: int[0, 2147483647] @Int32 = CallInline v25 inlineBuiltin=SetSize overload=SetPrototypeSize/0 accessSite=37
-# CHECK-NEXT: v27: "," @Cell = String string=","
-# CHECK-NEXT: v28: string @Cell = Strcat v23, v24, v26, v27
-# CHECK-NEXT: v29: Array<Array<never, proven, pristine[Storage, Names, Dense]>, Contiguous> @Cell = NewArray contents=Array<never, proven, pristine[Storage, Names, Dense]> allocationSite=13 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v30: Array<Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v29 provenType=Array<Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v31: anything @JSValue = PropGet v1 key="counts" accessSite=38 receivers=[L3]
-# CHECK-NEXT: v32: object @JSValue = AssumeType v31 provenType=object
-# CHECK-NEXT: v33: undefined @JSValue = CallDirect v30, v32 function=f41 [isNeverInlined]
-# CHECK-NEXT: Jump -> next b6(v28, v30)
-# CHECK-NEXT: b6(v34: string @Cell, v35: Array<Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell):
-# CHECK-NEXT: v36: 0 @OptionalDouble = Integer
-# CHECK-NEXT: v37: 2 @OptionalDouble = Integer integer=2
-# CHECK-NEXT: TryCallInline v35, v36, v37 inlineBuiltin=ArraySlice overload=ArrayPrototypeSlice/0 accessSite=40 -> done b14(), miss b15()
-# CHECK-NEXT: b7() frequency=Unlikely:
-# CHECK-NEXT: v43: "undefined," @Cell = String string="undefined,"
-# CHECK-NEXT: v44: Set<never, proven, pristine[Storage, Names]> @Cell = GetSlot v1 key="present" receivers=[L3] level=Proven accessSite=36 fieldAccess=2
-# CHECK-NEXT: v45: int[0, 2147483647] @Int32 = CallInline v44 inlineBuiltin=SetSize overload=SetPrototypeSize/0 accessSite=37
-# CHECK-NEXT: v46: "," @Cell = String string=","
-# CHECK-NEXT: v47: Array<Array<never, proven, pristine[Storage, Names, Dense]>, Contiguous> @Cell = NewArray contents=Array<never, proven, pristine[Storage, Names, Dense]> allocationSite=13 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v48: Array<Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v47 provenType=Array<Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v49: anything @JSValue = PropGet v1 key="counts" accessSite=38 receivers=[L3]
-# CHECK-NEXT: v50: object @JSValue = AssumeType v49 provenType=object
-# CHECK-NEXT: v51: undefined @JSValue = CallDirect v48, v50 function=f41 [isNeverInlined]
-# CHECK-NEXT: v52: 0 @OptionalDouble = Integer
-# CHECK-NEXT: v53: 2 @OptionalDouble = Integer integer=2
-# CHECK-NEXT: TryCallInline v48, v52, v53 inlineBuiltin=ArraySlice overload=ArrayPrototypeSlice/0 accessSite=40 -> done b10(), miss b11()
-# CHECK-NEXT: b8(v57: string @Cell) frequency=Unlikely:
-# CHECK-NEXT: v58: string @Cell = Strcat v43, v45, v46, v57
-# CHECK-NEXT: Return v58
+# CHECK-NEXT: Jump -> next b3(v12, v14)
+# CHECK-NEXT: b3(v17: string @Cell, v18: Array<Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell):
+# CHECK-NEXT: v19: 0 @OptionalDouble = Integer
+# CHECK-NEXT: v20: 2 @OptionalDouble = Integer integer=2
+# CHECK-NEXT: TryCallInline v18, v19, v20 inlineBuiltin=ArraySlice overload=ArrayPrototypeSlice/0 accessSite=40 -> done b8(), miss b9()
+# CHECK-NEXT: b4() frequency=Rare:
+# CHECK-NEXT: v26: anything @JSValue = PropGet v1 key="counts" accessSite=34 receivers=[L3]
+# CHECK-NEXT: v27: object @JSValue = AssumeType v26 provenType=object
+# CHECK-NEXT: Jump -> next b5(v27)
+# CHECK-NEXT: b5(v28: object @JSValue) frequency=Rare:
+# CHECK-NEXT: v29: anything @JSValue = PropGet v28 key="size" accessSite=35 siteCache=0
+# CHECK-NEXT: v30: undefined|number @JSValue = AssumeType v29 provenType=undefined|number
+# CHECK-NEXT: v31: undefined|number @JSValue = Expect v30 expectedType=number
+# CHECK-NEXT: v32: "," @Cell = String string=","
+# CHECK-NEXT: v33: Set<never, proven, pristine[Storage, Names]> @Cell = GetSlot v1 key="present" receivers=[L3] level=Proven accessSite=36 fieldAccess=2
+# CHECK-NEXT: v34: int[0, 2147483647] @Int32 = CallInline v33 inlineBuiltin=SetSize overload=SetPrototypeSize/0 accessSite=37
+# CHECK-NEXT: v35: "," @Cell = String string=","
+# CHECK-NEXT: v36: string @Cell = Strcat v31, v32, v34, v35
+# CHECK-NEXT: v37: Array<Array<never, proven, pristine[Storage, Names, Dense]>, Contiguous> @Cell = NewArray contents=Array<never, proven, pristine[Storage, Names, Dense]> allocationSite=13 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v38: Array<Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v37 provenType=Array<Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v39: anything @JSValue = PropGet v1 key="counts" accessSite=38 receivers=[L3]
+# CHECK-NEXT: v40: object @JSValue = AssumeType v39 provenType=object
+# CHECK-NEXT: v41: undefined @JSValue = CallDirect v38, v40 function=f41 [isNeverInlined]
+# CHECK-NEXT: Jump -> next b3(v36, v38)
+# CHECK-NEXT: b6(v24: string @Cell):
+# CHECK-NEXT: v25: string @Cell = Add v17, v24 form=Strings
+# CHECK-NEXT: Return v25
+# CHECK-NEXT: b7() frequency=Rare:
+# CHECK-NEXT: v42: string @JSValue = CallBuiltin v22, v23 overload=ArrayPrototypeJoin/0 accessSite=42
+# CHECK-NEXT: Jump -> next b6(v42)
+# CHECK-NEXT: b8(v21: Array<Array<never, proven, pristine[Storage, Names, Dense]>> @Cell):
+# CHECK-NEXT: v22: Array<Array<never, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> @Cell = AssumeType v21 provenType=Array<Array<never, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v23: "+" @JSValue = String string="+"
+# CHECK-NEXT: TryCallInline v22, v23 inlineBuiltin=ArrayJoin overload=ArrayPrototypeJoin/0 accessSite=42 -> done b6(), miss b7()
 # CHECK-NEXT: b9() frequency=Rare:
-# CHECK-NEXT: v59: string @JSValue = CallBuiltin v55, v56 overload=ArrayPrototypeJoin/0 accessSite=42
-# CHECK-NEXT: Jump -> next b8(v59)
-# CHECK-NEXT: b10(v54: Array<Array<never, proven, pristine[Storage, Names, Dense]>> @Cell) frequency=Unlikely:
-# CHECK-NEXT: v55: Array<Array<never, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> @Cell = AssumeType v54 provenType=Array<Array<never, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v56: "+" @JSValue = String string="+"
-# CHECK-NEXT: TryCallInline v55, v56 inlineBuiltin=ArrayJoin overload=ArrayPrototypeJoin/0 accessSite=42 -> done b8(), miss b9()
-# CHECK-NEXT: b11() frequency=Rare:
-# CHECK-NEXT: v60: Array<Array<never, proven, pristine[Storage, Names, Dense]>> @JSValue = CallBuiltin v48, v52, v53 overload=ArrayPrototypeSlice/0 accessSite=40
-# CHECK-NEXT: Jump -> next b10(v60)
-# CHECK-NEXT: b12(v41: string @Cell):
-# CHECK-NEXT: v42: string @Cell = Add v34, v41 form=Strings
-# CHECK-NEXT: Return v42
-# CHECK-NEXT: b13() frequency=Rare:
-# CHECK-NEXT: v61: string @JSValue = CallBuiltin v39, v40 overload=ArrayPrototypeJoin/0 accessSite=42
-# CHECK-NEXT: Jump -> next b12(v61)
-# CHECK-NEXT: b14(v38: Array<Array<never, proven, pristine[Storage, Names, Dense]>> @Cell):
-# CHECK-NEXT: v39: Array<Array<never, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> @Cell = AssumeType v38 provenType=Array<Array<never, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v40: "+" @JSValue = String string="+"
-# CHECK-NEXT: TryCallInline v39, v40 inlineBuiltin=ArrayJoin overload=ArrayPrototypeJoin/0 accessSite=42 -> done b12(), miss b13()
-# CHECK-NEXT: b15() frequency=Rare:
-# CHECK-NEXT: v62: Array<Array<never, proven, pristine[Storage, Names, Dense]>> @JSValue = CallBuiltin v35, v36, v37 overload=ArrayPrototypeSlice/0 accessSite=40
-# CHECK-NEXT: Jump -> next b14(v62)
+# CHECK-NEXT: v43: Array<Array<never, proven, pristine[Storage, Names, Dense]>> @JSValue = CallBuiltin v18, v19, v20 overload=ArrayPrototypeSlice/0 accessSite=40
+# CHECK-NEXT: Jump -> next b8(v43)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="onAnyShelf"
 # CHECK: module=m0 position=4771 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<L3, proven, Contiguous, pristine[Storage, Names, Dense]> site=w31 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w33 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f8 parameterMap=[{original=0}]} {

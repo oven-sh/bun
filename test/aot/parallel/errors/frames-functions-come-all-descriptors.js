@@ -10,6 +10,8 @@ const top = stack =>
     .join(" | ");
 const rename = (f, n) => Object.defineProperty(f, "name", { value: n });
 const key = Symbol("key");
+// The descriptors of another object go where nobody follows them.
+new CustomEvent("x", { detail: Object.getOwnPropertyDescriptors({ p: 1 }) });
 
 const roads = {
   getter(n) {

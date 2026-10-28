@@ -783,9 +783,14 @@ runtimefunction id=131091 function=f30 visibility=Private
 # CHECK-LABEL: function {{*}}name="clampToLength"
 # CHECK: module=m3 position=720 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w108}, {type=number site=w109 flags=[IsExpected]}] results=[{type=0 site=w110}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: number, v1: anything ~ number):
-# CHECK-NEXT: v2: number|string|bigint ~ number = Add v1, v0
+# CHECK-NEXT: v2: boolean ~ true = TypeTest v1 testedType=number
+# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2(| 0)
+# CHECK-NEXT: b1():
 # CHECK-NEXT: v3: 0 = Integer
 # CHECK-NEXT: Return v3
+# CHECK-NEXT: b2(v4: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: v5: number|string|bigint = Add v4, v0
+# CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="mapped"
 # CHECK: module=m0 position=499 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w5}, {type=10 site=w6}] results=[{type=undefined|null|Array<number> site=w7 flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameterMap=[{original=0}, {original=1}]} inlineFrames=[{}, {callee=f17 callPosition=4294967295 module=m1}, {callee=f39 callPosition=5210 parent=1 module=m3}, {callee=f30 callPosition=2337 parent=2 module=m3}, {callee=f24 callPosition=4294967295 parent=3 module=m3}, {callee=f8 callPosition=4294967295 parent=3 calleeIsPredicted=true module=m0}, {callee=f33 callPosition=580 parent=5 isTailCall=true module=m0}] {
@@ -860,23 +865,25 @@ runtimefunction id=131091 function=f30 visibility=Private
 # CHECK-NEXT: b18():
 # CHECK-NEXT: v41: 0 = Integer
 # CHECK-NEXT: v42: Array = TruncateNewArray v10, v41
-# CHECK-NEXT: v43: 0 = Integer
-# CHECK-NEXT: v44: boolean = HasArrayStorage v42 arrayStorage=Double
-# CHECK-NEXT: Branch v44 -> taken b19(| 0), notTaken b21()
-# CHECK-NEXT: b19(v45: guard):
-# CHECK-NEXT: v46: boolean = IsElementPresent v42, v43, v45 arrayStorage=Double [keyIsIntegral]
-# CHECK-NEXT: Branch v46 -> taken b20(), notTaken b22()
+# CHECK-NEXT: v43: Array ~ Array<number> = Expect v42 expectedType=undefined|null|Array<number>
+# CHECK-NEXT: v44: 0 = Integer
+# CHECK-NEXT: v45: Array<number> = Upcast v43 castType=Array<number>
+# CHECK-NEXT: v46: boolean = HasArrayStorage v45 arrayStorage=Double
+# CHECK-NEXT: Branch v46 -> taken b19(| 0), notTaken b21()
+# CHECK-NEXT: b19(v47: guard):
+# CHECK-NEXT: v48: boolean = IsElementPresent v45, v44, v47 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: Branch v48 -> taken b20(), notTaken b22()
 # CHECK-NEXT: b20():
-# CHECK-NEXT: Return v42
+# CHECK-NEXT: Return v45
 # CHECK-NEXT: b21() frequency=Rare:
-# CHECK-NEXT: ConvertToDoubleStorage v42
+# CHECK-NEXT: ConvertToDoubleStorage v45
 # CHECK-NEXT: Jump -> next b22()
 # CHECK-NEXT: b22() frequency=Rare:
-# CHECK-NEXT: v48: anything ~ undefined|number = ElemGet v42, v43 accessSite=6 [keyIsIntegral]
-# CHECK-NEXT: Return v42
+# CHECK-NEXT: v50: anything ~ undefined|number = ElemGet v43, v44 accessSite=6 [keyIsIntegral]
+# CHECK-NEXT: Return v43
 # CHECK-NEXT: b23() frequency=Rare:
-# CHECK-NEXT: v49: anything ~ undefined|null|Array<number> = CallDirect v0, v1 function=f34 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v49 requirement=Allowed
+# CHECK-NEXT: v51: anything ~ undefined|null|Array<number> = CallDirect v0, v1 function=f34 [isNeverInlined]
+# CHECK-NEXT: ReturnCall v51 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="mapped"
 # CHECK: module=m0 position=499 role=GenericVersion flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w5 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=10 site=w6}] results=[{type=undefined|null|Array<number> site=w7 flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f32} {

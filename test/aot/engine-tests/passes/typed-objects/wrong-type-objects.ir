@@ -219,36 +219,33 @@ function f17 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK: module=m0 position=2416 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|L1|L2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: undefined|L1|L2):
 # CHECK-NEXT: v1: boolean = TypeTest v0 testedType=L1
-# CHECK-NEXT: Branch v1 -> taken b3(), notTaken b1(| 0)
+# CHECK-NEXT: Branch v1 -> taken b5(), notTaken b1(| 0)
 # CHECK-NEXT: b1(v2: undefined|L2):
 # CHECK-NEXT: v3: boolean = TypeTest v2 testedType=L2
-# CHECK-NEXT: Branch v3 -> taken b6(), notTaken b2()
+# CHECK-NEXT: Branch v3 -> taken b3(), notTaken b2()
 # CHECK-NEXT: b2() frequency=Unlikely:
 # CHECK-NEXT: v4: undefined = Undefined
 # CHECK-NEXT: v5: boolean = PropHas v4 key="habitat" accessSite=17 receivers=[L1, L2]
-# CHECK-NEXT: Branch v5 -> taken b3(), notTaken b6()
+# CHECK-NEXT: Branch v5 -> taken b6(), notTaken b3()
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v6: boolean = TypeTest v0 testedType=undefined|null|L1
-# CHECK-NEXT: Branch v6 -> taken b4(| 0), notTaken b5()
-# CHECK-NEXT: b4(v7: undefined|L1):
-# CHECK-NEXT: v8: L1 = RequireObjectCoercible v7 name="habitat"
-# CHECK-NEXT: v9: "fish:true" = String string="fish:true"
-# CHECK-NEXT: Jump -> next b7(v9)
-# CHECK-NEXT: b5() frequency=Unlikely:
-# CHECK-NEXT: v10: undefined = Undefined
-# CHECK-NEXT: v11: never = RequireObjectCoercible v10 name="salt"
+# CHECK-NEXT: v6: "car:" = String string="car:"
+# CHECK-NEXT: v7: fact = Specified
+# CHECK-NEXT: v8: undefined|L2 = AssumeType v0, v7 provenType=undefined|L2
+# CHECK-NEXT: v9: L2 = RequireObjectCoercible v8 name="engine"
+# CHECK-NEXT: v10: L5 = GetSlot v9 key="engine" receivers=[L2] level=Expected accessSite=20
+# CHECK-NEXT: v11: string = TypeOf v10
+# CHECK-NEXT: v12: string = Add v6, v11
+# CHECK-NEXT: Jump -> next b4(v12)
+# CHECK-NEXT: b4(v13: string):
+# CHECK-NEXT: Return v13
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v14: "fish:true" = String string="fish:true"
+# CHECK-NEXT: Jump -> next b4(v14)
+# CHECK-NEXT: b6() frequency=Rare:
+# CHECK-NEXT: v15: fact = Specified
+# CHECK-NEXT: v16: undefined = AssumeType v0, v15 provenType=undefined
+# CHECK-NEXT: v17: never = RequireObjectCoercible v16 name="habitat"
 # CHECK-NEXT: Unreachable
-# CHECK-NEXT: b6():
-# CHECK-NEXT: v12: "car:" = String string="car:"
-# CHECK-NEXT: v13: fact = Specified
-# CHECK-NEXT: v14: undefined|L2 = AssumeType v0, v13 provenType=undefined|L2
-# CHECK-NEXT: v15: L2 = RequireObjectCoercible v14 name="engine"
-# CHECK-NEXT: v16: L5 = GetSlot v15 key="engine" receivers=[L2] level=Proven accessSite=20
-# CHECK-NEXT: v17: string = TypeOf v16
-# CHECK-NEXT: v18: string = Add v12, v17
-# CHECK-NEXT: Jump -> next b7(v18)
-# CHECK-NEXT: b7(v19: string):
-# CHECK-NEXT: Return v19
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="attempt"
 # CHECK: module=m0 position=424 role=CalleeVersion flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=f8|f9}] results=[{type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameter=1073741824 parameterMap=[{original=0}]} creator=Version{provenVersion=f2} inlineFrames=[{}, {callee=f9 callPosition=4294967295 module=m0}, {callee=f8 callPosition=4294967295 module=m0}] {

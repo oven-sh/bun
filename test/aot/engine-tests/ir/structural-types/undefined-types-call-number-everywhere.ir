@@ -628,22 +628,16 @@ function f78 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: DefineSetter v0, v1 key="level"
 # CHECK-NEXT: v3: L2 = FinishObject v0
 # CHECK-NEXT: v4: boolean = IsSlotFilled v3 key="level" receivers=[L2] level=Expected
-# CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b3()
+# CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v5: guard):
 # CHECK-NEXT: v6: function = GetSlotGetter v3, v5 key="level" receivers=[L2] level=Expected
 # CHECK-NEXT: v7: anything ~ undefined|number = Call v6, v3 accessSite=30
-# CHECK-NEXT: v8: boolean = TypeTest v7 testedType=number
-# CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b5(| 0)
-# CHECK-NEXT: b2(v9: number):
-# CHECK-NEXT: Return v9
-# CHECK-NEXT: b3() frequency=Rare:
-# CHECK-NEXT: v10: anything ~ undefined|number = PropGet v3 key="level" accessSite=30 receivers=[L2]
-# CHECK-NEXT: v11: boolean = TypeTest v10 testedType=number
-# CHECK-NEXT: Branch v11 -> taken b4(| 0), notTaken b5(| 0)
-# CHECK-NEXT: b4(v12: number) frequency=Rare:
-# CHECK-NEXT: Return v12
-# CHECK-NEXT: b5(v13: undefined|null|boolean|string|symbol|bigint|object ~ undefined) frequency=Unlikely:
-# CHECK-NEXT: Return v13
+# CHECK-NEXT: v8: anything ~ number = Expect v7 expectedType=number
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: v9: anything ~ undefined|number = PropGet v3 key="level" accessSite=30 receivers=[L2]
+# CHECK-NEXT: v10: anything ~ number = Expect v9 expectedType=number
+# CHECK-NEXT: Return v10
 # CHECK-NEXT: }
 # CHECK-LABEL: function f19 module=
 # CHECK: m0 position=2882 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function site=w24 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number site=w29}] functionTypes=[f55] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f81 fallback=f99} {
@@ -807,7 +801,7 @@ function f78 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|function
 # CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1() frequency=Rare:
-# CHECK-NEXT: v2: undefined|string = CallDirect function=f160
+# CHECK-NEXT: v2: undefined|string = CallDirect function=f150
 # CHECK-NEXT: ReturnCall v2
 # CHECK-NEXT: b2() frequency=Rare:
 # CHECK-NEXT: v3: undefined|string = CallDirect v0 function=f112

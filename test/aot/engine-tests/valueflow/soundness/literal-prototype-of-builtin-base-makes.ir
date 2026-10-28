@@ -158,7 +158,7 @@ function f5 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v5: builtin(Object) = AssumeType v4 provenType=builtin(Object)
 # CHECK-NEXT: v6: object ~ L0 = SuperConstruct v5, v3 layout=L0 accessSite=8 callees=[builtin(Object)]
 # CHECK-NEXT: v7: boolean ~ true = TypeTest v6 testedType=L0
-# CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b6(| 0)
+# CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b4()
 # CHECK-NEXT: b1(v8: L0):
 # CHECK-NEXT: v9: boolean = HasLayoutPrototype v8
 # CHECK-NEXT: Branch v9 -> taken b2(| 0), notTaken b4()
@@ -169,17 +169,12 @@ function f5 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v12: undefined = Undefined
 # CHECK-NEXT: Jump -> next b5(v12)
 # CHECK-NEXT: b4() frequency=Unlikely:
-# CHECK-NEXT: v13: anything = PropGet v8 key="peek" accessSite=11
+# CHECK-NEXT: v13: anything = PropGet v6 key="peek" accessSite=11
 # CHECK-NEXT: Jump -> next b5(v13)
 # CHECK-NEXT: b5(v14: anything ~ undefined):
 # CHECK-NEXT: v15: string = TypeOf v14
 # CHECK-NEXT: v16: undefined = CallBuiltin -, v15 overload=ConsoleLog/0 accessSite=12
-# CHECK-NEXT: Return v8
-# CHECK-NEXT: b6(v17: object) frequency=Unlikely:
-# CHECK-NEXT: v18: anything = PropGet v17 key="peek" accessSite=11
-# CHECK-NEXT: v19: string = TypeOf v18
-# CHECK-NEXT: v20: undefined = CallBuiltin -, v19 overload=ConsoleLog/0 accessSite=12
-# CHECK-NEXT: Return v17
+# CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="A"
 # CHECK: module=m0 position=97 kind=DerivedConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget] captures=[{type=f1}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers takesNewTarget=true} {

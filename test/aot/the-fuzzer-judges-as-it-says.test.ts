@@ -28,7 +28,7 @@ import {
 } from "./fuzz/beds";
 import { fuzz } from "./fuzz/fuzzer";
 import { reduceFiles, type Whole } from "./fuzz/reduce";
-import { allSources } from "./fuzz/sources";
+import { allSources, inSeveralFiles, writtenAgain } from "./fuzz/sources";
 import { typeChecker, typingsOfBun } from "./fuzz/type-check";
 
 const options = { baseFlags: [], validate: false, threads: 1, buildSeconds: 60, runSeconds: 60 };
@@ -649,4 +649,17 @@ test("of two long lines that differ, what is shown begins a little in front of w
   );
   expect(detail("a 1\n", "a 2\n")).toBe(`plain "a 1" compiled "a 2"`);
   expect(detail("a\n", "a\nb\n")).toBe(`plain "" compiled "b"`);
+});
+
+// By itself, behind the others: it loads every generator, and what they hold makes each collection longer.
+one.skipIf(isWindows)("every source makes a program", async () => {
+  const sources = await allSources(join(import.meta.dir, "parallel"), new Set(), true);
+  const bed = { ...standIn(() => {}), takesSeveralFiles: true };
+  const startPython = ["by-python", "cases-written-by-scripts"];
+  const asked = Object.keys(sources).filter(
+    name => !startPython.includes(name) && !name.endsWith(inSeveralFiles) && !name.endsWith(writtenAgain),
+  );
+  expect(asked.length).toBeGreaterThan(300);
+  const seeds = Array.from({ length: 24 }, (_, seed) => seed);
+  expect(asked.filter(name => !seeds.some(seed => sources[name](seed, bed)))).toEqual([]);
 });

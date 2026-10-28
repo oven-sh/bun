@@ -2491,17 +2491,14 @@ runtimefunction id=131091 function=f33 visibility=Private
 # CHECK-NEXT: b12():
 # CHECK-NEXT: v26: string = CallDirect function=f12 accessSite=66
 # CHECK-NEXT: v27: string = Add v24, v26
-# CHECK-NEXT: Return v27
+# CHECK-NEXT: Jump -> next b14(v27)
 # CHECK-NEXT: b13() frequency=Rare:
 # CHECK-NEXT: v28: anything = Call v16 calleeName="error" accessSite=66 callees=[f12, ..]
-# CHECK-NEXT: v29: boolean = TypeTest v28 testedType=undefined|null|string
-# CHECK-NEXT: Branch v29 -> taken b14(| 0), notTaken b15(| 0)
-# CHECK-NEXT: b14(v30: undefined|null|string) frequency=Rare:
-# CHECK-NEXT: v31: string = Add v24, v30
+# CHECK-NEXT: v29: anything ~ undefined|null|string = Expect v28 expectedType=undefined|null|string
+# CHECK-NEXT: v30: string = Add v24, v29
+# CHECK-NEXT: Jump -> next b14(v30)
+# CHECK-NEXT: b14(v31: string):
 # CHECK-NEXT: Return v31
-# CHECK-NEXT: b15(v32: boolean|number|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v33: string = Add v24, v32
-# CHECK-NEXT: Return v33
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="helper"
 # CHECK: module=m0 position=551 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=w50}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode]

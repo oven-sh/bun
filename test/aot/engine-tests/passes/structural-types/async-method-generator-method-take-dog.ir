@@ -867,53 +867,45 @@ runtimefunction id=131091 function=f127 visibility=Private
 # CHECK-NEXT: Return v9
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="show"
-# CHECK: module=m0 position=1126 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string site=w1 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|L1|L4|L5 site=w2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f20 callPosition=4294967295 module=m0}] {
-# CHECK-NEXT: b0(v0: string, v1: undefined|L1|L4|L5) handler=b1():
+# CHECK: module=m0 position=1126 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string site=w1 flags=[OmitsNull, OmitsUndefined]}, {type=f20 site=w2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f20 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: string, v1: f20) handler=b1():
 # CHECK-NEXT: v2: ": " = String string=": "
 # CHECK-NEXT: v3: string = Add v0, v2
 # CHECK-NEXT: v4: f1 = GetModuleVariable variable=g0
+# CHECK-NEXT: v5: undefined|L1|L4|L5 = GetCapture v1 function=f20
 # CHECK-NEXT: v6: Array<string, Contiguous> = NewArray contents=string allocationSite=13 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v7: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v6 provenType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: b1() role=CatchHandler:
 # CHECK-NEXT: v8: anything = CatchValue
 # CHECK-NEXT: v9: ": threw " = String string=": threw "
 # CHECK-NEXT: v10: string = Add v0, v9
 # CHECK-NEXT: v11: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
 # CHECK-NEXT: v12: boolean = HasInPrototypeChain v8, v11
-# CHECK-NEXT: Branch v12 -> taken b2(), notTaken b6()
+# CHECK-NEXT: Branch v12 -> taken b2(), notTaken b3()
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v13: anything ~ undefined|null|Error = Upcast v8 castType=anything
 # CHECK-NEXT: v14: anything = PropGet v13 key="constructor" accessSite=5
-# CHECK-NEXT: v15: boolean = TypeTest v14 testedType=undefined|null|function
-# CHECK-NEXT: Branch v15 -> taken b3(| 0), notTaken b4(| 0)
-# CHECK-NEXT: b3(v16: undefined|null|function):
-# CHECK-NEXT: v17: function = RequireObjectCoercible v16 name="name"
-# CHECK-NEXT: v18: anything = PropGet v17 key="name" accessSite=6
-# CHECK-NEXT: v19: boolean = TypeTest v18 testedType=undefined|null|string
-# CHECK-NEXT: Branch v19 -> taken b6(), notTaken b5()
-# CHECK-NEXT: b4(v20: boolean|number|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v21: anything = PropGet v20 key="name" accessSite=6
+# CHECK-NEXT: v15: anything ~ undefined|null|function = Expect v14 expectedType=undefined|null|function
+# CHECK-NEXT: v16: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v15 name="name"
+# CHECK-NEXT: v17: anything = PropGet v16 key="name" accessSite=6
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v18: undefined = Undefined
+# CHECK-NEXT: Return v18
+# CHECK-NEXT: b4() handler=b6():
+# CHECK-NEXT: v19: L2 = GetModuleVariable variable=g8
+# CHECK-NEXT: v20: f10 = NewClosure function=f10 [isHeldByClosureTable]
+# CHECK-NEXT: v21: anything = Call v20, v19, v5 calleeKey="steps" calleeName="trainer.steps" accessSite=24 callees=[f10]
 # CHECK-NEXT: Jump -> next b5()
-# CHECK-NEXT: b5() frequency=Unlikely:
-# CHECK-NEXT: v22: undefined = Undefined
-# CHECK-NEXT: Return v22
-# CHECK-NEXT: b6():
-# CHECK-NEXT: v23: undefined = Undefined
-# CHECK-NEXT: Return v23
-# CHECK-NEXT: b7() handler=b9():
-# CHECK-NEXT: v24: L2 = GetModuleVariable variable=g8
-# CHECK-NEXT: v25: f10 = NewClosure function=f10 [isHeldByClosureTable]
-# CHECK-NEXT: v26: anything = Call v25, v24, v1 calleeKey="steps" calleeName="trainer.steps" accessSite=24 callees=[f10]
-# CHECK-NEXT: Jump -> next b8()
-# CHECK-NEXT: b8() handler=b9():
+# CHECK-NEXT: b5() handler=b6():
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: Jump -> next b8()
-# CHECK-NEXT: b9() role=CatchHandler handler=b1():
-# CHECK-NEXT: v28: "threw" = String string="threw"
-# CHECK-NEXT: v29: int[0, 4294967295] = CallBuiltin v7, v28 overload=ArrayPrototypePush/0 accessSite=26
-# CHECK-NEXT: v30: undefined|null|string = Call v4, -, v7 calleeName="text" accessSite=3 callees=[f1]
-# CHECK-NEXT: Jump -> next b6()
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: b6() role=CatchHandler handler=b1():
+# CHECK-NEXT: v23: "threw" = String string="threw"
+# CHECK-NEXT: v24: int[0, 4294967295] = CallBuiltin v7, v23 overload=ArrayPrototypePush/0 accessSite=26
+# CHECK-NEXT: v25: undefined|null|string = Call v4, -, v7 calleeName="text" accessSite=3 callees=[f1]
+# CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="report"
 # CHECK: module=m0 position=2255 role=CoroutineRamp flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=2 thisType={type=undefined} parameters=[{type=string site=w3 flags=[OmitsNull, OmitsUndefined]}, {type=f21|f22 site=w4 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Promise<undefined, proven, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{kind=AsyncFunction ramp=f3 body=f129 entryWithoutPromise=f129 promiseType=Promise promiseParameter=3} {
@@ -967,35 +959,28 @@ runtimefunction id=131091 function=f127 visibility=Private
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="report"
 # CHECK: module=m0 position=2255 role=CoroutineBody flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=2 thisType={type=undefined} parameters=[{type=string site=w3 flags=[OmitsNull, OmitsUndefined]}, {type=f21|f22 site=w4 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f3 parameterMap=[{original=0}, {original=1}, {original=2}, {}]} creator=Coroutine{kind=AsyncFunction ramp=f3 body=f129 entryWithoutPromise=f129 promiseType=Promise promiseParameter=3} {
-# CHECK-NEXT: b0(v0: undefined, v1: string, v2: f21|f22, v3: undefined|Promise) handler=b1():
-# CHECK-NEXT: v4: anything = Call v2 calleeName="run" accessSite=7 callees=[f21, f22]
-# CHECK-NEXT: v5: Promise<never, proven, pristine[Storage, Names]> = AssumeType v4 provenType=Promise<never, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v6: anything = AwaitBySavingFrame v5, v3, v2
+# CHECK-NEXT: b0(v0: undefined, v1: string, v2: f21|f22, v15: undefined|Promise) handler=b1():
+# CHECK-NEXT: v3: anything = Call v2 calleeName="run" accessSite=7 callees=[f21, f22]
+# CHECK-NEXT: v4: Promise<never, proven, pristine[Storage, Names]> = AssumeType v3 provenType=Promise<never, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v5: anything = AwaitBySavingFrame v4, v15, v2
 # CHECK-NEXT: Jump -> next b2()
 # CHECK-NEXT: b1() role=CatchHandler:
-# CHECK-NEXT: v7: anything = CatchValue
-# CHECK-NEXT: v8: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
-# CHECK-NEXT: v9: boolean = HasInPrototypeChain v7, v8
-# CHECK-NEXT: v10: anything ~ undefined|null|Error = Upcast v7 castType=anything
-# CHECK-NEXT: v11: anything = PropGet v10 key="constructor" accessSite=9
-# CHECK-NEXT: v12: boolean = TypeTest v11 testedType=undefined|null|function
-# CHECK-NEXT: Branch v12 -> taken b3(| 0), notTaken b4(| 0)
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v13: undefined = Undefined
-# CHECK-NEXT: v14: anything = ReturnAsyncResult v3, v13
-# CHECK-NEXT: Return v14
-# CHECK-NEXT: b3(v15: undefined|null|function):
-# CHECK-NEXT: v16: function = RequireObjectCoercible v15 name="name"
-# CHECK-NEXT: v17: anything = PropGet v16 key="name" accessSite=10
+# CHECK-NEXT: v6: anything = CatchValue
+# CHECK-NEXT: v7: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
+# CHECK-NEXT: v8: boolean = HasInPrototypeChain v6, v7
+# CHECK-NEXT: v9: anything ~ undefined|null|Error = Upcast v6 castType=anything
+# CHECK-NEXT: v10: anything = PropGet v9 key="constructor" accessSite=9
+# CHECK-NEXT: v11: anything ~ undefined|null|function = Expect v10 expectedType=undefined|null|function
+# CHECK-NEXT: v12: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v11 name="name"
+# CHECK-NEXT: v13: anything = PropGet v12 key="name" accessSite=10
 # CHECK-NEXT: Jump -> next b2()
-# CHECK-NEXT: b4(v18: boolean|number|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v19: anything = PropGet v18 key="name" accessSite=10
-# CHECK-NEXT: v20: undefined = Undefined
-# CHECK-NEXT: v21: anything = ReturnAsyncResult v3, v20
-# CHECK-NEXT: Return v21
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v14: undefined = Undefined
+# CHECK-NEXT: v16: anything = ReturnAsyncResult v15, v14
+# CHECK-NEXT: Return v16
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="main"
-# CHECK: module=m0 position=2528 role=CoroutineBody flags=[IsAsync, HasThis, IsChecked, HasExplicitName] thisType={type=undefined} parameters=[{type=undefined|Promise}] results=[{type=anything}] derivation={source=f4 parameterMap=[{original=0}, {}]} creator=Coroutine{kind=AsyncFunction ramp=f4 body=f130 entryWithoutPromise=f130 promiseType=Promise promiseParameter=1} inlineFrames=[{}, {callee=f3 callPosition=4294967295 module=m0}, {callee=f137 callPosition=4294967295 isConstruction=true module=m0}, {callee=f145 callPosition=4294967295 isConstruction=true module=m0}, {callee=f143 callPosition=4294967295 isConstruction=true module=m0}, {callee=f137 callPosition=4294967295 parent=4 isConstruction=true module=m0}, {callee=f137 callPosition=4294967295 parent=3 isConstruction=true module=m0}] {
+# CHECK: module=m0 position=2528 role=CoroutineBody flags=[IsAsync, HasThis, IsChecked, HasExplicitName] thisType={type=undefined} parameters=[{type=undefined|Promise}] results=[{type=anything}] derivation={source=f4 parameterMap=[{original=0}, {}]} creator=Coroutine{kind=AsyncFunction ramp=f4 body=f130 entryWithoutPromise=f130 promiseType=Promise promiseParameter=1} inlineFrames=[{}, {callee=f3 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f137 callPosition=4294967295 isConstruction=true module=m0}, {callee=f145 callPosition=4294967295 isConstruction=true module=m0}, {callee=f143 callPosition=4294967295 isConstruction=true module=m0}, {callee=f137 callPosition=4294967295 parent=5 isConstruction=true module=m0}, {callee=f137 callPosition=4294967295 parent=4 isConstruction=true module=m0}] {
 # CHECK-NEXT: b0(v0: undefined, v1: undefined|Promise):
 # CHECK-NEXT: v2: f12 = GetModuleVariable variable=g5
 # CHECK-NEXT: v3: "rex" = String string="rex"
@@ -1011,48 +996,70 @@ runtimefunction id=131091 function=f127 visibility=Private
 # CHECK-NEXT: v13: Array<L1|L4|L5, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v12 provenType=Array<L1|L4|L5, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: PutModuleVariable v13 variable=g49
 # CHECK-NEXT: v15: 0 = Integer
+# CHECK-NEXT: v16: f1 = GetModuleVariable variable=g0
 # CHECK-NEXT: Jump -> next b1(v15)
-# CHECK-NEXT: b1(v16: int[0, 4294967295]):
+# CHECK-NEXT: b1(v17: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v18: int[0, 4294967295] = CallBuiltin v13 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v19: boolean = Less v16, v18
-# CHECK-NEXT: Branch v19 -> taken b2(| 0), notTaken b6()
-# CHECK-NEXT: b2(v20: int[0, 4294967294]):
-# CHECK-NEXT: v21: undefined|L1|L4|L5 = GetArrayElement v13, v20 arrayStorage=Contiguous level=Proven [keyIsIntegral]
-# CHECK-NEXT: v22: 1 = Integer integer=1
-# CHECK-NEXT: v23: int[1, 4294967295] = Add v20, v22
-# CHECK-NEXT: v24: L1|L4|L5 = RequireObjectCoercible v21 name="constructor"
-# CHECK-NEXT: v25: anything = PropGet v24 key="constructor" accessSite=17
-# CHECK-NEXT: v26: undefined|f6|f14|f16|builtin(Object) = AssumeType v25 provenType=undefined|f6|f14|f16|builtin(Object)
-# CHECK-NEXT: v27: f6|f14|f16|builtin(Object) = RequireObjectCoercible v26 name="name"
-# CHECK-NEXT: v28: boolean = TypeTest v27 testedType=builtin(Object)
-# CHECK-NEXT: Branch v28 -> taken b3(| 0), notTaken b4(| 0)
-# CHECK-NEXT: b3(v29: builtin(Object)):
-# CHECK-NEXT: v30: anything = PropGet v29 key="name" accessSite=18
-# CHECK-NEXT: Jump -> next b5(v30)
-# CHECK-NEXT: b4(v31: f6|f14|f16) frequency=Unlikely:
-# CHECK-NEXT: v32: anything = PropGet v31 key="name" accessSite=18
-# CHECK-NEXT: Jump -> next b5(v32)
-# CHECK-NEXT: b5(v33: anything):
-# CHECK-NEXT: v34: undefined|null|string = AssumeType v33 provenType=undefined|null|string
-# CHECK-NEXT: v35: " steps" = String string=" steps"
-# CHECK-NEXT: v36: string = Add v34, v35
-# CHECK-NEXT: v38: undefined = CallDirect v36, v24 function=f2 accessSite=19
-# CHECK-NEXT: v39: " stream" = String string=" stream"
-# CHECK-NEXT: v40: string = Add v34, v39
-# CHECK-NEXT: v41: f21 = NewClosure v24 function=f21 allocationSite=10
-# CHECK-NEXT: v42: undefined = Undefined
-# CHECK-NEXT: v43: Promise = NewPromise
-# CHECK-NEXT: v44: anything = CallDirect v42, v40, v41, v43 function=f129
-# CHECK-NEXT: Jump -> next b1(v23)
-# CHECK-NEXT: b6():
-# CHECK-NEXT: v45: "all at once" = String string="all at once"
-# CHECK-NEXT: v46: f22 = NewClosure function=f22 allocationSite=8 [isHeldByClosureTable]
-# CHECK-NEXT: v47: undefined = Undefined
-# CHECK-NEXT: v48: anything ~ undefined = AwaitCallBySavingFrame v1, v47, v45, v46 function=f129 accessSite=16
-# CHECK-NEXT: v49: undefined = Undefined
-# CHECK-NEXT: v50: anything = ReturnAsyncResult v1, v49
-# CHECK-NEXT: Return v50
+# CHECK-NEXT: v19: int[0, 4294967295] = CallBuiltin v13 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v20: boolean = Less v17, v19
+# CHECK-NEXT: Branch v20 -> taken b2(| 0), notTaken b10()
+# CHECK-NEXT: b2(v21: int[0, 4294967294]):
+# CHECK-NEXT: v22: undefined|L1|L4|L5 = GetArrayElement v13, v21 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+# CHECK-NEXT: v23: 1 = Integer integer=1
+# CHECK-NEXT: v24: int[1, 4294967295] = Add v21, v23
+# CHECK-NEXT: v25: L1|L4|L5 = RequireObjectCoercible v22 name="constructor"
+# CHECK-NEXT: v26: anything = PropGet v25 key="constructor" accessSite=17
+# CHECK-NEXT: v27: undefined|f6|f14|f16|builtin(Object) = AssumeType v26 provenType=undefined|f6|f14|f16|builtin(Object)
+# CHECK-NEXT: v28: f6|f14|f16|builtin(Object) = RequireObjectCoercible v27 name="name"
+# CHECK-NEXT: v29: boolean = TypeTest v28 testedType=builtin(Object)
+# CHECK-NEXT: Branch v29 -> taken b3(| 0), notTaken b4(| 0)
+# CHECK-NEXT: b3(v30: builtin(Object)):
+# CHECK-NEXT: v31: anything = PropGet v30 key="name" accessSite=18
+# CHECK-NEXT: Jump -> next b5(v31)
+# CHECK-NEXT: b4(v32: f6|f14|f16) frequency=Unlikely:
+# CHECK-NEXT: v33: anything = PropGet v32 key="name" accessSite=18
+# CHECK-NEXT: Jump -> next b5(v33)
+# CHECK-NEXT: b5(v34: anything):
+# CHECK-NEXT: v35: undefined|null|string = AssumeType v34 provenType=undefined|null|string
+# CHECK-NEXT: v36: " steps" = String string=" steps"
+# CHECK-NEXT: v37: string = Add v35, v36
+# CHECK-NEXT: Jump -> next b6()
+# CHECK-NEXT: b6() handler=b7():
+# CHECK-NEXT: v38: ": " = String string=": "
+# CHECK-NEXT: v39: string = Add v37, v38
+# CHECK-NEXT: v40: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v25 function=f20 accessSite=2
+# CHECK-NEXT: v41: undefined|null|string = Call v16, -, v40 calleeName="text" accessSite=3 callees=[f1]
+# CHECK-NEXT: Jump -> next b9()
+# CHECK-NEXT: b7() role=CatchHandler:
+# CHECK-NEXT: v42: anything = CatchValue
+# CHECK-NEXT: v43: ": threw " = String string=": threw "
+# CHECK-NEXT: v44: string = Add v37, v43
+# CHECK-NEXT: v45: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
+# CHECK-NEXT: v46: boolean = HasInPrototypeChain v42, v45
+# CHECK-NEXT: Branch v46 -> taken b8(), notTaken b9()
+# CHECK-NEXT: b8():
+# CHECK-NEXT: v47: anything ~ undefined|null|Error = Upcast v42 castType=anything
+# CHECK-NEXT: v48: anything = PropGet v47 key="constructor" accessSite=5
+# CHECK-NEXT: v49: anything ~ undefined|null|function = Expect v48 expectedType=undefined|null|function
+# CHECK-NEXT: v50: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v49 name="name"
+# CHECK-NEXT: v51: anything = PropGet v50 key="name" accessSite=6
+# CHECK-NEXT: Jump -> next b9()
+# CHECK-NEXT: b9():
+# CHECK-NEXT: v52: " stream" = String string=" stream"
+# CHECK-NEXT: v53: string = Add v35, v52
+# CHECK-NEXT: v54: f21 = NewClosure v25 function=f21 allocationSite=10
+# CHECK-NEXT: v55: undefined = Undefined
+# CHECK-NEXT: v56: Promise = NewPromise
+# CHECK-NEXT: v57: anything = CallDirect v55, v53, v54, v56 function=f129
+# CHECK-NEXT: Jump -> next b1(v24)
+# CHECK-NEXT: b10():
+# CHECK-NEXT: v58: "all at once" = String string="all at once"
+# CHECK-NEXT: v59: f22 = NewClosure function=f22 allocationSite=8 [isHeldByClosureTable]
+# CHECK-NEXT: v60: undefined = Undefined
+# CHECK-NEXT: v61: anything ~ undefined = AwaitCallBySavingFrame v1, v60, v58, v59 function=f129 accessSite=16
+# CHECK-NEXT: v62: undefined = Undefined
+# CHECK-NEXT: v63: anything = ReturnAsyncResult v1, v62
+# CHECK-NEXT: Return v63
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Animal"
 # CHECK: module=m0 position=207 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget, IsChecked] length=1 captures=[{type=f6}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f6} creator=Entrypoint{target=f6 arguments=Registers takesNewTarget=true} {

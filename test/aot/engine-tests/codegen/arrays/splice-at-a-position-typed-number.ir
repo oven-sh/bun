@@ -106,5 +106,5 @@ function f3 name="pick" module=m0 position=590 flags=[IsChecked, HasExplicitName
 # -- generated: f0
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 170, patchpoints: 15, rare instructions: 384, polls: 1
+# CHECK-NEXT: instructions: 171, patchpoints: 15, rare instructions: 379, polls: 1
 # CHECK-NEXT: end of function f0

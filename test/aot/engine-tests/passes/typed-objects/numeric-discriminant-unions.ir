@@ -624,7 +624,7 @@ runtimefunction id=131091 function=f39 visibility=Private
 # CHECK-NEXT: end of function f6
 # CHECK-LABEL: function {{*}}name="upgrade"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 30, patchpoints: 8
+# CHECK-NEXT: instructions: 48, patchpoints: 3, rare instructions: 22
 # CHECK-NEXT: end of function f42
 # CHECK-LABEL: function {{*}}name="upgrade"
 # CHECK: role=GenericVersion

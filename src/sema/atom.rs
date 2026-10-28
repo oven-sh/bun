@@ -790,6 +790,11 @@ impl<'s> Interner<'s> {
         self.session
     }
 
+    /// The same atoms. What is parsed with it belongs to `session`.
+    pub fn for_files_of(self, session: &'s Session) -> Interner<'s> {
+        Interner { session, ..self }
+    }
+
     /// Sequence number of this interner among all interners ever created. Data cached for one
     /// interner is invalid for another.
     #[inline]

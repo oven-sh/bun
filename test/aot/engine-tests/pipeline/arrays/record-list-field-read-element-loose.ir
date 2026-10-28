@@ -247,24 +247,17 @@ runtimefunction id=69 function=f2
 # CHECK-NEXT: b0(v0: Array<int[2, 3], proven, Int32, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v1: 0 = Integer
 # CHECK-NEXT: v2: boolean = IsInBounds v0, v1
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b3()
 # CHECK-NEXT: b1(v3: guard):
 # CHECK-NEXT: v4: int[2, 3] = GetArrayElement v0, v1, v3 arrayStorage=Int32 level=Proven accessSite=17 [keyIsIntegral, isInBounds]
-# CHECK-NEXT: Jump -> next b3(v4)
-# CHECK-NEXT: b2() frequency=Rare:
-# CHECK-NEXT: v5: undefined|int[2, 3] = GetArrayElement v0, v1 arrayStorage=Int32 level=Proven accessSite=17 [keyIsIntegral]
-# CHECK-NEXT: v6: undefined|int[2, 3] ~ int[2, 3] = Upcast v5 castType=undefined|int[2, 3]
-# CHECK-NEXT: v7: boolean ~ true = TypeTest v6 testedType=number
-# CHECK-NEXT: Branch v7 -> taken b3(| 0), notTaken b4()
-# CHECK-NEXT: b3(v8: int[2, 3]):
-# CHECK-NEXT: v9: Array<undefined|int[2, 3]> = NewArray v8 contents=undefined|int[2, 3] allocationSite=7 [contentsAreProven]
-# CHECK-NEXT: v10: Array<undefined|int[2, 3], proven, pristine[Storage, Names, Dense]> = AssumeType v9 provenType=Array<undefined|int[2, 3], proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Return v10
-# CHECK-NEXT: b4() frequency=Unlikely:
-# CHECK-NEXT: v11: undefined = Undefined
-# CHECK-NEXT: v12: Array<undefined|int[2, 3]> = NewArray v11 contents=undefined|int[2, 3] allocationSite=7 [contentsAreProven]
-# CHECK-NEXT: v13: Array<undefined|int[2, 3], proven, pristine[Storage, Names, Dense]> = AssumeType v12 provenType=Array<undefined|int[2, 3], proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Return v13
+# CHECK-NEXT: Jump -> next b2(v4)
+# CHECK-NEXT: b2(v5: undefined|int[2, 3] ~ int[2, 3]):
+# CHECK-NEXT: v6: Array<undefined|int[2, 3]> = NewArray v5 contents=undefined|int[2, 3] allocationSite=7 [contentsAreProven]
+# CHECK-NEXT: v7: Array<undefined|int[2, 3], proven, pristine[Storage, Names, Dense]> = AssumeType v6 provenType=Array<undefined|int[2, 3], proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Return v7
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: v8: undefined|int[2, 3] = GetArrayElement v0, v1 arrayStorage=Int32 level=Proven accessSite=17 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b2(v8)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="next"
 # CHECK: module=m1 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] enclosingRuntimeFunction=69 captures=[{type=f2}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f2} creator=Entrypoint{target=f2 arguments=Registers} {

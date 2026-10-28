@@ -3621,42 +3621,39 @@ runtimefunction id=131091 function=f32 visibility=Private
 # CHECK-NEXT: v12: boolean = ResultAt v11
 # CHECK-NEXT: v13: int[0, 2147483647] = ResultAt v11 index=1
 # CHECK-NEXT: v14: undefined|int|string|Array<int[1, 3]|string, proven, pristine[Storage, Names, Dense]> = ResultAt v11 index=3
-# CHECK-NEXT: Branch v12 -> taken b3(), notTaken b11()
+# CHECK-NEXT: Branch v12 -> taken b3(), notTaken b10()
 # CHECK-NEXT: b3():
 # CHECK-NEXT: v15: anything = CollectionTable v0
 # CHECK-NEXT: v16: 1 = Integer integer=1
 # CHECK-NEXT: v17: int[1, 2147483648] = Add v13, v16
-# CHECK-NEXT: v18: fact = Specified
-# CHECK-NEXT: v19: boolean = TypeTest v14 testedType=number
-# CHECK-NEXT: Branch v19 -> taken b4(| 0), notTaken b5(| 0)
-# CHECK-NEXT: b4(v20: int):
+# CHECK-NEXT: v18: undefined|int|string|Array<int[1, 3]|string, proven, pristine[Storage, Names, Dense]> ~ int = Expect v14 expectedType=number
+# CHECK-NEXT: v19: boolean = TypeTest v18 testedType=i32
+# CHECK-NEXT: Branch v19 -> taken b4(| 0), notTaken b5(v7, v15, v17, v18)
+# CHECK-NEXT: b4(v20: i32):
 # CHECK-NEXT: v21: int|whole = Add v7, v20
 # CHECK-NEXT: Jump -> next b2(v21, v15, v17)
-# CHECK-NEXT: b5(v22: undefined|string|Array<int[1, 3]|string, proven, pristine[Storage, Names, Dense]>) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b6(v7, v22, v15, v17)
-# CHECK-NEXT: b6(v23: number|string|bigint, v24: undefined|int|string|Array<int[1, 3]|string, proven, pristine[Storage, Names, Dense]>, v25: anything, v26: int[1, 2147483648]) frequency=Unlikely:
-# CHECK-NEXT: v27: number|string|bigint = Add v23, v24
-# CHECK-NEXT: v28: boolean = TypeTest v27 testedType=int|whole
-# CHECK-NEXT: Branch v28 -> taken b7(| 0), notTaken b8()
-# CHECK-NEXT: b7(v29: int|whole) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b1(v29, v25, v26)
-# CHECK-NEXT: b8() frequency=Unlikely:
+# CHECK-NEXT: b5(v22: number|string|bigint ~ int|whole, v23: anything, v24: int[1, 2147483648], v25: undefined|int|string|Array<int[1, 3]|string, proven, pristine[Storage, Names, Dense]> ~ int) frequency=Rare:
+# CHECK-NEXT: v26: number|string|bigint ~ int|whole = Add v22, v25
+# CHECK-NEXT: v27: boolean ~ true = TypeTest v26 testedType=int|whole
+# CHECK-NEXT: Branch v27 -> taken b6(| 0), notTaken b7()
+# CHECK-NEXT: b6(v28: int|whole) frequency=Rare:
+# CHECK-NEXT: Jump -> next b1(v28, v23, v24)
+# CHECK-NEXT: b7() frequency=Rare:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v31: undefined = MapNext v0, v25, v26
-# CHECK-NEXT: v32: boolean = ResultAt v31
-# CHECK-NEXT: v33: int[0, 2147483647] = ResultAt v31 index=1
-# CHECK-NEXT: v34: undefined|int|string|Array<int[1, 3]|string, proven, pristine[Storage, Names, Dense]> = ResultAt v31 index=3
-# CHECK-NEXT: Branch v32 -> taken b9(), notTaken b10()
-# CHECK-NEXT: b9() frequency=Unlikely:
-# CHECK-NEXT: v35: anything = CollectionTable v0
-# CHECK-NEXT: v36: 1 = Integer integer=1
-# CHECK-NEXT: v37: int[1, 2147483648] = Add v33, v36
-# CHECK-NEXT: v38: fact = Specified
-# CHECK-NEXT: v39: undefined|int|string|Array<int[1, 3]|string, proven, pristine[Storage, Names, Dense]> ~ int = Expect v34 expectedType=number
-# CHECK-NEXT: Jump -> next b6(v27, v39, v35, v37)
-# CHECK-NEXT: b10() frequency=Unlikely:
-# CHECK-NEXT: Return v27
-# CHECK-NEXT: b11():
+# CHECK-NEXT: v30: undefined = MapNext v0, v23, v24
+# CHECK-NEXT: v31: boolean = ResultAt v30
+# CHECK-NEXT: v32: int[0, 2147483647] = ResultAt v30 index=1
+# CHECK-NEXT: v33: undefined|int|string|Array<int[1, 3]|string, proven, pristine[Storage, Names, Dense]> = ResultAt v30 index=3
+# CHECK-NEXT: Branch v31 -> taken b8(), notTaken b9()
+# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: v34: anything = CollectionTable v0
+# CHECK-NEXT: v35: 1 = Integer integer=1
+# CHECK-NEXT: v36: int[1, 2147483648] = Add v32, v35
+# CHECK-NEXT: v37: undefined|int|string|Array<int[1, 3]|string, proven, pristine[Storage, Names, Dense]> ~ int = Expect v33 expectedType=number
+# CHECK-NEXT: Jump -> next b5(v26, v34, v36, v37)
+# CHECK-NEXT: b9() frequency=Rare:
+# CHECK-NEXT: Return v26
+# CHECK-NEXT: b10():
 # CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="textsOf"
@@ -3666,32 +3663,24 @@ runtimefunction id=131091 function=f32 visibility=Private
 # CHECK-NEXT: v2: 0 = Integer
 # CHECK-NEXT: v3: stringbuilder = StringBuilderBegin
 # CHECK-NEXT: Jump -> next b1(v1, v2)
-# CHECK-NEXT: b1(v4: anything, v5: int[0, 2147483648] ~ 0):
-# CHECK-NEXT: Jump -> next b2(v4, v5)
-# CHECK-NEXT: b2(v6: anything, v7: int[0, 2147483648]):
+# CHECK-NEXT: b1(v4: anything, v5: int[0, 2147483648]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v9: undefined = SetNext v0, v6, v7
-# CHECK-NEXT: v10: boolean = ResultAt v9
-# CHECK-NEXT: v11: int[0, 2147483647] = ResultAt v9 index=1
-# CHECK-NEXT: v12: undefined|fractional|string = ResultAt v9 index=2
-# CHECK-NEXT: Branch v10 -> taken b3(), notTaken b6()
+# CHECK-NEXT: v7: undefined = SetNext v0, v4, v5
+# CHECK-NEXT: v8: boolean = ResultAt v7
+# CHECK-NEXT: v9: int[0, 2147483647] = ResultAt v7 index=1
+# CHECK-NEXT: v10: undefined|fractional|string = ResultAt v7 index=2
+# CHECK-NEXT: Branch v8 -> taken b3(), notTaken b2()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v11: string = StringBuilderFinish v3
+# CHECK-NEXT: Return v11
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v13: anything = CollectionTable v0
-# CHECK-NEXT: v14: 1 = Integer integer=1
-# CHECK-NEXT: v15: int[1, 2147483648] = Add v11, v14
-# CHECK-NEXT: v16: boolean = TypeTest v12 testedType=undefined|null|string
-# CHECK-NEXT: Branch v16 -> taken b4(| 0), notTaken b5(| 0)
-# CHECK-NEXT: b4(v17: undefined|string):
-# CHECK-NEXT: v18: "," = String string=","
-# CHECK-NEXT: StringBuilderAppend v3, v17, v18
-# CHECK-NEXT: Jump -> next b2(v13, v15)
-# CHECK-NEXT: b5(v20: fractional) frequency=Unlikely:
-# CHECK-NEXT: v21: "," = String string=","
-# CHECK-NEXT: StringBuilderAppend v3, v20, v21
-# CHECK-NEXT: Jump -> next b1(v13, v15)
-# CHECK-NEXT: b6():
-# CHECK-NEXT: v23: string = StringBuilderFinish v3
-# CHECK-NEXT: Return v23
+# CHECK-NEXT: v12: anything = CollectionTable v0
+# CHECK-NEXT: v13: 1 = Integer integer=1
+# CHECK-NEXT: v14: int[1, 2147483648] = Add v9, v13
+# CHECK-NEXT: v15: undefined|fractional|string ~ undefined|string = Expect v10 expectedType=undefined|null|string
+# CHECK-NEXT: v16: "," = String string=","
+# CHECK-NEXT: StringBuilderAppend v3, v15, v16
+# CHECK-NEXT: Jump -> next b1(v12, v14)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="sumOf"
 # CHECK: module=m0 position=1238 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Set<undefined|int|whole, proven, pristine[Storage, Names]> site=w11 flags=[OmitsNull, OmitsUndefined]}] results=[{type=int|whole site=w12}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -3726,53 +3715,34 @@ runtimefunction id=131091 function=f32 visibility=Private
 # CHECK-NEXT: v2: 0 = Integer
 # CHECK-NEXT: v3: stringbuilder = StringBuilderBegin
 # CHECK-NEXT: Jump -> next b1(v1, v2)
-# CHECK-NEXT: b1(v4: anything, v5: int[0, 2147483648] ~ 0):
-# CHECK-NEXT: Jump -> next b2(v4, v5)
-# CHECK-NEXT: b2(v6: anything, v7: int[0, 2147483648]):
+# CHECK-NEXT: b1(v4: anything, v5: int[0, 2147483648]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v9: undefined = SetNext v0, v6, v7
-# CHECK-NEXT: v10: boolean = ResultAt v9
-# CHECK-NEXT: v11: int[0, 2147483647] = ResultAt v9 index=1
-# CHECK-NEXT: v12: undefined|number = ResultAt v9 index=2
-# CHECK-NEXT: Branch v10 -> taken b3(), notTaken b12()
+# CHECK-NEXT: v7: undefined = SetNext v0, v4, v5
+# CHECK-NEXT: v8: boolean = ResultAt v7
+# CHECK-NEXT: v9: int[0, 2147483647] = ResultAt v7 index=1
+# CHECK-NEXT: v10: undefined|number = ResultAt v7 index=2
+# CHECK-NEXT: Branch v8 -> taken b2(), notTaken b6()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v11: anything = CollectionTable v0
+# CHECK-NEXT: v12: 1 = Integer integer=1
+# CHECK-NEXT: v13: int[1, 2147483648] = Add v9, v12
+# CHECK-NEXT: v14: undefined|number ~ number = Expect v10 expectedType=number
+# CHECK-NEXT: v15: whole = Double number=-0
+# CHECK-NEXT: v16: boolean = CallBuiltin -, v14, v15 overload=ObjectIs/0 accessSite=218
+# CHECK-NEXT: Branch v16 -> taken b3(), notTaken b4()
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v13: anything = CollectionTable v0
-# CHECK-NEXT: v14: 1 = Integer integer=1
-# CHECK-NEXT: v15: int[1, 2147483648] = Add v11, v14
-# CHECK-NEXT: v16: boolean = TypeTest v12 testedType=number
-# CHECK-NEXT: Branch v16 -> taken b4(| 0), notTaken b8()
-# CHECK-NEXT: b4(v17: number):
-# CHECK-NEXT: v18: whole = Double number=-0
-# CHECK-NEXT: v19: boolean = CallBuiltin -, v17, v18 overload=ObjectIs/0 accessSite=218
-# CHECK-NEXT: Branch v19 -> taken b5(), notTaken b6()
-# CHECK-NEXT: b5():
-# CHECK-NEXT: v20: "-0" = String string="-0"
-# CHECK-NEXT: Jump -> next b7(v20)
+# CHECK-NEXT: v17: "-0" = String string="-0"
+# CHECK-NEXT: Jump -> next b5(v17)
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v18: string = CallBuiltin -, v14 overload=String/0 accessSite=219
+# CHECK-NEXT: Jump -> next b5(v18)
+# CHECK-NEXT: b5(v19: string):
+# CHECK-NEXT: v20: "," = String string=","
+# CHECK-NEXT: StringBuilderAppend v3, v19, v20
+# CHECK-NEXT: Jump -> next b1(v11, v13)
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v21: string = CallBuiltin -, v17 overload=String/0 accessSite=219
-# CHECK-NEXT: Jump -> next b7(v21)
-# CHECK-NEXT: b7(v22: string):
-# CHECK-NEXT: v23: "," = String string=","
-# CHECK-NEXT: StringBuilderAppend v3, v22, v23
-# CHECK-NEXT: Jump -> next b2(v13, v15)
-# CHECK-NEXT: b8() frequency=Unlikely:
-# CHECK-NEXT: v25: undefined = Undefined
-# CHECK-NEXT: v26: whole = Double number=-0
-# CHECK-NEXT: v27: boolean = CallBuiltin -, v25, v26 overload=ObjectIs/0 accessSite=218
-# CHECK-NEXT: Branch v27 -> taken b9(), notTaken b10()
-# CHECK-NEXT: b9() frequency=Unlikely:
-# CHECK-NEXT: v28: "-0" = String string="-0"
-# CHECK-NEXT: Jump -> next b11(v28)
-# CHECK-NEXT: b10() frequency=Unlikely:
-# CHECK-NEXT: v29: string = CallBuiltin -, v25 overload=String/0 accessSite=219
-# CHECK-NEXT: Jump -> next b11(v29)
-# CHECK-NEXT: b11(v30: string) frequency=Unlikely:
-# CHECK-NEXT: v31: "," = String string=","
-# CHECK-NEXT: StringBuilderAppend v3, v30, v31
-# CHECK-NEXT: Jump -> next b1(v13, v15)
-# CHECK-NEXT: b12():
-# CHECK-NEXT: v33: string = StringBuilderFinish v3
-# CHECK-NEXT: Return v33
+# CHECK-NEXT: v22: string = StringBuilderFinish v3
+# CHECK-NEXT: Return v22
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="keySum"
 # CHECK: module=m0 position=1493 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Map<int, string, proven, pristine[Storage, Names]> site=w15 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w16 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

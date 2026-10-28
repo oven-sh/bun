@@ -1,6 +1,6 @@
 import { trimExecutable } from "bun:internal-for-testing";
 import { expect, setDefaultTimeout, test } from "bun:test";
-import { tempDir } from "harness";
+import { isWindows, tempDir } from "harness";
 import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BuildError } from "../../../scripts/build/error.ts";
@@ -602,6 +602,33 @@ function readLink(folder: string) {
 }
 
 describeLink("the reader of lld-link's maps", () => {
+  test.skipIf(!isWindows)("reads CRT archive members found through the native LIB environment", async () => {
+    using dir = tempDir("trim-coff-native-lib", sources);
+    const folder = String(dir);
+    const command = await plainLink(folder, { libraryPaths: [] });
+    expect(command.some(argument => /^\/(libpath|winsysroot):/i.test(argument))).toBe(false);
+    expect(/\blibcmt:/i.test(readFileSync(join(folder, "program.map"), "latin1"))).toBe(true);
+    const { features, builtinUses } = writeLinkInputs(folder);
+    const arguments_ = parseArguments([
+      "bun",
+      "link.ts",
+      join(folder, "work"),
+      features,
+      builtinUses,
+      "--",
+      ...command,
+    ]);
+    const format = coff(createLinker(arguments_).linker);
+    const { failures, graph } = format.read({
+      name: "second",
+      executable: join(folder, output),
+      map: join(folder, "program.lldmap"),
+      log: "",
+    });
+    expect(failures).toEqual([]);
+    expect(nodeAt(graph, readPe(join(folder, output)).entryPoint)).toBeGreaterThanOrEqual(0);
+  });
+
   test("reads a good link and makes the entry point a root", async () => {
     using dir = tempDir("trim-coff-reader", sources);
     const folder = String(dir);

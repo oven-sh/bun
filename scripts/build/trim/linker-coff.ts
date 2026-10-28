@@ -63,6 +63,7 @@ export function coff(linker: Linker): LinkerFormat {
         join(version, "um", architecture),
       ]),
     ]),
+    ...(process.platform === "win32" ? (process.env.LIB ?? "").split(";").filter(Boolean) : []),
   ];
   const inputDirectories = new Set([work, ...linker.inputs.map(path => dirname(path))]);
   const executableNames = { first: linker.firstLinkName + ".exe", second: basename(output) };

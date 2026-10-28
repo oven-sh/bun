@@ -624,6 +624,50 @@ pub fn one_long_copy(distance: usize) -> Vec<u8> {
     w.bytes
 }
 
+/// Literals up to `before_end` bytes before the end of a ring buffer of 1024 bytes, a word of the static dictionary, which the
+/// decoder writes past that end, a literal, and a copy of 8 bytes from the end of the word. Returns the stream and what it
+/// decodes to.
+pub fn word_at_end(before_end: usize, len: usize, index: usize, transform: usize) -> (Vec<u8>, Vec<u8>) {
+    let literals = 1024 - before_end;
+    let mut output = vec![97; literals];
+    output.extend(dictionary_word(len, index, transform));
+    output.push(97);
+    for _ in 0..8 {
+        output.push(output[output.len() - 12]);
+    }
+    let mut w = Bits::default();
+    // A window of 10 bits. The last meta-block, not empty, with one block type of each kind.
+    w.put(7, 0x21);
+    w.put(4, 1);
+    w.put(16, output.len() as u64 - 1);
+    w.put(3, 0);
+    // NPOSTFIX, NDIRECT, the context mode, and one tree each for the literals and the distances.
+    w.put(10, 0);
+    w.put(4, 1);
+    w.put(8, 97);
+    let (insert, insert_extra) = range_code(&INSERT_BASE, literals);
+    let (copy, copy_extra) = range_code(&COPY_BASE, len);
+    let commands = [command_symbol(insert, copy, false), command_symbol(1, 6, false)];
+    let far = distance_symbol(literals.min(1008) + 1 + index + (transform << size_bits(len)), 0, 0);
+    let near = distance_symbol(12, 0, 0);
+    let distances = [far.0, near.0];
+    for (bits, symbols) in [(10, commands), (6, distances)] {
+        w.put(4, 5);
+        w.put(bits, symbols[0] as u64);
+        w.put(bits, symbols[1] as u64);
+    }
+    // Of two symbols, the lower one is written as 0.
+    w.put(1, u64::from(commands[0] > commands[1]));
+    w.put(INSERT_EXTRA[insert], insert_extra);
+    w.put(COPY_EXTRA[copy], copy_extra);
+    w.put(1, u64::from(distances[0] > distances[1]));
+    w.put(far.1, far.2);
+    w.put(1, u64::from(commands[1] > commands[0]));
+    w.put(1, u64::from(distances[1] > distances[0]));
+    w.put(near.1, near.2);
+    (w.bytes, output)
+}
+
 /// Writes a code of 16 symbols with 1 to 15 bits, `others` among them, of which `deep` has 15, and returns it.
 fn write_chain(w: &mut Bits, rng: &mut Rng, alphabet: usize, deep: usize, others: &[usize]) -> Code {
     let mut symbols = vec![deep];

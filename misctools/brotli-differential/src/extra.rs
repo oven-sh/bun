@@ -71,6 +71,24 @@ fn dec_longest_read(seed0: u64, iters: u64) {
     println!("ok: results and how many inputs gave them: {stats:?}");
 }
 
+/// A word of every length with every transform, from 1 to 38 bytes before the end of the ring buffer. The longest has 37 bytes.
+fn dec_word_at_end(seed: u64) {
+    let mut rng = Rng(seed);
+    let mut streams = 0;
+    for (before_end, len, transform) in (0..38 * 21 * 121).map(|i| (1 + i / (21 * 121), 4 + i / 121 % 21, i % 121)) {
+        let index = rng.below(1 << grammar::size_bits(len));
+        let (stream, output) = grammar::word_at_end(before_end, len, index, transform);
+        let schedule = if rng.chance(1, 2) { 0 } else { rng.next() | 1 };
+        let case = DecCase { stream, large_window: false, no_realloc: false, dicts: Vec::new(), schedule, max_output: usize::MAX };
+        match compare(&case, Some(&output)) {
+            Ok(o) if o.result == 1 => streams += 1,
+            Ok(o) => panic!("{before_end} bytes before the end, word {index} of {len} bytes, transform {transform}: result {} error {}", o.result, o.error),
+            Err(e) => panic!("{before_end} bytes before the end, word {index} of {len} bytes, transform {transform}, schedule {schedule}: {e}"),
+        }
+    }
+    println!("ok: {streams} streams");
+}
+
 /// Streams from the grammar. `evil`: one chance in this many, at each opportunity, to break a rule (0: never).
 fn dec_gen(seed0: u64, iters: u64, evil: usize) {
     let mut stats = std::collections::BTreeMap::<String, u64>::new();
@@ -263,6 +281,7 @@ pub fn run(args: &[String]) -> bool {
         Some("dec-gen") => dec_gen(num(2, 1), num(3, 1000), num(4, 0) as usize),
         Some("dec-distances") => dec_distances(),
         Some("dec-longest-read") => dec_longest_read(num(2, 1), num(3, 300)),
+        Some("dec-word-at-end") => dec_word_at_end(num(2, 1)),
         Some("dec-stream") => dec_stream(num(2, 1), num(3, 1000), num(4, 1 << 20) as usize),
         Some("dec-empty-commands") => {
             for distances in [false, true] {
@@ -285,6 +304,7 @@ pub fn run(args: &[String]) -> bool {
         Some("enc-dict") => shapes::run_dict(num(2, 1), num(3, 1000), num(4, 1 << 20) as usize, num(5, 0xFFC), &corpus()),
         Some("enc-far-dict") => shapes::run_far_dict(num(2, 1), num(3, 0x3FC)),
         Some("enc-reach") => shapes::run_reach(num(2, 1), num(3, 0xFFC)),
+        Some("enc-huge-dictionary") => shapes::run_huge_dictionary(num(2, 1), num(3, 0xFE0)),
         Some("enc-commands") => shapes::run_commands(num(2, 1), num(3, 20), num(4, 0x3E0)),
         Some("enc-utf8") => shapes::run_utf8(num(2, 1), num(3, 2000), num(4, 0xC00)),
         Some("enc-offset-dict") => shapes::run_offset_dict(num(2, 1), num(3, 20), num(4, 0xFE0)),

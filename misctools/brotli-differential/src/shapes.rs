@@ -1621,6 +1621,31 @@ pub fn run_utf8(seed0: u64, iters: u64, qualities: u64) {
     println!("ok: {iters} iterations, {} -> {}", totals.0, totals.1);
 }
 
+/// A dictionary of more than 1 GiB of random bytes, and an input with pieces of its last 40 MB. Those are at positions past
+/// 1 << 30, within reach of a distance, and so late that the encoder, which keeps the last 32 positions with the same hash, has
+/// them. Below quality 5 it does not look into dictionaries.
+pub fn run_huge_dictionary(seed: u64, qualities: u64) {
+    let mut rng = Rng(seed);
+    let q = *rng.pick(&crate::args::qualities(qualities, 5..12));
+    let total = (1usize << 30) + (160 << 20) + rng.below(1000);
+    let mut dictionary = Vec::with_capacity(total + 8);
+    while dictionary.len() < total {
+        dictionary.extend_from_slice(&rng.next().to_le_bytes());
+    }
+    dictionary.truncate(total);
+    let mut data = Vec::new();
+    for _ in 0..300 {
+        let n = rng.range(8, 200);
+        let at = total - n - rng.below(40 << 20);
+        data.extend_from_slice(&dictionary[at..at + n]);
+        data.extend((0..rng.below(20)).map(|_| rng.next() as u8));
+    }
+    let params = vec![(1, q), (2, rng.range(16, 24) as u32)];
+    let mut totals = (0usize, 0usize);
+    check("huge-dictionary", seed, &mut rng, &data, &params, &[dictionary], &mut totals);
+    println!("ok: quality {q}, {} -> {}", totals.0, totals.1);
+}
+
 /// What `run_commands` knows of the encoder while it lays out the input.
 struct Commands {
     data: Vec<u8>,

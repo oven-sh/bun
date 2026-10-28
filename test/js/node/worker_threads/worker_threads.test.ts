@@ -4,6 +4,7 @@ import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { Readable } from "node:stream";
+import { format, inspect } from "node:util";
 import wt, {
   BroadcastChannel,
   getEnvironmentData,
@@ -1163,6 +1164,98 @@ test("hasRef() survives collection of the unreferenced peer", () => {
   port1.ref();
   expect({ afterListener, afterRefCycle: port1.hasRef() }).toEqual({ afterListener: true, afterRefCycle: true });
   port1.close();
+});
+
+describe("MessagePort's inspect hook", () => {
+  const hook: (this: unknown) => unknown = (MessagePort.prototype as any)[inspect.custom];
+
+  // node's hook returns a receiver that is not a native port, and a formatter then prints the
+  // value without the hook. The util.inspect and util.format texts of the heirs are node's.
+  test("hands back a receiver that is not a native port", () => {
+    const { port1 } = new MessageChannel();
+    const calls: string[] = [];
+    const heir = Object.create(MessagePort.prototype);
+    const heirWithHasRef = Object.create(MessagePort.prototype, { hasRef: { value: () => calls.push("hasRef") } });
+    const proxy = new Proxy(port1, {
+      get(target, key) {
+        calls.push(`get ${String(key)}`);
+        return Reflect.get(target, key, target);
+      },
+    });
+    try {
+      expect({
+        heir: inspect(heir),
+        ownProperty: inspect(Object.assign(Object.create(MessagePort.prototype), { a: 1 })),
+        nested: inspect({ p: heir }),
+        heirOfPort: inspect(Object.create(port1)),
+        heirWithHasRef: inspect(heirWithHasRef),
+        proxy: inspect(proxy),
+        format: format("%s %O", heir, heir),
+        bunInspect: Bun.inspect(Object.assign(Object.create(MessagePort.prototype), { a: 1 }))
+          .split("\n")
+          .slice(0, 2),
+        bunInspectPrototype: Bun.inspect(MessagePort.prototype).split("\n")[0],
+        returned: [heir, {}, null, undefined, 1].map(receiver => hook.call(receiver) === receiver),
+        calls,
+      }).toEqual({
+        heir: "MessagePort {}",
+        ownProperty: "MessagePort { a: 1 }",
+        nested: "{ p: MessagePort {} }",
+        heirOfPort: "MessagePort {}",
+        heirWithHasRef: "MessagePort {}",
+        proxy: "MessagePort {}",
+        format: "MessagePort {} MessagePort {}",
+        bunInspect: ["MessagePort {", "  a: 1,"],
+        bunInspectPrototype: "MessagePort {",
+        returned: [true, true, true, true, true],
+        calls: [],
+      });
+    } finally {
+      port1.close();
+    }
+  });
+
+  // A ref'ed port whose peer closed stays ref'ed until its own 'close' event.
+  test("prints the four states of a port without a call of its hasRef", () => {
+    const { port1, port2 } = new MessageChannel();
+    const calls: string[] = [];
+    Object.defineProperty(port1, "hasRef", { value: () => calls.push("hasRef") });
+    const fresh = [inspect(port1), Bun.inspect(port1), format("%s", port1)];
+    port1.ref();
+    const refed = inspect(port1);
+    port2.close();
+    const peerClosed = inspect(port1);
+    port1.close();
+    expect({ fresh, refed, peerClosed, closed: inspect(port1), calls }).toEqual({
+      fresh: Array(3).fill("MessagePort [EventTarget] { active: true, refed: false }"),
+      refed: "MessagePort [EventTarget] { active: true, refed: true }",
+      peerClosed: "MessagePort [EventTarget] { active: false, refed: true }",
+      closed: "MessagePort [EventTarget] { active: false, refed: false }",
+      calls: [],
+    });
+  });
+
+  test("console.log prints an heir of the prototype, and the prototype", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { MessagePort } = require("node:worker_threads");
+         console.log(Object.assign(Object.create(MessagePort.prototype), { a: 1 }));
+         console.log(MessagePort.prototype);`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Each value prints as a listing of its members: keep the lines that are not indented.
+    const lines = stdout.split(/\r?\n/).filter(line => !line.startsWith(" "));
+    expect({ lines, stderr, exitCode }).toEqual({
+      lines: ["MessagePort {", "}", "MessagePort {", "}", ""],
+      stderr,
+      exitCode: 0,
+    });
+  });
 });
 
 // markAsUncloneable blocks *cloning*, not transfer: a marked port in the transfer

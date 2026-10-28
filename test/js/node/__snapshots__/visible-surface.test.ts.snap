@@ -3697,7 +3697,7 @@ worker_threads[MessagePort][prototype][hasRef][length] c-- number
 worker_threads[MessagePort][prototype][hasRef][name] c-- string
 worker_threads[MessagePort][prototype][Symbol(Symbol.toStringTag)] c-- string
 worker_threads[MessagePort][prototype][Symbol(nodejs.util.inspect.custom)] c-w function
-worker_threads[MessagePort][prototype][Symbol(nodejs.util.inspect.custom)]: function function name="value" length=2 above=Function extensible=true
+worker_threads[MessagePort][prototype][Symbol(nodejs.util.inspect.custom)]: function native name="inspect" length=0 above=Function extensible=true
 worker_threads[MessagePort][prototype][Symbol(nodejs.util.inspect.custom)][length] c-- number
 worker_threads[MessagePort][prototype][Symbol(nodejs.util.inspect.custom)][name] c-- string
 worker_threads[getEnvironmentData] cew function

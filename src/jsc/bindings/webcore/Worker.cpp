@@ -256,15 +256,21 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
     return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "The \"port\" argument must be a MessagePort instance"_s);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsMessagePortIsActive, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+// A receiver that is not a native port is handed back: the formatters then print it without the hook, as in node.
+JSC_DEFINE_HOST_FUNCTION(jsMessagePortInspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    auto port = callFrame->argument(0);
-    if (auto* messagePort = dynamicDowncast<JSMessagePort>(port)) {
-        auto& wrapped = messagePort->wrapped();
-        bool active = (wrapped.isDetached() == false) && wrapped.pipe()->isOtherSideOpen(wrapped.side());
-        return JSC::JSValue::encode(jsBoolean(active));
-    }
-    return JSC::JSValue::encode(jsBoolean(false));
+    static constexpr ASCIILiteral text[2][2] = {
+        { "MessagePort [EventTarget] { active: false, refed: false }"_s, "MessagePort [EventTarget] { active: false, refed: true }"_s },
+        { "MessagePort [EventTarget] { active: true, refed: false }"_s, "MessagePort [EventTarget] { active: true, refed: true }"_s },
+    };
+    JSValue thisValue = callFrame->thisValue().toThis(lexicalGlobalObject, JSC::ECMAMode::strict());
+    auto* messagePort = dynamicDowncast<JSMessagePort>(thisValue);
+    if (!messagePort) [[unlikely]]
+        return JSValue::encode(thisValue);
+    auto& wrapped = messagePort->wrapped();
+    bool active = !wrapped.isDetached() && wrapped.pipe()->isOtherSideOpen(wrapped.side());
+    bool refed = wrapped.jsHasRef();
+    return JSValue::encode(jsNontrivialString(JSC::getVM(lexicalGlobalObject), text[active][refed]));
 }
 
 // Primitives are a documented no-op for both.
@@ -364,7 +370,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 4, threadName);
     RETURN_IF_EXCEPTION(scope, {});
-    array->putDirectIndex(globalObject, 5, JSFunction::create(vm, globalObject, 1, "isMessagePortActive"_s, jsMessagePortIsActive, ImplementationVisibility::Public, NoIntrinsic));
+    array->putDirectIndex(globalObject, 5, JSFunction::create(vm, globalObject, 0, "inspect"_s, jsMessagePortInspectCustom, ImplementationVisibility::Public, NoIntrinsic));
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 6, JSFunction::create(vm, globalObject, 1, "markAsUntransferable"_s, jsFunctionMarkAsUntransferable, ImplementationVisibility::Public, NoIntrinsic));
     RETURN_IF_EXCEPTION(scope, {});

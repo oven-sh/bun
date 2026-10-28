@@ -349,7 +349,98 @@ row("keys", () => Reflect.ownKeys(copy).map(String).filter(key => key !== "stack
 `;
 }
 
-export const programs = (): WrittenProgram[] =>
+const declaredFields: [name: string, field: string][] = [
+  ["boolean", "f: boolean = true;"],
+  ["an-integer", "f: number = 1;"],
+  ["a-fraction", "f: number = 1.5;"],
+  ["string", 'f: string = "s";'],
+  ["bigint", "f: bigint = 1n;"],
+  ["symbol", "f: symbol = Symbol.iterator;"],
+  ["an-object", "f: { a: number } = { a: 1 };"],
+  ["a-list", "f: number[] = [1];"],
+  ["a-function-or-null", "f: (() => number) | null = () => 1;"],
+  ["boolean-or-null", "f: boolean | null = true;"],
+  ["number-or-undefined", "f: number | undefined = 1;"],
+  ["an-optional-number", "f?: number;"],
+  ["any", "f: any = 1;"],
+  ["unknown", "f: unknown = 1;"],
+  ["one-of-two-texts", 'f: "a" | "b" = "a";'],
+  ["an-enum", "f: E = E.One;"],
+];
+
+const definedValues = [
+  "undefined",
+  "null",
+  "true",
+  "false",
+  "0",
+  "1",
+  "-0",
+  "1.5",
+  "NaN",
+  "2147483648",
+  "-2147483649",
+  '""',
+  '"text"',
+  "1n",
+  "Symbol.iterator",
+  "{ a: 2 }",
+  "[2]",
+  "() => 2",
+];
+
+const plainDescriptor = (value: string) => `{ value: ${value}, writable: true, enumerable: true, configurable: true }`;
+
+const definers: Record<string, (object: string, value: string) => string> = {
+  "Object.defineProperty": (object, value) => `Object.defineProperty(${object}, "f", ${plainDescriptor(value)});`,
+  "Object.defineProperties": (object, value) => `Object.defineProperties(${object}, { f: ${plainDescriptor(value)} });`,
+  "Reflect.defineProperty": (object, value) => `Reflect.defineProperty(${object}, "f", ${plainDescriptor(value)});`,
+};
+
+const headOfDeclaredFields = `enum E { Zero = 0, One = 1 }
+const out: string[] = [];
+function show(x: unknown): string {
+  if (typeof x === "number") return Object.is(x, -0) ? "-0" : String(x);
+  if (typeof x === "bigint") return x + "n";
+  if (typeof x === "symbol" || typeof x === "function") return typeof x;
+  if (typeof x === "object" && x !== null) return JSON.stringify(x);
+  return typeof x === "string" ? JSON.stringify(x) : String(x);
+}
+function flags(o: object): string {
+  const d = Object.getOwnPropertyDescriptor(o, "f");
+  return d ? (d.writable ? "w" : "-") + (d.enumerable ? "e" : "-") + (d.configurable ? "c" : "-") : "none";
+}
+`;
+
+function textOfDeclaredField(field: string): string {
+  const cases: string[] = [];
+  for (const value of definedValues) {
+    for (const [definerName, define] of Object.entries(definers)) {
+      for (const place of ["straight", "in a loop", "behind a call", "in the constructor"]) {
+        const n = cases.length + 1;
+        const label = JSON.stringify(`${value} | ${definerName} | ${place}: `);
+        const look = `out.push(${label} + [typeof h.f, show(h.f), h.f ? "t" : "f", h.f === undefined, h.f == null, Object.keys(h).join(), flags(h), h.x].join(" "));`;
+        const plainClass = `class C${n} { x: number = 1; ${field} }`;
+        const body = {
+          "straight": `${plainClass}\nfunction run${n}() { const h = new C${n}(); ${define("h", value)} ${look} }`,
+          "in a loop": `${plainClass}\nfunction run${n}() { const h = new C${n}(); let held = 0; for (let round = 0; round < 40; round++) { if (round === 36) ${define("h", value)} if (h.f) held++; } out.push("held " + held); ${look} }`,
+          "behind a call": `${plainClass}\nfunction change${n}(o: C${n}) { ${define("o", value)} }\nfunction run${n}() { const h = new C${n}(); change${n}(h); ${look} }`,
+          "in the constructor": `class C${n} { x: number = 1; ${field} constructor() { ${define("this", value)} } }\nfunction run${n}() { const h = new C${n}(); ${look} }`,
+        }[place]!;
+        cases.push(`${body}\nrun${n}();`);
+      }
+    }
+  }
+  return `${headOfDeclaredFields}${cases.join("\n")}\nconsole.log(out.join("\\n"));\n`;
+}
+
+const programsOfDeclaredFields = (): WrittenProgram[] =>
+  declaredFields.map(([name, field]) => {
+    const entry = `a-field-declared-${name}-is-defined-with-every-kind-of-value.ts`;
+    return { entry, files: { [entry]: textOfDeclaredField(field) } };
+  });
+
+const programsOfCopies = (): WrittenProgram[] =>
   Object.entries(sources).flatMap(([sourceName, source]) =>
     Object.entries(copiers)
       .filter(([copierName]) => !source.isBuiltIn || copierName !== "a-spread-of-what-was-made-enumerable")
@@ -370,3 +461,5 @@ export const programs = (): WrittenProgram[] =>
         }),
       ),
   );
+
+export const programs = (): WrittenProgram[] => [...programsOfCopies(), ...programsOfDeclaredFields()];

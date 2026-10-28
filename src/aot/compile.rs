@@ -78,7 +78,7 @@ use bun_sema_driver::{
 };
 use bun_sys::{Fd, File};
 use bun_trim::Feature;
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
 use core::fmt;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::collections::VecDeque;
@@ -141,6 +141,8 @@ pub(crate) struct StartedWorkers {
     /// The files of the application that the programs hold, each once, with the sizes of their texts.
     pub held_texts: Vec<(Vec<u8>, usize)>,
     pub writes_preload: bool,
+    /// `CodeThatStartsWorkers::constructs_node_workers`
+    pub constructs_node_workers: bool,
 }
 
 impl StartedWorkers {
@@ -163,6 +165,7 @@ impl StartedWorkers {
         self.held_texts.shared_sort_unstable();
         self.held_texts.dedup();
         self.writes_preload |= further.writes_preload;
+        self.constructs_node_workers |= further.constructs_node_workers;
     }
 }
 
@@ -237,6 +240,19 @@ pub(crate) struct ProgramsOfOneLoad<'a> {
     pub are_all_of_the_build: bool,
     /// Of the program of a `WorkerFile`: `StartedWorkers::held_texts` of the programs before it.
     pub held_elsewhere: Option<&'a [(Vec<u8>, usize)]>,
+    /// Nothing is compiled. The load ends with `Build::is_one_program`: whether `mentions_worker_constructor` is false of one of the programs.
+    pub only_looks_for_worker_threads: bool,
+}
+
+/// What `compile_with_options` knows of the files that Workers start from while it compiles one program.
+#[derive(Copy, Clone)]
+struct KnownWorkerFiles<'a> {
+    /// Each of them may begin a program of its own.
+    splits: bool,
+    /// `TextsLeftOut::names`
+    left_out: &'a [Vec<u8>],
+    /// Filled by a build that ends ahead of the engine, which is no failure: one program has to hold these files with all the entry points.
+    of_the_one_program: &'a RefCell<Vec<WorkerFile>>,
 }
 
 #[derive(Clone)]
@@ -592,11 +608,18 @@ fn compile_with_options(
     let mut left_out = TextsLeftOut::default();
     loop {
         let options = with_worker_files.as_ref().unwrap_or(options);
-        let compiled = match with_worker_files {
-            None => Ok(compile_written_entry_points(options, provider, log)?),
-            Some(_) => compile_program(options, ProgramPlace::Only, provider, log),
-        };
         let splits = with_worker_files.is_none() && can_have_several_programs(options);
+        let of_the_one_program = RefCell::new(Vec::new());
+        let known = KnownWorkerFiles {
+            splits,
+            left_out: &left_out.names,
+            of_the_one_program: &of_the_one_program,
+        };
+        let compiled = match with_worker_files {
+            None => compile_written_entry_points(options, known, provider, log),
+            Some(_) => compile_program(options, ProgramPlace::Only, known, provider, log),
+        };
+        let of_the_one_program = of_the_one_program.into_inner();
         let longer = match compiled {
             Ok(compiled) => {
                 let added = add_programs_of_worker_files(
@@ -612,14 +635,13 @@ fn compile_with_options(
                         left_out.said.append_to(log);
                         return Ok(compiled);
                     }
-                    Err(found) => {
-                        let named = found.iter().filter(|file| file.is_named_by_path);
-                        (left_out.named_by_paths)
-                            .extend(named.map(|file| file.source_path.clone()));
-                        options_with_worker_files(options, &found)
-                    }
+                    Err(found) => left_out.add_worker_files(options, &found),
                 }
             }
+            Err(_) if !of_the_one_program.is_empty() => {
+                left_out.add_worker_files(options, &of_the_one_program)
+            }
+            Err(failure) if with_worker_files.is_none() => return Err(failure),
             Err(failure) => {
                 let texts = &options.load.entry_texts;
                 let starts_over = failure.brought_bun_types && !failure.is_internal_error;
@@ -658,6 +680,14 @@ struct TextsLeftOut {
 }
 
 impl TextsLeftOut {
+    /// The options of the one program that holds the files too.
+    fn add_worker_files<'a>(&mut self, options: &Options<'a>, files: &[WorkerFile]) -> Options<'a> {
+        let named = files.iter().filter(|file| file.is_named_by_path);
+        self.named_by_paths
+            .extend(named.map(|file| file.source_path.clone()));
+        options_with_worker_files(options, files)
+    }
+
     /// False: the build has failed for another reason. `first`: where the messages of the failed program begin.
     fn take_texts_with_errors(
         &mut self,
@@ -815,8 +845,9 @@ fn add_programs_of_worker_files(
             options: core::slice::from_ref(&own),
             are_all_of_the_build: false,
             held_elsewhere: Some(&first.started_workers.held_texts),
+            only_looks_for_worker_threads: false,
         };
-        let compiled = compile_programs(&own, Some(of_one_load), provider, log);
+        let compiled = compile_programs(&own, Some(of_one_load), None, provider, log);
         forget_repeated_messages(log, said_before);
         let program = match compiled {
             // The file was not written for a Worker. It stays a plain embedded file.
@@ -927,11 +958,12 @@ fn add_program(first: &mut Compilation, program: Compilation) {
 
 fn compile_written_entry_points(
     options: &Options<'_>,
+    known: KnownWorkerFiles<'_>,
     provider: &dyn SourceProvider,
     log: &mut Log,
 ) -> Result<Compilation, BuildFailed> {
     if !begins_program_at_each_entry_point(options) {
-        return compile_program(options, ProgramPlace::Only, provider, log);
+        return compile_program(options, ProgramPlace::Only, known, provider, log);
     }
     let said_before = (log.msgs.len(), log.warnings, log.errors);
     if let Some(compiled) = compile_program_at_each_entry_point(options, provider, log) {
@@ -940,7 +972,7 @@ fn compile_written_entry_points(
     log.msgs.truncate(said_before.0);
     (log.warnings, log.errors) = (said_before.1, said_before.2);
     remove_program_files_of_further_entry_points(options);
-    compile_program(options, ProgramPlace::Only, provider, log)
+    compile_program(options, ProgramPlace::Only, known, provider, log)
 }
 
 fn remove_program_files_of_further_entry_points(options: &Options<'_>) {
@@ -977,8 +1009,9 @@ fn compile_program_at_each_entry_point(
             options: &each,
             are_all_of_the_build: indexes.len() == count,
             held_elsewhere: None,
+            only_looks_for_worker_threads: false,
         };
-        let compiled = compile_programs(&together, Some(of_one_load), provider, log);
+        let compiled = compile_programs(&together, Some(of_one_load), None, provider, log);
         forget_repeated_messages(log, said_before);
         let compiled = match compiled {
             Err(failure) if failure.is_one_program => return None,
@@ -1080,11 +1113,12 @@ pub(crate) enum ProgramPlace {
 fn compile_program(
     options: &Options<'_>,
     place: ProgramPlace,
+    known: KnownWorkerFiles<'_>,
     provider: &dyn SourceProvider,
     log: &mut Log,
 ) -> Result<Compilation, BuildFailed> {
     debug_assert!(place == ProgramPlace::Only);
-    let mut compiled = compile_programs(options, None, provider, log)?;
+    let mut compiled = compile_programs(options, None, Some(known), provider, log)?;
     Ok(compiled.programs.pop().expect("a build has a program").1)
 }
 
@@ -1098,6 +1132,7 @@ struct CompiledPrograms {
 fn compile_programs<'a>(
     options: &'a Options<'a>,
     programs: Option<ProgramsOfOneLoad<'a>>,
+    known_worker_files: Option<KnownWorkerFiles<'_>>,
     provider: &'a dyn SourceProvider,
     log: &mut Log,
 ) -> Result<CompiledPrograms, BuildFailed> {
@@ -1152,6 +1187,15 @@ fn compile_programs<'a>(
         ProgramPlace::Only => 0,
         ProgramPlace::OneOfSeveral(index) => index,
     });
+    if let (Some(known), [(_, output)]) = (known_worker_files, &outputs[..]) {
+        let started = &build.started_workers;
+        let worker_files =
+            find_files_of_the_one_program(options, known, started, output, provider, log);
+        if !worker_files.is_empty() {
+            known.of_the_one_program.replace(worker_files);
+            return Err(build.finish::<()>(Err(Stage::Any), log).unwrap_err());
+        }
+    }
     let mut compiled = Vec::with_capacity(outputs.len());
     for (place, output) in outputs {
         build.place = place;
@@ -1263,6 +1307,62 @@ fn compile_programs<'a>(
             has_early_errors: false,
         }),
     }
+}
+
+// What `add_programs_of_worker_files` answers with `Err`, as far as the front end can tell: the engine then runs once, for the program that holds them all.
+fn find_files_of_the_one_program(
+    options: &Options<'_>,
+    known: KnownWorkerFiles<'_>,
+    started: &StartedWorkers,
+    output: &FrontEndOutput,
+    provider: &dyn SourceProvider,
+    log: &mut Log,
+) -> Vec<WorkerFile> {
+    let is_entry_point = |file: &WorkerFile| {
+        (output.entry_points.iter()).any(|it| it.source_path == file.source_path)
+    };
+    let mut files: Vec<WorkerFile> = (started.files.iter())
+        .filter(|file| !is_entry_point(file) && !known.left_out.contains(&file.source_path))
+        .cloned()
+        .collect();
+    let has_options = files.iter().any(|file| file.has_options);
+    files.dedup_by(|a, b| a.source_path == b.source_path);
+    let are_one_program = !files.is_empty()
+        && (!known.splits
+            || (output.writes_preload && has_options)
+            || (started.constructs_node_workers
+                && lacks_worker_threads_in_a_program(options, &files, provider, log)));
+    match are_one_program {
+        true => files,
+        false => Vec::new(),
+    }
+}
+
+// The host loads node:worker_threads into the global of a Worker of that module, so the program of such a Worker holds the module. The files are loaded and nothing more.
+fn lacks_worker_threads_in_a_program(
+    options: &Options<'_>,
+    files: &[WorkerFile],
+    provider: &dyn SourceProvider,
+    log: &mut Log,
+) -> bool {
+    let said_before = (log.msgs.len(), log.warnings, log.errors);
+    let with_files = options_with_worker_files(options, files);
+    let indexes: Vec<usize> = (options.entry_points.len()..with_files.entry_points.len()).collect();
+    let together = options_with_entry_points(&with_files, &indexes);
+    let each: Vec<Options<'_>> = (indexes.iter())
+        .map(|&index| options_with_entry_points(&with_files, &[index]))
+        .collect();
+    let of_one_load = ProgramsOfOneLoad {
+        indexes: &indexes,
+        options: &each,
+        are_all_of_the_build: false,
+        held_elsewhere: None,
+        only_looks_for_worker_threads: true,
+    };
+    let loaded = compile_programs(&together, Some(of_one_load), None, provider, log);
+    log.msgs.truncate(said_before.0);
+    (log.warnings, log.errors) = (said_before.1, said_before.2);
+    matches!(loaded, Err(failure) if failure.is_one_program)
 }
 
 fn fail(

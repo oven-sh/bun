@@ -98,6 +98,7 @@ pub(super) struct ModuleEntries {
     pub has_names: bool,
     pub knows_all_names: bool,
     pub is_half: bool,
+    pub is_replaced_late: bool,
     /// What `__esModule` says to an ES importer, as far as the text of the module says it.
     pub marker: Option<bool>,
     pub names: Vec<NameEntry>,
@@ -252,6 +253,7 @@ fn create_entries(text: &OwnText) -> ModuleEntries {
         has_names: text.has_names,
         knows_all_names: text.knows_all_names(),
         is_half: text.is_half,
+        is_replaced_late: text.is_replaced_late,
         marker: match text.is_marker_ignored_by_imports {
             true => Some(false),
             false => text.marker,
@@ -535,11 +537,23 @@ impl CommonJsExports {
         tables: &ExportTables,
         imports: &[FileImports],
     ) {
+        // The link may come while the body runs, and only the object says what the module has then.
+        let is_half_when = |module: ModuleRef, linked: ModuleRef| {
+            self.text_of(module).is_some_and(|text| text.is_half) && (input.half_at_link)(linked)
+        };
+        let is_half = |module: &ModuleRef| is_half_when(*module, *module);
         let written = tables.commonjs_imports.iter();
         let written = written
             .filter(|imported| imported.name == known::default)
             .map(|imported| ModuleRef::File(imported.exporter))
-            .filter(|&module| self.marker_for_imports(module) != Some(false));
+            .filter(|module| match self.marker_for_imports(*module) {
+                Some(false) => {
+                    let text = self.text_of(*module);
+                    self.marker(*module) != Some(false)
+                        && (is_half(module) || text.is_some_and(|text| text.is_replaced_late))
+                }
+                Some(true) | None => true,
+            });
         // Only an import statement that names the file itself reads `module.exports` in place of the copy.
         let exported = tables.modules_whose_default_is_exported();
         // `ns.default` is the object itself unless the module has a `default` of its own.
@@ -550,11 +564,10 @@ impl CommonJsExports {
             .map(|member| ModuleRef::File(member.exporter));
         let seen = collect_seen_namespaces(input.modules, tables, imports).into_iter();
         let seen = seen.map(ModuleRef::File);
-        // The link may come while the body runs, and only the object says what the module has then.
-        let is_half_when = |module: ModuleRef, linked: ModuleRef| {
-            self.text_of(module).is_some_and(|text| text.is_half) && (input.half_at_link)(linked)
-        };
-        let is_half = |module: &ModuleRef| is_half_when(*module, *module);
+        // Only the object lists the names of a module whose text does not say all of them.
+        let listed_by_object = seen.clone();
+        let listed_by_object =
+            listed_by_object.filter(|&module| !tables.commonjs.says_all_names(module));
         let owners = members.iter();
         let owners = owners
             .filter(|member| is_half_when(member.owner, ModuleRef::File(member.exporter)))
@@ -564,6 +577,7 @@ impl CommonJsExports {
             .chain(defaults)
             .chain(seen)
             .filter(|module| !self.has_default_of_its_own(*module) || is_half(module))
+            .chain(listed_by_object)
             .chain(owners)
             .collect();
         // Whether the module has a name by the time the copy is taken: a variable cannot say that it is absent, the object can.

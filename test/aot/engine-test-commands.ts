@@ -42,18 +42,14 @@ export async function runTool(cmd: string[]) {
 
 export const run = (...args: string[]) => runTool([testaot!, ...args]);
 
-// TODO: on Windows the tests that run a program in the shell, or in a child of testaot, ended with "CannotMapCode" while an image had to be
-// brought to its address. There it no longer has one. "jsc takes an image that testaot wrote" runs on Windows; the others follow once it passes.
-const shellTakesNoImage = isWindows;
-// TODO: on Windows `pass` answers "unknown pass f0:v3" to a word that retypes a value behind the parser, so it runs no pass. Why is not known.
-// These are the three files with such a word. The last one is in ./engine-tests.
+// TODO: on Windows x64 `pass` answers "unknown pass f0:v3" to a word that retypes a value behind the parser, so it runs no pass. Why is not known.
+// On Windows arm64 it takes the word. These are three files with such a word. The last one is in ./engine-tests.
 export const unexplainedOnWindows = [
   "represent/operand-wider-than-its-operation-takes.ir",
   "select/builtin-call-whose-operand-lost-its-type.ir",
   "select/a-call-that-takes-parts-of-views-keeps-its-form-when-a-view-is-only-known-as-an-object.ir",
 ];
 const isKnownOnWindows = (line: string) =>
-  line.includes(": run-in-shell: ") ||
   unexplainedOnWindows.some(file => line.replaceAll("\\", "/").includes(`/${file}:`));
 
 // TODO: on arm64 it prints another output.
@@ -65,7 +61,7 @@ const limit = isASAN ? 480_000 : 290_000;
 
 async function expectEveryTestPassed({ lines, stderr, exitCode }: Awaited<ReturnType<typeof run>>) {
   await printOutputOfFailedTests(lines.filter(line => !(isWindows && isKnownOnWindows(line))));
-  if (shellTakesNoImage && lines.some(line => line.startsWith("FAIL ") && isKnownOnWindows(line))) {
+  if (isWindows && lines.some(line => line.startsWith("FAIL ") && isKnownOnWindows(line))) {
     expect(lines.filter(line => line.startsWith("FAIL ") && !isKnownOnWindows(line))).toEqual([]);
     return;
   }
@@ -106,8 +102,7 @@ export function runIRTests(folder: "engine" | "bun") {
 }
 
 export function runNativeTests(part: number, parts: number) {
-  const cannotRunNativeTests = shellTakesNoImage || nativeTestsOutlastTheRunner;
-  (whyNativeTestsSkipped || comeInParts ? test.skip : cannotRunNativeTests ? test.todo : test)(
+  (whyNativeTestsSkipped || comeInParts ? test.skip : nativeTestsOutlastTheRunner ? test.todo : test)(
     `the engine's native tests pass: part ${part} of ${parts}`,
     async () => {
       await expectEveryTestPassed(await run("native", `--part=${part}/${parts}`));

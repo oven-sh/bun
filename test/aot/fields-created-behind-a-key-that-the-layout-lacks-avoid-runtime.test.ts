@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { runtimeEnvironment } from "./harness/flags";
 import { run } from "./harness/run";
-import { test } from "./supported-with-counted-calls";
+import { test } from "./supported";
 
 const turns = 2000;
 const numberOfKinds = 12;

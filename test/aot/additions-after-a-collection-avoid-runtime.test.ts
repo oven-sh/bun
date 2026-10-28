@@ -2,7 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { test } from "./supported-with-counted-calls";
+import { test } from "./supported";
 
 const files = {
   "main.ts": `

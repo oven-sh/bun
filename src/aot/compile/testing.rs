@@ -343,6 +343,7 @@ fn with_loaded_bind_input<R>(
 ) -> Result<R, Stage> {
     build.with_loaded_projects(|build, loaded| {
         let in_parallel = build.parallel_runner();
+        let beside = build.beside_runner();
         let view = loaded.project(project).view();
         let known_helpers = KnownHelpers::compute(view.files(), &in_parallel);
         let library = loaded.project(ProjectId::Runtime).view();
@@ -357,6 +358,7 @@ fn with_loaded_bind_input<R>(
             application: None,
             known_helpers: &known_helpers,
             in_parallel: &in_parallel,
+            beside: &beside,
         }))
     })
 }

@@ -1,18 +1,10 @@
 // A Worker that starts from a text or from the path of a file which is known when the program is built runs code that was compiled ahead of time.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { cpSync, symlinkSync } from "node:fs";
+import { cpSync, readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { compileCommand, runtimeEnvironment } from "./harness/flags";
-import {
-  built,
-  slot,
-  spawned,
-  withEverySlot,
-  withoutCoreDump,
-  withoutCrashReport,
-  withoutDebugInformation,
-} from "./run-programs";
+import { built, slot, spawned, withoutCoreDump, withoutCrashReport, withoutDebugInformation } from "./run-programs";
 import { describe, test } from "./supported";
 
 const timeout = 600_000;
@@ -27,35 +19,35 @@ const listen = `
   worker.onerror = event => (console.log("error", /^[A-Za-z]*Error: .*|Cannot find module/m.exec(event.message)?.[0]), event.preventDefault());
 `;
 
-async function build(folder: string, entry: string) {
+async function build(folder: string, ...entries: string[]) {
   const executable = join(folder, "program");
-  const command = [bunExe(), ...compileCommand, ...withoutDebugInformation(), entry, "--outfile", executable];
-  return { executable, ...(await spawned(command, folder, bunEnv)) };
+  const report = join(folder, "report.json");
+  const flags = [`--aot-report=${report}`, ...withoutDebugInformation()];
+  const command = [bunExe(), ...compileCommand, ...flags, ...entries, "--outfile", executable];
+  return { executable, report, ...(await spawned(command, folder, bunEnv)) };
 }
 
-const whileNothingElseRuns: typeof slot = work => withEverySlot(0, work);
+/** How many programs the build has compiled, also those that it then threw away. */
+const programsCompiled = (report: string): number => JSON.parse(readFileSync(report, "utf8")).statistics.EngineRuns;
 
 describe.concurrent("compile/aot/workers from texts that the build knows", () => {
   test.each([
-    ["data-urls-that-the-build-knows-start-workers", "main.ts", slot],
-    ["files-named-by-paths-start-workers", "main.ts", slot],
-    // Each of its texts is an entry point, and its build keeps every core busy.
-    [
-      "texts-that-the-build-knows-start-workers.ts",
-      "texts-that-the-build-knows-start-workers.ts",
-      whileNothingElseRuns,
-    ],
-    ["what-a-worker-sees-that-started-from-a-data-url.ts", "what-a-worker-sees-that-started-from-a-data-url.ts", slot],
+    ["data-urls-that-the-build-knows-start-workers", "main.ts", 1],
+    ["files-named-by-paths-start-workers", "main.ts", 1],
+    ["texts-that-the-build-knows-start-workers.ts", "texts-that-the-build-knows-start-workers.ts", 1],
+    // Each of its eleven texts begins a program of its own.
+    ["what-a-worker-sees-that-started-from-a-data-url.ts", "what-a-worker-sees-that-started-from-a-data-url.ts", 12],
   ])(
     "%s runs without the interpreter",
-    (program, entry, hold) =>
-      hold(async () => {
+    (program, entry, programsOfExecutable) =>
+      slot(async () => {
         using dir = tempDir("aot-workers-from-texts", {});
         const folder = String(dir);
         cpSync(join(programs, program), program === entry ? join(folder, entry) : folder, { recursive: true });
         const plain = await spawned([bunExe(), "run", entry], folder, bunEnv);
         const compiled = await build(folder, entry);
         built(compiled);
+        expect(programsCompiled(compiled.report)).toBe(programsOfExecutable);
         const ran = await spawned([compiled.executable], folder, compiledOnly);
         expect(plain.stdout).not.toBe("");
         expect({ stdout: ran.stdout, stderr: ran.stderr, exitCode: ran.exitCode, signal: ran.signal }).toEqual({
@@ -64,6 +56,38 @@ describe.concurrent("compile/aot/workers from texts that the build knows", () =>
           exitCode: 0,
           signal: null,
         });
+      }),
+    timeout,
+  );
+
+  const speaks = `import { parentPort } from "node:worker_threads";\nparentPort!.postMessage("spoken");\n`;
+  const startsBoth = `import { Worker } from "node:worker_threads";
+new Worker(new URL("./first.ts", import.meta.url)).on("exit", code => console.log("exit", code));
+new Worker(new URL("./second.ts", import.meta.url)).on("message", message => console.log("message", message));
+`;
+  test.each([
+    ["that starts no Worker", { "main.ts": `console.log(1 + 1);\n` }, ["main.ts"], 1],
+    ["whose Worker files all import node:worker_threads", { "first.ts": speaks }, ["main.ts"], 3],
+    [
+      "with a Worker file that does not import node:worker_threads",
+      { "first.ts": `console.log("quiet");\n` },
+      ["main.ts"],
+      1,
+    ],
+    [
+      "with an entry point that does not import node:worker_threads",
+      { "first.ts": `console.log("quiet");\n` },
+      ["main.ts", "first.ts", "second.ts"],
+      1,
+    ],
+  ])(
+    "the build compiles nothing twice for a program %s",
+    (_, files, entries, programsOfExecutable) =>
+      slot(async () => {
+        using dir = tempDir("aot-workers-from-texts", { "main.ts": startsBoth, "second.ts": speaks, ...files });
+        const compiled = await build(String(dir), ...entries);
+        built(compiled);
+        expect(programsCompiled(compiled.report)).toBe(programsOfExecutable);
       }),
     timeout,
   );

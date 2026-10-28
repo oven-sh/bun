@@ -1,0 +1,35 @@
+// A generator that delegates hands `throw`, `return` and what is sent in on to the iterator that it delegates to, and an asynchronous walk over a synchronous iterator does the same through a wrapper.
+// A built-in that is handed a generator, an iterator helper or a wrapper steps it itself. In each case the program holds the members that are asked for, for that one step alone.
+const said = [];
+const say = word => { said.push(word); };
+const never = process.argv.length > 99;
+const show = value => (value === undefined ? "undefined" : JSON.stringify(value));
+async function t(name, run) {
+  said.length = 0;
+  let answer;
+  try { answer = show(await run()); } catch (thrown) { answer = "threw " + thrown.name; }
+  console.log(name, said.join(), answer);
+}
+await t("throw reaches a written throw", () => { const outer = (function* () { yield* { [Symbol.iterator]() { return { next() { say("next"); return { done: false, value: 1 }; }, throw(reason) { say("throw " + reason); return { done: true, value: 2 }; } }; } }; return "end"; })(); return [outer.next(), outer.throw("why"), outer.next()]; });
+await t("throw reaches a getter for throw", () => { const outer = (function* () { yield* { [Symbol.iterator]() { return { next() { return { done: false, value: 1 }; }, get throw() { say("get throw"); return reason => ({ done: true, value: reason }); } }; } }; })(); return [outer.next(), outer.throw("why")]; });
+await t("throw closes what has no throw", () => { const outer = (function* () { yield* { [Symbol.iterator]() { return { next() { return { done: false, value: 1 }; }, return() { say("return"); return {}; } }; } }; })(); outer.next(); return outer.throw("why"); });
+await t("throw closes through a getter for return", () => { const outer = (function* () { yield* { [Symbol.iterator]() { return { next() { return { done: false, value: 1 }; }, get return() { say("get return"); return () => ({}); } }; } }; })(); outer.next(); return outer.throw("why"); });
+await t("return reaches a written return", () => { const outer = (function* () { yield* { [Symbol.iterator]() { return { next() { return { done: false, value: 1 }; }, return(value) { say("return " + value); return { done: true, value: "closed" }; } }; } }; })(); return [outer.next(), outer.return("now")]; });
+await t("return reads done and value behind getters", () => { const outer = (function* () { yield* { [Symbol.iterator]() { return { next() { return { done: false, value: 1 }; }, return() { return { get done() { say("done"); return true; }, get value() { say("value"); return "closed"; } }; } }; } }; })(); return [outer.next(), outer.return("now")]; });
+await t("a value sent in reaches next", () => { const outer = (function* () { yield* { [Symbol.iterator]() { return { next(sent) { say("next " + sent); return { done: sent === "stop", value: 1 }; } }; } }; })(); return [outer.next("first"), outer.next("more"), outer.next("stop")]; });
+await t("throw reaches an inherited throw", () => { class Steps { next() { return { done: false, value: 1 }; } throw(reason) { say("throw " + reason); return { done: true }; } [Symbol.iterator]() { return this; } } const outer = (function* () { yield* new Steps(); })(); return [outer.next(), outer.throw("why")]; });
+await t("throw reaches an inner generator", () => { const outer = (function* () { yield* (function* () { try { yield 1; } catch (caught) { say("caught " + caught); yield 2; } })(); })(); return [outer.next(), outer.throw("why"), outer.next()]; });
+await t("an async throw reaches a written throw", async () => { const outer = (async function* () { yield* { [Symbol.asyncIterator]() { return { next() { return Promise.resolve({ done: false, value: 1 }); }, throw(reason) { say("throw " + reason); return Promise.resolve({ done: true, value: 2 }); } }; } }; })(); return [await outer.next(), await outer.throw("why")]; });
+await t("an async throw reaches the throw of a synchronous iterator", async () => { const outer = (async function* () { yield* { [Symbol.iterator]() { return { next() { return { done: false, value: 1 }; }, throw(reason) { say("throw " + reason); return { done: true, value: 2 }; } }; } }; })(); return [await outer.next(), await outer.throw("why")]; });
+await t("an async return reaches the return of a synchronous iterator", async () => { const outer = (async function* () { yield* { [Symbol.iterator]() { return { next() { return { done: false, value: 1 }; }, return(value) { say("return " + value); return { done: true, value: "closed" }; } }; } }; })(); return [await outer.next(), await outer.return("now")]; });
+await t("an async throw closes a synchronous iterator without throw", async () => { const outer = (async function* () { yield* { [Symbol.iterator]() { return { next() { return { done: false, value: 1 }; }, return() { say("return"); return {}; } }; } }; })(); await outer.next(); return await outer.throw("why"); });
+await t("for await closes a synchronous iterator", async () => { for await (const value of { [Symbol.iterator]() { return { next() { return { done: false, value: Promise.resolve(1) }; }, return() { say("return"); return {}; } }; } }) return value; });
+await t("for await awaits a thenable that a synchronous iterator hands out", async () => { for await (const value of [{ then(resolve) { say("then"); resolve(7); } }]) return value; });
+await t("for await meets a rejection out of a synchronous iterator", async () => { try { for await (const value of { [Symbol.iterator]() { return { next() { return { done: false, value: Promise.reject(new RangeError("no")) }; }, return() { say("return"); return {}; } }; } }) return value; } catch (caught) { return caught.name; } });
+await t("a built-in steps an iterator helper over a written iterator", () => new AggregateError(Iterator.prototype.map.call({ at: 0, next() { say("next"); return { done: this.at++ > 1, value: this.at }; } }, value => value * 2)).errors);
+await t("a built-in steps the wrapper of Iterator.from", () => new AggregateError(Iterator.from({ at: 0, next() { say("next"); return { done: this.at++ > 1, value: this.at }; } })).errors);
+await t("a built-in steps an async generator", async () => await Array.fromAsync(never ? new Proxy([], {}) : (async function* () { say("start"); yield 1; })()));
+await t("a stream steps an async generator", async () => { const all = []; for await (const chunk of ReadableStream.from((async function* () { say("start"); yield "a"; yield "b"; })())) all.push(chunk); return all; });
+await t("a stream steps a generator", async () => { const all = []; for await (const chunk of ReadableStream.from((function* () { say("start"); yield "a"; yield "b"; })())) all.push(chunk); return all; });
+await t("a response reads an async generator", async () => await new Response((async function* () { say("start"); yield "a"; yield "b"; })()).text());
+await t("a response reads an object with an async iterator", async () => await new Response({ async *[Symbol.asyncIterator]() { say("start"); yield "a"; yield "b"; } }).text());

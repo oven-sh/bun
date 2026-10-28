@@ -5933,6 +5933,9 @@ pub mod macho {
     /// `LC_SEGMENT_64` — 64-bit segment load command.
     pub const LC_SEGMENT_64: u32 = 0x19;
 
+    /// `<mach/vm_prot.h> VM_PROT_EXECUTE`.
+    const VM_PROT_EXECUTE: vm_prot_t = 0x04;
+
     /// `<mach-o/loader.h> mach_header_64`. Layout matches libc's
     /// `mach_header_64`.
     #[repr(C)]
@@ -6035,6 +6038,23 @@ pub mod macho {
             self.offset += data.len();
             Some(LoadCommand { hdr, data, offset })
         }
+    }
+
+    /// Returns the offset of `address` from the start of the image's code, or `None` if the
+    /// address isn't in the code. `address` is unslid, like the addresses in the load commands.
+    ///
+    /// A linker emits one code segment. `bun build --compile --trim` splits it into several,
+    /// with gaps between them.
+    pub fn offset_in_code(ncmds: u32, commands: &[u8], address: u64) -> Option<u64> {
+        let mut code_segments = LoadCommandIterator::new(ncmds, commands)
+            .filter(|command| command.cmd() == LC_SEGMENT_64)
+            .filter_map(|command| command.cast::<segment_command_64>())
+            .filter(|segment| segment.initprot & VM_PROT_EXECUTE != 0)
+            .peekable();
+        let code_start = code_segments.peek()?.vmaddr;
+        code_segments
+            .any(|segment| address.wrapping_sub(segment.vmaddr) < segment.vmsize)
+            .then(|| address.wrapping_sub(code_start))
     }
 }
 

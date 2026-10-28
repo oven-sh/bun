@@ -3,7 +3,7 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { run as runCommand } from "./harness/run";
-import { beforeAll, test } from "./supported-with-counted-calls";
+import { beforeAll, test } from "./supported";
 
 // A program that draws, waits and draws again makes the same short-lived objects in every turn, and none of them is alive when a full
 // collection comes in between. What the run time has learned about their layouts (the Structure of each, the record of each allocation

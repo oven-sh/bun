@@ -522,7 +522,7 @@ impl Follower<'_, '_, '_> {
                 match find_values_passed_for(hir, bound, self.inputs.decisions, name, &find_written)
                 {
                     Some(passed) => self.values_of_any(passed),
-                    None => self.values_of_element_handed_to(symbol),
+                    None => self.values_handed_by_walk(symbol),
                 }
             }
             BindingKind::Function if bound.is_stable_binding(symbol) => {
@@ -662,8 +662,8 @@ impl Follower<'_, '_, '_> {
         Some(elements)
     }
 
-    /// `list.forEach(name => ..)`: what `name` holds.
-    fn values_of_element_handed_to(&mut self, parameter: SymbolId) -> Option<Values> {
+    /// `list.forEach((name, index, all) => ..)`: what `name` or `all` holds.
+    fn values_handed_by_walk(&mut self, parameter: SymbolId) -> Option<Values> {
         let &ScanInputs { hir, bound, .. } = self.inputs;
         let &[Decl::Param(pattern)] = bound.symbol(parameter).decls else {
             return None;
@@ -675,8 +675,8 @@ impl Follower<'_, '_, '_> {
         let FnOwner::Expr(written) = bound.fns[function.idx()].owner else {
             return None;
         };
-        let is_first_alone = hir[function].params.iter().next() == Some(id)
-            && hir[id].default.is_none()
+        let position = hir[function].params.iter().position(|it| it == id)?;
+        let holds_what_it_is_handed = hir[id].default.is_none()
             && !hir[id].flags.contains(Flags::REST)
             && bound.stores_to(parameter).is_empty()
             && !bound.finds_itself(hir, function);
@@ -687,12 +687,19 @@ impl Follower<'_, '_, '_> {
             return None;
         };
         let call = hir[call];
-        let (list, _) = self.find_walk_of_list(call).filter(|_| is_first_alone)?;
-        (hir.ids(call.args).next() == Some(written)).then(|| self.values_of_elements(list))?
+        let (list, _) = self.find_walk_of_list(call)?;
+        if !holds_what_it_is_handed || hir.ids(call.args).next() != Some(written) {
+            return None;
+        }
+        match position {
+            0 => self.values_of_elements(list),
+            2 => self.values_of(list),
+            _ => None,
+        }
     }
 
-    /// The list, where the call hands each element of a list to its first argument. A program cannot replace these members of a list.
-    fn find_walk_of_list(&self, call: Call) -> Option<(ExprId, Atom)> {
+    /// The list, where the call hands each element of a list to its first argument, which leaves the list as it is. A program cannot replace these members of a list.
+    fn find_walk_of_list(&mut self, call: Call) -> Option<(ExprId, Atom)> {
         let hir = self.inputs.hir;
         let (list, MemberKey::Name(name)) =
             hir.member_key(hir.skip_type_assertions(call.callee))?
@@ -711,7 +718,34 @@ impl Follower<'_, '_, '_> {
                 | b"some"
                 | b"every"
         );
-        (walks && call.chain == Chain::No).then_some((list, name))
+        (walks && call.chain == Chain::No && self.keeps_walked_list_as_written(call))
+            .then_some((list, name))
+    }
+
+    /// A walk hands the list itself to its first argument too, as the third argument of each call.
+    fn keeps_walked_list_as_written(&mut self, walk: Call) -> bool {
+        let &ScanInputs { hir, bound, .. } = self.inputs;
+        let written = hir.ids(walk.args).next();
+        let written = written.and_then(|it| expr_kind(hir, hir.skip_type_assertions(it)));
+        let Some(ExprKind::Fn(function)) = written else {
+            return false;
+        };
+        let parameters = hir[function].params;
+        let has_rest = (parameters.iter()).any(|id| hir[id].flags.contains(Flags::REST));
+        if has_rest || bound.finds_itself(hir, function) {
+            return false;
+        }
+        let Some(list) = parameters.iter().nth(2) else {
+            return true;
+        };
+        let pattern = hir[list].pat;
+        if !matches!(hir[pattern].kind, PatKind::Ident(_)) {
+            return false;
+        }
+        let holder = bound.declared_symbol(Decl::Param(pattern));
+        self.take_as_kept_as_written(holder);
+        bound.dynamic_lookup_scope(NodeData::Pat(pattern)).is_none()
+            && !bound.is_visible_to_eval(holder)
     }
 
     fn values_of_walk(&mut self, call: Call) -> Option<Values> {
@@ -967,6 +1001,8 @@ impl Follower<'_, '_, '_> {
             ExprKind::Binary { op, left, .. } => match op {
                 BinOp::And | BinOp::Or | BinOp::Nullish => self.keeps_as_written(above),
                 BinOp::Comma => left == e || self.keeps_as_written(above),
+                // `Symbol.hasInstance` of the right side is called with the left side.
+                BinOp::Instanceof => left != e,
                 _ => true,
             },
             ExprKind::Cond { test, .. } => test == e || self.keeps_as_written(above),
@@ -1100,6 +1136,10 @@ impl Follower<'_, '_, '_> {
                 }
                 PropKey::None | PropKey::Private(_) => return None,
             };
+            // An operator that converts the object calls these with the object as `this`.
+            if matches!(&key[..], b"toString" | b"valueOf") {
+                return None;
+            }
             written.retain(|earlier| earlier.0 != key);
             written.push((key, property.value));
         }

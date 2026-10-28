@@ -56,6 +56,18 @@ impl CommonJsNames {
                 .is_some_and(is_created)
     }
 
+    /// Somebody may look at the module while its body runs.
+    pub(in crate::modules) fn is_half(&self, module: ModuleRef) -> bool {
+        let index = self.index.get(&module);
+        index.is_some_and(|&index| self.entries[index].is_half)
+    }
+
+    /// Something may store to `module.exports` once the body has ended.
+    pub(in crate::modules) fn is_replaced_late(&self, module: ModuleRef) -> bool {
+        let index = self.index.get(&module);
+        index.is_some_and(|&index| self.entries[index].is_replaced_late)
+    }
+
     /// Whether an ES importer finds under the name what `require` of the module reads under it. Without the marker its `default` is the value of the module.
     fn shows_member(&self, module: ModuleRef, name: Atom) -> bool {
         let index = self.index.get(&module);
@@ -63,13 +75,20 @@ impl CommonJsNames {
             || index.is_some_and(|&index| self.entries[index].marker == Some(true))
     }
 
+    /// The text says which names a loop over the object sees once the body has run.
+    pub(in crate::modules) fn says_all_names(&self, module: ModuleRef) -> bool {
+        self.index.get(&module).is_some_and(|&index| {
+            let entries = &self.entries[index];
+            !self.is_refused[index] && entries.has_names && entries.knows_all_names
+        })
+    }
+
     /// The names that a loop over the object sees once the body has run, and `default`. `None`: the text does not say.
     pub(in crate::modules) fn names_of(&self, module: ModuleRef) -> Option<Vec<Atom>> {
-        let &index = self.index.get(&module)?;
-        let entries = &self.entries[index];
-        if self.is_refused[index] || !entries.has_names || !entries.knows_all_names {
+        if !self.says_all_names(module) {
             return None;
         }
+        let entries = &self.entries[*self.index.get(&module)?];
         let is_shown = |entry: &&NameEntry| entry.is_enumerable && entry.name != known::__esModule;
         let shown = entries.names.iter().filter(is_shown);
         let mut names: Vec<Atom> = shown.map(|entry| entry.name).collect();

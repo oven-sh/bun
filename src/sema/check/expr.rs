@@ -612,7 +612,7 @@ impl<'p, 's> Checker<'p, 's> {
         if self.in_progress[(crate::util::fx_hash(&q) >> 54) as usize] == 0 {
             return None;
         }
-        let first = self.stack.iter().rposition(|&it| it == q)?;
+        let first = self.position_in_progress(q, 0)?;
         let pushed_at = self.flow_loop_pushed_since(first)?;
         let is_checked_once = !is_rechecked && self.is_rechecking();
         // Hides the first visit from `enter`, which still fails when time, native stack or query

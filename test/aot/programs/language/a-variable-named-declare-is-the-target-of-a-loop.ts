@@ -1,0 +1,10 @@
+var declare: any;
+for (declare of [1, 2]);
+console.log(declare);
+for (declare in { a: 1, b: 2 });
+console.log(declare);
+for await (declare of [3, 4]);
+console.log(declare);
+for (declare; ; ) break;
+console.log(declare);
+export {};

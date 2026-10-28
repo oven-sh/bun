@@ -1,0 +1,21 @@
+m2 begins
+m2 ends
+m3 begins
+m1 begins
+m1 ends
+m0 begins
+m0 early m2 * object{default,first,second}
+m0 early m2 *.second number:2
+m0 early m2 *.default object{first,second}
+m0 ends
+m3 ends
+m2 not awaited m3 object{default}
+m2 not awaited m3.second undefined:undefined
+m2 not awaited m3.default object{first,second}
+m1 late import m0 object{default,first,firstOfm1_0,second}
+m1 late import m0.second function{of}
+m1 late import m0.default function{first}
+m0 late m2 * object{default,first,second}
+m0 late m2 *.second number:2
+m0 late m2 *.default object{first,second}
+the end

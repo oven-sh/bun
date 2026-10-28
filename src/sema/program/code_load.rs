@@ -21,6 +21,8 @@ pub enum MainModule {
 pub struct CompileInputs<'a, 's> {
     pub entry_points: &'a [Vec<u8>],
     pub main_module: MainModule,
+    /// The program of the build that has loaded these files. This load folds each file and follows its imports as that one did.
+    pub loaded_before: Option<&'a Files<'s>>,
     pub code: &'a CodeOptions,
     pub fold: &'a FoldInputs<'s>,
     pub atoms: Interner<'s>,
@@ -73,6 +75,14 @@ pub(super) struct CodeLoadContext<'a, 's: 'r, 'r> {
     pub(super) entry_points: Vec<CodeTarget<'r>>,
     pub(super) is_case_sensitive: bool,
     shares_parsed_files: bool,
+    files_loaded_before: FxHashMap<(Cow<'a, [u8]>, HostLoader), FileId>,
+}
+
+/// A file as `CompileInputs::loaded_before` has it.
+#[derive(Copy, Clone)]
+pub(super) struct LoadedBefore<'a, 's> {
+    pub(super) hir: &'a hir::File<'s>,
+    pub(super) compiled: &'s CompiledModule<'s>,
 }
 
 const _: fn() = || {
@@ -92,6 +102,14 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             let request = resolver.loader_request(path, CodeImportKind::EntryPoint, None, None);
             CodeTarget::of_path(resolver.keep(path), compile.host.loader_of(&request))
         });
+        let is_case_sensitive = compile.host.is_case_sensitive();
+        let loaded_before = compile.inputs.loaded_before;
+        let files_loaded_before = loaded_before.into_iter().flat_map(|files| {
+            files.loaded_code_files().iter().filter_map(move |&file| {
+                let path = to_path(files.module(file).file_name(), is_case_sensitive);
+                Some(((path, files.compiled(file)?.loader), file))
+            })
+        });
         CodeLoadContext {
             session,
             host: compile.host,
@@ -102,9 +120,21 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             projects: Projects::new(session),
             project_resolvers: ProjectResolvers::new(),
             entry_points: entry_points.collect(),
-            is_case_sensitive: compile.host.is_case_sensitive(),
+            is_case_sensitive,
             shares_parsed_files: compile.shares_parsed_files,
+            files_loaded_before: files_loaded_before.collect(),
         }
+    }
+
+    pub(super) fn find_loaded_before(&self, key: LoadKey<'_>) -> Option<LoadedBefore<'a, 's>> {
+        let files = self.inputs.loaded_before?;
+        let key = self.key_of_read_code(key);
+        let path = to_path(key.path, self.is_case_sensitive);
+        let &file = self.files_loaded_before.get(&(path, key.loader))?;
+        Some(LoadedBefore {
+            hir: files.hir(file),
+            compiled: files.compiled(file)?,
+        })
     }
 
     /// The I/O threads serve one load at a time.
@@ -165,6 +195,8 @@ pub(super) struct Analyzed<'s, 'r> {
     pub(super) package: Option<EnclosingPackage<'r>>,
     pub(super) side_effects: DeclaredSideEffects<'r>,
     pub(super) is_aot_source: bool,
+    pub(super) import_meta_main: Option<bool>,
+    pub(super) is_called_before_it_runs: bool,
 }
 
 pub(super) struct LoadedCode<'s, 'r> {

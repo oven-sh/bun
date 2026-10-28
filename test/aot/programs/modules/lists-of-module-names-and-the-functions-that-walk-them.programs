@@ -1,0 +1,262 @@
+//// a-list-of-module-names-is-changed-through-the-third-parameter-of-the-function-that-walks-it.json
+{ "skipInShell": "it needs require()" }
+//// a-list-of-module-names-is-changed-through-the-third-parameter-of-the-function-that-walks-it/lib/a.cjs
+exports.who = "lib/a";
+//// a-list-of-module-names-is-changed-through-the-third-parameter-of-the-function-that-walks-it/lib/b.cjs
+exports.who = "lib/b";
+//// a-list-of-module-names-is-changed-through-the-third-parameter-of-the-function-that-walks-it/lib/c.cjs
+exports.who = "lib/c";
+//// a-list-of-module-names-is-changed-through-the-third-parameter-of-the-function-that-walks-it/main.cjs
+// The function that `forEach` calls gets the list as its third argument and stores to it.
+const names = ["A", "B"];
+names.forEach((name, index, list) => {
+  list[index] = name.toLowerCase();
+});
+for (const name of names) console.log(require("./lib/" + name + ".cjs").who);
+//// a-list-of-module-names-is-changed-through-a-constant-that-holds-the-third-parameter.json
+{ "skipInShell": "it needs require()" }
+//// a-list-of-module-names-is-changed-through-a-constant-that-holds-the-third-parameter/lib/a.cjs
+exports.who = "lib/a";
+//// a-list-of-module-names-is-changed-through-a-constant-that-holds-the-third-parameter/lib/b.cjs
+exports.who = "lib/b";
+//// a-list-of-module-names-is-changed-through-a-constant-that-holds-the-third-parameter/lib/c.cjs
+exports.who = "lib/c";
+//// a-list-of-module-names-is-changed-through-a-constant-that-holds-the-third-parameter/main.cjs
+// The function that `forEach` calls keeps its third argument, the list, in a constant and stores to that.
+const names = ["A", "B"];
+names.forEach((name, index, list) => {
+  const same = list;
+  same[index] = name.toLowerCase();
+});
+for (const name of names) console.log(require("./lib/" + name + ".cjs").who);
+//// a-list-of-module-names-is-changed-by-a-function-that-gets-the-third-parameter.json
+{ "skipInShell": "it needs require()" }
+//// a-list-of-module-names-is-changed-by-a-function-that-gets-the-third-parameter/lib/a.cjs
+exports.who = "lib/a";
+//// a-list-of-module-names-is-changed-by-a-function-that-gets-the-third-parameter/lib/b.cjs
+exports.who = "lib/b";
+//// a-list-of-module-names-is-changed-by-a-function-that-gets-the-third-parameter/lib/c.cjs
+exports.who = "lib/c";
+//// a-list-of-module-names-is-changed-by-a-function-that-gets-the-third-parameter/main.cjs
+// The function that `forEach` calls hands its third argument, the list, to another function.
+const names = ["A", "B"];
+function replaceAll(list) {
+  list[0] = "c";
+  list[1] = "a";
+}
+names.forEach((name, index, list) => {
+  replaceAll(list);
+});
+for (const name of names) console.log(require("./lib/" + name + ".cjs").who);
+//// a-list-of-module-names-is-changed-through-the-arguments-object-of-the-function-that-walks-it.json
+{ "skipInShell": "it needs require()" }
+//// a-list-of-module-names-is-changed-through-the-arguments-object-of-the-function-that-walks-it/lib/a.cjs
+exports.who = "lib/a";
+//// a-list-of-module-names-is-changed-through-the-arguments-object-of-the-function-that-walks-it/lib/b.cjs
+exports.who = "lib/b";
+//// a-list-of-module-names-is-changed-through-the-arguments-object-of-the-function-that-walks-it/lib/c.cjs
+exports.who = "lib/c";
+//// a-list-of-module-names-is-changed-through-the-arguments-object-of-the-function-that-walks-it/main.cjs
+// The function that `forEach` calls finds the list in `arguments`.
+const names = ["A", "B"];
+names.forEach(function () {
+  arguments[2][arguments[1]] = arguments[0].toLowerCase();
+});
+for (const name of names) console.log(require("./lib/" + name + ".cjs").who);
+//// a-list-of-module-names-is-changed-through-the-rest-parameter-of-the-function-that-walks-it.json
+{ "skipInShell": "it needs require()" }
+//// a-list-of-module-names-is-changed-through-the-rest-parameter-of-the-function-that-walks-it/lib/a.cjs
+exports.who = "lib/a";
+//// a-list-of-module-names-is-changed-through-the-rest-parameter-of-the-function-that-walks-it/lib/b.cjs
+exports.who = "lib/b";
+//// a-list-of-module-names-is-changed-through-the-rest-parameter-of-the-function-that-walks-it/lib/c.cjs
+exports.who = "lib/c";
+//// a-list-of-module-names-is-changed-through-the-rest-parameter-of-the-function-that-walks-it/main.cjs
+// The function that `forEach` calls finds the list in its rest parameter.
+const names = ["A", "B"];
+names.forEach((...given) => {
+  given[2][given[1]] = given[0].toLowerCase();
+});
+for (const name of names) console.log(require("./lib/" + name + ".cjs").who);
+//// a-list-of-module-names-is-changed-by-a-declared-function-that-walks-it.json
+{ "skipInShell": "it needs require()" }
+//// a-list-of-module-names-is-changed-by-a-declared-function-that-walks-it/lib/a.cjs
+exports.who = "lib/a";
+//// a-list-of-module-names-is-changed-by-a-declared-function-that-walks-it/lib/b.cjs
+exports.who = "lib/b";
+//// a-list-of-module-names-is-changed-by-a-declared-function-that-walks-it/lib/c.cjs
+exports.who = "lib/c";
+//// a-list-of-module-names-is-changed-by-a-declared-function-that-walks-it/main.cjs
+// The function that `forEach` calls is declared elsewhere.
+const names = ["A", "B"];
+function lower(name, index, list) {
+  list[index] = name.toLowerCase();
+}
+names.forEach(lower);
+for (const name of names) console.log(require("./lib/" + name + ".cjs").who);
+//// a-list-of-module-names-is-changed-by-the-functions-that-map-filter-find-some-and-every-call.json
+{ "skipInShell": "it needs require()" }
+//// a-list-of-module-names-is-changed-by-the-functions-that-map-filter-find-some-and-every-call/every/a.cjs
+exports.who = "every/a";
+//// a-list-of-module-names-is-changed-by-the-functions-that-map-filter-find-some-and-every-call/every/b.cjs
+exports.who = "every/b";
+//// a-list-of-module-names-is-changed-by-the-functions-that-map-filter-find-some-and-every-call/every/c.cjs
+exports.who = "every/c";
+//// a-list-of-module-names-is-changed-by-the-functions-that-map-filter-find-some-and-every-call/filtered/a.cjs
+exports.who = "filtered/a";
+//// a-list-of-module-names-is-changed-by-the-functions-that-map-filter-find-some-and-every-call/filtered/b.cjs
+exports.who = "filtered/b";
+//// a-list-of-module-names-is-changed-by-the-functions-that-map-filter-find-some-and-every-call/filtered/c.cjs
+exports.who = "filtered/c";
+//// a-list-of-module-names-is-changed-by-the-functions-that-map-filter-find-some-and-every-call/found-last/a.cjs
+exports.who = "found-last/a";
+//// a-list-of-module-names-is-changed-by-the-functions-that-map-filter-find-some-and-every-call/found-last/b.cjs
+exports.who = "found-last/b";
+//// a-list-of-module-names-is-changed-by-the-functions-that-map-filter-find-some-and-every-call/found-last/c.cjs
+exports.who = "found-last/c";
+//// a-list-of-module-names-is-changed-by-the-functions-that-map-filter-find-some-and-every-call/found/a.cjs
+exports.who = "found/a";
+//// a-list-of-module-names-is-changed-by-the-functions-that-map-filter-find-some-and-every-call/found/b.cjs
+exports.who = "found/b";
+//// a-list-of-module-names-is-changed-by-the-functions-that-map-filter-find-some-and-every-call/found/c.cjs
+exports.who = "found/c";
+//// a-list-of-module-names-is-changed-by-the-functions-that-map-filter-find-some-and-every-call/indexed-last/a.cjs
+exports.who = "indexed-last/a";
+//// a-list-of-module-names-is-changed-by-the-functions-that-map-filter-find-some-and-every-call/indexed-last/b.cjs
+exports.who = "indexed-last/b";
+//// a-list-of-module-names-is-changed-by-the-functions-that-map-filter-find-some-and-every-call/indexed-last/c.cjs
+exports.who = "indexed-last/c";
+//// a-list-of-module-names-is-changed-by-the-functions-that-map-filter-find-some-and-every-call/indexed/a.cjs
+exports.who = "indexed/a";
+//// a-list-of-module-names-is-changed-by-the-functions-that-map-filter-find-some-and-every-call/indexed/b.cjs
+exports.who = "indexed/b";
+//// a-list-of-module-names-is-changed-by-the-functions-that-map-filter-find-some-and-every-call/indexed/c.cjs
+exports.who = "indexed/c";
+//// a-list-of-module-names-is-changed-by-the-functions-that-map-filter-find-some-and-every-call/main.cjs
+// Each of these members of a list hands the list to the function that it calls.
+const mappedNames = ["A"];
+mappedNames.map((name, at, list) => (list[at] = "a"));
+const filteredNames = ["A"];
+filteredNames.filter((name, at, list) => (list[at] = "b"));
+const foundNames = ["A"];
+foundNames.find((name, at, list) => (list[at] = "c"));
+const lastFoundNames = ["A"];
+lastFoundNames.findLast((name, at, list) => (list[at] = "a"));
+const indexedNames = ["A"];
+indexedNames.findIndex((name, at, list) => (list[at] = "b"));
+const lastIndexedNames = ["A"];
+lastIndexedNames.findLastIndex((name, at, list) => (list[at] = "c"));
+const someNames = ["A"];
+someNames.some((name, at, list) => (list[at] = "a"));
+const everyName = ["A"];
+everyName.every((name, at, list) => (list[at] = "b"));
+for (const name of mappedNames) console.log(require("./mapped/" + name + ".cjs").who);
+for (const name of filteredNames) console.log(require("./filtered/" + name + ".cjs").who);
+for (const name of foundNames) console.log(require("./found/" + name + ".cjs").who);
+for (const name of lastFoundNames) console.log(require("./found-last/" + name + ".cjs").who);
+for (const name of indexedNames) console.log(require("./indexed/" + name + ".cjs").who);
+for (const name of lastIndexedNames) console.log(require("./indexed-last/" + name + ".cjs").who);
+for (const name of someNames) console.log(require("./some/" + name + ".cjs").who);
+for (const name of everyName) console.log(require("./every/" + name + ".cjs").who);
+//// a-list-of-module-names-is-changed-by-the-functions-that-map-filter-find-some-and-every-call/mapped/a.cjs
+exports.who = "mapped/a";
+//// a-list-of-module-names-is-changed-by-the-functions-that-map-filter-find-some-and-every-call/mapped/b.cjs
+exports.who = "mapped/b";
+//// a-list-of-module-names-is-changed-by-the-functions-that-map-filter-find-some-and-every-call/mapped/c.cjs
+exports.who = "mapped/c";
+//// a-list-of-module-names-is-changed-by-the-functions-that-map-filter-find-some-and-every-call/some/a.cjs
+exports.who = "some/a";
+//// a-list-of-module-names-is-changed-by-the-functions-that-map-filter-find-some-and-every-call/some/b.cjs
+exports.who = "some/b";
+//// a-list-of-module-names-is-changed-by-the-functions-that-map-filter-find-some-and-every-call/some/c.cjs
+exports.who = "some/c";
+//// a-list-of-module-names-is-changed-by-a-walk-inside-the-walk.json
+{ "skipInShell": "it needs require()" }
+//// a-list-of-module-names-is-changed-by-a-walk-inside-the-walk/lib/a.cjs
+exports.who = "lib/a";
+//// a-list-of-module-names-is-changed-by-a-walk-inside-the-walk/lib/b.cjs
+exports.who = "lib/b";
+//// a-list-of-module-names-is-changed-by-a-walk-inside-the-walk/lib/c.cjs
+exports.who = "lib/c";
+//// a-list-of-module-names-is-changed-by-a-walk-inside-the-walk/main.cjs
+// The function that `forEach` calls walks its third argument, the list, with a function that stores to its own third argument.
+const names = ["A", "B"];
+names.forEach((name, index, list) => {
+  list.forEach((inner, at, again) => {
+    again[at] = inner.toLowerCase();
+  });
+});
+for (const name of names) console.log(require("./lib/" + name + ".cjs").who);
+//// a-list-of-module-names-is-changed-while-map-walks-it-and-no-variable-holds-it.json
+{ "skipInShell": "it needs require()" }
+//// a-list-of-module-names-is-changed-while-map-walks-it-and-no-variable-holds-it/lib/a.cjs
+exports.who = "lib/a";
+//// a-list-of-module-names-is-changed-while-map-walks-it-and-no-variable-holds-it/lib/b.cjs
+exports.who = "lib/b";
+//// a-list-of-module-names-is-changed-while-map-walks-it-and-no-variable-holds-it/lib/c.cjs
+exports.who = "lib/c";
+//// a-list-of-module-names-is-changed-while-map-walks-it-and-no-variable-holds-it/main.cjs
+// The list is a literal that `map` walks. The function stores to a later element, which `map` then hands to it.
+const mapped = ["a", "b"].map((name, index, list) => {
+  list[1] = "c";
+  return name;
+});
+for (const name of mapped) console.log(require("./lib/" + name + ".cjs").who);
+//// a-list-of-module-names-is-changed-while-for-each-walks-it-and-no-variable-holds-it.json
+{ "skipInShell": "it needs require()" }
+//// a-list-of-module-names-is-changed-while-for-each-walks-it-and-no-variable-holds-it/lib/a.cjs
+exports.who = "lib/a";
+//// a-list-of-module-names-is-changed-while-for-each-walks-it-and-no-variable-holds-it/lib/b.cjs
+exports.who = "lib/b";
+//// a-list-of-module-names-is-changed-while-for-each-walks-it-and-no-variable-holds-it/lib/c.cjs
+exports.who = "lib/c";
+//// a-list-of-module-names-is-changed-while-for-each-walks-it-and-no-variable-holds-it/main.cjs
+// The list is a literal that `forEach` walks. The function stores to a later element, which `forEach` then hands to it.
+["a", "b"].forEach((name, index, list) => {
+  list[1] = "c";
+  console.log(require("./lib/" + name + ".cjs").who);
+});
+//// a-list-of-module-names-is-changed-through-a-third-parameter-with-a-default.json
+{ "skipInShell": "it needs require()" }
+//// a-list-of-module-names-is-changed-through-a-third-parameter-with-a-default/lib/a.cjs
+exports.who = "lib/a";
+//// a-list-of-module-names-is-changed-through-a-third-parameter-with-a-default/lib/b.cjs
+exports.who = "lib/b";
+//// a-list-of-module-names-is-changed-through-a-third-parameter-with-a-default/lib/c.cjs
+exports.who = "lib/c";
+//// a-list-of-module-names-is-changed-through-a-third-parameter-with-a-default/main.cjs
+// The third parameter has a default, which is never taken: the list is always handed over.
+const names = ["A", "B"];
+names.forEach((name, index, list = []) => {
+  list[index] = name.toLowerCase();
+});
+for (const name of names) console.log(require("./lib/" + name + ".cjs").who);
+//// a-list-of-module-names-is-changed-before-import-is-called-with-its-elements/lib/a.ts
+export const who: string = "lib/a";
+//// a-list-of-module-names-is-changed-before-import-is-called-with-its-elements/lib/b.ts
+export const who: string = "lib/b";
+//// a-list-of-module-names-is-changed-before-import-is-called-with-its-elements/lib/c.ts
+export const who: string = "lib/c";
+//// a-list-of-module-names-is-changed-before-import-is-called-with-its-elements/main.ts
+// The function that `forEach` calls stores to the list through its third parameter. `import()` gets the names.
+const names = ["A", "B"];
+names.forEach((name, index, list) => {
+  list[index] = name.toLowerCase();
+});
+for (const name of names) console.log((await import("./lib/" + name + ".ts")).who);
+//// a-list-of-module-names-is-only-read-through-the-third-parameter-of-the-function-that-walks-it.json
+{ "skipInShell": "it needs require()" }
+//// a-list-of-module-names-is-only-read-through-the-third-parameter-of-the-function-that-walks-it/lib/a.cjs
+exports.who = "lib/a";
+//// a-list-of-module-names-is-only-read-through-the-third-parameter-of-the-function-that-walks-it/lib/b.cjs
+exports.who = "lib/b";
+//// a-list-of-module-names-is-only-read-through-the-third-parameter-of-the-function-that-walks-it/lib/c.cjs
+exports.who = "lib/c";
+//// a-list-of-module-names-is-only-read-through-the-third-parameter-of-the-function-that-walks-it/main.cjs
+// The function that `forEach` calls only asks its third argument, the list.
+const names = ["a", "b"];
+names.forEach((name, index, list) => {
+  console.log(index, list.includes(name), list[index] === name, list.join());
+});
+console.log(names.map((name, index, list) => name + list.length).join());
+for (const name of names) console.log(require("./lib/" + name + ".cjs").who);

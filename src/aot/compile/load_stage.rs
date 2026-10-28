@@ -5,6 +5,7 @@ use super::{
 };
 use crate::builtins::BuiltinNames;
 use crate::diagnostics::{Diagnostics, InternalError, LoadMessages, ProgramView};
+use crate::link::run_beside;
 use crate::load::fold_inputs::{
     ProgramFacts, create_application_fold_inputs, create_runtime_fold_inputs,
 };
@@ -377,7 +378,8 @@ impl<'a> Build<'a> {
         let files = application.files();
         self.started_workers = Default::default();
         if !options.aot.checks_only {
-            self.started_workers.copies = find_embedded_code_files(files, &options.load.loaders);
+            self.started_workers.copies =
+                find_embedded_code_files(files, &options.load.loaders, &self.parallel_runner());
         }
         if !options.aot.checks_only && mentions_worker_constructor(files) {
             let code_from_root = CodeOptions {
@@ -395,8 +397,10 @@ impl<'a> Build<'a> {
                 resolve_entry_point: &|written| resolve_entry_point(host, request.code, written),
                 resolve_bare_name: &|name| resolve_entry_point(host, &code_from_root, name),
             };
-            (self.started_workers.files, self.started_workers.code) =
-                find_code_that_starts_workers(files, &search);
+            let found = find_code_that_starts_workers(files, &search, &self.parallel_runner());
+            self.started_workers.files = found.files;
+            self.started_workers.code = found.code;
+            self.started_workers.constructs_node_workers = found.constructs_node_workers;
         }
         if !self.started_workers.copies.is_empty() || !self.started_workers.files.is_empty() {
             self.started_workers.held_texts = texts_of_program_files(files)
@@ -410,6 +414,14 @@ impl<'a> Build<'a> {
         // Each program with its position and the file it begins at. A build of one program looks at all that was loaded.
         let programs: Vec<(usize, Option<FileId>)> = match self.programs {
             None => vec![(0, None)],
+            Some(of_one_load) if of_one_load.only_looks_for_worker_threads => {
+                self.is_one_program = files.entry_points().iter().any(|&first| {
+                    view(Some(first));
+                    !mentions_worker_constructor(files)
+                });
+                view(None);
+                return Err(Stage::Load);
+            }
             Some(ProgramsOfOneLoad {
                 held_elsewhere: Some(held),
                 indexes,
@@ -428,6 +440,7 @@ impl<'a> Build<'a> {
                     || are_one_program(
                         files,
                         of_one_load.indexes[positions[0]] == 0,
+                        self.started_workers.constructs_node_workers,
                         &self.limits,
                     ) =>
             {
@@ -489,8 +502,29 @@ impl<'a> Build<'a> {
                 ..
             } = inputs;
             let kept = kept_runtime.take();
+            let mut frozen_application = None;
             let mut runtime = match kept.filter(|(known, _)| asks_the_same(known, roots)) {
                 Some((_, runtime)) => runtime,
+                // Each of several programs has options and a view of the files of its own.
+                None if self.programs.is_none() => {
+                    let input = self.create_freeze_input(shared, &application, None);
+                    let in_parallel = self.parallel_runner();
+                    let (frozen, runtime) = run_beside(
+                        &self.beside_runner(),
+                        || freeze_sources(&input, &in_parallel),
+                        || {
+                            let parsed = shared.parsed_declarations;
+                            load_program_with_parsed_files(
+                                session,
+                                runtime_host,
+                                &runtime_request,
+                                parsed,
+                            )
+                        },
+                    );
+                    frozen_application = Some(frozen);
+                    self.finish_load(runtime, &runtime_request, shared.messages)?
+                }
                 None => self.load_runtime(shared, session, runtime_host, &runtime_request)?,
             };
             self.count_time(StatisticId::LoadRuntimeProjectNanoseconds, started);
@@ -505,7 +539,8 @@ impl<'a> Build<'a> {
                     application: &application,
                     runtime: &runtime,
                 };
-                let sources = self.freeze_projects(shared, programs, roots)?;
+                let frozen_application = frozen_application.take();
+                let sources = self.freeze_projects(shared, programs, roots, frozen_application)?;
                 self.stop_if_errors(Stage::Load)?;
                 let projects = PerProject {
                     application: LoadedProject {
@@ -740,28 +775,48 @@ impl<'a> Build<'a> {
         }
     }
 
+    /// `roots`: of Bun's own modules. `None`: `loaded` is the application.
+    fn create_freeze_input<'i, 's>(
+        &self,
+        shared: &SharedLoadInputs<'_, '_>,
+        loaded: &'i LoadedProgram<'s>,
+        roots: Option<&'i RuntimeRoots>,
+    ) -> FreezeInput<'i, 's>
+    where
+        'a: 'i,
+    {
+        FreezeInput {
+            project: match roots {
+                Some(_) => ProjectId::Runtime,
+                None => ProjectId::Application,
+            },
+            files: loaded.files(),
+            options: self.options,
+            manifest: shared.manifest,
+            host_loaded_modules: roots.map_or(&[], |it| &it.host_loaded_modules),
+            modules_named_at_run_time: roots.map_or(&[], |it| &it.modules_named_at_run_time),
+            is_world: false,
+        }
+    }
+
     fn freeze_projects(
         &mut self,
         shared: &SharedLoadInputs<'_, '_>,
         programs: PerProject<&LoadedProgram<'_>>,
         roots: &RuntimeRoots,
+        frozen_application: Option<Result<FrozenSources, InternalError>>,
     ) -> Result<PerProject<Sources>, Stage> {
-        let mut freeze = |project: ProjectId, roots: Option<&RuntimeRoots>| {
-            let loaded = *programs.get(project);
-            let input = FreezeInput {
-                project,
-                files: loaded.files(),
-                options: self.options,
-                manifest: shared.manifest,
-                host_loaded_modules: roots.map_or(&[], |it| &it.host_loaded_modules),
-                modules_named_at_run_time: roots.map_or(&[], |it| &it.modules_named_at_run_time),
-                is_world: false,
-            };
-            self.freeze_project(loaded, &input)
-        };
+        let in_parallel = self.parallel_runner();
+        let application = frozen_application.unwrap_or_else(|| {
+            let input = self.create_freeze_input(shared, programs.application, None);
+            freeze_sources(&input, &in_parallel)
+        });
+        let application = self.finish_freeze(programs.application, application)?;
+        let input = self.create_freeze_input(shared, programs.runtime, Some(roots));
+        let runtime = freeze_sources(&input, &in_parallel);
         let sources = PerProject {
-            application: freeze(ProjectId::Application, None)?,
-            runtime: freeze(ProjectId::Runtime, Some(roots))?,
+            application,
+            runtime: self.finish_freeze(programs.runtime, runtime)?,
         };
         let frozen = sources.as_ref();
         let frozen = frozen.map(|project, sources| (programs.get(project).files(), sources));
@@ -791,12 +846,11 @@ impl<'a> Build<'a> {
         Ok(self.stop_at_internal_error(frozen)?.sources)
     }
 
-    fn freeze_project(
+    fn finish_freeze(
         &mut self,
         loaded: &LoadedProgram<'_>,
-        input: &FreezeInput<'_, '_>,
+        frozen: Result<FrozenSources, InternalError>,
     ) -> Result<Sources, Stage> {
-        let frozen = freeze_sources(input, &self.parallel_runner());
         let FrozenSources {
             sources,
             diagnostics,
@@ -818,10 +872,16 @@ impl<'a> Build<'a> {
 // Of the files of several entry points. A global begins at each of them, and what the compiler proves holds for one global, so each begins
 // a program of its own. They are one program where that gains nothing or costs the executable its size:
 // - nothing starts a Worker, so there is one global;
+// - a Worker of node:worker_threads may begin at a program without that module, which the host loads into its global;
 // - a program loads a module by a name that the build does not know, which may be that of any entry point: it has to hold them all;
 // - the programs share much of their files, and a file is compiled once for each program that holds it;
 // - there are very many: pages or plugins that a pattern has found.
-fn are_one_program(files: &Files<'_>, has_first_of_build: bool, limits: &LimitValues) -> bool {
+fn are_one_program(
+    files: &Files<'_>,
+    has_first_of_build: bool,
+    constructs_node_workers: bool,
+    limits: &LimitValues,
+) -> bool {
     let limit = |limit: LimitId| usize::try_from(limits.get(limit)).unwrap_or(usize::MAX);
     let entry_points = files.entry_points();
     let view = |first: Option<FileId>| {
@@ -843,7 +903,9 @@ fn are_one_program(files: &Files<'_>, has_first_of_build: bool, limits: &LimitVa
         }
         view(Some(first));
         let compiled = files.compiled_files();
-        are_one = (position == 0 && has_first_of_build && !mentions_worker_constructor(files))
+        let is_first_of_build = position == 0 && has_first_of_build;
+        are_one = ((is_first_of_build || constructs_node_workers)
+            && !mentions_worker_constructor(files))
             || loads_modules_by_names_that_are_not_constant(files);
         size_of_each += size_of(compiled);
         for &file in compiled {

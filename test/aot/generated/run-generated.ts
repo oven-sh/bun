@@ -38,6 +38,7 @@ import {
   takeFromShare,
   takesWhatIsFixed,
   unsupported,
+  withEverySlot,
   withoutCoreDump,
   withoutCrashReport,
 } from "../run-programs";
@@ -94,7 +95,7 @@ export type Generated = {
   flags?: string[];
   /** Flags of `bun build` that decide what the program is, such as --feature and --define. The reference is built with them too, so it is compiled. */
   flagsOfBothBuilds?: string[];
-  /** What it prints differs in a build with --aot-validate, and docs/compiler/internals.mdx says why. */
+  /** What it prints differs in a build with --aot-validate, and docs/compiler/internals.mdx says why. Or it runs past its time limit there. */
   isNeverValidated?: true;
   /** The executable runs once more under each of these and prints the same. */
   alsoUnder?: Record<string, string>[];
@@ -147,6 +148,10 @@ const bytesInOneExecutable = 64 * 1024;
 // What starts a Worker holds more of the library: its build costs as much as those of four small programs.
 const fewestInOneExecutable = 6;
 const executablesAtOnce = 8;
+// The build of a program this large takes from half a gigabyte to two, so nothing else that takes a slot runs beside it.
+const bytesOfALargeProgram = 640 * 1024;
+const slotFor = (program: Generated): typeof slot =>
+  program.make().text.length < bytesOfALargeProgram ? slot : work => withEverySlot(0, work);
 const runner = "run-each-in-a-worker.ts";
 const mark = "=== the program above has ended with";
 const sharesAnExecutable = (program: Generated) =>
@@ -603,7 +608,7 @@ export function generated(title: string, given: Generated[]) {
           if (shared === "left out") return void leftOut++;
           if (shared === "nothing to compare") return;
           if (shared !== "alone") return judgeShared(program, shared);
-          await slot(async () => {
+          await slotFor(program)(async () => {
             if (mayBeLeftOut(program) && performance.now() > 200_000) return void leftOut++;
             const folder = join(root, title.replaceAll(" ", "-"), String(index));
             const { file, entryPoints } = write(program, folder);

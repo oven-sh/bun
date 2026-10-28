@@ -94,8 +94,6 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
   `test.skipIf(!!unsupported)` with `unsupported` of `run-programs.ts` where only some of its tests use it. Never a list of
   platforms: the Bun under test is asked. `test-files-self-skip.test.ts` reads every test file of the repository that is in
   this folder or whose text uses the flag, and is red if one does not ask.
-- **A file whose tests read the lines `operation:` of `BUN_JSC_aotCountsPath`** imports the three names from `./supported-with-counted-calls` instead:
-  the run time counts no calls of its operations on Windows (that file says why), and a count of nothing proves nothing.
 - **A skip says why on stderr**: `console.error("SKIPPED: <file>: <what is missing, what switches it on>")`. Neither reporter prints the
   name of a skipped test, and CI's prints a dot.
 - **A test file is a process in CI, and `bun test test/aot` is one process for all.** What a helper keeps in a variable of its
@@ -155,7 +153,9 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
 - **What the back end is told.** `--aot-check=ClaimsToBackEnd` leaves the code of an ordinary build as it is up to the last phase that moves a value and adds code that finds out in
   the run whether a word that was said never to change has changed, a number lies in its range, a cell in the frame is read before it is filled. An ASAN or debug build of Bun builds
   every program that way; `joined-programs-claims-checked-*` takes all of them. `--aot-check=MovedLoads` (`joined-programs-moved-loads-checked-*`) reads every load again that a phase
-  moved or replaced; its second reads stand in the way of later phases, so it is not quite the ordinary build. `what-the-back-end-is-told-is-checked-at-run-time.test.ts` tells the
+  moved or replaced; its second reads stand in the way of later phases, so it is not quite the ordinary build. `--aot-check=DecidedComparisons`
+  (`joined-programs-decided-comparisons-checked-*`) compares again, where it stood, every pair of integers whose comparison a loop phase has answered by itself: a range check that left a
+  loop, the test of a turn that is written out. What was compared stays alive for that, so it is not quite the ordinary build either. `what-the-back-end-is-told-is-checked-at-run-time.test.ts` tells the
   back end something untrue of each kind and asks for the line that names it.
 - **The share.** All programs in all ways are 130 hours of one processor, and CI has 24 shards of twelve minutes on four vCPUs. So a
   run that is told nothing takes a share, and which one follows from `Bun.revision`: each commit takes other programs, and in

@@ -469,8 +469,10 @@ calls-of-proxies/recursion-without-trap
 calls-of-proxies/tail-calls-through-proxies-from-code-made-at-run-time
 calls-of-proxies/tail-calls-through-proxies-without-an-apply-trap
 calls/a-call-by-value-names-its-callee-when-it-throws
+calls/a-callback-handed-to-flat-map-is-an-arrow-until-a-loop-replaces-it-with-a-class
 calls/a-cast-on-a-tail-call-in-front-of-a-declared-result-in-a-validating-build
 calls/a-closure-kept-in-a-field-is-called-at-many-places-and-the-stack-is-read-inside
+calls/a-finally-around-a-require-runs-at-every-depth-close-to-the-end-of-the-stack
 calls/a-function-calls-its-parameter-many-times-in-a-row-and-then-in-a-loop-with-callees-of-two-kinds
 calls/a-function-handed-to-a-helper-changes-the-list-between-two-reads
 calls/a-function-is-called-straight-out-of-an-array-literal
@@ -481,6 +483,7 @@ calls/a-function-of-a-module-is-touched-and-then-told-from-two-others
 calls/a-function-that-ends-only-by-a-throw-hands-its-rest-parameter-on
 calls/a-function-whose-names-were-listed-is-called-through-a-table
 calls/a-generator-method-is-looped-over-and-what-is-no-function-is-called
+calls/a-handler-whose-try-has-ended-stays-out-of-what-is-made-behind-it-at-every-depth-close-to-the-end-of-the-stack
 calls/a-helper-that-calls-what-it-is-handed-is-called-in-a-walk-over-a-list-and-every-pass-is-verified
 calls/a-list-too-long-for-the-stack-fails-inside-the-try-around-the-call
 calls/a-number-bound-to-a-plain-function-is-there-when-it-is-called-and-when-it-is-constructed
@@ -495,10 +498,13 @@ calls/a-spread-resolved-behind-the-last-round
 calls/a-variable-that-holds-a-bound-function-an-object-or-a-class-is-constructed-and-called
 calls/a-variable-that-holds-json-parse-or-string-is-called-in-a-loop
 calls/a-worker-is-terminated-inside-a-loop-below-a-number-of-the-program
+calls/a-worker-is-terminated-inside-a-loop-below-a-number-over-a-large-view
 calls/a-worker-is-terminated-inside-a-loop-that-calls-nothing
 calls/a-worker-is-terminated-inside-a-loop-that-walks-on-past-the-end-of-a-typed-array
 calls/a-worker-is-terminated-inside-a-loop-up-to-a-length-with-nothing-behind-it
+calls/a-worker-is-terminated-inside-every-form-of-a-counted-loop
 calls/above-the-allocation
+calls/an-arguments-object-is-the-receiver-and-the-list-of-one-apply
 calls/an-async-function-that-takes-the-rest-of-its-arguments-is-found-by-name-and-called-at-every-level-on-the-way-up-from-the-end-of-the-stack
 calls/async-functions-of-a-library-that-take-the-rest-of-their-arguments-are-called-at-every-level-on-the-way-up-from-the-end-of-the-stack
 calls/bind-found-by-name
@@ -515,6 +521,7 @@ calls/closures-made-in-a-callback-that-call-hands-to-a-built-in
 calls/construct
 calls/construct-trace-forwarding-function
 calls/deep-tail-recursion-between-a-spread-call-and-a-call-with-a-short-list
+calls/deep-tail-recursion-fills-a-list-with-closures-many-times-in-a-validating-build
 calls/deep-tail-recursion-through-rest-parameters-in-a-validating-build
 calls/deep-tail-recursion-where-one-function-answers-any-and-the-next-declares-a-type
 calls/deep-tail-recursion-where-parsed-text-comes-back-to-a-function-that-declares-a-type
@@ -546,6 +553,7 @@ calls/not-a-function-by-name
 calls/null-checks-not-repeated
 calls/nullish-property-error-message
 calls/numbers-handed-to-a-function-that-reads-arguments-by-index
+calls/one-list-is-the-receiver-and-the-arguments-of-one-call
 calls/operands-that-fit-no-overload-behind-an-expected-receiver
 calls/parameters-and-the-arguments-object-follow-each-other-in-sloppy-code
 calls/proxy-revocable-or-object-entries-is-picked-by-a-condition-and-called
@@ -616,10 +624,13 @@ claims-to-the-back-end/a-field-is-tested-in-front-of-a-store-and-a-maximum-is-ta
 claims-to-the-back-end/a-function-calls-itself-in-tail-position-behind-the-tests-of-its-parameter
 claims-to-the-back-end/a-function-that-a-loop-calls-reads-a-method-of-objects-of-two-classes-one-after-the-other
 claims-to-the-back-end/a-list-written-in-the-text-is-stored-to-in-a-loop-that-asks-for-its-length-on-every-turn
+claims-to-the-back-end/a-loop-reads-every-second-element-of-a-view-also-past-its-end
 claims-to-the-back-end/increment-field-of-spread-copy-in-loop
 claims-to-the-back-end/one-place-in-a-loop-reads-a-method-of-objects-of-two-classes-one-after-the-other
+claims-to-the-back-end/the-elements-of-views-of-every-length-are-added-up
 claims-to-the-back-end/the-first-line-of-a-text-of-one-line-is-taken-ahead-of-the-first-await
 claims-to-the-back-end/the-first-line-of-a-text-of-one-line-is-taken-where-other-calls-have-returned
+claims-to-the-back-end/views-of-every-length-are-filled
 claims-to-the-back-end/what-was-read-from-a-text-is-used-when-the-text-is-gone
 classes-and-closures/a-closure-changes-a-variable-that-loops-in-try-blocks-read-among-many-variables
 classes-and-closures/a-closure-made-anew-beside-a-way-that-calls-is-read-on-that-turn
@@ -679,6 +690,7 @@ classes-and-closures/variables-that-closures-read-are-stored-to-in-loops-inside-
 classes-and-closures/what-is-made-with-a-closure-over-a-typed-parameter-that-gets-another-kind-of-value
 classes-below-built-in-classes/a-class-below-proxy-in-an-imported-file
 classes-below-built-in-classes/a-class-below-proxy-that-is-exported-and-never-used
+classes-below-built-in-classes/a-class-below-proxy-that-is-exported-and-that-no-file-names
 classes-below-built-in-classes/a-class-below-proxy-whose-members-are-used-behind-a-catch
 classes-below-built-in-classes/a-class-below-regexp-runs-its-own-global-getter-in-a-replacement-beside-three-more-modules
 classes-below-built-in-classes/a-class-below-regexp-runs-its-own-unicode-getter-in-a-replacement-beside-four-more-modules
@@ -697,14 +709,25 @@ classes-below-built-in-classes/names-read-through-a-built-in-constructor-that-ch
 classes-below-built-in-classes/objects-of-classes-below-containers-flow-into-unions-of-an-interface-and-the-container
 classes-below-built-in-classes/promise-first-touched-by-the-inspector
 classes-below-built-in-classes/the-promise-constructor-is-constructed-by-value
+classes-below-functions/a-call-through-super-above-a-function-that-makes-no-object-comes-before-the-method
+classes-below-functions/a-class-is-constructed-for-a-plain-function-between-two-calls-on-an-instance
+classes-below-functions/a-class-is-constructed-for-a-plain-function-in-a-loop
+classes-below-functions/a-class-is-constructed-for-itself-and-for-a-plain-function-in-turns
 classes-below-functions/a-class-made-in-a-function-below-a-constructor-function-whose-prototype-was-replaced
+classes-below-functions/a-class-two-levels-below-a-function-whose-prototype-object-was-replaced-calls-super
+classes-below-functions/a-getter-reads-super-below-a-function-whose-prototype-object-was-replaced-after-it-made-an-object
+classes-below-functions/a-helper-constructs-a-class-for-itself-and-then-for-a-plain-function
+classes-below-functions/a-method-calls-super-below-a-function-whose-prototype-object-was-replaced-after-it-made-an-object
 classes-below-functions/a-prototype-that-would-close-a-cycle-is-refused
 classes-below-functions/a-prototype-that-would-close-a-cycle-is-refused-in-typed-code
+classes-below-functions/a-read-through-super-above-a-function-that-makes-no-object-comes-before-the-getter
 classes-below-functions/a-setter-of-new-target-below-a-class-and-below-a-plain-function
 classes-below-functions/a-setter-of-new-target-in-the-form-that-a-class-compiled-to-es5-has
 classes-below-functions/a-setter-of-new-target-takes-the-store-of-a-string-in-the-constructor
 classes-below-functions/a-setter-of-new-target-takes-the-store-of-an-object-in-the-constructor
 classes-below-functions/a-setter-of-new-target-takes-the-store-when-reflect-construct-is-called-through-call
+classes-below-functions/a-store-through-super-above-a-function-that-makes-no-object-comes-before-the-setter
+classes-below-functions/an-object-made-in-the-turn-before-for-a-plain-function-is-asked-for-a-method
 classes-below-functions/base-that-returns-another-object-is-a-class-below-a-class-that-returns
 classes-below-functions/classes-below-mixins-bound-functions-and-proxies-are-constructed-for-each-other
 classes-below-functions/classes-below-one-function-are-constructed-for-each-other
@@ -713,6 +736,7 @@ classes-below-functions/field-of-another-kind-is-defined-on-an-object-held-in-a-
 classes-below-functions/new-field-is-defined-on-an-object-held-in-a-variable-declared-a-number
 classes-below-functions/new-field-is-defined-on-an-object-that-the-base-is-declared-to-return-as-a-number
 classes-below-functions/reflect-construct-after-the-class-was-wrapped-in-a-proxy
+classes-below-functions/two-classes-below-one-function-inherit-from-the-two-prototype-objects-it-had
 classes/a-base-constructor-makes-the-object-that-new-target-selects
 classes/a-base-constructor-returns-another-object-to-the-classes-below
 classes/a-class-is-constructed-for-a-class-below-beside-or-above-it
@@ -735,9 +759,11 @@ classes/a-private-method-reads-a-private-field-of-a-new-object-beside-a-file-tha
 classes/a-private-name-is-asked-for-on-what-the-host-makes
 classes/a-subclass-without-a-constructor-is-constructed-as-one-that-calls-super-itself
 classes/a-subclass-without-a-constructor-is-made-at-the-price-of-one-that-calls-super-itself
+classes/a-worker-defines-an-unused-class-that-extends-an-object
 classes/an-arrow-or-evaluated-text-calls-super-in-a-class-with-an-accessor-field-alone
 classes/an-imported-interface-is-the-type-of-a-decorated-field
 classes/an-object-gets-the-private-names-of-a-class-twice
+classes/an-object-gets-the-private-names-of-two-evaluations-of-one-class
 classes/bare-field-is-undefined-below-a-replaced-grandparent
 classes/bare-field-is-undefined-below-a-replaced-parent
 classes/bare-field-is-undefined-on-an-instance-kept-by-a-replaced-parent
@@ -761,6 +787,10 @@ classes/declared-mixins-are-applied-where-classes-are-declared
 classes/evaluated-text-lists-the-static-fields-of-a-class-in-its-first-for-in
 classes/evaluated-text-reads-one-name-of-classes-with-and-without-a-static-member-of-that-name
 classes/every-method-of-a-class-with-more-methods-than-a-word-has-bits-is-replaced
+classes/fields-beside-a-field-under-a-constant-where-fields-are-assigned
+classes/fields-beside-a-field-under-a-defined-name-where-fields-are-assigned
+classes/fields-beside-a-field-under-a-key-computed-from-literals-where-fields-are-assigned
+classes/fields-beside-a-field-under-a-signed-number-where-fields-are-assigned
 classes/fields-declared-without-a-value-above-classes-that-a-function-makes-in-a-loop
 classes/fields-declared-without-a-value-above-classes-that-nobody-names
 classes/fields-declared-without-a-value-above-two-functions-that-make-classes
@@ -791,6 +821,7 @@ classes/objects-with-accessors-under-indexes-become-prototypes-forty-thousand-ti
 classes/objects-with-elements-lie-below-prototypes-that-get-setters-under-indexes-later
 classes/one-function-makes-two-classes-below-one-class
 classes/one-mixin-over-classes-that-share-a-base
+classes/one-mixin-with-private-names-is-applied-twice-in-a-validating-build
 classes/own-members-and-links-of-objects-of-a-class-below-map
 classes/own-property-tests-under-the-names-of-members
 classes/parameter-properties-beside-fields-under-computed-keys-where-fields-are-assigned
@@ -824,6 +855,15 @@ classes/twenty-subclasses-override-a-method-beside-an-entry-point-that-requires-
 classes/typed-code-is-handed-objects-of-classes-below-mixins
 classes/typed-functions-that-return-a-class
 classes/unread-field-is-stored-below-a-replaced-parent
+classes/unused-classes-are-stored-under-names-of-commonjs-modules
+classes/unused-classes-define-static-members-named-prototype
+classes/unused-classes-extend-imports
+classes/unused-classes-extend-replaced-globals
+classes/unused-classes-have-computed-keys-of-every-kind
+classes/unused-classes-that-extend-an-object-are-written-in-every-form
+classes/unused-classes-under-void-or-not-extend-an-object
+classes/unused-top-level-classes-extend-values-of-every-kind
+classes/unused-top-level-typed-classes-extend-values-of-every-kind
 classes/what-a-loop-reads-is-changed-inside-the-loop-without-naming-it
 classes/what-is-defined-or-frozen-on-a-prototype-object-stops-the-stores-under-its-own-names-alone
 classes/what-runs-while-a-class-out-of-a-function-is-evaluated
@@ -880,6 +920,7 @@ closed-world/functions-native-code-calls/timer-delay-known-at-run-time
 closed-world/getters-that-are-bound-twice-are-read-by-built-ins
 closed-world/import-of-text-refused
 closed-world/match-all-constructs-the-function-constructor-as-the-species-of-a-regexp
+closed-world/members-of-a-module-of-node-are-listed-once-a-function-nobody-knows-was-handed-it
 closed-world/members-of-built-in-objects-are-redefined-by-closures-handed-on-through-a-spread-beside-evaluated-text
 closed-world/members-of-console-are-replaced-through-a-list-after-built-in-prototypes-took-their-own-descriptors
 closed-world/members-of-process-are-listed-once-a-built-in-that-kept-it-hands-it-back
@@ -1017,6 +1058,8 @@ commonjs/a-commonjs-file-requires-the-entry-point-whose-first-import-takes-anoth
 commonjs/a-commonjs-file-requires-the-es-module-that-an-import-call-is-loading
 commonjs/a-commonjs-file-requires-the-es-module-that-hands-on-all-its-names
 commonjs/a-constructor-function-that-only-unseen-code-constructs
+commonjs/a-default-import-and-the-namespace-hold-one-object-of-a-file-that-was-linked-while-it-ran
+commonjs/a-default-import-holds-what-a-file-exported-when-its-body-ended-though-a-job-replaces-it
 commonjs/a-file-defines-a-getter-on-its-exports-beside-writable-false-and-is-required
 commonjs/a-file-defines-a-getter-on-its-exports-beside-writable-false-and-its-name-is-imported
 commonjs/a-file-defines-a-getter-on-its-exports-beside-writable-true-and-is-required
@@ -1058,6 +1101,9 @@ commonjs/an-entry-point-requires-only-where-bun-is-missing
 commonjs/an-es-module-that-its-own-commonjs-import-requires-reads-that-import-early
 commonjs/an-imported-commonjs-file-requires-a-module-that-imports-its-importer
 commonjs/an-imported-file-requires-an-es-module-that-shares-a-module-with-the-graph-being-loaded
+commonjs/an-importer-holds-what-a-file-had-when-its-body-ended-on-a-namespace-that-is-listed
+commonjs/an-importer-holds-what-a-file-had-when-its-body-ended-through-a-star
+commonjs/an-importer-holds-what-a-file-had-when-its-body-ended-while-its-tasks-count-down
 commonjs/an-object-stored-as-the-children-changes-what-each-later-child-exports
 commonjs/an-object-stored-behind-a-files-require-is-read-off-the-default-import-inside-the-require
 commonjs/an-unused-literal-with-a-key-in-brackets-holds-the-only-commonjs-name
@@ -1095,6 +1141,7 @@ commonjs/module-id-behind-dynamic-import
 commonjs/module-require-behind-an-optional-link
 commonjs/module-require-has-what-require-has
 commonjs/module-require-of-bun-is-the-only-commonjs-word-of-a-file
+commonjs/names-come-through-a-star-over-a-marked-file-that-may-end-without-one-of-its-names
 commonjs/names-imported-out-of-a-commonjs-file-are-constructed-called-and-read
 commonjs/push-above-the-list-of-children-gets-each-child
 commonjs/require-cache-is-listed-without-a-method-of-arrays
@@ -1126,6 +1173,7 @@ commonjs/what-stands-in-place-of-the-list-of-children-is-asked-at-every-require-
 conditions-of-passes/a-busy-worker-is-ended-1
 conditions-of-passes/a-busy-worker-is-ended-2
 conditions-of-passes/a-function-that-waits-holds-values-that-nothing-else-holds
+conditions-of-passes/a-mark-is-taken-away-ahead-of-a-call-at-every-depth-close-to-the-end-of-the-stack
 conditions-of-passes/a-pattern-made-at-run-time-meets-a-subject-made-from-it
 conditions-of-passes/a-read-finds-what-was-stored
 conditions-of-passes/a-typed-generator-meets-a-number-between-two-yields
@@ -1230,8 +1278,10 @@ copied-properties/a-setter-of-the-target-takes-what-the-source-got-by-another-as
 copied-properties/a-typed-literal-with-members-takes-the-spread-of-its-own-kind-from-text-made-at-run-time
 copied-properties/an-assignment-behind-a-delete-asks-the-prototypes
 copied-properties/copies-across-collections-and-shapes-that-come-and-go
+copied-properties/copies-have-none-of-the-private-fields-of-their-source
 copied-properties/copies-in-unknown-hands-and-their-sources
 copied-properties/copies-made-in-loops-of-objects-with-symbols-between-names-are-printed
+copied-properties/copies-of-a-non-extensible-object-are-extensible
 copied-properties/copies-of-objects-with-symbols-between-names-are-printed
 copied-properties/defaults-are-merged-with-options-that-hold-some-of-the-names
 copied-properties/instances-of-classes-are-spread-under-a-declared-type
@@ -1266,11 +1316,13 @@ copied-properties/records-with-optional-numbers-and-booleans-are-spread-into-rec
 copied-properties/rests-leave-out-a-name-that-one-object-got-under-a-key-and-keep-the-name-the-next-one-got
 copied-properties/sources-that-hold-elements-beside-symbols-and-names-are-assigned-and-spread
 copied-properties/sources-that-once-had-getters
+copied-properties/the-descriptors-of-the-arguments-of-a-strict-function-are-defined-on-other-objects-in-a-validating-build
 copied-properties/two-copies-born-in-the-cell-of-one-holder
 counterexamples/a-variable-is-assigned-in-every-case-of-an-exhaustive-switch-and-every-pass-is-verified
 data-from-outside/a-counter-below-a-number-of-every-kind
 data-from-outside/an-object-from-outside-is-stored-into-its-own-field-whose-name-a-literal-has
 data-from-outside/async-function-returns-json-parse
+data-from-outside/json-parse-drawn-texts-into-types-that-hold-each-other
 data-from-outside/json-parse-hostile-texts-without-a-type
 data-from-outside/json-parse-into-a-type-that-holds-itself
 data-from-outside/json-parse-into-three-types-inside-each-other
@@ -1297,6 +1349,13 @@ definitions-by-descriptor/a-bound-function-that-is-a-getter-throws-where-the-lan
 definitions-by-descriptor/a-computed-name-among-the-written-names-of-a-map
 definitions-by-descriptor/a-description-holds-what-stands-elsewhere-in-the-call-that-takes-it
 definitions-by-descriptor/a-descriptor-of-constants-alone
+definitions-by-descriptor/a-field-declared-a-fraction-is-defined-with-every-kind-of-value
+definitions-by-descriptor/a-field-declared-an-enum-is-defined-with-every-kind-of-value
+definitions-by-descriptor/a-field-declared-an-integer-is-defined-with-every-kind-of-value
+definitions-by-descriptor/a-field-declared-boolean-is-defined-as-null-in-the-middle-of-a-loop
+definitions-by-descriptor/a-field-declared-boolean-is-defined-with-every-kind-of-value
+definitions-by-descriptor/a-field-declared-boolean-or-null-is-defined-with-every-kind-of-value
+definitions-by-descriptor/a-field-declared-number-or-undefined-is-defined-with-every-kind-of-value
 definitions-by-descriptor/a-property-is-defined-on-texts-numbers-and-objects-that-a-function-hands-back
 definitions-by-descriptor/a-store-to-an-accessor-of-a-literal-calls-whatever-setter-is-there
 definitions-by-descriptor/a-store-to-an-accessor-without-a-setter-is-ignored-in-sloppy-code
@@ -1581,6 +1640,7 @@ errors/stack-frames-of-renamed-functions-made-from-text
 errors/stack-frames-of-renamed-functions-made-from-text-where-function-may-be-gone-from-globalthis
 errors/stack-frames-of-sloppy-functions-that-return-a-new-error
 errors/stack-frames-of-targets-of-bound-functions-one-of-which-was-given-a-display-name
+errors/stack-frames-of-ten-chains-of-a-hundred-functions-and-classes-that-construct-each-other
 errors/stack-frames-show-the-name-property-once-something-has-looked-for-it
 errors/stack-frames-under-reflect-construct
 errors/stack-frames-under-reflect-construct-where-nothing-is-known-of-its-operands
@@ -1722,10 +1782,16 @@ escape-analysis/what-an-object-hands-a-built-in-is-told-apart-from-its-like-obje
 every-member-of-a-host-object/a-member-of-console-that-the-trap-of-a-proxy-handed-out-is-called-and-constructed
 every-member-of-a-host-object/a-member-that-was-left-out-reads-as-a-function-and-only-a-call-throws
 every-member-of-a-host-object/every-getter-is-read-by-evaluated-text-in-a-program-that-names-none
+every-member-of-a-host-object/every-getter-is-read-under-a-computed-key
+every-member-of-a-host-object/getters-of-a-buffer-that-a-function-nobody-knows-hands-back-are-read-under-computed-keys
+every-member-of-a-host-object/getters-of-a-buffer-that-a-stream-hands-to-a-listener-are-read-under-computed-keys
+every-member-of-a-host-object/getters-of-a-buffer-that-an-emitter-hands-to-a-listener-are-read-under-computed-keys
+every-member-of-a-host-object/getters-of-a-buffer-that-gzip-hands-to-its-callback-are-read-under-computed-keys
+every-member-of-a-host-object/getters-of-a-buffer-that-random-bytes-hands-to-its-callback-are-read-under-computed-keys
 every-member-of-a-host-object/names-and-lengths-of-every-function-that-a-walk-finds
 function-prototypes/a-bound-plain-function-is-constructed-and-the-function-went-through-a-call
 function-prototypes/a-constructor-function-called-without-new-hands-this-to-its-catch-block-ahead-of-the-test
-function-prototypes/a-constructor-function-stored-as-the-prototype-of-a-function-is-read-back-from-an-object-that-the-function-constructs-and-called-in-a-loop
+function-prototypes/a-constructor-function-stored-as-the-prototype-of-a-function-is-read-back-from-an-instance-and-called-in-a-loop
 function-prototypes/a-function-stored-as-the-prototype-of-a-function-is-kept-in-a-constant-and-called
 function-prototypes/a-function-stored-as-the-prototype-of-a-function-is-read-back-by-a-dot-and-called-in-a-loop
 function-prototypes/a-function-stored-as-the-prototype-of-a-function-is-read-back-in-brackets-and-called
@@ -2019,6 +2085,7 @@ language/a-switch-lists-every-whole-remainder-of-a-count-of-halves
 language/a-switch-that-lists-every-value-chooses-a-number-or-a-text-and-a-test-follows
 language/a-value-of-32-bits-feeds-a-phi-of-64-bits-in-the-same-frame-slot
 language/a-variable-named-await-is-read-and-stored-to-at-the-top-of-a-commonjs-file
+language/a-variable-named-declare-is-the-target-of-a-loop
 language/a-variable-named-using-is-the-target-of-a-for-of-loop
 language/accessors-of-the-global-object-and-code-made-from-text
 language/accessors-of-the-global-object-and-code-made-from-text-in-a-module
@@ -2246,6 +2313,7 @@ modules/a-commonjs-file-requires-a-module-that-awaits-and-imports-the-entry-poin
 modules/a-commonjs-file-requires-a-module-that-its-importer-imports-behind-it-while-an-import-loads-them
 modules/a-commonjs-file-requires-the-entry-point-inside-a-require-of-another-graph
 modules/a-commonjs-file-requires-the-entry-point-inside-a-require-of-another-graph-and-a-later-file-throws
+modules/a-commonjs-file-requires-the-entry-point-while-its-graph-is-loaded-and-runs-to-its-end
 modules/a-commonjs-file-requires-the-module-that-settles-an-awaited-promise
 modules/a-commonjs-file-requires-the-root-of-a-graph-that-also-imports-the-names-of-the-entry-point
 modules/a-commonjs-file-that-a-module-it-requires-imports-ends-in-order-and-is-required-later
@@ -2266,6 +2334,7 @@ modules/a-default-export-that-names-only-a-type-exports-nothing
 modules/a-deferred-file-is-not-begun-while-a-file-that-it-imports-is-unfinished
 modules/a-deferred-namespace-lists-an-export-named-then
 modules/a-deferred-namespace-of-a-module-whose-cycle-failed-behind-an-await
+modules/a-delete-of-a-name-on-what-require-answers-for-an-es-module-is-refused
 modules/a-file-exports-a-literal-with-constructor-and-a-spread-of-parsed-text
 modules/a-file-exports-an-instance-of-a-class-that-has-constructor-and-a-name-that-is-not-enumerable
 modules/a-file-exports-constructor-and-deletes-the-name-it-stored-under-a-key-that-only-the-run-knows
@@ -2288,6 +2357,10 @@ modules/a-file-that-a-module-it-requires-imports-has-the-file-that-required-it-a
 modules/a-file-that-an-import-loads-reads-variables-of-a-file-that-waits-for-what-it-imports
 modules/a-file-that-is-gone-by-the-time-it-is-loaded-under-a-computed-path
 modules/a-file-that-threw-before-its-constant-was-stored-is-imported-again
+modules/a-file-under-another-tsconfig-imports-a-package-that-the-entry-point-requires
+modules/a-file-under-another-tsconfig-imports-nothing-where-a-constant-of-the-entry-point-says-so
+modules/a-file-under-another-tsconfig-reads-what-the-entry-point-says-of-itself
+modules/a-file-with-side-effects-hands-on-values-of-a-json-file-behind-files-without
 modules/a-file-with-the-marker-on-an-object-that-only-the-run-knows-exports-a-name-that-is-not-enumerable
 modules/a-file-without-an-extension-lies-beside-a-computed-path
 modules/a-folder-and-a-file-of-one-name-are-loaded-under-computed-names
@@ -2322,6 +2395,20 @@ modules/a-later-require-of-a-commonjs-file-marked-as-an-es-module-that-threw-beh
 modules/a-later-require-of-a-commonjs-file-that-exports-a-class-and-threw-behind-a-graph-that-imports-it
 modules/a-later-require-of-a-commonjs-file-that-exports-a-function-and-threw-behind-a-graph-that-imports-it
 modules/a-later-require-of-an-imported-commonjs-file-that-threw-behind-a-graph-that-imports-it
+modules/a-list-of-module-names-is-changed-before-import-is-called-with-its-elements
+modules/a-list-of-module-names-is-changed-by-a-declared-function-that-walks-it
+modules/a-list-of-module-names-is-changed-by-a-function-that-gets-the-third-parameter
+modules/a-list-of-module-names-is-changed-by-a-walk-inside-the-walk
+modules/a-list-of-module-names-is-changed-by-the-functions-that-map-filter-find-some-and-every-call
+modules/a-list-of-module-names-is-changed-by-the-method-that-instanceof-calls
+modules/a-list-of-module-names-is-changed-through-a-constant-that-holds-the-third-parameter
+modules/a-list-of-module-names-is-changed-through-a-third-parameter-with-a-default
+modules/a-list-of-module-names-is-changed-through-the-arguments-object-of-the-function-that-walks-it
+modules/a-list-of-module-names-is-changed-through-the-rest-parameter-of-the-function-that-walks-it
+modules/a-list-of-module-names-is-changed-through-the-third-parameter-of-the-function-that-walks-it
+modules/a-list-of-module-names-is-changed-while-for-each-walks-it-and-no-variable-holds-it
+modules/a-list-of-module-names-is-changed-while-map-walks-it-and-no-variable-holds-it
+modules/a-list-of-module-names-is-only-read-through-the-third-parameter-of-the-function-that-walks-it
 modules/a-load-is-rejected-with-the-error-of-the-commonjs-file-that-threw-inside-the-drain-of-the-file-in-front-of-it
 modules/a-load-that-ends-at-a-module-that-is-not-there-while-another-waits-for-one-of-its-commonjs-files-rejects-both
 modules/a-load-that-fails-while-another-waits-for-one-of-its-commonjs-files-and-fails-too-rejects-both
@@ -2334,6 +2421,7 @@ modules/a-module-in-the-output-of-bun-build-with-bytecode-has-none-of-the-five-n
 modules/a-module-is-asked-for-again-after-every-load-has-settled
 modules/a-module-is-one-module-whether-its-type-is-written-or-made-at-run-time
 modules/a-module-is-required-again-by-a-file-it-imports-on-demand-before-the-first-require-returns
+modules/a-module-requires-a-module-that-an-import-call-of-one-job-later-is-loading
 modules/a-module-resumed-inside-require-awaits-a-number
 modules/a-module-resumed-inside-require-awaits-calls-of-async-functions
 modules/a-module-resumed-inside-require-awaits-settled-promises
@@ -2342,6 +2430,7 @@ modules/a-module-resumed-inside-require-queues-a-job-and-a-tick
 modules/a-module-resumed-inside-require-requires-another-module
 modules/a-module-resumed-inside-require-requires-the-same-module
 modules/a-module-resumed-inside-require-throws
+modules/a-module-that-an-import-call-loads-requires-a-module-that-imports-the-entry-point
 modules/a-module-that-an-import-loads-inside-a-require-reads-variables-of-the-module-that-requires
 modules/a-module-that-an-import-loads-inside-a-require-reads-variables-of-the-module-that-requires-in-a-validating-build
 modules/a-module-that-an-import-loads-runs-inside-a-call-that-runs-the-waiting-jobs
@@ -2353,6 +2442,7 @@ modules/a-module-that-cannot-be-linked-exports-functions-and-classes
 modules/a-module-that-ended-on-a-cycle-whose-other-module-throws-is-imported-later
 modules/a-module-that-passes-on-a-json-file-is-read-under-computed-keys-across-a-cycle
 modules/a-module-that-reads-a-type-of-a-library-module-fails-to-link
+modules/a-module-whose-require-threw-behind-an-await-runs-and-is-imported-later
 modules/a-name-behind-a-getter-of-a-commonjs-file-comes-through-export-star
 modules/a-name-behind-a-getter-of-a-commonjs-file-comes-through-export-star-beside-an-import-of-a-second-name
 modules/a-name-behind-two-export-stars-in-a-package-without-side-effects-is-exported-again-by-the-program
@@ -2387,7 +2477,11 @@ modules/a-required-module-settles-an-awaited-promise-and-throws-after-an-await
 modules/a-shadow-realm-imports-the-modules-that-come-with-the-runtime
 modules/a-shadow-realm-reads-globals-that-the-runtime-fills-from-its-modules
 modules/a-shell-command-starts-in-the-directory-of-the-system
+modules/a-star-over-a-commonjs-file-hands-on-names-of-an-es-module-and-the-namespaces-list-them
+modules/a-star-over-a-commonjs-file-hands-on-names-of-an-es-module-that-nothing-reads
+modules/a-store-to-the-es-module-mark-of-a-required-es-module-is-read-back
 modules/a-strict-bundle-in-the-commonjs-format-of-bun-build-returns-early-and-names-a-source-map
+modules/a-table-of-module-names-changes-itself-where-an-operator-converts-it
 modules/a-tick-of-a-commonjs-file-that-a-module-between-imports-runs-ahead-of-that-module
 modules/a-typed-constant-of-another-file-decides-what-is-loaded
 modules/a-typed-module-that-an-import-loads-below-three-loaders-reads-variables-of-the-module-that-started-them
@@ -2407,6 +2501,7 @@ modules/an-import-alias-names-a-value-of-the-namespace-of-a-json-file
 modules/an-import-alias-names-a-value-on-the-exports-of-its-own-commonjs-file
 modules/an-import-alias-names-the-whole-namespace-of-a-json-file
 modules/an-import-alias-that-only-types-name-leaves-a-required-es-module-alone
+modules/an-import-call-made-ahead-of-a-require-runs-its-module-behind-the-module-that-called
 modules/an-import-called-below-a-require-finds-a-commonjs-file-that-the-required-graph-has-just-asked-for
 modules/an-import-called-below-a-require-finds-an-es-module-that-the-required-graph-has-just-asked-for
 modules/an-import-called-by-a-commonjs-file-of-an-imported-graph-that-throws-after-a-module-imported-it-settles
@@ -2423,6 +2518,8 @@ modules/an-import-is-rejected-with-what-a-commonjs-entry-point-throws-after-drai
 modules/an-import-is-rejected-with-what-an-imported-commonjs-file-throws-after-draining-the-microtask-queue
 modules/an-import-of-a-package-with-module-and-main-loads-what-module-names-unless-the-package-is-required-too
 modules/an-import-of-an-evaluated-module-settles-in-the-same-job-however-the-module-was-first-loaded
+modules/an-import-of-the-module-that-a-require-is-running-settles
+modules/an-import-of-the-module-that-an-import-call-is-running-settles
 modules/an-import-of-the-root-called-by-its-commonjs-file-that-then-drains-the-jobs-settles
 modules/an-import-statement-finds-a-getter-of-a-commonjs-file-that-is-not-enumerable-and-returns-a-name-of-another-file
 modules/an-import-that-leads-to-the-running-commonjs-file-and-to-a-file-that-throws-is-rejected-while-the-file-runs
@@ -2435,6 +2532,8 @@ modules/an-import-waits-for-a-commonjs-file-below-two-modules-that-drains-the-mi
 modules/an-import-waits-for-a-commonjs-file-of-another-import-that-drains-the-jobs-while-it-runs
 modules/an-import-waits-for-an-imported-commonjs-file-that-drains-the-microtask-queue
 modules/an-imported-commonjs-file-requires-a-module-that-awaits
+modules/an-imported-require-is-given-a-path-that-starts-at-the-folder-of-the-caller
+modules/an-imported-require-of-a-commonjs-file-is-given-a-path-that-starts-at-dirname
 modules/an-object-under-0-is-read-from-a-commonjs-file-by-an-import-by-name
 modules/an-object-under-minus-1-is-read-from-a-namespace-by-a-rest-pattern
 modules/bindings-behind-getters-that-a-helper-defines-are-imported-by-name-beside-the-default
@@ -2490,6 +2589,8 @@ modules/imported-require-made-by-create-require
 modules/imports-called-by-two-imported-commonjs-files-that-drain-the-microtask-queue-settle-though-the-second-file-throws
 modules/imports-through-getters-of-commonjs-files-as-three-tools-write-them-hold-what-a-module-held-when-the-files-were-loaded
 modules/jobs-of-the-caller-wait-while-require-runs-a-module-with-top-level-await
+modules/jobs-require-modules-that-import-calls-began-to-load-up-to-nine-jobs-earlier
+modules/jobs-require-modules-that-two-import-calls-each-are-loading
 modules/json-text-of-the-namespace-of-a-file-that-exports-a-function-whose-prototype-object-has-a-tojson
 modules/keys-of-the-namespace-of-a-file-that-marks-itself-behind-a-call-out-of-its-body
 modules/members-of-the-namespace-of-a-file-with-a-getter-that-an-earlier-file-starts
@@ -2572,6 +2673,8 @@ modules/the-default-that-a-file-with-the-flag-stores-in-an-arm-of-a-conditional-
 modules/the-default-that-a-file-with-the-flag-stores-under-an-if-is-read-through-a-getter-over-an-es-module
 modules/the-entries-of-the-namespace-of-a-file-that-exports-a-function-say-how-many-keys-each-object-has
 modules/the-entry-point-imports-a-cycle-that-throws-and-a-handler-imports-later
+modules/the-error-of-imported-text-that-does-not-parse-lists-the-frames-of-the-import
+modules/the-es-module-mark-is-read-from-an-object-that-somebody-else-has
 modules/the-factory-of-jsx-elements-by-tsconfig-lies-a-namespace-below-a-required-es-module
 modules/the-factory-of-jsx-elements-is-a-function-of-a-required-es-module
 modules/the-factory-of-jsx-elements-is-a-function-of-an-es-module-that-a-constant-holds-beside-a-read-of-another-name
@@ -2589,6 +2692,7 @@ modules/the-first-commonjs-file-that-import-is-called-for-has-the-id-dot
 modules/the-first-graph-that-imports-a-built-in-module-is-loaded-a-level-later
 modules/the-fragment-of-jsx-elements-is-a-value-on-the-exports-of-its-own-commonjs-file
 modules/the-id-of-a-commonjs-file-that-import-is-called-for-is-read-and-nothing-else
+modules/the-importer-of-a-commonjs-file-that-requires-a-module-that-imports-it-back-runs-behind-the-file
 modules/the-namespace-object-of-a-commonjs-file-lacks-a-getter-that-is-not-enumerable
 modules/the-namespace-object-of-a-commonjs-file-that-keeps-its-exports-object-lacks-a-getter-that-is-not-enumerable
 modules/the-namespace-object-of-a-module-that-a-commonjs-file-required-says-that-it-is-not-extensible
@@ -2627,6 +2731,7 @@ modules/two-modules-imported-on-demand-have-classes-with-a-field-of-one-name-and
 modules/typescript-re-export-from-external-package
 modules/uncompiled-importer
 modules/variables-named-like-the-five-names-of-commonjs-in-the-output-of-bun-build
+modules/what-a-commonjs-file-imports-by-a-call-while-its-importer-is-loaded-runs-ahead-of-the-importer
 modules/what-a-constant-of-another-file-removes-names-files-that-are-not-there
 modules/what-a-resolver-answered-is-loaded
 modules/what-a-working-directory-in-the-executable-cannot-do
@@ -2755,6 +2860,9 @@ nothing-throws-because-of-a-type/a-field-keeps-the-undefined-of-its-definition-w
 nothing-throws-because-of-a-type/a-literal-lists-a-member-of-an-object-that-is-not-what-its-type-says
 nothing-throws-because-of-a-type/a-literal-lists-a-member-of-what-a-declared-function-made
 nothing-throws-because-of-a-type/a-literal-lists-a-member-of-what-an-untyped-file-made
+nothing-throws-because-of-a-type/a-literal-lists-a-sum-with-a-list-declared-as-an-interface-in-a-validating-build
+nothing-throws-because-of-a-type/a-literal-lists-the-joined-text-of-a-list-declared-as-an-interface
+nothing-throws-because-of-a-type/a-literal-lists-three-values-made-from-a-list-declared-as-an-interface
 nothing-throws-because-of-a-type/a-number-declared-a-string-is-spread-behind-a-loop-in-a-validating-build
 nothing-throws-because-of-a-type/a-private-name-is-looked-for-in-a-value-that-is-not-the-object-its-type-says
 nothing-throws-because-of-a-type/a-test-that-only-null-and-undefined-should-fail-is-failed-by-other-values
@@ -2864,6 +2972,7 @@ objects/every-way-an-allocation-site-meets-its-record
 objects/extra-property-reads-avoid-runtime
 objects/fields-and-keys-come-and-go-in-every-order-and-are-listed-in-every-way
 objects/fields-created-by-name-beside-extra-properties-keep-the-order-of-keys
+objects/for-in-lists-a-name-once-where-an-object-with-index-keys-and-its-prototype-both-have-it
 objects/functions-that-make-makers-of-objects-below-their-own-prototype
 objects/getters-under-computed-keys-hide-values-on-the-prototype
 objects/holders-are-made-with-a-record-where-a-class-is-named
@@ -2899,6 +3008,7 @@ objects/optional-number-fields-box-every-value
 objects/own-accessors-whose-getters-nobody-can-list
 objects/own-property-that-holds-undefined-hides-a-method
 objects/own-values-of-built-in-objects-that-the-program-added-to
+objects/plain-properties-are-defined-by-descriptors-that-are-written-out
 objects/properties-are-defined-by-every-kind-of-descriptor-literal-in-functions-that-run-often
 objects/property-descriptors-only-taken-apart
 objects/stack-trace-captured-on-a-frozen-empty-object
@@ -3017,6 +3127,7 @@ soundness/a-reviver-puts-arrays-into-the-holder-and-the-walk-makes-holes-and-sto
 soundness/a-setter-of-node-fs-stores-into-a-field-of-its-receiver
 soundness/a-static-block-in-a-try-reads-a-list-declared-as-an-interface-and-then-names-a-variable-nobody-declares
 soundness/a-sum-with-a-list-declared-as-an-interface-is-captured-and-read-later
+soundness/a-well-known-symbol-declared-as-a-function-is-called
 soundness/an-element-of-a-list-declared-as-an-interface-is-captured-by-a-function-nobody-calls
 soundness/bindings-read-in-their-dead-zone-beside-many-shapes-with-the-same-field
 soundness/computed-stores-onto-names-stored-by-name-in-a-validating-build
@@ -3034,6 +3145,7 @@ soundness/has-own-of-a-function-member-overwritten-through-a-wider-type
 soundness/in-sloppy-code-the-arguments-object-and-the-parameters-are-two-names-of-the-same-places
 soundness/instances-of-subclasses-of-built-ins-hand-back-their-contents
 soundness/lying-predicates-unbound-methods-literals-for-class-types-and-narrowing-that-a-call-undoes
+soundness/members-appear-late-on-the-object-where-a-lookup-starts
 soundness/members-of-bun-named-on-bun-while-bun-is-in-unknown-hands
 soundness/members-of-bun-taken-from-its-own-values-under-unknown-names
 soundness/members-of-console-taken-from-its-own-values-under-unknown-names
@@ -3080,6 +3192,7 @@ static-modules/rulings/the-cache-lists-no-module-of-the-executable
 static-modules/rulings/ways-under-a-computed-key-are-shown-to-nobody-where-no-file-names-one
 strings/a-block-reads-one-started-string-and-starts-another
 strings/a-character-of-a-returned-part-goes-through-a-function-that-also-gets-numbers
+strings/a-json-text-behind-other-texts-is-a-little-too-long-in-a-validating-build
 strings/a-json-text-behind-other-texts-makes-a-string-as-long-as-a-string-can-be-or-a-little-longer
 strings/a-line-is-joined-from-what-the-last-turn-of-a-loop-left-and-every-pass-is-verified
 strings/a-part-of-a-string-returned-behind-a-loop-is-read-by-position
@@ -3095,6 +3208,7 @@ strings/a-search-in-unicode-mode-passes-over-ascii-many-characters-at-a-time
 strings/a-string-used-with-itself
 strings/a-subject-without-the-text-that-every-match-holds-is-not-tried-place-by-place
 strings/a-symbol-stands-in-a-sum-of-texts-in-front-of-a-call
+strings/a-text-built-in-a-loop-takes-a-json-text-that-makes-it-as-long-as-a-string-can-be-or-a-little-longer
 strings/a-text-is-read-between-and-behind-its-appends
 strings/a-text-made-in-either-arm-grows-in-a-try-whose-catch-reads-it
 strings/a-text-takes-the-place-of-what-a-pattern-finds
@@ -3232,6 +3346,7 @@ tree-shaking/two-files-on-a-cycle-read-a-json-file-by-names
 tree-shaking/unused-declarations-that-only-name-something-in-its-dead-zone
 tree-shaking/values-of-a-json-file-are-read-by-names-alone
 tree-shaking/values-of-a-json-file-stand-in-every-kind-of-place
+tree-shaking/values-that-look-inert-and-are-not
 tree-shaking/what-the-program-is-started-as-decides-a-branch
 type-parameters/a-result-that-never-has-its-declared-layout-is-read-by-name
 type-predicates/instanceof-asks-a-method-defined-by-a-descriptor-on-what-a-bound-function-was-made-of
@@ -3279,7 +3394,9 @@ typed-objects/a-literal-read-where-it-is-made-beside-a-spread-copy-in-a-validati
 typed-objects/a-literal-with-a-getter-and-a-parsed-object-come-to-one-typed-parameter
 typed-objects/a-literal-with-a-getter-and-parsed-objects-are-held-under-one-type-in-two-functions
 typed-objects/a-literal-writes-names-that-only-the-index-signature-of-its-type-allows
+typed-objects/a-null-is-stored-into-a-field-that-has-held-only-undefined-and-the-object-is-written-as-json
 typed-objects/a-number-is-stored-into-a-field-that-was-deleted-frozen-redefined-or-never-assigned
+typed-objects/a-proxy-calls-a-trap-stored-on-its-handler-after-the-proxy-was-made
 typed-objects/a-typed-object-is-reached-through-every-form-of-the-language
 typed-objects/a-typed-object-is-the-global-object-of-a-context
 typed-objects/a-value-under-using-is-stored-into-its-own-field-beside-records-of-other-files
@@ -3314,6 +3431,7 @@ typed-objects/stores-to-frozen-and-readonly
 typed-objects/structured-clone-uncloneable-marker
 typed-objects/tdz-captured-variables
 typed-objects/the-entries-of-a-record-literal-that-holds-a-symbol-where-a-string-is-declared
+typed-objects/the-entries-of-an-object-are-listed-behind-a-store-of-another-type-in-a-validating-build
 typed-objects/typescript-unsoundness-open-cases
 typed-objects/young-objects-between-old-ones
 typed-objects/young-objects-between-old-ones-and-every-pass-is-verified
@@ -3537,6 +3655,7 @@ workers/the-main-module-of-a-worker
 workers/what-a-text-finds-that-a-worker-starts-from
 workers/what-a-worker-printed-before-it-exits-is-printed
 workers/what-a-worker-sees-that-started-from-a-data-url
+workers/what-import-finds-in-a-data-url-that-a-worker-starts-from
 workers/what-waits-when-a-thread-meets-its-end
 workers/workers-that-nobody-holds
 writes-to-host-objects/a-default-is-put-on-node-module-with-a-create-require

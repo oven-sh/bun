@@ -2314,7 +2314,9 @@ impl<'p, 's> Checker<'p, 's> {
     fn resolve_declared_type(&mut self, sym: Sym) -> TypeId {
         loop {
             let ty = self.resolve_declared_type_once(sym);
-            if self.unwind_to != self.stack.len() || !self.retry_too_deep_query() {
+            if self.unwind_to != self.stack.len()
+                || !self.retry_too_deep_query(Query::Declared(sym))
+            {
                 return ty;
             }
             if let Some((known, _)) = self.p.declared_types.get(&self.task, &sym) {
@@ -2987,6 +2989,7 @@ impl<'p, 's> Checker<'p, 's> {
         if resolves_to_any && let Some(annotation) = self.frames.last_mut() {
             annotation.tainted = false;
             annotation.drops_reported = false;
+            self.tainted_from = None;
         }
     }
 

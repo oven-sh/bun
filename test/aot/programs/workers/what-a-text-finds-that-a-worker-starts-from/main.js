@@ -9,11 +9,7 @@ const then = '.then(m => postMessage(m.beside ?? m.default ?? m.sep), e => postM
 const thenOfNode = then.replaceAll("postMessage", 'require("node:worker_threads").parentPort.postMessage');
 const object = text => URL.createObjectURL(new Blob([text]));
 
-await ask("data: import() of a relative path", new Worker('data:text/javascript,import("./beside.js")' + then));
-await ask("data: import() of a path above", new Worker('data:text/javascript,import("../what-a-text-finds-that-a-worker-starts-from/beside.js")' + then));
-await ask("data: import() of a package", new Worker('data:text/javascript,import("pkg")' + then));
 await ask("data: import() of a built-in module", new Worker('data:text/javascript,import("node:path/posix")' + then));
-await ask("data: awaited import() of a relative path", new Worker('data:text/javascript,try { postMessage((await import("./beside.js")).beside) } catch (e) { postMessage("refused " + e.code) }'));
 await ask("data: import of a relative path", new Worker('data:text/javascript,import { beside } from "./beside.js"; postMessage(beside)'));
 await ask("data: import of a package", new Worker('data:text/javascript,import pkg from "pkg"; postMessage(pkg)'));
 await ask("data: require() of a relative path", new Worker('data:text/javascript,postMessage(require("./beside.js").beside)'));

@@ -1300,11 +1300,13 @@ impl<'s, 'r> Prefetch<'s, 'r> {
     fn take(&self, path: &[u8], is_lib: bool) -> Option<Box<Loaded<'s, 'r>>> {
         let mut state = self.state.lock();
         loop {
-            if let Some(loaded) = state.done.get(path) {
-                return match loaded.module.is_lib == is_lib {
-                    true => state.done.remove(path),
-                    false => None,
-                };
+            match state.done.remove_entry(path) {
+                Some((_, loaded)) if loaded.module.is_lib == is_lib => return Some(loaded),
+                Some((path, loaded)) => {
+                    state.done.insert(path, loaded);
+                    return None;
+                }
+                None => {}
             }
             if state.is_done() {
                 return None;
@@ -5019,6 +5021,13 @@ fn output_path_errors(
     } else {
         b""
     };
+    let depends_on_common_directory = !options.out_dir.is_empty()
+        || !options.root_dir.is_empty()
+        || options.specifies_source_or_map_root
+        || !declaration_dir.is_empty();
+    if options.no_emit && !options.composite && !depends_on_common_directory {
+        return (errors, None);
+    }
     // See `Options::own_roots`.
     let reached_from_own_roots = options.own_roots.map(|count| {
         let own = roots.iter().take(count);
@@ -5053,11 +5062,7 @@ fn output_path_errors(
     }
     // `CommonSourceDirectory`, if anything depends on it. `None`: there is none.
     let mut common = None;
-    if !options.out_dir.is_empty()
-        || !options.root_dir.is_empty()
-        || options.specifies_source_or_map_root
-        || !declaration_dir.is_empty()
-    {
+    if depends_on_common_directory {
         let specified = if !options.root_dir.is_empty() {
             options.root_dir.as_slice()
         } else if !options.config_path.is_empty() {
@@ -5722,8 +5727,8 @@ impl<'s> Files<'s> {
             code_files.register(&prefetch, &mut add, tables);
         }
         let mut next_root_task = 0;
-        // (file, how many of its edges have been followed)
-        let mut stack: Vec<(FileId, usize)> = Vec::new();
+        // (the edges of a file, how many of them have been followed)
+        let mut stack: Vec<(&[FileId], usize)> = Vec::new();
         let mut seen: Vec<bool> = Vec::new();
         // `redirectFilesByPath`: a copy of a package file, and the one that is in the program.
         let mut redirects: Vec<(FileId, FileId)> = Vec::new();
@@ -6008,15 +6013,7 @@ impl<'s> Files<'s> {
                 loop {
                     let file = match stack.last_mut() {
                         Some(top) => {
-                            // Sub tasks that were never started aren't loaded.
-                            let has_started = !not_started.contains_key(&top.0);
-                            let edges = match modules[top.0.idx()].as_ref().filter(|_| has_started)
-                            {
-                                Some(module) => module.edges,
-                                None if Some(top.0) == automatic_task => &starts[roots_end..],
-                                None => &[],
-                            };
-                            let Some(&edge) = edges.get(top.1) else {
+                            let Some(&edge) = top.0.get(top.1) else {
                                 stack.pop();
                                 continue;
                             };
@@ -6109,7 +6106,14 @@ impl<'s> Files<'s> {
                     }
                     seen[file.idx()] = true;
                     log.append(&mut traces[file.idx()]);
-                    stack.push((file, 0));
+                    // Sub tasks that were never started aren't loaded.
+                    let has_started = !not_started.contains_key(&file);
+                    let edges = match modules[file.idx()].as_ref().filter(|_| has_started) {
+                        Some(module) => module.edges,
+                        None if Some(file) == automatic_task => &starts[roots_end..],
+                        None => &[],
+                    };
+                    stack.push((edges, 0));
                 }
             }
         };

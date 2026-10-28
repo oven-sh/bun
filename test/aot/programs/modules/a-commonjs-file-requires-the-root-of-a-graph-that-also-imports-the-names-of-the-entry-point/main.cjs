@@ -1,5 +1,5 @@
 // Two graphs are imported one after the other. In each, back.cjs lies two levels below the root and requires the root, and another branch ends in a module that imports the names of the entry point:
-// one level below the root in the first graph, two levels in the second.
+// one level below the root in the first graph, two levels in the second. In both, require() returns the root. Plain Bun prints another output.
 console.log("main begins");
 exports.early = 1;
 setTimeout(async () => {

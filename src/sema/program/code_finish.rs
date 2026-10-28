@@ -127,6 +127,8 @@ impl<'s, 'r> CodeFiles<'s, 'r> {
             host_module: entry.host_module,
             loader: entry.key.loader,
             is_aot_source: analyzed.is_aot_source,
+            import_meta_main: analyzed.import_meta_main,
+            is_called_before_it_runs: analyzed.is_called_before_it_runs,
         });
         module.compiled = Some(compiled);
 

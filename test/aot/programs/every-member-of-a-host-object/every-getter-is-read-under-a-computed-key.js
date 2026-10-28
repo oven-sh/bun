@@ -1,6 +1,6 @@
 // Compiled code makes objects of the host and of the library and reads every accessor that it finds on them and above them, each under a key that it has computed.
-// Each read answers what plain Bun answers, or throws the error that says what was left out: nobody knows the receiver and nobody knows the key, so the read names no member of the host, and the program lets in no text
-// that would. It never answers something else. TODO: Buffer.prototype.parent is refused here.
+// Nobody knows the receiver and nobody knows the key, so the read names no member of the host, and the program lets in no text that would. Reading an accessor calls its getter all the same:
+// each read answers what plain Bun answers.
 console.log((function () {
   const stream = new Proxy({}, { get(target, name) { return process.getBuiltinModule("node:stream")[name]; } });
   const subjects = {

@@ -274,6 +274,18 @@ pub fn well_known_symbol(id: BuiltinId) -> Option<WellKnownSymbol> {
     Some(SYMBOL_CONSTANTS[position].2)
 }
 
+pub fn is_callable(id: BuiltinId) -> bool {
+    match entry(id).kind {
+        BuiltinKind::Constructor | BuiltinKind::Function | BuiltinKind::Method => true,
+        BuiltinKind::Prototype => canonical_id(id) == BuiltinId::FunctionPrototype,
+        BuiltinKind::Namespace
+        | BuiltinKind::Accessor
+        | BuiltinKind::DataProperty
+        | BuiltinKind::Constant
+        | BuiltinKind::NativeBinding => false,
+    }
+}
+
 pub fn is_legal_builtin_constant(id: BuiltinId) -> bool {
     let entry = entry(id);
     match entry.kind {

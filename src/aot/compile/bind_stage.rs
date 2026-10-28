@@ -71,6 +71,7 @@ impl Build<'_> {
         deferred_exports: &DeferredExports,
     ) -> impl FnOnce(BuiltinTypeSymbols) -> BoundProject<'s> + use<'s> {
         let in_parallel = self.parallel_runner();
+        let beside = self.beside_runner();
         let view = loaded.project(project).view();
         let external_packages: &[Vec<u8>] = match project {
             ProjectId::Application => &self.options.load.externals.packages,
@@ -95,6 +96,7 @@ impl Build<'_> {
             application: application.map(|application| &application.graph),
             known_helpers: &known_helpers,
             in_parallel: &in_parallel,
+            beside: &beside,
         });
         self.diagnostics.add_module_failures(view, &graph);
         self.statistics.add_counters(view, counters);

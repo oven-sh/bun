@@ -57,6 +57,7 @@ describe.skipIf(!systemCC || !!unsupported)("compile/aot/napi-addon", () => {
     "created-by-the-addon",
     "referenced-by-the-addon",
     "classes-and-callbacks",
+    "a-nan-that-native-code-hands-over",
   ])(
     "%s",
     name =>

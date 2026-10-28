@@ -13,7 +13,7 @@ function characters(text: string, maybe: { x: number } | null): number {
   return sum + text.charCodeAt(1);
 }
 
-const nothing: { x: number } | null = process.env.SOMETHING ? { x: 1 } : null;
+const nothing: { x: number } | null = process.argv.length > 9 ? { x: 1 } : null;
 const view = new Uint8Array(4).fill(3);
 (globalThis as any).first = bytes;
 (globalThis as any).second = characters;

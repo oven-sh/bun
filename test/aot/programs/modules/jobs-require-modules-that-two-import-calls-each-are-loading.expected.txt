@@ -1,0 +1,27 @@
+module1 is imported, call 1
+module1 is imported, call 2
+module1 is required: value1
+module2 is imported, call 1
+module2 is imported, call 2
+module2 is required: value2
+module3 is imported, call 1
+module3 is imported, call 2
+module3 is required: value3
+module4 is imported, call 1
+module4 is imported, call 2
+module4 is required: value4
+module5 is imported, call 1
+module5 is imported, call 2
+module5 is required: value5
+module6 is imported, call 1
+module6 is imported, call 2
+module6 is required: value6
+module7 is imported, call 1
+module7 is imported, call 2
+module7 is required: value7
+module8 is imported, call 1
+module8 is imported, call 2
+module8 is required: value8
+module9 is imported, call 1
+module9 is imported, call 2
+module9 is required: value9

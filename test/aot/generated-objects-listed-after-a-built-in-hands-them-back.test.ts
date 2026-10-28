@@ -17,20 +17,11 @@ const onceWrong = [
   "await Promise.any([Promise.reject($)]).catch(error => error.errors[0])",
 ];
 
-const makesMembersAtTheFirstRead = [
-  "process",
-  "globalThis.process",
-  "ofNode",
-  "console",
-  "util",
-  "fs",
-  "tls",
-  "timers",
-];
-
 function departsToday({ path }: Subject, road: string) {
-  if (road.startsWith("await new Promise(() => { throw $; })")) return makesMembersAtTheFirstRead.includes(path);
-  return path === "timers" && /ReadableStream|throwIfAborted|await Promise\.reject|reject\) => reject\(\$\)/.test(road);
+  return (
+    path === "timers" &&
+    /ReadableStream|throwIfAborted|await Promise\.reject|reject\) => reject\(\$\)|made\.re(solve|ject)\(\$\)/.test(road)
+  );
 }
 
 generated(

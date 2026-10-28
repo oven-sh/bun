@@ -19,7 +19,7 @@ use bun_sema::util::SharedSort;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::{SmallVec, smallvec};
 
-use super::removable::Removable;
+use super::removable::{ClassChecks, Removable};
 use crate::builtins::resolve::{ModuleField, ModuleObjectOwner, ModuleObjectUse};
 use crate::ir::generated::ModuleRequestKind;
 use crate::ir::{InParallel, for_each_mut};
@@ -29,8 +29,8 @@ use crate::load::sources::{SourceKind, parsed_source};
 use crate::lower::LeftOutDeclarations;
 use crate::modules::{
     Candidates, ExportBinding, ExportLookup, ExportUse, ImportBinding, KnownMemberValues,
-    KnownObjects, Member, ModuleExport, ModuleGraph, ModuleRef, ModuleRequest, Shape, Site,
-    SiteAnswer, SyntheticExportId, Validity, View, is_enum,
+    KnownObjects, Member, ModuleExport, ModuleGraph, ModuleKind, ModuleRef, ModuleRequest, Shape,
+    Site, SiteAnswer, SyntheticExportId, Validity, View, is_enum,
 };
 use crate::options::RemovableOptions;
 use crate::statistics::LimitValues;
@@ -97,6 +97,8 @@ enum Interest {
     LoadByUnknownName,
     // A read of a member of an enum of another file whose value the build knows. The value stands for it unless something gets hold of the object.
     KnownMember(Sym),
+    // A read of a variable of a module of data. The value stands for it.
+    KnownVariable(Sym),
     // Something is looked up in the object of the enum, and nothing gets hold of the object.
     Lookup(Sym),
     // A name of an enum of the file itself hands the object on.
@@ -146,6 +148,8 @@ struct Unit {
     part: Part,
     // The region that the unit is written in.
     region_around: u32,
+    // What runs of this class even where the unit is left out.
+    class_checks: Option<(ClassId, ClassChecks)>,
 }
 
 // The regions of a file: the code at its top level, then its units.
@@ -329,6 +333,7 @@ impl<'a, 's> FileScan<'a, 's> {
             functions,
             part,
             region_around: self.region,
+            class_checks: None,
         });
         unit
     }
@@ -367,6 +372,38 @@ impl<'a, 's> FileScan<'a, 's> {
         unit
     }
 
+    // What the checks evaluate is code of the region around the part.
+    fn add_part_with_class_checks(
+        &mut self,
+        part: Part,
+        written_at: Range<u32>,
+        symbols: &[SymbolId],
+        class: ClassId,
+        checks: ClassChecks,
+    ) -> u32 {
+        let hir = self.hir;
+        let heritage = checks.heritage.then_some(hir[class].extends);
+        let keys = checks
+            .keys
+            .iter()
+            .filter_map(|&member| match hir[member].key {
+                PropKey::Computed(key) => Some(key),
+                PropKey::None | PropKey::Name(_) | PropKey::Private(_) => None,
+            });
+        let unit = self.add_unit(part, SmallVec::new());
+        let mut start = written_at.start;
+        for evaluated in heritage.into_iter().chain(keys) {
+            self.add_piece(start..hir[evaluated].pos, unit);
+            start = hir[evaluated].end;
+        }
+        self.add_piece(start..written_at.end, unit);
+        for &symbol in symbols {
+            self.units.unit_of_symbol.insert(symbol, unit);
+        }
+        self.units.units[unit as usize].class_checks = Some((class, checks));
+        unit
+    }
+
     // `false`: something stores to one of the names.
     fn collect_stable_names(&self, pattern: PatId, names: &mut SmallVec<[SymbolId; 2]>) -> bool {
         let hir = self.hir;
@@ -396,22 +433,35 @@ impl<'a, 's> FileScan<'a, 's> {
         declaration: VarDeclId,
     ) -> bool {
         let node = &self.hir[declaration];
-        let mut names = SmallVec::new();
-        let is_part = !node.init.is_none()
-            && !node.flags.contains(Flags::AMBIENT)
-            && removable.declaration(declaration)
-            && self.collect_stable_names(node.pat, &mut names);
-        if is_part {
-            self.add_part(
-                Part::Declarator(declaration),
-                node.loc.pos..node.loc.end,
-                &names,
-            );
+        if node.init.is_none() || node.flags.contains(Flags::AMBIENT) {
+            return false;
         }
-        is_part
+        let class_checks = match removable.declaration(declaration) {
+            true => None,
+            false => {
+                let class = removable.find_class_of_declaration(declaration);
+                let checks = class.and_then(|class| removable.find_class_checks(class));
+                match class.zip(checks) {
+                    Some(class_checks) => Some(class_checks),
+                    None => return false,
+                }
+            }
+        };
+        let mut names = SmallVec::new();
+        if !self.collect_stable_names(node.pat, &mut names) {
+            return false;
+        }
+        let (part, written_at) = (Part::Declarator(declaration), node.loc.pos..node.loc.end);
+        match class_checks {
+            Some((class, checks)) => {
+                self.add_part_with_class_checks(part, written_at, &names, class, checks)
+            }
+            None => self.add_part(part, written_at, &names),
+        };
+        true
     }
 
-    fn add_class_part(&mut self, class: ClassId, written_at: Range<u32>) {
+    fn add_class_part(&mut self, class: ClassId, written_at: Range<u32>, checks: ClassChecks) {
         let hir = self.hir;
         let names = [
             self.bound.declared_symbol(Decl::Class(class)),
@@ -419,7 +469,11 @@ impl<'a, 's> FileScan<'a, 's> {
         ];
         let names: SmallVec<[SymbolId; 2]> =
             names.into_iter().filter(|name| !name.is_none()).collect();
-        let unit = self.add_part(Part::Class(class), written_at, &names);
+        let part = Part::Class(class);
+        let unit = match checks.is_empty() {
+            true => self.add_part(part, written_at, &names),
+            false => self.add_part_with_class_checks(part, written_at, &names, class, checks),
+        };
         let members = hir[class].members.iter().map(|member| hir[member].func);
         let functions =
             members.filter(|&function| !function.is_none() && hir::has_body(&hir[function]));
@@ -506,6 +560,7 @@ impl<'a, 's> FileScan<'a, 's> {
         removable: &Removable<'_, '_>,
         expression: ExprId,
         names: &mut SmallVec<[Atom; 1]>,
+        class_checks: &mut Option<(ClassId, ClassChecks)>,
     ) -> bool {
         let hir = self.hir;
         let mut expression = hir.skip_type_assertions(expression);
@@ -528,7 +583,16 @@ impl<'a, 's> FileScan<'a, 's> {
             has_store = true;
             expression = hir.skip_type_assertions(value);
         }
-        has_store && removable.expression(expression)
+        if !has_store || removable.expression(expression) {
+            return has_store;
+        }
+        let ExprKind::Class(class) = hir[expression].kind else {
+            return false;
+        };
+        *class_checks = removable
+            .find_class_checks(class)
+            .map(|checks| (class, checks));
+        class_checks.is_some()
     }
 
     // `exports.a = exports.b = value` is a part like `var a = value`: it is there for whoever reads one of the names.
@@ -536,16 +600,18 @@ impl<'a, 's> FileScan<'a, 's> {
         let StmtKind::Expr(expression) = self.hir[statement].kind else {
             return;
         };
-        let mut names = SmallVec::new();
-        if !self.collect_stored_names(removable, expression, &mut names) {
+        let (mut names, mut class_checks) = (SmallVec::new(), None);
+        if !self.collect_stored_names(removable, expression, &mut names, &mut class_checks) {
             return;
         }
         let written_at = self.hir[statement].loc;
-        let unit = self.add_part(
-            Part::Statement(statement),
-            written_at.pos..written_at.end,
-            &[],
-        );
+        let (part, written_at) = (Part::Statement(statement), written_at.pos..written_at.end);
+        let unit = match class_checks {
+            Some((class, checks)) => {
+                self.add_part_with_class_checks(part, written_at, &[], class, checks)
+            }
+            None => self.add_part(part, written_at, &[]),
+        };
         let module = &mut self.units.modules[self.module as usize];
         if names.is_empty() {
             module.parts_of_object.push(unit);
@@ -658,9 +724,10 @@ impl<'a, 's> FileScan<'a, 's> {
                     }
                     let is_one_part =
                         self.is_name_of_one_part(bound.declared_symbol(Decl::Class(class)));
-                    if is_one_part && removable.is_some_and(|it| it.class(class)) {
+                    let checks = removable.and_then(|it| it.find_class_checks(class));
+                    if let (true, Some(checks)) = (is_one_part, checks) {
                         let written_at = hir[statement].loc;
-                        self.add_class_part(class, written_at.pos..written_at.end);
+                        self.add_class_part(class, written_at.pos..written_at.end, checks);
                     } else if !has_decorators {
                         self.add_class_unit(class);
                     }
@@ -977,13 +1044,14 @@ impl<'a, 's> FileScan<'a, 's> {
     }
 
     // The value stands in the place of the name.
-    fn names_data_variable(&self, symbol: SymbolId) -> bool {
+    fn find_data_variable(&self, symbol: SymbolId) -> Option<Sym> {
         let members = self.input.known_objects(&self.known_members);
         let named = Sym {
             file: self.file,
             id: symbol,
         };
-        members.find_data_variable(named).is_some()
+        let (variable, _) = members.find_data_variable(named)?;
+        Some(variable)
     }
 
     // What a name, or a member of the object of a module, is there for where it leads to the object of an enum and no further.
@@ -1054,7 +1122,8 @@ impl<'a, 's> FileScan<'a, 's> {
             if !is_evaluated {
                 continue;
             }
-            if self.names_data_variable(symbol) {
+            if let Some(variable) = self.find_data_variable(symbol) {
+                self.add_interest(hir[reference].pos, Interest::KnownVariable(variable));
                 continue;
             }
             if let Some(interest) = self.interest_in_known_object(reference) {
@@ -2390,7 +2459,14 @@ impl<'a, 's> Walk<'a, 's> {
                     self.hand_on_every_data_object();
                 }
             }
+            Interest::KnownVariable(variable) => {
+                self.reach_files_between(file, HandedOn::Variable(variable));
+            }
             Interest::KnownMember(enumeration) => {
+                // The bundler counts a read out of a module of data as a use of the import, and a read of a member of an enum not.
+                if self.input.graph.kind(enumeration.file) == ModuleKind::Data {
+                    self.reach_files_between(file, HandedOn::Variable(enumeration));
+                }
                 let is_met_before = self.objects_handed_on.contains(&enumeration)
                     || self.files_reading_members.contains_key(&enumeration);
                 if !is_met_before {
@@ -2739,6 +2815,14 @@ pub(crate) fn find_left_out_code(
                 .functions
                 .extend(functions.map(|&function| FunctionRef { file, function }));
             let declarations = &mut left_out.declarations;
+            if let Some((class, checks)) = &unit.class_checks {
+                if checks.heritage {
+                    declarations.keep_heritage_check(file, *class);
+                }
+                for &member in &checks.keys {
+                    declarations.keep_key_conversion(file, member);
+                }
+            }
             match unit.part {
                 Part::Bodies | Part::InnerModule(_) => {}
                 Part::Declarator(declarator) => declarations.leave_out_declarator(file, declarator),

@@ -295,6 +295,83 @@ if (isMainThread) {
 }
 `;
 
+// 48 Workers are constructed one by one, and each that starts stays.
+const startsWorkersThatStay = `import { isMainThread, parentPort } from "node:worker_threads";
+if (isMainThread) {
+  let outcomes = "";
+  for (let i = 0; i < 48; i++) {
+    try {
+      const worker = new Worker(new URL(import.meta.url));
+      await new Promise(resolve => (worker.onmessage = resolve));
+      outcomes += "started ";
+    } catch {
+      outcomes += "threw ";
+    }
+  }
+  console.log(outcomes);
+  process.exit(0);
+} else {
+  setInterval(() => {}, 1000);
+  postMessage(typeof parentPort);
+}
+`;
+
+// Workers start until the constructor throws. One ends, so there is room for about one. The others are terminated in a call that blocks, and another is constructed at once.
+const keepsObjectsInWorkerConstructedWhileOthersEnd = `declare var self: Worker;
+if (Bun.isMainThread) {
+  const hear = (worker: Worker, wanted: string) =>
+    new Promise<string>(resolve => {
+      worker.onmessage = event => void (String(event.data).startsWith(wanted) && resolve(event.data));
+      worker.onerror = event => resolve(event.message);
+    });
+  const workers: Worker[] = [];
+  for (;;) {
+    try {
+      const worker = new Worker(new URL(import.meta.url));
+      await hear(worker, "ready");
+      workers.push(worker);
+    } catch {
+      break;
+    }
+  }
+  const first = workers.shift()!;
+  const closed = new Promise(resolve => first.addEventListener("close", resolve));
+  first.terminate();
+  await closed;
+  await Promise.all(
+    workers.map(worker => {
+      const heldUp = hear(worker, "held up");
+      worker.postMessage("block");
+      return heldUp;
+    }),
+  );
+  for (const worker of workers) worker.terminate();
+  const last = new Worker(new URL(import.meta.url));
+  const ready = await hear(last, "ready");
+  if (ready !== "ready") throw new Error(ready);
+  const kept = hear(last, "kept");
+  last.postMessage("keep");
+  console.log(await kept);
+  process.exit(0);
+} else {
+  type Entry = { id: number; next: Entry | null };
+  let head: Entry | null = null;
+  self.onmessage = event => {
+    if (event.data === "block") {
+      postMessage("held up");
+      Bun.sleepSync(3000);
+      return;
+    }
+    for (let i = 0; i < 2_000_000; i++) head = { id: i, next: head };
+    let entries = 0;
+    for (let entry: Entry | null = head; entry; entry = entry.next) entries++;
+    postMessage("kept " + entries);
+  };
+  setInterval(() => {}, 1000);
+  postMessage("ready");
+}
+`;
+
 const takesRoomThatWorkerWaitsFor = `import { Worker as NodeWorker, parentPort } from "node:worker_threads";
 declare var self: Worker;
 const isNode = process.argv[2] === "node";
@@ -949,6 +1026,30 @@ export function workersWithinAddressSpaceLimit(part: number, parts: number) {
     );
 
     inPart(test.skipIf(!isLinux || isASAN))(
+      "once the constructor has thrown it throws again for as long as no Worker ends",
+      async () => {
+        const limits = [1104, 1150].flatMap(megabytes => Array.from({ length: 4 }, () => megabytes * 1024));
+        const results = await runWithinEach(limits, startsWorkersThatStay);
+        expect(results.map((result, i) => ({ limit: limits[i], ...result }))).toEqual(
+          limits.map(limit => ({ limit, stdout: expect.stringMatching(/^(started )+(threw )+\n$/), stderr: "", exitCode: 0 })),
+        );
+      },
+      240_000,
+    );
+
+    inPart(test.skipIf(!isLinux || isASAN))(
+      "a Worker that is constructed while others are ending does not take the last of the room, and has room for its objects",
+      async () => {
+        expect(await runWithin(GB, keepsObjectsInWorkerConstructedWhileOthersEnd)).toEqual({
+          stdout: "kept 2000000\n",
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+      240_000,
+    );
+
+    inPart(test.skipIf(!isLinux || isASAN))(
       "the constructor throws in the turn in which there is no room, though the thread has not heard yet that Workers have ended",
       async () => {
         expect(await runWithin(GB, constructsWorkersBeforeItHearsThatOthersEnded)).toEqual({
@@ -1061,6 +1162,7 @@ export function workersWithinAddressSpaceLimit(part: number, parts: number) {
         dealt([
           "lists",
           "lists that built-ins make",
+          "objects with many properties",
           "typed arrays",
           "long texts",
           "maps and sets",

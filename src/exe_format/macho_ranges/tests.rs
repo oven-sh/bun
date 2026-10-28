@@ -393,6 +393,30 @@ fn pieces_take_segment_name() {
 }
 
 #[test]
+fn code_is_found_in_every_piece() {
+    let offset_in_code = |bytes: &[u8], address: u64| {
+        let header = read_header(bytes).unwrap();
+        let commands = &bytes[HEADER_SIZE..][..header.sizeofcmds as usize];
+        bun_sys::macho::offset_in_code(header.ncmds, commands, address)
+    };
+    let cuts = [cut(2, 4), cut(86, 90), cut(99, 101)];
+    let original = toy();
+    let trimmed = remove_and_verify(&original, &cuts);
+    let code = vm_addresses(&parse(&original).unwrap().segments[TEXT_INDEX].command);
+    for index in 0..107 {
+        let page = cut(index, index + 1);
+        let is_removed = cuts.iter().any(|cut| cut.contains(page));
+        for address in [page.start, page.end - 1] {
+            let offset = code.contains(page).then(|| address - IMAGE_BASE);
+            assert_eq!(offset_in_code(&original, address), offset);
+            let offset = offset.filter(|_| !is_removed);
+            assert_eq!(offset_in_code(&trimmed, address), offset);
+        }
+    }
+    assert_eq!(offset_in_code(&trimmed, IMAGE_BASE - 1), None);
+}
+
+#[test]
 fn second_removal_splits_pieces() {
     let (first, second) = (cut(3, 5), cut(8, 9));
     let once = remove_and_verify(&toy(), &[first]);

@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows } from "harness";
-import { statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { spawned, unsupported } from "../aot/run-programs";
-import { canTrim, tempDirForAotBuilds } from "./compile-trim-features";
+import { readRemovedFeatures } from "../aot/trimmed-against-whole/removed-features";
+import { canTrim, describeBytesRemovedWith, tempDirForAotBuilds, trimFeatureNamed } from "./compile-trim-features";
 
 // `compile.trim.remove` takes a feature out of an executable whose program uses it. The names stay: an import works, `typeof` answers as
 // before. A call throws an error with the code ERR_FEATURE_REMOVED that says how the executable was built.
@@ -110,6 +111,7 @@ const smallest: Record<string, number> = {
 const buildScript = `const [entry, outfile, trim] = process.argv.slice(2);
 try {
   const result = await Bun.build({ entrypoints: [entry], compile: { outfile, aot: true, trim: JSON.parse(trim) } });
+  for (const { message } of result.logs) console.error(message.split(": ", 2).join(": "));
   console.log(result.success ? "built" : "failed");
 } catch (error) {
   console.log(String(error.message));
@@ -117,6 +119,19 @@ try {
 
 const libc = isWindows ? "kernel32.dll" : isLinux ? "libc.so.6" : "/usr/lib/libSystem.B.dylib";
 const sizeOf = (executable: string) => statSync(isWindows ? executable + ".exe" : executable).size;
+
+// What the link of this Bun wrote down about the features with `name` in their names: how large their groups are, and what of them other code keeps.
+function readLinkReview(name: string): string {
+  const folder = bunExe() + ".trim";
+  if (!existsSync(folder)) return "";
+  const isNamed = (text: string) => text.toLowerCase().includes(name.replaceAll("-", ""));
+  const read = (file: string) => readFileSync(join(folder, file), "utf8");
+  const kept = read("retained-by.txt")
+    .split("\n\n")
+    .filter(block => isNamed(block.slice(0, block.indexOf(":"))))
+    .flatMap(block => block.split("\n").slice(0, 24));
+  return [...read("groups.txt").split("\n").filter(isNamed), ...kept].map(line => line.slice(0, 240)).join("\n");
+}
 
 describe.skipIf(!canTrim || !!unsupported)("compile.trim.remove", () => {
   const files = {
@@ -133,11 +148,21 @@ describe.skipIf(!canTrim || !!unsupported)("compile.trim.remove", () => {
       using dir = tempDirForAotBuilds("compile-trim-remove", files);
       const folder = String(dir);
       const env = { ...bunEnv, LIBC: libc };
-      expect(await build(folder, entry, "kept", {})).toMatchObject({ stdout: "built\n", exitCode: 0 });
-      expect(await build(folder, entry, "cut", { remove: [remove] })).toMatchObject({ stdout: "built\n", exitCode: 0 });
+      const kept = await build(folder, entry, "kept", { log: true });
+      const withoutIt = await build(folder, entry, "cut", { remove: [remove], log: true });
+      expect(kept).toMatchObject({ stdout: "built\n", exitCode: 0 });
+      expect(withoutIt).toMatchObject({ stdout: "built\n", exitCode: 0 });
       expect(await spawned([join(folder, "kept")], folder, env)).toMatchObject({ stdout: whole, exitCode: 0 });
       expect(await spawned([join(folder, "cut")], folder, env)).toMatchObject({ stdout: cut, exitCode: 0 });
-      expect(sizeOf(join(folder, "kept")) - sizeOf(join(folder, "cut"))).toBeGreaterThan(smallest[remove]! * 1024);
+      const saved = sizeOf(join(folder, "kept")) - sizeOf(join(folder, "cut"));
+      if (saved <= smallest[remove]! * 1024) {
+        const removed = readRemovedFeatures(join(folder, isWindows ? "cut.exe" : "cut")) ?? [];
+        const bytes = trimFeatureNamed(remove).features.map(feature => describeBytesRemovedWith(feature, removed));
+        console.log(
+          `with ${remove}:\n${kept.stderr}without:\n${withoutIt.stderr}${bytes.join("\n")}\n${readLinkReview(remove)}`,
+        );
+      }
+      expect(saved).toBeGreaterThan(smallest[remove]! * 1024);
     },
     240_000,
   );

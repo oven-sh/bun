@@ -173,6 +173,7 @@ export const rows: Row[] = [
         "errors/stack-frames-above-a-constructed-function-that-ends-in-a-call",
         "errors/stack-frames-above-a-constructed-function-that-stores-to-this-and-ends-in-a-call",
         "errors/stack-frames-of-functions-that-end-in-a-call-and-are-both-called-and-constructed",
+        "errors/stack-frames-of-ten-chains-of-a-hundred-functions-and-classes-that-construct-each-other",
         "errors/stack-positions-of-method-calls-whose-read-throws-or-runs-a-getter",
       ],
     ],
@@ -211,10 +212,12 @@ export const rows: Row[] = [
         "errors/stack-frames-above-a-constructed-function-that-ends-in-a-call",
         "errors/stack-frames-above-a-constructed-function-that-stores-to-this-and-ends-in-a-call",
         "errors/stack-frames-of-functions-that-end-in-a-call-and-are-both-called-and-constructed",
+        "errors/stack-frames-of-ten-chains-of-a-hundred-functions-and-classes-that-construct-each-other",
       ],
     ],
   ]),
   variant("moved-loads-checked-at-run-time", ["--aot-check=MovedLoads"]),
+  variant("decided-comparisons-checked-at-run-time", ["--aot-check=DecidedComparisons"]),
   variant("no-flow-results", ["--aot-disable=flow-results"], {}, 3, [
     [
       [
@@ -366,7 +369,7 @@ export const rows: Row[] = [
   births("objects written into by a built-in", "written-into-by-a-built-in", false),
   births("one class makes the members of a union", "one-class-makes-the-members-of-a-union", false),
   births("one thing under two names", "one-thing-under-two-names", false),
-  births("one use of two kinds of value", undefined, undefined, 9),
+  births("one use of two kinds of value", undefined, undefined, 14),
   births("one walk of two kinds of collection"),
   births("parameters and results that nobody reads", "parameters-and-results-that-nobody-reads", false),
   births("pattern literals met again", "pattern-literals-met-again", false),
@@ -503,6 +506,13 @@ export const rows: Row[] = [
     "./joined-programs",
     "joined",
     ["moved-loads-checked", ["--aot-check=MovedLoads"]],
+  ],
+  [
+    "aot/joined-programs-decided-comparisons-checked",
+    3,
+    "./joined-programs",
+    "joined",
+    ["decided-comparisons-checked", ["--aot-check=DecidedComparisons"]],
   ],
   // A group of 250 programs costs about one build, so these take fifty times the programs of variant-validate and variant-proofs-checked-at-run-time.
   [

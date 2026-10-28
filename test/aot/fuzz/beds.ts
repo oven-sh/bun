@@ -357,6 +357,8 @@ export class ProductBed implements Bed {
     modes.push({ name: "moved-loads-checked", flags: ["--aot-check=MovedLoads"] });
     modes.push({ name: "hot-with-claims-checked", flags: ["--aot-heat=everything-is-hot", "--aot-check=ClaimsToBackEnd"] });
     modes.push({ name: "hot-with-moved-loads-checked", flags: ["--aot-heat=everything-is-hot", "--aot-check=MovedLoads"] });
+    modes.push({ name: "decided-comparisons-checked", flags: ["--aot-check=DecidedComparisons"] });
+    modes.push({ name: "hot-with-decided-comparisons-checked", flags: ["--aot-heat=everything-is-hot", "--aot-check=DecidedComparisons"] });
     return modes.filter(mode => this.options.modes!.includes(mode.name));
   }
 

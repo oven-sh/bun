@@ -1,0 +1,8 @@
+awaits begins
+awaits goes on
+requires goes on
+require() throws a TypeError
+waits goes on
+required runs
+both are imported
+required is imported: value

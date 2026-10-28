@@ -21,6 +21,7 @@ use bun_sema::hir_from_data::{DataModule, DataValue};
 use bun_sema::resolve::{AOT_CONDITION, CodeFailure, CodeImportKind, FileSearch, FoundCode, Host};
 use bun_sema_driver::host::{from_native, to_native};
 use bun_threading::Guarded;
+use core::any::Any;
 use core::ptr::NonNull;
 
 #[derive(Clone)]
@@ -260,6 +261,10 @@ impl SourceProvider for BundlerServices {
         log: &mut Log,
     ) -> FoldOptions<'s> {
         defines::fold_options(self.context.options(), arena, atoms, log)
+    }
+
+    fn define(&self) -> Option<&dyn Any> {
+        Some(&*self.context.options().define)
     }
 
     fn enabled_features(&self) -> Vec<&[u8]> {

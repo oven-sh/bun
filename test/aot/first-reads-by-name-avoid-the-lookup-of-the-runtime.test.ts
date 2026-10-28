@@ -3,7 +3,7 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { run } from "./harness/run";
-import { test } from "./supported-with-counted-calls";
+import { test } from "./supported";
 
 // Every read below runs once, on a receiver that comes back out of an array, so the compiler does not know what arrives: what a program does while it starts.
 const copies = 40;

@@ -146,6 +146,54 @@ function turn(i: number): number {
   for (const row of rows) sum += row.label.length;
   return sum;
 }
+//// json-parse-a-chain-of-three-by-a-type-that-holds-itself-with-one-member-more-in-the-first
+interface Item {
+  id: number;
+  name: string;
+  next: Item | null;
+}
+const text = '{"id":0,"name":"n0","x":0,"next":{"id":1,"name":"n1","next":{"id":2,"name":"n2","next":null}}}';
+function turn(i: number): number {
+  const item = JSON.parse(text) as Item;
+  return item.id + item.name.length + (i & 1);
+}
+//// json-parse-a-tree-by-a-type-that-holds-itself-with-one-member-more-in-the-root
+interface Tree {
+  value: number;
+  left: Tree | null;
+  right: Tree | null;
+}
+const text = '{"value":0,"x":0,"left":{"value":1,"left":null,"right":null},"right":{"value":1,"left":null,"right":null}}';
+function turn(i: number): number {
+  const tree = JSON.parse(text) as Tree;
+  return tree.value + (i & 1);
+}
+//// json-parse-a-tree-by-a-type-that-holds-itself-with-one-member-more-in-each
+interface Tree {
+  value: number;
+  left: Tree | null;
+  right: Tree | null;
+}
+const treeOf = (levels: number): string => (levels ? '{"value":' + levels + ',"x":1,"left":' + treeOf(levels - 1) + ',"right":' + treeOf(levels - 1) + "}" : "null");
+const text = treeOf(3);
+function turn(i: number): number {
+  const tree = JSON.parse(text) as Tree;
+  return tree.value + (i & 1);
+}
+//// json-parse-by-two-types-that-hold-each-other-with-one-member-more-in-each
+interface Owner {
+  title: string;
+  pet: Pet | null;
+}
+interface Pet {
+  kind: string;
+  owner: Owner | null;
+}
+const text = '{"title":"t0","x":1,"pet":{"kind":"k1","x":1,"owner":{"title":"t2","x":1,"pet":{"kind":"k3","x":1,"owner":null}}}}';
+function turn(i: number): number {
+  const owner = JSON.parse(text) as Owner;
+  return owner.title.length + (i & 1);
+}
 //// json-parse-nested
 const text = '{"user":{"id":7,"roles":["admin","dev"],"address":{"city":"Oslo"}},"total":3}';
 function turn(i: number): number {

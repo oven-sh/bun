@@ -196,12 +196,14 @@ for (let i = 0; i < 10; i++) try { readers[i & 1](value); } catch { caught++; }
 console.log("reads of an object:", caught, "TypeErrors");
 `;
 
-// Runs a program until it stands at the instruction of its first null check again, after ten of them, and sends it SIGSEGV there
-// as another process would, with sigqueue().
+// Runs a program until it stands at the instruction of its first null check again, after all of them, and sends it SIGSEGV there
+// as another process would, with sigqueue(). How many of its reads of null a program finds by such an instruction is the compiler's choice:
+// without $CHECKS it runs the program to its end and prints their number.
 const sender = `#define _GNU_SOURCE
 #include <elf.h>
 #include <signal.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/ptrace.h>
 #include <sys/uio.h>
@@ -226,21 +228,21 @@ int main(int argc, char** argv)
         _exit(127);
     }
     unsigned long site = 0, word = 0;
-    int checks = 0, status;
+    int checks = 0, status, all = getenv("CHECKS") ? atoi(getenv("CHECKS")) : -1;
     struct user_regs_struct registers;
     struct iovec io = { &registers, sizeof registers };
     for (;;) {
         if (waitpid(child, &status, 0) < 0) return 125;
-        if (WIFEXITED(status)) return WEXITSTATUS(status);
+        if (WIFEXITED(status)) { if (all < 0) printf("%d\\n", checks); return WEXITSTATUS(status); }
         if (WIFSIGNALED(status)) { printf("ended by signal %d\\n", WTERMSIG(status)); return 0; }
         int signal_number = WSTOPSIG(status);
-        if (signal_number == SIGSEGV && checks < 10) {
+        if (signal_number == SIGSEGV && (all < 0 || checks < all)) {
             if (!checks++) { ptrace(PTRACE_GETREGSET, child, NT_PRSTATUS, &io); site = PC(registers); }
-            if (checks == 10) { word = ptrace(PTRACE_PEEKTEXT, child, site, 0); ptrace(PTRACE_POKETEXT, child, site, (word & ~trap_mask) | trap); }
+            if (checks == all) { word = ptrace(PTRACE_PEEKTEXT, child, site, 0); ptrace(PTRACE_POKETEXT, child, site, (word & ~trap_mask) | trap); }
         } else if (signal_number == SIGTRAP) {
             signal_number = 0;
             ptrace(PTRACE_GETREGSET, child, NT_PRSTATUS, &io);
-            if (checks == 10 && PC(registers) - trap_length == site) {
+            if (checks == all && PC(registers) - trap_length == site) {
                 ptrace(PTRACE_POKETEXT, child, site, word);
                 PC(registers) = site;
                 ptrace(PTRACE_SETREGSET, child, NT_PRSTATUS, &io);
@@ -385,8 +387,13 @@ describe.skipIf(skipped).concurrent("reading a property of null throws a TypeErr
         run([compiler!, "-w", "-o", "sender", "sender.c"], String(directory)),
       ]);
       expect(built).toMatchObject({ exitCode: 0 });
-      const { stdout, exitCode } = await run([join(String(directory), "sender"), executable], String(directory));
-      if (exitCode === 126) return console.error("SKIPPED: a process may not be traced here");
+      const counted = await run([join(String(directory), "sender"), executable], String(directory));
+      if (counted.exitCode === 126) return console.error("SKIPPED: a process may not be traced here");
+      const checks = counted.stdout.trimEnd().split("\n").at(-1)!;
+      expect(Number(checks)).toBeWithin(1, 11);
+      const { stdout, exitCode } = await run([join(String(directory), "sender"), executable], String(directory), {
+        CHECKS: checks,
+      });
       expect({ stdout, exitCode }).toEqual({
         stdout: "reads of null: 10 TypeErrors\nended by signal 11\n",
         exitCode: 0,

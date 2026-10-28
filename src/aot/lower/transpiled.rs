@@ -23,20 +23,31 @@ use smallvec::{SmallVec, smallvec};
 
 use self::alignment::{Alignment, PrintedTree, Rewrites};
 pub(super) use self::alignment::{Rewrite, find_written_literal};
+use crate::load::source_provider::SourceProvider;
 
-/// Bun's transpiler with the options `bun run` gives it, and the flags of the build.
-pub struct RuntimeTranspiler {
-    define: Box<Define>,
+/// Bun's transpiler with the options `bun run` gives it, and the defines and flags of the build.
+pub struct RuntimeTranspiler<'b> {
+    define: &'b Define,
     enabled_features: Option<Box<StringSet>>,
     /// The arena of each thread that is not asking now. They are given back with the transpiler.
     arenas: Guarded<Vec<(ThreadId, Arena)>>,
 }
 
-impl RuntimeTranspiler {
+impl<'b> RuntimeTranspiler<'b> {
+    /// What `bun run` defines where no flag defines anything.
+    pub fn create_default_define() -> Box<Define> {
+        Define::with_pure_globals(false, true)
+    }
+
+    pub fn find_define(provider: &'b dyn SourceProvider) -> Option<&'b Define> {
+        let define = provider.define()?.downcast_ref();
+        Some(define.expect("a provider hands over the transpiler's `Define`"))
+    }
+
     /// `enabled_features`: the flags for which `feature()` of "bun:bundle" answers true.
-    pub fn new(enabled_features: &[&[u8]]) -> RuntimeTranspiler {
+    pub fn new(define: &'b Define, enabled_features: &[&[u8]]) -> RuntimeTranspiler<'b> {
         RuntimeTranspiler {
-            define: Define::with_pure_globals(false, true),
+            define,
             enabled_features: Features::init_bundler_feature_flags(enabled_features),
             arenas: Guarded::new(Vec::new()),
         }
@@ -56,6 +67,7 @@ pub(super) struct TranspileRequest<'a, 's> {
     pub(super) text: &'a [u8],
     pub(super) loader: Loader,
     pub(super) has_legacy_decorators: bool,
+    pub(super) assigns_class_fields: bool,
     /// The front end's own tree of `text`. Without it no rewrites are looked for.
     pub(super) parsed: Option<ParsedText<'a, 's>>,
 }
@@ -94,7 +106,7 @@ fn errors_of(log: &Log) -> Vec<TranspilerError> {
 
 const MAX_RETAINED_ARENA_BYTES: usize = 8 * 1024 * 1024;
 
-impl RuntimeTranspiler {
+impl RuntimeTranspiler<'_> {
     /// `Err`: nothing is printed for the file. The list holds what the transpiler says of its text.
     pub(super) fn transpile(
         &self,
@@ -125,6 +137,7 @@ impl RuntimeTranspiler {
         let mut options = ParserOptions::init(Default::default(), request.loader);
         options.tree_shaking = true;
         options.warn_about_unbundled_modules = false;
+        options.use_define_for_class_fields = !request.assigns_class_fields;
         let features = &mut options.features;
         features.standard_decorators = !request.has_legacy_decorators;
         features.allow_runtime = true;
@@ -140,7 +153,7 @@ impl RuntimeTranspiler {
         features.bundler_feature_flags =
             enabled_features.map(|flags| Box::new(handle_oom(flags.clone())));
         let mut log = Log::init();
-        let parsed = Parser::init(options, &mut log, &source, &self.define, arena)
+        let parsed = Parser::init(options, &mut log, &source, self.define, arena)
             .and_then(|parser| parser.parse());
         let Ok(Parsed::Ast(tree)) = parsed else {
             return Err(errors_of(&log));
@@ -177,6 +190,7 @@ impl RuntimeTranspiler {
             regexp_literals: walker.regexp_literals,
             require_main_positions: walker.require_main_positions,
             joined_declarators: walker.joined_declarators,
+            classes_that_assign_fields: walker.classes_that_assign_fields,
             rewrites: rewrites.unwrap_or_default(),
         })
     }
@@ -223,6 +237,8 @@ pub(super) struct TranspiledFile {
     require_main_positions: Vec<u32>,
     // `a = o.x, b = o.y` is printed `{ x: a, y: b } = o`: the `o` of each declarator of such a run.
     joined_declarators: Vec<JoinedDeclarator>,
+    // The `class` of each class whose instance fields are printed as assignments in its constructor.
+    classes_that_assign_fields: Vec<u32>,
     rewrites: Rewrites,
 }
 
@@ -262,6 +278,11 @@ impl TranspiledFile {
         index.ok().map(|index| joined[index])
     }
 
+    pub(super) fn assigns_fields_of_class_at(&self, position: u32) -> bool {
+        let classes = &self.classes_that_assign_fields;
+        classes.binary_search(&position).is_ok()
+    }
+
     pub(super) fn find_return_that_evaluates(&self, initializer: ExprId) -> Option<u32> {
         let returned = &self.rewrites.returned_initializers;
         returned.get(&initializer).copied()
@@ -276,6 +297,7 @@ struct Walker<'a> {
     regexp_literals: Vec<u32>,
     require_main_positions: Vec<u32>,
     joined_declarators: Vec<JoinedDeclarator>,
+    classes_that_assign_fields: Vec<u32>,
     statements: Vec<(u32, Stmt)>,
     initializers: Vec<(u32, Expr)>,
     computed_keys: Vec<(u32, Expr)>,
@@ -316,6 +338,7 @@ impl<'a> Walker<'a> {
             regexp_literals: Vec::new(),
             require_main_positions: Vec::new(),
             joined_declarators: Vec::new(),
+            classes_that_assign_fields: Vec::new(),
             statements: Vec::new(),
             initializers: Vec::new(),
             computed_keys: Vec::new(),
@@ -342,6 +365,7 @@ impl<'a> Walker<'a> {
         self.regexp_literals.sort_unstable();
         self.require_main_positions.sort_unstable();
         self.joined_declarators.sort_unstable();
+        self.classes_that_assign_fields.sort_unstable();
         self.statements.sort_unstable_by_key(|entry| entry.0);
         self.initializers.sort_unstable_by_key(|entry| entry.0);
         self.computed_keys.sort_unstable_by_key(|entry| entry.0);
@@ -456,6 +480,12 @@ impl<'a> Walker<'a> {
             .extend_from_slice(&class.ts_decorators);
         self.pending_expressions.extend(class.extends);
         self.push_initializer_at(class.class_keyword.loc, class.extends);
+        if class.assigns_fields_in_constructor {
+            push_position(
+                &mut self.classes_that_assign_fields,
+                class.class_keyword.loc,
+            );
+        }
         for property in class.properties.slice() {
             self.walk_property(property);
             if let Some(key) = property.key {

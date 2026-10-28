@@ -9,7 +9,7 @@ async function show(x) { x = await x; return x !== null && typeof x === "object"
 const out = [];
 for (const f of [q, other]) { try { out.push(await show(g(f))); } catch (e) { out.push(e.constructor.name); } }
 console.log(out.join(" "));
-//// a-function-stored-as-the-prototype-of-a-function-is-read-back-from-an-object-that-the-function-constructs-and-called-in-a-loop/main.mjs
+//// a-function-stored-as-the-prototype-of-a-function-is-read-back-from-an-instance-and-called-in-a-loop/main.mjs
 // A function stored as the prototype of a function is read back from an object that the function constructs and called in a loop.
 function h() {}
 h.prototype = function () { return 1; };
@@ -31,7 +31,7 @@ async function show(x) { x = await x; return x !== null && typeof x === "object"
 const out = [];
 for (const f of [q, other]) { try { out.push(await show(g(f))); } catch (e) { out.push(e.constructor.name); } }
 console.log(out.join(" "));
-//// a-constructor-function-stored-as-the-prototype-of-a-function-is-read-back-from-an-object-that-the-function-constructs-and-called-in-a-loop/main.mjs
+//// a-constructor-function-stored-as-the-prototype-of-a-function-is-read-back-from-an-instance-and-called-in-a-loop/main.mjs
 // A constructor function stored as the prototype of a function is read back from an object that the function constructs and called in a loop.
 function h() {}
 h.prototype = function () { this.n = 1; };
@@ -53,7 +53,7 @@ async function show(x) { x = await x; return x !== null && typeof x === "object"
 const out = [];
 for (const f of [q, other]) { try { out.push(await show(g(f))); } catch (e) { out.push(e.constructor.name); } }
 console.log(out.join(" "));
-//// an-arrow-function-stored-as-the-prototype-of-a-function-is-read-back-from-an-object-that-the-function-constructs-and-called-in-a-loop/main.mjs
+//// an-arrow-function-stored-as-the-prototype-of-a-function-is-read-back-from-an-instance-and-called-in-a-loop/main.mjs
 // An arrow function stored as the prototype of a function is read back from an object that the function constructs and called in a loop.
 function h() {}
 h.prototype = () => 1;
@@ -75,7 +75,7 @@ async function show(x) { x = await x; return x !== null && typeof x === "object"
 const out = [];
 for (const f of [q, other]) { try { out.push(await show(g(f))); } catch (e) { out.push(e.constructor.name); } }
 console.log(out.join(" "));
-//// an-async-function-stored-as-the-prototype-of-a-function-is-read-back-from-an-object-that-the-function-constructs-and-called-in-a-loop/main.mjs
+//// an-async-function-stored-as-the-prototype-of-a-function-is-read-back-from-an-instance-and-called-in-a-loop/main.mjs
 // An async function stored as the prototype of a function is read back from an object that the function constructs and called in a loop.
 function h() {}
 h.prototype = async function () { return 1; };
@@ -97,7 +97,7 @@ async function show(x) { x = await x; return x !== null && typeof x === "object"
 const out = [];
 for (const f of [q, other]) { try { out.push(await show(g(f))); } catch (e) { out.push(e.constructor.name); } }
 console.log(out.join(" "));
-//// an-async-arrow-function-stored-as-the-prototype-of-a-function-is-read-back-from-an-object-that-the-function-constructs-and-called-in-a-loop/main.mjs
+//// an-async-arrow-function-stored-as-the-prototype-of-a-function-is-read-back-from-an-instance-and-called-in-a-loop/main.mjs
 // An async arrow function stored as the prototype of a function is read back from an object that the function constructs and called in a loop.
 function h() {}
 h.prototype = async () => 1;
@@ -119,7 +119,7 @@ async function show(x) { x = await x; return x !== null && typeof x === "object"
 const out = [];
 for (const f of [q, other]) { try { out.push(await show(g(f))); } catch (e) { out.push(e.constructor.name); } }
 console.log(out.join(" "));
-//// a-method-stored-as-the-prototype-of-a-function-is-read-back-from-an-object-that-the-function-constructs-and-called-in-a-loop/main.mjs
+//// a-method-stored-as-the-prototype-of-a-function-is-read-back-from-an-instance-and-called-in-a-loop/main.mjs
 // A method stored as the prototype of a function is read back from an object that the function constructs and called in a loop.
 function h() {}
 h.prototype = ({ m() { return 1; } }).m;
@@ -141,7 +141,7 @@ async function show(x) { x = await x; return x !== null && typeof x === "object"
 const out = [];
 for (const f of [q, other]) { try { out.push(await show(g(f))); } catch (e) { out.push(e.constructor.name); } }
 console.log(out.join(" "));
-//// a-closure-over-a-variable-stored-as-the-prototype-of-a-function-is-read-back-from-an-object-that-the-function-constructs-and-called-in-a-loop/main.mjs
+//// a-closure-over-a-variable-stored-as-the-prototype-of-a-function-is-read-back-from-an-instance-and-called-in-a-loop/main.mjs
 // A closure over a variable stored as the prototype of a function is read back from an object that the function constructs and called in a loop.
 function h() {}
 h.prototype = ((c) => () => c)(1);
@@ -187,7 +187,7 @@ let a, b;
 try { a = g(q); } catch (e) { a = e.constructor.name; }
 try { b = g(other); } catch (e) { b = e.constructor.name; }
 console.log(await show(a), await show(b));
-//// a-function-stored-as-the-prototype-of-a-function-is-read-back-by-reflect-from-an-object-that-the-function-constructs-and-called-by-reflect-apply/main.mjs
+//// a-function-stored-as-the-prototype-of-a-function-is-read-back-by-reflect-from-an-instance-and-called-by-reflect-apply/main.mjs
 // A function stored as the prototype of a function is read back by Reflect from an object that the function constructs and called by Reflect.apply.
 function h() {}
 h.prototype = function () { return 1; };

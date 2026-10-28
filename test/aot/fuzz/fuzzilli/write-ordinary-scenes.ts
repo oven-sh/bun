@@ -3296,6 +3296,706 @@ class Scenes {
     this.emit(1, `printValue("constants ${number}", out);`);
     this.lines.push("}");
   }
+
+  /**
+   * A for-in whose keys are printed, over an object that is no array and has about twenty keys that are indexes, or many more, and a name that an object above it has too: own over inherited,
+   * hidden over enumerable and the reverse, an accessor over a value, removed and stored again. The indexes come ahead of the names or behind them, and the object above can have indexes as well.
+   */
+  sceneOfForInOverManyIndexKeys() {
+    const number = ++this.count;
+    const any = this.typed("any");
+    this.lines.push("{");
+    this.emit(1, `let out = "";`, `function note(value${any})${this.typed("void")} { out += String(value) + ";"; }`);
+    this.emit(
+      1,
+      `function walked(object${any})${this.typed("string")} { const keys${this.typed("string[]")} = []; for (const key in object) keys.push(key); return keys.length + ":" + keys.filter(key => !/^\\d+$/.test(key)).join() + ":" + keys.slice(0, 2).join() + ":" + keys.slice(-2).join(); }`,
+    );
+    for (let index = this.pick([1, 2, 2, 3]); index > 0; index--) {
+      const id = `${number}_${index}`;
+      const shared = this.nameOfItsOwn("s");
+      const other = this.nameOfItsOwn("t");
+      const count = () => this.pick([19, 20, 21, 21, 22, 64, 1000]);
+      const above = this.pick([
+        `{ ${shared}: 7 }`,
+        `{ ${shared}: 7 }`,
+        `{ ${shared}: 7, ${other}: 8 }`,
+        `{ ${other}: 8, ${shared}: 7 }`,
+        `{ 3: "up", ${shared}: 7 }`,
+        `{ get ${shared}() { return 1; } }`,
+        `Object.defineProperty({ ${other}: 8 }, "${shared}", { value: 1, enumerable: false, configurable: true, writable: true })`,
+        `Object.create({ ${shared}: 1 }, { ${other}: { value: 2, enumerable: true } })`,
+        `Object.create({ ${shared}: 1, ${other}: 2 }, { ${shared}: { value: 3, enumerable: true, writable: true, configurable: true } })`,
+      ]);
+      const made = this.pick([
+        `Object.create(up${id})`,
+        `Object.create(up${id})`,
+        `{ __proto__: up${id} }`,
+        `Object.setPrototypeOf({}, up${id})`,
+        `(() => { class K${id} { own = 1; } Object.setPrototypeOf(K${id}.prototype, up${id}); return new K${id}(); })()`,
+        `(() => { function F${id}(${this.isTypeScript ? "this: any" : ""}) { this.own = 1; } F${id}.prototype = up${id}; return new (F${id}${this.isTypeScript ? " as any" : ""})(); })()`,
+      ]);
+      const indexes = `for (let i = 0; i < ${count()}; i++) o${id}[i] = i;`;
+      const name = this.pick([
+        `o${id}.${shared} = null;`,
+        `o${id}.${shared} = null;`,
+        `o${id}.${shared} = 1; o${id}.${other} = 2;`,
+        `Object.defineProperty(o${id}, "${shared}", { value: 1, enumerable: false, configurable: true });`,
+        `Object.defineProperty(o${id}, "${shared}", { get() { return 1; }, enumerable: true, configurable: true });`,
+        `o${id}.${shared} = 1; delete o${id}.${shared}; o${id}.${shared} = 2;`,
+        `o${id}.${shared} = 1; delete o${id}.${shared};`,
+        `o${id}["${shared}"] = undefined;`,
+      ]);
+      this.emit(1, `const up${id}${any} = ${above};`);
+      if (this.chance(30))
+        this.emit(1, `for (let i = 0; i < ${count()}; i++) up${id}[i + ${this.pick([0, 10, 100])}] = i;`);
+      this.emit(1, `const o${id}${any} = ${made};`);
+      const named = `try { ${name} } catch (error) { note("refused"); }`;
+      this.emit(1, ...(this.chance(50) ? [indexes, named] : [named, indexes]));
+      this.emit(
+        1,
+        `try { note(walked(o${id})); note(Object.keys(o${id}).length); note(walked(o${id})); note(walked({ ...o${id} })); } catch (error) { note("threw"); }`,
+      );
+    }
+    this.emit(1, `printValue("walks ${number}", out);`);
+    this.lines.push("}");
+  }
+
+  /**
+   * A record gets a key under a name that only the run knows, then may not grow any more (or gets a private field through a base class that answers its argument), and is copied.
+   * The copy may grow: an index key and a name are written to it, and what it is afterwards is printed.
+   */
+  sceneOfCopiesOfRecordsThatMayNotGrow() {
+    const number = ++this.count;
+    const any = this.typed("any");
+    this.lines.push("{");
+    this.emit(
+      1,
+      `let out = "";`,
+      `function note(value${any})${this.typed("void")} { out += (typeof value === "object" && value !== null ? JSON.stringify(value) : String(value)) + ";"; }`,
+    );
+    this.emit(
+      1,
+      `class Answers${number} { constructor(given${any}) { return given; } }`,
+      `class Stamps${number} extends Answers${number} { #p = 1; static has(given${any})${this.typed("boolean")} { return #p in given; } }`,
+    );
+    for (let index = this.pick([2, 3, 3, 4]); index > 0; index--) {
+      const id = `${number}_${index}`;
+      const [head, tail] = [this.nameOfItsOwn("k"), this.nameOfItsOwn("l")];
+      const held = this.pick([
+        `Object.preventExtensions(o${id});`,
+        `Object.preventExtensions(o${id});`,
+        `Object.seal(o${id});`,
+        `Object.freeze(o${id});`,
+        `Reflect.preventExtensions(o${id});`,
+        `new Stamps${number}(o${id});`,
+        `new Stamps${number}(o${id}); Object.freeze(o${id});`,
+      ]);
+      const copy = this.pick([
+        `{ ...o${id} }`,
+        `{ ...o${id} }`,
+        `{ ...o${id}, 1: 1 }`,
+        `{ 1: 1, ...o${id} }`,
+        `(({ a, ...rest }${any}) => rest)(o${id})`,
+        `Object.assign({}, o${id})`,
+        `Object.fromEntries(Object.entries(o${id}))`,
+        `{ ...{ ...o${id} } }`,
+      ]);
+      this.emit(
+        1,
+        `const key${id}${this.typed("string")} = ["${head}", "${tail}"].join("");`,
+        `const o${id}${any} = ${this.pick([`{ a: 1 }`, `{ a: 1, b: "t" }`, `{}`, `{ a: 1, 0: "zero" }`])};`,
+      );
+      this.emit(
+        1,
+        this.pick([
+          `o${id}[key${id}] = 2;`,
+          `o${id}[key${id}] = 2;`,
+          `o${id}[key${id}] = { inner: 1 };`,
+          `Object.defineProperty(o${id}, key${id}, { value: 2, enumerable: true, writable: true, configurable: true });`,
+          ``,
+        ]),
+        held,
+      );
+      this.emit(1, `const c${id}${any} = ${copy};`);
+      this.emit(
+        1,
+        `try { c${id}[${this.pick(["0", "5", "1", "4294967294", `"7"`])}] = "index"; note("stored"); } catch (error) { note("threw"); }`,
+        `note(Reflect.set(c${id}, 9, 1)); note(Reflect.defineProperty(c${id}, 11, { value: 1, enumerable: true })); note(Object.isExtensible(c${id})); note(Object.isFrozen(c${id})); note(Stamps${number}.has(c${id})); note(Stamps${number}.has(o${id}));`,
+        `try { c${id}.named = 1; c${id}.a = 5; delete c${id}[key${id}]; } catch (error) { note("threw"); }`,
+        `note(Object.keys(c${id}).join()); note(Object.getOwnPropertyDescriptors(c${id})); note(Object.keys(o${id}).join());`,
+      );
+    }
+    this.emit(1, `printValue("copies ${number}", out);`);
+    this.lines.push("}");
+  }
+
+  /**
+   * Three or four files. One exports a function that answers closures over its arguments. A second has a binding at its top, exports what that function makes of the binding, and has a second
+   * reader of the binding that the program never reaches: an export that nobody imports. The program imports what was made, uses the function once more itself, and calls what both answer.
+   */
+  sceneOfExportsThatNobodyImports() {
+    const number = ++this.count;
+    const any = this.typed("any");
+    const ignore = this.isTypeScript ? "// @ts-ignore\n" : "";
+    const extension = this.isTypeScript ? "ts" : "mjs";
+    const tag = this.nameOfItsOwn("x");
+    const [tables, prices, apart] = [
+      `./tables-${tag}.${extension}`,
+      `./prices-${tag}.${extension}`,
+      `./held-${tag}.${extension}`,
+    ];
+    const [factory, use] = this.pick<[string, (made: string, key: string) => string[]]>([
+      [
+        `export function column${number}(name${any}, empty${any})${any} { return (load${any}, save${any}) => ({ read: () => load()[name] ?? empty, write: (next${any}) => save((row${any}) => ({ ...row, [name]: next(row[name] ?? empty) })) }); }`,
+        (made, key) => [
+          `{ const cell = ${made}(load${number}, save${number}); note(cell.read()); cell.write((each${any}) => [each, 1]); note(row${number}.${key}[0]); note(row${number}.${key}[1]); note(cell.read()); }`,
+        ],
+      ],
+      [
+        `export function column${number}(name${any}, empty${any})${any} { return (load${any}, save${any}) => ({ read: () => load()[name] ?? empty, write: (next${any}) => save((row${any}) => ({ ...row, [name]: next(row[name] ?? empty) })) }); }`,
+        (made, key) => [
+          `{ const cell = ${made}(load${number}, save${number}); note(cell.read()); cell.write((each${any}) => [each, 1]); note(row${number}.${key}[0]); note(row${number}.${key}[1]); note(cell.read()); }`,
+        ],
+      ],
+      [
+        `export const column${number} = (name${any}, empty${any})${any} => ({ read: () => empty, named: () => name, both: () => [name, empty] });`,
+        made => [
+          `note(${made}.read()); note(${made}.named()); note(${made}.both()[1]); note(${made}.read() === ${made}.both()[1]);`,
+        ],
+      ],
+      [
+        `export function column${number}(name${any}, empty${any})${any} { const seen${any} = []; return function (extra${any})${any} { seen.push(extra); return [name, empty, seen.length]; }; }`,
+        made => [`note(${made}(1)[1]); note(${made}(2)[2]); note(${made}(3)[0]);`],
+      ],
+      [
+        `export function column${number}(name${any}, empty${any})${any} { return class { static read() { return empty; } name = name; value = empty; }; }`,
+        made => [`note(${made}.read()); note(new ${made}().value); note(new ${made}().name);`],
+      ],
+      [
+        `export function* steps${number}(empty${any})${any} { yield empty; yield [empty]; }\nexport function column${number}(name${any}, empty${any})${any} { return () => steps${number}(empty); }`,
+        made => [`for (const each of ${made}()) note(each);`],
+      ],
+    ]);
+    const held = this.pick([
+      `const held${number}${any} = [1, 2];`,
+      `const held${number}${any} = [{}];`,
+      `const held${number}${any} = new Map([["a", 1]]);`,
+      `const held${number}${any} = new Set([1]);`,
+      `const held${number}${any} = /x/g;`,
+      `const held${number}${any} = () => 1;`,
+      `const held${number}${any} = function () {};`,
+      `const held${number}${any} = { low: {}, high: {} };`,
+      `class held${number} { static low = {}; static high = {}; }`,
+      `function held${number}() { return 1; }`,
+      `const held${number}${any} = new Date(0);`,
+      `const held${number}${any} = Symbol("s");`,
+      `let held${number}${any} = [1, 2];`,
+      `const held${number}${any} = new (class Kept { kept = 1; })();`,
+    ]);
+    const never = this.pick([
+      `export function neverCalled${number}()${any} { return held${number}; }`,
+      `export function neverCalled${number}()${any} { return held${number}; }`,
+      `export const neverCalled${number} = ()${any} => held${number};`,
+      `export const never${number} = { method()${any} { return held${number}; } };`,
+      `export const never${number} = { get got()${any} { return held${number}; } };`,
+      `export class Never${number} { read()${any} { return held${number}; } }`,
+      `export class Never${number} { static read()${any} { return held${number}; } }`,
+      `export function neverCalled${number}()${any} { return () => held${number}; }`,
+      `export function neverCalled${number}(given${any} = held${number})${any} { return given; }`,
+      `export { held${number} };`,
+      `function hidden${number}()${any} { return held${number}; }\nexport function neverCalled${number}()${any} { return hidden${number}(); }`,
+      ``,
+    ]);
+    const made = `export const prices${number}${any} = column${number}("prices", held${number});`;
+    this.files.push([tables, factory + "\n"]);
+    if (this.chance(20) && !never.startsWith("export {")) {
+      this.files.push([apart, [held, `export { held${number} };`, never, ""].join("\n")]);
+      this.files.push([
+        prices,
+        [
+          `${ignore}import { column${number} } from "${tables}";`,
+          `${ignore}import { held${number} } from "${apart}";`,
+          this.chance(50) ? `export { held${number} } from "${apart}";` : "",
+          made,
+          "",
+        ].join("\n"),
+      ]);
+    } else {
+      const body = this.pick([
+        [held, made, never],
+        [held, made, never],
+        [held, never, made],
+      ]);
+      this.files.push([prices, [`${ignore}import { column${number} } from "${tables}";`, ...body, ""].join("\n")]);
+    }
+    this.imports.push(
+      `${ignore}import { prices${number} } from "${prices}";`,
+      `${ignore}import { column${number} } from "${tables}";`,
+    );
+    this.lines.push("{");
+    this.emit(
+      1,
+      `let out = "";`,
+      `function note(value${any})${this.typed("void")} { out += (typeof value === "function" ? "function " + value.name + " " + Object.keys(value).join() : value instanceof Map ? "map " + [...value.keys()].join() : value instanceof Set ? "set " + [...value].join() : value instanceof RegExp || typeof value === "symbol" ? String(value) : JSON.stringify(value)) + ";"; }`,
+      `let row${number}${any} = {};`,
+      `const load${number} = ()${any} => row${number};`,
+      `const save${number} = (change${any})${this.typed("void")} => { row${number} = change(row${number}); };`,
+      `const names${number}${any} = column${number}("names", { first: 1 });`,
+    );
+    const [mine, theirs] = [use(`names${number}`, "names"), use(`prices${number}`, "prices")];
+    this.emit(
+      1,
+      `try {`,
+      ...(this.chance(50) ? [...mine, ...theirs] : [...theirs, ...mine]),
+      `} catch (error) { note("threw"); }`,
+    );
+    this.emit(1, `printValue("exports ${number}", out);`);
+    this.lines.push("}");
+  }
+
+  /**
+   * TypeScript. A field is born with the least that its type allows and never gets the rest of that type; then a value outside the type reaches it past the checker, and the object is looked at
+   * in every way. Each case has a type and names of its own. In JavaScript there are no such types, and the scene is one of steps on an object.
+   */
+  sceneOfValuesOutsideTheTypeOfAField() {
+    if (!this.isTypeScript) return this.sceneOfStepsOnOneObject();
+    const number = ++this.count;
+    this.lines.push("{");
+    this.emit(
+      1,
+      `let out = "";`,
+      `function note(value: unknown): void { out += (typeof value === "symbol" || typeof value === "bigint" ? typeof value + " " + String(value) : typeof value === "function" ? "function" : (JSON.stringify(value) ?? "undefined")) + ";"; }`,
+    );
+    for (let index = this.pick([2, 3, 3, 4]); index > 0; index--) {
+      const id = `${number}_${index}`;
+      const u = this.nameOfItsOwn("u");
+      const [type, born] = this.pick<[string, string]>([
+        ["number | undefined", "undefined"],
+        ["number | undefined", "undefined"],
+        ["number | null", "null"],
+        ["boolean | undefined", "undefined"],
+        ["1 | 2 | undefined", "undefined"],
+        ["undefined", "undefined"],
+        ["null", "null"],
+        ["string | undefined", "undefined"],
+        ["{ inner: number } | undefined", "undefined"],
+        ["number[] | null", "null"],
+        ["number", "3"],
+        ["number", "1.5"],
+        ["boolean", "true"],
+      ]);
+      const stored = this.pick([
+        "null",
+        "null",
+        "undefined",
+        "0",
+        "1.5",
+        `"text"`,
+        "true",
+        `Symbol("s")`,
+        "{}",
+        "[]",
+        "10n",
+        "() => 1",
+        "NaN",
+        "-0",
+      ]);
+      const way = this.pick([
+        `Object.assign(v${id}, { ${u}: ${stored} });`,
+        `Object.assign(v${id}, { ${u}: ${stored} });`,
+        `Reflect.set(v${id}, "${u}", ${stored});`,
+        `Object.defineProperty(v${id}, "${u}", { value: ${stored}, writable: true, enumerable: true, configurable: true });`,
+        `(v${id} as any).${u} = ${stored};`,
+        `(v${id} as any)["${u}"] = ${stored};`,
+        `(function (given: { ${u}: unknown }): void { given.${u} = ${stored}; })(v${id});`,
+        `v${id} = { ...v${id}, ...({ ${u}: ${stored} } as any) };`,
+        `for (const [key, value] of Object.entries({ ${u}: ${stored} })) (v${id} as any)[key] = value;`,
+      ]);
+      this.emit(
+        1,
+        `interface R${id} { a: number; ${u}: ${type} }`,
+        `let v${id}: R${id} = { a: 1, ${u}: ${born} };`,
+        `note(v${id}.${u});`,
+        way,
+      );
+      this.emit(
+        1,
+        `try { note(v${id}.${u}); note(typeof v${id}.${u}); note(v${id}.${u} === undefined); note(v${id}.${u} === null); note(v${id}.${u} == null); note(v${id}.${u} ?? "none"); note(v${id}.${u} ? "yes" : "no"); } catch (error) { note("threw"); }`,
+        `try { note(v${id}); note([v${id}]); note({ v${id} }); } catch (error) { note("threw " + (error as any)?.name); }`,
+        `try { note(Object.entries(v${id}).map(([key, value]) => key + ":" + typeof value).join()); const { ${u}: taken } = v${id}; note(taken); note({ ...v${id} }.${u}); note(Object.values(v${id}).length); } catch (error) { note("threw"); }`,
+      );
+    }
+    this.emit(1, `printValue("fields ${number}", out);`);
+    this.lines.push("}");
+  }
+
+  /**
+   * TypeScript. A value of a built-in that the build can follow by its name is declared as unknown, cast to a function type, and goes where an honest function goes too: a parameter, a variable,
+   * a field, an element, an answer, a capture. There it is called, constructed, handed to map, compared and asked for its type. In JavaScript the scene is one of built-in callees.
+   */
+  sceneOfBuiltInValuesDeclaredAsFunctions() {
+    if (!this.isTypeScript) return this.sceneOfBuiltInCallees();
+    const number = ++this.count;
+    this.lines.push("{");
+    this.emit(
+      1,
+      `let out = "";`,
+      `function note(value: unknown): void { out += (typeof value === "symbol" ? String(value) : typeof value === "function" ? "function" : typeof value === "object" && value !== null ? Object.prototype.toString.call(value) : typeof value + " " + String(value)) + ";"; }`,
+      `type F${number} = (n: number) => number;`,
+    );
+    for (let index = this.pick([2, 3, 3, 4]); index > 0; index--) {
+      const id = `${number}_${index}`;
+      const value = this.pick([
+        "Symbol.iterator",
+        "Symbol.iterator",
+        "Symbol.asyncIterator",
+        "Symbol.hasInstance",
+        "Symbol.toPrimitive",
+        "Symbol.toStringTag",
+        "Symbol.species",
+        "Symbol.unscopables",
+        "Math.PI",
+        "Number.EPSILON",
+        "Number.MAX_SAFE_INTEGER",
+        "Int8Array.BYTES_PER_ELEMENT",
+        "Float64Array.BYTES_PER_ELEMENT",
+        "Math",
+        "JSON",
+        "Reflect",
+        "Array.prototype",
+        "Object.prototype",
+        "process.platform.length",
+        "undefined",
+        "null",
+      ]);
+      const declared = this.pick([
+        `const held${id}: unknown = ${value};`,
+        `const held${id}: unknown = ${value};`,
+        `const held${id}: any = ${value};`,
+        `let held${id}: unknown = ${value};`,
+      ]);
+      const honest = `(n: number): number => n + ${index}`;
+      const cast = `held${id} as F${number}`;
+      // What is done with the function stands INSIDE a function of its own, which meets an honest function first and the cast value second, each in a statement of its own.
+      const done = (f: string) =>
+        this.several(1, 3, () =>
+          this.pick([
+            `note(${f}(1));`,
+            `note(${f}(1));`,
+            `note(${f}(1));`,
+            `note(new (${f} as any)(1));`,
+            `note(${f}.call(null, 2));`,
+            `note([1, 2].map(${f}).join());`,
+            `note(Reflect.apply(${f}, undefined, [3]));`,
+            `note(${f} === (${value} as unknown));`,
+            `note(typeof ${f});`,
+          ]),
+        )
+          .map(each => `try { ${each} } catch (error) { note("threw " + (error as any)?.name); }`)
+          .join(" ");
+      const steps = this.pick<string[]>([
+        [`function uses${id}(p: F${number}): void { ${done("p")} }`, `uses${id}(${honest});`, `uses${id}(${cast});`],
+        [`function uses${id}(p: F${number}): void { ${done("p")} }`, `uses${id}(${honest});`, `uses${id}(${cast});`],
+        [
+          `const uses${id} = (p: F${number}): void => { ${done("p")} };`,
+          `uses${id}(${honest});`,
+          `uses${id}(${cast});`,
+        ],
+        [
+          `let kept${id}: F${number} = ${honest};`,
+          `function uses${id}(): void { ${done(`kept${id}`)} }`,
+          `uses${id}();`,
+          `kept${id} = ${cast};`,
+          `uses${id}();`,
+        ],
+        [
+          `const box${id}: { f: F${number} } = { f: ${honest} };`,
+          `function uses${id}(): void { ${done(`box${id}.f`)} }`,
+          `uses${id}();`,
+          `box${id}.f = ${cast};`,
+          `uses${id}();`,
+        ],
+        [
+          `const list${id}: F${number}[] = [${honest}, ${cast}];`,
+          `function uses${id}(at: number): void { const f = list${id}[at]; ${done("f")} }`,
+          `uses${id}(0);`,
+          `uses${id}(1);`,
+        ],
+        [
+          `function answers${id}(which: number): F${number} { if (which) return ${cast}; return ${honest}; }`,
+          `function uses${id}(which: number): void { const f = answers${id}(which); ${done("f")} }`,
+          `uses${id}(0);`,
+          `uses${id}(1);`,
+        ],
+        [
+          `function makes${id}(f: F${number}): () => void { return () => { ${done("f")} }; }`,
+          `makes${id}(${honest})();`,
+          `makes${id}(${cast})();`,
+        ],
+        [
+          `class Uses${id} { constructor(public f: F${number}) {} run(): void { ${done("this.f")} } }`,
+          `new Uses${id}(${honest}).run();`,
+          `new Uses${id}(${cast}).run();`,
+        ],
+        [
+          `async function uses${id}(p: F${number}): Promise<void> { ${done("p")} }`,
+          `await uses${id}(${honest});`,
+          `await uses${id}(${cast});`,
+        ],
+      ]);
+      this.emit(1, declared, ...steps);
+    }
+    this.emit(1, `printValue("declared ${number}", out);`);
+    this.lines.push("}");
+  }
+
+  /**
+   * An object of the host reaches a reader through hands that are not the program's: a listener, a callback of a built-in. The reader reads it under a key made at run time, or walks the own keys of
+   * the objects above it and reads each one that is an accessor.
+   */
+  sceneOfHostObjectsReadUnderMadeKeys() {
+    const number = ++this.count;
+    const any = this.typed("any");
+    const ignore = this.isTypeScript ? "// @ts-ignore\n" : "";
+    this.imports.push(`${ignore}import { EventEmitter as Emitter${number} } from "node:events";`);
+    this.lines.push("{");
+    this.emit(
+      1,
+      `let out = "";`,
+      `function note(value${any})${this.typed("void")} { out += (typeof value === "string" || typeof value === "boolean" ? typeof value + " " + value : typeof value === "object" && value !== null ? Object.prototype.toString.call(value) : typeof value) + ";"; }`,
+    );
+    for (let index = this.pick([1, 2, 2, 3]); index > 0; index--) {
+      const id = `${number}_${index}`;
+      const [host, keys] = this.pick<[string, string[]]>([
+        [`Buffer.from("abc")`, ["parent", "offset", "buffer", "byteLength", "length", "byteOffset"]],
+        [`Buffer.from("abc")`, ["parent", "offset", "buffer", "byteLength", "length", "byteOffset"]],
+        [
+          `new URL("http://user@host.example:81/a/b?c=d#e")`,
+          ["href", "origin", "protocol", "host", "port", "pathname", "search", "hash", "username", "searchParams"],
+        ],
+        [
+          `new Request("http://host.example/a", { method: "POST", body: "b" })`,
+          ["method", "url", "headers", "bodyUsed", "signal", "redirect", "mode"],
+        ],
+        [
+          `new Response("b", { status: 201 })`,
+          ["status", "ok", "statusText", "headers", "bodyUsed", "type", "redirected"],
+        ],
+        [
+          `new Event("x", { cancelable: true })`,
+          ["type", "cancelable", "bubbles", "defaultPrevented", "target", "eventPhase", "isTrusted"],
+        ],
+        [`new Blob(["abc"], { type: "text/plain" })`, ["size", "type"]],
+        [`new AbortController().signal`, ["aborted", "reason", "onabort"]],
+        [`new TextDecoder("utf-8", { fatal: true })`, ["encoding", "fatal", "ignoreBOM"]],
+        [`new URLSearchParams("a=1&b=2")`, ["size"]],
+        [`new Uint8Array([1, 2, 3])`, ["buffer", "byteLength", "byteOffset", "length"]],
+        [`new Map([[1, 2]])`, ["size"]],
+      ]);
+      const key = this.pick(keys);
+      const cut = Math.max(1, Math.floor(key.length / 2));
+      const made = this.pick([
+        `["${key.slice(0, cut)}", "${key.slice(cut)}"].join("")`,
+        `["${key.slice(0, cut)}", "${key.slice(cut)}"].join("")`,
+        `"${key.slice(0, cut)}".concat("${key.slice(cut)}")`,
+        `String("${key}").slice(0)`,
+        `JSON.parse('"${key}"')`,
+      ]);
+      const read = this.pick([
+        `note(v[key${id}]);`,
+        `note(v[key${id}]);`,
+        `note(Reflect.get(v, key${id}));`,
+        `{ const { [key${id}]: taken } = v; note(taken); }`,
+        `note(key${id} in v); note(v[key${id}]); note(Object.hasOwn(v, key${id}));`,
+        `for (let at = Object.getPrototypeOf(v); at && at !== Object.prototype; at = Object.getPrototypeOf(at)) for (const k of Reflect.ownKeys(at)) { if (typeof k === "string" && Object.getOwnPropertyDescriptor(at, k)?.get) { note(k); try { note(v[k]); } catch (error) { note("threw"); } } }`,
+      ]);
+      const reader = `(v${any})${this.typed("void")} => { try { ${read} } catch (error) { note("threw"); } }`;
+      this.emit(1, `const key${id}${this.typed("string")} = ${made};`);
+      this.emit(
+        1,
+        this.pick([
+          `{ const e = new Emitter${number}(); e.on("x", ${reader}); e.emit("x", ${host}); }`,
+          `{ const e = new Emitter${number}(); e.on("x", ${reader}); e.emit("x", ${host}); }`,
+          `{ const e = new Emitter${number}(); e.once("x", ${reader}); e.emit("x", ${host}); }`,
+          `{ const t = new EventTarget(); const held${any} = ${host}; t.addEventListener("x", () => (${reader})(held)); t.dispatchEvent(new Event("x")); }`,
+          `[${host}].forEach(${reader});`,
+          `Array.from([${host}], ${reader});`,
+          `new Map([[1, ${host}]]).forEach(${reader});`,
+          `(${reader})(${host});`,
+          `Reflect.apply(${reader}, undefined, [${host}]);`,
+          `[${host}].sort().map(${reader});`,
+        ]),
+      );
+    }
+    this.emit(1, `printValue("hosts ${number}", out);`);
+    this.lines.push("}");
+  }
+
+  /**
+   * In one function: a handler that is an instance of a class, a proxy made with it, a trap stored on the handler AFTER the proxy is made, and an access through the proxy. The function is called
+   * from a loop. Elsewhere in the program a proxy of a function is constructed.
+   */
+  sceneOfProxiesWhoseTrapsAreStoredLater() {
+    const number = ++this.count;
+    const any = this.typed("any");
+    const asAny = this.isTypeScript ? " as any" : "";
+    this.lines.push("{");
+    this.emit(
+      1,
+      `let out = "";`,
+      `function note(value${any})${this.typed("void")} { out += (typeof value === "object" && value !== null ? JSON.stringify(value) : String(value)) + ";"; }`,
+    );
+    if (this.chance(75))
+      this.emit(
+        1,
+        this.pick([
+          `try { const constructible${any} = new Proxy(function () {}, { get: () => 1 }); const built${any} = new constructible(); note(built.size); } catch (error) { note("threw"); }`,
+          `try { note(typeof new (new Proxy(function () {}, { get: () => 1 })${asAny})()); } catch (error) { note("threw"); }`,
+          `try { note(typeof new (new Proxy(class {}, {})${asAny})()); } catch (error) { note("threw"); }`,
+          `try { note(new (new Proxy(function (${this.isTypeScript ? "this: any" : ""}) { this.a = 1; }, { construct: (target${any}, given${any}) => ({ made: given.length }) })${asAny})(1, 2)); } catch (error) { note("threw"); }`,
+        ]),
+      );
+    for (let index = this.pick([1, 2, 2, 3]); index > 0; index--) {
+      const id = `${number}_${index}`;
+      const name = this.nameOfItsOwn("c");
+      const handler = this.pick([
+        `new class {}`,
+        `new class {}`,
+        `new (class {})()`,
+        `new (class Handler${id} {})()`,
+        `new (class { kept = 1; })()`,
+        `Object.create(null)`,
+        `{}`,
+        `new (class { get(target${any}, key${any})${any} { return "above"; } })()`,
+        `Object.create({ has: () => false })`,
+      ]);
+      const [trap, access] = this.pick<[string, string]>([
+        [`get = () => "trapped"`, `note(p.${name});`],
+        [`get = () => "trapped"`, `note(p.${name});`],
+        [
+          `get = (target${any}, key${any}, receiver${any}) => String(key) + (receiver === p)`,
+          `note(p.${name}); note(Reflect.get(p, "${name}", {}));`,
+        ],
+        [`has = () => true`, `note("${name}" in p); note("other" in p);`],
+        [`has = () => false`, `note("other" in p); note(Reflect.has(p, "other"));`],
+        [
+          `set = (target${any}, key${any}, value${any}) => { target[key] = value + 1; return true; }`,
+          `p.${name} = 1; note(target.${name});`,
+        ],
+        [`deleteProperty = () => true`, `note(delete p.${name}); note(target.${name});`],
+        [
+          `getOwnPropertyDescriptor = () => ({ value: "made", configurable: true, enumerable: true, writable: true })`,
+          `note(Object.getOwnPropertyDescriptor(p, "${name}")); note(Object.hasOwn(p, "${name}"));`,
+        ],
+        [`ownKeys = () => ["${name}", "more"]`, `note(Reflect.ownKeys(p).join());`],
+        [
+          `getPrototypeOf = () => Array.prototype`,
+          `note(p instanceof Array); note(Object.getPrototypeOf(p) === Array.prototype);`,
+        ],
+      ]);
+      const before = this.chance(30) ? access : "";
+      this.emit(
+        1,
+        `function uses${id}()${this.typed("void")} { const h${any} = ${handler}; const target${any} = { ${name}: "red" }; const p${any} = new Proxy(target, h); ${before} h.${trap}; ${access} }`,
+      );
+      this.emit(
+        1,
+        `try { for (let round = 0; round < ${this.pick([1, 2, 2, 5])}; round++) uses${id}(); } catch (error) { note("threw"); }`,
+      );
+    }
+    this.emit(1, `printValue("traps ${number}", out);`);
+    this.lines.push("}");
+  }
+
+  /**
+   * A member that only a step of the language or a built-in ever uses, and that the program names nowhere else: the length of a list-like object that Array.prototype.values walks, the next() of a
+   * generator that only a built-in steps. Beside it, in code that never runs, the same built-in can be given a proxy or what eval answers.
+   */
+  sceneOfMembersThatOnlyTheLanguageUses() {
+    const number = ++this.count;
+    const any = this.typed("any");
+    const asAny = this.isTypeScript ? " as any" : "";
+    this.lines.push("{");
+    this.emit(
+      1,
+      `let out = "";`,
+      `function note(value${any})${this.typed("void")} { out += (typeof value === "object" && value !== null ? JSON.stringify(value) : String(value)) + ";"; }`,
+      `const never${number} = Date.now() < 5;`,
+    );
+    for (let index = this.pick([2, 3, 3, 4]); index > 0; index--) {
+      const id = `${number}_${index}`;
+      if (this.chance(50)) {
+        const length = this.pick([
+          `2`,
+          `count${id}`,
+          `count${id}`,
+          `{ valueOf() { note("valueOf"); return 2; } }`,
+          `{ toString() { note("toString"); return "2"; } }`,
+          `{ [Symbol.toPrimitive]() { note("toPrimitive"); return 2; } }`,
+          `"2"`,
+          `2.5`,
+        ]);
+        const like = this.pick([
+          `{ 0: "a", 1: "b", 2: "c", length: ${length} }`,
+          `{ 0: "a", 1: "b", 2: "c", get length() { note("length"); return ${length.startsWith("{") ? "2" : length}; } }`,
+        ]);
+        const walker = this.pick(["values", "values", "keys", "entries"]);
+        this.emit(1, `let count${id}${any} = 2;`, `const like${id}${any} = ${like};`);
+        this.emit(
+          1,
+          this.pick([
+            `try { for (const each of Array.prototype.${walker}.call(like${id})) note(each); } catch (error) { note("threw"); }`,
+            `try { note([...Array.prototype.${walker}.call(like${id})]); } catch (error) { note("threw"); }`,
+            `try { like${id}[Symbol.iterator] = Array.prototype.${walker}; note([...like${id}]); } catch (error) { note("threw"); }`,
+            `try { like${id}[Symbol.iterator] = Array.prototype.${walker}; const [first, second, third] = like${id}; note([first, second, third]); } catch (error) { note("threw"); }`,
+            `try { const walk = Array.prototype.${walker}.call(like${id}); note(walk.next()); count${id} = 3; note(walk.next()); note(walk.next()); note(walk.next()); } catch (error) { note("threw"); }`,
+            `try { note(Array.from(Array.prototype.${walker}.call(like${id}))); } catch (error) { note("threw"); }`,
+          ]),
+        );
+      } else {
+        const texts = this.chance(25);
+        const [a, b] = texts ? [`"a"`, `"b"`] : ["1", "2"];
+        const source = this.pick([
+          `(function* () { note("in"); yield ${a}; yield ${b}; note("end"); })()`,
+          `(function* () { note("in"); yield ${a}; yield ${b}; note("end"); })()`,
+          `{ *[Symbol.iterator]() { note("in"); yield ${a}; yield ${b}; } }`,
+          `{ [Symbol.iterator]() { let at = 0; return { next() { note("next"); return at++ < 2 ? { value: ${a}, done: false } : { value: undefined, done: true }; }, return() { note("return"); return {}; } }; } }`,
+          `new (class { *[Symbol.iterator]() { yield ${a}; yield ${b}; } })()`,
+        ]);
+        const native = (given: string) =>
+          texts
+            ? this.pick([
+                `new Intl.ListFormat("en").format(${given})`,
+                `new Set(${given}).size`,
+                `Array.from(${given}).join()`,
+              ])
+            : this.pick([
+                `new AggregateError(${given}).errors`,
+                `new AggregateError(${given}).errors`,
+                `Uint8Array.from(${given}).length`,
+                `(Math${asAny}).sumPrecise(${given})`,
+                `new Set(${given}).size`,
+                `Array.from(${given})`,
+                `new Float64Array(${given}).length`,
+                `new WeakSet([...${given}].map(() => ({}))) instanceof WeakSet`,
+                `Math.max(...${given})`,
+              ]);
+        const call = native(`source${id}`);
+        this.emit(
+          1,
+          `const source${id}${any} = ${source};`,
+          `try { note(${call}); } catch (error) { note("threw " + (error${asAny})?.name); }`,
+        );
+        if (this.chance(40))
+          this.emit(
+            1,
+            `if (never${number}) { try { note(${call.replace(`source${id}`, this.pick([`new Proxy([], {})`, `(0, eval)("[]")`, `new Proxy(source${id}, {})`]))}); } catch (error) { note("threw"); } }`,
+          );
+      }
+    }
+    this.emit(1, `printValue("steps of the language ${number}", out);`);
+    this.lines.push("}");
+  }
 }
 
 /**
@@ -3317,6 +4017,40 @@ export function writeOrdinaryScenes(text: string, isTypeScript: boolean, only?: 
         () => scenes.sceneOfWalks(),
         () => scenes.sceneOfWalks(),
         () => scenes.sceneOfIdioms(),
+        () => scenes.sceneOfProxiesWhoseTrapsAreStoredLater(),
+        () => scenes.sceneOfProxiesWhoseTrapsAreStoredLater(),
+        () => scenes.sceneOfProxiesWhoseTrapsAreStoredLater(),
+        () => scenes.sceneOfProxiesWhoseTrapsAreStoredLater(),
+        () => scenes.sceneOfMembersThatOnlyTheLanguageUses(),
+        () => scenes.sceneOfMembersThatOnlyTheLanguageUses(),
+        () => scenes.sceneOfMembersThatOnlyTheLanguageUses(),
+        () => scenes.sceneOfMembersThatOnlyTheLanguageUses(),
+        () => scenes.sceneOfValuesOutsideTheTypeOfAField(),
+        () => scenes.sceneOfValuesOutsideTheTypeOfAField(),
+        () => scenes.sceneOfValuesOutsideTheTypeOfAField(),
+        () => scenes.sceneOfValuesOutsideTheTypeOfAField(),
+        () => scenes.sceneOfBuiltInValuesDeclaredAsFunctions(),
+        () => scenes.sceneOfBuiltInValuesDeclaredAsFunctions(),
+        () => scenes.sceneOfBuiltInValuesDeclaredAsFunctions(),
+        () => scenes.sceneOfBuiltInValuesDeclaredAsFunctions(),
+        () => scenes.sceneOfHostObjectsReadUnderMadeKeys(),
+        () => scenes.sceneOfHostObjectsReadUnderMadeKeys(),
+        () => scenes.sceneOfHostObjectsReadUnderMadeKeys(),
+        () => scenes.sceneOfHostObjectsReadUnderMadeKeys(),
+        () => scenes.sceneOfExportsThatNobodyImports(),
+        () => scenes.sceneOfExportsThatNobodyImports(),
+        () => scenes.sceneOfExportsThatNobodyImports(),
+        () => scenes.sceneOfExportsThatNobodyImports(),
+        () => scenes.sceneOfExportsThatNobodyImports(),
+        () => scenes.sceneOfExportsThatNobodyImports(),
+        () => scenes.sceneOfForInOverManyIndexKeys(),
+        () => scenes.sceneOfForInOverManyIndexKeys(),
+        () => scenes.sceneOfForInOverManyIndexKeys(),
+        () => scenes.sceneOfForInOverManyIndexKeys(),
+        () => scenes.sceneOfCopiesOfRecordsThatMayNotGrow(),
+        () => scenes.sceneOfCopiesOfRecordsThatMayNotGrow(),
+        () => scenes.sceneOfCopiesOfRecordsThatMayNotGrow(),
+        () => scenes.sceneOfCopiesOfRecordsThatMayNotGrow(),
         () => scenes.sceneOfConstantsWorkedOutAheadOfEffects(),
         () => scenes.sceneOfConstantsWorkedOutAheadOfEffects(),
         () => scenes.sceneOfConstantsWorkedOutAheadOfEffects(),

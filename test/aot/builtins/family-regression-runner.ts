@@ -1,7 +1,7 @@
 // Runs the programs of family-regressions.test.ts and table-regressions.test.ts: once under plain Bun, then compiled in
 // each build mode.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -76,8 +76,7 @@ function readCountedOperations(path: string) {
 
 async function checkCompiled(regression: Regression, cwd: string, [mode, flags]: BuildMode, expected: RunResult) {
   const counts = join(cwd, "counts-" + mode);
-  // ../supported-with-counted-calls.ts says why nothing is counted on Windows.
-  const neverCalls = isWindows ? undefined : regression.neverCalls;
+  const { neverCalls } = regression;
   const tripwire = regression.evaluatesText ? {} : { BUN_JSC_crashIfInterpreterIsUsed: "1" };
   const environments: Record<string, string>[] = [{}];
   if (regression.stressesCollector) environments.push(stress, { BUN_JSC_verifyGC: "1" });

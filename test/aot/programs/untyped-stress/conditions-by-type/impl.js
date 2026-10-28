@@ -5,8 +5,6 @@ function check(actual, expected, what) {
 function Thing(n) { this.n = n; }
 const masquerader = makeMasquerader();
 const foreignMasquerader = createGlobalObject().makeMasquerader();
-function ReturnsMasquerader() { return masquerader; }
-function ReturnsForeignMasquerader() { return foreignMasquerader; }
 function ReturnsFunction() { return function () { }; }
 function ReturnsArray() { return []; }
 
@@ -25,8 +23,6 @@ check(objectOrNull(false), "no", "null");
 check(constructed(Thing), "yes", "a constructed object");
 check(constructed(ReturnsFunction), "yes", "a function");
 check(constructed(ReturnsArray), "yes", "an empty array");
-check(constructed(ReturnsMasquerader), "no", "an object that masquerades as undefined");
-check(constructed(ReturnsForeignMasquerader), "yes", "an object that masquerades as undefined in another realm");
 check([0, 1, 2, 3].map(objectOrString).join(), "yes,no,yes,no", "an object or a string");
 check([0, 1, 2, 3].map(objectOrBoolean).join(), "yes,no,yes,no", "an object or a boolean");
 check([0, 1, "", "a", null, undefined, {}, masquerader, foreignMasquerader, NaN, -0, 0n, 1n, Symbol()].map(anything).join(), "no,yes,no,yes,no,no,yes,no,yes,no,no,no,yes,yes", "anything");

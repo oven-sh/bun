@@ -438,11 +438,11 @@ impl Checker<'_, '_> {
                 ret: self.sig_return(fake_signature),
             };
             // As in `resolve_call`: expressions checked only to produce an error use the signature.
-            self.resolved_meanwhile.push((file, e, resolved));
+            self.push_resolved_meanwhile(file, e, resolved);
             let relation = Relation::Assignable;
             let at = Some(error_node);
             self.check_jsx_attributes_related_to(file, e, source, result, relation, at);
-            self.resolved_meanwhile.pop();
+            self.pop_resolved_meanwhile();
             if let Some(first) = hir.ids(jsx.type_args).next() {
                 let end = self.end_of_type_argument_list(file, jsx.type_args);
                 let args = [Arg::Number(0), Arg::Number(jsx.type_args.len())];

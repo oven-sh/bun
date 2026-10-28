@@ -1,0 +1,1003 @@
+//// unused-top-level-classes-extend-values-of-every-kind/main.js
+// Each module defines a class at its top level that nothing uses. Defining a class throws a TypeError unless it extends null or a constructor whose prototype property is an object or null.
+const modules = [
+  ["object-literal", () => import("./object-literal.js")],
+  ["array-literal", () => import("./array-literal.js")],
+  ["number", () => import("./number.js")],
+  ["string", () => import("./string.js")],
+  ["boolean", () => import("./boolean.js")],
+  ["undefined", () => import("./undefined.js")],
+  ["void", () => import("./void.js")],
+  ["bigint", () => import("./bigint.js")],
+  ["symbol", () => import("./symbol.js")],
+  ["regular-expression", () => import("./regular-expression.js")],
+  ["template", () => import("./template.js")],
+  ["null", () => import("./null.js")],
+  ["arrow-function", () => import("./arrow-function.js")],
+  ["async-function", () => import("./async-function.js")],
+  ["generator", () => import("./generator.js")],
+  ["method", () => import("./method.js")],
+  ["function-expression", () => import("./function-expression.js")],
+  ["class-expression", () => import("./class-expression.js")],
+  ["class-expression-that-extends-an-object", () => import("./class-expression-that-extends-an-object.js")],
+  ["const-object", () => import("./const-object.js")],
+  ["const-arrow-function", () => import("./const-arrow-function.js")],
+  ["const-class", () => import("./const-class.js")],
+  ["let-without-a-value", () => import("./let-without-a-value.js")],
+  ["var-assigned-later", () => import("./var-assigned-later.js")],
+  ["var-assigned-in-a-branch-not-taken", () => import("./var-assigned-in-a-branch-not-taken.js")],
+  ["var-assigned-twice", () => import("./var-assigned-twice.js")],
+  ["var-class", () => import("./var-class.js")],
+  ["let-reassigned", () => import("./let-reassigned.js")],
+  ["let-reassigned-by-a-function", () => import("./let-reassigned-by-a-function.js")],
+  ["let-reassigned-later", () => import("./let-reassigned-later.js")],
+  ["class-reassigned", () => import("./class-reassigned.js")],
+  ["class-declaration", () => import("./class-declaration.js")],
+  ["class-declared-later", () => import("./class-declared-later.js")],
+  ["chain-that-starts-at-an-object", () => import("./chain-that-starts-at-an-object.js")],
+  ["function-declaration", () => import("./function-declaration.js")],
+  ["function-with-a-number-as-prototype", () => import("./function-with-a-number-as-prototype.js")],
+  ["function-with-null-as-prototype", () => import("./function-with-null-as-prototype.js")],
+  ["function-whose-prototype-an-alias-replaces", () => import("./function-whose-prototype-an-alias-replaces.js")],
+  ["function-expression-with-a-number-as-prototype", () => import("./function-expression-with-a-number-as-prototype.js")],
+  ["async-function-declaration", () => import("./async-function-declaration.js")],
+  ["generator-declaration", () => import("./generator-declaration.js")],
+  ["proxy-of-a-class", () => import("./proxy-of-a-class.js")],
+  ["conditional-with-an-object", () => import("./conditional-with-an-object.js")],
+  ["conditional-of-two-classes", () => import("./conditional-of-two-classes.js")],
+  ["logical-or-with-an-object", () => import("./logical-or-with-an-object.js")],
+  ["logical-and-with-an-object", () => import("./logical-and-with-an-object.js")],
+  ["comma-that-ends-in-an-object", () => import("./comma-that-ends-in-an-object.js")],
+  ["comma-that-ends-in-a-class", () => import("./comma-that-ends-in-a-class.js")],
+  ["math", () => import("./math.js")],
+  ["json", () => import("./json.js")],
+  ["parse-int", () => import("./parse-int.js")],
+  ["proxy", () => import("./proxy.js")],
+  ["function-prototype", () => import("./function-prototype.js")],
+  ["array-prototype-map", () => import("./array-prototype-map.js")],
+  ["global-this", () => import("./global-this.js")],
+  ["process", () => import("./process.js")],
+  ["object", () => import("./object.js")],
+  ["array", () => import("./array.js")],
+  ["error", () => import("./error.js")],
+  ["type-error", () => import("./type-error.js")],
+  ["map", () => import("./map.js")],
+  ["promise", () => import("./promise.js")],
+  ["uint8-array", () => import("./uint8-array.js")],
+  ["buffer", () => import("./buffer.js")],
+  ["event-target", () => import("./event-target.js")],
+  ["response", () => import("./response.js")],
+  ["intl-collator", () => import("./intl-collator.js")],
+  ["statements-around-the-class", () => import("./statements-around-the-class.js")],
+  ["members", () => import("./members.js")],
+];
+for (const [name, load] of modules) {
+  try {
+    await load();
+    console.log(name, "loaded");
+  } catch (error) {
+    console.log(name, error.name, error.message);
+  }
+}
+//// unused-top-level-classes-extend-values-of-every-kind/object-literal.js
+class Unused extends {} {}
+//// unused-top-level-classes-extend-values-of-every-kind/array-literal.js
+class Unused extends [] {}
+//// unused-top-level-classes-extend-values-of-every-kind/number.js
+class Unused extends 5 {}
+//// unused-top-level-classes-extend-values-of-every-kind/string.js
+class Unused extends "text" {}
+//// unused-top-level-classes-extend-values-of-every-kind/boolean.js
+class Unused extends true {}
+//// unused-top-level-classes-extend-values-of-every-kind/undefined.js
+class Unused extends undefined {}
+//// unused-top-level-classes-extend-values-of-every-kind/void.js
+class Unused extends (void 0) {}
+//// unused-top-level-classes-extend-values-of-every-kind/bigint.js
+class Unused extends 1n {}
+//// unused-top-level-classes-extend-values-of-every-kind/symbol.js
+class Unused extends Symbol.iterator {}
+//// unused-top-level-classes-extend-values-of-every-kind/regular-expression.js
+class Unused extends /x/ {}
+//// unused-top-level-classes-extend-values-of-every-kind/template.js
+class Unused extends `text` {}
+//// unused-top-level-classes-extend-values-of-every-kind/null.js
+class Unused extends null {}
+//// unused-top-level-classes-extend-values-of-every-kind/arrow-function.js
+class Unused extends (() => {}) {}
+//// unused-top-level-classes-extend-values-of-every-kind/async-function.js
+class Unused extends (async function () {}) {}
+//// unused-top-level-classes-extend-values-of-every-kind/generator.js
+class Unused extends (function* () {}) {}
+//// unused-top-level-classes-extend-values-of-every-kind/method.js
+class Unused extends { method() {} }.method {}
+//// unused-top-level-classes-extend-values-of-every-kind/function-expression.js
+class Unused extends function () {} {}
+//// unused-top-level-classes-extend-values-of-every-kind/class-expression.js
+class Unused extends class {} {}
+//// unused-top-level-classes-extend-values-of-every-kind/class-expression-that-extends-an-object.js
+class Unused extends class extends {} {} {}
+//// unused-top-level-classes-extend-values-of-every-kind/const-object.js
+const base = {};
+class Unused extends base {}
+//// unused-top-level-classes-extend-values-of-every-kind/const-arrow-function.js
+const base = () => {};
+class Unused extends base {}
+//// unused-top-level-classes-extend-values-of-every-kind/const-class.js
+const base = class {};
+class Unused extends base {}
+//// unused-top-level-classes-extend-values-of-every-kind/let-without-a-value.js
+let base;
+class Unused extends base {}
+//// unused-top-level-classes-extend-values-of-every-kind/var-assigned-later.js
+class Unused extends base {}
+var base = class {};
+//// unused-top-level-classes-extend-values-of-every-kind/var-assigned-in-a-branch-not-taken.js
+if (globalThis.nothing) {
+  var base = class {};
+}
+class Unused extends base {}
+//// unused-top-level-classes-extend-values-of-every-kind/var-assigned-twice.js
+var base = class {};
+var base = {};
+class Unused extends base {}
+//// unused-top-level-classes-extend-values-of-every-kind/var-class.js
+var Base = class {};
+var Unused = class extends Base {};
+//// unused-top-level-classes-extend-values-of-every-kind/let-reassigned.js
+let base = class {};
+base = {};
+class Unused extends base {}
+//// unused-top-level-classes-extend-values-of-every-kind/let-reassigned-by-a-function.js
+let base = class {};
+function replace() {
+  base = {};
+}
+replace();
+class Unused extends base {}
+//// unused-top-level-classes-extend-values-of-every-kind/let-reassigned-later.js
+let base = class {};
+class Unused extends base {}
+base = {};
+//// unused-top-level-classes-extend-values-of-every-kind/class-reassigned.js
+class Base {}
+Base = 5;
+class Unused extends Base {}
+//// unused-top-level-classes-extend-values-of-every-kind/class-declaration.js
+class Base {}
+class Unused extends Base {}
+//// unused-top-level-classes-extend-values-of-every-kind/class-declared-later.js
+class Unused extends Base {}
+class Base {}
+//// unused-top-level-classes-extend-values-of-every-kind/chain-that-starts-at-an-object.js
+const base = {};
+class Middle extends base {}
+class Unused extends Middle {}
+//// unused-top-level-classes-extend-values-of-every-kind/function-declaration.js
+function Base() {}
+class Unused extends Base {}
+//// unused-top-level-classes-extend-values-of-every-kind/function-with-a-number-as-prototype.js
+function Base() {}
+Base.prototype = 5;
+class Unused extends Base {}
+//// unused-top-level-classes-extend-values-of-every-kind/function-with-null-as-prototype.js
+function Base() {}
+Base.prototype = null;
+class Unused extends Base {}
+//// unused-top-level-classes-extend-values-of-every-kind/function-whose-prototype-an-alias-replaces.js
+function Base() {}
+const alias = Base;
+alias.prototype = "text";
+class Unused extends Base {}
+//// unused-top-level-classes-extend-values-of-every-kind/function-expression-with-a-number-as-prototype.js
+const Base = function () {};
+Base.prototype = 5;
+class Unused extends Base {}
+//// unused-top-level-classes-extend-values-of-every-kind/async-function-declaration.js
+async function Base() {}
+class Unused extends Base {}
+//// unused-top-level-classes-extend-values-of-every-kind/generator-declaration.js
+function* Base() {}
+class Unused extends Base {}
+//// unused-top-level-classes-extend-values-of-every-kind/proxy-of-a-class.js
+const Base = new Proxy(class {}, {
+  get(target, key) {
+    console.log("get", String(key));
+    return target[key];
+  },
+});
+class Unused extends Base {}
+//// unused-top-level-classes-extend-values-of-every-kind/conditional-with-an-object.js
+class Base {}
+class Unused extends (globalThis.nothing ? Base : {}) {}
+//// unused-top-level-classes-extend-values-of-every-kind/conditional-of-two-classes.js
+class First {}
+class Second {}
+class Unused extends (globalThis.nothing ? First : Second) {}
+//// unused-top-level-classes-extend-values-of-every-kind/logical-or-with-an-object.js
+class Unused extends (globalThis.nothing || {}) {}
+//// unused-top-level-classes-extend-values-of-every-kind/logical-and-with-an-object.js
+class Base {}
+class Unused extends (Base && {}) {}
+//// unused-top-level-classes-extend-values-of-every-kind/comma-that-ends-in-an-object.js
+class Base {}
+class Unused extends (Base, {}) {}
+//// unused-top-level-classes-extend-values-of-every-kind/comma-that-ends-in-a-class.js
+class Base {}
+class Unused extends ({}, Base) {}
+//// unused-top-level-classes-extend-values-of-every-kind/math.js
+class Unused extends Math {}
+//// unused-top-level-classes-extend-values-of-every-kind/json.js
+class Unused extends JSON {}
+//// unused-top-level-classes-extend-values-of-every-kind/parse-int.js
+class Unused extends parseInt {}
+//// unused-top-level-classes-extend-values-of-every-kind/proxy.js
+class Unused extends Proxy {}
+//// unused-top-level-classes-extend-values-of-every-kind/function-prototype.js
+class Unused extends Function.prototype {}
+//// unused-top-level-classes-extend-values-of-every-kind/array-prototype-map.js
+class Unused extends Array.prototype.map {}
+//// unused-top-level-classes-extend-values-of-every-kind/global-this.js
+class Unused extends globalThis {}
+//// unused-top-level-classes-extend-values-of-every-kind/process.js
+class Unused extends process {}
+//// unused-top-level-classes-extend-values-of-every-kind/object.js
+class Unused extends Object {}
+//// unused-top-level-classes-extend-values-of-every-kind/array.js
+class Unused extends Array {}
+//// unused-top-level-classes-extend-values-of-every-kind/error.js
+class Unused extends Error {}
+//// unused-top-level-classes-extend-values-of-every-kind/type-error.js
+class Unused extends TypeError {}
+//// unused-top-level-classes-extend-values-of-every-kind/map.js
+class Unused extends Map {}
+//// unused-top-level-classes-extend-values-of-every-kind/promise.js
+class Unused extends Promise {}
+//// unused-top-level-classes-extend-values-of-every-kind/uint8-array.js
+class Unused extends Uint8Array {}
+//// unused-top-level-classes-extend-values-of-every-kind/buffer.js
+class Unused extends Buffer {}
+//// unused-top-level-classes-extend-values-of-every-kind/event-target.js
+class Unused extends EventTarget {}
+//// unused-top-level-classes-extend-values-of-every-kind/response.js
+class Unused extends Response {}
+//// unused-top-level-classes-extend-values-of-every-kind/intl-collator.js
+class Unused extends Intl.Collator {}
+//// unused-top-level-classes-extend-values-of-every-kind/statements-around-the-class.js
+console.log("before the class");
+class Unused extends {} {}
+console.log("after the class");
+//// unused-top-level-classes-extend-values-of-every-kind/members.js
+class Unused extends {} {
+  static count = 1;
+  field = 2;
+  constructor() {
+    super();
+  }
+  method() {
+    return this.field;
+  }
+  static create() {
+    return new Unused();
+  }
+}
+//// unused-classes-that-extend-an-object-are-written-in-every-form/main.js
+// Each module defines a class that extends an object literal and that nothing uses, each in another syntactic form.
+const modules = [
+  ["const", () => import("./const.js")],
+  ["let", () => import("./let.js")],
+  ["var", () => import("./var.js")],
+  ["named-class-expression", () => import("./named-class-expression.js")],
+  ["expression-statement", () => import("./expression-statement.js")],
+  ["typeof", () => import("./typeof.js")],
+  ["comma", () => import("./comma.js")],
+  ["array-element", () => import("./array-element.js")],
+  ["property-value", () => import("./property-value.js")],
+  ["static-field", () => import("./static-field.js")],
+  ["static-block", () => import("./static-block.js")],
+  ["conditional", () => import("./conditional.js")],
+  ["block", () => import("./block.js")],
+  ["exported-class", () => import("./exported-class.js")],
+  ["exported-const", () => import("./exported-const.js")],
+  ["exported-later", () => import("./exported-later.js")],
+  ["default-export", () => import("./default-export.js")],
+  ["named-default-export", () => import("./named-default-export.js")],
+  ["default-export-in-parentheses", () => import("./default-export-in-parentheses.js")],
+  ["function-that-is-called", () => import("./function-that-is-called.js")],
+  ["function-that-is-never-called", () => import("./function-that-is-never-called.js")],
+];
+for (const [name, load] of modules) {
+  try {
+    await load();
+    console.log(name, "loaded");
+  } catch (error) {
+    console.log(name, error.name, error.message);
+  }
+}
+//// unused-classes-that-extend-an-object-are-written-in-every-form/const.js
+const Unused = class extends {} {};
+//// unused-classes-that-extend-an-object-are-written-in-every-form/let.js
+let Unused = class extends {} {};
+//// unused-classes-that-extend-an-object-are-written-in-every-form/var.js
+var Unused = class extends {} {};
+//// unused-classes-that-extend-an-object-are-written-in-every-form/named-class-expression.js
+const Unused = class Named extends {} {};
+//// unused-classes-that-extend-an-object-are-written-in-every-form/expression-statement.js
+(class extends {} {});
+//// unused-classes-that-extend-an-object-are-written-in-every-form/typeof.js
+typeof class extends {} {};
+//// unused-classes-that-extend-an-object-are-written-in-every-form/comma.js
+(0, class extends {} {});
+//// unused-classes-that-extend-an-object-are-written-in-every-form/array-element.js
+const unused = [class extends {} {}];
+//// unused-classes-that-extend-an-object-are-written-in-every-form/property-value.js
+const unused = { value: class extends {} {} };
+//// unused-classes-that-extend-an-object-are-written-in-every-form/static-field.js
+class Unused {
+  static value = class extends {} {};
+}
+//// unused-classes-that-extend-an-object-are-written-in-every-form/static-block.js
+class Unused {
+  static {
+    class Inner extends {} {}
+  }
+}
+//// unused-classes-that-extend-an-object-are-written-in-every-form/conditional.js
+const unused = globalThis.nothing ? 1 : class extends {} {};
+//// unused-classes-that-extend-an-object-are-written-in-every-form/block.js
+{
+  class Unused extends {} {}
+}
+//// unused-classes-that-extend-an-object-are-written-in-every-form/exported-class.js
+export class Unused extends {} {}
+//// unused-classes-that-extend-an-object-are-written-in-every-form/exported-const.js
+export const Unused = class extends {} {};
+//// unused-classes-that-extend-an-object-are-written-in-every-form/exported-later.js
+class Unused extends {} {}
+export { Unused };
+//// unused-classes-that-extend-an-object-are-written-in-every-form/default-export.js
+export default class extends {} {}
+//// unused-classes-that-extend-an-object-are-written-in-every-form/named-default-export.js
+export default class Unused extends {} {}
+//// unused-classes-that-extend-an-object-are-written-in-every-form/default-export-in-parentheses.js
+export default (class extends {} {});
+//// unused-classes-that-extend-an-object-are-written-in-every-form/function-that-is-called.js
+function define() {
+  class Unused extends {} {}
+}
+define();
+//// unused-classes-that-extend-an-object-are-written-in-every-form/function-that-is-never-called.js
+function define() {
+  class Unused extends {} {}
+}
+//// unused-classes-under-void-or-not-extend-an-object/main.js
+// Each module defines a class under void or ! whose result nothing uses, and most of the definitions throw or run code. Plain Bun prints another output.
+const modules = [
+  ["void", () => import("./void.js")],
+  ["not", () => import("./not.js")],
+  ["void-null", () => import("./void-null.js")],
+  ["not-class", () => import("./not-class.js")],
+  ["void-key", () => import("./void-key.js")],
+  ["not-key", () => import("./not-key.js")],
+  ["void-static-prototype", () => import("./void-static-prototype.js")],
+  ["not-static-prototype", () => import("./not-static-prototype.js")],
+];
+for (const [name, load] of modules) {
+  try {
+    await load();
+    console.log(name, "loaded");
+  } catch (error) {
+    console.log(name, error.name, error.message);
+  }
+}
+//// unused-classes-under-void-or-not-extend-an-object/void.js
+void class extends {} {};
+//// unused-classes-under-void-or-not-extend-an-object/not.js
+!class extends {} {};
+//// unused-classes-under-void-or-not-extend-an-object/void-null.js
+void class extends null {};
+//// unused-classes-under-void-or-not-extend-an-object/not-class.js
+!class extends class {} {};
+//// unused-classes-under-void-or-not-extend-an-object/void-key.js
+const key = {
+  toString() {
+    console.log("converted");
+    return "name";
+  },
+};
+void class {
+  [key]() {}
+};
+//// unused-classes-under-void-or-not-extend-an-object/not-key.js
+const key = {
+  toString() {
+    console.log("converted");
+    return "name";
+  },
+};
+!class {
+  [key]() {}
+};
+//// unused-classes-under-void-or-not-extend-an-object/void-static-prototype.js
+void class {
+  static ["prototype"]() {}
+};
+//// unused-classes-under-void-or-not-extend-an-object/not-static-prototype.js
+!class {
+  static ["prototype"] = 1;
+};
+//// unused-classes-extend-imports/main.js
+// Each module defines a class at its top level that nothing uses and that extends an import. In the cycles, the class is defined before the module that it imports from has run.
+const modules = [
+  ["named-declared", () => import("./named-declared.js")],
+  ["namespace-declared", () => import("./namespace-declared.js")],
+  ["reexported-declared", () => import("./reexported-declared.js")],
+  ["named-constant", () => import("./named-constant.js")],
+  ["namespace-constant", () => import("./namespace-constant.js")],
+  ["reexported-constant", () => import("./reexported-constant.js")],
+  ["named-variable", () => import("./named-variable.js")],
+  ["namespace-variable", () => import("./namespace-variable.js")],
+  ["reexported-variable", () => import("./reexported-variable.js")],
+  ["named-reassigned", () => import("./named-reassigned.js")],
+  ["namespace-reassigned", () => import("./namespace-reassigned.js")],
+  ["reexported-reassigned", () => import("./reexported-reassigned.js")],
+  ["named-conditional", () => import("./named-conditional.js")],
+  ["namespace-conditional", () => import("./namespace-conditional.js")],
+  ["reexported-conditional", () => import("./reexported-conditional.js")],
+  ["named-ordinary", () => import("./named-ordinary.js")],
+  ["namespace-ordinary", () => import("./namespace-ordinary.js")],
+  ["reexported-ordinary", () => import("./reexported-ordinary.js")],
+  ["named-without-prototype", () => import("./named-without-prototype.js")],
+  ["namespace-without-prototype", () => import("./namespace-without-prototype.js")],
+  ["reexported-without-prototype", () => import("./reexported-without-prototype.js")],
+  ["named-asynchronous", () => import("./named-asynchronous.js")],
+  ["namespace-asynchronous", () => import("./namespace-asynchronous.js")],
+  ["reexported-asynchronous", () => import("./reexported-asynchronous.js")],
+  ["named-arrow", () => import("./named-arrow.js")],
+  ["namespace-arrow", () => import("./namespace-arrow.js")],
+  ["reexported-arrow", () => import("./reexported-arrow.js")],
+  ["named-object", () => import("./named-object.js")],
+  ["namespace-object", () => import("./namespace-object.js")],
+  ["reexported-object", () => import("./reexported-object.js")],
+  ["named-nothing", () => import("./named-nothing.js")],
+  ["namespace-nothing", () => import("./namespace-nothing.js")],
+  ["reexported-nothing", () => import("./reexported-nothing.js")],
+  ["named-none", () => import("./named-none.js")],
+  ["namespace-none", () => import("./namespace-none.js")],
+  ["reexported-none", () => import("./reexported-none.js")],
+  ["named-renamed", () => import("./named-renamed.js")],
+  ["namespace-renamed", () => import("./namespace-renamed.js")],
+  ["reexported-renamed", () => import("./reexported-renamed.js")],
+  ["default-class", () => import("./default-class.js")],
+  ["default-object", () => import("./default-object.js")],
+  ["namespace-itself", () => import("./namespace-itself.js")],
+  ["missing-member", () => import("./missing-member.js")],
+  ["replaced-by-a-call", () => import("./replaced-by-a-call.js")],
+  ["commonjs-class", () => import("./commonjs-class.js")],
+  ["commonjs-object", () => import("./commonjs-object.js")],
+  ["commonjs-named-class", () => import("./commonjs-named-class.js")],
+  ["commonjs-named-object", () => import("./commonjs-named-object.js")],
+  ["event-emitter", () => import("./event-emitter.js")],
+  ["event-emitter-once", () => import("./event-emitter-once.js")],
+  ["readable", () => import("./readable.js")],
+  ["tty-write-stream", () => import("./tty-write-stream.js")],
+  ["tty-read-stream", () => import("./tty-read-stream.js")],
+  ["file-system", () => import("./file-system.js")],
+  ["path-separator", () => import("./path-separator.js")],
+  ["cycle-var", () => import("./cycle-var.js")],
+  ["cycle-var-through-a-namespace", () => import("./cycle-var-through-a-namespace.js")],
+  ["cycle-function", () => import("./cycle-function.js")],
+  ["cycle-entered-at-the-class", () => import("./cycle-entered-at-the-class.js")],
+];
+for (const [name, load] of modules) {
+  try {
+    await load();
+    console.log(name, "loaded");
+  } catch (error) {
+    console.log(name, error.name, error.message);
+  }
+}
+//// unused-classes-extend-imports/named-declared.js
+import { Declared } from "./bases/bases.js";
+class Unused extends Declared {}
+//// unused-classes-extend-imports/namespace-declared.js
+import * as bases from "./bases/bases.js";
+var Unused = class extends bases.Declared {};
+//// unused-classes-extend-imports/reexported-declared.js
+import { Declared } from "./bases/reexports.js";
+class Unused extends Declared {}
+//// unused-classes-extend-imports/named-constant.js
+import { constant } from "./bases/bases.js";
+class Unused extends constant {}
+//// unused-classes-extend-imports/namespace-constant.js
+import * as bases from "./bases/bases.js";
+var Unused = class extends bases.constant {};
+//// unused-classes-extend-imports/reexported-constant.js
+import { constant } from "./bases/reexports.js";
+class Unused extends constant {}
+//// unused-classes-extend-imports/named-variable.js
+import { variable } from "./bases/bases.js";
+class Unused extends variable {}
+//// unused-classes-extend-imports/namespace-variable.js
+import * as bases from "./bases/bases.js";
+var Unused = class extends bases.variable {};
+//// unused-classes-extend-imports/reexported-variable.js
+import { variable } from "./bases/reexports.js";
+class Unused extends variable {}
+//// unused-classes-extend-imports/named-reassigned.js
+import { reassigned } from "./bases/bases.js";
+class Unused extends reassigned {}
+//// unused-classes-extend-imports/namespace-reassigned.js
+import * as bases from "./bases/bases.js";
+var Unused = class extends bases.reassigned {};
+//// unused-classes-extend-imports/reexported-reassigned.js
+import { reassigned } from "./bases/reexports.js";
+class Unused extends reassigned {}
+//// unused-classes-extend-imports/named-conditional.js
+import { conditional } from "./bases/bases.js";
+class Unused extends conditional {}
+//// unused-classes-extend-imports/namespace-conditional.js
+import * as bases from "./bases/bases.js";
+var Unused = class extends bases.conditional {};
+//// unused-classes-extend-imports/reexported-conditional.js
+import { conditional } from "./bases/reexports.js";
+class Unused extends conditional {}
+//// unused-classes-extend-imports/named-ordinary.js
+import { ordinary } from "./bases/bases.js";
+class Unused extends ordinary {}
+//// unused-classes-extend-imports/namespace-ordinary.js
+import * as bases from "./bases/bases.js";
+var Unused = class extends bases.ordinary {};
+//// unused-classes-extend-imports/reexported-ordinary.js
+import { ordinary } from "./bases/reexports.js";
+class Unused extends ordinary {}
+//// unused-classes-extend-imports/named-without-prototype.js
+import { withoutPrototype } from "./bases/bases.js";
+class Unused extends withoutPrototype {}
+//// unused-classes-extend-imports/namespace-without-prototype.js
+import * as bases from "./bases/bases.js";
+var Unused = class extends bases.withoutPrototype {};
+//// unused-classes-extend-imports/reexported-without-prototype.js
+import { withoutPrototype } from "./bases/reexports.js";
+class Unused extends withoutPrototype {}
+//// unused-classes-extend-imports/named-asynchronous.js
+import { asynchronous } from "./bases/bases.js";
+class Unused extends asynchronous {}
+//// unused-classes-extend-imports/namespace-asynchronous.js
+import * as bases from "./bases/bases.js";
+var Unused = class extends bases.asynchronous {};
+//// unused-classes-extend-imports/reexported-asynchronous.js
+import { asynchronous } from "./bases/reexports.js";
+class Unused extends asynchronous {}
+//// unused-classes-extend-imports/named-arrow.js
+import { arrow } from "./bases/bases.js";
+class Unused extends arrow {}
+//// unused-classes-extend-imports/namespace-arrow.js
+import * as bases from "./bases/bases.js";
+var Unused = class extends bases.arrow {};
+//// unused-classes-extend-imports/reexported-arrow.js
+import { arrow } from "./bases/reexports.js";
+class Unused extends arrow {}
+//// unused-classes-extend-imports/named-object.js
+import { object } from "./bases/bases.js";
+class Unused extends object {}
+//// unused-classes-extend-imports/namespace-object.js
+import * as bases from "./bases/bases.js";
+var Unused = class extends bases.object {};
+//// unused-classes-extend-imports/reexported-object.js
+import { object } from "./bases/reexports.js";
+class Unused extends object {}
+//// unused-classes-extend-imports/named-nothing.js
+import { nothing } from "./bases/bases.js";
+class Unused extends nothing {}
+//// unused-classes-extend-imports/namespace-nothing.js
+import * as bases from "./bases/bases.js";
+var Unused = class extends bases.nothing {};
+//// unused-classes-extend-imports/reexported-nothing.js
+import { nothing } from "./bases/reexports.js";
+class Unused extends nothing {}
+//// unused-classes-extend-imports/named-none.js
+import { none } from "./bases/bases.js";
+class Unused extends none {}
+//// unused-classes-extend-imports/namespace-none.js
+import * as bases from "./bases/bases.js";
+var Unused = class extends bases.none {};
+//// unused-classes-extend-imports/reexported-none.js
+import { none } from "./bases/reexports.js";
+class Unused extends none {}
+//// unused-classes-extend-imports/named-renamed.js
+import { renamed } from "./bases/bases.js";
+class Unused extends renamed {}
+//// unused-classes-extend-imports/namespace-renamed.js
+import * as bases from "./bases/bases.js";
+var Unused = class extends bases.renamed {};
+//// unused-classes-extend-imports/reexported-renamed.js
+import { renamed } from "./bases/reexports.js";
+class Unused extends renamed {}
+//// unused-classes-extend-imports/default-class.js
+import Base from "./bases/bases.js";
+class Unused extends Base {}
+//// unused-classes-extend-imports/default-object.js
+import base from "./bases/default-object.js";
+class Unused extends base {}
+//// unused-classes-extend-imports/namespace-itself.js
+import * as bases from "./bases/bases.js";
+class Unused extends bases {}
+//// unused-classes-extend-imports/missing-member.js
+import * as bases from "./bases/bases.js";
+class Unused extends bases.missing {}
+//// unused-classes-extend-imports/replaced-by-a-call.js
+import { replaceable, replace } from "./bases/bases.js";
+replace();
+class Unused extends replaceable {}
+//// unused-classes-extend-imports/commonjs-class.js
+import Base from "./bases/class.cjs";
+class Unused extends Base {}
+//// unused-classes-extend-imports/commonjs-object.js
+import base from "./bases/object.cjs";
+class Unused extends base {}
+//// unused-classes-extend-imports/commonjs-named-class.js
+import { Named } from "./bases/names.cjs";
+class Unused extends Named {}
+//// unused-classes-extend-imports/commonjs-named-object.js
+import { object } from "./bases/names.cjs";
+class Unused extends object {}
+//// unused-classes-extend-imports/event-emitter.js
+import { EventEmitter } from "node:events";
+class Unused extends EventEmitter {}
+//// unused-classes-extend-imports/event-emitter-once.js
+import { once } from "node:events";
+class Unused extends once {}
+//// unused-classes-extend-imports/readable.js
+import { Readable } from "node:stream";
+class Unused extends Readable {}
+//// unused-classes-extend-imports/tty-write-stream.js
+import { WriteStream } from "node:tty";
+class Unused extends WriteStream {}
+//// unused-classes-extend-imports/tty-read-stream.js
+import { ReadStream } from "node:tty";
+class Unused extends ReadStream {}
+//// unused-classes-extend-imports/file-system.js
+import fs from "node:fs";
+class Unused extends fs {}
+//// unused-classes-extend-imports/path-separator.js
+import { sep } from "node:path";
+class Unused extends sep {}
+//// unused-classes-extend-imports/cycle-var.js
+import "./cycles/var-late.js";
+//// unused-classes-extend-imports/cycle-var-through-a-namespace.js
+import "./cycles/namespace-late.js";
+//// unused-classes-extend-imports/cycle-function.js
+import "./cycles/function-late.js";
+//// unused-classes-extend-imports/cycle-entered-at-the-class.js
+import "./cycles/entered-early.js";
+//// unused-classes-extend-imports/bases/bases.js
+export class Declared {}
+export const constant = class {};
+export var variable = class {};
+export let reassigned = class {};
+reassigned = {};
+export let replaceable = class {};
+export function replace() {
+  replaceable = 5;
+}
+if (globalThis.nothing) {
+  var conditional = class {};
+}
+export { conditional };
+export function ordinary() {}
+export function withoutPrototype() {}
+withoutPrototype.prototype = 5;
+export async function asynchronous() {}
+export const arrow = () => {};
+export const object = {};
+export const nothing = undefined;
+export const none = null;
+export { Declared as renamed };
+export default class {}
+//// unused-classes-extend-imports/bases/reexports.js
+export * from "./bases.js";
+//// unused-classes-extend-imports/bases/default-object.js
+export default {};
+//// unused-classes-extend-imports/bases/class.cjs
+module.exports = class {};
+//// unused-classes-extend-imports/bases/object.cjs
+module.exports = {};
+//// unused-classes-extend-imports/bases/names.cjs
+exports.Named = class {};
+exports.object = {};
+//// unused-classes-extend-imports/cycles/var-late.js
+import "./var-early.js";
+export var Base = class {};
+//// unused-classes-extend-imports/cycles/var-early.js
+import { Base } from "./var-late.js";
+class Unused extends Base {}
+//// unused-classes-extend-imports/cycles/namespace-late.js
+import "./namespace-early.js";
+export var Base = class {};
+//// unused-classes-extend-imports/cycles/namespace-early.js
+import * as late from "./namespace-late.js";
+var Unused = class extends late.Base {};
+//// unused-classes-extend-imports/cycles/function-late.js
+import "./function-early.js";
+export function Base() {}
+//// unused-classes-extend-imports/cycles/function-early.js
+import { Base } from "./function-late.js";
+class Unused extends Base {}
+//// unused-classes-extend-imports/cycles/entered-early.js
+import { Base } from "./entered-late.js";
+class Unused extends Base {}
+//// unused-classes-extend-imports/cycles/entered-late.js
+import "./entered-early.js";
+export var Base = class {};
+//// unused-classes-extend-replaced-globals/main.js
+// Each module replaces a global constructor and then defines a class at its top level that extends it and that nothing uses.
+const names = ["EvalError", "RangeError", "URIError", "SyntaxError", "AggregateError", "ReferenceError", "WeakRef", "FinalizationRegistry"];
+const saved = names.map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)]);
+const modules = [
+  ["assigned-through-global-this", () => import("./assigned-through-global-this.js")],
+  ["assigned-an-arrow-function", () => import("./assigned-an-arrow-function.js")],
+  ["assigned-a-class", () => import("./assigned-a-class.js")],
+  ["assigned-under-a-computed-key", () => import("./assigned-under-a-computed-key.js")],
+  ["defined", () => import("./defined.js")],
+  ["defined-as-a-getter", () => import("./defined-as-a-getter.js")],
+  ["deleted", () => import("./deleted.js")],
+  ["assigned-later", () => import("./assigned-later.js")],
+];
+for (const [name, load] of modules) {
+  try {
+    await load();
+    console.log(name, "loaded");
+  } catch (error) {
+    console.log(name, error.name, error.message);
+  }
+  for (const [key, descriptor] of saved) Object.defineProperty(globalThis, key, descriptor);
+}
+//// unused-classes-extend-replaced-globals/assigned-through-global-this.js
+globalThis.EvalError = {};
+class Unused extends EvalError {}
+//// unused-classes-extend-replaced-globals/assigned-an-arrow-function.js
+globalThis.RangeError = () => {};
+class Unused extends RangeError {}
+//// unused-classes-extend-replaced-globals/assigned-a-class.js
+globalThis.URIError = class {};
+class Unused extends URIError {}
+//// unused-classes-extend-replaced-globals/assigned-under-a-computed-key.js
+const key = ["Syntax", "Error"].join("");
+globalThis[key] = 5;
+class Unused extends SyntaxError {}
+//// unused-classes-extend-replaced-globals/defined.js
+Object.defineProperty(globalThis, "AggregateError", { value: 5, configurable: true, writable: true });
+class Unused extends AggregateError {}
+//// unused-classes-extend-replaced-globals/defined-as-a-getter.js
+Object.defineProperty(globalThis, "ReferenceError", {
+  get() {
+    console.log("read");
+    return 5;
+  },
+  configurable: true,
+});
+class Unused extends ReferenceError {}
+//// unused-classes-extend-replaced-globals/deleted.js
+delete globalThis.WeakRef;
+class Unused extends WeakRef {}
+//// unused-classes-extend-replaced-globals/assigned-later.js
+class Unused extends FinalizationRegistry {}
+globalThis.FinalizationRegistry = 5;
+//// a-worker-defines-an-unused-class-that-extends-an-object/main.js
+// The file that a Worker runs defines a class at its top level that extends an object literal and that nothing uses.
+const worker = new Worker(new URL("./worker.js", import.meta.url).href);
+worker.addEventListener("error", event => {
+  console.log("error event:", String(event.message).split("\n").find(line => /^\w*Error/.test(line)));
+});
+worker.addEventListener("close", event => console.log("closed", event.code));
+//// a-worker-defines-an-unused-class-that-extends-an-object/worker.js
+class Unused extends {} {}
+console.log("after the class");
+//// unused-top-level-typed-classes-extend-values-of-every-kind/main.ts
+// Each module defines a class at its top level that nothing uses. The casts hide from the type checker what the class extends.
+const modules: [string, () => Promise<unknown>][] = [
+  ["object", () => import("./object.ts")],
+  ["null", () => import("./null.ts")],
+  ["undefined", () => import("./undefined.ts")],
+  ["non-null-object", () => import("./non-null-object.ts")],
+  ["satisfied-object", () => import("./satisfied-object.ts")],
+  ["enum", () => import("./enum.ts")],
+  ["enum-member", () => import("./enum-member.ts")],
+  ["namespace", () => import("./namespace.ts")],
+  ["class-of-a-namespace", () => import("./class-of-a-namespace.ts")],
+  ["object-of-a-namespace", () => import("./object-of-a-namespace.ts")],
+  ["class-merged-with-a-namespace", () => import("./class-merged-with-a-namespace.ts")],
+  ["generic-class", () => import("./generic-class.ts")],
+  ["abstract-class", () => import("./abstract-class.ts")],
+  ["typed-const", () => import("./typed-const.ts")],
+  ["implements", () => import("./implements.ts")],
+  ["declared-class", () => import("./declared-class.ts")],
+];
+for (const [name, load] of modules) {
+  try {
+    await load();
+    console.log(name, "loaded");
+  } catch (error) {
+    console.log(name, (error as Error).name, (error as Error).message);
+  }
+}
+//// unused-top-level-typed-classes-extend-values-of-every-kind/object.ts
+class Unused extends ({} as any) {}
+export {};
+//// unused-top-level-typed-classes-extend-values-of-every-kind/null.ts
+class Unused extends (null as any) {}
+export {};
+//// unused-top-level-typed-classes-extend-values-of-every-kind/undefined.ts
+class Unused extends (undefined as any) {}
+export {};
+//// unused-top-level-typed-classes-extend-values-of-every-kind/non-null-object.ts
+class Unused extends ({} as any)! {}
+export {};
+//// unused-top-level-typed-classes-extend-values-of-every-kind/satisfied-object.ts
+class Unused extends (({} satisfies object) as any) {}
+export {};
+//// unused-top-level-typed-classes-extend-values-of-every-kind/enum.ts
+enum Level {
+  Low,
+}
+class Unused extends (Level as any) {}
+export {};
+//// unused-top-level-typed-classes-extend-values-of-every-kind/enum-member.ts
+enum Level {
+  Low,
+}
+class Unused extends (Level.Low as any) {}
+export {};
+//// unused-top-level-typed-classes-extend-values-of-every-kind/namespace.ts
+namespace Shapes {
+  export const sides = 4;
+}
+class Unused extends (Shapes as any) {}
+//// unused-top-level-typed-classes-extend-values-of-every-kind/class-of-a-namespace.ts
+namespace Shapes {
+  export class Circle {}
+}
+class Unused extends Shapes.Circle {}
+//// unused-top-level-typed-classes-extend-values-of-every-kind/object-of-a-namespace.ts
+namespace Shapes {
+  export const table: any = {};
+}
+class Unused extends Shapes.table {}
+//// unused-top-level-typed-classes-extend-values-of-every-kind/class-merged-with-a-namespace.ts
+class Base {}
+namespace Base {
+  export const sides = 4;
+}
+class Unused extends Base {}
+//// unused-top-level-typed-classes-extend-values-of-every-kind/generic-class.ts
+class Generic<T> {
+  value?: T;
+}
+class Unused extends Generic<number> {}
+export {};
+//// unused-top-level-typed-classes-extend-values-of-every-kind/abstract-class.ts
+abstract class Abstract {}
+class Unused extends Abstract {}
+export {};
+//// unused-top-level-typed-classes-extend-values-of-every-kind/typed-const.ts
+const base: any = {};
+class Unused extends base {}
+export {};
+//// unused-top-level-typed-classes-extend-values-of-every-kind/implements.ts
+interface Shape {}
+class Unused extends ({} as any) implements Shape {}
+export {};
+//// unused-top-level-typed-classes-extend-values-of-every-kind/declared-class.ts
+declare class Ambient extends Missing {}
+declare const Missing: any;
+export {};
+//// unused-classes-are-stored-under-names-of-commonjs-modules/main.cjs
+// Each CommonJS module stores a class under a name that nothing reads. Defining the class checks what it extends and converts its computed keys.
+const modules = [
+  ["object", () => require("./object.cjs").used],
+  ["undefined", () => require("./undefined.cjs").used],
+  ["arrow-function", () => require("./arrow-function.cjs").used],
+  ["error", () => require("./error.cjs").used],
+  ["function", () => require("./function.cjs").used],
+  ["function-with-a-number-as-prototype", () => require("./function-with-a-number-as-prototype.cjs").used],
+  ["class", () => require("./class.cjs").used],
+  ["null", () => require("./null.cjs").used],
+  ["two-names", () => require("./two-names.cjs").used],
+  ["module-exports", () => require("./module-exports.cjs").used],
+  ["declaration-stored-later", () => require("./declaration-stored-later.cjs").used],
+  ["key", () => require("./key.cjs").used],
+  ["static-key", () => require("./static-key.cjs").used],
+  ["static-prototype", () => require("./static-prototype.cjs").used],
+  ["required-object", () => require("./required-object.cjs").used],
+  ["required-class", () => require("./required-class.cjs").used],
+  ["member-of-a-required-module", () => require("./member-of-a-required-module.cjs").used],
+];
+for (const [name, load] of modules) {
+  try {
+    console.log(name, load());
+  } catch (error) {
+    console.log(name, error.name, error.message);
+  }
+}
+//// unused-classes-are-stored-under-names-of-commonjs-modules/object.cjs
+exports.Unused = class extends {} {};
+exports.used = 1;
+//// unused-classes-are-stored-under-names-of-commonjs-modules/undefined.cjs
+exports.Unused = class Named extends undefined {};
+exports.used = 1;
+//// unused-classes-are-stored-under-names-of-commonjs-modules/arrow-function.cjs
+const base = () => {};
+exports.Unused = class extends base {};
+exports.used = 1;
+//// unused-classes-are-stored-under-names-of-commonjs-modules/error.cjs
+exports.Unused = class extends Error {};
+exports.used = 1;
+//// unused-classes-are-stored-under-names-of-commonjs-modules/function.cjs
+function Base() {}
+exports.Unused = class extends Base {};
+exports.used = 1;
+//// unused-classes-are-stored-under-names-of-commonjs-modules/function-with-a-number-as-prototype.cjs
+function Base() {}
+Base.prototype = 5;
+exports.Unused = class extends Base {};
+exports.used = 1;
+//// unused-classes-are-stored-under-names-of-commonjs-modules/class.cjs
+class Base {}
+exports.Unused = class extends Base {};
+exports.used = 1;
+//// unused-classes-are-stored-under-names-of-commonjs-modules/null.cjs
+exports.Unused = class extends null {};
+exports.used = 1;
+//// unused-classes-are-stored-under-names-of-commonjs-modules/two-names.cjs
+exports.First = exports.Second = class extends {} {};
+exports.used = 1;
+//// unused-classes-are-stored-under-names-of-commonjs-modules/module-exports.cjs
+module.exports.Unused = class extends {} {};
+module.exports.used = 1;
+//// unused-classes-are-stored-under-names-of-commonjs-modules/declaration-stored-later.cjs
+class Unused extends {} {}
+exports.Unused = Unused;
+exports.used = 1;
+//// unused-classes-are-stored-under-names-of-commonjs-modules/key.cjs
+const key = {
+  toString() {
+    console.log("converted");
+    return "name";
+  },
+};
+exports.Unused = class {
+  [key]() {}
+};
+exports.used = 1;
+//// unused-classes-are-stored-under-names-of-commonjs-modules/static-key.cjs
+const key = {
+  toString() {
+    console.log("converted");
+    return "name";
+  },
+};
+exports.Unused = class {
+  static [key]() {}
+};
+exports.used = 1;
+//// unused-classes-are-stored-under-names-of-commonjs-modules/static-prototype.cjs
+exports.Unused = class {
+  static ["prototype"]() {}
+};
+exports.used = 1;
+//// unused-classes-are-stored-under-names-of-commonjs-modules/required-object.cjs
+const { object } = require("./bases.cjs");
+exports.Unused = class extends object {};
+exports.used = 1;
+//// unused-classes-are-stored-under-names-of-commonjs-modules/required-class.cjs
+const { Base } = require("./bases.cjs");
+exports.Unused = class extends Base {};
+exports.used = 1;
+//// unused-classes-are-stored-under-names-of-commonjs-modules/member-of-a-required-module.cjs
+const bases = require("./bases.cjs");
+exports.Unused = class extends bases.object {};
+exports.used = 1;
+//// unused-classes-are-stored-under-names-of-commonjs-modules/bases.cjs
+exports.Base = class {};
+exports.object = {};

@@ -5,6 +5,7 @@ import { expect } from "bun:test";
 import { tempDir } from "harness";
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join, relative } from "node:path";
+import { casesOf, words } from "./contextual-keywords-as-names-cases";
 import { unpacked } from "./generate";
 import { describe, test } from "./supported";
 
@@ -141,6 +142,26 @@ describe("early errors", () => {
       expect(failures).toEqual([]);
     });
   }
+
+  describe("a word that has a meaning in some places is a name in the others", () => {
+    for (const word of words) {
+      test(
+        word,
+        () => {
+          const cases = casesOf(word);
+          for (const directive of ["", "// @ts-nocheck\n"]) {
+            const rejected = findRejected(
+              cases.map(it => ({ ...it, text: directive + it.text })),
+              "ts",
+            );
+            const failures = cases.filter((it, index) => rejected.has(index) !== it.isRejected).map(it => it.name);
+            expect({ directive, failures }).toEqual({ directive, failures: [] });
+          }
+        },
+        120_000,
+      );
+    }
+  });
 
   const test262 = process.env.TEST262_DIR;
   const BATCH_SIZE = 500;

@@ -24,12 +24,12 @@ use bun_sema::check::aot::{
 };
 use bun_sema::config;
 use bun_sema::hir::DiagnosticKind;
-use bun_sema::program::{FileId, FileRole, Files, Run};
+use bun_sema::program::{FileId, FileRole, Files, HostLoader, Run};
 use bun_sema::resolve::Options as CompilerOptions;
 use bun_sema::session::Session;
 use bun_sema_driver::{
     self as driver, BuildDiagnostic, CheckedProgram, CompileRequest, Demotion, EntryPoints,
-    Incomplete, RoleDecision, decide_roles, keep_verified_roles, load_program_with_parsed_files,
+    Incomplete, RoleDecision, decide_roles, keep_verified_roles, load_program_of_loaded_files,
     run_on_one_thread_while,
 };
 use bun_threading::Guarded;
@@ -514,7 +514,7 @@ impl Build<'_> {
         // The application's program goes on with the files of a program that does not load.
         let parsed = loaded.parsed_declarations;
         let program =
-            load_program_with_parsed_files(world.session, application.host, &request, parsed);
+            load_program_of_loaded_files(world.session, application.host, &request, parsed, files);
         let Ok(program) = program else {
             return;
         };
@@ -525,11 +525,24 @@ impl Build<'_> {
         {
             return;
         }
+        let loader_of = |files: &Files<'_>, file: FileId| {
+            let loader = files.compiled(file).map(|compiled| compiled.loader);
+            loader.filter(|&loader| loader != HostLoader::default())
+        };
+        let mut read_with_loaders: FxHashMap<(&[u8], HostLoader), FileId> = FxHashMap::default();
+        for &file in files.compiled_files() {
+            if let Some(loader) = loader_of(files, file) {
+                read_with_loaders.insert((files.module(file).file_name(), loader), file);
+            }
+        }
         let to_application: Vec<Option<FileId>> = (0..world_files.modules.len())
             .map(|index| {
-                files
-                    .by_path
-                    .get(world_files.module(FileId(index as u32)).file_name())
+                let file = FileId(index as u32);
+                let path = world_files.module(file).file_name();
+                match loader_of(world_files, file) {
+                    Some(loader) => read_with_loaders.get(&(path, loader)).copied(),
+                    None => files.by_path.get(path),
+                }
             })
             .collect();
         let mut to_world: FxHashMap<FileId, FileId> = FxHashMap::default();
@@ -945,10 +958,14 @@ impl Build<'_> {
         let compiled = files.compiled_files().iter().copied();
         let mut files_of_dependencies: Vec<FileId> = compiled.filter(is_in_dependency).collect();
         files_of_dependencies.sort_unstable();
-        let transpiler = RuntimeTranspiler::new(&match project {
-            ProjectId::Application => self.provider.enabled_features(),
-            ProjectId::Runtime => Vec::new(),
-        });
+        let default_define = RuntimeTranspiler::create_default_define();
+        let transpiler = match project {
+            ProjectId::Application => RuntimeTranspiler::new(
+                RuntimeTranspiler::find_define(self.provider).unwrap_or(&default_define),
+                &self.provider.enabled_features(),
+            ),
+            ProjectId::Runtime => RuntimeTranspiler::new(&default_define, &[]),
+        };
         then(&LoweringInputs {
             roles: &lowering_roles,
             checked_elsewhere: match project {

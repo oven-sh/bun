@@ -12,6 +12,10 @@ const nothingToCompareWith = new Set<number>([72, 143, 147, 286, 327, 387, 399, 
 // Where the lines of the executable are not those of `bun run` today. The programs are built and run all the same.
 const departing: Record<string, number[]> = {
   "a CommonJS module that threw is asked for again, and an executable throws the same error": [75, 284, 576],
+  // programs/modules/a-commonjs-file-requires-the-entry-point-while-its-graph-is-loaded-and-runs-to-its-end is this graph, with its lines.
+  "a CommonJS file requires the entry point, which the loader has fetched and not yet run, and require() returns it": [
+    124,
+  ],
 };
 const howItDeparts = new Map(
   Object.entries(departing).flatMap(([how, seeds]) => seeds.map(seed => [seed, how] as const)),

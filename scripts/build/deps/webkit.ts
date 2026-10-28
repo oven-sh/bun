@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "fcc1ea0973a4b96a007e699b25f52aab6a3d3470";
+export const WEBKIT_VERSION = "autobuild-preview-pr-927-7f21d5ed";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
@@ -1722,10 +1722,16 @@ function unifiedSources(wk: WebKitBuild, listFiles: string[], options: string[])
  */
 const aotBundleSize = 8;
 
+/** The lists of aot/ that are compiled for size, and the attribute that every function of their bundles takes. */
+const aotListsCompiledForSize = [
+  { framework: "JavaScriptCoreAOTCompiledForSize", attribute: "optsize" },
+  { framework: "JavaScriptCoreAOTCompiledForMinimumSize", attribute: "minsize" },
+] as const;
+
 interface JSCSources {
   sources: string[];
-  /** Those of `sources` that are compiled for size. */
-  compiledForSize: string[];
+  /** Those of `sources` that are compiled for size, each with the attribute that its functions take. */
+  compiledForSize: Map<string, string>;
   /** A bundle of aot/ and the sources that it includes. */
   bundledAotSources: Map<string, string[]>;
   listFiles: string[];
@@ -1733,10 +1739,10 @@ interface JSCSources {
 
 /**
  * JSC's translation units: the bundles of the Sources.txt lists, plus
- * JavaScriptCore_SOURCES. aot/ has two lists of its own (AOT_COMPUTE_SOURCES in
+ * JavaScriptCore_SOURCES. aot/ has three lists of its own (AOT_COMPUTE_SOURCES in
  * aot/AOT.cmake), because a bundle is compiled with one set of flags.
  * `--unified-sources=off` compiles each source of aot/ by itself.
- * `--aot=off` compiles of the two lists only what aot/AOT.cmake names for a build without AoT.
+ * `--aot=off` compiles of the three lists only what aot/AOT.cmake names for a build without AoT.
  */
 function jscSourceList(wk: WebKitBuild, lists: LibraryLists): JSCSources {
   const listsOf = (framework: string): string[] => lists.paths(`${framework}_UNIFIED_SOURCE_LIST_FILES`);
@@ -1744,13 +1750,17 @@ function jscSourceList(wk: WebKitBuild, lists: LibraryLists): JSCSources {
   const aot = wk.cfg.aot
     ? unifiedSources(wk, listsOf("JavaScriptCoreAOT"), aotOptions)
     : lists.paths("JavaScriptCore_AOT_SOURCES_WITHOUT_AOT");
-  const aotCompiledForSize = wk.cfg.aot
-    ? unifiedSources(wk, listsOf("JavaScriptCoreAOTCompiledForSize"), [
-        ...aotOptions,
-        "--bundle-filename-prefix",
-        ...lists.values("JavaScriptCoreAOTCompiledForSize_UNIFIED_SOURCE_BUNDLE_PREFIX"),
-      ])
-    : [];
+  const compiledForSize = new Map<string, string>();
+  for (const { framework, attribute } of wk.cfg.aot ? aotListsCompiledForSize : []) {
+    const options = ["--bundle-filename-prefix", ...lists.values(`${framework}_UNIFIED_SOURCE_BUNDLE_PREFIX`)];
+    for (const path of unifiedSources(wk, listsOf(framework), [...aotOptions, ...options])) {
+      compiledForSize.set(path, attribute);
+    }
+  }
+  const aotCompiledForSize = [...compiledForSize.keys()];
+  for (const path of lists.paths("JavaScriptCore_AOT_GENERATED_SOURCES_COMPILED_FOR_SIZE")) {
+    compiledForSize.set(path, "optsize");
+  }
   const bundles = join(wk.DS, "unified-sources") + sep;
   return {
     sources: [
@@ -1759,7 +1769,7 @@ function jscSourceList(wk: WebKitBuild, lists: LibraryLists): JSCSources {
       ...aotCompiledForSize,
       ...lists.paths("JavaScriptCore_SOURCES"),
     ],
-    compiledForSize: [...aotCompiledForSize, ...lists.paths("JavaScriptCore_AOT_GENERATED_SOURCES_COMPILED_FOR_SIZE")],
+    compiledForSize,
     bundledAotSources: new Map(
       [...aot, ...aotCompiledForSize]
         .filter(path => path.startsWith(bundles))
@@ -1771,7 +1781,7 @@ function jscSourceList(wk: WebKitBuild, lists: LibraryLists): JSCSources {
     listFiles: [
       ...listsOf("JavaScriptCore"),
       ...listsOf("JavaScriptCoreAOT"),
-      ...listsOf("JavaScriptCoreAOTCompiledForSize"),
+      ...aotListsCompiledForSize.flatMap(({ framework }) => listsOf(framework)),
       unifiedSourceBundler(wk),
     ],
   };
@@ -1813,7 +1823,7 @@ function jscGroup(
   llintAssembly: string,
 ): SourceGroup {
   const { cfg, JSC } = wk;
-  const forSize = new Set(cfg.release && cfg.unix ? compiledForSize : []);
+  const forSize = cfg.release && cfg.unix ? compiledForSize : new Map<string, string>();
   const generated = aotGeneratedDirectory(wk) + sep;
   // A bundle takes the header of its first source: whatever the others need beyond it they include themselves.
   const aotPrefixOf = (source: string): AotPrefix | undefined => {
@@ -1840,7 +1850,11 @@ function jscGroup(
     sources: [
       // Last, so that a function several sources instantiate is linked from one that is compiled for speed.
       ...[...sources.filter(path => !forSize.has(path)), ...sources.filter(path => forSize.has(path))].map(path => {
-        const extra = [...noUnwindTables(path), ...(forSize.has(path) ? ["-mllvm=-force-attribute=optsize"] : [])];
+        const attribute = forSize.get(path);
+        const extra = [
+          ...noUnwindTables(path),
+          ...(attribute !== undefined ? [`-mllvm=-force-attribute=${attribute}`] : []),
+        ];
         const prefix = aotPrefixOf(path);
         const bundled = bundledAotSources.get(path);
         if (prefix !== undefined) {

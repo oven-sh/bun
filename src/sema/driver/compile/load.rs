@@ -37,6 +37,27 @@ pub fn load_program_with_parsed_files<'s>(
     request: &CompileRequest<'_, 's>,
     parsed: Option<&'s Run<'s>>,
 ) -> Result<LoadedProgram<'s>, LoadFailure> {
+    load(session, host, request, parsed, None)
+}
+
+/// Loads files of `loaded_before` as a program of their own, under another configuration.
+pub fn load_program_of_loaded_files<'s>(
+    session: &'s Session,
+    host: &dyn CodeHost,
+    request: &CompileRequest<'_, 's>,
+    parsed: Option<&'s Run<'s>>,
+    loaded_before: &Files<'s>,
+) -> Result<LoadedProgram<'s>, LoadFailure> {
+    load(session, host, request, parsed, Some(loaded_before))
+}
+
+fn load<'s>(
+    session: &'s Session,
+    host: &dyn CodeHost,
+    request: &CompileRequest<'_, 's>,
+    parsed: Option<&'s Run<'s>>,
+    loaded_before: Option<&Files<'s>>,
+) -> Result<LoadedProgram<'s>, LoadFailure> {
     use_dedicated_pool("Bun Compile");
     let entry_paths = match request.entry_points {
         EntryPoints::Written(specifiers) | EntryPoints::WrittenFor(specifiers, _) => {
@@ -119,6 +140,7 @@ pub fn load_program_with_parsed_files<'s>(
                 EntryPoints::WrittenFor(_, main_module) => main_module,
                 EntryPoints::Written(_) | EntryPoints::Resolved(_) => MainModule::EntryPoint,
             },
+            loaded_before,
             code: request.code,
             fold: request.fold,
             atoms: request.atoms,

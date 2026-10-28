@@ -110,6 +110,7 @@ export const testsOfEngineSources = [
   "aot/lists-of-operations-in-the-compiler-only-shrink.test",
   "aot/one-text-of-the-engine-reads-what-a-descriptor-literal-says.test",
   "aot/the-compiler-reads-no-environment-variable.test",
+  "aot/the-compiler-sorts-with-its-own-sort.test",
   "aot/the-frame-of-an-operation-outlives-whoever-is-handed-its-address.test",
   "aot/the-value-under-a-chain-of-casts-is-only-asked-about.test",
   "aot/what-is-only-expected-of-a-position-is-widened-in-one-place.test",
@@ -181,6 +182,9 @@ export function getAotAlwaysDrawn(
     "aot/without-executable-memory",
     // Each system has its own way to take a wish for an address.
     "aot/every-launch-places-its-heap-anew",
+    // Each system has its own way to tell a process its time zone, and its own folders above a temporary one.
+    "aot/time-zone-at-start",
+    "aot/plain-bun-installs-no-packages",
     // Only on this CPU is the reach of a call within the size of a large program.
     ...(arch === "aarch64" ? ["aot/calls-beyond-their-reach"] : []),
     // Only a file system that ignores the case of letters can tell it from any other resolution.
@@ -203,24 +207,25 @@ export function getAotAlwaysDrawn(
 export const testsAwaitedOn: Record<string, string[]> = {
   windows: [
     "aot/a-descriptor-that-is-written-out-is-no-object-whatever-it-describes-a-property-of",
-    "aot/an-operation-without-a-value-stops-the-build",
-    "aot/code-nested-in-itself",
+    "aot/a-field-that-holds-undefined-outside-the-cell-fails-no-test",
+    "aot/asking-about-a-class-keeps-none-of-its-code",
+    "aot/compact-code-avoids-runtime",
     "aot/engine-tests-ir",
+    "aot/engine-tests-native",
     "aot/every-program-28.",
-    "aot/every-program-3.",
-    "aot/every-program-alone-82.",
+    "aot/function-prototypes.",
     "aot/minifying-first-saves-no-code-12.",
+    "aot/one-line-changes-little-1.",
     "aot/pointers-into-what-a-cell-owns",
-    "aot/programs-in-every-run-18.",
-    "aot/programs-in-every-run-29.",
-    "aot/programs-in-every-run-31.",
+    "aot/programs-in-every-run-13.",
+    "aot/programs-in-every-run-23.",
+    "aot/programs-in-every-run-27.",
     "aot/programs-in-every-run-37.",
-    "aot/programs-in-every-run-46.",
-    "aot/programs-in-every-run-49.",
-    "aot/programs-in-every-run-59.",
-    "aot/workers-from-embedded-files",
-    "aot/workers-from-texts-that-the-build-knows",
-    "aot/workers-named-by-relative-texts",
+    "aot/programs-in-every-run-44.",
+    "aot/programs-in-every-run-60.",
+    "aot/runtime-counts-file",
+    "aot/wide-prototype-objects-cost-what-narrow-ones-cost",
+    "bundler/compile-trim-remove",
   ],
 };
 
@@ -230,9 +235,6 @@ export function getAotAlwaysInDrawnStep({ os, profile }: AotLane, aot: AotTests)
     ...(testsAwaitedOn[os] ?? []),
     // A mark for this lane alone can only be found stale on this lane.
     ...(aot === "all" ? ["aot/programs-marked-as-failing"] : []),
-    // Each system has its own way to tell a process its time zone, and its own folders above a temporary one. They go to the other step once they have been green here.
-    "aot/time-zone-at-start",
-    "aot/plain-bun-installs-no-packages",
     // They go to the other step once they have been green here.
     ...(profile === "asan" ? testsWithSanitizer : []),
     // One test of the first is for this system, and the file system ignores the case of letters. They go to the other step once they have been green here.

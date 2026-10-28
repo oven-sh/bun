@@ -4686,5 +4686,11 @@
   ],
   "typed results made for the caller": [
     "orNull-asksForAName-underACleanup-method"
+  ],
+  "functions whose last act is to call themselves": [
+    "twoInTurn-inAChoice-goesVeryDeep-aClosureOverAVariable-alsoCalledWhereItSeldomRuns"
+  ],
+  "typed functions whose last act is to call themselves": [
+    "insideAnother-inAChoice-goesVeryDeep-aClosureThatCounts-alsoCalledWhereItSeldomRuns"
   ]
 }

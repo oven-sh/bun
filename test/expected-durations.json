@@ -3186,6 +3186,21 @@
   "aot/generated-births-and-uses-of-one-use-of-two-kinds-of-value-1.test.ts": {
     "default": 51166
   },
+  "aot/generated-births-and-uses-of-one-use-of-two-kinds-of-value-10.test.ts": {
+    "default": 51166
+  },
+  "aot/generated-births-and-uses-of-one-use-of-two-kinds-of-value-11.test.ts": {
+    "default": 51166
+  },
+  "aot/generated-births-and-uses-of-one-use-of-two-kinds-of-value-12.test.ts": {
+    "default": 51166
+  },
+  "aot/generated-births-and-uses-of-one-use-of-two-kinds-of-value-13.test.ts": {
+    "default": 51166
+  },
+  "aot/generated-births-and-uses-of-one-use-of-two-kinds-of-value-14.test.ts": {
+    "default": 51166
+  },
   "aot/generated-births-and-uses-of-one-use-of-two-kinds-of-value-2.test.ts": {
     "default": 51166
   },
@@ -3779,6 +3794,9 @@
   "aot/generated-object-mutations.test.ts": {
     "default": 3276,
     "windows": 4292
+  },
+  "aot/generated-objects-and-the-prototypes-they-really-have.test.ts": {
+    "default": 120
   },
   "aot/generated-objects-born-in-every-place.test.ts": {
     "default": 3898,

@@ -11,7 +11,7 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { built, spawned } from "./run-programs";
-import { describe, test } from "./supported-with-counted-calls";
+import { describe, test } from "./supported";
 
 // `round(i)` answers a number. What stands in front of it runs once.
 const idioms: Record<string, string> = {

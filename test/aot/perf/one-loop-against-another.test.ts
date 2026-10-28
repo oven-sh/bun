@@ -26,7 +26,6 @@ const rows: Row[] = [
     "a class of its own file",
     "a class out of a required file",
     5,
-    10.5,
   ],
   [
     "beside-a-file-that-requires-through-its-module-object/main.cjs",
@@ -34,16 +33,8 @@ const rows: Row[] = [
     "a class of its own file",
     "a class out of a required file",
     5,
-    10.2,
   ],
-  [
-    "beside-a-file-with-a-direct-eval/main.cjs",
-    [],
-    "a class of its own file",
-    "a class out of a required file",
-    5,
-    8.9,
-  ],
+  ["beside-a-file-with-a-direct-eval/main.cjs", [], "a class of its own file", "a class out of a required file", 5],
   ["imported-by-default/main.mjs", [], "out of a module", "out of a CommonJS file", 3],
   ["pieces-of-two-characters.ts", [], "slices of three characters", "slices of two characters", 1.3],
   ["pieces-of-two-characters.ts", erased, "slices of three characters", "slices of two characters", 1.3],
@@ -157,6 +148,23 @@ const rows: Row[] = [
     1.3,
     1.6,
   ],
+  ...["make", "read", "link"].flatMap(verb =>
+    [[], erased].map((flags): Row => [
+      "a-counter-on-its-way-into-fields.ts",
+      flags,
+      `${verb} under 2 ** 31`,
+      `${verb} past 2 ** 31`,
+      1.3,
+    ]),
+  ),
+  ...["literals.ts", "instances.ts", "made-by-a-function.ts"].flatMap(form =>
+    [[], erased].flatMap(flags =>
+      ["integers past 2 ** 32", "fractions", "negative zeros"].flatMap((kind): Row[] => [
+        [`numbers-out-of-a-request/${form}`, flags, "make small integers", `make ${kind}`, 1.3],
+        [`numbers-out-of-a-request/${form}`, flags, "read small integers", `read ${kind}`, 1.3],
+      ]),
+    ),
+  ),
 ];
 const [few, many] = [100_000, 400_000];
 

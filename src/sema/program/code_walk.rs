@@ -214,7 +214,7 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         }
     }
 
-    fn key_of_read_code(&self, key: LoadKey<'r>) -> LoadKey<'r> {
+    pub(super) fn key_of_read_code<'k>(&self, key: LoadKey<'k>) -> LoadKey<'k> {
         if key.loader != HostLoader::default() {
             return key;
         }
@@ -245,13 +245,14 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
             return index;
         }
         let index = state.files.len() as u32;
+        let known = context.find_loaded_before(target.key);
         state.files.push(WalkedFile {
             target,
             parsed: None,
             targets: Vec::new(),
-            is_called_before_it_runs: false,
-            imported_requires: Vec::new(),
-            imported_constants: Vec::new(),
+            is_called_before_it_runs: known.is_some_and(|it| it.compiled.is_called_before_it_runs),
+            imported_requires: known.map_or(Vec::new(), |it| it.hir.imported_requires.to_vec()),
+            imported_constants: known.map_or(Vec::new(), |it| it.hir.imported_constants.to_vec()),
             foldings_with_constants: 0,
         });
         let key = context.canonical_key(target.key);
@@ -403,10 +404,11 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         let mut state = self.state.lock();
         debug_assert!(state.is_drained && state.in_progress == 0);
         loop {
-            let goes_on = fold_files_that_import_constants_again(context, &mut state)
-                || forget_files_called_before_they_run(&mut state)
-                || forget_files_that_import_requires(&context.atoms, &mut state)
-                || finish_files(&mut state);
+            let learns_from_other_files = context.inputs.loaded_before.is_none()
+                && (fold_files_that_import_constants_again(context, &mut state)
+                    || forget_files_called_before_they_run(&mut state)
+                    || forget_files_that_import_requires(&context.atoms, &mut state));
+            let goes_on = learns_from_other_files || finish_files(&mut state);
             if !goes_on {
                 state.is_finished = true;
                 self.has_to_read.notify_all();

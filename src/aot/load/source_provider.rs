@@ -13,6 +13,7 @@ use bun_sema::fold::FoldOptions;
 use bun_sema::hir_from_data::{DataModule, DataValue};
 use bun_sema::resolve::{FileSearch, FoundCode, Host, find_file_plainly};
 use bun_sema::session::Arena;
+use std::any::Any;
 use std::borrow::Cow;
 
 #[derive(Debug)]
@@ -91,6 +92,11 @@ pub trait SourceProvider: Sync {
         atoms: &Interner<'s>,
         log: &mut Log,
     ) -> FoldOptions<'s>;
+
+    /// The `Define` of the transpiler: what the build puts in place of names, as `fold_options` lists it.
+    fn define(&self) -> Option<&dyn Any> {
+        None
+    }
 
     /// The flags for which `feature()` of "bun:bundle" answers true, as `fold_options` lists them.
     fn enabled_features(&self) -> Vec<&[u8]> {

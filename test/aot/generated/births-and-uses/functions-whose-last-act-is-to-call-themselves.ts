@@ -106,5 +106,9 @@ export function programs(isTyped?: boolean) {
           const made = stretch(form, tail, round, make);
           if (made) all.set(made.name, made);
         }
-  return inEveryPlace([...all.values()], isTyped, somePlaces);
+  const written = inEveryPlace([...all.values()], isTyped, somePlaces);
+  // Three hundred rounds that deep call JSON.stringify up to a hundred million times, and a validating build checks every call of native code.
+  for (const program of written)
+    if (/-goesVeryDeep-aKeptArguments-(often|copiedIntoALoop|alsoCalledWhereItSeldomRuns)$/.test(program.name)) program.isNeverValidated = true;
+  return written;
 }

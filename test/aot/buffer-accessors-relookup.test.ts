@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { run } from "./harness/run";
 import { built } from "./run-programs";
-import { test } from "./supported-with-counted-calls";
+import { test } from "./supported";
 
 const files = {
   "main.mjs": `

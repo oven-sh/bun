@@ -109,7 +109,7 @@ export const places: Record<string, Place> = {
   awaitUnderAHandler: { kind: "await", text: s => `async function run(seed: number): Promise<void> { ${s.before("seed")} try { { ${s.body("1")} } await Promise.reject(new RangeError("stop")); { ${s.body("2")} } } catch (error) { say("caught", ${s.after}); } say(${s.after}); }\n${waits}` },
 };
 
-export type Written = { name: string; file: string; text: string; flags?: string[] };
+export type Written = { name: string; file: string; text: string; flags?: string[]; isNeverValidated?: true };
 
 /** Every stretch in every place where it may stand. Without types the same text is JavaScript. */
 export function inEveryPlace(stretches: Stretch[], isTyped: boolean | undefined, only?: string[]): Written[] {

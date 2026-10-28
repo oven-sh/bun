@@ -9,6 +9,7 @@ const scratch = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "paths-"))
 const clean = text =>
   String(text)
     .replace(/\d+(,\d+)+/g, bytes => Buffer.from(bytes.split(",").map(Number)).toString())
+    .replaceAll(url.pathToFileURL(root).href, "file://<root>")
     .replaceAll(root, "<root>")
     .replaceAll(scratch, "<scratch>")
     .replaceAll("\\", "/");

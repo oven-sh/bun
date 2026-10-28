@@ -287,6 +287,9 @@ const noticedBy: Record<string, Row | Row[]> = {
   ),
   // The build stops: ./an-operation-without-a-value-stops-the-build.test.ts holds it to the line that names the read.
   StoredValuesAreNeverRead: conditionOfAPass("a-read-finds-what-was-stored.ts"),
+  FramesAlwaysFit: conditionOfAPass(
+    "a-mark-is-taken-away-ahead-of-a-call-at-every-depth-close-to-the-end-of-the-stack.mjs",
+  ),
   // The build stops: ./a-flow-analysis-that-is-given-more-finds-no-less.test.ts holds it to the line that names the place.
   WhatIsGivenTakesThePlaceOfWhatComes: {
     ...conditionOfAPass("a-read-finds-what-was-stored.ts"),
@@ -297,11 +300,80 @@ const noticedBy: Record<string, Row | Row[]> = {
     flags: [],
     programs: ["strided-indexes-into-typed-arrays-and-lists.ts"],
   },
+  LanesHoldWhateverIsComputed: { folder: "arrays", flags: [], programs: ["elements-are-kept-between-two-limits.ts"] },
+  VectorTurnsMeetNoOtherAccess: [
+    { folder: "arrays", flags: [], programs: ["elements-copied-one-by-one-between-views-of-one-buffer.ts"] },
+    toldTheBackEnd(
+      "--aot-check=MovedLoads",
+      "elements-are-copied-one-by-one-between-views-that-lie-over-each-other.ts",
+    ),
+  ],
+  CallbacksOfOneChainShareNoMemory: conditionOfAPass(
+    "two-callbacks-of-one-chain-store-to-one-variable.ts",
+    "two-callbacks-of-one-chain-store-to-one-variable.js",
+  ),
+  WalkedArraysStayAsTheyWereOpened: conditionOfAPass(
+    "a-default-in-a-pattern-lengthens-the-list-behind-the-end-of-its-walk.ts",
+    "a-default-in-a-pattern-lengthens-the-list-behind-the-end-of-its-walk.js",
+  ),
+  HeadsThatAreCopiedLeaveNoTrace: {
+    folder: "escape-analysis",
+    flags: [],
+    programs: [
+      "a-closure-made-in-a-try-holds-a-parameter-the-try-stores-under-a-condition.cjs",
+      "closures-captured-by-frame-closures.ts",
+    ],
+  },
+  WhatRunsAgainLeavesNoTrace: conditionOfAPass(
+    "a-count-goes-up-between-reads-of-a-list-that-is-too-short-or-has-a-gap.ts",
+    "a-count-goes-up-between-reads-of-a-list-that-is-too-short-or-has-a-gap.js",
+  ),
+  // The build stops: a test of the list is relied on behind the getter.
+  GettersInSlotsHaveNoEffects: conditionOfAPass(
+    "a-getter-of-a-literal-stores-a-text-into-a-list-of-numbers-between-two-reads.ts",
+    "a-getter-of-a-literal-stores-a-text-into-a-list-of-numbers-between-two-reads.js",
+  ),
+  // The build stops: what was proven of a list is relied on behind its conversion.
+  ConversionsOfStorageEndNoProofs: {
+    folder: "arrays",
+    flags: [],
+    programs: ["the-pairs-of-a-map-of-numbers-are-taken-apart-kept-and-changed.ts", "sort-sees-removed-elements.ts"],
+  },
+  WrittenOutTurnsAlwaysFit: [
+    {
+      folder: "claims-to-the-back-end",
+      flags: [],
+      programs: ["the-elements-of-views-of-every-length-are-added-up.ts", "views-of-every-length-are-filled.ts"],
+    },
+    toldTheBackEnd("--aot-check=DecidedComparisons", "the-elements-of-views-of-every-length-are-added-up.ts"),
+  ],
+  LoadsFoldedIntoTheirUsersOutlastWrites: conditionOfAPass(
+    "an-element-of-a-view-is-read-stored-to-and-then-used.ts",
+    "an-element-of-a-view-is-read-stored-to-and-then-used.js",
+  ),
+  ReadsOfCalleesSinkPastWrites: {
+    folder: "calls-fast-paths",
+    flags: [],
+    programs: ["static-method-read-and-called.ts", "push-read-ahead-of-its-argument.js"],
+  },
+  RemovedTestsOutlastWrites: [
+    conditionOfAPass("a-member-changes-the-record-that-holds-it-while-the-record-is-written.ts"),
+    { folder: "classes", flags: [], programs: ["bare-private-field-is-undefined-below-a-replaced-parent.js"] },
+  ],
+};
+/** What one kind of processor alone can show: for the others the phase that is broken finds nothing to do. */
+const shownOnOneArchitectureAlone: Record<string, NodeJS.Architecture> = {
+  // An instruction that computes takes an operand out of memory.
+  LoadsFoldedIntoTheirUsersOutlastWrites: "x64",
 };
 /** What no program can show, and the test of the engine that shows it (./engine-tests.test.ts runs those). */
 const noticedByTheEngineTestsAlone: Record<string, string> = {
   // Between the read of a word and two tests of its bits nothing that a program is compiled to writes that word.
   WordsReadAgainOutlastWrites: "merged-tests-of-bits-tell-the-log-of-the-word-read-again",
+  // A variable that a loop reads again at the end of each turn, out of memory that the turn stores to under another address: what a program is compiled to reads such a variable by more than a load.
+  VariablesReadAgainInLoopsOutlastWrites: "variable-read-again-in-loop-is-held-against-what-stands-for-it",
+  // Two neighboring words are read into two registers at once (arm64). In what a program is compiled to, a test or a mark for the collector stands between two reads with a store between them.
+  PairedLoadsOutlastWrites: "loads-are-not-paired-across-store-that-may-lie-over-them",
 };
 /** What stops the build itself, which then says where it stood: ./a-build-that-stops-says-where.test.ts holds each to its line. */
 const stopTheBuild = [
@@ -417,7 +489,14 @@ describe.skipIf(!listed)("compile/aot/sabotages", () => {
     });
   });
 
-  test.concurrent.each((listed ?? []).filter(name => noticedBy[name] && name.includes(wanted)))(
+  test.concurrent.each(
+    (listed ?? []).filter(
+      name =>
+        noticedBy[name] &&
+        name.includes(wanted) &&
+        (shownOnOneArchitectureAlone[name] ?? process.arch) === process.arch,
+    ),
+  )(
     "%s",
     async name => {
       const seen = (

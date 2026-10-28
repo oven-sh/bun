@@ -225,7 +225,10 @@ unsafe extern "C" {
     safe fn WebWorker__postFailedToStartError(proxy: *mut c_void);
     /// The address space a compiled program's thread needs for its tables, taken
     /// by the thread that starts it. False: there is none. `pages` may be null.
-    fn Bun__AOT__tryReservePagesForNewThread(pages: *mut *mut c_void) -> bool;
+    fn Bun__AOT__tryReservePagesForNewThread(
+        pages: *mut *mut c_void,
+        threads_are_ending: bool,
+    ) -> bool;
     safe fn Bun__AOT__releasePagesForNewThread(pages: *mut c_void);
     safe fn Bun__AOT__adoptPagesForNewThread(pages: *mut c_void);
     safe fn Bun__AOT__releaseUnusedPagesOfThread();
@@ -595,11 +598,13 @@ impl WebWorker {
             _parent_ticket: parent_ticket,
         });
         worker_ref.thread_start.set(start);
-        let mut outcome = worker_ref.try_start();
+        // SAFETY: `parent` is the calling thread's VM.
+        let mut outcome = worker_ref.try_start(unsafe { Self::has_room_to_wait_for(parent) });
         if matches!(outcome, StartOutcome::NoRoom) {
             // SAFETY: `parent` is the calling thread's VM.
             if unsafe { Self::join_returning_children(parent) } {
-                outcome = worker_ref.try_start();
+                // SAFETY: `parent` is the calling thread's VM.
+                outcome = worker_ref.try_start(unsafe { Self::has_room_to_wait_for(parent) });
             }
         }
         match outcome {
@@ -624,11 +629,12 @@ impl WebWorker {
     }
 
     /// Spawn the thread and hand it `thread_start`, which stays where it is unless that succeeds. Parent thread.
-    fn try_start(&self) -> StartOutcome {
+    /// A worker that `can_wait` for the room of workers that are ending does not take the last of the room.
+    fn try_start(&self, can_wait: bool) -> StartOutcome {
         let start = self.thread_start.get();
         let mut table_pages: *mut c_void = core::ptr::null_mut();
         // SAFETY: `table_pages` is a live local the callee writes once.
-        if !unsafe { Bun__AOT__tryReservePagesForNewThread(&raw mut table_pages) } {
+        if !unsafe { Bun__AOT__tryReservePagesForNewThread(&raw mut table_pages, can_wait) } {
             return StartOutcome::NoRoom;
         }
         // SAFETY: `heap::alloc`'d in `create()`; no thread has it yet.
@@ -734,7 +740,8 @@ impl WebWorker {
                 .filter(|worker| !worker.thread_start.get().is_null())
                 .min_by_key(|worker| worker.execution_context_id);
             let Some(worker) = oldest else { return };
-            match worker.try_start() {
+            // SAFETY: fn contract.
+            match worker.try_start(unsafe { Self::has_ending_child(parent) }) {
                 StartOutcome::Started => {
                     WORKERS_WAITING_FOR_ROOM.fetch_sub(1, Ordering::Relaxed);
                 }

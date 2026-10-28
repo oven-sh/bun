@@ -127,6 +127,8 @@ pub(super) struct Plan {
     /// A `require` of a file may run before the loader has come to a CommonJS file, and code names a way between module objects: whether one did says which file has the id ".".
     is_first_require_seen: bool,
     is_namespace_seen: Vec<bool>,
+    /// A file stores `__esModule` on what `require` of the module answers.
+    is_marker_stored: Vec<bool>,
     /// The statements that define inner modules, and those of modules that cannot be loaded.
     erased_statements: Vec<(FileId, StmtId)>,
     pub named_members: FxHashMap<(ModuleRef, Atom), NamedMember<ImportBinding>>,
@@ -148,6 +150,7 @@ impl Plan {
             names_way_to_module_objects: vec![false; order.numbers.len()],
             is_first_require_seen: false,
             is_namespace_seen: vec![false; order.numbers.len()],
+            is_marker_stored: vec![false; order.numbers.len()],
             order,
             erased_statements,
             named_members: FxHashMap::default(),
@@ -168,6 +171,10 @@ impl Plan {
         if let Some(number) = self.order.numbers.number_of(module) {
             set(self)[number] = true;
         }
+    }
+
+    pub(super) fn set_marker_is_stored(&mut self, module: ModuleRef) {
+        self.add(|plan| &mut plan.is_marker_stored, module);
     }
 
     pub(super) fn inner_modules(&self) -> &[(FileId, FnId)] {
@@ -326,8 +333,18 @@ impl ModuleGraph {
         }
     }
 
+    // Whoever has the object can store a name on it, define it or delete it.
+    fn is_object_seen(&self, module: ModuleRef) -> bool {
+        match self.shape(module) {
+            Shape::EsModule => self.plan.has(&self.plan.is_namespace_seen, module),
+            Shape::Names => false,
+            Shape::Value | Shape::AsToday => true,
+        }
+    }
+
     fn finish_fixed_member(&self, module: ModuleRef, member: Member) -> Member {
         match member {
+            Member::Marker(_) if self.is_object_seen(module) => Member::OnObject,
             Member::Marker(_) => self.marker(module).map_or(Member::OnObject, Member::Marker),
             _ => member,
         }
@@ -457,10 +474,14 @@ impl ModuleGraph {
         self.commonjs().ignores_this(module, name)
     }
 
+    pub(super) fn is_marker_stored(&self, module: ModuleRef) -> bool {
+        self.plan.has(&self.plan.is_marker_stored, module)
+    }
+
     /// Whether whoever requires the module finds `__esModule` on it.
     pub fn marker(&self, module: ModuleRef) -> Option<bool> {
         match self.shape(module) {
-            Shape::EsModule => Some(true),
+            Shape::EsModule => (!self.is_marker_stored(module)).then_some(true),
             Shape::Names | Shape::Value => self.commonjs().marker(module),
             Shape::AsToday => None,
         }

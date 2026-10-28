@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { compileCommand, runtimeEnvironment } from "./harness/flags";
 import { built, slot, spawned } from "./run-programs";
-import { describe, test } from "./supported-with-counted-calls";
+import { describe, test } from "./supported";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
 const numberOfFunctions = 1200;

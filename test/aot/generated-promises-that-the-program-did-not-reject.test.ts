@@ -14,17 +14,8 @@ import {
   makers,
   nameOf,
   rejections,
-  type Rejection,
 } from "./fuzz/promises-that-the-program-did-not-reject";
 import { generated } from "./generated/run-generated";
-
-function departsToday({ promise }: Rejection, look: string) {
-  const showsTheMessage = look === everyLook || looksThatShowTheMessage.includes(look);
-  if (promise.startsWith('import("data:text/javascript,') && (look === everyLook || look === "stack"))
-    return "the error of text that does not parse has no stack";
-  if (promise.includes("value.member") && showsTheMessage) return "the message names the value and not the expression";
-  if (promise === "WebAssembly.instantiate(5)" && showsTheMessage) return "the message does not name the call";
-}
 
 generated(
   "a handler is handed what plain Bun hands it where the program did not reject the promise",
@@ -40,7 +31,7 @@ generated(
         : isPlain
           ? [looks[(rejectionIndex + handlerIndex) % looks.length][0]]
           : [];
-      const shown = alone.filter(look => !rejection.messageNamesAPath || !looksThatShowTheMessage.includes(look));
+      const shown = alone.filter(look => !rejection.messageDiffers || !looksThatShowTheMessage.includes(look));
       return [everyLook, ...shown].map(look => ({
         name: nameOf(rejection, handler, look),
         isAlwaysRun:
@@ -52,7 +43,6 @@ generated(
           rejection.promise === 'import("./leaf.mjs", 5)' &&
           (look === everyLook || look === "message"),
         isOnlyCompiled: true as const,
-        ...(departsToday(rejection, look) ? { linesDepartToday: departsToday(rejection, look) } : {}),
         make: () => ({
           file: handler.isTyped ? "main.ts" : "main.mjs",
           text: generate(rejection, handler, look),

@@ -76,8 +76,8 @@
     "untyped": 97.5
   },
   "everyday-arrays/for-of-sum": {
-    "typed": 147,
-    "untyped": 149
+    "typed": 75,
+    "untyped": 77
   },
   "everyday-arrays/holes-read": {
     "typed": 13,
@@ -88,8 +88,8 @@
     "untyped": 8.3
   },
   "everyday-arrays/indexed-loop-sum": {
-    "typed": 147,
-    "untyped": 149
+    "typed": 75,
+    "untyped": 77
   },
   "everyday-arrays/is-array": {
     "typed": 16,
@@ -108,7 +108,7 @@
     "untyped": 406.4
   },
   "everyday-arrays/map-a-field": {
-    "typed": 229.0,
+    "typed": 229,
     "untyped": 225.7
   },
   "everyday-arrays/map-then-read-every-element": {
@@ -116,8 +116,8 @@
     "untyped": 505.5
   },
   "everyday-arrays/matrix-read": {
-    "typed": 29,
-    "untyped": 29
+    "typed": 24,
+    "untyped": 24
   },
   "everyday-arrays/max-by-spread": {
     "typed": 9,
@@ -141,7 +141,7 @@
   },
   "everyday-arrays/some-and-every": {
     "typed": 256.2,
-    "untyped": 238.7
+    "untyped": 232.8
   },
   "everyday-arrays/spread-as-a-copy": {
     "typed": 330.1,
@@ -156,8 +156,8 @@
     "untyped": 5
   },
   "everyday-arrays/sum-of-doubles": {
-    "typed": 147,
-    "untyped": 149
+    "typed": 75,
+    "untyped": 77
   },
   "everyday-arrays/swap-by-destructuring": {
     "typed": 189.7,
@@ -176,36 +176,36 @@
     "untyped": 23691.6
   },
   "everyday-benchmarks/bubble-sort": {
-    "typed": 1131,
+    "typed": 1088.8,
     "untyped": 1905.5
   },
   "everyday-benchmarks/destructuring-in-a-loop": {
-    "typed": 1918.8,
-    "untyped": 10493.2
+    "typed": 1576,
+    "untyped": 1679
   },
   "everyday-benchmarks/fannkuch-of-six": {
-    "typed": 1278179.9,
-    "untyped": 848170
+    "typed": 348100,
+    "untyped": 368700
   },
   "everyday-benchmarks/fizz-buzz": {
     "typed": 1207,
     "untyped": 1207.1
   },
   "everyday-benchmarks/generator-sum-of-a-thousand": {
-    "typed": 8019.1,
-    "untyped": 8023.1
+    "typed": 2545,
+    "untyped": 2549
   },
   "everyday-benchmarks/heap-push-and-pop": {
     "typed": 275.6,
     "untyped": 851.1
   },
   "everyday-benchmarks/matrix-multiply-flat": {
-    "typed": 10777,
-    "untyped": 11945
+    "typed": 6040,
+    "untyped": 6040.1
   },
   "everyday-benchmarks/matrix-multiply-of-arrays": {
-    "typed": 16811,
-    "untyped": 16852
+    "typed": 12131.7,
+    "untyped": 12154.6
   },
   "everyday-benchmarks/quicksort-by-hand": {
     "typed": 10908.5,
@@ -220,8 +220,8 @@
     "untyped": 1334.3
   },
   "everyday-benchmarks/typed-array-sum-of-a-thousand": {
-    "typed": 4051.1,
-    "untyped": 4032
+    "typed": 1412,
+    "untyped": 1413
   },
   "everyday-benchmarks/validate-an-object-by-hand": {
     "typed": 68.7,
@@ -296,8 +296,8 @@
     "untyped": 8
   },
   "everyday-classes/mixin": {
-    "typed": 36.1,
-    "untyped": 36
+    "typed": 7,
+    "untyped": 7
   },
   "everyday-classes/mixins-whose-objects-are-kept": {
     "typed": 106.7,
@@ -316,8 +316,8 @@
     "untyped": 86.9
   },
   "everyday-classes/private-in-check": {
-    "typed": 57.5,
-    "untyped": 56.5
+    "typed": 20.2,
+    "untyped": 20.3
   },
   "everyday-classes/private-method": {
     "typed": 15,
@@ -373,7 +373,7 @@
   },
   "everyday-code-out-of-run-time-text/a-key-parsed-as-a-schema-library-writes-it": {
     "typed": 2033.2,
-    "untyped": 2071.0
+    "untyped": 2071
   },
   "everyday-code-out-of-run-time-text/a-path-cut-out-of-a-url-as-a-composed-handler-writes-it": {
     "typed": 1138.6,
@@ -388,20 +388,20 @@
     "untyped": 560.3
   },
   "everyday-code-out-of-run-time-text/integers-validated-as-a-schema-compiler-writes-it": {
-    "typed": 1624.0,
-    "untyped": 1624.0
+    "typed": 1624,
+    "untyped": 1624
   },
   "everyday-code-out-of-run-time-text/methods-of-the-program-bound-in-the-text": {
     "typed": 1565.8,
     "untyped": 1528.1
   },
   "everyday-code-out-of-run-time-text/names-stored-on-an-object-of-a-constructor-of-the-program": {
-    "typed": 1104.0,
+    "typed": 1104,
     "untyped": 1090.8
   },
   "everyday-code-out-of-run-time-text/the-names-of-a-parsed-object-walked-as-a-schema-compiler-writes-it": {
-    "typed": 1013.0,
-    "untyped": 1012.0
+    "typed": 1013,
+    "untyped": 1012
   },
   "everyday-collections/map-entries-to-an-object": {
     "typed": 345.8,
@@ -536,12 +536,12 @@
     "untyped": 20.5
   },
   "everyday-copies-that-nobody-keeps/kept.nothing-replaced": {
-    "typed": 96.1,
-    "untyped": 96.1
+    "typed": 41.1,
+    "untyped": 41.2
   },
   "everyday-copies-that-nobody-keeps/kept.one-member-replaced": {
-    "typed": 100.1,
-    "untyped": 100.1
+    "typed": 47.1,
+    "untyped": 47.2
   },
   "everyday-copies-that-nobody-keeps/nothing-replaced": {
     "typed": 8,
@@ -576,8 +576,8 @@
     "untyped": 13
   },
   "everyday-data-and-control/abort-controller": {
-    "typed": 8761.2,
-    "untyped": 8754
+    "typed": 7349.5,
+    "untyped": 7318.3
   },
   "everyday-data-and-control/buffer-equals": {
     "typed": 10,
@@ -612,12 +612,16 @@
     "untyped": 1721.3
   },
   "everyday-data-and-control/event-emitter": {
-    "typed": 87.0,
-    "untyped": 79.0
+    "typed": 87,
+    "untyped": 79
   },
   "everyday-data-and-control/int32-array-store-and-read": {
     "typed": 14,
     "untyped": 14
+  },
+  "everyday-data-and-control/json-parse-a-chain-of-three-by-a-type-that-holds-itself-with-one-member-more-in-the-first": {
+    "typed": 1571.5,
+    "untyped": 1894
   },
   "everyday-data-and-control/json-parse-a-list-by-a-type-that-lists-one-of-three-members": {
     "typed": 4183.3,
@@ -629,31 +633,43 @@
   },
   "everyday-data-and-control/json-parse-a-small-object": {
     "typed": 436.1,
-    "untyped": 1442
+    "untyped": 938
+  },
+  "everyday-data-and-control/json-parse-a-tree-by-a-type-that-holds-itself-with-one-member-more-in-each": {
+    "typed": 4387.6,
+    "untyped": 3764.8
+  },
+  "everyday-data-and-control/json-parse-a-tree-by-a-type-that-holds-itself-with-one-member-more-in-the-root": {
+    "typed": 1392.9,
+    "untyped": 2318.1
   },
   "everyday-data-and-control/json-parse-by-a-type-of-66-members": {
     "typed": 1477.8,
     "untyped": 774.3
   },
   "everyday-data-and-control/json-parse-by-a-type-that-lists-fewer-members-and-list-the-keys": {
-    "typed": 765.6,
-    "untyped": 1442
+    "typed": 753.2,
+    "untyped": 950
   },
   "everyday-data-and-control/json-parse-by-a-type-that-lists-fewer-members-and-write-it-again": {
     "typed": 1933.7,
     "untyped": 1948.3
   },
   "everyday-data-and-control/json-parse-by-a-type-that-lists-one-of-eleven-members": {
-    "typed": 1666.6,
-    "untyped": 2542.2
+    "typed": 1646,
+    "untyped": 2072
   },
   "everyday-data-and-control/json-parse-by-a-type-that-lists-one-of-three-members": {
-    "typed": 718.9,
-    "untyped": 1382.2
+    "typed": 706.9,
+    "untyped": 912
   },
   "everyday-data-and-control/json-parse-by-a-type-that-lists-three-of-nine-members": {
-    "typed": 2434.8,
-    "untyped": 2259
+    "typed": 2364.4,
+    "untyped": 2256.2
+  },
+  "everyday-data-and-control/json-parse-by-two-types-that-hold-each-other-with-one-member-more-in-each": {
+    "typed": 2568.1,
+    "untyped": 2253.1
   },
   "everyday-data-and-control/json-parse-lists-with-other-values-each-time-by-a-type-that-lists-one-of-three-members": {
     "typed": 10472.9,
@@ -668,8 +684,8 @@
     "untyped": 1638.6
   },
   "everyday-data-and-control/json-parse-with-a-member-that-the-type-does-not-declare": {
-    "typed": 964.3,
-    "untyped": 937.6
+    "typed": 934,
+    "untyped": 937.4
   },
   "everyday-data-and-control/json-stringify-a-list-parsed-by-a-type-that-lists-one-of-three-members-whose-texts-have-escapes": {
     "typed": 7803.2,
@@ -681,7 +697,7 @@
   },
   "everyday-data-and-control/loop-counting-down": {
     "typed": 83,
-    "untyped": 131
+    "untyped": 73
   },
   "everyday-data-and-control/loose-equality-with-null": {
     "typed": 12.5,
@@ -708,8 +724,8 @@
     "untyped": 13.3
   },
   "everyday-data-and-control/uint8-array-sum": {
-    "typed": 626,
-    "untyped": 480
+    "typed": 309,
+    "untyped": 310
   },
   "everyday-dictionaries-built-anew/one-name-by-key.one-of-1024-listed-between-collections": {
     "typed": 691.2,
@@ -728,20 +744,24 @@
     "untyped": 8
   },
   "everyday-downleveled/class.babel-create-class": {
-    "typed": 130.2,
-    "untyped": 126
+    "typed": 57.2,
+    "untyped": 52.2
   },
   "everyday-downleveled/class.new-or-call": {
     "typed": 45.1,
     "untyped": 7
   },
   "everyday-downleveled/derived.es5-extends": {
-    "typed": 35.1,
-    "untyped": 33.1
+    "typed": 7.1,
+    "untyped": 7.1
+  },
+  "everyday-downleveled/derived.object-create-prototype": {
+    "typed": 7.1,
+    "untyped": 7.1
   },
   "everyday-downleveled/field.define-property": {
-    "typed": 2664.5,
-    "untyped": 2664.6
+    "typed": 7,
+    "untyped": 7
   },
   "everyday-downleveled/is-nan.global-is-nan": {
     "typed": 19,
@@ -788,16 +808,16 @@
     "untyped": 24
   },
   "everyday-downleveled/three-derived.inherits-helper-object-create": {
-    "typed": 142.0,
-    "untyped": 128.5
+    "typed": 15,
+    "untyped": 15
   },
   "everyday-downleveled/three-derived.object-create": {
-    "typed": 121.1,
-    "untyped": 114.5
+    "typed": 15,
+    "untyped": 15
   },
   "everyday-downleveled/three-derived.set-prototype-of": {
-    "typed": 13.0,
-    "untyped": 13.0
+    "typed": 13,
+    "untyped": 13
   },
   "everyday-downleveled/two-classes.assign-to-prototype": {
     "typed": 92.5,
@@ -807,33 +827,53 @@
     "typed": 125.4,
     "untyped": 116.9
   },
+  "everyday-downleveled/two-classes.prototype-literal": {
+    "typed": 10,
+    "untyped": 10
+  },
+  "everyday-downleveled/variant.direct-create-with-descriptor": {
+    "typed": 7.1,
+    "untyped": 7.1
+  },
   "everyday-downleveled/variant.direct-plain-create-two-levels": {
-    "typed": 75.8,
-    "untyped": 73.2
+    "typed": 10,
+    "untyped": 10
+  },
+  "everyday-downleveled/variant.helper-create-with-descriptor-one-class": {
+    "typed": 7.1,
+    "untyped": 7.1
+  },
+  "everyday-downleveled/variant.helper-create-with-descriptor-two-classes": {
+    "typed": 10,
+    "untyped": 10
+  },
+  "everyday-downleveled/variant.helper-plain-create-two-classes": {
+    "typed": 10,
+    "untyped": 10
   },
   "everyday-downleveled/variant.helper-plain-create-two-levels": {
-    "typed": 76.0,
-    "untyped": 74.1
+    "typed": 10,
+    "untyped": 10
   },
   "everyday-emitters/a-class-below-emits-to-itself": {
-    "typed": 177.0,
-    "untyped": 174.0
+    "typed": 177,
+    "untyped": 174
   },
   "everyday-emitters/no-argument": {
-    "typed": 74.0,
-    "untyped": 74.0
+    "typed": 74,
+    "untyped": 74
   },
   "everyday-emitters/no-listener": {
-    "typed": 41.0,
-    "untyped": 66.0
+    "typed": 41,
+    "untyped": 66
   },
   "everyday-emitters/one-listener-one-argument": {
-    "typed": 86.0,
-    "untyped": 83.0
+    "typed": 86,
+    "untyped": 83
   },
   "everyday-emitters/three-arguments": {
-    "typed": 100.0,
-    "untyped": 119.0
+    "typed": 100,
+    "untyped": 119
   },
   "everyday-functions/a-count-kept-by-a-closure": {
     "typed": 12,
@@ -900,7 +940,7 @@
     "untyped": 32.5
   },
   "everyday-functions/functions-with-typed-parameters-written-as-arguments-of-methods-of-a-list-out-of-a-text-where-another-was-given-a-display-name": {
-    "typed": 268.4,
+    "typed": 207.3,
     "untyped": 342.8
   },
   "everyday-functions/functions-without-captures-written-as-arguments-of-methods-of-a-list-known-by-a-test-where-another-was-given-a-display-name": {
@@ -968,7 +1008,7 @@
     "untyped": 29
   },
   "everyday-iteration-and-async/array-iterator-by-hand": {
-    "typed": 503.0,
+    "typed": 503,
     "untyped": 462.9
   },
   "everyday-iteration-and-async/async-arrow-callbacks": {
@@ -992,8 +1032,8 @@
     "untyped": 580
   },
   "everyday-iteration-and-async/await-a-resolved-promise": {
-    "typed": 685.8,
-    "untyped": 686.1
+    "typed": 549.4,
+    "untyped": 549.5
   },
   "everyday-iteration-and-async/await-a-value": {
     "typed": 519,
@@ -1012,20 +1052,20 @@
     "untyped": 539.1
   },
   "everyday-iteration-and-async/await-then-catch-a-rejection": {
-    "typed": 4219.8,
-    "untyped": 4226.4
+    "typed": 3892.5,
+    "untyped": 3905.2
   },
   "everyday-iteration-and-async/await-three-deep": {
     "typed": 1046.2,
     "untyped": 1046.3
   },
   "everyday-iteration-and-async/capture-a-stack-trace-behind-five-hundred-suspended-functions": {
-    "typed": 152910.5,
-    "untyped": 152953.7
+    "typed": 146522.2,
+    "untyped": 146224.4
   },
   "everyday-iteration-and-async/capture-a-stack-trace-behind-ten-suspended-functions": {
-    "typed": 9202.6,
-    "untyped": 9132.4
+    "typed": 9103.7,
+    "untyped": 9074.9
   },
   "everyday-iteration-and-async/capture-a-stack-trace-below-a-function-that-is-not-on-the-stack": {
     "typed": 72155.9,
@@ -1036,8 +1076,8 @@
     "untyped": 6004.9
   },
   "everyday-iteration-and-async/capture-a-stack-trace-two-thousand-calls-deep": {
-    "typed": 36330.2,
-    "untyped": 36327.5
+    "typed": 29688.8,
+    "untyped": 29691.3
   },
   "everyday-iteration-and-async/catch-a-kept-error-and-throw-it-again": {
     "typed": 1313,
@@ -1048,28 +1088,28 @@
     "untyped": 104
   },
   "everyday-iteration-and-async/catch-an-error-thrown-below-a-built-in-function": {
-    "typed": 9692.8,
-    "untyped": 9706
+    "typed": 8304.1,
+    "untyped": 8326.8
   },
   "everyday-iteration-and-async/catch-and-rethrow": {
     "typed": 5678.8,
     "untyped": 5166.1
   },
   "everyday-iteration-and-async/catch-the-error-of-a-built-in-function": {
-    "typed": 4469.1,
-    "untyped": 4478.7
+    "typed": 4161.2,
+    "untyped": 4171.0
   },
   "everyday-iteration-and-async/construct-an-error-that-captures-below-its-class-ten-calls-deep": {
     "typed": 9391.2,
     "untyped": 9380.6
   },
   "everyday-iteration-and-async/construct-an-error-that-captures-below-its-class-two-thousand-calls-deep": {
-    "typed": 40574.4,
-    "untyped": 40564.7
+    "typed": 32250.1,
+    "untyped": 32241.1
   },
   "everyday-iteration-and-async/error-told-apart-by-instanceof": {
-    "typed": 3387.7,
-    "untyped": 3299.7
+    "typed": 3089.5,
+    "untyped": 2970.1
   },
   "everyday-iteration-and-async/for-await-over-an-array-of-promises": {
     "typed": 2083.3,
@@ -1112,8 +1152,8 @@
     "untyped": 5729
   },
   "everyday-iteration-and-async/promise-catch-method": {
-    "typed": 4129.3,
-    "untyped": 4138.5
+    "typed": 3807.2,
+    "untyped": 3817.9
   },
   "everyday-iteration-and-async/promise-race": {
     "typed": 1987.3,
@@ -1160,8 +1200,8 @@
     "untyped": 18.1
   },
   "everyday-iteration-and-async/throw-through-three-frames": {
-    "typed": 3426.1,
-    "untyped": 3458.5
+    "typed": 3388.7,
+    "untyped": 3398.9
   },
   "everyday-iteration-and-async/try-finally": {
     "typed": 19,
@@ -1180,112 +1220,112 @@
     "untyped": 67.4
   },
   "everyday-kinds-of-types/tuple.of-a-record-and-a-number": {
-    "typed": 59.0,
-    "untyped": 26.0
+    "typed": 59,
+    "untyped": 26
   },
   "everyday-loops-over-lists-and-typed-arrays/buffer-entries-summed": {
-    "typed": 25196.6,
-    "untyped": 25197.9
+    "typed": 7709,
+    "untyped": 7711
   },
   "everyday-loops-over-lists-and-typed-arrays/buffer-sum-of-a-thousand": {
-    "typed": 7025,
-    "untyped": 7025.9
+    "typed": 2432,
+    "untyped": 2433
   },
   "everyday-loops-over-lists-and-typed-arrays/buffer-values-summed": {
-    "typed": 7032,
-    "untyped": 7034
+    "typed": 2441,
+    "untyped": 2444
   },
   "everyday-loops-over-lists-and-typed-arrays/data-view-sum-of-floats": {
-    "typed": 58488.7,
-    "untyped": 58493.9
+    "typed": 874,
+    "untyped": 877
   },
   "everyday-loops-over-lists-and-typed-arrays/float32-array-scaled-in-place": {
-    "typed": 3115.4,
-    "untyped": 3120.5
+    "typed": 736.5,
+    "untyped": 736.5
   },
   "everyday-loops-over-lists-and-typed-arrays/float64-array-in-a-field": {
-    "typed": 4028.1,
-    "untyped": 4029.9
+    "typed": 1410,
+    "untyped": 1410
   },
   "everyday-loops-over-lists-and-typed-arrays/float64-array-in-a-parameter": {
-    "typed": 4024.4,
-    "untyped": 153407.8
+    "typed": 1410,
+    "untyped": 1410
   },
   "everyday-loops-over-lists-and-typed-arrays/float64-array-mean-of-three-neighbors": {
-    "typed": 14911.9,
-    "untyped": 14885.7
+    "typed": 2101,
+    "untyped": 2081.9
   },
   "everyday-loops-over-lists-and-typed-arrays/float64-array-running-sums": {
-    "typed": 4182,
-    "untyped": 4184.9
+    "typed": 2135,
+    "untyped": 2113
   },
   "everyday-loops-over-lists-and-typed-arrays/float64-array-that-a-closure-captured": {
-    "typed": 4026.8,
-    "untyped": 4029.9
+    "typed": 1410,
+    "untyped": 1410
   },
   "everyday-loops-over-lists-and-typed-arrays/float64-array-walked-downward": {
-    "typed": 7030.5,
-    "untyped": 13045
+    "typed": 1414,
+    "untyped": 1414
   },
   "everyday-loops-over-lists-and-typed-arrays/float64-dot-product-of-a-thousand": {
-    "typed": 11043,
-    "untyped": 6047
+    "typed": 3549.1,
+    "untyped": 3436
   },
   "everyday-loops-over-lists-and-typed-arrays/float64-matrix-transposed-flat": {
-    "typed": 4631.9,
-    "untyped": 4460.9
+    "typed": 1573,
+    "untyped": 1315
   },
   "everyday-loops-over-lists-and-typed-arrays/int32-array-reversed-in-place": {
-    "typed": 5687.9,
-    "untyped": 5673.9
+    "typed": 513,
+    "untyped": 519
   },
   "everyday-loops-over-lists-and-typed-arrays/int32-array-sum-of-a-thousand": {
-    "typed": 7028.8,
-    "untyped": 7035.9
+    "typed": 2434,
+    "untyped": 2433
   },
   "everyday-loops-over-lists-and-typed-arrays/list-of-fractions-sum-of-a-thousand": {
-    "typed": 4018.9,
-    "untyped": 4020.8
+    "typed": 1406,
+    "untyped": 1408
   },
   "everyday-loops-over-lists-and-typed-arrays/list-of-integers-in-a-parameter": {
-    "typed": 4016.9,
-    "untyped": 4017
+    "typed": 1405,
+    "untyped": 1404
   },
   "everyday-loops-over-lists-and-typed-arrays/list-of-integers-stored-to-in-place": {
-    "typed": 6170.1,
-    "untyped": 6170.9
+    "typed": 3998,
+    "untyped": 4000
   },
   "everyday-loops-over-lists-and-typed-arrays/list-of-integers-sum-of-a-thousand": {
-    "typed": 4019,
-    "untyped": 4021
+    "typed": 1406,
+    "untyped": 1408
   },
   "everyday-loops-over-lists-and-typed-arrays/list-of-objects-one-field-summed": {
-    "typed": 3604,
-    "untyped": 5140.8
+    "typed": 2267.1,
+    "untyped": 3996
   },
   "everyday-loops-over-lists-and-typed-arrays/rows-of-float64-arrays": {
-    "typed": 4580.1,
-    "untyped": 178108.5
+    "typed": 1831,
+    "untyped": 1830
   },
   "everyday-loops-over-lists-and-typed-arrays/text-sum-of-char-codes": {
-    "typed": 4251,
-    "untyped": 4254.7
+    "typed": 1836,
+    "untyped": 1840
   },
   "everyday-loops-over-lists-and-typed-arrays/uint16-array-greatest-of-a-thousand": {
-    "typed": 6021.9,
-    "untyped": 6028.9
+    "typed": 3405.1,
+    "untyped": 3406.1
   },
   "everyday-loops-over-lists-and-typed-arrays/uint8-array-copied-by-index": {
-    "typed": 13855,
-    "untyped": 3141
+    "typed": 168,
+    "untyped": 159
   },
   "everyday-loops-over-lists-and-typed-arrays/uint8-array-counted-into-bins": {
-    "typed": 10285.9,
-    "untyped": 12826.4
+    "typed": 4123.9,
+    "untyped": 4122.9
   },
   "everyday-loops-over-lists-and-typed-arrays/uint8-clamped-array-brightened": {
-    "typed": 5669.3,
-    "untyped": 6186.4
+    "typed": 405,
+    "untyped": 406
   },
   "everyday-microtasks-and-promises/async-arrow-that-captures": {
     "typed": 1293.5,
@@ -1320,8 +1360,8 @@
     "untyped": 3613.5
   },
   "everyday-microtasks-and-promises/async-generator-that-awaits": {
-    "typed": 2820.8,
-    "untyped": 2814
+    "typed": 2610.7,
+    "untyped": 2605.5
   },
   "everyday-microtasks-and-promises/async-generator-through-another": {
     "typed": 3943.4,
@@ -1344,8 +1384,8 @@
     "untyped": 3339.6
   },
   "everyday-microtasks-and-promises/await-a-kept-settled-promise": {
-    "typed": 662.7,
-    "untyped": 673.6
+    "typed": 526.1,
+    "untyped": 537.2
   },
   "everyday-microtasks-and-promises/await-a-pending-promise": {
     "typed": 1110.7,
@@ -1620,16 +1660,16 @@
     "untyped": 14
   },
   "everyday-objects/for-in": {
-    "typed": 91.0,
-    "untyped": 95.0
+    "typed": 91,
+    "untyped": 95
   },
   "everyday-objects/freeze-a-literal": {
     "typed": 46.1,
     "untyped": 46.1
   },
   "everyday-objects/getter-in-a-literal": {
-    "typed": 9.0,
-    "untyped": 9.0
+    "typed": 9,
+    "untyped": 9
   },
   "everyday-objects/keys": {
     "typed": 7,
@@ -1864,12 +1904,12 @@
     "untyped": 31.1
   },
   "everyday-small-objects-run-by-a-loop/a-method-under-a-key-joined-from-constants": {
-    "typed": 16.0,
-    "untyped": 16.0
+    "typed": 16,
+    "untyped": 16
   },
   "everyday-small-objects-run-by-a-loop/a-stack-popped-until-an-entry-has-the-key": {
-    "typed": 90.0,
-    "untyped": 89.0
+    "typed": 90,
+    "untyped": 89
   },
   "everyday-small-objects-run-by-a-loop/steps-of-four-kinds-run-until-one-is-the-last": {
     "typed": 1000.5,
@@ -1888,8 +1928,8 @@
     "untyped": 497
   },
   "everyday-small-programs/matrix-four-by-four-in-float32": {
-    "typed": 1285,
-    "untyped": 1240
+    "typed": 793,
+    "untyped": 799
   },
   "everyday-small-programs/nested-update-by-spread": {
     "typed": 137.6,
@@ -2044,8 +2084,8 @@
     "untyped": 70
   },
   "everyday-spellings/keys-loop.for-in": {
-    "typed": 109.0,
-    "untyped": 101.0
+    "typed": 109,
+    "untyped": 101
   },
   "everyday-spellings/last-element.at": {
     "typed": 11,
@@ -2064,8 +2104,8 @@
     "untyped": 7
   },
   "everyday-spellings/literal-copy.object-assign": {
-    "typed": 11,
-    "untyped": 11
+    "typed": 9,
+    "untyped": 9
   },
   "everyday-spellings/literal-copy.spread": {
     "typed": 9,
@@ -2081,7 +2121,7 @@
   },
   "everyday-spellings/loop.for-down": {
     "typed": 83,
-    "untyped": 131
+    "untyped": 73
   },
   "everyday-spellings/number-of-a-text.unary-plus": {
     "typed": 88,
@@ -2212,8 +2252,8 @@
     "untyped": 1051.6
   },
   "everyday-texts-that-every-match-holds/a-16-bit-line-without-the-character-behind-a-bounded-run": {
-    "typed": 287.0,
-    "untyped": 287.0
+    "typed": 287,
+    "untyped": 287
   },
   "everyday-texts-that-every-match-holds/a-line-that-holds-the-text-far-behind-its-start": {
     "typed": 1156.6,
@@ -2224,16 +2264,16 @@
     "untyped": 364.5
   },
   "everyday-texts-that-every-match-holds/a-line-without-either-sign-behind-a-key-word": {
-    "typed": 273.0,
-    "untyped": 273.0
+    "typed": 273,
+    "untyped": 273
   },
   "everyday-texts-that-every-match-holds/a-line-without-the-character-behind-a-bounded-run": {
-    "typed": 257.0,
-    "untyped": 257.0
+    "typed": 257,
+    "untyped": 257
   },
   "everyday-texts-that-every-match-holds/a-line-without-the-text-between-two-runs": {
-    "typed": 307.0,
-    "untyped": 307.0
+    "typed": 307,
+    "untyped": 307
   },
   "everyday-texts-that-every-match-holds/a-name-and-its-number-far-behind-the-start-of-a-line": {
     "typed": 1519.5,
@@ -2266,29 +2306,5 @@
   "everyday-texts-that-every-match-holds/trim-by-a-written-out-class": {
     "typed": 756.6,
     "untyped": 756.5
-  },
-  "everyday-downleveled/derived.object-create-prototype": {
-    "typed": 7.1,
-    "untyped": 7.1
-  },
-  "everyday-downleveled/two-classes.prototype-literal": {
-    "typed": 10,
-    "untyped": 10
-  },
-  "everyday-downleveled/variant.direct-create-with-descriptor": {
-    "typed": 7.1,
-    "untyped": 7.1
-  },
-  "everyday-downleveled/variant.helper-create-with-descriptor-one-class": {
-    "typed": 7.1,
-    "untyped": 7.1
-  },
-  "everyday-downleveled/variant.helper-create-with-descriptor-two-classes": {
-    "typed": 10,
-    "untyped": 10
-  },
-  "everyday-downleveled/variant.helper-plain-create-two-classes": {
-    "typed": 10,
-    "untyped": 10
   }
 }

@@ -76,6 +76,9 @@ pub struct CompiledModule<'s> {
     pub loader: HostLoader,
     /// TypeScript of a package whose `exports` name the "aot" condition.
     pub is_aot_source: bool,
+    /// What the file was folded with.
+    pub(super) import_meta_main: Option<bool>,
+    pub(super) is_called_before_it_runs: bool,
 }
 
 #[derive(Copy, Clone)]
@@ -341,6 +344,11 @@ impl<'s> Files<'s> {
     #[inline]
     pub fn compiled_files(&self) -> &'s [FileId] {
         self.code_graph.viewed().compiled_files
+    }
+
+    /// Of every program of the load.
+    pub(super) fn loaded_code_files(&self) -> &'s [FileId] {
+        self.code_graph.loaded.compiled_files
     }
 
     #[inline]

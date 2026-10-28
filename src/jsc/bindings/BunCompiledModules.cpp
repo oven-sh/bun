@@ -751,9 +751,9 @@ extern "C" bool Bun__AOT__omitsFunctionSource(BunAOTBytes image)
     return reinterpret_cast<const JSC::AOT::ImageHeader*>(bytes.data())->options.omitsFunctionSource;
 }
 
-extern "C" bool Bun__AOT__tryReservePagesForNewThread(void** pages)
+extern "C" bool Bun__AOT__tryReservePagesForNewThread(void** pages, bool threadsAreEnding)
 {
-    JSC::AOT::PagesForNewThread result = JSC::AOT::tryReservePagesForNewThread();
+    JSC::AOT::PagesForNewThread result = JSC::AOT::tryReservePagesForNewThread(threadsAreEnding);
     *pages = result.pages;
     return !result.isRefused;
 }
@@ -816,7 +816,7 @@ extern "C" bool Bun__refusesCodeOutsideExecutable(JSC::JSGlobalObject*) { return
 extern "C" bool Bun__isCompiledProgramFile(const BunString*) { return false; }
 extern "C" bool Bun__isCompiledProgramFileInSomeForm(const BunString*) { return false; }
 extern "C" bool Bun__AOT__omitsFunctionSource(BunAOTBytes) { return false; }
-extern "C" bool Bun__AOT__tryReservePagesForNewThread(void** pages)
+extern "C" bool Bun__AOT__tryReservePagesForNewThread(void** pages, bool)
 {
     *pages = nullptr;
     return true;

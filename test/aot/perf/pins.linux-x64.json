@@ -1174,8 +1174,8 @@
     "jit": 475.5
   },
   "text/three-parts-of-which-two-are-empty": {
-    "typed": 355.8,
-    "untyped": 356.8,
+    "typed": 233.8,
+    "untyped": 234.7,
     "jit": 266.5,
     "best": {
       "typed": 178,
@@ -1202,8 +1202,8 @@
     "jit": 269.7
   },
   "built-in/byte-length-of-chunks-written-to-a-view": {
-    "typed": 292,
-    "untyped": 264.7,
+    "typed": 62.5,
+    "untyped": 60.4,
     "jit": 143
   },
   "built-in/length-of-six-kinds-behind-an-interface": {
@@ -1454,8 +1454,8 @@
     "jit": 268.4
   },
   "closure/getters-of-a-table-that-unknown-code-has-seen": {
-    "typed": 395,
-    "untyped": 393.9,
+    "typed": 455.9,
+    "untyped": 435,
     "jit": 396,
     "best": {
       "typed": 363,

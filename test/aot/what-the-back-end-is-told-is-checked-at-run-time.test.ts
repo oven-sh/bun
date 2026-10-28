@@ -2,6 +2,7 @@
 // this stack slot is written before it is read. `--aot-check=ClaimsToBackEnd` (hidden) leaves all of that as it is, lets the back end do with it what it does in an ordinary
 // build, and adds, behind the last phase that moves a value, code that finds out in the run whether it holds. `--aot-check=MovedLoads` has each phase that moves a load, or puts
 // another value in its place, write down beside the code where the load stood. Behind the same last phase a second read goes in at each of those places that is still there.
+// `--aot-check=DecidedComparisons` has each loop phase that answers a comparison of two integers by itself write the two down in the same way, and they are compared where the comparison stood.
 //
 // Does the check see anything? For each kind one `--aot-sabotage` tells the back end something untrue. The program built that way must stop with the line that names the kind,
 // and the same program built with the check alone must answer as plain Bun does.
@@ -23,6 +24,7 @@ import { describe, test } from "./supported";
 
 const claims = "--aot-check=ClaimsToBackEnd";
 const movedLoads = "--aot-check=MovedLoads";
+const decidedComparisons = "--aot-check=DecidedComparisons";
 // No pass is left out in a function with this number, so none is left out anywhere: closures are placed in frames whatever the default is.
 const everyPass = "--aot-disable-in=4000000000:1";
 const rows: [sabotage: string, flags: string[], program: string, named: string][] = [
@@ -53,6 +55,25 @@ const rows: [sabotage: string, flags: string[], program: string, named: string][
     "one-place-in-a-loop-reads-a-method-of-objects-of-two-classes-one-after-the-other.js",
     "LoadMayMove",
   ],
+  [
+    "VectorTurnsMeetNoOtherAccess",
+    [movedLoads],
+    "elements-are-copied-one-by-one-between-views-that-lie-over-each-other.ts",
+    "LoadMayMove",
+  ],
+  [
+    "StridedIndexesStayInRange",
+    [decidedComparisons],
+    "a-loop-reads-every-second-element-of-a-view-also-past-its-end.ts",
+    "ComparisonIsDecided",
+  ],
+  [
+    "WrittenOutTurnsAlwaysFit",
+    [decidedComparisons],
+    "the-elements-of-views-of-every-length-are-added-up.ts",
+    "ComparisonIsDecided",
+  ],
+  ["WrittenOutTurnsAlwaysFit", [decidedComparisons], "views-of-every-length-are-filled.ts", "ComparisonIsDecided"],
   ["FieldsNeverChange", [claims], "a-field-is-read-and-stored-on-every-turn-of-a-loop.ts", "WordNeverChanges"],
   [
     "ClosureInFrameKeepsNoCaptures",

@@ -297,13 +297,21 @@ pub(crate) fn is_free_common_js(
 }
 
 // The path of the file whose `require` a call goes through, if the file imports that `require`.
-fn find_path_to_resolve_from(inputs: &ScanInputs<'_, '_>, call: ExprId) -> Option<Atom> {
+// A specifier that stands for a whole path starts at the folder of the file that writes it, whichever `require` gets it.
+fn find_path_to_resolve_from(
+    inputs: &ScanInputs<'_, '_>,
+    call: ExprId,
+    starts_at_own_directory: bool,
+) -> Option<Atom> {
     let &ScanInputs {
         hir,
         bound,
         decisions,
         ..
     } = inputs;
+    if hir.imported_requires.is_empty() || starts_at_own_directory {
+        return None;
+    }
     let Some(CallForm::Call { callee, .. }) = find_call_form(hir, call) else {
         return None;
     };
@@ -357,9 +365,10 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         let site = create_call_site(inputs, &found, &mut alternatives);
         if !is_ordinary_builtin_call(&site) {
             module_require_objects.extend(found.module_require_object);
-            if !hir.imported_requires.is_empty()
-                && let Some(path) = find_path_to_resolve_from(inputs, call)
-            {
+            let argument = site.specifier_node;
+            let starts_at_own_directory = decisions.is_path_from_own_directory(argument)
+                || alternatives.paths_from_own_directory.last() == Some(&argument);
+            if let Some(path) = find_path_to_resolve_from(inputs, call, starts_at_own_directory) {
                 requires_of_other_files.push((sites.len() as u32, path));
             }
             sites.push(site);

@@ -70,6 +70,7 @@ export type Measured = {
   operations: number;
   /** The files whose own code has an operation. */
   filesThatRun: number;
+  pathsThatRun: string[];
   runtimeOperations: number | undefined;
   byOperation: Record<string, number>;
 };
@@ -187,8 +188,8 @@ function readMap(path: string): Omit<Measured, "runtimeOperations"> {
       if (seen.size) offsetsOfCodeWithOperations.add(offset);
     }
   }
-  const filesThatRun = new Set(files.filter(file => offsetsOfCodeWithOperations.has(file.offset)).map(file => file.path)).size;
-  return { codeBytes, operations, filesThatRun, byOperation };
+  const pathsThatRun = [...new Set(files.filter(file => offsetsOfCodeWithOperations.has(file.offset)).map(file => file.path))]; // prettier-ignore
+  return { codeBytes, operations, filesThatRun: pathsThatRun.length, pathsThatRun, byOperation };
 }
 
 function runtimeOperationsIn(path: string) {
@@ -371,6 +372,8 @@ export function savedByMinifyingFirst({ plain, written, ...minified }: Compared)
     for (const name of Object.keys(written.byOperation).sort())
       if (written.byOperation[name] > (other.byOperation[name] ?? 0))
         lines.push(moved(name, written.byOperation[name], other.byOperation[name] ?? 0));
+    if (written.filesThatRun > 4)
+      lines.push(`${moved("files that run", written.filesThatRun, other.filesThatRun)}: ${written.pathsThatRun.join(" ").slice(0, 800)}`); // prettier-ignore
     found.push(`${form}: ${lines.join(", ")}`);
   }
   return found;

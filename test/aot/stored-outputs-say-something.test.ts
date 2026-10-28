@@ -25,6 +25,8 @@ const plainBunVaries: Record<string, string> = {
     "plain Bun prints one of two outputs from run to run, the stored one among them: how much stack a chain takes there goes by the tier that runs it",
   "commonjs/a-microtask-of-an-imported-file-runs-before-a-file-of-a-deeper-module":
     "plain Bun prints one of several outputs from run to run, the stored one among them",
+  "commonjs/another-file-stores-the-es-module-marker-of-a-file-behind-its-import":
+    "plain Bun prints another output in about one run of twenty-five; the stored output is what it prints in the others, and what the executable always prints",
   "commonjs/wrapper-variables-in-loops":
     "plain Bun begins the five CommonJS files that the entry point imports in one of many orders from run to run; the stored output has them in the order of the import statements, which is what the executable always prints",
   "memory-of-many-objects/records-made-by-a-callback-for-each-element":
@@ -59,6 +61,7 @@ const plainBunVaries: Record<string, string> = {
     "it compares two times: plain Bun is under the bound on some machines and over it on others",
   "untyped-speed/names-read-a-hundred-times-off-each-new-shape-are-not-four-times-as-slow-as-off-one-shape":
     "it compares two times: plain Bun is under the bound on some machines and over it on others",
+  "workers/what-import-finds-in-a-data-url-that-a-worker-starts-from": "plain Bun prints another output on Windows",
 };
 
 // A script that writes programs may write what they are to print too (generate.ts).

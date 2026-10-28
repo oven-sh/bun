@@ -21,6 +21,7 @@ const ways: [label: string, flag: string][] = [
   ["every-function-cold", "--aot-heat=everything-is-cold"],
   ["verify-each-pass", buildFlags.verifyEachPass],
   ["moved-loads-checked-at-run-time", "--aot-check=MovedLoads"],
+  ["decided-comparisons-checked-at-run-time", "--aot-check=DecidedComparisons"],
   ["claims-checked-at-run-time", "--aot-check=ClaimsToBackEnd"],
 ];
 

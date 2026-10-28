@@ -145,7 +145,6 @@ calls-fast-paths/exported-arrows-via-namespace	// IR+ ^variable g\d+ name="hookO
 calls-fast-paths/exported-arrows-via-namespace	// IR+ ^variable g\d+ name="hookOfStoredTwice" .*declared=f\d+( |$)
 calls-fast-paths/factory-result-cast-to-subtype	// IR+  = Construct v[0-9]+ \(.*\).* isFallback
 calls-fast-paths/factory-result-cast-to-subtype	// IR= 1 createResolved : =?L[0-9]+ = (NewObject|CreateThis) 
-calls-fast-paths/factory-result-cast-to-subtype	// IR= 1 createTracedResolved : =?L[0-9]+ = (NewObject|CreateThis) 
 calls-fast-paths/facts-kept-across-calls-inside-try	// IR= 1 twice PropGet v[0-9]+ name="x"(?!.* isFallback)
 calls-fast-paths/facts-kept-across-calls-inside-try	// IR= 2 twiceAroundACall PropGet v[0-9]+ name="x"(?!.* isFallback)
 calls-fast-paths/field-stores-after-predicted-new	// IR= 1 makeSeen PropSet v[0-9]+, v[0-9]+ name="id"

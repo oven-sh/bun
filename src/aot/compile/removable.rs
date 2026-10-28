@@ -1,4 +1,5 @@
 mod dead_zone;
+mod heritage;
 #[cfg(test)]
 mod tests;
 mod unused;
@@ -24,9 +25,10 @@ use bun_sema::hir::{
 use bun_sema::module_format::ModuleFormat;
 use bun_sema::program::{FileId, Files, Sym};
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 
 use crate::builtins::table::{self, BuiltinFlags};
-use crate::builtins::{BuiltinId, BuiltinKind, ResolvedBuiltins};
+use crate::builtins::{BuiltinId, BuiltinKind, Mutability, Resolved, ResolvedBuiltins};
 use crate::load::sources::parsed_source;
 use crate::lower::SourceKind;
 use crate::modules::{ImportBinding, Member, ModuleGraph, ModuleRef};
@@ -140,6 +142,21 @@ fn find_written_name(key: PropKey, name_kind: NameKind) -> Option<Atom> {
     match key {
         PropKey::Name(name) if is_written_name => Some(name),
         PropKey::Name(_) | PropKey::None | PropKey::Private(_) | PropKey::Computed(_) => None,
+    }
+}
+
+// What still has to run of a class that is left out.
+#[derive(Default)]
+pub(crate) struct ClassChecks {
+    // Whether what the class extends is a constructor or null.
+    pub heritage: bool,
+    // The members whose computed keys are converted to property keys.
+    pub keys: SmallVec<[MemberId; 2]>,
+}
+
+impl ClassChecks {
+    pub(crate) fn is_empty(&self) -> bool {
+        !self.heritage && self.keys.is_empty()
     }
 }
 
@@ -296,12 +313,40 @@ impl<'a, 's> Removable<'a, 's> {
     }
 
     pub(crate) fn class(&self, class: ClassId) -> bool {
+        self.find_class_checks(class)
+            .is_some_and(|checks| checks.is_empty())
+    }
+
+    // `const A = class extends B {}`
+    pub(crate) fn find_class_of_declaration(&self, declaration: VarDeclId) -> Option<ClassId> {
+        let node = &self.hir[declaration];
+        let is_plain = matches!(node.kind, VarKind::Var | VarKind::Let | VarKind::Const);
+        match self.hir[node.init.some()?].kind {
+            ExprKind::Class(class) if is_plain && self.pattern(node.pat, node.init) => Some(class),
+            _ => None,
+        }
+    }
+
+    // `None`: the class has to be defined though nothing uses it.
+    pub(crate) fn find_class_checks(&self, class: ClassId) -> Option<ClassChecks> {
         let node = &self.hir[class];
-        node.flags.contains(Flags::AMBIENT)
-            || (!self.has_decorator(node.modifiers)
-                && node.other_extends.is_empty()
-                && self.expression(node.extends)
-                && node.members.iter().all(|member| self.member(member)))
+        let mut checks = ClassChecks::default();
+        if node.flags.contains(Flags::AMBIENT) {
+            return Some(checks);
+        }
+        if self.has_decorator(node.modifiers)
+            || !node.other_extends.is_empty()
+            || !self.expression(node.extends)
+        {
+            return None;
+        }
+        checks.heritage = !self.has_valid_heritage(class);
+        for member in node.members.iter() {
+            if self.member(member)? {
+                checks.keys.push(member);
+            }
+        }
+        Some(checks)
     }
 
     pub(crate) fn expression(&self, expression: ExprId) -> bool {
@@ -509,28 +554,53 @@ impl<'a, 's> Removable<'a, 's> {
             })
     }
 
-    fn member(&self, member: MemberId) -> bool {
+    // `None`: the member has to be defined. `Some(true)`: converting its key to a property key may run code.
+    fn member_key(&self, member: MemberId) -> Option<bool> {
+        let hir = self.hir;
+        let node = &hir[member];
+        // The `prototype` of a class can't be redefined.
+        let is_static = node.flags.contains(Flags::STATIC);
+        let key = match node.key {
+            PropKey::None | PropKey::Private(_) => return Some(false),
+            PropKey::Name(name) => {
+                return (!is_static || name != known::prototype).then_some(false);
+            }
+            PropKey::Computed(key) => hir.skip_type_assertions(key),
+        };
+        if let Some(literal) = self.literal(key) {
+            let may_be_prototype = literal == Primitive::String
+                && self
+                    .find_string(key)
+                    .is_none_or(|text| text == known::prototype);
+            return (!is_static || !may_be_prototype).then_some(false);
+        }
+        let is_reference = matches!(hir[key].kind, ExprKind::Ident(_) | ExprKind::Dot { .. });
+        if !is_reference || !self.expression(key) {
+            return None;
+        }
+        match self.builtins.of_pure_expr(key) {
+            Some(Resolved::Builtin(path))
+                if path.mutability == Mutability::AlwaysLocked
+                    && table::well_known_symbol(path.id).is_some() =>
+            {
+                Some(false)
+            }
+            _ => (!is_static).then_some(true),
+        }
+    }
+
+    // `None`: the member has to be defined. `Some(true)`: only its key has to be converted to a property key.
+    fn member(&self, member: MemberId) -> Option<bool> {
         let hir = self.hir;
         if !hir::has_runtime_member(hir, member) {
-            return true;
+            return Some(false);
         }
         let node = &hir[member];
-        let has_plain_key = match node.key {
-            PropKey::None | PropKey::Name(_) | PropKey::Private(_) => true,
-            PropKey::Computed(key) => {
-                let key = hir.skip_type_assertions(key);
-                let is_reference =
-                    matches!(hir[key].kind, ExprKind::Ident(_) | ExprKind::Dot { .. });
-                self.literal(key).is_some() || (is_reference && self.expression(key))
-            }
-        };
-        if !has_plain_key
-            || self.has_decorator(node.modifiers)
-            || node.flags.contains(Flags::ACCESSOR)
-        {
-            return false;
+        let converts_key = self.member_key(member)?;
+        if self.has_decorator(node.modifiers) || node.flags.contains(Flags::ACCESSOR) {
+            return None;
         }
-        match node.kind {
+        let is_removable = match node.kind {
             MemberKind::Property => {
                 !node.flags.contains(Flags::STATIC) || self.expression(node.init)
             }
@@ -547,7 +617,8 @@ impl<'a, 's> Removable<'a, 's> {
                 let mut parameters = hir[node.func].params.iter();
                 parameters.all(|parameter| !self.has_decorator(hir.param_modifiers(parameter)))
             }
-        }
+        };
+        is_removable.then_some(converts_key)
     }
 
     fn property(&self, property: PropId) -> bool {

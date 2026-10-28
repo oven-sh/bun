@@ -912,6 +912,7 @@ fn with_compile_inputs<'s, R>(
     then(&CompileInputs {
         entry_points: &entry_points,
         main_module: MainModule::EntryPoint,
+        loaded_before: None,
         code: &build.code,
         fold: &fold,
         atoms: Interner::new_in(session),

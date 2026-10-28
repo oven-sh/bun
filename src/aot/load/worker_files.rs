@@ -19,6 +19,7 @@ use bun_sema_driver::host::to_native;
 use crate::builtins::{BuiltinId, Intrinsic, Resolved, RuntimeModule, table};
 use crate::compile::CodeOfWorkers;
 use crate::diagnostics::{ShownPosition, new_driver_diagnostic, position_of_diagnostic};
+use crate::ir::parallel::{InParallel, map_each};
 use crate::load::loaders::{loader_named_by_path, script_kind_of};
 use crate::load::module_paths::{
     compute_module_path, compute_relative_path, with_separators_of_host,
@@ -262,13 +263,22 @@ struct Walk<'a, 's> {
     texts: Vec<WorkerFile>,
     /// A Worker may start from what was not followed to its end, so from a text that is not among `texts`.
     has_unseen_start: bool,
+    constructs_node_workers: bool,
+}
+
+pub(crate) struct CodeThatStartsWorkers {
+    pub files: Vec<WorkerFile>,
+    pub code: CodeOfWorkers,
+    /// Some file calls `new` on the Worker of node:worker_threads.
+    pub constructs_node_workers: bool,
 }
 
 // `import path from "./worker.js" with { type: "file" }; new Worker(path)`, `new Worker("./worker.js")` and `new Worker("data:text/javascript,..")`: the build has seen the code that the Worker runs, or finds it. What the constructor is given is followed back through variables, parameters and exports to the import, to the path or to the text. In the order of their paths.
 pub(crate) fn find_code_that_starts_workers(
     files: &Files<'_>,
     search: &WorkerSearch<'_>,
-) -> (Vec<WorkerFile>, CodeOfWorkers) {
+    in_parallel: InParallel<'_>,
+) -> CodeThatStartsWorkers {
     let &WorkerSearch {
         limits,
         loaders,
@@ -307,8 +317,14 @@ pub(crate) fn find_code_that_starts_workers(
         copies: Vec::new(),
         texts: Vec::new(),
         has_unseen_start: false,
+        constructs_node_workers: false,
     };
-    for &file in files.compiled_files() {
+    let compiled = files.compiled_files();
+    let (constructor, worker_threads) = (walk.constructor, walk.modules[0]);
+    let may_start_workers = map_each(compiled.to_vec(), in_parallel, &|file| {
+        may_start_workers(files, file, constructor, worker_threads)
+    });
+    for (&file, _) in compiled.iter().zip(may_start_workers).filter(|it| it.1) {
         walk.visit_file(file);
     }
     let code = match walk.has_unseen_start {
@@ -326,18 +342,54 @@ pub(crate) fn find_code_that_starts_workers(
     found.append(&mut walk.texts);
     found.sort_unstable();
     found.dedup();
-    (found, code)
+    CodeThatStartsWorkers {
+        files: found,
+        code,
+        constructs_node_workers: walk.constructs_node_workers,
+    }
+}
+
+fn find_module_answered(
+    files: &Files<'_>,
+    file: FileId,
+    site: Option<usize>,
+) -> Option<RuntimeModule> {
+    let answer = site.and_then(|site| files.compiled(file)?.code_answers.get(site));
+    match answer {
+        Some(&CodeAnswer::HostModule(module)) => RuntimeModule::from_registry_id(module.0),
+        _ => None,
+    }
+}
+
+fn may_start_workers(
+    files: &Files<'_>,
+    file: FileId,
+    constructor: Option<BuiltinId>,
+    worker_threads: Option<RuntimeModule>,
+) -> bool {
+    let Some(source) = parsed_source(files, file) else {
+        return false;
+    };
+    let is_constructor = |&id: &BuiltinId| Some(table::canonical_id(id)) == constructor;
+    let mut sites = 0..files.analysis(file).import_sites.len();
+    source.builtins.mentioned().iter().any(is_constructor)
+        || sites.any(|site| {
+            let module = find_module_answered(files, file, Some(site));
+            module.is_some() && module == worker_threads
+        })
 }
 
 // Every code file that the program embeds with the `file` loader, sorted by path.
 pub(crate) fn find_embedded_code_files(
     files: &Files<'_>,
     loaders: &[(Vec<u8>, Loader)],
+    in_parallel: InParallel<'_>,
 ) -> Vec<WorkerFile> {
-    let compiled = files.compiled_files().iter();
-    let mut copies: Vec<WorkerFile> = compiled
-        .filter_map(|&file| describe_embedded_file(files, loaders, file))
-        .collect();
+    let compiled = files.compiled_files().to_vec();
+    let described = map_each(compiled, in_parallel, &|file| {
+        describe_embedded_file(files, loaders, file)
+    });
+    let mut copies: Vec<WorkerFile> = described.into_iter().flatten().collect();
     copies.sort_unstable();
     copies.dedup();
     copies
@@ -354,11 +406,14 @@ fn describe_embedded_file(
     copy: FileId,
 ) -> Option<WorkerFile> {
     let source = parsed_source(files, copy)?;
-    let path = files.module(copy).file_name();
     let is_copy = source.kind == SourceKind::Data && source.loader == Loader::File;
+    if !is_copy || source.is_from_plugin || source.plugin_module.is_some() {
+        return None;
+    }
+    let path = files.module(copy).file_name();
     let is_code =
         loader_named_by_path(loaders, path).is_some_and(|loader| script_kind_of(loader).is_some());
-    if !is_copy || !is_code || source.is_from_plugin || source.plugin_module.is_some() {
+    if !is_code {
         return None;
     }
     let hir = files.hir(copy);
@@ -388,16 +443,6 @@ impl Walk<'_, '_> {
         let Some(source) = parsed_source(files, file) else {
             return;
         };
-        let is_constructor = |&id: &BuiltinId| Some(table::canonical_id(id)) == self.constructor;
-        let sites = 0..files.analysis(file).import_sites.len();
-        if !source.builtins.mentioned().iter().any(is_constructor)
-            && !sites.into_iter().any(|site| {
-                let module = self.find_module_answered(file, Some(site));
-                module.is_some() && module == self.modules[0]
-            })
-        {
-            return;
-        }
         let (hir, bound) = (files.hir(file), files.bound(file));
         let decisions = &files.analysis(file).decisions;
         let mut callees: Vec<ExprId> = Vec::new();
@@ -417,6 +462,7 @@ impl Walk<'_, '_> {
                 continue;
             }
             callees.push(callee);
+            self.constructs_node_workers |= constructor.is_none();
             let mut arguments = hir.ids(hir[call].args);
             if let Some(argument) = arguments.next() {
                 let options = arguments.next();
@@ -594,11 +640,7 @@ impl Walk<'_, '_> {
     }
 
     fn find_module_answered(&self, file: FileId, site: Option<usize>) -> Option<RuntimeModule> {
-        let answer = site.and_then(|site| self.files.compiled(file)?.code_answers.get(site));
-        match answer {
-            Some(&CodeAnswer::HostModule(module)) => RuntimeModule::from_registry_id(module.0),
-            _ => None,
-        }
+        find_module_answered(self.files, file, site)
     }
 
     fn follow(&mut self, file: FileId, argument: ExprId) {

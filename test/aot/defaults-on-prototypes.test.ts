@@ -9,7 +9,7 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { built, spawned } from "./run-programs";
-import { describe, test } from "./supported-with-counted-calls";
+import { describe, test } from "./supported";
 
 // `make(i)` answers an object. The lines between the two marks store the defaults.
 const idioms: Record<string, string> = {

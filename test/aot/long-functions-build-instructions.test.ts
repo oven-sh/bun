@@ -8,15 +8,19 @@ import {
   writeClassWithFields,
   writeClassWithMethods,
   writeClassWithStaticFields,
+  writeConditionalsInsideOneAnother,
   writeCountedLoopsInARow,
   writeEntriesPutIntoOneMap,
+  writeFunctionsThatCallTheNext,
   writeLocalsReadInCatch,
   writeLoopsOverOneArrayInARow,
   writeMethodsStoredIntoPrototype,
+  writeMethodsThatCallTheNext,
   writeNewObjectsStoredIntoFields,
   writeOperandsOfOneLogicalChain,
   writeParametersOfOneFunction,
   writePromisesAwaitedTogether,
+  writePromisesAwaitedTogetherAndWalked,
   writeTryBlocksInARow,
   type Program,
 } from "./long-functions-programs";
@@ -220,6 +224,47 @@ test.skipIf(isSlowBuild || isWindows)(
   "the instructions of a build are nearly linear in the number of promises awaited together",
   async () => {
     await expectLinearInstructionCount(3_000, writePromisesAwaitedTogether, 5);
+  },
+  240_000,
+);
+
+test.skipIf(isSlowBuild || isWindows)(
+  "the instructions of a build are linear in the number of functions that call the next in a ring",
+  async () => {
+    await expectLinearInstructionCount(500, writeFunctionsThatCallTheNext, 4.5);
+  },
+  240_000,
+);
+
+// The longer of the two rings does not fit on the stack of the type checker.
+test.skipIf(isSlowBuild || isWindows)(
+  "the instructions of a build are nearly linear in the number of functions that call the next in a long ring",
+  async () => {
+    await expectLinearInstructionCount(2_000, writeFunctionsThatCallTheNext, 6.5);
+  },
+  240_000,
+);
+
+test.skipIf(isSlowBuild || isWindows)(
+  "the instructions of a build are linear in the number of methods that call the next in a ring",
+  async () => {
+    await expectLinearInstructionCount(500, writeMethodsThatCallTheNext, 4.5);
+  },
+  240_000,
+);
+
+test.skipIf(isSlowBuild || isWindows)(
+  "the instructions of a build are linear in the number of conditionals inside one another",
+  async () => {
+    await expectLinearInstructionCount(3_000, writeConditionalsInsideOneAnother, 4.5);
+  },
+  240_000,
+);
+
+test.skipIf(isSlowBuild || isWindows)(
+  "the instructions of a build are nearly linear in the number of promises awaited together and walked",
+  async () => {
+    await expectLinearInstructionCount(3_000, writePromisesAwaitedTogetherAndWalked, 5.5);
   },
   240_000,
 );

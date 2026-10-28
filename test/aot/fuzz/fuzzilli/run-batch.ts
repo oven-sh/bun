@@ -548,6 +548,7 @@ const refusalsOfBunRun = [
   "Cannot declare a let variable twice",
   "Left side of assignment is not a reference",
   "Unexpected token '...'",
+  "Cannot call constructor in an optional chain",
   "Unexpected private name",
   "Ambiguous unary expression",
   "cannot cross static block boundary",

@@ -908,6 +908,8 @@ pub(crate) mod libuv_error_map;
 #[path = "SignalCode.rs"]
 pub mod signal_code;
 pub use signal_code::SignalCode;
+#[cfg(unix)]
+pub mod beneath;
 pub mod tmp;
 pub use tmp::Tmpfile;
 // `windows/mod.rs` is `#![cfg(windows)]`-gated internally; on POSIX this
@@ -1200,6 +1202,12 @@ pub mod O {
     pub const EVTONLY: i32 = libc::O_EVTONLY;
     #[cfg(not(target_os = "macos"))]
     pub const EVTONLY: i32 = 0;
+    // Darwin-only: fail with ELOOP if *any* path component is a symlink, not
+    // just the final one like O_NOFOLLOW. 0 elsewhere so the bit-or is a no-op.
+    #[cfg(target_os = "macos")]
+    pub const NOFOLLOW_ANY: i32 = libc::O_NOFOLLOW_ANY;
+    #[cfg(not(target_os = "macos"))]
+    pub const NOFOLLOW_ANY: i32 = 0;
 }
 // ──────────────────────────────────────────────────────────────────────────
 // `File` / `Dir` — high-level handles. Extracted to file.rs / dir.rs.
@@ -1895,51 +1903,61 @@ mod posix_impl {
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn openat2_beneath(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
+        use super::linux_syscall::ResolveFlags;
         let dir = dir.as_fd();
         let flags = flags | O::CLOEXEC;
-        super::linux_syscall::openat2_beneath(dir, path, flags, mode)
+        super::linux_syscall::openat2(dir, path, flags, mode, ResolveFlags::BENEATH)
             .map_err(|e| Error::from_code_int(e, Tag::open).with_path(path.as_bytes()))
     }
-    /// `openat2(RESOLVE_IN_ROOT | RESOLVE_NO_MAGICLINKS)`: resolves `path` as
-    /// if `dir` were `/`. Falls back to plain `openat` on kernels without
-    /// `openat2` (or when seccomp blocks it), caching the unavailability.
+    /// `None` on kernels without `openat2` and when seccomp blocks it, which is remembered.
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub fn openat2_in_root(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
+    pub(crate) fn openat2_if_available(
+        dir: Fd,
+        path: &ZStr,
+        flags: i32,
+        mode: Mode,
+        resolve: super::linux_syscall::ResolveFlags,
+    ) -> Option<core::result::Result<Fd, i32>> {
         use core::sync::atomic::{AtomicBool, Ordering};
         static UNAVAILABLE: AtomicBool = AtomicBool::new(false);
 
-        let dir = dir.as_fd();
+        if UNAVAILABLE.load(Ordering::Relaxed) {
+            return None;
+        }
         let flags = flags | O::CLOEXEC;
-        if !UNAVAILABLE.load(Ordering::Relaxed) {
-            match super::linux_syscall::openat2_in_root(dir, path, flags, mode) {
-                Ok(fd) => return Ok(fd),
-                Err(e @ (libc::ENOSYS | libc::EPERM | libc::EINVAL | libc::E2BIG)) => {
-                    let probe = super::linux_syscall::openat2_in_root(
-                        dir,
-                        bun_core::zstr!("."),
-                        O::PATH | O::DIRECTORY | O::CLOEXEC,
-                        0,
-                    );
-                    match probe {
-                        Err(libc::ENOSYS | libc::EPERM | libc::EINVAL | libc::E2BIG) => {
-                            UNAVAILABLE.store(true, Ordering::Relaxed);
-                        }
-                        other => {
-                            if let Ok(fd) = other {
-                                let _ = close(fd);
-                            }
-                            return Err(
-                                Error::from_code_int(e, Tag::open).with_path(path.as_bytes())
-                            );
-                        }
-                    }
-                }
-                Err(e) => {
-                    return Err(Error::from_code_int(e, Tag::open).with_path(path.as_bytes()));
-                }
+        // A rename or mount anywhere on the system while a symlink's `..` resolves is `EAGAIN`.
+        const EAGAIN_ATTEMPTS: u32 = 4;
+        let mut result = Err(libc::EAGAIN);
+        for _ in 0..EAGAIN_ATTEMPTS {
+            result = super::linux_syscall::openat2(dir, path, flags, mode, resolve);
+            if !matches!(result, Err(libc::EAGAIN)) {
+                break;
             }
         }
-        openat(dir, path, flags, mode)
+        match result {
+            Err(e @ (libc::ENOSYS | libc::EPERM | libc::EINVAL | libc::E2BIG)) => {
+                let probe = super::linux_syscall::openat2(
+                    dir,
+                    bun_core::zstr!("."),
+                    O::PATH | O::DIRECTORY | O::CLOEXEC,
+                    0,
+                    resolve,
+                );
+                match probe {
+                    Err(libc::ENOSYS | libc::EPERM | libc::EINVAL | libc::E2BIG) => {
+                        UNAVAILABLE.store(true, Ordering::Relaxed);
+                        None
+                    }
+                    other => {
+                        if let Ok(fd) = other {
+                            let _ = close(fd);
+                        }
+                        Some(Err(e))
+                    }
+                }
+            }
+            result => Some(result),
+        }
     }
     pub fn close(fd: Fd) -> Maybe<()> {
         // Call close ONCE; never retry on EINTR (Linux may have already
@@ -2407,11 +2425,8 @@ mod posix_impl {
     /// `mkdir_recursive_at` with an explicit `mode` for created directories
     /// (matches `bun.api.node.fs.NodeFS.mkdirRecursive`'s `mode` arg).
     pub fn mkdir_recursive_at_mode(dir: Fd, sub_path: &[u8], mode: Mode) -> Maybe<()> {
-        use bun_paths::{ComponentIterator, MakePathStep, PathFormat};
-        // POSIX `init` is infallible.
-        let it = ComponentIterator::init(sub_path, PathFormat::Posix).unwrap();
         let mut buf = [0u8; bun_core::MAX_PATH_BYTES];
-        bun_paths::make_path_with(it, |p| {
+        mkdir_recursive_with(sub_path, |p| {
             if p.len() >= buf.len() {
                 // Tag as `.mkdir`; keep consistent with `mkdirat`.
                 return Err(
@@ -2420,12 +2435,21 @@ mod posix_impl {
             }
             buf[..p.len()].copy_from_slice(p);
             buf[p.len()] = 0;
-            match mkdirat(dir, ZStr::from_buf(&buf[..], p.len()), mode) {
-                Ok(()) => Ok(MakePathStep::Created),
-                Err(e) if e.get_errno() == E::EEXIST => Ok(MakePathStep::Exists),
-                Err(e) if e.get_errno() == E::ENOENT => Ok(MakePathStep::NotFound(e)),
-                Err(e) => Err(e),
-            }
+            mkdirat(dir, ZStr::from_buf(&buf[..], p.len()), mode)
+        })
+    }
+    pub(crate) fn mkdir_recursive_with(
+        sub_path: &[u8],
+        mut mkdir: impl FnMut(&[u8]) -> Maybe<()>,
+    ) -> Maybe<()> {
+        use bun_paths::{ComponentIterator, MakePathStep, PathFormat};
+        // POSIX `init` is infallible.
+        let it = ComponentIterator::init(sub_path, PathFormat::Posix).unwrap();
+        bun_paths::make_path_with(it, |p| match mkdir(p) {
+            Ok(()) => Ok(MakePathStep::Created),
+            Err(e) if e.get_errno() == E::EEXIST => Ok(MakePathStep::Exists),
+            Err(e) if e.get_errno() == E::ENOENT => Ok(MakePathStep::NotFound(e)),
+            Err(e) => Err(e),
         })
     }
     pub fn unlink(path: &ZStr) -> Maybe<()> {
@@ -3078,6 +3102,88 @@ mod posix_impl {
         // NUL-terminated absolute path written into it.
         let len = unsafe { libc::strlen(p) };
         Ok(&buf.0[..len])
+    }
+    /// The canonical path of `path`, as `open` followed by `get_fd_path` reports it, but normally in one system call that opens nothing.
+    #[cfg(target_os = "macos")]
+    pub fn get_full_path<'a>(
+        path: &ZStr,
+        out: &'a mut bun_core::PathBuffer,
+    ) -> Maybe<&'a mut [u8]> {
+        // The kernel repeats the first two, which only tell it how to resolve the rest. `/dev/fd/3` stands for an open file.
+        const PREFIXES_THAT_NEED_OPEN: [&[u8]; 3] = [b"/.nofollow/", b"/.resolve/", b"/dev/fd/"];
+        match get_full_path_attribute(path, out) {
+            Ok(len)
+                if !PREFIXES_THAT_NEED_OPEN
+                    .iter()
+                    .any(|prefix| out.0[..len].starts_with(prefix)) =>
+            {
+                return Ok(&mut out.0[..len]);
+            }
+            // `open` does not find these either, and it needs a free descriptor to say so.
+            Err(err) if matches!(err.get_errno(), E::ENOENT | E::ENOTDIR | E::ELOOP) => {
+                return Err(err);
+            }
+            // `getattrlist` can fail where `open` succeeds: `EPERM` on a resource fork, `EACCES` under an ACL that denies only `readattr`, `ENOSPC` after a prefix, `ENOTSUP` on a volume without it.
+            _ => {}
+        }
+        let fd = open(path, O::RDONLY | O::NONBLOCK | O::NOCTTY, 0)?;
+        let _close = CloseOnDrop::new(fd);
+        get_fd_path(fd, out).map_err(|err| err.with_path(path.as_bytes()))
+    }
+    /// Copies `ATTR_CMN_FULLPATH` and its NUL into `out`, and returns the length without the NUL.
+    #[cfg(target_os = "macos")]
+    fn get_full_path_attribute(path: &ZStr, out: &mut bun_core::PathBuffer) -> Maybe<usize> {
+        #[repr(C)]
+        struct Reply {
+            length: u32,
+            full_path: libc::attrreference_t,
+            bytes: [u8; bun_core::MAX_PATH_BYTES],
+        }
+        let mut request = libc::attrlist {
+            bitmapcount: libc::ATTR_BIT_MAP_COUNT,
+            reserved: 0,
+            commonattr: libc::ATTR_CMN_FULLPATH,
+            volattr: 0,
+            dirattr: 0,
+            fileattr: 0,
+            forkattr: 0,
+        };
+        let mut reply = Reply {
+            length: 0,
+            full_path: libc::attrreference_t {
+                attr_dataoffset: 0,
+                attr_length: 0,
+            },
+            bytes: [0; bun_core::MAX_PATH_BYTES],
+        };
+        // SAFETY: `path` is NUL-terminated, and `request` and `reply` are valid for the sizes passed.
+        check_p!(
+            unsafe {
+                libc::getattrlist(
+                    path.as_ptr(),
+                    (&raw mut request).cast(),
+                    (&raw mut reply).cast(),
+                    size_of::<Reply>(),
+                    0,
+                )
+            },
+            Tag::realpath,
+            path
+        );
+        // The offset counts from the reference itself, and the length includes the NUL.
+        let with_nul = (reply.full_path.attr_dataoffset as usize)
+            .checked_sub(size_of::<libc::attrreference_t>())
+            .and_then(|start| {
+                reply
+                    .bytes
+                    .get(start..start + reply.full_path.attr_length as usize)
+            })
+            .filter(|with_nul| !with_nul.is_empty())
+            .ok_or_else(|| {
+                Error::from_code(E::ENAMETOOLONG, Tag::realpath).with_path(path.as_bytes())
+            })?;
+        out.0[..with_nul.len()].copy_from_slice(with_nul);
+        Ok(with_nul.len() - 1)
     }
 
     // ── fcntl/dup/pipe/io group ──

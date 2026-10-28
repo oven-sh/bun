@@ -185,6 +185,156 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     expect(result).toMatchObject({ stderr: "", files: [reversed], exitCode: 0 });
   });
 
+  // A Tailwind CSS 4 stub that follows `@import` with `loadStylesheet`, as Tailwind does.
+  const version4WithImports = {
+    ...version4,
+    "node_modules/tailwindcss/index.js": `const order = ${JSON.stringify(order)};
+exports.__unstable__loadDesignSystem = async (css, { base, loadStylesheet }) => {
+  const load = async (css, base) => {
+    for (const [, id] of css.matchAll(/@import "([^"]*)"/g)) {
+      const sheet = await loadStylesheet(id, base);
+      css += await load(sheet.content, sheet.base);
+    }
+    return css;
+  };
+  const sign = (await load(css, base)).includes("reversed") ? -1 : 1;
+  return { getClassOrder: ${getClassOrder} };
+};
+`,
+  };
+  const stylesheetOf = (css: string) => ({
+    ...version4WithImports,
+    ".oxfmtrc.json": '{ "sortTailwindcss": { "stylesheet": "./app.css" } }',
+    "app.css": css,
+    "src/a.jsx": sorted,
+  });
+
+  // Like @fontsource-variable/roboto: `./*` is listed before `./*.css`, and `./*` would map `a.css` to `a.css.css`.
+  test.each<[Record<string, unknown> | null, string]>([
+    [{ "./*": "./*.css", "./*.css": "./*.css" }, "pkg/a.css"],
+    [{ "./*": { style: "./*.css" }, "./*.css": "./*.css" }, "pkg/a.css"],
+    // `./*.css` is the most specific, doesn't match, and `./*` is next.
+    [{ "./*": "./*.css", "./*.css": "./*.css" }, "pkg/a"],
+    // `./*` maps this to `./styles/a.css`, which exists, but `./styles/*` is more specific.
+    [{ "./*": "./*.css", "./styles/*": "./*.css" }, "pkg/styles/a"],
+    // Not a map of subpaths, and with conditions.
+    [{ style: "./a.css", default: "./styles/a.css" }, "pkg"],
+    // As without `exports`.
+    [null, "pkg"],
+  ])("`@import` in `stylesheet` takes the most specific `exports` pattern, like Node: %j", async (exports, id) => {
+    const files = {
+      ...stylesheetOf(`@import "${id}";\n`),
+      "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", version: "1.0.0", exports, style: "./a.css" }),
+      "node_modules/pkg/a.css": "/* reversed */\n",
+      "node_modules/pkg/styles/a.css": "",
+    };
+    expect(await format(files, ["src/a.jsx"])).toMatchObject({ stderr: "", files: [reversed], exitCode: 0 });
+  });
+
+  // The most specific pattern is the answer, as in Node: there is no going on to the next when it has nothing for a
+  // style sheet.
+  test.each<[Record<string, unknown>, string]>([
+    [{ "./*": "./*.css", "./styles/*": { import: "./*.js" } }, "pkg/styles/a"],
+    [{ "./*": "./*.css", "./styles/*": null }, "pkg/styles/a"],
+  ])("`@import` in `stylesheet` of an `exports` subpath that is not for a style sheet: %j", async (exports, id) => {
+    const files = {
+      ...stylesheetOf(`@import "${id}";\n`),
+      "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", version: "1.0.0", exports }),
+      "node_modules/pkg/styles/a.css": "/* reversed */\n",
+    };
+    const result = await format(files, ["src/a.jsx"]);
+    expect(result.stderr).toContain(`Can't resolve '${id}' in '`);
+    expect(result.files).toEqual([sorted]);
+    expect(result.exitCode).not.toBe(0);
+  });
+
+  // Like @nuxt/ui, whose index.css has `@import "#build/ui.css"`: a package.json `imports` specifier.
+  test.each<[Record<string, unknown>, string]>([
+    [{ "#theme": "./theme.css" }, "#theme"],
+    [{ "#theme": "./theme" }, "#theme"],
+    [{ "#/theme": "./theme.css" }, "#/theme"],
+    [{ "#build/*": "./build/*.css" }, "#build/ui"],
+    // The most specific pattern, whatever the order. Then the exact key.
+    [{ "#k/*": "./all/*.css", "#k/x/*": "./x/*.css" }, "#k/x/a"],
+    [{ "#k/x/*": "./x/*.css", "#k/*": "./all/*.css" }, "#k/x/a"],
+    [{ "#k/*": "./all/*.css", "#k/a": "./theme.css" }, "#k/a"],
+    // Conditions: `style`, else `default`.
+    [{ "#theme": { style: "./theme.css", default: "./all/theme.css" } }, "#theme"],
+    [{ "#theme": { import: "./theme.js", style: "./theme.css" } }, "#theme"],
+    [{ "#theme": { import: "./theme.js", default: "./theme.css" } }, "#theme"],
+    // A package, through its `exports`.
+    [{ "#ui": "other/ui.css" }, "#ui"],
+  ])("`@import` in `stylesheet` resolves a `#` specifier through `imports`, like Node: %j", async (imports, id) => {
+    const files = {
+      ...stylesheetOf('@import "pkg";\n'),
+      "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", exports: { ".": "./index.css" }, imports }),
+      "node_modules/pkg/index.css": `@import "${id}";\n`,
+      "node_modules/pkg/theme.css": "/* reversed */\n",
+      "node_modules/pkg/theme.js": "",
+      "node_modules/pkg/build/ui.css": "/* reversed */\n",
+      "node_modules/pkg/x/a.css": "/* reversed */\n",
+      "node_modules/pkg/all/x/a.css": "",
+      "node_modules/pkg/all/theme.css": "",
+      "node_modules/other/package.json": JSON.stringify({ name: "other", exports: { "./ui.css": "./ui.css" } }),
+      "node_modules/other/ui.css": "/* reversed */\n",
+    };
+    expect(await format(files, ["src/a.jsx"])).toMatchObject({ stderr: "", files: [reversed], exitCode: 0 });
+  });
+
+  test.each<[Record<string, unknown>, string]>([
+    [{ "#theme": "./theme.css" }, "#nope"],
+    [{ "#theme": "./theme.css" }, "#"],
+    [{ "#theme/": "./theme.css" }, "#theme/"],
+    [{ "#theme": "#theme" }, "#theme"],
+    // The most specific pattern, even when it has nothing for a style sheet.
+    [{ "#k/*": "./theme.css", "#k/x/*": { import: "./x/*.js" } }, "#k/x/a"],
+    [{ "#k/*": "./theme.css", "#k/x/*": null }, "#k/x/a"],
+    [{ "#theme": "../pkg/theme.css" }, "#theme"],
+    [{ "#theme": "./missing.css" }, "#theme"],
+    [{ "#theme": { import: "./theme.css" } }, "#theme"],
+  ])("`@import` of a `#` specifier that `imports` doesn't have, or not for a style sheet: %j", async (imports, id) => {
+    const files = {
+      ...stylesheetOf('@import "pkg";\n'),
+      "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", exports: { ".": "./index.css" }, imports }),
+      "node_modules/pkg/index.css": `@import "${id}";\n`,
+      "node_modules/pkg/theme.css": "/* reversed */\n",
+    };
+    const result = await format(files, ["src/a.jsx"]);
+    expect(result.stderr).toContain(`Can't resolve '${id}' in '`);
+    expect(result.files).toEqual([sorted]);
+    expect(result.exitCode).not.toBe(0);
+  });
+
+  // The shape of @nuxt/ui 4: the `@import` is two directories down in the package, and the target is in a dot directory.
+  test("`@import` of a `#` specifier from a nested style sheet of a scoped package", async () => {
+    const files = {
+      ...stylesheetOf('@import "@nuxt/ui";\n'),
+      "node_modules/@nuxt/ui/package.json": JSON.stringify({
+        name: "@nuxt/ui",
+        exports: { ".": { types: "./dist/index.d.ts", style: "./dist/runtime/index.css", import: "./dist/index.js" } },
+        imports: { "#build/ui.css": "./.nuxt/ui.static.css" },
+      }),
+      "node_modules/@nuxt/ui/dist/runtime/index.css": '@import "#build/ui.css";\n@import "./more.css";\n',
+      "node_modules/@nuxt/ui/dist/runtime/more.css": "",
+      "node_modules/@nuxt/ui/.nuxt/ui.static.css": "/* reversed */\n",
+      "node_modules/@nuxt/ui/dist/runtime/.nuxt/ui.static.css": "",
+    };
+    expect(await format(files, ["src/a.jsx"])).toMatchObject({ stderr: "", files: [reversed], exitCode: 0 });
+  });
+
+  test("`@import` of a `#` specifier in the project's own style sheet, through the project's `imports`", async () => {
+    const files = {
+      ...version4WithImports,
+      ".oxfmtrc.json": '{ "sortTailwindcss": { "stylesheet": "./css/app.css" } }',
+      "package.json": JSON.stringify({ name: "app", imports: { "#theme": "./src/theme.css" } }),
+      "css/app.css": '@import "#theme";\n',
+      "css/src/theme.css": "",
+      "src/theme.css": "/* reversed */\n",
+      "src/a.jsx": sorted,
+    };
+    expect(await format(files, ["src/a.jsx"])).toMatchObject({ stderr: "", files: [reversed], exitCode: 0 });
+  });
+
   test("loads Tailwind CSS 3 with `config`, or with the nearest tailwind.config.*", async () => {
     const files = { ...version3, "other.js": "module.exports = { reversed: true };\n", "src/a.jsx": input };
     const nearest = { ".oxfmtrc.json": '{ "sortTailwindcss": true }', "tailwind.config.ts": "export default {};\n" };

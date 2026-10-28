@@ -4533,6 +4533,11 @@ impl<'a> LinkerContext<'a> {
             && ast_flags.contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
     }
 
+    /// Does the chunk of this file export its namespace object as `"module.exports"`?
+    pub(crate) fn chunk_module_exports_is_namespace(meta_flags: crate::js_meta::Flags) -> bool {
+        meta_flags.needs_module_exports_export && meta_flags.wrap != WrapKind::Cjs
+    }
+
     /// Is `target` a lifted CommonJS file, whose namespace object `require()` returns with no copy?
     pub(crate) fn require_returns_namespace(
         ast_flags: &[AstFlags],

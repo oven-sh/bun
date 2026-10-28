@@ -974,11 +974,11 @@ describe("bundler", () => {
       run: { file: "/out/main.js", stdout: "undefined 42 true" },
     });
   }
-  // Control: with `target: "bun"` and the default `splitRequire`, the lifted
-  // file is a chunk of its own, and this change does not reach that route.
-  // The call returns the module namespace of the chunk, which is read-only
-  // and has `__esModule: true`. `bun run` prints `undefined ok 42`.
+  // With `target: "bun"` and the default `splitRequire`, the lifted file is a
+  // chunk of its own. The chunk exports the exports object of the file as
+  // "module.exports", which `import.meta.require` returns.
   itBundled("cjs2esm/KeptRequireOfLiftedCommonJSWithSplitting-SplitRequire", {
+    matchesBunRun: true,
     files: {
       "/main.ts": /* ts */ `
         let m;
@@ -997,7 +997,7 @@ describe("bundler", () => {
     onAfterBundle(api) {
       api.expectFile("/out/main.js").toMatch(/m = import\.meta\.require\("\.\/[^"]+"\);/);
     },
-    run: { file: "/out/main.js", stdout: "true TypeError 1" },
+    run: { file: "/out/main.js", stdout: "undefined ok 42" },
   });
   // Only ESM output lifts. With CommonJS output the file keeps its wrapper.
   // With IIFE output a file with no exports is an ES module, as under any

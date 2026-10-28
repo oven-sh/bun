@@ -369,6 +369,17 @@ pub(crate) fn scan_imports_and_exports(
                                 col!(flags)[other_file].wrap = WrapKind::Cjs;
                                 col!(exports_kind)[other_file] = ExportsKind::Cjs;
                             }
+                        } else if LinkerContext::require_returns_namespace(
+                            col_ref!(ast_flags_list),
+                            col_ref!(exports_kind),
+                            col_ref!(export_star_import_records),
+                            col_ref!(import_records_list),
+                            other_file as u32,
+                        ) && require_reads_exports_object(
+                            col_ref!(dynamic_import_aliases)[id].get(&(import_record_index as u32)),
+                        ) {
+                            // `require()` of an ES module returns its `"module.exports"` export.
+                            col!(flags)[other_file].needs_module_exports_export = true;
                         }
                     }
                     ImportKind::Dynamic => {
@@ -1001,7 +1012,8 @@ pub(crate) fn scan_imports_and_exports(
                     || LinkerContext::chunk_default_export_is_namespace(
                         flag,
                         col_ref!(ast_flags_list)[id],
-                    );
+                    )
+                    || LinkerContext::chunk_module_exports_is_namespace(flag);
                 let add_wrapper = wrap != WrapKind::None;
 
                 let extra_count = (include_namespace as usize) + (add_wrapper as usize);
@@ -1448,6 +1460,19 @@ pub(crate) fn scan_imports_and_exports(
     }
 
     Ok(())
+}
+
+/// Does a `require()` observe the object it returns, and not only names that a chunk exports too?
+fn require_reads_exports_object(
+    dynamic_use: Option<&bun_ast::ast_result::DynamicImportUse>,
+) -> bool {
+    dynamic_use.is_none_or(|dynamic_use| {
+        dynamic_use
+            .aliases
+            .slice()
+            .iter()
+            .any(|alias| matches!(alias.slice(), b"default" | b"__esModule"))
+    })
 }
 
 #[inline]

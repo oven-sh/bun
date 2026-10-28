@@ -272,6 +272,8 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                     flags,
                     deps.ast_flags[chunk.entry_point.source_index() as usize],
                 );
+                let module_exports_is_namespace =
+                    LinkerContext::chunk_module_exports_is_namespace(flags);
                 if flags.wrap != WrapKind::Cjs {
                     let resolved_exports =
                         &deps.resolved_exports[chunk.entry_point.source_index() as usize];
@@ -279,7 +281,9 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                         .sorted_and_filtered_export_aliases
                         [chunk.entry_point.source_index() as usize];
                     for alias in sorted_and_filtered_export_aliases.iter() {
-                        if default_is_namespace && **alias == *b"default" {
+                        if (default_is_namespace && **alias == *b"default")
+                            || (module_exports_is_namespace && **alias == *b"module.exports")
+                        {
                             continue;
                         }
                         let export_ = resolved_exports.get(alias).unwrap();
@@ -324,7 +328,10 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
 
                 // Ensure "exports" is included if the current output format needs it
                 // https://github.com/evanw/esbuild/blob/v0.27.2/internal/linker/linker.go#L1049-L1051
-                if flags.force_include_exports_for_entry_point || default_is_namespace {
+                if flags.force_include_exports_for_entry_point
+                    || default_is_namespace
+                    || module_exports_is_namespace
+                {
                     // result intentionally discarded
                     let _ = chunk_meta.imports.put(
                         deps.exports_refs[chunk.entry_point.source_index() as usize],

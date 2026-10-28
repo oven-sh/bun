@@ -3,6 +3,7 @@ import { noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { totalmem } from "node:os";
+import * as vm from "node:vm";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
@@ -2227,7 +2228,6 @@ test("Error.captureStackTrace adds an `at <parse>` line only to a SyntaxError th
 });
 
 test("a SyntaxError from node:vm has an `at <parse>` line only if the source has a filename", () => {
-  const vm = require("node:vm");
   const parseLineOf = fn => {
     try {
       fn();
@@ -2235,20 +2235,24 @@ test("a SyntaxError from node:vm has an `at <parse>` line only if the source has
       return e.stack.split("\n").find(line => line.includes("<parse>"));
     }
   };
+  // An options object without a filename gets Node's default name. compileFunction has no default, and
+  // neither has an empty filename.
   expect({
     script: parseLineOf(() => new vm.Script("\n\n/[a-0]/", { filename: "my-script.js" })),
-    scriptWithoutAFilename: parseLineOf(() => new vm.Script("\n\n/[a-0]/")),
+    scriptWithEmptyOptions: parseLineOf(() => new vm.Script("\n\n/[a-0]/", {})),
+    scriptWithAnEmptyFilename: parseLineOf(() => new vm.Script("\n\n/[a-0]/", { filename: "" })),
     compileFunction: parseLineOf(() => vm.compileFunction("{", [], { filename: "named.js" })),
     compileFunctionWithoutAFilename: parseLineOf(() => vm.compileFunction("{")),
   }).toEqual({
     script: "    at <parse> (my-script.js:3)",
-    scriptWithoutAFilename: undefined,
+    scriptWithEmptyOptions: "    at <parse> (evalmachine.<anonymous>:3)",
+    scriptWithAnEmptyFilename: undefined,
     compileFunction: "    at <parse> (named.js:1)",
     compileFunctionWithoutAFilename: undefined,
   });
 });
 
-test("a SyntaxError from import() keeps its `at <parse>` line, with and without captured frames", async () => {
+test.concurrent("a SyntaxError from import() keeps its `at <parse>` line, with and without captured frames", async () => {
   // Bun's transpiler accepts these modules and JavaScriptCore's parser rejects the regular expression.
   // A top-level `await import()` fails with no JavaScript frame on the stack, so each error has only the
   // frames that Error.captureStackTrace gives it.

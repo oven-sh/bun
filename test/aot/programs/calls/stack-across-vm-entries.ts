@@ -69,12 +69,11 @@ function frameList(stack: unknown): string[] {
     const where = named ? named[2] : at[1];
     const position = /:(\d+):\d+$/.exec(where) ?? /:(\d+)$/.exec(where);
     if (name === "eval" && !position) continue;
-    // Plain Bun numbers the "at <parse>" line of a SyntaxError in the transpiled text.
-    seen.push(name + (position && name !== "<parse>" ? "@" + position[1] : ""));
+    seen.push(name + (position ? "@" + position[1] : ""));
   }
   return seen;
 }
-const chain = new Set(["leaf", "<anonymous>", "inner", "textMiddle", "middle", "viaNative", "replace", "outermost", "ground", "parse", "<parse>", "textThrower"]);
+const chain = new Set(["leaf", "<anonymous>", "inner", "textMiddle", "middle", "viaNative", "replace", "outermost", "ground", "parse", "textThrower"]);
 function trace(stack: unknown): string {
   const all = frameList(stack);
   let end = 0;

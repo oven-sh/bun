@@ -2497,7 +2497,7 @@ pub mod parse_worker {
         };
         opts.package_version = task.package_version.slice();
         // SAFETY: the resolver outlives the parse, which only calls it from this thread.
-        opts.import_meta_glob = Some(unsafe { js_parser::ImportMetaGlobHost::of(resolver) });
+        opts.import_meta_glob = Some(unsafe { Resolver::import_meta_glob_host(resolver) });
 
         opts.features.allow_runtime = !task.source_index.is_runtime();
         opts.features.unwrap_commonjs_to_esm =

@@ -1,3 +1,4 @@
+use bun_js_parser::ImportMetaGlobHost;
 use bun_paths::strings;
 
 use crate::dir_info::DirInfo;
@@ -5,16 +6,26 @@ use crate::package_json::{ESModule, Status};
 use crate::resolver::Resolver;
 use crate::tsconfig_json::TSConfigJSON;
 
-bun_js_parser::link_impl_ImportMetaGlobHost! {
-    Resolver for Resolver<'static> => |this| {
-        resolve_alias(importer_dir, glob) => (*this).import_meta_glob_alias(importer_dir, glob),
-    }
-}
-
 /// (absolute directory, glob relative to it)
 type GlobInDir = (Vec<u8>, Vec<u8>);
 
 impl Resolver<'_> {
+    /// # Safety
+    /// `this` must outlive the parse, which may only call it from this thread.
+    pub unsafe fn import_meta_glob_host(this: *mut Self) -> ImportMetaGlobHost {
+        unsafe fn resolve_alias(
+            resolver: *mut (),
+            importer_dir: &[u8],
+            glob: &[u8],
+        ) -> Option<GlobInDir> {
+            // SAFETY: `resolver` is the `this` below.
+            unsafe { &mut *resolver.cast::<Resolver<'_>>() }
+                .import_meta_glob_alias(importer_dir, glob)
+        }
+        // SAFETY: the caller's contract.
+        unsafe { ImportMetaGlobHost::new(this.cast(), resolve_alias) }
+    }
+
     /// Resolves a pattern like `@/pages/*.tsx` or `#pages/*.tsx`, in the same order as an import path.
     pub fn import_meta_glob_alias(
         &mut self,

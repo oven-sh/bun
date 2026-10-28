@@ -1669,12 +1669,8 @@ impl<'a> Transpiler<'a> {
                 // Only the runtime's module loader sets `allow_commonjs`. Other callers just transform text.
                 if this_parse.allow_commonjs {
                     // SAFETY: the resolver outlives the parse, which only calls it from this thread.
-                    opts.import_meta_glob = Some(unsafe {
-                        js_ast::ImportMetaGlobHost::new(
-                            js_ast::ImportMetaGlobHostKind::Resolver,
-                            &raw mut self.resolver,
-                        )
-                    });
+                    opts.import_meta_glob =
+                        Some(unsafe { Resolver::import_meta_glob_host(&raw mut self.resolver) });
                 }
 
                 // spec calls `transpiler.resolver.caches.js.parse`.

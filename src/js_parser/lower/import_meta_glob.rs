@@ -16,9 +16,29 @@ use crate::lexer::T;
 use crate::p::P;
 use crate::parser::TransposeState;
 
-bun_dispatch::link_interface! {
-    pub ImportMetaGlobHost[Resolver] {
-        fn resolve_alias(importer_dir: &[u8], glob: &[u8]) -> Option<(Vec<u8>, Vec<u8>)>;
+type ResolveAlias =
+    unsafe fn(*mut (), importer_dir: &[u8], glob: &[u8]) -> Option<(Vec<u8>, Vec<u8>)>;
+
+/// Not a `link_interface!`: some test binaries link the parser without the resolver.
+#[derive(Clone, Copy)]
+pub struct ImportMetaGlobHost {
+    resolver: *mut (),
+    resolve_alias: ResolveAlias,
+}
+
+impl ImportMetaGlobHost {
+    /// # Safety
+    /// `resolve_alias` must be safe to call with `resolver` for as long as the parse runs.
+    pub unsafe fn new(resolver: *mut (), resolve_alias: ResolveAlias) -> Self {
+        Self {
+            resolver,
+            resolve_alias,
+        }
+    }
+
+    fn resolve_alias(self, importer_dir: &[u8], glob: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
+        // SAFETY: the contract of `new`.
+        unsafe { (self.resolve_alias)(self.resolver, importer_dir, glob) }
     }
 }
 

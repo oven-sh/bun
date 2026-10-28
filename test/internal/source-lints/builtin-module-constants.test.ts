@@ -60,8 +60,8 @@ test("a constant that several built-in modules declare has one value", () => {
 
 type Value = number | string | undefined;
 
-// A member's value, in the forms that src/js writes one: left out, a number, a string, `1 << N` or an OR of members.
-// An escape can write one string in two ways, so a string with an escape is not one of the forms.
+// A member's value, in the forms that src/js writes one: left out, a number, a string, `1 << N`, a member or an OR of
+// members. An escape can write one string in two ways, so a string with an escape is not one of the forms.
 function valueOf(text: string | undefined, previous: Value, values: Map<string, Value>): Value {
   if (text === undefined) return typeof previous === "number" ? previous + 1 : undefined;
   if (/^"[^"\\]*"$/.test(text)) return text;
@@ -69,6 +69,8 @@ function valueOf(text: string | undefined, previous: Value, values: Map<string, 
   const shift = /^(\d+)\s*<<\s*(\d+)$/.exec(text);
   if (shift) return Number(shift[1]) << Number(shift[2]);
   const bits = text.split(/\s*\|\s*/).map(name => values.get(name));
+  // A member alone keeps its value. `|` would make it a 32-bit integer.
+  if (bits.length === 1) return bits[0];
   if (bits.every(bit => typeof bit === "number")) return bits.reduce((all, bit) => all | bit, 0);
 }
 
@@ -114,7 +116,9 @@ export const enum Flag {
   Destroyed = 1 << 9,
   Recorded = 1 << 9,
   ClosedOrDelivered = Closed | Delivered,
-  NotClosed = ~Closed,
+  High = 0x80000000,
+  Top = High,
+  ClosedOrShared = Closed | SHARED,
 }
 function family() {
   enum Family {
@@ -126,10 +130,11 @@ function family() {
   }
 }`;
   expect(readEnums(sample)).toEqual({
-    members: 11,
+    members: 13,
     problems: [
       "Flag: `Recorded = 1 << 9` has the value of `Destroyed`",
-      "Flag: cannot read `NotClosed = ~Closed`",
+      "Flag: `Top = High` has the value of `High`",
+      "Flag: cannot read `ClosedOrShared = Closed | SHARED`",
       'Family: `Default = "ipv4"` has the value of `IPv4`',
       'Family: cannot read `Tab = "\\t"`',
     ],

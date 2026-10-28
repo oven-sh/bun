@@ -474,6 +474,7 @@ export function initializeNextTickQueue(process: NodeJS.Process, marker: NextTic
 
 type InternalEnvMap = Record<string, string>;
 type EditWindowsEnvVarCb = (key: string, value: null | string) => void;
+type GetSharedEnv = () => InternalEnvMap | undefined;
 
 export function windowsEnv(
   internalEnv: InternalEnvMap,
@@ -482,7 +483,7 @@ export function windowsEnv(
   coerceForWrite,
   resetForDelete,
   customInspect,
-  getSharedEnv: () => InternalEnvMap | undefined,
+  getSharedEnv: GetSharedEnv,
 ) {
   let sharedEnv: InternalEnvMap | undefined;
   const shared = (): InternalEnvMap | undefined => {

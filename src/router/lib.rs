@@ -195,8 +195,7 @@ pub struct Routes {
     /// this is a fast path?
     pub(crate) static_: StringHashMap<*const Route>,
 
-    /// The route for the empty path: "index.js" on the filesystem, else the
-    /// first root-level `[[...x]]` in match order.
+    /// The route for the empty path: "index.js", else the first root-level `[[...x]]` in match order.
     /// A raw pointer co-owned with `list` (points into a `Box<Route>` owned by
     /// `list.route`). Stored as `NonNull` (not `&'a Route`) so `Routes` claims
     /// no borrow it doesn't actually take; matches `static_` above.
@@ -517,8 +516,6 @@ impl<'a> RouteLoader<'a> {
 
         let dynamic_len = dynamic_start.map_or(0, |dynamic_i| route_list.len() - dynamic_i);
 
-        // Points into a Box<Route> now owned by `route_list`; co-owned raw
-        // pointer.
         let root = match root_optional_catch_all {
             Some(i) => Some(NonNull::from(&mut *route_list.route[i])),
             None => this.index,
@@ -529,6 +526,8 @@ impl<'a> RouteLoader<'a> {
             dynamic_start,
             dynamic_len,
             static_: this.static_list,
+            // Points into a Box<Route> now owned by `route_list`; co-owned raw
+            // pointer.
             root,
         }
     }
@@ -1007,8 +1006,7 @@ pub(crate) mod sorter {
         tag as u8 + 1
     }
 
-    /// The precedence key of each dynamic route, built once so that no comparison tokenizes a name: per
-    /// token the rank of its tag, and for static text also the text and a 0. Byte order is token order.
+    /// A precedence key per dynamic route: per token its rank, and for static text also the text and a 0.
     pub(crate) struct Keys {
         bytes: Vec<u8>,
         offsets: Vec<usize>,
@@ -1052,9 +1050,7 @@ pub(crate) mod sorter {
             self.get(i).first() == Some(&rank(Tag::OptionalCatchAll))
         }
 
-        /// Static routes first, then dynamic routes in the order of Next.js's `getSortedRoutes`: at the first
-        /// token where two differ, static text beats `[x]` beats `[...x]` beats `[[...x]]`, and a route
-        /// comes before the routes under it. Routes of one shape keep the order they had.
+        /// Static routes first, then dynamic routes by key: the order of Next.js's `getSortedRoutes`.
         pub(crate) fn compare(&self, routes: &[Box<Route>], a: u32, b: u32) -> Ordering {
             let (x, y) = (&routes[a as usize], &routes[b as usize]);
             (x.kind != Tag::Static)
@@ -1065,8 +1061,7 @@ pub(crate) mod sorter {
                     _ => self.get(a).iter().cmp(self.get(b)),
                 })
                 .then_with(|| sort_by_name_string(x.match_name.as_bytes(), y.match_name.as_bytes()))
-                // Only case differs from here, and a URL reaches both names by their lowercase text.
-                // The lowercase spelling goes first: it is the one that Next.js serves for that URL.
+                // Only case differs from here. Lowercase first: the file Next.js serves for the lowercase URL.
                 .then_with(|| y.name.cmp(x.name))
         }
     }

@@ -1,4 +1,5 @@
 const fs = require("node:fs"), os = require("node:os"), path = require("node:path");
+const { once } = require("node:events");
 const { PassThrough } = require("node:stream");
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "history-"));
 const out = [];
@@ -10,7 +11,7 @@ const text = stream => { let s = ""; stream.on("data", c => (s += c)); return ()
     const input = new PassThrough(), output = new PassThrough();
     const rl = readline.createInterface({ input, output, terminal: true, historySize: 3, removeHistoryDuplicates: true });
     const lines = []; rl.on("line", l => lines.push(l)); rl.on("history", h => say("history event", h));
-    input.write("one\ntwo\none\nthree\nfour\n"); await new Promise(r => setTimeout(r, 30));
+    input.write("one\ntwo\none\nthree\nfour\n"); while (lines.length < 5) await once(rl, "line");
     say("lines", lines, "history", rl.history); rl.close();
   }
   {
@@ -25,8 +26,9 @@ const text = stream => { let s = ""; stream.on("data", c => (s += c)); return ()
     const input = new PassThrough(), output = new PassThrough(); const read = text(output);
     const server = repl.start({ input, output, terminal: true, prompt: "> ", useColors: false, useGlobal: false });
     const error = await new Promise(r => server.setupHistory(file, e => r(e)));
-    for (const c of commands) { input.write(c + "\n"); await new Promise(r => setTimeout(r, 30)); }
-    const closed = new Promise(r => server.on("exit", r)); input.write(".exit\n"); await closed; await new Promise(r => setTimeout(r, 60));
+    // The REPL saves its history a moment after each line. A ".exit" that comes before that save is saved too, so wait for the save after each line.
+    for (const c of commands) { const line = once(server, "line"); input.write(c + "\n"); await line; while (server.isFlushing) await once(server, "flushHistory"); }
+    const closed = once(server, "exit"); input.write(".exit\n"); await closed;
     return { error: error && (error.code ?? error.message), history: server.history, printed: read().replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").split(/\r?\n/).map(l => l.trim()).filter(l => /^(2|'ab'|Uncaught|3)/.test(l)) };
   };
   const file = path.join(dir, "h.txt");

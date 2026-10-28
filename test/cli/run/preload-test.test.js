@@ -47,7 +47,17 @@ describe("preload", () => {
     });
     const executable = join(String(dir), process.platform === "win32" ? "app.exe" : "app");
     await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "--aot", "--aot-allow-code-from-disk", "main.mjs", "--outfile", executable],
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--aot",
+        "--aot-allow-code-from-disk",
+        "--compile-inspector",
+        "main.mjs",
+        "--outfile",
+        executable,
+      ],
       cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",

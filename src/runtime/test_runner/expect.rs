@@ -638,7 +638,11 @@ impl Expect {
             .phase
             .entry(buntest)
             .ok_or(crate::Error::SnapshotInConcurrentGroup)?;
+        Ok(Self::snapshot_name_of(execution_entry, hint))
+    }
 
+    /// The names of the describe scopes and of the test, joined by a space, then `: hint`.
+    pub(crate) fn snapshot_name_of(execution_entry: &bun_test::ExecutionEntry, hint: &[u8]) -> Vec<u8> {
         let test_name: &[u8] = execution_entry.base.name.as_deref().unwrap_or(b"(unnamed)");
 
         let mut length: usize = 0;
@@ -686,7 +690,7 @@ impl Expect {
             curr_scope = scope.base.parent;
         }
 
-        Ok(buf)
+        buf
     }
 
     pub(crate) fn call(cx: &mut JsScope<'_>, value: JsLocal<'_>, message: JsLocal<'_>) -> JsResult<JSValue> {

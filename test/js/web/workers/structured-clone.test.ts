@@ -1,6 +1,6 @@
 import { deserialize, serialize } from "bun:jsc";
 import { openSync } from "fs";
-import { bunEnv, bunExe, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, tls } from "harness";
 import { createPrivateKey, createPublicKey, createSecretKey, KeyObject, X509Certificate } from "node:crypto";
 import { BlockList } from "node:net";
 import type { ReadableStreamDefaultReader } from "node:stream/web";
@@ -507,6 +507,87 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
             await promise;
           }
           expect(ab.byteLength).toBe(64);
+        });
+        // The copies of the pinned buffers are made before the other buffers are detached.
+        // Each one still arrives in the place of its own buffer.
+        test.each([
+          ["a pinned buffer, then a detachable one", ["pinned", "detachable"]],
+          ["a detachable buffer, then a pinned one", ["detachable", "pinned"]],
+          ["a detachable buffer between two pinned ones", ["pinned", "detachable", "pinned"]],
+        ] as const)("A transfer list with %s delivers each buffer", async (_, kinds) => {
+          const pending: Promise<void>[] = [];
+          const buffers = kinds.map((kind, index) => {
+            const ab = new ArrayBuffer(16 + index);
+            new Uint8Array(ab).fill(index + 1);
+            if (kind === "pinned") {
+              const { promise, resolve, reject } = Promise.withResolvers<void>();
+              // Starting the async deflate pins ab for the duration of the call.
+              deflate(new Uint8Array(ab), e => (e ? reject(e) : resolve()));
+              pending.push(promise);
+            }
+            return ab;
+          });
+          // The message holds the buffers in the opposite order of the list.
+          const clone: ArrayBuffer[] = structuredCloneFn(buffers.toReversed(), { transfer: buffers }).toReversed();
+          expect(clone.map(ab => Array.from(new Uint8Array(ab)))).toEqual(
+            kinds.map((_, index) => Array.from({ length: 16 + index }, () => index + 1)),
+          );
+          await Promise.all(pending);
+          expect(buffers.map(ab => ab.byteLength)).toEqual(
+            kinds.map((kind, index) => (kind === "pinned" ? 16 + index : 0)),
+          );
+        });
+        // The copy of a pinned buffer is an allocation, so it can fail. The transfer then throws
+        // before it detaches anything. The child fills its address space first: an ASAN build
+        // allocates ArrayBuffers in JSC's Gigacage, and any other build gets a limit from ulimit.
+        test.skipIf(!isLinux)("A transfer that cannot copy a Bun-pinned ArrayBuffer detaches nothing", async () => {
+          const script = `
+            const fs = require("node:fs");
+            const big = new ArrayBuffer(256 * 1024 * 1024);
+            const other = new ArrayBuffer(8);
+            const fd = fs.openSync(process.execPath, "r");
+            fs.read(fd, new Uint8Array(big), 0, 4, 0, () => fs.closeSync(fd));
+            const held = [];
+            const fill = (count, make) => {
+              try {
+                for (let i = 0; i < count; i++) held.push(make());
+              } catch {
+                return true;
+              }
+              return false;
+            };
+            fill(64, () => new ArrayBuffer(0, { maxByteLength: 2 ** 32 }));
+            const full = fill(256, () => new ArrayBuffer(64 * 1024 * 1024));
+            // Room for everything but a copy of big.
+            held.length -= 2;
+            Bun.gc(true);
+            const errors = [[big], [other, big]].map(transfer => {
+              try {
+                structuredClone(transfer, { transfer });
+              } catch (error) {
+                return error.name + ": " + error.message;
+              }
+            });
+            console.log(JSON.stringify({ full, errors, otherDetached: other.detached, bigDetached: big.detached }));
+          `;
+          await using proc = Bun.spawn({
+            cmd: isASAN
+              ? [bunExe(), "-e", script]
+              : ["sh", "-c", 'ulimit -v 8388608 && exec "$0" "$@"', bunExe(), "-e", script],
+            // A Malloc variable in the environment would take the Gigacage away.
+            env: { ...bunEnv, WebKitMallocForceEnabled: "1" },
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toBe("");
+          expect(JSON.parse(stdout)).toEqual({
+            full: true,
+            errors: ["RangeError: Out of memory", "RangeError: Out of memory"],
+            otherDetached: false,
+            bigDetached: false,
+          });
+          expect(exitCode).toBe(0);
         });
         // WebAssembly.Memory buffers carry a non-undefined [[ArrayBufferDetachKey]]
         // and must be rejected from a transfer list (per HTML's

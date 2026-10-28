@@ -353,6 +353,80 @@ Still needed:   eslint (some files go to it)
     expect(missing.exitCode).toBe(0);
   });
 
+  // The doctor can't run a processor. A block that keeps the file's name is linted as the file would be without the
+  // processor, so the report is the same with and without the `processor` line.
+  test(
+    "files with a processor whose blocks need the config's custom parser go to the installed ESLint",
+    async () => {
+      const files = {
+        "package.json": dependencies("eslint", "eslint-plugin-p"),
+        "node_modules/eslint-plugin-p/package.json": JSON.stringify({ name: "eslint-plugin-p", version: "1.0.0" }),
+        "node_modules/eslint-plugin-p/index.js": `module.exports = {
+          meta: { name: "eslint-plugin-p", version: "1.0.0" },
+          rules: { foo: { create: () => ({}) } },
+          processors: { whole: { preprocess: text => [text], postprocess: lists => lists.flat() } },
+        };`,
+        "eslint.config.js": `
+        import p from "eslint-plugin-p";
+        const parser = { meta: { name: "my-parser" }, parse() {} };
+        export default [
+          { rules: { "no-var": "error" } },
+          {
+            files: ["**/*.foo"],
+            plugins: { p },
+            processor: "p/whole",
+            languageOptions: { parser },
+            rules: { "p/foo": "error", "no-debugger": "error" },
+          },
+        ];`,
+        "a.js": "",
+        "b.foo": "<template>x</template>\n",
+        "c.foo": "<template>y</template>\n",
+      };
+      const eslint = { "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version: "10.0.0" }) };
+      const [installed, json, missing] = await Promise.all([
+        doctor({ ...files, ...eslint }),
+        doctor({ ...files, ...eslint }, ["-f", "json"]),
+        doctor(files),
+      ]);
+      expect(installed.stdout).toBe(`Using eslint.config.js (ESLint flat config)
+
+    4 files to lint
+    2 of them go to your installed ESLint: 2 *.foo
+
+    1 rule runs natively
+    0 rules run in JavaScript
+
+Still needed:   eslint (some files go to it)
+                eslint-plugin-p (eslint.config.js loads it)
+`);
+      const report = JSON.parse(json.stdout);
+      expect(report.files).toEqual({ linted: 4, by_eslint: { "*.foo": 2 }, not_linted: {} });
+      expect(report.rules).toEqual({ native: ["no-var"], javascript: {}, not_run: [] });
+      expect(report.packages.removable).toEqual([]);
+      expect(report.packages.needed).toEqual([
+        { name: "eslint", reason: "files", by: null },
+        { name: "eslint-plugin-p", reason: "config", by: "eslint.config.js" },
+      ]);
+      expect(missing.stdout).toBe(`Using eslint.config.js (ESLint flat config)
+
+    2 files to lint
+    2 files cannot be linted: 2 *.foo
+        Install eslint to lint them
+
+    1 rule runs natively
+    0 rules run in JavaScript
+
+Still needed:   eslint (some files go to it)
+                eslint-plugin-p (eslint.config.js loads it)
+`);
+      expect(installed.exitCode).toBe(0);
+      expect(json.exitCode).toBe(0);
+      expect(missing.exitCode).toBe(0);
+    },
+    timeout,
+  );
+
   test("with both an ESLint and an oxlint config, says which one is used and why", async () => {
     const files = {
       "eslint.config.js": `export default [{ rules: { "no-var": "error", eqeqeq: "error" } }];`,

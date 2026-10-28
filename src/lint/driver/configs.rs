@@ -444,6 +444,15 @@ impl Loaded {
             route => route,
         }
     }
+
+    /// [`Loaded::routes`] for the file at `path` without its processor, which is also how a block of the processor
+    /// that keeps the file's name is linted.
+    pub(crate) fn routes_without_processor(&self, config: &ResolvedConfig, path: &[u8]) -> Route {
+        match config.route_without_processor(path) {
+            Route::Eslint if self.for_eslint.is_none() => Route::Unsupported,
+            route => route,
+        }
+    }
 }
 
 pub(crate) type Found = Result<Arc<Loaded>, Fatal>;

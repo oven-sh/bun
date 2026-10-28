@@ -13414,6 +13414,41 @@ describe.concurrent("nativePluginRules", () => {
     timeout,
   );
 
+  test(
+    "--print-config adds no note for a file that the eslint package lints as a whole",
+    async () => {
+      // The custom parser sends every `.foo` file to the eslint package, so none of its rules is built in.
+      const files = {
+        ...flat,
+        ...bunfig(`["import"]`),
+        "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version: "10.0.0" }),
+        "eslint.config.js": `const hooks = require("eslint-plugin-react-hooks");
+const parser = { meta: { name: "my-parser" }, parse() {} };
+const whole = { preprocess: text => [text], postprocess: lists => lists.flat() };
+module.exports = [
+  { plugins: { "react-hooks": hooks, p: { processors: { whole } } }, rules: { "react-hooks/rules-of-hooks": "error", "no-debugger": "error" } },
+  { files: ["**/*.foo"], languageOptions: { parser } },
+  { files: ["**/*.bar"], processor: "p/whole", languageOptions: { parser } },
+];\n`,
+        "b.foo": "",
+        "c.bar": "",
+      };
+      const [js, foo, bar] = await Promise.all([
+        lint(files, ["--print-config", "a.js"]),
+        lint(files, ["--print-config", "b.foo"]),
+        lint(files, ["--print-config", "c.bar"]),
+      ]);
+      expect(js.stderr).toBe(
+        "note: these rules run in JavaScript: react-hooks/rules-of-hooks. All other rules are built in.",
+      );
+      expect(foo.stderr).toBe("");
+      expect(bar.stderr).toBe("");
+      expect(JSON.parse(foo.raw).languageOptions.parser).toBe("unknown");
+      expect(JSON.parse(bar.raw).processor).toBe("p/whole");
+    },
+    timeout,
+  );
+
   // Only built-in rules have type information.
   test(
     "a package's rule that needs type information doesn't run, and the run reports it and exits with 2",

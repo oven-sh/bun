@@ -145,10 +145,8 @@ impl Context<'_, '_> {
         it: Text,
         config: &ResolvedConfig,
     ) -> LintResult {
-        match config.route_without_processor(it.path) {
-            Route::Eslint if loaded.for_eslint.is_some() => {
-                self.verify_with_eslint(loaded, it, config).0
-            }
+        match loaded.routes_without_processor(config, it.path) {
+            Route::Eslint => self.verify_with_eslint(loaded, it, config).0,
             Route::Language => self.verify_in_config_language(loaded, it, config),
             _ => self.verify_natively(loaded, it, it.path, it.text, config),
         }
@@ -281,7 +279,7 @@ impl Context<'_, '_> {
                 self.verify_with_processor(loaded, it, config, processor)
             }
             (Route::Processor, None) => thrown(no_such_processor(config)),
-            (Route::Unsupported, _) if config.route_without_processor(it.path) == Route::Eslint => {
+            (Route::Unsupported, _) if config.routes_to_eslint(it.path) => {
                 needs_eslint()
             }
             // Same as for a file of that kind.

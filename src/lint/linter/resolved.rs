@@ -536,6 +536,12 @@ impl ResolvedConfig {
         }
     }
 
+    /// True if the `eslint` package lints the file at `path`, ignoring any processor. A block of a processor that
+    /// keeps the file's name takes the same route, so this also says where such a block goes.
+    pub fn routes_to_eslint(&self, path: &[u8]) -> bool {
+        self.route_without_processor(path) == Route::Eslint
+    }
+
     /// Returns how the file at `path` is linted. With a processor, neither the language nor the parser reads the file
     /// itself.
     pub fn route(&self, path: &[u8]) -> Route {

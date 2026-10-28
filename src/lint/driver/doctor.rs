@@ -361,7 +361,13 @@ pub(crate) fn lint(
         let Status::Matched(config) = &target.status else {
             continue;
         };
-        match target.route() {
+        // The blocks of a processor are linted as the file would be without it. Only a processor that renames
+        // its blocks can send them elsewhere, and the doctor doesn't run processors.
+        let route = match target.route() {
+            Route::Processor => target.loaded.routes_without_processor(config, &target.path),
+            route => route,
+        };
+        match route {
             Route::Eslint => {
                 files += 1;
                 by_eslint.add(&target.path);
@@ -369,7 +375,7 @@ pub(crate) fn lint(
             Route::Unsupported => {
                 not_linted.add(&target.path);
                 lacks_eslint |= target.loaded.flavor == Flavor::Eslint
-                    && config.route_without_processor(&target.path) == Route::Eslint;
+                    && config.routes_to_eslint(&target.path);
             }
             Route::Native | Route::Language | Route::Processor => {
                 files += 1;

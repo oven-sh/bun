@@ -87,6 +87,31 @@ const DEFAULT_CONSOLE_LOG_DEPTH: u16 = 2;
 
 type Counter = HashMap<u64, u32>;
 
+/// The position in a block of [`ConsoleObject::block`]. The block has `room`
+/// more bytes from `next`. What is before `next` is not written yet.
+#[derive(Clone, Copy)]
+struct Cursor {
+    next: *mut u8,
+    room: usize,
+}
+
+impl Cursor {
+    /// No message streams: there is no block.
+    const NONE: Self = Self {
+        next: core::ptr::NonNull::dangling().as_ptr(),
+        room: 0,
+    };
+
+    /// Nothing of `block` is in use. Only its capacity is used.
+    fn at_start_of(block: &mut Vec<u8>) -> Self {
+        debug_assert!(block.is_empty());
+        Self {
+            next: block.as_mut_ptr(),
+            room: block.capacity(),
+        }
+    }
+}
+
 pub struct ConsoleObject {
     stderr: Output::StreamType,
     stdout: Output::StreamType,
@@ -194,31 +219,6 @@ impl ConsoleObject {
                 self.locked[stream as usize] = false;
                 stream_mutex(stream).unlock();
             }
-        }
-    }
-}
-
-/// The position in a block of [`ConsoleObject::block`]. The block has `room`
-/// more bytes from `next`. What is before `next` is not written yet.
-#[derive(Clone, Copy)]
-struct Cursor {
-    next: *mut u8,
-    room: usize,
-}
-
-impl Cursor {
-    /// No message streams: there is no block.
-    const NONE: Self = Self {
-        next: core::ptr::NonNull::dangling().as_ptr(),
-        room: 0,
-    };
-
-    /// Nothing of `block` is in use. Only its capacity is used.
-    fn at_start_of(block: &mut Vec<u8>) -> Self {
-        debug_assert!(block.is_empty());
-        Self {
-            next: block.as_mut_ptr(),
-            room: block.capacity(),
         }
     }
 }

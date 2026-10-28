@@ -8295,9 +8295,7 @@ pub mod bv2_impl {
             bun_core::scoped_log!(ContentHasher, "HASH_UPDATE: {:?}\n", i);
             self.hasher.update(bun_core::slice_as_bytes(i));
         }
-        /// Hashes the output path that `template` prints, with `/` as the
-        /// separator on every platform. Until the template has its hash, that
-        /// is the path without the `[hash]`.
+        /// Hashes the path `template` prints with `/` separators. A template without its hash prints no `[hash]`.
         pub(crate) fn write_path(
             &mut self,
             template: &options::PathTemplate,

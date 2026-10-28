@@ -1924,8 +1924,7 @@ pub(crate) unsafe fn pending_part_range_prologue<'a>(
 }
 
 impl<'a> LinkerContext<'a> {
-    /// What `PathTemplate::print` takes for the path of a chunk. The hash of
-    /// a chunk covers its path, so both have to print it the same way.
+    /// The `PathTemplate::print` argument for a chunk path, the same for its hash and its final path.
     pub(crate) fn sanitize_parent_dirs(&self) -> bool {
         !self.options.compile_mode.is_executable()
     }
@@ -1984,8 +1983,7 @@ impl<'a> LinkerContext<'a> {
         // any import to be considered different if the import's output path has changed.
         hasher.write(&chunk.template.data);
 
-        // esbuild's template has `[dir]`, `[name]` and `[ext]` filled in by now, and
-        // ours does not: also hash the path it prints. The hash is not set yet.
+        // esbuild's template has `[dir]`, `[name]` and `[ext]` filled in by now. Ours prints them here.
         debug_assert!(chunk.template.placeholder.hash.is_none());
         hasher.write_path(&chunk.template, self.sanitize_parent_dirs());
 
@@ -2020,8 +2018,7 @@ impl<'a> LinkerContext<'a> {
         // data in the spans between them.
         match &chunk.intermediate_output {
             crate::chunk::IntermediateOutput::Pieces(pieces) => {
-                // Standalone HTML has the bytes of an asset where another build has
-                // its path (`IntermediateOutput::code_standalone`).
+                // Standalone HTML prints the bytes of an asset here, not its path.
                 let inlined_assets = self.options.compile_mode.is_standalone_html().then(|| {
                     self.parse_graph()
                         .input_files
@@ -2063,6 +2060,9 @@ impl<'a> LinkerContext<'a> {
         hasher.write(&chunk.output_source_map.prefix);
         hasher.write(&chunk.output_source_map.mappings);
         hasher.write(&chunk.output_source_map.suffix);
+
+        // The mode decides what follows the code: a debug ID, a link to the map, or the map itself.
+        hasher.write(&[chunk.content.sourcemap(self.options.source_maps) as u8]);
 
         hasher.digest()
     }
@@ -2670,8 +2670,8 @@ impl<'a> LinkerContext<'a> {
     /// every chunk it transitively reaches through cross-chunk imports or
     /// output pieces, so a change anywhere below a chunk renames it. Cycles
     /// are fine: reachability is a fixpoint over bitsets, and each chunk
-    /// digests its own hash first, then the rest of its closure in chunk order
-    /// (so two chunks that reach each other still differ).
+    /// digests its own hash first, then the sum of the rest of its closure
+    /// (so two chunks that reach each other still differ, in any chunk order).
     ///
     /// The width is the template's (`[hash]` = 8, `[hashN]` = N) unless two
     /// chunks with different hashes would print the same characters; those
@@ -2724,9 +2724,7 @@ impl<'a> LinkerContext<'a> {
                         crate::chunk::QueryKind::Chunk | crate::chunk::QueryKind::ChunkId => {
                             let chunk_index = piece.query.index();
                             out.push(chunk_index);
-                            // The edge does not say which piece names which chunk: two
-                            // pieces can trade chunks and leave the closure as it was.
-                            // esbuild keeps the name in that case.
+                            // Two pieces can trade chunks and keep the closure. esbuild keeps the name then.
                             hash.write(&chunks[chunk_index as usize].isolated_hash.to_ne_bytes());
                         }
                         crate::chunk::QueryKind::Scb => {
@@ -2776,14 +2774,17 @@ impl<'a> LinkerContext<'a> {
             .iter()
             .enumerate()
             .map(|(i, bits)| {
-                let mut hash = ContentHasher::default();
-                hash.write(&own[i].to_ne_bytes());
+                // A sum: one more entry point can put the same chunks in another order.
+                let mut rest: u64 = 0;
                 let mut iter = bits.iterator::<true, true>();
                 while let Some(j) = iter.next() {
                     if j != i {
-                        hash.write(&own[j].to_ne_bytes());
+                        rest = rest.wrapping_add(own[j]);
                     }
                 }
+                let mut hash = ContentHasher::default();
+                hash.write(&own[i].to_ne_bytes());
+                hash.write(&rest.to_ne_bytes());
                 hash.digest()
             })
             .collect();

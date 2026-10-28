@@ -723,8 +723,7 @@ impl SourceMapPieces {
     const DEBUG_ID_PLACEHOLDER: &'static [u8] = &[b'0'; DebugIDFormatter::LEN];
     const AFTER_DEBUG_ID: &'static [u8] = b"\",\n  \"names\": []\n}";
 
-    /// What follows the mappings. The debug ID covers the final chunk, which
-    /// does not exist yet, so this leaves a placeholder for `finalize`.
+    /// What follows the mappings, with a placeholder for the debug ID that `finalize` writes.
     pub fn push_suffix(j: &mut bun_core::string_joiner::StringJoiner<'_>) {
         if bun_core::FeatureFlags::SOURCE_MAP_DEBUG_ID {
             j.push_static(Self::BEFORE_DEBUG_ID);

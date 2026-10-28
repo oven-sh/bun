@@ -1,12 +1,9 @@
 use crate::mal_prelude::*;
-use bun_collections::MultiArrayList;
 use bun_core::string_joiner::{StringJoiner, Watcher};
-use bun_sourcemap::{LineColumnOffset, LineColumnOffsetOptional};
 
-use crate::chunk::IntermediateOutput;
 use crate::linker_context_mod::{GenerateChunkCtx, LinkerOptionsMode};
 use crate::thread_pool;
-use crate::{Chunk, CompileResultForSourceMap, Index, options};
+use crate::{Chunk, Index};
 
 /// This runs after we've already populated the compile results
 pub(crate) fn post_process_css_chunk(
@@ -20,16 +17,6 @@ pub(crate) fn post_process_css_chunk(
     j.watcher = Watcher {
         input: chunk.unique_key,
         ..Default::default()
-    };
-
-    // The emit step asks the same question, so a map is only built, and only
-    // hashed into the chunk's name, when it is also written.
-    let has_source_map =
-        chunk.content.sourcemap(c.options.source_maps) != options::SourceMapOption::None;
-    let mut line_offset: LineColumnOffsetOptional = if has_source_map {
-        LineColumnOffsetOptional::Value(LineColumnOffset::default())
-    } else {
-        LineColumnOffsetOptional::Null
     };
 
     let mut newline_before_comment = false;
@@ -52,10 +39,6 @@ pub(crate) fn post_process_css_chunk(
     // Concatenate the generated CSS chunks together
     let compile_results = &chunk.compile_results_for_chunk;
 
-    let mut compile_results_for_source_map: MultiArrayList<CompileResultForSourceMap> =
-        MultiArrayList::default();
-    bun_core::handle_oom(compile_results_for_source_map.set_capacity(compile_results.len()));
-
     let sources: &[bun_ast::Source] = c.parse_graph().input_files.items_source();
     for compile_result in compile_results.iter() {
         let source_index = compile_result.source_index();
@@ -66,13 +49,11 @@ pub(crate) fn post_process_css_chunk(
         {
             if newline_before_comment {
                 j.push_static(b"\n");
-                line_offset.advance(b"\n");
             }
 
             let pretty: &[u8] = sources[source_index as usize].path.pretty;
 
             j.push_static(b"/* ");
-            line_offset.advance(b"/* ");
 
             // A `*/` in the path would terminate the comment early and let the
             // rest of the path be parsed as CSS in the bundled output.
@@ -84,15 +65,12 @@ pub(crate) fn post_process_css_chunk(
                     }
                     escaped.push(byte);
                 }
-                line_offset.advance(&escaped);
                 j.push_owned(escaped.into_boxed_slice());
             } else {
                 j.push_static(pretty);
-                line_offset.advance(pretty);
             }
 
             j.push_static(b" */\n");
-            line_offset.advance(b" */\n");
         }
 
         if !compile_result.code().is_empty() {
@@ -103,30 +81,6 @@ pub(crate) fn post_process_css_chunk(
         // code() borrows from
         // compile_results which outlives the joiner; treat as static (no copy/free).
         j.push_static(compile_result.code());
-
-        if let Some(source_map_chunk) = compile_result.source_map_chunk() {
-            if has_source_map {
-                bun_core::handle_oom(compile_results_for_source_map.append(
-                    CompileResultForSourceMap {
-                        // SAFETY: bitwise alias of `chunk.compile_results_for_chunk`
-                        // (read-only and outlives this fn); see `postProcessJSChunk.rs`.
-                        source_map_chunk: unsafe { source_map_chunk.alias() },
-                        // Guaranteed `Value` here
-                        // because `has_source_map` implies `line_offset` was
-                        // initialised to `Value(_)` above.
-                        generated_offset: match line_offset {
-                            LineColumnOffsetOptional::Value(v) => v,
-                            LineColumnOffsetOptional::Null => unreachable!(),
-                        },
-                        source_index: compile_result.source_index(),
-                    },
-                ));
-            }
-
-            line_offset.reset();
-        } else {
-            line_offset.advance(compile_result.code());
-        }
     }
 
     // Make sure the file ends with a newline
@@ -145,25 +99,8 @@ pub(crate) fn post_process_css_chunk(
         bun_core::handle_oom(c.break_output_into_pieces(alloc, &mut j, ctx.chunks.len() as u32));
     // TODO: meta contents
 
-    // chunk.flags.is_executable = is_executable;
-
-    if has_source_map {
-        let can_have_shifts = matches!(chunk.intermediate_output, IntermediateOutput::Pieces(_));
-        // Copy the `ParentRef` out (not `c.resolver()`) so `output_dir`
-        // borrows the local, not `c`, avoiding the split-borrow with
-        // `c.generate_source_map_for_chunk(&mut self, …)` below.
-        let resolver = c.resolver.expect("resolver set in load()");
-        let output_dir = &resolver.opts.output_dir;
-        chunk.output_source_map = c.generate_source_map_for_chunk(
-            worker,
-            &compile_results_for_source_map,
-            output_dir,
-            can_have_shifts,
-        )?;
-    }
-
-    // After the source map, which the hash covers.
     chunk.isolated_hash = c.generate_isolated_hash(chunk, alloc);
+    // chunk.flags.is_executable = is_executable;
 
     Ok(())
 }

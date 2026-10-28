@@ -282,8 +282,7 @@ impl<'a> Chunk<'a> {
             .unwrap_or_else(|| bun_core::fmt::ContentHash::short(self.isolated_hash))
     }
 
-    /// Names this chunk and its source map. It is the final content hash
-    /// because the isolated hash leaves out the paths that the chunk prints.
+    /// Names this chunk and its source map. It covers what the final content hash covers.
     pub(crate) fn debug_id(&self) -> source_map::DebugIDFormatter {
         source_map::DebugIDFormatter {
             id: self.id().value,

@@ -93,7 +93,10 @@ impl Checker<'_, '_> {
             // An assignment may have a pattern: `({ a } = this)`.
             if matches!(
                 hir[id].kind,
-                ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::Assign { op: None, .. }
+                ExprKind::Dot { .. }
+                    | ExprKind::Index { .. }
+                    | ExprKind::PrivateIdentifier(_)
+                    | ExprKind::Assign { op: None, .. }
             ) && !bound.is_unchecked(id.idx())
                 && self.is_in_dead_code(hir[id].pos)
             {

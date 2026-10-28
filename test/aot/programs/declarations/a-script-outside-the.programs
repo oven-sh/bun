@@ -1299,8 +1299,10 @@ class Paths {
   private share = "\\\\";
   private device = "\\\\.\\";
   #root = "C:";
+  #brand = true;
   isAbsolute(path: string): boolean {
     if (process.platform === "win32") {
+      if (!(#brand in this)) return false;
       const drive: Drive = this.#root + this.separator;
       const { share } = this;
       let device = "";

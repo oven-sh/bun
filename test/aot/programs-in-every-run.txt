@@ -1291,6 +1291,7 @@ declarations/a-type-of-a-script-with-code-that-cannot-add-to-a-global-one-is-its
 declarations/class-and-function-bindings-that-are-assigned-again
 declarations/constants-copied-from-returned-object
 declarations/functions-declared-in-blocks-of-a-sloppy-file-are-read-outside-them
+declarations/names-used-only-in-removed-code
 declarations/scripts-with-code-and-a-declaration-file-add-to-one-another
 declarations/what-runs-in-a-script-with-code-takes-nothing-from-a-global-declaration
 definitions-by-descriptor/a-bound-function-that-is-a-getter-throws-where-the-language-reads-the-property
@@ -2387,6 +2388,7 @@ modules/a-required-module-settles-an-awaited-promise-and-throws-after-an-await
 modules/a-shadow-realm-imports-the-modules-that-come-with-the-runtime
 modules/a-shadow-realm-reads-globals-that-the-runtime-fills-from-its-modules
 modules/a-shell-command-starts-in-the-directory-of-the-system
+modules/a-source-phase-import
 modules/a-strict-bundle-in-the-commonjs-format-of-bun-build-returns-early-and-names-a-source-map
 modules/a-tick-of-a-commonjs-file-that-a-module-between-imports-runs-ahead-of-that-module
 modules/a-typed-constant-of-another-file-decides-what-is-loaded

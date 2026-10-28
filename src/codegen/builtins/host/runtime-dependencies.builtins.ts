@@ -601,6 +601,11 @@ const nativeCalls = [
         caller: "ensureSharedEnvStoreForWorker",
         onBehalfOf: workerConstructors,
       },
+      {
+        file: inBindings("webcore/JSWorker.cpp"),
+        caller: "JSWorkerDOMConstructor::construct",
+        onBehalfOf: workerConstructors,
+      },
     ],
   }),
 ];

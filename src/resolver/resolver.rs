@@ -3009,7 +3009,7 @@ impl<'a> Resolver<'a> {
         }
         const LEVEL: u8 = SlotUse::NoNodeModules as u8 | SlotUse::SearchLevel as u8;
         let mut stale = false;
-        let mut read_dirs: Vec<ReadDir> = Vec::new();
+        let mut read_dirs: bun_collections::smallvec::SmallVec<[ReadDir; 16]> = Default::default();
         for record in &touched.records {
             let TouchedDir::Slot { uses, slot } = *record else {
                 continue;

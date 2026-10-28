@@ -349,6 +349,62 @@ mod tests {
         );
     }
 
+    fn lingering_pool() -> &'static bun_threading::ThreadPool {
+        let config = bun_threading::thread_pool::Config {
+            max_threads: 8,
+            ..Default::default()
+        };
+        let pool = bun_threading::ThreadPool::init(config).named("Test");
+        Box::leak(Box::new(pool.lingering()))
+    }
+
+    #[test]
+    fn lingering_pool_runs_tasks_that_come_one_after_the_other() {
+        set_up_output();
+        let pool = lingering_pool();
+        static DONE: AtomicUsize = AtomicUsize::new(0);
+        for round in 1..=5000 {
+            // A thread that waits briefly takes most of the tasks. One that gave up and sleeps takes the rest.
+            if round % 50 == 0 {
+                wait_until(
+                    || pool.available_threads() == 8,
+                    "the thread never came to rest",
+                );
+            }
+            schedule_on(pool, || {
+                DONE.fetch_add(1, Ordering::SeqCst);
+            });
+            wait_until(
+                || DONE.load(Ordering::SeqCst) == round,
+                "the task never ran",
+            );
+        }
+    }
+
+    #[test]
+    fn lingering_pool_runs_every_task() {
+        set_up_output();
+        let pool = lingering_pool();
+        static DONE: AtomicUsize = AtomicUsize::new(0);
+        const SCHEDULERS: usize = 4;
+        const TASKS: usize = 20_000;
+        std::thread::scope(|scope| {
+            for _ in 0..SCHEDULERS {
+                scope.spawn(|| {
+                    for _ in 0..TASKS {
+                        schedule_on(pool, || {
+                            DONE.fetch_add(1, Ordering::SeqCst);
+                        });
+                    }
+                });
+            }
+        });
+        wait_until(
+            || DONE.load(Ordering::SeqCst) == SCHEDULERS * TASKS,
+            "a task never ran",
+        );
+    }
+
     #[test]
     fn tasks_that_wait_get_the_threads_that_a_pool_is_allowed_later() {
         set_up_output();

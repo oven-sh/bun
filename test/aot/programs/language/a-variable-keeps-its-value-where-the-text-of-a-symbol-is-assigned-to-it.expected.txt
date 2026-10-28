@@ -1,0 +1,9 @@
+caught TypeError
+at the top: number
+caught TypeError
+in a function: number
+caught TypeError
+a call on the left: number 0
+caught TypeError
+a member on the left: before
+in a finally: number

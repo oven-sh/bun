@@ -1,0 +1,4 @@
+{
+  "build": ["--aot-validate"],
+  "skipInShell": "it uses what Bun provides and the jsc shell does not: Bun.CryptoHasher, Bun.SHA256, Bun.MD5"
+}

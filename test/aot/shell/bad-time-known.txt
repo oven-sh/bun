@@ -1,0 +1,46 @@
+# Programs that end with a realm that is having a bad time, which bad-time.py does not count, and why.
+arrays/empty-arrays-of-numbers    means it: defines an index accessor on the prototype of an Array subclass; has none before that line; the plain engine has none, as for language/array-subclass-iteration
+arrays/array-creation-and-search-stubs    means it: defines an index accessor on the prototype of an Array subclass, as arrays/empty-arrays-of-numbers does
+arrays/element-stubs-by-storage-shape    means it: defines an index accessor on the prototype of an Array subclass, as arrays/empty-arrays-of-numbers does
+arrays/frozen-arrays-proxy-in-prototype-chain    has one in the plain engine too
+arrays/array-subclass-prototype-element    has one in the plain engine too
+arrays/map-callback-0-index-accessor    has one in the plain engine too
+arrays/map-callback-1-index-accessor    has one in the plain engine too
+arrays/map-callback-2-index-accessor    has one in the plain engine too
+arrays/map-callback-2-index-accessor-readonly    has one in the plain engine too
+arrays/map-callback-3-index-accessor    has one in the plain engine too
+arrays/sort-callback-0-index-accessor    has one in the plain engine too
+arrays/sort-callback-1-index-accessor    has one in the plain engine too
+arrays/sort-callback-2-index-accessor    has one in the plain engine too
+arrays/sort-callback-2-index-accessor-readonly    has one in the plain engine too
+arrays/sort-callback-3-index-accessor    has one in the plain engine too
+calls-fast-paths/index-named-members    has one in the plain engine too
+classes-and-closures/indexed-property-on-array-prototype-function    has one in the plain engine too
+counterexamples/long-array-literal-after-index-accessor    has one in the plain engine too
+counterexamples/long-array-literal-defines-index-accessor    has one in the plain engine too
+counterexamples/array-from-callback-adds-index-accessor    has one in the plain engine too
+counterexamples/filter-callback-adds-index-accessor    has one in the plain engine too
+counterexamples/map-callback-adds-index-accessor    has one in the plain engine too
+counterexamples/sort-nine-numbers-comparator-adds-index    has one in the plain engine too
+counterexamples/sort-numbers-comparator-adds-index    has one in the plain engine too
+counterexamples/sort-strings-comparator-adds-index    has one in the plain engine too
+language/array-subclass-iteration    TODO: has none in the plain engine: a getter at an index of the prototype of a class that extends Array and has no instance yet
+language/for-in-after-indexed-accessor    means it: has one in the plain engine too
+objects/object-assign-onto-instances-of-classes-with-accessors    has one in the plain engine too
+soundness/native-short-cuts-over-heirs-of-indexed-getters    means it: has one in the plain engine too
+type-rules/out-of-bounds-array-reads    has one in the plain engine too
+typed-objects/absent-fields-under-another-prototype    has one in the plain engine too
+typed-objects/index-on-array-prototype-object    has one in the plain engine too
+typed-objects/several-first-stores-under-another-prototype    has one in the plain engine too
+typed-objects/stores-under-prototypes-that-refuse-them    has one in the plain engine too: it defines a read-only property at index 0 of a class prototype; without that line it has none
+untyped-code/constant-array-literals    means it: "A BAD TIME" in program.js
+untyped-code/array-species-and-large-arrays    has one in the plain engine too
+untyped-code/inlined-constructors-meet-setters    has one in the plain engine too
+untyped-code/define-properties-own-descriptors    has one in the plain engine too
+untyped-code/empty-number-literals-pushed    has one in the plain engine too
+untyped-code/in-of-optional-field    has one in the plain engine too
+untyped-code/properties-added-under-changing-prototypes    has one in the plain engine too
+untyped-code/number-array-spread    means it: "A BAD TIME" in program.js
+untyped-code/set-prototype-of-plain-objects    TODO: has none in the plain engine, nor has its untyped twin set-prototype-of-untyped-objects: its literals are typed records, whether one has been a prototype is kept per layout, and a record of such a layout is given a prototype with an accessor at an index
+untyped-code/stores-add-properties-under-accessor-prototypes    has one in the plain engine too
+untyped-code/user-code-during-array-method    has one in the plain engine too

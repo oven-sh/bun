@@ -1,0 +1,50 @@
+// eval in many spellings. The evaluated code calls an API that the program never uses.
+//@ evaluated-code-uses-removed-api
+const text = "Bun.color('red', 'hex') + ' ' + typeof HTMLRewriter";
+//// direct
+console.log(eval(text));
+//// indirect-comma
+console.log((0, eval)(text));
+//// optional-call
+console.log(eval?.(text));
+//// variable
+const e = eval;
+console.log(e(text));
+//// globalThis-dot
+console.log(globalThis.eval(text));
+//// globalThis-bracket
+console.log(globalThis["eval"](text));
+//// globalThis-concat
+console.log(globalThis["ev" + "al"](text));
+//// globalThis-argv
+//@ not-seen
+//@ args eval
+console.log(globalThis[process.argv[2]](text));
+//// destructured
+const { eval: run } = globalThis;
+console.log(run(text));
+//// call
+console.log(eval.call(null, text));
+//// apply
+console.log(eval.apply(null, [text]));
+//// bind
+console.log(eval.bind(null)(text));
+//// Reflect-apply
+console.log(Reflect.apply(eval, null, [text]));
+//// Reflect-get
+console.log(Reflect.get(globalThis, "eval")(text));
+//// array-map
+console.log([text].map(eval)[0]);
+//// promise-then
+Promise.resolve(text).then(eval).then(console.log);
+//// in-try
+try { console.log(eval(text)); } catch (error) { console.log("caught", error.code); }
+//// indirect-in-try
+try { console.log((0, eval)(text)); } catch (error) { console.log("caught", error.code); }
+//// descriptor
+console.log(Object.getOwnPropertyDescriptor(globalThis, "eval").value(text));
+//// self
+console.log(self.eval(text));
+//// sloppy-this
+//@ ext cjs
+console.log((function () { return this; })().eval(text));

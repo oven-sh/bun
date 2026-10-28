@@ -1,0 +1,6 @@
+error: TS2815: 'arguments' cannot be referenced in property initializers or class static initialization blocks.
+error: TS2335: 'super' can only be referenced in a derived class.
+error: TS2660: 'super' can only be referenced in members of derived classes or object literal expressions.
+error: TS2337: Super calls are not permitted outside constructors or in nested functions inside constructors.
+error: TS18016: Private identifiers are not allowed outside class bodies.
+error: TS1497: Expression must be enclosed in parentheses to be used as a decorator.

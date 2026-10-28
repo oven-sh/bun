@@ -1,0 +1,14 @@
+{
+  "guarded-by-try-sloppy.import.mjs": {
+    "output": "ok [\"defined\",\"fell back\"]\n"
+  },
+  "guarded-by-try-sloppy.require.cjs": {
+    "output": "ok [\"defined\",\"fell back\"]\n"
+  },
+  "guarded-by-try-strict.import.mjs": {
+    "output": "ok [\"defined\",\"fell back\"]\n"
+  },
+  "guarded-by-try-strict.require.cjs": {
+    "output": "ok [\"defined\",\"fell back\"]\n"
+  }
+}

@@ -52,7 +52,7 @@ impl NoThisAlias {
             Some(name) => {
                 if !self.allowed_names.iter().any(|allowed| name == **allowed) {
                     cx.report(id, THIS_ASSIGNMENT)
-                        .hint("Use an arrow function instead. It has the this of the code around it.");
+                        .hint("Use an arrow function. It keeps the outer this.");
                 }
             }
             None => {

@@ -530,7 +530,6 @@ interface HookCallbacks {
   promiseResolve?(asyncId: number): void;
 }
 
-
 type TimerHook = { init?: Function; destroy?: Function; hook: object };
 let timerHooks: TimerHook[] = [];
 const asyncHooksTick = require("internal/async_hooks_tick");

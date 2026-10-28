@@ -29,22 +29,48 @@ const isBuiltinFile = "src/jsc/bindings/isBuiltinModule.cpp";
 const resolverFile = "src/resolve_builtins/HardcodedModule.rs";
 const root = path.resolve(import.meta.dir, "..", "..", "..");
 
-function asciiLiteralTable(file: string, name: string): Set<string> {
+// An entry that is commented out is not in the table.
+const withoutCommentLines = (text: string) => text.replace(/^[ \t]*\/\/.*$/gm, "");
+
+// The names of an ASCIILiteral table in their order, and the lines of it that are not one name each: a shape
+// this does not know is reported, not skipped.
+function asciiLiteralTable(file: string, name: string): { names: string[]; unread: string[] } {
   const source = readFileSync(path.join(root, file), "utf8");
   const table = new RegExp(String.raw`\b${name}\[\] = \{([^}]*)\};`).exec(source);
   if (table === null) throw new Error(`${file} no longer defines the table ${name}[]`);
-  const names = new Set(Array.from(table[1].matchAll(/"([^"]+)"_s/g), m => m[1]));
-  if (names.size === 0) throw new Error(`${file}: the table ${name}[] has no "..."_s entries`);
-  return names;
+  const names: string[] = [];
+  const unread: string[] = [];
+  for (const line of withoutCommentLines(table[1]).split("\n")) {
+    const entry = /^\s*"([^"]+)"_s,?\s*(?:\/\/.*)?$/.exec(line);
+    if (entry !== null) names.push(entry[1]);
+    else if (line.trim() !== "") unread.push(line.trim());
+  }
+  if (names.length === 0) throw new Error(`${file}: the table ${name}[] has no "..."_s entries`);
+  return { names, unread };
 }
 
-const builtinModules = asciiLiteralTable(builtinModulesFile, "builtinModuleNames");
-const isBuiltin = asciiLiteralTable(isBuiltinFile, "builtinModuleNamesSortedLength");
+const listed = asciiLiteralTable(builtinModulesFile, "builtinModuleNames");
+const accepted = asciiLiteralTable(isBuiltinFile, "builtinModuleNamesSortedLength");
+const builtinModules = new Set(listed.names);
+const isBuiltin = new Set(accepted.names);
 const onlyPrefix = Array.from(
-  readFileSync(path.join(root, resolverFile), "utf8").matchAll(/\bnode_entry_only_prefix!\("([^"]+)"\)/g),
+  withoutCommentLines(readFileSync(path.join(root, resolverFile), "utf8")).matchAll(
+    /\bnode_entry_only_prefix!\("([^"]+)"\)/g,
+  ),
   m => m[1],
 );
 if (onlyPrefix.length === 0) throw new Error(`${resolverFile} has no node_entry_only_prefix!() entries`);
+
+test("every line of the two tables is one name, and no name is there twice", () => {
+  const twice = (names: string[]) => names.filter((name, index) => names.indexOf(name) !== index);
+  expect({
+    [builtinModulesFile]: { unread: listed.unread, twice: twice(listed.names) },
+    [isBuiltinFile]: { unread: accepted.unread, twice: twice(accepted.names) },
+  }).toEqual({
+    [builtinModulesFile]: { unread: [], twice: [] },
+    [isBuiltinFile]: { unread: [], twice: [] },
+  });
+});
 
 test(`${builtinModulesFile} lists every name ${isBuiltinFile} accepts, unless notListed says why not`, () => {
   const missing = [...isBuiltin].filter(name => !builtinModules.has(name) && !Object.hasOwn(notListed, name)).sort();

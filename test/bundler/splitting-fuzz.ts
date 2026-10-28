@@ -10,6 +10,11 @@
 // the unbundled program on some fact and the folded one does not. The facts compared are (1) each value read, and
 // (2) the relative order of the top-level effects.
 //
+// `checkUnsplit` is a second check on the same graphs, built without code splitting. There every module that an
+// `import()` or a `require()` reaches is wrapped in a function that its importers call, so the order that the bundle
+// runs them in is the linker's to get right. The bundle must read every value and keep every order of top-level
+// effects that the unbundled program has.
+//
 // scripts/splitting-fuzz.ts runs many seeds against a given binary.
 import { spawn } from "bun";
 import { bunEnv, tempDir } from "harness";
@@ -29,7 +34,7 @@ function rng(seed: number) {
 
 type Graph = { files: Record<string, string>; entries: string[] };
 
-function generateGraph(seed: number): Graph {
+function generateGraph(seed: number, unsplit = false): Graph {
   const rnd = rng(seed);
   const int = (n: number) => Math.floor(rnd() * n);
   const chance = (p: number) => rnd() < p;
@@ -51,7 +56,7 @@ function generateGraph(seed: number): Graph {
   const awaits = new Set<number>();
   for (let i = 1; i < n; i++) if (chance(0.08)) awaits.add(i);
   const reachesAwait = new Set<number>(awaits);
-  for (let changed = true; changed; ) {
+  for (let changed = true; changed;) {
     changed = false;
     for (let i = 0; i < n; i++) {
       if (!reachesAwait.has(i) && staticImports[i].some(j => reachesAwait.has(j))) {
@@ -83,10 +88,25 @@ function generateGraph(seed: number): Graph {
 
   // Draws for shapes added after seeds were pinned come from a stream of their own, so old seeds keep their graphs.
   const later = rng(seed ^ 0x5bd1e995);
+  // Shapes that only the unsplit check draws, from a third stream.
+  const wrapped = rng(seed ^ 0x1b873593);
 
   const files: Record<string, string> = {};
   for (let i = 0; i < n; i++) {
-    let src = `import { note, read, attempt, later } from "./log.ts";\n`;
+    let src = `import { note, read, attempt, later${unsplit ? ", soon" : ""} } from "./log.ts";\n`;
+    const [nowDraw, nowTarget, nowEarly, polyfillDraw, starDraw, starTarget] = Array.from({ length: 6 }, wrapped);
+    // A CommonJS file that has to run before the import after it (a polyfill and the package that needs it).
+    if (unsplit && polyfillDraw < 0.15 && !pure.has(i)) {
+      src += `import "./p${i}.cjs";\nimport "./q${i}.ts";\n`;
+      files[`p${i}.cjs`] = `globalThis.p${i} = true;\nmodule.exports = {};\n`;
+      files[`q${i}.ts`] = `if (!(globalThis as any).p${i}) throw new Error("q${i} ran before p${i}");\nexport {};\n`;
+    }
+    // An import() that runs while the graph loads, so its target can be a module whose wrapper is running.
+    const nowFile = Math.floor(nowTarget * n);
+    const now =
+      unsplit && nowDraw < 0.3 && nowFile !== i && !pure.has(i)
+        ? `soon(import("./f${nowFile}.ts").then(m => read("f${i}~now${nowFile}", () => m.get${nowFile}())));\n`
+        : "";
     const importsItself = later() < 0.1 && !pure.has(i);
     if (importsItself) src += `import * as self${i} from "./f${i}.ts";\n`;
     const uses: string[] = [];
@@ -103,8 +123,20 @@ function generateGraph(seed: number): Graph {
         ? `export { get${j} as via${i}_get${j} } from "./f${j}.ts";\n`
         : `export * as ns${i}_${j} from "./f${j}.ts";\n`;
     }
+    // `export *` of a file that no import statement of this file names. A file that can be require()d stays one.
+    const star = 1 + Math.floor(starTarget * (n - 1));
+    if (
+      unsplit &&
+      starDraw < 0.25 &&
+      star !== i &&
+      !staticImports[i].includes(star) &&
+      (reachesAwait.has(i) || !reachesAwait.has(star))
+    ) {
+      src += `export * from "./f${star}.ts";\n`;
+    }
     const isPure = pure.has(i);
     if (!isPure) src += `note("f${i}");\n`;
+    if (nowEarly < 0.5) src += now;
     if (awaits.has(i)) src += `await null;\n`;
     src += `export const val${i} = "v${i}";\n`;
     src += `export function get${i}() { return val${i}; }\n`;
@@ -140,6 +172,7 @@ function generateGraph(seed: number): Graph {
         if (t !== i)
           src += `later(() => import("./f${t}.ts").then(m => read("f${i}~import${t}", () => m.get${t}())));\n`;
       }
+      if (nowEarly >= 0.5) src += now;
       src += `note("f${i}:done");\n`;
     }
     files[`f${i}.ts`] = src;
@@ -158,9 +191,9 @@ export function attempt<T>(what: string, make: () => T): T | undefined {
   try { return make(); } catch { lines.push(what + "=!"); return undefined; }
 }
 export function later(thunk: () => Promise<unknown>) { thunks.push(thunk); }
-export async function finish() {
+${unsplit ? `const waits: Promise<unknown>[] = [];\nexport function soon(wait: Promise<unknown>) { waits.push(wait); }\n` : ""}export async function finish() {
   for (let i = 0; i < thunks.length; i++) { note("later" + i); await thunks[i](); }
-  console.log(lines.join("\\n"));
+${unsplit ? "  for (let i = 0; i < waits.length; i++) await waits[i];\n" : ""}  console.log(lines.join("\\n"));
 }
 `;
   const entries = ["entry.ts"];
@@ -169,6 +202,12 @@ export async function finish() {
     const other = 1 + int(n - 1);
     files["entry2.ts"] = `import { finish } from "./log.ts";\nawait import("./f${other}.ts");\nawait finish();\n`;
     entries.push("entry2.ts");
+  }
+  // An entry that imports the graph with import statements has no wrapper. The files that an import() reaches have one.
+  const [entryDraw, secondDraw] = [wrapped(), wrapped()];
+  if (unsplit && entryDraw < 0.4) {
+    const second = entryDraw < 0.2 ? `import "./f${1 + Math.floor(secondDraw * (n - 1))}.ts";\n` : "";
+    files["entry.ts"] = `import { finish } from "./log.ts";\nimport "./f0.ts";\n${second}await finish();\n`;
   }
   return { files, entries };
 }
@@ -279,4 +318,62 @@ export async function checkGraph(bun: string, seed: number): Promise<GraphResult
   );
   const status = problems.length ? "worse" : skipped.length ? "skipped" : "ok";
   return { seed, status, folded: true, problems: problems.length ? problems : skipped };
+}
+
+/** "different": the bundle lost a value or an order that the unbundled program has, or only the bundle failed. */
+export type UnsplitResult = { seed: number; status: "ok" | "skipped" | "different"; problems: string[] };
+
+function differences(reference: string, bundled: string): string[] {
+  const [ref, out] = [facts(reference), facts(bundled)];
+  const problems: string[] = [];
+  for (const what of new Set([...ref.reads.keys(), ...out.reads.keys()])) {
+    const [value, outValue] = [ref, out].map(log => log.reads.get(what) ?? "fine");
+    if (outValue !== value) problems.push(`${what}: ${value} unbundled, ${out.reads.get(what) ?? "missing"} bundled`);
+  }
+  const at = new Map(out.effects.map((effect, index) => [effect, index]));
+  for (let a = 0; a < ref.effects.length; a++) {
+    for (let b = a + 1; b < ref.effects.length; b++) {
+      const [x, y] = [ref.effects[a], ref.effects[b]];
+      if (!(at.has(x) && at.has(y) && at.get(x)! < at.get(y)!)) problems.push(`order of ${x} and ${y} lost`);
+    }
+  }
+  return problems;
+}
+
+export async function checkUnsplit(bun: string, seed: number): Promise<UnsplitResult> {
+  const graph = generateGraph(seed, true);
+  using dir = tempDir("unsplit-fuzz", {
+    ...graph.files,
+    "build.ts": `
+      const result = await Bun.build({
+        entrypoints: ${JSON.stringify(graph.entries)}.map(entry => import.meta.dir + "/" + entry),
+        outdir: import.meta.dir + "/out",
+        target: "bun",
+        format: "esm",
+      });
+      if (!result.success) throw new Error(result.logs.join("\\n"));
+    `,
+  });
+  const cwd = String(dir);
+  const build = await run([bun, "build.ts"], cwd, env);
+  if (build.exitCode !== 0) {
+    return { seed, status: "skipped", problems: ["the build failed: " + build.stderr.slice(0, 400)] };
+  }
+  const skipped: string[] = [];
+  const problems: string[] = [];
+  await Promise.all(
+    graph.entries.map(async entry => {
+      const [reference, bundled] = await Promise.all([
+        run([bun, entry], cwd, env),
+        run([bun, join("out", entry.replace(/\.ts$/, ".js"))], cwd, env),
+      ]);
+      if (reference.exitCode !== 0)
+        skipped.push(`${entry}: the unbundled run failed: ` + reference.stderr.slice(0, 400));
+      else if (bundled.exitCode !== 0)
+        problems.push(`${entry}: only the bundle failed: ` + bundled.stderr.slice(0, 400));
+      else problems.push(...differences(reference.stdout, bundled.stdout).map(p => `${entry}: ${p}`));
+    }),
+  );
+  const status = problems.length ? "different" : skipped.length ? "skipped" : "ok";
+  return { seed, status, problems: problems.length ? problems : skipped };
 }

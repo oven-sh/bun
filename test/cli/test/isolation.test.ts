@@ -1997,9 +1997,6 @@ function transpilerCacheEnv(cacheDir: string) {
   };
 }
 
-// On a debug or ASAN build under load, a child test can need more than its 5 s default.
-const transpilerCacheChildTimeout = "--timeout=30000";
-
 // A run without isolation stores no module record in the on-disk transpiler cache. An isolated
 // run that took such an entry as it is cached a plain Module provider: JSC parsed the module
 // again in every test file, and a type-only re-export, which links only through the record,
@@ -2056,18 +2053,13 @@ test("a transpiler cache entry written without isolation gets its module record"
   const esm = (list: TranspilerCacheEntry[]) => list.filter(e => e.moduleType === 1);
   const commonjs = (list: TranspilerCacheEntry[]) => list.filter(e => e.moduleType === 2);
   const writer = async () => {
-    const { stderr, exitCode } = await runTests(String(dir), [transpilerCacheChildTimeout], ["./writer.test.ts"], env);
+    const { stderr, exitCode } = await runTests(String(dir), [], ["./writer.test.ts"], env);
     expect(stderr).toContain("1 pass");
     expect(stderr).toContain("0 fail");
     expect(exitCode).toBe(0);
   };
   const isolated = async (args: string[]) => {
-    const { stderr, exitCode } = await runTests(
-      String(dir),
-      [...args, transpilerCacheChildTimeout],
-      ["./a.test.ts", "./b.test.ts"],
-      env,
-    );
+    const { stderr, exitCode } = await runTests(String(dir), args, ["./a.test.ts", "./b.test.ts"], env);
     expect(stderr).toContain("4 pass");
     expect(stderr).toContain("0 fail");
     expect(exitCode).toBe(0);
@@ -2114,12 +2106,7 @@ test("a run without isolation does not read the module record of a transpiler ca
   const cacheDir = join(String(dir), ".cache");
   const env = transpilerCacheEnv(cacheDir);
   const run = async (args: string[]) => {
-    const { stderr, exitCode } = await runTests(
-      String(dir),
-      [...args, transpilerCacheChildTimeout],
-      ["./a.test.ts"],
-      env,
-    );
+    const { stderr, exitCode } = await runTests(String(dir), args, ["./a.test.ts"], env);
     expect(stderr).toContain("1 pass");
     expect(stderr).toContain("0 fail");
     expect(exitCode).toBe(0);
@@ -2221,12 +2208,7 @@ test("an isolated run keeps a transpiler cache entry that its own transpile does
 
   // Two files, so that `--parallel` starts workers.
   for (const args of [["--isolate"], ["--parallel=2"]]) {
-    const { stderr, exitCode } = await runTests(
-      String(dir),
-      [...args, transpilerCacheChildTimeout],
-      ["./a.test.ts", "./b.test.ts"],
-      env,
-    );
+    const { stderr, exitCode } = await runTests(String(dir), args, ["./a.test.ts", "./b.test.ts"], env);
     expect(stderr).toContain("2 pass");
     expect(stderr).toContain("0 fail");
     expect(exitCode).toBe(0);
@@ -2283,12 +2265,7 @@ test("a macro import in an isolated run does not replace a transpiler cache entr
     expect(exitCode).toBe(0);
   };
   const isolated = async (files: string[]) => {
-    const { stdout, stderr, exitCode } = await runTests(
-      String(dir),
-      ["--isolate", transpilerCacheChildTimeout],
-      files,
-      env,
-    );
+    const { stdout, stderr, exitCode } = await runTests(String(dir), ["--isolate"], files, env);
     expect(stderr).toContain(`${files.length} pass`);
     expect(stderr).toContain("0 fail");
     expect(exitCode).toBe(0);

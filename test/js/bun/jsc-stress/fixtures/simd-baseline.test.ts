@@ -203,12 +203,13 @@ describe("String search — Highway memMem/indexOfChar", () => {
   });
 });
 
-describe("JPEG codec: loops the compiler vectorizes", () => {
-  // bun_jpeg has no kernels of its own and no runtime dispatch. The compiler turns its
-  // loops into vector code for the CPU the build targets, so this traps if that is not the
-  // baseline CPU.
-  // 72 px wide: whole vectors of 32 or 16 pixels plus an 8-pixel tail; 40 px tall keeps
-  // h2v2 chroma downsampling and upsampling busy.
+describe("JPEG codec", () => {
+  // What works on a row of samples (colour conversion, downsampling, upsampling) is Highway
+  // kernels with runtime dispatch (highway_jpeg.cpp), so this traps if the dispatch picks a
+  // target that the CPU lacks. The rest of bun_jpeg is loops that the compiler turns into
+  // vector code for the CPU the build targets, so this traps if that is not the baseline CPU.
+  // 72 px wide: not a whole number of vectors of 16, 32 or 64 pixels; 40 px tall keeps h2v2
+  // chroma downsampling and upsampling busy.
   const width = 72;
   const height = 40;
 

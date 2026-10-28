@@ -1103,3 +1103,20 @@ _ZN3bun10N_AVX3_SPR13OddBlocksImplEPKhmPm          [AVX, AVX2, AVX512BW, AVX512D
 _ZN3bun11N_AVX3_ZEN419ScannerRunStopsImplEPKhmPhm  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
 _ZN3bun11N_AVX3_ZEN414LineStartsImplEPKhmPj        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
 _ZN3bun11N_AVX3_ZEN413OddBlocksImplEPKhmPm         [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
+
+
+# ----------------------------------------------------------------------------
+# Row kernels of the JPEG codec (highway_jpeg.cpp). Gate: BUN_HWY_DISPATCH ->
+# hwy::SupportedTargets() via CPUID. Same gate as the highway_strings block.
+# (10 symbols)
+# ----------------------------------------------------------------------------
+_ZN3bun6N_AVX2L13JpegToYccImplEPKhPhS3_S3_m        [AVX, AVX2]
+_ZN3bun6N_AVX2L15JpegFromYccImplEPKhS2_S2_S2_Phm   [AVX, AVX2]
+_ZN3bun6N_AVX2L17JpegH2V1FancyImplEPKhPhm          [AVX, AVX2]
+_ZN3bun6N_AVX2L17JpegH2V2FancyImplEPKhS2_Phm       [AVX, AVX2]
+_ZN3bun6N_AVX2L22JpegH2V2DownsampleImplEPKhS2_Phm  [AVX, AVX2]
+_ZN3bun6N_AVX3L13JpegToYccImplEPKhPhS3_S3_m        [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
+_ZN3bun6N_AVX3L15JpegFromYccImplEPKhS2_S2_S2_Phm   [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
+_ZN3bun6N_AVX3L17JpegH2V1FancyImplEPKhPhm          [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
+_ZN3bun6N_AVX3L17JpegH2V2FancyImplEPKhS2_Phm       [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
+_ZN3bun6N_AVX3L22JpegH2V2DownsampleImplEPKhS2_Phm  [AVX, AVX2, AVX512BW, AVX512F]

@@ -6,6 +6,8 @@ is an unmodified copy. [LICENSE.md](LICENSE.md) and [README.ijg](README.ijg) are
 
 This software is based in part on the work of the Independent JPEG Group.
 
+The same goes for `src/jsc/bindings/highway_jpeg.cpp`, which has color conversion, downsampling and upsampling in C++.
+
 The description at the top of each Rust module names the files it derives from. Their copyright notices:
 
 - `src/jdapimin.c`
@@ -226,5 +228,27 @@ The description at the top of each Rust module names the files it derives from. 
   - Copyright 2009 Pierre Ossman <ossman@cendio.se> for Cendio AB
   - Copyright (C) 2009, 2016, 2024-2025, D. R. Commander.
   - Copyright (C) 2018, Matthias Räncker.
+  - Copyright (C) 1999-2006, MIYASAKA Masaru.
+  - For conditions of distribution and use, see copyright notice in jsimdext.inc
+- `simd/x86_64/jdcolor-sse2.asm`
+  - Copyright 2009 Pierre Ossman <ossman@cendio.se> for Cendio AB
+  - Copyright (C) 2009, 2016, 2024, D. R. Commander.
+  - Copyright (C) 1999-2006, MIYASAKA Masaru.
+  - For conditions of distribution and use, see copyright notice in jsimdext.inc
+- `simd/x86_64/jdcolext-sse2.asm`
+  - Copyright 2009, 2012 Pierre Ossman <ossman@cendio.se> for Cendio AB
+  - Copyright (C) 2009, 2012, 2016, 2024-2025, D. R. Commander.
+  - Copyright (C) 2018, Matthias Räncker.
+  - Copyright (C) 2023, Aliaksiej Kandracienka.
+  - Copyright (C) 1999-2006, MIYASAKA Masaru.
+  - For conditions of distribution and use, see copyright notice in jsimdext.inc
+- `simd/x86_64/jccolor-sse2.asm`
+  - Copyright (C) 2009, 2016, 2024, D. R. Commander.
+  - Copyright (C) 1999-2006, MIYASAKA Masaru.
+  - For conditions of distribution and use, see copyright notice in jsimdext.inc
+- `simd/x86_64/jccolext-sse2.asm`
+  - Copyright (C) 2009, 2016, 2024-2025, D. R. Commander.
+  - Copyright (C) 2018, Matthias Räncker.
+  - Copyright (C) 2023, Aliaksiej Kandracienka.
   - Copyright (C) 1999-2006, MIYASAKA Masaru.
   - For conditions of distribution and use, see copyright notice in jsimdext.inc

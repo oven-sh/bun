@@ -80,13 +80,13 @@ impl McuRowSamples {
 /// Half minus epsilon, so that the largest result rounds to 255 and not to 256.
 const CBCR_OFFSET: i32 = (128 << SCALEBITS) + ONE_HALF - 1;
 
-#[inline(never)]
 fn convert(rgba: &[u8], y: &mut [u8], cb: &mut [u8], cr: &mut [u8]) {
     let (pixels, _) = rgba.as_chunks::<4>();
+    if bun_highway::jpeg::to_ycc(pixels, y, cb, cr) {
+        return;
+    }
     for (((pixel, y), cb), cr) in pixels.iter().zip(y).zip(cb).zip(cr) {
-        // Taking a pixel apart by shifts is what the compiler makes vector code of. It gathers bytes one by one.
-        let pixel = u32::from_le_bytes(*pixel);
-        let [r, g, b] = [pixel, pixel >> 8, pixel >> 16].map(|v| (v & 255) as i32);
+        let [r, g, b, _] = pixel.map(i32::from);
         *y = ((fix(0.29900) * r + fix(0.58700) * g + fix(0.11400) * b + ONE_HALF) >> SCALEBITS)
             as u8;
         *cb = ((-fix(0.16874) * r - fix(0.33126) * g + fix(0.50000) * b + CBCR_OFFSET) >> SCALEBITS)
@@ -103,12 +103,14 @@ fn expand_right_edge(row: &mut [u8], width: usize) {
     }
 }
 
-#[inline(never)]
 fn h2v2_downsample(row0: &[u8], row1: &[u8], out: &mut [u8]) {
-    // Rounding alternates between down and up, so as not to brighten or darken the image.
     let (quads0, _) = row0.as_chunks::<4>();
     let (quads1, _) = row1.as_chunks::<4>();
     let (out, _) = out.as_chunks_mut::<2>();
+    if bun_highway::jpeg::h2v2_downsample(quads0, quads1, out) {
+        return;
+    }
+    // Rounding alternates between down and up, so as not to brighten or darken the image.
     for ((a, b), out) in quads0.iter().zip(quads1).zip(out) {
         let [a0, a1, a2, a3] = a.map(u16::from);
         let [b0, b1, b2, b3] = b.map(u16::from);

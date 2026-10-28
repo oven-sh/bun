@@ -140,13 +140,6 @@ impl Decoder<'_> {
             output_width: output_width as usize,
             rows_left: output_height as usize,
             pixels: &mut pixels,
-            column_sums: try_vec_with_capacity(
-                upsamplers
-                    .iter()
-                    .map(|upsampler| upsampler.width)
-                    .max()
-                    .unwrap_or(0),
-            )?,
         };
         let total = self.total_imcu_rows;
         for imcu_row in 0..total {
@@ -315,7 +308,6 @@ struct Emitter<'p> {
     /// Rows of the image that are still to be written.
     rows_left: usize,
     pixels: &'p mut Vec<[u8; 4]>,
-    column_sums: Vec<u16>,
 }
 
 impl Emitter<'_> {
@@ -371,9 +363,8 @@ impl Emitter<'_> {
                     }
                     Method::H2V2Fancy => {
                         for y in first..first + upsampler.rowgroup_height {
-                            let sums = &mut self.column_sums;
-                            upsample::h2v2_fancy(row(y)?, row(y - 1)?, sums, out_row()?);
-                            upsample::h2v2_fancy(row(y)?, row(y + 1)?, sums, out_row()?);
+                            upsample::h2v2_fancy(row(y)?, row(y - 1)?, out_row()?);
+                            upsample::h2v2_fancy(row(y)?, row(y + 1)?, out_row()?);
                         }
                     }
                     Method::Replicate { h_expand, v_expand } => {

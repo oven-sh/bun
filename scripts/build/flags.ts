@@ -1811,6 +1811,14 @@ export const fileOverrides: FileOverride[] = [
     desc: "Vendored electron/rcedit; VersionInfo ctor throws std::system_error caught in OnEnumResourceLanguage. Self-contained throw/catch — already excluded from PCH",
   },
   {
+    file: "src/jsc/bindings/highway_jpeg.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc:
+      "Same as highway_json.cpp below. bun_jpeg, which calls these kernels for every row of an image, is optimized in " +
+      "debug builds too (Cargo.toml).",
+  },
+  {
     file: "src/jsc/bindings/highway_xml.cpp",
     extraFlags: ["-O2"],
     when: c => c.debug,

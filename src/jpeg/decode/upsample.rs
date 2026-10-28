@@ -27,44 +27,26 @@ impl Method {
 /// edge sample repeats, which leaves the outermost samples as they are.
 ///
 /// The result is `(3 * near + far + bias) >> shift`.
-#[inline(always)]
-fn widen<T: Copy + Into<u16>>(input: &[T], output: &mut [u8], bias: [u16; 2], shift: u32) {
-    let (pairs, _) = output.as_chunks_mut::<2>();
-    let [bias_left, bias_right] = bias;
-    let sample =
-        |near: T, far: T, bias: u16| ((near.into() * 3 + far.into() + bias) >> shift) as u8;
-
-    let (Some(&first), Some(&last)) = (input.first(), input.last()) else {
-        return;
-    };
-    let before = input;
-    let at = input.get(1..).unwrap_or(&[]);
-    let after = input.get(2..).unwrap_or(&[]);
-    let inner = pairs.get_mut(1..).unwrap_or(&mut []);
-    for (((pair, &before), &at), &after) in inner.iter_mut().zip(before).zip(at).zip(after) {
+fn widen(
+    input: impl DoubleEndedIterator<Item = u16> + Clone,
+    output: &mut [[u8; 2]],
+    [bias_left, bias_right]: [u16; 2],
+    shift: u32,
+) {
+    let sample = |near: u16, far: u16, bias: u16| ((near * 3 + far + bias) >> shift) as u8;
+    let before = input.clone().take(1).chain(input.clone());
+    let after = input.clone().skip(1).chain(input.clone().next_back());
+    for (((pair, at), before), after) in output.iter_mut().zip(input).zip(before).zip(after) {
         *pair = [sample(at, before, bias_left), sample(at, after, bias_right)];
-    }
-
-    let second = at.first().copied().unwrap_or(first);
-    if let Some(pair) = pairs.first_mut() {
-        *pair = [
-            sample(first, first, bias_left),
-            sample(first, second, bias_right),
-        ];
-    }
-    if let Some(i) = input.len().checked_sub(2)
-        && let (Some(&before), Some(pair)) = (input.get(i), pairs.get_mut(i + 1))
-    {
-        *pair = [
-            sample(last, before, bias_left),
-            sample(last, last, bias_right),
-        ];
     }
 }
 
 /// `output` has room for twice the samples of `input`.
 pub(crate) fn h2v1_fancy(input: &[u8], output: &mut [u8]) {
-    widen(input, output, [1, 2], 2);
+    let (output, _) = output.as_chunks_mut::<2>();
+    if !bun_highway::jpeg::h2v1_fancy(input, output) {
+        widen(input.iter().copied().map(u16::from), output, [1, 2], 2);
+    }
 }
 
 /// One of the two rows that `near` turns into: the one on the side of `far`. `upper` says which side that is.
@@ -75,16 +57,14 @@ pub(crate) fn h1v2_fancy(near: &[u8], far: &[u8], upper: bool, output: &mut [u8]
     }
 }
 
-/// One of the two rows that `near` turns into: the one on the side of `far`. `column_sums` is scratch space with room for
-/// a number for every sample of `near`.
-pub(crate) fn h2v2_fancy(near: &[u8], far: &[u8], column_sums: &mut Vec<u16>, output: &mut [u8]) {
-    column_sums.clear();
-    column_sums.extend(
-        near.iter()
-            .zip(far)
-            .map(|(&near, &far)| u16::from(near) * 3 + u16::from(far)),
-    );
-    widen(column_sums, output, [8, 7], 4);
+/// One of the two rows that `near` turns into: the one on the side of `far`.
+pub(crate) fn h2v2_fancy(near: &[u8], far: &[u8], output: &mut [u8]) {
+    let (output, _) = output.as_chunks_mut::<2>();
+    if !bun_highway::jpeg::h2v2_fancy(near, far, output) {
+        let columns = near.iter().zip(far);
+        let sums = columns.map(|(&near, &far)| u16::from(near) * 3 + u16::from(far));
+        widen(sums, output, [8, 7], 4);
+    }
 }
 
 /// `output` has room for `h_expand` times the samples of `input`.

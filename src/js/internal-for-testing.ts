@@ -58,6 +58,15 @@ export const highwayStringsForTesting: (
   arg: number | Uint8Array,
 ) => number = $newCppFunction("highway_strings_testing.cpp", "Bun__highwayStringsForTesting", 3);
 
+// The kernels of the JPEG codec that work on a row of samples (src/jsc/bindings/highway_jpeg.cpp), driven directly so
+// tests can give them rows of every length. `rows` are the pointers of the kernel, in its order. False: the row is too
+// short for the kernel, which has done nothing.
+export const highwayJpegForTesting: (
+  op: "fromYcc" | "toYcc" | "h2v2Downsample" | "h2v1Fancy" | "h2v2Fancy",
+  n: number,
+  ...rows: (Uint8Array | null)[]
+) => boolean = $newCppFunction("highway_jpeg_testing.cpp", "Bun__highwayJpegForTesting", 2);
+
 export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
 export const setSQLiteColumnNameTransform = (
   statement: import("bun:sqlite").Statement,

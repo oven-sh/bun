@@ -8,6 +8,9 @@
 //! Only what `Bun.Image` needs is here. Decoding: 8-bit baseline, extended sequential and progressive streams, Huffman or
 //! arithmetic coded, and lossless Huffman streams of up to 8 bits, to RGBA or CMYK, at 1/8 to 8/8 of the size.
 //! Encoding: RGBA to 4:2:0 YCbCr, baseline or progressive.
+//!
+//! Color conversion, downsampling and upsampling have kernels in C++ (`bun_highway::jpeg`). The Rust next to each call
+//! says what the kernel computes, and does the rows that are too short for it.
 
 #![feature(allocator_api)]
 #![forbid(unsafe_code)]

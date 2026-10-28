@@ -868,9 +868,11 @@ impl<'a> HTTPClient<'a> {
     /// are a compile-time fiction on raw pointers; consumers re-derive a
     /// short-lived `&mut` when accessing. Centralizing the cast keeps every
     /// such erasure auditable at one definition.
+    ///
+    /// Takes `&mut self` because holders later write through the pointer. A
+    /// pointer made from `&self` would only allow reads.
     #[inline(always)]
-    pub(crate) fn as_erased_ptr(&self) -> NonNull<HTTPClient<'static>> {
-        // SAFETY: `self` is a valid reference (non-null, aligned).
+    pub(crate) fn as_erased_ptr(&mut self) -> NonNull<HTTPClient<'static>> {
         NonNull::from(self).cast::<HTTPClient<'static>>()
     }
 
@@ -921,11 +923,16 @@ pub(crate) static HTTP_THREAD: bun_core::ThreadCell<core::mem::MaybeUninit<HTTPT
 static HTTP_THREAD_INIT: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
+/// Raw pointer to the HTTP thread state.
+///
+/// HTTP-thread code that can run inside a request or socket callback reaches
+/// single fields through this pointer instead of making a `&mut HTTPThread`.
+/// The event loop further up the stack may be using other fields at the time.
 #[inline]
-pub fn http_thread() -> &'static mut HTTPThread {
+pub(crate) fn http_thread_ptr() -> *mut HTTPThread {
     // Release-mode guard, not `debug_assert!`: `HTTPThread` contains
     // niche-bearing fields (`Box`, `Vec`, `NonNull`, `Option<Arc>` …), so
-    // `assume_init_mut()` on the uninitialized static is *immediate* UB — a
+    // using the uninitialized static is *immediate* UB — a
     // `debug_assert!` leaves release builds unguarded. The `Acquire` load
     // pairs with `init_once`'s `Release` store on `HTTP_THREAD_INIT`,
     // establishing happens-before for cross-thread callers that did not
@@ -935,11 +942,18 @@ pub fn http_thread() -> &'static mut HTTPThread {
         HTTP_THREAD_INIT.load(core::sync::atomic::Ordering::Acquire),
         "http_thread() called before HTTPThread::init()"
     );
-    // SAFETY: `HTTP_THREAD_INIT == true` (checked above) is set only after
-    // `HTTP_THREAD.write(..)` in `init_once`, so the `MaybeUninit` is fully
-    // written. Thread-affinity is documented (HTTP-thread-only after
-    // `on_start`); the `ThreadCell` owner assert covers debug.
-    unsafe { (*HTTP_THREAD.get()).assume_init_mut() }
+    // `MaybeUninit<T>` has the layout of `T`, and `HTTP_THREAD_INIT == true`
+    // (checked above) is set only after `HTTP_THREAD.write(..)` in
+    // `init_once`, so the value behind this pointer is fully written.
+    HTTP_THREAD.get().cast::<HTTPThread>()
+}
+
+#[inline]
+pub fn http_thread() -> &'static mut HTTPThread {
+    // SAFETY: `http_thread_ptr` points at the initialized state. Thread-affinity
+    // is documented (HTTP-thread-only after `on_start`); the `ThreadCell`
+    // owner assert covers debug.
+    unsafe { &mut *http_thread_ptr() }
 }
 #[inline]
 pub(crate) fn http_thread_mut() -> &'static mut HTTPThread {
@@ -2466,9 +2480,13 @@ impl<'a> HTTPClient<'a> {
             if let Some(ctx) = self.custom_ssl_ctx.as_ref() {
                 return ctx.as_ptr().cast::<GenHttpContext<IS_SSL>>();
             }
-            (&raw mut http_thread().https_context).cast::<GenHttpContext<IS_SSL>>()
+            // SAFETY: field address only; no reference to the whole thread state.
+            unsafe {
+                (&raw mut (*http_thread_ptr()).https_context).cast::<GenHttpContext<IS_SSL>>()
+            }
         } else {
-            (&raw mut http_thread().http_context).cast::<GenHttpContext<IS_SSL>>()
+            // SAFETY: field address only; no reference to the whole thread state.
+            unsafe { (&raw mut (*http_thread_ptr()).http_context).cast::<GenHttpContext<IS_SSL>>() }
         }
     }
 
@@ -2477,7 +2495,7 @@ impl<'a> HTTPClient<'a> {
     /// through as a parameter) to `&mut`.
     ///
     /// INVARIANT: every value reaching here is one of two thread-owned,
-    /// set-once non-null pointers — `&raw mut http_thread().http(s)_context`
+    /// set-once non-null pointers — `&raw mut (*http_thread_ptr()).http(s)_context`
     /// or the heap-boxed `custom_ssl_ctx` on which the client holds a strong
     /// intrusive ref — both live for the call. The context is a separate
     /// allocation from `HTTPClient`, so the returned `&mut` does not alias any
@@ -2903,7 +2921,7 @@ impl<'a> HTTPClient<'a> {
                     // SAFETY: runs on the HTTP thread after `HTTPThread::init`
                     // set `uws_loop` to its live `us_loop_t`.
                     let h3_ctx = h3::ClientContext::get_or_create(unsafe {
-                        NonNull::new_unchecked(http_thread().uws_loop)
+                        NonNull::new_unchecked((*http_thread_ptr()).uws_loop)
                     });
                     if let Some(ctx) = h3_ctx {
                         if !h3::ClientContext::as_mut(ctx).connect(
@@ -2958,7 +2976,7 @@ impl<'a> HTTPClient<'a> {
             // SAFETY: runs on the HTTP thread after `HTTPThread::init` set
             // `uws_loop` to its live `us_loop_t`.
             let Some(ctx) = h3::ClientContext::get_or_create(unsafe {
-                NonNull::new_unchecked(http_thread().uws_loop)
+                NonNull::new_unchecked((*http_thread_ptr()).uws_loop)
             }) else {
                 self.fail(crate::Error::HTTP3Unsupported);
                 self.complete_connecting_process();
@@ -3049,7 +3067,8 @@ impl<'a> HTTPClient<'a> {
             return Ok(());
         }
 
-        let deflater = http_thread().deflater();
+        // SAFETY: HTTP thread; `deflater` is not held across another call to it.
+        let deflater = unsafe { HTTPThread::deflater() };
         let out =
             compress_body::compress_into(deflater, input, &opt, &mut self.compressed_request_body)?;
         let slice: &[u8] = match out {
@@ -3242,14 +3261,13 @@ impl<'a> HTTPClient<'a> {
             if socket.is_closed() || socket.is_shutdown() {
                 return Err(crate::Error::ConnectionClosed);
             }
-            let proxy = proxy_tunnel::raw_as_mut(proxy_ptr);
             // Any Err is backpressure: WantRead/WantWrite retry on the next
             // on_writable, and a fatal SSL error already ran on_close (and
             // may have freed *self), so bail via Ok(true) without touching
             // self — same as the other ProxyTunnel::write callers.
             let pending = buffer.slice().len();
             if pending > 0 {
-                let Ok(n) = ProxyTunnel::write(proxy, buffer.slice()) else {
+                let Ok(n) = ProxyTunnel::write(proxy_ptr, buffer.slice()) else {
                     let _ = buffer.write(data);
                     return Ok(true);
                 };
@@ -3262,7 +3280,7 @@ impl<'a> HTTPClient<'a> {
                 buffer.reset();
             }
             if !data.is_empty() {
-                let Ok(n) = ProxyTunnel::write(proxy, data) else {
+                let Ok(n) = ProxyTunnel::write(proxy_ptr, data) else {
                     let _ = buffer.write(data);
                     return Ok(true);
                 };
@@ -3569,17 +3587,13 @@ impl<'a> HTTPClient<'a> {
             RequestStage::ProxyBody => {
                 bun_core::scoped_log!(fetch, "send proxy body");
                 if let Some(proxy_ptr) = self.proxy_tunnel.as_ref().map(|p| p.as_ptr()) {
-                    // Detached upgrade so `&mut self` can be reborrowed below;
-                    // the tunnel is a disjoint heap allocation (see
-                    // `proxy_tunnel::raw_as_mut` INVARIANT).
-                    let proxy = proxy_tunnel::raw_as_mut(proxy_ptr);
                     match &self.state.original_request_body {
                         HTTPRequestBody::Bytes(_) => {
                             self.set_timeout(&socket);
 
                             let to_send = self.request_body();
                             // just wait and retry when onWritable! if closed internally will call proxy.onClose
-                            let Ok(sent) = ProxyTunnel::write(proxy, to_send) else {
+                            let Ok(sent) = ProxyTunnel::write(proxy_ptr, to_send) else {
                                 return;
                             };
 
@@ -3606,10 +3620,6 @@ impl<'a> HTTPClient<'a> {
             RequestStage::ProxyHeaders => {
                 bun_core::scoped_log!(fetch, "send proxy headers");
                 if let Some(proxy_ptr) = self.proxy_tunnel.as_ref().map(|p| p.as_ptr()) {
-                    // Detached upgrade so `&mut self` can be reborrowed below;
-                    // the tunnel is a disjoint heap allocation (see
-                    // `proxy_tunnel::raw_as_mut` INVARIANT).
-                    let proxy = proxy_tunnel::raw_as_mut(proxy_ptr);
                     self.set_timeout(&socket);
                     // Proxy-tunnel writes can be partial across event-loop ticks
                     // — compress straight into the Vec.
@@ -3648,7 +3658,7 @@ impl<'a> HTTPClient<'a> {
                         return;
                     }
                     // just wait and retry when onWritable! if closed internally will call proxy.onClose
-                    let Ok(amount) = ProxyTunnel::write(proxy, to_send) else {
+                    let Ok(amount) = ProxyTunnel::write(proxy_ptr, to_send) else {
                         return;
                     };
 

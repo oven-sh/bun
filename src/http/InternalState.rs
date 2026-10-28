@@ -318,7 +318,8 @@ impl<'a> InternalState<'a> {
                 self.flags.is_libdeflate_fast_path_disabled = true;
 
                 log!("Decompressing {} bytes with libdeflate\n", buffer.len());
-                let deflater = crate::http_thread().deflater();
+                // SAFETY: HTTP thread; not held across another `deflater` call.
+                let deflater = unsafe { crate::HTTPThread::deflater() };
 
                 // If we know that the stream is going to be larger than our
                 // pre-allocated buffer, then let's dynamically allocate the exact

@@ -447,15 +447,14 @@ fn on_handshake(
 }
 
 pub(crate) fn write_encrypted(ctx: *mut HTTPClient, encoded_data: &[u8]) {
-    // write_encrypted is fired from inside SSLWrapper::flush/handle_traffic;
-    // the call chains that reach here (e.g. on_handshake → on_writable → flush,
-    // on_open → flush) each NLL-end their `client_from_ctx`/`*ctx` borrow
-    // before reentering, so there is NO live `&mut HTTPClient` anywhere up the
-    // stack — re-deriving via the centralised `client_from_ctx` accessor here
-    // is the sole live borrow, dropped immediately after copying out the
-    // tunnel pointer. The pointee is alive: this client holds a
-    // strong ref to the tunnel for the duration of tunneling.
-    let Some(proxy_nn) = client_from_ctx(ctx).proxy_tunnel_ptr() else {
+    // write_encrypted is fired from inside SSLWrapper::write_data/flush/
+    // handle_traffic. Some callers of `ProxyTunnel::write` are methods on this
+    // same client that still hold `&mut self` (e.g.
+    // `write_to_stream_using_buffer`), so do not make a second
+    // `&mut HTTPClient` here: read only the `proxy_tunnel` field.
+    // SAFETY: `ctx` is the live client (see `client_from_ctx`); this borrows
+    // one field, which those callers do not write while calling in.
+    let Some(proxy_nn) = (unsafe { (*ctx).proxy_tunnel.as_ref() }).map(|p| p.as_non_null()) else {
         return;
     };
     // Live intrusive-refcounted tunnel. Access `write_buffer` and `socket` via
@@ -518,7 +517,7 @@ fn on_close(ctx: *mut HTTPClient) {
             Ok(()) => {
                 // `this` dead (NLL); reborrow via `client_from_ctx` inside.
                 progress_update_for_proxy_socket(ctx, proxy_nn);
-                crate::http_thread().schedule_proxy_deref(keepalive);
+                crate::HTTPThread::schedule_proxy_deref(keepalive);
                 return;
             }
             Err(e) => fail_err = Some(e),
@@ -543,7 +542,7 @@ fn on_close(ctx: *mut HTTPClient) {
         }
     }
     ProxyTunnel::set_socket(proxy_nn, Socket::None);
-    crate::http_thread().schedule_proxy_deref(keepalive);
+    crate::HTTPThread::schedule_proxy_deref(keepalive);
 }
 
 /// `ctx` and `proxy` must be live. Caller must not hold `&mut HTTPClient` or
@@ -744,8 +743,11 @@ impl ProxyTunnel {
         // _guard derefs here.
     }
 
-    pub(crate) fn write(&mut self, buf: &[u8]) -> Result<usize, Error> {
-        if let Some(wrapper) = &self.wrapper {
+    /// Encrypt `buf` into the tunnel. Takes a raw pointer, not `&mut self`:
+    /// `write_data` calls back into `write_encrypted`, which writes to
+    /// `write_buffer` of this same tunnel. Only `wrapper` is borrowed here.
+    pub(crate) fn write(this: *mut Self, buf: &[u8]) -> Result<usize, Error> {
+        if let Some(wrapper) = Self::wrapper_ref(this) {
             return wrapper.write_data(buf).map_err(|e| match e {
                 WriteDataError::ConnectionClosed => crate::Error::ConnectionClosed,
                 WriteDataError::WantRead => crate::Error::WantRead,

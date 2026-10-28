@@ -1064,7 +1064,7 @@ export class Client extends EventEmitter {
 
   /** The next `received-hmr-event` ack. Rejects if the client exits or the timeout passes first. */
   nextAck(waitingFor: string, timeout = 2000 * WAIT_MULTIPLIER): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
+    const ack = new Promise<void>((resolve, reject) => {
       if (this.exited) return reject(clientExitedWhile(waitingFor, this.exitCode ?? "unknown"));
       const cleanup = () => {
         clearTimeout(timer);
@@ -1089,6 +1089,9 @@ export class Client extends EventEmitter {
       this.once("received-hmr-event", onAck);
       this.once("exit", onExit);
     });
+    // A test registers the wait before the save and awaits it after. If the test fails in between, this rejection has no handler.
+    ack.catch(() => {});
+    return ack;
   }
 
   /** Sends a request to client-fixture.mjs and returns its reply. Rejects if the client exits first. */

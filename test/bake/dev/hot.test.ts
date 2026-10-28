@@ -1466,7 +1466,9 @@ devTest("a file that its writer still appends to does not hold the reload past i
     await c.expectElemText("#a", "a2");
   },
 });
-// Keeps a bundle that loads slow.ts open for as long as hold/on exists, and one that loads slow2.ts for hold/on2.
+// Beside the project: `ReadDirectoryChangesW` reports each file in the tree of the project, and a third file event behind a bundle replaces the second (#42739).
+const gate = (dev: Dev, name: "on" | "on2" = "on") => `${dev.rootDir}.${name}`;
+// Keeps a bundle that loads slow.ts open for as long as its gate file exists, and one that loads slow2.ts for the second gate file.
 const slowBundle = {
   "bunfig.toml": `
     [serve.static]
@@ -1474,13 +1476,12 @@ const slowBundle = {
   `,
   "hold-plugin.ts": `
     import { existsSync, readFileSync } from "node:fs";
-    import { join } from "node:path";
 
     export default {
       name: "hold",
       setup(build) {
         build.onLoad({ filter: /slow2?\\.ts$/ }, async args => {
-          const on = join(import.meta.dir, "hold", args.path.endsWith("slow2.ts") ? "on2" : "on");
+          const on = import.meta.dir + (args.path.endsWith("slow2.ts") ? ".on2" : ".on");
           if (existsSync(on)) {
             console.log("hold-plugin: the bundle is open");
             while (existsSync(on)) await Bun.sleep(5);
@@ -1490,7 +1491,6 @@ const slowBundle = {
       },
     };
   `,
-  "hold/.keep": "",
   // With two html files, index.html is the page at /index.
   "index.html": emptyHtmlFile({
     scripts: ["index.ts"],
@@ -1517,14 +1517,19 @@ const slowBundle = {
   `,
 };
 /** The script of a page. The first request for a page starts a bundle. */
-async function loadPage(dev: Dev, route: string) {
-  const html = await (await fetch(new URL(route, dev.baseUrl))).text();
-  const src = html.match(/<script[^>]+src="([^"]+)"[^>]*data-bun-dev-server-script/)![1];
-  return await (await fetch(new URL(src, dev.baseUrl))).text();
+function loadPage(dev: Dev, route: string) {
+  const script = (async () => {
+    const html = await (await fetch(new URL(route, dev.baseUrl))).text();
+    const src = html.match(/<script[^>]+src="([^"]+)"[^>]*data-bun-dev-server-script/)![1];
+    return await (await fetch(new URL(src, dev.baseUrl))).text();
+  })();
+  // A test awaits a request that waits behind a bundle some steps later. If the test fails before that, the closed connection must not fail the next test.
+  script.catch(() => {});
+  return script;
 }
 // The plugin keeps the bundle of /other open.
 async function startSlowBundle(dev: Dev) {
-  writeFileSync(dev.join("hold/on"), "");
+  writeFileSync(gate(dev), "");
   const open = dev.output.waitForLine(/hold-plugin: the bundle is open/);
   const page = loadPage(dev, "/other");
   await Promise.race([
@@ -1555,7 +1560,7 @@ devTest("a file that a save empties while another bundle runs is held when that 
         readFileSync(emptiedBehindBundleTrace, "latin1").slice(traced).includes("a.ts"),
       );
       const held = dev.heldEvents();
-      unlinkSync(dev.join("hold/on"));
+      unlinkSync(gate(dev));
       expect(await other.page).toContain("slow");
       // The bundle has ended and a.ts is still empty: the event that waited starts a hold, not a bundle.
       await held;
@@ -1589,7 +1594,7 @@ devTest("a page request that waited behind a bundle is answered while the file e
       // /index is loaded, so the dev server answers it at once, after it has read the request for /third.
       await (await fetch(new URL("/index", dev.baseUrl))).text();
       const held = dev.heldEvents();
-      unlinkSync(dev.join("hold/on"));
+      unlinkSync(gate(dev));
       expect(await other.page).toContain("slow");
       await held;
       // The text is not written yet. A request that waited for the hold would not be answered here.
@@ -1627,7 +1632,7 @@ devTest("a file event that waited behind a long bundle gets its full time in the
     // The file event is older than the longest hold when the bundle ends.
     await Bun.sleep(10 * behindBundleWait + 100);
     const released = performance.now();
-    unlinkSync(dev.join("hold/on"));
+    unlinkSync(gate(dev));
     expect(await other.page).toContain("slow");
     await until("the end of the hold", () => dev.holdsEnded > 0);
     // The hold starts when the dev server takes the file event, and a.ts has one wait from then.
@@ -1662,7 +1667,7 @@ devTest("a file event that waited behind a bundle gets its full time in a hold t
     // The request for /other2 waits behind the bundle of /other. Its bundle starts in the step that starts the
     // hold of a.ts, so that bundle keeps the hold open from the start.
     const other = await startSlowBundle(dev);
-    writeFileSync(dev.join("hold/on2"), "");
+    writeFileSync(gate(dev, "on2"), "");
     const other2 = loadPage(dev, "/other2");
     // /index is loaded, so the dev server answers it at once, after it has read the request for /other2.
     await (await fetch(new URL("/index", dev.baseUrl))).text();
@@ -1670,7 +1675,7 @@ devTest("a file event that waited behind a bundle gets its full time in a hold t
     emptyFile(dev.join("a.ts"));
     await until("the watcher to report a.ts", () => readFileSync(atCapTrace, "latin1").slice(traced).includes("a.ts"));
     const held = dev.heldEvents();
-    unlinkSync(dev.join("hold/on"));
+    unlinkSync(gate(dev));
     await held;
     const heldAt = performance.now();
 
@@ -1681,7 +1686,7 @@ devTest("a file event that waited behind a bundle gets its full time in a hold t
     await Bun.sleep(Math.max(0, heldAt + 9.5 * behindBundleWait - performance.now()));
     expect(dev.holdsEnded).toBe(0);
     const released = performance.now();
-    unlinkSync(dev.join("hold/on2"));
+    unlinkSync(gate(dev, "on2"));
     // The script of /other waited for the bundle of /other2 too.
     expect(await other.page).toContain("slow");
     expect(await other2).toContain("slow2");
@@ -1708,7 +1713,7 @@ devTest("a hold whose deadline passes while another bundle runs ends when that b
       expect(dev.holdsEnded).toBe(0);
       // No file event follows. The hold ends because the other bundle ends.
       const ended = dev.endedHolds();
-      unlinkSync(dev.join("hold/on"));
+      unlinkSync(gate(dev));
       expect(await other.page).toContain("slow");
       await ended;
     } finally {

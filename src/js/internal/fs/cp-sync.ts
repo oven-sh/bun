@@ -498,6 +498,9 @@ function copyDir(src: string, dest: string, opts: CpOptions) {
     const { destStat, skipped } = checkPathsSync(srcItem, destItem, opts);
     if (!skipped) getStats(destStat, srcItem, destItem, opts);
   }
+  // Stamps created and existing directories alike, so every exit of copyDir must reach it. Node's sync walk
+  // does this in a `finally`. Here a copy that throws leaves the directory as it is, as for its mode.
+  if (opts.preserveTimestamps) setDestTimestamps(src, dest);
 }
 
 function onLink(destStat: BigIntStats | null | undefined, src: string, dest: string, opts: CpOptions) {

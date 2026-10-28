@@ -1,6 +1,16 @@
 import { describe, expect, jest, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, type DirectoryTree, isLinux, isPosix, isWindows, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  type DirectoryTree,
+  isLinux,
+  isPosix,
+  isRoot,
+  isWindows,
+  tempDir,
+  unprivilegedSpawnOptions,
+} from "harness";
 import { mkfifo } from "mkfifo";
 import { isAbsolute, join } from "path";
 
@@ -422,6 +432,181 @@ for (const [name, copy] of impls) {
     });
   });
 }
+
+const copyForms = [
+  ["cpSync", async (src: string, dest: string, options: fs.CopySyncOptions) => fs.cpSync(src, dest, options)],
+  ["promises.cp", (src: string, dest: string, options: fs.CopyOptions) => fs.promises.cp(src, dest, options)],
+  [
+    "cp",
+    (src: string, dest: string, options: fs.CopyOptions) => {
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      fs.cp(src, dest, options, err => (err ? reject(err) : resolve()));
+      return promise;
+    },
+  ],
+] as const;
+
+describe.each(copyForms)("fs.%s with preserveTimestamps", (_name, copy) => {
+  const past = new Date("2001-02-03T04:05:06Z");
+  const older = new Date("1999-09-09T09:09:09Z");
+  const tree = { "from/a/b/f.txt": "f", "from/top.txt": "top", "from/empty": {} };
+  // Children come before their parents: a new entry moves the time of its directory.
+  const entries = ["a/b/f.txt", "a/b", "a", "top.txt", "empty", ""];
+
+  function setTimes(root: string, paths: string[], time: Date) {
+    for (const path of paths) fs.utimesSync(join(root, path), time, time);
+  }
+  function mtimes(root: string, paths: string[]) {
+    return Object.fromEntries(paths.map(path => [path || ".", fs.statSync(join(root, path)).mtime.toISOString()]));
+  }
+  function all(paths: string[], time: Date) {
+    return Object.fromEntries(paths.map(path => [path || ".", time.toISOString()]));
+  }
+
+  const variants = [
+    ["", {}],
+    [" and a filter", { filter: () => true }],
+    [" and dereference", { dereference: true }],
+    [" and force: false", { force: false }],
+  ] as const;
+
+  test.each(variants)("a new destination has the times of the source directories%s", async (_label, extra) => {
+    using dir = tempDir("cp-times", tree);
+    const from = join(dir, "from");
+    setTimes(from, entries, past);
+
+    await copy(from, join(dir, "to"), { recursive: true, preserveTimestamps: true, ...extra });
+
+    expect(mtimes(join(dir, "to"), entries)).toEqual(all(entries, past));
+  });
+
+  test.each(variants)("an existing destination directory gets the times of its source%s", async (_label, extra) => {
+    using dir = tempDir("cp-times", { ...tree, "to/a/kept.txt": "kept", "to/a/b/f.txt": "old", "to/empty": {} });
+    const from = join(dir, "from");
+    const to = join(dir, "to");
+    setTimes(from, entries, past);
+    setTimes(to, ["a/kept.txt", "a/b/f.txt", "a/b", "a", "empty", ""], older);
+    if (isPosix) fs.chmodSync(join(to, "a"), 0o700);
+
+    await copy(from, to, { recursive: true, preserveTimestamps: true, ...extra });
+
+    expect(mtimes(to, ["", "a", "a/b", "empty", "top.txt", "a/kept.txt", "a/b/f.txt"])).toEqual({
+      ".": past.toISOString(),
+      "a": past.toISOString(),
+      "a/b": past.toISOString(),
+      "empty": past.toISOString(),
+      "top.txt": past.toISOString(),
+      // The source has no such entry.
+      "a/kept.txt": older.toISOString(),
+      // With force: false the copy leaves a file that exists alone.
+      "a/b/f.txt": ("force" in extra ? older : past).toISOString(),
+    });
+    if (isPosix) expect(fs.statSync(join(to, "a")).mode & 0o777).toBe(0o700);
+  });
+
+  test("a directory that the filter rejects is left out and its parent has the source's times", async () => {
+    using dir = tempDir("cp-times", tree);
+    const from = join(dir, "from");
+    setTimes(from, entries, past);
+
+    await copy(from, join(dir, "to"), {
+      recursive: true,
+      preserveTimestamps: true,
+      filter: (_src: string, dest: string) => dest !== join(dir, "to", "a"),
+    });
+
+    expect(fs.readdirSync(join(dir, "to")).sort()).toEqual(["empty", "top.txt"]);
+    expect(mtimes(join(dir, "to"), ["", "empty", "top.txt"])).toEqual(all(["", "empty", "top.txt"], past));
+  });
+
+  test("directories created above the destination keep the time of the copy", async () => {
+    using dir = tempDir("cp-times", tree);
+    const from = join(dir, "from");
+    setTimes(from, entries, past);
+
+    await copy(from, join(dir, "above", "parent", "to"), { recursive: true, preserveTimestamps: true });
+
+    expect(mtimes(join(dir, "above", "parent", "to"), entries)).toEqual(all(entries, past));
+    expect(Object.values(mtimes(dir, ["above", "above/parent"]))).not.toContain(past.toISOString());
+  });
+
+  test("without the option a copied directory has the time of the copy", async () => {
+    using dir = tempDir("cp-times", { ...tree, "existing/a": {} });
+    const from = join(dir, "from");
+    setTimes(from, entries, past);
+
+    await copy(from, join(dir, "to"), { recursive: true });
+    await copy(from, join(dir, "existing"), { recursive: true });
+
+    const directories = ["to", "to/a", "to/a/b", "to/empty", "existing", "existing/a", "existing/a/b"];
+    expect(Object.values(mtimes(dir, directories))).not.toContain(past.toISOString());
+  });
+});
+
+// utimes needs the owner. Node v26.12.1 fails the same way, after it copied the entries of that directory.
+test.if(isPosix && isRoot)(
+  "cp with preserveTimestamps fails with EPERM on an existing directory that the caller does not own",
+  async () => {
+    const forms = ["cpSync", "promises", "callback"];
+    using dir = tempDir("cp-times-owner", {
+      "from/a/f.txt": "f",
+      ...Object.fromEntries(forms.map(form => [`to-${form}/a`, {}])),
+      "copy.mjs": `
+        import fs from "node:fs";
+        import { join } from "node:path";
+        const options = { recursive: true, preserveTimestamps: true };
+        const forms = {
+          cpSync: async (src, dest) => fs.cpSync(src, dest, options),
+          promises: (src, dest) => fs.promises.cp(src, dest, options),
+          callback: (src, dest) =>
+            new Promise((resolve, reject) => fs.cp(src, dest, options, err => (err ? reject(err) : resolve()))),
+        };
+        const results = {};
+        for (const [form, copy] of Object.entries(forms)) {
+          const to = join(import.meta.dirname, "to-" + form);
+          try {
+            await copy(join(import.meta.dirname, "from"), to);
+            results[form] = "copied";
+          } catch (err) {
+            results[form] = {
+              code: err.code,
+              syscall: err.syscall,
+              path: err.path,
+              fileCopied: fs.existsSync(join(to, "a", "f.txt")),
+            };
+          }
+        }
+        console.log(JSON.stringify(results));
+      `,
+    });
+    using unprivileged = unprivilegedSpawnOptions(String(dir));
+    for (const form of forms) {
+      fs.chownSync(join(dir, `to-${form}`, "a"), 0, 0);
+      fs.chmodSync(join(dir, `to-${form}`, "a"), 0o777);
+    }
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "copy.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      ...unprivileged,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ results: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+      results: Object.fromEntries(
+        forms.map(form => [
+          form,
+          { code: "EPERM", syscall: "utime", path: join(dir, `to-${form}`, "a"), fileCopied: true },
+        ]),
+      ),
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
 
 test("cp with missing callback throws", () => {
   expect(() => {

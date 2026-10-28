@@ -376,6 +376,9 @@ async function copyDir(src: string, dest: string, opts: CpOptions) {
     const { destStat, skipped } = await checkPaths(srcItem, destItem, opts);
     if (!skipped) await getStatsForCopy(destStat, srcItem, destItem, opts);
   }
+  // Stamps created and existing directories alike, so every exit of copyDir must reach it. Node has one
+  // stamp in onDir and one in mkDirAndCopy instead.
+  if (opts.preserveTimestamps) await setDestTimestamps(src, dest);
 }
 
 async function onLink(destStat: DestinationStats, src: string, dest: string, opts: CpOptions) {

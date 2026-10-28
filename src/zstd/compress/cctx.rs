@@ -1423,14 +1423,19 @@ impl FrameCompressor {
         }
         let mut estimate = |from: usize, to: usize| -> Result<Result<usize>> {
             let chunk = derive_seq_store_chunk(&self.seq_store, from, to)?;
-            Ok(build_entropy_statistics_and_estimate_sub_block_size(
+            let size = build_entropy_statistics_and_estimate_sub_block_size(
                 &mut self.seq_store,
                 &chunk,
                 &block_state(&self.prev_c_block).entropy,
                 &mut block_state_mut(&mut self.next_c_block).entropy,
                 &self.applied_params,
                 entropy_metadata,
-            ))
+            );
+            match size {
+                // Not among what makes for no split: the C code allocates nothing here.
+                Err(Error::MemoryAllocation) => Err(Error::MemoryAllocation),
+                size => Ok(size),
+            }
         };
         let estimated_original_size = estimate(start_idx, end_idx)?;
         let estimated_first_half_size = estimate(start_idx, mid_idx)?;

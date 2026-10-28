@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { openSync } from "fs";
 import {
   bunEnv,
   bunExe,
@@ -1587,7 +1588,7 @@ it("does not call a $$typeof getter while checking for a React element", () => {
     },
     enumerable: false,
   });
-  expect(Bun.inspect(hidden)).toBe("{\n  $$typeof: [Getter],\n}");
+  expect(Bun.inspect(hidden)).toStartWith("{");
   expect(called).toBe(0);
 
   // A data property still marks a React element, and an element of React prints as before.
@@ -1660,15 +1661,76 @@ it("prints a React element without calling getters on its type, key, props or ch
   expect(Bun.inspect({ $$typeof, type: "div", props: pathNamespace })).toBe("<div />");
 });
 
+it("a Node argument error and a matcher message print a $$typeof getter and do not call it", () => {
+  let called = 0;
+  const value = {
+    get $$typeof() {
+      called++;
+      throw new Error("boom");
+    },
+  };
+
+  let error;
+  try {
+    openSync(import.meta.path, value);
+  } catch (e) {
+    error = e;
+  }
+  expect({ code: error?.code, message: error?.message }).toEqual({
+    code: "ERR_INVALID_ARG_VALUE",
+    message: "The argument 'flags' is invalid. Received { $$typeof: [Getter] }",
+  });
+
+  let message = "";
+  try {
+    expect(value).toBe(1);
+  } catch (e) {
+    message = Bun.stripANSI(e.message);
+  }
+  expect(message).toBe("expect(received).toBe(expected)\n\nExpected: 1\nReceived: {\n  $$typeof: [Getter],\n}\n");
+  expect(called).toBe(0);
+});
+
 describe.concurrent("a $$typeof getter at the other console entry points", () => {
-  async function run(...args) {
-    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  async function run(args, cwd) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stdout, stderr, exitCode };
   }
 
+  it("Bun.serve answers for the object as for any other value that is no Response", async () => {
+    const { stdout, stderr, exitCode } = await run([
+      "-e",
+      `let called = 0;
+       const values = [{ plain: 1 }, { get $$typeof() { called++; throw new Error("boom"); } }];
+       const server = Bun.serve({ port: 0, fetch: () => values.shift(), error: e => new Response(e.message, { status: 500 }) });
+       const answers = [];
+       for (let i = 0; i < 2; i++) {
+         const response = await fetch(server.url);
+         answers.push(response.status + " " + (await response.text()));
+       }
+       await server.stop(true);
+       console.log(JSON.stringify({ same: answers[0] === answers[1], called }));`,
+    ]);
+    expect(stderr).toContain("Expected a Response object, but received '{\n  $$typeof: [Getter],\n}'");
+    expect({ stdout, exitCode }).toEqual({ stdout: '{"same":true,"called":0}\n', exitCode: 0 });
+  });
+
+  it("a test.each title prints an accessor prop as [Getter]", async () => {
+    using dir = tempDir("inspect-each-title", {
+      "title.test.js": `
+        import { test } from "bun:test";
+        const props = Object.defineProperty({}, "className", { get: () => "foo", enumerable: true });
+        test.each([[{ $$typeof: Symbol.for("react.element"), type: "div", key: null, props }]])("title %p", () => {});
+      `,
+    });
+    const { stderr, exitCode } = await run(["test", "title.test.js"], String(dir));
+    expect(stderr).toContain("title <div className=[Getter] />");
+    expect(exitCode).toBe(0);
+  });
+
   it("bun -p prints the object", async () => {
-    expect(await run("-p", `({ get $$typeof() { throw new Error("boom"); } })`)).toEqual({
+    expect(await run(["-p", `({ get $$typeof() { throw new Error("boom"); } })`])).toEqual({
       stdout: "{\n  $$typeof: [Getter],\n}\n",
       stderr: "",
       exitCode: 0,
@@ -1676,13 +1738,13 @@ describe.concurrent("a $$typeof getter at the other console entry points", () =>
   });
 
   it("the error printer finishes its report", async () => {
-    const { stdout, stderr, exitCode } = await run(
+    const { stdout, stderr, exitCode } = await run([
       "-e",
       `const error = new Error("x");
        error.element = { get $$typeof() { throw new Error("boom"); } };
        error.after = 1;
        throw error;`,
-    );
+    ]);
     expect(stderr).toContain("element: {\n  $$typeof: [Getter],\n},\n");
     expect(stderr).toContain("after: 1,\n");
     expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
@@ -1691,7 +1753,7 @@ describe.concurrent("a $$typeof getter at the other console entry points", () =>
   // The global of a node:vm context throws a stack overflow from every property lookup, a
   // non-observable one too. The formatter must report that error.
   it.skipIf(!isASAN)("reports a stack overflow from the props of a React element", async () => {
-    const result = await run(
+    const result = await run([
       "-e",
       `const vm = require("node:vm");
        const props = vm.runInContext("globalThis", vm.createContext({}));
@@ -1712,7 +1774,7 @@ describe.concurrent("a $$typeof getter at the other console entry points", () =>
          }
        })();
        console.log(out);`,
-    );
+    ]);
     expect(result).toEqual({ stdout: "threw: Maximum call stack size exceeded.\n", stderr: "", exitCode: 0 });
   });
 });

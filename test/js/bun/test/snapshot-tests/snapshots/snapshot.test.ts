@@ -1034,3 +1034,37 @@ test.skipIf(isWindows)("snapshot file path longer than PATH_MAX fails the test i
   expect(stdout + stderr).toContain("1 fail");
   expect(exitCode).toBe(1);
 });
+
+// The contract for committed snapshot files: a getter runs once and its value prints. console.log prints [Getter] there.
+test("a snapshot and a matcher diff read a React element with ordinary gets", () => {
+  const $$typeof = Symbol.for("react.element");
+  const calls = { className: 0, type: 0, $$typeof: 0 };
+  const counting = <T extends object>(target: T, name: keyof typeof calls, value: unknown): T =>
+    Object.defineProperty(target, name, {
+      get() {
+        calls[name]++;
+        return value;
+      },
+      enumerable: true,
+    });
+
+  expect({ $$typeof, type: "div", key: null, props: counting({}, "className", "foo") }).toMatchInlineSnapshot(
+    `<div className="foo" />`,
+  );
+  expect(Object.assign(Object.create({ type: "span", props: { id: "x" } }), { $$typeof })).toMatchInlineSnapshot(
+    `<span id="x" />`,
+  );
+  expect(counting({ $$typeof, key: null, props: { id: "x" } }, "type", "em")).toMatchInlineSnapshot(`<em id="x" />`);
+  expect(counting({ type: "b", key: null, props: { id: "y" } }, "$$typeof", $$typeof)).toMatchInlineSnapshot(
+    `<b id="y" />`,
+  );
+  expect(calls).toEqual({ className: 1, type: 1, $$typeof: 1 });
+
+  let message = "";
+  try {
+    expect({ $$typeof, type: "div", key: null, props: counting({}, "className", "foo") }).toEqual({ other: 1 });
+  } catch (e: any) {
+    message = Bun.stripANSI(e.message);
+  }
+  expect(message).toContain('<div className="foo" />');
+});

@@ -4978,9 +4978,7 @@ pub mod formatter {
             Ok(())
         }
 
-        // JSX printing is large (≈230 LOC) and entirely self-contained string
-        // formatting over `value.get("type"/"key"/"props"/"children")`
-        // (covered by `test/js/bun/util/inspect.test.js` snapshots).
+        // Reads `type`, `key`, `props` and `props.children` through `reader`: own data only, no getter, no Proxy trap.
         #[inline(never)]
         fn print_jsx<const C: bool>(
             &mut self,

@@ -54,6 +54,8 @@ pub(crate) struct JSTranspiler {
     // address is stable across the move into `Box<JSTranspiler>` —
     // `transpiler.arena` holds a `&'static Arena` pointing into it.
     pub(crate) _arena: Box<Arena>,
+    /// About what the instance owns beside itself. Written once, before the wrapper exists.
+    estimated_size: usize,
     pub(crate) ref_count: bun_ptr::RefCount<JSTranspiler>,
 }
 
@@ -952,12 +954,13 @@ impl JSTranspiler {
             }
         };
 
-        let this: Box<JSTranspiler> = Box::new(JSTranspiler {
+        let mut this: Box<JSTranspiler> = Box::new(JSTranspiler {
             config: JsCell::new(config),
             _arena: arena,
             transpiler: JsCell::new(transpiler),
             scan_pass_result: JsCell::new(ScanPassResult::init()),
             buffer_writer: JsCell::new(None),
+            estimated_size: 0,
             ref_count: bun_ptr::RefCount::init(),
         });
         // errdefer past this point → `this: Box<_>` drops and runs Drop for JSTranspiler.
@@ -1018,7 +1021,15 @@ impl JSTranspiler {
         transpiler.options.react_fast_refresh = false;
         transpiler.options.repl_mode = config.repl_mode;
 
+        this.estimated_size = transpiler.options.define.memory_cost()
+            + config.tsconfig_buf.len()
+            + config.macros_buf.len();
         Ok(bun_core::heap::into_raw(this))
+    }
+
+    /// The GC calls this from its marking threads.
+    pub(crate) fn estimated_size(&self) -> usize {
+        self.estimated_size
     }
 }
 

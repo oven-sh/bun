@@ -592,6 +592,37 @@ pub mod defines {
             }
         }
 
+        /// What `insert_global` allocates for the two tables of globals that `with_pure_globals` loads.
+        const GLOBALS_COST: usize = {
+            const fn cost(globals: &[&[&[u8]]]) -> usize {
+                let (mut cost, mut global) = (0, 0);
+                while global < globals.len() {
+                    let parts = globals[global];
+                    cost += size_of::<DotDefine>() + parts.len() * size_of::<Box<[u8]>>();
+                    let mut part = 0;
+                    while part < parts.len() {
+                        cost += parts[part].len();
+                        part += 1;
+                    }
+                    global += 1;
+                }
+                cost
+            }
+            cost(crate::defines_table::GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES)
+                + cost(
+                    crate::defines_table::GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING,
+                )
+        };
+
+        /// About how many bytes the table owns beside itself. A user define counts by its slot only.
+        pub fn memory_cost(&self) -> usize {
+            Self::GLOBALS_COST
+                + self.identifiers.capacity()
+                    * size_of::<(bun_collections::StringHashMapKey, IdentifierDefine)>()
+                + self.dots.capacity()
+                    * size_of::<(bun_collections::StringHashMapKey, Vec<DotDefine>)>()
+        }
+
         /// The dot defines whose last part is `name` (`NODE_ENV` for
         /// `process.env.NODE_ENV`).
         #[inline]

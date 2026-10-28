@@ -5753,6 +5753,27 @@ it.concurrent("matches a define key with many parts without crashing", async () 
   });
 });
 
+// Without the size, a loop that drops instances never makes the GC run: an instance is one small cell.
+it.concurrent("tells the GC how much memory an instance holds", async () => {
+  const kibibytesReported = () => {
+    const { heapStats } = require("bun:jsc");
+    const held = [];
+    const perInstance = options => {
+      Bun.gc(true);
+      const before = heapStats().extraMemorySize;
+      for (let i = 0; i < 32; i++) held.push(new Bun.Transpiler(options));
+      Bun.gc(true);
+      return Math.round((heapStats().extraMemorySize - before) / 32 / 1024);
+    };
+    return { plain: perInstance({}) };
+  };
+  const { stdout, ...exit } = await bunRun(["-e", `console.log(JSON.stringify((${kibibytesReported})()));`]);
+  const { plain } = JSON.parse(stdout);
+  // The copy of the table of global defines that each instance holds is about 25 KiB.
+  expect(plain).toBeGreaterThan(16);
+  expect(exit).toEqual({ stderr: "", exitCode: 0, signalCode: null });
+});
+
 // After a stack overflow, the visit pass skips every expression it hasn't visited yet.
 it.concurrent("reports only the stack overflow when the visit pass overflows", async () => {
   const script = `

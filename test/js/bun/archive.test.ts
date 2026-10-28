@@ -1579,6 +1579,9 @@ describe("Bun.Archive", () => {
             using dir = tempDir("archive-symlinks", fixture);
             const unlisted = join(String(dir), "0", "dest", "d");
             using _ = { [Symbol.dispose]: () => existsSync(unlisted) && chmodSync(unlisted, 0o700) };
+            // With a glob, `extract()` makes every directory 0755, whatever its entry says.
+            mkdirSync(unlisted, { recursive: true });
+            chmodSync(unlisted, 0o300);
             const { list, results } = await extractAll(
               String(dir),
               {
@@ -1596,8 +1599,10 @@ describe("Bun.Archive", () => {
               mode,
               env,
             );
+            const permissions = statSync(unlisted).mode & 0o777;
             chmodSync(unlisted, 0o700);
-            expect({ results, tree: tree(list[0].dest) }).toEqual({
+            expect({ permissions, results, tree: tree(list[0].dest) }).toEqual({
+              permissions: 0o300,
               results: { unlisted: [4] },
               tree: {
                 "d": "directory",

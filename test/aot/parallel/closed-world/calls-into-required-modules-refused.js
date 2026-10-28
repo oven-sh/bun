@@ -1,4 +1,4 @@
-// closed-world/calls-into-loaded-modules-refused without the loads by computed names: the modules are required by their constant names alone, and that opens nothing either. The program calls what they export in a way the compiler cannot follow, and the calls throw. It is built with --no-compile-function-source, so each error also says to rebuild without that flag. node:repl is not among the modules: its own code compiles text, which the compiler sees, and a program that requires it runs text from then on.
+// closed-world/calls-into-loaded-modules-refused without the loads by computed names: the modules are required by their constant names alone, and that opens nothing either. The program calls what they export in a way the compiler cannot follow, and the calls throw. It is built with --no-compile-function-source, so each error also says to rebuild without that flag. node:repl is not among the modules: its own code compiles text, which the compiler sees, and a program that requires it runs text from then on. node:worker_threads reaches nothing that evaluates text in this realm or loads machine code: a module like that is compiled whole once the program hands it on, so its Worker is made.
 // What native code hands back is unknown to the compiler, and so is text that is decoded at run time.
 // Flags: --aot-refuse-code-from-disk --no-compile-function-source
 const unknown = value => new CustomEvent("unknown", { detail: value }).detail;
@@ -45,5 +45,5 @@ module._compile: refused: Code generation from strings disallowed for this conte
 ffi.dlopen: refused: '..' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
 ffi.linkSymbols: refused: '..' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
 ffi.CFunction: refused: '..' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
-a Worker of node:worker_threads from text: refused: '..' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+a Worker of node:worker_threads from text: object
 */

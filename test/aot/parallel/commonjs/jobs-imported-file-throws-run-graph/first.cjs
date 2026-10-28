@@ -1,3 +1,4 @@
+module.exports = {};
 process.on("uncaughtException", error => console.log("reported:", error.message));
 console.log("first begins");
 Promise.resolve().then(() => console.log("job of first"));

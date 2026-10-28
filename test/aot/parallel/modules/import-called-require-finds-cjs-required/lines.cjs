@@ -16,3 +16,4 @@ globalThis.track = (name, promise) => {
 };
 process.on("uncaughtException", error => lines.push("uncaught: " + text(error)));
 process.on("exit", () => console.log(lines.join("\n") + "\nnot settled: " + [...waiting].join(", ")));
+module.exports = {};

@@ -22,7 +22,7 @@ use crate::ir::{
 };
 use crate::modules::{self, ModuleRef};
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ModuleFragment {
     pub body: Option<FunctionId>,
     pub data: Option<DataId>,

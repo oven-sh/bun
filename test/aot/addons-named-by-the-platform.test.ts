@@ -321,6 +321,10 @@ describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named
     });
   });
 
+  // The name of the file is what the build has to find. A program that imports no built-in module is built without them, which takes a fifth of the time.
+  const usesABuiltInModule = ({ files }: Program) =>
+    Object.values(files).some(text => /(\brequire\(|\bfrom |\bimport\()["'](node:|path|os|fs|module|url)\b/.test(text));
+
   async function run(title: string, program: Program, { passesAddons = false } = {}) {
     const file = title.replaceAll(/[^a-z]+/gi, "-") + (passesAddons ? "-passed" : "");
     const sources = join(folder, file);
@@ -347,6 +351,7 @@ describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named
         "build",
         "--compile",
         "--aot",
+        ...(usesABuiltInModule(program) ? [] : ["--no-builtin-modules"]),
         join(sources, program.entry),
         ...(passesAddons ? program.addons.map(path => join(sources, path)) : []),
         "--outfile",

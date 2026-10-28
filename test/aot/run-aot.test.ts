@@ -191,7 +191,17 @@ describe("at run time", () => {
   test("an executable built with --compile-inspector loads such a module from disk", async () => {
     using dir = tempDir("run-aot", { "tsconfig.json": tsconfig, ...importsDynamicPath });
     const build = await spawned(
-      [bunExe(), "build", "--compile", "--aot", "--compile-inspector", "main.ts", "--outfile", "main"],
+      [
+        bunExe(),
+        "build",
+        "--compile",
+        "--aot",
+        "--compile-inspector",
+        "--no-builtin-modules",
+        "main.ts",
+        "--outfile",
+        "main",
+      ],
       String(dir),
     );
     expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({

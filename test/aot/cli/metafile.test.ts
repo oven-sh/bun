@@ -209,7 +209,8 @@ console.log(typeof marked, typeof test, typeof missing, chosen.name, import.meta
         const folder = String(dir);
         built(
           await bun(
-            ...[folder, "build", "--compile", "--aot", "--external", "marked-external"],
+            // Only the metafile is read. An executable that loads code at run time would hold every built-in module.
+            ...[folder, "build", "--compile", "--aot", "--no-builtin-modules", "--external", "marked-external"],
             ...["--metafile=meta.json", "main.ts", "--outfile", "app"],
           ),
         );

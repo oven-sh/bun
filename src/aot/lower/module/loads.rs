@@ -1201,6 +1201,7 @@ fn lower_tested_call(
         unreachable!("a module call with a spread argument is an ordinary call");
     };
     lowering.set_position(lowering.file.load_position(call));
+    let mut other_callee = callee;
     let condition = match test {
         CalleeTest::Expected(expected) => {
             let expected = lowering.emit_expected_callee(expected);
@@ -1208,6 +1209,7 @@ fn lower_tested_call(
         }
         CalleeTest::IsFilled => {
             let empty = lowering.builder.undefined();
+            other_callee.function = empty;
             lowering.builder.strict_eq(callee.function, empty)
         }
         CalleeTest::Method {
@@ -1218,7 +1220,6 @@ fn lower_tested_call(
     let matched = lowering.create_block();
     let other = lowering.create_block();
     let done = lowering.create_block();
-    let mut other_callee = callee;
     let (if_true, if_false) = match test {
         CalleeTest::Expected(_) => {
             other_callee.function = lowering.builder.add_edge_result(other);

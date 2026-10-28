@@ -1,3 +1,3 @@
 import { testFramework } from "./each-framework";
 
-testFramework("hono");
+testFramework("hono", { alsoWithOtherBuildOptions: true });

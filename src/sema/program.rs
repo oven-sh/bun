@@ -928,6 +928,8 @@ pub struct Run<'u> {
     provided: FxHashSet<Vec<u8>>,
     /// Only declaration files are shared. Every other file is parsed for each program and freed with it.
     only_declaration_files: bool,
+    /// `Some`: the files for which it holds are shared, whatever their names end in.
+    is_shared_path: Option<fn(&[u8]) -> bool>,
     parses: AtomicUsize,
     /// `None`: nobody asks for them. Each look at the size of an arena walks the pages of every arena of the process.
     bytes: Option<AtomicUsize>,
@@ -943,6 +945,7 @@ impl<'u> Run<'u> {
             parsed: ShardedMap::new_in(session),
             provided,
             only_declaration_files: false,
+            is_shared_path: None,
             parses: AtomicUsize::new(0),
             bytes: Some(AtomicUsize::new(0)),
             origins: AtomicUsize::new(1),
@@ -957,9 +960,23 @@ impl<'u> Run<'u> {
             parsed: ShardedMap::new_in(session),
             provided: FxHashSet::default(),
             only_declaration_files: true,
+            is_shared_path: None,
             parses: AtomicUsize::new(0),
             bytes: None,
             origins: AtomicUsize::new(1),
+        }
+    }
+
+    /// For the compile builds of one process, which all intern in `atoms`. `has_same_text`: whether every build reads the same text
+    /// at a path.
+    pub fn of_compile_builds(
+        session: &'u Session,
+        atoms: Interner<'u>,
+        has_same_text: fn(&[u8]) -> bool,
+    ) -> Run<'u> {
+        Run {
+            is_shared_path: Some(has_same_text),
+            ..Run::of_compile_build(session, atoms)
         }
     }
 
@@ -989,8 +1006,14 @@ impl<'u> Run<'u> {
 
     /// True if the file at `path` is shared by all programs.
     fn has_file(&self, host: &dyn Host, path: &[u8]) -> bool {
-        let is_shared = !self.only_declaration_files
-            || crate::resolve::is_declaration_file_name(path) && host.script_kind(path).is_none();
+        let is_shared = match self.is_shared_path {
+            Some(is_shared) => is_shared(path) && host.script_kind(path).is_none(),
+            None => {
+                !self.only_declaration_files
+                    || crate::resolve::is_declaration_file_name(path)
+                        && host.script_kind(path).is_none()
+            }
+        };
         is_shared
             && (self.provided.is_empty()
                 || !(self.provided).contains(&*to_path(path, host.is_case_sensitive())))

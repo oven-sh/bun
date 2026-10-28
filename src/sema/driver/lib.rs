@@ -418,7 +418,7 @@ pub fn use_dedicated_pool(name: &'static str) {
         .without_spare_threads();
         if FITS_THREADS_TO_SOURCES.load(Ordering::Relaxed) {
             pool.limit_threads(threads_for_sources_read());
-        } else if let Some(count) = NonZeroUsize::new(CHOSEN_THREADS.load(Ordering::Relaxed)) {
+        } else if let Some(count) = NonZeroUsize::new(*CHOSEN_THREADS.lock()) {
             pool.limit_threads(count.get());
         }
         pool
@@ -427,8 +427,8 @@ pub fn use_dedicated_pool(name: &'static str) {
 
 static FITS_THREADS_TO_SOURCES: AtomicBool = AtomicBool::new(false);
 static SOURCE_BYTES_READ: AtomicUsize = AtomicUsize::new(0);
-/// 0: nobody chose.
-static CHOSEN_THREADS: AtomicUsize = AtomicUsize::new(0);
+/// The sum over the builds that chose and have not ended. 0: nobody chose.
+static CHOSEN_THREADS: Guarded<usize> = Guarded::new(0);
 
 /// A thread that joins a build touches megabytes of its own first, which takes about two milliseconds.
 const SOURCE_BYTES_PER_THREAD: usize = 32 << 10;
@@ -442,21 +442,39 @@ fn threads_for_sources_read() -> usize {
 /// From now on the dedicated pool starts no more threads than there is source text for: `THREADS_FOR_ANY_PROGRAM`, and one more for every `SOURCE_BYTES_PER_THREAD` reported to `did_read_source` since this call.
 pub fn fit_threads_to_sources() {
     SOURCE_BYTES_READ.store(0, Ordering::Relaxed);
-    CHOSEN_THREADS.store(0, Ordering::Relaxed);
     FITS_THREADS_TO_SOURCES.store(true, Ordering::Relaxed);
     if let Some(pool) = DEDICATED_POOL.get() {
         pool.limit_threads(THREADS_FOR_ANY_PROGRAM);
     }
 }
 
-/// Undoes `fit_threads_to_sources`, for a build whose thread count somebody chose. The dedicated pool starts no more than `count` threads.
-pub fn limit_threads_to(count: NonZeroUsize) {
-    let count = count.get();
-    FITS_THREADS_TO_SOURCES.store(false, Ordering::Relaxed);
-    CHOSEN_THREADS.store(count, Ordering::Relaxed);
-    if let Some(pool) = DEDICATED_POOL.get() {
-        pool.allow_threads(count);
-        pool.limit_threads(count);
+/// The threads of a build whose thread count somebody chose. The builds of a process share the dedicated pool: it starts no more
+/// threads than those that have not ended chose together.
+pub struct ChosenThreads(usize);
+
+impl ChosenThreads {
+    /// Undoes `fit_threads_to_sources`.
+    pub fn new(count: NonZeroUsize) -> ChosenThreads {
+        FITS_THREADS_TO_SOURCES.store(false, Ordering::Relaxed);
+        let mut chosen = CHOSEN_THREADS.lock();
+        *chosen += count.get();
+        if let Some(pool) = DEDICATED_POOL.get() {
+            pool.allow_threads(*chosen);
+            pool.limit_threads(*chosen);
+        }
+        ChosenThreads(count.get())
+    }
+}
+
+impl Drop for ChosenThreads {
+    fn drop(&mut self) {
+        let mut chosen = CHOSEN_THREADS.lock();
+        *chosen -= self.0;
+        if let Some(pool) = DEDICATED_POOL.get()
+            && *chosen != 0
+        {
+            pool.limit_threads(*chosen);
+        }
     }
 }
 

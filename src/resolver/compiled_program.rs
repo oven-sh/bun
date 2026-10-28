@@ -38,7 +38,7 @@ impl CompiledEntryPoint {
     }
 }
 
-/// A name that leads to an entry point and is not the path of its file: the name of a package, a key of its `exports`, or a folder whose `package.json` names its main file.
+/// A name that leads to an entry point and is not the path of its file: the name of a package, a key of its `exports`, a folder whose `package.json` names its main file, or what the program writes where it starts a Worker.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct CompiledPackageName {
     /// The public path that the name would have as a file: `<folder>/node_modules/<name>`. That of a folder ends in `/`.
@@ -73,6 +73,9 @@ pub struct CompiledProgram {
 
 /// Answers the public path of the module compiled at that path, in memory that is never freed.
 pub type ModuleLookup = fn(&[u8]) -> Option<&'static [u8]>;
+
+/// A `ModuleLookup`, or one among the entry points.
+type Lookup<'a> = &'a dyn Fn(&[u8]) -> Option<&'static [u8]>;
 
 /// What `bun run` tries for a path that names no file as spelled.
 #[derive(Copy, Clone)]
@@ -209,7 +212,7 @@ pub fn directories_of_importer(public_root: &[u8], source_dir: &[u8], base: &[u8
 fn find_with_extensions(
     stem: &[u8],
     search: &ExtensionSearch<'_>,
-    lookup: ModuleLookup,
+    lookup: Lookup<'_>,
 ) -> Option<&'static [u8]> {
     let mut extensions = search.extensions.iter().chain(search.extra_extensions);
     extensions.find_map(|extension| lookup(&[stem, &extension[..]].concat()))
@@ -219,7 +222,7 @@ fn find_file(
     path: &[u8],
     names_directory: bool,
     search: &ExtensionSearch<'_>,
-    lookup: ModuleLookup,
+    lookup: Lookup<'_>,
 ) -> Option<&'static [u8]> {
     let with_extension = || match names_directory {
         true => None,
@@ -375,10 +378,29 @@ impl CompiledProgram {
         is_require: bool,
         search: &ExtensionSearch<'_>,
     ) -> Option<&'static [u8]> {
+        let lookup = self.module_lookup.get()?;
+        self.resolve_module_among(
+            lookup,
+            public_root,
+            source_dir,
+            specifier,
+            is_require,
+            search,
+        )
+    }
+
+    fn resolve_module_among(
+        &self,
+        lookup: Lookup<'_>,
+        public_root: &[u8],
+        source_dir: &[u8],
+        specifier: &[u8],
+        is_require: bool,
+        search: &ExtensionSearch<'_>,
+    ) -> Option<&'static [u8]> {
         if self.preserves_source_paths {
             return None;
         }
-        let lookup = *self.module_lookup.get()?;
         let path = join_public_path(public_root, source_dir, specifier)?;
         let how = HowNamed {
             names_directory: Resolver::import_path_names_directory(specifier),
@@ -408,7 +430,7 @@ impl CompiledProgram {
         path: &[u8],
         how: HowNamed,
         search: &ExtensionSearch<'_>,
-        lookup: ModuleLookup,
+        lookup: Lookup<'_>,
     ) -> Option<&'static [u8]> {
         if let Some(file) = find_file(path, how.names_directory, search, lookup) {
             return Some(file);
@@ -440,6 +462,28 @@ impl CompiledProgram {
         is_require: bool,
         search: &ExtensionSearch<'_>,
     ) -> PackageLookup {
+        let Some(lookup) = self.module_lookup.get() else {
+            return PackageLookup::Unknown;
+        };
+        self.resolve_package_among(
+            lookup,
+            public_root,
+            source_dir,
+            specifier,
+            is_require,
+            search,
+        )
+    }
+
+    fn resolve_package_among(
+        &self,
+        lookup: Lookup<'_>,
+        public_root: &[u8],
+        source_dir: &[u8],
+        specifier: &[u8],
+        is_require: bool,
+        search: &ExtensionSearch<'_>,
+    ) -> PackageLookup {
         use PackageLookup::{Found, Hidden, Unknown};
         if self.preserves_source_paths
             || specifier.is_empty()
@@ -448,9 +492,6 @@ impl CompiledProgram {
         {
             return Unknown;
         }
-        let Some(&lookup) = self.module_lookup.get() else {
-            return Unknown;
-        };
         let how = HowNamed {
             names_directory: names_directory_below_node_modules(specifier, Platform::AUTO),
             is_require,
@@ -524,7 +565,46 @@ impl CompiledProgram {
         if !self.preserves_source_paths {
             return None;
         }
-        self.find_file_or_directory(path, how, search, *self.module_lookup.get()?)
+        self.find_file_or_directory(path, how, search, self.module_lookup.get()?)
+    }
+
+    /// The entry point that a Worker starts from when it is given `specifier`, whichever program of the executable begins there. It is found as `bun run` finds the file from the root directory of the build: a name without `./` in front leads to a package, else to a file.
+    pub fn resolve_entry_point(
+        &self,
+        public_root: &[u8],
+        specifier: &[u8],
+        search: &ExtensionSearch<'_>,
+    ) -> Option<&CompiledEntryPoint> {
+        let lookup = |path: &[u8]| {
+            let entry_point = self.entry_point_by_module_path(path)?;
+            Some(entry_point.module_path)
+        };
+        let find_file = |specifier: &[u8]| {
+            let names_directory = Resolver::import_path_names_directory(specifier);
+            let path = join_public_path(public_root, public_root, specifier)?;
+            match self.find_package_name(&path, false) {
+                Some(listed) if !names_directory => listed,
+                _ => self.resolve_module_among(
+                    &lookup,
+                    public_root,
+                    public_root,
+                    specifier,
+                    false,
+                    search,
+                ),
+            }
+        };
+        let package =
+            self.resolve_package_among(&lookup, public_root, public_root, specifier, false, search);
+        let module = match package {
+            PackageLookup::Found(module) => Some(module),
+            PackageLookup::Hidden => None,
+            PackageLookup::Unknown if bun_paths::is_package_path(specifier) => {
+                find_file(&[b"./", specifier].concat())
+            }
+            PackageLookup::Unknown => find_file(specifier),
+        };
+        self.entry_point_by_module_path(module?)
     }
 
     pub fn entry_point_by_source_path(&self, path: &[u8]) -> Option<&CompiledEntryPoint> {

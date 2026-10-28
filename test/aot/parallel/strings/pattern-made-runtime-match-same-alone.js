@@ -42,3 +42,15 @@ for (const form of ["(?:^(x+)+$)|$", "(?:^(x+)+$)|!", "(?:^(x+)+$|never)|$"]) {
   const pattern = new RegExp(form + nothing);
   console.log(form, [26, 27].map(length => pattern.exec("x".repeat(length) + "!")?.index ?? "none").join(" "));
 }
+// As plain Bun prints it: the run that shows so takes up to half a minute.
+/* Output:
+0  223: 0 233, 224: none
+1  223: 0 233, 224: none
+2  223: 0 233, 224: none
+3  223: 0 233, 224: none
+0 i 223: 0 233, 224: none
+1 i 223: 0 233, 224: none
+(?:^(x+)+$)|$ 27 none
+(?:^(x+)+$)|! 26 none
+(?:^(x+)+$|never)|$ 27 none
+*/

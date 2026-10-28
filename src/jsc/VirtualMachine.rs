@@ -4365,6 +4365,13 @@ impl VirtualMachine {
     }
 
     #[cfg(not(bun_disallow_code_generation_from_strings))]
+    #[unsafe(export_name = "Bun__isCodeGenerationDisallowedByFlags")]
+    pub(crate) extern "C" fn is_code_generation_disallowed_by_flags_for_cpp() -> bool {
+        bun_core::code_generation_from_strings_by_flags()
+            != bun_core::CodeGenerationFromStrings::Allowed
+    }
+
+    #[cfg(not(bun_disallow_code_generation_from_strings))]
     #[unsafe(export_name = "Bun__isCodeGenerationDisallowedByTrimming")]
     pub(crate) extern "C" fn is_code_generation_disallowed_by_trimming_for_cpp() -> bool {
         bun_core::is_code_generation_disallowed_by_trimming()

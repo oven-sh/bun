@@ -7,7 +7,7 @@ import { isFinding, sameFailure, wholeText, writeProgram, type Bed, type Failure
 import { parses, reprinted } from "./mutate";
 import { Random } from "./random";
 import { reduce, reduceFiles, shape, type Reduction, type Whole } from "./reduce";
-import { allSources, inSeveralFiles, type Generated } from "./sources";
+import { allSources, inSeveralFiles, writtenAgain, type Generated } from "./sources";
 import { typeChecker, type Checker } from "./type-check";
 
 export interface Settings {
@@ -32,6 +32,7 @@ export interface Settings {
   isCountOnly?: boolean;
   /** Each of `sources` is drawn as often in its form of several files, on the beds that take such programs. */
   alsoInSeveralFiles?: boolean;
+  alsoWrittenAgain?: boolean;
 }
 
 export interface Summary {
@@ -65,9 +66,10 @@ export async function fuzz(settings: Settings): Promise<Summary> {
 
   const rejected = new Set<string>();
   const sources = await allSources(settings.programsRoot, rejected, true);
-  const wanted = (settings.sources ?? Object.keys(sources).filter(name => !name.endsWith(inSeveralFiles))).filter(name => sources[name]);
+  const wanted = (settings.sources ?? Object.keys(sources).filter(name => !name.endsWith(inSeveralFiles) && !name.endsWith(writtenAgain))).filter(name => sources[name]);
   if (!wanted.length) throw new Error("no source of programs");
-  const wantedInBothForms = settings.alsoInSeveralFiles ? wanted.flatMap(name => (name.endsWith(inSeveralFiles) ? [name] : [name, name + inSeveralFiles])) : wanted;
+  const isAForm = (name: string) => name.endsWith(inSeveralFiles) || name.endsWith(writtenAgain);
+  const wantedInBothForms = wanted.flatMap(name => (isAForm(name) ? [name] : [name, ...(settings.alsoInSeveralFiles ? [name + inSeveralFiles] : []), ...(settings.alsoWrittenAgain ? [name + writtenAgain] : [])]));
 
   const known: Known[] = [];
   for (const file of settings.known) {

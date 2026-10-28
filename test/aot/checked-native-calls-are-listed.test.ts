@@ -38,7 +38,17 @@ describe.skipIf(isHardened)("the native calls that a validating executable check
 
   beforeAll(async () => {
     const built = await runProcess(
-      [bunExe(), "build", "--compile", "--aot", "--aot-validate", "main.ts", "--outfile", executable],
+      [
+        bunExe(),
+        "build",
+        "--compile",
+        "--aot",
+        "--no-builtin-modules",
+        "--aot-validate",
+        "main.ts",
+        "--outfile",
+        executable,
+      ],
       String(dir),
       bunEnv,
     );

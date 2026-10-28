@@ -44,3 +44,81 @@ for (let count = 25; count <= 28; count++) show("three to two hundred turns, as 
 for (let count = 25; count <= 28; count++) show("a group that ignores case, " + count, "(?i:a|A)*c|a+", "", "a".repeat(count));
 for (let count = 25; count <= 28; count++) show("an alternative that ignores case, " + count, "(?:a|(?i:A))*(?-i:c)|a+", "i", "a".repeat(count));
 show("a group where the dot takes line ends", "^(?s:.+)+(?-s:.)x$", "", "ab\n".repeat(9) + "y");
+// As plain Bun prints it: the run that shows so takes up to half a minute.
+/* Output:
+five stars, none no match
+five stars 0 1232
+five stars, not anchored no match
+five stars on the second line 1233 1236
+five stars from the middle of a line no match
+lazy stars no match
+lazy stars that match 0 451 2 2 2 441
+stars in optional groups no match
+stars in optional groups that match 0 243 240 - - -
+words no match
+words that match 0 27 3
+assignments no match
+turns that may take nothing no match
+turns that may take nothing, lazy no match
+turns that may take nothing in turns that may take nothing no match
+counted turns no match
+a group that is referred to no match
+a lookahead no match
+alternatives no match
+a match behind 20 0 21 -
+a match behind 21 0 22 -
+a match behind 22 0 23 -
+a match behind 23 0 24 -
+a match behind 24 0 25 -
+a match behind 25 0 26 -
+a match behind 26 0 27 -
+a match behind 27 no match
+a match behind 28 no match
+another behind 30 30 1
+another behind 31 31 1
+another behind 32 32 1
+another behind 33 33 1
+another behind 34 34 1
+another behind 35 no match
+another behind 36 no match
+another behind 37 no match
+behind turns that are counted, 24 0 25
+behind turns that are counted, 25 0 26
+behind turns that are counted, 26 0 27
+behind turns that are counted, 27 no match
+behind turns that are counted, 28 no match
+behind a lookahead, 24 0 25 -
+behind a lookahead, 25 0 26 -
+behind a lookahead, 26 0 27 -
+behind a lookahead, 27 no match
+behind a lookahead, 28 no match
+two to five turns no match
+a lookahead that must fail 0 23 -
+behind a lookbehind no match
+behind a lookbehind that must fail no match
+a match behind a lookbehind, 25 0 27 -
+a match behind a lookbehind, 26 0 28 -
+a match behind a lookbehind, 27 no match
+a match behind a lookbehind, 28 no match
+only at the end, after a lookahead that must fail 31 0
+only at the end, behind a lookbehind 31 0
+only at the end, a class that takes pairs 35 0
+only at the end, behind a pair 32 0
+up to ninety-nine turns, 25 0 25
+up to ninety-nine turns, 26 0 26
+up to ninety-nine turns, 27 no match
+up to ninety-nine turns, 28 no match
+three to two hundred turns, as few as may be, 25 0 25
+three to two hundred turns, as few as may be, 26 0 26
+three to two hundred turns, as few as may be, 27 no match
+three to two hundred turns, as few as may be, 28 no match
+a group that ignores case, 25 0 25
+a group that ignores case, 26 0 26
+a group that ignores case, 27 no match
+a group that ignores case, 28 no match
+an alternative that ignores case, 25 0 25
+an alternative that ignores case, 26 0 26
+an alternative that ignores case, 27 no match
+an alternative that ignores case, 28 no match
+a group where the dot takes line ends no match
+*/

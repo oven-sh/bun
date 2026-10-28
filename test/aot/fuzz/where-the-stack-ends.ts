@@ -1,5 +1,5 @@
-import { nameOf, pickCombination, programOf } from "../generated/where-the-stack-ends";
-import * as writes from "../generated/writes-where-the-stack-ends";
+import { nameOf, pickCombination, programOf } from "./generators/where-the-stack-ends";
+import * as writes from "./generators/writes-where-the-stack-ends";
 import type { Random } from "./random";
 
 export function generate(random: Random): string {

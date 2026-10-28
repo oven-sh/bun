@@ -1,6 +1,4 @@
 // What ./engine-tests.test.ts and the tests beside it share to start `testaot` and `jsc`. ./engine/ runs the engine's own tests.
-//
-//   TEST_PART=aot/engine-tests-flow-under-other-schedules-2 bun test test/aot/parts.test.ts   flow's IR text tests under a quarter of the other orders of its rules
 import { expect, test } from "bun:test";
 import { existsSync } from "fs";
 import { isASAN, isDebug, isWindows } from "harness";

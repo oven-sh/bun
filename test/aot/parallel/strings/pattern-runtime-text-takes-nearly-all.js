@@ -16,3 +16,7 @@ function fastestOf(runs, count) {
 // 9,900 words: 49 million turns. 14,140 words: 99.98 million.
 const half = fastestOf(3, 9900), whole = fastestOf(2, 14140);
 console.log(whole < half * 10 ? "twice the turns in under ten times the time" : "twice the turns took over ten times the time");
+// As plain Bun prints it: the run that shows so takes up to half a minute.
+/* Output:
+twice the turns in under ten times the time
+*/

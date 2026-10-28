@@ -131,6 +131,7 @@ impl<'s, 'r> CodeFiles<'s, 'r> {
             is_aot_source: analyzed.is_aot_source,
             import_meta_main: analyzed.import_meta_main,
             is_called_before_it_runs: analyzed.is_called_before_it_runs,
+            is_only_imported: analyzed.is_only_imported,
         });
         module.compiled = Some(compiled);
 

@@ -1,5 +1,6 @@
-import { describe as describeAnywhere, expect, test } from "bun:test";
+import { afterAll, describe as describeAnywhere, expect, test } from "bun:test";
 import { bunEnv, bunExe, isArm64, isASAN, isLinux, isWindows, tempDir } from "harness";
+import { linkSync } from "node:fs";
 import { join } from "node:path";
 import { unsupported } from "./harness/compiler";
 import { run as runCommand } from "./harness/run";
@@ -186,6 +187,44 @@ async function build(cwd: string, ...moreEntryPoints: string[]) {
     stderr: expect.not.stringMatching(/^error\b/m),
     exitCode: 0,
   });
+  return join(cwd, "program");
+}
+
+// node:worker_threads brings the streams of Node.js along, which makes a build thirty times dearer. The programs that import it are files of one program: its entry points import the files of
+// the case that the working directory names.
+const programsTogether: Record<string, Record<string, string>> = {};
+function together(name: string, files: Record<string, string>) {
+  programsTogether[name] = files;
+  return { "case.txt": name };
+}
+const importsTheCase = (file: string) =>
+  `const files: Record<string, () => Promise<unknown>> = {\n` +
+  Object.entries(programsTogether)
+    .filter(([, files]) => file in files)
+    .map(([name]) => `  "${name}": () => import("./${name}/${file}"),\n`)
+    .join("") +
+  `};\nawait files[await Bun.file("case.txt").text()]!();\n`;
+let builtTogether: Promise<string> | undefined;
+let folderTogether: Disposable | undefined;
+afterAll(() => folderTogether?.[Symbol.dispose]());
+/** Puts the executable of all those programs into `cwd` as ./program. */
+async function linkTogether(cwd: string) {
+  const executable = await (builtTogether ??= (async () => {
+    const files: Record<string, string> = {};
+    const alone: string[] = [];
+    for (const [name, ofCase] of Object.entries(programsTogether))
+      for (const [file, text] of Object.entries(ofCase)) {
+        const isShared = file === "program.ts" || file === "worker.ts";
+        files[isShared ? `${name}/${file}` : file] = text;
+        if (!isShared) alone.push(file);
+      }
+    files["program.ts"] = importsTheCase("program.ts");
+    files["worker.ts"] = importsTheCase("worker.ts");
+    folderTogether = tempDir("aot-heap-limit-together", files);
+    return build(String(folderTogether), "worker.ts", ...alone);
+  })());
+  const extension = isWindows ? ".exe" : "";
+  linkSync(executable + extension, join(cwd, "program" + extension));
   return join(cwd, "program");
 }
 
@@ -509,11 +548,8 @@ attempt("a small copy afterward", () => structuredClone([1, { a: 2 }]));
       120_000,
     );
 
-    inPart(test)(
-      "a Worker that is sent such a text ends alone",
-      async () => {
-        using folder = tempDir("aot-heap-limit", {
-          "program.ts": `import { Worker } from "node:worker_threads";
+    const case1 = together("1", {
+      "program.ts": `import { Worker } from "node:worker_threads";
 const worker = new Worker("./worker.ts");
 worker.on("message", (said: string) => console.log("the Worker says:", said));
 worker.on("error", (error: Error) => console.log("the Worker ends with:", error.name, error.message));
@@ -521,11 +557,15 @@ worker.on("exit", (code: number) => console.log("exit", code, "and the main thre
 worker.postMessage("[1,2]");
 worker.postMessage("[" + '{"a":1,"b":"x"},'.repeat(2_000_000) + '{"a":1}]');
 `,
-          "worker.ts": `import { parentPort } from "node:worker_threads";
+      "worker.ts": `import { parentPort } from "node:worker_threads";
 parentPort!.on("message", (text: string) => parentPort!.postMessage("parsed " + JSON.parse(text).length));
 `,
-        });
-        const program = await build(String(folder), "worker.ts");
+    });
+    inPart(test)(
+      "a Worker that is sent such a text ends alone",
+      async () => {
+        using folder = tempDir("aot-heap-limit", case1);
+        const program = await linkTogether(String(folder));
         const { stdout, stderr, exitCode } = await run([program], String(folder), smallHeap);
         expect(stderr).not.toContain("FATAL");
         expect({ stdout, exitCode }).toEqual({
@@ -537,11 +577,8 @@ parentPort!.on("message", (text: string) => parentPort!.postMessage("parsed " + 
       120_000,
     );
 
-    inPart(test)(
-      "a Worker catches its own, and one that it does not catch ends the Worker alone",
-      async () => {
-        using folder = tempDir("aot-heap-limit", {
-          "program.ts": `import { Worker } from "node:worker_threads";
+    const case2 = together("2", {
+      "program.ts": `import { Worker } from "node:worker_threads";
 const worker = new Worker("./worker.ts");
 worker.on("message", (said: string) => console.log("the Worker says:", said));
 worker.on("error", (error: Error) => console.log("the Worker ends with:", error.name, error.message));
@@ -551,7 +588,7 @@ worker.on("exit", (code: number) => {
   console.log("exit", code, "and the main thread goes on:", list.length);
 });
 `,
-          "worker.ts": `import { parentPort } from "node:worker_threads";
+      "worker.ts": `import { parentPort } from "node:worker_threads";
 ${treeBuilder}let keep: (Tree | null)[] = [];
 process.on("exit", () => console.log("the Worker held trees of", smallest(keep)));
 try {
@@ -563,8 +600,12 @@ try {
 }
 for (;;) keep.push(build(10, 1));
 `,
-        });
-        const program = await build(String(folder), "worker.ts");
+    });
+    inPart(test)(
+      "a Worker catches its own, and one that it does not catch ends the Worker alone",
+      async () => {
+        using folder = tempDir("aot-heap-limit", case2);
+        const program = await linkTogether(String(folder));
         const { stdout, stderr, exitCode } = await run([program], String(folder), smallHeap);
         expect(stderr).not.toContain("FATAL");
         expect({ stdout, exitCode }).toEqual({
@@ -578,11 +619,8 @@ for (;;) keep.push(build(10, 1));
     );
 
     // A Worker that catches the error goes on, one that does not ends alone, and one that is told and goes on filling ends alone too, where the main thread would end the process.
-    inPart(test)(
-      "a Worker that fills its range inside a try catches the error, and one that does not catch it ends alone",
-      async () => {
-        using folder = tempDir("aot-heap-limit", {
-          "program.ts": `import { Worker as NodeWorker } from "node:worker_threads";
+    const case3 = together("3", {
+      "program.ts": `import { Worker as NodeWorker } from "node:worker_threads";
 type Entry = { id: number };
 function some(): number {
   const list: Entry[] = [];
@@ -604,7 +642,7 @@ await new Promise<void>(resolve => {
   worker.addEventListener("close", event => (console.log("on the web: close", (event as CloseEvent).code, "and the main thread goes on:", some()), resolve()));
 });
 `,
-          "worker.ts": `import { parentPort, workerData } from "node:worker_threads";
+      "worker.ts": `import { parentPort, workerData } from "node:worker_threads";
 type Entry = { id: number; next: Entry | null };
 const way: string = workerData ?? process.env.WAY;
 process.on("exit", () => parentPort!.postMessage("an exit listener ran"));
@@ -669,8 +707,12 @@ if (way === "objects in a try") {
   }
 }
 `,
-        });
-        const program = await build(String(folder), "worker.ts");
+    });
+    inPart(test)(
+      "a Worker that fills its range inside a try catches the error, and one that does not catch it ends alone",
+      async () => {
+        using folder = tempDir("aot-heap-limit", case3);
+        const program = await linkTogether(String(folder));
         const { stdout, stderr, exitCode } = await run([program], String(folder), smallHeap);
         expect(stderr).not.toContain("FATAL");
         // A push may be what finds the memory gone, and it throws: then the Worker catches the error. Either way it is a RangeError, the Worker ends with 1 and nothing else does.
@@ -708,24 +750,25 @@ if (way === "objects in a try") {
       120_000,
     );
 
-    inPart(test)(
-      "a Worker of a Worker that ends so takes neither its parent nor the main thread along",
-      async () => {
-        using folder = tempDir("aot-heap-limit", {
-          "program.ts": `import { Worker } from "node:worker_threads";
+    const case4 = together("4", {
+      "program.ts": `import { Worker } from "node:worker_threads";
 const worker = new Worker("./parent.ts");
 worker.on("message", (said: string) => console.log(said));
 worker.on("error", (error: Error) => console.log("the parent ends with:", error.name));
 worker.on("exit", (code: number) => console.log("the parent: exit", code));
 `,
-          "parent.ts": `import { Worker, parentPort } from "node:worker_threads";
+      "parent.ts": `import { Worker, parentPort } from "node:worker_threads";
 const worker = new Worker("./child.ts");
 worker.on("error", (error: Error) => parentPort!.postMessage("the child ends with: " + error.name + " " + error.message));
 worker.on("exit", (code: number) => parentPort!.postMessage("the child: exit " + code));
 `,
-          "child.ts": isToldAndGoesOnFilling("String"),
-        });
-        const program = await build(String(folder), "parent.ts", "child.ts");
+      "child.ts": isToldAndGoesOnFilling("String"),
+    });
+    inPart(test)(
+      "a Worker of a Worker that ends so takes neither its parent nor the main thread along",
+      async () => {
+        using folder = tempDir("aot-heap-limit", case4);
+        const program = await linkTogether(String(folder));
         const { stdout, stderr, exitCode } = await run([program], String(folder), smallHeap);
         expect(stderr).not.toContain("FATAL");
         expect({ stdout: stdout.replaceAll(": " + limitOf64MB, ""), exitCode }).toEqual({
@@ -987,11 +1030,8 @@ try {
       120_000,
     );
 
-    inPart(test)(
-      "a Worker that is told so and does not catch it ends alone",
-      async () => {
-        using folder = tempDir("aot-heap-limit", {
-          "program.ts": `import { Worker } from "node:worker_threads";
+    const case5 = together("5", {
+      "program.ts": `import { Worker } from "node:worker_threads";
 type Entry = { id: number };
 function some(): number {
   const list: Entry[] = [];
@@ -1005,10 +1045,14 @@ await new Promise<void>(resolve => {
   worker.on("exit", (code: number) => (console.log("exit", code, "and the main thread goes on:", some()), resolve()));
 });
 `,
-          "worker.ts": `import { parentPort } from "node:worker_threads";
+      "worker.ts": `import { parentPort } from "node:worker_threads";
 ${keepsAFullRangeAndGoesOnInATry("parentPort!.postMessage")}`,
-        });
-        const program = await build(String(folder), "worker.ts");
+    });
+    inPart(test)(
+      "a Worker that is told so and does not catch it ends alone",
+      async () => {
+        using folder = tempDir("aot-heap-limit", case5);
+        const program = await linkTogether(String(folder));
         const { stdout, stderr, exitCode } = await run([program], String(folder), smallHeap);
         expect(stderr).not.toContain("FATAL");
         expect({ stdout: stdout.replace(/finished \d+/, "finished"), exitCode }).toEqual({
@@ -1020,11 +1064,12 @@ ${keepsAFullRangeAndGoesOnInATry("parentPort!.postMessage")}`,
       120_000,
     );
 
+    const case6 = together("6", twoWorkersThatKeepMoreThanHalfARange);
     inPart(test.skipIf(runsOutOfRoomEarly))(
       "two Workers each keep more alive than half a range holds",
       async () => {
-        using folder = tempDir("aot-heap-limit", twoWorkersThatKeepMoreThanHalfARange);
-        const program = await build(String(folder), "worker.ts");
+        using folder = tempDir("aot-heap-limit", case6);
+        const program = await linkTogether(String(folder));
         const { stdout, stderr, exitCode } = await run([program], String(folder), {
           BUN_JSC_markedBlockCageSizeInMB: "128",
         });
@@ -1034,11 +1079,8 @@ ${keepsAFullRangeAndGoesOnInATry("parentPort!.postMessage")}`,
       120_000,
     );
 
-    inPart(test.skipIf(!isLinux || isASAN))(
-      "where address space is limited a Worker shares the range of the main thread",
-      async () => {
-        using folder = tempDir("aot-heap-limit", {
-          "program.ts": `import { readFileSync } from "node:fs";
+    const case7 = together("7", {
+      "program.ts": `import { readFileSync } from "node:fs";
 import { Worker } from "node:worker_threads";
 type Entry = { id: number; next: Entry | null };
 const free = () => 64 * 1024 * 1024 - Number(/VmSize:\\s+(\\d+) kB/.exec(readFileSync("/proc/self/status", "utf8"))![1]);
@@ -1052,7 +1094,7 @@ new Worker("./worker.ts").once("message", (sum: number) => {
   console.log(after > before / 2 ? "shares" : "took " + (before - after) + " kB of " + before, sum, own);
 });
 `,
-          "worker.ts": `import { parentPort } from "node:worker_threads";
+      "worker.ts": `import { parentPort } from "node:worker_threads";
 type Entry = { id: number; next: Entry | null };
 let head: Entry | null = null;
 for (let i = 0; i < 100_000; i++) head = { id: i, next: head };
@@ -1060,19 +1102,20 @@ let sum = 0;
 for (let entry: Entry | null = head; entry; entry = entry.next) sum += entry.id;
 parentPort!.postMessage(sum);
 `,
-        });
-        await build(String(folder), "worker.ts");
+    });
+    inPart(test.skipIf(!isLinux || isASAN))(
+      "where address space is limited a Worker shares the range of the main thread",
+      async () => {
+        using folder = tempDir("aot-heap-limit", case7);
+        await linkTogether(String(folder));
         const { stdout, exitCode } = await run(["sh", "-c", "ulimit -v 67108864 && exec ./program"], String(folder));
         expect({ stdout, exitCode }).toEqual({ stdout: "shares 4999950000 4999950000\n", exitCode: 0 });
       },
       120_000,
     );
 
-    inPart(test.skipIf(!isLinux || isASAN))(
-      "where address space is limited much of it is left for Workers and their threads",
-      async () => {
-        using folder = tempDir("aot-heap-limit", {
-          "program.ts": `import { readFileSync } from "node:fs";
+    const case8 = together("8", {
+      "program.ts": `import { readFileSync } from "node:fs";
 import { Worker } from "node:worker_threads";
 const limit = 8 * 1024 * 1024;
 const free = limit - Number(/VmSize:\\s+(\\d+) kB/.exec(readFileSync("/proc/self/status", "utf8"))![1]);
@@ -1087,7 +1130,7 @@ for (const worker of workers) {
   });
 }
 `,
-          "worker.ts": `import { parentPort } from "node:worker_threads";
+      "worker.ts": `import { parentPort } from "node:worker_threads";
 type Entry = { id: number; next: Entry | null };
 let head: Entry | null = null;
 for (let i = 0; i < 100_000; i++) head = { id: i, next: head };
@@ -1097,8 +1140,12 @@ await fetch("http://127.0.0.1:1/").catch(() => {});
 parentPort!.once("message", () => {});
 parentPort!.postMessage(sum);
 `,
-        });
-        await build(String(folder), "worker.ts");
+    });
+    inPart(test.skipIf(!isLinux || isASAN))(
+      "where address space is limited much of it is left for Workers and their threads",
+      async () => {
+        using folder = tempDir("aot-heap-limit", case8);
+        await linkTogether(String(folder));
         const { stdout, stderr, exitCode } = await run(
           ["sh", "-c", "ulimit -v 8388608 && exec ./program"],
           String(folder),
@@ -1738,11 +1785,12 @@ console.log(rounds, pinned.length > 10);
       240_000,
     );
 
+    const case9 = together("9", sixWorkersOneAfterTheOther);
     inPart(test.skipIf(!isLinux))(
       "the range of a Worker that has ended is given back",
       async () => {
-        using folder = tempDir("aot-heap-limit", sixWorkersOneAfterTheOther);
-        const { stdout, exitCode } = await run([await build(String(folder), "worker.ts")], String(folder));
+        using folder = tempDir("aot-heap-limit", case9);
+        const { stdout, exitCode } = await run([await linkTogether(String(folder))], String(folder));
         expect({ stdout, exitCode }).toEqual({ stdout: "given back\n", exitCode: 0 });
       },
       120_000,

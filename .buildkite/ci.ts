@@ -916,10 +916,10 @@ function getCargoTestStep(buildId: string | undefined): CommandStep {
     timeout_in_minutes: 30,
     command: [
       `buildkite-agent artifact download '${profileDir}.zip' . --step ${buildStep}${buildId ? ` --build ${buildId}` : ""}`,
-      `unzip -o '${profileDir}.zip' '${profileDir}/testaot'`,
-      `chmod +x ${profileDir}/testaot`,
+      `unzip -o '${profileDir}.zip' '${profileDir}/testaot' '${profileDir}/bun-profile'`,
+      `chmod +x ${profileDir}/testaot ${profileDir}/bun-profile`,
       // ($$ is a literal $ after pipeline-upload interpolation.)
-      `TESTAOT="$$PWD/${profileDir}/testaot" bun run rust:test`,
+      `TESTAOT="$$PWD/${profileDir}/testaot" BUN_UNDER_TEST="$$PWD/${profileDir}/bun-profile" bun run rust:test`,
     ],
   };
 }

@@ -334,13 +334,16 @@ describe("the debugger", () => {
       noAddress(new Error("no address of the debugger in stderr:\n" + stderr));
     })();
     let stdout = "";
+    const { promise: printedFirstLine, resolve: didPrintFirstLine } = Promise.withResolvers<void>();
     const { promise: printedAll, resolve: didPrintAll } = Promise.withResolvers<void>();
     (async () => {
       const decoder = new TextDecoder();
       for await (const chunk of proc.stdout) {
         stdout += decoder.decode(chunk, { stream: true });
+        if (stdout.includes("\n")) didPrintFirstLine();
         if (stdout.endsWith("resumed\n")) didPrintAll();
       }
+      didPrintFirstLine();
       didPrintAll();
     })();
     const client = new WebSocket(await address);
@@ -366,6 +369,7 @@ describe("the debugger", () => {
     ]);
     await request("Inspector.initialized");
     const { reason } = await paused;
+    await printedFirstLine;
     const before = stdout;
     await request("Debugger.resume");
     await printedAll;

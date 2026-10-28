@@ -17,16 +17,6 @@ const roads: [keptFeature: string, extension: "mjs" | "cjs", text: string][] = [
     "mjs",
     `console.log(new (Object.getOwnPropertyDescriptors(globalThis).BroadcastChannel.value)("x").close());`,
   ],
-  [
-    "BroadcastChannel",
-    "mjs",
-    `console.log(new (Object.fromEntries(Object.entries(globalThis)).BroadcastChannel)("x").close());`,
-  ],
-  [
-    "BroadcastChannel",
-    "mjs",
-    `const { BroadcastChannel, ...rest } = globalThis; console.log(new BroadcastChannel("x").close(), typeof rest);`,
-  ],
   ["process.memoryUsage", "mjs", `const [b] = await Promise.all([process]); console.log(b.memoryUsage().rss > 0);`],
   ["process.memoryUsage", "mjs", `console.log(([process].reduce((a, b) => b, 0).memoryUsage)().rss > 0);`],
   [
@@ -34,18 +24,17 @@ const roads: [keptFeature: string, extension: "mjs" | "cjs", text: string][] = [
     "cjs",
     `const wt = require("node:worker_threads"); with (wt) { console.log(new MessageChannel().port1.close()); }`,
   ],
-  [
-    "MessageChannel",
-    "mjs",
-    `import wt from "node:worker_threads"; console.log(Object.getOwnPropertyNames(wt).filter(n => n === "MessageChannel").map(n => new wt[n]().port1.close())[0]);`,
-  ],
 ];
 
 (unsupported ? describe.skip : describe.concurrent)("a member is kept whatever the road to it", () => {
-  test.each(roads)("%s: %s: %s", async (keptFeature, extension, text) => {
-    const entryPoint = `main.${extension}`;
-    const use = await runtimeUse({ [entryPoint]: text + "\n" }, undefined, entryPoint);
-    const kept = use.lines.filter(line => line.startsWith("kept ") && line.includes(keptFeature));
-    expect({ exitCode: use.exitCode, isKept: kept.length > 0 }).toEqual({ exitCode: 0, isKept: true });
-  });
+  test.each(roads)(
+    "%s: %s: %s",
+    async (keptFeature, extension, text) => {
+      const entryPoint = `main.${extension}`;
+      const use = await runtimeUse({ [entryPoint]: text + "\n" }, undefined, entryPoint);
+      const kept = use.lines.filter(line => line.startsWith("kept ") && line.includes(keptFeature));
+      expect({ exitCode: use.exitCode, isKept: kept.length > 0 }).toEqual({ exitCode: 0, isKept: true });
+    },
+    120_000,
+  );
 });

@@ -343,6 +343,11 @@ pub fn is_parser(builtin: BuiltinId) -> bool {
     PARSERS.binary_search(&builtin).is_ok()
 }
 
+/// Whether `builtin`, which is a canonical id, answers a query that settles to rows.
+pub fn answers_query(builtin: BuiltinId) -> bool {
+    QUERY_FUNCTIONS.binary_search(&builtin).is_ok()
+}
+
 /// The ways to call or construct `builtin`, which is a canonical id, so that nothing a program can see happens when nobody uses the result.
 pub fn removable_calls(
     builtin: BuiltinId,

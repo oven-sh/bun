@@ -373,21 +373,14 @@ try {
 const unlikeTheOthers = ["ModuleGraph", "Transpiler", "build", "plugin", "SQL", "sql", "postgres", "$", "peek"];
 
 test.concurrent.each([
-  ["every member of Bun", "its name", members, (name: string) => `Bun.${name}`],
+  ["every member of Bun that is read by its name", members, (name: string) => `Bun.${name}`],
   [
-    "a member that is unlike the others",
-    "Reflect.get",
+    "a member that is unlike the others, read by Reflect.get or by Reflect.getOwnPropertyDescriptor",
     unlikeTheOthers,
-    (name: string) => `Reflect.get(Bun, "${name}")`,
+    (name: string, index: number) => `Reflect.${index % 2 ? "getOwnPropertyDescriptor" : "get"}(Bun, "${name}")`,
   ],
-  [
-    "a member that is unlike the others",
-    "Reflect.getOwnPropertyDescriptor",
-    unlikeTheOthers,
-    (name: string) => `Reflect.getOwnPropertyDescriptor(Bun, "${name}")`,
-  ],
-] as const)("%s that is read by %s counts as used", async (_, __, names, read) => {
-  const reads = `() => [\n${names.map(name => `    ${read(name)},`).join("\n")}\n  ]`;
+] as const)("%s counts as used", async (_, names, read) => {
+  const reads = `() => [\n${names.map((name, index) => `    ${read(name, index)},`).join("\n")}\n  ]`;
   const used = await membersUsed({
     "program.mjs": `${behindCalls(calls, "", reads)}console.log(holder${calls}.next().length);\n`,
   });

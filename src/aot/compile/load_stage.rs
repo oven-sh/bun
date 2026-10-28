@@ -11,6 +11,8 @@ use crate::load::fold_inputs::{
     ProgramFacts, create_application_fold_inputs, create_runtime_fold_inputs,
 };
 use crate::load::host::{LoadHost, LoadHostInput, create_disk};
+#[cfg(any(test, feature = "test_support"))]
+use crate::load::is_in_archive_of_bun;
 use crate::load::named_loads::resolve_loads_through_imported_loaders;
 use crate::load::runtime_host::RuntimeHost;
 use crate::load::runtime_modules::RuntimeModules;
@@ -35,13 +37,16 @@ use bun_sema::resolve::{CodeHost, CodeOptions};
 use bun_sema::session::Session;
 use bun_sema_driver::host::Disk;
 use bun_sema_driver::{
-    CompileRequest, EntryPoints, LoadFailure, LoadedProgram,
-    find_configuration_of_each_entry_point, load_program_with_parsed_files, resolve_entry_point,
+    ChosenThreads, CompileRequest, EntryPoints, LoadFailure, LoadedProgram,
+    find_configuration_of_each_entry_point, fit_threads_to_sources, load_program_with_parsed_files,
+    resolve_entry_point,
 };
 use bun_threading::Guarded;
 use core::sync::atomic::Ordering;
 use std::cell::Cell;
 use std::mem::take;
+#[cfg(any(test, feature = "test_support"))]
+use std::sync::OnceLock;
 use std::thread::Scope;
 use std::time::Instant;
 
@@ -99,6 +104,63 @@ struct ApplicationLoad<'l, 'scope, 'env, 'h, 's> {
     positions: &'l [usize],
 }
 
+/// The files that earlier loads have parsed.
+#[derive(Copy, Clone)]
+enum ParsedBefore<'s> {
+    Nothing,
+    ByThisBuild(&'s Run<'s>),
+    #[cfg(any(test, feature = "test_support"))]
+    ByBuildsOfTestProgram(&'static Run<'static>),
+}
+
+impl<'s> ParsedBefore<'s> {
+    fn load_program(
+        self,
+        session: &'s Session,
+        host: &dyn CodeHost,
+        request: &CompileRequest<'_, 's>,
+    ) -> Result<LoadedProgram<'s>, LoadFailure> {
+        match self {
+            ParsedBefore::Nothing => load_program_with_parsed_files(session, host, request, None),
+            ParsedBefore::ByThisBuild(parsed) => {
+                load_program_with_parsed_files(session, host, request, Some(parsed))
+            }
+            #[cfg(any(test, feature = "test_support"))]
+            ParsedBefore::ByBuildsOfTestProgram(parsed) => {
+                load_program_with_parsed_files(session, host, request, Some(parsed))
+            }
+        }
+    }
+}
+
+/// A test program builds thousands of small programs. What each reads out of the archive of Bun is parsed and bound for the first.
+#[cfg(any(test, feature = "test_support"))]
+struct SharedByBuilds {
+    atoms: Interner<'static>,
+    parsed: Run<'static>,
+}
+
+#[cfg(any(test, feature = "test_support"))]
+impl SharedByBuilds {
+    fn of_test_program() -> &'static SharedByBuilds {
+        static SESSION: OnceLock<Session> = OnceLock::new();
+        static SHARED: OnceLock<SharedByBuilds> = OnceLock::new();
+        SHARED.get_or_init(|| {
+            let session = SESSION.get_or_init(Session::new);
+            let atoms = Interner::new_in(session);
+            SharedByBuilds {
+                atoms,
+                parsed: Run::of_compile_builds(session, atoms, is_in_archive_of_bun),
+            }
+        })
+    }
+
+    fn serves(options: &Options<'_>) -> bool {
+        let mut own_texts = options.load.in_memory_files.iter();
+        preload_of(options).is_none() && !own_texts.any(|(path, _)| is_in_archive_of_bun(path))
+    }
+}
+
 struct SharedLoadInputs<'c, 's> {
     disk: &'c Disk,
     sessions: PerProject<&'s Session>,
@@ -111,7 +173,7 @@ struct SharedLoadInputs<'c, 's> {
     manifest: &'static Manifest,
     runtime_modules: &'c RuntimeModules,
     messages: &'c LoadMessages,
-    parsed_declarations: Option<&'s Run<'s>>,
+    parsed_before: ParsedBefore<'s>,
 }
 
 /// What the request for a load of Bun's own code borrows.
@@ -190,9 +252,21 @@ impl<'a> Build<'a> {
     ) -> Result<R, Stage> {
         self.clock.start(Stage::Load);
         let options = self.options;
+        self.chosen_threads = match options.aot.thread_count {
+            None => {
+                fit_threads_to_sources();
+                None
+            }
+            Some(_) => Some(ChosenThreads::new(self.threads)),
+        };
         let disk = create_disk(options, self.threads);
         let application_session = sessions.application;
         let atoms = Interner::new_in(application_session);
+        #[cfg(any(test, feature = "test_support"))]
+        let shared_by_builds =
+            SharedByBuilds::serves(options).then(SharedByBuilds::of_test_program);
+        #[cfg(any(test, feature = "test_support"))]
+        let atoms = shared_by_builds.map_or(atoms, |shared| shared.atoms);
         let builtin_names = BuiltinNames::new(&atoms);
         let archive = Archive::embedded();
         let runtime_modules = create_runtime_modules(archive, options);
@@ -208,8 +282,16 @@ impl<'a> Build<'a> {
             &self.limits,
             self.platform,
         );
-        let parsed_declarations = preload_of(options).map(|_| {
-            &*(application_session.arena()).alloc(Run::of_compile_build(application_session, atoms))
+        let parsed_before = match preload_of(options) {
+            None => ParsedBefore::Nothing,
+            Some(_) => ParsedBefore::ByThisBuild(
+                (application_session.arena())
+                    .alloc(Run::of_compile_build(application_session, atoms)),
+            ),
+        };
+        #[cfg(any(test, feature = "test_support"))]
+        let parsed_before = shared_by_builds.map_or(parsed_before, |shared| {
+            ParsedBefore::ByBuildsOfTestProgram(&shared.parsed)
         });
         let shared = SharedLoadInputs {
             disk: &disk,
@@ -222,7 +304,7 @@ impl<'a> Build<'a> {
             manifest: archive.manifest(),
             runtime_modules: &runtime_modules,
             messages: &messages,
-            parsed_declarations,
+            parsed_before,
         };
         let result = self.load_projects(&shared, asset_reads, then);
         self.leftovers.push(Box::new(disk));
@@ -405,6 +487,7 @@ impl<'a> Build<'a> {
             };
             let found = find_code_that_starts_workers(files, &search, &self.parallel_runner());
             self.started_workers.files = found.files;
+            self.started_workers.names = found.names;
             self.started_workers.code = found.code;
             self.started_workers.constructs_node_workers = found.constructs_node_workers;
         }
@@ -535,13 +618,8 @@ impl<'a> Build<'a> {
                         &self.beside_runner(),
                         || freeze_sources(&input, &in_parallel),
                         || {
-                            let parsed = shared.parsed_declarations;
-                            load_program_with_parsed_files(
-                                session,
-                                runtime_host,
-                                &runtime_request,
-                                parsed,
-                            )
+                            let parsed_before = shared.parsed_before;
+                            parsed_before.load_program(session, runtime_host, &runtime_request)
                         },
                     );
                     frozen_application = Some(frozen);
@@ -551,7 +629,8 @@ impl<'a> Build<'a> {
             };
             self.count_time(StatisticId::LoadRuntimeProjectNanoseconds, started);
 
-            runtime.set_is_read_again(is_read_again || shared.parsed_declarations.is_some());
+            let is_kept = matches!(shared.parsed_before, ParsedBefore::ByThisBuild(_));
+            runtime.set_is_read_again(is_read_again || is_kept);
             for &index in group {
                 if first_files[index].is_some() {
                     view(first_files[index]);
@@ -685,8 +764,7 @@ impl<'a> Build<'a> {
         host: &RuntimeHost<'_>,
         request: &CompileRequest<'_, 's>,
     ) -> Result<LoadedProgram<'s>, Stage> {
-        let parsed = shared.parsed_declarations;
-        let runtime = load_program_with_parsed_files(session, host, request, parsed);
+        let runtime = shared.parsed_before.load_program(session, host, request);
         self.finish_load(runtime, request, shared.messages)
     }
 
@@ -763,8 +841,8 @@ impl<'a> Build<'a> {
         request: &CompileRequest<'_, 's>,
         shared: &SharedLoadInputs<'_, 's>,
     ) -> Result<LoadedProgram<'s>, Stage> {
-        let (messages, parsed) = (shared.messages, shared.parsed_declarations);
-        let mut result = load_program_with_parsed_files(session, host, request, parsed);
+        let (messages, parsed_before) = (shared.messages, shared.parsed_before);
+        let mut result = parsed_before.load_program(session, host, request);
         if !host.reads_in_background_after_load()
             && !host.finish_background_reads()
             && result.is_ok()
@@ -772,7 +850,7 @@ impl<'a> Build<'a> {
         {
             drop(result);
             self.provider.clear_embedded_files();
-            result = load_program_with_parsed_files(session, host, request, parsed);
+            result = parsed_before.load_program(session, host, request);
         }
         self.finish_load(result, request, messages)
     }

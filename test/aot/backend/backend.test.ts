@@ -4,7 +4,7 @@
 // an answer of two kilobytes). It is built with `bun build --compile --aot`, started, and asked. ./answers.ts has what is right.
 //
 //   AOT_BACKEND=1 bun test test/aot/backend
-//   AOT_BACKEND_MODULES=<a node_modules folder> ..     the packages are taken from there
+//   AOT_BACKEND_MODULES=<a node_modules folder> ..     the packages are already installed there, and nothing is downloaded
 //   AOT_BACKEND_DATABASE_URL=postgres://.. ..          a database that ./schema.sql may fill. Its tables of the same names are dropped.
 //
 // It needs Postgres. Without AOT_BACKEND_DATABASE_URL it uses the container that test/js/sql uses, and where there is no Docker
@@ -113,12 +113,15 @@ describe.skipIf(!wanted || !hasPostgres || !!unsupported)("compile/aot/backend",
     env = { ...bunEnv, DATABASE_URL: url, CARRIER_URL: `http://127.0.0.1:${carrier.port}` };
 
     cpSync(join(import.meta.dir, "app"), folder, { recursive: true });
-    // zod and the types of Bun, at the versions of ./app/package.json, are among the packages of ../servers/app, a workspace of test/package.json.
-    symlinkSync(
-      process.env.AOT_BACKEND_MODULES ?? join(import.meta.dir, "..", "servers", "app", "node_modules"),
-      join(folder, "node_modules"),
-      "junction",
-    );
+    if (process.env.AOT_BACKEND_MODULES) {
+      symlinkSync(process.env.AOT_BACKEND_MODULES, join(folder, "node_modules"), "junction");
+    } else {
+      const install = await spawned([bunExe(), "install", "--ignore-scripts"], folder, bunEnv);
+      expect({ stderr: install.exitCode ? install.stderr : "", exitCode: install.exitCode }).toEqual({
+        stderr: "",
+        exitCode: 0,
+      });
+    }
     built(
       await spawned(
         [bunExe(), "build", "--compile", "--aot", "--target=bun", "./server.ts", "--outfile", executable],

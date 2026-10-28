@@ -149,5 +149,5 @@ for (const a of makers) {
 print("concatenation " + total);
 print(show(plus("", "")) + show(plus("a", "")) + show(plus("", "b")) + show(plus3("", "", "")) + show(plus3("", "b", "")) + show(plus(u, "x")) + show(plus("x", n)) + show(template(u, -0, n)) + show(plusNumber("a", 1.5)) + show(plusNumber("", -0)) + show(plusNumber("\u65E5", 1000000000000000000000)));
 print(show(appended("ab", 5)) + appended("\u65E5x", 1000).length + appended("", 10).length + show(appended("abc", 100).slice(148, 152)) + show(appended("abc", 100).charCodeAt(299)) + appended("abc", 100).lastIndexOf("c"));
-const big = "x".repeat(1073741824);
+let big = "x"; for (let i = 0; i < 30; i++) big += big;
 print(attempt(() => plus(big, big).length) + attempt(() => plus3(big, "", "").length) + attempt(() => plus3(big, big, big).length) + attempt(() => template(big, 1, big).length));

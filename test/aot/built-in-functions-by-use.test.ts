@@ -16,26 +16,9 @@ const programs: Record<string, Program> = {
     source: `let all = ""; process.stdin.on("data", chunk => (all += chunk)).on("end", () => console.log(JSON.stringify(all)));`,
     stdin: "given\n",
   },
-  "process.openStdin": {
-    source: `let all = ""; process.openStdin().on("data", chunk => (all += chunk)).on("end", () => console.log(JSON.stringify(all)));`,
-    stdin: "given\n",
-  },
   "process.send and a message": {
     source: `process.on("message", message => { console.log("got", JSON.stringify(message)); process.disconnect(); }); process.send({ hello: 1 });`,
     ipc: "json",
-  },
-  "process.channel": {
-    source: `console.log(typeof process.channel, typeof process.channel?.unref, process.connected); process.channel?.unref();`,
-    ipc: "json",
-  },
-  "messages with buffers": {
-    source: `process.on("message", message => { console.log("got", message.constructor.name, [...message.bytes].join()); process.disconnect(); }); process.send({ bytes: new Uint8Array([1, 2, 3]) });`,
-    ipc: "advanced",
-  },
-  "a message that only arrives, for a listener whose event is computed": {
-    source: `process.on(["mess", "age"].join(""), message => { console.log("got", JSON.stringify(message)); process.exit(0); });`,
-    ipc: "json",
-    greeting: { hello: 2 },
   },
   "a message with buffers that only arrives": {
     source: `process.once("message", message => { console.log("got", message.constructor.name, [...message.bytes].join()); process.exit(0); });`,

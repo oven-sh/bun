@@ -5,7 +5,7 @@
 //   bun build --compile --aot --aot-allow-code-from-disk     prints the same and exits alike
 //
 // Such a build holds every built-in module, so the cases that are built with the same flags share one: their programs lie in folders of one program, whose entry point imports the one that PROGRAM names.
-// A case about the entry point itself has executables of its own.
+// A case about the entry point itself has executables of its own. Only the largest group holds the built-in modules: the programs of the others import none. Bun.build() builds it, the command line the others.
 //
 //   program   the files that are compiled. "main.ts" is the entry point
 //   disk      the files that lie beside the executable when it runs, in a folder that the build is not told of. It is the working directory and process.argv[2]
@@ -653,6 +653,14 @@ describe.skipIf(isHardened)("code from disk", () => {
             `const programs: Record<string, () => Promise<unknown>> = {\n` +
             group.map((_, index) => `  "${index}": () => import("./${index}/main.ts"),\n`).join("") +
             `};\nawait programs[process.env.PROGRAM!]!();\n`;
+        const isLargest = isShared && !first.flags && !first.aotFlags;
+        if (isLargest)
+          files["program/build.ts"] = `const result = await Bun.build({
+  entrypoints: ["./main.ts"],
+  compile: { aot: true, allowCodeFromDisk: true, outfile: process.argv[2] },
+});
+console.log(result.success, result.logs.filter(log => log.message.includes("TS100064")).length);
+`;
         const dir = tempDir("aot-code-from-disk", files);
         const folder = String(dir);
         const executables: Record<"plain" | "compiled", string> = { plain: "", compiled: "" };
@@ -678,7 +686,25 @@ describe.skipIf(isHardened)("code from disk", () => {
               ),
             );
           };
-          await Promise.all([build("plain", []), build("compiled", [...allowed, ...(first.aotFlags ?? [])])]);
+          const buildThroughTheApi = async () => {
+            executables.compiled = join(folder, "compiled" + (isWindows ? ".exe" : ""));
+            const { stdout, stderr, exitCode } = await spawned(
+              [bunExe(), "build.ts", executables.compiled],
+              join(folder, "program"),
+              bunEnv,
+            );
+            expect({ stdout, stderr: exitCode ? stderr : "", exitCode }).toEqual({
+              stdout: "true 0\n",
+              stderr: "",
+              exitCode: 0,
+            });
+          };
+          await Promise.all([
+            build("plain", []),
+            isLargest
+              ? buildThroughTheApi()
+              : build("compiled", [...allowed, "--no-builtin-modules", ...(first.aotFlags ?? [])]),
+          ]);
         }, timeout);
 
         for (const [index, [name, it]] of group.entries()) {
@@ -733,31 +759,6 @@ describe("the option", () => {
         const { stdout, exitCode } = await spawned([executable, disk], disk, bunEnv);
         expect({ stdout, exitCode }).toEqual({
           stdout: `import: threw Error ERR_MODULE_NOT_FOUND\nrequire: threw Error MODULE_NOT_FOUND\ndata: {"kind":"json","named":"json"} json\nthe error names the option: true\n`,
-          exitCode: 0,
-        });
-      })(),
-    timeout,
-  );
-
-  test.skipIf(isHardened)(
-    "Bun.build() takes the option as compile.allowCodeFromDisk",
-    () =>
-      (async () => {
-        using dir = tempDir("aot-code-from-disk", {
-          ...closedWorld,
-          "program/build.ts": `const result = await Bun.build({
-          entrypoints: ["./main.ts"],
-          compile: { aot: true, allowCodeFromDisk: true, outfile: process.argv[2] },
-        });
-        console.log(result.success, result.logs.filter(log => log.message.includes("TS100064")).length);`,
-        });
-        const { folder, disk } = foldersOf(dir);
-        const executable = join(folder, "open" + (isWindows ? ".exe" : ""));
-        const build = await spawned([bunExe(), "build.ts", executable], join(folder, "program"), bunEnv);
-        expect({ stdout: build.stdout, exitCode: build.exitCode }).toEqual({ stdout: "true 0\n", exitCode: 0 });
-        const { stdout, exitCode } = await spawned([executable, disk], disk, bunEnv);
-        expect({ stdout, exitCode }).toEqual({
-          stdout: `import: {"kind":"ts"} ts\nrequire: {"kind":"cjs","named":"cjs"} cjs\ndata: {"kind":"json","named":"json"} json\n`,
           exitCode: 0,
         });
       })(),

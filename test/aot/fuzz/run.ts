@@ -14,6 +14,8 @@
 //   --sources a,b:8       of mutation, grammar, protocols, new-targets, object-mutations, typed-object-mutations, unsound-types (default: all). A number is a weight: b is drawn eight times as often as a
 //   --one-file-only       without it every second program of each source is drawn in several files: the declarations at its top lie in up to four further files that import from each other, and its source is called <source>-in-several-files,
 //                         which --sources and --replay take too. A finding in such a program is tried in one file first; if it takes the files, files are cut first, then lines
+//   --written-again       each source is also drawn as <source>-written-again, a name that --sources and --replay take too: the program is written again in one to six ways after which it prints the same
+//                         and the compiler knows less: values that come back from text nobody knows, bounds of short loops that hang on the run, collections inside calls, functions the host could call, an open world, the whole file inside a function, a try or a loop
 //   --flags "<flags>"     added to every build on the product bed; --engine-flags the same for the engine bed
 //   --validate            also builds each program in validate mode
 //   --modes a,b           only these modes of the product bed: default, validate, proofs-checked, erased, every-function-hot, each-a-program, and those that run only when named here:
@@ -107,6 +109,7 @@ if (replay) {
       attribute: !has("no-attribution"),
       isCountOnly: has("count-only"),
       alsoInSeveralFiles: !has("one-file-only"),
+      alsoWrittenAgain: has("written-again"),
       known: [join(import.meta.dir, "accepted-differences.tsv"), ...options("known")],
       minFreeBytes: Number(option("min-free-gb") ?? 4) * 2 ** 30,
       reduceSeconds: Number(option("reduce-seconds") ?? 600),

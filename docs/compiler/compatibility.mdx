@@ -116,6 +116,20 @@ bun compile  TypeError: null is not an object (evaluating 'null.c')
 
 Check `error.name` or use `instanceof`, not `error.message`. A service that groups errors by message, such as Sentry, shows new groups. An uncaught error prints [without the source excerpt](/compiler/debugging#stack-traces) that `bun run` shows above it.
 
+## Garbage collection
+
+A local variable stops keeping its value alive after its last use, even while the function waits at an `await`. Under `bun run`, a variable that a closure captures lives as long as the function's other variables.
+
+```ts watch.ts icon="/icons/typescript.svg"
+async function watch(target: object) {
+  const registry = new FinalizationRegistry(() => console.log("collected"));
+  registry.register(target, 0);
+  await finished; // the registry can be collected here, and then its callback never runs
+}
+```
+
+Keep a `FinalizationRegistry` at module level, or somewhere your program reads it again later.
+
 ## Not supported
 
 | Feature                                     | Instead                                    |

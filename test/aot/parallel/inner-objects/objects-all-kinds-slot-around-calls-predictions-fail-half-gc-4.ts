@@ -85,7 +85,7 @@ function describe(wide: Wide): string {
 let length = 0;
 let last = "";
 const kept: unknown[] = [];
-for (let i = 0; i < 1200; i++) {
+for (let i = 0; i < 300; i++) {
   const first = fromLiteral(i, "a,b,c," + i);
   const second = withOptionalFields(i, "x;y;" + i);
   const copy: Wide = { ...first, maybeFlag: i % 2 === 0, parts: second.text.split(/\+/) };

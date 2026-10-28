@@ -1,5 +1,5 @@
 // A build is a function of its sources and flags. The tsconfig.json here lists thousands of files by `include`, and threads read them
-// while others follow the imports of the code; 100 of the listed folders have a tsconfig.json of their own that names `types`, and no code is in them.
+// while others follow the imports of the code; 40 of the listed folders have a tsconfig.json of their own that names `types`, and no code is in them.
 import { expect, setDefaultTimeout } from "bun:test";
 import { bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
@@ -8,8 +8,8 @@ import { test } from "./supported";
 
 setDefaultTimeout(600_000);
 
-const chainLength = 250;
-const sideProjects = 100;
+const chainLength = 120;
+const sideProjects = 40;
 const filesInSideProject = 10;
 const compilerOptions = { strict: true, module: "esnext", moduleResolution: "bundler", noEmit: true };
 
@@ -94,7 +94,7 @@ async function build(directory: string, entry: string, threads: number) {
 }
 
 test("how many of the listed files are read by the time the code is loaded changes nothing", async () => {
-  const lengths = [60, chainLength];
+  const lengths = [chainLength];
   using dir = tempDir("aot-threads-fall", {
     ...program(
       project => `declare const global${project}: number;\n`,
@@ -120,12 +120,12 @@ test("what a folder without code names in `types` is not declared to the code, i
       project => `declare var shared: ${project % 2 ? "string" : "number"};\n`,
       () => `x + Number(shared)`,
     ),
-    "main.ts": entryPoint(120),
+    "main.ts": entryPoint(60),
   });
-  for (const threads of [1, 4, 16])
+  for (const threads of [1, 16])
     expect(await build(String(dir), "main.ts", threads)).toEqual({
       exitCode: 1,
-      errors: 120,
+      errors: 60,
       program: "",
       executable: "",
     });

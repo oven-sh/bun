@@ -1,1 +1,2 @@
 runFile("f");
+module.exports = {};

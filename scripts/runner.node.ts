@@ -263,6 +263,8 @@ const jobBudgetMs = () => {
   return minutes * 60_000 - (Date.now() - runnerStartedAt);
 };
 const aotDriver = "test/aot/run-parallel.ts";
+// What a program under test/aot/parallel takes of a shard: its part of a build that it shares with others, and two runs. No program has an entry in expected-durations.json.
+const aotProgramCostMs = 1_000;
 const spawnTimeout = 5_000;
 const spawnBunTimeout = 20_000; // when running with ASAN/LSAN bun can take a bit longer to exit, not a bug.
 const testTimeout = 3 * 60_000;
@@ -1329,21 +1331,34 @@ async function runTests(): Promise<TestResult[]> {
       const list = join(folder, "files.txt");
       writeFileSync(list, [...byPath.keys()].join("\n") + "\n");
       let unfinishedLine = "";
+      let unexpectedLine: string | undefined;
       const { error, exitCode, crashes } = await spawnBun(execPath, {
         args: [aotDriver, `--jobs=${parallelSafeWidth}`, `--files-from=${list}`],
         cwd,
         timeout: Math.max(60_000, Math.min(60 * 60_000, jobBudgetMs() - 5 * 60_000)),
         idleTimeout: 4 * 60_000,
+        // It ends what it started when it is asked to end.
+        gracefulTimeout: true,
         stdout: chunk => {
           const lines = (unfinishedLine + chunk).split("\n");
           unfinishedLine = lines.pop()!; // split() returns at least one element
           for (const text of lines) {
             if (!text.trim()) continue;
-            const line = JSON.parse(text) as AotDriverLine;
-            const testPath = byPath.get(line.file);
-            if (testPath === undefined) throw new Error(`${aotDriver} reported a file it was not given: ${line.file}`);
-            if (line.state === "compiling") started.add(testPath);
-            else verdicts.set(testPath, line);
+            // Anything may print here some day. An error thrown out of this callback would end the runner.
+            let line: AotDriverLine | undefined;
+            try {
+              line = JSON.parse(text);
+            } catch {}
+            const testPath = byPath.get(line?.file!);
+            if (testPath !== undefined && line!.state === "compiling") started.add(testPath);
+            else if (testPath !== undefined && ["pass", "fail", "skip"].includes(line!.state))
+              verdicts.set(testPath, line as AotVerdict);
+            else {
+              unexpectedLine ??= text.slice(0, 500);
+              console.log(
+                `${getAnsi("yellow")}${aotDriver} printed a line that is no result: ${text.slice(0, 2000)}${getAnsi("reset")}`,
+              );
+            }
           }
         },
         stderr: pipeTestStdout(process.stderr),
@@ -1352,7 +1367,12 @@ async function runTests(): Promise<TestResult[]> {
       return {
         verdicts,
         unfinished: [...started].filter(testPath => !verdicts.has(testPath)),
-        died: exitCode !== 0 && exitCode !== 1 ? `${error ?? `exit code ${exitCode}`}${crashes ?? ""}` : undefined,
+        died:
+          exitCode !== 0 && exitCode !== 1
+            ? `${error ?? `exit code ${exitCode}`}${crashes ?? ""}`
+            : unexpectedLine !== undefined
+              ? `it printed a line that is no result: ${unexpectedLine}`
+              : undefined,
       };
     };
 
@@ -1365,6 +1385,7 @@ async function runTests(): Promise<TestResult[]> {
             output.stderr.trimEnd(),
           ].filter(Boolean);
 
+    const aotProgramsSkipped = new Map<string, number>();
     const reportAotProgram = (testPath: string, verdict: AotVerdict) => {
       const title = join("test", testPath).replaceAll("\\", "/");
       const result: TestResult = {
@@ -1379,6 +1400,8 @@ async function runTests(): Promise<TestResult[]> {
       if (verdict.state === "skip") {
         console.log(`${getAnsi("gray")}[${++i}/${total}] ${title} - skipped: ${verdict.message}${getAnsi("reset")}`);
         okResults.push({ ...result, status: "skip" });
+        const why = verdict.message.startsWith("todo: ") ? "marked `// Todo:`" : verdict.message;
+        aotProgramsSkipped.set(why, (aotProgramsSkipped.get(why) ?? 0) + 1);
         return;
       }
       if (verdict.state === "pass") {
@@ -1467,6 +1490,17 @@ async function runTests(): Promise<TestResult[]> {
     }
     await Promise.all(parallelSafeTests.map(t => parallelSafeLimit(() => runOneTest(t, parallelSafeWidth > 1))));
     if (aotPrograms.length) await runAotPrograms(aotPrograms);
+    for (const [why, count] of aotProgramsSkipped) {
+      const line = `SKIPPED ${count} of ${aotPrograms.length} programs compiled ahead of time: ${why}`;
+      console.log(`${getAnsi("yellow")}${line}${getAnsi("reset")}`);
+      if (why.startsWith("marked ")) continue;
+      reportAnnotationToBuildkite({
+        context: "aot-programs-skipped",
+        label: "programs compiled ahead of time",
+        style: "warning",
+        content: `${escapeHtml(line)} <i>(on ${getBuildLabel()})</i>\n\n`,
+      });
+    }
   }
 
   if (vendorTests?.length) {
@@ -2905,7 +2939,8 @@ function getRelevantTests(cwd: string, testModifiers: string[], testExpectations
     const durations = loadExpectedDurations(cwd);
     const known = Object.values(durations).sort((a, b) => a - b);
     const unknownCost = known.length ? known[Math.floor(known.length / 2)]! : 100;
-    const costOf = (testPath: string) => durations[testPath.replaceAll("\\", "/")] ?? unknownCost;
+    const costOf = (testPath: string) =>
+      durations[testPath.replaceAll("\\", "/")] ?? (isAotProgram(testPath) ? aotProgramCostMs : unknownCost);
 
     // Stable order for equal costs so the packing is reproducible.
     const order = availableTests

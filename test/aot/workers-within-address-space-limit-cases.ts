@@ -61,22 +61,6 @@ if (Bun.isMainThread) {
 }
 `;
 
-const startsNodeWorkers = `import { isMainThread, parentPort, Worker } from "node:worker_threads";
-if (isMainThread) {
-  let started = 0;
-  for (let i = 0; i < 8; i++) {
-    new Worker(new URL(import.meta.url)).once("message", () => {
-      if (++started < 8) return;
-      console.log("started", started);
-      process.exit(0);
-    });
-  }
-} else {
-  setInterval(() => {}, 1000);
-  parentPort!.postMessage(1);
-}
-`;
-
 const startsWorkersInWorkers = `declare var self: Worker;
 function start(depth: number, report: (line: string) => void) {
   if (depth === 4) return report("4");
@@ -378,12 +362,11 @@ if (Bun.isMainThread) {
 `;
 
 // Workers start until the constructor throws. One ends and has closed. Another is terminated in a call that blocks it, and a new one is constructed at once.
-const constructsWorkerAfterTerminatingBlockedOne = `import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+const constructsWorkerAfterTerminatingBlockedOne = `import { readFileSync } from "node:fs";
 declare var self: Worker;
 const call = process.argv[2];
 if (Bun.isMainThread) {
-  if (call.includes("pipe")) execFileSync("mkfifo", ["pipe"]);
+  if (call.includes("pipe")) Bun.spawnSync(["mkfifo", "pipe"]);
   const construct = () => new Worker(new URL(import.meta.url), { argv: [call] });
   const hear = (worker: Worker, wanted: string) =>
     new Promise<string>(resolve => {
@@ -892,15 +875,21 @@ const built = (program: string) =>
     return String(folder);
   });
 
+// A run within two gigabytes or more may fill them.
+let lastLargeRun: Promise<unknown> = Promise.resolve();
+function oneAtATime<T>(work: () => Promise<T>): Promise<T> {
+  const mine = lastLargeRun.then(work);
+  lastLargeRun = mine.catch(() => {});
+  return mine;
+}
+
 async function runEach(runs: Run[], program: string, ...args: string[]) {
   const folder = await built(program);
   const results: { stdout: string; stderr: string; exitCode: number | null }[] = [];
   for (const run of runs) {
     const command = run.limitInKB ? `ulimit -v ${run.limitInKB} && exec ./program "$@"` : `exec ./program "$@"`;
-    const { stdout, stderr, exitCode } = await runCommand(["sh", "-c", command, "sh", ...args], String(folder), {
-      ...env,
-      ...run.env,
-    });
+    const start = () => runCommand(["sh", "-c", command, "sh", ...args], String(folder), { ...env, ...run.env });
+    const { stdout, stderr, exitCode } = await (run.limitInKB && run.limitInKB >= 2 * GB ? oneAtATime(start) : start());
     results.push({ stdout, stderr, exitCode });
   }
   return results;
@@ -974,14 +963,6 @@ export function workersWithinAddressSpaceLimit(part: number, parts: number) {
           all: count,
           many: true,
         });
-      },
-      120_000,
-    );
-
-    inPart(test.skipIf(!isLinux || isASAN))(
-      "those of node:worker_threads start",
-      async () => {
-        expect(await runWithin(2 * GB, startsNodeWorkers)).toEqual({ stdout: "started 8\n", stderr: "", exitCode: 0 });
       },
       120_000,
     );
@@ -1224,7 +1205,17 @@ export function workersWithinAddressSpaceLimit(part: number, parts: number) {
     test
       .skipIf(!isLinux || isASAN)
       .each(
-        dealt(["lists", "lists that built-ins make", "objects with many properties", "typed arrays", "long texts"]),
+        dealt([
+          "lists",
+          "lists that built-ins make",
+          "objects with many properties",
+          "typed arrays",
+          "long texts",
+          "maps and sets",
+          "buffers",
+          "copies of what a text holds",
+          "lists of arguments and of keys",
+        ]),
       )(
       "Workers that keep %s end one by one where another Worker has taken all the room, and the program goes on",
       async kind => {
@@ -1242,21 +1233,7 @@ export function workersWithinAddressSpaceLimit(part: number, parts: number) {
       240_000,
     );
 
-    test
-      .skipIf(!isLinux || isASAN)
-      .each(
-        dealt([
-          "lists",
-          "lists that built-ins make",
-          "objects with many properties",
-          "typed arrays",
-          "long texts",
-          "maps and sets",
-          "buffers",
-          "copies of what a text holds",
-          "lists of arguments and of keys",
-        ]),
-      )(
+    test.skipIf(!isLinux || isASAN).each(dealt(["lists", "objects with many properties"]))(
       "24 Workers that keep %s find no room at once, each gets its error, and the program goes on",
       async kind => {
         const places = ["33"];

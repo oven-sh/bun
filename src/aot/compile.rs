@@ -29,6 +29,7 @@ mod tests;
 #[cfg(test)]
 mod time_tests;
 
+use self::lower_stage::LoweredRuntimes;
 #[cfg(test)]
 pub(crate) use self::lower_stage::collect_file_inputs;
 #[cfg(test)]
@@ -78,8 +79,8 @@ use bun_sema::resolve::CodeHost;
 use bun_sema::session::Session;
 use bun_sema::util::SharedSort;
 use bun_sema_driver::{
-    CompileRequest, LoadedProgram, ThreadCaches, drop_thread_caches, for_each_parallel_in_runs,
-    run_on_one_thread_while,
+    ChosenThreads, CompileRequest, LoadedProgram, ThreadCaches, drop_thread_caches,
+    for_each_parallel_in_runs, run_on_one_thread_while,
 };
 use bun_sys::{Fd, File};
 use bun_trim::Feature;
@@ -141,6 +142,8 @@ pub(crate) struct StartedWorkers {
     pub code: CodeOfWorkers,
     /// What `find_code_that_starts_workers` found, and the `copies` that the engine saw passed to `new Worker()`.
     pub files: Vec<WorkerFile>,
+    /// `CodeThatStartsWorkers::names`
+    pub names: Vec<EntryPointPaths>,
     /// What `find_embedded_code_files` found.
     pub copies: Vec<WorkerFile>,
     /// Files that a Worker may start from and that the build did not compile for it.
@@ -157,6 +160,8 @@ impl StartedWorkers {
     pub(crate) fn remove_sources(&mut self, source_paths: &[Vec<u8>]) {
         self.files
             .retain(|file| !source_paths.contains(&file.source_path));
+        self.names
+            .retain(|name| !source_paths.contains(&name.source_path));
         self.copies
             .retain(|file| !source_paths.contains(&file.source_path));
         self.left_out
@@ -166,6 +171,7 @@ impl StartedWorkers {
     fn add(&mut self, further: StartedWorkers) {
         self.code = self.code.max(further.code);
         self.files.extend(further.files);
+        self.names.extend(further.names);
         self.copies.extend(further.copies);
         self.left_out.extend(further.left_out);
         self.held_texts.extend(further.held_texts);
@@ -206,6 +212,7 @@ pub(crate) struct Build<'a> {
     provider: &'a dyn SourceProvider,
     caches: &'a ThreadCaches,
     threads: NonZeroUsize,
+    chosen_threads: Option<ChosenThreads>,
     platform: Platforms,
     limits: LimitValues,
     pub(crate) diagnostics: Diagnostics,
@@ -219,6 +226,7 @@ pub(crate) struct Build<'a> {
     held_library_code: HeldLibraryCode,
     // Each with `QueryStatistics::closed_cycles`, which is not 0.
     circular_runtime_files: Vec<(FileId, u32)>,
+    lowered_runtimes: LoweredRuntimes,
     import_graph: Option<ImportGraph>,
     /// `QueryInputs::checked_elsewhere` of the program that is lowered as the application.
     pub(crate) checked_elsewhere: Vec<FileId>,
@@ -722,10 +730,7 @@ fn find_load_options_to_compile_again_with(
             load.takes_runtime_as_any = true;
         }
         Ok(compiled) => return find_load_options_with_library_code_lacked(options, compiled),
-        Err(failure) if failure.is_internal_error && chooses_library_code_by_names(options) => {
-            load.keeps_library_code_without_names = true;
-        }
-        _ => return None,
+        Err(_) => return None,
     }
     Some(load)
 }
@@ -1625,6 +1630,7 @@ impl<'a> Build<'a> {
             provider,
             caches,
             threads: options.thread_count(),
+            chosen_threads: None,
             platform: match options.aot.platform {
                 None => host_platform(),
                 Some(TargetPlatform::Darwin) => Platforms::DARWIN,
@@ -1640,6 +1646,7 @@ impl<'a> Build<'a> {
             unreached_runtime_files: Vec::new(),
             held_library_code: HeldLibraryCode::default(),
             circular_runtime_files: Vec::new(),
+            lowered_runtimes: LoweredRuntimes::default(),
             import_graph: None,
             checked_elsewhere: Vec::new(),
             place: ProgramPlace::Only,

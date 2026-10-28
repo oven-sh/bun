@@ -71,14 +71,9 @@ describe("cell cage messages", () => {
     folder = tempDir("aot-cell-cage-messages", {
       "main.ts": `console.log("ran");\n`,
       "server.ts": `
-import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
-const server = createServer((request, response) => response.end("ran"));
-server.listen(0, async () => {
-  const response = await fetch("http://127.0.0.1:" + (server.address() as AddressInfo).port);
-  console.log(await response.text());
-  server.close();
-});
+const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("ran") });
+console.log(await (await fetch(server.url)).text());
+await server.stop(true);
 `,
     });
     cwd = String(folder);

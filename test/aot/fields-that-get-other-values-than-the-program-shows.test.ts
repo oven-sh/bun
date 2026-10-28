@@ -89,11 +89,14 @@ class DefinesA extends function (given) { return given; } { a = handed[1]; }
 class DefinesB extends function (given) { return given; } { b = handed[2]; }
 `;
 let n = 0;
+let pairs = 0;
 for (const [maker, declarations] of Object.entries(makers))
-  for (const [event, happens] of Object.entries(events))
-    for (const [kind, text] of Object.entries(given)) {
-      // There is nothing above a literal but Object.prototype.
-      if (maker === "literal" && (event === "setterAbove" || event === "readOnlyAbove")) continue;
+  for (const [event, happens] of Object.entries(events)) {
+    // There is nothing above a literal but Object.prototype.
+    if (maker === "literal" && (event === "setterAbove" || event === "readOnlyAbove")) continue;
+    // Each maker meets each event once, with one of the four texts in turn.
+    const kinds = Object.entries(given);
+    for (const [kind, text] of [kinds[pairs++ % kinds.length]]) {
       n++;
       program += `${declarations(n)}
 function run${n}() {
@@ -137,6 +140,7 @@ function run${n}() {
 run${n}();
 `;
     }
+  }
 
 describe.skipIf(!!unsupported)("compile/aot/fields-that-get-other-values-than-the-program-shows", () => {
   const folder = String(tempDir("aot-fields-that-get-other-values", {}));

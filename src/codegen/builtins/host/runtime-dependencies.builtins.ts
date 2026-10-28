@@ -244,7 +244,8 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   "console._stderr": standardOutputFunctionsOf(2, "console._stderr", ...writtenByWarnings),
   "console._stdout": standardOutputFunctionsOf(1, "console._stdout"),
   "node:fs/promises": functionsIn("builtins/Fifo", "createFIFO"),
-  "node:module": [
+  "node:module": functionsIn("builtins/CommonJS", "requireESMFromHijackedExtension"),
+  "node:module.wrapper": [
     b.functionUsed(
       b.functionIn("builtins/CommonJS", "getWrapperArrayProxy"),
       b.calledByHost({
@@ -254,7 +255,6 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
         result: [b.isValueOf("node:module.wrapper")],
       }),
     ),
-    ...functionsIn("builtins/CommonJS", "requireESMFromHijackedExtension"),
   ],
   "node:module._initPaths": [heldAs(b.functionIn("builtins/NodeModuleObject", "_initPaths"), "node:module._initPaths")],
   "node:module._cache": requireCacheFunctions,

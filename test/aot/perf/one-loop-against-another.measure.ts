@@ -1,0 +1,251 @@
+// One loop of a program may take a few times the instructions of another loop of the same program, and not many times.
+// Each row names a program of ./one-loop-against-another, how it is built, two of its loops, and how many times the instructions of the first the second may take.
+// Both are measured in the same executable: no clock, the same at any load.
+// A row that is over its bound says how many times it takes today, and that number is held: more is red, and so is a row that has come under its bound, whose `today` goes out.
+import { expect } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMusl, isWindows, tempDir } from "harness";
+import { join } from "path";
+import { measureCommand } from "../analysis-scaling/measure-check";
+import { built, spawned, withoutDebugInformation } from "../harness/commands";
+import { withSteadyCollections } from "../harness/counted-run";
+import { beforeAll, describe, test } from "../supported";
+
+const root = join(import.meta.dir, "one-loop-against-another");
+const erased = ["--aot-erase-types"];
+
+type Row = [program: string, flags: string[], baseline: string, other: string, times: number, today?: number];
+const rows: Row[] = [
+  ["a-count-by-one.ts", [], "under 2 ** 31", "past 2 ** 31", 2],
+  ["a-sum-of-bytes.ts", [], "under two gibibytes", "past two gibibytes", 2],
+  ["the-field-beside-a-sum.ts", [], "beside a small sum", "beside a sum past two gibibytes", 2],
+  ["the-constructor-of-an-instance.ts", [], "by a method", "by the constructor", 3],
+  ["the-constructor-of-an-instance.ts", erased, "by a method", "by the constructor", 3],
+  [
+    "beside-a-file-that-asks-for-its-module-object/main.cjs",
+    [],
+    "a class of its own file",
+    "a class out of a required file",
+    5,
+  ],
+  [
+    "beside-a-file-that-requires-through-its-module-object/main.cjs",
+    [],
+    "a class of its own file",
+    "a class out of a required file",
+    5,
+  ],
+  ["beside-a-file-with-a-direct-eval/main.cjs", [], "a class of its own file", "a class out of a required file", 5],
+  ["imported-by-default/main.mjs", [], "out of a module", "out of a CommonJS file", 3],
+  ["pieces-of-two-characters.ts", [], "slices of three characters", "slices of two characters", 1.3],
+  ["pieces-of-two-characters.ts", erased, "slices of three characters", "slices of two characters", 1.3],
+  ["pieces-of-two-characters.ts", [], "groups of three digits", "groups of two digits", 1.2],
+  ["pieces-of-two-characters.ts", erased, "groups of three digits", "groups of two digits", 1.2],
+  ["a-text-joined-of-parts.ts", [], "behind a look under a computed name", "nothing was looked up", 1.1],
+  ["a-text-joined-of-parts.ts", erased, "behind a look under a computed name", "nothing was looked up", 1.1],
+  ["a-list-that-is-emptied-now-and-then.ts", [], "kept to the end", "emptied every 256 turns", 3],
+  ["a-list-that-is-emptied-now-and-then.ts", erased, "kept to the end", "emptied every 256 turns", 3],
+  [
+    "a-method-under-an-own-property-of-some-instances.ts",
+    [],
+    "a class that never stores",
+    "an instance without the own property",
+    1.2,
+  ],
+  [
+    "a-method-under-an-own-property-of-some-instances.ts",
+    erased,
+    "a class that never stores",
+    "an instance without the own property",
+    1.2,
+  ],
+  [
+    "a-method-under-an-own-property-of-some-instances.ts",
+    [],
+    "a class that never stores, handed in",
+    "an instance without the own property, handed in",
+    2,
+  ],
+  [
+    "a-method-under-an-own-property-of-some-instances.ts",
+    erased,
+    "a class that never stores, handed in",
+    "an instance without the own property, handed in",
+    3.5,
+  ],
+  ["the-fields-of-a-merged-object.cjs", [], "products of a literal", "products of an assigned object", 1.1],
+  ["the-fields-of-a-merged-object.cjs", [], "sums of a literal", "sums of an assigned object", 1.1],
+  ["the-fields-of-a-merged-object.cjs", [], "products of a literal", "products of a spread", 1.1],
+  ["the-fields-of-a-merged-object.cjs", [], "sums of a literal", "sums of a spread", 1.1],
+  ["an-object-put-together-from-others-and-kept.cjs", [], "literals", "spreads of two objects", 1.5],
+  ["an-object-put-together-from-others-and-kept.cjs", [], "literals", "the rest of a record", 1.5],
+  ["an-object-put-together-from-others-and-kept.cjs", [], "literals", "the rest of one of three records", 3],
+  [
+    "beside-a-file-whose-literals-have-the-same-names/main.cjs",
+    [],
+    "literals that no other file writes",
+    "literals beside computed integers",
+    1.3,
+  ],
+  [
+    "beside-a-file-whose-literals-have-the-same-names/main.cjs",
+    [],
+    "spreads that no other file writes",
+    "spreads beside computed integers",
+    1.3,
+  ],
+  [
+    "beside-a-file-whose-literals-have-the-same-names/main.cjs",
+    [],
+    "assigned objects that no other file writes",
+    "assigned objects beside computed integers",
+    1.3,
+  ],
+  [
+    "beside-a-file-whose-literals-have-the-same-names/main.cjs",
+    [],
+    "literals that no other file writes",
+    "literals beside fractions",
+    1.3,
+    1.7,
+  ],
+  [
+    "beside-a-file-whose-literals-have-the-same-names/main.cjs",
+    [],
+    "spreads that no other file writes",
+    "spreads beside fractions",
+    1.3,
+    1.7,
+  ],
+  [
+    "beside-a-file-whose-literals-have-the-same-names/main.cjs",
+    [],
+    "assigned objects that no other file writes",
+    "assigned objects beside fractions",
+    1.3,
+    1.7,
+  ],
+  [
+    "beside-a-file-whose-literals-have-the-same-names/main.cjs",
+    [],
+    "literals that no other file writes",
+    "literals beside texts",
+    1.3,
+    1.7,
+  ],
+  [
+    "beside-a-file-whose-literals-have-the-same-names/main.cjs",
+    [],
+    "spreads that no other file writes",
+    "spreads beside texts",
+    1.3,
+    1.6,
+  ],
+  [
+    "beside-a-file-whose-literals-have-the-same-names/main.cjs",
+    [],
+    "assigned objects that no other file writes",
+    "assigned objects beside texts",
+    1.3,
+    1.6,
+  ],
+  ...["make", "read", "link"].flatMap(verb =>
+    [[], erased].map((flags): Row => [
+      "a-counter-on-its-way-into-fields.ts",
+      flags,
+      `${verb} under 2 ** 31`,
+      `${verb} past 2 ** 31`,
+      1.3,
+    ]),
+  ),
+  ...["literals.ts", "instances.ts", "made-by-a-function.ts"].flatMap(form =>
+    [[], erased].flatMap(flags =>
+      ["integers past 2 ** 32", "fractions", "negative zeros"].flatMap((kind): Row[] => [
+        [`numbers-out-of-a-request/${form}`, flags, "make small integers", `make ${kind}`, 1.3],
+        [`numbers-out-of-a-request/${form}`, flags, "read small integers", `read ${kind}`, 1.3],
+      ]),
+    ),
+  ),
+  ...["integers past 2 ** 32", "fractions", "negative zeros"].flatMap((kind): Row[] => [
+    ["numbers-out-of-a-request/without-types.js", [], "make small integers", `make ${kind}`, 3, 6.8],
+    ["numbers-out-of-a-request/without-types.js", [], "read small integers", `read ${kind}`, 3, 11.6],
+  ]),
+  ["a-sum-in-a-cell-without-room.ts", [], "under 2 ** 31", "past 2 ** 31", 3, 10.5],
+  ["a-sum-in-a-cell-without-room.ts", erased, "under 2 ** 31", "past 2 ** 31", 3, 11.9],
+];
+const [few, many] = [100_000, 400_000];
+
+const skipped =
+  isDebug || isASAN
+    ? "a debug or ASAN build counts other instructions"
+    : isWindows
+      ? "it counts with perf_event_open or /usr/bin/time -l"
+      : !isLinux || isMusl || process.arch !== "x64"
+        ? "the numbers of today are those of Linux x64 with glibc"
+        : undefined;
+if (skipped) console.error(`SKIPPED: test/aot/perf/one-loop-against-another.test.ts: ${skipped}`);
+
+describe.skipIf(!!skipped)("compile/aot/perf/one-loop-against-another", () => {
+  const folder = String(tempDir("aot-one-loop-against-another", {}));
+  const env = { ...bunEnv, ...withSteadyCollections };
+  const executableOf = (program: string, flags: string[]) =>
+    join(folder, [program, ...flags].join("").replaceAll(/[^a-z0-9]+/gi, "-"));
+
+  beforeAll(async () => {
+    for (const [program, flags] of rows) {
+      built(
+        await spawned(
+          [
+            bunExe(),
+            "build",
+            "--compile",
+            "--aot",
+            ...flags,
+            ...withoutDebugInformation(),
+            join(root, program),
+            "--outfile",
+            executableOf(program, flags),
+          ],
+          root,
+          bunEnv,
+        ),
+      );
+      const compiled = await spawned([executableOf(program, flags)], root, bunEnv);
+      const plain = await spawned([bunExe(), "run", join(root, program)], root, bunEnv);
+      expect(compiled.stdout).toBe(plain.stdout);
+    }
+  }, 600_000);
+
+  async function costOf(executable: string, loop: string) {
+    const less = await measureCommand(root, [executable, loop, String(few)], 300_000, env);
+    const more = await measureCommand(root, [executable, loop, String(many)], 300_000, env);
+    if (less.instructions === undefined || more.instructions === undefined) return undefined;
+    return (more.instructions - less.instructions) / (many - few);
+  }
+
+  for (const [program, flags, baseline, other, times, today] of rows) {
+    const title = `${program}${flags.length ? " " + flags.join(" ") : ""}: ${other}: at most ${times} times ${baseline}`;
+    test(
+      title,
+      async () => {
+        const executable = executableOf(program, flags);
+        const [expected, measured] = [await costOf(executable, baseline), await costOf(executable, other)];
+        if (expected === undefined || measured === undefined)
+          return void console.error(`SKIPPED: ${title}: instructions cannot be counted here`);
+        const ratio = Math.round((measured / expected) * 10) / 10;
+        console.error(
+          `ONE LOOP AGAINST ANOTHER ${program} ${flags.join(" ")}\t${baseline}\t${Math.round(expected * 10) / 10}\t| ${other}\t${Math.round(measured * 10) / 10}\t| ${ratio} times`,
+        );
+        const verdict =
+          ratio <= times
+            ? today === undefined
+              ? "within its bound"
+              : "within its bound: `today` goes out"
+            : today !== undefined && ratio <= today * 1.15
+              ? "as today"
+              : "over its bound";
+        expect({ ratio, verdict }).toEqual({ ratio, verdict: today === undefined ? "within its bound" : "as today" });
+      },
+      900_000,
+    );
+  }
+});

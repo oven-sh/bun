@@ -1165,6 +1165,24 @@ impl<'a> Resolver<'a> {
         graph.resolve_package(source_dir, specifier, is_require(kind), &search)
     }
 
+    /// The module of `CompiledProgram::resolve_entry_point`.
+    pub fn resolve_embedded_entry_point(&self, specifier: &[u8]) -> Option<&'static [u8]> {
+        let search = crate::compiled_program::ExtensionSearch {
+            extensions: self.opts.ext_order_slice(self.extension_order),
+            extra_extensions: &self.opts.extra_cjs_extensions,
+            rewritten_extensions: &|extension, path| {
+                rewritten_file_extensions(extension, || {
+                    strings::path_contains_node_modules_folder(path)
+                })
+            },
+        };
+        let graph = self.standalone_module_graph?;
+        let public_root = graph.base_public_path_with_default_suffix();
+        let program = graph.compiled_program()?;
+        let entry_point = program.resolve_entry_point(public_root, specifier, &search)?;
+        Some(entry_point.module_path)
+    }
+
     /// What an executable compiled in place holds under the path that `specifier` names from `source_dir`: a compiled module, then a file that `--asset` gave it.
     fn resolve_at_source_path(
         &self,

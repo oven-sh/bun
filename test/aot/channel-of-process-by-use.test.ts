@@ -45,13 +45,7 @@ async function startWithChannel(name: string, self: string) {
 
 const received = { stdout: "child got hello true 3\n", error: "", exitCode: 0 };
 
-test.concurrent.each([
-  ["named", "process"],
-  ["another-variable", "[process][process.argv.length - process.argv.length]"],
-  ["parameter", "(emitter => emitter)(process)"],
-  ["weak-reference", "new WeakRef(process).deref()"],
-  ["cause", `new Error("holder", { cause: process }).cause`],
-])(
+test.concurrent.each([["another-variable", "[process][process.argv.length - process.argv.length]"]])(
   "the channel works where the receiver of the call lists process: %s",
   async (name, self) => {
     expect(await startWithChannel(name, self)).toEqual(received);

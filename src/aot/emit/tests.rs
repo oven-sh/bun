@@ -76,6 +76,7 @@ fn create_expected_result(names: &Names) -> ExpectedResult {
     ExpectedResult {
         ty: names.object,
         layouts: vec![LAYOUT],
+        ..ExpectedResult::default()
     }
 }
 

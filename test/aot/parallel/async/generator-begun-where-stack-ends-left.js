@@ -129,3 +129,12 @@ for (const make of [leftByReturn, leftByThrow, leftByASecondStep, leftByBreak, l
   }
   console.log(make.name + ":", [...outcomes].join(", "), "|", stayed < places ? "what has begun is left" : "a count stays at " + stayed + " of " + 2 * places + " places");
 }
+// As plain Bun prints it: the run that shows so takes up to half a minute.
+/* Output:
+leftByReturn: RangeError | what has begun is left
+leftByThrow: RangeError | what has begun is left
+leftByASecondStep: RangeError | what has begun is left
+leftByBreak: RangeError | what has begun is left
+leftByReturnFromALoop: RangeError | what has begun is left
+leftByAPattern: RangeError | what has begun is left
+*/

@@ -127,10 +127,7 @@ pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str = const_format::concatcp!("
 
 /// `BUN_AOT_START_AT`. Answers the file of the entry point that the process starts with, or `None` where nothing asks for another than the first.
 #[cfg(not(bun_locked_environment))]
-fn start_at_named_entry_point(
-    program: &mut CompiledProgram,
-    first_file: u32,
-) -> Option<Result<u32, crate::Error>> {
+fn start_at_named_entry_point(program: &mut CompiledProgram) -> Option<Result<u32, crate::Error>> {
     if !bun_core::env::IS_CANARY {
         return None;
     }
@@ -141,20 +138,18 @@ fn start_at_named_entry_point(
     let has_image_for_each = program.images().nth(1).is_some();
     let position = program.entry_points.iter().position(is_named);
     Some(match position {
-        Some(position) if has_image_for_each => {
-            program.start_at(position);
+        Some(position) => {
+            if has_image_for_each {
+                program.start_at(position);
+            }
             Ok(program.entry_points[position].file_index)
         }
-        Some(position) if program.entry_points[position].file_index == first_file => Ok(first_file),
-        Some(_) | None => Err(crate::Error::NoProgramToStartAt),
+        None => Err(crate::Error::NoEntryPointToStartAt),
     })
 }
 
 #[cfg(bun_locked_environment)]
-fn start_at_named_entry_point(
-    _program: &mut CompiledProgram,
-    _first_file: u32,
-) -> Option<Result<u32, crate::Error>> {
+fn start_at_named_entry_point(_program: &mut CompiledProgram) -> Option<Result<u32, crate::Error>> {
     None
 }
 
@@ -1495,8 +1490,7 @@ impl StandaloneModuleGraph {
         }
 
         let module_count = modules.count();
-        let started = (compiled_program.as_mut())
-            .and_then(|program| start_at_named_entry_point(program, offsets.entry_point_id));
+        let started = compiled_program.as_mut().and_then(start_at_named_entry_point);
         let entry_point_id = started.transpose()?.unwrap_or(offsets.entry_point_id);
         // `entry_point()` indexes `files`, which has one entry per name, not one per record.
         if entry_point_id as usize >= module_count {

@@ -1,4 +1,4 @@
-// Module graphs of both kinds (generated/module-graphs-of-both-kinds.ts), each written into one file by `bun build --target=bun` first.
+// Module graphs of both kinds (generators/module-graphs-of-both-kinds.ts), each written into one file by `bun build --target=bun` first.
 // The bundle wraps files in `__commonJS(..)` and `__esm(..)` functions that run them at the first call. The bundle built with --aot has to
 // print what the bundle prints under `bun run`.
 //
@@ -13,7 +13,7 @@
 import { spawn } from "bun";
 import { cpSync, mkdirSync, renameSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
-import { program } from "../generated/module-graphs-of-both-kinds";
+import { program } from "./generators/module-graphs-of-both-kinds";
 import { Random } from "./random";
 
 const argument = (name: string, otherwise?: string) => {

@@ -164,6 +164,35 @@ const maxBlocksWritten = (256 << 20) / 512;
 
 type Spent = { cpuSeconds: number; wallSeconds: number; peakMegabytes: number };
 type Ended = { stdout: string; stderr: string; end: string; stoppedBefore?: number[] };
+
+/**
+ * How much memory the machine, its memory nodes and the control groups above this process have at this moment, as Linux says it. It is read as soon as a build has ended by SIGSEGV, SIGILL or SIGBUS
+ * and kept beside the compiler's last words: whether the machine was short of memory can't be asked later. What can't be read is left out, so elsewhere only the time is kept.
+ */
+function memoryOfTheMachine() {
+  const read = (path: string) => {
+    try {
+      return readFileSync(path, "utf8");
+    } catch {
+      return "";
+    }
+  };
+  const lines = [new Date().toISOString()];
+  const take = (path: string, names: RegExp) => {
+    for (const line of read(path).split("\n"))
+      if (names.test(line)) lines.push(`${path}: ${line.trim().replace(/\s+/g, " ")}`);
+  };
+  take("/proc/meminfo", /^(?:MemTotal|MemFree|MemAvailable|SwapFree):/);
+  for (let node = 0; existsSync(`/sys/devices/system/node/node${node}/meminfo`); node++)
+    take(`/sys/devices/system/node/node${node}/meminfo`, /\bMemFree:/);
+  take("/proc/vmstat", /^(?:numa_pages_migrated|pgmigrate_fail|pgmajfault|oom_kill) /);
+  for (let group = /^0::(\/.*)$/m.exec(read("/proc/self/cgroup"))?.[1] ?? "/"; group !== "/"; group = dirname(group))
+    for (const file of ["memory.current", "memory.max", "memory.events"]) {
+      const said = read(`/sys/fs/cgroup${group}/${file}`).trim();
+      if (said) lines.push(`${group}/${file}: ${said.replace(/\n/g, ", ")}`);
+    }
+  return lines.join("\n") + "\n";
+}
 const spent: Record<string, Spent> = {};
 
 async function spawn(stage: string, cmd: string[], cwd: string, env: Record<string, string>, seconds: number) {
@@ -367,7 +396,7 @@ type Built = {
   /** All programs that the report names so. */
   openers?: number[];
   reasons?: string;
-  stopped?: { reason: string; culprit: number | undefined; stderr: string };
+  stopped?: { reason: string; culprit: number | undefined; stderr: string; machine?: string };
 };
 /** Builds the executable. Returns the programs that the errors name, or how the compiler stopped. */
 async function build(
@@ -443,6 +472,7 @@ async function build(
       reason: `${ran.signal ?? `exit code ${ran.exitCode}`}: ${said || "the errors name no program"}`,
       culprit,
       stderr: ran.stderr.slice(-8000),
+      machine: /^SIG(?:SEGV|ILL|BUS)$/.test(ran.signal ?? "") ? memoryOfTheMachine() : undefined,
     },
   };
 }
@@ -532,6 +562,13 @@ const documentedNames = [
   "__dirname",
   ".argv",
 ];
+/** A stored program that is held to an output of its own says so in its head. The families that draw stored programs as they are bring it here. */
+const saysThatPlainBunDiffers = "Plain Bun prints another output.";
+/** A stored program of ../../parallel ends in a comment with what it prints, and the tests hold the executable to that, whatever `bun run` prints. */
+const printsItsStoredOutput = (text: string, ours: Ended) => {
+  const stored = /^\/\* Output:\n([^]*?)\*\/$/m.exec(text)?.[1];
+  return stored !== undefined && ours.stdout.trimEnd() === stored.trimEnd();
+};
 /** What these hold differs between the two runs, and so does what a program prints from them. What else it prints doesn't. */
 const namesOfDetails = [".stack", ".message", ".raw"];
 
@@ -1241,6 +1278,7 @@ async function judgeTogether(texts: string[], extension: string, add: (kind: str
         "programs.txt": listed(texts),
         "report.txt": `${stopped.reason}\n${bun} build --compile --aot ${buildFlags.join(" ")}\nprograms.txt holds the ${texts.length} programs of the build, ${howTheyAreLaidOut}, and the program is number ${stopped.culprit ?? 0} in it\n`,
         "compiler.stderr": stopped.stderr,
+        ...(stopped.machine === undefined ? {} : { "machine.txt": stopped.machine }),
       });
       add("stopped the build");
       // Each of them as an entry point says which one it was.
@@ -1330,6 +1368,7 @@ async function judgeTogether(texts: string[], extension: string, add: (kind: str
         "programs.txt": listed(texts),
         "report.txt": `${stopped.reason}\n${command}\nprograms.txt holds the ${texts.length} programs of the build, ${howTheyAreLaidOut}, and the program is number ${stopped.culprit ?? 0} in it\n`,
         "compiler.stderr": stopped.stderr,
+        ...(stopped.machine === undefined ? {} : { "machine.txt": stopped.machine }),
       });
     } else if (refused.size === 0) {
       const limit = milliseconds * 16 + 80 * together;
@@ -1637,6 +1676,7 @@ for (
         "programs.txt": listedPrograms.map((index, offset) => `// ---- ${offset}\n${texts[index]}`).join("\n"),
         "report.txt": `${stopped.reason}\n${bun} build --compile --aot ${buildFlags.join(" ")}\nprograms.txt holds ${listedPrograms.length} of the ${texts.length} programs of the build, in groups of ${groupSize}${enough.length > 1 ? ", which are enough to stop it" : enough.length ? ", of which one alone stops it" : ""}, and the program is number ${Math.max(0, listedPrograms.indexOf(stopped.culprit ?? -1))} in it\n`,
         "compiler.stderr": stopped.stderr,
+        ...(stopped.machine === undefined ? {} : { "machine.txt": stopped.machine }),
       });
       add("stopped the build");
       if (stopped.culprit === undefined && (enough.length === 0 || enough.length === texts.length)) {
@@ -1754,6 +1794,8 @@ for (
                 : documentedMessages.some(says) ||
                     (!isLimit(second) && referenceAgain.stderr.includes("Maximum call stack size exceeded")) ||
                     documentedNames.some(name => texts[index].includes(name)) ||
+                    texts[index].includes(saysThatPlainBunDiffers) ||
+                    printsItsStoredOutput(texts[index], second) ||
                     differOnlyInDetails(texts[index], second, referenceAgain) ||
                     setsThePrototypeOfABuiltIn.test(texts[index]) ||
                     deletesTheLengthOfAString.test(texts[index]) ||
@@ -1916,6 +1958,7 @@ for (
         "programs.txt": programsOfTheBuild,
         "report.txt": `${stopped.reason}\n${command}\nprograms.txt holds the ${texts.length} programs of the build, in groups of ${groupSize}, and the program is number ${stopped.culprit ?? 0} in it\n`,
         "compiler.stderr": stopped.stderr,
+        ...(stopped.machine === undefined ? {} : { "machine.txt": stopped.machine }),
       });
     } else if (refused.size === 0) {
       const validated = await run(

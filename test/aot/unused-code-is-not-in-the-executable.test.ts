@@ -237,7 +237,18 @@ async function build(directory: string, entry: string) {
   const report = join(directory, "report.json");
   const flags = ["--aot-report=" + report, "--aot-report-detail=functions"];
   const built = await run(
-    [bunExe(), "build", "--compile", "--aot", ...flags, ...withoutDebugInformation, entry, "--outfile", executable],
+    [
+      bunExe(),
+      "build",
+      "--compile",
+      "--aot",
+      "--no-builtin-modules",
+      ...flags,
+      ...withoutDebugInformation,
+      entry,
+      "--outfile",
+      executable,
+    ],
     directory,
   );
   expect({ errors: built.errors, exitCode: built.exitCode }).toEqual({ errors: [], exitCode: 0 });

@@ -3,23 +3,30 @@ if (!Bun.isMainThread) { postMessage("the entry point ran again in a worker"); p
 const text = "postMessage(Bun.color('red', 'hex') + ' ' + typeof HTMLRewriter)";
 function listen(worker) { worker.onmessage = event => { console.log(event.data); worker.terminate(); }; worker.onerror = event => { console.log("error", event.message.replace(/blob:[-0-9a-f]+/, "blob:")); }; }
 //// blob-url
+//@ alone
 listen(new Worker(URL.createObjectURL(new Blob([text], { type: "application/javascript" }))));
 //// data-url
+//@ alone
 listen(new Worker("data:application/javascript," + encodeURIComponent(text)));
 //// computed-path
+//@ todo the trimmed executable stops with exit code 70 and says that it needs the interpreter
 //@ file cwd/w.js "postMessage(Bun.color('red', 'hex') + ' ' + typeof HTMLRewriter)"
 listen(new Worker(process.cwd() + "/w.js"));
 //// worker-threads-eval
+//@ alone
 import { Worker as NodeWorker } from "node:worker_threads";
 const worker = new NodeWorker("require('node:worker_threads').parentPort.postMessage(Bun.color('red', 'hex') + ' ' + typeof HTMLRewriter)", { eval: true });
 worker.on("message", message => { console.log(message); worker.terminate(); });
 worker.on("error", error => console.log("error", error.message.replace(/blob:[-0-9a-f]+/, "blob:")));
 //// globalThis-Worker
+//@ alone
 listen(new globalThis.Worker("data:application/javascript," + encodeURIComponent(text)));
 //// Reflect-construct
+//@ todo the trimmed executable stops with exit code 70 and says that it needs the interpreter
 //@ trimmed-says it isn't in this executable
 listen(Reflect.construct(Worker, ["data:application/javascript," + encodeURIComponent(text)]));
 //// alias
+//@ alone
 const W = Worker;
 listen(new W("data:application/javascript," + encodeURIComponent(text)));
 //// own-file

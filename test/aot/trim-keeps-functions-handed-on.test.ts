@@ -101,8 +101,12 @@ expectWaysToKeepFeatures(`${remove.path} after a constant`, [[remove, wayNamed("
 const firstOfEachFeature = [
   ...new Map(callables.toReversed().map(callable => [callable.features[0].feature, callable])).values(),
 ].toReversed();
-for (const members of packWithoutSharedFeatures(firstOfEachFeature, waysToHandOn.length).slice(0, 2))
-  expectWaysToKeepFeatures(
-    `${members[0].path} to ${members.at(-1)!.path}, each in another way`,
-    members.map((member, index) => [member, waysToHandOn[index]]),
-  );
+// The functions of the language bring less of Bun's own modules along than those of the host, and a way does not ask whose function it hands on.
+const ofTheLanguage = firstOfEachFeature.filter(({ path }) =>
+  /^[A-Z]\w+\.prototype\.|^(Math|JSON|Object|Reflect|Atomics)\./.test(path),
+);
+const [members] = packWithoutSharedFeatures([...ofTheLanguage, ...firstOfEachFeature], waysToHandOn.length);
+expectWaysToKeepFeatures(
+  `${members[0].path} to ${members.at(-1)!.path}, each in another way`,
+  members.map((member, index) => [member, waysToHandOn[index]]),
+);

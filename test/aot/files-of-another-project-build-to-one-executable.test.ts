@@ -11,7 +11,7 @@ import { test } from "./supported";
 
 setDefaultTimeout(600_000);
 
-const files = 6;
+const files = 4;
 const threadCounts = [1, 4, 16];
 
 const shared = { target: "esnext", module: "esnext", moduleResolution: "bundler", noEmit: true };

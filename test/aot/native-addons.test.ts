@@ -72,7 +72,17 @@ describe.skipIf(!systemCC || !!unsupported)("compile/aot/native-addons", () => {
         const executable = join(folder, name.replace(/\.\w+$/, isWindows ? ".exe" : ""));
         built(
           await spawned(
-            [bunExe(), "build", "--compile", "--aot", join(programs, name), "--outfile", executable],
+            // No program imports a built-in module.
+            [
+              bunExe(),
+              "build",
+              "--compile",
+              "--aot",
+              "--no-builtin-modules",
+              join(programs, name),
+              "--outfile",
+              executable,
+            ],
             programs,
             bunEnv,
           ),

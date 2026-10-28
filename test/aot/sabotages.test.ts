@@ -13,7 +13,6 @@ import { afterAll, expect } from "bun:test";
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { dirname, join, resolve } from "path";
-import { tsconfig } from "./generated/births-and-uses/run";
 import {
   built,
   slot,
@@ -26,6 +25,18 @@ import {
 } from "./harness/commands";
 import { registry } from "./harness/registry";
 import { describe, test } from "./supported";
+
+/** What the programs in TypeScript out of ./fuzz/generators/births-and-uses are checked under. */
+const tsconfig = JSON.stringify({
+  compilerOptions: {
+    target: "esnext",
+    module: "preserve",
+    moduleResolution: "bundler",
+    noEmit: true,
+    typeRoots: [join(import.meta.dir, "..", "..", "packages")],
+    types: ["bun-types"],
+  },
+});
 
 type Environment = Record<string, string>;
 const overwriting = { BUN_JSC_scribbleFreeCells: "1", BUN_JSC_useZombieMode: "1" };
@@ -45,7 +56,7 @@ type Row = { folder: string; flags: string[]; programs: string[]; isGenerated?: 
 // What a pass takes for granted shows in what a program answers, whenever the collector runs.
 const asTheyAre: Environment[] = [{}];
 const conditionOfAPass = (...programs: string[]): Row => ({ folder: "pass-conditions", flags: [], programs });
-/** Programs out of ./generated/births-and-uses/<family>.ts by name: `typed/<name>` is the one in TypeScript. */
+/** Programs out of ./fuzz/generators/births-and-uses/<family>.ts by name: `typed/<name>` is the one in TypeScript. */
 const ofFamily = (family: string, ...programs: string[]): Row => ({
   folder: family,
   flags: [],
@@ -230,6 +241,9 @@ describe.skipIf(!listed)("compile/aot/sabotages", () => {
     // The compiler looks its own work over at the end, and what it then refuses to hand on has been noticed too.
     if (build.exitCode && build.stderr.includes("internal compiler error"))
       return { environment: environments[0], how: "the build stops" };
+    // A Bun with assertions also validates the code of the back end after each of its phases, which comes first.
+    if (build.exitCode && build.stderr.includes("AIR VALIDATION FAILURE"))
+      return { environment: environments[0], how: "the validator of the back end stops the build" };
     built(build);
     try {
       for (const environment of environments) {
@@ -254,7 +268,7 @@ describe.skipIf(!listed)("compile/aot/sabotages", () => {
     const {
       programs,
     }: { programs(isTyped: boolean): { name: string; file: string; text: string; flags?: string[] }[] } = require(
-      `./generated/births-and-uses/${family}`,
+      `./fuzz/generators/births-and-uses/${family}`,
     );
     const found = programs(kind === "typed").find(candidate => candidate.name === name);
     expect({ family, program, isInTheFamily: !!found }).toEqual({ family, program, isInTheFamily: true });

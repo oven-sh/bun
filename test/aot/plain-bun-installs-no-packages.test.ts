@@ -98,7 +98,7 @@ const root = import.meta.dir;
 const cure = join(root, "harness", "without-installing-packages.ts");
 // Programs, and what belongs to them. They are started by a test or a tool, in a folder that it chose.
 const programFolders =
-  /(^|\/)(node_modules|programs|parallel|more-programs|apps|app|cases|fixtures|test262|each-case-alone|generated-programs)\//;
+  /(^|\/)(node_modules|programs|parallel|library-sweeps|more-programs|apps|app|cases|fixtures|test262|each-case-alone|generated-programs)\//;
 const sources = [...new Glob("**/*.{ts,mts,cts}").scanSync({ cwd: root })]
   .map(path => path.replaceAll(sep, "/"))
   .filter(path => !programFolders.test(path) && !path.endsWith(".d.ts"))
@@ -154,7 +154,7 @@ describe("the sources of the tests and tools", () => {
     // These name such a place for something else than the folder of a program that plain Bun runs.
     const otherUses = new Set([
       "every-image-of-an-executable-has-its-map.test.ts",
-      "generated/text-that-comes-at-run-time-changes-what-the-program-holds.ts",
+      "fuzz/generators/text-that-comes-at-run-time-changes-what-the-program-holds.ts",
       "hardened-environment.test.ts",
       "names-from-run-time-in-a-trimmed-executable.test.ts",
       "plain-bun-installs-no-packages.test.ts",

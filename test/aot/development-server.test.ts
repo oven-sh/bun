@@ -65,7 +65,7 @@ async function run(cmd: string[], cwd: string) {
           slot(async () => {
             using dir = tempDir("development-server", { [file]: source, ...late });
             const build = await run(
-              [bunExe(), "build", "--compile", "--aot", file, "--outfile", "program"],
+              [bunExe(), "build", "--compile", "--aot", "--no-builtin-modules", file, "--outfile", "program"],
               String(dir),
             );
             expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({

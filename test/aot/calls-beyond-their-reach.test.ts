@@ -48,8 +48,10 @@ describe.skipIf(!!unsupported)("calls beyond their reach", () => {
     const usual = await built();
     const sharedCodeSize = counted(usual.stderr + usual.stdout, "SharedCodeBytesEmitted");
     expect(sharedCodeSize).toBeGreaterThan(0);
-    // A copy serves the functions that lie within the reach less its own size, on either side.
-    const far = await built(`--aot-limit=DirectCallReach:${Math.ceil(1.25 * sharedCodeSize)}`);
+    const otherCodeSize = counted(usual.stderr + usual.stdout, "CodeBytesEmitted") - sharedCodeSize;
+    expect(otherCodeSize).toBeGreaterThan(0);
+    // A copy serves the functions that lie within the reach less its own size, on either side: a quarter of them here, however large the shared code is.
+    const far = await built(`--aot-limit=DirectCallReach:${sharedCodeSize + Math.ceil(otherCodeSize / 8)}`);
     expect(counted(far.stderr + far.stdout, "SharedCodeBytesEmitted")).toBeGreaterThan(2 * sharedCodeSize);
     expect(await printedBy([far.executable])).toEqual(await printedBy([bunExe(), "program.ts"]));
   });

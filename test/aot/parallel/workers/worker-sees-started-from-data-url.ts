@@ -1,5 +1,7 @@
 // What a Worker that starts from a data: URL sees of itself, and what it can import.
 // Alone: which texts the build compiles for a Worker depends on what else the executable holds
+// Env of the executable: BUN_JSC_crashIfInterpreterIsUsed=1
+// STATISTIC: EngineRuns = 12
 const ask = (url: string) =>
   new Promise<string>(done => {
     const worker = new Worker(url);

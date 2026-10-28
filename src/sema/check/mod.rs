@@ -993,6 +993,7 @@ impl<'s> Program<'s> {
             recent_unions: Default::default(),
             recent_unreduced_unions: Default::default(),
             unions_of_union_types: Default::default(),
+            unions_without_subtypes: Default::default(),
             union_calls: Default::default(),
             constraint_stack: Vec::new(),
             constraints_marked_circular: Vec::new(),
@@ -1939,6 +1940,9 @@ pub struct Checker<'p, 's> {
     recent_unreduced_unions: instantiate::Recent,
     /// `unionOfUnionTypes`, for `UnionReductionSubtype`: the lower id first.
     unions_of_union_types: FxHashMap<(TypeId, TypeId), TypeId>,
+    /// The unions in which `removeSubtypes` has compared every member with every other and removed none, and whether
+    /// primitives were compared too.
+    unions_without_subtypes: FxHashMap<TypeId, bool>,
     union_calls: unions::UnionCalls,
     /// The `stack` of `getResolvedBaseConstraint`: the recursion identities of the nested
     /// constraint computations in progress.

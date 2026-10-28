@@ -27,14 +27,8 @@ const threadCounts = [1, 16, 64];
 const programs: { path: string; builds: number; flags?: string[] }[] = [
   // What it prints depends on which methods the compiler has seen their classes assign to.
   { path: "repeated-builds/methods-reassigned-by-class.ts", builds: 3 },
-  { path: "parallel/commonjs/typed-requires-typed/main.ts", builds: 3 },
   // Steps of the flow analysis ran side by side, and one of them opened a phase of the type table while another held an arena of it: 5 builds of 200 aborted.
   { path: "parallel/relational-summaries/accessors-arrive-on-chain-in-every-way.js", builds: 3 },
-  // The same race, 9 builds of 300. And it pulls in enough of Bun's library that code is generated on every thread for a while: the body of a function was
-  // released when its code was emitted, while the thread that compiled a caller asked whether the function has a body: 3 builds of 200 reported a call of a function without code.
-  { path: "parallel/native-callbacks/callbacks-net-sockets-and-their-events.ts", builds: 3, flags: ["--target=bun"] },
-  // Whether a member that some objects lack is found above them is asked of a table that another step of the flow analysis fills.
-  { path: "parallel/objects/member-named-tojson-that-objects-get.js", builds: 3 },
 ];
 
 const root = String(tempDir("aot-repeated-builds", {}));

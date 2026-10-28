@@ -1,4 +1,4 @@
-// Programs that are written by a rule and have a size: so many modules, wrappers, calls, layouts, statements. ./build-scaling.test.ts builds each at
+// Programs that are written by a rule and have a size: so many modules, wrappers, calls, layouts, statements. ./build-scaling-cases.ts builds each at
 // a size and at twice that size.
 //
 //   bun test/aot/build-scaling/shapes.ts <name of a shape, or a part of it> <size> <folder>     writes the program there

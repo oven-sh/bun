@@ -25,7 +25,7 @@ use bun_aot::statistics::{Stage, Statistics};
 use bun_aot::{BuildFailed, Compilation};
 use bun_ast::{Loc, Log};
 use bun_options_types::aot_options::AotOptions;
-use bun_resolver::package_names::{BuildPaths, PackageName};
+use bun_resolver::package_names::{BuildPaths, PackageName, add_written_names};
 use bun_sema_driver::Libs;
 use core::ptr::NonNull;
 pub use metafile::{MetafileFiles, MetafileOutput, write_metafile, write_metafile_files};
@@ -190,10 +190,13 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
             let folders: Vec<BuildPaths<'_>> = folders
                 .map(|it| paths(&it.source_path, &it.public_path))
                 .collect();
-            bundle
-                .transpiler
-                .resolver
-                .find_package_names(&entry_points, &folders)
+            let written = compilation.names_of_worker_files.iter();
+            let written: Vec<BuildPaths<'_>> = written
+                .map(|it| paths(&it.source_path, &it.public_path))
+                .collect();
+            let resolver = &mut bundle.transpiler.resolver;
+            let names = resolver.find_package_names(&entry_points, &folders);
+            add_written_names(names, &written, &entry_points)
         }
         Ok(_) | Err(_) => Vec::new(),
     };

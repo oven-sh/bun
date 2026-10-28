@@ -84,7 +84,7 @@ CODE_RANGE_IN_HEADER = 40
 
 
 def source(name):
-    """The file that quick.py compiles: program.<ext> of a folder, else its main.<ext>, the first by name as in run-programs.ts, else <name>.<ext>."""
+    """The file that quick.py compiles: program.<ext> of a folder, else its main.<ext>, the first by name, else <name>.<ext>."""
     for stem, extensions in (('%s/program', ('js', 'tsx', 'ts')), ('%s/main', ('cjs', 'cts', 'js', 'mjs', 'mts', 'ts', 'tsx')), ('%s', ('cjs', 'cts', 'js', 'mjs', 'mts', 'ts', 'tsx'))):
         for ext in extensions:
             path = '%s/%s.%s' % (PROGRAMS, stem % name, ext)

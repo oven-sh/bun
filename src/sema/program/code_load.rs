@@ -38,9 +38,9 @@ pub(super) struct CompileLoad<'a, 's> {
 
 impl<'s> Files<'s> {
     /// `parsed`: `Run::of_compile_build` with the atoms of `inputs`.
-    pub fn load_for_compile_with_parsed_files(
+    pub fn load_for_compile_with_parsed_files<'u: 's>(
         session: &'s Session,
-        parsed: Option<&'s Run<'s>>,
+        parsed: Option<&'s Run<'u>>,
         host: &dyn CodeHost,
         options: Options,
         roots: RootFileNames<'_>,
@@ -197,6 +197,7 @@ pub(super) struct Analyzed<'s, 'r> {
     pub(super) is_aot_source: bool,
     pub(super) import_meta_main: Option<bool>,
     pub(super) is_called_before_it_runs: bool,
+    pub(super) is_only_imported: bool,
 }
 
 pub(super) struct LoadedCode<'s, 'r> {

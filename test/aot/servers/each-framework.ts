@@ -12,20 +12,22 @@
 //   a few thousand       requests later each route still answers the same, and a new array still has contiguous storage
 //   other engines        the same with the RegExp JIT off, with the GC running continuously, and with a GC every few allocations
 //                        that overwrites dead cells
-//   other build options  the same with --trim and --disallow-code-generation-from-strings
+//   other build options  the same with --trim and --disallow-code-generation-from-strings, for the frameworks that ask for it: it is a second build
 //
-// The packages are those of ./app/package.json, a workspace of test/package.json: `bun install` in test/ installs them.
+// Each test file works in a copy of ./app, where it installs the packages of ./app/bun.lock.
 import { afterAll, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { canTrim } from "../../bundler/compile-trim-features";
 import { run } from "../harness/run";
 import { beforeAll, describe, test } from "../supported";
 import { apiRoutes, invalidOrderBody, invalidOrders, routes, type Route } from "./answers";
 import { edgeCaseRequests, featureRequests, type RequestSpec } from "./requests";
+import { copyApp } from "./run-servers";
 
-const app = join(import.meta.dir, "app");
+const dir = tempDir("aot-servers", {});
+const app = join(String(dir), "app");
 const timeout = 600_000;
 
 /** AOT_SERVERS_FLAGS="--aot-heat=everything-is-hot": more flags for every build. What a server answers does not depend on them. */
@@ -44,7 +46,7 @@ type Answers = Record<string, unknown>;
 
 /** The servers that ./app/all/<framework>.ts imports, in the order in which they start. */
 function serversOf(framework: string): Server[] {
-  const text = readFileSync(join(app, "all", `${framework}.ts`), "utf8");
+  const text = readFileSync(join(import.meta.dir, "app", "all", `${framework}.ts`), "utf8");
   return Array.from(text.matchAll(/^await import\("\.\.\/(.+)"\);$/gm), ([, file]) => ({
     kind: file.startsWith("features/") ? "features" : file.startsWith("api-") ? "api" : "routes",
     file,
@@ -303,12 +305,14 @@ async function askAgainAndAgain(origins: string[], servers: Server[], times: num
   }
 }
 
-export function testFramework(framework: string, { generatesHandlersFromStrings = false } = {}) {
+export function testFramework(
+  framework: string,
+  { generatesHandlersFromStrings = false, alsoWithOtherBuildOptions = false } = {},
+) {
   const servers = serversOf(framework);
   const entry = `./all/${framework}.ts`;
   // The bundler inlines process.env.NODE_ENV and defaults it to "development", which would make Express put stack traces into its answers.
   const flags = ["--define", 'process.env.NODE_ENV="production"', "--target=bun"];
-  const dir = tempDir(`aot-servers-${framework}`, {});
   afterAll(() => dir[Symbol.dispose]());
 
   async function build(name: string, more: string[]) {
@@ -336,8 +340,7 @@ export function testFramework(framework: string, { generatesHandlersFromStrings 
     let expected: Record<string, Answers>;
 
     beforeAll(async () => {
-      if (!existsSync(join(app, "node_modules", "zod")))
-        throw new Error("the packages of test/aot/servers/app are not installed: run `bun install` in test/");
+      await copyApp(app);
       const building = build("compiled", []);
       await using plain = await start([bunExe(), entry], servers.length, bunEnv);
       expected = await askAll(plain.origins, servers);
@@ -414,7 +417,7 @@ export function testFramework(framework: string, { generatesHandlersFromStrings 
       ...(canTrim ? ["--trim"] : []),
       ...(generatesHandlersFromStrings ? [] : ["--disallow-code-generation-from-strings"]),
     ];
-    test.skipIf(options.length === 0)(
+    test.skipIf(options.length === 0 || !alsoWithOtherBuildOptions)(
       `answers the same when built with ${options.join(" ")}`,
       async () => {
         await using compiled = await start([await build("variant", options)], servers.length, bunEnv);

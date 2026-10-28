@@ -31,11 +31,11 @@ pub fn load_program<'s>(
 }
 
 /// `parsed`: the declaration files that the loads of the build have parsed so far.
-pub fn load_program_with_parsed_files<'s>(
+pub fn load_program_with_parsed_files<'u: 's, 's>(
     session: &'s Session,
     host: &dyn CodeHost,
     request: &CompileRequest<'_, 's>,
-    parsed: Option<&'s Run<'s>>,
+    parsed: Option<&'s Run<'u>>,
 ) -> Result<LoadedProgram<'s>, LoadFailure> {
     load(session, host, request, parsed, None)
 }
@@ -51,11 +51,11 @@ pub fn load_program_of_loaded_files<'s>(
     load(session, host, request, parsed, Some(loaded_before))
 }
 
-fn load<'s>(
+fn load<'u: 's, 's>(
     session: &'s Session,
     host: &dyn CodeHost,
     request: &CompileRequest<'_, 's>,
-    parsed: Option<&'s Run<'s>>,
+    parsed: Option<&'s Run<'u>>,
     loaded_before: Option<&Files<'s>>,
 ) -> Result<LoadedProgram<'s>, LoadFailure> {
     use_dedicated_pool("Bun Compile");

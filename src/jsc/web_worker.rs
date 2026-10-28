@@ -1655,36 +1655,8 @@ unsafe fn resolve_entry_point_specifier<'s>(
     }
     // The file of the first entry point has the name of the executable, and its module the name of its source.
     // SAFETY: per fn contract; the resolver is only read.
-    if let Some(graph) = unsafe { (*parent).standalone_module_graph }
-        // SAFETY: as above.
-        && let Some(module) = unsafe {
-            let root = graph.base_public_path_with_default_suffix();
-            let resolver = &(*parent).transpiler.resolver;
-            resolver.resolve_embedded_module(root, str, bun_ast::ImportKind::Stmt)
-        }
-        && let Some(entry) = crate::compiled_program::find_entry_point_by_module_path(module)
-    {
-        return Some(crate::compiled_program::module_key(entry));
-    }
-    // A name without `./` in front leads to a package, else to a file, as `resolve_entry_point` has it below.
-    // SAFETY: per fn contract; the resolver is only read.
-    if let Some(graph) = unsafe { (*parent).standalone_module_graph }
-        && bun_paths::is_package_path(str)
-        // SAFETY: as above.
-        && let Some(module) = unsafe {
-            let root = graph.base_public_path_with_default_suffix();
-            let resolver = &(*parent).transpiler.resolver;
-            let kind = bun_ast::ImportKind::Stmt;
-            use bun_resolver::standalone_module_graph::PackageLookup::{Found, Hidden, Unknown};
-            match resolver.resolve_embedded_package(root, str, kind) {
-                Found(module) => Some(module),
-                Hidden => None,
-                Unknown => {
-                    let prefixed = dot_slash.get_or_init(|| [b"./", str].concat());
-                    resolver.resolve_embedded_module(root, prefixed, kind)
-                }
-            }
-        }
+    let resolver = unsafe { &(*parent).transpiler.resolver };
+    if let Some(module) = resolver.resolve_embedded_entry_point(str)
         && let Some(entry) = crate::compiled_program::find_entry_point_by_module_path(module)
     {
         return Some(crate::compiled_program::module_key(entry));

@@ -1,7 +1,9 @@
 // A Worker that starts from a text or from the path of a file which is known when the program is built runs code that was compiled ahead of time.
+// ./parallel/workers has the programs that go through the ways to write such a text or path. They run where the interpreter is forbidden.
+// node:worker_threads brings the streams of Node.js along, so only the programs that are about it import it.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { cpSync, readFileSync, symlinkSync } from "node:fs";
+import { readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { built, slot, spawned, withoutCoreDump, withoutCrashReport, withoutDebugInformation } from "./harness/commands";
 import { compileCommand, runtimeEnvironment } from "./harness/flags";
@@ -11,8 +13,6 @@ const timeout = 600_000;
 
 // The executable stops where code is interpreted.
 const compiledOnly = { ...bunEnv, [runtimeEnvironment.forbidsInterpreter]: "1" };
-
-const programs = join(import.meta.dir, "parallel", "workers");
 
 const listen = `
   worker.onmessage = event => (console.log("message", event.data), worker.terminate());
@@ -31,35 +31,6 @@ async function build(folder: string, ...entries: string[]) {
 const programsCompiled = (report: string): number => JSON.parse(readFileSync(report, "utf8")).statistics.EngineRuns;
 
 describe.concurrent("compile/aot/workers from texts that the build knows", () => {
-  test.each([
-    ["data-urls-that-build-knows-start-workers", "main.ts", 1],
-    ["files-named-by-paths-start-workers", "main.ts", 1],
-    ["texts-that-the-build-knows-start-workers.ts", "texts-that-the-build-knows-start-workers.ts", 1],
-    // Each of its eleven texts begins a program of its own.
-    ["worker-sees-started-from-data-url.ts", "worker-sees-started-from-data-url.ts", 12],
-  ])(
-    "%s runs without the interpreter",
-    (program, entry, programsOfExecutable) =>
-      slot(async () => {
-        using dir = tempDir("aot-workers-from-texts", {});
-        const folder = String(dir);
-        cpSync(join(programs, program), program === entry ? join(folder, entry) : folder, { recursive: true });
-        const plain = await spawned([bunExe(), "run", entry], folder, bunEnv);
-        const compiled = await build(folder, entry);
-        built(compiled);
-        expect(programsCompiled(compiled.report)).toBe(programsOfExecutable);
-        const ran = await spawned([compiled.executable], folder, compiledOnly);
-        expect(plain.stdout).not.toBe("");
-        expect({ stdout: ran.stdout, stderr: ran.stderr, exitCode: ran.exitCode, signal: ran.signal }).toEqual({
-          stdout: plain.stdout,
-          stderr: plain.stderr,
-          exitCode: 0,
-          signal: null,
-        });
-      }),
-    timeout,
-  );
-
   const speaks = `import { parentPort } from "node:worker_threads";\nparentPort!.postMessage("spoken");\n`;
   const startsBoth = `import { Worker } from "node:worker_threads";
 new Worker(new URL("./first.ts", import.meta.url)).on("exit", code => console.log("exit", code));
@@ -67,17 +38,10 @@ new Worker(new URL("./second.ts", import.meta.url)).on("message", message => con
 `;
   test.each([
     ["that starts no Worker", { "main.ts": `console.log(1 + 1);\n` }, ["main.ts"], 1],
-    ["whose Worker files all import node:worker_threads", { "first.ts": speaks }, ["main.ts"], 3],
     [
       "with a Worker file that does not import node:worker_threads",
       { "first.ts": `console.log("quiet");\n` },
       ["main.ts"],
-      1,
-    ],
-    [
-      "with an entry point that does not import node:worker_threads",
-      { "first.ts": `console.log("quiet");\n` },
-      ["main.ts", "first.ts", "second.ts"],
       1,
     ],
   ])(
@@ -141,25 +105,21 @@ new Worker(new URL("./second.ts", import.meta.url)).on("message", message => con
         using dir = tempDir("aot-workers-from-texts", {
           "elsewhere/empty.txt": "",
           "project/src/main.js": `
-            import { Worker as NodeWorker } from "node:worker_threads";
             import { start } from "pool";
             ${report}
             await report("./worker.ts", new Worker("./worker.ts"));
             await report("./worker", new Worker("./worker"));
             await report("./lib/../worker.ts", new Worker("./lib/../worker.ts"));
-            await report("./lib/of-node.cjs", new NodeWorker("./lib/of-node.cjs"));
             await report("a package", start());
             await report("./no-such-file.ts", new Worker("./no-such-file.ts"));
           `,
           "project/src/worker.ts": `postMessage("worker.ts" as string);`,
-          "project/src/lib/of-node.cjs": `require("node:worker_threads").parentPort.postMessage("of-node.cjs");`,
           "project/node_modules/pool/package.json": `{ "name": "pool", "main": "lib/index.js" }`,
           "project/node_modules/pool/lib/index.js": `
             const { join } = require("path");
-            const { Worker } = require("worker_threads");
             exports.start = () => new Worker(join(__dirname, "worker.js"));
           `,
-          "project/node_modules/pool/lib/worker.js": `require("worker_threads").parentPort.postMessage("the worker of a package");`,
+          "project/node_modules/pool/lib/worker.js": `postMessage("the worker of a package");`,
         });
         const sources = join(String(dir), "project", "src");
         const plain = await spawned([bunExe(), "run", "main.js"], sources, bunEnv);
@@ -190,10 +150,9 @@ new Worker(new URL("./second.ts", import.meta.url)).on("message", message => con
           "packages/pool/package.json": `{ "name": "pool", "main": "lib/index.js" }`,
           "packages/pool/lib/index.js": `
             const { join } = require("path");
-            const { Worker } = require("worker_threads");
             exports.start = () => new Worker(join(__dirname, "worker.js"));
           `,
-          "packages/pool/lib/worker.js": `require("worker_threads").parentPort.postMessage("its worker");`,
+          "packages/pool/lib/worker.js": `postMessage("its worker");`,
         });
         const folder = String(dir);
         symlinkSync(join(folder, "packages", "pool"), join(folder, "node_modules", "pool"), "junction");
@@ -241,7 +200,6 @@ new Worker(new URL("./second.ts", import.meta.url)).on("message", message => con
           "elsewhere/empty.txt": "",
           "project/src/app/main.ts": `
             import path from "node:path";
-            import { Worker as NodeWorker } from "node:worker_threads";
             import { start } from "./lib/starts.ts";
             ${report.replace("(how, worker)", "(how: string, worker: any)").replaceAll(/(done|text|error|event) =>/g, "($1: any) =>")}
             await report("worker.ts", new Worker("worker.ts"));
@@ -257,7 +215,6 @@ new Worker(new URL("./second.ts", import.meta.url)).on("message", message => con
             await report("a URL one folder above", new Worker(new URL("../beside.ts", import.meta.url)));
             await report("its href", new Worker(new URL("../beside.ts", import.meta.url).href));
             await report("a joined path one folder above", new Worker(path.join(import.meta.dir, "../beside.ts")));
-            await report("the Worker of node", new NodeWorker(new URL("../beside.ts", import.meta.url)));
             await report("a URL from a folder below", start());
           `,
           "project/src/app/worker.ts": `postMessage("worker.ts" as string);`,

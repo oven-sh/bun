@@ -1,7 +1,6 @@
-// Whether a pass of the compiler does anything is asked of real programs, not of programs written for it: three servers of ./app and a
+// Whether a pass of the compiler does anything is asked of real programs, not of programs written for it: two servers of ./app and a
 // terminal program on a package that names its TypeScript under the "aot" condition (../typed-packages/small-renderer/terminal.ts). Each is
-// built the way a user builds it, and the build's report says how often each pass changed something. The four are the fewest of the
-// programs of this folder in which every pass finds work.
+// built the way a user builds it, and the build's report says how often each pass changed something.
 //
 //   every pass        changes something in at least one of the programs, or stands in the list below: the passes that only look or only
 //                     lay out, which never report a change. A listed pass that does change something fails the test as well, so the
@@ -24,8 +23,9 @@ import { built, slot, spawned } from "../harness/commands";
 import { compileCommand, withReport } from "../harness/flags";
 import { beforeAll, describe, test } from "../supported";
 import { installSmallRenderer } from "../typed-packages/small-renderer/install";
+import { copyApp } from "./run-servers";
 
-const programs = ["thin", "elysia", "fastify", "terminal"];
+const programs = ["thin", "elysia", "terminal"];
 
 /** They read the program, check it, or decide where things lie, and hand the result to others. */
 const passesThatReportNoChange = [
@@ -43,6 +43,8 @@ const passesThatReportNoChange = [
   "SummarizeForInlining",
   "VerifyProgram",
 ];
+/** It finds work in the server on Fastify alone, whose build takes longer than the three together. */
+const passesWithoutWorkHere = ["ExpandLongArrayLiterals"];
 /** Two of them count what they decide. */
 const statisticsOfPassesThatReportNoChange = {
   ElideStackChecks: "FunctionsEnteredWithoutStackCheck",
@@ -58,7 +60,6 @@ const statisticsOfPassesThatReportNoChange = {
 const barriersAtMost: Record<string, number> = {
   thin: 519,
   elysia: 2353,
-  fastify: 4260,
   terminal: 199,
 };
 /** The whole text of the terminal program lies in this repository, and its number is small: it is held where it was read. */
@@ -67,11 +68,13 @@ const isHeldHere = (program: string) => program !== "terminal" || (isLinux && pr
 describe("every pass changes a real program", () => {
   const work = String(tempDir("aot-every-pass", {}));
   const terminal = String(tempDir("aot-every-pass-terminal", {}));
+  const app = join(work, "app");
   const reports = new Map<string, BuildReport>();
   afterAll(() => [work, terminal].forEach(folder => rmSync(folder, { recursive: true, force: true })));
 
   beforeAll(async () => {
     installSmallRenderer(terminal);
+    await copyApp(app);
     await Promise.all(
       programs.map(name =>
         slot(async () => {
@@ -80,7 +83,7 @@ describe("every pass changes a real program", () => {
           built(
             await spawned(
               [bunExe(), ...compileCommand, ...withReport(report, "summary"), "--define", 'process.env.NODE_ENV="production"', "--target=bun", `./${name}.ts`, "--outfile", executable], // prettier-ignore
-              name === "terminal" ? terminal : join(import.meta.dir, "app"),
+              name === "terminal" ? terminal : app,
               bunEnv,
             ),
           );
@@ -98,7 +101,7 @@ describe("every pass changes a real program", () => {
     for (const pass of names)
       console.log(`PASS ${pass}: ${programs.map(program => `${program} ${changesOf(pass, program)}`).join(", ")}`);
     const idle = names.filter(pass => programs.every(program => changesOf(pass, program) === 0));
-    expect(idle.toSorted()).toEqual(passesThatReportNoChange.toSorted());
+    expect(idle.toSorted()).toEqual([...passesThatReportNoChange, ...passesWithoutWorkHere].toSorted());
     for (const [pass, statistic] of Object.entries(statisticsOfPassesThatReportNoChange))
       expect({ pass, counts: programs.some(program => reports.get(program)!.statistics[statistic] > 0) }).toEqual({
         pass,

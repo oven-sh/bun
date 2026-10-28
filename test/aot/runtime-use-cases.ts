@@ -439,10 +439,6 @@ group("what the compiler follows, so that it is no longer so:", () => {
       "the report is open with createRequire, called at once",
       'import { createRequire } from "node:module";\nconsole.log(typeof createRequire((import.meta as any).url)("node:path").join);',
     ],
-    [
-      "the report is open with module.require of one of two literals",
-      'console.log(module.require(process.argv[2] ? "node:vm" : "node:fs"));',
-    ],
     ["the report is open with import() of bun:main", 'try { await import("bun:main"); } catch {}\nexport {};'],
     [
       "the base of a class leaves the report closed, and any member of the holder may be used",
@@ -454,6 +450,15 @@ group("what the compiler follows, so that it is no longer so:", () => {
     ],
   ])("%s", async (_, text) => {
     expect(completeness(await of(text))).toEqual(closed);
+  });
+
+  test("the report is open with module.require of one of two literals", async () => {
+    const use = await of('console.log(module.require(process.argv[2] ? "node:vm" : "node:path"));');
+    const loaded = ["module node:path", "module node:vm"];
+    expect({ ...completeness(use), loaded: use.lines.filter(line => loaded.includes(line)) }).toEqual({
+      ...closed,
+      loaded,
+    });
   });
 });
 

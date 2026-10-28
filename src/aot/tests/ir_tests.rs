@@ -10,12 +10,13 @@ pub mod support;
 use bun_sema_standalone::for_each_parallel;
 use std::any::Any;
 use std::fmt::Display;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Lines, Read, Write};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
-use std::process::{Command as Process, Stdio};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::process::{Child, ChildStdin, ChildStdout, Command as Process, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard, Once, OnceLock, PoisonError};
+use std::thread::JoinHandle;
 use support::TestFailure;
 use support::check_lines::match_check_lines;
 use support::commands::{
@@ -34,8 +35,12 @@ const JOB_COUNT_VARIABLE: &str = "AOT_IR_JOBS";
 const OUTPUT_FOLDER_VARIABLE: &str = "AOT_IR_OUTPUT";
 /// Set to write the check lines below `GENERATED` anew.
 const UPDATE_VARIABLE: &str = "AOT_IR_UPDATE";
-/// `<index>/<count>`: which of the files a copy of this program runs. The program sets it for the copies that it starts.
+/// `<index>/<count>`: which of the files this program runs itself, for a debugger.
 const SHARE_VARIABLE: &str = "AOT_IR_SHARE";
+/// The program sets it for the copies that it starts: a copy runs the files whose numbers it reads, a line each.
+const READS_FILE_NUMBERS_VARIABLE: &str = "AOT_IR_READS_FILE_NUMBERS";
+/// What a copy prints behind the lines of a file.
+const END_OF_FILE_MARK: &str = "DONE";
 const PROJECT_FILE: &str = "tsconfig.json";
 const STDERR_LINES_SHOWN: usize = 12;
 /// Set where a run that the engine did not verify is a failure, as in CI.
@@ -134,6 +139,9 @@ fn run_area(area: &str) {
         Ok(count) => parse_job_count(&count).get(),
         Err(_) => std::thread::available_parallelism().map_or(1, usize::from),
     };
+    if std::env::var_os(READS_FILE_NUMBERS_VARIABLE).is_some() {
+        return run_files_named_on_input(&tests);
+    }
     match std::env::var(SHARE_VARIABLE) {
         Ok(share) => {
             let (index, count) = parse_share(&share);
@@ -161,14 +169,8 @@ fn run_area(area: &str) {
     let mut failed_file_count = 0;
     let mut skipped: Vec<&TestFailure> = Vec::new();
     for (test, outcome) in tests.iter().zip(&outcomes) {
-        let path = &test.display_path;
         let outcome = outcome.get().expect("every test has run");
-        for TestFailure { line, message } in &outcome.failures {
-            println!("FAIL {path}:{line}: {message}");
-        }
-        for TestFailure { line, message } in &outcome.skipped {
-            println!("SKIP {path}:{line}: {message}");
-        }
+        print_outcome(test, outcome);
         failed_file_count += usize::from(!outcome.failures.is_empty());
         skipped.extend(&outcome.skipped);
     }
@@ -197,71 +199,157 @@ fn parse_share(share: &str) -> (usize, usize) {
     }
 }
 
-// A file has a process of its own, as a build has: the resolver takes its working directory once for a process, and two builds in one
-// process wait for each other, since the front end has one pool for all of them.
-fn run_area_in_copies(area: &str, jobs: usize, tests: &[FoundTest]) {
-    let file_count = tests.len();
-    let program = std::env::current_exe().expect("a test program knows its path");
-    let start = |index: usize| {
-        Process::new(&program)
+fn print_outcome(test: &FoundTest, outcome: &TestOutcome) {
+    let path = &test.display_path;
+    for TestFailure { line, message } in &outcome.failures {
+        println!("FAIL {path}:{line}: {message}");
+    }
+    for TestFailure { line, message } in &outcome.skipped {
+        println!("SKIP {path}:{line}: {message}");
+    }
+}
+
+fn run_files_named_on_input(tests: &[FoundTest]) {
+    println!();
+    for_each_parallel(1, 1, |_| {
+        for line in std::io::stdin().lines() {
+            let line = line.expect("the input is text");
+            let test = line.parse().ok().and_then(|index: usize| tests.get(index));
+            let test = test.unwrap_or_else(|| panic!("{line} is not the number of a file"));
+            print_outcome(test, &run_guarded_test_file(test));
+            println!("{END_OF_FILE_MARK}");
+        }
+    });
+}
+
+/// A copy of this program that runs one file after another.
+struct ProgramCopy {
+    process: Child,
+    numbers: ChildStdin,
+    lines: Lines<BufReader<ChildStdout>>,
+    errors: JoinHandle<String>,
+}
+
+impl ProgramCopy {
+    fn start(area: &str) -> ProgramCopy {
+        let program = std::env::current_exe().expect("a test program knows its path");
+        let mut process = Process::new(&program)
             .args([area, "--exact", "--nocapture", "--test-threads=1"])
-            .env(SHARE_VARIABLE, format!("{index}/{file_count}"))
-            .stdin(Stdio::null())
+            .env(READS_FILE_NUMBERS_VARIABLE, "1")
+            .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .unwrap_or_else(|error| panic!("cannot start {}: {error}", program.display()))
-    };
-    let outputs: Vec<OnceLock<std::process::Output>> =
-        (0..file_count).map(|_| OnceLock::new()).collect();
-    for_each_parallel(jobs, file_count, |index| {
-        let output = start(index).wait_with_output();
-        let _ = outputs[index].set(output.expect("a started copy ends"));
-    });
-    let mut failed_files: Vec<String> = Vec::new();
-    let mut skipped_runs = 0;
-    let mut first_summary = None;
-    for (test, output) in tests.iter().zip(&outputs) {
-        let output = output.get().expect("every copy has run");
-        let (stdout, stderr) = (
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr),
+            .unwrap_or_else(|error| panic!("cannot start {}: {error}", program.display()));
+        let pipes = (
+            process.stdin.take(),
+            process.stdout.take(),
+            process.stderr.take(),
         );
-        let mut has_said_why = false;
-        for line in stdout.lines() {
-            if let Some(failure) = line.strip_prefix("FAIL ") {
-                println!("{line}");
-                failed_files.extend(failure.split(':').next().map(str::to_owned));
-                has_said_why = true;
-            } else if line.starts_with("SKIP ") {
-                skipped_runs += 1;
-            }
-        }
-        let mut summaries = stderr.lines().filter(|line| line.starts_with("SKIP "));
-        first_summary = first_summary.or_else(|| summaries.next().map(str::to_owned));
-        if !output.status.success() && !has_said_why {
-            let lines: Vec<&str> = stderr.lines().collect();
-            let shown = &lines[lines.len().saturating_sub(STDERR_LINES_SHOWN)..];
-            let path = &test.display_path;
-            println!(
-                "FAIL {path}:1: the test program ended with {}:",
-                output.status
-            );
-            println!("{}", shown.join("\n"));
-            failed_files.push(path.clone());
+        let (Some(numbers), Some(output), Some(mut errors)) = pipes else {
+            unreachable!("all three are pipes");
+        };
+        ProgramCopy {
+            process,
+            numbers,
+            lines: BufReader::new(output).lines(),
+            // A copy that nobody listens to waits once the pipe is full.
+            errors: std::thread::spawn(move || {
+                let mut bytes = Vec::new();
+                let _ = errors.read_to_end(&mut bytes);
+                String::from_utf8_lossy(&bytes).into_owned()
+            }),
         }
     }
-    if let Some(summary) = first_summary {
-        let why = summary.rsplit(": ").next().unwrap_or_default();
+
+    /// The lines of the file. `None`: the copy has ended over it.
+    fn run(&mut self, index: usize) -> Option<Vec<String>> {
+        writeln!(self.numbers, "{index}").ok()?;
+        let mut lines = Vec::new();
+        loop {
+            match self.lines.next()?.ok()? {
+                line if line == END_OF_FILE_MARK => return Some(lines),
+                line => lines.push(line),
+            }
+        }
+    }
+
+    /// How it ended, and what it wrote as errors.
+    fn end(self) -> (ExitStatus, String) {
+        let ProgramCopy {
+            mut process,
+            numbers,
+            errors,
+            ..
+        } = self;
+        drop(numbers);
+        let status = process.wait().expect("a started copy ends");
+        (status, errors.join().unwrap_or_default())
+    }
+}
+
+// Builds of one process wait for each other wherever they ask for its one pool, so each job is a process. It runs many files, since the
+// first build of a process pays for what all of them read. A file that ends its process fails alone: the rest goes to a new copy.
+fn run_area_in_copies(area: &str, jobs: usize, tests: &[FoundTest]) {
+    let file_count = tests.len();
+    let next = AtomicUsize::new(0);
+    let outputs: Vec<OnceLock<Vec<String>>> = (0..file_count).map(|_| OnceLock::new()).collect();
+    for_each_parallel(jobs, jobs, |_| {
+        let mut copy = None;
+        loop {
+            let index = next.fetch_add(1, Ordering::Relaxed);
+            if index >= file_count {
+                break;
+            }
+            let running = copy.get_or_insert_with(|| ProgramCopy::start(area));
+            let lines = running.run(index).unwrap_or_else(|| {
+                let (status, errors) = copy.take().expect("it ran the file").end();
+                let lines: Vec<&str> = errors.lines().collect();
+                let shown = &lines[lines.len().saturating_sub(STDERR_LINES_SHOWN)..];
+                let path = &tests[index].display_path;
+                let mut lines = vec![format!(
+                    "FAIL {path}:1: the test program ended with {status}:"
+                )];
+                lines.extend(shown.iter().map(|&line| line.to_owned()));
+                lines
+            });
+            let _ = outputs[index].set(lines);
+        }
+        if let Some(copy) = copy {
+            copy.end();
+        }
+    });
+    let mut failed_files: Vec<&str> = Vec::new();
+    let mut first_skipped_run = None;
+    let mut skipped_runs = 0;
+    for (test, output) in tests.iter().zip(&outputs) {
+        let lines = output.get().expect("every file has run");
+        let has_failed = lines.iter().any(|line| line.starts_with("FAIL "));
+        for line in lines {
+            if line.starts_with("SKIP ") {
+                skipped_runs += 1;
+                first_skipped_run = first_skipped_run.or(Some(line));
+            } else if has_failed {
+                println!("{line}");
+            }
+        }
+        if has_failed {
+            failed_files.push(&test.display_path);
+        }
+    }
+    if let Some(line) = first_skipped_run {
+        let why = line.rsplit(": ").next().unwrap_or_default();
         let folder = display_folder_of(area);
         eprintln!("SKIP {folder}: the engine verified none of {skipped_runs} runs: {why}");
     }
-    failed_files.sort_unstable();
-    failed_files.dedup();
     assert!(
         failed_files.is_empty(),
         "{} of {file_count} files failed",
         failed_files.len()
+    );
+    assert!(
+        skipped_runs == 0 || std::env::var_os(ENGINE_IS_REQUIRED_VARIABLE).is_none(),
+        "the engine verified none of {skipped_runs} runs, and {ENGINE_IS_REQUIRED_VARIABLE} is set"
     );
 }
 
@@ -521,6 +609,10 @@ fn run_test_text(path: &Path, text: &str) -> TestOutcome {
             return fail_whole_file(format!("cannot be written: {error}"));
         }
         file = parse_test_file(&updated);
+        if !file.errors.is_empty() {
+            outcome.failures = file.errors;
+            return outcome;
+        }
     }
     check_same_runs(&file, &outcomes, &mut outcome.failures);
     for (run, command_outcome) in file.runs.iter().zip(outcomes) {
@@ -595,6 +687,11 @@ fn pattern_of(line: &str, ids: &mut Vec<String>) -> String {
                     ids.push(token.to_owned());
                     ids.len() - 1
                 });
+                // Three brackets would not read as a bracket and a variable.
+                if pattern.ends_with('[') {
+                    pattern.pop();
+                    pattern.push_str("{{*}}");
+                }
                 pattern.push_str(&format!("[[{}_{number}]]", &token[..1]));
             } else {
                 pattern.push_str(token);
@@ -1184,6 +1281,8 @@ mod tests {
         assert_eq!(pattern, "v4 = Call v1, [[f_0]] site=[[w_1]] key=\"f12 @9\"");
         let pattern = pattern_of("v10 = ElemGet v3, v9 @4333 @4324 callers", &mut ids);
         assert_eq!(pattern, "v10 = ElemGet v3, v9{{*}} callers");
+        let pattern = pattern_of("functionTypes=[f12, w3] {", &mut ids);
+        assert_eq!(pattern, "functionTypes={{*}}[[f_0]], [[w_1]]] {");
         let pattern = pattern_of(
             "x=f12 position=17 text={start=1 end=2} casts=[[{{a}}]] L2.b",
             &mut ids,

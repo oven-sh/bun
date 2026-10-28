@@ -5,7 +5,7 @@ import { rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned } from "./harness/commands";
-import { compileCommand } from "./harness/flags";
+import { buildEnvironment, compileCommand } from "./harness/flags";
 import { describe, test } from "./supported";
 
 describe("compile/aot/a build that verifies each pass stops where an operation that may throw goes", () => {
@@ -24,7 +24,7 @@ describe("compile/aot/a build that verifies each pass stops where an operation t
         join(root, isWindows ? "program.exe" : "program"),
       ],
       root,
-      bunEnv,
+      { ...bunEnv, [buildEnvironment.logsPhaseTimes]: "1" },
     );
 
   test("with the sabotage", async () => {
@@ -33,6 +33,9 @@ describe("compile/aot/a build that verifies each pass stops where an operation t
     expect(result.stderr + result.stdout).toMatch(
       /verification failed after \w+; function '\w+' \(f\d+\); v\d+ \(\w+\) in b\d+ may throw or run code, and is gone/,
     );
+    // An internal error ends the build where it is found: nothing is compiled a second time.
+    const lines = (result.stderr + result.stdout).split("\n");
+    expect(lines.filter(line => line.startsWith("AOT flow round 1 ")).length).toBe(1);
   }, 600_000);
 
   test("without it", async () => {

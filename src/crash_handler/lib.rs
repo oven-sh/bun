@@ -33,7 +33,10 @@ pub use error::{Error, Result};
 
 pub mod build_id;
 mod compiled_frames;
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 mod fault_registers;
 mod stopped_builds;
 pub use compiled_frames::{DecodedReport, ShortBuildId, report_compiled_frames};
@@ -1217,7 +1220,10 @@ mod draft {
                         }
                     }
 
-                    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+                    #[cfg(all(
+                        target_os = "linux",
+                        any(target_arch = "x86_64", target_arch = "aarch64")
+                    ))]
                     crate::fault_registers::write_to(&mut |text| {
                         let _ = writer.write_all(text);
                     });
@@ -1648,7 +1654,10 @@ mod draft {
         // sigfault address field.
         let addr: usize = unsafe { (*info).si_addr() as usize };
         let context = fault_context_from_ucontext(ctx);
-        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        #[cfg(all(
+            target_os = "linux",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        ))]
         crate::fault_registers::remember(
             ctx,
             matches!(sig, libc::SIGSEGV | libc::SIGBUS).then_some(addr),

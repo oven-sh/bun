@@ -7,7 +7,7 @@ const MB = 2 ** 20;
 const holds96MB = `const held = Buffer.alloc(${96 * MB}, 1); setTimeout(() => console.log(held.length), Number(process.argv[1]));`;
 
 async function runAtOnce(count: number, milliseconds: number) {
-  const watch = endAtMemoryLimitTogether(320 * MB);
+  const { watch } = endAtMemoryLimitTogether(320 * MB);
   return Promise.all(
     Array.from({ length: count }, async () => {
       await using child = Bun.spawn({

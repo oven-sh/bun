@@ -11,12 +11,20 @@
  *   bun run rust:test              # every crate of the list
  *   bun run rust:test -p bun_foo   # extra args go straight to `cargo test`
  *
+ * `cargo test` runs one test program behind another. For the whole list each program starts when cargo has linked it,
+ * beside those that still run and beside the rest of the build. What a program prints is shown when it ends.
+ *
  * TESTAOT=<testaot>: the engine reads what the front end writes in some tests of bun_aot. With it, and in CI, a test that
  * the engine did not see fails. Without it such a test leaves that part out.
+ *
+ * BUN_UNDER_TEST=<bun>: beside the crates it builds and runs the programs of test/aot/library-sweeps, which compile all of
+ * Bun's library in a checking mode. This step has the processors for them, and no shard of the tests waits for it.
  */
 
-import { spawnSync } from "node:child_process";
-import { resolve } from "node:path";
+import { spawn, spawnSync } from "node:child_process";
+import { readdirSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
+import { createInterface } from "node:readline";
 import { isBuildkite } from "./buildkite.ts";
 
 const repo = resolve(import.meta.dirname, "..");
@@ -82,15 +90,15 @@ if (requiresEngine && !process.env.TESTAOT) {
   process.exit(1);
 }
 
-const extraArgs = process.argv.slice(2);
-// It asks for a path below `/` that a test cannot create.
-const everyCrate = [
-  ...crates.flatMap(crate => ["-p", crate]),
-  "--",
-  "--skip",
-  "realpath_under_the_marked_root_stays_under_it",
-];
-run("cargo", ["test", "--no-fail-fast", ...(extraArgs.length ? extraArgs : everyCrate)], {
+const bunUnderTest = process.env.BUN_UNDER_TEST;
+if (process.env.CI && !bunUnderTest) {
+  console.error("BUN_UNDER_TEST is not set: in CI the step downloads Bun from the build (.buildkite/ci.ts)");
+  process.exit(1);
+}
+
+const env = {
+  // A panic says its file and line without it, and a quarter of the build is writing it.
+  CARGO_PROFILE_DEV_DEBUG: "0",
   ...process.env,
   BUN_CODEGEN_DIR: resolve(repo, "build/debug/codegen"),
   ...(requiresEngine && { AOT_IR_REQUIRES_ENGINE: "1" }),
@@ -98,6 +106,90 @@ run("cargo", ["test", "--no-fail-fast", ...(extraArgs.length ? extraArgs : every
   // stack before the limit.
   CARGO_PROFILE_DEV_OPT_LEVEL: "1",
   // With optimization the frame pointer goes unless it is forced, as scripts/build/rust.ts does:
-  // `bun_core::return_address()` reads it.
-  [flagsOfHost]: "-Cforce-frame-pointers=yes",
-});
+  // `bun_core::return_address()` reads it. The two largest crates are compiled one behind the other, each with most of
+  // the processors idle until it generates code: see `-Zthreads` there.
+  [flagsOfHost]: "-Cforce-frame-pointers=yes -Zthreads=8",
+};
+
+const extraArgs = process.argv.slice(2);
+if (extraArgs.length) {
+  run("cargo", ["test", "--no-fail-fast", ...extraArgs], env);
+  process.exit(0);
+}
+
+// The crates of the list whose documentation has examples that run. `--no-run` builds none of them.
+const cratesWithExamples = ["bun_pod"];
+
+// It asks for a path below `/` that a test cannot create.
+const programArgs = ["--skip", "realpath_under_the_marked_root_stays_under_it"];
+
+interface TestProgram {
+  name: string;
+  status: number | NodeJS.Signals | null;
+}
+
+/** What it prints is shown when it ends. */
+function start(name: string, command: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv }) {
+  const started = performance.now();
+  const program = spawn(command, args, { ...options, stdio: ["ignore", "pipe", "pipe"] });
+  const output: Buffer[] = [];
+  program.stdout.on("data", chunk => output.push(chunk));
+  program.stderr.on("data", chunk => output.push(chunk));
+  return new Promise<TestProgram>(done => {
+    program.on("error", error => {
+      console.error(`\x1b[31m[test]\x1b[0m ${name}: ${error.message}`);
+      done({ name, status: 1 });
+    });
+    program.on("close", (code, signal) => {
+      const seconds = ((performance.now() - started) / 1000).toFixed(1);
+      console.log(`\x1b[36m[test]\x1b[0m ${name} (${seconds} s)`);
+      process.stdout.write(Buffer.concat(output));
+      done({ name, status: code ?? signal });
+    });
+  });
+}
+
+/** As `cargo test` starts it: in the folder of its package. */
+function startProgram(executable: string, manifestPath: string, target: string) {
+  const cwd = dirname(manifestPath);
+  return start(`${relative(repo, cwd)} ${target}`, executable, programArgs, {
+    cwd,
+    env: { ...env, CARGO_MANIFEST_DIR: cwd, CARGO_MANIFEST_PATH: manifestPath },
+  });
+}
+
+const buildArgs = ["test", "--no-run", "--no-fail-fast", "--message-format=json-render-diagnostics"];
+buildArgs.push(...crates.flatMap(crate => ["-p", crate]));
+console.log(`\x1b[36m[test]\x1b[0m cargo ${buildArgs.join(" ")}`);
+const build = spawn("cargo", buildArgs, { cwd: repo, env, stdio: ["ignore", "pipe", "inherit"] });
+const built = new Promise<number | NodeJS.Signals | null>(done =>
+  build.on("close", (code, signal) => done(code ?? signal)),
+);
+const programs: Promise<TestProgram>[] = [];
+if (bunUnderTest) {
+  const sweeps = "test/aot/library-sweeps";
+  const files = readdirSync(resolve(repo, sweeps)).filter(name => /\.[cm]?[jt]s$/.test(name));
+  const args = ["test/aot/run-parallel.ts", `--root=${sweeps}`, ...files.map(name => join(sweeps, name))];
+  programs.push(start(sweeps, bunUnderTest, args, { cwd: repo, env: process.env }));
+}
+for await (const line of createInterface({ input: build.stdout })) {
+  if (!line.startsWith("{")) continue;
+  const message = JSON.parse(line);
+  if (message.reason === "compiler-artifact" && message.profile.test && message.executable) {
+    programs.push(startProgram(message.executable, message.manifest_path, message.target.name));
+  }
+}
+const buildStatus = await built;
+if (buildStatus === 0) {
+  const args = ["test", "--doc", ...cratesWithExamples.flatMap(crate => ["-p", crate])];
+  programs.push(start(`cargo ${args.join(" ")}`, "cargo", args, { cwd: repo, env }));
+}
+const failed = (await Promise.all(programs)).filter(program => program.status !== 0);
+for (const { name, status } of failed) {
+  console.error(`\x1b[31m[test]\x1b[0m ${name} ended with ${status}`);
+}
+if (buildStatus !== 0) {
+  console.error(`\x1b[31m[test]\x1b[0m cargo ended with ${buildStatus}`);
+}
+console.log(`\x1b[36m[test]\x1b[0m ${programs.length - failed.length} of ${programs.length} test programs pass`);
+process.exit(failed.length || buildStatus !== 0 ? 1 : 0);

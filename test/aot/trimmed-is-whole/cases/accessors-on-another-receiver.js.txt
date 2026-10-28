@@ -27,14 +27,17 @@ class A { get got() { return this.constructor; } }
 class B extends A {}
 console.log(Reflect.get(B.prototype, "got", function () {})(text)());
 //// Reflect-set-class-setter
+//@ alone
 //@ evaluated-code-uses-removed-api
 class A { set put(given) { console.log(this.constructor(given)()); } }
 Reflect.set(A.prototype, "put", text, function () {});
 //// Reflect-set-object-setter
+//@ alone
 //@ evaluated-code-uses-removed-api
 const o = { a: 1, set put(given) { console.log(this.constructor(given)()); } };
 Reflect.set(o, "put", text, function () {});
 //// Reflect-set-spread
+//@ alone
 //@ not-seen
 //@ evaluated-code-uses-removed-api
 class A { set put(given) { console.log(this.constructor(given)()); } }

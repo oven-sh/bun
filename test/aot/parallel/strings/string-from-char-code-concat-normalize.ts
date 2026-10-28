@@ -103,7 +103,7 @@ for (const nil of [undefined, null]) {
 }
 for (const other of [new String("boxed"), { normalize() { return 1; }, isWellFormed() { return 2; }, toWellFormed() { return 3; } }, 12])
     print(attempt(() => formsOfAnything(other)) + attempt(() => concatOfAnything(other, 1, 2)));
-const big = "x".repeat(1 << 30);
+let big = "x"; for (let i = 0; i < 30; i++) big += big;
 print(attempt(() => concat1(big, big).length) + attempt(() => concat2(big, big, big).length) + attempt(() => concat1(big, "").length));
 // The functions the expectations name stay functions: one that is copied into all its callers has no code of its own.
 (globalThis as any).kept = [stringOfString, stringOfNumber, stringOfInteger, stringOfBoolean, fromCharCodeMasked, fromCharCode1, fromCodePointMasked, fromCharCodeByte, fromCodePointByte, concatKnown, stringOfAnything, fromCharCode3]; console.log("number");

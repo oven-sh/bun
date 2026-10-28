@@ -28,13 +28,15 @@ const files = {
 `,
 };
 
+// An executable that may load other code holds every built-in module. The program imports none.
+const open = "--no-builtin-modules";
 const builds: Record<string, string[]> = {
   "default": ["--aot"],
   "without-function-source": ["--aot", "--no-compile-function-source"],
   "obfuscated": ["--aot", "--obfuscate"],
-  "with-inspector": ["--aot", "--compile-inspector"],
-  "with-inspector-without-function-source": ["--aot", "--compile-inspector", "--no-compile-function-source"],
-  "embeds-inspect": ["--aot", "--compile-exec-argv=--inspect=127.0.0.1:0 --preload ./before.ts"],
+  "with-inspector": ["--aot", open, "--compile-inspector"],
+  "with-inspector-without-function-source": ["--aot", open, "--compile-inspector", "--no-compile-function-source"],
+  "embeds-inspect": ["--aot", open, "--compile-exec-argv=--inspect=127.0.0.1:0 --preload ./before.ts"],
   "not-compiled": [],
 };
 

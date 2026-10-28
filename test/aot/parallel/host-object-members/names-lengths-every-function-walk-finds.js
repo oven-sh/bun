@@ -13,7 +13,13 @@ const describe = (fn, key) => {
   return (Object(value) === value ? typeof value : JSON.stringify(value)) + " " + flagsOf(descriptor);
 };
 // What these hold goes by the machine and by how the program was started.
-const passedOver = new Set(["globalThis.process.env", "globalThis.Bun.env", "globalThis.process.mainModule"]);
+// A compiled program has no ShadowRealm.
+const passedOver = new Set([
+  "globalThis.process.env",
+  "globalThis.Bun.env",
+  "globalThis.process.mainModule",
+  "globalThis.ShadowRealm",
+]);
 const visit = (value, path) => {
   if (Object(value) !== value || found.has(value) || passedOver.has(path)) return;
   found.add(value);

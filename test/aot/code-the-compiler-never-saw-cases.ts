@@ -7,7 +7,7 @@
 // A Worker that starts from text runs it in a VM of its own, without the compiled program: nothing that the analysis has proven is within its reach. Its routes are listed to pin that they run.
 // Machine code is not such JavaScript: an N-API addon and what bun:ffi calls are native code like Bun's own. Their routes are listed to pin that they raise no event and are not refused.
 // What native code can do to a compiled program is the subject of native-addons.test.ts.
-import { expect } from "bun:test";
+import { afterAll, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "path";
@@ -191,7 +191,6 @@ const routes: Record<string, Record<string, Route>> = {
     "sqlite load extension": {
       body: `new (require('bun:sqlite').Database)(':memory:').loadExtension(temporaryFile('.so', 'x'))`,
     },
-    "repl named": { body: `typeof require('node:repl').start` },
     "inspector named": { body: `require('node:inspector').open(0)` },
     "inspector under a computed name": { body: `require(glue('node:', 'inspector')).open(0)` },
     "node test under a computed name": { body: `typeof require(glue('node:', 'test'))` },
@@ -260,10 +259,6 @@ const routes: Record<string, Record<string, Route>> = {
       body: `const { Worker } = require(glue('node:', 'worker_threads')); const w = new Worker(glue('require("node:worker_threads").parentPort.postMessage(', '1)'), { eval: true }); await new Promise((res, rej) => { w.on('message', () => { globalThis.RAN = 1; res(); }); w.on('error', rej); setTimeout(() => rej(new Error('no message')), 1500); }).finally(() => w.terminate())`,
     },
     "unnamed repl": { body: `typeof require(glue('node:', 'repl')).start` },
-    "process dlopen under a computed name": {
-      body: `process[glue('dl', 'open')]({ exports: {} }, temporaryFile('.node', 'not a library'))`,
-      isMachineCode: true,
-    },
     "plugin under a computed name": {
       body: `Bun[glue('plu', 'gin')]({ name: 'p', setup(b) { b.module(glue('virtual-', 'module'), () => ({ contents: moduleText, loader: 'js' })); } }); await import(glue('virtual-', 'module'))`,
     },
@@ -334,22 +329,71 @@ const routes: Record<string, Record<string, Route>> = {
   },
 };
 
-// A program that may load a module under any name holds every built-in module, which makes its build many times dearer. These are files of one program, whose entry point imports the one that
-// ROUTE names. Each opens the program to unseen code by itself, so none of them leans on a neighbor for that, and the report says in which file each event lies.
-const builtTogether = new Set([
-  "module load",
-  "module create require",
-  "import of a file",
-  "import of vm under a computed name",
-  "process get builtin module module",
-  "plugin on resolve returns a file",
-  "build then import",
+// One build for each route would be a hundred builds. The routes are files of two programs, whose entry points import the file that ROUTE names, and the report says in which file each event lies.
+// In the first program are the routes for which the build finds an event: each opens the program to unseen code by itself. In the second are those for which it finds none, so that program stays
+// closed, and a route in it that runs the code fails.
+const findsNoEvent = new Set([
+  "addon extension handler",
+  "addon extension handler under a computed name",
+  "arguments callee caller",
+  "be bun in environment",
+  "call site get function",
+  "call site get this",
+  "eval argument",
+  "eval from a descriptor",
+  "eval under a computed name",
+  "function arguments",
+  "function caller",
+  "function constructor under a computed member",
+  "function constructor under a computed name",
+  "immediate with a string",
+  "inspect argument",
+  "inspect in environment",
   "inspector named",
-  "inspector under a computed name",
-  "unnamed worker threads eval",
-  "unnamed repl",
-  "plugin under a computed name",
-  "build plugin from a file",
+  "loader load and evaluate file",
+  "loader object exists",
+  "loader parse module",
+  "loader provide fetch",
+  "loader registry hands out modules",
+  "loader request import",
+  "module compile through constructor",
+  "module extensions",
+  "module prototype load",
+  "module register",
+  "module run main",
+  "preload argument",
+  "preload in bun options",
+  "preload in bunfig",
+  "process binding contextify",
+  "process binding natives",
+  "process linked binding",
+  "require argument",
+  "require in node options",
+  "serve development with plugins in bunfig",
+  "serve static plugins in bunfig",
+  "spawn of itself as bun",
+  "sqlite load extension",
+  "timeout with a string",
+  "transpiler that scans a text with a macro",
+  "transpiler with a macro",
+  "transpiler with a macro out of a built-in module",
+  "worker of a blob url",
+  "worker of a data url",
+  "worker of a file",
+  "worker threads eval",
+  "worker under a computed name",
+  "worker with preload",
+]);
+
+// The event of these lies in a built-in module or nowhere, so only a program of their own tells whose it is.
+const builtAlone = new Set([
+  "eval as a callback of map",
+  "eval as a promise reaction",
+  "function constructor through reflect construct",
+  "function constructor bound",
+  "vm named",
+  "bun ffi named",
+  "bun ffi cc",
 ]);
 
 type Event = { location: { file: string } | null };
@@ -420,11 +464,9 @@ async function judge(
   });
 }
 
-/** Every `parts`-th route from the `part`-th. The last part also has those that are built together. */
-export function codeTheCompilerNeverSaw(part: number, parts: number) {
-  describe.concurrent("code the compiler never saw", () => {
-    const alone = all.filter(({ name }) => !builtTogether.has(name));
-    for (const { group, name, route, file } of alone.filter((_, index) => index % parts === part - 1)) {
+export function codeTheCompilerNeverSaw() {
+  describe.concurrent("code the compiler never saw, in a program of its own", () => {
+    for (const { group, name, route, file } of all.filter(({ name }) => builtAlone.has(name))) {
       test(
         `${group}: ${name}`,
         () =>
@@ -438,31 +480,37 @@ export function codeTheCompilerNeverSaw(part: number, parts: number) {
     }
   });
 
-  if (part !== parts) return;
-  describe("code the compiler never saw, in one program", () => {
-    const together = all.filter(({ name }) => builtTogether.has(name));
-    const dir = tempDir("aot-unseen-code-together", {
-      "main.js":
-        `const routes = {\n${together.map(({ file }) => `  ${JSON.stringify(file)}: () => import("./${file}"),\n`).join("")}};\n` +
-        `routes[process.env.ROUTE]();\n`,
-      ...Object.fromEntries(together.map(({ file, route }) => [file, textOf(route)])),
-      ...others,
+  for (const [title, routesOfProgram] of [
+    [
+      "in a program that the build finds open",
+      all.filter(({ name }) => !findsNoEvent.has(name) && !builtAlone.has(name)),
+    ],
+    ["in a program that the build finds closed", all.filter(({ name }) => findsNoEvent.has(name))],
+  ] as const) {
+    describe(`code the compiler never saw, ${title}`, () => {
+      const dir = tempDir("aot-unseen-code", {
+        "main.js":
+          `const routes = {\n${routesOfProgram.map(({ file }) => `  ${JSON.stringify(file)}: () => import("./${file}"),\n`).join("")}};\n` +
+          `routes[process.env.ROUTE]();\n`,
+        ...Object.fromEntries(routesOfProgram.map(({ file, route }) => [file, textOf(route)])),
+        ...others,
+      });
+      afterAll(() => dir[Symbol.dispose]());
+      let built: Awaited<ReturnType<typeof build>>;
+      beforeAll(async () => void (built = await build(String(dir), "main.js")), 600_000);
+      for (const { group, name, route, file } of routesOfProgram) {
+        test.concurrent(
+          `${group}: ${name}`,
+          () =>
+            slot(async () => {
+              using run = tempDir("aot-unseen-code-run", others);
+              const sawAnEvent = built.events.some(event => event.location?.file.replaceAll("\\", "/").endsWith(file));
+              expect({ sawAnEvent }).toEqual({ sawAnEvent: !findsNoEvent.has(name) });
+              await judge(String(run), built.executable, sawAnEvent, route, { ROUTE: file });
+            }),
+          600_000,
+        );
+      }
     });
-    let built: Awaited<ReturnType<typeof build>>;
-    beforeAll(async () => void (built = await build(String(dir), "main.js")), 600_000);
-    for (const { group, name, route, file } of together) {
-      test(
-        `${group}: ${name}`,
-        () =>
-          judge(
-            String(dir),
-            built.executable,
-            built.events.some(event => event.location?.file.replaceAll("\\", "/").endsWith(file)),
-            route,
-            { ROUTE: file },
-          ),
-        600_000,
-      );
-    }
-  });
+  }
 }

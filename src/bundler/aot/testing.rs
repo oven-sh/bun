@@ -10,6 +10,7 @@ use bun_aot::{Options, SourceProvider};
 use bun_ast::Log;
 use bun_options_types::aot_options::AotOptions;
 use bun_options_types::schema::api;
+use bun_resolver::fs::{DirnameStore, FileSystem};
 use bun_sema_driver::Libs;
 use core::ptr::NonNull;
 
@@ -20,7 +21,7 @@ const MODULE_PREFIX: &[u8] = if cfg!(windows) {
 };
 
 pub struct FrontEndInputs<'r> {
-    /// The first call of a process decides it for all: the file system of the resolver is made once.
+    /// Of the process from here on: the builds of a process come one after another.
     pub working_directory: &'r [u8],
     pub entry_points: &'r [&'r [u8]],
     pub options: &'r AotOptions,
@@ -41,6 +42,11 @@ pub fn with_front_end_inputs<R>(
         target: Some(api::Target::Bun),
         ..Default::default()
     };
+    // The file system of the resolver is made once, with the folder of the first build.
+    let directory = DirnameStore::instance().append_slice(inputs.working_directory);
+    let directory = directory.ok()?;
+    FileSystem::init(Some(directory)).ok()?;
+    FileSystem::get().set_top_level_dir(directory);
     let transpiler = Transpiler::init(&arena, &raw mut *log, transform_options, None).ok()?;
     let transpiler = arena.alloc(transpiler);
     transpiler.options.compile_mode = crate::options::CompileMode::Executable;

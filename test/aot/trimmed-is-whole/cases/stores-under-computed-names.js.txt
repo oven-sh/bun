@@ -1,4 +1,5 @@
 // Stores a primitive under a computed name, for every member of globalThis, process and Bun.
+//@ build --no-builtin-modules
 //@ build --disallow-code-generation-from-strings
 const { log } = console;
 const names = process.argv.slice(2);

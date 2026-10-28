@@ -9,11 +9,9 @@ use crate::ir::{FunctionId, FunctionKey, Id};
 use crate::link::{KeyContext, LinkUnit, Rehoming};
 use crate::load::sources::parsed_source;
 use crate::load::{PerProject, ProjectId, Sources};
-#[cfg(bun_fuzzilli)]
-use crate::lower::LeftOutDeclarations;
 use crate::lower::{
-    DefinedObjectTypes, FileInputs, LibraryFunctions, LoweredFile, LoweringInputs, LoweringOptions,
-    RuntimeTranspiler, lower_file,
+    DefinedObjectTypes, FileInputs, LeftOutDeclarations, LibraryFunctions, LoweredFile,
+    LoweringInputs, LoweringOptions, RuntimeTranspiler, lower_file,
 };
 use crate::modules::{ApplicationGraph, Library, LinkedProject, ModuleGraph, ModuleRef, Shape};
 use crate::package_diagnostics::report_package_errors;
@@ -40,6 +38,7 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
 
+#[derive(Clone)]
 pub(crate) struct LoweredUnit {
     // A unit is a large record, and the list of what was lowered is copied and put in order on one thread.
     pub unit: Box<LinkUnit>,
@@ -48,17 +47,40 @@ pub(crate) struct LoweredUnit {
     pub queries: QueryStatistics,
 }
 
-/// What a build with `Preload` makes of Bun's own code for the placeholder. A program that leaves out the same takes it.
-#[cfg(bun_fuzzilli)]
 struct LoweredRuntime {
     key: RuntimeLoweringKey,
     checked: CheckedProgram<Option<LoweredUnit>>,
 }
 
+/// What a build with `Preload` makes of Bun's own code for the placeholder. A program that leaves out the same takes it.
 #[cfg(bun_fuzzilli)]
 static LOWERED_RUNTIME: Guarded<Option<LoweredRuntime>> = Guarded::new(None);
 
-#[cfg(bun_fuzzilli)]
+/// What the programs of one build have made of Bun's own code. A program that leaves out the same takes a copy.
+#[derive(Default)]
+pub(crate) struct LoweredRuntimes(Guarded<Vec<LoweredRuntime>>);
+
+impl LoweredRuntimes {
+    fn find(&self, key: &RuntimeLoweringKey) -> Option<CheckedProgram<Option<LoweredUnit>>> {
+        let kept = self.0.lock();
+        let found = kept.iter().find(|it| it.key == *key)?;
+        Some(copy_of(&found.checked))
+    }
+
+    fn keep(&self, key: RuntimeLoweringKey, checked: &CheckedProgram<Option<LoweredUnit>>) {
+        let checked = copy_of(checked);
+        self.0.lock().push(LoweredRuntime { key, checked });
+    }
+}
+
+fn copy_of(checked: &CheckedProgram<Option<LoweredUnit>>) -> CheckedProgram<Option<LoweredUnit>> {
+    CheckedProgram {
+        lowered: checked.lowered.clone(),
+        diagnostics: checked.diagnostics.clone(),
+        incomplete: checked.incomplete.clone(),
+    }
+}
+
 #[derive(PartialEq, Eq)]
 struct RuntimeLoweringKey {
     /// `Interner::number`: one for each build.
@@ -716,13 +738,15 @@ impl Build<'_> {
         let has_one_thread = self.threads == NonZeroUsize::MIN;
         #[cfg(bun_fuzzilli)]
         let keeps_runtime = self.is_preloading || LOWERED_RUNTIME.lock().is_some();
-        #[cfg(bun_fuzzilli)]
-        let runtime_key = keeps_runtime.then(|| RuntimeLoweringKey {
+        let create_key = || RuntimeLoweringKey {
             build: loaded.atoms.number(),
             files_to_lower: decided.runtime.files_to_lower.clone(),
             left_out_functions: left_out.runtime.clone(),
             left_out_declarations: bound.projects.runtime.left_out.declarations.clone(),
-        });
+        };
+        #[cfg(bun_fuzzilli)]
+        let runtime_key = keeps_runtime.then(create_key);
+        let key_among_programs = self.programs.is_some().then(create_key);
         self.with_inputs_for_reached_code(
             loaded,
             bound,
@@ -769,17 +793,29 @@ impl Build<'_> {
                                 },
                             };
                         }
-                        if has_one_thread {
+                        let kept = key_among_programs
+                            .as_ref()
+                            .and_then(|key| self.lowered_runtimes.find(key));
+                        if let Some(runtime) = kept {
                             return PerProject {
                                 application: of_application.lower(),
-                                runtime: of_runtime.lower(),
+                                runtime,
                             };
                         }
-                        let (runtime, application) = run_on_one_thread_while(
-                            self.caches,
-                            || of_runtime.lower(),
-                            || of_application.lower(),
-                        );
+                        let (runtime, application) = match has_one_thread {
+                            true => {
+                                let application = of_application.lower();
+                                (of_runtime.lower(), application)
+                            }
+                            false => run_on_one_thread_while(
+                                self.caches,
+                                || of_runtime.lower(),
+                                || of_application.lower(),
+                            ),
+                        };
+                        if let Some(key) = key_among_programs {
+                            self.lowered_runtimes.keep(key, &runtime);
+                        }
                         PerProject {
                             application,
                             runtime,
@@ -938,7 +974,9 @@ impl Build<'_> {
             }
             (ProjectId::Application | ProjectId::Runtime, _) => DefinedObjectTypes::default(),
         };
-        let lowering_roles = roles_for_lowering(&roles.roles, files, self.options.aot.erases_types);
+        // Bun's own modules keep their types: no build of a user's is without them.
+        let erases_types = self.options.aot.erases_types && project == ProjectId::Application;
+        let lowering_roles = roles_for_lowering(&roles.roles, files, erases_types);
         let library = Library {
             project: LinkedProject {
                 files: loaded.project(ProjectId::Runtime).loaded.files(),

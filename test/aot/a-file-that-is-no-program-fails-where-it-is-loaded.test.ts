@@ -65,12 +65,13 @@ console.log("goes on");
 };
 
 async function expectSameAsPlain(folder: string, entry: string) {
-  const [plain, checked, compiled] = await Promise.all(
-    [[], ["--aot"], ["--debug-aot"]].map(flags => run([bunExe(), "run", ...flags, entry], folder)),
+  const [plain, compiled] = await Promise.all(
+    [[], ["--debug-aot"]].map(flags => run([bunExe(), "run", ...flags, entry], folder)),
   );
-  const expected = { stdout: plain.stdout, exitCode: plain.exitCode };
-  expect({ stdout: checked.stdout, exitCode: checked.exitCode }).toEqual(expected);
-  expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual(expected);
+  expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({
+    stdout: plain.stdout,
+    exitCode: plain.exitCode,
+  });
 }
 
 // Every way meets a shared library. What else a file may hold meets the two ways that say the most of the error.

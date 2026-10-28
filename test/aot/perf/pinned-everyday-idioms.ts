@@ -1,19 +1,21 @@
 // The idioms of ./everyday that ./everyday-pins.<os>-<arch>.json names, each held against the instructions a turn that it took when it was pinned, as TypeScript and as JavaScript.
-// ./idioms-against-the-jit.test.ts only holds an idiom under 1.35 times the JIT, and one run in ten measures it: an idiom far ahead of the JIT could lose most of that unseen.
+// ./idioms-against-the-jit.measure.ts only holds an idiom under 1.35 times the JIT: an idiom far ahead of the JIT could lose most of that unseen.
 // An idiom that ./behind-the-jit.<os>-<arch>.json or ./typed-dearer-than-untyped.<os>-<arch>.json lists is a todo there, whatever it takes: each of them has a pin here.
-// Every run measures all of these. An idiom that Linux on x64 pins and the platform's own file does not name is measured, printed and not judged: ./pins-from-a-log.ts writes a file from the log.
+// An idiom that Linux on x64 pins and the platform's own file does not name is measured, printed and not judged: ./pins-from-a-log.ts writes a file from the log.
+// Nothing runs under the JIT here, and 128 idioms are the entry points of one executable.
 // An idiom that got faster for good gets a line, or a lower one:
 //
-//   AOT_PERF=lower TEST_PART=aot/perf/pinned-everyday-idioms bun test test/aot/parts.test.ts    writes every number that got better into the file
-//   AOT_PERF=update ..                                                                          rewrites the pinned numbers as measured
-//   AOT_PERF_BUILD_FLAGS="--aot-.. --aot-.."                                                    goes to every `bun build --compile --aot`
+//   bun test/aot/perf/measure.ts pinned-everyday-idioms                  needs a counter of the processor: ./README.md
+//   AOT_PERF=lower ..                                                    writes every number that got better into the file
+//   AOT_PERF=update ..                                                   rewrites the pinned numbers as measured
+//   AOT_PERF_BUILD_FLAGS="--aot-.. --aot-.."                             goes to every `bun build --compile --aot`
 import { afterAll, expect } from "bun:test";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunExe, isASAN, isDebug, isLinux, isMusl, tempDir } from "harness";
 import { join } from "path";
 import { slot } from "../harness/commands";
 import { describe, test } from "../supported";
-import { idiomsAgainstTheJit, isWhole } from "./measure-idioms";
+import { idiomsAgainstTheJit } from "./measure-idioms";
 
 const pinsPath = join(import.meta.dir, `everyday-pins.${process.platform}-${process.arch}.json`);
 const mode = process.env.AOT_PERF;
@@ -47,6 +49,8 @@ export function pinnedEverydayIdioms(part = 1, parts = 1) {
     });
     const { names, measure } = idiomsAgainstTheJit(bunExe(), folder, {
       collections: false,
+      jit: false,
+      together: measured.filter((_, index) => index % parts === part - 1),
       buildFlags: process.env.AOT_PERF_BUILD_FLAGS?.split(" ") ?? [],
     });
 
@@ -70,7 +74,7 @@ export function pinnedEverydayIdioms(part = 1, parts = 1) {
             if (row.failure === "instructions cannot be counted here")
               return void console.error(`SKIPPED: ${name}: ${row.failure}`);
             expect(row.failure).toBeUndefined();
-            if (!isWhole(row)) throw new Error("not measured");
+            if (!row.typed || !row.untyped) throw new Error("not measured");
             const rounded = (count: number) => Math.round(count * 10) / 10;
             const now = { typed: rounded(row.typed.instructions), untyped: rounded(row.untyped.instructions) };
             const pin = pins[name];

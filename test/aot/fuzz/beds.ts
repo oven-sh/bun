@@ -18,11 +18,17 @@ import { asBunInitWritesIt, typeChecker, typingsOfBun, type Checker } from "./ty
 
 export interface Program {
   text: string;
-  extension: "js" | "ts";
+  extension: "js" | "ts" | "mjs" | "cjs" | "mts" | "cts";
   /** Its other files, by their paths from the folder it lies in. That folder is its own then, and `text` lies there as `main.<extension>`. */
   files?: Record<string, string>;
   /** More flags for every build of it. */
   flags?: string[];
+  /** Set where plain Bun runs it for reference, and nowhere else. Such a program has a build to itself. */
+  plainEnvironment?: Record<string, string>;
+  /** Those of `files` that the build is given behind the program, for what it loads under a computed name. */
+  entryPoints?: string[];
+  /** It has `files`, and both runs and the build start in its folder: what it says of itself in tsconfig.json counts for `bun run` too, and a path counts from there. */
+  runsInItsFolder?: true;
 }
 
 export interface Run {
@@ -390,7 +396,7 @@ export class ProductBed implements Bed {
 
   #write(folder: string, stem: string, program: Program, flags: string[]) {
     writeProgram(folder, stem, this.#written(program));
-    if (program.extension === "ts" && !flags.some(flag => flag.startsWith(besideTheProgram)) && !existsSync(join(folder, "tsconfig.json"))) writeFileSync(join(folder, "tsconfig.json"), JSON.stringify(projects["the-bed's-own"].tsconfig));
+    if (program.extension.endsWith("ts") && !flags.some(flag => flag.startsWith(besideTheProgram)) && !existsSync(join(folder, "tsconfig.json"))) writeFileSync(join(folder, "tsconfig.json"), JSON.stringify(projects["the-bed's-own"].tsconfig));
   }
 
   // The folder is that of one worker, which builds one thing at a time.
@@ -431,9 +437,9 @@ export class ProductBed implements Bed {
     return spawned(cmd, folder, seconds, set, this.options.memory);
   }
 
-  #build(folder: string, entry: string, flags: string[], further: string[] = []) {
+  #build(folder: string, entry: string, flags: string[], further: string[] = [], from = folder) {
     const all = this.#merged([...this.options.baseFlags, ...flags]).filter(isOfTheBuild);
-    return spawned([this.bun, "build", "--compile", "--aot", `--aot-threads=${this.options.threads}`, ...all, entry, ...further, "--outfile", join(folder, "executable")], folder, this.options.buildSeconds, undefined, this.options.memory);
+    return spawned([this.bun, "build", "--compile", "--aot", `--aot-threads=${this.options.threads}`, ...all, entry, ...further, "--outfile", join(folder, "executable")], from, this.options.buildSeconds, undefined, this.options.memory);
   }
 
   // Workers and company come through the modules of one program.
@@ -446,15 +452,16 @@ export class ProductBed implements Bed {
     try {
       if (programs.length !== 1 || this.options.workers || flags.some(flag => flag.startsWith(inTheCompanyOf))) return await this.#judgeTogether(folder, programs, flags);
       const [program] = programs;
-      const file = entryOf("program", program);
+      const home = program.runsInItsFolder && program.files ? join(folder, "program") : folder;
+      const file = home === folder ? entryOf("program", program) : `main.${program.extension}`;
       this.#layBeside(folder, flags);
       this.#write(folder, "program", program, flags);
-      const plain = await spawned([this.bun, "run", file], folder, this.options.runSeconds, undefined, this.options.memory);
+      const plain = await spawned([this.bun, "run", file], home, this.options.runSeconds, program.plainEnvironment, this.options.memory);
       const early = unusable(this, plain);
       if (early) return [{ plain, verdict: early }];
       rmSync(executable, { force: true });
-      const build = await this.#build(folder, file, flags);
-      const compiled: Compiled = existsSync(executable) && build.exitCode === 0 ? { build, run: await this.#run(folder, [executable], flags) } : { build };
+      const build = await this.#build(folder, file, flags, program.entryPoints?.map(path => (home === folder ? `program/${path}` : path)), home);
+      const compiled: Compiled = existsSync(executable) && build.exitCode === 0 ? { build, run: await this.#run(home, [executable], flags) } : { build };
       return [{ plain, compiled, verdict: this.#judged(program, flags, compare(this, program, plain, compiled)) }];
     } finally {
       rmSync(executable, { force: true });
@@ -744,7 +751,7 @@ export function compare(bed: Bed, program: Program, plain: Run, compiled: Compil
     if (build.signal || /\bpanic(ked)?\b|ASSERTION FAILED|SHOULD NEVER BE REACHED|Segmentation fault/.test(said))
       return failure("build crash", `${build.signal ?? ""} ${normalized(/^.*(panic|ASSERTION FAILED|SHOULD NEVER BE REACHED|Segmentation fault|AOT: ).*$/m.exec(said)?.[0] ?? "")}`.trim());
     // A mutant of a typed program may not type-check, and that stops a build.
-    const refusal = program.extension === "ts" && /\berror: (TS\d+).*/.exec(said);
+    const refusal = program.extension.endsWith("ts") && /\berror: (TS\d+).*/.exec(said);
     if (refusal) return { kind: "skipped", why: `type error ${refusal[1]}`, refusal: refusal[0].slice("error: ".length) };
     const error = /^(front end: )?.*\berror\b.*$/im.exec(said)?.[0] ?? said.trim().split("\n")[0] ?? "";
     // testaot reports what the product calls an internal compiler error as `<Name>: <what it means>; function ..`.

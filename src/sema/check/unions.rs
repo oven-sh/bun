@@ -1018,6 +1018,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let [only] = types {
             return *only;
         }
+        let before = self.non_cacheable_mark();
         let union = self.union(types);
         let TypeData::Union(members) = self.data(union) else {
             return union;
@@ -1092,6 +1093,24 @@ impl<'p, 's> Checker<'p, 's> {
             m == TypeId::EMPTY_OBJECT || self.is_object_type(m) && self.is_empty_object_type(m)
         });
         const HAS_PROPERTIES: u32 = tf::OBJECT | tf::INTERSECTION | tf::INSTANTIABLE_NON_PRIMITIVE;
+        // Two members of a union that came out of here whole were compared then, and neither was removed.
+        let reduced_before = types
+            .iter()
+            .copied()
+            .filter(|ty| {
+                self.unions_without_subtypes
+                    .get(ty)
+                    .is_some_and(|&with_primitives| with_primitives || !has_empty_object)
+            })
+            .max_by_key(|&ty| self.parts(ty).len());
+        let was_compared: Vec<bool> = match reduced_before {
+            Some(reduced) => {
+                let parts: crate::util::FxHashSet<TypeId> =
+                    self.parts(reduced).iter().copied().collect();
+                members.iter().map(|m| parts.contains(m)).collect()
+            }
+            None => vec![false; len],
+        };
         let mut keep = vec![true; len];
         let mut count = 0usize;
         for i in (0..len).rev() {
@@ -1134,6 +1153,9 @@ impl<'p, 's> Checker<'p, 's> {
                     return TypeId::ERROR;
                 }
                 count += 1;
+                if was_compared[i] && was_compared[j] {
+                    continue;
+                }
                 if let Some((name, unit)) = key_property
                     && self.flags(target) & HAS_PROPERTIES != 0
                     && let Some(other) = self.type_of_property(target, name)
@@ -1169,16 +1191,22 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
         }
-        if !is_reduced && keep.iter().all(|&k| k) {
-            return union;
+        let reduced = if !is_reduced && keep.iter().all(|&k| k) {
+            union
+        } else {
+            let kept: Flat = members
+                .iter()
+                .zip(&keep)
+                .filter(|(_, k)| **k)
+                .map(|(&m, _)| m)
+                .collect();
+            self.union_of_type_set(types, kept, false, FirstRequest::NONE)
+        };
+        if before == self.non_cacheable_mark() {
+            self.unions_without_subtypes
+                .insert(reduced, has_empty_object);
         }
-        let kept: Flat = members
-            .iter()
-            .zip(&keep)
-            .filter(|(_, k)| **k)
-            .map(|(&m, _)| m)
-            .collect();
-        self.union_of_type_set(types, kept, false, FirstRequest::NONE)
+        reduced
     }
 
     /// `removeSubtypes`, keyProperty: returns the first property of `ty` whose type is a unit type, and that type.

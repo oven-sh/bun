@@ -1,6 +1,6 @@
 // Ends a child process that holds more memory than it may, so that no test fills the machine it runs on.
-import { readFileSync } from "fs";
-import { totalmem } from "os";
+import { readdirSync, readFileSync } from "fs";
+import { freemem, totalmem } from "os";
 
 const machine = Math.min(totalmem(), process.constrainedMemory() || Infinity, 64 * 2 ** 30);
 
@@ -71,37 +71,106 @@ export function endAtMemoryLimit(
   return watch;
 }
 
+/** In bytes: what the control group of this process holds and cannot give back by forgetting pages of files. */
+function heldByControlGroup() {
+  const folder = `/sys/fs/cgroup${/^0::(.*)$/m.exec(readFileSync("/proc/self/cgroup", "utf8"))?.[1] ?? "/"}`;
+  const parts = readFileSync(`${folder}/memory.stat`, "utf8");
+  const part = (name: string) => Number(new RegExp(`^${name} (\\d+)$`, "m").exec(parts)?.[1] ?? 0);
+  return Number(readFileSync(`${folder}/memory.current`, "utf8")) - part("file") + part("shmem");
+}
+
+/** In bytes: what the machine, or the container, can still hand out. */
+export function availableMemory() {
+  // Elsewhere the system counts only pages that nobody has ever used, which says little.
+  if (process.platform !== "linux") return totalmem() / 2;
+  let available = freemem();
+  try {
+    available = Number(/^MemAvailable:\s*(\d+) kB/m.exec(readFileSync("/proc/meminfo", "utf8"))![1]) * 1024;
+    const bound = process.constrainedMemory();
+    if (bound > 0 && bound < totalmem()) available = Math.min(available, bound - heldByControlGroup());
+  } catch {}
+  return available;
+}
+
+/** A process with what it has started, as far as the kernel tells. */
+function processesBelow(pid: number): number[] {
+  const all = [pid];
+  if (process.platform !== "linux") return all;
+  for (let next = 0; next < all.length; next++) {
+    try {
+      for (const task of readdirSync(`/proc/${all[next]}/task`))
+        all.push(
+          ...readFileSync(`/proc/${all[next]}/task/${task}/children`, "utf8").split(" ").filter(Boolean).map(Number),
+        );
+    } catch {}
+  }
+  return all;
+}
+
 /**
- * Returns a function that watches a child until the watch is disposed of. Once the children that are watched hold more than `limit` bytes together all of them are killed, and `exceeded`
- * of each says so. Linux alone.
+ * Watches the children that run at once, each until its watch is disposed of, so that together they never fill the machine.
+ * Once they hold more than `limit` bytes together, or the machine has less left than a seventh of that, `ends` says who is killed: all of them, or the one that holds most, alone.
+ * `exceeded` of a watch says that its child was killed so, `held` what it held then, `peak` the most that it was seen to hold. Nothing tells on Windows.
  */
-export function endAtMemoryLimitTogether(limit = memoryLimitOfCommandsAtOnce) {
+export function endAtMemoryLimitTogether(limit = memoryLimitOfCommandsAtOnce, ends: "all" | "the fattest" = "all") {
   type Child = { pid: number; kill(signal: "SIGKILL"): void };
-  const watches = new Map<Child, { exceeded: boolean }>();
+  type Watch = { exceeded: boolean; held: string; peak: number; hasChildren: boolean };
+  const watches = new Map<Child, Watch>();
+  const isLinux = process.platform === "linux";
+  const keptBack = limit / 7;
+  const inMB = (bytes: number) => `${Math.round(bytes / 2 ** 20)} MB`;
   let timer: Timer | undefined;
+  // The kernel takes a moment to take back what a killed process held.
+  let waitsUntil = 0;
+  let heldAtLastLook = 0;
   const check = () => {
     let held = 0;
-    // Without the pages of files, which children of one executable share.
-    for (const child of watches.keys()) held += residentMemory(child.pid, "RssAnon");
-    if (held <= limit) return;
+    let fattest: [Child, Watch, number] | undefined;
     for (const [child, watch] of watches) {
+      if (watch.exceeded) continue;
+      let own = 0;
+      // Without the pages of files, which children of one executable share.
+      for (const pid of watch.hasChildren ? processesBelow(child.pid) : [child.pid])
+        own += residentMemory(pid, isLinux ? "RssAnon" : undefined);
+      watch.peak = Math.max(watch.peak, own);
+      held += own;
+      if (!fattest || own > fattest[2]) fattest = [child, watch, own];
+    }
+    heldAtLastLook = held;
+    if (!fattest || performance.now() < waitsUntil) return;
+    if (held <= limit && !(isLinux && availableMemory() < keptBack)) return;
+    waitsUntil = performance.now() + 250;
+    for (const [child, watch] of ends === "all" ? watches : [fattest]) {
+      if (watch.exceeded) continue;
       watch.exceeded = true;
+      watch.held = `it held ${inMB(watch.peak)} of the ${inMB(held)} that ${watches.size} processes held together, which may hold ${inMB(limit)}`;
       child.kill("SIGKILL");
     }
   };
-  return (child: Child) => {
-    const watch = {
-      exceeded: false,
-      [Symbol.dispose]() {
-        watches.delete(child);
-        if (watches.size) return;
-        clearInterval(timer);
-        timer = undefined;
-      },
-    };
-    if (process.platform !== "linux") return watch;
-    watches.set(child, watch);
-    timer ??= setInterval(check, 100).unref();
-    return watch;
+  return {
+    /** Whether one more may start: nothing runs, or twice as much is left as has to be. */
+    hasRoom: () =>
+      !watches.size || (heldAtLastLook + 2 * keptBack < limit && (!isLinux || availableMemory() > 2 * keptBack)),
+    /** `hasChildren`: what the child starts counts as its own. */
+    watch(child: Child, hasChildren = false) {
+      const watch = {
+        exceeded: false,
+        held: "",
+        peak: 0,
+        hasChildren,
+        [Symbol.dispose]() {
+          watches.delete(child);
+          if (watches.size) return;
+          clearInterval(timer);
+          timer = undefined;
+          heldAtLastLook = 0;
+        },
+      };
+      if (process.platform === "win32") return watch;
+      watches.set(child, watch);
+      // A process can grow by 400 MB a second.
+      timer ??= setInterval(check, isLinux ? 50 : 1000).unref();
+      return watch;
+    },
   };
 }

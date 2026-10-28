@@ -55,14 +55,11 @@ const waysToTheConstructor = {
   "main.js": `
     import direct from "./a.js" with { type: "file" };
     import { chosen } from "./paths.ts";
-    import { Worker as NodeWorker } from "node:worker_threads";
-    import ofNode from "./d.js" with { type: "file" };
     ${report}
     const held = direct;
     const begin = path => new Worker(path);
     const { default: awaited } = await import("./c.ts", { with: { type: "file" } });
     report([begin(held), new Worker(chosen), new Worker(awaited)]);
-    new NodeWorker(ofNode).on("message", text => console.log(text));
   `,
   "paths.ts": `
     import b from "./b.ts" with { type: "file" };
@@ -71,7 +68,6 @@ const waysToTheConstructor = {
   "a.js": `postMessage("a: through a variable and a parameter");`,
   "b.ts": `import { name } from "./shared.ts"; postMessage("b: through an export, with " + name);`,
   "c.ts": `const text: string = "c: out of import()"; postMessage(text);`,
-  "d.js": `require("node:worker_threads").parentPort.postMessage("d: a Worker of node:worker_threads");`,
   "shared.ts": `export const name: string = "a file that it imports";`,
 };
 
@@ -379,7 +375,6 @@ describe.concurrent("a Worker started by the path of a file that is embedded wit
             "a: through a variable and a parameter",
             "b: through an export, with a file that it imports",
             "c: out of import()",
-            "d: a Worker of node:worker_threads",
           ],
           exitCode: 0,
         });
@@ -442,12 +437,13 @@ describe.concurrent("a Worker started by the path of a file that is embedded wit
 
   test.each([
     [100, "", { untypedFiles: 0, engineRuns: 1, leftOut: '"page-1.js", "page-10.js", "page-100.js" and 97 more' }],
-    [100, preload, { untypedFiles: 0, engineRuns: 1, leftOut: '"page-1.js", "page-10.js", "page-100.js" and 97 more' }],
+    // The one file is what `preload` names.
+    [100, preload, { untypedFiles: 1, engineRuns: 1, leftOut: '"page-1.js", "page-10.js", "page-100.js" and 97 more' }],
     [5, "", { untypedFiles: 0, engineRuns: 1, leftOut: '"page-1.js", "page-2.js", "page-3.js" and 2 more' }],
     // Few enough to try: each is a program of its own, and both numbers see it.
     [4, "", { untypedFiles: 4, engineRuns: 5, leftOut: undefined }],
     // Not worth a second build of the whole program.
-    [4, preload, { untypedFiles: 0, engineRuns: 1, leftOut: '"page-1.js", "page-2.js", "page-3.js" and 1 more' }],
+    [4, preload, { untypedFiles: 1, engineRuns: 1, leftOut: '"page-1.js", "page-2.js", "page-3.js" and 1 more' }],
   ])(
     "compiles none of many embedded pages that the program reads: %d pages, new Worker(path%s)",
     (pages, workerOptions, counts) =>

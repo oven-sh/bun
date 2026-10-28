@@ -1,6 +1,6 @@
 """What makes the farm's programs. A producer turns a seed into a program, and the same seed always gives the same program.
 
-    generated:<name>[:<language>]   test/aot/generated/python/<name>.py <seed>
+    generated:<name>[:<language>]   test/aot/fuzz/generators/python/<name>.py <seed>
     mutated:ts | mutated:js         a program of test/aot/parallel, changed a little (the mutations of mutated-programs-same-output.test.ts)
     untyped:<name>                  the programs of a TypeScript generator after plain Bun has taken the types out
     border:ts                       the same programs with a statement inserted that does to an object in scope what untyped code may do to it

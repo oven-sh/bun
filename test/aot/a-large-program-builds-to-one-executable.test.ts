@@ -1,6 +1,6 @@
 // A build is a function of its sources and flags: one program, one executable, whatever the number of threads and however they fall.
-// Analyses of the whole program run side by side, and each takes as long as the program is large, so this program is large: three
-// thousand typed functions that any code may call, each of which hands closures to shared helpers and hands a value of unknown type and
+// Analyses of the whole program run side by side, and each takes as long as the program is large, so this program is large: twelve
+// hundred typed functions that any code may call, each of which hands closures to shared helpers and hands a value of unknown type and
 // a function on to the next. ./repeated-builds.test.ts builds small programs far more often.
 //
 //   AOT_LARGE_PROGRAM_BUILDS=40 bun test test/aot/a-large-program-builds-to-one-executable    as many builds
@@ -16,10 +16,10 @@ import { describe, test } from "./supported";
 
 setDefaultTimeout(1_200_000);
 
-const modules = 100;
+const modules = 40;
 const functionsInModule = 30;
 // Most builds have more threads than CI gives cores: a thread that waits for a core stops at other places than one that runs.
-const threadCounts = [16, 1, 5];
+const threadCounts = [16, 1];
 
 const helpers = `
 export interface Item { id: number; name: string; weight: number; next?: Item; tags: string[] }

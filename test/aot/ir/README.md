@@ -22,6 +22,7 @@ The driver is `src/aot/tests/ir_tests.rs`, with `src/aot/tests/support/`.
 | --- | --- |
 | `commands/` | the commands `lower`, `link` and `emit`, and the option words |
 | `lower/<construct family>/` | lowering, one folder per family of constructs |
+| `lower/programs/<topic>/` | whole programs, each held to what its entry module lowers to today. Their `tsconfig.json` is the one of `test/aot/parallel` |
 
 - A test file ends in `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs` or `.cjs`. A declaration file (`.d.ts`, `.d.mts`, `.d.cts`)
   is not a test, and neither is a `package.json` or a `tsconfig.json`.
@@ -59,8 +60,8 @@ What the tests print:
 | `SKIP <file>:<line>: <command>: TESTAOT is not set` | the check lines were compared, but the engine did not see the output |
 | `SKIP <area>: the engine verified none of <n> runs: ..` | the same for the area, on stderr, so it shows in a passing run too |
 
-The test program starts a copy of itself for each file, `AOT_IR_JOBS` of them at a time, and prints their `FAIL` lines. A file whose
-copy dies is `FAIL <file>:1: the test program ended with <status>`, with the last lines that the copy wrote.
+The test program starts `AOT_IR_JOBS` copies of itself, hands each one file after another, and prints their `FAIL` lines. A file whose
+copy dies is `FAIL <file>:1: the test program ended with <status>`, with the last lines that the copy wrote, and a new copy takes its place.
 For a debugger: `AOT_IR_FILTER=<one file> AOT_IR_SHARE=0/1 <the test program> lower --exact` runs that file in the program itself.
 
 ## What a run does

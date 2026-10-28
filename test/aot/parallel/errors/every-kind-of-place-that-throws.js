@@ -24,7 +24,7 @@ function attempt(label, run) {
 }
 const nothing = opaque(undefined), none = opaque(null), five = opaque(5), text = opaque("abc"), plain = opaque({}), list = opaque([1, 2]);
 const holder = opaque({ inner: null, missing: undefined, number: 5, deep: { inner: null }, list: [null], run: 5 });
-const key = opaque("name"), index = opaque(0);
+const key = opaque("name"), index = opaque(0); let textOfABillionSigns = "x"; for (let i = 0; i < 30; i++) textOfABillionSigns += textOfABillionSigns;
 function thrower() { throw new Error("thrown behind a tail call"); }
 const throwing = { method() { throw new Error("thrown in a method behind a tail call"); } };
 
@@ -188,7 +188,7 @@ attempt("Intl locale", () => { new Intl.NumberFormat(opaque("xx-invalid-locale-x
 attempt("Intl currency", () => { new Intl.NumberFormat("en", { style: "currency" }); });
 attempt("localeCompare", () => { text.localeCompare("b", opaque("x_y")); });
 attempt("stack overflow", () => { const again = () => again() + 1; return again(); });
-attempt("concat huge", () => { let s = opaque("x").repeat(2 ** 30); return (s + s + s + s).length; });
+attempt("concat huge", () => { let s = opaque(textOfABillionSigns); return (s + s + s + s).length; });
 attempt("at BigInt", () => { BigInt.asIntN(opaque(-1), 1n); });
 attempt("flat depth symbol", () => { list.flat(opaque(Symbol())); });
 attempt("with index", () => { list.with(opaque(9), 1); });

@@ -49,7 +49,7 @@
     "bundler/transpiler/esbuild-decorator-tests.ts", // standard decorators, this project sets experimentalDecorators
     "regression/issue/14477/*-mismatch.tsx", // deliberately-mismatched JSX, the test asserts the parse error
     "integration/bun-types/fixture", // declares globals, bun-types.test.ts checks it with its own tsconfig.json
-    "aot/programs", // many declare globals, run-programs.ts builds each with their own tsconfig.json
+    "aot/programs", // many declare globals, and the folder has its own tsconfig.json
     "aot/parallel", // many declare globals, run-parallel.ts builds each under the nearest tsconfig.json
     "aot/fixtures", // what the programs of aot/parallel import
     "aot/ir", // texts that the compiler is asked about: some declare globals, and each folder has its own tsconfig.json

@@ -74,8 +74,8 @@ new!(pub BUN_CONFIG_WS_HANDSHAKE_TIMEOUT: unsigned, "BUN_CONFIG_WS_HANDSHAKE_TIM
 // Seconds the `new WebSocket()` client waits for the server's TCP close after its close event. 0 disables.
 new!(pub BUN_CONFIG_WS_CLOSE_TIMEOUT: unsigned, "BUN_CONFIG_WS_CLOSE_TIMEOUT", { default: 30 });
 new!(pub BUN_CRASH_REPORT_URL: string, "BUN_CRASH_REPORT_URL", {});
-// Canary builds only: an executable built with `--aot-separate-programs` starts with the program of this entry point, given as
-// its path below the root of the build, in place of the first.
+// Canary builds only: an executable built with `--aot` starts with this entry point, given as its path below the root of the
+// build, in place of the first.
 #[cfg(not(bun_locked_environment))]
 new!(pub BUN_AOT_START_AT: string, "BUN_AOT_START_AT", {});
 #[cfg(not(bun_locked_environment))]

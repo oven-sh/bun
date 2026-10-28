@@ -8,16 +8,13 @@ import { refusesExecuteOnlyStart } from "./execute-only-start";
 import { test } from "./supported";
 
 const program = `import { readFileSync } from "node:fs";
-import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
 class Point {
   constructor(public x: number, public y: number) {}
   length(): number { return Math.sqrt(this.x * this.x + this.y * this.y); }
 }
-const server = createServer((request, response) => response.end(String(new Point(3, 4).length())));
-await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
-console.log(await (await fetch("http://127.0.0.1:" + (server.address() as AddressInfo).port)).text());
-server.close();
+const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response(String(new Point(3, 4).length())) });
+console.log(await (await fetch(server.url)).text());
+await server.stop(true);
 console.log(readFileSync("/proc/self/" + (process.argv[2] ?? "maps"), "utf8"));
 `;
 

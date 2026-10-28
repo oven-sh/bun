@@ -1,5 +1,7 @@
 // The ways in which a program writes a data: URL that is known when it is built, and the ways on which the URL reaches the constructor of a Worker.
 // Alone: which texts the build compiles for a Worker depends on what else the executable holds
+// Env of the executable: BUN_JSC_crashIfInterpreterIsUsed=1
+// STATISTIC: EngineRuns = 1
 import * as threads from "node:worker_threads";
 import defaultThreads, { Worker as NodeWorker } from "node:worker_threads";
 import { url as imported } from "./other.ts";

@@ -77,6 +77,7 @@ pub(crate) fn finish_build(
         summary,
         further_programs,
         starts_workers_from_unseen_code,
+        names_of_worker_files: _,
     } = compilation;
     let ProgramSummary {
         entry_points: entry_paths,

@@ -338,9 +338,9 @@ const programs: Record<string, Program> = {
         const Module = require("node:module");
         const original = Module.prototype.require;
         Module.prototype.require = function (id) { console.log("hooked", id); return original.call(this, id); };
-        console.log(typeof require("node:http").request);`,
+        console.log(typeof require("node:path").join);`,
     },
-    plain: "hooked node:http\nfunction\n",
+    plain: "hooked node:path\nfunction\n",
     compiled: "function\n",
   },
   "clear-module": {
@@ -450,7 +450,8 @@ describe.skipIf(!!unsupported)("libraries that are known not to work", () => {
       });
       expect(after.exitCode).toBe(1);
 
-      // Under `bun run --aot` the program runs from its source, with the built-in objects read-only as in an executable.
+      // Under `bun run --aot` the program runs from its source, with the built-in objects read-only as in an executable. Asked of the first row of each rule.
+      if (rows.find(row => row.rule === rule && row.name in programs)!.name !== name) return;
       const fromSource = await slot(() => run([bunExe(), "run", "--aot", "main.js"], cwd, env));
       if (rule === "#loader-hooks-and-the-module-cache" || name === "async-listener")
         expect(fromSource.stdout).toBe(plain);

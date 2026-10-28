@@ -21,7 +21,17 @@ describe.skipIf(isASAN || isDebug).concurrent("compile/aot/operations that may n
     expect(plain.exitCode).toBe(0);
     const executable = join(cwd, name + (isWindows ? ".exe" : ".out"));
     const built = await run(
-      [bunExe(), "build", "--compile", "--aot", "--aot-check=validate", name, "--outfile", executable],
+      [
+        bunExe(),
+        "build",
+        "--compile",
+        "--aot",
+        "--no-builtin-modules",
+        "--aot-check=validate",
+        name,
+        "--outfile",
+        executable,
+      ],
       cwd,
     );
     expect(built.stderr).not.toContain("error:");

@@ -1,5 +1,5 @@
 // Some folders of ./programs are written by a script, whole or in part. What a script writes is not kept in the repository: a test file writes the programs that it runs
-// into a temporary folder when it starts (run-programs.ts). This writes them for whoever wants to read them, or to run them with a tool of their own:
+// into a temporary folder when it starts. This writes them for whoever wants to read them, or to run them with a tool of their own:
 //
 //   bun test/aot/generate.ts                       names the folders
 //   bun test/aot/generate.ts <folder> <where>      writes <where>/<folder> as a test sees it: the programs that the script writes and, beside them, those of ./programs/<folder>, written by hand
@@ -50,7 +50,7 @@ export type Generator = {
 const besidePrograms = /\.(json|expected\.txt|build-errors\.txt|todo\.txt)$/;
 
 /**
- * Files, by their paths below a folder of programs, as programs, by the rules at the top of run-programs.ts: a folder with a main.<extension> is one program,
+ * Files, by their paths below a folder of programs, as programs: a folder with a main.<extension> is one program,
  * and so is any other source file, with the files that bear its name.
  */
 export function programsOf(files: Record<string, string>): WrittenProgram[] {

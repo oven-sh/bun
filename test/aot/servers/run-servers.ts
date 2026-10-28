@@ -1,8 +1,8 @@
 // Helpers of the tests of this folder that build a server in a copy of ./app.
 import { expect } from "bun:test";
-import { rmSync, symlinkSync } from "fs";
+import { cpSync, existsSync, rmSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, isWindows } from "harness";
-import { join } from "path";
+import { basename, join } from "path";
 import { spawned } from "../harness/commands";
 
 export const requestedServers = process.env.AOT_SERVERS;
@@ -19,14 +19,29 @@ export const moreFlags = (process.env.AOT_SERVERS_FLAGS ?? "").split(" ").filter
 /** AOT_SERVERS_ENVIRONMENT="A=1 B=2": more variables for every run of an executable that was built with --aot. */
 export const moreEnvironment = Object.fromEntries((process.env.AOT_SERVERS_ENVIRONMENT ?? "").split(" ").filter(Boolean).map(pair => pair.split("="))); // prettier-ignore
 
-/** Runs `bun install` in the folder, or links AOT_SERVERS_MODULES as its node_modules. */
+/** Runs `bun install` in the folder, by its bun.lock if it has one, or links AOT_SERVERS_MODULES as its node_modules. */
 export async function installPackages(folder: string) {
-  // A copy of ./app brings along the links to the packages that `bun install` in test/ has laid there.
-  rmSync(join(folder, "node_modules"), { recursive: true, force: true });
   if (process.env.AOT_SERVERS_MODULES)
-    return symlinkSync(process.env.AOT_SERVERS_MODULES, join(folder, "node_modules"));
-  const install = await spawned([bunExe(), "install", "--ignore-scripts"], folder, bunEnv);
-  expect({ stderr: install.stderr, exitCode: install.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
+    return symlinkSync(process.env.AOT_SERVERS_MODULES, join(folder, "node_modules"), "junction");
+  const byLockfile = existsSync(join(folder, "bun.lock")) ? ["--frozen-lockfile"] : [];
+  const install = await spawned(
+    [bunExe(), "install", ...byLockfile, "--ignore-scripts", "--linker", "hoisted"],
+    folder,
+    bunEnv,
+  );
+  expect({ stderr: install.exitCode ? install.stderr : "", exitCode: install.exitCode }).toEqual({
+    stderr: "",
+    exitCode: 0,
+  });
+}
+
+/** Copies ./app to the folder and installs its packages there. */
+export async function copyApp(folder: string) {
+  cpSync(join(import.meta.dir, "app"), folder, {
+    recursive: true,
+    filter: source => basename(source) !== "node_modules",
+  });
+  await installPackages(folder);
 }
 
 const exits: Promise<number>[] = [];

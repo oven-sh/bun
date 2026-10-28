@@ -938,6 +938,36 @@ devTest("a file that a later file event finds half-saved has a deadline of its o
     expect(performance.now() - emptiedB).toBeGreaterThanOrEqual(400);
   },
 });
+devTest("a held file that a second save empties has a new deadline", {
+  skip: ["darwin"],
+  env: holdFor(400),
+  files: twoFiles,
+  async test(dev) {
+    // The files stay empty, so the page gets empty modules when the hold ends.
+    await using c = await dev.client("/", { allowUnlimitedReloads: true });
+    await c.expectElemText("#b", "b1");
+
+    // b.ts keeps the hold open after a.ts has its text.
+    for (const name of ["a", "b"]) {
+      const held = dev.heldEvents();
+      emptyFile(dev.join(name + ".ts"));
+      await held;
+    }
+    let held = dev.heldEvents();
+    appendFileSync(dev.join("a.ts"), setsText("a", "a2"));
+    await held;
+    // The second save of a.ts comes late in the time that its first save has.
+    await Bun.sleep(250);
+    held = dev.heldEvents();
+    const emptiedA = performance.now();
+    emptyFile(dev.join("a.ts"));
+    await held;
+    const ended = dev.holdsEnded;
+    await until("the end of the hold", () => dev.holdsEnded > ended);
+    // a.ts holds the reload for one wait from its second save, not from its first.
+    expect(performance.now() - emptiedA).toBeGreaterThanOrEqual(400);
+  },
+});
 const chainWait = 240;
 const chains = [0, 1, 2].map(attempt => Array.from({ length: 45 }, (_, i) => `f${attempt}_${i}`));
 devTest("a hold ends ten waits after it starts, while files still join it", {

@@ -37,7 +37,6 @@ impl HeldFile {
 
 pub(crate) struct HalfSavedHold {
     entry_points: EntryPointList,
-    /// In the order of their deadlines.
     files: StringArrayHashMap<HeldFile>,
     /// The files before this index are past their deadline.
     first_with_time_left: usize,
@@ -155,14 +154,22 @@ impl DevServer {
         bun_core::handle_oom(hold.entry_points.append_list(entry_points));
         let deadline = (now + wait()).min(hold.last_deadline);
         for path in half_saved {
-            if !hold.files.contains(&path) {
-                let file = HeldFile {
-                    size: 0,
-                    size_since: now,
-                    deadline,
-                };
-                bun_core::handle_oom(hold.files.put(&path, file));
-                joined = true;
+            let file = HeldFile {
+                size: 0,
+                size_since: now,
+                deadline,
+            };
+            match hold.files.get_index(&path) {
+                None => {
+                    bun_core::handle_oom(hold.files.put(&path, file));
+                    joined = true;
+                }
+                // A look saw the text of this file, and a later save emptied it again.
+                Some(i) if hold.files.values()[i].size != 0 => {
+                    hold.files.values_mut()[i] = file;
+                    hold.first_with_time_left = hold.first_with_time_left.min(i);
+                }
+                Some(_) => {}
             }
         }
         if joined {
@@ -190,7 +197,9 @@ impl DevServer {
         let mut wait_until: Option<Instant> = None;
         for i in hold.first_with_time_left..hold.files.count() {
             if now >= hold.files.values()[i].deadline {
-                hold.first_with_time_left = i + 1;
+                if i == hold.first_with_time_left {
+                    hold.first_with_time_left = i + 1;
+                }
                 continue;
             }
             // The bundle reports a file that `stat` fails on.
@@ -265,6 +274,7 @@ impl DevServer {
 
     /// Bundles what the hold keeps, if no file holds the reload any more or `force` is set. While another bundle runs, `finalize_bundle_cleanup` calls this again.
     pub(crate) fn release_half_saved_hold(&mut self, force: bool) {
+        bun_removable_features::removable_definition!(Bundler, Self::release_half_saved_hold);
         if self.half_saved_hold.is_none() || self.current_bundle.is_some() {
             return;
         }

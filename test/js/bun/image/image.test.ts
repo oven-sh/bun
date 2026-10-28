@@ -1188,7 +1188,9 @@ describe("Bun.Image", () => {
     }
 
     // 32×32 white page with 1px red lines: chroma bleed at 4:2:0 is large here.
-    const redLinesPng = makePng(32, 32, (x, y) => (x % 4 === 0 || y % 4 === 0 ? [255, 0, 0, 255] : [255, 255, 255, 255]));
+    const redLinesPng = makePng(32, 32, (x, y) =>
+      x % 4 === 0 || y % 4 === 0 ? [255, 0, 0, 255] : [255, 255, 255, 255],
+    );
 
     test(".jpeg({chromaSubsampling}) selects 4:2:0 (default) or 4:4:4", async () => {
       const dflt = await new Bun.Image(redLinesPng).jpeg({ quality: 82 }).bytes();
@@ -1218,7 +1220,9 @@ describe("Bun.Image", () => {
 
     test(".jpeg({chromaSubsampling}) rejects unknown values", () => {
       expect(() => new Bun.Image(gradientPng).jpeg({ chromaSubsampling: "4:2:2" as any })).toThrow(TypeError);
-      expect(() => new Bun.Image(gradientPng).jpeg({ chromaSubsampling: "4:2:2" as any })).toThrow(/'4:2:0' or '4:4:4'/);
+      expect(() => new Bun.Image(gradientPng).jpeg({ chromaSubsampling: "4:2:2" as any })).toThrow(
+        /'4:2:0' or '4:4:4'/,
+      );
       expect(() => new Bun.Image(gradientPng).jpeg({ chromaSubsampling: 444 as any })).toThrow(TypeError);
     });
 

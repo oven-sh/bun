@@ -3180,7 +3180,7 @@ mod draft {
     /// On POSIX this re-raises the signal that caused the crash (or SIGABRT
     /// for panics) so the parent sees the real fault and core dumps are
     /// attributed correctly.
-    fn crash(reason: CrashReason) -> ! {
+    fn crash(reason: CrashReason<'_>) -> ! {
         #[cfg(not(windows))]
         {
             let sig = reason.terminal_signal();
@@ -3879,8 +3879,6 @@ mod draft {
         }
         // SAFETY: per the caller contract above, `name` is a valid NUL-terminated C string (non-null).
         let name_bytes = unsafe { bun_core::ffi::cstr(name) }.to_bytes();
-        // PORTING.md §Forbidden: no Box::leak. We're on the noreturn path, so a stack
-        // buffer suffices — `panic_impl` erases to &'static for the abort path.
         let mut msg = BoundedArray::<u8, 256>::default();
         let _ = write!(
             msg.writer(),
@@ -3909,10 +3907,8 @@ mod draft {
     unsafe extern "C" fn CrashHandler__beginDlOpenAction(
         path: *const c_char,
     ) -> *mut ActionGuard<'static> {
-        // SAFETY: path is a valid NUL-terminated C string (caller contract)
-        let s = unsafe { bun_core::ffi::cstr(path) }.to_bytes();
-        // SAFETY: the C string outlives the guard (caller contract)
-        let s: &'static [u8] = unsafe { bun_collections::detach_lifetime(s) };
+        // SAFETY: path is a valid NUL-terminated C string that outlives the guard (caller contract)
+        let s: &'static [u8] = unsafe { bun_core::ffi::cstr(path) }.to_bytes();
         // SAFETY: `CrashHandler__endDlOpenAction` drops it (caller contract)
         bun_core::heap::into_raw(Box::new(unsafe { ActionGuard::new(Action::Dlopen(s)) }))
     }

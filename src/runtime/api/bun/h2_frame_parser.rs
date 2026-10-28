@@ -1943,16 +1943,21 @@ impl Stream {
 impl H2FrameParser {
     /// A header block from its first encoded field until `ScopeGuard::into_inner` says that it will be written.
     fn header_block(&self) -> scopeguard::ScopeGuard<Vec<u8>, impl FnOnce(Vec<u8>)> {
-        scopeguard::guard(Vec::new(), |bytes| {
-            if bytes.is_empty() {
-                return;
-            }
-            self.hpack_encoder.with_mut(|encoder| {
-                if let Some(encoder) = encoder {
-                    encoder.discard_block();
-                }
-            });
+        scopeguard::guard(Vec::new(), |mut bytes| {
+            self.discard_header_block(&mut bytes)
         })
+    }
+
+    /// The block will not be written. To be said before a call into JavaScript, which may encode a block of its own.
+    fn discard_header_block(&self, bytes: &mut Vec<u8>) {
+        if core::mem::take(bytes).is_empty() {
+            return;
+        }
+        self.hpack_encoder.with_mut(|encoder| {
+            if let Some(encoder) = encoder {
+                encoder.discard_block();
+            }
+        });
     }
 
     /// Appends a single header to the header block in `encoded_headers`.
@@ -5637,6 +5642,7 @@ impl H2FrameParser {
                         // nghttp2 checks maxSendHeaderBlockLength pre-deflation and fires
                         // on_frame_not_send_callback(NGHTTP2_ERR_FRAME_SIZE_ERROR); Node surfaces
                         // 'frameError' + ERR_HTTP2_STREAM_ERROR (test-http2-exceeds-server-trailer-size.js).
+                        self.discard_header_block(&mut encoded_headers);
                         let identifier = stream.get_identifier();
                         identifier.ensure_still_alive();
                         self.dispatch_with_2_extra(
@@ -6820,6 +6826,7 @@ impl H2FrameParser {
             if !options.is_object() {
                 stream.state = StreamState::CLOSED;
                 stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
+                self.discard_header_block(&mut encoded_headers);
                 self.dispatch_with_extra(
                     js::on_stream_error_get_cached,
                     stream.get_identifier(),
@@ -6897,6 +6904,7 @@ impl H2FrameParser {
                     if parent <= 0 || parent as u32 > MAX_STREAM_ID {
                         stream.state = StreamState::CLOSED;
                         stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
+                        self.discard_header_block(&mut encoded_headers);
                         self.dispatch_with_extra(
                             js::on_stream_error_get_cached,
                             stream.get_identifier(),
@@ -6920,6 +6928,7 @@ impl H2FrameParser {
                     if weight < 1 || weight > u8::MAX as i32 {
                         stream.state = StreamState::CLOSED;
                         stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
+                        self.discard_header_block(&mut encoded_headers);
                         self.dispatch_with_extra(
                             js::on_stream_error_get_cached,
                             stream.get_identifier(),
@@ -6958,8 +6967,7 @@ impl H2FrameParser {
                         stream.state = StreamState::IDLE;
                         let wrapped =
                             Bun__wrapAbortError(global_object, signal_.js_reason(global_object));
-                        // 'aborted' is emitted in there, and a listener may encode a block of its own.
-                        drop(encoded_headers);
+                        self.discard_header_block(&mut encoded_headers);
                         self.abort_stream(&mut stream, wrapped);
                         return Ok(JSValue::js_number(stream_id as f64));
                     }
@@ -6979,6 +6987,7 @@ impl H2FrameParser {
             stream.state = StreamState::CLOSED;
             stream.rst_code = ErrorCode::ENHANCE_YOUR_CALM.0;
             self.rejected_streams.set(self.rejected_streams.get() + 1);
+            self.discard_header_block(&mut encoded_headers);
             self.dispatch_with_extra(
                 js::on_stream_error_get_cached,
                 stream.get_identifier(),
@@ -7015,6 +7024,7 @@ impl H2FrameParser {
             stream.state = StreamState::CLOSED;
             stream.rst_code = ErrorCode::REFUSED_STREAM.0;
 
+            self.discard_header_block(&mut encoded_headers);
             self.dispatch_with_2_extra(
                 js::on_frame_error_get_cached,
                 stream.get_identifier(),

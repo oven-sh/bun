@@ -9,6 +9,7 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, gcTick, normalizeBunSnapshot, tls as tlsCert } from "harness";
+import diagnostics_channel from "node:diagnostics_channel";
 import { EventEmitter, once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
@@ -3686,17 +3687,46 @@ describe("HPACK (RFC 7541)", () => {
       );
     });
 
-    test("in respond() with an aborted signal, for a block that a listener of 'aborted' encodes", async () => {
+    // Giving up runs JavaScript before the call returns, and that answers the streams that were held back.
+    // In Node it does not, so they are answered after the call.
+    test.each<[string, (stream: http2.ServerHttp2Stream, answerHeld: () => void) => void]>([
+      [
+        "respond() with an aborted signal, for a block that a listener of 'aborted' encodes",
+        (stream, answerHeld) => {
+          stream.on("aborted", answerHeld);
+          const options = { signal: AbortSignal.abort(), sendDate: false };
+          attempt(() => stream.respond({ ":status": 200, "x-new": "1" }, options));
+          answerHeld();
+        },
+      ],
+      [
+        "sendTrailers() with a field that HPACK cannot carry, for a block that a subscriber to a channel encodes",
+        (stream, answerHeld) => {
+          stream.on("wantTrailers", () => {
+            // The session ends within the call, stream by stream.
+            diagnostics_channel.subscribe("http2.server.stream.close", answerHeld);
+            attempt(() => stream.sendTrailers({ "x-new": "1", "x-bad": Buffer.alloc(65536, "v").toString() }));
+            diagnostics_channel.unsubscribe("http2.server.stream.close", answerHeld);
+            answerHeld();
+          });
+          stream.respond({ ":status": 200 }, { waitForTrailers: true, sendDate: false });
+          stream.end();
+        },
+      ],
+    ])("in %s", async (_, giveUp) => {
       const srv = http2.createServer();
       srv.on("sessionError", () => {});
-      let held: http2.ServerHttp2Stream;
+      const held: http2.ServerHttp2Stream[] = [];
       srv.on("stream", (stream, headers) => {
         quiet(stream);
-        const fields = { ":status": 200, "x-new": "1" };
-        if (headers[":path"] === "/held") return void (held = stream);
+        if (headers[":path"] === "/held") return void held.push(stream);
         if (headers[":path"] === "/give-up") {
-          stream.on("aborted", () => held.respond(fields, { endStream: true, sendDate: false }));
-          return attempt(() => stream.respond(fields, { signal: AbortSignal.abort(), sendDate: false }));
+          return giveUp(stream, () => {
+            for (const stream of held.splice(0)) {
+              if (!stream.destroyed)
+                stream.respond({ ":status": 200, "x-new": "1" }, { endStream: true, sendDate: false });
+            }
+          });
         }
         stream.respond({ ":status": 200, "x-old": "0" }, { endStream: true, sendDate: false });
       });
@@ -3706,9 +3736,12 @@ describe("HPACK (RFC 7541)", () => {
       quiet(client);
       try {
         await get(client, { ":path": "/" });
-        const response = get(client, { ":path": "/held" });
+        const responses = [1, 2, 3].map(() => get(client, { ":path": "/held" }));
         quiet(client.request({ ":path": "/give-up", ":method": "POST" }));
-        expect(Object.keys(await response)).toEqual([":status", "x-new"]);
+        // Where the session ends, one of the streams is gone by the time the others are answered.
+        const answered = (await Promise.allSettled(responses)).filter(response => response.status === "fulfilled");
+        expect(answered.length).toBeGreaterThan(0);
+        expect(answered.map(response => Object.keys(response.value))).toEqual(answered.map(() => [":status", "x-new"]));
       } finally {
         client.destroy();
         srv.close();

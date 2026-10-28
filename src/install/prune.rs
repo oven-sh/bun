@@ -1905,7 +1905,7 @@ fn links_package(
         ResolutionTag::Workspace => res.workspace().slice(buf).into(),
         ResolutionTag::Symlink => match res.symlink().slice(buf) {
             path if crate::dependency::is_link_path(path) => path.into(),
-            name => join(&manager.global_link_dir_path, name),
+            name => join(manager.global_link_dir_path, name),
         },
         _ => {
             let Some(found) = store_link_target(entry.dir, entry.name) else {

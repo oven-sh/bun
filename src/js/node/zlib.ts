@@ -444,12 +444,12 @@ function takeOutput(buffer: Buffer, offset: number, have: number): Buffer {
 }
 
 function processChunkSync(self: $Node.ZlibBase, chunk: View, flushFlag: number): Buffer {
-  if (chunk.byteLength > kMaxUint32) {
+  let availInBefore = chunk.byteLength;
+  if (availInBefore > kMaxUint32) {
     _close(self);
-    throw $ERR_OUT_OF_RANGE("chunk.byteLength", `<= ${kMaxUint32}`, chunk.byteLength);
+    throw $ERR_OUT_OF_RANGE("chunk.byteLength", `<= ${kMaxUint32}`, availInBefore);
   }
 
-  let availInBefore = chunk.byteLength;
   let availOutBefore = self._chunkSize - self._outOffset;
   let inOff = 0;
   let availOutAfter: number;
@@ -540,14 +540,15 @@ function processChunkSync(self: $Node.ZlibBase, chunk: View, flushFlag: number):
 function processChunk(self: $Node.ZlibBase, chunk: View, flushFlag: number, cb: (error?: Error) => void) {
   const handle = self._handle;
   if (!handle) return process.nextTick(cb);
-  if (chunk.byteLength > kMaxUint32) {
-    return process.nextTick(cb, $ERR_OUT_OF_RANGE("chunk.byteLength", `<= ${kMaxUint32}`, chunk.byteLength));
+  const { byteLength } = chunk;
+  if (byteLength > kMaxUint32) {
+    return process.nextTick(cb, $ERR_OUT_OF_RANGE("chunk.byteLength", `<= ${kMaxUint32}`, byteLength));
   }
 
   handle.buffer = chunk;
   handle.cb = cb;
   handle.availOutBefore = self._chunkSize - self._outOffset;
-  handle.availInBefore = chunk.byteLength;
+  handle.availInBefore = byteLength;
   handle.inOff = 0;
   handle.flushFlag = flushFlag;
 

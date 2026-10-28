@@ -1763,6 +1763,7 @@ host-classes/a-handler-gets-the-error-of-a-lookup-that-fails
 host-classes/a-histogram-comes-back-through-a-message-channel
 host-classes/a-histogram-is-printed-and-its-members-are-read
 host-classes/a-histogram-made-by-a-function-read-under-a-key-is-printed
+host-classes/a-histogram-s-members-written-in-javascript-are-read-under-a-key-nobody-knows
 host-classes/a-host-constructor-answers-new-with-a-string
 host-classes/a-host-constructor-that-answers-with-a-string-comes-out-of-a-list-a-bound-function-and-a-proxy
 host-classes/a-host-constructor-that-answers-with-a-string-is-constructed-through-a-parameter

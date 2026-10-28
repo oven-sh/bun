@@ -1706,9 +1706,10 @@ for (const [key, blob] of build.outputs) {
       }
       const cmd = [bunExe(), ...(firstRun.bunArgs ?? []), entryPaths[0], ...(firstRun.args ?? [])];
       const unbundledEnv: Record<string, string> = {};
-      for (const [key, value] of Object.entries({ ...bunEnv, ...env, ...(firstRun.env || {}) })) {
+      for (const [key, value] of Object.entries({ ...bunEnv, ...env })) {
         if (typeof value === "string") unbundledEnv[key] = value.replaceAll("{{root}}", root);
       }
+      Object.assign(unbundledEnv, firstRun.env);
       await using unbundled = Bun.spawn({
         cmd,
         env: unbundledEnv,

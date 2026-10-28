@@ -2007,6 +2007,33 @@ describe("bun test", () => {
       expect(stderr).toContain("2 pass");
       expect(exitCode).toBe(0);
     });
+
+    test("the copies are one array after a file that imports node:process and does not read argv", async () => {
+      using dir = tempDir("bun-test-argv-unread", {
+        "a.test.ts": /* ts */ `
+          import { expect, test } from "bun:test";
+          import { platform } from "node:process";
+          test("platform", () => {
+            expect(platform).toBe(process.platform);
+          });
+        `,
+        "b.test.ts": argvProbe,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "./a.test.ts", "./b.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      const probes = parseProbes(stdout);
+      expect(probes).toHaveLength(1);
+      expect(probes[0]).toEqual(expectedProbe(probes[0].file));
+      expect(basename(probes[0].file)).toBe("b.test.ts");
+      expect(stderr).toContain("2 pass");
+      expect(exitCode).toBe(0);
+    });
   });
 });
 

@@ -135,7 +135,7 @@ public:
     inline JSObject* bindingNatives() { return m_bindingNatives.getInitializedOnMainThread(this); }
 };
 
-// Points every existing copy of a process property (on process, on Bun, in node:process) at `value`.
+// Points every existing copy of a process property at `value`: on process, on Bun, and in the node:process and bun modules of the global's own loader.
 void repointProcessProperty(Zig::GlobalObject*, const JSC::Identifier& name, JSC::JSValue value);
 
 JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);

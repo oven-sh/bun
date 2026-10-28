@@ -3488,10 +3488,18 @@ extern "C" void Bun__Process__resetArgv(Zig::GlobalObject* globalObject)
 
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    // Not process.argv: the first read made it an own value of the process object, which this replaces.
-    JSValue argv = constructArgv(vm, globalObject->processObject());
+    auto* process = globalObject->processObject();
+    auto name = Identifier::fromString(vm, "argv"_s);
+    // Not process.argv: a read stores the array as an own value of the process object, and that is the copy to replace.
+    JSValue argv = constructArgv(vm, process);
     if (!scope.exception()) {
-        repointProcessProperty(globalObject, Identifier::fromString(vm, "argv"_s), argv);
+        unsigned attributes = 0;
+        if (!isValidOffset(process->structure()->get(vm, name, attributes))) {
+            // Nothing has read process.argv yet. The process object takes the array now: a later read would build a second one, apart from the module bindings.
+            JSC::AllowLazyMaterializationOfImmutableProperties allowStores(vm);
+            process->putDirect(vm, name, argv, 0);
+        }
+        repointProcessProperty(globalObject, name, argv);
     }
     if (auto* exception = scope.exception()) [[unlikely]] {
         CLEAR_IF_EXCEPTION(scope);

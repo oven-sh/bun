@@ -1058,10 +1058,10 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         // SAFETY: `loop_` is the live per-thread uws loop.
         let quic_next_tick_us = unsafe {
             let ild = &(*loop_).internal_loop_data;
-            if ild.quic_head.is_null() {
+            if ild.quic_head.get().is_null() {
                 None
             } else {
-                Some(ild.quic_next_tick_us)
+                Some(ild.quic_next_tick_us.get())
             }
         };
         let mut timespec = bun_core::Timespec { sec: 0, nsec: 0 };
@@ -1202,10 +1202,10 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
         // SAFETY: `loop_` is the live per-thread uws loop.
         let quic_next_tick_us = unsafe {
             let ild = &(*loop_).internal_loop_data;
-            if ild.quic_head.is_null() {
+            if ild.quic_head.get().is_null() {
                 None
             } else {
-                Some(ild.quic_next_tick_us)
+                Some(ild.quic_next_tick_us.get())
             }
         };
         let mut timespec = bun_core::Timespec { sec: 0, nsec: 0 };

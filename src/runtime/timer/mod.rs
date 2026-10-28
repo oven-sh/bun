@@ -328,7 +328,7 @@ impl DateHeaderTimer {
         // updateDate() is an expensive function.
         loop_.update_date();
 
-        if loop_.internal_loop_data.sweep_timer_count > 0 {
+        if loop_.should_enable_date_header_timer() {
             // Reschedule it automatically for 1 second later.
             let next = now.add_ms(1000);
             self.event_loop_timer.next = ElTimespec {

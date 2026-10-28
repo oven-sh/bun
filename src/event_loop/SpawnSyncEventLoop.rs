@@ -168,9 +168,9 @@ impl SpawnSyncEventLoop {
         // never null on a successful create.
         debug_assert!(!this.event_loop.is_null(), "spawn-sync event loop alloc");
         let (tag, ptr) = EventLoopHandle::init(this.event_loop).into_tag_ptr();
-        let loop_data = &mut this.uws_loop_mut().internal_loop_data;
+        let loop_data = &this.uws_loop().internal_loop_data;
         loop_data.set_parent_raw(tag, ptr);
-        loop_data.jsc_vm = core::ptr::null();
+        loop_data.jsc_vm.set(core::ptr::null());
         true
     }
 
@@ -187,18 +187,11 @@ impl SpawnSyncEventLoop {
         self.event_loop
     }
 
-    /// Shared borrow of the isolated `uws::Loop`. Not to be held across a tick, which borrows it uniquely.
+    /// The isolated `uws::Loop`.
     #[inline]
     pub fn uws_loop(&self) -> &uws::Loop {
         // SAFETY: set in `init` and freed only in `Drop`.
         unsafe { self.uws_loop.as_ref() }
-    }
-
-    /// Unique borrow of the isolated `uws::Loop`, for `init`.
-    #[inline]
-    fn uws_loop_mut(&mut self) -> &mut uws::Loop {
-        // SAFETY: set in `init` and freed only in `Drop`; `&mut self` rules out a tick.
-        unsafe { self.uws_loop.as_mut() }
     }
 
     /// Runs `f` on the libuv timeout timer, if a call has needed one yet. Not from under `uv_run`.
@@ -258,7 +251,7 @@ impl SpawnSyncEventLoop {
         __bun_spawn_sync_vm_set_event_loop_handle(
             vm,
             Some(
-                NonNull::new(self.uws_loop().uv_loop)
+                NonNull::new(self.uws_loop().uv_loop())
                     .expect("uv_loop is set by us_create_loop for the loop's lifetime"),
             ),
         );
@@ -293,10 +286,10 @@ impl Drop for PreparedSpawnSyncEventLoop<'_> {
     fn drop(&mut self) {
         #[cfg(unix)]
         debug_assert!(
-            self.uws_loop().num_polls == 0 && self.uws_loop().active == 0,
+            self.uws_loop().num_polls.get() == 0 && self.uws_loop().active.get() == 0,
             "spawnSync left num_polls={} active={} on its loop",
-            self.uws_loop().num_polls,
-            self.uws_loop().active,
+            self.uws_loop().num_polls.get(),
+            self.uws_loop().active.get(),
         );
         #[cfg(windows)]
         {
@@ -340,7 +333,7 @@ impl PreparedSpawnSyncEventLoop<'_> {
             // `Box`-`noalias` reborrow that `into_raw` would later pop).
             self.uv_timer
                 .set(Some(bun_core::heap::into_raw_nn(uv_timer)));
-            let uv_loop = self.uws_loop().uv_loop;
+            let uv_loop = self.uws_loop().uv_loop();
             // The loop is boxed by `RareData` and outlives its timer.
             let data = core::ptr::from_ref::<SpawnSyncEventLoop>(self.inner)
                 .cast_mut()
@@ -355,7 +348,7 @@ impl PreparedSpawnSyncEventLoop<'_> {
         // flight, so `loop->time` (which `uv_timer_start` computes the due time from) can be
         // staler than the timeout, which would make the timer fire immediately.
         // SAFETY: `uv_loop` is the live initialized loop owned by `self.uws_loop`.
-        unsafe { libuv::uv_update_time(self.uws_loop().uv_loop) };
+        unsafe { libuv::uv_update_time(self.uws_loop().uv_loop()) };
 
         self.with_uv_timer(|timer| {
             timer.start(ts.ms_unsigned(), 0, Some(on_uv_timer));
@@ -396,8 +389,8 @@ impl PreparedSpawnSyncEventLoop<'_> {
         // Tick the isolated uws loop with the specified timeout
         // This will only process I/O related to this subprocess
         // and will NOT interfere with the main event loop
-        // SAFETY: set in `init` and freed only in `Drop`; a call ticks its loop from one place, this one.
-        unsafe { (*self.uws_loop.as_ptr()).tick_with_timeout(duration, uws::NOW_NS_UNKNOWN) };
+        self.uws_loop()
+            .tick_with_timeout(duration, uws::NOW_NS_UNKNOWN);
 
         if let Some(ts) = timeout {
             #[cfg(windows)]

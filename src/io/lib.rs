@@ -294,7 +294,7 @@ pub fn uws_to_native(uws: *mut bun_uws_sys::Loop) -> *mut Loop {
     // `uv_loop` is initialised in C before any Rust caller can observe the
     // handle and is never mutated.
     {
-        unsafe { (*uws).uv_loop }
+        unsafe { (*uws).uv_loop() }
     }
 }
 
@@ -2237,24 +2237,12 @@ pub mod waker {
         }
 
         pub fn wait(&self) {
-            // Do NOT route through `WindowsLoop::wait(&mut self)`: that would
-            // materialize a `&mut WindowsLoop` over the process-global
-            // singleton for the entire duration of `us_loop_run`/`uv_run`,
-            // and a concurrent `wake()` from a worker thread (BundleThread,
-            // HTTPThread) would alias it — two live `&mut T` to one
-            // allocation is UB under Stacked/Tree Borrows. Call the C entry
-            // point with the raw pointer directly so no Rust reference is
-            // ever formed.
-            // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton,
-            // non-null after `init()`.
-            unsafe { bun_uws_sys::loop_::us_loop_run(self.loop_ref().as_const_ptr().cast_mut()) };
+            self.loop_ref().run();
         }
 
         pub fn wake(&self) {
-            // See `wait()` — this is the cross-thread wake path; forming a
-            // `&mut WindowsLoop` here would alias the event-loop thread's
-            // borrow held across `us_loop_run`. Pass the raw pointer to the
-            // thread-safe C wake (`uv_async_send`) instead.
+            // The cross-thread wake path: `WindowsLoop` is `!Sync`, so pass the raw
+            // pointer to the thread-safe C wake (`uv_async_send`).
             // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton;
             // `us_wakeup_loop` → `uv_async_send` is documented thread-safe.
             unsafe {
@@ -2272,7 +2260,7 @@ pub mod waker {
         pub fn uv_loop(&self) -> *mut bun_sys::windows::libuv::Loop {
             // `BackRef` deref is safe (process-lifetime singleton); `uv_loop`
             // is a `Copy` field set once by C `us_create_loop`.
-            self.loop_ref().uv_loop
+            self.loop_ref().uv_loop()
         }
     }
 }

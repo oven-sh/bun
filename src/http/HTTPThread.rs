@@ -1351,7 +1351,7 @@ mod _event_loop_draft {
             let uws_loop = self.uws_loop_mut();
             #[cfg(unix)]
             {
-                uws_loop.num_polls = uws_loop.num_polls.max(2);
+                uws_loop.num_polls.set(uws_loop.num_polls.get().max(2));
             }
             #[cfg(windows)]
             {

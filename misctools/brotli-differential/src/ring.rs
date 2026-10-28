@@ -275,15 +275,18 @@ pub fn run_tail(seed0: u64, iters: u64, qualities: u64, corpus: &r#gen::Corpus) 
         let seed = seed0.wrapping_add(it);
         let mut rng = Rng(seed);
         let q = *rng.pick(&qs);
-        let lgwin = rng.range(10, 16);
+        // With a match that depends on that byte alone, see below.
+        let aimed = rng.chance(1, 2);
+        let lgwin = if aimed && rng.chance(3, 4) { 16 } else { rng.range(10, 16) };
         let lgblock = if q >= 4 && rng.chance(1, 4) { rng.range(16, 17) } else { 0 };
         let effective = if q < 4 { 14 } else if lgblock == 0 { 16 } else { lgblock };
         let size = 2usize << lgwin.max(effective);
         let tail = 1usize << effective;
-        let first = match rng.below(4) {
+        let first = match rng.below(5) {
             0 => rng.range(1, 40),
             1 => rng.range(1, 3000),
             2 => tail - rng.range(1, 40),
+            3 => tail,
             _ => rng.range(1, tail - 1),
         };
         // How far into the second lap the block ends.
@@ -292,6 +295,7 @@ pub fn run_tail(seed0: u64, iters: u64, qualities: u64, corpus: &r#gen::Corpus) 
             1 => rng.range(0, 3),
             2 | 3 => near(&mut rng, first),
             4 => rng.below(first + 1),
+            5 | 6 if aimed => rng.below(24),
             _ => rng.below(tail / 2),
         }
         .min(tail - 2);
@@ -328,6 +332,26 @@ pub fn run_tail(seed0: u64, iters: u64, qualities: u64, corpus: &r#gen::Corpus) 
                 }
                 i += 1 + rng.below(2 * noise);
             }
+        }
+        // A match from far away runs to the end of the block. The one that starts a byte later is so much nearer that it is
+        // the better one, but it is only looked at if what followed it is the byte after the end of the input.
+        if aimed {
+            let n = rng.range(9, 20);
+            let piece: Vec<u8> = (0..n + 1).map(|_| rng.next() as u8).collect();
+            let last = size + over - n - 1;
+            let far = last - ((1 << lgwin) - 16 - rng.below(1 << (lgwin - 2)));
+            let near = last - rng.range(1, 7) - n;
+            data[far..far + n + 1].copy_from_slice(&piece);
+            data[near - 4..last].fill_with(|| rng.next() as u8);
+            data[near..near + n].copy_from_slice(&piece[1..]);
+            data[last..last + n + 1].copy_from_slice(&piece);
+            // It is in the tail if the match starts before the end of the ring buffer.
+            let after = if over >= n || over >= first || first == tail { data[over] } else if over == 0 { 241 } else { 0 };
+            data[near + n] = match rng.below(4) {
+                0 | 1 => after,
+                2 => after ^ 1,
+                _ => rng.next() as u8,
+            };
         }
         let mut params = vec![(1, q), (2, lgwin as u32)];
         if lgblock != 0 {

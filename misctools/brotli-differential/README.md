@@ -33,7 +33,7 @@ quality `q`: `0xFFF` for all of them.
 | `enc-fuzz <seed> <iterations> <max length> <mask of qualities>` | random data, parameters, dictionaries and schedules |
 | `enc-ring <seed> <iterations> <max length> <mask>` | lengths and pieces that end near the sizes of the ring buffer. Qualities 2 and up, which have one |
 | `enc-hash <seed> <iterations> <max length> <mask>` | more than 65536 positions in one bucket of a hasher. Qualities 2 and up |
-| `enc-tail <seed> <iterations> <mask>` | blocks that straddle the end of the ring buffer after a short first write: the byte after the end of the input is in the tail. Qualities 2 and up |
+| `enc-tail <seed> <iterations> <mask>` | blocks that straddle the end of the ring buffer after a short first write: the byte after the end of the input is in the tail. In half of them a near match that beats a far one is only looked at if that byte followed it. Qualities 2 and up |
 | `enc-marks <seed> <iterations> <mask> <position>...` | lengths, ends of pieces and flushes near the given positions, for thresholds inside the encoder |
 | `enc-words <seed> <iterations> <max length> <mask>` | words of the static dictionary after each of the 121 transforms |
 | `enc-every-word <mask> <all>` | all 13,504 words of the static dictionary, as they are, with the first letter in upper case and all in upper case, each an input of its own. If `all` is not 0: after each of the 121 transforms |
@@ -53,7 +53,7 @@ quality `q`: `0xFFF` for all of them.
 | `enc-flint <mask>` | the start of a stream with an offset: every combination of three operations with little input and little room for output. None may be refused, and the stream has to decode |
 | `enc-states <seed> <iterations> <mask>` | calls in any order, with any amount of input and room, whether or not the call before was completed or refused |
 | `enc-select <seed> <length>` | every quality with every window size and size hints on both sides of 1 MiB: all that decides which hasher is used |
-| `enc-big <seed> <bytes> <param>=<value>...` | one long stream, through both decoders too. The position wraps at 3 GiB and then every 2 GiB. Around every other GiB (the odd ones for an odd seed) each piece of the input repeats what came one of two distances before it, but for one byte. After the wrap the hasher has forgotten that, so the copies depend on the last distances: the same distance as for the piece before is the newest of them, the other one the second |
+| `enc-big <seed> <bytes> <param>=<value>...` | one long stream, through both decoders too. The position wraps at 3 GiB and then every 2 GiB. Around every other GiB (the odd ones for an odd seed) each piece of the input repeats what came one of two distances before it, but for one byte. After the wrap the hasher has forgotten that, so the copies depend on the last distances: the same distance as for the piece before is the newest of them, the other one the second. Around the other GiBs, with a window of 16 to 20 bits, some pieces end with a flush and depend on the byte after the end of the input as in `enc-tail`: the ring buffer's counter wraps at 2 GiB, and qualities 2 to 4 see whether it still knows that this is not the first lap. So an odd seed has both |
 | `enc-lap <seed> <bytes> <param>=<value>...` | random data with a period of 2 GiB, for a window of more than 24 bits (`2=25 6=1`). The C encoder writes a stream that decodes to something else: its rolling hasher finds the current position in its table, left there by the lap before, and takes it for a match at distance 0. Only Rust's stream has to be right |
 | `enc-files <mask> <lgwin>`, `enc-one <file> <param>=<value>...` | files |
 | `api <seed> <iterations>` | values out of range, calls at the wrong time, metadata and dictionaries of every size, dictionaries of 2 GiB in all (Rust only: the reference does not check the sum), more than 1 GiB and more than 2 GiB in one call: always the same cases, which take 3.5 GB of memory. The seed and the iterations are for `SpareCapacity` |
@@ -73,7 +73,7 @@ after it. Right after the first lap of the ring buffer, and after a first write 
 that the reference never wrote, so what it puts out depends on what `malloc` returned. The harness gives the reference zeroed
 memory, which is what the Rust encoder behaves like, except for measurements and in `BrotliEncoderCompress`, which takes no
 allocator. `C_FILL=165` fills new memory with that byte instead:
-`C_FILL=165 harness enc-tail 5 1 28` shows the difference.
+`C_FILL=165 harness enc-tail 18 1 28` shows the difference.
 
 ## Speed
 
@@ -105,7 +105,8 @@ target/x86_64-unknown-linux-gnu/release/fuzz_enc -fork=8 -ignore_crashes=1 -max_
 
 Break `src/brotli` on purpose in a copy and see which subcommand notices. What was learned that way: long runs and short
 periods do not fill a bucket of a hasher (`enc-hash` does); a hasher is only prepared a second time after 3 GiB (`enc-big`);
-what the tail of the ring buffer holds after the first lap matters, but only `enc-tail` sees it; lengths exactly at the edge
+what the tail of the ring buffer holds after the first lap matters, but only `enc-tail` sees it, and which byte it is only
+where a match depends on nothing else; lengths exactly at the edge
 of a code's range need `enc-lengths`; most of the search in the static dictionary needs `enc-words`; a copy from a compound
 dictionary is only taken up again in the next block in `enc-dict`; the queue of pairs of histograms only fills up with more
 than 8000 blocks (`enc-blocks`); that a chain of the hashers of small windows ends at a gap of 65536 positions or more is

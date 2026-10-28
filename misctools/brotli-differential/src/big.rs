@@ -57,7 +57,14 @@ pub fn run(seed: u64, total: u64, params: Vec<(i32, u32)>, corpus: &r#gen::Corpu
     let far = 250_000.min(3usize << lgwin >> 2);
     let distances = [far, far - far / 5 - rng.below(far / 5)];
     let mut turn = 0;
-    // At least the last `far` bytes of the input.
+    // Around the other ones some pieces end with a flush and depend on the byte after the end of the input, see
+    // `ring::run_tail`. After the first lap of the ring buffer that is what was written a lap before, and whether it is the
+    // first lap is a bit in a counter that wraps around at 2 GiB.
+    let lgblock = params.iter().rev().find(|&&(k, _)| k == 3).map_or(16, |&(_, v)| v.clamp(16, 24));
+    let lap = 2usize << lgwin.max(lgblock);
+    let aim = (16..=20).contains(&lgwin);
+    let keep = if aim { lap + 100 } else { far };
+    // At least the last `keep` bytes of the input.
     let mut recent: Vec<u8> = Vec::new();
     let case = EncCase { data: Vec::new(), params: params.clone(), dicts: Vec::new(), schedule: 0, misuse: false };
     let mut p = Pair::new(&case).unwrap();
@@ -92,6 +99,7 @@ pub fn run(seed: u64, total: u64, params: Vec<(i32, u32)>, corpus: &r#gen::Corpu
         let max = if close { rng.range(1, 5000) } else { (to_mark - 299_999) as usize };
         let n = (block.len() - off).min(max).min(left as usize);
         let changed;
+        let mut flush = false;
         let chunk = if close && (((din.n + 300_000) >> 30) + seed) % 2 == 0 && recent.len() >= far {
             turn += rng.below(2);
             let distance = distances[turn % 2];
@@ -102,14 +110,25 @@ pub fn run(seed: u64, total: u64, params: Vec<(i32, u32)>, corpus: &r#gen::Corpu
             piece[flip] ^= 1;
             changed = piece;
             &changed[..]
+        } else if close && aim && recent.len() >= keep && left > 100 && rng.chance(1, 4) {
+            let n = rng.range(9, 20);
+            let last = 4 + n + rng.range(1, 7);
+            let at = recent.len() + last - rng.range(33_000, 60_000);
+            let mut piece: Vec<u8> = (0..last).map(|_| rng.next() as u8).collect();
+            piece[4..4 + n].copy_from_slice(&recent[at + 1..at + 1 + n]);
+            piece.extend_from_slice(&recent[at..at + 1 + n]);
+            piece[4 + n] = recent[recent.len() + piece.len() - lap];
+            flush = true;
+            changed = piece;
+            &changed[..]
         } else {
             &block[off..off + n]
         };
         let n = chunk.len();
-        let op = if left == n as u64 { 2 } else if rng.chance(1, if close { 50 } else { 400 }) { 1 } else { 0 };
+        let op = if left == n as u64 { 2 } else if flush || rng.chance(1, if close { 50 } else { 400 }) { 1 } else { 0 };
         din.add(chunk);
-        if recent.len() > 8 * far {
-            recent.drain(..recent.len() - far);
+        if recent.len() > 8 * keep {
+            recent.drain(..recent.len() - keep);
         }
         recent.extend_from_slice(chunk);
         let mut input = chunk;

@@ -2388,13 +2388,20 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   // hook hits addTest()'s parentAlreadyFinished path (Node cancels these).
   node.finished = true;
 
-  for (let i = ancestors.length - 1; i >= 0; i--) {
+  // Node's runHook(): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/test.js#L1263-L1279
+  afterEachHooks: for (let i = ancestors.length - 1; i >= 0; i--) {
     const ancestor = ancestors[i];
     for (const hook of ancestor.hooks.afterEach) {
       try {
         await runHook(hook, ancestor, ctx);
       } catch (err) {
-        if (!acceptedXfail) failure ??= err;
+        if (!acceptedXfail) {
+          failure ??= err;
+          // Node's fail() runs before the after hooks, so they see this failure.
+          node.passed = false;
+          node.error = failure;
+        }
+        break afterEachHooks;
       }
     }
   }
@@ -2404,6 +2411,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
       await runHook(hook, node, ctx);
     } catch (err) {
       if (!acceptedXfail) failure ??= err;
+      break;
     }
   }
 
@@ -2490,6 +2498,7 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown,
         await runHook(hook, suite, suite.getSuiteCtx());
       } catch (err) {
         recordSuiteFailure(suite, err);
+        break;
       }
     }
     suite.finished = true;

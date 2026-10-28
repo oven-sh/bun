@@ -323,6 +323,43 @@ describe("node:test", () => {
       stderr: expect.stringContaining("0 fail"),
     });
   });
+
+  // Like the three tests at the top, the tests below spawn in parallel and get
+  // the same headroom for a debug+ASAN `bun test` child.
+  test.concurrent(
+    "should stop the after and afterEach hooks of a test at the first one that fails",
+    async () => {
+      const { exitCode, stdout, stderr } = await runTests(["43-failing-hook-stops-later-hooks.js"]);
+      // The lines that the hooks print under `node --test` (v26.3.0), in the same order.
+      expect(stdout.split("\n").filter(line => line.startsWith("ran: "))).toEqual([
+        "ran: after 1",
+        "ran: inner afterEach 1",
+        "ran: after, passed=false",
+        "ran: suite after 1",
+        "ran: after before todo",
+        "ran: subtest after before todo",
+        "ran: afterEach before skip",
+      ]);
+      expect(errorsAndVerdicts(stderr)).toEqual([
+        "error: after 1 failed",
+        "(fail) an after hook of a test fails",
+        "error: inner afterEach 1 failed",
+        "(fail) an afterEach hook fails > in a suite below > for a test with an after hook",
+        "error: 1 subtest failed",
+        "error: suite after 1 failed",
+        "(fail) an after hook of an inline suite fails",
+        "error: after before todo failed",
+        "(fail) an after hook of a test fails, and the next one calls t.todo()",
+        "error: 1 subtest failed",
+        "error: subtest after before todo failed",
+        "(fail) an after hook of a subtest fails, and the next one calls t.todo()",
+        "error: afterEach before skip failed",
+        "(fail) an afterEach hook fails, and the next one calls t.skip() > fails",
+      ]);
+      expect(exitCode).toBe(1);
+    },
+    30_000,
+  );
 });
 
 async function runTests(filenames: string[], env: Record<string, string> = {}, args: string[] = []) {
@@ -342,6 +379,14 @@ async function runTests(filenames: string[], env: Record<string, string> = {}, a
     new Response(stderrStream).text(),
   ]);
   return { exitCode, stdout, stderr };
+}
+
+// The `error: ...` lines and the per-test verdict lines of a `bun test` report, in order.
+function errorsAndVerdicts(stderr: string) {
+  return stderr
+    .split("\n")
+    .filter(line => /^(error: |\((pass|fail|skip|todo)\) )/.test(line))
+    .map(line => line.replace(/ \[[\d.]+ms\]$/, ""));
 }
 
 describe("node:test mock", () => {

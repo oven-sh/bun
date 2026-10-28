@@ -11,8 +11,8 @@
 const tickInitHooks: Array<(asyncId: number, type: string, triggerAsyncId: number, resource: object) => void> = [];
 const allocateAsyncHooksId = $bindgen("Timer.bind.ts", "newAsyncHooksId");
 let hookDispatchDepth = 0;
-let pendingTickInitHooks;
-let deferredHookMutations;
+let pendingTickInitHooks: typeof tickInitHooks | undefined;
+let deferredHookMutations: Array<() => void> | undefined;
 
 function mutableTickInitHooks() {
   if (hookDispatchDepth === 0) return tickInitHooks;
@@ -23,7 +23,7 @@ function mutableTickInitHooks() {
   return pendingTickInitHooks;
 }
 
-function removeFromArray(array, value) {
+function removeFromArray(array: typeof tickInitHooks, value: (typeof tickInitHooks)[number]) {
   for (var i = 0, n = array.length; i < n; i++) {
     if (array[i] !== value) continue;
     for (var j = i + 1; j < n; j++) array[j - 1] = array[j];
@@ -34,10 +34,10 @@ function removeFromArray(array, value) {
 
 export default {
   tickInitHooks,
-  addInitHook(hook) {
+  addInitHook(hook: (typeof tickInitHooks)[number]) {
     $arrayPush(mutableTickInitHooks(), hook);
   },
-  removeInitHook(hook) {
+  removeInitHook(hook: (typeof tickInitHooks)[number]) {
     removeFromArray(mutableTickInitHooks(), hook);
   },
   beginHookDispatch() {
@@ -61,7 +61,7 @@ export default {
   hookDispatchActive() {
     return hookDispatchDepth !== 0;
   },
-  deferHookMutation(callback) {
+  deferHookMutation(callback: () => void) {
     if (hookDispatchDepth === 0) {
       callback();
     } else if (deferredHookMutations === undefined) {

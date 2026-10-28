@@ -1,6 +1,8 @@
 import assert from "assert";
 import { AsyncLocalStorage, AsyncResource } from "async_hooks";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
+import { unsupported as aotUnsupported } from "../../../aot/supported";
 
 test("node async_hooks.AsyncLocalStorage enable disable", async done => {
   const asyncLocalStorage = new AsyncLocalStorage<Map<string, any>>();
@@ -503,4 +505,68 @@ test("timer hooks survive a replaced global Promise", async () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "1", stderr: "", exitCode: 0 });
+});
+
+test.skipIf(!!aotUnsupported)("compiled timer hooks stage mutations across TickObject dispatch", async () => {
+  using dir = tempDir("compiled-timer-hooks", {
+    "main.js": `
+      const fs = require("node:fs");
+      const { createHook } = require("node:async_hooks");
+      const events = [];
+      let creating;
+      let laterId;
+      const second = createHook({
+        init(id, type) {
+          if (type === "Timeout") {
+            events.push("second:" + creating);
+            if (creating === "later") laterId = id;
+          }
+        },
+        destroy(id) {
+          if (id === laterId) events.push("second:destroy");
+        },
+      });
+      let first;
+      first = createHook({
+        init(_id, type) {
+          if (type === "TickObject") {
+            events.push("first:" + creating);
+            second.enable();
+            first.disable();
+            creating = "nested";
+            setTimeout(() => {}, 1);
+            creating = "tick";
+          } else if (type === "Timeout") events.push("first:" + creating);
+        },
+      }).enable();
+      creating = "tick";
+      process.nextTick(() => {});
+      creating = "later";
+      const timer = setTimeout(() => events.push("unexpected callback"), 1);
+      clearTimeout(timer);
+      creating = undefined;
+      setImmediate(() => setImmediate(() => fs.writeSync(1, JSON.stringify(events))));
+    `,
+  });
+  const executable = join(String(dir), process.platform === "win32" ? "app.exe" : "app");
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", "--aot", "main.js", "--outfile", executable],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [buildOut, buildError, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+  expect({ buildOut: buildExit ? buildOut : "", buildError: buildExit ? buildError : "", buildExit }).toEqual({
+    buildOut: "",
+    buildError: "",
+    buildExit: 0,
+  });
+  await using proc = Bun.spawn({ cmd: [executable], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
+    stdout: ["first:tick", "first:nested", "second:later", "second:destroy"],
+    stderr: "",
+    exitCode: 0,
+  });
 });

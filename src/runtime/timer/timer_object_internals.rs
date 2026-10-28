@@ -1012,7 +1012,7 @@ impl TimerObjectInternals {
         self.reschedule(this_value, VirtualMachine::get(), global_object);
 
         if let Some(async_hooks_id) = restarted_async_hooks_id {
-            if self.node().state() == EventLoopTimerState::ACTIVE {
+            if self.node().state.get() == EventLoopTimerState::ACTIVE {
                 emit_async_hooks_timer_init(
                     global_object,
                     this_value,

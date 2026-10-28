@@ -469,6 +469,14 @@ fn distance_alphabet(npostfix: u32, ndirect: usize, large_window: bool) -> (usiz
     (max, ((group << npostfix) | ((1 << npostfix) - 1)) + ndirect + 16 + 1)
 }
 
+/// The longest distance that there is a code for.
+fn longest_distance(npostfix: u32, ndirect: usize, large_window: bool) -> usize {
+    let code = distance_alphabet(npostfix, ndirect, large_window).1 - 1 - 16 - ndirect;
+    let nbits = 1 + (code >> (npostfix + 1));
+    let offset = ((2 + ((code >> npostfix) & 1)) << nbits) - 4;
+    ((offset + (1 << nbits) - 1) << npostfix) + (code & ((1 << npostfix) - 1)) + ndirect + 1
+}
+
 /// The symbol and the extra bits for a distance that is not taken from the last ones.
 fn distance_symbol(distance: usize, npostfix: u32, ndirect: usize) -> (usize, u32, u64) {
     if distance <= ndirect {
@@ -678,6 +686,7 @@ fn compressed_meta_block(w: &mut Bits, rng: &mut Rng, evil: &mut Evil, m: &mut M
         if evil.now(rng, "a distance that is too long") {
             let far = m.out.len() + insert + m.dictionary.len() + rng.range(1, 200);
             let far = if (4..=24).contains(&copy) { far + (121 << size_bits(copy)) } else { far };
+            let far = if rng.chance(1, 3) { longest_distance(npostfix, ndirect, large_window) } else { far };
             choice = Some((How::Explicit(far), far, None, m.idx));
         }
         let (ins_code, ins_extra) = range_code(&INSERT_BASE, insert);

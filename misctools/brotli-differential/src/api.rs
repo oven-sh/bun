@@ -3,7 +3,7 @@ use crate::enc::{EncCase, Pair, run_op};
 use crate::ffi::CDecoder;
 use crate::r#gen;
 use crate::rng::Rng;
-use bun_brotli::{Decoder, DecoderParameter, Encoder, EncoderOperation, EncoderParameter, PreparedDictionary, SpareCapacity};
+use bun_brotli::{Decoder, DecoderParameter, Encoder, EncoderMode, EncoderOperation, EncoderParameter, PreparedDictionary, SpareCapacity};
 
 const VALUES: &[u32] = &[
     0, 1, 2, 3, 4, 5, 9, 10, 11, 12, 13, 15, 16, 17, 18, 23, 24, 25, 26, 29, 30, 31, 32, 33, 63, 64, 120, 121, 127, 128, 255, 256, 1 << 16, 1 << 20, 1 << 24,
@@ -384,14 +384,19 @@ fn decoder(text: &[u8]) -> Result<usize, String> {
     if cr != 1 || rr != 1 || a[..made] != data[..] || b[..made_by_rust] != data[..] {
         return Err(format!("decoder: after 17 dictionaries: result {cr}/{rr}, error {} / {:?}", c.error_code(), r.error_code()));
     }
-    // What `node:zlib` takes for a valid flush value.
-    for raw in 0..300u32 {
-        if EncoderOperation::from_raw(raw).map(|op| op as u32) != (raw < 4).then_some(raw) {
-            return Err(format!("EncoderOperation::from_raw({raw})"));
+    // What `node:zlib` takes for a valid flush value or parameter. The numbers are those of the reference.
+    for raw in (0..300).chain([u32::MAX]) {
+        let numbers = [
+            ("EncoderOperation", EncoderOperation::from_raw(raw).map(|v| v as u32), 4),
+            ("EncoderMode", EncoderMode::from_raw(raw).map(|v| v as u32), 3),
+            ("EncoderParameter", EncoderParameter::from_raw(raw).map(|v| v as u32), 10),
+            ("DecoderParameter", DecoderParameter::from_raw(raw).map(|v| v as u32), 2),
+        ];
+        for (name, number, count) in numbers {
+            if number != (raw < count).then_some(raw) {
+                return Err(format!("{name}::from_raw({raw})"));
+            }
         }
-    }
-    if EncoderOperation::from_raw(u32::MAX).is_some() {
-        return Err("EncoderOperation::from_raw(u32::MAX)".into());
     }
     Ok(n)
 }

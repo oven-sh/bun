@@ -1,7 +1,7 @@
-use super::FormatterTestExt;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_jsc::console_object::Formatter;
 use bun_jsc::{JSValue, JsResult};
+use super::FormatterTestExt;
+use bun_jsc::console_object::Formatter;
 
 use super::DiffFormatter;
 use super::Expect;

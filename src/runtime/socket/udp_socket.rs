@@ -12,8 +12,8 @@ use bun_jsc::bindgen::{
 };
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    JSArray, JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer, StringJsc,
-    SysErrorJsc, SystemError,
+    JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer, StringJsc, SysErrorJsc,
+    SystemError,
 };
 use bun_ptr::BackRef;
 
@@ -28,10 +28,8 @@ use libc::sockaddr_storage;
 use libc::{IF_NAMESIZE, if_indextoname, if_nametoindex};
 
 use crate::api::SocketAddress;
-use crate::generated_bindgen::socket_body::loose_string;
 use crate::generated_bindgen::udp_socket::{
-    UDPAddress, UDPConnectHostname, UDPPayload, UDPPort, UDPSocketOptions, js_UDPSocket as js,
-    loose_number,
+    UDPConnectHostname, UDPSocketOptions, js_UDPSocket as js, loose_string,
 };
 use crate::socket::socket_address::inet::{self, INET6_ADDRSTRLEN, sockaddr_in, sockaddr_in6};
 
@@ -843,8 +841,8 @@ impl UDPSocket {
     fn set_membership(
         &self,
         global_this: &JSGlobalObject,
-        multicast_address: UDPAddress<'_>,
-        interface_address: UDPAddress<'_>,
+        multicast_address: JSValue,
+        interface_address: JSValue,
         drop: bool,
     ) -> JsResult<bool> {
         if self.closed.get() {
@@ -863,7 +861,9 @@ impl UDPSocket {
         }
 
         let mut interface: sockaddr_storage = bun_core::ffi::zeroed();
-        let iface = if self.parse_addr(global_this, 0, interface_address, &mut interface)? {
+        let iface = if !interface_address.is_undefined()
+            && self.parse_addr(global_this, 0, interface_address, &mut interface)?
+        {
             if addr.ss_family != interface.ss_family {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "Family mismatch between address and interface"
@@ -891,27 +891,37 @@ impl UDPSocket {
     pub(crate) fn add_membership(
         &self,
         cx: &mut JsScope<'_>,
-        multicast_address: UDPAddress<'_>,
-        interface_address: UDPAddress<'_>,
+        multicast_address: JsLocal<'_>,
+        interface_address: JsLocal<'_>,
     ) -> JsResult<bool> {
-        self.set_membership(cx.global(), multicast_address, interface_address, false)
+        self.set_membership(
+            cx.global(),
+            multicast_address.to_js(),
+            interface_address.to_js(),
+            false,
+        )
     }
 
     pub(crate) fn drop_membership(
         &self,
         cx: &mut JsScope<'_>,
-        multicast_address: UDPAddress<'_>,
-        interface_address: UDPAddress<'_>,
+        multicast_address: JsLocal<'_>,
+        interface_address: JsLocal<'_>,
     ) -> JsResult<bool> {
-        self.set_membership(cx.global(), multicast_address, interface_address, true)
+        self.set_membership(
+            cx.global(),
+            multicast_address.to_js(),
+            interface_address.to_js(),
+            true,
+        )
     }
 
     fn set_source_specific_membership(
         &self,
         global_this: &JSGlobalObject,
-        source_address: UDPAddress<'_>,
-        group_address: UDPAddress<'_>,
-        interface_address: UDPAddress<'_>,
+        source_address: JSValue,
+        group_address: JSValue,
+        interface_address: JSValue,
         drop: bool,
     ) -> JsResult<bool> {
         if self.closed.get() {
@@ -950,7 +960,9 @@ impl UDPSocket {
         }
 
         let mut interface: sockaddr_storage = bun_core::ffi::zeroed();
-        let iface = if self.parse_addr(global_this, 0, interface_address, &mut interface)? {
+        let iface = if !interface_address.is_undefined()
+            && self.parse_addr(global_this, 0, interface_address, &mut interface)?
+        {
             if source_addr.ss_family != interface.ss_family {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "Family mismatch among source, group and interface addresses"
@@ -983,15 +995,15 @@ impl UDPSocket {
     pub(crate) fn add_source_specific_membership(
         &self,
         cx: &mut JsScope<'_>,
-        source_address: UDPAddress<'_>,
-        group_address: UDPAddress<'_>,
-        interface_address: UDPAddress<'_>,
+        source_address: JsLocal<'_>,
+        group_address: JsLocal<'_>,
+        interface_address: JsLocal<'_>,
     ) -> JsResult<bool> {
         self.set_source_specific_membership(
             cx.global(),
-            source_address,
-            group_address,
-            interface_address,
+            source_address.to_js(),
+            group_address.to_js(),
+            interface_address.to_js(),
             false,
         )
     }
@@ -999,15 +1011,15 @@ impl UDPSocket {
     pub(crate) fn drop_source_specific_membership(
         &self,
         cx: &mut JsScope<'_>,
-        source_address: UDPAddress<'_>,
-        group_address: UDPAddress<'_>,
-        interface_address: UDPAddress<'_>,
+        source_address: JsLocal<'_>,
+        group_address: JsLocal<'_>,
+        interface_address: JsLocal<'_>,
     ) -> JsResult<bool> {
         self.set_source_specific_membership(
             cx.global(),
-            source_address,
-            group_address,
-            interface_address,
+            source_address.to_js(),
+            group_address.to_js(),
+            interface_address.to_js(),
             true,
         )
     }
@@ -1015,7 +1027,7 @@ impl UDPSocket {
     pub(crate) fn set_multicast_interface(
         &self,
         cx: &mut JsScope<'_>,
-        interface_address: UDPAddress<'_>,
+        interface_address: JsLocal<'_>,
     ) -> JsResult<bool> {
         let global_this = cx.global();
         if self.closed.get() {
@@ -1031,7 +1043,7 @@ impl UDPSocket {
         // address-family-specific fields `parse_addr` populated).
         let mut addr: sockaddr_storage = bun_core::ffi::zeroed();
 
-        if !self.parse_addr(global_this, 0, interface_address, &mut addr)? {
+        if !self.parse_addr(global_this, 0, interface_address.to_js(), &mut addr)? {
             return Ok(false);
         }
 
@@ -1085,11 +1097,7 @@ impl UDPSocket {
         Ok(ttl)
     }
 
-    pub(crate) fn send_many(
-        &self,
-        cx: &mut JsScope<'_>,
-        packets: Option<JsLocal<'_, JSArray>>,
-    ) -> JsResult<i32> {
+    pub(crate) fn send_many(&self, cx: &mut JsScope<'_>, packets: JsLocal<'_>) -> JsResult<i32> {
         // Iterating the input array can run arbitrary user JS: `iter.next()`'s
         // slow path hits `JSObject.getIndex`, and `parse_port`/`parse_addr`
         // coerce the port (ToNumber) and address (`toBunString`). That JS can drop
@@ -1104,28 +1112,27 @@ impl UDPSocket {
         // user JS; phase 2 borrows byte slices only once no more user JS
         // sits between capture and `socket.send`.
         MarkedArgumentBuffer::new(|payload_roots| {
-            self.send_many_impl(cx.global(), packets, payload_roots)
+            self.send_many_impl(cx.global(), packets.to_js(), payload_roots)
         })
     }
 
     fn send_many_impl(
         &self,
         global_this: &JSGlobalObject,
-        packets: Option<JsLocal<'_, JSArray>>,
+        packets: JSValue,
         payload_roots: &mut MarkedArgumentBuffer,
     ) -> JsResult<i32> {
         if self.closed.get() {
             return Err(global_this.throw(format_args!("Socket is closed")));
         }
 
-        let Some(packets) = packets else {
+        if !packets.js_type().is_array() {
             return Err(global_this.throw_invalid_argument_type(
                 "sendMany",
                 "first argument",
                 "array",
             ));
-        };
-        let packets = packets.to_js();
+        }
 
         // Cache the connection state before doing anything that can run user JS.
         // Array index getters, `port.valueOf()`, and `address.toString()` can all
@@ -1206,9 +1213,8 @@ impl UDPSocket {
                 continue;
             }
             if i % 3 == 2 {
-                let port_num = Self::parse_port(global_this, port.coerce_f64(global_this)?)?;
-                let address = UDPAddress::Text(val.to_bun_string(global_this)?);
-                if !self.parse_addr(global_this, port_num, address, &mut addrs[slice_idx])? {
+                let port_num = Self::parse_port(global_this, port)?;
+                if !self.parse_addr(global_this, port_num, val, &mut addrs[slice_idx])? {
                     return Err(
                         global_this.throw_invalid_arguments(format_args!("Invalid address"))
                     );
@@ -1270,19 +1276,20 @@ impl UDPSocket {
         Ok(res)
     }
 
-    pub(crate) fn send<'a>(
+    pub(crate) fn send(
         &self,
-        cx: &mut JsScope<'a>,
-        data: UDPPayload<'a>,
-        port: UDPPort<'a>,
-        address: UDPAddress<'a>,
+        cx: &mut JsScope<'_>,
+        data: JsLocal<'_>,
+        port: JsLocal<'_>,
+        address: JsLocal<'_>,
     ) -> JsResult<bool> {
         let global_this = cx.global();
         if self.closed.get() {
             return Err(global_this.throw(format_args!("Socket is closed")));
         }
+        let (port, address) = (port.to_js(), address.to_js());
         let dst = if self.connect_info.get().is_some() {
-            if !matches!(port, UDPPort::Missing) || !matches!(address, UDPAddress::Missing) {
+            if !port.is_undefined() || !address.is_undefined() {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "Cannot specify destination on connected socket"
                 )));
@@ -1298,16 +1305,11 @@ impl UDPSocket {
         // (`.transfer(n)`) or closes this socket. Doing this first means no
         // JSC safepoint sits between capturing `payload.ptr` and handing it
         // to `socket.send`, so a borrowed pointer cannot be freed out from
-        // under us. `data` itself stays rooted in the callframe.
+        // under us. `payload_arg` itself stays rooted in the callframe.
         let mut addr: sockaddr_storage = bun_core::ffi::zeroed();
         let addr_ptr: *const c_void = 'brk: {
             if let Some(dest) = dst {
-                let port = match dest.port {
-                    UDPPort::Missing => f64::NAN,
-                    UDPPort::Number(port) => port,
-                    UDPPort::Other(port) => loose_number(global_this, port)?,
-                };
-                let port = Self::parse_port(global_this, port)?;
+                let port = Self::parse_port(global_this, dest.port)?;
                 if !self.parse_addr(global_this, port, dest.address, &mut addr)? {
                     return Err(
                         global_this.throw_invalid_arguments(format_args!("Invalid address"))
@@ -1319,28 +1321,28 @@ impl UDPSocket {
             }
         };
 
+        let payload_arg = data.to_js();
         let payload_view;
         let mut payload_str = Utf8Bytes::EMPTY;
-        // Hoisted so the `slice()` borrow outlives the `match`; the
-        // backing store is kept alive by `data` on the JS stack.
-        let array_buffer;
-        let payload: &[u8] = match data {
-            UDPPayload::Buffer(bytes) => {
-                array_buffer = bytes.as_array_buffer(global_this);
-                array_buffer.slice()
-            }
-            UDPPayload::String(string) => {
-                // A boxed `StringObject`/`DerivedStringObject` is resolved
-                // via `toPrimitive` — safe here:
+        // Hoisted so the `slice()` borrow outlives the `'brk` block; the
+        // backing store is kept alive by `payload_arg` on the JS stack.
+        let array_buffer = payload_arg.as_array_buffer(global_this);
+        let payload: &[u8] = 'brk: {
+            if let Some(ref array_buffer) = array_buffer {
+                break 'brk array_buffer.slice();
+            } else if payload_arg.is_string() {
+                // `isString()` is `isStringLike()` and accepts boxed
+                // `StringObject`/`DerivedStringObject`; `asString()` is a raw
+                // `static_cast<JSString*>` that asserts/type-confuses on those.
+                // `toJSString` resolves them via `toPrimitive` — safe here:
                 // `parseAddr` already ran, there is only one payload so
                 // `toPrimitive` cannot invalidate an earlier captured pointer,
                 // and `this.socket orelse throw` below handles a
                 // close-during-`toPrimitive`.
-                payload_view = string.to_js_string_view(global_this)?;
+                payload_view = payload_arg.to_js_string_view(global_this)?;
                 payload_str = payload_view.to_utf8();
-                payload_str.slice()
-            }
-            UDPPayload::Other => {
+                break 'brk payload_str.slice();
+            } else {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "Expected ArrayBufferView or string as first argument"
                 )));
@@ -1364,9 +1366,10 @@ impl UDPSocket {
     }
 
     /// Destination port for `send`/`sendMany`, per Node's `validatePort`
-    /// (`allowZero: false`).
-    fn parse_port(global_this: &JSGlobalObject, number: f64) -> JsResult<u16> {
+    /// (`allowZero: false`). ToNumber on the value can run user JS.
+    fn parse_port(global_this: &JSGlobalObject, port_val: JSValue) -> JsResult<u16> {
         // Range-check as f64: ToInt32 would wrap e.g. 2^32 + 9 to 9.
+        let number = port_val.coerce_f64(global_this)?;
         if number.fract() != 0.0 || !(1.0..=65535.0).contains(&number) {
             return Err(global_this.throw_invalid_arguments(format_args!(
                 "Expected \"port\" to be an integer between 1 and 65535"
@@ -1379,15 +1382,11 @@ impl UDPSocket {
         &self,
         global_this: &JSGlobalObject,
         port: u16,
-        address_val: UDPAddress<'_>,
+        address_val: JSValue,
         storage: &mut sockaddr_storage,
     ) -> JsResult<bool> {
         let _ = self;
-        let str = match address_val {
-            UDPAddress::Missing => return Ok(false),
-            UDPAddress::Text(text) => text,
-            UDPAddress::Other(value) => loose_string(global_this, value)?,
-        };
+        let str = address_val.to_bun_string(global_this)?;
         let address_slice: Vec<u8> = str.to_owned_slice_z().into_vec_with_nul();
         let bytes_len = address_slice.len() - 1; // exclude trailing NUL
 
@@ -2173,9 +2172,9 @@ pub(crate) fn dgram_close_fd(fd: i32) -> bun_sys::Result<()> {
     }
 }
 
-struct Destination<'a> {
-    port: UDPPort<'a>,
-    address: UDPAddress<'a>,
+struct Destination {
+    port: JSValue,
+    address: JSValue,
 }
 
 pub(crate) fn get_us_error<const USE_WSA: bool>(

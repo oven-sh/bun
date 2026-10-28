@@ -615,12 +615,6 @@ impl<'a> JsLocal<'a, JSObject> {
 }
 
 impl<'a> JsLocal<'a, crate::JSBigInt> {
-    /// For a [`JSValue`] that hand-written C++ passed.
-    #[inline]
-    pub fn from_js(_: &'a JSGlobalObject, value: JSValue) -> Option<Self> {
-        value.is_big_int().then(|| JsLocal::from_raw(value))
-    }
-
     #[inline]
     pub fn as_big_int(self) -> &'a crate::JSBigInt {
         crate::JSBigInt::from_js(self.0).unwrap()
@@ -643,14 +637,6 @@ impl JsLocal<'_, StringLike> {
 
 /// Marks a [`JsLocal`] that is a number.
 pub enum Number {}
-
-impl<'a> JsLocal<'a, Number> {
-    /// For a [`JSValue`] that hand-written C++ passed.
-    #[inline]
-    pub fn from_js(_: &'a JSGlobalObject, value: JSValue) -> Option<Self> {
-        value.is_number().then(|| JsLocal::from_raw(value))
-    }
-}
 
 impl<'a> JsLocal<'a> {
     /// A string, not a `String` object.
@@ -823,11 +809,6 @@ impl<'a> JsLatin1<'a> {
 pub enum Callable {}
 
 impl<'a> JsLocal<'a, Callable> {
-    #[inline(always)]
-    pub fn as_object(self) -> JsLocal<'a, JSObject> {
-        JsLocal::from_raw(self.0)
-    }
-
     /// Runs JavaScript.
     pub fn call<T>(
         self,

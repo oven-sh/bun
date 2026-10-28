@@ -26,7 +26,7 @@ pub(crate) mod proxy_testing;
 use crate::generated_bindgen::fetch::{
     CompressInit, FetchInit, FetchInput, FetchVerbose, MaxRedirects,
 };
-use crate::generated_bindgen::fetch_session::{FlagOrNumber, UnixPath};
+use crate::generated_bindgen::fetch_session::FlagOrNumber;
 use crate::generated_bindgen::response::{BodyInit, HeadersInit, SignalInit};
 use crate::node;
 use crate::node::types::PathLikeExt as _;
@@ -74,13 +74,9 @@ pub(crate) use self::fetch_tasklet::{
 fn parse_unix(
     vm: &VirtualMachine,
     global: &JSGlobalObject,
-    value: UnixPath<'_>,
+    value: JSValue,
 ) -> JsResult<Option<Box<[u8]>>> {
-    let UnixPath::String(value) = value else {
-        return Ok(None);
-    };
-    let value = value.to_js();
-    if value.get_length(global)? == 0 {
+    if !value.is_string() || value.get_length(global)? == 0 {
         return Ok(None);
     }
     Ok(Some(absolute_unix_socket_path(
@@ -648,8 +644,10 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
         let objects_to_try = [options_object, request_init_object];
 
         for obj in objects_to_try.into_iter().flatten() {
-            if let Some(path) = parse_unix(vm, global_this, obj.unix(global_this)?)? {
-                break 'extract_unix_socket_path path;
+            if let Some(socket_path) = obj.unix(global_this)? {
+                if let Some(path) = parse_unix(vm, global_this, socket_path.to_js())? {
+                    break 'extract_unix_socket_path path;
+                }
             }
         }
         break 'extract_unix_socket_path unix_socket_path;

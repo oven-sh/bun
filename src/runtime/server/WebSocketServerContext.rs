@@ -1,9 +1,7 @@
 use core::ffi::c_void;
 
 use crate::generated_bindgen::node_http_binding::WebSocketHandlers;
-use crate::generated_bindgen::server::{
-    DeflateOption, OptionNumber, PerMessageDeflate, WebSocketOptions,
-};
+use crate::generated_bindgen::server::{DeflateOption, PerMessageDeflate, WebSocketOptions};
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 use bun_core::comptime_string_map::ComptimeStringMap;
 use bun_jsc::bindgen::{Callable, JsLocal};
@@ -271,22 +269,28 @@ pub(crate) fn on_create(
         }
     }
 
-    match object.max_payload_length(global_object)? {
-        OptionNumber::Missing => {}
-        OptionNumber::Number(value) if value.to_js().is_any_int() => {
-            server.max_payload_length = value.to_js().to_u32();
-        }
-        _ => {
-            return Err(global_object.throw_invalid_arguments(format_args!(
-                "websocket expects maxPayloadLength to be an integer"
-            )));
+    if let Some(value) = object.max_payload_length(global_object)? {
+        let value = value.to_js();
+        if !value.is_undefined_or_null() {
+            if !value.is_any_int() {
+                return Err(global_object.throw_invalid_arguments(format_args!(
+                    "websocket expects maxPayloadLength to be an integer"
+                )));
+            }
+            server.max_payload_length = value.to_u32();
         }
     }
 
-    match object.idle_timeout(global_object)? {
-        OptionNumber::Missing => {}
-        OptionNumber::Number(value) if value.to_js().is_any_int() => {
-            let idle_timeout = value.to_js().to_int64().max(0);
+    if let Some(value) = object.idle_timeout(global_object)? {
+        let value = value.to_js();
+        if !value.is_undefined_or_null() {
+            if !value.is_any_int() {
+                return Err(global_object.throw_invalid_arguments(format_args!(
+                    "websocket expects idleTimeout to be an integer"
+                )));
+            }
+
+            let idle_timeout = value.to_int64().max(0);
             if idle_timeout > 960 {
                 return Err(global_object.throw_invalid_arguments(format_args!(
                     "websocket expects idleTimeout to be 960 or less"
@@ -301,21 +305,17 @@ pub(crate) fn on_create(
 
             server.idle_timeout = idle_timeout;
         }
-        _ => {
-            return Err(global_object.throw_invalid_arguments(format_args!(
-                "websocket expects idleTimeout to be an integer"
-            )));
-        }
     }
-    match object.backpressure_limit(global_object)? {
-        OptionNumber::Missing => {}
-        OptionNumber::Number(value) if value.to_js().is_any_int() => {
-            server.backpressure_limit = value.to_js().to_u32();
-        }
-        _ => {
-            return Err(global_object.throw_invalid_arguments(format_args!(
-                "websocket expects backpressureLimit to be an integer"
-            )));
+    if let Some(value) = object.backpressure_limit(global_object)? {
+        let value = value.to_js();
+        if !value.is_undefined_or_null() {
+            if !value.is_any_int() {
+                return Err(global_object.throw_invalid_arguments(format_args!(
+                    "websocket expects backpressureLimit to be an integer"
+                )));
+            }
+
+            server.backpressure_limit = value.to_u32();
         }
     }
 

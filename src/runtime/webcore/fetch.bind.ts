@@ -1,6 +1,6 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 import { S3Options } from "./Blob.bind.ts";
-import { FetchSession, FetchTLS, FlagOrNumber, ProxyInit, UnixPath } from "./fetch/FetchSession.bind.ts";
+import { FetchSession, FetchTLS, FlagOrNumber, ProxyInit } from "./fetch/FetchSession.bind.ts";
 import { BodyInit, HeadersInit, SignalInit } from "./response.bind.ts";
 
 export default b.module({ rustPath: "crate::webcore::fetch" });
@@ -35,7 +35,7 @@ export const FetchInit = b.dictionary(
     maxRedirects: MaxRedirects,
     session: { type: FetchSession.withValue.nullable, expected: "fetch: 'session' must be a Bun.FetchSession" },
     tls: FetchTLS.otherAsNull,
-    unix: UnixPath,
+    unix: b.opaque.optional,
     protocol: b.stringLike.otherAsNull,
     timeout: FlagOrNumber,
     redirect: { type: b.stringLike.nullable, expected: "redirect must be a string" },

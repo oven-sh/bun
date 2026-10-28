@@ -11,9 +11,7 @@ use super::parse_args_utils::{
     is_option_like_value,
 };
 use super::validators;
-use crate::generated_bindgen::parse_args::{
-    ParseArgsArgument, ParseArgsFlag, ParseArgsList, ParseArgsOptions,
-};
+use crate::generated_bindgen::parse_args::ParseArgsArgument;
 
 bun_output::declare_scope!(parseArgs, hidden);
 
@@ -909,93 +907,72 @@ fn parse_args_impl(
     };
 
     // Phase 0.A: Get and validate type of input args
-    let config_args = match config {
-        Some(c) => c.args(global)?,
-        None => ParseArgsList::Missing,
+    let config_args: JSValue = match config {
+        Some(c) => c.args(global)?.to_js(),
+        None => JSValue::UNDEFINED,
     };
-    let args: ArgsSlice = match config_args {
-        ParseArgsList::List(config_args) => {
-            let config_args = config_args.to_js();
-            ArgsSlice {
-                array: config_args,
-                start: 0,
-                end: u32::try_from(config_args.get_length(global)?).expect("int cast"),
-            }
+    let args: ArgsSlice = if !config_args.is_undefined_or_null() {
+        validators::validate_array(global, config_args, "args", None)?;
+        ArgsSlice {
+            array: config_args,
+            start: 0,
+            end: u32::try_from(config_args.get_length(global)?).expect("int cast"),
         }
-        ParseArgsList::Missing => get_default_args(global)?,
-        ParseArgsList::Other(config_args) => {
-            return Err(validators::throw_err_invalid_arg_type_with_message(
-                global,
-                format_args!(
-                    "The \"args\" property must be an instance of Array, got {}",
-                    config_args.to_js().type_name(global)
-                ),
-            ));
-        }
+    } else {
+        get_default_args(global)?
     };
 
     // Phase 0.B: Parse and validate config
 
-    let config_strict = match config {
+    // Node coalesces each top-level flag with `?? default`, so an explicit `null`
+    // behaves like an absent key. Apply the default before `validate_boolean`.
+    let config_strict: JSValue = match config {
         Some(c) => c.strict(global)?,
-        None => ParseArgsFlag::Missing,
-    };
-    let config_allow_positionals = match config {
+        None => None,
+    }
+    .map(|v| v.to_js())
+    .unwrap_or(JSValue::TRUE);
+    let config_allow_positionals: JSValue = match config {
         Some(c) => c.allow_positionals(global)?,
-        None => ParseArgsFlag::Missing,
-    };
-    let config_return_tokens = match config {
+        None => None,
+    }
+    .map(|v| v.to_js())
+    .unwrap_or_else(|| JSValue::from(!config_strict.to_boolean()));
+    let config_return_tokens: JSValue = match config {
         Some(c) => c.tokens(global)?,
-        None => ParseArgsFlag::Missing,
-    };
-    let config_allow_negative = match config {
+        None => None,
+    }
+    .map(|v| v.to_js())
+    .unwrap_or(JSValue::FALSE);
+    let config_allow_negative: JSValue = match config {
         Some(c) => c.allow_negative(global)?,
-        None => ParseArgsFlag::Missing,
-    };
-    let config_options = match config {
-        Some(c) => c.options(global)?,
-        None => ParseArgsOptions::Missing,
+        None => None,
+    }
+    .map(|v| v.to_js())
+    .unwrap_or(JSValue::FALSE);
+    let config_options: JSValue = match config {
+        Some(c) => c.options(global)?.to_js(),
+        None => JSValue::UNDEFINED,
     };
 
-    // Node coalesces each top-level flag with `?? default`, so an explicit `null`
-    // behaves like an absent key.
-    let validate_boolean = |value: ParseArgsFlag<'_>, name: &str, default: bool| match value {
-        ParseArgsFlag::Missing => Ok(default),
-        ParseArgsFlag::Flag(flag) => Ok(flag),
-        ParseArgsFlag::Other(value) => Err(validators::throw_err_invalid_arg_type(
-            global,
-            name,
-            "boolean",
-            value.to_js(),
-        )),
-    };
-    let strict = validate_boolean(config_strict, "strict", true)?;
+    let strict = validators::validate_boolean(global, config_strict, "strict")?;
     let allow_positionals =
-        validate_boolean(config_allow_positionals, "allowPositionals", !strict)?;
-    let return_tokens = validate_boolean(config_return_tokens, "tokens", false)?;
-    let allow_negative = validate_boolean(config_allow_negative, "allowNegative", false)?;
+        validators::validate_boolean(global, config_allow_positionals, "allowPositionals")?;
+    let return_tokens = validators::validate_boolean(global, config_return_tokens, "tokens")?;
+    let allow_negative =
+        validators::validate_boolean(global, config_allow_negative, "allowNegative")?;
 
     // Phase 0.C: Parse the options definitions
 
-    let options_iter = match config_options {
-        ParseArgsOptions::Missing => None,
-        ParseArgsOptions::Object(config_options) => {
-            let config_options = config_options.to_js();
-            validators::validate_object(global, config_options, "options", Default::default())?;
-            Some(bun_jsc::JSPropertyIterator::init(
-                global,
-                config_options.get_object().unwrap(),
-                bun_jsc::JSPropertyIteratorOptions::new(false, true),
-            )?)
-        }
-        ParseArgsOptions::Other(config_options) => {
-            return Err(validators::throw_err_invalid_arg_type(
-                global,
-                "options",
-                "object",
-                config_options.to_js(),
-            ));
-        }
+    let options_iter = if !config_options.is_undefined_or_null() {
+        validators::validate_object(global, config_options, "options", Default::default())?;
+        Some(bun_jsc::JSPropertyIterator::init(
+            global,
+            config_options.get_object().unwrap(),
+            bun_jsc::JSPropertyIteratorOptions::new(false, true),
+        )?)
+    } else {
+        None
     };
 
     let mut option_defs: Vec<OptionDefinition> = Vec::new();

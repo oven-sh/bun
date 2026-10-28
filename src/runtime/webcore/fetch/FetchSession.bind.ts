@@ -5,10 +5,9 @@ const js = { capability: "js", throws: true } as const;
 
 /** A number is `false` when `ToInt32` of it is 0. */
 export const FlagOrNumber = b.union({ flag: b.bool, number: b.jsNumber, other: b.ignored });
-export const CheckServerIdentity = b.union({ missing: b.null, callback: b.callable, other: b.opaque });
 /** The `tls` option of `fetch` and `Bun.FetchSession`, which is read as a `TLSOptions` too. */
 export const FetchTLS = b.dictionary(
-  { rejectUnauthorized: FlagOrNumber, checkServerIdentity: CheckServerIdentity },
+  { rejectUnauthorized: FlagOrNumber, checkServerIdentity: b.opaque.optional },
   { deferred: true },
 );
 
@@ -30,7 +29,6 @@ export const ProxyInit = b.union({
   options: ProxyOptions,
   other: b.opaque,
 });
-export const UnixPath = b.union({ missing: b.null, string: b.stringLike, other: b.ignored });
 
 export const IdleTimeout = b.union({ missing: b.undefined, number: b.f64, other: b.ignored });
 export const KeepAliveOptions = b.dictionary(
@@ -46,7 +44,7 @@ export const FetchSessionInit = b.dictionary(
   {
     tls: { type: FetchTLS.nullable, expected: "FetchSession: 'tls' must be an object" },
     proxy: ProxyInit,
-    unix: UnixPath,
+    unix: b.opaque.optional,
     keepAlive: { type: FetchKeepAlive, expected: "FetchSession: 'keepAlive' must be a boolean or an object" },
   },
   { deferred: true },

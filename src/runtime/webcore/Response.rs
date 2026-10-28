@@ -159,8 +159,7 @@ impl BodyAbortListener {
 }
 
 use crate::generated_bindgen::response::{
-    BodyInit, HeadersInit, ResponseInit, ResponseInitArgument, ResponseInitOrStatus,
-    ResponseStatus, js_Response as js,
+    BodyInit, ResponseInit, ResponseInitArgument, ResponseInitOrStatus, js_Response as js,
 };
 
 #[inline]
@@ -1267,13 +1266,12 @@ impl Init {
             status_code: 200,
             ..Default::default()
         };
-        HeadersInit::from_js(global_this, parts.headers, |headers| {
-            init.set_headers(global_this, headers)
-        })?;
-        init.set_status(
-            global_this,
-            ResponseStatus::from_js(global_this, parts.status)?,
-        )?;
+        if !parts.headers.is_undefined() {
+            init.set_headers(global_this, parts.headers)?;
+        }
+        if !parts.status.is_undefined() {
+            init.set_status(global_this, parts.status)?;
+        }
         let status_text = parts.status_text;
         if !status_text.is_empty_or_undefined_or_null()
             && !(status_text.is_string() && !status_text.to_boolean())
@@ -1283,36 +1281,26 @@ impl Init {
         Ok(init)
     }
 
-    fn set_headers(
-        &mut self,
-        global_this: &JSGlobalObject,
-        headers: HeadersInit<'_>,
-    ) -> JsResult<()> {
-        match headers {
-            HeadersInit::Missing => {}
-            HeadersInit::Headers((orig, _)) => {
-                if !orig.is_empty() {
-                    self.headers = orig.clone_this(global_this)?.map(|p| {
-                        // SAFETY: `clone_this` returns a fresh +1-ref'd `FetchHeaders*`;
-                        // ownership of that ref is transferred into the `HeadersRef`.
-                        unsafe { HeadersRef::adopt(p) }
-                    });
-                }
+    fn set_headers(&mut self, global_this: &JSGlobalObject, headers: JSValue) -> JsResult<()> {
+        // `JSValue::as_::<FetchHeaders>()` requires `JsClass`; FetchHeaders is a hand-bound opaque, so use its dedicated `cast()` (wraps `WebCore__FetchHeaders__cast_`).
+        if let Some(orig) = FetchHeaders::cast(headers) {
+            // `orig` is a live `WebCore::FetchHeaders*` borrowed from JS; `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
+            let orig = bun_opaque::opaque_deref_mut(orig.as_ptr());
+            if !orig.is_empty() {
+                self.headers = orig.clone_this(global_this)?.map(|p| {
+                    // SAFETY: `clone_this` returns a fresh +1-ref'd `FetchHeaders*`;
+                    // ownership of that ref is transferred into the `HeadersRef`.
+                    unsafe { HeadersRef::adopt(p) }
+                });
             }
-            HeadersInit::Init(headers) => {
-                self.headers = HeadersRef::create_from_js(global_this, headers.to_js())?;
-            }
+        } else {
+            self.headers = HeadersRef::create_from_js(global_this, headers)?;
         }
         Ok(())
     }
 
-    fn set_status(&mut self, global_this: &JSGlobalObject, status: ResponseStatus) -> JsResult<()> {
-        let number = match status {
-            ResponseStatus::Missing => return Ok(()),
-            ResponseStatus::BigInt(status) => status,
-            ResponseStatus::Number(status) => status as i64,
-            ResponseStatus::Other(status) => i64::from(status),
-        };
+    fn set_status(&mut self, global_this: &JSGlobalObject, status_value: JSValue) -> JsResult<()> {
+        let number = status_value.coerce_to_int64(global_this)?;
         if (200 <= number && number < 600) || number == 101 {
             self.status_code = (u32::try_from(number).expect("int cast")) as u16;
         } else {
@@ -1361,8 +1349,13 @@ impl Init {
             }
         }
 
-        result.set_headers(global_this, response_init.headers(global_this)?)?;
-        result.set_status(global_this, response_init.status(global_this)?)?;
+        if let Some(headers) = response_init.headers(global_this)? {
+            result.set_headers(global_this, headers.to_js())?;
+        }
+
+        if let Some(status_value) = response_init.status(global_this)? {
+            result.set_status(global_this, status_value.to_js())?;
+        }
 
         if let Some(status_text) = response_init.status_text(global_this)? {
             result.status_text = status_text;

@@ -1,23 +1,24 @@
-use bun_jsc::bindgen::{JsScope, JsWrapper};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{JSValue, JsResult};
 
 use super::Expect;
 use super::get_signature;
 use super::throw;
-use crate::generated_bindgen::expect::SnapshotArgument;
 
 impl Expect {
     pub(crate) fn to_match_snapshot(
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        first: SnapshotArgument<'_>,
-        second: SnapshotArgument<'_>,
+        property_matchers: JsLocal<'_>,
+        hint: JsLocal<'_>,
     ) -> JsResult<()> {
         let global = cx.global();
         let this = self.post_match_guard(global);
 
         let this_value = this_value.to_js();
+        let first = property_matchers.to_js();
+        let second = hint.to_js();
 
         this.increment_expect_call_counter();
 
@@ -45,8 +46,8 @@ impl Expect {
 
         let mut hint_string = None;
         let mut property_matchers: Option<JSValue> = None;
-        if !matches!(second, SnapshotArgument::Missing) {
-            let Some(first) = first.as_object() else {
+        if !second.is_undefined() {
+            if !first.is_object() {
                 let signature =
                     get_signature("toMatchSnapshot", "<green>properties<r><d>, <r>hint", false);
                 return throw!(
@@ -55,11 +56,11 @@ impl Expect {
                     signature,
                     "\n\nMatcher error: Expected <green>properties<r> must be an object\n",
                 );
-            };
+            }
 
             property_matchers = Some(first);
 
-            if let Some(second) = second.as_string() {
+            if second.is_string() {
                 hint_string = Some(second.to_js_string_view(global)?);
             } else {
                 return throw!(
@@ -69,11 +70,11 @@ impl Expect {
                     "\n\nMatcher error: Expected second argument to be a string\n",
                 );
             }
-        } else if let Some(first) = first.as_string() {
+        } else if first.is_string() {
             hint_string = Some(first.to_js_string_view(global)?);
-        } else if let Some(first) = first.as_object() {
+        } else if first.is_object() {
             property_matchers = Some(first);
-        } else if !matches!(first, SnapshotArgument::Missing) {
+        } else if !first.is_undefined() {
             return throw!(
                 this,
                 global,

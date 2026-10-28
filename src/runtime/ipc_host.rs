@@ -6,16 +6,13 @@
 use crate::ipc::{
     self as IPC, DecodedIPCMessage, Handle, IsInternal, SendQueue, SerializeAndSendResult,
 };
-use bun_jsc::bindgen::{Callable, JsLocal, JsScope};
+use bun_jsc::bindgen::{JsLocal, JsScope};
 #[cfg(windows)]
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{JSGlobalObject, JSObject, JSValue, JsClass, JsResult};
 use bun_ptr::RefPtr;
 
-use crate::generated_bindgen::ipc_host::{MessageTarget, ReceivedMessage};
-use crate::generated_bindgen::subprocess::{
-    IpcMessage, IpcSendHandle, IpcSendOptions, IpcSendOptionsObject,
-};
+use crate::generated_bindgen::ipc_host::MessageTarget;
 use crate::socket::Listener;
 
 bun_core::define_scoped_log!(log, IPC, visible);
@@ -82,46 +79,29 @@ fn do_send_err(
     Err(global_object.throw_value(ex))
 }
 
-pub(crate) fn do_send<'a>(
+pub(crate) fn do_send(
     ipc: Option<&SendQueue>,
     global_object: &JSGlobalObject,
-    message: IpcMessage<'a>,
-    sent_handle: IpcSendHandle<'a>,
-    options: IpcSendOptions<'a>,
-    callback: Option<JsLocal<'a, Callable>>,
+    [mut message, mut handle, options_, mut callback]: [JSValue; 4],
     from: FromEnum,
     peer_pid: u32,
 ) -> JsResult<bool> {
     #[cfg(not(windows))]
     let _ = peer_pid;
 
-    let mut callback = callback.map_or(JSValue::UNDEFINED, JsLocal::to_js);
-    // Read only with a handle to send.
-    let mut options_: Option<IpcSendOptionsObject<'a>> = None;
     let mut is_internal = IsInternal::External;
-    if let IpcSendHandle::Callback(handle) = sent_handle {
-        callback = handle.to_js();
-    } else {
-        match options {
-            IpcSendOptions::Callback(options) => {
-                callback = options.to_js();
-                options_ = Some(IpcSendOptionsObject::new(options.as_object()));
-            }
-            IpcSendOptions::Missing => {}
-            IpcSendOptions::Options(options) => {
-                global_object.validate_object(
-                    "options",
-                    options.object().to_js(),
-                    Default::default(),
-                )?;
-                if options.internal(global_object)? {
-                    is_internal = IsInternal::Internal;
-                }
-                options_ = Some(options);
-            }
-            IpcSendOptions::Other(options) => {
-                global_object.validate_object("options", options.to_js(), Default::default())?;
-            }
+    if handle.is_callable() {
+        callback = handle;
+        handle = JSValue::UNDEFINED;
+    } else if options_.is_callable() {
+        callback = options_;
+    } else if !options_.is_undefined() {
+        global_object.validate_object("options", options_, Default::default())?;
+        if options_
+            .fast_get(global_object, bun_jsc::BuiltinName::internal)?
+            .is_some_and(|v| v.to_boolean())
+        {
+            is_internal = IsInternal::Internal;
         }
     }
 
@@ -145,32 +125,29 @@ pub(crate) fn do_send<'a>(
 
     let ipc_data = ipc.unwrap();
 
-    let refuse = |message: JSValue| {
-        global_object.throw_invalid_argument_type_value_one_of(
+    if message.is_undefined() {
+        return Err(global_object.throw_missing_arguments_value(&["message"]));
+    }
+    if !message.is_string()
+        && !message.is_object()
+        && !message.is_number()
+        && !message.is_boolean()
+        && !message.is_null()
+    {
+        return Err(global_object.throw_invalid_argument_type_value_one_of(
             b"message",
             b"string, object, number, or boolean",
             message,
-        )
-    };
-    let mut message = match message {
-        IpcMessage::Missing => {
-            return Err(global_object.throw_missing_arguments_value(&["message"]));
-        }
-        IpcMessage::Symbol(message) => return Err(refuse(message.to_js())),
-        IpcMessage::BigInt(message) => return Err(refuse(message.to_js())),
-        IpcMessage::Other(message) => message.to_js(),
-    };
+        ));
+    }
 
     let original_message = message;
-    let mut handle = JSValue::UNDEFINED;
-    if let IpcSendHandle::Handle(sent_handle) = sent_handle {
-        let serialized_array: JSValue = IPC::ipc_serialize(
-            global_object,
-            message,
-            sent_handle.to_js(),
-            options_.map_or(JSValue::UNDEFINED, |options_| options_.object().to_js()),
-        )?;
-        if !serialized_array.is_undefined_or_null() {
+    if !handle.is_undefined_or_null() {
+        let serialized_array: JSValue =
+            IPC::ipc_serialize(global_object, message, handle, options_)?;
+        if serialized_array.is_undefined_or_null() {
+            handle = JSValue::UNDEFINED;
+        } else {
             let serialized_handle = serialized_array.get_index(global_object, 0)?;
             let serialized_message = serialized_array.get_index(global_object, 1)?;
             handle = serialized_handle;
@@ -213,10 +190,10 @@ pub(crate) fn do_send<'a>(
             let fd = unsafe { (*socket).socket.get().fd() };
             if fd != bun_sys::Fd::INVALID {
                 log!("got tcp socket fd");
-                let keep_open = match options_ {
-                    Some(options_) => options_.keep_open(global_object)?,
-                    None => false,
-                };
+                let keep_open = !options_.is_undefined_or_null()
+                    && options_
+                        .get(global_object, "keepOpen")?
+                        .is_some_and(|v| v.to_boolean());
                 if !keep_open {
                     pause_target = handle;
                 }
@@ -320,16 +297,12 @@ pub(crate) fn do_send<'a>(
 pub(crate) fn emit_handle_ipc_message<'a>(
     cx: &mut JsScope<'a>,
     target: MessageTarget<'a>,
-    message: ReceivedMessage<'a>,
+    message: JsLocal<'a>,
     handle: JsLocal<'a, JSObject>,
 ) -> JsResult<()> {
     let global_this = cx.global();
     let handle = handle.to_js();
-    let received = message;
-    let message = match received {
-        ReceivedMessage::Object(object) => object.object().to_js(),
-        ReceivedMessage::Primitive(primitive) => primitive.to_js(),
-    };
+    let message = message.to_js();
     match target {
         MessageTarget::Subprocess(subprocess) => {
             subprocess.handle_ipc_message(&DecodedIPCMessage::Data(message), handle)?;
@@ -340,15 +313,18 @@ pub(crate) fn emit_handle_ipc_message<'a>(
             // sockets) are marked with cmd: "NODE_CLUSTER"; hand them straight to
             // the cluster's internal-message dispatcher instead of emitting a
             // process 'message' event, mirroring Node's NODE_-prefix routing.
-            if let ReceivedMessage::Object(object) = received {
-                if let Some(cmd_str) = object.cmd(global_this)? {
-                    if cmd_str.eq_ascii(b"NODE_CLUSTER") {
-                        crate::node::node_cluster_binding::handle_internal_message_child(
-                            global_this,
-                            message,
-                            handle,
-                        )?;
-                        return Ok(());
+            if message.is_object() {
+                if let Some(cmd) = message.get(global_this, "cmd")? {
+                    if cmd.is_string() {
+                        let cmd_str = cmd.to_bun_string(global_this)?;
+                        if cmd_str.eq_ascii(b"NODE_CLUSTER") {
+                            crate::node::node_cluster_binding::handle_internal_message_child(
+                                global_this,
+                                message,
+                                handle,
+                            )?;
+                            return Ok(());
+                        }
                     }
                 }
             }
@@ -367,10 +343,10 @@ pub(crate) fn emit_handle_ipc_message<'a>(
 
 pub(crate) fn send<'a>(
     cx: &mut JsScope<'a>,
-    message: IpcMessage<'a>,
-    handle: IpcSendHandle<'a>,
-    options: IpcSendOptions<'a>,
-    callback: Option<JsLocal<'a, Callable>>,
+    message: JsLocal<'a>,
+    handle: JsLocal<'a>,
+    options: JsLocal<'a>,
+    callback: JsLocal<'a>,
 ) -> JsResult<bool> {
     bun_jsc::mark_binding!();
     let global = cx.global();
@@ -393,10 +369,12 @@ pub(crate) fn send<'a>(
     do_send(
         ipc,
         global,
-        message,
-        handle,
-        options,
-        callback,
+        [
+            message.to_js(),
+            handle.to_js(),
+            options.to_js(),
+            callback.to_js(),
+        ],
         FromEnum::Process,
         peer_pid,
     )

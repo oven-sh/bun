@@ -15,9 +15,6 @@ const hasRef = { returns: b.bool, invalidThis: "undefined" } as const;
 const dispose = { capability: "js", invalidThis: "undefined", name: "" } as const;
 const toPrimitive = { returns: b.u64, throws: true, invalidThis: "undefined", name: "" } as const;
 
-/** Only a number moves the start of the timer. Anything is read back. */
-export const IdleStart = b.union({ number: b.jsNumber, other: b.opaque });
-
 export const Timeout = b.class({
   rustPath: "crate::timer::TimeoutObject",
   refCounted: true,
@@ -27,11 +24,7 @@ export const Timeout = b.class({
   internalFields: ["arguments", "callback", "idleTimeout", "repeat", "idleStart"],
   proto: {
     _destroyed: destroyed,
-    _idleStart: {
-      getter: b.opaque,
-      setter: { type: IdleStart, capability: "js" },
-      passThis: true,
-    },
+    _idleStart: { getter: b.opaque, setter: { capability: "js" }, passThis: true },
     _idleTimeout: { setter: true, internalField: "idleTimeout" },
     _onTimeout: { setter: true, internalField: "callback" },
     _repeat: { setter: true, internalField: "repeat" },

@@ -14,7 +14,7 @@
 //! in JS.
 
 use crate::crypto::boringssl_jsc::err_to_js;
-use crate::generated_bindgen::secure_context::{ParsedPkcs12, Pkcs12Source, pkcs12_text};
+use crate::generated_bindgen::secure_context::{ParsedPkcs12, pkcs12_text};
 use crate::generated_bindgen::ssl_config::TLSOptions;
 use crate::socket::uws_jsc::create_bun_socket_error_to_js;
 use crate::socket::{SSLConfig, SSLConfigFromJs};
@@ -67,11 +67,11 @@ impl SecureContext {
     /// option plumbing can consume Node's `pfx` option.
     pub(crate) fn parse_pkcs12<'a>(
         cx: &mut JsScope<'a>,
-        pfx: Pkcs12Source<'a>,
+        pfx: JsLocal<'a>,
         passphrase: Deferred<'a, Option<Utf8Bytes<'static>>>,
     ) -> JsResult<ParsedPkcs12<'a>> {
         let global = cx.global();
-        if matches!(pfx, Pkcs12Source::Missing) {
+        if pfx.to_js().is_undefined() {
             return Err(global.throw(format_args!("PFX certificate argument is mandatory")));
         }
         // The passphrase is optional; the C side treats NULL as "". Coerce it
@@ -82,6 +82,24 @@ impl SecureContext {
             v.push(0);
             v
         });
+        // The pfx arrives as a Buffer/TypedArray (binary DER) or a string;
+        // a string-conversion would mangle the DER bytes, so read the raw
+        // view when one exists.
+        let pfx_view;
+        let pfx_string;
+        let pfx_bytes: &[u8] = match pfx.to_js().as_array_buffer(global) {
+            Some(view) => {
+                pfx_view = view;
+                pfx_view.byte_slice()
+            }
+            None => {
+                pfx_string = pkcs12_text(global, pfx)?;
+                pfx_string.slice()
+            }
+        };
+        if pfx_bytes.is_empty() {
+            return Err(global.throw(format_args!("PFX certificate argument is mandatory")));
+        }
         let mut out_key: *mut core::ffi::c_char = core::ptr::null_mut();
         let mut out_cert: *mut core::ffi::c_char = core::ptr::null_mut();
         let mut out_ca: *mut core::ffi::c_char = core::ptr::null_mut();
@@ -91,7 +109,7 @@ impl SecureContext {
         let mut err_reason: *const core::ffi::c_char = core::ptr::null();
         // SAFETY: the buffers are live for the call; the out-pointers are
         // freed below with libc free per the helper's contract.
-        let mut parse = |pfx_bytes: &[u8]| unsafe {
+        let ok = unsafe {
             c::us_ssl_parse_pkcs12(
                 pfx_bytes.as_ptr().cast(),
                 pfx_bytes.len(),
@@ -106,23 +124,6 @@ impl SecureContext {
                 &raw mut ca_len,
                 &raw mut err_reason,
             )
-        };
-        // The pfx arrives as a Buffer/TypedArray (binary DER) or a string;
-        // a string-conversion would mangle the DER bytes, so read the raw
-        // view when one exists.
-        let ok = match pfx {
-            Pkcs12Source::Missing => None,
-            Pkcs12Source::Buffer(view) => view.with_bytes(&cx.heap, |pfx_bytes| {
-                (!pfx_bytes.is_empty()).then(|| parse(pfx_bytes))
-            }),
-            Pkcs12Source::Other(other) => {
-                let pfx_string = pkcs12_text(cx.global(), other)?;
-                (!pfx_string.slice().is_empty()).then(|| parse(pfx_string.slice()))
-            }
-        };
-        let global = cx.global();
-        let Some(ok) = ok else {
-            return Err(global.throw(format_args!("PFX certificate argument is mandatory")));
         };
         unsafe extern "C" {
             fn free(ptr: *mut core::ffi::c_void);

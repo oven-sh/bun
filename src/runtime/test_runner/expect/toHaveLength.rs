@@ -1,5 +1,5 @@
-use bun_jsc::JsResult;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::JsResult;
 
 use super::Expect;
 use super::get_signature;
@@ -16,6 +16,8 @@ impl Expect {
         let (this, value, not) =
             self.matcher_prelude(global, this_value.to_js(), "toHaveLength", "<green>expected<r>")?;
 
+        let expected = expected.to_js();
+
         if !value.is_object() && !value.is_string() {
             let mut fmt = super::make_formatter(global);
             return Err(global.throw(format_args!(
@@ -28,7 +30,7 @@ impl Expect {
             let mut fmt = super::make_formatter(global);
             return Err(global.throw(format_args!(
                 "Expected value must be a non-negative integer: {}",
-                expected.to_js().to_fmt(&mut fmt),
+                expected.to_fmt(&mut fmt),
             )));
         };
         if expected_length.round() != expected_length
@@ -39,7 +41,7 @@ impl Expect {
             let mut fmt = super::make_formatter(global);
             return Err(global.throw(format_args!(
                 "Expected value must be a non-negative integer: {}",
-                expected.to_js().to_fmt(&mut fmt),
+                expected.to_fmt(&mut fmt),
             )));
         }
 

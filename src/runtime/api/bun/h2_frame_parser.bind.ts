@@ -7,8 +7,6 @@ const js = { capability: "js", throws: true } as const;
 const streamId = b.f64.otherAsNull;
 const stream = { ...js, args: { streamId }, length: 1 } as const;
 export const OptionalStreamId = b.union({ missing: b.null, id: b.f64, other: b.ignored });
-/** `null` and `undefined` release the one the stream has. */
-export const StreamContext = b.union({ release: b.null, context: b.object, other: b.ignored });
 /** The elements of `list` are strings. */
 export const H2Origins = b.union({
   missing: b.null,
@@ -40,9 +38,6 @@ export const H2StreamState = b.dictionary({
   weight: b.f64,
 });
 
-/** Both forms are walked twice: the pseudo-headers go first. */
-export const RequestHeaders = b.union({ rawPairs: b.jsArray, record: b.object, other: b.ignored });
-
 /** `options` of `request()`. */
 export const H2RequestOptions = b.dictionary(
   {
@@ -71,8 +66,6 @@ export const H2NativeSocket = b.union({ tls: TLSSocket.withValue, tcp: TCPSocket
 
 export const NumberSetting = b.union({ missing: b.null, number: b.f64, other: b.ignored });
 export const FlagSetting = b.union({ missing: b.undefined, flag: b.bool, other: b.ignored });
-/** From a setting id to its value. */
-export const CustomSettingsRecord = b.union({ missing: b.undefined, record: b.object, other: b.ignored });
 export const StreamResetBurst = b.union({ missing: b.undefined, number: b.f64, other: b.ignored });
 /** From `maxOutstandingPings` on: the limits of a session, which only the constructor reads. A wrong type is ignored. */
 export const H2Settings = b.dictionary(
@@ -85,7 +78,7 @@ export const H2Settings = b.dictionary(
     maxHeaderListSize: NumberSetting,
     maxHeaderSize: NumberSetting,
     enableConnectProtocol: FlagSetting,
-    customSettings: CustomSettingsRecord,
+    customSettings: b.opaque.optional,
     remoteCustomSettings: b.jsArray.otherAsNull,
     maxOutstandingPings: b.jsNumber.otherAsNull,
     maxSessionMemory: b.jsNumber.otherAsNull,
@@ -231,7 +224,7 @@ export const H2FrameParser = b.class({
       args: {
         streamId,
         context: b.object.otherAsNull,
-        headers: RequestHeaders,
+        headers: b.opaque,
         sensitiveHeaders: b.object.otherAsNull,
         options: RequestOptionsArgument,
       },
@@ -251,7 +244,7 @@ export const H2FrameParser = b.class({
     },
     setNativeSocket: { args: { socket: H2NativeSocket }, capability: "js" },
     setNextStreamID: stream,
-    setStreamContext: { ...js, args: { streamId, context: StreamContext } },
+    setStreamContext: { ...js, args: { streamId, context: b.opaque } },
     setStreamReading: { args: { streamId, reading: b.bool.loose }, capability: "js" },
     settings: { ...js, args: { settings: H2Settings.otherAsNull }, returns: b.bool, length: 1 },
     writeStream: {

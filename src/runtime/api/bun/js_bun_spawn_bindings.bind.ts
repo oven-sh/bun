@@ -7,8 +7,6 @@ import { TerminalOptions } from "./Terminal.bind.ts";
 
 export default b.module({ rustPath: "crate::api::js_bun_spawn_bindings" });
 
-/** `null` is there: `stdin`, `stderr` and `stdout` are read only if `stdio` is `undefined`. */
-export const SpawnStdioList = b.union({ missing: b.undefined, none: b.null, list: b.jsArray });
 /** An element of `stdio`, or `stdin`, `stderr`, `stdout`. `stream` is a `ReadableStream`, or it is refused. */
 export const StdioValue = b.union(
   {
@@ -50,7 +48,7 @@ export const SpawnOptionsObject = b.dictionary(
     onDisconnect: b.callable.emptyStringAsNull,
     onExit: b.callable.emptyStringAsNull,
     env: b.object.emptyStringAsNull,
-    stdio: { type: SpawnStdioList, expected: "stdio must be an array" },
+    stdio: b.opaque.optional,
     stdin: StdioValue,
     stderr: StdioValue,
     stdout: StdioValue,

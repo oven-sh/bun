@@ -2,7 +2,7 @@ use core::ffi::{c_char, c_int, c_long, c_void};
 
 use crate::api::bun_secure_context::SecureContext;
 use crate::generated_bindgen::socket_body::{
-    ALPNProtocol, CipherInfo, EphemeralKeyInfo, OptionalBool, TextOrBytes, loose_string,
+    ALPNProtocol, CipherInfo, EphemeralKeyInfo, OptionalBool,
 };
 use bun_boringssl_sys as boringssl;
 use bun_core::{EncodedSlice, String as BunString, strings};
@@ -270,8 +270,7 @@ pub(super) mod ffi {
     }
 }
 use super::TLSSocket;
-use crate::node::types::Flavor;
-use crate::node::{Encoding, StringOrBuffer};
+use crate::node::StringOrBuffer;
 
 impl TLSSocket {
     pub(crate) fn get_servername(&self) -> Option<&[u8]> {
@@ -858,9 +857,10 @@ impl TLSSocket {
         cx: &mut JsScope<'_>,
         length: Option<JsLocal<'_, Number>>,
         label: Deferred<'_, Option<BunString>>,
-        context: TextOrBytes<'_>,
+        context: JsLocal<'_>,
     ) -> JsResult<Option<JSValue>> {
         let global = cx.global();
+        let context = context.to_js();
         if self.socket.get().is_detached() {
             return Ok(None);
         }
@@ -883,16 +883,17 @@ impl TLSSocket {
 
         // Converting `context` can run user JS (toString / Symbol.toPrimitive)
         // that closes the socket, so do it before fetching the SSL*.
-        let context = match context {
-            TextOrBytes::Missing => None,
-            context => match string_or_buffer(global, context, Encoding::Utf8)? {
+        let context = if !context.is_undefined() {
+            match StringOrBuffer::from_js(global, context)? {
                 Some(sb) => Some(sb),
                 None => {
                     return Err(global.throw(format_args!(
                         "Expected context to be a string, Buffer or TypedArray"
                     )));
                 }
-            },
+            }
+        } else {
+            None
         };
         let (context_ptr, context_len, use_context) = match &context {
             Some(sb) => (sb.slice().as_ptr(), sb.slice().len(), 1),
@@ -1035,17 +1036,13 @@ impl TLSSocket {
         Ok(Some(buffer))
     }
 
-    pub(crate) fn set_session(
-        &self,
-        cx: &mut JsScope<'_>,
-        session: TextOrBytes<'_>,
-    ) -> JsResult<()> {
+    pub(crate) fn set_session(&self, cx: &mut JsScope<'_>, session: JsLocal<'_>) -> JsResult<()> {
         let global = cx.global();
         if self.socket.get().is_detached() {
             return Ok(());
         }
 
-        if let Some(sb) = string_or_buffer(global, session, Encoding::Utf8)? {
+        if let Some(sb) = StringOrBuffer::from_js(global, session.to_js())? {
             let session_slice = sb.slice();
             let Some(ssl_ptr) = self.socket.get().ssl() else {
                 return Ok(());
@@ -1197,27 +1194,6 @@ extern "C" fn always_allow_ssl_verify_callback(
     _ctx: *mut boringssl::X509_STORE_CTX,
 ) -> c_int {
     1
-}
-
-/// A string is encoded as `encoding`. `None` for what is neither a string nor a buffer.
-pub(super) fn string_or_buffer(
-    global: &JSGlobalObject,
-    value: TextOrBytes<'_>,
-    encoding: Encoding,
-) -> JsResult<Option<StringOrBuffer<'static>>> {
-    let text = match value {
-        TextOrBytes::String(text) => loose_string(global, text)?,
-        TextOrBytes::Buffer(bytes) => {
-            return StringOrBuffer::buffer_from_js(global, bytes.to_js(), Flavor::Sync).map(Some);
-        }
-        TextOrBytes::Missing | TextOrBytes::Other => return Ok(None),
-    };
-    Ok(Some(StringOrBuffer::from_bun_string(
-        global,
-        text,
-        encoding,
-        Flavor::Sync,
-    )))
 }
 
 #[cold]

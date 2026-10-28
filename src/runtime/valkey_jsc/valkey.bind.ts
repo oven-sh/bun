@@ -233,9 +233,6 @@ const key = RedisArgument;
 /** `ToString` comes after the command has looked at the state of the client. */
 const text = b.string.loose.deferred;
 
-/** As itself: it is the key of the listeners too, and `toString` of a `String` object runs once the client has dialed. */
-export const RedisChannel = b.union({ list: b.jsArray, string: b.stringLike, other: b.ignored });
-
 const integerOption = b.u32.validateIntegerRange().nanAs(0).optional;
 export const RedisOptions = b.dictionary(
   {
@@ -250,11 +247,7 @@ export const RedisOptions = b.dictionary(
   { allowArray: true, reportedAs: "" },
 );
 
-/** What follows the key of `hset` and `hmset`: the pairs in an array, in an object, or the first of those that come one after the other. */
-export const HashFields = b.union({ list: b.jsArray, object: b.object, other: b.opaque });
-/** One of the pairs that come one after the other, once their number has been checked. */
-export const hashText = b.conversion(b.string.loose.utf8.owned);
-const hashSet = { ...command, args: { key: text, fields: HashFields, more: b.rest(b.opaque) }, length: 2 } as const;
+const hashSet = { ...command, args: { key: text, fields: b.rest(b.opaque) }, length: 2 } as const;
 
 const eventHandler = { getter: b.opaque, setter: { capability: "js" }, passThis: true } as const;
 
@@ -335,19 +328,12 @@ export const RedisClient = b.class({
         "subscribe",
         {
           ...command,
-          args: { channel: RedisChannel, listener: b.callable },
+          args: { channel: b.opaque, listener: b.callable },
           expected: { listener: "Expected listener to be a function for 'subscribe'." },
           length: 0,
         },
       ] as const,
-      [
-        "unsubscribe",
-        {
-          ...command,
-          args: { channel: RedisChannel.ifPassed, listener: b.rest(b.callable.otherAsNull) },
-          length: 0,
-        },
-      ] as const,
+      ["unsubscribe", { ...command, args: { args: b.rest(b.opaque) }, length: 0 }] as const,
     ].sort(([x], [y]) => x.localeCompare(y)),
   ),
 });

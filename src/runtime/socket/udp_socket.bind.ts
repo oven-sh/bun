@@ -19,25 +19,15 @@ export const dgramListenFd = b.fn({ args: { fd: b.i32 }, throws: true });
 export const dgramCloseFd = b.fn({ args: { fd: b.i32 }, throws: true });
 
 const js = { capability: "js", throws: true } as const;
-/** `other` is converted to a string where the address is parsed. */
-export const UDPAddress = b.union({ missing: b.undefined, text: b.string, other: b.opaque });
-/** `other` is converted to a number where the port is checked. */
-export const UDPPort = b.union({ missing: b.undefined, number: b.f64, other: b.opaque });
-export const looseNumber = b.conversion(b.f64.loose);
-/** `string` is converted after the destination. */
-export const UDPPayload = b.union({
-  buffer: b.bufferSource.allowShared,
-  string: b.stringLike,
-  other: b.ignored,
-});
+export const looseString = b.conversion(b.string.loose);
 const membership = {
   ...js,
-  args: { multicastAddress: UDPAddress, interfaceAddress: UDPAddress },
+  args: { multicastAddress: b.opaque, interfaceAddress: b.opaque },
   returns: b.bool,
 } as const;
 const sourceSpecificMembership = {
   ...js,
-  args: { sourceAddress: UDPAddress, groupAddress: UDPAddress, interfaceAddress: UDPAddress },
+  args: { sourceAddress: b.opaque, groupAddress: b.opaque, interfaceAddress: b.opaque },
   returns: b.bool,
 } as const;
 /** Returns `enabled` as it was passed. */
@@ -102,11 +92,11 @@ export const UDPSocket = b.class({
     reload: { ...js, passThis: true, args: { options: UDPSocketOptions.otherAsNull }, length: 1 },
     remoteAddress: { ...js, getter: socketAddress, cache: true },
     /** `(data)` when connected, `(data, port, address)` when not. */
-    send: { ...js, args: { data: UDPPayload, port: UDPPort, address: UDPAddress }, returns: b.bool },
+    send: { ...js, args: { data: b.opaque, port: b.opaque, address: b.opaque }, returns: b.bool },
     /** Payloads when connected, else a payload, a port and an address for each packet. */
-    sendMany: { ...js, args: { packets: b.jsArray.otherAsNull }, returns: b.i32, length: 3 },
+    sendMany: { ...js, args: { packets: b.opaque }, returns: b.i32, length: 3 },
     setBroadcast: flag,
-    setMulticastInterface: { ...js, args: { interfaceAddress: UDPAddress }, returns: b.bool },
+    setMulticastInterface: { ...js, args: { interfaceAddress: b.opaque }, returns: b.bool },
     setMulticastLoopback: flag,
     setMulticastTTL: ttl,
     setTTL: ttl,

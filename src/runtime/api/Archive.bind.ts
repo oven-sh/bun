@@ -14,8 +14,6 @@ export const ArchiveExtractOptions = b.dictionary(
   { allowArray: true },
 );
 
-/** `object` is a `Blob`, an `Archive`, or the files by their paths. The schema of `Blob` imports this one. */
-export const ArchiveData = b.union({ buffer: b.bufferSource.allowShared, object: b.object, other: b.ignored });
 /** `level` is only read with `compress`. */
 export const ArchiveOptions = b.dictionary(
   {
@@ -31,7 +29,7 @@ export const ArchiveOptions = b.dictionary(
 export const Archive = b.class({
   rustPath: "crate::api::archive::Archive",
   construct: {
-    args: { data: ArchiveData, options: ArchiveOptions.nullable },
+    args: { data: b.opaque, options: ArchiveOptions.nullable },
     expected: { options: "Archive: options must be an object" },
     capability: "js",
     throws: true,
@@ -59,7 +57,7 @@ export const Archive = b.class({
   static: {
     write: {
       ...method,
-      args: { path: b.string.allowStringObject, data: ArchiveData, options: ArchiveOptions.nullable },
+      args: { path: b.string.allowStringObject, data: b.opaque, options: ArchiveOptions.nullable },
       expected: {
         path: "Archive.write: first argument must be a string path",
         options: "Archive: options must be an object",

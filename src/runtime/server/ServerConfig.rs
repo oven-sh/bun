@@ -17,8 +17,7 @@ use super::server_body::ServerInitContext;
 use super::web_socket_server_context::WebSocketServerContext;
 use super::{AnyRoute, AnyServer};
 use crate::generated_bindgen::server::{
-    FrameworkValue, OptionNumber, ServeOptions, ServerDevelopment, ServerId, ServerRoutes,
-    ServerTLS, Stringish,
+    FrameworkValue, ServeOptions, ServerDevelopment, ServerId, Stringish,
 };
 use crate::server::jsc::{JSGlobalObject, JSPropertyIterator, JSValue, JsResult, Strong};
 use bun_core::fmt as bun_fmt;
@@ -567,16 +566,15 @@ fn validate_route_name(global: &JSGlobalObject, path: &[u8]) -> JsResult<()> {
     Ok(())
 }
 
-fn get_routes_object<'a>(
-    global: &JSGlobalObject,
-    arg: ServeOptions<'a>,
-) -> JsResult<Option<ServerRoutes<'a>>> {
+fn get_routes_object(global: &JSGlobalObject, arg: ServeOptions<'_>) -> JsResult<Option<JSValue>> {
     for routes in [ServeOptions::routes, ServeOptions::static_routes] {
-        match routes(arg, global)? {
-            ServerRoutes::Missing => {}
+        if let Some(routes) = routes(arg, global)? {
+            let routes = routes.to_js();
             // https://github.com/oven-sh/bun/issues/17568
-            ServerRoutes::List(_) => return Ok(None),
-            routes => return Ok(Some(routes)),
+            if routes.is_array() {
+                return Ok(None);
+            }
+            return Ok(Some(routes));
         }
     }
     Ok(None)
@@ -698,7 +696,7 @@ impl ServerConfig {
         }
 
         if let Some(static_) = get_routes_object(global, arg)? {
-            let ServerRoutes::Routes(static_obj) = static_ else {
+            let Some(static_obj) = static_.get_object() else {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "Bun.serve() expects 'routes' to be an object shaped like:\n\n\
                      \x20 {{\n\
@@ -714,6 +712,8 @@ impl ServerConfig {
             };
             args.had_routes_object = true;
 
+            // SAFETY: `get_object()` returned Some, so the pointer is a live JSObject.
+            let static_obj: &bun_jsc::JSObject = unsafe { &*static_obj };
             let iter = JSPropertyIterator::init(
                 global,
                 static_obj,
@@ -990,13 +990,17 @@ impl ServerConfig {
             }
         }
 
-        match arg.idle_timeout(global)? {
-            OptionNumber::Missing => {}
-            OptionNumber::Number(value) if value.to_js().is_any_int() => {
+        if let Some(value) = arg.idle_timeout(global)? {
+            let value = value.to_js();
+            if !value.is_undefined_or_null() {
+                if !value.is_any_int() {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "Bun.serve expects idleTimeout to be an integer",
+                    )));
+                }
                 args.has_idle_timeout = true;
 
-                let idle_timeout: u64 =
-                    u64::try_from(value.to_js().to_int64().max(0)).expect("int cast");
+                let idle_timeout: u64 = u64::try_from(value.to_int64().max(0)).expect("int cast");
                 if idle_timeout > 255 {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "Bun.serve expects idleTimeout to be 255 or less",
@@ -1004,11 +1008,6 @@ impl ServerConfig {
                 }
 
                 args.idle_timeout = idle_timeout as u8;
-            }
-            _ => {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "Bun.serve expects idleTimeout to be an integer",
-                )));
             }
         }
 
@@ -1186,10 +1185,12 @@ impl ServerConfig {
             )));
         }
 
-        match arg.tls(global)? {
-            ServerTLS::Missing => {}
-            ServerTLS::List(tls) => {
-                let mut value_iter = tls.to_js().array_iterator(global)?;
+        if let Some(tls) = arg.tls(global)? {
+            let tls = tls.to_js();
+            if tls.is_falsey() {
+                args.ssl_config = None;
+            } else if tls.js_type().is_array() {
+                let mut value_iter = tls.array_iterator(global)?;
                 if value_iter.len == 0 {
                     // Empty TLS array means no TLS - this is valid
                 } else {
@@ -1216,12 +1217,8 @@ impl ServerConfig {
                         }
                     }
                 }
-            }
-            ServerTLS::Config(tls) => {
-                let tls = tls.to_js();
-                if tls.is_falsey() {
-                    args.ssl_config = None;
-                } else if let Some(ssl_config) = SSLConfig::from_js(vm, global, tls, true)? {
+            } else {
+                if let Some(ssl_config) = SSLConfig::from_js(vm, global, tls, true)? {
                     args.ssl_config = Some(ssl_config);
                 }
             }

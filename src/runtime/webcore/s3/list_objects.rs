@@ -1,9 +1,8 @@
 use super::s3::xml_response;
 use crate::generated_bindgen::s3_client::ListObjectsOptions;
 use bun_core::Utf8Bytes;
-use bun_jsc::bindgen::JsLocal;
 use bun_jsc::bun_string_jsc;
-use bun_jsc::{JSGlobalObject, JSObject, JSValue, JsResult};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
 pub(crate) struct S3ListObjectsOptions {
     pub(crate) continuation_token: Option<Utf8Bytes<'static>>,
@@ -220,9 +219,9 @@ pub(crate) fn parse_s3_list_objects_result(body: &[u8]) -> Option<S3ListObjectsV
 
 pub(crate) fn get_list_objects_options_from_js(
     global_this: &JSGlobalObject,
-    list_options: Option<JsLocal<'_, JSObject>>,
+    list_options: JSValue,
 ) -> JsResult<S3ListObjectsOptions> {
-    let Some(list_options) = list_options else {
+    if !list_options.is_object() {
         return Ok(S3ListObjectsOptions {
             continuation_token: None,
             delimiter: None,
@@ -232,9 +231,9 @@ pub(crate) fn get_list_objects_options_from_js(
             prefix: None,
             start_after: None,
         });
-    };
+    }
 
-    let members = ListObjectsOptions::from_js(global_this, list_options.to_js())?;
+    let members = ListObjectsOptions::from_js(global_this, list_options)?;
     // `new String("")` is as good as `""`.
     let non_empty = |text: Option<Utf8Bytes<'static>>| text.filter(|text| !text.is_empty());
     Ok(S3ListObjectsOptions {

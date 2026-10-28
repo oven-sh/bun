@@ -13,9 +13,7 @@ use bun_lsquic_sys as lsquic;
 use super::endpoint::{alloc_exposed_array_buffer, read_u64_option};
 use super::ffi::lsquic_callback;
 use super::session::{H3_INTERNAL_ERROR, QuicSession, SessionEvent};
-use crate::generated_bindgen::quic::{
-    StreamBatch, StreamDestroyReason, StreamSource, Uint64Option,
-};
+use crate::generated_bindgen::quic::{StreamDestroyReason, Uint64Option};
 
 const QUIC_STREAM_HEADERS_KIND_HINTS: u32 = 0;
 const QUIC_STREAM_HEADERS_KIND_INITIAL: u32 = 1;
@@ -708,22 +706,20 @@ impl QuicStream {
         Ok(())
     }
 
-    pub(crate) fn attach_source<'a>(
-        &self,
-        cx: &mut JsScope<'a>,
-        source: StreamSource<'a>,
-    ) -> JsResult<()> {
+    pub(crate) fn attach_source(&self, cx: &mut JsScope<'_>, source: JsLocal<'_>) -> JsResult<()> {
+        let global = cx.global();
         if self.destroyed.get() {
             return Ok(());
         }
-        let bytes = match source {
-            StreamSource::Missing => Vec::new(),
-            StreamSource::Buffer(buf) => buf.with_bytes(&cx.heap, <[u8]>::to_vec),
-            StreamSource::Other => {
-                return Err(cx.global().throw(format_args!(
-                    "Unsupported QUIC stream body source (Blob and FileHandle sources are not implemented yet)"
-                )));
-            }
+        let source = source.to_js();
+        let bytes = if source.is_undefined_or_null() {
+            Vec::new()
+        } else if let Some(buf) = source.as_array_buffer(global) {
+            buf.byte_slice().to_vec()
+        } else {
+            return Err(global.throw(format_args!(
+                "Unsupported QUIC stream body source (Blob and FileHandle sources are not implemented yet)"
+            )));
         };
         self.outbound.with_mut(|o| {
             o.started = true;
@@ -746,33 +742,28 @@ impl QuicStream {
         });
     }
 
-    pub(crate) fn write<'a>(
-        &self,
-        cx: &mut JsScope<'a>,
-        batch: StreamBatch<'a>,
-    ) -> JsResult<Option<f64>> {
+    pub(crate) fn write(&self, cx: &mut JsScope<'_>, batch: JsLocal<'_>) -> JsResult<Option<f64>> {
+        let global = cx.global();
         if self.destroyed.get() {
             return Ok(None);
         }
+        let batch = batch.to_js();
         let mut queued: u64 = 0;
         let mut append = |bytes: &[u8]| {
             queued += bytes.len() as u64;
             self.outbound
                 .with_mut(|o| o.data.extend(bytes.iter().copied()));
         };
-        match batch {
-            StreamBatch::Chunks(batch) => {
-                let (global, batch) = (cx.global(), batch.to_js());
-                let len = batch.get_length(global)?;
-                for i in 0..len {
-                    let chunk = batch.get_index(global, i as u32)?;
-                    if let Some(buf) = chunk.as_array_buffer(global) {
-                        append(buf.byte_slice());
-                    }
+        if batch.is_array() {
+            let len = batch.get_length(global)?;
+            for i in 0..len {
+                let chunk = batch.get_index(global, i as u32)?;
+                if let Some(buf) = chunk.as_array_buffer(global) {
+                    append(buf.byte_slice());
                 }
             }
-            StreamBatch::Buffer(buf) => buf.with_bytes(&cx.heap, append),
-            StreamBatch::Other => {}
+        } else if let Some(buf) = batch.as_array_buffer(global) {
+            append(buf.byte_slice());
         }
         let pending = self.outbound.get().data.len() as u32;
         self.with_state(|s| s.write_desired_size = s.high_water_mark.saturating_sub(pending));

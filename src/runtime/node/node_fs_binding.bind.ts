@@ -40,8 +40,7 @@ const deferred = { deferred: true, reportedAs: "options" } as const;
 const boolean = (value: boolean) => ({ type: b.bool.default(value), expected: ["boolean"] });
 const optionalBoolean = { type: b.bool.optional, expected: ["boolean"] };
 
-export const EncodingName = b.union({ string: b.stringLike, other: b.opaque });
-const encoding = EncodingName.falsyAsNull;
+const encoding = b.opaque;
 const flag = FileFlags.emptyStringAsNull;
 const mode = { type: FileMode.emptyStringAsNull, expected: ["number"] };
 const signal = {

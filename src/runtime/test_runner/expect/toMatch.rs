@@ -1,16 +1,16 @@
-use bun_jsc::JsResult;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::JsResult;
+use super::JSValueTestExt;
 
 use super::Expect;
 use super::throw;
-use crate::generated_bindgen::expect::StringOrRegExp;
 
 impl Expect {
     pub(crate) fn to_match(
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        (pattern, expected): (StringOrRegExp<'_>, JsLocal<'_>),
+        expected: JsLocal<'_>,
     ) -> JsResult<()> {
         let global = cx.global();
         let (this, value, not) =
@@ -18,10 +18,11 @@ impl Expect {
 
         let mut formatter = super::make_formatter(global);
 
-        if matches!(pattern, StringOrRegExp::Other) {
+        let expected = expected.to_js();
+        if !expected.is_string() && !expected.is_reg_exp() {
             return Err(global.throw(format_args!(
                 "Expected value must be a string or regular expression: {}",
-                expected.to_js().to_fmt(&mut formatter),
+                expected.to_fmt(&mut formatter),
             )));
         }
 
@@ -32,10 +33,13 @@ impl Expect {
             )));
         }
 
-        let mut pass: bool = match pattern {
-            StringOrRegExp::String(string) => value.string_includes(global, string.to_js())?,
-            StringOrRegExp::RegExp(reg_exp) => reg_exp.to_js().to_match(global, value)?,
-            StringOrRegExp::Other => unreachable!(),
+        let mut pass: bool = 'brk: {
+            if expected.is_string() {
+                break 'brk value.string_includes(global, expected)?;
+            } else if expected.is_reg_exp() {
+                break 'brk expected.to_match(global, value)?;
+            }
+            unreachable!();
         };
 
         if not {
@@ -46,7 +50,7 @@ impl Expect {
         }
 
         let mut formatter2 = super::make_formatter(global);
-        let expected_fmt = expected.to_js().to_fmt(&mut formatter);
+        let expected_fmt = expected.to_fmt(&mut formatter);
         let value_fmt = value.to_fmt(&mut formatter2);
 
         if not {

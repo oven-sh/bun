@@ -6,7 +6,7 @@ use core::ptr::NonNull;
 
 use bun_ptr::{RefCount, RefPtr};
 
-use bun_jsc::bindgen::{self, Callable, JsHeap, JsLocal, JsScope, JsWrapper};
+use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsWrapper};
 use bun_jsc::{
     self as jsc, JSArray, JSGlobalObject, JSPromise, JSValue, JsCell, JsRef, JsResult,
     VirtualMachine,
@@ -57,8 +57,8 @@ pub(crate) use bun_io::MaxBuf;
 bun_output::declare_scope!(Subprocess, visible);
 bun_output::declare_scope!(IPC, visible);
 
+use crate::generated_bindgen::subprocess::KillSignal;
 pub(crate) use crate::generated_bindgen::subprocess::js_Subprocess as js;
-use crate::generated_bindgen::subprocess::{IpcMessage, IpcSendHandle, IpcSendOptions, KillSignal};
 
 pub(crate) fn signal_code(
     global_this: &JSGlobalObject,
@@ -768,13 +768,13 @@ impl Subprocess<'_> {
         }
     }
 
-    pub(crate) fn send<'a>(
+    pub(crate) fn send(
         &self,
-        cx: &mut JsScope<'a>,
-        message: IpcMessage<'a>,
-        handle: IpcSendHandle<'a>,
-        options: IpcSendOptions<'a>,
-        callback: Option<JsLocal<'a, Callable>>,
+        cx: &mut JsScope<'_>,
+        message: JsLocal<'_>,
+        handle: JsLocal<'_>,
+        options: JsLocal<'_>,
+        callback: JsLocal<'_>,
     ) -> JsResult<bool> {
         bun_output::scoped_log!(IPC, "Subprocess#doSend");
 
@@ -788,10 +788,12 @@ impl Subprocess<'_> {
         crate::ipc_host::do_send(
             self.ipc(),
             cx.global(),
-            message,
-            handle,
-            options,
-            callback,
+            [
+                message.to_js(),
+                handle.to_js(),
+                options.to_js(),
+                callback.to_js(),
+            ],
             context,
             self.pid() as u32,
         )

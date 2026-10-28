@@ -733,6 +733,11 @@ impl JSType {
     }
 
     #[inline]
+    pub fn is_string_object_like(self) -> bool {
+        self == JSType::StringObject || self == JSType::DerivedStringObject
+    }
+
+    #[inline]
     pub fn is_string_like(self) -> bool {
         matches!(
             self,

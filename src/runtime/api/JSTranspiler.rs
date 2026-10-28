@@ -7,9 +7,8 @@ use std::io::Write as _;
 
 use crate::Error;
 use crate::generated_bindgen::transpiler::{
-    LoaderOrContext, MacroContext, TranspilerExternal, TranspilerList, TranspilerLoader,
-    TranspilerMacros, TranspilerMinify, TranspilerOptions, TranspilerRecord, TranspilerSourcemap,
-    TranspilerTSConfig,
+    LoaderOrContext, TranspilerExternal, TranspilerLoader, TranspilerMacros, TranspilerMinify,
+    TranspilerOptions, TranspilerSourcemap, TranspilerTSConfig,
 };
 use crate::node::types::Buffer;
 use crate::node::{Encoding, StringOrBuffer, ThreadIsolated};
@@ -25,7 +24,7 @@ use bun_js_parser::parser::Runtime;
 use bun_js_parser::parser::ScanPassResult;
 use bun_js_parser::{self as JSAst};
 use bun_js_printer as JSPrinter;
-use bun_jsc::bindgen::{JsScope, JsWrapper, StringOrJsBytes};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper, StringOrJsBytes};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
@@ -222,48 +221,56 @@ impl Config {
             return Ok(());
         };
 
-        if let Some(define) = &object.define {
-            let TranspilerRecord::Record(define_obj) = define else {
-                return Err(
-                    global.throw_invalid_arguments(format_args!("define must be an object"))
-                );
-            };
-
-            let define_iter = JSPropertyIterator::init(global, *define_obj, PROP_ITER_OPTS)?;
-            // `defer define_iter.deinit()` → Drop
-
-            // `define_iter.i` is the property position, not a dense index of yielded
-            // entries. With `skip_empty_name = true` (or a skipped property getter),
-            // writing at `define_iter.i` would leave earlier slots uninitialized.
-            // Use Vecs so the stored slice is always exactly what was appended.
-            let mut names: Vec<Box<[u8]>> = Vec::new();
-            let mut values: Vec<Box<[u8]>> = Vec::new();
-            names.reserve_exact(define_iter.len);
-            values.reserve_exact(define_iter.len);
-
-            while let Some((prop, property_value)) = define_iter.next()? {
-                let value_type = property_value.js_type();
-
-                if !value_type.is_string_like() {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "define \"{}\" must be a JSON string",
-                        prop
-                    )));
+        if let Some(define) = object.define.map(JsLocal::to_js) {
+            'define: {
+                if define.is_undefined_or_null() {
+                    break 'define;
                 }
 
-                names.push(prop.to_owned_slice().into());
-                let val = property_value.to_js_string_view(global)?;
-                values.push(if val.is_empty() {
-                    Box::from(&b"\"\""[..])
-                } else {
-                    val.to_owned_slice().into_boxed_slice()
+                let Some(define_obj) = define.get_object() else {
+                    return Err(
+                        global.throw_invalid_arguments(format_args!("define must be an object"))
+                    );
+                };
+
+                // SAFETY: `define_obj` is a non-null *mut JSObject (just returned by get_object()).
+                let define_obj_ref = unsafe { &*define_obj };
+                let define_iter = JSPropertyIterator::init(global, define_obj_ref, PROP_ITER_OPTS)?;
+                // `defer define_iter.deinit()` → Drop
+
+                // `define_iter.i` is the property position, not a dense index of yielded
+                // entries. With `skip_empty_name = true` (or a skipped property getter),
+                // writing at `define_iter.i` would leave earlier slots uninitialized.
+                // Use Vecs so the stored slice is always exactly what was appended.
+                let mut names: Vec<Box<[u8]>> = Vec::new();
+                let mut values: Vec<Box<[u8]>> = Vec::new();
+                names.reserve_exact(define_iter.len);
+                values.reserve_exact(define_iter.len);
+
+                while let Some((prop, property_value)) = define_iter.next()? {
+                    let value_type = property_value.js_type();
+
+                    if !value_type.is_string_like() {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "define \"{}\" must be a JSON string",
+                            prop
+                        )));
+                    }
+
+                    names.push(prop.to_owned_slice().into());
+                    let val = property_value.to_js_string_view(global)?;
+                    values.push(if val.is_empty() {
+                        Box::from(&b"\"\""[..])
+                    } else {
+                        val.to_owned_slice().into_boxed_slice()
+                    });
+                }
+
+                self.transform.define = Some(api::StringMap {
+                    keys: names,
+                    values,
                 });
             }
-
-            self.transform.define = Some(api::StringMap {
-                keys: names,
-                values,
-            });
         }
 
         if let Some(external) = &object.external {
@@ -467,13 +474,12 @@ impl Config {
             let mut replacements = bun_ast::runtime::ReplaceableExportMap::default();
             // errdefer replacements.clearAndFree(allocator) → Drop on error path
 
-            if let Some(eliminate) = &exports.eliminate {
-                let TranspilerList::List(eliminate) = eliminate else {
+            if let Some(eliminate) = exports.eliminate.map(JsLocal::to_js) {
+                if !eliminate.js_type().is_array() {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "exports.eliminate must be an array",
                     )));
-                };
-                let eliminate = eliminate.to_js();
+                }
 
                 let mut total_name_buf_len: u32 = 0;
                 let mut string_count: u32 = 0;
@@ -531,14 +537,16 @@ impl Config {
                 }
             }
 
-            if let Some(replace) = &exports.replace {
-                let TranspilerRecord::Record(replace_obj) = replace else {
+            if let Some(replace) = exports.replace.map(JsLocal::to_js) {
+                let Some(replace_obj) = replace.get_object() else {
                     return Err(
                         global.throw_invalid_arguments(format_args!("replace must be an object"))
                     );
                 };
 
-                let iter = JSPropertyIterator::init(global, *replace_obj, PROP_ITER_OPTS)?;
+                // SAFETY: `replace_obj` is non-null (just returned by get_object()).
+                let replace_obj_ref = unsafe { &*replace_obj };
+                let iter = JSPropertyIterator::init(global, replace_obj_ref, PROP_ITER_OPTS)?;
 
                 if iter.len > 0 {
                     bun_core::handle_oom(replacements.ensure_unused_capacity(iter.len));
@@ -1373,7 +1381,7 @@ impl JSTranspiler {
         cx: &mut JsScope<'a>,
         code_arg: StringOrJsBytes<'a>,
         loader_or_context: LoaderOrContext<'a>,
-        context: MacroContext<'a>,
+        context: JsLocal<'a>,
     ) -> JsResult<JSValue> {
         jsc::mark_binding();
 
@@ -1399,10 +1407,11 @@ impl JSTranspiler {
             LoaderOrContext::Other => None,
         };
 
-        match context {
-            MacroContext::Missing => {}
-            MacroContext::Context(context) => js_ctx_value = context.to_js(),
-            MacroContext::Other => {
+        let context = context.to_js();
+        if !context.is_undefined() {
+            if context.is_object() {
+                js_ctx_value = context;
+            } else {
                 return Err(global.throw_invalid_argument_type(
                     "transformSync",
                     "context",

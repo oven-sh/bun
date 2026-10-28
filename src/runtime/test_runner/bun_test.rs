@@ -3,20 +3,20 @@ use core::ptr::NonNull;
 use std::cell::UnsafeCell;
 use std::rc::{Rc, Weak};
 
-use super::execution::TimespecExt as _;
-use super::jest::{FileColumns as _, FileId, Jest};
+use bun_collections::LinearFifo;
+use bun_core::{Output, Timespec};
+use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, JsResult, Strong};
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::js_promise::Status as PromiseStatus;
+use bun_ptr::RefPtr;
+use super::jest::{Jest, FileId, FileColumns as _};
+use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, ElTimespec};
 use crate::cli::test_command::CommandLineReporter;
 use crate::generated_bindgen::bun_test::{
     Bun__TestScope__Describe2__bunTestCatch, Bun__TestScope__Describe2__bunTestThen,
 };
-use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
-use bun_collections::LinearFifo;
-use bun_core::{Output, Timespec};
-use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_jsc::js_promise::Status as PromiseStatus;
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, JsResult, Strong};
-use bun_ptr::RefPtr;
+use super::execution::TimespecExt as _;
 
 bun_core::declare_scope!(bun_test_group, hidden);
 // Callers use `group_log!` / `group_begin!` / `group_end!` below.
@@ -817,11 +817,7 @@ impl BunTest {
         } else {
             // error is only reported for the first done() call
             if let Some(error) = error {
-                let _ = global_this.bun_vm().as_mut().uncaught_exception(
-                    global_this,
-                    error.to_js(),
-                    false,
-                );
+                let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, error.to_js(), false);
             }
         }
         this.called.set(true);
@@ -1976,8 +1972,8 @@ impl TestScheduleEntry {
 
 // Module aliases so `Execution::ConcurrentGroup` / `Order::AllOrderResult`
 // resolve as module paths without per-reference rewrites.
-pub(crate) use super::debug;
 pub(crate) use super::execution as Execution;
-pub(crate) use super::order as Order;
+pub(crate) use super::debug;
 pub(crate) use super::scope_functions as ScopeFunctions;
+pub(crate) use super::order as Order;
 

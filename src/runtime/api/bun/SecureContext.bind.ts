@@ -14,7 +14,6 @@ export const ParsedPkcs12 = b.dictionary({
 });
 
 /** What is not a buffer becomes a string once the passphrase has. */
-export const Pkcs12Source = b.union({ missing: b.undefined, buffer: b.bufferSource.allowShared, other: b.opaque });
 export const pkcs12Text = b.conversion(b.string.loose.utf8.owned);
 
 /** What `node:tls` hands out as `secureContext.context`. */
@@ -35,7 +34,7 @@ export const SecureContext = b.class({
     intern: { ...fromOptions, returns: b.self },
     /** A PKCS#12 (`pfx`) blob as `{ key, cert, ca }` PEM strings. */
     parsePkcs12: {
-      args: { pfx: Pkcs12Source, passphrase: b.string.loose.utf8.owned.nullable.deferred },
+      args: { pfx: b.opaque, passphrase: b.string.loose.utf8.owned.nullable.deferred },
       returns: ParsedPkcs12,
       capability: "js",
       throws: true,

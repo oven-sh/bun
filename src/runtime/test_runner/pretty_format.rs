@@ -3,11 +3,11 @@ use core::ffi::c_void;
 
 use bun_collections::HashMap;
 use bun_core::fmt as bun_fmt;
-use bun_core::{EncodedSlice, Utf8Bytes, strings};
 use bun_jsc::{
     self as jsc, ComptimeStringMapExt as _, JSGlobalObject, JSObject,
     JSPropertyIterator, JSType, JSValue, JsError, JsResult, VM,
 };
+use bun_core::{strings, EncodedSlice, Utf8Bytes};
 
 use super::expect;
 use crate::generated_bindgen::expect::{

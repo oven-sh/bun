@@ -1,5 +1,5 @@
 use crate::api::js_bundler::BuildArtifact;
-use crate::generated_bindgen::valkey::{HashFields, RedisArgument, RedisChannel, hash_text};
+use crate::generated_bindgen::valkey::RedisArgument;
 use crate::node::{BlobOrStringOrBuffer as JSArgument, FileBlobs, StringOrBuffer};
 use bun_collections::VecExt as _;
 use bun_collections::smallvec::SmallVec;
@@ -1055,8 +1055,7 @@ impl JSValkeyClient {
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: Deferred<'_, bun_core::String>,
-        fields: HashFields<'_>,
-        more: &[JsLocal<'_>],
+        fields: &[JsLocal<'_>],
         command: &'static str,
     ) -> JsResult<JSValue> {
         let global = cx.global();
@@ -1064,73 +1063,75 @@ impl JSValkeyClient {
 
         let key = key.convert(global)?;
 
+        let fields = JsLocal::to_js_slice(fields);
+        let second_arg = fields.first().copied().unwrap_or(JSValue::UNDEFINED);
+
         let object_iter;
         let mut args: Vec<bun_core::Utf8Bytes<'_>> = Vec::new();
 
         args.push(key.to_utf8());
 
-        match fields {
-            HashFields::Object(obj) => {
-                // Pattern 1: Object/Record - hset(key, {field: value, ...})
-                object_iter = JSPropertyIterator::init(
-                    global,
-                    obj,
-                    jsc::PropertyIteratorOptions {
-                        skip_empty_name: false,
-                        include_value: true,
-                    },
-                )?;
+        if second_arg.is_object() && !second_arg.is_array() {
+            // Pattern 1: Object/Record - hset(key, {field: value, ...})
+            let Some(obj) = second_arg.get_object() else {
+                return Err(global.throw_invalid_argument_type(command, "fields", "object"));
+            };
 
-                args.ensure_total_capacity(1 + object_iter.len * 2);
+            object_iter = JSPropertyIterator::init(
+                global,
+                obj,
+                jsc::PropertyIteratorOptions {
+                    skip_empty_name: false,
+                    include_value: true,
+                },
+            )?;
 
-                while let Some((field_name, value)) = object_iter.next()? {
-                    args.push(field_name.to_utf8());
+            args.ensure_total_capacity(1 + object_iter.len * 2);
 
-                    args.push(value.to_utf8(global)?);
-                }
+            while let Some((field_name, value)) = object_iter.next()? {
+                args.push(field_name.to_utf8());
+
+                args.push(value.to_utf8(global)?);
             }
-            HashFields::List(second_arg) => {
-                // Pattern 3: Array - hmset(key, [field, value, ...])
-                let mut iter = second_arg.to_js().array_iterator(global)?;
-                if iter.len % 2 != 0 {
+        } else if second_arg.is_array() {
+            // Pattern 3: Array - hmset(key, [field, value, ...])
+            let mut iter = second_arg.array_iterator(global)?;
+            if iter.len % 2 != 0 {
+                return Err(global.throw(format_args!(
+                    "Array must have an even number of elements (field-value pairs)"
+                )));
+            }
+
+            args.ensure_total_capacity(1 + iter.len as usize);
+
+            while let Some(field_js) = iter.next()? {
+                args.push(field_js.to_utf8(global)?);
+
+                let Some(value_js) = iter.next()? else {
                     return Err(global.throw(format_args!(
                         "Array must have an even number of elements (field-value pairs)"
                     )));
-                }
-
-                args.ensure_total_capacity(1 + iter.len as usize);
-
-                while let Some(field_js) = iter.next()? {
-                    args.push(field_js.to_utf8(global)?);
-
-                    let Some(value_js) = iter.next()? else {
-                        return Err(global.throw(format_args!(
-                            "Array must have an even number of elements (field-value pairs)"
-                        )));
-                    };
-                    args.push(value_js.to_utf8(global)?);
-                }
+                };
+                args.push(value_js.to_utf8(global)?);
             }
-            HashFields::Other(first) => {
-                // Pattern 2: Variadic - hset(key, field, value, ...)
-                if more.is_empty() {
-                    return Err(global.throw(format_args!(
-                        "HSET requires at least key, field, and value arguments"
-                    )));
-                }
+        } else {
+            // Pattern 2: Variadic - hset(key, field, value, ...)
+            if fields.len() < 2 {
+                return Err(global.throw(format_args!(
+                    "HSET requires at least key, field, and value arguments"
+                )));
+            }
 
-                if more.len().is_multiple_of(2) {
-                    return Err(global.throw(format_args!(
-                        "HSET requires field-value pairs (even number of arguments after key)"
-                    )));
-                }
+            if !fields.len().is_multiple_of(2) {
+                return Err(global.throw(format_args!(
+                    "HSET requires field-value pairs (even number of arguments after key)"
+                )));
+            }
 
-                args.ensure_total_capacity(2 + more.len());
+            args.ensure_total_capacity(1 + fields.len());
 
-                args.push(hash_text(global, first)?);
-                for field_or_value in more {
-                    args.push(hash_text(global, *field_or_value)?);
-                }
+            for field_or_value in fields {
+                args.push(field_or_value.to_utf8(global)?);
             }
         }
 
@@ -1159,10 +1160,9 @@ impl JSValkeyClient {
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: Deferred<'_, bun_core::String>,
-        fields: HashFields<'_>,
-        more: &[JsLocal<'_>],
+        fields: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
-        self.hset_impl(this_value, cx, key, fields, more, "HSET")
+        self.hset_impl(this_value, cx, key, fields, "HSET")
     }
 
     pub(crate) fn hmset(
@@ -1170,10 +1170,9 @@ impl JSValkeyClient {
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: Deferred<'_, bun_core::String>,
-        fields: HashFields<'_>,
-        more: &[JsLocal<'_>],
+        fields: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
-        self.hset_impl(this_value, cx, key, fields, more, "HMSET")
+        self.hset_impl(this_value, cx, key, fields, "HMSET")
     }
 
     cmd_key_varargs!(hdel, "hdel", "HDEL", "key", NotSubscriber);
@@ -1603,7 +1602,7 @@ impl JSValkeyClient {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        channel: RedisChannel<'_>,
+        channel: JsLocal<'_>,
         listener: JsLocal<'_, Callable>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
@@ -1612,10 +1611,10 @@ impl JSValkeyClient {
         // stays live across those calls.
         let _guard = self.ref_guard();
 
-        let handler_callback = listener.to_js();
+        let (channel_or_many, handler_callback) = (channel.to_js(), listener.to_js());
         let mut redis_channels: Vec<JSArgument> = Vec::with_capacity(1);
 
-        if matches!(channel, RedisChannel::Other) {
+        if !channel_or_many.is_string() && !channel_or_many.is_array() {
             return Err(global.throw_invalid_argument_type(
                 "subscribe",
                 "channel",
@@ -1638,8 +1637,7 @@ impl JSValkeyClient {
         }
 
         // The first argument given is the channel or may be an array of channels.
-        if let RedisChannel::List(many) = channel {
-            let channel_or_many = many.to_js();
+        if channel_or_many.is_array() {
             if channel_or_many.get_length(global)? == 0 {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "subscribe requires at least one channel"
@@ -1666,8 +1664,7 @@ impl JSValkeyClient {
                 // handler.
                 self.upsert_receive_handler(global, channel_arg, handler_callback)?;
             }
-        } else if let RedisChannel::String(channel) = channel {
-            let channel_or_many = channel.to_js();
+        } else {
             // It is a single string channel
             let Some(channel) = from_js(global, channel_or_many)? else {
                 return Err(global.throw_invalid_argument_type("subscribe", "channel", "string"));
@@ -1718,8 +1715,7 @@ impl JSValkeyClient {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        channel: Option<RedisChannel<'_>>,
-        listener: Rest<'_, Option<JsLocal<'_, Callable>>>,
+        args: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
         let global = cx.global();
         // Hold a ref so `*self` stays live across the handler-map updates and
@@ -1729,10 +1725,12 @@ impl JSValkeyClient {
         // Check if we're in subscription mode
         require_subscriber(self, "unsubscribe")?;
 
+        let args_view = JsLocal::to_js_slice(args);
+
         let mut redis_channels: Vec<JSArgument> = Vec::with_capacity(1);
 
         // The first argument can be a channel or an array of channels
-        let Some(channel_or_many) = channel else {
+        let Some(&channel_or_many) = args_view.first() else {
             // If no arguments, unsubscribe from all channels
             self.clear_all_receive_handlers(global)?;
             return Self::send_unsubscribe_request_and_cleanup(
@@ -1752,32 +1750,34 @@ impl JSValkeyClient {
         }
 
         // Two arguments means .unsubscribe(channel, listener) is invoked.
-        if let (Some(listener_cb), 1) = (listener.iter().next(), listener.len()) {
+        if let &[_, listener_cb] = args_view {
             // In this case, the first argument is a channel string and the second
             // argument is the handler to remove.
-            let RedisChannel::String(channel) = channel_or_many else {
+            if !channel_or_many.is_string() {
                 return Err(global.throw_invalid_argument_type("unsubscribe", "channel", "string"));
-            };
+            }
 
-            let Some(listener_cb) = listener_cb.convert(global)? else {
+            let channel = channel_or_many;
+
+            if !listener_cb.is_callable() {
                 return Err(global.throw_invalid_argument_type(
                     "unsubscribe",
                     "listener",
                     "function",
                 ));
-            };
+            }
 
             // Populate the redis_channels list with the single channel to
             // unsubscribe from. This s important since this list is used to send
             // the UNSUBSCRIBE command to redis. Without this, we would end up
             // unsubscribing from all channels.
-            let Some(ch) = from_js(global, channel.to_js())? else {
+            let Some(ch) = from_js(global, channel)? else {
                 return Err(global.throw_invalid_argument_type("unsubscribe", "channel", "string"));
             };
             redis_channels.push(ch);
 
             let remaining_listeners =
-                match self.remove_receive_handler(global, channel.to_js(), listener_cb.to_js()) {
+                match self.remove_receive_handler(global, channel, listener_cb) {
                     Ok(Some(n)) => n,
                     Ok(None) => {
                         // Listeners weren't present in the first place, so we can return a
@@ -1808,8 +1808,7 @@ impl JSValkeyClient {
             ));
         }
 
-        if let RedisChannel::List(many) = channel_or_many {
-            let channel_or_many = many.to_js();
+        if channel_or_many.is_array() {
             if channel_or_many.get_length(global)? == 0 {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "unsubscribe requires at least one channel"
@@ -1833,8 +1832,7 @@ impl JSValkeyClient {
                 // Clear the handlers for this channel
                 self.clear_receive_handlers(global, channel_arg)?;
             }
-        } else if let RedisChannel::String(channel) = channel_or_many {
-            let channel_or_many = channel.to_js();
+        } else if channel_or_many.is_string() {
             // It is a single string channel
             let Some(channel) = from_js(global, channel_or_many)? else {
                 return Err(global.throw_invalid_argument_type("unsubscribe", "channel", "string"));

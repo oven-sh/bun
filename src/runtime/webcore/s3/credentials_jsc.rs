@@ -13,7 +13,7 @@ use bun_s3_signing::{
 };
 use bun_url::URL;
 
-use crate::generated_bindgen::blob::{OptionText, S3Count, S3Options, S3Size};
+use crate::generated_bindgen::blob::{OptionText, S3Options};
 
 /// `opts.{key}` → owned UTF-8 slice when the property is present, truthy, a
 /// JS string, and non-empty. A non-string throws `ERR_INVALID_ARG_TYPE` keyed on `key`.
@@ -129,7 +129,8 @@ pub(crate) fn get_credentials_with_options(
             new_credentials.changed_credentials = true;
         }
 
-        if let Some(page_size) = size_from_js(opts.page_size(global_object)?) {
+        if let Some(page_size) = opts.page_size(global_object)? {
+            let page_size = page_size.to_js().coerce::<i64>(global_object)?;
             if page_size < MultiPartUploadOptions::MIN_SINGLE_UPLOAD_SIZE as i64
                 || page_size > MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE as i64
             {
@@ -146,7 +147,8 @@ pub(crate) fn get_credentials_with_options(
                 new_credentials.options.part_size = page_size as u64;
             }
         }
-        if let Some(part_size) = size_from_js(opts.part_size(global_object)?) {
+        if let Some(part_size) = opts.part_size(global_object)? {
+            let part_size = part_size.to_js().coerce::<i64>(global_object)?;
             if part_size < MultiPartUploadOptions::MIN_SINGLE_UPLOAD_SIZE as i64
                 || part_size > MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE as i64
             {
@@ -164,7 +166,8 @@ pub(crate) fn get_credentials_with_options(
             }
         }
 
-        if let Some(queue_size) = count_from_js(opts.queue_size(global_object)?) {
+        if let Some(queue_size) = opts.queue_size(global_object)? {
+            let queue_size = queue_size.to_js().coerce::<i32>(global_object)?;
             if queue_size < 1 {
                 return Err(global_object.throw_range_error(
                     queue_size as i64,
@@ -179,7 +182,8 @@ pub(crate) fn get_credentials_with_options(
             }
         }
 
-        if let Some(retry) = count_from_js(opts.retry(global_object)?) {
+        if let Some(retry) = opts.retry(global_object)? {
+            let retry = retry.to_js().coerce::<i32>(global_object)?;
             if !(0..=255).contains(&retry) {
                 return Err(global_object.throw_range_error(
                     retry as i64,
@@ -255,22 +259,6 @@ pub(crate) fn get_credentials_with_options(
         }
     }
     Ok(new_credentials)
-}
-
-fn size_from_js(size: S3Size) -> Option<i64> {
-    match size {
-        S3Size::Missing => None,
-        S3Size::BigInt(size) => Some(size),
-        S3Size::Other(size) => Some(size as i64),
-    }
-}
-
-pub(crate) fn count_from_js(count: S3Count) -> Option<i32> {
-    match count {
-        S3Count::Missing => None,
-        S3Count::Number(count) => Some(count as i32),
-        S3Count::Other(count) => Some(count),
-    }
 }
 
 fn enum_from_map<E: Copy + 'static, M: ComptimeStringMap<Value = E>>(

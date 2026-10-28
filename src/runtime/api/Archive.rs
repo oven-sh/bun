@@ -1,8 +1,6 @@
 //! `Bun.Archive` — tar/tgz pack + extract.
 
-use crate::generated_bindgen::archive::{
-    ArchiveData, ArchiveExtractOptions, ArchiveGlob, ArchiveOptions,
-};
+use crate::generated_bindgen::archive::{ArchiveExtractOptions, ArchiveGlob, ArchiveOptions};
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 use crate::webcore::blob::Store;
@@ -10,9 +8,7 @@ use bun_archive::tar;
 use bun_core::{self, Output, Utf8Bytes, ZBox, strings};
 use bun_glob as glob;
 use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_jsc::{
-    self as jsc, JSGlobalObject, JSMap, JSObject, JSPromise, JSPromiseStrong, JSValue, JsResult,
-};
+use bun_jsc::{self as jsc, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSValue, JsResult};
 use bun_jsc::{StringJsc as _, SysErrorJsc as _};
 use bun_ptr::RefPtr;
 use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, Mode};
@@ -124,42 +120,40 @@ impl Archive {
     /// When no options are provided, no compression is applied
     pub(crate) fn constructor(
         cx: &mut JsScope<'_>,
-        data: ArchiveData<'_>,
+        data: JsLocal<'_>,
         options: Option<ArchiveOptions<'_>>,
     ) -> JsResult<Self> {
         let global = cx.global();
+        let data = data.to_js();
 
         // Parse compression options
         let compress = parse_compression_options(global, options)?;
 
-        let files = match data {
-            // For ArrayBuffer/TypedArray, copy the data
-            ArchiveData::Buffer(data) => {
-                let data: Vec<u8> = data.as_array_buffer(global).slice().to_vec();
-                return Ok(create_archive(data, compress));
+        // For Blob/Archive, ref the existing store (zero-copy)
+        if let Some(blob) = blob_from_js(data) {
+            if let Some(store) = blob.store.get().as_ref() {
+                return Ok(Self {
+                    store: store.clone(),
+                    compress,
+                });
             }
-            ArchiveData::Object(object) => {
-                // For Blob/Archive, ref the existing store (zero-copy)
-                if let Some(blob) = object.to_js().as_class_ref::<Blob>()
-                    && let Some(store) = blob.store.get().as_ref()
-                {
-                    return Ok(Self {
-                        store: store.clone(),
-                        compress,
-                    });
-                }
-                object
-            }
-            ArchiveData::Other => {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "Expected an object, Blob, TypedArray, or ArrayBuffer"
-                )));
-            }
-        };
+        }
+
+        // For ArrayBuffer/TypedArray, copy the data
+        if let Some(array_buffer) = data.as_array_buffer(global) {
+            let data: Vec<u8> = array_buffer.slice().to_vec();
+            return Ok(create_archive(data, compress));
+        }
 
         // For plain objects, build a tarball
-        let data = build_tarball_from_object(global, files)?;
-        Ok(create_archive(data, compress))
+        if data.is_object() {
+            let data = build_tarball_from_object(global, data)?;
+            return Ok(create_archive(data, compress));
+        }
+
+        Err(global.throw_invalid_arguments(format_args!(
+            "Expected an object, Blob, TypedArray, or ArrayBuffer"
+        )))
     }
 }
 
@@ -216,10 +210,11 @@ fn blob_from_js(value: JSValue) -> Option<&'static Blob> {
 }
 
 /// Shared helper that builds tarball bytes from a JS object
-fn build_tarball_from_object(
-    global: &JSGlobalObject,
-    js_obj: JsLocal<'_, JSObject>,
-) -> JsResult<Vec<u8>> {
+fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<Vec<u8>> {
+    let Some(js_obj) = obj.get_object() else {
+        return Err(global.throw_invalid_arguments(format_args!("Expected an object")));
+    };
+
     let mut writer = tar::writer::Writer::new(Vec::<u8>::new(), tar::writer::Names::for_host());
     // Writing to a `Vec` fails for want of memory only.
     let fail = |_: tar::Error| {
@@ -289,71 +284,70 @@ impl Archive {
     pub(crate) fn write(
         cx: &mut JsScope<'_>,
         path: &bun_core::String,
-        data_arg: ArchiveData<'_>,
+        data: JsLocal<'_>,
         options: Option<ArchiveOptions<'_>>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global = cx.global();
+        let data_arg = data.to_js();
 
         let path_slice = path.to_utf8();
 
         // Parse options for compression override
         let options_compress = parse_compression_options(global, options)?;
 
-        let files = match data_arg {
-            // For ArrayBuffer/TypedArray, copy the data with options compression
-            ArchiveData::Buffer(data_arg) => {
-                let data = data_arg.as_array_buffer(global).slice().to_vec();
+        // For Archive instances, use options override or archive's compression settings
+        if let Some(archive) = data_arg.as_class_ref::<Archive>() {
+            let compress = if !matches!(options_compress, Compression::None) {
+                options_compress
+            } else {
+                archive.compress
+            };
+            return start_write_task(
+                &cx,
+                WriteData::Store(archive.store.clone()),
+                path_slice.slice(),
+                compress,
+            );
+        }
+
+        // For Blobs, use store reference with options compression
+        if let Some(blob) = blob_from_js(data_arg) {
+            if let Some(store) = blob.store.get().as_ref() {
                 return start_write_task(
                     &cx,
-                    WriteData::Owned(data),
+                    WriteData::Store(store.clone()),
                     path_slice.slice(),
                     options_compress,
                 );
             }
-            ArchiveData::Object(object) => {
-                // For Archive instances, use options override or archive's compression settings
-                if let Some(archive) = object.to_js().as_class_ref::<Archive>() {
-                    let compress = if !matches!(options_compress, Compression::None) {
-                        options_compress
-                    } else {
-                        archive.compress
-                    };
-                    return start_write_task(
-                        &cx,
-                        WriteData::Store(archive.store.clone()),
-                        path_slice.slice(),
-                        compress,
-                    );
-                }
-                // For Blobs, use store reference with options compression
-                if let Some(blob) = object.to_js().as_class_ref::<Blob>()
-                    && let Some(store) = blob.store.get().as_ref()
-                {
-                    return start_write_task(
-                        &cx,
-                        WriteData::Store(store.clone()),
-                        path_slice.slice(),
-                        options_compress,
-                    );
-                }
-                object
-            }
-            ArchiveData::Other => {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "Expected an object, Blob, TypedArray, ArrayBuffer, or Archive"
-                )));
-            }
-        };
+        }
+
+        // For ArrayBuffer/TypedArray, copy the data with options compression
+        if let Some(array_buffer) = data_arg.as_array_buffer(global) {
+            let data = array_buffer.slice().to_vec();
+            return start_write_task(
+                &cx,
+                WriteData::Owned(data),
+                path_slice.slice(),
+                options_compress,
+            );
+        }
 
         // For plain objects, build a tarball with options compression
-        let data = build_tarball_from_object(global, files)?;
-        start_write_task(
-            &cx,
-            WriteData::Owned(data),
-            path_slice.slice(),
-            options_compress,
-        )
+        if data_arg.is_object() {
+            let data = build_tarball_from_object(global, data_arg)?;
+            return start_write_task(
+                &cx,
+                WriteData::Owned(data),
+                path_slice.slice(),
+                options_compress,
+            );
+        }
+
+        Err(global.throw_invalid_arguments(format_args!(
+            "Expected an object, Blob, TypedArray, ArrayBuffer, or Archive"
+        )))
     }
 
     /// Instance method: archive.extract(path, options?)

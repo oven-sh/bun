@@ -1,15 +1,13 @@
 //! Test-only host fns for `bun.ini` (used by `internal-for-testing.ts`).
 //! Kept out of `ini/` so that directory has no JSC references.
 
-use bun_jsc::bindgen::{JsHeap, JsScope};
+use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, LogJsc as _, StringJsc};
-
-use crate::generated_bindgen::ini_jsc::NpmrcEnv;
 
 pub(crate) fn load_npmrc<'a>(
     cx: &mut JsScope<'a>,
     contents: &[u8],
-    env: NpmrcEnv<'a>,
+    env: JsLocal<'a>,
 ) -> JsResult<JSValue> {
     use bun_ast::{Log, Source};
     use bun_core::StringView;
@@ -23,14 +21,15 @@ pub(crate) fn load_npmrc<'a>(
 
     let mut log = Log::init();
 
+    let envjs = env.to_js();
     // The loader is either VM-owned or built locally; keep local storage in
     // an `Option` so both arms yield the same `&Loader` type.
     let mut env_storage: Option<dotenv::Loader> = None;
-    let env: &dotenv::Loader = if matches!(env, NpmrcEnv::Inherited) {
+    let env: &dotenv::Loader = if envjs.is_empty_or_undefined_or_null() {
         global.bun_vm().as_mut().transpiler.env()
     } else {
         let mut envmap = dotenv::map::HashTable::new();
-        let NpmrcEnv::Variables(envobj) = env else {
+        let Some(envobj) = envjs.get_object() else {
             return Err(global.throw_type_error(format_args!("env must be an object")));
         };
         let object_iter = bun_jsc::JSPropertyIterator::init(

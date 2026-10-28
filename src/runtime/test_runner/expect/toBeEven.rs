@@ -1,6 +1,6 @@
-use super::Expect;
-use bun_jsc::JsResult;
 use bun_jsc::bindgen::{JsScope, JsWrapper};
+use bun_jsc::JsResult;
+use super::Expect;
 
 impl Expect {
     pub(crate) fn to_be_even(

@@ -9,11 +9,8 @@ export const parse = b.fn({
   throws: true,
 });
 
-/** Without one, the variables of the process. */
-export const NpmrcEnv = b.union({ inherited: b.null, variables: b.object, other: b.ignored });
-
 export const loadNpmrc = b.fn({
-  args: { contents: b.string.loose.utf8, env: NpmrcEnv },
+  args: { contents: b.string.loose.utf8, env: b.opaque },
   returns: b.opaque,
   capability: "js",
   throws: true,

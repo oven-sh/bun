@@ -117,13 +117,12 @@ const SERIALIZATION_VERSION: u8 = 4;
 
 pub(crate) use crate::generated_bindgen::blob::js_Blob as js;
 use crate::generated_bindgen::blob::{
-    BlobName, BlobOrBuildArtifact, BlobParts, BlobPropertyBag, BlobType, BunFileOptions,
-    BunWriteOptions, OptionText, S3Options, WriteOptionsArgument,
+    BlobName, BlobOrBuildArtifact, BlobPropertyBag, BlobType, BunFileOptions, BunWriteOptions,
+    OptionText, S3Options, WriteOptionsArgument,
 };
-use crate::generated_bindgen::blob_arguments::{BlobSliceBound, BunWriteData};
+use crate::generated_bindgen::blob_arguments::BunWriteData;
 use crate::generated_bindgen::image::ImageOptions;
 
-/// [`BlobExt::get`] goes through all of them, and takes a value that is not a list as the only part.
 // ──────────────────────────────────────────────────────────────────────────
 
 // is_all_ascii: canonical impl lives later in this file (pub). Duplicate
@@ -232,12 +231,12 @@ pub(crate) trait BlobExt {
         relative_end: i64,
         content_type: BlobContentType,
     ) -> JSValue;
-    fn slice<'a>(
+    fn slice(
         &self,
-        cx: &mut JsScope<'a>,
-        start: BlobSliceBound<'a>,
-        end: BlobSliceBound<'a>,
-        content_type: BlobSliceBound<'a>,
+        cx: &mut JsScope<'_>,
+        start: JsLocal<'_>,
+        end: JsLocal<'_>,
+        content_type: JsLocal<'_>,
     ) -> JsResult<JSValue>;
     fn get_mime_type_or_content_type(&self) -> Option<MimeType>;
     fn get_type(&self, cx: &mut JsScope<'_>) -> JSValue;
@@ -258,7 +257,7 @@ pub(crate) trait BlobExt {
     fn resolved_size(&self) -> (SizeType, SizeType);
     fn constructor(
         cx: &mut JsScope<'_>,
-        parts: BlobParts<'_>,
+        parts: JsLocal<'_>,
         options: Option<BlobPropertyBag<'_>>,
     ) -> JsResult<*mut Blob>
     where
@@ -1743,12 +1742,12 @@ impl BlobExt for Blob {
     }
 
     /// https://w3c.github.io/FileAPI/#slice-method-algo
-    fn slice<'a>(
+    fn slice(
         &self,
-        cx: &mut JsScope<'a>,
-        start: BlobSliceBound<'a>,
-        end: BlobSliceBound<'a>,
-        content_type: BlobSliceBound<'a>,
+        cx: &mut JsScope<'_>,
+        start: JsLocal<'_>,
+        end: JsLocal<'_>,
+        content_type: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global_this = cx.global();
 
@@ -1768,16 +1767,14 @@ impl BlobExt for Blob {
         let mut relative_end: i64 = size_i64;
 
         // A string in place of `start` or `end` is the content type.
-        let (start, end, content_type) = match (start, end, content_type) {
-            (start @ BlobSliceBound::String(_), _, _) => {
-                (BlobSliceBound::Other, BlobSliceBound::Other, start)
-            }
-            (start, end @ BlobSliceBound::String(_), _) => (start, BlobSliceBound::Other, end),
+        let (start, end, content_type) = match (start.to_js(), end.to_js(), content_type.to_js()) {
+            (start, _, _) if start.is_string() => (JSValue::UNDEFINED, JSValue::UNDEFINED, start),
+            (start, end, _) if end.is_string() => (start, JSValue::UNDEFINED, end),
             args => args,
         };
 
-        if let BlobSliceBound::Number(start) = start {
-            let start = start.to_js().to_int64();
+        if start.is_number() {
+            let start = start.to_int64();
             if start < 0 {
                 relative_start = start.saturating_add(size_i64).max(0);
             } else {
@@ -1785,8 +1782,8 @@ impl BlobExt for Blob {
             }
         }
 
-        if let BlobSliceBound::Number(end) = end {
-            let end = end.to_js().to_int64();
+        if end.is_number() {
+            let end = end.to_int64();
             if end < 0 {
                 relative_end = end.saturating_add(size_i64).max(0);
             } else {
@@ -1794,21 +1791,18 @@ impl BlobExt for Blob {
             }
         }
 
-        let blob_content_type = match content_type {
-            BlobSliceBound::String(content_type) => {
-                let content_type_view = content_type.to_js_string_view(global_this)?;
-                let slicer = content_type_view.to_utf8();
-                let slice = slicer.slice();
-                if !is_valid_blob_type(slice) {
-                    BlobContentType::default()
-                } else if let Some(mime) = global_this.bun_vm().as_mut().mime_type(slice) {
-                    BlobContentType::from(mime)
-                } else {
-                    BlobContentType::from_lowercased(slice)
-                }
+        let mut blob_content_type = BlobContentType::default();
+        if content_type.is_string() {
+            let content_type_view = content_type.to_js_string_view(global_this)?;
+            let slicer = content_type_view.to_utf8();
+            let slice = slicer.slice();
+            if is_valid_blob_type(slice) {
+                blob_content_type = match global_this.bun_vm().as_mut().mime_type(slice) {
+                    Some(mime) => BlobContentType::from(mime),
+                    None => BlobContentType::from_lowercased(slice),
+                };
             }
-            _ => BlobContentType::default(),
-        };
+        }
 
         Ok(self.get_slice_from(global_this, relative_start, relative_end, blob_content_type))
     }
@@ -2138,15 +2132,11 @@ impl BlobExt for Blob {
     }
     fn constructor(
         cx: &mut JsScope<'_>,
-        parts: BlobParts<'_>,
+        parts: JsLocal<'_>,
         options: Option<BlobPropertyBag<'_>>,
     ) -> JsResult<*mut Blob> {
         let global_this = cx.global();
-        let blob = match parts {
-            BlobParts::Missing => Blob::init_empty(global_this),
-            BlobParts::List(parts) => Blob::get::<false, true>(global_this, parts.to_js())?,
-            BlobParts::Buffer(parts) => Blob::get::<false, true>(global_this, parts.to_js())?,
-        };
+        let blob = Blob::get::<false, true>(global_this, parts.to_js())?;
 
         if let Some(options) = options
             && let Some(content_type_str) = options.r#type(global_this)?

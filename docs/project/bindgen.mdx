@@ -353,14 +353,17 @@ object is `heap.create_empty_object()`.
 
 ### Opaque values
 
-`b.opaque` is a value whose type the function does not depend on. The body returns it, stores it (`Strong::create`, an
+`b.opaque` is a value that the generated code hands over as it is. The body returns it, stores it (`Strong::create`, an
 internal field, a `JsRef`), passes it to a call, resolves or rejects a promise with it, throws it, puts it in an object
-or an array, compares it with another as a whole, or prints it. All of those take a `JSValue`, which is
-`value.to_js()`. So does what walks all of a value: the formatters, the YAML, JSON5, TOML and XML stringifiers, the
-parts of a `Blob`.
+or an array, compares it with another as a whole, prints it, or looks at it itself (`is_number()`, `is_big_int()`,
+`as_array_buffer()`). All of those take a `JSValue`, which is `value.to_js()`. So does what walks all of a value: the
+formatters, the YAML, JSON5, TOML and XML stringifiers, the parts of a `Blob`.
 
-A body that tests a value or converts it declares what it looks for instead: a union, a class, `.deferred`. The
-compiler does not hold a body to that, since every handle has `to_js()`.
+A type is for what the generated code converts: a string to bytes, a number to an `i32`, an options object to a
+dictionary, an object of a class to its native pointer. A union is for an argument with at least one alternative like
+that. An argument whose every alternative would carry the same JS value on (a number or a `BigInt`, an array or an
+object, a string or a buffer that one helper takes as a `JSValue`) is `b.opaque`: a union of those makes C++ sort the
+value and the body test it again.
 
 `b.opaque.optional` is `None` for `undefined`, `.nullable` for `null` too.
 
@@ -368,7 +371,7 @@ A value that was not an argument is a `JSValue`, which the body tests itself: an
 read while walking, an internal field. `JsLocal::new(&cx.heap, value)` makes a handle of one, for what takes a handle,
 and `JsLocal::<JSObject>::from_js(global, value)` one of an object.
 
-A body that tells kinds of value apart says which in a union, and matches on it:
+A body that tells kinds of value apart, some of which are converted, says which in a union, and matches on it:
 
 ```ts
 export const Expected = b.union(
@@ -403,7 +406,7 @@ pub fn send<'a>(&self, cx: &mut JsScope<'a>, command: Deferred<'a, bun_core::Str
 A conversion can run JavaScript, so like everything else that can it takes the `&JSGlobalObject` and returns a
 `JsResult`. `undefined` for a type with a default, or one that is `.optional`, is answered without a call into C++.
 
-A union whose alternatives are handles (`b.stringLike`, `b.bufferSource`, a `deferred` dictionary) and that ends in
+A union of a `deferred` dictionary and handles (`b.stringLike`, `b.bufferSource`) that ends in
 `b.ignored` or `b.opaque` only tells kinds apart: it runs nothing and refuses nothing, so it is not `.deferred`. It is also
 `Copy`, where a union that owns a string is dropped at every early return of every body that takes it. A union that many
 functions hand to one helper takes handles and the helper converts them, as for the commands of `RedisClient` and the

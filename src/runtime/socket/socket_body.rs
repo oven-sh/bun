@@ -6,8 +6,7 @@ use core::ptr::{self, NonNull};
 
 use crate::generated_bindgen::socket_body::{
     ALPNProtocol, AnySocket, BufferedWrite, BunSocket, CipherInfo, DuplexTLSOptions,
-    EphemeralKeyInfo, OptionalBool, SocketData, SocketHandle, SocketWriteOption, TextOrBytes,
-    TimeoutSeconds, UpgradeTLSOptions, js_TCPSocket, js_TLSSocket, loose_string, timeout_seconds,
+    EphemeralKeyInfo, OptionalBool, SocketHandle, UpgradeTLSOptions, js_TCPSocket, js_TLSSocket,
 };
 use crate::generated_bindgen::socket_config::{SocketReloadOptions, UpgradeTLS};
 use bun_core::EncodedSlice;
@@ -31,7 +30,7 @@ use bun_jsc::{
 // struct directly so `VirtualMachine::get()` resolves as an associated fn.
 use super::upgraded_duplex::{Handlers as UpgradedDuplexHandlers, UpgradedDuplex};
 use crate::crypto::boringssl_jsc::err_to_js as boringssl_err_to_js;
-use crate::node::{BlobOrStringOrBuffer, Encoding, StringOrBuffer};
+use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
 use crate::socket::{SSLConfig, SSLConfigFromJs};
 use bun_boringssl_sys as boringssl_sys;
 use bun_cares_sys::c_ares_draft as c_ares;
@@ -106,7 +105,6 @@ use std::rc::Rc;
 mod tls_socket_functions;
 use crate::api::bun::h2_frame_parser::H2FrameParser;
 use crate::api::bun_secure_context::SecureContext;
-use crate::api::js_bundler::BuildArtifact;
 use crate::socket::udp_socket::get_us_error;
 
 bun_output::declare_scope!(Socket, visible);
@@ -2302,19 +2300,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         self.flags.get().contains(Flags::AUTHORIZED)
     }
 
-    pub(crate) fn timeout(
-        &self,
-        cx: &mut JsScope<'_>,
-        seconds: TimeoutSeconds<'_>,
-    ) -> JsResult<()> {
+    pub(crate) fn timeout(&self, cx: &mut JsScope<'_>, seconds: JsLocal<'_>) -> JsResult<()> {
         let global = cx.global();
         if self.socket.get().is_detached() {
             return Ok(());
         }
-        let t = match seconds {
-            TimeoutSeconds::Number(seconds) => seconds.to_js().coerce::<i32>(global)?,
-            TimeoutSeconds::Other(seconds) => timeout_seconds(global, seconds)?,
-        };
+        let t = seconds.to_js().coerce::<i32>(global)?;
         if t < 0 {
             return Err(global.throw(format_args!("Timeout must be a positive integer")));
         }
@@ -2377,13 +2368,13 @@ impl<const SSL: bool> NewSocket<SSL> {
         Some(fallback.to_error_instance(global))
     }
 
-    pub(crate) fn write<'a>(
+    pub(crate) fn write(
         &self,
-        cx: &mut JsScope<'a>,
-        data: (SocketData<'a>, JsLocal<'a>),
-        byte_offset: SocketWriteOption<'a>,
-        byte_length: SocketWriteOption<'a>,
-        encoding: SocketWriteOption<'a>,
+        cx: &mut JsScope<'_>,
+        data: JsLocal<'_>,
+        byte_offset: JsLocal<'_>,
+        byte_length: JsLocal<'_>,
+        encoding: JsLocal<'_>,
     ) -> JsResult<i32> {
         let global = cx.global();
 
@@ -2391,8 +2382,14 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(-1);
         }
 
-        let result =
-            self.write_or_end::<false>(global, data, byte_offset, byte_length, encoding, false);
+        let result = self.write_or_end::<false>(
+            global,
+            data.to_js(),
+            byte_offset.to_js(),
+            byte_length.to_js(),
+            encoding.to_js(),
+            false,
+        );
         Ok(match result {
             WriteResult::Fail => return Err(jsc::JsError::Thrown),
             // The errno of a fatal send (< -1) is for node:net; this API documents -1.
@@ -2569,11 +2566,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         res
     }
 
-    pub(crate) fn write_buffered<'a>(
+    pub(crate) fn write_buffered(
         &self,
-        cx: &mut JsScope<'a>,
-        data: (SocketData<'a>, JsLocal<'a>),
-        encoding: SocketWriteOption<'a>,
+        cx: &mut JsScope<'_>,
+        data: JsLocal<'_>,
+        encoding: JsLocal<'_>,
     ) -> JsResult<BufferedWrite> {
         let global = cx.global();
         if self.socket.get().is_detached() {
@@ -2583,7 +2580,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         Ok(
-            match self.write_or_end_buffered::<false>(global, data, encoding) {
+            match self.write_or_end_buffered::<false>(global, data.to_js(), encoding.to_js()) {
                 WriteResult::Fail => return Err(jsc::JsError::Thrown),
                 WriteResult::Success { wrote, total } => {
                     if wrote < -1 {
@@ -2601,11 +2598,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         )
     }
 
-    pub(crate) fn end_buffered<'a>(
+    pub(crate) fn end_buffered(
         &self,
-        cx: &mut JsScope<'a>,
-        data: (SocketData<'a>, JsLocal<'a>),
-        encoding: SocketWriteOption<'a>,
+        cx: &mut JsScope<'_>,
+        data: JsLocal<'_>,
+        encoding: JsLocal<'_>,
     ) -> JsResult<bool> {
         let global = cx.global();
         if self.socket.get().is_detached() {
@@ -2616,52 +2613,53 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // `write_or_end_buffered` reaches `internal_flush`, which re-enters JS.
         let _guard = self.ref_guard();
-        let result = match self.write_or_end_buffered::<true>(global, data, encoding) {
-            WriteResult::Fail => return Err(jsc::JsError::Thrown),
-            WriteResult::Success { wrote, total } => {
-                if wrote >= 0 && usize::try_from(wrote).expect("int cast") == total {
-                    let _ = self.internal_flush();
-                }
+        let result =
+            match self.write_or_end_buffered::<true>(global, data.to_js(), encoding.to_js()) {
+                WriteResult::Fail => return Err(jsc::JsError::Thrown),
+                WriteResult::Success { wrote, total } => {
+                    if wrote >= 0 && usize::try_from(wrote).expect("int cast") == total {
+                        let _ = self.internal_flush();
+                    }
 
-                usize::try_from(wrote.max(0)).expect("int cast") == total
-            }
-        };
+                    usize::try_from(wrote.max(0)).expect("int cast") == total
+                }
+            };
         Ok(result)
     }
 
-    fn write_or_end_buffered<'a, const IS_END: bool>(
+    fn write_or_end_buffered<const IS_END: bool>(
         &self,
         global: &JSGlobalObject,
-        (data, data_value): (SocketData<'a>, JsLocal<'a>),
-        encoding_value: SocketWriteOption<'a>,
+        data_value: JSValue,
+        encoding_value: JSValue,
     ) -> WriteResult {
         if self.buffered_data_for_node_net.get().len() == 0 {
             return self.write_or_end::<IS_END>(
                 global,
-                (data, data_value),
-                SocketWriteOption::Missing,
-                SocketWriteOption::Missing,
+                data_value,
+                JSValue::UNDEFINED,
+                JSValue::UNDEFINED,
                 encoding_value,
                 true,
             );
         }
 
-        let data = match data {
-            SocketData::Data(data) => data,
-            _ => TextOrBytes::Other,
-        };
-        let has_data = !matches!(data, TextOrBytes::Missing);
-        let buffer: StringOrBuffer = if !has_data {
+        let buffer: StringOrBuffer = if data_value.is_undefined() {
             StringOrBuffer::EMPTY
         } else {
-            match string_or_buffer_to_write(global, data, encoding_value) {
+            match StringOrBuffer::from_js_with_encoding_value_allow_string_object(
+                global,
+                // allocator dropped (global mimalloc)
+                data_value,
+                encoding_value,
+            ) {
                 Ok(Some(b)) => b,
                 Ok(None) => {
                     if !global.has_exception() {
                         let _ = global.throw_invalid_argument_type_value(
                             b"data",
                             b"string, buffer, or blob",
-                            data_value.to_js(),
+                            data_value,
                         );
                     }
                     return WriteResult::Fail;
@@ -2687,7 +2685,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if total_to_write == 0 {
             if SSL {
                 log!("total_to_write == 0");
-                if has_data {
+                if !data_value.is_undefined() {
                     log!("data_value is not undefined");
                     // special condition for SSL_write(0, "", 0)
                     // we need to send an empty packet after the buffer is flushed and after the handshake is complete
@@ -2793,16 +2791,16 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
-    fn write_or_end<'a, const IS_END: bool>(
+    fn write_or_end<const IS_END: bool>(
         &self,
         global: &JSGlobalObject,
-        (data, data_value): (SocketData<'a>, JsLocal<'a>),
-        byte_offset: SocketWriteOption<'a>,
-        byte_length: SocketWriteOption<'a>,
-        encoding: SocketWriteOption<'a>,
+        data: JSValue,
+        byte_offset: JSValue,
+        byte_length: JSValue,
+        encoding: JSValue,
         buffer_unwritten_data: bool,
     ) -> WriteResult {
-        if matches!(data, SocketData::Data(TextOrBytes::Missing)) {
+        if data.is_undefined() {
             if !self.flags.get().contains(Flags::END_AFTER_FLUSH) && IS_END {
                 self.update_flags(|f| f.insert(Flags::END_AFTER_FLUSH));
             }
@@ -2811,31 +2809,34 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         debug_assert!(self.buffered_data_for_node_net.get().len() == 0);
-        let (offset_value, length_value, encoding_value) =
-            if matches!(byte_length, SocketWriteOption::String(_)) {
-                (byte_offset, SocketWriteOption::Missing, byte_length)
-            } else if matches!(byte_offset, SocketWriteOption::String(_)) {
-                (SocketWriteOption::Missing, byte_length, byte_offset)
-            } else {
-                (byte_offset, byte_length, encoding)
-            };
+        let (offset_value, length_value, encoding_value) = if byte_length.is_string() {
+            (byte_offset, JSValue::UNDEFINED, byte_length)
+        } else if byte_offset.is_string() {
+            (JSValue::UNDEFINED, byte_length, byte_offset)
+        } else {
+            (byte_offset, byte_length, encoding)
+        };
 
-        if !matches!(encoding_value, SocketWriteOption::Missing)
-            && (!matches!(offset_value, SocketWriteOption::Missing)
-                || !matches!(length_value, SocketWriteOption::Missing))
+        if !encoding_value.is_undefined()
+            && (!offset_value.is_undefined() || !length_value.is_undefined())
         {
             let _ = global.throw_todo(b"Support encoding with offset and length altogether. Only either encoding or offset, length is supported, but not both combinations yet.");
             return WriteResult::Fail;
         }
 
-        let buffer = match data_to_write(global, data, encoding_value) {
+        let buffer = match BlobOrStringOrBuffer::from_js_with_encoding_value_allow_request_response(
+            global,
+            data,
+            encoding_value,
+            true,
+        ) {
             Ok(Some(b)) => b,
             Ok(None) => {
                 if !global.has_exception() {
                     let _ = global.throw_invalid_argument_type_value(
                         b"data",
                         b"string, buffer, or blob",
-                        data_value.to_js(),
+                        data,
                     );
                 }
                 return WriteResult::Fail;
@@ -2855,14 +2856,14 @@ impl<const SSL: bool> NewSocket<SSL> {
         let label: &'static str = if IS_END { "Socket.end" } else { "Socket.write" };
 
         let byte_offset: usize = 'brk: {
-            let i = match offset_value {
-                SocketWriteOption::Missing => break 'brk 0,
-                SocketWriteOption::Number(i) if i.to_js().is_any_int() => i.to_js().to_int64(),
-                _ => {
-                    let _ = global.throw_invalid_argument_type(label, "byteOffset", "integer");
-                    return WriteResult::Fail;
-                }
-            };
+            if offset_value.is_undefined() {
+                break 'brk 0;
+            }
+            if !offset_value.is_any_int() {
+                let _ = global.throw_invalid_argument_type(label, "byteOffset", "integer");
+                return WriteResult::Fail;
+            }
+            let i = offset_value.to_int64();
             if i < 0 {
                 let _ = global.throw_range_error(
                     i,
@@ -2879,14 +2880,15 @@ impl<const SSL: bool> NewSocket<SSL> {
         };
 
         let byte_length: usize = 'brk: {
-            let l = match length_value {
-                SocketWriteOption::Missing => break 'brk buffer.slice().len(),
-                SocketWriteOption::Number(l) if l.to_js().is_any_int() => l.to_js().to_int64(),
-                _ => {
-                    let _ = global.throw_invalid_argument_type(label, "byteLength", "integer");
-                    return WriteResult::Fail;
-                }
-            };
+            if length_value.is_undefined() {
+                break 'brk buffer.slice().len();
+            }
+            if !length_value.is_any_int() {
+                let _ = global.throw_invalid_argument_type(label, "byteLength", "integer");
+                return WriteResult::Fail;
+            }
+
+            let l = length_value.to_int64();
 
             if l < 0 {
                 let _ = global.throw_range_error(
@@ -3125,13 +3127,13 @@ impl<const SSL: bool> NewSocket<SSL> {
         });
     }
 
-    pub(crate) fn end<'a>(
+    pub(crate) fn end(
         &self,
-        cx: &mut JsScope<'a>,
-        data: (SocketData<'a>, JsLocal<'a>),
-        byte_offset: SocketWriteOption<'a>,
-        byte_length: SocketWriteOption<'a>,
-        encoding: SocketWriteOption<'a>,
+        cx: &mut JsScope<'_>,
+        data: JsLocal<'_>,
+        byte_offset: JsLocal<'_>,
+        byte_length: JsLocal<'_>,
+        encoding: JsLocal<'_>,
     ) -> JsResult<i32> {
         let global = cx.global();
         log!("end");
@@ -3141,8 +3143,14 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // `write_or_end` reaches `internal_flush`, which re-enters JS.
         let _guard = self.ref_guard();
-        let result =
-            self.write_or_end::<true>(global, data, byte_offset, byte_length, encoding, false);
+        let result = self.write_or_end::<true>(
+            global,
+            data.to_js(),
+            byte_offset.to_js(),
+            byte_length.to_js(),
+            encoding.to_js(),
+            false,
+        );
         let result = match result {
             WriteResult::Fail => return Err(jsc::JsError::Thrown),
             WriteResult::Success { wrote, total } => {
@@ -3295,13 +3303,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Bytes already consumed from the wire before the upgrade (e.g. the
         // ClientHello sitting in the readable buffer of the socket being
         // wrapped); fed into the TLS engine once the upgrade is wired up.
-        let initial_data: Vec<u8> = tls_socket_functions::string_or_buffer(
-            global,
-            opts.initial_data(global)?,
-            Encoding::Utf8,
-        )?
-        .map(|data| data.slice().to_vec())
-        .unwrap_or_default();
+        let initial_data: Vec<u8> = match opts.initial_data(global)? {
+            Some(v) => StringOrBuffer::from_js(global, v.to_js())?
+                .map(|data| data.slice().to_vec())
+                .unwrap_or_default(),
+            None => Vec::new(),
+        };
         // Client mode: a standalone `new TLSSocket(socket, { isServer })` is NOT
         // a SocketListener, so these handlers have no listener to release. The
         // server-ness lives in the SSL accept state (adopt_tls
@@ -3649,7 +3656,7 @@ impl TCPSocket {
     pub(crate) fn get_tls_ticket(&self, _: &mut JsScope<'_>) -> JsResult<Option<JSValue>> {
         Ok(None)
     }
-    pub(crate) fn set_session(&self, _: &mut JsScope<'_>, _: TextOrBytes<'_>) -> JsResult<()> {
+    pub(crate) fn set_session(&self, _: &mut JsScope<'_>, _: JsLocal<'_>) -> JsResult<()> {
         Ok(())
     }
     pub(crate) fn get_session(&self, _: &mut JsScope<'_>) -> JsResult<Option<JSValue>> {
@@ -3673,7 +3680,7 @@ impl TCPSocket {
         _: &mut JsScope<'_>,
         _: Option<JsLocal<'_, Number>>,
         _: Deferred<'_, Option<BunString>>,
-        _: TextOrBytes<'_>,
+        _: JsLocal<'_>,
     ) -> JsResult<Option<JSValue>> {
         Ok(None)
     }
@@ -3772,43 +3779,6 @@ impl NativeCallbacks {
 enum WriteResult {
     Fail,
     Success { wrote: i32, total: usize },
-}
-
-/// `data` that is a string or a buffer, a string encoded as `encoding`. `None` for anything else.
-fn string_or_buffer_to_write<'a>(
-    global: &JSGlobalObject,
-    data: TextOrBytes<'a>,
-    encoding: SocketWriteOption<'a>,
-) -> JsResult<Option<StringOrBuffer<'static>>> {
-    let encoding = match encoding {
-        SocketWriteOption::Missing | SocketWriteOption::Number(_) => None,
-        SocketWriteOption::String(name) => Encoding::from_bun_string(&loose_string(global, name)?),
-        SocketWriteOption::Other(name) => Encoding::from_bun_string(&loose_string(global, name)?),
-    }
-    .unwrap_or(Encoding::Utf8);
-    tls_socket_functions::string_or_buffer(global, data, encoding)
-}
-
-/// As [`string_or_buffer_to_write`], and the bytes of a blob or of a body.
-/// A free function, so it is not instantiated for each `SSL`.
-fn data_to_write<'a>(
-    global: &JSGlobalObject,
-    data: SocketData<'a>,
-    encoding: SocketWriteOption<'a>,
-) -> JsResult<Option<BlobOrStringOrBuffer>> {
-    match data {
-        SocketData::Blob(blob) | SocketData::BuildArtifact(BuildArtifact { blob, .. }) => {
-            Ok(Some(BlobOrStringOrBuffer::Blob(Box::new(blob.dupe()))))
-        }
-        SocketData::Request(request) => {
-            BlobOrStringOrBuffer::from_body_value(global, request.get_body_value()).map(Some)
-        }
-        SocketData::Response(response) => {
-            BlobOrStringOrBuffer::from_body_value(global, response.get_body_value()).map(Some)
-        }
-        SocketData::Data(data) => string_or_buffer_to_write(global, data, encoding)
-            .map(|buffer| buffer.map(BlobOrStringOrBuffer::StringOrBuffer)),
-    }
 }
 
 pub(crate) struct StoredVerifyError {

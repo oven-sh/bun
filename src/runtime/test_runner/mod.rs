@@ -193,9 +193,7 @@ pub(crate) mod expect {
     // local FFI re-decls, no semantic divergence.
 
     use bun_jsc::{JSGlobalObject, JSValue, JsResult};
-    use bun_jsc::bindgen::JsLocal;
     use bun_jsc::console_object::Formatter;
-    use crate::generated_bindgen::expect::NumberOrBigInt;
 
     pub(crate) trait JSValueTestExt {
         fn jest_snapshot_pretty_format<W: bun_io::Write>(self, out: &mut W, global: &JSGlobalObject) -> JsResult<()>;
@@ -340,7 +338,7 @@ pub(crate) mod expect {
             &self,
             global: &JSGlobalObject,
             this_value: JSValue,
-            (other, other_value): (NumberOrBigInt<'_>, JsLocal<'_>),
+            other_value: JSValue,
             name: &'static str,
             rel: OrderingRelation,
         ) -> JsResult<()> {
@@ -351,8 +349,8 @@ pub(crate) mod expect {
             let value: JSValue =
                 this.get_value(global, this_value, name, "<green>expected<r>")?;
 
-            let other_value = other_value.to_js();
-            if (!value.is_number() && !value.is_big_int()) || matches!(other, NumberOrBigInt::Other)
+            if (!value.is_number() && !value.is_big_int())
+                || (!other_value.is_number() && !other_value.is_big_int())
             {
                 return Err(global.throw(format_args!(
                     "Expected and actual values must be numbers or bigints"

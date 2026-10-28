@@ -564,11 +564,11 @@ impl From<bun_core::NodeEncoding> for Encoding {
     }
 }
 
-pub(crate) fn assert_encoding_valid(
-    cx: &mut JsScope<'_>,
-    encoding: Option<generated::EncodingName<'_>>,
+pub(crate) fn assert_encoding_valid<'a>(
+    cx: &mut JsScope<'a>,
+    encoding: JsLocal<'a>,
 ) -> JsResult<()> {
-    Encoding::assert(encoding, cx.global(), Encoding::Utf8)?;
+    Encoding::assert(encoding.to_js(), cx.global(), Encoding::Utf8)?;
     Ok(())
 }
 
@@ -596,33 +596,25 @@ impl Encoding {
     }
 
     pub(crate) fn assert(
-        value: Option<generated::EncodingName<'_>>,
-        global_object: &JSGlobalObject,
-        default: Encoding,
-    ) -> JsResult<Encoding> {
-        match value {
-            None => Ok(default),
-            Some(generated::EncodingName::String(name)) => {
-                Self::from_name_with_default_on_empty(name.to_js(), global_object, default)
-            }
-            Some(generated::EncodingName::Other(value)) => {
-                Err(Self::throw_encoding_error(global_object, value.to_js()))
-            }
-        }
-    }
-
-    pub(crate) fn from_name_with_default_on_empty(
         value: JSValue,
         global_object: &JSGlobalObject,
         default: Encoding,
     ) -> JsResult<Encoding> {
+        if value.is_falsey() {
+            return Ok(default);
+        }
+
+        if !value.is_string() {
+            return Err(Self::throw_encoding_error(global_object, value));
+        }
+
         match Self::from_js_with_default_on_empty(value, global_object, default)? {
             Some(e) => Ok(e),
             None => Err(Self::throw_encoding_error(global_object, value)),
         }
     }
 
-    fn from_js_with_default_on_empty(
+    pub(crate) fn from_js_with_default_on_empty(
         value: JSValue,
         global_object: &JSGlobalObject,
         default: Encoding,
@@ -634,7 +626,10 @@ impl Encoding {
         Ok(Self::from(str.to_utf8().slice()))
     }
 
-    fn throw_encoding_error(global_object: &JSGlobalObject, value: JSValue) -> jsc::JsError {
+    pub(crate) fn throw_encoding_error(
+        global_object: &JSGlobalObject,
+        value: JSValue,
+    ) -> jsc::JsError {
         global_object
             .err(
                 jsc::ErrorCode::INVALID_ARG_VALUE,

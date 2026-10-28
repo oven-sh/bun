@@ -13,9 +13,7 @@ use super::interpreter::ShellArgs;
 use super::shell_body::shell_cmd_from_js;
 use super::{EnvStr, Interpreter};
 
-pub(crate) use crate::generated_bindgen::parsed_shell_script::{
-    ShellArrayLike, js_ParsedShellScript as js,
-};
+pub(crate) use crate::generated_bindgen::parsed_shell_script::js_ParsedShellScript as js;
 
 pub(crate) struct ParsedShellScript {
     pub args: JsCell<Option<Box<ShellArgs>>>,
@@ -150,18 +148,18 @@ fn env_bytes(global: &JSGlobalObject, name: &str, str: &BunString) -> JsResult<B
 
 pub(crate) fn create_parsed_shell_script<'a>(
     cx: &mut JsScope<'a>,
-    strings: ShellArrayLike<'a>,
+    strings: JsLocal<'a>,
     template_args: JsLocal<'a, JSArray>,
 ) -> JsResult<JSValue> {
     let global = cx.global();
     MarkedArgumentBuffer::new(|buf| {
-        create_parsed_shell_script_impl(global, strings, template_args.to_js(), buf)
+        create_parsed_shell_script_impl(global, strings.to_js(), template_args.to_js(), buf)
     })
 }
 
 fn create_parsed_shell_script_impl(
     global: &JSGlobalObject,
-    string_args: ShellArrayLike<'_>,
+    string_args: JSValue,
     template_args_js: JSValue,
     marked_argument_buffer: &mut MarkedArgumentBuffer,
 ) -> JsResult<JSValue> {

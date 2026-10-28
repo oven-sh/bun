@@ -14,18 +14,11 @@ export const crc32 = b.fn({
 const method = { capability: "js", throws: true, passThis: true, length: 0 } as const;
 /** A number saturates to a `u32`, `true` is 1 and anything else is 0. Only `flush` refuses `undefined`. */
 export const ZlibWriteNumber = b.union({ number: b.f64, flag: b.bool, missing: b.undefined, other: b.ignored });
-/** `null` is a write that only flushes. */
-export const ZlibWriteInput = b.union({
-  buffer: b.bufferSource.allowShared,
-  missing: b.undefined,
-  flushOnly: b.null,
-  other: b.ignored,
-});
 const write = {
   ...method,
   args: {
     flush: ZlibWriteNumber,
-    in_: ZlibWriteInput,
+    in_: b.opaque,
     inOff: ZlibWriteNumber,
     inLen: ZlibWriteNumber,
     out: b.bufferSource.allowShared.otherAsNull,
@@ -60,7 +53,7 @@ const compressionStream = <Init extends object, Params extends object>(
     proto: {
       close: {},
       init: { ...method, ...init },
-      onerror: { getter: b.opaque, setter: { type: b.callable.otherAsNull, capability: "js" }, passThis: true },
+      onerror: { getter: b.opaque, setter: { capability: "js" }, passThis: true },
       params,
       reset: method,
       write,

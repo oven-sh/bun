@@ -1,23 +1,21 @@
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::JsResult;
 use super::DiffFormatter;
 use super::throw;
-use super::{Expect, get_signature};
-use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_jsc::{JSObject, JsResult};
+use super::{get_signature, Expect};
 
 impl Expect {
     pub(crate) fn to_match_object(
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        expected: Option<JsLocal<'_, JSObject>>,
+        expected: JsLocal<'_>,
     ) -> JsResult<()> {
         let global = cx.global();
-        let (this, received_object, not) = self.matcher_prelude(
-            global,
-            this_value.to_js(),
-            "toMatchObject",
-            "<green>expected<r>",
-        )?;
+        let (this, received_object, not) =
+            self.matcher_prelude(global, this_value.to_js(), "toMatchObject", "<green>expected<r>")?;
+        let expected = expected.to_js();
+
         if !received_object.is_object() {
             let signature: &str = get_signature("toMatchObject", "<green>expected<r>", not);
             return throw!(
@@ -26,14 +24,13 @@ impl Expect {
             );
         }
 
-        let Some(expected) = expected else {
+        if !expected.is_object() {
             let signature: &str = get_signature("toMatchObject", "", not);
             return throw!(
                 this, global, signature,
                 "\n\n<b>Matcher error<r>: <green>expected<r> value must be a non-null object\n",
             );
-        };
-        let expected = expected.to_js();
+        }
 
         let mut pass = received_object.jest_deep_match(expected, global, true)?;
 

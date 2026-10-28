@@ -4,7 +4,7 @@ use std::borrow::Cow;
 use bun_core::Output;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
-use super::diff::print_diff::{DiffConfig, print_diff_main};
+use super::diff::print_diff::{print_diff_main, DiffConfig};
 use super::pretty_format::{FormatOptions, JestPrettyFormat, MessageLevel};
 
 /// Renders a Jest-style diff of two already-formatted values. Formatting a JS value runs user code

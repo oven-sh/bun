@@ -24,9 +24,8 @@ use bun_paths as path;
 use bun_resolver::fs as Fs;
 
 use crate::generated_bindgen::ffi::{
-    CCOptions, CCStrings, CCSymbols, FFIArgs, FFIFunction, FFIReturnType, js_FFI as js,
+    CCOptions, CCStrings, FFIFunction, FFIReturnType, js_FFI as js,
 };
-use crate::generated_bindgen::ffi_object::FFINumber;
 
 // ─── Local shims for upstream surfaces not yet wired (Phase D) ───────────────
 
@@ -1039,20 +1038,19 @@ impl FFI {
 
         let mut compile_c = CompileC::default();
 
-        let symbols_object = match object.symbols(global_this)? {
-            CCSymbols::Record(symbols_object) => symbols_object,
-            CCSymbols::Other(symbols_object) => {
-                return Err(global_this.throw_invalid_argument_type_value(
-                    b"symbols",
-                    b"object",
-                    symbols_object.to_js(),
-                ));
-            }
-        };
+        let symbols_object: JSValue = object.symbols(global_this)?.to_js();
+        if symbols_object.is_empty() || !symbols_object.is_object() {
+            return Err(global_this.throw_invalid_argument_type_value(
+                b"symbols",
+                b"object",
+                symbols_object,
+            ));
+        }
 
-        if let Some(val) =
-            generate_symbols(global_this, &mut compile_c.symbols.map, symbols_object)?
-        {
+        // SAFETY: already checked that symbols_object is an object
+        if let Some(val) = generate_symbols(global_this, &mut compile_c.symbols.map, unsafe {
+            &*symbols_object.get_object().unwrap()
+        })? {
             return Err(global_this.throw_value(val));
         }
 
@@ -1749,14 +1747,14 @@ pub(super) fn generate_symbol_for_function(
 
     let mut abi_types: Vec<ABIType> = Vec::new();
 
-    if let Some(args) = value.args(global)? {
-        let FFIArgs::List(args) = args else {
+    if let Some(args) = value.args(global)?.map(JsLocal::to_js) {
+        if args.is_empty_or_undefined_or_null() || !args.js_type().is_array() {
             return Ok(Some(global.create_error_instance(format_args!(
                 "Expected an object with \"args\" as an array"
             ))));
-        };
+        }
 
-        let mut array = args.to_js().array_iterator(global)?;
+        let mut array = args.array_iterator(global)?;
 
         abi_types.reserve_exact(array.len as usize);
         while let Some(val) = array.next()? {
@@ -1854,15 +1852,13 @@ pub(super) fn generate_symbol_for_function(
     function.return_type = return_type;
     function.threadsafe = threadsafe;
 
-    match value.ptr(global)? {
-        FFINumber::Number(ptr) => {
-            let num = ptr.to_js().as_ptr_address();
+    if let Some(ptr) = value.ptr(global)?.map(JsLocal::to_js) {
+        if ptr.is_number() {
+            let num = ptr.as_ptr_address();
             if num > 0 {
                 function.symbol_from_dynamic_library = Some(num as *mut c_void);
             }
-        }
-        FFINumber::BigInt(ptr) => {
-            let ptr = ptr.to_js();
+        } else if ptr.is_heap_big_int() {
             if !ptr.is_big_int_in_uint64_range(1, usize::MAX as u64) {
                 return Ok(Some(
                     global.to_invalid_arguments(format_args!("ptr is out of range.")),
@@ -1871,7 +1867,6 @@ pub(super) fn generate_symbol_for_function(
             function.symbol_from_dynamic_library =
                 Some(ptr.to_uint64_no_truncate() as usize as *mut c_void);
         }
-        FFINumber::Missing | FFINumber::Other => {}
     }
 
     Ok(None)

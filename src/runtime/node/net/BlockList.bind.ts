@@ -4,12 +4,8 @@ import { SocketAddress } from "../../socket/SocketAddress.bind.ts";
 
 const js = { capability: "js", throws: true } as const;
 
-/** An error shows what is none of them. A `String` object is converted once the kind of every argument is checked. */
-export const BlockListAddress = b.union({ address: SocketAddress, string: b.stringLike, other: b.opaque });
-/** `"ipv4"` or `"ipv6"` in any case. It is not looked at if the address is a `SocketAddress`. */
-export const BlockListFamily = b.union({ ipv4: b.undefined, string: b.stringLike, other: b.opaque });
-/** The range depends on the family of the network. */
-export const BlockListPrefix = b.union({ number: b.jsNumber, other: b.opaque });
+/** `other` is an address string. */
+export const BlockListAddress = b.union({ address: SocketAddress, other: b.opaque });
 
 /** `net.BlockList`. A structured clone shares the struct. */
 export const BlockList = b.class({
@@ -19,18 +15,14 @@ export const BlockList = b.class({
   types: [table.exactType("$Node.BlockList"), table.exactType("$Bindgen.BlockList")],
   construct: {},
   proto: {
-    addAddress: { ...js, args: { address: BlockListAddress, family: BlockListFamily }, length: 1 },
+    addAddress: { ...js, args: { address: BlockListAddress, family: b.opaque }, length: 1 },
     addRange: {
       ...js,
-      args: { start: BlockListAddress.withValue, end: BlockListAddress, family: BlockListFamily },
+      args: { start: BlockListAddress.withValue, end: BlockListAddress, family: b.opaque },
       length: 2,
     },
-    addSubnet: {
-      ...js,
-      args: { network: BlockListAddress, prefix: BlockListPrefix, family: BlockListFamily },
-      length: 2,
-    },
-    check: { ...js, args: { address: BlockListAddress, family: BlockListFamily }, returns: b.bool, length: 1 },
+    addSubnet: { ...js, args: { network: BlockListAddress, prefix: b.opaque, family: b.opaque }, length: 2 },
+    check: { ...js, args: { address: BlockListAddress, family: b.opaque }, returns: b.bool, length: 1 },
     rules: { ...js, getter: b.jsArray },
   },
   static: {

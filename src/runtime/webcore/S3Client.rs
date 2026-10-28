@@ -2,14 +2,14 @@ use bstr::BStr;
 
 use crate::generated_bindgen::blob::{PathOrBlob, S3Options};
 use crate::generated_bindgen::blob_arguments::BunWriteData;
-use crate::generated_bindgen::s3_client::{ListObjectsInput, S3Path, S3PresignOptions};
+use crate::generated_bindgen::s3_client::{S3Path, S3PresignOptions};
 use crate::node::PathLike;
 use crate::node::types::{Flavor, Parsing, PathLikeExt as _};
 use crate::webcore::blob::BlobExt as _;
 use crate::webcore::blob::store::S3Ext as _;
 use crate::webcore::s3::MultiPartUploadOptions;
 use crate::webcore::s3::client::{ACL, S3Credentials, StorageClass};
-use bun_jsc::bindgen::JsScope;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{ConsoleFormatter, ErrorCode, JSGlobalObject, JSValue, JsResult};
 
 use super::s3_file as S3File;
@@ -525,7 +525,7 @@ impl S3Client {
     pub(crate) fn list(
         &self,
         cx: &mut JsScope<'_>,
-        input: ListObjectsInput<'_>,
+        input: JsLocal<'_>,
         options: Option<S3Options<'_>>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
@@ -545,7 +545,7 @@ impl S3Client {
         store
             .data
             .as_s3()
-            .list_objects(store.clone(), &cx, input, options)
+            .list_objects(store.clone(), &cx, input.to_js(), options)
     }
 
     pub(crate) fn unlink(
@@ -696,7 +696,7 @@ impl S3Client {
 
     pub(crate) fn static_list(
         cx: &mut JsScope<'_>,
-        input: ListObjectsInput<'_>,
+        input: JsLocal<'_>,
         options: Option<S3Options<'_>>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
@@ -724,7 +724,7 @@ impl S3Client {
         store
             .data
             .as_s3()
-            .list_objects(store.clone(), &cx, input, options)
+            .list_objects(store.clone(), &cx, input.to_js(), options)
     }
 }
 

@@ -1,5 +1,4 @@
 import * as b from "../../codegen/bindgen-lib.ts";
-import { EncodingName } from "./node_fs_binding.bind.ts";
 
 export default b.module({ rustPath: "crate::node::node_util_binding" });
 
@@ -25,7 +24,7 @@ export const normalizeEncoding = b.fn({
 });
 
 export const assertEncodingValid = b.fn({
-  args: { encoding: EncodingName.falsyAsNull },
+  args: { encoding: b.opaque },
   capability: "js",
   throws: true,
   rustPath: "crate::node::types::assert_encoding_valid",

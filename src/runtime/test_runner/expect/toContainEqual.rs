@@ -1,11 +1,10 @@
 use core::ffi::c_void;
 
-use bun_core::strings;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, VM};
+use bun_core::strings;
 
-use super::{Expect, get_signature, throw};
-use crate::generated_bindgen::expect::StringValue;
+use super::{get_signature, throw, Expect};
 
 struct ExpectedEntry<'a> {
     global_this: &'a JSGlobalObject,
@@ -31,24 +30,22 @@ extern "C" fn deep_equals_iterator(
 }
 
 impl Expect {
-    pub(crate) fn to_contain_equal<'a>(
+    pub(crate) fn to_contain_equal(
         &self,
-        this_value: JsWrapper<'a, Self>,
+        this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        (expected_string, expected): (StringValue<'_>, JsLocal<'_>),
-    ) -> JsResult<JsWrapper<'a, Self>> {
+        expected: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
         let global = cx.global();
-        let (this, value, not) = self.matcher_prelude(
-            global,
-            this_value.to_js(),
-            "toContainEqual",
-            "<green>expected<r>",
-        )?;
+        let this_value = this_value.to_js();
+        let (this, value, not) =
+            self.matcher_prelude(global, this_value, "toContainEqual", "<green>expected<r>")?;
 
+        let expected = expected.to_js();
         let mut pass = false;
 
         let value_type = value.js_type();
-        let expected = expected.to_js();
+        let expected_type = expected.js_type();
 
         if value_type.is_array_like() {
             let mut itr = value.array_iterator(global)?;
@@ -58,8 +55,8 @@ impl Expect {
                     break;
                 }
             }
-        } else if value_type.is_string_like() && !matches!(expected_string, StringValue::Other) {
-            if matches!(expected_string, StringValue::StringObject(_)) && value_type.is_string() {
+        } else if value_type.is_string_like() && expected_type.is_string_like() {
+            if expected_type.is_string_object_like() && value_type.is_string() {
                 pass = false;
             } else {
                 let value_string = value.to_utf8(global)?;

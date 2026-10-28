@@ -1,5 +1,5 @@
-use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper, StringLike};
-use bun_jsc::{JSValue, JsResult};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::JsResult;
 
 use super::{Expect, get_signature, throw};
 
@@ -8,8 +8,8 @@ impl Expect {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        substring: Option<JsLocal<'_, StringLike>>,
-        count: Option<f64>,
+        substring: JsLocal<'_>,
+        count: JsLocal<'_>,
     ) -> JsResult<()> {
         let global = cx.global();
         // toIncludeRepeated bypasses get_value (reads `captured_value_get_cached` directly,
@@ -20,21 +20,21 @@ impl Expect {
 
         this.increment_expect_call_counter();
 
-        let Some(substring) = substring else {
+        let substring = substring.to_js();
+
+        if !substring.is_string() {
             return Err(global.throw(format_args!(
                 "toIncludeRepeated() requires the first argument to be a string"
             )));
-        };
-        let substring = substring.to_js();
+        }
 
-        let Some(count) = count
-            .map(JSValue::js_double_number)
-            .filter(|count| count.is_any_int())
-        else {
+        let count = count.to_js();
+
+        if !count.is_any_int() {
             return Err(global.throw(format_args!(
                 "toIncludeRepeated() requires the second argument to be a number"
             )));
-        };
+        }
 
         let count_as_num = count.to_u32();
 

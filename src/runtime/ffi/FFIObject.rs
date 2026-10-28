@@ -1,11 +1,10 @@
 use core::ffi::c_void;
 
-use bun_jsc::bindgen::{JsLocal, JsScope, Number};
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::host_fn::DomCall;
 use bun_jsc::{self as jsc, ArrayBuffer, JSFunction, JSGlobalObject, JSObject, JSValue, JsResult};
 
-use crate::generated_bindgen::ffi_object::FFINumber;
 use crate::generated_bindgen::{ffi, ffi_object};
 
 /// Reinterpret a user-supplied raw address (from `bun:ffi` JS land) as a
@@ -79,9 +78,9 @@ unsafe extern "C" {
 
 fn new_cstring(
     global_this: &JSGlobalObject,
-    value: FFINumber<'_>,
-    byte_offset: FFINumber<'_>,
-    length_value: FFINumber<'_>,
+    value: JSValue,
+    byte_offset: Option<JSValue>,
+    length_value: Option<JSValue>,
 ) -> JsResult<JSValue> {
     let (ptr, len) = get_ptr_slice(global_this, value, byte_offset, length_value)?;
     // SAFETY: ptr/len point to FFI-owned memory whose lifetime the caller guarantees.
@@ -96,24 +95,9 @@ pub(crate) unsafe extern "C" fn Bun__FFI__CString__transcode(
     byte_offset: JSValue,
     byte_length: JSValue,
 ) -> JSValue {
-    let number = |value: JSValue| {
-        if value.is_undefined_or_null() {
-            FFINumber::Missing
-        } else if let Some(number) = JsLocal::<Number>::from_js(global, value) {
-            FFINumber::Number(number)
-        } else {
-            JsLocal::<jsc::JSBigInt>::from_js(global, value)
-                .map_or(FFINumber::Other, FFINumber::BigInt)
-        }
-    };
     jsc::to_js_host_fn_result(
         global,
-        new_cstring(
-            global,
-            number(ptr),
-            number(byte_offset),
-            number(byte_length),
-        ),
+        new_cstring(global, ptr, Some(byte_offset), Some(byte_length)),
     )
 }
 
@@ -526,29 +510,20 @@ fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValu
 /// memory. Consumers borrow it or hand it to a supplied finalizer, never free it from Rust.
 fn get_ptr_slice(
     global_this: &JSGlobalObject,
-    value: FFINumber<'_>,
-    byte_offset: FFINumber<'_>,
-    byte_length: FFINumber<'_>,
+    value: JSValue,
+    byte_offset: Option<JSValue>,
+    byte_length: Option<JSValue>,
 ) -> JsResult<(*mut u8, usize)> {
-    let num = match value {
-        FFINumber::BigInt(value) => {
-            let value = value.to_js();
-            if !value.is_big_int_in_uint64_range(0, usize::MAX as u64) {
-                return Err(
-                    global_this.throw_invalid_arguments(format_args!("ptr is out of range."))
-                );
-            }
-            value.to_uint64_no_truncate() as usize
+    let num = if value.is_big_int() {
+        if !value.is_big_int_in_uint64_range(0, usize::MAX as u64) {
+            return Err(global_this.throw_invalid_arguments(format_args!("ptr is out of range.")));
         }
-        FFINumber::Number(value)
-            if !(value.to_js().as_number() < 0.0
-                || value.to_js().as_number() > usize::MAX as f64) =>
-        {
-            value.to_js().as_ptr_address()
-        }
-        _ => {
+        value.to_uint64_no_truncate() as usize
+    } else {
+        if !value.is_number() || value.as_number() < 0.0 || value.as_number() > usize::MAX as f64 {
             return Err(global_this.throw_invalid_arguments(format_args!("ptr must be a number.")));
         }
+        value.as_ptr_address()
     };
     if num == 0 {
         return Err(global_this.throw_invalid_arguments(format_args!(
@@ -558,9 +533,8 @@ fn get_ptr_slice(
 
     let mut addr: usize = num;
 
-    match byte_offset {
-        FFINumber::Number(byte_off) => {
-            let byte_off = byte_off.to_js();
+    if let Some(byte_off) = byte_offset {
+        if byte_off.is_number() {
             let off = byte_off.to_int64();
             if off < 0 {
                 addr =
@@ -579,9 +553,7 @@ fn get_ptr_slice(
                 return Err(global_this
                     .throw_invalid_arguments(format_args!("ptr must be a finite number.")));
             }
-        }
-        FFINumber::Missing => {}
-        _ => {
+        } else if !byte_off.is_empty_or_undefined_or_null() {
             return Err(
                 global_this.throw_invalid_arguments(format_args!("Expected number for byteOffset"))
             );
@@ -594,11 +566,16 @@ fn get_ptr_slice(
         )));
     }
 
-    match byte_length {
-        FFINumber::Missing => {}
-        FFINumber::Number(value_length) => {
+    if let Some(value_length) = byte_length {
+        if !value_length.is_empty_or_undefined_or_null() {
+            if !value_length.is_number() {
+                return Err(
+                    global_this.throw_invalid_arguments(format_args!("length must be a number."))
+                );
+            }
+
             // NaN and every value in (-1, 1) truncate to 0 and fail this check too.
-            let length_i = value_length.to_js().to_int64();
+            let length_i = value_length.to_int64();
             if length_i <= 0 {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "length must be > 0. This usually means a bug in your code."
@@ -614,11 +591,6 @@ fn get_ptr_slice(
             let length = usize::try_from(length_i).expect("int cast");
             return Ok((addr as *mut u8, length));
         }
-        _ => {
-            return Err(
-                global_this.throw_invalid_arguments(format_args!("length must be a number."))
-            );
-        }
     }
 
     // Scan for the NUL terminator.
@@ -629,22 +601,17 @@ fn get_ptr_slice(
     Ok((addr as *mut u8, len))
 }
 
-fn get_cptr(value: FFINumber<'_>) -> Option<usize> {
+fn get_cptr(value: JSValue) -> Option<usize> {
     // pointer to C function
-    match value {
-        FFINumber::Number(value) => {
-            let addr = value.to_js().as_ptr_address();
-            if addr > 0 {
-                return Some(addr);
-            }
+    if value.is_number() {
+        let addr = value.as_ptr_address();
+        if addr > 0 {
+            return Some(addr);
         }
-        FFINumber::BigInt(value) => {
-            let value = value.to_js();
-            if value.is_big_int_in_uint64_range(1, usize::MAX as u64) {
-                return Some(value.to_uint64_no_truncate() as usize);
-            }
+    } else if value.is_big_int() {
+        if value.is_big_int_in_uint64_range(1, usize::MAX as u64) {
+            return Some(value.to_uint64_no_truncate() as usize);
         }
-        FFINumber::Missing | FFINumber::Other => {}
     }
 
     None
@@ -652,40 +619,49 @@ fn get_cptr(value: FFINumber<'_>) -> Option<usize> {
 
 pub(crate) fn to_array_buffer<'a>(
     cx: &mut JsScope<'a>,
-    ptr: FFINumber<'a>,
-    byte_offset: FFINumber<'a>,
-    byte_length: FFINumber<'a>,
-    deallocator_context: FFINumber<'a>,
-    deallocator: Option<FFINumber<'a>>,
+    ptr: JsLocal<'a>,
+    byte_offset: Option<JsLocal<'a>>,
+    byte_length: Option<JsLocal<'a>>,
+    deallocator_context: Option<JsLocal<'a>>,
+    deallocator: Option<JsLocal<'a>>,
 ) -> JsResult<JSValue> {
     let global_this = cx.global();
-    let (ptr, len) = get_ptr_slice(global_this, ptr, byte_offset, byte_length)?;
+    let (ptr, len) = get_ptr_slice(
+        global_this,
+        ptr.to_js(),
+        byte_offset.map(JsLocal::to_js),
+        byte_length.map(JsLocal::to_js),
+    )?;
     let mut callback: jsc::JSTypedArrayBytesDeallocator = None;
     let mut ctx: Option<*mut c_void> = None;
-    if let Some(callback_value) = deallocator {
+    if let Some(callback_value) = deallocator.map(JsLocal::to_js) {
         if let Some(callback_ptr) = get_cptr(callback_value) {
             // SAFETY: user-supplied raw fn pointer address.
             callback = unsafe { deallocator_from_addr(callback_ptr) };
 
-            if let Some(ctx_ptr) = get_cptr(deallocator_context) {
-                ctx = Some(ctx_ptr as *mut c_void);
-            } else if !matches!(deallocator_context, FFINumber::Missing) {
-                return Err(global_this.throw_invalid_arguments(format_args!(
-                    "Expected user data to be a C pointer (number or BigInt)"
-                )));
+            if let Some(ctx_value) = deallocator_context.map(JsLocal::to_js) {
+                if let Some(ctx_ptr) = get_cptr(ctx_value) {
+                    ctx = Some(ctx_ptr as *mut c_void);
+                } else if !ctx_value.is_undefined_or_null() {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Expected user data to be a C pointer (number or BigInt)"
+                    )));
+                }
             }
-        } else if !matches!(callback_value, FFINumber::Missing) {
+        } else if !callback_value.is_empty_or_undefined_or_null() {
             return Err(global_this.throw_invalid_arguments(format_args!(
                 "Expected callback to be a C pointer (number or BigInt)"
             )));
         }
-    } else if let Some(callback_ptr) = get_cptr(deallocator_context) {
-        // SAFETY: user-supplied raw fn pointer address.
-        callback = unsafe { deallocator_from_addr(callback_ptr) };
-    } else if !matches!(deallocator_context, FFINumber::Missing) {
-        return Err(global_this.throw_invalid_arguments(format_args!(
-            "Expected callback to be a C pointer (number or BigInt)"
-        )));
+    } else if let Some(callback_value) = deallocator_context.map(JsLocal::to_js) {
+        if let Some(callback_ptr) = get_cptr(callback_value) {
+            // SAFETY: user-supplied raw fn pointer address.
+            callback = unsafe { deallocator_from_addr(callback_ptr) };
+        } else if !callback_value.is_empty_or_undefined_or_null() {
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "Expected callback to be a C pointer (number or BigInt)"
+            )));
+        }
     }
 
     // SAFETY: ptr/len came from get_ptr_slice; FFI-owned memory. The
@@ -705,40 +681,49 @@ pub(crate) fn to_array_buffer<'a>(
 
 pub(crate) fn to_buffer<'a>(
     cx: &mut JsScope<'a>,
-    ptr: FFINumber<'a>,
-    byte_offset: FFINumber<'a>,
-    byte_length: FFINumber<'a>,
-    deallocator_context: FFINumber<'a>,
-    deallocator: Option<FFINumber<'a>>,
+    ptr: JsLocal<'a>,
+    byte_offset: Option<JsLocal<'a>>,
+    byte_length: Option<JsLocal<'a>>,
+    deallocator_context: Option<JsLocal<'a>>,
+    deallocator: Option<JsLocal<'a>>,
 ) -> JsResult<JSValue> {
     let global_this = cx.global();
-    let (ptr, len) = get_ptr_slice(global_this, ptr, byte_offset, byte_length)?;
+    let (ptr, len) = get_ptr_slice(
+        global_this,
+        ptr.to_js(),
+        byte_offset.map(JsLocal::to_js),
+        byte_length.map(JsLocal::to_js),
+    )?;
     let mut callback: jsc::JSTypedArrayBytesDeallocator = None;
     let mut ctx: Option<*mut c_void> = None;
-    if let Some(callback_value) = deallocator {
+    if let Some(callback_value) = deallocator.map(JsLocal::to_js) {
         if let Some(callback_ptr) = get_cptr(callback_value) {
             // SAFETY: user-supplied raw fn pointer address.
             callback = unsafe { deallocator_from_addr(callback_ptr) };
 
-            if let Some(ctx_ptr) = get_cptr(deallocator_context) {
-                ctx = Some(ctx_ptr as *mut c_void);
-            } else if !matches!(deallocator_context, FFINumber::Missing) {
-                return Err(global_this.throw_invalid_arguments(format_args!(
-                    "Expected user data to be a C pointer (number or BigInt)"
-                )));
+            if let Some(ctx_value) = deallocator_context.map(JsLocal::to_js) {
+                if let Some(ctx_ptr) = get_cptr(ctx_value) {
+                    ctx = Some(ctx_ptr as *mut c_void);
+                } else if !ctx_value.is_empty_or_undefined_or_null() {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Expected user data to be a C pointer (number or BigInt)"
+                    )));
+                }
             }
-        } else if !matches!(callback_value, FFINumber::Missing) {
+        } else if !callback_value.is_empty_or_undefined_or_null() {
             return Err(global_this.throw_invalid_arguments(format_args!(
                 "Expected callback to be a C pointer (number or BigInt)"
             )));
         }
-    } else if let Some(callback_ptr) = get_cptr(deallocator_context) {
-        // SAFETY: user-supplied raw fn pointer address.
-        callback = unsafe { deallocator_from_addr(callback_ptr) };
-    } else if !matches!(deallocator_context, FFINumber::Missing) {
-        return Err(global_this.throw_invalid_arguments(format_args!(
-            "Expected callback to be a C pointer (number or BigInt)"
-        )));
+    } else if let Some(callback_value) = deallocator_context.map(JsLocal::to_js) {
+        if let Some(callback_ptr) = get_cptr(callback_value) {
+            // SAFETY: user-supplied raw fn pointer address.
+            callback = unsafe { deallocator_from_addr(callback_ptr) };
+        } else if !callback_value.is_empty_or_undefined_or_null() {
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "Expected callback to be a C pointer (number or BigInt)"
+            )));
+        }
     }
 
     // SAFETY: ptr/len came from get_ptr_slice; caller-owned FFI memory.

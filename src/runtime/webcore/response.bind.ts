@@ -69,21 +69,11 @@ export const BodyInit = b.union(
 );
 
 /** `headers` is copied. `init` is what `FetchHeaders::create_from_js` takes. */
-export const HeadersInit = b.union({ missing: b.undefined, headers: Headers, init: b.opaque }, { fromJS: true });
-/** `other` is `ToInt32`. */
-export const ResponseStatus = b.union(
-  {
-    missing: b.undefined,
-    bigInt: b.i64.asIntN,
-    number: b.f64,
-    other: b.i32.wrap,
-  },
-  { fromJS: true },
-);
+export const HeadersInit = b.union({ missing: b.undefined, headers: Headers, init: b.opaque });
 export const ResponseInit = b.dictionary(
   {
-    headers: HeadersInit,
-    status: ResponseStatus,
+    headers: b.opaque.optional,
+    status: b.opaque.optional,
     statusText: b.string.loose.emptyStringAsNull,
     method: b.string.loose.emptyStringAsNull,
   },

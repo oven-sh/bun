@@ -1,4 +1,4 @@
-use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper, Number};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{JSValue, JsResult};
 
 use super::Expect;
@@ -11,7 +11,7 @@ impl Expect {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        expected: Option<JsLocal<'_, Number>>,
+        expected: JsLocal<'_>,
         precision: ExpectPrecision,
     ) -> JsResult<()> {
         let global = cx.global();
@@ -21,20 +21,16 @@ impl Expect {
 
         this.increment_expect_call_counter();
 
-        let Some(expected_value) = expected else {
+        let expected_value = expected.to_js();
+        if !expected_value.is_number() {
             return Err(global.throw_invalid_argument_type("toBeCloseTo", "expected", "number"));
-        };
-        let expected_value = expected_value.to_js();
+        }
 
         let precision: f64 = match precision {
             ExpectPrecision::Missing => 2.0,
             ExpectPrecision::Digits(digits) => digits,
             ExpectPrecision::Other => {
-                return Err(global.throw_invalid_argument_type(
-                    "toBeCloseTo",
-                    "precision",
-                    "number",
-                ));
+                return Err(global.throw_invalid_argument_type("toBeCloseTo", "precision", "number"));
             }
         };
 

@@ -1,21 +1,12 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 import * as table from "../../codegen/builtins/lib.ts";
 
-/** `"ipv4"` or `"ipv6"` in any case, or the number of the address family. An error shows what is neither. */
-export const SocketAddressFamily = b.union({
-  missing: b.undefined,
-  string: b.stringLike,
-  number: b.jsNumber,
-  other: b.opaque,
-});
-/** An error shows what is not a number. */
-export const SocketAddressNumber = b.union({ missing: b.undefined, number: b.jsNumber, other: b.opaque });
 export const SocketAddressOptions = b.dictionary(
   {
     address: { type: b.string.allowStringObject.optional, expected: ["string"] },
-    family: SocketAddressFamily,
-    port: SocketAddressNumber,
-    flowlabel: SocketAddressNumber,
+    family: b.opaque.optional,
+    port: b.opaque.optional,
+    flowlabel: b.opaque.optional,
   },
   { deferred: true, reportedAs: "options" },
 );

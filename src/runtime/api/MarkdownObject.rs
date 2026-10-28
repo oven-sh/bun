@@ -1,11 +1,11 @@
 //! `Bun.markdown` — html/ansi/react/render host fns over `bun_md`.
 
 use crate::generated_bindgen::markdown_object::{
-    AnsiTheme, Autolinks, ComponentOverride, ComponentOverrides, Headings, MarkdownInput,
-    MarkdownOptions, ReactOptions, RenderCallbacks,
+    AnsiTheme, Autolinks, ComponentOverrides, Headings, MarkdownOptions, ReactOptions,
+    RenderCallbacks,
 };
 use bun_core::StackCheck;
-use bun_jsc::bindgen::{JsBytes, JsScope};
+use bun_jsc::bindgen::{JsBytes, JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, PinnedArrayBuffer, RangeErrorOptions,
@@ -132,20 +132,6 @@ macro_rules! parser_options {
     }};
 }
 
-fn input_from_js(
-    global: &JSGlobalObject,
-    input: MarkdownInput<'_>,
-) -> JsResult<StringOrBuffer<'static>> {
-    let buffer = match input {
-        MarkdownInput::String(string) => StringOrBuffer::from_js_stable(global, string.to_js())?,
-        MarkdownInput::Buffer(buffer) => StringOrBuffer::from_js_stable(global, buffer.to_js())?,
-        MarkdownInput::Other => None,
-    };
-    buffer.ok_or_else(|| {
-        global.throw_invalid_arguments(format_args!("Expected a string or buffer to render"))
-    })
-}
-
 /// Pins a buffer input for the render, which can re-enter JS; `None` for a string.
 fn pin(global: &JSGlobalObject, input: &StringOrBuffer) -> JsResult<Option<PinnedArrayBuffer>> {
     let StringOrBuffer::Buffer(buffer) = input else {
@@ -214,13 +200,22 @@ pub(crate) fn html<'a>(
 /// of all callback outputs.
 pub(crate) fn render<'a>(
     cx: &mut JsScope<'a>,
-    input: MarkdownInput<'a>,
+    input: JsLocal<'a>,
     callbacks: Option<&RenderCallbacks<'a>>,
     options: Option<&MarkdownOptions>,
 ) -> JsResult<Vec<u8>> {
     let global_this = cx.global();
+    let input_value = input.to_js();
 
-    let buffer = input_from_js(global_this, input)?;
+    if input_value.is_empty_or_undefined_or_null() {
+        return Err(global_this
+            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
+    }
+
+    let Some(buffer) = StringOrBuffer::from_js_stable(global_this, input_value)? else {
+        return Err(global_this
+            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
+    };
 
     let pinned = pin(global_this, &buffer)?;
     let input: &[u8] = match &pinned {
@@ -254,7 +249,7 @@ pub(crate) fn render<'a>(
 // accumulates stays GC-visible for the duration of the call.
 pub(crate) fn react<'a>(
     cx: &mut JsScope<'a>,
-    input: MarkdownInput<'a>,
+    input: JsLocal<'a>,
     components: Option<&ComponentOverrides<'a>>,
     options: Option<&ReactOptions>,
 ) -> JsResult<JSValue> {
@@ -268,7 +263,7 @@ pub(crate) fn react<'a>(
     MarkedArgumentBuffer::new(|marked_args| {
         let children = render_ast(
             global_this,
-            input,
+            input.to_js(),
             components,
             parser_options!(options),
             marked_args,
@@ -290,13 +285,21 @@ unsafe extern "C" {
 
 fn render_ast(
     global_this: &JSGlobalObject,
-    input: MarkdownInput<'_>,
+    input_value: JSValue,
     components: Option<&ComponentOverrides<'_>>,
     options: md::Options,
     marked_args: &mut MarkedArgumentBuffer,
     react_version: Option<u8>,
 ) -> JsResult<JSValue> {
-    let buffer = input_from_js(global_this, input)?;
+    if input_value.is_empty_or_undefined_or_null() {
+        return Err(global_this
+            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
+    }
+
+    let Some(buffer) = StringOrBuffer::from_js_stable(global_this, input_value)? else {
+        return Err(global_this
+            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
+    };
 
     let pinned = pin(global_this, &buffer)?;
     let input: &[u8] = match &pinned {
@@ -485,14 +488,11 @@ impl<'a> ParseRenderer<'a> {
     fn extract_components(&mut self, components: &ComponentOverrides<'_>) {
         macro_rules! extract {
             ($($name:ident),* $(,)?) => {$(
-                let val = match components.$name {
-                    ComponentOverride::Missing | ComponentOverride::Flag(_) => None,
-                    ComponentOverride::Text(val) => val.to_js().to_boolean().then_some(val.to_js()),
-                    ComponentOverride::Other(val) => Some(val.to_js()),
-                };
-                if let Some(val) = val {
-                    self.components.$name = val;
-                    self.marked_args.append(val);
+                if let Some(val) = components.$name.map(JsLocal::to_js) {
+                    if !val.is_boolean() {
+                        self.components.$name = val;
+                        self.marked_args.append(val);
+                    }
                 }
             )*};
         }

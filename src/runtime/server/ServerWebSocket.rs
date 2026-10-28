@@ -13,7 +13,7 @@ use bun_uws_sys::{Opcode, SendStatus};
 
 use crate::api::js_bundler::BuildArtifact;
 use crate::generated_bindgen::server::{
-    WebSocketCompress, WebSocketMessage, WebSocketTopic, js_ServerWebSocket as js,
+    WebSocketCompress, WebSocketMessage, js_ServerWebSocket as js,
 };
 use crate::server::WebSocketServerHandler;
 use crate::server::jsc::{
@@ -266,19 +266,13 @@ pub(super) fn payload_from_js<'a, 'call: 'a>(
 fn topic_from_js<'a>(
     global_this: &'a JSGlobalObject,
     fn_name: &'static str,
-    topic: WebSocketTopic<'_>,
+    value: JSValue,
     empty: EmptyTopic,
 ) -> JsResult<jsc::JSStringView<'a>> {
-    let topic = match topic {
-        WebSocketTopic::String(topic) => topic.to_js_string_view(global_this)?,
-        WebSocketTopic::Other(value) => {
-            return Err(global_this.throw_invalid_argument_type_value(
-                b"topic",
-                b"string",
-                value.to_js(),
-            ));
-        }
-    };
+    if !value.is_string() {
+        return Err(global_this.throw_invalid_argument_type_value(b"topic", b"string", value));
+    }
+    let topic = value.to_js_string_view(global_this)?;
     if topic.is_empty() && matches!(empty, EmptyTopic::Reject) {
         return Err(global_this.throw(format_args!("{fn_name} requires a non-empty topic name")));
     }
@@ -456,7 +450,7 @@ impl ServerWebSocket {
     fn publish_message(
         &self,
         global_this: &JSGlobalObject,
-        topic_value: WebSocketTopic<'_>,
+        topic_value: JSValue,
         message_value: WebSocketMessage<'_>,
         compress_value: WebSocketCompress,
         fn_name: &'static str,
@@ -503,7 +497,7 @@ impl ServerWebSocket {
     fn topic_dispatch(
         &self,
         global_this: &JSGlobalObject,
-        topic: WebSocketTopic<'_>,
+        topic: JSValue,
         fn_name: &'static str,
         op: impl FnOnce(AnyWebSocket, &[u8]) -> bool,
     ) -> JsResult<bool> {
@@ -954,23 +948,30 @@ impl ServerWebSocket {
     pub(crate) fn publish(
         &self,
         cx: &mut JsScope<'_>,
-        topic: WebSocketTopic<'_>,
-        data: WebSocketMessage<'_>,
-        compress: WebSocketCompress,
-    ) -> JsResult<JSValue> {
-        self.publish_message(cx.global(), topic, data, compress, "publish", Accept::Any)
-    }
-
-    pub(crate) fn publish_text(
-        &self,
-        cx: &mut JsScope<'_>,
-        topic: WebSocketTopic<'_>,
+        topic: JsLocal<'_>,
         data: WebSocketMessage<'_>,
         compress: WebSocketCompress,
     ) -> JsResult<JSValue> {
         self.publish_message(
             cx.global(),
-            topic,
+            topic.to_js(),
+            data,
+            compress,
+            "publish",
+            Accept::Any,
+        )
+    }
+
+    pub(crate) fn publish_text(
+        &self,
+        cx: &mut JsScope<'_>,
+        topic: JsLocal<'_>,
+        data: WebSocketMessage<'_>,
+        compress: WebSocketCompress,
+    ) -> JsResult<JSValue> {
+        self.publish_message(
+            cx.global(),
+            topic.to_js(),
             data,
             compress,
             "publishText",
@@ -981,13 +982,13 @@ impl ServerWebSocket {
     pub(crate) fn publish_binary(
         &self,
         cx: &mut JsScope<'_>,
-        topic: WebSocketTopic<'_>,
+        topic: JsLocal<'_>,
         data: WebSocketMessage<'_>,
         compress: WebSocketCompress,
     ) -> JsResult<JSValue> {
         self.publish_message(
             cx.global(),
-            topic,
+            topic.to_js(),
             data,
             compress,
             "publishBinary",
@@ -1156,30 +1157,28 @@ impl ServerWebSocket {
         self.websocket().get_buffered_amount()
     }
 
-    pub(crate) fn subscribe(
-        &self,
-        cx: &mut JsScope<'_>,
-        topic: WebSocketTopic<'_>,
-    ) -> JsResult<bool> {
-        self.topic_dispatch(cx.global(), topic, "subscribe", AnyWebSocket::subscribe)
-    }
-
-    pub(crate) fn unsubscribe(
-        &self,
-        cx: &mut JsScope<'_>,
-        topic: WebSocketTopic<'_>,
-    ) -> JsResult<bool> {
-        self.topic_dispatch(cx.global(), topic, "unsubscribe", AnyWebSocket::unsubscribe)
-    }
-
-    pub(crate) fn is_subscribed(
-        &self,
-        cx: &mut JsScope<'_>,
-        topic: WebSocketTopic<'_>,
-    ) -> JsResult<bool> {
+    pub(crate) fn subscribe(&self, cx: &mut JsScope<'_>, topic: JsLocal<'_>) -> JsResult<bool> {
         self.topic_dispatch(
             cx.global(),
-            topic,
+            topic.to_js(),
+            "subscribe",
+            AnyWebSocket::subscribe,
+        )
+    }
+
+    pub(crate) fn unsubscribe(&self, cx: &mut JsScope<'_>, topic: JsLocal<'_>) -> JsResult<bool> {
+        self.topic_dispatch(
+            cx.global(),
+            topic.to_js(),
+            "unsubscribe",
+            AnyWebSocket::unsubscribe,
+        )
+    }
+
+    pub(crate) fn is_subscribed(&self, cx: &mut JsScope<'_>, topic: JsLocal<'_>) -> JsResult<bool> {
+        self.topic_dispatch(
+            cx.global(),
+            topic.to_js(),
             "isSubscribed",
             AnyWebSocket::is_subscribed,
         )

@@ -5,7 +5,6 @@ use crate::webcore::blob::store::{S3Ext as _, Store, StoreExt as _};
 use crate::webcore::blob::{self, Blob, BlobExt};
 use crate::webcore::s3::client as s3;
 use crate::webcore::s3::client::error_jsc::s3_error_to_js_with_async_stack;
-use crate::webcore::s3::credentials_jsc::count_from_js;
 use crate::webcore::s3_client::S3CredentialsExt as _;
 use bun_core::strings;
 use bun_http::Method;
@@ -483,7 +482,8 @@ pub(crate) fn get_presign_url_from(
                     }
                 };
             }
-            if let Some(expires_) = count_from_js(options.expires_in(global)?) {
+            if let Some(expires_) = options.expires_in(global)? {
+                let expires_ = expires_.to_js().coerce::<i32>(global)?;
                 if expires_ <= 0 {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "expiresIn must be greather than 0"

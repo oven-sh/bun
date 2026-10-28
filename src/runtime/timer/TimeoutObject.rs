@@ -1,7 +1,7 @@
 use bun_jsc::JSValue;
-use bun_jsc::bindgen::{JsScope, JsWrapper};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 
-use crate::generated_bindgen::timer::{IdleStart, js_Timeout as js};
+use crate::generated_bindgen::timer::js_Timeout as js;
 
 use super::Kind;
 
@@ -45,15 +45,12 @@ impl TimeoutObject {
         this: &Self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        value: IdleStart<'_>,
+        value: JsLocal<'_>,
     ) {
-        let value = match value {
-            IdleStart::Number(ms) => {
-                this.internals.set_idle_start(ms.to_js().as_number());
-                ms.to_js()
-            }
-            IdleStart::Other(other) => other.to_js(),
-        };
+        let value = value.to_js();
+        if let Some(ms) = value.get_number() {
+            this.internals.set_idle_start(ms);
+        }
         js::idle_start_set_cached(this_value.to_js(), cx.global(), value);
     }
 }

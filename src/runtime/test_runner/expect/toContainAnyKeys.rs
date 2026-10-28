@@ -1,26 +1,17 @@
-use super::{ContainMsgs, ContainOutcome, Expect, ExpectedArray};
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_jsc::{JSArray, JsResult};
+use bun_jsc::{JSValue, JsResult};
+use super::{Expect, ExpectedArray, ContainMsgs, ContainOutcome};
 
 impl Expect {
-    pub(crate) fn to_contain_any_keys<'a>(
+    pub(crate) fn to_contain_any_keys(
         &self,
-        this_value: JsWrapper<'a, Self>,
+        this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        expected: Option<JsLocal<'_, JSArray>>,
-    ) -> JsResult<JsWrapper<'a, Self>> {
-        self.contain_matcher(
-            cx.global(),
-            this_value,
-            expected,
-            "toContainAnyKeys",
-            ExpectedArray::AfterValue,
-            ContainMsgs::CONTAIN,
+        expected: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
+        self.contain_matcher(cx.global(), this_value.to_js(), expected.to_js(), "toContainAnyKeys", ExpectedArray::AfterValue, ContainMsgs::CONTAIN,
             |g, value, expected| {
-                let expected = expected.to_js();
-                if !value.is_object() {
-                    return Ok(ContainOutcome::pass(false));
-                }
+                if !value.is_object() { return Ok(ContainOutcome::pass(false)); }
                 let count = expected.get_length(g)?;
                 let mut i: u32 = 0;
                 while u64::from(i) < count {

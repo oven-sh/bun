@@ -1,6 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 import * as table from "../../codegen/builtins/lib.ts";
-import { FFINumber } from "./FFIObject.bind.ts";
 
 export default b.module({ rustPath: "crate::ffi::FFI" });
 
@@ -15,16 +14,15 @@ export const FFI = b.class({
 
 const method = { returns: b.opaque, feature: "Ffi", capability: "js", throws: true } as const;
 
-export const FFIArgs = b.union({ list: b.jsArray, other: b.ignored });
 /** The number of a type, or its name: anything else is converted to a string. */
 export const FFIReturnType = b.union({ number: b.jsNumber, name: b.string.loose });
 /** What is wrong with a member is reported before the next one is read. */
 export const FFIFunction = b.dictionary(
   {
-    args: { type: FFIArgs.ifPassed, own: true },
+    args: { type: b.opaque.ifPassed, own: true },
     threadsafe: b.bool.loose.default(false),
     returns: FFIReturnType.emptyStringAsNull,
-    ptr: FFINumber,
+    ptr: b.opaque.optional,
   },
   { deferred: true },
 );
@@ -65,14 +63,12 @@ export const cfunction = b.fn({
   args: { options: FFIFunction.otherAsNull, name: b.string.allowStringObject.otherAsNull },
 });
 
-/** The error for anything else prints it. */
-export const CCSymbols = b.union({ record: b.object, other: b.opaque });
 /** A string or an array of strings. The error for anything else prints it. */
 export const CCStrings = b.union({ list: b.jsArray, text: b.string.allowStringObject, other: b.opaque });
 /** What is wrong with a member is reported before the next one is read. */
 export const CCOptions = b.dictionary(
   {
-    symbols: { type: CCSymbols, own: true },
+    symbols: { type: b.opaque, own: true },
     library: { type: CCStrings.optional, own: true },
     flags: CCStrings.emptyStringAsNull,
     define: b.object.otherAsNull,

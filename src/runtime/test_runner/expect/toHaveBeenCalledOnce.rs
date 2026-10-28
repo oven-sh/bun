@@ -1,8 +1,8 @@
+use bun_jsc::bindgen::{JsScope, JsWrapper};
+use bun_jsc::JsResult;
 use super::Expect;
 use super::get_signature;
 use super::throw;
-use bun_jsc::JsResult;
-use bun_jsc::bindgen::{JsScope, JsWrapper};
 
 impl Expect {
     pub(crate) fn to_have_been_called_once(

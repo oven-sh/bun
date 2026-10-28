@@ -2,23 +2,15 @@ import * as b from "../../../codegen/bindgen-lib.ts";
 
 export default b.module({ rustPath: "crate::node::util::parse_args" });
 
-/** In each union, an error shows `other`. */
-export const ParseArgsList = b.union({ missing: b.null, list: b.jsArray, other: b.opaque });
-export const ParseArgsFlag = b.union({ missing: b.null, flag: b.bool, other: b.opaque });
-/**
- * Each own enumerable string key of `object` is the long name of an option.
- * Its value is `{ type, short?, multiple?, default? }`, own properties only.
- */
-export const ParseArgsOptions = b.union({ missing: b.null, object: b.object, other: b.opaque });
 /** `args` is checked before the rest is read, and the rest is read before any of it is checked. */
 export const ParseArgsConfig = b.dictionary(
   {
-    args: { type: ParseArgsList, own: true },
-    strict: { type: ParseArgsFlag, own: true },
-    allowPositionals: { type: ParseArgsFlag, own: true },
-    tokens: { type: ParseArgsFlag, own: true },
-    allowNegative: { type: ParseArgsFlag, own: true },
-    options: { type: ParseArgsOptions, own: true },
+    args: { type: b.opaque, own: true },
+    strict: { type: b.opaque.nullable, own: true },
+    allowPositionals: { type: b.opaque.nullable, own: true },
+    tokens: { type: b.opaque.nullable, own: true },
+    allowNegative: { type: b.opaque.nullable, own: true },
+    options: { type: b.opaque, own: true },
   },
   { deferred: true },
 );

@@ -275,6 +275,15 @@ impl JSValue {
     pub fn is_big_int(self) -> bool {
         JSC__JSValue__isBigInt(self)
     }
+    /// `JSValue.isHeapBigInt()` — true iff this is a
+    /// heap-allocated `JSBigInt` cell, as every BigInt is.
+    #[inline]
+    pub fn is_heap_big_int(self) -> bool {
+        unsafe extern "C" {
+            safe fn JSC__JSValue__isHeapBigInt(this: JSValue) -> bool;
+        }
+        JSC__JSValue__isHeapBigInt(self)
+    }
     /// `JSValue.isBigIntInInt64Range` — `self` must already be
     /// known to be a BigInt; checks `min <= self <= max` without truncation.
     #[inline]

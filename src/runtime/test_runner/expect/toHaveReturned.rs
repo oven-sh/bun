@@ -27,7 +27,7 @@ fn to_have_returned_times_fn(
     this: &Expect,
     global: &JSGlobalObject,
     this_value: JSValue,
-    expected_success_count: impl FnOnce() -> JsResult<i32>,
+    expected: JSValue,
     mode: Mode,
 ) -> JsResult<()> {
     bun_jsc::mark_binding!();
@@ -40,7 +40,24 @@ fn to_have_returned_times_fn(
     )?;
     let mut returns = returns_arr.array_iterator(global)?;
 
-    let expected_success_count: i32 = expected_success_count()?;
+    let expected_success_count: i32 = if mode == Mode::ToHaveReturned {
+        if !expected.is_undefined() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "{}() must not have an argument",
+                mode.tag_name()
+            )));
+        }
+        1
+    } else {
+        if !expected.is_uint32_as_any_int() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "{}() requires 1 non-negative integer argument",
+                mode.tag_name()
+            )));
+        }
+
+        expected.coerce::<i32>(global)?
+    };
 
     let mut pass;
 
@@ -95,52 +112,17 @@ impl Expect {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        expected: Option<JsLocal<'_>>,
+        expected: JsLocal<'_>,
     ) -> JsResult<()> {
-        let global = cx.global();
-        let expected_success_count = || {
-            if expected.is_some() {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "{}() must not have an argument",
-                    Mode::ToHaveReturned.tag_name()
-                )));
-            }
-            Ok(1)
-        };
-        to_have_returned_times_fn(
-            self,
-            global,
-            this_value.to_js(),
-            expected_success_count,
-            Mode::ToHaveReturned,
-        )
+        to_have_returned_times_fn(self, cx.global(), this_value.to_js(), expected.to_js(), Mode::ToHaveReturned)
     }
 
     pub(crate) fn to_have_returned_times(
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        expected: Option<f64>,
+        expected: JsLocal<'_>,
     ) -> JsResult<()> {
-        let global = cx.global();
-        let expected_success_count = || {
-            let Some(expected) = expected
-                .map(JSValue::js_double_number)
-                .filter(|expected| expected.is_uint32_as_any_int())
-            else {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "{}() requires 1 non-negative integer argument",
-                    Mode::ToHaveReturnedTimes.tag_name()
-                )));
-            };
-            expected.coerce::<i32>(global)
-        };
-        to_have_returned_times_fn(
-            self,
-            global,
-            this_value.to_js(),
-            expected_success_count,
-            Mode::ToHaveReturnedTimes,
-        )
+        to_have_returned_times_fn(self, cx.global(), this_value.to_js(), expected.to_js(), Mode::ToHaveReturnedTimes)
     }
 }

@@ -1,15 +1,15 @@
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::{JSValue, JsResult};
 use super::Expect;
 use super::get_signature;
 use super::throw;
-use bun_jsc::bindgen::{JsScope, JsWrapper};
-use bun_jsc::{JSValue, JsResult};
 
 impl Expect {
     pub(crate) fn to_be_array_of_size(
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        size: Option<f64>,
+        size: JsLocal<'_>,
     ) -> JsResult<()> {
         let global = cx.global();
         let this = self.post_match_guard(global);
@@ -18,14 +18,11 @@ impl Expect {
 
         let value: JSValue = this.get_value(global, this_value, "toBeArrayOfSize", "")?;
 
-        let Some(size) = size
-            .map(JSValue::js_double_number)
-            .filter(|size| size.is_any_int())
-        else {
-            return Err(global.throw(format_args!(
-                "toBeArrayOfSize() requires the first argument to be a number"
-            )));
-        };
+        let size = size.to_js();
+
+        if !size.is_any_int() {
+            return Err(global.throw(format_args!("toBeArrayOfSize() requires the first argument to be a number")));
+        }
 
         this.increment_expect_call_counter();
 

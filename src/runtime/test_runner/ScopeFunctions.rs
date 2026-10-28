@@ -1,16 +1,16 @@
-use crate::test_runner::expect::JSValueTestExt;
 use core::fmt;
+use crate::test_runner::expect::JSValueTestExt;
 
-use bun_core::{String as BunString, StringView};
 use bun_jsc::bindgen::{Callable, JsLocal, JsScope};
 use bun_jsc::{JSGlobalObject, JSValue, JsClass, JsResult};
+use bun_core::{String as BunString, StringView};
 
-use crate::generated_bindgen::jest::{EachTable, js_ScopeFunctions as js};
+use crate::generated_bindgen::jest::js_ScopeFunctions as js;
 use crate::generated_bindgen::scope_functions::{
     Bun__ScopeFunctions__callAsFunction, CallbackOrOptions, DescriptionOrCallback,
 };
-use crate::test_runner::bun_test::js_fns::Signature;
 use crate::test_runner::bun_test::{self, BaseScopeCfg, BunTest, DescribeScope};
+use crate::test_runner::bun_test::js_fns::Signature;
 use crate::test_runner::jest;
 
 // `group_log` wraps `test_runner::debug::group` (a begin/end/log tracer) as an RAII guard
@@ -105,20 +105,15 @@ impl ScopeFunctions {
     pub(crate) fn serial_if(&self, cx: &mut JsScope<'_>, condition: bool) -> JsResult<JSValue> {
         self.generic_if(cx.global(), condition, BaseScopeCfg { self_concurrent: SelfConcurrent::No, ..Default::default() }, b"call .serialIf()", false, "serialIf")
     }
-    pub(crate) fn each(&self, cx: &mut JsScope<'_>, table: EachTable<'_>) -> JsResult<JSValue> {
+    pub(crate) fn each(&self, cx: &mut JsScope<'_>, table: JsLocal<'_>) -> JsResult<JSValue> {
         let _g = group_log::begin();
 
         let global = cx.global();
-        let array = match table {
-            EachTable::List(array) => array.to_js(),
-            EachTable::Other(other) => {
-                let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global);
-                return Err(global.throw(format_args!(
-                    "Expected array, got {}",
-                    other.to_js().to_fmt(&mut formatter)
-                )));
-            }
-        };
+        let array = table.to_js();
+        if array.is_undefined_or_null() || !array.is_array() {
+            let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global);
+            return Err(global.throw(format_args!("Expected array, got {}", array.to_fmt(&mut formatter))));
+        }
 
         if !self.each.is_empty() {
             return Err(global.throw(format_args!("Cannot {} on {}", "each", self)));
@@ -552,30 +547,20 @@ pub(crate) fn parse_arguments<'a>(
         // callback, options
         (
             DescriptionOrCallback::Callback(callback),
-            options @ (CallbackOrOptions::Missing
-            | CallbackOrOptions::Timeout(_)
-            | CallbackOrOptions::Options(_)),
+            options @ (CallbackOrOptions::Missing | CallbackOrOptions::Timeout(_) | CallbackOrOptions::Options(_)),
             CallbackOrOptions::Missing,
-        ) => (
-            DescriptionOrCallback::Missing,
-            CallbackOrOptions::Callback(callback),
-            options,
-        ),
+        ) => (DescriptionOrCallback::Missing, CallbackOrOptions::Callback(callback), options),
         // description
         // description, callback
         // description, callback, options
         (description, callback @ CallbackOrOptions::Callback(_), options)
-        | (description, callback, options @ CallbackOrOptions::Missing) => {
-            (description, callback, options)
-        }
+        | (description, callback, options @ CallbackOrOptions::Missing) => (description, callback, options),
         // description, options, callback
         (description, options, callback) => (description, callback, options),
     };
 
     let result_callback: Option<JSValue> = match callback {
-        CallbackOrOptions::Callback(callback) => {
-            Some(callback.to_js().with_async_context_if_needed(global))
-        }
+        CallbackOrOptions::Callback(callback) => Some(callback.to_js().with_async_context_if_needed(global)),
         CallbackOrOptions::Missing if cfg.callback != CallbackMode::Require => None,
         _ => {
             let ordinal = if cfg.kind == FunctionKind::Hook { "first" } else { "second" };
@@ -615,9 +600,7 @@ pub(crate) fn parse_arguments<'a>(
 
     result.description = match description {
         DescriptionOrCallback::Missing => None,
-        DescriptionOrCallback::Callback(callable) => {
-            Some(name_of_callable(global, callable, signature)?)
-        }
+        DescriptionOrCallback::Callback(callable) => Some(name_of_callable(global, callable, signature)?),
         DescriptionOrCallback::Text(text) => Some(text.into_vec()),
         DescriptionOrCallback::Number(number) => Some(bun_core::fmt::FormatDouble::dtoa(&mut [0; 124], number).to_vec()),
     };
@@ -716,6 +699,6 @@ pub(crate) fn create_bound(
 
 // These enum types live on `bun_test::BaseScopeCfg` (`self_mode`, `self_concurrent`).
 // bun_test.rs names them `ScopeMode`/`ConcurrentMode`; alias here for brevity.
-use crate::test_runner::bun_test::{ConcurrentMode as SelfConcurrent, ScopeMode as SelfMode};
+use crate::test_runner::bun_test::{ScopeMode as SelfMode, ConcurrentMode as SelfConcurrent};
 // `TestReporterKind` in the spec is `bun_jsc::debugger::TestType` (Test/Describe).
 use bun_jsc::debugger::TestType as TestReporterKind;

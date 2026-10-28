@@ -1,29 +1,18 @@
-use super::{ContainMsgs, ContainOutcome, Expect, ExpectedArray};
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_jsc::{JSArray, JsResult};
+use bun_jsc::{JSValue, JsResult};
+use super::{Expect, ExpectedArray, ContainMsgs, ContainOutcome};
 
 impl Expect {
-    pub(crate) fn to_contain_all_values<'a>(
+    pub(crate) fn to_contain_all_values(
         &self,
-        this_value: JsWrapper<'a, Self>,
+        this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        expected: Option<JsLocal<'_, JSArray>>,
-    ) -> JsResult<JsWrapper<'a, Self>> {
-        self.contain_matcher(
-            cx.global(),
-            this_value,
-            expected,
-            "toContainAllValues",
-            ExpectedArray::BeforeValue,
-            ContainMsgs {
-                verb: "contain all values",
-                not_verb: "contain all values",
-            },
+        expected: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
+        self.contain_matcher(cx.global(), this_value.to_js(), expected.to_js(), "toContainAllValues", ExpectedArray::BeforeValue,
+            ContainMsgs { verb: "contain all values", not_verb: "contain all values" },
             |g, value, expected| {
-                let expected = expected.to_js();
-                if value.is_undefined_or_null() {
-                    return Ok(ContainOutcome::pass(false));
-                }
+                if value.is_undefined_or_null() { return Ok(ContainOutcome::pass(false)); }
                 let values = value.values(g)?;
                 let count = values.get_length(g)?;
                 if count != expected.get_length(g)? { return Ok(ContainOutcome::pass(false)); }

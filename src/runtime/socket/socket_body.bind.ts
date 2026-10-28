@@ -1,10 +1,7 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 import * as table from "../../codegen/builtins/lib.ts";
 import { SecureContext } from "../api/bun/SecureContext.bind.ts";
-import { BuildArtifact } from "../api/JSBundler.bind.ts";
 import { ServerWebSocket } from "../server/server.bind.ts";
-import { Blob } from "../webcore/Blob.bind.ts";
-import { Request, Response } from "../webcore/response.bind.ts";
 import { Listener } from "./Listener.bind.ts";
 import { SocketHandler, SocketReloadOptions, UpgradeTLS } from "./SocketConfig.bind.ts";
 
@@ -16,53 +13,18 @@ const address = { getter: b.string.local.optional, cache: true, capability: "hea
 const family = { getter: b.string.local.optional, cache: true, capability: "heap" } as const;
 const certificate = { ...js, returns: b.object.optional } as const;
 
-export const looseString = b.conversion(b.string.loose);
-
-/** `string` is converted after the encoding. */
-export const TextOrBytes = b.union({
-  missing: b.undefined,
-  string: b.stringLike,
-  buffer: b.bufferSource.allowShared,
-  other: b.ignored,
-});
-/** What a socket writes. */
-export const SocketData = b.union({
-  blob: Blob,
-  buildArtifact: BuildArtifact,
-  request: Request,
-  response: Response,
-  data: TextOrBytes,
-});
-/**
- * `byteOffset`, `byteLength` or `encoding`. A string or a `String` object in the place of the first two is the encoding.
- * `string` and `other` are converted only as the encoding of data that an open socket writes.
- */
-export const SocketWriteOption = b.union({
-  missing: b.undefined,
-  number: b.jsNumber,
-  string: b.stringLike,
-  other: b.opaque,
-});
 const write = {
   ...js,
-  args: {
-    data: SocketData.withValue,
-    byteOffset: SocketWriteOption,
-    byteLength: SocketWriteOption,
-    encoding: SocketWriteOption,
-  },
+  args: { data: b.opaque, byteOffset: b.opaque, byteLength: b.opaque, encoding: b.opaque },
   returns: b.i32,
   length: 3,
 } as const;
-const writeBuffered = { ...js, args: { data: SocketData.withValue, encoding: SocketWriteOption }, length: 2 } as const;
+const writeBuffered = { ...js, args: { data: b.opaque, encoding: b.opaque } } as const;
 /** Whether all of it was written, or the negative errno of a fatal send. */
 export const BufferedWrite = b.union({ flushed: b.bool, errno: b.i32 });
 
 export const OptionalBool = b.union({ missing: b.undefined, flag: b.bool, other: b.ignored });
 export const coercedInt32 = b.i32.allowBigInt.wrap;
-export const timeoutSeconds = b.conversion(coercedInt32);
-/** A number saturates. `other` is converted once the socket is known to be open. */
-export const TimeoutSeconds = b.union({ number: b.jsNumber, other: b.opaque });
 
 const secureContext = { type: SecureContext.withValue.emptyStringAsNull, expected: ["SecureContext"] } as const;
 /** `secureContext` can also be in `tls`. */
@@ -73,7 +35,7 @@ export const UpgradeTLSOptions = b.dictionary(
     /** Read as `SocketHandler`. */
     socket: b.opaque.optional,
     /** Bytes of the handshake that were already read. */
-    initialData: TextOrBytes,
+    initialData: b.opaque.emptyStringAsNull,
     secureContext,
     tls: UpgradeTLS.emptyStringAsNull,
     data: b.opaque.optional,
@@ -124,9 +86,8 @@ function socket<SSL extends boolean>(ssl: SSL) {
         args: {
           length: b.jsNumber.otherAsNull,
           label: b.string.allowStringObject.otherAsNull.deferred,
-          context: TextOrBytes,
+          context: b.opaque,
         },
-        length: 3,
       },
       fd: { getter: b.i64 },
       flush: { capability: "js" },
@@ -181,7 +142,7 @@ function socket<SSL extends boolean>(ssl: SSL) {
       /** No argument enables it, `undefined` disables it. */
       setNoDelay: { args: { noDelay: b.bool.loose.ifPassed }, returns: b.bool, length: 1 },
       setServername: { ...js, args: { name: b.string.allowStringObject.otherAsNull.deferred }, length: 1 },
-      setSession: { ...js, args: { session: TextOrBytes }, length: 1 },
+      setSession: { ...js, args: { session: b.opaque } },
       setTypeOfService: { args: { tos: b.i32.validateIntegerRange(0, 255).default(0) }, returns: b.i32, length: 1 },
       setVerifyMode: {
         ...js,
@@ -190,7 +151,7 @@ function socket<SSL extends boolean>(ssl: SSL) {
       },
       shutdown: { args: { halfClose: b.bool.loose }, capability: "js" },
       terminate: { capability: "js" },
-      timeout: { ...js, args: { seconds: TimeoutSeconds } },
+      timeout: { ...js, args: { seconds: b.opaque } },
       unref: { rustName: "js_unref" },
       upgradeTLS: { ...upgradeTLS, args: { options: UpgradeTLSOptions.otherAsNull }, length: 1 },
       write,

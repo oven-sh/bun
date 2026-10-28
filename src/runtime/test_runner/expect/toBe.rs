@@ -1,9 +1,9 @@
-use bun_jsc::JsResult;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::JsResult;
 
+use super::throw;
 use super::DiffFormatter;
 use super::Expect;
-use super::throw;
 
 impl Expect {
     /// Object.is()

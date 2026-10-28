@@ -1,20 +1,20 @@
-use super::make_formatter;
-use bun_jsc::JsResult;
 use bun_jsc::bindgen::{JsScope, JsWrapper};
+use bun_jsc::{JSValue, JsResult};
+use super::make_formatter;
 
 use super::Expect;
 use super::get_signature;
 use super::throw;
 
 impl Expect {
-    pub(crate) fn to_be_valid_date<'a>(
+    pub(crate) fn to_be_valid_date(
         &self,
-        this_value: JsWrapper<'a, Self>,
+        this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-    ) -> JsResult<JsWrapper<'a, Self>> {
+    ) -> JsResult<JSValue> {
         let global = cx.global();
-        let (this, value, not) =
-            self.matcher_prelude(global, this_value.to_js(), "toBeValidDate", "")?;
+        let this_value = this_value.to_js();
+        let (this, value, not) = self.matcher_prelude(global, this_value, "toBeValidDate", "")?;
         let mut pass = value.is_date() && !value.get_unix_timestamp().is_nan();
         if not {
             pass = !pass;

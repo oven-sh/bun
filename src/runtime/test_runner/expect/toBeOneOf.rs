@@ -6,7 +6,6 @@ use bun_jsc::{JSGlobalObject, JSValue, JsResult, VM};
 use super::Expect;
 use super::get_signature;
 use super::throw;
-use crate::generated_bindgen::expect::ExpectArrayLike;
 
 struct ExpectedEntry<'a> {
     global_this: &'a JSGlobalObject,
@@ -37,20 +36,16 @@ impl Expect {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        (list, list_value): (ExpectArrayLike<'_>, JsLocal<'_>),
+        expected: JsLocal<'_>,
     ) -> JsResult<()> {
         let global_this = cx.global();
-        let list_value = list_value.to_js();
-        let (this, expected, not) = self.matcher_prelude(
-            global_this,
-            this_value.to_js(),
-            "toBeOneOf",
-            "<green>expected<r>",
-        )?;
+        let list_value = expected.to_js();
+        let (this, expected, not) =
+            self.matcher_prelude(global_this, this_value.to_js(), "toBeOneOf", "<green>expected<r>")?;
 
         let mut pass = false;
 
-        if !matches!(list, ExpectArrayLike::DataView(_) | ExpectArrayLike::Other) {
+        if list_value.js_type().is_array_like() {
             let mut itr = list_value.array_iterator(global_this)?;
             while let Some(item) = itr.next()? {
                 // Confusingly, jest-extended uses `deepEqual`, instead of `toBe`

@@ -1,20 +1,19 @@
 use core::ffi::c_void;
 
-use bun_core::strings;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, VM};
+use bun_core::strings;
 
 use super::Expect;
 use super::get_signature;
 use super::throw;
-use crate::generated_bindgen::expect::StringValue;
 
 impl Expect {
     pub(crate) fn to_contain(
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        (expected_string, expected): (StringValue<'_>, JsLocal<'_>),
+        expected: JsLocal<'_>,
     ) -> JsResult<()> {
         let global = cx.global();
         let (this, value, not) =
@@ -41,7 +40,7 @@ impl Expect {
                     break;
                 }
             }
-        } else if value.is_string_literal() && matches!(expected_string, StringValue::String(_)) {
+        } else if value.is_string_literal() && expected.is_string_literal() {
             let value_string = value.to_utf8(global)?;
             let expected_string = expected.to_utf8(global)?;
 

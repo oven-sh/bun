@@ -1,19 +1,19 @@
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::{JSValue, JsResult};
 use super::DiffFormatter;
 use super::Expect;
 use super::throw;
-use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_jsc::{JSValue, JsResult};
 
 impl Expect {
     pub(crate) fn to_have_been_nth_called_with(
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        nth: Option<f64>,
+        nth: JsLocal<'_>,
         expected: &[JsLocal<'_>],
     ) -> JsResult<()> {
         let global = cx.global();
-
+        let expected = JsLocal::to_js_slice(expected);
         let (this, calls, _) = self.mock_prologue(
             global,
             this_value.to_js(),
@@ -22,14 +22,12 @@ impl Expect {
             super::mock::MockKind::CallsWithSig,
         )?;
 
-        let Some(nth) = nth
-            .map(JSValue::js_double_number)
-            .filter(|nth| nth.is_any_int())
-        else {
+        let nth = nth.to_js();
+        if !nth.is_any_int() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "toHaveBeenNthCalledWith() requires a positive integer as the first argument"
             )));
-        };
+        }
         let nth_call_num_i32 = nth.to_int32();
 
         if nth_call_num_i32 <= 0 {
@@ -57,9 +55,7 @@ impl Expect {
             } else {
                 let mut itr = nth_call_value.array_iterator(global)?;
                 while let Some(call_arg) = itr.next()? {
-                    if !call_arg
-                        .jest_deep_equals((expected[(itr.i - 1) as usize]).to_js(), global)?
-                    {
+                    if !call_arg.jest_deep_equals(expected[(itr.i - 1) as usize], global)? {
                         pass = false;
                         break;
                     }
@@ -74,8 +70,7 @@ impl Expect {
         // handle failure
         let mut formatter = super::make_formatter(global);
 
-        let expected_args_js_array =
-            JSValue::create_array_from_slice(global, JsLocal::to_js_slice(expected))?;
+        let expected_args_js_array = JSValue::create_array_from_slice(global, expected)?;
         expected_args_js_array.ensure_still_alive();
 
         if this.flags.get().not() {

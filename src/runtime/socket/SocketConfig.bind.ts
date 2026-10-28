@@ -8,24 +8,21 @@ export const SocketHandlerBinaryType = b.enumeration([
   ["uint8array", "Uint8Array"],
 ]);
 
-/** `other` is refused after every member was read. */
-export const SocketCallback = b.union({ missing: b.null, callback: b.callable, other: b.ignored });
-
 export const SocketHandler = b.dictionary(
   {
-    open: { type: SocketCallback, rustName: "on_open" },
-    close: { type: SocketCallback, rustName: "on_close" },
-    error: { type: SocketCallback, rustName: "on_error" },
-    data: { type: SocketCallback, rustName: "on_data" },
-    drain: { type: SocketCallback, rustName: "on_writable" },
-    handshake: { type: SocketCallback, rustName: "on_handshake" },
-    end: { type: SocketCallback, rustName: "on_end" },
-    connectError: { type: SocketCallback, rustName: "on_connect_error" },
-    timeout: { type: SocketCallback, rustName: "on_timeout" },
-    session: { type: SocketCallback, rustName: "on_session" },
-    keylog: { type: SocketCallback, rustName: "on_keylog" },
-    serverName: { type: SocketCallback, rustName: "on_server_name" },
-    alpnCallback: { type: SocketCallback, rustName: "on_alpn_callback" },
+    open: { type: b.opaque, rustName: "on_open" },
+    close: { type: b.opaque, rustName: "on_close" },
+    error: { type: b.opaque, rustName: "on_error" },
+    data: { type: b.opaque, rustName: "on_data" },
+    drain: { type: b.opaque, rustName: "on_writable" },
+    handshake: { type: b.opaque, rustName: "on_handshake" },
+    end: { type: b.opaque, rustName: "on_end" },
+    connectError: { type: b.opaque, rustName: "on_connect_error" },
+    timeout: { type: b.opaque, rustName: "on_timeout" },
+    session: { type: b.opaque, rustName: "on_session" },
+    keylog: { type: b.opaque, rustName: "on_keylog" },
+    serverName: { type: b.opaque, rustName: "on_server_name" },
+    alpnCallback: { type: b.opaque, rustName: "on_alpn_callback" },
     binaryType: SocketHandlerBinaryType.default("buffer"),
   },
   { fromJS: true },

@@ -23,15 +23,12 @@ export const StreamDestroyReason = b.union({
   error: QuicStreamError,
   other: b.ignored,
 });
-export const StreamSource = b.union({ missing: b.null, buffer: b.bufferSource.allowShared, other: b.ignored });
-/** In `chunks`, what is not a buffer is skipped. */
-export const StreamBatch = b.union({ chunks: b.jsArray, buffer: b.bufferSource.allowShared, other: b.ignored });
 
 export const QuicStream = b.class({
   rustPath: "crate::node::quic::QuicStream",
   proto: {
     abortForDestroy: { args: { stopSendingCode: Uint64Option, resetCode: Uint64Option }, capability: "js" },
-    attachSource: { ...js, args: { source: StreamSource } },
+    attachSource: { ...js, args: { source: b.opaque } },
     destroy: { ...js, args: { error: StreamDestroyReason } },
     endWrite: { capability: "js" },
     getPriority: { returns: b.u32 },
@@ -51,7 +48,7 @@ export const QuicStream = b.class({
     setPriority: { args: { priority: coercedInt32 } },
     setWakeup: { args: { callback: b.opaque.nullable }, capability: "js" },
     stopSending: { args: { code: Uint64Option }, capability: "js" },
-    write: { ...js, args: { batch: StreamBatch }, returns: b.f64.optional },
+    write: { ...js, args: { batch: b.opaque }, returns: b.f64.optional },
   },
 });
 

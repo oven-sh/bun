@@ -3,7 +3,7 @@ import * as table from "../../codegen/builtins/lib.ts";
 import { BuildArtifact } from "../api/JSBundler.bind.ts";
 import { Image, ImageOptions } from "../image/Image.bind.ts";
 import { PathOrFileDescriptor } from "../node/node_fs_binding.bind.ts";
-import { BlobSliceBound, BunWriteData, chunkSize } from "./BlobArguments.bind.ts";
+import { BunWriteData, chunkSize } from "./BlobArguments.bind.ts";
 
 export default b.module({ rustPath: "crate::webcore::blob" });
 
@@ -17,10 +17,6 @@ export const OptionText = b.union({
   stringObject: b.string.allowStringObject,
   other: b.opaque,
 });
-/** `other` is `ToNumber`. */
-export const S3Size = b.union({ missing: b.null, bigInt: b.i64.asIntN, other: b.f64.loose });
-/** `number` saturates and `other` wraps. */
-export const S3Count = b.union({ missing: b.null, number: b.f64, other: b.i32.allowBigInt.wrap });
 /** What a function that reads or writes a file reads of its options when the file is in S3. */
 export const S3Options = b.dictionary(
   {
@@ -31,10 +27,10 @@ export const S3Options = b.dictionary(
     bucket: OptionText,
     virtualHostedStyle: { type: b.bool.optional, expected: ["boolean"] },
     sessionToken: OptionText,
-    pageSize: S3Size,
-    partSize: S3Size,
-    queueSize: S3Count,
-    retry: S3Count,
+    pageSize: b.opaque.nullable,
+    partSize: b.opaque.nullable,
+    queueSize: b.opaque.nullable,
+    retry: b.opaque.nullable,
     acl: { type: b.string.utf8.owned.nullable, expected: "acl must be a string" },
     storageClass: { type: b.string.utf8.owned.nullable, expected: "storageClass must be a string" },
     contentDisposition: OptionText,
@@ -43,7 +39,7 @@ export const S3Options = b.dictionary(
     requestPayer: { type: b.bool.optional, expected: ["boolean"] },
     /** `presign` */
     method: b.string.loose.emptyStringAsNull,
-    expiresIn: S3Count,
+    expiresIn: b.opaque.nullable,
     /** `blob.write` */
     createPath: b.bool.emptyStringAsNull,
   },
@@ -52,12 +48,6 @@ export const S3Options = b.dictionary(
 const unlink = { ...method, args: { options: S3Options.otherAsNull }, length: 0 } as const;
 
 export const WriteOptionsArgument = b.union({ missing: b.null, options: S3Options, other: b.opaque });
-
-export const BlobParts = b.union({
-  missing: b.null,
-  list: b.jsArray,
-  buffer: b.bufferSource.allowShared,
-});
 
 /** Read after `parts` is converted. */
 export const BlobPropertyBag = b.dictionary({ type: b.string.utf8.owned.otherAsNull }, { deferred: true });
@@ -75,12 +65,7 @@ export const Blob = b.class({
   estimatedSize: true,
   types: [table.viewType("Blob"), table.exactType("$Bindgen.Blob")],
   lockedObjects: ["prototype"],
-  construct: {
-    args: { parts: BlobParts, options: BlobPropertyBag.otherAsNull },
-    expected: { parts: "new Blob() expects an Array" },
-    ...js,
-    length: 0,
-  },
+  construct: { args: { parts: b.opaque, options: BlobPropertyBag.otherAsNull }, ...js, length: 0 },
   internalFields: ["stream"],
   proto: {
     arrayBuffer: method,
@@ -102,7 +87,7 @@ export const Blob = b.class({
     size: { getter: b.f64 },
     slice: {
       ...method,
-      args: { start: BlobSliceBound, end: BlobSliceBound, contentType: BlobSliceBound },
+      args: { start: b.opaque, end: b.opaque, contentType: b.opaque },
       returns: b.self,
       length: 2,
     },

@@ -3525,10 +3525,10 @@ pub(crate) mod args {
     ) -> JsResult<Encoding> {
         Ok(match options.convert(ctx)? {
             generated::EncodingOrOptions::String(name) => {
-                Encoding::from_name_with_default_on_empty(name.to_js(), ctx, default)?
+                Encoding::assert(name.to_js(), ctx, default)?
             }
             generated::EncodingOrOptions::Options(options) => {
-                Encoding::assert(options.encoding, ctx, default)?
+                Encoding::assert(options.encoding.to_js(), ctx, default)?
             }
             generated::EncodingOrOptions::Other => default,
         })
@@ -3728,11 +3728,10 @@ pub(crate) mod args {
             let mut recursive = false;
             match options {
                 generated::EncodingOrReaddirOptions::String(name) => {
-                    encoding =
-                        Encoding::from_name_with_default_on_empty(name.to_js(), ctx, encoding)?;
+                    encoding = Encoding::assert(name.to_js(), ctx, encoding)?;
                 }
                 generated::EncodingOrReaddirOptions::Options(val) => {
-                    encoding = Encoding::assert(val.encoding(ctx)?, ctx, encoding)?;
+                    encoding = Encoding::assert(val.encoding(ctx)?.to_js(), ctx, encoding)?;
                     if let Some(r) = val.recursive(ctx)? {
                         recursive = r;
                     }
@@ -3953,9 +3952,7 @@ pub(crate) mod args {
             encoding: Option<JsLocal<'_, StringLike>>,
         ) -> JsResult<Self> {
             let encoding = match encoding {
-                Some(name) => {
-                    Encoding::from_name_with_default_on_empty(name.to_js(), ctx, Encoding::Utf8)?
-                }
+                Some(name) => Encoding::assert(name.to_js(), ctx, Encoding::Utf8)?,
                 None => Encoding::Utf8,
             };
             let buffer = StringOrBuffer::from_bun_string(
@@ -4219,11 +4216,10 @@ pub(crate) mod args {
             });
             match options {
                 generated::EncodingOrReadFileOptions::String(name) => {
-                    encoding =
-                        Encoding::from_name_with_default_on_empty(name.to_js(), ctx, encoding)?;
+                    encoding = Encoding::assert(name.to_js(), ctx, encoding)?;
                 }
                 generated::EncodingOrReadFileOptions::Options(arg) => {
-                    encoding = Encoding::assert(arg.encoding(ctx)?, ctx, encoding)?;
+                    encoding = Encoding::assert(arg.encoding(ctx)?.to_js(), ctx, encoding)?;
                     flag = FileSystemFlags::from_js(ctx, arg.flag(ctx)?)?.unwrap_or(flag);
                     if let Some(signal) = arg.signal(ctx)? {
                         signal.pending_activity_ref();
@@ -4312,11 +4308,10 @@ pub(crate) mod args {
             }
             match options {
                 generated::EncodingOrWriteFileOptions::String(name) => {
-                    encoding =
-                        Encoding::from_name_with_default_on_empty(name.to_js(), ctx, encoding)?;
+                    encoding = Encoding::assert(name.to_js(), ctx, encoding)?;
                 }
                 generated::EncodingOrWriteFileOptions::Options(arg) => {
-                    encoding = Encoding::assert(arg.encoding(ctx)?, ctx, encoding)?;
+                    encoding = Encoding::assert(arg.encoding(ctx)?.to_js(), ctx, encoding)?;
                     flag = FileSystemFlags::from_js(ctx, arg.flag(ctx)?)?.unwrap_or(flag);
                     if let Some(mode_) = arg.mode(ctx)? {
                         mode = node::mode_from_js(ctx, mode_)?;

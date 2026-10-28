@@ -64,6 +64,11 @@ impl<'a> CommonStrings<'a> {
     pub fn ipv6(self) -> JSValue {
         CommonStringsForRust::IPv6.to_js(self.global_object)
     }
+    /// `"ipv4"`
+    #[inline]
+    pub fn ipv4_lower(self) -> JSValue {
+        CommonStringsForRust::Ipv4Lower.to_js(self.global_object)
+    }
     /// `"default"`
     #[inline]
     pub fn default(self) -> JSValue {

@@ -16,6 +16,7 @@ use core::ffi::c_void;
 #[cfg(windows)]
 use core::sync::atomic::{AtomicU32, Ordering};
 
+use crate::node::StringOrBuffer;
 use bun_core::EncodedSlice;
 use bun_core::SignalCode;
 use bun_io::Loop as AsyncLoop;
@@ -38,11 +39,8 @@ use bun_sys::windows;
 
 bun_output::declare_scope!(Terminal, hidden);
 
+use crate::generated_bindgen::terminal::TerminalOptions;
 pub(crate) use crate::generated_bindgen::terminal::js_Terminal as js;
-#[cfg(unix)]
-use crate::generated_bindgen::terminal::termios_flags;
-use crate::generated_bindgen::terminal::{TerminalData, TerminalOptions, TerminalSize};
-use crate::node::StringOrBuffer;
 
 /// Reference counting for Terminal.
 /// Refs are held by:
@@ -169,15 +167,6 @@ impl Default for Options {
     }
 }
 
-impl From<TerminalSize> for i32 {
-    fn from(size: TerminalSize) -> i32 {
-        match size {
-            TerminalSize::Number(n) => n as i32,
-            TerminalSize::Other(n) => n,
-        }
-    }
-}
-
 impl Options {
     /// Maximum length for terminal name (e.g., "xterm-256color")
     /// Longest known terminfo names are ~23 chars; 128 allows for custom terminals
@@ -190,13 +179,15 @@ impl Options {
     ) -> JsResult<Options> {
         let mut options = Options::default();
 
-        if let Some(n) = js_options.cols(global_object)?.map(i32::from) {
+        if let Some(n) = js_options.cols(global_object)? {
+            let n = n.to_js().coerce::<i32>(global_object)?;
             if n > 0 && n <= 65535 {
                 options.cols = u16::try_from(n).expect("int cast");
             }
         }
 
-        if let Some(n) = js_options.rows(global_object)?.map(i32::from) {
+        if let Some(n) = js_options.rows(global_object)? {
+            let n = n.to_js().coerce::<i32>(global_object)?;
             if n > 0 && n <= 65535 {
                 options.rows = u16::try_from(n).expect("int cast");
             }
@@ -1301,7 +1292,7 @@ impl Terminal {
             if self.flags.get().contains(Flags::CLOSED) || self.master_fd.get() == Fd::INVALID {
                 return Ok(());
             }
-            let num = termios_flags(cx.global(), value)?;
+            let num = value.to_js().coerce_f64(cx.global())?;
             let Some(mut termios_data) = get_termios(self.master_fd.get()) else {
                 return Ok(());
             };
@@ -1355,26 +1346,20 @@ impl Terminal {
     }
 
     /// Write data to the terminal
-    pub(crate) fn write<'a>(
-        &self,
-        cx: &mut JsScope<'a>,
-        data: TerminalData<'a>,
-    ) -> JsResult<usize> {
+    pub(crate) fn write(&self, cx: &mut JsScope<'_>, data: JsLocal<'_>) -> JsResult<usize> {
         let global_object = cx.global();
         if self.flags.get().contains(Flags::CLOSED) {
             return Err(global_object.throw(format_args!("Terminal is closed")));
         }
 
+        let data = data.to_js();
+
+        if data.is_undefined_or_null() {
+            return Err(global_object.throw(format_args!("write() requires data argument")));
+        }
+
         // Get bytes to write using StringOrBuffer
-        let string_or_buffer = match data {
-            TerminalData::Missing => {
-                return Err(global_object.throw(format_args!("write() requires data argument")));
-            }
-            TerminalData::String(data) => StringOrBuffer::from_js(global_object, data.to_js())?,
-            TerminalData::Buffer(data) => StringOrBuffer::from_js(global_object, data.to_js())?,
-            TerminalData::Other => None,
-        };
-        let Some(string_or_buffer) = string_or_buffer else {
+        let Some(string_or_buffer) = StringOrBuffer::from_js(global_object, data)? else {
             return Err(global_object.throw(format_args!(
                 "write() argument must be a string or ArrayBuffer"
             )));

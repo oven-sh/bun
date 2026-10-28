@@ -1,11 +1,11 @@
-use super::FormatterTestExt;
-use super::JSValueTestExt;
-use crate::generated_bindgen::expect::{ExpectedError, js_ExpectAny};
-use bun_core::strings;
-use bun_jsc::JsClass;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_jsc::console_object::Formatter;
 use bun_jsc::{JSValue, JsResult};
+use super::JSValueTestExt;
+use super::FormatterTestExt;
+use bun_jsc::console_object::Formatter;
+use bun_jsc::JsClass;
+use bun_core::strings;
+use crate::generated_bindgen::expect::js_ExpectAny;
 
 use super::Expect;
 use super::ExpectAny;
@@ -17,7 +17,7 @@ impl Expect {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        (expected, expected_argument): (ExpectedError<'_>, JsLocal<'_>),
+        expected: JsLocal<'_>,
     ) -> JsResult<()> {
         let global = cx.global();
         let this = self.post_match_guard(global);
@@ -27,36 +27,33 @@ impl Expect {
         this.increment_expect_call_counter();
 
         let expected_value: JSValue = 'brk: {
-            match expected {
-                ExpectedError::Missing => JSValue::ZERO,
-                ExpectedError::Other => {
-                    let mut fmt = Formatter::new(global).with_quote_strings(true);
-                    return Err(global.throw(format_args!(
-                        "Expected value must be string or Error: {}",
-                        expected_argument.to_js().to_fmt(&mut fmt),
-                    )));
-                }
-                ExpectedError::Object(object) => {
-                    let value = object.to_js();
-                    if ExpectAny::from_js_direct(value).is_some() {
-                        if let Some(inner_constructor_value) =
-                            js_ExpectAny::constructor_value_get_cached(value)
-                        {
-                            break 'brk inner_constructor_value;
-                        }
+            let value = expected.to_js();
+            if value.is_undefined() {
+                break 'brk JSValue::ZERO;
+            }
+            if value.is_undefined_or_null() || (!value.is_object() && !value.is_string()) {
+                let mut fmt = Formatter::new(global).with_quote_strings(true);
+                return Err(global.throw(format_args!(
+                    "Expected value must be string or Error: {}",
+                    value.to_fmt(&mut fmt),
+                )));
+            }
+            if value.is_object() {
+                if ExpectAny::from_js_direct(value).is_some() {
+                    if let Some(inner_constructor_value) =
+                        js_ExpectAny::constructor_value_get_cached(value)
+                    {
+                        break 'brk inner_constructor_value;
                     }
-                    value
                 }
-                ExpectedError::String(string) => {
-                    let value = string.to_js();
-                    // `.toThrow("")` behaves the same as `.toThrow()`
-                    let s = value.to_js_string(global)?;
-                    if s.length() == 0 {
-                        break 'brk JSValue::ZERO;
-                    }
-                    value
+            } else if value.is_string() {
+                // `.toThrow("")` behaves the same as `.toThrow()`
+                let s = value.to_js_string(global)?;
+                if s.length() == 0 {
+                    break 'brk JSValue::ZERO;
                 }
             }
+            break 'brk value;
         };
         expected_value.ensure_still_alive();
 

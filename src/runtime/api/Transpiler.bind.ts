@@ -21,12 +21,9 @@ export const TranspilerMinify = b.union({ all: b.bool, options: TranspilerMinify
 
 export const TranspilerSourcemap = b.union({ enabled: b.bool, mode: b.string.loose.utf8 });
 
-export const TranspilerList = b.union({ list: b.jsArray, other: b.ignored });
-export const TranspilerRecord = b.union({ record: b.object, other: b.ignored });
-
 /** `eliminate` ignores non-strings. Each value of `replace` is converted to an expression. */
 export const TranspilerExports = b.dictionary(
-  { eliminate: TranspilerList.emptyStringAsNull, replace: TranspilerRecord.emptyStringAsNull },
+  { eliminate: b.opaque.emptyStringAsNull, replace: b.opaque.emptyStringAsNull },
   { allowArray: true },
 );
 
@@ -42,7 +39,7 @@ export const TranspilerMacros = b.union({
 /** `define` is a record. `tsconfig` and `macro` are a JSON string or an object to stringify. */
 export const TranspilerOptions = b.dictionary(
   {
-    define: TranspilerRecord.emptyStringAsNull,
+    define: b.opaque.emptyStringAsNull,
     external: TranspilerExternal.nullable,
     loader: TranspilerLoader,
     target: b.string.utf8.optional,
@@ -77,7 +74,6 @@ export const LoaderOrContext = b.union({
   context: b.object,
   other: b.ignored,
 });
-export const MacroContext = b.union({ missing: b.undefined, context: b.object, other: b.ignored });
 const expected = (name: string) => ({ code: `Expected code to be a string or Uint8Array for '${name}'.` });
 const listOfNames = b.object.returning(table.plainData.fresh.spec);
 const promiseOfText = table.instance("Promise").holding({ value: table.string, reason: table.any }).fresh;
@@ -110,7 +106,7 @@ export const Transpiler = b.class({
     },
     transformSync: {
       ...method,
-      args: { code, loaderOrContext: LoaderOrContext, context: MacroContext },
+      args: { code, loaderOrContext: LoaderOrContext, context: b.opaque },
       expected: expected("transformSync"),
       returns: b.string.local,
     },

@@ -3,7 +3,6 @@
 use bun_options_types::LoaderExt as _;
 use core::ffi::c_void;
 
-use crate::generated_bindgen::blob_arguments::BlobSliceBound;
 use crate::generated_bindgen::js_bundler::js_BuildArtifact as js;
 use crate::webcore::Blob;
 use crate::webcore::blob::BlobExt;
@@ -2376,12 +2375,12 @@ impl BuildArtifact {
         self.blob.array_buffer(cx)
     }
 
-    pub(crate) fn slice<'a>(
+    pub(crate) fn slice(
         &self,
-        cx: &mut JsScope<'a>,
-        start: BlobSliceBound<'a>,
-        end: BlobSliceBound<'a>,
-        content_type: BlobSliceBound<'a>,
+        cx: &mut JsScope<'_>,
+        start: JsLocal<'_>,
+        end: JsLocal<'_>,
+        content_type: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         self.blob.slice(cx, start, end, content_type)
     }

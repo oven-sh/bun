@@ -14,18 +14,9 @@ export const ParsedShellScript = b.class({
   },
 });
 
-/** Its `length` and the indices below that are read as they are needed. `other` has no elements. */
-export const ShellArrayLike = b.union({
-  text: b.string.local,
-  bigInt: b.bigInt,
-  symbol: b.symbol,
-  object: b.object,
-  other: b.ignored,
-});
-
-/** `strings` and `templateArgs` are read in turn, one element of each at a time. */
+/** `strings` and `templateArgs` are array-likes that are read in turn, one element of each at a time. */
 export const createParsedShellScript = b.fn({
-  args: { strings: ShellArrayLike, templateArgs: b.jsArray },
+  args: { strings: b.opaque, templateArgs: b.jsArray },
   returns: ParsedShellScript,
   capability: "js",
   throws: true,

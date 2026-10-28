@@ -1,4 +1,4 @@
-use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper, Number};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::JsResult;
 
 use super::{throw, Expect};
@@ -8,8 +8,8 @@ impl Expect {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        start: Option<JsLocal<'_, Number>>,
-        end: Option<JsLocal<'_, Number>>,
+        start: JsLocal<'_>,
+        end: JsLocal<'_>,
     ) -> JsResult<()> {
         let global = cx.global();
         let (this, value, not) = self.matcher_prelude(
@@ -19,19 +19,21 @@ impl Expect {
             "<green>start<r><d>, <r><green>end<r>",
         )?;
 
-        let Some(start) = start else {
+        let start = start.to_js();
+
+        if !start.is_number() {
             return Err(global.throw(format_args!(
                 "toBeWithin() requires the first argument to be a number"
             )));
-        };
-        let start = start.to_js();
+        }
 
-        let Some(end) = end else {
+        let end = end.to_js();
+
+        if !end.is_number() {
             return Err(global.throw(format_args!(
                 "toBeWithin() requires the second argument to be a number"
             )));
-        };
-        let end = end.to_js();
+        }
 
         let mut pass = value.is_number();
         if pass {

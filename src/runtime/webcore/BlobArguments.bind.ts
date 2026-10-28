@@ -5,12 +5,6 @@ import { Request, Response } from "./response.bind.ts";
 
 /** A cached stream is returned whatever `chunkSize` is. */
 export const chunkSize = b.f64.nullable.deferred;
-/** A string in place of `start` or `end` is the content type, and the strings after it are not read. */
-export const BlobSliceBound = b.union({
-  string: b.stringLike,
-  number: b.jsNumber,
-  other: b.ignored,
-});
 
 /** What `Bun.write` and the `write` of a file write. `other` is the parts of a `Blob`, and so are `string` and `buffer` past the fast path. */
 export const BunWriteData = b.union(

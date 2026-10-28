@@ -38,7 +38,7 @@ use crate::api::bun_terminal_body::{
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use crate::generated_bindgen::js_bun_spawn_bindings::SpawnCgroupTarget;
 use crate::generated_bindgen::js_bun_spawn_bindings::{
-    SpawnCommand, SpawnOptionsObject, SpawnStdioList, SpawnTerminal, StdioValue,
+    SpawnCommand, SpawnOptionsObject, SpawnTerminal, StdioValue,
 };
 use crate::webcore as WebCore;
 
@@ -543,52 +543,57 @@ fn spawn_maybe_sync<'a>(
                 &mut cstr_storage,
             )?;
 
-            match args.stdio(cx.global())? {
-                SpawnStdioList::List(stdio_val) => {
-                    let mut stdio_iter = stdio_val.to_js().array_iterator(cx.global())?;
-                    let mut i: i32 = 0;
-                    while let Some(value) = stdio_iter.next()? {
-                        StdioValue::from_js(cx.global(), value, |value| {
-                            Stdio::extract(&mut stdio[i as usize], cx, i, value, is_sync)
-                        })?;
-                        if i == 2 {
-                            break;
-                        }
-                        i += 1;
-                    }
-                    i += 1;
-
-                    while let Some(value) = stdio_iter.next()? {
-                        // extract() leaves `out_stdio` untouched when `value` is undefined, so this
-                        // must be initialized to a sane default instead of `undefined`.
-                        let mut new_item: Stdio = Stdio::Ignore;
-                        StdioValue::from_js(cx.global(), value, |value| {
-                            Stdio::extract(&mut new_item, cx, i, value, is_sync)
-                        })?;
-
-                        let opt = match new_item.as_spawn_option(i) {
-                            stdio::ResultT::Result(opt) => opt,
-                            stdio::ResultT::Err(e) => {
-                                return Err(e.throw_js(cx.global()));
+            if let Some(stdio_val) = args.stdio(cx.global())? {
+                let stdio_val = stdio_val.to_js();
+                if !stdio_val.is_empty_or_undefined_or_null() {
+                    if stdio_val.js_type().is_array() {
+                        let mut stdio_iter = stdio_val.array_iterator(cx.global())?;
+                        let mut i: i32 = 0;
+                        while let Some(value) = stdio_iter.next()? {
+                            StdioValue::from_js(cx.global(), value, |value| {
+                                Stdio::extract(&mut stdio[i as usize], cx, i, value, is_sync)
+                            })?;
+                            if i == 2 {
+                                break;
                             }
-                        };
-                        #[cfg(not(windows))]
-                        let is_ipc = matches!(opt, SpawnOptionsStdio::Ipc);
-                        #[cfg(windows)]
-                        let is_ipc = matches!(opt, SpawnOptionsStdio::Ipc(_));
-                        if is_ipc {
-                            ipc_channel = i32::try_from(extra_fds.len()).expect("int cast");
+                            i += 1;
                         }
-                        extra_fds.push(opt);
                         i += 1;
+
+                        while let Some(value) = stdio_iter.next()? {
+                            // extract() leaves `out_stdio` untouched when `value` is undefined, so this
+                            // must be initialized to a sane default instead of `undefined`.
+                            let mut new_item: Stdio = Stdio::Ignore;
+                            StdioValue::from_js(cx.global(), value, |value| {
+                                Stdio::extract(&mut new_item, cx, i, value, is_sync)
+                            })?;
+
+                            let opt = match new_item.as_spawn_option(i) {
+                                stdio::ResultT::Result(opt) => opt,
+                                stdio::ResultT::Err(e) => {
+                                    return Err(e.throw_js(cx.global()));
+                                }
+                            };
+                            #[cfg(not(windows))]
+                            let is_ipc = matches!(opt, SpawnOptionsStdio::Ipc);
+                            #[cfg(windows)]
+                            let is_ipc = matches!(opt, SpawnOptionsStdio::Ipc(_));
+                            if is_ipc {
+                                ipc_channel = i32::try_from(extra_fds.len()).expect("int cast");
+                            }
+                            extra_fds.push(opt);
+                            i += 1;
+                        }
+                    } else {
+                        return Err(cx
+                            .global()
+                            .throw_invalid_arguments(format_args!("stdio must be an array")));
                     }
                 }
-                SpawnStdioList::None => {}
-                SpawnStdioList::Missing => {
-                    Stdio::extract(&mut stdio[0], cx, 0, args.stdin(cx.global())?, is_sync)?;
-                    Stdio::extract(&mut stdio[2], cx, 2, args.stderr(cx.global())?, is_sync)?;
-                    Stdio::extract(&mut stdio[1], cx, 1, args.stdout(cx.global())?, is_sync)?;
-                }
+            } else {
+                Stdio::extract(&mut stdio[0], cx, 0, args.stdin(cx.global())?, is_sync)?;
+                Stdio::extract(&mut stdio[2], cx, 2, args.stderr(cx.global())?, is_sync)?;
+                Stdio::extract(&mut stdio[1], cx, 1, args.stdout(cx.global())?, is_sync)?;
             }
 
             if !is_sync {

@@ -1,5 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
-import { BlobSliceBound, chunkSize } from "../webcore/BlobArguments.bind.ts";
+import { chunkSize } from "../webcore/BlobArguments.bind.ts";
 
 export default b.module({ rustPath: "crate::api::js_bundler" });
 
@@ -20,7 +20,7 @@ export const BuildArtifact = b.class({
     /** Returns a `Blob`, whose schema imports this one. */
     slice: {
       ...method,
-      args: { start: BlobSliceBound, end: BlobSliceBound, contentType: BlobSliceBound },
+      args: { start: b.opaque, end: b.opaque, contentType: b.opaque },
       returns: b.object.returning("Blob"),
       length: 2,
     },

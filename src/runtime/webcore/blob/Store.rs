@@ -9,7 +9,6 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use crate::generated_bindgen::blob::S3Options;
-use crate::generated_bindgen::s3_client::ListObjectsInput;
 use crate::node::fs as node_fs;
 use crate::node::types::PathOrFileDescriptorSerializeTag;
 use crate::webcore::jsc::{JSGlobalObject, JSPromise, JSValue, JsResult};
@@ -82,7 +81,7 @@ pub(crate) trait S3Ext {
         &self,
         store: RefPtr<Store>,
         cx: &bun_jsc::JsThread<'_>,
-        list_options: ListObjectsInput<'_>,
+        list_options: JSValue,
         extra_options: Option<S3Options<'_>>,
     ) -> JsResult<JSValue>;
 }
@@ -341,18 +340,14 @@ impl S3Ext for S3 {
         &self,
         store: RefPtr<Store>,
         cx: &bun_jsc::JsThread<'_>,
-        list_options: ListObjectsInput<'_>,
+        list_options: JSValue,
         extra_options: Option<S3Options<'_>>,
     ) -> JsResult<JSValue> {
-        let list_options = match list_options {
-            ListObjectsInput::Missing => None,
-            ListObjectsInput::Options(list_options) => Some(list_options),
-            ListObjectsInput::Other => {
-                return Err(cx.global().throw_invalid_arguments(format_args!(
-                    "S3Client.listObjects() needs a S3ListObjectsOption as it's first argument"
-                )));
-            }
-        };
+        if !list_options.is_empty_or_undefined_or_null() && !list_options.is_object() {
+            return Err(cx.global().throw_invalid_arguments(format_args!(
+                "S3Client.listObjects() needs a S3ListObjectsOption as it's first argument"
+            )));
+        }
 
         struct Wrapper {
             promise: bun_jsc::JSPromiseStrong,

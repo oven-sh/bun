@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 use std::rc::Rc;
 
 use crate::generated_bindgen::socket_config::{
-    SocketCallback, SocketHandler, SocketHandlerBinaryType, SocketOptions, SocketOptionsTLS,
+    SocketHandler, SocketHandlerBinaryType, SocketOptions, SocketOptionsTLS,
 };
 use bun_core::Utf8Bytes;
 use bun_jsc::array_buffer::BinaryType;
@@ -341,15 +341,16 @@ impl Handlers {
     ) -> JsResult<[JSValue; CALLBACK_COUNT]> {
         macro_rules! validated_callback {
             ($field:ident, $name:literal) => {{
-                match generated.$field {
-                    SocketCallback::Missing => JSValue::ZERO,
-                    SocketCallback::Callback(callback) => callback.to_js(),
-                    SocketCallback::Other => {
-                        return Err(global_object.throw_invalid_arguments(format_args!(
-                            "Expected \"{}\" callback to be a function",
-                            $name
-                        )));
-                    }
+                let value = generated.$field.to_js();
+                if value.is_undefined_or_null() {
+                    JSValue::ZERO
+                } else if !value.is_callable() {
+                    return Err(global_object.throw_invalid_arguments(format_args!(
+                        "Expected \"{}\" callback to be a function",
+                        $name
+                    )));
+                } else {
+                    value
                 }
             }};
         }

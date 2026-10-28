@@ -2,9 +2,9 @@ use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer};
 
 use super::DiffFormatter;
-use super::Expect;
 use super::mock;
 use super::throw;
+use super::Expect;
 
 impl Expect {
     pub(crate) fn to_have_returned_with(

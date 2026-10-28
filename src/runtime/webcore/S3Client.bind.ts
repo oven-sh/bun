@@ -15,7 +15,6 @@ export const S3PresignOptions = b.union({ options: S3Options, other: b.ignored }
 const text = b.string.utf8.owned.otherAsNull;
 
 /** Read after the credentials are. */
-export const ListObjectsInput = b.union({ missing: b.null, options: b.object, other: b.ignored });
 export const ListObjectsOptions = b.dictionary(
   {
     continuationToken: text,
@@ -37,7 +36,7 @@ const methods = (prefix: "" | "static_") => {
     delete: { ...pathMethod, rustName: `${prefix}unlink` },
     exists: { ...pathMethod, rustName: `${prefix}exists` },
     file: { ...method, args: { path: S3Path, options }, returns: Blob, rustName: `${prefix}file` },
-    list: { ...method, args: { input: ListObjectsInput, options }, rustName: `${prefix}list` },
+    list: { ...method, args: { input: b.opaque, options }, rustName: `${prefix}list` },
     presign: {
       ...method,
       args: { path, options: S3PresignOptions.ifPassed },

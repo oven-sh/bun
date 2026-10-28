@@ -52,11 +52,8 @@ export const WebSocketMessage = b.union({
   string: b.stringLike,
   other: b.opaque,
 });
-export const WebSocketTopic = b.union({ string: b.stringLike, other: b.opaque });
 export const WebSocketCompress = b.union({ missing: b.undefined, flag: b.bool, other: b.ignored });
 
-/** The body refuses `other` with the text it also has for a number out of range. */
-export const OptionNumber = b.union({ missing: b.null, number: b.jsNumber, other: b.ignored });
 /** `false` is as good as missing. */
 export const Stringish = b.union({
   missing: b.null,
@@ -90,9 +87,9 @@ export const WebSocketOptions = b.dictionary(
       type: PerMessageDeflate,
       expected: "websocket expects perMessageDeflate to be a boolean or an object",
     },
-    maxPayloadLength: OptionNumber,
-    idleTimeout: OptionNumber,
-    backpressureLimit: OptionNumber,
+    maxPayloadLength: b.opaque.optional,
+    idleTimeout: b.opaque.optional,
+    backpressureLimit: b.opaque.optional,
     closeOnBackpressureLimit: {
       type: b.bool.nullable,
       expected: "websocket expects closeOnBackpressureLimit to be a boolean",
@@ -113,11 +110,7 @@ export const DevelopmentOptions = b.dictionary(
   { allowArray: true, reportedAs: "development" },
 );
 export const ServerDevelopment = b.union({ missing: b.undefined, options: DevelopmentOptions, flag: b.bool.loose });
-/** An array is as good as missing. */
-export const ServerRoutes = b.union({ missing: b.undefined, list: b.jsArray, routes: b.object, other: b.ignored });
 export const ServerId = b.union({ missing: b.undefined, null: b.null, id: b.string.loose.utf8.owned });
-/** `config`, and each element of `list`, is read as a `TLSOptions`. */
-export const ServerTLS = b.union({ missing: b.null, list: b.jsArray, config: b.opaque });
 
 // `Bake.Options` of bake.d.ts. `src/tsconfig.json` excludes `runtime/bake`, so this file cannot import a schema from there.
 
@@ -254,9 +247,9 @@ export const BakeApp = b.union({ name: b.string, options: BakeOptions, other: b.
 export const ServeOptions = b.dictionary(
   {
     development: ServerDevelopment,
-    routes: ServerRoutes,
-    static: { type: ServerRoutes, rustName: "static_routes" },
-    idleTimeout: OptionNumber,
+    routes: b.opaque.optional,
+    static: { type: b.opaque.optional, rustName: "static_routes" },
+    idleTimeout: b.opaque.optional,
     webSocket: websocket,
     websocket,
     port: b.f64.loose.emptyStringAsNull,
@@ -278,7 +271,7 @@ export const ServeOptions = b.dictionary(
       expected: "Expected onNodeHTTPRequest to be a function",
     },
     fetch: { type: b.callable.emptyStringAsNull, expected: "Expected fetch() to be a function" },
-    tls: ServerTLS,
+    tls: b.opaque.emptyStringAsNull,
   },
   { deferred: true },
 );
@@ -411,12 +404,12 @@ const control = {
   throws: true,
 } as const;
 const publish = {
-  args: { topic: WebSocketTopic, data: WebSocketMessage, compress: WebSocketCompress },
+  args: { topic: b.opaque, data: WebSocketMessage, compress: WebSocketCompress },
   returns: b.opaque.returning("number"),
   capability: "js",
   throws: true,
 } as const;
-const topic = { args: { topic: WebSocketTopic }, returns: b.bool, capability: "js", throws: true } as const;
+const topic = { args: { topic: b.opaque }, returns: b.bool, capability: "js", throws: true } as const;
 
 /** The first argument of the `websocket` handlers of `Bun.serve`. */
 export const ServerWebSocket = b.class({

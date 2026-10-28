@@ -20,8 +20,7 @@ use crate::webcore::response::HeadersRef;
 
 pub(crate) use crate::generated_bindgen::fetch_session::js_FetchSession as js;
 use crate::generated_bindgen::fetch_session::{
-    CheckServerIdentity, FetchKeepAlive, FetchSessionInit, FetchTLS, FlagOrNumber, IdleTimeout,
-    ProxyHeaders, ProxyInit, UnixPath,
+    FetchKeepAlive, FetchSessionInit, FetchTLS, FlagOrNumber, IdleTimeout, ProxyHeaders, ProxyInit,
 };
 
 /// `proxy` as given to `fetch()` or to a session. Absent means "inherit".
@@ -55,16 +54,15 @@ pub(crate) fn parse_tls(
         check_server_identity: None,
     };
     parsed.reject_unauthorized = tls.reject_unauthorized(global)?.to_bool();
-    match tls.check_server_identity(global)? {
-        CheckServerIdentity::Missing => {}
-        CheckServerIdentity::Callback(callback) => {
-            parsed.check_server_identity = Some(callback.to_js());
-        }
-        CheckServerIdentity::Other(callback) => {
+    if let Some(callback) = tls.check_server_identity(global)? {
+        let callback = callback.to_js();
+        if callback.is_cell() && callback.is_callable() {
+            parsed.check_server_identity = Some(callback);
+        } else if !callback.is_null() {
             return Err(global.throw_invalid_property_type_value(
                 b"tls.checkServerIdentity",
                 b"function",
-                callback.to_js(),
+                callback,
             ));
         }
     }
@@ -324,11 +322,11 @@ impl FetchSession {
             ProxyArg::Unusable(proxy) => return Err(invalid_proxy(global, proxy.to_js())),
         }
 
-        let unix = options.unix(global)?;
-        if !matches!(unix, UnixPath::Missing) {
+        if let Some(unix) = options.unix(global)? {
+            let unix = unix.to_js();
             if let Some(path) = super::parse_unix(vm, global, unix)? {
                 this.unix = path;
-            } else {
+            } else if !unix.is_undefined_or_null() {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "FetchSession: 'unix' must be a non-empty string"
                 )));

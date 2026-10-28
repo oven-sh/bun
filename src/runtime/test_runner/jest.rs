@@ -5,7 +5,7 @@ use crate::cli::command::TestOptions;
 use crate::cli::test_command::CommandLineReporter;
 use bun_collections::{ArrayHashMap, MultiArrayList};
 use bun_core::Output;
-use bun_jsc::bindgen::{Callable, JsLocal, JsScope};
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
@@ -525,11 +525,8 @@ pub(crate) fn file_generation() -> u32 {
 /// the running sequence's result so bun:test reports skip/todo instead of pass.
 /// `done`'s bound `DoneCallback.r#ref.phase` names the intended sequence so a
 /// late call after the watchdog moved on cannot mark the currently-running one.
-pub(crate) fn node_test_mark_result(todo: bool, done: Option<JsLocal<'_, Callable>>) {
+pub(crate) fn node_test_mark_result(todo: bool, done: JsLocal<'_>) {
     use super::execution::Result as ExecResult;
-    let Some(done) = done else {
-        return;
-    };
     let Some(buntest_strong) = bun_test::clone_active_strong() else {
         return;
     };

@@ -3,7 +3,7 @@ import * as b from "../../codegen/bindgen-lib.ts";
 export default b.module({ rustPath: "crate::test_runner::jest" });
 
 export const fileGeneration = b.fn({ returns: b.u32 });
-export const nodeTestMarkResult = b.fn({ args: { todo: b.bool, done: b.callable.otherAsNull }, length: 2 });
+export const nodeTestMarkResult = b.fn({ args: { todo: b.bool, done: b.opaque } });
 
 const js = { capability: "js", throws: true } as const;
 
@@ -22,8 +22,6 @@ export const DoneCallback = b.class({ rustPath: "crate::test_runner::DoneCallbac
 const modifier = { getter: b.callable, cache: true, ...js } as const;
 const conditionalModifier = { args: { condition: b.bool.loose }, returns: b.callable, ...js } as const;
 
-export const EachTable = b.union({ list: b.jsArray, other: b.opaque });
-
 /** The bound `this` of `test`, `describe` and what their modifiers give, such as `test.skip`. */
 export const ScopeFunctions = b.class({
   rustPath: "crate::test_runner::scope_functions::ScopeFunctions",
@@ -32,7 +30,7 @@ export const ScopeFunctions = b.class({
   proto: {
     concurrent: modifier,
     concurrentIf: conditionalModifier,
-    each: { args: { table: EachTable }, returns: b.callable, ...js },
+    each: { args: { table: b.opaque }, returns: b.callable, ...js },
     failing: modifier,
     failingIf: conditionalModifier,
     if: conditionalModifier,

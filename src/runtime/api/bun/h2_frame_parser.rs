@@ -31,10 +31,10 @@ use bun_jsc::{
 use bun_ptr::RefPtr;
 
 use crate::generated_bindgen::h2_frame_parser::{
-    CustomSettingsRecord, FlagSetting, H2FrameCounters, H2FrameParserOptions, H2Handlers,
-    H2NativeSocket, H2Origins, H2SessionState, H2Settings, H2SettingsOption, H2StreamState,
-    H2StringObject, H2WriteData, H2WriteResult, NumberSetting, OptionalStreamId, RequestHeaders,
-    RequestOptionsArgument, StreamContext, StreamResetBurst, WriteEncoding, js_H2FrameParser as js,
+    FlagSetting, H2FrameCounters, H2FrameParserOptions, H2Handlers, H2NativeSocket, H2Origins,
+    H2SessionState, H2Settings, H2SettingsOption, H2StreamState, H2StringObject, H2WriteData,
+    H2WriteResult, NumberSetting, OptionalStreamId, RequestOptionsArgument, StreamResetBurst,
+    WriteEncoding, js_H2FrameParser as js,
 };
 
 bun_output::declare_scope!(H2FrameParser, visible);
@@ -4452,74 +4452,71 @@ impl H2FrameParser {
         // leave partial state installed for the next submission.
         let mut staged_custom: Vec<(u16, u32)> = Vec::new();
         // Validate customSettings and remember them so they go on the wire with our SETTINGS.
-        match options.custom_settings(global_object)? {
-            CustomSettingsRecord::Missing => {}
-            CustomSettingsRecord::Other => {
+        if let Some(custom_settings) = options.custom_settings(global_object)? {
+            let Some(custom_settings_obj) = custom_settings.to_js().get_object() else {
                 return global_object
                     .err_http2_invalid_setting_value("Expected customSettings to be an object")
                     .throw();
-            }
-            CustomSettingsRecord::Record(custom_settings_obj) => {
-                let mut count: usize = 0;
-                let iter = bun_jsc::JSPropertyIterator::init(
-                    global_object,
-                    custom_settings_obj,
-                    bun_jsc::JSPropertyIteratorOptions {
-                        skip_empty_name: false,
-                        include_value: true,
-                        ..Default::default()
-                    },
-                )?;
+            };
 
-                while let Some((prop_name, setting_value)) = iter.next()? {
-                    count += 1;
-                    if count > MAX_CUSTOM_SETTINGS {
+            let mut count: usize = 0;
+            let iter = bun_jsc::JSPropertyIterator::init(
+                global_object,
+                custom_settings_obj,
+                bun_jsc::JSPropertyIteratorOptions {
+                    skip_empty_name: false,
+                    include_value: true,
+                    ..Default::default()
+                },
+            )?;
+
+            while let Some((prop_name, setting_value)) = iter.next()? {
+                count += 1;
+                if count > MAX_CUSTOM_SETTINGS {
+                    return global_object
+                        .err_http2_too_many_custom_settings(
+                            "Number of custom settings exceeds MAX_ADDITIONAL_SETTINGS",
+                        )
+                        .throw();
+                }
+
+                // Validate setting ID (key) is in range [0, 0xFFFF]
+                let setting_id_str = prop_name.to_utf8();
+                // Parse bytes directly (ASCII decimal); do not insert
+                // UTF-8 validation on external data.
+                let Some(setting_id) = bun_core::parse_int::<u32>(setting_id_str.slice(), 10).ok()
+                else {
+                    return global_object
+                        .err_http2_invalid_setting_value_range_error(
+                            "Invalid custom setting identifier",
+                        )
+                        .throw();
+                };
+                if setting_id > 0xFFFF {
+                    return global_object
+                        .err_http2_invalid_setting_value_range_error(
+                            "Invalid custom setting identifier",
+                        )
+                        .throw();
+                }
+
+                // Validate setting value is in range [0, 2^32-1]
+                if setting_value.is_number() {
+                    let value = setting_value.as_number();
+                    if value < 0.0 || value > MAX_HEADER_TABLE_SIZE_F64 {
                         return global_object
-                            .err_http2_too_many_custom_settings(
-                                "Number of custom settings exceeds MAX_ADDITIONAL_SETTINGS",
+                            .err_http2_invalid_setting_value_range_error(
+                                "Invalid custom setting value",
                             )
                             .throw();
                     }
-
-                    // Validate setting ID (key) is in range [0, 0xFFFF]
-                    let setting_id_str = prop_name.to_utf8();
-                    // Parse bytes directly (ASCII decimal); do not insert
-                    // UTF-8 validation on external data.
-                    let Some(setting_id) =
-                        bun_core::parse_int::<u32>(setting_id_str.slice(), 10).ok()
-                    else {
-                        return global_object
-                            .err_http2_invalid_setting_value_range_error(
-                                "Invalid custom setting identifier",
-                            )
-                            .throw();
-                    };
-                    if setting_id > 0xFFFF {
-                        return global_object
-                            .err_http2_invalid_setting_value_range_error(
-                                "Invalid custom setting identifier",
-                            )
-                            .throw();
-                    }
-
-                    // Validate setting value is in range [0, 2^32-1]
-                    if setting_value.is_number() {
-                        let value = setting_value.as_number();
-                        if value < 0.0 || value > MAX_HEADER_TABLE_SIZE_F64 {
-                            return global_object
-                                .err_http2_invalid_setting_value_range_error(
-                                    "Invalid custom setting value",
-                                )
-                                .throw();
-                        }
-                        staged_custom.push((setting_id as u16, value as u32));
-                    } else {
-                        return global_object
-                            .err_http2_invalid_setting_value_range_error(
-                                "Expected custom setting value to be a number",
-                            )
-                            .throw();
-                    }
+                    staged_custom.push((setting_id as u16, value as u32));
+                } else {
+                    return global_object
+                        .err_http2_invalid_setting_value_range_error(
+                            "Expected custom setting value to be a number",
+                        )
+                        .throw();
                 }
             }
         }
@@ -6158,27 +6155,25 @@ impl H2FrameParser {
         &self,
         cx: &mut JsScope<'_>,
         stream_id: Option<f64>,
-        context: StreamContext<'_>,
+        context: JsLocal<'_>,
     ) -> JsResult<()> {
         let global_object = cx.global();
+        let context = context.to_js();
         let Some(stream_id) = stream_id else {
             return Err(global_object.throw(format_args!("Expected stream_id to be a number")));
         };
         let stream_id = stream_id as u32;
-        let context = match context {
-            StreamContext::Release => {
-                // Release: a pushed stream torn down before its PUSH_PROMISE left has no reset
-                // dispatch coming, so the JS layer drops the context root explicitly.
-                self.sctx.with_mut(|m| {
-                    m.remove(&stream_id);
-                });
-                return Ok(());
-            }
-            StreamContext::Context(context) => context.to_js(),
-            StreamContext::Other => {
-                return Err(global_object.throw(format_args!("Expected context to be an object")));
-            }
-        };
+        if context.is_undefined_or_null() {
+            // Release: a pushed stream torn down before its PUSH_PROMISE left has no reset
+            // dispatch coming, so the JS layer drops the context root explicitly.
+            self.sctx.with_mut(|m| {
+                m.remove(&stream_id);
+            });
+            return Ok(());
+        }
+        if !context.is_object() {
+            return Err(global_object.throw(format_args!("Expected context to be an object")));
+        }
 
         // Rewrite engine: record the JS stream context for the engine's Sink callbacks. Dropping a
         // previous entry releases its root (StrongOptional: Drop -> destroy).
@@ -6294,16 +6289,17 @@ impl H2FrameParser {
         cx: &mut JsScope<'_>,
         stream_id: Option<f64>,
         context: Option<JsLocal<'_, JSObject>>,
-        headers: RequestHeaders<'_>,
+        headers: JsLocal<'_>,
         sensitive_headers: Option<JsLocal<'_, JSObject>>,
         options: RequestOptionsArgument<'_>,
     ) -> JsResult<Option<f64>> {
         let global_object = cx.global();
         bun_output::scoped_log!(H2FrameParser, "request");
 
-        if matches!(headers, RequestHeaders::Other) {
+        let headers = headers.to_js();
+        let Some(headers_obj) = headers.get_object() else {
             return Err(global_object.throw(format_args!("Expected headers to be an object")));
-        }
+        };
 
         let Some(sensitive_headers) = sensitive_headers else {
             return Err(
@@ -6331,9 +6327,10 @@ impl H2FrameParser {
         // Raw (flat [name, value, ...] array) headers form: encode each pair in
         // its given order, pseudo-headers first (same two-pass split as the
         // object form below), preserving interleaved duplicates on the wire.
-        if let RequestHeaders::RawPairs(headers) = &headers {
+        let headers_are_raw_pairs = headers.js_type().is_array();
+        if headers_are_raw_pairs {
             for ignore_pseudo_headers in 0..2usize {
-                let mut pairs = headers.to_js().array_iterator(global_object)?;
+                let mut pairs = headers.array_iterator(global_object)?;
                 loop {
                     let Some(name_js) = pairs.next()? else { break };
                     let Some(value_js) = pairs.next()? else { break };
@@ -6457,15 +6454,16 @@ impl H2FrameParser {
             }
         }
 
-        for ignore_pseudo_headers in 0..2usize {
-            let RequestHeaders::Record(headers_obj) = &headers else {
-                break;
-            };
+        for ignore_pseudo_headers in 0..(if headers_are_raw_pairs {
+            0usize
+        } else {
+            2usize
+        }) {
             // Note: `bun_jsc::JSPropertyIterator` (runtime-options variant) lacks `.reset()`;
             // re-initialize per pass instead — the observable property walk is the same.
             let iter = bun_jsc::JSPropertyIterator::init(
                 global_object,
-                *headers_obj,
+                headers_obj,
                 bun_jsc::JSPropertyIteratorOptions {
                     skip_empty_name: false,
                     include_value: true,
@@ -7135,8 +7133,8 @@ impl H2FrameParser {
     }
 
     /// Saturating read of a numeric session limit into its u32 field.
-    fn session_option_u32(value: JsLocal<'_, Number>) -> u32 {
-        u32::try_from(value.to_js().to_uint64_no_truncate()).unwrap_or(u32::MAX)
+    fn session_option_u32(value: JSValue) -> u32 {
+        u32::try_from(value.to_uint64_no_truncate()).unwrap_or(u32::MAX)
     }
 
     pub(crate) fn constructor<'a>(
@@ -7302,33 +7300,33 @@ impl H2FrameParser {
                 if let Some(max_memory) = settings_js.max_session_memory(global_object)? {
                     this_ref
                         .max_session_memory
-                        .set(Self::session_option_u32(max_memory).max(1));
+                        .set(Self::session_option_u32(max_memory.to_js()).max(1));
                 }
                 if let Some(max_header_list_pairs) =
                     settings_js.max_header_list_pairs(global_object)?
                 {
                     this_ref
                         .max_header_list_pairs
-                        .set(Self::session_option_u32(max_header_list_pairs).max(4));
+                        .set(Self::session_option_u32(max_header_list_pairs.to_js()).max(4));
                 }
                 if let Some(max_settings) = settings_js.max_settings(global_object)? {
                     this_ref
                         .max_settings
-                        .set(Self::session_option_u32(max_settings).max(1));
+                        .set(Self::session_option_u32(max_settings.to_js()).max(1));
                 }
                 if let Some(max_rejected_streams) =
                     settings_js.max_session_rejected_streams(global_object)?
                 {
                     this_ref
                         .max_rejected_streams
-                        .set(Self::session_option_u32(max_rejected_streams));
+                        .set(Self::session_option_u32(max_rejected_streams.to_js()));
                 }
                 if let Some(max_session_invalid_frames) =
                     settings_js.max_session_invalid_frames(global_object)?
                 {
                     this_ref
                         .max_session_invalid_frames
-                        .set(Self::session_option_u32(max_session_invalid_frames));
+                        .set(Self::session_option_u32(max_session_invalid_frames.to_js()));
                 }
                 if let Some(strict) =
                     settings_js.strict_field_whitespace_validation(global_object)?
@@ -7349,7 +7347,7 @@ impl H2FrameParser {
                 {
                     this_ref
                         .max_outstanding_settings
-                        .set(Self::session_option_u32(max_outstanding_settings).max(1));
+                        .set(Self::session_option_u32(max_outstanding_settings.to_js()).max(1));
                 }
                 if let Some(max_send_header_block_length) =
                     settings_js.max_send_header_block_length(global_object)?

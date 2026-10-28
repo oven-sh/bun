@@ -1,3 +1,6 @@
+use bun_core::Timespec;
+use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
+use bun_jsc::{JSFunction, JSGlobalObject, JSHostFn, JSValue, JsResult};
 use crate::api::cron::CronJob;
 use crate::generated_bindgen::fake_timers::{
     Bun__FakeTimers__advanceTimersByTime, Bun__FakeTimers__advanceTimersToNextTimer,
@@ -7,12 +10,9 @@ use crate::generated_bindgen::fake_timers::{
 };
 use crate::jsc::virtual_machine::VirtualMachine;
 use crate::timer::{
-    AbortSignalTimeout, ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, InHeap,
-    TimeoutObject, TimerHeap, TimerObjectInternals,
+    AbortSignalTimeout, ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag,
+    InHeap, TimerObjectInternals, TimeoutObject, TimerHeap,
 };
-use bun_core::Timespec;
-use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
-use bun_jsc::{JSFunction, JSGlobalObject, JSHostFn, JSValue, JsResult};
 
 // JSMock C++ bindings (fake timers are only used by bun:test, so these stay local).
 unsafe extern "C" {

@@ -2755,44 +2755,64 @@ pub fn self_exe_path() -> crate::CrateResult<&'static ZStr> {
 }
 
 // ── get_thread_count ──────────────────────────────────────────────────────
-// Clamped to [2, 1024]; honours
-// UV_THREADPOOL_SIZE / GOMAXPROCS overrides.
+// In [2, 1024], from the environment the process started with. An empty value is not set.
+// UV_THREADPOOL_SIZE: the digits in front count, as in libuv's atoi, and a value with no
+// count gives 2. libuv's floor is 1, but pool work can wait for other pool work.
+// GOMAXPROCS: only a positive integer counts, as in Go.
 pub fn get_thread_count() -> u16 {
     static CELL: Once<u16> = Once::new();
     *CELL.get_or_init(|| {
         const MAX: u16 = 1024;
         const MIN: u16 = 2;
+        let count = |text: &[u8]| match crate::fmt::parse_int::<u16>(text, 10) {
+            Ok(n) if n > 0 => Some(n.clamp(MIN, MAX)),
+            // A negative number does not fit in a u16 either.
+            Err(crate::fmt::ParseIntError::Overflow) if !text.starts_with(b"-") => Some(MAX),
+            _ => None,
+        };
+        let resolve = |value: &[u8], like_libuv: bool| -> Option<u16> {
+            let value = value.trim_ascii();
+            if value.is_empty() {
+                return None;
+            }
+            count(value).or_else(|| {
+                if !like_libuv {
+                    return None;
+                }
+                // libuv's atoi reads "8abc" as 8 and "abc" as 0.
+                let unsigned = value.strip_prefix(b"+").unwrap_or(value);
+                let digits = unsigned
+                    .iter()
+                    .take_while(|byte| byte.is_ascii_digit())
+                    .count();
+                Some(count(&unsigned[..digits]).unwrap_or(MIN))
+            })
+        };
         let from_env = || -> Option<u16> {
-            for key in [
-                crate::zstr!("UV_THREADPOOL_SIZE"),
-                crate::zstr!("GOMAXPROCS"),
+            for (key, like_libuv) in [
+                (crate::zstr!("UV_THREADPOOL_SIZE"), true),
+                (crate::zstr!("GOMAXPROCS"), false),
             ] {
-                if let Some(v) = getenv_z(key) {
-                    if let Ok(n) = crate::fmt::parse_int::<u16>(v.trim_ascii(), 10) {
-                        if n >= MIN {
-                            return Some(n.min(MAX));
-                        }
+                if let Some(value) = getenv_z(key) {
+                    if let Some(n) = resolve(value, like_libuv) {
+                        return Some(n);
                     }
                 }
-                // Windows: `getenv_z` is currently a no-op (no narrow C
-                // environ to borrow from); honour the override via
-                // `std::env::var` so behaviour matches
-                // on all platforms. POSIX keeps the borrow path above.
+                // Windows: `getenv_z` reads the environment as it was at startup. This reads
+                // the live one, where a `process.env` assignment lands.
                 #[cfg(windows)]
-                if let Ok(s) = std::env::var(
+                if let Ok(value) = std::env::var(
                     // SAFETY: keys above are ASCII literals.
                     unsafe { core::str::from_utf8_unchecked(key.as_bytes()) },
                 ) {
-                    if let Ok(n) = s.trim().parse::<u16>() {
-                        if n >= MIN {
-                            return Some(n.min(MAX));
-                        }
+                    if let Some(n) = resolve(value.as_bytes(), like_libuv) {
+                        return Some(n);
                     }
                 }
             }
             None
         };
-        let raw = from_env().unwrap_or_else(|| {
+        from_env().unwrap_or_else(|| {
             // `WTF::numberOfProcessorCores()`: on Linux Bun's fork takes the
             // minimum of _SC_NPROCESSORS_ONLN, the sched_getaffinity mask and
             // the cgroup cpu quota (uv_get_constrained_cpu), so this is the
@@ -2801,9 +2821,8 @@ pub fn get_thread_count() -> u16 {
             unsafe extern "C" {
                 safe fn WTF__numberOfProcessorCores() -> core::ffi::c_int;
             }
-            WTF__numberOfProcessorCores().max(1) as u16
-        });
-        raw.clamp(MIN, MAX)
+            WTF__numberOfProcessorCores().clamp(MIN.into(), MAX.into()) as u16
+        })
     })
 }
 

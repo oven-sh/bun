@@ -909,6 +909,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.visit_expr_in_out(
             &mut e_.target,
             ExprIn {
+                property_access_for_method_call_maybe_should_replace_with_undefined: in_
+                    .property_access_for_method_call_maybe_should_replace_with_undefined,
                 is_property_access_target: !is_delete_target,
                 ..Default::default()
             },
@@ -1039,7 +1041,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 e_.target,
                                 s.data.slice(),
                                 unwrapped.loc,
-                                Self::import_meta_hot_optional_opts(in_, is_call_target),
+                                Self::import_meta_hot_optional_opts(in_),
                             )
                         {
                             *e = rewrite;
@@ -1372,13 +1374,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    /// The options for the rewrite of `import.meta.hot?.x`.
+    /// The options for the rewrite of `import.meta.hot?.x`: the two bits its arm reads.
     #[inline]
-    fn import_meta_hot_optional_opts(in_: ExprIn, is_call_target: bool) -> IdentifierOpts {
+    fn import_meta_hot_optional_opts(in_: ExprIn) -> IdentifierOpts {
         IdentifierOpts::default()
-            .with_is_call_target(is_call_target)
-            .with_assign_target(in_.assign_target)
-            .with_is_property_access_target(in_.is_property_access_target)
             .with_is_method_call_callee(
                 in_.property_access_for_method_call_maybe_should_replace_with_undefined,
             )
@@ -1510,7 +1509,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 e_.target,
                 e_.name.slice(),
                 e_.name_loc,
-                Self::import_meta_hot_optional_opts(in_, is_call_target),
+                Self::import_meta_hot_optional_opts(in_),
             )
         {
             *e = rewrite;

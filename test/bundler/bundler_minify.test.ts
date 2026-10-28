@@ -1154,6 +1154,7 @@ describe("bundler", () => {
           import.meta.hot.accept?.(() => console.log("FAIL"));
           import.meta.hot.accept.call(null, () => console.log("FAIL"));
           import.meta.hot.dispose.apply(null, [() => console.log("FAIL")]);
+          import.meta.hot.accept["call"](null, () => console.log("FAIL"));
           console.log("after direct calls");
         `,
       },
@@ -2299,15 +2300,19 @@ test.each([false, true])(
 
 // HMR is off in the runtime transpiler, so `import.meta.hot?.x` keeps its JavaScript meaning.
 test("runtime transpiler drops an import.meta.hot?.method call and its callback", async () => {
-  using dir = tempDir("import-meta-hot-optional", {
-    "index.ts": /* ts */ `
-      import.meta.hot?.accept(() => console.log("FAIL"));
-      import.meta.hot?.dispose(() => console.log("FAIL"));
-      import.meta.hot?.acceptExports(["x"], () => console.log("FAIL"));
-      const accept = import.meta.hot?.accept;
-      console.log("after read", accept, import.meta.hot?.data ?? "fallback");
-    `,
-  });
+  const source = /* ts */ `
+    import.meta.hot?.accept(() => console.log("FAIL"));
+    import.meta.hot?.dispose(() => console.log("FAIL"));
+    import.meta.hot?.acceptExports(["x"], () => console.log("vite only, kept"));
+    const accept = import.meta.hot?.accept;
+    console.log("after read", accept, import.meta.hot?.data ?? "fallback");
+  `;
+  const transpiled = new Bun.Transpiler({ loader: "ts" }).transformSync(source);
+  expect(transpiled).not.toContain("FAIL");
+  expect(transpiled).toContain("vite only, kept");
+  expect(transpiled).toContain('undefined?.data ?? "fallback"');
+
+  using dir = tempDir("import-meta-hot-optional", { "index.ts": source });
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "index.ts"],

@@ -4678,6 +4678,7 @@ bitflags::bitflags! {
         const REQUEST_BODY_BUFFER_ALL     = 1 << 17;
     }
 }
+bun_core::assert_distinct_flag_bits!(FlagsBits);
 
 #[repr(transparent)]
 #[derive(Default)]
@@ -4826,5 +4827,3 @@ fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (Mime
 // `NewServer` monomorphizations.
 
 static WELCOME_PAGE_HTML_GZ: &[u8] = include_bytes!("../api/welcome-page.html.gz");
-
-bun_core::assert_distinct_flag_bits!(FlagsBits);

@@ -1356,6 +1356,7 @@ bitflags::bitflags! {
         // _: u5 padding
     }
 }
+bun_core::assert_distinct_flag_bits!(Enable);
 
 impl Default for Enable {
     fn default() -> Self {
@@ -1451,5 +1452,3 @@ impl Enable {
         self.contains(Enable::GLOBAL_VIRTUAL_STORE)
     }
 }
-
-bun_core::assert_distinct_flag_bits!(Enable);

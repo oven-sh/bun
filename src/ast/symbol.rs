@@ -133,6 +133,7 @@ bitflags::bitflags! {
         const CALL_IGNORES_THIS = 1 << 7;
     }
 }
+bun_core::assert_distinct_flag_bits!(SymbolFlags);
 
 macro_rules! symbol_flag_accessors {
     ($($getter:ident, $setter:ident => $flag:ident;)*) => {
@@ -780,5 +781,3 @@ impl Symbol {
         kind.is_private()
     }
 }
-
-bun_core::assert_distinct_flag_bits!(SymbolFlags);

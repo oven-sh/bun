@@ -1106,6 +1106,7 @@ bitflags::bitflags! {
         // _padding: u16
     }
 }
+bun_core::assert_distinct_flag_bits!(Flags);
 
 const TRAILER: &[u8] = b"\n---- Bun! ----\n";
 
@@ -3935,5 +3936,3 @@ pub(crate) fn serialize_json_source_map_for_standalone(
     debug_assert!(header_list.len() == string_payload_start_location);
     Ok(())
 }
-
-bun_core::assert_distinct_flag_bits!(Flags);

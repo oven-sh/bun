@@ -105,6 +105,7 @@ bitflags::bitflags! {
         const IS_BARREL_DEFERRED = 1 << 18;
     }
 }
+bun_core::assert_distinct_flag_bits!(Flags);
 
 pub type List<'a> = bun_alloc::ArenaVec<'a, ImportRecord<'a>>;
 
@@ -131,8 +132,6 @@ pub enum Tag {
 // NOTE: no `impl Default for ImportRecord` — `range`, `path`, `kind` have no
 // sensible defaults. Construction sites must supply required fields explicitly
 // (struct-update or a `new(range, path, kind)` helper).
-
-bun_core::assert_distinct_flag_bits!(Flags);
 
 #[cfg(doctest)]
 #[doc = "

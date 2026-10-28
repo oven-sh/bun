@@ -160,6 +160,7 @@ bitflags::bitflags! {
         // _padding: u6 fills the rest
     }
 }
+bun_core::assert_distinct_flag_bits!(Flags);
 
 impl<'arena> BundledAst<'arena> {
     // The three `ArenaVec` fields prevent `const fn` here, but spell out the
@@ -394,5 +395,3 @@ impl<'arena> BundledAst<'arena> {
         }
     }
 }
-
-bun_core::assert_distinct_flag_bits!(Flags);

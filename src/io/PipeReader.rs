@@ -216,6 +216,7 @@ bitflags::bitflags! {
         const READ_FAILED              = 1 << 11;
     }
 }
+bun_core::assert_distinct_flag_bits!(PosixFlags);
 
 impl PosixFlags {
     pub(crate) const fn new() -> Self {
@@ -1986,5 +1987,3 @@ pub type BufferedReader = PosixBufferedReader;
 pub type BufferedReader = WindowsBufferedReader;
 #[cfg(not(any(unix, windows)))]
 compile_error!("Unsupported platform");
-
-bun_core::assert_distinct_flag_bits!(PosixFlags);

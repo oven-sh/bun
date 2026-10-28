@@ -239,6 +239,7 @@ bitflags::bitflags! {
         const ABORT_SIGNAL_KILLED          = 1 << 7;
     }
 }
+bun_core::assert_distinct_flag_bits!(Flags);
 
 // `StdioResult` is `Option<Fd>` (Copy) on unix but a non-Copy enum on windows;
 // a fn would have to pick by-value (moves on windows) or by-ref
@@ -1540,5 +1541,3 @@ pub(crate) mod testing_apis {
         true
     }
 }
-
-bun_core::assert_distinct_flag_bits!(Flags);

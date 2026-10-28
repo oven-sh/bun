@@ -1,5 +1,6 @@
 import { describe, expect, jest, test } from "bun:test";
 import { createSocket } from "dgram";
+import { errorMonitor } from "node:events";
 import { Worker } from "node:worker_threads";
 
 import { bunEnv, bunExe, bunRun, disableAggressiveGCScope, isWindows } from "harness";
@@ -261,6 +262,14 @@ describe.skipIf(isWindows)("cluster", () => {
     expect(stdout).toStartWith("ok: all 4 workers adopted and released the shared descriptor ");
     expect(exitCode).toBe(0);
   }, 40_000);
+
+  test("a bind error from the primary is raised in a worker that passed a callback and has no 'error' listener", async () => {
+    const { stdout, stderr, exitCode } = await runClusterFixture(
+      "dgram-cluster-bind-callback-error-fixture.ts",
+      20_000,
+    );
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "uncaughtException UNKNOWN\n", stderr: "", exitCode: 0 });
+  });
 });
 
 describe("after close()", () => {
@@ -358,6 +367,116 @@ describe("bind()", () => {
     // The in-flight first bind must still complete normally.
     await listening;
     expect(onError).not.toHaveBeenCalled();
+  });
+
+  // bind(..., callback) drops the callback when the bind fails. It watches for
+  // that through events.errorMonitor, as Node does: a listener under 'error'
+  // would count as the program's own and hide the failure from a program that
+  // has none.
+  test("with a callback watches for the failure through errorMonitor, not an 'error' listener", async () => {
+    await using socket = createSocket("udp4");
+    const counts = () => ({
+      error: socket.listenerCount("error"),
+      errorMonitor: socket.listenerCount(errorMonitor),
+      listening: socket.listenerCount("listening"),
+    });
+    const { promise: inCallback, resolve } = Promise.withResolvers<ReturnType<typeof counts>>();
+    socket.bind(0, "127.0.0.1", () => resolve(counts()));
+    const pending = counts();
+    expect({ pending, inCallback: await inCallback }).toEqual({
+      pending: { error: 0, errorMonitor: 1, listening: 1 },
+      inCallback: { error: 0, errorMonitor: 0, listening: 0 },
+    });
+  });
+
+  test("with a callback and no 'error' listener, a lookup that fails synchronously throws from bind()", () => {
+    const failure = new Error("lookup failed");
+    const socket = createSocket({ type: "udp4", lookup: (_hostname, _family, callback) => callback(failure, "", 0) });
+    const callback = jest.fn();
+    let thrown: unknown;
+    try {
+      socket.bind(0, "host.invalid", callback);
+    } catch (err) {
+      thrown = err;
+    }
+    socket.close();
+    expect(thrown).toBe(failure);
+    expect(callback).not.toHaveBeenCalled();
+  });
+
+  // Each child installs both process handlers, and a handler prints the name
+  // of its event and the error code. The socket that holds the taken port is
+  // unref'd, so a child that hears nothing exits with no output.
+  const prelude = `
+    const dgram = require("node:dgram");
+    process.on("uncaughtException", err => console.log("uncaughtException", err.code));
+    process.on("unhandledRejection", err => console.log("unhandledRejection", err?.code));
+    function withTakenPort(fn) {
+      const holder = dgram.createSocket("udp4");
+      holder.bind(0, "127.0.0.1", () => {
+        holder.unref();
+        fn(holder.address().port);
+      });
+    }
+  `;
+
+  test.concurrent.each([
+    [
+      "bind(port, address, callback) raises the error",
+      `withTakenPort(port => {
+        dgram.createSocket("udp4").bind(port, "127.0.0.1", () => console.log("callback"));
+      });`,
+      "uncaughtException EADDRINUSE",
+    ],
+    [
+      "bind({ port, address }, callback) raises the error",
+      `withTakenPort(port => {
+        dgram.createSocket("udp4").bind({ port, address: "127.0.0.1" }, () => console.log("callback"));
+      });`,
+      "uncaughtException EADDRINUSE",
+    ],
+    [
+      "a send() queued behind the bind is dropped and the error is raised",
+      `withTakenPort(port => {
+        const socket = dgram.createSocket("udp4");
+        socket.bind(port, "127.0.0.1", () => console.log("callback"));
+        socket.send("x", port, "127.0.0.1", () => console.log("send callback"));
+      });`,
+      "uncaughtException EADDRINUSE",
+    ],
+    [
+      "a lookup that fails asynchronously raises its error",
+      `const failure = Object.assign(new Error("lookup failed"), { code: "ELOOKUP" });
+      const lookup = (hostname, family, callback) => process.nextTick(callback, failure);
+      dgram.createSocket({ type: "udp4", lookup }).bind(0, "host.invalid", () => console.log("callback"));`,
+      "uncaughtException ELOOKUP",
+    ],
+    [
+      "an 'error' listener of the program hears the error and nothing is raised",
+      `withTakenPort(port => {
+        const socket = dgram.createSocket("udp4");
+        socket.on("error", err => console.log("error listener", err.code));
+        socket.bind(port, "127.0.0.1", () => console.log("callback"));
+      });`,
+      "error listener EADDRINUSE",
+    ],
+  ])("a failed bind with a callback: %s", async (_name, body, expected) => {
+    expect(await bunRun(["-e", prelude + body])).toSpawn(expected);
+  });
+
+  // Which of the two process events carries this error is a separate
+  // difference from Node, so the row takes either.
+  test.concurrent("a failed bind with a callback: a receive buffer size that cannot be applied is raised", async () => {
+    const body = `
+      const socket = dgram.createSocket({ type: "udp4", recvBufferSize: 2 ** 31 });
+      socket.unref();
+      socket.bind(0, "127.0.0.1", () => console.log("callback"));`;
+    const { stdout, stderr, exitCode } = await bunRun(["-e", prelude + body]);
+    expect({ stdout: stdout.replace(/^(uncaughtException|unhandledRejection) /, ""), stderr, exitCode }).toEqual({
+      stdout: "ERR_SOCKET_BUFFER_SIZE",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 

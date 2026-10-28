@@ -689,7 +689,7 @@ Socket.prototype.bind = function (this: $Node.DgramSocket, port_, address_ /* , 
   const cb: unknown = arguments.length && arguments[arguments.length - 1];
   if (typeof cb === "function") {
     function removeListeners(this: $Node.DgramSocket) {
-      this.removeListener("error", removeListeners);
+      this.removeListener(EventEmitter.errorMonitor, removeListeners);
       this.removeListener("listening", onListening);
     }
 
@@ -698,7 +698,7 @@ Socket.prototype.bind = function (this: $Node.DgramSocket, port_, address_ /* , 
       (cb as (this: $Node.DgramSocket) => void).$call(this);
     }
 
-    this.on("error", removeListeners);
+    this.on(EventEmitter.errorMonitor, removeListeners);
     this.on("listening", onListening);
   }
 

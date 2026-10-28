@@ -29,6 +29,7 @@ const kDeserialize = Symbol("kDeserialize");
 const kEmptyObject = ObjectFreeze(Object.create(null));
 const kFlag = Symbol("kFlag");
 const kLocked = Symbol("kLocked");
+const kCloseReason = Symbol("kCloseReason");
 const kCloseSync = Symbol("kCloseSync");
 
 var SymbolDispose = Symbol.dispose;
@@ -234,7 +235,7 @@ declare global {
       [kFd]: number;
       [kRef](): void;
       [kUnref](): void;
-      [kDeserialize](data: { fd: number; flag: string | number }): void;
+      [kDeserialize](data: { fd: number; flag: string | number; [kCloseReason]?: string }): void;
       read<T extends ArrayBufferView>(
         buffer: T,
         offset?: number | FileHandleReadOptions | null,
@@ -510,12 +511,13 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
     [kClosePromise]: Promise<void> | null | undefined;
     [kRefs]: number;
     declare [kLocked]: boolean | undefined;
+    declare [kCloseReason]: string | undefined;
     // needs to exist for https://github.com/nodejs/node/blob/8641d941893/test/parallel/test-worker-message-port-transfer-fake-js-transferable.js to pass
     [Symbol("messaging_transfer_symbol")]() {}
 
     async appendFile(data, options?: BufferEncoding | { encoding?: BufferEncoding | null; flush?: boolean } | null) {
       const fd = this[kFd];
-      throwEBADFIfNecessary("writeFile", fd);
+      throwEBADFIfNecessary("writeFile", this, fd);
       let encoding: BufferEncoding = "utf8";
       let flush = false;
       if (options == null || typeof options === "function") {
@@ -536,7 +538,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
 
     async chmod(mode) {
       const fd = this[kFd];
-      throwEBADFIfNecessary("fchmod", fd);
+      throwEBADFIfNecessary("fchmod", this, fd);
 
       try {
         this[kRef]();
@@ -548,7 +550,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
 
     async chown(uid, gid) {
       const fd = this[kFd];
-      throwEBADFIfNecessary("fchown", fd);
+      throwEBADFIfNecessary("fchown", this, fd);
 
       try {
         this[kRef]();
@@ -560,7 +562,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
 
     async datasync() {
       const fd = this[kFd];
-      throwEBADFIfNecessary("fdatasync", fd);
+      throwEBADFIfNecessary("fdatasync", this, fd);
 
       try {
         this[kRef]();
@@ -572,7 +574,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
 
     async sync() {
       const fd = this[kFd];
-      throwEBADFIfNecessary("fsync", fd);
+      throwEBADFIfNecessary("fsync", this, fd);
 
       try {
         this[kRef]();
@@ -584,7 +586,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
 
     async read(bufferOrParams?, offset?, length?, position?) {
       const fd = this[kFd];
-      throwEBADFIfNecessary("read", fd);
+      throwEBADFIfNecessary("read", this, fd);
 
       let buffer = bufferOrParams;
       if (!types.isArrayBufferView(buffer)) {
@@ -627,7 +629,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
 
     async readv(buffers, position) {
       const fd = this[kFd];
-      throwEBADFIfNecessary("readv", fd);
+      throwEBADFIfNecessary("readv", this, fd);
 
       try {
         this[kRef]();
@@ -639,7 +641,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
 
     async readFile(options) {
       const fd = this[kFd];
-      throwEBADFIfNecessary("readFile", fd);
+      throwEBADFIfNecessary("readFile", this, fd);
 
       try {
         this[kRef]();
@@ -659,7 +661,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
 
     async stat(options) {
       const fd = this[kFd];
-      throwEBADFIfNecessary("fstat", fd);
+      throwEBADFIfNecessary("fstat", this, fd);
 
       try {
         this[kRef]();
@@ -671,7 +673,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
 
     async truncate(len = 0) {
       const fd = this[kFd];
-      throwEBADFIfNecessary("ftruncate", fd);
+      throwEBADFIfNecessary("ftruncate", this, fd);
 
       try {
         this[kRef]();
@@ -683,7 +685,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
 
     async utimes(atime, mtime) {
       const fd = this[kFd];
-      throwEBADFIfNecessary("futimes", fd);
+      throwEBADFIfNecessary("futimes", this, fd);
 
       try {
         this[kRef]();
@@ -701,7 +703,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
     ): Promise<{ buffer: T; bytesWritten: number }>;
     async write(buffer, offset, length, position) {
       const fd = this[kFd];
-      throwEBADFIfNecessary("write", fd);
+      throwEBADFIfNecessary("write", this, fd);
 
       if (buffer?.byteLength === 0) return { __proto__: null, bytesWritten: 0, buffer };
 
@@ -737,7 +739,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
 
     async writev(buffers, position) {
       const fd = this[kFd];
-      throwEBADFIfNecessary("writev", fd);
+      throwEBADFIfNecessary("writev", this, fd);
 
       try {
         this[kRef]();
@@ -752,7 +754,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
       options: BufferEncoding | { encoding?: BufferEncoding | null; signal?: AbortSignal } | null = "utf8",
     ) {
       const fd = this[kFd];
-      throwEBADFIfNecessary("writeFile", fd);
+      throwEBADFIfNecessary("writeFile", this, fd);
       let encoding: BufferEncoding = "utf8";
       let signal: AbortSignal | undefined = undefined;
 
@@ -914,8 +916,6 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
     }
 
     createReadStream(options = kEmptyObject) {
-      const fd = this[kFd];
-      throwEBADFIfNecessary("createReadStream", fd);
       return new (require("internal/fs/streams").ReadStream)(undefined, {
         highWaterMark: 64 * 1024,
         ...options,
@@ -924,8 +924,6 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
     }
 
     createWriteStream(options = kEmptyObject) {
-      const fd = this[kFd];
-      throwEBADFIfNecessary("createWriteStream", fd);
       return new (require("internal/fs/streams").WriteStream)(undefined, {
         highWaterMark: 64 * 1024,
         ...options,
@@ -1583,10 +1581,13 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
 
       const fd = this[kFd];
       const flag = this[kFlag];
+      const reason = this[kCloseReason];
       this[kFd] = -1;
+      this[kCloseReason] = "The FileHandle has been transferred";
       fileHandleRegistry?.unregister(this);
       return {
-        data: { fd, flag },
+        // A symbol key is not cloned, so only a rollback on this thread (worker_threads.ts restoreNeutered) gets the earlier reason back.
+        data: { fd, flag, [kCloseReason]: reason },
         deserializeInfo: "internal/fs/promises:FileHandle",
       };
     }
@@ -1595,9 +1596,10 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
       return [];
     }
 
-    [kDeserialize]({ fd, flag }) {
+    [kDeserialize]({ fd, flag, [kCloseReason]: reason }) {
       this[kFd] = fd;
       this[kFlag] = flag;
+      if (this[kCloseReason] !== reason) this[kCloseReason] = reason;
       if (fd !== -1) {
         (fileHandleRegistry ??= new FinalizationRegistry(onFileHandleCollected)).register(
           this,
@@ -1629,7 +1631,12 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
   fileHandles.whenLoaded?.(private_symbols);
 }
 
-function throwEBADFIfNecessary(fn: string, fd) {
+// The throw is out of line (throwBadFileHandle) so that this stays small enough for the DFG to inline.
+function throwEBADFIfNecessary(fn: string, handle, fd) {
+  if (fd === undefined || fd === -1) throwBadFileHandle(fn, handle, fd);
+}
+
+function throwBadFileHandle(fn: string, handle, fd): never {
   if (fd === undefined) {
     // A FileHandle method invoked with a foreign receiver (fn.call({})); node's
     // fsCall asserts on the missing internal slot before touching the fd.
@@ -1637,13 +1644,11 @@ function throwEBADFIfNecessary(fn: string, fd) {
       "handle must be an instance of FileHandle" + require("internal/shared").kInternalAssertionSuffix,
     );
   }
-  if (fd === -1) {
-    // eslint-disable-next-line no-restricted-syntax
-    const err: any = new Error("file closed");
-    err.code = "EBADF";
-    err.syscall = fn;
-    throw err;
-  }
+  // A plain Error with a hand-set code, as node's fsCall builds it: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/promises.js#L1104-L1110
+  const err: any = new Error(handle[kCloseReason] ?? "file closed");
+  err.code = "EBADF";
+  err.syscall = fn;
+  throw err;
 }
 
 async function writeFileAsyncIteratorInner(fd, iterable, encoding, signal: AbortSignal | null) {

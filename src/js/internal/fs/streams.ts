@@ -179,6 +179,14 @@ function streamFileHandleClose(this: FileHandle, fd: FD, cb: ErrorCallback) {
   this.close().then(() => cb(), cb);
 }
 
+// Node takes the ref and the 'close' listener before this check and leaves both on a closed handle: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/streams.js#L154-L156
+function refFileHandle(handle: FileHandle): number {
+  const fd = handle[kFd];
+  validateInt32(fd, "fd", 0, 2147483647);
+  handle[kRef]();
+  return fd;
+}
+
 function getValidatedPath(p: string | URL | null | undefined): string {
   if (p instanceof URL) return Bun.fileURLToPath(p);
   if (typeof p !== "string") throw $ERR_INVALID_ARG_TYPE("path", "string or URL", p);
@@ -265,11 +273,10 @@ function ReadStream(
       throw $ERR_METHOD_NOT_IMPLEMENTED("FileHandle with fs");
     }
     this[kFs] = fileHandleStreamFs(fd);
-    this.fd = fd[kFd];
-    fd[kRef]();
+    this.fd = refFileHandle(fd);
     fd.on("close", this.close.bind(this));
   } else {
-    throw $ERR_INVALID_ARG_TYPE("options.fd", "number or FileHandle", fd);
+    throw $ERR_INVALID_ARG_TYPE("options.fd", ["number", "FileHandle"], fd);
   }
 
   if (customFs) {
@@ -514,11 +521,11 @@ function WriteStream(
       throw $ERR_METHOD_NOT_IMPLEMENTED("FileHandle with fs");
     }
     this[kFs] = customFs = fileHandleStreamFs(fd);
-    fd[kRef]();
+    const handleFd = refFileHandle(fd);
     fd.on("close", this.close.bind(this));
-    this.fd = fd = fd[kFd];
+    this.fd = fd = handleFd;
   } else {
-    throw $ERR_INVALID_ARG_TYPE("options.fd", "number or FileHandle", fd);
+    throw $ERR_INVALID_ARG_TYPE("options.fd", ["number", "FileHandle"], fd);
   }
 
   const autoDestroy = (autoClose = options.autoDestroy = autoClose === undefined ? true : autoClose);

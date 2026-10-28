@@ -685,7 +685,7 @@ impl<'a> Resolver<'a> {
 
     /// Shared borrow of the inner `RealFS`. See [`fs_ref`](Self::fs_ref).
     #[inline(always)]
-    pub(crate) fn rfs(&self) -> &Fs::file_system::RealFS {
+    fn rfs_ref(&self) -> &Fs::file_system::RealFS {
         &self.fs_ref().fs
     }
 
@@ -1811,7 +1811,7 @@ impl<'a> Resolver<'a> {
             // map in place under that lock. The entry pointer stays valid after
             // unlock (EntryStore-owned).
             if let Some(query) = dir.get_entry(self.generation, name.filename) {
-                let symlink_path = query.entry().symlink(self.rfs(), self.store_fd);
+                let symlink_path = query.entry().symlink(self.rfs_ref(), self.store_fd);
                 if !symlink_path.is_empty() {
                     path.set_realpath(symlink_path);
                     if !result.file_fd.is_valid() {
@@ -3668,7 +3668,6 @@ impl<'a> Resolver<'a> {
                         in_place.map(|existing| unsafe { &mut (*existing).data }),
                         &_value,
                         &mut filename_store,
-                        (),
                     )
                     .expect("unreachable");
             }
@@ -3917,8 +3916,7 @@ impl<'a> Resolver<'a> {
                 // rewrites the `DirEntry` in place under that lock. The entry
                 // pointer stays valid after unlock (EntryStore-owned).
                 let looked_up = {
-                    let rfs = &mut Fs::FileSystem::instance().fs;
-                    let _entries_lock = rfs.entries_mutex.lock_guard();
+                    let _entries_lock = self.rfs_ref().entries_mutex.lock_guard();
                     resolved_dir_info
                         .get_entries_ref_locked(self.generation)
                         .map(|entries| (entries.get(base), entries.fd))
@@ -3929,7 +3927,7 @@ impl<'a> Resolver<'a> {
                 };
                 let entry_kind = entry_lookup
                     .as_ref()
-                    .map(|q| q.entry().kind(self.rfs(), self.store_fd));
+                    .map(|q| q.entry().kind(self.rfs_ref(), self.store_fd));
                 let entry_query = match entry_lookup {
                     Some(q) if entry_kind != Some(Fs::file_system::EntryKind::Dangling) => q,
                     _ => {
@@ -3984,7 +3982,7 @@ impl<'a> Resolver<'a> {
                                 let index_query =
                                     dir_info_ref.get_entry(self.generation, &file_name[..]);
                                 if let Some(iq) = index_query {
-                                    if iq.entry().kind(self.rfs(), self.store_fd)
+                                    if iq.entry().kind(self.rfs_ref(), self.store_fd)
                                         == Fs::file_system::EntryKind::File
                                     {
                                         if let Some(debug) = self.debug_logs.as_mut() {
@@ -4100,7 +4098,7 @@ impl<'a> Resolver<'a> {
                 if let Some(ext_query) =
                     resolved_dir_info.get_entry(self.generation, &file_name[..])
                 {
-                    if ext_query.entry().kind(self.rfs(), self.store_fd)
+                    if ext_query.entry().kind(self.rfs_ref(), self.store_fd)
                         == Fs::file_system::EntryKind::File
                     {
                         if let Some(debug) = self.debug_logs.as_mut() {
@@ -4140,7 +4138,7 @@ impl<'a> Resolver<'a> {
                     if let Some(ts_query) =
                         resolved_dir_info.get_entry(self.generation, &file_name[..])
                     {
-                        if ts_query.entry().kind(self.rfs(), self.store_fd)
+                        if ts_query.entry().kind(self.rfs_ref(), self.store_fd)
                             == Fs::file_system::EntryKind::File
                         {
                             if let Some(debug) = self.debug_logs.as_mut() {
@@ -4898,7 +4896,6 @@ impl<'a> Resolver<'a> {
                                 in_place.map(|existing| unsafe { &mut (*existing).data }),
                                 &_value,
                                 &mut filename_store,
-                                (),
                             )
                             .expect("unreachable");
                     }
@@ -5599,8 +5596,7 @@ impl<'a> Resolver<'a> {
         // for the rewrite this guards against); the fd gate matches
         // `DirInfo::get_file_descriptor`.
         let looked_up = {
-            let realfs = &mut Fs::FileSystem::instance().fs;
-            let _entries_lock = realfs.entries_mutex.lock_guard();
+            let _entries_lock = self.rfs_ref().entries_mutex.lock_guard();
             dir_info
                 .get_entries_ref_locked(self.generation)
                 .map(|entries| {
@@ -5615,7 +5611,9 @@ impl<'a> Resolver<'a> {
                 })
         };
         if let Some((Some(lookup), dirname_fd)) = looked_up {
-            if lookup.entry().kind(self.rfs(), self.store_fd) == Fs::file_system::EntryKind::File {
+            if lookup.entry().kind(self.rfs_ref(), self.store_fd)
+                == Fs::file_system::EntryKind::File
+            {
                 let Ok(out_buf) = lookup.entry().abs_path_or_try_fill(|| {
                     let parts = [dir_info.abs_path, &base[..]];
                     let out_buf_ = self
@@ -6037,12 +6035,6 @@ impl<'a> Resolver<'a> {
         path: &[u8],
         extension_order: options::ExtOrder,
     ) -> Option<LoadResult> {
-        // SAFETY: RealFS is the global singleton. Derive provenance from the raw
-        // `*mut FileSystem` field so intervening `unsafe { &mut *self.fs() }` calls in
-        // `load_extension` / `dirname_store.append_slice` don't invalidate `rfs`
-        // under Stacked Borrows. We re-borrow `&mut *rfs` at each use site.
-        let rfs: *mut Fs::file_system::RealFS = self.rfs_ptr();
-
         if let Some(debug) = self.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!(
                 "Attempting to load \"{}\" as a file",
@@ -6066,9 +6058,9 @@ impl<'a> Resolver<'a> {
         // (debug_logs / load_extension / dirname_store) don't trip borrowck
         // while each read goes through safe `BackRef: Deref` (pointee outlives
         // holder by ARENA invariant).
-        // SAFETY: `rfs` points at the process-global RealFS singleton (see note at fn top).
+        // SAFETY: `rfs_ptr()` points at the process-global RealFS singleton.
         let dir_entry: bun_ptr::BackRef<Fs::file_system::real_fs::EntriesOption> =
-            match unsafe { &mut *rfs }.read_directory(
+            match unsafe { &mut *self.rfs_ptr() }.read_directory(
                 dir_path,
                 None,
                 self.generation,
@@ -6112,7 +6104,8 @@ impl<'a> Resolver<'a> {
         // in-place rewrite this guards against).
         let (plain_query, plain_dirname_fd) = dir_entry.get().lookup(base);
         if let Some(query) = plain_query {
-            if query.entry().kind(self.rfs(), self.store_fd) == Fs::file_system::EntryKind::File {
+            if query.entry().kind(self.rfs_ref(), self.store_fd) == Fs::file_system::EntryKind::File
+            {
                 if let Some(debug) = self.debug_logs.as_mut() {
                     debug.add_note_fmt(format_args!("Found file \"{}\" ", bstr::BStr::new(base)));
                 }
@@ -6194,7 +6187,7 @@ impl<'a> Resolver<'a> {
 
                     let (ts_query, ts_dirname_fd) = dir_entry.get().lookup(&buffer[..]);
                     if let Some(query) = ts_query {
-                        if query.entry().kind(self.rfs(), self.store_fd)
+                        if query.entry().kind(self.rfs_ref(), self.store_fd)
                             == Fs::file_system::EntryKind::File
                         {
                             if let Some(debug) = self.debug_logs.as_mut() {
@@ -6289,7 +6282,8 @@ impl<'a> Resolver<'a> {
 
         let (ext_query, dirname_fd) = dir_entry.get().lookup(file_name);
         if let Some(query) = ext_query {
-            if query.entry().kind(self.rfs(), self.store_fd) == Fs::file_system::EntryKind::File {
+            if query.entry().kind(self.rfs_ref(), self.store_fd) == Fs::file_system::EntryKind::File
+            {
                 if let Some(debug) = self.debug_logs.as_mut() {
                     debug.add_note_fmt(format_args!(
                         "Found file \"{}\" ",
@@ -6381,7 +6375,7 @@ impl<'a> Resolver<'a> {
             if let Some(entry) = entries!().get_comptime_query(b"node_modules") {
                 info.flags.set_present(
                     DirInfo::Flag::HasNodeModules,
-                    entry.entry().kind(self.rfs(), self.store_fd)
+                    entry.entry().kind(self.rfs_ref(), self.store_fd)
                         == Fs::file_system::EntryKind::Dir,
                 );
             }
@@ -6432,7 +6426,7 @@ impl<'a> Resolver<'a> {
 
                 if info.is_node_modules() {
                     if let Some(q) = entries!().get_comptime_query(b".bin") {
-                        if q.entry().kind(self.rfs(), self.store_fd)
+                        if q.entry().kind(self.rfs_ref(), self.store_fd)
                             == Fs::file_system::EntryKind::Dir
                         {
                             // SAFETY: BIN_FOLDERS_LOADED is single-thread init-once; protected by RESOLVER_MUTEX held by callers.
@@ -6520,11 +6514,8 @@ impl<'a> Resolver<'a> {
                             let _entry_guard = lookup.entry().mutex.lock_guard();
                             lookup.entry().set_cache_fd(entries_fd);
                         }
-                        // SAFETY: EntryStore-owned slot — read-only borrow,
-                        // dies (NLL) before any later `&mut` to this slot.
-                        let entry = lookup.entry();
 
-                        let mut symlink = entry.symlink(self.rfs(), self.store_fd);
+                        let mut symlink = lookup.entry().symlink(self.rfs_ref(), self.store_fd);
                         if !symlink.is_empty() {
                             if let Some(logs) = self.debug_logs.as_mut() {
                                 let mut buf = Vec::new();
@@ -6582,10 +6573,9 @@ impl<'a> Resolver<'a> {
         // Record if this directory has a package.json file
         if self.opts.load_package_json {
             if let Some(lookup) = entries!().get_comptime_query(b"package.json") {
-                // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
-                // dies (NLL) before any later `&mut` to this slot.
-                let entry = lookup.entry();
-                if entry.kind(self.rfs(), self.store_fd) == Fs::file_system::EntryKind::File {
+                if lookup.entry().kind(self.rfs_ref(), self.store_fd)
+                    == Fs::file_system::EntryKind::File
+                {
                     // A package in the global cache has a `package_id`, and keeps it even if its
                     // tarball shipped a `node_modules` folder.
                     info.package_json = if self.use_package_manager()
@@ -6653,10 +6643,9 @@ impl<'a> Resolver<'a> {
         if self.opts.load_tsconfig_json {
             let mut tsconfig_path: Option<&[u8]> = None;
             if let Some(lookup) = entries!().get_comptime_query(b"tsconfig.json") {
-                // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
-                // dies (NLL) before any later `&mut` to this slot.
-                let entry = lookup.entry();
-                if entry.kind(self.rfs(), self.store_fd) == Fs::file_system::EntryKind::File {
+                if lookup.entry().kind(self.rfs_ref(), self.store_fd)
+                    == Fs::file_system::EntryKind::File
+                {
                     let parts = [path, b"tsconfig.json".as_slice()];
                     tsconfig_path = self
                         .fs_ref()
@@ -6665,10 +6654,9 @@ impl<'a> Resolver<'a> {
             }
             if tsconfig_path.is_none() {
                 if let Some(lookup) = entries!().get_comptime_query(b"jsconfig.json") {
-                    // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
-                    // dies (NLL) before any later `&mut` to this slot.
-                    let entry = lookup.entry();
-                    if entry.kind(self.rfs(), self.store_fd) == Fs::file_system::EntryKind::File {
+                    if lookup.entry().kind(self.rfs_ref(), self.store_fd)
+                        == Fs::file_system::EntryKind::File
+                    {
                         let parts = [path, b"jsconfig.json".as_slice()];
                         tsconfig_path = self
                             .fs_ref()

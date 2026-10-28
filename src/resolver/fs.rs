@@ -92,6 +92,7 @@ impl strings::Appender for FilenameStoreAppender {
 /// `RealFS` type; the inline-`fs::RealFS` in `lib.rs` impls this by forwarding
 /// to `RealFS::kind`.
 pub trait EntryKindResolver {
+    /// Runs with the entry's `mutex` held, so it must not ask for that entry's kind or symlink.
     fn resolve_kind(
         &self,
         dir: &[u8],
@@ -213,8 +214,7 @@ impl Entry {
         p
     }
 
-    /// Stat-on-first-use. `resolve_kind` must not re-enter this entry's `mutex`
-    /// (it only performs syscalls and string interning).
+    /// Stat-on-first-use.
     // `Entry` lives in the EntryStore BSSMap singleton. The lazy-stat rewrite
     // of `need_stat` / `cache` is serialized on the per-entry `mutex` here
     // (double-checked: the cached fast path stays lock-free).
@@ -339,23 +339,13 @@ pub mod dir_entry {
     }
 }
 
-/// Per-entry hook invoked by `add_entry`/`readdir`.
+/// Per-entry hook invoked by `readdir`, which lends it the filesystem it is running on.
 pub trait DirEntryIterator {
-    const IS_VOID: bool = false;
-    fn next(&self, entry: &mut Entry, fd: Fd);
+    fn next<R: EntryKindResolver>(&self, fs: &R, entry: &mut Entry, fd: Fd);
 }
 
 impl DirEntryIterator for () {
-    const IS_VOID: bool = true;
-    fn next(&self, _entry: &mut Entry, _fd: Fd) {}
-}
-
-impl<T: DirEntryIterator + ?Sized> DirEntryIterator for &T {
-    const IS_VOID: bool = T::IS_VOID;
-    #[inline]
-    fn next(&self, entry: &mut Entry, fd: Fd) {
-        (**self).next(entry, fd)
-    }
+    fn next<R: EntryKindResolver>(&self, _fs: &R, _entry: &mut Entry, _fd: Fd) {}
 }
 
 pub struct DirEntry {
@@ -382,13 +372,13 @@ impl DirEntry {
     // should hoist `FilenameStoreAppender::new()` once and call
     // `add_entry_with_store` directly.
 
-    pub(crate) fn add_entry_with_store<I: DirEntryIterator>(
+    /// Returns the stored entry, or `None` for a kind that is not kept (a device, a socket, ...).
+    pub(crate) fn add_entry_with_store(
         &mut self,
         prev_map: Option<&mut dir_entry::EntryMap>,
         entry: &bun_sys::dir_iterator::IteratorResult,
         filename_store: &mut FilenameStoreAppender,
-        iterator: I,
-    ) -> crate::CrateResult<()> {
+    ) -> crate::CrateResult<Option<&mut Entry>> {
         use bun_sys::FileKind as DK;
         // `entry.name.slice()` is OS-native (`&[u16]` on Windows); the
         // entry-store / hashmap key in `data` is UTF-8, so use the eagerly-
@@ -411,7 +401,7 @@ impl DirEntry {
             | DK::UnixDomainSocket
             | DK::Whiteout
             | DK::Door
-            | DK::EventPort => return Ok(()),
+            | DK::EventPort => return Ok(None),
         };
 
         // Lowercase the entry basename once. The same bytes drive the
@@ -530,9 +520,6 @@ impl DirEntry {
             }
         };
 
-        // SAFETY: just produced from EntryStore append or prev_map lookup
-        let stored_ref = unsafe { &mut *stored };
-
         // PERF: the
         // generic `put` here would heap-box a second key copy. `base_lowercase`
         // points either into the `Entry`'s inline `StringOrTinyString` buffer
@@ -549,11 +536,8 @@ impl DirEntry {
         // `name_hash` is its hash too — insert without re-hashing.
         self.data.put_static_key_hashed(name_hash, key, stored)?;
 
-        if !I::IS_VOID {
-            iterator.next(stored_ref, self.fd);
-        }
-
-        Ok(())
+        // SAFETY: just produced from EntryStore append or prev_map lookup
+        Ok(Some(unsafe { &mut *stored }))
     }
 
     /// Debug-only contract check: every `.data` probe must run under

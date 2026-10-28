@@ -271,8 +271,8 @@ test("a non-string options.paths entry throws the error of path.resolve(entry)",
     expect([
       errorOf(() => Module._resolveFilename("resolve-test-pkg", fakeParent, false, { paths: [dir, null] })),
       errorOf(() => require.resolve("resolve-test-pkg", { paths: [dir, null] })),
-      // The request can be an object that converts to a string, or an absolute path.
-      errorOf(() => Module._resolveFilename(new String("resolve-test-pkg"), fakeParent, false, { paths: [0] })),
+      errorOf(() => Module._resolveFilename("resolve-test-pkg", fakeParent, false, { paths: [0] })),
+      // An absolute request does not use the entries. Node reads them first.
       errorOf(() => Module._resolveFilename(join(dir, "target.js"), fakeParent, false, { paths: [dir, dir, 5] })),
     ]).toEqual([invalid("null"), invalid("null"), invalid("type number (0)"), invalid("type number (5)")]);
   } finally {
@@ -423,6 +423,12 @@ async function resolveRowsInChild(order) {
     ["plugroot", ["nowhere/"], plugroot],
     ["plug", ["."], plug, "plugins"],
     ["plugroot", [".."], plugroot, "plugins"],
+    // path.resolve() reads the "." and ".." of an absolute entry as text.
+    ["plug", [`${dir}/nowhere/../plugins`], plug],
+    ["plug", [`${dir}/deps/../plugins/`], plug],
+    ["dep", [`${dir}/deps/../plugins`], missing],
+    ["plug", [`${dir}/plugins/..`], missing],
+    ["plugroot", [`${dir}/plugins/./..`], plugroot],
     // A relative request is joined to the entry.
     ["./node_modules/plug/index.js", ["plugins"], plug],
     ["./file.js", ["plugins"], file],
@@ -487,9 +493,16 @@ async function resolveRowsInChild(order) {
       ["plugd", ["C:\\plugins"], missing],
       ["plug", ["plugins\0x"], missing],
       ["plugroot", ["plugins\0x"], plugroot],
+      ["plug", [`${dir}/plugins\\`], missing],
+      ["plugroot", [`${dir}/plugins\\`], plugroot],
+      ["plug", [`${dir}/plugins\0x`], missing],
+      ["plugroot", [`${dir}/plugins\0x`], plugroot],
       // Longer than PATH_MAX as written, short once resolved.
       ["plug", [Buffer.alloc(4200, "./").toString() + "plugins"], plug],
+      // No directory has a name that long. The search starts above it.
       ["plug", [Buffer.alloc(5000, "a").toString()], missing],
+      ["plugroot", [Buffer.alloc(5000, "a").toString()], plugroot],
+      ["plugroot", [`${dir}/${Buffer.alloc(5000, "a")}`], plugroot],
       // The cwd has a backslash in its name. Bun's directory cache cannot read it, so the search starts above it.
       ["plugroot", ["."], plugroot, "back\\slash"],
       ["plugroot", ["./nowhere"], plugroot, "back\\slash"],
@@ -630,27 +643,29 @@ if (isBun) {
   const fromRegistry = "cache/no-deps@2.0.0/index.js";
 
   test.concurrent.each([
-    // Auto-install is on: nothing above the calling file has a node_modules directory.
-    [[], inPlugins, ["/no-deps-2"]],
-    [["-i"], inPlugins, ["/no-deps-2"]],
+    // By default, a node_modules directory above the calling file or above an entry keeps auto-install off.
+    [[], inPlugins, ["/no-deps-3"]],
+    [["-i"], inPlugins, ["/no-deps-2", "/no-deps-3"]],
     [["--no-install"], inPlugins, []],
     // This mode reads no node_modules directory, so the registry's copy is the answer.
-    [["--install=force"], fromRegistry, [...installed("2.0.0"), "/no-deps-2"]],
+    [["--install=force"], fromRegistry, [...installed("2.0.0"), "/no-deps-2", "/no-deps-3"]],
   ])("options.paths: every entry is searched before a package is installed, with %j", async (args, found, requests) => {
     const result = await runWithRegistry({
       files: { "project/plugins/node_modules/no-deps/index.js": "" },
       cwd: "project",
       args,
-      // The first entry misses. The second entry has the package. No entry has "no-deps-2".
+      // The first entry misses. The second entry has the package. The registry has neither
+      // "no-deps-2" nor "no-deps-3".
       source: `
         console.log(resolve("no-deps", [abs("nowhere"), abs("plugins")]));
         console.log(resolve("no-deps", ["./nowhere", "./plugins"]));
         console.log(resolve("no-deps", [abs("nowhere"), "plugins"]));
         console.log(resolve("no-deps-2", [abs("nowhere"), "plugins"]));
+        console.log(resolve("no-deps-3", [abs("nowhere")]));
       `,
     });
     expect(result).toEqual({
-      stdout: [found, found, found, missing("no-deps-2")],
+      stdout: [found, found, found, missing("no-deps-2"), missing("no-deps-3")],
       stderr: "",
       exitCode: 0,
       requests,
@@ -740,12 +755,14 @@ if (isBun) {
       source: `
         console.log(resolve("no-deps", [abs("conf"), abs("../../tool")]));
         console.log(resolve("no-deps", ["conf", "../../tool"]));
+        // The second entry has a node_modules directory: nothing is installed, so nothing is refused.
         console.log(resolve("no-deps-3", [abs("conf"), abs("../../tool")]));
+        console.log(resolve("no-deps-3", [abs("conf")]));
       `,
     });
     const inTool = "tool/node_modules/no-deps/index.js";
     expect(result).toEqual({
-      stdout: [inTool, inTool, refusal("no-deps-3")],
+      stdout: [inTool, inTool, missing("no-deps-3"), refusal("no-deps-3")],
       stderr: "",
       exitCode: 0,
       requests: [],
@@ -778,19 +795,27 @@ if (isBun) {
   });
 
   test.concurrent(
-    "options.paths: a miss installs nothing when the calling file has a node_modules directory",
+    "options.paths: a miss installs nothing when a node_modules directory is above the calling file or an entry",
     async () => {
-      // Nothing above the entry has a node_modules directory.
       const result = await runWithRegistry({
-        files: { "project/node_modules/.keep": "", "outside/file.js": "" },
+        files: {
+          "project/node_modules/.keep": "",
+          "outside/file.js": "",
+          "bare/resolve.cjs": `module.exports = (request, paths) => require.resolve(request, { paths });`,
+        },
         cwd: "project",
         source: `
+        // The calling file has a node_modules directory above it. The entry has none.
         console.log(resolve("no-deps", [abs("../outside")]));
         console.log(resolve("no-deps", ["../outside"]));
+        // The calling file has none. One entry has one.
+        const fromBare = require("../bare/resolve.cjs");
+        console.log(relative(() => fromBare("no-deps", [abs(".")])));
+        console.log(relative(() => fromBare("no-deps", [abs("../outside"), "."])));
       `,
       });
       expect(result).toEqual({
-        stdout: [missing("no-deps"), missing("no-deps")],
+        stdout: [missing("no-deps"), missing("no-deps"), missing("no-deps"), missing("no-deps")],
         stderr: "",
         exitCode: 0,
         requests: [],
@@ -799,18 +824,18 @@ if (isBun) {
   );
 
   test.concurrent("options.paths: a package that no entry has is installed for the calling file", async () => {
-    // The first entry has a node_modules directory. The second entry is in a project that lists
-    // another version of the package.
+    // No node_modules directory is above the calling file or an entry. The first entry is in a
+    // project that lists another version of the package.
     const result = await runWithRegistry({
       files: {
         "project/package.json": JSON.stringify({ name: "project", dependencies: { "no-deps": "1.0.0" } }),
-        "project/plugins/node_modules/other/index.js": "",
+        "project/plugins/file.js": "",
         "elsewhere/package.json": JSON.stringify({ name: "elsewhere", dependencies: { "no-deps": "1.1.0" } }),
       },
       cwd: "project",
       source: `
-        console.log(resolve("no-deps", [abs("plugins"), abs("../elsewhere")]));
-        console.log(resolve("no-deps", ["plugins", "../elsewhere"]));
+        console.log(resolve("no-deps", [abs("../elsewhere"), abs("plugins")]));
+        console.log(resolve("no-deps", ["../elsewhere", "plugins"]));
       `,
     });
     expect(result).toEqual({

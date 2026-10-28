@@ -568,8 +568,8 @@ pub struct Resolver<'a> {
 
     /// The `paths` of `require(id, { paths })` and `require.resolve(id, { paths })`, set while
     /// that one request is resolved. A relative request is joined to each directory. A bare
-    /// request searches the `node_modules` directories from each directory up, and everything
-    /// else about it (tsconfig.json, package.json, auto-install) stays with the importing file.
+    /// request searches the `node_modules` directories from each directory up. Its tsconfig.json,
+    /// its package.json and the project that installs a package stay the importing file's.
     pub custom_dir_paths: Option<LookupPaths<'a>>,
 
     /// Why "exports" or "imports" led to no file: the first time since this was last `None`.
@@ -2446,15 +2446,34 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// Node's `path.resolve(entry)` for a relative `paths` entry.
-    fn custom_dir<'b>(&self, entry: &[u8], buf: &'b mut PathBuffer) -> Option<&'b [u8]> {
+    /// Node's `path.resolve(entry)` for a `paths` entry. `spill` holds a path that is longer than
+    /// a path buffer: no directory has that name, and the search starts at the nearest one above.
+    fn custom_dir<'b>(
+        &self,
+        entry: &'b [u8],
+        buf: &'b mut PathBuffer,
+        spill: &'b mut Vec<u8>,
+    ) -> Option<&'b [u8]> {
         #[cfg(windows)]
-        let path: &'b [u8] = self.fs_ref().abs_buf_checked(&[entry], &mut buf[..])?;
+        let path: &'b [u8] = {
+            let _ = spill;
+            // `dir_info_cached` normalizes an absolute path on Windows.
+            if bun_paths::is_absolute(entry) {
+                entry
+            } else {
+                self.fs_ref().abs_buf_checked(&[entry], &mut buf[..])?
+            }
+        };
         #[cfg(not(windows))]
         let path: &'b [u8] = {
-            use ::bun_paths::resolve_path::{join_z_buf_checked, platform};
-            let cwd = self.fs_ref().top_level_dir();
-            join_z_buf_checked::<platform::Posix>(&mut buf[..], &[cwd, entry])?.as_bytes()
+            use ::bun_paths::resolve_path::{join_z_buf_spill, platform};
+            let from_cwd = [self.fs_ref().top_level_dir(), entry];
+            let parts = if bun_paths::is_absolute(entry) {
+                &from_cwd[1..]
+            } else {
+                &from_cwd[..]
+            };
+            join_z_buf_spill::<platform::Posix>(&mut buf[..], spill, parts).as_bytes()
         };
         // The cache reads a NUL as the end of a path and, on POSIX, a backslash as a separator.
         // The search starts above the first component that it would misread.
@@ -2474,11 +2493,9 @@ impl<'a> Resolver<'a> {
 
     /// The directory where the walk of `node_modules` directories starts for a `paths` entry.
     fn custom_dir_info(&mut self, entry: &[u8]) -> Option<DirInfoRef> {
-        if bun_paths::is_absolute(entry) {
-            return self.dir_info_or_nearest_existing(entry);
-        }
         let mut buf = bun_paths::path_buffer_pool::get();
-        let dir = self.custom_dir(entry, &mut buf)?;
+        let mut spill = Vec::new();
+        let dir = self.custom_dir(entry, &mut buf, &mut spill)?;
         self.dir_info_or_nearest_existing(dir)
     }
 
@@ -2941,7 +2958,7 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        let esm_ = crate::package_json::Package::parse::<PATHS>(import_path, bufs!(esm_subpath));
+        let esm_ = crate::package_json::Package::parse(import_path, bufs!(esm_subpath));
 
         let source_dir_info = dir_info;
         let mut any_node_modules_folder = false;
@@ -2952,6 +2969,7 @@ impl<'a> Resolver<'a> {
         let mut entries = lookup_paths.map_or(&[][..], |paths| paths.dirs).iter();
         let mut has_walk_start = false;
         let mut searched_node_path = false;
+        let mut walks_saw_node_modules = false;
 
         loop {
             if PATHS && !is_self_reference {
@@ -3203,6 +3221,9 @@ impl<'a> Resolver<'a> {
                 if Self::is_global_cache_package(&dir_info) {
                     any_node_modules_folder = false;
                 }
+                if PATHS {
+                    walks_saw_node_modules |= core::mem::take(&mut any_node_modules_folder);
+                }
             }
 
             if PATHS {
@@ -3265,7 +3286,8 @@ impl<'a> Resolver<'a> {
                 }
                 return MatchStatus::NotFound;
             }
-            // Whether auto-install is on is the importing file's question, not an entry's.
+            // Auto-install is for a request that no "node_modules" directory could answer: none
+            // above an entry, and none above the importing file.
             let mut top = source_dir_info;
             any_node_modules_folder = top.has_node_modules();
             while let Some(parent) = top.get_parent() {
@@ -3273,6 +3295,7 @@ impl<'a> Resolver<'a> {
                 any_node_modules_folder |= top.has_node_modules();
             }
             any_node_modules_folder &= !Self::is_global_cache_package(&top);
+            any_node_modules_folder |= walks_saw_node_modules;
         }
 
         // this is the magic!

@@ -783,8 +783,13 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         if (*vm).transpiler.options.rewrite_jest_for_tests
             && (*vm).transpiler.options.vitest_globals
         {
-            crate::test_runner::jest::Jest::define_vitest_globals(&*global)
-                .map_err(|_| bun_jsc::CrateError::JSError)?;
+            bun_removable_features::call_removable!(
+                Test,
+                Abort,
+                crate::test_runner::jest::Jest::define_vitest_globals,
+                &*global
+            )
+            .map_err(|_| bun_jsc::CrateError::JSError)?;
         }
     }
     // `vm.transpiler` (hence `transpiler.fs`) is always initialized here:
@@ -1172,6 +1177,18 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     let _ = unsafe { (*(*vm).global).handle_rejected_promises() };
 }
 
+/// # Safety
+/// `vm` is the live per-thread VM.
+unsafe fn run_pending_test_step(vm: *mut VirtualMachine) {
+    bun_removable_features::call_removable!(
+        Test,
+        Abort,
+        crate::test_runner::bun_test::BunTest::run_pending_step,
+        // SAFETY: per fn contract.
+        unsafe { &*vm }.global()
+    );
+}
+
 /// `eventLoop().autoTickActive()`. Same shape as
 /// [`auto_tick`] but: no `runImminentGCTimer`, no `handleRejectedPromises` at
 /// the tail, and no debug sleep-timer logging. Used by `bun_main` /
@@ -1180,11 +1197,6 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
 ///
 /// # Safety
 /// `vm` is the live per-thread VM.
-unsafe fn run_pending_test_step(vm: *mut VirtualMachine) {
-    // SAFETY: per fn contract — `vm` is the live per-thread VM.
-    crate::test_runner::bun_test::BunTest::run_pending_step(unsafe { &*vm }.global());
-}
-
 unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     // Note: reshaped for borrowck — see `auto_tick` above.
     // SAFETY: per fn contract — `vm` is the live per-thread VM.

@@ -1107,6 +1107,7 @@ impl BunTest {
     }
 
     /// Runs the step queued by `run_next_tick` right away instead of waiting for its task.
+    #[inline(never)] // --trim cuts the test runner at the call.
     pub(crate) fn run_pending_step(global_this: &JSGlobalObject) {
         let Some(strong) = clone_active_strong() else {
             return;

@@ -349,6 +349,7 @@ pub(crate) mod Jest {
     }
 
     /// `globals = "vitest"`: as with Vitest's `globals: true`, the names are also properties of `globalThis`. Packages look for them there.
+    #[inline(never)] // --trim cuts the test runner at the call.
     pub(crate) fn define_vitest_globals(global: &JSGlobalObject) -> JsResult<()> {
         let module = jsc::from_js_host_call(global, || Bun__Jest__vitestModuleObject(global))?;
         for &name in bun_js_parser::Jest::GLOBALS {

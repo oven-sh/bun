@@ -1010,6 +1010,69 @@ describe.concurrent(() => {
     expect(await proc.exited).toBe(0);
   });
 
+  // Nothing wakes these children's loop: the timer is far away, Bun's GC timer is
+  // off, and Bun.gc(true) leaves JSC's with nothing to collect. A loop that goes
+  // to sleep on the error stays asleep, and the test times out.
+  describe("the event loop does not go to sleep on", () => {
+    async function run(script, entry = "") {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const keepAlive = setTimeout(() => {}, 2 ** 30);
+           const fs = require("fs");
+           const fail = how => { if (how === "throw") throw new Error("boom"); Promise.reject(new Error("boom")); };
+           setImmediate(() => { Bun.gc(true); ${script} });
+           ${entry}`,
+        ],
+        env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    it.each([
+      ["a throw in an immediate", `setImmediate(fail, "throw");`],
+      ["a rejection in an immediate", `setImmediate(fail, "reject");`],
+      ["a throw in an fs callback", `fs.stat(".", () => fail("throw"));`],
+      ["a rejection in an fs callback", `fs.stat(".", () => fail("reject"));`],
+      ["a throw in the reaction of an fs promise", `fs.promises.stat(".").then(() => fail("throw"));`],
+      ["a rejection in a timer", `setTimeout(fail, 1, "reject");`],
+    ])("%s that is fatal", async (_, script) => {
+      const { stdout, stderr, exitCode } = await run(`process.on("exit", () => console.log("exit")); ${script}`);
+      expect(stderr).toContain("error: boom");
+      expect({ stdout, exitCode }).toEqual({ stdout: "exit\n", exitCode: 1 });
+    });
+
+    it.each([
+      ["", `clearTimeout(keepAlive);`, "listener\n"],
+      [
+        ", nor on the immediate the listener schedules",
+        `setImmediate(() => { console.log("immediate"); clearTimeout(keepAlive); });`,
+        "listener\nimmediate\n",
+      ],
+    ])("a rejection in an immediate that has a listener%s", async (_, listener, expected) => {
+      expect(
+        await run(
+          `process.on("unhandledRejection", () => { console.log("listener"); ${listener} }); setImmediate(fail, "reject");`,
+        ),
+      ).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+    });
+
+    it("a rejection in an immediate that has a listener, while the entry awaits", async () => {
+      expect(
+        await run(
+          `process.on("unhandledRejection", () => { console.log("listener"); clearTimeout(keepAlive); entry.resolve(); });
+           setImmediate(fail, "reject");`,
+          `const entry = Promise.withResolvers();
+           await entry.promise;`,
+        ),
+      ).toEqual({ stdout: "listener\n", stderr: "", exitCode: 0 });
+    });
+  });
+
   describe("process.onBeforeExit", () => {
     it("emitted", async () => {
       await using proc = Bun.spawn({

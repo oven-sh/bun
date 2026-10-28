@@ -1209,8 +1209,9 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
             }
         };
         let mut timespec = bun_core::Timespec { sec: 0, nsec: 0 };
-        // SAFETY: `loop_` is the live per-thread uws loop.
-        if unsafe { (*loop_).is_active() } {
+        // A fatal error has ended the caller's `while is_event_loop_alive()`: no sleep before it looks.
+        // SAFETY: `loop_` is the live per-thread uws loop; `vm` per fn contract.
+        if unsafe { (*loop_).is_active() && (*vm).unhandled_error_counter == 0 } {
             // Before `get_timeout` — see the matching call in `auto_tick`.
             // SAFETY: `el` is the live per-thread event loop.
             unsafe { (*el).process_gc_timer() };

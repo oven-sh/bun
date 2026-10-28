@@ -9,8 +9,8 @@
 //
 // When this fails, allocate a large table at its first use instead of declaring it zero-filled.
 import { expect, test } from "bun:test";
-import { closeSync, openSync, readSync, realpathSync } from "node:fs";
 import { bunExe, isASAN, isDebug, isLinux } from "harness";
+import { closeSync, openSync, readSync, realpathSync } from "node:fs";
 
 const smallestPage = 4096;
 const hugePage = 2 * 1024 * 1024;

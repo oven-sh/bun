@@ -1,8 +1,10 @@
-// The ways in which the rows of a valid PNG file may be compressed, cut into chunks and handed over.
-// See png-valid.test.ts.
+// The ways in which the rows of a valid PNG file may be compressed, cut into chunks and handed over, and what other
+// programs make of them. See png-valid.test.ts.
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import zlib from "node:zlib";
-import { make, maker, mistakes, slow, type Case } from "./check";
+import { loadCases } from "../../archive-golden/observe";
+import { decoded, make, maker, mistakes, slow, type Case } from "./check";
 import {
   filteredLines,
   formats,
@@ -88,7 +90,7 @@ describe.each(readers)("%s", (_, format, interlaced) => {
     expect(await mistakes(cases)).toEqual([]);
   });
 
-  test("every setting of zlib", async () => {
+  test("every setting of zlib and of libdeflate", async () => {
     const { Z_FILTERED, Z_HUFFMAN_ONLY, Z_RLE, Z_FIXED, Z_DEFAULT_STRATEGY } = zlib.constants;
     // Enough for several blocks and for a small window to slide.
     const compressed = maker(noise(format, 150, 40, randomBytes(15), { few: true }), {
@@ -106,6 +108,12 @@ describe.each(readers)("%s", (_, format, interlaced) => {
     const cases = all.map(options =>
       compressed(JSON.stringify(options), { deflate: lines => zlib.deflateSync(lines, options) }),
     );
+    for (const level of [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const) {
+      if (slow && level % 3) continue;
+      const deflate = (lines: Uint8Array) =>
+        zlibStream(lines, [Bun.deflateSync(lines, { library: "libdeflate", level })]);
+      cases.push(compressed(`libdeflate, level ${level}`, { deflate }));
+    }
     expect(await mistakes(cases)).toEqual([]);
   });
 
@@ -121,7 +129,7 @@ describe.each(readers)("%s", (_, format, interlaced) => {
       "an empty block of fixed codes": Uint8Array.of(3, 0),
     };
     for (const [ending, last] of Object.entries(endings)) {
-      for (const finishFlush of [Z_SYNC_FLUSH, Z_FULL_FLUSH]) {
+      for (const finishFlush of slow ? [Z_SYNC_FLUSH] : [Z_SYNC_FLUSH, Z_FULL_FLUSH]) {
         for (const [picture, size] of [
           [small, 1],
           [small, 7],
@@ -202,6 +210,29 @@ test.each([
     return zlibStream(lines, [stored(lines.subarray(0, distance)), copyFromFarBack(distance, distance, true)]);
   };
   expect(await mistakes([make("", { ...top, height: 16, samples }, { deflate })])).toEqual([]);
+});
+
+// Pictures that were made up first and then written by 24 programs in as many ways as each offers. A name says which
+// program, what kind of file came out, and of which picture and settings. They are picked from 54,000 different files
+// so that each program is there with every format, zlib header, kind of block, filter, way to cut IDAT, set of other
+// chunks and magnitude of a copy's length and distance that it came up with in a file of up to 2.5 KB. Each keeps every
+// rule, and libpng gets the pixels that the picture has. What Bun makes of a file had no part in picking it.
+// 11 of the programs can put in a profile, and did.
+test("files written by other programs", async () => {
+  /** `sha256` is of what `rgbaLinesOf` gives for the picture, `profile` of the profile if there is one. */
+  type Entry = { name: string; data: string; width: number; height: number; sha256: string; profile?: string };
+  const entries = await loadCases<Entry>(join(import.meta.dir, "valid.json.gz"));
+  expect(entries.length).toBe(622);
+  const sha256 = (bytes: Uint8Array) => Bun.SHA256.hash(bytes, "hex");
+  const results = entries.map(async ({ name, data }) => {
+    try {
+      const { width, height, lines, profile } = await decoded(Buffer.from(data, "base64"));
+      return { name, width, height, sha256: sha256(lines), ...(profile && { profile: sha256(profile) }) };
+    } catch (error: any) {
+      return { name, error: error.code ?? error };
+    }
+  });
+  expect(await Promise.all(results)).toEqual(entries.map(({ data, ...expected }) => expected));
 });
 
 /** `height` rows out of a few of noise, unfiltered, so that making the file costs little. */

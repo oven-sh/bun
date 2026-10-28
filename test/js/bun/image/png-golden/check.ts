@@ -1,4 +1,4 @@
-// Gives files made with write.ts to Bun.Image and says where the result is not what the samples stand for.
+// Gives PNG files to Bun.Image. Of those made with write.ts it says where the result is not what the samples stand for.
 import { isASAN, isDebug } from "harness";
 import { filteredLines, rgbaLinesOf, writeAround, type Layout, type Picture } from "./write";
 
@@ -65,11 +65,14 @@ function parse(out: Uint8Array) {
   return { width, height, lines, profile };
 }
 
+/** The pixels as `rgbaLinesOf` gives them, and the profile. */
+export const decoded = async (file: Uint8Array, options?: { maxPixels: number }) =>
+  parse(await new Bun.Image(file, options).png({ compressionLevel: 0 }).bytes());
+
 async function mistake({ name, file, width, height, expected, profile, maxPixels }: Case) {
   let out: ReturnType<typeof parse>;
   try {
-    const options = maxPixels === undefined ? undefined : { maxPixels };
-    out = parse(await new Bun.Image(file, options).png({ compressionLevel: 0 }).bytes());
+    out = await decoded(file, maxPixels === undefined ? undefined : { maxPixels });
   } catch (error: any) {
     return `${name}: ${error.code ?? error}`;
   }

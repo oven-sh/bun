@@ -565,7 +565,7 @@ describe("bundler", () => {
     expect(pathsWithTwoContents(first.texts, second.texts)).toEqual([]);
   });
 
-  for (const sourcemap of ["none", "external", "linked", "inline"] as const) {
+  for (const sourcemap of ["external", "linked", "inline"] as const) {
     for (const to of ["memory", "disk", "standalone HTML"] as const) {
       test.concurrent(`naming/ChunkHashCoversSourceMap (sourcemap: ${sourcemap}, to ${to})`, async () => {
         using dir = tempDir("naming-chunk-hash-sourcemap", { "index.html": page, "entry.js": "" });
@@ -587,11 +587,22 @@ describe("bundler", () => {
         const second = await withComment("second, longer comment");
 
         expect(pathsWithTwoContents(first, second)).toEqual([]);
-        if (sourcemap === "none") expect(second).toEqual(first);
-        else expect(debugId(second)).not.toBe(debugId(first));
+        expect(debugId(second)).not.toBe(debugId(first));
       });
     }
   }
+
+  test.concurrent("naming/ChunkHashCoversSourceMap (without a source map, a comment changes no output)", async () => {
+    using dir = tempDir("naming-chunk-hash-comment", { "entry.js": "" });
+    const withComment = (comment: string) => {
+      writeFileSync(join(String(dir), "entry.js"), `// ${comment}\nconsole.log("x");\n`);
+      return build({ entrypoints: [join(String(dir), "entry.js")], naming: hashed });
+    };
+    const first = await withComment("first comment");
+    const second = await withComment("second, longer comment");
+
+    expect(second).toEqual(first);
+  });
 
   test.concurrent("naming/ChunkHashCoversSourceMap (a stylesheet has no source map)", async () => {
     using dir = tempDir("naming-chunk-hash-css", { "style.css": `body { color: red; }` });

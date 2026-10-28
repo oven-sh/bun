@@ -122,6 +122,8 @@ impl Framework {
                 Graph::Client => Side::Client,
                 Graph::Server | Graph::Ssr => Side::Server,
             },
+            log,
+            arena,
         )?;
 
         if !bundler_options.define.keys.is_empty() {
@@ -160,45 +162,25 @@ pub(crate) fn add_import_meta_defines(
     define: &mut bun_bundler::options::Define,
     mode: Mode,
     side: Side,
+    log: &mut bun_ast::Log,
+    arena: &Arena,
 ) -> crate::Result<()> {
-    use bun_ast::E::EString;
-
+    use bun_bundler::DefineDataExt;
     use bun_bundler::defines::DefineData;
+    use bun_bundler::options::default_user_defines::import_meta_env_defines;
 
-    static MODE_DEVELOPMENT: EString = EString::from_static(b"development");
-    static MODE_PRODUCTION: EString = EString::from_static(b"production");
-
-    // The following are from Vite: https://vitejs.dev/guide/env-and-mode
     // Note that it is not currently possible to have mixed
-    // modes (production + hmr dev server)
-    // TODO: BASE_URL
-    // NOTE: `HTMLBundle::on_plugins_resolved` (the `Bun.serve` path without the
-    // HMR dev server) mirrors this key list; add new keys in both places.
-    define.insert(
-        b"import.meta.env.DEV",
-        DefineData::init_boolean(mode == Mode::Development),
-    )?;
-    define.insert(
-        b"import.meta.env.PROD",
-        DefineData::init_boolean(mode != Mode::Development),
-    )?;
-    define.insert(
-        b"import.meta.env.MODE",
-        DefineData::init_static_string(match mode {
-            Mode::Development => &MODE_DEVELOPMENT,
-            Mode::ProductionStatic => &MODE_PRODUCTION,
-        }),
-    )?;
-    define.insert(
-        b"import.meta.env.SSR",
-        DefineData::init_boolean(side == Side::Server),
-    )?;
-
-    // To indicate a static build, `STATIC` is set to true then.
-    define.insert(
-        b"import.meta.env.STATIC",
-        DefineData::init_boolean(mode == Mode::ProductionStatic),
-    )?;
+    // modes (production + hmr dev server). `STATIC` marks a static build.
+    for (key, value) in import_meta_env_defines(
+        /* is_production: */ mode != Mode::Development,
+        /* ssr: */ side == Side::Server,
+        /* static_: */ mode == Mode::ProductionStatic,
+    ) {
+        define.insert(
+            key,
+            DefineData::parse(key, value, false, false, log, arena)?,
+        )?;
+    }
 
     Ok(())
 }

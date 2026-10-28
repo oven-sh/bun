@@ -793,13 +793,42 @@ impl ESMConditions {
 pub use bun_options_types::jsx;
 pub use jsx as JSX;
 
-pub(crate) mod default_user_defines {
+pub mod default_user_defines {
     // This must be globally scoped so it doesn't disappear
     pub(crate) mod node_env {
         pub(crate) const KEY: &[u8] = b"process.env.NODE_ENV";
     }
     pub(crate) mod process_browser_define {
         pub(crate) const KEY: &[u8] = b"process.browser";
+    }
+
+    /// The `import.meta.env.*` keys (from Vite: https://vitejs.dev/guide/env-and-mode)
+    /// that fold to constants in browser output, because `import.meta.env` does
+    /// not exist in a browser. Every producer of a browser bundle (the
+    /// bundler's default defines, `Bun.serve` HTML routes, the bake dev server)
+    /// reads this one table. `BASE_URL` is not defined.
+    pub fn import_meta_env_defines(
+        is_production: bool,
+        ssr: bool,
+        static_: bool,
+    ) -> [(&'static [u8], &'static [u8]); 5] {
+        const fn boolean(value: bool) -> &'static [u8] {
+            if value { b"true" } else { b"false" }
+        }
+        [
+            (b"import.meta.env.DEV", boolean(!is_production)),
+            (b"import.meta.env.PROD", boolean(is_production)),
+            (
+                b"import.meta.env.MODE",
+                if is_production {
+                    b"\"production\""
+                } else {
+                    b"\"development\""
+                },
+            ),
+            (b"import.meta.env.SSR", boolean(ssr)),
+            (b"import.meta.env.STATIC", boolean(static_)),
+        ]
     }
 }
 
@@ -826,7 +855,7 @@ pub(crate) fn defines_from_transform_options(
     };
 
     let mut user_defines: defines::RawDefines = defines::RawDefines::default();
-    user_defines.reserve(input_keys.len() + 4);
+    user_defines.reserve(input_keys.len() + 8);
     for (i, key) in input_keys.iter().enumerate() {
         user_defines.insert(key.as_ref(), input_values[i].clone());
     }
@@ -892,7 +921,12 @@ pub(crate) fn defines_from_transform_options(
             Box::from(b"\"development\"".as_slice())
         };
 
-        user_defines.get_or_put_value(b"process.env.NODE_ENV", quoted_node_env.clone())?;
+        let is_production = {
+            let node_env = user_defines
+                .get_or_put_value(default_user_defines::node_env::KEY, quoted_node_env.clone())?;
+            let node_env: &[u8] = node_env.value_ptr;
+            node_env == b"\"production\"" || node_env == b"'production'"
+        };
         user_defines.get_or_put_value(b"process.env.BUN_ENV", quoted_node_env)?;
 
         // Automatically set `process.browser` to `true` for browsers and false for node+js
@@ -902,6 +936,19 @@ pub(crate) fn defines_from_transform_options(
                 default_user_defines::process_browser_define::KEY,
                 Box::from(value.as_bytes()),
             )?;
+        }
+
+        // `import.meta.env` is undefined in a browser, so `import.meta.env.DEV`
+        // throws unless it folds. On the bun and node targets it is a runtime
+        // alias of `process.env`, so they keep the property access.
+        if target == Target::Browser {
+            for (key, value) in default_user_defines::import_meta_env_defines(
+                is_production,
+                /* ssr: */ false,
+                /* static_: */ false,
+            ) {
+                user_defines.get_or_put_value(key, Box::from(value))?;
+            }
         }
     }
 

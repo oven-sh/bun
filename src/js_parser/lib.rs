@@ -267,7 +267,6 @@ pub mod defines {
     use bun_core::strings;
 
     use bun_ast::E;
-    use bun_ast::StoreRef;
     use bun_ast::expr::Data as ExprData;
 
     pub type RawDefines = StringArrayHashMap<Box<[u8]>>;
@@ -449,26 +448,6 @@ pub mod defines {
         #[inline]
         pub fn valueless(&self) -> bool {
             self.flags.valueless()
-        }
-
-        pub fn init_boolean(value: bool) -> DefineData {
-            let mut flags = Flags::default();
-            flags.set_can_be_removed_if_unused(true);
-            DefineData {
-                value: ExprData::EBoolean(E::Boolean { value }),
-                flags,
-                ..Default::default()
-            }
-        }
-
-        pub fn init_static_string(str: &'static E::EString) -> DefineData {
-            let mut flags = Flags::default();
-            flags.set_can_be_removed_if_unused(true);
-            DefineData {
-                value: ExprData::EString(StoreRef::from_static(str)),
-                flags,
-                ..Default::default()
-            }
         }
 
         pub(crate) fn merge(a: &DefineData, b: DefineData) -> DefineData {

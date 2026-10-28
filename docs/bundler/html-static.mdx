@@ -276,8 +276,9 @@ env = "PUBLIC_*"  # only inline env vars starting with PUBLIC_ (recommended)
 ```
 
 <Note>
-  Inlining only works with literal `process.env.FOO` references, not `import.meta.env` or indirect access like `const env =
-  process.env; env.FOO`.
+  Inlining only works with literal `process.env.FOO` references, not indirect access like `const env =
+  process.env; env.FOO`. Your own variables are not available as `import.meta.env.FOO` in the browser. Only the
+  [mode keys](#mode-keys) below are.
 
 If an environment variable is not set, you may see runtime errors like `ReferenceError: process
   is not defined` in the browser.
@@ -346,6 +347,20 @@ The bundled output contains:
 const apiUrl = "https://api.example.com";
 console.log(`API URL: ${apiUrl}`);
 ```
+
+### Mode keys
+
+`import.meta.env` does not exist in a browser. For browser builds, Bun replaces these keys with constants, so code that checks the mode does not throw:
+
+| Key                      | Production     | Development     |
+| ------------------------ | -------------- | --------------- |
+| `import.meta.env.DEV`    | `false`        | `true`          |
+| `import.meta.env.PROD`   | `true`         | `false`         |
+| `import.meta.env.MODE`   | `"production"` | `"development"` |
+| `import.meta.env.SSR`    | `false`        | `false`         |
+| `import.meta.env.STATIC` | `false`        | `false`         |
+
+`bun build --production`, `NODE_ENV=production`, or a `Bun.serve` HTML route with `development: false` selects production. A `define` entry for one of these keys wins over the default. `--env=disable` leaves them in place. Other `import.meta.env.*` names are not replaced.
 
 ## Echo console logs from browser to terminal
 

@@ -14,11 +14,8 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
 extern "C" BunLoaderType NodeModuleModule__builtinHandlerLoader(JSC::JSGlobalObject*, BunLoaderType handler, const BunString* filename);
 
 // These functions are separate so that assigning one to the other can be
-// detected and use the corresponding loader. Like Node's
-// `Module._extensions['.js']`, the JS handler picks the loader from the file
-// name it is given, so it strips types from a `.ts` path. The TS handler always
-// strips types and takes JSX from the file name. See
-// `builtin_handler_loader` in NodeModuleModule.rs.
+// detected and use the corresponding loader. The JS and TS handlers pick it
+// from the file name (`builtin_handler_loader` in NodeModuleModule.rs).
 JSC_DEFINE_HOST_FUNCTION(jsLoaderJS, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     return builtinLoader(globalObject, callFrame, BunLoaderTypeJS);

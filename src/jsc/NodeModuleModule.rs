@@ -130,24 +130,15 @@ impl Default for CustomLoader {
     }
 }
 
-/// The file extension (with its leading `.`) of a file that the
-/// `require.extensions` key `key` matches. `key` starts with `.`, so the last
-/// `.` always exists. For a key such as `.spec.ts` that is `.ts`.
+/// `.ts` for the key `.spec.ts`: the extension of the files the key matches.
 fn file_ext_of_key(key: &[u8]) -> &[u8] {
     let last_dot = strings::last_index_of_char(key, b'.').unwrap_or(0);
     &key[last_dot..]
 }
 
 /// The loader a built-in `Module._extensions` handler uses for a file with the
-/// extension `ext` (with its leading `.`).
-///
-/// Node's `.js` handler does not force a format. It picks a JavaScript flavor
-/// from the file name it is given (`.ts`, `.cts` and `.mts` strip types), and
-/// compiles any other file as JavaScript. Bun does the same with its loader
-/// map, so `.js` files get the JSX-enabled loader that a plain `require()`
-/// gives them. Bun's own `.ts` handler always strips types and takes JSX from
-/// the file name the same way. The `.json` and `.node` handlers mean one
-/// loader.
+/// extension `ext`. Like Node's, the `.js` handler picks the JavaScript flavor
+/// from the file name. The `.ts` handler takes only JSX from it.
 pub(crate) fn builtin_handler_loader(
     vm: &VirtualMachine,
     ext: &[u8],
@@ -163,11 +154,8 @@ pub(crate) fn builtin_handler_loader(
     }
 }
 
-/// Whether an entry under `key` can change how a file that already has a
-/// default loader is loaded. `require()` consults the extension table for such
-/// files only while `has_mutated_built_in_extensions` is non-zero. A compound
-/// key such as `.spec.ts` matches `a.spec.ts` ahead of the default `.ts`
-/// loader, so it counts too.
+/// Whether an entry under `key` (`.ts`, or a compound key such as `.spec.ts`)
+/// overrides a default loader, so `require()` must consult the table.
 fn shadows_default_loader(key: &[u8]) -> bool {
     DEFAULT_LOADERS.get(file_ext_of_key(key)).is_some()
 }
@@ -287,8 +275,7 @@ extern "C" fn NodeModuleModule__onRequireExtensionModifyNonFunction(
     }
 }
 
-/// C++ entry point for a direct call of a built-in handler: the loader it
-/// uses for `filename`, as a `BunLoaderType`.
+/// The loader a built-in handler called directly on `filename` uses.
 #[unsafe(no_mangle)]
 extern "C" fn NodeModuleModule__builtinHandlerLoader(
     global: &JSGlobalObject,

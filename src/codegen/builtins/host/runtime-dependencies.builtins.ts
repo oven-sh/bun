@@ -780,7 +780,7 @@ export default b.declarations(
       "internalRequire",
       "loadEsmIntoCjs",
       "overridableRequire",
-      "require",
+      "requireFunction",
       "requireESM",
     ),
   }),

@@ -1,0 +1,22 @@
+this is sloppy code: false
+over a function: TypeError
+over the length of an array: TypeError
+a new name: true
+a new index: TypeError
+a new symbol: true
+a new well-known symbol: TypeError
+a new Symbol.toStringTag: TypeError
+a new property named prototype: true
+over a function under a symbol: TypeError
+read-only: a number: false
+read-only: the name of a function: Array
+read-only: a string under a symbol: Map
+read-only: a function under a symbol: false
+read-only: Symbol.hasInstance: false
+not configurable: delete the length of an array: false
+an accessor without a setter: ignored
+a setter that throws: TypeError
+Reflect.set, a setter that throws: false
+Reflect.set, an index: false
+Reflect.set, a symbol: true
+the same value again: stored

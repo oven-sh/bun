@@ -1,0 +1,1 @@
+{ "entryPoints": ["inner.cjs"], "skipInShell": "the jsc shell has no node:worker_threads", "skipWithASAN": "which of its two lines comes first goes by how long a worker takes to start, and there plain Bun needs over half a second" }

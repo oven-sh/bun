@@ -1,0 +1,85 @@
+// Defines an accessor on EventEmitter.prototype under a name that the runtime reads from process.
+//@ build --disallow-code-generation-from-strings
+//@ env NODE_NO_WARNINGS=1
+import { EventEmitter } from "node:events";
+import util from "node:util";
+import http from "node:http";
+import domain from "node:domain";
+const key = ["get", "Builtin", "Module"].join(""), name = ["node", "vm"].join(":");
+let got;
+const seen = () => console.log(typeof got, got && typeof got[key], got && typeof got[key] === "function" && typeof got[key](name));
+//// the-prototype-of-an-instance
+//@ exit 1
+Object.defineProperty(Object.getPrototypeOf(new EventEmitter()), "noDeprecation", { get() { got = this; return false; }, configurable: true });
+util.deprecate(() => {}, "x")();
+seen();
+//// the-prototype-of-a-subclass
+//@ exit 1
+class Mine extends EventEmitter {}
+Object.defineProperty(Object.getPrototypeOf(Mine.prototype), "noDeprecation", { get() { got = this; return false; }, configurable: true });
+util.deprecate(() => {}, "x")();
+seen();
+//// a-definer-under-a-computed-name
+//@ exit 1
+EventEmitter.prototype[["__define", "Getter__"].join("")]("noDeprecation", function () { got = this; return false; });
+util.deprecate(() => {}, "x")();
+seen();
+//// the-chain-of-a-server
+//@ exit 1
+let proto = Object.getPrototypeOf(http.createServer());
+while (Object.getPrototypeOf(Object.getPrototypeOf(proto))) proto = Object.getPrototypeOf(proto);
+Object.defineProperty(proto, "noDeprecation", { get() { got = this; return false; }, configurable: true });
+util.deprecate(() => {}, "x")();
+seen();
+//// a-warning-noDeprecation
+//@ exit 1
+Object.defineProperty(Object.getPrototypeOf(new EventEmitter()), "noDeprecation", { get() { got = this; return false; }, configurable: true });
+process.emitWarning("x", "DeprecationWarning");
+await new Promise(resolve => setTimeout(resolve, 10));
+seen();
+//// a-warning-throwDeprecation
+//@ exit 1
+Object.defineProperty(Object.getPrototypeOf(new EventEmitter()), "throwDeprecation", { get() { got = this; return false; }, configurable: true });
+process.emitWarning("x", "DeprecationWarning");
+await new Promise(resolve => setTimeout(resolve, 10));
+seen();
+//// a-warning-traceDeprecation
+Object.defineProperty(Object.getPrototypeOf(new EventEmitter()), "traceDeprecation", { get() { got = this; return false; }, configurable: true });
+process.on("warning", () => {});
+process.emitWarning("x", "DeprecationWarning");
+await new Promise(resolve => setTimeout(resolve, 10));
+console.log(typeof got);
+//// a-warning-traceProcessWarnings
+Object.defineProperty(Object.getPrototypeOf(new EventEmitter()), "traceProcessWarnings", { get() { got = this; return false; }, configurable: true });
+process.emitWarning("x");
+await new Promise(resolve => setTimeout(resolve, 10));
+seen();
+//// the-domain-that-a-request-reads
+//@ exit 1
+Object.defineProperty(Object.getPrototypeOf(new EventEmitter()), "domain", { get() { got = this; return null; }, set(value) { got = this; }, configurable: true });
+http.request({ host: "127.0.0.1", port: 1 }).on("error", () => {}).destroy();
+seen();
+//// the-domain-that-is-entered
+//@ exit 1
+Object.defineProperty(Object.getPrototypeOf(new EventEmitter()), "domain", { get() { return null; }, set(value) { got = this; }, configurable: true });
+domain.create().run(() => {});
+seen();
+//// a-proxy-as-the-parent
+//@ exit 1
+Object.setPrototypeOf(EventEmitter.prototype, new Proxy(Object.getPrototypeOf(EventEmitter.prototype), { get(target, asked, receiver) { if (asked === "noDeprecation") got = receiver; return Reflect.get(target, asked, receiver); } }));
+util.deprecate(() => {}, "x")();
+seen();
+//// own-properties-are-honored
+process.noDeprecation = true;
+process.on("warning", () => console.log("warned"));
+util.deprecate(() => {}, "x")();
+process.emitWarning("x", "DeprecationWarning");
+await new Promise(resolve => setTimeout(resolve, 10));
+console.log("quiet");
+//// the-option-of-the-command-line-is-honored
+//@ build --compile-exec-argv=--no-deprecation
+process.on("warning", () => console.log("warned"));
+util.deprecate(() => {}, "x")();
+process.emitWarning("x", "DeprecationWarning");
+await new Promise(resolve => setTimeout(resolve, 10));
+console.log("quiet", process.noDeprecation);

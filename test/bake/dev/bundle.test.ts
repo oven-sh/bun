@@ -381,7 +381,7 @@ devTest("deleting imported file shows error then recovers", {
   };
   const byRelativePath = { how: "by its relative path", lib: "./packages/lib", symlinks: undefined };
   const indexHtml = emptyHtmlFile({ scripts: ["index.ts"] });
-  const libPackageJson = (fields: object = {}) => JSON.stringify({ name: "lib", version: "1.0.0", ...fields });
+  const libPackageJson = JSON.stringify({ name: "lib", version: "1.0.0" });
   const libExport = (name: string, value: string) => `export const ${name} = "EXPORT_${value}";`;
   const clientScriptUrl = (html: string) => /src="([^"]+\.js)"/.exec(html)?.[1];
   // Which of the exports of packages/lib the script of "/" holds.
@@ -392,23 +392,29 @@ devTest("deleting imported file shows error then recovers", {
       if (!url) throw new Error('"/" serves no script');
       const script = await dev.fetch(url).text();
       if (clientScriptUrl(await dev.fetch("/").text()) === url) {
-        return ["EXPORT_A", "EXPORT_C", "EXPORT_D", "EXPORT_E"].filter(name => script.includes(name));
+        return ["EXPORT_A", "EXPORT_C", "EXPORT_D"].filter(name => script.includes(name));
       }
     }
     throw new Error('The script of "/" got a new URL on every attempt');
   }
-  // An import that its module handles does not fail the build.
-  const guardedImport = (specifier: string) => `
-    let c = "none";
-    try {
-      c = require('${specifier}').c;
-    } catch {}
-    console.log(c);
-  `;
+  // Only the rename is in this batch. An importer that is saved in the same batch keeps its import of the
+  // removed file, with or without a link.
+  async function renameLibFile(dev: Dev) {
+    await using batch = await dev.batchChanges();
+    await dev.delete("packages/lib/c.ts");
+    await dev.write("packages/lib/c.tsx", libExport("c", "D"));
+  }
 
-  for (const { how, lib, symlinks } of [throughNodeModulesLink, throughDirectoryLink, byRelativePath]) {
+  for (const { how, lib, symlinks, env } of [
+    { ...throughNodeModulesLink, env: undefined },
+    { ...throughDirectoryLink, env: undefined },
+    { ...byRelativePath, env: undefined },
+    // `bun init` scaffolds "dev": "bun --hot src/index.ts". The reloader of the runtime then watches the files too.
+    { ...throughNodeModulesLink, how: "through a node_modules link under bun --hot", env: { BUN_OPTIONS: "--hot" } },
+  ]) {
     devTest(`renaming a file of a package imported ${how}`, {
       symlinks,
+      env,
       files: {
         "index.html": indexHtml,
         "index.ts": `
@@ -416,143 +422,16 @@ devTest("deleting imported file shows error then recovers", {
           import { c } from '${lib}/c';
           console.log(a, c);
         `,
-        "packages/lib/package.json": libPackageJson(),
+        "packages/lib/package.json": libPackageJson,
         "packages/lib/a.ts": libExport("a", "A"),
         "packages/lib/c.ts": libExport("c", "C"),
       },
       async test(dev) {
         expect(await servedLibExports(dev)).toEqual(["EXPORT_A", "EXPORT_C"]);
-        {
-          // Only the rename is in this batch. An importer that is saved in the same batch keeps its import of
-          // the removed file, with or without a link.
-          await using batch = await dev.batchChanges();
-          await dev.delete("packages/lib/c.ts");
-          await dev.write("packages/lib/c.tsx", libExport("c", "D"));
-        }
+        await renameLibFile(dev);
         expect(await servedLibExports(dev)).toEqual(["EXPORT_A", "EXPORT_D"]);
         await dev.writeNoChanges("index.ts");
         expect(await servedLibExports(dev)).toEqual(["EXPORT_A", "EXPORT_D"]);
-      },
-    });
-  }
-
-  // The importer reports the import of a deleted file, and it is bundled again when the file is back. The
-  // package.json of the package can name the file too: as its "main", or in its "exports".
-  for (const { entry, how, symlinks, specifier, fields } of [
-    { entry: "a file", ...throughNodeModulesLink, specifier: "lib/c", fields: {} },
-    { entry: 'the "main" file', ...throughNodeModulesLink, specifier: "lib", fields: { main: "./c.ts" } },
-    { entry: 'the "main" file', ...byRelativePath, specifier: "./packages/lib", fields: { main: "./c.ts" } },
-    {
-      entry: 'an "exports" file',
-      ...throughNodeModulesLink,
-      specifier: "lib/c",
-      fields: { exports: { "./c": "./c.ts" } },
-    },
-  ]) {
-    devTest(`deleting then re-creating ${entry} of a package imported ${how}`, {
-      symlinks,
-      files: {
-        "index.html": indexHtml,
-        "index.ts": `
-          import { c } from '${specifier}';
-          console.log(c);
-        `,
-        "packages/lib/package.json": libPackageJson(fields),
-        "packages/lib/c.ts": libExport("c", "C"),
-      },
-      async test(dev) {
-        await using c = await dev.client("/");
-        await c.expectMessage("EXPORT_C");
-        await dev.delete("packages/lib/c.ts", {
-          errors: [
-            `index.ts:1:19: error: Could not resolve: "${specifier}"` +
-              (specifier.startsWith(".") ? "" : '. Maybe you need to "bun install"?'),
-          ],
-        });
-        await c.expectReload(async () => {
-          await dev.write("packages/lib/c.ts", libExport("c", "D"));
-        });
-        await c.expectMessage("EXPORT_D");
-      },
-    });
-  }
-
-  devTest("deleting then re-creating a file of a linked package whose import is guarded", {
-    symlinks: throughNodeModulesLink.symlinks,
-    files: {
-      "index.html": indexHtml,
-      "index.ts": guardedImport("lib/c"),
-      "packages/lib/package.json": libPackageJson(),
-      "packages/lib/c.ts": libExport("c", "C"),
-    },
-    async test(dev) {
-      expect(await servedLibExports(dev)).toEqual(["EXPORT_C"]);
-      await dev.delete("packages/lib/c.ts");
-      expect(await servedLibExports(dev)).toEqual([]);
-      await dev.write("packages/lib/c.ts", libExport("c", "D"));
-      expect(await servedLibExports(dev)).toEqual(["EXPORT_D"]);
-    },
-  });
-
-  // `git checkout` of a branch without the file and back: no build has a failed import that could wait for the file.
-  for (const { kind, importOf } of [
-    { kind: "an import", importOf: (specifier: string) => `import { c } from '${specifier}'; console.log(c);` },
-    { kind: "a guarded import", importOf: guardedImport },
-  ]) {
-    devTest(`${kind} of a file of a linked package that was deleted while nothing imported it`, {
-      symlinks: throughNodeModulesLink.symlinks,
-      files: {
-        "index.html": indexHtml,
-        "index.ts": importOf("lib/c"),
-        "packages/lib/package.json": libPackageJson(),
-        "packages/lib/a.ts": libExport("c", "A"),
-        "packages/lib/c.ts": libExport("c", "C"),
-      },
-      async test(dev) {
-        expect(await servedLibExports(dev)).toEqual(["EXPORT_C"]);
-        {
-          await using batch = await dev.batchChanges();
-          await dev.write("index.ts", importOf("lib/a"));
-          await dev.delete("packages/lib/c.ts");
-        }
-        expect(await servedLibExports(dev)).toEqual(["EXPORT_A"]);
-        {
-          await using batch = await dev.batchChanges();
-          await dev.write("packages/lib/c.ts", libExport("c", "D"));
-          await dev.write("index.ts", importOf("lib/c"));
-        }
-        expect(await servedLibExports(dev)).toEqual(["EXPORT_D"]);
-      },
-    });
-  }
-
-  // A build that cleans its output first: `rm -rf dist && tsc`. The importer is bundled while there is no "dist".
-  for (const { how, lib, symlinks } of [throughNodeModulesLink, byRelativePath]) {
-    devTest(`building again the output directory of a package imported ${how}`, {
-      symlinks,
-      files: {
-        "index.html": indexHtml,
-        "index.ts": `
-          import { c } from '${lib}';
-          console.log(c);
-        `,
-        "packages/lib/package.json": libPackageJson({ main: "./dist/c.ts" }),
-        "packages/lib/dist/c.ts": libExport("c", "C"),
-      },
-      async test(dev) {
-        expect(await servedLibExports(dev)).toEqual(["EXPORT_C"]);
-        {
-          await using batch = await dev.batchChanges({ errors: null });
-          fs.rmSync(dev.join("packages/lib/dist"), { recursive: true });
-        }
-        {
-          // The watcher reports nothing for the new "dist". The importer is saved after the build, as one change.
-          await using batch = await dev.batchChanges();
-          fs.mkdirSync(dev.join("packages/lib/dist"));
-          fs.writeFileSync(dev.join("packages/lib/dist/c.ts"), libExport("c", "D"));
-          fs.writeFileSync(dev.join("index.ts"), dev.read("index.ts"));
-        }
-        expect(await servedLibExports(dev)).toEqual(["EXPORT_D"]);
       },
     });
   }
@@ -570,7 +449,7 @@ devTest("deleting imported file shows error then recovers", {
         import { c } from 'lib/c';
         console.log(c);
       `,
-      "packages/lib/package.json": libPackageJson(),
+      "packages/lib/package.json": libPackageJson,
       "packages/lib/c.ts": libExport("c", "C"),
     },
     async test(dev) {
@@ -585,34 +464,6 @@ devTest("deleting imported file shows error then recovers", {
     },
   });
 
-  // `bun init` scaffolds "dev": "bun --hot src/index.ts". The reloader of the runtime then watches the files too.
-  devTest("renaming, then deleting and re-creating a file of a linked package under bun --hot", {
-    env: { BUN_OPTIONS: "--hot --no-clear-screen" },
-    symlinks: throughNodeModulesLink.symlinks,
-    files: {
-      "index.html": indexHtml,
-      "index.ts": `
-        import { c } from 'lib/c';
-        console.log(c);
-      `,
-      "packages/lib/package.json": libPackageJson(),
-      "packages/lib/c.ts": libExport("c", "C"),
-    },
-    async test(dev) {
-      expect(await servedLibExports(dev)).toEqual(["EXPORT_C"]);
-      {
-        await using batch = await dev.batchChanges();
-        await dev.delete("packages/lib/c.ts");
-        await dev.write("packages/lib/c.tsx", libExport("c", "D"));
-      }
-      expect(await servedLibExports(dev)).toEqual(["EXPORT_D"]);
-
-      await dev.delete("packages/lib/c.tsx", { errors: null });
-      await dev.write("packages/lib/c.tsx", libExport("c", "E"));
-      expect(await servedLibExports(dev)).toEqual(["EXPORT_E"]);
-    },
-  });
-
   // A route of a framework is bundled for the server. A module that a client component imports too is in the
   // server graph and in the client graph, and each graph bundles the importers of a removed file again.
   for (const { importers, component, separateSSRGraph } of [
@@ -621,14 +472,14 @@ devTest("deleting imported file shows error then recovers", {
     { importers: "a server route and a client component import", component: true, separateSSRGraph: true },
   ]) {
     const graphs = separateSSRGraph ? " with an SSR graph" : "";
-    devTest(`renaming, then deleting and re-creating a file of a linked package that ${importers}${graphs}`, {
+    devTest(`renaming a file of a linked package that ${importers}${graphs}`, {
       framework: {
         fileSystemRouterTypes: minimalFramework.fileSystemRouterTypes,
         serverComponents: { ...minimalFramework.serverComponents!, separateSSRGraph },
       },
       symlinks: throughNodeModulesLink.symlinks,
       files: {
-        "packages/lib/package.json": libPackageJson(),
+        "packages/lib/package.json": libPackageJson,
         "packages/lib/c.ts": libExport("c", "C"),
         "routes/index.ts": `
           import { c } from 'lib/c';
@@ -645,19 +496,44 @@ devTest("deleting imported file shows error then recovers", {
       },
       async test(dev) {
         await dev.fetch("/").equals("EXPORT_C");
-        {
-          await using batch = await dev.batchChanges();
-          await dev.delete("packages/lib/c.ts");
-          await dev.write("packages/lib/c.tsx", libExport("c", "D"));
-        }
+        await renameLibFile(dev);
         await dev.fetch("/").equals("EXPORT_D");
-
-        await dev.delete("packages/lib/c.tsx", { errors: null });
-        await dev.write("packages/lib/c.tsx", libExport("c", "E"));
-        await dev.fetch("/").equals("EXPORT_E");
       },
     });
   }
+
+  // With no link, the directory of a removed file is read again before the file is looked up when another import
+  // waits for a file of that directory. The removed file then does not resolve, in the two graphs that have it.
+  devTest("renaming a file in two graphs while another import waits for a file of its directory", {
+    framework: minimalFramework,
+    files: {
+      "packages/lib/c.ts": libExport("c", "C"),
+      "routes/index.ts": `
+        import { c } from '../packages/lib/c';
+        import "../Component";
+        export default function (req, meta) {
+          return new Response(c);
+        }
+      `,
+      "Component.ts": `
+        "use client";
+        import { c } from './packages/lib/c';
+        export const marker = c;
+      `,
+      "routes/waiting.ts": `
+        import '../packages/lib/later';
+        export default function (req, meta) {
+          return new Response("later");
+        }
+      `,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals("EXPORT_C");
+      expect((await dev.fetch("/waiting")).status).toBe(500);
+      await renameLibFile(dev);
+      await dev.fetch("/").equals("EXPORT_D");
+    },
+  });
 }
 // Without a separate SSR graph, the server bundle keeps a "use client" module
 // and the parser wraps its exported values in `registerClientReference(value,

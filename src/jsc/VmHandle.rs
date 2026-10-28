@@ -177,7 +177,7 @@ impl Shared {
     /// on the condvar, not on the loop).
     fn deliver(&self, kind: LoopKind, task: NonNull<ConcurrentTaskItem>) {
         let el = self.loop_of(kind);
-        el.concurrent_tasks.push(task);
+        el.post(task);
         if self.state() >= State::Draining {
             self.notify();
         } else {
@@ -955,7 +955,7 @@ impl IsolatedPosterInner {
         if open {
             // SAFETY: gate held and open ⇒ the isolated loop is alive.
             let el = unsafe { &*self.event_loop };
-            el.concurrent_tasks.push(task);
+            el.post(task);
             el.wakeup();
         }
         self.active.fetch_sub(1, Ordering::SeqCst);

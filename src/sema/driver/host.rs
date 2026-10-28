@@ -16,7 +16,7 @@ use bun_sema::atom::Interner;
 use bun_sema::hir;
 use bun_sema::json::Json;
 use bun_sema::resolve::{
-    CachedConfig, Host, ModuleDetection, ParseOptions, Paths, ScriptKind, ancestors,
+    CachedConfig, FileStamp, Host, ModuleDetection, ParseOptions, Paths, ScriptKind, ancestors,
     case_insensitive_hash, inside, is_declaration_file_name, is_same_path, join, root_length,
     to_file_name_lower_case, to_path, typescript_path,
 };
@@ -273,7 +273,7 @@ pub struct Disk {
     pub(crate) script_kinds: Vec<(Vec<u8>, ScriptKind)>,
     /// `Request::script_kinds_by_extension`
     pub(crate) script_kinds_by_extension: Vec<(Vec<u8>, ScriptKind)>,
-    pub(crate) before_read: Option<BeforeRead>,
+    pub before_read: Option<BeforeRead>,
     /// `Host::extended_config`. The projects of a build often extend the same file.
     extended_configs: bun_threading::Guarded<FxHashMap<Vec<u8>, CachedConfig>>,
     /// `Host::shared_paths`
@@ -400,6 +400,24 @@ fn read_file(directory: Fd, name: &[u8], buffer: &mut Vec<u8>) -> Option<Vec<u8>
     Some(all)
 }
 
+#[cfg(unix)]
+fn stamp_on_disk(path: &[u8]) -> Option<FileStamp> {
+    let mut buffer = path_buffer_pool::get();
+    let stat = bun_sys::stat(z(to_syscall_path(path)?, &mut buffer)).ok()?;
+    Some(FileStamp {
+        device: stat.st_dev as u64,
+        inode: stat.st_ino as u64,
+        size: stat.st_size as u64,
+        modified: (stat.st_mtime as i64, stat.st_mtime_nsec as i64),
+        changed: (stat.st_ctime as i64, stat.st_ctime_nsec as i64),
+    })
+}
+
+#[cfg(not(unix))]
+fn stamp_on_disk(_path: &[u8]) -> Option<FileStamp> {
+    None
+}
+
 /// `decodeBytes`: returns a file's text, decoded according to its byte order mark. `BOM` doesn't support big endian, so
 /// the byte pairs are swapped first. `keeps_mark`: a UTF-8 mark stays in the text.
 fn decoded(mut bytes: Vec<u8>, keeps_mark: bool) -> Cow<'static, [u8]> {
@@ -523,6 +541,15 @@ impl Disk {
             before_read: None,
             scripts_of_page: None,
         }
+    }
+
+    /// As on a system where the threads that read files are not the threads that parse them.
+    #[cfg(test)]
+    pub(crate) fn with_reader_threads(mut self) -> Self {
+        if self.io_pool.is_none() {
+            self.io_pool = Some(bun_threading::io_thread_pool::acquire().into());
+        }
+        self
     }
 
     /// Returns the name of the file at `path` in `bundled_libs`, if it's there.
@@ -800,7 +827,12 @@ fn list(path: &[u8]) -> Directory {
     };
     let mut listing = Entries::default();
     let mut entries = bun_sys::iterate_dir(directory.fd());
-    while let Ok(Some(entry)) = entries.next() {
+    loop {
+        let entry = match entries.next() {
+            Ok(Some(entry)) => entry,
+            Ok(None) => break,
+            Err(_) => return Directory::Unreadable,
+        };
         let name = entry.name.slice_u8();
         // The entry kind from the directory listing avoids a system call per file.
         let is_link = match entry.kind {
@@ -1229,6 +1261,27 @@ fn parse_package_json(arena: &Arena, text: &[u8]) -> Option<Json> {
     unmarshal_fields(root.get(), log.warnings > 0)
 }
 
+/// Every member of a JSON object, such as a source map.
+pub(crate) fn parse_json_object(arena: &Arena, text: &[u8]) -> Option<Json> {
+    use bun_parsers::json::ParsedJson;
+    if !is_valid(text) {
+        return None;
+    }
+    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
+    let _ast_scope = ast_memory_allocator.enter();
+    let source = bun_ast::Source::init_path_string(b"object.json".as_slice(), text);
+    let mut log = bun_ast::Log::init();
+    let parsed = ParsedJson::parse_json(&source, &mut log).ok()?;
+    let bun_ast::expr::Data::EObjectJSON(root) = parsed.root.data else {
+        return None;
+    };
+    let members = root.get().properties().iter().map(|property| {
+        let value = unmarshal_json_value(&property.value, log.warnings > 0)?;
+        Some((property.key.slice().to_vec(), value))
+    });
+    Some(Json::Object(members.collect::<Option<_>>()?))
+}
+
 /// The disk, for a few queries across many directories. Each query is a system call, and no directory is listed or
 /// cached for it. A `Disk` lists the directory of whatever it's queried about, which pays off when most of the
 /// directory is queried.
@@ -1350,6 +1403,7 @@ impl Host for Disk {
         if !self.already_read.is_empty()
             && let Some(text) = (self.already_read).get(&*to_path(path, self.case_sensitive))
         {
+            crate::did_read_source(text.len());
             return Some(Cow::Owned(text.clone()));
         }
         if is_bundled(path) {
@@ -1364,14 +1418,14 @@ impl Host for Disk {
         // Config files and `package.json` are read as JSON, so they never keep the mark.
         let keeps_mark = self.keeps_byte_order_marks && ScriptKind::from_file_name(path).is_some();
         if name.is_empty() || Self::is_never_listed(parent) {
-            return read_at(path, keeps_mark);
+            return read_at(path, keeps_mark).inspect(|text| crate::did_read_source(text.len()));
         }
         let _turn = self.reader_limit.as_ref().map(ReadSlot::wait_for);
         let mut reader = self.take_reader(parent);
         // The second and later files read from a directory are opened relative to the directory. An absolute path makes
         // the kernel look up every directory on the way again, and all threads contend on the ones near the root. For a
-        // single file, opening the directory costs that walk and more.
-        let read = if reader.directory != parent {
+        // single file, opening the directory costs that walk and more. On macOS it always does: opens wait for one lock.
+        let read = if cfg!(target_os = "macos") || reader.directory != parent {
             reader.handle = None;
             reader.directory.clear();
             reader.directory.extend_from_slice(parent);
@@ -1392,7 +1446,10 @@ impl Host for Disk {
             read_file(Fd::cwd(), path, &mut reader.buffer)
         });
         self.return_reader(reader);
-        read.map(|bytes| decoded(bytes, keeps_mark))
+        read.map(|bytes| {
+            crate::did_read_source(bytes.len());
+            decoded(bytes, keeps_mark)
+        })
     }
     fn read_source(&self, path: &[u8]) -> Cow<'static, [u8]> {
         self.read(path).unwrap_or_else(|| {
@@ -1402,6 +1459,14 @@ impl Host for Disk {
     }
     fn take_unreadable(&self) -> Vec<Vec<u8>> {
         std::mem::take(&mut *self.unreadable.lock())
+    }
+    fn file_stamp(&self, path: &[u8]) -> Option<FileStamp> {
+        let is_in_memory = !self.already_read.is_empty()
+            && (self.already_read).contains_key(&*to_path(path, self.case_sensitive));
+        if is_in_memory || is_bundled(path) {
+            return Some(FileStamp::IMMUTABLE);
+        }
+        stamp_on_disk(path)
     }
     fn is_file(&self, path: &[u8]) -> bool {
         if is_bundled(path) {
@@ -1486,6 +1551,24 @@ impl Host for Disk {
             options.module_detection == ModuleDetection::Force,
         )
     }
+    fn parse_top_level<'s>(
+        &self,
+        arena: &'s Arena,
+        path: &[u8],
+        text: &[u8],
+        atoms: &Interner<'s>,
+        options: ParseOptions,
+    ) -> Option<hir::File<'s>> {
+        bun_sema_parser::summarize_top_level(
+            arena,
+            path,
+            self.script_kind(path),
+            text,
+            atoms,
+            options.experimental_decorators,
+            options.module_detection == ModuleDetection::Force,
+        )
+    }
     fn parse_package_json(&self, arena: &Arena, text: &[u8]) -> Option<Json> {
         parse_package_json(arena, text)
     }
@@ -1538,5 +1621,8 @@ impl Host for Disk {
         }
         let run = chunk_len_for(count);
         crate::for_each_parallel_while(&self.caches, self.threads, count, run, work, meanwhile);
+    }
+    fn run_regions_inline(&self, work: &mut dyn FnMut()) {
+        crate::run_regions_inline_during(work);
     }
 }

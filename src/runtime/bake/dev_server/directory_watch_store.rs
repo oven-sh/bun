@@ -156,43 +156,33 @@ impl DirectoryWatchStore {
             return Ok(());
         }
 
-        let is_package_path = match loader {
+        match loader {
             Loader::Tsx | Loader::Ts | Loader::Jsx | Loader::Js => {
-                !(specifier.starts_with(b"./") || specifier.starts_with(b"../"))
+                if !(specifier.starts_with(b"./") || specifier.starts_with(b"../")) {
+                    return Ok(());
+                }
             }
             // Imports in CSS can resolve to relative files without './'
             // Imports in HTML can resolve to project-relative paths by
             // prefixing with '/', but that is done in HTMLScanner.
-            Loader::Css | Loader::Html => false,
+            Loader::Css | Loader::Html => {}
             // Multiple parts of DevServer rely on the fact that these
             // loaders do not depend on importing other files.
-            _ => {
-                debug_assert!(false);
-                false
-            }
-        };
+            _ => debug_assert!(false),
+        }
 
-        let source_dir =
-            bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(import_source);
         let mut buf = bun_paths::path_buffer_pool::get();
-        let dir = if is_package_path {
-            // SAFETY: the transpiler of the live DevServer is disjoint from `directory_watchers`.
-            let resolver =
-                &mut unsafe { (*self.owner()).server_transpiler.assume_init_mut() }.resolver;
-            let Some(dir) = resolver.linked_package_dir(source_dir, specifier, &mut buf.0) else {
-                // The watcher reports nothing for a package inside node_modules.
-                return Ok(());
-            };
-            dir
-        } else {
-            let Some(joined) = bun_paths::resolve_path::join_abs_string_buf_checked::<
-                bun_paths::platform::Auto,
-            >(source_dir, &mut buf.0, &[specifier]) else {
-                // There's nothing to watch, like in `insert`'s NameTooLong case.
-                return Ok(());
-            };
-            bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(joined)
+        let Some(joined) =
+            bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
+                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(import_source),
+                &mut buf.0,
+                &[specifier],
+            )
+        else {
+            // There's nothing to watch, like in `insert`'s NameTooLong case.
+            return Ok(());
         };
+        let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(joined);
 
         // The `import_source` parameter is not a stable string. Since the
         // import source will be added to IncrementalGraph anyways, this is a
@@ -223,7 +213,7 @@ impl DirectoryWatchStore {
             }
         };
 
-        match self.insert(dir, owned_file_path, specifier, is_package_path) {
+        match self.insert(dir, owned_file_path, specifier) {
             Ok(()) => Ok(()),
             Err(DirectoryWatchInsertError::Ignore) => Ok(()), // ignoring watch errors.
             Err(DirectoryWatchInsertError::OutOfMemory) => Err(bun_alloc::AllocError),
@@ -237,7 +227,6 @@ impl DirectoryWatchStore {
         dir_name_to_watch: &[u8],
         file_path: bun_ptr::RawSlice<u8>,
         specifier: &[u8],
-        is_package_path: bool,
     ) -> Result<(), DirectoryWatchInsertError> {
         debug_assert!(!specifier.is_empty());
         // TODO: watch the parent dir too.
@@ -266,7 +255,7 @@ impl DirectoryWatchStore {
         let found_existing = gop.found_existing;
 
         let specifier_cloned: Box<[u8]> =
-            if is_package_path || specifier[0] == b'.' || bun_paths::is_absolute(specifier) {
+            if specifier[0] == b'.' || bun_paths::is_absolute(specifier) {
                 Box::<[u8]>::from(specifier)
             } else {
                 let mut v = Vec::with_capacity(2 + specifier.len());

@@ -1,0 +1,3047 @@
+////: A
+type A = {
+  f0?: number;
+  f1?: string;
+  f2?: boolean;
+  f3?: string[];
+  f4?: { a: number };
+  f5?: () => number;
+  f6?: number;
+  f7?: string;
+  f8?: boolean;
+  f9?: string[];
+  f10?: { a: number };
+  f11?: () => number;
+  f12?: number;
+  f13?: string;
+  f14?: boolean;
+  f15?: string[];
+  f16?: { a: number };
+  f17?: () => number;
+  f18?: number;
+  f19?: string;
+  f20?: boolean;
+  f21?: string[];
+  f22?: { a: number };
+  f23?: () => number;
+  f24?: number;
+  f25?: string;
+  f26?: boolean;
+  f27?: string[];
+  f28?: { a: number };
+  f29?: () => number;
+  f30?: number;
+  f31?: string;
+  f32?: boolean;
+  f33?: string[];
+  f34?: { a: number };
+  f35?: () => number;
+  f36?: number;
+  f37?: string;
+  f38?: boolean;
+  f39?: string[];
+  f40?: { a: number };
+  f41?: () => number;
+  f42?: number;
+  f43?: string;
+  f44?: boolean;
+  f45?: string[];
+  f46?: { a: number };
+  f47?: () => number;
+  f48?: number;
+  f49?: string;
+  f50?: boolean;
+  f51?: string[];
+  f52?: { a: number };
+  f53?: () => number;
+  f54?: number;
+  f55?: string;
+  f56?: boolean;
+  f57?: string[];
+  f58?: { a: number };
+  f59?: () => number;
+  f60?: number;
+  f61?: string;
+  f62?: boolean;
+  f63?: string[];
+  f64?: { a: number };
+  f65?: () => number;
+  f66?: number;
+  f67?: string;
+  f68?: boolean;
+  f69?: string[];
+  f70?: { a: number };
+  f71?: () => number;
+  f72?: number;
+  f73?: string;
+  f74?: boolean;
+  f75?: string[];
+  f76?: { a: number };
+  f77?: () => number;
+  f78?: number;
+  f79?: string;
+  f80?: boolean;
+  f81?: string[];
+  f82?: { a: number };
+  f83?: () => number;
+  f84?: number;
+  f85?: string;
+  f86?: boolean;
+  f87?: string[];
+  f88?: { a: number };
+  f89?: () => number;
+  f90?: number;
+  f91?: string;
+  f92?: boolean;
+  f93?: string[];
+  f94?: { a: number };
+  f95?: () => number;
+  f96?: number;
+  f97?: string;
+  f98?: boolean;
+  f99?: string[];
+};
+////: Account
+class Account {
+  constructor(balance) {
+    this.balance = balance;
+    this.moves = 0;
+  }
+}
+////: B
+type B = {
+  f0?: number;
+  f1?: string;
+  f2?: boolean;
+  f3?: string[];
+  f4?: { a: number };
+  f5?: () => number;
+  f6?: number;
+  f7?: string;
+  f8?: boolean;
+  f9?: string[];
+  f10?: { a: number };
+  f11?: () => number;
+  f12?: number;
+  f13?: string;
+  f14?: boolean;
+  f15?: string[];
+  f16?: { a: number };
+  f17?: () => number;
+  f18?: number;
+  f19?: string;
+  f20?: boolean;
+  f21?: string[];
+  f22?: { a: number };
+  f23?: () => number;
+  f24?: number;
+  f25?: string;
+  f26?: boolean;
+  f27?: string[];
+  f28?: { a: number };
+  f29?: () => number;
+  f30?: number;
+  f31?: string;
+  f32?: boolean;
+  f33?: string[];
+  f34?: { a: number };
+  f35?: () => number;
+  f36?: number;
+  f37?: string;
+  f38?: boolean;
+  f39?: string[];
+  f40?: { a: number };
+  f41?: () => number;
+  f42?: number;
+  f43?: string;
+  f44?: boolean;
+  f45?: string[];
+  f46?: { a: number };
+  f47?: () => number;
+  f48?: number;
+  f49?: string;
+  f50?: boolean;
+  f51?: string[];
+  f52?: { a: number };
+  f53?: () => number;
+  f54?: number;
+  f55?: string;
+  f56?: boolean;
+  f57?: string[];
+  f58?: { a: number };
+  f59?: () => number;
+  f60?: number;
+  f61?: string;
+  f62?: boolean;
+  f63?: string[];
+  f64?: { a: number };
+  f65?: () => number;
+  f66?: number;
+  f67?: string;
+  f68?: boolean;
+  f69?: string[];
+  f70?: { a: number };
+  f71?: () => number;
+  f72?: number;
+  f73?: string;
+  f74?: boolean;
+  f75?: string[];
+  f76?: { a: number };
+  f77?: () => number;
+  f78?: number;
+  f79?: string;
+  f80?: boolean;
+  f81?: string[];
+  f82?: { a: number };
+  f83?: () => number;
+  f84?: number;
+  f85?: string;
+  f86?: boolean;
+  f87?: string[];
+  f88?: { a: number };
+  f89?: () => number;
+  f90?: number;
+  f91?: string;
+  f92?: boolean;
+  f93?: string[];
+  f94?: { a: number };
+  f95?: () => number;
+  f96?: number;
+  f97?: string;
+  f98?: boolean;
+  f99?: string[];
+  more?: number;
+  other?: string;
+};
+////: Context
+type Context = {
+  options: { debug: boolean; model: string; tools: string[] };
+  value0?: number;
+  value1: string;
+  value2: boolean;
+  value3?: number[];
+  value4: number;
+  value5: string;
+  value6?: boolean;
+  value7: number[];
+  value8: number;
+  value9?: string;
+  value10: boolean;
+  value11: number[];
+  value12?: number;
+  value13: string;
+  value14: boolean;
+  value15?: number[];
+  value16: number;
+  value17: string;
+  value18?: boolean;
+  value19: number[];
+  handler0: (input: number) => void;
+  handler1?: (input: string) => number;
+  handler2: (input: number) => string;
+  handler3?: (input: string) => void;
+  handler4: (input: number) => number;
+  handler5?: (input: string) => string;
+  handler6: (input: number) => void;
+  handler7?: (input: string) => number;
+  handler8: (input: number) => string;
+  handler9?: (input: string) => void;
+  handler10: (input: number) => number;
+  handler11?: (input: string) => string;
+  handler12: (input: number) => void;
+  handler13?: (input: string) => number;
+  handler14: (input: number) => string;
+  handler15?: (input: string) => void;
+  handler16: (input: number) => number;
+  handler17?: (input: string) => string;
+  handler18: (input: number) => void;
+  handler19?: (input: string) => number;
+  getState: () => State;
+  setState: (update: (previous: State) => State) => void;
+  depth?: number;
+  parent?: string;
+};
+////: T
+class T {
+    next: T; nn: T | null; any: unknown; s: string; e: string; m: string;
+    f0: number; d0: number; r0: T; l0: number[]; ss0: string; f1: number; d1: number; r1: T; l1: number[]; ss1: string; f2: number; d2: number; r2: T; l2: number[]; ss2: string; f3: number; d3: number; r3: T; l3: number[]; ss3: string; f4: number; d4: number; r4: T; l4: number[]; ss4: string; f5: number; d5: number; r5: T; l5: number[]; ss5: string; f6: number; d6: number; r6: T; l6: number[]; ss6: string; f7: number; d7: number; r7: T; l7: number[]; ss7: string; f8: number; d8: number; r8: T; l8: number[]; ss8: string; f9: number; d9: number; r9: T; l9: number[]; ss9: string; f10: number; d10: number; r10: T; l10: number[]; ss10: string; f11: number; d11: number; r11: T; l11: number[]; ss11: string; f12: number; d12: number; r12: T; l12: number[]; ss12: string; f13: number; d13: number; r13: T; l13: number[]; ss13: string; f14: number; d14: number; r14: T; l14: number[]; ss14: string; f15: number; d15: number; r15: T; l15: number[]; ss15: string;
+    constructor(seed: number, verb: string) {
+        this.next = this; this.nn = null; this.any = this; this.s = WORD.slice(0, 5) + (seed & 7); this.e = WORD.slice(0, 3) + WORD.slice(3); this.m = verb;
+        this.f0 = (seed + 0) | 0; this.d0 = seed + 0.5; this.r0 = this; this.l0 = fill(LEN, seed + 0); this.ss0 = "t0" + seed; this.f1 = (seed + 1) | 0; this.d1 = seed + 1.5; this.r1 = this; this.l1 = fill(LEN, seed + 1); this.ss1 = "t1" + seed; this.f2 = (seed + 2) | 0; this.d2 = seed + 2.5; this.r2 = this; this.l2 = fill(LEN, seed + 2); this.ss2 = "t2" + seed; this.f3 = (seed + 3) | 0; this.d3 = seed + 3.5; this.r3 = this; this.l3 = fill(LEN, seed + 3); this.ss3 = "t3" + seed; this.f4 = (seed + 4) | 0; this.d4 = seed + 4.5; this.r4 = this; this.l4 = fill(LEN, seed + 4); this.ss4 = "t4" + seed; this.f5 = (seed + 5) | 0; this.d5 = seed + 5.5; this.r5 = this; this.l5 = fill(LEN, seed + 5); this.ss5 = "t5" + seed; this.f6 = (seed + 6) | 0; this.d6 = seed + 6.5; this.r6 = this; this.l6 = fill(LEN, seed + 6); this.ss6 = "t6" + seed; this.f7 = (seed + 7) | 0; this.d7 = seed + 7.5; this.r7 = this; this.l7 = fill(LEN, seed + 7); this.ss7 = "t7" + seed; this.f8 = (seed + 8) | 0; this.d8 = seed + 8.5; this.r8 = this; this.l8 = fill(LEN, seed + 8); this.ss8 = "t8" + seed; this.f9 = (seed + 9) | 0; this.d9 = seed + 9.5; this.r9 = this; this.l9 = fill(LEN, seed + 9); this.ss9 = "t9" + seed; this.f10 = (seed + 10) | 0; this.d10 = seed + 10.5; this.r10 = this; this.l10 = fill(LEN, seed + 10); this.ss10 = "t10" + seed; this.f11 = (seed + 11) | 0; this.d11 = seed + 11.5; this.r11 = this; this.l11 = fill(LEN, seed + 11); this.ss11 = "t11" + seed; this.f12 = (seed + 12) | 0; this.d12 = seed + 12.5; this.r12 = this; this.l12 = fill(LEN, seed + 12); this.ss12 = "t12" + seed; this.f13 = (seed + 13) | 0; this.d13 = seed + 13.5; this.r13 = this; this.l13 = fill(LEN, seed + 13); this.ss13 = "t13" + seed; this.f14 = (seed + 14) | 0; this.d14 = seed + 14.5; this.r14 = this; this.l14 = fill(LEN, seed + 14); this.ss14 = "t14" + seed; this.f15 = (seed + 15) | 0; this.d15 = seed + 15.5; this.r15 = this; this.l15 = fill(LEN, seed + 15); this.ss15 = "t15" + seed;
+    }
+}
+////: describe-3
+function describe(value: object): string {
+  return Reflect.ownKeys(value).map(key => {
+    const item = (value as Record<PropertyKey, unknown>)[key];
+    return String(key) + "=" + (typeof item === "function" ? "function " + (item as Handler)("x") : typeof item === "symbol" ? String(item) : JSON.stringify(item));
+  }).join(",");
+}
+////: for-17
+for (let round = 0; round < ROUNDS; round++) {
+  for (let index = 0; index < handlers.length; index++) {
+    const props = propsWith(index, handlers[(index + (round > 2 ? round : 0)) % handlers.length]);
+    sink += Object.keys(widen(props, index)).length + Object.keys(withFirst(props)).length + Object.keys(rest(props)).length;
+  }
+}
+////: lines-12
+async function «1»(r: number): Promise<number> {
+    if (G15 > 1000000) { G1 = ((G4 + 3) ^ G8) | 0; G2 = ((G5 + 5) ^ G9) | 0; G3 = ((G6 + 7) ^ G10) | 0; G4 = ((G7 + 9) ^ G11) | 0; G5 = ((G8 + 11) ^ G12) | 0; G6 = ((G9 + 13) ^ G13) | 0; G7 = ((G10 + 15) ^ G1) | 0; G8 = ((G11 + 17) ^ G2) | 0; G9 = ((G12 + 19) ^ G3) | 0; G10 = ((G13 + 21) ^ G4) | 0; G11 = ((G1 + 23) ^ G5) | 0; G12 = ((G2 + 25) ^ G6) | 0; G13 = ((G3 + 27) ^ G7) | 0; G1 = ((G4 + 29) ^ G8) | 0; G2 = ((G5 + 31) ^ G9) | 0; G3 = ((G6 + 33) ^ G10) | 0; G4 = ((G7 + 35) ^ G11) | 0; G5 = ((G8 + 37) ^ G12) | 0; G6 = ((G9 + 39) ^ G13) | 0; G7 = ((G10 + 41) ^ G1) | 0; G8 = ((G11 + 43) ^ G2) | 0; G9 = ((G12 + 45) ^ G3) | 0; G10 = ((G13 + 47) ^ G4) | 0; G11 = ((G1 + 49) ^ G5) | 0; G12 = ((G2 + 51) ^ G6) | 0; G13 = ((G3 + 53) ^ G7) | 0; G1 = ((G4 + 55) ^ G8) | 0; G2 = ((G5 + 57) ^ G9) | 0; G3 = ((G6 + 59) ^ G10) | 0; G4 = ((G7 + 61) ^ G11) | 0; G5 = ((G8 + 63) ^ G12) | 0; G6 = ((G9 + 65) ^ G13) | 0; G7 = ((G10 + 67) ^ G1) | 0; G8 = ((G11 + 69) ^ G2) | 0; G9 = ((G12 + 71) ^ G3) | 0; G10 = ((G13 + 73) ^ G4) | 0; G11 = ((G1 + 75) ^ G5) | 0; G12 = ((G2 + 77) ^ G6) | 0; G13 = ((G3 + 79) ^ G7) | 0; G1 = ((G4 + 81) ^ G8) | 0; G2 = ((G5 + 83) ^ G9) | 0; G3 = ((G6 + 85) ^ G10) | 0; G4 = ((G7 + 87) ^ G11) | 0; G5 = ((G8 + 89) ^ G12) | 0; G6 = ((G9 + 91) ^ G13) | 0; G7 = ((G10 + 93) ^ G1) | 0; G8 = ((G11 + 95) ^ G2) | 0; G9 = ((G12 + 97) ^ G3) | 0; G10 = ((G13 + 99) ^ G4) | 0; G11 = ((G1 + 101) ^ G5) | 0; G12 = ((G2 + 103) ^ G6) | 0; G13 = ((G3 + 105) ^ G7) | 0; G1 = ((G4 + 107) ^ G8) | 0; G2 = ((G5 + 109) ^ G9) | 0; G3 = ((G6 + 111) ^ G10) | 0; G4 = ((G7 + 113) ^ G11) | 0; G5 = ((G8 + 115) ^ G12) | 0; G6 = ((G9 + 117) ^ G13) | 0; G7 = ((G10 + 119) ^ G1) | 0; G8 = ((G11 + 121) ^ G2) | 0; } 
+    r = await suspends(r);
+    r = await suspends(r);
+    r = await suspends(r);
+    r = await suspends(r);
+    return r;
+}
+////: lines-14
+function «1»(object, hidden) {
+  let sum = 0;
+  if (hidden) for (let i = 0; i < N; i++) sum = (sum + object.bumpHidden(i & 7)) | 0;
+  else for (let i = 0; i < N; i++) sum = (sum + object.bumpShown(i & 7)) | 0;
+  return sum;
+}
+////: lines-19
+function «1»(object) {
+  let sum = 0;
+  for (let i = 0; i < N; i++) {
+    object.«2» = i & 7;
+    object.«3» = i & 3;
+    sum = (sum + object.«2» + object.«3») | 0;
+  }
+  return sum;
+}
+////: lines-33
+function «1»(holder, value) {
+  holder.«2» = value;
+}
+////: lines-35
+async function «1»() {
+  let sum = 0;
+  for (let i = 0; i < N; i++) sum = (sum + (await «2»(i))) | 0;
+  return sum;
+}
+////: lines-38
+function «1»(«2») {
+  let sum = 0;
+  for (let i = 0; i < N; i++) sum = (sum + «3»(i & 7)) | 0;
+  return sum;
+}
+////: lines-4
+async function «1»(r: number): Promise<number> {
+    if (G15 > 1000000) { G1 = ((G4 + 3) ^ G8) | 0; G2 = ((G5 + 5) ^ G9) | 0; G3 = ((G6 + 7) ^ G10) | 0; G4 = ((G7 + 9) ^ G11) | 0; G5 = ((G8 + 11) ^ G12) | 0; G6 = ((G9 + 13) ^ G13) | 0; G7 = ((G10 + 15) ^ G1) | 0; G8 = ((G11 + 17) ^ G2) | 0; G9 = ((G12 + 19) ^ G3) | 0; G10 = ((G13 + 21) ^ G4) | 0; G11 = ((G1 + 23) ^ G5) | 0; G12 = ((G2 + 25) ^ G6) | 0; G13 = ((G3 + 27) ^ G7) | 0; G1 = ((G4 + 29) ^ G8) | 0; G2 = ((G5 + 31) ^ G9) | 0; G3 = ((G6 + 33) ^ G10) | 0; G4 = ((G7 + 35) ^ G11) | 0; G5 = ((G8 + 37) ^ G12) | 0; G6 = ((G9 + 39) ^ G13) | 0; G7 = ((G10 + 41) ^ G1) | 0; G8 = ((G11 + 43) ^ G2) | 0; G9 = ((G12 + 45) ^ G3) | 0; G10 = ((G13 + 47) ^ G4) | 0; G11 = ((G1 + 49) ^ G5) | 0; G12 = ((G2 + 51) ^ G6) | 0; G13 = ((G3 + 53) ^ G7) | 0; G1 = ((G4 + 55) ^ G8) | 0; G2 = ((G5 + 57) ^ G9) | 0; G3 = ((G6 + 59) ^ G10) | 0; G4 = ((G7 + 61) ^ G11) | 0; G5 = ((G8 + 63) ^ G12) | 0; G6 = ((G9 + 65) ^ G13) | 0; G7 = ((G10 + 67) ^ G1) | 0; G8 = ((G11 + 69) ^ G2) | 0; G9 = ((G12 + 71) ^ G3) | 0; G10 = ((G13 + 73) ^ G4) | 0; G11 = ((G1 + 75) ^ G5) | 0; G12 = ((G2 + 77) ^ G6) | 0; G13 = ((G3 + 79) ^ G7) | 0; G1 = ((G4 + 81) ^ G8) | 0; G2 = ((G5 + 83) ^ G9) | 0; G3 = ((G6 + 85) ^ G10) | 0; G4 = ((G7 + 87) ^ G11) | 0; G5 = ((G8 + 89) ^ G12) | 0; G6 = ((G9 + 91) ^ G13) | 0; G7 = ((G10 + 93) ^ G1) | 0; G8 = ((G11 + 95) ^ G2) | 0; G9 = ((G12 + 97) ^ G3) | 0; G10 = ((G13 + 99) ^ G4) | 0; G11 = ((G1 + 101) ^ G5) | 0; G12 = ((G2 + 103) ^ G6) | 0; G13 = ((G3 + 105) ^ G7) | 0; G1 = ((G4 + 107) ^ G8) | 0; G2 = ((G5 + 109) ^ G9) | 0; G3 = ((G6 + 111) ^ G10) | 0; G4 = ((G7 + 113) ^ G11) | 0; G5 = ((G8 + 115) ^ G12) | 0; G6 = ((G9 + 117) ^ G13) | 0; G7 = ((G10 + 119) ^ G1) | 0; G8 = ((G11 + 121) ^ G2) | 0; } 
+    r = await suspends(r);
+    r = await suspends(r);
+    r = await suspends(r);
+    r = await suspends(r);
+    r = await suspends(r);
+    r = await suspends(r);
+    r = await suspends(r);
+    r = await suspends(r);
+    r = await suspends(r);
+    r = await suspends(r);
+    r = await suspends(r);
+    r = await suspends(r);
+    return r;
+}
+////: lines-8
+function «1»(n: number): number {
+    let a: T = A0, x = LEN | 0, y = 0.5; 
+    for (let i = 0; i < n; ++i) { x ^= «2»(ringO[i & 7]).«3» ?? 0; a = a.next; }
+    return (x ^ a.f0 ^ (y | 0)) | 0;
+}
+////: lines-9
+class «1» extends «2» {
+  #hidden = 0;
+  shown = 0;
+  bumpHidden(amount) {
+    this.#hidden = (this.#hidden + amount) | 0;
+    return this.#hidden;
+  }
+  bumpShown(amount) {
+    this.shown = (this.shown + amount) | 0;
+    return this.shown;
+  }
+}
+////: makeA
+function makeA(seed: number): A {
+  const a: A = {};
+  a.f0 = 0;
+  a.f1 = "s1";
+  a.f2 = true;
+  a.f3 = ["x3"];
+  a.f4 = { a: 4 };
+  a.f5 = () => 5;
+  a.f6 = 6;
+  a.f7 = "s7";
+  a.f8 = true;
+  a.f10 = { a: 10 };
+  a.f11 = () => 11;
+  a.f12 = 12;
+  a.f13 = "s13";
+  a.f14 = true;
+  a.f15 = ["x15"];
+  a.f16 = { a: 16 };
+  a.f17 = () => 17;
+  a.f18 = 18;
+  a.f20 = true;
+  a.f21 = ["x21"];
+  a.f22 = { a: 22 };
+  a.f23 = () => 23;
+  a.f24 = 24;
+  a.f25 = "s25";
+  a.f26 = true;
+  a.f27 = ["x27"];
+  a.f28 = { a: 28 };
+  a.f30 = 30;
+  a.f31 = "s31";
+  a.f32 = true;
+  a.f33 = ["x33"];
+  a.f34 = { a: 34 };
+  a.f35 = () => 35;
+  a.f36 = 36;
+  a.f37 = "s37";
+  a.f38 = true;
+  a.f40 = { a: 40 };
+  a.f41 = () => 41;
+  a.f42 = 42;
+  a.f43 = "s43";
+  a.f44 = true;
+  a.f45 = ["x45"];
+  a.f46 = { a: 46 };
+  a.f47 = () => 47;
+  a.f48 = 48;
+  a.f50 = true;
+  a.f51 = ["x51"];
+  a.f52 = { a: 52 };
+  a.f53 = () => 53;
+  a.f54 = 54;
+  a.f55 = "s55";
+  a.f56 = true;
+  a.f57 = ["x57"];
+  a.f58 = { a: 58 };
+  a.f60 = 60;
+  a.f61 = "s61";
+  a.f62 = true;
+  a.f63 = ["x63"];
+  a.f64 = { a: 64 };
+  a.f65 = () => 65;
+  a.f66 = 66;
+  a.f67 = "s67";
+  a.f68 = true;
+  a.f70 = { a: 70 };
+  a.f71 = () => 71;
+  a.f72 = 72;
+  a.f73 = "s73";
+  a.f74 = true;
+  a.f75 = ["x75"];
+  a.f76 = { a: 76 };
+  a.f77 = () => 77;
+  a.f78 = 78;
+  a.f80 = true;
+  a.f81 = ["x81"];
+  a.f82 = { a: 82 };
+  a.f83 = () => 83;
+  a.f84 = 84;
+  a.f85 = "s85";
+  a.f86 = true;
+  a.f87 = ["x87"];
+  a.f88 = { a: 88 };
+  a.f90 = 90;
+  a.f91 = "s91";
+  a.f92 = true;
+  a.f93 = ["x93"];
+  a.f94 = { a: 94 };
+  a.f95 = () => 95;
+  a.f96 = 96;
+  a.f97 = "s97";
+  a.f98 = true;
+  return a;
+}
+////: makeContext
+function makeContext(seed: number, owner: Owner): Context {
+  const context: Context = {
+    options: { debug: seed % 2 === 0, model: "m" + seed, tools: ["a", "b"] },
+    value1: "s1",
+    value2: seed % 2 === 0,
+    value4: seed + 4,
+    value5: "s5",
+    value7: [seed, 7],
+    value8: seed + 8,
+    value10: seed % 2 === 0,
+    value11: [seed, 11],
+    value13: "s13",
+    value14: seed % 2 === 0,
+    value16: seed + 16,
+    value17: "s17",
+    value19: [seed, 19],
+    handler0: input => { sink += Number(input); },
+    handler2: input => String(input) + seed,
+    handler4: input => Number(input) + seed,
+    handler6: input => { sink += Number(input); },
+    handler8: input => String(input) + seed,
+    handler10: input => Number(input) + seed,
+    handler12: input => { sink += Number(input); },
+    handler14: input => String(input) + seed,
+    handler16: input => Number(input) + seed,
+    handler18: input => { sink += Number(input); },
+    getState: () => state,
+    setState: update => { state = update(state); },
+  };
+  if (seed % 3 === 0) context.value0 = seed;
+  if (seed % 4 === 0) context.handler1 = owner.size.bind(owner);
+  if (seed % 5 === 0) context.handler3 = input => { sink += input.length; };
+  return context;
+}
+////: makeCounter
+function makeCounter() {
+  return class Counter {
+    constructor(start) {
+      this.value = start;
+    }
+    add(amount) {
+      this.value = (this.value + amount) | 0;
+      return this.value;
+    }
+  };
+}
+////: readAdded
+function readAdded() {
+  let sum = 0;
+  for (let i = 0; i < rounds; i++) sum = (sum + BelowGains.added + i) | 0;
+  return sum;
+}
+////: readAddedFromLowest
+function readAddedFromLowest() {
+  let sum = 0;
+  for (let i = 0; i < rounds; i++) sum = (sum + LowestGains.added + i) | 0;
+  return sum;
+}
+//// guards-that-fail-once/canary-node-http-server.ts
+// Guards that fail once: canary node http server. It prints what plain Bun prints.
+import { createServer } from "node:http";
+const server = createServer((request, response) => {
+  response.writeHead(200, { "Content-Type": "text/plain" });
+  response.end(`${request.method} ${request.url}`);
+});
+server.listen(0, async () => {
+  const answer = await fetch(`http://127.0.0.1:${(server.address() as { port: number }).port}/one`);
+  console.log(answer.status, answer.headers.get("content-type"), await answer.text());
+  server.close();
+});
+//// guards-that-fail-once/copy-data-properties-bags.ts
+// Bags of unlisted names, each of another size, get two more names once.
+type Bag = { a?: number; b?: string; c?: boolean };
+type Two = { x: number; y: number };
+function merge(bag: Bag, two: any): Bag {
+  return { ...bag, ...two };
+}
+function bagOf(size: number): Bag {
+  const bag: Bag = { a: size };
+  for (let index = 0; index < size; ++index)
+    (bag as any)["name" + index] = index;
+  return bag;
+}
+const sizes = Number(process.argv[2] ?? 40);
+const rounds = Number(process.argv[3] ?? 1);
+let total = 0;
+for (let round = 0; round < rounds; ++round) {
+  for (let size = 1; size <= sizes; ++size)
+    total += Object.keys(merge(bagOf(size), JSON.parse(`{"x":${size},"y":${round}}`))).length;
+}
+console.log(total);
+//// guards-that-fail-once/copy-data-properties-cold.ts
+// Guards that fail once: copy data properties cold. It prints what plain Bun prints.
+type Styles = { flexWrap?: string; flexDirection?: string; flexGrow?: number; flexShrink?: number; flexBasis?: number | string; alignItems?: number | string; alignSelf?: number | string; justifyContent?: number | string; gap?: number | string; columnGap?: number | string; rowGap?: number | string; margin?: number | string; marginX?: number | string; marginY?: number | string; marginTop?: number | string; marginBottom?: number | string; marginLeft?: number | string; marginRight?: number | string; padding?: number | string; paddingX?: number | string; paddingY?: number | string; paddingTop?: number | string; paddingBottom?: number | string; paddingLeft?: number | string; paddingRight?: number | string; width?: number | string; height?: number | string; minWidth?: number | string; minHeight?: number | string; display?: number | string; borderStyle?: number | string; borderColor?: number | string; overflow?: number | string; position?: number | string; };
+type Props = Styles & { children?: unknown; tabIndex?: number };
+type Element = { type: unknown; props: { tabIndex: number | undefined; style: Styles; children: unknown } };
+function Box({ children, flexWrap = "nowrap", flexDirection = "row", flexGrow = 0, flexShrink = 1, tabIndex, ...style }: Props): Element {
+  return { type: "box", props: { tabIndex, style: { flexWrap, flexDirection, flexGrow, flexShrink, ...style }, children } };
+}
+const render = (component: (props: any) => Element, props: unknown): Element => component(props);
+const sites: (() => Element)[] = [
+  () => render(Box, { gap: 1, marginLeft: 2, paddingRight: 3, alignItems: 4, children: 1 }),
+  () => render(Box, { borderStyle: 1, paddingTop: 2, children: 1 }),
+  () => render(Box, { marginBottom: 1, paddingBottom: 2, children: 1 }),
+  () => render(Box, { position: 1, paddingY: 2, children: 1 }),
+  () => render(Box, { alignItems: 1, alignSelf: 2, marginRight: 3, children: 1 }),
+  () => render(Box, { alignSelf: 1, margin: 2, paddingTop: 3, marginRight: 4, alignItems: 5, children: 1 }),
+  () => render(Box, { justifyContent: 1, margin: 2, paddingRight: 3, borderColor: 4, paddingBottom: 5, alignItems: 6, children: 1 }),
+  () => render(Box, { paddingBottom: 1, marginLeft: 2, alignItems: 3, margin: 4, borderColor: 5, paddingTop: 6, children: 1 }),
+  () => render(Box, { marginY: 1, marginRight: 2, gap: 3, children: 1 }),
+  () => render(Box, { justifyContent: 1, paddingBottom: 2, marginY: 3, paddingTop: 4, width: 5, columnGap: 6, children: 1 }),
+  () => render(Box, { paddingBottom: 1, paddingRight: 2, children: 1 }),
+  () => render(Box, { marginBottom: 1, justifyContent: 2, paddingTop: 3, children: 1 }),
+  () => render(Box, { paddingBottom: 1, alignItems: 2, children: 1 }),
+  () => render(Box, { rowGap: 1, paddingX: 2, width: 3, paddingTop: 4, marginRight: 5, minHeight: 6, children: 1 }),
+  () => render(Box, { padding: 1, paddingBottom: 2, position: 3, marginBottom: 4, children: 1 }),
+  () => render(Box, { margin: 1, display: 2, columnGap: 3, height: 4, children: 1 }),
+  () => render(Box, { alignSelf: 1, paddingBottom: 2, marginY: 3, children: 1 }),
+  () => render(Box, { paddingX: 1, overflow: 2, marginTop: 3, minWidth: 4, padding: 5, marginY: 6, children: 1 }),
+  () => render(Box, { alignSelf: 1, justifyContent: 2, paddingY: 3, marginRight: 4, columnGap: 5, minHeight: 6, children: 1 }),
+  () => render(Box, { gap: 1, position: 2, paddingX: 3, marginRight: 4, children: 1 }),
+  () => render(Box, { width: 1, alignSelf: 2, children: 1 }),
+  () => render(Box, { paddingBottom: 1, display: 2, borderStyle: 3, marginTop: 4, borderColor: 5, height: 6, children: 1 }),
+  () => render(Box, { paddingLeft: 1, paddingX: 2, paddingBottom: 3, display: 4, children: 1 }),
+  () => render(Box, { alignSelf: 1, borderStyle: 2, marginX: 3, paddingX: 4, height: 5, children: 1 }),
+  () => render(Box, { alignItems: 1, minWidth: 2, children: 1 }),
+  () => render(Box, { paddingRight: 1, paddingBottom: 2, width: 3, borderStyle: 4, children: 1 }),
+  () => render(Box, { marginY: 1, height: 2, marginLeft: 3, overflow: 4, width: 5, children: 1 }),
+  () => render(Box, { flexBasis: 1, padding: 2, marginBottom: 3, columnGap: 4, children: 1 }),
+  () => render(Box, { justifyContent: 1, paddingX: 2, alignItems: 3, rowGap: 4, minHeight: 5, marginY: 6, children: 1 }),
+  () => render(Box, { minWidth: 1, margin: 2, marginLeft: 3, children: 1 }),
+  () => render(Box, { position: 1, borderColor: 2, paddingX: 3, alignSelf: 4, columnGap: 5, children: 1 }),
+  () => render(Box, { marginLeft: 1, paddingTop: 2, marginX: 3, overflow: 4, gap: 5, children: 1 }),
+  () => render(Box, { borderColor: 1, paddingTop: 2, marginX: 3, height: 4, marginRight: 5, children: 1 }),
+  () => render(Box, { width: 1, overflow: 2, marginLeft: 3, margin: 4, children: 1 }),
+  () => render(Box, { alignSelf: 1, columnGap: 2, gap: 3, children: 1 }),
+  () => render(Box, { width: 1, margin: 2, flexBasis: 3, children: 1 }),
+  () => render(Box, { borderStyle: 1, paddingBottom: 2, columnGap: 3, marginX: 4, marginY: 5, children: 1 }),
+  () => render(Box, { gap: 1, marginRight: 2, children: 1 }),
+  () => render(Box, { marginBottom: 1, paddingLeft: 2, paddingBottom: 3, marginTop: 4, gap: 5, height: 6, children: 1 }),
+  () => render(Box, { paddingLeft: 1, paddingRight: 2, width: 3, minWidth: 4, alignItems: 5, padding: 6, children: 1 }),
+  () => render(Box, { marginLeft: 1, position: 2, overflow: 3, borderColor: 4, justifyContent: 5, paddingX: 6, children: 1 }),
+  () => render(Box, { alignItems: 1, rowGap: 2, alignSelf: 3, padding: 4, columnGap: 5, children: 1 }),
+  () => render(Box, { marginTop: 1, paddingLeft: 2, children: 1 }),
+  () => render(Box, { justifyContent: 1, flexBasis: 2, children: 1 }),
+  () => render(Box, { gap: 1, paddingTop: 2, justifyContent: 3, marginBottom: 4, paddingLeft: 5, flexBasis: 6, children: 1 }),
+  () => render(Box, { borderColor: 1, rowGap: 2, children: 1 }),
+  () => render(Box, { marginLeft: 1, gap: 2, paddingRight: 3, marginX: 4, marginBottom: 5, paddingLeft: 6, children: 1 }),
+  () => render(Box, { paddingX: 1, justifyContent: 2, borderColor: 3, padding: 4, children: 1 }),
+  () => render(Box, { paddingX: 1, marginY: 2, alignSelf: 3, gap: 4, justifyContent: 5, children: 1 }),
+  () => render(Box, { minWidth: 1, marginX: 2, paddingX: 3, borderStyle: 4, children: 1 }),
+  () => render(Box, { paddingY: 1, flexBasis: 2, rowGap: 3, children: 1 }),
+  () => render(Box, { marginBottom: 1, gap: 2, height: 3, paddingTop: 4, flexBasis: 5, minHeight: 6, children: 1 }),
+  () => render(Box, { marginY: 1, paddingRight: 2, borderColor: 3, alignSelf: 4, height: 5, marginX: 6, children: 1 }),
+  () => render(Box, { marginBottom: 1, columnGap: 2, position: 3, minHeight: 4, margin: 5, paddingTop: 6, children: 1 }),
+  () => render(Box, { minHeight: 1, paddingY: 2, marginTop: 3, paddingRight: 4, margin: 5, paddingLeft: 6, children: 1 }),
+  () => render(Box, { display: 1, margin: 2, borderStyle: 3, children: 1 }),
+  () => render(Box, { minWidth: 1, display: 2, margin: 3, rowGap: 4, paddingY: 5, children: 1 }),
+  () => render(Box, { marginBottom: 1, minWidth: 2, flexBasis: 3, display: 4, marginX: 5, children: 1 }),
+  () => render(Box, { marginX: 1, rowGap: 2, height: 3, paddingLeft: 4, marginBottom: 5, children: 1 }),
+  () => render(Box, { display: 1, position: 2, minWidth: 3, marginBottom: 4, alignSelf: 5, children: 1 }),
+  () => render(Box, { justifyContent: 1, margin: 2, paddingX: 3, children: 1 }),
+  () => render(Box, { marginTop: 1, rowGap: 2, paddingX: 3, children: 1 }),
+  () => render(Box, { overflow: 1, paddingLeft: 2, borderStyle: 3, flexBasis: 4, paddingX: 5, paddingRight: 6, children: 1 }),
+  () => render(Box, { display: 1, paddingRight: 2, alignSelf: 3, borderStyle: 4, children: 1 }),
+  () => render(Box, { position: 1, marginLeft: 2, children: 1 }),
+  () => render(Box, { paddingX: 1, overflow: 2, columnGap: 3, children: 1 }),
+  () => render(Box, { display: 1, paddingRight: 2, marginTop: 3, alignSelf: 4, minWidth: 5, children: 1 }),
+  () => render(Box, { padding: 1, marginLeft: 2, minWidth: 3, alignSelf: 4, columnGap: 5, children: 1 }),
+  () => render(Box, { gap: 1, flexBasis: 2, paddingBottom: 3, children: 1 }),
+  () => render(Box, { display: 1, paddingRight: 2, gap: 3, paddingLeft: 4, borderStyle: 5, children: 1 }),
+  () => render(Box, { paddingX: 1, width: 2, marginBottom: 3, gap: 4, paddingTop: 5, display: 6, children: 1 }),
+  () => render(Box, { flexBasis: 1, display: 2, minWidth: 3, children: 1 }),
+  () => render(Box, { paddingY: 1, minWidth: 2, children: 1 }),
+  () => render(Box, { marginRight: 1, borderColor: 2, rowGap: 3, children: 1 }),
+  () => render(Box, { flexBasis: 1, marginX: 2, rowGap: 3, children: 1 }),
+  () => render(Box, { paddingY: 1, margin: 2, minHeight: 3, paddingBottom: 4, children: 1 }),
+  () => render(Box, { marginX: 1, paddingTop: 2, marginRight: 3, borderStyle: 4, children: 1 }),
+  () => render(Box, { alignItems: 1, position: 2, minWidth: 3, children: 1 }),
+  () => render(Box, { overflow: 1, padding: 2, width: 3, paddingBottom: 4, children: 1 }),
+  () => render(Box, { marginRight: 1, borderStyle: 2, paddingY: 3, gap: 4, paddingTop: 5, overflow: 6, children: 1 }),
+  () => render(Box, { paddingY: 1, flexBasis: 2, borderColor: 3, padding: 4, minHeight: 5, columnGap: 6, children: 1 }),
+  () => render(Box, { flexBasis: 1, minHeight: 2, display: 3, gap: 4, columnGap: 5, borderStyle: 6, children: 1 }),
+  () => render(Box, { paddingLeft: 1, minWidth: 2, justifyContent: 3, paddingTop: 4, alignItems: 5, children: 1 }),
+  () => render(Box, { width: 1, paddingY: 2, paddingTop: 3, paddingX: 4, children: 1 }),
+  () => render(Box, { overflow: 1, paddingTop: 2, children: 1 }),
+  () => render(Box, { margin: 1, rowGap: 2, children: 1 }),
+  () => render(Box, { alignItems: 1, minHeight: 2, justifyContent: 3, paddingY: 4, children: 1 }),
+  () => render(Box, { paddingTop: 1, flexBasis: 2, minHeight: 3, overflow: 4, position: 5, children: 1 }),
+  () => render(Box, { padding: 1, marginTop: 2, children: 1 }),
+  () => render(Box, { paddingY: 1, paddingLeft: 2, position: 3, rowGap: 4, height: 5, marginX: 6, children: 1 }),
+  () => render(Box, { paddingY: 1, paddingTop: 2, display: 3, paddingX: 4, margin: 5, children: 1 }),
+  () => render(Box, { overflow: 1, position: 2, marginX: 3, paddingTop: 4, rowGap: 5, padding: 6, children: 1 }),
+  () => render(Box, { marginRight: 1, justifyContent: 2, marginLeft: 3, children: 1 }),
+  () => render(Box, { marginTop: 1, alignSelf: 2, width: 3, margin: 4, marginRight: 5, children: 1 }),
+  () => render(Box, { rowGap: 1, width: 2, children: 1 }),
+  () => render(Box, { display: 1, justifyContent: 2, overflow: 3, minHeight: 4, children: 1 }),
+  () => render(Box, { height: 1, paddingRight: 2, width: 3, children: 1 }),
+  () => render(Box, { gap: 1, marginX: 2, overflow: 3, padding: 4, children: 1 }),
+  () => render(Box, { minWidth: 1, justifyContent: 2, marginLeft: 3, children: 1 }),
+  () => render(Box, { columnGap: 1, width: 2, borderStyle: 3, margin: 4, height: 5, children: 1 }),
+  () => render(Box, { paddingY: 1, marginLeft: 2, marginTop: 3, marginRight: 4, rowGap: 5, children: 1 }),
+  () => render(Box, { marginTop: 1, alignSelf: 2, minWidth: 3, marginBottom: 4, children: 1 }),
+  () => render(Box, { marginTop: 1, paddingTop: 2, children: 1 }),
+  () => render(Box, { padding: 1, height: 2, flexBasis: 3, marginLeft: 4, marginTop: 5, children: 1 }),
+  () => render(Box, { paddingLeft: 1, marginY: 2, paddingY: 3, alignSelf: 4, justifyContent: 5, margin: 6, children: 1 }),
+  () => render(Box, { alignSelf: 1, marginX: 2, children: 1 }),
+  () => render(Box, { alignItems: 1, overflow: 2, minHeight: 3, columnGap: 4, children: 1 }),
+  () => render(Box, { minHeight: 1, gap: 2, borderStyle: 3, marginRight: 4, children: 1 }),
+  () => render(Box, { marginLeft: 1, gap: 2, paddingTop: 3, position: 4, children: 1 }),
+  () => render(Box, { paddingBottom: 1, paddingX: 2, height: 3, marginTop: 4, alignSelf: 5, marginX: 6, children: 1 }),
+  () => render(Box, { display: 1, height: 2, children: 1 }),
+  () => render(Box, { marginRight: 1, overflow: 2, alignSelf: 3, children: 1 }),
+  () => render(Box, { flexBasis: 1, paddingRight: 2, alignSelf: 3, display: 4, children: 1 }),
+  () => render(Box, { alignSelf: 1, paddingLeft: 2, borderColor: 3, margin: 4, children: 1 }),
+  () => render(Box, { marginX: 1, borderColor: 2, children: 1 }),
+  () => render(Box, { padding: 1, flexBasis: 2, children: 1 }),
+  () => render(Box, { paddingTop: 1, marginRight: 2, position: 3, marginX: 4, children: 1 }),
+  () => render(Box, { gap: 1, alignItems: 2, paddingY: 3, height: 4, margin: 5, justifyContent: 6, children: 1 }),
+  () => render(Box, { marginX: 1, alignItems: 2, columnGap: 3, children: 1 }),
+  () => render(Box, { position: 1, marginY: 2, paddingRight: 3, children: 1 }),
+  () => render(Box, { paddingY: 1, minHeight: 2, rowGap: 3, marginY: 4, children: 1 }),
+  () => render(Box, { paddingY: 1, width: 2, columnGap: 3, marginX: 4, marginBottom: 5, children: 1 }),
+  () => render(Box, { marginX: 1, alignItems: 2, children: 1 }),
+  () => render(Box, { flexBasis: 1, minWidth: 2, children: 1 }),
+  () => render(Box, { paddingTop: 1, rowGap: 2, paddingY: 3, paddingX: 4, margin: 5, padding: 6, children: 1 }),
+  () => render(Box, { width: 1, borderStyle: 2, children: 1 }),
+  () => render(Box, { width: 1, paddingX: 2, paddingTop: 3, borderStyle: 4, overflow: 5, children: 1 }),
+  () => render(Box, { paddingY: 1, marginY: 2, height: 3, rowGap: 4, margin: 5, children: 1 }),
+  () => render(Box, { rowGap: 1, borderStyle: 2, overflow: 3, height: 4, children: 1 }),
+  () => render(Box, { marginLeft: 1, marginBottom: 2, alignItems: 3, children: 1 }),
+  () => render(Box, { flexBasis: 1, alignSelf: 2, paddingRight: 3, children: 1 }),
+  () => render(Box, { marginRight: 1, columnGap: 2, alignItems: 3, alignSelf: 4, children: 1 }),
+  () => render(Box, { borderColor: 1, paddingY: 2, width: 3, marginY: 4, paddingLeft: 5, children: 1 }),
+  () => render(Box, { height: 1, marginY: 2, alignItems: 3, children: 1 }),
+  () => render(Box, { columnGap: 1, marginX: 2, padding: 3, flexBasis: 4, marginBottom: 5, children: 1 }),
+  () => render(Box, { paddingTop: 1, marginTop: 2, margin: 3, alignItems: 4, children: 1 }),
+  () => render(Box, { rowGap: 1, marginBottom: 2, columnGap: 3, flexBasis: 4, children: 1 }),
+  () => render(Box, { marginLeft: 1, alignSelf: 2, paddingX: 3, marginX: 4, children: 1 }),
+  () => render(Box, { paddingRight: 1, rowGap: 2, margin: 3, paddingY: 4, minHeight: 5, flexBasis: 6, children: 1 }),
+  () => render(Box, { marginX: 1, borderStyle: 2, children: 1 }),
+  () => render(Box, { gap: 1, marginLeft: 2, children: 1 }),
+  () => render(Box, { alignItems: 1, marginLeft: 2, flexBasis: 3, marginY: 4, borderStyle: 5, paddingRight: 6, children: 1 }),
+  () => render(Box, { alignSelf: 1, paddingBottom: 2, paddingY: 3, children: 1 }),
+  () => render(Box, { width: 1, overflow: 2, height: 3, children: 1 }),
+  () => render(Box, { marginLeft: 1, minHeight: 2, marginTop: 3, minWidth: 4, paddingX: 5, gap: 6, children: 1 }),
+  () => render(Box, { minWidth: 1, paddingLeft: 2, paddingRight: 3, gap: 4, children: 1 }),
+  () => render(Box, { borderStyle: 1, height: 2, children: 1 }),
+  () => render(Box, { paddingRight: 1, marginRight: 2, minWidth: 3, height: 4, display: 5, paddingY: 6, children: 1 }),
+  () => render(Box, { position: 1, paddingY: 2, minHeight: 3, children: 1 }),
+  () => render(Box, { paddingBottom: 1, borderStyle: 2, overflow: 3, display: 4, flexBasis: 5, width: 6, children: 1 }),
+  () => render(Box, { display: 1, overflow: 2, height: 3, width: 4, borderColor: 5, paddingRight: 6, children: 1 }),
+  () => render(Box, { alignSelf: 1, flexBasis: 2, alignItems: 3, children: 1 }),
+  () => render(Box, { paddingRight: 1, marginBottom: 2, justifyContent: 3, children: 1 }),
+  () => render(Box, { borderStyle: 1, padding: 2, paddingTop: 3, alignItems: 4, paddingRight: 5, children: 1 }),
+  () => render(Box, { paddingRight: 1, paddingTop: 2, children: 1 }),
+  () => render(Box, { paddingX: 1, marginX: 2, flexBasis: 3, children: 1 }),
+  () => render(Box, { display: 1, alignSelf: 2, minWidth: 3, position: 4, paddingY: 5, children: 1 }),
+  () => render(Box, { alignSelf: 1, width: 2, paddingY: 3, position: 4, minWidth: 5, display: 6, children: 1 }),
+  () => render(Box, { marginX: 1, display: 2, alignSelf: 3, borderColor: 4, margin: 5, children: 1 }),
+  () => render(Box, { margin: 1, minWidth: 2, paddingRight: 3, children: 1 }),
+  () => render(Box, { paddingX: 1, borderColor: 2, marginLeft: 3, alignSelf: 4, position: 5, children: 1 }),
+  () => render(Box, { minHeight: 1, alignItems: 2, paddingLeft: 3, paddingRight: 4, children: 1 }),
+  () => render(Box, { alignSelf: 1, paddingLeft: 2, gap: 3, children: 1 }),
+  () => render(Box, { marginX: 1, paddingRight: 2, minWidth: 3, height: 4, children: 1 }),
+  () => render(Box, { paddingLeft: 1, paddingBottom: 2, gap: 3, flexBasis: 4, children: 1 }),
+  () => render(Box, { alignItems: 1, paddingX: 2, marginX: 3, width: 4, justifyContent: 5, children: 1 }),
+  () => render(Box, { width: 1, paddingX: 2, marginY: 3, children: 1 }),
+  () => render(Box, { marginY: 1, padding: 2, overflow: 3, borderColor: 4, minHeight: 5, justifyContent: 6, children: 1 }),
+  () => render(Box, { rowGap: 1, marginY: 2, alignSelf: 3, paddingX: 4, flexBasis: 5, overflow: 6, children: 1 }),
+  () => render(Box, { alignSelf: 1, borderStyle: 2, paddingY: 3, padding: 4, marginX: 5, children: 1 }),
+  () => render(Box, { rowGap: 1, position: 2, alignSelf: 3, paddingBottom: 4, gap: 5, children: 1 }),
+  () => render(Box, { marginX: 1, marginBottom: 2, gap: 3, paddingLeft: 4, paddingRight: 5, paddingY: 6, children: 1 }),
+  () => render(Box, { overflow: 1, justifyContent: 2, height: 3, marginBottom: 4, children: 1 }),
+  () => render(Box, { paddingX: 1, overflow: 2, marginLeft: 3, children: 1 }),
+  () => render(Box, { columnGap: 1, flexBasis: 2, children: 1 }),
+  () => render(Box, { width: 1, padding: 2, marginLeft: 3, marginY: 4, minWidth: 5, children: 1 }),
+  () => render(Box, { marginRight: 1, marginBottom: 2, marginLeft: 3, children: 1 }),
+  () => render(Box, { justifyContent: 1, borderStyle: 2, marginTop: 3, flexBasis: 4, children: 1 }),
+  () => render(Box, { minHeight: 1, marginTop: 2, borderStyle: 3, marginLeft: 4, children: 1 }),
+  () => render(Box, { position: 1, rowGap: 2, children: 1 }),
+  () => render(Box, { overflow: 1, minWidth: 2, children: 1 }),
+  () => render(Box, { marginX: 1, marginBottom: 2, alignSelf: 3, marginLeft: 4, children: 1 }),
+  () => render(Box, { borderColor: 1, paddingBottom: 2, alignSelf: 3, marginBottom: 4, position: 5, children: 1 }),
+  () => render(Box, { minHeight: 1, marginX: 2, borderColor: 3, alignItems: 4, justifyContent: 5, children: 1 }),
+  () => render(Box, { borderStyle: 1, width: 2, children: 1 }),
+  () => render(Box, { paddingRight: 1, position: 2, gap: 3, margin: 4, children: 1 }),
+  () => render(Box, { marginRight: 1, paddingY: 2, marginTop: 3, rowGap: 4, children: 1 }),
+  () => render(Box, { display: 1, marginRight: 2, overflow: 3, flexBasis: 4, children: 1 }),
+  () => render(Box, { position: 1, overflow: 2, paddingTop: 3, rowGap: 4, minWidth: 5, children: 1 }),
+  () => render(Box, { alignItems: 1, position: 2, children: 1 }),
+  () => render(Box, { padding: 1, paddingLeft: 2, minHeight: 3, gap: 4, paddingRight: 5, children: 1 }),
+  () => render(Box, { paddingX: 1, alignItems: 2, position: 3, paddingTop: 4, children: 1 }),
+  () => render(Box, { columnGap: 1, paddingX: 2, marginRight: 3, children: 1 }),
+  () => render(Box, { marginY: 1, marginX: 2, minWidth: 3, paddingRight: 4, children: 1 }),
+  () => render(Box, { marginLeft: 1, paddingRight: 2, margin: 3, marginY: 4, children: 1 }),
+  () => render(Box, { paddingTop: 1, width: 2, marginLeft: 3, justifyContent: 4, columnGap: 5, children: 1 }),
+  () => render(Box, { alignSelf: 1, rowGap: 2, paddingY: 3, children: 1 }),
+  () => render(Box, { paddingTop: 1, margin: 2, padding: 3, position: 4, marginTop: 5, children: 1 }),
+  () => render(Box, { marginRight: 1, gap: 2, paddingTop: 3, rowGap: 4, margin: 5, children: 1 }),
+  () => render(Box, { columnGap: 1, marginTop: 2, children: 1 }),
+  () => render(Box, { alignSelf: 1, marginTop: 2, margin: 3, marginBottom: 4, marginX: 5, paddingBottom: 6, children: 1 }),
+  () => render(Box, { overflow: 1, flexBasis: 2, minWidth: 3, children: 1 }),
+  () => render(Box, { marginLeft: 1, marginRight: 2, minWidth: 3, paddingY: 4, rowGap: 5, children: 1 }),
+  () => render(Box, { marginX: 1, marginTop: 2, minHeight: 3, alignItems: 4, paddingX: 5, children: 1 }),
+  () => render(Box, { paddingBottom: 1, marginBottom: 2, gap: 3, width: 4, children: 1 }),
+  () => render(Box, { paddingY: 1, paddingRight: 2, display: 3, rowGap: 4, alignSelf: 5, marginX: 6, children: 1 }),
+  () => render(Box, { marginLeft: 1, paddingRight: 2, padding: 3, children: 1 }),
+  () => render(Box, { marginY: 1, borderColor: 2, borderStyle: 3, flexBasis: 4, gap: 5, children: 1 }),
+  () => render(Box, { marginRight: 1, height: 2, children: 1 }),
+  () => render(Box, { paddingBottom: 1, paddingX: 2, flexBasis: 3, alignSelf: 4, marginLeft: 5, children: 1 }),
+  () => render(Box, { borderColor: 1, padding: 2, overflow: 3, margin: 4, display: 5, justifyContent: 6, children: 1 }),
+  () => render(Box, { gap: 1, paddingY: 2, width: 3, children: 1 }),
+  () => render(Box, { borderStyle: 1, minWidth: 2, children: 1 }),
+  () => render(Box, { alignSelf: 1, paddingTop: 2, minHeight: 3, alignItems: 4, flexBasis: 5, children: 1 }),
+  () => render(Box, { margin: 1, paddingBottom: 2, position: 3, children: 1 }),
+  () => render(Box, { paddingRight: 1, height: 2, children: 1 }),
+  () => render(Box, { gap: 1, paddingRight: 2, marginX: 3, paddingY: 4, children: 1 }),
+  () => render(Box, { height: 1, minHeight: 2, justifyContent: 3, alignSelf: 4, marginY: 5, children: 1 }),
+  () => render(Box, { paddingBottom: 1, rowGap: 2, marginLeft: 3, marginX: 4, margin: 5, paddingLeft: 6, children: 1 }),
+  () => render(Box, { flexBasis: 1, paddingTop: 2, children: 1 }),
+  () => render(Box, { padding: 1, marginX: 2, marginTop: 3, paddingRight: 4, children: 1 }),
+  () => render(Box, { paddingX: 1, paddingY: 2, margin: 3, children: 1 }),
+  () => render(Box, { margin: 1, flexBasis: 2, marginRight: 3, height: 4, paddingRight: 5, marginY: 6, children: 1 }),
+  () => render(Box, { flexBasis: 1, rowGap: 2, children: 1 }),
+  () => render(Box, { overflow: 1, width: 2, paddingRight: 3, marginRight: 4, alignSelf: 5, children: 1 }),
+  () => render(Box, { margin: 1, width: 2, marginRight: 3, position: 4, children: 1 }),
+  () => render(Box, { margin: 1, paddingX: 2, alignItems: 3, height: 4, children: 1 }),
+  () => render(Box, { height: 1, marginRight: 2, marginBottom: 3, width: 4, children: 1 }),
+  () => render(Box, { rowGap: 1, flexBasis: 2, display: 3, marginY: 4, minWidth: 5, children: 1 }),
+  () => render(Box, { alignSelf: 1, rowGap: 2, paddingX: 3, overflow: 4, marginY: 5, minHeight: 6, children: 1 }),
+  () => render(Box, { margin: 1, padding: 2, marginX: 3, children: 1 }),
+  () => render(Box, { justifyContent: 1, paddingLeft: 2, paddingX: 3, columnGap: 4, children: 1 }),
+  () => render(Box, { paddingX: 1, marginRight: 2, position: 3, children: 1 }),
+  () => render(Box, { paddingLeft: 1, gap: 2, children: 1 }),
+  () => render(Box, { alignItems: 1, rowGap: 2, flexBasis: 3, paddingLeft: 4, gap: 5, children: 1 }),
+  () => render(Box, { alignItems: 1, height: 2, columnGap: 3, marginLeft: 4, padding: 5, children: 1 }),
+  () => render(Box, { minWidth: 1, justifyContent: 2, alignSelf: 3, position: 4, children: 1 }),
+  () => render(Box, { marginTop: 1, rowGap: 2, columnGap: 3, children: 1 }),
+  () => render(Box, { minWidth: 1, padding: 2, alignItems: 3, marginY: 4, width: 5, position: 6, children: 1 }),
+  () => render(Box, { borderStyle: 1, marginBottom: 2, marginTop: 3, padding: 4, columnGap: 5, children: 1 }),
+  () => render(Box, { flexBasis: 1, alignSelf: 2, children: 1 }),
+  () => render(Box, { alignSelf: 1, marginBottom: 2, marginRight: 3, overflow: 4, children: 1 }),
+  () => render(Box, { paddingTop: 1, minHeight: 2, children: 1 }),
+  () => render(Box, { marginLeft: 1, marginBottom: 2, minHeight: 3, children: 1 }),
+  () => render(Box, { borderStyle: 1, display: 2, marginRight: 3, alignSelf: 4, children: 1 }),
+  () => render(Box, { height: 1, paddingX: 2, children: 1 }),
+  () => render(Box, { marginBottom: 1, paddingTop: 2, position: 3, children: 1 }),
+  () => render(Box, { rowGap: 1, marginTop: 2, marginBottom: 3, minWidth: 4, overflow: 5, children: 1 }),
+  () => render(Box, { flexBasis: 1, paddingRight: 2, marginRight: 3, margin: 4, display: 5, children: 1 }),
+  () => render(Box, { alignItems: 1, marginLeft: 2, padding: 3, alignSelf: 4, display: 5, children: 1 }),
+  () => render(Box, { marginX: 1, rowGap: 2, children: 1 }),
+  () => render(Box, { overflow: 1, paddingLeft: 2, children: 1 }),
+  () => render(Box, { marginBottom: 1, marginX: 2, marginTop: 3, paddingLeft: 4, children: 1 }),
+  () => render(Box, { marginX: 1, minWidth: 2, children: 1 }),
+  () => render(Box, { position: 1, marginX: 2, marginY: 3, flexBasis: 4, children: 1 }),
+  () => render(Box, { position: 1, display: 2, paddingRight: 3, alignSelf: 4, flexBasis: 5, margin: 6, children: 1 }),
+  () => render(Box, { paddingX: 1, height: 2, children: 1 }),
+  () => render(Box, { minHeight: 1, marginLeft: 2, display: 3, marginX: 4, position: 5, children: 1 }),
+  () => render(Box, { borderStyle: 1, paddingX: 2, gap: 3, position: 4, columnGap: 5, children: 1 }),
+  () => render(Box, { display: 1, position: 2, children: 1 }),
+  () => render(Box, { borderStyle: 1, height: 2, minHeight: 3, gap: 4, children: 1 }),
+  () => render(Box, { margin: 1, marginTop: 2, borderColor: 3, overflow: 4, padding: 5, marginBottom: 6, children: 1 }),
+  () => render(Box, { alignSelf: 1, paddingY: 2, rowGap: 3, marginLeft: 4, minHeight: 5, columnGap: 6, children: 1 }),
+  () => render(Box, { marginRight: 1, alignSelf: 2, paddingRight: 3, children: 1 }),
+  () => render(Box, { paddingX: 1, paddingTop: 2, children: 1 }),
+  () => render(Box, { marginTop: 1, columnGap: 2, marginRight: 3, justifyContent: 4, alignSelf: 5, marginX: 6, children: 1 }),
+  () => render(Box, { alignSelf: 1, rowGap: 2, justifyContent: 3, marginRight: 4, paddingX: 5, height: 6, children: 1 }),
+  () => render(Box, { columnGap: 1, margin: 2, gap: 3, marginRight: 4, padding: 5, children: 1 }),
+  () => render(Box, { overflow: 1, width: 2, margin: 3, minWidth: 4, paddingTop: 5, minHeight: 6, children: 1 }),
+  () => render(Box, { minHeight: 1, borderStyle: 2, children: 1 }),
+  () => render(Box, { marginY: 1, marginX: 2, paddingBottom: 3, marginBottom: 4, children: 1 }),
+  () => render(Box, { minWidth: 1, marginX: 2, rowGap: 3, padding: 4, children: 1 }),
+  () => render(Box, { columnGap: 1, margin: 2, gap: 3, children: 1 }),
+  () => render(Box, { overflow: 1, position: 2, paddingBottom: 3, rowGap: 4, children: 1 }),
+  () => render(Box, { alignSelf: 1, marginLeft: 2, marginX: 3, margin: 4, children: 1 }),
+  () => render(Box, { paddingY: 1, margin: 2, paddingRight: 3, display: 4, justifyContent: 5, borderColor: 6, children: 1 }),
+  () => render(Box, { alignItems: 1, justifyContent: 2, flexBasis: 3, paddingX: 4, overflow: 5, children: 1 }),
+  () => render(Box, { borderStyle: 1, padding: 2, position: 3, children: 1 }),
+  () => render(Box, { alignItems: 1, overflow: 2, marginY: 3, margin: 4, children: 1 }),
+  () => render(Box, { alignItems: 1, rowGap: 2, children: 1 }),
+  () => render(Box, { borderStyle: 1, paddingBottom: 2, rowGap: 3, alignSelf: 4, marginBottom: 5, paddingY: 6, children: 1 }),
+  () => render(Box, { padding: 1, paddingLeft: 2, marginX: 3, children: 1 }),
+  () => render(Box, { justifyContent: 1, paddingRight: 2, children: 1 }),
+  () => render(Box, { height: 1, paddingLeft: 2, marginBottom: 3, rowGap: 4, alignItems: 5, borderColor: 6, children: 1 }),
+  () => render(Box, { gap: 1, alignItems: 2, rowGap: 3, marginX: 4, children: 1 }),
+  () => render(Box, { paddingLeft: 1, minWidth: 2, children: 1 }),
+  () => render(Box, { borderStyle: 1, flexBasis: 2, marginTop: 3, children: 1 }),
+  () => render(Box, { width: 1, marginBottom: 2, columnGap: 3, paddingLeft: 4, marginY: 5, children: 1 }),
+  () => render(Box, { rowGap: 1, alignItems: 2, children: 1 }),
+  () => render(Box, { paddingTop: 1, paddingX: 2, alignSelf: 3, marginRight: 4, justifyContent: 5, children: 1 }),
+  () => render(Box, { width: 1, paddingTop: 2, gap: 3, paddingRight: 4, alignSelf: 5, children: 1 }),
+  () => render(Box, { marginLeft: 1, height: 2, marginX: 3, children: 1 }),
+  () => render(Box, { marginY: 1, width: 2, marginRight: 3, alignItems: 4, minWidth: 5, children: 1 }),
+  () => render(Box, { overflow: 1, marginBottom: 2, marginRight: 3, borderColor: 4, flexBasis: 5, minHeight: 6, children: 1 }),
+  () => render(Box, { paddingRight: 1, rowGap: 2, marginLeft: 3, minWidth: 4, children: 1 }),
+  () => render(Box, { rowGap: 1, flexBasis: 2, marginRight: 3, overflow: 4, columnGap: 5, children: 1 }),
+  () => render(Box, { justifyContent: 1, borderStyle: 2, alignSelf: 3, marginLeft: 4, paddingBottom: 5, children: 1 }),
+  () => render(Box, { padding: 1, minHeight: 2, columnGap: 3, gap: 4, children: 1 }),
+  () => render(Box, { alignItems: 1, paddingTop: 2, children: 1 }),
+  () => render(Box, { paddingRight: 1, display: 2, position: 3, children: 1 }),
+  () => render(Box, { alignSelf: 1, paddingBottom: 2, paddingLeft: 3, position: 4, marginBottom: 5, children: 1 }),
+  () => render(Box, { columnGap: 1, gap: 2, marginBottom: 3, marginY: 4, position: 5, paddingY: 6, children: 1 }),
+  () => render(Box, { position: 1, alignSelf: 2, justifyContent: 3, children: 1 }),
+  () => render(Box, { paddingX: 1, minHeight: 2, display: 3, rowGap: 4, marginY: 5, children: 1 }),
+  () => render(Box, { borderStyle: 1, alignItems: 2, position: 3, children: 1 }),
+  () => render(Box, { marginTop: 1, alignItems: 2, paddingLeft: 3, position: 4, paddingRight: 5, children: 1 }),
+  () => render(Box, { alignSelf: 1, overflow: 2, height: 3, paddingLeft: 4, borderStyle: 5, children: 1 }),
+  () => render(Box, { paddingRight: 1, display: 2, borderColor: 3, children: 1 }),
+  () => render(Box, { paddingLeft: 1, marginLeft: 2, borderColor: 3, children: 1 }),
+  () => render(Box, { borderStyle: 1, paddingX: 2, columnGap: 3, children: 1 }),
+  () => render(Box, { rowGap: 1, alignItems: 2, marginLeft: 3, paddingY: 4, columnGap: 5, borderColor: 6, children: 1 }),
+  () => render(Box, { justifyContent: 1, gap: 2, margin: 3, minWidth: 4, children: 1 }),
+  () => render(Box, { alignItems: 1, overflow: 2, paddingTop: 3, children: 1 }),
+  () => render(Box, { justifyContent: 1, marginLeft: 2, paddingLeft: 3, padding: 4, children: 1 }),
+  () => render(Box, { borderColor: 1, paddingRight: 2, minHeight: 3, marginY: 4, overflow: 5, marginRight: 6, children: 1 }),
+  () => render(Box, { paddingBottom: 1, margin: 2, marginRight: 3, marginLeft: 4, children: 1 }),
+  () => render(Box, { padding: 1, paddingY: 2, columnGap: 3, flexBasis: 4, children: 1 }),
+  () => render(Box, { paddingLeft: 1, paddingX: 2, children: 1 }),
+  () => render(Box, { margin: 1, padding: 2, minHeight: 3, paddingLeft: 4, borderStyle: 5, children: 1 }),
+  () => render(Box, { borderStyle: 1, columnGap: 2, display: 3, paddingX: 4, marginLeft: 5, children: 1 }),
+  () => render(Box, { alignSelf: 1, gap: 2, children: 1 }),
+  () => render(Box, { marginRight: 1, marginBottom: 2, alignSelf: 3, display: 4, children: 1 }),
+  () => render(Box, { paddingY: 1, width: 2, alignItems: 3, paddingRight: 4, gap: 5, children: 1 }),
+  () => render(Box, { position: 1, minWidth: 2, children: 1 }),
+  () => render(Box, { minHeight: 1, minWidth: 2, paddingY: 3, alignSelf: 4, children: 1 }),
+  () => render(Box, { minHeight: 1, paddingY: 2, children: 1 }),
+  () => render(Box, { paddingRight: 1, display: 2, gap: 3, flexBasis: 4, borderColor: 5, children: 1 }),
+  () => render(Box, { rowGap: 1, gap: 2, children: 1 }),
+  () => render(Box, { marginY: 1, display: 2, position: 3, columnGap: 4, width: 5, children: 1 }),
+  () => render(Box, { alignSelf: 1, borderStyle: 2, marginBottom: 3, children: 1 }),
+  () => render(Box, { minHeight: 1, marginX: 2, columnGap: 3, marginTop: 4, paddingLeft: 5, overflow: 6, children: 1 }),
+  () => render(Box, { gap: 1, marginX: 2, paddingY: 3, position: 4, paddingX: 5, children: 1 }),
+  () => render(Box, { paddingBottom: 1, marginX: 2, paddingLeft: 3, children: 1 }),
+  () => render(Box, { margin: 1, marginTop: 2, marginBottom: 3, alignItems: 4, rowGap: 5, columnGap: 6, children: 1 }),
+  () => render(Box, { columnGap: 1, paddingRight: 2, position: 3, marginX: 4, width: 5, children: 1 }),
+  () => render(Box, { overflow: 1, marginLeft: 2, columnGap: 3, display: 4, children: 1 }),
+  () => render(Box, { justifyContent: 1, minHeight: 2, paddingY: 3, alignItems: 4, children: 1 }),
+  () => render(Box, { borderColor: 1, padding: 2, paddingTop: 3, paddingY: 4, children: 1 }),
+  () => render(Box, { height: 1, overflow: 2, justifyContent: 3, marginX: 4, paddingTop: 5, paddingRight: 6, children: 1 }),
+  () => render(Box, { minWidth: 1, display: 2, marginBottom: 3, marginX: 4, marginLeft: 5, children: 1 }),
+  () => render(Box, { paddingBottom: 1, gap: 2, marginBottom: 3, marginTop: 4, children: 1 }),
+  () => render(Box, { padding: 1, margin: 2, children: 1 }),
+  () => render(Box, { paddingLeft: 1, minWidth: 2, alignItems: 3, children: 1 }),
+  () => render(Box, { borderStyle: 1, paddingY: 2, marginX: 3, marginY: 4, children: 1 }),
+  () => render(Box, { position: 1, width: 2, marginTop: 3, minWidth: 4, flexBasis: 5, borderStyle: 6, children: 1 }),
+  () => render(Box, { margin: 1, gap: 2, children: 1 }),
+  () => render(Box, { paddingLeft: 1, paddingRight: 2, marginRight: 3, paddingY: 4, children: 1 }),
+  () => render(Box, { overflow: 1, alignItems: 2, gap: 3, paddingX: 4, children: 1 }),
+  () => render(Box, { paddingLeft: 1, paddingRight: 2, alignItems: 3, children: 1 }),
+  () => render(Box, { alignItems: 1, flexBasis: 2, children: 1 }),
+  () => render(Box, { marginBottom: 1, marginY: 2, justifyContent: 3, paddingY: 4, position: 5, paddingTop: 6, children: 1 }),
+  () => render(Box, { marginRight: 1, paddingBottom: 2, marginY: 3, children: 1 }),
+  () => render(Box, { gap: 1, rowGap: 2, marginBottom: 3, paddingLeft: 4, paddingX: 5, columnGap: 6, children: 1 }),
+  () => render(Box, { flexBasis: 1, position: 2, display: 3, children: 1 }),
+  () => render(Box, { height: 1, gap: 2, padding: 3, children: 1 }),
+  () => render(Box, { alignSelf: 1, paddingRight: 2, children: 1 }),
+  () => render(Box, { borderColor: 1, width: 2, display: 3, children: 1 }),
+  () => render(Box, { marginLeft: 1, display: 2, marginX: 3, flexBasis: 4, children: 1 }),
+  () => render(Box, { paddingRight: 1, borderStyle: 2, children: 1 }),
+  () => render(Box, { overflow: 1, marginBottom: 2, paddingLeft: 3, paddingRight: 4, paddingBottom: 5, padding: 6, children: 1 }),
+  () => render(Box, { position: 1, paddingY: 2, minWidth: 3, paddingX: 4, margin: 5, columnGap: 6, children: 1 }),
+  () => render(Box, { marginLeft: 1, columnGap: 2, children: 1 }),
+  () => render(Box, { columnGap: 1, alignItems: 2, position: 3, children: 1 }),
+  () => render(Box, { flexBasis: 1, paddingLeft: 2, children: 1 }),
+  () => render(Box, { width: 1, rowGap: 2, gap: 3, marginRight: 4, overflow: 5, paddingY: 6, children: 1 }),
+  () => render(Box, { paddingRight: 1, paddingY: 2, position: 3, borderColor: 4, marginRight: 5, paddingLeft: 6, children: 1 }),
+  () => render(Box, { paddingY: 1, marginY: 2, alignSelf: 3, children: 1 }),
+  () => render(Box, { paddingRight: 1, alignItems: 2, overflow: 3, minWidth: 4, children: 1 }),
+  () => render(Box, { height: 1, paddingTop: 2, flexBasis: 3, marginLeft: 4, borderColor: 5, children: 1 }),
+  () => render(Box, { minWidth: 1, position: 2, padding: 3, alignSelf: 4, paddingRight: 5, children: 1 }),
+  () => render(Box, { columnGap: 1, margin: 2, justifyContent: 3, marginX: 4, paddingRight: 5, children: 1 }),
+  () => render(Box, { justifyContent: 1, marginTop: 2, children: 1 }),
+  () => render(Box, { height: 1, alignItems: 2, marginX: 3, paddingRight: 4, children: 1 }),
+  () => render(Box, { width: 1, marginRight: 2, position: 3, display: 4, paddingY: 5, marginX: 6, children: 1 }),
+  () => render(Box, { paddingRight: 1, position: 2, overflow: 3, rowGap: 4, children: 1 }),
+  () => render(Box, { overflow: 1, paddingY: 2, children: 1 }),
+  () => render(Box, { columnGap: 1, marginX: 2, children: 1 }),
+  () => render(Box, { borderStyle: 1, minWidth: 2, rowGap: 3, children: 1 }),
+  () => render(Box, { minWidth: 1, position: 2, marginTop: 3, children: 1 }),
+  () => render(Box, { overflow: 1, marginLeft: 2, marginTop: 3, children: 1 }),
+  () => render(Box, { margin: 1, marginLeft: 2, borderColor: 3, paddingRight: 4, height: 5, width: 6, children: 1 }),
+  () => render(Box, { paddingX: 1, position: 2, borderStyle: 3, paddingY: 4, height: 5, flexBasis: 6, children: 1 }),
+  () => render(Box, { marginRight: 1, minWidth: 2, children: 1 }),
+  () => render(Box, { paddingBottom: 1, overflow: 2, marginY: 3, children: 1 }),
+  () => render(Box, { marginLeft: 1, paddingLeft: 2, paddingBottom: 3, children: 1 }),
+  () => render(Box, { paddingBottom: 1, position: 2, children: 1 }),
+  () => render(Box, { gap: 1, alignItems: 2, flexBasis: 3, children: 1 }),
+  () => render(Box, { justifyContent: 1, paddingLeft: 2, children: 1 }),
+  () => render(Box, { marginBottom: 1, gap: 2, height: 3, children: 1 }),
+  () => render(Box, { flexBasis: 1, alignItems: 2, children: 1 }),
+  () => render(Box, { height: 1, paddingRight: 2, alignItems: 3, children: 1 }),
+  () => render(Box, { minWidth: 1, alignItems: 2, children: 1 }),
+  () => render(Box, { borderColor: 1, paddingBottom: 2, children: 1 }),
+  () => render(Box, { rowGap: 1, borderStyle: 2, paddingTop: 3, overflow: 4, children: 1 }),
+  () => render(Box, { overflow: 1, borderColor: 2, children: 1 }),
+  () => render(Box, { justifyContent: 1, margin: 2, rowGap: 3, alignItems: 4, borderColor: 5, children: 1 }),
+  () => render(Box, { borderStyle: 1, minHeight: 2, children: 1 }),
+  () => render(Box, { paddingX: 1, justifyContent: 2, gap: 3, display: 4, children: 1 }),
+  () => render(Box, { marginY: 1, marginTop: 2, marginRight: 3, children: 1 }),
+  () => render(Box, { flexBasis: 1, marginBottom: 2, marginX: 3, position: 4, children: 1 }),
+];
+const kinds = Number(process.argv[2]); const rounds = Number(process.argv[3]);
+let sum = 0;
+for (let round = 0; round < rounds; round++) for (let i = 0; i < kinds; i++) sum += (sites[i]!().props.children as number);
+console.log(sum);
+//// guards-that-fail-once/copy-data-properties-coldsmall.ts
+// Guards that fail once: copy data properties coldsmall. It prints what plain Bun prints.
+////= A
+////= B
+////= makeA
+type Small = { f0?: number; f1?: string; f2?: boolean };
+////= lines-30	toSmall	a	A	Small
+////= lines-30	fromSmall	small	Small	A
+function parsed(text: string): A {
+  return { ...JSON.parse(text) };
+}
+const rounds = Number(process.argv[2] ?? 1);
+let total = 0;
+for (let round = 0; round < rounds; ++round) {
+  const small = toSmall(makeA(round));
+  const back = fromSmall(small);
+  const text = JSON.stringify({ ...back, f5: undefined, f11: undefined });
+  total += Object.keys(back).length + Object.keys(parsed(text)).length;
+}
+console.log(total);
+//// guards-that-fail-once/copy-data-properties-coldwide.ts
+// Guards that fail once: copy data properties coldwide. It prints what plain Bun prints.
+////= A
+////= B
+////= makeA
+function toB(a: A): B {
+  return { ...a, more: 1 };
+}
+////= lines-30	toA	b	B	A
+const rounds = Number(process.argv[2] ?? 1);
+let total = 0;
+for (let round = 0; round < rounds; ++round) {
+  const b = toB(makeA(round));
+  const back = toA(b);
+  total += Object.keys(back).length + (back.f0 ?? 0);
+}
+console.log(total);
+//// guards-that-fail-once/copy-data-properties-context.ts
+// A wide context object, half of whose fields are callbacks, copied with a few changes at many places.
+type State = { count: number; label: string };
+////= Context
+let state: State = { count: 0, label: "start" };
+let sink = 0;
+class Owner {
+  total = 0;
+  add(input: number): number { this.total += input; return this.total; }
+  size(input: string): number { return input.length + this.total; }
+}
+////= makeContext
+function withDepth(context: Context, depth: number): Context { return { ...context, depth }; }
+function withParent(context: Context, parent: string): Context { return { ...context, parent, value1: parent }; }
+function withHandler(context: Context, owner: Owner): Context { return { ...context, handler0: owner.add.bind(owner), setState: update => { state = update(state); sink++; } }; }
+function withOptions(context: Context): Context { return { ...context, options: { ...context.options, debug: true } }; }
+function use(context: Context): void {
+  context.handler0(1); context.handler2(2); context.setState(previous => ({ ...previous, count: previous.count + 1 }));
+  sink += (context.depth ?? 0) + context.value1.length + Object.keys(context).length + (context.handler1 ? context.handler1("x") : 0);
+}
+const rounds = Number(process.argv[2] ?? 3);
+const owner = new Owner();
+for (let round = 0; round < rounds; round++) {
+  for (let seed = 0; seed < 12; seed++) {
+    const context = makeContext(seed, owner);
+    const a = withDepth(context, round); const b = withParent(a, "p" + seed); const c = withHandler(b, owner); const d = withOptions(c);
+    use(a); use(b); use(c); use(d);
+    if (round < 2) console.log(round, seed, Object.keys(d).join(","), d.depth, d.parent, d.value1, d.options.debug, typeof d.handler1, typeof d.handler3, d.getState().count);
+  }
+}
+console.log(sink, state.count, owner.total);
+//// guards-that-fail-once/copy-data-properties-context2.ts
+// A wide context object, half of whose fields are callbacks, copied with a few changes at many places.
+type State = { count: number; label: string };
+////= Context
+let state: State = { count: 0, label: "start" };
+let sink = 0;
+class Owner {
+  total = 0;
+  add(input: number): number { this.total += input; return this.total; }
+  size(input: string): number { return input.length + this.total; }
+}
+////= makeContext
+function withDepth(context: Context, depth: number): Context { return { ...context, depth }; }
+function withParent(context: Context, parent: string): Context { return { ...context, parent, value1: parent }; }
+function withHandler(context: Context, owner: Owner): Context { return { ...context, handler0: owner.add.bind(owner), setState: update => { state = update(state); sink++; } }; }
+function withOptions(context: Context): Context { return { ...context, options: { ...context.options, debug: true } }; }
+type Child = Context & { child: number; note?: string };
+function toChild(context: Context, child: number): Child { return { ...context, child }; }
+function fromChild({ child, note, ...context }: Child): Context { return context; }
+function use(context: Context): void {
+  context.handler0(1); context.handler2(2); context.setState(previous => ({ ...previous, count: previous.count + 1 }));
+  sink += (context.depth ?? 0) + context.value1.length + Object.keys(context).length + (context.handler1 ? context.handler1("x") : 0);
+}
+const rounds = Number(process.argv[2] ?? 3);
+const owner = new Owner();
+for (let round = 0; round < rounds; round++) {
+  for (let seed = 0; seed < 12; seed++) {
+    const context = makeContext(seed, owner);
+    const a = withDepth(context, round); const b = withParent(a, "p" + seed); const c = withHandler(b, owner); const d = withOptions(c);
+    const e = toChild(d, seed); const f = fromChild(e);
+    use(a); use(b); use(c); use(d); use(e); use(f);
+    if (round < 2) console.log(round, seed, Object.keys(d).join(","), d.depth, d.parent, d.value1, d.options.debug, typeof d.handler1, typeof d.handler3, d.getState().count, Object.keys(e).length, e.child, Object.keys(f).join(",") === Object.keys(d).join(","), f.handler0 === d.handler0, e.setState === d.setState);
+  }
+}
+console.log(sink, state.count, owner.total);
+//// guards-that-fail-once/copy-data-properties-env2.ts
+// The environment of a child process: the parent's, some names unset, some pinned, the path rewritten.
+const UNSET_KEYS = Array.from({ length: 24 }, (_, index) => "TOOL_SETTING_TO_UNSET_" + index);
+const FIXED: Readonly<Record<string, string>> = { TOOL_TERMINAL_PROMPT: "0", TOOL_OPTIONAL_LOCKS: "0", TOOL_PAGER: "cat", LC_ALL: "C" };
+
+function pinsFor(extra: Record<string, string> | undefined, repository: string | undefined): Record<string, string> {
+  return { ...FIXED, ...(repository !== undefined && { TOOL_DIRECTORY: repository }), ...extra };
+}
+
+function scopedEnvironment(extra: Record<string, string> | undefined, repository: string | undefined, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const pins = pinsFor(extra, repository);
+  const unset: Record<string, undefined> = {};
+  for (const key of UNSET_KEYS) unset[key] = undefined;
+  for (const key of Object.keys(base)) {
+    if (key.toUpperCase().startsWith("TOOL_CONFIG_")) unset[key] = undefined;
+  }
+  return { ...base, ...unset, ...pins };
+}
+
+function withAbsolutePath(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const kept = (value: string | undefined) => value === undefined ? undefined : value.split(":").filter(entry => entry.startsWith("/")).join(":");
+  const pathKeys = Object.keys(environment).filter(key => key === "PATH");
+  return { ...environment, ...Object.fromEntries(pathKeys.map(key => [key, kept(environment[key])])) };
+}
+
+const rounds = Number(process.argv[2] ?? 3);
+let sum = 0;
+for (let round = 0; round < rounds; round++) {
+  const environment = withAbsolutePath(scopedEnvironment(round & 1 ? { TOOL_EXTRA: "x" + (round & 3) } : undefined, round & 2 ? "/repository" : undefined));
+  // How many variables there are besides differs from run to run: a shell that starts the program adds its own.
+  sum += Object.keys(environment).filter(key => key.startsWith("TOOL_")).length + (environment.PATH ?? "").length;
+  if (round < 4) console.log(Object.keys(environment).filter(key => key.startsWith("TOOL_") || key === "PATH" || key === "LC_ALL").join(","), environment.PATH, environment.TOOL_DIRECTORY, environment.TOOL_EXTRA, "TOOL_SETTING_TO_UNSET_3" in environment, environment.TOOL_SETTING_TO_UNSET_3);
+}
+console.log(sum);
+//// guards-that-fail-once/copy-data-properties-kit-rows-member-before-spread.ts
+// Guards that fail once: copy data properties kit rows member before spread. It prints what plain Bun prints.
+const argv: string[] = process.argv;
+const ROW: string = argv[2] ?? "", COUNT: number = parseInt(argv[3] ?? "0", 10) | 0, LEN: number = parseInt(argv[4] ?? "2", 10) | 0, WORD: string = argv[5] ?? "lit_zz", VERB0: string = argv[6] ?? "DELETE", VERB1: string = argv[7] ?? "PATCH";
+let G0 = (LEN + -2) | 0, G1 = (LEN + -1) | 0, G2 = (LEN + 0) | 0, G3 = (LEN + 1) | 0, G4 = (LEN + 2) | 0, G5 = (LEN + 3) | 0, G6 = (LEN + 4) | 0, G7 = (LEN + 5) | 0, G8 = (LEN + 6) | 0, G9 = (LEN + 7) | 0, G10 = (LEN + 8) | 0, G11 = (LEN + 9) | 0, G12 = (LEN + 10) | 0, G13 = (LEN + 11) | 0, G14 = (LEN + 12) | 0, G15 = (LEN + 13) | 0;
+function fill(n: number, v: number): number[] { const r: number[] = []; for (let i = 0; i < n; ++i) r.push((v + i) | 0); return r; }
+////= T
+interface Opts { a?: number; b?: number; c?: number; d?: number; e?: string; f?: number; g?: number; h?: number; }
+const ringO: Opts[] = [{ a: LEN }, { b: 1, a: LEN }, { c: 2, a: 1, b: LEN }, { a: 1, d: LEN }, { e: WORD, a: LEN }, { f: 1, a: 2, e: WORD }, { g: LEN, a: 1 }, { h: 1, g: 2, a: LEN }];
+const A0 = new T(LEN - 1, VERB0), A1 = new T(LEN, VERB1); A0.next = A1; A1.next = A0; A0.nn = A1; A1.nn = A0; A0.any = A1; A1.any = A0; A0.f0 = LEN - 2; A1.f0 = LEN - 1;
+function member_before_spread_4(p: Opts): Opts {
+    if (G15 > 1000000) { G1 = ((G4 + 3) ^ G8) | 0; G2 = ((G5 + 5) ^ G9) | 0; G3 = ((G6 + 7) ^ G10) | 0; G4 = ((G7 + 9) ^ G11) | 0; G5 = ((G8 + 11) ^ G12) | 0; G6 = ((G9 + 13) ^ G13) | 0; G7 = ((G10 + 15) ^ G1) | 0; G8 = ((G11 + 17) ^ G2) | 0; G9 = ((G12 + 19) ^ G3) | 0; G10 = ((G13 + 21) ^ G4) | 0; G11 = ((G1 + 23) ^ G5) | 0; G12 = ((G2 + 25) ^ G6) | 0; G13 = ((G3 + 27) ^ G7) | 0; G1 = ((G4 + 29) ^ G8) | 0; G2 = ((G5 + 31) ^ G9) | 0; G3 = ((G6 + 33) ^ G10) | 0; G4 = ((G7 + 35) ^ G11) | 0; G5 = ((G8 + 37) ^ G12) | 0; G6 = ((G9 + 39) ^ G13) | 0; G7 = ((G10 + 41) ^ G1) | 0; G8 = ((G11 + 43) ^ G2) | 0; G9 = ((G12 + 45) ^ G3) | 0; G10 = ((G13 + 47) ^ G4) | 0; G11 = ((G1 + 49) ^ G5) | 0; G12 = ((G2 + 51) ^ G6) | 0; G13 = ((G3 + 53) ^ G7) | 0; G1 = ((G4 + 55) ^ G8) | 0; G2 = ((G5 + 57) ^ G9) | 0; G3 = ((G6 + 59) ^ G10) | 0; G4 = ((G7 + 61) ^ G11) | 0; G5 = ((G8 + 63) ^ G12) | 0; G6 = ((G9 + 65) ^ G13) | 0; G7 = ((G10 + 67) ^ G1) | 0; G8 = ((G11 + 69) ^ G2) | 0; G9 = ((G12 + 71) ^ G3) | 0; G10 = ((G13 + 73) ^ G4) | 0; G11 = ((G1 + 75) ^ G5) | 0; G12 = ((G2 + 77) ^ G6) | 0; G13 = ((G3 + 79) ^ G7) | 0; G1 = ((G4 + 81) ^ G8) | 0; G2 = ((G5 + 83) ^ G9) | 0; G3 = ((G6 + 85) ^ G10) | 0; G4 = ((G7 + 87) ^ G11) | 0; G5 = ((G8 + 89) ^ G12) | 0; G6 = ((G9 + 91) ^ G13) | 0; G7 = ((G10 + 93) ^ G1) | 0; G8 = ((G11 + 95) ^ G2) | 0; G9 = ((G12 + 97) ^ G3) | 0; G10 = ((G13 + 99) ^ G4) | 0; G11 = ((G1 + 101) ^ G5) | 0; G12 = ((G2 + 103) ^ G6) | 0; G13 = ((G3 + 105) ^ G7) | 0; G1 = ((G4 + 107) ^ G8) | 0; G2 = ((G5 + 109) ^ G9) | 0; G3 = ((G6 + 111) ^ G10) | 0; G4 = ((G7 + 113) ^ G11) | 0; G5 = ((G8 + 115) ^ G12) | 0; G6 = ((G9 + 117) ^ G13) | 0; G7 = ((G10 + 119) ^ G1) | 0; G8 = ((G11 + 121) ^ G2) | 0; } 
+    p = { h: 0, ...p };
+    p = { h: 1, ...p };
+    p = { h: 2, ...p };
+    p = { h: 3, ...p };
+    return p;
+}
+////= lines-8	drive_member_before_spread_4	member_before_spread_4	h
+function member_before_spread_12(p: Opts): Opts {
+    if (G15 > 1000000) { G1 = ((G4 + 3) ^ G8) | 0; G2 = ((G5 + 5) ^ G9) | 0; G3 = ((G6 + 7) ^ G10) | 0; G4 = ((G7 + 9) ^ G11) | 0; G5 = ((G8 + 11) ^ G12) | 0; G6 = ((G9 + 13) ^ G13) | 0; G7 = ((G10 + 15) ^ G1) | 0; G8 = ((G11 + 17) ^ G2) | 0; G9 = ((G12 + 19) ^ G3) | 0; G10 = ((G13 + 21) ^ G4) | 0; G11 = ((G1 + 23) ^ G5) | 0; G12 = ((G2 + 25) ^ G6) | 0; G13 = ((G3 + 27) ^ G7) | 0; G1 = ((G4 + 29) ^ G8) | 0; G2 = ((G5 + 31) ^ G9) | 0; G3 = ((G6 + 33) ^ G10) | 0; G4 = ((G7 + 35) ^ G11) | 0; G5 = ((G8 + 37) ^ G12) | 0; G6 = ((G9 + 39) ^ G13) | 0; G7 = ((G10 + 41) ^ G1) | 0; G8 = ((G11 + 43) ^ G2) | 0; G9 = ((G12 + 45) ^ G3) | 0; G10 = ((G13 + 47) ^ G4) | 0; G11 = ((G1 + 49) ^ G5) | 0; G12 = ((G2 + 51) ^ G6) | 0; G13 = ((G3 + 53) ^ G7) | 0; G1 = ((G4 + 55) ^ G8) | 0; G2 = ((G5 + 57) ^ G9) | 0; G3 = ((G6 + 59) ^ G10) | 0; G4 = ((G7 + 61) ^ G11) | 0; G5 = ((G8 + 63) ^ G12) | 0; G6 = ((G9 + 65) ^ G13) | 0; G7 = ((G10 + 67) ^ G1) | 0; G8 = ((G11 + 69) ^ G2) | 0; G9 = ((G12 + 71) ^ G3) | 0; G10 = ((G13 + 73) ^ G4) | 0; G11 = ((G1 + 75) ^ G5) | 0; G12 = ((G2 + 77) ^ G6) | 0; G13 = ((G3 + 79) ^ G7) | 0; G1 = ((G4 + 81) ^ G8) | 0; G2 = ((G5 + 83) ^ G9) | 0; G3 = ((G6 + 85) ^ G10) | 0; G4 = ((G7 + 87) ^ G11) | 0; G5 = ((G8 + 89) ^ G12) | 0; G6 = ((G9 + 91) ^ G13) | 0; G7 = ((G10 + 93) ^ G1) | 0; G8 = ((G11 + 95) ^ G2) | 0; G9 = ((G12 + 97) ^ G3) | 0; G10 = ((G13 + 99) ^ G4) | 0; G11 = ((G1 + 101) ^ G5) | 0; G12 = ((G2 + 103) ^ G6) | 0; G13 = ((G3 + 105) ^ G7) | 0; G1 = ((G4 + 107) ^ G8) | 0; G2 = ((G5 + 109) ^ G9) | 0; G3 = ((G6 + 111) ^ G10) | 0; G4 = ((G7 + 113) ^ G11) | 0; G5 = ((G8 + 115) ^ G12) | 0; G6 = ((G9 + 117) ^ G13) | 0; G7 = ((G10 + 119) ^ G1) | 0; G8 = ((G11 + 121) ^ G2) | 0; } 
+    p = { h: 0, ...p };
+    p = { h: 1, ...p };
+    p = { h: 2, ...p };
+    p = { h: 3, ...p };
+    p = { h: 4, ...p };
+    p = { h: 5, ...p };
+    p = { h: 6, ...p };
+    p = { h: 7, ...p };
+    p = { h: 8, ...p };
+    p = { h: 9, ...p };
+    p = { h: 10, ...p };
+    p = { h: 11, ...p };
+    return p;
+}
+////= lines-8	drive_member_before_spread_12	member_before_spread_12	h
+const rows = new Map<string, (n: number) => number>([["member_before_spread_4", drive_member_before_spread_4], ["member_before_spread_12", drive_member_before_spread_12]]);
+const chosen = rows.get(ROW);
+if (chosen !== undefined) console.log(ROW, chosen(COUNT)); else console.log("no row", ROW);
+//// guards-that-fail-once/copy-data-properties-kit-rows-rest-of-many-orders.ts
+// Guards that fail once: copy data properties kit rows rest of many orders. It prints what plain Bun prints.
+const argv: string[] = process.argv;
+const ROW: string = argv[2] ?? "", COUNT: number = parseInt(argv[3] ?? "0", 10) | 0, LEN: number = parseInt(argv[4] ?? "2", 10) | 0, WORD: string = argv[5] ?? "lit_zz", VERB0: string = argv[6] ?? "DELETE", VERB1: string = argv[7] ?? "PATCH";
+let G0 = (LEN + -2) | 0, G1 = (LEN + -1) | 0, G2 = (LEN + 0) | 0, G3 = (LEN + 1) | 0, G4 = (LEN + 2) | 0, G5 = (LEN + 3) | 0, G6 = (LEN + 4) | 0, G7 = (LEN + 5) | 0, G8 = (LEN + 6) | 0, G9 = (LEN + 7) | 0, G10 = (LEN + 8) | 0, G11 = (LEN + 9) | 0, G12 = (LEN + 10) | 0, G13 = (LEN + 11) | 0, G14 = (LEN + 12) | 0, G15 = (LEN + 13) | 0;
+function fill(n: number, v: number): number[] { const r: number[] = []; for (let i = 0; i < n; ++i) r.push((v + i) | 0); return r; }
+////= T
+interface Opts { a?: number; b?: number; c?: number; d?: number; e?: string; f?: number; g?: number; h?: number; }
+const ringO: Opts[] = [{ a: LEN }, { b: 1, a: LEN }, { c: 2, a: 1, b: LEN }, { a: 1, d: LEN }, { e: WORD, a: LEN }, { f: 1, a: 2, e: WORD }, { g: LEN, a: 1 }, { h: 1, g: 2, a: LEN }];
+const A0 = new T(LEN - 1, VERB0), A1 = new T(LEN, VERB1); A0.next = A1; A1.next = A0; A0.nn = A1; A1.nn = A0; A0.any = A1; A1.any = A0; A0.f0 = LEN - 2; A1.f0 = LEN - 1;
+function rest_of_many_orders_4(p: Opts): Opts {
+    if (G15 > 1000000) { G1 = ((G4 + 3) ^ G8) | 0; G2 = ((G5 + 5) ^ G9) | 0; G3 = ((G6 + 7) ^ G10) | 0; G4 = ((G7 + 9) ^ G11) | 0; G5 = ((G8 + 11) ^ G12) | 0; G6 = ((G9 + 13) ^ G13) | 0; G7 = ((G10 + 15) ^ G1) | 0; G8 = ((G11 + 17) ^ G2) | 0; G9 = ((G12 + 19) ^ G3) | 0; G10 = ((G13 + 21) ^ G4) | 0; G11 = ((G1 + 23) ^ G5) | 0; G12 = ((G2 + 25) ^ G6) | 0; G13 = ((G3 + 27) ^ G7) | 0; G1 = ((G4 + 29) ^ G8) | 0; G2 = ((G5 + 31) ^ G9) | 0; G3 = ((G6 + 33) ^ G10) | 0; G4 = ((G7 + 35) ^ G11) | 0; G5 = ((G8 + 37) ^ G12) | 0; G6 = ((G9 + 39) ^ G13) | 0; G7 = ((G10 + 41) ^ G1) | 0; G8 = ((G11 + 43) ^ G2) | 0; G9 = ((G12 + 45) ^ G3) | 0; G10 = ((G13 + 47) ^ G4) | 0; G11 = ((G1 + 49) ^ G5) | 0; G12 = ((G2 + 51) ^ G6) | 0; G13 = ((G3 + 53) ^ G7) | 0; G1 = ((G4 + 55) ^ G8) | 0; G2 = ((G5 + 57) ^ G9) | 0; G3 = ((G6 + 59) ^ G10) | 0; G4 = ((G7 + 61) ^ G11) | 0; G5 = ((G8 + 63) ^ G12) | 0; G6 = ((G9 + 65) ^ G13) | 0; G7 = ((G10 + 67) ^ G1) | 0; G8 = ((G11 + 69) ^ G2) | 0; G9 = ((G12 + 71) ^ G3) | 0; G10 = ((G13 + 73) ^ G4) | 0; G11 = ((G1 + 75) ^ G5) | 0; G12 = ((G2 + 77) ^ G6) | 0; G13 = ((G3 + 79) ^ G7) | 0; G1 = ((G4 + 81) ^ G8) | 0; G2 = ((G5 + 83) ^ G9) | 0; G3 = ((G6 + 85) ^ G10) | 0; G4 = ((G7 + 87) ^ G11) | 0; G5 = ((G8 + 89) ^ G12) | 0; G6 = ((G9 + 91) ^ G13) | 0; G7 = ((G10 + 93) ^ G1) | 0; G8 = ((G11 + 95) ^ G2) | 0; G9 = ((G12 + 97) ^ G3) | 0; G10 = ((G13 + 99) ^ G4) | 0; G11 = ((G1 + 101) ^ G5) | 0; G12 = ((G2 + 103) ^ G6) | 0; G13 = ((G3 + 105) ^ G7) | 0; G1 = ((G4 + 107) ^ G8) | 0; G2 = ((G5 + 109) ^ G9) | 0; G3 = ((G6 + 111) ^ G10) | 0; G4 = ((G7 + 113) ^ G11) | 0; G5 = ((G8 + 115) ^ G12) | 0; G6 = ((G9 + 117) ^ G13) | 0; G7 = ((G10 + 119) ^ G1) | 0; G8 = ((G11 + 121) ^ G2) | 0; } 
+    let r = 0;
+    { const { a, ...rest } = p; r ^= a ?? 0; rest.c = r; p = rest; }
+    { const { a, ...rest } = p; r ^= a ?? 1; rest.c = r; p = rest; }
+    { const { a, ...rest } = p; r ^= a ?? 2; rest.c = r; p = rest; }
+    { const { a, ...rest } = p; r ^= a ?? 3; rest.c = r; p = rest; }
+    return p;
+}
+////= lines-8	drive_rest_of_many_orders_4	rest_of_many_orders_4	c
+function rest_of_many_orders_12(p: Opts): Opts {
+    if (G15 > 1000000) { G1 = ((G4 + 3) ^ G8) | 0; G2 = ((G5 + 5) ^ G9) | 0; G3 = ((G6 + 7) ^ G10) | 0; G4 = ((G7 + 9) ^ G11) | 0; G5 = ((G8 + 11) ^ G12) | 0; G6 = ((G9 + 13) ^ G13) | 0; G7 = ((G10 + 15) ^ G1) | 0; G8 = ((G11 + 17) ^ G2) | 0; G9 = ((G12 + 19) ^ G3) | 0; G10 = ((G13 + 21) ^ G4) | 0; G11 = ((G1 + 23) ^ G5) | 0; G12 = ((G2 + 25) ^ G6) | 0; G13 = ((G3 + 27) ^ G7) | 0; G1 = ((G4 + 29) ^ G8) | 0; G2 = ((G5 + 31) ^ G9) | 0; G3 = ((G6 + 33) ^ G10) | 0; G4 = ((G7 + 35) ^ G11) | 0; G5 = ((G8 + 37) ^ G12) | 0; G6 = ((G9 + 39) ^ G13) | 0; G7 = ((G10 + 41) ^ G1) | 0; G8 = ((G11 + 43) ^ G2) | 0; G9 = ((G12 + 45) ^ G3) | 0; G10 = ((G13 + 47) ^ G4) | 0; G11 = ((G1 + 49) ^ G5) | 0; G12 = ((G2 + 51) ^ G6) | 0; G13 = ((G3 + 53) ^ G7) | 0; G1 = ((G4 + 55) ^ G8) | 0; G2 = ((G5 + 57) ^ G9) | 0; G3 = ((G6 + 59) ^ G10) | 0; G4 = ((G7 + 61) ^ G11) | 0; G5 = ((G8 + 63) ^ G12) | 0; G6 = ((G9 + 65) ^ G13) | 0; G7 = ((G10 + 67) ^ G1) | 0; G8 = ((G11 + 69) ^ G2) | 0; G9 = ((G12 + 71) ^ G3) | 0; G10 = ((G13 + 73) ^ G4) | 0; G11 = ((G1 + 75) ^ G5) | 0; G12 = ((G2 + 77) ^ G6) | 0; G13 = ((G3 + 79) ^ G7) | 0; G1 = ((G4 + 81) ^ G8) | 0; G2 = ((G5 + 83) ^ G9) | 0; G3 = ((G6 + 85) ^ G10) | 0; G4 = ((G7 + 87) ^ G11) | 0; G5 = ((G8 + 89) ^ G12) | 0; G6 = ((G9 + 91) ^ G13) | 0; G7 = ((G10 + 93) ^ G1) | 0; G8 = ((G11 + 95) ^ G2) | 0; G9 = ((G12 + 97) ^ G3) | 0; G10 = ((G13 + 99) ^ G4) | 0; G11 = ((G1 + 101) ^ G5) | 0; G12 = ((G2 + 103) ^ G6) | 0; G13 = ((G3 + 105) ^ G7) | 0; G1 = ((G4 + 107) ^ G8) | 0; G2 = ((G5 + 109) ^ G9) | 0; G3 = ((G6 + 111) ^ G10) | 0; G4 = ((G7 + 113) ^ G11) | 0; G5 = ((G8 + 115) ^ G12) | 0; G6 = ((G9 + 117) ^ G13) | 0; G7 = ((G10 + 119) ^ G1) | 0; G8 = ((G11 + 121) ^ G2) | 0; } 
+    let r = 0;
+    { const { a, ...rest } = p; r ^= a ?? 0; rest.c = r; p = rest; }
+    { const { a, ...rest } = p; r ^= a ?? 1; rest.c = r; p = rest; }
+    { const { a, ...rest } = p; r ^= a ?? 2; rest.c = r; p = rest; }
+    { const { a, ...rest } = p; r ^= a ?? 3; rest.c = r; p = rest; }
+    { const { a, ...rest } = p; r ^= a ?? 4; rest.c = r; p = rest; }
+    { const { a, ...rest } = p; r ^= a ?? 5; rest.c = r; p = rest; }
+    { const { a, ...rest } = p; r ^= a ?? 6; rest.c = r; p = rest; }
+    { const { a, ...rest } = p; r ^= a ?? 7; rest.c = r; p = rest; }
+    { const { a, ...rest } = p; r ^= a ?? 8; rest.c = r; p = rest; }
+    { const { a, ...rest } = p; r ^= a ?? 9; rest.c = r; p = rest; }
+    { const { a, ...rest } = p; r ^= a ?? 10; rest.c = r; p = rest; }
+    { const { a, ...rest } = p; r ^= a ?? 11; rest.c = r; p = rest; }
+    return p;
+}
+////= lines-8	drive_rest_of_many_orders_12	rest_of_many_orders_12	c
+const rows = new Map<string, (n: number) => number>([["rest_of_many_orders_4", drive_rest_of_many_orders_4], ["rest_of_many_orders_12", drive_rest_of_many_orders_12]]);
+const chosen = rows.get(ROW);
+if (chosen !== undefined) console.log(ROW, chosen(COUNT)); else console.log("no row", ROW);
+//// guards-that-fail-once/copy-data-properties-kit-rows-spread-into-another-layout.ts
+// Guards that fail once: copy data properties kit rows spread into another layout. It prints what plain Bun prints.
+const argv: string[] = process.argv;
+const ROW: string = argv[2] ?? "", COUNT: number = parseInt(argv[3] ?? "0", 10) | 0, LEN: number = parseInt(argv[4] ?? "2", 10) | 0, WORD: string = argv[5] ?? "lit_zz", VERB0: string = argv[6] ?? "DELETE", VERB1: string = argv[7] ?? "PATCH";
+let G0 = (LEN + -2) | 0, G1 = (LEN + -1) | 0, G2 = (LEN + 0) | 0, G3 = (LEN + 1) | 0, G4 = (LEN + 2) | 0, G5 = (LEN + 3) | 0, G6 = (LEN + 4) | 0, G7 = (LEN + 5) | 0, G8 = (LEN + 6) | 0, G9 = (LEN + 7) | 0, G10 = (LEN + 8) | 0, G11 = (LEN + 9) | 0, G12 = (LEN + 10) | 0, G13 = (LEN + 11) | 0, G14 = (LEN + 12) | 0, G15 = (LEN + 13) | 0;
+function fill(n: number, v: number): number[] { const r: number[] = []; for (let i = 0; i < n; ++i) r.push((v + i) | 0); return r; }
+////= T
+interface Opts { a?: number; b?: number; c?: number; d?: number; e?: string; f?: number; g?: number; h?: number; }
+const ringO: Opts[] = [{ a: LEN }, { b: 1, a: LEN }, { c: 2, a: 1, b: LEN }, { a: 1, d: LEN }, { e: WORD, a: LEN }, { f: 1, a: 2, e: WORD }, { g: LEN, a: 1 }, { h: 1, g: 2, a: LEN }];
+interface Wide extends Opts { z: number; }
+function widened(p: Opts, k: number): Wide { if (G15 > 1000000) { G1 = ((G4 + 3) ^ G8) | 0; G2 = ((G5 + 5) ^ G9) | 0; G3 = ((G6 + 7) ^ G10) | 0; G4 = ((G7 + 9) ^ G11) | 0; G5 = ((G8 + 11) ^ G12) | 0; G6 = ((G9 + 13) ^ G13) | 0; G7 = ((G10 + 15) ^ G1) | 0; G8 = ((G11 + 17) ^ G2) | 0; G9 = ((G12 + 19) ^ G3) | 0; G10 = ((G13 + 21) ^ G4) | 0; G11 = ((G1 + 23) ^ G5) | 0; G12 = ((G2 + 25) ^ G6) | 0; G13 = ((G3 + 27) ^ G7) | 0; G1 = ((G4 + 29) ^ G8) | 0; G2 = ((G5 + 31) ^ G9) | 0; G3 = ((G6 + 33) ^ G10) | 0; G4 = ((G7 + 35) ^ G11) | 0; G5 = ((G8 + 37) ^ G12) | 0; G6 = ((G9 + 39) ^ G13) | 0; G7 = ((G10 + 41) ^ G1) | 0; G8 = ((G11 + 43) ^ G2) | 0; G9 = ((G12 + 45) ^ G3) | 0; G10 = ((G13 + 47) ^ G4) | 0; G11 = ((G1 + 49) ^ G5) | 0; G12 = ((G2 + 51) ^ G6) | 0; G13 = ((G3 + 53) ^ G7) | 0; G1 = ((G4 + 55) ^ G8) | 0; G2 = ((G5 + 57) ^ G9) | 0; G3 = ((G6 + 59) ^ G10) | 0; G4 = ((G7 + 61) ^ G11) | 0; G5 = ((G8 + 63) ^ G12) | 0; G6 = ((G9 + 65) ^ G13) | 0; G7 = ((G10 + 67) ^ G1) | 0; G8 = ((G11 + 69) ^ G2) | 0; G9 = ((G12 + 71) ^ G3) | 0; G10 = ((G13 + 73) ^ G4) | 0; G11 = ((G1 + 75) ^ G5) | 0; G12 = ((G2 + 77) ^ G6) | 0; G13 = ((G3 + 79) ^ G7) | 0; G1 = ((G4 + 81) ^ G8) | 0; G2 = ((G5 + 83) ^ G9) | 0; G3 = ((G6 + 85) ^ G10) | 0; G4 = ((G7 + 87) ^ G11) | 0; G5 = ((G8 + 89) ^ G12) | 0; G6 = ((G9 + 91) ^ G13) | 0; G7 = ((G10 + 93) ^ G1) | 0; G8 = ((G11 + 95) ^ G2) | 0; G9 = ((G12 + 97) ^ G3) | 0; G10 = ((G13 + 99) ^ G4) | 0; G11 = ((G1 + 101) ^ G5) | 0; G12 = ((G2 + 103) ^ G6) | 0; G13 = ((G3 + 105) ^ G7) | 0; G1 = ((G4 + 107) ^ G8) | 0; G2 = ((G5 + 109) ^ G9) | 0; G3 = ((G6 + 111) ^ G10) | 0; G4 = ((G7 + 113) ^ G11) | 0; G5 = ((G8 + 115) ^ G12) | 0; G6 = ((G9 + 117) ^ G13) | 0; G7 = ((G10 + 119) ^ G1) | 0; G8 = ((G11 + 121) ^ G2) | 0; } return { ...p, z: k }; }
+const A0 = new T(LEN - 1, VERB0), A1 = new T(LEN, VERB1); A0.next = A1; A1.next = A0; A0.nn = A1; A1.nn = A0; A0.any = A1; A1.any = A0; A0.f0 = LEN - 2; A1.f0 = LEN - 1;
+function spread_into_another_layout_4(p: Opts): Opts {
+    if (G15 > 1000000) { G1 = ((G4 + 3) ^ G8) | 0; G2 = ((G5 + 5) ^ G9) | 0; G3 = ((G6 + 7) ^ G10) | 0; G4 = ((G7 + 9) ^ G11) | 0; G5 = ((G8 + 11) ^ G12) | 0; G6 = ((G9 + 13) ^ G13) | 0; G7 = ((G10 + 15) ^ G1) | 0; G8 = ((G11 + 17) ^ G2) | 0; G9 = ((G12 + 19) ^ G3) | 0; G10 = ((G13 + 21) ^ G4) | 0; G11 = ((G1 + 23) ^ G5) | 0; G12 = ((G2 + 25) ^ G6) | 0; G13 = ((G3 + 27) ^ G7) | 0; G1 = ((G4 + 29) ^ G8) | 0; G2 = ((G5 + 31) ^ G9) | 0; G3 = ((G6 + 33) ^ G10) | 0; G4 = ((G7 + 35) ^ G11) | 0; G5 = ((G8 + 37) ^ G12) | 0; G6 = ((G9 + 39) ^ G13) | 0; G7 = ((G10 + 41) ^ G1) | 0; G8 = ((G11 + 43) ^ G2) | 0; G9 = ((G12 + 45) ^ G3) | 0; G10 = ((G13 + 47) ^ G4) | 0; G11 = ((G1 + 49) ^ G5) | 0; G12 = ((G2 + 51) ^ G6) | 0; G13 = ((G3 + 53) ^ G7) | 0; G1 = ((G4 + 55) ^ G8) | 0; G2 = ((G5 + 57) ^ G9) | 0; G3 = ((G6 + 59) ^ G10) | 0; G4 = ((G7 + 61) ^ G11) | 0; G5 = ((G8 + 63) ^ G12) | 0; G6 = ((G9 + 65) ^ G13) | 0; G7 = ((G10 + 67) ^ G1) | 0; G8 = ((G11 + 69) ^ G2) | 0; G9 = ((G12 + 71) ^ G3) | 0; G10 = ((G13 + 73) ^ G4) | 0; G11 = ((G1 + 75) ^ G5) | 0; G12 = ((G2 + 77) ^ G6) | 0; G13 = ((G3 + 79) ^ G7) | 0; G1 = ((G4 + 81) ^ G8) | 0; G2 = ((G5 + 83) ^ G9) | 0; G3 = ((G6 + 85) ^ G10) | 0; G4 = ((G7 + 87) ^ G11) | 0; G5 = ((G8 + 89) ^ G12) | 0; G6 = ((G9 + 91) ^ G13) | 0; G7 = ((G10 + 93) ^ G1) | 0; G8 = ((G11 + 95) ^ G2) | 0; G9 = ((G12 + 97) ^ G3) | 0; G10 = ((G13 + 99) ^ G4) | 0; G11 = ((G1 + 101) ^ G5) | 0; G12 = ((G2 + 103) ^ G6) | 0; G13 = ((G3 + 105) ^ G7) | 0; G1 = ((G4 + 107) ^ G8) | 0; G2 = ((G5 + 109) ^ G9) | 0; G3 = ((G6 + 111) ^ G10) | 0; G4 = ((G7 + 113) ^ G11) | 0; G5 = ((G8 + 115) ^ G12) | 0; G6 = ((G9 + 117) ^ G13) | 0; G7 = ((G10 + 119) ^ G1) | 0; G8 = ((G11 + 121) ^ G2) | 0; } 
+    p = widened(p, 0);
+    p = widened(p, 1);
+    p = widened(p, 2);
+    p = widened(p, 3);
+    return p;
+}
+////= lines-8	drive_spread_into_another_layout_4	spread_into_another_layout_4	a
+function spread_into_another_layout_12(p: Opts): Opts {
+    if (G15 > 1000000) { G1 = ((G4 + 3) ^ G8) | 0; G2 = ((G5 + 5) ^ G9) | 0; G3 = ((G6 + 7) ^ G10) | 0; G4 = ((G7 + 9) ^ G11) | 0; G5 = ((G8 + 11) ^ G12) | 0; G6 = ((G9 + 13) ^ G13) | 0; G7 = ((G10 + 15) ^ G1) | 0; G8 = ((G11 + 17) ^ G2) | 0; G9 = ((G12 + 19) ^ G3) | 0; G10 = ((G13 + 21) ^ G4) | 0; G11 = ((G1 + 23) ^ G5) | 0; G12 = ((G2 + 25) ^ G6) | 0; G13 = ((G3 + 27) ^ G7) | 0; G1 = ((G4 + 29) ^ G8) | 0; G2 = ((G5 + 31) ^ G9) | 0; G3 = ((G6 + 33) ^ G10) | 0; G4 = ((G7 + 35) ^ G11) | 0; G5 = ((G8 + 37) ^ G12) | 0; G6 = ((G9 + 39) ^ G13) | 0; G7 = ((G10 + 41) ^ G1) | 0; G8 = ((G11 + 43) ^ G2) | 0; G9 = ((G12 + 45) ^ G3) | 0; G10 = ((G13 + 47) ^ G4) | 0; G11 = ((G1 + 49) ^ G5) | 0; G12 = ((G2 + 51) ^ G6) | 0; G13 = ((G3 + 53) ^ G7) | 0; G1 = ((G4 + 55) ^ G8) | 0; G2 = ((G5 + 57) ^ G9) | 0; G3 = ((G6 + 59) ^ G10) | 0; G4 = ((G7 + 61) ^ G11) | 0; G5 = ((G8 + 63) ^ G12) | 0; G6 = ((G9 + 65) ^ G13) | 0; G7 = ((G10 + 67) ^ G1) | 0; G8 = ((G11 + 69) ^ G2) | 0; G9 = ((G12 + 71) ^ G3) | 0; G10 = ((G13 + 73) ^ G4) | 0; G11 = ((G1 + 75) ^ G5) | 0; G12 = ((G2 + 77) ^ G6) | 0; G13 = ((G3 + 79) ^ G7) | 0; G1 = ((G4 + 81) ^ G8) | 0; G2 = ((G5 + 83) ^ G9) | 0; G3 = ((G6 + 85) ^ G10) | 0; G4 = ((G7 + 87) ^ G11) | 0; G5 = ((G8 + 89) ^ G12) | 0; G6 = ((G9 + 91) ^ G13) | 0; G7 = ((G10 + 93) ^ G1) | 0; G8 = ((G11 + 95) ^ G2) | 0; G9 = ((G12 + 97) ^ G3) | 0; G10 = ((G13 + 99) ^ G4) | 0; G11 = ((G1 + 101) ^ G5) | 0; G12 = ((G2 + 103) ^ G6) | 0; G13 = ((G3 + 105) ^ G7) | 0; G1 = ((G4 + 107) ^ G8) | 0; G2 = ((G5 + 109) ^ G9) | 0; G3 = ((G6 + 111) ^ G10) | 0; G4 = ((G7 + 113) ^ G11) | 0; G5 = ((G8 + 115) ^ G12) | 0; G6 = ((G9 + 117) ^ G13) | 0; G7 = ((G10 + 119) ^ G1) | 0; G8 = ((G11 + 121) ^ G2) | 0; } 
+    p = widened(p, 0);
+    p = widened(p, 1);
+    p = widened(p, 2);
+    p = widened(p, 3);
+    p = widened(p, 4);
+    p = widened(p, 5);
+    p = widened(p, 6);
+    p = widened(p, 7);
+    p = widened(p, 8);
+    p = widened(p, 9);
+    p = widened(p, 10);
+    p = widened(p, 11);
+    return p;
+}
+////= lines-8	drive_spread_into_another_layout_12	spread_into_another_layout_12	a
+const rows = new Map<string, (n: number) => number>([["spread_into_another_layout_4", drive_spread_into_another_layout_4], ["spread_into_another_layout_12", drive_spread_into_another_layout_12]]);
+const chosen = rows.get(ROW);
+if (chosen !== undefined) console.log(ROW, chosen(COUNT)); else console.log("no row", ROW);
+//// guards-that-fail-once/copy-data-properties-kit-rows-spread-of-dictionary.ts
+// Guards that fail once: copy data properties kit rows spread of dictionary. It prints what plain Bun prints.
+const argv: string[] = process.argv;
+const ROW: string = argv[2] ?? "", COUNT: number = parseInt(argv[3] ?? "0", 10) | 0, LEN: number = parseInt(argv[4] ?? "2", 10) | 0, WORD: string = argv[5] ?? "lit_zz", VERB0: string = argv[6] ?? "DELETE", VERB1: string = argv[7] ?? "PATCH";
+let G0 = (LEN + -2) | 0, G1 = (LEN + -1) | 0, G2 = (LEN + 0) | 0, G3 = (LEN + 1) | 0, G4 = (LEN + 2) | 0, G5 = (LEN + 3) | 0, G6 = (LEN + 4) | 0, G7 = (LEN + 5) | 0, G8 = (LEN + 6) | 0, G9 = (LEN + 7) | 0, G10 = (LEN + 8) | 0, G11 = (LEN + 9) | 0, G12 = (LEN + 10) | 0, G13 = (LEN + 11) | 0, G14 = (LEN + 12) | 0, G15 = (LEN + 13) | 0;
+function fill(n: number, v: number): number[] { const r: number[] = []; for (let i = 0; i < n; ++i) r.push((v + i) | 0); return r; }
+////= T
+const keys8: string[] = []; for (let i = 0; i < 8; ++i) keys8.push(WORD + i);
+let dict8: Record<string, number> = {}; for (const key of keys8) dict8[key] = LEN;
+const A0 = new T(LEN - 1, VERB0), A1 = new T(LEN, VERB1); A0.next = A1; A1.next = A0; A0.nn = A1; A1.nn = A0; A0.any = A1; A1.any = A0; A0.f0 = LEN - 2; A1.f0 = LEN - 1;
+function spread_of_dictionary_4(d: Record<string, number>, key: string): Record<string, number> {
+    if (G15 > 1000000) { G1 = ((G4 + 3) ^ G8) | 0; G2 = ((G5 + 5) ^ G9) | 0; G3 = ((G6 + 7) ^ G10) | 0; G4 = ((G7 + 9) ^ G11) | 0; G5 = ((G8 + 11) ^ G12) | 0; G6 = ((G9 + 13) ^ G13) | 0; G7 = ((G10 + 15) ^ G1) | 0; G8 = ((G11 + 17) ^ G2) | 0; G9 = ((G12 + 19) ^ G3) | 0; G10 = ((G13 + 21) ^ G4) | 0; G11 = ((G1 + 23) ^ G5) | 0; G12 = ((G2 + 25) ^ G6) | 0; G13 = ((G3 + 27) ^ G7) | 0; G1 = ((G4 + 29) ^ G8) | 0; G2 = ((G5 + 31) ^ G9) | 0; G3 = ((G6 + 33) ^ G10) | 0; G4 = ((G7 + 35) ^ G11) | 0; G5 = ((G8 + 37) ^ G12) | 0; G6 = ((G9 + 39) ^ G13) | 0; G7 = ((G10 + 41) ^ G1) | 0; G8 = ((G11 + 43) ^ G2) | 0; G9 = ((G12 + 45) ^ G3) | 0; G10 = ((G13 + 47) ^ G4) | 0; G11 = ((G1 + 49) ^ G5) | 0; G12 = ((G2 + 51) ^ G6) | 0; G13 = ((G3 + 53) ^ G7) | 0; G1 = ((G4 + 55) ^ G8) | 0; G2 = ((G5 + 57) ^ G9) | 0; G3 = ((G6 + 59) ^ G10) | 0; G4 = ((G7 + 61) ^ G11) | 0; G5 = ((G8 + 63) ^ G12) | 0; G6 = ((G9 + 65) ^ G13) | 0; G7 = ((G10 + 67) ^ G1) | 0; G8 = ((G11 + 69) ^ G2) | 0; G9 = ((G12 + 71) ^ G3) | 0; G10 = ((G13 + 73) ^ G4) | 0; G11 = ((G1 + 75) ^ G5) | 0; G12 = ((G2 + 77) ^ G6) | 0; G13 = ((G3 + 79) ^ G7) | 0; G1 = ((G4 + 81) ^ G8) | 0; G2 = ((G5 + 83) ^ G9) | 0; G3 = ((G6 + 85) ^ G10) | 0; G4 = ((G7 + 87) ^ G11) | 0; G5 = ((G8 + 89) ^ G12) | 0; G6 = ((G9 + 91) ^ G13) | 0; G7 = ((G10 + 93) ^ G1) | 0; G8 = ((G11 + 95) ^ G2) | 0; G9 = ((G12 + 97) ^ G3) | 0; G10 = ((G13 + 99) ^ G4) | 0; G11 = ((G1 + 101) ^ G5) | 0; G12 = ((G2 + 103) ^ G6) | 0; G13 = ((G3 + 105) ^ G7) | 0; G1 = ((G4 + 107) ^ G8) | 0; G2 = ((G5 + 109) ^ G9) | 0; G3 = ((G6 + 111) ^ G10) | 0; G4 = ((G7 + 113) ^ G11) | 0; G5 = ((G8 + 115) ^ G12) | 0; G6 = ((G9 + 117) ^ G13) | 0; G7 = ((G10 + 119) ^ G1) | 0; G8 = ((G11 + 121) ^ G2) | 0; } 
+    d = { ...d, [key]: 0 };
+    d = { ...d, [key]: 1 };
+    d = { ...d, [key]: 2 };
+    d = { ...d, [key]: 3 };
+    return d;
+}
+function drive_spread_of_dictionary_4(n: number): number {
+    let a: T = A0, x = LEN | 0, y = 0.5; 
+    for (let i = 0; i < n; ++i) { dict8 = spread_of_dictionary_4(dict8, keys8[i & 7]); a = a.next; }
+    return (x ^ a.f0 ^ (y | 0) ^ (dict8[keys8[0]] ?? 0)) | 0;
+}
+function spread_of_dictionary_12(d: Record<string, number>, key: string): Record<string, number> {
+    if (G15 > 1000000) { G1 = ((G4 + 3) ^ G8) | 0; G2 = ((G5 + 5) ^ G9) | 0; G3 = ((G6 + 7) ^ G10) | 0; G4 = ((G7 + 9) ^ G11) | 0; G5 = ((G8 + 11) ^ G12) | 0; G6 = ((G9 + 13) ^ G13) | 0; G7 = ((G10 + 15) ^ G1) | 0; G8 = ((G11 + 17) ^ G2) | 0; G9 = ((G12 + 19) ^ G3) | 0; G10 = ((G13 + 21) ^ G4) | 0; G11 = ((G1 + 23) ^ G5) | 0; G12 = ((G2 + 25) ^ G6) | 0; G13 = ((G3 + 27) ^ G7) | 0; G1 = ((G4 + 29) ^ G8) | 0; G2 = ((G5 + 31) ^ G9) | 0; G3 = ((G6 + 33) ^ G10) | 0; G4 = ((G7 + 35) ^ G11) | 0; G5 = ((G8 + 37) ^ G12) | 0; G6 = ((G9 + 39) ^ G13) | 0; G7 = ((G10 + 41) ^ G1) | 0; G8 = ((G11 + 43) ^ G2) | 0; G9 = ((G12 + 45) ^ G3) | 0; G10 = ((G13 + 47) ^ G4) | 0; G11 = ((G1 + 49) ^ G5) | 0; G12 = ((G2 + 51) ^ G6) | 0; G13 = ((G3 + 53) ^ G7) | 0; G1 = ((G4 + 55) ^ G8) | 0; G2 = ((G5 + 57) ^ G9) | 0; G3 = ((G6 + 59) ^ G10) | 0; G4 = ((G7 + 61) ^ G11) | 0; G5 = ((G8 + 63) ^ G12) | 0; G6 = ((G9 + 65) ^ G13) | 0; G7 = ((G10 + 67) ^ G1) | 0; G8 = ((G11 + 69) ^ G2) | 0; G9 = ((G12 + 71) ^ G3) | 0; G10 = ((G13 + 73) ^ G4) | 0; G11 = ((G1 + 75) ^ G5) | 0; G12 = ((G2 + 77) ^ G6) | 0; G13 = ((G3 + 79) ^ G7) | 0; G1 = ((G4 + 81) ^ G8) | 0; G2 = ((G5 + 83) ^ G9) | 0; G3 = ((G6 + 85) ^ G10) | 0; G4 = ((G7 + 87) ^ G11) | 0; G5 = ((G8 + 89) ^ G12) | 0; G6 = ((G9 + 91) ^ G13) | 0; G7 = ((G10 + 93) ^ G1) | 0; G8 = ((G11 + 95) ^ G2) | 0; G9 = ((G12 + 97) ^ G3) | 0; G10 = ((G13 + 99) ^ G4) | 0; G11 = ((G1 + 101) ^ G5) | 0; G12 = ((G2 + 103) ^ G6) | 0; G13 = ((G3 + 105) ^ G7) | 0; G1 = ((G4 + 107) ^ G8) | 0; G2 = ((G5 + 109) ^ G9) | 0; G3 = ((G6 + 111) ^ G10) | 0; G4 = ((G7 + 113) ^ G11) | 0; G5 = ((G8 + 115) ^ G12) | 0; G6 = ((G9 + 117) ^ G13) | 0; G7 = ((G10 + 119) ^ G1) | 0; G8 = ((G11 + 121) ^ G2) | 0; } 
+    d = { ...d, [key]: 0 };
+    d = { ...d, [key]: 1 };
+    d = { ...d, [key]: 2 };
+    d = { ...d, [key]: 3 };
+    d = { ...d, [key]: 4 };
+    d = { ...d, [key]: 5 };
+    d = { ...d, [key]: 6 };
+    d = { ...d, [key]: 7 };
+    d = { ...d, [key]: 8 };
+    d = { ...d, [key]: 9 };
+    d = { ...d, [key]: 10 };
+    d = { ...d, [key]: 11 };
+    return d;
+}
+function drive_spread_of_dictionary_12(n: number): number {
+    let a: T = A0, x = LEN | 0, y = 0.5; 
+    for (let i = 0; i < n; ++i) { dict8 = spread_of_dictionary_12(dict8, keys8[i & 7]); a = a.next; }
+    return (x ^ a.f0 ^ (y | 0) ^ (dict8[keys8[0]] ?? 0)) | 0;
+}
+const rows = new Map<string, (n: number) => number>([["spread_of_dictionary_4", drive_spread_of_dictionary_4], ["spread_of_dictionary_12", drive_spread_of_dictionary_12]]);
+const chosen = rows.get(ROW);
+if (chosen !== undefined) console.log(ROW, chosen(COUNT)); else console.log("no row", ROW);
+//// guards-that-fail-once/copy-data-properties-kit-rows-spread-of-many-orders.ts
+// Guards that fail once: copy data properties kit rows spread of many orders. It prints what plain Bun prints.
+const argv: string[] = process.argv;
+const ROW: string = argv[2] ?? "", COUNT: number = parseInt(argv[3] ?? "0", 10) | 0, LEN: number = parseInt(argv[4] ?? "2", 10) | 0, WORD: string = argv[5] ?? "lit_zz", VERB0: string = argv[6] ?? "DELETE", VERB1: string = argv[7] ?? "PATCH";
+let G0 = (LEN + -2) | 0, G1 = (LEN + -1) | 0, G2 = (LEN + 0) | 0, G3 = (LEN + 1) | 0, G4 = (LEN + 2) | 0, G5 = (LEN + 3) | 0, G6 = (LEN + 4) | 0, G7 = (LEN + 5) | 0, G8 = (LEN + 6) | 0, G9 = (LEN + 7) | 0, G10 = (LEN + 8) | 0, G11 = (LEN + 9) | 0, G12 = (LEN + 10) | 0, G13 = (LEN + 11) | 0, G14 = (LEN + 12) | 0, G15 = (LEN + 13) | 0;
+function fill(n: number, v: number): number[] { const r: number[] = []; for (let i = 0; i < n; ++i) r.push((v + i) | 0); return r; }
+////= T
+interface Opts { a?: number; b?: number; c?: number; d?: number; e?: string; f?: number; g?: number; h?: number; }
+const ringO: Opts[] = [{ a: LEN }, { b: 1, a: LEN }, { c: 2, a: 1, b: LEN }, { a: 1, d: LEN }, { e: WORD, a: LEN }, { f: 1, a: 2, e: WORD }, { g: LEN, a: 1 }, { h: 1, g: 2, a: LEN }];
+const A0 = new T(LEN - 1, VERB0), A1 = new T(LEN, VERB1); A0.next = A1; A1.next = A0; A0.nn = A1; A1.nn = A0; A0.any = A1; A1.any = A0; A0.f0 = LEN - 2; A1.f0 = LEN - 1;
+function spread_of_many_orders_4(p: Opts): Opts {
+    if (G15 > 1000000) { G1 = ((G4 + 3) ^ G8) | 0; G2 = ((G5 + 5) ^ G9) | 0; G3 = ((G6 + 7) ^ G10) | 0; G4 = ((G7 + 9) ^ G11) | 0; G5 = ((G8 + 11) ^ G12) | 0; G6 = ((G9 + 13) ^ G13) | 0; G7 = ((G10 + 15) ^ G1) | 0; G8 = ((G11 + 17) ^ G2) | 0; G9 = ((G12 + 19) ^ G3) | 0; G10 = ((G13 + 21) ^ G4) | 0; G11 = ((G1 + 23) ^ G5) | 0; G12 = ((G2 + 25) ^ G6) | 0; G13 = ((G3 + 27) ^ G7) | 0; G1 = ((G4 + 29) ^ G8) | 0; G2 = ((G5 + 31) ^ G9) | 0; G3 = ((G6 + 33) ^ G10) | 0; G4 = ((G7 + 35) ^ G11) | 0; G5 = ((G8 + 37) ^ G12) | 0; G6 = ((G9 + 39) ^ G13) | 0; G7 = ((G10 + 41) ^ G1) | 0; G8 = ((G11 + 43) ^ G2) | 0; G9 = ((G12 + 45) ^ G3) | 0; G10 = ((G13 + 47) ^ G4) | 0; G11 = ((G1 + 49) ^ G5) | 0; G12 = ((G2 + 51) ^ G6) | 0; G13 = ((G3 + 53) ^ G7) | 0; G1 = ((G4 + 55) ^ G8) | 0; G2 = ((G5 + 57) ^ G9) | 0; G3 = ((G6 + 59) ^ G10) | 0; G4 = ((G7 + 61) ^ G11) | 0; G5 = ((G8 + 63) ^ G12) | 0; G6 = ((G9 + 65) ^ G13) | 0; G7 = ((G10 + 67) ^ G1) | 0; G8 = ((G11 + 69) ^ G2) | 0; G9 = ((G12 + 71) ^ G3) | 0; G10 = ((G13 + 73) ^ G4) | 0; G11 = ((G1 + 75) ^ G5) | 0; G12 = ((G2 + 77) ^ G6) | 0; G13 = ((G3 + 79) ^ G7) | 0; G1 = ((G4 + 81) ^ G8) | 0; G2 = ((G5 + 83) ^ G9) | 0; G3 = ((G6 + 85) ^ G10) | 0; G4 = ((G7 + 87) ^ G11) | 0; G5 = ((G8 + 89) ^ G12) | 0; G6 = ((G9 + 91) ^ G13) | 0; G7 = ((G10 + 93) ^ G1) | 0; G8 = ((G11 + 95) ^ G2) | 0; G9 = ((G12 + 97) ^ G3) | 0; G10 = ((G13 + 99) ^ G4) | 0; G11 = ((G1 + 101) ^ G5) | 0; G12 = ((G2 + 103) ^ G6) | 0; G13 = ((G3 + 105) ^ G7) | 0; G1 = ((G4 + 107) ^ G8) | 0; G2 = ((G5 + 109) ^ G9) | 0; G3 = ((G6 + 111) ^ G10) | 0; G4 = ((G7 + 113) ^ G11) | 0; G5 = ((G8 + 115) ^ G12) | 0; G6 = ((G9 + 117) ^ G13) | 0; G7 = ((G10 + 119) ^ G1) | 0; G8 = ((G11 + 121) ^ G2) | 0; } 
+    p = { ...p, a: 0 };
+    p = { ...p, a: 1 };
+    p = { ...p, a: 2 };
+    p = { ...p, a: 3 };
+    return p;
+}
+////= lines-8	drive_spread_of_many_orders_4	spread_of_many_orders_4	a
+function spread_of_many_orders_12(p: Opts): Opts {
+    if (G15 > 1000000) { G1 = ((G4 + 3) ^ G8) | 0; G2 = ((G5 + 5) ^ G9) | 0; G3 = ((G6 + 7) ^ G10) | 0; G4 = ((G7 + 9) ^ G11) | 0; G5 = ((G8 + 11) ^ G12) | 0; G6 = ((G9 + 13) ^ G13) | 0; G7 = ((G10 + 15) ^ G1) | 0; G8 = ((G11 + 17) ^ G2) | 0; G9 = ((G12 + 19) ^ G3) | 0; G10 = ((G13 + 21) ^ G4) | 0; G11 = ((G1 + 23) ^ G5) | 0; G12 = ((G2 + 25) ^ G6) | 0; G13 = ((G3 + 27) ^ G7) | 0; G1 = ((G4 + 29) ^ G8) | 0; G2 = ((G5 + 31) ^ G9) | 0; G3 = ((G6 + 33) ^ G10) | 0; G4 = ((G7 + 35) ^ G11) | 0; G5 = ((G8 + 37) ^ G12) | 0; G6 = ((G9 + 39) ^ G13) | 0; G7 = ((G10 + 41) ^ G1) | 0; G8 = ((G11 + 43) ^ G2) | 0; G9 = ((G12 + 45) ^ G3) | 0; G10 = ((G13 + 47) ^ G4) | 0; G11 = ((G1 + 49) ^ G5) | 0; G12 = ((G2 + 51) ^ G6) | 0; G13 = ((G3 + 53) ^ G7) | 0; G1 = ((G4 + 55) ^ G8) | 0; G2 = ((G5 + 57) ^ G9) | 0; G3 = ((G6 + 59) ^ G10) | 0; G4 = ((G7 + 61) ^ G11) | 0; G5 = ((G8 + 63) ^ G12) | 0; G6 = ((G9 + 65) ^ G13) | 0; G7 = ((G10 + 67) ^ G1) | 0; G8 = ((G11 + 69) ^ G2) | 0; G9 = ((G12 + 71) ^ G3) | 0; G10 = ((G13 + 73) ^ G4) | 0; G11 = ((G1 + 75) ^ G5) | 0; G12 = ((G2 + 77) ^ G6) | 0; G13 = ((G3 + 79) ^ G7) | 0; G1 = ((G4 + 81) ^ G8) | 0; G2 = ((G5 + 83) ^ G9) | 0; G3 = ((G6 + 85) ^ G10) | 0; G4 = ((G7 + 87) ^ G11) | 0; G5 = ((G8 + 89) ^ G12) | 0; G6 = ((G9 + 91) ^ G13) | 0; G7 = ((G10 + 93) ^ G1) | 0; G8 = ((G11 + 95) ^ G2) | 0; G9 = ((G12 + 97) ^ G3) | 0; G10 = ((G13 + 99) ^ G4) | 0; G11 = ((G1 + 101) ^ G5) | 0; G12 = ((G2 + 103) ^ G6) | 0; G13 = ((G3 + 105) ^ G7) | 0; G1 = ((G4 + 107) ^ G8) | 0; G2 = ((G5 + 109) ^ G9) | 0; G3 = ((G6 + 111) ^ G10) | 0; G4 = ((G7 + 113) ^ G11) | 0; G5 = ((G8 + 115) ^ G12) | 0; G6 = ((G9 + 117) ^ G13) | 0; G7 = ((G10 + 119) ^ G1) | 0; G8 = ((G11 + 121) ^ G2) | 0; } 
+    p = { ...p, a: 0 };
+    p = { ...p, a: 1 };
+    p = { ...p, a: 2 };
+    p = { ...p, a: 3 };
+    p = { ...p, a: 4 };
+    p = { ...p, a: 5 };
+    p = { ...p, a: 6 };
+    p = { ...p, a: 7 };
+    p = { ...p, a: 8 };
+    p = { ...p, a: 9 };
+    p = { ...p, a: 10 };
+    p = { ...p, a: 11 };
+    return p;
+}
+////= lines-8	drive_spread_of_many_orders_12	spread_of_many_orders_12	a
+const rows = new Map<string, (n: number) => number>([["spread_of_many_orders_4", drive_spread_of_many_orders_4], ["spread_of_many_orders_12", drive_spread_of_many_orders_12]]);
+const chosen = rows.get(ROW);
+if (chosen !== undefined) console.log(ROW, chosen(COUNT)); else console.log("no row", ROW);
+//// guards-that-fail-once/copy-data-properties-props.ts
+// Guards that fail once: copy data properties props. It prints what plain Bun prints.
+type Props = {
+  p0?: number;
+  p1?: string;
+  p2?: boolean;
+  p3?: string[];
+  p4?: number;
+  p5?: string;
+  p6?: number;
+  p7?: string;
+  p8?: boolean;
+  p9?: string[];
+  p10?: number;
+  p11?: string;
+  p12?: number;
+  p13?: string;
+  p14?: boolean;
+  p15?: string[];
+  p16?: number;
+  p17?: string;
+  p18?: number;
+  p19?: string;
+  p20?: boolean;
+  p21?: string[];
+  p22?: number;
+  p23?: string;
+  p24?: number;
+  p25?: string;
+  p26?: boolean;
+  p27?: string[];
+  p28?: number;
+  p29?: string;
+  p30?: number;
+  p31?: string;
+  p32?: boolean;
+  p33?: string[];
+  p34?: number;
+  p35?: string;
+  p36?: number;
+  p37?: string;
+  p38?: boolean;
+  p39?: string[];
+  p40?: number;
+  p41?: string;
+  p42?: number;
+  p43?: string;
+  p44?: boolean;
+  p45?: string[];
+  p46?: number;
+  p47?: string;
+  p48?: number;
+  p49?: string;
+  p50?: boolean;
+  p51?: string[];
+  p52?: number;
+  p53?: string;
+  p54?: number;
+  p55?: string;
+  p56?: boolean;
+  p57?: string[];
+  p58?: number;
+  p59?: string;
+  p60?: number;
+  p61?: string;
+  p62?: boolean;
+  p63?: string[];
+  p64?: number;
+  p65?: string;
+  p66?: number;
+  p67?: string;
+  p68?: boolean;
+  p69?: string[];
+  p70?: number;
+  p71?: string;
+  p72?: number;
+  p73?: string;
+  p74?: boolean;
+  p75?: string[];
+  p76?: number;
+  p77?: string;
+  p78?: number;
+  p79?: string;
+  p80?: boolean;
+  p81?: string[];
+  p82?: number;
+  p83?: string;
+  p84?: number;
+  p85?: string;
+  p86?: boolean;
+  p87?: string[];
+  p88?: number;
+  p89?: string;
+};
+type Style = {
+  p0?: number;
+  p1?: string;
+  p2?: boolean;
+  p3?: string[];
+  p4?: number;
+  p5?: string;
+  p6?: number;
+  p7?: string;
+  p8?: boolean;
+  p9?: string[];
+  p10?: number;
+  p11?: string;
+  p12?: number;
+  p13?: string;
+  p14?: boolean;
+  p15?: string[];
+  p16?: number;
+  p17?: string;
+  p18?: number;
+  p19?: string;
+  p20?: boolean;
+  p21?: string[];
+  p22?: number;
+  p23?: string;
+  p24?: number;
+  p25?: string;
+  p26?: boolean;
+  p27?: string[];
+  p28?: number;
+  p29?: string;
+  p30?: number;
+  p31?: string;
+  p32?: boolean;
+  p33?: string[];
+  p34?: number;
+  p35?: string;
+  p36?: number;
+  p37?: string;
+  p38?: boolean;
+  p39?: string[];
+  p40?: number;
+  p41?: string;
+  p42?: number;
+  p43?: string;
+  p44?: boolean;
+  p45?: string[];
+  p46?: number;
+  p47?: string;
+  p48?: number;
+  p49?: string;
+  p50?: boolean;
+  p51?: string[];
+  p52?: number;
+  p53?: string;
+  p54?: number;
+  p55?: string;
+  p56?: boolean;
+  p57?: string[];
+  p58?: number;
+  p59?: string;
+  own?: number;
+};
+function set(props: Props, which: number, index: number) {
+  switch (which) {
+    case 0: props.p0 = index; break;
+    case 1: props.p1 = "s" + index; break;
+    case 2: props.p2 = true; break;
+    case 3: props.p3 = ["x"]; break;
+    case 4: props.p4 = index + 1; break;
+    case 5: props.p5 = "t"; break;
+    case 6: props.p6 = index; break;
+    case 7: props.p7 = "s" + index; break;
+    case 8: props.p8 = true; break;
+    case 9: props.p9 = ["x"]; break;
+    case 10: props.p10 = index + 1; break;
+    case 11: props.p11 = "t"; break;
+    case 12: props.p12 = index; break;
+    case 13: props.p13 = "s" + index; break;
+    case 14: props.p14 = true; break;
+    case 15: props.p15 = ["x"]; break;
+    case 16: props.p16 = index + 1; break;
+    case 17: props.p17 = "t"; break;
+    case 18: props.p18 = index; break;
+    case 19: props.p19 = "s" + index; break;
+    case 20: props.p20 = true; break;
+    case 21: props.p21 = ["x"]; break;
+    case 22: props.p22 = index + 1; break;
+    case 23: props.p23 = "t"; break;
+    case 24: props.p24 = index; break;
+    case 25: props.p25 = "s" + index; break;
+    case 26: props.p26 = true; break;
+    case 27: props.p27 = ["x"]; break;
+    case 28: props.p28 = index + 1; break;
+    case 29: props.p29 = "t"; break;
+    case 30: props.p30 = index; break;
+    case 31: props.p31 = "s" + index; break;
+    case 32: props.p32 = true; break;
+    case 33: props.p33 = ["x"]; break;
+    case 34: props.p34 = index + 1; break;
+    case 35: props.p35 = "t"; break;
+    case 36: props.p36 = index; break;
+    case 37: props.p37 = "s" + index; break;
+    case 38: props.p38 = true; break;
+    case 39: props.p39 = ["x"]; break;
+    case 40: props.p40 = index + 1; break;
+    case 41: props.p41 = "t"; break;
+    case 42: props.p42 = index; break;
+    case 43: props.p43 = "s" + index; break;
+    case 44: props.p44 = true; break;
+    case 45: props.p45 = ["x"]; break;
+    case 46: props.p46 = index + 1; break;
+    case 47: props.p47 = "t"; break;
+    case 48: props.p48 = index; break;
+    case 49: props.p49 = "s" + index; break;
+    case 50: props.p50 = true; break;
+    case 51: props.p51 = ["x"]; break;
+    case 52: props.p52 = index + 1; break;
+    case 53: props.p53 = "t"; break;
+    case 54: props.p54 = index; break;
+    case 55: props.p55 = "s" + index; break;
+    case 56: props.p56 = true; break;
+    case 57: props.p57 = ["x"]; break;
+    case 58: props.p58 = index + 1; break;
+    case 59: props.p59 = "t"; break;
+  }
+}
+function make(seed: number): Props {
+  const props: Props = {};
+  const count = 9 + seed % 6;
+  for (let index = 0; index < count; ++index)
+    set(props, (seed * 7 + index * (1 + seed % 5)) % 60, index);
+  return props;
+}
+function toStyle(props: Props): Style {
+  return { ...props, own: 1 };
+}
+const kindsOfProps = Number(process.argv[2] ?? 100);
+const rounds = Number(process.argv[3] ?? 1);
+let total = 0;
+for (let round = 0; round < rounds; ++round) {
+  for (let seed = 0; seed < kindsOfProps; ++seed)
+    total += Object.keys(toStyle(make(seed))).length;
+}
+console.log(total);
+//// guards-that-fail-once/copy-data-properties-settings2.ts
+// A wide settings object: many optional fields, many names that its type does not list, and a value or two of another type than declared.
+type Settings = {
+  setting0?: number;
+  setting1?: string;
+  setting2?: boolean;
+  setting3?: string[];
+  setting4?: number;
+  setting5?: string;
+  setting6?: boolean;
+  setting7?: string[];
+  setting8?: number;
+  setting9?: string;
+  setting10?: boolean;
+  setting11?: string[];
+  setting12?: number;
+  setting13?: string;
+  setting14?: boolean;
+  setting15?: string[];
+  setting16?: number;
+  setting17?: string;
+  setting18?: boolean;
+  setting19?: string[];
+  setting20?: number;
+  setting21?: string;
+  setting22?: boolean;
+  setting23?: string[];
+  setting24?: number;
+  setting25?: string;
+  setting26?: boolean;
+  setting27?: string[];
+  setting28?: number;
+  setting29?: string;
+  setting30?: boolean;
+  setting31?: string[];
+  setting32?: number;
+  setting33?: string;
+  setting34?: boolean;
+  setting35?: string[];
+  setting36?: number;
+  setting37?: string;
+  setting38?: boolean;
+  setting39?: string[];
+  setting40?: number;
+  setting41?: string;
+  setting42?: boolean;
+  setting43?: string[];
+  setting44?: number;
+  setting45?: string;
+  setting46?: boolean;
+  setting47?: string[];
+  setting48?: number;
+  setting49?: string;
+  setting50?: boolean;
+  setting51?: string[];
+  setting52?: number;
+  setting53?: string;
+  setting54?: boolean;
+  setting55?: string[];
+  setting56?: number;
+  setting57?: string;
+  setting58?: boolean;
+  setting59?: string[];
+  setting60?: number;
+  setting61?: string;
+  setting62?: boolean;
+  setting63?: string[];
+  setting64?: number;
+  setting65?: string;
+  setting66?: boolean;
+  setting67?: string[];
+  setting68?: number;
+  setting69?: string;
+  setting70?: boolean;
+  setting71?: string[];
+  setting72?: number;
+  setting73?: string;
+  setting74?: boolean;
+  setting75?: string[];
+  setting76?: number;
+  setting77?: string;
+  setting78?: boolean;
+  setting79?: string[];
+};
+function read(seed: number, odd: boolean, unlisted: boolean): Settings {
+  const text: Record<string, unknown> = {};
+  for (let index = 0; index < 80; index += 2) text["setting" + index] = index % 4 === 0 ? seed + index : seed % 2 === 0;
+  if (unlisted) for (let index = 0; index < 6; index++) text["unlisted" + index] = "u" + index;
+  if (odd) { text.setting8 = "not a number"; text.setting40 = [1]; }
+  return JSON.parse(JSON.stringify(text)) as Settings;
+}
+const defaults: Settings = { setting1: "one", setting3: ["a"], setting5: "five", setting0: 0 };
+function merged(parsed: Settings): Settings { return { ...defaults, ...parsed }; }
+function copied(settings: Settings): Settings { return { ...settings }; }
+function changed(settings: Settings, value: number): Settings { return { ...settings, setting4: value }; }
+type More = Settings & { more: number; note?: string };
+function toMore(settings: Settings, more: number): More { return { ...settings, more }; }
+function fromMore({ more, note, ...settings }: More): Settings { return settings; }
+function describe(value: object): string { const keys = Object.keys(value); return keys.length + " " + keys.slice(0, 6).join(",") + " .. " + keys.slice(-3).join(",") + " " + JSON.stringify((value as Settings).setting8) + " " + JSON.stringify((value as Settings).setting4); }
+const rounds = Number(process.argv[2] ?? 3);
+let sum = 0;
+for (let round = 0; round < rounds; round++) {
+  for (let seed = 0; seed < 4; seed++) {
+    const a = merged(read(seed, (seed & 1) === 1, (seed & 2) === 2)); const b = toMore(a, seed); const c = fromMore(b); const d = toMore(changed(c, round), round);
+    sum += Object.keys(d).length + (typeof d.setting8 === "number" ? d.setting8 : 1);
+    if (round < 2) console.log(round, seed, describe(a), "|", describe(b), "|", describe(c), "|", describe(d));
+  }
+}
+console.log(sum);
+//// guards-that-fail-once/copy-data-properties-unfit-model.ts
+// Guards that fail once: copy data properties unfit model. It prints what plain Bun prints.
+type Handler = (text: string) => string;
+type Props = { id: number; label: string; onChange?: Handler; width?: number; note?: string };
+type Wide = Props & { extra?: number; last?: string };
+
+const ROUNDS = Number(process.argv[2] ?? 6);
+const shout: Handler = text => text.toUpperCase();
+const handlers: unknown[] = [shout, shout.bind(null), 7, "text", null, undefined, { call: 1 }, Symbol.for("s")];
+
+function propsWith(index: number, handler: unknown): Props {
+  const props: Props = { id: index, label: "p" + index };
+  (props as Record<string, unknown>).onChange = handler;
+  props.width = index * 2;
+  if (index % 3 === 0) props.note = "n" + index;
+  return props;
+}
+
+function widen(props: Props, index: number): Wide {
+  return { ...props, extra: index, last: "z" };
+}
+
+function withFirst(props: Props): Wide {
+  return { last: "a", ...props };
+}
+
+function rest({ id, ...others }: Props) {
+  return others;
+}
+
+////= describe-3
+
+let sink = 0;
+////= for-17
+
+type Empty = {};
+type Point = { x: number; y: number };
+function empty(): Empty { return {}; }
+function onto(point: Point, nothing: Empty): Point { return { ...point, ...nothing }; }
+function under(point: Point, nothing: Empty): Point { return { ...nothing, ...point }; }
+function alone(nothing: Empty): Empty { return { ...nothing }; }
+for (let index = 0; index < 4; index++) {
+  const grown = empty();
+  if (index > 1) (grown as Record<string, number>)["added" + index] = index;
+  console.log(describe(onto({ x: index, y: 1 }, grown)), "|", describe(under({ x: index, y: 2 }, grown)), "|", describe(alone(grown)), "|", describe(alone(empty())));
+}
+console.log(sink);
+//// guards-that-fail-once/copy-data-properties-unfit3-model.ts
+// Guards that fail once: copy data properties unfit3 model. It prints what plain Bun prints.
+type Handler = (text: string) => string;
+type Props = { id: number; label: string; onChange?: Handler; width?: number; note?: string };
+type Wide = Props & { extra?: number; last?: string };
+
+const ROUNDS = Number(process.argv[2] ?? 6);
+const shout: Handler = text => text.toUpperCase();
+const handlers: unknown[] = [shout, shout.bind(null), 7, "text", null, undefined, { call: 1 }, Symbol.for("s")];
+
+function propsWith(index: number, handler: unknown): Props {
+  const props: Props = { id: index, label: "p" + index };
+  (props as Record<string, unknown>).onChange = handler;
+  (props as Record<string, unknown>).stray = index;
+  props.width = index * 2;
+  if (index & 1) (props as Record<string, unknown>).other = "o";
+  if (index % 3 === 0) props.note = "n" + index;
+  return props;
+}
+
+function widen(props: Props, index: number): Wide {
+  return { ...props, extra: index, last: "z" };
+}
+
+function withFirst(props: Props): Wide {
+  return { last: "a", ...props };
+}
+
+function rest({ id, ...others }: Props) {
+  return others;
+}
+
+////= describe-3
+
+let sink = 0;
+////= for-17
+
+type Empty = {};
+type Point = { x: number; y: number };
+function empty(): Empty { return {}; }
+function onto(point: Point, nothing: Empty): Point { return { ...point, ...nothing }; }
+function under(point: Point, nothing: Empty): Point { return { ...nothing, ...point }; }
+function alone(nothing: Empty): Empty { return { ...nothing }; }
+for (let index = 0; index < 4; index++) {
+  const grown = empty();
+  if (index > 1) (grown as Record<string, number>)["added" + index] = index;
+  console.log(describe(onto({ x: index, y: 1 }, grown)), "|", describe(under({ x: index, y: 2 }, grown)), "|", describe(alone(grown)), "|", describe(alone(empty())));
+}
+console.log(sink);
+//// guards-that-fail-once/inherit-h1.js
+// Guards that fail once, one probe of many. It prints what plain Bun prints.
+class Base {}
+class Below extends Base {}
+Base.prototype["undec" + (process.argv[9] ?? "lared")] = 3;
+const N = Number(process.argv[2] ?? 2);
+function read() { let sum = 0; for (let i = 0; i < N; i++) sum = (sum + Below.prototype.undeclared + i) | 0; return sum; }
+console.log(read());
+//// guards-that-fail-once/inherit-h2.js
+// Guards that fail once, one probe of many. It prints what plain Bun prints.
+class Base { m() { return 1; } }
+class Below extends Base {}
+Base.prototype["" + (process.argv[9] ?? "m")] = () => 2;
+const N = Number(process.argv[2] ?? 2);
+function call() { let sum = 0; for (let i = 0; i < N; i++) sum = (sum + Below.prototype.m()) | 0; return sum; }
+console.log(call());
+//// guards-that-fail-once/inherit-h3.js
+// Guards that fail once, one probe of many. It prints what plain Bun prints.
+class Base { static method() { return 1; } }
+class Below extends Base {}
+class Lowest extends Below {}
+Below["met" + (process.argv[9] ?? "hod")] = () => 2;
+const N = Number(process.argv[2] ?? 2);
+function call() { let sum = 0; for (let i = 0; i < N; i++) sum = (sum + Lowest.method()) | 0; return sum; }
+function has() { let sum = 0; for (let i = 0; i < N; i++) sum += "method" in Lowest ? 1 : 0; return sum; }
+console.log(call(), has());
+//// guards-that-fail-once/inherit-h4.js
+// Guards that fail once, one probe of many. It prints what plain Bun prints.
+class Base {}
+class Below extends Base {}
+Base["undec" + (process.argv[9] ?? "lared")] = 3;
+const N = Number(process.argv[2] ?? 2);
+function has() { let sum = 0; for (let i = 0; i < N; i++) sum += "undeclared" in Below ? 1 : 0; return sum; }
+function kind() { let text = ""; for (let i = 0; i < N; i++) text += typeof Below.undeclared; return text; }
+function call() { let text = ""; for (let i = 0; i < N; i++) text += Below.undeclared?.toString(); return text; }
+console.log(process.argv[3] === "kind" ? kind() : process.argv[3] === "call" ? call() : has());
+//// guards-that-fail-once/inherit-k1.js
+// Guards that fail once, one probe of many. It prints what plain Bun prints.
+const rounds = 3;
+const named = (...parts) => parts.join("");
+class Gains {}
+class BelowGains extends Gains {}
+class LowestGains extends BelowGains {}
+Gains[named("ad", "ded")] = 3;
+////= readAdded
+////= readAddedFromLowest
+console.log(readAdded(), readAdded(), readAddedFromLowest(), readAddedFromLowest());
+//// guards-that-fail-once/inherit-k2.js
+// Guards that fail once, one probe of many. It prints what plain Bun prints.
+const rounds = Number(process.argv[2] ?? 3);
+class Gains {}
+class BelowGains extends Gains {}
+Gains["ad" + (process.argv[9] ?? "ded")] = 3;
+////= readAdded
+console.log(readAdded(), readAdded());
+//// guards-that-fail-once/inherit-k3.js
+// Guards that fail once, one probe of many. It prints what plain Bun prints.
+const rounds = Number(process.argv[2] ?? 3);
+class Gains {}
+class BelowGains extends Gains {}
+class LowestGains extends BelowGains {}
+Gains["ad" + (process.argv[9] ?? "ded")] = 3;
+////= readAdded
+////= readAddedFromLowest
+function readOwn() {
+  let sum = 0;
+  for (let i = 0; i < rounds; i++) sum = (sum + Gains.added + i) | 0;
+  return sum;
+}
+console.log(readAddedFromLowest(), readAdded(), readOwn());
+//// guards-that-fail-once/inherit-m1.js
+// Guards that fail once, one probe of many. It prints what plain Bun prints.
+const rounds = Number(process.argv[2] ?? 3);
+class Base { static method() { return 1; } }
+class Below extends Base {}
+Base["met" + (process.argv[9] ?? "hod")] = () => 2;
+function viaBelow() { let sum = 0; for (let i = 0; i < rounds; i++) sum = (sum + Below.method() + i) | 0; return sum; }
+function viaBase() { let sum = 0; for (let i = 0; i < rounds; i++) sum = (sum + Base.method() + i) | 0; return sum; }
+console.log(viaBelow(), viaBase(), viaBelow());
+//// guards-that-fail-once/inherit-m2.js
+// Guards that fail once, one probe of many. It prints what plain Bun prints.
+const rounds = Number(process.argv[2] ?? 3);
+class Base { static get value() { return 1; } }
+class Below extends Base {}
+Object.defineProperty(Base, "val" + (process.argv[9] ?? "ue"), { value: 2, configurable: true });
+function viaBelow() { let sum = 0; for (let i = 0; i < rounds; i++) sum = (sum + Below.value + i) | 0; return sum; }
+function viaBase() { let sum = 0; for (let i = 0; i < rounds; i++) sum = (sum + Base.value + i) | 0; return sum; }
+console.log(viaBelow(), viaBase(), viaBelow());
+//// guards-that-fail-once/inherit-m3.js
+// Guards that fail once, one probe of many. It prints what plain Bun prints.
+const rounds = Number(process.argv[2] ?? 3);
+class Base { static method() { return 1; } }
+class Below extends Base {}
+delete Base["met" + (process.argv[9] ?? "hod")];
+function viaBelow() { let text = ""; for (let i = 0; i < rounds; i++) text += typeof Below.method + " "; return text; }
+function viaBase() { let text = ""; for (let i = 0; i < rounds; i++) text += typeof Base.method + " "; return text; }
+console.log(viaBelow(), viaBase(), viaBelow());
+//// guards-that-fail-once/inherit-m4.js
+// Guards that fail once, one probe of many. It prints what plain Bun prints.
+const rounds = Number(process.argv[2] ?? 3);
+class Other { static method() { return 5; } }
+class Base {}
+class Below extends Base {}
+Object.setPrototypeOf(Base, process.argv.length > 20 ? Function.prototype : Other);
+function viaBelow() { let text = ""; for (let i = 0; i < rounds; i++) text += typeof Below.method + " "; return text; }
+function viaBase() { let text = ""; for (let i = 0; i < rounds; i++) text += typeof Base.method + " "; return text; }
+console.log(viaBelow(), viaBase(), viaBelow());
+//// guards-that-fail-once/inherit-m5.js
+// Guards that fail once, one probe of many. It prints what plain Bun prints.
+const rounds = Number(process.argv[2] ?? 3);
+class Other { static method() { return 5; } }
+class Base { static method() { return 1; } }
+class Below extends Base {}
+if (process.argv.length > 20) Object.setPrototypeOf(Base, Other);
+Base["met" + (process.argv[9] ?? "hod")] = () => 2;
+function viaBelow() { let sum = 0; for (let i = 0; i < rounds; i++) sum = (sum + Below.method() + i) | 0; return sum; }
+function viaBase() { let sum = 0; for (let i = 0; i < rounds; i++) sum = (sum + Base.method() + i) | 0; return sum; }
+console.log(viaBelow(), viaBase(), viaBelow());
+//// guards-that-fail-once/inherit-m6.js
+// Guards that fail once, one probe of many. It prints what plain Bun prints.
+const rounds = Number(process.argv[2] ?? 3);
+class Other { static method() { return 5; } }
+class Base { static method() { return 1; } }
+class Below extends Base {}
+if (process.argv.length > 20) Object.setPrototypeOf(Below, Other);
+Base["met" + (process.argv[9] ?? "hod")] = () => 2;
+function viaBelow() { let sum = 0; for (let i = 0; i < rounds; i++) sum = (sum + Below.method() + i) | 0; return sum; }
+function viaBase() { let sum = 0; for (let i = 0; i < rounds; i++) sum = (sum + Base.method() + i) | 0; return sum; }
+console.log(viaBelow(), viaBase(), viaBelow());
+//// guards-that-fail-once/inherit-t-inherit.js
+// What a class object inherits is read from the class objects above it as they are now, also where one of them got the name before anything used the class below: the first read in a loop counts like every other.
+const rounds = Number(process.argv[2] ?? 3);
+
+class Gains {}
+class BelowGains extends Gains {}
+class LowestGains extends BelowGains {}
+Gains["ad" + (process.argv[9] ?? "ded")] = 3;
+////= readAdded
+////= readAddedFromLowest
+function readOwn() {
+  let sum = 0;
+  for (let i = 0; i < rounds; i++) sum = (sum + Gains.added + i) | 0;
+  return sum;
+}
+
+class Keeps {}
+class BelowKeeps extends Keeps {}
+function readAbsent() {
+  let text = "";
+  for (let i = 0; i < rounds; i++) text += typeof BelowKeeps.absent + " ";
+  return text;
+}
+function readAbsentOwn() {
+  let text = "";
+  for (let i = 0; i < rounds; i++) text += typeof Keeps.absent + " ";
+  return text;
+}
+
+console.log(readAddedFromLowest(), readAdded(), readOwn());
+console.log(readAddedFromLowest(), readAdded(), readOwn());
+console.log(readAbsent(), readAbsentOwn(), readAbsent());
+Keeps["abs" + (process.argv[9] ?? "ent")] = "now";
+console.log(readAbsent(), readAbsentOwn());
+//// guards-that-fail-once/kit-rows-async-context-await-suspended.ts
+// Guards that fail once: kit rows async context await suspended. It prints what plain Bun prints.
+const argv: string[] = process.argv;
+const ROW: string = argv[2] ?? "", COUNT: number = parseInt(argv[3] ?? "0", 10) | 0, LEN: number = parseInt(argv[4] ?? "2", 10) | 0, WORD: string = argv[5] ?? "lit_zz", VERB0: string = argv[6] ?? "DELETE", VERB1: string = argv[7] ?? "PATCH";
+let G0 = (LEN + -2) | 0, G1 = (LEN + -1) | 0, G2 = (LEN + 0) | 0, G3 = (LEN + 1) | 0, G4 = (LEN + 2) | 0, G5 = (LEN + 3) | 0, G6 = (LEN + 4) | 0, G7 = (LEN + 5) | 0, G8 = (LEN + 6) | 0, G9 = (LEN + 7) | 0, G10 = (LEN + 8) | 0, G11 = (LEN + 9) | 0, G12 = (LEN + 10) | 0, G13 = (LEN + 11) | 0, G14 = (LEN + 12) | 0, G15 = (LEN + 13) | 0;
+function fill(n: number, v: number): number[] { const r: number[] = []; for (let i = 0; i < n; ++i) r.push((v + i) | 0); return r; }
+////= T
+async function suspends(a: number): Promise<number> { await null; return (a + G0) | 0; }
+const A0 = new T(LEN - 1, VERB0), A1 = new T(LEN, VERB1); A0.next = A1; A1.next = A0; A0.nn = A1; A1.nn = A0; A0.any = A1; A1.any = A0; A0.f0 = LEN - 2; A1.f0 = LEN - 1;
+////= lines-12	await_suspended_4
+async function drive_await_suspended_4(n: number): Promise<number> {
+    let a: T = A0, x = LEN | 0, y = 0.5; 
+    for (let i = 0; i < n; ++i) { x = await await_suspended_4(x); a = a.next; }
+    return (x ^ a.f0 ^ (y | 0)) | 0;
+}
+////= lines-4	await_suspended_12
+async function drive_await_suspended_12(n: number): Promise<number> {
+    let a: T = A0, x = LEN | 0, y = 0.5; 
+    for (let i = 0; i < n; ++i) { x = await await_suspended_12(x); a = a.next; }
+    return (x ^ a.f0 ^ (y | 0)) | 0;
+}
+const asyncRows = new Map<string, (n: number) => Promise<number>>([["await_suspended_4", drive_await_suspended_4], ["await_suspended_12", drive_await_suspended_12]]);
+const chosenAsync = asyncRows.get(ROW);
+if (chosenAsync !== undefined) chosenAsync(COUNT).then((v: number): void => { console.log(ROW, v); }); else console.log("no row", ROW);
+//// guards-that-fail-once/kit-rows-async-context-await-suspended-store-created.ts
+// Guards that fail once: kit rows async context await suspended store created. It prints what plain Bun prints.
+const argv: string[] = process.argv;
+const ROW: string = argv[2] ?? "", COUNT: number = parseInt(argv[3] ?? "0", 10) | 0, LEN: number = parseInt(argv[4] ?? "2", 10) | 0, WORD: string = argv[5] ?? "lit_zz", VERB0: string = argv[6] ?? "DELETE", VERB1: string = argv[7] ?? "PATCH";
+let G0 = (LEN + -2) | 0, G1 = (LEN + -1) | 0, G2 = (LEN + 0) | 0, G3 = (LEN + 1) | 0, G4 = (LEN + 2) | 0, G5 = (LEN + 3) | 0, G6 = (LEN + 4) | 0, G7 = (LEN + 5) | 0, G8 = (LEN + 6) | 0, G9 = (LEN + 7) | 0, G10 = (LEN + 8) | 0, G11 = (LEN + 9) | 0, G12 = (LEN + 10) | 0, G13 = (LEN + 11) | 0, G14 = (LEN + 12) | 0, G15 = (LEN + 13) | 0;
+function fill(n: number, v: number): number[] { const r: number[] = []; for (let i = 0; i < n; ++i) r.push((v + i) | 0); return r; }
+////= T
+async function suspends(a: number): Promise<number> { await null; return (a + G0) | 0; }
+import { AsyncLocalStorage } from "node:async_hooks";
+const STORE = new AsyncLocalStorage<number>();
+const A0 = new T(LEN - 1, VERB0), A1 = new T(LEN, VERB1); A0.next = A1; A1.next = A0; A0.nn = A1; A1.nn = A0; A0.any = A1; A1.any = A0; A0.f0 = LEN - 2; A1.f0 = LEN - 1;
+////= lines-12	await_suspended_store_created_4
+async function drive_await_suspended_store_created_4(n: number): Promise<number> {
+    let a: T = A0, x = LEN | 0, y = 0.5; if (STORE.getStore() !== undefined) x = 0;
+    for (let i = 0; i < n; ++i) { x = await await_suspended_store_created_4(x); a = a.next; }
+    return (x ^ a.f0 ^ (y | 0)) | 0;
+}
+////= lines-4	await_suspended_store_created_12
+async function drive_await_suspended_store_created_12(n: number): Promise<number> {
+    let a: T = A0, x = LEN | 0, y = 0.5; if (STORE.getStore() !== undefined) x = 0;
+    for (let i = 0; i < n; ++i) { x = await await_suspended_store_created_12(x); a = a.next; }
+    return (x ^ a.f0 ^ (y | 0)) | 0;
+}
+const asyncRows = new Map<string, (n: number) => Promise<number>>([["await_suspended_store_created_4", drive_await_suspended_store_created_4], ["await_suspended_store_created_12", drive_await_suspended_store_created_12]]);
+const chosenAsync = asyncRows.get(ROW);
+if (chosenAsync !== undefined) chosenAsync(COUNT).then((v: number): void => { console.log(ROW, v); }); else console.log("no row", ROW);
+//// guards-that-fail-once/kit-rows-async-context-await-suspended-store-entered.ts
+// Guards that fail once: kit rows async context await suspended store entered. It prints what plain Bun prints.
+const argv: string[] = process.argv;
+const ROW: string = argv[2] ?? "", COUNT: number = parseInt(argv[3] ?? "0", 10) | 0, LEN: number = parseInt(argv[4] ?? "2", 10) | 0, WORD: string = argv[5] ?? "lit_zz", VERB0: string = argv[6] ?? "DELETE", VERB1: string = argv[7] ?? "PATCH";
+let G0 = (LEN + -2) | 0, G1 = (LEN + -1) | 0, G2 = (LEN + 0) | 0, G3 = (LEN + 1) | 0, G4 = (LEN + 2) | 0, G5 = (LEN + 3) | 0, G6 = (LEN + 4) | 0, G7 = (LEN + 5) | 0, G8 = (LEN + 6) | 0, G9 = (LEN + 7) | 0, G10 = (LEN + 8) | 0, G11 = (LEN + 9) | 0, G12 = (LEN + 10) | 0, G13 = (LEN + 11) | 0, G14 = (LEN + 12) | 0, G15 = (LEN + 13) | 0;
+function fill(n: number, v: number): number[] { const r: number[] = []; for (let i = 0; i < n; ++i) r.push((v + i) | 0); return r; }
+////= T
+async function suspends(a: number): Promise<number> { await null; return (a + G0) | 0; }
+import { AsyncLocalStorage } from "node:async_hooks";
+const STORE = new AsyncLocalStorage<number>();
+const A0 = new T(LEN - 1, VERB0), A1 = new T(LEN, VERB1); A0.next = A1; A1.next = A0; A0.nn = A1; A1.nn = A0; A0.any = A1; A1.any = A0; A0.f0 = LEN - 2; A1.f0 = LEN - 1;
+////= lines-12	await_suspended_store_entered_4
+async function drive_await_suspended_store_entered_4(n: number): Promise<number> {
+    let a: T = A0, x = LEN | 0, y = 0.5; STORE.enterWith(LEN);
+    for (let i = 0; i < n; ++i) { x = await await_suspended_store_entered_4(x); a = a.next; }
+    return (x ^ a.f0 ^ (y | 0) ^ (STORE.getStore() ?? 0)) | 0;
+}
+////= lines-4	await_suspended_store_entered_12
+async function drive_await_suspended_store_entered_12(n: number): Promise<number> {
+    let a: T = A0, x = LEN | 0, y = 0.5; STORE.enterWith(LEN);
+    for (let i = 0; i < n; ++i) { x = await await_suspended_store_entered_12(x); a = a.next; }
+    return (x ^ a.f0 ^ (y | 0) ^ (STORE.getStore() ?? 0)) | 0;
+}
+const asyncRows = new Map<string, (n: number) => Promise<number>>([["await_suspended_store_entered_4", drive_await_suspended_store_entered_4], ["await_suspended_store_entered_12", drive_await_suspended_store_entered_12]]);
+const chosenAsync = asyncRows.get(ROW);
+if (chosenAsync !== undefined) chosenAsync(COUNT).then((v: number): void => { console.log(ROW, v); }); else console.log("no row", ROW);
+//// guards-that-fail-once/r01-async-context.js
+// Guards that fail once: async context. It prints what plain Bun prints.
+const { AsyncLocalStorage } = require("node:async_hooks");
+const trip = process.argv[2] === "trip";
+const N = Number(process.argv[3] ?? 2000000);
+const variant = process.argv[4] ?? "call";
+if (trip) new AsyncLocalStorage();
+
+async function finishesAtOnce(i) {
+  return i + 1;
+}
+async function suspendsOnce(i) {
+  await null;
+  return i + 1;
+}
+////= lines-35	awaitsCalls	finishesAtOnce
+////= lines-35	awaitsSuspendedCalls	suspendsOnce
+async function awaitsPromises() {
+  let sum = 0;
+  for (let i = 0; i < N; i++) sum = (sum + (await Promise.resolve(i))) | 0;
+  return sum;
+}
+async function awaitsNumbers() {
+  let sum = 0;
+  for (let i = 0; i < N; i++) sum = (sum + (await i)) | 0;
+  return sum;
+}
+const loops = { call: awaitsCalls, suspended: awaitsSuspendedCalls, promise: awaitsPromises, number: awaitsNumbers };
+loops[variant]().then(sum => console.log(variant, sum));
+//// guards-that-fail-once/r01b-async-context-created-or-entered.js
+// Guards that fail once: async context created or entered. It prints what plain Bun prints.
+const { AsyncLocalStorage } = require("node:async_hooks");
+const trip = process.argv[2] === "trip";
+const N = Number(process.argv[3] ?? 2000000);
+const variant = process.argv[4] ?? "call";
+const entered = process.argv[2] === "entered";
+const storage = trip || entered ? new AsyncLocalStorage() : undefined;
+
+async function finishesAtOnce(i) {
+  return i + 1;
+}
+async function suspendsOnce(i) {
+  await null;
+  return i + 1;
+}
+////= lines-35	awaitsCalls	finishesAtOnce
+////= lines-35	awaitsSuspendedCalls	suspendsOnce
+async function awaitsPromises() {
+  let sum = 0;
+  for (let i = 0; i < N; i++) sum = (sum + (await Promise.resolve(i))) | 0;
+  return sum;
+}
+async function awaitsNumbers() {
+  let sum = 0;
+  for (let i = 0; i < N; i++) sum = (sum + (await i)) | 0;
+  return sum;
+}
+const loops = { call: awaitsCalls, suspended: awaitsSuspendedCalls, promise: awaitsPromises, number: awaitsNumbers };
+const start = () => loops[variant]().then(sum => console.log(variant, sum, storage?.getStore()));
+if (entered) storage.run("store", start);
+else start();
+//// guards-that-fail-once/r02-freeze-prototype.js
+// Guards that fail once: freeze prototype. It prints what plain Bun prints.
+const trip = process.argv[2] === "trip";
+const N = Number(process.argv[3] ?? 10000000);
+const variant = process.argv[4] ?? "prototype";
+
+class Shape {
+  constructor(side) {
+    this.side = side;
+  }
+  area(scale) {
+    return this.side * scale;
+  }
+}
+class Square extends Shape {
+  twice(scale) {
+    return this.area(scale) * 2;
+  }
+}
+if (process.argv.length > 9) Shape.prototype[process.argv[9]] = process.argv[10];
+if (process.argv.length > 9) Square.prototype[process.argv[9]] = process.argv[10];
+if (trip && variant === "prototype") Object.freeze(Shape.prototype);
+if (trip && variant === "class") Object.freeze(Shape);
+
+function run(shapes) {
+  let sum = 0;
+  for (let i = 0; i < N; i++) sum = (sum + shapes[i & 1].area(i & 7)) | 0;
+  return sum;
+}
+console.log(variant, run([new Shape(3), new Square(5)]));
+//// guards-that-fail-once/r04-class-evaluated-twice.js
+// Guards that fail once: class evaluated twice. It prints what plain Bun prints.
+const trip = process.argv[2] === "trip";
+const N = Number(process.argv[3] ?? 10000000);
+
+////= makeCounter
+const Counter = makeCounter();
+if (trip) makeCounter();
+
+////= lines-38	run	counter	counter.add
+console.log(run(new Counter(1)));
+//// guards-that-fail-once/r04b-class-evaluated-twice-one-site.js
+// Guards that fail once: class evaluated twice one site. It prints what plain Bun prints.
+const trip = process.argv[2] === "trip";
+const N = Number(process.argv[3] ?? 10000000);
+const variant = process.argv[4] ?? "loop";
+
+////= makeCounter
+const made = [];
+if (variant === "loop") for (let k = 0; k < (trip ? 2 : 1); k++) made.push(makeCounter());
+const Counter = made[0];
+
+////= lines-38	run	counter	counter.add
+console.log(run(new Counter(1)));
+//// guards-that-fail-once/r05-class-below-builtin.js
+// Guards that fail once: class below builtin. It prints what plain Bun prints.
+const trip = process.argv[2] === "trip";
+const N = Number(process.argv[3] ?? 5000000);
+const variant = process.argv[4] ?? "array";
+
+class Plain {
+  #hidden = 0;
+  shown = 0;
+  bumpHidden(amount) {
+    this.#hidden = (this.#hidden + amount) | 0;
+    return this.#hidden;
+  }
+  bumpShown(amount) {
+    this.shown = (this.shown + amount) | 0;
+    return this.shown;
+  }
+}
+////= lines-9	BelowArray	Array
+////= lines-9	BelowError	Error
+////= lines-9	BelowMap	Map
+////= lines-14	runPlain
+////= lines-14	runArray
+////= lines-14	runError
+////= lines-14	runMap
+const [base, field] = variant.split("-");
+const hidden = field === "hidden";
+let sum;
+if (!trip) sum = runPlain(new Plain(), hidden);
+else if (base === "array") sum = runArray(new BelowArray(), hidden);
+else if (base === "error") sum = runError(new BelowError("x"), hidden);
+else sum = runMap(new BelowMap(), hidden);
+console.log(variant, sum);
+//// guards-that-fail-once/r06-extra-property-once.js
+// Guards that fail once: extra property once. It prints what plain Bun prints.
+const trip = process.argv[2] === "trip";
+const N = Number(process.argv[3] ?? 5000000);
+const variant = process.argv[4] ?? "store";
+
+function makePoint(x) {
+  return { x, y: 2, z: 3 };
+}
+const point = makePoint(1);
+if (trip) {
+  const name = process.argv[2] + "x";
+  point[name] = 1;
+  delete point[name];
+}
+
+////= lines-19	stores	x	y
+function reads(object) {
+  let sum = 0;
+  for (let i = 0; i < N; i++) sum = (sum + object.x + object.z + i) | 0;
+  return sum;
+}
+async function awaits(object) {
+  let sum = 0;
+  for (let i = 0; i < N; i++) sum = (sum + (await object).y) | 0;
+  return sum;
+}
+async function answers(object) {
+  return object;
+}
+async function awaitsAnswers(object) {
+  let sum = 0;
+  for (let i = 0; i < N; i++) sum = (sum + (await answers(object)).y) | 0;
+  return sum;
+}
+function lists(object) {
+  let sum = 0;
+  for (let i = 0; i < N; i++) sum = (sum + Object.keys(object).length) | 0;
+  return sum;
+}
+function writes(object) {
+  let sum = 0;
+  for (let i = 0; i < N; i++) sum = (sum + JSON.stringify(object).length) | 0;
+  return sum;
+}
+function spreads(object) {
+  let sum = 0;
+  for (let i = 0; i < N; i++) sum = (sum + { ...object }.z) | 0;
+  return sum;
+}
+const loops = { store: stores, read: reads, await: awaits, answer: awaitsAnswers, keys: lists, json: writes, spread: spreads };
+Promise.resolve(loops[variant](point)).then(sum => console.log(variant, sum));
+//// guards-that-fail-once/r07-sealed-object.js
+// Guards that fail once: sealed object. It prints what plain Bun prints.
+const trip = process.argv[2] === "trip";
+const N = Number(process.argv[3] ?? 10000000);
+const variant = process.argv[4] ?? "seal";
+
+////= Account
+const account = new Account(1);
+if (trip && variant === "seal") Object.seal(account);
+if (trip && variant === "preventExtensions") Object.preventExtensions(account);
+
+////= lines-19	run	balance	moves
+console.log(variant, run(account));
+//// guards-that-fail-once/r12-one-odd-instance.js
+// Guards that fail once: one odd instance. It prints what plain Bun prints.
+const trip = process.argv[2] === "trip";
+const N = Number(process.argv[3] ?? 10000000);
+const variant = process.argv[4] ?? "prototype-site";
+
+class A { constructor(n) { this.n = n; } size(k) { return this.n + k; } }
+class B { constructor(n) { this.n = n; } size(k) { return this.n + k + 1; } }
+class C { constructor(n) { this.n = n; } size(k) { return this.n + k + 2; } }
+class D { constructor(n) { this.n = n; } size(k) { return this.n + k + 3; } }
+class E { constructor(n) { this.n = n; } size(k) { return this.n + k + 4; } }
+class F { constructor(n) { this.n = n; } size(k) { return this.n + k + 5; } }
+class G { constructor(n) { this.n = n; } size(k) { return this.n + k + 6; } }
+class H { constructor(n) { this.n = n; } size(k) { return this.n + k + 7; } }
+class I { constructor(n) { this.n = n; } size(k) { return this.n + k + 8; } }
+
+const [what, where] = variant.split("-");
+const odd = new A(0);
+if (trip && what === "prototype") Object.setPrototypeOf(odd, { size() { return 0; } });
+if (trip && what === "shadow") odd["si" + process.argv[2].replace("trip", "ze")] = () => 0;
+
+////= lines-38	oneClass	object	object.size
+function nineClasses(objects) {
+  let sum = 0;
+  for (let i = 0; i < N; i++) sum = (sum + objects[i & 7].size(i & 7)) | 0;
+  return sum;
+}
+const all = [new A(1), new B(1), new C(1), new D(1), new E(1), new F(1), new G(1), new H(1), new I(1)];
+console.log(variant, odd.size(1), where === "site" ? oneClass(new A(1)) : nineClasses(all));
+//// guards-that-fail-once/r14-host-function-length.js
+// Guards that fail once: host function length. It prints what plain Bun prints.
+const fs = require("node:fs");
+const trip = process.argv[2] === "trip";
+// An open costs far more on Windows.
+const isWindows = process.platform === "win32";
+const N = Number(process.argv[3] ?? (isWindows ? 20000 : 1000000));
+const nullDevice = isWindows ? "\\\\.\\nul" : "/dev/null";
+const variant = process.argv[4] ?? "readFileSync";
+
+let touched = 0;
+if (trip) touched = fs.readFileSync.length + fs.existsSync.length + performance.now.length + Bun.nanoseconds.length + Buffer.byteLength.length;
+
+function readsFile() {
+  let sum = 0;
+  for (let i = 0; i < N; i++) sum = (sum + fs.readFileSync(nullDevice).length) | 0;
+  return sum;
+}
+function asksForFile() {
+  let sum = 0;
+  for (let i = 0; i < N; i++) sum = (sum + (fs.existsSync("/") ? 1 : 0)) | 0;
+  return sum;
+}
+function asksForTime() {
+  let sum = 0;
+  for (let i = 0; i < N; i++) sum = (sum + (performance.now() > 0 ? 1 : 0)) | 0;
+  return sum;
+}
+function asksForNanoseconds() {
+  let sum = 0;
+  for (let i = 0; i < N; i++) sum = (sum + (Bun.nanoseconds() > 0 ? 1 : 0)) | 0;
+  return sum;
+}
+function measuresText() {
+  let sum = 0;
+  for (let i = 0; i < N; i++) sum = (sum + Buffer.byteLength("abc")) | 0;
+  return sum;
+}
+const loops = { readFileSync: readsFile, existsSync: asksForFile, now: asksForTime, nanoseconds: asksForNanoseconds, byteLength: measuresText };
+console.log(variant, touched > 0, loops[variant]());
+//// guards-that-fail-once/r16-store-to-class-object.js
+// Guards that fail once: store to class object. It prints what plain Bun prints.
+const trip = process.argv[2] === "trip";
+const N = Number(process.argv[3] ?? 5000000);
+
+class Declared {
+  static count = 0;
+}
+class Undeclared {}
+Undeclared["co" + (process.argv[9] ?? "unt")] = 0;
+
+function runDeclared() {
+  for (let i = 0; i < N; i++) Declared.count++;
+  return Declared.count;
+}
+function runUndeclared() {
+  for (let i = 0; i < N; i++) Undeclared.count++;
+  return Undeclared.count;
+}
+console.log(trip ? runUndeclared() : runDeclared());
+//// guards-that-fail-once/r21-inherited-static-read.js
+// no trip: the class that has the property is read; trip: a subclass that inherits it is read. Variants: undeclared (stored under a computed key), declared (a static field), method (a static method is called).
+const trip = process.argv[2] === "trip";
+const N = Number(process.argv[3] ?? 5000000);
+const variant = process.argv[4] ?? "undeclared";
+
+class Base {
+  static declared = 3;
+  static method(i) { return i & 3; }
+}
+class Below extends Base {}
+Base["undec" + (process.argv[9] ?? "lared")] = 3;
+
+function undeclaredOwn() { let sum = 0; for (let i = 0; i < N; i++) sum = (sum + Base.undeclared + i) | 0; return sum; }
+function undeclaredInherited() { let sum = 0; for (let i = 0; i < N; i++) sum = (sum + Below.undeclared + i) | 0; return sum; }
+function declaredOwn() { let sum = 0; for (let i = 0; i < N; i++) sum = (sum + Base.declared + i) | 0; return sum; }
+function declaredInherited() { let sum = 0; for (let i = 0; i < N; i++) sum = (sum + Below.declared + i) | 0; return sum; }
+function methodOwn() { let sum = 0; for (let i = 0; i < N; i++) sum = (sum + Base.method(i)) | 0; return sum; }
+function methodInherited() { let sum = 0; for (let i = 0; i < N; i++) sum = (sum + Below.method(i)) | 0; return sum; }
+const runs = { undeclared: [undeclaredOwn, undeclaredInherited], declared: [declaredOwn, declaredInherited], method: [methodOwn, methodInherited] };
+console.log(runs[variant][trip ? 1 : 0]());
+//// guards-that-fail-once/r22-absent-name-on-class-object.js
+// What a framework does with a component: it reads names that most classes do not have. no trip: the receivers are plain functions; trip: they are classes nobody has looked into.
+const trip = process.argv[2] === "trip";
+const N = Number(process.argv[3] ?? 5000000);
+const variant = process.argv[4] ?? "one";
+
+class First { render() { return 1; } }
+class Second { render() { return 2; } }
+class Third extends First { static displayName = "third"; }
+function first() { return 1; }
+function second() { return 2; }
+function third() { return 3; }
+third.displayName = "third";
+
+const classes = variant === "one" ? [First, First, First] : [First, Second, Third];
+const functions = variant === "one" ? [first, first, first] : [first, second, third];
+const receivers = trip ? classes : functions;
+function describe(type) {
+  return (type.defaultProps === undefined ? 1 : 0) + (type.contextType === undefined ? 1 : 0) + (type.displayName === undefined ? 1 : 0);
+}
+let sum = 0;
+for (let i = 0; i < N; i++) sum += describe(receivers[i % 3]);
+console.log(sum);
+//// guards-that-fail-once/r25-instanceof.js
+// no trip: nothing but `new` and `instanceof` uses the class. trip (same build): argv decides nothing here; the variants are separate classes of one program.
+// closed: only new and instanceof. stored: the class object is also stored under a computed key of an object. changed: a property is stored on the class object under a computed key (never run).
+const trip = process.argv[2] === "trip";
+const N = Number(process.argv[3] ?? 5000000);
+const variant = process.argv[4] ?? "closed";
+
+class Closed { constructor(x) { this.x = x; } }
+class Stored { constructor(x) { this.x = x; } }
+class Changed { constructor(x) { this.x = x; } }
+class Other { constructor(x) { this.x = x; } }
+const registry = {};
+registry["st" + (process.argv[9] ?? "ored")] = Stored;
+if (process.argv.length > 20) Changed[process.argv[20]] = 1;
+
+function closed(values) { let sum = 0; for (let i = 0; i < N; i++) sum += values[i & 3] instanceof Closed ? 1 : 0; return sum; }
+function stored(values) { let sum = 0; for (let i = 0; i < N; i++) sum += values[i & 3] instanceof Stored ? 1 : 0; return sum; }
+function changed(values) { let sum = 0; for (let i = 0; i < N; i++) sum += values[i & 3] instanceof Changed ? 1 : 0; return sum; }
+function kind(values) { let text = 0; for (let i = 0; i < N; i++) text += (typeof values[i & 3]).length; return text; }
+const mixed = trip ? [new Closed(1), new Stored(2), new Changed(3), new Other(4)] : [new Other(1), new Other(2), new Other(3), new Other(4)];
+console.log({ closed, stored, changed, kind }[variant](mixed));
+//// guards-that-fail-once/t-await-objects.mjs
+// An await of an object without a `then` takes one turn, like an await of a primitive: alone, among the jobs of then() handlers and of other awaits, and while the collector runs with nothing but
+// a queued job holding on to the object. An object that has a `then`, gets one, inherits one, answers for one through a getter or a proxy is asked for it every time.
+const settled = Promise.resolve();
+const lines = [];
+let log = [];
+const named = (...parts) => parts.join("");
+
+////= lines-15	Point	x
+class Listed extends Array {}
+function show(value) {
+  if (typeof value === "function") return "function " + value.name;
+  if (value instanceof Map) return "Map(" + value.size + ")";
+  if (value instanceof Error) return "Error " + value.message;
+  if (value instanceof RegExp || value instanceof URL) return String(value);
+  if (value instanceof Date) return "Date " + value.getTime();
+  return typeof value === "object" && value !== null ? JSON.stringify(value) : String(value);
+}
+
+async function awaitsSame(label, value, steps) {
+  for (let i = 0; i < steps; i++) log.push(label + " " + show(await value));
+}
+async function awaitsNew(label, make, steps) {
+  for (let i = 0; i < steps; i++) log.push(label + " " + show(await make(i)));
+}
+async function awaitsWhatComes(label, values) {
+  for (const value of values) log.push(label + " " + show(await value));
+}
+function thenChain(label, steps) {
+  let done = 0;
+  const step = () => {
+    log.push(label + " " + done);
+    if (++done < steps) settled.then(step);
+  };
+  settled.then(step);
+}
+
+function adopt(label) {
+  return function (resolve) {
+    log.push("then of " + label);
+    resolve("adopted from " + label);
+  };
+}
+const tagged = new Point(7);
+tagged[named("t", "ag")] = 1;
+const emptied = new Point(8);
+emptied[named("t", "ag")] = 1;
+delete emptied[named("t", "ag")];
+const withoutPrototype = Object.create(null);
+withoutPrototype.bare = true;
+const withNumber = { then: 5 };
+const ownThen = { then: adopt("own") };
+const inheritedThen = Object.create({ then: adopt("inherited") });
+const getterThen = {
+  get then() {
+    log.push("getter of then");
+    return undefined;
+  },
+};
+const proxied = new Proxy(
+  { inside: 1 },
+  {
+    get(target, key) {
+      if (key === "then") log.push("proxy asked for then");
+      return target[key];
+    },
+  },
+);
+
+async function everyKindTogether() {
+  log = [];
+  const all = [awaitsSame("literal", { a: 1 }, 4), awaitsNew("new literal", i => ({ i }), 3), awaitsSame("instance", new Point(1), 4)];
+  thenChain("then", 6);
+  all.push(awaitsNew("new instance", i => new Point(i), 3), awaitsSame("array", [1, 2], 3), awaitsSame("subclass of Array", Listed.of(3), 2), awaitsSame("function", show, 3));
+  all.push(awaitsSame("tagged", tagged, 3), awaitsSame("emptied", emptied, 3), awaitsSame("frozen", Object.freeze({ f: 1 }), 2), awaitsSame("no prototype", withoutPrototype, 3));
+  thenChain("second then", 4);
+  all.push(awaitsWhatComes("what comes", [{ a: 1 }, 1, new Point(2), "two", [3], null, new Map([[1, 2]]), new Error("four"), /five/g, new Date(6), new URL("http://seven/"), withNumber, show, tagged]));
+  all.push(awaitsWhatComes("thenables", [ownThen, { a: 1 }, inheritedThen, new Point(3), getterThen, proxied, ownThen, settled, Promise.resolve({ p: 1 })]));
+  log.push("all have begun");
+  await Promise.all(all);
+  lines.push("== every kind together", ...log);
+}
+
+async function thenComesAndGoes() {
+  log = [];
+  const point = new Point(1);
+  const literal = { a: 1 };
+  for (const value of [point, literal]) {
+    thenChain("then", 3);
+    await awaitsSame("before", value, 3);
+    value[named("th", "en")] = adopt("late");
+    await awaitsSame("with then", value, 2);
+    delete value[named("th", "en")];
+    await awaitsSame("after", value, 2);
+  }
+  Point.prototype[named("th", "en")] = adopt("the class");
+  await awaitsSame("class with then", new Point(2), 2);
+  await awaitsSame("literal beside it", literal, 2);
+  delete Point.prototype[named("th", "en")];
+  await awaitsSame("class without then", new Point(3), 2);
+  lines.push("== then comes and goes", ...log);
+}
+
+const laps = {
+  "one literal": async (id, steps, seen, shared) => {
+    for (let step = 0; step < steps; step++) if ((await shared) === shared) seen.push(id);
+  },
+  "new literals": async (id, steps, seen) => {
+    for (let step = 0; step < steps; step++) if ((await { step }).step === step) seen.push(id);
+  },
+  "new instances": async (id, steps, seen) => {
+    for (let step = 0; step < steps; step++) if ((await new Point(step)).x === step) seen.push(id);
+  },
+  "new arrays": async (id, steps, seen) => {
+    for (let step = 0; step < steps; step++) if ((await [step])[0] === step) seen.push(id);
+  },
+  "objects and numbers": async (id, steps, seen, shared) => {
+    for (let step = 0; step < steps; step++) if ((await (step & 1 ? shared : step)) !== undefined) seen.push(id);
+  },
+};
+// Every member takes one turn a step, so the members go on in the order in which they began, step after step.
+async function population(label, size, steps) {
+  const seen = [];
+  const all = [];
+  const shared = { shared: true };
+  for (let id = 0; id < size; id++) all.push(laps[label](id, steps, seen, shared));
+  let thens = 0;
+  const byThen = () => {
+    seen.push(size);
+    if (++thens < steps) settled.then(byThen);
+  };
+  settled.then(byThen);
+  await Promise.all(all);
+  const members = size + 1;
+  const inTurn = seen.length === members * steps && seen.every((id, index) => id === index % members);
+  lines.push(label + ", " + size + " functions, " + steps + " steps: " + (inTurn ? "each in its turn" : "OUT OF TURN: " + seen.slice(0, 3 * members).join(" ")));
+}
+
+async function holds(id, steps) {
+  let sum = 0;
+  for (let step = 0; step < steps; step++) sum += (await { id, text: "held " + id, step }).text.length + step;
+  return sum;
+}
+async function collections(size, steps) {
+  const all = [];
+  for (let id = 0; id < size; id++) {
+    all.push(holds(id, steps));
+    if (id === size >> 1) {
+      let rounds = 0;
+      const collects = () => {
+        Bun.gc(true);
+        if (++rounds < steps) settled.then(collects);
+      };
+      settled.then(collects);
+    }
+  }
+  const sums = await Promise.all(all);
+  lines.push(size + " objects that only queued jobs hold, with a collection in every round: " + sums.reduce((a, b) => a + b, 0));
+}
+
+await everyKindTogether();
+await thenComesAndGoes();
+lines.push("== in turn");
+for (const label of Object.keys(laps)) {
+  for (const size of [1, 2, 3, 7, 30, 100]) await population(label, size, 20);
+  await population(label, 10, 2000);
+}
+lines.push("== alone");
+log = [];
+await awaitsSame("alone", { a: 1 }, 3);
+await awaitsNew("alone", i => new Point(i), 3);
+lines.push(...log);
+lines.push("== collections");
+await collections(1000, 4);
+console.log(lines.join("\n"));
+////! guards-that-fail-once/t-first.mjs
+// Guards that fail once: t first. It prints what plain Bun prints.
+    const rounds = Number(process.argv[2]);
+    function Point(x) { this.x = x; this.y = 2; }
+    Point.prototype.sum = function () { return this.x + this.y; };
+    let total = 0;
+    for (let i = 0; i < rounds; i++) total += new Point(i).sum();
+    console.log(total === rounds * (rounds - 1) / 2 + 2 * rounds);
+
+    function Watched(x) { this.x = x; }
+    let seen = 0;
+    Object.defineProperty(Watched.prototype, "x", { set(value) { seen += value; }, get() { return -1; } });
+    let read = 0;
+    for (let i = 0; i < 4; i++) read += new Watched(i).x;
+    console.log(seen, read);
+
+    function Replaced() { this.a = 1; }
+    Replaced.prototype = { kind: "replaced" };
+    let kinds = "";
+    for (let i = 0; i < 3; i++) kinds += new Replaced().kind + " ";
+    Replaced.prototype = { kind: "replaced again" };
+    for (let i = 0; i < 3; i++) kinds += new Replaced().kind + " ";
+    console.log(kinds.trim());
+
+    function Fixed(x) { this.x = x; }
+    Object.defineProperty(Fixed.prototype, "x", { value: 7, writable: false });
+    let refused = 0;
+    for (let i = 0; i < 3; i++) {
+      try {
+        new Fixed(i);
+      } catch (error) {
+        refused += error instanceof TypeError ? 1 : 100;
+      }
+    }
+    console.log(refused);
+  
+////! guards-that-fail-once/t-forin.mjs
+// Guards that fail once: t forin. It prints what plain Bun prints.
+    class Options {
+      constructor() { this.host = "localhost"; this.port = 80; }
+    }
+    const rounds = Number(process.argv[2]);
+    const extra = "ex" + process.argv[3];
+    const port = "po" + process.argv[4];
+    const change = (object, f) => { f(object); return object; };
+    const objects = [
+      change(new Options(), o => { o[extra] = 1; }),
+      change(new Options(), o => { o[extra] = 1; delete o[extra]; }),
+      change(new Options(), o => { o[port] = "eighty"; o[port] = 80; }),
+      change({ first: 1, second: 2 }, o => { o[extra] = 3; }),
+    ];
+    function walk(object) {
+      let keys = "";
+      for (const key in object) keys += key + " ";
+      return keys.trim();
+    }
+    const seen = new Set();
+    for (let round = 0; round < rounds; round++) seen.add(walk(objects[round & 1 ? 3 : 0]));
+    console.log([...seen].join(" | "));
+    console.log(objects.map(walk).join(" | "));
+    objects[0][extra + "2"] = 2;
+    objects[1][extra] = 4;
+    delete objects[2][port];
+    delete objects[3][extra];
+    Object.defineProperty(objects[3], "hidden", { value: 1, enumerable: false });
+    console.log(objects.map(walk).join(" | "));
+    console.log(objects.map(walk).join(" | "));
+    Options.prototype[extra + "3"] = 5;
+    console.log(objects.map(walk).join(" | "));
+  
+//// guards-that-fail-once/t-forin2.mjs
+// Guards that fail once: t forin2. It prints what plain Bun prints.
+class Options {
+  constructor() { this.host = "localhost"; this.port = 80; }
+}
+const rounds = Number(process.argv[2]);
+const extra = "ex" + process.argv[3];
+const port = "po" + process.argv[4];
+const change = (object, f) => { f(object); return object; };
+const objects = [
+  change(new Options(), o => { o[extra] = 1; }),
+  change(new Options(), o => { o[extra] = 1; delete o[extra]; }),
+  change(new Options(), o => { o[port] = "eighty"; o[port] = 80; }),
+  change({ first: 1, second: 2 }, o => { o[extra] = 3; }),
+  change(new Options(), o => { o[port] = "eighty"; }),
+  change(new Options(), o => { o[port] = 0.5; o[port] = 80; }),
+];
+function walk(object) {
+  let keys = "";
+  for (const key in object) keys += key + "=" + object[key] + " ";
+  return keys.trim();
+}
+const object = objects[Number(process.argv[5])];
+let n = 0;
+for (let round = 0; round < rounds; round++) n += walk(object).length;
+console.log(n, walk(object));
+//// guards-that-fail-once/t-global.mjs
+// A store through `globalThis` held in a variable does what a store to any object does: it replaces, adds, calls a setter, is refused by a read-only property, and a read of the global by its bare name sees it at once.
+const holders = [globalThis, { count: -1, fixed: -1, watched: -1 }];
+const pick = index => holders[index % holders.length];
+const log = [];
+function attempt(label, f) {
+  try {
+    log.push(label + " " + f());
+  } catch (error) {
+    log.push(label + " " + error.constructor.name);
+  }
+}
+////= lines-33	store	count
+////= lines-33	storeFixed	fixed
+////= lines-33	storeWatched	watched
+////= lines-33	storeLate	late
+function bump(holder) {
+  holder.count++;
+  holder.count += 2;
+  return holder.count;
+}
+
+globalThis.count = 0;
+let sum = 0;
+for (let i = 0; i < 300; i++) {
+  store(pick(0), i);
+  sum += count + globalThis.count;
+  store(pick(1), -i);
+  sum += count;
+}
+attempt("replaced in a loop", () => [sum, count, holders[1].count]);
+attempt("bumped", () => [bump(pick(0)), bump(pick(0)), count, bump(pick(1))]);
+attempt("other kinds", () => { const seen = []; for (const value of [0.5, "text", null, undefined, { a: 1 }, 7]) { store(pick(0), value); seen.push(typeof count); } return seen; });
+
+Object.defineProperty(globalThis, "fixed", { value: 1, writable: false, configurable: true });
+attempt("read-only", () => { for (let i = 0; i < 3; i++) storeFixed(pick(1), i); storeFixed(pick(0), 2); return "stored"; });
+attempt("read-only stays", () => [fixed, holders[1].fixed]);
+Object.defineProperty(globalThis, "fixed", { value: 1, writable: true, configurable: true });
+attempt("writable again", () => { storeFixed(pick(0), 3); return fixed; });
+
+let seenBySetter = 0;
+Object.defineProperty(globalThis, "watched", { get: () => seenBySetter, set: value => { seenBySetter += value; }, configurable: true });
+attempt("setter", () => { for (let i = 0; i < 5; i++) storeWatched(pick(0), i); return [seenBySetter, watched]; });
+Object.defineProperty(globalThis, "watched", { value: 9, writable: true, configurable: true });
+attempt("a value in place of the setter", () => { storeWatched(pick(0), 10); return [seenBySetter, watched]; });
+
+attempt("added", () => { const before = typeof late; storeLate(pick(0), 1); return [before, late, "late" in globalThis]; });
+attempt("removed and added again", () => { const removed = delete globalThis.late; const between = typeof late; storeLate(pick(0), 2); storeLate(pick(0), 3); return [removed, between, late]; });
+attempt("removed, then read by its name", () => { delete globalThis.late; return late; });
+console.log(log.join("\n"));
+////! guards-that-fail-once/t-protofn.mjs
+// Guards that fail once: t protofn. It prints what plain Bun prints.
+    const rounds = Number(process.argv[2]);
+    const named = (f, name) => { f.displayName = name; return f; };
+    class Component { isComponent() { return true; } }
+    const holder = { method() {} };
+    const types = [
+      named(() => 1, "arrow"),
+      named(async () => 1, "async arrow"),
+      named(holder.method, "method"),
+      named(function () {}, "function"),
+      named(class extends Component {}, "class"),
+    ];
+    function constructs(type) {
+      return type.displayName + " " + !!(type.prototype && type.prototype.isComponent) + " " + ("prototype" in type) + " " + Object.hasOwn(type, "prototype");
+    }
+    const seen = new Set();
+    for (let round = 0; round < rounds; round++) seen.add(constructs(types[round % types.length]));
+    console.log([...seen].join(" | "));
+    types[0].prototype = new Component();
+    Object.setPrototypeOf(types[1], Object.create(Function.prototype, { prototype: { value: new Component() } }));
+    console.log(types.map(constructs).join(" | "), "|", constructs(named(() => 2, "another arrow")), "|", constructs(named(async () => 2, "another async arrow")));
+  
+//// guards-that-fail-once/t-sealed.js
+// A sealed object and an object that is not extensible take stores to the properties they have and refuse new ones, a frozen object refuses both, and a definition of a class field needs an extensible object.
+////= Account
+class Closed {
+  constructor(how) {
+    this.first = 1;
+    how(this);
+  }
+}
+////= lines-24	BelowClosed	Closed	second	2
+
+function replace(account, amount) {
+  account.balance = amount;
+  account.moves = account.moves + 1;
+  return account.balance + account.moves;
+}
+function create(account, note) {
+  account.note = note;
+  return account.note;
+}
+function createByKey(account, key, note) {
+  account[key] = note;
+  return account[key];
+}
+function remove(account) {
+  return delete account.moves;
+}
+function attempt(name, action) {
+  try {
+    return `${name} ${action()}`;
+  } catch (error) {
+    return `${name} ${error.constructor.name}`;
+  }
+}
+
+const ways = {
+  open: object => object,
+  preventExtensions: Object.preventExtensions,
+  seal: Object.seal,
+  freeze: Object.freeze,
+};
+for (const [way, change] of Object.entries(ways)) {
+  const account = new Account(1);
+  let sum = 0;
+  for (let i = 0; i < 100; i++) sum += replace(account, i);
+  change(account);
+  const lines = [];
+  for (let i = 0; i < 3; i++) lines.push(attempt("replace", () => replace(account, 10 + i)));
+  lines.push(attempt("create", () => create(account, "a")));
+  lines.push(attempt("createByKey", () => createByKey(account, "other", "b")));
+  lines.push(attempt("remove", () => remove(account)));
+  lines.push(attempt("createAgain", () => replace(account, 20)));
+  lines.push(attempt("define", () => Object.keys(new BelowClosed(change)).join()));
+  console.log(way, sum, lines.join(" | "), JSON.stringify(account), Object.isExtensible(account), Object.isSealed(account), Object.isFrozen(account));
+}
+
+const late = new Account(5);
+create(late, "early");
+Object.seal(late);
+console.log(attempt("storeToLateField", () => create(late, "later")), JSON.stringify(late));
+//// guards-that-fail-once/t-then.mjs
+// An object is adopted through `then` exactly while it has one, also where `then` comes and goes among properties under computed keys, after objects with the same other properties were awaited and returned many times.
+const log = [];
+const named = (...parts) => parts.join("");
+
+function makePoint(x) {
+  return { x, y: 2 };
+}
+function adopt(label) {
+  return function (resolve) {
+    log.push(`then of ${label} ${this.x}`);
+    resolve(`adopted from ${label}`);
+  };
+}
+async function returns(value) {
+  return value;
+}
+async function awaits(value) {
+  return await value;
+}
+function describe(value) {
+  return typeof value === "object" ? JSON.stringify(value) : String(value);
+}
+async function observe(label, value) {
+  log.push(`${label}: returned ${describe(await returns(value))}`);
+  log.push(`${label}: awaited ${describe(await awaits(value))}`);
+  log.push(`${label}: resolved ${describe(await Promise.resolve(value))}`);
+  log.push(`${label}: in all ${describe((await Promise.all([value]))[0])}`);
+}
+
+const tagged = makePoint(1);
+tagged[named("t", "ag")] = "first";
+const emptied = makePoint(2);
+emptied[named("t", "ag")] = "gone";
+delete emptied[named("t", "ag")];
+let sum = 0;
+for (let i = 0; i < 200; i++) sum += (await returns(tagged)).x + (await awaits(tagged)).y + (await returns(emptied)).x + (await awaits(emptied)).y;
+log.push(`warm ${sum}`);
+await observe("tagged", tagged);
+await observe("emptied", emptied);
+
+const sibling = makePoint(3);
+sibling[named("t", "ag")] = "second";
+await observe("sibling", sibling);
+sibling[named("th", "en")] = adopt("sibling");
+await observe("sibling with then", sibling);
+await observe("tagged beside it", tagged);
+
+tagged[named("th", "en")] = adopt("tagged");
+await observe("tagged with then", tagged);
+delete tagged[named("th", "en")];
+await observe("tagged without then", tagged);
+tagged[named("th", "en")] = 5;
+await observe("tagged with a number", tagged);
+
+emptied[named("th", "en")] = adopt("emptied");
+await observe("emptied with then", emptied);
+delete emptied[named("th", "en")];
+await observe("emptied again", emptied);
+
+const many = [];
+for (let i = 0; i < 40; i++) {
+  const point = makePoint(10 + i);
+  point[named("t", "ag")] = i;
+  if (i % 4 === 3) point[named("th", "en")] = adopt("every fourth");
+  many.push(point);
+}
+for (const point of many) log.push(describe(await returns(point)));
+
+const inheriting = makePoint(4);
+inheriting[named("t", "ag")] = "third";
+await observe("inheriting", inheriting);
+Object.setPrototypeOf(inheriting, { then: adopt("the prototype") });
+await observe("inheriting a then", inheriting);
+
+console.log(log.join("\n"));
+//// guards-that-fail-once/t-without.mjs
+// Guards that fail once: t without. It prints what plain Bun prints.
+const rounds = Number(process.argv[2]);
+function Without(x) { this.x = x; this.y = 2; }
+Without.prototype.m = function () { return this.x; };
+function run(n) { let s = 0; for (let i = 0; i < n; i++) s += new Without(i).y; return s; }
+console.log(run(rounds));
+//// guards-that-fail-once/t-without2.mjs
+// Guards that fail once: t without2. It prints what plain Bun prints.
+const rounds = Number(process.argv[2]);
+function Without(x) { this.x = x; this.y = 2; }
+Without.prototype.m = function () { return this.x; };
+function Other(x) { this.x = x; }
+Other.prototype.y = 0;
+function run(n) { let s = 0; for (let i = 0; i < n; i++) s += new Without(i).y; return s; }
+console.log(run(rounds), new Other(1).y);
+//// guards-that-fail-once/t-without3.mjs
+// Guards that fail once: t without3. It prints what plain Bun prints.
+const rounds = Number(process.argv[2]);
+function Without(x) { this.x = x; this.y = 2; }
+Without.prototype.m = function () { return this.x; };
+function run(n) { let s = 0; for (let i = 0; i < n; i++) s += new Without(i).y; return s; }
+run(1);
+console.log(run(rounds));
+//// guards-that-fail-once/t-without4.mjs
+// Guards that fail once: t without4. It prints what plain Bun prints.
+const rounds = Number(process.argv[2]);
+class Without { constructor(x) { this.x = x; this.y = 2; } m() { return this.x; } }
+function run(n) { let s = 0; for (let i = 0; i < n; i++) s += new Without(i).y; return s; }
+console.log(run(rounds));
+////! guards-that-fail-once/t06.mjs
+// Guards that fail once, one probe of many. It prints what plain Bun prints.
+    function makePoint(x) { return { x, y: 2 }; }
+    async function returns(value) { return value; }
+    const rounds = Number(process.argv[2]);
+    const emptied = makePoint(1);
+    emptied[process.argv[3]] = 1;
+    delete emptied[process.argv[3]];
+    const tagged = makePoint(2);
+    tagged[process.argv[3]] = 1;
+    let sum = 0;
+    for (let round = 0; round < rounds; round++) sum += (await returns(emptied)).x + (await returns(tagged)).x;
+    console.log(sum === 3 * rounds);
+  
+////! guards-that-fail-once/t16.mjs
+// Guards that fail once, one probe of many. It prints what plain Bun prints.
+    class Registry {
+      static make() { return "declared"; }
+    }
+    class Below extends Registry {}
+    function Legacy() {}
+    const rounds = Number(process.argv[2]);
+    Registry["co" + process.argv[3]] = 0;
+    Legacy["co" + process.argv[3]] = 0;
+    function countInClass() { Registry.count++; }
+    function countInFunction() { Legacy.count++; }
+    function callMake() { return Registry.make() + " " + Below.make(); }
+    for (let round = 0; round < rounds; round++) {
+      countInClass();
+      countInFunction();
+    }
+    const before = callMake();
+    Registry.make = () => "first";
+    const first = callMake();
+    Registry.make = () => "second";
+    const second = callMake();
+    Object.freeze(Registry);
+    let refused = "stored";
+    try {
+      countInClass();
+    } catch (error) {
+      refused = error.constructor.name;
+    }
+    console.log(Registry.count === rounds, Below.count === rounds, Legacy.count === rounds, before, "|", first, "|", second, "|", refused);
+  
+//// guards-that-fail-once/t16b.mjs
+// Guards that fail once, one probe of many. It prints what plain Bun prints.
+class Registry {
+  static make() { return "declared"; }
+}
+class Below extends Registry {}
+function Legacy() {}
+Legacy.prototype.run = function () { return 1; };
+const key = process.argv[2] ?? "helper";
+const first = () => "first";
+const second = () => "second";
+Registry[key] = first;
+Legacy[key] = first;
+function setInClass(f) { Registry.helper = f; }
+function setInFunction(f) { Legacy.helper = f; }
+function callAll() { return Registry.helper() + " " + Below.helper() + " " + Legacy.helper(); }
+function readAll() { return (Registry.helper === Below.helper) + " " + Registry.helper.name + " " + Below.helper.name + " " + Legacy.helper.name; }
+const seen = new Map();
+for (let round = 0; round < 3000; round++) {
+  const f = round % 3 === 0 ? second : first;
+  setInClass(f);
+  setInFunction(f);
+  const line = (round % 3 === 0) + " " + callAll() + " | " + readAll();
+  seen.set(line, (seen.get(line) ?? 0) + 1);
+}
+for (const [line, count] of seen) console.log(count, line);
+Below.helper = () => "own";
+setInClass(first);
+console.log(callAll(), "|", readAll());
+delete Below.helper;
+setInClass(second);
+console.log(callAll(), "|", readAll());
+Object.defineProperty(Registry, "helper", { get() { return () => "getter"; }, set(v) { console.log("setter", v.name); }, configurable: true });
+setInClass(first);
+console.log(callAll());
+Object.defineProperty(Registry, "helper", { value: second, writable: false, configurable: true });
+try { setInClass(first); console.log("stored"); } catch (error) { console.log(error.constructor.name); }
+console.log(callAll());
+////! guards-that-fail-once/t23.mjs
+// Guards that fail once, one probe of many. It prints what plain Bun prints.
+    class Point {
+      constructor(x) { this.x = x; }
+    }
+    const rounds = Number(process.argv[2]);
+    async function awaits(value) {
+      let sum = 0;
+      for (let round = 0; round < rounds; round++) sum += (await value).x;
+      return sum;
+    }
+    const alone = [await awaits({ x: 1 }), await awaits(new Point(2))];
+    const together = await Promise.all([awaits({ x: 3 }), awaits(new Point(4)), awaits({ x: 5 })]);
+    console.log([...alone, ...together].map(sum => sum / rounds).join(" "));
+  
+//// guards-that-fail-once/t24.mjs
+// Guards that fail once, one probe of many. It prints what plain Bun prints.
+class Model {}
+class User extends Model {}
+class Admin extends User { static displayName = "admin"; }
+const rounds = Number(process.argv[2]);
+const variant = process.argv[3];
+Model["table" + "Name".slice(0, process.argv.length)] = "models";
+const types = [Model, User, Admin];
+const keys = ["tableName", "defaultProps", "displayName"];
+function byValue(type, key) { return type[key] === undefined ? 0 : 1; }
+function presence(type) { return ("tableName" in type ? 1 : 0) + ("defaultProps" in type ? 1 : 0); }
+function presenceByValue(type, key) { return key in type ? 1 : 0; }
+function own(type) { return (Object.hasOwn(type, "tableName") ? 1 : 0) + (type.hasOwnProperty("displayName") ? 1 : 0); }
+function call(type) { return typeof type.create === "function" ? type.create() : 0; }
+let sum = 0;
+for (let round = 0; round < rounds; round++) {
+  const type = types[round % 3];
+  if (variant === "byValue") sum += byValue(type, keys[(round >> 2) % 3]);
+  else if (variant === "presence") sum += presence(type);
+  else if (variant === "presenceByValue") sum += presenceByValue(type, keys[(round >> 2) % 3]);
+  else if (variant === "own") sum += own(type);
+  else sum += call(type);
+}
+console.log(sum);
+////! guards-that-fail-once/t26.mjs
+// Guards that fail once, one probe of many. It prints what plain Bun prints.
+    import { EventEmitter } from "node:events";
+    class Source extends EventEmitter {
+      constructor() { super(); this.open = true; }
+      close() { this.open = false; }
+    }
+    function Legacy() { this.old = true; }
+    Legacy.prototype.run = function () { return 1; };
+    class Heir extends Legacy {
+      walk() { return 2; }
+    }
+    class Plain {
+      walk() { return 3; }
+    }
+    const rounds = Number(process.argv[2]);
+    function describe(value) {
+      return typeof value[Symbol.iterator] + " " + typeof value[Symbol.asyncIterator] + " " + (value[Symbol.toStringTag] ?? "none");
+    }
+    const values = [new Source(), new Heir(), Plain.prototype, new Plain()];
+    const seen = new Set();
+    for (let round = 0; round < rounds; round++) seen.add(describe(values[round & 3]));
+    console.log([...seen].join(" | "));
+    Source.prototype[Symbol.asyncIterator] = function () {};
+    Legacy.prototype[Symbol.iterator] = function () {};
+    Object.defineProperty(Plain.prototype, Symbol.toStringTag, { get() { return "plain"; } });
+    console.log(values.map(describe).join(" | "));
+    console.log(values[0].open, values[1].walk() + values[1].run(), values[3].walk(), Object.prototype.toString.call(values[3]));
+  
+////! guards-that-fail-once/t27.mjs
+// Guards that fail once, one probe of many. It prints what plain Bun prints.
+    class List extends Array {}
+    const rounds = Number(process.argv[2]);
+    function describe(value) {
+      return (value.name ?? "none") + " " + (value.prototype ?? "none") + " " + value.length;
+    }
+    const values = [[1, 2], "text", List.of(1)];
+    const seen = new Set();
+    for (let round = 0; round < rounds; round++) seen.add(describe(values[round % 3]));
+    console.log([...seen].join(" | "));
+    values[0].name = "own";
+    values[2].prototype = "own too";
+    console.log(values.map(describe).join(" | "), "|", describe([]));
+  
+//// guards-that-fail-once/t27b.mjs
+// Guards that fail once, one probe of many. It prints what plain Bun prints.
+class List extends Array {}
+const rounds = Number(process.argv[2]);
+const which = process.argv[3];
+const value = { array: [1, 2], text: "text", list: List.of(1) }[which];
+const ask = { name: v => v.name, prototype: v => v.prototype, length: v => v.length }[process.argv[4]];
+let n = 0;
+for (let round = 0; round < rounds; round++) n += ask(value) === undefined ? 1 : 0;
+console.log(n);

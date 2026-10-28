@@ -1,0 +1,49 @@
+before
+  literals made before: 190 30 10
+  literals made now: 190 30 10
+  instances made before: 190 30 10 0---4---8---12---16---20---24---28---32---36---
+  instances made now: 190 30 10
+  objects of a function made before: 190 30 10
+  objects of a function made now: 190 30 10
+  stores: 40 40 40
+  behind the stores: 4040 0 40 | 4040 0 40 | 4040 0 40
+one step above
+  literals made before: 190 30 10
+  literals made now: 190 30 10
+  instances made before: NaN 0 40 0---4---8---12---16---20---24---28---32---36---
+  instances made now: NaN 0 40
+  objects of a function made before: NaN 0 40
+  objects of a function made now: NaN 0 40
+  stores: 40 40 40
+  behind the stores: 4040 0 40 | 4040 0 40 | 4040 0 40
+at the top: TypeError
+behind that
+  literals made before: 190 30 10
+  literals made now: 190 30 10
+  instances made before: 190 30 10 0---4---8---12---16---20---24---28---32---36---
+  instances made now: 190 30 10
+  objects of a function made before: 190 30 10
+  objects of a function made now: 190 30 10
+  stores: 40 40 40
+  behind the stores: 4040 0 40 | 4040 0 40 | 4040 0 40
+delete at the top: done
+through the constructor: TypeError
+behind that
+  literals made before: 190 30 10
+  literals made now: 190 30 10
+  instances made before: 190 30 10 0---4---8---12---16---20---24---28---32---36---
+  instances made now: 190 30 10
+  objects of a function made before: 190 30 10
+  objects of a function made now: 190 30 10
+  stores: 40 40 40
+  behind the stores: 4040 0 40 | 4040 0 40 | 4040 0 40
+delete: done
+behind that
+  literals made before: 190 30 10
+  literals made now: 190 30 10
+  instances made before: 190 30 10 0---4---8---12---16---20---24---28---32---36---
+  instances made now: 190 30 10
+  objects of a function made before: 190 30 10
+  objects of a function made now: 190 30 10
+  stores: 40 40 40
+  behind the stores: 4040 0 40 | 4040 0 40 | 4040 0 40

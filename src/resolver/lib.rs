@@ -890,18 +890,6 @@ pub mod fs {
     /// The active filesystem backend (always the real filesystem).
     pub type Implementation = RealFS;
 
-    /// The clock of `DirEntry.generation`: a lookup at a later tick reads a listing of an earlier tick again.
-    static GENERATION: AtomicU32 = AtomicU32::new(0);
-
-    /// A new tick. A lookup at it reads each cached listing again, once.
-    pub fn next_generation() -> Generation {
-        GENERATION
-            .try_update(Ordering::Relaxed, Ordering::Relaxed, |tick| {
-                tick.checked_add(1)
-            })
-            .map_or(Generation::MAX, |tick| tick + 1)
-    }
-
     /// Which cache keys of a directory a bust evicts.
     #[derive(Clone, Copy)]
     pub(crate) enum DirKeys {
@@ -927,6 +915,7 @@ pub mod fs {
             }
             bun_core::handle_oom(self.real_of.put_static_key(link, real));
             match self.links_of.get_mut(real) {
+                Some(links) if links.0.contains(&link) => {}
                 Some(links) => links.0.push(link),
                 None => bun_core::handle_oom(
                     self.links_of
@@ -2448,7 +2437,9 @@ pub use ::bun_paths::{is_package_path, is_package_path_not_absolute};
 
 // Resolver implementation modules. Each file declares the sibling-crate `use`s
 // it needs; cross-file references go through `crate::*` paths.
+pub mod compiled_program;
 pub mod options;
+pub mod package_names;
 pub mod resolver;
 pub mod result;
 pub mod standalone_module_graph;

@@ -251,10 +251,45 @@ impl core::ops::Deref for ZStr {
     }
 }
 
+/// What only a compiler, a test or somebody who debugs Bun sets: it writes a file, prints addresses or brings in other code.
+/// An executable compiled ahead of time does not start where the environment sets one.
+#[cfg(bun_locked_environment)]
+pub fn is_never_read(key: &[u8]) -> bool {
+    const WORDS: [&[u8]; 22] = [
+        b"BUN_BE_BUN",
+        b"BUN_BYTECODE_DIGEST_OUT",
+        b"BUN_BYTECODE_ORDER_NAMES_OUT",
+        b"BUN_BYTECODE_ORDER_OUT",
+        b"BUN_CRASH_REPORT_URL",
+        b"BUN_DESTRUCT_VM_ON_EXIT",
+        b"BUN_DUMP_STATE_ON_CRASH",
+        b"BUN_DUMP_SYMBOLS",
+        b"BUN_FEATURE_FLAG_DUMP_CODE",
+        b"BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING",
+        b"BUN_INSPECT",
+        b"BUN_INSPECT_CONNECT_TO",
+        b"BUN_INSPECT_PRELOAD",
+        b"BUN_INSTRUMENTS",
+        b"BUN_OPTIONS",
+        b"BUN_POSTGRES_SOCKET_MONITOR",
+        b"BUN_POSTGRES_SOCKET_MONITOR_READER",
+        b"BUN_TCC_OPTIONS",
+        b"BUN_THREADPOOL_STATS",
+        b"BUN_TRACE",
+        b"BUN_WATCHER_TRACE",
+        b"MI_VERBOSE",
+    ];
+    key.starts_with(b"BUN_AOT_") || key.starts_with(b"BUN_DEBUG") || WORDS.contains(&key)
+}
+
 /// `bun.getenvZ` — read an environment variable. Returns the value as borrowed
 /// process-static bytes (env block lives for the process). On POSIX wraps
 /// `libc::getenv`; on Windows scans `environ` case-insensitively.
 pub fn getenv_z(key: &ZStr) -> Option<&'static [u8]> {
+    #[cfg(bun_locked_environment)]
+    if is_never_read(key.as_bytes()) {
+        return None;
+    }
     #[cfg(not(any(unix, windows)))]
     {
         let _ = key;
@@ -304,6 +339,10 @@ pub fn c_environ() -> *const *const core::ffi::c_char {
 /// `bun.getenvZAnyCase` — case-insensitive env lookup (used on POSIX for
 /// CI-detection vars where casing varies across providers).
 pub fn getenv_z_any_case(key: &ZStr) -> Option<&'static [u8]> {
+    #[cfg(bun_locked_environment)]
+    if is_never_read(key.as_bytes()) {
+        return None;
+    }
     #[cfg(unix)]
     unsafe {
         // SAFETY: `environ` is the C env block; entries are NUL-terminated `KEY=VALUE`.
@@ -2231,7 +2270,7 @@ impl StackCheck {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Bumped each rebuild/rescan to invalidate stale cache entries.
-pub type Generation = u32;
+pub type Generation = u16;
 
 // ── Ordinal ───────────────────────────────────────────────────────────────
 // ABI-equivalent of WTF::OrdinalNumber:
@@ -2766,6 +2805,55 @@ pub fn get_thread_count() -> u16 {
         });
         raw.clamp(MIN, MAX)
     })
+}
+
+pub unsafe fn copy_in_parallel(to: *mut u8, from: *const u8, len: usize) {
+    const MIN_BYTES_PER_THREAD: usize = 16 << 20;
+    let threads = usize::from(get_thread_count())
+        .min(len / MIN_BYTES_PER_THREAD)
+        .min(16);
+    if threads < 2 {
+        // SAFETY: the caller's contract is that of `copy_nonoverlapping`.
+        return unsafe { core::ptr::copy_nonoverlapping(from, to, len) };
+    }
+    let share = len.div_ceil(threads).next_multiple_of(1 << 16);
+    let (to, from) = (to as usize, from as usize);
+    for_each_in_parallel((0..len).step_by(share), |start| {
+        // SAFETY: a part of what the caller's contract covers, and no two calls get the same part.
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                (from + start) as *const u8,
+                (to + start) as *mut u8,
+                share.min(len - start),
+            )
+        }
+    });
+}
+
+/// Calls `work` once with each of `items`, on this thread and on one more for each item after the first.
+/// Every thread takes the next item until none is left, so the items of a thread that the system does not start go to the others.
+pub fn for_each_in_parallel<T: Send>(
+    items: impl ExactSizeIterator<Item = T> + Send,
+    work: impl Fn(T) + Sync,
+) {
+    let more_threads = items.len().saturating_sub(1);
+    let items = Mutex::new(items);
+    let work_through_items = || {
+        loop {
+            let item = items.lock().next();
+            let Some(item) = item else { break };
+            work(item);
+        }
+    };
+    std::thread::scope(|scope| {
+        for _ in 0..more_threads {
+            let thread = std::thread::Builder::new();
+            if thread.spawn_scoped(scope, work_through_items).is_err() {
+                break;
+            }
+        }
+        work_through_items();
+    });
 }
 
 // ── time ──────────────────────────────────────────────────────────────────
@@ -3759,6 +3847,21 @@ impl OptionsEnvArg for Box<ZStr> {
     }
 }
 
+pub fn is_bootstrap_flag(argument: &[u8]) -> bool {
+    const PREFIXES: [&[u8]; 4] = [
+        b"--trace-event",
+        b"--trace-env",
+        b"--trace-exit",
+        b"--stack-trace-limit",
+    ];
+    PREFIXES.iter().any(|prefix| argument.starts_with(prefix))
+}
+
+/// The bootstrap flag that native code carries out where `internal/process/pre_execution` cannot be loaded.
+pub fn is_stack_trace_limit_flag(argument: &[u8]) -> bool {
+    argument.starts_with(b"--stack-trace-limit")
+}
+
 /// Parse a `BUN_OPTIONS`-style string
 /// (`--flag=value --flag2 "quoted value" bare`) and insert each token into
 /// `args` starting at index 1 (callers prepend a placeholder at [0]).
@@ -4165,6 +4268,18 @@ pub fn maybe_handle_panic_during_process_reload() {
     }
 }
 
+static RESTART_ARGUMENTS: Once<Vec<ZBox>> = Once::new();
+
+/// `reload_process` starts the process with the arguments it was started with, except those that `replace` gives another text for.
+pub fn replace_restart_arguments(replace: impl Fn(&[u8]) -> Option<&'static [u8]>) {
+    RESTART_ARGUMENTS.get_or_init(|| {
+        let arguments = argv_storage().iter().map(|argument| argument.as_bytes());
+        arguments
+            .map(|argument| ZBox::from_bytes(replace(argument).unwrap_or(argument)))
+            .collect()
+    });
+}
+
 /// Port of `bun.reloadProcess`. `may_return == true` → returns on failure; `false` → exits with 1.
 /// `on_before_reload_process_posix` clears CLOEXEC on stdio/IPC and resets caught signal
 /// dispositions on all POSIX; the close_range sweep is Linux/BSD only.
@@ -4229,13 +4344,15 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     unsafe {
         {
             unsafe extern "C" {
-                safe fn on_before_reload_process_posix();
+                safe fn on_before_reload_process_posix(close_inherited_fds: bool);
             }
-            on_before_reload_process_posix();
+            on_before_reload_process_posix(true);
         }
 
         // We clone argv so that the memory address isn't the same as the libc one.
-        let args = argv_storage();
+        let args = RESTART_ARGUMENTS
+            .get()
+            .map_or_else(argv_storage, Vec::as_slice);
         let dupe_argv: Vec<ZBox> = args
             .iter()
             .map(|z| ZBox::from_vec_with_nul(z.as_bytes().to_vec()))
@@ -4286,6 +4403,35 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         let _ = (clear_terminal, may_return);
         compile_error!("unsupported platform for reload_process");
     }
+}
+
+/// Replaces this process with Bun run with `args`.
+#[cfg(unix)]
+pub fn exec_self(args: &[&[u8]], keep_open: Option<Fd>) -> i32 {
+    unsafe extern "C" {
+        safe fn on_before_reload_process_posix(close_inherited_fds: bool);
+    }
+    let mut argv: Vec<ZBox> = Vec::with_capacity(args.len() + 1);
+    argv.push(ZBox::from_bytes(
+        argv_storage().first().map_or(&b"bun"[..], ZBox::as_bytes),
+    ));
+    argv.extend(args.iter().map(ZBox::from_bytes));
+    let mut pointers: Vec<*const core::ffi::c_char> = argv.iter().map(|z| z.as_ptr()).collect();
+    pointers.push(core::ptr::null());
+    let exec_path = self_exe_path().expect("unreachable").as_ptr();
+    on_before_reload_process_posix(false);
+    // SAFETY: `pointers` is a null-terminated array of NUL-terminated strings that outlive the call, `environ` is the
+    // process's own, and `fcntl` takes no pointer.
+    unsafe {
+        if let Some(fd) = keep_open {
+            let flags = libc::fcntl(fd.native(), libc::F_GETFD);
+            if flags >= 0 {
+                libc::fcntl(fd.native(), libc::F_SETFD, flags & !libc::FD_CLOEXEC);
+            }
+        }
+        libc::execve(exec_path, pointers.as_ptr().cast(), c_environ().cast());
+    }
+    std::io::Error::last_os_error().raw_os_error().unwrap_or(-1)
 }
 
 // ── spawn_sync_inherit ────────────────────────────────────────────────────

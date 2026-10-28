@@ -1,8 +1,18 @@
 import { pathToFileURL } from "bun";
+import { bustResolverDirCache } from "bun:internal-for-testing";
 import { describe, expect, it, test } from "bun:test";
-import { chmodSync, chownSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
+import {
+  chmodSync,
+  chownSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  symlinkSync,
+  writeFileSync,
+} from "fs";
 import { bunEnv, bunExe, bunRun, isLinux, isMacOS, isRoot, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
-import { join, resolve, sep } from "path";
+import { join, parse, relative, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
 
@@ -2256,77 +2266,64 @@ test.concurrent.each(["import", "require"])(
   },
 );
 
-// The resolver caches each "not found": a name that a directory listing lacks, and a directory that did not open.
-// The lookup that runs again after a miss has to check those on disk. A specifier that starts with a package name
-// has no directory that its text names, so nothing else reads its directories again.
-describe("a lookup that missed before its file was there", () => {
-  const packageJson = (fields: object = {}) => JSON.stringify({ name: "lib", version: "1.0.0", ...fields });
-  const linked = (root: string) => {
+// The resolver caches a directory once for each path that it walked to it: its real path, and the path through each
+// link. A watcher names a changed directory by one path. The bust for it has to reach every other path too.
+describe("a bust for a changed directory reaches each path that leads to it", () => {
+  /** packages/lib with c.js and sub/c.js. It is also node_modules/lib and linked, through links made first. */
+  function linkedLib() {
+    const dir = tempDir("resolve-bust-links", {
+      "packages/lib/package.json": JSON.stringify({ name: "lib", main: "./a.js" }),
+      "packages/lib/a.js": "",
+      "packages/lib/c.js": "",
+      "packages/lib/sub/c.js": "",
+    });
+    const root = realpathSync(String(dir));
+    const lib = join(root, "packages", "lib");
     mkdirSync(join(root, "node_modules"));
     // A junction on Windows, where a symlink to a directory needs a privilege.
-    symlinkSync(join(root, "packages", "lib"), join(root, "node_modules", "lib"), "junction");
-  };
+    for (const link of ["node_modules/lib", "linked"]) symlinkSync(lib, join(root, link), "junction");
+    /** The file of packages/lib that each specifier names. */
+    const resolved = (...specifiers: string[]) =>
+      specifiers.map(specifier => relative(lib, Bun.resolveSync(specifier, root)).replaceAll("\\", "/"));
+    // A stale listing still has c.js and lacks c.tsx, which is first in the extension order.
+    const rename = (dir: string) => renameSync(join(lib, dir, "c.js"), join(lib, dir, "c.tsx"));
+    return { dir, root, lib, resolved, rename };
+  }
 
   test.each([
-    {
-      name: "a file of a package",
-      files: { "node_modules/lib/package.json": packageJson() },
-      specifier: "lib/later",
-      later: "node_modules/lib/later.js",
-    },
-    {
-      name: "a file in a new directory of a package",
-      files: { "node_modules/lib/package.json": packageJson() },
-      specifier: "lib/dist/later",
-      later: "node_modules/lib/dist/later.js",
-    },
-    {
-      name: 'the "main" file of a package, in a new directory',
-      files: { "node_modules/lib/package.json": packageJson({ main: "./dist/index.js" }) },
-      specifier: "lib",
-      later: "node_modules/lib/dist/index.js",
-    },
-    {
-      name: "a package",
-      files: { "node_modules/other/package.json": packageJson({ name: "other" }) },
-      specifier: "lib",
-      later: "node_modules/lib/index.js",
-    },
-    {
-      name: "a file of a package behind a link",
-      files: { "packages/lib/package.json": packageJson() },
-      link: linked,
-      specifier: "lib/later",
-      later: "packages/lib/later.js",
-    },
-    {
-      name: 'the "exports" file of a package behind a link, in a new directory',
-      files: { "packages/lib/package.json": packageJson({ exports: { ".": "./dist/index.js" } }) },
-      link: linked,
-      specifier: "lib",
-      later: "packages/lib/dist/index.js",
-    },
-    {
-      name: 'the "main" file of a directory, in a new directory',
-      files: { "packages/lib/package.json": packageJson({ main: "./dist/index.js" }) },
-      specifier: "./packages/lib",
-      later: "packages/lib/dist/index.js",
-    },
-  ])("$name", ({ files, link, specifier, later }) => {
-    using dir = tempDir("resolve-later", files);
-    const root = realpathSync(String(dir));
-    link?.(root);
-    const resolved = () => {
-      try {
-        return Bun.resolveSync(specifier, root);
-      } catch {
-        return "not found";
-      }
-    };
+    { named: "its real path", bust: "packages/lib", changed: "." },
+    { named: "its real path, for a directory below a link", bust: "packages/lib/sub", changed: "sub" },
+    { named: "the path through a link", bust: "linked", changed: "." },
+    { named: "the path through a link, for a directory below it", bust: "linked/sub", changed: "sub" },
+  ])("when the bust names $named", ({ bust, changed }) => {
+    const { dir, root, resolved, rename } = linkedLib();
+    using _ = dir;
+    const file = changed === "." ? "c" : changed + "/c";
+    const paths = [`./packages/lib/${file}`, `./linked/${file}`, `lib/${file}`];
+    expect(resolved(...paths)).toEqual([file + ".js", file + ".js", file + ".js"]);
+    rename(changed);
+    bustResolverDirCache(join(root, bust));
+    expect(resolved(...paths)).toEqual([file + ".tsx", file + ".tsx", file + ".tsx"]);
+  });
 
-    expect(resolved()).toBe("not found");
-    mkdirSync(join(root, later, ".."), { recursive: true });
-    writeFileSync(join(root, later), "");
-    expect(resolved()).toBe(join(root, later));
+  test("for the package.json that a link leads to", () => {
+    const { dir, lib, resolved } = linkedLib();
+    using _ = dir;
+    expect(resolved("lib")).toEqual(["a.js"]);
+    writeFileSync(join(lib, "package.json"), JSON.stringify({ name: "lib", main: "./c.js" }));
+    bustResolverDirCache(lib);
+    expect(resolved("lib")).toEqual(["c.js"]);
+  });
+
+  test("through a link to the root of the file system", () => {
+    const { dir, root, lib, resolved, rename } = linkedLib();
+    using _ = dir;
+    const fileSystemRoot = parse(root).root;
+    symlinkSync(fileSystemRoot, join(root, "rootlink"), "junction");
+    const throughRootLink = "./rootlink/" + relative(fileSystemRoot, lib).replaceAll("\\", "/") + "/c";
+    expect(resolved(throughRootLink)).toEqual(["c.js"]);
+    rename(".");
+    bustResolverDirCache(lib);
+    expect(resolved(throughRootLink)).toEqual(["c.tsx"]);
   });
 });

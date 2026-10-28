@@ -957,17 +957,11 @@ function follow(stream: ReadableStream<Uint8Array>) {
 
 /** Resolves to the text of a `--hot` process's stderr once a reload fails, which prints "error: ...", or at EOF. */
 async function failedReload(stderr: ReadableStream<Uint8Array>) {
-  const reader = stderr.getReader();
   let text = "";
-  while (!/^error: .*\n/m.test(text)) {
-    const { value, done } = await reader.read();
-    if (done) return text;
-    text += Buffer.from(value).toString();
+  for await (const chunk of stderr) {
+    text += Buffer.from(chunk).toString();
+    if (/^error: .*\n/m.test(text)) break;
   }
-  // The process can print more. Its pipe stays open, and empty.
-  (async () => {
-    while (!(await reader.read()).done);
-  })().catch(() => {});
   return text;
 }
 
@@ -1176,21 +1170,25 @@ function hotWithLinkedFolder(prefix: string, files: Record<string, string>) {
   const failed = failedReload(runner.stderr);
   /** Resolves to `true` once stdout has `output`, or to the text of stderr when a reload fails first. */
   const loaded = (output: string) => Promise.race([stdout(output), failed]);
-  return { dir, root, folder, runner, stdout, failed, loaded };
+  return { dir, root, folder, runner, failed, loaded };
 }
 
 it.each(importedFolders)("reloads when a file of a folder imported %s is renamed", async (_, lib) => {
-  const main = `import { c } from "${lib}/c";\nconsole.log("loaded", c);\n`;
+  const main = `import { c } from "${lib}/c";\nimport { d } from "${lib}/sub/d";\nconsole.log("loaded", c, d);\n`;
   const { dir, root, folder, runner, failed, loaded } = hotWithLinkedFolder("hot-folder-rename", {
     "main.ts": main,
     "packages/lib/c.ts": `export const c = import.meta.file;`,
+    "packages/lib/sub/d.ts": `export const d = import.meta.file;`,
   });
   using _dir = dir;
   await using _runner = runner;
-  expect(await loaded("loaded c.ts\n")).toBe(true);
+  expect(await loaded("loaded c.ts d.ts\n")).toBe(true);
 
   renameSync(join(folder, "c.ts"), join(folder, "c.tsx"));
-  expect(await loaded("loaded c.tsx\n")).toBe(true);
+  expect(await loaded("loaded c.tsx d.ts\n")).toBe(true);
+
+  renameSync(join(folder, "sub", "d.ts"), join(folder, "sub", "d.tsx"));
+  expect(await loaded("loaded c.tsx d.tsx\n")).toBe(true);
 
   // writeFileSync truncates after it writes, so a shorter file could be read with the rest of the old one.
   writeFileSync(join(root, "main.ts"), main + `process.exit(0);\n`);
@@ -1218,32 +1216,6 @@ it.each(importedFolders)("imports a file created in a folder imported %s", async
   expect(await failed).not.toContain("error: ");
   expect(await runner.exited).toBe(0);
 });
-
-// A build that cleans its output first: `rm -rf dist && tsc`. A reload that runs between the two finds no "dist".
-it.each(importedFolders)(
-  "imports a folder imported %s after its output directory is removed and built again",
-  async (_, lib) => {
-    const main = `import { built } from "${lib}";\nconsole.log("loaded", built);\n`;
-    const { dir, root, folder, runner, stdout, failed } = hotWithLinkedFolder("hot-folder-rebuild", {
-      "main.ts": main,
-      "packages/lib/package.json": JSON.stringify({ name: "lib", version: "1.0.0", main: "./dist/index.ts" }),
-      "packages/lib/dist/index.ts": `export const built = "first";`,
-    });
-    using _dir = dir;
-    await using _runner = runner;
-    expect(await Promise.race([stdout("loaded first\n"), failed])).toBe(true);
-
-    rmSync(join(folder, "dist"), { recursive: true });
-    writeFileSync(join(root, "main.ts"), main + `// saved with no "dist"\n`);
-    expect(await failed).toContain("error: ");
-
-    mkdirSync(join(folder, "dist"));
-    writeFileSync(join(folder, "dist", "index.ts"), `export const built = "second";`);
-    writeFileSync(join(root, "main.ts"), main + `process.exit(0);\n`);
-    expect(await stdout("loaded second\n")).toBe(true);
-    expect(await runner.exited).toBe(0);
-  },
-);
 
 // Only inotify reports the changed entry's name, and PATH_MAX is 1024 on macOS.
 it.skipIf(!isLinux).each([

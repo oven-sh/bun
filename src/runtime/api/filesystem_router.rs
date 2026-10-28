@@ -208,7 +208,7 @@ impl FileSystemRouter {
                         // `abs()` writes into a thread-local buffer; copy out
                         // before recursing (recursion overwrites it).
                         let full_path = vm.fs().abs(&abs_parts).to_vec();
-                        let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(
+                        let _ = vm.as_mut().transpiler.resolver.bust_dir_cache_key(
                             strings::paths::without_trailing_slash_windows_path(&full_path),
                         );
                         Self::bust_dir_cache_recursive(&full_path);
@@ -217,7 +217,7 @@ impl FileSystemRouter {
             }
         }
 
-        let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(path);
+        let _ = vm.as_mut().transpiler.resolver.bust_dir_cache_key(path);
     }
 }
 

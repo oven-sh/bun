@@ -402,7 +402,10 @@ describe("bundler", () => {
         // 'Cannot use global name "y" with "composes"',
         // 'Cannot use global name "x" with "composes"',
       ],
-      "/file.module.css": ['The name "z" never appears in "file.module.css"'],
+      "/file.module.css": [
+        'The name "y" never appears in "file.module.css"',
+        'The name "z" never appears in "file.module.css"',
+      ],
       "/file.css": ['The name "x" never appears in "file.css"'],
     },
     bundleWarnings: {
@@ -1260,7 +1263,9 @@ b {
     minifyWhitespace: true,
     outdir: "/out",
     onAfterBundle(api) {
-      api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(/* css */ `.a{mask:url(./sprites-mrrzcz3w.svg#icon)}`);
+      api
+        .expectFile("/out/entry.css")
+        .toEqualIgnoringWhitespace(/* css */ `.a{mask:url("./sprites-mrrzcz3w.svg#icon")}`);
     },
   });
 
@@ -2314,5 +2319,304 @@ c {
       "/across-files.css",
       "/across-files-url.css",
     ],
+  });
+});
+
+describe("bundler", () => {
+  // tachyons, handsontable and jasmine ship the IE star hack.
+  itBundled("css/StarHackIsSkipped", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "./clearfix.css";
+        .inline-block { display: inline-block; *display: inline; *background: url(./missing.png); *zoom: 1 }
+      `,
+      "/clearfix.css": /* css */ `.cf:after { clear: both } .cf { *zoom: 1 }`,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
+        /* clearfix.css */
+        .cf:after {
+          clear: both;
+        }
+
+        /* entry.css */
+        .inline-block {
+          display: inline-block;
+        }
+      `);
+    },
+  });
+
+  // The bundler puts the path of a copied file in after printing. Unquoted, a space or a parenthesis ends the url().
+  itBundled("css/FileLoaderURLWithSpecialCharsMinified", {
+    files: {
+      "/entry.css": /* css */ `
+        .a { background: url("./my image.png") }
+        .b { background: url("./a(b).png") }
+        .c { --bg: url("./my image.png") }
+        @font-face { font-family: I; src: url("./plain.png") }
+      `,
+      "/my image.png": Buffer.alloc(128 * 1024 + 1, "Z").toString(),
+      "/a(b).png": Buffer.alloc(128 * 1024 + 1, "Y").toString(),
+      "/plain.png": Buffer.alloc(128 * 1024 + 1, "X").toString(),
+    },
+    loader: {
+      ".png": "file",
+    },
+    minifyWhitespace: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      api
+        .expectFile("/out/entry.css")
+        .toBe(
+          '.a{background:url("./my image-mrrzcz3w.png")}.b{background:url("./a(b)-nkpagkva.png")}.c{--bg:url("./my image-mrrzcz3w.png")}' +
+            '@font-face{font-family:I;src:url("./plain-w49ecq2a.png")}\n',
+        );
+    },
+  });
+  itBundled("css/FileLoaderURLAssetNamingDirAndPublicPath", {
+    files: {
+      "/entry.css": `@font-face { font-family: I; src: url("./Brand Fonts/inter.woff2") }`,
+      "/Brand Fonts/inter.woff2": Buffer.alloc(128 * 1024 + 1, "W").toString(),
+    },
+    loader: {
+      ".woff2": "file",
+    },
+    assetNaming: "[dir]/[name]-[hash].[ext]",
+    publicPath: "https://cdn.example.com/a/",
+    minifyWhitespace: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      api
+        .expectFile("/out/entry.css")
+        .toBe('@font-face{font-family:I;src:url("https://cdn.example.com/a/Brand Fonts/inter-tny5bcvp.woff2")}\n');
+    },
+  });
+
+  // The same url text in two files names two files.
+  itBundled("css/RulesWithTheSameURLTextInTwoFilesStayApart", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "./one/a.css";
+        @import "./two/b.css";
+      `,
+      "/one/a.css": `.a { background: url(./x.png) }`,
+      "/two/b.css": `.b { background: url(./x.png) }`,
+      "/one/x.png": "1",
+      "/two/x.png": "2",
+    },
+    minifyWhitespace: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      api
+        .expectFile("/out/entry.css")
+        .toEqualIgnoringWhitespace(
+          /* css */ `.a{background:url(data:image/png;base64,MQ==)}.b{background:url(data:image/png;base64,Mg==)}`,
+        );
+    },
+  });
+});
+
+describe("bundler", () => {
+  // `zoom`, `line-clamp`, `--a` and `--b` have no type. No import makes an earlier one redundant.
+  itBundled("css/CSSAtImportConditionsSupportsUnknownProperty", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "./foo.css" supports(zoom: 1);
+        @import "./foo.css" supports(line-clamp: 1);
+        @import "./foo.css" supports(--a: 1);
+        @import "./foo.css" supports(--b: 1);
+        @import "./foo.css" supports(--b: 1);
+      `,
+      "/foo.css": /* css */ `body { color: red }`,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      const block = (condition: string) => `/* foo.css */ @supports (${condition}) { body { color: red; } }`;
+      api
+        .expectFile("/out.css")
+        .toEqualIgnoringWhitespace(
+          ["zoom: 1", "line-clamp: 1", "--a: 1", "--b: 1"].map(block).join("") + "/* entry.css */",
+        );
+    },
+  });
+
+  // The empty blocks put `foo` before `bar` in the layer order, so `bar` wins.
+  itBundled("css/CSSAtLayerEmptyBlockKeepsLayerOrder", {
+    files: {
+      "/entry.css": /* css */ `
+        @layer foo {}
+        @layer bar {}
+        @layer bar { .box { background-color: green; } }
+        @layer foo { .box { background-color: red; } }
+      `,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+        /* entry.css */
+        @layer foo {}
+        @layer bar {}
+        @layer bar { .box { background-color: green; } }
+        @layer foo { .box { background-color: red; } }
+      `);
+    },
+  });
+
+  // What Tailwind 4 prints: a declaration for old browsers, then its override in `@supports`.
+  itBundled("css/CSSAtSupportsSameConditionKeepsAllRules", {
+    files: {
+      "/entry.css": /* css */ `
+        .a { --x: 1; @supports (color: red) { --x: 2; } --y: 1; @supports (color: red) { --y: 2; } }
+      `,
+    },
+    outfile: "/out.css",
+    minifyWhitespace: true,
+    minifySyntax: true,
+    onAfterBundle(api) {
+      api
+        .expectFile("/out.css")
+        .toBe(".a{--x:1}@supports (color: red){.a{--x:2}}.a{--y:1}@supports (color: red){.a{--y:2}}\n");
+    },
+  });
+});
+
+describe("bundler", () => {
+  itBundled("css/CSSUrlInPropertyInitialValue", {
+    files: {
+      "/a.css": /* css */ `
+          @property --url {
+            syntax: "<url>";
+            inherits: false;
+            initial-value: url(./hi.svg);
+          }
+          @property --image {
+            initial-value: url("./hi.svg");
+            syntax: "<image>";
+            inherits: false;
+          }
+          /* The first initial-value is replaced, so its file is not an import. */
+          @property --last {
+            syntax: "<url>";
+            inherits: false;
+            initial-value: url(./replaced.svg);
+            initial-value: url(./hi.svg);
+          }
+        `,
+      "/hi.svg": /* svg */ `<svg xmlns="http://www.w3.org/2000/svg"><circle r="4" /></svg>`,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      const url = `url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxjaXJjbGUgcj0iNCIgLz48L3N2Zz4=")`;
+      api.expectFile("/out/a.css").toEqualIgnoringWhitespace(`
+  /* a.css */
+  @property --url {
+    syntax: "<url>";
+    inherits: false;
+    initial-value: ${url};
+  }
+  @property --image {
+    syntax: "<image>";
+    inherits: false;
+    initial-value: ${url};
+  }
+  @property --last {
+    syntax: "<url>";
+    inherits: false;
+    initial-value: ${url};
+  }
+  `);
+    },
+  });
+
+  // A media or container condition the parser does not know is kept as written.
+  itBundled("css/GeneralEnclosedCondition", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "https://example.com/b.css" (layer(x));
+        @import "./ie.css" screen and (min-width:0\\0);
+        @media screen and (min-width:0\\0) { .media { color: red } }
+        @container scroll-state(stuck: top) { .container { color: red } }
+      `,
+      "/ie.css": /* css */ `.ie { color: red }`,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
+        @import "https://example.com/b.css" (layer(x));
+
+        /* ie.css */
+        @media screen and (min-width:0\\0) {
+          .ie {
+            color: red;
+          }
+        }
+
+        /* entry.css */
+        @media screen and (min-width:0\\0) {
+          .media {
+            color: red;
+          }
+        }
+
+        @container scroll-state(stuck: top) {
+          .container {
+            color: red;
+          }
+        }
+      `);
+    },
+  });
+
+  // The text of a kept condition is not an import.
+  itBundled("css/GeneralEnclosedConditionURL", {
+    files: {
+      "/entry.css": /* css */ `
+        @media (foo: url("./missing.png")) { .media { color: red } }
+        @container (style(--bg: url(./missing.png)) junk) { .container { color: red } }
+      `,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
+        /* entry.css */
+        @media (foo: url("./missing.png")) {
+          .media {
+            color: red;
+          }
+        }
+
+        @container (style(--bg: url(./missing.png)) junk) {
+          .container {
+            color: red;
+          }
+        }
+      `);
+    },
+  });
+});
+
+describe("bundler", () => {
+  // The default browser targets start at Chrome 80 and Safari 14.
+  itBundled("css/DefaultTargetsKeepWhatBrowsersRead", {
+    files: {
+      "/entry.css": /* css */ `
+        .overlay { position: fixed; top: 0; right: 0; bottom: 0; left: 0 }
+        .clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; flex-direction: column; overflow: hidden }
+        .frame { border: 4px solid; border-image: linear-gradient(red, blue); border-image-slice: 1 }
+        .menu { max-width: calc(100vw - 32px); max-width: var(--menu-max-width, calc(100vw - 32px)) }
+      `,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
+        /* entry.css */
+        .overlay { position: fixed; top: 0; bottom: 0; left: 0; right: 0; }
+        .clamp { display: -webkit-box; -webkit-line-clamp: 3; overflow: hidden; -webkit-box-orient: vertical; flex-direction: column; }
+        .frame { border: 4px solid; border-image: linear-gradient(red, #00f) 1; }
+        .menu { max-width: calc(100vw - 32px); max-width: var(--menu-max-width, calc(100vw - 32px)); }
+      `);
+    },
   });
 });

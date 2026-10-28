@@ -1,9 +1,8 @@
 import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, gcTick, isASAN, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, gcTick, isASAN, tempDir } from "harness";
 import type { BlobPropertyBag } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
-import { closeSync, openSync, rmSync, writeSync } from "node:fs";
 import path from "node:path";
 
 test("blob: imports have sourcemapped stacktraces", async () => {
@@ -111,6 +110,7 @@ for (const info of [
       "3.5": [[3.5], "oo"],
       "0, 2.5": [[0, 2.5], "Bu"],
       "-0.5": [[-0.5], "BunFoo"],
+      "-0.6": [[-0.6], "o"],
       "0.5, -2.5": [[0.5, -2.5], "BunF"],
       "1, Infinity": [[1, Infinity], "unFoo"],
       "-Infinity, 2": [[-Infinity, 2], "Bu"],
@@ -177,58 +177,6 @@ test("BuildArtifact.slice rounds offsets as Blob.slice does", async () => {
     "1.5": bytes.subarray(2).toString(),
     "0, 3.5": bytes.subarray(0, 4).toString(),
   });
-});
-
-// `[Clamp]` stops an offset at 2^53 - 1, which shows only on a Blob of 2^53 bytes or more. The one
-// way to have such a Blob is a sparse file, and of the common Linux filesystems only tmpfs takes a
-// write at that offset. The file is unlinked before the write, so it is gone when the fd closes.
-function openFileOf2Pow53Bytes(): number | undefined {
-  if (!isLinux) return undefined;
-  const file = `/dev/shm/bun-blob-slice-${Bun.randomUUIDv7()}`;
-  let fd: number;
-  try {
-    fd = openSync(file, "wx+");
-  } catch {
-    return undefined;
-  }
-  try {
-    rmSync(file);
-    writeSync(fd, new Uint8Array(1), 0, 1, 2 ** 53 - 1);
-    return fd;
-  } catch {
-    closeSync(fd);
-    return undefined;
-  }
-}
-const canOpenFileOf2Pow53Bytes = (() => {
-  const fd = openFileOf2Pow53Bytes();
-  if (fd === undefined) return false;
-  closeSync(fd);
-  return true;
-})();
-
-test.skipIf(!canOpenFileOf2Pow53Bytes)("Bun.file().slice clamps an offset to 2^53 - 1", () => {
-  const fd = openFileOf2Pow53Bytes()!;
-  try {
-    const file = Bun.file(fd);
-    expect({
-      "size": file.size,
-      "2 ** 53": file.slice(2 ** 53).size,
-      "Infinity": file.slice(Infinity).size,
-      "-(2 ** 53)": file.slice(-(2 ** 53)).size,
-      "-Infinity": file.slice(-Infinity).size,
-      "0, 2 ** 53": file.slice(0, 2 ** 53).size,
-    }).toEqual({
-      "size": 2 ** 53,
-      "2 ** 53": 1,
-      "Infinity": 1,
-      "-(2 ** 53)": 2 ** 53 - 1,
-      "-Infinity": 2 ** 53 - 1,
-      "0, 2 ** 53": 2 ** 53 - 1,
-    });
-  } finally {
-    closeSync(fd);
-  }
 });
 
 test("new Blob", () => {

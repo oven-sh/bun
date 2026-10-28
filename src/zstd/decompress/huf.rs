@@ -33,6 +33,9 @@ const FAST_LOG: u32 = 11;
 const FAST_MIN_LITERALS: usize = 2048;
 /// From how many literals on the larger table is considered.
 const LARGE_MIN_LITERALS: usize = 1 << 14;
+/// From how many bits to a literal on few lookups of at most `SINGLE_MAX_LOG` bits would yield more than one.
+const SINGLE_MIN_BITS: usize = 5;
+const SINGLE_MAX_LOG: u32 = 9;
 
 impl Code {
     /// How many symbols a lookup of `log` bits yields, in 65536ths, if symbols are as frequent as their codes are short.
@@ -86,6 +89,11 @@ impl Code {
             return FAST_LOG + 1;
         }
         FAST_LOG
+    }
+
+    /// Whether four streams of `nb_bytes` in all are decoded sooner to `nb_literals` one to a lookup of `log` bits.
+    fn is_best_single(log: u32, nb_literals: usize, nb_bytes: usize) -> bool {
+        log <= SINGLE_MAX_LOG && 8 * nb_bytes >= SINGLE_MIN_BITS * nb_literals
     }
 }
 
@@ -263,6 +271,8 @@ pub(crate) struct HufDTable {
     table_type: TableType,
     /// How many bits `table` is indexed with.
     log: u32,
+    /// Every entry of `table` is one symbol.
+    single: bool,
     table: [Entry; TABLE_SIZE],
 }
 
@@ -277,17 +287,19 @@ impl HufDTable {
             },
             table_type: TableType::X1,
             log: 0,
+            single: false,
             table: [0; TABLE_SIZE],
         }
     }
 
     /// Reads the description of a table at the start of `src`, and returns its size. The table is to decode
-    /// `nb_literals` with.
+    /// `nb_literals` with, from the rest of `src` if that is `four_streams`.
     fn read(
         &mut self,
         src: &[u8],
         table_type: TableType,
         nb_literals: usize,
+        four_streams: bool,
         spread: &mut Spread,
     ) -> Result<usize> {
         let Code {
@@ -299,25 +311,33 @@ impl HufDTable {
         self.code.nb_symbols = stats.nb_symbols;
         self.code.table_log = stats.table_log;
         self.table_type = table_type;
-        self.build(self.code.best_log(nb_literals))?;
+        let log = self.code.best_log(nb_literals);
+        let nb_bytes = src.len().saturating_sub(stats.size);
+        let single = four_streams && Code::is_best_single(log, nb_literals, nb_bytes);
+        self.build(log, single)?;
         Ok(stats.size)
     }
 
-    /// Makes the table fit to decode `nb_literals` with.
+    /// Makes the table fit to decode `nb_literals` of another block with.
     pub(crate) fn prepare(&mut self, nb_literals: usize) -> Result<()> {
         if self.log < FAST_LOG && nb_literals >= FAST_MIN_LITERALS {
-            self.build(self.code.table_log.max(FAST_LOG))?;
+            self.build(self.code.table_log.max(FAST_LOG), false)?;
+        } else if self.single {
+            self.build(self.log, false)?;
         }
         Ok(())
     }
 
     /// Fills `table` for lookups of `log` bits, which is at least as many as the longest code has.
-    fn build(&mut self, log: u32) -> Result<()> {
+    fn build(&mut self, log: u32, single: bool) -> Result<()> {
         self.log = log;
+        self.single = single;
         let sorted = Sorted::new(&self.code, log)?;
         // The tables of what a third symbol adds end with the one for this many bits.
         let room = log.saturating_sub(2 * sorted.shortest());
-        if room < 7 {
+        if single || room < sorted.shortest() {
+            self.fill(&sorted, &mut [])
+        } else if room < 7 {
             self.fill(&sorted, &mut [0; 1 << 7])
         } else {
             self.fill(&sorted, &mut [0; TABLE_SIZE / 2])
@@ -326,8 +346,9 @@ impl HufDTable {
 
     fn fill(&mut self, sorted: &Sorted, thirds: &mut [Entry]) -> Result<()> {
         let log = sorted.log;
-        let shortest = sorted.shortest();
-        for room in shortest..=log.saturating_sub(2 * shortest) {
+        // From how many bits on what a symbol leaves of a lookup holds another.
+        let min_room = if self.single { log } else { sorted.shortest() };
+        for room in min_room..=log.saturating_sub(2 * min_room) {
             sorted.fill(thirds.span_mut(1 << room, 1 << room)?, room, 0, 2, None)?;
         }
         for weight in 1..=sorted.max_weight {
@@ -337,7 +358,7 @@ impl HufDTable {
             let entries = self
                 .table
                 .span_mut(sorted.position(weight, log)?, symbols.len() << room)?;
-            if room < shortest {
+            if room < min_room {
                 fill_runs(entries, symbols, room, entry(0, 0, nb_bits), 0);
                 continue;
             }
@@ -381,7 +402,11 @@ impl HufDTable {
             return false;
         };
         if streams.0.iter().all(|stream| stream.bits != 0) {
-            self.decode_most(&mut streams);
+            if self.single {
+                self.decode_most_single(&mut streams);
+            } else {
+                self.decode_most(&mut streams);
+            }
         }
         if !streams.0.iter().all(Stream::fits_tail) {
             return self.decode_stragglers(streams);
@@ -397,6 +422,15 @@ impl HufDTable {
             10 => streams.decode_most::<10, 5>(&self.table),
             11 => streams.decode_most::<11, 5>(&self.table),
             _ => streams.decode_most::<12, 4>(&self.table),
+        }
+    }
+
+    /// The same with a table where every entry is one symbol.
+    #[inline(never)]
+    fn decode_most_single(&self, streams: &mut Streams<'_>) {
+        match self.log {
+            8 => streams.decode_most_single::<8, 7>(&self.table),
+            _ => streams.decode_most_single::<SINGLE_MAX_LOG, 6>(&self.table),
         }
     }
 
@@ -814,7 +848,7 @@ impl<'a> Streams<'a> {
                 .as_mut_array()
         }
 
-        const { assert!(LOOKUPS == 4 || LOOKUPS == 5) };
+        const { assert!((LOOKUPS == 4 || LOOKUPS == 5) && LOG as usize * LOOKUPS <= 55) };
         let [s0, s1, s2, s3] = &mut self.0;
         let (mut bits0, mut bits1, mut bits2, mut bits3) = (s0.bits, s1.bits, s2.bits, s3.bits);
         let (mut ip0, mut ip1, mut ip2, mut ip3) = (s0.ip, s1.ip, s2.ip, s3.ip);
@@ -865,6 +899,79 @@ impl<'a> Streams<'a> {
         (s0.ip, s1.ip, s2.ip, s3.ip) = (ip0, ip1, ip2, ip3);
         (s0.op, s1.op, s2.op, s3.op) = (op0, op1, op2, op3);
     }
+
+    /// The same with a table where every entry is one symbol. `LOOKUPS` of `LOG` bits are at most 56 bits.
+    #[inline(always)]
+    fn decode_most_single<const LOG: u32, const LOOKUPS: usize>(
+        &mut self,
+        table: &[Entry; TABLE_SIZE],
+    ) {
+        #[inline(always)]
+        fn lookup<const LOG: u32>(
+            table: &[Entry; TABLE_SIZE],
+            bits: &mut u64,
+            to: Option<&mut u8>,
+        ) {
+            let index = (*bits >> (64 - LOG)) as usize;
+            // The highest byte of the entry, read on its own where that is simple: the next lookup waits for it.
+            let nb_bits = if cfg!(target_endian = "little") {
+                bun_pod::bytes_of(table).get(4 * index + 3).copied()
+            } else {
+                table.get(index).map(|entry| (entry >> 24) as u8)
+            };
+            if let (Some(to), Some(nb_bits), Some(&entry)) = (to, nb_bits, table.get(index)) {
+                *bits <<= nb_bits & 63;
+                *to = entry as u8;
+            }
+        }
+
+        #[inline(always)]
+        fn rounds<'a, const LOOKUPS: usize>(stream: &'a mut Stream<'_>) -> &'a mut [[u8; LOOKUPS]] {
+            let left = stream.out.get_mut(stream.op as usize..).unwrap_or_default();
+            left.as_chunks_mut().0
+        }
+
+        const { assert!(LOOKUPS <= 7 && LOG as usize * LOOKUPS <= 56) };
+        let [s0, s1, s2, s3] = &mut self.0;
+        let (mut bits0, mut bits1, mut bits2, mut bits3) = (s0.bits, s1.bits, s2.bits, s3.bits);
+        let (mut ip0, mut ip1, mut ip2, mut ip3) = (s0.ip, s1.ip, s2.ip, s3.ip);
+        let (src0, src1, src2, src3) = (s0.src, s1.src, s2.src, s3.src);
+        let mut nb_rounds = 0;
+        for (((out0, out1), out2), out3) in rounds::<LOOKUPS>(s0)
+            .iter_mut()
+            .zip(rounds::<LOOKUPS>(s1))
+            .zip(rounds::<LOOKUPS>(s2))
+            .zip(rounds::<LOOKUPS>(s3))
+        {
+            // A stream that is not reloaded yet can have as few as 55 bits.
+            if !(reload(src0, &mut ip0, &mut bits0)
+                && reload(src1, &mut ip1, &mut bits1)
+                && reload(src2, &mut ip2, &mut bits2)
+                && reload(src3, &mut ip3, &mut bits3))
+            {
+                break;
+            }
+            let mut lookups = |index: usize| {
+                lookup::<LOG>(table, &mut bits0, out0.get_mut(index));
+                lookup::<LOG>(table, &mut bits1, out1.get_mut(index));
+                lookup::<LOG>(table, &mut bits2, out2.get_mut(index));
+                lookup::<LOG>(table, &mut bits3, out3.get_mut(index));
+            };
+            lookups(0);
+            lookups(1);
+            lookups(2);
+            lookups(3);
+            lookups(4);
+            lookups(5);
+            lookups(6);
+            nb_rounds += 1;
+        }
+        (s0.bits, s1.bits, s2.bits, s3.bits) = (bits0, bits1, bits2, bits3);
+        (s0.ip, s1.ip, s2.ip, s3.ip) = (ip0, ip1, ip2, ip3);
+        for stream in &mut self.0 {
+            stream.op += nb_rounds * LOOKUPS as u32;
+        }
+    }
 }
 
 /// `HUF_readDTableX2_wksp`. Returns the size of the table's description in `src`.
@@ -873,7 +980,7 @@ pub(crate) fn read_dtable_x2(
     src: &[u8],
     spread: &mut Spread,
 ) -> Result<usize> {
-    dtable.read(src, TableType::X2, usize::MAX, spread)
+    dtable.read(src, TableType::X2, usize::MAX, false, spread)
 }
 
 /// `HUF_decompress1X_usingDTable`
@@ -895,7 +1002,7 @@ pub(crate) fn decompress_1x1(
     src: &[u8],
     spread: &mut Spread,
 ) -> Result<usize> {
-    let h_size = dtable.read(src, TableType::X1, dst.len(), spread)?;
+    let h_size = dtable.read(src, TableType::X1, dst.len(), false, spread)?;
     if h_size >= src.len() {
         return Err(Error::SrcSizeWrong);
     }
@@ -932,7 +1039,7 @@ pub(crate) fn decompress_4x_huf_only(
     } else {
         TableType::X1
     };
-    let h_size = dtable.read(src, table_type, dst.len(), spread)?;
+    let h_size = dtable.read(src, table_type, dst.len(), true, spread)?;
     if h_size >= src.len() {
         return Err(Error::SrcSizeWrong);
     }

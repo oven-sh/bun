@@ -109,6 +109,75 @@ describe("Zstandard compression", async () => {
     ).toBeLessThan(10);
   }
 
+  describe("few literals whose codes are long", () => {
+    // How often each of how many symbols is there, out of 1536: a code of 5 bits for 48 times, of 9 bits for 3 times.
+    const upTo8Bits = [
+      [48, 8],
+      [6, 192],
+    ];
+    const upTo9Bits = [
+      [48, 8],
+      [6, 140],
+      [3, 104],
+    ];
+    let x = 1;
+    /** In a random order, but that each quarter, which is a Huffman stream of its own, starts with the longest codes. */
+    function literals(mix: number[][]) {
+      const input: number[] = [];
+      let symbol = 0;
+      for (const [count, nbSymbols] of mix) {
+        for (const end = symbol + nbSymbols; symbol < end; symbol++) input.push(...Array(count).fill(symbol));
+      }
+      const isRare = (other: number) => other >= symbol - mix.at(-1)![1];
+      for (let i = input.length - 1; i > 0; i--) {
+        x ^= x << 13;
+        x ^= x >>> 17;
+        x ^= x << 5;
+        const j = (x >>> 0) % (i + 1);
+        [input[i], input[j]] = [input[j], input[i]];
+      }
+      for (let start = 0; start < input.length; start += input.length / 4) {
+        for (let i = start, from = start + 8; i < start + 8; i++) {
+          while (!isRare(input[from])) from++;
+          if (!isRare(input[i])) [input[i], input[from]] = [input[from], input[i]];
+        }
+      }
+      return Uint8Array.from(input);
+    }
+
+    // Where a stream ends within a byte, which is what varies, is how many bits there are before more have to be read.
+    it.each([
+      [8, upTo8Bits],
+      [9, upTo9Bits],
+    ])("of up to %i bits", (_, mix) => {
+      for (let round = 0; round < 40; round++) {
+        const input = literals(mix);
+        const frame = zstdCompressSync(input);
+        expect(frame.length).toBeLessThan(1500);
+        expect(Buffer.compare(zstdDecompressSync(frame), input)).toBe(0);
+      }
+    });
+
+    it("with a table that later blocks use again", () => {
+      // Blocks of a target size end with a match.
+      const input = Buffer.concat(
+        Array.from({ length: 4 }, () => literals(upTo8Bits)).flatMap(part => [part, part.subarray(0, 64)]),
+      );
+      const ZSTD_c_targetCBlockSize = 130;
+      const frame = zlib.zstdCompressSync(input, { params: { [ZSTD_c_targetCBlockSize]: 1340 } });
+      // The blocks are after the magic number, the descriptor and a content size of 2 bytes.
+      expect(frame[4]).toBe(0x60);
+      const literalsTypes: number[] = [];
+      for (let at = 7, header = 0; !(header & 1); at += 3 + (header >> 3)) {
+        header = frame.readUIntLE(at, 3);
+        literalsTypes.push(frame[at + 3] & 3);
+      }
+      const [compressed, treeless] = [2, 3];
+      expect(literalsTypes).toEqual([compressed, treeless, treeless, treeless]);
+      expect(Buffer.compare(zstdDecompressSync(frame), input)).toBe(0);
+    });
+  });
+
   // Test with known zstd-compressed data
   describe("zstd CLI compatibility", () => {
     for (const { name, compressed, original } of [

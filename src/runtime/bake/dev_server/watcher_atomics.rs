@@ -288,7 +288,7 @@ impl WatcherAtomics {
 impl WatcherAtomics {
     pub(crate) fn init(owner: *mut DevServer) -> core::ptr::NonNull<Self> {
         let mk_event = || HotReloadEvent::init_empty(owner);
-        let atomics: *mut WatcherAtomics = bun_core::heap::into_raw(Box::new(WatcherAtomics {
+        let atomics = bun_core::heap::alloc_nn(WatcherAtomics {
             events: [mk_event(), mk_event(), mk_event()],
             next_event: core::sync::atomic::AtomicU8::new(NextEvent::DONE.0),
             current_event: None,
@@ -297,14 +297,12 @@ impl WatcherAtomics {
             dbg_watcher_event: None,
             #[cfg(debug_assertions)]
             dbg_server_event: None,
-        }));
-        // SAFETY: `atomics` is the fresh `heap::into_raw` result; the
+        });
+        // SAFETY: `atomics` is the fresh `heap::alloc_nn` result; the
         // allocation is exclusively reachable through it here.
-        unsafe {
-            for ev in &mut (*atomics).events {
-                ev.atomics = atomics;
-            }
-            core::ptr::NonNull::new_unchecked(atomics)
+        for ev in unsafe { &mut (*atomics.as_ptr()).events } {
+            ev.atomics = atomics.as_ptr();
         }
+        atomics
     }
 }

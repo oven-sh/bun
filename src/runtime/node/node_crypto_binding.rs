@@ -549,8 +549,8 @@ pub(crate) fn random_bytes<'a>(
         callback.to_js(),
         RandomFillJob::InPlace {
             // SAFETY: `bytes` is `result`'s backing store, kept alive by the job's
-            // Js side; a slice's data pointer is non-null even when empty.
-            bytes: unsafe { JsPtr::new(core::ptr::NonNull::new_unchecked(bytes.as_mut_ptr())) },
+            // Js side.
+            bytes: unsafe { JsPtr::new(core::ptr::NonNull::from_mut(bytes).cast()) },
             length: size as usize,
         },
         result,

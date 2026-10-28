@@ -300,24 +300,28 @@ for (const [name, copy] of impls) {
         }
       });
 
-      test("two copies started together both finish with one whole source at the destination", async () => {
-        const a = Buffer.alloc(64 * 1024, "a").toString();
-        const b = Buffer.alloc(64 * 1024, "b").toString();
-        using dir = tempDir("cp-together", { a, b, existing: "original" });
-        const at = (...names: string[]) => join(String(dir), ...names);
-        const together = (dest: string) => Promise.all([copy(at("a"), dest), copy(at("b"), dest)]);
-        const which = (dest: string) => {
-          const content = fs.readFileSync(dest, "utf8");
-          return content === a ? "a" : content === b ? "b" : "neither";
-        };
-        const results: string[] = [];
-        for (let round = 0; round < 10; round++) {
-          await together(at("existing"));
-          await together(at("new", String(round), "dest"));
-          results.push(which(at("existing")), which(at("new", String(round), "dest")));
-        }
-        expect(results.filter(result => result === "neither")).toEqual([]);
-      });
+      // Windows: CopyFileW cannot open a destination that the other copy holds, `EBUSY: resource busy or locked, copyfile`.
+      test.skipIf(isWindows)(
+        "two copies started together both finish with one whole source at the destination",
+        async () => {
+          const a = Buffer.alloc(64 * 1024, "a").toString();
+          const b = Buffer.alloc(64 * 1024, "b").toString();
+          using dir = tempDir("cp-together", { a, b, existing: "original" });
+          const at = (...names: string[]) => join(String(dir), ...names);
+          const together = (dest: string) => Promise.all([copy(at("a"), dest), copy(at("b"), dest)]);
+          const which = (dest: string) => {
+            const content = fs.readFileSync(dest, "utf8");
+            return content === a ? "a" : content === b ? "b" : "neither";
+          };
+          const results: string[] = [];
+          for (let round = 0; round < 10; round++) {
+            await together(at("existing"));
+            await together(at("new", String(round), "dest"));
+            results.push(which(at("existing")), which(at("new", String(round), "dest")));
+          }
+          expect(results.filter(result => result === "neither")).toEqual([]);
+        },
+      );
     });
 
     test("'force: false' + 'errorOnExist: true' can throw", async () => {

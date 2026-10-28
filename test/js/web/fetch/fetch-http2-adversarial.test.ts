@@ -961,3 +961,87 @@ describe.concurrent("SETTINGS_HEADER_TABLE_SIZE from an HTTP/2 server", () => {
     );
   });
 });
+
+test("fetch() over HTTP/2 sends authorization and cookie as never indexed, every time", async () => {
+  const blocks: string[] = [];
+  await withAdversarialServer(
+    {
+      onStream: (socket, id, _, block) => {
+        blocks.push(block.toString("hex"));
+        socket.write(frame(1, 5, id, hpackStatus200));
+      },
+    },
+    async (url, state) => {
+      // Huffman coding would make these values longer, so they are on the wire as they are.
+      const headers = { authorization: "#@~$a", cookie: "#@~$c", "x-plain": "#@~$p" };
+      for (let i = 0; i < 2; i++) {
+        expect((await fetch(url, { protocol: "http2", tls: { rejectUnauthorized: false }, headers })).status).toBe(200);
+      }
+      expect(state.connections).toBe(1);
+      const raw = (value: string) => "05" + Buffer.from(value).toString("hex");
+      for (const block of blocks) {
+        // 0001 and a 4-bit prefix (RFC 7541 §6.2.3): static names 23 and 32 are 15 + 8 and 15 + 17.
+        expect(block).toContain("1f08" + raw("#@~$a"));
+        expect(block).toContain("1f11" + raw("#@~$c"));
+      }
+      // Any other header enters the table and is a reference from then on.
+      expect(blocks[0]).toContain(raw("#@~$p"));
+      expect(blocks[1]).not.toContain(raw("#@~$p"));
+    },
+  );
+});
+
+test("a header that HPACK cannot carry fails the fetch() and retires the HTTP/2 connection", async () => {
+  const blocks: Array<[connection: number, block: string]> = [];
+  await withAdversarialServer(
+    {
+      onStream: (socket, id, connection, block) => {
+        blocks.push([connection, block.toString("hex")]);
+        socket.write(frame(1, 5, id, hpackStatus200));
+      },
+    },
+    async url => {
+      const get = (headers: Record<string, string>) =>
+        fetch(url, { protocol: "http2", tls: { rejectUnauthorized: false }, headers }).then(
+          res => res.status,
+          e => e.code,
+        );
+      expect(await get({ "x-a": "first" })).toBe(200);
+      // x-b is in the encoder's table by the time x-c is refused, and the server never hears of it.
+      expect(await get({ "x-a": "first", "x-b": "second", "x-c": Buffer.alloc(65536, "c").toString() })).toBe(
+        "UnableToEncode",
+      );
+      expect(await get({ "x-a": "first" })).toBe(200);
+      // A new connection, so the same bytes as from the first one's empty table.
+      expect(blocks).toEqual([
+        [0, blocks[0][1]],
+        [1, blocks[0][1]],
+      ]);
+    },
+  );
+});
+
+test("a header block for a finished stream that does not decode is fatal to the HTTP/2 connection", async () => {
+  await withAdversarialServer(
+    {
+      onStream: (socket, id) => {
+        // Index 70 of an empty dynamic table, on the stream that the first response has ended.
+        if (id === 3) socket.write(frame(1, 4, 1, Buffer.from([0x80 | 70])));
+        socket.write(frame(1, 5, id, hpackStatus200));
+      },
+    },
+    async (url, state) => {
+      const results: unknown[] = [];
+      for (let i = 0; i < 3; i++) {
+        results.push(
+          await fetch(url, { protocol: "http2", tls: { rejectUnauthorized: false } }).then(
+            res => res.status,
+            e => e.code,
+          ),
+        );
+      }
+      expect(results).toEqual([200, "HTTP2CompressionError", 200]);
+      expect(state.connections).toBe(2);
+    },
+  );
+});

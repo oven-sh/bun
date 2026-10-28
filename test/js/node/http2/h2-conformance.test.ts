@@ -3215,6 +3215,253 @@ describe("HPACK (RFC 7541)", () => {
     },
   );
 
+  // Whether such a call throws, fails its stream or goes through is not the point here, and differs from Node for some.
+  describe("the block after one that was given up on decodes", () => {
+    const throws = {
+      toString() {
+        throw new Error("no");
+      },
+    };
+    /** What comes after `x-new`, which is in the encoder's table by then. */
+    const endings: Array<[string, http2.OutgoingHttpHeaders]> = [
+      ["a value with LF", { "x-bad": "a\nb" }],
+      ["a value with LF in an array", { "x-bad": ["ok", "a\nb"] }],
+      ["null", { "x-bad": null as any }],
+      ["null in an array", { "x-bad": ["ok", null as any] }],
+      ["a name with SP", { "x bad": "1" }],
+      ["a name of 5000 bytes", { ["x-" + Buffer.alloc(5000, "n")]: "1" }],
+      ["two values for a single-value header", { "content-type": ["a", "b"] }],
+      ["a single-value header twice", { "content-type": "a", "Content-Type": "b" }],
+      ["a pseudo-header that does not exist", { ":bad": "1" }],
+      ["a value whose toString() throws", { "x-bad": throws as any }],
+    ];
+    const badOptions: Array<[string, any]> = [
+      ["a number", 5],
+      ["silent: 1", { silent: 1 }],
+      ["exclusive: 1", { exclusive: 1 }],
+      ["parent: 'x'", { parent: "x" }],
+      ["parent: -1", { parent: -1 }],
+      ["weight: 0", { weight: 0 }],
+      ["weight: 'x'", { weight: "x" }],
+      ["an aborted signal", { signal: AbortSignal.abort() }],
+    ];
+    const quiet = (emitter?: EventEmitter | void) => void emitter?.on("error", () => {});
+    const attempt = (call: () => EventEmitter | void) => {
+      try {
+        quiet(call());
+      } catch {}
+    };
+
+    /** `x-old` entered the table before the block that is given up on: an entry the peer lacks moves its index. */
+    type ClientCase = [string, (client: http2.ClientHttp2Session, n: string) => unknown];
+    async function clientGivesUp(cases: ClientCase[]) {
+      const { srv, seen, port } = await listen();
+      const client = http2.connect(`http://127.0.0.1:${port}`);
+      quiet(client);
+      try {
+        await get(client, { ":path": "/", "x-old": "0" });
+        const results: unknown[] = [];
+        for (const [label, giveUp] of cases) {
+          const n = String(results.length);
+          await giveUp(client, n);
+          await get(client, { ":path": "/after", "x-old": "0", "x-new": n });
+          results.push([label, seen.at(-1)!["x-old"], seen.at(-1)!["x-new"]]);
+        }
+        expect(results).toEqual(cases.map(([label], i) => [label, "0", String(i)]));
+        // The table is in use again.
+        expect(client.state.deflateDynamicTableSize).toBeGreaterThan(0);
+      } finally {
+        client.destroy();
+        srv.close();
+      }
+    }
+
+    test("in request()", async () => {
+      await clientGivesUp([
+        ...[...endings, [":status", { ":status": "200" }] as const].map(([label, ending]): ClientCase => [
+          label,
+          (client, n) => attempt(() => client.request({ ":path": "/gone" + n, "x-new": n, ...ending })),
+        ]),
+        ...badOptions.map(([label, options]): ClientCase => [
+          label,
+          (client, n) => attempt(() => client.request({ ":path": "/gone" + n, "x-new": n }, options)),
+        ]),
+      ]);
+    });
+
+    test("in request() with an array of names and values", async () => {
+      await clientGivesUp(
+        endings.map(([label, ending]) => [
+          label,
+          (client, n) =>
+            attempt(() => client.request([":path", "/gone" + n, "x-new", n, ...Object.entries(ending).flat()] as any)),
+        ]),
+      );
+    });
+
+    test("in a client's sendTrailers()", async () => {
+      await clientGivesUp(
+        endings.map(([label, ending]) => [
+          label,
+          (client, n) => {
+            const req = client.request({ ":path": "/", ":method": "POST" }, { waitForTrailers: true });
+            quiet(req);
+            req.on("wantTrailers", () => {
+              attempt(() => req.sendTrailers({ "x-new": n, ...ending }));
+              req.close();
+            });
+            req.resume();
+            req.end();
+            return once(req, "close");
+          },
+        ]),
+      );
+    });
+
+    type ServerCase = [string, (stream: http2.ServerHttp2Stream, n: string) => void];
+    async function serverGivesUp(cases: ServerCase[]) {
+      const srv = http2.createServer();
+      srv.on("sessionError", () => {});
+      srv.on("stream", (stream, headers) => {
+        quiet(stream);
+        const n = headers["x-case"] as string;
+        if (headers[":path"] === "/give-up") cases[+n][1](stream, n);
+        if (stream.destroyed || stream.closed) return;
+        if (!stream.headersSent) {
+          const fields = headers[":path"] === "/after" ? { "x-new": n } : {};
+          stream.respond({ ":status": 200, "x-old": "0", ...fields }, { sendDate: false });
+        }
+        if (stream.writable) stream.end();
+      });
+      srv.listen(0, "127.0.0.1");
+      await once(srv, "listening");
+      const client = http2.connect(`http://127.0.0.1:${(srv.address() as net.AddressInfo).port}`);
+      quiet(client);
+      client.on("stream", pushed => {
+        quiet(pushed);
+        pushed.resume();
+      });
+      try {
+        await get(client, { ":path": "/" });
+        const results: unknown[] = [];
+        for (const [label] of cases) {
+          const n = String(results.length);
+          // Some of these never get an answer. The server takes up the next request after this one all the same.
+          const req = client.request({ ":path": "/give-up", "x-case": n });
+          quiet(req);
+          req.resume();
+          const after = await get(client, { ":path": "/after", "x-case": n });
+          results.push([label, after["x-old"], after["x-new"]]);
+          req.close();
+        }
+        expect(results).toEqual(cases.map(([label], i) => [label, "0", String(i)]));
+      } finally {
+        client.destroy();
+        srv.close();
+      }
+    }
+
+    test("in respond()", async () => {
+      await serverGivesUp([
+        // This :status is not in the static table, so it is an entry by the time a pseudo-header is refused.
+        ...[...endings, [":path", { ":path": "/" }] as const].map(([label, ending]): ServerCase => [
+          label,
+          (stream, n) => attempt(() => stream.respond({ ":status": 250, "x-new": n, ...ending })),
+        ]),
+        // In request(), Node throws for this one and leaves a stream behind that nobody can listen to.
+        ...[...badOptions, ["signal: {}", { signal: {} }] as const].map(([label, options]): ServerCase => [
+          label,
+          (stream, n) => attempt(() => stream.respond({ ":status": 200, "x-new": n }, options)),
+        ]),
+      ]);
+    });
+
+    test("in additionalHeaders()", async () => {
+      await serverGivesUp(
+        endings.map(([label, ending]) => [
+          label,
+          (stream, n) => attempt(() => stream.additionalHeaders({ ":status": 103, "x-new": n, ...ending })),
+        ]),
+      );
+    });
+
+    test("in a server's sendTrailers()", async () => {
+      await serverGivesUp(
+        endings.map(([label, ending]) => [
+          label,
+          (stream, n) => {
+            stream.on("wantTrailers", () => {
+              attempt(() => stream.sendTrailers({ "x-new": n, ...ending }));
+              stream.close();
+            });
+            stream.respond({ ":status": 200 }, { waitForTrailers: true, sendDate: false });
+          },
+        ]),
+      );
+    });
+
+    test("in pushStream()", async () => {
+      await serverGivesUp(
+        endings.map(([label, ending]) => [
+          label,
+          (stream, n) =>
+            attempt(() =>
+              stream.pushStream({ ":path": "/gone" + n, "x-new": n, ...ending }, (error, pushed) => {
+                if (error) return;
+                quiet(pushed);
+                pushed.respond({ ":status": 200 }, { endStream: true, sendDate: false });
+              }),
+            ),
+        ]),
+      );
+    });
+  });
+
+  test("a header block that was sent stays in the encoder's table", async () => {
+    const srv = http2.createServer();
+    const sizes: Record<string, number> = {};
+    srv.on("stream", (stream, headers) => {
+      const path = headers[":path"] as string;
+      const size = () => stream.session!.state.deflateDynamicTableSize!;
+      sizes[path] = size();
+      if (path === "/push") {
+        stream.pushStream({ ":path": "/pushed", "x-push": "1" }, (_, pushed) => {
+          pushed.respond({ ":status": 200 }, { endStream: true, sendDate: false });
+        });
+      }
+      stream.on("wantTrailers", () => {
+        // Given up on before anything was encoded, so there is nothing to take back.
+        expect(() => stream.sendTrailers({ "x bad": "1" })).toThrow();
+        sizes["nothing encoded"] = size();
+        stream.sendTrailers({ "x-trailer": "1" });
+      });
+      stream.respond({ ":status": 200 }, { waitForTrailers: path === "/trailers", sendDate: false });
+      stream.end();
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const client = http2.connect(`http://127.0.0.1:${(srv.address() as net.AddressInfo).port}`);
+    client.on("stream", pushed => pushed.resume());
+    try {
+      for (const path of ["/push", "/trailers", "/end"]) await get(client, { ":path": path });
+      expect(sizes["/push"]).toBe(0);
+      expect(sizes["/trailers"]).toBeGreaterThan(0);
+      expect(sizes["nothing encoded"]).toBe(sizes["/trailers"]);
+      expect(sizes["/end"]).toBeGreaterThan(sizes["/trailers"]);
+
+      // Sent as HEADERS and CONTINUATION frames. None of the values is too large for the table.
+      const before = client.state.deflateDynamicTableSize!;
+      const long = Object.fromEntries(
+        Array.from({ length: 20 }, (_, i) => [`x-${i}`, Buffer.alloc(1000, "!").toString()]),
+      );
+      await get(client, { ":path": "/", ...long });
+      expect(client.state.deflateDynamicTableSize).toBeGreaterThan(Math.max(before, 3000));
+    } finally {
+      client.destroy();
+      srv.close();
+    }
+  });
+
   // Bun up to 1.4.4 is such a peer. nghttp2, and so Node, waits for the size update and answers with COMPRESSION_ERROR.
   test("a peer may fill a larger acknowledged headerTableSize without a table size update", async () => {
     const { srv, seen, port } = await listen({ settings: { headerTableSize: 65536 } });

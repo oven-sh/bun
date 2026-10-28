@@ -1100,6 +1100,64 @@ describe.concurrent("Bun.serve http2 protocol", () => {
     s0.close();
   });
 
+  // hpackLiteral() spells every name out. A real client takes them from the static table (RFC 7541 Appendix A).
+  describe("a name from the HPACK static table", () => {
+    const end = F.END_HEADERS | F.END_STREAM;
+    /** Literal without indexing, or with (`0x40`), whose name is an index into the static table. */
+    const named = (index: number, value: string, pattern = 0x00) => {
+      const max = pattern ? 63 : 15;
+      const name = index < max ? [pattern | index] : [pattern | max, index - max];
+      return Buffer.concat([Buffer.from([...name, value.length]), Buffer.from(value)]);
+    };
+    // :method GET, :scheme https, :authority localhost
+    const request = Buffer.concat([Buffer.from([0x82, 0x87]), named(1, "localhost")]);
+    const HOST = 38;
+    const TRANSFER_ENCODING = 57;
+
+    test(":path /index.html is a :path", async () => {
+      const raw = await RawH2.connect(fx.port, secure);
+      try {
+        raw.write(frame(T.HEADERS, end, 1, Buffer.concat([request, Buffer.from([0x85])])));
+        const { payload } = await raw.waitFor(
+          f => (f.type === T.HEADERS || f.type === T.RST_STREAM) && f.streamId === 1,
+        );
+        expect(decodeStatus(payload)).toBe(404);
+      } finally {
+        raw.close();
+      }
+    });
+
+    test.each([
+      ["transfer-encoding", [named(TRANSFER_ENCODING, "chunked", 0x40)]],
+      ["a second host", [named(HOST, "localhost", 0x40), Buffer.from([0x80 | 62])]],
+    ])("%s is malformed, also when it comes back from the dynamic table", async (_, fields) => {
+      const raw = await RawH2.connect(fx.port, secure);
+      const hello = Buffer.concat([request, named(4, "/hello")]);
+      try {
+        raw.write(frame(T.HEADERS, end, 1, Buffer.concat([hello, ...fields])));
+        expect(await raw.rst(1)).toBe(1);
+        // Index 62 is what the first request added. Twice, so that it is a second host as well.
+        raw.write(frame(T.HEADERS, end, 3, Buffer.concat([hello, Buffer.from([0x80 | 62, 0x80 | 62])])));
+        expect(await raw.rst(3)).toBe(1);
+        raw.write(frame(T.HEADERS, end, 5, hello));
+        expect((await raw.body(5)).toString()).toBe("hello");
+      } finally {
+        raw.close();
+      }
+    });
+
+    test("one host stands in for :authority", async () => {
+      const raw = await RawH2.connect(fx.port, secure);
+      try {
+        const block = Buffer.concat([Buffer.from([0x82, 0x87]), named(4, "/headers"), named(HOST, "from.host:81")]);
+        raw.write(frame(T.HEADERS, end, 1, block));
+        expect(JSON.parse((await raw.body(1)).toString()).headers.host).toBe("from.host:81");
+      } finally {
+        raw.close();
+      }
+    });
+  });
+
   test("a header block of nothing but HPACK table size updates counts as an empty one", async () => {
     const raw = await RawH2.connect(fx.port, secure);
     const end = F.END_HEADERS | F.END_STREAM;

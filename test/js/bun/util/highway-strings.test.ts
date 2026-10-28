@@ -742,4 +742,28 @@ describe("hpackHuffmanDecodeShort", () => {
       else expect(count, `room=${room}`).toBeGreaterThan(room - 16);
     }
   });
+
+  // The pages of a resizable ArrayBuffer after its length are not accessible: going past a view that ends there crashes.
+  const atEnd = (length: number) =>
+    new Uint8Array(new ArrayBuffer(65536, { maxByteLength: 131072 }), 65536 - length, length);
+
+  it.skipIf(!hasKernel)("reads nothing after the input", () => {
+    for (let length = 0; length <= 40; length++) {
+      // All zeros, which is "0" every 5 bits.
+      const src = atEnd(length);
+      for (let skipped = 0; skipped < 8; skipped++) {
+        const out = new Uint8Array(((length * 8) / 5 + 17) | 0);
+        out[0] = skipped;
+        const stopped = hw("hpackHuffmanDecodeShort", src, out);
+        expect(stopped, `length=${length} skipped=${skipped}`).toBeWithin(skipped, Math.max(skipped, length * 8) + 1);
+      }
+    }
+  });
+
+  it.skipIf(!hasKernel)("writes nothing after the output", () => {
+    const src = new Uint8Array(100);
+    for (let room = 1; room <= 80; room++) {
+      expect(hw("hpackHuffmanDecodeShort", src, atEnd(room)), `room=${room}`).toBeWithin(0, src.length * 8 + 1);
+    }
+  });
 });

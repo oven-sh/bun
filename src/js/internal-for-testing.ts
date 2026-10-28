@@ -932,8 +932,7 @@ export const isMemoryPressureWatcherInstalled: () => boolean = $newCppFunction(
 export const spawnThreadsForTesting: (iterations: number, fd: number, parallelism: number, detach?: boolean) => number =
   $newCppFunction("InternalForTesting.cpp", "jsFunction_spawnThreadsForTesting", 4);
 
-// Another thread looks the calling global's context identifier up without pause, as a thread that
-// posts to the context does, until stopContextLookups(). A miss is a lookup that found no context.
+// A thread looks the calling global's context identifier up without pause until stopContextLookups(), which counts its misses.
 export const startContextLookups: () => void = $newCppFunction(
   "InternalForTesting.cpp",
   "jsFunction_startContextLookupsForTesting",

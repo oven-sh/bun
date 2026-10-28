@@ -1443,6 +1443,24 @@ describe("the output is that of zstd 1.5.7", () => {
     `);
   });
 
+  it("where a block is one match, which is too short for the optimal parser to take at once", () => {
+    const digests = (data: Buffer, windowLog: number) =>
+      [16, 19, 22].map(level => {
+        const params = {
+          [c.ZSTD_c_compressionLevel]: level,
+          [c.ZSTD_c_windowLog]: windowLog,
+          [c.ZSTD_c_targetLength]: 4096,
+        };
+        const compressed = zlib.zstdCompressSync(data, { params });
+        expect(zlib.zstdDecompressSync(compressed).equals(data)).toBe(true);
+        return digest(compressed);
+      });
+    const periodic = Buffer.alloc(5_000, corpus.subarray(0, 700));
+    expect(digests(periodic, 10)).toEqual(Array(3).fill("163 571cb5ea10428fa7"));
+    expect(digests(periodic, 11)).toEqual(Array(3).fill("142 671efcd2063db130"));
+    expect(digests(Buffer.alloc(1_000), 10)).toEqual(Array(3).fill("19 bf47b44041ed0aa6"));
+  });
+
   // Short input searches the tables of the dictionary, long input starts from a copy of them.
   function withDictionary(dictionary: Uint8Array) {
     const results: Record<string, string> = {};

@@ -13,7 +13,7 @@ use crate::common::{
 };
 use crate::error::{Error, Result};
 use crate::util::{
-    BUG, SliceExt, highbit32, make_room, read_le32, read_le64, try_zeroed, write_le24,
+    BUG, SliceExt, highbit32, make_room, read_le32, read_le64, reset_table, try_zeroed, write_le24,
 };
 
 pub(crate) const K_SEARCH_STRENGTH: u32 = 8;
@@ -1977,17 +1977,11 @@ pub(crate) struct PriceTable {
 impl PriceTable {
     /// Makes room for `len` positions.
     pub(crate) fn resize(&mut self, len: usize) -> Result<()> {
-        if self.price.len() != len {
-            *self = Self::default();
-            *self = Self {
-                price: try_zeroed(len)?,
-                off: try_zeroed(len)?,
-                lens: try_zeroed(len)?,
-                rep: try_zeroed(len)?,
-                ml_price: try_zeroed(len)?,
-            };
-        }
-        Ok(())
+        reset_table(&mut self.price, len, false)?;
+        reset_table(&mut self.off, len, false)?;
+        reset_table(&mut self.lens, len, false)?;
+        reset_table(&mut self.rep, len, false)?;
+        reset_table(&mut self.ml_price, len, false)
     }
 }
 

@@ -520,6 +520,27 @@ mod tests {
     }
 
     #[test]
+    fn tables_that_change_size_give_the_same_frames() -> Result<()> {
+        let mut state = 11u32;
+        let src: Vec<u8> = (0..if cfg!(miri) { 300 } else { 6000 })
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                (state >> 8) as u8 % 5
+            })
+            .collect();
+        // The tables of the optimal parser are as long as a block.
+        let mut cctx = CCtx::new();
+        cctx.set_parameter(c_param::COMPRESSION_LEVEL, 19)?;
+        let first = frame_of(&mut cctx, &[&src])?;
+        frame_of(&mut cctx, &[src.sub(..src.len() / 30)?])?;
+        assert_eq!(frame_of(&mut cctx, &[&src])?, first);
+        assert_eq!(decompress_alloc(&first), Ok(src));
+        Ok(())
+    }
+
+    #[test]
     fn long_matches_in_a_dictionary_are_appended() -> Result<()> {
         let mut state = 7u32;
         let mut noise = move |len: usize| -> Vec<u8> {

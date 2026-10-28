@@ -8,7 +8,7 @@ use super::huf::HufRepeat;
 use super::internal::{
     BlockSrc, Common, Descent, DictMatchState, DictMode, DictTree, EntropyCTables, Hasher, Match,
     MatchState, Near, Nodes, OptState, ParamSwitch, Prefix, PriceTable, RawSeq, RawSeqStore,
-    SeqStore, Strategy, TreeInput, ZSTD_OPT_NUM, ZSTD_OPT_SIZE, bt_look_ahead, bt_nodes, bt_walk,
+    SeqStore, Strategy, TreeInput, ZSTD_OPT_NUM, bt_look_ahead, bt_nodes, bt_set_children, bt_walk,
     hash3_of, index_overlap_check, ll_code, ml_code, new_rep, offset_to_offbase, table_get,
     table_put,
 };
@@ -567,6 +567,10 @@ impl<'a> Trees<'a> {
         let match_index = table_get(self.hash_table, h);
         table_put(self.hash_table, h, curr);
         bt_look_ahead::<4, 2>(self.hash_table, self.bt, &self.input, self.hasher, ip);
+        if match_index < low {
+            bt_set_children(self.bt, curr, [0, 0]);
+            return Ok(self.nb_compares);
+        }
 
         let descent = Descent::new(self.bt, curr);
         bt_walk::<false>(
@@ -720,25 +724,29 @@ impl<'a> Trees<'a> {
         };
         // With a dictionary, the range of valid offsets shrinks when the dictionary gets out of reach.
         let most_in_prefix = ip.min(curr.wrapping_sub(window_low));
-        for (off, &rep_offset) in (1..).zip(&rep_offsets) {
+        let candidates = rep_offsets.map(|rep_offset| {
             // The subtraction wraps around to discard 0 and -1: `curr > rep_index >= dict_limit`.
             if rep_offset.wrapping_sub(1) < most_in_prefix {
-                let rep_match = ip.wrapping_sub(rep_offset);
-                let rep_bytes = near.read32(rep_match).ok_or(BUG)?;
-                if minmatch_differs(rep_bytes, bytes as u32, min_match) != 0 {
+                let rep_bytes = near.read32(ip.wrapping_sub(rep_offset))?;
+                Some(minmatch_differs(rep_bytes, bytes as u32, min_match) == 0)
+            } else {
+                Some(rep_offset.wrapping_sub(1) >= ip)
+            }
+        });
+        if candidates != [Some(false); 3] {
+            for ((off, rep_offset), is_candidate) in (1..).zip(rep_offsets).zip(candidates) {
+                if !is_candidate.ok_or(BUG)? {
                     continue;
                 }
-            } else if rep_offset.wrapping_sub(1) < ip {
-                continue;
-            }
-            let rep_len = self.rep_len(ip, rep_offset, window_low)?;
-            if rep_len > best_length {
-                best_length = rep_len;
-                matches.put(mnum as usize, Match { off, len: rep_len })?;
-                mnum += 1;
-                if rep_len > self.sufficient_len || rep_len == near.len().wrapping_sub(ip) {
-                    // The best there can be.
-                    return Ok(mnum);
+                let rep_len = self.rep_len(ip, rep_offset, window_low)?;
+                if rep_len > best_length {
+                    best_length = rep_len;
+                    matches.put(mnum as usize, Match { off, len: rep_len })?;
+                    mnum += 1;
+                    if rep_len > self.sufficient_len || rep_len == near.len().wrapping_sub(ip) {
+                        // The best there can be.
+                        return Ok(mnum);
+                    }
                 }
             }
         }
@@ -750,7 +758,13 @@ impl<'a> Trees<'a> {
             // Farther than that is likely to cost too much.
             if match_index3 >= match_low && curr.wrapping_sub(match_index3) < (1 << 18) {
                 let mlen = if match_index3 >= dict_limit {
-                    count(near, ip, match_index3.wrapping_sub(dict_limit))
+                    let match_pos = match_index3.wrapping_sub(dict_limit);
+                    let match_bytes = near.read32(match_pos).ok_or(BUG)?;
+                    if minmatch_differs(match_bytes, bytes as u32, 3) != 0 {
+                        0
+                    } else {
+                        count(near, ip, match_pos)
+                    }
                 } else {
                     self.input.count_ext_dict(ip, match_index3)?
                 };
@@ -1191,11 +1205,14 @@ fn parse_block(
 
     rescale_freqs(opt_state, src.symbol_costs, buf.sub(istart..iend)?)?;
     // Of the same size, so that one check is enough for all.
-    let opt_price: &mut [_; ZSTD_OPT_SIZE] = price_table.price.first_chunk_mut().ok_or(BUG)?;
-    let opt_off: &mut [_; ZSTD_OPT_SIZE] = price_table.off.first_chunk_mut().ok_or(BUG)?;
-    let opt_lens: &mut [_; ZSTD_OPT_SIZE] = price_table.lens.first_chunk_mut().ok_or(BUG)?;
-    let opt_rep: &mut [_; ZSTD_OPT_SIZE] = price_table.rep.first_chunk_mut().ok_or(BUG)?;
-    let ml_prices = price_table.ml_price.sub_mut(..=sufficient_len as usize)?;
+    let nb_positions = price_table.price.len();
+    let opt_price = price_table.price.sub_mut(..nb_positions)?;
+    let opt_off = price_table.off.sub_mut(..nb_positions)?;
+    let opt_lens = price_table.lens.sub_mut(..nb_positions)?;
+    let opt_rep = price_table.rep.sub_mut(..nb_positions)?;
+    // No match is longer than a block.
+    let ml_prices =
+        (price_table.ml_price).sub_mut(..(sufficient_len as usize + 1).min(nb_positions))?;
     let mut prices = Prices::new(opt_state, ml_prices, opt_level)?;
     ip += usize::from(ip == prefix_start);
 
@@ -1272,7 +1289,7 @@ fn parse_block(
                 cur += 1;
                 let at = cur as usize;
                 let inr = ip + at;
-                if at + 1 >= ZSTD_OPT_SIZE {
+                if at + 1 >= nb_positions {
                     return Err(BUG);
                 }
 

@@ -12,9 +12,9 @@ use super::fse::FseRepeat;
 use super::huf::{self, HufRepeat};
 use super::internal::{
     BlockSrc, BufId, Buffers, CompressedBlockState, CompressionParameters, DictMatchState,
-    EntropyCTablesMetadata, HASH_READ_SIZE, LdmState, LongLengthType, Match, MatchState,
-    ParamSwitch, Prefix, RawSeq, RawSeqStore, RowTags, SeqChunk, SeqStore, Strategy, Table,
-    TableFillPurpose, Window, ZSTD_CHUNKSIZE_MAX, ZSTD_CURRENT_MAX, ZSTD_DUBT_UNSORTED_MARK,
+    EntropyCTablesMetadata, HASH_READ_SIZE, LdmState, LongLengthType, Match, MatchState, OptState,
+    ParamSwitch, Prefix, PriceTable, RawSeq, RawSeqStore, RowTags, SeqChunk, SeqStore, Strategy,
+    Table, TableFillPurpose, Window, ZSTD_CHUNKSIZE_MAX, ZSTD_CURRENT_MAX, ZSTD_DUBT_UNSORTED_MARK,
     ZSTD_OPT_SIZE, ZSTD_SHORT_CACHE_TAG_BITS, ZSTD_WINDOW_START_INDEX, min_gain, no_compress_block,
     offbase_is_repcode, offset_to_offbase, rle_compress_block, update_rep,
 };
@@ -224,31 +224,43 @@ fn reset_match_state(
         ms.row_hash_log = c_params.hash_log - row_log;
     }
 
-    if for_who == ResetTarget::CCtx && c_params.strat() >= Strategy::BtOpt {
-        reset_table(&mut ms.opt.lit_freq, 1 << LITBITS, false)?;
-        reset_table(&mut ms.opt.lit_length_freq, MAX_LL as usize + 1, false)?;
-        reset_table(&mut ms.opt.match_length_freq, MAX_ML as usize + 1, false)?;
-        reset_table(&mut ms.opt.off_code_freq, MAX_OFF as usize + 1, false)?;
-        reset_table(&mut ms.opt.match_table, ZSTD_OPT_SIZE, false)?;
-        ms.opt.price_table.resize(ZSTD_OPT_SIZE)?;
-    }
-
     ms.c_params = *c_params;
     Ok(())
+}
+
+/// The part of `ZSTD_reset_matchState` that is for the optimal parser.
+fn reset_opt_state(opt: &mut OptState, block_size: usize) -> Result<()> {
+    reset_table(&mut opt.lit_freq, 1 << LITBITS, false)?;
+    reset_table(&mut opt.lit_length_freq, MAX_LL as usize + 1, false)?;
+    reset_table(&mut opt.match_length_freq, MAX_ML as usize + 1, false)?;
+    reset_table(&mut opt.off_code_freq, MAX_OFF as usize + 1, false)?;
+    let nb_positions = nb_opt_positions(block_size);
+    reset_table(&mut opt.match_table, nb_positions, false)?;
+    opt.price_table.resize(nb_positions)
+}
+
+/// How many positions the tables of the optimal parser have: `ZSTD_OPT_SIZE`, or fewer if no block is that long. One
+/// before each byte, one after the last, and one more that is only given a price.
+fn nb_opt_positions(block_size: usize) -> usize {
+    ZSTD_OPT_SIZE.min(block_size + 2)
 }
 
 /// What the tables of the optimal parser take for a position: a `Match`, and 7 numbers in the `PriceTable`.
 const OPT_POSITION_SIZE: usize = size_of::<Match>() + 7 * size_of::<u32>();
 
 /// How many bytes the tables of a context take.
-fn tables_size(c_params: &CompressionParameters, use_row_match_finder: ParamSwitch) -> usize {
+fn tables_size(
+    c_params: &CompressionParameters,
+    use_row_match_finder: ParamSwitch,
+    block_size: usize,
+) -> usize {
     let sizes = MatchStateSizes::new(c_params, use_row_match_finder, true);
     let mut size = (sizes.h_size + sizes.chain_size + sizes.h3_size) * size_of::<u32>();
     if row_match_finder_used(c_params.strat(), use_row_match_finder) {
         size += sizes.h_size;
     }
     if c_params.strat() >= Strategy::BtOpt {
-        size += ZSTD_OPT_SIZE * OPT_POSITION_SIZE;
+        size += nb_opt_positions(block_size) * OPT_POSITION_SIZE;
     }
     size
 }
@@ -958,7 +970,7 @@ impl FrameCompressor {
         let new_tables = if self.workspace.is_some() {
             new_workspace
         } else {
-            let needed = tables_size(&params.c_params, params.use_row_match_finder);
+            let needed = tables_size(&params.c_params, params.use_row_match_finder, block_size);
             let oversized = tables_capacity(&self.match_state)
                 >= needed.saturating_mul(ZSTD_WORKSPACETOOLARGE_FACTOR);
             self.oversized_duration = if oversized {
@@ -976,7 +988,7 @@ impl FrameCompressor {
             ms.hash_table3 = Table::new();
             ms.tag_table = Table::new();
             ms.opt.match_table = Vec::new();
-            ms.opt.price_table.resize(0)?;
+            ms.opt.price_table = PriceTable::default();
         }
 
         self.match_state.c_params = params.c_params;
@@ -1006,6 +1018,9 @@ impl FrameCompressor {
             ResetTarget::CCtx,
             (pledged_src_size != ZSTD_CONTENTSIZE_UNKNOWN).then_some(pledged_src_size),
         )?;
+        if params.c_params.strat() >= Strategy::BtOpt {
+            reset_opt_state(&mut self.match_state.opt, block_size)?;
+        }
 
         if params.ldm_params.enable_ldm == ParamSwitch::Enable {
             let ldm_h_size = 1usize << params.ldm_params.hash_log;

@@ -187,13 +187,13 @@ fn get_if_exists_longest_common_path_generic<'a, P: PlatformT>(
     // /app/public/
     // To detect /app/public is actually a folder, we do one more loop through the strings
     // and say, "do one of you have a path separator after what we thought was the end?"
-    // Up to 8 strings, one yes is enough, as in every release. More than 8 all have to say
-    // yes: /app/publicx/a.js keeps /app/.
-    let is_folder = input.len() <= 8
+    // Builds of up to 8 entry points keep their output names, so one yes is enough for them.
+    const ONE_YES_IS_ENOUGH_UP_TO: usize = 8;
+    if input.len() <= ONE_YES_IS_ENOUGH_UP_TO
         || input
             .iter()
-            .all(|str| str.len() <= index || is_path_separator(str[index]));
-    if is_folder {
+            .all(|str| str.len() <= index || is_path_separator(str[index]))
+    {
         for str in input {
             if str.len() > index {
                 if is_path_separator(str[index]) {

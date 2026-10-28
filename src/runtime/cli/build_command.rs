@@ -201,7 +201,7 @@ impl BuildCommand {
             && has_typescript_entry_point
             && skips_typed_files_for.is_none();
         let type_check: Option<options::TypeCheck> = if ctx.bundler_options.dts {
-            Some(crate::cli::check_command::check_and_emit_declarations)
+            Some(crate::cli::check_command::check_and_emit_declarations_for_build_command)
         } else if ctx.bundler_options.check {
             Some(crate::cli::check_command::check_for_build_command)
         } else {

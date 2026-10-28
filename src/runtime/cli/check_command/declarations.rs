@@ -13,8 +13,8 @@ use bun_threading::Guarded;
 
 use super::typed_files::NotedModuleTypes;
 use super::{
-    Entries, Paths, already_read, has_types_with, log_data_of, request, script_kind_of,
-    script_kinds_by_extension, with_pages,
+    Entries, KillSwitch, Paths, already_read, command_runs_external_code, content_mapper_transport,
+    has_types_with, log_data_of, request, script_kind_of, script_kinds_by_extension, with_pages,
 };
 
 /// A package without a configuration file is written for every runtime: it gets the globals that all of them have.
@@ -39,7 +39,37 @@ pub(crate) fn take_module_types() -> Vec<ModuleTypes> {
     std::mem::take(&mut *MODULE_TYPES.lock())
 }
 
+/// `BundleOptions::type_check` for `bun build --dts`.
+pub(crate) fn check_and_emit_declarations_for_build_command(
+    checked: TypeChecked,
+    log: &mut bun_ast::Log,
+) -> bool {
+    let content_mappers = command_runs_external_code().then(KillSwitch::default);
+    emit_declarations(checked, log, content_mappers)
+}
+
+/// `BundleOptions::type_check` for `Bun.build({ dts: true })`.
 pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_ast::Log) -> bool {
+    emit_declarations(checked, log, None)
+}
+
+/// `check_and_emit_declarations` with `check: { runExternalCode: true }`. The command line of the process has no say in
+/// it.
+pub(crate) fn check_and_emit_declarations_with_external_code(
+    checked: TypeChecked,
+    log: &mut bun_ast::Log,
+) -> bool {
+    use crate::api::js_bundle_completion_task::kill_switch_of;
+    let content_mappers = checked.completion.map(kill_switch_of).unwrap_or_default();
+    emit_declarations(checked, log, Some(content_mappers))
+}
+
+/// `content_mappers`: see `content_mapper_transport`.
+fn emit_declarations(
+    checked: TypeChecked,
+    log: &mut bun_ast::Log,
+    content_mappers: Option<KillSwitch>,
+) -> bool {
     let TypeChecked {
         cwd,
         tsconfig,
@@ -60,6 +90,7 @@ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_as
     });
     let provided = Provided {
         already_read: already_read(cwd, &mut sources),
+        content_mapper_transport: content_mapper_transport(content_mappers),
         ..Default::default()
     };
     let is_source = |path: &&[u8]| {

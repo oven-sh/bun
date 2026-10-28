@@ -853,6 +853,8 @@ describe.concurrent("--check", () => {
     ["bun run --check start", (flags, rest = []) => ["run", "--check", ...flags, "start", ...rest]],
     ["bun test --check", (flags, rest = []) => ["test", "--check", ...flags, "main.test.ts", ...rest]],
     ["bun build --check", (flags, rest = []) => ["build", "--check", ...flags, "main.ts", "--outdir", "out", ...rest]],
+    // It always checks.
+    ["bun build --dts", (flags, rest = []) => ["build", "--dts", ...flags, "main.ts", "--outdir", "out", ...rest]],
   ];
   /** Whether the command went on after the check. */
   const hasRun = (dir: { toString(): string }, stdout: string) =>
@@ -899,7 +901,7 @@ describe.concurrent("--check", () => {
       using dir = project({ mapper, files, compilerOptions });
       const { stdout, output, exitCode } = await run(dir, cmd, extra);
       // To `bun build`, what follows `--` is an entry point.
-      const isEntryPoint = name === "bun build --check" && where.endsWith("after `--`");
+      const isEntryPoint = name.startsWith("bun build") && where.endsWith("after `--`");
       expect(output).toContain(isEntryPoint ? `ModuleNotFound resolving "--runExternalCode"` : notAllowed);
       expect({ mappers: pidsOf(dir), hasRun: hasRun(dir, stdout), exitCode }).toEqual({
         mappers: [],
@@ -908,7 +910,7 @@ describe.concurrent("--check", () => {
       });
     });
 
-    test("with the flag and without --check, nothing starts", async () => {
+    test.skipIf(name === "bun build --dts")("with the flag and without --check, nothing starts", async () => {
       using dir = project({ mapper, files });
       const cmd = command(["--runExternalCode"]).filter(arg => arg !== "--check");
       const { stdout, exitCode } = await run(dir, cmd);
@@ -1131,8 +1133,8 @@ const isRunning = pid => {
     return false;
   }
 };
-async function build(check, entrypoint = "./main.ts") {
-  const { success, logs } = await Bun.build({ entrypoints: [entrypoint], check, throw: false });
+async function build(check, entrypoint = "./main.ts", more = {}) {
+  const { success, logs } = await Bun.build({ entrypoints: [entrypoint], check, throw: false, ...more });
   const messages = logs.map(log => log.message.split("\n")[0]);
   return { success, messages, started: pids().length, running: pids().filter(isRunning) };
 }
@@ -1235,6 +1237,60 @@ async function build(check, entrypoint = "./main.ts") {
     });
   });
 
+  describe("with dts: true", () => {
+    const dts = `"./main.ts", { dts: true, outdir: "out" }`;
+
+    test("check: { runExternalCode: true } runs the mapper", async () => {
+      const program = `
+const { messages, ...built } = await build({ runExternalCode: true }, ${dts});
+const read = name => fs.readFileSync("out/" + name, "utf8");
+done({ ...built, declarations: fs.readdirSync("out").filter(name => /\\.d\\.(vue\\.)?ts$/.test(name)).sort().map(name => [name, read(name)]) });`;
+      expect(await run({ mapper: `${recordsPid} serve();` }, program)).toEqual({
+        success: true,
+        started: 1,
+        running: [],
+        declarations: [
+          ["App.d.vue.ts", "export type Count = number;\n"],
+          ["main.d.ts", `import type { Count } from "./App.vue";\nexport declare const one: Count;\n`],
+        ],
+      });
+    });
+
+    test("the errors in App.vue fail the build", async () => {
+      const program = `done(await build({ runExternalCode: true }, ${dts}));`;
+      expect(await run({ mapper: `${recordsPid} serve();`, files: wrong }, program)).toEqual({
+        success: false,
+        messages: ["TS2322: Type 'string' is not assignable to type 'number'."],
+        started: 1,
+        running: [],
+      });
+    });
+
+    test.each(["undefined", "true", "false", "{}", "{ runExternalCode: false }"])(
+      "check: %s starts nothing",
+      async check => {
+        const result = await run({ mapper: `${recordsPid} serve();` }, `done(await build(${check}, ${dts}));`);
+        expect(result).toEqual({
+          success: false,
+          messages: expect.arrayContaining([notAllowed]),
+          started: 0,
+          running: [],
+        });
+      },
+    );
+
+    test("the flags of the process don't count", async () => {
+      const program = `const before = pids().length;\ndone({ ...(await build(undefined, ${dts})), started: pids().length - before });`;
+      const result = await run({ mapper: `${recordsPid} serve();` }, program, {}, ["--check", "--runExternalCode"]);
+      expect(result).toEqual({
+        success: false,
+        messages: expect.arrayContaining([notAllowed]),
+        started: 0,
+        running: [],
+      });
+    });
+  });
+
   test.each([`"true"`, "1", "null", "{}"])("check: { runExternalCode: %s } throws", async value => {
     const program = `done(await build({ runExternalCode: ${value} }).catch(error => [error.name, error.message, pids()]));`;
     expect(await run({ mapper: `${recordsPid} serve();` }, program)).toEqual([
@@ -1300,11 +1356,13 @@ const mapperIsWorking = () =>
   ])("a process that exits during a build takes the mapper with it%s", async (_, extra) => {
     const program = `${workers}
 const exit = why => (done(why), process.exit(0));
-build({ runExternalCode: true }, "./stuck/main.ts").then(() => exit("the build has settled"));
+build({ runExternalCode: true }, "./stuck/main.ts", more).then(() => exit("the build has settled"));
 await mapperIsWorking();
 exit("the mapper is working");`;
     // The mapper has the standard error of the process, so this only returns once both have exited.
-    expect(await run(stuck, program, extra)).toBe("the mapper is working");
+    for (const more of ["{}", `{ dts: true, outdir: "out" }`]) {
+      expect(await run(stuck, `const more = ${more};\n${program}`, extra)).toBe("the mapper is working");
+    }
   });
 
   test("a worker that's terminated during a build stops the mapper, and later builds go on", async () => {

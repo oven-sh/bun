@@ -318,6 +318,16 @@ fn check_types_and_emit_declarations(
     })
 }
 
+/// `check_types_and_emit_declarations` for `check: { runExternalCode: true }`.
+fn check_types_and_emit_declarations_with_external_code(
+    checked: options::TypeChecked<'_, '_>,
+    log: &mut bun_ast::Log,
+) -> bool {
+    bun_removable_features::removable_body!(Check, Abort, {
+        crate::cli::check_command::check_and_emit_declarations_with_external_code(checked, log)
+    })
+}
+
 fn write_declarations(outdir: &[u8], output_files: &mut [OutputFile]) -> bun_bundler::Result<()> {
     let directory = Dir::cwd().make_open_path(outdir, bun_sys::OpenDirOptions::default())?;
     for file in output_files.iter_mut() {
@@ -1250,9 +1260,10 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.min_chunk_size = config.min_chunk_size;
         transpiler.options.fold_chunks = config.fold_chunks;
         transpiler.options.module_preload = config.module_preload;
-        transpiler.options.type_check = match config.dts {
-            true => Some(check_types_and_emit_declarations as options::TypeCheck),
-            false => config.check,
+        transpiler.options.type_check = match (config.dts, config.runs_external_code) {
+            (true, true) => Some(check_types_and_emit_declarations_with_external_code),
+            (true, false) => Some(check_types_and_emit_declarations as options::TypeCheck),
+            (false, _) => config.check,
         };
         if config.dts {
             let unsupported = [

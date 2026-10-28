@@ -159,6 +159,8 @@ pub(crate) mod js_bundler {
         pub(crate) module_preload: bool,
         /// `check`: `BundleOptions::type_check`.
         pub(crate) check: Option<options::TypeCheck>,
+        /// `check: { runExternalCode: true }`
+        pub(crate) runs_external_code: bool,
         pub(crate) dts: bool,
         pub(crate) drop: StringSet,
         pub(crate) features: StringSet,
@@ -229,6 +231,7 @@ pub(crate) mod js_bundler {
                 fold_chunks: true,
                 module_preload: true,
                 check: None,
+                runs_external_code: false,
                 dts: false,
                 drop: StringSet::default(),
                 features: StringSet::default(),
@@ -1223,6 +1226,7 @@ pub(crate) mod js_bundler {
                 };
                 let runs_external_code = check.is_object()
                     && check.get_boolean_strict(global_this, "runExternalCode")? == Some(true);
+                this.runs_external_code = runs_external_code;
                 this.check = match runs_external_code {
                     true => Some(check_types_with_external_code),
                     false => check

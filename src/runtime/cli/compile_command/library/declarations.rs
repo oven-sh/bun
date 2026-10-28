@@ -80,10 +80,16 @@ pub(super) fn declaration_path(root_directory: &[u8], source: &[u8]) -> Option<V
     if leaves_its_directory(relative) {
         return None;
     }
-    let (stem, extension) = DECLARATION_EXTENSIONS
+    let known = DECLARATION_EXTENSIONS
         .iter()
-        .find_map(|(from, to)| Some((relative.strip_suffix(*from)?, *to)))?;
-    let mut path = [stem, extension].concat();
+        .find_map(|(from, to)| Some([relative.strip_suffix(*from)?, *to].concat()));
+    // `GetDeclarationEmitExtensionForPath`: `App.vue`, which a content mapper reads, has `App.d.vue.ts`.
+    let mut path = known.unwrap_or_else(|| {
+        let name = relative.len() - bun_paths::basename(relative).len();
+        let dot = relative[name..].iter().rposition(|&it| it == b'.');
+        let (stem, extension) = relative.split_at(dot.map_or(relative.len(), |dot| name + dot));
+        [stem, b".d", extension, b".ts"].concat()
+    });
     platform_to_posix_in_place::<u8>(&mut path);
     Some(path)
 }

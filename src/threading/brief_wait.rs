@@ -16,25 +16,7 @@ fn length() -> Duration {
     LENGTH
 }
 
-/// Calls `is_ready` until it returns true or `LENGTH` passes, and yields the processor in between: the other thread may need it.
-pub fn wait_briefly(is_ready: impl FnMut() -> bool) -> bool {
-    wait_for(length(), is_ready)
-}
-
-fn wait_for(length: Duration, mut is_ready: impl FnMut() -> bool) -> bool {
-    let start = Instant::now();
-    loop {
-        if is_ready() {
-            return true;
-        }
-        if start.elapsed() >= length {
-            return false;
-        }
-        std::thread::yield_now();
-    }
-}
-
-/// Whether the next brief wait is worth it: a miss skips the next 1, 2, 4, ... `MAX_SKIPS` waits, until one ends in time.
+/// Brief waits for one kind of event. One that was in vain skips the next 1, 2, 4, ... `MAX_SKIPS` waits, until one ends in time.
 #[derive(Default)]
 pub struct Patience {
     skips_left: AtomicU32,
@@ -62,8 +44,28 @@ impl Patience {
         false
     }
 
-    /// What the wait that `allows_wait` allowed came to.
-    pub fn record(&self, ended_in_time: bool) {
+    /// Calls `is_ready` until it returns true or `LENGTH` passes, and yields the processor in between: the other thread may need it.
+    pub fn wait_briefly(&self, is_ready: impl FnMut() -> bool) -> bool {
+        self.wait_for(length(), is_ready)
+    }
+
+    fn wait_for(&self, length: Duration, mut is_ready: impl FnMut() -> bool) -> bool {
+        let start = Instant::now();
+        let is_ready = loop {
+            if is_ready() {
+                break true;
+            }
+            if start.elapsed() >= length {
+                break false;
+            }
+            std::thread::yield_now();
+        };
+        // Ready but late: the processor went to another program meanwhile, and a sleep would have cost no more.
+        self.record(is_ready && start.elapsed() <= length);
+        is_ready
+    }
+
+    fn record(&self, ended_in_time: bool) {
         let skips = if ended_in_time {
             0
         } else {
@@ -78,10 +80,16 @@ impl Patience {
 mod tests {
     use super::*;
 
+    const NEVER: Duration = Duration::MAX;
+
+    fn wait_in_vain(patience: &Patience) {
+        assert!(!patience.wait_for(Duration::ZERO, || false));
+    }
+
     #[test]
     fn a_wait_ends_when_it_is_ready() {
         let mut calls = 0;
-        assert!(wait_for(Duration::MAX, || {
+        assert!(Patience::new().wait_for(NEVER, || {
             calls += 1;
             calls == 3
         }));
@@ -90,9 +98,9 @@ mod tests {
 
     #[test]
     fn a_wait_asks_once_before_its_length_counts() {
-        assert!(wait_for(Duration::ZERO, || true));
+        assert!(Patience::new().wait_for(Duration::ZERO, || true));
         let mut calls = 0;
-        assert!(!wait_for(Duration::ZERO, || {
+        assert!(!Patience::new().wait_for(Duration::ZERO, || {
             calls += 1;
             false
         }));
@@ -101,34 +109,46 @@ mod tests {
 
     #[test]
     fn a_wait_that_is_never_ready_ends() {
-        assert!(!wait_briefly(|| false));
+        assert!(!Patience::new().wait_briefly(|| false));
     }
 
     #[test]
-    fn misses_skip_more_and_more_waits() {
+    fn waits_in_vain_skip_more_and_more_waits() {
         let patience = Patience::new();
-        let mut skipped_after_each_miss = Vec::new();
+        let mut skipped_after_each_wait = Vec::new();
         for _ in 0..8 {
             assert!(patience.allows_wait());
-            patience.record(false);
+            wait_in_vain(&patience);
             let mut skipped = 0;
             while !patience.allows_wait() {
                 skipped += 1;
             }
-            skipped_after_each_miss.push(skipped);
+            skipped_after_each_wait.push(skipped);
         }
-        assert_eq!(skipped_after_each_miss, [1, 2, 4, 8, 16, 32, 64, 64]);
+        assert_eq!(skipped_after_each_wait, [1, 2, 4, 8, 16, 32, 64, 64]);
     }
 
     #[test]
-    fn a_wait_that_ends_in_time_forgets_the_misses() {
+    fn a_wait_that_ends_in_time_forgets_the_waits_in_vain() {
         let patience = Patience::new();
         for _ in 0..5 {
-            patience.record(false);
+            wait_in_vain(&patience);
         }
-        patience.record(true);
+        assert!(patience.wait_for(NEVER, || true));
         assert!(patience.allows_wait());
-        patience.record(false);
+        wait_in_vain(&patience);
+        assert!(!patience.allows_wait());
+        assert!(patience.allows_wait());
+    }
+
+    #[test]
+    fn a_wait_that_ends_late_counts_as_in_vain() {
+        let patience = Patience::new();
+        let length = Duration::from_millis(1);
+        assert!(patience.wait_for(length, || {
+            std::thread::sleep(5 * length);
+            true
+        }));
         assert!(!patience.allows_wait());
         assert!(patience.allows_wait());
     }

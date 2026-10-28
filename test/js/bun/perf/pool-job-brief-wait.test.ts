@@ -15,6 +15,7 @@ const jobs = 30;
 const fixture = /* js */ `
   import { pbkdf2 } from "node:crypto";
   import fs from "node:fs";
+  import { deflate } from "node:zlib";
 
   function sleeps() {
     const counts = { eventLoop: 0, pool: 0, poolThreads: 0 };
@@ -53,6 +54,8 @@ const fixture = /* js */ `
       job: await sleepsOfChain(() => new Promise(done => pbkdf2("password", "salt", 1000, 32, "sha256", done))),
       // crypto.subtle: ConcurrentCppTask.
       cppTask: await sleepsOfChain(() => crypto.subtle.deriveBits(algorithm, key, 256)),
+      // node:zlib gives the pool a task of its own, as fs.cp() and N-API async work do.
+      ownTask: await sleepsOfChain(() => new Promise(done => deflate("brief wait", done))),
     }),
   );
 `;
@@ -69,9 +72,9 @@ test.skipIf(!isLinux || (!isDebug && !isASAN))(
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
 
-    const sleeps: Record<"job" | "cppTask", { eventLoop: number; pool: number; poolThreads: number }> =
+    const sleeps: Record<"job" | "cppTask" | "ownTask", { eventLoop: number; pool: number; poolThreads: number }> =
       JSON.parse(stdout);
-    for (const carrier of ["job", "cppTask"] as const) {
+    for (const carrier of ["job", "cppTask", "ownTask"] as const) {
       // Without the wait the pool's threads sleep twice a job (the thread that ran it, and the spare one that was
       // woken with it), and the event loop once.
       expect(sleeps[carrier].poolThreads).toBeGreaterThanOrEqual(1);

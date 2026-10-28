@@ -95,5 +95,4 @@ extern "C" fn ConcurrentCppTask__createAndRun(
         ticket,
         workpool_task: WorkPoolTask::default(),
     });
-    vm.event_loop_shared().pool_job_scheduled.set(true);
 }

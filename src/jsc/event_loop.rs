@@ -9,12 +9,11 @@
 //! dispatch through `virtual_machine::RuntimeHooks` (need `Timer::All` for the
 //! poll deadline). See PORTING.md §Dispatch.
 
-use core::cell::Cell;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, AtomicPtr, AtomicU64, Ordering};
 
 use bun_io::{self as Async, Waker};
-use bun_threading::brief_wait::{Patience, wait_briefly};
+use bun_threading::brief_wait::Patience;
 use bun_uws as uws;
 
 use crate::js_promise::Status as PromiseStatus;
@@ -108,8 +107,6 @@ pub struct EventLoop {
     /// `fetch` can start and finish within one iteration. Atomic because a Worker may read it.
     task_drains: AtomicU64,
     pub concurrent_ref: AtomicI32,
-    /// This thread gave the work pool a job since `await_pool_job` last ran.
-    pub(crate) pool_job_scheduled: Cell<bool>,
     /// Whether the last waits of `await_pool_job` ended with a task.
     pool_job_patience: Patience,
     /// Atomic nullable pointer to the next-due `WTFTimer`.
@@ -155,7 +152,6 @@ impl Default for EventLoop {
             entered_event_loop_count: 0,
             task_drains: AtomicU64::new(0),
             concurrent_ref: AtomicI32::new(0),
-            pool_job_scheduled: Cell::new(false),
             pool_job_patience: Patience::new(),
             imminent_gc_timer: AtomicPtr::new(core::ptr::null_mut()),
             #[cfg(unix)]
@@ -795,14 +791,14 @@ impl EventLoop {
             || self.has_concurrent_tasks()
     }
 
-    /// Before a poll that would sleep: waits briefly for the result of a job this thread gave the work pool since the last one.
+    /// Before a poll that would sleep: waits briefly for the result of a task that this thread gave the work pool and that is still out.
     pub fn await_pool_job(&self) -> bool {
-        if !self.pool_job_scheduled.replace(false) || !self.pool_job_patience.allows_wait() {
-            return false;
-        }
-        let came = wait_briefly(|| self.has_concurrent_tasks());
-        self.pool_job_patience.record(came);
-        came
+        WorkPool::take_scheduled_by_this_thread()
+            && self.vm_ref().handle_ref().tickets_outstanding() > 0
+            && self.pool_job_patience.allows_wait()
+            && self
+                .pool_job_patience
+                .wait_briefly(|| self.has_concurrent_tasks())
     }
 
     /// Any thread.

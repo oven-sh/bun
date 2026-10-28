@@ -30,7 +30,7 @@ use core::cell::Cell;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering, fence};
 
-use crate::brief_wait::{Patience, wait_briefly};
+use crate::brief_wait::Patience;
 use crate::{Futex, WaitGroup};
 use bun_core::Output;
 
@@ -1039,7 +1039,7 @@ impl ThreadPool {
         }
 
         let mut took_notification = false;
-        wait_briefly(|| {
+        self.linger_patience.wait_briefly(|| {
             let mut sync = self.sync.load(Ordering::Relaxed);
             loop {
                 // `wait` reports a shutdown.
@@ -1064,7 +1064,6 @@ impl ThreadPool {
                 }
             }
         });
-        self.linger_patience.record(took_notification);
         took_notification
     }
 

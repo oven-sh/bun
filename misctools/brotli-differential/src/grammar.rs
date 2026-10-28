@@ -607,9 +607,10 @@ pub fn one_long_copy(distance: usize) -> Vec<u8> {
     w.put(3, 0);
     // NPOSTFIX, NDIRECT, the context mode, and one tree each for the literals and the distances.
     w.put(10, 0);
-    // Command 391: no literal, and a copy of 2118 bytes and as many more as 24 bits say.
+    // No literal, and a copy of 2118 bytes and as many more as 24 bits say.
     let (symbol, nbits, extra) = distance_symbol(distance, 0, 0);
-    for (bits, symbol) in [(8, 0), (10, 391), (6, symbol)] {
+    assert!(symbol < 64);
+    for (bits, symbol) in [(8, 0), (10, command_symbol(0, 23, false)), (6, symbol)] {
         w.put(4, 1);
         w.put(bits, symbol as u64);
     }

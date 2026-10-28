@@ -1737,7 +1737,6 @@ pub fn run_commands(seed0: u64, iters: u64, qualities: u64) {
                     continue;
                 }
                 c.data.extend_from_slice(&word);
-                c.sparse_after = at + 2 * len + spree;
                 if c.copy(COPY_BASE[with_word] + rng.below(1 << COPY_EXTRA[with_word]), false) {
                     with_word += 1;
                 } else {
@@ -1748,7 +1747,8 @@ pub fn run_commands(seed0: u64, iters: u64, qualities: u64) {
         for _ in 0..40 {
             c.literal(&mut rng);
         }
-        let params = vec![(1, q), (2, rng.range(16, 22) as u32), (3, 21)];
+        // With a window of 16 bits the hasher asks its table before it tries the distance before the last.
+        let params = vec![(1, q), (2, rng.range(17, 22) as u32), (3, 21)];
         check("commands", seed, &mut rng, &c.data, &params, &[], &mut totals);
     }
     println!("ok: {iters} iterations, {} -> {}", totals.0, totals.1);

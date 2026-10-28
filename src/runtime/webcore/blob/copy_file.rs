@@ -23,12 +23,12 @@ use bun_sys::windows::libuv;
 use bun_sys::{self, Fd, FdExt, Mode};
 #[cfg(windows)]
 use bun_sys_jsc::ErrorJsc as _;
-#[cfg(any(target_os = "linux", target_os = "android"))]
-use core::ffi::c_int;
 #[cfg(windows)]
 use core::ffi::c_void;
 #[cfg(not(windows))]
 use core::marker::ConstParamTy;
+#[cfg(not(windows))]
+use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 // ───────────────────────────────────────────────────────────────────────────
 // CopyFile (POSIX, blocking off-thread)
@@ -54,6 +54,8 @@ pub(crate) struct CopyFile {
 
     pub(crate) mkdirp_if_not_exists: bool,
     pub(crate) destination_mode: Option<Mode>,
+
+    cancel: Cancel,
 }
 
 #[cfg(not(windows))]
@@ -75,6 +77,7 @@ unsafe impl Send for CopyFile {}
 
 #[cfg(not(windows))]
 impl jsc::JobContext for CopyFile {
+    const CANCELLABLE: bool = true;
     type OffThread = Self;
     type Js = jsc::JSPromiseStrong;
     fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
@@ -87,6 +90,11 @@ impl jsc::JobContext for CopyFile {
         cx: &jsc::JsThread<'_>,
     ) -> jsc::JsResult<()> {
         CopyFile::then(&mut this, promise.swap(), cx.global())
+    }
+    /// Ends the wait of a copy whose other end (a FIFO, pipe, socket or terminal) is silent: it fails with ECANCELED.
+    unsafe fn cancel(this: *mut Self) {
+        // SAFETY: fn contract. `Cancel::request` touches atomics, and an fd that only `Drop` closes (this thread).
+        unsafe { (*this).cancel.request() }
     }
 }
 
@@ -116,6 +124,7 @@ impl CopyFile {
             source_fd: Fd::INVALID,
             system_error: None,
             read_len: 0,
+            cancel: Cancel::new(),
         };
         let promise = jsc::JSPromiseStrong::init(cx.global());
         let value = promise.value();
@@ -214,103 +223,127 @@ impl CopyFile {
         }
     }
 
-    pub(crate) fn do_open_file<const WHICH: IOWhich>(&mut self) -> Result<(), crate::Error> {
-        let mut path_buf1 = bun_paths::path_buffer_pool::get();
-        // open source file first
-        // if it fails, we don't want the extra destination file hanging out
-        if matches!(WHICH, IOWhich::Both | IOWhich::Source) {
-            self.source_fd = match bun_sys::open(
-                self.source_file_store
-                    .pathlike
-                    .path()
-                    .slice_z(&mut path_buf1),
-                OPEN_SOURCE_FLAGS,
-                0,
-            ) {
+    /// Opens the source path. `Ok(true)`: the fd is non-blocking.
+    fn open_source(&mut self, path_buf: &mut bun_core::PathBuffer) -> Result<bool, crate::Error> {
+        let path = self.source_file_store.pathlike.path().slice_z(path_buf);
+        let mut nonblocking = true;
+        let opened = match bun_sys::open(path, OPEN_SOURCE_FLAGS, 0) {
+            // A lease on the file (`F_SETLEASE`) fails a non-blocking open. A blocking one waits for the holder.
+            bun_sys::Result::Err(errno) if errno.get_errno() == bun_sys::E::EAGAIN => {
+                nonblocking = false;
+                bun_sys::open(path, OPEN_SOURCE_FLAGS & !bun_sys::O::NONBLOCK, 0)
+            }
+            opened => opened,
+        };
+        self.source_fd = match opened {
+            bun_sys::Result::Ok(result) => {
+                match result.make_lib_uv_owned_for_syscall(
+                    bun_sys::Tag::open,
+                    bun_sys::ErrorCase::CloseOnFail,
+                ) {
+                    bun_sys::Result::Ok(result_fd) => result_fd,
+                    bun_sys::Result::Err(errno) => {
+                        self.system_error = Some(errno.to_system_error());
+                        return Err(bun_errno::from_errno(errno.errno as i32).into());
+                    }
+                }
+            }
+            bun_sys::Result::Err(errno) => {
+                self.system_error = Some(errno.to_system_error());
+                return Err(bun_errno::from_errno(errno.errno as i32).into());
+            }
+        };
+        Ok(nonblocking)
+    }
+
+    /// Opens the destination path. `Ok(true)`: the fd is non-blocking.
+    fn open_destination(
+        &mut self,
+        path_buf: &mut bun_core::PathBuffer,
+    ) -> Result<bool, crate::Error> {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        let (mut flags, mut retry_ms) = (OPEN_DESTINATION_FLAGS, 1i32);
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        let flags = OPEN_DESTINATION_FLAGS;
+        loop {
+            // `slice_z` would tie `dest` to `self`: copy the path into `path_buf` and borrow that.
+            let dest_len = {
+                let s = self.destination_file_store.pathlike.path().slice();
+                let n = s.len().min(path_buf.len() - 1);
+                path_buf[..n].copy_from_slice(&s[..n]);
+                path_buf[n] = 0;
+                n
+            };
+            // SAFETY: path_buf[dest_len] == 0 written above.
+            let dest: &bun_core::ZStr = bun_core::ZStr::from_buf(&path_buf[..], dest_len);
+            let mode = self.destination_mode.unwrap_or(node_fs::DEFAULT_PERMISSION);
+            match bun_sys::open(dest, flags, mode) {
                 bun_sys::Result::Ok(result) => {
                     match result.make_lib_uv_owned_for_syscall(
                         bun_sys::Tag::open,
                         bun_sys::ErrorCase::CloseOnFail,
                     ) {
-                        bun_sys::Result::Ok(result_fd) => result_fd,
+                        bun_sys::Result::Ok(result_fd) => self.destination_fd = result_fd,
                         bun_sys::Result::Err(errno) => {
                             self.system_error = Some(errno.to_system_error());
                             return Err(bun_errno::from_errno(errno.errno as i32).into());
                         }
                     }
+                    return Ok(flags & bun_sys::O::NONBLOCK != 0);
                 }
                 bun_sys::Result::Err(errno) => {
-                    self.system_error = Some(errno.to_system_error());
+                    #[cfg(any(target_os = "linux", target_os = "android"))]
+                    match errno.get_errno() {
+                        // As in `open_source`.
+                        bun_sys::E::EAGAIN if flags & bun_sys::O::NONBLOCK != 0 => {
+                            flags &= !bun_sys::O::NONBLOCK;
+                            continue;
+                        }
+                        // A FIFO with no reader yet. No event reports a reader's open: repeat until it works or a cancel.
+                        bun_sys::E::ENXIO
+                            if bun_sys::stat(dest)
+                                .is_ok_and(|stat| bun_sys::S::ISFIFO(stat.st_mode as _)) =>
+                        {
+                            if let bun_sys::Result::Err(err) =
+                                self.cancel.wait(None, Some(retry_ms), bun_sys::Tag::open)
+                            {
+                                self.system_error =
+                                    Some(err.with_path(dest.as_bytes()).to_system_error());
+                                return Err(bun_errno::from_errno(err.errno as i32).into());
+                            }
+                            retry_ms = (retry_ms * 2).min(FIFO_READER_RETRY_MS);
+                            continue;
+                        }
+                        _ => {}
+                    }
+
+                    match blob::mkdir_if_not_exists(self, &errno, dest, dest.as_bytes()) {
+                        Retry::Continue => continue,
+                        Retry::Fail => {
+                            return Err(bun_errno::from_errno(errno.errno as i32).into());
+                        }
+                        Retry::No => {}
+                    }
+
+                    self.system_error = Some(
+                        errno
+                            .with_path(self.destination_file_store.pathlike.path().slice())
+                            .to_system_error(),
+                    );
                     return Err(bun_errno::from_errno(errno.errno as i32).into());
                 }
-            };
-        }
-
-        if matches!(WHICH, IOWhich::Both | IOWhich::Destination) {
-            loop {
-                // detach `dest` lifetime from `self` (borrowck) — slice_z
-                // copies into path_buf1, so build the ZStr directly from the buffer.
-                let dest_len = {
-                    let s = self.destination_file_store.pathlike.path().slice();
-                    let n = s.len().min(path_buf1.len() - 1);
-                    path_buf1[..n].copy_from_slice(&s[..n]);
-                    path_buf1[n] = 0;
-                    n
-                };
-                // SAFETY: path_buf1[dest_len] == 0 written above.
-                let dest: &bun_core::ZStr = bun_core::ZStr::from_buf(&path_buf1[..], dest_len);
-                let mode = self.destination_mode.unwrap_or(node_fs::DEFAULT_PERMISSION);
-                match bun_sys::open(dest, OPEN_DESTINATION_FLAGS, mode) {
-                    bun_sys::Result::Ok(result) => {
-                        match result.make_lib_uv_owned_for_syscall(
-                            bun_sys::Tag::open,
-                            bun_sys::ErrorCase::CloseOnFail,
-                        ) {
-                            bun_sys::Result::Ok(result_fd) => self.destination_fd = result_fd,
-                            bun_sys::Result::Err(errno) => {
-                                self.system_error = Some(errno.to_system_error());
-                                return Err(bun_errno::from_errno(errno.errno as i32).into());
-                            }
-                        }
-                    }
-                    bun_sys::Result::Err(errno) => {
-                        match blob::mkdir_if_not_exists(self, &errno, dest, dest.as_bytes()) {
-                            Retry::Continue => continue,
-                            Retry::Fail => {
-                                if matches!(WHICH, IOWhich::Both) {
-                                    self.source_fd.close();
-                                    self.source_fd = Fd::INVALID;
-                                }
-                                return Err(bun_errno::from_errno(errno.errno as i32).into());
-                            }
-                            Retry::No => {}
-                        }
-
-                        if matches!(WHICH, IOWhich::Both) {
-                            self.source_fd.close();
-                            self.source_fd = Fd::INVALID;
-                        }
-
-                        self.system_error = Some(
-                            errno
-                                .with_path(self.destination_file_store.pathlike.path().slice())
-                                .to_system_error(),
-                        );
-                        return Err(bun_errno::from_errno(errno.errno as i32).into());
-                    }
-                }
-                break;
             }
         }
-        Ok(())
     }
 
-    /// Copies the rest of the file with [`read_write_fallback`] when
+    /// Copies the rest of the file with a read/write loop when
     /// `copy_file_range`/`sendfile`/`splice` is unavailable or unusable,
     /// recording a failure in `system_error` the same way the syscall paths do.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn fallback_read_write(
         &mut self,
+        src: End,
+        mut dst: End,
         remain: usize,
         unknown_size: bool,
         total_written: &mut u64,
@@ -324,26 +357,45 @@ impl CopyFile {
         } else {
             remain as SizeType
         };
-        match read_write_fallback(
-            self.source_fd,
-            self.destination_fd,
-            bun_opened_dest,
-            cap,
-            total_written,
-        ) {
-            bun_sys::Result::Err(err) => {
-                self.system_error = Some(err.to_system_error());
-                Err(bun_errno::from_errno(err.errno as i32).into())
-            }
-            bun_sys::Result::Ok(()) => Ok(()),
-        }
+        // The copy began as one between two regular files, and the syscall for that refused it.
+        dst.learn_peer();
+        let copied = if waits_for_peer(src, dst) {
+            copy_with_waits(&self.cancel, src, dst, cap, total_written)
+        } else {
+            read_write_fallback(src.fd, dst.fd, bun_opened_dest, cap, total_written)
+        };
+        self.recorded(copied)
+    }
+
+    /// Records a failure the way the copy loops record one.
+    fn recorded<T>(&mut self, result: bun_sys::Result<T>) -> Result<T, crate::Error> {
+        result.map_err(|err| {
+            self.system_error = Some(err.to_system_error());
+            bun_errno::from_errno(err.errno as i32).into()
+        })
+    }
+
+    /// For a source that a read waits in (a socket, a terminal): sendfile() refuses the first and sleeps in the second.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn do_read_write(&mut self, src: End, dst: End) -> Result<(), crate::Error> {
+        let remain: usize = self.max_length as usize;
+        let unknown_size = remain == MAX_SIZE as usize || remain == 0;
+        let mut total_written: u64 = 0;
+        let result = self.fallback_read_write(src, dst, remain, unknown_size, &mut total_written);
+        self.read_len = total_written as SizeType;
+        result
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub(crate) fn do_copy_file_range<const USE: TryWith, const CLEAR_APPEND_IF_INVALID: bool>(
+    fn do_copy_file_range(
         &mut self,
+        mut with: TryWith,
+        source_mode: Mode,
+        src: End,
+        mut dst: End,
     ) -> Result<(), crate::Error> {
         use bun_sys::linux;
+        use bun_sys::posix::{POLL_IN, POLL_OUT};
 
         let mut remain: usize = self.max_length as usize;
         let unknown_size = remain == MAX_SIZE as usize || remain == 0;
@@ -367,17 +419,33 @@ impl CopyFile {
             unsafe { *read_len_slot = *total_written_slot as SizeType };
         }
 
-        let mut has_unset_append = false;
-
-        // If they can't use copy_file_range, they probably also can't
-        // use sendfile() or splice()
-        if !bun_sys::copy_file::can_use_copy_file_range_syscall() {
-            return self.fallback_read_write(remain, unknown_size, &mut total_written);
+        // sendfile() and splice() say ENOSYS themselves where they are missing.
+        if with == TryWith::CopyFileRange && !bun_sys::copy_file::can_use_copy_file_range_syscall()
+        {
+            return self.fallback_read_write(src, dst, remain, unknown_size, &mut total_written);
         }
 
+        // A FIFO with no writer yet reads as an end of file. Only a wait tells that from a writer that left.
+        if with == TryWith::Splice && src.peer == Peer::Fifo && src.nonblocking {
+            self.recorded(self.cancel.wait_until_ready(src_fd, POLL_IN, with.tag()))?;
+        }
+
+        // The end that an EAGAIN waits for. The wait ends at once if it was the other end: the next EAGAIN in a row swaps.
+        let mut wait_for_source = src.peer == Peer::Fifo;
+        let mut stalled = false;
+
         loop {
-            // TODO: this should use non-blocking I/O.
-            let written: isize = match USE {
+            // An end that waits for a peer: no call may sleep in it. The copy sleeps in `Cancel::wait`.
+            let waits = waits_for_peer(src, dst);
+            if waits {
+                // A copy between two ends that always have bytes and room never waits.
+                self.recorded(self.cancel.check(with.tag()))?;
+            }
+            // splice() keeps its flag for a pipe. It sleeps in a socket or a terminal that has nothing to read: ask first.
+            if with == TryWith::Splice && matches!(src.peer, Peer::Socket | Peer::Terminal) {
+                self.recorded(self.cancel.wait_until_ready(src_fd, POLL_IN, with.tag()))?;
+            }
+            let written: isize = match with {
                 TryWith::CopyFileRange => {
                     // SAFETY: raw copy_file_range(2); both fds owned by caller, null offsets.
                     unsafe {
@@ -411,7 +479,8 @@ impl CopyFile {
                             dest_fd.native(),
                             core::ptr::null_mut(),
                             remain,
-                            0,
+                            // One end is a pipe: with the flag, the call does not sleep in it.
+                            libc::SPLICE_F_NONBLOCK,
                         )
                     }
                 }
@@ -420,54 +489,67 @@ impl CopyFile {
             match bun_sys::get_errno(written) {
                 bun_sys::E::SUCCESS => {}
 
+                // The source is empty, or the destination is full.
+                bun_sys::E::EAGAIN if waits => {
+                    if stalled && src.peer.waits() && dst.peer.waits() {
+                        wait_for_source = !wait_for_source;
+                    }
+                    stalled = true;
+                    let (fd, events) = if wait_for_source {
+                        (src_fd, POLL_IN)
+                    } else {
+                        (dest_fd, POLL_OUT)
+                    };
+                    self.recorded(self.cancel.wait_until_ready(fd, events, with.tag()))?;
+                    continue;
+                }
+
                 // XDEV: cross-device copy not supported
                 // NOSYS: syscall not available
                 // OPNOTSUPP: filesystem doesn't support this operation
                 bun_sys::E::ENOSYS | bun_sys::E::EXDEV | bun_sys::E::ENOTSUP => {
-                    // TODO: this should use non-blocking I/O.
-                    return self.fallback_read_write(remain, unknown_size, &mut total_written);
+                    return self.fallback_read_write(
+                        src,
+                        dst,
+                        remain,
+                        unknown_size,
+                        &mut total_written,
+                    );
                 }
 
                 // EINVAL: eCryptfs and other filesystems may not support copy_file_range.
                 // Also returned when the file descriptor is incompatible with the syscall.
                 bun_sys::E::EINVAL => {
-                    if CLEAR_APPEND_IF_INVALID {
-                        if !has_unset_append {
-                            // https://kylelaker.com/2018/08/31/stdout-oappend.html
-                            // make() can set STDOUT / STDERR to O_APPEND
-                            // this messes up sendfile()
-                            has_unset_append = true;
-                            // SAFETY: dest_fd is a valid open fd; raw fcntl(2).
-                            let flags =
-                                unsafe { libc::fcntl(dest_fd.native(), libc::F_GETFL, 0 as c_int) };
-                            if (flags & bun_sys::O::APPEND) != 0 {
-                                // SAFETY: dest_fd is a valid open fd; raw fcntl(2).
-                                let _ = unsafe {
-                                    libc::fcntl(
-                                        dest_fd.native(),
-                                        libc::F_SETFL,
-                                        flags ^ bun_sys::O::APPEND,
-                                    )
-                                };
-                                continue;
-                            }
-                        }
-                    }
-
                     // If the Linux machine doesn't support
                     // copy_file_range or the file descriptor is
                     // incompatible with the chosen syscall, fall back
                     // to a read/write loop
                     if total_written == 0 {
-                        // TODO: this should use non-blocking I/O.
-                        return self.fallback_read_write(remain, unknown_size, &mut total_written);
+                        // copy_file_range() refuses a destination that is not a regular file: another call may copy into it.
+                        if dst.peer == Peer::Unknown {
+                            let destination_mode = dst.learn_peer();
+                            match Self::plan(source_mode, src.peer, destination_mode, dst.peer) {
+                                Some(Plan::Syscall(other)) if other != with => {
+                                    with = other;
+                                    continue;
+                                }
+                                _ => {}
+                            }
+                        }
+                        return self.fallback_read_write(
+                            src,
+                            dst,
+                            remain,
+                            unknown_size,
+                            &mut total_written,
+                        );
                     }
 
                     self.system_error = Some(
                         bun_sys::Error {
                             // bare `as` is lossless here (E repr == Error.Int).
                             errno: bun_sys::E::EINVAL as bun_sys::ErrorInt,
-                            syscall: USE.tag(),
+                            syscall: with.tag(),
                             ..Default::default()
                         }
                         .to_system_error(),
@@ -479,7 +561,7 @@ impl CopyFile {
                         bun_sys::Error {
                             // bare `as` is lossless here (E repr == Error.Int).
                             errno: errno as bun_sys::ErrorInt,
-                            syscall: USE.tag(),
+                            syscall: with.tag(),
                             ..Default::default()
                         }
                         .to_system_error(),
@@ -488,6 +570,7 @@ impl CopyFile {
                 }
             }
 
+            stalled = false;
             // wrote zero bytes means EOF
             total_written += u64::try_from(written).expect("int cast");
             if written == 0 {
@@ -504,19 +587,20 @@ impl CopyFile {
     }
 
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-    fn do_read_write_loop_capped(&mut self, cap: SizeType) -> Result<(), crate::Error> {
+    fn do_read_write_loop_capped(
+        &mut self,
+        src: End,
+        dst: End,
+        cap: SizeType,
+    ) -> Result<(), crate::Error> {
         let mut total: u64 = 0;
-        match read_write_loop_capped(self.source_fd, self.destination_fd, cap, &mut total) {
-            bun_sys::Result::Ok(()) => {
-                self.read_len = total as SizeType;
-                Ok(())
-            }
-            bun_sys::Result::Err(err) => {
-                self.read_len = total as SizeType;
-                self.system_error = Some(err.to_system_error());
-                Err(bun_errno::from_errno(err.errno as i32).into())
-            }
-        }
+        let copied = if waits_for_peer(src, dst) {
+            copy_with_waits(&self.cancel, src, dst, cap, &mut total)
+        } else {
+            read_write_loop_capped(src.fd, dst.fd, cap, &mut total)
+        };
+        self.read_len = total as SizeType;
+        self.recorded(copied)
     }
 
     /// Returns the number of bytes copied.
@@ -613,6 +697,41 @@ impl CopyFile {
         Ok(())
     }
 
+    /// The call that copies between ends of these kinds. `None`: no call does.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn plan(
+        source_mode: Mode,
+        source: Peer,
+        destination_mode: Mode,
+        destination: Peer,
+    ) -> Option<Plan> {
+        // Bun.write(Bun.file("a"), Bun.file("b"))
+        if bun_sys::S::ISREG(source_mode)
+            && (bun_sys::S::ISREG(destination_mode) || destination_mode == 0)
+        {
+            return Some(Plan::Syscall(TryWith::CopyFileRange));
+        }
+        // $ bun run foo.js | bun run bar.js
+        if bun_sys::S::ISFIFO(source_mode) && bun_sys::S::ISFIFO(destination_mode) {
+            return Some(Plan::Syscall(TryWith::Splice));
+        }
+        if bun_sys::S::ISREG(source_mode)
+            || bun_sys::S::ISCHR(source_mode)
+            || bun_sys::S::ISSOCK(source_mode)
+        {
+            return Some(if bun_sys::S::ISFIFO(destination_mode) {
+                // sendfile() into a pipe is this splice(), without the flag that keeps it from a sleep in the pipe.
+                Plan::Syscall(TryWith::Splice)
+            } else if source.waits() || destination.waits() {
+                // sendfile() has no such flag: nothing ends its sleep in a socket or a terminal.
+                Plan::ReadWrite
+            } else {
+                Plan::Syscall(TryWith::Sendfile)
+            });
+        }
+        None
+    }
+
     pub(crate) fn run_async(&mut self) {
         #[cfg(target_os = "macos")]
         let mut stat_: Option<Stat> = None;
@@ -627,8 +746,11 @@ impl CopyFile {
             self.source_fd = *fd;
         }
 
+        let opens_source = self.source_fd == Fd::INVALID;
+        let opens_destination = self.destination_fd == Fd::INVALID;
+
         // Do we need to open both files?
-        if self.destination_fd == Fd::INVALID && self.source_fd == Fd::INVALID {
+        if opens_source && opens_destination {
             // First, we attempt to clonefile() on macOS
             // This is the fastest way to copy a file.
             #[cfg(target_os = "macos")]
@@ -727,39 +849,18 @@ impl CopyFile {
                     }
                 }
             }
-
-            if self.do_open_file::<{ IOWhich::Both }>().is_err() {
-                return;
-            }
-            // Do we need to open only one file?
-        } else if self.destination_fd == Fd::INVALID {
-            self.source_fd = self.source_file_store.pathlike.fd();
-
-            if self.do_open_file::<{ IOWhich::Destination }>().is_err() {
-                return;
-            }
-            // Do we need to open only one file?
-        } else if self.source_fd == Fd::INVALID {
-            self.destination_fd = self.destination_file_store.pathlike.fd();
-
-            if self.do_open_file::<{ IOWhich::Source }>().is_err() {
-                return;
-            }
         }
 
-        if self.system_error.is_some() {
-            return;
-        }
-
-        debug_assert!(self.destination_fd.is_valid());
-        debug_assert!(self.source_fd.is_valid());
-
-        if matches!(
-            self.destination_file_store.pathlike,
-            PathOrFileDescriptor::Fd(_)
-        ) {
-            // nothing to do for the Fd case
-        }
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        // The source first: a copy that its kind rules out must not create, truncate or wait for the destination.
+        let source_nonblocking = if opens_source {
+            match self.open_source(&mut path_buf) {
+                Ok(nonblocking) => nonblocking,
+                Err(_) => return,
+            }
+        } else {
+            false
+        };
 
         let stat: Stat = match stat_ {
             Some(s) => s,
@@ -777,6 +878,67 @@ impl CopyFile {
             self.system_error = Some(unsupported_directory_error());
             self.do_close();
             return;
+        }
+
+        let mut src = End {
+            fd: self.source_fd,
+            peer: Peer::of(
+                stat.st_mode as _,
+                self.source_fd,
+                self.source_file_store.is_atty,
+            ),
+            nonblocking: source_nonblocking,
+        };
+        src.keep_nonblocking_for(stat.st_mode as _);
+
+        // The destination is not open yet: this says whether there is a call at all. Which one, once it is.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        let Some(mut plan) = Self::plan(
+            stat.st_mode as _,
+            src.peer,
+            self.destination_file_store.mode,
+            Peer::Unknown,
+        ) else {
+            self.system_error = Some(unsupported_non_regular_file_error());
+            self.do_close();
+            return;
+        };
+
+        let destination_nonblocking = if opens_destination {
+            match self.open_destination(&mut path_buf) {
+                Ok(nonblocking) => nonblocking,
+                Err(_) => {
+                    self.do_close();
+                    return;
+                }
+            }
+        } else {
+            false
+        };
+        drop(path_buf);
+
+        debug_assert!(self.destination_fd.is_valid());
+        debug_assert!(self.source_fd.is_valid());
+
+        let mut dst = End {
+            fd: self.destination_fd,
+            peer: Peer::of(
+                self.destination_file_store.mode,
+                self.destination_fd,
+                self.destination_file_store.is_atty,
+            ),
+            nonblocking: destination_nonblocking,
+        };
+        dst.keep_nonblocking_for(self.destination_file_store.mode);
+        // Only copy_file_range() says by itself that the destination is not a regular file.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if !matches!(plan, Plan::Syscall(TryWith::CopyFileRange)) {
+            let destination_mode = match dst.learn_peer() {
+                0 => self.destination_file_store.mode,
+                learned => learned,
+            };
+            plan =
+                Self::plan(stat.st_mode as _, src.peer, destination_mode, dst.peer).unwrap_or(plan);
         }
 
         // BSD fstat on a pipe reports bytes currently buffered in st_size;
@@ -810,50 +972,11 @@ impl CopyFile {
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            // Bun.write(Bun.file("a"), Bun.file("b"))
-            if bun_sys::S::ISREG(stat.st_mode as _)
-                && (bun_sys::S::ISREG(self.destination_file_store.mode as _)
-                    || self.destination_file_store.mode == 0)
-            {
-                if self.destination_file_store.is_atty.unwrap_or(false) {
-                    let _ = self.do_copy_file_range::<{ TryWith::CopyFileRange }, true>();
-                } else {
-                    let _ = self.do_copy_file_range::<{ TryWith::CopyFileRange }, false>();
-                }
+            let _ = match plan {
+                Plan::Syscall(with) => self.do_copy_file_range(with, stat.st_mode as _, src, dst),
+                Plan::ReadWrite => self.do_read_write(src, dst),
+            };
 
-                self.do_close();
-                return;
-            }
-
-            // $ bun run foo.js | bun run bar.js
-            if bun_sys::S::ISFIFO(stat.st_mode as _)
-                && bun_sys::S::ISFIFO(self.destination_file_store.mode as _)
-            {
-                if self.destination_file_store.is_atty.unwrap_or(false) {
-                    let _ = self.do_copy_file_range::<{ TryWith::Splice }, true>();
-                } else {
-                    let _ = self.do_copy_file_range::<{ TryWith::Splice }, false>();
-                }
-
-                self.do_close();
-                return;
-            }
-
-            if bun_sys::S::ISREG(stat.st_mode as _)
-                || bun_sys::S::ISCHR(stat.st_mode as _)
-                || bun_sys::S::ISSOCK(stat.st_mode as _)
-            {
-                if self.destination_file_store.is_atty.unwrap_or(false) {
-                    let _ = self.do_copy_file_range::<{ TryWith::Sendfile }, true>();
-                } else {
-                    let _ = self.do_copy_file_range::<{ TryWith::Sendfile }, false>();
-                }
-
-                self.do_close();
-                return;
-            }
-
-            self.system_error = Some(unsupported_non_regular_file_error());
             self.do_close();
             return;
         }
@@ -886,7 +1009,10 @@ impl CopyFile {
                 } else {
                     self.read_len = copied as SizeType;
                 }
-            } else if self.do_read_write_loop_capped(self.max_length).is_err() {
+            } else if self
+                .do_read_write_loop_capped(src, dst, self.max_length)
+                .is_err()
+            {
                 self.do_close();
                 return;
             }
@@ -902,20 +1028,21 @@ impl CopyFile {
                 PathOrFileDescriptor::Path(_)
             ) {
                 let mut total_written: u64 = 0;
-                match node_fs::NodeFS::copy_file_using_read_write_loop(
-                    bun_core::ZStr::EMPTY,
-                    bun_core::ZStr::EMPTY,
-                    self.source_fd,
-                    self.destination_fd,
-                    0,
-                    &mut total_written,
-                ) {
-                    bun_sys::Result::Err(err) => {
-                        self.system_error = Some(err.to_system_error());
-                        self.do_close();
-                        return;
-                    }
-                    bun_sys::Result::Ok(()) => {}
+                let copied = if waits_for_peer(src, dst) {
+                    copy_with_waits(&self.cancel, src, dst, MAX_SIZE, &mut total_written)
+                } else {
+                    node_fs::NodeFS::copy_file_using_read_write_loop(
+                        bun_core::ZStr::EMPTY,
+                        bun_core::ZStr::EMPTY,
+                        self.source_fd,
+                        self.destination_fd,
+                        0,
+                        &mut total_written,
+                    )
+                };
+                if self.recorded(copied).is_err() {
+                    self.do_close();
+                    return;
                 }
                 if stat.st_size != 0
                     && SizeType::try_from(stat.st_size).expect("int cast") > self.max_length
@@ -928,7 +1055,10 @@ impl CopyFile {
                 } else {
                     self.read_len = total_written as SizeType;
                 }
-            } else if self.do_read_write_loop_capped(self.max_length).is_err() {
+            } else if self
+                .do_read_write_loop_capped(src, dst, self.max_length)
+                .is_err()
+            {
                 self.do_close();
                 return;
             }
@@ -1006,6 +1136,289 @@ fn read_write_loop_capped(
     Ok(())
 }
 
+/// What a read or a write of one end of the copy waits for.
+#[cfg(not(windows))]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Peer {
+    /// Nothing: a regular file, or a device that answers at once (`/dev/null`).
+    None,
+    Fifo,
+    Socket,
+    Terminal,
+    /// A destination that nothing has `stat`ed (a path, most often). A regular file, until a call refuses it.
+    Unknown,
+}
+
+#[cfg(not(windows))]
+impl Peer {
+    fn of(mode: Mode, fd: Fd, is_atty: Option<bool>) -> Peer {
+        if mode == 0 {
+            Peer::Unknown
+        } else if bun_sys::S::ISFIFO(mode) {
+            Peer::Fifo
+        } else if bun_sys::S::ISSOCK(mode) {
+            Peer::Socket
+        } else if bun_sys::S::ISCHR(mode) && is_atty.unwrap_or_else(|| bun_sys::isatty(fd)) {
+            Peer::Terminal
+        } else {
+            Peer::None
+        }
+    }
+
+    fn waits(self) -> bool {
+        !matches!(self, Peer::None | Peer::Unknown)
+    }
+}
+
+/// One end of the copy.
+#[cfg(not(windows))]
+#[derive(Clone, Copy)]
+pub(crate) struct End {
+    fd: Fd,
+    peer: Peer,
+    /// Bun opened the fd with O_NONBLOCK, so no read or write of it sleeps. An fd from the caller keeps its flags.
+    nonblocking: bool,
+}
+
+#[cfg(not(windows))]
+impl End {
+    /// O_NONBLOCK stays on a regular file, which ignores it, and on an end that the copy waits for. Not on a device.
+    fn keep_nonblocking_for(&mut self, mode: Mode) {
+        if self.nonblocking && mode != 0 && !bun_sys::S::ISREG(mode) && !self.peer.waits() {
+            let _ = bun_sys::update_nonblocking(self.fd, false);
+            self.nonblocking = false;
+        }
+    }
+
+    /// `fstat`s a destination of `Peer::Unknown`. Returns its mode, or 0 if there was nothing to learn.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn learn_peer(&mut self) -> Mode {
+        if self.peer != Peer::Unknown {
+            return 0;
+        }
+        let bun_sys::Result::Ok(stat) = bun_sys::fstat(self.fd) else {
+            return 0;
+        };
+        self.peer = Peer::of(stat.st_mode as _, self.fd, None);
+        self.keep_nonblocking_for(stat.st_mode as _);
+        stat.st_mode as _
+    }
+}
+
+/// Whether a read or a write of one of the two waits for a peer. `copy_with_waits` copies between such ends.
+#[cfg(not(windows))]
+fn waits_for_peer(src: End, dst: End) -> bool {
+    src.peer.waits() || dst.peer.waits()
+}
+
+/// `JobContext::cancel` for a copy that waits: a flag, and an fd in every poll that the pool thread sleeps in.
+#[cfg(not(windows))]
+struct Cancel {
+    requested: AtomicBool,
+    /// -1 until the first wait.
+    wake: AtomicI32,
+    /// macOS has no eventfd: the write end of a pipe, and `wake` is its read end.
+    #[cfg(target_os = "macos")]
+    wake_writer: AtomicI32,
+}
+
+#[cfg(not(windows))]
+impl Cancel {
+    /// Without a wake fd (the process is out of descriptors) a wait comes back this often to read the flag.
+    const TICK_MS: i32 = 50;
+
+    const fn new() -> Self {
+        Self {
+            requested: AtomicBool::new(false),
+            wake: AtomicI32::new(-1),
+            #[cfg(target_os = "macos")]
+            wake_writer: AtomicI32::new(-1),
+        }
+    }
+
+    /// JS thread.
+    fn request(&self) {
+        self.requested.store(true, Ordering::SeqCst);
+        #[cfg(target_os = "macos")]
+        let fd = self.wake_writer.load(Ordering::SeqCst);
+        #[cfg(not(target_os = "macos"))]
+        let fd = self.wake.load(Ordering::SeqCst);
+        if fd >= 0 {
+            // An eventfd takes 8 bytes. A failed write means that the fd is readable already.
+            let _ = bun_sys::write(Fd::from_native(fd), &1u64.to_ne_bytes());
+        }
+    }
+
+    fn check(&self, tag: bun_sys::Tag) -> bun_sys::Result<()> {
+        if self.requested.load(Ordering::SeqCst) {
+            return Err(bun_sys::Error::from_code(bun_sys::E::ECANCELED, tag));
+        }
+        Ok(())
+    }
+
+    /// Pool thread. `None`: the process is out of descriptors.
+    fn wake_fd(&self) -> Option<Fd> {
+        let fd = self.wake.load(Ordering::SeqCst);
+        if fd >= 0 {
+            return Some(Fd::from_native(fd));
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let fd = bun_sys::eventfd(0, bun_sys::O::CLOEXEC).ok()?;
+            self.wake.store(fd.native(), Ordering::SeqCst);
+            Some(fd)
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let [reader, writer] = bun_sys::pipe().ok()?;
+            for fd in [reader, writer] {
+                let _ = bun_sys::set_close_on_exec(fd);
+                let _ = bun_sys::set_nonblocking(fd);
+            }
+            self.wake.store(reader.native(), Ordering::SeqCst);
+            self.wake_writer.store(writer.native(), Ordering::SeqCst);
+            Some(reader)
+        }
+    }
+
+    /// Pool thread. `Ok(false)`: `timeout_ms` passed (`None`: no limit). `Err`: ECANCELED after `request`, or a failed poll.
+    fn wait(
+        &self,
+        fd: Option<(Fd, i16)>,
+        timeout_ms: Option<i32>,
+        syscall: bun_sys::Tag,
+    ) -> bun_sys::Result<bool> {
+        self.check(syscall)?;
+        let wake = self.wake_fd();
+        // `request` found no fd to write to if it ran between the check and the store of the fd.
+        self.check(syscall)?;
+        let timeout_ms = match (wake, timeout_ms) {
+            (Some(_), None) => -1,
+            (Some(_), Some(ms)) => ms,
+            (None, None) => Self::TICK_MS,
+            (None, Some(ms)) => ms.min(Self::TICK_MS),
+        };
+        let waited = bun_sys::wait_for_io(fd, wake, timeout_ms)?;
+        self.check(syscall)?;
+        Ok(waited.ready)
+    }
+
+    fn wait_until_ready(&self, fd: Fd, events: i16, syscall: bun_sys::Tag) -> bun_sys::Result<()> {
+        while !self.wait(Some((fd, events)), None, syscall)? {}
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+impl Drop for Cancel {
+    /// JS thread, after the job left the VM's list: `request` does not run again.
+    fn drop(&mut self) {
+        let fd = *self.wake.get_mut();
+        if fd >= 0 {
+            Fd::from_native(fd).close();
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let fd = *self.wake_writer.get_mut();
+            if fd >= 0 {
+                Fd::from_native(fd).close();
+            }
+        }
+    }
+}
+
+/// One write that does not sleep while the destination has no room. `None`: it has none.
+#[cfg(not(windows))]
+fn write_now(cancel: &Cancel, dst: End, bytes: &[u8]) -> bun_sys::Result<Option<usize>> {
+    // Without O_NONBLOCK a write sleeps until every byte is in. On Linux a pipe with room takes PIPE_BUF bytes at once.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let bytes = if matches!(dst.peer, Peer::Fifo | Peer::Terminal) && !dst.nonblocking {
+        cancel.wait_until_ready(dst.fd, bun_sys::posix::POLL_OUT, bun_sys::Tag::write)?;
+        if dst.peer == Peer::Fifo {
+            &bytes[..bytes.len().min(libc::PIPE_BUF)]
+        } else {
+            bytes
+        }
+    } else {
+        bytes
+    };
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    let _ = cancel;
+    let wrote = if dst.peer == Peer::Socket {
+        bun_sys::send_non_block(dst.fd, bytes)
+    } else {
+        bun_sys::write(dst.fd, bytes)
+    };
+    match wrote {
+        Ok(wrote) => Ok(Some(wrote)),
+        Err(err) if err.get_errno() == bun_sys::E::EAGAIN => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
+/// The read/write loop for a copy with an end that waits for a peer. It sleeps only in `Cancel::wait`.
+#[inline(never)] // 64 KB stack buffer
+#[cfg(not(windows))]
+fn copy_with_waits(
+    cancel: &Cancel,
+    src: End,
+    dst: End,
+    cap: SizeType,
+    total: &mut u64,
+) -> bun_sys::Result<()> {
+    use bun_sys::posix::{POLL_IN, POLL_OUT};
+    let mut stack_buf = bun_core::vec::UninitBuf::<{ 64 * 1024 }>::uninit();
+    // SAFETY: `read` is the only writer of `buf`; each iteration reads back only `buf[..amt]`.
+    let buf = unsafe { stack_buf.as_bytes_mut() };
+    // A read without O_NONBLOCK sleeps, and a FIFO with no writer yet reads as an end of file: wait for "ready" first.
+    let mut wait_before_read = match src.peer {
+        Peer::None | Peer::Socket | Peer::Unknown => false,
+        Peer::Fifo => true,
+        Peer::Terminal => !src.nonblocking,
+    };
+    let mut remaining = cap;
+    while remaining > 0 {
+        // A copy between two ends that always have bytes and room never waits.
+        cancel.check(bun_sys::Tag::read)?;
+        let want = (buf.len() as SizeType).min(remaining) as usize;
+        let amt = loop {
+            if wait_before_read {
+                cancel.wait_until_ready(src.fd, POLL_IN, bun_sys::Tag::read)?;
+            }
+            let read = if src.peer == Peer::Socket {
+                bun_sys::recv_non_block(src.fd, &mut buf[..want])
+            } else {
+                bun_sys::read(src.fd, &mut buf[..want])
+            };
+            match read {
+                Ok(amt) => break amt,
+                Err(err) if err.get_errno() == bun_sys::E::EAGAIN => {
+                    cancel.wait_until_ready(src.fd, POLL_IN, bun_sys::Tag::read)?;
+                    wait_before_read = false;
+                }
+                Err(err) => return Err(err),
+            }
+        };
+        wait_before_read = matches!(src.peer, Peer::Fifo | Peer::Terminal) && !src.nonblocking;
+        if amt == 0 {
+            break;
+        }
+        remaining -= amt as SizeType;
+        let mut slice = &buf[..amt];
+        while !slice.is_empty() {
+            match write_now(cancel, dst, slice)? {
+                Some(0) => return Ok(()),
+                Some(wrote) => {
+                    *total += wrote as u64;
+                    slice = &slice[wrote..];
+                }
+                None => cancel.wait_until_ready(dst.fd, POLL_OUT, bun_sys::Tag::write)?,
+            }
+        }
+    }
+    Ok(())
+}
+
 // Ownership is encoded in the types, so cleanup is all field `Drop`:
 // `source_file_store.pathlike` is a `PathLike` clone that is independently
 // droppable — `PathLike::clone` dupes owned string buffers (freed by the
@@ -1021,13 +1434,33 @@ const PREALLOCATE_SUPPORTED: bool = cfg!(any(target_os = "linux", target_os = "a
 #[cfg(not(windows))]
 const PREALLOCATE_LENGTH: SizeType = 2048 * 1024;
 
-#[cfg(not(windows))]
+// O_NONBLOCK: open(2) of a FIFO does not wait for its other end. A regular file ignores the flag.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+const OPEN_DESTINATION_FLAGS: i32 = bun_sys::O::CLOEXEC
+    | bun_sys::O::CREAT
+    | bun_sys::O::WRONLY
+    | bun_sys::O::TRUNC
+    | bun_sys::O::NONBLOCK;
+// No O_NONBLOCK: fcopyfile() and the node:fs loop fail on a full FIFO that has it, and only an fstat per copy tells.
+#[cfg(any(target_os = "macos", target_os = "freebsd"))]
 const OPEN_DESTINATION_FLAGS: i32 =
     bun_sys::O::CLOEXEC | bun_sys::O::CREAT | bun_sys::O::WRONLY | bun_sys::O::TRUNC;
 #[cfg(not(windows))]
-const OPEN_SOURCE_FLAGS: i32 = bun_sys::O::CLOEXEC | bun_sys::O::RDONLY;
+const OPEN_SOURCE_FLAGS: i32 = bun_sys::O::CLOEXEC | bun_sys::O::RDONLY | bun_sys::O::NONBLOCK;
 
-#[derive(ConstParamTy, PartialEq, Eq, Clone, Copy)]
+/// The longest time between two opens of a destination FIFO that has no reader yet.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+const FIFO_READER_RETRY_MS: i32 = 50;
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[derive(Clone, Copy)]
+enum Plan {
+    Syscall(TryWith),
+    /// `copy_with_waits`.
+    ReadWrite,
+}
+
+#[derive(PartialEq, Eq, Clone, Copy)]
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub(crate) enum TryWith {
     Sendfile,

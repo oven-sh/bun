@@ -12,6 +12,7 @@ import {
   tempDir,
   withoutAggressiveGC,
 } from "harness";
+import { mkfifo } from "mkfifo";
 import { once } from "node:events";
 import http from "node:http";
 import { finished } from "node:stream/promises";
@@ -1782,5 +1783,286 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     expect(stdout).toBe("caught EISDIR\n");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
+  });
+});
+
+// Apart from the main block: its tests that collect garbage stop this process for seconds on a debug build, and
+// these have many steps.
+describe.concurrent("Bun.write(file, file) between ends that are not regular files", () => {
+  // Bun.write(file, file) opens a FIFO without a wait for its other end, and does not sleep in a read or a
+  // write of a pipe (a worker's terminate() has to be able to end the copy). The copy itself waits for the
+  // other end. These run the orders in which that wait has to happen.
+  describe.skipIf(isWindows)("Bun.write(file, file) waits for the other end of a pipe", () => {
+    // The number of open descriptors is what shows that the copy is in its wait: the pool thread has no
+    // other signal. `extra` is how many it has over the ones at the start: the files that the copy opened,
+    // and the one that wakes its wait.
+    const untilWaiting = (copy, extra) => `
+      // The child of a test that timed out must not stay behind: nothing else ends it.
+      setTimeout(() => process.exit(1), 30_000).unref();
+      const fds = () => require("node:fs").readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length;
+      await Bun.sleep(1);
+      const before = fds();
+      let settled = false;
+      const copy = (${copy}).then(n => "resolved " + n, e => "rejected " + e.code).finally(() => (settled = true));
+      while (!settled && fds() < before + ${extra}) await Bun.sleep(1);
+      console.error("waiting");
+      console.error(await copy);
+    `;
+    // Resolves once `proc`'s stderr has the line that `untilWaiting` prints, with a reader for the rest.
+    async function waiting(proc) {
+      const reader = proc.stderr.getReader();
+      const decoder = new TextDecoder();
+      let stderr = "";
+      while (!stderr.includes("waiting\n")) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        stderr += decoder.decode(value, { stream: true });
+      }
+      return async () => {
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) return stderr + decoder.decode();
+          stderr += decoder.decode(value, { stream: true });
+        }
+      };
+    }
+    // A FIFO that the test has open for both ends: a pipe for the child, whose other end does only what the
+    // test does. `take(length)` reads that many bytes out of it.
+    function heldFifo(dir, name, flags = fs.constants.O_RDWR) {
+      const fifo = join(String(dir), name);
+      mkfifo(fifo);
+      const fd = fs.openSync(fifo, flags);
+      return {
+        fd,
+        async take(length) {
+          const reader = await fs.promises.open(fifo, "r");
+          try {
+            const taken = Buffer.alloc(length);
+            for (let at = 0; at < length;) at += (await reader.read(taken, at, length - at)).bytesRead;
+            return taken;
+          } finally {
+            await reader.close();
+          }
+        },
+        [Symbol.dispose]: () => fs.closeSync(fd),
+      };
+    }
+
+    it("a FIFO source: a writer that opens it later, sends in two parts and closes", async () => {
+      using dir = tempDir("bun-write-fifo-late-writer", {});
+      const fifo = join(String(dir), "fifo");
+      mkfifo(fifo);
+      using stdout = heldFifo(dir, "stdout");
+      // The copy has the FIFO open, and the fd that wakes its wait.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", untilWaiting(`Bun.write(Bun.stdout, Bun.file(${JSON.stringify(fifo)}))`, 2)],
+        env: bunEnv,
+        stdout: stdout.fd,
+        stderr: "pipe",
+      });
+      const rest = await waiting(proc);
+      // No writer has had the FIFO open yet: a read of it now is an end of file.
+      const writer = await fs.promises.open(fifo, "w");
+      const parts = [Buffer.alloc(100_000, "a"), Buffer.alloc(100_000, "b")];
+      const copied = [];
+      try {
+        // After each part the copy has taken all there is, and the writer is still there: the copy waits again.
+        for (const part of parts) {
+          copied.push((await Promise.all([stdout.take(part.length), writer.write(part)]))[0]);
+        }
+      } finally {
+        await writer.close();
+      }
+      const [stderr, exitCode] = await Promise.all([rest(), proc.exited]);
+      expect({ stderr, same: Buffer.concat(copied).equals(Buffer.concat(parts)) }).toEqual({
+        stderr: "waiting\nresolved 200000\n",
+        same: true,
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    // Linux copies these two with splice(), which sleeps in a socket that has nothing to read.
+    it.skipIf(process.platform !== "linux")(
+      "Bun.stdin (a socket) into Bun.stdout (a pipe): bytes that come in two parts",
+      async () => {
+        using dir = tempDir("bun-write-socket-to-pipe", {});
+        using stdout = heldFifo(dir, "stdout");
+        // The copy opens no file. It has the fd that wakes its wait.
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", untilWaiting(`Bun.write(Bun.stdout, Bun.stdin)`, 1)],
+          env: bunEnv,
+          stdin: "pipe",
+          stdout: stdout.fd,
+          stderr: "pipe",
+        });
+        const rest = await waiting(proc);
+        const parts = [Buffer.alloc(100_000, "a"), Buffer.alloc(100_000, "b")];
+        const copied = [];
+        // After each part the copy has taken all there is, and the socket is still open: the copy waits again.
+        for (const part of parts) {
+          proc.stdin.write(part);
+          copied.push((await Promise.all([stdout.take(part.length), proc.stdin.flush()]))[0]);
+        }
+        await proc.stdin.end();
+        const [stderr, exitCode] = await Promise.all([rest(), proc.exited]);
+        expect({ stderr, same: Buffer.concat(copied).equals(Buffer.concat(parts)) }).toEqual({
+          stderr: "waiting\nresolved 200000\n",
+          same: true,
+        });
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    // Linux only: macOS and FreeBSD open the destination as before, with an open(2) that waits for the reader.
+    it.skipIf(process.platform !== "linux")(
+      "a FIFO destination: a reader that opens it later gets every byte",
+      async () => {
+        const source = Buffer.alloc(1024 * 1024, "abcdefghij");
+        using dir = tempDir("bun-write-fifo-late-reader", { "source.bin": source });
+        const fifo = join(String(dir), "fifo");
+        mkfifo(fifo);
+        // The source is open. The destination is not: it has no reader.
+        const copy = `Bun.write(Bun.file(${JSON.stringify(fifo)}), Bun.file(${JSON.stringify(join(String(dir), "source.bin"))}))`;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", untilWaiting(copy, 1)],
+          env: bunEnv,
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+        const rest = await waiting(proc);
+        const reader = await fs.promises.open(fifo, "r");
+        const received = await reader.readFile().finally(() => reader.close());
+        const [stderr, exitCode] = await Promise.all([rest(), proc.exited]);
+        expect({ stderr, received: received.length, same: received.equals(source) }).toEqual({
+          stderr: "waiting\nresolved " + source.length + "\n",
+          received: source.length,
+          same: true,
+        });
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    // open(2) of a socket file gives the same ENXIO as a FIFO that has no reader, and nothing will ever read it.
+    it.skipIf(process.platform !== "linux")("a destination that is a socket file rejects with ENXIO", async () => {
+      using dir = tempDir("bun-write-enxio", { "source.txt": "hello" });
+      const socket = join(String(dir), "socket");
+      using server = Bun.listen({ unix: socket, socket: { data() {} } });
+      await expect(Bun.write(Bun.file(socket), Bun.file(join(String(dir), "source.txt")))).rejects.toThrow(
+        expect.objectContaining({ code: "ENXIO", syscall: "open" }),
+      );
+    });
+
+    // The socket is full after a few hundred KiB, because the test reads it only once the copy waits.
+    it("a file into a socket that is full", async () => {
+      const source = Buffer.alloc(1024 * 1024, "abcdefghij");
+      using dir = tempDir("bun-write-full-socket", { "source.bin": source });
+      const copy = `Bun.write(Bun.file(3), Bun.file(${JSON.stringify(join(String(dir), "source.bin"))}))`;
+      // The copy has its source open, and the fd that wakes its wait.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", untilWaiting(copy, 2)],
+        env: bunEnv,
+        stdio: ["ignore", "ignore", "pipe", "pipe"],
+      });
+      const rest = await waiting(proc);
+      const copied = [];
+      let length = 0;
+      for await (const chunk of Bun.file(proc.stdio[3]).stream()) {
+        copied.push(chunk);
+        if ((length += chunk.length) >= source.length) break;
+      }
+      const [stderr, exitCode] = await Promise.all([rest(), proc.exited]);
+      expect({ stderr, same: Buffer.concat(copied).equals(source) }).toEqual({
+        stderr: `waiting\nresolved ${source.length}\n`,
+        same: true,
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    // The pipe is full after 64 KiB, because the test reads it only once the copies wait.
+    // Linux only: macOS and FreeBSD write to a pipe that they did not open with a write(2) that sleeps.
+    describe.skipIf(process.platform !== "linux")("a file into a pipe that is full", () => {
+      const size = 128 * 1024;
+
+      it("Bun.stdout, with two copies at once", async () => {
+        using dir = tempDir("bun-write-full-stdout", { "source.bin": Buffer.alloc(size, "x") });
+        using stdout = heldFifo(dir, "stdout");
+        const one = `Bun.write(Bun.stdout, Bun.file(${JSON.stringify(join(String(dir), "source.bin"))}))`;
+        // Each copy has its source open, and the fd that wakes its wait.
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", untilWaiting(`Promise.all([${one}, ${one}]).then(counts => counts.join("+"))`, 4)],
+          env: bunEnv,
+          stdout: stdout.fd,
+          stderr: "pipe",
+        });
+        const rest = await waiting(proc);
+        const copied = await stdout.take(2 * size);
+        const [stderr, exitCode] = await Promise.all([rest(), proc.exited]);
+        expect({ stderr, same: copied.equals(Buffer.alloc(2 * size, "x")) }).toEqual({
+          stderr: `waiting\nresolved ${size}+${size}\n`,
+          same: true,
+        });
+        expect(exitCode).toBe(0);
+      });
+
+      // A write to it fails with EAGAIN while it is full. (fd 1 is like this once process.stdout is in use.)
+      it("Bun.file(fd) of a pipe that has O_NONBLOCK", async () => {
+        const source = Buffer.alloc(size, "abcdefghij");
+        using dir = tempDir("bun-write-full-nonblocking", { "source.bin": source });
+        using pipe = heldFifo(dir, "pipe", fs.constants.O_RDWR | fs.constants.O_NONBLOCK);
+        const copy = `Bun.write(Bun.file(3), Bun.file(${JSON.stringify(join(String(dir), "source.bin"))}))`;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", untilWaiting(copy, 2)],
+          env: bunEnv,
+          stdio: ["ignore", "ignore", "pipe", pipe.fd],
+        });
+        const rest = await waiting(proc);
+        const copied = await pipe.take(size);
+        const [stderr, exitCode] = await Promise.all([rest(), proc.exited]);
+        expect({ stderr, same: copied.equals(source) }).toEqual({
+          stderr: `waiting\nresolved ${size}\n`,
+          same: true,
+        });
+        expect(exitCode).toBe(0);
+      });
+    });
+  });
+
+  // The kind of the source decides whether there is a copy at all, so it is known before the destination is
+  // opened: a copy that is refused leaves no empty file.
+  describe.skipIf(isWindows)("Bun.write(path, Bun.file(source)) that is refused creates no destination", () => {
+    it("a directory source", async () => {
+      using dir = tempDir("bun-write-refused-directory", { "folder/file.txt": "x" });
+      const destination = join(String(dir), "destination");
+      await expect(Bun.write(destination, Bun.file(join(String(dir), "folder")))).rejects.toThrow(
+        "That doesn't work on folders",
+      );
+      expect(fs.existsSync(destination)).toBe(false);
+    });
+
+    // macOS and FreeBSD copy from a FIFO. Nobody writes to this one: an open(2) that waits for a writer never returns.
+    it.skipIf(process.platform !== "linux")("a FIFO source, which Linux cannot copy into a file", async () => {
+      using dir = tempDir("bun-write-refused-fifo", {});
+      const fifo = join(String(dir), "fifo");
+      mkfifo(fifo);
+      const destination = join(String(dir), "destination");
+      const copy = `Bun.write(${JSON.stringify(destination)}, Bun.file(${JSON.stringify(fifo)}))`;
+      // The child of a test that timed out must not stay behind: nothing else ends it.
+      const script = `
+        setTimeout(() => process.exit(1), 30_000).unref();
+        await ${copy}.catch(error => console.error(error.message));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect({ stderr, created: fs.existsSync(destination) }).toEqual({
+        stderr: "Non-regular files aren't supported yet\n",
+        created: false,
+      });
+      expect(exitCode).toBe(0);
+    });
   });
 });

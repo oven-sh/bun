@@ -1682,6 +1682,15 @@ mod nocancel {
         ) -> isize;
         #[link_name = "poll$NOCANCEL"]
         pub(crate) fn poll(fds: *mut libc::pollfd, nfds: libc::nfds_t, timeout: c_int) -> c_int;
+        // The `DARWIN_EXTSN` variant takes sets of `nfds` bits in 32-bit words, with no `FD_SETSIZE` limit.
+        #[link_name = "select$DARWIN_EXTSN$NOCANCEL"]
+        pub(crate) fn select(
+            nfds: c_int,
+            readfds: *mut u32,
+            writefds: *mut u32,
+            errorfds: *mut u32,
+            timeout: *mut libc::timeval,
+        ) -> c_int;
         // Remaining `$NOCANCEL` variants Bun links against.
         // safe: by-value `c_int` fd; bad fd → -1/EBADF, no UB.
         #[link_name = "close$NOCANCEL"]
@@ -9269,6 +9278,118 @@ fn qw_set_fd(qw: &mut bun_core::output::QuietWriter, fd: Fd) {
     // exclusively borrowed.
     unsafe {
         *core::ptr::from_mut(qw).cast::<*mut ()>() = fd.native() as usize as *mut ();
+    }
+}
+
+/// What ended a [`wait_for_io`].
+#[cfg(unix)]
+#[derive(Clone, Copy, Default)]
+pub struct IoWait {
+    /// The fd can be read or written without a wait, or has an end of file or an error that the next read or write reports.
+    pub ready: bool,
+    /// `wake` is readable.
+    pub woken: bool,
+}
+
+/// Blocks until `fd` is ready for `events` (`POLL_IN` or `POLL_OUT`), `wake` is readable, or `timeout_ms` passes (< 0: never).
+#[cfg(all(unix, not(target_os = "macos")))]
+pub fn wait_for_io(fd: Option<(Fd, i16)>, wake: Option<Fd>, timeout_ms: i32) -> Maybe<IoWait> {
+    // poll skips an entry whose fd is negative.
+    let mut fds = [
+        posix::PollFd {
+            fd: fd.map_or(-1, |(fd, _)| fd.native()),
+            events: fd.map_or(0, |(_, events)| events),
+            revents: 0,
+        },
+        posix::PollFd {
+            fd: wake.map_or(-1, |wake| wake.native()),
+            events: posix::POLL_IN,
+            revents: 0,
+        },
+    ];
+    posix::poll(&mut fds, timeout_ms)?;
+    Ok(IoWait {
+        ready: fds[0].revents != 0,
+        woken: fds[1].revents != 0,
+    })
+}
+
+/// `select`: `poll` and kqueue on macOS report a FIFO only for its bytes or room, never for a close of its other end.
+#[cfg(target_os = "macos")]
+pub fn wait_for_io(fd: Option<(Fd, i16)>, wake: Option<Fd>, timeout_ms: i32) -> Maybe<IoWait> {
+    const WORD_BITS: usize = u32::BITS as usize;
+    const INLINE_WORDS: usize = libc::FD_SETSIZE / WORD_BITS;
+    let bit_of =
+        |fd: Fd| usize::try_from(fd.native()).map_err(|_| Error::from_code(E::EBADF, Tag::poll));
+    let fd = match fd {
+        Some((fd, events)) => Some((bit_of(fd)?, events == posix::POLL_OUT)),
+        None => None,
+    };
+    let wake = match wake {
+        Some(wake) => Some(bit_of(wake)?),
+        None => None,
+    };
+    let nfds = fd
+        .map_or(0, |(bit, _)| bit + 1)
+        .max(wake.map_or(0, |bit| bit + 1));
+    let words = nfds.div_ceil(WORD_BITS);
+    // The usual fds fit in the stack sets. The `DARWIN_EXTSN` variant has no `FD_SETSIZE` limit: a set is `nfds` bits.
+    let mut inline_sets = [[0u32; INLINE_WORDS]; 2];
+    let mut heap_sets;
+    let [readable, writable]: [&mut [u32]; 2] = if words <= INLINE_WORDS {
+        let [readable, writable] = &mut inline_sets;
+        [readable, writable]
+    } else {
+        heap_sets = [vec![0u32; words], vec![0u32; words]];
+        let [readable, writable] = &mut heap_sets;
+        [readable, writable]
+    };
+    let has = |set: &[u32], bit: usize| set[bit / WORD_BITS] & (1 << (bit % WORD_BITS)) != 0;
+    loop {
+        readable.fill(0);
+        writable.fill(0);
+        if let Some((bit, for_write)) = fd {
+            let set = if for_write {
+                &mut *writable
+            } else {
+                &mut *readable
+            };
+            set[bit / WORD_BITS] |= 1 << (bit % WORD_BITS);
+        }
+        if let Some(bit) = wake {
+            readable[bit / WORD_BITS] |= 1 << (bit % WORD_BITS);
+        }
+        let mut timeout = libc::timeval {
+            tv_sec: (timeout_ms.max(0) / 1000) as _,
+            tv_usec: ((timeout_ms.max(0) % 1000) * 1000) as _,
+        };
+        // SAFETY: each set holds the `nfds` bits, rounded up to a word, that the kernel reads and writes back. The
+        // error set can be null, and so can the timeout (no limit).
+        let rc = unsafe {
+            nocancel::select(
+                nfds as core::ffi::c_int,
+                readable.as_mut_ptr(),
+                writable.as_mut_ptr(),
+                core::ptr::null_mut(),
+                if timeout_ms < 0 {
+                    core::ptr::null_mut()
+                } else {
+                    &raw mut timeout
+                },
+            )
+        };
+        if rc >= 0 {
+            return Ok(IoWait {
+                ready: fd.is_some_and(|(bit, for_write)| {
+                    has(if for_write { &*writable } else { &*readable }, bit)
+                }),
+                woken: wake.is_some_and(|bit| has(&*readable, bit)),
+            });
+        }
+        let errno = last_errno();
+        if errno != libc::EINTR {
+            return Err(Error::from_code_int(errno, Tag::poll));
+        }
     }
 }
 

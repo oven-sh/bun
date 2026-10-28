@@ -193,6 +193,29 @@ export function bunExe() {
   return process.execPath;
 }
 
+let bunExeCopy: string | undefined;
+
+/**
+ * Puts the bun under test in `dir` and returns its path there, for a test that removes or replaces the executable of
+ * a running process. The file shares its inode with `bunExe()`: rename or unlink it, never write to it or chmod it.
+ */
+export function linkBunExe(dir: string): string {
+  const to = join(dir, basename(process.execPath));
+  try {
+    fs.linkSync(process.execPath, to);
+  } catch {
+    // `dir` is on another file system. The test file shares one copy, which is removed when the process exits.
+    if (!bunExeCopy) {
+      const copyDir = tmpdirSync();
+      process.on("exit", () => fs.rmSync(copyDir, { recursive: true, force: true }));
+      bunExeCopy = join(copyDir, basename(process.execPath));
+      fs.copyFileSync(process.execPath, bunExeCopy);
+    }
+    fs.linkSync(bunExeCopy, to);
+  }
+  return to;
+}
+
 /**
  * Source for a `bun -e` script: binds `port`, where a dial to 127.0.0.1 sits in
  * EINPROGRESS for good, and `filler`, to `destroy()` when done. Not on Windows or musl.

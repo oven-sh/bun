@@ -2217,6 +2217,42 @@ describe("compiled binary validity", () => {
     expect(stdout.trim()).toBe("compile-test-output");
     expect(exitCode).toBe(0);
   });
+
+  // A compiled executable reads the path it was started from when it starts: an update can put another file there
+  // before the program first uses `process.execPath`. A script stands in for the update, so its output shows which
+  // file a spawn of `process.execPath` starts.
+  test.skipIf(!isLinux && !isMacOS)(
+    "process.execPath of a compiled executable after another file replaced it",
+    async () => {
+      using dir = tempDir("build-compile-replaced-self", {
+        "app.js": `
+          import { renameSync } from "node:fs";
+          renameSync(Bun.env.REPLACEMENT, Bun.env.OWN_EXE);
+          const child = Bun.spawnSync({ cmd: [process.execPath] });
+          console.log(JSON.stringify({ execPath: process.execPath, child: child.stdout.toString() }));
+        `,
+        "replacement": "#!/bin/sh\necho replacement\n",
+      });
+      const outfile = join(String(dir), "app");
+      const replacement = join(String(dir), "replacement");
+      chmodSync(replacement, 0o755);
+      const result = await Bun.build({ entrypoints: [join(String(dir), "app.js")], compile: { outfile } });
+      expect(result.success).toBe(true);
+
+      await using proc = Bun.spawn({
+        cmd: [outfile],
+        env: { ...bunEnv, OWN_EXE: outfile, REPLACEMENT: replacement },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ execPath: outfile, child: "replacement\n" });
+      expect(exitCode).toBe(0);
+    },
+    60_000,
+  );
 });
 
 if (isLinux) {

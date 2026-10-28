@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import fs, { readdirSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, linkBunExe, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
 // Whether `bun init` emits CLAUDE.md depends on a `claude` binary being on
@@ -142,6 +142,55 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(exitCode).toBe(0);
     expect(fs.existsSync(path.join(temp, "package.json"))).toBe(false);
   });
+
+  // `bun init` starts `bun install` after its prompts, and an upgrade can replace bun while a prompt waits. A script
+  // stands in for the new bun and records its arguments, which shows the file that `bun init` starts. Not on FreeBSD,
+  // which reads the path of the executable when it is first needed.
+  test.skipIf(!isLinux && !isMacOS)(
+    "bun init runs the bun at its start path when that file is replaced during a prompt",
+    async () => {
+      await using temp = tempDir("bun-init-replaced-exe", {});
+      const project = path.join(String(temp), "project");
+      const ran = path.join(String(temp), "ran");
+      fs.mkdirSync(project);
+      const exe = linkBunExe(String(temp));
+
+      const decoder = new TextDecoder();
+      let output = "";
+      const menu = Promise.withResolvers<void>();
+      await using terminal = new Bun.Terminal({
+        cols: 80,
+        rows: 24,
+        data(_, chunk: Uint8Array) {
+          output += decoder.decode(chunk, { stream: true });
+          if (output.includes("Select a project template")) menu.resolve();
+        },
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [exe, "init"],
+        cwd: project,
+        env: initEnv,
+        terminal,
+      });
+      const exitedEarly = proc.exited.then(code => {
+        throw new Error(`bun init exited before the prompt (code ${code}):\n${output}`);
+      });
+      exitedEarly.catch(() => {});
+
+      await Promise.race([menu.promise, exitedEarly]);
+      fs.writeFileSync(exe + ".new", `#!/bin/sh\necho "$*" > '${ran}'\n`, { mode: 0o755 });
+      fs.renameSync(exe + ".new", exe);
+      // "1" picks the first entry (Blank), which asks nothing more.
+      terminal.write("1");
+
+      const exitCode = await proc.exited;
+      // Without the file of the script, the failure shows what `bun init` printed.
+      expect(fs.existsSync(ran) ? fs.readFileSync(ran, "utf8") : output).toBe("install\n");
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
 
   test("bun init in folder", async () => {
     await using temp = tempDir("bun-init-in-folder", {

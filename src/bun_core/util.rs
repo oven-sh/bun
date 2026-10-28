@@ -2709,6 +2709,22 @@ fn os_entropy(bytes: &mut [u8]) {
 pub fn self_exe_path() -> crate::CrateResult<&'static ZStr> {
     static CELL: Once<crate::CrateResult<ZBox>> = Once::new();
     let r = CELL.get_or_init(|| {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            let mut buf = PathBuffer::ZEROED;
+            // SAFETY: the path is NUL-terminated, and `readlink` writes at most `buf.len()` bytes into `buf`.
+            let len = unsafe {
+                libc::readlink(
+                    c"/proc/self/exe".as_ptr(),
+                    buf.as_mut_ptr().cast(),
+                    buf.len(),
+                )
+            };
+            // Not a result that fills the buffer: `readlink` cuts off what does not fit.
+            if len >= 0 && (len as usize) < buf.len() {
+                return Ok(ZBox::from_bytes(&buf[..len as usize]));
+            }
+        }
         let path = std::env::current_exe().map_err(|_| crate::CrateError::Unexpected)?;
         // Symlink resolution: Rust's
         // `current_exe()` already resolves on Linux (`readlink /proc/self/exe`),
@@ -2752,6 +2768,13 @@ pub fn self_exe_path() -> crate::CrateResult<&'static ZStr> {
         Ok(z) => Ok(z.as_zstr()),
         Err(e) => Err(*e),
     }
+}
+
+/// Linux composes `/proc/self/exe` when it is read, so read it before the file can be replaced (`bun upgrade`).
+pub fn init_self_exe_path() {
+    // macOS and Windows report the start path. FreeBSD reads late too, but no CI lane runs its tests.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let _ = self_exe_path();
 }
 
 // ── get_thread_count ──────────────────────────────────────────────────────
@@ -4374,7 +4397,13 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         envp.push(core::ptr::null());
 
         // we must clone selfExePath in case argv[0] was not an absolute path
-        let exec_path = self_exe_path().expect("unreachable");
+        let Ok(exec_path) = self_exe_path() else {
+            crate::err_generic!("Failed to reload: the path of the executable is not known");
+            if may_return {
+                return;
+            }
+            crate::Global::exit(1);
+        };
 
         libc::execve(
             exec_path.as_ptr(),

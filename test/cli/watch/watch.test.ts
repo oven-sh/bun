@@ -1,7 +1,7 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { afterEach, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBroken, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isBroken, isLinux, isMacOS, isWindows, linkBunExe, tempDir, tmpdirSync } from "harness";
 import {
   copyFileSync,
   readdirSync,
@@ -11,6 +11,7 @@ import {
   renameSync,
   rmSync,
   symlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { basename, join } from "node:path";
 
@@ -303,17 +304,130 @@ int inotify_init1(int flags) {
   });
 });
 
-it.skipIf(isWindows)("--watch reports an error when its executable was deleted", async () => {
-  using dir = tempDir("watch-exe-removed", {
-    "app/entry.js": `console.log("iter first"); setInterval(() => {}, 1000);`,
-  });
-  const exe = join(String(dir), basename(bunExe()));
-  copyFileSync(bunExe(), exe);
+// The tests below remove or replace the executable of a running `--watch` session, so each session starts from a path
+// of its own, outside the directory it watches. A restart starts the path the session was started from. Not on
+// FreeBSD, which still reads the path at the restart, and Windows restarts from a manager process (see below).
+const restartsStartPath = isLinux || isMacOS;
+function watchWithOwnExe(dir: string) {
+  const exe = linkBunExe(dir);
   const proc = spawn({
     // The flag skips a debug build's slow crash symbolication.
     cmd: [exe, "--debug-crash-handler-use-trace-string", "--watch", "entry.js"],
-    cwd: join(String(dir), "app"),
+    cwd: join(dir, "app"),
     env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  watchee = proc;
+  return { exe, proc };
+}
+
+it.skipIf(!restartsStartPath)("--watch reports an error when its executable was deleted", async () => {
+  using dir = tempDir("watch-exe-removed", {
+    "app/entry.js": `console.log("iter first"); setInterval(() => {}, 1000);`,
+  });
+  const { exe, proc } = watchWithOwnExe(String(dir));
+  const stderr = proc.stderr.text();
+
+  const { waitFor, release } = stdoutWaiter(proc);
+  await waitFor("iter first");
+  release();
+
+  rmSync(exe);
+  await Bun.write(join(String(dir), "app", "entry.js"), `console.log("iter second");`);
+
+  expect(await stderr).toContain(`error: Failed to reload "${exe}": ENOENT (execve)`);
+  expect(await proc.exited).toBe(1);
+});
+
+// `bun upgrade` and installers put a new bun at the path of the running one. The old file is unlinked, or it stays
+// under another name: `bun upgrade` swaps it into its download directory. The next restart starts the new file.
+// The new file is a script that starts the bun under test, so the restarted session reports `bunExe()` as its path.
+for (const oldFile of ["unlinked", "moved aside"] as const) {
+  it.skipIf(!restartsStartPath)(
+    `--watch restarts into an executable that replaced its own (old file ${oldFile})`,
+    async () => {
+      using dir = tempDir("watch-exe-replaced", {
+        "app/entry.js": `console.log("iter first"); setInterval(() => {}, 1000);`,
+      });
+      const { exe, proc } = watchWithOwnExe(String(dir));
+      const { waitFor, output } = stdoutWaiter(proc);
+      await waitFor("iter first");
+
+      const replacement = `#!/bin/sh\nexec '${bunExe()}' "$@"\n`;
+      if (oldFile === "unlinked") {
+        writeFileSync(exe + ".new", replacement, { mode: 0o755 });
+        renameSync(exe + ".new", exe);
+      } else {
+        renameSync(exe, exe + ".old");
+        writeFileSync(exe, replacement, { mode: 0o755 });
+      }
+      await Bun.write(
+        join(String(dir), "app", "entry.js"),
+        `console.log("iter second [" + process.execPath + "]"); setInterval(() => {}, 1000);`,
+      );
+
+      await waitFor("]\n");
+      expect(output()).toContain(`iter second [${bunExe()}]\n`);
+    },
+  );
+}
+
+// Linux reports a renamed executable under its new name, so a restart used to follow the rename there. Nothing is at
+// the path the session was started from, as on macOS.
+it.skipIf(!restartsStartPath)("--watch does not follow its executable to a new name", async () => {
+  using dir = tempDir("watch-exe-renamed", {
+    "app/entry.js": `console.log("iter first"); setInterval(() => {}, 1000);`,
+  });
+  const { exe, proc } = watchWithOwnExe(String(dir));
+  const stderr = proc.stderr.text();
+
+  const { waitFor } = stdoutWaiter(proc);
+  await waitFor("iter first");
+
+  renameSync(exe, exe + ".renamed");
+  await Bun.write(join(String(dir), "app", "entry.js"), `console.log("iter second"); setInterval(() => {}, 1000);`);
+
+  // Stdout ends when the session does. A session that follows the rename prints the second line.
+  const outcome = await waitFor("iter second").then(
+    () => "restarted",
+    () => proc.exited,
+  );
+  expect(outcome).toBe(1);
+  expect(await stderr).toContain(`error: Failed to reload "${exe}": ENOENT (execve)`);
+});
+
+// The kernel gives no path for the executable when /proc is not mounted or when the path is 4096 bytes or longer.
+// The shim fails that read. The session then has nothing to restart, and it says so.
+it.skipIf(!isLinux || !cc)("--watch reports an error when it cannot read the path of its executable", async () => {
+  using dir = tempDir("watch-exe-path-unknown", {
+    "entry.js": `console.log("iter first"); setInterval(() => {}, 1000);`,
+    "shim.c":
+      NO_CORE_C +
+      /* c */ `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <string.h>
+#include <unistd.h>
+ssize_t readlink(const char *path, char *buf, size_t len) {
+  static ssize_t (*real)(const char *, char *, size_t);
+  if (!real) real = dlsym(RTLD_NEXT, "readlink");
+  if (strcmp(path, "/proc/self/exe") == 0) {
+    errno = ENOENT;
+    return -1;
+  }
+  return real(path, buf, len);
+}
+`,
+  });
+  const shimPath = await compileShim(String(dir));
+  const existing = bunEnv.LD_PRELOAD;
+  const proc = spawn({
+    cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "--watch", "entry.js"],
+    cwd: String(dir),
+    env: { ...bunEnv, LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath },
     stdout: "pipe",
     stderr: "pipe",
     stdin: "ignore",
@@ -325,11 +439,9 @@ it.skipIf(isWindows)("--watch reports an error when its executable was deleted",
   await waitFor("iter first");
   release();
 
-  rmSync(exe);
-  await Bun.write(join(String(dir), "app", "entry.js"), `console.log("iter second");`);
+  await Bun.write(join(String(dir), "entry.js"), `console.log("iter second");`);
 
-  expect(await stderr).toContain(`error: Failed to reload "${exe}`);
-  expect(await stderr).toContain(`ENOENT (execve)`);
+  expect(await stderr).toContain("error: Failed to reload: the path of the executable is not known\n");
   expect(await proc.exited).toBe(1);
 });
 

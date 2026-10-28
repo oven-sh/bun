@@ -3,7 +3,19 @@ import { CString, dlopen, ptr } from "bun:ffi";
 import { memoryUsage as jscMemoryUsage } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isRoot, isWindows, tempDir, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isLinux,
+  isMacOS,
+  isRoot,
+  isWindows,
+  linkBunExe,
+  tempDir,
+  tmpdirSync,
+} from "harness";
 import { basename, join, resolve } from "path";
 import { getHeapStatistics } from "v8";
 
@@ -722,6 +734,49 @@ it("process.execPath", () => {
   expect(process.execPath).not.toBe(basename(process.argv0));
   expect(which(process.execPath)).not.toBeNull();
 });
+
+// Another file can be at the path of a running bun: `bun upgrade` puts the new version there, and the old file is
+// unlinked or stays under another name. `process.execPath` is the path the process was started from, also when
+// nothing reads it before that, and also when nothing is at that path any more.
+for (const [change, child] of [
+  ["replaced, old file unlinked", "replacement\n"],
+  ["replaced, old file moved aside", "replacement\n"],
+  ["renamed", "ENOENT"],
+]) {
+  it.concurrent.skipIf(!isLinux && !isMacOS)(`process.execPath after the executable was ${change}`, async () => {
+    using dir = tempDir("process-execpath-replaced", {
+      // A script stands in for the new executable: its output shows which file a spawn of `process.execPath` starts.
+      "replacement": "#!/bin/sh\necho replacement\n",
+      "index.js": `
+        const { chmodSync, renameSync } = require("node:fs");
+        const { OWN_EXE: exe, REPLACEMENT: replacement, CHANGE: change } = Bun.env;
+        chmodSync(replacement, 0o755);
+        if (change !== "replaced, old file unlinked") renameSync(exe, exe + ".old");
+        if (change !== "renamed") renameSync(replacement, exe);
+        let child;
+        try {
+          child = Bun.spawnSync({ cmd: [process.execPath] }).stdout.toString();
+        } catch (error) {
+          child = error.code;
+        }
+        console.log(JSON.stringify({ execPath: process.execPath, argv0: process.argv[0], child }));
+      `,
+    });
+    const exe = linkBunExe(String(dir));
+
+    await using proc = Bun.spawn({
+      cmd: [exe, join(String(dir), "index.js")],
+      env: { ...bunEnv, OWN_EXE: exe, REPLACEMENT: join(String(dir), "replacement"), CHANGE: change },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ execPath: exe, argv0: exe, child });
+    expect(exitCode).toBe(0);
+  });
+}
 
 it("process.uptime()", () => {
   expect(process.uptime()).toBeGreaterThan(0);

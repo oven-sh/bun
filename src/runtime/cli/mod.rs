@@ -947,6 +947,8 @@ pub(crate) mod command {
     /// `Context::set_global`. Shared by `create_context_data` and the
     /// standalone-graph fast path in `start()`.
     fn write_context_no_parse(log: &mut bun_ast::Log) -> &'static mut ContextData {
+        // Not in `main`: `bun --version` exits before this, and it does not need the path.
+        bun_core::init_self_exe_path();
         // SAFETY: single-threaded CLI startup; first and only write to
         // `CONTEXT_DATA` for the process lifetime. `log` is the `&'static mut`
         // borrow of `Cli::LOG_` taken in `Cli::start()`, so storing its raw
@@ -1133,6 +1135,8 @@ pub(crate) mod command {
             }
         }
 
+        // `bun init` and the other commands that build no context start from here.
+        bun_core::init_self_exe_path();
         let tag = call_removable!(Tools, Abort, which);
 
         // NOTE: an earlier shim used to scan all of `argv` here for

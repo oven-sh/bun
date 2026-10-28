@@ -72,6 +72,8 @@ const invalids = [
   [null, "null"],
   [undefined, "undefined"],
   ["2001:0db8:85a3:0000:0000:8a2e:0370:7334", ""],
+  // An IPv6 literal cannot end with a single ":".
+  ["[::1:]", ""],
 ];
 
 describe("url.domainToASCII", () => {
@@ -97,7 +99,7 @@ describe("url.domainToUnicode", () => {
   }
   for (const [input, expected] of invalids) {
     test(`-> '${input}' is '${expected}'`, () => {
-      expect(url.domainToASCII(input)).toEqual(expected);
+      expect(url.domainToUnicode(input)).toEqual(expected);
     });
   }
 });

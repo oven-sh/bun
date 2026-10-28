@@ -374,6 +374,7 @@ impl<C: JobContext> Job<C> {
             }
             WorkPool::schedule(&raw mut (*job).task);
         }
+        cx.vm().event_loop_shared().pool_job_scheduled.set(true);
     }
 
     fn run_on_pool(task: *mut WorkPoolTask) {

@@ -1,5 +1,6 @@
 //! bun_threading crate root — thin re-exports.
 
+pub mod brief_wait;
 pub mod channel;
 #[path = "Condition.rs"]
 pub mod condition;

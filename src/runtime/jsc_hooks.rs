@@ -1053,7 +1053,8 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         let has_pending_immediate = has_yielded_tasks
             || uv_idle_started
             || !unsafe { &*el }.immediate_tasks.is_empty()
-            || unsafe { &*el }.has_pending_tasks();
+            || unsafe { &*el }.has_pending_tasks()
+            || unsafe { &*el }.await_pool_job();
         // Fold the QUIC deadline into the poll timeout.
         // SAFETY: `loop_` is the live per-thread uws loop.
         let quic_next_tick_us = unsafe {
@@ -1198,7 +1199,8 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
         let has_pending_immediate = has_yielded_tasks
             || uv_idle_started
             || !unsafe { &*el }.immediate_tasks.is_empty()
-            || unsafe { &*el }.has_pending_tasks();
+            || unsafe { &*el }.has_pending_tasks()
+            || unsafe { &*el }.await_pool_job();
         // SAFETY: `loop_` is the live per-thread uws loop.
         let quic_next_tick_us = unsafe {
             let ild = &(*loop_).internal_loop_data;

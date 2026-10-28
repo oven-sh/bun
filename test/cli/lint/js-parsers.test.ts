@@ -479,7 +479,7 @@ describe.concurrent("bun lint with languages", () => {
       for (const result of [one, all]) {
         expect(result.stderr).not.toContain("Invalid config in");
         expect(result.stderr).toContain("the eslint package linted 1 files");
-        expect(summary(result.raw)).toBe("c.vue: 2:1 lines/no-tabs tab [object Object] 8 v c.vue [fix 11,12 \" \"]");
+        expect(summary(result.raw)).toBe('c.vue: 2:1 lines/no-tabs tab [object Object] 8 v c.vue [fix 11,12 " "]');
         expect(result.exitCode).toBe(1);
       }
       for (const result of [listed, missing, missingAll]) {

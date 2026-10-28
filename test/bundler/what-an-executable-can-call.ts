@@ -212,6 +212,26 @@ export function placesThatCall(file: Uint8Array, names: readonly string[]): Plac
   return placesIn(readImage(file), name => names.includes(name));
 }
 
+// What lies at a place, for the message of a test that expected none.
+export function describePlace(file: Uint8Array, { name, address }: Place): string {
+  const { view, segments, importAt, stubs, isArm64 } = readImage(file);
+  const hex = (value: number) => value.toString(16);
+  const segment = segments.find(each => address >= each.address && address < each.address + (each.end - each.offset))!;
+  const at = segment.offset + (address - segment.address);
+  const words: string[] = [];
+  for (let each = Math.max(segment.offset, at - 8); each + 4 <= Math.min(segment.end, at + 24); each += 4) words.push(hex(view.getUint32(each, true)).padStart(8, "0"));
+  const targets = [...importAt].filter(([, other]) => other === name).map(([target]) => `its ${stubs.has(target) ? "stub" : "slot"} at ${hex(target)}`);
+  let branches = 0;
+  for (const { offset, end, address: start, isExecutable } of segments) {
+    if (!isArm64 || !isExecutable) continue;
+    for (let each = (offset + 3) & ~3; each + 4 <= end; each += 4) {
+      const word = view.getUint32(each, true);
+      if ((word & 0x7c000000) >>> 0 === 0x14000000 && start + (each - offset) + signed(word & 0x03ffffff, 26) * 4 === address) branches++;
+    }
+  }
+  return `${segment.isExecutable ? "code" : "data"} of ${hex(segment.address)} to ${hex(segment.address + (segment.end - segment.offset))}, words from 8 bytes ahead of it: ${words.join(" ")}, ${targets.join(", ")}, ${branches} branches to it`;
+}
+
 function numberLoadedAhead(elf: Image, at: number, start: number, isFirstArgument: boolean): number | undefined {
   const { file, view } = elf;
   if (elf.isArm64) {

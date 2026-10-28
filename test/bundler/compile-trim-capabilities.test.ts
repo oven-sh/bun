@@ -11,7 +11,7 @@ import {
   trimFeatureNamed,
   withoutFeatures,
 } from "./compile-trim-features";
-import { placesThatCall, placesThatMakeSystemCalls } from "./what-an-executable-can-call";
+import { describePlace, placesThatCall, placesThatMakeSystemCalls } from "./what-an-executable-can-call";
 
 const featuresOf = (...names: string[]) => names.flatMap(name => trimFeatureNamed(name).features);
 
@@ -96,6 +96,7 @@ describe.skipIf(isWindows || isASAN)("an executable without what starts programs
       placesThatCall(cut.file, startsAProgram.functions).map(place => ({
         ...place,
         keptBy: featuresThatKeep(place.address, startsAProgram.features),
+        holds: describePlace(cut.file, place),
       })),
     ).toEqual([]);
     expect(placesThatMakeSystemCalls(cut.file, startsAProgram.systemCalls)).toEqual([]);

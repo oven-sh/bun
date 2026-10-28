@@ -86,7 +86,7 @@ pub(super) fn declaration_path(root_directory: &[u8], source: &[u8]) -> Option<V
     // `GetDeclarationEmitExtensionForPath`: `App.vue`, which a content mapper reads, has `App.d.vue.ts`.
     let mut path = known.unwrap_or_else(|| {
         let name = relative.len() - bun_paths::basename(relative).len();
-        let dot = relative[name..].iter().rposition(|&it| it == b'.');
+        let dot = bun_core::strings::last_index_of_char(&relative[name..], b'.');
         let (stem, extension) = relative.split_at(dot.map_or(relative.len(), |dot| name + dot));
         [stem, b".d", extension, b".ts"].concat()
     });

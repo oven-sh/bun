@@ -4910,8 +4910,8 @@ describe("bundler", () => {
       using dir = tempDir("splitting-reference-paths-outdir", files);
       const inMemory = await buildAdminEntry(String(dir), { sourcemap: "linked" });
       const onDisk = await buildAdminEntry(String(dir), { sourcemap: "linked", outdir: join(String(dir), "out") });
-      // A source map names its sources relative to the output directory, so the two maps differ.
-      // The hash of a chunk covers its map, so the hashes differ too. Nothing else does.
+      // The two builds write different `sources` in their maps, and the hash of a chunk covers its map.
+      // So the hashes differ, and nothing else does.
       expect(onDisk.references).toBe(inMemory.references);
       expect(onDisk.map.mappings).toBe(inMemory.map.mappings);
       expect(readFileSync(join(String(dir), "out", "pages", "admin", "index.js"), "utf8")).toBe(onDisk.code);

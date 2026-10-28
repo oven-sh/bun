@@ -437,16 +437,23 @@ describe("bundler", () => {
     return Object.keys(first).filter(path => path in second && first[path] !== second[path]);
   }
 
-  // The debug ID of a build with one JavaScript chunk. The chunk prints it, and so does the source map of the chunk.
-  function debugId(texts: Record<string, string>) {
-    const code = Object.values(texts).find(text => text.includes("//# debugId="))!;
-    const id = code.match(/^\/\/# debugId=([0-9A-F]{32})$/m)![1];
-    const inline = code.match(/sourceMappingURL=data:application\/json;base64,([\w+/=]+)/)?.[1];
-    const map = inline
-      ? Buffer.from(inline, "base64").toString()
-      : Object.entries(texts).find(([path]) => path.endsWith(".map"))![1];
-    expect(JSON.parse(map).debugId).toBe(id);
-    return id;
+  // The outputs that have a hash in their name.
+  function hashedOutputs(texts: Record<string, string>) {
+    return Object.fromEntries(Object.entries(texts).filter(([path]) => /-[0-9a-z]{8}\./.test(path)));
+  }
+
+  // The debug ID of each JavaScript chunk, in output order. A chunk prints its ID, and so does its own source map.
+  function debugIds(texts: Record<string, string>) {
+    const maps = Object.keys(texts).filter(path => path.endsWith(".map"));
+    return Object.entries(texts).flatMap(([path, code]) => {
+      const id = code.match(/^\/\/# debugId=([0-9A-F]{32})$/m)?.[1];
+      if (!id) return [];
+      const inline = code.match(/sourceMappingURL=data:application\/json;base64,([\w+/=]+)/)?.[1];
+      // A standalone HTML file holds its one chunk, and the map keeps the name of that chunk.
+      const map = inline ? Buffer.from(inline, "base64").toString() : (texts[path + ".map"] ?? texts[maps[0]]);
+      expect(JSON.parse(map).debugId).toBe(id);
+      return [id];
+    });
   }
 
   test.concurrent(
@@ -525,45 +532,77 @@ describe("bundler", () => {
     expect(second.hash).not.toBe(first.hash);
   });
 
-  test.concurrent("naming/ChunkHashCoversChunkPath (an import() gets a chunk that another import() has)", async () => {
-    using dir = tempDir("naming-chunk-hash-retarget", {
-      "router.js": "",
-      "pages/a.js": `import { first, second, third } from "../router.js";\nexport const a = [first, second, third];`,
-      "pages/b.js": `import { first, second, third } from "../router.js";\nexport const b = [third, second, first];`,
-      "x.js": `export const name = "x";`,
-      "y.js": `export const name = "y";`,
-    });
-    const withSecond = async (target: "x" | "y") => {
-      writeFileSync(
-        join(String(dir), "router.js"),
-        `export const first = () => import("./x.js");
+  test.concurrent(
+    "naming/ChunkHashCoversChunkReference (an import() gets a chunk that another import() has)",
+    async () => {
+      using dir = tempDir("naming-chunk-hash-retarget", {
+        "router.js": "",
+        "pages/a.js": `import { first, second, third } from "../router.js";\nexport const a = [first, second, third];`,
+        "pages/b.js": `import { first, second, third } from "../router.js";\nexport const b = [third, second, first];`,
+        "x.js": `export const name = "x";`,
+        "y.js": `export const name = "y";`,
+      });
+      const withSecond = async (target: "x" | "y") => {
+        writeFileSync(
+          join(String(dir), "router.js"),
+          `export const first = () => import("./x.js");
          export const second = () => import("./${target}.js");
          export const third = () => import("./y.js");`,
-      );
-      // The chunks of router.js, x.js and y.js keep the default name, chunk-[hash].js.
-      const texts = await build({
-        entrypoints: [join(String(dir), "pages/a.js"), join(String(dir), "pages/b.js")],
-        splitting: true,
-        naming: { entry: "[name]-[hash].[ext]" },
-      });
-      // Which of x.js and y.js each import() loads, in the order that the chunk of router.js prints them.
-      const loads = Array.from(
-        Object.values(texts)
-          .join("\n")
-          .matchAll(/import\("(.+?)"\)/g),
-        ([, path]) => texts[path].match(/"(x|y)"/)![1],
-      );
-      return { texts, loads };
-    };
-    const first = await withSecond("y");
-    const second = await withSecond("x");
+        );
+        // The chunks of router.js, x.js and y.js keep the default name, chunk-[hash].js.
+        const texts = await build({
+          entrypoints: [join(String(dir), "pages/a.js"), join(String(dir), "pages/b.js")],
+          splitting: true,
+          naming: { entry: "[name]-[hash].[ext]" },
+        });
+        // Which of x.js and y.js each import() loads, in the order that the chunk of router.js prints them.
+        const loads = Array.from(
+          Object.values(texts)
+            .join("\n")
+            .matchAll(/import\("(.+?)"\)/g),
+          ([, path]) => texts[path].match(/"(x|y)"/)![1],
+        );
+        return { texts, loads };
+      };
+      const first = await withSecond("y");
+      const second = await withSecond("x");
 
-    expect([first.loads, second.loads]).toEqual([
-      ["x", "y", "y"],
-      ["x", "x", "y"],
-    ]);
-    expect(pathsWithTwoContents(first.texts, second.texts)).toEqual([]);
-  });
+      expect([first.loads, second.loads]).toEqual([
+        ["x", "y", "y"],
+        ["x", "x", "y"],
+      ]);
+      expect(pathsWithTwoContents(first.texts, second.texts)).toEqual([]);
+      // The chunks of x.js and y.js did not change, so they are the two outputs that keep their name.
+      const kept = Object.keys(first.texts).filter(path => path in second.texts);
+      expect(kept.map(path => first.texts[path].match(/"(x|y)"/)?.[1]).sort()).toEqual(["x", "y"]);
+    },
+  );
+
+  for (const sourcemap of ["none", "external", "linked", "inline"] as const) {
+    test.concurrent(`naming/ChunkHashIgnoresChunkOrder (sourcemap: ${sourcemap})`, async () => {
+      const routes = ["r1", "r2", "r3", "r4", "r5", "r6", "r7"];
+      using dir = tempDir("naming-chunk-hash-order", {
+        "main.js": `export const shared = "shared";
+          export const routes = [${routes.map(route => `() => import("./${route}.js")`).join(", ")}];`,
+        ...Object.fromEntries(
+          routes.map(route => [
+            `${route}.js`,
+            `import { shared } from "./main.js";\nexport default "${route} " + shared;`,
+          ]),
+        ),
+        "other.js": `console.log("other");`,
+      });
+      // main.js and its seven routes are eight entry points. The ninth puts the chunks in another order.
+      const withEntrypoints = (...entrypoints: string[]) =>
+        build({ entrypoints: entrypoints.map(file => join(String(dir), file)), splitting: true, sourcemap });
+      const first = hashedOutputs(await withEntrypoints("main.js"));
+      const second = await withEntrypoints("main.js", "other.js");
+
+      // The chunk of each route, and the chunk that the routes import `shared` from.
+      expect(Object.keys(first).filter(path => path.endsWith(".js"))).toHaveLength(8);
+      expect(second).toMatchObject(first);
+    });
+  }
 
   for (const sourcemap of ["external", "linked", "inline"] as const) {
     for (const to of ["memory", "disk", "standalone HTML"] as const) {
@@ -587,7 +626,8 @@ describe("bundler", () => {
         const second = await withComment("second, longer comment");
 
         expect(pathsWithTwoContents(first, second)).toEqual([]);
-        expect(debugId(second)).not.toBe(debugId(first));
+        expect(debugIds(first)).toHaveLength(1);
+        expect(debugIds(second)).not.toEqual(debugIds(first));
       });
     }
   }
@@ -612,8 +652,20 @@ describe("bundler", () => {
     expect(await withSourcemap("linked")).toEqual(await withSourcemap("none"));
   });
 
+  test.concurrent("naming/ChunkHashCoversSourceMapMode", async () => {
+    using dir = tempDir("naming-chunk-hash-mode", { "entry.js": `console.log("x");` });
+    // Each mode ends the chunk in its own way: nothing, a debug ID, a link to the map, or the map.
+    const chunks: string[] = [];
+    for (const sourcemap of ["none", "external", "linked", "inline"] as const) {
+      const texts = await build({ entrypoints: [join(String(dir), "entry.js")], naming: hashed, sourcemap });
+      chunks.push(...Object.keys(texts).filter(path => path.endsWith(".js")));
+    }
+
+    expect(new Set(chunks).size).toBe(4);
+  });
+
   for (const sourcemap of ["external", "linked", "inline"] as const) {
-    test.concurrent(`naming/DebugIdCoversPrintedPaths (sourcemap: ${sourcemap})`, async () => {
+    test.concurrent(`naming/DebugIdCoversAssetPath (sourcemap: ${sourcemap})`, async () => {
       using dir = tempDir("naming-debug-id", {
         "entry.js": `import logo from "./logo.png";\nconsole.log(logo);`,
         "logo.png": "",
@@ -622,14 +674,43 @@ describe("bundler", () => {
       const withLogo = async (bytes: string) => {
         writeFileSync(join(String(dir), "logo.png"), bytes);
         const texts = await build({ entrypoints: [join(String(dir), "entry.js")], naming: hashed, sourcemap });
-        return { logo: Object.keys(texts).find(path => path.endsWith(".png")), debugId: debugId(texts) };
+        return { logo: Object.keys(texts).find(path => path.endsWith(".png")), debugIds: debugIds(texts) };
       };
       const first = await withLogo("A");
       const second = await withLogo("B");
 
       expect(second.logo).not.toBe(first.logo);
-      expect(second.debugId).not.toBe(first.debugId);
+      expect(first.debugIds).toHaveLength(1);
+      expect(second.debugIds).not.toEqual(first.debugIds);
     });
+
+    for (const to of ["memory", "disk"] as const) {
+      test.concurrent(`naming/DebugIdOfEachChunk (sourcemap: ${sourcemap}, to ${to})`, async () => {
+        using dir = tempDir("naming-debug-id-chunks", {
+          "shared.js": "",
+          "a.js": `import { shared } from "./shared.js";\nconsole.log("a", shared);`,
+          "b.js": `import { shared } from "./shared.js";\nconsole.log("b", shared);`,
+        });
+        // The chunks of a.js and b.js print the path of the chunk of shared.js, which has the hash of that chunk.
+        const withShared = async (value: string) => {
+          writeFileSync(join(String(dir), "shared.js"), `export const shared = "${value}";`);
+          return debugIds(
+            await build({
+              entrypoints: [join(String(dir), "a.js"), join(String(dir), "b.js")],
+              splitting: true,
+              naming: hashed,
+              sourcemap,
+              outdir: to === "disk" ? join(String(dir), "out") : undefined,
+            }),
+          );
+        };
+        const first = await withShared("one");
+        const second = await withShared("two");
+
+        expect(new Set(first).size).toBe(3);
+        expect(first.filter((id, chunk) => id === second[chunk])).toEqual([]);
+      });
+    }
   }
 
   test.concurrent("naming/ChunkHashCoversInlinedAsset (standalone HTML)", async () => {

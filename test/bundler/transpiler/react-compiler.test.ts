@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, runCommandMaxRSS, tempDir, withoutAsanQuarantine } from "harness";
 import { readdirSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { SourceMapConsumer } from "source-map";
 import { itBundled, type BundlerTestInput } from "../expectBundled";
 
@@ -592,6 +592,674 @@ describe("bundler", () => {
       target,
       backend: "cli",
       run: { stdout: "theirs theirs theirs theirs, theirs theirs, mine mine" },
+    });
+  }
+
+  // In a bundle the parser makes an import item of `ns.member`, which the linker binds to the export. To the compiler
+  // that item was a named import, `import { member }`, and a call of it was not a method call. Upstream has the type
+  // of `createElement` and of `cloneElement` for a member of an import with the name `React` only, so with
+  // `import * as React` their operands shared one memo block. Under another name, and as what `require()` or
+  // `import()` gave, React has no such type to upstream. Bun knows its hooks there by the module.
+  const membersOfReact = /* jsx */ `
+    export function Create({ v }) {
+      const a = [v];
+      const b = { v };
+      return <div>{React.createElement("p", null, a, b)}</div>;
+    }
+    export function Clone({ element, v }) {
+      const a = { v };
+      const b = [v];
+      return <div>{React.cloneElement(element, a, b)}</div>;
+    }
+    export function ValueRead({ v }) {
+      const create = React.createElement;
+      const a = [v];
+      const b = { v };
+      return <div>{create("p", null, a, b)}</div>;
+    }
+    export function StringKey({ v }) {
+      const a = [v];
+      const b = { v };
+      return <div>{React["createElement"]("p", null, a, b)}</div>;
+    }
+    export function OptionalCall({ v }) {
+      const a = [v];
+      const b = { v };
+      return <div>{React.createElement?.("p", null, a, b)}</div>;
+    }
+    export function InACallback({ items, v }) {
+      const a = [v];
+      return <div>{items.map(item => React.createElement("p", null, a, item))}</div>;
+    }
+    export function MemberTag({ v }) {
+      const a = [v];
+      return <React.Nested.Tag a={a} />;
+    }
+    // The setter of a state is not a dependency.
+    export function StateAndCallback({ v }) {
+      const [n, setN] = React.useState(v);
+      const onClick = React.useCallback(() => setN(n => n + 1), []);
+      return <button onClick={onClick}>{n}</button>;
+    }
+    // What createElement is given is frozen, so this one is not compiled.
+    export function MutatesWhatIsFrozen({ v }) {
+      const a = [v];
+      const element = React.createElement("p", null, a);
+      a.push(1);
+      return <div>{element}</div>;
+    }
+  `;
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`react-compiler/NamespaceMemberIsCompiledAsAMember-${backend}`, {
+      files: {
+        "/namespace.jsx": `import * as React from "react";` + membersOfReact,
+        "/default.jsx": `import React from "react";` + membersOfReact,
+        "/renamed.jsx": `import * as R from "react";` + membersOfReact.replaceAll("React", "R"),
+        "/required.jsx": `const React = require("react");` + membersOfReact,
+        "/imported.jsx": `const React = await import("react");` + membersOfReact,
+        "/required-in-function.jsx": membersOfReact.replaceAll(") {\n", `) {\n const React = require("react");\n`),
+      },
+      entryPoints: [
+        "/namespace.jsx",
+        "/default.jsx",
+        "/renamed.jsx",
+        "/required.jsx",
+        "/imported.jsx",
+        "/required-in-function.jsx",
+      ],
+      outdir: "/out",
+      reactCompiler: true,
+      target: "browser",
+      backend,
+      external: ["*"],
+      onAfterBundle(api) {
+        const slots = (file: string) => Array.from(api.readFile(file).matchAll(/\b_c\((\d+)\)/g), m => Number(m[1]));
+        // The memo slots of each function that is compiled. They are upstream's for the first two files. In the
+        // others only `StateAndCallback` has the type of React, and the last function is compiled.
+        const typed = [9, 10, 9, 9, 9, 9, 2, 3];
+        const hooksOnly = [4, 5, 4, 4, 4, 5, 2, 3, 4];
+        expect({
+          namespace: slots("/out/namespace.js"),
+          default: slots("/out/default.js"),
+          renamed: slots("/out/renamed.js"),
+          required: slots("/out/required.js"),
+          imported: slots("/out/imported.js"),
+          requiredInFunction: slots("/out/required-in-function.js"),
+        }).toEqual({
+          namespace: typed,
+          default: typed,
+          renamed: hooksOnly,
+          required: hooksOnly,
+          imported: hooksOnly,
+          requiredInFunction: hooksOnly,
+        });
+      },
+    });
+  }
+
+  // For a server the compiler takes out what only a client needs: a state is what it starts as, and an effect, a ref
+  // and a handler of an event are not there. A hook of a namespace is the property of a method call.
+  itBundled("react-compiler/HooksOfANamespaceOfReactOnAServer", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import * as React from "react";
+        import * as R from "react";
+        export function Counter({ initial }) {
+          const [count, setCount] = React.useState(initial);
+          const ref = R.useRef(null);
+          R.useEffect(() => {
+            setCount(1);
+          }, []);
+          return (
+            <button ref={ref} onClick={() => setCount(count + 1)}>
+              {count}
+            </button>
+          );
+        }
+      `,
+    },
+    reactCompiler: true,
+    target: "bun",
+    backend: "cli",
+    external: ["*"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("let [count] = React.useState(initial);");
+      expect(out).not.toMatch(/\buse(?:Ref|Effect)\(/);
+    },
+  });
+
+  const reactForARun = {
+    "/node_modules/react/package.json": `{"name":"react","type":"module","main":"./index.js"}`,
+    "/node_modules/react/index.js": /* js */ `
+      export const createElement = (type, props, ...children) => ({ type, children });
+      export const useState = initial => [initial, () => {}];
+      export const version = "react";
+      export const notRead = "REACT_NOT_READ_SENTINEL";
+    `,
+    "/node_modules/react/jsx-runtime.js": `export const jsx = (type, props) => ({ type, props }), jsxs = jsx;`,
+    "/node_modules/react/jsx-dev-runtime.js": `export const jsxDEV = (type, props) => ({ type, props });`,
+    "/node_modules/react/compiler-runtime.js": `
+      export const c = size => new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+    `,
+  };
+  // The functions that are compiled for a client, each with the size of its memo cache.
+  const compiledFunctions = (out: string) =>
+    Array.from(out.matchAll(/function (\w+)\(t0\) \{\s*let \$ = c\((\d+)\)/g), m => [m[1], Number(m[2])]);
+
+  for (const target of ["browser", "bun"] as const) {
+    // The compiler knows a global by its name, and the import item of `dark.name` has the name of `light.name`: the
+    // two were one constant, and `isDark ? dark.name : light.name` was `dark.name`. A global is also a constant, and
+    // a member is not: a read ahead of a call was moved behind it.
+    itBundled(`react-compiler/NamespaceMembersAreReadWhereTheyAreWritten-${target}`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          import * as light from "./light";
+          import * as dark from "./dark";
+          import * as counter from "./counter";
+          import * as hooks from "./hooks";
+          import { name } from "./named";
+          const lightLocal = require("./light");
+          const darkLocal = require("./dark");
+          const React = require("./hooks");
+          function TwoNamespaces({ isDark }) {
+            const theme = isDark ? dark.name : light.name;
+            return <div>{theme}</div>;
+          }
+          function NamespaceAndNamedImport({ isDark }) {
+            const theme = isDark ? dark.name : name;
+            return <div>{theme}</div>;
+          }
+          function TwoRequireLocals({ isDark }) {
+            const theme = isDark ? darkLocal.name : lightLocal.name;
+            return <div>{theme}</div>;
+          }
+          function ReadAheadOfACall({ label }) {
+            const read = () => {
+              const before = counter.count;
+              counter.increment();
+              return [before, counter.count, label];
+            };
+            return <button data-read={read}>{label}</button>;
+          }
+          // Not React's: the call stays.
+          function HookOfALowerCaseNamespace({ a }) {
+            const memo = hooks.useMemo(() => [a], [a]);
+            return <div>{memo}</div>;
+          }
+          // Not React's, under the name of React: the module of the local says so.
+          function HookOfARequireLocalCalledReact({ a }) {
+            const memo = React.useMemo(() => [a], [a]);
+            return <div>{memo}</div>;
+          }
+          // The bundler makes an import statement of a \`require()\` of these packages, also in a function.
+          function TwoUnwrappedRequires({ isDark }) {
+            const React = require("react");
+            const theme = isDark ? require("react-dom").version : React.version;
+            return <div>{theme}</div>;
+          }
+          function ReadAheadOfACallOfAnUnwrappedRequire({ label }) {
+            const counter = require("react-is");
+            const read = () => {
+              const before = counter.count;
+              counter.increment();
+              return [before, counter.count, label];
+            };
+            return <button data-read={read}>{label}</button>;
+          }
+          function ReceiverOfAnUnwrappedRequire({ first, next }) {
+            const list = [first];
+            const who = require("react-is").who(list.push(next));
+            return <div>{who}{list}</div>;
+          }
+          function HookOfAnUnwrappedRequireCalledReact({ a }) {
+            const React = require("react-is");
+            const memo = React.useMemo(() => [a], [a]);
+            return <div>{memo}</div>;
+          }
+          const both = Component => [true, false].map(isDark => Component({ isDark }).props.children).join(" ");
+          console.log(
+            [
+              both(TwoNamespaces),
+              both(NamespaceAndNamedImport),
+              both(TwoRequireLocals),
+              JSON.stringify(ReadAheadOfACall({ label: "x" }).props["data-read"]()),
+              HookOfALowerCaseNamespace({ a: 1 }).props.children,
+              HookOfARequireLocalCalledReact({ a: 1 }).props.children,
+              both(TwoUnwrappedRequires),
+              JSON.stringify(ReadAheadOfACallOfAnUnwrappedRequire({ label: "x" }).props["data-read"]()),
+              JSON.stringify(ReceiverOfAnUnwrappedRequire({ first: 1, next: 2 }).props.children),
+              HookOfAnUnwrappedRequireCalledReact({ a: 1 }).props.children,
+            ].join(", "),
+          );
+        `,
+        "/light.js": `export const name = "light";`,
+        "/dark.js": `export const name = "dark";`,
+        "/named.js": `export const name = "named";`,
+        "/counter.js": `
+          export let count = 0;
+          export function increment() {
+            count++;
+          }
+        `,
+        "/hooks.js": `export const useMemo = () => "theirs";`,
+        "/node_modules/react-dom/package.json": `{"name":"react-dom","type":"module","main":"./index.js"}`,
+        "/node_modules/react-dom/index.js": `export const version = "dom";`,
+        "/node_modules/react-is/package.json": `{"name":"react-is","main":"./index.js"}`,
+        "/node_modules/react-is/index.js": /* js */ `
+          exports.useMemo = () => "theirs";
+          exports.count = 0;
+          exports.increment = function () {
+            exports.count++;
+          };
+          exports.who = function () {
+            return this === undefined ? "undefined" : typeof this;
+          };
+        `,
+        ...reactForARun,
+      },
+      reactCompiler: true,
+      target,
+      backend: "cli",
+      run: {
+        stdout:
+          `dark light, dark named, dark light, [0,1,"x"], theirs, theirs, ` +
+          `dom react, [0,1,"x"], ["object",[1,2]], theirs`,
+      },
+      onAfterBundle(api) {
+        if (target !== "browser") return;
+        expect(compiledFunctions(api.readFile("/out.js")).map(([name]) => name)).toEqual([
+          "TwoNamespaces",
+          "NamespaceAndNamedImport",
+          "TwoRequireLocals",
+          "ReadAheadOfACall",
+          "HookOfALowerCaseNamespace",
+          "HookOfARequireLocalCalledReact",
+          "TwoUnwrappedRequires",
+          "ReadAheadOfACallOfAnUnwrappedRequire",
+          "ReceiverOfAnUnwrappedRequire",
+          "HookOfAnUnwrappedRequireCalledReact",
+        ]);
+      },
+    });
+
+    // A call of the import item was a call of a value, which the compiler keeps in a variable when it has to:
+    // `t1 = time.toMinutes; ... t1(t2)`. A method call has its receiver, and in `InAMemoBlock` the call is in the
+    // memo block as written. In `ReceiverIsADependency` the namespace is read ahead of the block that has the call:
+    // upstream keeps the namespace in a variable there, and here the block depends on the member. Upstream compiles
+    // no function where a method would be called off a variable, and `AtTheLimit` is such a function. The last two
+    // read the namespace as a value.
+    itBundled(`react-compiler/NamespaceMethodCallKeepsItsReceiver-${target}`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          import * as time from "./time.cjs";
+          import * as other from "./other.cjs";
+          import { useState } from "react";
+          function Inline({ minutes }) {
+            return <div>{time.toMinutes(minutes)}</div>;
+          }
+          function InAMemoBlock({ first, next }) {
+            const list = [first];
+            const minutes = time.toMinutes(list.push(next));
+            return <div>{minutes}{list}</div>;
+          }
+          function ReceiverIsADependency({ first, next }) {
+            const list = [first];
+            const [pressed] = useState(false);
+            let made;
+            const label = time.toMinutes(list.push(next), (made = [next], 1)) + "!";
+            made.push(label);
+            return <div>{label}{made}{pressed}</div>;
+          }
+          function AtTheLimit({ first, next, unit }) {
+            const list = [first];
+            const label = time.toMinutes(list.push(next) + 1) + "/" + unit;
+            return <div>{label}</div>;
+          }
+          function CallOfAnAlias({ minutes }) {
+            const alias = other;
+            return <div>{alias.toMinutes(minutes)}</div>;
+          }
+          function TagOfAnAlias({ minutes }) {
+            const alias = other;
+            return <div>{alias.tag\`x\`}{minutes}</div>;
+          }
+          console.log(
+            JSON.stringify([
+              Inline({ minutes: 1 }).props.children,
+              InAMemoBlock({ first: 1, next: 2 }).props.children,
+              ReceiverIsADependency({ first: 1, next: 2 }).props.children,
+              AtTheLimit({ first: 1, next: 2, unit: "u" }).props.children,
+              CallOfAnAlias({ minutes: 3 }).props.children,
+              TagOfAnAlias({ minutes: 4 }).props.children,
+            ]),
+          );
+        `,
+        "/time.cjs": `
+          exports.unit = "min";
+          exports.toMinutes = function (n) {
+            return n + (this && this.unit);
+          };
+        `,
+        "/other.cjs": `
+          exports.unit = "min";
+          exports.toMinutes = function (n) {
+            return n + (this && this.unit);
+          };
+          exports.tag = function (strings) {
+            return strings[0] + (this && this.unit);
+          };
+        `,
+        ...reactForARun,
+      },
+      reactCompiler: true,
+      target,
+      backend: "cli",
+      run: { stdout: `["1min",["2min",[1,2]],["2min!",[2,"2min!"],false],"3min/u","3min",["xmin",4]]` },
+      onAfterBundle(api) {
+        if (target !== "browser") return;
+        const out = api.readFile("/out.js");
+        expect(compiledFunctions(out)).toEqual([
+          ["Inline", 4],
+          ["InAMemoBlock", 7],
+          ["ReceiverIsADependency", 9],
+          ["CallOfAnAlias", 4],
+          ["TagOfAnAlias", 3],
+        ]);
+        expect(out).toMatch(/\w+\.toMinutes\(list\.push\(next\)\)/);
+      },
+    });
+
+    // What the compiler prints is again the import item, so the linker binds each read to its export: there is no
+    // namespace object, and an export that nothing reads is dropped. So it is for a function that is not compiled
+    // (see `AtTheLimit`), which the compiler leaves as the parser made it. `ns?.member` is no import item.
+    itBundled(`react-compiler/NamespaceMemberOfACompiledFunctionIsBoundToItsExport-${target}`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          import * as React from "react";
+          import * as utils from "./utils";
+          import * as whole from "./whole";
+          const required = require("./required");
+          function App({ v }) {
+            const list = utils.list(v);
+            const label = utils.upper\`label\`;
+            const box = new utils.Box(v);
+            return (
+              <utils.Tag label={label} box={box.v}>
+                {React.createElement("p", null, list, utils.unit)}
+                {whole?.optional}
+              </utils.Tag>
+            );
+          }
+          function NotCompiled({ v }) {
+            const list = [v];
+            const label = utils.pad(list.push(v) + 1) + "/" + required.pad(list.push(v) + 1);
+            return <div>{label}</div>;
+          }
+          console.log(JSON.stringify([App({ v: 1 }), NotCompiled({ v: 1 }).props.children]));
+        `,
+        "/utils.js": /* js */ `
+          export const list = v => [v];
+          export const upper = strings => strings[0].toUpperCase();
+          export class Box {
+            constructor(v) {
+              this.v = v;
+            }
+          }
+          export const Tag = "tag";
+          export const unit = "unit";
+          export const pad = v => "0" + v;
+          export const notRead = "UTILS_NOT_READ_SENTINEL";
+        `,
+        "/required.js": /* js */ `
+          export const pad = v => "00" + v;
+          export const notRead = "REQUIRED_NOT_READ_SENTINEL";
+        `,
+        "/whole.js": `export const optional = "optional";`,
+        ...reactForARun,
+      },
+      reactCompiler: true,
+      target,
+      backend: "cli",
+      run: {
+        stdout: JSON.stringify([
+          {
+            type: "tag",
+            props: { label: "LABEL", box: 1, children: [{ type: "p", children: [[1], "unit"] }, "optional"] },
+          },
+          "03/004",
+        ]),
+      },
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        if (target === "browser") expect(compiledFunctions(out).map(([name]) => name)).toEqual(["App"]);
+        expect(out).not.toContain("UTILS_NOT_READ_SENTINEL");
+        expect(out).not.toContain("REQUIRED_NOT_READ_SENTINEL");
+        expect(out).not.toContain("REACT_NOT_READ_SENTINEL");
+        expect(out).not.toMatch(/exports_(?:utils|react)/);
+      },
+    });
+  }
+
+  // The compiler knows libraries that it cannot compile for: this one gives the same table each time, and what a
+  // method of it gives is not the same. A namespace is of its module, and so is a local that holds what `require()`
+  // or `import()` gave.
+  itBundled("react-compiler/ModuleOfANamespaceLocalIsKnown", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import * as namespace from "@tanstack/react-table";
+        const required = require("@tanstack/react-table");
+        const imported = await import("@tanstack/react-table");
+        function Namespace({ data }) {
+          const table = namespace.useReactTable({ data });
+          const rows = table.getRowModel().rows;
+          return <div>{rows.length}</div>;
+        }
+        function Required({ data }) {
+          const table = required.useReactTable({ data });
+          const rows = table.getRowModel().rows;
+          return <div>{rows.length}</div>;
+        }
+        function Imported({ data }) {
+          const table = imported.useReactTable({ data });
+          const rows = table.getRowModel().rows;
+          return <div>{rows.length}</div>;
+        }
+        const grids = [Namespace, Required, Imported];
+        console.log(grids.flatMap(Grid => [[1], [1, 2]].map(data => Grid({ data }).props.children)).join(" "));
+      `,
+      "/node_modules/@tanstack/react-table/package.json": `{"name":"@tanstack/react-table","type":"module","main":"./index.js"}`,
+      "/node_modules/@tanstack/react-table/index.js": /* js */ `
+        let table;
+        export function useReactTable(options) {
+          table ??= {
+            getRowModel() {
+              return { rows: this.options.data };
+            },
+          };
+          table.options = options;
+          return table;
+        }
+      `,
+      ...reactForARun,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: "1 2 1 2 1 2" },
+    onAfterBundle(api) {
+      expect(compiledFunctions(api.readFile("/out.js"))).toEqual([]);
+    },
+  });
+
+  // Upstream takes `obj.useFoo()` for a call of a hook when `obj` is written in PascalCase. A function with the name
+  // of a component that calls no hook and makes no JSX is not a component, and is not compiled.
+  itBundled("react-compiler/HookOfALowerCaseNamespaceMakesNoComponent", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import * as hooks from "hooks";
+        import * as Hooks from "hooks";
+        export function LowerCase(props) {
+          const x = hooks.useFoo(props.a);
+          return [x, props.b];
+        }
+        export function PascalCase(props) {
+          const x = Hooks.useFoo(props.a);
+          return [x, props.b];
+        }
+        export function MemberOfAMember(props) {
+          const x = Hooks.Inner.useFoo(props.a);
+          return [x, props.b];
+        }
+      `,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    external: ["*"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out.match(/\b_c\(\d+\)/g)).toEqual(["_c(3)"]);
+      expect(out).toMatch(/function PascalCase\(props\) \{\s*let \$ = _c\(3\);/);
+    },
+  });
+
+  // The namespace is a constant to the compiler and a member of it is not. A member that is read ahead of a call
+  // which is not memoized is what the memo block behind the call depends on. The compiler does not keep the namespace
+  // in a variable for that: as a value it is an object of all of the module, and a stylesheet has no such object.
+  itBundled("react-compiler/NamespaceOfAMemberIsNotReadAsAValue", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import * as styles from "./button.module.css";
+        import * as theme from "./theme";
+        import { useState } from "react";
+        function Button({ options, value }) {
+          const option = options.find(o => o.id === value);
+          const [pressed] = useState(false);
+          return (
+            <button className={styles.button} title={theme.title}>
+              {option.name.toUpperCase()}
+              {pressed}
+            </button>
+          );
+        }
+        console.log(JSON.stringify(Button({ options: [{ id: 1, name: "n" }], value: 1 }).props));
+      `,
+      "/button.module.css": `
+        .button { color: red; }
+        .notRead { color: blue; }
+      `,
+      "/theme.js": `
+        export const title = "dark";
+        export const notRead = "THEME_NOT_READ_SENTINEL";
+      `,
+      ...reactForARun,
+    },
+    entryPoints: ["/entry.jsx"],
+    outdir: "/out",
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: /^\{"className":"button_\w+","title":"dark","children":\["N",false\]\}$/ },
+    onAfterBundle(api) {
+      const out = api.readFile("/out/entry.js");
+      expect(compiledFunctions(out)).toEqual([["Button", 7]]);
+      expect(out).not.toContain("THEME_NOT_READ_SENTINEL");
+      expect(out).not.toMatch(/exports_|__export/);
+    },
+  });
+
+  // With one memo cache for every render, a render after the member changed has its new value.
+  itBundled("react-compiler/NamespaceMemberIsADependencyOfAMemoBlock", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import * as theme from "./theme";
+        import { useState } from "react";
+        function Button({ options, value }) {
+          const option = options.find(o => o.id === value);
+          const [pressed] = useState(false);
+          return (
+            <button title={theme.title}>
+              {option.name.toUpperCase()}
+              {pressed}
+            </button>
+          );
+        }
+        const options = [{ id: 1, name: "n" }];
+        const render = () => Button({ options, value: 1 });
+        const first = render();
+        const again = render();
+        theme.setTitle("light");
+        const changed = render();
+        console.log(first.props.title, again === first, changed.props.title);
+      `,
+      "/theme.js": `
+        export let title = "dark";
+        export function setTitle(next) {
+          title = next;
+        }
+      `,
+      ...reactForARun,
+      "/node_modules/react/compiler-runtime.js": `
+        let cache;
+        export const c = size => (cache ??= new Array(size).fill(Symbol.for("react.memo_cache_sentinel")));
+      `,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: "dark true light" },
+    onAfterBundle(api) {
+      expect(compiledFunctions(api.readFile("/out.js"))).toEqual([["Button", 6]]);
+    },
+  });
+
+  // The parser can leave the import item of `ns.member` as what a call calls where the source has no method call:
+  // it folds `(true ? ns.member : 0)`, and with the minifier it puts a `const` that is read once into the call.
+  // Such a call is a call of a value, as to upstream, whatever else the module calls.
+  for (const minifySyntax of [false, true] as const) {
+    const callees = {
+      Method: /* jsx */ `
+        export function Method({ v }) {
+          return <b>{ns.who(v)}</b>;
+        }`,
+      Folded: /* jsx */ `
+        export function Folded({ first, next, unit }) {
+          const list = [first];
+          const label = (true ? ns.who : 0)(list.push(next) + 1) + "/" + unit;
+          return <div>{label}</div>;
+        }`,
+      ValueInABlock: /* jsx */ `
+        export function ValueInABlock({ first, next, unit }) {
+          let label = "";
+          if (unit) {
+            const list = [first];
+            const who = ns.who;
+            label = who(list.push(next) + 1) + "/" + unit;
+          }
+          return <div>{label}</div>;
+        }`,
+    };
+    itBundled(`react-compiler/FoldedCalleeOfANamespaceMemberIsNoMethodCall-syntax=${minifySyntax}`, {
+      files: {
+        "/method-first.jsx": `import * as ns from "ext";` + callees.Method + callees.Folded + callees.ValueInABlock,
+        "/method-last.jsx": `import * as ns from "ext";` + callees.Folded + callees.ValueInABlock + callees.Method,
+      },
+      entryPoints: ["/method-first.jsx", "/method-last.jsx"],
+      outdir: "/out",
+      reactCompiler: true,
+      target: "browser",
+      backend: "cli",
+      minifySyntax,
+      external: ["*"],
+      onAfterBundle(api) {
+        const compiled = (file: string) =>
+          Array.from(api.readFile(file).matchAll(/function (\w+)\(t0\) \{\s*let \$ = _c\((\d+)\)/g), m => m[1]);
+        expect({ first: compiled("/out/method-first.js"), last: compiled("/out/method-last.js") }).toEqual({
+          first: ["Method", "Folded", "ValueInABlock"],
+          last: ["Folded", "ValueInABlock", "Method"],
+        });
+      },
     });
   }
 
@@ -4118,6 +4786,167 @@ describe("bundler", () => {
       });
     },
   });
+});
+
+// With a member of a namespace in it, a function was another program with the compiler than without it, and nothing
+// said so. For each of these reads, what the function gives is the same both ways, and the bundle keeps no more of
+// the module of the namespace. The bundle without the compiler is the reference as it is without a minifier: with
+// one, that bundle makes a method call of `const who = ns.who; who()`.
+const readsOfANamespace: Record<string, string> = {
+  Call: `return <div>{ns.fn(v)}</div>;`,
+  ValueThenCall: `const who = ns.who; return <div>{who()}{v}</div>;`,
+  StringKey: `return <div>{ns["fn"](v)}</div>;`,
+  OptionalCall: `return <div>{ns.who?.()}{v}</div>;`,
+  MethodOfAMember: `return <div>{ns.obj.method(v)}</div>;`,
+  New: `const made = new ns.Made(v); return <div>{made.v}</div>;`,
+  TemplateTag: "return <div>{ns.tag`x`}{v}</div>;",
+  JsxTag: `return <div><ns.Tag v={v} /></div>;`,
+  InACallback: `return <div>{[v, v + 1].map(x => ns.fn(x))}</div>;`,
+  ReadAheadOfACall: `
+    const read = () => {
+      const before = ns.count;
+      ns.increment();
+      return [before, ns.count, v];
+    };
+    return <div data-read={read}>{v}</div>;`,
+  Receiver: `return <div>{ns.who()}{v}</div>;`,
+  ReceiverInAMemoBlock: `const list = [v]; const who = ns.who(list.push(1)); return <div>{who}{list}</div>;`,
+  TwoNamespaces: `const name = v ? ns.name : ns2.name; return <div>{name}</div>;`,
+  // Not compiled: upstream compiles no function where a method would be called off a variable.
+  AtTheLimit: `const list = [v]; const label = ns.fn(list.push(1) + 1) + "/" + v; return <div>{label}</div>;`,
+};
+const modulesOfANamespace = {
+  js: {
+    lib: /* js */ `
+      export const fn = v => "fn:" + v;
+      export const obj = { method(v) { return "method:" + v + ":" + (this === obj); } };
+      export class Made { constructor(v) { this.v = "made:" + v; } }
+      export const tag = strings => "tag:" + strings[0];
+      export const Tag = "tag";
+      export let count = 0;
+      export function increment() { count++; }
+      export function who() { return this === undefined ? "undefined" : typeof this; }
+      export const name = "lib";
+      export const notRead = "NOT_READ_SENTINEL";
+    `,
+    lib2: `export const name = "lib2";`,
+  },
+  cjs: {
+    lib: /* js */ `
+      exports.fn = v => "fn:" + v;
+      exports.obj = { method(v) { return "method:" + v + ":" + (this === exports.obj); } };
+      exports.Made = class { constructor(v) { this.v = "made:" + v; } };
+      exports.tag = strings => "tag:" + strings[0];
+      exports.Tag = "tag";
+      exports.count = 0;
+      exports.increment = function () { exports.count++; };
+      exports.who = function () { return this === undefined ? "undefined" : typeof this; };
+      exports.name = "lib";
+      exports.notRead = "NOT_READ_SENTINEL";
+    `,
+    lib2: `exports.name = "lib2";`,
+  },
+};
+const waysToHaveANamespace = {
+  namespaceImport: (ns: string, lib: string) => `import * as ${ns} from "./${lib}";`,
+  required: (ns: string, lib: string) => `const ${ns} = require("./${lib}");`,
+  imported: (ns: string, lib: string) => `const ${ns} = await import("./${lib}");`,
+};
+
+test("react-compiler gives these reads of a member of a namespace what the bundle without it gives", async () => {
+  const files: Record<string, string> = {
+    "node_modules/react/package.json": `{"name":"react","type":"module"}`,
+    "node_modules/react/jsx-runtime.js": `export const jsx = (type, props) => ({ type, props }), jsxs = jsx;`,
+    "node_modules/react/jsx-dev-runtime.js": `export const jsxDEV = (type, props) => ({ type, props });`,
+    "node_modules/react/compiler-runtime.js": `
+      export const c = size => new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+    `,
+    "values.mjs": `
+      const values = { plain: {}, compiled: {}, minified: {} };
+      for (const side of Object.keys(values)) {
+        for (const name of process.argv.slice(2)) {
+          values[side][name] = (await import("./" + side + "/" + name + "/entry.js")).default;
+        }
+      }
+      console.log(JSON.stringify(values));
+    `,
+  };
+  const reads = Object.keys(readsOfANamespace);
+  const names: string[] = [];
+  for (const [way, have] of Object.entries(waysToHaveANamespace)) {
+    for (const [ext, modules] of Object.entries(modulesOfANamespace)) {
+      const name = `${way}-${ext}`;
+      names.push(name);
+      // Each entry point has its own copy of the modules, so that what one reads is not kept for another.
+      files[`${name}/lib.${ext}`] = modules.lib;
+      files[`${name}/lib2.${ext}`] = modules.lib2;
+      files[`${name}/entry.jsx`] = `
+        ${have("ns", `lib.${ext}`)}
+        ${have("ns2", `lib2.${ext}`)}
+        ${reads.map(read => `function ${read}({ v }) {${readsOfANamespace[read]}}`).join("\n")}
+        const give = (Read, v) => {
+          const { props } = Read({ v });
+          const value = props["data-read"] ? props["data-read"]() : props.children;
+          return JSON.stringify(value, (key, value) => (typeof value === "function" ? "function" : value));
+        };
+        export default { ${reads.map(read => `${read}: [give(${read}, 1), give(${read}, 0)]`).join(", ")} };
+      `;
+    }
+  }
+  using dir = tempDir("react-compiler-namespace", files);
+  const root = String(dir);
+
+  const build = async (side: "plain" | "compiled" | "minified") => {
+    const result = await Bun.build({
+      entrypoints: names.map(name => join(root, name, "entry.jsx")),
+      root,
+      outdir: join(root, side),
+      target: "browser",
+      reactCompiler: side !== "plain",
+      minify: { syntax: side === "minified" },
+      metafile: true,
+    });
+    const outputs = Object.entries(result.metafile!.outputs);
+    const bytesOfTheModules: Record<string, number> = {};
+    const compiled: Record<string, string[]> = {};
+    for (const name of names) {
+      const [, output] = outputs.find(([file]) => file.replace(/^\.\//, "") === `${name}/entry.js`)!;
+      for (const [input, { bytesInOutput }] of Object.entries(output.inputs)) {
+        if (/\/lib2?\.c?js$/.test(input)) bytesOfTheModules[`${name}/${basename(input)}`] = bytesInOutput;
+      }
+      const text = await Bun.file(join(root, side, name, "entry.js")).text();
+      compiled[name] = Array.from(text.matchAll(/function (\w+)\(t0\) \{\s*let \$ = c\(\d+\)/g), m => m[1]);
+    }
+    return { bytesOfTheModules, compiled };
+  };
+  const plain = await build("plain");
+  const compiled = await build("compiled");
+  const minified = await build("minified");
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "values.mjs", ...names],
+    env: bunEnv,
+    cwd: root,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const values = JSON.parse(stdout);
+
+  const keepsMore = Object.keys(compiled.bytesOfTheModules).filter(
+    module => compiled.bytesOfTheModules[module] > (plain.bytesOfTheModules[module] ?? 0),
+  );
+  expect({ compiled: values.compiled, minified: values.minified, keepsMore }).toEqual({
+    compiled: values.plain,
+    minified: values.plain,
+    keepsMore: [],
+  });
+  const allButAtTheLimit = Object.fromEntries(names.map(name => [name, reads.filter(read => read !== "AtTheLimit")]));
+  expect({ compiled: compiled.compiled, minified: minified.compiled }).toEqual({
+    compiled: allButAtTheLimit,
+    minified: allButAtTheLimit,
+  });
+  expect(exitCode).toBe(0);
 });
 
 // Three passes kept one copy of their work per basic block or per nesting

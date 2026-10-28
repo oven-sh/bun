@@ -59,6 +59,17 @@ const delayedTimer = (times: b.CallbackTimes) => [
   timerAfterDelay(times, b.f64.loose.optional, "js"),
 ];
 
+const immediateTimer = {
+  args: { callback: b.callable, passed: b.any.rest },
+  returns: b.instance("Immediate").fresh,
+  capability: "heap",
+  throws: true,
+  uses: scheduled("Later"),
+  reads: externalState,
+  writes: externalState,
+  implementation: b.hostCall,
+} satisfies b.FunctionField;
+
 const answersFunctionOfTimersPromises = {
   getter: b.any,
   capability: "js",
@@ -1722,16 +1733,8 @@ export default b.declarations(
       },
     }),
   ),
-  b.fn("setImmediate", {
-    args: { callback: b.callable, passed: b.any.rest },
-    returns: b.instance("Immediate").fresh,
-    capability: "heap",
-    throws: true,
-    uses: scheduled("Later"),
-    reads: externalState,
-    writes: externalState,
-    implementation: b.hostCall,
-  }),
+  b.fn("setImmediate", immediateTimer),
+  b.static("native:NewCppFunction:node/NodeTimers.cpp:functionSetImmediate", immediateTimer),
   b.fn("clearTimeout", timerCancellation),
   b.fn("clearInterval", timerCancellation),
   b.fn("clearImmediate", timerCancellation),

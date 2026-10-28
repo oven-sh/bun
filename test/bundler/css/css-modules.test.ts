@@ -922,6 +922,93 @@ describe("css modules", () => {
     ]);
   });
 
+  // Two composed classes from different files set the same property. CSS modules leave the result
+  // undefined, so the build succeeds and the diagnostic is a warning, as in esbuild.
+  describe.concurrent("a composes conflict", () => {
+    const conflict = {
+      "a.module.css": `.foo { composes: bar from "./b.module.css"; color: red }`,
+      "b.module.css": `.bar { color: blue }`,
+    };
+    const message = "The value of color in the class foo is undefined.";
+
+    /** Runs `bun build a.module.css --outdir=out` in a directory that holds `files`. */
+    async function cli(files: Record<string, string>) {
+      using dir = tempDir("css-modules-conflict-cli", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "a.module.css", "--outdir=out"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return {
+        // The first line of every error and warning, in the order printed.
+        diagnostics: stderr.split("\n").filter(line => /^(error|warn): /.test(line)),
+        wroteOutput: await Bun.file(join(String(dir), "out", "a.module.css")).exists(),
+        exitCode,
+      };
+    }
+
+    test("is one warning of a bun build that succeeds", async () => {
+      expect(await cli(conflict)).toEqual({ diagnostics: [`warn: ${message}`], wroteOutput: true, exitCode: 0 });
+    });
+
+    test('is not printed by bun build with logLevel = "error"', async () => {
+      expect(await cli({ ...conflict, "bunfig.toml": `logLevel = "error"` })).toEqual({
+        diagnostics: [],
+        wroteOutput: true,
+        exitCode: 0,
+      });
+    });
+
+    // `Bun.build()` returns every message the log holds. bunfig.toml is read when the process
+    // starts, so the build runs in a child.
+    test.each([
+      { logLevel: "warn", logs: [["warn", message]] },
+      { logLevel: "error", logs: [] },
+    ])('the logs of Bun.build() with logLevel = "$logLevel"', async ({ logLevel, logs }) => {
+      using dir = tempDir("css-modules-conflict-api", {
+        ...conflict,
+        "bunfig.toml": `logLevel = "${logLevel}"`,
+        "build.js": `
+          const result = await Bun.build({ entrypoints: ["./a.module.css"], outdir: "out", throw: false });
+          console.log(JSON.stringify({
+            logs: result.logs.map(log => [log.level, log.message]),
+            outputs: result.outputs.length,
+            success: result.success,
+          }));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ logs, outputs: 1, success: true });
+      expect(exitCode).toBe(0);
+    });
+
+    // The linker logs the missing name first. The warnings are printed above the errors only when
+    // the log has counted at least one of each.
+    test("is counted as a warning: it is printed above the error of a build that fails", async () => {
+      expect(
+        await cli({ ...conflict, "a.module.css": `.foo { composes: missing bar from "./b.module.css"; color: red }` }),
+      ).toEqual({
+        diagnostics: [
+          `warn: ${message}`,
+          expect.stringMatching(/^error: The name "missing" never appears in "b\.module\.css"/),
+        ],
+        wroteOutput: false,
+        exitCode: 1,
+      });
+    });
+  });
+
   test.concurrent("composes in a plain stylesheet is an unknown property, not an import", async () => {
     expect(
       await bundle({

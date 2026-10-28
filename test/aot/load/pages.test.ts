@@ -120,6 +120,19 @@ const twoPagesBuilds: [name: string, flags: string[]][] = [
   ["two pages with source maps", ["--sourcemap=external"]],
 ];
 
+const servedPages: [name: string, script: string, files: Files][] = [
+  ["served page", 'document.title = "script of a";\n', {}],
+  // Two composed classes of different files set one property. That is a warning, which stops neither build.
+  [
+    "served page whose CSS module has a composes conflict",
+    '// @ts-ignore\nimport styles from "./a.module.css";\ndocument.title = styles.foo;\n',
+    {
+      "a.module.css": '.foo { composes: bar from "./b.module.css"; color: red }\n',
+      "b.module.css": ".bar { color: blue }\n",
+    },
+  ],
+];
+
 const failures: [name: string, script: string, files: Files, message: RegExp][] = [
   ["page with a missing script", "missing.ts", {}, /missing\.ts/],
   ["page with a syntax error in its script", "broken.ts", { "broken.ts": "const = 1;\n" }, /broken\.ts:1:\d/],
@@ -132,15 +145,16 @@ describe.concurrent("compile/aot/load/pages", () => {
     600_000,
   );
 
-  test(
-    "served page",
-    () =>
+  test.each(servedPages)(
+    "%s",
+    (_, script, files) =>
       slot(() =>
         expectInBothModes(
           commandLine(),
           {
+            ...files,
             "a.html": page("A", "a.ts"),
-            "a.ts": 'document.title = "script of a";\n',
+            "a.ts": script,
             "main.ts":
               importPage("a") +
               `declare const Bun: any;

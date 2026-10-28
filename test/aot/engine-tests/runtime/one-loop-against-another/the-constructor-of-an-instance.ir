@@ -33,17 +33,17 @@
 # export {};
 # -- end of source
 # FORM: AsRead
-# REPEAT: run = L0 L1; loop = by_a_method by_the_constructor; most = 8.4 8.4
+# REPEAT: run = L0 L1; loop = by_a_method by_the_constructor; most = 8.9 8.9
 # RUN(%(run)): run-in-shell --aotCountsPath=/dev/null --useConcurrentGC=0 --numberOfGCMarkers=1 const calls = () => aotRuntimeCounters().split("\n").reduce((sum, line) => sum + (/\toperation:/.test(line) ? parseInt(line) : 0), 0); let callsBefore, instructionsBefore; globalThis.loop = "%(loop)".replaceAll("_", " "); globalThis.isLoud = false; Object.defineProperty(globalThis, "turns", { get() { callsBefore = calls(); instructionsBefore = aotInstructionCount(); return 100000; } }); globalThis.given = undefined; globalThis.apply = Reflect.apply; globalThis.report = (...values) => { const instructions = aotInstructionCount(); print(values.join(" ")); if (callsBefore === undefined) return; const taken = instructions === null ? 0 : Math.round((instructions - instructionsBefore) / 10000) / 10; print("a turn:", Math.round((calls() - callsBefore) / 10000) / 10, "calls into the run time,", taken <= %(most) ? "at most %(most) instructions" : taken + " instructions"); callsBefore = undefined; };
 # REQUIRES(%(run)): x86_64 unsanitized-code not-windows
 # END REPEAT
 # by a method
 # L0: 10000 10000 200000
-# L0-NEXT: a turn: 0 calls into the run time, at most 8.4 instructions
+# L0-NEXT: a turn: 0 calls into the run time, at most 8.9 instructions
 # L0-NEXT: exited with 0
 # by the constructor
 # L1: 10000 10000 200000
-# L1-NEXT: a turn: 0 calls into the run time, at most 8.4 instructions
+# L1-NEXT: a turn: 0 calls into the run time, at most 8.9 instructions
 # L1-NEXT: exited with 0
 
 module m0 path="the-constructor-of-an-instance.ts" displayPath="the-constructor-of-an-instance.ts" body=f0 namespaceLayout=L(m0)

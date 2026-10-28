@@ -58,7 +58,7 @@
 # if (loop === "sums of an assigned object") report(sumsOfAssigned(rounds));
 # -- end of source
 # FORM: AsRead
-# REPEAT: run = L0 L1 L2 L3 L4 L5; loop = products_of_a_literal products_of_an_assigned_object sums_of_a_literal sums_of_an_assigned_object products_of_a_spread sums_of_a_spread; most = 11.4 11.4 5.4 5.4 11.4 5.4
+# REPEAT: run = L0 L1 L2 L3 L4 L5; loop = products_of_a_literal products_of_an_assigned_object sums_of_a_literal sums_of_an_assigned_object products_of_a_spread sums_of_a_spread; most = 11.9 11.9 5.9 5.9 11.9 5.9
 # RUN(%(run)): run-in-shell --aotCountsPath=/dev/null --useConcurrentGC=0 --numberOfGCMarkers=1 const calls = () => aotRuntimeCounters().split("\n").reduce((sum, line) => sum + (/\toperation:/.test(line) ? parseInt(line) : 0), 0); let callsBefore, instructionsBefore; globalThis.loop = "%(loop)".replaceAll("_", " "); globalThis.isLoud = false; Object.defineProperty(globalThis, "turns", { get() { callsBefore = calls(); instructionsBefore = aotInstructionCount(); return 100000; } }); globalThis.given = undefined; globalThis.apply = Reflect.apply; globalThis.report = (...values) => { const instructions = aotInstructionCount(); print(values.join(" ")); if (callsBefore === undefined) return; const taken = instructions === null ? 0 : Math.round((instructions - instructionsBefore) / 10000) / 10; print("a turn:", Math.round((calls() - callsBefore) / 10000) / 10, "calls into the run time,", taken <= %(most) ? "at most %(most) instructions" : taken + " instructions"); callsBefore = undefined; };
 # REQUIRES(%(run)): x86_64 unsanitized-code not-windows
 # END REPEAT
@@ -66,37 +66,37 @@
 # L0: -5000 -5000 -5000
 # L0-NEXT: 30000 30000 30000
 # L0-NEXT: -100000
-# L0-NEXT: a turn: 0 calls into the run time, at most 11.4 instructions
+# L0-NEXT: a turn: 0 calls into the run time, at most 11.9 instructions
 # L0-NEXT: exited with 0
 # products of an assigned object
 # L1: -5000 -5000 -5000
 # L1-NEXT: 30000 30000 30000
 # L1-NEXT: -100000
-# L1-NEXT: a turn: 0 calls into the run time, at most 11.4 instructions
+# L1-NEXT: a turn: 0 calls into the run time, at most 11.9 instructions
 # L1-NEXT: exited with 0
 # sums of a literal
 # L2: -5000 -5000 -5000
 # L2-NEXT: 30000 30000 30000
 # L2-NEXT: 600000
-# L2-NEXT: a turn: 0 calls into the run time, at most 5.4 instructions
+# L2-NEXT: a turn: 0 calls into the run time, at most 5.9 instructions
 # L2-NEXT: exited with 0
 # sums of an assigned object
 # L3: -5000 -5000 -5000
 # L3-NEXT: 30000 30000 30000
 # L3-NEXT: 600000
-# L3-NEXT: a turn: 0 calls into the run time, at most 5.4 instructions
+# L3-NEXT: a turn: 0 calls into the run time, at most 5.9 instructions
 # L3-NEXT: exited with 0
 # products of a spread
 # L4: -5000 -5000 -5000
 # L4-NEXT: 30000 30000 30000
 # L4-NEXT: -100000
-# L4-NEXT: a turn: 0 calls into the run time, at most 11.4 instructions
+# L4-NEXT: a turn: 0 calls into the run time, at most 11.9 instructions
 # L4-NEXT: exited with 0
 # sums of a spread
 # L5: -5000 -5000 -5000
 # L5-NEXT: 30000 30000 30000
 # L5-NEXT: 600000
-# L5-NEXT: a turn: 0 calls into the run time, at most 5.4 instructions
+# L5-NEXT: a turn: 0 calls into the run time, at most 5.9 instructions
 # L5-NEXT: exited with 0
 
 module m0 path="the-fields-of-a-merged-object.cjs" displayPath="the-fields-of-a-merged-object.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0

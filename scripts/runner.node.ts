@@ -1692,6 +1692,7 @@ async function runTests(): Promise<TestResult[]> {
       !isNodeTest(t) &&
       !/stress/i.test(t) &&
       isParallelAllowlisted(t) &&
+      !runsAlone(t) &&
       !needsDockerService(t) &&
       (!validationApplies || (shouldValidateExceptions(t) && shouldValidateLeakSan(t)));
 

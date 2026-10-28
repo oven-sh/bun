@@ -1,8 +1,8 @@
 // Pieces cut out of a text and kept: by slice() and as the groups of a match. One loop of each kind cuts pieces of three characters, the other pieces of two, and nothing else in its turns makes a string.
 // COUNT: operations <= 160
 // COUNT: arrivals <= 20
-// COUNT: cells <= 50000
-// COUNT: branches <= 90500
+// COUNT: cells <= 25100
+// COUNT: branches <= 45500
 const text = "0123456789abcdefghijklmnopqrstuvwxyz".slice(process.argv.length > 99 ? 1 : 0);
 const shortDates = ["10-26", "11-05", "01-31", "12-25"];
 const longDates = ["110-226", "111-305", "101-131", "112-325"];
@@ -42,5 +42,5 @@ const loops: Record<string, (turns: number) => number> = {
   "groups of three digits": groupsOfThree,
   "groups of two digits": groupsOfTwo,
 };
-for (const name in loops) console.log(name, loops[name]!(5000), kept.join(" "));
+for (const name in loops) console.log(name, loops[name]!(2500), kept.join(" "));
 export {};

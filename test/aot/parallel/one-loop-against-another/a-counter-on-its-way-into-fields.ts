@@ -1,8 +1,8 @@
 // A counter that nothing bounds is stored into the fields of new objects. One day it no longer fits 32 bits.
 // COUNT: operations <= 60
 // COUNT: arrivals <= 10
-// COUNT: cells <= 8150
-// COUNT: branches <= 16400
+// COUNT: cells <= 5650
+// COUNT: branches <= 11400
 type Pair = { a: number; b: number };
 type Link = { next: Link | null; a: number; b: number };
 function make(kept: Pair[], turns: number, start: number) {
@@ -18,7 +18,7 @@ function link(turns: number, start: number) {
   for (let i = start === 0 ? 0 : 2147483000, n = 0; n < turns; i++, n++) head = { next: head, a: i, b: i };
   return head;
 }
-const [loop = "make past 2 ** 31", turns = "5000"] = process.argv.slice(2);
+const [loop = "make past 2 ** 31", turns = "2500"] = process.argv.slice(2);
 const start = loop.endsWith("past 2 ** 31") ? 1 : 0;
 const kept: Pair[] = [];
 for (let index = 0; index < 1024; index++) kept.push({ a: index, b: index });

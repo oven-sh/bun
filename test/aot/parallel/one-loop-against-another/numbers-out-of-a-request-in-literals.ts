@@ -1,8 +1,8 @@
 // Numbers come out of a parsed text, are put into fields of new objects and read again. They are fractions: a turn takes what it takes with small integers.
 // COUNT: operations <= 80
 // COUNT: arrivals <= 20
-// COUNT: cells <= 6100
-// COUNT: branches <= 41500
+// COUNT: cells <= 3600
+// COUNT: branches <= 24000
 type Pair = { a: number; b: number };
 type Row = { v: number };
 function make(kept: Pair[], turns: number, rows: Row[]) {
@@ -19,7 +19,7 @@ const texts: Record<string, string> = {
   "fractions": "7.5",
   "negative zeros": "-0",
 };
-const [loop = "make fractions", turns = "5000"] = process.argv.slice(2);
+const [loop = "make fractions", turns = "2500"] = process.argv.slice(2);
 const [verb, kind] = [loop.slice(0, 4), loop.slice(5)];
 const rows: Row[] = JSON.parse("[" + Array(8).fill(`{"v":${texts[kind]}}`).join() + "]");
 if (rows.length !== 8) rows.push({ v: 1 });

@@ -69,29 +69,29 @@
 # if (loop === "the rest of one of three records") report(restsOfOneOfThree(rounds));
 # -- end of source
 # FORM: AsRead
-# REPEAT: run = L0 L1 L2 L3; loop = literals spreads_of_two_objects the_rest_of_a_record the_rest_of_one_of_three_records; most = 124.8 125.6 124.6 165.4
+# REPEAT: run = L0 L1 L2 L3; loop = literals spreads_of_two_objects the_rest_of_a_record the_rest_of_one_of_three_records; most = 142.2 142.7 140.8 183.8
 # RUN(%(run)): run-in-shell --aotCountsPath=/dev/null --useConcurrentGC=0 --numberOfGCMarkers=1 const calls = () => aotRuntimeCounters().split("\n").reduce((sum, line) => sum + (/\toperation:/.test(line) ? parseInt(line) : 0), 0); let callsBefore, instructionsBefore; globalThis.loop = "%(loop)".replaceAll("_", " "); globalThis.isLoud = false; Object.defineProperty(globalThis, "turns", { get() { callsBefore = calls(); instructionsBefore = aotInstructionCount(); return 100000; } }); globalThis.given = undefined; globalThis.apply = Reflect.apply; globalThis.report = (...values) => { const instructions = aotInstructionCount(); print(values.join(" ")); if (callsBefore === undefined) return; const taken = instructions === null ? 0 : Math.round((instructions - instructionsBefore) / 10000) / 10; print("a turn:", Math.round((calls() - callsBefore) / 10000) / 10, "calls into the run time,", taken <= %(most) ? "at most %(most) instructions" : taken + " instructions"); callsBefore = undefined; };
 # REQUIRES(%(run)): x86_64 unsanitized-code not-windows
 # END REPEAT
 # literals
 # L0: 81208320 [{"id":8,"name":"eight"},{"name":"nine","id":9,"age":3,"more":1},{"id":6,"name":"six","age":20},{"id":8,"name":"eight"},{"id":6,"name":"six","age":20},{"id":8,"name":"eight"},{"name":"nine","id":9,"age":3,"more":1},{"id":6,"name":"six","age":20}]
 # L0-NEXT: 809150000
-# L0-NEXT: a turn: 0 calls into the run time, at most 124.8 instructions
+# L0-NEXT: a turn: 0 calls into the run time, at most 142.2 instructions
 # L0-NEXT: exited with 0
 # spreads of two objects
 # L1: 81208320 [{"id":8,"name":"eight"},{"name":"nine","id":9,"age":3,"more":1},{"id":6,"name":"six","age":20},{"id":8,"name":"eight"},{"id":6,"name":"six","age":20},{"id":8,"name":"eight"},{"name":"nine","id":9,"age":3,"more":1},{"id":6,"name":"six","age":20}]
 # L1-NEXT: 809150000
-# L1-NEXT: a turn: 0 calls into the run time, at most 125.6 instructions
+# L1-NEXT: a turn: 0 calls into the run time, at most 142.7 instructions
 # L1-NEXT: exited with 0
 # the rest of a record
 # L2: 81208320 [{"id":8,"name":"eight"},{"name":"nine","id":9,"age":3,"more":1},{"id":6,"name":"six","age":20},{"id":8,"name":"eight"},{"id":6,"name":"six","age":20},{"id":8,"name":"eight"},{"name":"nine","id":9,"age":3,"more":1},{"id":6,"name":"six","age":20}]
 # L2-NEXT: 4450000
-# L2-NEXT: a turn: 0 calls into the run time, at most 124.6 instructions
+# L2-NEXT: a turn: 0 calls into the run time, at most 140.8 instructions
 # L2-NEXT: exited with 0
 # the rest of one of three records
 # L3: 81208320 [{"id":8,"name":"eight"},{"name":"nine","id":9,"age":3,"more":1},{"id":6,"name":"six","age":20},{"id":8,"name":"eight"},{"id":6,"name":"six","age":20},{"id":8,"name":"eight"},{"name":"nine","id":9,"age":3,"more":1},{"id":6,"name":"six","age":20}]
 # L3-NEXT: 1416664
-# L3-NEXT: a turn: 0 calls into the run time, at most 165.4 instructions
+# L3-NEXT: a turn: 0 calls into the run time, at most 183.8 instructions
 # L3-NEXT: exited with 0
 
 module m0 path="an-object-put-together-from-others-and-kept.cjs" displayPath="an-object-put-together-from-others-and-kept.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0

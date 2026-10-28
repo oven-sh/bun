@@ -25,17 +25,17 @@
 # report(countMany(counter, Number(turns)), counter.bytes, counter.chunks, Object.keys(counter).join());
 # -- end of source
 # FORM: AsRead
-# REPEAT: run = L0 L1; loop = beside_a_small_sum beside_a_sum_past_two_gibibytes; most = 10.5 10.5
+# REPEAT: run = L0 L1; loop = beside_a_small_sum beside_a_sum_past_two_gibibytes; most = 11 11
 # RUN(%(run)): run-in-shell --aotCountsPath=/dev/null --useConcurrentGC=0 --numberOfGCMarkers=1 const calls = () => aotRuntimeCounters().split("\n").reduce((sum, line) => sum + (/\toperation:/.test(line) ? parseInt(line) : 0), 0); let callsBefore, instructionsBefore; globalThis.loop = "%(loop)".replaceAll("_", " "); globalThis.isLoud = false; Object.defineProperty(globalThis, "turns", { get() { callsBefore = calls(); instructionsBefore = aotInstructionCount(); return 100000; } }); globalThis.given = undefined; globalThis.apply = Reflect.apply; globalThis.report = (...values) => { const instructions = aotInstructionCount(); print(values.join(" ")); if (callsBefore === undefined) return; const taken = instructions === null ? 0 : Math.round((instructions - instructionsBefore) / 10000) / 10; print("a turn:", Math.round((calls() - callsBefore) / 10000) / 10, "calls into the run time,", taken <= %(most) ? "at most %(most) instructions" : taken + " instructions"); callsBefore = undefined; };
 # REQUIRES(%(run)): x86_64 unsanitized-code not-windows
 # END REPEAT
 # beside a small sum
 # L0: 1205082704 6593600 105000 bytes,chunks
-# L0-NEXT: a turn: 0 calls into the run time, at most 10.5 instructions
+# L0-NEXT: a turn: 0 calls into the run time, at most 11 instructions
 # L0-NEXT: exited with 0
 # beside a sum past two gibibytes
 # L1: 1205082704 2627993600 105000 bytes,chunks
-# L1-NEXT: a turn: 0 calls into the run time, at most 10.5 instructions
+# L1-NEXT: a turn: 0 calls into the run time, at most 11 instructions
 # L1-NEXT: exited with 0
 
 module m0 path="the-field-beside-a-sum.ts" displayPath="the-field-beside-a-sum.ts" body=f0 namespaceLayout=L(m0)

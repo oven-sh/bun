@@ -450,7 +450,7 @@ pub(crate) mod test_kernel {
         let mut written = 0;
         // It may stop anywhere, also where it started.
         for _ in 0..(bit_pos * 7 + src.len()) % 29 {
-            let window = (0..64).fold(0, |window, i| window << 1 | bit(bit_pos + i));
+            let window = (0..16).fold(0, |window, i| window << 1 | bit(bit_pos + i)) << 48;
             let prefix = Decoder::prefix(window);
             let len = usize::from(code(prefix.symbols[0]).1);
             if prefix.count == 0 || len > 8 || bit_pos + len > src.len() * 8 {

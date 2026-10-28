@@ -3193,6 +3193,7 @@ describe("HPACK (RFC 7541)", () => {
   test.each([0, 64, 100])("requests keep working with headerTableSize: %d on the server", async headerTableSize => {
     const { srv, seen, port } = await listen({ settings: { headerTableSize } });
     const client = http2.connect(`http://127.0.0.1:${port}`);
+    client.on("error", () => {});
     try {
       await once(client, "remoteSettings");
       const statuses: unknown[] = [];
@@ -3220,12 +3221,7 @@ describe("HPACK (RFC 7541)", () => {
       expect(seen.map(h => h["x-a"])).toEqual(["1", "1"]);
       // Acknowledging it empties the table on both sides.
       c.sendSettingsAck();
-      c.sendFrame(
-        FrameType.HEADERS,
-        0x5,
-        5,
-        Buffer.concat([Buffer.from([0x20]), requestHeaderBlock("GET", Buffer.from([0xbe]))]),
-      );
+      c.sendFrame(FrameType.HEADERS, 0x5, 5, requestHeaderBlock("GET", Buffer.from([0xbe])));
       const answer = await c.waitFor(headersOrGoaway(5));
       expect(answer.type).toBe(FrameType.GOAWAY);
       expect(goawayErrorCode(answer)).toBe(ErrorCode.COMPRESSION_ERROR);
@@ -3284,6 +3280,7 @@ describe("HPACK (RFC 7541)", () => {
   test("a sensitive header is sent as never indexed even if the table has the same field", async () => {
     const { srv, seen, port } = await listen();
     const client = http2.connect(`http://127.0.0.1:${port}`);
+    client.on("error", () => {});
     try {
       await get(client, { ":path": "/", "x-secret": "abc" });
       await get(client, { ":path": "/", "x-secret": "abc", [http2.sensitiveHeaders]: ["x-secret"] });
@@ -3309,6 +3306,7 @@ describe("HPACK (RFC 7541)", () => {
     async headerTableSize => {
       const { srv, seen, port } = await listen({ settings: { headerTableSize } });
       const client = http2.connect(`http://127.0.0.1:${port}`, { maxSendHeaderBlockLength: 200 });
+      client.on("error", () => {});
       try {
         await once(client, "remoteSettings");
         // Given up on after `x-a` was encoded.
@@ -3557,6 +3555,7 @@ describe("HPACK (RFC 7541)", () => {
     srv.listen(0, "127.0.0.1");
     await once(srv, "listening");
     const client = http2.connect(`http://127.0.0.1:${(srv.address() as net.AddressInfo).port}`);
+    client.on("error", () => {});
     client.on("stream", pushed => pushed.resume());
     try {
       for (const path of ["/push", "/trailers", "/end"]) await get(client, { ":path": path });
@@ -3648,6 +3647,7 @@ describe("HPACK (RFC 7541)", () => {
   test("a field too large for the dynamic table leaves the table alone", async () => {
     const { srv, seen, port } = await listen();
     const client = http2.connect(`http://127.0.0.1:${port}`);
+    client.on("error", () => {});
     try {
       const large = Buffer.alloc(5000, "v").toString();
       await get(client, { ":path": "/", "x-a": "1", "x-large": large });
@@ -3707,6 +3707,7 @@ describe("HPACK (RFC 7541)", () => {
     const { srv, seen, port } = await listen();
     const c = await RawH2.connect(port);
     const client = http2.connect(`http://127.0.0.1:${port}`);
+    client.on("error", () => {});
     try {
       // Coded here.
       c.sendPreface();
@@ -3908,6 +3909,7 @@ describe("HPACK (RFC 7541)", () => {
     const sessions: http2.ServerHttp2Session[] = [];
     srv.on("session", session => sessions.push(session));
     const client = http2.connect(`http://127.0.0.1:${port}`);
+    client.on("error", () => {});
     try {
       await once(client, "connect");
       expect(client.state.deflateDynamicTableSize).toBe(0);

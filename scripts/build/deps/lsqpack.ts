@@ -42,7 +42,8 @@ export const lsqpack: Dependency = {
 
   // lsqpack.c is compiled inside the lsquic dep because lsquic feeds it a
   // non-FILE* logger context that only works with LSQPACK_*_LOGGER_HEADER
-  // pointing at lsquic-internal headers. This dep just provides lsqpack.h.
+  // pointing at lsquic-internal headers. This dep just provides headers and
+  // the define above.
   build: cfg => {
     void cfg;
     const spec: DirectBuild = { kind: "direct", sources: [] };

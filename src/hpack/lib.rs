@@ -157,6 +157,24 @@ mod tests {
     }
 
     #[test]
+    fn a_field_left_out_of_the_table_takes_no_index() {
+        let mut decoder = Decoder::new();
+        let fields = decode(&mut decoder, &hex("0003782d610131 4003782d620132 be")).unwrap();
+        assert_eq!(fields[2], (b"x-b".to_vec(), b"2".to_vec(), false));
+        assert_eq!(decoder.table_size(), 36);
+    }
+
+    #[test]
+    fn an_added_field_larger_than_the_table_empties_it() {
+        let mut decoder = Decoder::new();
+        // 36 bytes hold x-a: 1 and not x-b: 22.
+        let fields = decode(&mut decoder, &hex("3f05 4003782d610131 4003782d62023232")).unwrap();
+        assert_eq!(fields[1], (b"x-b".to_vec(), b"22".to_vec(), false));
+        assert_eq!(decoder.table_size(), 0);
+        assert_eq!(decode(&mut decoder, &hex("be")), Err(Error::Invalid));
+    }
+
+    #[test]
     fn a_block_of_nothing_but_size_updates() {
         let mut decoder = Decoder::new();
         let insert = hex("4003782d610131");
@@ -496,6 +514,30 @@ mod tests {
     }
 
     #[test]
+    fn rfc7541_appendix_a() {
+        let mut table = String::new();
+        for index in 1..=61 {
+            let fields = decode(&mut Decoder::new(), &[0x80 | index]).unwrap();
+            let (name, value) = (str::from_utf8(&fields[0].0), str::from_utf8(&fields[0].1));
+            table += &format!("{} {}|", name.unwrap(), value.unwrap());
+        }
+        assert_eq!(
+            table,
+            ":authority |:method GET|:method POST|:path /|:path /index.html|:scheme http|\
+             :scheme https|:status 200|:status 204|:status 206|:status 304|:status 400|\
+             :status 404|:status 500|accept-charset |accept-encoding gzip, deflate|\
+             accept-language |accept-ranges |accept |access-control-allow-origin |age |allow |\
+             authorization |cache-control |content-disposition |content-encoding |\
+             content-language |content-length |content-location |content-range |content-type |\
+             cookie |date |etag |expect |expires |from |host |if-match |if-modified-since |\
+             if-none-match |if-range |if-unmodified-since |last-modified |link |location |\
+             max-forwards |proxy-authenticate |proxy-authorization |range |referer |refresh |\
+             retry-after |server |set-cookie |strict-transport-security |transfer-encoding |\
+             user-agent |vary |via |www-authenticate |"
+        );
+    }
+
+    #[test]
     fn static_table_lookups() {
         let entries: Vec<_> = (1..=static_table::LEN)
             .map(|index| static_table::get(index).unwrap())
@@ -593,9 +635,15 @@ mod tests {
             out
         };
         for (name_coded, value_coded) in [(false, true), (true, false), (true, true)] {
-            for (value_len, fits) in [(MAX_FIELD_LEN - 6, true), (MAX_FIELD_LEN - 5, false)] {
+            for (name_len, value_len, fits) in [
+                (6, MAX_FIELD_LEN - 6, true),
+                (6, MAX_FIELD_LEN - 5, false),
+                (MAX_FIELD_LEN - 1, 1, true),
+                (MAX_FIELD_LEN, 1, false),
+                (MAX_FIELD_LEN + 1, 1, false),
+            ] {
                 let mut block = vec![0x00];
-                block.extend(string(6, name_coded));
+                block.extend(string(name_len, name_coded));
                 block.extend(string(value_len, value_coded));
                 let decoded = decode(&mut Decoder::new(), &block).map(|fields| fields.len());
                 assert_eq!(decoded, if fits { Ok(1) } else { Err(Error::TooLarge) });
@@ -672,6 +720,21 @@ mod tests {
     }
 
     #[test]
+    fn a_capacity_raised_after_a_lower_one_was_announced() {
+        let (mut encoder, mut decoder) = (Encoder::new(), Decoder::new());
+        for (capacity, update, value_len, table_size) in
+            [(100, "3f45", 1, 36), (4096, "3fe11f", 60, 36 + 95)]
+        {
+            encoder.set_max_capacity(capacity);
+            let block = encode(&mut encoder, "x-a", &"v".repeat(value_len), Indexing::Add);
+            assert!(block.starts_with(&hex(update)));
+            assert!(decode(&mut decoder, &block).is_ok());
+            let table_sizes = (encoder.table_size(), decoder.table_size());
+            assert_eq!(table_sizes, (table_size, table_size));
+        }
+    }
+
+    #[test]
     fn a_discarded_block_empties_both_tables() {
         let (mut encoder, mut decoder) = (Encoder::new(), Decoder::new());
         let sent = encode(&mut encoder, "x-a", "1", Indexing::Add);
@@ -712,6 +775,14 @@ mod tests {
         // Those two pushed out 0 and 1.
         assert_eq!(add("1"), "skipped");
         assert_eq!(add("5"), "added");
+    }
+
+    #[test]
+    fn history_leaves_a_never_indexed_field_as_it_is() {
+        let mut encoder = Encoder::with_history();
+        skip_values(&mut encoder, 0..42);
+        let block = encode(&mut encoder, "x-a", "new", Indexing::Never);
+        assert_eq!(representation(&block), "never indexed");
     }
 
     #[test]
@@ -787,8 +858,10 @@ mod tests {
             ("1fe1ffffff0f", None),   // one more
             ("1f8080808010", None),   // bit 32
             ("1f808080808001", None), // a sixth byte
-            ("1f8080808000", None),   // padded with zeros to the fifth
-            ("1f80", None),           // cut off
+            ("1f808080808100", None), // the same, after a fifth that is not zero
+            ("1f808080808f00", None),
+            ("1f8080808000", None), // padded with zeros to the fifth
+            ("1f80", None),         // cut off
             ("1f", None),
             ("", None),
         ] {

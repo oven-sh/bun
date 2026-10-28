@@ -19,6 +19,28 @@ fn finish(p: &mut Pair, rng: &mut Rng, data: &[u8], big: bool) -> Result<(), Str
     run_op(p, rng, 2, data, big).map(|_| ())
 }
 
+/// The start of the first file that is mostly small letters and does not say the same again and again.
+fn text(corpus: &r#gen::Corpus, len: usize) -> &[u8] {
+    let starts = corpus.files.iter().filter(|f| f.len() > len).map(|f| &f[..len]);
+    let letters = |f: &[u8]| f.iter().filter(|b| b.is_ascii_lowercase()).count();
+    let different = |f: &[u8]| f.chunks(8).collect::<std::collections::HashSet<_>>().len();
+    starts.filter(|f| f.is_ascii() && letters(f) > len / 2).find(|f| different(f) > len / 16).unwrap()
+}
+
+/// A new encoder, with no parameter set. Every quality but the highest gives another stream.
+fn defaults(text: &[u8]) -> Result<usize, String> {
+    let mut new = pair(&[], &[])?;
+    finish(&mut new, &mut Rng(1), text, false)?;
+    for quality in 0..11 {
+        let mut p = pair(&[(1, quality)], &[])?;
+        finish(&mut p, &mut Rng(1), text, false).map_err(|e| format!("quality {quality}: {e}"))?;
+        if p.out == new.out {
+            return Err(format!("quality {quality} gives the same stream"));
+        }
+    }
+    Ok(12)
+}
+
 /// Every parameter with every value of the list: what setting it returns, before and after the first call, and what
 /// comes out.
 fn parameters(text: &[u8]) -> Result<usize, String> {
@@ -548,18 +570,19 @@ fn spare_capacity(rng: &mut Rng, corpus: &r#gen::Corpus) -> Result<(), String> {
 }
 
 pub fn run(seed: u64, iters: u64, corpus: &r#gen::Corpus) {
-    let text: Vec<u8> = corpus.files.iter().find(|f| f.len() > 5000 && f.is_ascii()).unwrap()[..4000].to_vec();
+    let text = text(corpus, 4000);
     let check = |name: &str, r: Result<usize, String>| match r {
         Ok(n) => println!("{name}: {n} cases ok"),
         Err(e) => panic!("seed 0 {name}: {e}"),
     };
-    check("decoder setters", decoder(&text));
+    check("decoder setters", decoder(text));
     check("error names", error_names());
-    check("first calls", first_calls(&text));
-    check("flint", flint(&text));
-    check("one shot", one_shot(&text));
-    check("parameters", parameters(&text));
-    check("metadata", metadata(&text));
+    check("first calls", first_calls(text));
+    check("flint", flint(text));
+    check("one shot", one_shot(text));
+    check("defaults", defaults(self::text(corpus, 20_000)));
+    check("parameters", parameters(text));
+    check("metadata", metadata(text));
     check("dictionaries", dictionaries(corpus));
     check("huge dictionaries", huge_dictionaries());
     check("long call", long_call(corpus));

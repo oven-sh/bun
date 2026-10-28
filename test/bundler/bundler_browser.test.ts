@@ -1,11 +1,14 @@
 import assert from "assert";
 import type { BunPlugin } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isCI, isDebug, tempDir } from "harness";
 import { mkdirSync, readdirSync, symlinkSync } from "node:fs";
 import path from "node:path";
 import { bun, layouts, table } from "./browser-field-matrix";
 import { itBundled } from "./expectBundled";
+
+// Like itBundled: a local debug build gets more time for a test that is not itBundled.
+const debugTimeout = !isCI && isDebug ? 60_000 : undefined;
 
 describe("bundler", () => {
   const nodePolyfillList = {
@@ -593,34 +596,38 @@ describe("bundler", () => {
 
   // `--check` checks the file as written. The empty module that stands in for a
   // disabled file in the bundle has no exports, and is not what the types are of.
-  test("browser/BrowserFieldDisabledModuleIsTypeCheckedAsWritten", async () => {
-    using dir = tempDir("browser-field-check", {
-      "package.json": JSON.stringify({ name: "project", browser: { "./src/node-only.ts": false } }),
-      // No DOM or Node.js type definitions to load, which keeps the check fast.
-      "tsconfig.json": JSON.stringify({
-        compilerOptions: {
-          strict: true,
-          noEmit: true,
-          module: "esnext",
-          moduleResolution: "bundler",
-          lib: ["esnext"],
-          types: [],
-        },
-      }),
-      "src/node-only.ts": `export const x: number = 1;`,
-      "entry.ts": `import { x } from "./src/node-only";\nexport const y: number = x;\n`,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--check", "--target=browser", "entry.ts", "--outdir", "out"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout + stderr).not.toContain("TS2305");
-    expect(exitCode).toBe(0);
-  });
+  test(
+    "browser/BrowserFieldDisabledModuleIsTypeCheckedAsWritten",
+    async () => {
+      using dir = tempDir("browser-field-check", {
+        "package.json": JSON.stringify({ name: "project", browser: { "./src/node-only.ts": false } }),
+        // No DOM or Node.js type definitions to load, which keeps the check fast.
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: {
+            strict: true,
+            noEmit: true,
+            module: "esnext",
+            moduleResolution: "bundler",
+            lib: ["esnext"],
+            types: [],
+          },
+        }),
+        "src/node-only.ts": `export const x: number = 1;`,
+        "entry.ts": `import { x } from "./src/node-only";\nexport const y: number = x;\n`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--check", "--target=browser", "entry.ts", "--outdir", "out"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout + stderr).not.toContain("TS2305");
+      expect(exitCode).toBe(0);
+    },
+    debugTimeout,
+  );
 
   // A disabled file that the imports name with its extension is one empty
   // module, also when one import reaches it through a symlinked package
@@ -1099,10 +1106,14 @@ describe("bundler", () => {
   // Which files each import of browser-field-matrix.ts loads. scripts/browser-field-matrix.ts compares the tables
   // with esbuild's. They differ where Bun applies the map to the target of "exports".
   for (const [group, all] of Object.entries(Object.groupBy(layouts(), layout => layout.group))) {
-    test(`browser/BrowserFieldMatrix: ${group}`, async () => {
-      using dir = tempDir("browser-field-matrix", {});
-      expect(await table(String(dir), all!, bun)).toMatchSnapshot();
-    });
+    test(
+      `browser/BrowserFieldMatrix: ${group}`,
+      async () => {
+        using dir = tempDir("browser-field-matrix", {});
+        expect(await table(String(dir), all!, bun)).toMatchSnapshot();
+      },
+      debugTimeout,
+    );
   }
 
   // unsure: do we want polyfills or no-op stuff like node:* has

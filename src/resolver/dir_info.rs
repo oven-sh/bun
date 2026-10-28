@@ -176,7 +176,7 @@ impl Default for DirInfo {
 /// PackageJSON / TSConfigJSON arena (see `intern_package_json` / the tsconfig
 /// merge loop); never freed for the life of the process.
 #[inline]
-fn arena_ref<T>(p: NonNull<T>) -> &'static T {
+pub(crate) fn arena_ref<T>(p: NonNull<T>) -> &'static T {
     // SAFETY: ARENA — see fn doc; pointee is process-lifetime, never freed
     // while a `DirInfo` reader is live.
     unsafe { &*p.as_ptr() }

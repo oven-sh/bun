@@ -566,15 +566,117 @@ pub struct Resolver<'a> {
     /// over "module" in package.json
     pub prefer_module_field: bool,
 
-    /// This is an array of paths to resolve against. Used for passing an
-    /// object '{ paths: string[] }' to `require` and `resolve`; This field
-    /// is overwritten while the resolution happens.
-    ///
-    /// When this is null, it is as if it is set to `&.{ path.dirname(referrer) }`.
-    pub custom_dir_paths: Option<&'a [bun_core::String]>,
+    /// Node's `options.paths` of `require.resolve(id, { paths })`, set while that call resolves.
+    /// A relative request is joined to each entry. For a bare request an entry is where the
+    /// search of `node_modules` directories starts, as `Module._nodeModulePaths(entry)`:
+    /// `#imports` and a self-reference are answered by the package of the calling module.
+    /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L1448-L1504
+    pub custom_dir_paths: Option<CustomDirPaths<'a>>,
+
+    /// The package.json of directories that are not in the directory cache, by the hash of the
+    /// directory. See `scope_package_json`.
+    custom_dir_scopes: bun_collections::HashMap<
+        u64,
+        Option<&'static PackageJSON>,
+        bun_collections::IdentityContext<u64>,
+    >,
 
     /// Why "exports" or "imports" led to no file: the first time since this was last `None`.
     pub esm_failure: Option<crate::package_json::Status>,
+}
+
+#[derive(Clone, Copy)]
+pub struct CustomDirPaths<'a> {
+    pub entries: &'a [bun_core::String],
+    pub package_scope: PackageScope<'a>,
+    /// Whether a search from an entry can still end in an install, or in the answer of the
+    /// entry's package that stands for one. See `check_package_path_in_custom_dirs`.
+    pub installs: bool,
+}
+
+/// Where the package of the calling module is looked up, for a request with `options.paths`.
+/// That package answers `#imports` and a self-reference. Node reads it from the filename of
+/// the parent, so a parent without one has none.
+/// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L634-L647
+#[derive(Clone, Copy)]
+pub enum PackageScope<'a> {
+    None,
+    /// The directory that the resolver searches from for this importer.
+    OfImporter,
+    /// The parent's filename names this directory.
+    Of(&'a [u8]),
+}
+
+/// The parent of a request with `options.paths`, as its caller in C++ has it. Kept in sync with
+/// `BunResolvePathsParent` in src/jsc/bindings/ImportMetaObject.h.
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PathsParent {
+    /// A string, an `{ id }`, or nothing: Node reads no package for it.
+    None = 0,
+    /// The source is `parent.filename`.
+    Filename = 1,
+    /// The parent has no filename and the id `<repl>`: Node reads the package of the cwd.
+    Repl = 2,
+    /// The same with the id `internal/preload`, but not for a `#` request.
+    Preload = 3,
+}
+
+impl PathsParent {
+    /// Where Node reads the package of this parent from.
+    /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L634-L647
+    pub fn package_scope<'a>(self, source: &'a [u8], request: &[u8]) -> PackageScope<'a> {
+        let has_nul = |path: &[u8]| strings::contains_char(path, 0);
+        // A module that is loaded from a `blob:` or `data:` URL, such as a worker that is made
+        // from a string, has that URL for a name. An ES module has it as a path in the root.
+        let is_url_name = |name: &[u8]| {
+            let name = match name.split_first() {
+                Some((&first, rest)) if bun_paths::is_sep_any(first) => rest,
+                _ => name,
+            };
+            name.starts_with(b"blob:") || name.starts_with(b"data:")
+        };
+        match self {
+            PathsParent::None => PackageScope::None,
+            // The resolver searches from the cwd for a source that is no path.
+            PathsParent::Repl => PackageScope::OfImporter,
+            PathsParent::Preload if request.first() == Some(&b'#') => PackageScope::None,
+            PathsParent::Preload => PackageScope::OfImporter,
+            // The resolver searches from the cwd for it too, where Node has such a worker.
+            PathsParent::Filename if is_url_name(source) => PackageScope::OfImporter,
+            // A `file://` URL or a relative path names no directory.
+            PathsParent::Filename if !bun_paths::is_absolute(source) => PackageScope::None,
+            // To Node, a filename that ends in the path separator is a directory.
+            // https://github.com/nodejs/node/blob/v26.3.0/src/node_modules.cc#L336-L351
+            PathsParent::Filename if source.last() == Some(&bun_paths::SEP) => {
+                if has_nul(source) {
+                    PackageScope::None
+                } else {
+                    PackageScope::Of(source)
+                }
+            }
+            PathsParent::Filename => match bun_paths::dirname(source) {
+                // Node reads no package.json in the root of the filesystem, and the resolver
+                // searches from the cwd for a file there.
+                Some(directory) if !is_filesystem_root(directory) && !has_nul(directory) => {
+                    PackageScope::OfImporter
+                }
+                _ => PackageScope::None,
+            },
+        }
+    }
+}
+
+const PACKAGE_JSON: &[u8] = b"package.json";
+
+/// Whether `dir` is the root of its filesystem. On Windows the root of a UNC path is its share,
+/// and `\\server` names no directory.
+fn is_filesystem_root(dir: &[u8]) -> bool {
+    bun_paths::dirname(dir).is_none()
+        || (cfg!(windows)
+            && dir.strip_prefix(b"\\\\").is_some_and(|unc| {
+                strings::count_char(unc.strip_suffix(b"\\").unwrap_or(unc), b'\\') <= 1
+            }))
 }
 
 /// RAII guard returned by [`Resolver::scoped_log`]. Restores the previous
@@ -652,6 +754,7 @@ impl<'a> Resolver<'a> {
             // Transient per-resolve scratch (only set for `require(..., {paths})`);
             // never carried across worker init.
             custom_dir_paths: None,
+            custom_dir_scopes: Default::default(),
             esm_failure: None,
         }
     }
@@ -1007,6 +1110,7 @@ impl<'a> Resolver<'a> {
             standalone_module_graph: None,
             prefer_module_field: true,
             custom_dir_paths: None,
+            custom_dir_scopes: Default::default(),
             esm_failure: None,
         }
     }
@@ -2070,7 +2174,7 @@ impl<'a> Resolver<'a> {
             if let Some(custom_paths) = self.custom_dir_paths {
                 // @branchHint(.unlikely)
                 bun_core::hint::cold();
-                for custom_path in custom_paths {
+                for custom_path in custom_paths.entries {
                     let custom_utf8 = custom_path.to_utf8();
                     match self.check_relative_path(
                         custom_utf8.slice(),
@@ -2211,20 +2315,13 @@ impl<'a> Resolver<'a> {
 
             if let Some(custom_paths) = self.custom_dir_paths {
                 bun_core::hint::cold();
-                for custom_path in custom_paths {
-                    let custom_utf8 = custom_path.to_utf8();
-                    match self.check_package_path(
-                        custom_utf8.slice(),
-                        import_path,
-                        kind,
-                        global_cache,
-                    ) {
-                        ResultUnion::Success(res) => return ResultUnion::Success(res),
-                        ResultUnion::Pending(p) => return ResultUnion::Pending(p),
-                        ResultUnion::Failure(p) => return ResultUnion::Failure(p),
-                        ResultUnion::NotFound => {}
-                    }
-                }
+                return self.check_package_path_in_custom_dirs(
+                    custom_paths,
+                    source_dir,
+                    import_path,
+                    kind,
+                    global_cache,
+                );
             } else {
                 match self.check_package_path(source_dir, import_path, kind, global_cache) {
                     ResultUnion::Success(res) => return ResultUnion::Success(res),
@@ -2255,6 +2352,239 @@ impl<'a> Resolver<'a> {
             return false;
         };
         rest.is_empty() || ResolvePath::is_sep_any(rest[rest.len() - 1])
+    }
+
+    /// A bare request with `options.paths`. Node asks the package of the calling module first
+    /// (`#imports`, its own name), then searches `Module._nodeModulePaths(entry)` per entry.
+    /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L1473-L1504
+    #[cold]
+    #[inline(never)]
+    fn check_package_path_in_custom_dirs<'r>(
+        &mut self,
+        custom_paths: CustomDirPaths<'a>,
+        source_dir: &[u8],
+        import_path: &'r [u8],
+        kind: ast::ImportKind,
+        global_cache: GlobalCache,
+    ) -> ResultUnion<'r> {
+        let importer_dir = match custom_paths.package_scope {
+            PackageScope::None => None,
+            PackageScope::OfImporter => Some(source_dir),
+            PackageScope::Of(dir) => Some(dir),
+        };
+        if let Some(importer_dir) = importer_dir
+            && self.importer_package_claims(importer_dir, import_path)
+        {
+            // Its answer is final, hit or miss: the search of the same request without `paths`.
+            self.custom_dir_paths = None;
+            let found = self.check_package_path(importer_dir, import_path, kind, global_cache);
+            self.custom_dir_paths = Some(custom_paths);
+            // That search read the directory of the calling module, and what it read decides.
+            if self.importer_package_claims(importer_dir, import_path) {
+                return found;
+            }
+        }
+
+        // Whether a search from an entry below a `node_modules` directory cannot install, and
+        // one from another entry can.
+        let installs_at_some_entries = global_cache.can_use(false)
+            && !global_cache.can_use(true)
+            && self.use_package_manager();
+        let found = 'entries: {
+            let mut entries = custom_paths.entries.iter();
+            while let Some(custom_path) = entries.next() {
+                // One lookup of the entry for each search, as a missing directory is marked as
+                // such on its second one.
+                let Some(start) = self.nearest_dir_info(custom_path.to_utf8().slice()) else {
+                    continue;
+                };
+                match self.check_package_path(start.abs_path, import_path, kind, global_cache) {
+                    ResultUnion::NotFound => {}
+                    found => break 'entries found,
+                }
+                // Before entries were searched as in Node, the package of an entry answered
+                // `#imports` and its own name first, and the search ended there. So when the
+                // package of this entry has the request, the later entries are searched as in
+                // Node: no install starts at one, and its package does not answer.
+                if installs_at_some_entries
+                    && !entries.as_slice().is_empty()
+                    && Self::entry_package_answers(start, import_path)
+                    && self.custom_dir_paths.is_some_and(|slot| slot.installs)
+                {
+                    self.custom_dir_paths = None;
+                    let has_it = matches!(
+                        self.check_package_path(
+                            start.abs_path,
+                            import_path,
+                            kind,
+                            GlobalCache::disable
+                        ),
+                        ResultUnion::Success(_)
+                    );
+                    self.custom_dir_paths = Some(CustomDirPaths {
+                        installs: !has_it,
+                        ..custom_paths
+                    });
+                }
+            }
+            ResultUnion::NotFound
+        };
+        self.custom_dir_paths = Some(custom_paths);
+        found
+    }
+
+    /// Whether the package of an `options.paths` entry answered the request before entries
+    /// were searched as in Node: a `#` request with its "imports", its own name with "exports".
+    fn entry_package_answers(start: DirInfoRef, import_path: &[u8]) -> bool {
+        start
+            .package_json_for_module_type
+            .is_some_and(|package_json| {
+                package_json.answers_import(import_path)
+                    || package_json.is_self_reference(import_path)
+            })
+    }
+
+    /// Whether the package of the calling module, which is in `dir`, answers `import_path`.
+    fn importer_package_claims(&mut self, dir: &[u8], import_path: &[u8]) -> bool {
+        self.scope_package_json(dir)
+            .is_some_and(|package_json| package_json.claims_as_parent(import_path))
+    }
+
+    /// The directory that a package search from `dir` starts in: the nearest one that exists.
+    fn nearest_dir_info(&mut self, dir: &[u8]) -> Option<DirInfoRef> {
+        let mut dir = dir;
+        loop {
+            match self.dir_info_cached(dir) {
+                Ok(Some(dir_info)) => return Some(dir_info),
+                Ok(None) => dir = bun_paths::dirname(dir)?,
+                Err(_) => return None,
+            }
+        }
+    }
+
+    /// The package.json of the package that a file in `dir` is in, as Node finds it: the nearest
+    /// one at or above `dir`, and none above a `node_modules` directory or in the root.
+    /// https://github.com/nodejs/node/blob/v26.3.0/src/node_modules.cc#L294-L334
+    ///
+    /// This reads the directory cache and does not write it. A search from the entries reads
+    /// none of these directories, and what a later request finds in them must not depend on
+    /// this lookup. A directory that is in the cache answers from there. Any other is asked
+    /// for its package.json by path.
+    fn scope_package_json(&mut self, dir: &[u8]) -> Option<&'static PackageJSON> {
+        // The directory cache has the normalized spelling on Windows.
+        let mut normalized = cfg!(windows).then(bun_paths::path_buffer_pool::get);
+        let mut dir = dir;
+        if let Some(normalized) = normalized.as_mut()
+            && dir.len() < normalized.len()
+        {
+            dir = self.fs_ref().normalize_buf(&mut normalized[..], dir);
+        }
+        while dir
+            .last()
+            .is_some_and(|&last| bun_paths::is_sep_native(last))
+            && bun_paths::dirname(dir).is_some()
+        {
+            dir = &dir[..dir.len() - 1];
+        }
+        loop {
+            if bun_paths::basename(dir) == b"node_modules" {
+                return None;
+            }
+            // Node does not read a package.json there.
+            if is_filesystem_root(dir) {
+                return None;
+            }
+            // The directory cache has no longer path.
+            if dir.len() < MAX_PATH_BYTES {
+                if let Some(in_cache) = self.cached_scope_package_json(dir) {
+                    return in_cache;
+                }
+                if let Some(package_json) = self.package_json_of_unread_dir(dir) {
+                    return Some(package_json);
+                }
+            }
+            dir = bun_paths::dirname(dir)?;
+        }
+    }
+
+    /// `scope_package_json` for a directory that is in the directory cache: `None` when it is
+    /// not. `dir_info_cached_maybe_log` puts a directory in the cache before it fills it, and
+    /// holds the lock that this takes for both.
+    fn cached_scope_package_json(&mut self, dir: &[u8]) -> Option<Option<&'static PackageJSON>> {
+        let _unlock = self.mutex.lock_guard();
+        let mut dir_info = self.dir_cache_mut().get(dir).map(DirInfoRef::from_slot)?;
+        if !self.custom_dir_scopes.is_empty()
+            && let Some(read_by_path) = self.custom_dir_scopes.get_mut(&bun_wyhash::hash(dir))
+        {
+            *read_by_path = dir_info.package_json();
+        }
+        loop {
+            if dir_info.is_node_modules() || is_filesystem_root(dir_info.abs_path) {
+                return Some(None);
+            }
+            if let Some(package_json) = dir_info.package_json() {
+                return Some(Some(package_json));
+            }
+            let Some(parent) = dir_info.get_parent() else {
+                return Some(None);
+            };
+            dir_info = parent;
+        }
+    }
+
+    /// The package.json of a directory that is not in the directory cache, read by path. The
+    /// answer is kept, as Node keeps the package.json that it read first, until the directory
+    /// cache has the directory.
+    fn package_json_of_unread_dir(&mut self, dir: &[u8]) -> Option<&'static PackageJSON> {
+        // A search that reads the directory reads no package.json without this option, and a
+        // longer path names no file.
+        if !self.opts.load_package_json || dir.len() + 1 + PACKAGE_JSON.len() >= MAX_PATH_BYTES {
+            return None;
+        }
+        let key = bun_wyhash::hash(dir);
+        if let Some(&package_json) = self.custom_dir_scopes.get(&key) {
+            return package_json;
+        }
+        let package_json = self.read_package_json_in(dir);
+        self.custom_dir_scopes.insert(key, package_json);
+        package_json
+    }
+
+    fn read_package_json_in(&mut self, dir: &[u8]) -> Option<&'static PackageJSON> {
+        let len = dir.len() + 1 + PACKAGE_JSON.len();
+        {
+            let mut buf = bun_paths::path_buffer_pool::get();
+            if len >= buf.len() || strings::contains_char(dir, 0) {
+                return None;
+            }
+            buf[..dir.len()].copy_from_slice(dir);
+            buf[dir.len()] = bun_paths::SEP;
+            buf[dir.len() + 1..len].copy_from_slice(PACKAGE_JSON);
+            buf[len] = 0;
+            let path = bun_core::ZStr::from_buf(&buf[..], len);
+            // What is no regular file is not opened: a read of a FIFO blocks.
+            #[cfg(not(windows))]
+            let is_file = bun_sys::stat(path)
+                .is_ok_and(|stat| bun_sys::is_regular_file(stat.st_mode as bun_sys::Mode));
+            // `bun_sys::stat` takes no long path on Windows.
+            #[cfg(windows)]
+            let is_file = matches!(
+                bun_sys::exists_at_type(FD::cwd(), path),
+                Ok(bun_sys::ExistsAtType::File)
+            );
+            if !is_file {
+                return None;
+            }
+        }
+        // What is wrong in the file is for the search that reads the directory to report.
+        let mut unread_log = bun_ast::Log::init();
+        // SAFETY: the resolver and `unread_log` outlive the guard.
+        let _log_scope =
+            unsafe { Self::scoped_log(&raw mut *self, NonNull::from(&mut unread_log)) };
+        self.parse_package_json::<false>(dir, FD::INVALID, None)
+            .ok()
+            .flatten()
+            .map(crate::dir_info::arena_ref)
     }
 
     pub(crate) fn check_relative_path(
@@ -2416,7 +2746,7 @@ impl<'a> Resolver<'a> {
         let mut source_dir_info: DirInfoRef = match self.dir_info_cached(source_dir) {
             Err(_) => return ResultUnion::NotFound,
             Ok(Some(d)) => d,
-            Ok(None) => 'dir: {
+            Ok(None) => {
                 // It is possible to resolve with a source file that does not exist:
                 // A. Bundler plugin refers to a non-existing `resolveDir`.
                 // B. `createRequire()` is called with a path that does not exist. This was
@@ -2441,19 +2771,10 @@ impl<'a> Resolver<'a> {
                 // [1]: https://github.com/oven-sh/bun/issues/16705
                 // [2]: https://github.com/nodejs/node/blob/e346323109b49fa6b9a4705f4e3816fc3a30c151/lib/internal/modules/cjs/loader.js#L1934
                 debug_assert!(is_package_path(import_path));
-                let mut closest_dir = source_dir;
-                // `dirname` returns `None` once the entire directory tree
-                // has been visited. `None` is theoretically impossible since
-                // the drive root should always exist.
-                while let Some(current) = bun_paths::dirname(closest_dir) {
-                    match self.dir_info_cached(current) {
-                        Err(_) => return ResultUnion::NotFound,
-                        Ok(Some(dir)) => break 'dir dir,
-                        Ok(None) => {}
-                    }
-                    closest_dir = current;
+                match bun_paths::dirname(source_dir).and_then(|dir| self.nearest_dir_info(dir)) {
+                    Some(dir) => dir,
+                    None => return ResultUnion::NotFound,
                 }
-                return ResultUnion::NotFound;
             }
         };
 
@@ -2712,6 +3033,43 @@ impl<'a> Resolver<'a> {
         a || b
     }
 
+    /// Whether `load_node_modules` starts from the importing directory. With `options.paths` it
+    /// starts from an entry, as Node's search of `Module._nodeModulePaths(entry)` does: the
+    /// package of the entry does not answer `#imports` or its own name first.
+    #[inline]
+    fn starts_from_importer(&self) -> bool {
+        self.custom_dir_paths.is_none()
+    }
+
+    /// An install would start for the search from the `options.paths` entry at `current`.
+    /// Before entries were searched as in Node, the package of the entry answered `#imports`
+    /// and its own name first. So that no install starts where it did not start then, that
+    /// package answers now, in the search that it had. When the package of an earlier entry
+    /// has the request, this entry is searched as in Node: nothing is installed and its
+    /// package does not answer.
+    #[cold]
+    #[inline(never)]
+    fn load_from_package_of_custom_dir(
+        &mut self,
+        import_path: &[u8],
+        kind: ast::ImportKind,
+        current: DirInfoRef,
+        global_cache: GlobalCache,
+        out: &mut MatchResult,
+    ) -> Option<MatchStatus> {
+        let custom_paths = self.custom_dir_paths?;
+        if !custom_paths.installs {
+            return Some(MatchStatus::NotFound);
+        }
+        if !Self::entry_package_answers(current, import_path) {
+            return None;
+        }
+        self.custom_dir_paths = None;
+        let status = self.load_node_modules(import_path, kind, current, global_cache, false, out);
+        self.custom_dir_paths = Some(custom_paths);
+        Some(status)
+    }
+
     pub(crate) fn load_node_modules(
         &mut self,
         import_path: &[u8],
@@ -2786,7 +3144,10 @@ impl<'a> Resolver<'a> {
         if let Some(_dir_info_package_json) = dir_info_package_json {
             let package_json = _dir_info_package_json.package_json().unwrap();
 
-            if import_path.starts_with(b"#") && !forbid_imports && package_json.imports.is_some() {
+            if package_json.answers_import(import_path)
+                && !forbid_imports
+                && self.starts_from_importer()
+            {
                 let r = self.load_package_imports(
                     import_path,
                     _dir_info_package_json,
@@ -2800,19 +3161,15 @@ impl<'a> Resolver<'a> {
                 return r;
             }
 
-            // https://nodejs.org/api/packages.html#packages_self_referencing_a_package_using_its_name
-            let package_name = crate::package_json::Package::parse_name(import_path);
-            if let Some(_package_name) = package_name {
-                if _package_name == package_json.name.as_ref() && package_json.exports.is_some() {
-                    if let Some(debug) = self.debug_logs.as_mut() {
-                        debug.add_note_fmt(format_args!(
-                            "\"{}\" is a self-reference",
-                            bstr::BStr::new(import_path)
-                        ));
-                    }
-                    dir_info = _dir_info_package_json;
-                    is_self_reference = true;
+            if package_json.is_self_reference(import_path) && self.starts_from_importer() {
+                if let Some(debug) = self.debug_logs.as_mut() {
+                    debug.add_note_fmt(format_args!(
+                        "\"{}\" is a self-reference",
+                        bstr::BStr::new(import_path)
+                    ));
                 }
+                dir_info = _dir_info_package_json;
+                is_self_reference = true;
             }
         }
 
@@ -3089,6 +3446,23 @@ impl<'a> Resolver<'a> {
         }
 
         dir_info = source_dir_info;
+
+        if !self.starts_from_importer()
+            && global_cache.can_use(any_node_modules_folder)
+            && self.use_package_manager()
+            && let Some(status) = self.load_from_package_of_custom_dir(
+                import_path,
+                kind,
+                source_dir_info,
+                global_cache,
+                out,
+            )
+        {
+            if let Some(d) = self.debug_logs.as_mut() {
+                d.decrease_indent();
+            }
+            return status;
+        }
 
         // this is the magic!
         if global_cache.can_use(any_node_modules_folder)

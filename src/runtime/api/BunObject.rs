@@ -921,6 +921,7 @@ pub(crate) fn bun_resolve_sync_with_paths(
     is_user_require_resolve: bool,
     paths_ptr: *const BunString,
     paths_len: usize,
+    parent: bun_resolver::PathsParent,
 ) -> JSValue {
     let paths: &[BunString] = if paths_len == 0 {
         &[]
@@ -948,12 +949,24 @@ pub(crate) fn bun_resolve_sync_with_paths(
         return JSValue::ZERO;
     };
 
+    let source_utf8 = source_str.to_utf8();
+    // SAFETY: `source_utf8` is valid for the duration of this synchronous resolve call, as
+    // `paths` is; lifetime is erased for the resolver slot.
+    let package_scope = parent.package_scope(
+        unsafe { bun_ptr::detach_lifetime(&source_utf8[..]) },
+        &specifier_str.to_utf8(),
+    );
+
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
     let bun_vm = global.bun_vm().as_mut();
     debug_assert!(bun_vm.transpiler.resolver.custom_dir_paths.is_none());
-    // SAFETY: `paths` borrows C++-owned BunStrings valid for the duration of
-    // this synchronous resolve call; lifetime is erased for the resolver slot.
-    bun_vm.transpiler.resolver.custom_dir_paths = Some(unsafe { bun_ptr::detach_lifetime(paths) });
+    bun_vm.transpiler.resolver.custom_dir_paths = Some(bun_resolver::CustomDirPaths {
+        // SAFETY: `paths` borrows C++-owned BunStrings valid for the duration of
+        // this synchronous resolve call; lifetime is erased for the resolver slot.
+        entries: unsafe { bun_ptr::detach_lifetime(paths) },
+        package_scope,
+        installs: true,
+    });
     scopeguard::defer! {
         // SAFETY: same VM pointer; called before returning to C++.
         global.bun_vm().as_mut().transpiler.resolver.custom_dir_paths = None;

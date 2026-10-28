@@ -306,22 +306,29 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
 
         // Extract filename string from fromValue
         // Follows pattern: typeof this === "string" ? this : (this?.filename ?? this?.id ?? "")
+        // `options.paths` reads `filename` and `id` of the parent too: Zig::pathsParentOf().
+        JSC::JSValue parentValue = fromValue;
+        JSC::JSValue parentFilename;
+        JSC::JSValue parentId;
         if (!fromValue.isString()) {
             if (
                 // fast path: it's a real CommonJS module object.
                 auto* cjs = dynamicDowncast<Bun::JSCommonJSModule>(fromValue)) {
                 fromValue = cjs->filename();
+                parentFilename = fromValue;
             } else if (fromValue.isObject()) {
                 // slow path: userland code did something weird. Try filename first, then id
                 auto* obj = fromValue.getObject();
                 auto filenameValue = obj->getIfPropertyExists(globalObject, names.filenamePublicName());
                 RETURN_IF_EXCEPTION(scope, {});
+                parentFilename = filenameValue;
 
                 if (filenameValue && filenameValue.isString()) {
                     fromValue = filenameValue;
                 } else {
                     auto idValue = obj->getIfPropertyExists(globalObject, vm.propertyNames->id);
                     RETURN_IF_EXCEPTION(scope, {});
+                    parentId = idValue ? idValue : jsUndefined();
 
                     if (idValue && idValue.isString()) {
                         fromValue = idValue;
@@ -357,6 +364,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
                 return {};
             }
 
+            auto pathsParent = Zig::pathsParentOf(globalObject, parentValue, parentFilename, parentId);
+            RETURN_IF_EXCEPTION(scope, {});
+
             WTF::Vector<BunString> paths;
 
             // Iterate through the array using forEachInIterable
@@ -383,7 +393,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
                 return {};
             }
 
-            result = Bun__resolveSyncWithPaths(globalObject, JSC::JSValue::encode(moduleName), JSValue::encode(fromValue), false, true, paths.begin(), paths.size());
+            result = Bun__resolveSyncWithPaths(globalObject, JSC::JSValue::encode(moduleName), JSValue::encode(fromValue), false, true, paths.begin(), paths.size(), pathsParent);
 
             // Clean up BunStrings to avoid leaking
             for (auto& path : paths) {

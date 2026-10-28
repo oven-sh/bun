@@ -191,6 +191,32 @@ impl PackageJSON {
                 .any(|rows| !rows.is_empty())
     }
 
+    /// Whether `import_path` is a `#` request that the "imports" of this package answer.
+    #[inline]
+    pub(crate) fn answers_import(&self, import_path: &[u8]) -> bool {
+        import_path.starts_with(b"#") && self.imports.is_some()
+    }
+
+    /// Whether `import_path` names this package, which has "exports".
+    /// https://nodejs.org/api/packages.html#packages_self_referencing_a_package_using_its_name
+    #[inline]
+    pub(crate) fn is_self_reference(&self, import_path: &[u8]) -> bool {
+        Package::parse_name(import_path).is_some_and(|name| name == self.name.as_ref())
+            && self.exports.is_some()
+    }
+
+    /// Whether Node takes `import_path` from this package when it is the package of the parent
+    /// module. Node does not read an "imports" or "exports" that is a number or a boolean.
+    /// https://github.com/nodejs/node/blob/v26.3.0/src/node_modules.cc#L178-L221
+    pub(crate) fn claims_as_parent(&self, import_path: &[u8]) -> bool {
+        let read_by_node = |map: &Option<ExportsMap>| {
+            map.as_ref()
+                .is_some_and(|map| !matches!(map.root.data, EntryData::Invalid))
+        };
+        (self.answers_import(import_path) && read_by_node(&self.imports))
+            || (self.is_self_reference(import_path) && read_by_node(&self.exports))
+    }
+
     /// The versions that a package in node_modules declares for `name`, highest precedence first.
     pub(crate) fn installed_dependency_versions<'a>(
         &'a self,

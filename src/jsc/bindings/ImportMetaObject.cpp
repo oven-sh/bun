@@ -221,6 +221,37 @@ static void throwIfResolvedFileIsRefused(JSC::JSGlobalObject* globalObject, JSC:
         JSC::throwException(globalObject, scope, error);
 }
 
+// Node's trySelfParentPath(): `parent.filename` when it is truthy, else the cwd for the ids
+// `<repl>` and `internal/preload`.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L634-L647
+BunResolvePathsParent pathsParentOf(JSC::JSGlobalObject* globalObject, JSC::JSValue parent, JSC::JSValue filename, JSC::JSValue id)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (filename && filename.isString() && asString(filename)->length() > 0)
+        return BunResolvePathsParent::Filename;
+
+    if (!id) {
+        if (auto* cjs = dynamicDowncast<Bun::JSCommonJSModule>(parent)) {
+            id = cjs->m_id.get();
+        } else if (parent && parent.isObject()) {
+            id = parent.getObject()->getIfPropertyExists(globalObject, vm.propertyNames->id);
+            RETURN_IF_EXCEPTION(scope, BunResolvePathsParent::None);
+        }
+    }
+    if (!id || !id.isString())
+        return BunResolvePathsParent::None;
+
+    auto view = asString(id)->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, BunResolvePathsParent::None);
+    if (view == "<repl>"_s)
+        return BunResolvePathsParent::Repl;
+    if (view == "internal/preload"_s)
+        return BunResolvePathsParent::Preload;
+    return BunResolvePathsParent::None;
+}
+
 extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -320,6 +351,9 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
 
                 JSC::EncodedJSValue result = {};
                 WTF::Vector<BunString> paths;
+                auto parent = pathsParentOf(lexicalGlobalObject, parentModule, from, {});
+                if (scope.exception()) [[unlikely]]
+                    goto cleanup;
                 for (size_t i = 0; i < userPathListArray->length(); ++i) {
                     JSValue path = userPathListArray->getIndex(globalObject, i);
                     if (scope.exception()) [[unlikely]]
@@ -339,7 +373,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     }
                 }
 
-                result = Bun__resolveSyncWithPaths(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM, isRequireDotResolve, paths.begin(), paths.size());
+                result = Bun__resolveSyncWithPaths(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM, isRequireDotResolve, paths.begin(), paths.size(), parent);
                 if (scope.exception()) [[unlikely]]
                     goto cleanup;
 

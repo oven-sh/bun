@@ -11,7 +11,20 @@
 extern "C" JSC_DECLARE_HOST_FUNCTION(functionImportMeta__resolveSync);
 extern "C" JSC_DECLARE_HOST_FUNCTION(functionImportMeta__resolveSyncPrivate);
 extern "C" JSC::EncodedJSValue Bun__resolveSync(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, JSC::EncodedJSValue from, bool is_esm, bool isUserRequireResolve);
-extern "C" JSC::EncodedJSValue Bun__resolveSyncWithPaths(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, JSC::EncodedJSValue from, bool is_esm, bool isUserRequireResolve, const BunString* paths, size_t paths_len);
+// The parent of a request with `options.paths`. Node reads the package that answers `#imports`
+// and a self-reference from it. Kept in sync with `PathsParent` in src/resolver/resolver.rs.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L634-L647
+enum class BunResolvePathsParent : uint8_t {
+    // A string, an `{ id }`, or nothing.
+    None = 0,
+    // `from` is `parent.filename`.
+    Filename = 1,
+    // The parent has no filename and the id `<repl>`.
+    Repl = 2,
+    // The parent has no filename and the id `internal/preload`.
+    Preload = 3,
+};
+extern "C" JSC::EncodedJSValue Bun__resolveSyncWithPaths(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, JSC::EncodedJSValue from, bool is_esm, bool isUserRequireResolve, const BunString* paths, size_t paths_len, BunResolvePathsParent parent);
 extern "C" JSC::EncodedJSValue Bun__resolveSyncWithSourceIfExists(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, BunString* from, bool is_esm);
 extern "C" JSC::EncodedJSValue Bun__resolveSyncWithStrings(JSC::JSGlobalObject* global, BunString* specifier, BunString* from, bool is_esm);
 
@@ -25,6 +38,9 @@ using namespace JSC;
 using namespace WebCore;
 
 JSC_DECLARE_HOST_FUNCTION(functionImportMeta__resolve);
+
+// `filename` is what `parent.filename` gave. `id` is what `parent.id` gave, when it was read.
+BunResolvePathsParent pathsParentOf(JSC::JSGlobalObject*, JSC::JSValue parent, JSC::JSValue filename, JSC::JSValue id);
 
 class ImportMetaObject final : public JSC::JSDestructibleObject {
 public:

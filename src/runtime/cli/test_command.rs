@@ -2598,6 +2598,9 @@ impl TestCommand {
                 0 => test_files.len(),
                 _ => 0,
             };
+            if let Some(aot) = ctx.bundler_options.aot.as_mut() {
+                aot.has_globals_of_vitest = ctx.test_options.globals == Some(TestGlobals::Vitest);
+            }
             run_compiled::start(ctx, entry_points, independent_count);
         }
 

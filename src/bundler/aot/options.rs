@@ -263,6 +263,7 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
         entry_texts: Vec::new(),
         omits_builtin_modules: input.aot.omits_builtin_modules,
         runs_tests: input.aot.runs_tests,
+        has_globals_of_vitest: input.aot.has_globals_of_vitest,
         takes_runtime_as_any: false,
     }
 }

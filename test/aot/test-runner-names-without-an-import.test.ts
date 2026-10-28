@@ -97,17 +97,22 @@ async function report(mode: string[], directory: string, file: string) {
 }
 
 describe("the names of the test runner without an import", () => {
-  for (const file of Object.keys(files).filter(name => name.includes(".test."))) {
+  const testFiles = Object.keys(files).filter(name => name.includes(".test."));
+  const rows = [
+    ...testFiles.map(file => [file, []] as const),
+    ["names-of-one-runner.test.js", ["--globals=vitest"]] as const,
+  ];
+  for (const [file, flags] of rows) {
     test(
-      file,
+      [file, ...flags].join(" "),
       async () => {
         using dir = tempDir("aot-test-runner-names", files);
-        const plain = await report([], String(dir), file);
+        const plain = await report([...flags], String(dir), file);
         expect(plain.lines.join("\n")).toContain("(pass)");
         expect(plain.lines.join("\n")).not.toContain("(fail)");
         expect(plain.exitCode).toBe(0);
-        expect(await report(["--aot"], String(dir), file)).toEqual(plain);
-        expect(await report(["--debug-aot"], String(dir), file)).toEqual(plain);
+        expect(await report([...flags, "--aot"], String(dir), file)).toEqual(plain);
+        expect(await report([...flags, "--debug-aot"], String(dir), file)).toEqual(plain);
       },
       120_000,
     );

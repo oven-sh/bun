@@ -124,9 +124,10 @@ pub(crate) fn import_used_names<'s>(
     arena: &'s Arena,
     atoms: &Interner<'s>,
     request: &mut TransformRequest<'_, 's>,
+    has_globals_of_vitest: bool,
 ) -> TreeChange {
     // The parser gives `bun test` the same names out of the same module.
-    let is_of_vitest = imports_vitest(request, atoms);
+    let is_of_vitest = has_globals_of_vitest || imports_vitest(request, atoms);
     let module = if is_of_vitest {
         MODULE_OF_VITEST
     } else {

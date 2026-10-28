@@ -92,6 +92,8 @@ pub struct AotOptions {
     pub checks_only: bool,
     /// `bun test --aot`: `@jest/globals` and `vitest` are `bun:test`, as in `bun test`.
     pub runs_tests: bool,
+    /// `bun test --globals=vitest`.
+    pub has_globals_of_vitest: bool,
     /// `--watch` starts to watch each file here.
     pub before_read: Option<ReadListener>,
     /// Only a build of Bun with Fuzzilli looks at it.
@@ -120,6 +122,7 @@ impl Default for AotOptions {
             runs_in_place: false,
             checks_only: false,
             runs_tests: false,
+            has_globals_of_vitest: false,
             before_read: None,
             preload: None,
             thread_count: None,

@@ -1,0 +1,4 @@
+{
+ "json-of-fresh-literals": "alone: the world changes: TypeError | TypeError | mine",
+ "native-setters": "alone: the setter is replaced: THROWS TypeError | \"http://a/?back\" | THROWS TypeError | THROWS TypeError"
+}

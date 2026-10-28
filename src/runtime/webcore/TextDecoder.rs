@@ -148,11 +148,16 @@ impl TextDecoder {
     /// Feeds one chunk to the encoding_rs decoder shared across a stream's
     /// `{stream: true}` chunks. `InvalidByteSequence` is only reported in
     /// fatal mode; otherwise malformed bytes become U+FFFD in the output.
+    #[inline(never)]
     fn decode_with_encoding_rs<const FLUSH: bool>(
         fatal: bool,
         decoder: &mut encoding_rs::Decoder,
         bytes: &[u8],
     ) -> Result<Vec<u16>, strings::ToUTF16Error> {
+        bun_removable_features::removable_definition!(
+            LegacyEncodings,
+            Self::decode_with_encoding_rs::<FLUSH>
+        );
         // Nothing to decode. Also keeps the chunk away from encoding_rs 0.8.35,
         // whose big5, euc-kr and shift_jis decoders forget a pending lead byte
         // when fed an empty non-final chunk.

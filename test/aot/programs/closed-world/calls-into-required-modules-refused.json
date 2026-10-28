@@ -1,0 +1,1 @@
+{"build": ["--aot-refuse-code-from-disk", "--no-compile-function-source"], "skipInShell": "it uses CustomEvent and Buffer, which the jsc shell does not have", "skipInVariants": "its output is what a program refuses that the flow analysis found closed, and a variant without the results of the analysis refuses nothing"}

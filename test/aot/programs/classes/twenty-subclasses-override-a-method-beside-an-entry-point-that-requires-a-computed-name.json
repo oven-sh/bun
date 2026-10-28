@@ -1,0 +1,1 @@
+{ "entryPoints": ["./requires-a-computed-name.cjs"], "build": ["--aot-allow-code-from-disk"] }

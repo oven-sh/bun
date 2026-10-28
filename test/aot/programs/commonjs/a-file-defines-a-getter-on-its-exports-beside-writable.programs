@@ -1,0 +1,69 @@
+//// a-file-defines-a-getter-on-its-exports-beside-writable-false-and-is-required.json
+{ "skipInShell": "it needs Bun's CommonJS modules" }
+//// a-file-defines-a-getter-on-its-exports-beside-writable-false-and-is-required/lib.cjs
+"use strict";
+const held = 41;
+Object.defineProperty(exports, "a", { enumerable: true, get: function () { return held; }, writable: false });
+//// a-file-defines-a-getter-on-its-exports-beside-writable-false-and-is-required/main.cjs
+// Object.defineProperty refuses a getter beside `writable`, whatever `writable` holds.
+process.on("uncaughtException", error => console.log("uncaught", error.name, error.message));
+const lib = require("./lib.cjs");
+console.log(lib.a);
+//// a-file-defines-a-getter-on-its-exports-beside-writable-false-and-its-name-is-imported.json
+{ "skipInShell": "it needs Bun's CommonJS modules" }
+//// a-file-defines-a-getter-on-its-exports-beside-writable-false-and-its-name-is-imported/importer.mjs
+import { a } from "./lib.cjs";
+console.log(a);
+//// a-file-defines-a-getter-on-its-exports-beside-writable-false-and-its-name-is-imported/lib.cjs
+"use strict";
+const held = 41;
+Object.defineProperty(exports, "a", { enumerable: true, get: function () { return held; }, writable: false });
+//// a-file-defines-a-getter-on-its-exports-beside-writable-false-and-its-name-is-imported/main.mjs
+// Object.defineProperty refuses a getter beside `writable`, whatever `writable` holds.
+await import("./importer.mjs").catch(error => console.log("rejected", error.name, error.message));
+//// a-file-defines-a-getter-on-its-exports-beside-writable-true-and-is-required.json
+{ "skipInShell": "it needs Bun's CommonJS modules" }
+//// a-file-defines-a-getter-on-its-exports-beside-writable-true-and-is-required/lib.cjs
+"use strict";
+const held = 41;
+Object.defineProperty(exports, "a", { enumerable: true, get: function () { return held; }, writable: true });
+//// a-file-defines-a-getter-on-its-exports-beside-writable-true-and-is-required/main.cjs
+// Object.defineProperty refuses a getter beside `writable`, whatever `writable` holds.
+process.on("uncaughtException", error => console.log("uncaught", error.name, error.message));
+const lib = require("./lib.cjs");
+console.log(lib.a);
+//// a-file-defines-a-getter-on-its-exports-beside-writable-true-and-its-name-is-imported.json
+{ "skipInShell": "it needs Bun's CommonJS modules" }
+//// a-file-defines-a-getter-on-its-exports-beside-writable-true-and-its-name-is-imported/importer.mjs
+import { a } from "./lib.cjs";
+console.log(a);
+//// a-file-defines-a-getter-on-its-exports-beside-writable-true-and-its-name-is-imported/lib.cjs
+"use strict";
+const held = 41;
+Object.defineProperty(exports, "a", { enumerable: true, get: function () { return held; }, writable: true });
+//// a-file-defines-a-getter-on-its-exports-beside-writable-true-and-its-name-is-imported/main.mjs
+// Object.defineProperty refuses a getter beside `writable`, whatever `writable` holds.
+await import("./importer.mjs").catch(error => console.log("rejected", error.name, error.message));
+//// a-file-defines-a-getter-on-its-exports-beside-writable-undefined-and-is-required.json
+{ "skipInShell": "it needs Bun's CommonJS modules" }
+//// a-file-defines-a-getter-on-its-exports-beside-writable-undefined-and-is-required/lib.cjs
+"use strict";
+const held = 41;
+Object.defineProperty(exports, "a", { enumerable: true, get: function () { return held; }, writable: undefined });
+//// a-file-defines-a-getter-on-its-exports-beside-writable-undefined-and-is-required/main.cjs
+// Object.defineProperty refuses a getter beside `writable`, whatever `writable` holds.
+process.on("uncaughtException", error => console.log("uncaught", error.name, error.message));
+const lib = require("./lib.cjs");
+console.log(lib.a);
+//// a-file-defines-a-getter-on-its-exports-beside-writable-undefined-and-its-name-is-imported.json
+{ "skipInShell": "it needs Bun's CommonJS modules" }
+//// a-file-defines-a-getter-on-its-exports-beside-writable-undefined-and-its-name-is-imported/importer.mjs
+import { a } from "./lib.cjs";
+console.log(a);
+//// a-file-defines-a-getter-on-its-exports-beside-writable-undefined-and-its-name-is-imported/lib.cjs
+"use strict";
+const held = 41;
+Object.defineProperty(exports, "a", { enumerable: true, get: function () { return held; }, writable: undefined });
+//// a-file-defines-a-getter-on-its-exports-beside-writable-undefined-and-its-name-is-imported/main.mjs
+// Object.defineProperty refuses a getter beside `writable`, whatever `writable` holds.
+await import("./importer.mjs").catch(error => console.log("rejected", error.name, error.message));

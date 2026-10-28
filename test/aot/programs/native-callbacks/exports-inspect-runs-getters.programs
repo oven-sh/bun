@@ -1,0 +1,2430 @@
+////: Meter
+class Meter {
+  size = 1;
+  measure(by: number): string {
+    return (this instanceof Meter ? "a meter" : "no meter") + " " + (typeof by === "number" ? "a number" : "no number");
+  }
+}
+////: lines-2
+try {
+  results.push(«1»);
+} catch (error) {
+  results.push((error as Error).name);
+}
+//// exports-inspect-runs-getters-when-asked.ts
+// Exports of start-up modules: util.inspect with { getters: true } runs accessors of an object that the program never reads by name, own ones and, for a class, none of the prototype's.
+import { inspect } from "node:util";
+
+let runs = 0;
+
+class Meter {
+  base = 5;
+  get reading(): number {
+    runs += 1000;
+    return this.base * 2;
+  }
+}
+
+const meter = new Meter();
+Object.defineProperty(meter, "own", {
+  enumerable: true,
+  get(this: Meter): number {
+    runs += typeof this.base === "number" ? 1 : 100;
+    return this.base + 1;
+  },
+  set(this: Meter, value: number) {
+    runs += 1000000;
+    this.base = value;
+  },
+});
+const literal = {
+  step: 3,
+  get next(): number {
+    runs += 10;
+    return this.step + 1;
+  },
+};
+
+const text = inspect(meter, { getters: true }) + inspect(literal, { getters: "get" }) + inspect(literal, { getters: "set" }) + inspect(literal);
+console.log(runs, text.length);
+//// exports-listeners-of-the-process-come-back.ts
+// Exports of start-up modules: the process is an emitter that native code made; listeners, rawListeners and emit hand the program's functions back or call them with what the program passes as `any`.
+let total = 0;
+
+function onExit(code: number): void {
+  total += typeof code === "number" ? 1 : typeof code === "string" ? 100 : 10000;
+}
+function onBeforeExit(code: number): void {
+  total += typeof code === "number" ? 100000 : typeof code === "string" ? 1000000 : 10000000;
+}
+////= lines	onCustom	value	100000000	200000000
+
+onExit(0);
+onBeforeExit(0);
+onCustom(0);
+process.on("exit", onExit);
+process.once("beforeExit", onBeforeExit);
+process.on("custom" as any, onCustom);
+for (const listener of process.listeners("exit") as any[]) listener("text");
+for (const listener of process.rawListeners("beforeExit") as any[]) listener("text");
+process.emit("custom" as any, "text" as any);
+process.on("exit", () => console.log(total, process.listenerCount("exit"), process.eventNames().length));
+//// exports-next-tick-passes-extra-arguments.ts
+// Exports of start-up modules: the tick queue calls the function back with the extra arguments of process.nextTick, which are typed any[]; direct calls pass numbers.
+let total = 0;
+
+function add(a: number, b: number): void {
+  total += typeof a === "number" ? a : typeof a === "string" ? 1000 : 100000;
+  total += typeof b === "number" ? b : b === undefined ? 10000 : 1000000;
+}
+
+class Counter {
+  count = 1;
+  bump(by: number): void {
+    total += this === undefined ? 10000000 : this.count + by;
+  }
+}
+
+add(1, 2);
+const counter = new Counter();
+counter.bump(1);
+process.nextTick(add, 3, 4);
+process.nextTick(add, "three");
+process.nextTick(add, { valueOf: () => 3 }, null);
+process.nextTick(counter.bump, 5);
+process.nextTick(add);
+setImmediate(() => console.log(total));
+//// exports-prepare-stack-trace-gets-native-errors.ts
+// Exports of start-up modules and stores into the realm: the engine calls Error.prepareStackTrace with an error that native code made, and what it returns becomes `stack`, whatever lib.d.ts says.
+////= Failure
+
+let total = 0;
+
+function format(error: Failure, sites: NodeJS.CallSite[]): any {
+  total += typeof error.code === "number" ? error.code : 1000;
+  total += Array.isArray(sites) ? 10000 : 0;
+  total += sites.length > 0 && typeof sites[0].getLineNumber() === "number" ? 100000 : 0;
+  return sites.length > 0 ? 5 : 6;
+}
+
+format(new Failure("mine"), []);
+Error.prepareStackTrace = format as (error: Error, sites: NodeJS.CallSite[]) => any;
+
+function stackOf(run: () => unknown): string | undefined {
+  try {
+    run();
+  } catch (error) {
+    return (error as Error).stack;
+  }
+  return "none";
+}
+
+const nothing: any = null;
+for (const run of [() => nothing.x, () => JSON.parse("{"), () => new Array(-1), () => { throw new Failure("own"); }]) {
+  const stack = stackOf(run);
+  total += typeof stack === "string" ? 1000000 : typeof stack === "number" ? 10000000 * stack : 0;
+}
+console.log(total);
+//// exports-promisify-passes-the-callback-where-an-argument-is-missing.ts
+// Exports of start-up modules: the function that util.promisify returns appends its own callback to whatever it was called with, so with an argument missing the callback lands in the number parameter.
+import { promisify, callbackify } from "node:util";
+
+let total = 0;
+
+function double(n: number, done: (error: Error | null, result?: number) => void): void {
+  total += typeof n === "number" ? 1 : typeof n === "function" ? 100 : 10000;
+  if (typeof n === "function") return (n as any)(null, -1);
+  done(null, n * 2);
+}
+
+double(1, () => {});
+const doubled = promisify(double);
+total += (await doubled(4)) ?? 0;
+total += (await (doubled as any)()) * 1000;
+total += typeof (await (doubled as any)("5")) === "number" ? 1000000 : 0;
+
+const failing = callbackify(async (kind: number): Promise<number> => {
+  if (kind === 0) throw null;
+  if (kind === 1) throw "text";
+  return kind;
+});
+function report(error: Error | null, value?: number): void {
+  total += error === null ? 10000000 * (value ?? 0) : typeof error === "string" ? 100000000 : (error as NodeJS.ErrnoException).code === "ERR_FALSY_VALUE_REJECTION" ? 200000000 : 0;
+}
+report(null, 0);
+failing(0, report);
+failing(1, report);
+failing(2, report);
+setTimeout(() => console.log(total), 10);
+//// exports-signal-listeners-get-a-name-and-a-number.ts
+// Exports of start-up modules: the process calls a signal listener with (name, number), while the program's own call passes (number, string).
+let total = 0;
+
+function onSignal(signal: number, code: string): void {
+  total += typeof signal === "number" ? 1 : typeof signal === "string" ? 100 : 10000;
+  total += typeof code === "string" ? 100000 : typeof code === "number" ? 1000000 : 10000000;
+}
+
+onSignal(1, "one");
+process.on("SIGUSR2", onSignal as any);
+process.kill(process.pid, "SIGUSR2");
+let rounds = 0;
+const timer = setInterval(() => {
+  if (total === 100001 && ++rounds < 150) return;
+  clearInterval(timer);
+  console.log(total);
+}, 10);
+//// exports-standard-input-ends-and-its-listeners-get-nothing.ts
+// The host's calls of library functions: process.stdin is built by the library on the first read, on top of a native stream; with nothing to read its "end" and "close" listeners are called without an argument; the program's own calls pass numbers.
+let total = 0;
+
+function onEnd(code: number): void {
+  total += typeof code === "number" ? 1 : code === undefined ? 100 : 10000;
+}
+////= lines	onData	chunk	100000	1000000
+
+onEnd(0);
+onData(0);
+process.stdin.on("data", onData as any);
+process.stdin.on("end", onEnd as any);
+process.stdin.on("close", onEnd as any);
+process.stdin.on("close", () => console.log(total, process.stdin.readableEnded));
+//// exports-store-of-async-local-storage-comes-back-in-native-callbacks.ts
+// Exports of start-up modules: the store of an AsyncLocalStorage is kept by native code across timers, ticks, promises and events and comes back from getStore, whatever run and enterWith were given under `any`.
+import { AsyncLocalStorage } from "node:async_hooks";
+
+interface Request {
+  id: number;
+}
+
+let total = 0;
+const storage = new AsyncLocalStorage<Request>();
+
+function weigh(): void {
+  const store = storage.getStore();
+  total += store === undefined ? 1 : typeof store === "string" ? 100 : typeof store.id === "number" ? store.id * 10000 : typeof store.id === "string" ? 1000000 : 100000000;
+}
+
+weigh();
+storage.run({ id: 1 }, weigh);
+storage.run({ id: 2 }, () => setTimeout(weigh, 1));
+storage.run("text" as any, () => process.nextTick(weigh));
+storage.run({ id: "3" } as any, () => Promise.resolve().then(weigh));
+storage.run(JSON.parse('{"id":"4"}'), () => queueMicrotask(weigh));
+storage.run({ id: 5 }, () => storage.exit(weigh));
+storage.run({ id: 6 }, (a: number, b: number) => void (total += typeof a === "string" ? 1000000000 : 0), "a" as any, 2);
+setTimeout(() => console.log(total), 10);
+//// exports-stylize-is-called-with-odd-values.ts
+// Exports of start-up modules: the stylize function that console.log and util.inspect hand to a custom inspect method is called by the program with values that are no strings.
+import { inspect } from "node:util";
+
+let total = 0;
+
+class Tag {
+  [inspect.custom](depth: number, options: { stylize(text: string, style: string): string }): string {
+    const odd: any[] = [42, undefined, null, true, 7n, ["a", 1], { toString: () => "object" }];
+    for (const value of odd) {
+      const styled: unknown = options.stylize(value, "number");
+      total += typeof styled === "string" ? styled.length : typeof styled === "number" ? 1000 : 10;
+    }
+    total += String(options.stylize("text", "no such style")).length * 100000;
+    total += String((options.stylize as any)()).length * 1000000;
+    return "tag";
+  }
+}
+
+const plain = inspect(new Tag());
+const colored = inspect(new Tag(), { colors: true });
+console.log(new Tag());
+console.log(plain.length + colored.length, total);
+//// exports-tables-of-inspect-are-changed-by-the-program.ts
+// Exports of start-up modules: inspect.styles, inspect.colors and inspect.defaultOptions are objects of a start-up module that the program stores odd values into, and the library reads them back while it prints.
+import { inspect } from "node:util";
+
+const value = { n: 1, s: "text", list: [1, [2, [3, [4]]]], u: undefined };
+const lengths: number[] = [inspect(value, { colors: true }).length];
+(inspect.styles as any).number = "no such color";
+(inspect.styles as any).string = 5;
+(inspect.styles as any).undefined = "mine";
+(inspect.colors as any).mine = ["<", ">"];
+lengths.push(inspect(value, { colors: true }).length);
+inspect.defaultOptions.depth = 0;
+lengths.push(inspect(value).length);
+inspect.defaultOptions = { depth: null, compact: false } as any;
+lengths.push(inspect(value).length);
+try {
+  inspect.defaultOptions = 5 as any;
+} catch (error) {
+  lengths.push((error as NodeJS.ErrnoException).code!.length);
+}
+console.log(lengths.join(), inspect(undefined, { colors: true }).length);
+//// exports-uncaught-exception-listener-gets-primitives.ts
+// Exports of start-up modules and thrown values: the process hands the "uncaughtException" listener whatever was thrown, here a number, a string and undefined, while the listener is typed for the program's own error class.
+////= Failure
+
+let total = 0;
+
+function onFailure(error: Failure, origin: string): void {
+  total += error instanceof Failure ? error.code : typeof error === "number" ? 100 + error : typeof error === "string" ? 1000 + (error as string).length : error === undefined ? 10000 : 100000;
+  total += origin === "uncaughtException" ? 1000000 : origin === "unhandledRejection" ? 10000000 : 0;
+}
+
+onFailure(new Failure("mine"), "own call");
+process.on("uncaughtException", onFailure);
+setTimeout(() => { throw 42; }, 1);
+setTimeout(() => { throw "text"; }, 2);
+setTimeout(() => { throw undefined; }, 3);
+setTimeout(() => { throw new Failure("thrown"); }, 4);
+setTimeout(() => console.log(total), 50);
+//// exports-unhandled-rejection-listener-gets-reason-and-promise.ts
+// Exports of start-up modules and thrown values: the process calls the "unhandledRejection" listener with any reason and the promise, while the program's own call passes its error class and null.
+////= Failure
+
+let total = 0;
+
+function onRejection(reason: Failure, promise: Promise<number> | null): void {
+  total += reason instanceof Failure ? reason.code : reason === null ? 100 : typeof reason === "object" ? 1000 : typeof reason === "bigint" ? 10000 : 100000;
+  total += promise instanceof Promise ? 1000000 : 0;
+}
+
+onRejection(new Failure("mine"), null);
+process.on("unhandledRejection", onRejection);
+Promise.reject(null);
+Promise.reject({ plain: true });
+Promise.reject(5n);
+Promise.reject(new Failure("rejected"));
+(async () => JSON.parse("{"))();
+setTimeout(() => console.log(total), 20);
+//// exports-warning-listeners-get-errors-made-by-the-library.ts
+// The host's calls of library functions: process.emitWarning builds an Error of its own, or passes on the one it was given, and a tick later the "warning" listener gets it; a warning about too many listeners brings the program's emitter back.
+import { EventEmitter } from "node:events";
+
+class Notice extends Error {
+  level = 3;
+}
+
+let total = 0;
+const names: string[] = [];
+
+function onWarning(notice: Notice): void {
+  total += typeof notice.level === "number" ? notice.level : 100;
+  names.push(notice.name + ":" + (notice as any).code);
+  const emitter = (notice as any).emitter;
+  if (emitter) emitter.emit("crowded", "text");
+}
+
+////= lines	onCrowded	value	10000	1000000
+
+onWarning(new Notice("own"));
+onCrowded(1);
+process.removeAllListeners("warning");
+process.on("warning", onWarning as (warning: Error) => void);
+process.emitWarning("text", "CustomName", "CODE1");
+process.emitWarning("plain");
+process.emitWarning(new Notice("object"));
+process.emitWarning("detailed", { type: "T", code: "C", detail: "D" });
+const crowded = new EventEmitter().setMaxListeners(1);
+crowded.on("crowded", onCrowded).on("crowded", () => {});
+setTimeout(() => console.log(total, names.join()), 10);
+//// exports-what-a-queued-callback-throws-reaches-the-process.ts
+// The host's calls of library functions: what a callback of the tick queue, a microtask, an immediate, a timer or an event listener throws is reported by native code to the "uncaughtException" listener, one function for each way.
+let bits = 0;
+
+function fromTick(value: number): void { if (typeof value !== "number") bits |= 1; }
+function fromMicrotask(value: number): void { if (typeof value !== "number") bits |= 2; }
+function fromImmediate(value: number): void { if (typeof value !== "number") bits |= 4; }
+function fromTimer(value: number): void { if (typeof value !== "number") bits |= 8; }
+function fromListener(value: number): void { if (typeof value !== "number") bits |= 16; }
+function fromReaction(value: number): void { if (typeof value !== "number") bits |= 32; }
+
+for (const own of [fromTick, fromMicrotask, fromImmediate, fromTimer, fromListener, fromReaction]) own(1);
+process.on("uncaughtException", (thrown: any) => thrown("text"));
+process.on("unhandledRejection", (thrown: any) => thrown("text"));
+process.nextTick(() => { throw fromTick; });
+queueMicrotask(() => { throw fromMicrotask; });
+setImmediate(() => { throw fromImmediate; });
+setTimeout(() => { throw fromTimer; }, 1);
+const target = new EventTarget();
+target.addEventListener("e", () => { throw fromListener; });
+target.dispatchEvent(new Event("e"));
+Promise.resolve().then(() => { throw fromReaction; });
+setTimeout(() => console.log(bits.toString(2)), 20);
+//// exports-write-callbacks-of-the-standard-streams.ts
+// Exports of start-up modules: process.stdout is built by a start-up module on the first read; its write calls the callback with nothing or null, and its methods are found under computed names.
+////= Failure
+
+let total = 0;
+
+function afterWrite(error: Failure): void {
+  total += error instanceof Failure ? error.code : error === undefined ? 100 : error === null ? 10000 : 1000000;
+}
+
+afterWrite(new Failure("own"));
+process.stdout.write("", afterWrite as any);
+process.stdout.write("", "utf8", afterWrite as any);
+const method = ["wri", "te"].join("");
+(process.stdout as any)[method]("", afterWrite);
+process.stdout.once("finish", afterWrite as any);
+total += typeof process.stdout.fd === "number" ? 100000000 : 0;
+total += typeof (process.stdout as any).constructor === "function" ? 200000000 : 0;
+setTimeout(() => console.log(total > 300000000, total % 100, process.stdout.listenerCount("finish")), 10);
+//// getters-of-host-objects-that-answer-something-new-at-each-read.js
+// Getters of host objects that make their answer anew at each read.
+import { BlockList } from "node:net";
+function twice(read) { const a = read(), b = read(); return [a === b, JSON.stringify(a) === JSON.stringify(b)]; }
+const list = new BlockList();
+list.addAddress("1.2.3.4");
+function rulesTwice(o) { const a = o.rules, b = o.rules; a.push("mine"); return [a === b, a.length, b.length, o.rules.length]; }
+console.log("rules", rulesTwice(list), twice(() => list.rules));
+const before = list.rules;
+list.addAddress("5.6.7.8");
+console.log("rules", before.length, list.rules.length, before === list.rules);
+
+new HTMLRewriter().on("p", { element(e) { const a = e.attributes, b = e.attributes; console.log("attributes", a === b, [...a].join(), [...b].join(), [...e.attributes].join()); e.setAttribute("c", "3"); console.log("attributes", [...e.attributes].join()); } }).transform("<p a=1 b=2></p>");
+
+const child = Bun.spawn([process.execPath, "--version"], { stdout: "pipe", stderr: "ignore", stdin: "ignore", env: { BUN_BE_BUN: "1" } });
+function stdioTwice(c) { const a = c.stdio, b = c.stdio; a.push("mine"); return [a === b, a.length, b.length, c.stdio.length]; }
+console.log("stdio", stdioTwice(child));
+await child.exited;
+const usage = child.resourceUsage();
+function messagesTwice(u) { const a = u.messages, b = u.messages; a.mine = 1; return [a === b, Object.keys(a).join(), Object.keys(b).join(), Object.keys(u.messages).join()]; }
+console.log("messages", messagesTwice(usage));
+
+let done;
+const finished = new Promise(resolve => { done = resolve; });
+const server = Bun.serve({
+  port: 0,
+  fetch(request, server) { return server.upgrade(request) ? undefined : new Response("no"); },
+  websocket: {
+    open(socket) {
+      socket.subscribe("one");
+      const a = socket.subscriptions, b = socket.subscriptions;
+      a.push("mine");
+      console.log("subscriptions", a === b, a.length, b.length, socket.subscriptions.length);
+      socket.subscribe("two");
+      console.log("subscriptions", b.length, socket.subscriptions.length);
+      socket.close();
+    },
+    message() {},
+    close() { done(); },
+  },
+});
+const client = new WebSocket(`ws://localhost:${server.port}/`);
+await finished;
+client.close();
+server.stop(true);
+//// getters-that-are-functions-bound-twice-beside-a-load-of-a-file-named-at-run-time.mjs
+// Every read that a built-in makes of a property on its own x a getter that is a function bound twice: what the getter throws arrives at whoever asked. Each case has its own object, getter and reader.
+// Beside them: a method of Array.prototype on an object with getters, and a load of a file that is named at run time.
+let ran = 0;
+process.on('unhandledRejection', () => {});
+function rc133(o) { return "x" in new Proxy({}, o); }
+function c133() { const o = {}; Object.defineProperty(o, "has", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc133(o); }
+function rc134(o) { return Object.keys(new Proxy({}, o)).length; }
+function c134() { const o = {}; Object.defineProperty(o, "ownKeys", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc134(o); }
+function rc135(o) { return new Proxy(function () {}, o)(); }
+function c135() { const o = {}; Object.defineProperty(o, "apply", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc135(o); }
+function rc136(o) { return typeof Object.getPrototypeOf(new Proxy({}, o)); }
+function c136() { const o = {}; Object.defineProperty(o, "getPrototypeOf", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc136(o); }
+function rc137(o) { return typeof Reflect.construct(function () {}, [], o); }
+function c137() { const o = (function () {}).bind(); Object.defineProperty(o, "prototype", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc137(o); }
+function rc138(o) { return typeof Reflect.construct(Map, [], o); }
+function c138() { const o = (function () {}).bind(); Object.defineProperty(o, "prototype", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc138(o); }
+function rc139(o) { return typeof Reflect.construct(Array, [], o); }
+function c139() { const o = (function () {}).bind(); Object.defineProperty(o, "prototype", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc139(o); }
+function rc140(o) { return typeof Reflect.construct(Error, [], o); }
+function c140() { const o = (function () {}).bind(); Object.defineProperty(o, "prototype", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc140(o); }
+function rc141(o) { return typeof Reflect.construct(Promise, [() => {}], o); }
+function c141() { const o = (function () {}).bind(); Object.defineProperty(o, "prototype", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc141(o); }
+function rc142(o) { return String.raw(o); }
+function c142() { const o = {}; Object.defineProperty(o, "raw", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc142(o); }
+function rc143(o) { return String.raw({ raw: o }); }
+function c143() { const o = {}; Object.defineProperty(o, "length", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc143(o); }
+function rc144(o) { return typeof new Intl.NumberFormat("en", o); }
+function c144() { const o = {}; Object.defineProperty(o, "style", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc144(o); }
+function rc145(o) { return "a".localeCompare("b", "en", o); }
+function c145() { const o = {}; Object.defineProperty(o, "sensitivity", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc145(o); }
+function rc146(o) { return (1).toLocaleString("en", o); }
+function c146() { const o = {}; Object.defineProperty(o, "style", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc146(o); }
+function rc147(o) { return typeof new Response("", o); }
+function c147() { const o = {}; Object.defineProperty(o, "status", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc147(o); }
+function rc148(o) { return typeof new Request("http://a/", o); }
+function c148() { const o = {}; Object.defineProperty(o, "headers", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc148(o); }
+function rc149(o) { return typeof new TextDecoder("utf-8", o); }
+function c149() { const o = {}; Object.defineProperty(o, "fatal", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc149(o); }
+function rc150(o) { return typeof new CustomEvent("e", o); }
+function c150() { const o = {}; Object.defineProperty(o, "detail", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc150(o); }
+function rc151(o) { return (new EventTarget().addEventListener("e", () => {}, o), "added"); }
+function c151() { const o = {}; Object.defineProperty(o, "once", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc151(o); }
+function rc152(o) { return new ArrayBuffer(1, o).byteLength; }
+function c152() { const o = {}; Object.defineProperty(o, "maxByteLength", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc152(o); }
+function rc153(o) { return typeof new Request("http://a/", o); }
+function c153() { const o = {}; Object.defineProperty(o, "signal", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc153(o); }
+function rc154(o) { return 1; }
+function c154() { const o = Object.create(Set.prototype); Object.defineProperty(o, "add", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc154(o); }
+function rc155(o) { return new Set([1]).isSubsetOf(o); }
+function c155() { const o = { size: 1 }; Object.defineProperty(o, "has", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc155(o); }
+function rc156(o) { return new Set([1]).union(o).size; }
+function c156() { const o = { size: 1, has() { return true; } }; Object.defineProperty(o, "keys", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc156(o); }
+function rc157(o) { return o.description; }
+function c157() { const o = Object(Symbol('s')); Object.defineProperty(o, "description", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc157(o); }
+function rc158(o) { return 1; }
+function c158() { const o = {}; Object.defineProperty(o, Symbol.unscopables, { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc158(o); }
+function rc159(o) { return o.k; }
+function c159() { const o = {}; Object.defineProperty(o, "k", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc159(o); }
+function rc160(o) { return o["k".trim()]; }
+function c160() { const o = {}; Object.defineProperty(o, "k", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc160(o); }
+function rc161(o) { return Reflect.get(o, "k"); }
+function c161() { const o = {}; Object.defineProperty(o, "k", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc161(o); }
+function rc162(o) { return Object.create(o).k; }
+function c162() { const o = {}; Object.defineProperty(o, "k", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc162(o); }
+function rc163(o) { return o?.k; }
+function c163() { const o = {}; Object.defineProperty(o, "k", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc163(o); }
+function rc164(o) { return (({ k }) => k)(o); }
+function c164() { const o = {}; Object.defineProperty(o, "k", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc164(o); }
+function rc165(o) { return o.k(); }
+function c165() { const o = {}; Object.defineProperty(o, "k", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc165(o); }
+function rc166(o) { return typeof o.k; }
+function c166() { const o = {}; Object.defineProperty(o, "k", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc166(o); }
+function rc167(o) { return delete o.k; }
+function c167() { const o = {}; Object.defineProperty(o, "k", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc167(o); }
+function rc168(o) { return "k" in o; }
+function c168() { const o = {}; Object.defineProperty(o, "k", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc168(o); }
+function rc169(o) { return typeof Object.getOwnPropertyDescriptor(o, "k").get; }
+function c169() { const o = {}; Object.defineProperty(o, "k", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return rc169(o); }
+async function rc170(o) { return await Promise.resolve(o); }
+async function c170() { const o = {}; Object.defineProperty(o, "then", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return await rc170(o); }
+async function rc171(o) { return await o; }
+async function c171() { const o = {}; Object.defineProperty(o, "then", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return await rc171(o); }
+async function rc172(o) { return await (async () => o)(); }
+async function c172() { const o = {}; Object.defineProperty(o, "then", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return await rc172(o); }
+async function rc173(o) { return await new Promise(r => r(o)); }
+async function c173() { const o = {}; Object.defineProperty(o, "then", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return await rc173(o); }
+async function rc174(o) { return (await Promise.all([o])).length; }
+async function c174() { const o = {}; Object.defineProperty(o, "then", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return await rc174(o); }
+async function rc175(o) { return await Promise.resolve(1).then(() => o); }
+async function c175() { const o = {}; Object.defineProperty(o, "then", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return await rc175(o); }
+async function rc176(o) { return (await Promise.allSettled([o]))[0].status; }
+async function c176() { const o = {}; Object.defineProperty(o, "then", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return await rc176(o); }
+async function rc177(o) { return await Promise.race([o]); }
+async function c177() { const o = {}; Object.defineProperty(o, "then", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return await rc177(o); }
+async function rc178(o) { return await (async () => { for await (const x of o) return x; })(); }
+async function c178() { const o = {}; Object.defineProperty(o, Symbol.asyncIterator, { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return await rc178(o); }
+async function rc179(o) { return await (async () => { for await (const x of o) return x; })(); }
+async function c179() { const o = {}; Object.defineProperty(o, Symbol.iterator, { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return await rc179(o); }
+async function rc180(o) { return (await Promise.all(o)).length; }
+async function c180() { const o = {}; Object.defineProperty(o, Symbol.iterator, { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return await rc180(o); }
+async function rc181(o) { return await Promise.race(o); }
+async function c181() { const o = {}; Object.defineProperty(o, Symbol.iterator, { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return await rc181(o); }
+async function rc182(o) { return (await Array.fromAsync(o)).length; }
+async function c182() { const o = {}; Object.defineProperty(o, Symbol.asyncIterator, { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return await rc182(o); }
+async function rc183(o) { return await (p => (p.constructor = o, p.then()))(Promise.resolve(1)); }
+async function c183() { const o = {}; Object.defineProperty(o, Symbol.species, { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return await rc183(o); }
+async function rc184(o) { return await o; }
+async function c184() { const o = Promise.resolve(1); Object.defineProperty(o, "constructor", { get: function () { ran++; throw new RangeError('thrown'); }.bind().bind(), configurable: true }); return await rc184(o); }
+const cases = [["handler has", c133], ["handler ownKeys", c134], ["handler apply", c135], ["handler getPrototypeOf", c136], ["newTarget prototype", c137], ["newTarget prototype Map", c138], ["newTarget prototype Array", c139], ["newTarget prototype Error", c140], ["newTarget prototype Promise", c141], ["raw", c142], ["raw length", c143], ["options style", c144], ["options localeCompare", c145], ["options toLocaleString", c146], ["options status", c147], ["options headers", c148], ["options fatal", c149], ["options detail", c150], ["options once", c151], ["options maxByteLength", c152], ["options signal", c153], ["adder", c154], ["set has", c155], ["set keys", c156], ["description", c157], ["with", c158], ["named", c159], ["keyed", c160], ["Reflect.get", c161], ["inherited", c162], ["optional", c163], ["pattern", c164], ["call", c165], ["typeof", c166], ["delete-no-read", c167], ["has-no-read", c168], ["descriptor-no-read", c169], ["then resolve", c170], ["then await", c171], ["then return", c172], ["then resolver", c173], ["then all", c174], ["then chain", c175], ["then allSettled", c176], ["then race", c177], ["asyncIterator", c178], ["iterator for-await", c179], ["iterator all", c180], ["iterator race", c181], ["iterator fromAsync", c182], ["species await then", c183], ["constructor await", c184]];
+const only = process.argv[2];
+if (process.env.A_FILE_NAMED_AT_RUN_TIME) await import(process.env.A_FILE_NAMED_AT_RUN_TIME);
+////= for
+let getterCalls = 0;
+class Item {
+  constructor(size) {
+    this.size = size;
+  }
+  double() {
+    return this.size * 2;
+  }
+}
+const item = new Item(1.5);
+const probe = {
+  count: 0,
+  work: Array.prototype.toSpliced,
+  get length() {
+    getterCalls++;
+    this.count++;
+    console.log("length");
+    return 3;
+  },
+  get 0() {
+    getterCalls++;
+    this.count++;
+    console.log("element 0");
+    return 1.5;
+  },
+  get 1() {
+    getterCalls++;
+    this.count++;
+    console.log("element 1");
+    return item;
+  },
+  get 2() {
+    getterCalls++;
+    this.count++;
+    console.log("element 2");
+    return "two";
+  },
+};
+const result = probe.work(1, 2, 3.5, "x");
+console.log(Array.isArray(result), result.length, typeof result[0], result[0] + 1);
+console.log(typeof result[1], result[1] + 1, typeof result[2], result[2].length, result[2]);
+console.log(typeof probe, Object.keys(probe).join(), typeof probe[0], probe[0] + 1, probe[1].double());
+console.log(typeof probe[2], probe[2].length, probe[2], typeof probe.count, probe.count + 1);
+console.log(getterCalls, probe.count);
+//// host-accessors-a-handler-of-performance-is-stored-under-a-computed-key.js
+// performance is kept under a name of the global object and read back, and a handler is stored on it under a key that the build does not know. The getter of the host answers the handler.
+const log = [];
+class Body { constructor() { this.hits = 1; } step() { return ++this.hits; } }
+const body = new Body(); body.step();
+const key = process.argv.length > 99 ? "x" : "onresourcetimingbufferfull";
+globalThis.__perf = performance;
+globalThis.__perf[key] = function (event) { log.push(typeof event); body.hits = "s"; };
+log.push(typeof performance.onresourcetimingbufferfull, String(body.step()));
+performance.onresourcetimingbufferfull({}); log.push(String(body.step()));
+console.log(log.join("; "));
+//// host-accessors-a-request-handed-to-a-callback-is-read-through-a-global.js
+// A request that the host hands to the fetch callback is kept under a name of the global object and read back: the getters of the host answer as on the request itself.
+const log = [];
+const server = Bun.serve({ port: 0, fetch(request) { globalThis.__request = request; const seen = globalThis.__request; log.push(typeof seen.url, seen.method, String(seen.headers.get("x-a")), String(seen.signal.aborted)); return new Response("ok"); } });
+const answer = await fetch(`http://127.0.0.1:${server.port}/p`, { headers: { "x-a": "1" } });
+log.push(await answer.text(), String(answer.status), typeof answer.headers.get("date"));
+server.stop(true);
+console.log(log.join("; "));
+//// host-accessors-a-setter-of-url-met-through-a-global-turns-the-value-into-a-string.js
+// A URL is kept under a name of the global object and read back. The store to its hash runs toString of the value, which puts a string into a field that held a number.
+const log = [];
+class Tag { constructor() { this.count = 1; } toString() { this.count = "text"; return "#frag"; } twice() { return this.count + this.count; } }
+globalThis.__box = new URL("http://example.com/a");
+const tag = new Tag(); log.push(String(tag.twice()));
+globalThis.__box.hash = tag;
+log.push(String(tag.twice()), globalThis.__box.href, String(new Tag().twice()));
+console.log(log.join("; "));
+//// host-accessors-a-timer-met-through-a-global-gets-another-callback.js
+// A timer is kept under a name of the global object and read back. The store to _onTimeout replaces its callback, which the host then calls without arguments and with the timer as this.
+const log = [];
+class Meter { constructor() { this.total = 0; } add(by) { this.total += by; return this.total; } }
+const meter = new Meter(); meter.add(1);
+function first() { log.push("first"); }
+function second(...rest) { log.push("second " + rest.length + " " + typeof this + " " + meter.add("x")); console.log(log.join("; ")); }
+globalThis.__timer = setTimeout(first, 5);
+globalThis.__timer._onTimeout = second;
+second.call(undefined, 1);
+//// host-accessors-the-data-of-a-socket-is-stored-and-read-through-a-global.js
+// A socket that the host hands to a callback is kept under a name of the global object. What is stored as its data there is what the next callback reads from the socket.
+const log = [];
+class State { constructor() { this.seen = 0; } more(by) { this.seen += by; return this.seen; } }
+const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: {
+  open(socket) { globalThis.__socket = socket; globalThis.__socket.data = new State(); },
+  data(socket, bytes) { log.push(String(socket.data.more(bytes.length)), String(globalThis.__socket.data.more("!"))); socket.end(); },
+  close() { server.stop(); console.log(log.join("; ")); },
+} });
+const client = await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { open(socket) { socket.write("abc"); }, data() {}, close() {} } });
+//// host-accessors-the-error-handler-of-a-zlib-handle-is-called-by-native-code.js
+// node:zlib stores its error handler on the native handle. Native code calls it for input that is no gzip stream, and the listener of the program gets a code that is a string.
+const zlib = require("node:zlib");
+const log = [];
+class Seen { constructor() { this.code = 0; } note(code) { this.code = code; return typeof this.code; } }
+const seen = new Seen(); log.push(seen.note(1));
+const stream = zlib.createGunzip();
+stream.on("error", error => { log.push(seen.note(error.code), String(error.errno), error.constructor.name); console.log(log.join("; ")); });
+stream.end(Buffer.from("this is no gzip stream"));
+//// host-accessors-the-name-of-a-file-is-stored-through-a-global.js
+// A File is kept under a name of the global object and read back. A store to its name changes nothing and does not turn the value into a string.
+const log = [];
+class Name { constructor() { this.reads = 0; } toString() { this.reads = "many"; return "n.txt"; } }
+globalThis.__file = new File(["a"], "first.txt");
+const name = new Name();
+try { globalThis.__file.name = name; } catch (error) { log.push(error.constructor.name); }
+log.push(String(globalThis.__file.name), String(name.reads), String(new Name().reads));
+console.log(log.join("; "));
+//// map-numbers-a-class-that-extends-map-answers-other-numbers.js
+// The get method of a class that extends Map answers larger numbers than the Map holds; a loop reads it beside a plain Map.
+const log = [];
+class Scaled extends Map { get(key) { const found = super.get(key); return found === undefined ? found : found * 4294967296; } }
+const scaled = new Scaled(Object.entries({ a: 1, b: 3 })); scaled.set("c", 5);
+const plain = new Map(Object.entries({ a: 1 }));
+for (const map of [scaled, plain]) log.push(map.get("a") + 1, typeof map.get("z"));
+log.push(scaled.get("c") + 1, Map.prototype.get.call(scaled, "b") + 1);
+console.log(log.join("; "));
+//// map-numbers-a-count-grows-past-int32.js
+// A count that is read out of a Map, raised and stored again leaves the range of an int32.
+const log = [];
+const counts = new Map();
+counts.set("a", 2147483600);
+for (let i = 0; i < 100; i++) counts.set("a", counts.get("a") + 1);
+log.push(counts.get("a"), counts.get("a") | 0, counts.get("a") + 1, typeof counts.get("none"));
+console.log(log.join("; "));
+//// map-numbers-a-spread-and-stores-into-both-objects.js
+// The entries of a literal with two spreads; both the source and the copy are stored into before the Maps are made.
+const log = [];
+const base = { a: 1, b: 2 };
+const more = { ...base, c: 3, ...{ d: 2147483648 } };
+base.a = 6000000000; more.c = 0.125;
+const ofBase = new Map(Object.entries(base)), ofMore = new Map(Object.entries(more));
+log.push(ofBase.get("a") + 1, ofMore.get("a") + 1, ofMore.get("c") * 8, ofMore.get("d") | 0, ofMore.size, ofBase.size);
+console.log(log.join("; "));
+//// map-numbers-entries-with-fractions-and-large-numbers.js
+// The literal whose entries fill the Map holds a fraction and numbers on both sides of the range of an int32.
+const log = [];
+const sizes = { small: 1, half: 0.5, large: 4294967296, negative: -2147483649 };
+const map = new Map(Object.entries(sizes));
+function twice(key) { const found = map.get(key); return found === undefined ? "none" : found * 2; }
+log.push(twice("small"), twice("half"), twice("large"), twice("negative"), twice("x"), map.get("large") | 0, map.get("negative") >> 0);
+console.log(log.join("; "));
+//// map-numbers-getters-and-instances-as-sources-of-entries.js
+// The values of the pairs come out of getters, one of them defined later, and out of the fields of an instance that a method raises past an int32.
+const log = [];
+class Sizes { constructor() { this.w = 1; this.h = 2147483647; } grow() { this.h += 1; return this; } }
+const withGetter = { plain: 1, get big() { return 8589934592; } };
+Object.defineProperty(withGetter, "defined", { get() { return 0.5; }, enumerable: true });
+const a = new Map(Object.entries(withGetter)), b = new Map(Object.entries(new Sizes().grow()));
+log.push(a.get("big") + 1, a.get("defined") * 2, a.get("plain") + 1, b.get("h") + 1, b.get("h") | 0, b.get("w"));
+console.log(log.join("; "));
+//// map-numbers-minus-zero-nan-and-infinity.js
+// -0, NaN and Infinity as values of a Map, from a literal and from set.
+const log = [];
+const map = new Map(Object.entries({ zero: -0, nan: NaN, up: Infinity, one: 1 })); map.set("set", -0);
+log.push(Object.is(map.get("zero"), -0), Object.is(map.get("set"), -0), 1 / map.get("zero"), map.get("nan") !== map.get("nan"), map.get("up") - 1, map.get("one") / map.get("set"), map.get("nan") | 0);
+console.log(log.join("; "));
+//// map-numbers-set-is-called-in-ways-that-spell-out-no-value.js
+// Map.prototype.set through call, apply, Reflect.apply, bind, a computed name and a callback, each with a number that is no int32.
+const log = [];
+const map = new Map(); map.set("plain", 1);
+Map.prototype.set.call(map, "call", 2147483648);
+Map.prototype.set.apply(map, ["apply", 0.25]);
+Reflect.apply(Map.prototype.set, map, ["reflect", -4294967297]);
+const bound = map.set.bind(map, "bound"); bound(1e300);
+const method = "se" + (process.argv.length > 99 ? "x" : "t"); map[method]("computed", 3000000000);
+[["each", 5000000000]].forEach(([key, value]) => map.set(key, value));
+for (const key of map.keys()) log.push(key + "=" + (map.get(key) + 1) + "|" + (map.get(key) | 0));
+console.log(log.join("; "));
+//// map-numbers-the-literal-gets-a-large-number-before-its-entries-are-taken.js
+// Stores under a name and under a computed key put large numbers into the literal before Object.entries reads it.
+const log = [];
+const words = { a: 1, b: 2 };
+const key = process.argv.length > 99 ? "a" : "late";
+words[key] = 9007199254740991; words.b = 2147483648;
+const map = new Map(Object.entries(words));
+log.push(map.get("late") - 1, map.get("b") + 1, map.get("a") + 1, (map.get("b") | 0));
+console.log(log.join("; "));
+//// map-numbers-two-maps-through-one-function.js
+// One function reads a Map of small integers, a Map of fractions and large numbers, and a Map made of a literal array of pairs.
+const log = [];
+const small = new Map(Object.entries({ a: 1 })), wide = new Map(); wide.set("a", 1.5); wide.set("b", 2 ** 40);
+function read(map, key) { const found = map.get(key); return found === undefined ? -1 : found + found; }
+log.push(read(small, "a"), read(wide, "a"), read(wide, "b"), read(small, "b"), read(new Map([["a", 2 ** 31]]), "a"));
+console.log(log.join("; "));
+//// map-numbers-values-of-other-types-come-later.js
+// A Map that starts with small integers gets large numbers, strings and null by calls of set in loops and callbacks.
+const log = [];
+const map = new Map(Object.entries({ a: 1, b: 2 }));
+function show(key) { const found = map.get(key); return typeof found === "number" ? found + 1 : String(found) + "!"; }
+log.push(show("a"));
+for (const [key, value] of map) map.set(key, value > 1 ? "text" : value * 1e10);
+[...map.keys()].forEach(key => map.set(key + key, null));
+log.push(show("a"), show("b"), show("aa"), show("zz"), map.size);
+console.log(log.join("; "));
+//// methods-async-iterator-is-driven-by-native-consumers.ts
+// Methods found through instances: Array.fromAsync, ReadableStream.from and Readable.from call next of an async iterator without an argument and return with a reason or nothing; the program's own calls pass numbers.
+import { Readable } from "node:stream";
+
+let total = 0;
+
+class Ticks {
+  constructor(public left: number) {}
+  [Symbol.asyncIterator](): this {
+    return this;
+  }
+  async next(step: number): Promise<IteratorResult<string>> {
+    total += typeof step === "number" ? 1 : step === undefined ? 100 : 10000;
+    return --this.left >= 0 ? { done: false, value: "t" + this.left } : { done: true, value: undefined };
+  }
+  async return(reason: number): Promise<IteratorResult<string>> {
+    total += typeof reason === "number" ? 100000 : reason === undefined ? 1000000 : typeof reason === "string" ? 10000000 : 100000000;
+    return { done: true, value: undefined };
+  }
+}
+
+const own = new Ticks(1);
+await own.next(1);
+await own.return(1);
+const counts: number[] = [(await Array.fromAsync(new Ticks(2) as any)).length];
+const reader = (ReadableStream as any).from(new Ticks(5)).getReader();
+await reader.read();
+await reader.cancel("enough");
+let chunks = 0;
+for await (const chunk of Readable.from(new Ticks(3) as any)) chunks += String(chunk).length;
+for await (const tick of new Ticks(4) as any) if (tick === "t2") break;
+console.log(total, counts.join(), chunks);
+//// methods-descriptor-objects-are-read-by-define-property.ts
+// Methods found through instances: Object.defineProperty and Object.create read `get`, `value`, `enumerable` from a descriptor that is a class instance, through its accessors, and later run the getter they found on another object.
+let total = 0;
+
+class Descriptor {
+  constructor(public held: number) {}
+  get enumerable(): boolean {
+    total += 1;
+    return true;
+  }
+  get get(): (this: Descriptor) => number {
+    total += 100;
+    return read;
+  }
+}
+
+function read(this: Descriptor): number {
+  total += this instanceof Descriptor ? 10000 : 1000000;
+  return typeof this.held === "number" ? this.held : -1;
+}
+
+const descriptor = new Descriptor(5);
+const honest = read.call(descriptor);
+const holder: any = Object.defineProperty({}, "a", descriptor);
+const created: any = Object.create(null, { b: descriptor, c: descriptor });
+const many: any = Object.defineProperties({ held: "text" }, { d: descriptor });
+console.log(total, honest, holder.a, created.b + created.c, many.d, JSON.stringify(holder), Object.keys(created).join());
+//// methods-generator-is-resumed-by-native-consumers-with-nothing.ts
+// Methods found through instances: a generator whose `yield` is typed to receive a number is resumed with undefined by Array.from, Set, a spread, Promise.all and yield*, and closed early by Map; the program's own calls send numbers.
+export {};
+
+let total = 0;
+
+function* steps(): Generator<number, void, number> {
+  try {
+    for (let i = 0; i < 3; i++) {
+      const sent = yield i;
+      total += typeof sent === "number" ? sent : sent === undefined ? 100 : 10000;
+    }
+  } finally {
+    total += 100000;
+  }
+}
+
+function* outer(): Generator<number, void, number> {
+  yield* steps();
+}
+
+const own = steps();
+own.next(0);
+own.next(1);
+own.next(2);
+own.next(3);
+const counts = [Array.from(steps()).length, new Set(steps()).size, Math.max(...(steps() as any)), (await Promise.all(steps())).length, [...(outer() as any)].length];
+try {
+  new Map(steps() as any);
+} catch {
+  counts.push(-1);
+}
+console.log(total, counts.join());
+//// methods-getters-are-run-by-structured-clone-and-the-class-is-lost.ts
+// Methods found through instances: structuredClone runs own getters and answers with a plain object, though lib.d.ts says that it returns what it was given: no method, no accessor and no class is left.
+let total = 0;
+
+class Point {
+  constructor(public x: number, public y: number) {
+    Object.defineProperty(this, "sum", { enumerable: true, get: (): number => ((total += 1000), this.x + this.y) });
+  }
+  norm(): number {
+    return Math.abs(this.x) + Math.abs(this.y);
+  }
+  get double(): number {
+    return this.x * 2;
+  }
+}
+
+function measure(point: Point): number {
+  if (point instanceof Point) return point.norm();
+  const other = point as Point;
+  return typeof other.norm === "function" ? 100 : 10 + other.x + (other.double === undefined ? 100000 : 0);
+}
+
+const point = new Point(1, 2);
+total += measure(point);
+const copy = structuredClone(point);
+total += measure(copy);
+const nested = structuredClone({ list: [point], map: new Map([["p", point]]) });
+total += measure(nested.list[0]) + measure(nested.map.get("p")!);
+console.log(total, Object.getPrototypeOf(copy) === Object.prototype, (copy as any).sum, nested.list[0] === nested.map.get("p"));
+//// methods-handle-event-of-a-listener-object.ts
+// Methods found through instances: an EventTarget calls handleEvent on a listener that is an object, with an Event, while every call in the program passes a number.
+let total = 0;
+
+class Recorder {
+  seen = 1;
+  handleEvent(event: number): void {
+    total += typeof event === "number" ? event : (event as any) instanceof Event ? 100 * this.seen : 10000;
+    total += typeof event === "object" && (event as any).type === "ping" ? 100000 : 0;
+    this.seen++;
+  }
+}
+
+const recorder = new Recorder();
+recorder.handleEvent(1);
+const target = new EventTarget();
+target.addEventListener("ping", recorder as any);
+target.addEventListener("pong", recorder as any, { once: true });
+target.dispatchEvent(new Event("ping"));
+target.dispatchEvent(new CustomEvent("pong", { detail: 5 }));
+target.dispatchEvent(new Event("pong"));
+const controller = new AbortController();
+controller.signal.addEventListener("abort", recorder as any);
+controller.abort("reason");
+console.log(total, recorder.seen);
+//// methods-iterator-next-and-return-are-called-by-native-consumers.ts
+// Methods found through instances: Array.from, Set, Map, Promise.all, Object.fromEntries and a spread call next without an argument, and return without one where they stop early; the program's own calls pass numbers.
+export {};
+
+let total = 0;
+
+class Countdown implements Iterator<number> {
+  constructor(public left: number) {}
+  [Symbol.iterator](): this {
+    return this;
+  }
+  next(step: number): IteratorResult<number> {
+    total += typeof step === "number" ? 1 : step === undefined ? 100 : 10000;
+    this.left -= typeof step === "number" ? step : 1;
+    return this.left >= 0 ? { done: false, value: this.left } : { done: true, value: undefined };
+  }
+  return(code: number): IteratorResult<number> {
+    total += typeof code === "number" ? 100000 : code === undefined ? 1000000 : 10000000;
+    return { done: true, value: undefined };
+  }
+}
+
+const own = new Countdown(5);
+own.next(2);
+own.return(0);
+const counts: number[] = [Array.from(new Countdown(2) as any).length, new Set(new Countdown(3) as any).size, Math.max(...(new Countdown(4) as any))];
+counts.push((await Promise.all(new Countdown(2) as any)).length);
+for (const attempt of [() => new Map(new Countdown(3) as any), () => Object.fromEntries(new Countdown(3) as any), () => Array.from(new Countdown(3) as any, () => { throw 1; })]) {
+  try {
+    attempt();
+  } catch {
+    counts.push(-1);
+  }
+}
+const [first] = new Countdown(9) as any;
+console.log(total, counts.join(), first);
+//// methods-length-setter-and-index-setters-are-run-by-array-methods.ts
+// Methods found through instances: Array.prototype.push, pop, unshift and fill, called on an instance of a class, store numbers through its setters and read through its getters; the program stores strings.
+let total = 0;
+
+class Shelf {
+  held = "0";
+  get length(): string {
+    return this.held;
+  }
+  set length(value: string) {
+    total += typeof value === "string" ? 1 : typeof value === "number" ? 100 : 10000;
+    this.held = value;
+  }
+  set 0(value: string) {
+    total += typeof value === "string" ? 100000 : typeof value === "number" ? 1000000 : 10000000;
+  }
+}
+
+const shelf = new Shelf();
+shelf.length = "0";
+shelf[0] = "book";
+const like: any = shelf;
+const results: unknown[] = [Array.prototype.push.call(like, 7), typeof shelf.held, Array.prototype.push.call(like, 8, 9), Array.prototype.pop.call(like), (Array.prototype.fill.call(like, {}) as any).held, Array.prototype.unshift.call(like, 1)];
+console.log(total, results.join(), shelf.length + 1);
+//// methods-option-bags-are-read-through-getters.ts
+// Methods found through instances: native constructors read their options from a class instance through accessors of its prototype: the cause of an Error, the flags of an event, the options of a stream strategy and of a TextDecoder.
+let total = 0;
+
+class Options {
+  get cause(): number {
+    total += 1;
+    return 5;
+  }
+  get detail(): string {
+    total += 100;
+    return "detail";
+  }
+  get bubbles(): boolean {
+    total += 10000;
+    return true;
+  }
+  get fatal(): number {
+    total += 1000000;
+    return 1;
+  }
+  get highWaterMark(): { valueOf(): number } {
+    total += 100000000;
+    return { valueOf: () => 3 };
+  }
+}
+
+const options: any = new Options();
+const results: unknown[] = [
+  new Error("e", options).cause,
+  new CustomEvent("x", options).detail,
+  new Event("x", options).bubbles,
+  new TextDecoder("utf-8", options).fatal,
+  new CountQueuingStrategy(options).highWaterMark,
+  new AggregateError([], "a", options).cause,
+];
+console.log(total, results.map(one => typeof one + ":" + String(one)).join());
+//// methods-proxy-traps-get-symbols-and-other-receivers.ts
+// Methods found through instances: the traps of a handler that is a class instance are called by native code with symbols as keys and with other receivers, while the program's own calls pass strings and the target.
+export {};
+
+let total = 0;
+
+type Target = Record<string, number>;
+
+class Watcher implements ProxyHandler<Target> {
+  get(target: Target, key: string, receiver: Target): unknown {
+    total += typeof key === "string" ? 1 : typeof key === "symbol" ? 1000 : 1000000;
+    return Reflect.get(target, key, receiver);
+  }
+  has(target: Target, key: string): boolean {
+    total += typeof key === "string" ? 10000000 : 100000000;
+    return key in target;
+  }
+  set(target: Target, key: string, value: number, receiver: Target): boolean {
+    total += receiver === target ? 10 : 100;
+    target[key] = typeof value === "number" ? value : -1;
+    return true;
+  }
+}
+
+const target: Target = { a: 1 };
+const watcher = new Watcher();
+watcher.get(target, "a", target);
+watcher.has(target, "a");
+watcher.set(target, "b", 2, target);
+const proxy: any = new Proxy(target, watcher);
+const child = Object.create(proxy);
+child.c = "text";
+const results: unknown[] = [String(Object.prototype.toString.call(proxy)), JSON.stringify(proxy), [].concat(proxy).length, Symbol.iterator in proxy, Reflect.has(proxy, "a"), await proxy === proxy, `${Object.keys(proxy)}`];
+////= lines-2	`${proxy}`
+console.log(total, results.join(" "));
+//// methods-setters-are-run-by-object-assign.ts
+// Methods found through instances: Object.assign stores through the setters of a class with whatever the sources hold, here strings and null out of JSON.parse, while every store in the program is a number.
+let total = 0;
+
+class Settings {
+  #size = 0;
+  set size(value: number) {
+    total += typeof value === "number" ? 1 : typeof value === "string" ? 100 : value === null ? 10000 : 1000000;
+    this.#size = value;
+  }
+  get size(): number {
+    return this.#size;
+  }
+}
+
+const settings = new Settings();
+settings.size = 4;
+Object.assign(settings, { size: 5 });
+const first = settings.size + 1;
+Object.assign(settings, JSON.parse('{"size":"6"}'));
+const second = settings.size + 1;
+Object.assign(settings, JSON.parse('{"size":null}'), { size: [7] } as any);
+const third = settings.size + 1;
+console.log(total, first, second, third, typeof settings.size);
+//// methods-thenable-gets-the-resolving-functions.ts
+// Methods found through instances: await, Promise.resolve, a resolve function and a returned value all call `then` with two functions that native code made, while the program's own calls pass a handler object and a number.
+export {};
+
+let total = 0;
+
+class Handler {
+  done(value: number): void {
+    total += value;
+  }
+}
+
+class Later {
+  constructor(public value: number) {}
+  then(handler: Handler, priority: number): void {
+    total += handler instanceof Handler ? 1 : typeof handler === "function" ? 100 : 10000;
+    total += typeof priority === "number" ? 100000 : typeof priority === "function" ? 1000000 : 0;
+    if (handler instanceof Handler) handler.done(this.value);
+    else (handler as any)(this.value);
+  }
+}
+
+new Later(3).then(new Handler(), 1);
+const later = (value: number): any => new Later(value);
+const values: number[] = [
+  await later(1),
+  await Promise.resolve(later(2)),
+  await new Promise<number>(resolve => resolve(later(3))),
+  await (async () => later(4))(),
+  await Promise.resolve(0).then(() => later(5)),
+  ...(await Promise.all([later(6), later(7)])),
+  await Promise.race([later(8)]),
+];
+console.log(total, values.join());
+//// methods-to-json-gets-the-key-as-a-string.ts
+// Methods found through instances: JSON.stringify calls toJSON with the key, a string, while every call in the program passes a number.
+class Reading {
+  constructor(public value: number) {}
+  toJSON(scale: number): number {
+    return typeof scale === "number" ? this.value * scale : this.value + 1000 + (scale as string).length;
+  }
+}
+
+const reading = new Reading(7);
+let sum = reading.toJSON(2) + reading.toJSON(3);
+const text = JSON.stringify({ first: reading, list: [reading, reading] });
+for (const part of text.match(/\d+/g)!) sum += Number(part);
+console.log(sum);
+//// methods-to-primitive-gets-a-hint.ts
+// Methods found through instances: every conversion calls Symbol.toPrimitive with one of three strings, while every call in the program passes a number.
+let total = 0;
+
+class Money {
+  constructor(public cents: number) {}
+  [Symbol.toPrimitive](digits: number): number | string {
+    total += typeof digits === "number" ? 1 : digits === "number" ? 100 : digits === "string" ? 10000 : digits === "default" ? 1000000 : 100000000;
+    return typeof digits === "number" ? this.cents.toFixed(digits) : (digits as string) === "string" ? "money" : this.cents;
+  }
+}
+
+const money: any = new Money(5);
+(money as Money)[Symbol.toPrimitive](2);
+const results: unknown[] = [
+  Math.abs(money),
+  String(money),
+  money + 1,
+  `${money}`,
+  new Date(money).getTime(),
+  money == 5,
+  money < 6,
+  [1, 2, 3, 4, 5, 6].indexOf(6, money),
+  ({ money: 1 } as any)[money],
+  Number(money),
+  BigInt(money),
+  [money].join(),
+  Object.is(Reflect.has({ money: 1 }, money), true),
+];
+console.log(total, results.join());
+//// methods-to-string-gets-no-radix.ts
+// Methods found through instances: join, String, concat, Symbol, RegExp, parseInt and a property key all call toString without an argument, while every call in the program passes a number.
+let total = 0;
+
+class Amount {
+  constructor(public cents: number) {}
+  toString(radix: number): string {
+    total += typeof radix === "number" ? 1 : radix === undefined ? 100 : 10000;
+    return this.cents.toString(radix === undefined ? 10 : radix + 0);
+  }
+}
+
+const amount: any = new Amount(255);
+total += (amount as Amount).toString(16).length;
+const texts: string[] = [
+  [amount, amount].join("-"),
+  String(amount),
+  "".concat(amount),
+  Symbol(amount).description!,
+  new RegExp(amount).source,
+  String(parseInt(amount)),
+  Object.keys({ [amount]: 1 })[0],
+  encodeURIComponent(amount),
+  new Error(amount).message,
+  "255".replace(amount, "x"),
+  `${amount}`,
+];
+console.log(total, texts.join(""));
+//// methods-value-of-gets-no-unit.ts
+// Methods found through instances: Math, Date, Number, typed arrays, string and array methods call valueOf without an argument, while every call in the program passes a string.
+export {};
+
+let total = 0;
+
+class Length {
+  constructor(public meters: number) {}
+  valueOf(unit: string): number {
+    total += typeof unit === "string" ? unit.length : unit === undefined ? 100 : 10000;
+    return unit === "cm" ? this.meters * 100 : this.meters;
+  }
+}
+
+const length: any = new Length(2);
+total += (length as Length).valueOf("cm");
+const numbers: number[] = [
+  Math.max(length, 1),
+  Math.imul(length, 3),
+  new Date(length).getTime(),
+  Number(length),
+  new Uint8Array(3).fill(length)[2],
+  "abcdef".charCodeAt(length),
+  [5, 6, 7, 8].slice(length).length,
+  [5, 6, 7, 8].at(length)!,
+  "ab".repeat(length).length,
+  new Array(length).length,
+  isNaN(length) ? 1 : 0,
+  length * 2,
+  +length,
+];
+console.log(total, numbers.join());
+//// methods-well-known-symbols-of-string-methods.ts
+// Methods found through instances: replace, split, match, search and matchAll call the method under their well-known symbol with the string (and more), while the program's own calls pass numbers.
+let total = 0;
+
+class Matcher {
+  [Symbol.replace](text: number, replacement: number): string {
+    total += typeof text === "number" ? 1 : typeof text === "string" ? 100 : 10000;
+    return typeof replacement === "number" ? "n" : typeof replacement;
+  }
+  [Symbol.split](text: number, limit: number): string[] {
+    total += typeof limit === "number" ? 100000 : limit === undefined ? 1000000 : 0;
+    return [typeof text];
+  }
+  [Symbol.search](text: number): number {
+    return typeof text === "number" ? text : -5;
+  }
+  get [Symbol.match](): boolean {
+    total += 10000000;
+    return false;
+  }
+}
+
+const matcher = new Matcher();
+matcher[Symbol.replace](1, 2);
+matcher[Symbol.split](1, 2);
+matcher[Symbol.search](3);
+const any: any = matcher;
+const results: unknown[] = ["abc".replace(any, "x"), "abc".replace(any, () => "y"), "abc".replaceAll(any, "z"), "abc".split(any), "abc".split(any, 2), "abc".search(any), "[object Object]".startsWith(any), "abc".includes(any)];
+console.log(total, results.join());
+//// prototypes-a-bare-literal-gets-a-prototype-later.ts
+// A literal under null finds nothing of Object.prototype until somebody puts it under an object. A store to `__proto__` finds no setter there: it makes an own property.
+class Shape {
+  sides = 4;
+  describe(): string {
+    return "sides " + (this as any).sides;
+  }
+}
+
+const first: any = { __proto__: null, sides: 3 };
+console.log(typeof first.toString, typeof first.describe, first.sides);
+first.__proto__ = Shape.prototype;
+console.log(typeof first.describe, Object.getPrototypeOf(first), Object.keys(first).join());
+
+const second: any = { __proto__: null, sides: 5 };
+Object.setPrototypeOf(second, Shape.prototype);
+console.log(second.describe(), second instanceof Shape, typeof second.toString);
+
+const third: any = { __proto__: null, sides: 6 };
+Reflect.setPrototypeOf(third, second);
+console.log(third.describe(), typeof third.hasOwnProperty, Object.getPrototypeOf(third) === second);
+
+const fourth: any = { __proto__: null, sides: 7 };
+(Object.prototype as any).__lookupSetter__("__proto__").call(fourth, Shape.prototype);
+console.log(fourth.describe());
+//// prototypes-a-copy-leaves-behind-what-lies-above-its-source.ts
+// A spread and Object.assign take own enumerable properties. Methods of the class, getters of its prototype object and what Object.prototype holds stay behind.
+class Account {
+  balance = 10;
+  get doubled(): number {
+    return this.balance * 2;
+  }
+  deposit(amount: number): number {
+    return (this.balance += amount);
+  }
+}
+
+const account = new Account();
+Object.defineProperty(account, "own", { get() { return this.balance + 1; }, enumerable: true });
+const bare: any = { __proto__: null, ...account };
+console.log(bare.balance, bare.own, bare.doubled, typeof bare.deposit, typeof bare.toString, typeof bare.constructor);
+account.deposit(5);
+console.log(bare.balance, bare.own, Object.getPrototypeOf(bare), bare.__proto__);
+
+const assigned: any = Object.assign(Object.create(null), account);
+console.log(assigned.balance, assigned.own, assigned.doubled, typeof assigned.deposit, typeof assigned.valueOf);
+
+const ordinary: any = { ...account };
+console.log(ordinary.balance, typeof ordinary.deposit, typeof ordinary.toString, ordinary.constructor === Object, Account.prototype.isPrototypeOf(ordinary), Object.prototype.isPrototypeOf.call(account, ordinary));
+
+const heir: any = { __proto__: account, top: 1 };
+const twice: any = { __proto__: null, ...heir };
+console.log(twice.top, twice.balance, typeof twice.deposit);
+
+let names = "";
+for (const name in bare) names += name + " ";
+for (const name in { __proto__: account, top: 1 }) names += name + " ";
+console.log(names);
+//// prototypes-a-literal-names-a-value-that-is-no-prototype.ts
+// `{ __proto__: value }` takes an object or null. Any other value is left out, and the literal stays under Object.prototype.
+function under(value: any): any {
+  return { __proto__: value, own: 1 };
+}
+
+const base = { inherited: 2 };
+const values: any[] = [null, undefined, 1, "text", true, Symbol.iterator, 10n, base, function named() {}, [], Object.prototype];
+for (const value of values) {
+  const made = under(value);
+  console.log(typeof value, typeof made.toString, typeof made.hasOwnProperty, made.inherited, typeof made.call, typeof made.push, "own" in made, Object.getPrototypeOf(made) === value);
+}
+//// prototypes-entries-values-and-keys-take-own-properties.ts
+// Object.entries, values and keys list own enumerable properties: nothing that is inherited, and an own property may have the name of a member of Object.prototype.
+class Point {
+  x = 1;
+  y = 2;
+  norm(): number {
+    return this.x + this.y;
+  }
+}
+
+let sum = 0;
+const point = new Point();
+Object.entries(point).forEach(([name, value]) => { sum += (value as number) * name.length; });
+Object.entries({ __proto__: point, z: 3 }).forEach(([, value]) => { sum += 10 * (value as number); });
+Object.entries({ a: point }).forEach(([, held]) => { held.x++; sum += 100 * held.norm(); });
+Object.values({ toString: point, constructor: point }).forEach(held => { held.y++; sum += 1000 * held.norm(); });
+console.log(sum, point.x, point.y, Object.keys({ __proto__: point }).length, Object.entries(Object.create(point)).length);
+const shadowing: any = { __proto__: null, toString: () => "own", hasOwnProperty: 1 };
+console.log(Object.entries(shadowing).map(([name, value]) => name + ":" + typeof value).join(), `${shadowing}`);
+//// prototypes-object-create-under-each-kind-of-operand.ts
+// What Object.create makes lies under its operand alone, whatever the operand is, and a later change above the operand shows through it.
+class Animal {
+  legs = 4;
+  speak(): string {
+    return "legs " + (this as any).legs;
+  }
+}
+
+function make(prototype: any): any {
+  return Object.create(prototype);
+}
+
+const bare = make(null);
+console.log(typeof bare.toString, typeof bare.hasOwnProperty, "toString" in bare);
+try {
+  console.log(`${bare}`);
+} catch (error) {
+  console.log((error as Error).constructor === TypeError);
+}
+
+const heir = make(Animal.prototype);
+heir.legs = 2;
+console.log(heir.speak(), heir instanceof Animal, typeof heir.toString);
+
+const base: any = make(null);
+base.greet = function () { return "hello " + this.name; };
+const below = make(base);
+below.name = "below";
+console.log(below.greet(), typeof below.toString);
+Object.setPrototypeOf(base, Animal.prototype);
+console.log(below.speak(), typeof below.toString);
+
+const underFunction = make(function callee() {});
+console.log(typeof underFunction.call, typeof underFunction, underFunction.name);
+const underArray = make([1, 2, 3]);
+console.log(underArray.length, underArray[1], Array.isArray(underArray), underArray.join("-"));
+const underProxy = make(new Proxy({}, { get: (_, name) => "trap " + String(name) }));
+console.log(underProxy.anything, underProxy.toString);
+for (const wrong of [undefined, 1, "text"]) {
+  try {
+    make(wrong);
+  } catch (error) {
+    console.log((error as Error).constructor === TypeError);
+  }
+}
+const described = Object.create(null, { shown: { value: 1, enumerable: true }, hidden: { value: 2 } });
+console.log(described.shown, described.hidden, Object.keys(described).join(), typeof described.toString);
+//// prototypes-one-literal-under-many-prototypes.ts
+// One literal in a loop lies under another prototype each time round, null among them.
+const cat = { sound() { return "meow"; } };
+const dog = { sound() { return "woof"; }, fetch() { return "stick"; } };
+const chain: any[] = [cat, null, dog, Object.prototype, null];
+let said = "";
+for (let index = 0; index < chain.length; index++) {
+  const pet: any = { __proto__: chain[index], index };
+  said += typeof pet.sound === "function" ? pet.sound() : "silent";
+  said += typeof pet.fetch === "function" ? pet.fetch() : "";
+  said += typeof pet.toString + " ";
+}
+console.log(said);
+//// prototypes-spellings-of-proto-in-a-literal.ts
+// Only `__proto__: value` and `"__proto__": value` set the prototype. A computed key, a method and parsed text make an own property.
+const key = "__proto__";
+const plain: any = { __proto__: null };
+const quoted: any = { "__proto__": null };
+const computed: any = { [key]: null };
+const constantKey: any = { ["__proto__"]: null };
+const method: any = { __proto__() { return 1; } };
+const parsed: any = JSON.parse('{ "__proto__": null }');
+for (const [name, made] of Object.entries({ plain, quoted, computed, constantKey, method, parsed })) {
+  console.log(name, typeof made.toString, Object.getPrototypeOf(made) === null, Object.getOwnPropertyNames(made).length);
+}
+//// prototypes-tables-under-null-read-by-any-key.ts
+// A table under null answers undefined for the names of Object.prototype, so a handler that is looked up by a name from outside is one that the program has stored.
+let total = 0;
+const handlers: any = { __proto__: null };
+const created: any = Object.create(null);
+const ordinary: any = {};
+handlers.add = created.add = ordinary.add = (amount: number) => { total += amount; };
+
+const names = ["add", "toString", "constructor", "__proto__", "hasOwnProperty", "valueOf", "__defineGetter__", "missing"];
+for (const name of names) {
+  for (const table of [handlers, created, ordinary]) {
+    const handler = table[name];
+    console.log(name, typeof handler, name in table);
+    if (typeof handler === "function" && name === "add") handler(1);
+  }
+}
+console.log(total);
+handlers["__proto__"] = { add: (amount: number) => { total += 100 * amount; } };
+console.log(Object.keys(handlers).join(), Object.getPrototypeOf(handlers), typeof handlers.__proto__.add);
+handlers.__proto__.add(1);
+ordinary["__proto__"] = { extra: (amount: number) => { total += 10000 * amount; } };
+ordinary.extra(1);
+console.log(total, Object.keys(ordinary).join());
+//// proxies-a-handler-gets-its-trap-after-the-proxy-is-made.js
+// The handler is empty when the proxy is made and gets a trap afterwards; another handler inherits its trap.
+const log = [];
+class Body { constructor() { this.hits = 1; } }
+const b = new Body(); const handler = {};
+const p = new Proxy(b, handler);
+log.push(String(p.hits));
+handler.get = function (target, key) { log.push("trap " + String(key) + " " + (target === b)); return 7; };
+log.push(String(p.hits));
+const inherited = Object.create({ has(target, key) { log.push("has " + String(key)); return true; } });
+log.push(String("nothing" in new Proxy(b, inherited)));
+console.log(log.join("; "));
+//// proxies-a-proxy-lies-above-another-object.js
+// A proxy without traps is the prototype of another object: reads through that object find what the target holds, and a getter of the target's class gets that object as this.
+const log = [];
+class Vec { constructor(x) { this.x = x; } }
+class Body { constructor() { this.pos = new Vec(2); } get twice() { log.push(this === child ? "this is the child" : "this is another"); return 2; } }
+const b = new Body(); const p = new Proxy(b, {});
+const child = { __proto__: p };
+child.pos.x = "s"; log.push(typeof b.pos.x, String(child.twice));
+const made = Object.create(new Proxy(new Body(), {})); made.pos.x = true; log.push(typeof made.pos.x);
+console.log(log.join("; "));
+//// proxies-a-proxy-that-is-dropped.js
+// A proxy that nobody keeps: its target goes on as if it had not been made.
+class Body { constructor() { this.hits = 0; } step() { this.hits++; return this; } }
+const b = new Body();
+new Proxy(b, {});
+console.log(b.step().step().hits);
+//// proxies-a-store-and-a-delete-through-a-proxy-reach-its-target.js
+// A proxy without traps: what the program stores and deletes through it is stored into and deleted from the target, whose own methods read the field afterwards.
+class Body { constructor() { this.hits = 0; } twice() { return this.hits * 2; } }
+const b = new Body();
+const p = new Proxy(b, {});
+p.hits = "s"; p.extra = 1;
+console.log(typeof b.hits, b.twice(), b.extra, Object.keys(b).join());
+delete p.hits;
+console.log(b.hits, "hits" in b, "hits" in p);
+//// proxies-a-trap-defines-accessors-on-the-target.js
+// A set trap puts an accessor in the place of each field it is asked to store, and Object.defineProperty goes through the defineProperty trap: the methods of the target's class read the accessors, other instances keep their fields.
+const log = [];
+class Body { constructor() { this.hits = 1; this.name = "b"; } twice() { return this.hits * 2; } label() { return this.name + "!"; } }
+const b = new Body(); log.push(String(b.twice()), b.label());
+const p = new Proxy(b, {
+  set(target, key, value) {
+    Object.defineProperty(target, key, { get() { log.push("getter " + String(key) + " " + (this === target)); return value; }, set(next) { log.push("setter " + typeof next); }, configurable: true });
+    return true;
+  },
+  defineProperty(target, key, descriptor) { log.push("define " + String(key)); return Reflect.defineProperty(target, key, descriptor); },
+});
+p.hits = 21; p.name = 5;
+log.push(String(b.twice()), b.label()); b.hits = "x";
+Object.defineProperty(p, "extra", { get() { return "e"; }, configurable: true });
+log.push(String(b.extra), String(new Body().twice()), new Body().label());
+console.log(log.join("; "));
+//// proxies-a-trap-keeps-and-changes-the-target.js
+// A get trap keeps the target, stores values of other types into its fields and gives it another prototype; other instances of the class keep theirs.
+const log = [];
+class Vec { constructor(x) { this.x = x; } twice() { return this.x * 2; } }
+class Body { constructor() { this.pos = new Vec(1); this.hits = 0; } step() { this.hits += 1; return this.hits; } }
+let kept;
+const b = new Body();
+const p = new Proxy(b, { get(target, key) { kept = target; target.hits = "text"; target.pos = { x: "o", twice() { return "replaced"; } }; Object.setPrototypeOf(target, { step() { return "other"; } }); return 1; } });
+log.push(String(b.step()), String(b.pos.twice()));
+p.anything;
+log.push(String(b.step()), String(b.pos.twice()), typeof b.hits, String(kept === b), String(new Body().step()));
+console.log(log.join("; "));
+//// proxies-built-ins-change-the-target-through-a-proxy.js
+// A proxy without traps is handed to Object.setPrototypeOf and Object.defineProperty: the target gets another prototype and an accessor in the place of a field, other instances of its class keep theirs.
+const log = [];
+class Base { kind() { return "base"; } }
+class Body extends Base { constructor() { super(); this.hits = 1; } kind() { return "body"; } }
+const b = new Body();
+const p = new Proxy(b, {});
+Object.setPrototypeOf(p, { kind() { return "replaced"; } });
+log.push(b.kind(), String(b instanceof Body));
+Object.defineProperty(p, "hits", { get() { log.push("getter ran"); return "g"; }, configurable: true });
+log.push(String(b.hits), String(new Body().hits), new Body().kind());
+console.log(log.join("; "));
+//// proxies-the-target-is-frozen-through-a-proxy.js
+// Object.freeze and Reflect.preventExtensions get a proxy without traps: the target is frozen, its field still reads what it held, and a store to it throws in strict code.
+"use strict";
+const log = [];
+class Body { constructor() { this.hits = 1; } }
+const b = new Body(); const p = new Proxy(b, {});
+Object.freeze(p);
+try { b.hits = 2; } catch (error) { log.push(error.constructor.name); }
+log.push(String(b.hits), String(Object.isFrozen(b)));
+const c = new Body(); Reflect.preventExtensions(new Proxy(c, {}));
+try { c.extra = 1; } catch (error) { log.push(error.constructor.name); }
+console.log(log.join("; "));
+//// proxies-traps-answer-other-things-than-the-target-holds.js
+// Traps answer other things than the target holds: another object under a field, bound methods, keys and a prototype of their own. A method called through the proxy sees them, the same method called on the target does not.
+const log = [];
+class Vec { constructor(x) { this.x = x; } len() { return Math.abs(this.x); } }
+class Body { constructor() { this.pos = new Vec(-2); } far() { return this.pos.len() > 1; } }
+const b = new Body();
+const p = new Proxy(b, {
+  get(target, key, receiver) { if (key === "pos") return { x: "s", len() { return "fake"; } }; const found = Reflect.get(target, key, receiver); return typeof found === "function" ? found.bind(receiver) : found; },
+  has() { return true; },
+  ownKeys() { return ["pos", "made"]; },
+  getOwnPropertyDescriptor(target, key) { return { value: key === "pos" ? target.pos : 1, enumerable: true, configurable: true, writable: true }; },
+  getPrototypeOf() { return Vec.prototype; },
+});
+log.push(String(p.far()), String(b.far()), String("nothing" in p), Object.keys(p).join(), String(p instanceof Vec), String(p instanceof Body), JSON.stringify({ ...p }));
+console.log(log.join("; "));
+//// proxies-what-a-spread-of-a-proxy-holds-is-what-the-target-holds.js
+// A spread and a rest pattern copy the fields of the target out of a proxy without traps: a store into the object that a copy holds is seen through the target.
+const log = [];
+class Vec { constructor(x) { this.x = x; } len() { return this.x * 2; } }
+class Body { constructor() { this.pos = new Vec(2); this.n = 1; } }
+const b = new Body(); const p = new Proxy(b, {});
+const copy = { ...p }; copy.pos.x = "s";
+log.push(typeof b.pos.x, String(b.pos.len()), String(copy.n));
+const { pos, ...rest } = new Proxy(new Body(), {}); pos.x = null;
+log.push(String(pos.len()), Object.keys(rest).join());
+console.log(log.join("; "));
+//// receivers-a-bigint-mixes-with-a-number-in-a-getter.ts
+// Receivers below an accessor: a getter that adds one to a number field throws a TypeError where the receiver that Reflect.get passes holds a bigint or a symbol in that field.
+let total = 0;
+
+class Meter {
+  count = 1;
+  get next(): number {
+    return this.count + 1;
+  }
+}
+
+const meter = new Meter();
+total += meter.next;
+for (const count of [2n, Symbol("s"), { valueOf: () => 3 }, null, undefined, "4", [5], true] as any[]) {
+  try {
+    const next: unknown = Reflect.get(meter, "next", { count });
+    total += typeof next === "number" ? (Number.isNaN(next) ? 100 : next * 1000) : typeof next === "string" ? 100000 * next.length : 0;
+  } catch (error) {
+    total += error instanceof TypeError ? 10000000 : 0;
+  }
+}
+console.log(total);
+//// receivers-a-method-read-from-a-parsed-array-is-run-through-apply.ts
+// A method comes back out of an array whose contents nobody knows and is run through `apply` with another receiver and another argument. What `taken.apply` answers may be anything, and `apply` itself is among it.
+const log: string[] = [];
+////= Meter
+
+log.push(new Meter().measure(1));
+const held: any[] = JSON.parse("[]");
+held.push(new Meter());
+const taken = held[0].measure;
+log.push(taken.apply({ size: "s" }, ["s"]));
+console.log(log.join("; "));
+//// receivers-a-method-read-from-a-parsed-array-is-run-through-bind.ts
+// A method comes back out of an array whose contents nobody knows and is run through `bind` with another receiver and another argument. What `taken.bind` answers may be anything, and `bind` itself is among it.
+const log: string[] = [];
+////= Meter
+
+log.push(new Meter().measure(1));
+const held: any[] = JSON.parse("[]");
+held.push(new Meter());
+const taken = held[0].measure;
+log.push(taken.bind({ size: "s" })("s"));
+console.log(log.join("; "));
+//// receivers-a-method-read-from-a-parsed-array-is-run-through-call.ts
+// A method comes back out of an array whose contents nobody knows and is run through `call` with another receiver and another argument. What `taken.call` answers may be anything, and `call` itself is among it.
+const log: string[] = [];
+////= Meter
+
+log.push(new Meter().measure(1));
+const held: any[] = JSON.parse("[]");
+held.push(new Meter());
+const taken = held[0].measure;
+log.push(taken.call({ size: "s" }, "s"));
+console.log(log.join("; "));
+//// receivers-a-proxy-without-traps-becomes-this.ts
+// Receivers below an accessor: a proxy without traps forwards a read to its target with the proxy as the receiver, so accessors and methods of the class run with a `this` that has no private field and is no instance layout.
+let total = 0;
+
+class Vault {
+  #secret = 5;
+  open = 7;
+  get secret(): number {
+    return this.#secret;
+  }
+  get visible(): number {
+    total += 1;
+    return this.open + 1;
+  }
+  has(): boolean {
+    return #secret in this;
+  }
+}
+
+const vault = new Vault();
+const proxy = new Proxy(vault, {});
+const results: unknown[] = [vault.secret, vault.visible, proxy.visible, proxy instanceof Vault, proxy.has(), vault.has(), JSON.stringify(proxy), Object.keys(proxy).join()];
+////= lines-2	proxy.secret
+const revocable = Proxy.revocable(vault, {});
+revocable.revoke();
+////= lines-2	revocable.proxy.visible
+console.log(total, results.join());
+//// receivers-accessors-taken-off-by-a-descriptor.ts
+// Receivers below an accessor: Object.getOwnPropertyDescriptor hands the getter and the setter of a class back as plain functions, and the program calls them on a string, on nothing and on another class.
+let total = 0;
+
+class Account {
+  balance = 10;
+  get doubled(): number {
+    total += this === undefined ? 100 : this instanceof Account ? 1 : 10000;
+    return this === undefined ? -1 : this.balance * 2;
+  }
+  set doubled(value: number) {
+    total += typeof value === "number" ? 1000000 : 100000000;
+    this.balance = value / 2;
+  }
+}
+
+class Wallet {
+  balance = "30";
+}
+
+const account = new Account();
+account.doubled = account.doubled + 2;
+const { get, set } = Object.getOwnPropertyDescriptor(Account.prototype, "doubled")!;
+const wallet = new Wallet();
+set!.call(wallet, "50");
+const all = Object.getOwnPropertyDescriptors(Account.prototype);
+const results: unknown[] = [account.balance, get!.call(account), get!.call("text"), get!.call(undefined), get!.call(new Wallet()), wallet.balance, all.doubled.get!.call({ balance: [4] }), (account as any).__lookupGetter__("doubled") === get];
+console.log(total, results.join());
+//// receivers-array-methods-on-array-likes.ts
+// Receivers below an accessor: Array.prototype methods run on an instance of a class read `length` and the elements through its accessors and pass the instance, not an array, as the third argument of the callback.
+let total = 0;
+
+class Row {
+  cells = ["a", "b"];
+  get length(): number {
+    total += 1;
+    return this.cells.length;
+  }
+  get 0(): string {
+    total += 100;
+    return this.cells[0];
+  }
+  get 1(): number {
+    total += 10000;
+    return 5;
+  }
+}
+
+function visit(cell: string, index: number, all: string[]): string {
+  total += typeof cell === "string" ? 1000000 : 10000000;
+  total += Array.isArray(all) ? 100000000 : 200000000;
+  return cell + index + all.length;
+}
+
+visit("x", 0, ["x"]);
+const row: any = new Row();
+const results: unknown[] = [Array.prototype.map.call(row, visit as any), Array.prototype.join.call(row, "+"), Array.prototype.indexOf.call(row, 5), Array.prototype.slice.call(row).length, Array.from(row).length, Array.prototype.includes.call(row, "a"), Array.prototype.at.call(row, -1)];
+console.log(total, results.join());
+//// receivers-frozen-and-sealed-instances.ts
+// Methods found through instances: Object.freeze, Object.seal and Object.preventExtensions are native code that changes what a store into a typed instance does: it throws a TypeError in strict code and leaves the field as it was.
+class Cell {
+  value = 1;
+  set(value: number): string {
+    try {
+      this.value = value;
+      return "stored " + this.value;
+    } catch (error) {
+      return (error as Error).name + " " + this.value;
+    }
+  }
+  grow(): string {
+    try {
+      (this as any).extra = 1;
+      return "grew";
+    } catch (error) {
+      return (error as Error).name;
+    }
+  }
+}
+
+const cells = [new Cell(), Object.freeze(new Cell()), Object.seal(new Cell()), Object.preventExtensions(new Cell()), Object.defineProperty(new Cell(), "value", { writable: false })];
+const frozenLate = new Cell();
+[frozenLate].forEach(Object.freeze);
+cells.push(frozenLate);
+console.log(cells.map(cell => cell.set(2) + "/" + cell.grow()).join(" "));
+//// receivers-native-code-changes-the-prototype-of-an-instance.ts
+// Receivers below an accessor: the setter of __proto__, Object.setPrototypeOf and Reflect.setPrototypeOf are native code that changes what lies above an instance, so a method call on a typed instance finds another function.
+class Circle {
+  radius = 2;
+  area(): number {
+    return this.radius * 3;
+  }
+  get kind(): string {
+    return "circle";
+  }
+}
+
+const other = {
+  area(this: { radius: number }): string {
+    return "other " + this.radius;
+  },
+  kind: "other",
+};
+
+function describe(circle: Circle): string {
+  return circle.area() + "/" + circle.kind + "/" + (circle instanceof Circle);
+}
+
+const results = [describe(new Circle())];
+const first = new Circle();
+(first as any).__proto__ = other;
+const second = Object.setPrototypeOf(new Circle(), other) as Circle;
+const third = new Circle();
+Reflect.setPrototypeOf(third, Object.create(Circle.prototype, { area: { value: () => "own" } }));
+const fourth = new Circle();
+Object.getOwnPropertyDescriptor(Object.prototype, "__proto__")!.set!.call(fourth, other);
+const fifth = Object.assign(Object.create(other), new Circle()) as Circle;
+for (const circle of [first, second, third, fourth, fifth]) results.push(describe(circle));
+console.log(results.join(" "));
+//// receivers-native-code-writes-methods-onto-a-prototype-object.ts
+// Held from creation: Object.assign, Object.defineProperty and Reflect.set store functions onto the prototype object of a class, so a method call that the types resolve to one function finds another, with other results.
+class Gauge {
+  level = 4;
+  read(): number {
+    return this.level;
+  }
+  twice(): number {
+    return this.level * 2;
+  }
+  half(): number {
+    return this.level / 2;
+  }
+  get label(): string {
+    return "gauge";
+  }
+}
+
+const gauge = new Gauge();
+const before = [gauge.read(), gauge.twice(), gauge.half(), gauge.label].join();
+Object.assign(Gauge.prototype, { read: () => "assigned" });
+Object.defineProperty(Gauge.prototype, "twice", { value: function (this: Gauge) { return "defined " + this.level; } });
+Reflect.set(Gauge.prototype, "half", () => "set");
+Object.defineProperty(Gauge.prototype, "label", { get: () => 5 });
+const after = [gauge.read(), gauge.twice(), gauge.half(), gauge.label, new Gauge().read()].join();
+console.log(before, after);
+//// receivers-reflect-get-and-set-with-another-receiver.ts
+// Receivers below an accessor: Reflect.get and Reflect.set run the accessors of a class with a receiver that is no instance: a plain object with a string in the field, a primitive, a proxy.
+let total = 0;
+
+class Thermometer {
+  degrees = 20;
+  get next(): number {
+    total += this instanceof Thermometer ? 1 : 100;
+    return this.degrees + 1;
+  }
+  set next(value: number) {
+    total += this instanceof Thermometer ? 10000 : 1000000;
+    this.degrees = value - 1;
+  }
+}
+
+const honest = new Thermometer();
+honest.next = honest.next + 1;
+const plain: any = { degrees: "7" };
+const results: unknown[] = [
+  honest.degrees,
+  Reflect.get(honest, "next", plain),
+  Reflect.get(honest, "next", "text"),
+  Reflect.get(honest, "next", 5),
+  Reflect.get(Thermometer.prototype, "next"),
+  Reflect.get(honest, "next", new Proxy({}, { get: () => "40" })),
+  Reflect.set(honest, "next", "9", plain),
+  plain.degrees,
+  Reflect.set(honest, "next", 3, Object.create(honest)),
+  honest.degrees,
+];
+console.log(total, results.map(one => typeof one + ":" + String(one)).join());
+//// receivers-super-property-reads-in-a-borrowed-method.ts
+// Receivers below an accessor: `super.value` runs the getter of the base class with the `this` of the method, and the method is borrowed through call, Reflect.apply and a native callback's `this` argument.
+let total = 0;
+
+class Base {
+  amount = 1;
+  get value(): number {
+    total += this instanceof Base ? 1 : 100;
+    return this.amount * 2;
+  }
+  describe(): string {
+    return "base " + typeof this.amount;
+  }
+}
+
+class Derived extends Base {
+  get value(): number {
+    return super.value + 1;
+  }
+  read(): number {
+    return super.value;
+  }
+  tell(): string {
+    return super.describe();
+  }
+}
+
+const derived = new Derived();
+const results: unknown[] = [
+  derived.value,
+  derived.read(),
+  derived.read.call({ amount: "3" } as any),
+  Reflect.apply(derived.read, { amount: [4] }, []),
+  [0].map(derived.read, { amount: "5" })[0],
+  [0].map(derived.tell, "text")[0],
+  Reflect.get(derived, "value", { amount: "6" }),
+  derived.tell.call(7 as any),
+];
+console.log(total, results.join());
+//// receivers-to-json-added-to-a-built-in-prototype.ts
+// Receivers below an accessor and stores into the realm: a toJSON function that the program adds to BigInt.prototype is called by JSON.stringify with a primitive bigint as `this` and the key as its argument.
+let total = 0;
+
+function bigintToJSON(this: bigint, key: string): string {
+  total += typeof this === "bigint" ? 1 : typeof this === "object" ? 100 : 10000;
+  total += typeof key === "string" ? 1000000 : 100000000;
+  return this.toString() + "n";
+}
+
+(BigInt.prototype as any).toJSON = bigintToJSON;
+const text = JSON.stringify({ a: 1n, list: [2n, Object(3n)], nested: { b: -4n } });
+console.log(total, text);
+//// species-a-plain-function-makes-what-is-filled.js
+// The species is a constructor function whose instances are no arrays: native code defines the elements and, in some methods, stores a length beside the fields of the constructor.
+const log = [];
+function Made(length) { this.tag = 7; this.given = length; this.next = null; }
+Made.prototype.describe = function () { return this.tag + "/" + this.given + "/" + this.length + "/" + Object.keys(this).join(); };
+const source = [[1], 2, 3]; source.constructor = { [Symbol.species]: Made };
+for (const made of [source.flat(), source.slice(1), source.concat(9), source.map(x => x), source.filter(() => true)]) { log.push(made instanceof Made, made.describe(), made[0] === undefined ? "none" : JSON.stringify(made[0])); made.next = made; log.push(made.next.tag); }
+console.log(log.join("; "));
+//// species-the-length-of-what-it-has-made-has-a-setter.js
+// The store of the length runs a setter of the class that the species constructs.
+const log = [];
+class Odd { constructor(n) { log.push("made " + n); this.kept = "k"; } set length(v) { log.push("length=" + v + " on " + this.kept); this.seen = v; } get length() { return 99; } }
+const source = [1, 2, 3]; source.constructor = { [Symbol.species]: Odd };
+const sliced = source.slice(1), joined = source.concat([4]), flat = source.flat();
+log.push(sliced.seen, sliced[0], sliced.length, joined.seen, joined[3], flat.seen, Object.keys(flat).join());
+console.log(log.join("; "));
+//// species-what-it-has-made-keeps-its-own-fields.js
+// flat, slice, concat, map, filter, splice and flatMap fill an instance of a class that extends Array; the fields that its constructor stores are as the constructor left them.
+const log = [];
+class List extends Array { constructor(...a) { super(...a); this.tag = 1; this.note = "n"; } }
+const list = new List(); list.push([1, [2]], [3], 4);
+for (const made of [list.flat(), list.flat(2), list.slice(1), list.concat([5]), list.map(x => x), list.filter(x => x !== 4), list.splice(0, 1), list.flatMap(x => x)])
+  log.push(made.constructor.name + ":" + made.tag + ":" + made.note + ":" + made.length + ":" + JSON.stringify(made) + ":" + Object.keys(made).join(""));
+console.log(log.join("; "));
+//// species-what-it-has-made-refuses-or-redirects-the-elements.js
+// What the species answers is frozen, has an accessor under an index that can or cannot be redefined, is a proxy, or inherits a setter under an index.
+const log = [];
+const attempt = (name, species, run) => { const source = [1, 2]; source.constructor = { [Symbol.species]: species }; try { const made = run(source); log.push(name + " " + typeof made + " " + JSON.stringify(Object.getOwnPropertyDescriptor(made, "0") ?? null)); } catch (error) { log.push(name + " " + error.constructor.name); } };
+attempt("frozen", function () { return Object.freeze({ tag: 1 }); }, s => s.slice());
+attempt("accessor", function () { const o = { tag: 2 }; Object.defineProperty(o, "0", { get() { return "got"; }, configurable: true }); return o; }, s => s.map(x => x * 2));
+attempt("fixed", function () { const o = {}; Object.defineProperty(o, "0", { get() { return "got"; }, configurable: false }); return o; }, s => s.filter(() => true));
+attempt("proxy", function () { return new Proxy({}, { defineProperty(target, key, descriptor) { log.push("define " + String(key)); return Reflect.defineProperty(target, key, descriptor); }, set(target, key, value) { log.push("set " + String(key) + "=" + value); target[key] = value; return true; } }); }, s => s.concat(3));
+attempt("inherited", function () { return Object.create({ set 0(v) { log.push("never"); } }); }, s => s.flat());
+console.log(log.join("; "));
+//// spread-copies-closures-that-native-code-then-hands-back.ts
+// Sources of a spread: a closure that lies in an object which is only ever spread reaches an emitter, a Map, a WeakRef, a promise and a timer inside the copy, comes back as `any`, and is called with a string; direct calls pass numbers.
+import { EventEmitter } from "node:events";
+
+let total = 0;
+
+const context = {
+  scale: 2,
+  handler(value: number): void {
+    total += typeof value === "number" ? value * this.scale : typeof value === "string" ? 1000 : 1000000;
+  },
+  arrow: (value: number): void => {
+    total += typeof value === "number" ? value : typeof value === "string" ? 100000 : 1000000;
+  },
+};
+
+context.handler(1);
+context.arrow(1);
+const use = (copy: any): void => {
+  copy.handler("text");
+  copy.arrow("text");
+};
+const emitter = new EventEmitter();
+emitter.on("context", use);
+emitter.emit("context", { ...context });
+use(new Map<string, unknown>([["c", { ...context }]]).get("c"));
+use(new WeakRef({ ...context }).deref());
+use(Object.values({ inner: { ...context } })[0]);
+use([{ ...context }].concat([])[0]);
+await Promise.resolve({ ...context }).then(use);
+await new Promise<void>(resolve => setTimeout(copy => (use(copy), resolve()), 1, { ...context }));
+console.log(total);
+//// spread-into-a-call-uses-the-iterator-of-a-subclass.ts
+// Sources of a spread: `f(...x)`, `[...x]`, `new Set(x)`, Array.from and Promise.all use the Symbol.iterator method of an Array subclass, which yields strings though the class says number.
+export {};
+
+let total = 0;
+
+class Odd extends Array<number> {
+  *[Symbol.iterator](): ArrayIterator<number> {
+    total += 1;
+    for (let i = 0; i < this.length; i++) yield (i % 2 ? String(this[i]) : this[i]) as number;
+  }
+}
+
+function sum(a: number, b: number, c: number): number | string {
+  total += (typeof a === "number" ? 100 : 10000) + (typeof b === "number" ? 100 : 10000) + (typeof c === "number" ? 100 : 10000);
+  return a + b + c;
+}
+
+const odd = new Odd();
+odd.push(1, 2, 3);
+sum(1, 2, 3);
+const results: unknown[] = [sum(...(odd as unknown as [number, number, number])), [...odd].map(one => typeof one), new Set(odd).has(2), Array.from(odd)[1] === 2, Math.max(...odd), ((await Promise.all(odd)) as any).map((one: unknown) => typeof one), Array.from(odd.concat([4]), one => typeof one).join("/")];
+const [, second] = odd;
+console.log(total, results.join(), typeof second);
+//// spread-of-a-proxy-runs-three-traps.ts
+// Sources of a spread: spreading a proxy runs ownKeys, getOwnPropertyDescriptor and get of a handler that is a class instance, with symbols among the keys; the program's own calls pass strings.
+let total = 0;
+
+const tag = Symbol("tag");
+type Target = Record<string | symbol, number>;
+
+class Handler implements ProxyHandler<Target> {
+  ownKeys(target: Target): (string | symbol)[] {
+    total += 1;
+    return [...Reflect.ownKeys(target), "ghost"];
+  }
+  getOwnPropertyDescriptor(target: Target, key: string): PropertyDescriptor | undefined {
+    total += typeof key === "string" ? 100 : 10000;
+    return key === "ghost" ? { value: 0, enumerable: true, configurable: true } : Reflect.getOwnPropertyDescriptor(target, key);
+  }
+  get(target: Target, key: string): number | string {
+    total += typeof key === "string" ? 1000000 : 100000000;
+    return typeof key === "string" ? key.length : "symbol";
+  }
+}
+
+const handler = new Handler();
+const target: Target = { a: 1, bb: 2, [tag]: 3 };
+handler.get(target, "own");
+handler.getOwnPropertyDescriptor(target, "a");
+const proxy = new Proxy(target, handler);
+const copy = { ...proxy };
+const assigned = Object.assign({}, proxy);
+const { a, ...rest } = proxy;
+console.log(total, JSON.stringify(copy), String(copy[tag]), Object.keys(assigned).join(), a, Object.keys(rest).join());
+//// spread-of-primitives-and-strange-sources.ts
+// Sources of a spread: a source typed as an object is really a string, a number, null, an array or a function with properties, each out of `any`; what the copy holds follows from the real value.
+let total = 0;
+
+interface Size {
+  width?: number;
+  length?: number;
+}
+
+function widthOf(size: Size): number {
+  const copy = { width: 1, ...size };
+  total += typeof copy.width === "number" ? 1 : 100;
+  return Object.keys(copy).length * 10 + (typeof copy.width === "number" ? copy.width : -1);
+}
+
+const withProperty: any = Object.assign(() => 0, { width: "wide" });
+const sources: any[] = [{ width: 2 }, "ab", 5, null, undefined, [7, 8], withProperty, new Map([["width", 3]]), Object.create({ width: 4 }), Object.defineProperty({}, "width", { value: 5 }), new String("xyz")];
+console.log(sources.map(widthOf).join(), total);
+//// spread-runs-the-getters-of-its-source.ts
+// Sources of a spread: `{ ...x }`, Object.assign and a rest pattern run the getters of the source, with the source as `this`, and copy what they return, which is a string under the type number.
+let total = 0;
+
+const raw: any = JSON.parse('{"width":"12"}');
+
+class Frame {
+  border = 1;
+}
+
+const source = {
+  border: 2,
+  get width(): number {
+    total += typeof this.border === "number" ? 1 : 100;
+    return raw.width;
+  },
+  get height(): number {
+    total += 10000;
+    return this.border * 2;
+  },
+};
+
+function area(box: { width: number; height: number }): number | string {
+  total += typeof box.width === "number" ? 1000000 : 100000000;
+  return box.width + box.height;
+}
+
+const results = [area({ width: 1, height: 2 }), area({ ...source }), area(Object.assign(new Frame(), source)), area({ ...source, width: 3 })];
+const { border, ...rest } = source;
+results.push(area(rest), border);
+console.log(total, results.join());
+//// the-callback-for-uncaught-exceptions-looks-at-its-this.js
+// The function that process.setUncaughtExceptionCaptureCallback is given looks at its `this`.
+const lines = [];
+process.setUncaughtExceptionCaptureCallback(function (error) {
+  lines.push(this === undefined ? "undefined" : typeof this);
+  lines.push(typeof this === "function" ? "a function" : "no function");
+  try { lines.push(String(this.name)); } catch (e) { lines.push(e.constructor.name); }
+  lines.push(arguments.length + " " + typeof arguments[1]);
+});
+await new Promise(resolve => { setTimeout(() => { setTimeout(resolve, 5); throw new TypeError("thrown"); }, 1); });
+process.setUncaughtExceptionCaptureCallback(null);
+console.log(lines.join("\n"));
+//// the-tostring-of-a-string-object-throws-what-is-no-object-inside-native-code.js
+// The toString of a String object throws something that is no object while native code asks it for its text.
+import { parseEnv } from "node:util";
+import path from "node:path";
+function odd(thrown) { const text = new String("A=1"); text.toString = () => { throw thrown; }; text[Symbol.toPrimitive] = () => { throw thrown; }; return text; }
+function kind(e) { return typeof e === "number" ? "number " + (e + 1) : typeof e === "string" ? "string " + e.length : e === undefined ? "undefined" : e === null ? "null" : "object " + e.constructor.name; }
+function env(text) { try { return JSON.stringify(parseEnv(text)); } catch (e) { return kind(e); } }
+function base(text) { try { return path.basename(text); } catch (e) { return kind(e); } }
+function joined(text) { try { return path.join("a", text); } catch (e) { return kind(e); } }
+function resolved(text) { try { return typeof path.resolve(text); } catch (e) { return kind(e); } }
+for (const f of [env, base, joined, resolved]) console.log(f.name, f("A=1"), f(odd(1)), f(odd("text")), f(odd(undefined)), f(odd(null)), f(new String("B=2")));
+//// thrown-errors-of-an-emitter-without-a-listener.ts
+// Thrown values: emit("error", x) without a listener throws x itself where it is an Error and wraps anything else in an error of the library, with the value under `context`; with a listener, the listener gets x as it is.
+import { EventEmitter } from "node:events";
+
+////= Failure
+
+let total = 0;
+
+function weigh(failure: Failure): number {
+  if (typeof failure !== "object" || failure === null) return 1000000;
+  return typeof failure.code === "number" ? failure.code : failure.code === "ERR_UNHANDLED_ERROR" ? 100 + (typeof (failure as any).context === "number" ? 10 : 0) : 10000;
+}
+
+const values: unknown[] = [new Failure("own"), 5, "text", null, { plain: true }, new TypeError("native kind")];
+const silent = new EventEmitter();
+for (const value of values) {
+  try {
+    silent.emit("error", value);
+  } catch (error) {
+    total += weigh(error as Failure);
+  }
+}
+const heard = new EventEmitter();
+heard.on("error", (failure: Failure) => void (total += weigh(failure) * 100000000));
+heard.emit("error", new Failure("own"));
+heard.emit("error", 5);
+console.log(total);
+//// thrown-native-errors-reach-a-catch-typed-for-the-programs-own-class.ts
+// Thrown values: a catch clause that treats what it caught as the program's own error class gets the errors that native code throws: `code` is missing, or a string, or a number of another meaning.
+import { readFileSync } from "node:fs";
+
+////= Failure
+
+let total = 0;
+
+function weigh(failure: Failure): number {
+  return typeof failure.code === "number" ? failure.code + 1 : typeof failure.code === "string" ? 1000 : failure.code === undefined ? 100000 : 0;
+}
+
+const nothing: any = null;
+const attempts: (() => unknown)[] = [
+  () => { throw new Failure("own"); },
+  () => nothing.x,
+  () => JSON.parse("{"),
+  () => new Array(-1),
+  () => "a".repeat(-1),
+  () => BigInt(1.5),
+  () => decodeURIComponent("%"),
+  () => structuredClone(() => 0),
+  () => atob("*"),
+  () => new URL("not a url"),
+  () => readFileSync("/no/such/file/anywhere"),
+  () => Buffer.alloc(-1),
+  () => (Symbol() as any) + "",
+  () => new (nothing ?? 5)(),
+];
+const names: string[] = [];
+for (const attempt of attempts) {
+  try {
+    attempt();
+  } catch (error) {
+    total += weigh(error as Failure);
+    names.push((error as Failure).name);
+  }
+}
+console.log(total, names.join());
+//// thrown-primitives-pass-through-native-frames.ts
+// Thrown values: a primitive that a callback throws passes through sort, JSON.stringify, Array.from, replace and a Proxy and reaches a catch clause that reads `message` and `code` as if it were the program's own error.
+////= Failure
+
+let total = 0;
+
+function weigh(error: Failure): number {
+  if (error === null || error === undefined) return 1000000;
+  return typeof error.message === "string" ? error.code : typeof error === "number" ? 100 + error : typeof error === "string" ? 10000 + (error as string).length : 100000000;
+}
+
+weigh(new Failure("own"));
+const thrower = (value: unknown) => (): never => {
+  throw value;
+};
+const attempts: (() => unknown)[] = [
+  () => [2, 1].sort(thrower(42)),
+  () => JSON.stringify({ get a() { throw "text"; } }),
+  () => Array.from([1], thrower(null)),
+  () => "a".replace("a", thrower(undefined)),
+  () => new Proxy<any>({}, { get: thrower(1n) }).x,
+  () => String({ toString: thrower(new Failure("inside")) }),
+  () => new Map([[1, 1]]).forEach(thrower(false)),
+  () => Reflect.apply(thrower(Symbol.iterator), null, []),
+  () => structuredClone({ get a() { throw 5; } }),
+];
+for (const attempt of attempts) {
+  try {
+    attempt();
+  } catch (error) {
+    total += weigh(error as Failure);
+  }
+}
+console.log(total);
+//// thrown-rejections-made-by-native-code.ts
+// Thrown values: a rejection handler typed for the program's own error class gets what native code rejects with: system errors, a SyntaxError, an AggregateError, and the primitives that the program gave to a controller.
+import { readFile } from "node:fs/promises";
+
+////= Failure
+
+let total = 0;
+
+function onFailure(failure: Failure): [number, string] {
+  if (typeof failure !== "object" || failure === null) return [1000000, typeof failure];
+  return [typeof failure.code === "number" ? failure.code : typeof failure.code === "string" ? 100 : 10000, failure.name];
+}
+
+onFailure(new Failure("own"));
+const failed = new ReadableStream({ start: controller => controller.error(5) });
+const promises: Promise<unknown>[] = [
+  Promise.reject(new Failure("rejected")),
+  readFile("/no/such/file/anywhere"),
+  Bun.file("/no/such/file/anywhere").text(),
+  new Response("{").json(),
+  Promise.any([]),
+  WebAssembly.compile(new Uint8Array(2)),
+  failed.getReader().read(),
+  new Promise((resolve, reject) => reject()),
+  new Response(null).body === null ? Promise.reject(null) : Promise.resolve(),
+  (async () => { throw "text"; })(),
+];
+const names: string[] = [];
+for (const outcome of await Promise.all(promises.map(promise => promise.catch(onFailure)))) {
+  const [weight, name] = outcome as [number, string];
+  total += weight;
+  names.push(name);
+}
+console.log(total, names.join());
+//// thrown-rejections-of-subtle-crypto-are-dom-exceptions.ts
+// Thrown values: crypto.subtle rejects with a DOMException that native code made, whose `code` is a number of another meaning than that of the program's own error class, for which the handler is typed.
+export {};
+
+////= Failure
+
+const names: string[] = [];
+
+function onFailure(failure: Failure): number {
+  names.push(failure.name);
+  if (failure instanceof Failure) return failure.code;
+  const other = failure as Failure;
+  return (other as any) instanceof DOMException ? 100 + other.code : 10000;
+}
+
+let total = onFailure(new Failure("own"));
+total += (await crypto.subtle.digest("no such digest", new Uint8Array(1)).catch(onFailure)) as number;
+total += (await crypto.subtle.importKey("raw", new Uint8Array(1), "no such algorithm", false, []).catch(onFailure)) as number;
+total += (await crypto.subtle.digest("SHA-256", new Uint8Array(1))).byteLength;
+console.log(total, names.join());
+//// thrown-values-collected-by-native-code.ts
+// Thrown values: Promise.allSettled, Promise.any, AggregateError, `cause` and a settled promise's record keep what was thrown and hand it back under `any`; the program reads it as its own error class.
+export {};
+
+////= Failure
+
+function weigh(failure: Failure): number {
+  return failure instanceof Failure ? failure.code : typeof failure === "number" ? 100 : typeof failure === "string" ? 10000 : failure === undefined ? 1000000 : 100000000;
+}
+
+let total = weigh(new Failure("own"));
+for (const outcome of await Promise.allSettled([Promise.reject(new Failure("a")), Promise.reject(5), Promise.reject("text"), Promise.reject(), 1])) {
+  if (outcome.status === "rejected") total += weigh(outcome.reason);
+}
+try {
+  await Promise.any([Promise.reject(6), Promise.reject(new Failure("b"))]);
+} catch (error) {
+  for (const inner of (error as AggregateError).errors) total += weigh(inner);
+}
+total += weigh(new Error("outer", { cause: "cause" }).cause as Failure);
+total += weigh(new AggregateError(new Set([7])).errors[0]);
+console.log(total);
+//// thrown-values-reach-generators-and-async-functions.ts
+// Thrown values: `throw` and `return` of a generator, an awaited rejection and a for-await loop bring values of any type into catch clauses inside coroutines that are typed for the program's own error class.
+export {};
+
+////= Failure
+
+let total = 0;
+
+function weigh(error: Failure): number {
+  return error instanceof Failure ? error.code : typeof error === "number" ? 100 : typeof error === "string" ? 10000 : error === undefined ? 1000000 : 100000000;
+}
+
+function* guarded(): Generator<number, number, void> {
+  for (;;) {
+    try {
+      yield 1;
+    } catch (error) {
+      total += weigh(error as Failure);
+    }
+  }
+}
+
+const generator = guarded();
+generator.next();
+for (const value of [new Failure("own"), 5, "text", undefined, null]) generator.throw(value);
+generator.return(0);
+
+async function awaited(promise: Promise<unknown>): Promise<void> {
+  try {
+    await promise;
+  } catch (error) {
+    total += weigh(error as Failure) * 2;
+  }
+}
+await awaited(Promise.reject(new Failure("own")));
+await awaited(Promise.reject(6));
+await awaited(new Response("{").json());
+await awaited({ then: (resolve: unknown, reject: (reason: unknown) => void) => reject("thenable") } as any);
+try {
+  for await (const one of [Promise.resolve(1), Promise.reject("in a loop")]) total += one;
+} catch (error) {
+  total += weigh(error as Failure) * 3;
+}
+console.log(total);
+//// what-a-generator-body-and-listeners-of-the-process-see-as-this.js
+// What a body that is a generator function, the callback for uncaught exceptions and listeners of the process see as `this` and as their arguments.
+const lines = [];
+function seen(name, self, given) {
+  lines.push(name + ": this " + (self === undefined ? "undefined" : self === process ? "process" : self === globalThis ? "globalThis" : typeof self) + ", " + given.length + ": " + Array.from(given, v => (v instanceof Error ? v.constructor.name : typeof v)).join());
+}
+lines.push(await new Response(async function* () { seen("body", this, arguments); yield "a"; yield "b"; }).text());
+lines.push(await new Response({ async *[Symbol.asyncIterator]() { seen("@@asyncIterator", typeof this, arguments); yield "c"; } }).text());
+process.on("uncaughtException", function (error, origin) { seen("uncaughtException", this, arguments); lines.push(origin); });
+await new Promise(resolve => { setTimeout(() => { setTimeout(resolve, 5); throw new RangeError("first"); }, 1); });
+process.removeAllListeners("uncaughtException");
+process.setUncaughtExceptionCaptureCallback(function (error) { seen("capture callback", this, arguments); });
+await new Promise(resolve => { setTimeout(() => { setTimeout(resolve, 5); throw new TypeError("second"); }, 1); });
+process.setUncaughtExceptionCaptureCallback(null);
+process.on("unhandledRejection", function (reason, promise) { seen("unhandledRejection", this, arguments); });
+Promise.reject(new EvalError("third"));
+await new Promise(resolve => setTimeout(resolve, 5));
+process.on("beforeExit", function (code) { seen("beforeExit", this, arguments); });
+process.on("exit", function (code) { seen("exit", this, arguments); console.log(lines.join("\n")); });
+//// what-code-of-an-operand-hands-back-is-used.mjs
+// Promise.prototype.finally of a thenable, Promise.try and the steps of generators: what code of an operand hands back is read, resolved and handed out.
+{
+  const log = [];
+  class Thenable {
+    constructor(value) {
+      this.value = value;
+    }
+    then(onFulfilled, onRejected) {
+      log.push("then called");
+      return onFulfilled(this.value);
+    }
+    static get [Symbol.species]() {
+      log.push("species");
+      return Promise;
+    }
+  }
+  function run() {
+    const holder = { reads: 0 };
+    const value = {
+      get then() {
+        holder.reads++;
+        log.push("then of the value read");
+        return undefined;
+      },
+    };
+    const answer = Promise.prototype.finally.call(new Thenable(value), () => {
+      log.push("finally ran");
+      return {
+        get then() {
+          holder.reads += 10;
+          log.push("then of what the callback answered");
+          return undefined;
+        },
+      };
+    });
+    return [holder, answer];
+  }
+  const [holder, answer] = run();
+  console.log(holder.reads);
+  await answer;
+  await new Promise(resolve => setTimeout(resolve, 2));
+  console.log(holder.reads, log.join(" | "));
+}
+
+{
+  function run() {
+    const holder = { reads: 0 };
+    const argument = {
+      get then() {
+        holder.reads++;
+        return undefined;
+      },
+    };
+    const promise = Promise.try(first => first, argument);
+    return [holder, promise, argument];
+  }
+  const [holder, promise, argument] = run();
+  console.log(holder.reads);
+  console.log((await promise) === argument, holder.reads);
+}
+
+{
+  function* make(held) {
+    const sent = yield held;
+    yield sent;
+  }
+  async function* makeAsync(held) {
+    yield held;
+  }
+  function step() {
+    const held = { tag: 1 };
+    const generator = make(held);
+    const next = Object.getPrototypeOf(Object.getPrototypeOf(generator)).next;
+    const first = next.call(generator);
+    first.value.tag = 2;
+    const sent = { tag: 5 };
+    const second = next.call(generator, sent);
+    second.value.tag = 6;
+    return `${held.tag} ${first.value === held} ${sent.tag} ${second.value === sent}`;
+  }
+  console.log(step());
+  const held = { tag: 1 };
+  const result = await makeAsync(held).next();
+  result.value.tag = 3;
+  console.log(held.tag, result.value === held);
+}
+//// what-functions-given-to-streams-timers-and-events-see-as-this.js
+// What functions that are handed to streams, timers, events and observers see as `this` and as their arguments.
+const lines = [];
+function seen(name, self, given, known = {}) {
+  const word = v => { for (const [k, o] of Object.entries(known)) if (o === v) return k; return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "globalThis" : typeof v === "object" ? v.constructor?.name ?? "object" : typeof v; };
+  lines.push(name + ": this " + word(self) + ", " + given.length + ": " + Array.from(given, word).join());
+}
+const source = {
+  start(controller) { seen("source.start", this, arguments, { source }); },
+  pull(controller) { seen("source.pull", this, arguments, { source }); controller.enqueue("a"); controller.close(); },
+  cancel(reason) { seen("source.cancel", this, arguments, { source }); },
+};
+const strategy = { highWaterMark: 1, size(chunk) { seen("strategy.size", this, arguments, { strategy }); return 1; } };
+for await (const chunk of new ReadableStream(source, strategy)) lines.push("chunk " + chunk);
+const cancelled = new ReadableStream(source); await cancelled.cancel("why");
+const sink = {
+  start(controller) { seen("sink.start", this, arguments, { sink }); },
+  write(chunk, controller) { seen("sink.write", this, arguments, { sink }); },
+  close() { seen("sink.close", this, arguments, { sink }); },
+  abort(reason) { seen("sink.abort", this, arguments, { sink }); },
+};
+const writer = new WritableStream(sink).getWriter(); await writer.write("w"); await writer.close();
+await new WritableStream(sink).abort("why");
+const transformer = {
+  start(controller) { seen("transformer.start", this, arguments, { transformer }); },
+  transform(chunk, controller) { seen("transformer.transform", this, arguments, { transformer }); controller.enqueue(chunk); },
+  flush(controller) { seen("transformer.flush", this, arguments, { transformer }); },
+};
+const through = new TransformStream(transformer); const tw = through.writable.getWriter(); tw.write("t"); tw.close();
+for await (const chunk of through.readable) lines.push("through " + chunk);
+await new Promise(resolve => setTimeout(function () { seen("setTimeout", this, arguments); resolve(); }, 1, "x", 2));
+await new Promise(resolve => setImmediate(function () { seen("setImmediate", this, arguments); resolve(); }, "x"));
+await new Promise(resolve => { const id = setInterval(function () { seen("setInterval", this, arguments); clearInterval(id); resolve(); }, 1, "x"); });
+await new Promise(resolve => queueMicrotask(function () { seen("queueMicrotask", this, arguments); resolve(); }));
+await new Promise(resolve => process.nextTick(function () { seen("nextTick", this, arguments); resolve(); }, 1, 2));
+const target = new EventTarget();
+target.addEventListener("ping", function (event) { seen("listener", this, arguments, { target }); });
+const listener = { handleEvent(event) { seen("handleEvent", this, arguments, { target, listener }); } };
+target.addEventListener("ping", listener);
+target.dispatchEvent(new Event("ping"));
+const controller = new AbortController();
+controller.signal.onabort = function (event) { seen("onabort", this, arguments, { signal: controller.signal }); };
+controller.signal.addEventListener("abort", function (event) { seen("abort listener", this, arguments, { signal: controller.signal }); });
+controller.abort();
+const channel = new MessageChannel();
+await new Promise(resolve => { channel.port1.onmessage = function (event) { seen("onmessage", this, arguments, { port1: channel.port1 }); resolve(); }; channel.port2.postMessage("m"); });
+channel.port1.close(); channel.port2.close();
+new HTMLRewriter().on("p", { element(e) { seen("element", this, arguments); }, text(t) { seen("text", this, arguments); }, comments(c) { seen("comments", this, arguments); } }).onDocument({ end(e) { seen("end", this, arguments); }, doctype(d) { seen("doctype", this, arguments); } }).transform("<!doctype html><p>a<!--c--></p>");
+process.once("custom", function () { seen("process.once", this, arguments, { process }); }); process.emit("custom", 1, 2);
+const registry = new FinalizationRegistry(function () {});
+structuredClone({ get x() { seen("getter under structuredClone", this, arguments); return 1; } });
+JSON.stringify({ toJSON(key) { seen("toJSON", this, arguments); return 1; } });
+[3, 1].sort(function (a, b) { seen("sort", this, arguments); return a - b; });
+"ab".replace(/a/, function () { seen("replace", this, arguments); return "x"; });
+Array.from({ length: 1 }, function () { seen("Array.from", this, arguments); });
+new Promise(function () { seen("executor", this, arguments); });
+await Promise.resolve(1).then(function () { seen("then", this, arguments); });
+await Promise.resolve(1).finally(function () { seen("finally", this, arguments); });
+await { then(resolve) { seen("thenable", typeof this, arguments); resolve(); } };
+Bun.inspect({ [Bun.inspect.custom](depth, options, inspect) { seen("inspect.custom", typeof this, arguments); return "x"; } });
+console.log(lines.join("\n"));
+//// what-the-handlers-of-a-server-see-as-this.js
+// What the functions that a server is given see as `this` and as their arguments.
+const lines = [];
+let server;
+function seen(name, self, given) {
+  lines.push(name + ": this " + (self === undefined ? "undefined" : self === server ? "the server" : self === handlers ? "the handlers" : self === options ? "the options" : self === routes ? "the routes" : typeof self) + ", " + given.length + " arguments: " + Array.from(given, v => v === server ? "the server" : v === null ? "null" : typeof v === "object" ? v.constructor.name : typeof v).join());
+}
+let done;
+const finished = new Promise(resolve => { done = resolve; });
+const handlers = {
+  open(socket) { seen("open", this, arguments); socket.subscribe("topic"); socket.send("first"); },
+  message(socket, text) { seen("message", this, arguments); socket.ping(); socket.close(1000, "bye"); },
+  close(socket, code, reason) { seen("close", this, arguments); done(); },
+  drain(socket) { seen("drain", this, arguments); },
+  ping(socket, data) { seen("ping", this, arguments); },
+  pong(socket, data) { seen("pong", this, arguments); },
+};
+const routes = {
+  "/plain": function (request) { seen("route", this, arguments); return new Response("plain"); },
+  "/by-method": { GET(request) { seen("route GET", this, arguments); return new Response("get"); }, POST: function (request) { seen("route POST", this, arguments); return new Response("post"); } },
+  "/with/:id": function (request) { seen("route with a parameter", this, arguments); return new Response(request.params.id); },
+};
+const options = {
+  port: 0,
+  routes,
+  fetch(request, given) {
+    seen("fetch", this, arguments);
+    const path = new URL(request.url).pathname;
+    if (path === "/socket") return given.upgrade(request) ? undefined : new Response("no");
+    if (path === "/throws") throw new RangeError("midway");
+    return new Response("fetch");
+  },
+  error(error) { seen("error", this, arguments); return new Response("error " + error.message); },
+  websocket: handlers,
+};
+server = Bun.serve(options);
+const base = `http://localhost:${server.port}`;
+for (const [path, method] of [["/plain", "GET"], ["/by-method", "GET"], ["/by-method", "POST"], ["/with/7", "GET"], ["/other", "GET"], ["/throws", "GET"]])
+  lines.push(path + " " + method + " > " + (await (await fetch(base + path, { method })).text()));
+const client = new WebSocket(`ws://localhost:${server.port}/socket`);
+client.onmessage = function (event) { seen("client message", this === client ? "client" : this, arguments); client.send("second"); };
+await finished;
+server.stop(true);
+console.log(lines.sort().join("\n"));

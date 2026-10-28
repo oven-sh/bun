@@ -1,0 +1,23 @@
+import * in compiled code, f: throws TypeError
+import * in compiled code, count: throws TypeError
+import * in compiled code: first, 0
+import() in new Function, f: throws TypeError
+import() in new Function, count: throws TypeError
+import() in new Function: first, 0
+import() in a loaded file, f: throws TypeError
+import() in a loaded file, count: throws TypeError
+import() in a loaded file: first, 0
+import * in a loaded file, f: throws TypeError
+import * in a loaded file, count: throws TypeError
+import * in a loaded file: first, 0
+export from in a loaded file, f: throws TypeError
+export from in a loaded file, count: throws TypeError
+export from in a loaded file: first, 0
+import * in compiled code, after a store: second, 1
+import() in new Function, after a store: second, 1
+import() in a loaded file, after a store: second, 1
+import * in a loaded file, after a store: second, 1
+export from in a loaded file, after a store: second, 1
+loaded file: real
+loaded file, spied: spied, calls 1
+loaded file, restored: real

@@ -4476,6 +4476,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             && crate::scan::scan_macro_refs::is_macro_ref(&self.macro_.refs, &self.symbols, r#ref)
     }
 
+    /// `find_symbol` for a global that a lowering names. A macro import of that name is not declared at runtime, so it does not shadow the global.
+    #[inline(never)]
+    pub(crate) fn find_global_symbol(&mut self, loc: bun_ast::Loc, name: &'a [u8]) -> Ref {
+        let r#ref = self.find_symbol(loc, name).expect("unreachable").r#ref;
+        if self.is_macro_ref(r#ref) {
+            return self.global_behind_macro_ref(r#ref, name);
+        }
+        r#ref
+    }
+
+    /// An unbound symbol of its own for the global, which the renamer keeps and reserves as it does for each global.
+    #[cold]
+    #[inline(never)]
+    fn global_behind_macro_ref(&mut self, macro_ref: Ref, name: &'a [u8]) -> Ref {
+        self.ignore_usage(macro_ref);
+        let global = self.new_symbol(js_ast::symbol::Kind::Unbound, name);
+        VecExt::append(&mut self.module_scope_mut().generated, global);
+        self.record_usage_impl(global, false);
+        global
+    }
+
     #[cold]
     fn validate_and_set_import_type(
         &mut self,
@@ -7803,13 +7824,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ts_metadata: bun_ast::ts::Metadata,
     ) -> Result<Expr, crate::Error> {
         use bun_ast::ts::Metadata as M;
-        // Local: `find_symbol` for a builtin name as an E::Identifier expr.
+        // Local: `find_global_symbol` for a builtin name as an E::Identifier expr.
         macro_rules! ident {
             ($name:expr) => {{
-                let r = self
-                    .find_symbol(bun_ast::Loc::EMPTY, $name)
-                    .expect("unreachable")
-                    .r#ref;
+                let r = self.find_global_symbol(bun_ast::Loc::EMPTY, $name);
                 self.new_expr(E::Identifier::init(r), bun_ast::Loc::EMPTY)
             }};
         }

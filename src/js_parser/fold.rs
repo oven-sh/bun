@@ -922,10 +922,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<Expr, crate::Error> {
         let p = self;
         let test = Self::check_if_defined_helper(p, identifier_expr)?;
-        let object_ref = p
-            .find_symbol(bun_ast::Loc::EMPTY, b"Object")
-            .expect("unreachable")
-            .r#ref;
+        let object_ref = p.find_global_symbol(bun_ast::Loc::EMPTY, b"Object");
         let yes = p.new_expr(E::Identifier::init(object_ref), bun_ast::Loc::EMPTY);
         Ok(p.new_expr(
             E::If {

@@ -895,6 +895,8 @@ describe("a macro import that is used outside of a call", () => {
       // As deep to the left as it is long.
       "long-chain.js": `export const sum = USE${Buffer.alloc(2 * 5_000, "+x").toString()}; var x = 1;`,
       "nested.js": `console.log(${Buffer.alloc(400, "[").toString()}USE${Buffer.alloc(400, "]").toString()});`,
+      // The walk has no depth limit of its own.
+      "deep.js": `console.log(${Buffer.alloc(600, "[").toString()}USE${Buffer.alloc(600, "]").toString()});`,
     },
     "functions and classes": {
       "arrow-body.js": `export const f = () => USE;`,
@@ -1698,6 +1700,7 @@ describe("a macro import that is used outside of a call", () => {
   // A macro remap replaces a plain import of a package. The package has the export at runtime, and Bun removes the
   // binding all the same.
   test.concurrent("an import that a macro remap replaces is an error too", async () => {
+    const classic = `/** @jsxRuntime classic */\n/** @jsx m */`;
     using dir = tempDir("macro-value-use", {
       "bunfig.toml": `[macros]\nfakepkg = { "m" = "./m.ts" }\n`,
       "m.ts": macroFile,
@@ -1710,33 +1713,34 @@ describe("a macro import that is used outside of a call", () => {
       "value.ts": `import { m as local, other } from "fakepkg";\nconst f = local;\nconsole.log(f, other());\n`,
       // What the note of the error says to write.
       "namespace.ts": `import * as pkg from "fakepkg";\nconsole.log(pkg.m(), pkg.other());\n`,
+      // The JSX factory is the export that the remap replaces.
+      "element.jsx": `${classic}\nimport { m } from "fakepkg";\nconsole.log(<div />);\n`,
+      "element-remedy.jsx": `${classic}\nimport * as pkg from "fakepkg";\nconst m = pkg.m;\nconsole.log(<div />);\n`,
       "load.ts": `
         const at = ${at};
         const errorsOf = ${errorsOf};
-        try {
-          await import("./value.ts");
-        } catch (e: any) {
-          console.log(JSON.stringify(errorsOf(e?.errors ?? [e])));
+        for (const file of ["./value.ts", "./element.jsx"]) {
+          try {
+            await import(file);
+          } catch (e: any) {
+            console.log(JSON.stringify(errorsOf(e?.errors ?? [e])));
+          }
         }
         await import("./namespace.ts");
+        await import("./element-remedy.jsx");
       `,
     });
     const { lines, stderr, exitCode } = await run(String(dir), "load.ts");
-    expect({ errors: JSON.parse(lines[0]), printed: lines.slice(1), stderr }).toEqual({
+    const removed = (name: string) =>
+      `Bun removes this import of "${name}" because a macro remap replaces it with "./m.ts"`;
+    const remedy = `${replaced} To use "m" of the package at runtime, read it from a namespace import of the package, or remove the macro remap.`;
+    const element = `"m" is the JSX factory or fragment of this file, so this element names it at runtime.`;
+    expect({ errors: lines.slice(0, 2).map(line => JSON.parse(line)), printed: lines.slice(2), stderr }).toEqual({
       errors: [
-        [
-          notDefined("local"),
-          2,
-          11,
-          [`Bun removes this import of "local" because a macro remap replaces it with "./m.ts"`, 1, 10],
-          [
-            `Bun replaces each direct call of a macro with its result. To use "m" of the package at runtime, read it from a namespace import of the package, or remove the macro remap.`,
-            null,
-            null,
-          ],
-        ],
+        [[notDefined("local"), 2, 11, [removed("local"), 1, 10], [remedy, null, null]]],
+        [[notDefined("m"), 4, 13, [removed("m"), 3, 10], [`${element} ${remedy}`, null, null]]],
       ],
-      printed: ["m at runtime other at runtime"],
+      printed: ["m at runtime other at runtime", "m at runtime"],
       stderr: "",
     });
     expect(exitCode).toBe(0);
@@ -1788,15 +1792,64 @@ describe("a macro import that is used outside of a call", () => {
     }).toEqual({ escaped: expected, defined: expected });
   });
 
-  // The metadata of a decorated member names the global `String` for the type `string`. Bun removes the macro import
-  // of that name, so the name in the output is the global.
-  test("a name that a lowering writes for a global is not a use of a macro import of that name", () => {
-    const transpiler = new Bun.Transpiler({
-      loader: "ts",
-      tsconfig: { compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true } },
+  // The metadata of a decorated member names the global `String` for the type `string`, and a decorated accessor
+  // needs `new WeakMap`. A macro import of that name is not declared at runtime, so the lowering names the global.
+  test.concurrent("a global that a lowering names is not a macro import of that name", async () => {
+    const tsconfig = { compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true } };
+    const imported = `import { m as String } from "./m.ts" with { type: "macro" };`;
+    const decorated = `${dec}\nclass A { @dec() x: string = "s"; }`;
+    for (const identifiers of [false, true]) {
+      const transpiler = new Bun.Transpiler({ loader: "ts", tsconfig, minify: { identifiers } });
+      expect(transpiler.transformSync(`${imported}\n${decorated}\nconsole.log(A);\n`)).toContain(
+        `("design:type", String)`,
+      );
+    }
+    const metadata = [
+      imported,
+      `import { String as declared } from "./string.ts";`,
+      `const types: unknown[] = [];`,
+      `(Reflect as any).metadata = (key: string, value: unknown) => () => void types.push(value);`,
+      decorated,
+      `console.log("metadata", String(), declared(), types[0] === globalThis.String);`,
+    ].join("\n");
+
+    using dir = tempDir("macro-value-use", {
+      "tsconfig.json": JSON.stringify(tsconfig),
+      "m.ts": macroFile,
+      // A top-level binding of the bundle that has the name too.
+      "string.ts": `export function String() { return "declared"; }\n`,
+      "metadata.ts": metadata,
+      "accessor.js": [
+        `import { m as WeakMap } from "./m.ts" with { type: "macro" };`,
+        `function plain() {}`,
+        `class A { @plain accessor x = 1; }`,
+        `console.log("accessor", WeakMap(), new A().x);`,
+      ].join("\n"),
+      // Each file as it is, then as a bundle with and without short names.
+      "load.ts": `
+        for (const file of ["./metadata.ts", "./accessor.js"]) {
+          await import(file);
+          for (const identifiers of [false, true]) {
+            const outdir = "out/" + identifiers;
+            const build = await Bun.build({ entrypoints: [file], target: "bun", minify: { identifiers }, outdir, throw: false });
+            for (const log of build.logs) console.log(String(log.message));
+            for (const output of build.outputs) await import(output.path);
+          }
+        }
+      `,
     });
-    const source = `import { m as String } from "./m.ts" with { type: "macro" };\n${dec}\nclass A { @dec() x: string = "s"; }\nconsole.log(A);\n`;
-    expect(transpiler.transformSync(source)).toContain(`("design:type", String)`);
+    const { lines, stderr, exitCode } = await run(String(dir), "load.ts");
+    expect({ lines, stderr }).toEqual({
+      lines: [...Array(3).fill("metadata 42 declared true"), ...Array(3).fill("accessor 42 1")],
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("the note at the import writes the path as a string literal", () => {
+    const source = `import { m } from "./m\\".ts" with { type: "macro" };\nconst f = m;\n`;
+    const note = `Bun removes this macro import of "m" from "./m\\".ts"`;
+    expect(errorsOfTransform(source)).toEqual([[notDefined("m"), 2, 11, [note, 1, 10], [advice("m"), null, null]]]);
   });
 
   // A decorator is in the call that applies it, which the walk meets after the class.

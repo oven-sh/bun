@@ -1,0 +1,1 @@
+{ "skipInShell": "it asks for the console of Bun, which the jsc shell does not provide" }

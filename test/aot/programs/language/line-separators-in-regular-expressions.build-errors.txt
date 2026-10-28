@@ -1,0 +1,4 @@
+error: TS1161: Unterminated regular expression literal.
+error: TS1005: ',' expected.
+error: TS2304: Cannot find name 'b'.
+error: TS1109: Expression expected.

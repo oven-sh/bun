@@ -1,0 +1,3108 @@
+////: lines-149
+{
+  const print = printer(«1»);
+  const p = { valueOf() { return 5 } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  let x = 1; x += o; print(x);
+}
+////: lines-150
+{
+  const print = printer(«1»);
+  const p = { valueOf() { return 5 } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  print(o | 0, o & 4, o ^ 1, ~o, o << 1, o >> 1, o >>> 1);
+}
+////: lines-151
+{
+  const print = printer(«1»);
+  const p = { valueOf() { return 5 } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  print(new Date(o).getTime());
+}
+////: lines-152
+{
+  const print = printer(«1»);
+  const p = { valueOf() { return 5 } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  print(o == 5, o != 5);
+}
+////: lines-153
+{
+  const print = printer(«1»);
+  const p = { valueOf() { return 5 } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  print(o ** 2, o % 3, o / 2);
+}
+////: lines-154
+{
+  const print = printer(«1»);
+  const p = { valueOf() { return 5 } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  function run(x) { return x + 1; } print(run(o)); print(run(o)); print(run(2));
+}
+////: lines-155
+{
+  const print = printer(«1»);
+  const p = { valueOf() { return 5 } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  let x = o; x++; print(x);
+}
+////: lines-156
+{
+  const print = printer(«1»);
+  const p = { valueOf() { return 5 } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  print(o < 6, o > 6, o <= 5, o >= 6);
+}
+////: lines-157
+{
+  const print = printer(«1»);
+  const p = { valueOf() { return 5 } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  print(Math.max(o, 1), Math.floor(o), Math.abs(o));
+}
+////: lines-158
+{
+  const print = printer(«1»);
+  const p = { valueOf() { return 5 } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  print(o * 2);
+}
+////: lines-159
+{
+  const print = printer(«1»);
+  const p = { valueOf() { return 5 } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  print(-o);
+}
+////: lines-160
+{
+  const print = printer(«1»);
+  const p = { valueOf() { return 5 } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  print(+o);
+}
+////: lines-161
+{
+  const print = printer(«1»);
+  const p = { valueOf() { return 5 } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  print(o - 1);
+}
+////: lines-209
+{
+  const print = printer(«1»);
+  const p = { valueOf() { return 5 } };
+  class C { x = 1; }
+  Object.setPrototypeOf(C.prototype, p);
+  const o = new C();
+  «2»);
+}
+//// value-of-run-by-operators.js
+// valueOf is run by the conversions inside operators and built-ins, wherever the object got it from.
+const lines = [];
+////= printer
+
+{
+  const print = printer("valueof-add literal");
+  const o = { valueOf() { return 5 } };
+  print(o + 1);
+}
+{
+  const print = printer("valueof-add literal-function");
+  const o = { valueOf: function () { return 5 } };
+  print(o + 1);
+}
+{
+  const print = printer("valueof-add literal-with-field");
+  const o = { x: 1, valueOf() { return 5 } };
+  print(o + 1);
+}
+{
+  const print = printer("valueof-add class-method");
+  class C { valueOf() { return 5 } }
+  const o = new C();
+  print(o + 1);
+}
+{
+  const print = printer("valueof-add class-field");
+  class C { valueOf = function () { return 5 }; }
+  const o = new C();
+  print(o + 1);
+}
+////= lines-118	"valueof-add subclass"	valueOf	5	o	1
+{
+  const print = printer("valueof-add class-static");
+  class C { static valueOf() { return 5 } }
+  const o = C;
+  print(o + 1);
+}
+{
+  const print = printer("valueof-add prototype-create");
+  const p = { valueOf() { return 5 } };
+  const o = Object.create(p);
+  print(o + 1);
+}
+{
+  const print = printer("valueof-add prototype-literal");
+  const p = { valueOf() { return 5 } };
+  const o = { __proto__: p };
+  print(o + 1);
+}
+{
+  const print = printer("valueof-add prototype-literal-with-field");
+  const p = { valueOf() { return 5 } };
+  const o = { __proto__: p, x: 1 };
+  print(o + 1);
+}
+////= lines-113	"valueof-add prototype-set"	valueOf	5	o	1
+////= lines-16	"valueof-add prototype-set-with-field"	valueOf	5	Object	o	1
+////= lines-16	"valueof-add prototype-reflect-set"	valueOf	5	Reflect	o	1
+////= lines-112	"valueof-add prototype-proto-store"	valueOf	5	o	1
+{
+  const print = printer("valueof-add prototype-two-levels");
+  const p = { valueOf() { return 5 } };
+  const o = Object.create(Object.create(p));
+  print(o + 1);
+}
+////= lines-32	"valueof-add prototype-of-class-instance"	valueOf	5	o	1
+{
+  const print = printer("valueof-add prototype-is-instance");
+  class C { valueOf = function () { return 5 }; }
+  const o = Object.create(new C());
+  print(o + 1);
+}
+{
+  const print = printer("valueof-add stored-after");
+  const o = {};
+  o.valueOf = function () { return 5 };
+  print(o + 1);
+}
+{
+  const print = printer("valueof-add stored-after-with-field");
+  const o = { x: 1 };
+  o.valueOf = function () { return 5 };
+  print(o + 1);
+}
+////= lines-115	"valueof-add stored-after-on-prototype"	valueOf	5	o	1
+////= lines-116	"valueof-add stored-after-on-prototype-late"	valueOf	5	o	1
+////= lines-114	"valueof-add stored-after-on-instance"	valueOf	5	o	1
+////= lines-117	"valueof-add stored-on-class-prototype"	valueOf	5	o	1
+////= lines-109	"valueof-add constructor-function"	valueOf	5	o	1
+////= lines-110	"valueof-add constructor-function-prototype-object"	valueOf	5	o	1
+{
+  const print = printer("valueof-add constructor-function-this");
+  function F() { this.valueOf = function () { return 5 }; }
+  const o = new F();
+  print(o + 1);
+}
+{
+  const print = printer("valueof-add getter");
+  const o = { get valueOf() { return function () { return 5 }; } };
+  print(o + 1);
+}
+{
+  const print = printer("valueof-add defined");
+  const o = {};
+  Object.defineProperty(o, "valueOf", { value: function () { return 5 } });
+  print(o + 1);
+}
+{
+  const print = printer("valueof-add assigned");
+  const o = Object.assign({}, { valueOf() { return 5 } });
+  print(o + 1);
+}
+{
+  const print = printer("valueof-add spread-copy");
+  const o = { ...{ valueOf() { return 5 } } };
+  print(o + 1);
+}
+{
+  const print = printer("valueof-add made-in-function");
+  function make() { return { valueOf() { return 5 } }; }
+  const o = make();
+  print(o + 1);
+}
+////= lines-111	"valueof-add made-in-function-twice"	valueOf	5	o	1
+{
+  const print = printer("valueof-add literal-arrow");
+  const o = { valueOf: () => { return 5 } };
+  print(o + 1);
+}
+{
+  const print = printer("valueof-add class-field-arrow");
+  class C { valueOf = () => { return 5 }; }
+  const o = new C();
+  print(o + 1);
+}
+{
+  const print = printer("valueof-add prototype-create-arrow");
+  const p = { valueOf: () => { return 5 } };
+  const o = Object.create(p);
+  print(o + 1);
+}
+{
+  const print = printer("valueof-sub literal");
+  const o = { valueOf() { return 5 } };
+  print(o - 1);
+}
+{
+  const print = printer("valueof-sub literal-function");
+  const o = { valueOf: function () { return 5 } };
+  print(o - 1);
+}
+{
+  const print = printer("valueof-sub literal-with-field");
+  const o = { x: 1, valueOf() { return 5 } };
+  print(o - 1);
+}
+{
+  const print = printer("valueof-sub class-method");
+  class C { valueOf() { return 5 } }
+  const o = new C();
+  print(o - 1);
+}
+{
+  const print = printer("valueof-sub class-field");
+  class C { valueOf = function () { return 5 }; }
+  const o = new C();
+  print(o - 1);
+}
+{
+  const print = printer("valueof-sub subclass");
+  class B { valueOf() { return 5 } }
+  class C extends B {}
+  const o = new C();
+  print(o - 1);
+}
+{
+  const print = printer("valueof-sub class-static");
+  class C { static valueOf() { return 5 } }
+  const o = C;
+  print(o - 1);
+}
+{
+  const print = printer("valueof-sub prototype-create");
+  const p = { valueOf() { return 5 } };
+  const o = Object.create(p);
+  print(o - 1);
+}
+{
+  const print = printer("valueof-sub prototype-literal");
+  const p = { valueOf() { return 5 } };
+  const o = { __proto__: p };
+  print(o - 1);
+}
+{
+  const print = printer("valueof-sub prototype-literal-with-field");
+  const p = { valueOf() { return 5 } };
+  const o = { __proto__: p, x: 1 };
+  print(o - 1);
+}
+{
+  const print = printer("valueof-sub prototype-set");
+  const p = { valueOf() { return 5 } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print(o - 1);
+}
+////= lines-161	"valueof-sub prototype-set-with-field"	Object
+////= lines-161	"valueof-sub prototype-reflect-set"	Reflect
+{
+  const print = printer("valueof-sub prototype-proto-store");
+  const p = { valueOf() { return 5 } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print(o - 1);
+}
+{
+  const print = printer("valueof-sub prototype-two-levels");
+  const p = { valueOf() { return 5 } };
+  const o = Object.create(Object.create(p));
+  print(o - 1);
+}
+////= lines-209	"valueof-sub prototype-of-class-instance"	print(o - 1
+{
+  const print = printer("valueof-sub prototype-is-instance");
+  class C { valueOf = function () { return 5 }; }
+  const o = Object.create(new C());
+  print(o - 1);
+}
+{
+  const print = printer("valueof-sub stored-after");
+  const o = {};
+  o.valueOf = function () { return 5 };
+  print(o - 1);
+}
+{
+  const print = printer("valueof-sub stored-after-with-field");
+  const o = { x: 1 };
+  o.valueOf = function () { return 5 };
+  print(o - 1);
+}
+{
+  const print = printer("valueof-sub stored-after-on-prototype");
+  const p = {};
+  p.valueOf = function () { return 5 };
+  const o = Object.create(p);
+  print(o - 1);
+}
+{
+  const print = printer("valueof-sub stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.valueOf = function () { return 5 };
+  print(o - 1);
+}
+{
+  const print = printer("valueof-sub stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.valueOf = function () { return 5 };
+  print(o - 1);
+}
+{
+  const print = printer("valueof-sub stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.valueOf = function () { return 5 };
+  const o = new C();
+  print(o - 1);
+}
+{
+  const print = printer("valueof-sub constructor-function");
+  function F() {}
+  F.prototype.valueOf = function () { return 5 };
+  const o = new F();
+  print(o - 1);
+}
+{
+  const print = printer("valueof-sub constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { valueOf() { return 5 } };
+  const o = new F();
+  print(o - 1);
+}
+{
+  const print = printer("valueof-sub constructor-function-this");
+  function F() { this.valueOf = function () { return 5 }; }
+  const o = new F();
+  print(o - 1);
+}
+{
+  const print = printer("valueof-sub getter");
+  const o = { get valueOf() { return function () { return 5 }; } };
+  print(o - 1);
+}
+{
+  const print = printer("valueof-sub defined");
+  const o = {};
+  Object.defineProperty(o, "valueOf", { value: function () { return 5 } });
+  print(o - 1);
+}
+{
+  const print = printer("valueof-sub assigned");
+  const o = Object.assign({}, { valueOf() { return 5 } });
+  print(o - 1);
+}
+{
+  const print = printer("valueof-sub spread-copy");
+  const o = { ...{ valueOf() { return 5 } } };
+  print(o - 1);
+}
+{
+  const print = printer("valueof-sub made-in-function");
+  function make() { return { valueOf() { return 5 } }; }
+  const o = make();
+  print(o - 1);
+}
+{
+  const print = printer("valueof-sub made-in-function-twice");
+  function make() { return { valueOf() { return 5 } }; }
+  make();
+  const o = make();
+  print(o - 1);
+}
+{
+  const print = printer("valueof-sub literal-arrow");
+  const o = { valueOf: () => { return 5 } };
+  print(o - 1);
+}
+{
+  const print = printer("valueof-sub class-field-arrow");
+  class C { valueOf = () => { return 5 }; }
+  const o = new C();
+  print(o - 1);
+}
+{
+  const print = printer("valueof-sub prototype-create-arrow");
+  const p = { valueOf: () => { return 5 } };
+  const o = Object.create(p);
+  print(o - 1);
+}
+{
+  const print = printer("valueof-mul literal");
+  const o = { valueOf() { return 5 } };
+  print(o * 2);
+}
+{
+  const print = printer("valueof-mul literal-function");
+  const o = { valueOf: function () { return 5 } };
+  print(o * 2);
+}
+{
+  const print = printer("valueof-mul literal-with-field");
+  const o = { x: 1, valueOf() { return 5 } };
+  print(o * 2);
+}
+{
+  const print = printer("valueof-mul class-method");
+  class C { valueOf() { return 5 } }
+  const o = new C();
+  print(o * 2);
+}
+{
+  const print = printer("valueof-mul class-field");
+  class C { valueOf = function () { return 5 }; }
+  const o = new C();
+  print(o * 2);
+}
+{
+  const print = printer("valueof-mul subclass");
+  class B { valueOf() { return 5 } }
+  class C extends B {}
+  const o = new C();
+  print(o * 2);
+}
+{
+  const print = printer("valueof-mul class-static");
+  class C { static valueOf() { return 5 } }
+  const o = C;
+  print(o * 2);
+}
+{
+  const print = printer("valueof-mul prototype-create");
+  const p = { valueOf() { return 5 } };
+  const o = Object.create(p);
+  print(o * 2);
+}
+{
+  const print = printer("valueof-mul prototype-literal");
+  const p = { valueOf() { return 5 } };
+  const o = { __proto__: p };
+  print(o * 2);
+}
+{
+  const print = printer("valueof-mul prototype-literal-with-field");
+  const p = { valueOf() { return 5 } };
+  const o = { __proto__: p, x: 1 };
+  print(o * 2);
+}
+{
+  const print = printer("valueof-mul prototype-set");
+  const p = { valueOf() { return 5 } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print(o * 2);
+}
+////= lines-158	"valueof-mul prototype-set-with-field"	Object
+////= lines-158	"valueof-mul prototype-reflect-set"	Reflect
+{
+  const print = printer("valueof-mul prototype-proto-store");
+  const p = { valueOf() { return 5 } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print(o * 2);
+}
+{
+  const print = printer("valueof-mul prototype-two-levels");
+  const p = { valueOf() { return 5 } };
+  const o = Object.create(Object.create(p));
+  print(o * 2);
+}
+////= lines-209	"valueof-mul prototype-of-class-instance"	print(o * 2
+{
+  const print = printer("valueof-mul prototype-is-instance");
+  class C { valueOf = function () { return 5 }; }
+  const o = Object.create(new C());
+  print(o * 2);
+}
+{
+  const print = printer("valueof-mul stored-after");
+  const o = {};
+  o.valueOf = function () { return 5 };
+  print(o * 2);
+}
+{
+  const print = printer("valueof-mul stored-after-with-field");
+  const o = { x: 1 };
+  o.valueOf = function () { return 5 };
+  print(o * 2);
+}
+{
+  const print = printer("valueof-mul stored-after-on-prototype");
+  const p = {};
+  p.valueOf = function () { return 5 };
+  const o = Object.create(p);
+  print(o * 2);
+}
+{
+  const print = printer("valueof-mul stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.valueOf = function () { return 5 };
+  print(o * 2);
+}
+{
+  const print = printer("valueof-mul stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.valueOf = function () { return 5 };
+  print(o * 2);
+}
+{
+  const print = printer("valueof-mul stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.valueOf = function () { return 5 };
+  const o = new C();
+  print(o * 2);
+}
+{
+  const print = printer("valueof-mul constructor-function");
+  function F() {}
+  F.prototype.valueOf = function () { return 5 };
+  const o = new F();
+  print(o * 2);
+}
+{
+  const print = printer("valueof-mul constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { valueOf() { return 5 } };
+  const o = new F();
+  print(o * 2);
+}
+{
+  const print = printer("valueof-mul constructor-function-this");
+  function F() { this.valueOf = function () { return 5 }; }
+  const o = new F();
+  print(o * 2);
+}
+{
+  const print = printer("valueof-mul getter");
+  const o = { get valueOf() { return function () { return 5 }; } };
+  print(o * 2);
+}
+{
+  const print = printer("valueof-mul defined");
+  const o = {};
+  Object.defineProperty(o, "valueOf", { value: function () { return 5 } });
+  print(o * 2);
+}
+{
+  const print = printer("valueof-mul assigned");
+  const o = Object.assign({}, { valueOf() { return 5 } });
+  print(o * 2);
+}
+{
+  const print = printer("valueof-mul spread-copy");
+  const o = { ...{ valueOf() { return 5 } } };
+  print(o * 2);
+}
+{
+  const print = printer("valueof-mul made-in-function");
+  function make() { return { valueOf() { return 5 } }; }
+  const o = make();
+  print(o * 2);
+}
+{
+  const print = printer("valueof-mul made-in-function-twice");
+  function make() { return { valueOf() { return 5 } }; }
+  make();
+  const o = make();
+  print(o * 2);
+}
+{
+  const print = printer("valueof-mul literal-arrow");
+  const o = { valueOf: () => { return 5 } };
+  print(o * 2);
+}
+{
+  const print = printer("valueof-mul class-field-arrow");
+  class C { valueOf = () => { return 5 }; }
+  const o = new C();
+  print(o * 2);
+}
+{
+  const print = printer("valueof-mul prototype-create-arrow");
+  const p = { valueOf: () => { return 5 } };
+  const o = Object.create(p);
+  print(o * 2);
+}
+{
+  const print = printer("valueof-plus literal");
+  const o = { valueOf() { return 5 } };
+  print(+o);
+}
+{
+  const print = printer("valueof-plus literal-function");
+  const o = { valueOf: function () { return 5 } };
+  print(+o);
+}
+{
+  const print = printer("valueof-plus literal-with-field");
+  const o = { x: 1, valueOf() { return 5 } };
+  print(+o);
+}
+{
+  const print = printer("valueof-plus class-method");
+  class C { valueOf() { return 5 } }
+  const o = new C();
+  print(+o);
+}
+{
+  const print = printer("valueof-plus class-field");
+  class C { valueOf = function () { return 5 }; }
+  const o = new C();
+  print(+o);
+}
+{
+  const print = printer("valueof-plus subclass");
+  class B { valueOf() { return 5 } }
+  class C extends B {}
+  const o = new C();
+  print(+o);
+}
+{
+  const print = printer("valueof-plus class-static");
+  class C { static valueOf() { return 5 } }
+  const o = C;
+  print(+o);
+}
+{
+  const print = printer("valueof-plus prototype-create");
+  const p = { valueOf() { return 5 } };
+  const o = Object.create(p);
+  print(+o);
+}
+{
+  const print = printer("valueof-plus prototype-literal");
+  const p = { valueOf() { return 5 } };
+  const o = { __proto__: p };
+  print(+o);
+}
+{
+  const print = printer("valueof-plus prototype-literal-with-field");
+  const p = { valueOf() { return 5 } };
+  const o = { __proto__: p, x: 1 };
+  print(+o);
+}
+{
+  const print = printer("valueof-plus prototype-set");
+  const p = { valueOf() { return 5 } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print(+o);
+}
+////= lines-160	"valueof-plus prototype-set-with-field"	Object
+////= lines-160	"valueof-plus prototype-reflect-set"	Reflect
+{
+  const print = printer("valueof-plus prototype-proto-store");
+  const p = { valueOf() { return 5 } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print(+o);
+}
+{
+  const print = printer("valueof-plus prototype-two-levels");
+  const p = { valueOf() { return 5 } };
+  const o = Object.create(Object.create(p));
+  print(+o);
+}
+////= lines-207	"valueof-plus prototype-of-class-instance"	valueOf() { return 5
+{
+  const print = printer("valueof-plus prototype-is-instance");
+  class C { valueOf = function () { return 5 }; }
+  const o = Object.create(new C());
+  print(+o);
+}
+{
+  const print = printer("valueof-plus stored-after");
+  const o = {};
+  o.valueOf = function () { return 5 };
+  print(+o);
+}
+{
+  const print = printer("valueof-plus stored-after-with-field");
+  const o = { x: 1 };
+  o.valueOf = function () { return 5 };
+  print(+o);
+}
+{
+  const print = printer("valueof-plus stored-after-on-prototype");
+  const p = {};
+  p.valueOf = function () { return 5 };
+  const o = Object.create(p);
+  print(+o);
+}
+{
+  const print = printer("valueof-plus stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.valueOf = function () { return 5 };
+  print(+o);
+}
+{
+  const print = printer("valueof-plus stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.valueOf = function () { return 5 };
+  print(+o);
+}
+{
+  const print = printer("valueof-plus stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.valueOf = function () { return 5 };
+  const o = new C();
+  print(+o);
+}
+{
+  const print = printer("valueof-plus constructor-function");
+  function F() {}
+  F.prototype.valueOf = function () { return 5 };
+  const o = new F();
+  print(+o);
+}
+{
+  const print = printer("valueof-plus constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { valueOf() { return 5 } };
+  const o = new F();
+  print(+o);
+}
+{
+  const print = printer("valueof-plus constructor-function-this");
+  function F() { this.valueOf = function () { return 5 }; }
+  const o = new F();
+  print(+o);
+}
+{
+  const print = printer("valueof-plus getter");
+  const o = { get valueOf() { return function () { return 5 }; } };
+  print(+o);
+}
+{
+  const print = printer("valueof-plus defined");
+  const o = {};
+  Object.defineProperty(o, "valueOf", { value: function () { return 5 } });
+  print(+o);
+}
+{
+  const print = printer("valueof-plus assigned");
+  const o = Object.assign({}, { valueOf() { return 5 } });
+  print(+o);
+}
+{
+  const print = printer("valueof-plus spread-copy");
+  const o = { ...{ valueOf() { return 5 } } };
+  print(+o);
+}
+{
+  const print = printer("valueof-plus made-in-function");
+  function make() { return { valueOf() { return 5 } }; }
+  const o = make();
+  print(+o);
+}
+{
+  const print = printer("valueof-plus made-in-function-twice");
+  function make() { return { valueOf() { return 5 } }; }
+  make();
+  const o = make();
+  print(+o);
+}
+{
+  const print = printer("valueof-plus literal-arrow");
+  const o = { valueOf: () => { return 5 } };
+  print(+o);
+}
+{
+  const print = printer("valueof-plus class-field-arrow");
+  class C { valueOf = () => { return 5 }; }
+  const o = new C();
+  print(+o);
+}
+{
+  const print = printer("valueof-plus prototype-create-arrow");
+  const p = { valueOf: () => { return 5 } };
+  const o = Object.create(p);
+  print(+o);
+}
+{
+  const print = printer("valueof-negate literal");
+  const o = { valueOf() { return 5 } };
+  print(-o);
+}
+{
+  const print = printer("valueof-negate literal-function");
+  const o = { valueOf: function () { return 5 } };
+  print(-o);
+}
+{
+  const print = printer("valueof-negate literal-with-field");
+  const o = { x: 1, valueOf() { return 5 } };
+  print(-o);
+}
+{
+  const print = printer("valueof-negate class-method");
+  class C { valueOf() { return 5 } }
+  const o = new C();
+  print(-o);
+}
+{
+  const print = printer("valueof-negate class-field");
+  class C { valueOf = function () { return 5 }; }
+  const o = new C();
+  print(-o);
+}
+{
+  const print = printer("valueof-negate subclass");
+  class B { valueOf() { return 5 } }
+  class C extends B {}
+  const o = new C();
+  print(-o);
+}
+{
+  const print = printer("valueof-negate class-static");
+  class C { static valueOf() { return 5 } }
+  const o = C;
+  print(-o);
+}
+{
+  const print = printer("valueof-negate prototype-create");
+  const p = { valueOf() { return 5 } };
+  const o = Object.create(p);
+  print(-o);
+}
+{
+  const print = printer("valueof-negate prototype-literal");
+  const p = { valueOf() { return 5 } };
+  const o = { __proto__: p };
+  print(-o);
+}
+{
+  const print = printer("valueof-negate prototype-literal-with-field");
+  const p = { valueOf() { return 5 } };
+  const o = { __proto__: p, x: 1 };
+  print(-o);
+}
+{
+  const print = printer("valueof-negate prototype-set");
+  const p = { valueOf() { return 5 } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print(-o);
+}
+////= lines-159	"valueof-negate prototype-set-with-field"	Object
+////= lines-159	"valueof-negate prototype-reflect-set"	Reflect
+{
+  const print = printer("valueof-negate prototype-proto-store");
+  const p = { valueOf() { return 5 } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print(-o);
+}
+{
+  const print = printer("valueof-negate prototype-two-levels");
+  const p = { valueOf() { return 5 } };
+  const o = Object.create(Object.create(p));
+  print(-o);
+}
+////= lines-209	"valueof-negate prototype-of-class-instance"	print(-o
+{
+  const print = printer("valueof-negate prototype-is-instance");
+  class C { valueOf = function () { return 5 }; }
+  const o = Object.create(new C());
+  print(-o);
+}
+{
+  const print = printer("valueof-negate stored-after");
+  const o = {};
+  o.valueOf = function () { return 5 };
+  print(-o);
+}
+{
+  const print = printer("valueof-negate stored-after-with-field");
+  const o = { x: 1 };
+  o.valueOf = function () { return 5 };
+  print(-o);
+}
+{
+  const print = printer("valueof-negate stored-after-on-prototype");
+  const p = {};
+  p.valueOf = function () { return 5 };
+  const o = Object.create(p);
+  print(-o);
+}
+{
+  const print = printer("valueof-negate stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.valueOf = function () { return 5 };
+  print(-o);
+}
+{
+  const print = printer("valueof-negate stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.valueOf = function () { return 5 };
+  print(-o);
+}
+{
+  const print = printer("valueof-negate stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.valueOf = function () { return 5 };
+  const o = new C();
+  print(-o);
+}
+{
+  const print = printer("valueof-negate constructor-function");
+  function F() {}
+  F.prototype.valueOf = function () { return 5 };
+  const o = new F();
+  print(-o);
+}
+{
+  const print = printer("valueof-negate constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { valueOf() { return 5 } };
+  const o = new F();
+  print(-o);
+}
+{
+  const print = printer("valueof-negate constructor-function-this");
+  function F() { this.valueOf = function () { return 5 }; }
+  const o = new F();
+  print(-o);
+}
+{
+  const print = printer("valueof-negate getter");
+  const o = { get valueOf() { return function () { return 5 }; } };
+  print(-o);
+}
+{
+  const print = printer("valueof-negate defined");
+  const o = {};
+  Object.defineProperty(o, "valueOf", { value: function () { return 5 } });
+  print(-o);
+}
+{
+  const print = printer("valueof-negate assigned");
+  const o = Object.assign({}, { valueOf() { return 5 } });
+  print(-o);
+}
+{
+  const print = printer("valueof-negate spread-copy");
+  const o = { ...{ valueOf() { return 5 } } };
+  print(-o);
+}
+{
+  const print = printer("valueof-negate made-in-function");
+  function make() { return { valueOf() { return 5 } }; }
+  const o = make();
+  print(-o);
+}
+{
+  const print = printer("valueof-negate made-in-function-twice");
+  function make() { return { valueOf() { return 5 } }; }
+  make();
+  const o = make();
+  print(-o);
+}
+{
+  const print = printer("valueof-negate literal-arrow");
+  const o = { valueOf: () => { return 5 } };
+  print(-o);
+}
+{
+  const print = printer("valueof-negate class-field-arrow");
+  class C { valueOf = () => { return 5 }; }
+  const o = new C();
+  print(-o);
+}
+{
+  const print = printer("valueof-negate prototype-create-arrow");
+  const p = { valueOf: () => { return 5 } };
+  const o = Object.create(p);
+  print(-o);
+}
+{
+  const print = printer("valueof-less literal");
+  const o = { valueOf() { return 5 } };
+  print(o < 6, o > 6, o <= 5, o >= 6);
+}
+{
+  const print = printer("valueof-less literal-function");
+  const o = { valueOf: function () { return 5 } };
+  print(o < 6, o > 6, o <= 5, o >= 6);
+}
+{
+  const print = printer("valueof-less literal-with-field");
+  const o = { x: 1, valueOf() { return 5 } };
+  print(o < 6, o > 6, o <= 5, o >= 6);
+}
+{
+  const print = printer("valueof-less class-method");
+  class C { valueOf() { return 5 } }
+  const o = new C();
+  print(o < 6, o > 6, o <= 5, o >= 6);
+}
+{
+  const print = printer("valueof-less class-field");
+  class C { valueOf = function () { return 5 }; }
+  const o = new C();
+  print(o < 6, o > 6, o <= 5, o >= 6);
+}
+{
+  const print = printer("valueof-less subclass");
+  class B { valueOf() { return 5 } }
+  class C extends B {}
+  const o = new C();
+  print(o < 6, o > 6, o <= 5, o >= 6);
+}
+{
+  const print = printer("valueof-less class-static");
+  class C { static valueOf() { return 5 } }
+  const o = C;
+  print(o < 6, o > 6, o <= 5, o >= 6);
+}
+{
+  const print = printer("valueof-less prototype-create");
+  const p = { valueOf() { return 5 } };
+  const o = Object.create(p);
+  print(o < 6, o > 6, o <= 5, o >= 6);
+}
+{
+  const print = printer("valueof-less prototype-literal");
+  const p = { valueOf() { return 5 } };
+  const o = { __proto__: p };
+  print(o < 6, o > 6, o <= 5, o >= 6);
+}
+{
+  const print = printer("valueof-less prototype-literal-with-field");
+  const p = { valueOf() { return 5 } };
+  const o = { __proto__: p, x: 1 };
+  print(o < 6, o > 6, o <= 5, o >= 6);
+}
+{
+  const print = printer("valueof-less prototype-set");
+  const p = { valueOf() { return 5 } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print(o < 6, o > 6, o <= 5, o >= 6);
+}
+////= lines-156	"valueof-less prototype-set-with-field"	Object
+////= lines-156	"valueof-less prototype-reflect-set"	Reflect
+{
+  const print = printer("valueof-less prototype-proto-store");
+  const p = { valueOf() { return 5 } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print(o < 6, o > 6, o <= 5, o >= 6);
+}
+{
+  const print = printer("valueof-less prototype-two-levels");
+  const p = { valueOf() { return 5 } };
+  const o = Object.create(Object.create(p));
+  print(o < 6, o > 6, o <= 5, o >= 6);
+}
+////= lines-209	"valueof-less prototype-of-class-instance"	print(o < 6, o > 6, o <= 5, o >= 6
+{
+  const print = printer("valueof-less prototype-is-instance");
+  class C { valueOf = function () { return 5 }; }
+  const o = Object.create(new C());
+  print(o < 6, o > 6, o <= 5, o >= 6);
+}
+{
+  const print = printer("valueof-less stored-after");
+  const o = {};
+  o.valueOf = function () { return 5 };
+  print(o < 6, o > 6, o <= 5, o >= 6);
+}
+{
+  const print = printer("valueof-less stored-after-with-field");
+  const o = { x: 1 };
+  o.valueOf = function () { return 5 };
+  print(o < 6, o > 6, o <= 5, o >= 6);
+}
+{
+  const print = printer("valueof-less stored-after-on-prototype");
+  const p = {};
+  p.valueOf = function () { return 5 };
+  const o = Object.create(p);
+  print(o < 6, o > 6, o <= 5, o >= 6);
+}
+{
+  const print = printer("valueof-less stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.valueOf = function () { return 5 };
+  print(o < 6, o > 6, o <= 5, o >= 6);
+}
+{
+  const print = printer("valueof-less stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.valueOf = function () { return 5 };
+  print(o < 6, o > 6, o <= 5, o >= 6);
+}
+{
+  const print = printer("valueof-less stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.valueOf = function () { return 5 };
+  const o = new C();
+  print(o < 6, o > 6, o <= 5, o >= 6);
+}
+{
+  const print = printer("valueof-less constructor-function");
+  function F() {}
+  F.prototype.valueOf = function () { return 5 };
+  const o = new F();
+  print(o < 6, o > 6, o <= 5, o >= 6);
+}
+{
+  const print = printer("valueof-less constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { valueOf() { return 5 } };
+  const o = new F();
+  print(o < 6, o > 6, o <= 5, o >= 6);
+}
+{
+  const print = printer("valueof-less constructor-function-this");
+  function F() { this.valueOf = function () { return 5 }; }
+  const o = new F();
+  print(o < 6, o > 6, o <= 5, o >= 6);
+}
+{
+  const print = printer("valueof-less getter");
+  const o = { get valueOf() { return function () { return 5 }; } };
+  print(o < 6, o > 6, o <= 5, o >= 6);
+}
+{
+  const print = printer("valueof-less defined");
+  const o = {};
+  Object.defineProperty(o, "valueOf", { value: function () { return 5 } });
+  print(o < 6, o > 6, o <= 5, o >= 6);
+}
+{
+  const print = printer("valueof-less assigned");
+  const o = Object.assign({}, { valueOf() { return 5 } });
+  print(o < 6, o > 6, o <= 5, o >= 6);
+}
+{
+  const print = printer("valueof-less spread-copy");
+  const o = { ...{ valueOf() { return 5 } } };
+  print(o < 6, o > 6, o <= 5, o >= 6);
+}
+{
+  const print = printer("valueof-less made-in-function");
+  function make() { return { valueOf() { return 5 } }; }
+  const o = make();
+  print(o < 6, o > 6, o <= 5, o >= 6);
+}
+{
+  const print = printer("valueof-less made-in-function-twice");
+  function make() { return { valueOf() { return 5 } }; }
+  make();
+  const o = make();
+  print(o < 6, o > 6, o <= 5, o >= 6);
+}
+{
+  const print = printer("valueof-less literal-arrow");
+  const o = { valueOf: () => { return 5 } };
+  print(o < 6, o > 6, o <= 5, o >= 6);
+}
+{
+  const print = printer("valueof-less class-field-arrow");
+  class C { valueOf = () => { return 5 }; }
+  const o = new C();
+  print(o < 6, o > 6, o <= 5, o >= 6);
+}
+{
+  const print = printer("valueof-less prototype-create-arrow");
+  const p = { valueOf: () => { return 5 } };
+  const o = Object.create(p);
+  print(o < 6, o > 6, o <= 5, o >= 6);
+}
+{
+  const print = printer("valueof-equal literal");
+  const o = { valueOf() { return 5 } };
+  print(o == 5, o != 5);
+}
+{
+  const print = printer("valueof-equal literal-function");
+  const o = { valueOf: function () { return 5 } };
+  print(o == 5, o != 5);
+}
+{
+  const print = printer("valueof-equal literal-with-field");
+  const o = { x: 1, valueOf() { return 5 } };
+  print(o == 5, o != 5);
+}
+{
+  const print = printer("valueof-equal class-method");
+  class C { valueOf() { return 5 } }
+  const o = new C();
+  print(o == 5, o != 5);
+}
+{
+  const print = printer("valueof-equal class-field");
+  class C { valueOf = function () { return 5 }; }
+  const o = new C();
+  print(o == 5, o != 5);
+}
+{
+  const print = printer("valueof-equal subclass");
+  class B { valueOf() { return 5 } }
+  class C extends B {}
+  const o = new C();
+  print(o == 5, o != 5);
+}
+{
+  const print = printer("valueof-equal class-static");
+  class C { static valueOf() { return 5 } }
+  const o = C;
+  print(o == 5, o != 5);
+}
+{
+  const print = printer("valueof-equal prototype-create");
+  const p = { valueOf() { return 5 } };
+  const o = Object.create(p);
+  print(o == 5, o != 5);
+}
+{
+  const print = printer("valueof-equal prototype-literal");
+  const p = { valueOf() { return 5 } };
+  const o = { __proto__: p };
+  print(o == 5, o != 5);
+}
+{
+  const print = printer("valueof-equal prototype-literal-with-field");
+  const p = { valueOf() { return 5 } };
+  const o = { __proto__: p, x: 1 };
+  print(o == 5, o != 5);
+}
+{
+  const print = printer("valueof-equal prototype-set");
+  const p = { valueOf() { return 5 } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print(o == 5, o != 5);
+}
+////= lines-152	"valueof-equal prototype-set-with-field"	Object
+////= lines-152	"valueof-equal prototype-reflect-set"	Reflect
+{
+  const print = printer("valueof-equal prototype-proto-store");
+  const p = { valueOf() { return 5 } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print(o == 5, o != 5);
+}
+{
+  const print = printer("valueof-equal prototype-two-levels");
+  const p = { valueOf() { return 5 } };
+  const o = Object.create(Object.create(p));
+  print(o == 5, o != 5);
+}
+////= lines-209	"valueof-equal prototype-of-class-instance"	print(o == 5, o != 5
+{
+  const print = printer("valueof-equal prototype-is-instance");
+  class C { valueOf = function () { return 5 }; }
+  const o = Object.create(new C());
+  print(o == 5, o != 5);
+}
+{
+  const print = printer("valueof-equal stored-after");
+  const o = {};
+  o.valueOf = function () { return 5 };
+  print(o == 5, o != 5);
+}
+{
+  const print = printer("valueof-equal stored-after-with-field");
+  const o = { x: 1 };
+  o.valueOf = function () { return 5 };
+  print(o == 5, o != 5);
+}
+{
+  const print = printer("valueof-equal stored-after-on-prototype");
+  const p = {};
+  p.valueOf = function () { return 5 };
+  const o = Object.create(p);
+  print(o == 5, o != 5);
+}
+{
+  const print = printer("valueof-equal stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.valueOf = function () { return 5 };
+  print(o == 5, o != 5);
+}
+{
+  const print = printer("valueof-equal stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.valueOf = function () { return 5 };
+  print(o == 5, o != 5);
+}
+{
+  const print = printer("valueof-equal stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.valueOf = function () { return 5 };
+  const o = new C();
+  print(o == 5, o != 5);
+}
+{
+  const print = printer("valueof-equal constructor-function");
+  function F() {}
+  F.prototype.valueOf = function () { return 5 };
+  const o = new F();
+  print(o == 5, o != 5);
+}
+{
+  const print = printer("valueof-equal constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { valueOf() { return 5 } };
+  const o = new F();
+  print(o == 5, o != 5);
+}
+{
+  const print = printer("valueof-equal constructor-function-this");
+  function F() { this.valueOf = function () { return 5 }; }
+  const o = new F();
+  print(o == 5, o != 5);
+}
+{
+  const print = printer("valueof-equal getter");
+  const o = { get valueOf() { return function () { return 5 }; } };
+  print(o == 5, o != 5);
+}
+{
+  const print = printer("valueof-equal defined");
+  const o = {};
+  Object.defineProperty(o, "valueOf", { value: function () { return 5 } });
+  print(o == 5, o != 5);
+}
+{
+  const print = printer("valueof-equal assigned");
+  const o = Object.assign({}, { valueOf() { return 5 } });
+  print(o == 5, o != 5);
+}
+{
+  const print = printer("valueof-equal spread-copy");
+  const o = { ...{ valueOf() { return 5 } } };
+  print(o == 5, o != 5);
+}
+{
+  const print = printer("valueof-equal made-in-function");
+  function make() { return { valueOf() { return 5 } }; }
+  const o = make();
+  print(o == 5, o != 5);
+}
+{
+  const print = printer("valueof-equal made-in-function-twice");
+  function make() { return { valueOf() { return 5 } }; }
+  make();
+  const o = make();
+  print(o == 5, o != 5);
+}
+{
+  const print = printer("valueof-equal literal-arrow");
+  const o = { valueOf: () => { return 5 } };
+  print(o == 5, o != 5);
+}
+{
+  const print = printer("valueof-equal class-field-arrow");
+  class C { valueOf = () => { return 5 }; }
+  const o = new C();
+  print(o == 5, o != 5);
+}
+{
+  const print = printer("valueof-equal prototype-create-arrow");
+  const p = { valueOf: () => { return 5 } };
+  const o = Object.create(p);
+  print(o == 5, o != 5);
+}
+{
+  const print = printer("valueof-increment literal");
+  const o = { valueOf() { return 5 } };
+  let x = o; x++; print(x);
+}
+{
+  const print = printer("valueof-increment literal-function");
+  const o = { valueOf: function () { return 5 } };
+  let x = o; x++; print(x);
+}
+{
+  const print = printer("valueof-increment literal-with-field");
+  const o = { x: 1, valueOf() { return 5 } };
+  let x = o; x++; print(x);
+}
+{
+  const print = printer("valueof-increment class-method");
+  class C { valueOf() { return 5 } }
+  const o = new C();
+  let x = o; x++; print(x);
+}
+{
+  const print = printer("valueof-increment class-field");
+  class C { valueOf = function () { return 5 }; }
+  const o = new C();
+  let x = o; x++; print(x);
+}
+{
+  const print = printer("valueof-increment subclass");
+  class B { valueOf() { return 5 } }
+  class C extends B {}
+  const o = new C();
+  let x = o; x++; print(x);
+}
+{
+  const print = printer("valueof-increment class-static");
+  class C { static valueOf() { return 5 } }
+  const o = C;
+  let x = o; x++; print(x);
+}
+{
+  const print = printer("valueof-increment prototype-create");
+  const p = { valueOf() { return 5 } };
+  const o = Object.create(p);
+  let x = o; x++; print(x);
+}
+{
+  const print = printer("valueof-increment prototype-literal");
+  const p = { valueOf() { return 5 } };
+  const o = { __proto__: p };
+  let x = o; x++; print(x);
+}
+{
+  const print = printer("valueof-increment prototype-literal-with-field");
+  const p = { valueOf() { return 5 } };
+  const o = { __proto__: p, x: 1 };
+  let x = o; x++; print(x);
+}
+{
+  const print = printer("valueof-increment prototype-set");
+  const p = { valueOf() { return 5 } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  let x = o; x++; print(x);
+}
+////= lines-155	"valueof-increment prototype-set-with-field"	Object
+////= lines-155	"valueof-increment prototype-reflect-set"	Reflect
+{
+  const print = printer("valueof-increment prototype-proto-store");
+  const p = { valueOf() { return 5 } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  let x = o; x++; print(x);
+}
+{
+  const print = printer("valueof-increment prototype-two-levels");
+  const p = { valueOf() { return 5 } };
+  const o = Object.create(Object.create(p));
+  let x = o; x++; print(x);
+}
+////= lines-209	"valueof-increment prototype-of-class-instance"	let x = o; x++; print(x
+{
+  const print = printer("valueof-increment prototype-is-instance");
+  class C { valueOf = function () { return 5 }; }
+  const o = Object.create(new C());
+  let x = o; x++; print(x);
+}
+{
+  const print = printer("valueof-increment stored-after");
+  const o = {};
+  o.valueOf = function () { return 5 };
+  let x = o; x++; print(x);
+}
+{
+  const print = printer("valueof-increment stored-after-with-field");
+  const o = { x: 1 };
+  o.valueOf = function () { return 5 };
+  let x = o; x++; print(x);
+}
+{
+  const print = printer("valueof-increment stored-after-on-prototype");
+  const p = {};
+  p.valueOf = function () { return 5 };
+  const o = Object.create(p);
+  let x = o; x++; print(x);
+}
+{
+  const print = printer("valueof-increment stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.valueOf = function () { return 5 };
+  let x = o; x++; print(x);
+}
+{
+  const print = printer("valueof-increment stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.valueOf = function () { return 5 };
+  let x = o; x++; print(x);
+}
+{
+  const print = printer("valueof-increment stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.valueOf = function () { return 5 };
+  const o = new C();
+  let x = o; x++; print(x);
+}
+{
+  const print = printer("valueof-increment constructor-function");
+  function F() {}
+  F.prototype.valueOf = function () { return 5 };
+  const o = new F();
+  let x = o; x++; print(x);
+}
+{
+  const print = printer("valueof-increment constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { valueOf() { return 5 } };
+  const o = new F();
+  let x = o; x++; print(x);
+}
+{
+  const print = printer("valueof-increment constructor-function-this");
+  function F() { this.valueOf = function () { return 5 }; }
+  const o = new F();
+  let x = o; x++; print(x);
+}
+{
+  const print = printer("valueof-increment getter");
+  const o = { get valueOf() { return function () { return 5 }; } };
+  let x = o; x++; print(x);
+}
+{
+  const print = printer("valueof-increment defined");
+  const o = {};
+  Object.defineProperty(o, "valueOf", { value: function () { return 5 } });
+  let x = o; x++; print(x);
+}
+{
+  const print = printer("valueof-increment assigned");
+  const o = Object.assign({}, { valueOf() { return 5 } });
+  let x = o; x++; print(x);
+}
+{
+  const print = printer("valueof-increment spread-copy");
+  const o = { ...{ valueOf() { return 5 } } };
+  let x = o; x++; print(x);
+}
+{
+  const print = printer("valueof-increment made-in-function");
+  function make() { return { valueOf() { return 5 } }; }
+  const o = make();
+  let x = o; x++; print(x);
+}
+{
+  const print = printer("valueof-increment made-in-function-twice");
+  function make() { return { valueOf() { return 5 } }; }
+  make();
+  const o = make();
+  let x = o; x++; print(x);
+}
+{
+  const print = printer("valueof-increment literal-arrow");
+  const o = { valueOf: () => { return 5 } };
+  let x = o; x++; print(x);
+}
+{
+  const print = printer("valueof-increment class-field-arrow");
+  class C { valueOf = () => { return 5 }; }
+  const o = new C();
+  let x = o; x++; print(x);
+}
+{
+  const print = printer("valueof-increment prototype-create-arrow");
+  const p = { valueOf: () => { return 5 } };
+  const o = Object.create(p);
+  let x = o; x++; print(x);
+}
+{
+  const print = printer("valueof-number literal");
+  const o = { valueOf() { return 5 } };
+  print(Number(o));
+}
+{
+  const print = printer("valueof-number literal-function");
+  const o = { valueOf: function () { return 5 } };
+  print(Number(o));
+}
+{
+  const print = printer("valueof-number literal-with-field");
+  const o = { x: 1, valueOf() { return 5 } };
+  print(Number(o));
+}
+{
+  const print = printer("valueof-number class-method");
+  class C { valueOf() { return 5 } }
+  const o = new C();
+  print(Number(o));
+}
+{
+  const print = printer("valueof-number class-field");
+  class C { valueOf = function () { return 5 }; }
+  const o = new C();
+  print(Number(o));
+}
+////= lines-146	"valueof-number subclass"	valueOf	5	Number
+{
+  const print = printer("valueof-number class-static");
+  class C { static valueOf() { return 5 } }
+  const o = C;
+  print(Number(o));
+}
+{
+  const print = printer("valueof-number prototype-create");
+  const p = { valueOf() { return 5 } };
+  const o = Object.create(p);
+  print(Number(o));
+}
+{
+  const print = printer("valueof-number prototype-literal");
+  const p = { valueOf() { return 5 } };
+  const o = { __proto__: p };
+  print(Number(o));
+}
+{
+  const print = printer("valueof-number prototype-literal-with-field");
+  const p = { valueOf() { return 5 } };
+  const o = { __proto__: p, x: 1 };
+  print(Number(o));
+}
+////= lines-141	"valueof-number prototype-set"	valueOf	5	Number
+////= lines-18	"valueof-number prototype-set-with-field"	valueOf	5	Object	Number
+////= lines-18	"valueof-number prototype-reflect-set"	valueOf	5	Reflect	Number
+////= lines-140	"valueof-number prototype-proto-store"	valueOf	5	Number
+{
+  const print = printer("valueof-number prototype-two-levels");
+  const p = { valueOf() { return 5 } };
+  const o = Object.create(Object.create(p));
+  print(Number(o));
+}
+////= lines-34	"valueof-number prototype-of-class-instance"	valueOf	5	Number
+{
+  const print = printer("valueof-number prototype-is-instance");
+  class C { valueOf = function () { return 5 }; }
+  const o = Object.create(new C());
+  print(Number(o));
+}
+{
+  const print = printer("valueof-number stored-after");
+  const o = {};
+  o.valueOf = function () { return 5 };
+  print(Number(o));
+}
+{
+  const print = printer("valueof-number stored-after-with-field");
+  const o = { x: 1 };
+  o.valueOf = function () { return 5 };
+  print(Number(o));
+}
+////= lines-143	"valueof-number stored-after-on-prototype"	valueOf	5	Number
+////= lines-144	"valueof-number stored-after-on-prototype-late"	valueOf	5	Number
+////= lines-142	"valueof-number stored-after-on-instance"	valueOf	5	Number
+////= lines-145	"valueof-number stored-on-class-prototype"	valueOf	5	Number
+////= lines-137	"valueof-number constructor-function"	valueOf	5	Number
+////= lines-138	"valueof-number constructor-function-prototype-object"	valueOf	5	Number
+{
+  const print = printer("valueof-number constructor-function-this");
+  function F() { this.valueOf = function () { return 5 }; }
+  const o = new F();
+  print(Number(o));
+}
+{
+  const print = printer("valueof-number getter");
+  const o = { get valueOf() { return function () { return 5 }; } };
+  print(Number(o));
+}
+{
+  const print = printer("valueof-number defined");
+  const o = {};
+  Object.defineProperty(o, "valueOf", { value: function () { return 5 } });
+  print(Number(o));
+}
+{
+  const print = printer("valueof-number assigned");
+  const o = Object.assign({}, { valueOf() { return 5 } });
+  print(Number(o));
+}
+{
+  const print = printer("valueof-number spread-copy");
+  const o = { ...{ valueOf() { return 5 } } };
+  print(Number(o));
+}
+{
+  const print = printer("valueof-number made-in-function");
+  function make() { return { valueOf() { return 5 } }; }
+  const o = make();
+  print(Number(o));
+}
+////= lines-139	"valueof-number made-in-function-twice"	valueOf	5	Number
+{
+  const print = printer("valueof-number literal-arrow");
+  const o = { valueOf: () => { return 5 } };
+  print(Number(o));
+}
+{
+  const print = printer("valueof-number class-field-arrow");
+  class C { valueOf = () => { return 5 }; }
+  const o = new C();
+  print(Number(o));
+}
+{
+  const print = printer("valueof-number prototype-create-arrow");
+  const p = { valueOf: () => { return 5 } };
+  const o = Object.create(p);
+  print(Number(o));
+}
+{
+  const print = printer("valueof-bitor literal");
+  const o = { valueOf() { return 5 } };
+  print(o | 0, o & 4, o ^ 1, ~o, o << 1, o >> 1, o >>> 1);
+}
+{
+  const print = printer("valueof-bitor literal-function");
+  const o = { valueOf: function () { return 5 } };
+  print(o | 0, o & 4, o ^ 1, ~o, o << 1, o >> 1, o >>> 1);
+}
+{
+  const print = printer("valueof-bitor literal-with-field");
+  const o = { x: 1, valueOf() { return 5 } };
+  print(o | 0, o & 4, o ^ 1, ~o, o << 1, o >> 1, o >>> 1);
+}
+{
+  const print = printer("valueof-bitor class-method");
+  class C { valueOf() { return 5 } }
+  const o = new C();
+  print(o | 0, o & 4, o ^ 1, ~o, o << 1, o >> 1, o >>> 1);
+}
+{
+  const print = printer("valueof-bitor class-field");
+  class C { valueOf = function () { return 5 }; }
+  const o = new C();
+  print(o | 0, o & 4, o ^ 1, ~o, o << 1, o >> 1, o >>> 1);
+}
+{
+  const print = printer("valueof-bitor subclass");
+  class B { valueOf() { return 5 } }
+  class C extends B {}
+  const o = new C();
+  print(o | 0, o & 4, o ^ 1, ~o, o << 1, o >> 1, o >>> 1);
+}
+{
+  const print = printer("valueof-bitor class-static");
+  class C { static valueOf() { return 5 } }
+  const o = C;
+  print(o | 0, o & 4, o ^ 1, ~o, o << 1, o >> 1, o >>> 1);
+}
+{
+  const print = printer("valueof-bitor prototype-create");
+  const p = { valueOf() { return 5 } };
+  const o = Object.create(p);
+  print(o | 0, o & 4, o ^ 1, ~o, o << 1, o >> 1, o >>> 1);
+}
+{
+  const print = printer("valueof-bitor prototype-literal");
+  const p = { valueOf() { return 5 } };
+  const o = { __proto__: p };
+  print(o | 0, o & 4, o ^ 1, ~o, o << 1, o >> 1, o >>> 1);
+}
+{
+  const print = printer("valueof-bitor prototype-literal-with-field");
+  const p = { valueOf() { return 5 } };
+  const o = { __proto__: p, x: 1 };
+  print(o | 0, o & 4, o ^ 1, ~o, o << 1, o >> 1, o >>> 1);
+}
+{
+  const print = printer("valueof-bitor prototype-set");
+  const p = { valueOf() { return 5 } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print(o | 0, o & 4, o ^ 1, ~o, o << 1, o >> 1, o >>> 1);
+}
+////= lines-150	"valueof-bitor prototype-set-with-field"	Object
+////= lines-150	"valueof-bitor prototype-reflect-set"	Reflect
+{
+  const print = printer("valueof-bitor prototype-proto-store");
+  const p = { valueOf() { return 5 } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print(o | 0, o & 4, o ^ 1, ~o, o << 1, o >> 1, o >>> 1);
+}
+{
+  const print = printer("valueof-bitor prototype-two-levels");
+  const p = { valueOf() { return 5 } };
+  const o = Object.create(Object.create(p));
+  print(o | 0, o & 4, o ^ 1, ~o, o << 1, o >> 1, o >>> 1);
+}
+////= lines-209	"valueof-bitor prototype-of-class-instance"	print(o | 0, o & 4, o ^ 1, ~o, o << 1, o >> 1, o >>> 1
+{
+  const print = printer("valueof-bitor prototype-is-instance");
+  class C { valueOf = function () { return 5 }; }
+  const o = Object.create(new C());
+  print(o | 0, o & 4, o ^ 1, ~o, o << 1, o >> 1, o >>> 1);
+}
+{
+  const print = printer("valueof-bitor stored-after");
+  const o = {};
+  o.valueOf = function () { return 5 };
+  print(o | 0, o & 4, o ^ 1, ~o, o << 1, o >> 1, o >>> 1);
+}
+{
+  const print = printer("valueof-bitor stored-after-with-field");
+  const o = { x: 1 };
+  o.valueOf = function () { return 5 };
+  print(o | 0, o & 4, o ^ 1, ~o, o << 1, o >> 1, o >>> 1);
+}
+{
+  const print = printer("valueof-bitor stored-after-on-prototype");
+  const p = {};
+  p.valueOf = function () { return 5 };
+  const o = Object.create(p);
+  print(o | 0, o & 4, o ^ 1, ~o, o << 1, o >> 1, o >>> 1);
+}
+{
+  const print = printer("valueof-bitor stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.valueOf = function () { return 5 };
+  print(o | 0, o & 4, o ^ 1, ~o, o << 1, o >> 1, o >>> 1);
+}
+{
+  const print = printer("valueof-bitor stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.valueOf = function () { return 5 };
+  print(o | 0, o & 4, o ^ 1, ~o, o << 1, o >> 1, o >>> 1);
+}
+{
+  const print = printer("valueof-bitor stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.valueOf = function () { return 5 };
+  const o = new C();
+  print(o | 0, o & 4, o ^ 1, ~o, o << 1, o >> 1, o >>> 1);
+}
+{
+  const print = printer("valueof-bitor constructor-function");
+  function F() {}
+  F.prototype.valueOf = function () { return 5 };
+  const o = new F();
+  print(o | 0, o & 4, o ^ 1, ~o, o << 1, o >> 1, o >>> 1);
+}
+{
+  const print = printer("valueof-bitor constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { valueOf() { return 5 } };
+  const o = new F();
+  print(o | 0, o & 4, o ^ 1, ~o, o << 1, o >> 1, o >>> 1);
+}
+{
+  const print = printer("valueof-bitor constructor-function-this");
+  function F() { this.valueOf = function () { return 5 }; }
+  const o = new F();
+  print(o | 0, o & 4, o ^ 1, ~o, o << 1, o >> 1, o >>> 1);
+}
+{
+  const print = printer("valueof-bitor getter");
+  const o = { get valueOf() { return function () { return 5 }; } };
+  print(o | 0, o & 4, o ^ 1, ~o, o << 1, o >> 1, o >>> 1);
+}
+{
+  const print = printer("valueof-bitor defined");
+  const o = {};
+  Object.defineProperty(o, "valueOf", { value: function () { return 5 } });
+  print(o | 0, o & 4, o ^ 1, ~o, o << 1, o >> 1, o >>> 1);
+}
+{
+  const print = printer("valueof-bitor assigned");
+  const o = Object.assign({}, { valueOf() { return 5 } });
+  print(o | 0, o & 4, o ^ 1, ~o, o << 1, o >> 1, o >>> 1);
+}
+{
+  const print = printer("valueof-bitor spread-copy");
+  const o = { ...{ valueOf() { return 5 } } };
+  print(o | 0, o & 4, o ^ 1, ~o, o << 1, o >> 1, o >>> 1);
+}
+{
+  const print = printer("valueof-bitor made-in-function");
+  function make() { return { valueOf() { return 5 } }; }
+  const o = make();
+  print(o | 0, o & 4, o ^ 1, ~o, o << 1, o >> 1, o >>> 1);
+}
+{
+  const print = printer("valueof-bitor made-in-function-twice");
+  function make() { return { valueOf() { return 5 } }; }
+  make();
+  const o = make();
+  print(o | 0, o & 4, o ^ 1, ~o, o << 1, o >> 1, o >>> 1);
+}
+{
+  const print = printer("valueof-bitor literal-arrow");
+  const o = { valueOf: () => { return 5 } };
+  print(o | 0, o & 4, o ^ 1, ~o, o << 1, o >> 1, o >>> 1);
+}
+{
+  const print = printer("valueof-bitor class-field-arrow");
+  class C { valueOf = () => { return 5 }; }
+  const o = new C();
+  print(o | 0, o & 4, o ^ 1, ~o, o << 1, o >> 1, o >>> 1);
+}
+{
+  const print = printer("valueof-bitor prototype-create-arrow");
+  const p = { valueOf: () => { return 5 } };
+  const o = Object.create(p);
+  print(o | 0, o & 4, o ^ 1, ~o, o << 1, o >> 1, o >>> 1);
+}
+{
+  const print = printer("valueof-math literal");
+  const o = { valueOf() { return 5 } };
+  print(Math.max(o, 1), Math.floor(o), Math.abs(o));
+}
+{
+  const print = printer("valueof-math literal-function");
+  const o = { valueOf: function () { return 5 } };
+  print(Math.max(o, 1), Math.floor(o), Math.abs(o));
+}
+{
+  const print = printer("valueof-math literal-with-field");
+  const o = { x: 1, valueOf() { return 5 } };
+  print(Math.max(o, 1), Math.floor(o), Math.abs(o));
+}
+{
+  const print = printer("valueof-math class-method");
+  class C { valueOf() { return 5 } }
+  const o = new C();
+  print(Math.max(o, 1), Math.floor(o), Math.abs(o));
+}
+{
+  const print = printer("valueof-math class-field");
+  class C { valueOf = function () { return 5 }; }
+  const o = new C();
+  print(Math.max(o, 1), Math.floor(o), Math.abs(o));
+}
+{
+  const print = printer("valueof-math subclass");
+  class B { valueOf() { return 5 } }
+  class C extends B {}
+  const o = new C();
+  print(Math.max(o, 1), Math.floor(o), Math.abs(o));
+}
+{
+  const print = printer("valueof-math class-static");
+  class C { static valueOf() { return 5 } }
+  const o = C;
+  print(Math.max(o, 1), Math.floor(o), Math.abs(o));
+}
+{
+  const print = printer("valueof-math prototype-create");
+  const p = { valueOf() { return 5 } };
+  const o = Object.create(p);
+  print(Math.max(o, 1), Math.floor(o), Math.abs(o));
+}
+{
+  const print = printer("valueof-math prototype-literal");
+  const p = { valueOf() { return 5 } };
+  const o = { __proto__: p };
+  print(Math.max(o, 1), Math.floor(o), Math.abs(o));
+}
+{
+  const print = printer("valueof-math prototype-literal-with-field");
+  const p = { valueOf() { return 5 } };
+  const o = { __proto__: p, x: 1 };
+  print(Math.max(o, 1), Math.floor(o), Math.abs(o));
+}
+{
+  const print = printer("valueof-math prototype-set");
+  const p = { valueOf() { return 5 } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print(Math.max(o, 1), Math.floor(o), Math.abs(o));
+}
+////= lines-157	"valueof-math prototype-set-with-field"	Object
+////= lines-157	"valueof-math prototype-reflect-set"	Reflect
+{
+  const print = printer("valueof-math prototype-proto-store");
+  const p = { valueOf() { return 5 } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print(Math.max(o, 1), Math.floor(o), Math.abs(o));
+}
+{
+  const print = printer("valueof-math prototype-two-levels");
+  const p = { valueOf() { return 5 } };
+  const o = Object.create(Object.create(p));
+  print(Math.max(o, 1), Math.floor(o), Math.abs(o));
+}
+////= lines-209	"valueof-math prototype-of-class-instance"	print(Math.max(o, 1), Math.floor(o), Math.abs(o)
+{
+  const print = printer("valueof-math prototype-is-instance");
+  class C { valueOf = function () { return 5 }; }
+  const o = Object.create(new C());
+  print(Math.max(o, 1), Math.floor(o), Math.abs(o));
+}
+{
+  const print = printer("valueof-math stored-after");
+  const o = {};
+  o.valueOf = function () { return 5 };
+  print(Math.max(o, 1), Math.floor(o), Math.abs(o));
+}
+{
+  const print = printer("valueof-math stored-after-with-field");
+  const o = { x: 1 };
+  o.valueOf = function () { return 5 };
+  print(Math.max(o, 1), Math.floor(o), Math.abs(o));
+}
+{
+  const print = printer("valueof-math stored-after-on-prototype");
+  const p = {};
+  p.valueOf = function () { return 5 };
+  const o = Object.create(p);
+  print(Math.max(o, 1), Math.floor(o), Math.abs(o));
+}
+{
+  const print = printer("valueof-math stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.valueOf = function () { return 5 };
+  print(Math.max(o, 1), Math.floor(o), Math.abs(o));
+}
+{
+  const print = printer("valueof-math stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.valueOf = function () { return 5 };
+  print(Math.max(o, 1), Math.floor(o), Math.abs(o));
+}
+{
+  const print = printer("valueof-math stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.valueOf = function () { return 5 };
+  const o = new C();
+  print(Math.max(o, 1), Math.floor(o), Math.abs(o));
+}
+{
+  const print = printer("valueof-math constructor-function");
+  function F() {}
+  F.prototype.valueOf = function () { return 5 };
+  const o = new F();
+  print(Math.max(o, 1), Math.floor(o), Math.abs(o));
+}
+{
+  const print = printer("valueof-math constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { valueOf() { return 5 } };
+  const o = new F();
+  print(Math.max(o, 1), Math.floor(o), Math.abs(o));
+}
+{
+  const print = printer("valueof-math constructor-function-this");
+  function F() { this.valueOf = function () { return 5 }; }
+  const o = new F();
+  print(Math.max(o, 1), Math.floor(o), Math.abs(o));
+}
+{
+  const print = printer("valueof-math getter");
+  const o = { get valueOf() { return function () { return 5 }; } };
+  print(Math.max(o, 1), Math.floor(o), Math.abs(o));
+}
+{
+  const print = printer("valueof-math defined");
+  const o = {};
+  Object.defineProperty(o, "valueOf", { value: function () { return 5 } });
+  print(Math.max(o, 1), Math.floor(o), Math.abs(o));
+}
+{
+  const print = printer("valueof-math assigned");
+  const o = Object.assign({}, { valueOf() { return 5 } });
+  print(Math.max(o, 1), Math.floor(o), Math.abs(o));
+}
+{
+  const print = printer("valueof-math spread-copy");
+  const o = { ...{ valueOf() { return 5 } } };
+  print(Math.max(o, 1), Math.floor(o), Math.abs(o));
+}
+{
+  const print = printer("valueof-math made-in-function");
+  function make() { return { valueOf() { return 5 } }; }
+  const o = make();
+  print(Math.max(o, 1), Math.floor(o), Math.abs(o));
+}
+{
+  const print = printer("valueof-math made-in-function-twice");
+  function make() { return { valueOf() { return 5 } }; }
+  make();
+  const o = make();
+  print(Math.max(o, 1), Math.floor(o), Math.abs(o));
+}
+{
+  const print = printer("valueof-math literal-arrow");
+  const o = { valueOf: () => { return 5 } };
+  print(Math.max(o, 1), Math.floor(o), Math.abs(o));
+}
+{
+  const print = printer("valueof-math class-field-arrow");
+  class C { valueOf = () => { return 5 }; }
+  const o = new C();
+  print(Math.max(o, 1), Math.floor(o), Math.abs(o));
+}
+{
+  const print = printer("valueof-math prototype-create-arrow");
+  const p = { valueOf: () => { return 5 } };
+  const o = Object.create(p);
+  print(Math.max(o, 1), Math.floor(o), Math.abs(o));
+}
+{
+  const print = printer("valueof-exponent literal");
+  const o = { valueOf() { return 5 } };
+  print(o ** 2, o % 3, o / 2);
+}
+{
+  const print = printer("valueof-exponent literal-function");
+  const o = { valueOf: function () { return 5 } };
+  print(o ** 2, o % 3, o / 2);
+}
+{
+  const print = printer("valueof-exponent literal-with-field");
+  const o = { x: 1, valueOf() { return 5 } };
+  print(o ** 2, o % 3, o / 2);
+}
+{
+  const print = printer("valueof-exponent class-method");
+  class C { valueOf() { return 5 } }
+  const o = new C();
+  print(o ** 2, o % 3, o / 2);
+}
+{
+  const print = printer("valueof-exponent class-field");
+  class C { valueOf = function () { return 5 }; }
+  const o = new C();
+  print(o ** 2, o % 3, o / 2);
+}
+{
+  const print = printer("valueof-exponent subclass");
+  class B { valueOf() { return 5 } }
+  class C extends B {}
+  const o = new C();
+  print(o ** 2, o % 3, o / 2);
+}
+{
+  const print = printer("valueof-exponent class-static");
+  class C { static valueOf() { return 5 } }
+  const o = C;
+  print(o ** 2, o % 3, o / 2);
+}
+{
+  const print = printer("valueof-exponent prototype-create");
+  const p = { valueOf() { return 5 } };
+  const o = Object.create(p);
+  print(o ** 2, o % 3, o / 2);
+}
+{
+  const print = printer("valueof-exponent prototype-literal");
+  const p = { valueOf() { return 5 } };
+  const o = { __proto__: p };
+  print(o ** 2, o % 3, o / 2);
+}
+{
+  const print = printer("valueof-exponent prototype-literal-with-field");
+  const p = { valueOf() { return 5 } };
+  const o = { __proto__: p, x: 1 };
+  print(o ** 2, o % 3, o / 2);
+}
+{
+  const print = printer("valueof-exponent prototype-set");
+  const p = { valueOf() { return 5 } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print(o ** 2, o % 3, o / 2);
+}
+////= lines-153	"valueof-exponent prototype-set-with-field"	Object
+////= lines-153	"valueof-exponent prototype-reflect-set"	Reflect
+{
+  const print = printer("valueof-exponent prototype-proto-store");
+  const p = { valueOf() { return 5 } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print(o ** 2, o % 3, o / 2);
+}
+{
+  const print = printer("valueof-exponent prototype-two-levels");
+  const p = { valueOf() { return 5 } };
+  const o = Object.create(Object.create(p));
+  print(o ** 2, o % 3, o / 2);
+}
+////= lines-209	"valueof-exponent prototype-of-class-instance"	print(o ** 2, o % 3, o / 2
+{
+  const print = printer("valueof-exponent prototype-is-instance");
+  class C { valueOf = function () { return 5 }; }
+  const o = Object.create(new C());
+  print(o ** 2, o % 3, o / 2);
+}
+{
+  const print = printer("valueof-exponent stored-after");
+  const o = {};
+  o.valueOf = function () { return 5 };
+  print(o ** 2, o % 3, o / 2);
+}
+{
+  const print = printer("valueof-exponent stored-after-with-field");
+  const o = { x: 1 };
+  o.valueOf = function () { return 5 };
+  print(o ** 2, o % 3, o / 2);
+}
+{
+  const print = printer("valueof-exponent stored-after-on-prototype");
+  const p = {};
+  p.valueOf = function () { return 5 };
+  const o = Object.create(p);
+  print(o ** 2, o % 3, o / 2);
+}
+{
+  const print = printer("valueof-exponent stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.valueOf = function () { return 5 };
+  print(o ** 2, o % 3, o / 2);
+}
+{
+  const print = printer("valueof-exponent stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.valueOf = function () { return 5 };
+  print(o ** 2, o % 3, o / 2);
+}
+{
+  const print = printer("valueof-exponent stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.valueOf = function () { return 5 };
+  const o = new C();
+  print(o ** 2, o % 3, o / 2);
+}
+{
+  const print = printer("valueof-exponent constructor-function");
+  function F() {}
+  F.prototype.valueOf = function () { return 5 };
+  const o = new F();
+  print(o ** 2, o % 3, o / 2);
+}
+{
+  const print = printer("valueof-exponent constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { valueOf() { return 5 } };
+  const o = new F();
+  print(o ** 2, o % 3, o / 2);
+}
+{
+  const print = printer("valueof-exponent constructor-function-this");
+  function F() { this.valueOf = function () { return 5 }; }
+  const o = new F();
+  print(o ** 2, o % 3, o / 2);
+}
+{
+  const print = printer("valueof-exponent getter");
+  const o = { get valueOf() { return function () { return 5 }; } };
+  print(o ** 2, o % 3, o / 2);
+}
+{
+  const print = printer("valueof-exponent defined");
+  const o = {};
+  Object.defineProperty(o, "valueOf", { value: function () { return 5 } });
+  print(o ** 2, o % 3, o / 2);
+}
+{
+  const print = printer("valueof-exponent assigned");
+  const o = Object.assign({}, { valueOf() { return 5 } });
+  print(o ** 2, o % 3, o / 2);
+}
+{
+  const print = printer("valueof-exponent spread-copy");
+  const o = { ...{ valueOf() { return 5 } } };
+  print(o ** 2, o % 3, o / 2);
+}
+{
+  const print = printer("valueof-exponent made-in-function");
+  function make() { return { valueOf() { return 5 } }; }
+  const o = make();
+  print(o ** 2, o % 3, o / 2);
+}
+{
+  const print = printer("valueof-exponent made-in-function-twice");
+  function make() { return { valueOf() { return 5 } }; }
+  make();
+  const o = make();
+  print(o ** 2, o % 3, o / 2);
+}
+{
+  const print = printer("valueof-exponent literal-arrow");
+  const o = { valueOf: () => { return 5 } };
+  print(o ** 2, o % 3, o / 2);
+}
+{
+  const print = printer("valueof-exponent class-field-arrow");
+  class C { valueOf = () => { return 5 }; }
+  const o = new C();
+  print(o ** 2, o % 3, o / 2);
+}
+{
+  const print = printer("valueof-exponent prototype-create-arrow");
+  const p = { valueOf: () => { return 5 } };
+  const o = Object.create(p);
+  print(o ** 2, o % 3, o / 2);
+}
+{
+  const print = printer("valueof-add-assign literal");
+  const o = { valueOf() { return 5 } };
+  let x = 1; x += o; print(x);
+}
+{
+  const print = printer("valueof-add-assign literal-function");
+  const o = { valueOf: function () { return 5 } };
+  let x = 1; x += o; print(x);
+}
+{
+  const print = printer("valueof-add-assign literal-with-field");
+  const o = { x: 1, valueOf() { return 5 } };
+  let x = 1; x += o; print(x);
+}
+{
+  const print = printer("valueof-add-assign class-method");
+  class C { valueOf() { return 5 } }
+  const o = new C();
+  let x = 1; x += o; print(x);
+}
+{
+  const print = printer("valueof-add-assign class-field");
+  class C { valueOf = function () { return 5 }; }
+  const o = new C();
+  let x = 1; x += o; print(x);
+}
+{
+  const print = printer("valueof-add-assign subclass");
+  class B { valueOf() { return 5 } }
+  class C extends B {}
+  const o = new C();
+  let x = 1; x += o; print(x);
+}
+{
+  const print = printer("valueof-add-assign class-static");
+  class C { static valueOf() { return 5 } }
+  const o = C;
+  let x = 1; x += o; print(x);
+}
+{
+  const print = printer("valueof-add-assign prototype-create");
+  const p = { valueOf() { return 5 } };
+  const o = Object.create(p);
+  let x = 1; x += o; print(x);
+}
+{
+  const print = printer("valueof-add-assign prototype-literal");
+  const p = { valueOf() { return 5 } };
+  const o = { __proto__: p };
+  let x = 1; x += o; print(x);
+}
+{
+  const print = printer("valueof-add-assign prototype-literal-with-field");
+  const p = { valueOf() { return 5 } };
+  const o = { __proto__: p, x: 1 };
+  let x = 1; x += o; print(x);
+}
+{
+  const print = printer("valueof-add-assign prototype-set");
+  const p = { valueOf() { return 5 } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  let x = 1; x += o; print(x);
+}
+////= lines-149	"valueof-add-assign prototype-set-with-field"	Object
+////= lines-149	"valueof-add-assign prototype-reflect-set"	Reflect
+{
+  const print = printer("valueof-add-assign prototype-proto-store");
+  const p = { valueOf() { return 5 } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  let x = 1; x += o; print(x);
+}
+{
+  const print = printer("valueof-add-assign prototype-two-levels");
+  const p = { valueOf() { return 5 } };
+  const o = Object.create(Object.create(p));
+  let x = 1; x += o; print(x);
+}
+////= lines-209	"valueof-add-assign prototype-of-class-instance"	let x = 1; x += o; print(x
+{
+  const print = printer("valueof-add-assign prototype-is-instance");
+  class C { valueOf = function () { return 5 }; }
+  const o = Object.create(new C());
+  let x = 1; x += o; print(x);
+}
+{
+  const print = printer("valueof-add-assign stored-after");
+  const o = {};
+  o.valueOf = function () { return 5 };
+  let x = 1; x += o; print(x);
+}
+{
+  const print = printer("valueof-add-assign stored-after-with-field");
+  const o = { x: 1 };
+  o.valueOf = function () { return 5 };
+  let x = 1; x += o; print(x);
+}
+{
+  const print = printer("valueof-add-assign stored-after-on-prototype");
+  const p = {};
+  p.valueOf = function () { return 5 };
+  const o = Object.create(p);
+  let x = 1; x += o; print(x);
+}
+{
+  const print = printer("valueof-add-assign stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.valueOf = function () { return 5 };
+  let x = 1; x += o; print(x);
+}
+{
+  const print = printer("valueof-add-assign stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.valueOf = function () { return 5 };
+  let x = 1; x += o; print(x);
+}
+{
+  const print = printer("valueof-add-assign stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.valueOf = function () { return 5 };
+  const o = new C();
+  let x = 1; x += o; print(x);
+}
+{
+  const print = printer("valueof-add-assign constructor-function");
+  function F() {}
+  F.prototype.valueOf = function () { return 5 };
+  const o = new F();
+  let x = 1; x += o; print(x);
+}
+{
+  const print = printer("valueof-add-assign constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { valueOf() { return 5 } };
+  const o = new F();
+  let x = 1; x += o; print(x);
+}
+{
+  const print = printer("valueof-add-assign constructor-function-this");
+  function F() { this.valueOf = function () { return 5 }; }
+  const o = new F();
+  let x = 1; x += o; print(x);
+}
+{
+  const print = printer("valueof-add-assign getter");
+  const o = { get valueOf() { return function () { return 5 }; } };
+  let x = 1; x += o; print(x);
+}
+{
+  const print = printer("valueof-add-assign defined");
+  const o = {};
+  Object.defineProperty(o, "valueOf", { value: function () { return 5 } });
+  let x = 1; x += o; print(x);
+}
+{
+  const print = printer("valueof-add-assign assigned");
+  const o = Object.assign({}, { valueOf() { return 5 } });
+  let x = 1; x += o; print(x);
+}
+{
+  const print = printer("valueof-add-assign spread-copy");
+  const o = { ...{ valueOf() { return 5 } } };
+  let x = 1; x += o; print(x);
+}
+{
+  const print = printer("valueof-add-assign made-in-function");
+  function make() { return { valueOf() { return 5 } }; }
+  const o = make();
+  let x = 1; x += o; print(x);
+}
+{
+  const print = printer("valueof-add-assign made-in-function-twice");
+  function make() { return { valueOf() { return 5 } }; }
+  make();
+  const o = make();
+  let x = 1; x += o; print(x);
+}
+{
+  const print = printer("valueof-add-assign literal-arrow");
+  const o = { valueOf: () => { return 5 } };
+  let x = 1; x += o; print(x);
+}
+{
+  const print = printer("valueof-add-assign class-field-arrow");
+  class C { valueOf = () => { return 5 }; }
+  const o = new C();
+  let x = 1; x += o; print(x);
+}
+{
+  const print = printer("valueof-add-assign prototype-create-arrow");
+  const p = { valueOf: () => { return 5 } };
+  const o = Object.create(p);
+  let x = 1; x += o; print(x);
+}
+{
+  const print = printer("valueof-isnan literal");
+  const o = { valueOf() { return 5 } };
+  print(isNaN(o), isFinite(o));
+}
+{
+  const print = printer("valueof-isnan literal-function");
+  const o = { valueOf: function () { return 5 } };
+  print(isNaN(o), isFinite(o));
+}
+{
+  const print = printer("valueof-isnan literal-with-field");
+  const o = { x: 1, valueOf() { return 5 } };
+  print(isNaN(o), isFinite(o));
+}
+{
+  const print = printer("valueof-isnan class-method");
+  class C { valueOf() { return 5 } }
+  const o = new C();
+  print(isNaN(o), isFinite(o));
+}
+{
+  const print = printer("valueof-isnan class-field");
+  class C { valueOf = function () { return 5 }; }
+  const o = new C();
+  print(isNaN(o), isFinite(o));
+}
+////= lines-136	"valueof-isnan subclass"	valueOf	5	isNaN	isFinite
+{
+  const print = printer("valueof-isnan class-static");
+  class C { static valueOf() { return 5 } }
+  const o = C;
+  print(isNaN(o), isFinite(o));
+}
+{
+  const print = printer("valueof-isnan prototype-create");
+  const p = { valueOf() { return 5 } };
+  const o = Object.create(p);
+  print(isNaN(o), isFinite(o));
+}
+{
+  const print = printer("valueof-isnan prototype-literal");
+  const p = { valueOf() { return 5 } };
+  const o = { __proto__: p };
+  print(isNaN(o), isFinite(o));
+}
+{
+  const print = printer("valueof-isnan prototype-literal-with-field");
+  const p = { valueOf() { return 5 } };
+  const o = { __proto__: p, x: 1 };
+  print(isNaN(o), isFinite(o));
+}
+////= lines-131	"valueof-isnan prototype-set"	valueOf	5	isNaN	isFinite
+////= lines-17	"valueof-isnan prototype-set-with-field"	valueOf	5	Object	isNaN	isFinite
+////= lines-17	"valueof-isnan prototype-reflect-set"	valueOf	5	Reflect	isNaN	isFinite
+////= lines-130	"valueof-isnan prototype-proto-store"	valueOf	5	isNaN	isFinite
+{
+  const print = printer("valueof-isnan prototype-two-levels");
+  const p = { valueOf() { return 5 } };
+  const o = Object.create(Object.create(p));
+  print(isNaN(o), isFinite(o));
+}
+////= lines-33	"valueof-isnan prototype-of-class-instance"	valueOf	5	isNaN	isFinite
+{
+  const print = printer("valueof-isnan prototype-is-instance");
+  class C { valueOf = function () { return 5 }; }
+  const o = Object.create(new C());
+  print(isNaN(o), isFinite(o));
+}
+{
+  const print = printer("valueof-isnan stored-after");
+  const o = {};
+  o.valueOf = function () { return 5 };
+  print(isNaN(o), isFinite(o));
+}
+{
+  const print = printer("valueof-isnan stored-after-with-field");
+  const o = { x: 1 };
+  o.valueOf = function () { return 5 };
+  print(isNaN(o), isFinite(o));
+}
+////= lines-133	"valueof-isnan stored-after-on-prototype"	valueOf	5	isNaN	isFinite
+////= lines-134	"valueof-isnan stored-after-on-prototype-late"	valueOf	5	isNaN	isFinite
+////= lines-132	"valueof-isnan stored-after-on-instance"	valueOf	5	isNaN	isFinite
+////= lines-135	"valueof-isnan stored-on-class-prototype"	valueOf	5	isNaN	isFinite
+////= lines-127	"valueof-isnan constructor-function"	valueOf	5	isNaN	isFinite
+////= lines-128	"valueof-isnan constructor-function-prototype-object"	valueOf	5	isNaN	isFinite
+{
+  const print = printer("valueof-isnan constructor-function-this");
+  function F() { this.valueOf = function () { return 5 }; }
+  const o = new F();
+  print(isNaN(o), isFinite(o));
+}
+{
+  const print = printer("valueof-isnan getter");
+  const o = { get valueOf() { return function () { return 5 }; } };
+  print(isNaN(o), isFinite(o));
+}
+{
+  const print = printer("valueof-isnan defined");
+  const o = {};
+  Object.defineProperty(o, "valueOf", { value: function () { return 5 } });
+  print(isNaN(o), isFinite(o));
+}
+{
+  const print = printer("valueof-isnan assigned");
+  const o = Object.assign({}, { valueOf() { return 5 } });
+  print(isNaN(o), isFinite(o));
+}
+{
+  const print = printer("valueof-isnan spread-copy");
+  const o = { ...{ valueOf() { return 5 } } };
+  print(isNaN(o), isFinite(o));
+}
+{
+  const print = printer("valueof-isnan made-in-function");
+  function make() { return { valueOf() { return 5 } }; }
+  const o = make();
+  print(isNaN(o), isFinite(o));
+}
+////= lines-129	"valueof-isnan made-in-function-twice"	valueOf	5	isNaN	isFinite
+{
+  const print = printer("valueof-isnan literal-arrow");
+  const o = { valueOf: () => { return 5 } };
+  print(isNaN(o), isFinite(o));
+}
+{
+  const print = printer("valueof-isnan class-field-arrow");
+  class C { valueOf = () => { return 5 }; }
+  const o = new C();
+  print(isNaN(o), isFinite(o));
+}
+{
+  const print = printer("valueof-isnan prototype-create-arrow");
+  const p = { valueOf: () => { return 5 } };
+  const o = Object.create(p);
+  print(isNaN(o), isFinite(o));
+}
+{
+  const print = printer("valueof-date literal");
+  const o = { valueOf() { return 5 } };
+  print(new Date(o).getTime());
+}
+{
+  const print = printer("valueof-date literal-function");
+  const o = { valueOf: function () { return 5 } };
+  print(new Date(o).getTime());
+}
+{
+  const print = printer("valueof-date literal-with-field");
+  const o = { x: 1, valueOf() { return 5 } };
+  print(new Date(o).getTime());
+}
+{
+  const print = printer("valueof-date class-method");
+  class C { valueOf() { return 5 } }
+  const o = new C();
+  print(new Date(o).getTime());
+}
+{
+  const print = printer("valueof-date class-field");
+  class C { valueOf = function () { return 5 }; }
+  const o = new C();
+  print(new Date(o).getTime());
+}
+{
+  const print = printer("valueof-date subclass");
+  class B { valueOf() { return 5 } }
+  class C extends B {}
+  const o = new C();
+  print(new Date(o).getTime());
+}
+{
+  const print = printer("valueof-date class-static");
+  class C { static valueOf() { return 5 } }
+  const o = C;
+  print(new Date(o).getTime());
+}
+{
+  const print = printer("valueof-date prototype-create");
+  const p = { valueOf() { return 5 } };
+  const o = Object.create(p);
+  print(new Date(o).getTime());
+}
+{
+  const print = printer("valueof-date prototype-literal");
+  const p = { valueOf() { return 5 } };
+  const o = { __proto__: p };
+  print(new Date(o).getTime());
+}
+{
+  const print = printer("valueof-date prototype-literal-with-field");
+  const p = { valueOf() { return 5 } };
+  const o = { __proto__: p, x: 1 };
+  print(new Date(o).getTime());
+}
+{
+  const print = printer("valueof-date prototype-set");
+  const p = { valueOf() { return 5 } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print(new Date(o).getTime());
+}
+////= lines-151	"valueof-date prototype-set-with-field"	Object
+////= lines-151	"valueof-date prototype-reflect-set"	Reflect
+{
+  const print = printer("valueof-date prototype-proto-store");
+  const p = { valueOf() { return 5 } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print(new Date(o).getTime());
+}
+{
+  const print = printer("valueof-date prototype-two-levels");
+  const p = { valueOf() { return 5 } };
+  const o = Object.create(Object.create(p));
+  print(new Date(o).getTime());
+}
+////= lines-209	"valueof-date prototype-of-class-instance"	print(new Date(o).getTime()
+{
+  const print = printer("valueof-date prototype-is-instance");
+  class C { valueOf = function () { return 5 }; }
+  const o = Object.create(new C());
+  print(new Date(o).getTime());
+}
+{
+  const print = printer("valueof-date stored-after");
+  const o = {};
+  o.valueOf = function () { return 5 };
+  print(new Date(o).getTime());
+}
+{
+  const print = printer("valueof-date stored-after-with-field");
+  const o = { x: 1 };
+  o.valueOf = function () { return 5 };
+  print(new Date(o).getTime());
+}
+{
+  const print = printer("valueof-date stored-after-on-prototype");
+  const p = {};
+  p.valueOf = function () { return 5 };
+  const o = Object.create(p);
+  print(new Date(o).getTime());
+}
+{
+  const print = printer("valueof-date stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.valueOf = function () { return 5 };
+  print(new Date(o).getTime());
+}
+{
+  const print = printer("valueof-date stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.valueOf = function () { return 5 };
+  print(new Date(o).getTime());
+}
+{
+  const print = printer("valueof-date stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.valueOf = function () { return 5 };
+  const o = new C();
+  print(new Date(o).getTime());
+}
+{
+  const print = printer("valueof-date constructor-function");
+  function F() {}
+  F.prototype.valueOf = function () { return 5 };
+  const o = new F();
+  print(new Date(o).getTime());
+}
+{
+  const print = printer("valueof-date constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { valueOf() { return 5 } };
+  const o = new F();
+  print(new Date(o).getTime());
+}
+{
+  const print = printer("valueof-date constructor-function-this");
+  function F() { this.valueOf = function () { return 5 }; }
+  const o = new F();
+  print(new Date(o).getTime());
+}
+{
+  const print = printer("valueof-date getter");
+  const o = { get valueOf() { return function () { return 5 }; } };
+  print(new Date(o).getTime());
+}
+{
+  const print = printer("valueof-date defined");
+  const o = {};
+  Object.defineProperty(o, "valueOf", { value: function () { return 5 } });
+  print(new Date(o).getTime());
+}
+{
+  const print = printer("valueof-date assigned");
+  const o = Object.assign({}, { valueOf() { return 5 } });
+  print(new Date(o).getTime());
+}
+{
+  const print = printer("valueof-date spread-copy");
+  const o = { ...{ valueOf() { return 5 } } };
+  print(new Date(o).getTime());
+}
+{
+  const print = printer("valueof-date made-in-function");
+  function make() { return { valueOf() { return 5 } }; }
+  const o = make();
+  print(new Date(o).getTime());
+}
+{
+  const print = printer("valueof-date made-in-function-twice");
+  function make() { return { valueOf() { return 5 } }; }
+  make();
+  const o = make();
+  print(new Date(o).getTime());
+}
+{
+  const print = printer("valueof-date literal-arrow");
+  const o = { valueOf: () => { return 5 } };
+  print(new Date(o).getTime());
+}
+{
+  const print = printer("valueof-date class-field-arrow");
+  class C { valueOf = () => { return 5 }; }
+  const o = new C();
+  print(new Date(o).getTime());
+}
+{
+  const print = printer("valueof-date prototype-create-arrow");
+  const p = { valueOf: () => { return 5 } };
+  const o = Object.create(p);
+  print(new Date(o).getTime());
+}
+{
+  const print = printer("valueof-in-function literal");
+  const o = { valueOf() { return 5 } };
+  function run(x) { return x + 1; } print(run(o)); print(run(o)); print(run(2));
+}
+{
+  const print = printer("valueof-in-function literal-function");
+  const o = { valueOf: function () { return 5 } };
+  function run(x) { return x + 1; } print(run(o)); print(run(o)); print(run(2));
+}
+{
+  const print = printer("valueof-in-function literal-with-field");
+  const o = { x: 1, valueOf() { return 5 } };
+  function run(x) { return x + 1; } print(run(o)); print(run(o)); print(run(2));
+}
+{
+  const print = printer("valueof-in-function class-method");
+  class C { valueOf() { return 5 } }
+  const o = new C();
+  function run(x) { return x + 1; } print(run(o)); print(run(o)); print(run(2));
+}
+{
+  const print = printer("valueof-in-function class-field");
+  class C { valueOf = function () { return 5 }; }
+  const o = new C();
+  function run(x) { return x + 1; } print(run(o)); print(run(o)); print(run(2));
+}
+{
+  const print = printer("valueof-in-function subclass");
+  class B { valueOf() { return 5 } }
+  class C extends B {}
+  const o = new C();
+  function run(x) { return x + 1; } print(run(o)); print(run(o)); print(run(2));
+}
+{
+  const print = printer("valueof-in-function class-static");
+  class C { static valueOf() { return 5 } }
+  const o = C;
+  function run(x) { return x + 1; } print(run(o)); print(run(o)); print(run(2));
+}
+{
+  const print = printer("valueof-in-function prototype-create");
+  const p = { valueOf() { return 5 } };
+  const o = Object.create(p);
+  function run(x) { return x + 1; } print(run(o)); print(run(o)); print(run(2));
+}
+{
+  const print = printer("valueof-in-function prototype-literal");
+  const p = { valueOf() { return 5 } };
+  const o = { __proto__: p };
+  function run(x) { return x + 1; } print(run(o)); print(run(o)); print(run(2));
+}
+{
+  const print = printer("valueof-in-function prototype-literal-with-field");
+  const p = { valueOf() { return 5 } };
+  const o = { __proto__: p, x: 1 };
+  function run(x) { return x + 1; } print(run(o)); print(run(o)); print(run(2));
+}
+{
+  const print = printer("valueof-in-function prototype-set");
+  const p = { valueOf() { return 5 } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  function run(x) { return x + 1; } print(run(o)); print(run(o)); print(run(2));
+}
+////= lines-154	"valueof-in-function prototype-set-with-field"	Object
+////= lines-154	"valueof-in-function prototype-reflect-set"	Reflect
+{
+  const print = printer("valueof-in-function prototype-proto-store");
+  const p = { valueOf() { return 5 } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  function run(x) { return x + 1; } print(run(o)); print(run(o)); print(run(2));
+}
+{
+  const print = printer("valueof-in-function prototype-two-levels");
+  const p = { valueOf() { return 5 } };
+  const o = Object.create(Object.create(p));
+  function run(x) { return x + 1; } print(run(o)); print(run(o)); print(run(2));
+}
+////= lines-209	"valueof-in-function prototype-of-class-instance"	function run(x) { return x + 1; } print(run(o)); print(run(o)); print(run(2)
+{
+  const print = printer("valueof-in-function prototype-is-instance");
+  class C { valueOf = function () { return 5 }; }
+  const o = Object.create(new C());
+  function run(x) { return x + 1; } print(run(o)); print(run(o)); print(run(2));
+}
+{
+  const print = printer("valueof-in-function stored-after");
+  const o = {};
+  o.valueOf = function () { return 5 };
+  function run(x) { return x + 1; } print(run(o)); print(run(o)); print(run(2));
+}
+{
+  const print = printer("valueof-in-function stored-after-with-field");
+  const o = { x: 1 };
+  o.valueOf = function () { return 5 };
+  function run(x) { return x + 1; } print(run(o)); print(run(o)); print(run(2));
+}
+{
+  const print = printer("valueof-in-function stored-after-on-prototype");
+  const p = {};
+  p.valueOf = function () { return 5 };
+  const o = Object.create(p);
+  function run(x) { return x + 1; } print(run(o)); print(run(o)); print(run(2));
+}
+{
+  const print = printer("valueof-in-function stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.valueOf = function () { return 5 };
+  function run(x) { return x + 1; } print(run(o)); print(run(o)); print(run(2));
+}
+{
+  const print = printer("valueof-in-function stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.valueOf = function () { return 5 };
+  function run(x) { return x + 1; } print(run(o)); print(run(o)); print(run(2));
+}
+{
+  const print = printer("valueof-in-function stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.valueOf = function () { return 5 };
+  const o = new C();
+  function run(x) { return x + 1; } print(run(o)); print(run(o)); print(run(2));
+}
+{
+  const print = printer("valueof-in-function constructor-function");
+  function F() {}
+  F.prototype.valueOf = function () { return 5 };
+  const o = new F();
+  function run(x) { return x + 1; } print(run(o)); print(run(o)); print(run(2));
+}
+{
+  const print = printer("valueof-in-function constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { valueOf() { return 5 } };
+  const o = new F();
+  function run(x) { return x + 1; } print(run(o)); print(run(o)); print(run(2));
+}
+{
+  const print = printer("valueof-in-function constructor-function-this");
+  function F() { this.valueOf = function () { return 5 }; }
+  const o = new F();
+  function run(x) { return x + 1; } print(run(o)); print(run(o)); print(run(2));
+}
+{
+  const print = printer("valueof-in-function getter");
+  const o = { get valueOf() { return function () { return 5 }; } };
+  function run(x) { return x + 1; } print(run(o)); print(run(o)); print(run(2));
+}
+{
+  const print = printer("valueof-in-function defined");
+  const o = {};
+  Object.defineProperty(o, "valueOf", { value: function () { return 5 } });
+  function run(x) { return x + 1; } print(run(o)); print(run(o)); print(run(2));
+}
+{
+  const print = printer("valueof-in-function assigned");
+  const o = Object.assign({}, { valueOf() { return 5 } });
+  function run(x) { return x + 1; } print(run(o)); print(run(o)); print(run(2));
+}
+{
+  const print = printer("valueof-in-function spread-copy");
+  const o = { ...{ valueOf() { return 5 } } };
+  function run(x) { return x + 1; } print(run(o)); print(run(o)); print(run(2));
+}
+{
+  const print = printer("valueof-in-function made-in-function");
+  function make() { return { valueOf() { return 5 } }; }
+  const o = make();
+  function run(x) { return x + 1; } print(run(o)); print(run(o)); print(run(2));
+}
+{
+  const print = printer("valueof-in-function made-in-function-twice");
+  function make() { return { valueOf() { return 5 } }; }
+  make();
+  const o = make();
+  function run(x) { return x + 1; } print(run(o)); print(run(o)); print(run(2));
+}
+{
+  const print = printer("valueof-in-function literal-arrow");
+  const o = { valueOf: () => { return 5 } };
+  function run(x) { return x + 1; } print(run(o)); print(run(o)); print(run(2));
+}
+{
+  const print = printer("valueof-in-function class-field-arrow");
+  class C { valueOf = () => { return 5 }; }
+  const o = new C();
+  function run(x) { return x + 1; } print(run(o)); print(run(o)); print(run(2));
+}
+{
+  const print = printer("valueof-in-function prototype-create-arrow");
+  const p = { valueOf: () => { return 5 } };
+  const o = Object.create(p);
+  function run(x) { return x + 1; } print(run(o)); print(run(o)); print(run(2));
+}
+
+console.log(lines.join("\n"));

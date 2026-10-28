@@ -1,0 +1,7 @@
+strict: false
+declared(1) ["function", "function", true]
+declared() ["function", "undefined", false]
+declaredSecond(1, 2) ["number", "number", "function", "function"]
+declaredSecond(1) ["number", "number", "function", "undefined"]
+storedAfterwards(1) ["string", "string"]
+assignedAfterwards(1) ["string", "string"]

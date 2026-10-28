@@ -36,6 +36,7 @@ export const obeyed: Record<string, string[]> = {
   ...themselves("--trace-warnings --trace-deprecation --pending-deprecation --zero-fill-buffers --use-system-ca --use-openssl-ca --use-bundled-ca"),
   // Native code carries out the first, and nobody does anything for the second.
   "--stack-trace-limit": ["--stack-trace-limit=3", "--stack-trace-limit 3"],
+  "--input-type": ["--input-type=module", "--input-type module"],
   ...themselves("--trace-env-native-stack"),
   ...themselves("--tls-min-v1.0 --tls-min-v1.1 --tls-min-v1.2 --tls-min-v1.3 --tls-max-v1.2 --tls-max-v1.3 --no-addons --no-ffi-cc"),
   ...themselves("--preserve-symlinks --preserve-symlinks-main --no-macros --jsx-side-effects --ignore-dce-annotations --no-env-file"),

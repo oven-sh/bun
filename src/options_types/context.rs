@@ -607,7 +607,10 @@ pub struct RuntimeOptions {
 
 #[derive(Default)]
 pub struct Eval {
-    pub script: Box<[u8]>,
+    /// The program given in memory (`-e`, `-p`, stdin). `None` when there is
+    /// none. `Some` with no bytes is an empty program, which runs and exits 0
+    /// like `node -e ''` and `node </dev/null`.
+    pub script: Option<Box<[u8]>>,
     pub eval_and_print: bool,
     /// Under `--interactive`, `script` holds the node:repl bootstrap; this
     /// holds the user's actual `-e` bytes so `process._eval` reports them

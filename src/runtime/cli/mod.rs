@@ -1355,7 +1355,7 @@ pub(crate) mod command {
             return run_command::RunCommand::exec_node_repl(ctx);
         }
 
-        if tag == Tag::AutoCommand && !ctx.runtime_options.eval.script.is_empty() {
+        if tag == Tag::AutoCommand && ctx.runtime_options.eval.script.is_some() {
             lint_command::read_program_from_stdin(ctx);
             return run_command::RunCommand::exec_eval(ctx);
         }
@@ -1368,7 +1368,7 @@ pub(crate) mod command {
         }
 
         // `bun --check` and `bun run --check` are `bun check`, also where that is a script.
-        if no_target && ctx.runtime_options.check && ctx.runtime_options.eval.script.is_empty() {
+        if no_target && ctx.runtime_options.check && ctx.runtime_options.eval.script.is_none() {
             super::check_command::CheckCommand::exec_without_arguments();
         }
 
@@ -2407,6 +2407,17 @@ pub(crate) fn print_version_and_exit() -> ! {
     // `\n` is baked into the constant) → one syscall.
     let w = Output::writer();
     let _ = w.write_all(Global::package_json_version_nl.as_bytes());
+    Output::flush();
+    Global::exit(0);
+}
+
+/// `node --version` with bun as `node`.
+#[cold]
+pub(crate) fn print_node_version_and_exit() -> ! {
+    let w = Output::writer();
+    let _ = w.write_all(b"v");
+    let _ = w.write_all(bun_core::Environment::REPORTED_NODEJS_VERSION.as_bytes());
+    let _ = w.write_all(b"\n");
     Output::flush();
     Global::exit(0);
 }

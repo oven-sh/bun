@@ -144,7 +144,7 @@ impl ReplCommand {
             // local reborrow lifetime via raw ptr (the runner never outlives
             // ctx — global_exit() is `!`).
             eval_script: {
-                let ptr: *const [u8] = &raw const *ctx.runtime_options.eval.script;
+                let ptr: *const [u8] = ctx.runtime_options.eval.script.as_deref().unwrap_or(&[]);
                 // SAFETY: ctx.runtime_options.eval.script lives in the process-global
                 // ContextData; the raw-ptr reborrow is sound because the runner never
                 // outlives it — hold_api_lock returns into global_exit() (`!`).

@@ -304,6 +304,50 @@ describe("echo | bun run -", () => {
   group(run);
 });
 
+test("bun run - with an empty stdin runs an empty program", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "-"],
+    env: bunEnv,
+    stdin: Buffer.alloc(0),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+});
+
+// An empty `-e` is no program for bun, so the file runs as `bun file.js` runs it.
+test("bun -e '' file.js runs the file", async () => {
+  using dir = tempDir("empty-eval-file", {
+    "file.js": "console.log(typeof process._eval, typeof fs)",
+  });
+  const run = async (...args: string[]) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args, "file.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  };
+  expect(await run("-e", "")).toEqual(["undefined undefined\n", "", 0]);
+  expect(await run("-e", "")).toEqual(await run());
+});
+
+test("bun -e '' prints the help text", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", ""],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("Usage: bun <command>");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 test("process._eval (undefined for normal run)", async () => {
   const cwd = tmpdirSync();
   const file = join(cwd, "test.js");

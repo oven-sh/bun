@@ -293,21 +293,20 @@ describe.concurrent("handler that calls the loader it replaced, for a module tha
       const ext = Module._extensions[".mjs"] ? ".mjs" : ".js";
       const original = Module._extensions[ext];
       const nothing = {};
-      let caught = nothing;
-      let finallyRan = false;
-      let calls = 0;
+      // What the handler and the module did in one attempt. Each attempt has a new one, so nothing of an attempt
+      // that is tried again stays in the result.
+      let attempt;
       Module._extensions[ext] = function (module, filename) {
-        calls++;
+        attempt.calls++;
         try {
           return original.call(this, module, filename);
         } catch (e) {
           // Only an assignment: the request to stop is still there, and it ends a catch block at its first call.
-          caught = e;
+          attempt.caught = e;
         } finally {
-          finallyRan = true;
+          attempt.finallyRan = true;
         }
       };
-      const state = (globalThis.state = { started: false, returned: false });
       let code;
       let outcome;
       // The module waits off-CPU when the timeout passes, and the run stops it in that wait. A loop that spins can
@@ -316,19 +315,20 @@ describe.concurrent("handler that calls the loader it replaced, for a module tha
       for (let timeout = 100; timeout <= 800 && outcome !== "stopped"; timeout *= 2) {
         const file = path.join(__dirname, "wait-" + timeout + ".mjs");
         const wait = "Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, " + (timeout + 250) + ");";
-        fs.writeFileSync(file, "globalThis.state.started = true; " + wait + " globalThis.state.returned = true;");
-        state.started = state.returned = false;
-        calls = 0;
+        fs.writeFileSync(file, "globalThis.attempt.started = true; " + wait + " globalThis.attempt.returned = true;");
+        attempt = { started: false, returned: false, calls: 0, caught: nothing, finallyRan: false };
+        globalThis.attempt = attempt;
         try {
           vm.runInContext("load()", vm.createContext({ load: () => require(file) }), { timeout });
           code = "no error";
         } catch (e) {
           code = e?.code ?? String(e);
         }
-        outcome = !state.started ? "not started" : state.returned ? "returned" : "stopped";
+        outcome = !attempt.started ? "not started" : attempt.returned ? "returned" : "stopped";
         // A run that ends in another way is not tried again.
         if (outcome !== "returned" && code !== "ERR_SCRIPT_EXECUTION_TIMEOUT") break;
       }
+      const { calls, caught, finallyRan } = attempt;
       const caughtText = caught === nothing ? "nothing" : String(caught);
       console.log(JSON.stringify({ code, outcome, calls, caught: caughtText, finallyRan }));
     `,

@@ -313,20 +313,22 @@ impl DeferredSymlink {
     }
 }
 
-/// `is_symlink_target_safe` takes a symlink to be where its path says, so that path goes through none.
+/// `is_symlink_target_safe` takes a symlink to be where its path says, so it is asked again about one that symlinks lead to.
 #[cfg(unix)]
 pub fn create_deferred_symlinks(dir_fd: Fd, symlinks: &[DeferredSymlink], log: bool) -> u32 {
     for symlink in symlinks {
         let dirname = bun_paths::dirname_simple(symlink.path.as_bytes());
         if !dirname.is_empty() {
-            let _ = beneath::make_path(dir_fd, dirname, Symlinks::Refuse);
+            let _ = beneath::make_path(dir_fd, dirname, Symlinks::FollowInside);
         }
     }
 
     let mut created: u32 = 0;
+    let mut join_buf = None;
     for symlink in symlinks {
         let (target, path) = (symlink.target.as_zstr(), symlink.path.as_bytes());
-        match beneath::symlinkat(target, dir_fd, path, Symlinks::Refuse) {
+        let is_safe = |path: &[u8]| is_symlink_target_safe(path, target.as_bytes(), &mut join_buf);
+        match beneath::symlinkat_where_safe(target, dir_fd, path, is_safe) {
             Ok(()) => created += 1,
             Err(_) => {
                 if log {

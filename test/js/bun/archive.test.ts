@@ -1514,6 +1514,80 @@ describe("Bun.Archive", () => {
           );
         });
 
+        // Below a symlink, a symlink entry is not where its path says. Its target is judged from where it is.
+        test.concurrent.each(["plain", "glob"] as const)(
+          "a symlink entry below one that stays inside (%s)",
+          async mode => {
+            using dir = tempDir("archive-symlinks", fixture);
+            /** What is in the destination afterwards, besides `links`. With a glob, no target has a `..`. */
+            const cases: Record<
+              string,
+              Case & Record<"plain" | "glob", { result: number; tree: Record<string, string> }>
+            > = {
+              "to a name beside it": {
+                links: [["alias", "real"]],
+                archives: [[directory("real"), ustarSymlink("alias/link", "new.txt")]],
+                plain: { result: 2, tree: { "real": "directory", "real/link": "-> new.txt" } },
+                glob: { result: 2, tree: { "real": "directory", "real/link": "-> new.txt" } },
+              },
+              "in directories that are not there yet": {
+                links: [["alias", "real"]],
+                archives: [[directory("real"), ustarSymlink("alias/a/b/link", "new.txt")]],
+                plain: {
+                  result: 2,
+                  tree: {
+                    "real": "directory",
+                    "real/a": "directory",
+                    "real/a/b": "directory",
+                    "real/a/b/link": "-> new.txt",
+                  },
+                },
+                glob: {
+                  result: 2,
+                  tree: {
+                    "real": "directory",
+                    "real/a": "directory",
+                    "real/a/b": "directory",
+                    "real/a/b/link": "-> new.txt",
+                  },
+                },
+              },
+              "to the directory above, which is inside": {
+                links: [["alias", "real/deep"]],
+                archives: [[directory("real"), directory("real/deep"), ustarSymlink("alias/link", "../new.txt")]],
+                plain: {
+                  result: 3,
+                  tree: { "real": "directory", "real/deep": "directory", "real/deep/link": "-> ../new.txt" },
+                },
+                glob: { result: 2, tree: { "real": "directory", "real/deep": "directory" } },
+              },
+              "to the directory above, which is outside": {
+                links: [["a/up", ".."]],
+                archives: [[ustarSymlink("a/up/link", "..")]],
+                plain: { result: 1, tree: { "a": "directory" } },
+                glob: { result: 0, tree: { "a": "directory" } },
+              },
+            };
+            const { list, results } = await extractAll(String(dir), cases, mode, env);
+            expect(
+              Object.fromEntries(list.map(({ name, dest }) => [name, { results: results[name], tree: tree(dest) }])),
+            ).toEqual(
+              Object.fromEntries(
+                list.map(({ name }) => [
+                  name,
+                  {
+                    results: [cases[name][mode].result],
+                    tree: {
+                      ...cases[name][mode].tree,
+                      ...Object.fromEntries(cases[name].links!.map(([path, target]) => [path, "-> " + target])),
+                    },
+                  },
+                ]),
+              ),
+            );
+          },
+        );
+
         test.concurrent.each(["plain", "glob"] as const)("one that goes back and forth 400 times (%s)", async mode => {
           using dir = tempDir("archive-symlinks", fixture);
           const deep = Buffer.alloc(80, "d/").toString();

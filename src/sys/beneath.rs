@@ -115,7 +115,7 @@ pub fn mkdirat(dir: Fd, path: &[u8], mode: Mode, symlinks: Symlinks) -> Maybe<()
     })
 }
 
-pub fn symlinkat(target: &ZStr, dir: Fd, path: &[u8], symlinks: Symlinks) -> Maybe<()> {
+fn symlinkat(target: &ZStr, dir: Fd, path: &[u8], symlinks: Symlinks) -> Maybe<()> {
     in_parent(dir, path, symlinks, Tag::symlinkat, |parent, name| {
         // No kernel makes `a/l` of `a/l/`, and a caller that checked the target took the link to be in `a/l`.
         if path.last() == Some(&b'/') {
@@ -123,6 +123,31 @@ pub fn symlinkat(target: &ZStr, dir: Fd, path: &[u8], symlinks: Symlinks) -> May
         }
         crate::symlinkat(target, parent, name)
     })
+}
+
+/// Follows the symlinks that lead to `path` while they stay in `dir`, and then asks `is_safe` about the path without them, which is where the new one will be.
+pub fn symlinkat_where_safe(
+    target: &ZStr,
+    dir: Fd,
+    path: &[u8],
+    is_safe: impl FnOnce(&[u8]) -> bool,
+) -> Maybe<()> {
+    let result = symlinkat(target, dir, path, Symlinks::Refuse);
+    let (Err(err), Some(slash)) = (&result, strings::last_index_of_char(path, b'/')) else {
+        return result;
+    };
+    if !matches!(err.get_errno(), E::ELOOP | E::ENOTDIR | E::EMLINK) {
+        return result;
+    }
+    let mut buf = path_buffer_pool::get();
+    let parent = z(&path[..slash], &mut buf.0, Tag::symlinkat)?;
+    let mut resolved = resolve_symlinks(dir, parent, 0, Symlinks::FollowInside)?;
+    resolved.pop();
+    resolved.extend_from_slice(&path[slash..]);
+    if !is_safe(&resolved) {
+        return Err(Error::from_code(E::EXDEV, Tag::symlinkat).with_path(path));
+    }
+    symlinkat(target, dir, &resolved, Symlinks::Refuse).map_err(|e| e.with_path(path))
 }
 
 pub fn unlinkat(dir: Fd, path: &[u8], symlinks: Symlinks) -> Maybe<()> {
@@ -184,7 +209,7 @@ fn open_component_by_component(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> 
     Err(with_path(Error::from_code(E::ENOENT, Tag::open)))
 }
 
-/// `path` without its symlinks and with a NUL. Only `open_without_symlinks` may open it: the disk can change after this has read it.
+/// `path` without its symlinks and with a NUL. Only what refuses symlinks may use it: the disk can change after this has read it.
 fn resolve_symlinks(dir: Fd, path: &ZStr, flags: i32, symlinks: Symlinks) -> Maybe<Vec<u8>> {
     fn read_link(dir: Fd, path: &mut Vec<u8>, target: &mut [u8]) -> Maybe<usize> {
         path.push(0);

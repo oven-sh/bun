@@ -2,7 +2,9 @@
 // recursive walk. Before this fix rm({force}) returned success with the tree
 // still on disk; without force it reported a misleading top-level ENOENT.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
@@ -96,6 +98,66 @@ const run = async (which: string, force: "force" | "noforce") => {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout: stdout.trim(), stderr, exitCode };
 };
+
+// The real race, no shim: a second process removes entries while rm walks the
+// tree. rm takes the subdirectories in readdir order and the other process
+// takes them in reverse order, so the two meet in the middle and rm finds a
+// subdirectory (openat) or a file (unlinkat) already gone.
+// The deleter lists the tree, prints "ready", waits for "go", then removes
+// what it listed. The "go" line and the rm() call are issued back to back so
+// both walks start at about the same time.
+const DELETER = /* js */ `
+import { readdirSync, rmdirSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
+const root = process.argv[2];
+const subs = readdirSync(root).reverse();
+console.log("ready");
+await console[Symbol.asyncIterator]().next(); // "go"
+for (const sub of subs) {
+  const dir = join(root, sub);
+  for (const name of ["a", "b"]) {
+    try { unlinkSync(join(dir, name)); } catch {}
+  }
+  try { rmdirSync(dir); } catch {}
+}
+`;
+
+describe.skipIf(isWindows)("rm({recursive}) while another process removes entries in the tree", () => {
+  for (const force of [true, false]) {
+    test.concurrent(`force:${force} removes the whole tree`, async () => {
+      using dir = tempDir(`rm-race-${force}`, { "deleter.mjs": DELETER });
+      const root = join(String(dir), "tree");
+      for (let n = 0; n < 200; n++) {
+        const sub = join(root, `d${n}`);
+        mkdirSync(sub, { recursive: true });
+        writeFileSync(join(sub, "a"), "x");
+        writeFileSync(join(sub, "b"), "x");
+      }
+      await using deleter = Bun.spawn({
+        cmd: [bunExe(), join(String(dir), "deleter.mjs"), root],
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const reader = deleter.stdout.getReader();
+      const { value } = await reader.read();
+      expect(new TextDecoder().decode(value)).toBe("ready\n");
+      deleter.stdin.write("go\n");
+      deleter.stdin.flush();
+      let outcome: string;
+      try {
+        await rm(root, { recursive: true, force });
+        outcome = existsSync(root) ? "resolved, tree still on disk" : "removed";
+      } catch (e: any) {
+        outcome = `rejected: ${e.code} on ${e.path === root ? "root" : "child"}`;
+      }
+      deleter.stdin.end();
+      expect(outcome).toBe("removed");
+      expect(await deleter.exited).toBe(0);
+    });
+  }
+});
 
 describe.skipIf(!isLinux || !cc)("rm({recursive}) continues past a child that raced to ENOENT", () => {
   for (const which of ["sync", "promise", "cb"] as const) {

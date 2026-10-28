@@ -772,15 +772,15 @@ class WASI {
     };
     const CPUTIME_START = Bun.nanoseconds();
     const timeOrigin = Math.trunc(performance.timeOrigin * 1e6);
-    const now = (clockId: number) => {
+    const now = (clockId: number, nanoseconds = Bun.nanoseconds()) => {
       switch (clockId) {
         case WASI_CLOCK_MONOTONIC:
-          return Bun.nanoseconds();
+          return nanoseconds;
         case WASI_CLOCK_REALTIME:
-          return Bun.nanoseconds() + timeOrigin;
+          return nanoseconds + timeOrigin;
         case WASI_CLOCK_PROCESS_CPUTIME_ID:
         case WASI_CLOCK_THREAD_CPUTIME_ID:
-          return Bun.nanoseconds() - CPUTIME_START;
+          return nanoseconds - CPUTIME_START;
         default:
           return null;
       }
@@ -1541,16 +1541,15 @@ class WASI {
         return WASI_ESUCCESS;
       }),
       poll_oneoff: (sin: number, sout: number, nsubscriptions: number, neventsPtr: number) => {
-        // wasi-libc poll() relies on this error when it has nothing to wait for:
         // https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/uvwasi.c#L2534-L2537
         if (nsubscriptions == 0) {
           return WASI_EINVAL;
         }
         const startNs = BigInt(bindings.hrtime());
+        // One clock read for all subscriptions, so that equal absolute deadlines tie and the first one wins.
+        const nanoseconds = Bun.nanoseconds();
         const events: { userdata: bigint; error: number; type: number }[] = [];
-        // Of the clock subscriptions, only the one with the earliest deadline fires. The first one wins a tie:
-        // https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/uvwasi.c#L2564-L2568
-        let timerEvent = -1;
+        let earliestClockEvent = -1;
         let waitTimeNs = BigInt(0);
         let fd = -1;
         let fd_type = "read";
@@ -1578,20 +1577,20 @@ class WASI {
               if (!absolute) {
                 fd_timeout_ms = timeout / BigInt(1e6);
               }
-              const t = now(clockid);
+              const t = now(clockid, nanoseconds);
               if (t == null) {
                 events.push({ userdata, error: WASI_EINVAL, type });
               } else {
                 const tNS = BigInt(t);
                 const end = absolute ? timeout : tNS + timeout;
-                // Negative for an absolute deadline in the past, so that clock fires at once. uvwasi subtracts
-                // unsigned values there and waits for centuries (uvwasi.c#L2559).
+                // A past absolute deadline fires at once. uvwasi wraps it to a wait of centuries (uvwasi.c#L2559).
                 const waitNs = end - tNS;
-                if (timerEvent === -1 || waitNs < waitTimeNs) {
-                  if (timerEvent !== -1) {
-                    events.splice(timerEvent, 1);
+                // https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/uvwasi.c#L2564-L2568
+                if (earliestClockEvent === -1 || waitNs < waitTimeNs) {
+                  if (earliestClockEvent !== -1) {
+                    events.splice(earliestClockEvent, 1);
                   }
-                  timerEvent = events.length;
+                  earliestClockEvent = events.length;
                   events.push({ userdata, error: WASI_ESUCCESS, type });
                   waitTimeNs = waitNs;
                 }
@@ -1623,8 +1622,7 @@ class WASI {
           }
           last_sin = sin;
         }
-        // event: userdata u64 @0, error u16 @8, type u8 @10, fd_readwrite { nbytes u64 @16, flags u16 @24 }. 32 bytes:
-        // https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/include/wasi_serdes.h#L123
+        // https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/wasi_serdes.c#L117-L127
         for (const { userdata, error, type } of events) {
           this.view.setBigUint64(sout, userdata, true);
           this.view.setUint16(sout + 8, error, true);

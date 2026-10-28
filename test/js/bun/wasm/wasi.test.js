@@ -213,23 +213,37 @@ describe("poll_oneoff", () => {
   const WASI_EVENTTYPE_FD_READ = 1;
   const WASI_EVENTTYPE_FD_WRITE = 2;
   const WASI_CLOCK_MONOTONIC = 1;
+  const WASI_SUBSCRIPTION_CLOCK_ABSTIME = 1;
   const WASI_STDIN_FILENO = 0;
   const WASI_STDOUT_FILENO = 1;
   const SUBSCRIPTION_SIZE = 48;
   const EVENT_SIZE = 32;
+  const timePtr = 512;
   const subscriptionPtr = 1024;
   const eventPtr = 2048;
   const neventsPtr = 4096;
   const untouched = new Uint8Array(EVENT_SIZE).fill(0xaa);
+  const seconds = n => BigInt(n) * 1_000_000_000n;
 
+  // A clock that fires `timeout` nanoseconds after the call.
   const clock = (userdata, timeout, clockid = WASI_CLOCK_MONOTONIC) => ({
     userdata,
     type: WASI_EVENTTYPE_CLOCK,
     clockid,
+    flags: 0,
     timeout,
+  });
+  // A clock with an absolute deadline, `fromNow` nanoseconds after the clock_time_get reading that poll() takes.
+  const deadline = (userdata, fromNow) => ({
+    userdata,
+    type: WASI_EVENTTYPE_CLOCK,
+    clockid: WASI_CLOCK_MONOTONIC,
+    flags: WASI_SUBSCRIPTION_CLOCK_ABSTIME,
+    fromNow,
   });
   const fdRead = (userdata, fd) => ({ userdata, type: WASI_EVENTTYPE_FD_READ, fd });
   const fdWrite = (userdata, fd) => ({ userdata, type: WASI_EVENTTYPE_FD_WRITE, fd });
+  const fired = userdata => ({ userdata, error: WASI_ESUCCESS, type: WASI_EVENTTYPE_CLOCK, nbytes: 0n, flags: 0 });
 
   // One poll_oneoff call on a new WASI. The injected sleep() records the requested wait and returns at once, so a long
   // timeout costs nothing.
@@ -240,6 +254,8 @@ describe("poll_oneoff", () => {
     const view = new DataView(wasi.memory.buffer);
     const bytes = new Uint8Array(wasi.memory.buffer);
 
+    expect(wasi.wasiImport.clock_time_get(WASI_CLOCK_MONOTONIC, 0n, timePtr)).toBe(WASI_ESUCCESS);
+    const now = view.getBigUint64(timePtr, true);
     subscriptions.forEach((subscription, i) => {
       // subscription: userdata u64 @0, type u8 @8, then clock { id u32 @16, timeout u64 (ns) @24, precision u64 @32,
       // flags u16 @40 } or fd_readwrite { fd u32 @16 }
@@ -248,7 +264,8 @@ describe("poll_oneoff", () => {
       view.setUint8(at + 8, subscription.type);
       if (subscription.type === WASI_EVENTTYPE_CLOCK) {
         view.setUint32(at + 16, subscription.clockid, true);
-        view.setBigUint64(at + 24, subscription.timeout, true);
+        view.setBigUint64(at + 24, subscription.timeout ?? now + subscription.fromNow, true);
+        view.setUint16(at + 40, subscription.flags, true);
       } else {
         view.setUint32(at + 16, subscription.fd, true);
       }
@@ -272,72 +289,96 @@ describe("poll_oneoff", () => {
       };
     });
     const spare = eventPtr + subscriptions.length * EVENT_SIZE;
-    return { errno, sleeps, nevents, events, spare: bytes.slice(spare, spare + EVENT_SIZE) };
+    return { sleeps, spare: bytes.slice(spare, spare + EVENT_SIZE), result: { errno, nevents, events } };
+  }
+
+  // The time that poll_oneoff already used comes off the wait, so the one sleep is a little shorter than `ms`.
+  function expectOneSleepOfAlmost(sleeps, ms) {
+    expect(sleeps).toHaveLength(1);
+    expect(sleeps[0]).toBeGreaterThan(ms - 1_000);
+    expect(sleeps[0]).toBeLessThanOrEqual(ms);
   }
 
   it("waits for the earliest clock and reports only that clock", () => {
     // The shortest timeout is neither the first nor the last subscription.
-    const { errno, sleeps, events } = poll([
-      clock(0x1111n, 60_000_000_000n),
-      clock(0x2222n, 30_000_000_000n),
-      clock(0x3333n, 90_000_000_000n),
+    const { sleeps, result } = poll([
+      clock(0x1111n, seconds(60)),
+      clock(0x2222n, seconds(30)),
+      clock(0x3333n, seconds(90)),
     ]);
-    expect(errno).toBe(WASI_ESUCCESS);
-    expect(sleeps).toHaveLength(1);
-    expect(sleeps[0]).toBeGreaterThan(29_000);
-    expect(sleeps[0]).toBeLessThanOrEqual(30_000);
-    expect(events).toEqual([
-      { userdata: 0x2222n, error: WASI_ESUCCESS, type: WASI_EVENTTYPE_CLOCK, nbytes: 0n, flags: 0 },
-    ]);
+    expect(result).toEqual({ errno: WASI_ESUCCESS, nevents: 1, events: [fired(0x2222n)] });
+    expectOneSleepOfAlmost(sleeps, 30_000);
   });
 
-  it("reports the first of two clocks with the same timeout", () => {
-    const { errno, events } = poll([clock(0x1111n, 30_000_000_000n), clock(0x2222n, 30_000_000_000n)]);
-    expect(errno).toBe(WASI_ESUCCESS);
-    expect(events).toEqual([
-      { userdata: 0x1111n, error: WASI_ESUCCESS, type: WASI_EVENTTYPE_CLOCK, nbytes: 0n, flags: 0 },
-    ]);
+  it.each([
+    ["timeout", [clock(0x1111n, seconds(30)), clock(0x2222n, seconds(30))]],
+    ["absolute deadline", [deadline(0x1111n, seconds(30)), deadline(0x2222n, seconds(30))]],
+  ])("reports the first of two clocks with the same %s", (_, subscriptions) => {
+    const { sleeps, result } = poll(subscriptions);
+    expect(result).toEqual({ errno: WASI_ESUCCESS, nevents: 1, events: [fired(0x1111n)] });
+    expectOneSleepOfAlmost(sleeps, 30_000);
+  });
+
+  it.each([
+    ["a relative timeout before an absolute deadline", [deadline(0x1111n, seconds(60)), clock(0x2222n, seconds(30))]],
+    ["an absolute deadline before a relative timeout", [clock(0x1111n, seconds(60)), deadline(0x2222n, seconds(30))]],
+  ])("reports %s", (_, subscriptions) => {
+    const { sleeps, result } = poll(subscriptions);
+    expect(result).toEqual({ errno: WASI_ESUCCESS, nevents: 1, events: [fired(0x2222n)] });
+    expectOneSleepOfAlmost(sleeps, 30_000);
+  });
+
+  it("reports a clock whose absolute deadline is in the past without a wait", () => {
+    // Node wraps the wait of the past deadline to centuries, and reports the relative clock after 30 s.
+    const { sleeps, result } = poll([clock(0x1111n, seconds(30)), deadline(0x2222n, -1n)]);
+    expect(result).toEqual({ errno: WASI_ESUCCESS, nevents: 1, events: [fired(0x2222n)] });
+    expect(sleeps).toEqual([]);
   });
 
   it("writes one 32-byte event record per reported subscription", () => {
     // A guest reads events[i] from out + 32 * i. fd polling is not implemented, so each fd subscription reports ENOSYS,
     // and a clock id that does not exist reports EINVAL. Node polls the fds and ignores the clock id.
-    const { errno, events, spare } = poll([
+    const { spare, result } = poll([
       fdRead(1n, WASI_STDIN_FILENO),
       clock(2n, 0n),
       fdWrite(3n, WASI_STDOUT_FILENO),
       clock(4n, 0n, 1234),
     ]);
-    expect(errno).toBe(WASI_ESUCCESS);
-    expect(events).toEqual([
-      { userdata: 1n, error: WASI_ENOSYS, type: WASI_EVENTTYPE_FD_READ, nbytes: 0n, flags: 0 },
-      { userdata: 2n, error: WASI_ESUCCESS, type: WASI_EVENTTYPE_CLOCK, nbytes: 0n, flags: 0 },
-      { userdata: 3n, error: WASI_ENOSYS, type: WASI_EVENTTYPE_FD_WRITE, nbytes: 0n, flags: 0 },
-      { userdata: 4n, error: WASI_EINVAL, type: WASI_EVENTTYPE_CLOCK, nbytes: 0n, flags: 0 },
-    ]);
+    expect(result).toEqual({
+      errno: WASI_ESUCCESS,
+      nevents: 4,
+      events: [
+        { userdata: 1n, error: WASI_ENOSYS, type: WASI_EVENTTYPE_FD_READ, nbytes: 0n, flags: 0 },
+        fired(2n),
+        { userdata: 3n, error: WASI_ENOSYS, type: WASI_EVENTTYPE_FD_WRITE, nbytes: 0n, flags: 0 },
+        { userdata: 4n, error: WASI_EINVAL, type: WASI_EVENTTYPE_CLOCK, nbytes: 0n, flags: 0 },
+      ],
+    });
     expect(spare).toEqual(untouched);
   });
 
   it("reports an fd subscription next to the clock that fired", () => {
-    const { errno, sleeps, events } = poll([
-      clock(0x1111n, 60_000_000_000n),
+    const { sleeps, result } = poll([
+      clock(0x1111n, seconds(60)),
       fdWrite(0x2222n, WASI_STDOUT_FILENO),
-      clock(0x3333n, 30_000_000_000n),
+      clock(0x3333n, seconds(30)),
     ]);
-    expect(errno).toBe(WASI_ESUCCESS);
+    expect(result).toEqual({
+      errno: WASI_ESUCCESS,
+      nevents: 2,
+      events: [
+        { userdata: 0x2222n, error: WASI_ENOSYS, type: WASI_EVENTTYPE_FD_WRITE, nbytes: 0n, flags: 0 },
+        fired(0x3333n),
+      ],
+    });
     // The ENOSYS event of the fd subscription does not end the wait. Node returns at once with the ready fd only.
-    expect(sleeps).toHaveLength(1);
-    expect(sleeps[0]).toBeGreaterThan(29_000);
-    expect(sleeps[0]).toBeLessThanOrEqual(30_000);
-    expect(events).toEqual([
-      { userdata: 0x2222n, error: WASI_ENOSYS, type: WASI_EVENTTYPE_FD_WRITE, nbytes: 0n, flags: 0 },
-      { userdata: 0x3333n, error: WASI_ESUCCESS, type: WASI_EVENTTYPE_CLOCK, nbytes: 0n, flags: 0 },
-    ]);
+    expectOneSleepOfAlmost(sleeps, 30_000);
   });
 
   it("returns EINVAL for zero subscriptions and writes nothing", () => {
-    const { errno, sleeps, nevents, spare } = poll([]);
-    expect({ errno, sleeps, nevents }).toEqual({ errno: WASI_EINVAL, sleeps: [], nevents: 0xaaaaaaaa });
+    const { sleeps, spare, result } = poll([]);
+    expect(result).toEqual({ errno: WASI_EINVAL, nevents: 0xaaaaaaaa, events: [] });
+    expect(sleeps).toEqual([]);
     expect(spare).toEqual(untouched);
   });
 });

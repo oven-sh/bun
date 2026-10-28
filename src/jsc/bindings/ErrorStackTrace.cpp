@@ -20,6 +20,9 @@
 #include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/NativeCallee.h>
 #include <JavaScriptCore/Interpreter.h>
+#include <JavaScriptCore/JSBoundFunction.h>
+#include <JavaScriptCore/JSRemoteFunction.h>
+#include <JavaScriptCore/ProxyObject.h>
 #include <JavaScriptCore/VMEntryRecord.h>
 #include <wtf/IterationStatus.h>
 #include <wtf/ScopedLambda.h>
@@ -140,11 +143,24 @@ static bool severalEntriesResumedAsyncFunctions(JSC::VM& vm)
     return false;
 }
 
+// V8 searches the stack for a JSFunction only. A bound function, a Proxy and a value that is not callable select no frame.
+static JSC::JSObject* functionToFindOnStack(JSC::JSValue caller)
+{
+    if (!caller.isCallable() || caller.inherits<JSC::JSBoundFunction>() || caller.inherits<JSC::JSRemoteFunction>() || caller.inherits<JSC::ProxyObject>())
+        return nullptr;
+    JSC::JSObject* function = caller.getObject();
+#if ENABLE(AOT)
+    if (JSC::AOT::CompiledCallee::isCompiledCallee(function) && JSC::AOT::CompiledCallee::isBoundFunction(function))
+        return nullptr;
+#endif
+    return function;
+}
+
 void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, JSC::JSCell* owner, JSC::JSValue caller, WTF::Vector<JSC::StackFrame>& stackTrace, size_t stackTraceLimit)
 {
     UNUSED_PARAM(callFrame);
 
-    JSC::JSObject* callerObject = caller.getObject();
+    JSC::JSObject* callerObject = functionToFindOnStack(caller);
     // Made at the first frame that is not the caller's by identity.
     std::optional<WTF::String> nameOfCaller;
 

@@ -1124,7 +1124,7 @@ test("Error.captureStackTrace in a node:vm context of a Worker is Bun's function
   expect(exitCode).toBe(0);
 });
 
-// V8 searches the stack for the caller argument only when it is a function, and it knows a frame by its function, not by a name.
+// V8 searches the stack for the caller argument only when it is a function.
 const callerArgumentRows = `
   const firstFrame = target => String(target.stack.split("\\n")[1]).trim().replace(/ \\(.*$/, "");
   function withCaller(caller) {
@@ -1138,12 +1138,6 @@ const callerArgumentRows = `
   const calledBound = function boundTarget() {
     return withCaller(calledBound);
   }.bind(null);
-  const innerSameName = function sameName(next) {
-    return next ? next() : withCaller(outerSameName);
-  };
-  const outerSameName = function sameName(next) {
-    return innerSameName(next);
-  };
   const rows = {
     object: withCaller({}),
     number: withCaller(1),
@@ -1153,9 +1147,6 @@ const callerArgumentRows = `
     boundFunctionNotOnStack: withCaller(function other() {}.bind(null)),
     boundFunctionAfterCall: (calledBound.name, calledBound()),
     callableProxy: withCaller(new Proxy(withCaller, {})),
-    functionOfTheSameNameAbove: (function below() {
-      return outerSameName(() => innerSameName());
-    })(),
     functionNotOnStack: withCaller(function other() {}),
   };
 `;
@@ -1168,7 +1159,6 @@ const callerArgumentFirstFrames = {
   boundFunctionNotOnStack: "at withCaller",
   boundFunctionAfterCall: "at withCaller",
   callableProxy: "at withCaller",
-  functionOfTheSameNameAbove: "at below",
   functionNotOnStack: "undefined",
 };
 

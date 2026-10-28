@@ -272,11 +272,15 @@ pub(crate) extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
 
 pub(crate) fn cancel(cx: &mut JsScope<'_>, value: JsLocal<'_>) -> JsResult<bool> {
     let global = cx.global();
-    let Some(ptr) = JSSink::from_js(value.to_js()) else {
+    let value = value.to_js();
+    let Some(ptr) = JSSink::sink_from_js(value) else {
+        if value.as_class_ref::<JSSink>().is_some() {
+            return Ok(false);
+        }
         return Err(global.throw(format_args!("expected a FileSink")));
     };
     // SAFETY: the live wrapper owns the sink; hold a ref across writer.close() re-entry.
-    let sink = unsafe { RefPtr::init_ref(core::ptr::addr_of_mut!((*ptr).sink)) };
+    let sink = unsafe { RefPtr::init_ref(ptr.as_ptr()) };
     // Acknowledged short writes can still need the graceful close path to flush.
     if sink.pending.get().state != streams::PendingState::Pending {
         return Ok(false);

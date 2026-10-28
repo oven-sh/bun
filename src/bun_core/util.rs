@@ -3267,13 +3267,6 @@ impl<I: GenericIndexInt, M> GenericIndex<I, M> {
         GenericIndexOptional(self.0, core::marker::PhantomData)
     }
 }
-impl<I: GenericIndexInt, M> GenericIndexOptional<I, M> {
-    #[inline]
-    pub fn is_some(self) -> bool {
-        !self.is_none()
-    }
-}
-
 /// `GenericIndex::Optional` — `MAX` is `none`.
 #[repr(transparent)]
 pub struct GenericIndexOptional<I, M = ()>(I, core::marker::PhantomData<M>);
@@ -3297,11 +3290,6 @@ impl<I: core::fmt::Debug, M> core::fmt::Debug for GenericIndexOptional<I, M> {
     }
 }
 impl<I: GenericIndexInt, M> GenericIndexOptional<I, M> {
-    #[inline]
-    pub fn is_none(self) -> bool {
-        self.0 == I::NULL_VALUE
-    }
-
     pub const NONE: Self = Self(I::NULL_VALUE, core::marker::PhantomData);
     /// Alias for `unwrap()` matching the local-newtype API that pre-existed in
     /// `bun_bundler::output_file::IndexOptional`.

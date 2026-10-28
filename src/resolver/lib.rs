@@ -2188,16 +2188,14 @@ pub mod cache {
         /// `Contents::Owned(Vec<u8>)` path.
         pub fn read_file_with_allocator(
             &mut self,
-            _fs: &mut fs_mod::FileSystem,
             path: &[u8],
             dirname_fd: Fd,
             use_shared_buffer: bool,
             _file_handle: Option<Fd>,
             arena: Option<&bun_alloc::Arena>,
         ) -> crate::CrateResult<Entry> {
-            let rfs = &_fs.fs;
-
-            let will_close = rfs.need_to_close_files() && _file_handle.is_none();
+            let will_close =
+                fs_mod::FileSystem::get().fs.need_to_close_files() && _file_handle.is_none();
 
             // A single let-expression avoids `mem::zeroed()` on a
             // type that may have niche (NonZero) fields.

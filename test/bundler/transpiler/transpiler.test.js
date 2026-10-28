@@ -1,5 +1,14 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, hideFromStackTrace, integersThatNeedRounding, isDebug, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  hideFromStackTrace,
+  integersThatNeedRounding,
+  isASAN,
+  isDebug,
+  tempDir,
+} from "harness";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -5753,10 +5762,127 @@ it.concurrent("matches a define key with many parts without crashing", async () 
   });
 });
 
+// mimalloc has 64,512 heaps for the whole process, and an instance lives until the GC collects it.
+// "staging" is not one of the NODE_ENV values that every instance defines from a static string.
+it.concurrent.each(["development", "staging"])("an instance keeps no mimalloc heap, NODE_ENV=%s", async nodeEnv => {
+  const countHeaps = async () => {
+    const { heapStats } = require("bun:jsc");
+    const heaps = () => heapStats({ dump: true }).mimallocDump.heaps.length;
+    class Subclass extends Bun.Transpiler {}
+    const construct = [
+      () => new Bun.Transpiler(),
+      () => new Bun.Transpiler({}),
+      () => new Bun.Transpiler({ loader: "tsx" }),
+      () => new Bun.Transpiler({ define: { "A": "true", "process.env.NODE_ENV": '"production"' } }),
+      () => new Bun.Transpiler({ define: { A: '"a"' } }),
+      () => new Bun.Transpiler({ define: { A: '"\\n"' } }),
+      () => new Bun.Transpiler({ define: { A: "a b" } }),
+      () => new Bun.Transpiler({ define: { A: "1" } }),
+      () => new Bun.Transpiler({ define: { A: '{"a":["b",{"c":null}]}' } }),
+      () => new Bun.Transpiler({ exports: { replace: { a: "b" } } }),
+      () => new Bun.Transpiler({ exports: { replace: { a: ["b", "c"] } } }),
+      () => new Bun.Transpiler({ exports: { replace: { a: 1 } } }),
+      () => new Bun.Transpiler({ tsconfig: { compilerOptions: { jsx: "react", jsxFactory: "h" } } }),
+      () => new Bun.Transpiler({ macro: { react: { bacon: "./macro.ts" } } }),
+      () => new Bun.Transpiler({ target: "macro" }),
+      () => new Subclass({}),
+      () => Reflect.construct(Bun.Transpiler, [{}]),
+    ];
+    const configured = () =>
+      new Bun.Transpiler({ loader: "ts", define: { A: '"a"', B: '{"b":[1]}' }, exports: { replace: { c: "c" } } });
+    const source = "export const c = 1;\nexport const value = [A, B];\n";
+    const call = [
+      transpiler => transpiler.scan(source),
+      transpiler => transpiler.scanImports(source),
+      transpiler => transpiler.transformSync(source),
+      transpiler => transpiler.transform(source),
+    ];
+
+    // The first of each pays for what the process makes once. It stays alive: on a build that
+    // gives each instance a heap, a collection in the middle would take some of them away.
+    const first = construct.map(make => make());
+    for (const use of call) {
+      const transpiler = configured();
+      first.push(transpiler);
+      await use(transpiler);
+    }
+
+    const held = [];
+    const start = heaps();
+    for (const make of construct) for (let i = 0; i < 4; i++) held.push(make());
+    const constructed = heaps();
+    for (const use of call) {
+      for (let i = 0; i < 4; i++) {
+        const transpiler = configured();
+        held.push(transpiler);
+        await use(transpiler);
+      }
+    }
+    return { instances: held.length, constructed: constructed - start, called: heaps() - constructed };
+  };
+  expect(
+    await bunRun(["-e", `(${countHeaps})().then(heaps => console.log(JSON.stringify(heaps)));`], { NODE_ENV: nodeEnv }),
+  ).toEqual({
+    stdout: JSON.stringify({ instances: 84, constructed: 0, called: 0 }),
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
+// transform() reads the strings on a pool thread. There are enough of them that the lists that hold them grow.
+it("prints the string values of exports.replace, from transformSync() and transform()", async () => {
+  const many = Array.from({ length: 48 }, (_, i) => [`k${i}`, `value ${i}`]);
+  const transpiler = new Bun.Transpiler({
+    exports: { replace: { a: "str", b: 'q"uote\n', c: ["named", "café 😀"], ...Object.fromEntries(many) } },
+  });
+  const source = `export const a = 1, b = 2, c = 3, ${many.map(([name]) => `${name} = 0`).join(", ")};`;
+  const printed =
+    'export const a = "str";\nexport const b = `q"uote\n`;\nexport const named = "café 😀";\n' +
+    many.map(([name, value]) => `export const ${name} = "${value}";\n`).join("");
+  expect({
+    sync: transpiler.transformSync(source),
+    async: await transpiler.transform(source),
+    syncAgain: transpiler.transformSync(source),
+  }).toEqual({ sync: printed, async: printed, syncAgain: printed });
+});
+
+// The instance has no arena of its own. A string that went to the heap of the process would stay until exit.
+it.concurrent("frees its exports.replace strings when it is collected", async () => {
+  const kibibytes = () => {
+    const { heapStats } = require("bun:jsc");
+    const allocated = () => {
+      const { malloc_normal, malloc_huge } = heapStats().mimalloc;
+      return malloc_normal.current + malloc_huge.current;
+    };
+    const text = Buffer.alloc(64 * 1024, "v").toString();
+    const make = () => new Bun.Transpiler({ exports: { replace: { a: text } } });
+    const round = () => {
+      for (let i = 0; i < 40; i++) make();
+      Bun.gc(true);
+    };
+    round();
+    const before = allocated();
+    let held = Array.from({ length: 40 }, make);
+    const whileHeld = allocated() - before;
+    held = undefined;
+    round();
+    round();
+    return { held: Math.round(whileHeld / 1024), kept: Math.round((allocated() - before) / 1024) };
+  };
+  const { stdout, ...exit } = await bunRun(["-e", `console.log(JSON.stringify((${kibibytes})()));`]);
+  const { held, kept } = JSON.parse(stdout);
+  // 40 strings of 64 KiB. Under ASAN they are in the allocator of the sanitizer, which this counter does not see.
+  if (!isASAN) expect(held).toBeGreaterThan(2000);
+  expect(kept).toBeLessThan(1000);
+  expect(exit).toEqual({ stderr: "", exitCode: 0, signalCode: null });
+});
+
 // Without the size, a loop that drops instances never makes the GC run: an instance is one small cell.
 it.concurrent("tells the GC how much memory an instance holds", async () => {
   const kibibytesReported = () => {
     const { heapStats } = require("bun:jsc");
+    const text = Buffer.alloc(64 * 1024, "v").toString();
     const held = [];
     const perInstance = options => {
       Bun.gc(true);
@@ -5765,12 +5891,14 @@ it.concurrent("tells the GC how much memory an instance holds", async () => {
       Bun.gc(true);
       return Math.round((heapStats().extraMemorySize - before) / 32 / 1024);
     };
-    return { plain: perInstance({}) };
+    return { plain: perInstance({}), withString: perInstance({ exports: { replace: { a: text } } }) };
   };
   const { stdout, ...exit } = await bunRun(["-e", `console.log(JSON.stringify((${kibibytesReported})()));`]);
-  const { plain } = JSON.parse(stdout);
+  const { plain, withString } = JSON.parse(stdout);
   // The copy of the table of global defines that each instance holds is about 25 KiB.
   expect(plain).toBeGreaterThan(16);
+  // The exports.replace string of 64 KiB.
+  expect(withString - plain).toBeGreaterThan(60);
   expect(exit).toEqual({ stderr: "", exitCode: 0, signalCode: null });
 });
 

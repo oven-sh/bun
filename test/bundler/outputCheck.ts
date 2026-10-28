@@ -11,13 +11,19 @@ import { Parser, type Pattern } from "acorn";
  */
 const generatedName = /^(?:(?:exports?|module|require|init|import)_|\$[\w$]|__\w)|_default\d*$/;
 
-/** acorn reads stage 4 syntax only, and Bun prints the stage 3 `import defer * as ns from "x"` as it is. */
 const OutputParser = Parser.extend(
   Base =>
     class extends Base {
+      // acorn reads stage 4 syntax only, and Bun prints the stage 3 `import defer * as ns from "x"` as it is.
       parseImportSpecifiers(this: any) {
         if (this.value === "defer" && /^\s*\*/.test(this.input.slice(this.end))) this.next();
         return (Base.prototype as any).parseImportSpecifiers.call(this);
+      }
+      // A module that exports a name nothing declares is an error for acorn. When the name is a generated one,
+      // the walk below reports it as any other use, so that the rest of the output is read too.
+      raiseRecoverable(this: any, pos: number, message: string) {
+        const exported = /^Export '(.*)' is not defined$/.exec(message);
+        if (!exported || !generatedName.test(exported[1])) this.raise(pos, message);
       }
     },
 );

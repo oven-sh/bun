@@ -123,6 +123,7 @@ describe("findUndeclaredGeneratedNames", () => {
     ["a module: import defer, which is stage 3", "module", `import defer * as ns from "x"; ns; exports_lib;`],
     ["a module: import defer without spaces", "module", `import defer*as ns from"x";exports_lib;`],
     ["a module: a default import with the name defer", "module", `import defer, * as ns from "x"; defer; exports_lib;`],
+    ["a module: an export of a generated name that nothing declares", "module", "export { exports_lib as default };"],
   ] as const)("parses %s", (_, sourceType, code) => {
     expect(undeclared(code, sourceType)).toEqual(["exports_lib"]);
   });
@@ -143,8 +144,8 @@ describe("findUndeclaredGeneratedNames", () => {
     [
       "a module that exports a name nothing declares",
       "module",
-      "export { exports_lib };",
-      "Export 'exports_lib' is not defined (1:9)",
+      "export { lib };",
+      "Export 'lib' is not defined (1:9)",
       9,
     ],
   ] as const)("throws a SyntaxError with a position for %s", (_, sourceType, code, message, pos) => {
@@ -210,23 +211,44 @@ describe("the output check of expectBundled", () => {
     expect(await bundle("outputCheck/TooLargeOutput", tooLarge)).toMatchObject({ id: "outputCheck/TooLargeOutput" });
   });
 
-  test("reads an output that takes the place of an input file, and no input file that the build left alone", async () => {
-    const inputs = { "/entry.js": `console.log("entry");`, "/notes.js": "These are notes, not JavaScript." };
-    const inPlace = (id: string, code: string) =>
-      bundle(id, { files: inputs, outdir: "/", onAfterApiBundle: write("entry.js", code) });
-    expect(await inPlace("outputCheck/InputInOutdir", "var a;\n")).toMatchObject({ id: "outputCheck/InputInOutdir" });
-    await expect(inPlace("outputCheck/OutputOverInput", fault)).rejects.toThrow(failed + names("/entry.js"));
+  test("reads a file in the place of an input file, and no input file that the build left alone", async () => {
+    const inputs = { "/entry.ts": `console.log("entry");`, "/notes.js": "These are notes, not JavaScript." };
+    const untouched = { files: inputs, outdir: "/" };
+    expect(await bundle("outputCheck/InputInOutdir", untouched)).toMatchObject({ id: "outputCheck/InputInOutdir" });
+    const replaced = {
+      ...untouched,
+      onAfterApiBundle: (build: BuildOutput) =>
+        writeFileSync(path.join(path.dirname(build.outputs[0].path), "notes.js"), fault),
+    };
+    await expect(bundle("outputCheck/OutputOverInput", replaced)).rejects.toThrow(failed + names("/notes.js"));
   });
 
   test("does not read the packages of the fixture when the outdir holds them", async () => {
     const options = {
       files: {
-        "/entry.js": `console.log("entry");`,
+        "/entry.ts": `console.log("entry");`,
         "/node_modules/pkg/index.js": Buffer.from("A package, not JavaScript."),
       },
       outdir: "/",
     };
     expect(await bundle("outputCheck/PackagesInOutdir", options)).toMatchObject({ id: "outputCheck/PackagesInOutdir" });
+  });
+
+  test("reports an export of a generated name that nothing declares as a name that an entry can excuse", async () => {
+    const exported = (id: string, allowUndeclaredGeneratedNames?: string[]) =>
+      bundle(id, {
+        files,
+        allowUndeclaredGeneratedNames,
+        onAfterApiBundle: write("out.js", "export { exports_lib as default };\nvar a = __lib;\n"),
+      });
+    await expect(exported("outputCheck/ExportedName")).rejects.toThrow(
+      failed +
+        "  /out.js:1:10: nothing declares the generated name `exports_lib`\n    export { exports_lib as default };\n" +
+        "  /out.js:2:9: nothing declares the generated name `__lib`\n    var a = __lib;",
+    );
+    expect(await exported("outputCheck/AllowExportedName", ["exports_lib", "__lib"])).toMatchObject({
+      id: "outputCheck/AllowExportedName",
+    });
   });
 
   test("allowUndeclaredGeneratedNames excuses the names it lists, and fails on an entry that excuses nothing", async () => {

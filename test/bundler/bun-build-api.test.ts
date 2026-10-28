@@ -380,7 +380,7 @@ describe("Bun.build", () => {
   // The child refuses each allocation over 1 MiB, so one growth of the bundler's two lists of sources fails:
   // the `graph.ast` row of an entry point, the `input_files` reserve for the entry points, the `graph.ast` row of an import.
   // `--debug-crash-handler-use-trace-string`: a debug build takes seconds to symbolize its report.
-  test.skipIf(!isASAN).each([
+  test.concurrent.skipIf(!isASAN).each([
     { entryPoints: 3000, imports: 0 },
     { entryPoints: 8000, imports: 0 },
     { entryPoints: 1, imports: 2000 },

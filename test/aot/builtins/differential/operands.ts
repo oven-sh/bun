@@ -56,7 +56,7 @@ export const neverCalled: ReadonlyMap<RegExp, string> = new Map([
 
 // Only the code of Bun and of the engine names these, and they take the kinds of their operands on trust: with a value outside the
 // declared types there is no such call, and native code may do anything.
-const takesOperandsOnTrust = /^%LinkTimeConstant:|^%NodeHTTPInternalBinding%\.setServer|^%(CompilerHelpers|PrivateGlobals|NativeFunctions|NodeURLFunctions)%\./;
+const takesOperandsOnTrust = /^%LinkTimeConstant:|^%(CompilerHelpers|PrivateGlobals|NativeFunctions|NodeURLFunctions)%\./;
 
 export function reasonNeverCalled(path: string): string | undefined {
   for (const [pattern, reason] of neverCalled) if (pattern.test(path)) return reason;

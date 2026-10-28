@@ -772,6 +772,9 @@ export type SocketFaultRule = {
     | "EINVAL"
     | "ENETUNREACH"
     | "EHOSTUNREACH"
+    | "EPROTOTYPE"
+    | "EMFILE"
+    | "EPERM"
     | number;
   /** clamp recv/send length to this many bytes; required and > 0 when action === "short" */
   bytes?: number;

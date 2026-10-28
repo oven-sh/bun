@@ -168,7 +168,7 @@ test("throws EADDRINUSE when another server holds the port on localhost", () => 
   const { port } = occupant;
   for (const listen of [
     () => serve({ hostname: "localhost", port, fetch: () => new Response() }),
-    () => Bun.listen({ hostname: "localhost", port, socket: { data() {} } }),
+    () => Bun.listen({ hostname: "localhost", port: port!, socket: { data() {} } }),
   ]) {
     expect(() => listen().stop(true)).toThrow(expect.objectContaining({ code: "EADDRINUSE" }));
   }
@@ -180,7 +180,7 @@ test.skipIf(!isLinux || !hasIPv6)(
   () => {
     using occupant = Bun.listen({ hostname: "::1", port: 0, socket: { data() {} } });
     using server = serve({ port: occupant.port, fetch: () => new Response() });
-    expect(server.address).toEqual({ address: "0.0.0.0", family: "IPv4", port: occupant.port });
+    expect((server as any).address).toEqual({ address: "0.0.0.0", family: "IPv4", port: occupant.port });
   },
 );
 

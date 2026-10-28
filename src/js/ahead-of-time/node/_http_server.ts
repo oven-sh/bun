@@ -4929,7 +4929,8 @@ function readsFlowUnseen(socket: $Node.HttpServerSocket): boolean {
     $findsDeclaredMember(socket, "readable") &&
     $findsDeclaredMember(socket, "readableLength") &&
     $findsDeclaredMember(socket, "readableHighWaterMark") &&
-    $findsDeclaredMember(socket, "readableEnded")
+    $findsDeclaredMember(socket, "readableEnded") &&
+    $findsDeclaredMember(socket, "destroyed")
   )) {
     ("unlikely");
     return walksToAccessorsOfFlow(socket);
@@ -4943,7 +4944,8 @@ function walksToAccessorsOfFlow(socket: $Node.HttpServerSocket): boolean {
     reachesReadablePrototype(socket, "readable") &&
     reachesReadablePrototype(socket, "readableLength") &&
     reachesReadablePrototype(socket, "readableHighWaterMark") &&
-    reachesReadablePrototype(socket, "readableEnded")
+    reachesReadablePrototype(socket, "readableEnded") &&
+    reachesDuplexPrototype(socket, "destroyed")
   );
 }
 

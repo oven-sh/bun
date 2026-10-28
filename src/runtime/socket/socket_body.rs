@@ -3922,7 +3922,7 @@ pub(crate) mod testing_apis {
     }
 
     /// `sweepSocketTimers` of `bun:internal-for-testing`.
-    pub(crate) fn sweep_socket_timers(cx: &mut JsScope<'_>, count: f64) -> JsResult<()> {
+    pub(crate) fn sweep_socket_timers(cx: &mut JsScope<'_>, count: u16) -> JsResult<()> {
         let loop_ = uws::Loop::get();
         // SAFETY: `loop_` is this thread's live loop; plain field reads.
         let sweeping = unsafe {
@@ -3934,7 +3934,7 @@ pub(crate) mod testing_apis {
                 "sweepSocketTimers() cannot be called from a socket timeout handler"
             )));
         }
-        for _ in 0..count as i32 {
+        for _ in 0..count {
             // SAFETY: `loop_` is this thread's live loop and no sweep is running on it.
             unsafe { bun_uws_sys::loop_::us_internal_timer_sweep(loop_) };
         }

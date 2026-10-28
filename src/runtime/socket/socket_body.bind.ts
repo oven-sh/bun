@@ -164,10 +164,9 @@ export const socketFaultInjectionAvailable = b.fn({
 });
 export const namedPipeLiveCount = b.fn({ returns: b.usize, rustPath: testing("named_pipe_live_count") });
 export const upgradedDuplexLiveCount = b.fn({ returns: b.usize, rustPath: testing("upgraded_duplex_live_count") });
-/** `count` is truncated and clamped to an `i32`. */
 export const sweepSocketTimers = b.fn({
   ...js,
-  args: { count: b.f64.loose.allowBigInt },
+  args: { count: b.u16.validateInteger() },
   rustPath: testing("sweep_socket_timers"),
 });
 export const clearSocketFaults = b.fn({ ...js, rustPath: testing("clear_socket_faults") });

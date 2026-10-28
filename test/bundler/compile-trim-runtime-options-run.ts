@@ -66,6 +66,11 @@ export const obeyed: Record<string, string[]> = {
   "--conditions": ["--conditions=x"],
   "--max-http-header-size": ["--max-http-header-size=100", "--max-http-header-size=nonsense"],
   "--dns-result-order": ["--dns-result-order=ipv4first", "--dns-result-order=ipv6first", "--dns-result-order=verbatim", "--dns-result-order=nonsense"],
+  "--network-family-autoselection-attempt-timeout": [
+    "--network-family-autoselection-attempt-timeout=500",
+    "--network-family-autoselection-attempt-timeout=nonsense",
+  ],
+  "--tls-keylog": ["--tls-keylog=keys.log"],
   "--redirect-warnings": ["--redirect-warnings=warnings.txt"],
   "--disable-warning": ["--disable-warning=x"],
   "--title": ["--title=x", "--title x", "--title 'two words'"],

@@ -134,9 +134,18 @@ export default b.declarations(
       "getMaxHTTPHeaderSize",
       "sendWebSocketFrame",
       "setMaxHTTPHeaderSize",
+      "setServerAppFlags",
+      "setServerCustomOptions",
+      "setServerMaxHeadersCount",
       "upgradeNodeHTTPResponseToWebSocket",
     ),
     ...nativeBindings("Bindgen", "node_http_binding.bind.ts", "getBunServerAllClosedPromise"),
+  ),
+  extendAll(
+    ["NodeHttp", "TlsSockets", "X509"],
+    "%NodeHTTPServerSocketTLS%",
+    ...nativeBindings("Bindgen", "node_http_binding.bind.ts", "setTLSServerOptions"),
+    ...nativeBindings("Bindgen", "socket_body.bind.ts", "NodeHTTPServerSocketTLS"),
   ),
 
   extendAll(

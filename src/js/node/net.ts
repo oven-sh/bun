@@ -2319,8 +2319,8 @@ Socket.prototype.connect = function connect(this: $Node.Socket, ...args) {
       // A dial is paused when it opens, and afterConnect releases its hold.
       this.readableFlowing = false;
     } else {
-      process.nextTick(startReadingNT, this);
       this.connecting = true;
+      process.nextTick(startReadingNT, this);
     }
     if (
       // TLSSocket already created a socket and is forwarding it here. This is a private API.

@@ -77,7 +77,7 @@ test("own accessors on the objects of an exchange see the reads and stores of th
       "  set",
       "  get x 1",
       "socket _writableState watched",
-      "  get x 8",
+      "  get x 9",
       "socket _writableState throws",
       "  uncaught get _writableState",
       "  the request emits 'error': get _writableState",

@@ -616,8 +616,8 @@ const pluginsSetUpUnder = (...path: readonly string[]) =>
     args: [b.any],
     result: "Escapes",
   });
-// The server, the URL, the method, the dispatch bits, the response, whether there is a body, the socket, whether it is new, its duplex, whether the request is HTTP/1.0, the bytes after the head, and whether the request was pipelined.
-const nodeRequestHandlerArguments = Array.from({ length: 12 }, () => b.any);
+// The URL, the method, the dispatch bits, the response, whether there is a body, the socket, whether it is new, its duplex, whether the request is HTTP/1.0, the bytes after the head, and whether the request was pipelined.
+const nodeRequestHandlerArguments = Array.from({ length: 11 }, () => b.any);
 const routeMethodNames = ["CONNECT", "DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT", "TRACE"];
 
 // A socket is one object for as long as it lives, whichever handler it is handed to.

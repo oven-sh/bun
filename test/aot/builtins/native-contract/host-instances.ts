@@ -75,7 +75,7 @@ function openServer(createOptions: () => object): Open {
   };
 }
 
-// What node:http is handed for a request: at 4 the response handle.
+// What node:http is handed for a request: at 3 the response handle.
 function openNodeHTTPHandle(position: number): Open {
   return async () => {
     const { promise, resolve } = Promise.withResolvers<object>();
@@ -303,7 +303,7 @@ const openers: (Open & { className?: string })[] = [
   openServer(() => ({ development: false, tls: createTLSOptions() })),
   openServer(() => ({ development: true })),
   openServer(() => ({ development: true, tls: createTLSOptions() })),
-  openNodeHTTPHandle(4),
+  openNodeHTTPHandle(3),
   openSubprocess,
   openResourceUsage,
   openFileSink,

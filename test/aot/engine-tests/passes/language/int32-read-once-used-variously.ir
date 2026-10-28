@@ -1438,7 +1438,7 @@ runtimefunction id=131091 function=f32 visibility=Private
 # -- generated: f0 overWords
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 1603, patchpoints: 97, rare instructions: 1172, polls: 4
+# CHECK-NEXT: instructions: 1603, patchpoints: 97, rare instructions: 1178, polls: 4
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="overWords"
 # CHECK: role=Source

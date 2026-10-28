@@ -28,6 +28,7 @@ import {
   throwsWarningCell,
   tickShownToHooksCell,
   versionsCell,
+  windowsEnvironmentNamesCell,
   windowsEnvironmentStorageCell,
   writeWarningCell,
 } from "./native-cells.ts";
@@ -435,7 +436,7 @@ const warningFunctions = [
 const warningFunctionsOfUndeclaredCode = [...warningPrinterFunctions, ...tickFunctions];
 
 // On Windows the object is a proxy that the function makes.
-const environmentObjectMade = (...otherUses: readonly b.HostUseSpec[]) => [
+const environmentObjectUsed = (result: readonly b.HostUseSpec[] | undefined) => [
   b.functionUsed(
     processInternal("windowsEnv"),
     b.calledByHost({
@@ -443,16 +444,20 @@ const environmentObjectMade = (...otherUses: readonly b.HostUseSpec[]) => [
       this: globalObject,
       args: [
         b.nativeCell(windowsEnvironmentStorageCell),
-        b.instance("Array").holding({ element: b.string }),
+        b.nativeCell(windowsEnvironmentNamesCell),
         b.nativeCell(editsWindowsEnvironmentCell),
         b.nativeCell(coercesEnvironmentValueCell),
         b.nativeCell(resetsEnvironmentValueCell),
         b.symbol,
       ],
-      result: [b.keptIn(environmentCell), ...otherUses],
+      result,
     }),
   ),
 ];
+const environmentObjectMade = (...otherUses: readonly b.HostUseSpec[]) =>
+  environmentObjectUsed([b.keptIn(environmentCell), ...otherUses]);
+// The report holds the object under `environmentVariables`.
+const environmentObjectHandedOut = environmentObjectUsed(undefined);
 
 // getOwnPropertyNames() of the enumerable names, then get() of each.
 const listedWithValues = b.passedTo("Object.entries", 0);
@@ -622,11 +627,13 @@ const nativeCalls = [
         file: inBindings("BunProcess.cpp"),
         caller: "constructReportObjectComplete",
         onBehalfOf: ["process.report.getReport"],
+        calls: environmentObjectHandedOut,
       },
       {
         file: inBindings("BunProcessReportObjectWindows.cpp"),
         caller: "constructReportObjectWindows",
         onBehalfOf: ["process.report.getReport"],
+        calls: environmentObjectHandedOut,
       },
       {
         file: inBindings("ImportMetaObject.cpp"),
@@ -691,6 +698,11 @@ export default b.declarations(
   // JSEnvironmentVariableMap.cpp: the object never holds anything but strings, whatever is stored.
   b.hostObject(environmentCell, { otherNames: b.string, keepsStringsOfStoredValues: true }),
   b.hostObject(windowsEnvironmentStorageCell, { otherNames: b.string }),
+  b.hostObject(windowsEnvironmentNamesCell, {
+    prototype: "Array.prototype",
+    fields: { length: b.int(0, 2 ** 32 - 1) },
+    otherNames: b.string,
+  }),
   b.hostFunction(editsWindowsEnvironmentCell, "JSEnvironmentVariableMap.cpp", "jsEditWindowsEnvVar", {
     args: { name: b.string, value: b.string.or(b.null) },
     returns: b.undefined,

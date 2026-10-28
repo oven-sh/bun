@@ -631,5 +631,5 @@ runtimefunction id=131110 function=f36
 # -- generated: f0
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 941, patchpoints: 107, rare instructions: 413, polls: 7
+# CHECK-NEXT: instructions: 1000, patchpoints: 111, rare instructions: 421, polls: 7
 # CHECK-NEXT: end of function f0

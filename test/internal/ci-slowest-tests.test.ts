@@ -155,6 +155,7 @@ describe("phase-header boundary", () => {
     [true, `--- [52-257/829] 206 files in parallel (3\u00d7)`],
     [true, `--- Running 444 parallel-safe tests (3-wide)`],
     [true, `--- Running 217 programs compiled ahead of time (3-wide)`],
+    [true, `--- Running 9 files that build many executables (3-wide)`],
     [true, `--- End`],
     [true, `--- Summary`],
     [true, `--- Received SIGTERM, exiting...`],

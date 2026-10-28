@@ -488,7 +488,7 @@ function f5 name="throughItsOwnLength" module=m0 position=2114 flags=[IsChecked,
 # CHECK-NEXT: end of function f9
 # CHECK-LABEL: function {{*}}name="signs"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 51, patchpoints: 10, rare instructions: 91
+# CHECK-NEXT: instructions: 91, patchpoints: 14, rare instructions: 91
 # CHECK-NEXT: end of function f3
 # CHECK-LABEL: function {{*}}name="signsOfNumbers"
 # CHECK: role=Source

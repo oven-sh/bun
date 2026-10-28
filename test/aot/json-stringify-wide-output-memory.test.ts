@@ -1,3 +1,4 @@
+// Runs alone: it judges by the memory that a program holds.
 // The compiled JSON.stringify writes a large 16-bit result straight into the string it returns, with no second copy of it.
 // Peak RSS over the baseline, in units of the length of the result, measured on Linux x64: 4.9 so, 6.9 with the second copy.
 import { expect } from "bun:test";

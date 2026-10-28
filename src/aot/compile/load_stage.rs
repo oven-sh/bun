@@ -670,6 +670,7 @@ impl<'a> Build<'a> {
         let mut runtime_to_keep = None;
         for (group_index, group) in groups.iter().enumerate() {
             let started = Instant::now();
+            self.lowered_runtimes.begin_load();
             let asks = join_asks(group.iter().map(|&index| &roots[index].asks));
             let of_group = group.iter().map(|&index| &roots[index]);
             let mut root_paths = join_root_paths(shared.runtime_modules, of_group);

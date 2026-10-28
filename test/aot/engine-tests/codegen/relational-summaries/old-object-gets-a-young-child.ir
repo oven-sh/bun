@@ -543,5 +543,5 @@ function f78 module=m3 role=Signature thisType={type=anything} results=[{type=an
 # -- generated: f0
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 222, patchpoints: 65, rare instructions: 83, polls: 4
+# CHECK-NEXT: instructions: 222, patchpoints: 65, rare instructions: 89, polls: 4
 # CHECK-NEXT: end of function f0

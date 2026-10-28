@@ -1,3 +1,4 @@
+// Runs alone: it judges by the memory that the machine has left.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isLinux } from "harness";
 import { endAtMemoryLimitTogether } from "./harness/memory-limit";

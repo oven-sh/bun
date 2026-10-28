@@ -59,6 +59,30 @@ test.skipIf(!isCanary)("BUN_AOT_START_AT starts any entry point of one program t
   expect(await startAt("none.ts")).toEqual({ stdout: "", exitCode: 1 });
 });
 
+test("each program of an executable holds the module of Bun's library that it imports", async () => {
+  using dir = tempDir("separate-programs-each-its-own-module", {
+    "main.mjs": `import found from "node:punycode";
+console.log("main", typeof found.toASCII, typeof found.parse);
+new Worker("./worker.mjs");
+`,
+    "worker.mjs": `import found from "node:querystring";
+console.log("worker", typeof found.toASCII, typeof found.parse);
+`,
+  });
+  const cwd = String(dir);
+  const executable = join(cwd, isWindows ? "all.exe" : "all");
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", "./main.mjs", "./worker.mjs", "--outfile", executable],
+    cwd,
+  );
+  expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  const { stdout, exitCode } = await run([executable], cwd, bunEnv);
+  expect({ stdout, exitCode }).toEqual({
+    stdout: "main function undefined\nworker undefined function\n",
+    exitCode: 0,
+  });
+});
+
 // Which of Bun's own code stands behind a member that is read by its name is a guess. The engine follows values: a program that it finds
 // to run code that it was not handed is compiled again with that code. The other programs of the build stay as they are.
 test("of the programs of one build only the one that was handed too little of Bun's own code is compiled again", async () => {

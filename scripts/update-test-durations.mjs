@@ -127,8 +127,8 @@ export function parseLog(raw) {
   return out;
 }
 
-// Most programs under test/aot/parallel take well under a second, and the runner
-// deals those out evenly (aotProgramCostMs): only the long ones have an entry.
+// Most programs under test/aot/parallel take well under a second, and count alike
+// where the shards are dealt (msOfWeight): only the long ones have an entry.
 // test/aot/run-parallel.ts compiles Bun's library once for all that have one,
 // and then each takes little: so an entry stays once it is there.
 export function entryOfProgram(medians, before) {

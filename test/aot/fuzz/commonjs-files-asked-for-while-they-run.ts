@@ -46,9 +46,9 @@ export function generate(random: Random) {
       "awaits first": `try {\n  await import("./first.cjs");\n  console.log("main: imported first.cjs");\n} catch (error) {\n  console.log("main: first.cjs is rejected,", error.message);\n}\n`,
       "requires first": requires("main", "first.cjs"),
       "calls first": imports("main", "first.cjs"),
-    }[start] + `console.log("main ends");\n`;
+    }[start] + `console.log("main ends");\nexport {};\n`;
 
-  // Each .cjs file names something of CommonJS: how a file is read that names nothing of it is another subject.
+  // Each .cjs file names something of CommonJS and each .mjs file exports: how a file is read that has no such sign is another subject.
   const files: Record<string, string> = {
     "first.cjs":
       `module.exports = {};\nconsole.log("first begins");\n` +
@@ -59,7 +59,7 @@ export function generate(random: Random) {
         declaration: `import "./file.cjs";\n`,
         call: imports("module", "file.cjs"),
         require: requires("module", "file.cjs"),
-      }[road] + `console.log("module ends");\n`,
+      }[road] + `console.log("module ends");\nexport {};\n`,
     "file.cjs":
       (throws
         ? `if (globalThis.hasRun) throw new RangeError("thrown by the file");\nglobalThis.hasRun = true;\n`
@@ -68,7 +68,7 @@ export function generate(random: Random) {
       taken.map(name => steps[name]).join("") +
       (throws ? `throw new RangeError("thrown by the file");\n` : `console.log("file ends");\n`),
     "asks.cjs": `module.exports = {};\n` + imports("asks.cjs", "file.cjs") + `console.log("asks.cjs ends");\n`,
-    "asks.mjs": imports("asks.mjs", "file.cjs") + `console.log("asks.mjs ends");\n`,
+    "asks.mjs": imports("asks.mjs", "file.cjs") + `console.log("asks.mjs ends");\nexport {};\n`,
     "back.mjs": `import "./file.cjs";\nconsole.log("back ends");\n`,
   };
   return { file: "main.mjs", text, files };

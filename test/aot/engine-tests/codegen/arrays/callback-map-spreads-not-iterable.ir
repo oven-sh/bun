@@ -478,5 +478,5 @@ runtimefunction id=131091 function=f51 visibility=Private
 # -- generated: f13
 # CHECK-LABEL: function f13 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 47, patchpoints: 8, rare instructions: 84, polls: 1
+# CHECK-NEXT: instructions: 47, patchpoints: 8, rare instructions: 95, polls: 1
 # CHECK-NEXT: end of function f13

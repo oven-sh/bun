@@ -1,3 +1,4 @@
+// Runs alone: it fills the memory of the machine.
 // run-parallel.ts shares the memory of the machine among all that it runs at once. What holds most when that runs short is ended, and the others go on.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";

@@ -31,7 +31,7 @@ import {
 } from "node:fs";
 import { readFile } from "node:fs/promises";
 import type { Socket } from "node:net";
-import { availableParallelism, userInfo } from "node:os";
+import { availableParallelism, totalmem, userInfo } from "node:os";
 import { basename, dirname, extname, join, relative, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { setTimeout as setTimeoutPromise } from "node:timers/promises";
@@ -269,16 +269,12 @@ const aotDriver = "test/aot/run-parallel.ts";
 const strippedBuns = new Map<string, string>();
 const buildsManyExecutables = (testPath: string) =>
   /^(?:aot\/|cli\/aot-|cli\/run\/run-aot\.|bundler\/compile-(?:aot|trim)-)/.test(testPath.replaceAll("\\", "/"));
+// A file says so where it judges by a clock, or by the memory that is held or left.
+const runsAlone = (testPath: string) => /^\/\/ Runs alone: /m.test(readFileSync(join(testsPath, testPath), "utf8"));
 const withSymbols = (execPath: string) =>
   [...strippedBuns].find(([, stripped]) => stripped === execPath)?.[0] ?? execPath;
 const bunFor = (execPath: string, testPath: string) =>
   (buildsManyExecutables(testPath) && strippedBuns.get(execPath)) || execPath;
-// With AddressSanitizer what has failed is tried again with the debug information: a report then names files and lines, and inlined functions too are held against test/leaksan.supp.
-const bunForTry = (execPath: string, testPath: string, attempt: number) =>
-  attempt > 1 && basename(execPath).includes("asan") ? execPath : bunFor(execPath, testPath);
-// What a program under test/aot/parallel takes of a shard: its part of a build that it shares with others, and two runs.
-// One that took 0.7 s or more has an entry in expected-durations.json.
-const aotProgramCostMs = 300;
 const spawnTimeout = 5_000;
 const spawnBunTimeout = 20_000; // when running with ASAN/LSAN bun can take a bit longer to exit, not a bug.
 const testTimeout = 3 * 60_000;
@@ -742,7 +738,7 @@ async function runTests(): Promise<TestResult[]> {
   const revision = getRevision(execPath);
   !isQuiet && console.log("Revision:", revision);
 
-  const tests = getRelevantTests(testsPath, modifiers, expectations);
+  const tests = getRelevantTests(testsPath, modifiers, expectations, execPath);
   !isQuiet && console.log("Running tests:", tests.length);
 
   // Start the docker-service coordinator (test/docker/coordinator.ts). It
@@ -846,6 +842,15 @@ async function runTests(): Promise<TestResult[]> {
   const parallelSafeLimit = parallelism > 1 ? limit : createLimit(parallelSafeWidth);
   // The programs compiled ahead of time come last and nothing of the shard runs beside them. Their driver and this runner only wait: a job for each processor.
   const aotWidth = parallelism > 1 ? parallelism : Math.min(parallelSafeCap, availableParallelism());
+  // A file that builds many executables waits for one build or one run most of the time: alone it keeps between two and
+  // three processors busy, whatever their number, and holds up to five gigabytes.
+  const buildingFilesWidth =
+    parallelism > 1
+      ? 1
+      : Math.max(
+          1,
+          Math.min(parallelSafeCap, Math.ceil(availableParallelism() / 3), Math.floor(totalmem() / (6 * 1024 ** 3))),
+        );
   const isParallelSafeTest = (testPath: string) => {
     const p = testPath.replaceAll("\\", "/");
     if (!p.includes("js/node/test/parallel/") && !p.includes("js/bun/test/parallel/")) return false;
@@ -862,12 +867,14 @@ async function runTests(): Promise<TestResult[]> {
 
   /**
    * @param concurrent this call may overlap with other runTest calls
+   * @param saysDuration of a concurrent call: the title is logged when it has passed, with the seconds it took, as for a file of a bucket, and what a failure printed is logged too
    */
   const runTest = async (
     title: string,
     fn: (index: number) => Promise<TestResult>,
     concurrent = parallelism > 1,
     maxAttempts = 1 + (parseInt(options.retries) || 0),
+    saysDuration = false,
   ): Promise<TestResult | undefined> => {
     const index = ++i;
 
@@ -881,7 +888,12 @@ async function runTests(): Promise<TestResult[]> {
       let grouptitle = `${getAnsi("gray")}[${index}/${total}]${getAnsi("reset")} ${title}`;
       if (attempt > 1) grouptitle += ` ${getAnsi("gray")}[attempt #${attempt}]${getAnsi("reset")}`;
 
-      if (concurrent) {
+      if (concurrent && saysDuration) {
+        const startedAt = Date.now();
+        result = await fn(index);
+        const seconds = ((Date.now() - startedAt) / 1000).toFixed(2);
+        if (result.ok) console.log(`${grouptitle} ${getAnsi("gray")}(${seconds}s)${getAnsi("reset")}`);
+      } else if (concurrent) {
         console.log(grouptitle);
         result = await fn(index);
       } else {
@@ -905,6 +917,7 @@ async function runTests(): Promise<TestResult[]> {
         // Don't open a group mid-phase: it would re-anchor the log viewer's
         // folding for every concurrent title printed after it.
         console.log(label);
+        if (saysDuration && isCI) process.stderr.write(stdoutPreview);
       } else {
         startGroup(label, () => {
           if (!isCI) return;
@@ -1036,7 +1049,7 @@ async function runTests(): Promise<TestResult[]> {
       }
     }
 
-    const runOneTest = async (testPath: string, concurrent: boolean) => {
+    const runOneTest = async (testPath: string, concurrent: boolean, saysDuration = false) => {
       await awaitNapiPrebuild(testPath);
       const absoluteTestPath = join(testsPath, testPath);
       const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
@@ -1157,16 +1170,17 @@ async function runTests(): Promise<TestResult[]> {
           concurrent,
         );
       } else {
-        let attempt = 0;
         return runTest(
           title,
           async () =>
-            spawnBunTest(bunForTry(execPath, testPath, ++attempt), join("test", testPath), {
+            spawnBunTest(bunFor(execPath, testPath), join("test", testPath), {
               cwd,
               stdout: concurrent ? () => {} : pipeTestStdout(process.stdout),
               stderr: concurrent ? () => {} : pipeTestStdout(process.stderr),
             }),
           concurrent,
+          undefined,
+          saysDuration,
         );
       }
     };
@@ -1498,10 +1512,25 @@ async function runTests(): Promise<TestResult[]> {
       .map(builds => bucketCandidates.filter(t => buildsManyExecutables(t) === builds))
       .filter(files => files.length >= 8);
     const bucketable = new Set(buckets.flat());
-    const restSerialTests = serialTests.filter(t => !isModified(t) && !bucketable.has(t));
+    const unbucketedTests = serialTests.filter(t => !isModified(t) && !bucketable.has(t));
+    // Those of them that take too long for a bucket run beside one another too, each in a process of its own. The longest first: what is left for the end is short.
+    const expectedDurations = loadExpectedDurations(testsPath);
+    const expectedDuration = (t: string) => expectedDurations[t.replaceAll("\\", "/")] ?? 0;
+    const buildingTests =
+      buildingFilesWidth > 1
+        ? unbucketedTests
+            .filter(t => buildsManyExecutables(t) && !runsAlone(t))
+            .sort((one, other) => expectedDuration(other) - expectedDuration(one))
+        : [];
+    const restSerialTests = unbucketedTests.filter(t => !buildingTests.includes(t));
 
     await Promise.all(modifiedSerialTests.map(t => limit(() => runOneTest(t, parallelism > 1))));
     await Promise.all(restSerialTests.map(t => limit(() => runOneTest(t, parallelism > 1))));
+    if (buildingTests.length) {
+      startGroup(`Running ${buildingTests.length} files that build many executables (${buildingFilesWidth}-wide)`);
+      const buildingFilesLimit = createLimit(buildingFilesWidth);
+      await Promise.all(buildingTests.map(t => buildingFilesLimit(() => runOneTest(t, true, true))));
+    }
     for (const files of buckets) await runParallelBucket(bunFor(execPath, files[0]!), files);
     // Concurrent tests log their title without opening a group (interleaved
     // output can't nest), so give the phase its own group instead of letting
@@ -2874,7 +2903,48 @@ function loadExpectedDurations(cwd: string): Record<string, number> {
   return durations;
 }
 
-function getRelevantTests(cwd: string, testModifiers: string[], testExpectations: TestExpectation[]): string[] {
+/**
+ * The programs under test/aot/parallel by the builds that hold them. A build compiles Bun's library once for up to a hundred programs:
+ * dealt one by one, every shard would compile it for its few.
+ */
+function getBuildsOfAotPrograms(execPath: string, testsPath: string, programs: string[]) {
+  const folder = mkdtempSync(join(tmpdir(), "aot-programs-"));
+  try {
+    const byPath = new Map(programs.map(testPath => [join(testsPath, testPath), testPath]));
+    writeFileSync(join(folder, "files.txt"), [...byPath.keys()].join("\n") + "\n");
+    const { status, stdout, stderr } = spawnSync(
+      execPath,
+      [aotDriver, "--deal", `--files-from=${join(folder, "files.txt")}`],
+      {
+        cwd,
+        encoding: "utf8",
+        timeout: 5 * 60_000,
+        maxBuffer: 64 * 1024 * 1024,
+        env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1", NO_COLOR: "1" },
+      },
+    );
+    // Anything may print here some day: what is no build is passed over, and the list is held against the programs below.
+    const builds = (stdout ?? "")
+      .split("\n")
+      .filter(line => line.startsWith('{"ms":'))
+      .map(line => JSON.parse(line) as { ms: number; files: string[] })
+      .map(({ ms, files }) => ({ cost: ms, testPaths: files.map(file => byPath.get(file)!) }));
+    // Every shard must deal alike: one that dealt otherwise would leave programs out that no other shard runs.
+    const dealt = builds.flatMap(({ testPaths }) => testPaths);
+    if (status !== 0 || dealt.sort().join("\n") !== [...programs].sort().join("\n"))
+      throw new Error(`${aotDriver} --deal ended with ${status} and does not list each program once:\n${stderr}`);
+    return builds;
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
+  }
+}
+
+function getRelevantTests(
+  cwd: string,
+  testModifiers: string[],
+  testExpectations: TestExpectation[],
+  execPath: string,
+): string[] {
   let tests = getTests(cwd);
   const availableTests: string[] = [];
   const filteredTests: string[] = [];
@@ -2960,21 +3030,27 @@ function getRelevantTests(cwd: string, testModifiers: string[], testExpectations
     const durations = loadExpectedDurations(cwd);
     const known = Object.values(durations).sort((a, b) => a - b);
     const unknownCost = known.length ? known[Math.floor(known.length / 2)]! : 100;
-    const costOf = (testPath: string) =>
-      durations[testPath.replaceAll("\\", "/")] ?? (isAotProgram(testPath) ? aotProgramCostMs : unknownCost);
+    const costOf = (testPath: string) => durations[testPath.replaceAll("\\", "/")] ?? unknownCost;
+    const indexOf = new Map(availableTests.map((testPath, originalIndex) => [testPath, originalIndex]));
+    const programs = availableTests.filter(isAotProgram);
 
     // Stable order for equal costs so the packing is reproducible.
-    const order = availableTests
-      .map((testPath, originalIndex) => ({ testPath, originalIndex, cost: costOf(testPath) }))
+    const order = [
+      ...availableTests
+        .filter(testPath => !isAotProgram(testPath))
+        .map(testPath => ({ testPaths: [testPath], cost: costOf(testPath) })),
+      ...(programs.length ? getBuildsOfAotPrograms(execPath, cwd, programs) : []),
+    ]
+      .map(item => ({ ...item, originalIndex: indexOf.get(item.testPaths[0]!)! }))
       .sort((a, b) => b.cost - a.cost || a.originalIndex - b.originalIndex);
     const load = new Float64Array(maxShards);
     const assigned = Array.from({ length: maxShards }, (): { testPath: string; originalIndex: number }[] => []);
-    for (const { testPath, originalIndex, cost } of order) {
+    for (const { testPaths, cost } of order) {
       // `load` and `assigned` have maxShards elements, and s and bin are less than that.
       let bin = 0;
       for (let s = 1; s < maxShards; s++) if (load[s]! < load[bin]!) bin = s;
       load[bin]! += cost;
-      assigned[bin]!.push({ testPath, originalIndex });
+      for (const testPath of testPaths) assigned[bin]!.push({ testPath, originalIndex: indexOf.get(testPath)! });
     }
     // Restore the within-shard order the rest of the pipeline expects
     // (docker-last / modified-first sorts below are stable over this).
@@ -3115,6 +3191,7 @@ async function getExecPathFromBuildkite(target: string, buildId?: string): Promi
     const execPath = join(releasePath, entry);
     if (/bun(?:-[a-z]+)?(?:\.exe)?$/i.test(entry) && statSync(execPath).isFile()) {
       if (isLinux) await unpackStrippedBun(releasePath, zipPath, execPath);
+      if (isLinux && basename(execPath).includes("asan")) unpackDebugInformation(execPath);
       return execPath;
     }
   }
@@ -3132,7 +3209,7 @@ async function unpackStrippedBun(releasePath: string, profileZipPath: string, ex
     .filter(filename => /^bun.*\.zip$/i.test(filename))
     .map(filename => join(releasePath, filename))
     .find(path => path !== profileZipPath);
-  if (!zipPath) return removeDebugInformation(execPath);
+  if (!zipPath) return;
   const unpacked = join(await unzip(zipPath), basename(zipPath, ".zip"), "bun");
   if (!existsSync(unpacked)) return;
   const stripped = join(dirname(execPath), "bun-stripped");
@@ -3143,20 +3220,26 @@ async function unpackStrippedBun(releasePath: string, profileZipPath: string, ex
 }
 
 /**
- * A link with AddressSanitizer uploads one archive, with the debug information, which is more than half of the file.
- * A process that ends with something to hold against test/leaksan.supp starts a symbolizer, and that begins by unpacking
- * all the debug information of the executable: seconds for each run of a program of one line. The file names functions,
- * so the table of symbols stays.
+ * A process that ends with something to hold against test/leaksan.supp starts a symbolizer. Before that names one function
+ * it unpacks all the debug information of the executable, which the link has compressed: seconds for each run of a program
+ * of one line. It looks first for a file of debug information under the build ID of the executable, so an unpacked copy
+ * lies there. What it answers is the same.
  */
-function removeDebugInformation(execPath: string): void {
-  const strip = which(["llvm-strip", "strip"]);
-  if (!strip) return;
-  const stripped = join(dirname(execPath), `${basename(execPath)}-stripped`);
-  const { status } = spawnSync(strip, ["--strip-debug", "-o", stripped, execPath], {
+function unpackDebugInformation(execPath: string): void {
+  const objcopy = which(["llvm-objcopy", "objcopy"]);
+  const readelf = which(["llvm-readelf", "readelf"]);
+  if (!objcopy || !readelf) return;
+  const notes = spawnSync(readelf, ["-n", execPath], { encoding: "utf-8", timeout: 120_000 }).stdout ?? "";
+  const [, buildId] = /Build ID: ([0-9a-f]{4,})/.exec(notes) ?? [];
+  if (!buildId) return;
+  const directory = join(dirname(execPath), "debug-information");
+  const unpacked = join(directory, ".build-id", buildId.slice(0, 2), `${buildId.slice(2)}.debug`);
+  mkdirSync(dirname(unpacked), { recursive: true });
+  const { status } = spawnSync(objcopy, ["--only-keep-debug", "--decompress-debug-sections", execPath, unpacked], {
     stdio: "inherit",
     timeout: 120_000,
   });
-  if (status === 0 && getRevision(stripped) === getRevision(execPath)) strippedBuns.set(execPath, stripped);
+  if (status === 0) process.env.LLVM_SYMBOLIZER_OPTS = `--debug-file-directory=${directory}`;
 }
 
 function getRevision(execPath: string): string {

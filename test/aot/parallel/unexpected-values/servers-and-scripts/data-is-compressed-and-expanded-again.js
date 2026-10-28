@@ -14,7 +14,9 @@ try {
 } catch (error) {
   console.log(error.code, error.errno);
 }
-zlib.inflate(Buffer.from([1, 2, 3]), error => console.log("callback", error.code));
+const codesHandedToCallback = [];
+zlib.inflate(Buffer.from([1, 2, 3]), error => codesHandedToCallback.push(error.code));
+process.on("exit", () => console.log("callback", ...codesHandedToCallback));
 
 const pieces = [];
 await pipeline(Readable.from([text.slice(0, 1000), text.slice(1000)]), zlib.createGzip(), zlib.createGunzip(), async function (source) {

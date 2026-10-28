@@ -446,6 +446,9 @@ export function initializeNextTickQueue(process: NodeJS.Process, marker: NextTic
     }
     $putInternalField(marker, 0, 1);
   }
+  // Object lists a member from when it is first read. internal/validators, which is loaded for a callback that is no function, reads these
+  // three when it loads: whoever has read process.nextTick finds them read, in this order.
+  const { freeze: _ObjectFreeze, create: _ObjectCreate, defineProperty: _ObjectDefineProperty } = Object;
   if (IS_COMPILED_AHEAD_OF_TIME) {
     return install(process, marker, startRing, require("internal/process/next_tick_queue").nextTick);
   }

@@ -15,6 +15,8 @@
 //   - compiled-programs phase: `--- Running N programs compiled ahead of time`,
 //     then `[N/M] <path> (compile X ms, run Y ms)` per program once its build
 //     and both its runs are through (not a path, so no span opens)
+//   - phase of the long files that build many executables: `--- Running N files that
+//     build many executables`, then `[N/M] <path> (X.XXs)` per file once it has passed
 //   - other startGroup phases: `--- napi prebuild: ...`, `--- End`
 // A parser that only recognises the first shape folds the entire following
 // phase into whichever serial test happened to precede it.
@@ -32,6 +34,6 @@
  * @returns {boolean}
  */
 export const isPhaseGroupHeader = body =>
-  /^--- (?:\[\d+-\d+\/\d+\]|napi prebuild:|Running \d+ (?:parallel-safe|programs compiled)|End\b|Summary\b|Received \w+, exiting)/.test(
+  /^--- (?:\[\d+-\d+\/\d+\]|napi prebuild:|Running \d+ (?:parallel-safe|programs compiled|files that build)|End\b|Summary\b|Received \w+, exiting)/.test(
     body,
   );

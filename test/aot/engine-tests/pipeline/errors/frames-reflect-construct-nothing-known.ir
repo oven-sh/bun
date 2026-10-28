@@ -158,7 +158,7 @@ function f9 module=m1 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v14: Error = AssumeType v6 provenType=Error
 # CHECK-NEXT: v7: anything = PropGet v14 key="stack" accessSite=10
 # CHECK-NEXT: v8: anything ~ undefined|null|string = Upcast v7 castType=anything
-# CHECK-NEXT: PropSet v0, v8 key="s" accessSite=11 receivers=[L0, ..]
+# CHECK-NEXT: PropSet v0, v8 key="s" accessSite=11
 # CHECK-NEXT: v10: undefined = Undefined
 # CHECK-NEXT: Return v10
 # CHECK-NEXT: }

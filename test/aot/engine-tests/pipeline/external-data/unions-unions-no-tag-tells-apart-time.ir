@@ -1141,7 +1141,7 @@ runtimefunction id=131110 function=f18
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 100 = Integer integer=100
 # CHECK-NEXT: v1: f8 = NewClosure function=f8 allocationSite=8 storage=Frame
-# CHECK-NEXT: v2: Array = CallDirect v0, v1 function=f18 accessSite=36
+# CHECK-NEXT: v2: anything ~ Array = CallDirect v0, v1 function=f18 accessSite=36
 # CHECK-NEXT: v3: Array<L0|L1, proven, pristine[Storage, Names, Dense]> = AssumeType v2 provenType=Array<L0|L1, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v4: stringbuilder = StringBuilderBegin
 # CHECK-NEXT: v5: i32 = StringBuilderCheckpoint v4

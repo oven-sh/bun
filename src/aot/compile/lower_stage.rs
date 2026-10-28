@@ -56,11 +56,16 @@ struct LoweredRuntime {
 #[cfg(bun_fuzzilli)]
 static LOWERED_RUNTIME: Guarded<Option<LoweredRuntime>> = Guarded::new(None);
 
-/// What the programs of one build have made of Bun's own code. A program that leaves out the same takes a copy.
+/// What the programs that share one load of Bun's own code have made of it. A program that leaves out the same takes a copy.
 #[derive(Default)]
 pub(crate) struct LoweredRuntimes(Guarded<Vec<LoweredRuntime>>);
 
 impl LoweredRuntimes {
+    /// A file has its number in one load.
+    pub(super) fn begin_load(&self) {
+        self.0.lock().clear();
+    }
+
     fn find(&self, key: &RuntimeLoweringKey) -> Option<CheckedProgram<Option<LoweredUnit>>> {
         let kept = self.0.lock();
         let found = kept.iter().find(|it| it.key == *key)?;

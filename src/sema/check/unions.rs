@@ -815,6 +815,13 @@ impl<'p, 's> Checker<'p, 's> {
         )
     }
 
+    /// True if `addNamedUnions` adds something for `ty`.
+    pub(super) fn has_named_unions(&self, ty: TypeId) -> bool {
+        let mut named = smallvec::SmallVec::new();
+        self.add_named_unions(&mut named, &[ty]);
+        !named.is_empty()
+    }
+
     /// `addNamedUnions`. `boolean` has no alias, even if an alias refers to it.
     fn add_named_unions(&self, named: &mut smallvec::SmallVec<[TypeId; 4]>, types: &[TypeId]) {
         for &t in types {

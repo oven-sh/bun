@@ -1,3 +1,4 @@
+// Runs alone: it judges by a clock.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { test } from "./supported";

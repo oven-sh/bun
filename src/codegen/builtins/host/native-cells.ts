@@ -48,6 +48,7 @@ export const keptHandlerCell = (path: string) => `Handler.${path}`;
 export const environmentCell = "GlobalObject.processEnvironment";
 // On Windows that object is a Proxy of the library over an ordinary object that native code has filled, and these are what native code hands the function that makes it.
 export const windowsEnvironmentStorageCell = "GlobalObject.windowsEnvironmentStorage";
+export const windowsEnvironmentNamesCell = "GlobalObject.windowsEnvironmentNames";
 export const editsWindowsEnvironmentCell = "GlobalObject.editsWindowsEnvironment";
 export const coercesEnvironmentValueCell = "GlobalObject.coercesEnvironmentValue";
 export const resetsEnvironmentValueCell = "GlobalObject.resetsEnvironmentValue";

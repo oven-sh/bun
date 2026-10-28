@@ -199,7 +199,7 @@ describe.skipIf(!!skipped)("compile/aot/perf/start", () => {
             stderr: expect.not.stringMatching(/^error\b/m),
             exitCode: 0,
           });
-          const now = await measureStart([executable, ...(program.arguments ?? [])], program.until, 5);
+          const { mappings, ...now } = await measureStart([executable, ...(program.arguments ?? [])], program.until, 5);
           rmSync(folder, { recursive: true, force: true });
 
           const budget = budgets[program.name];
@@ -227,6 +227,7 @@ describe.skipIf(!!skipped)("compile/aot/perf/start", () => {
             `BUDGET ${program.name}: ${[worse.length ? `WORSE: ${moved(worse)}` : "", better.length ? `better: ${moved(better)}` : ""].filter(Boolean).join("; ") || "within"}`,
           );
           console.error(`NUMBERS ${program.name}: ${JSON.stringify(now)}`);
+          if (worse.includes("privateKilobytes")) console.error(`MAPPINGS ${program.name}:\n${mappings}`);
           expect(worse.map(what => `${what}: ${now[what]}, the budget is ${budget[what]}`)).toEqual([]);
         }),
       900_000,

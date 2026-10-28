@@ -521,8 +521,11 @@ const constructsWorkersBeforeItHearsThatOthersEnded = `if (Bun.isMainThread) {
 
 // A thread starts Workers until the constructor throws. One of them is held up for eight seconds on its way out, and more are constructed meanwhile until the constructor throws again: one of them waits.
 // Then the thread ends: the main thread exits, or a Worker is terminated. A Worker that starts after that writes a line.
+// The runs of the program share a folder, so each names its files by the number of its process.
 const endsThreadWhoseWorkerWaits = `import { existsSync, writeFileSync, writeSync } from "node:fs";
 declare var self: Worker;
+const threadEnds = "the-thread-ends-" + process.pid;
+const hasStarted = (late: number | string) => "started-" + process.pid + "-" + late;
 const start = async () => {
   const worker = new Worker(new URL(import.meta.url));
   await new Promise(resolve => (worker.onmessage = resolve));
@@ -542,28 +545,25 @@ async function constructWorkerThatWaits() {
   await new Promise(resolve => (heldUp.onmessage = resolve));
   await Bun.sleep(200);
   heldUp.terminate();
-  // Only one Worker can wait for the one that is ending, so once the constructor throws, all but one have started.
-  let constructed = 0;
-  let settled = 0;
+  // Only one Worker can wait for the one that is ending, so once the constructor throws, all but one start.
+  // Only this thread can start the one that waits, in a turn of its loop, and it takes none from here on.
+  const late: Worker[] = [];
   try {
-    for (; constructed < 64; constructed++) {
-      const worker = new Worker(new URL(import.meta.url), { argv: ["late"] });
-      const settle = () => {
-        settled++;
-        worker.onmessage = null;
-        worker.removeEventListener("close", settle);
-      };
-      worker.onmessage = settle;
-      worker.addEventListener("close", settle);
-    }
+    while (late.length < 64) late.push(new Worker(new URL(import.meta.url), { argv: ["late", String(late.length)] }));
   } catch (error) {
     if (!(error instanceof TypeError)) throw error;
   }
-  while (settled < constructed - 1) await Bun.sleep(10);
-  writeFileSync("the-thread-ends", "");
+  for (let rounds = 0; late.filter((_, index) => existsSync(hasStarted(index))).length < late.length - 1; rounds++) {
+    if (rounds === 3000) throw new Error("a Worker that the constructor let in has not started");
+    Bun.sleepSync(10);
+  }
+  writeFileSync(threadEnds, "");
 }
 if (!Bun.isMainThread) {
-  if (process.argv[2] === "late" && existsSync("the-thread-ends")) writeSync(1, "the one that waited has started\\n");
+  if (process.argv[2] === "late") {
+    if (existsSync(threadEnds)) writeSync(1, "the one that waited has started\\n");
+    writeFileSync(hasStarted(process.argv[3]), "");
+  }
   self.onmessage = async event => {
     if (event.data === "a call that blocks") {
       postMessage("held up");
@@ -883,12 +883,16 @@ function oneAtATime<T>(work: () => Promise<T>): Promise<T> {
   return mine;
 }
 
+// They hold a thread up for eight seconds and do nothing meanwhile: a run of theirs takes no core from the others.
+const programsThatWait = new Set([constructsWorkersWhileAnotherIsHeldUp, endsThreadWhoseWorkerWaits]);
+
 async function runEach(runs: Run[], program: string, ...args: string[]) {
   const folder = await built(program);
+  const runProgram = programsThatWait.has(program) ? run : runCommand;
   const results: { stdout: string; stderr: string; exitCode: number | null }[] = [];
   for (const run of runs) {
     const command = run.limitInKB ? `ulimit -v ${run.limitInKB} && exec ./program "$@"` : `exec ./program "$@"`;
-    const start = () => runCommand(["sh", "-c", command, "sh", ...args], String(folder), { ...env, ...run.env });
+    const start = () => runProgram(["sh", "-c", command, "sh", ...args], String(folder), { ...env, ...run.env });
     const { stdout, stderr, exitCode } = await (run.limitInKB && run.limitInKB >= 2 * GB ? oneAtATime(start) : start());
     results.push({ stdout, stderr, exitCode });
   }
@@ -919,6 +923,38 @@ export function workersWithinAddressSpaceLimit(part: number, parts: number) {
   };
 
   describe("Workers of a compiled program within a limit on the address space", () => {
+    // The runs that fill two gigabytes go one at a time and take longest, so they begin first.
+    test.skipIf(!isLinux || isASAN).each(dealt(["lists", "objects with many properties"]))(
+      "24 Workers that keep %s find no room at once, each gets its error, and the program goes on",
+      async kind => {
+        const places = ["33"];
+        const results = await runEach(
+          places.map(place => ({ limitInKB: 2048 * 1024, env: { BUN_JSC_seedOfVMRandomForFuzzer: place } })),
+          workersThatKeepListsRunOutOfRoom,
+          kind,
+          "24",
+        );
+        const stdout = "RangeError: Out of memory, code 1\n".repeat(24);
+        expect(results.map((result, i) => ({ place: places[i], ...result }))).toEqual(
+          places.map(place => ({ place, stdout, stderr: "", exitCode: 0 })),
+        );
+      },
+      240_000,
+    );
+
+    inPart(test.skipIf(!isLinux || isASAN))(
+      "a program that keeps lists until there is no room catches a RangeError, twice",
+      async () => {
+        // What the program first needs when it ends, it needs where no room is left. Whether there is some left differs from run to run.
+        const limits = [512, 768, 1024, 2048].map(megabytes => megabytes * 1024);
+        const results = await runWithinEach(limits, keepsListsUntilThereIsNoRoom);
+        expect(results.map((result, i) => ({ limit: limits[i], ...result }))).toEqual(
+          limits.map(limit => ({ limit, stdout: "[ true, true ] [ true, true ]\n", stderr: "", exitCode: 0 })),
+        );
+      },
+      240_000,
+    );
+
     test.skipIf(!isLinux || isASAN).each(
       dealt([
         [8, 4 * GB],
@@ -1147,7 +1183,7 @@ export function workersWithinAddressSpaceLimit(part: number, parts: number) {
         const ended = Date.now();
         const [, exits] = /^exits at (\d+)\n$/.exec(stdout) ?? [];
         expect({ stdout, stderr, exitCode, within4Seconds: ended - Number(exits) < 4000 }).toEqual({
-          stdout,
+          stdout: expect.stringMatching(/^exits at \d+\n$/),
           stderr: "",
           exitCode: 0,
           within4Seconds: true,
@@ -1228,37 +1264,6 @@ export function workersWithinAddressSpaceLimit(part: number, parts: number) {
         const stdout = "RangeError: Out of memory, code 1\n".repeat(4);
         expect(results.map((result, i) => ({ place: places[i], ...result }))).toEqual(
           places.map(place => ({ place, stdout, stderr: "", exitCode: 0 })),
-        );
-      },
-      240_000,
-    );
-
-    test.skipIf(!isLinux || isASAN).each(dealt(["lists", "objects with many properties"]))(
-      "24 Workers that keep %s find no room at once, each gets its error, and the program goes on",
-      async kind => {
-        const places = ["33"];
-        const results = await runEach(
-          places.map(place => ({ limitInKB: 2048 * 1024, env: { BUN_JSC_seedOfVMRandomForFuzzer: place } })),
-          workersThatKeepListsRunOutOfRoom,
-          kind,
-          "24",
-        );
-        const stdout = "RangeError: Out of memory, code 1\n".repeat(24);
-        expect(results.map((result, i) => ({ place: places[i], ...result }))).toEqual(
-          places.map(place => ({ place, stdout, stderr: "", exitCode: 0 })),
-        );
-      },
-      240_000,
-    );
-
-    inPart(test.skipIf(!isLinux || isASAN))(
-      "a program that keeps lists until there is no room catches a RangeError, twice",
-      async () => {
-        // What the program first needs when it ends, it needs where no room is left. Whether there is some left differs from run to run.
-        const limits = [512, 768, 1024, 2048].map(megabytes => megabytes * 1024);
-        const results = await runWithinEach(limits, keepsListsUntilThereIsNoRoom);
-        expect(results.map((result, i) => ({ limit: limits[i], ...result }))).toEqual(
-          limits.map(limit => ({ limit, stdout: "[ true, true ] [ true, true ]\n", stderr: "", exitCode: 0 })),
         );
       },
       240_000,

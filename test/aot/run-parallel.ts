@@ -5,6 +5,7 @@
 //   --no-erased       leaves out the second build, see below
 //   --root=<folder>   the programs lie under that folder, not under ./parallel
 //   --memory=<MB>     what all that runs at once may hold together. Without it: seven eighths of what the machine has available at the start
+//   --deal            builds and runs nothing: prints the first builds of the programs, a line each: { ms, files }. scripts/runner.node.ts deals whole builds to the shards
 //
 // A program with a TypeScript file is built twice, the second time with --aot-erase-types: types never change what a program prints.
 // Not one that names much of Bun's library: nearly all of it is the library, which keeps its types.
@@ -97,9 +98,12 @@ type Program = {
   way: "compiled" | "erased";
 };
 
+// A weight of one is what a small program takes of a build that it shares.
+const msOfWeight = 300;
 const programsInOneExecutable = 64;
-// The library is compiled once for each such program, so the fewer the better.
-const entryPointsOfOneProgram = 256;
+// The library is compiled once for each such program, so the fewer the better. One build runs on one thread while others wait: it must not be the last to end.
+const entryPointsOfOneProgram = 96;
+const weightOfLibrary = 40;
 // Whoever names one of these, in whichever of its files, brings thousands of functions of Bun's library, and takes as long to build as eight other programs.
 const namesMuchOfTheLibrary =
   /["'`](?:node:)?(?:assert|child_process|cluster|console|crypto|dgram|diagnostics_channel|dns|events|fs|https?|http2|inspector|net|perf_hooks|readline|repl|stream|tls|tty|util|v8|worker_threads|zlib)(?:\/[a-z]+)?["'`]|\bWorker\b|\bprocess\.std(?:in|out|err)\b/;
@@ -116,10 +120,10 @@ const writesToBuiltIn = new RegExp(
 const handsOutObjectOfHost = /(?<![.\w$"'`:])(?:globalThis|process|Bun)\b(?!\s*\??\.\s*[A-Za-z_$])(?!["'`:])/;
 // And whoever was seen to take long, which no text tells: the table by which the shards are dealt lists only such programs.
 const tests = resolve(import.meta.dir, "..");
-const takesLong = new Set(
-  Object.keys(JSON.parse(readFileSync(join(tests, "expected-durations.json"), "utf8")))
-    .filter(path => path.startsWith("aot/"))
-    .map(path => join(tests, path)),
+const tookMs = new Map(
+  Object.entries<{ default?: number }>(JSON.parse(readFileSync(join(tests, "expected-durations.json"), "utf8")))
+    .filter(([path]) => path.startsWith("aot/"))
+    .map(([path, lanes]) => [join(tests, path), lanes.default ?? 0]),
 );
 /** Asks the file and the files that it names by relative paths, and those that they name. */
 function someFileOf(path: string, holds: (text: string) => boolean) {
@@ -140,10 +144,26 @@ function someFileOf(path: string, holds: (text: string) => boolean) {
 const saysWhatWasLeftOut = /was not compiled into this executable|the compiler couldn't tell at build time/;
 const sharesLibrary = ({ weight, output, way, writesToBuiltIn }: Program) =>
   output === undefined && (weight > 1 || (!writesToBuiltIn && way === "erased"));
-const weightOf = (programs: Program[]) =>
+const weightOf = (programs: Program[]) => {
+  const ofEachAlone = programs.reduce((sum, { weight }) => sum + weight, 0);
+  return sharesLibrary(programs[0]) ? Math.min(ofEachAlone, weightOfLibrary + programs.length) : ofEachAlone;
+};
+// What a program took in CI, in milliseconds: its own build or its share of one, and its runs. One that takes under a second has no entry.
+const tookInCI: Record<string, { default?: number } | undefined> = (() => {
+  try {
+    return JSON.parse(readFileSync(join(import.meta.dir, "..", "expected-durations.json"), "utf8"));
+  } catch {
+    return {};
+  }
+})();
+/** In milliseconds. */
+const expectedTimeOf = (programs: Program[]) =>
   programs.reduce(
-    (sum, program) => sum + (sharesLibrary(program) ? 1 : program.weight),
-    sharesLibrary(programs[0]) ? 8 : 0,
+    (sum, program) =>
+      sum +
+      (tookInCI[relative(join(import.meta.dir, ".."), program.path).replaceAll("\\", "/")]?.default ??
+        800 * (sharesLibrary(program) ? 1 : program.weight)),
+    0,
   );
 const longestCommandLine = 30_000;
 const longestTextShown = 16 * 1024;
@@ -189,14 +209,17 @@ let hasFailed = false;
 
 let free = jobs;
 const waiting: (() => void)[] = [];
-const waitingBuilds: { weight: number; start: () => void }[] = [];
+const waitingBuilds: { weight: number; start: (slots: number) => void }[] = [];
 /** The longest first, also where programs are built again: what is left for the end is short. */
 function takeLongestBuild() {
   let longest = 0;
   for (let index = 1; index < waitingBuilds.length; index++)
     if (waitingBuilds[index].weight > waitingBuilds[longest].weight) longest = index;
-  return waitingBuilds.splice(longest, 1)[0]?.start;
+  return waitingBuilds.splice(longest, 1)[0];
 }
+let expectedTimeOfAll = Infinity;
+/** On one thread the longest build of a shard takes nearly as long as all the others together on the other slots. How many slots' worth of all the builds one is. */
+const sharesOf = (expectedTime: number) => Math.max(1, Math.round(expectedTime / (expectedTimeOfAll / jobs)));
 // Where the time went, in milliseconds. `inFlight`: summed over the slots that are taken.
 const spent = { notedAt: 0, inFlight: 0, withFreeSlots: 0, beforeFirstSlot: 0, lastFullAt: 0, forMemory: 0 };
 let waitForMemory = 0;
@@ -226,10 +249,15 @@ async function withSlot<T>(work: () => Promise<T>): Promise<T> {
   }
 }
 function giveBack(slots: number) {
-  for (; slots > 0; slots--) {
-    const next = waiting.shift() ?? takeLongestBuild();
+  while (slots > 0) {
+    const next = waiting.shift();
+    const build = next ? undefined : takeLongestBuild();
+    // A build that is made again without the program that was refused takes the slots of the first.
+    const given = build ? Math.min(slots, sharesOf(build.weight)) : 1;
     if (next) next();
+    else if (build) build.start(given);
     else takeFreeSlots(-1);
+    slots -= given;
   }
 }
 const memory = endAtMemoryLimitTogether(
@@ -268,21 +296,23 @@ function noteExecutable(path: string) {
   };
 }
 let buildsToStart = 0;
-/** A build has a thread for each slot that it holds: one while other builds wait, and its share of the free ones when few are left. */
+/** A build has a thread for each slot that it holds: as many as it has shares of all the builds while others wait, and its share of the free ones when few are left. */
 async function withSlotsOfBuild<T>(weight: number, work: (threads: number) => Promise<T>): Promise<T> {
   buildsToStart++;
   // The builds that are asked for in one turn all count.
   await Promise.resolve();
+  let held = 1;
   if (free > 0) takeFreeSlots(1);
-  else await new Promise<void>(start => waitingBuilds.push({ weight, start }));
-  const more = Math.floor(free / buildsToStart--);
+  else held = await new Promise<number>(start => waitingBuilds.push({ weight, start }));
+  const more = Math.max(Math.min(sharesOf(weight) - held, free), Math.floor(free / buildsToStart--));
   takeFreeSlots(more);
+  held += more;
   try {
     await untilThereIsRoom(true);
-    return await work(1 + more);
+    return await work(held);
   } finally {
     // Once whoever waits for the build has asked for the runs of what it made: they come first.
-    setImmediate(giveBack, 1 + more);
+    setImmediate(giveBack, held);
   }
 }
 
@@ -495,7 +525,11 @@ function read(file: string): Program {
     erasedIsAsPlain: lines("Erased types").includes("as plain Bun"),
     isBuiltErased: !lines("Erased types").some(line => line.startsWith("not built")),
     isAlone: lines("Alone").length > 0,
-    weight: namesModules || takesLong.has(path) || someFileOf(path, text => handsOutObjectOfHost.test(text)) ? 8 : 1,
+    weight: tookMs.has(path)
+      ? Math.max(8, Math.round(tookMs.get(path)! / msOfWeight))
+      : namesModules || someFileOf(path, text => handsOutObjectOfHost.test(text))
+        ? 8
+        : 1,
     namesModules,
     writesToBuiltIn: writesToBuiltIn.test(text),
     exitCode: Number(lines("Exit code")[0] ?? 0),
@@ -645,7 +679,7 @@ async function run(programs: Program[]): Promise<void> {
     "--outfile",
     executable,
   ];
-  const build = await withSlotsOfBuild(weightOf(programs), threads => {
+  const build = await withSlotsOfBuild(expectedTimeOf(programs), threads => {
     for (const { file, way } of programs) say((lastTaken = { file, way, state: "compiling" }));
     const cmd = command(threads);
     return start(cmd, buildsIn, { ...environmentOfBuilds, ...first.envOfBuild }, timeLimit(cmd, weightOf(programs)));
@@ -866,13 +900,15 @@ const whySkipped = refusal
   : isCanary
     ? undefined
     : "only a canary build of Bun reads BUN_AOT_START_AT";
-if (whySkipped) {
+// Whoever deals asks what belongs together. What a Bun cannot build is said where the programs are run.
+const deals = process.argv.includes("--deal");
+if (whySkipped && !deals) {
   for (const file of files) say({ file, state: "skip", message: whySkipped });
   console.error(`SKIPPED all ${files.length} programs: ${whySkipped}`);
   process.exit(0);
 }
 // A Bun that cannot do this much passes nothing: no program is left out for it.
-const whyNothingStarts = findWhyNothingStartsWhereItIsTold();
+const whyNothingStarts = deals ? undefined : findWhyNothingStartsWhereItIsTold();
 if (whyNothingStarts) {
   for (const file of files) say({ file, state: "fail", stage: "probe", message: whyNothingStarts });
   process.exit(1);
@@ -915,7 +951,7 @@ const all = [
     ? asWritten
         .filter(
           program =>
-            program.isBuiltErased && program.weight === 1 && program.buildErrors === undefined && hasTypes(program),
+            program.isBuiltErased && !program.namesModules && program.buildErrors === undefined && hasTypes(program),
         )
         .map(program => ({ ...program, way: "erased" as const }))
     : []),
@@ -937,16 +973,24 @@ const groups = Map.groupBy(all, program =>
   ]),
 );
 const batches = [...groups.values()].flatMap(group => {
+  const sizeOf = (programs: Program[]) => (sharesLibrary(group[0]) ? programs.length : weightOf(programs));
   const limit = sharesLibrary(group[0]) ? entryPointsOfOneProgram : programsInOneExecutable;
-  const most = Math.ceil(weightOf(group) / Math.ceil(weightOf(group) / limit));
+  const most = Math.ceil(sizeOf(group) / Math.ceil(sizeOf(group) / limit));
   const batches: Program[][] = [[]];
   for (const program of group) {
-    if (batches.at(-1)!.length && weightOf([...batches.at(-1)!, program]) > most) batches.push([]);
+    if (batches.at(-1)!.length && sizeOf([...batches.at(-1)!, program]) > most) batches.push([]);
     batches.at(-1)!.push(program);
   }
   return batches;
 });
-batches.sort((one, other) => weightOf(other) - weightOf(one));
+batches.sort((one, other) => expectedTimeOf(other) - expectedTimeOf(one));
+expectedTimeOfAll = batches.reduce((sum, batch) => sum + expectedTimeOf(batch), 0);
+if (deals) {
+  for (const batch of batches)
+    if (batch[0].way === "compiled")
+      console.log(JSON.stringify({ ms: weightOf(batch) * msOfWeight, files: batch.map(({ file }) => file) }));
+  process.exit(0);
+}
 await Promise.all(batches.map(run));
 console.error(describeTime());
 process.exit(hasFailed ? 1 : 0);

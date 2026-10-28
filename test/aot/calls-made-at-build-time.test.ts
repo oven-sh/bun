@@ -1,3 +1,4 @@
+// Runs alone: it judges by the memory that a build holds.
 // A built-in that the table calls deterministic is called while the program is built, where all its operands are constants, and its answer
 // stands in its place. The program does what it does in plain Bun, an error included, and the build does not make an answer that is too long to keep.
 import { expect } from "bun:test";

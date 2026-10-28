@@ -282,6 +282,7 @@ export const shapes: Shape[] = [
     }),
   },
   // The type of the list at a push follows from the pushes before it: pushes x pushes, and each step made a union of the objects so far.
+  // A branch now and then, so that the way back from a push to the declaration is no straight line.
   // TypeScript checks no body with 2,000 pushes onto one list, so a list takes 1,800.
   {
     name: "objects that statements push onto a list without a type",
@@ -293,7 +294,14 @@ export const shapes: Shape[] = [
       "tsconfig.json": withoutLibraryTypes,
       "main.ts":
         declaredConsole +
-        lines(size, index => `${index % 1800 ? "" : `const all${index / 1800} = [];\n`}all${Math.floor(index / 1800)}.push({ a: ${index}, b: "x" });`) +
+        lines(size, index => {
+          const list = `all${Math.floor(index / 1800)}`;
+          return (
+            (index % 1800 ? "" : `const ${list} = [];\n`) +
+            (index % 300 ? "" : `if (${list}.length > ${index}) console.log(${index});\n`) +
+            `${list}.push({ a: ${index}, b: "x" });`
+          );
+        }) +
         `console.log(${size ? "all0.length" : 0});\n`,
     }),
   },

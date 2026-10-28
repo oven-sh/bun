@@ -1,3 +1,4 @@
+// Runs alone: it judges by the memory that a build holds.
 import { isASAN, isDebug, isWindows } from "harness";
 import { expectPeakBytesForEachItem } from "./long-functions-instructions";
 import { writeFieldsStoredInTry, writeStringsStoredInTry } from "./long-functions-programs";

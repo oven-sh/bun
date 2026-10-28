@@ -1087,7 +1087,7 @@ function f18 name="notANumberBound" module=m0 position=3205 flags=[IsChecked, Ha
 # -- generated: f0 neighbours blurred counterIsSetBack detached
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 368, patchpoints: 28, rare instructions: 3410, polls: 10
+# CHECK-NEXT: instructions: 569, patchpoints: 42, rare instructions: 3454, polls: 8
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="neighbours"
 # CHECK: role=Source

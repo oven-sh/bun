@@ -31,10 +31,10 @@ that runs and is red for a file that nothing reaches.
 - **A program that compiles all of Bun's library, or much of it in a checking mode, lies under `library-sweeps/`**, not under `parallel/`:
   each takes from half a minute to minutes of processor time. `scripts/rust-test.ts` hands them to `run-parallel.ts` in the step `cargo-test`, which has sixteen
   processors and which no shard of the tests waits for: `bun test/aot/run-parallel.ts --root=test/aot/library-sweeps test/aot/library-sweeps/*.*[jt]s`.
-- **A program under `parallel/` is dealt out like a test file**: by its path, the number of the shard and the number of shards
-  (`getRelevantTests()` in `scripts/runner.node.ts`), never by the commit. `run-parallel.ts` builds the programs of a shard 64 to an
-  executable. They have no lines in `test/expected-durations.json`: what the log says of a program is a share of its build's time.
-  So each counts as the median of that table, and every shard gets as many as any other. A program that fails is not run again.
+- **The programs under `parallel/` are dealt out by whole builds**: `run-parallel.ts --deal` says which programs one build holds and
+  what it takes, and `getRelevantTests()` in `scripts/runner.node.ts` deals those like test files: by cost, the number of the shard and
+  the number of shards, never by the commit. So Bun's library is compiled once for up to 96 programs, not once in every shard.
+  Only a program that took 0.7 s or more has a line in `test/expected-durations.json`. A program that fails is not run again.
 - **Many programs in one executable.** A build costs about as much for 64 small programs as for one. Each program is an entry point
   of its own, is compiled as it is when it is built alone, and runs in a process of its own. `// Alone: <why>` takes a program out
   of that: what it prints depends on what else the executable holds.
@@ -75,12 +75,18 @@ that runs and is red for a file that nothing reaches.
   class with a method `m`.
 - **The time limit of a file is three minutes**, as for any other test (`getTestTimeout()` in `scripts/runner.node.ts`): whatever
   limit a test gives itself, the file is killed then.
+- **A file runs beside others.** One that takes under fifteen seconds on every lane runs in a bucket, many files to a process
+  (`test/parallel-allowlist.json`). The longer ones run beside one another too, each in a process of its own: one for every three
+  processors, and no more than one for every six gigabytes of the machine. A file that judges by a clock, or by the memory that is
+  held or left, says so in a line `// Runs alone: <why>`, and nothing else of the shard runs beside it.
 - **A path is short.** Windows does not find a path of 260 characters: `the-folder-of-a-program-has-a-short-name.test.ts`.
 - **Disk.** Each build leaves an executable the size of Bun in the temporary directory, which is deleted afterwards. CI tests
   `bun-profile`, which on Linux carries its debug information: three times the bytes of the Bun that ships. A test file that builds
   many programs builds them on a stripped copy: `harness/without-debug-information.ts`.
 - **The ASAN lane** gives a file twice the time. The runner sets `BUN_JSC_validateExceptionChecks=1` there for every file that
-  `test/no-validate-exceptions.txt` does not list, and the builds and executables that a test starts inherit it.
+  `test/no-validate-exceptions.txt` does not list, and the builds and executables that a test starts inherit it. It also lays an
+  unpacked copy of Bun's debug information where a symbolizer looks first (`LLVM_SYMBOLIZER_OPTS`): unpacking it takes seconds, and
+  without the copy every process that ends with something to hold against `test/leaksan.supp` does it again.
 - **A group that needs more than a Bun** is switched on by an environment variable named `AOT_<GROUP>`, and without it every test of
   the group is skipped, so that `bun test test/aot` never needs more than a Bun. The top of each such test file says what its
   variables mean: `AOT_SERVERS` and `AOT_BACKEND` need npm, the second also a PostgreSQL.

@@ -790,7 +790,7 @@ runtimefunction id=131072 function=f39 visibility=Private
 # CHECK: module=m0 position=667 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0|L1|L2|L3|L4|L5 site=w0 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=number site=w1 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|L0|L1|L2|L3|L4|L5):
 # CHECK-NEXT: v3: undefined|null|L0|L1|L2|L3|L4|L5 = Check v0 expectedType=undefined|null|L0|L1|L2|L3|L4|L5 site=w0
-# CHECK-NEXT: v1: anything ~ number = PropGet v3 key="listeners" accessSite=9 receivers=[L0, L1, L4, L5, ..]
+# CHECK-NEXT: v1: anything ~ number = PropGet v3 key="listeners" accessSite=9
 # CHECK-NEXT: v2: number = Check v1 expectedType=number site=w1
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }

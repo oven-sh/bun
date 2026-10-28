@@ -751,7 +751,7 @@ runtimefunction id=131091 function=f46 visibility=Private
 # -- generated: f0 ofTextByDefault
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 388, patchpoints: 81, rare instructions: 150, polls: 8
+# CHECK-NEXT: instructions: 388, patchpoints: 81, rare instructions: 156, polls: 8
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="ofTextByDefault"
 # CHECK: role=Source

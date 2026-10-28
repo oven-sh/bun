@@ -1936,54 +1936,25 @@ impl Stream {
     }
 }
 
-/// A header block from its first encoded field until it is written.
-struct HeaderBlock<'a> {
-    parser: &'a H2FrameParser,
-    bytes: Vec<u8>,
-    will_be_sent: bool,
-}
-
-impl<'a> HeaderBlock<'a> {
-    fn new(parser: &'a H2FrameParser) -> Self {
-        Self {
-            parser,
-            bytes: Vec::new(),
-            will_be_sent: false,
-        }
-    }
-}
-
-impl core::ops::Deref for HeaderBlock<'_> {
-    type Target = Vec<u8>;
-    fn deref(&self) -> &Vec<u8> {
-        &self.bytes
-    }
-}
-
-impl core::ops::DerefMut for HeaderBlock<'_> {
-    fn deref_mut(&mut self) -> &mut Vec<u8> {
-        &mut self.bytes
-    }
-}
-
-impl Drop for HeaderBlock<'_> {
-    fn drop(&mut self) {
-        if self.will_be_sent || self.bytes.is_empty() {
-            return;
-        }
-        self.parser.hpack_encoder.with_mut(|encoder| {
-            if let Some(encoder) = encoder {
-                encoder.discard_block();
-            }
-        });
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // H2FrameParser impl — core methods
 // ──────────────────────────────────────────────────────────────────────────
 
 impl H2FrameParser {
+    /// A header block from its first encoded field until `ScopeGuard::into_inner` says that it will be written.
+    fn header_block(&self) -> scopeguard::ScopeGuard<Vec<u8>, impl FnOnce(Vec<u8>)> {
+        scopeguard::guard(Vec::new(), |bytes| {
+            if bytes.is_empty() {
+                return;
+            }
+            self.hpack_encoder.with_mut(|encoder| {
+                if let Some(encoder) = encoder {
+                    encoder.discard_block();
+                }
+            });
+        })
+    }
+
     /// Appends a single header to the header block in `encoded_headers`.
     fn encode_header_into_list(
         &self,
@@ -5581,7 +5552,7 @@ impl H2FrameParser {
             );
         }
 
-        let mut encoded_headers = HeaderBlock::new(self);
+        let mut encoded_headers = self.header_block();
         if encoded_headers.try_reserve(16384).is_err() {
             return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
         }
@@ -5778,7 +5749,7 @@ impl H2FrameParser {
                 }
             }
         }
-        encoded_headers.will_be_sent = true;
+        let encoded_headers = scopeguard::ScopeGuard::into_inner(encoded_headers);
         let encoded_data = encoded_headers.as_slice();
         let encoded_size = encoded_data.len();
 
@@ -6043,7 +6014,7 @@ impl H2FrameParser {
         };
 
         let mut name_buffer = [0u8; 4096];
-        let mut encoded_headers = HeaderBlock::new(self);
+        let mut encoded_headers = self.header_block();
         let mut single_value_headers = [false; SINGLE_VALUE_HEADERS_LEN];
 
         // A PUSH_PROMISE carries a REQUEST, so request pseudo-headers are valid even on the server.
@@ -6204,7 +6175,7 @@ impl H2FrameParser {
                 .get()
                 .map(|s| s.max_frame_size)
                 .unwrap_or_else(|| self.local_settings.get().max_frame_size) as usize;
-        encoded_headers.will_be_sent = true;
+        let encoded_headers = scopeguard::ScopeGuard::into_inner(encoded_headers);
         let payload_size = 4 + encoded_headers.len();
         if payload_size <= max_frame {
             // PUSH_PROMISE frame: 9-byte header + 4-byte promised stream id + the header block.
@@ -6446,7 +6417,7 @@ impl H2FrameParser {
                 global_object.throw(format_args!("Expected sensitiveHeaders to be an object"))
             );
         }
-        let mut encoded_headers = HeaderBlock::new(self);
+        let mut encoded_headers = self.header_block();
         if encoded_headers.try_reserve(16384).is_err() {
             return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
         }
@@ -7113,7 +7084,7 @@ impl H2FrameParser {
                 }
             }
 
-            encoded_headers.will_be_sent = true;
+            let mut encoded_headers = scopeguard::ScopeGuard::into_inner(encoded_headers);
             let frame = FrameHeader {
                 type_: FrameType::HTTP_FRAME_HEADERS as u8,
                 flags,
@@ -7155,7 +7126,7 @@ impl H2FrameParser {
                 actual_max_frame_size
             );
 
-            encoded_headers.will_be_sent = true;
+            let encoded_headers = scopeguard::ScopeGuard::into_inner(encoded_headers);
             let first_chunk_size = actual_max_frame_size - priority_overhead;
             let headers_flags = flags & !(HeadersFrameFlags::END_HEADERS as u8);
 

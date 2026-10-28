@@ -651,8 +651,7 @@ impl<'a> Parser<'a> {
 
         if let Some(import_source) = p.lexer.jsx_pragma.jsx_import_source() {
             let text = import_source.text.slice();
-            p.options.jsx.classic_import_source = text.to_vec().into();
-            p.options.jsx.package_name = p.options.jsx.classic_import_source.clone();
+            p.options.jsx.package_name = text.to_vec().into();
             p.options.jsx.set_import_source();
         }
         if let Some(span) = p.lexer.jsx_pragma.jsx_runtime()
@@ -664,20 +663,30 @@ impl<'a> Parser<'a> {
             }
         }
         // Symbol use counts are unavailable, so "any JSX parsed?" is the proxy.
+        // The records follow the order of the imports that the visit pass emits.
         if p.options.jsx.parse
-            && p.needs_jsx_import
             && p.options.features.auto_import_jsx
             && p.options.jsx.runtime == options::JSX::Runtime::Automatic
         {
             // `add_import_record` requires `&'a [u8]`, but borrowing
             // `p.options` would conflict with `&mut p`, so copy into the arena.
             let arena = p.arena;
-            let import_source: &'a [u8] = arena.alloc_slice_copy(p.options.jsx.import_source());
-            let _ = p.add_import_record(
-                bun_ast::ImportKind::Stmt,
-                bun_ast::Loc { start: 0 },
-                import_source,
-            );
+            if p.needs_jsx_import {
+                let import_source: &'a [u8] = arena.alloc_slice_copy(p.options.jsx.import_source());
+                let _ = p.add_import_record(
+                    bun_ast::ImportKind::Stmt,
+                    bun_ast::Loc { start: 0 },
+                    import_source,
+                );
+            }
+            if p.needs_jsx_create_element_import {
+                let package_name: &'a [u8] = arena.alloc_slice_copy(&p.options.jsx.package_name);
+                let _ = p.add_import_record(
+                    bun_ast::ImportKind::Stmt,
+                    bun_ast::Loc { start: 0 },
+                    package_name,
+                );
+            }
         }
 
         Ok(())

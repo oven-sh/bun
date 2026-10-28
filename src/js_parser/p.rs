@@ -490,6 +490,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // "Did we parse anything that looked like JSX"?
     // If yes, then automatically add the JSX import.
     pub(crate) needs_jsx_import: NeedsJSXType,
+    // Scan pass only. A `key` prop after a `{...spread}` makes the visit pass
+    // call `createElement` from the package instead of the runtime module.
+    pub(crate) needs_jsx_create_element_import: NeedsJSXType,
 
     // The parser does two passes and we need to pass the scope tree information
     // from the first pass to the second pass. That's done by tracking the calls
@@ -3271,8 +3274,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(import_source) = self.lexer.jsx_pragma.jsx_import_source() {
             // SAFETY: Span.text is `ArenaStr` valid for 'a.
             let text = import_source.text.slice();
-            self.options.jsx.classic_import_source = text.to_vec().into();
-            self.options.jsx.package_name = self.options.jsx.classic_import_source.clone();
+            self.options.jsx.package_name = text.to_vec().into();
             self.options.jsx.set_import_source();
         }
 
@@ -9690,6 +9692,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             module_scope: scope,
             scopes_in_order: scope_order,
             needs_jsx_import: false,
+            needs_jsx_create_element_import: false,
             lexer,
 
             commonjs_named_exports_deoptimized,

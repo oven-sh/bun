@@ -8,6 +8,97 @@ function jscOption(stderr: string, name: string): string | undefined {
 }
 
 describe("bundler", () => {
+  // --disallow-code-generation-from-strings=strict baked into the executable: it is on with no
+  // arguments, a Worker has it and reports it, BUN_OPTIONS cannot lower it, its own command line is
+  // not read as flags, and BUN_JSC_useDollarVM does not bring back $vm (which evaluates strings).
+  for (const [name, embedded, env, execArgv] of [
+    ["", "--disallow-code-generation-from-strings=strict", {}, ["--disallow-code-generation-from-strings=strict"]],
+    [
+      "BunOptionsCannotLower",
+      "--disallow-code-generation-from-strings=strict",
+      { BUN_OPTIONS: "--disallow-code-generation-from-strings" },
+      ["--disallow-code-generation-from-strings", "--disallow-code-generation-from-strings=strict"],
+    ],
+    // The embedded flags are unquoted before they are parsed, and the floor is what was parsed.
+    [
+      "QuotedBunOptionsCannotLower",
+      '"--disallow-code-generation-from-strings=strict"',
+      { BUN_OPTIONS: "--disallow-code-generation-from-strings" },
+      ["--disallow-code-generation-from-strings", '"--disallow-code-generation-from-strings=strict"'],
+    ],
+  ] as const) {
+    const refused = "EvalError: Code generation from strings disallowed for this context";
+    const seen = {
+      execArgv,
+      eval: refused,
+      Function: refused,
+      vm: refused,
+      importData: refused,
+      importFile: 2,
+      dollarVM: "undefined",
+    };
+    itBundled("compile/CompileExecArgvDisallowCodeGenerationFromStrings" + name, {
+      compile: {
+        execArgv: [embedded],
+      },
+      backend: "cli",
+      files: {
+        "/entry.ts": /* js */ `
+          import { Worker } from "node:worker_threads";
+          import { see } from "./see.ts";
+          const main = await see();
+          const worker = await new Promise((resolve, reject) => {
+            const worker = new Worker("./worker.ts");
+            worker.on("message", resolve);
+            worker.on("error", reject);
+          });
+          const workerEmptyExecArgv = await new Promise((resolve, reject) => {
+            const worker = new Worker("./worker.ts", { execArgv: [] });
+            worker.on("message", resolve);
+            worker.on("error", reject);
+          });
+          console.log(JSON.stringify({ main, worker, workerEmptyExecArgv }));
+          process.exit(0);
+        `,
+        "/worker.ts": /* js */ `
+          import { parentPort } from "node:worker_threads";
+          import { see } from "./see.ts";
+          parentPort.postMessage(await see());
+        `,
+        "/see.ts": /* js */ `
+          import vm from "node:vm";
+          const attempt = async fn => { try { return await fn(); } catch (e) { return e.constructor.name + ": " + e.message; } };
+          // Computed, so that it is a string at run time: the bundler makes a literal "data:" specifier
+          // part of the program when it builds.
+          const data = ["data:text/javascript", "export default 1 + 1"].join(",");
+          export const see = async () => ({
+            execArgv: process.execArgv,
+            eval: await attempt(() => eval("1 + 1")),
+            Function: await attempt(() => new Function("return 1 + 1")()),
+            vm: await attempt(() => vm.runInThisContext("1 + 1")),
+            importData: await attempt(async () => (await import(data)).default),
+            importFile: await attempt(async () => (await import("./imported.ts")).default),
+            dollarVM: typeof $vm,
+          });
+        `,
+        "/imported.ts": /* js */ `export default 2;`,
+      },
+      entryPointsRaw: ["./entry.ts", "./worker.ts"],
+      outfile: "dist/out",
+      run: {
+        file: "dist/out",
+        setCwd: true,
+        env: { ...env, BUN_JSC_useDollarVM: "1" },
+        args: ["--disallow-code-generation-from-strings"],
+        stdout: JSON.stringify({
+          main: seen,
+          worker: seen,
+          workerEmptyExecArgv: { ...seen, execArgv: ["--disallow-code-generation-from-strings=strict"] },
+        }),
+      },
+    });
+  }
+
   // Test that the --compile-exec-argv flag works for both runtime processing and execArgv
   itBundled("compile/CompileExecArgvDualBehavior", {
     compile: {
@@ -95,8 +186,9 @@ describe("bundler", () => {
         }
 
         // argv[1] should be the script path (contains the bundle path)
-        if (!process.argv[1].includes("bunfs")) {
-          console.error("FAIL: Expected argv[1] to contain 'bunfs' path, got", process.argv[1]);
+        // Windows uses "B:/~BUN/root/", Unix uses "/$bunfs/root/"
+        if (!process.argv[1].includes("/$bunfs/") && !process.argv[1].includes("/~BUN/")) {
+          console.error("FAIL: Expected argv[1] to contain standalone bundle root, got", process.argv[1]);
           process.exit(1);
         }
 
@@ -152,8 +244,9 @@ describe("bundler", () => {
           process.exit(1);
         }
 
-        if (!process.argv[1].includes("bunfs")) {
-          console.error("FAIL: Expected argv[1] to contain 'bunfs' path, got", process.argv[1]);
+        // Windows uses "B:/~BUN/root/", Unix uses "/$bunfs/root/"
+        if (!process.argv[1].includes("/$bunfs/") && !process.argv[1].includes("/~BUN/")) {
+          console.error("FAIL: Expected argv[1] to contain standalone bundle root, got", process.argv[1]);
           process.exit(1);
         }
 

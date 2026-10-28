@@ -20,6 +20,8 @@ class AbstractModuleRecord;
 }
 
 namespace Bun {
+class JSModuleGraph;
+
 using namespace JSC;
 
 class JSCommonJSModule;
@@ -34,7 +36,7 @@ const OnLoadResultType OnLoadResultTypeObject = 2;
 const OnLoadResultType OnLoadResultTypePromise = 3;
 
 struct CodeString {
-    ZigString string;
+    EncodedSlice string;
     JSC::JSValue value;
     BunLoaderType loader;
 };
@@ -50,6 +52,9 @@ struct OnLoadResult {
     OnLoadResultValue value;
     OnLoadResultType type;
     bool wasMock;
+    // Backs `value.sourceText.string` when `contents` is a typed array.
+    // No inline capacity, so moving the struct doesn't invalidate the pointer.
+    WTF::Vector<uint8_t> sourceTextCopy;
 };
 
 extern "C" bool isBunTest;
@@ -80,8 +85,11 @@ public:
     bool wasModuleMock = false;
 };
 
+// `graph`: the Bun.ModuleGraph whose loader is fetching, or null. A CommonJS file
+// becomes a module of that graph's require cache.
 JSValue fetchESMSourceCodeSync(
     Zig::GlobalObject* globalObject,
+    Bun::JSModuleGraph* graph,
     JSString* spceifierJS,
     ErrorableResolvedSource* res,
     BunString* specifier,
@@ -90,11 +98,19 @@ JSValue fetchESMSourceCodeSync(
 
 JSValue fetchESMSourceCodeAsync(
     Zig::GlobalObject* globalObject,
+    Bun::JSModuleGraph* graph,
     JSString* spceifierJS,
     ErrorableResolvedSource* res,
     BunString* specifier,
     BunString* referrer,
     BunString* typeAttribute);
+
+// Appends { ...object, default: object }. Returns object if any export was deferred (its value is empty), null otherwise or on exception.
+JSC::JSObject* appendInternalModuleExports(Zig::GlobalObject*, JSC::JSObject* object, WTF::Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues);
+// Appends what an `import` of a module in NativeModuleList.h gets. Returns the object that a deferred export (its value is empty) is read from, null for a module that never defers or on exception.
+JSC::JSObject* appendNativeModuleExports(Zig::GlobalObject*, uint32_t registryID, WTF::Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues);
+
+JSC::JSObject* createAsyncModuleRequiredError(JSC::JSGlobalObject*, const WTF::String& specifier);
 
 JSValue fetchCommonJSModule(
     Zig::GlobalObject* globalObject,
@@ -121,11 +137,24 @@ JSValue fetchCommonJSModuleNonBuiltin(
 
 JSValue resolveAndFetchBuiltinModule(
     Zig::GlobalObject* globalObject,
-    BunString* specifier);
+    const BunString* specifier);
 
-JSValue fetchBuiltinModuleWithoutResolution(
+struct BuiltinModule {
+    enum class Kind : uint8_t {
+        /// Not a builtin; `res` is untouched.
+        None,
+        /// `exports` is the module's exports value.
+        Exports,
+        /// `res` holds the module's source; the caller evaluates it.
+        Source,
+    };
+    Kind kind = Kind::None;
+    JSValue exports {};
+};
+
+BuiltinModule fetchBuiltinModuleWithoutResolution(
     Zig::GlobalObject* globalObject,
-    BunString* specifier,
+    const BunString* specifier,
     ErrorableResolvedSource* res);
 
 } // namespace Bun

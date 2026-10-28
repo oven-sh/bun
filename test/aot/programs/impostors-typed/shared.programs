@@ -1,0 +1,282 @@
+////: Point
+interface Point {
+  x: number;
+  y: number;
+}
+////: Scale
+export class Scale {
+  constructor(public factor: number) {}
+  apply(n: number): number {
+    return n * this.factor;
+  }
+}
+////: add
+function add(a: number, b: number): number {
+  return a + b;
+}
+////: attempt
+function attempt(label: string, run: () => unknown): void {
+  log.length = 0;
+  try {
+    console.log(label, "->", show(run()), log.join(" "));
+  } catch (error) {
+    console.log(label, "threw", error instanceof Error ? error.constructor.name : typeof error, log.join(" "));
+  }
+}
+////: attempt-4
+export function attempt(label: string, run: () => unknown): void {
+  log.length = 0;
+  try {
+    console.log(label, "->", show(run()), log.join(" "));
+  } catch (error) {
+    console.log(label, "threw", error instanceof Error ? error.constructor.name : typeof error, log.join(" "));
+  }
+}
+////: code
+function code(s: string): number {
+  return s.charCodeAt(0) + s.length;
+}
+////: doubled
+function doubled(list: number[]): number[] {
+  return list.map(value => value * 2);
+}
+////: eachOf
+function eachOf(f: Step): number {
+  let sum = 0;
+  for (let i = 0; i < 3; i++) sum += f(i);
+  return sum;
+}
+////: half
+function half(n: number): number {
+  return n / 2;
+}
+////: honest
+function honest(label: string): void {
+  const list = [1, 2.5];
+  const point: Point = { x: 1, y: 2 };
+  const word = "abc";
+  console.log(label, total([1, 2]), total(list), sum({ x: 3, y: 4 }), sum(point), code("a"), code(word), once(increment), once(n => n * 2), half(3), half(list[0]));
+}
+////: increment
+function increment(n: number): number {
+  return n + 1;
+}
+////: increment-2
+////= increment
+
+////= honest
+
+////= warm
+////: lines-26
+function «1»(list: number[]): «2» {
+  return list.«3»(«4»);
+}
+////: lines-27
+function «1»(«2»: «3»): «4» {
+  return «5»();
+}
+////: lines-28
+class «1» extends «2» {
+  «3» = «4»;
+}
+////: lines-29
+function «1»(«2»: «3»): number {
+  «4» += 1;
+  return «4»;
+}
+////: lines-30
+function «1»(«2»: «3»): «4» {
+  return «5»;
+}
+////: lines-31
+enum «1» {
+  «2»,
+  «3»,
+  «4»,
+}
+////: lines-32
+function «1»(list: number[]): number {
+  let sum = 0;
+  for (const value of list) sum += value;
+  return sum;
+}
+////: lines-34
+function «1»(a: number, b: number): number {
+  return a - b;
+}
+////: once
+function once(f: Step): number {
+  return f(1) + 1;
+}
+////: show
+function show(value: unknown): string {
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "bigint") return value + "n";
+  if (value === null || value === undefined) return String(value);
+  if (typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) {
+    const parts: string[] = [];
+    for (let i = 0; i < value.length; i++) parts.push(i in value ? show(value[i]) : "hole");
+    return "[" + parts.join(", ") + "]";
+  }
+  return typeof value;
+}
+////: show-2
+function show(value: unknown): string {
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "bigint") return value + "n";
+  if (value === null || value === undefined) return String(value);
+  if (typeof value === "boolean") return String(value);
+  return typeof value;
+}
+////: show-3
+function show(value: unknown): string {
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "bigint") return value + "n";
+  if (value === null || value === undefined) return String(value);
+  return typeof value;
+}
+////: show-5
+export function show(value: unknown): string {
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "bigint") return value + "n";
+  if (value === null || value === undefined) return String(value);
+  if (Array.isArray(value)) return "[" + value.map(show).join(", ") + "]";
+  return typeof value;
+}
+////: sum
+function sum(p: Point): number {
+  return p.x + p.y;
+}
+////: texts
+const texts = [
+  "'abc'",
+  "''",
+  "'a' + ['b', 'c'].join('')",
+  "'\\u0100bc'",
+  "'\\ud83d\\ude00'",
+  "'\\ud83d'",
+  "new String('abc')",
+  "Object.assign(new String('abc'), { length: 9, charCodeAt() { return -1; } })",
+  "{ charCodeAt() { return -1; }, length: 2, 0: 'zero', slice() { return 7; }, indexOf() { return 'where'; }, includes() { return 'holds'; }, toUpperCase() { return 8; }, at() { return 9; }, toString() { note('toString'); return 'abc'; } }",
+  "{ toString() { note('toString'); return 'abc'; } }",
+  "{ valueOf() { note('valueOf'); return 'abc'; } }",
+  "{ valueOf() { note('valueOf'); return 'v'; }, toString() { note('toString'); return 't'; } }",
+  "{ [Symbol.toPrimitive](hint) { note(hint); return 'abc'; } }",
+  "{ [Symbol.toPrimitive]() { return {}; } }",
+  "['a', 'b', 'c']",
+  "['abc']",
+  "[]",
+  "Buffer.from('abc')",
+  "new Uint8Array([97, 98])",
+  "new Proxy(new String('abc'), {})",
+  "/abc/",
+  "function abc() {}",
+  "1",
+  "-0",
+  "NaN",
+  "1n",
+  "true",
+  "Symbol('abc')",
+  "null",
+  "undefined",
+  "{}",
+];
+////: texts-3
+const texts = [
+  "2",
+  "0",
+  "-0",
+  "-1",
+  "1.5",
+  "-1.5",
+  "0.9999999",
+  "2147483647",
+  "2147483648",
+  "-2147483648",
+  "-2147483649",
+  "4294967295",
+  "4294967296",
+  "46341",
+  "65536",
+  "9007199254740992",
+  "1e21",
+  "NaN",
+  "Infinity",
+  "-Infinity",
+  "'2'",
+  "'0x10'",
+  "'-0'",
+  "''",
+  "'two'",
+  "2n",
+  "null",
+  "undefined",
+  "true",
+  "[2]",
+  "{}",
+  "{ valueOf() { note('valueOf'); return 2; } }",
+  "{ [Symbol.toPrimitive](hint) { note(hint); return 2; } }",
+  "{ valueOf() { note('valueOf'); return 2n; } }",
+  "new Number(-0)",
+  "Symbol()",
+];
+////: texts-5
+const texts = [
+  "3",
+  "'3'",
+  "''",
+  "' 3 '",
+  "'three'",
+  "-0",
+  "NaN",
+  "Infinity",
+  "2147483647",
+  "-2147483648",
+  "9007199254740993",
+  "0.1",
+  "3n",
+  "null",
+  "undefined",
+  "true",
+  "[]",
+  "[3]",
+  "[3, 4]",
+  "{}",
+  "new Number(3)",
+  "new Date(3)",
+  "{ valueOf() { note('valueOf'); return 3; } }",
+  "{ toString() { note('toString'); return '3'; } }",
+  "{ valueOf() { note('valueOf'); return {}; }, toString() { note('toString'); return '3'; } }",
+  "{ [Symbol.toPrimitive](hint) { note(hint); return 3; } }",
+  "{ [Symbol.toPrimitive](hint) { note(hint); return 3n; } }",
+  "{ valueOf() { throw new RangeError('no'); } }",
+  "Symbol()",
+  "function () {}",
+];
+////: total
+function total(list: number[]): number {
+  let sum = 0;
+  for (let i = 0; i < list.length; i++) sum += list[i];
+  return sum;
+}
+////: total-2
+////= total
+
+////= sum
+
+////= code
+
+////= once
+
+////= half
+////: warm
+function warm(): void {
+  let result = 0;
+  for (let i = 0; i < 2000; i++) result += total([i, 1]) + sum({ x: i, y: 1 }) + code("k") + once(increment) + half(i);
+  console.log("2000 honest rounds", result);
+}

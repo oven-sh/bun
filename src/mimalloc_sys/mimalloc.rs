@@ -1,4 +1,4 @@
-#![allow(non_camel_case_types, non_snake_case, clippy::missing_safety_doc)]
+#![allow(non_camel_case_types)]
 
 use core::ffi::{c_char, c_long, c_void};
 
@@ -28,6 +28,18 @@ unsafe extern "C" {
     /// free blocks inside its still-used pages, and hands the arena purge to the scavenger.
     /// Safe on any thread; a no-op on a thread that never allocated. No preconditions.
     pub safe fn mi_on_thread_idle();
+    /// Call right before this thread blocks: mimalloc's scavenger thread does the work of
+    /// `mi_on_thread_idle` while it sleeps, and comes back for what one sweep leaves (the free
+    /// blocks of large pages that were just allocated from). Returns false when nothing was
+    /// handed off (no scavenger, or a thread that never allocated); `mi_on_thread_idle_end` is
+    /// not needed then, and the caller decides whether to sweep inline instead.
+    ///
+    /// # Safety
+    /// After a `true`, this thread must not allocate or free until `mi_on_thread_idle_end`.
+    pub fn mi_on_thread_idle_start() -> bool;
+    /// Awake again: take the heaps back from the scavenger, waiting for a sweep in progress to
+    /// stop at its next page. A no-op on a thread that is not parked. No preconditions.
+    pub safe fn mi_on_thread_idle_end();
     pub fn mi_stats_print_out(out: core::option::Option<mi_output_fun>, arg: *mut c_void);
     pub fn mi_process_info(
         elapsed_msecs: *mut usize,
@@ -46,34 +58,25 @@ unsafe extern "C" {
     pub fn mi_realloc_aligned(p: *mut c_void, newsize: usize, alignment: usize) -> *mut c_void;
 }
 
+// patches/mimalloc/entry-points-that-use-address-space-kept-aside.patch. As the functions without
+// `must`, but a request that has found no memory asks once more as one that cannot fail.
+unsafe extern "C" {
+    /// No preconditions; returns null on failure.
+    pub safe fn mi_must_malloc(size: usize) -> *mut c_void;
+    /// No preconditions; returns null on failure.
+    pub safe fn mi_must_zalloc(size: usize) -> *mut c_void;
+    pub fn mi_must_realloc(p: *mut c_void, newsize: usize) -> *mut c_void;
+    /// No preconditions; returns null on failure.
+    pub safe fn mi_must_malloc_aligned(size: usize, alignment: usize) -> *mut c_void;
+    /// No preconditions; returns null on failure.
+    pub safe fn mi_must_zalloc_aligned(size: usize, alignment: usize) -> *mut c_void;
+    pub fn mi_must_realloc_aligned(p: *mut c_void, newsize: usize, alignment: usize)
+    -> *mut c_void;
+}
+
 bun_opaque::opaque_ffi! {
     /// Opaque mimalloc heap handle (`mi_heap_t`).
     pub struct Heap;
-}
-
-impl Heap {
-    #[inline]
-    pub fn malloc(&mut self, size: usize) -> *mut c_void {
-        // SAFETY: `self` is a live `*mut Heap` obtained from mimalloc.
-        unsafe { mi_heap_malloc(self, size) }
-    }
-
-    #[inline]
-    pub fn calloc(&mut self, count: usize, size: usize) -> *mut c_void {
-        // SAFETY: `self` is a live `*mut Heap` obtained from mimalloc.
-        unsafe { mi_heap_calloc(self, count, size) }
-    }
-
-    /// # Safety
-    /// `p` must be null or a pointer previously allocated by this heap.
-    #[inline]
-    pub unsafe fn realloc(&mut self, p: *mut c_void, newsize: usize) -> *mut c_void {
-        // SAFETY: `self` is a live `*mut Heap`; caller upholds `p` contract.
-        unsafe { mi_heap_realloc(self, p, newsize) }
-    }
-
-    // `p` is only address-range-tested (never dereferenced) — there is no
-    // caller precondition, so this stays safe.
 }
 
 unsafe extern "C" {
@@ -82,7 +85,6 @@ unsafe extern "C" {
     pub fn mi_heap_main() -> *mut Heap;
     pub fn mi_heap_malloc(heap: *mut Heap, size: usize) -> *mut c_void;
     fn mi_heap_zalloc(heap: *mut Heap, size: usize) -> *mut c_void;
-    fn mi_heap_calloc(heap: *mut Heap, count: usize, size: usize) -> *mut c_void;
     pub fn mi_heap_realloc(heap: *mut Heap, p: *mut c_void, newsize: usize) -> *mut c_void;
     pub fn mi_heap_malloc_aligned(heap: *mut Heap, size: usize, alignment: usize) -> *mut c_void;
     fn mi_heap_zalloc_aligned(heap: *mut Heap, size: usize, alignment: usize) -> *mut c_void;
@@ -168,12 +170,15 @@ pub enum Option {
     page_commit_on_demand = 40,
     page_max_reclaim = 41,
     page_cross_thread_max_reclaim = 42,
+    purge_holes = 50,
+    hand_out_last_freed = 56,
 }
 
 unsafe extern "C" {
     // `mi_option_*` take only by-value `#[repr(C)]` enum + scalar args and
     // mutate mimalloc-internal global state; no pointer invariants → `safe fn`.
     pub safe fn mi_option_set(option: Option, value: c_long);
+    pub safe fn mi_option_set_default(option: Option, value: c_long);
     pub fn mi_malloc_usable_size(p: *const c_void) -> usize;
     pub fn mi_free_size(p: *mut c_void, size: usize);
     pub fn mi_free_size_aligned(p: *mut c_void, size: usize, alignment: usize);
@@ -206,6 +211,26 @@ pub fn mi_zalloc_auto_align(size: usize, align: usize) -> *mut c_void {
         mi_zalloc_aligned(size, align)
     } else {
         mi_zalloc(size)
+    }
+}
+
+/// [`mi_malloc_auto_align`] through the `must` entry points. No preconditions; null on failure.
+#[inline(always)]
+pub fn mi_must_malloc_auto_align(size: usize, align: usize) -> *mut c_void {
+    if must_use_aligned_alloc(align) {
+        mi_must_malloc_aligned(size, align)
+    } else {
+        mi_must_malloc(size)
+    }
+}
+
+/// Zeroing variant of [`mi_must_malloc_auto_align`]. No preconditions; null on failure.
+#[inline(always)]
+pub fn mi_must_zalloc_auto_align(size: usize, align: usize) -> *mut c_void {
+    if must_use_aligned_alloc(align) {
+        mi_must_zalloc_aligned(size, align)
+    } else {
+        mi_must_zalloc(size)
     }
 }
 

@@ -1,0 +1,46 @@
+# try { promise.constructor = { [Symbol.species]: Function }; promise.then(each) } catch (error) { console.log(error.name, error.message) }
+# Native code keeps the promise, so the promise has escaped and the object under `constructor` with it. `then` constructs what that object holds under @@species all the same,
+# whatever else the program does with values nobody knows.
+# RUN: valueflow-solve unseen
+# CHECK: unseen-code yes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1() handler=b3():
+    v0 = Builtin builtin=Promise
+    v1 = Builtin builtin=PromiseResolve
+    v2 = Integer integer=1
+    v3 = Call v1, v0, v2
+    v4 = Builtin builtin=Function
+    v5 = NewObject layout=L0
+    PropDefine v5, v4 key=@@species
+    v7 = FinishObject v5
+    PropSet v3, v7 key="constructor"
+    v9 = NewClosure function=f1
+    v10 = PropGet v3 key="then"
+    v11 = Call v10, v3, v9 calleeKey="then"
+    v12 = TypeOf v11
+    v13 = Builtin builtin=Console
+    v14 = Builtin builtin=ConsoleLog
+    v15 = Call v14, v13, v12
+    Jump -> next b2()
+  b2():
+    Jump -> next b4()
+  b3() role=CatchHandler:
+    v16 = CatchValue
+    v17 = Builtin builtin=Console
+    v18 = Builtin builtin=ConsoleLog
+    v19 = PropGet v16 key="name"
+    v20 = PropGet v16 key="message"
+    v21 = Call v18, v17, v19, v20
+    Jump -> next b4()
+  b4():
+    Return
+}
+function f1 name="each" kind=Arrow results=[{type=anything}] {
+    Return
+}

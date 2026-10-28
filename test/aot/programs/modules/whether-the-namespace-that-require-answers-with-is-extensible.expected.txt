@@ -1,0 +1,6 @@
+extensible false false
+sealed true
+frozen false
+takes a new member false false false
+keys c
+the same object true false

@@ -1,8 +1,16 @@
 #![feature(inherent_associated_types)]
 #![feature(adt_const_params, allocator_api, thread_local)]
 #![allow(incomplete_features)] // inherent_associated_types — used only for the ThreadPool::Worker path
-#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
+#![allow(non_snake_case, non_upper_case_globals)]
 #![warn(unused_must_use)]
+
+#[cfg(test)]
+use bun_aot_compiler as _;
+#[cfg(test)]
+use bun_sema_standalone as _;
+
+#[cfg(test)]
+mod native_test_shims;
 
 pub mod error;
 pub use error::{Error, Result};
@@ -26,6 +34,46 @@ pub mod bun_css {
 }
 
 pub use crate::HTMLScanner as html_scanner;
+
+/// Framing for the `<chunk>.jsc` bytecode sidecar written by `bun build --bytecode`.
+/// JSC decodes cached bytecode in place with no bounds or integrity checks, so the
+/// payload is followed by `payload_len: u64 le | wyhash(payload): u64 le | MAGIC`
+/// and a file that fails verification is ignored (the module is parsed from source).
+/// Bytecode embedded in `--compile` executables isn't framed.
+pub mod bytecode_sidecar {
+    pub const EXTENSION: &str = ".jsc";
+    const MAGIC: [u8; 8] = *b"\0bun.jsc";
+    pub const FOOTER_LEN: usize = 8 + 8 + 8;
+
+    fn footer(payload: &[u8]) -> [u8; FOOTER_LEN] {
+        let mut out = [0u8; FOOTER_LEN];
+        out[0..8].copy_from_slice(&(payload.len() as u64).to_le_bytes());
+        out[8..16].copy_from_slice(&bun_wyhash::hash(payload).to_le_bytes());
+        out[16..].copy_from_slice(&MAGIC);
+        out
+    }
+
+    pub fn frame(payload: Box<[u8]>) -> Box<[u8]> {
+        let footer = footer(&payload);
+        let mut bytes = Vec::from(payload);
+        bytes.reserve_exact(FOOTER_LEN);
+        bytes.extend_from_slice(&footer);
+        bytes.into_boxed_slice()
+    }
+
+    /// Returns the length of the JSC payload at the start of `file`, or `None` if the footer is invalid.
+    pub fn payload_len(file: &[u8]) -> Option<usize> {
+        let (payload, tail) = file.split_at(file.len().checked_sub(FOOTER_LEN)?);
+        if payload.is_empty()
+            || tail[16..] != MAGIC
+            || tail[0..8] != (payload.len() as u64).to_le_bytes()
+            || tail[8..16] != bun_wyhash::hash(payload).to_le_bytes()
+        {
+            return None;
+        }
+        Some(payload.len())
+    }
+}
 
 pub(crate) mod index {
     pub(crate) use bun_ast::IndexInt as Int;
@@ -82,6 +130,7 @@ pub mod ServerComponentParseTask;
 pub mod HTMLImportManifest;
 
 pub mod HTMLScanner;
+pub mod aot;
 pub mod cache;
 pub mod entry_points;
 #[path = "OutputFile.rs"]
@@ -92,6 +141,8 @@ pub mod thread_pool;
 pub(crate) mod AstBuilder;
 pub mod analyze_transpiled_module;
 pub mod bundled_ast;
+pub mod bytecode_order;
+pub mod prelinked_module_graph;
 pub use bundled_ast::BundledAst;
 pub mod barrel_imports;
 #[path = "Chunk.rs"]
@@ -119,6 +170,12 @@ pub mod linker_context {
 
     #[path = "computeChunks.rs"]
     pub mod compute_chunks;
+
+    #[path = "mergeSmallChunks.rs"]
+    pub mod merge_small_chunks;
+
+    #[path = "crossChunkNames.rs"]
+    pub mod cross_chunk_names;
 
     #[path = "computeCrossChunkDependencies.rs"]
     pub mod compute_cross_chunk_dependencies;
@@ -245,6 +302,8 @@ pub mod options {
     /// `options.Format` — many ported call-sites spell this `OutputFormat`.
     pub use bun_options_types::Format as OutputFormat;
     pub use bun_options_types::schema::api::DotEnvBehavior as EnvBehavior;
+    /// The type behind `BundleOptions::transform_options`.
+    pub use bun_options_types::schema::api::TransformOptions;
 
     /// Output kind of a build artifact (`OutputFile.output_kind`).
     ///
@@ -267,6 +326,25 @@ pub mod options {
         Bytecode,
         #[strum(serialize = "module_info")]
         ModuleInfo,
+        /// Ahead-of-time bytecode for an internal module (node:fs etc.) a --compile executable uses; `dest_path` is the
+        /// InternalModuleRegistry id in decimal.
+        #[strum(serialize = "builtin-bytecode")]
+        BuiltinBytecode,
+        /// The one shared string table every chunk's bytecode references by ordinal (`EncoderStringTable::serialize`).
+        #[strum(serialize = "bytecode-string-table")]
+        BytecodeStringTable,
+        /// `--compile --bytecode` with a payload order file: the one payload holding every chunk's bytecode
+        /// (`bytecode_order::LinkedPayload`). Each chunk's `Bytecode` file then has no bytes, and says where its cache entry is
+        /// in it (`OutputFile::bytecode_entry_offset`).
+        #[strum(serialize = "bytecode-payload")]
+        BytecodePayload,
+        /// The string table every chunk's `ModuleInfo` body indexes (`ModuleInfoStringTable::serialize`).
+        #[strum(serialize = "module-info-string-table")]
+        ModuleInfoStringTable,
+        /// The pre-resolved ES module graph of a --compile executable (`prelinked_module_graph::build`), consumed by
+        /// JSC's module loader (`JSC::PrelinkedModuleGraph`).
+        #[strum(serialize = "prelinked-module-graph")]
+        PrelinkedModuleGraph,
         #[strum(serialize = "metafile-json")]
         MetafileJson,
         #[strum(serialize = "metafile-markdown")]
@@ -280,6 +358,11 @@ pub mod options {
                 OutputKind::Sourcemap
                     | OutputKind::Bytecode
                     | OutputKind::ModuleInfo
+                    | OutputKind::BuiltinBytecode
+                    | OutputKind::BytecodeStringTable
+                    | OutputKind::BytecodePayload
+                    | OutputKind::ModuleInfoStringTable
+                    | OutputKind::PrelinkedModuleGraph
                     | OutputKind::MetafileJson
                     | OutputKind::MetafileMarkdown
             )
@@ -349,13 +432,14 @@ bun_dispatch::link_interface! {
         fn origin_host() -> &'static [u8];
         fn origin_path() -> &'static [u8];
         fn loaders() -> *const bun_collections::StringArrayHashMap<bun_ast::Loader>;
-        fn eval_source() -> Option<*const bun_ast::Source>;
-        fn main() -> &'static [u8];
+        fn eval_source() -> Option<*const bun_ast::Source<'static>>;
+        // The path of the entry module, `None` when there is none (`bun bake`).
+        fn main() -> Option<&'static [u8]>;
         fn read_dir_info_package_json(dir: &[u8]) -> Option<*const bun_resolver::PackageJSON>;
         fn is_blob_url(specifier: &[u8]) -> bool;
         fn resolve_blob(specifier: &[u8]) -> Option<options::OpaqueBlob>;
         fn blob_loader(blob: options::OpaqueBlob) -> Option<bun_ast::Loader>;
-        fn blob_file_name(blob: options::OpaqueBlob) -> Option<&'static [u8]>;
+        fn blob_store_path(blob: options::OpaqueBlob) -> Option<&'static [u8]>;
         fn blob_needs_read_file(blob: options::OpaqueBlob) -> bool;
         fn blob_shared_view(blob: options::OpaqueBlob) -> &'static [u8];
         fn blob_deinit(blob: options::OpaqueBlob);

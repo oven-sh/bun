@@ -1,0 +1,7 @@
+error: TS100031: The return value of 'yielded' is declared 'int32', but 'n' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'n | 0'.
+error: TS100031: Property 'line' of 'Cursor' is declared 'int32', but 'by' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'by | 0'.
+error: TS100031: 'kept' is declared 'int32', but 'n' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'n | 0'.
+error: TS100031: Parameter 'n' of 'half' is declared 'int32', but 'n' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'n | 0'.
+error: TS100031: Parameter 'n' of 'whole' is declared 'int32', but 'n' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'n | 0'.
+error: TS100031: Parameter 'n' of 'counted' is declared 'int32', but 'n' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'n | 0'.
+error: TS100031: Parameter 'n' of 'inline' is declared 'int32', but 'n' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'n | 0'.

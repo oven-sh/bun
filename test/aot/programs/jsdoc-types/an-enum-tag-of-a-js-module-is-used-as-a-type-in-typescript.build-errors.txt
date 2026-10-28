@@ -1,0 +1,1 @@
+error: TS2749: 'Level' refers to a value, but is being used as a type here. Did you mean 'typeof Level'?

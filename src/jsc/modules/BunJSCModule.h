@@ -1,5 +1,7 @@
 #include "root.h"
 #include "_NativeModule.h"
+#include "BunCompiledModules.h"
+#include "CodeGenerationFromStrings.h"
 
 #include "ExceptionOr.h"
 #include "JavaScriptCore/CallData.h"
@@ -13,6 +15,7 @@
 #include <JavaScriptCore/APICast.h>
 #include <JavaScriptCore/AggregateError.h>
 #include <JavaScriptCore/BytecodeIndex.h>
+#include <JavaScriptCore/CachedBytecode.h>
 #include <JavaScriptCore/CallFrameInlines.h>
 #include <JavaScriptCore/ClassInfo.h>
 #include <JavaScriptCore/CodeBlock.h>
@@ -52,8 +55,6 @@
 extern "C" char* mi_stats_get_json(size_t, char*);
 extern "C" char* mi_heap_dump_json(bool include_blocks, bool hash_addresses);
 
-#include <JavaScriptCore/ControlFlowProfiler.h>
-
 #if OS(DARWIN)
 #if ASSERT_ENABLED
 #if !__has_feature(address_sanitizer)
@@ -74,23 +75,33 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger,
     (JSGlobalObject * globalObject,
         CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Inspector, functionStartRemoteDebugger);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (JSValue error = Bun::errorIfDebuggerIsRefused(globalObject, "startRemoteDebugger from bun:jsc"_s)) [[unlikely]] {
+        throwException(globalObject, scope, error);
+        return {};
+    }
+
+    // The debugger evaluates what its client sends, whatever the engine's eval setting.
+    THROW_AND_RETURN_IF_CODE_GENERATION_FROM_STRINGS_IS_STRICT(globalObject, scope, {});
+
 #if ENABLE(REMOTE_INSPECTOR)
     static const char* defaultHost = "127.0.0.1\0";
     static uint16_t defaultPort = 9230; // node + 1
 
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
     JSC::JSValue hostValue = callFrame->argument(0);
     JSC::JSValue portValue = callFrame->argument(1);
     const char* host = defaultHost;
-    WTF::CString hostCString;
+    WTF::UTF8CString hostCString;
     if (hostValue.isString()) {
 
         auto str = hostValue.toWTFString(globalObject);
-        hostCString = toCString(str);
+        RETURN_IF_EXCEPTION(scope, {});
+        hostCString = toUTF8CString(str);
         if (!str.isEmpty())
-            host = hostCString.span().data();
+            host = hostCString.legacyCStringPointer();
     } else if (!hostValue.isUndefined()) {
         throwVMError(globalObject, scope,
             createTypeError(globalObject, "host must be a string"_s));
@@ -99,7 +110,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger,
 
     uint16_t port = defaultPort;
     if (portValue.isNumber()) {
-        auto port_int = portValue.toUInt32(globalObject);
+        auto port_int = JSC::toUInt32(portValue.asNumber());
         if (!(port_int > 0 && port_int < 65536)) {
             throwVMError(
                 globalObject, scope,
@@ -117,7 +128,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger,
 
     globalObject->setInspectable(true);
     auto& server = Inspector::RemoteInspectorServer::singleton();
-    if (!server.start(reinterpret_cast<const char*>(host), port)) {
+    if (!server.start(WTF::UTF8CStringView::unsafeFromUTF8(host), port)) {
         throwVMError(
             globalObject, scope,
             createError(globalObject,
@@ -129,8 +140,6 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger,
 
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsUndefined()));
 #else
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     throwVMError(globalObject, scope,
         createTypeError(
             globalObject,
@@ -429,8 +438,9 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateMemoryFootprint,
     mi_process_info(&elapsed_msecs, &user_msecs, &system_msecs, &current_rss,
         &peak_rss, &current_commit, &peak_commit, &page_faults);
 
-    // mi_process_info produces incorrect rss size on linux.
+    // Match process.memoryUsage().rss and resourceUsage().maxRSS: mi_process_info reads resident_size on macOS.
     Bun::getRSS(&current_rss);
+    Bun::getPeakRSS(&peak_rss);
 
     VM& vm = globalObject->vm();
     JSC::JSObject* object = JSC::constructEmptyObject(
@@ -454,6 +464,7 @@ JSC_DEFINE_HOST_FUNCTION(functionNeverInlineFunction,
 }
 
 extern "C" bool Bun__mkdirp(JSC::JSGlobalObject*, const char*);
+extern "C" void Bun__VirtualMachine__setSamplingProfilerDirectory(void* bunVM, const BunString* directory);
 
 JSC_DECLARE_HOST_FUNCTION(functionStartSamplingProfiler);
 JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
@@ -469,22 +480,29 @@ JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (directoryValue.isString()) {
         auto path = directoryValue.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         if (!path.isEmpty()) {
-            StringPrintStream pathOut;
-            auto pathCString = toCString(String(path));
-            if (!Bun__mkdirp(globalObject, pathCString.span().data())) {
+            if (path.contains(static_cast<UChar>(0))) {
+                throwVMError(
+                    globalObject, scope,
+                    createTypeError(globalObject, "directory must not contain null bytes"_s));
+                return {};
+            }
+            auto pathCString = toUTF8CString(String(path));
+            if (!Bun__mkdirp(globalObject, pathCString.legacyCStringPointer())) {
                 throwVMError(
                     globalObject, scope,
                     createTypeError(globalObject, "directory couldn't be created"_s));
                 return {};
             }
 
-            Options::samplingProfilerPath() = pathCString.span().data();
-            samplingProfiler.registerForReportAtExit();
+            // JSC::Options is read-only after Config::finalize, so store the directory on the VM.
+            auto directory = Bun::toString(path);
+            Bun__VirtualMachine__setSamplingProfilerDirectory(bunVM(globalObject), &directory);
         }
     }
     if (sampleValue.isNumber()) {
-        unsigned sampleInterval = sampleValue.toUInt32(globalObject);
+        unsigned sampleInterval = JSC::toUInt32(sampleValue.asNumber());
         samplingProfiler.setTimingInterval(
             Seconds::fromMicroseconds(sampleInterval));
     }
@@ -509,9 +527,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSamplingProfilerStackTraces,
             createError(globalObject, "Sampling profiler was never started"_s)));
 
     WTF::String jsonString = vm.samplingProfiler()->stackTracesAsJSON()->toJSONString();
-    JSC::EncodedJSValue result = JSC::JSValue::encode(JSONParse(globalObject, jsonString));
-    scope.releaseAssertNoException();
-    return result;
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSONParse(globalObject, jsonString)));
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionGetRandomSeed);
@@ -605,7 +621,11 @@ JSC_DECLARE_HOST_FUNCTION(functionTotalCompileTime);
 JSC_DEFINE_HOST_FUNCTION(functionTotalCompileTime,
     (JSGlobalObject*, CallFrame*))
 {
+#if ENABLE(JIT)
     return JSValue::encode(jsNumber(JIT::totalCompileTime().milliseconds()));
+#else
+    return JSValue::encode(jsNumber(0));
+#endif
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionGetProtectedObjects);
@@ -613,11 +633,20 @@ JSC_DEFINE_HOST_FUNCTION(functionGetProtectedObjects,
     (JSGlobalObject * globalObject, CallFrame*))
 {
     auto& vm = globalObject->vm();
+    if (JSValue error = Bun::errorIfUnseenCodeIsRefused(globalObject, "getProtectedObjects from bun:jsc"_s)) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        throwException(globalObject, scope, error);
+        return {};
+    }
     MarkedArgumentBuffer list;
-    vm.heap.forEachProtectedCell(
-        [&](JSCell* cell) { list.append(cell); });
+    // Skip protected cells that aren't objects (unlinked code blocks, structures). They aren't JavaScript values.
+    auto appendObject = [&](JSCell* cell) {
+        if (cell->isObject())
+            list.append(cell);
+    };
+    vm.heap.forEachProtectedCell(appendObject);
     for (auto* block = WebCore::clientData(vm)->m_strongRootBlockHead; block; block = block->next())
-        block->forEachOccupiedCell([&](JSCell* cell) { list.append(cell); });
+        block->forEachOccupiedCell(appendObject);
     RELEASE_ASSERT(!list.hasOverflowed());
     return JSC::JSValue::encode(constructArray(
         globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), list));
@@ -637,8 +666,6 @@ JSC_DEFINE_HOST_FUNCTION(functionReoptimizationRetryCount,
     return JSValue::encode(jsNumber(block->reoptimizationRetryCounter()));
 }
 
-extern "C" void Bun__drainMicrotasks();
-
 JSC_DECLARE_HOST_FUNCTION(functionDrainMicrotasks);
 JSC_DEFINE_HOST_FUNCTION(functionDrainMicrotasks,
     (JSGlobalObject * globalObject, CallFrame*))
@@ -647,7 +674,8 @@ JSC_DEFINE_HOST_FUNCTION(functionDrainMicrotasks,
     auto scope = DECLARE_THROW_SCOPE(vm);
     vm.drainMicrotasks();
     RETURN_IF_EXCEPTION(scope, {});
-    Bun__drainMicrotasks();
+    // Not EventLoop::tick(): it runs queued tasks beneath the caller.
+    defaultGlobalObject()->drainMicrotasks();
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
@@ -709,7 +737,7 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
     }
 
     if (sampleValue.isNumber()) {
-        unsigned sampleInterval = sampleValue.toUInt32(globalObject);
+        unsigned sampleInterval = JSC::toUInt32(sampleValue.asNumber());
         samplingProfiler.setTimingInterval(Seconds::fromMicroseconds(sampleInterval));
     } else {
         // Reset to default interval (1000 microseconds) to ensure each profile()
@@ -764,7 +792,7 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
     samplingProfiler.start();
     JSValue returnValue = JSC::profiledCall(globalObject, ProfilingReason::API, callbackValue, callData, JSC::jsUndefined(), args);
 
-    if (returnValue.isEmpty() || throwScope.exception()) {
+    if (throwScope.exception() || returnValue.isEmpty()) {
         return JSValue::encode(reportFailure(vm));
     }
 
@@ -823,13 +851,14 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshotForDebugging,
     }
     scope.releaseAssertNoException();
 
-    return JSValue::encode(JSONParse(globalObject, WTF::move(jsonString)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSONParse(globalObject, WTF::move(jsonString))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionSerialize,
     (JSGlobalObject * lexicalGlobalObject,
         CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(StructuredClone, functionSerialize);
     auto* globalObject = uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -880,6 +909,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
 }
 JSC_DEFINE_HOST_FUNCTION(functionDeserialize, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(StructuredClone, functionDeserialize);
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     JSValue value = callFrame->argument(0);
@@ -901,8 +931,7 @@ JSC_DEFINE_HOST_FUNCTION(functionDeserialize, (JSGlobalObject * globalObject, Ca
 }
 
 extern "C" JSC::EncodedJSValue ByteRangeMapping__findExecutedLines(
-    JSC::JSGlobalObject*, BunString sourceURL, BasicBlockRange* ranges,
-    size_t len, size_t functionOffset, bool ignoreSourceMap);
+    JSC::JSGlobalObject*, const BunString* sourceURL, bool ignoreSourceMap);
 
 JSC_DEFINE_HOST_FUNCTION(functionCodeCoverageForFile,
     (JSGlobalObject * globalObject,
@@ -915,41 +944,21 @@ JSC_DEFINE_HOST_FUNCTION(functionCodeCoverageForFile,
     RETURN_IF_EXCEPTION(throwScope, {});
     bool ignoreSourceMap = callFrame->argument(1).toBoolean(globalObject);
 
-    auto sourceID = Zig::sourceIDForSourceURL(fileName);
-    if (!sourceID) {
+    BunString fileNameBunString = Bun::toString(fileName);
+    JSValue row = JSValue::decode(ByteRangeMapping__findExecutedLines(globalObject, &fileNameBunString, ignoreSourceMap));
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    if (row.isNull()) {
         throwException(globalObject, throwScope,
             createError(globalObject, "No source for file"_s));
         return {};
     }
 
-    auto basicBlocks = vm.controlFlowProfiler()->getBasicBlocksForSourceIDWithoutFunctionRange(
-        sourceID, vm);
-
-    if (basicBlocks.isEmpty()) {
-        return JSC::JSValue::encode(
-            JSC::constructEmptyArray(globalObject, nullptr, 0));
+    if (row.isUndefined()) {
+        RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::constructEmptyArray(globalObject, nullptr, 0)));
     }
 
-    size_t functionStartOffset = basicBlocks.size();
-
-    const Vector<std::tuple<bool, unsigned, unsigned>>& functionRanges = vm.functionHasExecutedCache()->getFunctionRanges(sourceID);
-
-    basicBlocks.reserveCapacity(functionRanges.size() + basicBlocks.size());
-
-    for (const auto& functionRange : functionRanges) {
-        BasicBlockRange range;
-        range.m_hasExecuted = std::get<0>(functionRange);
-        range.m_startOffset = static_cast<int>(std::get<1>(functionRange));
-        range.m_endOffset = static_cast<int>(std::get<2>(functionRange));
-        range.m_executionCount = range.m_hasExecuted
-            ? 1
-            : 0; // This is a hack. We don't actually count this.
-        basicBlocks.append(range);
-    }
-
-    return ByteRangeMapping__findExecutedLines(
-        globalObject, Bun::toString(fileName), basicBlocks.begin(),
-        basicBlocks.size(), functionStartOffset, ignoreSourceMap);
+    return JSValue::encode(row);
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionEstimateDirectMemoryUsageOf, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -970,10 +979,42 @@ JSC_DEFINE_HOST_FUNCTION(functionPercentAvailableMemoryInUse, (JSGlobalObject * 
     return JSValue::encode(jsNull());
 }
 
+// null unless this executable's bytecode was laid out by an order file (`bun build --compile --bytecode-order`).
+JSC_DEFINE_HOST_FUNCTION(functionBytecodeOrderStats, (JSGlobalObject * globalObject, CallFrame*))
+{
+    VM& vm = globalObject->vm();
+    auto* payloads = vm.persistentBytecodePayloadsIfExists();
+    auto* statistics = payloads ? payloads->linkedPayloadStatistics() : nullptr;
+    if (!statistics)
+        return JSValue::encode(jsNull());
+
+    JSObject* regions = constructEmptyObject(globalObject);
+    static constexpr ASCIILiteral regionNames[] = { "moduleHeads"_s, "hot"_s, "unknown"_s, "lateModuleHeads"_s, "cold"_s, "expressionInfo"_s };
+    static_assert(std::size(regionNames) == JSC::BytecodeLinkRegions::Count);
+    uint32_t start = 0;
+    for (unsigned i = 0; i < JSC::BytecodeLinkRegions::Count; ++i) {
+        uint32_t end = std::max(start, statistics->regionEnds[i]);
+        regions->putDirect(vm, Identifier::fromString(vm, regionNames[i]), jsNumber(end - start));
+        start = end;
+    }
+
+    JSObject* result = constructEmptyObject(globalObject);
+    result->putDirect(vm, Identifier::fromString(vm, "hot"_s), jsNumber(statistics->hot.count));
+    result->putDirect(vm, Identifier::fromString(vm, "unknown"_s), jsNumber(statistics->unknown.count));
+    result->putDirect(vm, Identifier::fromString(vm, "cold"_s), jsNumber(statistics->cold.count));
+    result->putDirect(vm, Identifier::fromString(vm, "hotBytes"_s), jsNumber(statistics->hot.bytes));
+    result->putDirect(vm, Identifier::fromString(vm, "unknownBytes"_s), jsNumber(statistics->unknown.bytes));
+    result->putDirect(vm, Identifier::fromString(vm, "coldBytes"_s), jsNumber(statistics->cold.bytes));
+    result->putDirect(vm, Identifier::fromString(vm, "regions"_s), regions);
+    return JSValue::encode(result);
+}
+
 namespace Zig {
 DEFINE_NATIVE_MODULE(BunJSC)
 {
-    INIT_NATIVE_MODULE(BunJSC, 36);
+    INIT_NATIVE_MODULE(BunJSC, 37);
+
+    putNativeFn(Identifier::fromString(vm, "bytecodeOrderStats"_s), functionBytecodeOrderStats);
 
     putNativeFn(Identifier::fromString(vm, "callerSourceOrigin"_s), functionCallerSourceOrigin);
     putNativeFn(Identifier::fromString(vm, "jscDescribe"_s), functionDescribe);

@@ -36,9 +36,11 @@
 #include "MessageEvent.h"
 #include "MessagePort.h"
 #include "SerializedScriptValue.h"
+#include "VectorSizeLimit.h"
 #include "Worker.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/OwedOutOfMemoryError.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -53,9 +55,10 @@ extern "C" {
 void* WebWorker__create(
     WorkerMessagingProxy*,
     void* parentVM,
-    BunString name,
-    BunString url,
+    const BunString* name,
+    const BunString* url,
     BunString* errorMessage,
+    bool* errorIsInvalidExecArgv,
     uint32_t parentContextId,
     uint32_t contextId,
     bool miniMode,
@@ -69,7 +72,7 @@ void* WebWorker__create(
     size_t execArgvLen,
     BunString* preloadModulesPtr,
     size_t preloadModulesLen);
-// Raise a TerminationException in the worker VM at its next safepoint and wake its loop. Any thread.
+// Raise a TerminationException in the worker VM at its next safepoint and wake its loop. Parent thread.
 void WebWorker__requestTermination(void*);
 // Toggle the keep-alive this worker holds on the parent event loop. Parent thread.
 void WebWorker__setRef(void*, bool);
@@ -122,7 +125,8 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
     }
 
     Vector<BunString> preloadModules;
-    preloadModules.reserveInitialCapacity(m_options.preloadModules.size());
+    if (!Bun::tryReserveCapacityWithinLimit(preloadModules, m_options.preloadModules.size())) [[unlikely]]
+        return Exception { OutOfMemoryError };
     for (auto& str : m_options.preloadModules) {
         if (str.startsWith("file://"_s)) {
             WTF::URL urlObject = WTF::URL(str);
@@ -143,12 +147,16 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
     // The thread holds a ref on the proxy until releaseWorkerThread().
     ref();
     BunString errorMessage = BunStringEmpty;
+    bool errorIsInvalidExecArgv = false;
+    BunString name = Bun::toString(m_options.name);
+    BunString url = Bun::toString(scriptURL);
     m_workerThread = WebWorker__create(
         this,
         WebCore::clientData(m_scriptExecutionContext->vm())->bunVM,
-        Bun::toString(m_options.name),
-        Bun::toString(scriptURL),
+        &name,
+        &url,
         &errorMessage,
+        &errorIsInvalidExecArgv,
         m_loaderContextIdentifier,
         m_workerContextIdentifier,
         m_options.mini,
@@ -167,7 +175,7 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
     if (!m_workerThread) {
         m_state.store(State::Closed);
         deref();
-        return Exception { TypeError, errorMessage.toWTFString(BunString::ZeroCopy) };
+        return Exception { errorIsInvalidExecArgv ? WORKER_INVALID_EXEC_ARGV : TypeError, errorMessage.transferToWTFString() };
     }
     return {};
 }
@@ -291,6 +299,8 @@ static constexpr size_t drainBatchLimit = 1024;
 template<typename Dispatch>
 static bool drainInbox(WorkerMessagingProxy::MessageInbox& inbox, Zig::GlobalObject& globalObject, ScriptExecutionContext& context, DrainBudget budget, Dispatch&& dispatch)
 {
+    auto& vm = globalObject.vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     size_t remaining = budget == DrainBudget::UntilEmpty ? std::numeric_limits<size_t>::max() : drainBatchLimit;
 
     while (true) {
@@ -320,9 +330,18 @@ static bool drainInbox(WorkerMessagingProxy::MessageInbox& inbox, Zig::GlobalObj
                 return false;
             auto message = batch.takeFirst();
             auto ports = MessagePort::entanglePorts(context, WTF::move(message.transferredPorts));
+            // message port post message steps (7.3): if deserializing throws, catch it and fire messageerror.
             auto event = MessageEvent::create(globalObject, message.message.releaseNonNull(), nullptr, WTF::move(ports));
-            dispatch(event.event);
-            if (globalObject.drainMicrotasks())
+            if (scope.exception()) [[unlikely]] {
+                if (vm.hasPendingTerminationException())
+                    return false;
+                scope.clearException();
+                dispatch(MessageEvent::create(eventNames().messageerrorEvent, MessageEvent::Init { {}, jsNull() }, MessageEvent::IsTrusted::Yes));
+            } else
+                dispatch(event->event);
+            bool terminating = globalObject.drainMicrotasks();
+            RETURN_IF_EXCEPTION(scope, false);
+            if (terminating)
                 return false; // termination pending
         }
     }
@@ -353,7 +372,9 @@ void WorkerMessagingProxy::drainMessagesToWorkerObject(ScriptExecutionContext& c
     }
     Ref workerObject = *m_workerObject;
     auto& globalObject = *defaultGlobalObject(context.globalObject());
-    bool more = drainInbox(m_toParent, globalObject, context, budget, [&](Event& event) {
+    // Ports the worker transfers are the Worker object's script's, as the message is.
+    auto* ownerContext = workerObject->scriptExecutionContext();
+    bool more = drainInbox(m_toParent, globalObject, ownerContext ? *ownerContext : context, budget, [&](Event& event) {
         workerObject->dispatchEvent(event);
     });
     if (more) {
@@ -365,26 +386,34 @@ void WorkerMessagingProxy::drainMessagesToWorkerObject(ScriptExecutionContext& c
 
 // ---- WorkerObjectProxy / WorkerReportingProxy (worker thread) -----------------------------------
 
-void WorkerMessagingProxy::workerGlobalScopeStarted(Zig::GlobalObject& workerGlobalObject)
+void WorkerMessagingProxy::workerThreadStarted()
 {
-    auto& context = *workerGlobalObject.scriptExecutionContext();
-    ASSERT(context.identifier() == m_workerContextIdentifier);
-
-    // Pending -> Running under the lock postTaskToWorkerGlobalScope() takes, and before 'online' is
-    // posted: a parent-side 'online' handler may immediately post a task and must find Running.
-    Deque<Function<void(ScriptExecutionContext&)>> pendingTasks;
+    // Stays Pending: what an 'online' handler posts is queued until workerGlobalScopeStarted().
     {
         Locker lock { m_pendingTasksLock };
-        m_state.store(State::Running);
-        pendingTasks = std::exchange(m_pendingTasks, {});
+        if (m_state.load() != State::Pending)
+            return;
     }
-
     ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }](ScriptExecutionContext&) {
         RefPtr workerObject = protectedThis->m_workerObject;
         if (!workerObject || !workerObject->hasEventListeners(eventNames().openEvent))
             return;
         workerObject->dispatchEvent(Event::create(eventNames().openEvent, Event::CanBubble::No, Event::IsCancelable::No));
     });
+}
+
+void WorkerMessagingProxy::workerGlobalScopeStarted(Zig::GlobalObject& workerGlobalObject)
+{
+    auto& context = *workerGlobalObject.scriptExecutionContext();
+    ASSERT(context.identifier() == m_workerContextIdentifier);
+
+    // Pending -> Running under the lock postTaskToWorkerGlobalScope() takes: no task is lost.
+    Deque<Function<void(ScriptExecutionContext&)>> pendingTasks;
+    {
+        Locker lock { m_pendingTasksLock };
+        m_state.store(State::Running);
+        pendingTasks = std::exchange(m_pendingTasks, {});
+    }
 
     // Tasks and messages that arrived while Pending. If the entry module installed a 'message'
     // listener they run now; otherwise on the next tick, so a listener added right after startup
@@ -488,6 +517,45 @@ void WorkerMessagingProxy::postErrorToWorkerObject(Zig::GlobalObject& workerGlob
             postMessageErrorToWorkerObject(String { message });
         return;
     }
+}
+
+void WorkerMessagingProxy::postOutOfMemoryErrorToWorkerObject()
+{
+    ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+        RefPtr workerObject = protectedThis->m_workerObject;
+        if (!workerObject)
+            return;
+        String limit = JSC::describeLimitOfMarkedBlockCage();
+        ErrorEvent::Init init;
+        switch (protectedThis->m_options.kind) {
+        case WorkerOptions::Kind::Web:
+            init.message = makeString("RangeError: Out of memory: "_s, limit);
+            break;
+        case WorkerOptions::Kind::Node:
+            init.error = JSC::createOutOfMemoryError(context.globalObject(), limit);
+            break;
+        }
+        workerObject->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
+    });
+}
+
+void WorkerMessagingProxy::postFailedToStartErrorToWorkerObject()
+{
+    ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+        RefPtr workerObject = protectedThis->m_workerObject;
+        if (!workerObject)
+            return;
+        ErrorEvent::Init init;
+        switch (protectedThis->m_options.kind) {
+        case WorkerOptions::Kind::Web:
+            init.message = "TypeError: Failed to spawn worker thread"_s;
+            break;
+        case WorkerOptions::Kind::Node:
+            init.error = JSC::createTypeError(context.globalObject(), "Failed to spawn worker thread"_s);
+            break;
+        }
+        workerObject->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
+    });
 }
 
 void WorkerMessagingProxy::workerGlobalScopeDestroyed(int32_t exitCode, bool stoppedByParent)

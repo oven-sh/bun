@@ -5,7 +5,7 @@
 use bun_ast::{E, Expr, ExprData, G, ToJSError};
 use bun_collections::VecExt;
 use bun_core::{StackCheck, String as BunString, strings};
-use bun_jsc::{JSGlobalObject, JSValue, JsError, bun_string_jsc};
+use bun_jsc::{JSGlobalObject, JSValue, JsError, StringJsc as _};
 
 /// Map a `bun_jsc::JsError` into the AST-layer `ToJSError`. Orphan rules forbid
 /// `impl From<JsError> for ToJSError` here (both foreign), so callers use
@@ -241,17 +241,16 @@ pub fn toml_datetime_to_js(
 
 fn utf8_bytes_to_js(bytes: &[u8], global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
     if bytes.is_empty() {
-        let empty = BunString::EMPTY;
-        return bun_string_jsc::to_js(&empty, global).map_err(js_err);
+        return Ok(JSValue::js_empty_string(global));
     }
     if let Some(utf16) = strings::wtf8_to_utf16_alloc(bytes) {
-        let (mut out, chars) = BunString::create_uninitialized_utf16(utf16.len());
+        let (out, chars) = BunString::create_uninitialized_utf16(utf16.len());
         chars.copy_from_slice(&utf16);
-        bun_string_jsc::transfer_to_js(&mut out, global).map_err(js_err)
+        out.into_js(global).map_err(js_err)
     } else {
-        let (mut out, chars) = BunString::create_uninitialized_latin1(bytes.len());
+        let (out, chars) = BunString::create_uninitialized_latin1(bytes.len());
         chars.copy_from_slice(bytes);
-        bun_string_jsc::transfer_to_js(&mut out, global).map_err(js_err)
+        out.into_js(global).map_err(js_err)
     }
 }
 
@@ -282,17 +281,16 @@ macro_rules! impl_string_to_js {
             }
 
             if !s.is_present() {
-                let emp = BunString::EMPTY;
-                return bun_string_jsc::to_js(&emp, global).map_err(js_err);
+                return Ok(JSValue::js_empty_string(global));
             }
 
             if s.is_utf8() {
                 utf8_bytes_to_js(s.slice8(), global)
             } else {
                 let utf16 = s.slice16();
-                let (mut out, chars) = BunString::create_uninitialized_utf16(utf16.len());
+                let (out, chars) = BunString::create_uninitialized_utf16(utf16.len());
                 chars.copy_from_slice(utf16);
-                bun_string_jsc::transfer_to_js(&mut out, global).map_err(js_err)
+                out.into_js(global).map_err(js_err)
             }
         }
     };

@@ -1,0 +1,144 @@
+sloppy: replaces a method: Array.prototype: throws TypeError
+sloppy: replaces a method: Map.prototype: the same
+sloppy: replaces a method: Request.prototype: the same
+sloppy: replaces a method: Response.prototype: the same
+sloppy: replaces a method: Blob.prototype: the same
+sloppy: replaces a method: Headers.prototype: the same
+sloppy: replaces a method: URL.prototype: the same
+sloppy: replaces a method: URLSearchParams.prototype: the same
+sloppy: adds a property: Array.prototype: no error AND IT CHANGED
+sloppy: adds a property: Map.prototype: the same
+sloppy: adds a property: Request.prototype: throws TypeError
+sloppy: adds a property: Response.prototype: throws TypeError
+sloppy: adds a property: Blob.prototype: throws TypeError
+sloppy: adds a property: Headers.prototype: throws TypeError
+sloppy: adds a property: URL.prototype: throws TypeError
+sloppy: adds a property: URLSearchParams.prototype: throws TypeError
+sloppy: adds an index: Array.prototype: throws TypeError
+sloppy: adds an index: Map.prototype: the same
+sloppy: adds an index: Request.prototype: the same
+sloppy: adds an index: Response.prototype: the same
+sloppy: adds an index: Blob.prototype: the same
+sloppy: adds an index: Headers.prototype: the same
+sloppy: adds an index: URL.prototype: the same
+sloppy: adds an index: URLSearchParams.prototype: the same
+sloppy: deletes a method: Array.prototype: throws TypeError
+sloppy: deletes a method: Map.prototype: the same
+sloppy: deletes a method: Request.prototype: false
+sloppy: deletes a method: Response.prototype: false
+sloppy: deletes a method: Blob.prototype: false
+sloppy: deletes a method: Headers.prototype: the same
+sloppy: deletes a method: URL.prototype: the same
+sloppy: deletes a method: URLSearchParams.prototype: the same
+sloppy: deletes a missing property: Array.prototype: true
+sloppy: deletes a missing property: Map.prototype: the same
+sloppy: deletes a missing property: Request.prototype: the same
+sloppy: deletes a missing property: Response.prototype: the same
+sloppy: deletes a missing property: Blob.prototype: the same
+sloppy: deletes a missing property: Headers.prototype: the same
+sloppy: deletes a missing property: URL.prototype: the same
+sloppy: deletes a missing property: URLSearchParams.prototype: the same
+sloppy: defines a method: Array.prototype: throws TypeError
+sloppy: defines a method: Map.prototype: the same
+sloppy: defines a method: Request.prototype: the same
+sloppy: defines a method: Response.prototype: the same
+sloppy: defines a method: Blob.prototype: the same
+sloppy: defines a method: Headers.prototype: the same
+sloppy: defines a method: URL.prototype: the same
+sloppy: defines a method: URLSearchParams.prototype: the same
+sloppy: sets __proto__: Array.prototype: throws TypeError
+sloppy: sets __proto__: Map.prototype: the same
+sloppy: sets __proto__: Request.prototype: the same
+sloppy: sets __proto__: Response.prototype: the same
+sloppy: sets __proto__: Blob.prototype: the same
+sloppy: sets __proto__: Headers.prototype: the same
+sloppy: sets __proto__: URL.prototype: the same
+sloppy: sets __proto__: URLSearchParams.prototype: the same
+sloppy: sets by Reflect: Array.prototype: false
+sloppy: sets by Reflect: Map.prototype: the same
+sloppy: sets by Reflect: Request.prototype: the same
+sloppy: sets by Reflect: Response.prototype: the same
+sloppy: sets by Reflect: Blob.prototype: the same
+sloppy: sets by Reflect: Headers.prototype: the same
+sloppy: sets by Reflect: URL.prototype: the same
+sloppy: sets by Reflect: URLSearchParams.prototype: the same
+sloppy: is this sloppy code: Array.prototype: sloppy
+sloppy: is this sloppy code: Map.prototype: the same
+sloppy: is this sloppy code: Request.prototype: the same
+sloppy: is this sloppy code: Response.prototype: the same
+sloppy: is this sloppy code: Blob.prototype: the same
+sloppy: is this sloppy code: Headers.prototype: the same
+sloppy: is this sloppy code: URL.prototype: the same
+sloppy: is this sloppy code: URLSearchParams.prototype: the same
+strict: replaces a method: Array.prototype: throws TypeError
+strict: replaces a method: Map.prototype: the same
+strict: replaces a method: Request.prototype: the same
+strict: replaces a method: Response.prototype: the same
+strict: replaces a method: Blob.prototype: the same
+strict: replaces a method: Headers.prototype: the same
+strict: replaces a method: URL.prototype: the same
+strict: replaces a method: URLSearchParams.prototype: the same
+strict: adds a property: Array.prototype: no error AND IT CHANGED
+strict: adds a property: Map.prototype: the same
+strict: adds a property: Request.prototype: throws TypeError
+strict: adds a property: Response.prototype: throws TypeError
+strict: adds a property: Blob.prototype: throws TypeError
+strict: adds a property: Headers.prototype: throws TypeError
+strict: adds a property: URL.prototype: throws TypeError
+strict: adds a property: URLSearchParams.prototype: throws TypeError
+strict: adds an index: Array.prototype: throws TypeError
+strict: adds an index: Map.prototype: the same
+strict: adds an index: Request.prototype: the same
+strict: adds an index: Response.prototype: the same
+strict: adds an index: Blob.prototype: the same
+strict: adds an index: Headers.prototype: the same
+strict: adds an index: URL.prototype: the same
+strict: adds an index: URLSearchParams.prototype: the same
+strict: deletes a method: Array.prototype: throws TypeError
+strict: deletes a method: Map.prototype: the same
+strict: deletes a method: Request.prototype: the same
+strict: deletes a method: Response.prototype: the same
+strict: deletes a method: Blob.prototype: the same
+strict: deletes a method: Headers.prototype: the same
+strict: deletes a method: URL.prototype: the same
+strict: deletes a method: URLSearchParams.prototype: the same
+strict: deletes a missing property: Array.prototype: true
+strict: deletes a missing property: Map.prototype: the same
+strict: deletes a missing property: Request.prototype: the same
+strict: deletes a missing property: Response.prototype: the same
+strict: deletes a missing property: Blob.prototype: the same
+strict: deletes a missing property: Headers.prototype: the same
+strict: deletes a missing property: URL.prototype: the same
+strict: deletes a missing property: URLSearchParams.prototype: the same
+strict: defines a method: Array.prototype: throws TypeError
+strict: defines a method: Map.prototype: the same
+strict: defines a method: Request.prototype: the same
+strict: defines a method: Response.prototype: the same
+strict: defines a method: Blob.prototype: the same
+strict: defines a method: Headers.prototype: the same
+strict: defines a method: URL.prototype: the same
+strict: defines a method: URLSearchParams.prototype: the same
+strict: sets __proto__: Array.prototype: throws TypeError
+strict: sets __proto__: Map.prototype: the same
+strict: sets __proto__: Request.prototype: the same
+strict: sets __proto__: Response.prototype: the same
+strict: sets __proto__: Blob.prototype: the same
+strict: sets __proto__: Headers.prototype: the same
+strict: sets __proto__: URL.prototype: the same
+strict: sets __proto__: URLSearchParams.prototype: the same
+strict: sets by Reflect: Array.prototype: false
+strict: sets by Reflect: Map.prototype: the same
+strict: sets by Reflect: Request.prototype: the same
+strict: sets by Reflect: Response.prototype: the same
+strict: sets by Reflect: Blob.prototype: the same
+strict: sets by Reflect: Headers.prototype: the same
+strict: sets by Reflect: URL.prototype: the same
+strict: sets by Reflect: URLSearchParams.prototype: the same
+strict: is this sloppy code: Array.prototype: strict
+strict: is this sloppy code: Map.prototype: the same
+strict: is this sloppy code: Request.prototype: the same
+strict: is this sloppy code: Response.prototype: the same
+strict: is this sloppy code: Blob.prototype: the same
+strict: is this sloppy code: Headers.prototype: the same
+strict: is this sloppy code: URL.prototype: the same
+strict: is this sloppy code: URLSearchParams.prototype: the same

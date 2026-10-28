@@ -13,7 +13,9 @@ class GlobalObject;
 namespace Bun {
 using namespace JSC;
 
+// Bytes. phys_footprint (Activity Monitor's number) on macOS, the resident set size elsewhere.
 extern "C" int getRSS(size_t* rss);
+extern "C" int getPeakRSS(size_t* peak);
 
 class Process : public WebCore::JSEventEmitter {
     using Base = WebCore::JSEventEmitter;
@@ -30,8 +32,6 @@ class Process : public WebCore::JSEventEmitter {
     WriteBarrier<JSObject> m_nextTickFunction;
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/bootstrap/switches/does_own_process_state.js#L113-L116
     WriteBarrier<JSString> m_cachedCwd;
-    WriteBarrier<Unknown> m_argv;
-    WriteBarrier<Unknown> m_execArgv;
     // The JS warning printer (ProcessObjectInternals createOnWarning), built on the first warning.
     WriteBarrier<JSObject> m_onWarning;
 
@@ -90,11 +90,7 @@ public:
     void clearCachedCwd() { m_cachedCwd.clear(); }
 
     JSValue getArgv(JSGlobalObject* globalObject);
-    void setArgv(JSGlobalObject* globalObject, JSValue argv);
-    void clearArgv() { m_argv.clear(); }
-
     JSValue getExecArgv(JSGlobalObject* globalObject);
-    void setExecArgv(JSGlobalObject* globalObject, JSValue execArgv);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject,
         JSC::JSValue prototype)
@@ -144,9 +140,13 @@ void repointProcessProperty(Zig::GlobalObject*, const JSC::Identifier& name, JSC
 
 JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
 
-// Routes its argument onto the uncaught-exception path. Used by the
-// process.nextTick drain and, via $newCppFunction, by the node-style
-// callback shims in src/js.
+// Routes its argument onto the uncaught-exception path. Used, via $newCppFunction, by the
+// node-style callback shims in src/js.
 JSC_DECLARE_HOST_FUNCTION(jsFunctionReportUncaughtException);
+
+JSC_DECLARE_HOST_FUNCTION(jsFunctionIsStandardOutputStream);
+
+// process.cwd() as a JSString, cached on the process object until it changes.
+JSC::JSValue getCachedCwd(JSC::JSGlobalObject*);
 
 } // namespace Bun

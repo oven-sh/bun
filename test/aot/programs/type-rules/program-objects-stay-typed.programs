@@ -1,0 +1,2488 @@
+////: attempt-3
+function attempt(label: string, run: () => unknown) {
+    try {
+        console.log(label, run());
+    } catch (error) {
+        console.log(label, error instanceof TypeError ? "TypeError" : String(error));
+    }
+}
+////: run
+export function run(odd: any, text: any) {
+  report("a Point", () => sum({ x: 1, y: 2 }));
+  report("a field of another kind", () => sum(odd));
+  report("a field that is missing", () => sum({ x: 1 } as any));
+  report("a number", () => scale(4));
+  report("a string for a number", () => scale(text));
+}
+//// program-objects-stay-typed-beside-external-data.ts
+// Objects the program makes itself stay typed when external data is nearby: a table of functions, and a Map or Set, are not external data. The read of `data.t`, a text under a written `number`, throws a TypeError, which changes nothing for them.
+const data = JSON.parse('{"t":"abc","name":"n"}') as { t: number; name: string };
+const table = { first() { return 1; }, second: () => 2, label: "table" };
+const other: { first?: unknown; label?: unknown } = {};
+try {
+  other.first = data.t;
+} catch (error) {
+  other.first = (error as Error).constructor.name;
+}
+other.label = data.name;
+export const one = table.first();
+export const two = table.second();
+const names = new Set<string>();
+const byName = new Map<string, { count: number }>();
+function remember(name: string): number {
+  names.add(name);
+  const known = byName.get(name);
+  if (known) return ++known.count;
+  byName.set(name, { count: 1 });
+  return 1;
+}
+console.log(one + two, table.label, remember(data.name), remember(data.name), names.size, byName.size, names.has("n"), [...byName.keys()].join());
+//// property-of-a-sum-that-is-not-a-string.ts
+// `list[i] + list[j]` of a `string[]` is NaN where both elements are missing. TypeScript calls the sum a string; what is read from it must be what a number gives.
+declare const console: { log(...values: unknown[]): void };
+const none: string[] = [];
+const some: string[] = ["ab", "cde"];
+function lengthOf(list: string[], i: number, j: number) { return (list[i] + list[j]).length; }
+function added(list: string[], i: number, j: number) { let total = 0; total += (list[i] + list[j]).length; return total; }
+function kept(list: string[], i: number, j: number) { const sum = list[i] + list[j]; return sum.length; }
+function compared(list: string[], i: number, j: number) { return (list[i] + list[j]).length > 2 ? "long" : "short"; }
+function shown(list: string[], i: number, j: number) { return (list[i] + list[j]).toString(); }
+function looped(list: string[]) { let total = 0; for (let i = 0; i <= list.length; i++) total += (list[i] + list[i + 1]).length; return total; }
+function show(name: string, f: () => unknown) { try { console.log(name, String(f())); } catch (e) { console.log(name, "threw", (e as Error).constructor.name); } }
+for (const [name, list] of [["none", none], ["some", some]] as [string, string[]][]) {
+  for (const [i, j] of [[0, 1], [0, 5], [5, 6]]) {
+    show(name + " length " + i + j, () => lengthOf(list, i, j));
+    show(name + " added " + i + j, () => added(list, i, j));
+    show(name + " kept " + i + j, () => kept(list, i, j));
+    show(name + " compared " + i + j, () => compared(list, i, j));
+    show(name + " shown " + i + j, () => shown(list, i, j));
+  }
+  show(name + " looped", () => looped(list));
+}
+//// property-read-into-untyped-call/feed.js
+export function feed(print) {
+  print({ id: "seven", name: null });
+  print({ id: 8 });
+}
+//// property-read-into-untyped-call/main.ts
+// A property read through a declared type is a typed read whatever the value is used for: read straight into a call of something untyped, or into a parameter declared `any`, a field of another kind throws. A missing field is undefined, and null passes. The objects here do not fit the type they are looked at as: untyped code hands one in, a cast lets one through, and a function that returns `any` makes one.
+import { feed } from "./feed.js";
+
+export interface Line {
+  id: number;
+  name: string;
+}
+
+const show: any = (...values: unknown[]) => console.log(values.join(" | "));
+function showDeclared(...values: any[]) {
+  console.log(values.join(" | "));
+}
+
+export function print(line: Line) {
+  try { showDeclared(line.id, line.name); } catch (e) { console.log("into a parameter declared any:", (e as Error).constructor.name); }
+  try { show(line.id, line.name); } catch (e) { console.log("into a call of something untyped:", (e as Error).constructor.name); }
+}
+
+feed(print);
+print({ id: 1, name: "fits" });
+
+const plain: any = { id: "seven", name: null };
+const odd: Line = plain as Line;
+try { showDeclared(odd.id, odd.name); } catch (e) { console.log("into a parameter declared any:", (e as Error).constructor.name); }
+try { show(odd.id, odd.name); } catch (e) { console.log("into a call of something untyped:", (e as Error).constructor.name); }
+
+function made(): any {
+  return { id: "nine", name: 9 };
+}
+const other: Line = made();
+try { showDeclared(other.id, other.name); } catch (e) { console.log("into a parameter declared any:", (e as Error).constructor.name); }
+try { show(other.id, other.name); } catch (e) { console.log("into a call of something untyped:", (e as Error).constructor.name); }
+//// proxies-through-interfaces.ts
+// Proxies are used through declared interface types, and the traps they see are listed.
+interface Point3 { x: number; y: number; z?: number; tag: string }
+const traps: string[] = []
+function flush(): string { return traps.splice(0).join(" ") }
+function rule(label: string, f: () => unknown) { try { console.log(label + ": no error", f()) } catch (e) { console.log(label + ":", e instanceof TypeError ? "TypeError" : "other " + e) } }
+const handler: ProxyHandler<any> = {
+  get(t, k, r) { traps.push("get:" + String(k)); return Reflect.get(t, k, r) },
+  set(t, k, x, r) { traps.push("set:" + String(k)); return Reflect.set(t, k, x, r) },
+  deleteProperty(t, k) { traps.push("delete:" + String(k)); return Reflect.deleteProperty(t, k) },
+}
+function spy<T extends object>(target: T): T { return new Proxy(target, handler) }
+function norm1(q: Point3): number { return q.x + q.y + (q.z ?? 0) }
+const target: Point3 = { x: 1, y: 2, tag: "t" }
+rule("proxy from a generic function, as its target's type", () => norm1(spy(target)))
+rule("new Proxy<Point3>", () => new Proxy<Point3>({ x: 0, y: 0, tag: "s" }, {}).x)
+rule("Proxy.revocable<Point3>", () => Proxy.revocable<Point3>({ x: 1, y: 1, tag: "r" }, {}).proxy.x)
+rule("an empty literal cast to the type, for a proxy that exists only in its traps", () => new Proxy({} as Point3, { get: () => 7 }).x)
+const untyped: any = new Proxy<object>(target, handler)
+rule("proxy as an argument", () => norm1(untyped))
+rule("proxy into an annotated variable", () => { const q: Point3 = untyped; return q.x })
+rule("proxy cast", () => (untyped as Point3).x)
+rule("proxy into a field", () => { const pair: { first: Point3 } = { first: untyped }; return pair.first.x })
+rule("heir of a proxy", () => { const child: Point3 = Object.create(untyped); return child.x })
+console.log(flush() === "")
+class Acc { total = 0; steps?: number; add(n: number): this { this.total += n; this.steps = (this.steps ?? 0) + 1; return this } get mean(): number { return this.total / (this.steps ?? 1) } }
+const acc = new Acc()
+const pa: any = new Proxy<object>(acc, handler)
+rule("method of a class with a proxy for this", () => pa.add(2))
+rule("getter of a class with a proxy for this", () => pa.mean)
+console.log(flush(), acc.total, acc.mean)
+rule("store through the traps that does not fit the field", () => { untyped.x = "ten"; return "stored" })
+rule("required field deleted through the traps", () => delete untyped.tag)
+console.log(flush(), JSON.stringify(target))
+//// quoted-constructor-as-accessor.ts
+// A quoted `"constructor"` names the constructor too. TypeScript accepts an accessor of that name, plain Bun rejects it while parsing, so the build stops.
+class A { get "constructor"() { return 1; } }
+console.log(new A().constructor);
+//// record-assigned-to-all-optional-type.ts
+declare const console: { log(...values: unknown[]): void };
+type Options = { mode?: { strict: boolean }; depth?: number };
+
+const NAMES: Record<string, string> = {
+  first: "First",
+  mode: "Mode",
+  last: "Last",
+};
+
+function depthOf(options: Options): number {
+  return options.depth ?? 0;
+}
+
+console.log(depthOf(NAMES), NAMES.first, NAMES.mode, NAMES.last, Object.keys(NAMES).join());
+//// record-key-named-like-object-prototype-member.ts
+// `table["toString"]` on a type that has a string index signature and nothing else has the type of that signature; `table.toString` has the type of Object.prototype's method.
+// A dictionary may hold a value under any key, also under the names that Object.prototype has.
+interface Entry { result: string }
+function attempt(label: string, run: () => unknown): void {
+  try { console.log(label + ": " + JSON.stringify(run())); } catch (error) { console.log(label + ": threw " + (error as Error).name); }
+}
+const cast = { toString: { result: "first" }, plain: { result: "second" } } as Record<string, Entry>;
+const made: Record<string, Entry> = {};
+made["toString"] = { result: "stored" }; made["valueOf"] = { result: "v" }; made["constructor"] = { result: "c" }; made["hasOwnProperty"] = { result: "h" };
+const indexed: { [key: string]: Entry } = {};
+indexed["toString"] = { result: "i" };
+const parsed: Record<string, Entry> = JSON.parse('{"toString":{"result":"p"},"constructor":{"result":"pc"}}');
+const numbers: Record<string, number> = {};
+numbers["toString"] = 5; numbers["valueOf"] = 6;
+const texts: Record<string, string> = { isPrototypeOf: "text" };
+const key: string = "toString";
+function read(table: Record<string, Entry>): string { return table["toString"].result; }
+function readBy(table: Record<string, Entry>, name: string): string { return table[name].result; }
+function sum(): number { return numbers["toString"] + 1; }
+function whole(): number { return numbers["toString"]; }
+
+console.log(cast["plain"].result, cast["toString"].result, made["toString"].result, numbers["toString"] + numbers["valueOf"], texts["isPrototypeOf"].length);
+attempt("a cast literal", () => cast["toString"].result);
+attempt("by a variable", () => cast[key].result);
+attempt("stored", () => [made["toString"].result, made["valueOf"].result, made["constructor"].result, made["hasOwnProperty"].result]);
+attempt("an index signature", () => indexed["toString"].result);
+attempt("parsed", () => parsed["toString"].result + parsed["constructor"].result);
+attempt("a parameter", () => read(made) + read(cast) + read(parsed));
+attempt("a parameter, by name", () => readBy(made, "toString") + readBy(cast, "toString"));
+attempt("numbers", () => [numbers["toString"] + numbers["valueOf"], sum(), whole(), numbers["toString"] * 2, -numbers["valueOf"]]);
+attempt("texts", () => [texts["isPrototypeOf"] + "!", texts["isPrototypeOf"].toUpperCase()]);
+attempt("the value itself", () => made["toString"]);
+attempt("nothing stored", () => typeof ({} as Record<string, Entry>)["toString"]);
+attempt("optional chain", () => made["toString"]?.result);
+attempt("keys", () => Object.keys(made).join());
+attempt("in", () => "toString" in made);
+attempt("stored again", () => { made["toString"] = { result: "again" }; return made["toString"].result; });
+attempt("compound", () => { numbers["toString"] += 2; numbers["valueOf"]++; return [numbers["toString"], numbers["valueOf"]]; });
+//// redefine-or-delete-field.ts
+// Turning a field of a typed object into an accessor, making it non-enumerable, or deleting a required field succeeds, as every change JavaScript allows does, and typed code sees the change.
+interface Command { name: string; description: string; hidden: boolean; count: number }
+function lazy(target: object, key: string, make: () => unknown) {
+  Object.defineProperty(target, key, { get: make, enumerable: true, configurable: true })
+}
+let calls = 0
+function command(name: string, dynamic: boolean): Command {
+  const made: Command = { name, description: dynamic ? "" : "static " + name, hidden: false, count: 1 }
+  if (dynamic) try { lazy(made, "description", () => "made " + name + " " + ++calls); console.log("getter: no error") } catch (e) { console.log("getter:", e instanceof TypeError ? "TypeError" : "other " + e) }
+  return made
+}
+const a = command("a", true), b = command("b", false)
+console.log(JSON.stringify(a.description), b.description, calls, Object.keys(a).join(), JSON.stringify(a))
+try { Object.defineProperty(b, "hidden", { enumerable: false }); console.log("not enumerable: no error") } catch (e) { console.log("not enumerable:", e instanceof TypeError ? "TypeError" : "other " + e) }
+console.log(Object.keys(b).join(), b.hidden, JSON.stringify(b))
+let stored = 0
+try { Object.defineProperty(a, "count", { get: () => stored, set: v => { stored = v * 10 }, enumerable: true, configurable: true }); console.log("getter and setter: no error") } catch (e) { console.log("getter and setter:", e instanceof TypeError ? "TypeError" : "other " + e) }
+a.count = 4
+console.log(a.count, stored, typeof Object.getOwnPropertyDescriptor(a, "count")!.get)
+try { delete (a as any).count; console.log("delete of a required field: no error") } catch (e) { console.log("delete of a required field:", e instanceof TypeError ? "TypeError" : "other " + e) }
+console.log("count" in a, Object.keys(a).join())
+class Point { x = 1; y = 2; sum() { return this.x + this.y } }
+const p = new Point()
+try { Object.defineProperty(p, "x", { get: () => 40, configurable: true }); console.log("getter on an instance: no error") } catch (e) { console.log("getter on an instance:", e instanceof TypeError ? "TypeError" : "other " + e) }
+console.log(p.sum(), p.x, Object.keys(p).join())
+//// reference-to-parameter-bound-by-conditional-type.ts
+// Where a reference's type is a type parameter whose base constraint is a union, `undefined` or `null`, TypeScript gives the reference the base constraint as its type.
+// Through a conditional type that constraint is not a bound on the values: here it is `undefined` or `number[] | null`, and the calls below are all well typed.
+interface Schema<Out> { parse(value: unknown): Out }
+type Infer<S> = S extends Schema<infer Out> ? Out : never;
+interface Tool { inputSchema?: Schema<unknown> }
+type ArgumentsOf<T extends Tool> = T["inputSchema"] extends infer S ? (S extends Schema<unknown> ? Infer<S> : undefined) : undefined;
+function isObject(value: unknown): boolean { return typeof value === "object" && value !== null; }
+function show(value: unknown): string { return typeof value + " " + JSON.stringify(value); }
+function attempt(label: string, ...runs: (() => unknown)[]): void {
+  console.log(label + ": " + runs.map(run => { try { return show(run()); } catch (error) { return "threw " + (error as Error).name; } }).join(" | "));
+}
+
+function passedOn<T extends Tool, A extends ArgumentsOf<T>>(tool: T, given: A): boolean { return isObject(given); }
+function stored<T extends Tool, A extends ArgumentsOf<T>>(tool: T, given: A): unknown { const held: unknown = given; return held; }
+function returned<T extends Tool, A extends ArgumentsOf<T>>(tool: T, given: A): unknown { return given; }
+function compared<T extends Tool, A extends ArgumentsOf<T>>(tool: T, given: A): boolean { return given === undefined; }
+function inArray<T extends Tool, A extends ArgumentsOf<T>>(tool: T, given: A): unknown[] { return [given]; }
+function inObject<T extends Tool, A extends ArgumentsOf<T>>(tool: T, given: A): { held: unknown } { return { held: given }; }
+function kindOf<T extends Tool, A extends ArgumentsOf<T>>(tool: T, given: A): string { return typeof given; }
+function asText<T extends Tool, A extends ArgumentsOf<T>>(tool: T, given: A): string { return String(given); }
+function serialized<T extends Tool, A extends ArgumentsOf<T>>(tool: T, given: A): string { return JSON.stringify(given) ?? "nothing"; }
+function fromField<T extends Tool, A extends ArgumentsOf<T>>(tool: T, box: { held: A }): boolean { return isObject(box.held); }
+function fromArray<T extends Tool, A extends ArgumentsOf<T>>(tool: T, list: A[]): boolean { return isObject(list[0]); }
+function captured<T extends Tool, A extends ArgumentsOf<T>>(tool: T, given: A): unknown { const read = (): unknown => given; return read(); }
+function orElse<T extends Tool, A extends ArgumentsOf<T>>(tool: T, given: A): unknown { return given ?? "none"; }
+function tested<T extends Tool, A extends ArgumentsOf<T>>(tool: T, given: A): string { return given ? "truthy" : "falsy"; }
+function assigned<T extends Tool, A extends ArgumentsOf<T>>(tool: T, given: A): unknown { let held: unknown; held = given; return held; }
+function narrowed<T extends Tool, A extends ArgumentsOf<T>>(tool: T, given: A): string { if (given === undefined) return "undefined"; return show(given); }
+class Call<T extends Tool, A extends ArgumentsOf<T>> {
+  constructor(public tool: T, public given: A) {}
+  check(): boolean { return isObject(this.given); }
+  text(): string { return show(this.given); }
+}
+
+const tool: Tool = { inputSchema: { parse: (value: unknown) => value } };
+const exact = { inputSchema: { parse: (value: unknown) => value as { a: number } } };
+const given: Record<string, unknown> | undefined = { a: 1 };
+attempt("passedOn", () => passedOn(tool, given), () => passedOn(tool, undefined), () => passedOn(tool, 5), () => passedOn(exact, { a: 2 }), () => passedOn({}, undefined));
+attempt("stored", () => stored(tool, given));
+attempt("returned", () => returned(tool, given));
+attempt("compared", () => compared(tool, given), () => compared(tool, undefined));
+attempt("inArray", () => inArray(tool, given));
+attempt("inObject", () => inObject(tool, given));
+attempt("kindOf", () => kindOf(tool, given), () => kindOf(tool, "s"), () => kindOf(tool, undefined));
+attempt("asText", () => asText(tool, 5));
+attempt("serialized", () => serialized(tool, given), () => serialized(tool, undefined));
+attempt("fromField", () => fromField(tool, { held: given }));
+attempt("fromArray", () => fromArray(tool, [given]));
+attempt("captured", () => captured(tool, given));
+attempt("orElse", () => orElse(tool, given), () => orElse(tool, undefined));
+attempt("tested", () => tested(tool, given), () => tested(tool, 0));
+attempt("assigned", () => assigned(tool, given));
+attempt("narrowed", () => narrowed(tool, given), () => narrowed(tool, undefined), () => narrowed(exact, { a: 3 }));
+attempt("check of a class", () => new Call(tool, given).check());
+attempt("text of a class", () => new Call(tool, given).text(), () => new Call(tool, undefined).text(), () => new Call(exact, { a: 4 }).text());
+
+type NoUndefined<T> = T extends undefined ? never : T;
+interface Holder<Output = unknown> { _output: Output }
+type Output<T> = T extends { _output: any } ? T["_output"] : never;
+const text: Holder<string> = { _output: "" };
+const point: Holder<{ x: number }> = { _output: { x: 1 } };
+function unionBound<T extends Holder, V extends NoUndefined<Output<T>> | number[] | null>(inner: T, value: V): string { return show(value); }
+function unionBoundStored<T extends Holder, V extends NoUndefined<Output<T>> | number[] | null>(inner: T, value: V): unknown { const held: unknown = value; return held; }
+function unionBoundLength<T extends Holder, V extends NoUndefined<Output<T>> | number[]>(inner: T, value: V): unknown { return Array.isArray(value) ? value.length : value; }
+function nullBound<T extends Holder, V extends NoUndefined<Output<T>> | null>(inner: T, value: V): string { return show(value); }
+attempt("unionBound", () => unionBound(text, "a"), () => unionBound(text, [1]), () => unionBound(text, null), () => unionBound(point, { x: 2 }));
+attempt("unionBoundStored", () => unionBoundStored(text, "b"), () => unionBoundStored(point, { x: 3 }));
+attempt("unionBoundLength", () => unionBoundLength(text, "c"), () => unionBoundLength(text, [1, 2]), () => unionBoundLength(point, { x: 4 }));
+attempt("nullBound", () => nullBound(text, "d"), () => nullBound(text, null), () => nullBound(point, { x: 5 }));
+//// regexp-early-errors.js
+// Regular expression literals that JavaScript rejects stop the build of a JavaScript file too, also in a function that is never called.
+function unused() {
+  return [
+    /\1/u,
+    /a**/,
+    /(?<a>.)\k<b>/,
+    /[b-a]/,
+  ];
+}
+console.log(typeof unused);
+//// repeated-proto-setter.js
+// `__proto__: v` twice in one object literal is an ECMAScript early error, so it stops the build in a JavaScript file too.
+console.log({ __proto__: null, "__proto__": null });
+//// results-of-functions-that-return-what-an-inner-check-turned-away.ts
+// A function whose parameter is tested at its head and whose body tests something else too: what a call answers. Where the second test fails, the function goes on with the value as it is
+// and returns it, so its callers may not take the declared result for proven. The first three are cut from programs that did not build; the last two do return what their types deny.
+declare const console: { log(...values: unknown[]): void };
+
+const LINE_SCRUB = /[\x00-\x1f]+/gu;
+const SHORT_LINE_LENGTH = 12;
+const ELLIPSIS = "...";
+
+function head(text: string, count: number): string {
+    let result = "";
+    let taken = 0;
+    for (const point of text) {
+        if (taken++ >= count)
+            break;
+        result += point;
+    }
+    return result;
+}
+
+function shortLine(text: string): string {
+    const line = (text.split(/\r?\n/u)[0] ?? "").replace(LINE_SCRUB, " ").trim();
+    return line.length <= SHORT_LINE_LENGTH ? line : head(line, SHORT_LINE_LENGTH - ELLIPSIS.length) + ELLIPSIS;
+}
+
+function truncate(text: string, width: number): string {
+    const flat = text.replace(/\s+/g, " ");
+    return flat.length <= width ? flat : head(flat, width - 1) + "…";
+}
+
+function hasMark(text: string): boolean {
+    return text.split(";").some(part => part.startsWith("<") && part.endsWith("M"));
+}
+
+const answers: unknown[] = ["text", 7, null, { length: 3 }, undefined, "longer than twelve characters"];
+function pick(index: number): string {
+    return answers[index % answers.length] as string;
+}
+
+function picked(prefix: string, index: number): string {
+    const value = pick(index);
+    return prefix.length > 100 ? prefix : value;
+}
+
+function pickedOrShort(prefix: string, index: number): string {
+    const value = pick(index);
+    return value != null && value.length <= SHORT_LINE_LENGTH ? value : prefix + ELLIPSIS;
+}
+
+function describe(value: string): string {
+    return typeof value + ":" + (typeof value === "object" && value !== null ? "length " + (value as { length: number }).length : String(value));
+}
+
+function report(lines: string[]): string[] {
+    return lines.map(line => JSON.stringify(shortLine(line)) + " " + JSON.stringify(truncate(line, 10)) + " " + hasMark(line));
+}
+
+const given: string[] = JSON.parse(JSON.stringify(["one\ntwo", "x".repeat(20), "<12M;a", "  a\tb  ", "\u{1f600}".repeat(14)]));
+for (const line of report(given))
+    console.log(line);
+let total = 0;
+for (let i = 0; i < 1000; i++)
+    total += shortLine(given[i % given.length]).length + truncate(given[i % given.length], 10).length;
+console.log(total);
+for (let round = 0; round < 3; round++) {
+    for (let index = 0; index < answers.length; index++)
+        console.log(describe(picked(given[index % given.length], index)), describe(pickedOrShort(given[index % given.length], index)));
+}
+//// return-in-static-block.js
+// `return` in a class static block is an early error, also in JavaScript, where nothing else is checked.
+class A { static { return; } }
+//// same-errors-in-tagged-template.ts
+// Built-in and user-defined methods called as template tags, after attempts to replace them.
+const log: string[] = []
+function note<T>(what: string, value: T): T { log.push(what); return value }
+function flush(): string { return log.splice(0).join() }
+function pushTo(a: unknown[]): unknown { return a.push`${note("arg", 7)}` }
+try { const fake = { get push() { log.push("get push"); return (s: unknown, x: number) => 100 + x } } as unknown as unknown[]; console.log(pushTo(fake)); console.log("an object as an array: no error") } catch (e) { console.log("an object as an array:", e instanceof TypeError ? "TypeError" : "other " + e, "[" + flush() + "]") }
+abstract class Shape { abstract area(s: TemplateStringsArray, scale: number): string }
+class Square extends Shape { area(s: TemplateStringsArray, scale: number): string { return "square" + scale } }
+class Circle extends Shape { area(s: TemplateStringsArray, scale: number): string { return "circle" + scale } }
+function retarget(s: Shape): number { (s as any).area = () => "own"; return 2 }
+const shapes: Shape[] = [new Square(), new Circle(), new Square()]
+for (const s of shapes) {
+  try { console.log(s.area`${retarget(s)}`); console.log("own property named like a method: no error") } catch (e) { console.log("own property named like a method:", e instanceof TypeError ? "TypeError" : "other " + e, s.area`${3}`) }
+}
+//// same-value-annotated-twice.ts
+// One value enters two places annotated with the same type. The second test may be dropped only where the first one has already passed on every path. The test asks for an object; a field of another kind throws where it is read, a missing field reads undefined.
+type Point = { x: number; y: number };
+type Named = { name: string };
+
+////= attempt-3
+
+function twice(value: any): number {
+    const a: Point = value;
+    const b: Point = value;
+    return a.x + b.y;
+}
+
+function onlyOneBranchChecks(value: any, flag: boolean): number {
+    let n = 0;
+    if (flag) {
+        const a: Point = value;
+        n = a.x;
+    }
+    const b: Point = value;
+    return n + b.y;
+}
+
+function bothBranchesCheck(value: any, flag: boolean): number {
+    let n = 0;
+    if (flag) {
+        const a: Point = value;
+        n = a.x;
+    } else {
+        const c: Point = value;
+        n = c.y;
+    }
+    const b: Point = value;
+    return n + b.y;
+}
+
+function firstFailureIsCaught(value: any): string {
+    try {
+        const a: Point = value;
+        return "first passed " + a.x;
+    } catch {}
+    try {
+        const b: Point = value;
+        return "second passed " + b.x;
+    } catch {
+        return "second failed too";
+    }
+}
+
+function reassignedBetween(good: any, bad: any): number {
+    let value = good;
+    const a: Point = value;
+    value = bad;
+    const b: Point = value;
+    return a.x + b.y;
+}
+
+function reassignedByClosure(good: any, bad: any): number {
+    let value = good;
+    const replace = () => {
+        value = bad;
+    };
+    const a: Point = value;
+    replace();
+    const b: Point = value;
+    return a.x + b.y;
+}
+
+function twoTypes(value: any): string {
+    const a: Point = value;
+    const b: Named = value;
+    return a.x + b.name;
+}
+
+function changedBetween(value: any, change: (value: any) => void): string {
+    const a: Point = value;
+    change(value);
+    const b: Point = value;
+    return typeof a.y + " " + typeof b.y + " " + (a === b);
+}
+
+function inLoop(values: any[], fixed: any): number {
+    let sum = 0;
+    for (const value of values) {
+        const a: Point = value;
+        const b: Point = fixed;
+        const c: Point = value;
+        sum += a.x + b.y + c.y;
+    }
+    return sum;
+}
+
+async function acrossAwait(value: any): Promise<number> {
+    const a: Point = value;
+    await null;
+    const b: Point = value;
+    return a.x + b.y;
+}
+
+function takesPoint(point: Point): number {
+    return point.x * 10 + point.y;
+}
+
+function passedTwice(value: any): number {
+    return takesPoint(value) + takesPoint(value);
+}
+
+function sameObject(value: any): boolean {
+    const a: Point = value;
+    const b: Point = value;
+    return a === b && a === value;
+}
+
+const point: Point = { x: 1, y: 2 };
+attempt("twice, a point", () => twice(point));
+attempt("twice, a literal through any", () => twice({ x: 3, y: 4 }));
+attempt("twice, parsed data", () => twice(JSON.parse('{"x":5,"y":6}')));
+attempt("twice, y is missing", () => twice({ x: 1 }));
+attempt("twice, a string", () => twice("point"));
+attempt("twice, undefined", () => twice(undefined));
+attempt("one branch, taken, a point", () => onlyOneBranchChecks(point, true));
+attempt("one branch, not taken, a point", () => onlyOneBranchChecks(point, false));
+attempt("one branch, taken, wrong", () => onlyOneBranchChecks({ x: "1" }, true));
+attempt("one branch, not taken, wrong", () => onlyOneBranchChecks({ x: "1" }, false));
+attempt("both branches, a point", () => bothBranchesCheck(point, true) + bothBranchesCheck(point, false));
+attempt("both branches, wrong", () => bothBranchesCheck({ y: 2 }, false));
+attempt("caught, a point", () => firstFailureIsCaught(point));
+attempt("caught, wrong", () => firstFailureIsCaught({ x: 1, y: "2" }));
+attempt("reassigned, good then good", () => reassignedBetween(point, { x: 7, y: 8 }));
+attempt("reassigned, good then bad", () => reassignedBetween(point, { x: 7 }));
+attempt("closure, good then good", () => reassignedByClosure(point, { x: 7, y: 8 }));
+attempt("closure, good then bad", () => reassignedByClosure(point, null));
+attempt("two types, both", () => twoTypes({ x: 1, y: 2, name: "n" }));
+attempt("two types, only a point", () => twoTypes({ x: 1, y: 2 }));
+attempt("changed, not at all", () => changedBetween({ x: 1, y: 2 }, () => {}));
+attempt("changed, y is another number", () => changedBetween({ x: 1, y: 2 }, value => { value.y = 9; }));
+attempt("changed, y is a string", () => changedBetween({ x: 1, y: 2 }, value => { value.y = "nine"; }));
+attempt("changed, y is deleted", () => changedBetween({ x: 1, y: 2 }, value => { delete value.y; }));
+attempt("changed, a property more", () => changedBetween({ x: 1, y: 2 }, value => { value.z = 3; }));
+attempt("loop, all points", () => inLoop([point, { x: 3, y: 4 }], point));
+attempt("loop, the second is wrong", () => inLoop([point, { x: 3 }], point));
+attempt("loop, the fixed one is wrong", () => inLoop([point], 5));
+attempt("loop, nothing to do", () => inLoop([], 5));
+attempt("passed twice, a point", () => passedTwice(point));
+attempt("passed twice, wrong", () => passedTwice({ x: 1, z: 2 }));
+attempt("same object, a point", () => sameObject(point));
+attempt("same object, a literal through any", () => sameObject({ x: 1, y: 2 }));
+attempt("same object, parsed data", () => sameObject(JSON.parse('{"x":1,"y":2}')));
+acrossAwait(point).then(
+    value => console.log("across await, a point", value),
+    error => console.log("across await, a point", String(error)),
+);
+acrossAwait({ y: 2 }).then(
+    value => console.log("across await, wrong", value),
+    error => console.log("across await, wrong", error instanceof TypeError ? "TypeError" : String(error)),
+);
+//// shared-array-buffer-is-not-an-array-buffer.ts
+// A SharedArrayBuffer is not an ArrayBuffer, nor the other way round: the runtime type check of a parameter, of a field and of a result tells them apart, and a type that names both classes takes both.
+class Holder {
+  unshared: ArrayBuffer = new ArrayBuffer(1);
+  shared: SharedArrayBuffer = new SharedArrayBuffer(2);
+}
+function takesUnshared(buffer: ArrayBuffer): number { return buffer.byteLength; }
+function takesShared(buffer: SharedArrayBuffer): number { return buffer.byteLength; }
+function takesEither(buffer: ArrayBuffer | SharedArrayBuffer): number { return buffer.byteLength; }
+function storesUnshared(buffer: any): number { const holder = new Holder(); holder.unshared = buffer; return holder.unshared.byteLength; }
+function storesShared(buffer: any): number { const holder = new Holder(); holder.shared = buffer; return holder.shared.byteLength; }
+function returnsUnshared(buffer: any): ArrayBuffer { return buffer; }
+function returnsShared(buffer: any): SharedArrayBuffer { return buffer; }
+function sizeOfUnsharedResult(buffer: any): number { return returnsUnshared(buffer).byteLength; }
+function sizeOfSharedResult(buffer: any): number { return returnsShared(buffer).byteLength; }
+const untyped: any[] = [takesUnshared, takesShared, takesEither, storesUnshared, storesShared, sizeOfUnsharedResult, sizeOfSharedResult];
+const given: any[] = [new ArrayBuffer(8), new SharedArrayBuffer(16), new Uint8Array(4), { byteLength: 32 }];
+for (const f of untyped) {
+  for (const value of given) {
+    const tag = Object.prototype.toString.call(value);
+    try { console.log(f.name, tag, f(value)); } catch (error) { console.log(f.name, tag, (error as Error).name); }
+  }
+}
+//// static-constructor-name-after-ts-ignore.ts
+// A static generator or accessor named `constructor` is valid JavaScript. TypeScript's errors (1368, 1341) are its own there: below a `@ts-ignore` the program builds and runs as in plain Bun.
+class A {
+  // @ts-ignore
+  static *constructor() { yield 1; }
+}
+class B {
+  // @ts-ignore
+  static get constructor() { return 2; }
+}
+console.log([...A.constructor()], B.constructor);
+//// static-method-named-constructor.js
+// A static generator or accessor named `constructor` is valid JavaScript. TypeScript reports it (1368, 1341), and the build accepts it.
+class A { static *constructor() { yield 1; } }
+class B { static get constructor() { return 2; } }
+class C {
+  static stored = 0;
+  static set constructor(value) { C.stored = value; }
+}
+console.log([...A.constructor()], B.constructor);
+C.constructor = 3;
+console.log(C.stored, C.constructor);
+console.log(new A().constructor === A, new B().constructor === B, new C().constructor === C);
+//// stores-of-a-sum-of-two-missing-strings.ts
+// A sum that TypeScript calls a string and that is NaN at run time is stored into a field of a literal or an element of an array that no annotation types.
+const none: string[] = [];
+const some: string[] = ["a", "b"];
+function show(name: string, f: () => unknown) { try { console.log(name, String(f())); } catch (e) { console.log(name, "threw", (e as Error).constructor.name); } }
+
+function inLiteral(list: string[], i: number) { const o = { key: list[i] + list[i + 1] }; return o.key; }
+function inArray(list: string[], i: number) { const all = [list[i] + list[i + 1]]; return all[0]; }
+function pushed(list: string[], i: number) { const all = ["x"]; all.push(list[i] + list[i + 1]); return all[1]; }
+
+for (const list of [none, some]) {
+  show("in a literal", () => inLiteral(list, 0));
+  show("in an array", () => inArray(list, 0));
+  show("pushed", () => pushed(list, 0));
+}
+//// stores-through-interfaces.ts
+// Stores through declared interface types into untyped objects with accessors, read-only properties, or that are frozen.
+interface Settings { volume: number; theme: string; muted?: boolean; limits: { max: number } }
+const heard: string[] = []
+function rule(label: string, f: () => unknown) { try { console.log(label + ": no error", f()) } catch (e) { console.log(label + ":", e instanceof TypeError ? "TypeError" : "other " + e) } }
+function withSetters(): Settings {
+  const hidden = { volume: 0 }
+  const o: any = { theme: "", limits: { max: 0 } }
+  Object.defineProperty(o, "volume", { get() { return hidden.volume }, set(x: number) { heard.push("volume=" + x); hidden.volume = x * 10 }, enumerable: true })
+  return o
+}
+rule("own setter", () => { withSetters().volume = 3; return "stored" })
+const chainedPrototype: any = { theme: "inherited", limits: { max: 7 }, volume: 1 }
+rule("heir", () => { const chained: Settings = Object.create(chainedPrototype); chained.volume = 4; return "stored" })
+const text = '{"volume":1,"theme":"j","limits":{"max":1}}'
+rule("frozen parsed text", () => { const frozen: Settings = Object.freeze(JSON.parse(text)); return frozen.volume })
+rule("sealed parsed text", () => { const sealed: Settings = Object.seal(JSON.parse(text)); return sealed.volume })
+rule("parsed text that may not grow", () => { const closedUp: Settings = Object.preventExtensions(JSON.parse(text)); return closedUp.volume })
+rule("proxy", () => { const doubling: Settings = new Proxy<Settings>({ volume: 0, theme: "", limits: { max: 0 } }, { set: (t, k, x) => Reflect.set(t, k, typeof x === "number" ? x * 2 : x) }); doubling.volume = 10; return doubling.volume })
+rule("array", () => { const list = [1, 2] as unknown as Settings; list.limits = { max: 0 }; return "stored" })
+rule("function", () => { const callable = (() => 1) as unknown as Settings; callable.limits = { max: 0 }; return "stored" })
+console.log(heard.length)
+//// stores-to-error-and-function-prototype.ts
+// A store to `Error.prototype.name` takes effect: a built-in that is not always locked and that the program writes stays writable. `Function.prototype` takes no new name in a compiled program: every string key of it is fixed, present or absent.
+declare const console: { log(...values: unknown[]): void };
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.constructor.name : String(e))) } }
+function hide(v: unknown): any { return v }
+row("Error.prototype.name", () => { (Error.prototype as any).name = "X"; return new Error("m").name + " " + String(new Error("m")) });
+row("Function.prototype.mine", () => { (Function.prototype as any).mine = 1; return (row as any).mine });
+//// strict-null-checks-are-predictions/main.ts
+// With `strictNullChecks` a type such as `number` excludes undefined and null for the checker only. At run time both pass every written type and stay what they are, and a test for them that the checker considers needless still answers. A value of another kind throws as without the option.
+const nothing: any = undefined;
+const empty: any = null;
+const text: any = "text";
+interface Row { id: number; name: string }
+////= attempt-2
+function kind(n: number): string { return n === undefined ? "undefined" : n === null ? "null" : typeof n; }
+function nameOf(row: Row): string { return row === null ? "no row" : row.name ?? "no name"; }
+function result(): string { return nothing; }
+
+attempt("undefined for a parameter of type number", () => kind(nothing));
+attempt("null for a parameter of type number", () => kind(empty));
+attempt("a string for a parameter of type number", () => kind(text));
+attempt("null for an object type", () => nameOf(empty));
+attempt("a field of type string that is missing", () => nameOf({ id: 1 } as any));
+attempt("null in a variable of type number", () => { const n: number = empty; return n; });
+attempt("undefined as a result of type string", () => result());
+attempt("undefined in a variable of type number | null", () => { const n: number | null = nothing; return n; });
+attempt("null in an element of number[]", () => { const list: number[] = [1]; list[0] = empty; return list[0]; });
+//// strict-null-checks-are-predictions/tsconfig.json
+////= lines
+//// structural-class-types.ts
+// A method is borrowed for object literals that have only the fields the method reads.
+class Vec {
+  x: number; y: number
+  constructor(x: number, y: number) { this.x = x; this.y = y }
+  len2(): number { return this.x * this.x + this.y * this.y }
+  get sum(): number { return this.x + this.y }
+}
+const real = new Vec(1, 2)
+try { const made: Vec = Object.create(Vec.prototype); made.x = 5; console.log("Object.create(C.prototype) as a C: no error") } catch (e) { console.log("Object.create(C.prototype) as a C:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { const heir: Vec = Object.create(real); console.log("heir of an instance as a C: no error", heir.x) } catch (e) { console.log("heir of an instance as a C:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { const parsed = JSON.parse('{"y":9,"x":8}') as Vec; console.log("parsed text without the methods as a C: no error", parsed.x) } catch (e) { console.log("parsed text without the methods as a C:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { const copied: Vec = Object.assign({}, real); console.log("copy of the own properties as a C: no error", copied.x) } catch (e) { console.log("copy of the own properties as a C:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { console.log(Vec.prototype.len2.call({ x: 2, y: 3 })); console.log("method on a literal with the fields it reads: no error") } catch (e) { console.log("method on a literal with the fields it reads:", e instanceof TypeError ? "TypeError" : "other " + e) }
+const getSum = Object.getOwnPropertyDescriptor(Vec.prototype, "sum")!.get!
+try { console.log(getSum.call({ x: 1, y: 1 })); console.log("getter on a literal with the fields it reads: no error") } catch (e) { console.log("getter on a literal with the fields it reads:", e instanceof TypeError ? "TypeError" : "other " + e) }
+const borrowed = { x: 0.5, y: 0.25, len2: Vec.prototype.len2 }
+try { console.log(borrowed.len2()); console.log("method borrowed by a literal: no error") } catch (e) { console.log("method borrowed by a literal:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { (real as any).len2 = () => 999; console.log("own property in place of a method: no error") } catch (e) { console.log("own property in place of a method:", e instanceof TypeError ? "TypeError" : "other " + e) }
+console.log(real.len2(), real.sum, getSum.call(real), Object.keys(real).join())
+//// subclass-checked-against-interface.ts
+// An object made with `Object.create` from an object of an interface type is held to that type: it finds every field on its prototype chain, so it satisfies the type. It stays the object it is and is read by name. An own property of another kind that shadows a field throws where typed code reads the field.
+interface Conf { host: string; port: number; secure?: boolean; nested: { depth: number } }
+function rule(label: string, f: () => unknown) { try { console.log(label + ": no error", String(f())) } catch (e) { console.log(label + ":", e instanceof TypeError ? "TypeError" : "other " + e) } }
+function next(c: Conf): number { return c.port + 1 + c.nested.depth }
+const defaults: Conf = { host: "localhost", port: 80, nested: { depth: 1 } }
+rule("heir of an object of the type", () => { const derived: Conf = Object.create(defaults); return derived.port })
+rule("then: typed code reads it", () => { const derived: Conf = Object.create(defaults); return next(derived) })
+rule("then: a store makes an own property", () => { const derived: Conf = Object.create(defaults); derived.port = 81; return [derived.port, defaults.port, Object.keys(derived).join(), next(derived)] })
+rule("then: the parent changes", () => { const derived: Conf = Object.create(defaults); defaults.port = 90; const seen = derived.port; defaults.port = 80; return seen })
+rule("then: an ill-typed own property shadows", () => { const raw = Object.create(defaults); raw.port = "text"; const derived: Conf = raw; return [typeof derived.port, next(derived)] })
+rule("heir of a frozen literal", () => { const locked: Conf = Object.create(Object.freeze({ host: "frozen", port: 1, nested: { depth: 2 } })); return next(locked) })
+//// sum-of-two-missing-strings.ts
+// `a + b` where TypeScript says both are strings and both are missing at run time is NaN, or 0 for two nulls, as in plain Bun: it does not throw.
+const none: string[] = [];
+const some: string[] = ["a", "b"];
+function show(name: string, f: () => unknown) { try { console.log(name, String(f())); } catch (e) { console.log(name, "threw", (e as Error).constructor.name); } }
+
+function inOneExpression(list: string[], i: number) { return list[i] + list[i + 1]; }
+function constants(list: string[], i: number) { const a = list[i], b = list[i + 1]; return a + b; }
+function parameters(a: string, b: string) { return a + b; }
+function passed(list: string[], i: number) { return parameters(list[i], list[i + 1]); }
+function fields(list: string[], i: number) { const o = { a: list[i], b: list[i + 1] }; return o.a + o.b; }
+function dictionary(map: Record<string, string>) { return map.a + map.b; }
+function pattern(list: string[]) { const [a, b] = list; return a + b; }
+function popped(list: string[]) { return list.pop()! + list.pop()!; }
+function nulls(a: string, b: string) { return a + b; }
+function three(list: string[], i: number) { return list[i] + list[i + 1] + list[i + 2]; }
+function thenText(list: string[], i: number) { return list[i] + list[i + 1] + "!"; }
+function textFirst(list: string[], i: number) { return "!" + list[i] + list[i + 1]; }
+function withNumber(list: string[], i: number) { const a = list[i]; return a + 1; }
+class Pair { constructor(public first: string, public second: string) {} joined() { return this.first + this.second; } }
+
+for (const list of [none, some]) {
+  show("in one expression", () => inOneExpression(list, 0));
+  show("constants", () => constants(list, 0));
+  show("parameters", () => passed(list, 0));
+  show("fields", () => fields(list, 0));
+  show("pattern", () => pattern(list));
+  show("three", () => three(list, 0));
+  show("then text", () => thenText(list, 0));
+  show("text first", () => textFirst(list, 0));
+  show("with a number", () => withNumber(list, 0));
+  show("members of a class", () => new Pair(list[0], list[1]).joined());
+}
+show("dictionary", () => dictionary({}));
+show("dictionary", () => dictionary({ a: "a", b: "b" }));
+show("popped", () => popped([]));
+show("popped", () => popped(["a", "b"]));
+show("nulls", () => nulls(null as unknown as string, null as unknown as string));
+show("null and undefined", () => nulls(null as unknown as string, undefined as unknown as string));
+//// test-positions.ts
+// A typed read is tested wherever it stands: under `typeof`, against `undefined` or a literal, in a condition, as a binding, an argument or an operand. A field that holds another kind throws a TypeError; one that is undefined, null or missing passes and goes on as it is.
+interface Clock { origin: number; name: string; on: boolean; next: Clock; list: number[]; tick: () => number; big: bigint }
+declare function fromHost(which: number): Clock;
+const raws: any[] = [0, 1].map(() => JSON.parse('{"origin":1,"name":"n","on":true,"next":null,"list":[1],"tick":null,"big":null}'));
+for (const raw of raws) { raw.next = raw; raw.tick = () => 7; raw.big = 5n; }
+(globalThis as any).fromHost = (which: number) => raws[which];
+const kept: Clock = fromHost(0), broken: Clock = fromHost(1);
+{ const raw = raws[1]; raw.origin = undefined; raw.name = 5; raw.on = "yes"; raw.next = 0; delete raw.list; raw.tick = null; raw.big = ""; }
+// The object under test. It goes from one place of type `Clock` to another, which asks only for an object.
+let c: Clock = kept;
+function attempt(label: string, f: () => unknown): void {
+    const out: string[] = [];
+    for (let which = 0; which < 2; which++) {
+        c = which === 0 ? kept : broken;
+        try { out.push(show(f())); } catch (e) { out.push((e as Error).constructor.name); }
+    }
+    console.log(label, out.join(" | "));
+}
+function show(v: unknown): string {
+    return typeof v === "bigint" ? v + "n" : typeof v === "function" ? "fn" : typeof v === "object" && v !== null ? "obj" : typeof v === "string" ? JSON.stringify(v) : String(v);
+}
+
+// typeof
+attempt("t typeof", () => [typeof c.origin, typeof c.name, typeof c.on, typeof c.next, typeof c.list, typeof c.tick, typeof c.big].join());
+attempt("t typeof ===", () => typeof c.origin === "number" && typeof c.tick === "function");
+attempt("t typeof through", () => [typeof (c.origin), typeof c.origin!, typeof (c.origin satisfies number), typeof (c.name)!].join());
+attempt("a typeof as", () => [typeof (c.origin as number), typeof ((c.name as string)!), (c.on as boolean) === true].join());
+// equality against undefined, null, a literal
+attempt("t === undefined", () => [c.origin === undefined, c.list === undefined, undefined !== c.name, c.tick === undefined].join());
+attempt("t === null", () => [c.tick === null, null === c.next, c.origin !== null].join());
+attempt("t == null", () => [c.origin == null, c.tick == null, c.list != null, null == c.name, c.on == undefined].join());
+attempt("t === literal", () => [c.origin === 1, c.name === "n", c.on === true, 5 === c.name as unknown, c.big === 5n, c.origin === -1, c.name !== "x", c.on === false].join());
+attempt("t == literal", () => [c.origin == 1, c.name == "5", "" == c.big as unknown, c.on != true].join());
+// conditions
+attempt("t if", () => { if (c.origin) return "T"; return "F"; });
+attempt("t if string", () => { if (c.name) return "T"; return "F"; });
+attempt("t if boolean", () => { if (c.on) return "T"; return "F"; });
+attempt("t if object", () => { if (c.next) return "T"; return "F"; });
+attempt("t if through", () => { if ((c.list as number[])!) return "T"; return "F"; });
+attempt("t ?:", () => (c.next ? "T" : "F") + (c.big ? "T" : "F"));
+attempt("t while", () => { let n = 0; while (c.list && n < 2) n++; return n; });
+attempt("t do", () => { let n = 0; do n++; while (c.origin && n < 2); return n; });
+attempt("t for", () => { let n = 0; for (; c.next && n < 2; n++); return n; });
+// !
+attempt("t !", () => [!c.origin, !c.name, !c.on, !c.next, !c.list, !c.tick, !c.big].join());
+attempt("t !!", () => [!!c.origin, !!c.list, Boolean(c.tick)].join());
+// in, instanceof
+attempt("t in", () => ["length" in (c.list ?? []), (c.name as unknown as string) in { n: 1, 5: 1 }].join());
+attempt("t instanceof", () => [c.list instanceof Array, c.next instanceof Object, c.tick instanceof Function, (c.origin as unknown) instanceof Number].join());
+// the left side of && and ||, in a condition and for its value
+attempt("t && condition", () => { if (c.origin && c.on) return "T"; return "F"; });
+attempt("t || condition", () => { if (c.list || c.next) return "T"; return "F"; });
+attempt("t && falls through", () => c.list && "there");
+attempt("t || falls through", () => c.origin || "none");
+// the left side of ??, the receiver of ?.
+attempt("t ??", () => [c.origin ?? "none", c.list ?? "none", c.tick ?? "none"].map(show).join());
+attempt("t ?.", () => [c.list?.length, c.tick?.(), c.list?.[0]].join());
+attempt("t ?. ??", () => c.list?.length ?? "none");
+// an expression that forwards its operand
+attempt("t ?: within typeof", () => typeof (c.on ? c.origin : c.name));
+attempt("t || within typeof", () => [typeof (c.name || c.origin), typeof (c.big && c.on), typeof (c.name ?? c.on)].join());
+attempt("t || within ===", () => (c.name || "x") === "n");
+attempt("t , within if", () => { let n = 0; if ((n++, c.list)) return "T" + n; return "F" + n; });
+
+// bindings, arguments, operands, results, receivers
+attempt("h binding", () => { const t = c.origin; return typeof t === "number"; });
+attempt("h argument", () => show(c.name));
+attempt("h arithmetic", () => c.origin + 1);
+attempt("h operand of an operand", () => { if (c.origin + 1) return "T"; return "F"; });
+attempt("h === not a literal", () => c.origin === kept.origin);
+attempt("h relational", () => c.origin < 2);
+attempt("h return", () => c.on);
+attempt("h receiver", () => c.list.length);
+attempt("h call", () => c.tick());
+attempt("h template", () => `${c.name}`);
+// the left side of &&, || and ?? for its value
+attempt("t && lets through", () => c.name && "x");
+attempt("h && kept", () => c.big && "x");
+attempt("h || kept", () => c.name || "none");
+attempt("t || falls through, object", () => c.next || "none");
+attempt("h ?? kept", () => c.name ?? "none");
+attempt("h ?. receiver that is no object", () => c.next?.origin);
+export {};
+//// this-checked-on-entry.ts
+// A method of an object literal is called, with `call`, on an object that does not match the type of its `this`.
+type Box = { inner?: { value: number, get(): number } }
+const full: Box = { inner: { value: 4, get() { return this.value + 1 } } }
+try { (full.inner?.get)?.call({ value: 9 }); console.log("call on another object: no error") } catch (e) { console.log("call on another object:", e instanceof TypeError ? "TypeError" : "other " + e) }
+//// throw-site-value-and-position.ts
+// What a throw site reports, the value and the position, in a hot loop, in cold code and inside try. Values that fit print results.
+interface Point { x: number }
+function hide(v: unknown): any { return v }
+function describeError(error: unknown): string {
+  const e = error as Error
+  const position = /:(\d+):(\d+)\)?\s*$/m.exec(e.stack ?? "")
+  return e.name + ": " + e.message.split("\n")[0].replace(/ \(bun compile[^)]*\)/, "").replace(" | undefined", "") + " | " + (position ? position[1] + ":" + position[2] : "no position")
+}
+function describeErrorLine(error: unknown): string { return describeError(error).replace(/:\d+$/, "") }
+function printResult(name: string, f: () => unknown): void { try { console.log(name, "|", String(f())) } catch (error) { console.log(name, "|", describeError(error)) } }
+function printResultLine(name: string, f: () => unknown): void { try { console.log(name, "|", String(f())) } catch (error) { console.log(name, "|", describeErrorLine(error)) } }
+function coldText(v: any): string { const t: string = v; return t }
+function hotText(v: any, count: number): number { let total = 0; for (let i = 0; i < count; i++) { const t: string = v; total += t.length } return total }
+function guardedText(v: any): unknown { try { const t: string = v; return t } catch (error) { return describeError(error) } }
+function coldNumber(v: any): number { const n: number = v; return n }
+function hotNumber(v: any, count: number): number { let total = 0; for (let i = 0; i < count; i++) { const n: number = v; total += n } return total }
+function guardedNumber(v: any): unknown { try { const n: number = v; return n } catch (error) { return describeError(error) } }
+function coldDouble(n: number): string { const hidden: any = n * 0.5; const t: string = hidden; return t }
+function hotDouble(n: number, count: number): number { let total = 0; for (let i = 0; i < count; i++) { const hidden: any = n * 0.5; const t: string = hidden; total += t.length } return total }
+function guardedDouble(n: number): unknown { try { const hidden: any = n * 0.5; const t: string = hidden; return t } catch (error) { return describeError(error) } }
+function coldInteger(n: number): string { const hidden: any = n | 0; const t: string = hidden; return t }
+function hotInteger(n: number, count: number): number { let total = 0; for (let i = 0; i < count; i++) { const hidden: any = n | 0; const t: string = hidden; total += t.length } return total }
+function guardedInteger(n: number): unknown { try { const hidden: any = n | 0; const t: string = hidden; return t } catch (error) { return describeError(error) } }
+function coldRead(p: Point): number { return p.x }
+function hotRead(p: Point, count: number): number { let total = 0; for (let i = 0; i < count; i++) { total += p.x } return total }
+function guardedRead(p: Point): unknown { try { return p.x } catch (error) { return describeError(error) } }
+function coldStore(p: Point): number { p.x = 1; return p.x }
+function hotStore(p: Point, count: number): number { let total = 0; for (let i = 0; i < count; i++) { p.x = i; total += p.x } return total }
+function guardedStore(p: Point): unknown { try { p.x = 1; return p.x } catch (error) { return describeError(error) } }
+function coldIterate(list: number[]): number { let total = 0; for (const x of list) total += x; return total }
+function hotIterate(list: number[], count: number): number { let total = 0; for (let i = 0; i < count; i++) { for (const x of list) total += x } return total }
+function guardedIterate(list: number[]): unknown { try { let total = 0; for (const x of list) total += x; return total } catch (error) { return describeErrorLine(error) } }
+function coldDeadZone(early: boolean): number { const read = () => late; if (early) return read(); const late = 1; return read() }
+function hotDeadZone(early: boolean, count: number): number { const read = () => late; let total = 0; for (let i = 0; i < count; i++) { if (early) total += read() } const late = 1; return total + read() }
+function guardedDeadZone(early: boolean): unknown { try { const read = () => late; if (early) return read(); const late = 1; return read() } catch (error) { return describeErrorLine(error) } }
+function coldError(bad: boolean): string { if (bad) throw new RangeError("too far"); return "fine" }
+function hotError(bad: boolean, count: number): number { let total = 0; for (let i = 0; i < count; i++) { if (bad) throw new RangeError("too far"); total += 1 } return total }
+function guardedError(bad: boolean): unknown { try { if (bad) throw new RangeError("too far"); return "fine" } catch (error) { return describeError(error) } }
+printResult("number as string cold", () => coldText(hide(5)))
+printResult("number as string hot", () => hotText(hide(5), 1000))
+printResult("number as string try", () => guardedText(hide(5)))
+printResult("string as number cold", () => coldNumber(hide("wrong")))
+printResult("string as number hot", () => hotNumber(hide("wrong"), 1000))
+printResult("string as number try", () => guardedNumber(hide("wrong")))
+printResult("object as string cold", () => coldText(JSON.parse("{}")))
+printResult("object as string hot", () => hotText(JSON.parse("{}"), 1000))
+printResult("object as string try", () => guardedText(JSON.parse("{}")))
+printResult("unboxed double cold", () => coldDouble(3))
+printResult("unboxed double hot", () => hotDouble(3, 1000))
+printResult("unboxed double try", () => guardedDouble(3))
+printResult("unboxed integer cold", () => coldInteger(3))
+printResult("unboxed integer hot", () => hotInteger(3, 1000))
+printResult("unboxed integer try", () => guardedInteger(3))
+printResult("read of null cold", () => coldRead(hide(null)))
+printResult("read of null hot", () => hotRead(hide(null), 1000))
+printResult("read of null try", () => guardedRead(hide(null)))
+printResult("store to undefined cold", () => coldStore(hide(undefined)))
+printResult("store to undefined hot", () => hotStore(hide(undefined), 1000))
+printResult("store to undefined try", () => guardedStore(hide(undefined)))
+printResultLine("iteration of null cold", () => coldIterate(hide(null)))
+printResultLine("iteration of null hot", () => hotIterate(hide(null), 1000))
+printResultLine("iteration of null try", () => guardedIterate(hide(null)))
+printResultLine("dead zone cold", () => coldDeadZone(true))
+printResultLine("dead zone hot", () => hotDeadZone(true, 1000))
+printResultLine("dead zone try", () => guardedDeadZone(true))
+printResult("thrown error cold", () => coldError(true))
+printResult("thrown error hot", () => hotError(true, 1000))
+printResult("thrown error try", () => guardedError(true))
+printResult("undefined passes cold", () => coldNumber(hide(undefined)))
+printResult("undefined passes hot", () => hotNumber(hide(undefined), 2))
+printResult("undefined passes try", () => guardedNumber(hide(undefined)))
+printResult("string fits cold", () => coldText(hide("ok")))
+printResult("string fits hot", () => hotText(hide("ok"), 2))
+printResult("string fits try", () => guardedText(hide("ok")))
+printResult("number fits cold", () => coldNumber(hide(2.5)))
+printResult("number fits hot", () => hotNumber(hide(2.5), 2))
+printResult("number fits try", () => guardedNumber(hide(2.5)))
+printResult("read fits cold", () => coldRead({ x: 4 }))
+printResult("read fits hot", () => hotRead({ x: 4 }, 2))
+printResult("read fits try", () => guardedRead({ x: 4 }))
+printResult("store fits cold", () => coldStore({ x: 0 }))
+printResult("store fits hot", () => hotStore({ x: 0 }, 2))
+printResult("store fits try", () => guardedStore({ x: 0 }))
+printResult("iteration fits cold", () => coldIterate([1, 2]))
+printResult("iteration fits hot", () => hotIterate([1, 2], 2))
+printResult("iteration fits try", () => guardedIterate([1, 2]))
+printResult("initialized cold", () => coldDeadZone(false))
+printResult("initialized hot", () => hotDeadZone(false, 2))
+printResult("initialized try", () => guardedDeadZone(false))
+printResult("no error cold", () => coldError(false))
+printResult("no error hot", () => hotError(false, 2))
+printResult("no error try", () => guardedError(false))
+//// throwing-lines-alone/lines.ts
+export interface Point { x: number; y: number }
+export function sum(p: Point): number { return p.x + p.y; }
+export function scale(n: number): number { return n * 2; }
+export function report(label: string, f: () => unknown) {
+  try { console.log(label + ":", String(f())); } catch (e) { console.log(label + ":", (e as Error).constructor.name); }
+}
+////= run
+//// throwing-lines-alone/main.ts
+// Which lines can throw is decided function by function, from the types as written. type-rules/throwing-lines-beside-another-file has the same `lines.ts` and one more file that uses its functions in other ways: the lines of `lines.ts` print the same in both programs.
+import { run } from "./lines";
+run(JSON.parse('{"x":"1","y":2}'), "text");
+//// throwing-lines-beside-another-file/lines.ts
+export interface Point { x: number; y: number }
+export function sum(p: Point): number { return p.x + p.y; }
+export function scale(n: number): number { return n * 2; }
+export function report(label: string, f: () => unknown) {
+  try { console.log(label + ":", String(f())); } catch (e) { console.log(label + ":", (e as Error).constructor.name); }
+}
+////= run
+//// throwing-lines-beside-another-file/main.ts
+// Adding a file never changes whether a line throws. `lines.ts` is that of type-rules/throwing-lines-alone, and its lines print the same here, where `other.ts` also calls its functions: as values, through `any`, with a proxy, an instance of a class and an object that inherits its fields.
+import { run } from "./lines";
+import { useOtherwise } from "./other";
+useOtherwise();
+run(JSON.parse('{"x":"1","y":2}'), "text");
+useOtherwise();
+//// throwing-lines-beside-another-file/other.ts
+import { type Point, report, scale, sum } from "./lines";
+
+class Pixel implements Point { constructor(public x: number, public y: number) {} }
+const table: Record<string, Function> = { sum, scale };
+export function useOtherwise() {
+  report("other.ts, an instance of a class", () => sum(new Pixel(1, 2)));
+  report("other.ts, a proxy", () => sum(new Proxy({ x: 2, y: 3 }, {})));
+  report("other.ts, inherited fields", () => sum(Object.create({ x: 3, y: 4 })));
+  report("other.ts, as a value", () => table.sum({ x: 4, y: 5 }) + table.scale(1));
+  report("other.ts, as a value with a boolean", () => table.scale(true));
+}
+//// truncation-keeps-fraction.ts
+// A truncated number is a new value: the fraction and the sign of zero stay with the original.
+declare const console: { log(...values: unknown[]): void };
+function show(value: number): string {
+  return Object.is(value, -0) ? "-0" : String(value);
+}
+function f(x: number): number[] {
+  const i = Math.trunc(x);
+  return [i, i + 0.5, x, 1 / i];
+}
+function int32Forms(x: number): number[] {
+  return [x | 0, x >>> 0, ~~x];
+}
+function line(values: number[]): string {
+  return values.map(show).join(" ");
+}
+const inputs = [1.5, -0.5, -0, NaN, 2 ** 40 + 0.5, 2 ** 62, Infinity];
+for (const x of inputs) console.log("once", show(x), line(f(x)), line(int32Forms(x)));
+for (const x of inputs) {
+  let truncated: number[] = [];
+  let forms: number[] = [];
+  for (let n = 0; n < 20000; n++) {
+    truncated = f(x);
+    forms = int32Forms(x);
+  }
+  console.log("hot", show(x), line(truncated), line(forms));
+}
+for (const x of [0, 1, 7, 2147483647, 2 ** 40]) {
+  const i = Math.trunc(x);
+  console.log("integral", x, i === x, f(x)[2] === x, (x | 0) === x, (x >>> 0) === x, ~~x === x);
+}
+for (const x of [-1, -2147483648]) console.log("negative integral", x, Math.trunc(x) === x, (x | 0) === x, ~~x === x);
+//// type-error-in-initializer-at-load/a-class-field-written-through-an-interface.ts
+interface Loose { size: number | null }
+class Strict { size: number = 1; }
+function clear(it: Loose): void { it.size = null; }
+function make(): { next: number } { const strict = new Strict(); clear(strict); return { next: strict.size + 1 }; }
+export const made = make();
+//// type-error-in-initializer-at-load/a-field-written-through-a-wider-view.ts
+type Base = { a: number };
+type Derived = { a: number; b: number };
+type Box<Held> = { it: Held };
+function make(): { next: number } { const derived: Box<Derived> = { it: { a: 1, b: 2 } }; const base: Box<Base> = derived; base.it = { a: 1 }; return { next: derived.it.b + 1 }; }
+export const made = make();
+//// type-error-in-initializer-at-load/a-method-parameter-that-varies-both-ways.ts
+type Base = { a: number };
+type Derived = { a: number; b: number };
+type Taker<Taken> = { take(it: Taken): number };
+function make(): { next: number } { const derived: Taker<Derived> = { take(it: Derived): number { return it.b + 1; } }; const base: Taker<Base> = derived; return { next: base.take({ a: 1 }) }; }
+export const made = make();
+//// type-error-in-initializer-at-load/a-number-written-as-a-string-through-a-union.ts
+type Narrow = { size: number };
+type Wide = { size: number | string };
+function make(): { twice: number } { const narrow: Narrow = { size: 1 }; const wide: Wide = narrow; wide.size = "s"; return { twice: narrow.size * 2 }; }
+export const made = make();
+//// type-error-in-initializer-at-load/an-optional-member-cleared-through-a-parameter.ts
+type Loose = { size?: number };
+type Strict = { size: number };
+function clear(it: Loose): void { it.size = undefined; }
+function make(): { next: number } { const strict: Strict = { size: 1 }; clear(strict); return { next: strict.size + 1 }; }
+export const made = make();
+//// type-error-in-initializer-at-load/main.ts
+// TypeScript lets a program break a type in a few known ways. Where a field then holds another kind, --aot throws a TypeError at the typed read; null, undefined and a missing member pass. Where it throws in the initializer of a top-level constant, the error is thrown while the module is loaded, not when the constant is first read.
+////= load	JSON.stringify(module.made)
+await load("a class field written through an interface", () => import("./a-class-field-written-through-an-interface"));
+await load("a field written through a wider view", () => import("./a-field-written-through-a-wider-view"));
+await load("a number written as a string through a union", () => import("./a-number-written-as-a-string-through-a-union"));
+await load("an optional member cleared through a parameter", () => import("./an-optional-member-cleared-through-a-parameter"));
+await load("a method parameter that varies both ways", () => import("./a-method-parameter-that-varies-both-ways"));
+//// type-error-in-legacy-static-decorator/main.ts
+// The decorators of a method are evaluated with the class, also where nobody calls the method: a type error in one stops the build.
+const made = (option: unknown) => (target: unknown, key: unknown, descriptor?: unknown) => {};
+class Decorated {
+  @made((1 as number).first) static fixed() {}
+  @made((1 as number).second) method() {}
+}
+console.log(typeof Decorated);
+//// type-error-in-legacy-static-decorator/tsconfig.json
+////= lines-2	"../../tsconfig.json"	"experimentalDecorators"	true
+//// type-error-in-removed-code.ts
+// A type error in code that folding removes does not stop the build, and a `@ts-expect-error` there is not reported as unused.
+if (false) {
+  const a: number = "one";
+  // @ts-expect-error
+  const b: number = "two";
+  missing(a, b);
+}
+console.log("printed");
+//// type-error-in-uncalled-method-decorator.ts
+// A type error stops the build wherever it stands in code that runs. The decorators of a method are evaluated with the class, also where nobody calls the method.
+const plain = (value: unknown, context: unknown) => {};
+const made = (option: unknown) => (value: unknown, context: unknown) => {};
+class Decorated {
+  @made((1 as number).first) method() {}
+  @((1 as number).second, plain) static fixed() {}
+  @made((1 as number).third) get read() { return 1; }
+  @made((1 as number).fourth) set written(value: number) {}
+  @made((1 as number).fifth) async *steps() {}
+}
+console.log(typeof Decorated);
+//// type-error-with-decorators.ts
+// A type error stops the build in a file that has decorators as in any other: inside a function that runs, inside a method, in an argument.
+const plain = (value: unknown, context: unknown) => {};
+class Decorated {
+  @plain method() {
+    const inAMethod: number = "a method";
+    return inAMethod;
+  }
+}
+function called() {
+  const inAFunction: boolean = "a function";
+  return inAFunction;
+}
+const arrow = () => {
+  const inAnArrow: bigint = "an arrow";
+  return inAnArrow;
+};
+function takes(given: symbol) {
+  return given;
+}
+console.log(new Decorated().method(), called(), arrow(), takes("an argument"));
+//// type-names-pass-early-errors/main.ts
+// The early errors of ECMAScript are looked for in checked TypeScript too. An exported interface has no binding, and a constant may share its name with an imported type: both are valid TypeScript, and plain Bun drops the export and the import.
+import { Shape } from "./types";
+interface Point { x: number }
+export { Point };
+const Shape = { side: 2 };
+const held: Shape = { side: 3 };
+const point: Point = { x: 1 };
+console.log(point.x, Shape.side, held.side);
+//// type-names-pass-early-errors/types.ts
+export interface Shape { side: number }
+//// typed-functions-via-any-missing-arguments.ts
+// Typed functions are called through `any` with an argument missing, and a method is called with a `this` that is not an instance of its class: undefined passes every written type and `this` of a method is not tested, so nothing throws.
+class K { v = 1; constructor(public w = 2) {} m(a?: number, b?: number) { return [this?.v, a, b].join() } static s(x: number) { return x + 1 } }
+function usesThis(this: unknown, a: number) { return typeof this + a }
+function withProps(a: number) { return a * 2 }
+const table: any[] = [usesThis, withProps, K.s], names = ["usesThis()", "withProps()", "K.s()"]
+for (let i = 0; i < table.length; i++) {
+  const f = table[i]
+  try { f(); console.log(names[i] + ": no error") } catch (e) { console.log(names[i] + ":", e instanceof TypeError ? "TypeError" : "other " + e) }
+}
+const holder: any = { f: usesThis, g: new K().m, v: 9 }
+try { holder.g(1); console.log("another this: no error") } catch (e) { console.log("another this:", e instanceof TypeError ? "TypeError" : "other " + e) }
+//// typed-object-prototype-changes.ts
+// Typed code may change the prototype of a record.
+interface Plain { a: number }
+const plain: Plain = { a: 1 }
+const parent = { inherited: "yes", hello() { return "hi " + (this as any).a } }
+try { Object.setPrototypeOf(plain, parent); console.log("another prototype: no error") } catch (e) { console.log("another prototype:", e instanceof TypeError ? "TypeError" : "other " + e) }
+console.log((plain as any).inherited, typeof (plain as any).hello, plain.a, Object.getPrototypeOf(plain) === parent, Object.keys(plain).join())
+try { Object.setPrototypeOf(plain, null); console.log("no prototype: no error") } catch (e) { console.log("no prototype:", e instanceof TypeError ? "TypeError" : "other " + e) }
+console.log(Object.getPrototypeOf(plain) === Object.prototype, plain.a, "toString" in plain)
+//// typeof-json-parse-types-the-parameters.ts
+// A function expression under `typeof globalThis.JSON.parse` gets its parameter types from it.
+export const parse: typeof globalThis.JSON.parse = (text, reviver) => globalThis.JSON.parse(text, reviver);
+
+console.log(parse("[1]"));
+console.log(parse('{"a":1,"b":2}', (key, value) => (key === "a" ? undefined : value)));
+console.log((JSON.parse("[1,2]") as number[]).length);
+//// types-with-the-same-names-say-int32-in-one-file-and-number-in-another/fractions.ts
+type Point = { x: number; y: number };
+type Solid = { x: number; y: number; z: number };
+type Depth = { x?: number };
+type Named = { x: number; y: number; name: string };
+type Line = { from: Point; to?: Point };
+interface Box<Value> { value: Value }
+function sum(point: Point, solid: Solid, depth: Depth, named: Named, line: Line, box: Box<number>): number {
+  return point.x + point.y + solid.z + (depth.x ?? 0.25) + named.y + line.from.x + (line.to?.y ?? 0) + box.value;
+}
+export function fractions() {
+  let step = 0.5;
+  const counted: Depth = { get x() { return (step += 1); } };
+  return [sum({ x: 0.5, y: 1.5 }, { x: 1, y: 2, z: 2.5 }, { x: 0.125 }, { x: 1, y: 1e12, name: "n" }, { from: { x: -0, y: NaN } }, { value: 0.0625 }), counted.x, counted.x].join(" ");
+}
+//// types-with-the-same-names-say-int32-in-one-file-and-number-in-another/main.ts
+// Two files have types with the same names: in one the members are int32, in the other numbers. No object of the one is taken for the other, and each file reads what its own types say.
+import { fractions } from "./fractions.ts";
+import { wholeNumbers } from "./whole-numbers.ts";
+console.log(await wholeNumbers(), fractions());
+//// types-with-the-same-names-say-int32-in-one-file-and-number-in-another/whole-numbers.ts
+import type { int32 } from "bun";
+interface Point { x: int32; y: int32 }
+type Alias = { x: int32; y: int32 };
+interface Solid extends Point { z: int32 }
+interface Depth { x?: int32 }
+interface Line { from: Point; to?: Point }
+interface Fixed { readonly x: int32; readonly y: int32 }
+interface Nullable { x: int32 | undefined; y: int32 | null }
+interface Box<Value> { value: Value }
+interface Whole { value: int32 }
+class Holder { n: int32 = 0; constructor(point: Point) { this.n = point.x; } }
+function take(value: int32): int32 { return value; }
+function annotatedPattern(point: Point): int32 { const { x }: Point = point; return x; }
+function renamed(point: Point): int32 { const { y: other } = point; return other; }
+function parameterPattern({ x, y }: Point): int32 { return x > y ? x : y; }
+function withDefault(depth: Depth): int32 { const { x = 4 } = depth; return x; }
+function inLoop(list: Point[]): int32 { let last: int32 = 0; for (const { x } of list) last = x; return last; }
+function loopMember(list: Point[]): int32 { let last: int32 = 0; for (const point of list) last = point.y; return last; }
+function byKey(point: Point): int32 { return point["x"]; }
+function chained(point: Point | undefined): int32 { return point?.x ?? -1; }
+function asserted(point: Point | null): int32 { return point!.x; }
+function cast(point: unknown): int32 { return (point as Point).x; }
+function variable(point: Point): int32 { const value: int32 = point.x; return value; }
+function argument(point: Point): int32 { return take(point.y); }
+function defaulted(point: Point, value: int32 = point.x): int32 { return value; }
+function either(first: boolean, point: Point, other: Point): int32 { return first ? point.x : other.y; }
+function largest(point: Point): int32 { return Math.max(point.x, point.y); }
+function captured(point: Point): int32 { const read = (): int32 => point.x; return read(); }
+function alias(point: Alias): int32 { return point.x; }
+function heir(solid: Solid): int32 { return solid.x > 0 ? solid.z : solid.y; }
+function fixed(point: Fixed): int32 { return point.x; }
+function mapped(point: Readonly<Point>): int32 { return point.x; }
+function part(point: Partial<Point>): int32 { return point.x ?? 0; }
+function picked(point: Pick<Point, "x">): int32 { return point.x; }
+function both(point: Point & { name: string }): int32 { return point.y; }
+function deep(line: Line): int32 { return line.to?.x ?? line.from.y; }
+function nullable(point: Nullable): int32 { return point.x === undefined ? (point.y ?? -2) : point.x; }
+function keyed<Key extends keyof Point>(point: Point, key: Key): Point[Key] { return point[key]; }
+function open(box: Box<int32>): int32 { return box.value; }
+function whole(box: Whole): int32 { return box.value; }
+function inMap(points: Map<string, Point>): int32 { const point = points.get("k"); return point ? point.y : -1; }
+function* made(point: Point): Generator<int32> { yield point.x; yield point.y; }
+async function later(point: Point): Promise<int32> { return point.x; }
+function stored(point: Point, target: Point): void { target.x = point.y; target.y = point.x; }
+function literal(point: Point): Point { return { x: point.y, y: point.x }; }
+function spread(point: Point): Point { return { ...point }; }
+function compound(point: Point): int32 { point.x |= 1; point.y &= 6; return point.x; }
+function next(point: Point): int32 { point.x = (point.x + 1) | 0; point.y = point.x; return point.y; }
+function switched(point: Point): int32 { switch (point.x) { case 1: return point.y; default: return point.x; } }
+export async function wholeNumbers() {
+  const point: Point = { x: 1, y: 2 }, solid: Solid = { x: 3, y: 4, z: 5 }, target: Point = { x: 0, y: 0 };
+  stored(point, target);
+  return [
+    new Holder(point).n, annotatedPattern(point), renamed(point), parameterPattern(point), withDefault({}), withDefault({ x: 9 }), inLoop([point, solid]), loopMember([point, solid]),
+    byKey(point), chained(point), chained(undefined), asserted(point), cast(point), variable(point), argument(point), defaulted(point), either(true, point, solid), either(false, point, solid),
+    largest(point), captured(point), alias({ x: 6, y: 7 }), heir(solid), fixed(point), mapped(point), part({}), part(point), picked(point), both({ x: 1, y: 8, name: "n" }),
+    deep({ from: point }), deep({ from: point, to: solid }), nullable({ x: undefined, y: null }), nullable({ x: 5, y: 6 }), keyed(point, "y"), open({ value: 3 }), whole({ value: 4 }),
+    inMap(new Map([["k", { x: 1, y: 2 }]])), [...made(point)].join(), await later(point), target.x, target.y, literal(point).x, spread(point).y, compound(target), next(target), switched(point),
+  ].join(" ");
+}
+//// typescript-only-super-errors-after-ts-ignore.ts
+// TypeScript rejects these uses of `super` and `arguments`, JavaScript does not: below a `@ts-ignore` they build and run. Plain Bun refuses the last one, `arguments` in the parameters of a function that a field initializer creates, which the language allows: the output is stored.
+class Base { name = "base"; }
+class NoBase { describe() {
+  // @ts-ignore
+  return typeof super.toString;
+} }
+class InArrow extends Base {
+  // @ts-ignore
+  constructor() {
+    // @ts-ignore
+    const initialize = () => super();
+    initialize();
+  }
+}
+class InParameter extends Base {
+  // @ts-ignore
+  constructor(self = super()) {
+    console.log(typeof self);
+  }
+}
+class InNestedParameter {
+  // @ts-ignore
+  make = function (first = arguments.length) { return first; };
+}
+console.log(new NoBase().describe(), new InArrow().name, new InParameter().name, new InNestedParameter().make());
+//// undefined-bang-placeholders.ts
+// `undefined!` and `null!` as placeholders for a `number`, `boolean` or numeric enum: `x!` tests nothing, and undefined and null pass every written type and stay what they are.
+////= attempt
+enum Target { ES5, ES2015 }
+attempt("variable, number", () => { let position: number = undefined!; return position })
+attempt("variable, boolean", () => { let isStrict: boolean = undefined!; return isStrict })
+attempt("variable, enum", () => { let target: Target = undefined!; return target })
+attempt("variable, number, null", () => { let position: number = null!; return position })
+let position = 0, isStrict = true, target = Target.ES2015
+attempt("module variable cleared, number", () => { position = undefined! })
+attempt("module variable cleared, boolean", () => { isStrict = undefined! })
+attempt("module variable cleared, enum", () => { target = undefined! })
+console.log(position, isStrict, target)
+attempt("captured variable", () => { let pos: number = undefined!; return { get: () => pos, set: (p: number) => { pos = p } }.get() })
+class Binder { label: string = null!; count: number = undefined! }
+attempt("field of a class", () => Object.keys(new Binder()).join())
+interface Links { type: string; id: number }
+attempt("field of a literal", () => { const links: Links = { type: undefined!, id: undefined! }; return Object.keys(links).join() })
+function visit(depth: number = undefined!): string { return String(depth) }
+attempt("default of a parameter, taken", () => visit())
+attempt("default of a parameter, not taken", () => visit(1))
+// A type that names undefined takes it too.
+attempt("variable, number | undefined", () => { let position: number | undefined = undefined!; return position })
+//// undefined-into-number-variable.ts
+// `undefined` that reaches a variable of type `number` through `!`, an out-of-bounds element or `as number` passes and stays undefined.
+function attempt(label: string, f: () => unknown) { try { console.log(label + ": no error", String(f())) } catch (e) { console.log(label + ":", e instanceof TypeError ? "TypeError" : "other " + e) } }
+interface Box { inner?: { value: number } }
+const list: number[] = [1, 2], empty: Box = {}
+attempt("undefined! into a number", () => { let position: number = undefined!; return position })
+attempt("an element out of bounds into a number", () => { const n: number = list[5]; return n })
+attempt("a method called on (x?.y)!", () => (empty.inner?.value)!.toString())
+attempt("undefined through a written `as`", () => { const n: number = empty.inner?.value as number; return n })
+//// undefined-stored-via-untyped-ref.ts
+// Untyped code stores undefined to a required field of parsed JSON that typed code holds too. The store succeeds, and undefined passes the check at the next typed read, so the program prints what plain Bun prints.
+declare const console: { log(...values: unknown[]): void };
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name + ": " + e.message.split("\n")[0] : String(e))) } }
+function hide(v: unknown): any { return v }
+function parse(t: string): any { return JSON.parse(t) }
+interface Sub { v: number }
+interface Item { id: string; n: number; sub: Sub | null }
+const made: Item[] = [{ id: "m", n: 0.5, sub: { v: 1 } }, { id: "m", n: 1, sub: null }];
+function bump(x: Item): number { x.n += 1; return x.n }
+function kind(x: Item): string { return typeof x.n }
+row("(made by typed code)", () => bump(made[0]) + bump(made[1]));
+const text = '{"id":"s","n":7,"sub":null}';
+row("undefined stored to a required field by the untyped holder", () => { const held = parse(text); const t: Item = held; held.n = undefined; return kind(t) });
+//// under-allocation-pressure.ts
+// Under allocation pressure, fields of nodes in a long list are turned into accessors and nodes get another prototype: every change succeeds, no TypeError is counted, and typed code reads the nodes as they are then.
+interface Cell { id: number; weight: number; label: string; next?: Cell }
+function churn(n: number): number { let s = 0; for (let i = 0; i < n; i++) { const junk: Cell = { id: i, weight: i + 0.5, label: "junk" + (i & 7) }; s += junk.label.length + junk.id % 3 } return s }
+let list: Cell = { id: 0, weight: 0.25, label: "c0" }
+for (let i = 1; i < 20000; i++) list = { id: i, weight: i / 4, label: "c" + i, next: list }
+const sharedProto = { kindOf() { return "patched" } }
+let index = 0, accessors = 0, prototypes = 0, others = 0
+for (let c: Cell | undefined = list; c; c = c.next, index++) {
+  if (index % 13 === 0) { const kept = { v: c.weight }; try { Object.defineProperty(c, "weight", { get() { return kept.v }, enumerable: true, configurable: true }); others++ } catch (e) { if (e instanceof TypeError) accessors++; else others++ } }
+  if (index % 17 === 0) try { Object.setPrototypeOf(c, sharedProto); others++ } catch (e) { if (e instanceof TypeError) prototypes++; else others++ }
+  if (index % 1000 === 0) churn(5000)
+}
+churn(100000)
+let n = 0, weights = 0, patched = 0
+for (let c: Cell | undefined = list; c; c = c.next) { n++; weights += c.weight; if ("kindOf" in c) patched++ }
+console.log("field made an accessor: TypeError", accessors, "another prototype: TypeError", prototypes, "anything else", others)
+console.log(n, weights, patched)
+//// undiscriminated-unions.ts
+// An object that a class's constructor did not create passes for the class type: `Object.create(C.prototype) as C` is used as a C, by typed and by untyped code.
+class Feline { lives = 9; sound() { return "meow" } }
+function tell(c: Feline): string { return c.sound() + c.lives }
+try { const made = Object.create(Feline.prototype) as Feline; made.lives = 1; console.log(tell(made)); console.log("Object.create(C.prototype) as C: no error") } catch (e) { console.log("Object.create(C.prototype) as C:", e instanceof TypeError ? "TypeError" : "other " + e) }
+const loose: any = Object.create(Feline.prototype)
+loose.lives = 1
+console.log(loose instanceof Feline, loose.lives)
+try { console.log(loose.sound()); console.log("a method that does not look at `this`, called by untyped code: no error") } catch (e) { console.log("a method that does not look at `this`, called by untyped code:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { console.log(tell(loose)); console.log("passed where a C is wanted: no error") } catch (e) { console.log("passed where a C is wanted:", e instanceof TypeError ? "TypeError" : "other " + e) }
+//// uninitialized-fields.ts
+// A field declared `number` or `boolean` is read before anything was assigned to it: it reads undefined, which passes every written type and stays undefined.
+function kind(v: unknown): string { return v === undefined ? "undefined" : v === null ? "null" : typeof v }
+function plusOne(n: number): number { return n + 1 }
+function withDefault(n: number = 42): number { return n }
+class Promised {
+  count!: number; label!: string; flag!: boolean; next!: Promised
+  init() { this.count = 5; this.label = "l"; this.flag = false; this.next = this; return this }
+  total() { return this.count * 2 }
+}
+const bare = new Promised()
+try { console.log(bare.count); console.log("number, printed: no error") } catch (e) { console.log("number, printed:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { console.log(bare.flag); console.log("boolean, printed: no error") } catch (e) { console.log("boolean, printed:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { kind(bare.count); console.log("number, to unknown: no error") } catch (e) { console.log("number, to unknown:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { bare.total(); console.log("number, in a method: no error") } catch (e) { console.log("number, in a method:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { console.log(bare.count + 1); console.log("number, added to: no error") } catch (e) { console.log("number, added to:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { console.log(bare.count > 0); console.log("number, compared: no error") } catch (e) { console.log("number, compared:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { console.log(bare.count == null); console.log("number == null: no error") } catch (e) { console.log("number == null:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { console.log(bare.count === undefined); console.log("number === undefined: no error") } catch (e) { console.log("number === undefined:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { console.log(typeof bare.count); console.log("typeof number: no error") } catch (e) { console.log("typeof number:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { console.log(bare.count ?? "none"); console.log("number ?? x: no error") } catch (e) { console.log("number ?? x:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { console.log(bare.count || 7); console.log("number || x: no error") } catch (e) { console.log("number || x:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { console.log(bare.flag === false); console.log("boolean === false: no error") } catch (e) { console.log("boolean === false:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { console.log(bare.flag ? "yes" : "no"); console.log("boolean, tested: no error") } catch (e) { console.log("boolean, tested:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { console.log(bare.flag ?? "none"); console.log("boolean ?? x: no error") } catch (e) { console.log("boolean ?? x:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { plusOne(bare.count); console.log("number, as an argument: no error") } catch (e) { console.log("number, as an argument:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { withDefault(bare.count); console.log("number, as an argument with a default: no error") } catch (e) { console.log("number, as an argument with a default:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { const c: number | undefined = bare.count; console.log(c); console.log("number, to number | undefined: no error") } catch (e) { console.log("number, to number | undefined:", e instanceof TypeError ? "TypeError" : "other " + e) }
+// Untyped code and reflection see what ECMAScript sees.
+console.log((bare as any).count, (bare as any).flag, JSON.stringify(bare), Object.keys(bare).join(), "count" in bare)
+
+// The constructor reads its own fields before it stores them.
+class Early {
+  n: number; b: boolean; seen = ""
+  constructor(which: number) {
+    const me: Early = this
+    if (which === 0) this.seen = kind(me.n)
+    if (which === 1) this.seen = me.b ? "yes" : "no"
+    this.n = 1; this.b = true
+  }
+}
+try { new Early(0); console.log("own number in the constructor: no error") } catch (e) { console.log("own number in the constructor:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { new Early(1); console.log("own boolean in the constructor: no error") } catch (e) { console.log("own boolean in the constructor:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { console.log(new Early(2).n); console.log("neither: no error") } catch (e) { console.log("neither:", e instanceof TypeError ? "TypeError" : "other " + e) }
+
+// The base constructor calls a method of the derived class, whose initializers have not run. ECMAScript: NaN.
+class Shape0 { area: number; constructor() { this.area = this.compute() } compute(): number { return 0 } }
+class Square0 extends Shape0 { side = 3; unit = "cm"; compute() { return this.side * this.side } text() { return this.area + this.unit } }
+try { new Square0(); console.log("initializer that has not run: no error") } catch (e) { console.log("initializer that has not run:", e instanceof TypeError ? "TypeError" : "other " + e) }
+
+// What was read too early is stored in typed fields and arrays: undefined passes there too.
+interface Sink { n: number; b: boolean }
+class Leaky {
+  value: number; on: boolean
+  constructor(out: Sink, list: number[], which: number) {
+    const me: Leaky = this
+    if (which === 0) out.n = me.value
+    if (which === 1) out.b = me.on
+    if (which === 2) list.push(me.value)
+    if (which === 3) list[3] = me.value
+    this.value = 7; this.on = true
+  }
+}
+const sink: Sink = { n: 0, b: false }
+const numbers: number[] = [1.5]
+for (let which = 0; which < 4; which++) try { new Leaky(sink, numbers, which); console.log("stored on " + which + ": no error") } catch (e) { console.log("stored on " + which + ":", e instanceof TypeError ? "TypeError" : "other " + e) }
+console.log(JSON.stringify(sink), JSON.stringify(numbers))
+
+// Some paths assign, some do not. `this.x = this.x ?? -5` is how a field is given its default late.
+class Sometimes {
+  x!: number; y!: number
+  constructor(mode: number) { if (mode > 0) this.x = mode; if (mode > 1) this.y = mode * 2; if (mode < 0) { this.y = -1; return } this.x = this.x ?? -5 }
+  sum() { return this.x + this.y }
+}
+for (const mode of [-1, 0, 1, 2]) try { console.log(JSON.stringify(new Sometimes(mode))); console.log("made with " + mode + ": no error") } catch (e) { console.log("made with " + mode + ":", e instanceof TypeError ? "TypeError" : "other " + e) }
+for (const mode of [-1, 1, 2]) try { console.log(new Sometimes(mode).sum()); console.log("summed with " + mode + ": no error") } catch (e) { console.log("summed with " + mode + ":", e instanceof TypeError ? "TypeError" : "other " + e) }
+
+// Many objects, half of them initialized, one site.
+const half: Promised[] = []
+for (let i = 0; i < 10; i++) half.push(i % 2 ? new Promised().init() : new Promised())
+let known = 0, missing = 0, refused = 0
+for (const p of half) try { if (p.count === undefined) missing++; else known += p.count } catch (e) { if (e instanceof TypeError) refused++ }
+console.log(known, missing, refused)
+//// uninitialized-number-variable/main.ts
+// A variable declared `number` without an initializer holds `undefined`: a read gives undefined, which passes a result of type `number`.
+function attempt(f: () => unknown): string { try { return String(f()) } catch (e) { return (e as Error).constructor.name } }
+function cases(x: number): string {
+  switch (x) {
+    case 0: let c: number; const r = (): number => c; return String(r())
+    case 1: return attempt(() => c)
+    default: c = x; return String(c)
+  }
+}
+try { console.log(cases(0)); console.log("number read before it is assigned, as the result of a function: no error") } catch (e) { console.log("number read before it is assigned, as the result of a function:", e instanceof TypeError ? "TypeError" : "other " + e) }
+// The dead zone stays exact.
+console.log(cases(1), attempt(() => cases(2)))
+// A reference may be null or undefined: exact.
+function references(late: boolean): string { let s: string; const r = (): string => s; if (late) s = "late"; return String(r()) }
+console.log(references(false), references(true))
+//// uninitialized-variables/main.ts
+// A variable declared `number` or `boolean` without an initializer holds `undefined` until something is stored: a read yields it, and it passes where it enters a place declared `number` or `boolean`.
+function kind(v: unknown): string { return v === undefined ? "undefined" : v === null ? "null" : typeof v }
+function double(n: number): number { return n * 2 }
+function orTen(n: number = 10): number { return n }
+
+// A closure reads the variable before the assignment.
+function closures(which: number): string {
+  let n: number, b: boolean
+  const reads: (() => unknown)[] = [() => kind(n), () => kind(b), () => double(n), () => b ? 1 : 0, () => orTen(n), () => n + 1, () => n === undefined]
+  const before = String(reads[which]())
+  n = 2; b = true
+  return before
+}
+for (let which = 0; which < 7; which++) try { closures(which); console.log("closure " + which + ": no error") } catch (e) { console.log("closure " + which + ":", e instanceof TypeError ? "TypeError" : "other " + e) }
+
+// `let x!: T` tests nothing, as `x!` does: a read while nothing has been stored yields undefined.
+let moduleCount!: number
+try { console.log(moduleCount); console.log("let x!: no error") } catch (e) { console.log("let x!:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { console.log(moduleCount + 1); console.log("let x!, added to: no error") } catch (e) { console.log("let x!, added to:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { console.log(orTen(moduleCount)); console.log("let x!, as an argument with a default: no error") } catch (e) { console.log("let x!, as an argument with a default:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { console.log(moduleCount ?? "none"); console.log("let x! ?? y: no error") } catch (e) { console.log("let x! ?? y:", e instanceof TypeError ? "TypeError" : "other " + e) }
+moduleCount = 3
+console.log(moduleCount + 1)
+
+// A module variable read by a function that is called after the initializer-less `let` has run and before the first store.
+function readLater(): string { return kind(later) + ":" + (later + 1) }
+let later: number
+try { console.log(readLater()); console.log("let without initializer: no error") } catch (e) { console.log("let without initializer:", e instanceof TypeError ? "TypeError" : "other " + e) }
+later = 4
+console.log(readLater())
+
+// `var` is undefined from the start of its function.
+function hoisted(flag: boolean, early: boolean): string {
+  const get = () => v
+  const first = early ? kind(get()) : "skipped"
+  if (flag) { var v: number = 6 }
+  return first + "," + double(get())
+}
+try { console.log(hoisted(true, true)); console.log("var, before: no error") } catch (e) { console.log("var, before:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { console.log(hoisted(true, false)); console.log("var, after: no error") } catch (e) { console.log("var, after:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { console.log(hoisted(false, false)); console.log("var, never stored: no error") } catch (e) { console.log("var, never stored:", e instanceof TypeError ? "TypeError" : "other " + e) }
+
+// Each turn of a loop starts a fresh, unassigned variable.
+function loop(): string {
+  const readers: (() => string)[] = []
+  for (let i = 0; i < 4; i++) {
+    let seen: number
+    readers.push(() => kind(seen) + (seen + i))
+    if (i % 2) seen = i * 10
+  }
+  return readers.map(r => { try { return r() } catch (e) { return e instanceof TypeError ? "TypeError" : "other " + e } }).join()
+}
+console.log(loop())
+
+// Only some paths assign.
+interface Acc { total: number; text: string }
+function paths(mode: number): string {
+  let n: number, s: string
+  const get = (): Acc => ({ total: n, text: s })
+  if (mode > 0) n = mode
+  if (mode > 1) s = "m" + mode
+  return JSON.stringify(get())
+}
+for (const mode of [0, 1, 2]) try { console.log(paths(mode)); console.log("path " + mode + ": no error") } catch (e) { console.log("path " + mode + ":", e instanceof TypeError ? "TypeError" : "other " + e) }
+
+// switch cases share one scope; try and finally.
+function cases(): string {
+  switch (0 as number) {
+    case 0: let c: number; const r = () => kind(c); return r()
+    default: c = 1; return String(c)
+  }
+}
+try { console.log(cases()); console.log("let in a case: no error") } catch (e) { console.log("let in a case:", e instanceof TypeError ? "TypeError" : "other " + e) }
+function tried(fail: boolean): string {
+  let got: number
+  const read = () => kind(got) + double(got)
+  try { if (fail) throw new RangeError("x"); got = 1 } catch { return "caught " + read() }
+  return read()
+}
+try { console.log(tried(false)); console.log("stored in try: no error") } catch (e) { console.log("stored in try:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { console.log(tried(true)); console.log("try left early: no error") } catch (e) { console.log("try left early:", e instanceof TypeError ? "TypeError" : "other " + e) }
+
+// a missing element enters a place for a number.
+try { const [d0, d1]: number[] = [1]; console.log(d0, d1); console.log("array pattern: no error") } catch (e) { console.log("array pattern:", e instanceof TypeError ? "TypeError" : "other " + e) }
+//// unions-passed-as-any.ts
+// A value of a union with a record in it is passed on `as any` to a parameter whose union has another record in it. The members of the unions that are no records pass as they are.
+interface Container { fn: number }
+function on(handler: string | Container): string { return typeof handler === "string" ? "string " + handler : "container " + handler.fn }
+function onError(options: { as: string } | string): string { return on(options as any) }
+function onErrorThroughVariable(options: { as: string } | string): string { const loose: any = options; return on(loose) }
+console.log(onError("text"), "|", onErrorThroughVariable("text"))
+interface Hook { fn: Function; scope?: string }
+function onHook(handler: Function | Hook | (Function | Hook)[]): string { return Array.isArray(handler) ? "array " + handler.length : typeof handler === "function" ? "function " + handler() : "hook " + handler.fn() }
+function onFunction(options: { as: string } | Function | Function[]): string { return onHook(options as any) }
+console.log(onFunction(() => 1.5), "|", onFunction([() => 1, () => 2]))
+interface Sized { size: number }
+function measure(value: number | boolean | null | undefined | Sized): string { return value === null ? "null" : typeof value === "object" ? "sized " + value.size : String(value) }
+function pass(value: { name: string } | number | boolean | null | undefined): string { return measure(value as any) }
+console.log(pass(2.5), pass(true), pass(null), pass(undefined))
+interface System { read(): string }
+interface Host { write(text: string): string }
+const system: System = { read: () => "read" }
+const host: Host = system as any
+;(host as any).write = (text: string) => "wrote " + text
+console.log(host.write("x"), system.read(), (host as unknown) === system)
+function both(value: { as: string } | string): string { const container: string | Container = value as any; if (typeof container !== "string") { (container as any).fn = 3.5; return "container " + container.fn + " " + (value as { as: string }).as } return container }
+console.log(both("plain"), "|", both({ as: "local" }))
+//// unknown-values-into-typed-slots.ts
+// Values whose type is not known enter places whose type is written down: in functions of one line and in large ones, called directly and as values,
+// with numbers, strings and objects alive around the place. What fits goes on unchanged, what does not is a TypeError, and nothing else is disturbed.
+type Point = { x: number; y: number };
+type Named = { name: string };
+type Open = { tag: string; size?: number };
+class Animal { legs = 4; }
+class Dog extends Animal { sound = "woof"; }
+class Stone { weight = 9; }
+
+function hide(value: unknown): any { return value; }
+function show(value: unknown): string {
+    if (value === undefined) return "undefined";
+    if (value === null) return "null";
+    if (typeof value === "function") return "function";
+    if (Array.isArray(value)) return "array(" + value.length + ")";
+    if (value instanceof Map) return "map(" + value.size + ")";
+    if (typeof value === "object") return "object(" + Object.keys(value as object).join() + ")";
+    return typeof value + " " + String(value);
+}
+
+function toText(v: any): string { const t: string = v; return t; }
+function toTextOrNothing(v: any): string | undefined { const t: string | undefined = v; return t; }
+function toPoint(v: any): Point { const t: Point = v; return t; }
+function toPointOrNothing(v: any): Point | undefined { const t: Point | undefined = v; return t; }
+function toPointOrNamed(v: any): Point | Named { const t: Point | Named = v; return t; }
+function toAnimal(v: any): Animal { const t: Animal = v; return t; }
+function toDog(v: any): Dog | null { const t: Dog | null = v; return t; }
+function toOpen(v: any): Open { const t: Open = v; return t; }
+function toList(v: any): number[] { const t: number[] = v; return t; }
+function toMap(v: any): Map<string, number> | undefined { const t: Map<string, number> | undefined = v; return t; }
+function toCallback(v: any): (() => number) | undefined { const t: (() => number) | undefined = v; return t; }
+function toObject(v: any): object { const t: object = v; return t; }
+function toTextOrNumber(v: any): string | number { const t: string | number = v; return t; }
+function toTextOrFlag(v: any): string | boolean | undefined { const t: string | boolean | undefined = v; return t; }
+function toTextOrPoint(v: any): string | Point | null { const t: string | Point | null = v; return t; }
+
+const point: Point = { x: 1, y: 2 };
+const named: Named = { name: "n" };
+const marked: number[] = [1, 2, 3];
+(marked as any).note = "an array with a property of its own";
+class Numbers extends Array<number> {}
+const heir = new Numbers();
+heir.push(7);
+
+const values: [string, any][] = [
+    ["text", hide("s")], ["long text", hide("ab".repeat(3) + String(point.x))], ["undefined", hide(undefined)], ["null", hide(null)],
+    ["integer", hide(3)], ["fraction", hide(1.5)], ["true", hide(true)], ["false", hide(false)],
+    ["point", hide(point)], ["named", hide(named)], ["animal", hide(new Animal())], ["dog", hide(new Dog())], ["stone", hide(new Stone())],
+    ["list", hide([4, 5])], ["marked list", hide(marked)], ["heir of Array", hide(heir)], ["map", hide(new Map([["k", 1]]))],
+    ["callback", hide(() => 5)], ["method", hide(Math.max)], ["class", hide(Stone)], ["symbol", hide(Symbol.iterator)], ["big integer", hide(10n)],
+    ["parsed", hide(JSON.parse('{"tag":"t","size":2}'))],
+];
+const places: [string, (v: any) => unknown][] = [
+    ["string", toText], ["string?", toTextOrNothing], ["Point", toPoint], ["Point?", toPointOrNothing], ["Point | Named", toPointOrNamed],
+    ["Animal", toAnimal], ["Dog | null", toDog], ["Open", toOpen], ["number[]", toList], ["Map?", toMap], ["callback?", toCallback],
+    ["object", toObject], ["string | number", toTextOrNumber], ["string | boolean?", toTextOrFlag], ["string | Point | null", toTextOrPoint],
+];
+for (const [place, enter] of places) {
+    const passed: string[] = [];
+    let refused = 0;
+    for (const [name, value] of values) {
+        try {
+            const held = enter(value);
+            passed.push(held === value ? name : name + " (another: " + show(held) + ")");
+        } catch (error) {
+            if (!(error instanceof TypeError)) throw error;
+            refused++;
+        }
+    }
+    console.log(place + ": " + passed.join(", ") + " | refused " + refused);
+}
+
+// Much is alive around the place: all of it is there afterwards, whichever way the value went.
+function amidMuch(v: any, a: number, b: number, c: number, d: number, s: string, t: string, list: number[]): string {
+    const p = a * 1.5, q = b * 2.5, r = c + d, u = a - d, w = s + t, x = b * c, y = a / 4, z = d % 7, n = list.length, m = list[0] + a;
+    const held: Point | undefined = v;
+    const e = p + q, f = r * u, g = x - y;
+    const text: string | undefined = hide(held ? w : undefined);
+    const again: number[] | undefined = hide(held ? list : undefined);
+    return [p, q, r, u, w, x, y, z, n, m, e, f, g, held ? held.x + held.y : "nothing", text, again ? again.length : -1].join(" ");
+}
+console.log(amidMuch(point, 1, 2, 3, 4, "s", "t", [9, 8]));
+console.log(amidMuch(undefined, 5, 6, 7, 8, "u", "v", [7]));
+console.log(amidMuch(null, 1.25, 2.5, 3.75, 4.5, "w", "x", marked));
+for (const wrong of [hide(1), hide("text"), hide(named), hide([1]), hide(true)]) {
+    try {
+        console.log(amidMuch(wrong, 1, 2, 3, 4, "s", "t", [1]));
+    } catch (error) {
+        console.log("refused: " + (error instanceof TypeError));
+    }
+}
+
+// Often, so that each way is gone many times, and what is made meanwhile is collected.
+let sum = 0;
+const mixed: any[] = [point, undefined, { x: 3, y: 4 } as Point, null, point];
+for (let i = 0; i < 200000; i++) {
+    const held = toPointOrNothing(mixed[i % mixed.length]);
+    if (held) sum += held.x + held.y;
+    const text = toTextOrNothing(i % 3 ? "t" + (i & 7) : undefined);
+    if (text) sum += text.length;
+    const list = toList(i % 5 ? marked : heir);
+    sum += list.length;
+}
+console.log(sum);
+
+// As values: the parameters are places too.
+function area(p: Point, scale: number, label: string | undefined, extra: number[] | undefined): string {
+    return (p.x * p.y * scale) + (label ?? "-") + (extra ? extra.length : 0);
+}
+const called: any = hide(area);
+console.log(called(point, 2, "a", [1]), called(point, 0.5, undefined, undefined), called({ x: 5, y: 6 } as Point, 1, "b", marked));
+for (const wrong of [[1, 1, "a", []], [point, "1", "a", []], [point, 1, 2, []], [point, 1, "a", {}], [undefined, 1, "a", []]]) {
+    try {
+        console.log(called(...wrong));
+    } catch (error) {
+        console.log("refused: " + (error instanceof TypeError));
+    }
+}
+//// unknown-values-into-typed-slots-in-try.ts
+// Values whose type is not known enter typed places inside `try`: what does not fit is caught in the same function, and everything that was alive at the place is there in the handler.
+type Point = { x: number; y: number };
+function hide(value: unknown): any { return value; }
+const point: Point = { x: 1, y: 2 };
+
+function guarded(v: any, a: number, b: number, s: string, list: number[]): string {
+    const p = a * 1.5, q = b + 0.25, w = s + "!", n = list.length, r = a - b, t = a * b;
+    let state = "before";
+    try {
+        const text: string | undefined = v;
+        state = "text " + (text ? text.length : "none");
+        const numbers: number[] = hide(text && text.length > 2 ? [1, 2] : text);
+        state += ", numbers " + (numbers ? numbers.length : "none");
+        const held: Point = hide(numbers ? point : 7);
+        state += ", point " + (held.x + held.y);
+    } catch (error) {
+        return [state, "caught", error instanceof TypeError, p, q, w, n, r, t].join(" ");
+    }
+    return [state, p, q, w, n, r, t].join(" ");
+}
+for (const value of [hide("long text"), hide("ab"), hide(undefined), hide(null), hide(5), hide(point), hide([1]), hide(true)])
+    console.log(guarded(value, 2, 3, "s", [1, 2, 3]));
+
+function nested(v: any, u: any): string {
+    const trail: string[] = [];
+    try {
+        try {
+            const first: Map<string, number> | undefined = v;
+            trail.push("first " + (first ? first.size : "none"));
+        } catch {
+            trail.push("inner caught");
+        } finally {
+            trail.push("inner finally");
+        }
+        const second: () => number = u;
+        trail.push("second " + second());
+    } catch {
+        trail.push("outer caught");
+    } finally {
+        trail.push("outer finally");
+    }
+    return trail.join(", ");
+}
+console.log(nested(new Map([["a", 1]]), () => 4));
+console.log(nested(undefined, () => 5));
+console.log(nested("no map", () => 6));
+console.log(nested(new Map(), "no function"));
+console.log(nested(1, 2));
+
+function counted(values: any[]): string {
+    let held = 0, refused = 0, sum = 0.5;
+    for (let i = 0; i < values.length; i++) {
+        const weight = i * 0.5;
+        try {
+            const text: string = values[i];
+            held += text ? text.length : 0;
+            sum += weight;
+        } catch {
+            refused++;
+            sum -= weight;
+        }
+    }
+    return held + " " + refused + " " + sum;
+}
+const many: any[] = [];
+for (let i = 0; i < 30000; i++) many.push(i % 7 === 0 ? i : i % 5 === 0 ? undefined : "t" + (i & 3));
+console.log(counted(many));
+
+async function awaited(v: any): Promise<string> {
+    const before = 1.5;
+    try {
+        const first: string = await v;
+        const second: number[] = hide(first === "list" ? [1, 2, 3] : first);
+        return "held " + second.length + " " + before;
+    } catch (error) {
+        return "caught " + (error instanceof TypeError) + " " + before;
+    }
+}
+console.log(await awaited("list"), "|", await awaited("text"), "|", await awaited(Promise.resolve(3)), "|", await awaited(Promise.resolve("list")));
+//// unreachable-const-enum-in-loose-package/inner/late.ts
+export function first(): number { return 1; const enum Late { A } }
+//// unreachable-const-enum-in-loose-package/inner/tsconfig.json
+////= lines-2	"../tsconfig.json"	"isolatedModules"	false
+//// unreachable-const-enum-in-loose-package/main.ts
+// A package whose own tsconfig.json turns isolatedModules off erases its const enums, so a const enum after a return is not unreachable code there, whatever the program's tsconfig.json says.
+import { first } from "./inner/late.ts";
+console.log(first());
+//// unreachable-const-enum-in-loose-package/tsconfig.json
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "allowUnreachableCode": false,
+    "isolatedModules": true
+  }
+}
+//// unreachable-const-enum-in-strict-package/inner/late.ts
+export function first(): number { return 1; const enum Late { A } }
+//// unreachable-const-enum-in-strict-package/inner/tsconfig.json
+////= lines-2	"../tsconfig.json"	"isolatedModules"	true
+//// unreachable-const-enum-in-strict-package/main.ts
+// isolatedModules in a package's own tsconfig.json preserves the package's const enums, so a const enum after a return is unreachable code there.
+import { first } from "./inner/late.ts";
+console.log(first());
+//// unreachable-const-enum-in-strict-package/tsconfig.json
+////= lines-2	"../../tsconfig.json"	"allowUnreachableCode"	false
+//// untyped-store-of-another-kind-then-typed-read.ts
+// A store from untyped code that does not fit the declared type of a field succeeds, as in plain Bun. Untyped code reads the value back, and a typed read of the field throws a TypeError.
+interface Rec { n: number; s: string }
+function poke(target: any, key: string, value: unknown) { target[key] = value }
+function peek(target: any, key: string): unknown { return target[key] }
+const r: Rec = { n: 1, s: "s" }
+try { poke(r, "n", "text"); console.log("a string stored to a number field: no error") } catch (e) { console.log("a string stored to a number field:", e instanceof TypeError ? "TypeError" : "other " + e) }
+console.log((r as any).n, peek(r, "n"))
+try { console.log(r.n); console.log("a typed read of the field: no error") } catch (e) { console.log("a typed read of the field:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { poke(r, "n", () => 7); console.log("a function stored to a number field: no error") } catch (e) { console.log("a function stored to a number field:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { console.log((r as any).n()); console.log("the stored function called: no error") } catch (e) { console.log("the stored function called:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { console.log(Reflect.set(r, "n", "text")); console.log("the same by Reflect.set: no error") } catch (e) { console.log("the same by Reflect.set:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { const source: any = { s: 5 }; Object.assign(r, source); console.log("the same by Object.assign: no error") } catch (e) { console.log("the same by Object.assign:", e instanceof TypeError ? "TypeError" : "other " + e) }
+// undefined passes every written type, so a typed read gives it back.
+poke(r, "n", 2.5); poke(r, "s", undefined)
+console.log(r.n, r.s)
+try { poke(r, "n", undefined); console.log("undefined stored to a number field: no error") } catch (e) { console.log("undefined stored to a number field:", e instanceof TypeError ? "TypeError" : "other " + e) }
+console.log(r.n, Object.keys(r).join())
+interface Narrow { m: number; t: string }
+interface Loose { m: number | string }
+const narrow: Narrow = { m: 1, t: "t" }
+const loose: Loose = narrow
+try { poke(narrow, "m", "text"); console.log("a string stored to a number field whose slot is for number | string: no error") } catch (e) { console.log("a string stored to a number field whose slot is for number | string:", e instanceof TypeError ? "TypeError" : "other " + e) }
+console.log(loose.m, peek(narrow, "m"))
+try { console.log(narrow.m); console.log("read through the view that says number: no error") } catch (e) { console.log("read through the view that says number:", e instanceof TypeError ? "TypeError" : "other " + e) }
+//// untyped-stores-into-typed-fields.ts
+// Untyped code stores a value of the wrong kind into a typed field, in five ways: each store succeeds. The typed read that follows throws a TypeError for another kind; null, undefined and, for an object type, any object pass.
+interface Gauge { n: number; s: string; b: boolean; o: { v: number }; f: () => string; opt?: number; list: number[] }
+function make(): Gauge { return { n: 1, s: "s", b: true, o: { v: 1 }, f: () => "f", list: [1] } }
+function all(g: Gauge): string { return [g.n + 1, g.s + "!", !g.b, g.o.v, g.f(), String(g.opt), g.list.length, Object.keys(g).join("")].join("") }
+function put(g: object, k: string, w: unknown, way: number): void {
+  const loose: any = g
+  if (way % 5 === 0) loose[k] = w
+  else if (way % 5 === 1) Reflect.set(g, k, w)
+  else if (way % 5 === 2) Object.assign(g, { [k]: w })
+  else if (way % 5 === 3) Object.defineProperty(g, k, { value: w, writable: true, enumerable: true, configurable: true })
+  else for (const [name, value] of Object.entries({ [k]: w })) loose[name] = value
+}
+const wrong: Record<string, unknown[]> = {
+  n: ["x", true, null, undefined, { z: 1 }, [1], () => 1, Symbol("y"), 10n],
+  s: [1, false, { z: 1 }, 2.5, Symbol("y")],
+  b: [0, "", null, "true", 1, undefined],
+  o: [5, "obj", true, [1], () => 1],
+  f: [1, "f", { call: 1 }, [1]],
+  opt: ["x", null, false, { z: 1 }],
+  list: [1, "list", true, { length: 1 }, () => 1],
+}
+const untouched = all(make())
+let way = 0
+for (const k of Object.keys(wrong)) {
+  const line: string[] = []
+  for (const w of wrong[k]) for (let turn = 0; turn < 5; turn++) {
+    const g = make()
+    try { put(g, k, w, way++); line.push("no error") } catch (e) { line.push(e instanceof TypeError ? "T" : "other " + e) }
+    try { if (all(g) !== untouched) line.push("changed: " + all(g)) } catch (e) { line.push("threw") }
+  }
+  console.log(k + ":", line.join(""))
+}
+// A class.
+class Ticker { n = 0; label = "t"; inc(): number { return ++this.n } tag(): string { return this.label + "#" } }
+const ticker = new Ticker()
+try { put(ticker, "n", "5", 0); console.log("a string for the number of an instance: no error") } catch (e) { console.log("a string for the number of an instance:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { console.log(ticker.inc(), JSON.stringify(ticker)) } catch (e) { console.log("line 37:", e instanceof TypeError ? "TypeError" : "other " + e) }
+//// unused-name-beside-removed-code/main.ts
+// A name that is unused in the source is still reported when the build removes code beside it.
+const WINDOWS_PATH = /^[a-zA-Z]:/;
+const neverRead = 1;
+function isAbsolute(path: string): boolean {
+  if (process.platform === "win32") return WINDOWS_PATH.test(path);
+  return path.startsWith("/");
+}
+console.log(isAbsolute("/a"));
+//// unused-name-beside-removed-code/tsconfig.json
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true
+  }
+}
+//// unused-parameter-tested-on-entry.ts
+// A parameter with a written type is tested on entry, whether or not the body uses it. Each function is called as a function value with a string for `a: number`: every call throws a TypeError, also where the parameter is never read, only assigned, or has a default. The neighbors below have no written type to test: a parameter typed by its context, `any`, `unknown`, a type parameter, a type taken from a default. They return as in plain Bun.
+const wrong: any = "wrong";
+const row = (name: string, f: () => unknown) => { try { const result = f(); console.log(name, typeof result === "function" ? "function" : String(result)); } catch (e) { console.log(name, "throws", (e as Error).constructor.name); } };
+function ignores(a: number): number { return 1; }
+function reads(a: number): number { return a; }
+function passesOn(a: number): number { return ignores(a); }
+function usesArguments(a: number): number { return arguments.length; }
+function readsArguments(a: number): unknown { return arguments[0]; }
+function hasRest(a: number, ...rest: number[]): number { return rest.length; }
+function defaultReadsIt(a: number, b: number = a): number { return 2; }
+function hasDefault(a: number = 5): number { return 3; }
+function destructures({ x }: { x: number }): number { return 4; }
+function captures(a: number): () => number { return () => a; }
+function capturesUnused(a: number): () => number { return () => 5; }
+function typeofOnly(a: number): string { return typeof a; }
+function assignsOnly(a: number): number { a = 6; return a; }
+const typedByContext: (a: number) => number = a => 7;
+function declaredAny(a: any): number { return 8; }
+function declaredUnknown(a: unknown): number { return 9; }
+function generic<T>(a: T): number { return 10; }
+function constrained<T extends number>(a: T): number { return 11; }
+function typedByDefault(a = 5): number { return 12; }
+const table: Record<string, Function> = { ignores, reads, passesOn, usesArguments, readsArguments, hasRest, defaultReadsIt, hasDefault, destructures, captures, capturesUnused, typeofOnly, assignsOnly, typedByContext, declaredAny, declaredUnknown, generic, constrained, typedByDefault };
+for (const name of Object.keys(table)) row(name, () => table[name](wrong));
+//// uses-of-a-sum-of-two-missing-strings.ts
+// What is done with a sum that TypeScript calls a string and that is NaN at run time does what it does in plain Bun, wherever no annotation says string.
+const none: string[] = [];
+const some: string[] = ["a", "b"];
+function show(name: string, f: () => unknown) { try { console.log(name, String(f())); } catch (e) { console.log(name, "threw", (e as Error).constructor.name); } }
+
+function lengthOf(list: string[], i: number) { return (list[i] + list[i + 1]).length; }
+function lengthOfEither(list: string[], i: number, c: boolean) { return (c ? list[i] + list[i + 1] : "x").length; }
+function lengthOfConstant(list: string[], i: number) { const s = list[i] + list[i + 1]; return s.length; }
+function lengthOfVariable(list: string[], i: number, c: boolean) { let s = "x"; if (c) s = list[i] + list[i + 1]; return s.length; }
+function lengthAfterAppend(list: string[], i: number) { let s = list[i]; s += list[i + 1]; return s.length; }
+function lengthOrElse(list: string[], i: number) { return (list[i] + list[i + 1] || "x").length; }
+function appendedInLoop(list: string[]) { let s = list[0]; for (let i = 1; i < 3; i++) s += list[i]; return s; }
+function accumulated(list: string[]) { let s = ""; for (let i = 0; i < 3; i++) s += list[i]; return s; }
+function typeOf(list: string[], i: number) { const s = list[i] + list[i + 1]; return typeof s; }
+function compared(list: string[], i: number) { const s = list[i] + list[i + 1]; return s === s; }
+function inTemplate(list: string[], i: number) { return `<${list[i] + list[i + 1]}>`; }
+function asKey(list: string[], i: number) { const seen: Record<string, number> = {}; seen[list[i] + list[i + 1]] = 1; return Object.keys(seen).join(); }
+function returnedTwice(list: string[], i: number) { const inner = () => list[i] + list[i + 1]; return inner(); }
+function calledOn(list: string[], i: number) { return (list[i] + list[i + 1]).toString(); }
+function throwsInBoth(list: string[], i: number) { return (list[i] + list[i + 1]).toUpperCase(); }
+
+for (const list of [none, some]) {
+  show("length", () => lengthOf(list, 0));
+  show("length of either", () => lengthOfEither(list, 0, true));
+  show("length of a constant", () => lengthOfConstant(list, 0));
+  show("length of a variable", () => lengthOfVariable(list, 0, true));
+  show("length after an append", () => lengthAfterAppend(list, 0));
+  show("length or else", () => lengthOrElse(list, 0));
+  show("appended in a loop", () => appendedInLoop(list));
+  show("accumulated", () => accumulated(list));
+  show("typeof", () => typeOf(list, 0));
+  show("compared", () => compared(list, 0));
+  show("in a template", () => inTemplate(list, 0));
+  show("as a key", () => asKey(list, 0));
+  show("returned twice", () => returnedTwice(list, 0));
+  show("called on", () => calledOn(list, 0));
+  show("throws in both", () => throwsInBoth(list, 0));
+}
+//// uses-of-variable-bound-by-conditional-type.ts
+// More places where a variable whose type parameter is bound through a conditional type is read: TypeScript's base constraint of V is `number[] | null`, and the calls below are all well typed.
+function show(value: unknown): string { return typeof value + " " + JSON.stringify(value); }
+function attempt(label: string, ...runs: (() => unknown)[]): void {
+  console.log(label + ": " + runs.map(run => { try { return show(run()); } catch (error) { return "threw " + (error as Error).name; } }).join(" | "));
+}
+type NoUndefined<T> = T extends undefined ? never : T;
+interface Holder<Output = unknown> { _output: Output }
+type Output<T> = T extends { _output: any } ? T["_output"] : never;
+type Bound<T> = NoUndefined<Output<T>> | number[] | null;
+const text: Holder<string> = { _output: "" };
+const point: Holder<{ x: number }> = { _output: { x: 1 } };
+function field<T extends Holder, V extends Bound<T>>(inner: T, box: { held: V }): string { return show(box.held); }
+function element<T extends Holder, V extends Bound<T>>(inner: T, list: V[]): string { return show(list[0]); }
+function destructured<T extends Holder, V extends Bound<T>>(inner: T, { held }: { held: V }): string { return show(held); }
+function fromTuple<T extends Holder, V extends Bound<T>>(inner: T, [first]: [V]): string { return show(first); }
+function iterated<T extends Holder, V extends Bound<T>>(inner: T, list: V[]): string { let out = ""; for (const each of list) out += show(each); return out; }
+function local<T extends Holder, V extends Bound<T>>(inner: T, value: V): string { const copy = value; return show(copy); }
+function reassigned<T extends Holder, V extends Bound<T>>(inner: T, value: V, other: V): string { let held = value; held = other; return show(held); }
+function nonNull<T extends Holder, V extends Bound<T>>(inner: T, value: V): string { return show(value!); }
+function chained<T extends Holder, V extends Bound<T>>(inner: T, value: V): string { return show(value?.length); }
+function lengthOf<T extends Holder, V extends Bound<T>>(inner: T, value: V): string { return value === null ? "null" : show(value.length); }
+function conditional<T extends Holder, V extends Bound<T>>(inner: T, value: V, flag: boolean): string { return show(flag ? value : 0); }
+function logical<T extends Holder, V extends Bound<T>>(inner: T, value: V): string { return show(value || "empty"); }
+function template<T extends Holder, V extends Bound<T>>(inner: T, value: V): string { return `${value}`; }
+function added<T extends Holder, V extends Bound<T>>(inner: T, value: V): string { return "<" + value + ">"; }
+function mapped<T extends Holder, V extends Bound<T>>(inner: T, list: V[]): string { return list.map(each => show(each)).join(); }
+function callback<T extends Holder, V extends Bound<T>>(inner: T, value: V, use: (given: unknown) => string): string { return use(value); }
+function rest<T extends Holder, V extends Bound<T>>(inner: T, ...values: V[]): string { return show(values[0]); }
+function defaulted<T extends Holder, V extends Bound<T>>(inner: T, value: V | undefined = undefined): string { return show(value); }
+function isArray<T extends Holder, V extends Bound<T>>(inner: T, value: V): string { return Array.isArray(value) ? "array " + value.length : show(value); }
+function switched<T extends Holder, V extends Bound<T>>(inner: T, value: V): string { switch (typeof value) { case "string": return "a string"; case "object": return show(value); default: return "other"; } }
+async function awaited<T extends Holder, V extends Bound<T>>(inner: T, value: V): Promise<string> { await null; return show(value); }
+function* yielded<T extends Holder, V extends Bound<T>>(inner: T, value: V): Generator<unknown> { yield value; }
+class Keeper<T extends Holder, V extends Bound<T>> { constructor(public inner: T, public value: V) {} text(): string { return show(this.value); } get held(): unknown { return this.value; } }
+attempt("field", () => field(text, { held: "a" }), () => field(text, { held: [1] }), () => field(point, { held: { x: 2 } }));
+attempt("element", () => element(text, ["a"]), () => element(point, [{ x: 2 }]));
+attempt("destructured", () => destructured(text, { held: "a" }), () => destructured(point, { held: { x: 2 } }));
+attempt("fromTuple", () => fromTuple(text, ["a"]), () => fromTuple(point, [{ x: 2 }]));
+attempt("iterated", () => iterated(text, ["a"]), () => iterated(point, [{ x: 2 }]));
+attempt("local", () => local(text, "a"), () => local(point, { x: 2 }));
+attempt("reassigned", () => reassigned(text, "a", "b"), () => reassigned(point, { x: 2 }, null));
+attempt("nonNull", () => nonNull(text, "a"), () => nonNull(point, { x: 2 }));
+attempt("chained", () => chained(text, "abc"), () => chained(text, [1]), () => chained(text, null), () => chained(point, { x: 2 }));
+attempt("lengthOf", () => lengthOf(text, "abc"), () => lengthOf(text, [1]), () => lengthOf(point, { x: 2 }));
+attempt("conditional", () => conditional(text, "a", true), () => conditional(point, { x: 2 }, true));
+attempt("logical", () => logical(text, "a"), () => logical(text, ""), () => logical(point, { x: 2 }));
+attempt("template", () => template(text, "a"), () => template(text, [1, 2]));
+attempt("added", () => added(text, "a"), () => added(text, null));
+attempt("mapped", () => mapped(text, ["a"]), () => mapped(point, [{ x: 2 }]));
+attempt("callback", () => callback(text, "a", show), () => callback(point, { x: 2 }, show));
+attempt("rest", () => rest(text, "a"), () => rest(point, { x: 2 }));
+attempt("defaulted", () => defaulted(text, "a"), () => defaulted(text), () => defaulted(point, { x: 2 }));
+attempt("isArray", () => isArray(text, "a"), () => isArray(text, [1]), () => isArray(point, { x: 2 }));
+attempt("switched", () => switched(text, "a"), () => switched(text, [1]), () => switched(point, { x: 2 }));
+attempt("yielded", () => [...yielded(text, "a")], () => [...yielded(point, { x: 2 })]);
+attempt("class", () => new Keeper(text, "a").text(), () => new Keeper(point, { x: 2 }).text(), () => new Keeper(text, "a").held);
+awaited(text, "a").then(got => console.log("awaited: " + got), error => console.log("awaited: threw " + error.name));
+awaited(point, { x: 2 }).then(got => console.log("awaited: " + got), error => console.log("awaited: threw " + error.name));
+//// values-outside-literal-and-enum-types.ts
+// Values of the right kind that are not among the constants their literal or enum type allows: a literal type promises the kind, so nothing throws.
+////= attempt
+const hide = (v: unknown): any => v
+enum Level { Low, Mid, High }
+// A numeric enum is tested as `number`: TypeScript lets any number into it.
+attempt("enum, 0.5", () => { const l: Level = hide(0.5); return l })
+attempt("enum, 2 ** 32", () => { const l: Level = hide(4294967296); return l })
+attempt("enum, NaN", () => { const l: Level = hide(NaN); return l })
+attempt("enum, 9", () => { const l: Level = hide(9); return l })
+// `true` and `false` are separate types.
+attempt("false as true", () => { const t: true = hide(false); return t ? "true" : "false" })
+attempt("true as false", () => { const f: false = hide(true); return f === false })
+interface Pixel { level: Level; on: true }
+const pixel: Pixel = { level: Level.Low, on: true }
+attempt("field, false as true", () => { hide(pixel).on = false })
+attempt("field, enum, 0.5", () => { hide(pixel).level = 0.5 })
+console.log(JSON.stringify(pixel))
+// Plain data that does not match passes `as` unchanged: the cast asks only for an object. The typed read of a field is tested against the field's type: `true` takes only true, a numeric enum any number.
+attempt("plain data, false as true", () => (JSON.parse('{"level":12,"on":false}') as Pixel).on)
+attempt("plain data, enum, 0.5", () => (JSON.parse('{"level":0.5,"on":true}') as Pixel).level)
+// A string literal type takes exactly its own strings, so the typed read of a discriminant outside the union throws. A discriminant of the other part passes, and the field that part declares is missing: it reads undefined.
+type Shape = { kind: "circle"; r: number } | { kind: "square"; side: number }
+function area(s: Shape): string {
+  if (s.kind === "circle") return "circle " + s.r
+  if (s.kind === "square") return "square " + s.side
+  return "neither " + (s as any).kind
+}
+attempt("discriminant of plain data outside the union", () => area(JSON.parse('{"kind":"triangle","r":1}')))
+attempt("discriminant stored from outside the union", () => { const s: Shape = { kind: "circle", r: 3 }; hide(s).kind = "blob"; return area(s) })
+attempt("discriminant of the other part", () => area(JSON.parse('{"kind":"square","r":1}')))
+//// values-outside-literal-types.ts
+// A literal type says which values the compiler may expect, not which values arrive: a value of the right kind outside the list goes on as it is. Everything that could be specialized for the list is tried here with values from parsed text, which no analysis knows: switches, comparisons, tables, indexes, arithmetic, conditions, fields, elements, discriminants. Every line is what plain Bun prints.
+const given: { strings: any[]; numbers: any[]; booleans: any[] } = JSON.parse(
+  '{"strings":["a","b","c","ab","","A","__proto__","constructor","0","reference"],"numbers":[1,2,3,0,-1,1.5,-0,4294967297,2147483648,-2147483649,1e300,300],"booleans":[true,false]}',
+);
+given.numbers.push(NaN, Infinity);
+// The same texts as cells that no literal of the program stands for.
+const built: any[] = given.strings.map(text => (text + "!").slice(0, -1));
+function line(label: string, values: unknown[]): void { console.log(label, values.map(value => (Object.is(value, -0) ? "-0" : String(value))).join(" ")); }
+
+type Name = "a" | "b";
+type Level = 1 | 2;
+enum Color { Red = "a", Blue = "b" }
+enum Step { Low = 1, High = 2 }
+enum Flag { None = 0, Read = 1, Write = 2 }
+interface Specs { reference: number; "amd-module": number }
+const specs: Specs = { reference: 1, "amd-module": 2 };
+
+function switchedName(name: Name): string { switch (name) { case "a": return "first"; case "b": return "second"; } }
+function switchedNameWithDefault(name: Name): string { switch (name) { case "a": return "first"; default: return "rest"; } }
+function switchedLevel(level: Level): string { switch (level) { case 1: return "one"; case 2: return "two"; } }
+function switchedColor(color: Color): string { switch (color) { case Color.Red: return "red"; case Color.Blue: return "blue"; } }
+function switchedStep(step: Step): string { switch (step) { case Step.Low: return "low"; case Step.High: return "high"; } }
+function chained(name: Name): string { if (name === "a") return "first"; else if (name === "b") return "second"; return "neither"; }
+function otherwise(name: Name): string { return name === "a" ? "first" : "must be b: " + name; }
+function notEqual(name: Name): boolean { return name !== "a" && name !== "b"; }
+function loose(level: Level): boolean { return level == 1 || level == 2; }
+for (const [label, texts] of [["literals", given.strings], ["built", built]] as const) {
+  line("switch on strings, " + label, texts.map(switchedName));
+  line("switch with default, " + label, texts.map(switchedNameWithDefault));
+  line("switch on a string enum, " + label, texts.map(switchedColor));
+  line("chain of comparisons, " + label, texts.map(chained));
+  line("else of one comparison, " + label, texts.map(otherwise));
+  line("unequal to every literal, " + label, texts.map(notEqual));
+}
+line("switch on numbers", given.numbers.map(switchedLevel));
+line("switch on a numeric enum", given.numbers.map(switchedStep));
+line("loosely equal", given.numbers.map(loose));
+
+const words = ["zero", "one", "two"];
+const bytes = new Uint8Array([10, 11, 12]);
+function indexed(level: Level): unknown { return words[level]; }
+function indexedBelow(level: Level): unknown { return words[level - 1]; }
+function indexedBytes(level: Level): unknown { return bytes[level]; }
+function character(level: Level): unknown { return "xyz"[level]; }
+function characterAt(level: Level): unknown { return "xyz".charCodeAt(level); }
+function reverse(step: Step): unknown { return Step[step]; }
+function keyed(name: keyof Specs): unknown { return typeof specs[name]; }
+function has(name: keyof Specs): boolean { return name in specs; }
+line("index", given.numbers.map(indexed));
+line("index minus one", given.numbers.map(indexedBelow));
+line("index of a typed array", given.numbers.map(indexedBytes));
+line("index of a string", given.numbers.map(character));
+line("charCodeAt", given.numbers.map(characterAt));
+line("reverse mapping", given.numbers.map(reverse));
+line("keyof read", given.strings.map(keyed));
+line("keyof read, built", built.map(keyed));
+line("keyof in", given.strings.map(has));
+
+function doubled(level: Level): number { return level * 2; }
+function added(level: Level): number { return level + 2147483647; }
+function shifted(level: Level): number { return 1 << level; }
+function masked(flag: Flag): number { return flag & Flag.Write; }
+function joined(flag: Flag): number { return flag | Flag.Read; }
+function divided(level: Level): number { return 6 / level; }
+function remainder(level: Level): number { return 7 % level; }
+function negated(level: Level): number { return -level; }
+function compared(level: Level): boolean { return level < 3 && level > 0; }
+function counted(level: Level): number { let turns = 0; for (let i = 0; i < level && turns < 5; i++) turns++; return turns; }
+function concatenated(name: Name): string { return name + name; }
+function measured(name: Name): number { return name.length; }
+function templated(name: Name, level: Level): string { return `${name}:${level}`; }
+line("times two", given.numbers.map(doubled));
+line("plus the largest int32", given.numbers.map(added));
+line("shift", given.numbers.map(shifted));
+line("and", given.numbers.map(masked));
+line("or", given.numbers.map(joined));
+line("divide", given.numbers.map(divided));
+line("remainder", given.numbers.map(remainder));
+line("negate", given.numbers.map(negated));
+line("inside the list's range", given.numbers.map(compared));
+line("loop bound", given.numbers.map(counted));
+line("concatenate", given.strings.map(concatenated));
+line("length", given.strings.map(measured));
+line("template", given.strings.map((text, index) => templated(text, given.numbers[index])));
+
+function whenTrue(on: true): string { return on ? "yes" : "no"; }
+function whenFalse(off: false): string { if (off) return "yes"; return "no"; }
+function inverted(on: true): boolean { return !on; }
+function truthyName(name: Name): string { return name ? "text" : "empty"; }
+function truthyLevel(level: Level): string { return level ? "some" : "none"; }
+line("a condition on true", given.booleans.map(whenTrue));
+line("a condition on false", given.booleans.map(whenFalse));
+line("not true", given.booleans.map(inverted));
+line("a string that is never empty", given.strings.map(truthyName));
+line("a number that is never zero", given.numbers.map(truthyLevel));
+
+class Holder { name: Name = "a"; level: Level = 1; on: true = true; step: Step = Step.Low; }
+function throughFields(name: any, level: any, on: any): string {
+  const holder = new Holder();
+  holder.name = name; holder.level = level; holder.on = on; holder.step = level;
+  return [switchedName(holder.name), holder.level * 2, holder.on ? "yes" : "no", Step[holder.step], holder.level === 1 || holder.level === 2].join("/");
+}
+line("fields", given.numbers.map((level, index) => throughFields(given.strings[index % given.strings.length], level, given.booleans[index % 2])));
+const levels: Level[] = [];
+for (const level of given.numbers) levels.push(level);
+line("elements", levels.map(level => level * 2));
+line("elements again", [levels.indexOf(1.5 as any), levels.includes(300 as any), levels.length, levels[5], Math.max(...levels.slice(0, 4))]);
+const names: Name[] = [...built];
+line("string elements", names.map(switchedName));
+const byName = new Map<Name, Level>();
+given.strings.forEach((text, index) => byName.set(text, given.numbers[index]));
+line("map", [byName.size, byName.get("c" as any), byName.get("ab" as any), [...byName.keys()].join("")]);
+const record: Record<Name, Level> = { a: 1, b: 2 };
+for (const text of built) if (text !== "__proto__") record[text as Name] = given.numbers[5];
+line("record", [Object.keys(record).join(), record.a, (record as any).c]);
+
+type Shape = { kind: "circle"; radius: number } | { kind: "square"; side: number };
+function area(shape: Shape): unknown { return shape.kind === "circle" ? shape.radius * 3 : shape.side * shape.side; }
+function areaBySwitch(shape: Shape): unknown { switch (shape.kind) { case "circle": return shape.radius * 3; case "square": return shape.side * shape.side; } }
+const shapes: any[] = JSON.parse('[{"kind":"circle","radius":1},{"kind":"square","side":2},{"kind":"line","radius":3,"side":4},{"kind":"circle","side":5},{"kind":"square","radius":6}]');
+line("discriminant, parsed", shapes.map(area));
+line("discriminant by switch, parsed", shapes.map(areaBySwitch));
+function circleOf(kind: any): Shape { return { kind, radius: 2 }; }
+function squareOf(kind: any): Shape { return { kind, side: 3 }; }
+line("discriminant, created here", given.strings.slice(0, 3).concat("circle", "square").flatMap(kind => [area(circleOf(kind)), area(squareOf(kind)), areaBySwitch(circleOf(kind)), areaBySwitch(squareOf(kind))]));
+
+function gives(value: any): Name { return value; }
+function givesLevel(value: any): Level { return value; }
+line("results", built.map(text => switchedName(gives(text))));
+line("number results", given.numbers.map(level => givesLevel(level) * 2));
+function optional(name?: Name): string { return name === undefined ? "none" : switchedName(name) + ""; }
+line("optional", [optional(), optional(built[0]), optional(built[2])]);
+function either(value: Name | Level): string { return typeof value === "string" ? switchedName(value) + "" : switchedLevel(value) + ""; }
+line("strings or numbers", [...built.slice(0, 4), ...given.numbers.slice(0, 6)].map(either));
+
+interface Item { name: Name; level: Level; on: true; step: Step; color: Color }
+const itemsText = '[{"name":"a","level":1,"on":true,"step":1,"color":"a"},{"name":"c","level":7.5,"on":false,"step":9,"color":"green"},{"name":"","level":-0,"on":true,"step":4294967297,"color":"b"}]';
+function showItem(item: Item): string { return [switchedName(item.name), item.level * 2, item.on ? "yes" : "no", Step[item.step], switchedColor(item.color), JSON.stringify(item)].join("/"); }
+line("parsed and cast", (JSON.parse(itemsText) as Item[]).map(showItem));
+const annotated: Item[] = JSON.parse(itemsText);
+line("parsed into an annotation", annotated.map(showItem));
+const shapesText = '[{"kind":"circle","radius":1},{"kind":"square","side":2},{"kind":"line","radius":3,"side":4},{"kind":"circle","side":5},{"kind":"","radius":6}]';
+line("a parsed union", (JSON.parse(shapesText) as Shape[]).map(shape => area(shape) + "/" + areaBySwitch(shape) + "/" + JSON.stringify(shape)));
+line("one parsed literal", [JSON.parse('"c"') as Name, JSON.parse("7.5") as Level, JSON.parse("false") as true].map(value => typeof value + ":" + value));
+line("copies", annotated.map(item => showItem({ ...item })).concat(annotated.map(item => showItem(structuredClone(item)))));
+
+interface Tagged { tag: "only"; zero: 0; yes: true; none: null; big: 1n }
+function readTagged(t: Tagged): string { return [t.tag, t.zero, t.yes, t.none, t.big, t.tag === "only", t.zero === 0, t.zero + 1, t.tag.length, `${t.tag}${t.zero}`, JSON.stringify({ tag: t.tag, zero: t.zero, yes: t.yes })].join("/"); }
+function makeTagged(tag: any, zero: any, yes: any, big: any): Tagged { return { tag, zero, yes, none: null, big }; }
+line("one literal each", [makeTagged("only", 0, true, 1n), makeTagged(built[2], given.numbers[5], given.booleans[1], 7n), makeTagged("", -0, false, 0n)].map(readTagged));
+line("serialized", [circleOf(built[2]), squareOf("line"), circleOf("circle")].map(shape => JSON.stringify(shape)).concat(annotated.map(item => JSON.stringify(item))));
+function onlyTag(tag: "only"): string { return tag; }
+function onlyZero(zero: 0): number { return zero; }
+line("one literal as a parameter", [onlyTag(built[2]), onlyTag(built[0]), onlyZero(given.numbers[5]), onlyZero(given.numbers[6]), onlyZero(given.numbers[7])]);
+const constant: "only" = built[3];
+let counter: 0 = given.numbers[0];
+line("one literal as a variable", [constant, constant === "only", counter, counter === 0, counter + 1]);
+//// variable-assigned-from-call-external-data.ts
+// A variable whose type is only inferred is assigned the result of a function whose return type is only inferred, and the function returns external data of another type.
+// The assignment and later uses must behave as in plain JavaScript instead of asserting the inferred type.
+const data = JSON.parse('{"t":"abc"}') as { t: number };
+const say = (label: string, f: () => unknown): void => { let r: string; try { const v = f(); r = typeof v + " " + String(v); } catch (e) { r = "throws " + (e as Error).constructor.name; } console.log(label + " ==> " + r); };
+const arrow = () => data.t;
+function declared() { return data.t; }
+const twice = () => arrow();
+const holder = { method() { return data.t; } };
+say("n += f()", () => { let n = 0; n += arrow(); return n; });
+say("n = f()", () => { let n = 0; n = arrow(); return n + 1; });
+say("n = f() of a declaration", () => { let n = 0; n = declared(); return n + 1; });
+say("n = f() through another function", () => { let n = 0; n = twice(); return n + 1; });
+say("n = o.m()", () => { let n = 0; n = holder.method(); return n + 1; });
+say("n -= f()", () => { let n = 0; n -= arrow(); return n; });
+say("in a loop", () => { let n = 0; for (let i = 0; i < 2; i++) n += arrow(); return n; });
+say("n = (() => ..)()", () => { let n = 0; n = (() => data.t)(); return n + 1; });
+say("n += (function () { .. })()", () => { let n = 0; n += (function () { return data.t; })(); return n; });
+say("n = (() => { a variable assigned in a callback })()", () => { const list = [data.t]; let n = 0; n = (() => { let last = 0; list.forEach(v => { last = v; }); return last; })(); n++; return n; });
+say("trusted stays exact", () => { const one = () => 1; let n = 0; n += one(); return n + 1; });
+//// variables-declared-with-an-assertion.ts
+// `let x!: T` and a field `x!: T` test nothing: until something is stored, a read gives undefined, whatever T is.
+interface Row { id: number; name: string }
+
+////= say
+function shout(text: string): string { return text + "!"; }
+function twice(n: number): number { return n + n; }
+
+let size!: number;
+let title!: string;
+let row!: Row;
+let flag!: boolean;
+let list!: number[];
+let later!: string;
+class Holder { held!: Row; count!: number; read(): number { return this.count + 1; } }
+function local(): string { let text!: string; return typeof text; }
+function captured(): () => string { let text!: string; return () => typeof text; }
+function setThenRead(): number { let n!: number; n = 4; return n + 1; }
+
+say("a number, its type", () => typeof size);
+say("a number, added", () => size + 1);
+say("a number, passed on", () => twice(size));
+say("a string, passed on", () => shout(title));
+say("a string, in a template", () => `${title}`);
+say("an object, its type", () => typeof row);
+say("an object, read", () => row.id);
+say("an object, tested", () => (row ? "some" : "none"));
+say("a boolean, tested", () => (flag ? "yes" : "no"));
+say("an array, read", () => list.length);
+say("compared", () => size === undefined);
+say("a local", () => local());
+say("a captured local", () => captured()());
+say("set, then read", () => setThenRead());
+say("a field, its type", () => typeof new Holder().held);
+say("a field, added", () => new Holder().read());
+say("a field, read", () => new Holder().held.name);
+later = "now";
+say("set at last", () => shout(later));
+size = 3;
+say("the number, set at last", () => twice(size));
+let count!: number;
+let total!: number;
+function bump(): number { count++; return count; }
+say("minus", () => 10 - total);
+say("times", () => total * 2);
+say("negated", () => -total);
+say("remainder", () => total % 2);
+say("or zero", () => total | 0);
+say("in a template, added", () => `${total + 1}`);
+say("incremented in place", () => bump());
+say("copied, then incremented", () => { let n = total; n++; return n; });
+say("switch", () => { switch (total) { case 5: return "five"; case 0: return "zero"; default: return "other"; } });
+say("as an index", () => [1, 2][total]);
+say("Math.max", () => Math.max(total, 1));
+total = 5;
+say("set: minus", () => 10 - total);
+say("set: switch", () => { switch (total) { case 5: return "five"; case 0: return "zero"; default: return "other"; } });
+//// variables-wider-than-values.ts
+// A variable is declared with a wide type and holds narrower values on every path, or on all paths but one. What it holds must come out unchanged either way.
+enum Flags {
+    None = 0,
+    A = 1,
+    B = 2,
+    C = 4,
+    High = 1 << 30,
+}
+type Shape = { kind: string; size: number | string };
+type Square = { kind: string; size: number; side: number };
+type Circle = { kind: string; size: number; radius: number };
+
+////= attempt-3
+
+function flagsOf(n: number): Flags {
+    return n & 1 ? Flags.A : n & 2 ? Flags.B : Flags.None;
+}
+
+function combine(from: number, read: (n: number) => number): number {
+    let flags = read(from);
+    if (from > 1) flags |= read(from >> 1);
+    if (from > 3) flags |= read(from >> 2);
+    return flags;
+}
+
+function combinedFlags(from: number): Flags {
+    return combine(from, flagsOf);
+}
+
+function half(n: number): number {
+    return n / 2;
+}
+
+function combinedHalves(from: number): number {
+    return combine(from, half);
+}
+
+function sometimesFraction(flag: boolean, n: number): Flags {
+    let value: number = Flags.A;
+    if (flag) value = n;
+    return value;
+}
+
+function alwaysInteger(flag: boolean): Flags {
+    let value: number = Flags.A;
+    if (flag) value = Flags.C;
+    return value;
+}
+
+function growsInLoop(rounds: number): number {
+    let value: number = 1;
+    for (let i = 0; i < rounds; i++) value = value * 4;
+    return value;
+}
+
+function orsInLoop(rounds: number): Flags {
+    let value: number = 0;
+    for (let i = 0; i < rounds; i++) value |= 1 << i;
+    return value;
+}
+
+function swapsInLoop(rounds: number, start: number): string {
+    let a: number = 1;
+    let b: number = start;
+    for (let i = 0; i < rounds; i++) {
+        const t = a;
+        a = b;
+        b = t;
+    }
+    return a + " " + b;
+}
+
+function negativeZero(flag: boolean): string {
+    let value: number = 0;
+    if (flag) value = -0;
+    return Object.is(value, -0) ? "-0" : "0";
+}
+
+function assignedInTry(fail: boolean): number | string {
+    let value: number | string = 1;
+    try {
+        value = 2;
+        if (fail) throw new Error("stop");
+        value = 3;
+    } catch {
+        return "caught with " + value;
+    } finally {
+        value = typeof value === "number" ? value + 10 : value;
+    }
+    return value;
+}
+
+function bySwitch(n: number): number | string | undefined {
+    let value: number | string | undefined;
+    switch (n) {
+        case 0:
+            value = 1;
+        case 1:
+            value = (value ?? 0) as number | string;
+            break;
+        case 2:
+            value = "two";
+            break;
+    }
+    return value;
+}
+
+function pickShape(flag: boolean, a: Square, b: Square): number {
+    let shape: Shape = a;
+    if (flag) shape = b;
+    return (shape as Square).side;
+}
+
+function pickEither(flag: boolean, a: Square, b: Circle): string {
+    let shape: Shape = a;
+    if (flag) shape = b;
+    return shape.kind + " " + shape.size;
+}
+
+function storeThroughWideType(flag: boolean, a: Square, b: Square, size: number | string): string {
+    let shape: Shape = a;
+    if (flag) shape = b;
+    shape.size = size;
+    return typeof a.size + " " + typeof b.size;
+}
+
+function maybeMissing(flag: boolean, a: Square): string {
+    let shape: Shape | undefined = a;
+    if (flag) shape = undefined;
+    return shape ? shape.kind : "nothing";
+}
+
+function fromAny(flag: boolean, a: Square, other: any): number {
+    let shape: Shape = a;
+    if (flag) shape = other;
+    return (shape as Square).side;
+}
+
+function lastOfChain(first: Square, hops: number): string {
+    let current: Shape = first;
+    let seen = 0;
+    while (seen < hops) {
+        current = seen & 1 ? first : { kind: "made " + seen, size: seen, side: seen * 2 };
+        seen++;
+    }
+    return current.kind;
+}
+
+function textOrNumber(flag: boolean): string {
+    let value: string | number = "text";
+    if (flag) value = "other";
+    return value.toString().toUpperCase();
+}
+
+const spare: unknown[] = [];
+function opaque<T>(value: T): T {
+    return spare.length > 0 ? (spare[0] as T) : value;
+}
+
+const square: Square = { kind: "square", size: 4, side: 2 };
+const bigger: Square = { kind: "bigger", size: 9, side: 3 };
+const circle: Circle = { kind: "circle", size: 3, radius: 1 };
+for (let n = 0; n < 9; n++) attempt("combined flags " + n, () => combinedFlags(n));
+for (let n = 0; n < 9; n += 3) attempt("combined halves " + n, () => combinedHalves(n));
+attempt("sometimes a fraction: no", () => sometimesFraction(false, 0.5));
+attempt("sometimes a fraction: an integer", () => sometimesFraction(true, 2));
+attempt("sometimes a fraction: a fraction", () => sometimesFraction(true, 0.5));
+attempt("sometimes a fraction: NaN", () => sometimesFraction(true, NaN));
+attempt("sometimes a fraction: too large", () => sometimesFraction(true, 2 ** 40));
+attempt("always an integer", () => alwaysInteger(false) + alwaysInteger(true));
+attempt("grows in a loop", () => [growsInLoop(0), growsInLoop(3), growsInLoop(15), growsInLoop(16), growsInLoop(40)].join(" "));
+attempt("ors in a loop", () => [orsInLoop(0), orsInLoop(3), orsInLoop(31), orsInLoop(32), orsInLoop(33)].join(" "));
+attempt("swaps in a loop", () => [swapsInLoop(0, 2), swapsInLoop(1, 2), swapsInLoop(2, 0.5), swapsInLoop(3, 0.5), swapsInLoop(1, NaN)].join(" | "));
+attempt("negative zero", () => negativeZero(false) + " " + negativeZero(true));
+attempt("assigned in try", () => assignedInTry(false) + " | " + assignedInTry(true));
+attempt("by switch", () => [bySwitch(0), bySwitch(1), bySwitch(2), bySwitch(3)].join(" | "));
+attempt("pick a shape", () => pickShape(false, square, bigger) + pickShape(true, square, bigger));
+attempt("pick either", () => pickEither(false, square, circle) + " | " + pickEither(true, square, circle));
+attempt("store a number through the wide type", () => storeThroughWideType(true, { ...square }, { ...bigger }, 5));
+attempt("store a string through the wide type", () => storeThroughWideType(true, { ...square }, { ...bigger }, "five"));
+attempt("maybe missing", () => maybeMissing(false, square) + " " + maybeMissing(true, square));
+attempt("from any: not taken", () => fromAny(false, square, 5));
+attempt("from any: a square", () => fromAny(true, square, bigger));
+attempt("from any: a literal", () => fromAny(true, square, { kind: "k", size: 1, side: 7 }));
+attempt("from any: a number", () => fromAny(true, square, 5));
+attempt("last of a chain", () => [lastOfChain(square, 0), lastOfChain(square, 1), lastOfChain(square, 2), lastOfChain(square, 3)].join(" | "));
+attempt("text or number", () => textOrNumber(false) + textOrNumber(true));
+for (const flag of [false, true]) {
+    attempt("not known ahead: always an integer " + flag, () => alwaysInteger(opaque(flag)));
+    attempt("not known ahead: a fraction " + flag, () => sometimesFraction(opaque(flag), opaque(1.5)));
+    attempt("not known ahead: an integer " + flag, () => sometimesFraction(opaque(flag), opaque(4)));
+    attempt("not known ahead: negative zero " + flag, () => negativeZero(opaque(flag)));
+    attempt("not known ahead: pick a shape " + flag, () => pickShape(opaque(flag), opaque(square), opaque(bigger)));
+    attempt("not known ahead: pick either " + flag, () => pickEither(opaque(flag), opaque(square), opaque(circle)));
+    attempt("not known ahead: store a string " + flag, () => storeThroughWideType(opaque(flag), { ...square }, { ...bigger }, opaque("text")));
+    attempt("not known ahead: maybe missing " + flag, () => maybeMissing(opaque(flag), opaque(square)));
+    attempt("not known ahead: from any, a number " + flag, () => fromAny(opaque(flag), opaque(square), opaque(5)));
+    attempt("not known ahead: text or number " + flag, () => textOrNumber(opaque(flag)));
+    attempt("not known ahead: assigned in try " + flag, () => assignedInTry(opaque(flag)));
+}
+for (const rounds of [0, 1, 2, 3, 31, 32]) {
+    attempt("not known ahead: ors in a loop " + rounds, () => orsInLoop(opaque(rounds)));
+    attempt("not known ahead: grows in a loop " + rounds, () => growsInLoop(opaque(rounds)));
+    attempt("not known ahead: swaps integers " + rounds, () => swapsInLoop(opaque(rounds), 2));
+    attempt("not known ahead: swaps a fraction " + rounds, () => swapsInLoop(opaque(rounds), opaque(0.25)));
+    attempt("not known ahead: last of a chain " + rounds, () => lastOfChain(opaque(square), opaque(rounds)));
+    attempt("not known ahead: by switch " + rounds, () => bySwitch(opaque(rounds)));
+}
+//// wrong-casts-and-method-shadowing.ts
+// Casts to the wrong type, and an own property with the name of a method.
+const log: string[] = []
+function note<T>(what: string, value: T): T { log.push(what); return value }
+function flush(): string { return log.splice(0).join() }
+try { const notCallable = { f: 1 as unknown as (x: number) => number }; console.log(notCallable.f(note("d", 1))); console.log("a number as a function: no error") } catch (e) { console.log("a number as a function:", e instanceof TypeError ? "TypeError" : "other " + e, "[" + flush() + "]") }
+function pushTo(a: number[]): unknown { return a.push(note("arg", 7)) }
+function getFrom(m: Map<string, string>): unknown { return m.get(((m as any).get = () => "new", "k")) }
+try { const fakeArray = { get push() { log.push("get push"); return (x: number) => 100 + x } } as unknown as number[]; console.log(pushTo(fakeArray)); console.log("an object as an array: no error") } catch (e) { console.log("an object as an array:", e instanceof TypeError ? "TypeError" : "other " + e, "[" + flush() + "]") }
+try { const fakeMap = { get: (k: string) => "old " + k } as unknown as Map<string, string>; console.log(getFrom(fakeMap)); console.log("an object as a Map: no error") } catch (e) { console.log("an object as a Map:", e instanceof TypeError ? "TypeError" : "other " + e) }
+// The receiver is tested in front of a resolved built-in method, so an own property shadows the method, as in ECMAScript.
+// A receiver that comes out of an `any[]` is untyped: by name.
+const real = new Map([["k", "real"]])
+const untyped: any[] = []; untyped.push(real)
+console.log(getFrom(real), real.get("k"), untyped[0].get("k"))
+abstract class Shape { abstract area(scale: number): string }
+class Square extends Shape { area(scale: number): string { return "square" + scale } }
+class Circle extends Shape { area(scale: number): string { return "circle" + scale } }
+function retarget(s: Shape): number { (s as any).area = () => "own"; return 2 }
+const shapes: Shape[] = [new Square(), new Circle(), new Square()]
+for (const s of shapes) {
+  try { console.log(s.area(retarget(s))); console.log("own property named like a method: no error") } catch (e) { console.log("own property named like a method:", e instanceof TypeError ? "TypeError" : "other " + e, s.area(3)) }
+}
+//// wrong-kind-stored-via-untyped-ref.ts
+// Untyped code stores a string to a field of type number of parsed JSON that typed code holds too. The store succeeds, and the next typed read of the field throws.
+declare const console: { log(...values: unknown[]): void };
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name + ": " + e.message.split("\n")[0] : String(e))) } }
+function hide(v: unknown): any { return v }
+function parse(t: string): any { return JSON.parse(t) }
+interface Sub { v: number }
+interface Item { id: string; n: number; sub: Sub | null }
+const made: Item[] = [{ id: "m", n: 0.5, sub: { v: 1 } }, { id: "m", n: 1, sub: null }];
+function bump(x: Item): number { x.n += 1; return x.n }
+function kind(x: Item): string { return typeof x.n }
+row("(made by typed code)", () => bump(made[0]) + bump(made[1]));
+const text = '{"id":"s","n":7,"sub":null}';
+row("another kind stored by the untyped holder", () => { const held = parse(text); const t: Item = held; held.n = "seven"; return kind(t) + " " + held.n });
+//// wrong-object-kind-argument.ts
+// A function of TypeScript that untyped code gets hold of in an object, and that has one body only, holds what it is called with to the types of its parameters: where an array, a function or a built-in class is declared, an object of another kind is refused, as a number is.
+export {};
+function list(value: string[]): unknown { return value; }
+function pair(value: [number, string]): unknown { return value; }
+function optionalList(value?: readonly number[]): unknown { return value; }
+function callback(value: (x: number) => number): unknown { return value; }
+function anyFunction(value: Function): unknown { return value; }
+function map(value: Map<string, number>): unknown { return value; }
+function listOrSet(value: string[] | Set<string>): unknown { return value; }
+function listOrFunction(value: string[] | (() => void)): unknown { return value; }
+const arrow = (value: string[]): unknown => value;
+async function later(value: string[]): Promise<unknown> { return [value]; }
+function second(first: number, value: string[]): unknown { return value; }
+function used(value: string[]): string { return "length " + value.length; }
+class Heir extends Array<string> {}
+const untyped: any = { list, pair, optionalList, callback, anyFunction, map, listOrSet, listOrFunction, arrow, later, used, second: (value: unknown) => untyped.inner.second(1, value), inner: { second } };
+const byName: Record<string, (...given: any[]) => unknown> = { list, callback, map };
+const values: [string, () => any][] = [
+  ["an array", () => ["a"]], ["an empty array", () => []], ["an array of numbers", () => [1, 2]], ["an heir of Array", () => new Heir()], ["a frozen array", () => Object.freeze(["a"])],
+  ["an object", () => ({})], ["an object with a length", () => ({ length: 1, 0: "a" })], ["a function", () => () => 1], ["a class", () => Heir], ["a bound function", () => list.bind(null)],
+  ["a Map", () => new Map()], ["a Set", () => new Set()], ["a Date", () => new Date(0)], ["bytes", () => new Uint8Array(2)], ["a proxy of an array", () => new Proxy([], {})], ["a proxy of a function", () => new Proxy(() => 1, {})],
+  ["a number", () => 5], ["a string", () => "text"], ["null", () => null], ["undefined", () => undefined],
+];
+async function tell(name: string, f: () => unknown): Promise<void> { let said: string; try { await f(); said = "taken"; } catch (e) { said = (e as Error).name; } console.log(name + ": " + said); }
+for (const name of ["list", "pair", "optionalList", "callback", "anyFunction", "map", "listOrSet", "listOrFunction", "arrow", "later", "second", "used"]) for (const [what, make] of values) await tell(name + " | " + what, () => untyped[name](make()));
+for (const name of ["list", "callback", "map"]) for (const [what, make] of values) await tell("through a record of functions | " + name + " | " + what, () => byName[name]!(make()));
+const own: string[] = ["a"];
+console.log(String(list(own)), String(list(new Heir())), typeof callback(x => x + 1), String(used(own)), (map(new Map([["a", 1]])) as Map<string, number>).size);
+//// wrong-type-objects.ts
+// `x as unknown as T` never throws for an object: `x` may be a typed object of an unrelated type, a built-in object, or data that lacks what `T` requires.
+interface Engine { power: number; parts: string[] }
+interface Car { wheels: number; engine: Engine; trailer?: Car; paint?: string; honk?(): string }
+interface Fish { fins: number; habitat: { salt: boolean }; paint?: string }
+interface Boat { paint?: string; engine: Engine; sails: number }
+function rule(label: string, f: () => unknown) { try { console.log(label + ": no error", f()) } catch (e) { console.log(label + ":", e instanceof TypeError ? "TypeError" : "other " + e) } }
+const fish: Fish = { fins: 2, habitat: { salt: true }, paint: "silver" }
+const boat: Boat = { sails: 2, engine: { power: 7, parts: ["mast"] }, paint: "white" }
+class Alpha { a = 1; run() { return "alpha" + this.a } }
+class Beta { b = "two"; run() { return "beta" + this.b } }
+class Goose { honk() { return "goose" } }
+rule("a record of an unrelated type", () => (fish as unknown as Car).paint)
+rule("a record that shares names", () => (boat as unknown as Car).engine.power)
+rule("an instance of an unrelated class", () => (new Alpha() as unknown as Beta).run())
+rule("an instance that has an optional member of the type only", () => (new Goose() as unknown as Car).honk?.())
+const strangers: [string, unknown][] = [["array", [1, 2]], ["Map", new Map()], ["function", () => 1], ["RegExp", /re/], ["object without prototype", Object.create(null)], ["empty object", JSON.parse("{}")], ["proxy", new Proxy({}, {})]]
+for (const [label, x] of strangers) rule(label, () => (x as Car).paint)
+console.log(JSON.stringify(fish), JSON.stringify(boat))
+//// yield-in-parameter-initializer.js
+// `yield` in a parameter initializer of a generator is an ECMAScript early error, so it stops the build in a JavaScript file too.
+function* g(a = yield) {}
+console.log(typeof g);

@@ -1,0 +1,1 @@
+class Base { "4294967295"() { return "base"; } "01"() { return "base01"; } "1e3"() { return "base1e3"; } } class A extends Base {} const p = A.prototype; p[4294967295] = () => "shadow"; p["01"] = () => "shadow01"; p["1e3"] = () => "shadow1e3"; const a = new A(); console.log(a[4294967295](), a["01"](), a["1e3"]());

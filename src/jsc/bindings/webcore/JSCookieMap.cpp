@@ -96,6 +96,7 @@ using JSCookieMapDOMConstructor = JSDOMConstructor<JSCookieMap>;
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Cookie, JSCookieMapDOMConstructor::construct);
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = uncheckedDowncast<JSCookieMapDOMConstructor>(callFrame->jsCallee());
@@ -105,10 +106,16 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
 
     std::variant<Vector<Vector<String>>, HashMap<String, String>, String> init;
 
-    if (initValue.isUndefinedOrNull() || (initValue.isString() && initValue.getString(lexicalGlobalObject).isEmpty())) {
+    String initString;
+    if (initValue.isString()) {
+        initString = initValue.getString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
+
+    if (initValue.isUndefinedOrNull() || (initValue.isString() && initString.isEmpty())) {
         init = String();
     } else if (initValue.isString()) {
-        init = initValue.getString(lexicalGlobalObject);
+        init = WTF::move(initString);
     } else if (initValue.isObject()) {
         auto* object = initValue.getObject();
 
@@ -138,9 +145,13 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
                 auto second = subArray->getIndex(lexicalGlobalObject, 1);
                 RETURN_IF_EXCEPTION(throwScope, {});
 
-                auto firstStr = first.toString(lexicalGlobalObject)->value(lexicalGlobalObject);
+                auto* firstString = first.toString(lexicalGlobalObject);
                 RETURN_IF_EXCEPTION(throwScope, {});
-                auto secondStr = second.toString(lexicalGlobalObject)->value(lexicalGlobalObject);
+                auto firstStr = firstString->value(lexicalGlobalObject);
+                RETURN_IF_EXCEPTION(throwScope, {});
+                auto* secondString = second.toString(lexicalGlobalObject);
+                RETURN_IF_EXCEPTION(throwScope, {});
+                auto secondStr = secondString->value(lexicalGlobalObject);
                 RETURN_IF_EXCEPTION(throwScope, {});
 
                 Vector<String> pair;
@@ -157,14 +168,19 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
             Vector<Vector<String>> seqSeq;
 
             PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-            JSObject::getOwnPropertyNames(object, lexicalGlobalObject, propertyNames, DontEnumPropertiesMode::Include);
+            if (object->type() == JSC::CompiledObjectType)
+                object->methodTable()->getOwnPropertyNames(object, lexicalGlobalObject, propertyNames, DontEnumPropertiesMode::Include);
+            else
+                JSObject::getOwnPropertyNames(object, lexicalGlobalObject, propertyNames, DontEnumPropertiesMode::Include);
             RETURN_IF_EXCEPTION(throwScope, {});
 
             for (const auto& propertyName : propertyNames) {
                 JSValue value = object->get(lexicalGlobalObject, propertyName);
                 RETURN_IF_EXCEPTION(throwScope, {});
 
-                auto valueStr = value.toString(lexicalGlobalObject)->value(lexicalGlobalObject);
+                auto* valueString = value.toString(lexicalGlobalObject);
+                RETURN_IF_EXCEPTION(throwScope, {});
+                auto valueStr = valueString->value(lexicalGlobalObject);
                 RETURN_IF_EXCEPTION(throwScope, {});
 
                 Vector<String> pair;
@@ -179,6 +195,8 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
         return {};
     }
 
+    auto* structure = structureForNewTarget<CookieMap>(lexicalGlobalObject, callFrame);
+    RETURN_IF_EXCEPTION(throwScope, {});
     auto result_exception = CookieMap::create(WTF::move(init));
     if (result_exception.hasException()) {
         WebCore::propagateException(lexicalGlobalObject, throwScope, result_exception.releaseException());
@@ -186,7 +204,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
     }
     auto result = result_exception.releaseReturnValue();
 
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated(lexicalGlobalObject, castedThis->globalObject(), WTF::move(result))));
+    return JSValue::encode(createWrapper<CookieMap>(castedThis->globalObject(), structure, WTF::move(result)));
 }
 
 JSC_ANNOTATE_HOST_FUNCTION(JSCookieMapDOMConstructorConstruct, JSCookieMapDOMConstructor::construct);
@@ -324,7 +342,9 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_toSetCookieHeader
     RETURN_IF_EXCEPTION(throwScope, {});
     size_t i = 0;
     for (auto& item : cookies) {
-        resultArray->putDirectIndex(lexicalGlobalObject, i, jsString(vm, item->toString(vm)));
+        auto header = toJS<IDLDOMString>(*lexicalGlobalObject, throwScope, item->toString(vm));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        resultArray->putDirectIndex(lexicalGlobalObject, i, header);
         RETURN_IF_EXCEPTION(throwScope, {});
         i += 1;
     }

@@ -22,11 +22,12 @@ use crate::bun_css;
 use crate::bun_fs;
 
 use crate::Graph::Graph;
+#[cfg(debug_assertions)]
+use crate::LinkerContext;
 use crate::html_import_manifest as HTMLImportManifest;
 use crate::options::{self, Loader};
 use crate::{
-    AdditionalFile, CompileResult, LinkerContext, LinkerGraph, PartRange, PathTemplate,
-    cheap_prefix_normalizer,
+    AdditionalFile, CompileResult, LinkerGraph, PartRange, PathTemplate, cheap_prefix_normalizer,
 };
 
 use crate::IndexInt;
@@ -36,17 +37,14 @@ pub struct ChunkImport {
     pub(crate) import_kind: ImportKind,
 }
 
-// Lifetime note: string/slice fields below conceptually borrow from the
-// bundler arena. The borrow is erased to
-// `&'static [u8]` (the arena is owned by `BundleV2` and outlives every
-// `Chunk`; see the lifetime-erasure note on `LinkerGraph::bump`) or owns a
-// `Box<[T]>` instead of threading a `'bump` lifetime through the chunk
-// pipeline.
-pub struct Chunk {
+// `'a` is the bundler arena. The keys' borrow of it is still erased (see `LinkerGraph::bump`).
+pub struct Chunk<'a> {
     /// This is a random string and is used to represent the output path of this
     /// chunk before the final output path has been computed. See OutputPiece
     /// for more info on this technique.
     pub(crate) unique_key: &'static [u8],
+    /// Like `unique_key`, but replaced with `id()` rather than the chunk's path.
+    pub(crate) id_key: &'static [u8],
 
     /// Maps source index to bytes contributed to this chunk's output (for metafile).
     /// The value is updated during parallel chunk generation to track bytesInOutput.
@@ -67,7 +65,7 @@ pub struct Chunk {
     /// For code splitting
     pub(crate) cross_chunk_imports: Vec<ChunkImport>,
 
-    pub content: Content,
+    pub content: Content<'a>,
 
     pub entry_point: EntryPoint,
 
@@ -80,12 +78,16 @@ pub struct Chunk {
     // borrows from the symbol table and so can't live in this owning struct.
     // `ChunkRenamer` is the owning equivalent (see `crate::bun_renamer`).
     pub(crate) renamer: bun_renamer::ChunkRenamer,
+    /// The nested scopes still to name after `rename_symbols_in_chunk`
+    /// (number renamer only), `(source_index, module-scope child)` grouped by
+    /// file; each file becomes a `NestedRenamer` task.
+    pub(crate) nested_scopes_to_rename: Vec<(u32, *const bun_ast::Scope)>,
 
     pub compile_results_for_chunk: CompileResultSlots,
 
-    /// Pre-built JSON fragment for this chunk's metafile output entry.
-    /// Generated during parallel chunk generation, joined at the end.
-    pub(crate) metafile_chunk_json: Box<[u8]>,
+    /// Byte length of the output emitted for this chunk: what `code()` returned plus
+    /// the source map comment. The metafile reports it as `outputs[..].bytes`.
+    pub(crate) final_output_size: usize,
 
     /// Pack boolean flags to reduce padding overhead.
     /// Previously 3 separate bool fields caused ~21 bytes of padding waste.
@@ -102,7 +104,7 @@ bitflags::bitflags! {
     }
 }
 
-impl Default for Content {
+impl Default for Content<'_> {
     fn default() -> Self {
         Content::Javascript(JavaScriptChunk::default())
     }
@@ -127,7 +129,7 @@ impl Default for Content {
 // Caveat: `Renamer<'r>` still borrows `&'r mut {Number,Minify}Renamer`,
 // so the per-chunk renamer is reborrowed mutably from each part-range task;
 // the printer never writes through it, but the borrow should become `&'r`.
-unsafe impl Send for Chunk {}
+unsafe impl Send for Chunk<'_> {}
 // SAFETY: shared `&Chunk` access during the worker fan-out touches only
 // `compile_results_for_chunk` (UnsafeCell-per-slot, disjoint indices) and
 // `files_with_parts_in_chunk` atomic counters; the remaining fields are
@@ -138,7 +140,7 @@ unsafe impl Send for Chunk {}
 // the matching split-borrow in `generate_compile_result_for_js_chunk`) goes
 // away. Pre-existing; this impl mirrors `unsafe impl Send for Chunk` and
 // the single-pointer fan-out the workers use.
-unsafe impl Sync for Chunk {}
+unsafe impl Sync for Chunk<'_> {}
 
 /// Disjoint-slot output buffer for [`Chunk::compile_results_for_chunk`].
 ///
@@ -186,19 +188,11 @@ impl CompileResultSlots {
     }
 }
 
-impl core::ops::Index<usize> for CompileResultSlots {
-    type Output = CompileResult;
-    #[inline]
-    fn index(&self, i: usize) -> &CompileResult {
-        // SAFETY: reads happen only after the pool join; no concurrent writer.
-        unsafe { &*self.0[i].get() }
-    }
-}
-
-impl Default for Chunk {
+impl Default for Chunk<'_> {
     fn default() -> Self {
         Chunk {
             unique_key: b"",
+            id_key: b"",
             files_with_parts_in_chunk: ArrayHashMap::new(),
             entry_bits: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
             final_rel_path: Box::default(),
@@ -210,14 +204,15 @@ impl Default for Chunk {
             intermediate_output: IntermediateOutput::default(),
             isolated_hash: u64::MAX,
             renamer: bun_renamer::ChunkRenamer::default(),
+            nested_scopes_to_rename: Vec::new(),
             compile_results_for_chunk: CompileResultSlots::default(),
-            metafile_chunk_json: Box::default(),
+            final_output_size: 0,
             flags: Flags::default(),
         }
     }
 }
 
-impl Chunk {
+impl<'a> Chunk<'a> {
     /// Write `result` into `compile_results_for_chunk[i]` through a raw
     /// `*mut Chunk`, for the `generate_compile_result_for_*_chunk` worker
     /// callbacks.
@@ -272,6 +267,44 @@ impl Chunk {
         self.entry_point.is_entry_point()
     }
 
+    /// Whether `source_index` is the entry point of this chunk. Without code
+    /// splitting, the files of other entry points can print in this chunk too.
+    #[inline]
+    pub(crate) fn is_entry_point_file(&self, source_index: u32) -> bool {
+        self.entry_point.is_entry_point() && self.entry_point.source_index() == source_index
+    }
+
+    /// Stable short name for this chunk in generated code: its final content hash, as `[hash]` prints it.
+    pub(crate) fn id(&self) -> bun_core::fmt::ContentHash {
+        self.template
+            .placeholder
+            .hash
+            .unwrap_or_else(|| bun_core::fmt::ContentHash::short(self.isolated_hash))
+    }
+
+    /// The chunks reachable from chunk `start` through cross-chunk imports of the given kinds, `start` first.
+    pub(crate) fn reachable_chunks(
+        chunks: &[Chunk],
+        start: u32,
+        kinds: &[ImportKind],
+    ) -> Result<Vec<u32>, AllocError> {
+        let mut seen = AutoBitSet::init_empty(chunks.len())?;
+        let mut order = vec![start];
+        seen.set(start as usize);
+        let mut i = 0;
+        while i < order.len() {
+            for import in chunks[order[i] as usize].cross_chunk_imports.iter() {
+                if kinds.contains(&import.import_kind) && !seen.is_set(import.chunk_index as usize)
+                {
+                    seen.set(import.chunk_index as usize);
+                    order.push(import.chunk_index);
+                }
+            }
+            i += 1;
+        }
+        Ok(order)
+    }
+
     /// Returns the HTML closing tag that must be escaped when this chunk's content
     /// is inlined into a standalone HTML file (e.g. "</script" for JS, "</style" for CSS).
     pub(crate) fn closing_tag_for_content(&self) -> &'static [u8] {
@@ -282,23 +315,29 @@ impl Chunk {
         }
     }
 
-    pub(crate) fn get_js_chunk_for_html<'a>(&self, chunks: &'a [Chunk]) -> Option<&'a Chunk> {
+    pub(crate) fn get_js_chunk_for_html<'c>(
+        &self,
+        chunks: &'c [Chunk<'a>],
+    ) -> Option<&'c Chunk<'a>> {
+        self.get_js_chunk_index_for_html(chunks).map(|i| &chunks[i])
+    }
+
+    pub(crate) fn get_js_chunk_index_for_html(&self, chunks: &[Chunk]) -> Option<usize> {
         // Non-entry chunks created under code splitting carry a default
         // entry_point_id of 0, so the id alone is ambiguous; require
         // is_entry_point to find the actual entry chunk.
         let entry_point_id = self.entry_point.entry_point_id();
-        for other in chunks.iter() {
-            if matches!(other.content, Content::Javascript(_))
+        chunks.iter().position(|other| {
+            matches!(other.content, Content::Javascript(_))
                 && other.entry_point.is_entry_point()
                 && other.entry_point.entry_point_id() == entry_point_id
-            {
-                return Some(other);
-            }
-        }
-        None
+        })
     }
 
-    pub(crate) fn get_css_chunk_for_html<'a>(&self, chunks: &'a [Chunk]) -> Option<&'a Chunk> {
+    pub(crate) fn get_css_chunk_for_html<'c>(
+        &self,
+        chunks: &'c [Chunk<'a>],
+    ) -> Option<&'c Chunk<'a>> {
         // Look up the CSS chunk via the JS chunk's css_chunks indices.
         // This correctly handles deduplicated CSS chunks that are shared
         // across multiple HTML entry points (see issue #23668).
@@ -330,34 +369,6 @@ impl Chunk {
     #[inline]
     pub(crate) fn entry_bits(&self) -> &AutoBitSet {
         &self.entry_bits
-    }
-}
-
-#[derive(Clone, Copy, Default)]
-pub(crate) struct Order {
-    pub source_index: IndexInt,
-    pub distance: u32,
-    pub tie_breaker: u32,
-}
-
-impl Order {
-    fn less_than(_ctx: Order, a: Order, b: Order) -> bool {
-        (a.distance < b.distance) || (a.distance == b.distance && a.tie_breaker < b.tie_breaker)
-    }
-
-    /// Sort so files closest to an entry point come first. If two files are
-    /// equidistant to an entry point, then break the tie by sorting on the
-    /// stable source index derived from the DFS over all entry points.
-    pub(crate) fn sort(a: &mut [Order]) {
-        index_sort::sort_slice_unstable_by(a, |a, b| {
-            if Order::less_than(Order::default(), *a, *b) {
-                core::cmp::Ordering::Less
-            } else if Order::less_than(Order::default(), *b, *a) {
-                core::cmp::Ordering::Greater
-            } else {
-                core::cmp::Ordering::Equal
-            }
-        });
     }
 }
 
@@ -561,20 +572,6 @@ impl IntermediateOutput {
         dst
     }
 
-    pub(crate) fn get_size(&self) -> usize {
-        match self {
-            IntermediateOutput::Pieces(pieces) => {
-                let mut total: usize = 0;
-                for piece in pieces.slice() {
-                    total += piece.data.len();
-                }
-                total
-            }
-            IntermediateOutput::Joiner(joiner) => joiner.len,
-            IntermediateOutput::Empty => 0,
-        }
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub fn code<'d>(
         &mut self,
@@ -689,8 +686,7 @@ impl IntermediateOutput {
         let additional_files = graph.input_files.items_additional_files();
         let unique_key_for_additional_files =
             graph.input_files.items_unique_key_for_additional_file();
-        let mut relative_platform_buf = bun_paths::path_buffer_pool::get();
-        let mut file_path_buf = bun_paths::path_buffer_pool::get();
+        let mut file_path_posix: Vec<u8> = Vec::new();
         match self {
             IntermediateOutput::Pieces(pieces) => {
                 let entry_point_chunks_for_scb = linker_graph.files.items_entry_point_chunk_index();
@@ -734,6 +730,9 @@ impl IntermediateOutput {
                     count += piece.data.len();
 
                     match piece.query.kind() {
+                        QueryKind::ChunkId => {
+                            count += chunks[piece.query.index() as usize].id().len()
+                        }
                         QueryKind::Chunk
                         | QueryKind::Asset
                         | QueryKind::Scb
@@ -800,20 +799,27 @@ impl IntermediateOutput {
                                     ));
                                     continue;
                                 }
-                                QueryKind::None => unreachable!(),
+                                QueryKind::None | QueryKind::ChunkId => unreachable!(),
                             };
 
+                            // Normalize like the write pass below so the counted length matches.
+                            let file_path: &[u8] = {
+                                file_path_posix.clear();
+                                file_path_posix.extend_from_slice(file_path);
+                                bun_paths::resolve_path::platform_to_posix_in_place::<u8>(
+                                    &mut file_path_posix,
+                                );
+                                &file_path_posix
+                            };
                             let cheap_normalizer = cheap_prefix_normalizer(
                                 import_prefix,
                                 if use_outdir_relative_path {
                                     file_path
                                 } else {
-                                    bun_paths::resolve_path::relative_platform_buf::<
+                                    bun_paths::resolve_path::relative_platform::<
                                         bun_paths::platform::Posix,
                                         false,
-                                    >(
-                                        &mut relative_platform_buf[..], from_chunk_dir, file_path
-                                    )
+                                    >(from_chunk_dir, file_path)
                                 },
                             );
                             count += cheap_normalizer[0].len() + cheap_normalizer[1].len();
@@ -862,6 +868,17 @@ impl IntermediateOutput {
                     remain = &mut remain[data.len()..];
 
                     match piece.query.kind() {
+                        QueryKind::ChunkId => {
+                            let id = chunks[piece.query.index() as usize].id();
+                            let (bytes, len) = (id.bytes(), id.len());
+                            remain[..len].copy_from_slice(&bytes[..len]);
+                            if ENABLE_SOURCE_MAP_SHIFTS {
+                                shift.before.advance(chunk.unique_key);
+                                shift.after.advance(&bytes[..len]);
+                                shifts.push(shift);
+                            }
+                            remain = &mut remain[len..];
+                        }
                         QueryKind::Asset
                         | QueryKind::Chunk
                         | QueryKind::Scb
@@ -978,29 +995,24 @@ impl IntermediateOutput {
                                 _ => unreachable!(),
                             };
 
-                            // normalize windows paths to '/'
-                            // The source slices are reachable only
-                            // through `&Graph` / `&[Chunk]` here; materialising `&mut` from a
-                            // shared-provenance pointer is UB regardless of whether the write
-                            // happens. Copy into a pooled scratch buffer and normalise that.
+                            // Normalize Windows paths to '/' in a copy because the source is borrowed immutably.
                             let file_path: &[u8] = {
-                                let n = file_path.len();
-                                let dst = &mut file_path_buf[..n];
-                                dst.copy_from_slice(file_path);
-                                bun_paths::resolve_path::platform_to_posix_in_place::<u8>(dst);
-                                dst
+                                file_path_posix.clear();
+                                file_path_posix.extend_from_slice(file_path);
+                                bun_paths::resolve_path::platform_to_posix_in_place::<u8>(
+                                    &mut file_path_posix,
+                                );
+                                &file_path_posix
                             };
                             let cheap_normalizer = cheap_prefix_normalizer(
                                 import_prefix,
                                 if use_outdir_relative_path {
                                     file_path
                                 } else {
-                                    bun_paths::resolve_path::relative_platform_buf::<
+                                    bun_paths::resolve_path::relative_platform::<
                                         bun_paths::platform::Posix,
                                         false,
-                                    >(
-                                        &mut relative_platform_buf[..], from_chunk_dir, file_path
-                                    )
+                                    >(from_chunk_dir, file_path)
                                 },
                             );
 
@@ -1172,6 +1184,7 @@ impl Query {
             2 => QueryKind::Chunk,
             3 => QueryKind::Scb,
             4 => QueryKind::HtmlImport,
+            5 => QueryKind::ChunkId,
             _ => unreachable!("Query: invalid kind tag"),
         }
     }
@@ -1190,18 +1203,21 @@ pub enum QueryKind {
     Scb = 3,
     /// Given an HTML import index, print the manifest
     HtmlImport = 4,
+    /// Given a chunk index, print the chunk's content hash as `[hash]` prints it
+    ChunkId = 5,
 }
 
 impl QueryKind {
     /// Single-ASCII-letter tag used in the [`UniqueKey`] wire format.
     /// `None` has no on-the-wire encoding.
     #[inline]
-    const fn letter(self) -> u8 {
+    pub(crate) const fn letter(self) -> u8 {
         match self {
             QueryKind::Asset => b'A',
             QueryKind::Chunk => b'C',
             QueryKind::Scb => b'S',
             QueryKind::HtmlImport => b'H',
+            QueryKind::ChunkId => b'I',
             QueryKind::None => unreachable!(),
         }
     }
@@ -1214,6 +1230,7 @@ impl QueryKind {
             b'C' => Some(QueryKind::Chunk),
             b'S' => Some(QueryKind::Scb),
             b'H' => Some(QueryKind::HtmlImport),
+            b'I' => Some(QueryKind::ChunkId),
             _ => None,
         }
     }
@@ -1303,10 +1320,14 @@ pub struct JavaScriptChunk {
     pub parts_in_chunk_in_order: Box<[PartRange]>,
 
     // for code splitting
-    // The map hashes via `Ref`'s `Hash` impl. Values
-    // are `&'static`-erased slices into bundler-owned storage (see the
-    // lifetime note on `Chunk`).
-    pub(crate) exports_to_other_chunks: ArrayHashMap<Ref, &'static [u8]>,
+    /// The other chunks with top-level side effects that the walk ordering
+    /// this chunk reaches, in the order it finishes their first file with
+    /// side effects: the order the unbundled modules would run them in.
+    /// `compute_cross_chunk_dependencies` sorts this chunk's `import`
+    /// statements by it.
+    pub(crate) reached_chunks_in_order: Box<[u32]>,
+    /// Bindings declared in this chunk that another chunk imports; named by `cross_chunk_names`.
+    pub(crate) exports_to_other_chunks: ArrayHashMap<Ref, ()>,
     pub(crate) imports_from_other_chunks: ImportsFromOtherChunks,
     pub(crate) cross_chunk_prefix_stmts: Vec<Stmt>,
     pub(crate) cross_chunk_suffix_stmts: Vec<Stmt>,
@@ -1324,8 +1345,8 @@ pub struct JavaScriptChunk {
     pub(crate) module_info: Option<Box<analyze_transpiled_module::ModuleInfo>>,
 }
 
-pub struct CssChunk {
-    pub(crate) imports_in_chunk_in_order: Vec<CssImportOrder>,
+pub struct CssChunk<'a> {
+    pub(crate) imports_in_chunk_in_order: Vec<CssImportOrder<'a>>,
     /// When creating a chunk, this is to be an uninitialized slice with
     /// length of `imports_in_chunk_in_order`
     ///
@@ -1337,7 +1358,7 @@ pub struct CssChunk {
     pub(crate) asts: Box<[bun_css::BundlerStyleSheet]>,
 }
 
-impl Drop for CssChunk {
+impl Drop for CssChunk<'_> {
     fn drop(&mut self) {
         // `asts` is a slice of bitwise shallow
         // copies (see `prepareCssAstsForChunk` `ptr::read`). Multiple slots may
@@ -1349,14 +1370,14 @@ impl Drop for CssChunk {
     }
 }
 
-pub struct CssImportOrder {
+pub struct CssImportOrder<'a> {
     pub(crate) conditions: Vec<bun_css::ImportConditions>,
-    pub(crate) condition_import_records: Vec<ImportRecord>,
+    pub(crate) condition_import_records: Vec<ImportRecord<'a>>,
 
-    pub(crate) kind: CssImportOrderKind,
+    pub(crate) kind: CssImportOrderKind<'a>,
 }
 
-impl Drop for CssImportOrder {
+impl Drop for CssImportOrder<'_> {
     fn drop(&mut self) {
         // `conditions`: bitwise-shared across multiple order entries by
         // `findImportedFilesInCSSOrder` (`bitwise_copy(wrapping_conditions)`);
@@ -1371,7 +1392,7 @@ impl Drop for CssImportOrder {
 }
 
 #[derive(strum::IntoStaticStr)]
-pub enum CssImportOrderKind {
+pub enum CssImportOrderKind<'a> {
     /// Represents earlier imports that have been made redundant by later ones (see `isConditionalImportRedundant`)
     /// We don't want to redundantly print the rules of these redundant imports
     /// BUT, the imports may include layers.
@@ -1379,7 +1400,7 @@ pub enum CssImportOrderKind {
     #[strum(serialize = "layers")]
     Layers(Layers),
     #[strum(serialize = "external_path")]
-    ExternalPath(bun_fs::Path<'static>),
+    ExternalPath(bun_fs::Path<'a>),
     #[strum(serialize = "source_index")]
     SourceIndex(Index),
 }
@@ -1438,7 +1459,7 @@ impl Layers {
     }
 }
 
-impl CssImportOrder {
+impl CssImportOrder<'_> {
     pub(crate) fn hash<H: bun_core::Hasher + ?Sized>(&self, hasher: &mut H) {
         // TODO: conditions, condition_import_records
 
@@ -1465,15 +1486,13 @@ impl CssImportOrder {
                 hasher.update(b"\x00");
             }
             CssImportOrderKind::ExternalPath(path) => hasher.update(path.text),
-            // Note: `Index` is a `#[repr(transparent)]` u32 newtype but
-            // doesn't impl `AsBytes`; hash the inner u32.
             CssImportOrderKind::SourceIndex(idx) => {
                 bun_core::write_any_to_hasher(hasher, idx.get())
             }
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg(debug_assertions)]
     pub(crate) fn fmt<'a, 'ctx>(
         &'a self,
         ctx: &'a LinkerContext<'ctx>,
@@ -1482,9 +1501,9 @@ impl CssImportOrder {
     }
 }
 
-#[allow(dead_code)]
+#[cfg(debug_assertions)]
 pub(crate) struct CssImportOrderDebug<'a, 'ctx> {
-    inner: &'a CssImportOrder,
+    inner: &'a CssImportOrder<'a>,
     // Note: split lifetimes — `LinkerContext<'ctx>` is invariant over `'ctx`,
     // so coupling the borrow lifetime to the struct param (`&'a LinkerContext<'a>`)
     // forces every caller's `&CssImportOrder` and `&LinkerContext` to share one
@@ -1493,6 +1512,7 @@ pub(crate) struct CssImportOrderDebug<'a, 'ctx> {
     ctx: &'a LinkerContext<'ctx>,
 }
 
+#[cfg(debug_assertions)]
 impl<'a, 'ctx> fmt::Display for CssImportOrderDebug<'a, 'ctx> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(writer, "{} = ", <&'static str>::from(&self.inner.kind))?;
@@ -1533,7 +1553,6 @@ pub(crate) type ImportsFromOtherChunks = ArrayHashMap<IndexInt, cross_chunk_impo
 
 #[derive(Default, Clone)]
 pub struct CrossChunkImportItem {
-    pub(crate) export_alias: Box<[u8]>,
     pub(crate) r#ref: Ref,
 }
 pub type CrossChunkImportItemList = Vec<CrossChunkImportItem>;
@@ -1548,26 +1567,44 @@ pub mod cross_chunk_import {
 }
 
 impl CrossChunkImport {
+    /// `evaluation_rank[other]` is the position of `other` in the importing
+    /// chunk's `reached_chunks_in_order` (`u32::MAX` when the walk did not
+    /// reach it). ESM hoists every `import` above the chunk's own code, so
+    /// this order is the only part of the source evaluation order the
+    /// statements can keep.
     pub(crate) fn sorted_cross_chunk_imports(
         list: &mut Vec<CrossChunkImport>,
-        chunks: &mut [Chunk],
+        chunks: &[Chunk],
         imports_from_other_chunks: &mut ImportsFromOtherChunks,
-    ) -> Result<(), crate::Error> {
+        stable_source_indices: &[u32],
+        evaluation_rank: &[u32],
+    ) {
         list.clear();
         list.reserve(imports_from_other_chunks.count());
 
         for i in 0..imports_from_other_chunks.count() {
             let chunk_index = imports_from_other_chunks.keys()[i];
-            let chunk = &mut chunks[chunk_index as usize];
 
-            let exports_to_other_chunks = &chunk.content.javascript().exports_to_other_chunks;
+            debug_assert!({
+                let exports_to_other_chunks = &chunks[chunk_index as usize]
+                    .content
+                    .javascript()
+                    .exports_to_other_chunks;
+                imports_from_other_chunks.values()[i]
+                    .iter()
+                    .all(|item| exports_to_other_chunks.contains(&item.r#ref))
+            });
             let import_items = &mut imports_from_other_chunks.values_mut()[i];
-            for item in import_items.slice_mut() {
-                item.export_alias = (*exports_to_other_chunks.get(&item.r#ref).unwrap()).into();
-                debug_assert!(!item.export_alias.is_empty());
-            }
+            // Deterministic order; the names are only known after renaming.
             index_sort::sort_slice_by(import_items.slice_mut(), |a, b| {
-                strings::order(&a.export_alias, &b.export_alias)
+                (
+                    stable_source_indices[a.r#ref.source_index() as usize],
+                    a.r#ref.inner_index(),
+                )
+                    .cmp(&(
+                        stable_source_indices[b.r#ref.source_index() as usize],
+                        b.r#ref.inner_index(),
+                    ))
             });
 
             list.push(CrossChunkImport {
@@ -1576,21 +1613,23 @@ impl CrossChunkImport {
             });
         }
 
-        index_sort::sort_slice_by(list, |a, b| a.chunk_index.cmp(&b.chunk_index));
-        Ok(())
+        index_sort::sort_slice_by(list, |a, b| {
+            (evaluation_rank[a.chunk_index as usize], a.chunk_index)
+                .cmp(&(evaluation_rank[b.chunk_index as usize], b.chunk_index))
+        });
     }
 }
 
 // `Chunk` is bump-arena-allocated (no Drop on free); boxing the large arm
 // would leak. The CSS/JS chunk size diff is acceptable.
 #[allow(clippy::large_enum_variant)]
-pub enum Content {
+pub enum Content<'a> {
     Javascript(JavaScriptChunk),
-    Css(CssChunk),
+    Css(CssChunk<'a>),
     Html,
 }
 
-impl Content {
+impl<'a> Content<'a> {
     #[inline]
     pub(crate) fn is_javascript(&self) -> bool {
         matches!(self, Content::Javascript(_))
@@ -1600,7 +1639,7 @@ impl Content {
         matches!(self, Content::Css(_))
     }
     bun_core::enum_unwrap!(pub Content, Javascript => fn javascript / javascript_mut -> JavaScriptChunk);
-    bun_core::enum_unwrap!(pub Content, Css        => fn css        / css_mut        -> CssChunk);
+    bun_core::enum_unwrap!(pub Content, Css        => fn css        / css_mut        -> CssChunk<'a>);
 
     pub(crate) fn sourcemap(&self, default: options::SourceMapOption) -> options::SourceMapOption {
         match self {

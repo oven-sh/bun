@@ -18,7 +18,9 @@ namespace Bun {
 class JSEnvironmentVariableMap final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
-    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesPut;
+    // OverridesPut alone doesn't stop the DFG from turning a put into a direct store when it knows the structure. OverridesGetOwnPropertySlot does.
+    // The last flag keeps indexed properties in the sparse map, so every indexed store reaches putByIndex().
+    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesPut | JSC::OverridesGetOwnPropertySlot | JSC::InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero;
 
     static JSEnvironmentVariableMap* create(JSC::VM& vm, JSC::Structure* structure)
     {
@@ -41,6 +43,9 @@ public:
         return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
+    // Fills in a map nothing has read yet, without a Structure per variable. `name` must not be on the map.
+    void putInitialValue(JSC::JSGlobalObject*, const JSC::Identifier& name, JSC::JSValue);
+
     static bool put(JSC::JSCell*, JSC::JSGlobalObject*, JSC::PropertyName, JSC::JSValue, JSC::PutPropertySlot&);
     static bool putByIndex(JSC::JSCell*, JSC::JSGlobalObject*, unsigned, JSC::JSValue, bool shouldThrow);
     static bool defineOwnProperty(JSC::JSObject*, JSC::JSGlobalObject*, JSC::PropertyName, const JSC::PropertyDescriptor&, bool shouldThrow);
@@ -53,11 +58,12 @@ private:
     }
 };
 
-JSC::JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject);
+// Returns null with an exception pending if it throws. On Windows, JS finishes building the map.
+JSC::JSObject* createEnvironmentVariablesMap(Zig::GlobalObject* globalObject);
 
 // Setting TZ must make *existing* Date instances recompute local time. JSC's DateCache
-// reset only clears shared slots; live DateInstances keep a Ref to DateInstanceData
-// whose gregorian cache still matches, so walk the heap and invalidate those.
+// reset only clears shared slots; live DateInstances keep their own cached fields
+// that still match, so walk the heap and invalidate those.
 void invalidateLiveDateInstanceCaches(JSC::VM&);
 
 // The shared DateCache reset and invalidateLiveDateInstanceCaches() must travel

@@ -1,5 +1,24 @@
 # List of tests for which we do NOT enable LeakSanitizer when running in ASAN CI
 
+# Third-party build tools and packages load native addons.
+test/aot/frameworks/angular.test.ts
+test/aot/frameworks/angular-one-file.test.ts
+test/aot/frameworks/astro.test.ts
+test/aot/frameworks/astro-one-file.test.ts
+test/aot/frameworks/next.test.ts
+test/aot/frameworks/next-one-file.test.ts
+test/aot/frameworks/nuxt.test.ts
+test/aot/frameworks/nuxt-one-file.test.ts
+test/aot/frameworks/react-router.test.ts
+test/aot/frameworks/react-router-one-file.test.ts
+test/aot/frameworks/sveltekit.test.ts
+test/aot/frameworks/sveltekit-one-file.test.ts
+test/aot/build-plugins-native.test.ts
+test/aot/backend-packages/programs-2.test.ts
+test/aot/backend-packages/programs-3.test.ts
+test/aot/backend-packages/programs-4.test.ts
+test/aot/backend-packages/programs-one-file.test.ts
+
 test/cli/install/bun-security-scanner-matrix-with-node-modules.test.ts
 test/cli/install/bun-security-scanner-matrix-without-node-modules.test.ts
 
@@ -46,7 +65,6 @@ test/cli/install/bunx.test.ts
 test/cli/install/isolated-install.test.ts
 test/cli/install/migration/complex-workspace.test.ts
 test/cli/install/npmrc.test.ts
-test/cli/install/overrides.test.ts
 test/cli/install/test-dev-peer-dependency-priority.test.ts
 test/cli/run/commonjs-invalid.test.ts
 test/cli/run/preload-test.test.js
@@ -58,7 +76,6 @@ test/integration/next-pages/test/dev-server-ssr-100.test.ts
 test/integration/next-pages/test/dev-server.test.ts
 test/integration/next-pages/test/next-build.test.ts
 test/integration/vite-build/vite-build.test.ts
-test/js/bun/css/css-fuzz.test.ts
 test/js/bun/ffi/cc.test.ts
 test/js/bun/http/bun-serve-html-manifest.test.ts
 test/js/bun/http/bun-server.test.ts
@@ -95,6 +112,9 @@ test/cli/install/bun-install-security-provider.test.ts
 test/js/node/test/parallel/test-tls-fast-writing.js
 test/js/bun/sqlite/sqlite.test.js
 test/regression/issue/12250.test.ts
+# `bun test --bail` exits with a bare exit(1), so the VM teardown is skipped and
+# LeakSanitizer aborts the child with 134 after several seconds (#32183).
+test/regression/issue/26851.test.ts
 test/js/bun/test/parallel/test-http-10177-response.write-with-non-ascii-latin1-should-not-cause-duplicated-character-or-segfault.ts
 test/cli/install/minimum-release-age.test.ts
 
@@ -154,6 +174,7 @@ test/js/node/test/parallel/test-http-server-keepalive-req-gc.js
 # Timeouts
 test/js/node/test/parallel/test-cluster-primary-kill.js
 test/cli/test/parallel.test.ts
+test/cli/test/parallel-startup-failure.test.ts
 
 # bun.assert(!this.hasPendingActivity() or jsc.VirtualMachine.get().isShuttingDown());
 # @call(bun.callmod_inline, Subprocess.finalize, .{thisValue});
@@ -352,6 +373,10 @@ test/regression/issue/10139.test.ts
 test/js/bun/udp/udp_socket.test.ts
 test/cli/init/init.test.ts
 
+# `bun create ./Component.tsx` exits from inside the bundler's dependency scan, so the
+# bundle (its worker map, the CSS it parsed) is never torn down.
+test/cli/create/create-jsx.test.ts
+
 # There are some leaks related to the dev server closing on process exit, the fix is to
 # tick the event loop on globalExit but this breaks like 50 tests. Since the
 # leak is when process exits it should be fine for now but it should be fixed at
@@ -395,3 +420,7 @@ test/bundler/native-plugin.test.ts
 
 # Slow
 test/js/bun/typescript/type-export.test.ts
+
+# End the process while threads, lookups and requests are in flight.
+test/js/bun/util/system-library-calls.test.ts
+test/napi/addon-allocations.test.ts

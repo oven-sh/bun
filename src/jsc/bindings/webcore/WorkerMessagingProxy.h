@@ -98,9 +98,16 @@ public:
     JSC::Strong<JSC::JSPromise> takeCrossVMRequest(uint64_t id);
 
     // -- WorkerObjectProxy / WorkerReportingProxy (worker thread) ---------------------------------
+    // Before the entry point loads: posts 'online' to the parent, as node does before user code.
+    void workerThreadStarted();
+    // The entry point has evaluated: Pending -> Running, queued tasks and messages are delivered.
     void workerGlobalScopeStarted(Zig::GlobalObject&);
     void postMessageToWorkerObject(MessageWithMessagePorts&&);
     void postErrorToWorkerObject(Zig::GlobalObject&, const String& message, JSC::JSValue error);
+    // The worker's heap is full, so the parent makes the error. Touches no heap of the worker: safe inside an allocation.
+    void postOutOfMemoryErrorToWorkerObject();
+    // Parent thread: the thread was to start after the constructor had returned, and could not. What the constructor throws otherwise.
+    void postFailedToStartErrorToWorkerObject();
     // The thread's global scope, VM and per-thread state are gone; only the OS thread remains.
     // stoppedByParent: it stopped because it was asked to and never called process.exit() itself.
     void workerGlobalScopeDestroyed(int32_t exitCode, bool stoppedByParent);

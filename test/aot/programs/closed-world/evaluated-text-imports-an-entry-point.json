@@ -1,0 +1,1 @@
+{ "entryPoints": ["./library.ts"], "skipInShell": "it imports a file by its path, which the jsc shell does not resolve", "alone": "the text finds its second entry point by the path beside the first", "mainThread": "the text finds its second entry point by the path beside the first" }

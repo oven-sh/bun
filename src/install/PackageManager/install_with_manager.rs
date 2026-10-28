@@ -2161,6 +2161,14 @@ pub(crate) fn exit_on_empty_package_json(path: &[u8]) -> ! {
 }
 
 #[cold]
+fn frozen_lockfile_had_changes(log_level: Options::LogLevel) -> ! {
+    if log_level != Options::LogLevel::Silent {
+        bun_core::pretty_errorln!("<r><red>error<r>: lockfile had changes, but lockfile is frozen");
+    }
+    Global::crash();
+}
+
+#[cold]
 #[inline(never)]
 fn create_new_lockfile_and_enqueue(
     manager: &mut PackageManager,
@@ -2186,15 +2194,10 @@ fn create_new_lockfile_and_enqueue(
         manager.lockfile.text_lockfile_version = version;
     }
 
-    if manager.options.enable.frozen_lockfile()
-        && !matches!(load_result, lockfile::LoadResult::NotFound)
-    {
-        if log_level != Options::LogLevel::Silent {
-            bun_core::pretty_errorln!(
-                "<r><red>error<r>: lockfile had changes, but lockfile is frozen"
-            );
-        }
-        Global::crash();
+    let frozen = manager.options.enable.frozen_lockfile();
+    // A frozen install cannot replace a lockfile that failed to load.
+    if frozen && matches!(load_result, lockfile::LoadResult::Err(_)) {
+        frozen_lockfile_had_changes(log_level);
     }
 
     // A loaded lockfile already describes the project, and a pnpm migration imports the yaml
@@ -2230,6 +2233,11 @@ fn create_new_lockfile_and_enqueue(
             &mut resolver,
             Features::main(),
         )?;
+    }
+    // The root of the loaded lockfile has no dependencies: a package.json with some has changed.
+    if frozen && root.dependencies.len > 0 && matches!(load_result, lockfile::LoadResult::Ok { .. })
+    {
+        frozen_lockfile_had_changes(log_level);
     }
     if PackageJSONEditor::steers_catalogs_to_latest(manager) {
         PackageJSONEditor::steer_used_catalogs_to_latest(manager, None)?;
@@ -2806,9 +2814,6 @@ fn write_yarn_lock_with_progress(
         let _ = manager.progress.start(b"Saving yarn.lock", 0);
         manager.progress.refresh();
         node_started = true;
-    } else if log_level != Options::LogLevel::Silent {
-        bun_core::pretty_errorln!("Saved yarn.lock");
-        Output::flush();
     }
 
     write_yarn_lock(manager)?;
@@ -2819,6 +2824,9 @@ fn write_yarn_lock_with_progress(
         manager.progress.refresh();
         manager.progress.root.end();
         manager.progress = Default::default();
+    } else if log_level != Options::LogLevel::Silent {
+        bun_core::pretty_errorln!("Saved yarn.lock");
+        Output::flush();
     }
     Ok(())
 }

@@ -2,6 +2,7 @@ use bun_alloc::AllocError;
 
 use crate::Error;
 use crate::bun_fs::FileSystem;
+use crate::lockfile_real::is_mount_point_error;
 use crate::lockfile_real::package::PackageColumns;
 use crate::repository::Repository;
 use bun_core::ZStr;
@@ -1323,6 +1324,21 @@ pub fn save_lockfile(
                             break 'delete;
                         }
 
+                        // A mount point cannot be deleted: save the emptied lockfile into the same file.
+                        if is_mount_point_error(&err) && this.lockfile.packages.len() > 0 {
+                            let wrote = this.lockfile.save_to_disk_as(
+                                delete_format,
+                                load_result,
+                                &this.options,
+                            );
+                            if wrote && log_level != LogLevel::Silent {
+                                bun_core::pretty_errorln!("Saved lockfile");
+                                Output::flush();
+                            }
+                            // `--lockfile-only` names the file of `save_format` as the one it saved.
+                            return Ok(wrote && delete_format == save_format);
+                        }
+
                         if log_level != LogLevel::Silent {
                             Output::err(err, "failed to delete empty lockfile", ());
                         }
@@ -1364,11 +1380,6 @@ pub fn save_lockfile(
 
     let wrote = this.lockfile.save_to_disk(load_result, &this.options);
 
-    // delete binary lockfile if saving text lockfile
-    if save_format == LockfileFormat::Text && load_result.loaded_from_binary_lockfile() {
-        let _ = sys::unlinkat(Fd::cwd(), bun_paths::path_literal!("bun.lockb"));
-    }
-
     if cfg!(debug_assertions) {
         if !matches!(load_result, LoadResult::NotFound) {
             if load_result.loaded_from_text_lockfile() {
@@ -1404,6 +1415,19 @@ pub fn save_lockfile(
     } else if wrote && log_level != LogLevel::Silent {
         bun_core::pretty_errorln!("Saved lockfile");
         Output::flush();
+    }
+
+    // delete binary lockfile if saving text lockfile
+    if save_format == LockfileFormat::Text && load_result.loaded_from_binary_lockfile() {
+        if let Err(err) = sys::unlinkat(Fd::cwd(), bun_paths::path_literal!("bun.lockb")) {
+            // bun.lock is saved and is the lockfile bun reads first, so the command still succeeds.
+            if err.get_errno() != sys::E::ENOENT && log_level != LogLevel::Silent {
+                bun_core::warn!(
+                    "failed to delete bun.lockb after saving bun.lock: {}",
+                    bun_fmt::s(err.name()),
+                );
+            }
+        }
     }
 
     Ok(wrote)

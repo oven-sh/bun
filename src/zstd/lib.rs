@@ -449,6 +449,76 @@ mod tests {
     use util::SliceExt;
 
     #[test]
+    fn a_stream_that_has_failed_goes_on_failing() {
+        // 5 bytes are announced, and the last block has 3.
+        let frame = [
+            0x28, 0xB5, 0x2F, 0xFD, 0x20, 5, 0x19, 0, 0, b'a', b'b', b'c',
+        ];
+        let mut stream = DCtx::new();
+        let mut decompress = |src: &[u8]| {
+            let mut dst = [0; 64];
+            let (mut output, mut input) = (
+                OutBuffer {
+                    dst: &mut dst,
+                    pos: 0,
+                },
+                InBuffer { src, pos: 0 },
+            );
+            stream.decompress_stream(&mut output, &mut input)
+        };
+        let (start, end) = frame.split_at(9);
+        assert_eq!(decompress(start), Ok(3));
+        assert_eq!(decompress(end), Err(Error::CorruptionDetected));
+        for more in [&b"x"[..], b"", &frame] {
+            assert_eq!(decompress(more), Err(Error::CorruptionDetected));
+        }
+        stream.init_stream();
+        let (mut dst, src) = ([0; 64], [&frame[..5], &[3], &frame[6..]].concat());
+        let (mut output, mut input) = (
+            OutBuffer {
+                dst: &mut dst,
+                pos: 0,
+            },
+            InBuffer { src: &src, pos: 0 },
+        );
+        assert_eq!(stream.decompress_stream(&mut output, &mut input), Ok(0));
+        assert_eq!(output.pos, 3);
+    }
+
+    #[test]
+    fn a_stream_under_way_goes_on_after_what_does_not_concern_its_frame() -> Result<()> {
+        let data = Vec::from_iter((0..300u32).map(|i| (i * i % 7) as u8));
+        let frame = compress_alloc(&data, 3)?;
+        let mut dst = [0; 400];
+        let mut stream = DCtx::new();
+        let (start, end) = frame.split_at(frame.len() - 5);
+        let (mut output, mut input) = (
+            OutBuffer {
+                dst: &mut dst,
+                pos: 0,
+            },
+            InBuffer { src: start, pos: 0 },
+        );
+        assert_eq!(stream.decompress_stream(&mut output, &mut input), Ok(5));
+        assert_eq!(
+            stream.decompress(&mut [0; 400], &frame),
+            Err(Error::StageWrong)
+        );
+        let mut no_input = InBuffer { src: &[], pos: 0 };
+        for _ in 0..15 {
+            assert_eq!(stream.decompress_stream(&mut output, &mut no_input), Ok(5));
+        }
+        let result = stream.decompress_stream(&mut output, &mut no_input);
+        assert_eq!(result, Err(Error::NoForwardProgressInputEmpty));
+        let mut input = InBuffer { src: end, pos: 0 };
+        assert_eq!(stream.decompress_stream(&mut output, &mut input), Ok(0));
+        assert_eq!(output.pos, data.len());
+        assert_eq!(*dst.sub(..data.len())?, *data);
+        assert_eq!(stream.decompress(&mut dst, &frame), Ok(data.len()));
+        Ok(())
+    }
+
+    #[test]
     fn little_more_is_zeroed_than_is_written() {
         const STEP: usize = 16;
         const MOST: usize = STEP * VecOutput::MOST_STEPS_AT_ONCE;

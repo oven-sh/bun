@@ -484,6 +484,8 @@ enum DStreamStage {
     Read,
     Load,
     Flush,
+    /// The frame is given up. The C library leaves what a call does after one that has failed undefined.
+    Failed(Error),
 }
 
 /// What precedes `prefix_start`.
@@ -622,11 +624,12 @@ impl DCtx {
     }
 
     /// `ZSTD_decompressDCtx`: decompresses all the frames of `src`, which has to end with one, to the start of `dst`.
-    /// Returns how many bytes that is.
+    /// Returns how many bytes that is. As the other functions that take whole frames, it refuses with `StageWrong` from
+    /// the first call of [`Self::decompress_stream`] for a frame until that frame ends or [`Self::init_stream`].
     pub fn decompress(&mut self, dst: &mut [u8], src: &[u8]) -> Result<usize> {
         let (size, dst) = (dst.len(), &mut OutputBuffer::Whole(dst));
         self.state
-            .decompress_multi_frame(dst, size, 0, src, self.ddict.as_deref())
+            .decompress_frames(dst, size, src, self.ddict.as_deref())
     }
 
     /// The same to a new buffer of `capacity` bytes, little more of which is touched than is written. With `ddict`, if
@@ -641,9 +644,7 @@ impl DCtx {
         dst.try_reserve_exact(capacity)
             .map_err(|_| Error::MemoryAllocation)?;
         let used = &mut OutputBuffer::Used(&mut dst);
-        let size = self
-            .state
-            .decompress_multi_frame(used, capacity, 0, src, ddict)?;
+        let size = self.state.decompress_frames(used, capacity, src, ddict)?;
         dst.truncate(size);
         Ok(dst)
     }
@@ -656,8 +657,7 @@ impl DCtx {
         ddict: &DDict<'_>,
     ) -> Result<usize> {
         let (size, dst) = (dst.len(), &mut OutputBuffer::Whole(dst));
-        self.state
-            .decompress_multi_frame(dst, size, 0, src, Some(ddict))
+        self.state.decompress_frames(dst, size, src, Some(ddict))
     }
 
     /// `ZSTD_DCtx_loadDictionary`: `dict` is copied, and used for every frame from now on. None if it is empty.
@@ -702,6 +702,7 @@ impl DCtx {
 
     /// `ZSTD_decompressStream`: reads from `input` and writes to `output` as much as it can, and moves their positions.
     /// Returns 0 when a frame is complete and all of it is written, else a hint of how much input to give next.
+    /// Once a frame has made it fail, it fails in the same way until [`Self::init_stream`].
     pub fn decompress_stream(
         &mut self,
         output: &mut OutBuffer<'_>,
@@ -927,6 +928,21 @@ impl DState {
             ip += 4;
         }
         Ok((op - ostart, ip))
+    }
+
+    /// [`Self::decompress_multi_frame`] to the start of `dst`, unless a stream is under way: the C library then goes on
+    /// with that stream, with what this leaves.
+    fn decompress_frames(
+        &mut self,
+        dst: &mut OutputBuffer<'_>,
+        dst_size: usize,
+        src: &[u8],
+        ddict: Option<&DDict<'_>>,
+    ) -> Result<usize> {
+        if self.stream_stage != DStreamStage::Init {
+            return Err(Error::StageWrong);
+        }
+        self.decompress_multi_frame(dst, dst_size, 0, src, ddict)
     }
 
     /// `ZSTD_decompressMultiFrame`: all the frames of `src`, to `dst` from `dst_start` on.
@@ -1177,6 +1193,29 @@ impl DState {
         }
         if output.pos > output.dst.len() {
             return Err(Error::DstSizeTooSmall);
+        }
+        self.decompress_stream_on(output, input, ddict)
+            .inspect_err(|&error| {
+                // These leave all as it was.
+                let can_go_on = matches!(
+                    error,
+                    Error::NoForwardProgressDestFull | Error::NoForwardProgressInputEmpty
+                );
+                if !can_go_on {
+                    self.stream_stage = DStreamStage::Failed(error);
+                }
+            })
+    }
+
+    /// [`Self::decompress_stream`], but for what becomes of the stream if it fails.
+    fn decompress_stream_on(
+        &mut self,
+        output: &mut OutBuffer<'_>,
+        input: &mut InBuffer<'_>,
+        ddict: Option<&DDict<'_>>,
+    ) -> Result<usize> {
+        if let DStreamStage::Failed(error) = self.stream_stage {
+            return Err(error);
         }
         let src = input.src;
         let istart = input.pos;

@@ -1804,6 +1804,28 @@ static void writeToStandardError(std::span<const char> bytes)
 }
 #endif
 
+static void readMembers(Zig::GlobalObject* globalObject, JSValue holder, std::span<const ASCIILiteral> names)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!holder.isObject())
+        return;
+    for (auto name : names) {
+        holder.get(globalObject, Identifier::fromString(vm, name));
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+}
+
+static void readMembersOfGlobal(Zig::GlobalObject* globalObject, ASCIILiteral global, std::span<const ASCIILiteral> names)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue holder = globalObject->get(globalObject, Identifier::fromString(vm, global));
+    RETURN_IF_EXCEPTION(scope, void());
+    scope.release();
+    readMembers(globalObject, holder, names);
+}
+
 // A built-in object lists a member from when it is first read. The modules that make process.stderr read these when they load, those of an object in this order,
 // whatever the descriptor is. test/aot/parallel/process/keys-of-built-in-objects-behind-a-warning.mjs compares.
 static void readMembersThatMakingStandardErrorReads(Zig::GlobalObject* globalObject)
@@ -1815,26 +1837,13 @@ static void readMembersThatMakingStandardErrorReads(Zig::GlobalObject* globalObj
     static constexpr ASCIILiteral membersOfSymbol[] = { "for"_s };
     static constexpr ASCIILiteral membersOfNumber[] = { "isNaN"_s };
     static constexpr ASCIILiteral membersOfPromisePrototype[] = { "finally"_s };
-    auto readMembers = [&](JSValue holder, std::span<const ASCIILiteral> names) {
-        for (auto name : names) {
-            if (!holder.isObject())
-                return;
-            holder.get(globalObject, Identifier::fromString(vm, name));
-            RETURN_IF_EXCEPTION(scope, void());
-        }
-    };
-    auto readMembersOfGlobal = [&](ASCIILiteral global, std::span<const ASCIILiteral> names) {
-        JSValue holder = globalObject->get(globalObject, Identifier::fromString(vm, global));
-        RETURN_IF_EXCEPTION(scope, void());
-        readMembers(holder, names);
-    };
-    readMembersOfGlobal("Object"_s, membersOfObject);
+    readMembersOfGlobal(globalObject, "Object"_s, membersOfObject);
     RETURN_IF_EXCEPTION(scope, void());
-    readMembersOfGlobal("Reflect"_s, membersOfReflect);
+    readMembersOfGlobal(globalObject, "Reflect"_s, membersOfReflect);
     RETURN_IF_EXCEPTION(scope, void());
-    readMembersOfGlobal("Symbol"_s, membersOfSymbol);
+    readMembersOfGlobal(globalObject, "Symbol"_s, membersOfSymbol);
     RETURN_IF_EXCEPTION(scope, void());
-    readMembersOfGlobal("Number"_s, membersOfNumber);
+    readMembersOfGlobal(globalObject, "Number"_s, membersOfNumber);
     RETURN_IF_EXCEPTION(scope, void());
     JSValue promise = globalObject->get(globalObject, Identifier::fromString(vm, "Promise"_s));
     RETURN_IF_EXCEPTION(scope, void());
@@ -1842,7 +1851,8 @@ static void readMembersThatMakingStandardErrorReads(Zig::GlobalObject* globalObj
         return;
     JSValue promisePrototype = promise.get(globalObject, vm.propertyNames->prototype);
     RETURN_IF_EXCEPTION(scope, void());
-    readMembers(promisePrototype, membersOfPromisePrototype);
+    scope.release();
+    readMembers(globalObject, promisePrototype, membersOfPromisePrototype);
 }
 
 // Calls process.stderr.write.

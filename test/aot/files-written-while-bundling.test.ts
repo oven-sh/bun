@@ -34,6 +34,7 @@ test("a file outside the bundle that the build script writes while it bundles co
             name: "writes late",
             setup(build) {
               build.onLoad({ filter: /\\.asset$/ }, async () => {
+                // Nothing tells a plugin when a checker that reads while the bundle runs has read the file. The wait gives it the time.
                 await Bun.sleep(500);
                 writeFileSync(import.meta.dir + "/tests/written-late.ts", "declare global {\\n  var fromWrittenLate: number | undefined;\\n}\\nexport {};\\n");
                 return { contents: "late", loader: "file" };
@@ -74,6 +75,7 @@ async function buildWithLateWrites(files: Record<string, string>, written: Recor
             name: "writes late",
             setup(build) {
               build.onLoad({ filter: /\\.asset$/ }, async () => {
+                // Nothing tells a plugin when a checker that reads while the bundle runs has read the file. The wait gives it the time.
                 await Bun.sleep(500);
                 for (const [path, text] of Object.entries(written)) {
                   mkdirSync(dirname(import.meta.dir + "/" + path), { recursive: true });

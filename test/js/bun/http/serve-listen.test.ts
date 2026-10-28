@@ -1,6 +1,6 @@
 import { file, serve } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
 import type { NetworkInterfaceInfo } from "node:os";
 import { networkInterfaces } from "node:os";
 import { join } from "node:path";
@@ -263,4 +263,134 @@ test.skipIf(!isLinux)("server.address / server.port do not panic when getsocknam
   expect({ address: out.address, port: out.port }).toEqual({ address: null, port: 0 });
   expect(out.url).not.toContain("65535");
   expect(out.url).not.toContain(":-1");
+});
+
+// listen(port, "localhost") walks the getaddrinfo() results in resolver order
+// and binds the first one, as node does. It moves to the next address only when
+// bind() says the family is unusable on this host (EADDRNOTAVAIL, EAFNOSUPPORT).
+describe('listen on "localhost"', () => {
+  test("Bun.serve() reports EADDRINUSE instead of binding the other loopback family", () => {
+    using first = serve({ hostname: "localhost", port: 0, fetch: () => new Response() });
+    let error: any;
+    try {
+      serve({ hostname: "localhost", port: first.port, fetch: () => new Response() }).stop(true);
+    } catch (e) {
+      error = e;
+    }
+    expect({ code: error?.code, syscall: error?.syscall }).toEqual({ code: "EADDRINUSE", syscall: "listen" });
+  });
+
+  test("Bun.listen() reports EADDRINUSE instead of binding the other loopback family", () => {
+    using first = Bun.listen({ hostname: "localhost", port: 0, socket: { data() {} } });
+    let error: any;
+    try {
+      Bun.listen({ hostname: "localhost", port: first.port, socket: { data() {} } }).stop(true);
+    } catch (e) {
+      error = e;
+    }
+    expect({ code: error?.code, syscall: error?.syscall }).toEqual({ code: "EADDRINUSE", syscall: "listen" });
+  });
+
+  // Every listener in the process reports the loopback address it bound.
+  const probe = /* js */ `
+    import net from "node:net";
+    import dns from "node:dns/promises";
+    const out = {};
+    out.lookup = (await dns.lookup("localhost", { all: true, order: "verbatim" })).map(a => a.address);
+    const server = Bun.serve({ hostname: "localhost", port: 0, fetch: () => new Response("ok") });
+    out.serve = server.address.address;
+    out.fetch = (await fetch("http://" + (out.serve.includes(":") ? "[" + out.serve + "]" : out.serve) + ":" + server.port + "/")).status;
+    server.stop(true);
+    const listener = Bun.listen({ hostname: "localhost", port: 0, socket: { data() {} } });
+    out.listen = await new Promise(resolve => {
+      const c = net.connect(listener.port, out.serve, () => { c.destroy(); resolve(out.serve); });
+      c.on("error", e => resolve(e.code));
+    });
+    listener.stop(true);
+    const netServer = net.createServer();
+    await new Promise(resolve => netServer.listen(0, "localhost", resolve));
+    out.net = netServer.address().address;
+    netServer.close();
+    const udp = await Bun.udpSocket({ hostname: "localhost", port: 0 });
+    out.udp = udp.address.address;
+    udp.close();
+    console.log(JSON.stringify(out));
+  `;
+
+  async function runProbe(wrap: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [...wrap, bunExe(), "-e", probe],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout.trim());
+  }
+
+  // A private mount namespace lets the test swap /etc/gai.conf, which is how
+  // glibc orders getaddrinfo() results. Skipped where user namespaces are off,
+  // as in most containers.
+  const canMount =
+    isLinux &&
+    Bun.which("unshare") !== null &&
+    Bun.spawnSync({ cmd: ["unshare", "-Urm", "true"], stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+
+  test.skipIf(!canMount)("every listener binds 127.0.0.1 when the resolver puts it first", async () => {
+    using dir = tempDir("gai-ipv4-first", { "gai.conf": "precedence ::ffff:0:0/96  100\n" });
+    const gaiConf = join(String(dir), "gai.conf");
+    // glibc reads the file once per process. Check the namespace sees the new order.
+    const probeOrder = Bun.spawnSync({
+      cmd: ["unshare", "-Urm", "sh", "-c", 'mount --bind "$0" /etc/gai.conf && getent ahosts localhost', gaiConf],
+      stderr: "ignore",
+    });
+    if (!probeOrder.stdout.toString().startsWith("127.0.0.1")) return;
+
+    const out = await runProbe([
+      "unshare",
+      "-Urm",
+      "sh",
+      "-c",
+      'mount --bind "$0" /etc/gai.conf && exec "$@"',
+      gaiConf,
+    ]);
+    expect(out).toEqual({
+      lookup: ["127.0.0.1", "::1"],
+      serve: "127.0.0.1",
+      fetch: 200,
+      listen: "127.0.0.1",
+      net: "127.0.0.1",
+      udp: "127.0.0.1",
+    });
+  });
+
+  // A private network namespace with IPv6 turned off on lo: bind(::1) fails
+  // with EADDRNOTAVAIL and every listener falls back to 127.0.0.1.
+  const canDisableIPv6 =
+    isLinux &&
+    Bun.which("unshare") !== null &&
+    Bun.spawnSync({
+      cmd: ["unshare", "-Urn", "sh", "-c", "ip link set lo up && sysctl -qw net.ipv6.conf.lo.disable_ipv6=1"],
+      stdout: "ignore",
+      stderr: "ignore",
+    }).exitCode === 0;
+
+  test.skipIf(!canDisableIPv6)("every listener falls back to 127.0.0.1 when IPv6 is disabled on lo", async () => {
+    const out = await runProbe([
+      "unshare",
+      "-Urn",
+      "sh",
+      "-c",
+      'ip link set lo up && sysctl -qw net.ipv6.conf.lo.disable_ipv6=1 && exec "$@"',
+      "sh",
+    ]);
+    expect(out).toMatchObject({
+      serve: "127.0.0.1",
+      fetch: 200,
+      listen: "127.0.0.1",
+      net: "127.0.0.1",
+      udp: "127.0.0.1",
+    });
+  });
 });

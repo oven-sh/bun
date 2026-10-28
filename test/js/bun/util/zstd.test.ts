@@ -1408,6 +1408,62 @@ describe("the output is that of zstd 1.5.7", () => {
     ]);
   });
 
+  it("where matches are far between, for the optimal parsers", () => {
+    const data = Buffer.alloc(100_000);
+    let x = 9;
+    const next = () => {
+      x ^= x << 13;
+      x ^= x >>> 17;
+      x ^= x << 5;
+      return x >>> 0;
+    };
+    const copy = (at: number, distance: number, length: number) => {
+      const end = Math.min(at + length, data.length);
+      while (at < end) data[at] = data[at++ - distance];
+      return end;
+    };
+    for (let at = 0, distance = 1; at < data.length;) {
+      if (at < 100 || next() % 300 !== 0) {
+        data[at++] = next() >> 8;
+        continue;
+      }
+      // From as far as the one before, from anywhere, or from one byte less far, which only counts right after a match.
+      const kind = next() % 4;
+      if (kind === 1 && distance > 1) distance--;
+      if (kind > 1) distance = 1 + (next() % Math.min(at, 1 << (3 + (next() % 15))));
+      at = copy(at, distance, next() % 8 === 0 ? 300 : 3 + (next() % 12));
+      if (next() % 2 === 0 && distance > 1) at = copy(at, distance - 1, 3 + (next() % 5));
+    }
+    const smallTables = { [c.ZSTD_c_minMatch]: 4, [c.ZSTD_c_hashLog]: 8, [c.ZSTD_c_chainLog]: 8 };
+    const cases: [Buffer | Uint8Array, Record<number, number>][] = [
+      [data, { [c.ZSTD_c_strategy]: c.ZSTD_btopt, [c.ZSTD_c_minMatch]: 3 }],
+      [data, { [c.ZSTD_c_compressionLevel]: 17 }],
+      [data, { [c.ZSTD_c_compressionLevel]: 19 }],
+      [data, { [c.ZSTD_c_strategy]: c.ZSTD_btultra, [c.ZSTD_c_minMatch]: 4 }],
+      [data, { [c.ZSTD_c_compressionLevel]: 19, [c.ZSTD_c_windowLog]: 12 }],
+      [data, { [c.ZSTD_c_compressionLevel]: 19, ...smallTables }],
+      [data, { [c.ZSTD_c_compressionLevel]: 19, ...smallTables, [c.ZSTD_c_enableLongDistanceMatching]: 1 }],
+      [large, { [c.ZSTD_c_strategy]: c.ZSTD_btopt, [c.ZSTD_c_windowLog]: 12 }],
+    ];
+    expect(cases.map(([data, params]) => digest(zlib.zstdCompressSync(data, { params })))).toEqual([
+      "89890 2e527bd77ff0248a",
+      "89813 167bd065007f9d2b",
+      "89828 46d69a88706923f0",
+      "89863 b3219cbfd91243e7",
+      "92097 87e40b8681136738",
+      "92667 ff08869afb33cf7b",
+      "90656 95d8a11469d222d9",
+      "57217 69a87c5b3e0a2b75",
+    ]);
+    const dictionary = data.subarray(0, 20_000);
+    const withDictionary = [3_000, 80_000].map(size => {
+      const params = { [c.ZSTD_c_compressionLevel]: 19 };
+      const options = { dictionary, params, pledgedSrcSize: size };
+      return digest(zlib.zstdCompressSync(data.subarray(20_000, 20_000 + size), options));
+    });
+    expect(withDictionary).toEqual(["2964 61e43e2a0511038c", "71053 b34a7f9afac77810"]);
+  });
+
   it("with parameters", () => {
     const cases: Record<string, Record<number, number>> = {
       checksum: { [c.ZSTD_c_checksumFlag]: 1 },

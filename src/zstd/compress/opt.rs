@@ -297,9 +297,7 @@ impl<'a> Prices<'a> {
             ml,
         };
         if prices.compressed_literals {
-            for (weight_of, &freq) in prices.lit_weight.iter_mut().zip(&*prices.lit_freq) {
-                *weight_of = weight(freq, opt_level);
-            }
+            prices.weigh_literals();
         }
         for code in 0..=MAX_LL {
             prices.price_lit_length(code)?;
@@ -424,6 +422,14 @@ impl<'a> Prices<'a> {
         self.match_base.wrapping_add(price.unwrap_or(0)) as i32
     }
 
+    /// Sets `lit_weight` for all of `lit_freq`.
+    #[inline(never)]
+    fn weigh_literals(&mut self) {
+        for (weight_of, &freq) in self.lit_weight.iter_mut().zip(&*self.lit_freq) {
+            *weight_of = weight(freq, self.opt_level);
+        }
+    }
+
     /// `ZSTD_updateStats`
     #[inline(always)]
     fn update_stats(&mut self, literals: &[u8], off_base: u32, match_length: u32) -> Result<()> {
@@ -437,11 +443,20 @@ impl<'a> Prices<'a> {
 
         let lit_length = literals.len() as u32;
         if self.compressed_literals {
-            for &literal in literals {
-                let literal = usize::from(literal);
-                let freq = self.lit_freq.at(literal)?.wrapping_add(ZSTD_LITFREQ_ADD);
-                self.lit_freq.put(literal, freq)?;
-                self.lit_weight.put(literal, weight(freq, self.opt_level))?;
+            if literals.len() > self.lit_weight.len() {
+                // There are fewer weights to compute than literals.
+                for &literal in literals {
+                    let freq = self.lit_freq.at_mut(usize::from(literal))?;
+                    *freq = freq.wrapping_add(ZSTD_LITFREQ_ADD);
+                }
+                self.weigh_literals();
+            } else {
+                for &literal in literals {
+                    let literal = usize::from(literal);
+                    let freq = self.lit_freq.at(literal)?.wrapping_add(ZSTD_LITFREQ_ADD);
+                    self.lit_freq.put(literal, freq)?;
+                    self.lit_weight.put(literal, weight(freq, self.opt_level))?;
+                }
             }
             self.sums.lit = self
                 .sums
@@ -704,7 +719,7 @@ impl<'a> Trees<'a> {
 
         let min_match = self.min_match;
         let bytes = near.read64(ip).ok_or(BUG)?;
-        let mut dict_root = match self.dms {
+        let dict_root = match self.dms {
             Some(dms) => {
                 let hasher = self.hasher.with_log(dms.ms.c_params.hash_log);
                 DictTree::root(dms, hasher.hash(bytes))?
@@ -788,46 +803,121 @@ impl<'a> Trees<'a> {
             }
         }
 
-        // The farthest position any match refers to, which detects repetitive patterns.
-        let mut match_end_idx = curr.wrapping_add(8 + 1);
+        let mut found = Found::new(mnum, best_length, curr);
+        let nb_compares = self.tree_matches(matches, ip, bytes, match_low, &mut found)?;
+        if dict_root != 0 && nb_compares != 0 {
+            // A copy, for the one that the loop above works on to need no place in memory.
+            let mut with_dict = found;
+            self.search_dms(
+                matches,
+                ip,
+                dict_root,
+                window_low,
+                nb_compares,
+                &mut with_dict,
+            )?;
+            found = with_dict;
+        }
+
+        // Repetitive patterns are skipped.
+        self.next_to_update = found.match_end_idx.wrapping_sub(8);
+        Ok(found.mnum)
+    }
+
+    /// The part of `ZSTD_insertBtAndGetAllMatches` that adds the position `ip` of `near`, which starts with `bytes`, to
+    /// its tree, and stores the matches that are met on the way. Returns how many more positions can be compared in the
+    /// tree of a dictionary.
+    #[inline(always)]
+    fn tree_matches(
+        &mut self,
+        matches: &mut [Match],
+        ip: u32,
+        bytes: u64,
+        match_low: u32,
+        found: &mut Found,
+    ) -> Result<u32> {
+        let curr = ip.wrapping_add(self.input.dict_limit);
+        let mut is_over = false;
         let nb_compares = self.walk(ip, bytes, match_low, |match_index, common| {
-            if common.len > best_length {
-                if common.len > match_end_idx.wrapping_sub(match_index) {
-                    match_end_idx = match_index.wrapping_add(common.len);
+            if common.len > found.best_length {
+                if common.len > found.match_end_idx.wrapping_sub(match_index) {
+                    found.match_end_idx = match_index.wrapping_add(common.len);
                 }
-                best_length = common.len;
+                found.best_length = common.len;
                 matches.put(
-                    mnum as usize,
+                    found.mnum as usize,
                     Match {
                         off: offset_to_offbase(curr.wrapping_sub(match_index)),
                         len: common.len,
                     },
                 )?;
-                mnum += 1;
+                found.mnum += 1;
                 if common.len > ZSTD_OPT_NUM as u32 || common.match_is_smaller.is_none() {
                     // If they are equal, there is no telling which is smaller. Dropping it keeps the tree consistent.
-                    // The dictionary is not to be searched either.
-                    dict_root = 0;
+                    is_over = true;
                     return Ok(false);
                 }
             }
             Ok(true)
         })?;
+        Ok(if is_over { 0 } else { nb_compares })
+    }
 
-        if dict_root != 0 && nb_compares != 0 {
-            let mut found = Found {
-                mnum,
-                best_length,
-                match_end_idx,
-            };
-            self.search_dms(matches, ip, dict_root, window_low, nb_compares, &mut found)?;
-            mnum = found.mnum;
-            match_end_idx = found.match_end_idx;
+    /// [`Self::get_all_matches`] for `ip`, which comes after literals, and then for the positions after it, before
+    /// `limit`, for as long as there is no match. It stops before a position that starts like what is at a repeat
+    /// offset, or where the table of 3-byte hashes leads: that one is left to [`Self::get_all_matches`]. Returns where
+    /// it stops, and how many matches it has found there.
+    #[inline(never)]
+    fn skip_matchless(
+        &mut self,
+        matches: &mut [Match],
+        mut ip: u32,
+        limit: u32,
+        rep: &[u32; ZSTD_REP_NUM],
+    ) -> Result<(u32, u32)> {
+        let near = self.input.near;
+        let dict_limit = self.input.dict_limit;
+        let min_match = self.min_match;
+        // No repeat offset leads before the current segment, from `ip` on.
+        if ip.wrapping_add(dict_limit) != self.next_to_update
+            || self.dms.is_some()
+            || rep.iter().any(|rep_offset| *rep_offset > ip)
+        {
+            return Ok((ip, 0));
         }
 
-        // Repetitive patterns are skipped.
-        self.next_to_update = match_end_idx.wrapping_sub(8);
-        Ok(mnum)
+        while ip < limit
+            && let Some(bytes) = near.read64(ip)
+        {
+            let curr = ip.wrapping_add(dict_limit);
+            let match_low = self.lowest_match_index(curr).max(1);
+            let starts_alike = |pos: u32, min_match: u32| {
+                let there = near.read32(pos);
+                there.is_none_or(|there| minmatch_differs(there, bytes as u32, min_match) == 0)
+            };
+            if (rep.iter()).any(|rep_offset| starts_alike(ip - rep_offset, min_match)) {
+                break;
+            }
+            if min_match == 3 {
+                let match_index3 = self.insert_and_find_first_index_hash3(curr, bytes as u32)?;
+                if match_index3 >= match_low
+                    && curr.wrapping_sub(match_index3) < (1 << 18)
+                    && (match_index3 < dict_limit || starts_alike(match_index3 - dict_limit, 3))
+                {
+                    break;
+                }
+            }
+
+            let mut found = Found::new(0, min_match - 1, curr);
+            self.tree_matches(matches, ip, bytes, match_low, &mut found)?;
+            if found.mnum != 0 {
+                self.next_to_update = found.match_end_idx.wrapping_sub(8);
+                return Ok((ip, found.mnum));
+            }
+            ip += 1;
+        }
+        self.next_to_update = ip.wrapping_add(dict_limit);
+        Ok((ip, 0))
     }
 
     /// The end of `ZSTD_insertBtAndGetAllMatches`: goes on in the tree of the dictionary whose root is `root`, for
@@ -877,10 +967,24 @@ fn count(near: Near<'_>, pos: u32, match_pos: u32) -> u32 {
 }
 
 /// What a search has found so far.
+#[derive(Clone, Copy)]
 struct Found {
     mnum: u32,
     best_length: u32,
+    /// The farthest position any match refers to, which detects repetitive patterns.
     match_end_idx: u32,
+}
+
+impl Found {
+    /// What the search for `curr` has before it gets to the trees.
+    #[inline(always)]
+    const fn new(mnum: u32, best_length: u32, curr: u32) -> Self {
+        Self {
+            mnum,
+            best_length,
+            match_end_idx: curr.wrapping_add(8 + 1),
+        }
+    }
 }
 
 /// `ZSTD_readMINMATCH`: 0 if the first `length` bytes, 3 or 4, of the 4 in `a` and in `b` are the same.
@@ -1053,6 +1157,12 @@ impl<'a> OptLdm<'a> {
         Ok(())
     }
 
+    /// Whether there is no candidate left.
+    #[inline(always)]
+    const fn is_over(&self) -> bool {
+        self.pos >= self.seq.len()
+    }
+
     /// `ZSTD_optLdm_processMatchCandidate`
     #[inline(always)]
     fn process_match_candidate(
@@ -1063,7 +1173,7 @@ impl<'a> OptLdm<'a> {
         remaining_bytes: u32,
         min_match: u32,
     ) -> Result<()> {
-        if self.pos >= self.seq.len() {
+        if self.is_over() {
             return Ok(());
         }
 
@@ -1227,9 +1337,22 @@ fn parse_block(
         let mut cur = 'forward: {
             // Find a first match.
             {
+                let mut nb_matches = 0;
+                if ip != anchor && opt_ldm.is_over() {
+                    let first = (ip - prefix_start) as u32;
+                    let limit = (ilimit - prefix_start) as u32;
+                    let (stop, found) = trees.skip_matchless(matches, first, limit, rep)?;
+                    ip += (stop - first) as usize;
+                    if ip >= ilimit {
+                        break 'series;
+                    }
+                    nb_matches = found;
+                }
                 let litlen = (ip - anchor) as u32;
-                let mut nb_matches =
-                    trees.get_all_matches(matches, (ip - prefix_start) as u32, rep, litlen == 0)?;
+                if nb_matches == 0 {
+                    let pos = (ip - prefix_start) as u32;
+                    nb_matches = trees.get_all_matches(matches, pos, rep, litlen == 0)?;
+                }
                 opt_ldm.process_match_candidate(
                     matches,
                     &mut nb_matches,

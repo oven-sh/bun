@@ -721,7 +721,7 @@ impl BunTest {
                     entry_data: Some(EntryData {
                         sequence_index: active_sequence_index,
                         entry: active_entry.as_ptr().cast::<()>(),
-                        remaining_repeat_count: sequence.remaining_repeat_count as i64,
+                        attempt: sequence.attempt,
                     }),
                 }
             }
@@ -1395,7 +1395,7 @@ impl Drop for BunTest {
 pub(crate) struct EntryData {
     pub(crate) sequence_index: usize,
     pub(crate) entry: *const (),
-    pub(crate) remaining_repeat_count: i64,
+    pub(crate) attempt: u32,
 }
 
 // Clone/Copy: bitwise OK — `active_scope` is a non-owning borrow of a
@@ -1462,8 +1462,8 @@ impl fmt::Display for RefDataValue {
                 if let Some(ed) = entry_data {
                     write!(
                         f,
-                        "execution: group_index={},sequence_index={},entry_index={:x},remaining_repeat_count={}",
-                        group_index, ed.sequence_index, ed.entry as usize, ed.remaining_repeat_count
+                        "execution: group_index={},sequence_index={},entry_index={:x},attempt={}",
+                        group_index, ed.sequence_index, ed.entry as usize, ed.attempt
                     )
                 } else {
                     write!(f, "execution: group_index={}", group_index)

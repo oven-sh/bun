@@ -159,6 +159,7 @@ pub(crate) struct ExecutionSequence {
     pub(crate) test_entry: Option<NonNull<ExecutionEntry>>,
     pub(crate) remaining_repeat_count: u32,
     pub(crate) remaining_retry_count: u32,
+    pub(crate) attempt: u32,
     pub(crate) result: Result,
     pub(crate) executing: bool,
     pub(crate) started_at: Timespec,
@@ -183,6 +184,7 @@ impl ExecutionSequence {
             remaining_repeat_count: repeat_count,
             remaining_retry_count: retry_count,
             // defaults:
+            attempt: 0,
             result: Result::Pending,
             executing: false,
             started_at: Timespec::EPOCH,
@@ -478,9 +480,9 @@ impl Execution {
             return None;
         }
         let sequence = &mut self.sequences[seq_abs];
-        if i64::from(sequence.remaining_repeat_count) != entry_data.remaining_repeat_count {
+        if sequence.attempt != entry_data.attempt {
             group_log::log(format_args!(
-                "runOneCompleted: the data is for a previous repeat count (outdated)",
+                "runOneCompleted: the data is for a previous retry or repeat (outdated)",
             ));
             return None;
         }
@@ -745,12 +747,15 @@ impl Execution {
         }
 
         // Preserve retry/repeat counts across reset
-        *sequence = ExecutionSequence::init(
-            sequence.first_entry,
-            sequence.test_entry,
-            sequence.remaining_retry_count,
-            sequence.remaining_repeat_count,
-        );
+        *sequence = ExecutionSequence {
+            attempt: sequence.attempt.wrapping_add(1),
+            ..ExecutionSequence::init(
+                sequence.first_entry,
+                sequence.test_entry,
+                sequence.remaining_retry_count,
+                sequence.remaining_repeat_count,
+            )
+        };
 
         // Snapshot counters are keyed by full test name and incremented on every
         // toMatchSnapshot() call. Without this reset, retries / repeats would
@@ -1009,7 +1014,7 @@ fn step_sequence_one(
         let entry_data = EntryData {
             sequence_index,
             entry: next_item_ptr.as_ptr() as *const (),
-            remaining_repeat_count: sequence.remaining_repeat_count as i64,
+            attempt: sequence.attempt,
         };
         let callback_data = RefDataValue::Execution {
             group_index: this.group_index,

@@ -3120,8 +3120,6 @@ pub mod bv2_impl {
             })
         }
 
-        /// Cannot fail: its callers have handed work out by the time they call it, and cannot
-        /// take that work back. Out of memory aborts.
         /// `loader`: see `requested_file_loader`.
         pub(crate) fn enqueue_entry_item(
             &mut self,
@@ -3776,8 +3774,6 @@ pub mod bv2_impl {
         }
 
         /// Common prelude shared by all enqueue_entry_points_* variants: add the runtime task.
-        /// The task is on the pool when this returns, so no enqueue returns an error after it: a
-        /// driver would tear the bundle down under the task. Out of memory aborts.
         fn enqueue_entry_points_common(&mut self) {
             // Add the runtime
             let rt = ParseTask::get_runtime_source(self.transpiler.options.target);
@@ -5544,8 +5540,6 @@ pub mod bv2_impl {
         }
 
         pub fn deinit_without_freeing_arena(&mut self) {
-            // Everything below frees what a parse task reads. A driver waits for its parse tasks
-            // (`wait_for_parse`, or `is_done` for the dev server) before it gets here.
             assert_eq!(
                 self.graph.pending_items, 0,
                 "BundleV2 torn down with parse tasks in flight"

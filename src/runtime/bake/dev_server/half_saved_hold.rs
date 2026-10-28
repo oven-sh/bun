@@ -79,6 +79,10 @@ fn size_of_file(path: &[u8]) -> sys::Maybe<Option<u64>> {
 
 /// Ends the holds of the dev servers of `vm`. A run loop calls this before it waits with no timers: `bun --hot` after an uncaught error.
 pub(crate) fn release_half_saved_holds(vm: &VirtualMachine) {
+    // On Windows libuv fires the timer of a hold while the run loop waits like that.
+    if cfg!(windows) {
+        return;
+    }
     let holding = match crate::jsc_hooks::half_saved_holds(vm) {
         Some(holding) => holding.borrow().clone(),
         None => return,
@@ -120,13 +124,10 @@ impl DevServer {
         }
     }
 
-    /// A bundle can keep a hold open past its cap. The file events that waited behind the bundle then get one wait.
-    pub(crate) fn restart_half_saved_cap_after_bundle(&mut self) {
-        let now = Instant::now();
-        if let Some(hold) = &mut self.half_saved_hold
-            && now >= hold.last_deadline
-        {
-            hold.last_deadline = now + wait();
+    /// The file events that waited behind a bundle get one wait, also if the hold is at its cap when the bundle ends.
+    pub(crate) fn extend_half_saved_cap_after_bundle(&mut self) {
+        if let Some(hold) = &mut self.half_saved_hold {
+            hold.last_deadline = hold.last_deadline.max(Instant::now() + wait());
         }
     }
 

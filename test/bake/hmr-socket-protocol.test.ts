@@ -21,7 +21,7 @@
 //     `assert!(self.root == v)`, or a different timer dropped on a canary build.
 import type { Subprocess } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isMacOS, tempDir, waitUntil } from "harness";
+import { bunEnv, bunExe, isDebug, isMacOS, isWindows, tempDir, waitUntil } from "harness";
 import { closeSync, existsSync, openSync, readFileSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
@@ -501,6 +501,9 @@ test.concurrent.skipIf(!isDebug && !Bun.version_with_sha.includes("-canary"))(
 
 // For a test that lets a hold end at its deadline: a slow build does its few steps before that in this time.
 const shortHoldMs = 1200;
+// For a hold that is open when an uncaught error happens under --hot. No timer runs after the error, so the run
+// loop ends the hold. On Windows the timers still run, and the hold ends at its deadline.
+const holdAcrossErrorMs = isWindows ? shortHoldMs : 30_000;
 /** Starts `server.ts` under `bun --hot`. `waitMs` is the deadline of a hold. */
 function spawnHotServer(dir: string, waitMs: number) {
   return Bun.spawn({
@@ -625,7 +628,7 @@ test.concurrent(
 
     await (await fetch(dev.origin + "/boom")).text();
     await dev.until("the uncaught error", () => dev.stderr().includes("boom"));
-    // No timer can end a hold now, so no hold lasts. The text still reaches the page.
+    // Except on Windows, no timer can end a hold now, so no hold lasts. The text still reaches the page.
     expect((await saveInPlace("t2")).at(-1)).toBe("t2");
   },
 );
@@ -638,8 +641,7 @@ test.concurrent("a hold that is open when an uncaught error happens under --hot 
     "module.ts": `console.log("m0");\nimport.meta.hot.accept();`,
     "server.ts": hotServer(""),
   });
-  // Longer than the test: the deadline does not end this hold.
-  await using proc = spawnHotServer(String(dir), 30_000);
+  await using proc = spawnHotServer(String(dir), holdAcrossErrorMs);
   const dev = await openPage(proc);
   using hmr = dev.hmr;
 
@@ -648,7 +650,7 @@ test.concurrent("a hold that is open when an uncaught error happens under --hot 
   expect(dev.frames).not.toContain("r6");
 
   await (await fetch(dev.origin + "/boom")).text();
-  // No file event follows. The run loop ends the hold when it stops to run timers.
+  // No file event follows.
   await dev.until("the end of the hold", () => dev.frames.includes("r6"));
   await dev.until("the page to learn of the save", () => dev.frames.includes("u") || dev.frames.includes("e"));
   expect(dev.stderr()).toContain("boom");
@@ -662,12 +664,12 @@ test.concurrent("a save that empties a module of the server and of the page unde
     // The save fails the reload of the server: the export is gone.
     "server.ts": hotServer(`import { shared } from "./module.ts";\n  console.log(shared);`),
   });
-  await using proc = spawnHotServer(String(dir), 30_000);
+  await using proc = spawnHotServer(String(dir), holdAcrossErrorMs);
   const dev = await openPage(proc);
   using hmr = dev.hmr;
 
   emptyOrDelete(join(String(dir), "module.ts"));
-  // No file event follows, and the failed reload stops the timers.
+  // No file event follows, and the failed reload is an uncaught error.
   await dev.until("the page to learn of the save", () => dev.frames.includes("u") || dev.frames.includes("e"));
 });
 

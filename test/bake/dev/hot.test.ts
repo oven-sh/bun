@@ -1549,10 +1549,12 @@ devTest("a page request that waited behind a bundle is answered while the file e
     expect(await c.js`return sessionStorage.getItem("bun:hmr:message")`).toBeNull();
   },
 });
+// The wait of the tests whose bundle runs for about the ten waits of a cap.
+const behindBundleWait = 100;
 const longBundleTrace = pathOutsideProjects("hot-emptied-behind-a-long-bundle.watcher-trace");
 devTest("a file event that waited behind a long bundle gets its full time in the hold", {
   skip: ["darwin"],
-  env: { ...holdFor(200), BUN_WATCHER_TRACE: longBundleTrace },
+  env: { ...holdFor(behindBundleWait), BUN_WATCHER_TRACE: longBundleTrace },
   files: slowBundle,
   async test(dev) {
     // The file stays empty, so the page gets the empty module when the hold ends.
@@ -1566,19 +1568,19 @@ devTest("a file event that waited behind a long bundle gets its full time in the
       readFileSync(longBundleTrace, "latin1").slice(traced).includes("a.ts"),
     );
     // The file event is older than the longest hold when the bundle ends.
-    await Bun.sleep(2200);
+    await Bun.sleep(10 * behindBundleWait + 100);
     const released = performance.now();
     unlinkSync(dev.join("hold/on"));
     expect(await other.page).toContain("slow");
     await until("the end of the hold", () => dev.holdsEnded > 0);
     // The hold starts when the dev server takes the file event, and a.ts has one wait from then.
-    expect(performance.now() - released).toBeGreaterThanOrEqual(200);
+    expect(performance.now() - released).toBeGreaterThanOrEqual(behindBundleWait);
   },
 });
-const pastCapTrace = pathOutsideProjects("hot-emptied-behind-a-bundle-past-the-cap.watcher-trace");
-devTest("a file event that waited behind a bundle gets its full time in a hold that is past its cap", {
+const atCapTrace = pathOutsideProjects("hot-emptied-behind-a-bundle-at-the-cap.watcher-trace");
+devTest("a file event that waited behind a bundle gets its full time in a hold that is at its cap", {
   skip: ["darwin"],
-  env: { ...holdFor(200), BUN_WATCHER_TRACE: pastCapTrace },
+  env: { ...holdFor(behindBundleWait), BUN_WATCHER_TRACE: atCapTrace },
   files: {
     ...slowBundle,
     "index.ts": `
@@ -1598,22 +1600,21 @@ devTest("a file event that waited behind a bundle gets its full time in a hold t
     const held = dev.heldEvents();
     emptyFile(dev.join("a.ts"));
     await held;
+    const heldAt = performance.now();
     const other = await startSlowBundle(dev);
 
-    const traced = statSync(pastCapTrace).size;
+    const traced = statSync(atCapTrace).size;
     emptyFile(dev.join("b.ts"));
-    await until("the watcher to report b.ts", () =>
-      readFileSync(pastCapTrace, "latin1").slice(traced).includes("b.ts"),
-    );
-    // The hold is older than its cap of ten waits when the bundle ends.
-    await Bun.sleep(2200);
+    await until("the watcher to report b.ts", () => readFileSync(atCapTrace, "latin1").slice(traced).includes("b.ts"));
+    // The bundle ends half a wait before the cap of the hold, which is ten waits after its start, or later.
+    await Bun.sleep(Math.max(0, heldAt + 9.5 * behindBundleWait - performance.now()));
     const ended = dev.holdsEnded;
     const released = performance.now();
     unlinkSync(dev.join("hold/on"));
     expect(await other.page).toContain("slow");
     await until("the end of the hold", () => dev.holdsEnded > ended);
     // b.ts joins the hold when the dev server takes its file event, and has one wait from then.
-    expect(performance.now() - released).toBeGreaterThanOrEqual(200);
+    expect(performance.now() - released).toBeGreaterThanOrEqual(behindBundleWait);
   },
 });
 devTest("a hold whose deadline passes while another bundle runs ends when that bundle ends", {

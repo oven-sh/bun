@@ -1,6 +1,6 @@
 --- a/lsqpack.c	2026-10-28 13:33:26.015031842 +0000
-+++ b/lsqpack.c	2026-10-28 15:53:38.559339313 +0000
-@@ -69,6 +69,16 @@
++++ b/lsqpack.c	2026-10-28 21:02:49.628017340 +0000
+@@ -69,6 +69,14 @@
  #include <xxhash.h>
  #endif
  
@@ -10,14 +10,12 @@
 +struct henc { unsigned lens; uint32_t code; };
 +struct hdec { uint8_t lens; uint8_t out[3]; };
 +extern struct lshpack_huff_tables { struct henc encs[65536]; struct hdec decs[65536]; } *lshpack_huff_tables;
-+#define hencs (__atomic_load_n(&lshpack_huff_tables, __ATOMIC_RELAXED)->encs)
-+#define hdecs (__atomic_load_n(&lshpack_huff_tables, __ATOMIC_RELAXED)->decs)
 +extern void lshpack_huff_tables_init(void);
 +#endif
  #include "huff-tables.h"
  
  #define MIN(a, b) ((a) < (b) ? (a) : (b))
-@@ -486,6 +496,10 @@
+@@ -486,6 +494,10 @@
  void
  lsqpack_enc_preinit (struct lsqpack_enc *enc, void *logger_ctx)
  {
@@ -28,7 +26,7 @@
      memset(enc, 0, sizeof(*enc));
      STAILQ_INIT(&enc->qpe_all_entries);
      STAILQ_INIT(&enc->qpe_hinfo_arrs);
-@@ -2775,6 +2789,9 @@
+@@ -2775,6 +2787,9 @@
      unsigned dyn_table_size, unsigned max_risked_streams,
      const struct lsqpack_dec_hset_if *dh_if, enum lsqpack_dec_opts opts)
  {
@@ -38,6 +36,28 @@
      unsigned i;
      memset(dec, 0, sizeof(*dec));
      dec->qpd_opts = opts;
+@@ -5094,6 +5109,10 @@
+ #if LS_QPACK_USE_LARGE_TABLES
+     const struct henc *henc;
+     uint16_t idx;
++#if LS_HPACK_LAZY_LARGE_TABLES
++    const struct henc *const hencs =
++        __atomic_load_n(&lshpack_huff_tables, __ATOMIC_RELAXED)->encs;
++#endif
+ 
+     while (src + sizeof(bits) * 8 / SHORTEST_CODE + sizeof(idx) < src_end)
+     {
+@@ -5247,6 +5266,10 @@
+     struct huff_decode_retval rv;
+     struct hdec hdec;
+     uint16_t idx;
++#if LS_HPACK_LAZY_LARGE_TABLES
++    const struct hdec *const hdecs =
++        __atomic_load_n(&lshpack_huff_tables, __ATOMIC_RELAXED)->decs;
++#endif
+ 
+ #if __GNUC__
+ #pragma GCC diagnostic push
 --- a/huff-tables.h	2026-10-28 13:33:26.023031842 +0000
 +++ b/huff-tables.h	2026-10-28 13:32:45.863030374 +0000
 @@ -5141,7 +5141,7 @@

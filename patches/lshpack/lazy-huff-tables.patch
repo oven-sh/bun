@@ -1,23 +1,23 @@
 --- a/lshpack.c	2026-10-28 13:31:41.835028034 +0000
-+++ b/lshpack.c	2026-10-28 15:53:38.267339303 +0000
-@@ -52,6 +52,125 @@
++++ b/lshpack.c	2026-10-28 22:20:54.396188565 +0000
+@@ -52,6 +52,133 @@
  
  #include "huff-tables.h"
  
 +#if LS_HPACK_USE_LARGE_TABLES && LS_HPACK_LAZY_LARGE_TABLES
 +/* Bun: hencs[65536] (512 KB) and hdecs[65536] (256 KB) are pure functions of
 + * encode_table[257]. They are left out of .rodata, and built once, at the
-+ * first lshpack/lsqpack init, in memory that is allocated then: ~250 us,
-+ * identical hot-path lookup afterwards. As zero-filled data of the executable
-+ * (.bss) they made it large enough for a transparent huge page.
++ * first lshpack/lsqpack init, in memory that is allocated then (~250 us).
++ * A function that reads them loads their address once, into a local with
++ * the table's name, so its loops are those of a static table. As zero-filled
++ * data of the executable (.bss) they made it large enough for a transparent
++ * huge page.
 + * Non-static so lsqpack.c can use the same tables instead of carrying its
 + * own copy. */
 +struct henc { unsigned lens; uint32_t code; };
 +struct hdec { uint8_t lens; uint8_t out[3]; };
 +struct lshpack_huff_tables { struct henc encs[65536]; struct hdec decs[65536]; };
 +struct lshpack_huff_tables *lshpack_huff_tables;
-+#define hencs (__atomic_load_n(&lshpack_huff_tables, __ATOMIC_RELAXED)->encs)
-+#define hdecs (__atomic_load_n(&lshpack_huff_tables, __ATOMIC_RELAXED)->decs)
 +#ifdef LS_HPACK_OOM
 +/* Reports out of memory and does not return. */
 +void LS_HPACK_OOM(void);
@@ -29,14 +29,15 @@
 +#define HENC_I(i,j) (((i)<<8)|(j))
 +#endif
 +
-+void
-+lshpack_huff_tables_init (void)
++/* Out of line: an init that finds the tables is a load and a test. */
++#if __GNUC__ || __clang__
++__attribute__((noinline))
++#endif
++static void
++build_huff_tables (void)
 +{
 +    struct lshpack_huff_tables *tables, *none = NULL;
 +    struct { uint8_t bits, sym; } *lut;
-+
-+    if (__atomic_load_n(&lshpack_huff_tables, __ATOMIC_ACQUIRE))
-+        return;
 +
 +    /* Both start zeroed: an entry of decs that stays zero takes the slow path. */
 +    tables = calloc(1, sizeof(*tables));
@@ -121,12 +122,19 @@
 +                                     __ATOMIC_RELEASE, __ATOMIC_ACQUIRE))
 +        free(tables);
 +}
++
++void
++lshpack_huff_tables_init (void)
++{
++    if (!__atomic_load_n(&lshpack_huff_tables, __ATOMIC_ACQUIRE))
++        build_huff_tables();
++}
 +#endif
 +
  #define HPACK_STATIC_TABLE_SIZE   61
  #define INITIAL_DYNAMIC_TABLE_SIZE  4096
  
-@@ -290,6 +409,9 @@
+@@ -290,6 +417,9 @@
  int
  lshpack_enc_init (struct lshpack_enc *enc)
  {
@@ -136,7 +144,18 @@
      struct lshpack_double_enc_head *buckets;
      unsigned nbits = 2;
      unsigned i;
-@@ -1269,6 +1391,9 @@
+@@ -712,6 +842,10 @@
+ #if LS_HPACK_USE_LARGE_TABLES
+     const struct henc *henc;
+     uint16_t idx;
++#if LS_HPACK_LAZY_LARGE_TABLES
++    const struct henc *const hencs =
++        __atomic_load_n(&lshpack_huff_tables, __ATOMIC_RELAXED)->encs;
++#endif
+ 
+     while (src + sizeof(bits) * 8 / 5 + sizeof(idx) < src_end
+                                     && p_dst + sizeof(bits) <= dst_end)
+@@ -1269,6 +1403,9 @@
  void
  lshpack_dec_init (struct lshpack_dec *dec)
  {
@@ -146,6 +165,17 @@
      memset(dec, 0, sizeof(*dec));
      dec->hpd_max_capacity = INITIAL_DYNAMIC_TABLE_SIZE;
      dec->hpd_cur_max_capacity = INITIAL_DYNAMIC_TABLE_SIZE;
+@@ -1876,6 +2013,10 @@
+     struct hdec hdec;
+     uint16_t idx;
+     int r;
++#if LS_HPACK_LAZY_LARGE_TABLES
++    const struct hdec *const hdecs =
++        __atomic_load_n(&lshpack_huff_tables, __ATOMIC_RELAXED)->decs;
++#endif
+ 
+ #if __GNUC__
+ #pragma GCC diagnostic push
 --- a/huff-tables.h	2026-10-28 13:31:41.843028034 +0000
 +++ b/huff-tables.h	2026-10-28 13:32:33.559029924 +0000
 @@ -266,7 +266,7 @@

@@ -7,6 +7,7 @@
 
 #include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/PropertySlot.h>
+#include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/SourceCode.h>
@@ -65,8 +66,7 @@ namespace ExposeNodeModuleGlobalGetters {
     JSC_DEFINE_CUSTOM_GETTER(id, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName)) \
     { \
         Zig::GlobalObject* thisObject = defaultGlobalObject(lexicalGlobalObject); \
-        JSC::VM& vm = thisObject->vm(); \
-        return JSC::JSValue::encode(thisObject->internalModuleRegistry()->requireId(thisObject, vm, field)); \
+        return JSC::JSValue::encode(Bun::DeclaredModuleLoad::requireForCommandLine(thisObject, field)); \
     }
 FOREACH_EXPOSED_BUILTIN_IMR(DECL_GETTER)
 #undef DECL_GETTER    
@@ -77,19 +77,94 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__ExposeNodeModuleGlobals(Zig::Global
 {
 
     auto& vm = JSC::getVM(globalObject);
-#define PUT_CUSTOM_GETTER_SETTER(id, field) \
-    globalObject->putDirectCustomAccessor( \
-        vm, \
-        JSC::Identifier::fromString(vm, #id##_s), \
-        JSC::CustomGetterSetter::create( \
-            vm, \
-            ExposeNodeModuleGlobalGetters::id, \
-            nullptr), \
-        0 | JSC::PropertyAttribute::CustomValue \
-    );
+    struct Entry {
+        ASCIILiteral name;
+        JSC::EncodedJSValue (JIT_OPERATION_ATTRIBUTES* getter)(JSC::JSGlobalObject*, JSC::EncodedJSValue, JSC::PropertyName);
+    };
+#define EXPOSED_BUILTIN_ENTRY(id, field) { #id##_s, ExposeNodeModuleGlobalGetters::id },
+    static const Entry entries[] = { FOREACH_EXPOSED_BUILTIN_IMR(EXPOSED_BUILTIN_ENTRY) };
+#undef EXPOSED_BUILTIN_ENTRY
+    for (auto& entry : entries) {
+        globalObject->putDirectCustomAccessor(
+            vm,
+            JSC::Identifier::fromString(vm, entry.name),
+            JSC::CustomGetterSetter::create(vm, entry.getter, nullptr),
+            0 | JSC::PropertyAttribute::CustomValue);
+    }
+}
 
-    FOREACH_EXPOSED_BUILTIN_IMR(PUT_CUSTOM_GETTER_SETTER)
-#undef PUT_CUSTOM_GETTER_SETTER
+// Evaluate `internal/process/pre_execution` before any user code runs.
+// Called from VirtualMachine::reload_entry_point when argv carries a
+// Node.js `--trace-*` flag. The registry caches the module, so repeat calls
+// (hot reload, workers) are cheap.
+extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__preExecutionBootstrap(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    Bun::DeclaredModuleLoad::requireForCommandLine(globalObject, Bun::InternalModuleRegistry::InternalProcessPreExecution);
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        CLEAR_IF_EXCEPTION(scope);
+        Bun__reportError(globalObject, JSC::JSValue::encode(exception));
+    }
+}
+
+extern "C" JSC::EncodedJSValue Bun__Process__getExecArgv(JSC::JSGlobalObject*);
+
+// What `internal/process/pre_execution` does with `--stack-trace-limit`, word for word, for an executable that cannot load that module.
+extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__applyStackTraceLimitOption(Zig::GlobalObject* globalObject)
+{
+    using namespace JSC;
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto apply = [&] {
+        auto* execArgv = dynamicDowncast<JSArray>(JSValue::decode(Bun__Process__getExecArgv(globalObject)));
+        RETURN_IF_EXCEPTION(scope, );
+        if (!execArgv)
+            return;
+
+        constexpr ASCIILiteral optionWithValue = "--stack-trace-limit="_s;
+        WTF::String limitText;
+        unsigned length = execArgv->length();
+        auto wordAt = [&](unsigned index) -> WTF::String {
+            JSValue word = execArgv->getIndex(globalObject, index);
+            RETURN_IF_EXCEPTION(scope, { });
+            return word.toWTFString(globalObject);
+        };
+        for (unsigned index = 0; index < length; index++) {
+            WTF::String word = wordAt(index);
+            RETURN_IF_EXCEPTION(scope, );
+            if (word == "--trace-event-categories"_s || word == "--trace-event-file-pattern"_s) {
+                index++;
+                continue;
+            }
+            if (word == "--stack-trace-limit"_s) {
+                if (index + 1 < length) {
+                    limitText = wordAt(++index);
+                    RETURN_IF_EXCEPTION(scope, );
+                }
+                continue;
+            }
+            if (word.startsWith(optionWithValue))
+                limitText = word.substring(optionWithValue.length());
+        }
+        if (limitText.isNull())
+            return;
+
+        double limit = jsToNumber(limitText);
+        if (!std::isfinite(limit))
+            return;
+        JSValue errorConstructor = globalObject->get(globalObject, Identifier::fromString(vm, "Error"_s));
+        RETURN_IF_EXCEPTION(scope, );
+        if (auto* object = errorConstructor.getObject()) {
+            PutPropertySlot slot(object, true);
+            object->methodTable()->put(object, globalObject, vm.propertyNames->stackTraceLimit, jsNumber(limit), slot);
+        }
+    };
+    apply();
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        CLEAR_IF_EXCEPTION(scope);
+        Bun__reportError(globalObject, JSValue::encode(exception));
+    }
 }
 
 // Set up require(), module, __filename, __dirname on globalThis for the REPL.
@@ -113,14 +188,14 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__REPL__setupGlobalRequire(
     moduleObject->hasEvaluated = true;
 
     auto* resolveFunction = JSBoundFunction::create(vm, globalObject,
-        globalObject->requireResolveFunctionUnbound(), filename,
-        ArgList(), 1, globalObject->commonStrings().resolveString(globalObject),
+        globalObject->requireResolveFunctionUnbound(), moduleObject,
+        ArgList(), 1, Bun::commonStrings(vm).resolveString(),
         makeSource("resolve"_s, SourceOrigin(), SourceTaintedOrigin::Untainted));
     RETURN_IF_EXCEPTION(scope, );
 
     auto* requireFunction = JSBoundFunction::create(vm, globalObject,
         globalObject->requireFunctionUnbound(), moduleObject,
-        ArgList(), 1, globalObject->commonStrings().requireString(globalObject),
+        ArgList(), 1, Bun::commonStrings(vm).requireString(),
         makeSource("require"_s, SourceOrigin(), SourceTaintedOrigin::Untainted));
     RETURN_IF_EXCEPTION(scope, );
 
@@ -128,9 +203,9 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__REPL__setupGlobalRequire(
     moduleObject->putDirect(vm, WebCore::clientData(vm)->builtinNames().requirePublicName(), requireFunction, 0);
 
     globalObject->putDirect(vm, WebCore::builtinNames(vm).requirePublicName(), requireFunction, 0);
-    globalObject->putDirect(vm, Identifier::fromString(vm, "module"_s), moduleObject, 0);
-    globalObject->putDirect(vm, Identifier::fromString(vm, "__filename"_s), filename, 0);
-    globalObject->putDirect(vm, Identifier::fromString(vm, "__dirname"_s), dirname, 0);
+    Bun::putDirectNamed(vm, globalObject, "module"_s, moduleObject);
+    Bun::putDirectNamed(vm, globalObject, "__filename"_s, filename);
+    Bun::putDirectNamed(vm, globalObject, "__dirname"_s, dirname);
 }
 
 #pragma pop_macro("assert")

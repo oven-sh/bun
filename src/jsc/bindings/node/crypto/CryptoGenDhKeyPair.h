@@ -38,9 +38,7 @@ public:
 };
 
 struct DhKeyPairJob {
-    static DhKeyPairJob* create(JSC::JSGlobalObject*, DhKeyPairJobCtx&&, JSC::JSValue callback);
     static void createAndSchedule(JSC::JSGlobalObject*, DhKeyPairJobCtx&&, JSC::JSValue callback);
-    void schedule();
 };
 
 } // namespace Bun

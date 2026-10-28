@@ -25,7 +25,7 @@ export function from(value, encodingOrOffset, length) {
       return new $Buffer(data);
     }
 
-    const toPrimitive = $tryGetByIdWithWellKnownSymbol(value, "toPrimitive");
+    const toPrimitive = value[Symbol.toPrimitive];
     if (typeof toPrimitive === "function") {
       const primitive = toPrimitive.$call(value, "string");
       if (typeof primitive === "string") {

@@ -9,6 +9,7 @@ Write JS builtins for Bun's Node.js compatibility and APIs. Run `bun bd` after c
 - `bun/` - Bun modules (`bun:ffi`, `bun:sqlite`)
 - `thirdparty/` - NPM replacements (`ws`, `node-fetch`)
 - `internal/` - Internal modules
+- `ahead-of-time/` - Second texts of some modules, under the same names: `bun build --compile --aot` compiles them in place of the first. A change to one text goes into the other too
 
 ## Writing Modules
 
@@ -30,17 +31,10 @@ export default {
 ## Writing Builtin Functions
 
 ```typescript
-export function initializeReadableStream(
-  this: ReadableStream,
-  underlyingSource,
-  strategy,
-) {
-  if (!$isObject(underlyingSource)) {
-    throw new TypeError(
-      "ReadableStream constructor takes an object as first argument",
-    );
-  }
-  $putByIdDirectPrivate(this, "state", $streamReadable);
+// Fifo.ts
+export function createFIFO<T>(): Dequeue<T> {
+  const Dequeue = require("internal/fifo");
+  return new Dequeue();
 }
 ```
 
@@ -48,7 +42,7 @@ C++ access:
 
 ```cpp
 object->putDirectBuiltinFunction(vm, globalObject, identifier,
-  readableStreamInitializeReadableStreamCodeGenerator(vm), 0);
+  fifoCreateFIFOCodeGenerator(vm), 0);
 ```
 
 ## $ Globals and Special Syntax

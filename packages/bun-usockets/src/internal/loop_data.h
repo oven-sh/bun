@@ -34,9 +34,23 @@ typedef void* zig_mutex_t;
 
 // IMPORTANT: When changing this, don't forget to update the Rust mirror in src/uws_sys/InternalLoopData.rs as well!
 struct us_quic_socket_context_s;
+struct us_nq_driver_s;
+
+/* A socket that us_socket_resume() failed to re-register with the kernel, and
+ * its close code. */
+struct us_internal_unresumable_socket_t {
+    struct us_socket_t *socket;
+    int code;
+};
 
 struct us_internal_loop_data_t {
+#ifdef LIBUS_USE_LIBUV
     struct us_timer_t *sweep_timer;
+#else
+    /* Absolute monotonic ns of the next sweep, or -1. Folded into the poll
+     * timeout — no timerfd, no EVFILT_TIMER. */
+    long long sweep_next_tick_ns;
+#endif
     int sweep_timer_count;
     struct us_internal_async *wakeup_async;
     struct us_socket_group_t *head;
@@ -52,11 +66,17 @@ struct us_internal_loop_data_t {
      * the gap between loop_post and getTimeout is sub-µs so storing the
      * relative diff is precise enough. */
     long long quic_next_tick_us;
-    /* libuv only: a fallthrough us_timer_t armed to quic_next_tick_us so the
-     * uv loop wakes for lsquic's time-driven state. POSIX folds the deadline
-     * into the epoll_pwait2 timeout via getTimeout() instead, so this stays
-     * NULL there. */
+    /* node:quic endpoints on this loop. us_nq_loop_flush_if_pending walks it
+     * from loop_pre/loop_post and the microtask drain, running each endpoint's
+     * full process pass only when it flagged pending work -- one engine pass
+     * per loop turn instead of one per native call. */
+    struct us_nq_driver_s *nq_head;
+#ifdef LIBUS_USE_LIBUV
+    /* A fallthrough us_timer_t armed to quic_next_tick_us so the uv loop wakes
+     * for lsquic's time-driven state. POSIX folds the deadline into the
+     * epoll_pwait2 timeout via getTimeout() instead. */
     struct us_timer_t *quic_timer;
+#endif
     struct us_socket_group_t *iterator;
     char *recv_buf;
     char *send_buf;
@@ -66,6 +86,7 @@ struct us_internal_loop_data_t {
     struct us_udp_socket_t *closed_udp_head;
     struct us_socket_t *closed_head;
     struct us_socket_t *low_prio_head;
+    struct us_socket_t *low_prio_iterator;
     int low_prio_budget;
     struct us_connecting_socket_t *dns_ready_head;
     struct us_connecting_socket_t *closed_connecting_head;
@@ -75,11 +96,14 @@ struct us_internal_loop_data_t {
     /* We do not care if this flips or not, it doesn't matter */
     size_t iteration_nr;
     void* jsc_vm;
-    /* Reentrancy depth of us_loop_run_bun_tick. When >1, we are inside a
-     * nested tick (e.g. waitForPromise from a poll callback). Freeing closed
-     * sockets must be deferred to the outermost tick so the outer dispatch
-     * doesn't read a freed poll. */
+    /* Reentrancy depth of us_loop_run / us_loop_run_bun_tick (and us_loop_pump
+     * on libuv). When >1, we are inside a nested tick (e.g. waitForPromise from
+     * a poll callback). Freeing closed sockets must be deferred to the
+     * outermost tick so the outer dispatch doesn't read a freed poll. */
     int tick_depth;
+    /* Filled by us_socket_resume(), closed by us_internal_loop_post(). */
+    int num_unresumable_sockets;
+    struct us_internal_unresumable_socket_t *unresumable_sockets;
 };
 
 #endif // LOOP_DATA_H

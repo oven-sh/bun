@@ -1,30 +1,25 @@
 use core::ffi::c_void;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VM};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, VM};
 use bun_core::strings;
 
 use super::Expect;
 use super::get_signature;
+use super::throw;
 
 impl Expect {
-    #[bun_jsc::host_fn(method)]
-    pub fn to_contain(
+    pub(crate) fn to_contain(
         &self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        expected: JsLocal<'_>,
     ) -> JsResult<JSValue> {
+        let global = cx.global();
         let (this, value, not) =
-            self.matcher_prelude(global, frame.this(), "toContain", "<green>expected<r>")?;
+            self.matcher_prelude(global, this_value.to_js(), "toContain", "<green>expected<r>")?;
 
-        let arguments_ = frame.arguments_old::<1>();
-        let arguments = arguments_.slice();
-
-        if arguments.len() < 1 {
-            return Err(global.throw_invalid_arguments(format_args!("toContain() takes 1 argument")));
-        }
-
-        let expected = arguments[0];
-        expected.ensure_still_alive();
+        let expected = expected.to_js();
         let mut pass = false;
 
         // FFI/BACKREF: erased to *mut c_void for for_each userdata; raw ptrs
@@ -46,8 +41,8 @@ impl Expect {
                 }
             }
         } else if value.is_string_literal() && expected.is_string_literal() {
-            let value_string = value.to_slice(global)?;
-            let expected_string = expected.to_slice(global)?;
+            let value_string = value.to_utf8(global)?;
+            let expected_string = expected.to_utf8(global)?;
 
             if expected_string.slice().is_empty() {
                 // edge case empty string is always contained
@@ -114,33 +109,31 @@ impl Expect {
         let mut formatter2 = super::make_formatter(global);
         if not {
             let signature = get_signature("toContain", "<green>expected<r>", true);
-            return this.throw(
+            return throw!(
+                this,
                 global,
                 signature,
-                format_args!(
-                    concat!(
-                        "\n\n",
-                        "Expected to not contain: <green>{}<r>\nReceived: <red>{}<r>\n",
-                    ),
-                    expected.to_fmt(&mut formatter),
-                    value.to_fmt(&mut formatter2),
+                concat!(
+                    "\n\n",
+                    "Expected to not contain: <green>{}<r>\nReceived: <red>{}<r>\n",
                 ),
+                expected.to_fmt(&mut formatter),
+                value.to_fmt(&mut formatter2),
             );
         }
 
         let signature = get_signature("toContain", "<green>expected<r>", false);
-        this.throw(
+        throw!(
+            this,
             global,
             signature,
-            format_args!(
-                concat!(
-                    "\n\n",
-                    "Expected to contain: <green>{}<r>\n",
-                    "Received: <red>{}<r>\n",
-                ),
-                expected.to_fmt(&mut formatter),
-                value.to_fmt(&mut formatter2),
+            concat!(
+                "\n\n",
+                "Expected to contain: <green>{}<r>\n",
+                "Received: <red>{}<r>\n",
             ),
+            expected.to_fmt(&mut formatter),
+            value.to_fmt(&mut formatter2),
         )
     }
 }

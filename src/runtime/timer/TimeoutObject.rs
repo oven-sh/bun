@@ -1,115 +1,56 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::JSValue;
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+
+use crate::generated_bindgen::timer::js_Timeout as js;
 
 use super::Kind;
 
-/// `jsc.Codegen.JSTimeout` — the `.classes.ts` codegen module for this type.
-///
-/// `toJS` / `fromJS` / `fromJSDirect` and the `Timeout__create` /
-/// `Timeout__fromJS` / `Timeout__fromJSDirect` externs are emitted by
-/// `#[bun_jsc::JsClass(name = "Timeout")]` on the struct below (see
-/// `jsc_macros::js_class_hooks`); only the cached-property accessors —
-/// `${name}GetCached` / `${name}SetCached` per `cache: true` prop — are
-/// declared here.
-pub mod js {
-    // One `${snake}_get_cached` / `${snake}_set_cached` pair per cached prop,
-    // each wrapping `TimeoutPrototype__${prop}{Get,Set}CachedValue` and mapping
-    // `.zero` → `None` on the get side.
-    bun_jsc::codegen_cached_accessors!(
-        "Timeout";
-        arguments,
-        callback,
-        idleTimeout,
-        repeat,
-        idleStart,
-    );
-}
-
-// Struct + `RefCounted`/`Default` impls + the forwarder host-fns
-// (`to_primitive`/`do_ref`/`do_unref`/`has_ref`/`get_destroyed`/`dispose`/
-// `constructor`/`finalize`/`ref_`/`deref`/`deinit`/`init_with`) — see
-// `impl_timer_object!` in `super` (timer/mod.rs).
-super::impl_timer_object!(TimeoutObject, TimeoutObject, "Timeout");
+// `Timeout`, declared in `Timer.bind.ts`.
+super::impl_timer_object!(TimeoutObject);
 
 impl TimeoutObject {
-    pub fn init(
-        global: &JSGlobalObject,
-        id: i32,
+    pub(crate) fn init(
+        cx: &bun_jsc::JsThread<'_>,
+        id: u64,
         kind: Kind,
         interval: u32,
         callback: JSValue,
         arguments: JSValue,
     ) -> JSValue {
-        Self::init_with(global, id, kind, interval, callback, arguments)
+        Self::init_with(cx, id, kind, interval, callback, arguments)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn do_refresh(
+    pub(crate) fn refresh(
         this: &Self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        this.internals.do_refresh(global, frame.this())
-    }
-
-    #[bun_jsc::host_fn(method)]
-    pub fn close(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        this.internals.cancel(global.bun_vm_ptr());
-        Ok(frame.this())
-    }
-
-    // Cached-property getters/setters — codegen passes `this_value` (the JS
-    // wrapper) so the cached `WriteBarrier` slot on the C++ side can be read/written.
-    // Signature does not match the standard `host_fn(getter/setter)` shape; the
-    // `#[JsClass]` derive emits the C-ABI shims directly.
-
-    pub fn get_on_timeout(_this: &Self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
-        js::callback_get_cached(this_value).unwrap()
-    }
-
-    pub fn set_on_timeout(
-        _this: &Self,
-        this_value: JSValue,
-        global: &JSGlobalObject,
-        value: JSValue,
-    ) {
-        js::callback_set_cached(this_value, global, value);
-    }
-
-    pub fn get_idle_timeout(
-        _this: &Self,
-        this_value: JSValue,
-        _global: &JSGlobalObject,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
     ) -> JSValue {
-        js::idle_timeout_get_cached(this_value).unwrap()
+        this.internals.do_refresh(cx.global(), this_value.to_js())
     }
 
-    pub fn set_idle_timeout(
-        _this: &Self,
-        this_value: JSValue,
-        global: &JSGlobalObject,
-        value: JSValue,
+    pub(crate) fn close<'a>(
+        this: &Self,
+        this_value: JsWrapper<'a, Self>,
+        cx: &mut JsScope<'a>,
+    ) -> JsWrapper<'a, Self> {
+        this.internals.cancel(cx.global().bun_vm_ptr());
+        this_value
+    }
+
+    pub(crate) fn get_idle_start(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
+        js::idle_start_get_cached(this_value.to_js()).unwrap()
+    }
+
+    pub(crate) fn set_idle_start(
+        this: &Self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        value: JsLocal<'_>,
     ) {
-        js::idle_timeout_set_cached(this_value, global, value);
-    }
-
-    pub fn get_repeat(_this: &Self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
-        js::repeat_get_cached(this_value).unwrap()
-    }
-
-    pub fn set_repeat(_this: &Self, this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
-        js::repeat_set_cached(this_value, global, value);
-    }
-
-    pub fn get_idle_start(_this: &Self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
-        js::idle_start_get_cached(this_value).unwrap()
-    }
-
-    pub fn set_idle_start(
-        _this: &Self,
-        this_value: JSValue,
-        global: &JSGlobalObject,
-        value: JSValue,
-    ) {
-        js::idle_start_set_cached(this_value, global, value);
+        let value = value.to_js();
+        if let Some(ms) = value.get_number() {
+            this.internals.set_idle_start(ms);
+        }
+        js::idle_start_set_cached(this_value.to_js(), cx.global(), value);
     }
 }

@@ -7,9 +7,10 @@ use bstr::BStr;
 use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMap, MultiArrayList};
 use bun_semver::String as SemverString;
+use bun_wyhash::Wyhash;
 
 use crate::lockfile::{Lockfile, package};
-use crate::{Dependency, DependencyID, INVALID_DEPENDENCY_ID, PackageID};
+use crate::{Dependency, DependencyID, INVALID_DEPENDENCY_ID, PackageID, Resolution};
 
 pub use super::installer::Installer;
 
@@ -17,14 +18,16 @@ bun_output::declare_scope!(Store, visible);
 
 #[derive(Copy, Clone)]
 pub struct Ids {
-    pub dep_id: DependencyID,
-    pub pkg_id: PackageID,
+    pub(crate) dep_id: DependencyID,
+    pub(crate) pkg_id: PackageID,
 }
 
 pub struct Store {
     /// Accessed from multiple threads
-    pub entries: entry::List,
-    pub nodes: node::List,
+    pub(crate) entries: entry::List,
+    pub(crate) nodes: node::List,
+    /// `node_modules/.bun/node_modules` names other than that of the entry's `node_id`.
+    pub(crate) hidden_hoist_keys: Vec<entry::DependenciesItem>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -71,44 +74,52 @@ impl<T> fmt::Debug for NewId<T> {
 impl<T> NewId<T> {
     const MAX: u32 = u32::MAX;
 
-    pub const ROOT: Self = Self(0, PhantomData);
-    pub const INVALID: Self = Self(Self::MAX, PhantomData);
+    pub(crate) const ROOT: Self = Self(0, PhantomData);
+    pub(crate) const INVALID: Self = Self(Self::MAX, PhantomData);
 
-    pub fn from(id: u32) -> Self {
+    pub(crate) fn from(id: u32) -> Self {
         debug_assert!(id != Self::MAX);
         Self(id, PhantomData)
     }
 
-    pub fn get(self) -> u32 {
+    pub(crate) fn get(self) -> u32 {
         debug_assert!(self != Self::INVALID);
         self.0
     }
 
-    pub fn try_get(self) -> Option<u32> {
+    pub(crate) fn try_get(self) -> Option<u32> {
         if self == Self::INVALID {
             None
         } else {
             Some(self.0)
         }
     }
-
-    pub fn get_or(self, default: u32) -> u32 {
-        if self == Self::INVALID {
-            default
-        } else {
-            self.0
-        }
-    }
 }
 
 impl Drop for Store {
     fn drop(&mut self) {
+        use entry::EntryColumns as _;
+        for slot in self.entries.items_scripts() {
+            if let Some(list) = slot.take() {
+                // SAFETY: `Installer::drop` waited for every task on the pool, so nothing else references the list boxed in Installer's RunPreinstall step.
+                unsafe { bun_core::heap::destroy(list) };
+            }
+        }
         self.entries.drop_elements();
         self.nodes.drop_elements();
     }
 }
 
 impl Store {
+    /// The dependency that created the entry and the package it resolves to.
+    pub(crate) fn ids(&self, id: entry::Id) -> Ids {
+        let node_id = self.entries.items_node_id()[id.get() as usize].get() as usize;
+        Ids {
+            dep_id: self.nodes.items_dep_id()[node_id],
+            pkg_id: self.nodes.items_pkg_id()[node_id],
+        }
+    }
+
     /// Called from multiple threads. `parent_dedupe` should not be shared between threads.
     pub(crate) fn is_cycle(
         &self,
@@ -166,7 +177,7 @@ pub(crate) trait OrderedArraySetCtx<T: Copy> {
 }
 
 pub struct OrderedArraySet<T> {
-    pub list: Vec<T>,
+    pub(crate) list: Vec<T>,
 }
 
 impl<T: Clone> Clone for OrderedArraySet<T> {
@@ -184,7 +195,7 @@ impl<T> Default for OrderedArraySet<T> {
 }
 
 impl<T> OrderedArraySet<T> {
-    pub(crate) const EMPTY: Self = Self { list: Vec::new() };
+    const EMPTY: Self = Self { list: Vec::new() };
 
     pub(crate) fn init_capacity(n: usize) -> Result<Self, AllocError> {
         // allocator param dropped — global mimalloc
@@ -226,25 +237,10 @@ impl<T: Copy> OrderedArraySet<T> {
         ctx: &impl OrderedArraySetCtx<T>,
     ) -> Result<(), AllocError> {
         // allocator param dropped — global mimalloc
-        for i in 0..self.list.len() {
-            let existing = self.list[i];
-            if ctx.eql(new, existing) {
-                return Ok(());
-            }
-
-            let order = ctx.order(new, existing);
-
-            if order == Ordering::Equal {
-                return Ok(());
-            }
-
-            if order == Ordering::Less {
-                self.list.insert(i, new);
-                return Ok(());
-            }
+        let found = (self.list).binary_search_by(|&existing| ctx.order(existing, new));
+        if let Err(i) = found {
+            self.list.insert(i, new);
         }
-
-        self.list.push(new);
         Ok(())
     }
 }
@@ -270,8 +266,7 @@ pub mod entry {
     pub(crate) type Dependencies = OrderedArraySet<DependenciesItem>;
 
     pub struct Entry {
-        // Used to get dependency name for destination path and peers
-        // for store path
+        // The first node deduped into this entry. Its dep_id is one dependent's dependency.
         pub node_id: super::node::Id,
         // parent_id: Id,
         pub dependencies: Dependencies,
@@ -284,6 +279,12 @@ pub mod entry {
         // if true this entry gets symlinked to `node_modules/.bun/node_modules`
         pub hoisted: bool,
 
+        /// It only exists inside the packages that declare it, so it has no store directory, task
+        /// or hoist slot.
+        pub nested_folder: bool,
+
+        /// For a `file:` or URL tarball, this also covers the pinned integrity. Without peers, it's
+        /// the integrity's first 8 bytes.
         pub peer_hash: PeerHash,
 
         /// Content hash of (package + sorted resolved dependency global-store keys),
@@ -314,25 +315,10 @@ pub mod entry {
             parents: Vec<Id>,
             step: core::sync::atomic::AtomicU32,
             hoisted: bool,
+            nested_folder: bool,
             peer_hash: PeerHash,
             entry_hash: u64,
             scripts: core::cell::Cell<Option<*mut package::scripts::List>>,
-        }
-    }
-
-    impl Default for Entry {
-        fn default() -> Self {
-            Self {
-                node_id: super::node::Id::INVALID,
-                dependencies: Dependencies::EMPTY,
-                parents: Vec::new(),
-                // `Step::LinkPackage as u32 == 0`.
-                step: core::sync::atomic::AtomicU32::new(0),
-                hoisted: false,
-                peer_hash: PeerHash::NONE,
-                entry_hash: 0,
-                scripts: core::cell::Cell::new(None),
-            }
         }
     }
 
@@ -347,38 +333,69 @@ pub mod entry {
             Self(int)
         }
 
-        pub(crate) fn cast(self) -> u64 {
+        fn cast(self) -> u64 {
             self.0
         }
     }
 
-    pub struct StorePathFormatter<'a> {
-        pub entry_id: Id,
-        pub store: &'a Store,
-        pub lockfile: &'a Lockfile,
+    /// Bounds the entry name so the lifecycle-script cwd fits Windows' MAX_PATH; 80 keeps versions and `github+owner+repo+<sha>` verbatim.
+    const MAX_RESOLUTION_LEN: usize = 80;
+    /// Longer resolutions become `<leading bytes>+<16 hex wyhash of the whole text>`, `MAX_RESOLUTION_LEN` bytes at most.
+    const CUT_RESOLUTION_LEN: usize = MAX_RESOLUTION_LEN - "+".len() - 16;
+
+    /// The first `MAX_RESOLUTION_LEN` bytes written, plus the length and hash of all of them.
+    struct ResolutionSink {
+        buf: [u8; MAX_RESOLUTION_LEN],
+        len: usize,
+        hasher: Wyhash,
     }
 
-    impl<'a> fmt::Display for StorePathFormatter<'a> {
+    impl fmt::Write for ResolutionSink {
+        fn write_str(&mut self, s: &str) -> fmt::Result {
+            let bytes = s.as_bytes();
+            if let Some(room) = self.buf.get_mut(self.len..) {
+                let n = bytes.len().min(room.len());
+                room[..n].copy_from_slice(&bytes[..n]);
+            }
+            self.len += bytes.len();
+            self.hasher.update(bytes);
+            Ok(())
+        }
+    }
+
+    fn write_resolution(f: &mut fmt::Formatter<'_>, resolution: fmt::Arguments<'_>) -> fmt::Result {
+        let mut sink = ResolutionSink {
+            buf: [0; MAX_RESOLUTION_LEN],
+            len: 0,
+            hasher: Wyhash::init(0),
+        };
+        fmt::write(&mut sink, resolution)?;
+
+        if sink.len <= MAX_RESOLUTION_LEN {
+            return f.write_str(bun_core::str_utf8(&sink.buf[..sink.len]).ok_or(fmt::Error)?);
+        }
+
+        let mut cut = CUT_RESOLUTION_LEN;
+        while !bun_core::strings::is_on_char_boundary(&sink.buf, cut) {
+            cut -= 1;
+        }
+        f.write_str(bun_core::str_utf8(&sink.buf[..cut]).ok_or(fmt::Error)?)?;
+        write!(f, "+{:016x}", sink.hasher.final_())
+    }
+
+    /// `name@version` (or `name@file+path` / `name@root`) without the `+peerhash` suffix.
+    /// The resolution part is bounded by [`MAX_RESOLUTION_LEN`].
+    pub struct StoreKeyFormatter<'a> {
+        name: SemverString,
+        resolution: &'a Resolution,
+        string_buf: &'a [u8],
+    }
+
+    impl<'a> fmt::Display for StoreKeyFormatter<'a> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            use super::node::NodeColumns as _;
-            let store = self.store;
-            let entries = store.entries.slice();
-            // derive(MultiArrayElement)-generated SliceExt accessors: `.items_peer_hash()`, `.items_node_id()`.
-            let entry_peer_hashes = entries.items_peer_hash();
-            let entry_node_ids = entries.items_node_id();
-
-            let peer_hash = entry_peer_hashes[self.entry_id.get() as usize];
-            let node_id = entry_node_ids[self.entry_id.get() as usize];
-            let pkg_id = store.nodes.items_pkg_id()[node_id.get() as usize];
-
-            let string_buf = self.lockfile.buffers.string_bytes.as_slice();
-
-            let pkgs = self.lockfile.packages.slice();
-            let pkg_names = pkgs.items_name();
-            let pkg_resolutions = pkgs.items_resolution();
-
-            let pkg_name = pkg_names[pkg_id as usize];
-            let pkg_res = &pkg_resolutions[pkg_id as usize];
+            let string_buf = self.string_buf;
+            let pkg_name = self.name;
+            let pkg_res = self.resolution;
 
             match pkg_res.tag {
                 crate::resolution::Tag::Root => {
@@ -389,31 +406,60 @@ pub mod entry {
                             BStr::new(bun_paths::basename(
                                 crate::bun_fs::FileSystem::instance().top_level_dir()
                             ))
-                        )?;
+                        )
                     } else {
-                        write!(f, "{}@root", pkg_name.fmt_store_path(string_buf))?;
+                        write!(f, "{}@root", pkg_name.fmt_store_path(string_buf))
                     }
                 }
                 crate::resolution::Tag::Folder => {
-                    // SAFETY: tag was matched as Folder; reads the union field
-                    // corresponding to that tag.
                     let folder = *pkg_res.folder();
-                    write!(
+                    write!(f, "{}@", pkg_name.fmt_store_path(string_buf))?;
+                    write_resolution(
                         f,
-                        "{}@file+{}",
-                        pkg_name.fmt_store_path(string_buf),
-                        folder.fmt_store_path(string_buf),
-                    )?;
+                        format_args!("file+{}", folder.fmt_store_path(string_buf)),
+                    )
                 }
                 _ => {
-                    write!(
-                        f,
-                        "{}@{}",
-                        pkg_name.fmt_store_path(string_buf),
-                        pkg_res.fmt_store_path(string_buf),
-                    )?;
+                    write!(f, "{}@", pkg_name.fmt_store_path(string_buf))?;
+                    write_resolution(f, format_args!("{}", pkg_res.fmt_store_path(string_buf)))
                 }
             }
+        }
+    }
+
+    pub fn fmt_store_key<'a>(
+        name: SemverString,
+        resolution: &'a Resolution,
+        string_buf: &'a [u8],
+    ) -> StoreKeyFormatter<'a> {
+        StoreKeyFormatter {
+            name,
+            resolution,
+            string_buf,
+        }
+    }
+
+    pub struct StorePathFormatter<'a> {
+        pub(crate) entry_id: Id,
+        pub(crate) store: &'a Store,
+        pub lockfile: &'a Lockfile,
+    }
+
+    impl<'a> fmt::Display for StorePathFormatter<'a> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            let peer_hash = self.store.entries.items_peer_hash()[self.entry_id.get() as usize];
+            let pkg_id = self.store.ids(self.entry_id).pkg_id;
+
+            let pkgs = self.lockfile.packages.slice();
+            write!(
+                f,
+                "{}",
+                fmt_store_key(
+                    pkgs.items_name()[pkg_id as usize],
+                    &pkgs.items_resolution()[pkg_id as usize],
+                    self.lockfile.buffers.string_bytes.as_slice(),
+                )
+            )?;
 
             if peer_hash != PeerHash::NONE {
                 write!(f, "+{:016x}", peer_hash.cast())?;
@@ -461,46 +507,13 @@ pub mod entry {
         }
     }
 
-    pub(crate) fn debug_gather_all_parents(entry_id: Id, store: &Store) -> Vec<Id> {
-        let mut i: usize = 0;
-        let mut len: usize;
-
-        let entry_parents = store.entries.items_parents();
-
-        let mut parents: ArrayHashMap<Id, ()> = ArrayHashMap::default();
-        // defer parents.deinit(bun.default_allocator);
-
-        for &parent_id in entry_parents[entry_id.get() as usize].as_slice() {
-            if parent_id == Id::INVALID {
-                continue;
-            }
-            let _ = parents.put(parent_id, ()); // OOM-only Result
-        }
-
-        len = parents.len();
-        while i < len {
-            // Capture key before mutating `parents`.
-            let key = parents.keys()[i];
-            for &parent_id in entry_parents[key.get() as usize].as_slice() {
-                if parent_id == Id::INVALID {
-                    continue;
-                }
-                let _ = parents.put(parent_id, ()); // OOM-only Result
-                len = parents.len();
-            }
-            i += 1;
-        }
-
-        parents.keys().to_vec()
-    }
-
     #[derive(Copy, Clone)]
     pub struct DependenciesItem {
-        pub entry_id: Id,
+        pub(crate) entry_id: Id,
 
-        // TODO: this can be removed, and instead dep_id can be retrieved through:
-        // entry_id -> node_id -> node_dep_ids
-        pub dep_id: DependencyID,
+        // The dependent's own dependency on `entry_id`, which has the name that this dependent
+        // uses.
+        pub(crate) dep_id: DependencyID,
     }
 
     pub(crate) struct DependenciesOrderedArraySetCtx<'a> {
@@ -552,8 +565,8 @@ pub mod entry {
     }
 }
 
-pub use entry::Entry;
-pub use entry::EntryColumns;
+pub(crate) use entry::EntryColumns;
+pub use entry::{Entry, fmt_store_key};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Node
@@ -563,7 +576,6 @@ pub use entry::EntryColumns;
 // from `pkg_id` and `peers`
 pub mod node {
     use super::*;
-    use crate::lockfile::package::PackageColumns as _;
 
     pub type Id = NewId<Node>;
     pub type List = MultiArrayList<Node>;
@@ -610,18 +622,14 @@ pub mod node {
 
     #[derive(Copy, Clone)]
     pub struct TransitivePeer {
-        pub dep_id: DependencyID,
-        pub pkg_id: PackageID,
-        pub auto_installed: bool,
+        pub(crate) dep_id: DependencyID,
+        pub(crate) pkg_id: PackageID,
+        pub(crate) auto_installed: bool,
     }
 
-    pub mod transitive_peer {
-        pub use super::TransitivePeerOrderedArraySetCtx as OrderedArraySetCtx;
-    }
-
-    pub struct TransitivePeerOrderedArraySetCtx<'a> {
-        pub string_buf: &'a [u8],
-        pub pkg_names: &'a [SemverString],
+    pub(crate) struct TransitivePeerOrderedArraySetCtx<'a> {
+        pub(crate) string_buf: &'a [u8],
+        pub(crate) pkg_names: &'a [SemverString],
     }
 
     impl<'a> OrderedArraySetCtx<TransitivePeer> for TransitivePeerOrderedArraySetCtx<'a> {
@@ -645,40 +653,7 @@ pub mod node {
             l_pkg_name.order(r_pkg_name, string_buf, string_buf)
         }
     }
-
-    impl Node {
-        pub fn debug_print(&self, id: Id, lockfile: &Lockfile) {
-            let pkgs = lockfile.packages.slice();
-            let pkg_names = pkgs.items_name();
-            let pkg_resolutions = pkgs.items_resolution();
-
-            let string_buf = lockfile.buffers.string_bytes.as_slice();
-            let deps = lockfile.buffers.dependencies.as_slice();
-
-            let dep_name: &[u8] = if self.dep_id == INVALID_DEPENDENCY_ID {
-                b"root"
-            } else {
-                deps[self.dep_id as usize].name.slice(string_buf)
-            };
-            let dep_version: &[u8] = if self.dep_id == INVALID_DEPENDENCY_ID {
-                b"root"
-            } else {
-                deps[self.dep_id as usize].version.literal.slice(string_buf)
-            };
-
-            bun_output::scoped_log!(
-                Store,
-                "node({})\n  deps: {}@{}\n  res: {}@{}\n",
-                id.get(),
-                BStr::new(dep_name),
-                BStr::new(dep_version),
-                BStr::new(pkg_names[self.pkg_id as usize].slice(string_buf)),
-                pkg_resolutions[self.pkg_id as usize]
-                    .fmt(string_buf, bun_core::fmt::PathSep::Posix),
-            );
-        }
-    }
 }
 
 pub use node::Node;
-pub use node::NodeColumns;
+pub(crate) use node::NodeColumns;

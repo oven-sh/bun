@@ -1,11 +1,20 @@
 // Hardcoded module "node:perf_hooks"
-const { throwNotImplemented, kNodeEntryTypes, NodeEntryObserver } = require("internal/shared");
+const {
+  kNodeEntryTypes,
+  NodeEntryObserver,
+  enqueueNodeEntry,
+  hasObserver,
+  PerformanceNodeEntry,
+  kEmptyObject,
+} = require("internal/shared");
+const { validateFunction, validateInteger, validateObject } = require("internal/validators");
 
-const cppCreateHistogram = $newCppFunction("JSNodePerformanceHooksHistogram.cpp", "jsFunction_createHistogram", 3) as (
-  min: number,
-  max: number,
-  figures: number,
-) => import("node:perf_hooks").RecordableHistogram;
+const createRecordable = $bindgen("histogram.bind.ts", "createRecordable");
+const createInterval = $bindgen("histogram.bind.ts", "createInterval");
+const isHistogram = $bindgen("histogram.bind.ts", "isHistogram");
+
+const NumberMAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
+const kInt64Max = 2n ** 63n - 1n;
 
 var {
   Performance,
@@ -15,6 +24,14 @@ var {
   PerformanceObserver: NodePerformanceObserver,
   PerformanceObserverEntryList,
 } = globalThis;
+
+// `extends PerformanceEntry` can't work (WebCore ctor throws); link here via
+// the captured global. Construction is gated by hasObserver() so this module
+// has loaded first. Guarded so a pre-require delete degrades, not throws.
+if (PerformanceEntry) {
+  Object.setPrototypeOf(PerformanceNodeEntry.prototype, PerformanceEntry.prototype);
+  Object.setPrototypeOf(PerformanceNodeEntry, PerformanceEntry);
+}
 
 var constants = {
   NODE_PERFORMANCE_ENTRY_TYPE_DNS: 4,
@@ -86,7 +103,10 @@ class PerformanceNodeTiming {
     };
   }
 }
-$toClass(PerformanceNodeTiming, "PerformanceNodeTiming", PerformanceEntry);
+if (PerformanceEntry) {
+  Object.setPrototypeOf(PerformanceNodeTiming.prototype, PerformanceEntry.prototype);
+  Object.setPrototypeOf(PerformanceNodeTiming, PerformanceEntry);
+}
 
 function createPerformanceNodeTiming() {
   const object = Object.create(PerformanceNodeTiming.prototype);
@@ -105,13 +125,7 @@ function eventLoopUtilization(_utilization1, _utilization2) {
   };
 }
 
-// PerformanceEntry is not a valid constructor, so we have to fake it.
-class PerformanceResourceTiming {
-  constructor() {
-    throwNotImplemented("PerformanceResourceTiming");
-  }
-}
-$toClass(PerformanceResourceTiming, "PerformanceResourceTiming", PerformanceEntry);
+const { PerformanceResourceTiming } = globalThis;
 
 const kNodeObserver = Symbol("kNodeObserver");
 const kObserverCallback = Symbol("kObserverCallback");
@@ -123,8 +137,17 @@ const kObserverCallback = Symbol("kObserverCallback");
  * observer unchanged. (`NodePerformanceObserver` is the existing alias for
  * the native class destructured from globalThis above.)
  */
+type NodeEntryObserver = InstanceType<typeof NodeEntryObserver>;
+type ObserverCallback = (
+  list: PerformanceObserverEntryList | Parameters<NodeEntryObserver["callback"]>[0],
+  observer: unknown,
+) => void;
+
 class PerformanceObserverForNodeTypes extends NodePerformanceObserver {
-  constructor(callback) {
+  declare [kNodeObserver]: NodeEntryObserver | undefined;
+  declare [kObserverCallback]: ObserverCallback;
+
+  constructor(callback: ObserverCallback) {
     super(callback);
     this[kObserverCallback] = callback;
   }
@@ -134,12 +157,12 @@ class PerformanceObserverForNodeTypes extends NodePerformanceObserver {
     return [...new Set([...(NodePerformanceObserver.supportedEntryTypes ?? []), ...kNodeEntryTypes])].sort();
   }
 
-  observe(options) {
-    let requested;
+  observe(options?: PerformanceObserverInit) {
+    let requested: string[] | undefined;
     let isTypeMode = false;
     if (options != null && typeof options === "object") {
       const entryTypes = options.entryTypes;
-      let type;
+      let type: string | undefined;
       if (entryTypes !== undefined && Array.isArray(entryTypes)) {
         requested = entryTypes;
       } else if ((type = options.type) !== undefined) {
@@ -193,64 +216,105 @@ class PerformanceObserverForNodeTypes extends NodePerformanceObserver {
     return super.disconnect();
   }
 }
-// Not $toClass: that resets the prototype object and would drop the
-// observe/disconnect overrides above. Only the public name needs fixing.
 Object.defineProperty(PerformanceObserverForNodeTypes, "name", {
   value: "PerformanceObserver",
   configurable: true,
 });
 
+// kEmptyObject (frozen, null-prototype) so the histogram read below cannot
+// pick up a polluted Object.prototype, matching node's default.
+interface Histogram {
+  record(value: number | bigint): void;
+}
+
+function timerify(
+  fn: (this: unknown, ...args: unknown[]) => unknown,
+  options: { histogram?: Histogram } = kEmptyObject,
+) {
+  validateFunction(fn, "fn");
+  validateObject(options, "options");
+  const { histogram } = options;
+  if (histogram !== undefined && (!isHistogram(histogram) || typeof histogram.record !== "function")) {
+    throw $ERR_INVALID_ARG_TYPE("options.histogram", ["RecordableHistogram"], histogram);
+  }
+
+  function timerified(this: unknown, ...args: unknown[]) {
+    const isConstructorCall = new.target !== undefined;
+    const start = performance.now();
+    const result = isConstructorCall ? Reflect.construct(fn, args, fn) : fn.$apply(this, args);
+    if (!isConstructorCall && typeof (result as Promise<unknown> | undefined)?.finally === "function") {
+      return (result as Promise<unknown>).finally(() => {
+        processTimerifyComplete(fn.name, start, args, histogram);
+      });
+    }
+    processTimerifyComplete(fn.name, start, args, histogram);
+    return result;
+  }
+
+  Object.defineProperties(timerified, {
+    length: {
+      __proto__: null,
+      configurable: false,
+      enumerable: true,
+      value: fn.length,
+    },
+    name: {
+      __proto__: null,
+      configurable: false,
+      enumerable: true,
+      value: `timerified ${fn.name}`,
+    },
+  });
+
+  return timerified;
+}
+
+function processTimerifyComplete(name: string, start: number, args: unknown[], histogram: Histogram | undefined) {
+  const duration = performance.now() - start;
+  if (histogram !== undefined) {
+    histogram.record(Math.ceil(duration * 1e6));
+  }
+  if (hasObserver("function")) {
+    const entry = new PerformanceNodeEntry(name, "function", start, duration, args);
+    for (let n = 0; n < args.length; n++) entry[n] = args[n];
+    enqueueNodeEntry(entry);
+  }
+}
+
+const nodeTiming = createPerformanceNodeTiming();
+
+// Node augments the real `performance` object (not a forwarding shim), so
+// timerify/eventLoopUtilization/nodeTiming go on Performance.prototype,
+// non-enumerable, per lib/internal/perf/performance.js.
+if (Performance) {
+  Object.defineProperties(Performance.prototype, {
+    nodeTiming: {
+      __proto__: null,
+      configurable: true,
+      enumerable: false,
+      writable: true,
+      value: nodeTiming,
+    },
+    timerify: {
+      __proto__: null,
+      configurable: true,
+      enumerable: false,
+      writable: true,
+      value: timerify,
+    },
+    eventLoopUtilization: {
+      __proto__: null,
+      configurable: true,
+      enumerable: false,
+      writable: true,
+      value: eventLoopUtilization,
+    },
+  });
+}
+
 export default {
-  performance: {
-    mark(_) {
-      return performance.mark(...arguments);
-    },
-    measure(_) {
-      return performance.measure(...arguments);
-    },
-    clearMarks(_) {
-      return performance.clearMarks(...arguments);
-    },
-    clearMeasures(_) {
-      return performance.clearMeasures(...arguments);
-    },
-    getEntries(_) {
-      return performance.getEntries(...arguments);
-    },
-    getEntriesByName(_) {
-      return performance.getEntriesByName(...arguments);
-    },
-    getEntriesByType(_) {
-      return performance.getEntriesByType(...arguments);
-    },
-    setResourceTimingBufferSize(_) {
-      return performance.setResourceTimingBufferSize(...arguments);
-    },
-    timeOrigin: performance.timeOrigin,
-    toJSON(_) {
-      return performance.toJSON(...arguments);
-    },
-    onresourcetimingbufferfull: performance.onresourcetimingbufferfull,
-    nodeTiming: createPerformanceNodeTiming(),
-    now: () => performance.now(),
-    eventLoopUtilization: eventLoopUtilization,
-    clearResourceTimings: function () {},
-  },
-  // performance: {
-  //   clearMarks: [Function: clearMarks],
-  //   clearMeasures: [Function: clearMeasures],
-  //   clearResourceTimings: [Function: clearResourceTimings],
-  //   getEntries: [Function: getEntries],
-  //   getEntriesByName: [Function: getEntriesByName],
-  //   getEntriesByType: [Function: getEntriesByType],
-  //   mark: [Function: mark],
-  //   measure: [Function: measure],
-  //   now: performance.now,
-  //   setResourceTimingBufferSize: [Function: setResourceTimingBufferSize],
-  //   timeOrigin: performance.timeOrigin,
-  //   toJSON: [Function: toJSON],
-  //   onresourcetimingbufferfull: [Getter/Setter]
-  // },
+  timerify,
+  performance,
   constants,
   Performance,
   PerformanceEntry,
@@ -259,64 +323,41 @@ export default {
   PerformanceObserver: PerformanceObserverForNodeTypes,
   PerformanceObserverEntryList,
   PerformanceNodeTiming,
-  monitorEventLoopDelay: function monitorEventLoopDelay(options?: { resolution?: number }) {
-    const impl = require("internal/perf_hooks/monitorEventLoopDelay");
-    return impl(options);
+  eventLoopUtilization,
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/event_loop_delay.js#L81
+  monitorEventLoopDelay: function monitorEventLoopDelay(options: { resolution?: number } = kEmptyObject) {
+    validateObject(options, "options");
+
+    const { resolution = 10 } = options;
+    validateInteger(resolution, "options.resolution", 1);
+
+    return createInterval(resolution);
   },
-  createHistogram: function createHistogram(options?: {
-    lowest?: number | bigint;
-    highest?: number | bigint;
-    figures?: number;
-  }): import("node:perf_hooks").RecordableHistogram {
-    const opts = options || {};
-
-    let lowest = 1;
-    let highest = Number.MAX_SAFE_INTEGER;
-    let figures = 3;
-
-    const lowestOpt = opts.lowest;
-    if (lowestOpt !== undefined) {
-      if (typeof lowestOpt === "bigint") {
-        lowest = Number(lowestOpt);
-      } else if (typeof lowestOpt === "number") {
-        lowest = lowestOpt;
-      } else {
-        throw $ERR_INVALID_ARG_TYPE("options.lowest", ["number", "bigint"], lowestOpt);
-      }
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/histogram.js#L367
+  createHistogram: function createHistogram(
+    options: { lowest?: number | bigint; highest?: number | bigint; figures?: number } = kEmptyObject,
+  ) {
+    validateObject(options, "options");
+    const { lowest = 1, highest = NumberMAX_SAFE_INTEGER, figures = 3 } = options;
+    if (typeof lowest !== "bigint") {
+      validateInteger(lowest, "options.lowest", 1, NumberMAX_SAFE_INTEGER);
+    } else if (lowest < 1n || lowest > kInt64Max) {
+      throw $ERR_OUT_OF_RANGE("options.lowest", `>= 1n && <= ${kInt64Max}n`, lowest);
     }
-
-    const highestOpt = opts.highest;
-    if (highestOpt !== undefined) {
-      if (typeof highestOpt === "bigint") {
-        highest = Number(highestOpt);
-      } else if (typeof highestOpt === "number") {
-        highest = highestOpt;
-      } else {
-        throw $ERR_INVALID_ARG_TYPE("options.highest", ["number", "bigint"], highestOpt);
-      }
+    if (typeof highest !== "bigint") {
+      validateInteger(highest, "options.highest", 2 * Number(lowest), NumberMAX_SAFE_INTEGER);
+    } else if (highest < 2n * BigInt(lowest)) {
+      throw $ERR_INVALID_ARG_VALUE_RangeError("options.highest", highest);
+    } else if (highest > kInt64Max) {
+      throw $ERR_OUT_OF_RANGE("options.highest", `<= ${kInt64Max}n`, highest);
     }
+    validateInteger(figures, "options.figures", 1, 5);
 
-    const figuresOpt = opts.figures;
-    if (figuresOpt !== undefined) {
-      if (typeof figuresOpt !== "number") {
-        throw $ERR_INVALID_ARG_TYPE("options.figures", "number", figuresOpt);
-      }
-      if (figuresOpt < 1 || figuresOpt > 5) {
-        throw $ERR_OUT_OF_RANGE("options.figures", ">= 1 && <= 5", figuresOpt);
-      }
-      figures = figuresOpt;
+    const histogram = createRecordable(lowest, highest, figures);
+    if (histogram === null) {
+      throw $ERR_INVALID_ARG_VALUE("options.lowest", lowest, `is too large for ${figures} significant figures`);
     }
-
-    // Node.js validation - highest must be >= 2 * lowest
-    if (lowest < 1) {
-      throw $ERR_OUT_OF_RANGE("options.lowest", ">= 1 && <= 9007199254740991", lowest);
-    }
-
-    if (highest < 2 * lowest) {
-      throw $ERR_OUT_OF_RANGE("options.highest", `>= ${2 * lowest} && <= 9007199254740991`, highest);
-    }
-
-    return cppCreateHistogram(lowest, highest, figures);
+    return histogram;
   },
   PerformanceResourceTiming,
 };

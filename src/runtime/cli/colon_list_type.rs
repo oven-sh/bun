@@ -1,13 +1,14 @@
+use crate::Error;
 use bun_core::fmt as bun_fmt;
 use bun_core::strings;
-use bun_core::{Error, Global, err, pretty_errorln};
+use bun_core::{Global, pretty_errorln};
 
 // The value type and its resolver fn collapse into one trait that the
 // value type implements. Each `T` declares its own resolver and whether it is the
 // schema Loader.
 pub(crate) trait ColonListValue: Sized {
     /// Parses one value from its string form.
-    fn resolve_value(input: &[u8]) -> Result<Self, Error>;
+    fn resolve_value(input: &'static [u8]) -> Result<Self, Error>;
 
     /// Whether `T` is the schema `Loader` type.
     const IS_LOADER: bool = false;
@@ -21,7 +22,7 @@ pub(crate) struct ColonListType<T: ColonListValue> {
 }
 
 impl<T: ColonListValue> ColonListType<T> {
-    pub(crate) fn init(count: usize) -> Self {
+    fn init(count: usize) -> Self {
         // `Vec::with_capacity` + `push`, which is infallible here.
         let keys = Vec::with_capacity(count);
         let values = Vec::with_capacity(count);
@@ -29,7 +30,7 @@ impl<T: ColonListValue> ColonListType<T> {
         ColonListType { keys, values }
     }
 
-    pub(crate) fn load(&mut self, input: &[&'static [u8]]) -> Result<(), Error> {
+    fn load(&mut self, input: &[&'static [u8]]) -> Result<(), Error> {
         for str in input.iter() {
             // Support either ":" or "=" as the separator, preferring whichever is first.
             // ":" is less confusing IMO because that syntax is used with flags
@@ -67,7 +68,7 @@ impl<T: ColonListValue> ColonListType<T> {
             self.values
                 .push(match T::resolve_value(&str[midpoint + 1..str.len()]) {
                     Ok(v) => v,
-                    Err(e) if e == err!("InvalidLoader") => {
+                    Err(crate::Error::InvalidLoader) => {
                         pretty_errorln!(
                             "<r><red>error<r><d>:<r> <b>invalid loader {}<r>, expected one of:{}",
                             bun_fmt::quote(&str[midpoint + 1..str.len()]),

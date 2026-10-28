@@ -7,11 +7,7 @@ use bun_boringssl_sys as boring;
 use bun_core::strings;
 use bun_sha_hmac::hmac;
 
-use bun_core::NodeEncoding;
 use bun_sha_hmac::evp::Algorithm;
-
-/// Default expiration time for tokens (24 hours)
-pub const DEFAULT_EXPIRATION_MS: u64 = 24 * 60 * 60 * 1000;
 
 /// Default HMAC algorithm used for token signing
 pub const DEFAULT_ALGORITHM: Algorithm = Algorithm::Sha256;
@@ -19,17 +15,11 @@ pub const DEFAULT_ALGORITHM: Algorithm = Algorithm::Sha256;
 /// Error types for CSRF operations
 #[derive(strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
-    InvalidToken,
-    ExpiredToken,
     TokenCreationFailed,
-    DecodingFailed,
 }
 bun_core::impl_tag_error!(Error);
 
-bun_core::named_error_set!(Error);
-
-/// Options for generating CSRF tokens. Defaults are noted on
-/// each field; callers must specify all fields.
+/// Options for generating CSRF tokens.
 pub struct GenerateOptions<'a> {
     /// Secret key to use for signing
     pub secret: &'a [u8],
@@ -37,15 +27,12 @@ pub struct GenerateOptions<'a> {
     /// means the token is not bound to any principal
     pub session_id: &'a [u8],
     /// How long the token should be valid (in milliseconds)
-    pub expires_in_ms: u64, // = DEFAULT_EXPIRATION_MS
-    /// Format to encode the token in
-    pub encoding: TokenFormat, // = .base64url
+    pub expires_in_ms: u64,
     /// Algorithm to use for signing
     pub algorithm: Algorithm, // = DEFAULT_ALGORITHM
 }
 
-/// Options for validating CSRF tokens. Defaults are noted on
-/// each field; callers must specify all fields.
+/// Options for validating CSRF tokens.
 pub struct VerifyOptions<'a> {
     /// The token to verify
     pub token: &'a [u8],
@@ -55,7 +42,7 @@ pub struct VerifyOptions<'a> {
     /// means the token is not bound to any principal
     pub session_id: &'a [u8],
     /// Maximum age of the token in milliseconds
-    pub max_age_ms: u64, // = DEFAULT_EXPIRATION_MS
+    pub max_age_ms: u64,
     /// Encoding to use for the token
     pub encoding: TokenFormat, // = .base64url
     /// Algorithm to use for signing
@@ -68,16 +55,6 @@ pub enum TokenFormat {
     Base64,
     Base64Url,
     Hex,
-}
-
-impl TokenFormat {
-    pub fn to_node_encoding(self) -> NodeEncoding {
-        match self {
-            TokenFormat::Base64 => NodeEncoding::Base64,
-            TokenFormat::Base64Url => NodeEncoding::Base64url,
-            TokenFormat::Hex => NodeEncoding::Hex,
-        }
-    }
 }
 
 /// Generate a new CSRF token
@@ -93,7 +70,7 @@ pub fn generate<'a>(
 ) -> Result<&'a mut [u8], Error> {
     // Generate nonce from entropy
     let mut nonce = [0u8; 16];
-    bun_core::csprng(&mut nonce);
+    boring::rand_bytes(&mut nonce);
 
     // Current timestamp in milliseconds
     let timestamp: i64 = bun_core::time::milli_timestamp();

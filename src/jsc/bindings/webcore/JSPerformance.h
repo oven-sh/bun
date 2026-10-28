@@ -27,12 +27,9 @@
 
 namespace WebCore {
 
-class JSPerformanceObject;
-
 class JSPerformance : public JSEventTarget {
 public:
     using Base = JSEventTarget;
-    using DOMWrapped = Performance;
     static JSPerformance* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<Performance>&& impl)
     {
         JSPerformance* ptr = new (NotNull, JSC::allocateCell<JSPerformance>(globalObject->vm())) JSPerformance(structure, *globalObject, WTF::move(impl));
@@ -42,13 +39,12 @@ public:
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
-    static Performance* toWrapped(JSC::VM&, JSC::JSValue);
 
     DECLARE_INFO;
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
     }
 
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
@@ -61,27 +57,16 @@ public:
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
     static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);
-    DECLARE_VISIT_CHILDREN;
     Performance& wrapped() const
     {
         return static_cast<Performance&>(Base::wrapped());
     }
-
-    JSC::JSValue timingBufferDeliveryAsyncContext() const { return m_timingBufferDeliveryAsyncContext.get(); }
-    void setTimingBufferDeliveryAsyncContext(JSC::VM& vm, JSC::JSValue value) { m_timingBufferDeliveryAsyncContext.set(vm, this, value); }
-    void clearTimingBufferDeliveryAsyncContext() { m_timingBufferDeliveryAsyncContext.clear(); }
 
 protected:
     JSPerformance(JSC::Structure*, JSDOMGlobalObject&, Ref<Performance>&&);
 
     void finishCreation(JSC::VM&);
     // DECLARE_DEFAULT_FINISH_CREATION;
-
-private:
-    // The async context active when the pending delivery task was scheduled.
-    // Node runs PerformanceObserver callbacks in the context of the entry that
-    // triggered the batch, so AsyncLocalStorage.getStore() works inside them.
-    JSC::WriteBarrier<JSC::Unknown> m_timingBufferDeliveryAsyncContext;
 };
 
 class JSPerformanceOwner final : public JSC::WeakHandleOwner {
@@ -94,11 +79,6 @@ inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, Performance*)
 {
     static NeverDestroyed<JSPerformanceOwner> owner;
     return &owner.get();
-}
-
-inline void* wrapperKey(Performance* wrappableObject)
-{
-    return wrappableObject;
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, Performance&);

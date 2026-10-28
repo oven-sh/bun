@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
 import { copyFileSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 
@@ -300,7 +300,7 @@ it("should return non-zero exit code for invalid syntax", async () => {
       env: bunEnv,
     });
     const err = (await stderr.text()).replaceAll("\\", "/");
-    expect(err.replaceAll(test_dir.replaceAll("\\", "/"), "<dir>").replaceAll(/\[(.*)\ms\]/g, "[xx ms]"))
+    expect(err.replaceAll(test_dir.replaceAll("\\", "/"), "<dir>").replaceAll(/\[[\d.]+m?s\]/g, "[xx ms]"))
       .toMatchInlineSnapshot(`
       "
       bad.test.js:
@@ -714,7 +714,7 @@ test("my-test", () => {
 });
     `.trim();
 
-      const test_dir = tempDirWithFiles("unhandled-" + stage, {
+      using test_dir = tempDir("unhandled-" + stage, {
         "my-test.test.js": code,
         "package.json": "{}",
       });

@@ -40,17 +40,20 @@ const enum uSockets {
   LISTEN_DISALLOW_REUSE_PORT_FAILURE = 32,
 }
 
-const kStateSymbol = Symbol("state symbol");
+const internalDgram = require("internal/dgram");
+const kStateSymbol: typeof internalDgram.kStateSymbol = internalDgram.kStateSymbol;
+const guessHandleType = internalDgram.guessHandleType;
 const kOwnerSymbol = Symbol("owner symbol");
 const async_id_symbol = Symbol("async_id_symbol");
 
-const { throwNotImplemented } = require("internal/shared");
+const { throwNotImplemented, ErrnoException, ExceptionWithHostPort } = require("internal/shared");
 const {
   validateString,
   validateNumber,
   validateFunction,
   validatePort,
   validateAbortSignal,
+  validateUint32,
 } = require("internal/validators");
 
 const { isIP } = require("internal/net/isIP");
@@ -64,51 +67,290 @@ const SymbolAsyncDispose = Symbol.asyncDispose;
 const ObjectDefineProperty = Object.defineProperty;
 const FunctionPrototypeBind = Function.prototype.bind;
 
+// Mirrors Node's SystemError shape for ERR_SOCKET_BUFFER_SIZE: name
+// "SystemError", an enumerable `info` object, errno/syscall accessors that
+// read through to it, a "SystemError [ERR_...]" stack header, and a custom
+// inspect that renders the accessor values like Node's SystemError does.
 class ERR_SOCKET_BUFFER_SIZE extends Error {
-  constructor(ctx) {
-    super(`Invalid buffer size: ${ctx}`);
+  constructor(ctx: { errno: number; code: string; message: string; syscall: string }) {
+    super(`Could not get or set buffer size: ${ctx.syscall} returned ${ctx.code} (${ctx.message})`);
     this.code = "ERR_SOCKET_BUFFER_SIZE";
+    ObjectDefineProperty(this, "name", {
+      value: "SystemError",
+      enumerable: false,
+      writable: true,
+      configurable: true,
+    });
+    const stack = this.stack;
+    if (typeof stack === "string") {
+      const rest = stack.indexOf("\n");
+      this.stack = `${this.toString()}${rest === -1 ? "" : stack.slice(rest)}`;
+    }
+    ObjectDefineProperty(this, "info", { value: ctx, enumerable: true, configurable: true, writable: false });
+    ObjectDefineProperty(this, "errno", {
+      get() {
+        return ctx.errno;
+      },
+      set(value) {
+        ctx.errno = value;
+      },
+      enumerable: true,
+      configurable: true,
+    });
+    ObjectDefineProperty(this, "syscall", {
+      get() {
+        return ctx.syscall;
+      },
+      set(value) {
+        ctx.syscall = value;
+      },
+      enumerable: true,
+      configurable: true,
+    });
+  }
+
+  toString() {
+    return `${this.name} [${this.code}]: ${this.message}`;
+  }
+
+  [Symbol.for("nodejs.util.inspect.custom")](_recurseTimes, ctx) {
+    return require("node:util").inspect(this, {
+      ...ctx,
+      getters: true,
+      customInspect: false,
+    });
   }
 }
 
-function isInt32(value) {
+// uv_strerror() text and libuv Windows constants for the buffer-size path.
+// On POSIX a native err.errno is already libuv-semantic; on Windows it's
+// -(Bun's discriminant), not the -4xxx Node reports, so map by code string.
+type UvError = [errno: number, message: string];
+const kUvErrors: { __proto__: null; EBADF: UvError; EINVAL: UvError; ENOTSOCK: UvError; ENOBUFS: UvError } = {
+  __proto__: null,
+  EBADF: [-4083, "bad file descriptor"],
+  EINVAL: [-4071, "invalid argument"],
+  ENOTSOCK: [-4050, "socket operation on non-socket"],
+  ENOBUFS: [-4060, "no buffer space available"],
+};
+
+function isInt32(value): value is number {
   return value === (value | 0);
 }
 
+// libuv-style negative errnos used where Node reports uv error codes (the POSIX
+// values match every supported platform; Windows uses libuv's own values).
+// NOT from process.binding("uv"): Bun's ProcessBindingUV.cpp negates the
+// COMPILING HOST's <errno.h> value, so on Windows it reports -9/-22/-105
+// where Node/libuv report the synthetic -4083/-4071/-4081.
+const UV_EBADF = process.platform === "win32" ? -4083 : -9;
+const UV_EEXIST = process.platform === "win32" ? -4075 : -17;
+const UV_EINVAL = process.platform === "win32" ? -4071 : -22;
+// Unlike the codes above, ECANCELED's number differs across the POSIX
+// platforms (Linux 125, Darwin 89, FreeBSD 85) and is a libuv-synthetic
+// -4081 on Windows, so it has to come from native.
+const UV_ECANCELED: number = $bindgen("node_util_binding.bind.ts", "ecanceledErrorCode");
+
+// Node's --test-udp-no-try-send makes udp_wrap skip uv_udp_try_send so every
+// request is counted until its callback runs. Only Node's own tests use it.
+const kNoTrySend = Array.prototype.indexOf.$call(process.execArgv, "--test-udp-no-try-send") !== -1;
+
+const getFdFn = $bindgen("udp_socket.bind.ts", "getFd") as (socket: $Node.UDPSocketHandle) => number;
+// Read-only query of the process-wide DGRAM_FDS registry the native layer
+// already maintains, so bind({ fd }) can synchronously report EEXIST like
+// libuv's uv_udp_open() without keeping a second per-VM copy of the same fact.
+const isFdAdoptedFn: (fd: number) => boolean = $bindgen("udp_socket.bind.ts", "dgramIsFdAdopted");
+// Fresh getsockname on a live socket's descriptor: the cached `.address`
+// getter can be stale for an adopted-but-unbound fd once the kernel
+// auto-binds on first sendto(); Node calls getsockname on every address().
+const getSockNameFn: (fd: number) => { address: string; port: number; family: string } = $bindgen(
+  "udp_socket.bind.ts",
+  "dgramGetSockNameFd",
+);
+
+let BlockList: $Node.BlockListConstructor | undefined;
+function isBlockList(value: unknown): value is $Node.BlockList {
+  BlockList ??= $bindgen("BlockList.bind.ts", "BlockList") as $Node.BlockListConstructor;
+  return BlockList.isBlockList(value);
+}
+
+function loadClusterOfWorker() {
+  const { isPrimary, loadChild } = require("internal/cluster/isPrimary");
+  return isPrimary ? undefined : loadChild();
+}
+
 // placeholder
-function defaultTriggerAsyncIdScope(triggerAsyncId, block, ...args) {
+function defaultTriggerAsyncIdScope<Args extends unknown[], Result>(
+  triggerAsyncId: unknown,
+  block: (...args: Args) => Result,
+  ...args: Args
+): Result {
   return block.$apply(null, args);
 }
 
-function lookup4(lookup, address, callback) {
+function lookup4(lookup: LookupFunction, address: string | null | undefined, callback: LookupCallback) {
   return lookup(address || "127.0.0.1", 4, callback);
 }
 
-function lookup6(lookup, address, callback) {
+function lookup6(lookup: LookupFunction, address: string | null | undefined, callback: LookupCallback) {
   return lookup(address || "::1", 6, callback);
 }
 
-function EINVAL(syscall) {
-  throw Object.assign(new Error(`${syscall} EINVAL`), {
-    code: "EINVAL",
-    syscall,
-  });
+type LookupCallback = (err: Error | null, ip: string) => void;
+// `dns.lookup`, or the `lookup` option.
+type LookupFunction = (hostname: string, family: number, callback: LookupCallback) => void;
+type SendCallback = (err: Error | null, sent?: number) => void;
+type SendData = ArrayBufferView;
+type RemoteInfo = { address: string; family: string; port: number; size?: number };
+
+// What `cluster._getServer` answers in a worker: the wrap of the descriptor that the primary shares.
+interface SharedHandle {
+  close(): unknown;
+  adopted?: boolean;
+  sharedFd?: number;
+  fd?: number;
 }
 
-let dns;
+interface DgramState {
+  handle: UDPHandle | null;
+  receiving: boolean;
+  bindState: number;
+  connectState: number;
+  queue: (() => void)[] | undefined;
+  reuseAddr: boolean | undefined;
+  reusePort: boolean | undefined;
+  ipv6Only: boolean | undefined;
+  recvBufferSize: number | undefined;
+  sendBufferSize: number | undefined;
+  receiveBlockList: $Node.BlockList | undefined;
+  sendBlockList: $Node.BlockList | undefined;
+  unrefOnBind: boolean;
+  sharedHandle: SharedHandle | undefined;
+}
 
-function newHandle(type, lookup) {
-  if (lookup === undefined) {
-    if (dns === undefined) {
-      dns = require("node:dns");
+interface DgramOptions {
+  type: string;
+  lookup?: LookupFunction;
+  recvBufferSize?: number;
+  sendBufferSize?: number;
+  receiveBlockList?: $Node.BlockList;
+  sendBlockList?: $Node.BlockList;
+  reuseAddr?: boolean;
+  reusePort?: boolean;
+  ipv6Only?: boolean;
+  signal?: AbortSignal;
+}
+
+interface BindOptions {
+  port?: number;
+  address?: string;
+  exclusive?: boolean;
+  fd?: number;
+}
+
+type MessageListener = (message: Buffer, remote: RemoteInfo) => void;
+
+declare global {
+  namespace $Node {
+    interface DgramSocket extends EventEmitter {
+      type: string;
+      [kStateSymbol]: DgramState;
+      [async_id_symbol]?: number;
+      bind(
+        port?: number | BindOptions | (() => void) | null,
+        address?: string | (() => void) | null,
+        callback?: () => void,
+      ): this;
+      connect(port: number, address?: string | ((err?: Error) => void), callback?: (err?: Error) => void): void;
+      disconnect(): void;
+      send(
+        buffer: string | ArrayBufferView | readonly (string | ArrayBufferView)[],
+        offset?: number | SendCallback | null,
+        length?: number | string | SendCallback | null,
+        port?: number | SendCallback | null,
+        address?: string | SendCallback | null,
+        callback?: SendCallback,
+      ): void;
+      sendto(
+        buffer: string | ArrayBufferView,
+        offset: number,
+        length: number,
+        port: number,
+        address: string,
+        callback?: SendCallback,
+      ): void;
+      close(callback?: () => void): this;
+      address(): { address: string; family: string; port: number };
+      remoteAddress(): { address: string; family: string; port: number };
+      ref(): this;
+      unref(): this;
     }
 
-    lookup = dns.lookup;
+    interface DgramSocketConstructor {
+      new (type: string | DgramOptions, listener?: MessageListener): DgramSocket;
+      (this: DgramSocket, type: string | DgramOptions, listener?: MessageListener): void;
+      prototype: any;
+    }
+  }
+}
+
+interface SendRequest {
+  oncomplete: ((this: SendRequest, err: unknown, sent: number) => void) | undefined;
+  address: string | undefined;
+  port: number | undefined;
+  callback: SendCallback | undefined;
+}
+
+interface QueuedSend {
+  data: Uint8Array;
+  length: number;
+  port: number | undefined;
+  address: string | null | undefined;
+  req: SendRequest;
+}
+
+interface UDPHandle {
+  socket: $Node.UDPSocketHandle | undefined;
+  queueSize: number;
+  queueCount: number;
+  sendQueue: (QueuedSend | undefined)[] | undefined;
+  sendQueueHead: number;
+  send: typeof handleSend;
+  drain: typeof handleDrain;
+  getSendQueueSize: typeof handleGetSendQueueSize;
+  getSendQueueCount: typeof handleGetSendQueueCount;
+  readonly fd: number;
+  lookup?: (address: string | null | undefined, callback: LookupCallback) => void;
+  onmessage?: typeof onMessage;
+  [kOwnerSymbol]?: $Node.DgramSocket;
+}
+
+function newHandle(type: string, lookup: LookupFunction | undefined) {
+  if (lookup === undefined) {
+    lookup = require("node:dns").lookup as LookupFunction;
   } else {
     validateFunction(lookup, "lookup");
   }
 
-  const handle = {};
+  const handle: UDPHandle = {
+    socket: undefined,
+    // Bytes/requests the kernel has not yet accepted — the uv_udp_send fallback
+    // queue. A synchronously accepted send (uv_udp_try_send fast path) never
+    // touches these, matching Node.
+    queueSize: 0,
+    queueCount: 0,
+    // Requests the kernel refused (send buffer full): flushed by on_drain.
+    sendQueue: undefined,
+    // Index of the first not-yet-drained sendQueue entry (see handleDrain).
+    sendQueueHead: 0,
+    send: handleSend,
+    drain: handleDrain,
+    getSendQueueSize: handleGetSendQueueSize,
+    getSendQueueCount: handleGetSendQueueCount,
+    get fd() {
+      return this.socket ? getFdFn(this.socket) : -1;
+    },
+  };
   if (type === "udp4") {
     handle.lookup = FunctionPrototypeBind.$call(lookup4, handle, lookup);
   } else if (type === "udp6") {
@@ -122,8 +364,167 @@ function newHandle(type, lookup) {
   return handle;
 }
 
-function onMessage(nread, handle, buf, rinfo) {
-  const self = handle[kOwnerSymbol];
+// Mirrors the libuv UDP wrap's send(): sentBytes + 1 on synchronous success,
+// 0 when queued for the next writable event (callback fires on drain), or a
+// negative uv errno / native error. Connected form omits port/address.
+function handleSend(
+  this: UDPHandle,
+  req: SendRequest,
+  list: SendData[],
+  count: number,
+  port?: number | boolean,
+  address?: string | null,
+  _hasCallback?: boolean,
+) {
+  if (typeof port === "boolean") {
+    port = undefined;
+    address = undefined;
+  }
+
+  const socket = this.socket;
+  if (!socket) {
+    return UV_EBADF;
+  }
+
+  let data;
+  if (count === 1) {
+    const { buffer, byteOffset, byteLength } = list[0];
+    data = new $Buffer(buffer).slice(byteOffset).slice(0, byteLength);
+  } else {
+    data = Buffer.concat(list as Uint8Array[]);
+  }
+
+  // Don't jump the queue: if earlier requests are still waiting for the kernel
+  // to accept them, this one goes behind them (libuv's uv_udp_send order).
+  if (this.sendQueue !== undefined) {
+    return handleQueueSend(this, data, port, address, req);
+  }
+
+  let accepted;
+  try {
+    accepted = port ? socket.send(data, port, address!) : socket.send(data);
+  } catch (err) {
+    // Hand the original error back so the caller keeps the platform-correct
+    // code; a numeric return is reserved for libuv-style errno values.
+    return err;
+  }
+
+  if (!accepted) {
+    // Kernel send buffer is full. The native send re-armed writable and
+    // on_drain will fire when it clears — queue this request until then like
+    // libuv's uv_udp_send() does when uv_udp_try_send() reports EAGAIN.
+    return handleQueueSend(this, data, port, address, req);
+  }
+
+  if (kNoTrySend) {
+    // Emulate uv_udp_send: the datagram was written, but the request stays
+    // counted until its callback runs on the next turn. On Windows a
+    // synchronously-completed WSASend contributes 0 queued bytes.
+    this.queueCount += 1;
+    if (process.platform !== "win32") this.queueSize += data.byteLength;
+    process.nextTick(completeNoTrySend, this, req, data.byteLength);
+    return 0;
+  }
+
+  // uv_udp_try_send fast path: the kernel accepted the datagram and Node's
+  // wrap returns bytes+1 without ever creating a uv_udp_send_t, so the queue
+  // counters stay untouched.
+  return data.byteLength + 1;
+}
+
+function completeNoTrySend(handle: UDPHandle, req: SendRequest, sent: number) {
+  handle.queueCount -= 1;
+  if (process.platform !== "win32") handle.queueSize -= sent;
+  if (req && typeof req.oncomplete === "function") req.oncomplete(undefined, sent);
+}
+
+function handleQueueSend(
+  handle: UDPHandle,
+  data: Uint8Array,
+  port: number | undefined,
+  address: string | null | undefined,
+  req: SendRequest,
+) {
+  // Capture the length once: `data` is a view over the caller's ArrayBuffer,
+  // and a detach between enqueue and completion would report byteLength 0,
+  // stranding bytes in getSendQueueSize(). libuv captures uv_buf_t.len the
+  // same way.
+  const length = data.byteLength;
+  handle.sendQueue ??= [];
+  handle.sendQueue.push({ data, length, port, address, req });
+  handle.queueCount += 1;
+  handle.queueSize += length;
+  return 0;
+}
+
+// Drains queued sends after the kernel signals writable. Consumes from the
+// live queue front so a send() from a completion callback lands behind the
+// remaining entries (libuv's FIFO order); stops on renewed backpressure.
+function handleDrain(this: UDPHandle) {
+  const queue = this.sendQueue;
+  if (queue === undefined) return;
+  // A non-empty queue implies the native socket: entries are only enqueued
+  // after handleSend's `!this.socket` guard, and close() flushes the queue in
+  // the same breath as it closes the socket.
+  const socket = this.socket!;
+  let head = this.sendQueueHead;
+  while (head < queue.length) {
+    const entry = queue[head]!;
+    let err;
+    let accepted = false;
+    try {
+      accepted = entry.port ? socket.send(entry.data, entry.port, entry.address!) : socket.send(entry.data);
+    } catch (e) {
+      err = e;
+    }
+    if (err === undefined && !accepted) {
+      // Still full: leave this and everything behind it queued for the next
+      // drain (native send has re-armed writable again).
+      break;
+    }
+    queue[head++] = undefined;
+    completeQueuedSend(this, entry, err);
+  }
+  if (head === queue.length) {
+    this.sendQueue = undefined;
+    this.sendQueueHead = 0;
+  } else if (head > 256) {
+    // Compact the consumed prefix only once it is worth an O(remaining)
+    // splice; doing it on every partial drain is quadratic under sustained
+    // backpressure. Same running-index shape (and threshold) as writable's
+    // buffered list.
+    queue.splice(0, head);
+    this.sendQueueHead = 0;
+  } else {
+    this.sendQueueHead = head;
+  }
+}
+
+function completeQueuedSend(handle: UDPHandle, entry: QueuedSend, err: unknown) {
+  handle.queueCount -= 1;
+  handle.queueSize -= entry.length;
+  // Next tick, like libuv's uv__udp_run_completed: a throwing or re-entrant
+  // callback cannot skip a sibling entry or run inside close()/drain.
+  const req = entry.req;
+  if (req && typeof req.oncomplete === "function") {
+    process.nextTick(runQueuedSendComplete, req, err, err === undefined ? entry.length : 0);
+  }
+}
+
+function runQueuedSendComplete(req: SendRequest, err: unknown, sent: number) {
+  req.oncomplete!(err, sent);
+}
+
+function handleGetSendQueueSize(this: UDPHandle) {
+  return this.queueSize;
+}
+
+function handleGetSendQueueCount(this: UDPHandle) {
+  return this.queueCount;
+}
+
+function onMessage(nread: number, handle: UDPHandle, buf: Buffer, rinfo: RemoteInfo) {
+  const self = handle[kOwnerSymbol]!;
   if (nread < 0) {
     return self.emit(
       "error",
@@ -137,13 +538,15 @@ function onMessage(nread, handle, buf, rinfo) {
   self.emit("message", buf, rinfo);
 }
 
-let udpSocketChannel;
+let udpSocketChannel: ReturnType<typeof import("./diagnostics_channel").default.channel> | undefined;
 
-function Socket(type, listener) {
+function Socket(this: $Node.DgramSocket, type: string | DgramOptions, listener?: MessageListener) {
   EventEmitter.$call(this);
   let lookup;
   let recvBufferSize;
   let sendBufferSize;
+  let receiveBlockList;
+  let sendBlockList;
 
   let options;
   if (type !== null && typeof type === "object") {
@@ -151,14 +554,28 @@ function Socket(type, listener) {
     type = options.type;
     lookup = options.lookup;
     recvBufferSize = options.recvBufferSize;
+    if (recvBufferSize) {
+      validateUint32(recvBufferSize, "options.recvBufferSize");
+    }
     sendBufferSize = options.sendBufferSize;
+    if (sendBufferSize) {
+      validateUint32(sendBufferSize, "options.sendBufferSize");
+    }
+    receiveBlockList = options.receiveBlockList;
+    if (receiveBlockList && !isBlockList(receiveBlockList)) {
+      throw $ERR_INVALID_ARG_TYPE("options.receiveBlockList", "net.BlockList", receiveBlockList);
+    }
+    sendBlockList = options.sendBlockList;
+    if (sendBlockList && !isBlockList(sendBlockList)) {
+      throw $ERR_INVALID_ARG_TYPE("options.sendBlockList", "net.BlockList", sendBlockList);
+    }
   }
 
-  const handle = newHandle(type, lookup);
+  const handle = newHandle(type as string, lookup);
   handle[kOwnerSymbol] = this;
 
   // this[async_id_symbol] = handle.getAsyncId();
-  this.type = type;
+  this.type = type as string;
 
   if (typeof listener === "function") this.on("message", listener);
 
@@ -173,7 +590,10 @@ function Socket(type, listener) {
     ipv6Only: options && options.ipv6Only,
     recvBufferSize,
     sendBufferSize,
+    receiveBlockList,
+    sendBlockList,
     unrefOnBind: false,
+    sharedHandle: undefined,
   };
 
   if (options?.signal !== undefined) {
@@ -200,45 +620,82 @@ function Socket(type, listener) {
 }
 $toClass(Socket, "Socket", EventEmitter);
 
-function createSocket(type, listener) {
+function createSocket(type: string | DgramOptions, listener?: MessageListener): $Node.DgramSocket {
   return new Socket(type, listener);
 }
 
-function bufferSize(self, size, _buffer) {
+const bufferSizeFn = $bindgen("udp_socket.bind.ts", "bufferSize") as (
+  socket: $Node.UDPSocketHandle,
+  size: number,
+  isRecv: boolean,
+) => number;
+
+function bufferSize(self: $Node.DgramSocket, size: number, buffer: boolean) {
   if (size >>> 0 !== size) throw $ERR_SOCKET_BAD_BUFFER_SIZE();
 
-  const ctx = {};
-  // const ret = self[kStateSymbol].handle.bufferSize(size, buffer, ctx);
-  const ret = 1 << 19; // common buffer for all sockets is fixed at 512KiB
-  if (ret === undefined) {
-    throw new ERR_SOCKET_BUFFER_SIZE(ctx);
+  const syscall = `uv_${buffer === RECV_BUFFER ? "recv" : "send"}_buffer_size`;
+
+  // The handle takes the size as a C int, so anything past INT32_MAX is
+  // rejected by libuv with EINVAL before it reaches the kernel.
+  if (size > 0x7fffffff) {
+    throw new ERR_SOCKET_BUFFER_SIZE({
+      errno: UV_EINVAL,
+      code: "EINVAL",
+      message: kUvErrors.EINVAL[1],
+      syscall,
+    });
   }
-  return ret;
+
+  const socket = self[kStateSymbol].handle?.socket;
+  if (!socket) {
+    // Node reports the libuv failure from the unbound handle's missing fd.
+    const code = process.platform === "win32" ? "ENOTSOCK" : "EBADF";
+    throw new ERR_SOCKET_BUFFER_SIZE({
+      errno: process.platform === "win32" ? kUvErrors[code][0] : UV_EBADF,
+      code,
+      message: kUvErrors[code][1],
+      syscall,
+    });
+  }
+
+  try {
+    return bufferSizeFn(socket, size, buffer === RECV_BUFFER);
+  } catch (err: any) {
+    const known = kUvErrors[err.code];
+    throw new ERR_SOCKET_BUFFER_SIZE({
+      // err.errno is only libuv-semantic on POSIX; on Windows it is Bun's
+      // own negated discriminant, so re-derive from the code string.
+      errno: process.platform === "win32" && known ? known[0] : err.errno,
+      code: err.code,
+      message: known ? known[1] : err.code,
+      syscall,
+    });
+  }
 }
 
-Socket.prototype.bind = function (port_, address_ /* , callback */) {
-  let port = port_;
+Socket.prototype.bind = function (this: $Node.DgramSocket, port_, address_ /* , callback */) {
+  // bind(cb): a function first argument is the callback, not a port.
+  let port = typeof port_ === "function" ? null : port_;
 
   healthCheck(this);
   const state = this[kStateSymbol];
 
   if (state.bindState !== BIND_STATE_UNBOUND) {
-    this.emit("error", $ERR_SOCKET_ALREADY_BOUND());
-    return;
+    throw $ERR_SOCKET_ALREADY_BOUND();
   }
 
   state.bindState = BIND_STATE_BINDING;
 
-  const cb = arguments.length && arguments[arguments.length - 1];
+  const cb: unknown = arguments.length && arguments[arguments.length - 1];
   if (typeof cb === "function") {
-    function removeListeners() {
+    function removeListeners(this: $Node.DgramSocket) {
       this.removeListener("error", removeListeners);
       this.removeListener("listening", onListening);
     }
 
-    function onListening() {
+    function onListening(this: $Node.DgramSocket) {
       removeListeners.$call(this);
-      cb.$call(this);
+      (cb as (this: $Node.DgramSocket) => void).$call(this);
     }
 
     this.on("error", removeListeners);
@@ -247,41 +704,45 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
 
   if (port !== null && typeof port === "object" && typeof port.recvStart === "function") {
     throwNotImplemented("Socket.prototype.bind(handle)");
-    /*
-    replaceHandle(this, port);
-    startListening(this);
-    return this;
-    */
   }
 
   // Open an existing fd instead of creating a new one.
-  if (port !== null && typeof port === "object" && isInt32(port.fd) && port.fd > 0) {
-    throwNotImplemented("Socket.prototype.bind({ fd })");
-    /*
-    const fd = port.fd;
+  const fd = port !== null && typeof port === "object" ? port.fd : undefined;
+  if (isInt32(fd) && fd > 0) {
     const exclusive = !!port.exclusive;
-    const state = this[kStateSymbol];
-
+    // In a worker the fd number refers to the primary's descriptor space
+    // (Node's test-cluster-dgram-bind-fd sends a number over IPC), so route
+    // through the primary before touching it locally.
+    if (loadClusterOfWorker()?.isWorker && !exclusive) {
+      bindServerHandle(this, { address: null, port: null, addressType: this.type, fd, flags: null }, err => {
+        state.bindState = BIND_STATE_UNBOUND;
+        this.emit("error", new ErrnoException(err, "open"));
+      });
+      return this;
+    }
     const type = guessHandleType(fd);
-    if (type !== 'UDP')
-      throw new ERR_INVALID_FD_TYPE(type);
-    const err = state.handle.open(fd);
-
-    if (err)
-      throw new ErrnoException(err, 'open');
-
-    startListening(this);
+    if (type !== "UDP") {
+      throw $ERR_INVALID_FD_TYPE(type);
+    }
+    // Query the native registry so bind({ fd }) throws synchronously like
+    // uv_udp_open (startBunSocket routes the same failure to emit('error')).
+    if (isFdAdoptedFn(fd)) {
+      throw new ErrnoException(UV_EEXIST, "open");
+    }
+    startBunSocket(this, state, { fd });
     return this;
-    */
   }
 
   let address;
+  let exclusive;
 
   if (port !== null && typeof port === "object") {
     address = port.address || "";
+    exclusive = !!port.exclusive;
     port = port.port;
   } else {
     address = typeof address_ === "function" ? "" : address_;
+    exclusive = false;
   }
 
   // Defaulting address for bind to all interfaces
@@ -291,7 +752,7 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
   }
 
   // Resolve address first
-  state.handle.lookup(address, (err, ip) => {
+  state.handle!.lookup!(address, (err, ip) => {
     if (!state.handle) return; // Handle has been closed in the mean time
 
     if (err) {
@@ -311,57 +772,184 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
     }
 
     if (state.reusePort) {
+      // SO_REUSEPORT load-balances in the kernel; treat it as exclusive like
+      // Node so the cluster does not also share one descriptor.
+      exclusive = true;
       flags |= uSockets.LISTEN_REUSE_PORT;
     }
 
-    // TODO flags
-    const family = this.type === "udp4" ? "IPv4" : "IPv6";
-    try {
-      Bun.udpSocket({
-        hostname: ip,
-        port: port || 0,
-        flags,
-        socket: {
-          data: (_socket, data, port, address) => {
-            this.emit("message", data, {
-              port: port,
-              address: address,
-              size: data.length,
-              // TODO check if this is correct
-              family,
-            });
-          },
-          error: error => {
-            this.emit("error", error);
-          },
-        },
-      }).$then(
-        socket => {
-          if (state.unrefOnBind) {
-            socket.unref();
-            state.unrefOnBind = false;
-          }
-          state.handle.socket = socket;
-          state.receiving = true;
-          state.bindState = BIND_STATE_BOUND;
-
-          this.emit("listening");
+    if (loadClusterOfWorker()?.isWorker && !exclusive) {
+      // Non-exclusive binds in a cluster worker go through the primary, which
+      // creates (or reuses) one shared descriptor per address/port.
+      bindServerHandle(
+        this,
+        {
+          address: ip,
+          port: port,
+          addressType: this.type,
+          fd: -1,
+          // UV_UDP_IPV6ONLY | UV_UDP_REUSEADDR for the primary's bind of the
+          // shared descriptor.
+          flags: (state.ipv6Only ? 1 : 0) | (state.reuseAddr ? 4 : 0),
         },
         err => {
+          const ex = new ExceptionWithHostPort(err, "bind", ip, port);
           state.bindState = BIND_STATE_UNBOUND;
-          this.emit("error", err);
+          this.emit("error", ex);
         },
       );
-    } catch (err) {
-      state.bindState = BIND_STATE_UNBOUND;
-      this.emit("error", err);
+      return;
     }
+
+    startBunSocket(this, state, { hostname: ip, port: port || 0, flags });
   });
 
   return this;
 };
 
-Socket.prototype.connect = function (port, address, callback) {
+// Asks the cluster primary for a shared descriptor and adopts it. Mirrors
+// Node's bindServerHandle()/replaceHandle() pair.
+function bindServerHandle(self: $Node.DgramSocket, options: object, errCb: (err: number) => void) {
+  const state = self[kStateSymbol];
+  loadClusterOfWorker()!._getServer(self, options, (err: number, handle: SharedHandle | null) => {
+    if (err) {
+      // Do not call the callback if the socket was closed in the mean time.
+      if (state.handle) errCb(err);
+      return;
+    }
+
+    if (!state.handle) {
+      // Handle has been closed in the mean time.
+      return handle!.close();
+    }
+
+    // The shared handle from the primary never reads; adopt its descriptor
+    // into a reading socket and keep the wrap so close() can notify the
+    // primary. In Node the wrap *is* the socket's handle, so closing it (e.g.
+    // on cluster disconnect) closes the socket — mirror that here.
+    const closeWrap = handle!.close;
+    handle!.close = function (this: SharedHandle) {
+      handle!.close = closeWrap;
+      if (state.sharedHandle === handle) {
+        // Detach first so Socket#close() doesn't re-enter this handle and
+        // invoke the original close twice.
+        state.sharedHandle = undefined;
+        if (state.handle) self.close();
+      }
+      return closeWrap.$apply(this, arguments);
+    };
+    state.sharedHandle = handle!;
+    // Set before the async adoption so a close() racing it cannot free the fd; releaseSharedHandle() undoes it on failure.
+    handle!.adopted = true;
+    startBunSocket(self, state, { fd: handle!.sharedFd ?? handle!.fd }, handle!);
+  });
+}
+
+function releaseSharedHandle(state: DgramState, handle: SharedHandle) {
+  if (state.sharedHandle === handle) state.sharedHandle = undefined;
+  handle.adopted = false;
+  handle.close();
+}
+
+// Creates the underlying Bun.udpSocket for `self` and completes the bind:
+// either from a resolved hostname/port or by adopting an existing descriptor
+// (`{ fd }`). Mirrors what Node's startListening() makes observable before
+// 'listening' fires.
+function startBunSocket(
+  self: $Node.DgramSocket,
+  state: DgramState,
+  createOptions: { fd: number | undefined } | { hostname: string; port: number; flags: number },
+  sharedHandle?: SharedHandle,
+) {
+  try {
+    const udpOptions: any = {
+      ...createOptions,
+      socket: {
+        data: (
+          _socket: $Node.UDPSocketHandle,
+          data: Buffer,
+          port: number,
+          address: string,
+          flags?: { ipv6?: boolean },
+        ) => {
+          // Per-packet, from the received sockaddr's family: bind({ fd }) can
+          // adopt a descriptor of the other family than `type`.
+          const family = flags?.ipv6 ? "IPv6" : "IPv4";
+          if (state.receiveBlockList?.check(address, flags?.ipv6 ? "ipv6" : "ipv4")) {
+            return;
+          }
+          self.emit("message", data, {
+            port: port,
+            address: address,
+            size: data.length,
+            family,
+          });
+        },
+        drain: () => {
+          handleDrain.$call(state.handle!);
+        },
+        error: error => {
+          if (error?.syscall === "recv") {
+            // Drop errqueue-origin ICMP errors on unconnected sockets like
+            // Node (which never enables IP_RECVERR); always emit real
+            // recvmmsg failures — the errno namespaces overlap.
+            if (error.errqueue === true && state.connectState !== CONNECT_STATE_CONNECTED) {
+              return;
+            }
+            // Node reports receive-path failures as `recvmsg` errors; keep
+            // the native error so its code stays platform-correct.
+            error.syscall = "recvmsg";
+            error.message = `recvmsg ${error.code}`;
+            self.emit("error", error);
+            return;
+          }
+          self.emit("error", error);
+        },
+      },
+    };
+    // Private name: a cluster-shared descriptor is read one datagram at a time so workers share the load.
+    if (sharedHandle) $putByIdDirectPrivate(udpOptions, "sharedFd", true);
+    (Bun.udpSocket(udpOptions) as Promise<$Node.UDPSocketHandle>).$then(
+      (socket: $Node.UDPSocketHandle) => {
+        if (!state.handle) {
+          // Closed while the bind was in flight.
+          socket.close();
+          return;
+        }
+        if (state.unrefOnBind) {
+          socket.unref();
+          state.unrefOnBind = false;
+        }
+        state.handle.socket = socket;
+        state.receiving = true;
+        state.bindState = BIND_STATE_BOUND;
+
+        // Node applies these in startListening(), before 'listening' fires.
+        const { recvBufferSize, sendBufferSize } = state;
+        try {
+          if (recvBufferSize) bufferSize(self, recvBufferSize, RECV_BUFFER);
+          if (sendBufferSize) bufferSize(self, sendBufferSize, SEND_BUFFER);
+        } catch (err) {
+          self.emit("error", err);
+          return;
+        }
+
+        self.emit("listening");
+      },
+      err => {
+        state.bindState = BIND_STATE_UNBOUND;
+        if (sharedHandle) releaseSharedHandle(state, sharedHandle);
+        self.emit("error", err);
+      },
+    );
+  } catch (err) {
+    state.bindState = BIND_STATE_UNBOUND;
+    if (sharedHandle) releaseSharedHandle(state, sharedHandle);
+    self.emit("error", err);
+  }
+}
+
+Socket.prototype.connect = function (this: $Node.DgramSocket, port, address, callback) {
   port = validatePort(port, "Port", false);
   if (typeof address === "function") {
     callback = address;
@@ -387,28 +975,43 @@ Socket.prototype.connect = function (port, address, callback) {
   _connect.$apply(this, [port, address, callback]);
 };
 
-function _connect(port, address, callback) {
+function _connect(this: $Node.DgramSocket, port: number, address: string, callback?: (err?: Error) => void) {
   const state = this[kStateSymbol];
   if (callback) this.once("connect", callback);
 
-  const afterDns = (ex, ip) => {
+  const afterDns = (ex: Error | null, ip: string) => {
     defaultTriggerAsyncIdScope(this[async_id_symbol], doConnect, ex, this, ip, address, port, callback);
   };
 
-  state.handle.lookup(address, afterDns);
+  state.handle!.lookup!(address, afterDns);
 }
 
-const connectFn = $newRustFunction("udp_socket.rs", "UDPSocket.jsConnect", 2);
+const connectFn = $bindgen("udp_socket.bind.ts", "connect") as (
+  socket: $Node.UDPSocketHandle,
+  host: string,
+  port: number,
+) => void;
 
-function doConnect(ex, self, ip, address, port, callback) {
+function doConnect(
+  ex: Error | null,
+  self: $Node.DgramSocket,
+  ip: string,
+  address: string,
+  port: number,
+  callback?: (err?: Error) => void,
+) {
   const state = self[kStateSymbol];
   if (!state.handle) return;
 
+  if (!ex && state.sendBlockList?.check(ip, `ipv${isIP(ip)}`)) {
+    ex = $ERR_IP_BLOCKED(ip);
+  }
+
   if (!ex) {
     try {
-      connectFn.$call(state.handle.socket, ip, port);
+      connectFn(state.handle.socket!, ip, port);
     } catch (e) {
-      ex = e;
+      ex = e as Error;
     }
   }
 
@@ -428,18 +1031,26 @@ function doConnect(ex, self, ip, address, port, callback) {
   process.nextTick(() => self.emit("connect"));
 }
 
-const disconnectFn = $newRustFunction("udp_socket.rs", "UDPSocket.jsDisconnect", 0);
+const disconnectFn = $bindgen("udp_socket.bind.ts", "disconnect") as (socket: $Node.UDPSocketHandle) => void;
 
-Socket.prototype.disconnect = function () {
+Socket.prototype.disconnect = function (this: $Node.DgramSocket) {
   const state = this[kStateSymbol];
   if (state.connectState !== CONNECT_STATE_CONNECTED) throw $ERR_SOCKET_DGRAM_NOT_CONNECTED();
 
-  disconnectFn.$call(state.handle.socket);
+  disconnectFn(state.handle!.socket!);
   state.connectState = CONNECT_STATE_DISCONNECTED;
 };
 
 // Thin wrapper around `send`, here for compatibility with dgram_legacy.js
-Socket.prototype.sendto = function (buffer, offset, length, port, address, callback) {
+Socket.prototype.sendto = function (
+  this: $Node.DgramSocket,
+  buffer: string | ArrayBufferView,
+  offset: number,
+  length: number,
+  port: number,
+  address: string,
+  callback?: SendCallback,
+) {
   validateNumber(offset, "offset");
   validateNumber(length, "length");
   validateNumber(port, "port");
@@ -468,8 +1079,8 @@ function sliceBuffer(buffer, offset, length) {
   return Buffer.from(buffer.buffer, buffer.byteOffset + offset, length);
 }
 
-function fixBufferList(list) {
-  const newlist = new Array(list.length);
+function fixBufferList(list: readonly unknown[]): SendData[] | null {
+  const newlist: SendData[] = new Array(list.length);
 
   for (let i = 0, l = list.length; i < l; i++) {
     const buf = list[i];
@@ -481,7 +1092,7 @@ function fixBufferList(list) {
   return newlist;
 }
 
-function enqueue(self, toEnqueue) {
+function enqueue(self: $Node.DgramSocket, toEnqueue: () => void) {
   const state = self[kStateSymbol];
 
   // If the send queue hasn't been initialized yet, do it, and install an
@@ -494,23 +1105,23 @@ function enqueue(self, toEnqueue) {
   state.queue.push(toEnqueue);
 }
 
-function onListenSuccess() {
+function onListenSuccess(this: $Node.DgramSocket) {
   this.removeListener(EventEmitter.errorMonitor, onListenError);
   clearQueue.$call(this);
 }
 
-function onListenError(_err) {
+function onListenError(this: $Node.DgramSocket, _err: Error) {
   this.removeListener("listening", onListenSuccess);
   this[kStateSymbol].queue = undefined;
 }
 
-function clearQueue() {
+function clearQueue(this: $Node.DgramSocket) {
   const state = this[kStateSymbol];
   const queue = state.queue;
   state.queue = undefined;
 
   // Flush the send queue.
-  for (const queueEntry of queue) queueEntry();
+  for (const queueEntry of queue!) queueEntry();
 }
 
 // valid combinations
@@ -528,8 +1139,8 @@ function clearQueue() {
 // send(buffer, offset, length)
 // send(bufferOrList, callback)
 // send(bufferOrList)
-Socket.prototype.send = function (buffer, offset, length, port, address, callback) {
-  let list;
+Socket.prototype.send = function (this: $Node.DgramSocket, buffer, offset, length, port, address, callback) {
+  let list: SendData[] | null;
   const state = this[kStateSymbol];
   const connected = state.connectState === CONNECT_STATE_CONNECTED;
   if (!connected) {
@@ -592,18 +1203,26 @@ Socket.prototype.send = function (buffer, offset, length, port, address, callbac
     return;
   }
 
-  const afterDns = (ex, ip) => {
+  const afterDns = (ex: Error | null, ip: string | null) => {
     defaultTriggerAsyncIdScope(this[async_id_symbol], doSend, ex, this, ip, list, address, port, callback);
   };
 
   if (!connected) {
-    state.handle.lookup(address, afterDns);
+    state.handle!.lookup!(address, afterDns);
   } else {
     afterDns(null, null);
   }
 };
 
-function doSend(ex, self, ip, list, address, port, callback) {
+function doSend(
+  ex: Error | null,
+  self: $Node.DgramSocket,
+  ip: string | null,
+  list: SendData[],
+  address: string | undefined,
+  port: number | undefined,
+  callback: SendCallback | undefined,
+) {
   const state = self[kStateSymbol];
 
   if (ex) {
@@ -618,54 +1237,25 @@ function doSend(ex, self, ip, list, address, port, callback) {
   if (!state.handle) {
     return;
   }
-  const socket = state.handle.socket;
-  if (!socket) {
+
+  if (ip && state.sendBlockList?.check(ip, `ipv${isIP(ip)}`)) {
+    if (callback) {
+      process.nextTick(callback, $ERR_IP_BLOCKED(ip));
+    }
     return;
   }
 
-  let err = null;
-  let success = false;
-  let data;
-  if (list === undefined) data = new $Buffer(0);
-  else if (Array.isArray(list) && list.length === 1) {
-    const { buffer, byteOffset, byteLength } = list[0];
-    data = new $Buffer(buffer).slice(byteOffset).slice(0, byteLength);
-  } else data = Buffer.concat(list);
-  try {
-    if (port) {
-      success = socket.send(data, port, ip);
-    } else {
-      success = socket.send(data);
-    }
-  } catch (e) {
-    err = e;
-  }
-  // TODO check if this makes sense
-  if (callback) {
-    if (err) {
-      err.address = ip;
-      err.port = port;
-      err.message = `send ${err.code} ${ip}:${port}`;
-      process.nextTick(callback, err);
-    } else {
-      const sent = success ? data.byteLength : 0;
-      process.nextTick(callback, null, sent);
-    }
-  }
-
-  /*
-  const req = new SendWrap();
-  req.list = list; // Keep reference alive.
-  req.address = address;
-  req.port = port;
-  if (callback) {
-    req.callback = callback;
-    req.oncomplete = afterSend;
-  }
-
+  // The queued (async) path invokes req.oncomplete once the kernel accepts
+  // the write; the synchronous path uses the numeric return.
+  const req: SendRequest = { oncomplete: undefined, address, port, callback };
   let err;
   if (port) err = state.handle.send(req, list, list.length, port, ip, !!callback);
   else err = state.handle.send(req, list, list.length, !!callback);
+
+  if (typeof err !== "number") {
+    if (callback) process.nextTick(callback, decorateSendError(err, address, port));
+    return;
+  }
 
   if (err >= 1) {
     // Synchronous finish. The return code is msg_length + 1 so that we can
@@ -674,27 +1264,45 @@ function doSend(ex, self, ip, list, address, port, callback) {
     return;
   }
 
-  if (err && callback) {
+  if (err === 0) {
+    // Queued behind kernel backpressure: completion arrives via on_drain.
+    req.oncomplete = afterQueuedSend;
+    return;
+  }
+
+  if (callback) {
     // Don't emit as error, dgram_legacy.js compatibility
-    const ex = new ExceptionWithHostPort(err, "send", address, port);
-    process.nextTick(callback, ex);
+    process.nextTick(callback, new ExceptionWithHostPort(err, "send", address!, port));
   }
-  */
 }
 
-/*
-function afterSend(err, sent) {
-  if (err) {
-    err = new ExceptionWithHostPort(err, 'send', this.address, this.port);
+function afterQueuedSend(this: SendRequest, err: unknown, sent: number) {
+  const callback = this.callback;
+  if (!callback) return;
+  if (err === undefined) {
+    callback(null, sent);
+  } else if (typeof err === "number") {
+    callback(new ExceptionWithHostPort(err, "send", this.address!, this.port));
   } else {
-    err = null;
+    callback(decorateSendError(err, this.address, this.port));
   }
-
-  this.callback(err, sent);
 }
-*/
 
-Socket.prototype.close = function (callback) {
+// Native send failure: keep the original error (its code is already
+// platform-correct) and decorate it like Node's ExceptionWithHostPort, which
+// omits the host segment when no address/port is known.
+function decorateSendError(err, address: string | undefined, port: number | undefined) {
+  err.syscall = "send";
+  err.address = address;
+  if (port) err.port = port;
+  let details = "";
+  if (port && port > 0) details = ` ${address}:${port}`;
+  else if (address) details = ` ${address}`;
+  err.message = `send ${err.code}${details}`;
+  return err;
+}
+
+Socket.prototype.close = function (this: $Node.DgramSocket, callback?: () => void) {
   const state = this[kStateSymbol];
   const queue = state.queue;
 
@@ -707,46 +1315,75 @@ Socket.prototype.close = function (callback) {
 
   healthCheck(this);
   state.receiving = false;
-  state.handle.socket?.close();
+  const handle = state.handle!;
+  state.handle!.socket?.close();
   state.handle = null;
+  // Requests still queued behind backpressure never reach the kernel once the
+  // descriptor is gone. libuv reports each as ECANCELED, not EBADF
+  // (uv__udp_finish_close); callbacks fire on the next tick, after close.
+  if (handle.sendQueue !== undefined) {
+    const queue = handle.sendQueue;
+    const head = handle.sendQueueHead;
+    handle.sendQueue = undefined;
+    handle.sendQueueHead = 0;
+    for (let i = head; i < queue.length; i++) completeQueuedSend(handle, queue[i]!, UV_ECANCELED);
+  }
+  const sharedHandle = state.sharedHandle;
+  if (sharedHandle) {
+    // Tells the cluster primary this worker no longer uses the shared
+    // descriptor (the descriptor itself was owned and closed by the socket).
+    state.sharedHandle = undefined;
+    sharedHandle.close();
+  }
   defaultTriggerAsyncIdScope(this[async_id_symbol], process.nextTick, socketCloseNT, this);
 
   return this;
 };
 
-Socket.prototype[SymbolAsyncDispose] = async function () {
+Socket.prototype[SymbolAsyncDispose] = async function (this: $Node.DgramSocket) {
   if (!this[kStateSymbol].handle) {
     return;
   }
-  const { promise, resolve, reject } = $newPromiseCapability(Promise);
-  this.close(err => {
-    if (err) {
-      reject(err);
-    } else {
-      resolve();
-    }
-  });
+  const promise = $newPromise();
+  this.close(FunctionPrototypeBind.$call(onAsyncDisposeClosed, undefined, promise));
 
   return promise;
 };
 
-function socketCloseNT(self) {
+function onAsyncDisposeClosed(promise: Promise<unknown>, err?: unknown) {
+  if (err) {
+    $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, err);
+  } else {
+    $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, undefined);
+  }
+}
+
+function socketCloseNT(self: $Node.DgramSocket) {
   self.emit("close");
 }
 
-Socket.prototype.address = function () {
+Socket.prototype.address = function (this: $Node.DgramSocket) {
   healthCheck(this);
 
-  const addr = this[kStateSymbol].handle.socket?.address;
-  if (!addr) throw $ERR_SOCKET_DGRAM_NOT_RUNNING();
-  return addr;
+  const socket = this[kStateSymbol].handle!.socket;
+  // Node calls getsockname() on the (lazily created, still fd-less) handle,
+  // which reports EBADF until the socket is bound.
+  if (!socket) throw new ErrnoException(UV_EBADF, "getsockname");
+  if (process.platform === "win32") {
+    // No fd registry on Windows (fd adoption isn't supported there anyway),
+    // so the cached value is never stale.
+    return socket.address;
+  }
+  // Fresh getsockname each call, like Node — the cached `.address` can be
+  // stale if an adopted-but-unbound fd auto-bound on the first sendto().
+  return getSockNameFn(getFdFn(socket));
 };
 
-Socket.prototype.remoteAddress = function () {
+Socket.prototype.remoteAddress = function (this: $Node.DgramSocket) {
   healthCheck(this);
 
   const state = this[kStateSymbol];
-  const socket = state.handle.socket;
+  const socket = state.handle!.socket;
 
   if (!socket) throw $ERR_SOCKET_DGRAM_NOT_RUNNING();
 
@@ -757,58 +1394,74 @@ Socket.prototype.remoteAddress = function () {
   return socket.remoteAddress;
 };
 
-Socket.prototype.setBroadcast = function (arg) {
+Socket.prototype.setBroadcast = function (this: $Node.DgramSocket, arg: boolean) {
   const handle = this[kStateSymbol].handle;
   if (!handle?.socket) {
-    throw new Error("setBroadcast EBADF");
+    throw new ErrnoException(UV_EBADF, "setBroadcast");
   }
   return handle.socket.setBroadcast(arg);
 };
 
-Socket.prototype.setTTL = function (ttl) {
-  if (typeof ttl !== "number") {
-    throw $ERR_INVALID_ARG_TYPE("ttl", "number", ttl);
-  }
+Socket.prototype.setTTL = function (this: $Node.DgramSocket, ttl: number) {
+  validateNumber(ttl, "ttl");
 
   const handle = this[kStateSymbol].handle;
   if (!handle?.socket) {
-    throw new Error("setTTL EBADF");
+    throw new ErrnoException(UV_EBADF, "setTTL");
   }
-  return handle.socket.setTTL(ttl);
+  try {
+    handle.socket.setTTL(ttl);
+  } catch (err: any) {
+    // Reuse the native error's platform-correct code, reported the way Node's
+    // ErrnoException would ("setTTL EINVAL").
+    err.syscall = "setTTL";
+    err.message = `setTTL ${err.code}`;
+    throw err;
+  }
+  return ttl;
 };
 
-Socket.prototype.setMulticastTTL = function (ttl) {
-  if (typeof ttl !== "number") {
-    throw $ERR_INVALID_ARG_TYPE("ttl", "number", ttl);
-  }
+Socket.prototype.setMulticastTTL = function (this: $Node.DgramSocket, ttl: number) {
+  validateNumber(ttl, "ttl");
 
   const handle = this[kStateSymbol].handle;
   if (!handle?.socket) {
-    throw new Error("setMulticastTTL EBADF");
+    throw new ErrnoException(UV_EBADF, "setMulticastTTL");
   }
-  return handle.socket.setMulticastTTL(ttl);
+  try {
+    handle.socket.setMulticastTTL(ttl);
+  } catch (err: any) {
+    err.syscall = "setMulticastTTL";
+    err.message = `setMulticastTTL ${err.code}`;
+    throw err;
+  }
+  return ttl;
 };
 
-Socket.prototype.setMulticastLoopback = function (arg) {
+Socket.prototype.setMulticastLoopback = function (this: $Node.DgramSocket, arg: boolean) {
   const handle = this[kStateSymbol].handle;
   if (!handle?.socket) {
-    throw new Error("setMulticastLoopback EBADF");
+    throw new ErrnoException(UV_EBADF, "setMulticastLoopback");
   }
   return handle.socket.setMulticastLoopback(arg);
 };
 
-Socket.prototype.setMulticastInterface = function (interfaceAddress) {
+Socket.prototype.setMulticastInterface = function (this: $Node.DgramSocket, interfaceAddress: string) {
   validateString(interfaceAddress, "interfaceAddress");
   const handle = this[kStateSymbol].handle;
   if (!handle?.socket) {
     throw $ERR_SOCKET_DGRAM_NOT_RUNNING();
   }
   if (!handle.socket.setMulticastInterface(interfaceAddress)) {
-    throw EINVAL("setMulticastInterface");
+    throw new ErrnoException(UV_EINVAL, "setMulticastInterface");
   }
 };
 
-Socket.prototype.addMembership = function (multicastAddress, interfaceAddress) {
+Socket.prototype.addMembership = function (
+  this: $Node.DgramSocket,
+  multicastAddress: string,
+  interfaceAddress?: string,
+) {
   if (!multicastAddress) {
     throw $ERR_MISSING_ARGS("multicastAddress");
   }
@@ -819,7 +1472,7 @@ Socket.prototype.addMembership = function (multicastAddress, interfaceAddress) {
   const { handle, bindState } = this[kStateSymbol];
   if (!handle?.socket) {
     if (!isIP(multicastAddress)) {
-      throw EINVAL("addMembership");
+      throw new ErrnoException(UV_EINVAL, "addMembership");
     }
     throw $ERR_SOCKET_DGRAM_NOT_RUNNING();
   }
@@ -829,7 +1482,11 @@ Socket.prototype.addMembership = function (multicastAddress, interfaceAddress) {
   return handle.socket.addMembership(multicastAddress, interfaceAddress);
 };
 
-Socket.prototype.dropMembership = function (multicastAddress, interfaceAddress) {
+Socket.prototype.dropMembership = function (
+  this: $Node.DgramSocket,
+  multicastAddress: string,
+  interfaceAddress?: string,
+) {
   if (!multicastAddress) {
     throw $ERR_MISSING_ARGS("multicastAddress");
   }
@@ -840,14 +1497,19 @@ Socket.prototype.dropMembership = function (multicastAddress, interfaceAddress) 
   const { handle } = this[kStateSymbol];
   if (!handle?.socket) {
     if (!isIP(multicastAddress)) {
-      throw EINVAL("dropMembership");
+      throw new ErrnoException(UV_EINVAL, "dropMembership");
     }
     throw $ERR_SOCKET_DGRAM_NOT_RUNNING();
   }
   return handle.socket.dropMembership(multicastAddress, interfaceAddress);
 };
 
-Socket.prototype.addSourceSpecificMembership = function (sourceAddress, groupAddress, interfaceAddress) {
+Socket.prototype.addSourceSpecificMembership = function (
+  this: $Node.DgramSocket,
+  sourceAddress: string,
+  groupAddress: string,
+  interfaceAddress?: string,
+) {
   validateString(sourceAddress, "sourceAddress");
   validateString(groupAddress, "groupAddress");
   if (typeof interfaceAddress !== "undefined") {
@@ -857,7 +1519,7 @@ Socket.prototype.addSourceSpecificMembership = function (sourceAddress, groupAdd
   const { handle, bindState } = this[kStateSymbol];
   if (!handle?.socket) {
     if (!isIP(sourceAddress) || !isIP(groupAddress)) {
-      throw EINVAL("addSourceSpecificMembership");
+      throw new ErrnoException(UV_EINVAL, "addSourceSpecificMembership");
     }
     throw $ERR_SOCKET_DGRAM_NOT_RUNNING();
   }
@@ -867,7 +1529,12 @@ Socket.prototype.addSourceSpecificMembership = function (sourceAddress, groupAdd
   return handle.socket.addSourceSpecificMembership(sourceAddress, groupAddress, interfaceAddress);
 };
 
-Socket.prototype.dropSourceSpecificMembership = function (sourceAddress, groupAddress, interfaceAddress) {
+Socket.prototype.dropSourceSpecificMembership = function (
+  this: $Node.DgramSocket,
+  sourceAddress: string,
+  groupAddress: string,
+  interfaceAddress?: string,
+) {
   validateString(sourceAddress, "sourceAddress");
   validateString(groupAddress, "groupAddress");
   if (typeof interfaceAddress !== "undefined") {
@@ -877,7 +1544,7 @@ Socket.prototype.dropSourceSpecificMembership = function (sourceAddress, groupAd
   const { handle, bindState } = this[kStateSymbol];
   if (!handle?.socket) {
     if (!isIP(sourceAddress) || !isIP(groupAddress)) {
-      throw EINVAL("dropSourceSpecificMembership");
+      throw new ErrnoException(UV_EINVAL, "dropSourceSpecificMembership");
     }
     throw $ERR_SOCKET_DGRAM_NOT_RUNNING();
   }
@@ -887,15 +1554,17 @@ Socket.prototype.dropSourceSpecificMembership = function (sourceAddress, groupAd
   return handle.socket.dropSourceSpecificMembership(sourceAddress, groupAddress, interfaceAddress);
 };
 
-Socket.prototype.ref = function () {
+Socket.prototype.ref = function (this: $Node.DgramSocket) {
   const socket = this[kStateSymbol].handle?.socket;
 
   if (socket) socket.ref();
+  // The last ref()/unref() before bind wins, like Node's always-present handle.
+  else this[kStateSymbol].unrefOnBind = false;
 
   return this;
 };
 
-Socket.prototype.unref = function () {
+Socket.prototype.unref = function (this: $Node.DgramSocket) {
   const socket = this[kStateSymbol].handle?.socket;
 
   if (socket) {
@@ -907,43 +1576,41 @@ Socket.prototype.unref = function () {
   return this;
 };
 
-Socket.prototype.setRecvBufferSize = function (size) {
+Socket.prototype.setRecvBufferSize = function (this: $Node.DgramSocket, size: number) {
   bufferSize(this, size, RECV_BUFFER);
 };
 
-Socket.prototype.setSendBufferSize = function (size) {
+Socket.prototype.setSendBufferSize = function (this: $Node.DgramSocket, size: number) {
   bufferSize(this, size, SEND_BUFFER);
 };
 
-Socket.prototype.getRecvBufferSize = function () {
+Socket.prototype.getRecvBufferSize = function (this: $Node.DgramSocket) {
   return bufferSize(this, 0, RECV_BUFFER);
 };
 
-Socket.prototype.getSendBufferSize = function () {
+Socket.prototype.getSendBufferSize = function (this: $Node.DgramSocket) {
   return bufferSize(this, 0, SEND_BUFFER);
 };
 
-Socket.prototype.getSendQueueSize = function () {
-  return 0;
-  // return this[kStateSymbol].handle.getSendQueueSize();
+Socket.prototype.getSendQueueSize = function (this: $Node.DgramSocket) {
+  return this[kStateSymbol].handle!.getSendQueueSize();
 };
 
-Socket.prototype.getSendQueueCount = function () {
-  return 0;
-  // return this[kStateSymbol].handle.getSendQueueCount();
+Socket.prototype.getSendQueueCount = function (this: $Node.DgramSocket) {
+  return this[kStateSymbol].handle!.getSendQueueCount();
 };
 
 // Deprecated private APIs.
 ObjectDefineProperty(Socket.prototype, "_handle", {
   get: deprecate(
-    function () {
+    function (this: $Node.DgramSocket) {
       return this[kStateSymbol].handle;
     },
     "Socket.prototype._handle is deprecated",
     "DEP0112",
   ),
   set: deprecate(
-    function (val) {
+    function (this: $Node.DgramSocket, val) {
       this[kStateSymbol].handle = val;
     },
     "Socket.prototype._handle is deprecated",
@@ -953,14 +1620,14 @@ ObjectDefineProperty(Socket.prototype, "_handle", {
 
 ObjectDefineProperty(Socket.prototype, "_receiving", {
   get: deprecate(
-    function () {
+    function (this: $Node.DgramSocket) {
       return this[kStateSymbol].receiving;
     },
     "Socket.prototype._receiving is deprecated",
     "DEP0112",
   ),
   set: deprecate(
-    function (val) {
+    function (this: $Node.DgramSocket, val) {
       this[kStateSymbol].receiving = val;
     },
     "Socket.prototype._receiving is deprecated",
@@ -970,14 +1637,14 @@ ObjectDefineProperty(Socket.prototype, "_receiving", {
 
 ObjectDefineProperty(Socket.prototype, "_bindState", {
   get: deprecate(
-    function () {
+    function (this: $Node.DgramSocket) {
       return this[kStateSymbol].bindState;
     },
     "Socket.prototype._bindState is deprecated",
     "DEP0112",
   ),
   set: deprecate(
-    function (val) {
+    function (this: $Node.DgramSocket, val) {
       this[kStateSymbol].bindState = val;
     },
     "Socket.prototype._bindState is deprecated",
@@ -987,14 +1654,14 @@ ObjectDefineProperty(Socket.prototype, "_bindState", {
 
 ObjectDefineProperty(Socket.prototype, "_queue", {
   get: deprecate(
-    function () {
+    function (this: $Node.DgramSocket) {
       return this[kStateSymbol].queue;
     },
     "Socket.prototype._queue is deprecated",
     "DEP0112",
   ),
   set: deprecate(
-    function (val) {
+    function (this: $Node.DgramSocket, val) {
       this[kStateSymbol].queue = val;
     },
     "Socket.prototype._queue is deprecated",
@@ -1004,14 +1671,14 @@ ObjectDefineProperty(Socket.prototype, "_queue", {
 
 ObjectDefineProperty(Socket.prototype, "_reuseAddr", {
   get: deprecate(
-    function () {
+    function (this: $Node.DgramSocket) {
       return this[kStateSymbol].reuseAddr;
     },
     "Socket.prototype._reuseAddr is deprecated",
     "DEP0112",
   ),
   set: deprecate(
-    function (val) {
+    function (this: $Node.DgramSocket, val) {
       this[kStateSymbol].reuseAddr = val;
     },
     "Socket.prototype._reuseAddr is deprecated",
@@ -1019,21 +1686,21 @@ ObjectDefineProperty(Socket.prototype, "_reuseAddr", {
   ),
 });
 
-function healthCheck(socket) {
+function healthCheck(socket: $Node.DgramSocket) {
   if (!socket[kStateSymbol].handle) {
     throw $ERR_SOCKET_DGRAM_NOT_RUNNING();
   }
 }
 
 Socket.prototype._healthCheck = deprecate(
-  function () {
+  function (this: $Node.DgramSocket) {
     healthCheck(this);
   },
   "Socket.prototype._healthCheck() is deprecated",
   "DEP0112",
 );
 
-function stopReceiving(socket) {
+function stopReceiving(socket: $Node.DgramSocket) {
   const state = socket[kStateSymbol];
 
   if (!state.receiving) return;
@@ -1043,55 +1710,14 @@ function stopReceiving(socket) {
 }
 
 Socket.prototype._stopReceiving = deprecate(
-  function () {
+  function (this: $Node.DgramSocket) {
     stopReceiving(this);
   },
   "Socket.prototype._stopReceiving() is deprecated",
   "DEP0112",
 );
 
-/*
-function _createSocketHandle(address, port, addressType, fd, flags) {
-  const handle = newHandle(addressType);
-  let err;
-
-  if (isInt32(fd) && fd > 0) {
-    const type = guessHandleType(fd);
-    if (type !== 'UDP') {
-      err = UV_EINVAL;
-    } else {
-      err = handle.open(fd);
-    }
-  } else if (port || address) {
-    err = handle.bind(address, port || 0, flags);
-  }
-
-  if (err) {
-    handle.close();
-    return err;
-  }
-
-  return handle;
-}
-
-
-// Legacy alias on the C++ wrapper object. This is not public API, so we may
-// want to runtime-deprecate it at some point. There's no hurry, though.
-ObjectDefineProperty(UDP.prototype, 'owner', {
-  __proto__: null,
-  get() { return this[kOwnerSymbol]; },
-  set(v) { return this[kOwnerSymbol] = v; },
-});
-*/
-
 export default {
-  /*
-  _createSocketHandle: deprecate(
-    _createSocketHandle,
-    'dgram._createSocketHandle() is deprecated',
-    'DEP0112',
-  ),
-  */
   createSocket,
-  Socket,
+  Socket: Socket as unknown as $Node.DgramSocketConstructor,
 };

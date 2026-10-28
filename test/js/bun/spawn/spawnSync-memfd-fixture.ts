@@ -5,8 +5,8 @@ const before = getCounters();
 const result = spawnSync({
   cmd: ["sleep", "0.00001"],
   stdout: "inherit",
-  stderr: "pipe",
-  stdin: "pipe",
+  stderr: "inherit",
+  stdin: new Uint8Array([104, 105]),
 });
 const after = getCounters();
 

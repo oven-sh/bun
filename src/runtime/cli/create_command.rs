@@ -1,51 +1,46 @@
 use bun_collections::VecExt;
-use core::sync::atomic::{AtomicU32, Ordering};
 use std::cell::Cell;
 use std::io::Write as _;
 
+use crate::api::bun_process::Status;
 use crate::api::bun_process::sync as spawn_sync;
+use bun_archive::{Archiver, archiver};
 use bun_clap as clap;
 use bun_core::Progress::{Node as ProgressNode, Progress};
-use bun_core::{Global, Output, pretty, pretty_error, pretty_errorln};
+use bun_core::{Global, Output, pretty_error, pretty_errorln};
 use bun_core::{MutableString, strings};
 use bun_dotenv as DotEnv;
 use bun_http as HTTP;
 use bun_js_printer as JSPrinter;
-use bun_libarchive::{Archiver, archiver};
 use bun_parsers::json as JSON;
 use bun_paths::{OSPathSlice, PathBuffer};
 use bun_resolver::fs;
 use bun_sys::FdDirExt as _;
 #[cfg(not(windows))]
 use bun_sys::copy_file as CopyFile;
-use bun_threading::Futex;
 use bun_url::URL;
 use bun_which::which;
 use bun_zlib as Zlib;
 
 use crate::Command;
-use crate::cli::which_npm_client::NPMClient;
+use crate::cli::run_command::RunCommand;
 
-// `cli/create/` has no mod.rs yet; mount the generator directly here
-// so `SourceFileProjectGenerator::generate(...)` resolves. The submodule itself
-// reaches back into `crate::cli::create_command::Example` via absolute path.
 #[path = "create/SourceFileProjectGenerator.rs"]
-pub mod SourceFileProjectGenerator;
+pub(crate) mod SourceFileProjectGenerator;
 
-// PORTING.md §Global mutable state: single-thread CLI scratch buffer →
-// RacyCell. Touched on the main thread for `--open` *and* the spawned git
-// thread (sequenced — git thread writes after main is done with it).
+// Single-thread CLI scratch buffer, used by the git lookup and by `--open`.
 static BUN_PATH_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
 
-// bun.OSPathLiteral — `bun_paths` does not (yet) export an
-// `os_path_literal!` macro from this crate's POV. `OSPathSlice` is `[u8]` on
-// POSIX, so byte-string literals coerce directly; the Windows `[u16]` form will
-// need the macro once it lands in `bun_paths` (see src/bun.rs).
-// Elements must be `&OSPathSlice` because `OSPathSlice` itself is unsized.
 #[cfg(not(windows))]
 const SKIP_DIRS: &[&OSPathSlice] = &[b"node_modules", b".git"];
+// `.git` as a file points a worktree or submodule at its repository.
 #[cfg(not(windows))]
-const SKIP_FILES: &[&OSPathSlice] = &[b"package-lock.json", b"yarn.lock", b"pnpm-lock.yaml"];
+const SKIP_FILES: &[&OSPathSlice] = &[
+    b"package-lock.json",
+    b"yarn.lock",
+    b"pnpm-lock.yaml",
+    b".git",
+];
 #[cfg(windows)]
 const SKIP_DIRS: &[&OSPathSlice] = &[bun_core::w!("node_modules"), bun_core::w!(".git")];
 #[cfg(windows)]
@@ -53,85 +48,41 @@ const SKIP_FILES: &[&OSPathSlice] = &[
     bun_core::w!("package-lock.json"),
     bun_core::w!("yarn.lock"),
     bun_core::w!("pnpm-lock.yaml"),
+    bun_core::w!(".git"),
 ];
 
-const NEVER_CONFLICT: &[&[u8]] = &[b"README.md", b"gitignore", b".gitignore", b".git/"];
+const NEVER_CONFLICT: &[&[u8]] = &[b"README.md", b"gitignore", b".git/"];
 
-const NPM_TASK_ARGS: &[&[u8]] = &[b"run"];
-
-fn exec_task(task_: &[u8], cwd: &[u8], _path: &[u8], npm_client: Option<NPMClient>) {
-    let task = strings::trim(task_, b" \n\r\t");
+/// Runs one `bun-create` task like a package.json script. A non-zero exit ends the process.
+fn exec_task(
+    ctx: Command::Context<'_>,
+    task: &[u8],
+    name: &[u8],
+    cwd: &[u8],
+    env_loader: &mut DotEnv::Loader,
+) -> crate::Result<()> {
+    let task = strings::trim(task, b" \n\r\t");
     if task.is_empty() {
-        return;
+        return Ok(());
     }
 
-    let mut count: usize = 0;
-    for _ in task.split(|b| *b == b' ') {
-        count += 1;
-    }
-
-    let npm_args = 2 * usize::from(npm_client.is_some());
-    let total = count + npm_args;
-    // `set_len` + index-write into uninitialized `&[u8]` slots is UB (invalid
-    // references exist before assignment). Build with `push` instead — same
-    // allocation, no unsafe.
-    let mut argv: Vec<&[u8]> = Vec::with_capacity(total);
-
-    if let Some(ref client) = npm_client {
-        argv.push(client.bin);
-        argv.push(NPM_TASK_ARGS[0]);
-    }
-
-    for split in task.split(|b| *b == b' ') {
-        argv.push(split);
-    }
-    debug_assert_eq!(argv.len(), total);
-
-    let mut argv: &[&[u8]] = &argv;
-    if npm_client.is_some() && strings::starts_with(task, b"bun ") {
-        argv = &argv[2..];
-    }
-
-    pretty!("\n<r><d>$<b>");
-    for (i, arg) in argv.iter().enumerate() {
-        if i > argv.len() - 1 {
-            Output::print(format_args!(" {} ", bstr::BStr::new(arg)));
-        } else {
-            Output::print(format_args!(" {}", bstr::BStr::new(arg)));
-        }
-    }
-    pretty!("<r>");
-    Output::print(format_args!("\n"));
+    let use_system_shell = ctx.debug.use_system_shell;
     Output::flush();
-
     let _unbuffered = Output::disable_buffering_scope();
-
-    let _ = spawn_sync::spawn(&spawn_sync::Options {
-        argv: argv.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
-        envp: None,
-        cwd: Box::from(cwd),
-        stderr: spawn_sync::SyncStdio::Inherit,
-        stdout: spawn_sync::SyncStdio::Inherit,
-        stdin: spawn_sync::SyncStdio::Inherit,
-        // `WindowsOptions::default()` zeroes `loop_` (UB — null `uv_loop` deref
-        // in `spawn_process_windows`), so populate it.
-        #[cfg(windows)]
-        windows: spawn_sync::WindowsOptions {
-            loop_: bun_event_loop::EventLoopHandle::init_mini(
-                bun_event_loop::MiniEventLoop::init_global(None, None),
-            ),
-            ..Default::default()
-        },
-        #[cfg(not(windows))]
-        windows: (),
-        ..Default::default()
-    });
+    RunCommand::run_package_script_foreground(
+        ctx,
+        task,
+        name,
+        cwd,
+        env_loader,
+        &[],
+        false,
+        use_system_shell,
+    )
 }
 
-// We don't want to allocate memory each time
-// But we cannot print over an existing buffer or weird stuff will happen
-// so we keep two and switch between them
-pub(crate) struct ProgressBuf;
+// Two buffers, used in turn: printing over the one on display would garble it.
+struct ProgressBuf;
 
 impl ProgressBuf {
     thread_local! {
@@ -139,28 +90,24 @@ impl ProgressBuf {
         static BUF_INDEX: Cell<usize> = const { Cell::new(0) };
     }
 
-    pub(crate) fn print(args: core::fmt::Arguments<'_>) -> Result<&'static [u8], bun_core::Error> {
+    fn print(args: core::fmt::Arguments<'_>) -> crate::Result<&'static [u8]> {
         Self::BUF_INDEX.with(|i| i.set(i.get() + 1));
         let idx = Self::BUF_INDEX.with(|i| i.get()) % 2;
         Self::BUFS.with_borrow_mut(|bufs| {
             let buf = &mut bufs[idx];
             let mut cursor: &mut [u8] = &mut buf[..];
             let cap = cursor.len();
-            write!(&mut cursor, "{}", args).map_err(|_| bun_core::err!("NoSpaceLeft"))?;
+            write!(&mut cursor, "{}", args)
+                .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
             let written = cap - cursor.len();
-            // SAFETY: the slice points into a thread-local static buffer that
-            // lives for the thread's lifetime; CLI usage prints/copies it before
-            // the buffer is reused.
+            // SAFETY: a thread-local static buffer; it is printed or copied before it is reused.
             let out: &'static [u8] = unsafe { bun_ptr::detach_lifetime(&buf[..written]) };
             Ok(out)
         })
     }
 
-    /// `pretty_fmt` post-processes the rendered payload, so callers bake the
-    /// color template into `args` directly. Note: `<tag>` sequences inside
-    /// interpolated arguments (e.g. a user-supplied template name) are also
-    /// rewritten here. Cosmetic-only on adversarial input.
-    pub(crate) fn pretty(args: core::fmt::Arguments<'_>) -> Result<&'static [u8], bun_core::Error> {
+    /// `<tag>` sequences inside interpolated arguments are rewritten too.
+    fn pretty(args: core::fmt::Arguments<'_>) -> crate::Result<&'static [u8]> {
         if Output::enable_ansi_colors_stdout() {
             ProgressBuf::print(format_args!("{}", Output::pretty_fmt::<true>(args)))
         } else {
@@ -169,42 +116,51 @@ impl ProgressBuf {
     }
 }
 
-#[derive(Default)]
+/// A raw pointer, so that it does not hold an exclusive borrow for the whole body of `exec`.
+struct RefreshOnDrop(*mut Progress);
+
+impl Drop for RefreshOnDrop {
+    fn drop(&mut self) {
+        // SAFETY: `exec` declares its `Progress` before this guard, so it is still alive.
+        unsafe { (*self.0).refresh() };
+    }
+}
+
 struct CreateOptions {
     skip_install: bool,
+    ignore_scripts: bool,
     overwrite: bool,
     skip_git: bool,
     skip_package_json: bool,
-    // `&'static` is sound: entries are duped into the process-lifetime CLI
-    // arena in `parse` (via `crate::cli::cli_dupe`), not borrowed from clap args.
-    positionals: Box<[&'static [u8]]>,
+    positionals: Vec<&'static [u8]>,
     verbose: bool,
     open: bool,
 }
 
 impl CreateOptions {
-    fn params() -> &'static [clap::Param<clap::Help>] {
+    fn parse() -> crate::Result<CreateOptions> {
         static PARAMS: &[clap::Param<clap::Help>] = &[
             clap::param!("-h, --help                     Print this menu"),
             clap::param!("--force                        Overwrite existing files"),
             clap::param!("--no-install                   Don't install node_modules"),
-            clap::param!("--no-git                       Don't create a git repository"),
+            clap::param!("--ignore-scripts               Don't run tasks or lifecycle scripts"),
+            clap::param!("--no-git                      Don't create a git repository"),
             clap::param!("--verbose                      Too many logs"),
             clap::param!("--no-package-json              Disable package.json transforms"),
             clap::param!("--open                         On finish, start bun & open in-browser"),
+            clap::param!(
+                "--use-system-ca                Use the system's trusted certificate authorities"
+            ),
+            clap::param!(
+                "--use-openssl-ca               Use OpenSSL's default CA store instead of the bundled one"
+            ),
+            clap::param!("--use-bundled-ca               Use bundled CA store"),
             clap::param!("<POS>...                       "),
         ];
-        PARAMS
-    }
-
-    pub(crate) fn parse(_ctx: &Command::Context<'_>) -> Result<CreateOptions, bun_core::Error> {
-        // The `is_verbose()` accessor reads the env directly each call, so this is a no-op.
-        let _ = Output::is_verbose();
-
         let mut diag = clap::Diagnostic::default();
 
         let args = match clap::parse::<clap::Help>(
-            Self::params(),
+            PARAMS,
             clap::ParseOptions {
                 diagnostic: Some(&mut diag),
                 ..Default::default()
@@ -212,75 +168,206 @@ impl CreateOptions {
         ) {
             Ok(a) => a,
             Err(err) => {
-                // Report useful error and exit
                 let _ = diag.report(Output::error_writer(), err);
-                return Err(err);
+                return Err(err.into());
             }
         };
 
-        let mut opts = CreateOptions {
-            // clap positionals borrow from process argv; dupe each
-            // entry into the process-lifetime CLI arena to obtain
-            // `&'static [u8]`.
-            positionals: args
-                .positionals()
-                .iter()
-                .map(|p| crate::cli::cli_dupe(p))
-                .collect::<Vec<&'static [u8]>>()
-                .into_boxed_slice(),
-            ..Default::default()
-        };
+        Global::set_ca_store_from_flags(|flag| args.flag(flag));
 
-        if opts.positionals.len() >= 1
-            && (opts.positionals[0] == b"c" || opts.positionals[0] == b"create")
-        {
-            let mut v = core::mem::take(&mut opts.positionals).into_vec();
-            v.remove(0);
-            opts.positionals = v.into_boxed_slice();
+        let mut positionals = args.positionals().to_vec();
+        if !positionals.is_empty() && (positionals[0] == b"c" || positionals[0] == b"create") {
+            positionals.remove(0);
         }
 
-        opts.skip_package_json = args.flag(b"--no-package-json");
-
-        opts.verbose = args.flag(b"--verbose") || Output::is_verbose();
-        opts.open = args.flag(b"--open");
-        opts.skip_install = args.flag(b"--no-install");
-        opts.skip_git = args.flag(b"--no-git");
-        opts.overwrite = args.flag(b"--force");
-
-        Ok(opts)
+        Ok(CreateOptions {
+            positionals,
+            skip_package_json: args.flag(b"--no-package-json"),
+            verbose: args.flag(b"--verbose") || Output::is_verbose(),
+            open: args.flag(b"--open"),
+            skip_install: args.flag(b"--no-install"),
+            ignore_scripts: args.flag(b"--ignore-scripts"),
+            skip_git: args.flag(b"--no-git"),
+            overwrite: args.flag(b"--force"),
+        })
     }
 }
 
 const BUN_CREATE_DIR: &[u8] = b".bun-create";
-// PORTING.md §Global mutable state: single-thread CLI scratch buffer → RacyCell.
+// Single-thread CLI scratch buffer.
 static HOME_DIR_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
+
+/// `name`, joined onto a template dir by the `Loose` join (`/` and `\` fold), stays inside it.
+fn names_path_inside_dir(name: &[u8]) -> bool {
+    let mut depth: usize = 0;
+    for segment in strings::split_any(name, b"/\\") {
+        match segment {
+            b"" | b"." => {}
+            b".." if depth == 0 => return false,
+            b".." => depth -= 1,
+            _ => depth += 1,
+        }
+    }
+    depth > 0
+}
+
+/// Such a copy would truncate its source or walk into its own output.
+fn destination_is_inside_template(
+    template_dir: &bun_sys::Dir,
+    abs_template_path: &[u8],
+    destination: &[u8],
+) -> bool {
+    use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
+    if is_parent_or_equal(abs_template_path, destination) != ParentEqual::Unrelated {
+        return true;
+    }
+
+    let mut template_buf = bun_paths::path_buffer_pool::get();
+    let mut existing_buf = bun_paths::path_buffer_pool::get();
+    let Ok(template_real) = template_dir.get_fd_path(&mut template_buf) else {
+        return false;
+    };
+    // The destination may not exist yet: its deepest existing directory decides.
+    let mut path = destination;
+    loop {
+        if let Ok(existing) = bun_sys::Dir::open(path) {
+            return existing.get_fd_path(&mut existing_buf).is_ok_and(|real| {
+                is_parent_or_equal(template_real, real) != ParentEqual::Unrelated
+            });
+        }
+        match bun_paths::dirname(path) {
+            Some(parent) if parent.len() < path.len() => path = parent,
+            _ => return false,
+        }
+    }
+}
+
+/// A component of `path` is a link in `destination`. `overwrite` removes the link instead.
+fn leaves_destination(destination: &[u8], path: &[u8], overwrite: bool) -> bun_sys::Result<bool> {
+    use bun_sys::FileKind;
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let mut end = 0;
+    while end < path.len() {
+        end = strings::index_of_char_usize(&path[end + 1..], bun_paths::SEP)
+            .map_or(path.len(), |i| end + 1 + i);
+        let Some(component) = bun_paths::resolve_path::join_abs_string_buf_z_checked::<
+            bun_paths::platform::Auto,
+        >(destination, &mut buf[..], &[&path[..end]]) else {
+            return Err(bun_sys::Error::from_code(
+                bun_sys::E::ENAMETOOLONG,
+                bun_sys::Tag::lstat,
+            ));
+        };
+        match bun_sys::lstat(component) {
+            Ok(stat) => match bun_sys::kind_from_mode(stat.st_mode as _) {
+                FileKind::Directory => {}
+                FileKind::SymLink if overwrite => {
+                    let removed = bun_sys::unlink(component);
+                    #[cfg(windows)]
+                    let removed = removed.or_else(|_| bun_sys::rmdir(component));
+                    return removed.map(|()| false);
+                }
+                kind => return Ok(kind == FileKind::SymLink),
+            },
+            Err(err) if err.get_errno() == bun_sys::E::ENOENT => return Ok(false),
+            Err(err) => return Err(err),
+        }
+    }
+    Ok(false)
+}
+
+/// The template's files that have something of `destination` in their way, relative to it.
+fn local_template_conflicts(
+    abs_template_path: &[u8],
+    destination: &[u8],
+    overwrite: bool,
+) -> crate::Result<Vec<Vec<u8>>> {
+    let Ok(existing) = bun_sys::Dir::open(destination) else {
+        return Ok(Vec::new());
+    };
+    let mut walker = bun_sys::walker_skippable::walk_owned(
+        bun_sys::Dir::open(abs_template_path)?,
+        SKIP_FILES,
+        SKIP_DIRS,
+    )?;
+    let mut conflicts = Vec::new();
+    while let Some(entry) = walker.next()? {
+        let is_file = entry.kind == bun_sys::FileKind::File;
+        // On Windows the copy makes the template's directories too, even empty ones.
+        if !is_file && !(cfg!(windows) && entry.kind == bun_sys::FileKind::Directory) {
+            continue;
+        }
+        #[cfg(windows)]
+        let path: Vec<u8> = strings::to_utf8_alloc(entry.path);
+        #[cfg(not(windows))]
+        let path: Vec<u8> = entry.path.as_bytes().to_vec();
+        if leaves_destination(destination, &path, overwrite)?
+            || (is_file
+                && !overwrite
+                && match existing.open_file(&path, bun_sys::O::WRONLY, 0) {
+                    // Windows opens a directory for writing.
+                    Ok(_) => {
+                        !NEVER_CONFLICT.contains(&path.as_slice())
+                            || (cfg!(windows) && existing.open_at(&path).is_ok())
+                    }
+                    Err(err) => matches!(err.get_errno(), bun_sys::E::EISDIR | bun_sys::E::ENOTDIR),
+                })
+        {
+            conflicts.push(path);
+        }
+    }
+    Ok(conflicts)
+}
+
+fn exit_with_conflicts<'a>(destination: &[u8], paths: impl Iterator<Item = &'a [u8]>) -> ! {
+    // Thank you create-react-app for this copy (and idea)
+    pretty_errorln!(
+        "<r>\n<red>error<r><d>: <r>The directory <b><blue>{}<r>/ contains files that could conflict:\n\n",
+        bstr::BStr::new(bun_paths::basename(destination)),
+    );
+    for path in paths {
+        if strings::ends_with(path, bun_paths::SEP_STR.as_bytes()) {
+            pretty_error!(
+                "<r>  <blue>{}<r>",
+                bun_core::fmt::escape_control_chars(&path[0..path.len().max(1) - 1]),
+            );
+            pretty_errorln!("{}", bun_paths::SEP_STR);
+        } else {
+            pretty_errorln!("<r>  {}", bun_core::fmt::escape_control_chars(path));
+        }
+    }
+
+    pretty_errorln!("<r>\n<d>To overwrite them, use --force<r>");
+    Global::exit(1);
+}
 
 pub(crate) struct CreateCommand;
 
 impl CreateCommand {
     #[cold]
     pub(crate) fn exec(
-        ctx: &Command::Context<'_>,
+        ctx: Command::Context<'_>,
         example_tag: ExampleTag,
         template: &[u8],
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         Global::configure_allocator(Global::AllocatorConfiguration {
             long_running: false,
             ..Default::default()
         });
         HTTP::http_thread::init(&Default::default());
 
-        let mut create_options = CreateOptions::parse(ctx)?;
+        let mut create_options = CreateOptions::parse()?;
         let positionals = &create_options.positionals;
 
         if positionals.is_empty() {
-            return CreateListExamplesCommand::exec(ctx);
+            return CreateListExamplesCommand::exec(&ctx);
         }
 
         // SAFETY: `fs::FileSystem::init` returns a process-global singleton pointer.
         let filesystem: &mut fs::FileSystem = unsafe { &mut *fs::FileSystem::init(None)? };
-        let mut env_loader: DotEnv::Loader =
-            { DotEnv::Loader::init(crate::cli::cli_arena().alloc(DotEnv::Map::init())) };
+        // Process-lifetime: every mini event loop (the tasks', a Windows spawn's) keeps a pointer to it.
+        let env_loader: &'static mut DotEnv::Loader = Box::leak(Box::new(DotEnv::Loader::init()));
+        DotEnv::set_instance(std::ptr::from_mut::<DotEnv::Loader>(env_loader));
 
         env_loader.load_process()?;
 
@@ -295,31 +382,22 @@ impl CreateCommand {
                 .dirname_store
                 .append_slice(bun_paths::resolve_path::join_abs::<
                     bun_paths::platform::Loose,
-                >(filesystem.top_level_dir, dirname))?;
+                >(filesystem.top_level_dir(), dirname))?;
 
         let mut progress = Progress {
             supports_ansi_escape_codes: Output::enable_ansi_colors_stderr(),
             ..Default::default()
         };
-        // `Progress::start` returns
-        // `&mut Node` borrowing `progress` exclusively for the node's lifetime.
-        // Convert to `*mut` immediately so `progress` and `node` can be used
-        // independently below (same pattern as `CreateListExamplesCommand::exec`
-        // at the bottom of this file).
-        let node: *mut ProgressNode = match example_tag {
-            ExampleTag::JslikeFile => progress.start(
-                ProgressBuf::print(format_args!("Analyzing {}", bstr::BStr::new(template)))?,
-                0,
-            ),
-            _ => progress.start(
-                ProgressBuf::print(format_args!("Loading {}", bstr::BStr::new(template)))?,
-                0,
-            ),
+        let verb = if example_tag == ExampleTag::JslikeFile {
+            "Analyzing"
+        } else {
+            "Loading"
         };
-        // SAFETY: `node` is `&mut progress.root`; both live on this stack frame
-        // for all of `exec`. Laundering through `*mut` decouples the borrowck-
-        // tracked exclusive borrow of `progress` (Node already holds
-        // `*mut Progress` internally).
+        let node: *mut ProgressNode = progress.start(
+            ProgressBuf::print(format_args!("{} {}", verb, bstr::BStr::new(template)))?,
+            0,
+        );
+        // SAFETY: `node` is `&mut progress.root`; both live for all of `exec`, and are used independently.
         let node: &mut ProgressNode = unsafe { &mut *node };
 
         // alacritty is fast
@@ -327,110 +405,106 @@ impl CreateCommand {
             progress.refresh_rate_ns = (bun_core::time::NS_PER_MS * 8) as u64;
         }
 
-        // Refresh the progress bar on exit. Capture `*mut Progress` so
-        // the guard does not hold an exclusive borrow for the whole fn body;
-        // `progress` is declared earlier so it is still alive when this drops.
-        let progress_ptr: *mut Progress = &raw mut progress;
-        let _refresh_on_exit = scopeguard::guard(progress_ptr, |p| {
-            // SAFETY: see note above — `progress` outlives this guard.
-            unsafe { (*p).refresh() };
-        });
+        let _refresh_on_exit = RefreshOnDrop(&raw mut progress);
 
         let mut package_json_contents: MutableString = MutableString::default();
         let mut package_json_file: Option<bun_sys::File> = None;
 
-        if example_tag != ExampleTag::LocalFolder {
-            if create_options.verbose {
-                pretty_errorln!("Downloading as {}\n", <&'static str>::from(example_tag),);
-            }
+        // What the destination already holds is the user's, not the template's.
+        let (had_gitignore, had_dot_gitignore, had_npmignore, had_git) =
+            match bun_sys::Dir::open(destination) {
+                Ok(dir) => (
+                    bun_sys::exists_at(&dir, bun_core::zstr!("gitignore")),
+                    bun_sys::exists_at(&dir, bun_core::zstr!(".gitignore")),
+                    bun_sys::exists_at(&dir, bun_core::zstr!(".npmignore")),
+                    bun_sys::exists_at_type(dir.fd(), bun_core::zstr!(".git")).is_ok(),
+                ),
+                Err(_) => (false, false, false, false),
+            };
+        let mut template_has_dot_gitignore = false;
+
+        if example_tag != ExampleTag::LocalFolder && create_options.verbose {
+            pretty_errorln!("Downloading as {}\n", <&'static str>::from(example_tag),);
         }
 
         match example_tag {
             ExampleTag::JslikeFile => {
-                return run_on_entry_point(ctx, example_tag, template, node);
+                return run_on_entry_point(ctx, create_options.overwrite, template, node);
             }
             ExampleTag::GithubRepository | ExampleTag::Official => {
                 let tarball_bytes: MutableString = match example_tag {
                     ExampleTag::Official => {
-                        match Example::fetch(ctx, &mut env_loader, template, &mut progress, node) {
+                        match Example::fetch(&ctx, env_loader, template, &mut progress, node) {
                             Ok(b) => b,
                             Err(err) => {
-                                if err == bun_core::err!("HTTPForbidden")
-                                    || err == bun_core::err!("ExampleNotFound")
-                                {
-                                    node.end();
-                                    progress.refresh();
+                                node.end();
+                                progress.refresh();
 
-                                    pretty_error!(
-                                        "\n<r><red>error:<r> <b>\"{}\"<r> was not found. Here are templates you can use:\n\n",
-                                        bstr::BStr::new(template),
-                                    );
-                                    Output::flush();
-
-                                    let examples = Example::fetch_all_local_and_remote(
-                                        ctx,
-                                        None,
-                                        &mut env_loader,
-                                        filesystem,
-                                    )?;
-                                    Example::print(&examples, Some(dirname));
-                                    Global::exit(1);
-                                } else {
-                                    node.end();
-                                    progress.refresh();
-
+                                if !matches!(
+                                    err,
+                                    crate::Error::HTTPForbidden | crate::Error::ExampleNotFound
+                                ) {
                                     pretty_errorln!("\n\n");
-
                                     return Err(err);
                                 }
-                            }
-                        }
-                    }
-                    ExampleTag::GithubRepository => match Example::fetch_from_github(
-                        ctx,
-                        &mut env_loader,
-                        template,
-                        &mut progress,
-                        node,
-                    ) {
-                        Ok(b) => b,
-                        Err(err) => {
-                            if err == bun_core::err!("HTTPForbidden") {
-                                node.end();
-                                progress.refresh();
-
                                 pretty_error!(
-                                    "\n<r><red>error:<r> GitHub returned 403. This usually means GitHub is rate limiting your requests.\nTo fix this, either:<r>  <b>A) pass a <r><cyan>GITHUB_ACCESS_TOKEN<r> environment variable to bun<r>\n  <b>B)Wait a little and try again<r>\n",
-                                );
-                                Global::crash();
-                            } else if err == bun_core::err!("GitHubRepositoryNotFound") {
-                                node.end();
-                                progress.refresh();
-
-                                pretty_error!(
-                                    "\n<r><red>error:<r> <b>\"{}\"<r> was not found on GitHub. Here are templates you can use:\n\n",
+                                    "\n<r><red>error:<r> <b>\"{}\"<r> was not found. Here are templates you can use:\n\n",
                                     bstr::BStr::new(template),
                                 );
                                 Output::flush();
 
                                 let examples = Example::fetch_all_local_and_remote(
-                                    ctx,
-                                    None,
-                                    &mut env_loader,
-                                    filesystem,
+                                    &ctx, None, env_loader, filesystem,
                                 )?;
                                 Example::print(&examples, Some(dirname));
-                                Global::crash();
-                            } else {
+                                Global::exit(1);
+                            }
+                        }
+                    }
+                    ExampleTag::GithubRepository => {
+                        match Example::fetch_from_github(env_loader, template, &mut progress, node)
+                        {
+                            Ok(b) => b,
+                            Err(err) => {
                                 node.end();
                                 progress.refresh();
 
-                                pretty_errorln!("\n\n");
+                                if matches!(
+                                    err,
+                                    crate::Error::HTTPForbidden | crate::Error::HTTPTooManyRequests
+                                ) {
+                                    pretty_error!(
+                                        "\n<r><red>error:<r> GitHub returned {}. This usually means GitHub is rate limiting your requests.\nTo fix this, either:<r>  <b>A) pass a <r><cyan>GITHUB_ACCESS_TOKEN<r> environment variable to bun<r>\n  <b>B)Wait a little and try again<r>\n",
+                                        if matches!(err, crate::Error::HTTPForbidden) {
+                                            "403"
+                                        } else {
+                                            "429"
+                                        },
+                                    );
+                                } else if matches!(err, crate::Error::GitHubIsDown) {
+                                    pretty_error!(
+                                        "\n<r><red>error:<r> GitHub returned a server error while fetching the tarball for <b>\"{}\"<r>. GitHub may be temporarily unavailable; wait a moment and try again.\n",
+                                        bstr::BStr::new(template),
+                                    );
+                                } else if matches!(err, crate::Error::GitHubRepositoryNotFound) {
+                                    pretty_error!(
+                                        "\n<r><red>error:<r> <b>\"{}\"<r> was not found on GitHub. Here are templates you can use:\n\n",
+                                        bstr::BStr::new(template),
+                                    );
+                                    Output::flush();
 
-                                return Err(err);
+                                    let examples = Example::fetch_all_local_and_remote(
+                                        &ctx, None, env_loader, filesystem,
+                                    )?;
+                                    Example::print(&examples, Some(dirname));
+                                } else {
+                                    pretty_errorln!("\n\n");
+                                    return Err(err);
+                                }
+                                Global::crash();
                             }
                         }
-                    },
+                    }
                     _ => unreachable!(),
                 };
 
@@ -443,9 +517,7 @@ impl CreateCommand {
 
                 progress.refresh();
 
-                let file_buf = vec![0u8; 16384];
-
-                let mut tarball_buf_list: Vec<u8> = file_buf;
+                let mut tarball_buf_list: Vec<u8> = Vec::with_capacity(16384);
                 let mut gunzip = Zlib::ZlibReaderArrayList::init(
                     tarball_bytes.list.as_slice(),
                     &mut tarball_buf_list,
@@ -460,12 +532,7 @@ impl CreateCommand {
 
                 progress.refresh();
 
-                // See SKIP_DIRS note re: os_path_literal — Plucker::init
-                // takes `&[OSPathChar]`, which is `&[u8]` on POSIX / `&[u16]` on Windows.
-                #[cfg(not(windows))]
-                let package_json_lit: &OSPathSlice = b"package.json";
-                #[cfg(windows)]
-                let package_json_lit: &OSPathSlice = bun_core::w!("package.json");
+                let package_json_lit: &OSPathSlice = bun_paths::os_path_literal!("package.json");
                 let pluckers: Vec<archiver::Plucker> = if !create_options.skip_package_json {
                     vec![archiver::Plucker::init(package_json_lit, 2048)?]
                 } else {
@@ -474,19 +541,16 @@ impl CreateCommand {
 
                 let mut archive_context = archiver::Context {
                     pluckers,
-                    all_files: Default::default(),
                     overwrite_list: bun_collections::StringArrayHashMap::<()>::default(),
                 };
 
-                if !create_options.overwrite {
-                    // The overwrite list boxes its keys itself, so the appender
-                    // only needs to hand back a stable view of the path for that
-                    // copy.
+                {
+                    // The overwrite list boxes its keys itself: a view of the path is enough.
                     struct OverwriteListAppender {
                         buf: Vec<u8>,
                     }
-                    impl bun_libarchive::ArchiveAppender for OverwriteListAppender {
-                        fn append(&mut self, path: &[u8]) -> Result<&[u8], bun_core::Error> {
+                    impl bun_archive::ArchiveAppender for OverwriteListAppender {
+                        fn append(&mut self, path: &[u8]) -> Result<&[u8], bun_archive::Error> {
                             self.buf.clear();
                             self.buf.extend_from_slice(path);
                             Ok(&self.buf)
@@ -497,40 +561,27 @@ impl CreateCommand {
                         destination,
                         &mut archive_context,
                         &mut OverwriteListAppender { buf: Vec::new() },
+                        &mut |path: &[u8]| {
+                            template_has_dot_gitignore |= path == b".gitignore";
+                            leaves_destination(destination, path, create_options.overwrite)
+                        },
                     )?;
 
                     for never_conflict_path in NEVER_CONFLICT {
-                        let _ = archive_context
-                            .overwrite_list
-                            .swap_remove(never_conflict_path);
+                        if !leaves_destination(destination, never_conflict_path, false)? {
+                            let _ = archive_context
+                                .overwrite_list
+                                .swap_remove(never_conflict_path);
+                        }
                     }
 
-                    if archive_context.overwrite_list.count() > 0 {
+                    if !create_options.overwrite && archive_context.overwrite_list.count() > 0 {
                         node.end();
                         progress.refresh();
-
-                        // Thank you create-react-app for this copy (and idea)
-                        pretty_errorln!(
-                            "<r>\n<red>error<r><d>: <r>The directory <b><blue>{}<r>/ contains files that could conflict:\n\n",
-                            bstr::BStr::new(bun_paths::basename(destination)),
+                        exit_with_conflicts(
+                            destination,
+                            archive_context.overwrite_list.keys().iter().map(|k| &**k),
                         );
-                        for path in archive_context.overwrite_list.keys() {
-                            if strings::ends_with(path, bun_paths::SEP_STR.as_bytes()) {
-                                pretty_error!(
-                                    "<r>  <blue>{}<r>",
-                                    bstr::BStr::new(&path[0..path.len().max(1) - 1]),
-                                );
-                                pretty_errorln!("{}", bun_paths::SEP_STR);
-                            } else {
-                                pretty_errorln!("<r>  {}", bstr::BStr::new(path));
-                            }
-                        }
-
-                        pretty_errorln!(
-                            "<r>\n<d>To download {} anyway, use --force<r>",
-                            bstr::BStr::new(template),
-                        );
-                        Global::exit(1);
                     }
                 }
 
@@ -558,15 +609,10 @@ impl CreateCommand {
                 }
             }
             ExampleTag::LocalFolder => {
-                let template_parts = [template];
-
                 node.name = b"Copying files";
                 progress.refresh();
 
-                let abs_template_path = filesystem.abs(&template_parts);
-                // `Dir::open` routes through `open_dir_at`, which always yields an
-                // iterable handle (`FILE_LIST_DIRECTORY` on Windows; readdir-capable
-                // `O_DIRECTORY` fd on POSIX).
+                let abs_template_path = crate::cli::cli_dupe(filesystem.abs(&[template]));
                 let template_dir = match bun_sys::Dir::open(abs_template_path) {
                     Ok(d) => d,
                     Err(err) => {
@@ -582,8 +628,30 @@ impl CreateCommand {
                     }
                 };
 
-                let _ = bun_sys::delete_tree_absolute(destination);
-                let destination_dir__ = match bun_sys::Fd::cwd().make_open_path(destination) {
+                if destination_is_inside_template(&template_dir, abs_template_path, destination) {
+                    node.end();
+                    progress.refresh();
+
+                    pretty_errorln!(
+                        "<r><red>error<r>: destination <b>{}<r> is inside template <b>{}<r>",
+                        bstr::BStr::new(destination),
+                        bstr::BStr::new(abs_template_path),
+                    );
+                    Global::exit(1);
+                }
+
+                let conflicts = local_template_conflicts(
+                    abs_template_path,
+                    destination,
+                    create_options.overwrite,
+                )?;
+                if !conflicts.is_empty() {
+                    node.end();
+                    progress.refresh();
+                    exit_with_conflicts(destination, conflicts.iter().map(Vec::as_slice));
+                }
+
+                let destination_dir = match bun_sys::Fd::cwd().make_open_path(destination) {
                     Ok(d) => d,
                     Err(err) => {
                         node.end();
@@ -591,7 +659,7 @@ impl CreateCommand {
 
                         pretty_errorln!(
                             "<r><red>{}<r>: creating dir {}",
-                            err.name(),
+                            bstr::BStr::new(err.name()),
                             bstr::BStr::new(destination),
                         );
                         Global::exit(1);
@@ -599,29 +667,31 @@ impl CreateCommand {
                 };
 
                 #[cfg(windows)]
-                let mut destination_buf: bun_paths::WPathBuffer = bun_paths::WPathBuffer::uninit();
+                let mut destination_buf = bun_paths::w_path_buffer_pool::get();
                 #[cfg(windows)]
-                let dst_without_trailing_slash: &[u8] =
-                    strings::without_trailing_slash(destination);
+                let destination_len = strings::convert_utf8_to_utf16_in_buffer(
+                    destination_buf.as_mut_slice(),
+                    strings::without_trailing_slash(destination),
+                )
+                .len();
                 #[cfg(windows)]
                 {
-                    strings::copy_u8_into_u16(&mut destination_buf, dst_without_trailing_slash);
-                    destination_buf[dst_without_trailing_slash.len()] = bun_paths::SEP as u16;
+                    destination_buf[destination_len] = bun_paths::SEP as u16;
                 }
 
                 #[cfg(windows)]
-                let mut template_path_buf: bun_paths::WPathBuffer =
-                    bun_paths::WPathBuffer::uninit();
+                let mut template_path_buf = bun_paths::w_path_buffer_pool::get();
                 #[cfg(windows)]
-                let src_without_trailing_slash: &[u8] =
-                    strings::without_trailing_slash(abs_template_path);
+                let template_path_len = strings::convert_utf8_to_utf16_in_buffer(
+                    template_path_buf.as_mut_slice(),
+                    strings::without_trailing_slash(abs_template_path),
+                )
+                .len();
                 #[cfg(windows)]
                 {
-                    strings::copy_u8_into_u16(&mut template_path_buf, src_without_trailing_slash);
-                    template_path_buf[src_without_trailing_slash.len()] = bun_paths::SEP as u16;
+                    template_path_buf[template_path_len] = bun_paths::SEP as u16;
                 }
 
-                let destination_dir = destination_dir__;
                 let mut walker_ = bun_sys::walker_skippable::walk(
                     bun_sys::Fd::from_std_dir(&template_dir),
                     SKIP_FILES,
@@ -634,18 +704,22 @@ impl CreateCommand {
                     node,
                     &mut progress,
                     #[cfg(windows)]
-                    (dst_without_trailing_slash.len() + 1),
+                    (destination_len + 1),
                     #[cfg(windows)]
                     &mut destination_buf,
                     #[cfg(windows)]
-                    (src_without_trailing_slash.len() + 1),
+                    (template_path_len + 1),
                     #[cfg(windows)]
                     &mut template_path_buf,
                 )?;
 
-                package_json_file = destination_dir
-                    .open_file(b"package.json", bun_sys::O::RDWR, 0)
-                    .ok();
+                template_has_dot_gitignore =
+                    bun_sys::exists_at(&template_dir, bun_core::zstr!(".gitignore"));
+                if bun_sys::exists_at(&template_dir, bun_core::zstr!("package.json")) {
+                    package_json_file = destination_dir
+                        .open_file(b"package.json", bun_sys::O::RDWR, 0)
+                        .ok();
+                }
 
                 'read_package_json: {
                     if let Some(ref pkg) = package_json_file {
@@ -693,8 +767,6 @@ impl CreateCommand {
 
                         #[cfg(windows)]
                         let prev_file_pos = pkg.get_pos()?;
-                        #[cfg(not(windows))]
-                        let _prev_file_pos: u64 = 0;
 
                         if let Err(err) =
                             pkg.pread_all(package_json_contents.list.as_mut_slice(), 0)
@@ -718,43 +790,48 @@ impl CreateCommand {
                     }
                 }
             }
-            _ => unreachable!(),
         }
 
         node.end();
         progress.refresh();
 
-        let is_nextjs = false;
-        let is_create_react_app = false;
-        let create_react_app_entry_point_path: &[u8] = b"";
         let mut preinstall_tasks: Vec<&[u8]> = Vec::new();
         let mut postinstall_tasks: Vec<&[u8]> = Vec::new();
         let mut has_dependencies: bool = false;
-        let path_env = env_loader.map.get(b"PATH").unwrap_or(b"");
+        let path_env: Vec<u8> = env_loader.map.get(b"PATH").unwrap_or(b"").to_vec();
+        let path_env: &[u8] = &path_env;
 
         {
             let parent_dir = bun_sys::Dir::open(destination)?;
-            #[cfg(windows)]
-            {
-                let _ = parent_dir.copy_file(
-                    b"gitignore",
+            if !had_gitignore {
+                // The template's `gitignore` does not replace a `.gitignore` that the template also
+                // ships. It only replaces the user's existing `.gitignore` with `--force`.
+                let replaces_the_users =
+                    create_options.overwrite && had_dot_gitignore && !template_has_dot_gitignore;
+                if !replaces_the_users
+                    && matches!(
+                        bun_sys::exists_at_type(parent_dir.fd(), bun_core::zstr!(".gitignore")),
+                        Ok(bun_sys::ExistsAtType::File)
+                    )
+                {
+                    let _ = bun_sys::unlinkat(&parent_dir, bun_core::zstr!("gitignore"));
+                } else if let Err(err) = bun_sys::renameat(
                     &parent_dir,
-                    b".gitignore",
-                    Default::default(),
-                );
-            }
-            #[cfg(not(windows))]
-            {
-                let _ = bun_sys::linkat(
-                    parent_dir.fd(),
                     bun_core::zstr!("gitignore"),
-                    parent_dir.fd(),
+                    &parent_dir,
                     bun_core::zstr!(".gitignore"),
-                );
+                ) && err.get_errno() != bun_sys::E::ENOENT
+                {
+                    pretty_errorln!(
+                        "<r><red>{}<r>: renaming gitignore to .gitignore",
+                        bstr::BStr::new(err.name()),
+                    );
+                    Global::exit(1);
+                }
             }
-
-            let _ = bun_sys::unlinkat(&parent_dir, bun_core::zstr!("gitignore"));
-            let _ = bun_sys::unlinkat(&parent_dir, bun_core::zstr!(".npmignore"));
+            if !had_npmignore {
+                let _ = bun_sys::unlinkat(&parent_dir, bun_core::zstr!(".npmignore"));
+            }
         }
 
         let mut start_command: &[u8] = b"bun dev";
@@ -772,27 +849,32 @@ impl CreateCommand {
                     package_json_contents.list.as_slice(),
                 );
 
-                // SAFETY: single-threaded CLI dispatch; no other borrow of the
-                // process-static `Cli::LOG_` is live across this scope.
+                // SAFETY: single-threaded CLI dispatch; no other borrow of `Cli::LOG_` is live in this scope.
                 let log: &mut bun_ast::Log = unsafe { ctx.log_mut() };
-                let bump = bun_alloc::Arena::new();
-                let mut package_json_expr = match JSON::parse_utf8(&source, log, &bump) {
-                    Ok(e) => e,
+                let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
+                let parsed = match JSON::parse_package_json_utf8_with_opts(
+                    JSON::JSONOptions {
+                        guess_indentation: true,
+                        ..JSON::JSONOptions::DEFAULT
+                    },
+                    &source,
+                    log,
+                    bump,
+                ) {
+                    Ok(r) => r,
                     Err(_) => {
+                        if log.errors > 0 {
+                            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                        }
                         break 'process_package_json;
                     }
                 };
+                let indentation = parsed.indentation;
+                let mut package_json_expr = parsed.root;
 
                 if package_json_expr.data.e_object().is_none() {
                     break 'process_package_json;
                 }
-
-                // The commented-out injection logic below would append to a
-                // properties list and round-trip it back into the object. With
-                // those appends disabled the round-trip is a no-op, so leave
-                // `properties` in place — moving it out would make every
-                // `as_property` lookup below see an empty object and skip
-                // dependency detection / install.
 
                 if log.errors > 0 {
                     let _ = log.print(std::ptr::from_mut(Output::error_writer()));
@@ -800,401 +882,21 @@ impl CreateCommand {
                     break 'process_package_json;
                 }
 
-                if let Some(name_expr) = package_json_expr.as_property(b"name") {
-                    if let Some(mut s) = name_expr.expr.data.e_string() {
-                        let basename = bun_paths::basename(destination);
-                        // SAFETY: `destination` is interned in the process-global DirnameStore
-                        // (`append_slice` returns `&'static [u8]`); re-erase the borrow lifetime
-                        // to `'static` to match `EString.data: &'static [u8]`.
-                        s.data = bun_ast::StoreStr::new(unsafe {
-                            core::slice::from_raw_parts(basename.as_ptr(), basename.len())
-                        });
-                    }
+                if let Some(name_expr) = package_json_expr.as_property(b"name")
+                    && let Some(mut s) = name_expr.expr.data.e_string()
+                {
+                    // `destination` is interned in the process-global DirnameStore.
+                    s.data = bun_ast::StoreStr::new(bun_paths::basename(destination));
                 }
 
-                // const Needs = struct {
-                //     bun_bun_for_nextjs: bool = false,
-                //     bun_macro_relay: bool = false,
-                //     bun_macro_relay_dependency: bool = false,
-                //     bun_framework_next: bool = false,
-                //     react_refresh: bool = false,
-                // };
-                // var needs = Needs{};
-                // var has_relay = false;
-                // var has_bun_framework_next = false;
-                // var has_react_refresh = false;
-                // var has_bun_macro_relay = false;
-                // var has_react = false;
-                // var has_react_scripts = false;
-
-                // const Prune = struct {
-                //     pub const packages = ComptimeStringMap(void, .{
-                //         .{ "@parcel/babel-preset", {} },
-                //         .{ "@parcel/core", {} },
-                //         .{ "@swc/cli", {} },
-                //         .{ "@swc/core", {} },
-                //         .{ "@webpack/cli", {} },
-                //         .{ "react-scripts", {} },
-                //         .{ "webpack-cli", {} },
-                //         .{ "webpack", {} },
-                //         // one of cosmic config's imports breaks stuff
-                //         .{ "cosmiconfig", {} },
-                //     });
-                //     pub var prune_count: u16 = 0;
-                //
-                //     pub fn prune(list: []js_ast.G.Property) []js_ast.G.Property {
-                //         var i: usize = 0;
-                //         var out_i: usize = 0;
-                //         while (i < list.len) : (i += 1) {
-                //             const key = list[i].key.?.data.e_string.data;
-                //             const do_prune = packages.has(key);
-                //             prune_count += @as(u16, @intCast(@intFromBool(do_prune)));
-                //             if (!do_prune) {
-                //                 list[out_i] = list[i];
-                //                 out_i += 1;
-                //             }
-                //         }
-                //         return list[0..out_i];
-                //     }
-                // };
-
-                let mut dev_dependencies: Option<bun_ast::Expr> = None;
-                let mut dependencies: Option<bun_ast::Expr> = None;
-
-                if let Some(q) = package_json_expr.as_property(b"devDependencies") {
-                    let property = q.expr;
-
-                    if property.data.is_e_object()
-                        && property
-                            .data
-                            .e_object()
-                            .expect("infallible: variant checked")
-                            .properties
-                            .len_u32()
-                            > 0
+                for key in [b"devDependencies".as_slice(), b"dependencies".as_slice()] {
+                    if let Some(q) = package_json_expr.as_property(key)
+                        && let Some(object) = q.expr.data.e_object()
+                        && object.properties.len_u32() > 0
                     {
-                        // unsupported_packages.update(property);
-                        // has_react_scripts = has_react_scripts or property.hasAnyPropertyNamed(&.{"react-scripts"});
-                        // has_relay = has_relay or property.hasAnyPropertyNamed(&.{ "react-relay", "relay-runtime", "babel-plugin-relay" });
-                        // property.data.e_object.properties = js_ast.G.Property.List.fromBorrowedSliceDangerous(Prune.prune(property.data.e_object.properties.slice()));
-                        if property
-                            .data
-                            .e_object()
-                            .expect("infallible: variant checked")
-                            .properties
-                            .len_u32()
-                            > 0
-                        {
-                            has_dependencies = true;
-                            dev_dependencies = Some(q.expr);
-
-                            // has_bun_framework_next = has_bun_framework_next or property.hasAnyPropertyNamed(&.{"bun-framework-next"});
-                            // has_react = has_react or property.hasAnyPropertyNamed(&.{ "react", "react-dom", "react-relay", "@emotion/react" });
-                            // has_bun_macro_relay = has_bun_macro_relay or property.hasAnyPropertyNamed(&.{"bun-macro-relay"});
-                            // has_react_refresh = has_react_refresh or property.hasAnyPropertyNamed(&.{"react-refresh"});
-                        }
+                        has_dependencies = true;
                     }
                 }
-
-                if let Some(q) = package_json_expr.as_property(b"dependencies") {
-                    let property = q.expr;
-
-                    if property.data.is_e_object()
-                        && property
-                            .data
-                            .e_object()
-                            .expect("infallible: variant checked")
-                            .properties
-                            .len_u32()
-                            > 0
-                    {
-                        // unsupported_packages.update(property);
-                        // has_react_scripts = has_react_scripts or property.hasAnyPropertyNamed(&.{"react-scripts"});
-                        // has_relay = has_relay or property.hasAnyPropertyNamed(&.{ "react-relay", "relay-runtime", "babel-plugin-relay" });
-                        // property.data.e_object.properties = js_ast.G.Property.List.fromBorrowedSliceDangerous(Prune.prune(property.data.e_object.properties.slice()));
-                        if property
-                            .data
-                            .e_object()
-                            .expect("infallible: variant checked")
-                            .properties
-                            .len_u32()
-                            > 0
-                        {
-                            has_dependencies = true;
-                            dependencies = Some(q.expr);
-
-                            // if (property.asProperty("next")) |next_q| {
-                            //     is_nextjs = true;
-                            //     needs.bun_bun_for_nextjs = true;
-                            //     next_q.expr.data.e_string.data = @constCast(target_nextjs_version);
-                            // }
-                            // has_bun_framework_next = has_bun_framework_next or property.hasAnyPropertyNamed(&.{"bun-framework-next"});
-                            // has_react = has_react or is_nextjs or property.hasAnyPropertyNamed(&.{ "react", "react-dom", "react-relay", "@emotion/react" });
-                            // has_react_refresh = has_react_refresh or property.hasAnyPropertyNamed(&.{"react-refresh"});
-                            // has_bun_macro_relay = has_bun_macro_relay or property.hasAnyPropertyNamed(&.{"bun-macro-relay"});
-                        }
-                    }
-                }
-
-                let _ = (dev_dependencies, dependencies);
-
-                // needs.bun_macro_relay = !has_bun_macro_relay and has_relay;
-                // needs.react_refresh = !has_react_refresh and has_react;
-                // needs.bun_framework_next = is_nextjs and !has_bun_framework_next;
-                // needs.bun_bun_for_nextjs = is_nextjs;
-                // needs.bun_macro_relay_dependency = needs.bun_macro_relay;
-                // var bun_bun_for_react_scripts = false;
-                //
-                // var bun_macros_prop: ?js_ast.Expr = null;
-                // var bun_prop: ?js_ast.Expr = null;
-                // var bun_relay_prop: ?js_ast.Expr = null;
-                //
-                // var needs_bun_prop = needs.bun_macro_relay or has_bun_macro_relay;
-                // var needs_bun_macros_prop = needs_bun_prop;
-                //
-                // if (needs_bun_macros_prop) {
-                //     if (package_json_expr.asProperty("bun")) |bun_| {
-                //         needs_bun_prop = false;
-                //         bun_prop = bun_.expr;
-                //         if (bun_.expr.asProperty("macros")) |macros_q| {
-                //             bun_macros_prop = macros_q.expr;
-                //             needs_bun_macros_prop = false;
-                //             if (macros_q.expr.asProperty("react-relay")) |react_relay_q| {
-                //                 bun_relay_prop = react_relay_q.expr;
-                //                 needs.bun_macro_relay = react_relay_q.expr.asProperty("graphql") == null;
-                //             }
-                //             if (macros_q.expr.asProperty("babel-plugin-relay/macro")) |react_relay_q| {
-                //                 bun_relay_prop = react_relay_q.expr;
-                //                 needs.bun_macro_relay = react_relay_q.expr.asProperty("graphql") == null;
-                //             }
-                //         }
-                //     }
-                // }
-                //
-                // if (Prune.prune_count > 0) {
-                //     Output.prettyErrorln("<r><d>[package.json] Pruned {d} unnecessary packages<r>", .{Prune.prune_count});
-                // }
-                //
-                // if (create_options.verbose) {
-                //   if (needs.bun_macro_relay) {
-                //       Output.prettyErrorln("<r><d>[package.json] Detected Relay -> added \"bun-macro-relay\"<r>", .{});
-                //   }
-                //   if (needs.react_refresh) {
-                //       Output.prettyErrorln("<r><d>[package.json] Detected React -> added \"react-refresh\"<r>", .{});
-                //   }
-                //   if (needs.bun_framework_next) {
-                //       Output.prettyErrorln("<r><d>[package.json] Detected Next -> added \"bun-framework-next\"<r>", .{});
-                //   } else if (is_nextjs) {
-                //       Output.prettyErrorln("<r><d>[package.json] Detected Next.js<r>", .{});
-                //   }
-                // }
-                //
-                // var needs_to_inject_dev_dependency = needs.react_refresh or needs.bun_macro_relay;
-                // var needs_to_inject_dependency = needs.bun_framework_next;
-                //
-                // const dependencies_to_inject_count = @as(usize, @intCast(@intFromBool(needs.bun_framework_next)));
-                //
-                // const dev_dependencies_to_inject_count = @as(usize, @intCast(@intFromBool(needs.react_refresh))) +
-                //     @as(usize, @intCast(@intFromBool(needs.bun_macro_relay)));
-                //
-                // const new_properties_count = @as(usize, @intCast(@intFromBool(needs_to_inject_dev_dependency and dev_dependencies == null))) +
-                //     @as(usize, @intCast(@intFromBool(needs_to_inject_dependency and dependencies == null))) +
-                //     @as(usize, @intCast(@intFromBool(needs_bun_prop)));
-                //
-                // if (new_properties_count != 0) {
-                //     try properties_list.ensureUnusedCapacity(new_properties_count);
-                // }
-
-                // InjectionPrefill — AST nodes used to inject "bun"/"macros"/dependency
-                // properties into package.json. Every consumer of it below is
-                // commented out except `npx_react_scripts_build`, so the module is
-                // stubbed here with the full structure preserved as a comment for
-                // reference; if the commented-out injection code is ever revived, the
-                // statics should be rebuilt on the stack/arena per call rather than as
-                // mutable statics of non-Sync AST types.
-                mod injection_prefill {
-                    // pub var dependencies_e_string = E.String.init(dependencies_string);
-                    // pub var devDependencies_e_string = E.String.init(dev_dependencies_string);
-                    // pub var bun_e_string = E.String.init(bun_string);
-                    // pub var macros_e_string = E.String.init(macros_string);
-                    // pub var react_relay_string = E.String.init("react-relay");
-                    // pub var bun_macros_relay_path_string = E.String.init("bun-macro-relay");
-                    // pub var babel_plugin_relay_macro = E.String.init("babel-plugin-relay/macro");
-                    // pub var babel_plugin_relay_macro_js = E.String.init("babel-plugin-relay/macro.js");
-                    // pub var graphql_string = E.String.init("graphql");
-                    //
-                    // var npx_react_scripts_build_str = E.String.init("npx react-scripts build");
-                    // pub const npx_react_scripts_build = js_ast.Expr{ .data = .{ .e_string = &npx_react_scripts_build_str }, .loc = logger.Loc.Empty };
-                    //
-                    // var bun_macro_relay_properties = [_]js_ast.G.Property{
-                    //     js_ast.G.Property{
-                    //         .key   = js_ast.Expr{ .data = .{ .e_string = &graphql_string }, .loc = logger.Loc.Empty },
-                    //         .value = js_ast.Expr{ .data = .{ .e_string = &bun_macros_relay_path_string }, .loc = logger.Loc.Empty },
-                    //     },
-                    // };
-                    // var bun_macro_relay_object = js_ast.E.Object{ .properties = undefined };
-                    //
-                    // var bun_macros_relay_object_properties = [_]js_ast.G.Property{
-                    //     .{ .key = Expr{ .e_string = &react_relay_string },           .value = Expr{ .e_object = &bun_macro_relay_object } },
-                    //     .{ .key = Expr{ .e_string = &babel_plugin_relay_macro },     .value = Expr{ .e_object = &bun_macro_relay_object } },
-                    //     .{ .key = Expr{ .e_string = &babel_plugin_relay_macro_js },  .value = Expr{ .e_object = &bun_macro_relay_object } },
-                    // };
-                    // pub var bun_macros_relay_object = E.Object{ .properties = undefined };
-                    //
-                    // var bun_macros_relay_only_object_string = js_ast.E.String.init("macros");
-                    // pub var bun_macros_relay_only_object_properties = [_]js_ast.G.Property{
-                    //     .{ .key = Expr{ .e_string = &bun_macros_relay_only_object_string }, .value = Expr{ .e_object = &bun_macros_relay_object } },
-                    // };
-                    // pub var bun_macros_relay_only_object = E.Object{ .properties = undefined };
-                    //
-                    // var bun_only_macros_string = js_ast.E.String.init("bun");
-                    // pub var bun_only_macros_relay_property = js_ast.G.Property{
-                    //     .key   = Expr{ .e_string = &bun_only_macros_string },
-                    //     .value = Expr{ .e_object = &bun_macros_relay_only_object },
-                    // };
-                    //
-                    // pub var bun_framework_next_string  = js_ast.E.String.init("bun-framework-next");
-                    // pub var bun_framework_next_version = js_ast.E.String.init("latest");
-                    // pub var bun_framework_next_property = js_ast.G.Property{
-                    //     .key   = Expr{ .e_string = &bun_framework_next_string },
-                    //     .value = Expr{ .e_string = &bun_framework_next_version },
-                    // };
-                    //
-                    // pub var bun_macro_relay_dependency_string  = js_ast.E.String.init("bun-macro-relay");
-                    // pub var bun_macro_relay_dependency_version = js_ast.E.String.init("latest");
-                    // pub var bun_macro_relay_dependency = js_ast.G.Property{
-                    //     .key   = Expr{ .e_string = &bun_macro_relay_dependency_string },
-                    //     .value = Expr{ .e_string = &bun_macro_relay_dependency_version },
-                    // };
-                    //
-                    // pub var refresh_runtime_string  = js_ast.E.String.init("react-refresh");
-                    // pub var refresh_runtime_version = js_ast.E.String.init("0.10.0");
-                    // pub var react_refresh_dependency = js_ast.G.Property{
-                    //     .key   = Expr{ .e_string = &refresh_runtime_string },
-                    //     .value = Expr{ .e_string = &refresh_runtime_version },
-                    // };
-                    //
-                    // pub var dev_dependencies_key = js_ast.Expr{ .data = .{ .e_string = &devDependencies_e_string }, .loc = logger.Loc.Empty };
-                    // pub var dependencies_key     = js_ast.Expr{ .data = .{ .e_string = &dependencies_e_string },    .loc = logger.Loc.Empty };
-
-                    // The static objects above were wired together at runtime; that
-                    // wiring only feeds the commented-out injection code below:
-                    // InjectionPrefill.bun_macro_relay_object.properties = ...fromBorrowedSliceDangerous(bun_macro_relay_properties[0..]);
-                    // InjectionPrefill.bun_macros_relay_object.properties = ...fromBorrowedSliceDangerous(&bun_macros_relay_object_properties);
-                    // InjectionPrefill.bun_macros_relay_only_object.properties = ...fromBorrowedSliceDangerous(&bun_macros_relay_only_object_properties);
-
-                    pub(crate) fn npx_react_scripts_build() -> bun_ast::Expr {
-                        bun_ast::Expr::init(
-                            bun_ast::E::EString::init(b"npx react-scripts build"),
-                            bun_ast::Loc::EMPTY,
-                        )
-                    }
-                }
-
-                // if (needs_to_inject_dev_dependency and dev_dependencies == null) {
-                //     var e_object = try ctx.allocator.create(E.Object);
-                //     e_object.* = E.Object{};
-                //     const value = js_ast.Expr{ .data = .{ .e_object = e_object }, .loc = logger.Loc.Empty };
-                //     properties_list.appendAssumeCapacity(js_ast.G.Property{
-                //         .key = InjectionPrefill.dev_dependencies_key,
-                //         .value = value,
-                //     });
-                //     dev_dependencies = value;
-                // }
-                //
-                // if (needs_to_inject_dependency and dependencies == null) {
-                //     var e_object = try ctx.allocator.create(E.Object);
-                //     e_object.* = E.Object{};
-                //     const value = js_ast.Expr{ .data = .{ .e_object = e_object }, .loc = logger.Loc.Empty };
-                //     properties_list.appendAssumeCapacity(js_ast.G.Property{
-                //         .key = InjectionPrefill.dependencies_key,
-                //         .value = value,
-                //     });
-                //     dependencies = value;
-                // }
-
-                // inject an object like this, handling each permutation of what may or may not exist:
-                // {
-                //    "bun": {
-                //       "macros": {
-                //          "react-relay": {
-                //              "graphql": "bun-macro-relay"
-                //          }
-                //        }
-                //    }
-                // }
-                // bun_section: {
-                //   // "bun.macros.react-relay.graphql"
-                //   if (needs.bun_macro_relay and !needs_bun_prop and !needs_bun_macros_prop) {
-                //       bun_relay_prop.?.data.e_object = InjectionPrefill.bun_macros_relay_object.properties.ptr[0].value.?.data.e_object;
-                //       needs_bun_macros_prop = false; needs_bun_prop = false; needs.bun_macro_relay = false;
-                //       break :bun_section;
-                //   }
-                //   // "bun.macros"
-                //   if (needs_bun_macros_prop and !needs_bun_prop) {
-                //       var obj = bun_prop.?.data.e_object;
-                //       var properties = try std.ArrayList(js_ast.G.Property).initCapacity(ctx.allocator,
-                //           obj.properties.len + InjectionPrefill.bun_macros_relay_object.properties.len);
-                //       defer obj.properties.update(properties);
-                //       try properties.insertSlice(0, obj.properties.slice());
-                //       try properties.insertSlice(0, InjectionPrefill.bun_macros_relay_object.properties.slice());
-                //       needs_bun_macros_prop = false; needs_bun_prop = false; needs.bun_macro_relay = false;
-                //       break :bun_section;
-                //   }
-                //   // "bun"
-                //   if (needs_bun_prop) {
-                //       try properties_list.append(InjectionPrefill.bun_only_macros_relay_property);
-                //       needs_bun_macros_prop = false; needs_bun_prop = false; needs.bun_macro_relay = false;
-                //       break :bun_section;
-                //   }
-                // }
-                //
-                // if (needs_to_inject_dependency) {
-                //     defer needs_to_inject_dependency = false;
-                //     var obj = dependencies.?.data.e_object;
-                //     var properties = try std.ArrayList(js_ast.G.Property).initCapacity(ctx.allocator,
-                //         obj.properties.len + dependencies_to_inject_count);
-                //     try properties.insertSlice(0, obj.properties.slice());
-                //     defer obj.properties.update(properties);
-                //     if (needs.bun_framework_next) {
-                //         properties.appendAssumeCapacity(InjectionPrefill.bun_framework_next_property);
-                //         needs.bun_framework_next = false;
-                //     }
-                // }
-                //
-                // if (needs_to_inject_dev_dependency) {
-                //     defer needs_to_inject_dev_dependency = false;
-                //     var obj = dev_dependencies.?.data.e_object;
-                //     var properties = try std.ArrayList(js_ast.G.Property).initCapacity(ctx.allocator,
-                //         obj.properties.len + dev_dependencies_to_inject_count);
-                //     try properties.insertSlice(0, obj.properties.slice());
-                //     defer obj.properties.update(properties);
-                //     if (needs.bun_macro_relay_dependency) {
-                //         properties.appendAssumeCapacity(InjectionPrefill.bun_macro_relay_dependency);
-                //         needs.bun_macro_relay_dependency = false;
-                //     }
-                //     if (needs.react_refresh) {
-                //         properties.appendAssumeCapacity(InjectionPrefill.react_refresh_dependency);
-                //         needs.react_refresh = false;
-                //     }
-                // }
-
-                // this is a little dicey
-                // The idea is:
-                // Before the closing </body> tag of Create React App's public/index.html
-                // Inject "<script type="module" src="/src/index.js" async></script>"
-                // Only do this for create-react-app
-                // Which we define as:
-                // 1. has a "public/index.html"
-                // 2. "react-scripts" in package.json dependencies or devDependencies
-                // 3. has a src/index.{jsx,tsx,ts,mts,mcjs}
-                // If at any point those expectations are not matched OR the string /src/index.js already exists in the HTML
-                // don't do it!
-                // if (has_react_scripts) {
-                //     bail: {
-                //         // ... (large CRA index.html injection block)
-                //     }
-                // }
 
                 package_json_expr
                     .data
@@ -1202,9 +904,6 @@ impl CreateCommand {
                     .expect("infallible: variant checked")
                     .is_single_line = false;
 
-                // (See note above; the aliasing round-trip is a no-op while the
-                // injection appends remain commented out, so `properties` is
-                // already current.)
                 {
                     use bun_ast::ExprData as LExprData;
                     let mut i: usize = 0;
@@ -1220,76 +919,56 @@ impl CreateCommand {
                             .as_utf8_string_literal()
                             .expect("infallible: is_string checked");
 
-                        if key == b"scripts" {
-                            let mut value_data = props.slice()[i].value.unwrap().data;
-                            if value_data.is_e_object() {
-                                // SAFETY: StoreRef<E::Object> derefs to arena-backed storage; mutating
-                                // through the local `value_data` copy mutates the same arena E::Object.
-                                let scripts_obj = value_data
-                                    .e_object_mut()
-                                    .expect("infallible: variant checked");
-                                let mut script_property_out_i: usize = 0;
+                        // A copy of the `StoreRef`: mutating through it mutates the same arena E::Object.
+                        if key == b"scripts"
+                            && let Some(mut scripts_obj) =
+                                props.slice()[i].value.unwrap().data.e_object()
+                        {
+                            let scripts_properties = scripts_obj.properties.slice_mut();
+                            let mut script_property_out_i: usize = 0;
+
+                            // Starting the app with "react-scripts start" or "next dev" won't make sense.
+                            for script_property_i in 0..scripts_properties.len() {
+                                if let Some(script_value) =
+                                    scripts_properties[script_property_i].value
+                                    && let Some(script_value) = script_value.data.e_string()
                                 {
-                                    let scripts_properties = scripts_obj.properties.slice_mut();
+                                    let script = script_value.data.slice();
 
-                                    // if they're starting the app with "react-scripts start" or "next dev", that won't make sense
-                                    // if they launch with npm run start it will just be slower
-                                    let mut script_property_i: usize = 0;
-
-                                    while script_property_i < scripts_properties.len() {
-                                        let Some(script_value) =
-                                            scripts_properties[script_property_i].value
-                                        else {
-                                            scripts_properties
-                                                .swap(script_property_out_i, script_property_i);
-                                            script_property_out_i += 1;
-                                            script_property_i += 1;
-                                            continue;
-                                        };
-                                        let Some(script_value) = script_value.data.e_string()
-                                        else {
-                                            scripts_properties
-                                                .swap(script_property_out_i, script_property_i);
-                                            script_property_out_i += 1;
-                                            script_property_i += 1;
-                                            continue;
-                                        };
-                                        let script = script_value.data.slice();
-
-                                        if strings::contains(script, b"react-scripts start")
-                                            || strings::contains(script, b"next dev")
-                                            || strings::contains(script, b"react-scripts eject")
-                                        {
-                                            if create_options.verbose {
-                                                bun_core::pretty_errorln!(
-                                                    "<r><d>[package.json] Pruned unnecessary script: {}<r>",
-                                                    bstr::BStr::new(script),
-                                                );
-                                            }
-
-                                            script_property_i += 1;
-                                            continue;
+                                    if strings::contains(script, b"react-scripts start")
+                                        || strings::contains(script, b"next dev")
+                                        || strings::contains(script, b"react-scripts eject")
+                                    {
+                                        if create_options.verbose {
+                                            bun_core::pretty_errorln!(
+                                                "<r><d>[package.json] Pruned unnecessary script: {}<r>",
+                                                bun_core::fmt::escape_control_chars(script),
+                                            );
                                         }
+                                        continue;
+                                    }
 
-                                        if strings::contains(script, b"react-scripts build") {
-                                            scripts_properties[script_property_i].value =
-                                                Some(injection_prefill::npx_react_scripts_build());
-                                        }
-
-                                        scripts_properties
-                                            .swap(script_property_out_i, script_property_i);
-                                        script_property_out_i += 1;
-                                        script_property_i += 1;
+                                    if strings::contains(script, b"react-scripts build") {
+                                        scripts_properties[script_property_i].value =
+                                            Some(bun_ast::Expr::init(
+                                                bun_ast::E::EString::init(
+                                                    b"npx react-scripts build",
+                                                ),
+                                                bun_ast::Loc::EMPTY,
+                                            ));
                                     }
                                 }
 
-                                scripts_obj
-                                    .properties
-                                    .shrink_retaining_capacity(script_property_out_i);
+                                scripts_properties.swap(script_property_out_i, script_property_i);
+                                script_property_out_i += 1;
                             }
+
+                            scripts_obj
+                                .properties
+                                .shrink_retaining_capacity(script_property_out_i);
                         }
 
-                        if key.is_empty() || key != b"bun-create" {
+                        if key != b"bun-create" {
                             props.slice_mut().swap(property_i, i);
                             property_i += 1;
                             i += 1;
@@ -1297,44 +976,22 @@ impl CreateCommand {
                         }
 
                         let value = props.slice()[i].value.unwrap();
-                        // `as_property` returns an owned `Query`
-                        // (Copy types backed by an arena `StoreRef`). Borrowck
-                        // ties any `&[u8]` we pull out of it to the `if let`
-                        // scope even though the underlying `EString.data` is
-                        // `&'static [u8]`. Erase the local borrow lifetime via
-                        // raw-pointer round-trip so the task slices can outlive
-                        // the temporary `Query`.
                         let arena_str = |s: &[u8]| -> &'static [u8] {
-                            // SAFETY: `s` always points into the JSON arena
-                            // (initialized via `initialize_store()`), which
-                            // lives for the rest of `exec`.
+                            // SAFETY: `s` points into the JSON arena, which lives for the rest of `exec`.
                             unsafe { &*std::ptr::from_ref::<[u8]>(s) }
                         };
-                        if let Some(postinstall) = value.as_property(b"postinstall") {
-                            match postinstall.expr.data {
-                                LExprData::EString(single_task) => {
-                                    postinstall_tasks.push(arena_str(single_task.data.slice()));
+                        for (name, tasks) in [
+                            (b"postinstall".as_slice(), &mut postinstall_tasks),
+                            (b"preinstall".as_slice(), &mut preinstall_tasks),
+                        ] {
+                            match value.as_property(name).map(|property| property.expr.data) {
+                                Some(LExprData::EString(single_task)) => {
+                                    tasks.push(arena_str(single_task.data.slice()));
                                 }
-                                LExprData::EArray(tasks) => {
-                                    let items = tasks.slice();
-                                    for task in items {
+                                Some(LExprData::EArray(array)) => {
+                                    for task in array.slice() {
                                         if let Some(task_entry) = task.as_utf8_string_literal() {
-                                            // if (needs.bun_bun_for_nextjs or bun_bun_for_react_scripts) {
-                                            //     var iter = std.mem.splitScalar(u8, task_entry, ' ');
-                                            //     var last_was_bun = false;
-                                            //     while (iter.next()) |current| {
-                                            //         if (strings.eqlComptime(current, "bun")) {
-                                            //             if (last_was_bun) {
-                                            //                 needs.bun_bun_for_nextjs = false;
-                                            //                 bun_bun_for_react_scripts = false;
-                                            //                 break;
-                                            //             }
-                                            //             last_was_bun = true;
-                                            //         }
-                                            //     }
-                                            // }
-
-                                            postinstall_tasks.push(arena_str(task_entry));
+                                            tasks.push(arena_str(task_entry));
                                         }
                                     }
                                 }
@@ -1342,28 +999,11 @@ impl CreateCommand {
                             }
                         }
 
-                        if let Some(preinstall) = value.as_property(b"preinstall") {
-                            match preinstall.expr.data {
-                                LExprData::EString(single_task) => {
-                                    preinstall_tasks.push(arena_str(single_task.data.slice()));
-                                }
-                                LExprData::EArray(tasks) => {
-                                    for task in tasks.items.slice() {
-                                        if let Some(task_entry) = task.as_utf8_string_literal() {
-                                            preinstall_tasks.push(arena_str(task_entry));
-                                        }
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-
-                        if let Some(start) = value.as_property(b"start") {
-                            if let Some(start_str) = start.expr.as_utf8_string_literal() {
-                                if !start_str.is_empty() {
-                                    start_command = arena_str(start_str);
-                                }
-                            }
+                        if let Some(start) = value.as_property(b"start")
+                            && let Some(start_str) = start.expr.as_utf8_string_literal()
+                            && !start_str.is_empty()
+                        {
+                            start_command = arena_str(start_str);
                         }
 
                         i += 1;
@@ -1371,7 +1011,14 @@ impl CreateCommand {
                     props.shrink_retaining_capacity(property_i);
                 }
 
-                let file: bun_sys::Fd = package_json_file.handle;
+                // A task that is the name of a package.json script runs that script.
+                if let Some(scripts) = package_json_expr.as_property(b"scripts") {
+                    for task in preinstall_tasks.iter_mut().chain(&mut postinstall_tasks) {
+                        if scripts.expr.as_property(*task).is_some() {
+                            *task = crate::cli::cli_dupe(&strings::concat(&[b"bun run ", *task]));
+                        }
+                    }
+                }
 
                 let mut buffer_writer = JSPrinter::BufferWriter::init();
                 buffer_writer.append_newline = true;
@@ -1383,7 +1030,7 @@ impl CreateCommand {
                     &source,
                     JSPrinter::PrintJsonOptions {
                         mangled_props: None,
-                        indent: Default::default(),
+                        indent: indentation,
                         ..Default::default()
                     },
                 ) {
@@ -1391,21 +1038,13 @@ impl CreateCommand {
                     break 'process_package_json;
                 }
                 let written = package_json_writer.ctx.get_written();
-                // `file` is the fd still owned by `package_json_file`; borrow it
-                // (constructing an owning `File` here would double-close on drop).
-                if let Err(err) = bun_sys::File::borrow(&file).write_all(written) {
+                if let Err(err) = package_json_file.write_all(written).and_then(|()| {
+                    bun_sys::ftruncate(package_json_file.handle, written.len() as i64)
+                }) {
                     bun_core::pretty_errorln!(
                         "package.json failed to write due to error {}",
                         bstr::BStr::new(err.name()),
                     );
-                    break 'process_package_json;
-                }
-                if let Err(err) = bun_sys::ftruncate(file, written.len() as i64) {
-                    bun_core::pretty_errorln!(
-                        "package.json failed to write due to error {}",
-                        bstr::BStr::new(err.name()),
-                    );
-                    break 'process_package_json;
                 }
             }
         }
@@ -1414,72 +1053,61 @@ impl CreateCommand {
             bun_core::pretty_errorln!("Has dependencies? {}", has_dependencies as u8,);
         }
 
-        let mut npm_client_: Option<NPMClient> = None;
+        // Settings that make `bun install` skip scripts in the current directory also apply to the
+        // template's tasks and to the install in the new project.
+        let ignore_scripts = create_options.ignore_scripts
+            || (!create_options.skip_install
+                && bun_install::package_manager::config_ignores_scripts(
+                    ctx,
+                    env_loader,
+                    filesystem.top_level_dir(),
+                )?);
 
-        // Remember whether the user explicitly opted out (`--no-install`)
-        // before this is widened to also cover dependency-less templates:
-        // the flag must skip template tasks, but a template with no
-        // dependencies should still run its documented postinstall hooks.
-        let user_skipped_install = create_options.skip_install;
+        // `--no-install` skips the tasks too. No dependencies skips only `bun install`.
+        let run_tasks = !create_options.skip_install
+            && !ignore_scripts
+            && !(preinstall_tasks.is_empty() && postinstall_tasks.is_empty());
         create_options.skip_install = create_options.skip_install || !has_dependencies;
 
+        // `git add` reads the destination, so git must exit before the tasks and the install.
         if !create_options.skip_git {
-            if !create_options.skip_install {
-                GitHandler::spawn(destination, path_env, create_options.verbose);
-            } else {
-                if create_options.verbose {
-                    create_options.skip_git =
-                        GitHandler::run::<true>(destination, path_env).unwrap_or(false);
-                } else {
-                    create_options.skip_git =
-                        GitHandler::run::<false>(destination, path_env).unwrap_or(false);
-                }
-            }
+            create_options.skip_git = had_git
+                || !GitHandler::run(destination, path_env, create_options.verbose).unwrap_or(false);
         }
 
-        if !create_options.skip_install {
-            npm_client_ = Some(NPMClient {
-                tag: crate::cli::which_npm_client::Tag::Bun,
-                bin: bun_core::self_exe_path()?,
-            });
-        }
+        let bun_exe = if create_options.skip_install {
+            None
+        } else {
+            Some(bun_core::self_exe_path()?)
+        };
 
-        if npm_client_.is_some() && !preinstall_tasks.is_empty() {
+        if run_tasks {
+            // `bun` in a task is this bun, as it is for the install below.
+            let path = RunCommand::path_for_run(env_loader, b"", None, destination, true)?;
+            env_loader.map.put(b"PATH", &path)?;
+            env_loader
+                .map
+                .put(b"npm_package_name", bun_paths::basename(destination))?;
+
             for task in &preinstall_tasks {
-                exec_task(task, destination, path_env, npm_client_);
+                exec_task(ctx, task, b"preinstall", destination, env_loader)?;
             }
         }
 
-        if let Some(ref npm_client) = npm_client_ {
+        if let Some(bun_exe) = bun_exe {
             let start_time = bun_core::time::nano_timestamp();
-            let install_args: &[&[u8]] = &[npm_client.bin, b"install"];
-            Output::flush();
-            bun_core::pretty!(
-                "\n<r><d>$ <b><cyan>{}<r><d> install",
-                npm_client.tag.as_str(),
-            );
-
-            if install_args.len() > 2 {
-                for arg in &install_args[2..] {
-                    bun_core::pretty!(" ");
-                    bun_core::pretty!("{}", bstr::BStr::new(arg));
-                }
+            let mut install_args: Vec<&[u8]> = vec![bun_exe, b"install"];
+            if ignore_scripts {
+                install_args.push(b"--ignore-scripts");
             }
-
+            install_args.extend(Global::ca_store_flag().map(|flag| flag.as_bytes()));
+            Output::flush();
+            bun_core::pretty!("\n<r><d>$ <b><cyan>bun<r><d>");
+            for arg in &install_args[1..] {
+                bun_core::pretty!(" {}", bstr::BStr::new(arg));
+            }
             bun_core::pretty!("<r>\n");
             Output::flush();
-            scopeguard::defer! {
-                Output::print_errorln("");
-                Output::print_start_end(start_time, bun_core::time::nano_timestamp());
-                bun_core::pretty_error!(
-                    " <r><d>{} install<r>\n",
-                    npm_client.tag.as_str(),
-                );
-                Output::flush();
-
-                Output::print(format_args!("\n"));
-                Output::flush();
-            }
 
             let process = spawn_sync::spawn(&spawn_sync::Options {
                 argv: install_args.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
@@ -1496,21 +1124,36 @@ impl CreateCommand {
                     ),
                     ..Default::default()
                 },
-                #[cfg(not(windows))]
-                windows: (),
                 ..Default::default()
-            })?;
-            let _ = process?;
-        }
+            });
 
-        if !user_skipped_install && !postinstall_tasks.is_empty() {
-            for task in &postinstall_tasks {
-                exec_task(task, destination, path_env, npm_client_);
+            Output::print_errorln("");
+            Output::print_start_end(start_time, bun_core::time::nano_timestamp());
+            bun_core::pretty_error!(" <r><d>bun install<r>\n");
+            Output::flush();
+
+            Output::print(format_args!("\n"));
+            Output::flush();
+
+            let status = process??.status;
+            if !status.is_ok() {
+                pretty_errorln!(
+                    "<r><red>error<r><d>:<r> <b>bun install<r> failed in {} ({})\n<blue>note<r><d>:<r> template files were written. run <b>bun install<r> there once the error is fixed",
+                    bun_core::fmt::quote(destination),
+                    status,
+                );
+                Global::exit(match (status.signal(), &status) {
+                    (Some(signal), _) => u32::from(signal.to_exit_code()),
+                    (None, Status::Exited(exited)) => u32::from(exited.code),
+                    _ => 1,
+                });
             }
         }
 
-        if !create_options.skip_install && !create_options.skip_git {
-            create_options.skip_git = !GitHandler::wait();
+        if run_tasks {
+            for task in &postinstall_tasks {
+                exec_task(ctx, task, b"postinstall", destination, env_loader)?;
+            }
         }
 
         Output::print_error("\n");
@@ -1526,13 +1169,6 @@ impl CreateCommand {
             Output::flush();
         }
 
-        // if (unsupported_packages.@"styled-jsx") {
-        //     Output.prettyErrorln("\n", .{});
-        //     unsupported_packages.print();
-        //     Output.prettyErrorln("\n", .{});
-        //     Output.flush();
-        // }
-
         if !create_options.skip_git && !create_options.skip_install {
             bun_core::pretty!(
                 "\n<d>A local git repository was created for you and dependencies were installed automatically.<r>\n",
@@ -1546,13 +1182,11 @@ impl CreateCommand {
         if example_tag == ExampleTag::GithubRepository {
             let mut display_name = template;
 
-            if let Some(first_slash) = bun_core::strings::index_of_char_usize(display_name, b'/') {
-                let first_slash = first_slash as usize;
-                if let Some(second_slash) =
-                    bun_core::strings::index_of_char_usize(&display_name[first_slash + 1..], b'/')
-                {
-                    display_name = &template[0..first_slash + 1 + second_slash as usize];
-                }
+            if let Some(first_slash) = strings::index_of_char_usize(template, b'/')
+                && let Some(second_slash) =
+                    strings::index_of_char_usize(&template[first_slash + 1..], b'/')
+            {
+                display_name = &template[0..first_slash + 1 + second_slash];
             }
 
             bun_core::pretty!(
@@ -1567,33 +1201,18 @@ impl CreateCommand {
             );
         }
 
-        if is_nextjs {
-            bun_core::pretty!(
-                "\n<r><d>#<r> When dependencies change, run this to update node_modules.bun:\n\n  <b><cyan>bun bun --use next<r>\n",
-            );
-        } else if is_create_react_app {
-            bun_core::pretty!(
-                "\n<r><d>#<r> When dependencies change, run this to update node_modules.bun:\n\n  <b><cyan>bun bun {}<r>\n",
-                bstr::BStr::new(create_react_app_entry_point_path),
-            );
-        }
-
-        // `bun_resolver::fs::FileSystem` (the inline shim) has no `relative_to`; call
-        // the resolver path helper directly with the singleton's `top_level_dir`.
         let rel_destination =
-            bun_paths::resolve_path::relative(filesystem.top_level_dir, destination);
-        let is_empty_destination = rel_destination.is_empty();
-
-        if is_empty_destination {
+            bun_paths::resolve_path::relative(filesystem.top_level_dir(), destination);
+        if rel_destination.is_empty() {
             bun_core::pretty!(
                 "\n<d>#<r><b> To get started, run:<r>\n\n  <b><cyan>{}<r>\n\n",
-                bstr::BStr::new(start_command),
+                bun_core::fmt::EscapeControlChars(bstr::BStr::new(start_command)),
             );
         } else {
             bun_core::pretty!(
                 "\n<d>#<r><b> To get started, run:<r>\n\n  <b><cyan>cd {}<r>\n  <b><cyan>{}<r>\n\n",
                 bstr::BStr::new(rel_destination),
-                bstr::BStr::new(start_command),
+                bun_core::fmt::EscapeControlChars(bstr::BStr::new(start_command)),
             );
         }
 
@@ -1620,8 +1239,6 @@ impl CreateCommand {
                         ),
                         ..Default::default()
                     },
-                    #[cfg(not(windows))]
-                    windows: (),
                     ..Default::default()
                 })?;
             }
@@ -1630,177 +1247,108 @@ impl CreateCommand {
         Ok(())
     }
 
-    pub(crate) fn extract_info(
-        ctx: &Command::Context<'_>,
-    ) -> Result<ExtractedInfo, bun_core::Error> {
+    pub(crate) fn extract_info() -> crate::Result<ExtractedInfo> {
         let example_tag;
         // SAFETY: process-lifetime singleton; init returns *mut.
         let filesystem = unsafe { &*fs::FileSystem::init(None)? };
 
-        let create_options = CreateOptions::parse(ctx)?;
+        let create_options = CreateOptions::parse()?;
         let positionals = &create_options.positionals;
         if positionals.is_empty() {
             crate::cli::command::tag_print_help(crate::Command::Tag::CreateCommand, false);
             Global::crash();
         }
 
-        let mut env_loader: DotEnv::Loader =
-            { DotEnv::Loader::init(crate::cli::cli_arena().alloc(DotEnv::Map::init())) };
+        let mut env_loader = DotEnv::Loader::init();
 
         env_loader.load_process()?;
 
-        // var unsupported_packages = UnsupportedPackages{};
         // SAFETY: single-threaded CLI access to module-level static path buffer
         let home_dir_buf = unsafe { &mut *HOME_DIR_BUF.get() };
+        // Returns the length of the NUL-terminated path in `buf`, or `None` if it is too long.
+        let join = |parts: &[&[u8]], buf: &mut PathBuffer| {
+            bun_paths::resolve_path::join_abs_string_buf_z_checked::<
+                bun_paths::resolve_path::platform::Loose,
+            >(filesystem.top_level_dir(), &mut buf[..], parts)
+            .map(|path| path.as_bytes().len())
+        };
         let template: &[u8] = 'brk: {
             let positional = positionals[0];
 
-            'outer: {
-                let parts = [filesystem.top_level_dir, positional];
-                let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
-                let len = outdir_path.len();
-                home_dir_buf[len] = 0;
-                // SAFETY: home_dir_buf[len] == 0 written above
+            let parts = [filesystem.top_level_dir(), positional];
+            let Some(len) = join(&parts, home_dir_buf) else {
+                pretty_errorln!("<r><red>error<r>: template name too long");
+                Global::exit(1);
+            };
+            let outdir_path_ = bun_core::ZStr::from_buf(&home_dir_buf[..], len);
+            if !bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes())
+                && matches!(
+                    bun_sys::exists_at_type(bun_sys::Fd::cwd(), outdir_path_),
+                    Ok(bun_sys::ExistsAtType::File)
+                )
+            {
+                let extension = bun_paths::extension(positional);
+                if let Some(tag) = ExampleTag::from_file_extension(extension) {
+                    example_tag = tag;
+                    break 'brk crate::cli::cli_dupe(&home_dir_buf[..len]);
+                }
+                // Not for .js: a lot of create-* npm packages have .js in the name.
+                else if !extension.is_empty() && extension != b".js" {
+                    bun_core::warn!(
+                        "bun create [local file] only supports .jsx and .tsx files currently",
+                    );
+                }
+            }
+
+            if !names_path_inside_dir(positional) {
+                pretty_errorln!(
+                    "<r><red>error<r>: <b>\"{}\"<r> is not a template name. Pass a template name, a <b>user/repo<r> on GitHub, or the absolute path of a folder.",
+                    bstr::BStr::new(positional),
+                );
+                Global::exit(1);
+            }
+
+            if bun_paths::is_absolute(positional) {
+                example_tag = ExampleTag::LocalFolder;
+                break 'brk positional;
+            }
+
+            let create_dir = env_loader.map.get(b"BUN_CREATE_DIR");
+            let home_dir = env_loader.map.get(b"HOME");
+            let template_dirs: [Option<Vec<&[u8]>>; 3] = [
+                create_dir.map(|dir| vec![dir, positional]),
+                Some(vec![filesystem.top_level_dir(), BUN_CREATE_DIR, positional]),
+                home_dir.map(|dir| vec![dir, BUN_CREATE_DIR, positional]),
+            ];
+            for parts in template_dirs.iter().flatten() {
+                let Some(len) = join(parts, home_dir_buf) else {
+                    continue;
+                };
                 let outdir_path_ = bun_core::ZStr::from_buf(&home_dir_buf[..], len);
-                if bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes()) {
-                    break 'outer;
-                }
-
-                if let Ok(exists_at_type) =
-                    bun_sys::exists_at_type(bun_sys::Fd::cwd(), outdir_path_)
-                {
-                    if exists_at_type == bun_sys::ExistsAtType::File {
-                        let extension = bun_paths::extension(positional);
-                        if let Some(tag) = ExampleTag::from_file_extension(extension) {
-                            example_tag = tag;
-                            break 'brk crate::cli::cli_dupe(&home_dir_buf[..len]);
-                        }
-                        // Show a warning when the local file exists and it's not a .js file
-                        // A lot of create-* npm packages have .js in the name, so you could end up with that warning.
-                        else if !extension.is_empty() && extension != b".js" {
-                            bun_core::warn!(
-                                "bun create [local file] only supports .jsx and .tsx files currently",
-                            );
-                        }
-                    }
-                }
-            }
-
-            if !bun_paths::is_absolute(positional) {
-                'outer: {
-                    if let Some(home_dir) = env_loader.map.get(b"BUN_CREATE_DIR") {
-                        let parts = [home_dir, positional];
-                        let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
-                        let len = outdir_path.len();
-                        home_dir_buf[len] = 0;
-                        // SAFETY: home_dir_buf[len] == 0 written above
-                        let outdir_path_ = bun_core::ZStr::from_buf(&home_dir_buf[..], len);
-                        if bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes()) {
-                            break 'outer;
-                        }
-                        if bun_sys::directory_exists_at(bun_sys::Fd::cwd(), outdir_path_)
-                            .unwrap_or(false)
-                        {
-                            example_tag = ExampleTag::LocalFolder;
-                            break 'brk &home_dir_buf[..len];
-                        }
-                    }
-                }
-
-                'outer: {
-                    let parts = [filesystem.top_level_dir, BUN_CREATE_DIR, positional];
-                    let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
-                    let len = outdir_path.len();
-                    home_dir_buf[len] = 0;
-                    // SAFETY: home_dir_buf[len] == 0 written above
-                    let outdir_path_ = bun_core::ZStr::from_buf(&home_dir_buf[..], len);
-                    if bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes()) {
-                        break 'outer;
-                    }
-                    if bun_sys::directory_exists_at(bun_sys::Fd::cwd(), outdir_path_)
+                if !bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes())
+                    && bun_sys::directory_exists_at(bun_sys::Fd::cwd(), outdir_path_)
                         .unwrap_or(false)
-                    {
-                        example_tag = ExampleTag::LocalFolder;
-                        break 'brk &home_dir_buf[..len];
-                    }
-                }
-
-                'outer: {
-                    if let Some(home_dir) = env_loader.map.get(b"HOME") {
-                        let parts = [home_dir, BUN_CREATE_DIR, positional];
-                        let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
-                        let len = outdir_path.len();
-                        home_dir_buf[len] = 0;
-                        // SAFETY: home_dir_buf[len] == 0 written above
-                        let outdir_path_ = bun_core::ZStr::from_buf(&home_dir_buf[..], len);
-                        if bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes()) {
-                            break 'outer;
-                        }
-                        if bun_sys::directory_exists_at(bun_sys::Fd::cwd(), outdir_path_)
-                            .unwrap_or(false)
-                        {
-                            example_tag = ExampleTag::LocalFolder;
-                            break 'brk &home_dir_buf[..len];
-                        }
-                    }
-                }
-
-                if bun_paths::is_absolute(positional) {
+                {
                     example_tag = ExampleTag::LocalFolder;
-                    break 'brk positional;
-                }
-
-                let mut repo_begin: usize = usize::MAX;
-                // "https://github.com/foo/bar"
-                if strings::starts_with(positional, b"github.com/") {
-                    repo_begin = b"github.com/".len();
-                }
-
-                if strings::starts_with(positional, b"https://github.com/") {
-                    repo_begin = b"https://github.com/".len();
-                }
-
-                if repo_begin == usize::MAX && positional[0] != b'/' {
-                    if let Some(first_slash_index) =
-                        bun_core::strings::index_of_char_usize(positional, b'/')
-                    {
-                        let first_slash_index = first_slash_index as usize;
-                        if let Some(last_slash_index) =
-                            bun_core::strings::index_of_char_usize(positional, b'/')
-                        {
-                            let last_slash_index = last_slash_index as usize;
-                            if first_slash_index == last_slash_index
-                                && !positional[last_slash_index..].is_empty()
-                                && last_slash_index > 0
-                            {
-                                repo_begin = 0;
-                            }
-                        }
-                    }
-                }
-
-                if repo_begin != usize::MAX {
-                    let remainder = &positional[repo_begin..];
-                    if let Some(i) = bun_core::strings::index_of_char_usize(remainder, b'/') {
-                        let i = i as usize;
-                        if i > 0 && !remainder[i + 1..].is_empty() {
-                            if let Some(last_slash) =
-                                bun_core::strings::index_of_char_usize(&remainder[i + 1..], b'/')
-                            {
-                                let last_slash = last_slash as usize;
-                                example_tag = ExampleTag::GithubRepository;
-                                break 'brk strings::trim(
-                                    &remainder[0..i + 1 + last_slash],
-                                    b"# \r\t",
-                                );
-                            } else {
-                                example_tag = ExampleTag::GithubRepository;
-                                break 'brk strings::trim(remainder, b"# \r\t");
-                            }
-                        }
-                    }
+                    break 'brk &home_dir_buf[..len];
                 }
             }
+
+            // "https://github.com/foo/bar", "github.com/foo/bar" or "foo/bar"
+            let remainder = positional
+                .strip_prefix(b"https://github.com/")
+                .or_else(|| positional.strip_prefix(b"github.com/"))
+                .unwrap_or(positional);
+            if let Some(i) = strings::index_of_char_usize(remainder, b'/')
+                && i > 0
+                && !remainder[i + 1..].is_empty()
+            {
+                let end = strings::index_of_char_usize(&remainder[i + 1..], b'/')
+                    .map_or(remainder.len(), |slash| i + 1 + slash);
+                example_tag = ExampleTag::GithubRepository;
+                break 'brk strings::trim(&remainder[..end], b"# \r\t");
+            }
+
             example_tag = ExampleTag::Official;
             break 'brk positional;
         };
@@ -1813,13 +1361,10 @@ impl CreateCommand {
 
 pub(crate) struct ExtractedInfo {
     pub example_tag: ExampleTag,
-    // `&'static` is sound: this borrows either CLI-arena-duped positionals or a
-    // static buffer, both process-lifetime.
+    // A positional or a static buffer, both process-lifetime.
     pub template: &'static [u8],
 }
 
-// Hoisted out of CreateCommand.exec because Rust does not allow
-// capturing-closure-style nested fns and the fn body is large.
 fn file_copier_copy(
     destination_dir_: &bun_sys::Dir,
     walker: &mut bun_sys::walker_skippable::Walker,
@@ -1829,7 +1374,7 @@ fn file_copier_copy(
     #[cfg(windows)] dst_buf: &mut bun_paths::WPathBuffer,
     #[cfg(windows)] src_base_len: usize,
     #[cfg(windows)] src_buf: &mut bun_paths::WPathBuffer,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     while let Some(entry) = walker.next()? {
         #[cfg(windows)]
         {
@@ -1839,18 +1384,15 @@ fn file_copier_copy(
 
             dst_buf[dst_base_len..][..entry.path.len()].copy_from_slice(entry.path);
             dst_buf[dst_base_len + entry.path.len()] = 0;
-            // SAFETY: NUL written at [dst_base_len + entry.path.len()]
             let dst = bun_core::WStr::from_buf(&dst_buf[..], dst_base_len + entry.path.len());
 
             src_buf[src_base_len..][..entry.path.len()].copy_from_slice(entry.path);
             src_buf[src_base_len + entry.path.len()] = 0;
-            // SAFETY: NUL written at [src_base_len + entry.path.len()]
             let src = bun_core::WStr::from_buf(&src_buf[..], src_base_len + entry.path.len());
 
             match entry.kind {
                 bun_sys::FileKind::Directory => {
-                    // SAFETY: `src`/`dst` are NUL-terminated wide strings built into
-                    // `src_buf`/`dst_buf` above; raw Win32 FFI.
+                    // SAFETY: `src`/`dst` are NUL-terminated wide strings.
                     if unsafe {
                         bun_sys::windows::CreateDirectoryExW(
                             src.as_ptr(),
@@ -1863,13 +1405,11 @@ fn file_copier_copy(
                     }
                 }
                 bun_sys::FileKind::File => {
-                    // Capture `node_` as a raw pointer so the defer closure
-                    // doesn't hold a unique borrow across the error-path `node_.end()` below.
+                    // A raw pointer, so that the guard holds no unique borrow across `node_.end()` below.
                     let node_ptr: *mut ProgressNode = node_;
                     // SAFETY: `node_` outlives this match arm; single-threaded progress access.
                     scopeguard::defer! { unsafe { (*node_ptr).complete_one() } }
-                    // SAFETY: `src`/`dst` are NUL-terminated wide strings built into
-                    // `src_buf`/`dst_buf` above; raw Win32 FFI.
+                    // SAFETY: `src`/`dst` are NUL-terminated wide strings.
                     if unsafe { bun_sys::windows::CopyFileW(src.as_ptr(), dst.as_ptr(), 0) }
                         == bun_sys::windows::FALSE
                     {
@@ -1884,25 +1424,14 @@ fn file_copier_copy(
                             }
                         }
 
-                        use bun_sys::windows::Win32ErrorExt as _;
-                        if let Some(err) = bun_sys::windows::Win32Error::get().to_system_errno() {
-                            Output::err(
-                                err,
-                                "failed to copy file {}",
-                                format_args!(
-                                    "{}",
-                                    bun_core::fmt::fmt_os_path(entry.path, Default::default())
-                                ),
-                            );
-                        } else {
-                            Output::err_generic(
-                                "failed to copy file {}",
-                                format_args!(
-                                    "{}",
-                                    bun_core::fmt::fmt_os_path(entry.path, Default::default())
-                                ),
-                            );
-                        }
+                        Output::err(
+                            bun_sys::windows::last_system_errno(),
+                            "failed to copy file {}",
+                            format_args!(
+                                "{}",
+                                bun_core::fmt::fmt_os_path(entry.path, Default::default())
+                            ),
+                        );
                         node_.end();
                         progress_.refresh();
                         Global::crash();
@@ -1919,47 +1448,26 @@ fn file_copier_copy(
                 continue;
             }
 
-            let outfile = match bun_sys::openat(
-                destination_dir_.fd,
-                entry.path,
-                bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
-                0o666,
-            ) {
-                Ok(f) => f,
-                Err(_) => 'brk: {
-                    let entry_dirname = bun_resolver::Dirname::dirname(entry.path.as_bytes());
-                    if !entry_dirname.is_empty() {
-                        let _ = destination_dir_.make_path(entry_dirname);
-                    }
-                    match bun_sys::openat(
-                        destination_dir_.fd,
-                        entry.path,
-                        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
-                        0o666,
-                    ) {
-                        Ok(f) => break 'brk f,
-                        Err(err) => {
-                            node_.end();
-                            progress_.refresh();
-                            Output::err(
-                                err,
-                                "failed to copy file {}",
-                                format_args!(
-                                    "{}",
-                                    bun_core::fmt::fmt_os_path(
-                                        entry.path.as_bytes(),
-                                        Default::default()
-                                    )
-                                ),
-                            );
-                            Global::crash();
-                        }
-                    }
+            let open_outfile = || {
+                bun_sys::openat(
+                    destination_dir_.fd,
+                    entry.path,
+                    bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
+                    0o666,
+                )
+            };
+            let outfile = match open_outfile().or_else(|_| {
+                let entry_dirname = bun_resolver::Dirname::dirname(entry.path.as_bytes());
+                if !entry_dirname.is_empty() {
+                    let _ = destination_dir_.make_path(entry_dirname);
                 }
+                open_outfile()
+            }) {
+                Ok(f) => f,
+                Err(err) => exit_copy_failed(err, entry.path.as_bytes(), node_, progress_),
             };
             let _close_out = bun_sys::CloseOnDrop::new(outfile);
-            // Capture `node_` as a raw pointer so the defer body
-            // doesn't hold a unique borrow across the error-path `node_.end()` below.
+            // A raw pointer, so that the guard holds no unique borrow across `node_.end()` below.
             let node_ptr: *mut ProgressNode = node_;
             // SAFETY: `node_` outlives this loop body; single-threaded progress access.
             scopeguard::defer! { unsafe { (*node_ptr).complete_one() } }
@@ -1967,35 +1475,39 @@ fn file_copier_copy(
             let infile = bun_sys::openat(entry.dir, entry.basename, bun_sys::O::RDONLY, 0)?;
             let _close_in = bun_sys::CloseOnDrop::new(infile);
 
-            // Assumption: you only really care about making sure something that was executable is still executable
-            match bun_sys::fstat(infile) {
-                Err(_) => {}
-                Ok(stat) => {
-                    let _ = bun_sys::fchmod(outfile, stat.st_mode as bun_core::Mode);
-                }
+            // What was executable stays executable.
+            if let Ok(stat) = bun_sys::fstat(infile) {
+                let _ = bun_sys::fchmod(outfile, stat.st_mode as bun_core::Mode);
             }
 
             if let Err(err) = CopyFile::copy_file(infile, outfile) {
-                node_.end();
-                progress_.refresh();
-                Output::err(
-                    err,
-                    "failed to copy file {}",
-                    format_args!(
-                        "{}",
-                        bun_core::fmt::fmt_os_path(entry.path.as_bytes(), Default::default())
-                    ),
-                );
-                Global::crash();
+                exit_copy_failed(err, entry.path.as_bytes(), node_, progress_);
             }
         }
     }
     Ok(())
 }
 
+#[cfg(not(windows))]
+#[cold]
+fn exit_copy_failed(
+    err: bun_sys::Error,
+    path: &[u8],
+    node: &mut ProgressNode,
+    progress: &mut Progress,
+) -> ! {
+    node.end();
+    progress.refresh();
+    Output::err(
+        err,
+        "failed to copy file {}",
+        format_args!("{}", bun_core::fmt::fmt_os_path(path, Default::default())),
+    );
+    Global::crash();
+}
+
 struct Analyzer<'a> {
-    ctx: &'a Command::Context<'a>,
-    example_tag: ExampleTag,
+    overwrite: bool,
     entry_point: &'a [u8],
     node: &'a mut ProgressNode,
 }
@@ -2004,23 +1516,22 @@ impl bun_bundler::bundle_v2::OnDependenciesAnalyze for Analyzer<'_> {
     fn on_analyze(
         &mut self,
         result: &mut bun_bundler::bundle_v2::DependenciesScannerResult<'_, '_>,
-    ) -> Result<(), bun_core::Error> {
-        let this = self;
-        this.node.end();
+    ) -> Result<(), bun_bundler::Error> {
+        self.node.end();
 
-        SourceFileProjectGenerator::generate(this.ctx, this.example_tag, this.entry_point, result)
+        SourceFileProjectGenerator::generate(self.overwrite, self.entry_point, result)
+            .map_err(Into::into)
     }
 }
 
 fn run_on_entry_point(
-    ctx: &Command::Context,
-    example_tag: ExampleTag,
+    ctx: Command::Context<'_>,
+    overwrite: bool,
     entry_point: &[u8],
     node: &mut ProgressNode,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     let mut analyzer = Analyzer {
-        ctx,
-        example_tag,
+        overwrite,
         entry_point,
         node,
     };
@@ -2029,188 +1540,111 @@ fn run_on_entry_point(
         &mut analyzer,
         vec![Box::<[u8]>::from(entry_point)].into_boxed_slice(),
     );
-    crate::cli::build_command::BuildCommand::exec(crate::cli::Command::get(), Some(&fetcher))
+    crate::cli::build_command::BuildCommand::exec(ctx, Some(&fetcher))
 }
 
-pub struct Example {
-    // `&'static` is sound for these three fields: they borrow either static
-    // literals, the process-lifetime CLI arena (`cli_arena()` — remote
-    // examples JSON), or `filesystem.filename_store` (local examples).
+pub(crate) struct Example {
+    // Static literals, the CLI arena (remote examples) or `filesystem.filename_store` (local ones).
     pub name: &'static [u8],
-    pub version: &'static [u8],
-    pub description: &'static [u8],
-    pub local: bool,
-}
-
-impl Default for Example {
-    fn default() -> Self {
-        Self {
-            name: b"",
-            version: b"",
-            description: b"",
-            local: false,
-        }
-    }
+    pub(crate) description: &'static [u8],
 }
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
 pub enum ExampleTag {
-    Unknown,
     GithubRepository,
     Official,
     LocalFolder,
     JslikeFile,
 }
 
-bun_core::comptime_string_map! {
-    static EXTENSION_TAG_MAP: ExampleTag = {
-        b".tsx" => ExampleTag::JslikeFile,
-        b".jsx" => ExampleTag::JslikeFile,
-    };
-}
-
 impl ExampleTag {
-    pub fn from_file_extension(extension: &[u8]) -> Option<ExampleTag> {
-        EXTENSION_TAG_MAP.get(extension).copied()
+    pub(crate) fn from_file_extension(extension: &[u8]) -> Option<ExampleTag> {
+        matches!(extension, b".tsx" | b".jsx").then_some(ExampleTag::JslikeFile)
     }
 }
 
-// PORTING.md §Global mutable state: single-threaded CLI scratch state →
-// RacyCell. `URL_` borrows into the `*_BUF` statics so they must remain
-// process-lifetime, not stack locals.
+// Single-threaded CLI scratch state. Static, so that a `URL<'static>` can borrow from the `*_BUF`s.
 static URL_: bun_core::RacyCell<Option<URL<'static>>> = bun_core::RacyCell::new(None);
-static APP_NAME_BUF: bun_core::RacyCell<[u8; 512]> = bun_core::RacyCell::new([0u8; 512]);
 static GITHUB_REPOSITORY_URL_BUF: bun_core::RacyCell<[u8; 1024]> =
     bun_core::RacyCell::new([0u8; 1024]);
-// Static so the borrowed slice satisfies `URL<'static>` for
-// `AsyncHTTP::init_sync` (single-threaded CLI; same pattern as
-// `GITHUB_REPOSITORY_URL_BUF`).
 static NPM_REGISTRY_URL_BUF: bun_core::RacyCell<[u8; 1024]> = bun_core::RacyCell::new([0u8; 1024]);
 
 impl Example {
     const EXAMPLES_URL: &'static [u8] = b"https://registry.npmjs.org/bun-examples-all/latest";
 
-    pub fn print(examples: &[Example], default_app_name: Option<&[u8]>) {
+    pub(crate) fn print(examples: &[Example], default_app_name: Option<&[u8]>) {
         for example in examples {
-            // SAFETY: single-threaded CLI access to static buffer
-            let app_name_buf = unsafe { &mut *APP_NAME_BUF.get() };
-            let app_name: &[u8] = default_app_name.unwrap_or_else(|| {
-                let mut cursor: &mut [u8] = &mut app_name_buf[..];
-                let cap = cursor.len();
-                write!(
-                    &mut cursor,
-                    "./{}-app",
-                    bstr::BStr::new(&example.name[0..example.name.len().min(492)])
-                )
-                .expect("unreachable");
-                let written = cap - cursor.len();
-                &app_name_buf[..written]
-            });
+            let generated = format!(
+                "./{}-app",
+                bstr::BStr::new(&example.name[0..example.name.len().min(492)])
+            );
+            let app_name: &[u8] = default_app_name.unwrap_or(generated.as_bytes());
 
             if !example.description.is_empty() {
                 bun_core::pretty!(
                     "  <r># {}<r>\n  <b>bun create <cyan>{}<r><b> {}<r>\n<d>  \n\n",
-                    bstr::BStr::new(example.description),
-                    bstr::BStr::new(example.name),
-                    bstr::BStr::new(app_name),
+                    bun_core::fmt::escape_control_chars(example.description),
+                    bun_core::fmt::escape_control_chars(example.name),
+                    bun_core::fmt::escape_control_chars(app_name),
                 );
             } else {
                 bun_core::pretty!(
                     "  <r><b>bun create <cyan>{}<r><b> {}<r>\n\n",
-                    bstr::BStr::new(example.name),
-                    bstr::BStr::new(app_name),
+                    bun_core::fmt::escape_control_chars(example.name),
+                    bun_core::fmt::escape_control_chars(app_name),
                 );
             }
         }
     }
 
-    pub fn fetch_all_local_and_remote(
+    pub(crate) fn fetch_all_local_and_remote(
         ctx: &Command::Context,
         mut node: Option<&mut ProgressNode>,
         env_loader: &mut DotEnv::Loader,
         filesystem: &mut fs::FileSystem,
-    ) -> Result<Vec<Example>, bun_core::Error> {
-        let remote_examples = Example::fetch_all(ctx, env_loader, node.as_deref_mut())?;
+    ) -> crate::Result<Vec<Example>> {
+        let mut examples = Example::fetch_all(ctx, env_loader, node.as_deref_mut())?;
         if let Some(node_) = node {
             node_.end();
         }
 
-        let mut examples: Vec<Example> = remote_examples.into_vec();
-        {
-            // SAFETY: single-threaded CLI access to module-level static path buffer
-            let home_dir_buf = unsafe { &mut *HOME_DIR_BUF.get() };
-            let mut folders: [bun_sys::Dir; 3] = [
-                bun_sys::Dir::from_fd(bun_sys::Fd::invalid()),
-                bun_sys::Dir::from_fd(bun_sys::Fd::invalid()),
-                bun_sys::Dir::from_fd(bun_sys::Fd::invalid()),
-            ];
-            if let Some(home_dir) = env_loader.map.get(b"BUN_CREATE_DIR") {
-                let parts = [home_dir];
-                let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
-                folders[0] = bun_sys::Dir::open(outdir_path)
-                    .unwrap_or_else(|_| bun_sys::Dir::from_fd(bun_sys::Fd::invalid()));
-            }
+        // SAFETY: single-threaded CLI access to module-level static path buffer
+        let home_dir_buf = unsafe { &mut *HOME_DIR_BUF.get() };
+        let create_dir = env_loader.map.get(b"BUN_CREATE_DIR");
+        let home_dir = env_loader.map.get(bun_core::env_var::HOME.key());
+        let folders: [Option<bun_sys::Dir>; 3] = [
+            create_dir.map(|dir| vec![dir]),
+            Some(vec![filesystem.top_level_dir(), BUN_CREATE_DIR]),
+            home_dir.map(|dir| vec![dir, BUN_CREATE_DIR]),
+        ]
+        .map(|parts| -> Option<bun_sys::Dir> {
+            bun_sys::Dir::open(filesystem.abs_buf(&parts?, home_dir_buf)).ok()
+        });
 
-            {
-                let parts = [filesystem.top_level_dir, BUN_CREATE_DIR];
-                let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
-                folders[1] = bun_sys::Dir::open(outdir_path)
-                    .unwrap_or_else(|_| bun_sys::Dir::from_fd(bun_sys::Fd::invalid()));
-            }
+        for folder in folders.iter().flatten() {
+            let mut iter = bun_sys::dir_iterator::iterate(folder.fd());
 
-            if let Some(home_dir) = env_loader.map.get(bun_core::env_var::HOME.key()) {
-                let parts = [home_dir, BUN_CREATE_DIR];
-                let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
-                folders[2] = bun_sys::Dir::open(outdir_path)
-                    .unwrap_or_else(|_| bun_sys::Dir::from_fd(bun_sys::Fd::invalid()));
-            }
+            while let Ok(Some(entry)) = iter.next() {
+                if entry.kind != bun_sys::FileKind::Directory
+                    || SKIP_DIRS.contains(&entry.name.slice())
+                {
+                    continue;
+                }
 
-            // subfolders with package.json
-            for folder in &folders {
-                if folder.fd() != bun_sys::Fd::invalid() {
-                    let mut iter = bun_sys::dir_iterator::iterate(folder.fd());
+                let entry_name = entry.name.slice_u8();
+                let len = entry_name.len() + 1 + b"package.json".len();
+                home_dir_buf[..entry_name.len()].copy_from_slice(entry_name);
+                home_dir_buf[entry_name.len()] = bun_paths::SEP;
+                home_dir_buf[entry_name.len() + 1..len].copy_from_slice(b"package.json");
+                home_dir_buf[len] = 0;
+                let path = bun_core::ZStr::from_buf(&home_dir_buf[..], len);
 
-                    'loop_: while let Some(entry) = iter.next().ok().flatten() {
-                        let entry_name = entry.name.slice_u8();
-                        match entry.kind {
-                            bun_sys::FileKind::Directory => {
-                                for skip_dir in SKIP_DIRS {
-                                    // `SKIP_DIRS` entries are already OS-path slices; compare directly.
-                                    if entry.name.slice() == *skip_dir {
-                                        continue 'loop_;
-                                    }
-                                }
-
-                                home_dir_buf[..entry_name.len()].copy_from_slice(entry_name);
-                                home_dir_buf[entry_name.len()] = bun_paths::SEP;
-                                home_dir_buf[entry_name.len() + 1..][..b"package.json".len()]
-                                    .copy_from_slice(b"package.json");
-                                home_dir_buf[entry_name.len() + 1 + b"package.json".len()] = 0;
-
-                                // SAFETY: NUL written at [entry_name.len() + 1 + "package.json".len()]
-                                let path = unsafe {
-                                    bun_core::ZStr::from_raw_mut(
-                                        home_dir_buf.as_mut_ptr(),
-                                        entry_name.len() + 1 + b"package.json".len(),
-                                    )
-                                };
-
-                                if !bun_sys::faccessat(folder, path).unwrap_or(false) {
-                                    continue 'loop_;
-                                }
-
-                                examples.push(Example {
-                                    name: filesystem.filename_store.append_slice(entry_name)?,
-                                    version: b"",
-                                    local: true,
-                                    description: b"",
-                                });
-                                continue 'loop_;
-                            }
-                            _ => continue,
-                        }
-                    }
+                if bun_sys::faccessat(folder, path).unwrap_or(false) {
+                    examples.push(Example {
+                        name: filesystem.filename_store.append_slice(entry_name)?,
+                        description: b"",
+                    });
                 }
             }
         }
@@ -2218,19 +1652,18 @@ impl Example {
         Ok(examples)
     }
 
-    pub fn fetch_from_github(
-        _ctx: &Command::Context,
+    pub(crate) fn fetch_from_github(
         env_loader: &mut DotEnv::Loader,
         name: &[u8],
         refresher: &mut Progress,
         progress: &mut ProgressNode,
-    ) -> Result<MutableString, bun_core::Error> {
-        let owner_i = bun_core::strings::index_of_char_usize(name, b'/').unwrap() as usize;
+    ) -> crate::Result<MutableString> {
+        let owner_i = strings::index_of_char_usize(name, b'/').unwrap();
         let owner = &name[0..owner_i];
         let mut repository = &name[owner_i + 1..];
 
-        if let Some(i) = bun_core::strings::index_of_char_usize(repository, b'/') {
-            repository = &repository[0..i as usize];
+        if let Some(i) = strings::index_of_char_usize(repository, b'/') {
+            repository = &repository[0..i];
         }
 
         progress.name = ProgressBuf::pretty(format_args!(
@@ -2270,32 +1703,30 @@ impl Example {
             .map
             .get(b"GITHUB_TOKEN")
             .or_else(|| env_loader.map.get(b"GITHUB_ACCESS_TOKEN"))
+            && !access_token.is_empty()
         {
-            if !access_token.is_empty() {
-                let mut buf = Vec::new();
-                write!(
-                    &mut buf,
-                    "AuthorizationBearer {}",
-                    bstr::BStr::new(access_token)
-                )?;
-                headers_buf = crate::cli::cli_dupe(&buf);
-                header_entries.append(bun_http::headers::Entry {
-                    name: bun_http_types::ETag::StringPointer {
-                        offset: 0,
-                        length: u32::try_from(b"Authorization".len()).expect("int cast"),
-                    },
-                    value: bun_http_types::ETag::StringPointer {
-                        offset: u32::try_from(b"Authorization".len()).expect("int cast"),
-                        length: u32::try_from(headers_buf.len() - b"Authorization".len())
-                            .expect("int cast"),
-                    },
-                })?;
-            }
+            let mut buf = Vec::new();
+            write!(
+                &mut buf,
+                "AuthorizationBearer {}",
+                bstr::BStr::new(access_token)
+            )?;
+            headers_buf = crate::cli::cli_dupe(&buf);
+            header_entries.append(bun_http::headers::Entry {
+                name: bun_http_types::ETag::StringPointer {
+                    offset: 0,
+                    length: u32::try_from(b"Authorization".len()).expect("int cast"),
+                },
+                value: bun_http_types::ETag::StringPointer {
+                    offset: u32::try_from(b"Authorization".len()).expect("int cast"),
+                    length: u32::try_from(headers_buf.len() - b"Authorization".len())
+                        .expect("int cast"),
+                },
+            })?;
         }
 
         let http_proxy = env_loader.get_http_proxy_for(&api_url);
-        let mutable: &'static mut MutableString =
-            crate::cli::cli_arena().alloc(MutableString::init(8192)?);
+        let mut mutable = MutableString::default();
 
         // ensure very stable memory address
         let mut async_http = Box::new(HTTP::AsyncHTTP::init_sync(
@@ -2303,45 +1734,41 @@ impl Example {
             api_url,
             header_entries,
             headers_buf,
-            mutable,
             b"",
             http_proxy,
-            None,
+            HTTP::ProxySettings::from_env(env_loader),
             HTTP::FetchRedirect::Follow,
         ));
         async_http.client.progress_node = Some(core::ptr::NonNull::from(&mut *progress));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
-        let response = async_http.send_sync()?;
+        let response = async_http.send_sync(&mut mutable)?;
 
-        match response.status_code {
-            404 => return Err(bun_core::err!("GitHubRepositoryNotFound")),
-            403 => return Err(bun_core::err!("HTTPForbidden")),
-            429 => return Err(bun_core::err!("HTTPTooManyRequests")),
-            499..=599 => return Err(bun_core::err!("NPMIsDown")),
+        match response.status_code() {
+            404 => return Err(crate::Error::GitHubRepositoryNotFound),
+            403 => return Err(crate::Error::HTTPForbidden),
+            429 => return Err(crate::Error::HTTPTooManyRequests),
+            499..=599 => return Err(crate::Error::GitHubIsDown),
             200 => {}
-            _ => return Err(bun_core::err!("HTTPError")),
+            _ => return Err(crate::Error::HTTPError),
         }
 
-        let content_type: &[u8] = response.headers.get(b"content-type").unwrap_or(b"");
-        let is_expected_content_type = content_type == b"application/x-gzip";
-
-        if !is_expected_content_type {
+        let content_type: &[u8] = response.header(b"content-type").unwrap_or(b"");
+        if content_type != b"application/x-gzip" {
             progress.end();
             refresher.refresh();
 
             if !content_type.is_empty() {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r>: Unexpected content type from GitHub: {}",
-                    bstr::BStr::new(content_type),
+                    bun_core::fmt::escape_control_chars(content_type),
                 );
-                Global::crash();
             } else {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r>: Invalid response from GitHub (missing content type)",
                 );
-                Global::crash();
             }
+            Global::crash();
         }
 
         if mutable.list.is_empty() {
@@ -2354,23 +1781,22 @@ impl Example {
             Global::crash();
         }
 
-        Ok(mutable.clone()?)
+        Ok(mutable)
     }
 
-    pub fn fetch(
+    pub(crate) fn fetch(
         ctx: &Command::Context,
         env_loader: &mut DotEnv::Loader,
         name: &[u8],
         refresher: &mut Progress,
         progress: &mut ProgressNode,
-    ) -> Result<MutableString, bun_core::Error> {
+    ) -> crate::Result<MutableString> {
         progress.name = b"Fetching package.json";
         refresher.refresh();
 
         // SAFETY: single-threaded CLI access to static buffer.
         let url_buf = unsafe { &mut *NPM_REGISTRY_URL_BUF.get() };
-        let mutable: &'static mut MutableString =
-            crate::cli::cli_arena().alloc(MutableString::init(2048)?);
+        let mut mutable = MutableString::default();
 
         let api_url = URL::parse({
             let mut cursor: &mut [u8] = &mut url_buf[..];
@@ -2383,55 +1809,46 @@ impl Example {
             let written = cap - cursor.len();
             &url_buf[..written]
         });
-        // SAFETY: `api_url` borrows from the process-global `NPM_REGISTRY_URL_BUF`;
-        // erase the local reborrow lifetime for storage in `URL_` /
-        // `AsyncHTTP::init_sync` (single-threaded CLI; same as
-        // `fetch_from_github`).
+        // SAFETY: `api_url` borrows from the process-global `NPM_REGISTRY_URL_BUF`; single-threaded CLI.
         unsafe {
             *URL_.get() = Some(api_url.erase_lifetime());
         }
 
-        // SAFETY: `http_proxy` borrows from `env_loader`'s arena-backed map
-        // (see `DotEnv::Loader::init(cli_arena().alloc(...))` in `exec`); erase
-        // to `'static` for `AsyncHTTP::init_sync` — same as `fetch_from_github`.
+        // SAFETY: single-threaded CLI access to static URL_ (set just above)
         let mut http_proxy: Option<URL<'static>> = env_loader
             .get_http_proxy_for(unsafe { (*URL_.get()).as_ref().unwrap() })
-            .map(|u| unsafe { u.erase_lifetime() });
+            .map(|u| URL::parse_single_reader(crate::cli::cli_dupe(u.href)));
 
-        // ensure very stable memory address
-        let async_http: &mut HTTP::AsyncHTTP =
-            crate::cli::cli_arena().alloc(HTTP::AsyncHTTP::init_sync(
-                HTTP::Method::GET,
-                // SAFETY: single-threaded CLI access to static URL_ (set just above)
-                unsafe { (*URL_.get()).clone() }.unwrap(),
-                Default::default(),
-                b"",
-                mutable,
-                b"",
-                http_proxy,
-                None,
-                HTTP::FetchRedirect::Follow,
-            ));
+        let mut async_http = HTTP::AsyncHTTP::init_sync(
+            HTTP::Method::GET,
+            // SAFETY: single-threaded CLI access to static URL_ (set just above)
+            unsafe { (*URL_.get()).clone() }.unwrap(),
+            Default::default(),
+            b"",
+            b"",
+            http_proxy,
+            HTTP::ProxySettings::from_env(env_loader),
+            HTTP::FetchRedirect::Follow,
+        );
         async_http.client.progress_node = Some(core::ptr::NonNull::from(&mut *progress));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
-        let mut response = async_http.send_sync()?;
+        let mut response = async_http.send_sync(&mut mutable)?;
 
-        match response.status_code {
-            404 => return Err(bun_core::err!("ExampleNotFound")),
-            403 => return Err(bun_core::err!("HTTPForbidden")),
-            429 => return Err(bun_core::err!("HTTPTooManyRequests")),
-            499..=599 => return Err(bun_core::err!("NPMIsDown")),
+        match response.status_code() {
+            404 => return Err(crate::Error::ExampleNotFound),
+            403 => return Err(crate::Error::HTTPForbidden),
+            429 => return Err(crate::Error::HTTPTooManyRequests),
+            499..=599 => return Err(crate::Error::NPMIsDown),
             200 => {}
-            _ => return Err(bun_core::err!("HTTPError")),
+            _ => return Err(crate::Error::HTTPError),
         }
 
         progress.name = b"Parsing package.json";
         refresher.refresh();
         bun_ast::initialize_store();
         let source = bun_ast::Source::init_path_string(b"package.json", mutable.list.as_slice());
-        // SAFETY: single-threaded CLI dispatch; no other borrow of the
-        // process-static `Cli::LOG_` is live across this scope.
+        // SAFETY: single-threaded CLI dispatch; no other borrow of `Cli::LOG_` is live in this scope.
         let log = unsafe { ctx.log_mut() };
         let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
         let expr = match JSON::parse_utf8(&source, log, bump) {
@@ -2442,11 +1859,10 @@ impl Example {
 
                 if log.errors > 0 {
                     let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-                    Global::exit(1);
                 } else {
                     bun_core::pretty_errorln!("Error parsing package: <r><red>{}<r>", err.name(),);
-                    Global::exit(1);
                 }
+                Global::exit(1);
             }
         };
 
@@ -2457,20 +1873,13 @@ impl Example {
             let _ = log.print(std::ptr::from_mut(Output::error_writer()));
             Global::exit(1);
         }
-        let tarball_url: &[u8] = 'brk: {
-            if let Some(q) = expr.as_property(b"dist") {
-                if let Some(p) = q.expr.as_property(b"tarball") {
-                    if let Some(s) = p.expr.as_utf8_string_literal() {
-                        if !s.is_empty()
-                            && (strings::starts_with(s, b"https://")
-                                || strings::starts_with(s, b"http://"))
-                        {
-                            break 'brk crate::cli::cli_dupe(s);
-                        }
-                    }
-                }
-            }
-
+        let tarball_url: &[u8] = if let Some(q) = expr.as_property(b"dist")
+            && let Some(p) = q.expr.as_property(b"tarball")
+            && let Some(s) = p.expr.as_utf8_string_literal()
+            && (strings::starts_with(s, b"https://") || strings::starts_with(s, b"http://"))
+        {
+            crate::cli::cli_dupe(s)
+        } else {
             progress.end();
             refresher.refresh();
 
@@ -2483,27 +1892,23 @@ impl Example {
         progress.name = b"Downloading tarball";
         refresher.refresh();
 
-        // reuse mutable buffer
-        // safe because the only thing we care about is the tarball url
+        // The tarball url was copied out of it.
         mutable.reset();
 
-        // ensure very stable memory address
         let parsed_tarball_url = URL::parse(tarball_url);
 
-        // SAFETY: see note on `http_proxy` above — env-loader-backed `'static`.
         http_proxy = env_loader
             .get_http_proxy_for(&parsed_tarball_url)
-            .map(|u| unsafe { u.erase_lifetime() });
+            .map(|u| URL::parse_single_reader(crate::cli::cli_dupe(u.href)));
 
-        *async_http = HTTP::AsyncHTTP::init_sync(
+        async_http = HTTP::AsyncHTTP::init_sync(
             HTTP::Method::GET,
             parsed_tarball_url,
             Default::default(),
             b"",
-            mutable,
             b"",
             http_proxy,
-            None,
+            HTTP::ProxySettings::from_env(env_loader),
             HTTP::FetchRedirect::Follow,
         );
         async_http.client.progress_node = Some(core::ptr::NonNull::from(&mut *progress));
@@ -2511,45 +1916,49 @@ impl Example {
 
         refresher.maybe_refresh();
 
-        response = async_http.send_sync()?;
+        response = async_http.send_sync(&mut mutable)?;
 
         refresher.maybe_refresh();
 
-        if response.status_code != 200 {
+        if response.status_code() != 200 {
             progress.end();
             refresher.refresh();
             bun_core::pretty_errorln!(
                 "Error fetching tarball: <r><red>{}<r>",
-                response.status_code,
+                response.status_code(),
             );
             Global::exit(1);
         }
 
         refresher.refresh();
 
-        Ok(mutable.clone()?)
+        Ok(mutable)
     }
 
-    pub fn fetch_all(
+    pub(crate) fn fetch_all(
         ctx: &Command::Context,
         env_loader: &mut DotEnv::Loader,
         progress_node: Option<&mut ProgressNode>,
-    ) -> Result<Box<[Example]>, bun_core::Error> {
+    ) -> crate::Result<Vec<Example>> {
         let url = URL::parse(Self::EXAMPLES_URL);
         let http_proxy = env_loader.get_http_proxy_for(&url);
 
+        // Never freed because the returned `Example` names borrow from the body.
         let mutable: &'static mut MutableString =
-            crate::cli::cli_arena().alloc(MutableString::init(2048)?);
+            crate::cli::cli_arena().alloc(MutableString::default());
+        bun_core::asan::register_root_region(
+            std::ptr::from_ref::<MutableString>(mutable).cast(),
+            core::mem::size_of::<MutableString>(),
+        );
 
         let mut async_http = Box::new(HTTP::AsyncHTTP::init_sync(
             HTTP::Method::GET,
             url,
             Default::default(),
             b"",
-            mutable,
             b"",
             http_proxy,
-            None,
+            HTTP::ProxySettings::from_env(env_loader),
             HTTP::FetchRedirect::Follow,
         ));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
@@ -2558,51 +1967,47 @@ impl Example {
             async_http.client.progress_node = progress_node.map(core::ptr::NonNull::from);
         }
 
-        let response = match async_http.send_sync() {
+        let response = match async_http.send_sync(mutable) {
             Ok(r) => r,
             Err(err) => {
-                if err == bun_core::err!("WouldBlock") {
+                if err.name() == "EAGAIN" {
                     bun_core::pretty_errorln!(
                         "Request timed out while trying to fetch examples list. Please try again",
                     );
-                    Global::exit(1);
                 } else {
                     bun_core::pretty_errorln!(
                         "<r><red>{}<r> while trying to fetch examples list. Please try again",
                         err.name(),
                     );
-                    Global::exit(1);
                 }
+                Global::exit(1);
             }
         };
 
-        if response.status_code != 200 {
+        if response.status_code() != 200 {
             bun_core::pretty_errorln!(
                 "<r><red>{} {}<r> fetching examples :( ",
-                response.status_code,
-                bstr::BStr::new(mutable.list.as_slice()),
+                response.status_code(),
+                bun_core::fmt::escape_control_chars_multiline(mutable.list.as_slice()),
             );
             Global::exit(1);
         }
 
         bun_ast::initialize_store();
         let source = bun_ast::Source::init_path_string(b"examples.json", mutable.list.as_slice());
-        // Use the process-lifetime CLI arena (examples slices borrow from it
-        // and the CLI exits shortly after).
+        // Process-lifetime: the examples borrow from it.
         let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
-        // SAFETY: single-threaded CLI dispatch; no other borrow of the
-        // process-static `Cli::LOG_` is live across this scope.
+        // SAFETY: single-threaded CLI dispatch; no other borrow of `Cli::LOG_` is live in this scope.
         let log = unsafe { ctx.log_mut() };
         let examples_object = match JSON::parse_utf8(&source, log, bump) {
             Ok(e) => e,
             Err(err) => {
                 if log.errors > 0 {
                     let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-                    Global::exit(1);
                 } else {
                     bun_core::pretty_errorln!("Error parsing examples: <r><red>{}<r>", err.name(),);
-                    Global::exit(1);
                 }
+                Global::exit(1);
             }
         };
 
@@ -2611,70 +2016,30 @@ impl Example {
             Global::exit(1);
         }
 
-        if let Some(q) = examples_object.as_property(b"examples") {
-            if q.expr.data.is_e_object() {
-                let count = q
-                    .expr
+        if let Some(q) = examples_object.as_property(b"examples")
+            && let Some(object) = q.expr.data.e_object()
+        {
+            let to_example = |property: &bun_ast::G::Property| {
+                let name: &'static [u8] = property
+                    .key
+                    .expect("infallible: prop has key")
                     .data
-                    .e_object()
+                    .e_string()
                     .expect("infallible: variant checked")
-                    .properties
-                    .len_u32() as usize;
-
-                let mut list: Box<[Example]> = (0..count).map(|_| Example::default()).collect();
-                for (i, property) in q
-                    .expr
                     .data
-                    .e_object()
-                    .expect("infallible: variant checked")
-                    .properties
-                    .slice()
-                    .iter()
-                    .enumerate()
-                {
-                    let name = property
-                        .key
-                        .expect("infallible: prop has key")
-                        .data
-                        .e_string()
-                        .expect("infallible: variant checked")
-                        .data
-                        .slice();
-                    list[i] = Example {
-                        name: if let Some(slash) =
-                            bun_core::strings::index_of_char_usize(name, b'/')
-                        {
-                            &name[slash as usize + 1..]
-                        } else {
-                            name
-                        },
-                        version: property
-                            .value
-                            .unwrap()
-                            .as_property(b"version")
-                            .unwrap()
-                            .expr
-                            .data
-                            .e_string()
-                            .unwrap()
-                            .data
-                            .slice(),
-                        description: property
-                            .value
-                            .unwrap()
-                            .as_property(b"description")
-                            .unwrap()
-                            .expr
-                            .data
-                            .e_string()
-                            .unwrap()
-                            .data
-                            .slice(),
-                        local: false,
-                    };
+                    .slice();
+                Example {
+                    name: strings::index_of_char_usize(name, b'/')
+                        .map_or(name, |slash| &name[slash + 1..]),
+                    description: property
+                        .value
+                        .and_then(|v| v.as_property(b"description"))
+                        .and_then(|q| q.expr.data.e_string())
+                        .map(|s| s.data.slice())
+                        .unwrap_or(b""),
                 }
-                return Ok(list);
-            }
+            };
+            return Ok(object.properties.slice().iter().map(to_example).collect());
         }
 
         bun_core::pretty_errorln!(
@@ -2685,13 +2050,13 @@ impl Example {
     }
 }
 
-pub(crate) struct CreateListExamplesCommand;
+struct CreateListExamplesCommand;
 
 impl CreateListExamplesCommand {
-    pub(crate) fn exec(ctx: &Command::Context) -> Result<(), bun_core::Error> {
-        let filesystem = fs::FileSystem::init(None)?;
-        let mut env_loader: DotEnv::Loader =
-            { DotEnv::Loader::init(crate::cli::cli_arena().alloc(DotEnv::Map::init())) };
+    fn exec(ctx: &Command::Context) -> crate::Result<()> {
+        // SAFETY: FileSystem::init returns the process-global singleton; valid for 'static.
+        let filesystem = unsafe { &mut *fs::FileSystem::init(None)? };
+        let mut env_loader = DotEnv::Loader::init();
 
         env_loader.load_process()?;
 
@@ -2699,13 +2064,10 @@ impl CreateListExamplesCommand {
             supports_ansi_escape_codes: Output::enable_ansi_colors_stderr(),
             ..Default::default()
         };
-        // `Progress::start` returns `&mut Node` borrowing `progress`; detach
-        // via raw pointer so `progress.refresh()` can re-borrow below.
+        // A raw pointer, so that `progress.refresh()` can borrow `progress` again.
         let node: *mut ProgressNode = progress.start(b"Fetching manifest", 0);
         progress.refresh();
 
-        // SAFETY: FileSystem::init returns the process-global singleton; valid for 'static.
-        let filesystem = unsafe { &mut *filesystem };
         // SAFETY: `node` points into `progress`, which outlives this call; single-threaded.
         let examples = Example::fetch_all_local_and_remote(
             ctx,
@@ -2724,16 +2086,11 @@ impl CreateListExamplesCommand {
             "<r><d>#<r> You can also paste a GitHub repository:\n\n  <b>bun create <cyan>ahfarmer/calculator calc<r>\n",
         );
 
-        if let Some(homedir) = env_loader.map.get(bun_core::env_var::HOME.key()) {
-            bun_core::prettyln!(
-                "<d>This command is completely optional. To add a new local template, create a folder in {}/.bun-create/. To publish a new template, git clone https://github.com/oven-sh/bun, add a new folder to the \"examples\" folder, and submit a PR.<r>",
-                bstr::BStr::new(homedir),
-            );
-        } else {
-            bun_core::prettyln!(
-                "<d>This command is completely optional. To add a new local template, create a folder in $HOME/.bun-create/. To publish a new template, git clone https://github.com/oven-sh/bun, add a new folder to the \"examples\" folder, and submit a PR.<r>",
-            );
-        }
+        let homedir = env_loader.map.get(bun_core::env_var::HOME.key());
+        bun_core::prettyln!(
+            "<d>This command is completely optional. To add a new local template, create a folder in {}/.bun-create/. To publish a new template, git clone https://github.com/oven-sh/bun, add a new folder to the \"examples\" folder, and submit a PR.<r>",
+            bstr::BStr::new(homedir.unwrap_or(b"$HOME")),
+        );
 
         Output::flush();
         Ok(())
@@ -2742,130 +2099,72 @@ impl CreateListExamplesCommand {
 
 struct GitHandler;
 
-static SUCCESS: AtomicU32 = AtomicU32::new(0);
-// bun_threading has no top-level Thread wrapper yet,
-// so use std::thread::JoinHandle directly (CLI-only, no JSC interaction).
-// PORTING.md §Global mutable state: written in `spawn`, taken in `wait`, both
-// on the main CLI thread → RacyCell.
-static THREAD: bun_core::RacyCell<Option<std::thread::JoinHandle<()>>> =
-    bun_core::RacyCell::new(None);
-
 impl GitHandler {
-    pub(crate) fn spawn(destination: &[u8], path: &[u8], verbose: bool) {
-        SUCCESS.store(0, Ordering::Relaxed);
-
-        // Own copies so the spawned closure is `'static` without any lifetime
-        // extension.
-        let destination: Box<[u8]> = Box::from(destination);
-        let path: Box<[u8]> = Box::from(path);
-        let thread = match std::thread::Builder::new()
-            .spawn(move || Self::spawn_thread(&destination, &path, verbose))
-        {
-            Ok(t) => t,
-            Err(err) => {
-                bun_core::pretty_errorln!("<r><red>{}<r>", err);
-                Global::exit(1);
-            }
-        };
-        // SAFETY: single-threaded CLI; written once before wait()
-        unsafe { *THREAD.get() = Some(thread) };
-    }
-
-    fn spawn_thread(destination: &[u8], path: &[u8], verbose: bool) {
-        Output::Source::configure_named_thread(bun_core::zstr!("git"));
-        let outcome = if verbose {
-            Self::run::<true>(destination, path).unwrap_or(false)
-        } else {
-            Self::run::<false>(destination, path).unwrap_or(false)
-        };
-
-        SUCCESS.store(if outcome { 1 } else { 2 }, Ordering::Release);
-        Futex::wake(&SUCCESS, 1);
-        Output::flush();
-    }
-
-    pub(crate) fn wait() -> bool {
-        while SUCCESS.load(Ordering::Acquire) == 0 {
-            let _ = Futex::wait(&SUCCESS, 0, Some(1000));
-        }
-
-        let outcome = SUCCESS.load(Ordering::Acquire) == 1;
-        // SAFETY: THREAD set in spawn() on this same thread before wait() called
-        let _ = unsafe { (*THREAD.get()).take() }.unwrap().join();
-        outcome
-    }
-
-    pub(crate) fn run<const VERBOSE: bool>(
-        destination: &[u8],
-        path: &[u8],
-    ) -> Result<bool, bun_core::Error> {
+    fn run(destination: &[u8], path: &[u8], verbose: bool) -> crate::Result<bool> {
         let git_start = bun_core::time::nano_timestamp();
 
-        // Not sure why...
-        // But using libgit for this operation is slower than the CLI!
-        // Used to have a feature flag to try it but was removed:
-        // https://github.com/oven-sh/bun/commit/deafd3d0d42fb8d7ddf2b06cde2d7c7ee8bc7144
-        //
-        // ~/Build/throw
-        // ❯ hyperfine "bun create react3 app --force --no-install" --prepare="rm -rf app"
-        // Benchmark #1: bun create react3 app --force --no-install
-        //   Time (mean ± σ):     974.6 ms ±   6.8 ms    [User: 170.5 ms, System: 798.3 ms]
-        //   Range (min … max):   960.8 ms … 984.6 ms    10 runs
-        //
-        // ❯ mv /usr/local/opt/libgit2/lib/libgit2.dylib /usr/local/opt/libgit2/lib/libgit2.dylib.1
-        //
-        // ~/Build/throw
-        // ❯ hyperfine "bun create react3 app --force --no-install" --prepare="rm -rf app"
-        // Benchmark #1: bun create react3 app --force --no-install
-        //   Time (mean ± σ):     306.7 ms ±   6.1 ms    [User: 31.7 ms, System: 269.8 ms]
-        //   Range (min … max):   299.5 ms … 318.8 ms    10 runs
-
-        // SAFETY: single-threaded CLI access to module-level static path buffer (note: this fn
-        // may run on the git thread; BUN_PATH_BUF is also touched on main thread for `--open`.
-        // The two uses are sequenced — git runs before `--open` block.)
+        // The git CLI: libgit2 took three times as long for this.
+        // SAFETY: single-threaded CLI access to module-level static path buffer
         let bun_path_buf = unsafe { &mut *BUN_PATH_BUF.get() };
-        // `bun.spawnSync` on Windows drives `uv_spawn` and needs a uv loop. This fn
-        // runs on the dedicated git thread (see `GitHandler::spawn`), so use the
-        // *thread-local* `MiniEventLoop` singleton — `init_global` is `thread_local!`-backed,
-        // so the main thread's loop is not touched (driving it cross-thread would be libuv UB).
         #[cfg(windows)]
         let win_loop = bun_event_loop::EventLoopHandle::init_mini(
             bun_event_loop::MiniEventLoop::init_global(None, None),
         );
         if let Some(git) = which(bun_path_buf, path, destination, b"git") {
             let git: &[u8] = git.as_bytes();
-            let git_commands: [&[&[u8]]; 3] = [
-                &[git, b"init", b"--quiet"],
-                &[git, b"add", destination, b"--ignore-errors"],
-                &[
-                    git,
-                    b"commit",
-                    b"-am",
-                    b"Initial commit (via bun create)",
-                    b"--quiet",
-                ],
-            ];
 
-            if VERBOSE {
+            if verbose {
                 bun_core::pretty_errorln!("git backend: {}", bstr::BStr::new(git));
             }
 
-            for command in git_commands {
-                let _ = spawn_sync::spawn(&spawn_sync::Options {
-                    argv: command.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
+            let env = DotEnv::Map::for_git_child()?.create_null_delimited_env_map()?;
+            use spawn_sync::SyncStdio::{self, Buffer, Ignore, Inherit};
+            let spawn = |args: &[&[u8]], output: SyncStdio| -> crate::Result<spawn_sync::Result> {
+                Ok(spawn_sync::spawn(&spawn_sync::Options {
+                    argv: core::iter::once(&git)
+                        .chain(args)
+                        .map(|s| Box::<[u8]>::from(*s))
+                        .collect(),
                     cwd: Box::from(destination),
-                    stdin: spawn_sync::SyncStdio::Inherit,
-                    stdout: spawn_sync::SyncStdio::Inherit,
-                    stderr: spawn_sync::SyncStdio::Inherit,
+                    envp: Some(env.as_ptr()),
+                    stdin: Inherit,
+                    stdout: output,
+                    stderr: output,
                     #[cfg(windows)]
                     windows: spawn_sync::WindowsOptions {
                         loop_: win_loop,
                         ..Default::default()
                     },
-                    #[cfg(not(windows))]
-                    windows: (),
                     ..Default::default()
-                })?;
+                })??)
+            };
+
+            if !spawn(&[b"init", b"--quiet"], Inherit)?.is_ok() {
+                return Ok(false);
+            }
+            // `--ignore-errors` still exits non-zero after it skipped a file.
+            let _ = spawn(&[b"add", destination, b"--ignore-errors"], Inherit)?;
+            let commit = spawn(
+                &[
+                    b"commit",
+                    b"-am",
+                    b"Initial commit (via bun create)",
+                    b"--quiet",
+                ],
+                Buffer,
+            )?;
+            if !commit.is_ok() {
+                if spawn(&[b"var", b"GIT_COMMITTER_IDENT"], Ignore)?.is_ok() {
+                    pretty_error!(
+                        "{}{}",
+                        bun_core::fmt::escape_control_chars_multiline(&commit.stdout),
+                        bun_core::fmt::escape_control_chars_multiline(&commit.stderr),
+                    );
+                } else {
+                    bun_core::pretty_errorln!(
+                        "<r><blue>note<r><d>:<r> git has no <b>user.name<r> and <b>user.email<r>, files staged but not committed",
+                    );
+                }
             }
 
             bun_core::pretty_error!("\n");

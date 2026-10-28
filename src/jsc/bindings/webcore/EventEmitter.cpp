@@ -1,4 +1,5 @@
 #include "EventEmitter.h"
+#include "BunClientData.h"
 
 #include "Event.h"
 
@@ -23,21 +24,16 @@ Ref<EventEmitter> EventEmitter::create(ScriptExecutionContext& context)
     return adoptRef(*new EventEmitter(context));
 }
 
-bool EventEmitter::addListener(const Identifier& eventType, Ref<EventListener>&& listener, bool once, bool prepend)
+void EventEmitter::addListener(const Identifier& eventType, Ref<EventListener>&& listener, bool once, bool prepend)
 {
-
-    if (prepend) {
-        if (!ensureEventEmitterData().eventListenerMap.prepend(eventType, listener.copyRef(), once))
-            return false;
-    } else {
-        if (!ensureEventEmitterData().eventListenerMap.add(eventType, listener.copyRef(), once))
-            return false;
-    }
+    if (prepend)
+        ensureEventEmitterData().eventListenerMap.prepend(eventType, WTF::move(listener), once);
+    else
+        ensureEventEmitterData().eventListenerMap.add(eventType, WTF::move(listener), once);
 
     eventListenersDidChange();
     if (this->onDidChangeListener)
         this->onDidChangeListener(*this, eventType, true);
-    return true;
 }
 
 void EventEmitter::addListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&& listener, bool once, bool prepend)
@@ -72,6 +68,22 @@ bool EventEmitter::removeListener(const Identifier& eventType, EventListener& li
     return false;
 }
 
+bool EventEmitter::removeListener(const Identifier& eventType, SimpleRegisteredEventListener& registration)
+{
+    auto* data = eventTargetData();
+    if (!data)
+        return false;
+
+    if (data->eventListenerMap.remove(eventType, registration)) {
+        eventListenersDidChange();
+
+        if (this->onDidChangeListener)
+            this->onDidChangeListener(*this, eventType, false);
+        return true;
+    }
+    return false;
+}
+
 void EventEmitter::removeAllListenersForBindings(const Identifier& eventType)
 {
     removeAllListeners(eventType);
@@ -85,8 +97,18 @@ bool EventEmitter::removeAllListeners()
 
     auto& map = data->eventListenerMap;
     bool any = !map.isEmpty();
+    // Collect before clearing so per-event teardown (signal handlers, IPC
+    // refs, listener-count mirrors) observes the post-removal zero counts.
+    Vector<Identifier> eventTypes = map.eventTypes();
     map.clear();
     this->m_thisObject.clear();
+    if (any) {
+        eventListenersDidChange();
+        if (this->onDidChangeListener) {
+            for (auto& eventType : eventTypes)
+                this->onDidChangeListener(*this, eventType, false);
+        }
+    }
     return any;
 }
 
@@ -116,17 +138,12 @@ bool EventEmitter::emitForBindings(const Identifier& eventType, const MarkedArgu
     if (!scriptExecutionContext())
         return false;
 
-    emit(eventType, arguments);
-    return true;
+    return emit(eventType, arguments);
 }
 
 bool EventEmitter::emit(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
 {
     return fireEventListeners(eventType, arguments);
-}
-
-void EventEmitter::uncaughtExceptionInEventHandler()
-{
 }
 
 Vector<Identifier> EventEmitter::getEventNames()
@@ -237,10 +254,12 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
 
         // Do this before invocation to avoid reentrancy issues.
         if (registeredListener->isOnce())
-            removeListener(eventType, callback);
+            removeListener(eventType, *registeredListener);
 
         if (!jsFunction) [[unlikely]]
             continue;
+        if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]]
+            break;
 
         JSC::JSGlobalObject* lexicalGlobalObject = jsFunction->globalObject();
         auto callData = JSC::getCallData(jsFunction);
@@ -257,7 +276,7 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
             auto hasErrorListener = this->hasActiveEventListeners(errorIdentifier);
             if (!hasErrorListener || eventType == errorIdentifier) {
                 // If the event type is error, report the exception to the console.
-                Bun__reportUnhandledError(lexicalGlobalObject, JSValue::encode(JSValue(exception)));
+                Bun__reportUnhandledError(lexicalGlobalObject, JSValue::encode(exception));
             } else if (hasErrorListener) {
                 MarkedArgumentBuffer expcep;
                 JSValue errorValue = exception->value();
@@ -271,25 +290,6 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
     }
 
     return fired;
-}
-
-Vector<Identifier> EventEmitter::eventTypes()
-{
-    if (auto* data = eventTargetData())
-        return data->eventListenerMap.eventTypes();
-    return {};
-}
-
-const SimpleEventListenerVector& EventEmitter::eventListeners(const Identifier& eventType)
-{
-    auto* data = eventTargetData();
-    auto* listenerVector = data ? data->eventListenerMap.find(eventType) : nullptr;
-    static NeverDestroyed<SimpleEventListenerVector> emptyVector;
-    return listenerVector ? *listenerVector : emptyVector.get();
-}
-
-void EventEmitter::invalidateEventListenerRegions()
-{
 }
 
 } // namespace WebCore

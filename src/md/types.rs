@@ -4,8 +4,6 @@ pub type JsResult<T> = Result<T, crate::parser::ParserError>;
 
 /// Offset into the input document.
 pub type OFF = u32;
-/// Size type.
-pub type SZ = u32;
 
 /// Block types reported via enter_block / leave_block callbacks.
 #[repr(u8)]
@@ -69,69 +67,6 @@ pub enum Align {
     Right,
 }
 
-// --- Detail structs ---
-
-#[derive(Copy, Clone)]
-pub struct UlDetail {
-    pub is_tight: bool,
-    pub mark: u8,
-}
-
-#[derive(Copy, Clone)]
-pub struct OlDetail {
-    pub start: u32,
-    pub is_tight: bool,
-    pub mark_delimiter: u8,
-}
-
-#[derive(Copy, Clone)]
-pub struct LiDetail {
-    pub is_task: bool,
-    pub task_mark: u8,
-    pub task_mark_offset: OFF,
-}
-
-#[derive(Copy, Clone)]
-pub struct HDetail {
-    pub level: u8,
-}
-
-#[derive(Copy, Clone)]
-pub struct CodeDetail<'a> {
-    pub info: Attribute<'a>,
-    pub lang: Attribute<'a>,
-    pub fence_char: u8,
-}
-
-#[derive(Copy, Clone)]
-pub struct TableDetail {
-    pub col_count: u32,
-    pub head_row_count: u32,
-    pub body_row_count: u32,
-}
-
-#[derive(Copy, Clone)]
-pub struct TdDetail {
-    pub alignment: Align,
-}
-
-#[derive(Copy, Clone)]
-pub struct ADetail<'a> {
-    pub href: Attribute<'a>,
-    pub title: Attribute<'a>,
-}
-
-#[derive(Copy, Clone)]
-pub struct ImgDetail<'a> {
-    pub src: Attribute<'a>,
-    pub title: Attribute<'a>,
-}
-
-#[derive(Copy, Clone)]
-pub struct WikilinkDetail<'a> {
-    pub target: Attribute<'a>,
-}
-
 /// Renderer interface. The parser calls these methods to produce output.
 //
 // A `&mut dyn RendererImpl` fat pointer. LIFETIMES.tsv classified `ptr` as
@@ -148,27 +83,87 @@ pub trait RendererImpl {
     fn enter_span(&mut self, span_type: SpanType, detail: SpanDetail<'_>) -> JsResult<()>;
     fn leave_span(&mut self, span_type: SpanType) -> JsResult<()>;
     fn text(&mut self, text_type: TextType, content: &[u8]) -> JsResult<()>;
+
+    /// Whether this consumer wants to know where things are written in the
+    /// document. Asked once, before parsing. None of the methods below is
+    /// called, and nothing is recorded for them, unless it does. It is then
+    /// also told about the paragraphs of tight lists.
+    fn wants_source(&self) -> bool {
+        false
+    }
+    /// Where the lines of the document start. Right after `enter_block` of the
+    /// document.
+    fn line_starts(&mut self, _starts: &[OFF]) {}
+    /// Before `enter_block` of a container: `beg..end` is its marker (of a
+    /// list: that of its first item), with `indent` columns of white space of
+    /// its own before it. Before its `leave_block`: `end` is the end of the
+    /// last line that belongs to it: one with something on it, or an empty one
+    /// with the `>` of a block quote in or around it. `beg` is the start of
+    /// the line that it does not go on with, `OFF::MAX` at the end of the
+    /// document. `indent` is 1 if that line is the `:::` that ends it.
+    fn container_source(&mut self, _beg: OFF, _end: OFF, _indent: u32) {}
+    /// Before `enter_block` of a leaf block: its lines. A line with
+    /// `beg > end` has been used up by reference definitions. Returns whether
+    /// the consumer reads the lines by itself: then there are no events for
+    /// what is in the block.
+    fn leaf_source(&mut self, _block_type: BlockType, _lines: &[VerbatimLine]) -> bool {
+        false
+    }
+    /// Before `enter_span`: where its opening marker is. Before `leave_span`:
+    /// its closing marker. Before `text` in a line: where that is written.
+    /// Before `enter_block` of a row of a table: the row. Of a cell: what is
+    /// between its pipes.
+    fn inline_source(&mut self, _beg: OFF, _end: OFF) {}
+    /// A span of the consumer's own, with the tag that `Extensions::span` gave it.
+    fn extension_span(&mut self, _tag: u32, _content: &[u8]) -> JsResult<()> {
+        Ok(())
+    }
+    /// A link reference definition. These come right after `enter_block` of
+    /// the document, those in front of a setext heading first.
+    fn definition(&mut self, _definition: &Definition<'_>) {}
+}
+
+/// `[label]: dest "title"`, as written: escapes and entities are not resolved.
+pub struct Definition<'a> {
+    /// Where the `[` is.
+    pub beg: OFF,
+    /// Where its last line ends.
+    pub end: OFF,
+    pub label: &'a [u8],
+    pub dest: &'a [u8],
+    pub title: &'a [u8],
+    /// The lines that it is written on.
+    pub lines: &'a [VerbatimLine],
 }
 
 impl<'a> Renderer<'a> {
     #[inline]
-    pub fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) -> JsResult<()> {
+    pub(crate) fn enter_block(
+        &mut self,
+        block_type: BlockType,
+        data: u32,
+        flags: u32,
+    ) -> JsResult<()> {
         self.ptr.enter_block(block_type, data, flags)
     }
     #[inline]
-    pub fn leave_block(&mut self, block_type: BlockType, data: u32) -> JsResult<()> {
+    pub(crate) fn leave_block(&mut self, block_type: BlockType, data: u32) -> JsResult<()> {
         self.ptr.leave_block(block_type, data)
     }
     #[inline]
-    pub fn enter_span(&mut self, span_type: SpanType, detail: SpanDetail<'_>) -> JsResult<()> {
+    pub(crate) fn enter_span(
+        &mut self,
+        span_type: SpanType,
+        detail: SpanDetail<'_>,
+    ) -> JsResult<()> {
         self.ptr.enter_span(span_type, detail)
     }
     #[inline]
-    pub fn leave_span(&mut self, span_type: SpanType) -> JsResult<()> {
+    pub(crate) fn leave_span(&mut self, span_type: SpanType) -> JsResult<()> {
         self.ptr.leave_span(span_type)
     }
     #[inline]
-    pub fn text(&mut self, text_type: TextType, content: &[u8]) -> JsResult<()> {
+    pub(crate) fn text(&mut self, text_type: TextType, content: &[u8]) -> JsResult<()> {
         self.ptr.text(text_type, content)
     }
 }
@@ -188,6 +183,22 @@ pub struct SpanDetail<'a> {
     pub permissive_autolink: bool,
     /// Permissive www autolink: prepend "http://" to href
     pub autolink_www: bool,
+    pub reference: Reference,
+}
+
+/// How a link or an image says where it goes.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum Reference {
+    /// `[text](href)`, or an autolink.
+    None,
+    /// `[text][label]`
+    Full,
+    /// `[label][]`
+    Collapsed,
+    /// `[label]`
+    Shortcut,
+    /// `[^label]`, with `Options::footnotes`. `href` is the label.
+    Footnote,
 }
 
 impl<'a> Default for SpanDetail<'a> {
@@ -199,43 +210,8 @@ impl<'a> Default for SpanDetail<'a> {
             autolink_email: false,
             permissive_autolink: false,
             autolink_www: false,
+            reference: Reference::None,
         }
-    }
-}
-
-/// An attribute is a string that may contain embedded entities.
-/// The text is split into substrings, each with a type (normal or entity).
-/// The substr slices borrow from parser-owned buffers.
-#[derive(Copy, Clone)]
-pub struct Attribute<'a> {
-    /// Slices into the source text, one per substring.
-    pub substr_offsets: &'a [SubstrOffset],
-    pub substr_types: &'a [SubstrType],
-}
-
-// `SubstrType`/`SubstrOffset` belong conceptually to `Attribute` but Rust has
-// no nested type defs in structs, so they live at module scope.
-#[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum SubstrType {
-    Normal,
-    Entity,
-}
-
-#[derive(Copy, Clone)]
-pub struct SubstrOffset {
-    pub beg: OFF,
-    pub end: OFF,
-}
-
-impl<'a> Attribute<'a> {
-    pub fn text<'s>(&self, src: &'s [u8]) -> &'s [u8] {
-        if self.substr_offsets.is_empty() {
-            return b"";
-        }
-        let first = self.substr_offsets[0].beg;
-        let last = self.substr_offsets[self.substr_offsets.len() - 1].end;
-        &src[first as usize..last as usize]
     }
 }
 
@@ -249,7 +225,6 @@ pub enum LineType {
     Hr,
     Atxheader,
     Setextunderline,
-    Setextheader,
     Indentedcode,
     Fencedcode,
     Html,
@@ -261,12 +236,12 @@ pub enum LineType {
 /// A line analysis result.
 #[derive(Copy, Clone)]
 pub struct Line {
-    pub r#type: LineType,
-    pub beg: OFF,
-    pub end: OFF,
-    pub indent: u32,
-    pub data: u32,
-    pub enforce_new_block: bool,
+    pub(crate) r#type: LineType,
+    pub(crate) beg: OFF,
+    pub(crate) end: OFF,
+    pub(crate) indent: u32,
+    pub(crate) data: u32,
+    pub(crate) enforce_new_block: bool,
 }
 
 impl Default for Line {
@@ -288,226 +263,126 @@ impl Default for Line {
 pub struct VerbatimLine {
     pub beg: OFF,
     pub end: OFF,
+    /// The columns of white space before `beg` that belong to the block.
     pub indent: u32,
 }
 
 /// Container types: blockquote or list item.
 #[derive(Copy, Clone, Default)]
 pub struct Container {
-    pub ch: u8,
-    pub is_loose: bool,
-    pub is_task: bool,
-    pub task_mark_off: OFF,
-    pub start: u32,
-    pub mark_indent: u32,
-    pub contents_indent: u32,
-    pub block_byte_off: u32,
+    pub(crate) ch: u8,
+    pub(crate) is_loose: bool,
+    pub(crate) is_task: bool,
+    pub(crate) task_mark_off: OFF,
+    pub(crate) start: u32,
+    pub(crate) mark_indent: u32,
+    pub(crate) contents_indent: u32,
+    pub(crate) block_byte_off: u32,
+    /// Where the marker of the container (of the current item of a list) is.
+    pub(crate) mark_beg: OFF,
+    pub(crate) mark_end: OFF,
 }
 
-/// Block flags stored in MD_BLOCK.
-// Packed u32 with bool bits + 28 bits of padding. Not every
-// field is `bool` (padding), so this is a transparent newtype
-// with manual shift accessors rather than `bitflags!`.
-#[repr(transparent)]
-#[derive(Copy, Clone, Default, Eq, PartialEq)]
-pub struct BlockFlags(pub u32);
-
-impl BlockFlags {
-    #[inline]
-    pub const fn container_closer(self) -> bool {
-        self.0 & 0x01 != 0
-    }
-    #[inline]
-    pub const fn container_opener(self) -> bool {
-        self.0 & 0x02 != 0
-    }
-    #[inline]
-    pub const fn loose_list(self) -> bool {
-        self.0 & 0x04 != 0
-    }
-    #[inline]
-    pub const fn setext_header(self) -> bool {
-        self.0 & 0x08 != 0
-    }
+/// The first `count` of the open containers end at `end`, as far as a later one of these does not say otherwise.
+#[derive(Copy, Clone)]
+pub(crate) struct ContainerEnds {
+    pub(crate) count: u32,
+    pub(crate) end: OFF,
 }
 
-pub const BLOCK_CONTAINER_CLOSER: u32 = 0x01;
-pub const BLOCK_CONTAINER_OPENER: u32 = 0x02;
-pub const BLOCK_LOOSE_LIST: u32 = 0x04;
+pub(crate) const BLOCK_CONTAINER_CLOSER: u32 = 0x01;
+pub(crate) const BLOCK_CONTAINER_OPENER: u32 = 0x02;
+pub(crate) const BLOCK_LOOSE_LIST: u32 = 0x04;
 pub const BLOCK_SETEXT_HEADER: u32 = 0x08;
 pub const BLOCK_FENCED_CODE: u32 = 0x10;
-pub const BLOCK_REF_DEF_ONLY: u32 = 0x20;
-
-/// Block descriptor stored in block_bytes buffer.
-#[derive(Copy, Clone)]
-pub struct Block {
-    pub r#type: BlockType,
-    pub flags: u32,
-    pub data: u32,
-    pub n_lines: u32,
-}
-
-/// Mark flags.
-pub struct MarkFlags;
-
-impl MarkFlags {
-    pub const POTENTIAL_OPENER: u16 = 0x01;
-    pub const POTENTIAL_CLOSER: u16 = 0x02;
-    pub const OPENER: u16 = 0x04;
-    pub const CLOSER: u16 = 0x08;
-    pub const RESOLVED: u16 = 0x10;
-
-    // Emphasis analysis flags
-    pub const EMPH_INTRAWORD: u16 = 0x20;
-    pub const EMPH_MOD3_0: u16 = 0x40;
-    pub const EMPH_MOD3_1: u16 = 0x80;
-    pub const EMPH_MOD3_2: u16 = 0x100;
-
-    pub const EMPH_OC: u16 = Self::POTENTIAL_OPENER | Self::POTENTIAL_CLOSER;
-}
-
-/// A mark in the inline processing system.
-#[derive(Copy, Clone)]
-pub struct Mark {
-    pub beg: OFF,
-    pub end: OFF,
-    pub prev: i32,
-    pub next: i32,
-    pub ch: u8,
-    pub flags: u16,
-}
-
-impl Default for Mark {
-    fn default() -> Self {
-        Self {
-            beg: 0,
-            end: 0,
-            prev: -1,
-            next: -1,
-            ch: 0,
-            flags: 0,
-        }
-    }
-}
+pub(crate) const BLOCK_REF_DEF_ONLY: u32 = 0x20;
+/// Fenced code with its closing fence, HTML with what ends it.
+pub const BLOCK_CLOSED: u32 = 0x40;
+/// HTML that only a certain text ends (`-->`, `</script>` ..), not an empty line.
+pub const BLOCK_HTML_UNTIL_TEXT: u32 = 0x80;
+/// Reported as `Html`: a leaf block of the consumer's own. See `Extensions`.
+pub const BLOCK_EXTENSION: u32 = 0x100;
+/// Reported as `Quote`: the definition of a footnote, `[^label]:`.
+pub const BLOCK_FOOTNOTE: u32 = 0x200;
+/// Reported as `Quote`: what is between `:::name` and `:::`.
+pub const BLOCK_DIRECTIVE: u32 = 0x400;
 
 /// Parser flags controlling which extensions are enabled.
 #[derive(Copy, Clone)]
 pub struct Flags {
-    pub collapse_whitespace: bool,
-    pub permissive_atx_headers: bool,
-    pub permissive_url_autolinks: bool,
-    pub permissive_www_autolinks: bool,
-    pub permissive_email_autolinks: bool,
-    pub no_indented_code_blocks: bool,
-    pub no_html_blocks: bool,
-    pub no_html_spans: bool,
-    pub tables: bool,
-    pub strikethrough: bool,
-    pub tasklists: bool,
-    pub latex_math: bool,
-    pub wiki_links: bool,
-    pub underline: bool,
-    pub hard_soft_breaks: bool,
+    pub(crate) collapse_whitespace: bool,
+    pub(crate) permissive_atx_headers: bool,
+    pub(crate) permissive_url_autolinks: bool,
+    pub(crate) permissive_www_autolinks: bool,
+    pub(crate) permissive_email_autolinks: bool,
+    pub(crate) no_indented_code_blocks: bool,
+    pub(crate) no_html_blocks: bool,
+    pub(crate) no_html_spans: bool,
+    pub(crate) tables: bool,
+    pub(crate) strikethrough: bool,
+    pub(crate) tasklists: bool,
+    pub(crate) latex_math: bool,
+    pub(crate) wiki_links: bool,
+    pub(crate) footnotes: bool,
+    pub(crate) math_blocks: bool,
+    pub(crate) directives: bool,
+    pub(crate) no_single_tilde: bool,
+    pub(crate) micromark: bool,
+    pub(crate) micromark_to_the_letter: bool,
+    pub(crate) mdx: bool,
 }
 
-impl Flags {
-    // Private base of field defaults so the named presets below
-    // can use struct-update syntax in const context.
-    const DEFAULTS: Flags = Flags {
-        collapse_whitespace: false,
-        permissive_atx_headers: false,
-        permissive_url_autolinks: false,
-        permissive_www_autolinks: false,
-        permissive_email_autolinks: false,
-        no_indented_code_blocks: false,
-        no_html_blocks: false,
-        no_html_spans: false,
-        tables: true,
-        strikethrough: true,
-        tasklists: true,
-        latex_math: false,
-        wiki_links: false,
-        underline: false,
-        hard_soft_breaks: false,
-    };
-
-    pub const COMMONMARK: Flags = Flags {
-        tables: false,
-        strikethrough: false,
-        tasklists: false,
-        ..Self::DEFAULTS
-    };
-
-    pub const GITHUB: Flags = Flags {
-        tables: true,
-        strikethrough: true,
-        tasklists: true,
-        permissive_url_autolinks: true,
-        permissive_www_autolinks: true,
-        permissive_email_autolinks: true,
-        ..Self::DEFAULTS
-    };
-
-    pub fn permissive_autolinks(self) -> bool {
-        self.permissive_url_autolinks
-            || self.permissive_www_autolinks
-            || self.permissive_email_autolinks
-    }
-}
-
-impl Default for Flags {
-    fn default() -> Self {
-        Self::DEFAULTS
-    }
-}
-
-/// Number of opener stacks used during inline analysis.
-/// 6 for *, 6 for _, 2 for ~, 1 for brackets, 1 for $
-pub const NUM_OPENER_STACKS: usize = 16;
-
-// Opener stack indices
-pub const ASTERISK_OPENERS_OO_0: usize = 0;
-pub const ASTERISK_OPENERS_OO_1: usize = 1;
-pub const ASTERISK_OPENERS_OO_2: usize = 2;
-pub const ASTERISK_OPENERS_OC_0: usize = 3;
-pub const ASTERISK_OPENERS_OC_1: usize = 4;
-pub const ASTERISK_OPENERS_OC_2: usize = 5;
-pub const UNDERSCORE_OPENERS_OO_0: usize = 6;
-pub const UNDERSCORE_OPENERS_OO_1: usize = 7;
-pub const UNDERSCORE_OPENERS_OO_2: usize = 8;
-pub const UNDERSCORE_OPENERS_OC_0: usize = 9;
-pub const UNDERSCORE_OPENERS_OC_1: usize = 10;
-pub const UNDERSCORE_OPENERS_OC_2: usize = 11;
-pub const TILDE_OPENERS_1: usize = 12;
-pub const TILDE_OPENERS_2: usize = 13;
-pub const BRACKET_OPENERS: usize = 14;
-pub const DOLLAR_OPENERS: usize = 15;
-
-/// An opener stack: a doubly-linked list through mark indices.
+/// Syntax of the consumer's own.
 #[derive(Copy, Clone)]
-pub struct OpenerStack {
-    pub top: i32,
+pub struct Extensions<'a> {
+    /// The bytes that a leaf block of its own can start with.
+    pub leaf_bytes: &'a [u8],
+    /// Where the leaf block ends that starts at `LeafStart::off`, if one does.
+    /// Nothing but blanks may follow on that line. It is reported as `Html`
+    /// with `BLOCK_EXTENSION`, in one piece.
+    pub leaf: &'a dyn Fn(&LeafStart<'_>) -> Option<OFF>,
+    /// The bytes by which a span of its own is told in the text of a
+    /// paragraph, a heading or a cell.
+    pub span_bytes: &'a [u8],
+    /// The span that the byte at `SpanStart::pos` is in, if it is in one.
+    /// Nothing in it is looked at. It comes before everything else that could
+    /// start there, but for a backslash.
+    pub span: &'a dyn Fn(&SpanStart<'_>) -> Option<ExtensionSpan>,
 }
 
-impl Default for OpenerStack {
-    fn default() -> Self {
-        Self { top: -1 }
-    }
+pub struct SpanStart<'a> {
+    pub content: &'a [u8],
+    pub pos: usize,
+    /// What is before this place is taken: the span does not start before it.
+    pub from: usize,
+    /// There is a `[` before it that no `]` has followed yet.
+    pub is_after_open_bracket: bool,
+    /// Another number for every text. `content` can be a part of the text.
+    pub serial: u32,
 }
 
-/// Internal limits matching md4c.
-pub const CODESPAN_MARK_MAXLEN: u32 = 255;
-pub const TABLE_MAXCOLCOUNT: u32 = 128;
-
-/// Reference definition used for link resolution.
-pub struct RefDef<'a> {
-    pub label: &'a [u8],
-    pub title: Attribute<'a>,
-    pub dest_beg: OFF,
-    pub dest_end: OFF,
-    pub label_needs_free: bool,
-    pub title_needs_free: bool,
+/// `SpanStart::from <= beg <= SpanStart::pos`. It can end before `pos`: `www` in `www. a`, which the `.` tells.
+pub struct ExtensionSpan {
+    pub beg: usize,
+    pub end: usize,
+    /// What `RendererImpl::extension_span` is told.
+    pub tag: u32,
 }
+
+pub struct LeafStart<'a> {
+    pub text: &'a [u8],
+    pub off: OFF,
+    /// The columns of white space before it.
+    pub indent: u32,
+    pub is_in_container: bool,
+    /// The line before is one of a paragraph.
+    pub interrupts_paragraph: bool,
+    /// Whether the line that starts at an offset would end a paragraph by
+    /// starting a container.
+    pub starts_container: &'a dyn Fn(OFF) -> bool,
+}
+
+pub(crate) const TABLE_MAXCOLCOUNT: u32 = 128;
 
 // ========================================
 // Metadata extraction helpers

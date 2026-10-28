@@ -27,7 +27,6 @@
 #include <memory>
 #include <utility>
 #include <span>
-#include <iostream>
 
 #include "MoveOnlyFunction.h"
 
@@ -40,10 +39,10 @@ struct HttpRouter {
 
 private:
     UserDataType userData;
-    static const unsigned int MAX_URL_SEGMENTS = 100;
+    static constexpr unsigned int MAX_URL_SEGMENTS = 100;
 
     /* Handler ids are 32-bit */
-    static const uint32_t HANDLER_MASK = 0x0fffffff;
+    static constexpr uint32_t HANDLER_MASK = 0x0fffffff;
 
     /* List of handlers */
     std::vector<MoveOnlyFunction<bool(HttpRouter *)>> handlers;

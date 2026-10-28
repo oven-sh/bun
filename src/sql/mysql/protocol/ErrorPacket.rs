@@ -1,11 +1,10 @@
 use super::any_mysql_error::Error as AnyMySQLError;
-use super::new_reader::{NewReader, ReaderContext};
+use super::stack_reader::PacketReader;
 use crate::shared::Data;
 
 pub struct ErrorPacket {
     pub header: u8,
     pub error_code: u16,
-    pub sql_state_marker: Option<u8>,
     pub sql_state: Option<[u8; 5]>,
     pub error_message: Data,
 }
@@ -15,7 +14,6 @@ impl Default for ErrorPacket {
         Self {
             header: 0xff,
             error_code: 0,
-            sql_state_marker: None,
             sql_state: None,
             error_message: Data::empty(),
         }
@@ -33,10 +31,7 @@ pub struct MySQLErrorOptions {
 // `createMySQLError` lives in bun_sql_jsc::mysql::protocol::error_packet_jsc — *_jsc alias deleted.
 
 impl ErrorPacket {
-    pub fn decode_internal<Context: ReaderContext>(
-        &mut self,
-        reader: NewReader<Context>,
-    ) -> Result<(), AnyMySQLError> {
+    pub fn decode_internal(&mut self, reader: PacketReader<'_>) -> Result<(), AnyMySQLError> {
         self.header = reader.int::<u8>()?;
         if self.header != 0xff {
             return Err(AnyMySQLError::InvalidErrorPacket);
@@ -47,7 +42,6 @@ impl ErrorPacket {
         // Check if we have a SQL state marker
         let next_byte = reader.int::<u8>()?;
         if next_byte == b'#' {
-            self.sql_state_marker = Some(b'#');
             let sql_state_data = reader.read(5)?;
             // `defer sql_state_data.deinit()` — Drop handles it.
             self.sql_state = Some(
@@ -60,19 +54,14 @@ impl ErrorPacket {
             reader.skip(-1);
         }
 
-        // Read the error message (rest of packet).
-        // Reshaped for borrowck — capture peek().len() before the mut call.
-        let remaining = reader.peek().len();
-        self.error_message = reader.read(remaining)?;
+        self.error_message = reader.read(reader.peek().len())?;
         Ok(())
     }
-}
 
-pub fn decode<Context: ReaderContext>(
-    this: &mut ErrorPacket,
-    reader: NewReader<Context>,
-) -> Result<(), AnyMySQLError> {
-    this.decode_internal(reader)
+    /// ER_NET_PACKET_TOO_LARGE: the server hangs up behind it.
+    pub fn ends_session(&self) -> bool {
+        self.error_code == 1153
+    }
 }
 
 // `toJS` lives in bun_sql_jsc::mysql::protocol::error_packet_jsc — *_jsc alias deleted.

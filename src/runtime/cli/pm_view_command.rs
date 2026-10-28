@@ -1,8 +1,9 @@
 use bstr::BStr;
 use bun_alloc::Arena as Bump;
-use bun_collections::VecExt;
+use bun_collections::{StringArrayHashMap, VecExt};
 use bun_core::MutableString;
 use bun_core::fmt as bun_fmt;
+use bun_core::fmt::escape_control_chars;
 use bun_core::strings;
 use bun_core::{Global, Output, prettyln};
 use bun_http as http;
@@ -12,57 +13,96 @@ use bun_install::npm::{self, PackageManifest};
 use bun_js_parser as ast;
 use bun_js_printer as JSPrinter;
 use bun_parsers::json as JSON;
-use bun_paths::PathBuffer;
 use bun_semver as Semver;
-use bun_url::URL; // bumpalo::Bump re-export
+use bun_url::URL;
 
-use bun_core::fmt::buf_print_infallible as buf_print;
+use crate::cli::pm_pkg_command::PmPkgCommand;
+
+fn string_of<'b>(object: &ast::Expr, bump: &'b Bump, key: &[u8]) -> Option<&'b [u8]> {
+    object.get_string_cloned(bump, key).ok().flatten()
+}
+
+/// A `--json` failure is one flat object on stdout.
+fn print_json_error(error: &str, spec: &[u8], property: Option<&[u8]>) {
+    let quoted = bun_fmt::JSONFormatterUTF8Options { quote: true };
+    Output::print(format_args!(
+        "{{ \"error\": \"{}\", \"version\": {}",
+        error,
+        bun_fmt::format_json_string_utf8(spec, quoted),
+    ));
+    if let Some(property) = property {
+        Output::print(format_args!(
+            ", \"property\": {}",
+            bun_fmt::format_json_string_utf8(property, quoted),
+        ));
+    }
+    Output::print(format_args!(" }}\n"));
+    Output::flush();
+}
+
+fn to_json_text(value: ast::Expr, source: &bun_ast::Source) -> Result<Vec<u8>, crate::Error> {
+    let mut printer = JSPrinter::BufferPrinter::init(JSPrinter::BufferWriter::init());
+    let _ = JSPrinter::print_json(
+        &mut printer,
+        value,
+        source,
+        JSPrinter::PrintJsonOptions {
+            mangled_props: None,
+            ..Default::default()
+        },
+    )?;
+    Ok(printer.ctx.get_written().to_vec())
+}
 
 pub(crate) fn view(
     manager: &mut PackageManager,
     spec_: &[u8],
-    property_path: Option<&[u8]>,
+    fields: &[&[u8]],
     json_output: bool,
-) -> Result<(), bun_core::Error> {
+) -> Result<(), crate::Error> {
     let bump = Bump::new();
     let (name, mut version) = dependency::split_name_and_version_or_latest('brk: {
         // Extremely best effort.
         if spec_ == b"." || spec_ == b"" {
             if strings::is_npm_package_name(&manager.root_package_json_name_at_time_of_init) {
-                // Note: reshaped for borrowck — copy into the function-scope
-                // bump so `name` doesn't keep `manager` borrowed across the
-                // `&mut self` calls (`http_proxy`, `tls_reject_unauthorized`) below.
-                break 'brk &*bump
-                    .alloc_slice_copy(&manager.root_package_json_name_at_time_of_init);
+                break 'brk &manager.root_package_json_name_at_time_of_init;
             }
 
             // Try our best to get the package.json name they meant
             'from_package_json: {
-                // `root_dir` is set once by `PackageManager::init()` and points
-                // into the resolver's directory cache for the process lifetime.
-                if !manager.root_dir.has_comptime_query(b"package.json") {
-                    break 'from_package_json;
+                // `root_dir` is in the resolver's directory cache, so lookups must hold
+                // `entries_mutex`.
+                let has_package_json = {
+                    let _entries_lock = bun_resolver::fs::FileSystem::instance()
+                        .fs
+                        .entries_mutex
+                        .lock_guard();
+                    manager.root_dir.has_comptime_query(b"package.json")
+                };
+                if !has_package_json {
+                    const NO_NAME: &str = "no package name given and no package.json found";
+                    if json_output {
+                        print_json_error(NO_NAME, spec_, None);
+                    } else {
+                        Output::err_generic(NO_NAME, ());
+                    }
+                    Global::exit(1);
                 }
                 let fd = manager.root_dir.fd;
                 if !fd.is_valid() {
                     break 'from_package_json;
                 }
-                let str = match bun_sys::File::read_from(fd, b"package.json") {
-                    Ok(s) => s,
-                    Err(_) => break 'from_package_json,
+                let Ok(str) = bun_sys::File::read_from(fd, b"package.json") else {
+                    break 'from_package_json;
                 };
-                // Note: copy into the function-scope bump so the slice
-                // outlives this block.
                 let str: &[u8] = bump.alloc_slice_copy(&str);
                 let source = &bun_ast::Source::init_path_string(b"package.json", str);
                 let mut pkg_log = bun_ast::Log::init();
-                let Ok(pkg_json) = JSON::parse::<false>(source, &mut pkg_log, &bump) else {
+                let Ok(pkg_json) = JSON::parse_utf8(source, &mut pkg_log, &bump) else {
                     break 'from_package_json;
                 };
-                if let Some(name) = pkg_json.get_string_cloned(&bump, b"name").ok().flatten() {
-                    if !name.is_empty() {
-                        break 'brk name;
-                    }
+                if let Some(name) = string_of(&pkg_json, &bump, b"name").filter(|n| !n.is_empty()) {
+                    break 'brk name;
                 }
             }
 
@@ -72,68 +112,29 @@ pub(crate) fn view(
         break 'brk spec_;
     });
 
-    // Note: reshaped for borrowck — clone the registry scope so it doesn't
-    // keep `manager` borrowed across `http_proxy` / `tls_reject_unauthorized`
-    // (`&mut self`) below; matches `outdated_command` / `update_interactive_command`.
-    let scope = manager.scope_for_package_name(name).clone();
+    let scope = manager.scope_for_package_name(name);
 
-    let mut url_buf = PathBuffer::uninit();
-    let encoded_name = buf_print(
-        url_buf.0.as_mut_slice(),
-        format_args!("{}", bun_fmt::dependency_url(name)),
-    );
-    let mut path_buf = PathBuffer::uninit();
     // Always fetch the full registry manifest, not a specific version
-    let url_slice = buf_print(
-        path_buf.0.as_mut_slice(),
-        format_args!(
-            "{}/{}",
-            BStr::new(strings::without_trailing_slash(scope.url.href())),
-            BStr::new(encoded_name),
-        ),
+    let href = format!(
+        "{}/{}",
+        BStr::new(strings::without_trailing_slash(scope.url.href())),
+        bun_fmt::dependency_url(name),
     );
-    let url = URL::parse(url_slice);
+    let url = URL::parse(href.as_bytes());
 
-    let mut headers = http::HeaderBuilder::default();
-    headers.count(b"Accept", b"application/json");
-    if !scope.token.is_empty() {
-        headers.count(b"Authorization", b"");
-        headers.content.cap += b"Bearer ".len() + scope.token.len();
-    } else if !scope.auth.is_empty() {
-        headers.count(b"Authorization", b"");
-        headers.content.cap += b"Basic ".len() + scope.auth.len();
+    let authorization = scope.authorization(&url);
+    let mut pairs: Vec<(&[u8], &[u8])> = vec![(b"Accept", b"application/json")];
+    if let Some(authorization) = &authorization {
+        pairs.push((b"Authorization", authorization));
     }
-    headers.allocate()?;
-    headers.append(b"Accept", b"application/json");
-    if !scope.token.is_empty() {
-        headers.append_fmt(
-            b"Authorization",
-            format_args!("Bearer {}", BStr::new(&*scope.token)),
-        );
-    } else if !scope.auth.is_empty() {
-        headers.append_fmt(
-            b"Authorization",
-            format_args!("Basic {}", BStr::new(&*scope.auth)),
-        );
-    }
+    let headers = http::HeaderBuilder::from_pairs(&pairs)?;
 
     let mut response_buf = MutableString::init(2048)?;
     let header_buf: &[u8] = headers.content.written_slice();
-    let http_proxy = manager.http_proxy(&url);
-    let mut req = http::AsyncHTTP::init_sync(
-        http::Method::GET,
-        url,
-        headers.entries,
-        header_buf,
-        &raw mut response_buf,
-        b"",
-        http_proxy,
-        None,
-        http::FetchRedirect::Follow,
-    );
-    req.client.flags.reject_unauthorized = manager.tls_reject_unauthorized();
+    let mut req =
+        manager.registry_request(http::Method::GET, url, headers.entries, header_buf, b"");
 
-    let res = match req.send_sync() {
+    let res = match manager.send_with_retries(&mut req, &mut response_buf) {
         Ok(r) => r,
         Err(err) => {
             Output::err(err, "view request failed to send", ());
@@ -141,7 +142,7 @@ pub(crate) fn view(
         }
     };
 
-    if res.status_code >= 400 {
+    if res.status_code() >= 400 {
         npm::response_error::<false>(&req, &res, Some((name, version)), &mut response_buf)?;
     }
 
@@ -159,9 +160,8 @@ pub(crate) fn view(
         Global::crash();
     }
 
-    // Parse the existing JSON response into a PackageManifest using the now-public parse function
     let parsed_manifest = match PackageManifest::parse(
-        &scope,
+        scope,
         &mut log,
         response_buf.list.as_slice(),
         name,
@@ -181,16 +181,13 @@ pub(crate) fn view(
         }
     };
 
-    // Now use the existing version resolution logic from outdated_command
     let mut manifest;
-
     let versions_len: usize;
 
-    // Note: reshaped for borrowck.
     'brk: {
+        let mut not_found = bun_install::Error::NoMatchingVersion;
         'from_versions: {
             if let Some(versions_obj) = json.get_object(b"versions") {
-                // Find the version string from JSON that matches the resolved version
                 let versions_e_obj = versions_obj
                     .data
                     .e_object()
@@ -198,53 +195,74 @@ pub(crate) fn view(
                 let versions = versions_e_obj.properties.slice();
                 versions_len = versions.len();
 
-                let wanted_version: Semver::Version = 'brk2: {
-                    // First try dist-tag lookup (like "latest", "beta", etc.)
-                    if let Some(result) = parsed_manifest.find_by_dist_tag(version) {
-                        break 'brk2 result.version;
-                    } else {
-                        // Parse as semver query and find best version
-                        let sliced_literal = Semver::SlicedString::init(version, version);
-                        let query = Semver::query::parse(version, sliced_literal)?;
-                        // `defer query.deinit()` — handled by Drop
-                        // Use the same pattern as outdated_command: findBestVersion(query.head, string_buf)
-                        if let Some(result) =
-                            parsed_manifest.find_best_version(&query, &parsed_manifest.string_buf)
-                        {
-                            break 'brk2 result.version;
-                        }
+                let wanted_version: Semver::Version = match parsed_manifest.find_by_spec(version) {
+                    Ok(result) => result.version,
+                    Err(
+                        err @ (bun_install::Error::DistTagNotFound
+                        | bun_install::Error::NoMatchingVersion),
+                    ) => {
+                        not_found = err;
+                        break 'from_versions;
                     }
-
-                    break 'from_versions;
+                    Err(err) => return Err(err.into()),
                 };
 
                 for prop in versions {
-                    let Some(key) = prop.key.as_ref() else {
-                        continue;
-                    };
-                    let Some(version_str) = key.as_string(&bump) else {
+                    let Some(version_str) = prop.key.and_then(|key| key.as_string(&bump)) else {
                         continue;
                     };
                     let sliced_version = Semver::SlicedString::init(version_str, version_str);
                     let parsed_version = Semver::Version::parse(sliced_version);
                     if parsed_version.valid && parsed_version.version.max().eql(wanted_version) {
+                        let value = prop.value.expect("infallible: prop has value");
+                        // The registry controls this value. `Expr::set` below requires an object.
+                        if !value.is_object() {
+                            Output::err_generic(
+                                "failed to parse package manifest: version <b>{}<r> is not an object",
+                                (bun_fmt::quote(version_str),),
+                            );
+                            Global::exit(1);
+                        }
                         version = version_str;
-                        manifest = prop.value.expect("infallible: prop has value");
+                        manifest = value;
                         break 'brk;
                     }
                 }
             }
         }
 
+        let is_dist_tag = matches!(not_found, bun_install::Error::DistTagNotFound);
         if json_output {
-            Output::print(format_args!(
-                "{{ \"error\": \"No matching version found\", \"version\": {} }}\n",
-                bun_fmt::format_json_string_utf8(
-                    spec_,
-                    bun_fmt::JSONFormatterUTF8Options { quote: true }
-                ),
-            ));
-            Output::flush();
+            let error = if is_dist_tag {
+                "Dist-tag not found"
+            } else {
+                "No matching version found"
+            };
+            print_json_error(error, spec_, None);
+        } else if is_dist_tag {
+            Output::err_generic(
+                "Package <b>{}<r> with tag <b>{}<r> not found, but package exists",
+                (bun_fmt::quote(name), bun_fmt::quote(version)),
+            );
+
+            let max_tags_to_display: usize = 10;
+            let tags_len = parsed_manifest.dist_tags().count();
+            if tags_len > 0 {
+                bun_core::pretty_errorln!("\nTags:<r>");
+                for (tag, v) in parsed_manifest.dist_tags().take(max_tags_to_display) {
+                    bun_core::pretty_errorln!(
+                        "<d>-<r> {}<d>:<r> {}",
+                        escape_control_chars(tag),
+                        v.fmt(&parsed_manifest.string_buf),
+                    );
+                }
+                if tags_len > max_tags_to_display {
+                    bun_core::pretty_errorln!(
+                        "  <d>... and {} more<r>",
+                        tags_len - max_tags_to_display
+                    );
+                }
+            }
         } else {
             Output::err_generic(
                 "No version of <b>{}<r> satisfying <b>{}<r> found",
@@ -253,13 +271,14 @@ pub(crate) fn view(
 
             let max_versions_to_display: usize = 5;
 
-            let start_index = parsed_manifest
-                .versions
-                .len()
-                .saturating_sub(max_versions_to_display);
-            let mut versions_to_display = &parsed_manifest.versions[start_index..];
-            versions_to_display =
-                &versions_to_display[..versions_to_display.len().min(max_versions_to_display)];
+            // The newest published versions. Prereleases are only included if nothing else was ever
+            // published.
+            let mut all_versions = parsed_manifest.release_versions();
+            if all_versions.is_empty() {
+                all_versions = parsed_manifest.prerelease_versions();
+            }
+            let start_index = all_versions.len().saturating_sub(max_versions_to_display);
+            let versions_to_display = &all_versions[start_index..];
             if !versions_to_display.is_empty() {
                 bun_core::pretty_errorln!("\nRecent versions:<r>");
                 for v in versions_to_display {
@@ -274,18 +293,26 @@ pub(crate) fn view(
         Global::exit(1);
     }
 
-    // Treat versions specially because npm does some normalization on there.
+    // Versions are handled specially, because npm normalizes them: only the valid ones, in semver
+    // order.
     if let Some(versions_object) = json.get_object(b"versions") {
         let versions_e_obj = versions_object
             .data
             .e_object()
             .expect("infallible: variant checked");
-        let props = versions_e_obj.properties.slice();
-        let mut keys: Vec<ast::Expr> = Vec::with_capacity(props.len());
-        debug_assert_eq!(props.len(), keys.capacity());
-        for prop in props {
-            keys.push(prop.key.expect("infallible: prop has key"));
+        let mut keys: Vec<(Semver::Version, &[u8], ast::Expr)> = Vec::with_capacity(versions_len);
+        for prop in versions_e_obj.properties.slice() {
+            let Some(key) = prop.key else { continue };
+            let Some(text) = key.as_string(&bump) else {
+                continue;
+            };
+            let parsed = Semver::Version::parse(Semver::SlicedString::init(text, text));
+            if parsed.valid {
+                keys.push((parsed.version.min(), text, key));
+            }
         }
+        bun_collections::index_sort::sort_slice_by(&mut keys, |a, b| a.0.order(b.0, a.1, b.1));
+        let keys: Vec<ast::Expr> = keys.into_iter().map(|(_, _, key)| key).collect();
         let versions_array = ast::Expr::init(
             ast::E::Array {
                 items: ast::ExprNodeList::from_owned_slice(keys.into_boxed_slice()),
@@ -296,143 +323,150 @@ pub(crate) fn view(
         manifest.set(&bump, b"versions", versions_array)?;
     }
 
-    // Handle property lookup if specified
-    if let Some(prop_path) = property_path {
-        // This is similar to what npm does.
-        // `bun pm view react version ` => 1.2.3
-        // `bun pm view react versions` => ['1.2.3', '1.2.4', '1.2.5']
-        if let Some(value) = manifest
-            .get_path_may_be_index(&bump, prop_path)
-            .or_else(|| json.get_path_may_be_index(&bump, prop_path))
+    // Like `npm view`, add the package-level fields (`dist-tags`, `time`). The readme is only added
+    // on request.
+    json.try_for_each_property(|key, _, value| {
+        if key != b"versions"
+            && (key != b"readme" || !fields.is_empty())
+            && manifest.get(key).is_none()
         {
-            if let bun_ast::ExprData::EString(e_string) = &value.data {
-                // JSON parse_utf8 always produces UTF-8 strings, so the raw
-                // `data` slice is the literal value.
-                let slice = e_string.data.slice();
-                if json_output {
-                    Output::print(format_args!(
-                        "{}\n",
-                        bun_fmt::format_json_string_utf8(slice, Default::default())
-                    ));
-                } else {
-                    Output::print(format_args!("{}\n", BStr::new(slice)));
-                }
-                Output::flush();
-                return Ok(());
-            }
+            manifest.set(&bump, key, value)?;
+        }
+        Ok::<(), bun_alloc::AllocError>(())
+    })?;
 
-            let mut buffer_writer = JSPrinter::BufferWriter::init();
-            buffer_writer.append_newline = true;
-            let mut package_json_writer = JSPrinter::BufferPrinter::init(buffer_writer);
-            let _ = JSPrinter::print_json(
-                &mut package_json_writer,
-                value,
-                source,
-                JSPrinter::PrintJsonOptions {
-                    mangled_props: None,
-                    ..Default::default()
-                },
-            )?;
-            Output::print(format_args!(
-                "{}",
-                BStr::new(package_json_writer.ctx.get_written())
-            ));
-            Output::flush();
-            Global::exit(0);
-        } else {
-            if json_output {
-                Output::print(format_args!(
-                    "{{ \"error\": \"Property not found\", \"version\": {}, \"property\": {} }}\n",
-                    bun_fmt::format_json_string_utf8(
-                        spec_,
-                        bun_fmt::JSONFormatterUTF8Options { quote: true }
-                    ),
-                    bun_fmt::format_json_string_utf8(
-                        prop_path,
-                        bun_fmt::JSONFormatterUTF8Options { quote: true }
-                    ),
-                ));
-                Output::flush();
-            } else {
-                Output::err_generic(
-                    "Property <b>{}<r> not found",
-                    format_args!("{}", BStr::new(prop_path)),
-                );
+    if !fields.is_empty() {
+        let mut found: StringArrayHashMap<ast::Expr> = StringArrayHashMap::new();
+        for &field in fields {
+            match PmPkgCommand::query(manifest, field, &mut found) {
+                Ok(()) => {}
+                Err(crate::Error::InvalidPath) if strings::contains(field, b"[]") => {
+                    if json_output {
+                        print_json_error(PmPkgCommand::EMPTY_BRACKETS, spec_, Some(field));
+                    } else {
+                        Output::err_generic(PmPkgCommand::EMPTY_BRACKETS, ());
+                    }
+                    Global::exit(1);
+                }
+                Err(crate::Error::InvalidPath) => {}
+                Err(err) => return Err(err),
             }
         }
-        Global::exit(1);
+
+        match (found.keys(), found.values()) {
+            // A field that does not exist is skipped unless there is nothing else to print.
+            ([], _) => {
+                if json_output {
+                    print_json_error("Property not found", spec_, Some(fields[0]));
+                } else {
+                    for &field in fields {
+                        Output::err_generic(
+                            "Property <b>{}<r> not found",
+                            format_args!("{}", BStr::new(field)),
+                        );
+                    }
+                }
+                Global::exit(1);
+            }
+            ([_], [value]) => {
+                if let bun_ast::ExprData::EString(e_string) = &value.data {
+                    // `parse_utf8` always produces UTF-8 strings.
+                    let slice = e_string.data.slice();
+                    if json_output {
+                        Output::print(format_args!(
+                            "{}\n",
+                            bun_fmt::format_json_string_utf8(slice, Default::default())
+                        ));
+                    } else {
+                        Output::print(format_args!(
+                            "{}\n",
+                            bun_fmt::escape_control_chars_multiline(slice)
+                        ));
+                    }
+                } else {
+                    let text = to_json_text(*value, source)?;
+                    if json_output {
+                        Output::print(format_args!("{}\n", BStr::new(&text)));
+                    } else {
+                        Output::print(format_args!(
+                            "{}\n",
+                            bun_fmt::escape_control_chars_multiline(&text)
+                        ));
+                    }
+                }
+            }
+            (labels, values) if json_output => {
+                let mut object = ast::Expr::init(ast::E::Object::default(), bun_ast::Loc::EMPTY);
+                for (label, value) in labels.iter().zip(values) {
+                    object.set(&bump, label, *value)?;
+                }
+                Output::print(format_args!(
+                    "{}\n",
+                    BStr::new(&to_json_text(object, source)?)
+                ));
+            }
+            (labels, values) => {
+                for (label, value) in labels.iter().zip(values) {
+                    Output::print(format_args!(
+                        "{} = {}\n",
+                        escape_control_chars(label),
+                        bun_fmt::escape_control_chars_multiline(&to_json_text(*value, source)?),
+                    ));
+                }
+            }
+        }
+        Output::flush();
+        return Ok(());
     }
 
     if json_output {
-        // Output formatted JSON using JSPrinter
-        let mut buffer_writer = JSPrinter::BufferWriter::init();
-        buffer_writer.append_newline = true;
-        let mut package_json_writer = JSPrinter::BufferPrinter::init(buffer_writer);
-        let _ = JSPrinter::print_json(
-            &mut package_json_writer,
-            manifest,
-            source,
-            JSPrinter::PrintJsonOptions {
-                mangled_props: None,
-                indent: bun_ast::Indentation {
-                    count: 2,
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-        )?;
         Output::print(format_args!(
-            "{}",
-            BStr::new(package_json_writer.ctx.get_written())
+            "{}\n",
+            BStr::new(&to_json_text(manifest, source)?)
         ));
         Output::flush();
         return Ok(());
     }
 
-    let pkg_name: &[u8] = manifest
-        .get_string_cloned(&bump, b"name")
-        .ok()
-        .flatten()
-        .unwrap_or(name);
-    let pkg_version: &[u8] = manifest
-        .get_string_cloned(&bump, b"version")
-        .ok()
-        .flatten()
-        .unwrap_or(version);
+    let string = |key: &[u8]| string_of(&manifest, &bump, key);
+    let pkg_name: &[u8] = string(b"name").unwrap_or(name);
+    let pkg_version: &[u8] = string(b"version").unwrap_or(version);
+    // `license` is a string, or the legacy `{ "type": "MIT", "url": ... }`.
     let license: &[u8] = manifest
-        .get_string_cloned(&bump, b"license")
-        .ok()
-        .flatten()
-        .unwrap_or(b"");
-    let mut dep_count: usize = 0;
-    let dependencies_object = manifest.get_object(b"dependencies");
-    if let Some(deps) = &dependencies_object {
-        dep_count = deps
-            .data
-            .e_object()
-            .expect("infallible: variant checked")
-            .properties
-            .len_u32() as usize;
-    }
+        .get(b"license")
+        .and_then(|license| {
+            license
+                .as_string(&bump)
+                .or_else(|| string_of(&license, &bump, b"type"))
+        })
+        .filter(|license| !license.is_empty())
+        .unwrap_or(b"Proprietary");
+    let dependencies_object = manifest
+        .get_object(b"dependencies")
+        .map(|deps| deps.data.e_object().expect("infallible: variant checked"));
+    let dependencies = (dependencies_object.as_ref())
+        .map(|deps| deps.properties.slice())
+        .unwrap_or_default();
 
+    // Every string printed below comes from the registry, so always pass it through
+    // `escape_control_chars`.
     prettyln!(
         "<b><blue><u>{}<r><d>@<r><blue><b><u>{}<r> <d>|<r> <cyan>{}<r> <d>|<r> deps<d>:<r> {} <d>|<r> versions<d>:<r> {}",
-        BStr::new(pkg_name),
-        BStr::new(pkg_version),
-        BStr::new(license),
-        dep_count,
+        escape_control_chars(pkg_name),
+        escape_control_chars(pkg_version),
+        escape_control_chars(license),
+        dependencies.len(),
         versions_len,
     );
 
-    // Get description and homepage from the top-level package manifest, not the version-specific one
-    if let Some(desc) = json.get_string_cloned(&bump, b"description").ok().flatten() {
-        prettyln!("{}", BStr::new(desc));
+    if let Some(desc) = string(b"description") {
+        prettyln!("{}", escape_control_chars(desc));
     }
-    if let Some(hp) = json.get_string_cloned(&bump, b"homepage").ok().flatten() {
-        prettyln!("<blue>{}<r>", BStr::new(hp));
+    if let Some(hp) = string(b"homepage") {
+        prettyln!("<blue>{}<r>", bun_fmt::for_terminal(BStr::new(hp)));
     }
 
-    if let Some(mut iter) = json.get_array(b"keywords") {
+    if let Some(mut iter) = manifest.get_array(b"keywords") {
         let mut keywords = MutableString::init(64)?;
         let mut first = true;
         while let Some(kw_expr) = iter.next() {
@@ -446,56 +480,61 @@ pub(crate) fn view(
             }
         }
         if !keywords.list.is_empty() {
-            prettyln!("<d>keywords:<r> {}", BStr::new(keywords.list.as_slice()));
+            let keywords = escape_control_chars(keywords.list.as_slice());
+            prettyln!("<d>keywords:<r> {}", keywords);
         }
     }
 
-    // Display dependencies if they exist
-    if let Some(deps) = &dependencies_object {
-        let deps_e_obj = deps.data.e_object().expect("infallible: variant checked");
-        let dependencies = deps_e_obj.properties.slice();
-        if !dependencies.is_empty() {
-            prettyln!("\n<b>dependencies<r><d> ({}):<r>", dependencies.len());
-        }
-
-        for prop in dependencies {
-            if prop.key.is_none() || prop.value.is_none() {
-                continue;
+    if let Some(bin) = manifest.get_object(b"bin") {
+        let mut bins: Vec<u8> = Vec::new();
+        bin.for_each_property(|key, _, _| {
+            if !bins.is_empty() {
+                bins.extend_from_slice(b", ");
             }
-            let Some(dep_name) = prop
-                .key
-                .as_ref()
-                .expect("infallible: prop has key")
-                .as_string(&bump)
-            else {
-                continue;
-            };
-            let Some(dep_version) = prop
-                .value
-                .as_ref()
-                .expect("infallible: prop has value")
-                .as_string(&bump)
-            else {
-                continue;
-            };
-            prettyln!(
-                "- <cyan>{}<r><d>:<r> {}",
-                BStr::new(dep_name),
-                BStr::new(dep_version),
-            );
+            bins.extend_from_slice(key);
+        });
+        if !bins.is_empty() {
+            prettyln!("<d>bin:<r> <cyan>{}<r>", escape_control_chars(&bins));
         }
+    }
+
+    if let Some(deprecated) = string(b"deprecated") {
+        let deprecated = escape_control_chars(deprecated);
+        prettyln!("\n<red><b>DEPRECATED<r> ⚠️  - {}", deprecated);
+    }
+
+    if !dependencies.is_empty() {
+        prettyln!("\n<b>dependencies<r><d> ({}):<r>", dependencies.len());
+    }
+    for prop in dependencies {
+        let (Some(dep_name), Some(dep_version)) = (
+            prop.key.and_then(|key| key.as_string(&bump)),
+            prop.value.and_then(|value| value.as_string(&bump)),
+        ) else {
+            continue;
+        };
+        prettyln!(
+            "- <cyan>{}<r><d>:<r> {}",
+            escape_control_chars(dep_name),
+            bun_fmt::for_terminal(BStr::new(dep_version)),
+        );
     }
 
     if let Some(dist) = manifest.get_object(b"dist") {
         prettyln!("\n<d><r><b>dist<r>");
-        if let Some(t) = dist.get_string_cloned(&bump, b"tarball").ok().flatten() {
-            prettyln!(" <d>.<r>tarball<d>:<r> {}", BStr::new(t));
+        if let Some(t) = string_of(&dist, &bump, b"tarball") {
+            prettyln!(
+                " <d>.<r>tarball<d>:<r> {}",
+                bun_fmt::for_terminal(BStr::new(t))
+            );
         }
-        if let Some(s) = dist.get_string_cloned(&bump, b"shasum").ok().flatten() {
-            prettyln!(" <d>.<r>shasum<r><d>:<r> <green>{}<r>", BStr::new(s));
+        if let Some(s) = string_of(&dist, &bump, b"shasum") {
+            let s = escape_control_chars(s);
+            prettyln!(" <d>.<r>shasum<r><d>:<r> <green>{}<r>", s);
         }
-        if let Some(i) = dist.get_string_cloned(&bump, b"integrity").ok().flatten() {
-            prettyln!(" <d>.<r>integrity<r><d>:<r> <green>{}<r>", BStr::new(i));
+        if let Some(i) = string_of(&dist, &bump, b"integrity") {
+            let i = escape_control_chars(i);
+            prettyln!(" <d>.<r>integrity<r><d>:<r> <green>{}<r>", i);
         }
         if let Some(u) = dist.get_number(b"unpackedSize") {
             prettyln!(
@@ -514,21 +553,20 @@ pub(crate) fn view(
             .properties
             .slice()
         {
-            if prop.key.is_none() || prop.value.is_none() {
+            let (Some(tag), Some(val)) = (
+                prop.key.and_then(|key| key.as_string(&bump)),
+                prop.value.and_then(|value| value.as_string(&bump)),
+            ) else {
                 continue;
-            }
-            let tagname_expr = prop.key.as_ref().expect("infallible: prop has key");
-            let val_expr = prop.value.as_ref().expect("infallible: prop has value");
-            if let Some(tag) = tagname_expr.as_string(&bump) {
-                if let Some(val) = val_expr.as_string(&bump) {
-                    if tag == b"latest" {
-                        prettyln!("<cyan>{}<r><d>:<r> {}", BStr::new(tag), BStr::new(val));
-                    } else if tag == b"beta" {
-                        prettyln!("<blue>{}<r><d>:<r> {}", BStr::new(tag), BStr::new(val));
-                    } else {
-                        prettyln!("<magenta>{}<r><d>:<r> {}", BStr::new(tag), BStr::new(val));
-                    }
-                }
+            };
+            let tag_fmt = escape_control_chars(tag);
+            let val_fmt = escape_control_chars(val);
+            if tag == b"latest" {
+                prettyln!("<cyan>{}<r><d>:<r> {}", tag_fmt, val_fmt);
+            } else if tag == b"beta" {
+                prettyln!("<blue>{}<r><d>:<r> {}", tag_fmt, val_fmt);
+            } else {
+                prettyln!("<magenta>{}<r><d>:<r> {}", tag_fmt, val_fmt);
             }
         }
     }
@@ -536,39 +574,22 @@ pub(crate) fn view(
     if let Some(mut iter) = json.get_array(b"maintainers") {
         prettyln!("\nmaintainers<r><d>:<r>");
         while let Some(m) = iter.next() {
-            let nm: &[u8] = m
-                .get_string_cloned(&bump, b"name")
-                .ok()
-                .flatten()
-                .unwrap_or(b"");
-            let em: &[u8] = m
-                .get_string_cloned(&bump, b"email")
-                .ok()
-                .flatten()
-                .unwrap_or(b"");
-            if !em.is_empty() {
-                prettyln!("<d>-<r> {} <d>\\<{}\\><r>", BStr::new(nm), BStr::new(em));
-            } else if !nm.is_empty() {
-                prettyln!("<d>-<r> {}", BStr::new(nm));
+            let nm = escape_control_chars(string_of(&m, &bump, b"name").unwrap_or(b""));
+            let em = escape_control_chars(string_of(&m, &bump, b"email").unwrap_or(b""));
+            if !em.0.is_empty() {
+                prettyln!("<d>-<r> {} <d>\\<{}\\><r>", nm, em);
+            } else if !nm.0.is_empty() {
+                prettyln!("<d>-<r> {}", nm);
             }
         }
     }
 
-    // Add published date information
     if let Some(time_obj) = json.get_object(b"time") {
+        let time = |key: &[u8]| string_of(&time_obj, &bump, key);
         // TODO: use a relative time formatter
-        if let Some(published_time) = time_obj
-            .get_string_cloned(&bump, pkg_version)
-            .ok()
-            .flatten()
-        {
-            prettyln!("\n<b>Published<r><d>:<r> {}", BStr::new(published_time));
-        } else if let Some(modified_time) = time_obj
-            .get_string_cloned(&bump, b"modified")
-            .ok()
-            .flatten()
-        {
-            prettyln!("\n<b>Published<r><d>:<r> {}", BStr::new(modified_time));
+        if let Some(published_time) = time(pkg_version).or_else(|| time(b"modified")) {
+            let published_time = escape_control_chars(published_time);
+            prettyln!("\n<b>Published<r><d>:<r> {}", published_time);
         }
     }
 

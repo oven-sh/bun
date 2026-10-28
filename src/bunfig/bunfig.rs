@@ -6,14 +6,13 @@
 //! (`api::TransformOptions`), `ctx.install` (`api::BunInstall`), and the rest
 //! of `ContextData`.
 
-#![allow(clippy::collapsible_if, clippy::needless_return)]
+#![allow(clippy::collapsible_if)]
 
 use bun_collections::VecExt;
 use core::sync::atomic::Ordering;
 
 use bun_alloc::Arena as Bump;
 use bun_ast::{E, Expr, ExprTag, expr::Data as ExprData};
-use bun_core::err;
 use bun_parsers::json as json_parser;
 use bun_parsers::toml::TOML;
 
@@ -28,10 +27,8 @@ use bun_options_types::schema::api;
 use bun_options_types::command_tag::Tag as CommandTag;
 use bun_options_types::context::ContextData;
 
-pub use bun_options_types::offline_mode::OfflineMode;
-
 // TODO: replace api.TransformOptions with Bunfig
-pub struct Bunfig;
+pub(crate) struct Bunfig;
 
 /// Owned clone of an `EString` payload (transcoding UTF-16 → UTF-8 if needed).
 #[inline]
@@ -142,9 +139,9 @@ fn num_to_u32(n: f64) -> u32 {
 // Parser
 // ─────────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct Parser<'a> {
+struct Parser<'a, 'tool> {
     json: Expr,
-    source: &'a bun_ast::Source,
+    source: &'a bun_ast::Source<'a>,
     log: &'a mut bun_ast::Log,
     // Holding both a `TransformOptions` pointer (= `&ctx.args`) and `ctx`
     // would be an overlapping borrow, so `bunfig` writes route through
@@ -153,10 +150,26 @@ pub(crate) struct Parser<'a> {
     /// Arena backing `EString::string()` UTF-16→UTF-8 transcodes; lifetime
     /// matches the `Expr` tree (same bump used for the TOML/JSON parse).
     bump: &'a Bump,
+    /// True for `./bunfig.toml`, which comes with the project. False for the user's own file and
+    /// for `--config`.
+    is_project_file: bool,
+    /// Reads `[lint]` and `[fmt]`.
+    tool: Option<&'a mut crate::ToolReader<'tool>>,
+    counts: Counts,
 }
 
-impl<'a> Parser<'a> {
-    fn add_error(&mut self, loc: bun_ast::Loc, text: &'static [u8]) -> Result<(), bun_core::Error> {
+/// What of a bunfig.toml counts.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Counts {
+    Everything,
+    /// `[lint]` and `[fmt]`: the file is above the working directory.
+    OnlyForTheTool,
+    /// Only the `[install]` section, which holds the package manager's settings.
+    OnlyInstall,
+}
+
+impl<'a> Parser<'a, '_> {
+    fn add_error(&mut self, loc: bun_ast::Loc, text: &'static [u8]) -> crate::Result<()> {
         self.log.add_error_opts(
             text,
             bun_ast::ErrorOpts {
@@ -166,14 +179,14 @@ impl<'a> Parser<'a> {
                 ..Default::default()
             },
         );
-        Err(err!("Invalid Bunfig"))
+        Err(crate::Error::InvalidBunfig)
     }
 
     fn add_error_format(
         &mut self,
         loc: bun_ast::Loc,
         args: core::fmt::Arguments<'_>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         self.log.add_error_fmt_opts(
             args,
             bun_ast::ErrorOpts {
@@ -183,10 +196,10 @@ impl<'a> Parser<'a> {
                 ..Default::default()
             },
         );
-        Err(err!("Invalid Bunfig"))
+        Err(crate::Error::InvalidBunfig)
     }
 
-    pub(crate) fn expect_string(&mut self, expr: &Expr) -> Result<(), bun_core::Error> {
+    fn expect_string(&mut self, expr: &Expr) -> crate::Result<()> {
         match &expr.data {
             ExprData::EString(_) => Ok(()),
             _ => self.add_error_format(
@@ -196,7 +209,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn apply_coverage_reporter_item(&mut self, item: &Expr) -> Result<(), bun_core::Error> {
+    fn apply_coverage_reporter_item(&mut self, item: &Expr) -> crate::Result<()> {
         let item_str = item.as_string(self.bump).unwrap_or(b"");
         if item_str == b"text" {
             self.ctx.test_options.coverage.reporters.text = true;
@@ -214,13 +227,13 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    pub(crate) fn expect(&mut self, expr: &Expr, token: ExprTag) -> Result<(), bun_core::Error> {
+    fn expect(&mut self, expr: &Expr, token: ExprTag) -> crate::Result<()> {
         if expr.data.tag() != token {
             return self.add_error_format(
                 expr.loc,
                 format_args!(
                     "expected {} but received {}",
-                    <&str>::from(token),
+                    token.type_name(),
                     expr.data.tag_name()
                 ),
             );
@@ -228,7 +241,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn load_log_level(&mut self, expr: &Expr) -> Result<(), bun_core::Error> {
+    fn load_log_level(&mut self, expr: &Expr) -> crate::Result<()> {
         self.expect_string(expr)?;
         let level = match expr.as_string(self.bump).unwrap_or(b"") {
             b"debug" => api::MessageLevel::Debug,
@@ -246,7 +259,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn load_preload(&mut self, expr: &Expr) -> Result<(), bun_core::Error> {
+    fn load_preload(&mut self, expr: &Expr) -> crate::Result<()> {
         match &expr.data {
             ExprData::EArray(array) => {
                 let items = array.items.slice();
@@ -274,7 +287,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn load_env_config(&mut self, expr: &Expr) -> Result<(), bun_core::Error> {
+    fn load_env_config(&mut self, expr: &Expr) -> crate::Result<()> {
         match &expr.data {
             ExprData::ENull(_) => {
                 // env = null -> disable default .env files
@@ -315,7 +328,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn parse_define_map(&mut self, expr: &Expr) -> Result<api::StringMap, bun_core::Error> {
+    fn parse_define_map(&mut self, expr: &Expr) -> crate::Result<api::StringMap> {
         self.expect(expr, ExprTag::EObject)?;
         let obj = expr.data.e_object().expect("infallible: variant checked");
         let properties = obj.properties.slice();
@@ -347,15 +360,36 @@ impl<'a> Parser<'a> {
     // `cmd` is a runtime arg rather than a const generic —
     // `bun_options_types::command_tag::Tag` does not derive `ConstParamTy` (it
     // already derives `enum_map::Enum`, which conflicts). Monomorphising over
+    fn read_for_tool(&mut self, json: &Expr) -> crate::Result<()> {
+        if let Some(read) = self.tool.as_deref_mut() {
+            if let Err((loc, message)) = read(json) {
+                self.add_error_format(loc, format_args!("{}", bstr::BStr::new(&message)))?;
+            }
+        }
+        Ok(())
+    }
+
     // `cmd` would only dead-code-eliminate untaken arms; the
     // runtime branches below are equivalent and the few hot fields are tiny.
-    pub(crate) fn parse(&mut self, cmd: CommandTag) -> Result<(), bun_core::Error> {
+    fn parse(&mut self, cmd: CommandTag) -> crate::Result<()> {
         bun_analytics::features::bunfig.fetch_add(1, Ordering::Relaxed);
 
         let json = self.json;
 
         if !matches!(json.data, ExprData::EObject(_)) {
             self.add_error(json.loc, b"bunfig expects an object { } at the root")?;
+        }
+
+        if self.counts == Counts::OnlyForTheTool {
+            return self.read_for_tool(&json);
+        }
+
+        if self.counts == Counts::OnlyInstall {
+            if let Some(install_obj) = json.get_object(b"install") {
+                self.ctx.install = Some(Box::default());
+                self.parse_install(&install_obj)?;
+            }
+            return Ok(());
         }
 
         if let Some(expr) = json.get(b"logLevel") {
@@ -411,35 +445,37 @@ impl<'a> Parser<'a> {
             }
         }
 
+        self.read_for_tool(&json)?;
+
         if cmd == CommandTag::TestCommand {
-            if let Some(test_) = json.get(b"test") {
-                if let Some(root) = test_.get(b"root") {
+            if let Some(test) = json.get(b"test") {
+                if let Some(root) = test.get(b"root") {
                     self.ctx.debug.test_directory = root.as_string(self.bump).unwrap_or(b"").into();
                 }
 
-                if let Some(expr) = test_.get(b"preload") {
+                if let Some(expr) = test.get(b"preload") {
                     self.load_preload(&expr)?;
                 }
 
-                if let Some(expr) = test_.get(b"smol") {
+                if let Some(expr) = test.get(b"smol") {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     self.ctx.runtime_options.smol =
                         expr.as_bool().expect("infallible: type checked");
                 }
 
-                if let Some(expr) = test_.get(b"coverage") {
+                if let Some(expr) = test.get(b"coverage") {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     self.ctx.test_options.coverage.enabled =
                         expr.as_bool().expect("infallible: type checked");
                 }
 
-                if let Some(expr) = test_.get(b"onlyFailures") {
+                if let Some(expr) = test.get(b"onlyFailures") {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     self.ctx.test_options.reporters.only_failures =
                         expr.as_bool().expect("infallible: type checked");
                 }
 
-                if let Some(expr) = test_.get(b"reporter") {
+                if let Some(expr) = test.get(b"reporter") {
                     self.expect(&expr, ExprTag::EObject)?;
                     if let Some(junit_expr) = expr.get(b"junit") {
                         self.expect_string(&junit_expr)?;
@@ -458,7 +494,7 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                if let Some(expr) = test_.get(b"coverageReporter") {
+                if let Some(expr) = test.get(b"coverageReporter") {
                     'brk: {
                         self.ctx.test_options.coverage.reporters = CoverageReporters {
                             text: false,
@@ -479,7 +515,7 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                if let Some(expr) = test_.get(b"coverageDir") {
+                if let Some(expr) = test.get(b"coverageDir") {
                     self.expect_string(&expr)?;
                     self.ctx.test_options.coverage.reports_directory = estring_to_owned(
                         expr.data
@@ -490,7 +526,7 @@ impl<'a> Parser<'a> {
                     );
                 }
 
-                if let Some(expr) = test_.get(b"coverageThreshold") {
+                if let Some(expr) = test.get(b"coverageThreshold") {
                     'outer: {
                         if let ExprData::ENumber(n) = expr.data {
                             let v = n.value();
@@ -524,13 +560,13 @@ impl<'a> Parser<'a> {
                 }
 
                 // This mostly exists for debugging.
-                if let Some(expr) = test_.get(b"coverageIgnoreSourcemaps") {
+                if let Some(expr) = test.get(b"coverageIgnoreSourcemaps") {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     self.ctx.test_options.coverage.ignore_sourcemap =
                         expr.as_bool().expect("infallible: type checked");
                 }
 
-                if let Some(expr) = test_.get(b"coverageSkipTestFiles") {
+                if let Some(expr) = test.get(b"coverageSkipTestFiles") {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     self.ctx.test_options.coverage.skip_test_files =
                         expr.as_bool().expect("infallible: type checked");
@@ -538,14 +574,14 @@ impl<'a> Parser<'a> {
 
                 let mut randomize_from_config: Option<bool> = None;
 
-                if let Some(expr) = test_.get(b"randomize") {
+                if let Some(expr) = test.get(b"randomize") {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     randomize_from_config = expr.as_bool();
                     self.ctx.test_options.randomize =
                         expr.as_bool().expect("infallible: type checked");
                 }
 
-                if let Some(expr) = test_.get(b"seed") {
+                if let Some(expr) = test.get(b"seed") {
                     self.expect(&expr, ExprTag::ENumber)?;
                     let seed_value =
                         num_to_u32(expr.as_number().expect("infallible: type checked"));
@@ -563,7 +599,7 @@ impl<'a> Parser<'a> {
                     self.ctx.test_options.seed = Some(seed_value);
                 }
 
-                if let Some(expr) = test_.get(b"rerunEach") {
+                if let Some(expr) = test.get(b"rerunEach") {
                     self.expect(&expr, ExprTag::ENumber)?;
                     if self.ctx.test_options.retry != 0 {
                         self.add_error(expr.loc, b"\"rerunEach\" cannot be used with \"retry\"")?;
@@ -573,7 +609,7 @@ impl<'a> Parser<'a> {
                         num_to_u32(expr.as_number().expect("infallible: type checked"));
                 }
 
-                if let Some(expr) = test_.get(b"retry") {
+                if let Some(expr) = test.get(b"retry") {
                     self.expect(&expr, ExprTag::ENumber)?;
                     if self.ctx.test_options.repeat_count != 0 {
                         self.add_error(expr.loc, b"\"retry\" cannot be used with \"rerunEach\"")?;
@@ -583,7 +619,7 @@ impl<'a> Parser<'a> {
                         num_to_u32(expr.as_number().expect("infallible: type checked"));
                 }
 
-                if let Some(expr) = test_.get(b"concurrentTestGlob") {
+                if let Some(expr) = test.get(b"concurrentTestGlob") {
                     match &expr.data {
                         ExprData::EString(s) => {
                             if s.len() == 0 {
@@ -635,7 +671,7 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                if let Some(expr) = test_.get(b"coveragePathIgnorePatterns") {
+                if let Some(expr) = test.get(b"coveragePathIgnorePatterns") {
                     'brk: {
                         match &expr.data {
                             ExprData::EString(s) => {
@@ -671,7 +707,7 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                if let Some(expr) = test_.get(b"pathIgnorePatterns") {
+                if let Some(expr) = test.get(b"pathIgnorePatterns") {
                     'brk: {
                         // Only skip if --path-ignore-patterns was explicitly passed via CLI
                         if self.ctx.test_options.path_ignore_patterns_from_cli {
@@ -770,6 +806,24 @@ impl<'a> Parser<'a> {
                     self.load_log_level(&expr)?;
                 }
 
+                // Only the package manager reads these two.
+                if self.is_project_file && cmd.is_npm_related() {
+                    for (key, env_var) in [
+                        ("globalDir", "BUN_INSTALL_GLOBAL_DIR"),
+                        ("globalBinDir", "BUN_INSTALL_BIN"),
+                    ] {
+                        if let Some(expr) = install_obj.get(key.as_bytes()) {
+                            self.log.add_warning_fmt(
+                                Some(self.source),
+                                expr.loc,
+                                format_args!(
+                                    "ignoring \"{key}\" in project bunfig.toml, set it in $HOME/.bunfig.toml or ${env_var}"
+                                ),
+                            );
+                        }
+                    }
+                }
+
                 self.parse_install(&install_obj)?;
             }
 
@@ -852,6 +906,7 @@ impl<'a> Parser<'a> {
 
         if let Some(_bun) = json.get(b"bundle") {
             if cmd == CommandTag::BuildCommand
+                || cmd == CommandTag::CompileCommand
                 || cmd == CommandTag::RunCommand
                 || cmd == CommandTag::AutoCommand
             {
@@ -867,7 +922,7 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            if cmd == CommandTag::BuildCommand {
+            if matches!(cmd, CommandTag::BuildCommand | CommandTag::CompileCommand) {
                 if let Some(expr2) = _bun.get(b"logLevel") {
                     self.load_log_level(&expr2)?;
                 }
@@ -957,8 +1012,6 @@ impl<'a> Parser<'a> {
             if let Some(value) = expr.as_string(self.bump) {
                 if value == b"react" {
                     jsx_runtime = api::JsxRuntime::Classic;
-                } else if value == b"solid" {
-                    jsx_runtime = api::JsxRuntime::Solid;
                 } else if value == b"react-jsx" {
                     jsx_runtime = api::JsxRuntime::Automatic;
                     jsx_dev = false;
@@ -968,7 +1021,7 @@ impl<'a> Parser<'a> {
                 } else {
                     self.add_error(
                         expr.loc,
-                        b"Invalid jsx runtime, only 'react', 'solid', 'react-jsx', and 'react-jsxDEV' are supported",
+                        b"Invalid jsx runtime, only 'react', 'react-jsx', and 'react-jsxDEV' are supported",
                     )?;
                 }
             }
@@ -1098,11 +1151,14 @@ impl<'a> Parser<'a> {
 }
 
 impl Bunfig {
-    pub fn parse(
+    pub(crate) fn parse(
         cmd: CommandTag,
         source: &bun_ast::Source,
+        is_project_file: bool,
         ctx: &mut ContextData,
-    ) -> Result<(), bun_core::Error> {
+        tool: Option<&mut crate::ToolReader<'_>>,
+        counts: Counts,
+    ) -> crate::Result<()> {
         // SAFETY: ctx.log is populated by `create_context_data()` before any
         // bunfig load; single-threaded CLI startup invariant. The raw pointer
         // is copied out so the resulting `&mut Log` does not borrow `ctx`
@@ -1139,11 +1195,11 @@ impl Bunfig {
                             },
                         );
                     }
-                    return Err(e);
+                    return Err(e.into());
                 }
             }
         } else {
-            match json_parser::parse_ts_config::<true>(source, log, &bump) {
+            match json_parser::parse_ts_config(source, log, &bump) {
                 Ok(e) => e,
                 Err(e) => {
                     if log.errors + log.warnings == log_count {
@@ -1156,7 +1212,7 @@ impl Bunfig {
                             },
                         );
                     }
-                    return Err(e);
+                    return Err(e.into());
                 }
             }
         };
@@ -1173,8 +1229,39 @@ impl Bunfig {
             source,
             ctx,
             bump: &bump,
+            is_project_file,
+            tool,
+            counts,
         };
         parser.parse(cmd)
+    }
+
+    /// Checks whether the file sets `[install.security] scanner` without applying any settings.
+    pub(crate) fn has_security_scanner(source: &bun_ast::Source) -> crate::Result<bool> {
+        // The AST store is not reset afterwards, because the caller may be in the middle of
+        // parsing a module whose nodes live in the same store.
+        bun_ast::initialize_store();
+        let bump = Bump::borrowing_default();
+        let file = TOML::parse(source, &mut bun_ast::Log::init(), &bump, true)?;
+        let security = file.get(b"install").and_then(|it| it.get(b"security"));
+        Ok(security.is_some_and(|it| it.get(b"scanner").is_some()))
+    }
+
+    /// Returns the settings in the file's `[install]` section without applying them.
+    pub(crate) fn parse_install_section(
+        source: &bun_ast::Source,
+    ) -> crate::Result<Option<Box<api::BunInstall>>> {
+        // The AST store is not reset afterwards, because the caller may be in the middle of
+        // parsing a module whose nodes live in the same store.
+        bun_ast::initialize_store();
+        let mut log = bun_ast::Log::init();
+        let mut ctx = ContextData {
+            log: &raw mut log,
+            ..Default::default()
+        };
+        let cmd = CommandTag::InstallCommand;
+        Self::parse(cmd, source, true, &mut ctx, None, Counts::OnlyInstall)?;
+        Ok(ctx.install)
     }
 }
 
@@ -1183,63 +1270,50 @@ impl Bunfig {
 // Split into a second `impl` block purely to keep `parse(cmd)` readable.
 // ─────────────────────────────────────────────────────────────────────────────
 
-impl<'a> Parser<'a> {
-    fn parse_registry_url_string(
-        &mut self,
-        str: &E::EString,
-    ) -> Result<api::NpmRegistry, bun_core::Error> {
-        // Dedup D009: body is the canonical port in `bun_api::npm_registry`.
-        // The api `Parser` is generic over log/source and never reads them for
-        // this path, so we just hand it our reborrowed handles.
-        let bytes = str.string(self.bump)?;
-        Ok(bun_api::npm_registry::Parser {
-            log: &mut *self.log,
-            source: self.source,
-        }
-        .parse_registry_url_string_impl(bytes)?)
-    }
+impl<'a> Parser<'a, '_> {
+    fn parse_registry_object(&mut self, obj: &E::Object) -> crate::Result<api::NpmRegistry> {
+        // `user:pass@` / `:token@` in the URL are credentials, as in the string form.
+        let mut registry = match obj.get(b"url") {
+            Some(url) => {
+                self.expect_string(&url)?;
+                let url = url.as_string(self.bump).expect("infallible: type checked");
+                api::NpmRegistry::from_url(url)
+            }
+            None => api::NpmRegistry::default(),
+        };
 
-    fn parse_registry_object(
-        &mut self,
-        obj: &E::Object,
-    ) -> Result<api::NpmRegistry, bun_core::Error> {
-        let mut registry = api::NpmRegistry::default();
+        let username = obj.get(b"username");
+        let password = obj.get(b"password");
+        let token = obj.get(b"token");
 
-        if let Some(url) = obj.get(b"url") {
-            self.expect_string(&url)?;
-            registry.url = url
-                .as_string(self.bump)
-                .expect("infallible: type checked")
-                .into();
+        // Keys replace the URL's credentials as a set: from_api would favor a URL token over keys.
+        if username.is_some() || password.is_some() || token.is_some() {
+            registry = api::NpmRegistry {
+                url: registry.url,
+                ..Default::default()
+            };
         }
-        if let Some(username) = obj.get(b"username") {
-            self.expect_string(&username)?;
-            registry.username = username
-                .as_string(self.bump)
-                .expect("infallible: type checked")
-                .into();
-        }
-        if let Some(password) = obj.get(b"password") {
-            self.expect_string(&password)?;
-            registry.password = password
-                .as_string(self.bump)
-                .expect("infallible: type checked")
-                .into();
-        }
-        if let Some(token) = obj.get(b"token") {
-            self.expect_string(&token)?;
-            registry.token = token
-                .as_string(self.bump)
-                .expect("infallible: type checked")
-                .into();
+
+        for (value, field) in [
+            (username, &mut registry.username),
+            (password, &mut registry.password),
+            (token, &mut registry.token),
+        ] {
+            if let Some(value) = value {
+                self.expect_string(&value)?;
+                *field = value
+                    .as_string(self.bump)
+                    .expect("infallible: type checked")
+                    .into();
+            }
         }
 
         Ok(registry)
     }
 
-    fn parse_registry(&mut self, expr: &Expr) -> Result<api::NpmRegistry, bun_core::Error> {
+    fn parse_registry(&mut self, expr: &Expr) -> crate::Result<api::NpmRegistry> {
         match &expr.data {
-            ExprData::EString(s) => self.parse_registry_url_string(s),
+            ExprData::EString(s) => Ok(api::NpmRegistry::from_url(s.string(self.bump)?)),
             ExprData::EObject(o) => self.parse_registry_object(o),
             _ => {
                 self.add_error(
@@ -1251,7 +1325,13 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_install(&mut self, install_obj: &Expr) -> Result<(), bun_core::Error> {
+    /// Resolves a relative path in `[install]` against the directory that contains the bunfig.toml.
+    fn install_path(&self, path: &[u8]) -> Box<[u8]> {
+        let dir = bun_paths::dirname(self.source.path.text).unwrap_or_default();
+        api::BunInstall::resolve_path(dir, path)
+    }
+
+    fn parse_install(&mut self, install_obj: &Expr) -> crate::Result<()> {
         // The helper methods (`expect*`, `add_error`, `parse_registry`) take
         // `&mut self`, which under Stacked Borrows would invalidate any
         // long-lived `&mut` derived from `self.ctx.install`. Move the box
@@ -1267,10 +1347,18 @@ impl<'a> Parser<'a> {
         &mut self,
         install: &mut api::BunInstall,
         install_obj: &Expr,
-    ) -> Result<(), bun_core::Error> {
-        if let Some(cafile) = install_obj.get(b"cafile") {
+    ) -> crate::Result<()> {
+        let cafile = install_obj.get(b"cafile");
+        let ca = install_obj.get(b"ca");
+        // `ca` and `cafile` are one setting, so a file that sets either one replaces both.
+        if cafile.is_some() || ca.is_some() {
+            install.cafile = None;
+            install.ca = None;
+        }
+
+        if let Some(cafile) = cafile {
             install.cafile = match cafile.as_string(self.bump) {
-                Some(s) => Some(s.into()),
+                Some(s) => Some(self.install_path(s)),
                 None => {
                     self.add_error(cafile.loc, b"Invalid cafile. Expected a string.")?;
                     return Ok(());
@@ -1278,7 +1366,7 @@ impl<'a> Parser<'a> {
             };
         }
 
-        if let Some(ca) = install_obj.get(b"ca") {
+        if let Some(ca) = ca {
             match &ca.data {
                 ExprData::EArray(arr) => {
                     let items = arr.items.slice();
@@ -1422,15 +1510,17 @@ impl<'a> Parser<'a> {
         }
         if let Some(v) = install_obj
             .get(b"globalDir")
+            .filter(|_| !self.is_project_file)
             .and_then(|e| e.as_string(self.bump))
         {
-            install.global_dir = Some(v.into());
+            install.global_dir = Some(self.install_path(v));
         }
         if let Some(v) = install_obj
             .get(b"globalBinDir")
+            .filter(|_| !self.is_project_file)
             .and_then(|e| e.as_string(self.bump))
         {
-            install.global_bin_dir = Some(v.into());
+            install.global_bin_dir = Some(self.install_path(v));
         }
 
         if let Some(cache) = install_obj.get(b"cache") {
@@ -1443,7 +1533,7 @@ impl<'a> Parser<'a> {
                     break 'load;
                 }
                 if let Some(value) = cache.as_string(self.bump) {
-                    install.cache_directory = Some(value.into());
+                    install.cache_directory = Some(self.install_path(value));
                     break 'load;
                 }
                 if let ExprData::EObject(_) = cache.data {
@@ -1454,7 +1544,7 @@ impl<'a> Parser<'a> {
                         install.disable_manifest_cache = Some(v);
                     }
                     if let Some(v) = cache.get(b"dir").and_then(|e| e.as_string(self.bump)) {
-                        install.cache_directory = Some(v.into());
+                        install.cache_directory = Some(self.install_path(v));
                     }
                 }
             }
@@ -1471,7 +1561,16 @@ impl<'a> Parser<'a> {
             if let ExprData::EObject(_) = security_obj.data {
                 if let Some(scanner) = security_obj.get(b"scanner") {
                     self.expect_string(&scanner)?;
-                    install.security_scanner = scanner.as_string(self.bump).map(Into::into);
+                    install.security_scanner = scanner.as_string(self.bump).map(|name| {
+                        // The scanner process runs in the project directory, so a relative path
+                        // from the project's own bunfig.toml already resolves correctly.
+                        if self.is_project_file || bun_paths::is_package_path(name) {
+                            return name.into();
+                        }
+                        let mut path = self.install_path(name);
+                        bun_paths::resolve_path::platform_to_posix_in_place(&mut path[..]);
+                        path
+                    });
                 }
             } else {
                 self.add_error(
@@ -1482,17 +1581,21 @@ impl<'a> Parser<'a> {
         }
 
         if let Some(min_age) = install_obj.get(b"minimumReleaseAge") {
+            const MS_PER_S: f64 = bun_core::time::MS_PER_S as f64;
+            let duration = (min_age.as_string(self.bump)).and_then(bun_core::fmt::parse_seconds);
             match &min_age.data {
                 ExprData::ENumber(seconds) => {
-                    if seconds.value() < 0.0 {
+                    if !(seconds.value() >= 0.0 && seconds.value().is_finite()) {
                         self.add_error(
                             min_age.loc,
                             b"Expected positive number of seconds for minimumReleaseAge",
                         )?;
                         return Ok(());
                     }
-                    const MS_PER_S: f64 = bun_core::time::MS_PER_S as f64;
                     install.minimum_release_age_ms = Some(seconds.value() * MS_PER_S);
+                }
+                _ if duration.is_some() => {
+                    install.minimum_release_age_ms = duration.map(|seconds| seconds * MS_PER_S);
                 }
                 _ => {
                     self.add_error(
@@ -1535,12 +1638,10 @@ impl<'a> Parser<'a> {
         // Remap PnpmMatcher errors so callers (and the
         // crash handler's `"Invalid Bunfig"` match) see the canonical
         // bunfig error; only OOM passes through unchanged.
-        let remap = |e: FromExprError| -> bun_core::Error {
+        let remap = |e: FromExprError| -> crate::Error {
             match e {
-                FromExprError::OutOfMemory => err!(OutOfMemory),
-                FromExprError::UnexpectedExpr | FromExprError::InvalidRegExp => {
-                    err!("Invalid Bunfig")
-                }
+                FromExprError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+                FromExprError::UnexpectedExpr => crate::Error::InvalidBunfig,
             }
         };
         if let Some(public_hoist_pattern_expr) = install_obj.get(b"publicHoistPattern") {
@@ -1555,11 +1656,18 @@ impl<'a> Parser<'a> {
                     .map_err(remap)?,
             );
         }
+        if let Some(v) = install_obj.get(b"hoist").and_then(|e| e.as_bool()) {
+            install.hoist = Some(v);
+        }
+
+        if let Some(v) = install_obj.get(b"offline").and_then(|e| e.as_bool()) {
+            install.offline = Some(v);
+        }
 
         Ok(())
     }
 
-    fn parse_serve_static(&mut self, serve_obj: &Expr) -> Result<(), bun_core::Error> {
+    fn parse_serve_static(&mut self, serve_obj: &Expr) -> crate::Result<()> {
         if let Some(config_plugins) = serve_obj.get(b"plugins") {
             let plugins: Option<Vec<Box<[u8]>>> = 'plugins: {
                 if let ExprData::EArray(arr) = &config_plugins.data {
@@ -1617,6 +1725,33 @@ impl<'a> Parser<'a> {
                 }
             } else {
                 self.add_error(minify.loc, b"Expected minify to be boolean or object")?;
+            }
+        }
+
+        if let Some(sourcemap) = serve_obj.get(b"sourcemap") {
+            if let Some(v) = sourcemap.as_bool() {
+                self.ctx.args.serve_sourcemap = Some(if v {
+                    api::SourceMapMode::Linked
+                } else {
+                    api::SourceMapMode::None
+                });
+            } else if let Some(s) = sourcemap.as_string(self.bump) {
+                match s {
+                    b"none" => self.ctx.args.serve_sourcemap = Some(api::SourceMapMode::None),
+                    b"linked" => self.ctx.args.serve_sourcemap = Some(api::SourceMapMode::Linked),
+                    b"inline" => self.ctx.args.serve_sourcemap = Some(api::SourceMapMode::Inline),
+                    b"external" => {
+                        self.ctx.args.serve_sourcemap = Some(api::SourceMapMode::External)
+                    }
+                    _ => {
+                        self.add_error(
+                            sourcemap.loc,
+                            b"Expected sourcemap to be one of 'none', 'linked', 'inline', or 'external'",
+                        )?;
+                    }
+                }
+            } else {
+                self.add_error(sourcemap.loc, b"Expected sourcemap to be boolean or string")?;
             }
         }
 

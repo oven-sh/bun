@@ -16,19 +16,12 @@ fn bs(p: Str) -> &'static BStr {
 /// A printer error.
 pub type PrinterError = Err<PrinterErrorKind>;
 
-pub fn fmt_printer_error() -> PrinterError {
-    Err {
-        kind: PrinterErrorKind::fmt_error,
-        loc: None,
-    }
-}
-
 /// An error with a source location.
 pub struct Err<T> {
     /// The type of error that occurred.
     pub kind: T,
     /// The location where the error occurred.
-    pub loc: Option<ErrorLocation>,
+    pub(crate) loc: Option<ErrorLocation>,
 }
 
 impl<T: fmt::Display> fmt::Display for Err<T> {
@@ -40,7 +33,10 @@ impl<T: fmt::Display> fmt::Display for Err<T> {
 // `to_error_instance` lives as an extension-trait method in `bun_css_jsc`.
 
 impl Err<ParserError> {
-    pub fn from_parse_error(err: ParseError<ParserError>, filename: &[u8]) -> Err<ParserError> {
+    pub(crate) fn from_parse_error(
+        err: ParseError<ParserError>,
+        filename: &[u8],
+    ) -> Err<ParserError> {
         let kind = match err.kind {
             ParserErrorKind::basic(b) => match b {
                 BasicParseErrorKind::unexpected_token(t) => ParserError::unexpected_token(t),
@@ -69,17 +65,17 @@ impl<T: fmt::Display> Err<T> {
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
     ) -> Result<(), bun_core::Error> {
-        use bun_core::OrWriteFailed as _;
         use std::io::Write as _;
         let mut text: Vec<u8> = Vec::new();
-        write!(&mut text, "{}", self.kind).or_write_failed()?;
+        write!(&mut text, "{}", self.kind).map_err(|_| bun_core::Error::WriteFailed)?;
 
         log.add_msg(bun_ast::Msg {
             kind: bun_ast::Kind::Err,
             data: bun_ast::Data {
                 location: match &self.loc {
                     Some(loc) => Some(loc.to_location(source)?),
-                    None => None,
+                    // An error with no location still reports the file name.
+                    None => bun_ast::Location::init_or_null(Some(source), bun_ast::Range::NONE),
                 },
                 text: text.into(),
             },
@@ -94,9 +90,9 @@ impl<T: fmt::Display> Err<T> {
 /// Extensible parse errors that can be encountered by client parsing implementations.
 pub struct ParseError<T> {
     /// Details of this error
-    pub kind: ParserErrorKind<T>,
+    pub(crate) kind: ParserErrorKind<T>,
     /// Location where this error occurred
-    pub location: SourceLocation,
+    pub(crate) location: SourceLocation,
 }
 
 impl<T> ParseError<T> {
@@ -171,38 +167,26 @@ impl fmt::Display for BasicParseErrorKind {
 /// A line and column location within a source file.
 pub struct ErrorLocation {
     /// The filename in which the error occurred.
-    pub filename: Str,
+    pub(crate) filename: Str,
     /// The line number, starting from 0.
-    pub line: u32,
+    pub(crate) line: u32,
     /// The column number, starting from 1.
-    pub column: u32,
+    pub(crate) column: u32,
 }
 
 impl ErrorLocation {
-    pub fn with_filename(&self, filename: &[u8]) -> ErrorLocation {
-        ErrorLocation {
-            filename,
-            line: self.line,
-            column: self.column,
-        }
-    }
-
-    pub fn to_location(
+    pub(crate) fn to_location(
         &self,
         source: &bun_ast::Source,
     ) -> Result<bun_ast::Location, bun_core::Error> {
-        // SAFETY: `'bump`-erasure — `bun_ast::Location.line_text` is `Option<&'static [u8]>`
-        // (`Str` placeholder per src/logger/lib.rs); the slice borrows
-        // `source.contents` which outlives the diagnostic. Re-thread once
-        // `bun_ast::Location` grows a real lifetime.
         let line_text = bun_core::strings::get_lines_in_text::<1>(&source.contents, self.line)
-            .map(|lines| unsafe { &*std::ptr::from_ref::<[u8]>(lines.as_slice()[0]) });
+            .map(|lines| Box::from(bun_core::strings::trim(lines.as_slice()[0], b"\r\n")));
         Ok(bun_ast::Location {
-            file: std::borrow::Cow::Borrowed(source.path.text),
-            namespace: source.path.namespace,
+            file: Box::from(source.path.text),
+            namespace: Box::from(source.path.namespace),
             line: i32::try_from(self.line + 1).expect("int cast"),
             column: i32::try_from(self.column).expect("int cast"),
-            line_text: line_text.map(std::borrow::Cow::Borrowed),
+            line_text,
             ..Default::default()
         })
     }
@@ -224,10 +208,6 @@ pub enum PrinterErrorKind {
     },
     /// A [std::fmt::Error](std::fmt::Error) was encountered in the underlying destination.
     fmt_error,
-    /// The CSS modules `composes` property cannot be used within nested rules.
-    invalid_composes_nesting,
-    /// The CSS modules `composes` property cannot be used with a simple class selector.
-    invalid_composes_selector,
     /// The CSS modules pattern must end with `[local]` for use in CSS grid.
     invalid_css_modules_pattern_in_grid,
     /// Substituting parent selectors for `&` while compiling CSS nesting for
@@ -250,12 +230,6 @@ impl fmt::Display for PrinterErrorKind {
                 bs(*url)
             ),
             Self::fmt_error => f.write_str("Formatting error occurred"),
-            Self::invalid_composes_nesting => {
-                f.write_str("The 'composes' property cannot be used within nested rules")
-            }
-            Self::invalid_composes_selector => {
-                f.write_str("The 'composes' property can only be used with a simple class selector")
-            }
             Self::invalid_css_modules_pattern_in_grid => {
                 f.write_str("CSS modules pattern must end with '[local]' when used in CSS grid")
             }
@@ -309,6 +283,7 @@ pub enum ParserError {
         expected: Str,
         received: Str,
     },
+    input_too_large,
 }
 
 impl fmt::Display for ParserError {
@@ -339,6 +314,7 @@ impl fmt::Display for ParserError {
             Self::unexpected_value { expected, received } => {
                 write!(f, "Expected {}, received {}", bs(*expected), bs(*received))
             }
+            Self::input_too_large => f.write_str("CSS file is too large to parse (2 GiB maximum)"),
         }
     }
 }
@@ -348,19 +324,12 @@ pub struct BasicParseError {
     /// Details of this error
     pub kind: BasicParseErrorKind,
     /// Location where this error occurred
-    pub location: SourceLocation,
+    pub(crate) location: SourceLocation,
 }
 
 impl BasicParseError {
-    pub fn into_parse_error<T>(self) -> ParseError<T> {
-        ParseError {
-            kind: ParserErrorKind::basic(self.kind),
-            location: self.location,
-        }
-    }
-
     #[inline]
-    pub fn into_default_parse_error(self) -> ParseError<ParserError> {
+    pub(crate) fn into_default_parse_error(self) -> ParseError<ParserError> {
         ParseError {
             kind: ParserErrorKind::basic(self.kind),
             location: self.location,
@@ -389,8 +358,6 @@ pub enum SelectorError {
     invalid_pseudo_class_after_pseudo_element,
     /// An invalid pseudo class was encountered after a `-webkit-scrollbar` pseudo element.
     invalid_pseudo_class_after_webkit_scrollbar,
-    /// A `-webkit-scrollbar` state was encountered before a `-webkit-scrollbar` pseudo element.
-    invalid_pseudo_class_before_webkit_scrollbar,
     /// Invalid qualified name in attribute selector.
     invalid_qual_name_in_attr(Token),
     /// The current token is not allowed in this state.
@@ -430,9 +397,6 @@ impl fmt::Display for SelectorError {
             }
             Self::invalid_pseudo_class_after_webkit_scrollbar => {
                 f.write_str("Invalid pseudo-class after -webkit-scrollbar")
-            }
-            Self::invalid_pseudo_class_before_webkit_scrollbar => {
-                f.write_str("-webkit-scrollbar state found before -webkit-scrollbar pseudo-element")
             }
 
             Self::expected_namespace(s) => write!(f, "Expected namespace '{}'", bs(*s)),
@@ -480,8 +444,8 @@ impl fmt::Display for SelectorError {
 }
 
 pub struct ErrorWithLocation<T> {
-    pub kind: T,
-    pub loc: Location,
+    pub(crate) kind: T,
+    pub(crate) loc: Location,
 }
 
 #[derive(strum::IntoStaticStr, Debug)]
@@ -490,7 +454,6 @@ pub enum MinifyErr {
     minify_err,
 }
 bun_core::impl_tag_error!(MinifyErr);
-bun_core::named_error_set!(MinifyErr);
 
 pub type MinifyError = ErrorWithLocation<MinifyErrorKind>;
 

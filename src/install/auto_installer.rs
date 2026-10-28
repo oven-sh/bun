@@ -21,18 +21,19 @@
 //! `value` union by plain assignment.
 
 use core::mem::{align_of, size_of};
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use bun_install_types::resolver_hooks as hooks;
+use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
 use bun_semver::{SlicedString, String as SemverString};
+use bun_threading::Futex;
 
-use crate::dependency::{self, DependencyExt as _};
-use crate::lockfile::{self, Package};
+use crate::dependency;
+use crate::lockfile;
 use crate::package_manager::package_manager_directories as directories;
 use crate::package_manager::package_manager_enqueue as enqueue;
-use crate::package_manager::package_manager_lifecycle as lifecycle;
-use crate::package_manager::package_manager_resolution as pm_resolution;
 use crate::resolution;
-use crate::{DependencyID, Features, PackageID, PackageManager, PreinstallState};
+use crate::{PackageID, PackageManager, PreinstallState};
 
 // ─── Static layout asserts (Resolution overlay) ───────────────────────────
 // `resolution::ResolutionType<u64>` and `hooks::Resolution` are distinct
@@ -127,14 +128,51 @@ fn resolution_from_hooks(r: &hooks::Resolution) -> resolution::Resolution {
 // (src/install/dependency.rs), so no overlay helper is needed — values pass
 // through nominally.
 
+// ─── The wait of a resolve ────────────────────────────────────────────────
+
+/// Bumped by every `PackageManager::wake_raw` of the auto-install manager.
+static WAKES: AtomicU32 = AtomicU32::new(0);
+/// Threads blocked on `WAKES` (Workers share the manager). At zero a wake skips the syscall.
+static PARKED: AtomicU32 = AtomicU32::new(0);
+
+/// Blocks the thread, because an event loop would run timers inside `require()`. Uses SeqCst
+/// because each side writes its own word and then reads the other's.
+pub(crate) struct Parked(());
+
+impl Parked {
+    pub(crate) fn new() -> Parked {
+        PARKED.fetch_add(1, Ordering::SeqCst);
+        Parked(())
+    }
+
+    /// Read this before draining. A task that finishes after the read then makes [`Parked::wait`]
+    /// return immediately.
+    pub(crate) fn wakes(&self) -> u32 {
+        WAKES.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn wait(&self, wakes: u32) {
+        Futex::wait_forever(&WAKES, wakes);
+    }
+
+    pub(crate) fn wake_all() {
+        WAKES.fetch_add(1, Ordering::SeqCst);
+        if PARKED.load(Ordering::SeqCst) > 0 {
+            Futex::wake(&WAKES, u32::MAX);
+        }
+    }
+}
+
+impl Drop for Parked {
+    fn drop(&mut self) {
+        PARKED.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 // ─── impl AutoInstaller ───────────────────────────────────────────────────
 
 impl hooks::AutoInstaller for PackageManager {
     // ── Lockfile reads ────────────────────────────────────────────────────
-
-    fn lockfile_packages_len(&self) -> usize {
-        self.lockfile.packages.len()
-    }
 
     fn lockfile_package_dependencies(&self, id: PackageID) -> hooks::DependencySlice {
         let s = self.lockfile.packages.get(id as usize).dependencies;
@@ -170,148 +208,69 @@ impl hooks::AutoInstaller for PackageManager {
         &self,
         name: &[u8],
         version: &hooks::DependencyVersion,
+        version_buf: &[u8],
     ) -> Option<PackageID> {
         self.lockfile
-            .resolve_package_from_name_and_version(name, version)
-    }
-
-    fn lockfile_legacy_package_to_dependency_id(
-        &self,
-        package_id: PackageID,
-    ) -> Result<DependencyID, bun_core::Error> {
-        self.lockfile
-            .buffers
-            .legacy_package_to_dependency_id(None, package_id)
-    }
-
-    fn lockfile_str<'a>(&'a self, s: &'a SemverString) -> &'a [u8] {
-        self.lockfile.str(s)
-    }
-
-    // ── Lockfile writes ───────────────────────────────────────────────────
-
-    fn lockfile_append_from_package_json(
-        &mut self,
-        package_json: &dyn hooks::PackageJsonView,
-        features: Features,
-    ) -> Result<PackageID, bun_core::Error> {
-        // Builds a `Package` from a package.json and appends it to the
-        // lockfile, driven entirely off the
-        // `PackageJsonView` interface so this impl does not need to name
-        // `bun_resolver::PackageJSON` directly.
-
-        // Reshaped for borrowck — `string_builder!` borrows
-        // `self.lockfile` mutably while `dep.clone_in` needs `&mut self`.
-        // Use a raw pointer for the disjoint reborrow (same approach as
-        // `Package::from_package_json`).
-        let pm: *mut PackageManager = self;
-        // SAFETY: `pm` derives from `&mut self`; reborrows below are disjoint
-        // from `string_builder`'s borrow of `lockfile.{string_bytes,string_pool}`.
-        let lockfile: &mut lockfile::Lockfile = unsafe { &mut *(*pm).lockfile };
-
-        let mut package = Package::default();
-        let mut string_builder = crate::string_builder!(lockfile);
-        let mut total_dependencies_count: u32 = 0;
-
-        // --- Counting
-        string_builder.count(package_json.name());
-        string_builder.count(package_json.version());
-        let source_buf = package_json.dependency_source_buf();
-        for (_, dep) in package_json.dependency_iter() {
-            if dep.behavior.is_enabled(features) {
-                dep.count(source_buf, &mut string_builder);
-                total_dependencies_count += 1;
-            }
-        }
-
-        string_builder.allocate()?;
-
-        let dependencies_list = &mut lockfile.buffers.dependencies;
-        let resolutions_list = &mut lockfile.buffers.resolutions;
-        dependencies_list.reserve(total_dependencies_count as usize);
-        resolutions_list.reserve(total_dependencies_count as usize);
-
-        // --- Cloning
-        let package_name: bun_semver::ExternalString =
-            string_builder.append::<bun_semver::ExternalString>(package_json.name());
-        package.name_hash = package_name.hash;
-        package.name = package_name.value;
-        package.resolution = resolution::Resolution::init(resolution::TaggedValue::Root);
-
-        let dep_start = dependencies_list.len();
-        debug_assert!(dependencies_list.len() == resolutions_list.len());
-
-        // Default-fill the tail now and `truncate` back
-        // to `dep_start` on the error path so a failed `clone_in` leaves both
-        // buffer lengths consistent.
-        let mut dependencies: &mut [dependency::Dependency] =
-            bun_core::vec::grow_default(dependencies_list, total_dependencies_count as usize);
-
-        for (_, dep) in package_json.dependency_iter() {
-            if !dep.behavior.is_enabled(features) {
-                continue;
-            }
-            // SAFETY: `pm` is the unique owner; `string_builder` borrows
-            // disjoint lockfile fields.
-            let pm_ref: &mut PackageManager = unsafe { &mut *pm };
-            match dep.clone_in(pm_ref, source_buf, &mut string_builder) {
-                Ok(cloned) => dependencies[0] = cloned,
-                Err(e) => {
-                    // `string_builder.clamp()` must run on the
-                    // error path too. `truncate` drops the default-filled tail
-                    // (and any already-written deps) before restoring length.
-                    dependencies_list.truncate(dep_start);
-                    string_builder.clamp();
-                    return Err(e);
-                }
-            }
-            dependencies = &mut dependencies[1..];
-            if dependencies.is_empty() {
-                break;
-            }
-        }
-        let remaining = dependencies.len() as u32;
-
-        package.meta.arch = package_json.arch();
-        package.meta.os = package_json.os();
-        // `scripts` is left zero-init by this path, so
-        // has-install-script is always false here.
-        package.meta.set_has_install_script(false);
-
-        package.dependencies = crate::lockfile::DependencySlice::new(
-            dep_start as u32,
-            total_dependencies_count - remaining,
-        );
-        package.resolutions = crate::lockfile::PackageIDSlice::new(
-            package.dependencies.off,
-            package.dependencies.len,
-        );
-
-        let new_length = package.dependencies.len as usize + dep_start;
-        // Length was bumped to `dep_start + total_dependencies_count` by
-        // `grow_default` above; trim any unused tail.
-        dependencies_list.truncate(new_length);
-        resolutions_list.resize(new_length, crate::INVALID_PACKAGE_ID);
-
-        string_builder.clamp();
-
-        let appended = lockfile.append_package(&package)?;
-        Ok(appended.meta.id)
-    }
-
-    fn lockfile_append_root_stub(&mut self) -> Result<PackageID, bun_core::Error> {
-        let pkg = Package {
-            resolution: resolution::Resolution::init(resolution::TaggedValue::Root),
-            ..Default::default()
-        };
-        let appended = self.lockfile.append_package(&pkg)?;
-        Ok(appended.meta.id)
+            .resolve_package_from_name_and_version(name, version, version_buf)
     }
 
     // ── PackageManager ops ────────────────────────────────────────────────
 
     fn set_on_wake(&mut self, handler: hooks::WakeHandler) {
         self.on_wake = handler;
+    }
+
+    fn project_folder<'b>(
+        &mut self,
+        name: &[u8],
+        version: &hooks::DependencyVersion,
+        version_buf: &[u8],
+        package_json_dir: Option<&[u8]>,
+        buf: &'b mut [u8],
+    ) -> Option<&'b [u8]> {
+        let name_hash = bun_semver::string::Builder::string_hash(match version.try_npm() {
+            Some(npm) if npm.is_alias => npm.name.slice(version_buf),
+            _ => name,
+        });
+        let links = self.options.link_workspace_packages;
+        let member: Option<SemverString> = match version.tag {
+            dependency::Tag::Workspace => self.lockfile.workspace_paths.get(&name_hash).copied(),
+            // A hoisted install links every workspace into the root's node_modules, whether or not
+            // a package.json lists it, so an import without a declared version finds it too.
+            dependency::Tag::Uninitialized if links => {
+                self.lockfile.workspace_paths.get(&name_hash).copied()
+            }
+            dependency::Tag::Npm => lockfile::linked_workspace_path_in(
+                links,
+                &self.lockfile.workspace_paths,
+                &self.lockfile.workspace_versions,
+                name_hash,
+                &version.npm().version,
+                version_buf,
+                self.lockfile.buffers.string_bytes.as_slice(),
+            ),
+            _ => None,
+        };
+        let (base, path): (&[u8], &[u8]) = if let Some(member) = &member {
+            (self.root_dir.dir, self.lockfile.str(member))
+        } else {
+            let package_json_dir = package_json_dir?;
+            match version.tag {
+                dependency::Tag::Folder => (package_json_dir, version.folder().slice(version_buf)),
+                dependency::Tag::Symlink => {
+                    let target = version.symlink().slice(version_buf);
+                    if dependency::is_link_path(target) {
+                        (package_json_dir, target)
+                    } else {
+                        directories::try_global_link_dir(self).ok()?;
+                        (directories::global_link_dir_path(self), target)
+                    }
+                }
+                _ => return None,
+            }
+        };
+        let len = join_abs_string_buf_checked::<platform::Auto>(base, buf, &[path])?.len();
+        Some(&buf[..len])
     }
 
     fn path_for_resolution<'b>(
@@ -329,50 +288,45 @@ impl hooks::AutoInstaller for PackageManager {
         // (asserted above).
         let path_buf: &mut bun_paths::PathBuffer =
             unsafe { &mut *buf.as_mut_ptr().cast::<bun_paths::PathBuffer>() };
+        if let Err(why) = directories::try_get_cache_directory(self) {
+            self.exit_or_log(&why);
+            return Err(bun_core::Error::WriteFailed);
+        }
         let r = resolution_from_hooks(resolution);
-        let out = directories::path_for_resolution(self, package_id, &r, path_buf)?;
-        Ok(&*out)
+        let mut len =
+            directories::path_for_resolution(self, package_id, &r, path_buf).map(|path| path.len());
+        // A package that is `Done` but has no folder was skipped because it is not for this
+        // platform, so it is not downloaded here either.
+        if len.is_err()
+            && r.tag == resolution::Tag::Npm
+            && PackageManager::get_preinstall_state(self, package_id) != PreinstallState::Done
+        {
+            enqueue::download_missing_package(self, package_id).map_err(bun_core::Error::from)?;
+            len = directories::path_for_resolution(self, package_id, &r, path_buf)
+                .map(|path| path.len());
+        } else if len.is_err() && r.tag != resolution::Tag::Npm {
+            let buf = self.lockfile.buffers.string_bytes.as_slice();
+            self.log_mut().add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "\"{}@{}\" not in cache, run `bun install`",
+                    bun_core::fmt::escape_control_chars(
+                        self.lockfile
+                            .packages
+                            .get(package_id as usize)
+                            .name
+                            .slice(buf)
+                    ),
+                    bun_core::fmt::for_terminal(r.fmt(buf, bun_core::fmt::PathSep::Posix)),
+                ),
+            );
+        }
+        Ok(&path_buf.0[..len.map_err(bun_core::Error::from)?])
     }
 
     fn get_preinstall_state(&self, package_id: PackageID) -> PreinstallState {
-        lifecycle::get_preinstall_state(self, package_id)
-    }
-
-    fn enqueue_package_for_download(
-        &mut self,
-        name: &[u8],
-        dependency_id: DependencyID,
-        package_id: PackageID,
-        resolution: &hooks::Resolution,
-        ctx: hooks::TaskCallbackContext,
-        patch_name_and_version_hash: Option<u64>,
-    ) -> Result<(), bun_core::Error> {
-        let r = resolution_from_hooks(resolution);
-        // Only the npm arm reaches this enqueue.
-        // Caller passes a `Resolution` whose tag was already checked == Npm by
-        // the resolver (`resolution.tag == .npm`); the field-copy bridge
-        // preserves the tag/union pairing.
-        let npm = *r.npm();
-        let url = self.lockfile.str(&npm.url).to_vec();
-        enqueue::enqueue_package_for_download(
-            self,
-            name,
-            dependency_id,
-            package_id,
-            npm.version,
-            &url,
-            crate::TaskCallbackContext::RootRequestId(ctx.root_request_id),
-            patch_name_and_version_hash,
-        )
-        .map_err(Into::into)
-    }
-
-    fn resolve_from_disk_cache(
-        &mut self,
-        name: &[u8],
-        version: &hooks::DependencyVersion,
-    ) -> Option<PackageID> {
-        pm_resolution::resolve_from_disk_cache(self, name, version)
+        PackageManager::get_preinstall_state(self, package_id)
     }
 
     fn enqueue_dependency_to_root(
@@ -380,8 +334,40 @@ impl hooks::AutoInstaller for PackageManager {
         name: &[u8],
         version: &hooks::DependencyVersion,
         version_buf: &[u8],
+        package_json_dir: Option<&[u8]>,
         behavior: hooks::Behavior,
     ) -> hooks::EnqueueResult {
+        // The package manager resolves a relative tarball path against the working directory,
+        // which is the project only for `bun install`. Here the path is made absolute first.
+        let mut absolute: Vec<u8> = Vec::new();
+        let mut from_package_json_dir = None;
+        if let Some(package_json_dir) = package_json_dir
+            && version.tag == dependency::Tag::Tarball
+            && let hooks::URI::Local(path) = version.tarball().uri
+        {
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let Some(joined) = join_abs_string_buf_checked::<platform::Auto>(
+                package_json_dir,
+                &mut buf[..],
+                &[path.slice(version_buf)],
+            ) else {
+                return hooks::EnqueueResult::NotFound;
+            };
+            absolute.extend_from_slice(b"file:");
+            absolute.extend_from_slice(joined);
+            from_package_json_dir = <Self as hooks::AutoInstaller>::parse_dependency(
+                self,
+                SemverString::init(name, name),
+                None,
+                &absolute,
+                &SlicedString::init(&absolute, &absolute),
+                None,
+            );
+        }
+        let (version, version_buf) = match &from_package_json_dir {
+            Some(version) => (version, absolute.as_slice()),
+            None => (version, version_buf),
+        };
         match enqueue::enqueue_dependency_to_root(self, name, version, version_buf, behavior) {
             enqueue::DependencyToEnqueue::Resolution {
                 package_id,
@@ -390,9 +376,8 @@ impl hooks::AutoInstaller for PackageManager {
                 package_id,
                 resolution: resolution_to_hooks(&resolution),
             },
-            enqueue::DependencyToEnqueue::Pending(id) => hooks::EnqueueResult::Pending(id),
             enqueue::DependencyToEnqueue::NotFound => hooks::EnqueueResult::NotFound,
-            enqueue::DependencyToEnqueue::Failure(e) => hooks::EnqueueResult::Failure(e),
+            enqueue::DependencyToEnqueue::Failure(e) => hooks::EnqueueResult::Failure(e.into()),
         }
     }
 
@@ -412,7 +397,7 @@ impl hooks::AutoInstaller for PackageManager {
     }
 
     fn parse_dependency_with_tag(
-        &mut self,
+        &self,
         name: SemverString,
         name_hash: u64,
         version: &[u8],
@@ -420,20 +405,32 @@ impl hooks::AutoInstaller for PackageManager {
         sliced: &SlicedString,
         log: Option<&mut bun_ast::Log>,
     ) -> Option<hooks::DependencyVersion> {
-        dependency::parse_with_tag(
-            name,
-            Some(name_hash),
-            version,
-            tag,
-            sliced,
-            log,
-            Some(self as &mut dyn dependency::NpmAliasRegistry),
-        )
+        dependency::parse_with_tag(name, Some(name_hash), version, tag, sliced, log, None)
     }
 
     fn infer_dependency_tag(&self, dep: &[u8]) -> hooks::DependencyVersionTag {
         <dependency::Tag as dependency::TagExt>::infer(dep)
     }
+}
+
+// `PackageJSON::parse` runs before the first bare import creates the manager.
+#[unsafe(no_mangle)]
+#[inline(never)]
+fn __bun_resolver_parse_dependency(
+    name: SemverString,
+    name_hash: hooks::PackageNameHash,
+    version: &[u8],
+    sliced: &SlicedString,
+    log: Option<&mut bun_ast::Log>,
+) -> Option<hooks::DependencyVersion> {
+    dependency::parse(
+        name,
+        name_hash,
+        version,
+        sliced,
+        log,
+        None::<&mut PackageManager>,
+    )
 }
 
 // ─── Lazy factory (resolver → install link-time hook) ─────────────────────
@@ -449,14 +446,21 @@ impl hooks::AutoInstaller for PackageManager {
 //   • `install` is `BundleOptions.install` (`?*Api.BunInstall`). The pointee is
 //     the CLI-owned `Box<BunInstall>` (process-lifetime), read-only.
 //   • `env` is the resolver's unwrapped `env_loader` (Transpiler-owned,
-//     process-lifetime). `init_with_runtime` stores it as
-//     `NonNull<Loader<'static>>`.
+//     process-lifetime). `init_with_runtime` stores it as `NonNull<Loader>`.
 #[unsafe(no_mangle)]
-pub(crate) unsafe fn __bun_resolver_init_package_manager(
+#[inline(never)]
+unsafe fn __bun_resolver_init_package_manager(
     mut log: core::ptr::NonNull<bun_ast::Log>,
     install: Option<core::ptr::NonNull<crate::bun_schema::api::BunInstall>>,
-    mut env: core::ptr::NonNull<bun_dotenv::Loader<'static>>,
-) -> Result<core::ptr::NonNull<dyn hooks::AutoInstaller>, bun_core::Error> {
+    mut env: core::ptr::NonNull<bun_dotenv::Loader>,
+    prefer_offline: bool,
+    importer_dir: &[u8],
+) -> core::result::Result<core::ptr::NonNull<dyn hooks::AutoInstaller>, bun_resolver::Error> {
+    // ABI: the resolver-side `extern "Rust"` declaration names its own
+    // `Error`, whose `Sys` variant carries the real errno name, so that an
+    // import fails with `EACCES` and not with `Unexpected`. Keep
+    // both sides byte-identical or the `Result` layout diverges.
+    //
     // Idempotent.
     bun_http::http_thread::init(&Default::default());
 
@@ -466,15 +470,34 @@ pub(crate) unsafe fn __bun_resolver_init_package_manager(
         install.map(|p| unsafe { p.as_ref() });
     // SAFETY: caller guarantees `log` / `env` point at process-lifetime
     // Transpiler-owned storage with no aliasing `&mut` live across this call.
-    let (log_ref, env_ref): (&mut bun_ast::Log, &mut bun_dotenv::Loader<'static>) =
+    let (log_ref, env_ref): (&mut bun_ast::Log, &mut bun_dotenv::Loader) =
         unsafe { (log.as_mut(), env.as_mut()) };
 
     let pm: *mut PackageManager = crate::package_manager::init_with_runtime(
         log_ref,
         bun_install,
-        crate::package_manager::CommandLineArguments::default(),
+        &crate::package_manager::CommandLineArguments {
+            prefer_offline,
+            ..Default::default()
+        },
         env_ref,
-    )?;
+        importer_dir,
+    )
+    .map_err(|e| match e {
+        crate::Error::Sys(errno) => bun_resolver::Error::Sys(errno),
+        crate::Error::Resolver(
+            err @ (bun_resolver::Error::Sys(_)
+            | bun_resolver::Error::SecurityScannerConfigured
+            | bun_resolver::Error::UnreadableConfig),
+        ) => err,
+        other => {
+            log_ref.add_zig_error_with_note(
+                other.name(),
+                format_args!("while initializing the auto-install package manager"),
+            );
+            bun_resolver::Error::Sys(bun_errno::SystemErrno::EIO)
+        }
+    })?;
     // On success `init_with_runtime` returns the non-null `holder::RAW_PTR`
     // singleton; upcast to the trait object the resolver stores.
     Ok(core::ptr::NonNull::new(pm as *mut dyn hooks::AutoInstaller)

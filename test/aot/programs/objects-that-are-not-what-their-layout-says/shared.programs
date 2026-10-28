@@ -1,0 +1,112 @@
+////: Node
+function Node(kind, pos, end) {
+  this.kind = kind;
+  this.pos = pos;
+  this.end = end;
+  this.flags = 0;
+  this.parent = null;
+  this.name = "n" + kind;
+}
+////: Node-2
+////= Node
+////= Token
+////= describe
+////= bits
+////= own
+////= make
+////= readAll
+////= show
+////= attempt
+////: Token
+class Token {
+  constructor(kind, pos, end) {
+    this.kind = kind;
+    this.pos = pos;
+    this.end = end;
+    this.flags = 0;
+    this.parent = null;
+    this.name = "t" + kind;
+  }
+}
+////: attempt
+function attempt(label, action) {
+  try {
+    return action();
+  } catch (error) {
+    console.log(label, error.constructor.name);
+  }
+}
+////: bits
+function bits(node) {
+  return (node.kind | node.flags) + (node.pos & 255) + (node.end >> 1);
+}
+////: describe
+function describe(node) {
+  return node.kind + " " + node.pos + " " + node.end + " " + node.flags + " " + node.parent + " " + node.name;
+}
+////: fill
+function fill(o, state) {
+  try {
+    if (state !== "empty") { o.extra = state === "filled" ? 7 : undefined; o.second = state === "filled" ? "two" : undefined; }
+    if (state === "deleted") { delete o.extra; delete o.second; }
+  } catch {}
+  return o;
+}
+////: fill-2
+function fill(o: any, state: string): A {
+  try {
+    if (state !== "empty") { o.extra = state === "filled" ? 7 : undefined; o.second = state === "filled" ? "two" : undefined; }
+    if (state === "deleted") { delete o.extra; delete o.second; }
+  } catch {}
+  return o;
+}
+////: for-12
+for (const [title, reader] of readers)
+  for (const state of states)
+    console.log(title + ", " + state + ": " + tell(reader, fill(new A(), state)) + " | " + tell(reader, fill(«1»(new A()), state)));
+////: make
+function make(Maker, count) {
+  const made = [];
+  for (let i = 0; i < count; i++) made.push(new Maker(i, i * 2, i * 3));
+  return made;
+}
+////: own
+function own(node) {
+  return Object.keys(node).join() + " " + ("pos" in node) + " " + Object.hasOwn(node, "flags") + " " + Object.hasOwn(node, "parent");
+}
+////: readAll
+function readAll(made) {
+  let sum = 0;
+  for (const node of made) sum += describe(node).length + bits(node);
+  return sum;
+}
+////: readers
+const readers = [
+  ["late field, then a method", function (o) { return o.extra + " " + o.m(); }],
+  ["late field, then a getter", function (o) { return o.extra + " " + o.g; }],
+  ["late field, then an absent name", function (o) { return o.extra + " " + o.missing; }],
+  ["late field, then another late field", function (o) { return o.extra + " " + o.second; }],
+  ["late field, then `in`", function (o) { return o.extra + " " + ("missing" in o) + " " + ("extra" in o); }],
+  ["late field twice round a method", function (o) { return o.extra + " " + o.m() + " " + o.extra; }],
+  ["a method, then the late field", function (o) { return o.m() + " " + o.extra; }],
+  ["an absent name, then the late field", function (o) { return o.missing + " " + o.extra; }],
+  ["two late fields, then a method and a field of the constructor", function (o) { return o.extra + " " + o.second + " " + o.m() + " " + o.x; }],
+  ["late field, then a store that creates a field", function (o) { const before = o.extra; o.third = 3; return before + " " + o.third + " " + Object.keys(o).join(); }],
+];
+////: readers-2
+const readers: [string, (o: A) => string][] = [
+  ["late field, then a method", function (o: A) { return o.extra + " " + o.m(); }],
+  ["late field, then a getter", function (o: A) { return o.extra + " " + o.g; }],
+  ["late field, then an absent name", function (o: A) { return o.extra + " " + (o as any).missing; }],
+  ["late field, then another late field", function (o: A) { return o.extra + " " + o.second; }],
+  ["late field, then `in`", function (o: A) { return o.extra + " " + ("missing" in o) + " " + ("extra" in o); }],
+  ["late field twice round a method", function (o: A) { return o.extra + " " + o.m() + " " + o.extra; }],
+  ["a method, then the late field", function (o: A) { return o.m() + " " + o.extra; }],
+  ["an absent name, then the late field", function (o: A) { return (o as any).missing + " " + o.extra; }],
+  ["two late fields, then a method and a field of the constructor", function (o: A) { return o.extra + " " + o.second + " " + o.m() + " " + o.x; }],
+  ["late field, then a store that creates a field", function (o: A) { const before = o.extra; o.third = 3; return before + " " + o.third + " " + Object.keys(o).join(); }],
+];
+////: show
+function show(label, node) {
+  console.log(label, "|", describe(node), "|", bits(node), "|", own(node));
+}

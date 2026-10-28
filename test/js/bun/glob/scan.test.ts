@@ -22,8 +22,9 @@
 
 import { Glob, GlobScanOptions } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { execSync } from "child_process";
 import fg from "fast-glob";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isRoot, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import * as fs from "node:fs";
 import * as path from "path";
 import { createTempDirectoryWithBrokenSymlinks, prepareEntries, tempFixturesDir } from "./util";
@@ -616,6 +617,28 @@ describe("literal fast path", async () => {
     const entries = await Array.fromAsync(glob.scan({ cwd: tempdir }));
     expect(entries.sort()).toEqual([`packages${path.sep}foo`].sort());
   });
+
+  // The fast path stats the literal in each matched directory. Mode 444 fails that stat.
+  // Root ignores the mode bits, and chmod on Windows cannot make a directory unsearchable.
+  test.skipIf(isWindows || isRoot)("a failed stat reports the path from cwd", () => {
+    using dir = tempDir("glob-scan-literal-fast-path-eacces", { "packages/a/package.json": "hi" });
+    const unsearchable = path.join(String(dir), "packages", "a");
+    fs.chmodSync(unsearchable, 0o444);
+    try {
+      expect(() => [...new Glob("packages/*/package.json").scanSync({ cwd: String(dir) })]).toThrow(
+        expect.objectContaining({ code: "EACCES", syscall: "fstatat", path: "packages/a/package.json" }),
+      );
+      expect(() => [...new Glob("packages/*/package.json").scanSync({ cwd: String(dir), absolute: true })]).toThrow(
+        expect.objectContaining({
+          code: "EACCES",
+          syscall: "fstatat",
+          path: path.join(unsearchable, "package.json"),
+        }),
+      );
+    } finally {
+      fs.chmodSync(unsearchable, 0o755);
+    }
+  });
 });
 
 describe("trailing directory separator", async () => {
@@ -698,7 +721,7 @@ describe("absolute path pattern", async () => {
 describe("glob scan should not escape cwd boundary", () => {
   test("pattern .*/* should not match parent directory via ..", async () => {
     // Create a directory structure where we can verify paths don't escape cwd
-    const tempdir = tempDirWithFiles("glob-cwd-escape", {
+    await using tempdir = tempDir("glob-cwd-escape", {
       ".hidden": {
         "file.txt": "hidden file content",
       },
@@ -730,7 +753,7 @@ describe("glob scan should not escape cwd boundary", () => {
   });
 
   test("pattern .*/**/*.ts should not escape cwd", async () => {
-    const tempdir = tempDirWithFiles("glob-cwd-escape-ts", {
+    await using tempdir = tempDir("glob-cwd-escape-ts", {
       ".config": {
         "settings.ts": "export default {}",
         "nested": {
@@ -768,14 +791,14 @@ describe("glob scan should not escape cwd boundary", () => {
 
 describe("glob.scan wildcard fast path", async () => {
   test("works", async () => {
-    const tempdir = tempDirWithFiles("glob-scan-wildcard-fast-path", {
+    await using tempdir = tempDir("glob-scan-wildcard-fast-path", {
       "lol.md": "",
       "lol2.md": "",
       "shouldnt-show.md23243": "",
       "shouldnt-show.ts": "",
     });
     const glob = new Glob("*.md");
-    const entries = await Array.fromAsync(glob.scan(tempdir));
+    const entries = await Array.fromAsync(glob.scan(String(tempdir)));
     // bun root dir
     expect(entries.sort()).toEqual(["lol.md", "lol2.md"].sort());
   });
@@ -784,9 +807,9 @@ describe("glob.scan wildcard fast path", async () => {
   describe("fast-path detection edgecase", async () => {
     function runTest(pattern: string, files: Record<string, string>, expected: string[]) {
       test(`pattern: ${pattern}`, async () => {
-        const tempdir = tempDirWithFiles("glob-scan-wildcard-fast-path", files);
+        await using tempdir = tempDir("glob-scan-wildcard-fast-path", files);
         const glob = new Glob(pattern);
-        const entries = await Array.fromAsync(glob.scan(tempdir));
+        const entries = await Array.fromAsync(glob.scan(String(tempdir)));
         expect(entries.sort()).toEqual(expected.sort());
       });
     }
@@ -855,7 +878,7 @@ test.skipIf(process.platform === "win32")("patterns with many components", () =>
   files[parts.join("/") + "/hit.txt"] = "";
   files[parts.slice(0, depth - 1).join("/") + "/miss.txt"] = "";
 
-  const dir = tempDirWithFiles("glob-deep", files);
+  using dir = tempDir("glob-deep", files);
 
   // Exact-depth pattern: depth `*` components + literal tail
   const star = Array(depth).fill("*").join("/") + "/hit.txt";
@@ -937,6 +960,12 @@ test("scan handles a cwd with redundant trailing separators when following symli
   expect(exitCode).toBe(0);
 });
 
+// globalThis has its own private names, such as the module resolver's.
+test("scan and scanSync throw a TypeError when `this` is globalThis", () => {
+  expect(() => Bun.Glob.prototype.scanSync.call(globalThis, "fs")).toThrow(TypeError);
+  expect(() => Bun.Glob.prototype.scan.call(globalThis, "fs")).toThrow(TypeError);
+});
+
 // A pattern segment that spells out a leading `.` is an explicit request for
 // that dotfile/dot-directory, so the `dot: false` default must not hide it.
 // This matches bash, picomatch, minimatch and fast-glob.
@@ -985,6 +1014,46 @@ describe("explicit dotfile segments match without dot:true", () => {
     using dir = tempDir("glob-scan-explicit-dot-async", files);
     const result = await Array.fromAsync(new Glob(".dotdir/inner.txt").scan({ cwd: String(dir) }));
     expect(norm(result)).toEqual([".dotdir/inner.txt"]);
+  });
+});
+
+// Directory entries on Linux are bytes that need not be valid UTF-8. The
+// matcher must step over them in the same units the returned names use (one
+// U+FFFD per maximal ill-formed subpart), not by the lead byte's nominal
+// length, or `?` and `*` step into the next character or past the end.
+describe.skipIf(!isLinux)("scan over entry names that are not valid UTF-8", () => {
+  let dir: string;
+  beforeAll(() => {
+    dir = String(tempDir("glob-scan-invalid-utf8", {}));
+    // Bytes after "t": `\xc3 x`, `\xe4\xb8 .js`, `é \xc3`, `😀 js`, `x \x80`, `\xed\xa0\x80` (a WTF-8 surrogate).
+    for (const hex of ["c378", "e4b82e6a73", "c3a9c3", "f09f98806a73", "7880", "eda080"]) {
+      fs.writeFileSync(Buffer.concat([Buffer.from(dir + "/t"), Buffer.from(hex, "hex")]), "");
+    }
+  });
+  afterAll(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  const scan = (pattern: string) => [...new Glob(pattern).scanSync({ cwd: dir })].sort();
+  const all = ["t\uFFFDx", "t\uFFFD.js", "té\uFFFD", "t😀js", "tx\uFFFD", "t\uFFFD\uFFFD\uFFFD"];
+
+  test.each([
+    ["*", all],
+    ["t*", all],
+    ["t?", []],
+    ["t??", ["t\uFFFDx", "té\uFFFD", "tx\uFFFD"]],
+    ["t???", ["t😀js", "t\uFFFD\uFFFD\uFFFD"]],
+    ["t????", ["t\uFFFD.js"]],
+    ["t*.js", ["t\uFFFD.js"]],
+    ["t?.js", ["t\uFFFD.js"]],
+    ["t*s", ["t\uFFFD.js", "t😀js"]],
+    ["t[!a-z]x", ["t\uFFFDx"]],
+    ["t[\uFFFD]*", ["t\uFFFDx", "t\uFFFD.js", "t\uFFFD\uFFFD\uFFFD"]],
+  ] as [string, string[]][])("%j", (pattern, expected) => {
+    expect(scan(pattern)).toEqual([...expected].sort());
+    // Wildcards and classes see the raw bytes the way match() sees the decoded
+    // name. (A literal U+FFFD in a pattern still compares bytes, since the
+    // decode is lossy.)
+    expect(scan(pattern)).toEqual(scan("*").filter(name => new Glob(pattern).match(name)));
   });
 });
 
@@ -1075,6 +1144,48 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
     expect(result).toEqual(["top/file.txt"]);
   });
 
+  test("** with followSymlinks does not descend into a symlink that resolves to one of its own ancestors", () => {
+    using dir = tempDir("glob-scan-symlink-self-cycle", {
+      "top/file.txt": "x",
+    });
+    fs.symlinkSync(".", path.join(String(dir), "top", "loop"), "dir");
+    const cwd = path.join(String(dir), "top");
+    const result = norm(Array.from(new Glob("**/*.txt").scanSync({ cwd, followSymlinks: true })));
+    expect(result).toEqual(["file.txt", "loop/file.txt"]);
+
+    using shared = tempDir("glob-scan-symlink-shared-target", {
+      "realdir/file.txt": "x",
+    });
+    fs.symlinkSync("realdir", path.join(String(shared), "linkA"), "dir");
+    fs.symlinkSync("realdir", path.join(String(shared), "linkB"), "dir");
+    const dag = norm(Array.from(new Glob("**/*.txt").scanSync({ cwd: String(shared), followSymlinks: true })));
+    expect(dag).toEqual(["linkA/file.txt", "linkB/file.txt", "realdir/file.txt"]);
+  });
+
+  // Symlinks to the same target in *different* subtrees are not a cycle: a
+  // followed link recorded in one subtree must not suppress its cousin.
+  test("** with followSymlinks descends cousin symlinks that share a target", () => {
+    using dir = tempDir("glob-scan-symlink-cousins", {
+      "shared/file.txt": "x",
+      "a/keep.txt": "x",
+      "b/keep.txt": "x",
+    });
+    fs.symlinkSync(path.join("..", "shared"), path.join(String(dir), "a", "link"), "dir");
+    fs.symlinkSync(path.join("..", "shared"), path.join(String(dir), "b", "link"), "dir");
+    const result = norm(Array.from(new Glob("**/*.txt").scanSync({ cwd: String(dir), followSymlinks: true })));
+    expect(result).toEqual(["a/keep.txt", "a/link/file.txt", "b/keep.txt", "b/link/file.txt", "shared/file.txt"]);
+  });
+
+  test("async ** with followSymlinks does not descend into a symlink that resolves to one of its own ancestors", async () => {
+    using dir = tempDir("glob-scan-symlink-self-cycle-async", {
+      "top/file.txt": "x",
+    });
+    fs.symlinkSync(".", path.join(String(dir), "top", "loop"), "dir");
+    const cwd = path.join(String(dir), "top");
+    const result = await Array.fromAsync(new Glob("**/*.txt").scan({ cwd, followSymlinks: true }));
+    expect(norm(result)).toEqual(["file.txt", "loop/file.txt"]);
+  });
+
   test("async scan resolves a literal path through a symlink", async () => {
     using dir = makeTree("glob-scan-symlink-literal-async");
     const result = await Array.fromAsync(
@@ -1082,4 +1193,107 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
     );
     expect(norm(result)).toEqual(["linkdir/file.txt"]);
   });
+});
+
+// A directory the user can read but not write (RX-only grant) must still be
+// descended by the scanner: directory opens used to request FILE_ADD_FILE and
+// fail ACCESS_DENIED there. Elevated tokens bypass the ACL; the precondition
+// is probed and the test skips visibly then.
+let roDirRoot = "";
+let roDirA = "";
+let roDirEnforced = false;
+if (isWindows) {
+  try {
+    roDirRoot = tempDirWithFiles("glob-scan-readonly-dir", {
+      "a/b/file.txt": "under a read-only directory",
+    });
+    roDirA = path.join(roDirRoot, "a");
+    execSync(`icacls "${roDirA}" /inheritance:r /grant:r "${process.env.USERNAME}:(OI)(CI)(RX)" /Q`);
+    try {
+      fs.mkdirSync(path.join(roDirA, "probe"));
+      // Creation succeeded: ACL not enforced under this token — restore and skip.
+      execSync(`icacls "${roDirA}" /reset /T /Q`);
+    } catch {
+      roDirEnforced = true;
+    }
+  } catch {}
+}
+
+afterAll(() => {
+  if (!roDirA) return;
+  try {
+    execSync(`icacls "${roDirA}" /reset /T /Q`);
+  } catch {}
+  try {
+    fs.rmSync(roDirRoot, { recursive: true, force: true });
+  } catch {}
+});
+
+describe("extglob and brace sequences", () => {
+  const scan = (pattern: string, cwd: string) =>
+    Array.from(new Glob(pattern).scanSync({ cwd }))
+      .map(p => p.replaceAll("\\", "/"))
+      .sort();
+
+  test("scan finds the same files that match accepts", () => {
+    using dir = tempDir("glob-extglob", {
+      "a.js": "",
+      "b.js": "",
+      "c.js": "",
+      "a.test.js": "",
+      "1.txt": "",
+      "2.txt": "",
+      "3.txt": "",
+      "a/x.js": "",
+      "b/x.js": "",
+      "ab/x.js": "",
+      "c/x.js": "",
+      "app/(marketing)/page.js": "",
+      "app/marketing/page.js": "",
+    });
+    const cwd = String(dir);
+    expect(scan("@(a|b).js", cwd)).toEqual(["a.js", "b.js"]);
+    expect(scan("+(a|b).js", cwd)).toEqual(["a.js", "b.js"]);
+    expect(scan("!(a|b).js", cwd)).toEqual(["a.test.js", "c.js"]);
+    expect(scan("*.@(txt|md)", cwd)).toEqual(["1.txt", "2.txt", "3.txt"]);
+    expect(scan("{1..2}.txt", cwd)).toEqual(["1.txt", "2.txt"]);
+    expect(scan("@(a|b)/*.js", cwd)).toEqual(["a/x.js", "b/x.js"]);
+    expect(scan("+(a|b)/*.js", cwd)).toEqual(["a/x.js", "ab/x.js", "b/x.js"]);
+    expect(scan("**/!(x|page).js", cwd)).toEqual(["a.js", "a.test.js", "b.js", "c.js"]);
+    expect(scan("app/(marketing)/*.js", cwd)).toEqual(["app/(marketing)/page.js"]);
+    expect(scan("app/(marketing)/**", cwd)).toEqual(["app/(marketing)/page.js"]);
+  });
+});
+
+describe.skipIf(!isWindows)("glob scan descends read-only directories", () => {
+  test.skipIf(!roDirEnforced)(
+    `RX-only directory is descended, creates still fail${roDirEnforced ? "" : " (skipped: ACL not enforced under this token)"}`,
+    () => {
+      const entries = Array.from(new Glob("**/*.txt").scanSync({ cwd: roDirRoot }))
+        .map(p => p.replaceAll("\\", "/"))
+        .sort();
+      expect(entries).toEqual(["a/b/file.txt"]);
+
+      let err: any;
+      try {
+        fs.mkdirSync(path.join(roDirA, "x"));
+      } catch (e) {
+        err = e;
+      }
+      expect(err?.code).toBe("EPERM");
+    },
+  );
+});
+
+test("scan and scanSync reject a cwd or a pattern with a null byte", () => {
+  using dir = tempDir("glob-scan-null-byte", { "safe/inside.ts": "x" });
+  const nullByteError = expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" });
+  const cwd = `${dir}/safe\0/../secret`;
+  expect(() => Array.from(new Glob("*.ts").scanSync({ cwd }))).toThrow(nullByteError);
+  expect(() => Array.from(new Glob("*.ts").scanSync(cwd))).toThrow(nullByteError);
+  expect(() => new Glob("*.ts").scan({ cwd })).toThrow(nullByteError);
+  const pattern = `${dir}/safe\0trailer/*.ts`;
+  expect(() => Array.from(new Glob(pattern).scanSync())).toThrow(nullByteError);
+  expect(() => new Glob(pattern).scan()).toThrow(nullByteError);
+  expect(new Glob("a\0b").match("a\0b")).toBe(true);
 });

@@ -1,75 +1,40 @@
 use core::fmt;
-use core::fmt::Write as _;
-use std::borrow::Cow;
-use std::io::Write as _;
 
 use bstr::BStr;
 
-use bun_alloc::Arena as Bump;
-use bun_collections::StringHashMap;
+use bun_ast::Loc;
+use bun_ast::{E, Expr};
+use bun_collections::{StringHashMap, index_sort};
+use bun_core::fmt::TerminalHyperlink;
+use bun_core::strings;
 use bun_core::{Global, Output};
-use bun_glob as glob;
 use bun_install::dependency::{self, Behavior};
 use bun_install::lockfile::package::PackageColumns as _;
-use bun_install::lockfile::{LoadResult, LoadStep};
-use bun_install::package_manager::{
-    LogLevel, ManifestLoad, ROOT_PACKAGE_JSON_PATH, Subcommand, WorkspaceFilter,
-    install_with_manager, populate_manifest_cache,
+use bun_install::package_manager::options::Do;
+use bun_install::package_manager::workspace_manifests::{
+    BrokenMember, DeclaredDependencies, is_outdated,
 };
+use bun_install::package_manager::{
+    LogLevel, Subcommand, WorkspaceFilter, populate_manifest_cache,
+    update_package_json_and_install_with_manager,
+};
+use bun_install::package_manager_real::command_line_arguments::UpdateGroups;
+use bun_install::package_manager_real::package_json_editor::{
+    catalog_object_of, updated_version_literal,
+};
+use bun_install::update_scope::selects;
 use bun_install::{
     CommandLineArguments, GetJsonOptions, GetJsonResult, INVALID_PACKAGE_ID, PackageID,
     PackageManager, WorkspacePackageJsonCacheEntry, resolution,
 };
 use bun_install_types::DependencyGroup;
-use bun_js_printer::{self as js_printer, BufferPrinter, BufferWriter, PrintJsonOptions};
-use bun_resolver::fs::FileSystem;
-// Layering: `Expr`/`E` here are the *lower-tier* `bun_ast::js_ast`
-// types, NOT `bun_js_parser`. `WorkspacePackageJsonCacheEntry.root` is the
-// logger-tier `Expr` (see WorkspacePackageJSONCache.rs), so the catalog-edit
-// helpers below must operate on that type. The earlier draft imported
-// `bun_ast::Expr`, which is a distinct struct and would not unify
-// with `MapEntry.root`.
-use bun_ast::Loc;
-use bun_ast::{self, E, Expr, expr as js_expr};
-use bun_core::strings;
 use bun_paths::{self as path, PathBuffer};
+use bun_resolver::fs::FileSystem;
 use bun_semver::{self as semver, SlicedString};
 
 use crate::Command;
-
-pub(crate) struct TerminalHyperlink<'a> {
-    link: &'a [u8],
-    text: &'a [u8],
-    enabled: bool,
-}
-
-impl<'a> TerminalHyperlink<'a> {
-    pub(crate) fn new(link: &'a [u8], text: &'a [u8], enabled: bool) -> TerminalHyperlink<'a> {
-        TerminalHyperlink {
-            link,
-            text,
-            enabled,
-        }
-    }
-}
-
-impl fmt::Display for TerminalHyperlink<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.enabled {
-            const ESC: &str = "\x1b";
-            // OSC8 = ESC ]8;; ; ST = ESC \
-            write!(
-                f,
-                "{esc}]8;;{link}{esc}\\{text}{esc}]8;;{esc}\\",
-                esc = ESC,
-                link = BStr::new(self.link),
-                text = BStr::new(self.text),
-            )
-        } else {
-            write!(f, "{}", BStr::new(self.text))
-        }
-    }
-}
+use crate::cli::cli_dupe;
+use crate::cli::outdated_command::{printed, printed_width};
 
 pub(crate) struct UpdateInteractiveCommand;
 
@@ -78,44 +43,102 @@ struct OutdatedPackage {
     current_version: Box<[u8]>,
     latest_version: Box<[u8]>,
     update_version: Box<[u8]>,
+    /// True if `update_version` is in the range that package.json declares. If no version is in
+    /// that range, this is false and `update_version` is the latest version.
+    update_in_range: bool,
     workspace_pkg_id: PackageID,
     dependency_type: &'static [u8],
     workspace_name: Box<[u8]>,
     behavior: Behavior,
     use_latest: bool,
-    /// Snapshot of `manager.options.scope.url_hash == DEFAULT_URL_HASH &&
-    /// manager.scope_for_package_name(name).url_hash == DEFAULT_URL_HASH`.
-    ///
-    /// The caller's exclusive `&mut PackageManager` in
-    /// `update_interactive` is live across the prompt loop, so any
-    /// `&PackageManager` derived from a stored back-pointer would alias an
-    /// outstanding `&mut` (Stacked-Borrows UB). Both reads are pure
-    /// `Options`-derived `u64` comparisons that cannot change between
-    /// construction and render, so snapshot the boolean at construction and
-    /// drop the back-pointer entirely.
+    /// A `latest` that is older than the installed version is shown, but no key or flag can select
+    /// it, because `bun update` does not downgrade.
+    latest_is_newer: bool,
+    /// Both the default scope and the scope of `name` are the npm registry, so the name links to npmjs.org.
     uses_default_registry: bool,
     is_catalog: bool,
     catalog_name: Option<Box<[u8]>>,
 }
 
-struct CatalogUpdate {
-    version: Box<[u8]>,
-    workspace_path: Box<[u8]>,
+impl OutdatedPackage {
+    fn picks_latest(&self) -> bool {
+        self.use_latest && self.latest_is_newer
+    }
+
+    fn target_version(&self) -> &[u8] {
+        if self.picks_latest() {
+            &self.latest_version
+        } else {
+            &self.update_version
+        }
+    }
+
+    /// True if an install would pick the chosen version from the range package.json declares now.
+    fn target_in_range(&self) -> bool {
+        self.update_in_range && strings::eql(self.target_version(), &self.update_version)
+    }
+
+    fn checkbox_color(&self) -> CheckboxColor {
+        use semver::version::ChangedVersion;
+        let target = self.target_version();
+        let (Some(current), Some(update)) =
+            (min_of_valid(&self.current_version), min_of_valid(target))
+        else {
+            return CheckboxColor::Green;
+        };
+        match semver::Version::which_version_is_different(
+            update,
+            current,
+            target,
+            &self.current_version,
+        ) {
+            Some(ChangedVersion::Major) => CheckboxColor::Red,
+            // 0.x.y minor changes and 0.0.x patch changes are breaking
+            Some(ChangedVersion::Minor) if current.major == 0 => CheckboxColor::Red,
+            Some(ChangedVersion::Minor) => CheckboxColor::Yellow,
+            Some(ChangedVersion::Patch) if current.major == 0 && current.minor == 0 => {
+                CheckboxColor::Red
+            }
+            _ => CheckboxColor::Green,
+        }
+    }
+
+    /// `name` or `name:catalog`.
+    fn catalog_key(&self) -> Vec<u8> {
+        match &self.catalog_name {
+            Some(catalog_name) => [&self.name[..], b":", &catalog_name[..]].concat(),
+            None => self.name.to_vec(),
+        }
+    }
+
+    /// " dev", " peer", " optional" or nothing, after the name.
+    fn tag(&self) -> &'static str {
+        if self.behavior.is_dev() {
+            " dev"
+        } else if self.behavior.is_peer() {
+            " peer"
+        } else if self.behavior.is_optional() {
+            " optional"
+        } else {
+            ""
+        }
+    }
 }
 
 struct PackageUpdate {
     name: Box<[u8]>,
     target_version: Box<[u8]>,
+    in_range: bool,
     dep_type: Box<[u8]>, // "dependencies", "devDependencies", etc.
     workspace_path: Box<[u8]>,
 }
 
-pub(crate) struct CatalogUpdateRequest {
-    // Owned copies keep the type lifetime-free (a few small allocations in
-    // an interactive UI).
-    package_name: Box<[u8]>,
-    new_version: Box<[u8]>,
-    catalog_name: Option<Box<[u8]>>,
+/// How risky an update looks from its semver distance.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CheckboxColor {
+    Green,
+    Yellow,
+    Red,
 }
 
 struct ColumnWidths {
@@ -132,25 +155,38 @@ struct MultiSelectState<'s> {
     selected: &'s mut [bool],
     cursor: usize,
     viewport_start: usize,
-    viewport_height: usize, // Default viewport height
+    viewport_height: usize,
     toggle_all: bool,
-    max_name_len: usize,
-    max_current_len: usize,
-    max_update_len: usize,
-    max_latest_len: usize,
-    max_workspace_len: usize,
-    show_workspace: bool,
+    columns: ColumnWidths,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 struct TerminalSize {
     height: usize,
     width: usize,
 }
 
-impl UpdateInteractiveCommand {
-    // Common utility functions to reduce duplication
+/// Hides the cursor and reports the mouse wheel until dropped.
+struct MouseTracking;
 
+impl MouseTracking {
+    fn enable() -> MouseTracking {
+        Output::print(format_args!("\x1b[?25l")); // hide cursor
+        Output::print(format_args!("\x1b[?1000h")); // Enable basic mouse tracking
+        Output::print(format_args!("\x1b[?1006h")); // Enable SGR extended mouse mode
+        MouseTracking
+    }
+}
+
+impl Drop for MouseTracking {
+    fn drop(&mut self) {
+        Output::print(format_args!("\x1b[?25h")); // show cursor
+        Output::print(format_args!("\x1b[?1000l")); // Disable mouse tracking
+        Output::print(format_args!("\x1b[?1006l")); // Disable SGR extended mouse mode
+    }
+}
+
+impl UpdateInteractiveCommand {
     fn build_package_json_path<'b>(
         root_dir: &'b [u8],
         workspace_path: &[u8],
@@ -171,56 +207,21 @@ impl UpdateInteractiveCommand {
         }
     }
 
-    // Helper to update a catalog entry at a specific path in the package.json AST
-    // No `*PackageManager` parameter: there is no per-manager allocator,
-    // and dropping it avoids overlapping `&mut PackageManager` with the live
-    // `&mut MapEntry` borrow of `manager.workspace_package_json_cache` at the
-    // call sites (which the previous draft laundered via raw pointers — UB
-    // under Stacked Borrows).
     fn save_package_json(
         package_json: &mut WorkspacePackageJsonCacheEntry,
         package_json_path: &[u8],
-    ) -> Result<(), bun_core::Error> {
-        let preserve_trailing_newline = !package_json.source.contents.is_empty()
-            && *package_json.source.contents.last().unwrap() == b'\n';
-
-        let mut buffer_writer = BufferWriter::init();
-        buffer_writer
-            .buffer
-            .list
-            .reserve(package_json.source.contents.len() + 1);
-        buffer_writer.append_newline = preserve_trailing_newline;
-        let mut package_json_writer = BufferPrinter::init(buffer_writer);
-
-        // Layering: `MapEntry.root` is the T2 `bun_ast::Expr`;
-        // `js_printer::print_json` consumes the T4 `bun_ast::Expr`. Lift via
-        // the existing `From<T2> for T4` deep-rebuild (same as
-        // `updatePackageJSONAndInstall` / pnpm migration). The T2 entry is not
-        // re-read — only `source.contents` is written back below.
-        if let Err(err) = js_printer::print_json(
-            &mut package_json_writer,
-            package_json.root,
-            &package_json.source,
-            PrintJsonOptions {
-                indent: package_json.indentation,
-                mangled_props: None,
-                ..Default::default()
-            },
-        ) {
+        log: &mut bun_ast::Log,
+    ) -> crate::Result<()> {
+        // The install reads this cache entry, not the file.
+        if let Err(err) = package_json.save(package_json.root, log) {
             Output::err_generic("Failed to serialize package.json: {s}", (err.name(),));
-            return Err(err);
+            return Err(err.into());
         }
 
-        let new_package_json_source: Box<[u8]> =
-            Box::from(package_json_writer.ctx.written_without_trailing_zero());
-
-        // Write the updated package.json
-        // Routes through `bun_sys::File::write_file` (cwd-relative
-        // open + write + close) per src/CLAUDE.md.
-        let mut path_zbuf = PathBuffer::uninit();
+        let mut path_zbuf = bun_paths::path_buffer_pool::get();
         let path_z = path::resolve_path::z(package_json_path, &mut path_zbuf);
         if let Err(err) =
-            bun_sys::File::write_file(bun_sys::Fd::cwd(), path_z, &new_package_json_source)
+            bun_sys::File::write_file(bun_sys::Fd::cwd(), path_z, &package_json.source.contents)
         {
             Output::err_generic(
                 "Failed to write package.json at {s}: {s}",
@@ -228,117 +229,113 @@ impl UpdateInteractiveCommand {
             );
             return Err(err.into());
         }
-
-        // Update the cache so installWithManager sees the new package.json
-        // This is critical - without this, installWithManager will use the cached old version
-        //
-        // Cached `root` AST slices still borrow the *old*
-        // `source.contents`; stash it instead of `mem::forget`-ing so it's
-        // freed when the entry drops (`PackageManager::deinit_caches()`).
-        let old = core::mem::replace(
-            &mut package_json.source.contents,
-            Cow::Owned(new_package_json_source.into_vec()),
-        );
-        package_json.stale_contents.push(old);
         Ok(())
     }
 
-    pub(crate) fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
+    pub(crate) fn exec(ctx: Command::Context) -> crate::Result<()> {
         bun_core::prettyln!(
             "<r><b>bun update --interactive <r><d>v{}<r>",
             Global::package_json_version_with_sha
         );
         Output::flush();
 
-        let cli = CommandLineArguments::parse(Subcommand::Update)?;
-        let silent = cli.silent;
-
-        let (manager, original_cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Update)
+        // On a pipe the multi-select would block forever or select nothing at EOF. Tests that pipe keystrokes set the flag.
+        if !Output::is_stdin_tty()
+            && !bun_core::env_var::feature_flag::BUN_INTERNAL_INTERACTIVE_ASSUME_TTY
+                .get()
+                .unwrap_or(false)
         {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: <b>bun update --interactive<r> requires an interactive terminal."
+            );
+            bun_core::note!(
+                "Use <cyan>bun update<r> to update non-interactively, or <cyan>bun outdated<r> to list available updates."
+            );
+            Output::flush();
+            Global::exit(1);
+        }
+
+        let cli = CommandLineArguments::parse(Subcommand::Update)?;
+
+        let (manager, original_cwd) = match PackageManager::init(ctx, &cli, Subcommand::Update) {
             Ok(v) => v,
             Err(err) => {
-                if !silent {
-                    if err == bun_core::err!("MissingPackageJSON") {
-                        Output::err_generic("missing package.json, nothing outdated", ());
+                if !cli.log_level.is_silent() {
+                    if err == bun_install::Error::MissingPackageJSON {
+                        Output::err_generic("missing package.json, nothing to update", ());
                     }
                     Output::err_generic("failed to initialize bun install: {s}", (err.name(),));
                 }
                 Global::crash();
             }
         };
-        // `original_cwd: Box<[u8]>` — `defer ctx.allocator.free(original_cwd)`
-        // is implicit via Drop at scope exit.
 
-        Self::update_interactive(ctx, &original_cwd, manager)
+        Self::update_interactive(ctx, &original_cwd, manager, cli.update_groups)
+    }
+
+    /// Returns `None` if the file can't be read or parsed. The error was already reported.
+    fn load_package_json<'a>(
+        manager: &'a mut PackageManager,
+        package_json_path: &[u8],
+        log: &mut bun_ast::Log,
+    ) -> Option<&'a mut WorkspacePackageJsonCacheEntry> {
+        match manager.workspace_package_json_cache.get_with_path(
+            log,
+            package_json_path,
+            GetJsonOptions {
+                guess_indentation: true,
+                ..Default::default()
+            },
+        ) {
+            GetJsonResult::ParseErr(err) => {
+                Output::err_generic(
+                    "Failed to parse package.json at {s}: {s}",
+                    (BStr::new(package_json_path), err.name()),
+                );
+                None
+            }
+            GetJsonResult::ReadErr(err) => {
+                Output::err_generic(
+                    "Failed to read package.json at {s}: {s}",
+                    (BStr::new(package_json_path), err.name()),
+                );
+                None
+            }
+            GetJsonResult::Entry(entry) => Some(entry),
+        }
     }
 
     fn update_package_json_files_from_updates(
         manager: &mut PackageManager,
         updates: &[PackageUpdate],
-    ) -> Result<(), bun_core::Error> {
-        // Group updates by workspace
+    ) -> crate::Result<()> {
+        // Workspace path -> indices into `updates`.
         let mut workspace_groups: StringHashMap<Vec<usize>> = StringHashMap::default();
-
-        // Group updates by workspace path (store indices to avoid cloning)
         for (i, update) in updates.iter().enumerate() {
-            let result = workspace_groups
-                .get_or_put(&update.workspace_path)
-                .map_err(|_| bun_core::err!("OutOfMemory"))?;
-            if !result.found_existing {
-                *result.value_ptr = Vec::new();
-            }
-            result.value_ptr.push(i);
+            workspace_groups
+                .get_or_put(&update.workspace_path)?
+                .value_ptr
+                .push(i);
         }
 
-        let bump = Bump::new();
+        let bump = crate::cli::cli_arena();
 
-        // Process each workspace
-        let mut it = workspace_groups.iter();
-        while let Some((workspace_path, workspace_update_idxs)) = it.next() {
-            // Build the package.json path for this workspace
-            // SAFETY: `FileSystem::init` ran during `PackageManager::init`.
-            let root_dir = FileSystem::get().top_level_dir;
-            let mut path_buf = PathBuffer::uninit();
+        for (workspace_path, workspace_update_idxs) in workspace_groups.iter() {
+            let root_dir = FileSystem::get().top_level_dir();
+            let mut path_buf = bun_paths::path_buffer_pool::get();
             let package_json_path =
                 Self::build_package_json_path(root_dir, workspace_path, &mut path_buf);
 
-            // Load and parse the package.json
-            // Reshaped for borrowck — `log_mut()` returns a borrow
-            // decoupled from `&self`, so it can overlap the disjoint
-            // `workspace_package_json_cache` field borrow below.
             let log = manager.log_mut();
-            let package_json: &mut WorkspacePackageJsonCacheEntry =
-                match manager.workspace_package_json_cache.get_with_path(
-                    log,
-                    package_json_path,
-                    GetJsonOptions {
-                        guess_indentation: true,
-                        ..Default::default()
-                    },
-                ) {
-                    GetJsonResult::ParseErr(err) => {
-                        Output::err_generic(
-                            "Failed to parse package.json at {s}: {s}",
-                            (BStr::new(package_json_path), err.name()),
-                        );
-                        continue;
-                    }
-                    GetJsonResult::ReadErr(err) => {
-                        Output::err_generic(
-                            "Failed to read package.json at {s}: {s}",
-                            (BStr::new(package_json_path), err.name()),
-                        );
-                        continue;
-                    }
-                    GetJsonResult::Entry(entry) => entry,
-                };
+            let Some(package_json) = Self::load_package_json(manager, package_json_path, log)
+            else {
+                continue;
+            };
 
             let mut modified = false;
 
-            // Update each package in this workspace's package.json
             for &idx in workspace_update_idxs {
                 let update = &updates[idx];
-                // Find the package in the correct dependency section
                 if !package_json.root.is_object() {
                     continue;
                 }
@@ -354,266 +351,167 @@ impl UpdateInteractiveCommand {
                 let Some(e_str) = version_query.expr.data.e_string() else {
                     continue;
                 };
-                // Get the original version to preserve prefix
-                let original_version = e_str.data.slice();
+                let Some(version_with_prefix) = chosen_version_literal(
+                    e_str.data.slice(),
+                    &update.target_version,
+                    update.in_range,
+                ) else {
+                    continue;
+                };
 
-                // Preserve the version prefix from the original
-                let version_with_prefix =
-                    preserve_version_prefix(original_version, &update.target_version)?;
-
-                // Update the version using hash map put
-                // `Expr::init` would put the `E.String` *node*
-                // in the Store, which `install_with_manager` resets via
-                // `initialize_store()` before re-reading this cached `root`.
-                // Allocate into the entry's own `json_arena` instead so the
-                // node lives as long as the cached AST. The string *bytes* go
-                // through the CLI arena (matches PackageJSONEditor `leak_str`).
-                let interned: &'static [u8] = crate::cli::cli_dupe(&version_with_prefix);
+                // Not `Expr::init`: a cached tree must not depend on the Store.
                 let new_expr = Expr::allocate(
-                    &package_json.json_arena,
-                    E::EString::init(interned),
+                    bump,
+                    E::EString::init(cli_dupe(&version_with_prefix)),
                     version_query.expr.loc,
                 );
-                dep_obj
-                    .put(&bump, &update.name, new_expr)
-                    .map_err(|_| bun_core::err!("OutOfMemory"))?;
+                dep_obj.put(bump, &update.name, new_expr)?;
                 modified = true;
             }
 
-            // Write the updated package.json if modified
             if modified {
-                Self::save_package_json(package_json, package_json_path)?;
+                Self::save_package_json(package_json, package_json_path, log)?;
             }
         }
         Ok(())
     }
 
+    /// `catalog_updates` maps `name` or `name:catalog` to the new version and `target_in_range`.
+    /// Catalogs are defined in the root package.json.
     fn update_catalog_definitions(
         manager: &mut PackageManager,
-        catalog_updates: &StringHashMap<CatalogUpdate>,
-    ) -> Result<(), bun_core::Error> {
-        // Group catalog updates by workspace path
-        let mut workspace_catalog_updates: StringHashMap<Vec<CatalogUpdateRequest>> =
-            StringHashMap::default();
+        catalog_updates: &StringHashMap<(Box<[u8]>, bool)>,
+    ) -> crate::Result<()> {
+        let root_dir = FileSystem::get().top_level_dir();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let package_json_path = Self::build_package_json_path(root_dir, b"", &mut path_buf);
 
-        // Group updates by workspace
-        let mut catalog_it = catalog_updates.iter();
-        while let Some((catalog_key, update)) = catalog_it.next() {
-            let result = workspace_catalog_updates
-                .get_or_put(&update.workspace_path)
-                .map_err(|_| bun_core::err!("OutOfMemory"))?;
-            if !result.found_existing {
-                *result.value_ptr = Vec::new();
-            }
+        let log = manager.log_mut();
+        let Some(package_json) = Self::load_package_json(manager, package_json_path, log) else {
+            return Ok(());
+        };
 
-            // Parse catalog_key (format: "package_name" or "package_name:catalog_name")
-            let colon_index = bun_core::index_of(catalog_key, b":");
-            let package_name = if let Some(idx) = colon_index {
-                &catalog_key[..idx]
-            } else {
-                &catalog_key[..]
+        for (catalog_key, (new_version, in_range)) in catalog_updates.iter() {
+            let (package_name, catalog_name) = match bun_core::index_of(catalog_key, b":") {
+                Some(colon) => (&catalog_key[..colon], &catalog_key[colon + 1..]),
+                None => (&catalog_key[..], &b""[..]),
             };
-            let catalog_name = colon_index.map(|idx| Box::<[u8]>::from(&catalog_key[idx + 1..]));
-
-            result.value_ptr.push(CatalogUpdateRequest {
-                package_name: Box::from(package_name),
-                new_version: update.version.clone(),
+            update_catalog(
+                &package_json.root,
                 catalog_name,
-            });
+                package_name,
+                new_version,
+                *in_range,
+            )?;
         }
 
-        // Update catalog definitions for each workspace
-        let mut workspace_it = workspace_catalog_updates.iter_mut();
-        while let Some((workspace_path, updates_for_workspace)) = workspace_it.next() {
-            // Build the package.json path for this workspace
-            // SAFETY: `FileSystem::init` ran during `PackageManager::init`.
-            let root_dir = FileSystem::get().top_level_dir;
-            let mut path_buf = PathBuffer::uninit();
-            let package_json_path =
-                Self::build_package_json_path(root_dir, workspace_path, &mut path_buf);
-
-            // Load and parse the package.json properly
-            let log = manager.log_mut();
-            let package_json: &mut WorkspacePackageJsonCacheEntry =
-                match manager.workspace_package_json_cache.get_with_path(
-                    log,
-                    package_json_path,
-                    GetJsonOptions {
-                        guess_indentation: true,
-                        ..Default::default()
-                    },
-                ) {
-                    GetJsonResult::ParseErr(err) => {
-                        Output::err_generic(
-                            "Failed to parse package.json at {s}: {s}",
-                            (BStr::new(package_json_path), err.name()),
-                        );
-                        continue;
-                    }
-                    GetJsonResult::ReadErr(err) => {
-                        Output::err_generic(
-                            "Failed to read package.json at {s}: {s}",
-                            (BStr::new(package_json_path), err.name()),
-                        );
-                        continue;
-                    }
-                    GetJsonResult::Entry(entry) => entry,
-                };
-
-            // Use the PackageJSONEditor to update catalogs
-            edit_catalog_definitions(&mut updates_for_workspace[..], &mut package_json.root)?;
-
-            // Save the updated package.json
-            Self::save_package_json(package_json, package_json_path)?;
-        }
-        Ok(())
+        Self::save_package_json(package_json, package_json_path, log)
     }
 
     fn update_interactive(
         ctx: Command::Context,
         original_cwd: &[u8],
         manager: &mut PackageManager,
-    ) -> Result<(), bun_core::Error> {
-        // Reshaped for borrowck — capture `log_level` / `ctx.log`
-        // before borrowing `&mut manager.lockfile`.
+        groups: UpdateGroups,
+    ) -> crate::Result<()> {
         let not_silent = manager.options.log_level != LogLevel::Silent;
-        let ctx_log_ptr: *mut bun_ast::Log = ctx.log;
+        manager.load_lockfile_from_cwd_or_exit("nothing to update");
 
-        match manager.load_lockfile_from_cwd::<true>() {
-            LoadResult::NotFound => {
-                if not_silent {
-                    Output::err_generic("missing lockfile, nothing outdated", ());
+        let workspace_pkg_ids: Vec<PackageID> =
+            if !manager.options.filter_patterns.is_empty() || manager.options.do_.recursive() {
+                WorkspaceFilter::select_workspaces(
+                    &manager.lockfile,
+                    manager.options.filter_patterns,
+                    original_cwd,
+                )
+            } else {
+                let root_pkg_id = manager
+                    .root_package_id
+                    .get(&manager.lockfile, manager.workspace_name_hash);
+                if root_pkg_id == INVALID_PACKAGE_ID {
+                    return Ok(());
                 }
-                Global::crash();
-            }
-            LoadResult::Err(cause) => {
-                if not_silent {
-                    match cause.step {
-                        LoadStep::OpenFile => Output::err_generic(
-                            "failed to open lockfile: {s}",
-                            (cause.value.name(),),
-                        ),
-                        LoadStep::ParseFile => Output::err_generic(
-                            "failed to parse lockfile: {s}",
-                            (cause.value.name(),),
-                        ),
-                        LoadStep::ReadFile => Output::err_generic(
-                            "failed to read lockfile: {s}",
-                            (cause.value.name(),),
-                        ),
-                        LoadStep::Migrating => Output::err_generic(
-                            "failed to migrate lockfile: {s}",
-                            (cause.value.name(),),
-                        ),
-                    }
-                    // SAFETY: `ctx.log` is set by `Command::create_context_data`
-                    // for every subcommand and is non-null for the command's
-                    // lifetime.
-                    if unsafe { (*ctx_log_ptr).has_errors() } {
-                        manager
-                            .log_mut()
-                            .print(std::ptr::from_mut(Output::error_writer()))?;
-                    }
-                }
-                Global::crash();
-            }
-            LoadResult::Ok(_) => {
-                // `load_lockfile_from_cwd` populates `manager.lockfile` (Box)
-                // in place, so no reassignment is needed.
-            }
-        }
-
-        let workspace_pkg_ids: Vec<PackageID> = if !manager.options.filter_patterns.is_empty() {
-            let filters = manager.options.filter_patterns;
-            Self::find_matching_workspaces(original_cwd, manager, filters)
-        } else if manager.options.do_.recursive() {
-            Self::get_all_workspaces(manager)
-        } else {
-            let root_pkg_id = manager
-                .root_package_id
-                .get(&manager.lockfile, manager.workspace_name_hash);
-            if root_pkg_id == INVALID_PACKAGE_ID {
-                return Ok(());
-            }
-            vec![root_pkg_id]
-        };
+                vec![root_pkg_id]
+            };
 
         populate_manifest_cache::populate_manifest_cache(
             manager,
             populate_manifest_cache::Packages::Ids(&workspace_pkg_ids),
         )?;
+        if populate_manifest_cache::print_fetch_failures(manager)? {
+            Global::crash();
+        }
 
-        // Get outdated packages
-        let mut outdated_packages = Self::get_outdated_packages(manager, &workspace_pkg_ids)?;
-        // `defer { allocator.free(...) }` is implicit via Drop on
-        // `Vec<OutdatedPackage>` (Box<[u8]> fields).
+        let (mut outdated_packages, checked) =
+            Self::get_outdated_packages(manager, &workspace_pkg_ids, groups)?;
 
         if outdated_packages.is_empty() {
-            // No packages need updating - just exit silently
-            bun_core::prettyln!("<r><green>✓<r> All packages are up to date!");
+            if not_silent {
+                bun_core::pretty!(
+                    "\nChecked <green>{}<r> dependenc{}, ",
+                    checked,
+                    if checked == 1 { "y" } else { "ies" }
+                );
+                if groups.is_default() {
+                    bun_core::pretty!("nothing to update ");
+                } else {
+                    bun_core::pretty!(
+                        "none selected by {} <d>(no changes)<r> ",
+                        GroupFlags(groups)
+                    );
+                }
+                Output::print_start_end_stdout(ctx.start_time, bun_core::time::nano_timestamp());
+                bun_core::pretty!("\n");
+                Output::flush();
+            }
             return Ok(());
         }
 
-        // Prompt user to select packages
-        let selected = Self::prompt_for_updates(&mut outdated_packages)?;
+        let selected = Self::prompt_for_updates(&mut outdated_packages);
 
-        // Track catalog updates separately (catalog_key -> {version, workspace_path})
-        let mut catalog_updates: StringHashMap<CatalogUpdate> = StringHashMap::default();
-
-        // Collect all package updates with full information
+        // Maps `OutdatedPackage::catalog_key` to the new version and its `target_in_range`.
+        let mut catalog_updates: StringHashMap<(Box<[u8]>, bool)> = StringHashMap::default();
         let mut package_updates: Vec<PackageUpdate> = Vec::new();
 
-        // Process selected packages
+        // Becomes `options.positionals` so the install runs as `bun update <selected...>`.
+        let mut positionals: Vec<&'static [u8]> = vec![&b"update"[..]];
+
+        let mut dry_run_rows: Vec<DryRunRow> = Vec::new();
+
         debug_assert_eq!(outdated_packages.len(), selected.len());
         for (pkg, &is_selected) in outdated_packages.iter().zip(selected.iter()) {
             if !is_selected {
                 continue;
             }
 
-            // Use latest version if requested
-            let target_version: &[u8] = if pkg.use_latest {
-                &pkg.latest_version
-            } else {
-                &pkg.update_version
-            };
-
+            let target_version = pkg.target_version();
             if strings::eql(&pkg.current_version, target_version) {
                 continue;
             }
 
-            // For catalog dependencies, we need to collect them separately
-            // to update the catalog definitions in the root or workspace package.json
+            if !positionals[1..]
+                .iter()
+                .any(|name| strings::eql(name, &pkg.name))
+            {
+                positionals.push(cli_dupe(&pkg.name));
+            }
+
+            if manager.options.dry_run {
+                dry_run_rows.push((
+                    pkg.name.clone(),
+                    pkg.current_version.clone(),
+                    Box::from(target_version),
+                ));
+            }
+
             if pkg.is_catalog {
-                // Store catalog updates for later processing
-                let catalog_key: Box<[u8]> = if let Some(catalog_name) = &pkg.catalog_name {
-                    let mut v = Vec::new();
-                    write!(
-                        &mut v,
-                        "{}:{}",
-                        BStr::new(&pkg.name),
-                        BStr::new(catalog_name)
-                    )
-                    .expect("OOM");
-                    v.into_boxed_slice()
-                } else {
-                    pkg.name.clone()
-                };
-
-                // For catalog dependencies, we always update the root package.json
-                // (or the workspace root where the catalog is defined)
-                let catalog_workspace_path: Box<[u8]> = Box::default(); // Always root for now
-
                 catalog_updates.put_assume_capacity(
-                    &catalog_key,
-                    CatalogUpdate {
-                        version: Box::from(target_version),
-                        workspace_path: catalog_workspace_path,
-                    },
+                    &pkg.catalog_key(),
+                    (Box::from(target_version), pkg.target_in_range()),
                 );
                 continue;
             }
 
-            // Get the workspace path for this package
             let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
             let workspace_resolution =
                 manager.lockfile.packages.items_resolution()[pkg.workspace_pkg_id as usize];
@@ -623,262 +521,87 @@ impl UpdateInteractiveCommand {
                 b"" // Root workspace
             };
 
-            // Add package update with full information
             package_updates.push(PackageUpdate {
                 name: pkg.name.clone(),
                 target_version: Box::from(target_version),
+                in_range: pkg.target_in_range(),
                 dep_type: Box::from(pkg.dependency_type),
                 workspace_path: Box::from(workspace_path),
             });
         }
 
-        // Check if we have any updates
-        let has_package_updates = !package_updates.is_empty();
-        let has_catalog_updates = !catalog_updates.is_empty();
-
-        if !has_package_updates && !has_catalog_updates {
+        if package_updates.is_empty() && catalog_updates.is_empty() {
             bun_core::prettyln!("<r><yellow>!</r> No packages selected for update");
             return Ok(());
         }
 
-        // Actually update the selected packages
-        if has_package_updates || has_catalog_updates {
-            if manager.options.dry_run {
-                bun_core::prettyln!("\n<r><yellow>Dry run mode: showing what would be updated<r>");
-
-                // In dry-run mode, just show what would be updated without modifying files
-                for update in &package_updates {
-                    let workspace_display: &[u8] = if !update.workspace_path.is_empty() {
-                        &update.workspace_path
-                    } else {
-                        b"root"
-                    };
-                    bun_core::prettyln!(
-                        "→ Would update {} to {} in {} ({})",
-                        BStr::new(&update.name),
-                        BStr::new(&update.target_version),
-                        BStr::new(workspace_display),
-                        BStr::new(&update.dep_type)
-                    );
-                }
-
-                if has_catalog_updates {
-                    let mut it = catalog_updates.iter();
-                    while let Some((catalog_key, catalog_update)) = it.next() {
-                        bun_core::prettyln!(
-                            "→ Would update catalog {} to {}",
-                            BStr::new(catalog_key),
-                            BStr::new(&catalog_update.version)
-                        );
-                    }
-                }
-
-                bun_core::prettyln!("\n<r><yellow>Dry run complete - no changes made<r>");
-            } else {
-                bun_core::prettyln!("\n<r><cyan>Installing updates...<r>");
-                Output::flush();
-
-                // Update catalog definitions first if needed
-                if has_catalog_updates {
-                    Self::update_catalog_definitions(manager, &catalog_updates)?;
-                }
-
-                // Update all package.json files directly (fast!)
-                if has_package_updates {
-                    Self::update_package_json_files_from_updates(manager, &package_updates)?;
-                }
-
-                manager.to_update = true;
-
-                // Reset the timer to show actual install time instead of total command time
-                ctx.start_time = bun_core::time::nano_timestamp();
-
-                // SAFETY: `ROOT_PACKAGE_JSON_PATH` is set once during
-                // `PackageManager::init` (single-threaded CLI startup).
-                let root_pkg_json = unsafe { ROOT_PACKAGE_JSON_PATH.read() };
-                // `install_with_manager` takes the original cwd path slice.
-                // Snapshot before the `&mut manager` borrow.
-                let root_dir_path: &'static [u8] = manager.root_dir.dir;
-                install_with_manager::install_with_manager(
-                    manager,
-                    &mut *ctx,
-                    root_pkg_json,
-                    root_dir_path,
-                )?;
+        if manager.options.dry_run {
+            if not_silent {
+                print_dry_run_rows(&mut dry_run_rows, ctx.start_time);
             }
+            return Ok(());
         }
+
+        bun_core::prettyln!("\n<r><cyan>Installing updates...<r>");
+        Output::flush();
+
+        if !catalog_updates.is_empty() {
+            Self::update_catalog_definitions(manager, &catalog_updates)?;
+        }
+        if !package_updates.is_empty() {
+            Self::update_package_json_files_from_updates(manager, &package_updates)?;
+        }
+
+        // Show the install time instead of the total command time
+        ctx.start_time = bun_core::time::nano_timestamp();
+
+        // package.json already resolves to the chosen versions. With `--latest` still set, the
+        // install would re-pin every selection to `latest` and ignore the per-package `l` toggles.
+        manager.options.do_.remove(Do::UPDATE_TO_LATEST);
+        manager.options.positionals = crate::cli::cli_arena().alloc_slice_copy(&positionals);
+        update_package_json_and_install_with_manager(manager, &mut *ctx, original_cwd)?;
         Ok(())
     }
 
-    fn get_all_workspaces(manager: &PackageManager) -> Vec<PackageID> {
-        let lockfile = &manager.lockfile;
-        let packages = lockfile.packages.slice();
-        let pkg_resolutions = packages.items_resolution();
-
-        let mut workspace_pkg_ids: Vec<PackageID> = Vec::new();
-        for (pkg_id, resolution) in pkg_resolutions.iter().enumerate() {
-            if resolution.tag != resolution::Tag::Workspace
-                && resolution.tag != resolution::Tag::Root
-            {
-                continue;
-            }
-            workspace_pkg_ids.push(pkg_id as PackageID);
-        }
-        workspace_pkg_ids
-    }
-
-    fn find_matching_workspaces(
-        original_cwd: &[u8],
-        manager: &PackageManager,
-        filters: &[&[u8]],
-    ) -> Vec<PackageID> {
-        let lockfile = &manager.lockfile;
-        let packages = lockfile.packages.slice();
-        let pkg_names = packages.items_name();
-        let pkg_resolutions = packages.items_resolution();
-        let string_buf = lockfile.buffers.string_bytes.as_slice();
-
-        let mut workspace_pkg_ids: Vec<PackageID> = Vec::new();
-        for (pkg_id, resolution) in pkg_resolutions.iter().enumerate() {
-            if resolution.tag != resolution::Tag::Workspace
-                && resolution.tag != resolution::Tag::Root
-            {
-                continue;
-            }
-            workspace_pkg_ids.push(pkg_id as PackageID);
-        }
-
-        let mut path_buf = PathBuffer::uninit();
-
-        let converted_filters: Vec<WorkspaceFilter> = filters
-            .iter()
-            .map(|filter| {
-                WorkspaceFilter::init(filter, original_cwd, &mut path_buf.0).expect("OOM")
-            })
-            .collect();
-        // `defer { filter.deinit(allocator); allocator.free(...) }` — implicit via Drop.
-
-        // SAFETY: `FileSystem::init` ran during `PackageManager::init`.
-        let top_level_dir = FileSystem::get().top_level_dir;
-
-        // move all matched workspaces to front of array
-        let mut i: usize = 0;
-        while i < workspace_pkg_ids.len() {
-            let workspace_pkg_id = workspace_pkg_ids[i];
-
-            let matched = 'matched: {
-                for filter in &converted_filters {
-                    match filter {
-                        WorkspaceFilter::Path(pattern) => {
-                            if pattern.is_empty() {
-                                continue;
-                            }
-                            let res = &pkg_resolutions[workspace_pkg_id as usize];
-                            let res_path: &[u8] = match res.tag {
-                                resolution::Tag::Workspace => res.workspace().slice(string_buf),
-                                resolution::Tag::Root => top_level_dir,
-                                _ => unreachable!(),
-                            };
-
-                            let abs_res_path = path::resolve_path::join_abs_string_buf::<
-                                path::platform::Posix,
-                            >(
-                                top_level_dir, &mut path_buf.0, &[res_path]
-                            );
-
-                            if !glob::r#match(
-                                pattern,
-                                strings::without_trailing_slash(abs_res_path),
-                            )
-                            .matches()
-                            {
-                                break 'matched false;
-                            }
-                        }
-                        WorkspaceFilter::Name(pattern) => {
-                            let name = pkg_names[workspace_pkg_id as usize].slice(string_buf);
-                            if !glob::r#match(pattern, name).matches() {
-                                break 'matched false;
-                            }
-                        }
-                        WorkspaceFilter::All => {}
-                    }
-                }
-                true
-            };
-
-            if matched {
-                i += 1;
-            } else {
-                workspace_pkg_ids.swap_remove(i);
-            }
-        }
-
-        workspace_pkg_ids
-    }
-
+    /// One row per catalog entry, with the workspaces that use it in `workspace_name`.
     fn group_catalog_dependencies(
         packages: Vec<OutdatedPackage>,
-    ) -> Result<Vec<OutdatedPackage>, bun_core::Error> {
-        // Create a map to track catalog dependencies by name
+    ) -> crate::Result<Vec<OutdatedPackage>> {
         let mut catalog_map: StringHashMap<Vec<OutdatedPackage>> = StringHashMap::default();
-
         let mut result: Vec<OutdatedPackage> = Vec::new();
 
-        // Group catalog dependencies
         for pkg in packages {
             if pkg.is_catalog {
-                let entry = catalog_map
-                    .get_or_put(&pkg.name)
-                    .map_err(|_| bun_core::err!("OutOfMemory"))?;
-                if !entry.found_existing {
-                    *entry.value_ptr = Vec::new();
-                }
-                entry.value_ptr.push(pkg);
+                catalog_map
+                    .get_or_put(&pkg.catalog_key())?
+                    .value_ptr
+                    .push(pkg);
             } else {
                 result.push(pkg);
             }
         }
 
-        // Add grouped catalog dependencies
-        // `StringHashMap` is a Deref newtype over `std::HashMap` with no
-        // owning `IntoIterator`; `.drain()` (via `DerefMut`) yields owned `(K, V)`.
-        let mut iter = catalog_map.drain();
-        while let Some((_k, catalog_packages)) = iter.next() {
-            if !catalog_packages.is_empty() {
-                let mut catalog_packages = catalog_packages.into_iter();
-                // Use the first package as the base, but combine workspace names
-                let mut first = catalog_packages.next().unwrap();
+        for (_, catalog_packages) in catalog_map.drain() {
+            let mut catalog_packages = catalog_packages.into_iter();
+            let Some(mut first) = catalog_packages.next() else {
+                continue;
+            };
 
-                // Build combined workspace name
-                let mut workspace_names: Vec<u8> = Vec::new();
-
-                // `catalog_packages.len > 0` always holds here; this is the
-                // unconditional true branch of that check.
-                if let Some(catalog_name) = &first.catalog_name {
-                    workspace_names.extend_from_slice(b"catalog:");
-                    workspace_names.extend_from_slice(catalog_name);
-                } else {
-                    workspace_names.extend_from_slice(b"catalog");
-                }
-                workspace_names.extend_from_slice(b" (");
-
-                workspace_names.extend_from_slice(&first.workspace_name);
-                let rest: Vec<OutdatedPackage> = catalog_packages.collect();
-                for cat_pkg in &rest {
-                    workspace_names.extend_from_slice(b", ");
-                    workspace_names.extend_from_slice(&cat_pkg.workspace_name);
-                }
-                workspace_names.push(b')');
-
-                // Replace workspace_name with combined (old one drops automatically).
-                first.workspace_name = workspace_names.into_boxed_slice();
-
-                result.push(first);
-
-                // The other catalog packages drop here, freeing their owned fields.
-                drop(rest);
+            let mut workspace_names: Vec<u8> = b"catalog".to_vec();
+            if let Some(catalog_name) = &first.catalog_name {
+                workspace_names.push(b':');
+                workspace_names.extend_from_slice(catalog_name);
             }
+            workspace_names.extend_from_slice(b" (");
+            workspace_names.extend_from_slice(&first.workspace_name);
+            for cat_pkg in catalog_packages {
+                workspace_names.extend_from_slice(b", ");
+                workspace_names.extend_from_slice(&cat_pkg.workspace_name);
+            }
+            workspace_names.push(b')');
+
+            first.workspace_name = workspace_names.into_boxed_slice();
+            result.push(first);
         }
 
         Ok(result)
@@ -887,13 +610,9 @@ impl UpdateInteractiveCommand {
     fn get_outdated_packages(
         manager: &mut PackageManager,
         workspace_pkg_ids: &[PackageID],
-    ) -> Result<Vec<OutdatedPackage>, bun_core::Error> {
-        // Reshaped for borrowck —
-        // hoist the four scalars the manifest-lookup path reads into a by-value
-        // `DiskCacheCtx` so the loop body holds only disjoint field borrows
-        // (`&mut manager.manifests` against `&manager.lockfile` /
-        // `&manager.options`). The returned `OutdatedPackage`s do *not*
-        // borrow from `manager`, so the caller may keep using it afterwards.
+        groups: UpdateGroups,
+    ) -> crate::Result<(Vec<OutdatedPackage>, usize)> {
+        // By value, so that the loop body holds only disjoint borrows of `manager`.
         let cache_ctx = manager.manifest_disk_cache_ctx();
         let min_age_ms = manager.options.minimum_release_age_ms;
         let needs_extended = min_age_ms.is_some();
@@ -904,277 +623,159 @@ impl UpdateInteractiveCommand {
 
         let mut outdated_packages: Vec<OutdatedPackage> = Vec::new();
 
-        let mut version_buf: String = String::new();
+        let declared = DeclaredDependencies::load(manager, workspace_pkg_ids, BrokenMember::Fatal);
+        let checked = declared.rows().len();
 
-        for &workspace_pkg_id in workspace_pkg_ids {
-            let pkg_deps =
-                manager.lockfile.packages.items_dependencies()[workspace_pkg_id as usize];
-            for dep_id in pkg_deps.begin()..pkg_deps.end() {
-                let package_id = manager.lockfile.buffers.resolutions[dep_id as usize];
-                if package_id == INVALID_PACKAGE_ID {
-                    continue;
-                }
-                let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
-                let dep = &manager.lockfile.buffers.dependencies[dep_id as usize];
-                let Some(resolved_version) = manager.lockfile.resolve_catalog_dependency(dep)
-                else {
-                    continue;
-                };
-                if resolved_version.tag != dependency::Tag::Npm
-                    && resolved_version.tag != dependency::Tag::DistTag
-                {
-                    continue;
-                }
-                let resolution = manager.lockfile.packages.items_resolution()[package_id as usize];
-                if resolution.tag != resolution::Tag::Npm {
-                    continue;
-                }
-
-                let name_slice = dep.name.slice(string_buf);
-                let package_name =
-                    manager.lockfile.packages.items_name()[package_id as usize].slice(string_buf);
-
-                let scope = manager.options.scope_for_package_name(package_name).clone();
-                // Snapshot for `OutdatedPackage.uses_default_registry` (see
-                // field comment) — cannot be deferred to render time, since a
-                // stored manager back-pointer cannot be soundly aliased.
-                let uses_default_registry = global_uses_default_registry
-                    && manager.options.scope_for_package_name(name_slice).url_hash
-                        == default_url_hash;
-                let mut expired = false;
-                let Some(manifest) = manager.manifests.by_name_allow_expired(
-                    cache_ctx,
-                    &scope,
-                    package_name,
-                    Some(&mut expired),
-                    ManifestLoad::LoadFromMemoryFallbackToDisk,
-                    needs_extended,
-                ) else {
-                    continue;
-                };
-
-                let Some(latest) = manifest
-                    .find_by_dist_tag_with_filter(b"latest", min_age_ms, excludes)
-                    .unwrap()
-                else {
-                    continue;
-                };
-
-                // In interactive mode, show the constrained update version as "Target"
-                // but always include packages (don't filter out breaking changes)
-                let update_version = if resolved_version.tag == dependency::Tag::Npm {
-                    manifest
-                        .find_best_version_with_filter(
-                            &resolved_version.npm().version,
-                            string_buf,
-                            min_age_ms,
-                            excludes,
-                        )
-                        .unwrap()
-                        .unwrap_or(latest)
-                } else {
-                    manifest
-                        .find_by_dist_tag_with_filter(
-                            resolved_version.dist_tag().tag.slice(string_buf),
-                            min_age_ms,
-                            excludes,
-                        )
-                        .unwrap()
-                        .unwrap_or(latest)
-                };
-
-                // Skip only if both the constrained update AND the latest version are the same as current
-                // This ensures we show packages where latest is newer even if constrained update isn't
-                let current_ver = resolution.npm().version;
-                let update_ver = update_version.version;
-                let latest_ver = latest.version;
-
-                let update_is_same = current_ver.major == update_ver.major
-                    && current_ver.minor == update_ver.minor
-                    && current_ver.patch == update_ver.patch
-                    && current_ver.tag.eql(update_ver.tag);
-
-                let latest_is_same = current_ver.major == latest_ver.major
-                    && current_ver.minor == latest_ver.minor
-                    && current_ver.patch == latest_ver.patch
-                    && current_ver.tag.eql(latest_ver.tag);
-
-                if update_is_same && latest_is_same {
-                    continue;
-                }
-
-                version_buf.clear();
-                write!(version_buf, "{}", current_ver.fmt(string_buf)).expect("OOM");
-                let current_version_buf: Box<[u8]> = Box::from(version_buf.as_bytes());
-
-                version_buf.clear();
-                write!(
-                    version_buf,
-                    "{}",
-                    update_version.version.fmt(&manifest.string_buf)
-                )
-                .expect("OOM");
-                let update_version_buf: Box<[u8]> = Box::from(version_buf.as_bytes());
-
-                version_buf.clear();
-                write!(version_buf, "{}", latest.version.fmt(&manifest.string_buf)).expect("OOM");
-                let latest_version_buf: Box<[u8]> = Box::from(version_buf.as_bytes());
-
-                // Already filtered by version.order check above
-
-                version_buf.clear();
-                let dep_type: &'static [u8] = DependencyGroup::prop_for_behavior(dep.behavior);
-
-                // Get workspace name but only show if it's actually a workspace
-                let workspace_resolution =
-                    manager.lockfile.packages.items_resolution()[workspace_pkg_id as usize];
-                let workspace_name: &[u8] =
-                    if workspace_resolution.tag == resolution::Tag::Workspace {
-                        manager.lockfile.packages.items_name()[workspace_pkg_id as usize]
-                            .slice(string_buf)
-                    } else {
-                        b""
-                    };
-
-                let is_catalog = dep.version.tag == dependency::Tag::Catalog;
-                let catalog_name_str: &[u8] = if is_catalog {
-                    dep.version.catalog().slice(string_buf)
-                } else {
-                    b""
-                };
-
-                let catalog_name: Option<Box<[u8]>> = if !catalog_name_str.is_empty() {
-                    Some(Box::from(catalog_name_str))
-                } else {
-                    None
-                };
-
-                outdated_packages.push(OutdatedPackage {
-                    name: Box::from(name_slice),
-                    current_version: current_version_buf,
-                    latest_version: latest_version_buf,
-                    update_version: update_version_buf,
-                    workspace_pkg_id,
-                    dependency_type: dep_type,
-                    workspace_name: Box::from(workspace_name),
-                    behavior: dep.behavior,
-                    uses_default_registry,
-                    is_catalog,
-                    catalog_name,
-                    use_latest: update_to_latest, // default to --latest flag value
-                });
+        for row in declared.rows() {
+            let workspace_pkg_id = row.workspace_pkg_id;
+            let package_id = row.package_id;
+            let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
+            let json_buf = declared.string_bytes();
+            let dep = declared.dependency(row);
+            if !selects(groups, dep.behavior) {
+                continue;
             }
+            let resolution = manager.lockfile.packages.items_resolution()[package_id as usize];
+
+            let name_slice = dep.name.slice(json_buf);
+            let package_name =
+                manager.lockfile.packages.items_name()[package_id as usize].slice(string_buf);
+
+            let scope = manager.options.scope_for_package_name(package_name).clone();
+            let uses_default_registry = global_uses_default_registry
+                && manager.options.scope_for_package_name(name_slice).url_hash == default_url_hash;
+            let mut expired = false;
+            let Some(manifest) = manager.manifests.by_name_allow_expired(
+                cache_ctx,
+                &scope,
+                package_name,
+                Some(&mut expired),
+                needs_extended,
+            ) else {
+                continue;
+            };
+
+            let Some(latest) = manifest.find_latest(min_age_ms, excludes).unwrap() else {
+                continue;
+            };
+
+            // "Target" is the newest version in range.
+            let in_range = declared
+                .find_update(row, manifest, min_age_ms, excludes)
+                .unwrap();
+            let update_version = in_range.unwrap_or(latest);
+
+            // A package whose range is exhausted is still listed when `latest` is newer.
+            let current_ver = resolution.npm().version;
+            if !is_outdated(current_ver, string_buf, in_range, latest, manifest) {
+                continue;
+            }
+
+            let boxed = |version: semver::Version, buf: &[u8]| -> Box<[u8]> {
+                version.fmt(buf).to_string().into_bytes().into_boxed_slice()
+            };
+
+            // The root is not shown as a workspace.
+            let workspace_resolution =
+                manager.lockfile.packages.items_resolution()[workspace_pkg_id as usize];
+            let workspace_name: &[u8] = if workspace_resolution.tag == resolution::Tag::Workspace {
+                manager.lockfile.packages.items_name()[workspace_pkg_id as usize].slice(string_buf)
+            } else {
+                b""
+            };
+
+            let is_catalog = dep.version.tag == dependency::Tag::Catalog;
+            let catalog_name: Option<Box<[u8]>> = is_catalog
+                .then(|| dep.version.catalog().slice(json_buf))
+                .filter(|name| !name.is_empty())
+                .map(Box::from);
+
+            outdated_packages.push(OutdatedPackage {
+                name: Box::from(name_slice),
+                current_version: boxed(current_ver, string_buf),
+                latest_version: boxed(latest.version, &manifest.string_buf),
+                update_version: boxed(update_version.version, &manifest.string_buf),
+                update_in_range: in_range.is_some(),
+                workspace_pkg_id,
+                dependency_type: DependencyGroup::prop_for_behavior(dep.behavior),
+                workspace_name: Box::from(workspace_name),
+                behavior: dep.behavior,
+                uses_default_registry,
+                is_catalog,
+                catalog_name,
+                use_latest: update_to_latest, // default to --latest flag value
+                latest_is_newer: latest.is_newer_than(manifest, current_ver, string_buf),
+            });
         }
 
-        // Group catalog dependencies
         let mut grouped_result = Self::group_catalog_dependencies(outdated_packages)?;
 
-        // Sort packages: dependencies first, then devDependencies, etc.
-        grouped_result.sort_by(|a, b| {
-            // First sort by dependency type
-            let a_priority = dep_type_priority(a.dependency_type);
-            let b_priority = dep_type_priority(b.dependency_type);
-            if a_priority != b_priority {
-                return a_priority.cmp(&b_priority);
-            }
-            // Then by name
-            strings::order(&a.name, &b.name)
+        index_sort::sort_slice_by(&mut grouped_result, |a, b| {
+            dep_type_priority(a.dependency_type)
+                .cmp(&dep_type_priority(b.dependency_type))
+                .then_with(|| strings::order(&a.name, &b.name))
+                .then_with(|| {
+                    strings::order(
+                        a.catalog_name.as_deref().unwrap_or(b""),
+                        b.catalog_name.as_deref().unwrap_or(b""),
+                    )
+                })
         });
 
-        Ok(grouped_result)
+        Ok((grouped_result, checked))
     }
 
     fn calculate_column_widths(packages: &[OutdatedPackage]) -> ColumnWidths {
-        // Calculate natural widths based on content
-        let mut max_name_len: usize = b"Package".len();
-        let mut max_current_len: usize = b"Current".len();
-        let mut max_target_len: usize = b"Target".len();
-        let mut max_latest_len: usize = b"Latest".len();
-        let mut max_workspace_len: usize = b"Workspace".len();
-        let mut has_workspaces = false;
+        let mut widths = ColumnWidths {
+            name: b"Package".len(),
+            current: b"Current".len(),
+            target: b"Target".len(),
+            latest: b"Latest".len(),
+            workspace: b"Workspace".len(),
+            show_workspace: false,
+        };
 
         for pkg in packages {
-            // Include dev tag length in max calculation
-            let mut dev_tag_len: usize = 0;
-            if pkg.behavior.is_dev() {
-                dev_tag_len = 4; // " dev"
-            } else if pkg.behavior.is_peer() {
-                dev_tag_len = 5; // " peer"
-            } else if pkg.behavior.is_optional() {
-                dev_tag_len = 9; // " optional"
-            }
-
-            max_name_len = max_name_len.max(pkg.name.len() + dev_tag_len);
-            max_current_len = max_current_len.max(pkg.current_version.len());
-            max_target_len = max_target_len.max(pkg.update_version.len());
-            max_latest_len = max_latest_len.max(pkg.latest_version.len());
-            max_workspace_len = max_workspace_len.max(pkg.workspace_name.len());
-
-            // Check if we have any non-empty workspace names
-            if !pkg.workspace_name.is_empty() {
-                has_workspaces = true;
-            }
+            widths.name = widths
+                .name
+                .max(printed_width(&printed(&pkg.name)) + pkg.tag().len());
+            widths.current = widths.current.max(pkg.current_version.len());
+            widths.target = widths.target.max(pkg.update_version.len());
+            widths.latest = widths.latest.max(pkg.latest_version.len());
+            widths.workspace = widths
+                .workspace
+                .max(printed_width(&printed(&pkg.workspace_name)));
+            widths.show_workspace |= !pkg.workspace_name.is_empty();
         }
 
-        // Get terminal width to apply smart limits if needed
-        let term_size = Self::get_terminal_size();
-
-        // Apply smart column width limits based on terminal width
-        if term_size.width < 60 {
-            // Very narrow terminal - aggressive truncation, hide workspace
-            max_name_len = max_name_len.min(12);
-            max_current_len = max_current_len.min(7);
-            max_target_len = max_target_len.min(7);
-            max_latest_len = max_latest_len.min(7);
-            has_workspaces = false;
-        } else if term_size.width < 80 {
-            // Narrow terminal - moderate truncation, hide workspace
-            max_name_len = max_name_len.min(20);
-            max_current_len = max_current_len.min(10);
-            max_target_len = max_target_len.min(10);
-            max_latest_len = max_latest_len.min(10);
-            has_workspaces = false;
-        } else if term_size.width < 120 {
-            // Medium terminal - light truncation
-            max_name_len = max_name_len.min(35);
-            max_current_len = max_current_len.min(15);
-            max_target_len = max_target_len.min(15);
-            max_latest_len = max_latest_len.min(15);
-            max_workspace_len = max_workspace_len.min(15);
-            // Show workspace only if terminal is wide enough for all columns
-            if term_size.width < 100 {
-                has_workspaces = false;
-            }
-        } else if term_size.width < 160 {
-            // Wide terminal - minimal truncation for very long names
-            max_name_len = max_name_len.min(45);
-            max_current_len = max_current_len.min(20);
-            max_target_len = max_target_len.min(20);
-            max_latest_len = max_latest_len.min(20);
-            max_workspace_len = max_workspace_len.min(20);
-        }
-        // else: wide terminal - use natural widths
-
-        ColumnWidths {
-            name: max_name_len,
-            current: max_current_len,
-            target: max_target_len,
-            latest: max_latest_len,
-            workspace: max_workspace_len,
-            show_workspace: has_workspaces,
-        }
+        let terminal_width = Self::get_terminal_size().width;
+        let (max_name, max_version, max_workspace) = match terminal_width {
+            ..60 => (12, 7, usize::MAX),
+            60..80 => (20, 10, usize::MAX),
+            80..120 => (35, 15, 15),
+            120..160 => (45, 20, 20),
+            _ => (usize::MAX, usize::MAX, usize::MAX),
+        };
+        widths.name = widths.name.min(max_name);
+        widths.current = widths.current.min(max_version);
+        widths.target = widths.target.min(max_version);
+        widths.latest = widths.latest.min(max_version);
+        widths.workspace = widths.workspace.min(max_workspace);
+        widths.show_workspace &= terminal_width >= 100;
+        widths
     }
 
+    /// Returns the size of the whole terminal. `viewport_height` says how many package rows fit in
+    /// it.
     fn get_terminal_size() -> TerminalSize {
-        // Try to get terminal size
         #[cfg(unix)]
         {
-            // TIOCGWINSZ on stdout, routed through the output sink (bun_sys).
-            if let Some(size) = bun_core::output::File::from(bun_core::Fd::stdout()).winsize() {
-                // Reserve space for prompt (1 line) + scroll indicators (2 lines) + some buffer
-                let usable_height = if size.row > 6 { size.row - 4 } else { 20 };
+            if let Some(size) = bun_core::output::File::from(bun_core::Fd::stdout()).winsize()
+                && size.row > 0
+                && size.col > 0
+            {
                 return TerminalSize {
-                    height: usable_height as usize,
+                    height: size.row as usize,
                     width: size.col as usize,
                 };
             }
@@ -1182,98 +783,107 @@ impl UpdateInteractiveCommand {
         #[cfg(windows)]
         {
             use bun_sys::windows;
-            let handle = match windows::GetStdHandle(windows::STD_OUTPUT_HANDLE) {
-                Some(h) => h,
-                None => {
-                    return TerminalSize {
-                        height: 20,
-                        width: 80,
-                    };
+            if let Some(handle) = windows::GetStdHandle(windows::STD_OUTPUT_HANDLE) {
+                // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
+                let mut csbi: windows::CONSOLE_SCREEN_BUFFER_INFO = bun_core::ffi::zeroed();
+                // SAFETY: handle is valid; csbi is a valid out-ptr.
+                if unsafe { windows::kernel32::GetConsoleScreenBufferInfo(handle, &mut csbi) }
+                    != windows::FALSE
+                {
+                    let width = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+                    let height = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
+                    if width > 0 && height > 0 {
+                        return TerminalSize {
+                            height: usize::try_from(height).expect("int cast"),
+                            width: usize::try_from(width).expect("int cast"),
+                        };
+                    }
                 }
-            };
-
-            // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
-            let mut csbi: windows::CONSOLE_SCREEN_BUFFER_INFO = bun_core::ffi::zeroed();
-            // SAFETY: handle is valid; csbi is a valid out-ptr.
-            if unsafe { windows::kernel32::GetConsoleScreenBufferInfo(handle, &mut csbi) }
-                != windows::FALSE
-            {
-                let width = csbi.srWindow.Right - csbi.srWindow.Left + 1;
-                let height = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
-                // Reserve space for prompt + scroll indicators + buffer
-                let usable_height = if height > 6 { height - 4 } else { 20 };
-                return TerminalSize {
-                    height: usize::try_from(usable_height).expect("int cast"),
-                    width: usize::try_from(width).expect("int cast"),
-                };
             }
         }
         TerminalSize {
-            height: 20,
+            height: 24,
             width: 80,
         } // Default fallback
     }
 
-    fn truncate_with_ellipsis(text: &[u8], max_width: usize, only_end: bool) -> Box<[u8]> {
-        if text.len() <= max_width {
-            return Box::from(text);
+    /// A frame that's taller than the screen can't be redrawn in place, because cursor-up stops at
+    /// the top.
+    fn viewport_height(terminal_rows: usize, packages: &[OutdatedPackage]) -> usize {
+        let groups = packages
+            .chunk_by(|a, b| a.dependency_type == b.dependency_type)
+            .count();
+        terminal_rows.saturating_sub(2 * groups + 3).max(1)
+    }
+
+    /// `text` as a cell of at most `max_width` terminal columns prints it.
+    fn truncate_with_ellipsis(text: &[u8], max_width: usize, only_end: bool) -> String {
+        use strings::visible::width::exclude_ansi_colors::utf8_index_at_width;
+
+        let text = printed(text);
+        if printed_width(&text) <= max_width {
+            return text;
         }
 
         if max_width <= 3 {
-            return Box::from("…".as_bytes());
+            return "…".to_owned();
         }
 
         // Put ellipsis in the middle to show both start and end of package name
-        let ellipsis = "…".as_bytes();
-        let available_chars = max_width - 1; // Reserve 1 char for ellipsis
-        let start_chars = if only_end {
-            available_chars
+        let available_width = max_width - 1; // Reserve 1 column for ellipsis
+        let start_width = if only_end {
+            available_width
         } else {
-            available_chars / 2
+            available_width / 2
         };
-        let end_chars = available_chars - start_chars;
+        let end_width = available_width - start_width;
 
-        let mut result = vec![0u8; start_chars + ellipsis.len() + end_chars];
-        result[0..start_chars].copy_from_slice(&text[0..start_chars]);
-        result[start_chars..start_chars + ellipsis.len()].copy_from_slice(ellipsis);
-        result[start_chars + ellipsis.len()..].copy_from_slice(&text[text.len() - end_chars..]);
-
-        result.into_boxed_slice()
-    }
-
-    fn prompt_for_updates(
-        packages: &mut [OutdatedPackage],
-    ) -> Result<Box<[bool]>, bun_core::Error> {
-        if packages.is_empty() {
-            bun_core::prettyln!("<r><green>✓<r> All packages are up to date!");
-            return Ok(Box::default());
+        let (start, rest) = text.split_at(utf8_index_at_width(text.as_bytes(), start_width));
+        let excess = printed_width(rest).saturating_sub(end_width);
+        let mut cut = utf8_index_at_width(rest.as_bytes(), excess);
+        if printed_width(&rest[..cut]) < excess {
+            // A 2-column character straddles the cut.
+            cut = utf8_index_at_width(rest.as_bytes(), excess + 1);
         }
 
+        [start, "…", &rest[cut..]].concat()
+    }
+
+    /// Prints `version`, coloured by its distance from `current` unless it is truncated. Returns the width printed.
+    fn print_version(version: &[u8], current: &[u8], max_width: usize, underline: bool) -> usize {
+        let truncated = Self::truncate_with_ellipsis(version, max_width, false);
+        if underline {
+            Output::print(format_args!("\x1B[4m"));
+        }
+        match (min_of_valid(version), min_of_valid(current)) {
+            (Some(full), Some(current_full)) if truncated.as_bytes() == version => {
+                bun_core::pretty!("{}", full.diff_fmt(current_full, version, current));
+            }
+            _ => bun_core::pretty!("<r>{}<r>", truncated),
+        }
+        if underline {
+            Output::print(format_args!("\x1B[24m"));
+        }
+        printed_width(&truncated)
+    }
+
+    /// `packages` is not empty.
+    fn prompt_for_updates(packages: &mut [OutdatedPackage]) -> Box<[bool]> {
         let mut selected = vec![false; packages.len()].into_boxed_slice();
-        // Default to all unselected (already false from vec!)
-
-        // Calculate optimal column widths based on terminal width and content
         let columns = Self::calculate_column_widths(packages);
-
-        // Get terminal size for viewport and width optimization
         let terminal_size = Self::get_terminal_size();
-
+        let viewport_height = Self::viewport_height(terminal_size.height, packages);
         let mut state = MultiSelectState {
             packages,
             selected: &mut selected,
             cursor: 0,
             viewport_start: 0,
-            viewport_height: terminal_size.height,
+            viewport_height,
             toggle_all: false,
-            max_name_len: columns.name,
-            max_current_len: columns.current,
-            max_update_len: columns.target,
-            max_latest_len: columns.latest,
-            max_workspace_len: columns.workspace,
-            show_workspace: columns.show_workspace, // Show workspace if packages have workspaces
+            columns,
         };
 
-        // Set raw mode — RAII guard restores the original terminal mode on Drop.
+        // Raw mode until dropped.
         #[cfg(windows)]
         let _restore =
             bun_sys::windows::StdinModeGuard::set(bun_sys::windows::UpdateStdioModeFlagsOpts {
@@ -1285,109 +895,64 @@ impl UpdateInteractiveCommand {
         #[cfg(unix)]
         let _restore = bun_core::tty::RawModeGuard::new(0);
 
-        let result = match Self::process_multi_select(&mut state, terminal_size) {
-            Ok(r) => r,
-            Err(err) => {
-                if err == bun_core::err!("EndOfStream") {
-                    Output::flush();
-                    bun_core::prettyln!("\n<r><red>x<r> Cancelled");
-                    Global::exit(0);
-                }
-                return Err(err);
-            }
-        };
+        if !Self::process_multi_select(&mut state, terminal_size) {
+            Output::flush();
+            bun_core::prettyln!("\n<r><red>x<r> Cancelled");
+            Global::exit(0);
+        }
 
         Output::flush();
-        // Reshaped for borrowck — clone the borrowed slice into an owned Box.
-        Ok(Box::from(result))
+        selected
     }
 
+    /// After the wheel moved the viewport.
     fn ensure_cursor_in_viewport(state: &mut MultiSelectState<'_>) {
-        // If cursor is not in viewport, position it sensibly
+        let viewport_end = state.viewport_start + state.viewport_height;
         if state.cursor < state.viewport_start {
-            // Cursor is above viewport - put it at the start of viewport
             state.cursor = state.viewport_start;
-        } else if state.cursor >= state.viewport_start + state.viewport_height {
-            // Cursor is below viewport - put it at the end of viewport
-            if !state.packages.is_empty() {
-                let max_cursor = if state.packages.len() > 1 {
-                    state.packages.len() - 1
-                } else {
-                    0
-                };
-                let viewport_end = state.viewport_start + state.viewport_height;
-                state.cursor = (viewport_end - 1).min(max_cursor);
-            }
+        } else if state.cursor >= viewport_end {
+            state.cursor = (viewport_end - 1).min(state.packages.len() - 1);
         }
     }
 
+    /// Call after the cursor moves. Keeps it visible, with 2 rows below it and 1 above it where
+    /// they fit.
     fn update_viewport(state: &mut MultiSelectState<'_>) {
-        // Ensure cursor is visible with context (2 packages below, 2 above if possible)
         let context_below: usize = 2;
-        let context_above: usize = 1;
+        // A 1-row viewport has no room above the cursor.
+        let context_above: usize = 1usize.min(state.viewport_height - 1);
+        let max_start = state.packages.len().saturating_sub(state.viewport_height);
 
-        // If cursor is below viewport
         if state.cursor >= state.viewport_start + state.viewport_height {
-            // Scroll down to show cursor with context
             let desired_start = if state.cursor + context_below + 1 > state.packages.len() {
-                // Can't show full context, align bottom
-                if state.packages.len() > state.viewport_height {
-                    state.packages.len() - state.viewport_height
-                } else {
-                    0
-                }
-            } else {
-                // Show cursor with context below
-                if state.viewport_height > context_below
-                    && state.cursor > state.viewport_height - context_below
-                {
-                    state.cursor - (state.viewport_height - context_below)
-                } else {
-                    0
-                }
-            };
-
-            state.viewport_start = desired_start;
-        }
-        // If cursor is above viewport
-        else if state.cursor < state.viewport_start {
-            // Scroll up to show cursor with context above
-            if state.cursor >= context_above {
-                state.viewport_start = state.cursor - context_above;
-            } else {
-                state.viewport_start = 0;
-            }
-        }
-        // If cursor is near bottom of viewport, adjust to maintain context
-        else if state.viewport_height > context_below
-            && state.cursor > state.viewport_start + state.viewport_height - context_below
-        {
-            let max_start = if state.packages.len() > state.viewport_height {
-                state.packages.len() - state.viewport_height
-            } else {
-                0
-            };
-            let desired_start = if state.viewport_height > context_below {
+                max_start
+            } else if state.viewport_height > context_below
+                && state.cursor > state.viewport_height - context_below
+            {
                 state.cursor - (state.viewport_height - context_below)
             } else {
-                state.cursor
+                // The viewport is shorter than the context, so put the cursor on the last visible
+                // row.
+                state.cursor.saturating_sub(state.viewport_height - 1)
             };
+
+            // Aligning the bottom of a 1-row viewport would scroll past the cursor.
+            state.viewport_start = desired_start.min(state.cursor);
+        } else if state.cursor < state.viewport_start + context_above && state.viewport_start > 0 {
+            state.viewport_start = state.cursor.saturating_sub(context_above);
+        } else if state.viewport_height > context_below
+            && state.cursor > state.viewport_start + state.viewport_height - context_below
+        {
+            let desired_start = state.cursor - (state.viewport_height - context_below);
             state.viewport_start = desired_start.min(max_start);
-        }
-        // If cursor is near top of viewport, adjust to maintain context
-        else if state.cursor < state.viewport_start + context_above && state.viewport_start > 0 {
-            if state.cursor >= context_above {
-                state.viewport_start = state.cursor - context_above;
-            } else {
-                state.viewport_start = 0;
-            }
         }
     }
 
-    fn process_multi_select<'s, 'b>(
-        state: &'b mut MultiSelectState<'s>,
+    /// Returns false if the user cancelled.
+    fn process_multi_select(
+        state: &mut MultiSelectState<'_>,
         initial_terminal_size: TerminalSize,
-    ) -> Result<&'b [bool], bun_core::Error> {
+    ) -> bool {
         let colors = Output::enable_ansi_colors_stdout();
 
         // Clear any previous progress output
@@ -1395,70 +960,27 @@ impl UpdateInteractiveCommand {
         Output::print(format_args!("\x1B[1A\x1B[2K")); // Move up one line and clear it too
         Output::flush();
 
-        // Enable mouse tracking for scrolling (if terminal supports it)
-        if colors {
-            Output::print(format_args!("\x1b[?25l")); // hide cursor
-            Output::print(format_args!("\x1b[?1000h")); // Enable basic mouse tracking
-            Output::print(format_args!("\x1b[?1006h")); // Enable SGR extended mouse mode
-        }
-        scopeguard::defer! {
-            if colors {
-                Output::print(format_args!("\x1b[?25h")); // show cursor
-                Output::print(format_args!("\x1b[?1000l")); // Disable mouse tracking
-                Output::print(format_args!("\x1b[?1006l")); // Disable SGR extended mouse mode
-            }
-        }
+        let _mouse_tracking = colors.then(MouseTracking::enable);
 
         let mut initial_draw = true;
-        let mut reprint_menu = true;
         let mut total_lines: usize = 0;
-        let mut last_terminal_width = initial_terminal_size.width;
-
-        macro_rules! cleanup_and_reprint {
-            ($reprint:expr) => {{
-                if !initial_draw {
-                    Output::up(total_lines);
-                }
-                Output::clear_to_end();
-                if $reprint {
-                    let mut count: usize = 0;
-                    for &sel in state.selected.iter() {
-                        if sel {
-                            count += 1;
-                        }
-                    }
-                    bun_core::prettyln!(
-                        "<r><green>✓<r> Selected {} package{} to update",
-                        count,
-                        if count == 1 { "" } else { "s" }
-                    );
-                }
-            }};
-        }
+        let mut last_terminal_size = initial_terminal_size;
+        let mut needs_redraw = true;
 
         loop {
-            // Check for terminal resize
             let current_size = Self::get_terminal_size();
-            if current_size.width != last_terminal_width {
-                // Terminal was resized, update viewport and redraw
-                state.viewport_height = current_size.height;
-                let columns = Self::calculate_column_widths(state.packages);
-                state.show_workspace = columns.show_workspace && current_size.width > 100;
-                state.max_name_len = columns.name;
-                state.max_current_len = columns.current;
-                state.max_update_len = columns.target;
-                state.max_latest_len = columns.latest;
-                state.max_workspace_len = columns.workspace;
-                last_terminal_width = current_size.width;
+            if current_size != last_terminal_size {
+                state.viewport_height = Self::viewport_height(current_size.height, state.packages);
+                state.columns = Self::calculate_column_widths(state.packages);
+                state.columns.show_workspace &= current_size.width > 100;
+                last_terminal_size = current_size;
                 Self::update_viewport(state);
-                // Force full redraw
-                initial_draw = true;
+                // Redraw in place, because a new frame below the old one would duplicate it.
+                needs_redraw = true;
             }
 
-            // The render body
-            {
+            if needs_redraw {
                 let synchronized = Output::synchronized();
-                let _sync_end = scopeguard::guard(synchronized, |s| s.end());
 
                 if !initial_draw {
                     Output::up(total_lines);
@@ -1470,28 +992,22 @@ impl UpdateInteractiveCommand {
                 let help_text: &[u8] = b"Space to toggle, Enter to confirm, a to select all, n to select none, i to invert, l to toggle latest";
                 let elipsised_help_text = Self::truncate_with_ellipsis(
                     help_text,
-                    current_size.width - b"? Select packages to update - ".len(),
+                    current_size
+                        .width
+                        .saturating_sub(b"? Select packages to update - ".len()),
                     true,
                 );
                 bun_core::prettyln!(
                     "<r><cyan>?<r> Select packages to update<d> - {}<r>",
-                    BStr::new(&elipsised_help_text)
+                    elipsised_help_text
                 );
 
-                // Calculate available space for packages (reserve space for scroll indicators if needed)
+                let columns = &state.columns;
                 let needs_scrolling = state.packages.len() > state.viewport_height;
-                let show_top_indicator = needs_scrolling && state.viewport_start > 0;
-
-                // First calculate preliminary viewport end to determine if we need bottom indicator
-                let preliminary_viewport_end =
+                let viewport_end =
                     (state.viewport_start + state.viewport_height).min(state.packages.len());
-                let show_bottom_indicator =
-                    needs_scrolling && preliminary_viewport_end < state.packages.len();
 
-                // const is_bottom_scroll = needs_scrolling and state.viewport_start + state.viewport_height <= state.packages.len;
-
-                // Show top scroll indicator if needed
-                if show_top_indicator {
+                if needs_scrolling && state.viewport_start > 0 {
                     bun_core::pretty!(
                         "  <d>↑ {} more package{} above<r>",
                         state.viewport_start,
@@ -1499,40 +1015,21 @@ impl UpdateInteractiveCommand {
                     );
                 }
 
-                // Calculate how many packages we can actually display
-                // The simple approach: just try to show viewport_height packages
-                // The display loop will stop when it runs out of room
-                let viewport_end =
-                    (state.viewport_start + state.viewport_height).min(state.packages.len());
-
-                // Group by dependency type
                 let mut current_dep_type: Option<&'static [u8]> = None;
 
-                // Track how many lines we've actually displayed (headers take 2 lines)
+                // Headers take 2 lines
                 let mut lines_displayed: usize = 0;
-                let mut packages_displayed: usize = 0;
 
-                // Only display packages within viewport
                 for i in state.viewport_start..viewport_end {
                     let pkg = &state.packages[i];
                     let selected = state.selected[i];
 
-                    // Check if we need a header and if we have room for it
-                    let needs_header = current_dep_type.is_none()
-                        || !strings::eql(current_dep_type.unwrap(), pkg.dependency_type);
-
-                    // Print dependency type header with column headers if changed
-                    if needs_header {
-                        // Count selected packages in this dependency type
-                        let mut selected_count: usize = 0;
+                    if current_dep_type != Some(pkg.dependency_type) {
                         debug_assert_eq!(state.packages.len(), state.selected.len());
-                        for (p, &sel) in state.packages.iter().zip(state.selected.iter()) {
-                            if strings::eql(p.dependency_type, pkg.dependency_type) && sel {
-                                selected_count += 1;
-                            }
-                        }
+                        let selected_count = (state.packages.iter().zip(state.selected.iter()))
+                            .filter(|(p, sel)| p.dependency_type == pkg.dependency_type && **sel)
+                            .count();
 
-                        // Print dependency type - bold if any selected
                         Output::print(format_args!("\n  "));
                         if selected_count > 0 {
                             bun_core::pretty!(
@@ -1544,9 +1041,6 @@ impl UpdateInteractiveCommand {
                             bun_core::pretty!("<r>{}<r>", BStr::new(pkg.dependency_type));
                         }
 
-                        // Calculate padding to align column headers with values
-                        let mut j: usize = 0;
-                        // Calculate actual displayed text length including count if present
                         let dep_type_text_len: usize = if selected_count > 0 {
                             pkg.dependency_type.len()
                                 + 1
@@ -1555,43 +1049,19 @@ impl UpdateInteractiveCommand {
                             pkg.dependency_type.len()
                         };
 
-                        // The padding should align with the first character of package names
-                        // Package names start at: "    " (4 spaces) + "□ " (2 chars) = 6 chars from left
-                        // Headers start at: "  " (2 spaces) + dep_type_text
-                        // We need the headers to align where the current version column starts
-                        // That's at: 6 (start of names) + max_name_len + 2 (spacing after names) - 2 (header indent) - dep_type_text_len
-                        let total_offset = 6 + state.max_name_len + 2;
+                        // Names start after "    " and "□ " and are followed by 2 spaces. The
+                        // header starts after "  ".
+                        let total_offset = 6 + columns.name + 2;
                         let header_start = 2 + dep_type_text_len;
-                        let padding_to_current = if header_start >= total_offset {
-                            1
-                        } else {
-                            total_offset - header_start
-                        };
-                        while j < padding_to_current {
-                            Output::print(format_args!(" "));
-                            j += 1;
-                        }
+                        print_spaces(total_offset.saturating_sub(header_start).max(1));
 
-                        // Column headers aligned with their columns
                         Output::print(format_args!("Current"));
-                        j = 0;
-                        while j < state.max_current_len - b"Current".len() + 2 {
-                            Output::print(format_args!(" "));
-                            j += 1;
-                        }
+                        print_spaces(columns.current - b"Current".len() + 2);
                         Output::print(format_args!("Target"));
-                        j = 0;
-                        while j < state.max_update_len - b"Target".len() + 2 {
-                            Output::print(format_args!(" "));
-                            j += 1;
-                        }
+                        print_spaces(columns.target - b"Target".len() + 2);
                         Output::print(format_args!("Latest"));
-                        if state.show_workspace {
-                            j = 0;
-                            while j < state.max_latest_len - b"Latest".len() + 2 {
-                                Output::print(format_args!(" "));
-                                j += 1;
-                            }
+                        if columns.show_workspace {
+                            print_spaces(columns.latest - b"Latest".len() + 2);
                             Output::print(format_args!("Workspace"));
                         }
                         Output::print(format_args!("\x1B[0K\n"));
@@ -1600,375 +1070,125 @@ impl UpdateInteractiveCommand {
                         current_dep_type = Some(pkg.dependency_type);
                     }
 
-                    let is_cursor = i == state.cursor;
                     let checkbox: &str = if selected { "■" } else { "□" };
+                    let tag = pkg.tag();
+                    let color = selected.then(|| pkg.checkbox_color());
 
-                    // Calculate padding - account for dev/peer/optional tags
-                    let mut dev_tag_len: usize = 0;
-                    if pkg.behavior.is_dev() {
-                        dev_tag_len = 4; // " dev"
-                    } else if pkg.behavior.is_peer() {
-                        dev_tag_len = 5; // " peer"
-                    } else if pkg.behavior.is_optional() {
-                        dev_tag_len = 9; // " optional"
-                    }
-                    let total_name_len = pkg.name.len() + dev_tag_len;
-                    let name_padding = state.max_name_len.saturating_sub(total_name_len);
-
-                    // Determine version change severity for checkbox color
-                    let current_ver_parsed = semver::Version::parse(SlicedString::init(
-                        &pkg.current_version,
-                        &pkg.current_version,
-                    ));
-                    let update_ver_parsed = if pkg.use_latest {
-                        semver::Version::parse(SlicedString::init(
-                            &pkg.latest_version,
-                            &pkg.latest_version,
-                        ))
-                    } else {
-                        semver::Version::parse(SlicedString::init(
-                            &pkg.update_version,
-                            &pkg.update_version,
-                        ))
-                    };
-
-                    let mut checkbox_color: &str = "green"; // default
-                    if current_ver_parsed.valid && update_ver_parsed.valid {
-                        let current_full = semver::Version {
-                            major: current_ver_parsed.version.major.unwrap_or(0),
-                            minor: current_ver_parsed.version.minor.unwrap_or(0),
-                            patch: current_ver_parsed.version.patch.unwrap_or(0),
-                            tag: current_ver_parsed.version.tag,
-                            _tag_padding: Default::default(),
-                        };
-                        let update_full = semver::Version {
-                            major: update_ver_parsed.version.major.unwrap_or(0),
-                            minor: update_ver_parsed.version.minor.unwrap_or(0),
-                            patch: update_ver_parsed.version.patch.unwrap_or(0),
-                            tag: update_ver_parsed.version.tag,
-                            _tag_padding: Default::default(),
-                        };
-
-                        let target_ver_str: &[u8] = if pkg.use_latest {
-                            &pkg.latest_version
-                        } else {
-                            &pkg.update_version
-                        };
-                        let diff = semver::Version::which_version_is_different(
-                            update_full,
-                            current_full,
-                            target_ver_str,
-                            &pkg.current_version,
-                        );
-                        if let Some(d) = diff {
-                            match d {
-                                semver::version::ChangedVersion::Major => checkbox_color = "red",
-                                semver::version::ChangedVersion::Minor => {
-                                    if current_full.major == 0 {
-                                        checkbox_color = "red"; // 0.x.y minor changes are breaking
-                                    } else {
-                                        checkbox_color = "yellow";
-                                    }
-                                }
-                                semver::version::ChangedVersion::Patch => {
-                                    if current_full.major == 0 && current_full.minor == 0 {
-                                        checkbox_color = "red"; // 0.0.x patch changes are breaking
-                                    } else {
-                                        checkbox_color = "green";
-                                    }
-                                }
-                                _ => checkbox_color = "green",
-                            }
-                        }
-                    }
-
-                    // Cursor and checkbox
-                    if is_cursor {
+                    if i == state.cursor {
                         bun_core::pretty!("  <r><cyan>❯<r> ");
                     } else {
                         Output::print(format_args!("    "));
                     }
 
-                    // Checkbox with appropriate color
-                    if selected {
-                        if checkbox_color == "red" {
-                            bun_core::pretty!("<r><red>{}<r> ", checkbox);
-                        } else if checkbox_color == "yellow" {
-                            bun_core::pretty!("<r><yellow>{}<r> ", checkbox);
-                        } else {
-                            bun_core::pretty!("<r><green>{}<r> ", checkbox);
+                    match color {
+                        Some(CheckboxColor::Red) => bun_core::pretty!("<r><red>{}<r> ", checkbox),
+                        Some(CheckboxColor::Yellow) => {
+                            bun_core::pretty!("<r><yellow>{}<r> ", checkbox)
                         }
-                    } else {
-                        Output::print(format_args!("{} ", checkbox));
+                        Some(CheckboxColor::Green) => {
+                            bun_core::pretty!("<r><green>{}<r> ", checkbox)
+                        }
+                        None => Output::print(format_args!("{} ", checkbox)),
                     }
 
-                    // Package name - truncate if needed and make it a hyperlink if colors are enabled and using default registry
-                    // Calculate available space for name (accounting for dev/peer/optional tags)
-                    let available_name_width = if state.max_name_len > dev_tag_len {
-                        state.max_name_len - dev_tag_len
+                    let available_name_width = if columns.name > tag.len() {
+                        columns.name - tag.len()
                     } else {
-                        state.max_name_len
+                        columns.name
                     };
                     let display_name =
                         Self::truncate_with_ellipsis(&pkg.name, available_name_width, false);
+                    let name_padding = columns
+                        .name
+                        .saturating_sub(printed_width(&display_name) + tag.len());
 
-                    let package_url: Box<[u8]> =
+                    let package_url =
                         if Output::enable_ansi_colors_stdout() && pkg.uses_default_registry {
-                            let ver: &[u8] = 'brk: {
-                                if selected {
-                                    if pkg.use_latest {
-                                        break 'brk &pkg.latest_version;
-                                    } else {
-                                        break 'brk &pkg.update_version;
-                                    }
-                                } else {
-                                    break 'brk &pkg.current_version;
-                                }
+                            let ver: &[u8] = if selected {
+                                pkg.target_version()
+                            } else {
+                                &pkg.current_version
                             };
-                            let mut v = Vec::new();
-                            write!(
-                                &mut v,
+                            format!(
                                 "https://npmjs.org/package/{}/v/{}",
                                 BStr::new(&pkg.name),
                                 BStr::new(ver)
                             )
-                            .unwrap();
-                            v.into_boxed_slice()
                         } else {
-                            Box::default()
+                            String::new()
                         };
-
                     let hyperlink = TerminalHyperlink::new(
-                        &package_url,
-                        &display_name,
+                        package_url.as_bytes(),
+                        display_name.as_bytes(),
                         !package_url.is_empty(),
                     );
 
-                    if selected {
-                        if checkbox_color == "red" {
-                            bun_core::pretty!("<r><red>{}<r>", hyperlink);
-                        } else if checkbox_color == "yellow" {
-                            bun_core::pretty!("<r><yellow>{}<r>", hyperlink);
-                        } else {
-                            bun_core::pretty!("<r><green>{}<r>", hyperlink);
+                    match color {
+                        Some(CheckboxColor::Red) => bun_core::pretty!("<r><red>{}<r>", hyperlink),
+                        Some(CheckboxColor::Yellow) => {
+                            bun_core::pretty!("<r><yellow>{}<r>", hyperlink)
                         }
-                    } else {
-                        bun_core::pretty!("<r>{}<r>", hyperlink);
+                        Some(CheckboxColor::Green) => {
+                            bun_core::pretty!("<r><green>{}<r>", hyperlink)
+                        }
+                        None => bun_core::pretty!("<r>{}<r>", hyperlink),
                     }
 
-                    // Print dev/peer/optional tag if applicable
-                    if pkg.behavior.is_dev() {
-                        bun_core::pretty!("<r><d> dev<r>");
-                    } else if pkg.behavior.is_peer() {
-                        bun_core::pretty!("<r><d> peer<r>");
-                    } else if pkg.behavior.is_optional() {
-                        bun_core::pretty!("<r><d> optional<r>");
+                    if !tag.is_empty() {
+                        bun_core::pretty!("<r><d>{}<r>", tag);
                     }
+                    print_spaces(name_padding + 2);
 
-                    // Print padding after name (2 spaces)
-                    let mut j: usize = 0;
-                    while j < name_padding + 2 {
-                        Output::print(format_args!(" "));
-                        j += 1;
-                    }
+                    let truncated_current =
+                        Self::truncate_with_ellipsis(&pkg.current_version, columns.current, false);
+                    bun_core::pretty!("<r>{}<r>", truncated_current);
+                    print_spaces(
+                        columns
+                            .current
+                            .saturating_sub(printed_width(&truncated_current))
+                            + 2,
+                    );
 
-                    // Current version - truncate if needed
-                    let truncated_current = Self::truncate_with_ellipsis(
+                    // The chosen version is underlined.
+                    let target_width = Self::print_version(
+                        &pkg.update_version,
                         &pkg.current_version,
-                        state.max_current_len,
-                        false,
+                        columns.target,
+                        selected && !pkg.picks_latest(),
                     );
-                    bun_core::pretty!("<r>{}<r>", BStr::new(&truncated_current));
+                    print_spaces(columns.target.saturating_sub(target_width) + 2);
 
-                    // Print padding after current version (2 spaces)
-                    let current_padding = if truncated_current.len() >= state.max_current_len {
-                        0
-                    } else {
-                        state.max_current_len - truncated_current.len()
-                    };
-                    j = 0;
-                    while j < current_padding + 2 {
-                        Output::print(format_args!(" "));
-                        j += 1;
+                    let is_same_as_target = pkg.latest_version == pkg.update_version;
+                    if is_same_as_target {
+                        Output::print(format_args!("\x1B[2m")); // Dim
                     }
-
-                    // Target version with diffFmt coloring - bold if not using latest
-                    let target_ver_parsed = semver::Version::parse(SlicedString::init(
-                        &pkg.update_version,
-                        &pkg.update_version,
-                    ));
-
-                    // Truncate target version if needed
-                    let truncated_target = Self::truncate_with_ellipsis(
-                        &pkg.update_version,
-                        state.max_update_len,
-                        false,
+                    let latest_width = Self::print_version(
+                        &pkg.latest_version,
+                        &pkg.current_version,
+                        columns.latest,
+                        selected && pkg.picks_latest(),
                     );
-
-                    // For width calculation, use the truncated version string length
-                    let target_width: usize = truncated_target.len();
-
-                    if current_ver_parsed.valid && target_ver_parsed.valid {
-                        let current_full = semver::Version {
-                            major: current_ver_parsed.version.major.unwrap_or(0),
-                            minor: current_ver_parsed.version.minor.unwrap_or(0),
-                            patch: current_ver_parsed.version.patch.unwrap_or(0),
-                            tag: current_ver_parsed.version.tag,
-                            _tag_padding: Default::default(),
-                        };
-                        let target_full = semver::Version {
-                            major: target_ver_parsed.version.major.unwrap_or(0),
-                            minor: target_ver_parsed.version.minor.unwrap_or(0),
-                            patch: target_ver_parsed.version.patch.unwrap_or(0),
-                            tag: target_ver_parsed.version.tag,
-                            _tag_padding: Default::default(),
-                        };
-
-                        // Print target version (use truncated version for narrow terminals)
-                        if selected && !pkg.use_latest {
-                            Output::print(format_args!("\x1B[4m")); // Start underline
-                        }
-                        if truncated_target.len() < pkg.update_version.len() {
-                            // If truncated, use plain display instead of diffFmt to avoid confusion
-                            bun_core::pretty!("<r>{}<r>", BStr::new(&truncated_target));
-                        } else {
-                            // Use diffFmt for full versions
-                            bun_core::pretty!(
-                                "{}",
-                                target_full.diff_fmt(
-                                    current_full,
-                                    &pkg.update_version,
-                                    &pkg.current_version,
-                                )
-                            );
-                        }
-                        if selected && !pkg.use_latest {
-                            Output::print(format_args!("\x1B[24m")); // End underline
-                        }
-                    } else {
-                        // Fallback if version parsing fails
-                        if selected && !pkg.use_latest {
-                            Output::print(format_args!("\x1B[4m")); // Start underline
-                        }
-                        bun_core::pretty!("<r>{}<r>", BStr::new(&truncated_target));
-                        if selected && !pkg.use_latest {
-                            Output::print(format_args!("\x1B[24m")); // End underline
-                        }
+                    if is_same_as_target {
+                        Output::print(format_args!("\x1B[22m")); // Reset dim
                     }
 
-                    let target_padding = state.max_update_len.saturating_sub(target_width);
-                    j = 0;
-                    while j < target_padding + 2 {
-                        Output::print(format_args!(" "));
-                        j += 1;
-                    }
-
-                    // Latest version with diffFmt coloring - bold if using latest
-                    let latest_ver_parsed = semver::Version::parse(SlicedString::init(
-                        &pkg.latest_version,
-                        &pkg.latest_version,
-                    ));
-
-                    // Truncate latest version if needed
-                    let truncated_latest = Self::truncate_with_ellipsis(
-                        &pkg.latest_version,
-                        state.max_latest_len,
-                        false,
-                    );
-                    if current_ver_parsed.valid && latest_ver_parsed.valid {
-                        let current_full = semver::Version {
-                            major: current_ver_parsed.version.major.unwrap_or(0),
-                            minor: current_ver_parsed.version.minor.unwrap_or(0),
-                            patch: current_ver_parsed.version.patch.unwrap_or(0),
-                            tag: current_ver_parsed.version.tag,
-                            _tag_padding: Default::default(),
-                        };
-                        let latest_full = semver::Version {
-                            major: latest_ver_parsed.version.major.unwrap_or(0),
-                            minor: latest_ver_parsed.version.minor.unwrap_or(0),
-                            patch: latest_ver_parsed.version.patch.unwrap_or(0),
-                            tag: latest_ver_parsed.version.tag,
-                            _tag_padding: Default::default(),
-                        };
-
-                        // Dim if latest matches target version
-                        let is_same_as_target =
-                            strings::eql(&pkg.latest_version, &pkg.update_version);
-                        if is_same_as_target {
-                            Output::print(format_args!("\x1B[2m")); // Dim
-                        }
-                        // Print latest version
-                        if selected && pkg.use_latest {
-                            Output::print(format_args!("\x1B[4m")); // Start underline
-                        }
-                        if truncated_latest.len() < pkg.latest_version.len() {
-                            // If truncated, use plain display instead of diffFmt to avoid confusion
-                            bun_core::pretty!("<r>{}<r>", BStr::new(&truncated_latest));
-                        } else {
-                            // Use diffFmt for full versions
-                            bun_core::pretty!(
-                                "{}",
-                                latest_full.diff_fmt(
-                                    current_full,
-                                    &pkg.latest_version,
-                                    &pkg.current_version,
-                                )
-                            );
-                        }
-                        if selected && pkg.use_latest {
-                            Output::print(format_args!("\x1B[24m")); // End underline
-                        }
-                        if is_same_as_target {
-                            Output::print(format_args!("\x1B[22m")); // Reset dim
-                        }
-                    } else {
-                        // Fallback if version parsing fails
-                        let is_same_as_target =
-                            strings::eql(&pkg.latest_version, &pkg.update_version);
-                        if is_same_as_target {
-                            Output::print(format_args!("\x1B[2m")); // Dim
-                        }
-                        if selected && pkg.use_latest {
-                            Output::print(format_args!("\x1B[4m")); // Start underline
-                        }
-                        bun_core::pretty!("<r>{}<r>", BStr::new(&truncated_latest));
-                        if selected && pkg.use_latest {
-                            Output::print(format_args!("\x1B[24m")); // End underline
-                        }
-                        if is_same_as_target {
-                            Output::print(format_args!("\x1B[22m")); // Reset dim
-                        }
-                    }
-
-                    // Workspace column
-                    if state.show_workspace {
-                        let latest_width: usize = truncated_latest.len();
-                        let latest_padding = state.max_latest_len.saturating_sub(latest_width);
-                        j = 0;
-                        while j < latest_padding + 2 {
-                            Output::print(format_args!(" "));
-                            j += 1;
-                        }
-                        // Truncate workspace name if needed
+                    if columns.show_workspace {
+                        print_spaces(columns.latest.saturating_sub(latest_width) + 2);
                         let truncated_workspace = Self::truncate_with_ellipsis(
                             &pkg.workspace_name,
-                            state.max_workspace_len,
+                            columns.workspace,
                             true,
                         );
-                        bun_core::pretty!("<r><d>{}<r>", BStr::new(&truncated_workspace));
+                        bun_core::pretty!("<r><d>{}<r>", truncated_workspace);
                     }
 
                     Output::print(format_args!("\x1B[0K\n"));
                     lines_displayed += 1;
-                    packages_displayed += 1;
                 }
 
-                let _ = packages_displayed;
-
-                // Show bottom scroll indicator if needed
-                if show_bottom_indicator {
+                if needs_scrolling && viewport_end < state.packages.len() {
                     bun_core::pretty!(
-                        "  <d>↓ {} more package{} below<r>",
+                        "  <d>↓ {} more package{} below<r>\x1B[0K\n",
                         state.packages.len() - viewport_end,
                         if state.packages.len() - viewport_end == 1 {
                             ""
@@ -1981,70 +1201,66 @@ impl UpdateInteractiveCommand {
 
                 total_lines = lines_displayed + 1;
                 Output::clear_to_end();
+                synchronized.end();
             }
             Output::flush();
 
-            // Read input
             let mut reader = bun_core::output::stdin_reader();
-            let byte = match reader.take_byte() {
-                Ok(b) => b,
-                Err(_) => {
-                    cleanup_and_reprint!(reprint_menu);
-                    return Ok(state.selected);
-                }
-            };
+            // The end of the input confirms, like Enter.
+            let byte = reader.take_byte().unwrap_or(b'\n');
+            needs_redraw = true;
+            let last = state.packages.len() - 1;
 
             match byte {
-                b'\n' | b'\r' => {
-                    cleanup_and_reprint!(reprint_menu);
-                    return Ok(state.selected);
-                }
-                3 | 4 => {
-                    // ctrl+c, ctrl+d
-                    reprint_menu = false;
-                    cleanup_and_reprint!(reprint_menu);
-                    return Err(bun_core::err!("EndOfStream"));
+                // Enter confirms. Ctrl+C and Ctrl+D cancel.
+                b'\n' | b'\r' | 3 | 4 => {
+                    Output::up(total_lines);
+                    Output::print(format_args!("\x1B[1G"));
+                    Output::clear_to_end();
+                    let confirmed = byte != 3 && byte != 4;
+                    if confirmed {
+                        let count = state.selected.iter().filter(|sel| **sel).count();
+                        bun_core::prettyln!(
+                            "<r><green>✓<r> Selected {} package{} to update",
+                            count,
+                            if count == 1 { "" } else { "s" }
+                        );
+                    }
+                    return confirmed;
                 }
                 b' ' => {
                     state.selected[state.cursor] = !state.selected[state.cursor];
-                    // if the package only has a latest version, then we should toggle the latest version instead of update
-                    if strings::eql(
-                        &state.packages[state.cursor].current_version,
-                        &state.packages[state.cursor].update_version,
-                    ) {
-                        state.packages[state.cursor].use_latest = true;
+                    // Nothing newer is in range, so selecting it means `latest`.
+                    let pkg = &mut state.packages[state.cursor];
+                    if pkg.current_version == pkg.update_version {
+                        pkg.use_latest = true;
                     }
                     state.toggle_all = false;
-                    // Don't move cursor on space - let user manually navigate
                 }
                 b'a' | b'A' => {
                     state.selected.fill(true);
-                    // For packages where current == update version, auto-set use_latest
-                    // so they get updated to the latest version (matching spacebar behavior)
+                    // Same as for the space bar.
                     for pkg in state.packages.iter_mut() {
-                        if strings::eql(&pkg.current_version, &pkg.update_version) {
+                        if pkg.current_version == pkg.update_version {
                             pkg.use_latest = true;
                         }
                     }
-                    state.toggle_all = true; // Mark that 'a' was used
+                    state.toggle_all = true;
                 }
                 b'n' | b'N' => {
                     state.selected.fill(false);
-                    state.toggle_all = false; // Reset toggle_all mode
+                    state.toggle_all = false;
                 }
                 b'i' | b'I' => {
-                    // Invert selection
                     for sel in state.selected.iter_mut() {
                         *sel = !*sel;
                     }
-                    state.toggle_all = false; // Reset toggle_all mode
+                    state.toggle_all = false;
                 }
                 b'l' | b'L' => {
-                    // Only affect all packages if 'a' (select all) was used
-                    // Otherwise, just toggle the current cursor package
+                    let new_latest_state = !state.packages[state.cursor].use_latest;
+                    // Right after 'a': every selected package. Otherwise the one under the cursor, which it selects.
                     if state.toggle_all {
-                        // All packages were selected with 'a', so toggle latest for all selected packages
-                        let new_latest_state = !state.packages[state.cursor].use_latest;
                         debug_assert_eq!(state.selected.len(), state.packages.len());
                         for (sel, pkg) in state.selected.iter().zip(state.packages.iter_mut()) {
                             if *sel {
@@ -2052,27 +1268,17 @@ impl UpdateInteractiveCommand {
                             }
                         }
                     } else {
-                        // Individual selection mode, just toggle current cursor package and select it
-                        state.packages[state.cursor].use_latest =
-                            !state.packages[state.cursor].use_latest;
+                        state.packages[state.cursor].use_latest = new_latest_state;
                         state.selected[state.cursor] = true;
                     }
                 }
                 b'j' => {
-                    if state.cursor < state.packages.len() - 1 {
-                        state.cursor += 1;
-                    } else {
-                        state.cursor = 0;
-                    }
+                    state.cursor = (state.cursor + 1) % state.packages.len();
                     Self::update_viewport(state);
                     state.toggle_all = false;
                 }
                 b'k' => {
-                    if state.cursor > 0 {
-                        state.cursor -= 1;
-                    } else {
-                        state.cursor = state.packages.len() - 1;
-                    }
+                    state.cursor = state.cursor.checked_sub(1).unwrap_or(last);
                     Self::update_viewport(state);
                     state.toggle_all = false;
                 }
@@ -2086,61 +1292,32 @@ impl UpdateInteractiveCommand {
                             continue;
                         };
                         match arrow {
+                            // up arrow
                             b'A' => {
-                                // up arrow
-                                if state.cursor > 0 {
-                                    state.cursor -= 1;
-                                } else {
-                                    state.cursor = state.packages.len() - 1;
-                                }
+                                state.cursor = state.cursor.checked_sub(1).unwrap_or(last);
                                 Self::update_viewport(state);
                             }
+                            // down arrow
                             b'B' => {
-                                // down arrow
-                                if state.cursor < state.packages.len() - 1 {
-                                    state.cursor += 1;
-                                } else {
-                                    state.cursor = 0;
-                                }
+                                state.cursor = (state.cursor + 1) % state.packages.len();
                                 Self::update_viewport(state);
                             }
-                            b'C' => {
-                                // right arrow - switch to Latest version and select
-                                state.packages[state.cursor].use_latest = true;
+                            // The right arrow selects Latest, and the left arrow selects Target.
+                            b'C' | b'D' => {
+                                state.packages[state.cursor].use_latest = arrow == b'C';
                                 state.selected[state.cursor] = true;
                             }
-                            b'D' => {
-                                // left arrow - switch to Target version and select
-                                state.packages[state.cursor].use_latest = false;
-                                state.selected[state.cursor] = true;
-                            }
-                            b'5' => {
-                                // Page Up
+                            // Page Up, Page Down
+                            b'5' | b'6' => {
                                 let Ok(tilde) = reader.take_byte() else {
                                     continue;
                                 };
                                 if tilde == b'~' {
-                                    // Move up by viewport height
-                                    if state.cursor >= state.viewport_height {
-                                        state.cursor -= state.viewport_height;
+                                    state.cursor = if arrow == b'5' {
+                                        state.cursor.saturating_sub(state.viewport_height)
                                     } else {
-                                        state.cursor = 0;
-                                    }
-                                    Self::update_viewport(state);
-                                }
-                            }
-                            b'6' => {
-                                // Page Down
-                                let Ok(tilde) = reader.take_byte() else {
-                                    continue;
-                                };
-                                if tilde == b'~' {
-                                    // Move down by viewport height
-                                    if state.cursor + state.viewport_height < state.packages.len() {
-                                        state.cursor += state.viewport_height;
-                                    } else {
-                                        state.cursor = state.packages.len() - 1;
-                                    }
+                                        (state.cursor + state.viewport_height).min(last)
+                                    };
                                     Self::update_viewport(state);
                                 }
                             }
@@ -2154,35 +1331,26 @@ impl UpdateInteractiveCommand {
                                     if c == b'M' || c == b'm' {
                                         // Parse SGR mouse event: ESC[<button;col;row(M or m)
                                         // button: 64 = scroll up, 65 = scroll down
-                                        let mut parts = buffer[0..buf_idx]
-                                            .split(|b| *b == b';')
-                                            .filter(|s| !s.is_empty());
+                                        let mut parts =
+                                            strings::tokenize(&buffer[0..buf_idx], b";");
                                         if let Some(button_str) = parts.next() {
                                             let button: u32 =
                                                 strings::parse_int(button_str, 10).unwrap_or(0);
-                                            // Mouse wheel events
                                             if button == 64 {
-                                                // Scroll up
                                                 if state.viewport_start > 0 {
-                                                    // Scroll up by 3 lines
-                                                    let scroll_amount =
-                                                        1usize.min(state.viewport_start);
-                                                    state.viewport_start -= scroll_amount;
+                                                    state.viewport_start -= 1;
                                                     Self::ensure_cursor_in_viewport(state);
                                                 }
                                             } else if button == 65 {
-                                                // Scroll down
                                                 if state.viewport_start + state.viewport_height
                                                     < state.packages.len()
                                                 {
-                                                    // Scroll down by 3 lines
-                                                    let max_scroll = state.packages.len()
-                                                        - (state.viewport_start
-                                                            + state.viewport_height);
-                                                    let scroll_amount = 1usize.min(max_scroll);
-                                                    state.viewport_start += scroll_amount;
+                                                    state.viewport_start += 1;
                                                     Self::ensure_cursor_in_viewport(state);
                                                 }
+                                            } else {
+                                                // A click changes nothing.
+                                                needs_redraw = false;
                                             }
                                         }
                                         break;
@@ -2204,8 +1372,72 @@ impl UpdateInteractiveCommand {
     }
 }
 
+/// (name, from, to)
+type DryRunRow = (Box<[u8]>, Box<[u8]>, Box<[u8]>);
+
+fn print_dry_run_rows(rows: &mut Vec<DryRunRow>, start_time: i128) {
+    index_sort::sort_vec_unstable_by(rows, |a, b| a.cmp(b));
+    rows.dedup();
+    let (glyph, arrow) = if Output::enable_ansi_colors_stdout() {
+        ("↑", "→")
+    } else {
+        ("^", "->")
+    };
+    bun_core::pretty!("\n");
+    for (name, from, to) in rows.iter() {
+        bun_core::prettyln!(
+            "<cyan>{}<r> <b>{}<r> <d>{} {}<r> <b><cyan>{}<r>",
+            glyph,
+            BStr::new(name),
+            BStr::new(from),
+            arrow,
+            BStr::new(to)
+        );
+    }
+    let n = rows.len();
+    bun_core::pretty!(
+        "\n<green>{}<r> package{} would be updated ",
+        n,
+        if n == 1 { "" } else { "s" }
+    );
+    Output::print_start_end_stdout(start_time, bun_core::time::nano_timestamp());
+    bun_core::pretty!("\n");
+    Output::flush();
+}
+
+struct GroupFlags(UpdateGroups);
+
+impl fmt::Display for GroupFlags {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut first = true;
+        for (set, flag) in [
+            (self.0.dev, "--dev"),
+            (self.0.prod, "--prod"),
+            (self.0.no_optional, "--no-optional"),
+        ] {
+            if !set {
+                continue;
+            }
+            if !first {
+                f.write_str(" ")?;
+            }
+            first = false;
+            f.write_str(flag)?;
+        }
+        Ok(())
+    }
+}
+
+fn print_spaces(count: usize) {
+    Output::print(format_args!("{:count$}", ""));
+}
+
+fn min_of_valid(version: &[u8]) -> Option<semver::Version> {
+    let parsed = semver::Version::parse(SlicedString::init(version, version));
+    parsed.valid.then(|| parsed.version.min())
+}
+
 fn dep_type_priority(dep_type: &[u8]) -> u8 {
-    // caller-specific UI sort order; not baked into canonical
     match DependencyGroup::from_prop(dep_type) {
         Some(g) if g.behavior == Behavior::PROD => 0,
         Some(g) if g.behavior == Behavior::DEV => 1,
@@ -2215,345 +1447,33 @@ fn dep_type_priority(dep_type: &[u8]) -> u8 {
     }
 }
 
-/// Dupe a byte buffer into the process-lifetime CLI arena to obtain a
-/// `'static` slice for storage in `E::EString.data` (the AST `Str` alias is
-/// `&'static [u8]` until `'bump` is threaded through).
-#[inline]
-fn leak_dup(bytes: &[u8]) -> &'static [u8] {
-    crate::cli::cli_dupe(bytes)
-}
-
-/// Edit catalog definitions in package.json
-// No `manager` parameter: a local `Bump` is used instead
-// (`E::Object::put` ignores its allocator arg), which keeps
-// `update_catalog_definitions` borrowck-clean.
-pub(crate) fn edit_catalog_definitions(
-    updates: &mut [CatalogUpdateRequest],
-    current_package_json: &mut Expr,
-) -> Result<(), bun_core::Error> {
-    // using data store is going to result in undefined memory issues as
-    // the store is cleared in some workspace situations. the solution
-    // is to always avoid the store
-    // `Expr.Disabler` is a debug-only guard around the T4
-    // `bun_js_parser` Store; the lower-tier `bun_ast::js_ast` `Expr` used
-    // here boxes via its own thread-local `DATA_STORE` (see js_ast.rs), so
-    // toggling the parser-tier disabler is a no-op for these allocations.
-    let bump = Bump::new();
-
-    for update in updates.iter() {
-        if let Some(catalog_name) = &update.catalog_name {
-            update_named_catalog(
-                &bump,
-                current_package_json,
-                catalog_name,
-                &update.package_name,
-                &update.new_version,
-            )?;
-        } else {
-            update_default_catalog(
-                &bump,
-                current_package_json,
-                &update.package_name,
-                &update.new_version,
-            )?;
-        }
-    }
-    Ok(())
-}
-
-/// Where `find_catalog_object` located the existing object — the lookup and
-/// the post-mutate placement use *different* predicates (see
-/// `update_default_catalog`), so the source must be tracked.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum CatalogSource {
-    Workspaces,
-    Root,
-    Missing,
-}
-
-/// Find the `StoreRef<E::Object>` for `package_json[.workspaces].<key>`, or
-/// `None` if absent / not an object. Mirrors the labeled-block lookup in
-/// updateDefaultCatalog/updateNamedCatalog.
-fn find_catalog_object(
+/// Rewrites the catalog entry that the row was read from. The new node is allocated in the CLI
+/// arena, because a cached tree must not depend on the Store.
+fn update_catalog(
     package_json: &Expr,
-    key: &[u8],
-) -> (Option<bun_ast::StoreRef<E::Object>>, CatalogSource) {
-    if let Some(workspaces_query) = package_json.as_property(b"workspaces") {
-        if workspaces_query.expr.is_object() {
-            if let Some(q) = workspaces_query.expr.as_property(key) {
-                if let Some(o) = q.expr.data.e_object() {
-                    return (Some(o), CatalogSource::Workspaces);
-                }
-            }
-        }
-    }
-    if let Some(q) = package_json.as_property(key) {
-        if let Some(o) = q.expr.data.e_object() {
-            return (Some(o), CatalogSource::Root);
-        }
-    }
-    (None, CatalogSource::Missing)
-}
-
-fn update_default_catalog(
-    bump: &Bump,
-    package_json: &mut Expr,
-    package_name: &[u8],
-    new_version: &[u8],
-) -> Result<(), bun_core::Error> {
-    // Get or create the catalog object
-    // First check if catalog is under workspaces.catalog
-    // Mutate the existing `StoreRef<E::Object>` in place (`StoreRef` is
-    // `Copy + DerefMut`); a shallow copy of the object would double-free its
-    // `Vec` buffer. Crucially, the *placement* check is looser than the
-    // lookup: put under `workspaces.<key>` whenever that key *exists* (any
-    // type), even when the lookup fell back to the root-level object. Track
-    // the lookup source so the in-place fast path is taken only when
-    // source == placement; otherwise re-`put` the mutated arena slot at the
-    // placement-mandated location.
-    let mut fresh_obj = E::Object::default();
-    let (existing, source) = find_catalog_object(package_json, b"catalog");
-    {
-        let catalog_obj: &mut E::Object = match existing {
-            Some(mut o) => {
-                // SAFETY: `StoreRef` derefs into the live arena slot for the
-                // duration of this block; no other `&mut` to it is live.
-                unsafe { &mut *core::ptr::addr_of_mut!(*o) }
-            }
-            None => &mut fresh_obj,
-        };
-
-        // Get original version to preserve prefix if it exists
-        let mut version_with_prefix: &'static [u8] = leak_dup(new_version);
-        if let Some(existing_prop) = catalog_obj.get(package_name) {
-            if let Some(e_str) = existing_prop.data.e_string() {
-                let original_version = e_str.data.slice();
-                version_with_prefix =
-                    crate::cli::cli_dupe(&preserve_version_prefix(original_version, new_version)?);
-            }
-        }
-
-        // Update or add the package version
-        let new_expr = Expr::init(E::EString::init(version_with_prefix), Loc::EMPTY);
-        catalog_obj
-            .put(bump, leak_dup(package_name), new_expr)
-            .map_err(|_| bun_core::err!("OutOfMemory"))?;
-    }
-
-    // Check if we need to update under workspaces.catalog or root-level catalog
-    if let Some(workspaces_query) = package_json.as_property(b"workspaces") {
-        if let Some(mut ws_obj) = workspaces_query.expr.data.e_object() {
-            if workspaces_query.expr.as_property(b"catalog").is_some() {
-                // Update under workspaces.catalog
-                if source == CatalogSource::Workspaces {
-                    // Mutated in place; placement matches lookup.
-                    return Ok(());
-                }
-                let expr = match existing {
-                    // Re-seat the arena slot mutated above; `StoreRef` is a
-                    // non-owning `Copy` handle so the previous `Data::EObject`
-                    // pointing at it remains valid.
-                    Some(o) => Expr {
-                        loc: Loc::EMPTY,
-                        data: js_expr::Data::EObject(o),
-                    },
-                    None => Expr::init(fresh_obj, Loc::EMPTY),
-                };
-                ws_obj
-                    .put(bump, b"catalog", expr)
-                    .map_err(|_| bun_core::err!("OutOfMemory"))?;
-                return Ok(());
-            }
-        }
-    }
-
-    // Otherwise update at root level
-    if source == CatalogSource::Root {
-        // Mutated in place; placement matches lookup.
-        return Ok(());
-    }
-    // source ∈ {Missing}; Workspaces is unreachable here since it implies the
-    // `workspaces.catalog` key exists.
-    if let Some(root_obj) = package_json.data.e_object_mut() {
-        root_obj
-            .put(bump, b"catalog", Expr::init(fresh_obj, Loc::EMPTY))
-            .map_err(|_| bun_core::err!("OutOfMemory"))?;
-    }
-    Ok(())
-}
-
-fn update_named_catalog(
-    bump: &Bump,
-    package_json: &mut Expr,
     catalog_name: &[u8],
     package_name: &[u8],
     new_version: &[u8],
-) -> Result<(), bun_core::Error> {
-    // Get or create the catalogs object
-    // First check if catalogs is under workspaces.catalogs (newer structure)
-    // Reshaped — see `update_default_catalog` for the
-    // shallow-copy-vs-in-place + lookup-vs-placement rationale.
-    let mut fresh_catalogs = E::Object::default();
-    let (existing_catalogs, source) = find_catalog_object(package_json, b"catalogs");
-    {
-        let catalogs_obj: &mut E::Object = match existing_catalogs {
-            Some(mut o) => {
-                // SAFETY: arena slot live for fn duration; no aliasing `&mut`.
-                unsafe { &mut *core::ptr::addr_of_mut!(*o) }
-            }
-            None => &mut fresh_catalogs,
-        };
-
-        // Get or create the specific catalog
-        let mut fresh_catalog = E::Object::default();
-        let existing_catalog: Option<bun_ast::StoreRef<E::Object>> = catalogs_obj
-            .get(catalog_name)
-            .and_then(|e| e.data.e_object());
-        let catalog_obj: &mut E::Object = match existing_catalog {
-            Some(mut o) => {
-                // SAFETY: arena slot live for fn duration; no aliasing `&mut`.
-                unsafe { &mut *core::ptr::addr_of_mut!(*o) }
-            }
-            None => &mut fresh_catalog,
-        };
-
-        // Get original version to preserve prefix if it exists
-        let mut version_with_prefix: &'static [u8] = leak_dup(new_version);
-        if let Some(existing_prop) = catalog_obj.get(package_name) {
-            if let Some(e_str) = existing_prop.data.e_string() {
-                let original_version = e_str.data.slice();
-                version_with_prefix =
-                    crate::cli::cli_dupe(&preserve_version_prefix(original_version, new_version)?);
-            }
-        }
-
-        // Update or add the package version
-        let new_expr = Expr::init(E::EString::init(version_with_prefix), Loc::EMPTY);
-        catalog_obj
-            .put(bump, leak_dup(package_name), new_expr)
-            .map_err(|_| bun_core::err!("OutOfMemory"))?;
-
-        // Update the catalog in catalogs object
-        if existing_catalog.is_none() {
-            catalogs_obj
-                .put(
-                    bump,
-                    leak_dup(catalog_name),
-                    Expr::init(fresh_catalog, Loc::EMPTY),
-                )
-                .map_err(|_| bun_core::err!("OutOfMemory"))?;
-        }
-    }
-
-    // Check if we need to update under workspaces.catalogs or root-level catalogs
-    if let Some(workspaces_query) = package_json.as_property(b"workspaces") {
-        if let Some(mut ws_obj) = workspaces_query.expr.data.e_object() {
-            if workspaces_query.expr.as_property(b"catalogs").is_some() {
-                // Update under workspaces.catalogs
-                if source == CatalogSource::Workspaces {
-                    // Mutated in place; placement matches lookup.
-                    return Ok(());
-                }
-                let expr = match existing_catalogs {
-                    Some(o) => Expr {
-                        loc: Loc::EMPTY,
-                        data: js_expr::Data::EObject(o),
-                    },
-                    None => Expr::init(fresh_catalogs, Loc::EMPTY),
-                };
-                ws_obj
-                    .put(bump, b"catalogs", expr)
-                    .map_err(|_| bun_core::err!("OutOfMemory"))?;
-                return Ok(());
-            }
-        }
-    }
-
-    // Otherwise update at root level
-    if source == CatalogSource::Root {
-        // Mutated in place; placement matches lookup.
+    in_range: bool,
+) -> crate::Result<()> {
+    let Some(mut catalog) = catalog_object_of(package_json, catalog_name, package_name) else {
         return Ok(());
-    }
-    if let Some(root_obj) = package_json.data.e_object_mut() {
-        root_obj
-            .put(bump, b"catalogs", Expr::init(fresh_catalogs, Loc::EMPTY))
-            .map_err(|_| bun_core::err!("OutOfMemory"))?;
-    }
+    };
+    let Some(literal) = (*catalog)
+        .get(package_name)
+        .and_then(|declared| declared.data.e_string())
+        .and_then(|declared| chosen_version_literal(declared.data.slice(), new_version, in_range))
+    else {
+        return Ok(());
+    };
+    let bump = crate::cli::cli_arena();
+    let literal = Expr::allocate(bump, E::EString::init(cli_dupe(&literal)), Loc::EMPTY);
+    catalog.put(bump, package_name, literal)?;
     Ok(())
 }
 
-fn preserve_version_prefix(
-    original_version: &[u8],
-    new_version: &[u8],
-) -> Result<Box<[u8]>, bun_core::Error> {
-    if original_version.len() > 1 {
-        let mut orig_version: &[u8] = original_version;
-        let mut alias: Option<&[u8]> = None;
-
-        // Preserve npm: prefix
-        if let Some(after_npm) =
-            strings::without_prefix_if_possible_comptime(original_version, b"npm:")
-        {
-            if let Some(i) = strings::last_index_of_char(after_npm, b'@') {
-                alias = Some(&after_npm[0..i]);
-                if i + 2 < after_npm.len() {
-                    orig_version = &after_npm[i + 1..];
-                }
-            } else {
-                alias = Some(after_npm);
-            }
-        }
-
-        // Preserve other version prefixes
-        let first_char = orig_version[0];
-        if first_char == b'^'
-            || first_char == b'~'
-            || first_char == b'>'
-            || first_char == b'<'
-            || first_char == b'='
-        {
-            let second_char = orig_version[1];
-            if (first_char == b'>' || first_char == b'<') && second_char == b'=' {
-                if let Some(a) = alias {
-                    let mut v = Vec::new();
-                    write!(
-                        &mut v,
-                        "npm:{}@{}={}",
-                        BStr::new(a),
-                        first_char as char,
-                        BStr::new(new_version)
-                    )
-                    .unwrap();
-                    return Ok(v.into_boxed_slice());
-                }
-                let mut v = Vec::new();
-                write!(&mut v, "{}={}", first_char as char, BStr::new(new_version))
-                    .expect("infallible: in-memory write");
-                return Ok(v.into_boxed_slice());
-            }
-            if let Some(a) = alias {
-                let mut v = Vec::new();
-                write!(
-                    &mut v,
-                    "npm:{}@{}{}",
-                    BStr::new(a),
-                    first_char as char,
-                    BStr::new(new_version)
-                )
-                .unwrap();
-                return Ok(v.into_boxed_slice());
-            }
-            let mut v = Vec::new();
-            write!(&mut v, "{}{}", first_char as char, BStr::new(new_version))
-                .expect("infallible: in-memory write");
-            return Ok(v.into_boxed_slice());
-        }
-        if let Some(a) = alias {
-            let mut v = Vec::new();
-            write!(&mut v, "npm:{}@{}", BStr::new(a), BStr::new(new_version))
-                .expect("infallible: in-memory write");
-            return Ok(v.into_boxed_slice());
-        }
-    }
-    Ok(Box::from(new_version))
+/// Returns what `bun update` would write in place of `declared`, or what `bun update --latest`
+/// would write if `chosen` is not `in_range`. `None` means `declared` is kept as written.
+fn chosen_version_literal(declared: &[u8], chosen: &[u8], in_range: bool) -> Option<Vec<u8>> {
+    updated_version_literal(declared, min_of_valid(chosen)?, chosen, false, !in_range)
 }

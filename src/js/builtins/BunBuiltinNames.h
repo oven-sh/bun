@@ -24,7 +24,6 @@ using namespace JSC;
 #define BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(macro) \
     macro(AbortSignal) \
     macro(Buffer) \
-    macro(Loader) \
     macro(ReadableByteStreamController) \
     macro(ReadableStream) \
     macro(ReadableStreamBYOBReader) \
@@ -32,67 +31,54 @@ using namespace JSC;
     macro(ReadableStreamDefaultController) \
     macro(ReadableStreamDefaultReader) \
     macro(SQL) \
-    macro(TextEncoderStreamEncoder) \
     macro(TransformStream) \
     macro(TransformStreamDefaultController) \
     macro(WritableStream) \
     macro(WritableStreamDefaultController) \
     macro(WritableStreamDefaultWriter) \
     macro(_events) \
-    macro(abortAlgorithm) \
-    macro(abortSteps) \
+    macro(abort) \
     macro(addAbortAlgorithmToSignal) \
-    macro(assignToStream) \
-    macro(associatedReadableByteStreamController) \
+    macro(armedTimeout) \
+    macro(arrayBuffer) \
+    macro(asUint8Array) \
     macro(atimeMs) \
     macro(attributes) \
     macro(autoAllocateChunkSize) \
-    macro(backpressure) \
-    macro(backpressureChangePromise) \
     macro(basename) \
     macro(birthtimeMs) \
+    macro(blob) \
     macro(body) \
     macro(bunNativePtr) \
-    macro(bunNativeType) \
-    macro(byobRequest) \
+    macro(bytes) \
     macro(cancel) \
-    macro(cancelAlgorithm) \
     macro(checks) \
-    macro(checkBufferRead) \
-    macro(cloneArrayBuffer) \
     macro(close) \
-    macro(closeAlgorithm) \
-    macro(closeRequest) \
-    macro(closeRequested) \
-    macro(closedPromise) \
-    macro(closedPromiseCapability) \
     macro(cmd) \
     macro(code) \
-    macro(controlledReadableStream) \
-    macro(controller) \
     macro(createCommonJSModule) \
-    macro(createEmptyReadableStream) \
-    macro(createErroredReadableStream) \
     macro(createFIFO) \
     macro(createInternalModuleById) \
-    macro(createNativeReadableStream) \
     macro(createUninitializedArrayBuffer) \
-    macro(createUsedReadableStream) \
-    macro(createWritableStreamFromInternal) \
     macro(ctimeMs) \
     macro(data) \
-    macro(dataView) \
     macro(decode) \
     macro(dest) \
+    macro(detail) \
     macro(dirname) \
-    macro(disturbed) \
     macro(domain) \
+    macro(drain) \
     macro(encoding) \
     macro(end) \
     macro(errno) \
-    macro(errorSteps) \
+    macro(esmLoadSync) \
+    macro(esmNamespaceForCjs) \
+    macro(esmRegistryDelete) \
+    macro(esmRegistryEvaluatedKeys) \
+    macro(esmRegistryHasEvaluated) \
     macro(evaluateCommonJSModule) \
     macro(evictIsolationSourceProviderCache) \
+    macro(exchange) \
     macro(expires) \
     macro(exports) \
     macro(extname) \
@@ -100,15 +86,12 @@ using namespace JSC;
     macro(fatal) \
     macro(fd) \
     macro(filename) \
-    macro(flushAlgorithm) \
+    macro(flush) \
     macro(format) \
-    macro(fulfillModuleSync) \
-    macro(esmNamespaceForCjs) \
-    macro(esmRegistryDelete) \
-    macro(esmRegistryEvaluatedKeys) \
-    macro(esmLoadSync) \
-    macro(getInternalWritableStream) \
+    macro(globScan) \
+    macro(globScanSync) \
     macro(handleEvent) \
+    macro(hasWaitingResponses) \
     macro(headers) \
     macro(highWaterMark) \
     macro(host) \
@@ -117,17 +100,22 @@ using namespace JSC;
     macro(httpOnly) \
     macro(ignoreBOM) \
     macro(importer) \
-    macro(inFlightCloseRequest) \
-    macro(inFlightWriteRequest) \
     macro(inherits) \
+    macro(initialExports) \
+    macro(internal) \
+    macro(internalMessage) \
     macro(internalModuleRegistry) \
     macro(internalRequire) \
-    macro(internalWritable) \
     macro(isAbortSignal) \
     macro(isAbsolute) \
+    macro(isOpen) \
+    macro(isPrepared) \
+    macro(isUncloneable) \
+    macro(isUntransferable) \
     macro(join) \
+    macro(json) \
+    macro(kResistStopPropagation) \
     macro(lazy) \
-    macro(lazyStreamPrototypeMap) \
     macro(lineText) \
     macro(loadEsmIntoCjs) \
     macro(main) \
@@ -135,115 +123,141 @@ using namespace JSC;
     macro(makeDOMException) \
     macro(makeErrorWithCode) \
     macro(makeGetterTypeError) \
+    macro(masked) \
     macro(maxAge) \
-    macro(method) \
+    macro(maxHeaderPairs) \
     macro(metafileJson) \
+    macro(method) \
+    macro(min) \
     macro(mockedFunction) \
     macro(mode) \
+    macro(moduleGraph) \
     macro(mtimeMs) \
     macro(napiDlopenHandle) \
     macro(napiWrappedContents) \
     macro(normalize) \
+    macro(onClose) \
+    macro(onDrain) \
+    macro(onEndCallbacks) \
     macro(originalColumn) \
     macro(originalLine) \
     macro(overridableRequire) \
-    macro(ownerReadableStream) \
+    macro(ownReadableState) \
+    macro(ownWritableState) \
     macro(parse) \
     macro(partitioned) \
     macro(path) \
     macro(paths) \
     macro(peekPromiseSettledValue) \
     macro(peekPromiseStatus) \
-    macro(pendingAbortRequest) \
-    macro(pendingPullIntos) \
+    macro(pipelinedResponses) \
     macro(pokePromiseAsHandled) \
     macro(port) \
-    macro(post) \
+    macro(prev) \
+    macro(preventAbort) \
+    macro(preventCancel) \
+    macro(preventClose) \
     macro(processBindingConstants) \
     macro(pull) \
-    macro(pullAgain) \
-    macro(pullAlgorithm) \
-    macro(pulling) \
-    macro(queue) \
+    macro(rawHeaders) \
     macro(read) \
-    macro(readIntoRequests) \
-    macro(readRequests) \
     macro(readable) \
-    macro(readableStreamController) \
-    macro(reader) \
-    macro(readyPromise) \
+    macro(readableMark) \
+    macro(readableType) \
     macro(redirect) \
     macro(relative) \
     macro(removeAbortAlgorithmFromSignal) \
     macro(require) \
+    macro(requireCacheWillSet) \
+    macro(isHiddenFromRequireCache) \
+    macro(requireCommonJS) \
     macro(requireESM) \
     macro(requireMap) \
     macro(requireNativeModule) \
     macro(resolveSync) \
-    macro(resume) \
+    macro(resumeUnlessFlowing) \
+    macro(runTail) \
     macro(sameSite) \
     macro(secure) \
     macro(self) \
+    macro(setColumnNameTransform) \
+    macro(sharedFd) \
     macro(signal) \
-    macro(sink) \
     macro(size) \
     macro(specifier) \
     macro(start) \
-    macro(startAlgorithm) \
-    macro(startDirectStream) \
-    macro(started) \
-    macro(state) \
     macro(status) \
+    macro(statusCode) \
+    macro(statusMessage) \
     macro(statusText) \
-    macro(storedError) \
-    macro(strategy) \
-    macro(strategyHWM) \
-    macro(strategySizeAlgorithm) \
+    macro(storage) \
     macro(stream) \
-    macro(structuredCloneForStream) \
     macro(syscall) \
-    macro(textDecoder) \
+    macro(text) \
     macro(textDecoderStreamDecoder) \
-    macro(textDecoderStreamTransform) \
     macro(textEncoderStreamEncoder) \
-    macro(textEncoderStreamTransform) \
     macro(toClass) \
     macro(toNamespacedPath) \
-    macro(transformAlgorithm) \
-    macro(underlyingByteSource) \
-    macro(underlyingSink) \
-    macro(underlyingSource) \
+    macro(transform) \
+    macro(type) \
+    macro(updateRef) \
     macro(url) \
-    macro(view) \
     macro(vmErrorDecorated) \
     macro(warning) \
+    macro(webStreamClosedPromise) \
+    macro(webStreamControllerError) \
     macro(writable) \
+    macro(writableMark) \
+    macro(writableType) \
     macro(write) \
-    macro(writeAlgorithm) \
-    macro(writeRequests) \
     macro(writer) \
     macro(written) \
-    macro($$typeof) \
-    macro(type) \
-    macro(key) \
-    macro(props) \
-    macro(validated) \
-    macro(_store) \
-    macro(_owner) \
-    macro(_debugInfo) \
-    macro(_debugStack) \
-    macro(_debugTask) \
     BUN_ADDITIONAL_BUILTIN_NAMES(macro)
 // --- END of BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME ---
+
+// Among the names above: those that only src/js reads and writes, never native code. A property under one of them is an
+// ordinary property that nothing lists: a Proxy reads and writes it on its target, without a trap. Keep this list sorted.
+#define BUN_MODULE_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(macro) \
+    macro(armedTimeout) \
+    macro(exchange) \
+    macro(hasWaitingResponses) \
+    macro(isOpen) \
+    macro(isPrepared) \
+    macro(ownReadableState) \
+    macro(ownWritableState) \
+    macro(pipelinedResponses) \
+    macro(readableMark) \
+    macro(resumeUnlessFlowing) \
+    macro(writableMark)
 
 class BunBuiltinNames {
     WTF_MAKE_NONCOPYABLE(BunBuiltinNames);
     friend class JSVMClientData;
     explicit BunBuiltinNames(JSC::VM&);
-    ~BunBuiltinNames();
 
 public:
-    BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
+    ~BunBuiltinNames();
+    // For a VM without JSVMClientData that still needs to parse builtins (ahead-of-time bytecode generation).
+    static std::unique_ptr<BunBuiltinNames> createStandalone(JSC::VM& vm) { return std::unique_ptr<BunBuiltinNames>(new BunBuiltinNames(vm)); }
+
+    enum class Name : uint16_t {
+#define BUN_BUILTIN_NAME_ENUM(name) k_##name,
+        BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(BUN_BUILTIN_NAME_ENUM)
+#undef BUN_BUILTIN_NAME_ENUM
+        Count_
+    };
+    static constexpr size_t count = static_cast<size_t>(Name::Count_);
+
+    // The identifiers live in two arrays (built by a loop over a string table
+    // in the .cpp) rather than one member per name; the accessors index them.
+#define BUN_DECLARE_BUILTIN_IDENTIFIER_ACCESSOR(name) \
+    const JSC::Identifier& name##PublicName() const { return m_publicNames[static_cast<size_t>(Name::k_##name)]; } \
+    const JSC::Identifier& name##PrivateName() const { return m_privateNames[static_cast<size_t>(Name::k_##name)]; }
+    BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(BUN_DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
+#undef BUN_DECLARE_BUILTIN_IDENTIFIER_ACCESSOR
+
+    const JSC::Identifier& publicName(Name name) const { return m_publicNames[static_cast<size_t>(name)]; }
+    const JSC::Identifier& privateName(Name name) const { return m_privateNames[static_cast<size_t>(name)]; }
 
     const JSC::Identifier& resolvePublicName() const { return m_vm.propertyNames->resolve;}
     const JSC::Identifier& inspectCustomPublicName() {
@@ -256,7 +270,8 @@ public:
 private:
     JSC::VM& m_vm;
     JSC::Identifier m_inspectCustomPublicName {};
-    BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(DECLARE_BUILTIN_NAMES)
+    std::array<JSC::Identifier, count> m_publicNames;
+    std::array<JSC::Identifier, count> m_privateNames;
 };
 
 } // namespace WebCore

@@ -3,6 +3,7 @@
 use bun_options_types::LoaderExt as _;
 use core::ffi::c_void;
 
+use crate::generated_bindgen::js_bundler::js_BuildArtifact as js;
 use crate::webcore::Blob;
 use crate::webcore::blob::BlobExt;
 use bun_ast::Target;
@@ -11,20 +12,27 @@ use bun_bundler::options;
 use bun_collections::{StringMap, StringSet};
 use bun_core::MutableString;
 use bun_core::Output;
-use bun_core::{String as BunString, ZigString};
+use bun_core::String as BunString;
 use bun_jsc::ConcurrentTask::ConcurrentTask;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
+use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope, JsWrapper};
+use bun_jsc::bun_string_jsc;
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, StringJsc as _};
+use bun_options_types::aot_options::AotOptions;
 use bun_options_types::compile_target::CompileTarget;
 use bun_options_types::schema::api; // bun.schema.api
+use bun_options_types::trim::TrimRequest;
 use bun_standalone_graph::StandaloneModuleGraph;
+
+use crate::cli::compile_command::RequestOrigin;
+use crate::cli::compile_options::{self, CompileFlags, OptionError, TrimFlags};
 
 // `CompileTarget.fromJS` / `.fromSlice` are JSC-aware option parsers shared
 // with the CLI build path; live in `bun_bundler_jsc::options_jsc`.
 use bun_bundler_jsc::options_jsc::{compile_target_from_js, compile_target_from_slice};
 
-pub mod js_bundler {
+pub(crate) mod js_bundler {
     use super::*;
-    use bun_core::ZigStringSlice;
+    use bun_core::Utf8Bytes;
 
     use bun_sys::FdExt;
 
@@ -37,7 +45,6 @@ pub mod js_bundler {
             options::JSX::Runtime::_None => api::JsxRuntime::_none,
             options::JSX::Runtime::Automatic => api::JsxRuntime::Automatic,
             options::JSX::Runtime::Classic => api::JsxRuntime::Classic,
-            options::JSX::Runtime::Solid => api::JsxRuntime::Solid,
         }
     }
 
@@ -46,16 +53,13 @@ pub mod js_bundler {
     /// `get`/`contains`/`resolve` live in `bun_bundler::bundle_v2` so the
     /// bundler thread can read it without depending on `bun_runtime`. Only
     /// the JS-aware `from_js` constructor lives here.
-    pub use bun_bundler::bundle_v2::api::JSBundler::FileMap;
+    pub(crate) use bun_bundler::bundle_v2::api::JSBundler::FileMap;
 
     /// Parse the `files` option from JavaScript.
     /// Expected format: `Record<string, string | Blob | File | TypedArray | ArrayBuffer>`.
-    /// Uses async (`from_js_async`) parsing so the resulting bytes are owned —
-    /// the bundler runs on a separate thread and must not borrow JS heap memory.
-    pub(crate) fn file_map_from_js(
-        global_this: &JSGlobalObject,
-        files_value: JSValue,
-    ) -> JsResult<FileMap> {
+    /// The bytes are copied: the bundler runs on a separate thread and must not
+    /// borrow JS heap memory.
+    fn file_map_from_js(global_this: &JSGlobalObject, files_value: JSValue) -> JsResult<FileMap> {
         let mut this = FileMap::default();
         // errdefer this.deinit() — `FileMap` (Box<[u8]> values) drops on `?`.
 
@@ -65,7 +69,7 @@ pub mod js_bundler {
             );
         };
 
-        let mut files_iter = jsc::JSPropertyIterator::init(
+        let files_iter = jsc::JSPropertyIterator::init(
             global_this,
             files_obj,
             jsc::JSPropertyIteratorOptions {
@@ -77,26 +81,18 @@ pub mod js_bundler {
 
         this.map.reserve(files_iter.len);
 
-        while let Some(prop) = files_iter.next()? {
-            let property_value = files_iter.value;
-
-            // Parse the value as BlobOrStringOrBuffer using async mode for thread safety.
-            // Async mode `protect()`s any JS-backed buffer; adopt into a
-            // `ThreadSafe` so the guard unprotects + drops at end of iteration.
-            let blob_or_string = match crate::node::BlobOrStringOrBuffer::from_js_async(
+        while let Some((prop, property_value)) = files_iter.next()? {
+            let blob_or_string = match crate::node::BlobOrStringOrBuffer::from_js(
                 global_this,
                 property_value,
             )? {
-                Some(v) => bun_jsc::ThreadSafe::adopt(v),
+                Some(v) => v,
                 None => {
                     return Err(global_this.throw_invalid_arguments(format_args!("Expected file content to be a string, Blob, File, TypedArray, or ArrayBuffer")));
                 }
             };
-            // Async mode guarantees `blob_or_string` owns its bytes (Blob data is
-            // copied, JS strings are decoded). Extract them into the lower-tier
-            // map and release the wrapper immediately so no JSC handle crosses
-            // threads.
-            let bytes: Box<[u8]> = blob_or_string.slice().to_vec().into_boxed_slice();
+            // Copy the bytes into the lower-tier map so no JSC handle crosses threads.
+            let bytes: Box<[u8]> = blob_or_string.slice().into();
             drop(blob_or_string);
 
             // Clone the key since we need to own it.
@@ -115,61 +111,70 @@ pub mod js_bundler {
         Ok(this)
     }
 
-    pub struct Config {
-        pub target: Target,
-        pub entry_points: StringSet,
-        pub hot: bool,
-        pub react_fast_refresh: bool,
-        pub react_compiler: bun_ast::runtime::ReactCompilerMode,
-        pub react_compiler_parse_test_pragmas: bool,
-        pub react_compiler_output_mode: Option<bun_ast::runtime::ReactCompilerMode>,
-        pub define: StringMap,
-        pub loaders: Option<api::LoaderMap>,
-        pub dir: OwnedString,
-        pub outdir: OwnedString,
-        pub rootdir: OwnedString,
-        pub serve: Serve,
-        pub jsx: api::Jsx,
-        pub force_node_env: options::ForceNodeEnv,
-        pub code_splitting: bool,
-        pub minify: Minify,
-        pub no_macros: bool,
-        pub ignore_dce_annotations: bool,
-        pub emit_dce_annotations: Option<bool>,
-        pub tree_shaking: Option<bool>,
-        pub names: Names,
-        pub external: StringSet,
-        pub allow_unresolved: Option<StringSet>,
-        pub source_map: options::SourceMapOption,
-        pub public_path: OwnedString,
-        pub conditions: StringSet,
-        pub packages: options::PackagesOption,
-        pub format: options::Format,
-        pub bytecode: bool,
-        pub banner: OwnedString,
-        pub footer: OwnedString,
+    pub(crate) struct Config {
+        pub(crate) target: Target,
+        pub(crate) entry_points: StringSet,
+        pub(crate) react_fast_refresh: bool,
+        pub(crate) react_compiler: bun_ast::runtime::ReactCompilerMode,
+        pub(crate) react_compiler_parse_test_pragmas: bool,
+        pub(crate) react_compiler_output_mode: Option<bun_ast::runtime::ReactCompilerMode>,
+        pub(crate) define: StringMap,
+        pub(crate) loaders: Option<api::LoaderMap>,
+        pub(crate) dir: OwnedString,
+        pub(crate) outdir: OwnedString,
+        pub(crate) rootdir: OwnedString,
+        pub(crate) tsconfig_override: OwnedString,
+        pub(crate) jsx: api::Jsx,
+        pub(crate) force_node_env: options::ForceNodeEnv,
+        pub(crate) code_splitting: bool,
+        pub(crate) split_require: bool,
+        pub(crate) minify: Minify,
+        pub(crate) no_macros: bool,
+        pub(crate) ignore_dce_annotations: bool,
+        pub(crate) emit_dce_annotations: Option<bool>,
+        pub(crate) deprecated_namespace_object_setters: bool,
+        pub(crate) tree_shaking: Option<bool>,
+        pub(crate) names: Names,
+        pub(crate) external: StringSet,
+        pub(crate) allow_unresolved: Option<StringSet>,
+        pub(crate) source_map: options::SourceMapOption,
+        pub(crate) public_path: OwnedString,
+        pub(crate) conditions: StringSet,
+        pub(crate) packages: options::PackagesOption,
+        pub(crate) format: options::Format,
+        pub(crate) bytecode: bool,
+        pub(crate) bytecode_depth: u32,
+        pub(crate) optimize_bytecode: bool,
+        pub(crate) banner: OwnedString,
+        pub(crate) footer: OwnedString,
         /// Path to write JSON metafile (if specified via metafile object) - TEST: moved here
-        pub metafile_json_path: OwnedString,
+        pub(crate) metafile_json_path: OwnedString,
         /// Path to write markdown metafile (if specified via metafile object) - TEST: moved here
-        pub metafile_markdown_path: OwnedString,
-        pub css_chunking: bool,
-        pub drop: StringSet,
-        pub features: StringSet,
-        pub has_any_on_before_parse: bool,
-        pub throw_on_error: bool,
-        pub env_behavior: api::DotEnvBehavior,
-        pub env_prefix: OwnedString,
-        pub tsconfig_override: OwnedString,
-        pub compile: Option<CompileOptions>,
+        pub(crate) metafile_markdown_path: OwnedString,
+        pub(crate) css_chunking: bool,
+        /// `minChunkSize`: see `BundleOptions::min_chunk_size`.
+        pub(crate) min_chunk_size: Option<u64>,
+        /// `foldChunksForTesting`, read only where `bun:internal-for-testing` resolves: see `BundleOptions::fold_chunks`.
+        pub(crate) fold_chunks: bool,
+        pub(crate) module_preload: bool,
+        /// `check`: see `BundleOptions::type_check`.
+        pub(crate) check: bool,
+        pub(crate) dts: bool,
+        pub(crate) drop: StringSet,
+        pub(crate) features: StringSet,
+        pub(crate) throw_on_error: bool,
+        pub(crate) env_behavior: api::DotEnvBehavior,
+        pub(crate) env_prefix: OwnedString,
+        pub(crate) compile: Option<CompileOptions>,
         /// In-memory files that can be used as entrypoints or imported.
         /// These files do not need to exist on disk.
-        pub files: FileMap,
+        pub(crate) files: FileMap,
         /// Generate metafile (JSON module graph)
-        pub metafile: bool,
+        pub(crate) metafile: bool,
         /// Package names whose barrel files should be optimized.
         /// Named imports from these packages will only load the submodules
         /// that are actually used instead of parsing all re-exported submodules.
-        pub optimize_imports: StringSet,
+        pub(crate) optimize_imports: StringSet,
     }
 
     impl Default for Config {
@@ -177,7 +182,6 @@ pub mod js_bundler {
             Self {
                 target: Target::Browser,
                 entry_points: StringSet::default(),
-                hot: false,
                 react_fast_refresh: false,
                 react_compiler: bun_ast::runtime::ReactCompilerMode::Disabled,
                 react_compiler_parse_test_pragmas: false,
@@ -187,7 +191,7 @@ pub mod js_bundler {
                 dir: OwnedString::default(),
                 outdir: OwnedString::default(),
                 rootdir: OwnedString::default(),
-                serve: Serve::default(),
+                tsconfig_override: OwnedString::default(),
                 jsx: api::Jsx {
                     factory: Box::default(),
                     fragment: Box::default(),
@@ -198,10 +202,12 @@ pub mod js_bundler {
                 },
                 force_node_env: options::ForceNodeEnv::Unspecified,
                 code_splitting: false,
+                split_require: true,
                 minify: Minify::default(),
                 no_macros: false,
                 ignore_dce_annotations: false,
                 emit_dce_annotations: None,
+                deprecated_namespace_object_setters: true,
                 tree_shaking: None,
                 names: Names::default(),
                 external: StringSet::default(),
@@ -212,18 +218,23 @@ pub mod js_bundler {
                 packages: options::PackagesOption::Bundle,
                 format: options::Format::Esm,
                 bytecode: false,
+                bytecode_depth: u32::MAX,
+                optimize_bytecode: true,
                 banner: OwnedString::default(),
                 footer: OwnedString::default(),
                 metafile_json_path: OwnedString::default(),
                 metafile_markdown_path: OwnedString::default(),
                 css_chunking: false,
+                min_chunk_size: None,
+                fold_chunks: true,
+                module_preload: true,
+                check: false,
+                dts: false,
                 drop: StringSet::default(),
                 features: StringSet::default(),
-                has_any_on_before_parse: false,
                 throw_on_error: true,
                 env_behavior: api::DotEnvBehavior::Disable,
                 env_prefix: OwnedString::default(),
-                tsconfig_override: OwnedString::default(),
                 compile: None,
                 files: FileMap::default(),
                 metafile: false,
@@ -232,22 +243,31 @@ pub mod js_bundler {
         }
     }
 
-    pub struct CompileOptions {
-        pub compile_target: CompileTarget,
-        pub exec_argv: OwnedString,
-        pub executable_path: OwnedString,
-        pub windows_hide_console: bool,
-        pub windows_icon_path: OwnedString,
-        pub windows_title: OwnedString,
-        pub windows_publisher: OwnedString,
-        pub windows_version: OwnedString,
-        pub windows_description: OwnedString,
-        pub windows_copyright: OwnedString,
-        pub outfile: OwnedString,
-        pub autoload_dotenv: bool,
-        pub autoload_bunfig: bool,
-        pub autoload_tsconfig: bool,
-        pub autoload_package_json: bool,
+    pub(crate) struct CompileOptions {
+        pub(crate) compile_target: CompileTarget,
+        pub(crate) exec_argv: OwnedString,
+        pub(crate) executable_path: OwnedString,
+        pub(crate) windows_hide_console: bool,
+        pub(crate) windows_icon_path: OwnedString,
+        pub(crate) windows_title: OwnedString,
+        pub(crate) windows_publisher: OwnedString,
+        pub(crate) windows_version: OwnedString,
+        pub(crate) windows_description: OwnedString,
+        pub(crate) windows_copyright: OwnedString,
+        pub(crate) outfile: OwnedString,
+        pub(crate) assets: Vec<Box<[u8]>>,
+        pub(crate) autoload_dotenv: bool,
+        pub(crate) autoload_bunfig: bool,
+        pub(crate) autoload_tsconfig: bool,
+        pub(crate) autoload_package_json: bool,
+        /// `compile.jitPolicy`: the tier-up threshold scale the executable starts with (1 = normal JIT policy).
+        pub(crate) jit_policy: f32,
+        /// `compile.bytecodeOrder`: payload order files, most important first.
+        pub(crate) bytecode_order: Vec<Box<[u8]>>,
+        /// `compile.aot` and what goes with it. `None`: the program is bundled.
+        pub(crate) aot: Option<Box<AotOptions>>,
+        /// `compile.trim` of a build without `aot`. With `aot` the request is `AotOptions::trim`.
+        pub(crate) trim: TrimRequest,
     }
 
     impl Default for CompileOptions {
@@ -264,20 +284,321 @@ pub mod js_bundler {
                 windows_description: OwnedString::default(),
                 windows_copyright: OwnedString::default(),
                 outfile: OwnedString::default(),
+                assets: Vec::new(),
                 autoload_dotenv: true,
                 autoload_bunfig: true,
                 autoload_tsconfig: false,
                 autoload_package_json: false,
+                jit_policy: 1.0,
+                bytecode_order: Vec::new(),
+                aot: None,
+                trim: TrimRequest::default(),
+            }
+        }
+    }
+
+    #[allow(clippy::needless_pass_by_value)] // the end of the error
+    fn throw_option_error(global_this: &JSGlobalObject, error: OptionError<'_>) -> JsError {
+        let mut message = Vec::new();
+        error.write_message(RequestOrigin::BuildApi, &mut message);
+        global_this.throw_invalid_arguments(format_args!("{}", bstr::BStr::new(&message)))
+    }
+
+    const TRIM_KEYS: [&[u8]; 4] = [b"allow", b"remove", b"locales", b"log"];
+
+    fn throw_invalid_trim(global_this: &JSGlobalObject) -> JsError {
+        global_this.throw_invalid_arguments(format_args!(
+            "compile.trim must be true, false or an object: {{ allow, remove, locales, log }}"
+        ))
+    }
+
+    fn check_trim_keys(global_this: &JSGlobalObject, trim: JSValue) -> JsResult<()> {
+        let Some(trim_object) = trim.get_object() else {
+            return Err(throw_invalid_trim(global_this));
+        };
+        let keys = jsc::JSPropertyIterator::init(
+            global_this,
+            trim_object,
+            jsc::JSPropertyIteratorOptions {
+                skip_empty_name: false,
+                include_value: false,
+                ..Default::default()
+            },
+        )?;
+        while let Some((key, _)) = keys.next()? {
+            if !TRIM_KEYS.contains(&key.to_utf8().slice()) {
+                return Err(throw_invalid_trim(global_this));
+            }
+        }
+        Ok(())
+    }
+
+    fn ensure_type_checker(global_this: &JSGlobalObject, option: &str) -> JsResult<()> {
+        use bun_removable_features::{Feature, Removal, removal_of};
+        if removal_of(Feature::Check) == Removal::Present {
+            return Ok(());
+        }
+        Err(global_this.throw_invalid_arguments(format_args!(
+            "{option}: this executable doesn't include the type checker"
+        )))
+    }
+
+    fn check_compile_keys(global_this: &JSGlobalObject, compile: JSValue) -> JsResult<()> {
+        let Some(compile_object) = compile.get_object() else {
+            return Ok(());
+        };
+        let keys = jsc::JSPropertyIterator::init(
+            global_this,
+            compile_object,
+            jsc::JSPropertyIteratorOptions {
+                skip_empty_name: true,
+                include_value: false,
+                ..Default::default()
+            },
+        )?;
+        while let Some((key, _)) = keys.next()? {
+            let key = key.to_utf8();
+            if let Some(error) = compile_options::misplaced_key(key.slice(), true) {
+                return Err(throw_option_error(global_this, error));
+            }
+        }
+        Ok(())
+    }
+
+    fn asks_for_aot(global_this: &JSGlobalObject, config: JSValue) -> JsResult<bool> {
+        let Some(compile) = config.get_truthy(global_this, "compile")? else {
+            return Ok(false);
+        };
+        if !compile.is_object() {
+            return Ok(false);
+        }
+        Ok(compile
+            .get_boolean_loose(global_this, "aot")?
+            .unwrap_or(false))
+    }
+
+    fn trim_names_from_js(global_this: &JSGlobalObject, names: JSValue) -> JsResult<Vec<Vec<u8>>> {
+        let mut result = Vec::new();
+        let mut iter = names.array_iterator(global_this)?;
+        while let Some(name) = iter.next()? {
+            if !name.is_string() {
+                return Err(throw_invalid_trim(global_this));
+            }
+            result.push(name.to_utf8(global_this)?.slice().to_vec());
+        }
+        Ok(result)
+    }
+
+    fn prepend_code_generation_flag(
+        global_this: &JSGlobalObject,
+        compile: JSValue,
+        exec_argv: &mut OwnedString,
+    ) -> JsResult<()> {
+        let Some(value) = compile.get(global_this, "disallowCodeGenerationFromStrings")? else {
+            return Ok(());
+        };
+        if value == JSValue::FALSE || value.is_undefined_or_null() {
+            return Ok(());
+        }
+        let level: &[u8] = if value == JSValue::TRUE {
+            b""
+        } else if value.is_string() && value.to_utf8(global_this)?.slice() == b"strict" {
+            b"strict"
+        } else {
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "disallowCodeGenerationFromStrings must be a boolean or \"strict\""
+            )));
+        };
+        let list = compile_options::prepend_code_generation_flag(level, &exec_argv.list)
+            .map_err(|error| throw_option_error(global_this, error))?;
+        *exec_argv = OwnedString { list };
+        Ok(())
+    }
+
+    /// The members of `compile` whose meaning `compile_options::resolve` owns, as written.
+    #[derive(Default)]
+    struct RawCompileFlags {
+        aot: bool,
+        logs_type_mismatches: bool,
+        explain: Vec<Vec<u8>>,
+        disable: Vec<Vec<u8>>,
+        heat: Option<Vec<u8>>,
+        omits_function_source: bool,
+        obfuscates: bool,
+        admits_inspector: bool,
+        allows_code_from_disk: bool,
+        removes_unused: bool,
+        allow: Vec<Vec<u8>>,
+        remove: Vec<Vec<u8>>,
+        locales: Option<Vec<Vec<u8>>>,
+        logs: bool,
+    }
+
+    impl RawCompileFlags {
+        fn from_js(global_this: &JSGlobalObject, compile: JSValue) -> JsResult<RawCompileFlags> {
+            let mut raw = RawCompileFlags {
+                aot: compile
+                    .get_boolean_loose(global_this, "aot")?
+                    .unwrap_or(false),
+                logs_type_mismatches: compile
+                    .get_boolean_loose(global_this, "aotLogTypeMismatches")?
+                    .unwrap_or(false),
+                omits_function_source: compile.get_boolean_loose(global_this, "functionSource")?
+                    == Some(false),
+                obfuscates: compile
+                    .get_boolean_loose(global_this, "obfuscate")?
+                    .unwrap_or(false),
+                admits_inspector: compile
+                    .get_boolean_loose(global_this, "inspector")?
+                    .unwrap_or(false),
+                allows_code_from_disk: compile
+                    .get_boolean_loose(global_this, "allowCodeFromDisk")?
+                    .unwrap_or(false),
+                ..Default::default()
+            };
+
+            if let Some(explain) = compile.get(global_this, "aotExplain")?
+                && !explain.is_undefined_or_null()
+            {
+                if explain.is_array() {
+                    let mut iter = explain.array_iterator(global_this)?;
+                    while let Some(value) = iter.next()? {
+                        raw.explain
+                            .push(value.to_utf8(global_this)?.slice().to_vec());
+                    }
+                } else {
+                    raw.explain
+                        .push(explain.to_utf8(global_this)?.slice().to_vec());
+                }
+            }
+
+            raw.read_developer_words(global_this, compile)?;
+            raw.read_trim(global_this, compile)?;
+            Ok(raw)
+        }
+
+        fn read_developer_words(
+            &mut self,
+            global_this: &JSGlobalObject,
+            compile: JSValue,
+        ) -> JsResult<()> {
+            if let Some(disable) = compile.get(global_this, "aotDisable")?
+                && !disable.is_undefined_or_null()
+            {
+                let mut push = |names: JSValue| -> JsResult<()> {
+                    if !names.is_string() {
+                        return Err(global_this.throw_invalid_property_type_value(
+                            b"compile.aotDisable",
+                            b"string or array of strings",
+                            names,
+                        ));
+                    }
+                    self.disable
+                        .push(names.to_utf8(global_this)?.slice().to_vec());
+                    Ok(())
+                };
+                if disable.is_array() {
+                    let mut iter = disable.array_iterator(global_this)?;
+                    while let Some(names) = iter.next()? {
+                        push(names)?;
+                    }
+                } else {
+                    push(disable)?;
+                }
+            }
+
+            if let Some(heat) = compile.get(global_this, "aotHeat")?
+                && !heat.is_undefined_or_null()
+            {
+                if !heat.is_string() {
+                    return Err(global_this.throw_invalid_property_type_value(
+                        b"compile.aotHeat",
+                        b"string",
+                        heat,
+                    ));
+                }
+                self.heat = Some(heat.to_utf8(global_this)?.slice().to_vec());
+            }
+            Ok(())
+        }
+
+        fn read_trim(&mut self, global_this: &JSGlobalObject, compile: JSValue) -> JsResult<()> {
+            let Some(trim) = compile.get(global_this, "trim")? else {
+                return Ok(());
+            };
+            if trim == JSValue::FALSE || trim.is_undefined_or_null() {
+                return Ok(());
+            }
+            self.removes_unused = true;
+            if trim == JSValue::TRUE {
+                return Ok(());
+            }
+            if trim.is_array() {
+                return Err(throw_invalid_trim(global_this));
+            }
+            check_trim_keys(global_this, trim)?;
+
+            if let Some(allow) = trim.get_own_array(global_this, "allow")? {
+                self.allow = trim_names_from_js(global_this, allow)?;
+            }
+            if let Some(remove) = trim.get_own_array(global_this, "remove")? {
+                self.remove = trim_names_from_js(global_this, remove)?;
+            }
+            if let Some(locales) = trim.get_own_array(global_this, "locales")? {
+                self.locales = Some(trim_names_from_js(global_this, locales)?);
+            }
+            self.logs = trim.get_boolean_loose(global_this, "log")?.unwrap_or(false);
+            Ok(())
+        }
+
+        fn compile_flags<'a>(
+            &'a self,
+            compile: &'a CompileOptions,
+            source_map: options::SourceMapOption,
+        ) -> CompileFlags<'a> {
+            CompileFlags {
+                is_executable: true,
+                aot: self.aot,
+                no_aot: false,
+                logs_type_mismatches: self.logs_type_mismatches,
+                explain: self.explain.iter().map(Vec::as_slice).collect(),
+                has_huge_heap: false,
+                is_in_place: false,
+                omits_function_source: self.omits_function_source,
+                obfuscates: self.obfuscates,
+                has_external_source_map: source_map == options::SourceMapOption::External,
+                admits_inspector: self.admits_inspector,
+                allows_code_from_disk: self.allows_code_from_disk,
+                trim: TrimFlags {
+                    removes_unused: self.removes_unused,
+                    allow: self.allow.iter().map(Vec::as_slice).collect(),
+                    remove: self.remove.iter().map(Vec::as_slice).collect(),
+                    remove_internal: vec![],
+                    locales: self
+                        .locales
+                        .as_ref()
+                        .map(|tags| tags.iter().map(Vec::as_slice).collect()),
+                    logs: self.logs,
+                    is_template: false,
+                },
+                developer_words: self
+                    .disable
+                    .iter()
+                    .map(|names| ("disable", Some(names.as_slice())))
+                    .chain(self.heat.iter().map(|word| ("heat", Some(word.as_slice()))))
+                    .collect(),
+                is_cross_compile: !compile.compile_target.is_this_bun(),
+                exec_argv: &compile.exec_argv.list,
             }
         }
     }
 
     impl CompileOptions {
-        pub(crate) fn from_js(
+        fn from_js(
             global_this: &JSGlobalObject,
             config: JSValue,
             compile_target: Option<CompileTarget>,
-        ) -> JsResult<Option<CompileOptions>> {
+        ) -> JsResult<Option<(CompileOptions, RawCompileFlags)>> {
             let mut this = CompileOptions {
                 compile_target: compile_target.unwrap_or_default(),
                 ..Default::default()
@@ -293,10 +614,10 @@ pub mod js_bundler {
                     if compile_value == JSValue::FALSE {
                         return Ok(None);
                     }
-                    return Ok(Some(this));
+                    return Ok(Some((this, RawCompileFlags::default())));
                 } else if compile_value.is_string() {
                     this.compile_target = compile_target_from_js(global_this, compile_value)?;
-                    return Ok(Some(this));
+                    return Ok(Some((this, RawCompileFlags::default())));
                 } else if compile_value.is_object() {
                     break 'brk compile_value;
                 } else {
@@ -306,7 +627,9 @@ pub mod js_bundler {
                 }
             };
 
-            if let Some(target) = object.get_own(global_this, &BunString::static_str("target"))? {
+            check_compile_keys(global_this, object)?;
+
+            if let Some(target) = object.get_own(global_this, &BunString::static_("target"))? {
                 this.compile_target = compile_target_from_js(global_this, target)?;
             }
 
@@ -314,7 +637,7 @@ pub mod js_bundler {
                 let mut iter = exec_argv.array_iterator(global_this)?;
                 let mut is_first = true;
                 while let Some(arg) = iter.next()? {
-                    let slice = arg.to_slice(global_this)?;
+                    let slice = arg.to_utf8(global_this)?;
                     if is_first {
                         is_first = false;
                         this.exec_argv.append_slice(slice.slice())?;
@@ -326,9 +649,9 @@ pub mod js_bundler {
             }
 
             if let Some(executable_path) =
-                object.get_own(global_this, &BunString::static_str("executablePath"))?
+                object.get_own(global_this, &BunString::static_("executablePath"))?
             {
-                let slice = executable_path.to_slice(global_this)?;
+                let slice = executable_path.to_utf8(global_this)?;
                 let path_z = bun_core::ZBox::from_bytes(slice.slice());
                 if bun_sys::exists_at_type(bun_sys::Fd::cwd(), path_z.as_zstr())
                     .unwrap_or(bun_sys::ExistsAtType::Directory)
@@ -349,15 +672,15 @@ pub mod js_bundler {
                 }
 
                 if let Some(hide_console) =
-                    windows.get_own(global_this, &BunString::static_str("hideConsole"))?
+                    windows.get_own(global_this, &BunString::static_("hideConsole"))?
                 {
                     this.windows_hide_console = hide_console.to_boolean();
                 }
 
                 if let Some(windows_icon_path) =
-                    windows.get_own(global_this, &BunString::static_str("icon"))?
+                    windows.get_own(global_this, &BunString::static_("icon"))?
                 {
-                    let slice = windows_icon_path.to_slice(global_this)?;
+                    let slice = windows_icon_path.to_utf8(global_this)?;
                     let path_z = bun_core::ZBox::from_bytes(slice.slice());
                     if bun_sys::exists_at_type(bun_sys::Fd::cwd(), path_z.as_zstr())
                         .unwrap_or(bun_sys::ExistsAtType::Directory)
@@ -372,44 +695,52 @@ pub mod js_bundler {
                 }
 
                 if let Some(windows_title) =
-                    windows.get_own(global_this, &BunString::static_str("title"))?
+                    windows.get_own(global_this, &BunString::static_("title"))?
                 {
-                    let slice = windows_title.to_slice(global_this)?;
+                    let slice = windows_title.to_utf8(global_this)?;
                     this.windows_title.append_slice_exact(slice.slice())?;
                 }
 
                 if let Some(windows_publisher) =
-                    windows.get_own(global_this, &BunString::static_str("publisher"))?
+                    windows.get_own(global_this, &BunString::static_("publisher"))?
                 {
-                    let slice = windows_publisher.to_slice(global_this)?;
+                    let slice = windows_publisher.to_utf8(global_this)?;
                     this.windows_publisher.append_slice_exact(slice.slice())?;
                 }
 
                 if let Some(windows_version) =
-                    windows.get_own(global_this, &BunString::static_str("version"))?
+                    windows.get_own(global_this, &BunString::static_("version"))?
                 {
-                    let slice = windows_version.to_slice(global_this)?;
+                    let slice = windows_version.to_utf8(global_this)?;
                     this.windows_version.append_slice_exact(slice.slice())?;
                 }
 
                 if let Some(windows_description) =
-                    windows.get_own(global_this, &BunString::static_str("description"))?
+                    windows.get_own(global_this, &BunString::static_("description"))?
                 {
-                    let slice = windows_description.to_slice(global_this)?;
+                    let slice = windows_description.to_utf8(global_this)?;
                     this.windows_description.append_slice_exact(slice.slice())?;
                 }
 
                 if let Some(windows_copyright) =
-                    windows.get_own(global_this, &BunString::static_str("copyright"))?
+                    windows.get_own(global_this, &BunString::static_("copyright"))?
                 {
-                    let slice = windows_copyright.to_slice(global_this)?;
+                    let slice = windows_copyright.to_utf8(global_this)?;
                     this.windows_copyright.append_slice_exact(slice.slice())?;
                 }
             }
 
-            if let Some(outfile) = object.get_own(global_this, &BunString::static_str("outfile"))? {
-                let slice = outfile.to_slice(global_this)?;
+            if let Some(outfile) = object.get_own(global_this, &BunString::static_("outfile"))? {
+                let slice = outfile.to_utf8(global_this)?;
                 this.outfile.append_slice_exact(slice.slice())?;
+            }
+
+            if let Some(assets) = object.get_own_array(global_this, "assets")? {
+                let mut iter = assets.array_iterator(global_this)?;
+                while let Some(arg) = iter.next()? {
+                    let slice = arg.to_utf8(global_this)?;
+                    this.assets.push(Box::from(slice.slice()));
+                }
             }
 
             if let Some(autoload_dotenv) =
@@ -418,10 +749,12 @@ pub mod js_bundler {
                 this.autoload_dotenv = autoload_dotenv;
             }
 
+            let mut is_autoload_bunfig_written = false;
             if let Some(autoload_bunfig) =
                 object.get_boolean_loose(global_this, "autoloadBunfig")?
             {
                 this.autoload_bunfig = autoload_bunfig;
+                is_autoload_bunfig_written = true;
             }
 
             if let Some(autoload_tsconfig) =
@@ -436,12 +769,74 @@ pub mod js_bundler {
                 this.autoload_package_json = autoload_package_json;
             }
 
-            Ok(Some(this))
+            let raw = RawCompileFlags::from_js(global_this, object)?;
+            prepend_code_generation_flag(global_this, object, &mut this.exec_argv)?;
+            if raw.removes_unused && !is_autoload_bunfig_written {
+                this.autoload_bunfig = false;
+            }
+
+            // `false` is "no order file", as in `compile: { bytecodeOrder: haveProfile && path }`.
+            if let Some(bytecode_order) = object.get(global_this, "bytecodeOrder")?
+                && !bytecode_order.is_undefined_or_null()
+                && bytecode_order != JSValue::FALSE
+            {
+                let mut push = |path: JSValue| -> JsResult<()> {
+                    if !path.is_string() {
+                        return Err(global_this.throw_invalid_property_type_value(
+                            b"compile.bytecodeOrder",
+                            b"string or array of strings",
+                            path,
+                        ));
+                    }
+                    let slice = path.to_utf8(global_this)?;
+                    if slice.slice().is_empty() {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "compile.bytecodeOrder must not contain an empty path"
+                        )));
+                    }
+                    this.bytecode_order.push(Box::from(slice.slice()));
+                    Ok(())
+                };
+                if bytecode_order.js_type().is_array() {
+                    let mut iter = bytecode_order.array_iterator(global_this)?;
+                    while let Some(path) = iter.next()? {
+                        push(path)?;
+                    }
+                } else {
+                    push(bytecode_order)?;
+                }
+            }
+
+            if let Some(jit_policy) = object.get(global_this, "jitPolicy")? {
+                if !jit_policy.is_undefined() {
+                    if !jit_policy.is_number() {
+                        return Err(global_this.throw_invalid_property_type_value(
+                            b"compile.jitPolicy",
+                            b"number",
+                            jit_policy,
+                        ));
+                    }
+                    let scale = jit_policy.as_number() as f32;
+                    if !(scale.is_finite() && scale >= 1.0) {
+                        return Err(global_this.throw_range_error(
+                            jit_policy.as_number(),
+                            bun_jsc::RangeErrorOptions {
+                                field_name: b"compile.jitPolicy",
+                                msg: b"a finite number >= 1",
+                                ..Default::default()
+                            },
+                        ));
+                    }
+                    this.jit_policy = scale;
+                }
+            }
+
+            Ok(Some((this, raw)))
         }
     }
 
     impl Config {
-        pub fn from_js(
+        pub(crate) fn from_js(
             global_this: &JSGlobalObject,
             config: JSValue,
             plugins: &mut Option<*mut Plugin>,
@@ -523,9 +918,9 @@ pub mod js_bundler {
                             let p = Plugin::create(
                                 global_this,
                                 match this.target {
-                                    Target::Bun | Target::BunMacro => jsc::BunPluginTarget::Bun,
-                                    Target::Node => jsc::BunPluginTarget::Node,
-                                    _ => jsc::BunPluginTarget::Browser,
+                                    Target::Bun | Target::BunMacro => BunPluginTarget::Bun,
+                                    Target::Node => BunPluginTarget::Node,
+                                    _ => BunPluginTarget::Browser,
                                 },
                             );
                             **plugins = Some(p);
@@ -549,11 +944,17 @@ pub mod js_bundler {
                         if let Some(promise) = plugin_result.as_any_promise() {
                             promise.set_handled(global_this.vm());
                             // SAFETY: bun_vm() returns the live process VirtualMachine pointer.
-                            global_this.bun_vm().as_mut().wait_for_promise(promise);
+                            global_this
+                                .bun_vm()
+                                .as_mut()
+                                .wait_for_promise(promise)
+                                .map_err(|stopped| stopped.throw(global_this))?;
                             match promise
                                 .unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled)
                             {
-                                jsc::PromiseResult::Pending => unreachable!(),
+                                jsc::PromiseResult::Pending => {
+                                    unreachable!("wait_for_promise returned Ok")
+                                }
                                 jsc::PromiseResult::Fulfilled(val) => {
                                     plugin_result = val;
                                 }
@@ -566,8 +967,6 @@ pub mod js_bundler {
 
                     if let Some(err) = plugin_result.to_error() {
                         return Err(global_this.throw_value(err));
-                    } else if global_this.has_exception() {
-                        return Err(JsError::Thrown);
                     }
 
                     onstart_promise_array = plugin_result;
@@ -591,6 +990,36 @@ pub mod js_bundler {
                         )));
                     }
                     this.target = Target::Bun;
+                }
+            }
+
+            if let Some(value) = config.get(global_this, "bytecodeDepth")? {
+                if value.is_number() && value.as_number().is_nan() {
+                    return Err(global_this.throw_invalid_property_type_value(
+                        b"bytecodeDepth",
+                        b"integer",
+                        value,
+                    ));
+                }
+                this.bytecode_depth = global_this.validate_integer_range::<u32>(
+                    value,
+                    u32::MAX,
+                    bun_jsc::IntegerRange {
+                        min: 0,
+                        max: i128::from(u32::MAX),
+                        field_name: b"bytecodeDepth",
+                    },
+                )?;
+            }
+
+            if let Some(optimize) = config.get_truthy(global_this, "optimize")? {
+                if !optimize.is_object() {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Expected optimize to be an object"
+                    )));
+                }
+                if let Some(bytecode) = optimize.get_boolean_loose(global_this, "bytecode")? {
+                    this.optimize_bytecode = bytecode;
                 }
             }
 
@@ -637,6 +1066,11 @@ pub mod js_bundler {
                 drop(slice);
             }
 
+            if let Some(slice) = config.get_optional_slice(global_this, b"tsconfig")? {
+                this.tsconfig_override.append_slice_exact(slice.slice())?;
+                drop(slice);
+            }
+
             if let Some(slice) = config.get_optional_slice(global_this, b"banner")? {
                 this.banner.append_slice_exact(slice.slice())?;
                 drop(slice);
@@ -676,7 +1110,7 @@ pub mod js_bundler {
                     } else if env == JSValue::TRUE || (env.is_number() && env.as_number() == 1.0) {
                         this.env_behavior = api::DotEnvBehavior::LoadAll;
                     } else if env.is_string() {
-                        let slice = env.to_slice(global_this)?;
+                        let slice = env.to_utf8(global_this)?;
                         match api::DotEnvBehavior::parse_str(slice.slice()) {
                             Ok((behavior, prefix)) => {
                                 this.env_behavior = behavior;
@@ -777,6 +1211,42 @@ pub mod js_bundler {
                 this.code_splitting = hot;
             }
 
+            if let Some(split_require) = config.get_boolean_loose(global_this, "splitRequire")? {
+                this.split_require = split_require;
+            }
+            if let Some(module_preload) = config.get_boolean_loose(global_this, "modulePreload")? {
+                this.module_preload = module_preload;
+            }
+            if let Some(check) = config.get_boolean_loose(global_this, "check")? {
+                if check {
+                    ensure_type_checker(global_this, "check")?;
+                }
+                this.check = check;
+            }
+            if let Some(dts) = config.get_boolean_loose(global_this, "dts")? {
+                if dts {
+                    ensure_type_checker(global_this, "dts")?;
+                }
+                this.dts = dts;
+            }
+            if bun_jsc::module_loader::is_allowed_to_use_internal_testing_apis()
+                && let Some(fold_chunks) =
+                    config.get_boolean_loose(global_this, "foldChunksForTesting")?
+            {
+                this.fold_chunks = fold_chunks;
+            }
+
+            if let Some(min_chunk_size) =
+                config.get_optional_int::<u64>(global_this, "minChunkSize")?
+            {
+                if min_chunk_size > 0 && !this.code_splitting {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "minChunkSize requires splitting to be true."
+                    )));
+                }
+                this.min_chunk_size = Some(min_chunk_size);
+            }
+
             if let Some(minify) = config.get_truthy(global_this, "minify")? {
                 if minify.is_boolean() {
                     let value = minify.to_boolean();
@@ -810,7 +1280,7 @@ pub mod js_bundler {
             if let Some(entry_points) = entry_points_opt {
                 let mut iter = entry_points.array_iterator(global_this)?;
                 while let Some(entry_point) = iter.next()? {
-                    let slice = entry_point.to_slice_or_null(global_this)?;
+                    let slice = entry_point.to_utf8(global_this)?;
                     this.entry_points.insert(slice.slice())?;
                     drop(slice);
                 }
@@ -825,6 +1295,11 @@ pub mod js_bundler {
                 this.files = file_map_from_js(global_this, JSValue::from_cell(files_obj))?;
             }
 
+            if let Some(flag) =
+                config.get_boolean_loose(global_this, "deprecatedNamespaceObjectSetters")?
+            {
+                this.deprecated_namespace_object_setters = flag;
+            }
             if let Some(flag) = config.get_boolean_loose(global_this, "emitDCEAnnotations")? {
                 this.emit_dce_annotations = Some(flag);
             }
@@ -839,13 +1314,13 @@ pub mod js_bundler {
 
             if let Some(conditions_value) = config.get_truthy(global_this, "conditions")? {
                 if conditions_value.is_string() {
-                    let slice = conditions_value.to_slice_or_null(global_this)?;
+                    let slice = conditions_value.to_utf8(global_this)?;
                     this.conditions.insert(slice.slice())?;
                     drop(slice);
                 } else if conditions_value.js_type().is_array() {
                     let mut iter = conditions_value.array_iterator(global_this)?;
                     while let Some(entry_point) = iter.next()? {
-                        let slice = entry_point.to_slice_or_null(global_this)?;
+                        let slice = entry_point.to_utf8(global_this)?;
                         this.conditions.insert(slice.slice())?;
                         drop(slice);
                     }
@@ -856,9 +1331,13 @@ pub mod js_bundler {
                 }
             }
 
-            {
-                let path: ZigStringSlice = 'brk: {
+            // `compile.aot`, which is read further down, derives the root from the expanded entry points.
+            let mut is_root_written = false;
+            let mut derived_root_error: Option<String> = None;
+            'root: {
+                let path: Utf8Bytes = 'brk: {
                     if let Some(slice) = config.get_optional_slice(global_this, b"root")? {
+                        is_root_written = true;
                         break 'brk slice;
                     }
 
@@ -874,7 +1353,7 @@ pub mod js_bundler {
                             }
                         }
                         if all_in_filemap {
-                            break 'brk ZigStringSlice::from_utf8_never_free(b".");
+                            break 'brk Utf8Bytes::Borrowed(b".");
                         }
                     }
 
@@ -882,18 +1361,14 @@ pub mod js_bundler {
                         let d = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
                             &entry_points[0],
                         );
-                        break 'brk ZigStringSlice::from_utf8_never_free(if d.is_empty() {
-                            b"."
-                        } else {
-                            d
-                        });
+                        break 'brk Utf8Bytes::Borrowed(if d.is_empty() { b"." } else { d });
                     }
 
                     // NOTE: `get_if_exists_longest_common_path` wants `&[&[u8]]`
                     // but `StringSet::keys()` yields `&[Box<[u8]>]`; build a borrow
                     // adapter on the stack.
                     let borrowed: Vec<&[u8]> = entry_points.iter().map(|b| b.as_ref()).collect();
-                    break 'brk ZigStringSlice::from_utf8_never_free(
+                    break 'brk Utf8Bytes::Borrowed(
                         bun_paths::resolve_path::get_if_exists_longest_common_path(&borrowed)
                             .unwrap_or(b"."),
                     );
@@ -902,16 +1377,21 @@ pub mod js_bundler {
                 let dir = match bun_sys::open_dir_at(bun_sys::Fd::cwd(), path.slice()) {
                     Ok(d) => d,
                     Err(err) => {
-                        return Err(global_this.throw(format_args!(
+                        let message = format!(
                             "{}: failed to open root directory: {}",
                             bstr::BStr::new(err.name()),
                             bstr::BStr::new(path.slice())
-                        )));
+                        );
+                        if is_root_written || !asks_for_aot(global_this, config)? {
+                            return Err(global_this.throw(format_args!("{message}")));
+                        }
+                        derived_root_error = Some(message);
+                        break 'root;
                     }
                 };
                 let _close = scopeguard::guard(dir, |d| d.close());
 
-                let mut rootdir_buf = bun_paths::PathBuffer::uninit();
+                let mut rootdir_buf = bun_paths::path_buffer_pool::get();
                 let rootdir = match bun_sys::get_fd_path(*_close, &mut rootdir_buf) {
                     Ok(p) => p,
                     Err(err) => {
@@ -929,14 +1409,14 @@ pub mod js_bundler {
             if let Some(externals) = config.get_own_array(global_this, "external")? {
                 let mut iter = externals.array_iterator(global_this)?;
                 while let Some(entry_point) = iter.next()? {
-                    let slice = entry_point.to_slice_or_null(global_this)?;
+                    let slice = entry_point.to_utf8(global_this)?;
                     this.external.insert(slice.slice())?;
                     drop(slice);
                 }
             }
 
             if let Some(allow_unresolved_val) =
-                config.get_own(global_this, &BunString::static_str("allowUnresolved"))?
+                config.get_own(global_this, &BunString::static_("allowUnresolved"))?
             {
                 if !allow_unresolved_val.is_undefined() && !allow_unresolved_val.is_null() {
                     if !(allow_unresolved_val.is_cell()
@@ -950,7 +1430,7 @@ pub mod js_bundler {
                     if allow_unresolved_val.get_length(global_this)? > 0 {
                         let mut iter = allow_unresolved_val.array_iterator(global_this)?;
                         while let Some(entry) = iter.next()? {
-                            let slice = entry.to_slice_or_null(global_this)?;
+                            let slice = entry.to_utf8(global_this)?;
                             this.allow_unresolved
                                 .as_mut()
                                 .unwrap()
@@ -964,7 +1444,7 @@ pub mod js_bundler {
             if let Some(drops) = config.get_own_array(global_this, "drop")? {
                 let mut iter = drops.array_iterator(global_this)?;
                 while let Some(entry) = iter.next()? {
-                    let slice = entry.to_slice_or_null(global_this)?;
+                    let slice = entry.to_utf8(global_this)?;
                     this.drop.insert(slice.slice())?;
                     drop(slice);
                 }
@@ -973,7 +1453,7 @@ pub mod js_bundler {
             if let Some(features) = config.get_own_array(global_this, "features")? {
                 let mut iter = features.array_iterator(global_this)?;
                 while let Some(entry) = iter.next()? {
-                    let slice = entry.to_slice_or_null(global_this)?;
+                    let slice = entry.to_utf8(global_this)?;
                     this.features.insert(slice.slice())?;
                     drop(slice);
                 }
@@ -982,7 +1462,7 @@ pub mod js_bundler {
             if let Some(optimize_imports) = config.get_own_array(global_this, "optimizeImports")? {
                 let mut iter = optimize_imports.array_iterator(global_this)?;
                 while let Some(entry) = iter.next()? {
-                    let slice = entry.to_slice_or_null(global_this)?;
+                    let slice = entry.to_utf8(global_this)?;
                     this.optimize_imports.insert(slice.slice())?;
                     drop(slice);
                 }
@@ -1004,23 +1484,38 @@ pub mod js_bundler {
                         buf.into_boxed_slice()
                     }
                 };
+                let validate = |option: &str, s: &[u8]| -> JsResult<()> {
+                    if let Some((pos, tail)) = options::find_unterminated_placeholder(s) {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "{}: unterminated \"{}\" placeholder (missing \"]\") at position {}",
+                            option,
+                            bstr::BStr::new(tail),
+                            pos,
+                        )));
+                    }
+                    Ok(())
+                };
                 if naming.is_string() {
                     if let Some(slice) = config.get_optional_slice(global_this, b"naming")? {
+                        validate("naming", slice.slice())?;
                         this.names.entry_point.data = with_dot_slash(slice.slice());
                         drop(slice);
                     }
                 } else if naming.is_object() {
                     if let Some(slice) = naming.get_optional_slice(global_this, b"entry")? {
+                        validate("naming.entry", slice.slice())?;
                         this.names.entry_point.data = with_dot_slash(slice.slice());
                         drop(slice);
                     }
 
                     if let Some(slice) = naming.get_optional_slice(global_this, b"chunk")? {
+                        validate("naming.chunk", slice.slice())?;
                         this.names.chunk.data = with_dot_slash(slice.slice());
                         drop(slice);
                     }
 
                     if let Some(slice) = naming.get_optional_slice(global_this, b"asset")? {
+                        validate("naming.asset", slice.slice())?;
                         this.names.asset.data = with_dot_slash(slice.slice());
                         drop(slice);
                     }
@@ -1034,7 +1529,7 @@ pub mod js_bundler {
             if let Some(define) = config.get_own_object(global_this, "define")? {
                 // SAFETY: `get_own_object` only returns non-null live JSObject*.
                 let define_ref = unsafe { &*define };
-                let mut define_iter = jsc::JSPropertyIterator::init(
+                let define_iter = jsc::JSPropertyIterator::init(
                     global_this,
                     define_ref,
                     jsc::JSPropertyIteratorOptions {
@@ -1044,8 +1539,7 @@ pub mod js_bundler {
                     },
                 )?;
 
-                while let Some(prop) = define_iter.next()? {
-                    let property_value = define_iter.value;
+                while let Some((prop, property_value)) = define_iter.next()? {
                     let value_type = property_value.js_type();
 
                     if !value_type.is_string_like() {
@@ -1055,27 +1549,26 @@ pub mod js_bundler {
                         )));
                     }
 
-                    let mut val = ZigString::init(b"");
-                    property_value.to_zig_string(&mut val, global_this)?;
-                    if val.len == 0 {
-                        val = ZigString::from_utf8(b"\"\"");
-                    }
-
+                    let val = property_value.to_js_string_view(global_this)?;
                     let key = prop.to_owned_slice();
-
-                    // value is always cloned
-                    let value = val.to_slice();
+                    let value = val.to_utf8();
 
                     // .insert clones the value, but not the key
-                    this.define.insert(&key, value.slice())?;
-                    drop(value);
+                    this.define.insert(
+                        &key,
+                        if value.slice().is_empty() {
+                            b"\"\""
+                        } else {
+                            value.slice()
+                        },
+                    )?;
                 }
             }
 
             if let Some(loaders) = config.get_own_object(global_this, "loader")? {
                 // SAFETY: `get_own_object` only returns non-null live JSObject*.
                 let loaders_ref = unsafe { &*loaders };
-                let mut loader_iter = jsc::JSPropertyIterator::init(
+                let loader_iter = jsc::JSPropertyIterator::init(
                     global_this,
                     loaders_ref,
                     jsc::JSPropertyIteratorOptions {
@@ -1097,7 +1590,7 @@ pub mod js_bundler {
                 loader_names.reserve_exact(loader_iter.len);
                 loader_values.reserve_exact(loader_iter.len);
 
-                while let Some(prop) = loader_iter.next()? {
+                while let Some((prop, value)) = loader_iter.next()? {
                     let prop_slice = prop.to_utf8();
                     if !prop_slice.slice().starts_with(b".") || prop.length() < 2 {
                         return Err(global_this.throw_invalid_arguments(format_args!(
@@ -1106,7 +1599,7 @@ pub mod js_bundler {
                     }
                     drop(prop_slice);
 
-                    loader_values.push(loader_iter.value.to_enum_from_map(
+                    loader_values.push(value.to_enum_from_map(
                         global_this,
                         "loader",
                         &options::LOADER_API_NAMES,
@@ -1127,14 +1620,14 @@ pub mod js_bundler {
 
             // Parse metafile option: boolean | string | { json?: string, markdown?: string }
             if let Some(metafile_value) =
-                config.get_own(global_this, &BunString::static_str("metafile"))?
+                config.get_own(global_this, &BunString::static_("metafile"))?
             {
                 if metafile_value.is_boolean() {
                     this.metafile = metafile_value == JSValue::TRUE;
                 } else if metafile_value.is_string() {
                     // metafile: "path/to/meta.json" - shorthand for { json: "..." }
                     this.metafile = true;
-                    let slice = metafile_value.to_slice(global_this)?;
+                    let slice = metafile_value.to_utf8(global_this)?;
                     this.metafile_json_path.append_slice_exact(slice.slice())?;
                     drop(slice);
                 } else if metafile_value.is_object() {
@@ -1156,12 +1649,30 @@ pub mod js_bundler {
                 }
             }
 
-            if let Some(compile) = CompileOptions::from_js(
+            for key in compile_options::COMPILE_AOT_KEYS {
+                if config.get(global_this, key)?.is_some()
+                    && let Some(error) = compile_options::misplaced_key(key.as_bytes(), false)
+                {
+                    return Err(throw_option_error(global_this, error));
+                }
+            }
+
+            if let Some((compile, raw)) = CompileOptions::from_js(
                 global_this,
                 config,
                 this.compile.as_ref().map(|c| c.compile_target),
             )? {
-                this.compile = Some(compile);
+                let compile = this.compile.insert(compile);
+                let settings =
+                    compile_options::resolve(&raw.compile_flags(compile, this.source_map))
+                        .map_err(|error| throw_option_error(global_this, error))?;
+                compile.aot = settings.aot;
+                compile.trim = settings.trim;
+                if compile.aot.is_some() {
+                    this.bytecode = false;
+                    this.format = options::Format::Esm;
+                    compile.compile_target = CompileTarget::default();
+                }
             }
 
             if let Some(compile) = this.compile.as_mut() {
@@ -1203,6 +1714,19 @@ pub mod js_bundler {
 
                     if compile.outfile.is_empty() {
                         let entry_point: &[u8] = &this.entry_points.keys()[0];
+                        // The build expands the patterns again, and reports one without a match.
+                        let expanded_entry_points = compile.aot.as_ref().and_then(|_| {
+                            bun_bundler::aot::expand_entry_points(
+                                this.entry_points.keys(),
+                                bun_resolver::fs::FileSystem::get().top_level_dir(),
+                                Some(&this.files),
+                                &mut bun_ast::Log::init(),
+                            )
+                        });
+                        let entry_point: &[u8] = match expanded_entry_points.as_deref() {
+                            Some([first, ..]) => first,
+                            Some([]) | None => entry_point,
+                        };
                         let mut outfile = bun_paths::basename(entry_point);
                         let ext = bun_paths::extension(outfile);
                         if !ext.is_empty() {
@@ -1228,33 +1752,24 @@ pub mod js_bundler {
                             return Err(global_this.throw_invalid_arguments(format_args!("cannot use compile with an output file named 'bun' because bun won't realize it's a standalone executable. Please choose a different name for compile.outfile")));
                         }
 
-                        // NOTE: when no `outdir`/`outfile` was given, place the
-                        // auto-derived executable next to its entry point — the
-                        // only path the caller actually supplied. Resolving the
-                        // basename against the process-wide cwd instead would
-                        // make every `Bun.build({compile: true, entrypoints:
-                        // [tmp + "/app.js"]})` from any test process write the
-                        // *same* `<cwd>/app`, so concurrently-running test files
-                        // would race on the executable (observed flake in
-                        // bun-build-compile-sourcemap.test.ts). This keeps each
-                        // build's output inside its own (temp) directory and is
-                        // also the more intuitive default for a programmatic API.
-                        // Explicit `outfile`/`outdir` are unaffected.
-                        let entry_dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                            entry_point,
-                        );
-                        if this.outdir.is_empty()
-                            && !entry_dir.is_empty()
-                            && bun_paths::is_absolute(entry_dir)
-                        {
-                            compile.outfile.append_slice_exact(entry_dir)?;
-                            compile
-                                .outfile
-                                .append_slice_exact(core::slice::from_ref(&bun_paths::SEP))?;
-                        }
                         compile.outfile.append_slice_exact(outfile)?;
                     }
+                } else {
+                    compile.aot = None;
                 }
+            }
+
+            let is_compiled_ahead_of_time =
+                (this.compile.as_ref()).is_some_and(|compile| compile.aot.is_some());
+            if is_compiled_ahead_of_time && !is_root_written {
+                this.rootdir = OwnedString::default();
+            } else if let Some(message) = derived_root_error {
+                return Err(global_this.throw(format_args!("{message}")));
+            }
+
+            if this.dts && this.compile.is_some() {
+                return Err(global_this
+                    .throw_invalid_arguments(format_args!("dts cannot be used with compile")));
             }
 
             // ESM bytecode requires compile because module_info (import/export metadata)
@@ -1262,6 +1777,18 @@ pub mod js_bundler {
             // twice (once for module analysis, once for bytecode), which is a deopt.
             if this.bytecode && this.format == options::Format::Esm && this.compile.is_none() {
                 return Err(global_this.throw_invalid_arguments(format_args!("ESM bytecode requires compile: true. Use format: 'cjs' for bytecode without compile.")));
+            }
+
+            if !this.bytecode
+                && !is_compiled_ahead_of_time
+                && this
+                    .compile
+                    .as_ref()
+                    .is_some_and(|compile| !compile.bytecode_order.is_empty())
+            {
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "compile.bytecodeOrder requires bytecode: true"
+                )));
             }
 
             // Validate standalone HTML mode: compile + browser target + all HTML entrypoints
@@ -1282,6 +1809,11 @@ pub mod js_bundler {
                         "Cannot use compile with target 'browser' and splitting for standalone HTML"
                     )));
                 }
+                if has_all_html && this.compile.as_ref().is_some_and(|c| !c.assets.is_empty()) {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Cannot use compile.assets with target 'browser' for standalone HTML"
+                    )));
+                }
             }
 
             scopeguard::ScopeGuard::into_inner(plugins);
@@ -1295,10 +1827,10 @@ pub mod js_bundler {
     /// Output path templates for entry points, chunks, and assets. Each
     /// `PathTemplate.data` is owned (`Box<[u8]>`), so no separate backing
     /// string per template is needed.
-    pub struct Names {
-        pub entry_point: options::PathTemplate,
-        pub chunk: options::PathTemplate,
-        pub asset: options::PathTemplate,
+    pub(crate) struct Names {
+        pub(crate) entry_point: options::PathTemplate,
+        pub(crate) chunk: options::PathTemplate,
+        pub(crate) asset: options::PathTemplate,
     }
 
     impl Default for Names {
@@ -1312,27 +1844,25 @@ pub mod js_bundler {
     }
 
     #[derive(Default)]
-    pub struct Minify {
-        pub whitespace: bool,
-        pub identifiers: bool,
-        pub syntax: bool,
-        pub keep_names: bool,
+    pub(crate) struct Minify {
+        pub(crate) whitespace: bool,
+        pub(crate) identifiers: bool,
+        pub(crate) syntax: bool,
+        pub(crate) keep_names: bool,
     }
 
-    #[derive(Default)]
-    pub struct Serve {
-        pub handler_path: OwnedString,
-        pub prefix: OwnedString,
-    }
-
-    fn build(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<JSValue> {
-        if arguments.is_empty() || !arguments[0].is_object() {
+    /// `Bun.build(config)`
+    pub(crate) fn build(cx: &mut JsScope<'_>, config: JsLocal<'_>) -> JsResult<JSValue> {
+        let global_this = cx.global();
+        let config = config.to_js();
+        if !config.is_object() {
             return Err(global_this.throw_invalid_arguments(format_args!(
                 "Expected a config object to be passed to Bun.build"
             )));
         }
 
         let vm = global_this.bun_vm();
+        let context = vm.context_of_caller().id();
 
         // Detect and prevent calling Bun.build from within a macro during bundling.
         // This would cause a deadlock because:
@@ -1349,38 +1879,22 @@ pub mod js_bundler {
         }
 
         let mut plugins: Option<*mut Plugin> = None;
-        let config = Config::from_js(global_this, arguments[0], &mut plugins)?;
-
-        let event_loop = vm.event_loop();
+        let config = Config::from_js(global_this, config, &mut plugins)?;
 
         // `BundleV2.generateFromJavaScript` — the completion-task struct lives in
         // `crate::api::js_bundle_completion_task` (bun_runtime owns it because its
         // fields name `Config`/`Plugin`/`HTMLBundle::Route`; lower-tier crates
         // cannot depend on those).
-        let completion =
-            crate::api::js_bundle_completion_task::create_and_schedule_completion_task(
-                config,
-                plugins.and_then(core::ptr::NonNull::new),
-                global_this,
-                event_loop,
-            )
-            .map_err(|_| JsError::OutOfMemory)?;
-        // SAFETY: `completion` is the freshly-boxed allocation returned above;
-        // sole owner on the JS thread until enqueued task runs.
-        unsafe {
-            (*completion).promise = jsc::JSPromiseStrong::init(global_this);
-            Ok((*completion).promise.value())
-        }
-    }
-
-    /// `Bun.build(config)`
-    #[bun_jsc::host_fn]
-    pub(crate) fn build_fn(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<1>();
-        build(global_this, arguments.slice())
+        let mut completion = crate::api::js_bundle_completion_task::JSBundleCompletionTask::new(
+            config,
+            plugins.and_then(core::ptr::NonNull::new),
+            global_this,
+            context,
+        );
+        completion.promise = jsc::JSPromiseStrong::init(global_this);
+        let promise = completion.promise.value();
+        completion.schedule();
+        Ok(promise)
     }
 
     // NOTE: `Resolve`/`Load`/`MiniImportRecord`/etc. are owned by
@@ -1390,9 +1904,11 @@ pub mod js_bundler {
     // `bun_event_loop` types and the `Plugin` opaque, neither of which is a T6
     // dependency. Only the JSC-aware bits (`on_defer`, `JSBundlerPlugin__*`
     // C-ABI exports) live here.
-    pub use bun_bundler::bundle_v2::api::JSBundler::{
-        Load, LoadSuccess, LoadValue, MiniImportRecord, Resolve, ResolveSuccess, ResolveValue,
+    pub(crate) use bun_bundler::bundle_v2::api::JSBundler::{
+        Load, LoadDeferred, LoadSuccess, LoadValue, Resolve, ResolveSuccess, ResolveValue,
     };
+
+    use bun_bundler::bundle_v2::api::JSBundler::RequestOwner;
 
     /// `&mut BundleV2` for the live backref stored on `Resolve`/`Load`.
     ///
@@ -1426,42 +1942,43 @@ pub mod js_bundler {
         unsafe { &mut *bv2_mut(bv2).plugins.unwrap().as_ptr() }
     }
 
-    /// # Safety
-    /// `resolve` must be the live `*mut Resolve` previously handed to C++ via
-    /// `Resolve::dispatch`; sole owner on the JS thread for the call duration.
     #[unsafe(no_mangle)]
-    pub(crate) unsafe extern "C" fn JSBundlerPlugin__onResolveAsync(
-        resolve: *mut Resolve,
+    extern "C" fn JSBundlerPlugin__onResolveAsync(
+        resolve: &mut Resolve,
         _unused: *mut c_void,
         path_value: JSValue,
         namespace_value: JSValue,
         external_value: JSValue,
     ) {
-        // SAFETY: called from C++ with valid Resolve pointer
-        let resolve = unsafe { &mut *resolve };
+        // C++ calls this only for a request the plugin object still held (BundlerPlugin::takeRequest): it is
+        // the request's one answer, produced on this thread, so `&mut` is real.
         if path_value.is_empty_or_undefined_or_null()
             || namespace_value.is_empty_or_undefined_or_null()
         {
             resolve.value = ResolveValue::NoMatch;
         } else {
-            let global = bv2_plugin(resolve.bv2).global_object();
-            // `to_slice_clone` already heap-allocates; `into_vec` moves that
-            // buffer out instead of allocating a second copy.
-            let path = path_value
-                .to_slice_clone(global)
-                .expect("Unexpected: path is not a string")
-                .into_vec()
-                .into_boxed_slice();
-            let namespace = namespace_value
-                .to_slice_clone(global)
-                .expect("Unexpected: namespace is not a string")
-                .into_vec()
-                .into_boxed_slice();
-            resolve.value = ResolveValue::Success(ResolveSuccess {
-                path,
-                namespace,
-                external: external_value.to_boolean(),
+            let plugin = bv2_plugin(resolve.bv2);
+            let global = plugin.global_object();
+            let strings = path_value.to_bun_string(global).and_then(|path| {
+                let namespace = namespace_value.to_bun_string(global)?;
+                Ok((path, namespace))
             });
+            resolve.value = match strings {
+                Ok((path, namespace)) => ResolveValue::Success(ResolveSuccess {
+                    path: path.to_owned_slice().into_boxed_slice(),
+                    namespace: namespace.to_owned_slice().into_boxed_slice(),
+                    external: external_value.to_boolean(),
+                }),
+                // Flattening a `path` or `namespace` string can still throw.
+                Err(err) => {
+                    let exception = global.take_exception(err);
+                    ResolveValue::Err(plugin_msg_from_js(
+                        plugin,
+                        &resolve.import_record.source_file,
+                        exception,
+                    ))
+                }
+            };
         }
 
         bv2_mut(resolve.bv2).on_resolve_async(resolve);
@@ -1472,7 +1989,7 @@ pub mod js_bundler {
     /// JSC-aware plumbing for `Load` (upstream owns `init`/`dispatch`/
     /// `run_on_js_thread`/`bake_graph`). Only `on_defer` lives here because it
     /// returns a `JSValue` and throws on the `JSGlobalObject`.
-    pub(crate) trait LoadJsExt {
+    trait LoadJsExt {
         fn on_defer(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue>;
     }
 
@@ -1492,13 +2009,20 @@ pub mod js_bundler {
                 bstr::BStr::new(&self.path)
             );
 
+            if let RequestOwner::Waiter(waiter) = self.owner {
+                // SAFETY: `aot::plugins` frees no waiter before the build shuts down, and that waits
+                // for the answer of this request.
+                unsafe { waiter.as_ref() }.defer();
+                return Ok(bv2_plugin(self.bv2).append_defer_promise());
+            }
+
             // Notify the *bundler thread* about the deferral. This will
             // decrement the pending item counter and increment the deferred
-            // counter. Must land on `parse_task.ctx.loop()` (the loop running
-            // BundleV2), which is distinct from `js_loop_for_plugins()` (the
-            // plugin host's JS loop) when `Bun.build` runs the bundler on its
-            // own Mini event loop.
-            // SAFETY: parse_task.ctx and bv2 are valid backrefs; `r#loop()`
+            // counter. Must land on `parse_task.ctx`'s `r#loop()` (the loop
+            // running BundleV2), which is distinct from the
+            // `enqueue_on_js_loop_for_plugins` target (the plugin host's JS loop)
+            // when `Bun.build` runs the bundler on its own Mini event loop.
+            // SAFETY: `parse_task.ctx` and `bv2` are valid backrefs; `r#loop()`
             // points at a live `AnyEventLoop` owned by the bundle thread /
             // runtime for the duration of the bundle.
             unsafe {
@@ -1509,19 +2033,24 @@ pub mod js_bundler {
                     .r#loop()
                     .expect("BundleV2.linker.loop must be set before plugins run");
                 match &mut *any_loop.as_ptr() {
-                    bun_event_loop::AnyEventLoop::Js { owner } => {
-                        owner.enqueue_task_concurrent(ConcurrentTask::from_callback(
-                            ctx.as_mut_ptr(),
-                            on_notify_defer_raw,
-                        ));
+                    bun_event_loop::AnyEventLoop::Js { .. } => {
+                        let ct = ConcurrentTask::create_from(
+                            std::ptr::from_mut::<Load>(self).cast::<LoadDeferred>(),
+                        );
+                        let poster = (*ctx.as_mut_ptr())
+                            .js_poster
+                            .as_ref()
+                            .expect("JS-owned bundle has a poster");
+                        if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
+                            // Owning JS VM torn down mid-bundle: the notify never runs.
+                            bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct);
+                        }
                     }
                     bun_event_loop::AnyEventLoop::Mini(mini) => {
-                        // `mini.enqueueTaskConcurrentWithExtraCtx(
-                        //    Load, BundleV2, this, BundleV2.onNotifyDeferMini, .task)`
                         mini.enqueue_task_concurrent_with_extra_ctx::<Load, BundleV2<'static>>(
                             std::ptr::from_mut::<Load>(self),
                             on_notify_defer_mini_wrap,
-                            core::mem::offset_of!(Load, task),
+                            core::mem::offset_of!(Load, defer_task),
                         );
                     }
                 }
@@ -1531,16 +2060,13 @@ pub mod js_bundler {
         }
     }
 
-    fn on_notify_defer_raw(ctx: *mut BundleV2<'static>) -> bun_event_loop::JsResult<()> {
-        bv2_mut(ctx).on_notify_defer();
-        Ok(())
-    }
-
+    #[inline(never)]
     fn on_notify_defer_mini_wrap(load: *mut Load, ctx: *mut BundleV2<'static>) {
+        bun_removable_features::removable_definition!(Bundler, on_notify_defer_mini_wrap);
         // SAFETY: callback contract — `load` was passed as the `Context` arg to
         // `enqueue_task_concurrent_with_extra_ctx`; `ctx` is the bundle-thread
-        // `BundleV2` backref the mini loop's tick supplies as `ParentContext`.
-        BundleV2::on_notify_defer_mini(unsafe { &mut *load }, unsafe { &mut *ctx });
+        // `BundleV2` backref the mini loop's tick supplies as `extra`.
+        BundleV2::on_notify_defer(unsafe { &mut *load }, unsafe { &mut *ctx });
     }
 
     /// # Safety
@@ -1548,7 +2074,7 @@ pub mod js_bundler {
     /// `Load::dispatch`, and `global` must be the plugin's owning
     /// `JSGlobalObject`; both valid and exclusively accessed on the JS thread.
     #[unsafe(no_mangle)]
-    pub(crate) unsafe extern "C" fn JSBundlerPlugin__onDefer(
+    unsafe extern "C" fn JSBundlerPlugin__onDefer(
         load: *mut Load,
         global: *mut JSGlobalObject,
     ) -> JSValue {
@@ -1557,52 +2083,35 @@ pub mod js_bundler {
     }
 
     #[unsafe(no_mangle)]
-    pub(crate) extern "C" fn JSBundlerPlugin__onLoadAsync(
+    extern "C" fn JSBundlerPlugin__onLoadAsync(
         this: &mut Load,
         _unused: *mut c_void,
         source_code_value: JSValue,
         loader_as_int: JSValue,
     ) {
         jsc::mark_binding();
+        // As `onResolveAsync`: the request's one answer.
         if source_code_value.is_empty_or_undefined_or_null()
             || loader_as_int.is_empty_or_undefined_or_null()
         {
             this.value = LoadValue::NoMatch;
-
-            if this.was_file {
-                // Faster path: skip the extra threadpool dispatch
-                // SAFETY: bv2 backref is valid; pool/worker_pool are live for bundle.
-                unsafe {
-                    (*(*(*this.bv2).graph.pool.as_ptr()).worker_pool).schedule(
-                        bun_threading::thread_pool::Batch::from(core::ptr::addr_of_mut!(
-                            (*this.parse_task.as_ptr()).task
-                        )),
-                    );
-                }
-                this.value = LoadValue::Consumed;
-                return;
-            }
         } else {
             let loader = api::Loader::from_raw(loader_as_int.as_int32() as u8);
-            let global = bv2_plugin(this.bv2).global_object();
-            let source_code = match crate::node::StringOrBuffer::from_js_to_owned_slice(
-                global,
+            let plugin = bv2_plugin(this.bv2);
+            this.value = match crate::node::StringOrBuffer::from_js_to_owned_slice(
+                plugin.global_object(),
                 source_code_value,
             ) {
-                Ok(s) => s,
+                Ok(source_code) => LoadValue::Success(LoadSuccess {
+                    loader: bun_ast::Loader::from_api(loader),
+                    source_code: source_code.into(),
+                }),
+                // Flattening a `contents` string can still throw.
                 Err(err) => {
-                    match err {
-                        JsError::OutOfMemory => bun_core::out_of_memory(),
-                        JsError::Thrown => {}
-                        JsError::Terminated => {}
-                    }
-                    panic!("Unexpected: source_code is not a string");
+                    let exception = plugin.global_object().take_exception(err);
+                    LoadValue::Err(plugin_msg_from_js(plugin, &this.path, exception))
                 }
             };
-            this.value = LoadValue::Success(LoadSuccess {
-                loader: bun_ast::Loader::from_api(loader),
-                source_code: source_code.into(),
-            });
         }
 
         bv2_mut(this.bv2).on_load_async(this);
@@ -1611,7 +2120,22 @@ pub mod js_bundler {
     /// Opaque FFI handle for the C++ `JSBundlerPlugin`. The opaque type and
     /// `has_any_matches` (the one method `bun_bundler` needs) live in the
     /// lower-tier crate; JSC-aware methods are added here via `PluginJscExt`.
-    pub use bun_bundler::bundle_v2::api::JSBundler::Plugin;
+    pub(crate) use bun_bundler::bundle_v2::api::JSBundler::Plugin;
+
+    #[repr(u8)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug)]
+    pub(crate) enum BunPluginTarget {
+        Bun = 0,
+        Node = 1,
+        Browser = 2,
+    }
+
+    // Crosses FFI by-value to `JSBundlerPlugin__create`
+    // (C++: `typedef uint8_t BunPluginTarget`, `headers-handwritten.h`). NB: the
+    // C++ header's *named* constants (`BunPluginTargetBrowser = 1`, `Node = 2`)
+    // disagree with the Rust enum (`Node = 1`, `Browser = 2`). The width (`u8`)
+    // is what matters at the ABI.
+    bun_core::assert_ffi_discr!(BunPluginTarget, u8; Bun = 0, Node = 1, Browser = 2);
 
     // `Plugin` is an `opaque_ffi!` handle (`repr(C)` + `UnsafeCell` marker), so
     // `&mut Plugin`/`&Plugin` are ABI-identical to non-null pointers and the
@@ -1621,7 +2145,7 @@ pub mod js_bundler {
     unsafe extern "C" {
         safe fn JSBundlerPlugin__create(
             global: &JSGlobalObject,
-            target: jsc::BunPluginTarget,
+            target: BunPluginTarget,
         ) -> *mut Plugin;
         safe fn JSBundlerPlugin__tombstone(plugin: &Plugin);
         safe fn JSBundlerPlugin__runOnEndCallbacks(
@@ -1654,8 +2178,8 @@ pub mod js_bundler {
     /// JSC-aware methods on the C++ `JSBundlerPlugin` opaque. The opaque type
     /// itself is owned by `bun_bundler` (lower tier, no JSC dep), so these are
     /// added as an extension trait rather than an inherent `impl`.
-    pub trait PluginJscExt {
-        fn create(global: &JSGlobalObject, target: jsc::BunPluginTarget) -> *mut Plugin;
+    pub(crate) trait PluginJscExt {
+        fn create(global: &JSGlobalObject, target: BunPluginTarget) -> *mut Plugin;
         fn run_on_end_callbacks(
             &mut self,
             global_this: &JSGlobalObject,
@@ -1666,6 +2190,10 @@ pub mod js_bundler {
         /// `this` must be a live handle previously returned by `Plugin::create`;
         /// non-null is checked via `Plugin::opaque_ref` (panics on null).
         fn destroy(this: *mut Plugin);
+        /// The plugins' VM is shutting down: every request the plugin object still holds is answered
+        /// as cancelled now, and whatever its JS side delivers later is dropped (an answer) or refused
+        /// (`.defer()`). JS thread.
+        fn tombstone(&self);
         fn global_object(&self) -> &JSGlobalObject;
         fn append_defer_promise(&mut self) -> JSValue;
         fn add_plugin(
@@ -1687,7 +2215,7 @@ pub mod js_bundler {
     }
 
     impl PluginJscExt for Plugin {
-        fn create(global: &JSGlobalObject, target: jsc::BunPluginTarget) -> *mut Plugin {
+        fn create(global: &JSGlobalObject, target: BunPluginTarget) -> *mut Plugin {
             jsc::mark_binding();
             let plugin = JSBundlerPlugin__create(global, target);
             JSValue::from_cell(plugin).protect();
@@ -1706,8 +2234,15 @@ pub mod js_bundler {
             let rejection_value = match rejection {
                 Ok(v) => v,
                 Err(JsError::OutOfMemory) => global_this.create_out_of_memory_error(),
-                Err(JsError::Thrown) => global_this.take_error(JsError::Thrown),
+                // A terminated worker runs no onEnd callbacks: taken outside script, or still unwinding beneath it.
                 Err(JsError::Terminated) => return Err(JsError::Terminated),
+                Err(JsError::Thrown) => {
+                    let value = global_this.take_error(JsError::Thrown);
+                    if value.is_termination_exception() {
+                        return Err(bun_jsc::top_exception_scope::thrown(global_this));
+                    }
+                    value
+                }
             };
 
             // The C++ side has a `DECLARE_THROW_SCOPE` whose dtor sets
@@ -1723,6 +2258,10 @@ pub mod js_bundler {
             );
             scope.return_if_exception()?;
             Ok(value)
+        }
+
+        fn tombstone(&self) {
+            JSBundlerPlugin__tombstone(self);
         }
 
         fn destroy(this: *mut Plugin) {
@@ -1806,7 +2345,7 @@ pub mod js_bundler {
                                 .to_vec(),
                         ),
                         location: Some(bun_ast::Location {
-                            file: std::borrow::Cow::Owned(file.to_vec()),
+                            file: Box::from(file),
                             line: -1,
                             column: -1,
                             ..Default::default()
@@ -1819,69 +2358,85 @@ pub mod js_bundler {
     }
 
     /// # Safety
-    /// `plugin` must be a live `JSBundlerPlugin` opaque handle. `ctx` must be
-    /// the live `*mut Resolve` (when `which == 0`) or `*mut Load` (when
-    /// `which == 1`) previously handed to C++ via `dispatch`; sole owner on
-    /// the JS thread.
+    /// The plugin's answer to a request it still held is an error. `plugin` is the live `JSBundlerPlugin`
+    /// handle; `ctx` the live `*mut Resolve` (`kind == 0`) or `*mut Load` (`kind == 1`) handed over by
+    /// `dispatch`. JS thread.
     #[unsafe(no_mangle)]
-    pub(crate) unsafe extern "C" fn JSBundlerPlugin__addError(
+    unsafe extern "C" fn JSBundlerPlugin__addError(
         ctx: *mut c_void,
         plugin: *mut Plugin,
         exception: JSValue,
-        which: JSValue,
+        kind: u8,
     ) {
-        // SAFETY: plugin is valid opaque FFI handle; ctx is *mut Resolve or *mut Load
+        // SAFETY: per fn contract.
         let plugin = unsafe { &mut *plugin };
-        match which.as_int32() {
+        match kind {
             0 => {
-                // SAFETY: C++ caller passes the live `*mut Resolve` it received from
-                // `Resolve::dispatch` as `ctx` when `which == 0`; sole owner on the JS thread.
+                // SAFETY: per fn contract; the request's one answer.
                 let resolve = unsafe { bun_ptr::callback_ctx::<Resolve>(ctx) };
                 let msg = plugin_msg_from_js(plugin, &resolve.import_record.source_file, exception);
                 resolve.value = ResolveValue::Err(msg);
                 bv2_mut(resolve.bv2).on_resolve_async(resolve);
             }
             1 => {
-                // SAFETY: C++ caller passes the live `*mut Load` it received from
-                // `Load::dispatch` as `ctx` when `which == 1`; sole owner on the JS thread.
+                // SAFETY: per fn contract; the request's one answer.
                 let load = unsafe { bun_ptr::callback_ctx::<Load>(ctx) };
                 let msg = plugin_msg_from_js(plugin, &load.path, exception);
                 load.value = LoadValue::Err(msg);
                 bv2_mut(load.bv2).on_load_async(load);
             }
-            _ => panic!("invalid error type"),
+            _ => unreachable!(),
+        }
+    }
+
+    /// The plugins can no longer answer this request — their VM is shutting down (BundlerPlugin::tombstone),
+    /// or the hop arrived after that / could not call them: answer it as cancelled, from this (the JS)
+    /// thread like every other answer, and hand it back to the bundle thread. `kind`: 0 = Resolve, 1 = Load.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn JSBundlerPlugin__answerCancelled(kind: u8, ctx: *mut c_void) {
+        match kind {
+            // SAFETY: the live `*mut Resolve` handed over by `Resolve::dispatch`; its one answer.
+            0 => unsafe { bun_ptr::callback_ctx::<Resolve>(ctx) }.answer_cancelled(),
+            // SAFETY: as above, `*mut Load` from `Load::dispatch`.
+            1 => unsafe { bun_ptr::callback_ctx::<Load>(ctx) }.answer_cancelled(),
+            _ => unreachable!("RequestKind"),
         }
     }
 }
 
-pub use js_bundler as JSBundler;
-pub use js_bundler::Config;
-/// `jsc.API.JSBundler.Plugin` — re-exported for `crate::bake` (`SplitBundlerOptions.plugin`).
-pub use js_bundler::Plugin;
-pub use js_bundler::PluginJscExt;
+pub(crate) use js_bundler as JSBundler;
 
-/// Full `.classes.ts` payload — wraps a `webcore::Blob` plus
-/// `loader/path/hash/output_kind/sourcemap`.
-#[bun_jsc::JsClass(no_constructor)]
-pub struct BuildArtifact {
-    pub blob: Blob,
-    pub loader: bun_ast::Loader,
+/// `bun:internal-for-testing`: bundler `Worker`s (one per pool thread a build ran on) not yet torn down.
+pub(crate) fn worker_live_count() -> usize {
+    use core::sync::atomic::Ordering;
+    bun_bundler::thread_pool::WORKER_LIVE_COUNT.load(Ordering::SeqCst)
+}
+
+pub(crate) use js_bundler::BunPluginTarget;
+/// `jsc.API.JSBundler.Plugin` — re-exported for `crate::bake` (`SplitBundlerOptions.plugin`).
+pub(crate) use js_bundler::Plugin;
+pub(crate) use js_bundler::PluginJscExt;
+
+/// Wraps a `webcore::Blob` plus
+/// `loader/path/hash/output_kind`. `.sourcemap` lives on the JS wrapper
+/// (`m_sourcemap` WriteBarrier from `cache: true`), not here.
+pub(crate) struct BuildArtifact {
+    pub(crate) blob: Blob,
+    pub(crate) loader: bun_ast::Loader,
     pub path: Box<[u8]>,
-    pub hash: u64,
-    pub output_kind: OutputKind,
-    pub sourcemap: bun_jsc::StrongOptional,
+    pub(crate) hash: bun_core::fmt::ContentHash,
+    pub(crate) output_kind: OutputKind,
 }
 
 /// `BuildArtifact.kind` — what role an output file plays. Single canonical
 /// definition lives in `bun_bundler::options` (it backs
-/// `OutputFile.output_kind`); re-exported so `crate::api::OutputKind`
-/// callers stay unchanged.
-pub use bun_bundler::options::OutputKind;
+/// `OutputFile.output_kind`).
+pub(crate) use bun_bundler::options::OutputKind;
 
 /// `JSValue::as(Blob)` BuildArtifact fallback — declared
 /// `extern "Rust"` in `bun_jsc::webcore_types`; link-time resolved.
 #[unsafe(no_mangle)]
-pub(crate) fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob> {
+fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob> {
     <BuildArtifact as bun_jsc::JsClass>::from_js(value).map(|b| {
         // SAFETY: `from_js` returns the non-null `*mut BuildArtifact` kept alive by
         // the JS wrapper; `addr_of_mut!` only computes the field address (no deref).
@@ -1890,114 +2445,86 @@ pub(crate) fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob
 }
 
 impl BuildArtifact {
-    /// `BuildArtifact` is not user-constructible (`noConstructor` in .classes.ts).
-    pub fn constructor(
-        global_this: &JSGlobalObject,
-        _callframe: &CallFrame,
-    ) -> JsResult<*mut BuildArtifact> {
-        Err(global_this.throw(format_args!("BuildArtifact is not constructable")))
+    pub(crate) fn text(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.blob.text(cx)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn get_text(
-        this: &Self,
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
+    pub(crate) fn json(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.blob.json(cx)
+    }
+
+    pub(crate) fn array_buffer(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.blob.array_buffer(cx)
+    }
+
+    pub(crate) fn slice(
+        &self,
+        cx: &mut JsScope<'_>,
+        start: JsLocal<'_>,
+        end: JsLocal<'_>,
+        content_type: JsLocal<'_>,
     ) -> JsResult<JSValue> {
-        this.blob.get_text(global_this, callframe)
+        self.blob.slice(cx, start, end, content_type)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn get_json(
-        this: &Self,
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
+    /// Not `Blob::stream`, which writes `JSBlob::m_stream`: `this_value` is a `JSBuildArtifact` with its own slot.
+    pub(crate) fn stream(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        chunk_size: JsLocal<'_>,
     ) -> JsResult<JSValue> {
-        this.blob.get_json(global_this, callframe)
-    }
-
-    #[bun_jsc::host_fn(method)]
-    pub fn get_array_buffer(
-        this: &Self,
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        this.blob.get_array_buffer(global_this, callframe)
-    }
-
-    #[bun_jsc::host_fn(method)]
-    pub fn get_slice(
-        this: &Self,
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        this.blob.get_slice(global_this, callframe)
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_type(this: &Self, global_this: &JSGlobalObject) -> JSValue {
-        BlobExt::get_type(&this.blob, global_this)
-    }
-
-    #[bun_jsc::host_fn(method)]
-    pub fn get_stream(
-        this: &Self,
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        this.blob.get_stream(global_this, callframe)
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_path(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        jsc::bun_string_jsc::create_utf8_for_js(global_this, &this.path)
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_loader(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        jsc::bun_string_jsc::create_utf8_for_js(
-            global_this,
-            <&'static str>::from(this.loader).as_bytes(),
+        self.blob.get_stream_with_cache(
+            &cx.js_thread(),
+            this_value.to_js(),
+            chunk_size.to_js(),
+            js::stream_get_cached,
+            js::stream_set_cached,
         )
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_hash(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_path(&self) -> &[u8] {
+        &self.path
+    }
+
+    pub(crate) fn get_loader(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        match self.loader {
+            bun_ast::Loader::Base64 => Ok(cx.global().common_strings().base64()),
+            loader => BunString::static_(<&'static str>::from(loader)).to_js(cx.global()),
+        }
+    }
+
+    pub(crate) fn get_hash(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         use std::io::Write;
         let mut buf = [0u8; 512];
         let mut cursor = &mut buf[..];
-        write!(cursor, "{}", bun_core::fmt::truncated_hash32(this.hash)).expect("Unexpected");
+        write!(cursor, "{}", self.hash).expect("Unexpected");
         let written = 512 - cursor.len();
-        jsc::bun_string_jsc::create_utf8_for_js(global_this, &buf[..written])
+        bun_string_jsc::create_utf8_for_js(cx.global(), &buf[..written])
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_size(this: &Self, global_object: &JSGlobalObject) -> JSValue {
-        // `Blob::get_size` is `&self` post-R-2 (lazy size caches are
-        // Cell-backed inside `Blob`), so a shared borrow is sound here.
-        this.blob.get_size(global_object)
+    pub(crate) fn get_size(&self) -> f64 {
+        self.blob.get_size()
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_mime_type(this: &Self, global_object: &JSGlobalObject) -> JSValue {
-        BlobExt::get_type(&this.blob, global_object)
+    pub(crate) fn get_type(&self, cx: &mut JsScope<'_>) -> JSValue {
+        self.blob.get_type(cx)
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_output_kind(this: &Self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        jsc::bun_string_jsc::create_utf8_for_js(
-            global_object,
-            <&'static str>::from(this.output_kind).as_bytes(),
-        )
+    pub(crate) fn get_kind(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        BunString::static_(<&'static str>::from(self.output_kind)).to_js(cx.global())
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_source_map(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        this.sourcemap.get().unwrap_or(JSValue::NULL)
+    pub(crate) fn get_sourcemap(&self, _: &JsHeap<'_>) -> JSValue {
+        // The value lives in the wrapper's `m_sourcemap` WriteBarrier (seeded
+        // by `on_complete`); the C++ getter returns that slot before calling
+        // here, so reaching this means no sourcemap was assigned.
+        JSValue::NULL
     }
 
-    pub fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
+    pub(crate) fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
         &self,
+        this_value: JSValue,
         formatter: &mut F,
         writer: &mut W,
     ) -> core::fmt::Result
@@ -2058,7 +2585,7 @@ impl BuildArtifact {
                 <&'static str>::from(self.output_kind),
             )?;
 
-            if self.hash != 0 {
+            if self.hash.value != 0 {
                 formatter
                     .print_comma::<W, ENABLE_ANSI_COLORS>(writer)
                     .expect("unreachable");
@@ -2069,7 +2596,7 @@ impl BuildArtifact {
                     writer,
                     ENABLE_ANSI_COLORS,
                     "<r>hash<r>: <green>\"{f}\"<r>",
-                    bun_core::fmt::truncated_hash32(self.hash),
+                    self.hash,
                 )?;
             }
 
@@ -2095,13 +2622,15 @@ impl BuildArtifact {
                     Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>sourcemap<r>: "),
                 )?;
 
-                if let Some(sourcemap) = self.sourcemap.get().and_then(|v| v.as_::<BuildArtifact>())
+                let sourcemap_value = js::sourcemap_get_cached(this_value);
+                if let Some((sm_value, sm_ptr)) =
+                    sourcemap_value.and_then(|v| v.as_::<BuildArtifact>().map(|p| (v, p)))
                 {
                     // SAFETY: `as_` returned a non-null wrapper-owned pointer;
-                    // `write_format` is `&self` so a shared borrow is sound
-                    // even if `sourcemap` aliases `self`.
-                    unsafe { &*sourcemap }
-                        .write_format::<F, W, ENABLE_ANSI_COLORS>(formatter, writer)?;
+                    // `write_format` is `&self` so a shared borrow of `sm_ptr`
+                    // is sound even if it aliases `self`.
+                    unsafe { &*sm_ptr }
+                        .write_format::<F, W, ENABLE_ANSI_COLORS>(sm_value, formatter, writer)?;
                 } else {
                     write!(
                         writer,

@@ -48,7 +48,7 @@ public:
 
 private:
     JSDOMConstructorNotConstructable(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure, nullptr, nullptr, templateErrorCode)
+        : Base(vm, structure, throwTypeErrorForJSDOMConstructorNotConstructable, throwTypeErrorForJSDOMConstructorNotConstructable, templateErrorCode)
     {
     }
 

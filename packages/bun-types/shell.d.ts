@@ -10,7 +10,7 @@ declare module "bun" {
     | ReadableStream;
 
   /**
-   * The [Bun shell](https://bun.com/docs/runtime/shell) is a powerful tool for running shell commands.
+   * Runs a shell command with the [Bun Shell](https://bun.com/docs/runtime/shell).
    *
    * @example
    * ```ts
@@ -27,7 +27,7 @@ declare module "bun" {
   namespace $ {
     /**
      * Perform bash-like brace expansion on the given pattern.
-     * @param pattern - Brace pattern to expand
+     * @param pattern Brace pattern to expand
      *
      * @example
      * ```js
@@ -44,10 +44,9 @@ declare module "bun" {
     function escape(input: string): string;
 
     /**
-     *
      * Change the default environment variables for shells created by this instance.
      *
-     * @param newEnv Default environment variables to use for shells created by this instance.
+     * @param newEnv Default environment variables to use for shells created by this instance
      * @default process.env
      *
      * @example
@@ -61,8 +60,9 @@ declare module "bun" {
     function env(newEnv?: Record<string, string | undefined> | NodeJS.Dict<string> | undefined): $;
 
     /**
+     * Change the default working directory for shells created by this instance.
      *
-     * @param newCwd Default working directory to use for shells created by this instance.
+     * @param newCwd Default working directory to use for shells created by this instance
      */
     function cwd(newCwd?: string): $;
 
@@ -72,13 +72,13 @@ declare module "bun" {
     function nothrow(): $;
 
     /**
-     * Configure whether or not the shell should throw an exception on non-zero exit codes.
+     * Configure whether the shell should throw an exception on non-zero exit codes.
      */
     function throws(shouldThrow: boolean): $;
 
     /**
-     * The `Bun.$.ShellPromise` class represents a shell command that gets executed
-     * once awaited, or called with `.text()`, `.json()`, etc.
+     * A shell command that runs once awaited, or once an output method like
+     * `.text()` or `.json()` is called.
      *
      * @example
      * ```ts
@@ -92,27 +92,27 @@ declare module "bun" {
 
       /**
        * Change the current working directory of the shell.
-       * @param newCwd - The new working directory
+       * @param newCwd The new working directory
        */
       cwd(newCwd: string): this;
 
       /**
        * Set environment variables for the shell.
-       * @param newEnv - The new environment variables
+       * @param newEnv The new environment variables
        *
        * @example
        * ```ts
-       * await $`echo $FOO`.env({ ...process.env, FOO: "LOL!" })
-       * expect(stdout.toString()).toBe("LOL!");
+       * const { stdout } = await $`echo $FOO`.env({ ...process.env, FOO: "bun" });
+       * console.log(stdout.toString()); // "bun\n"
        * ```
        */
       env(newEnv: Record<string, string | undefined> | NodeJS.Dict<string> | undefined): this;
 
       /**
-       * By default, the shell will write to the current process's stdout and stderr, as well as buffering that output.
+       * By default, the shell writes to the current process's stdout and stderr while also buffering that output.
        *
-       * This configures the shell to only buffer the output.
-       * @param isQuiet - Whether to suppress output. Defaults to true.
+       * `quiet()` configures the shell to only buffer the output.
+       * @param isQuiet Whether to suppress output. Defaults to `true`
        */
       quiet(isQuiet?: boolean): this;
 
@@ -128,7 +128,7 @@ declare module "bun" {
        *
        * Automatically calls {@link quiet} to disable echoing to stdout.
        *
-       * @param encoding - The encoding to use when decoding the output
+       * @param encoding The encoding to use when decoding the output
        * @returns A promise that resolves with stdout as a string
        *
        * @example
@@ -192,12 +192,12 @@ declare module "bun" {
       /**
        * Configure the shell to not throw an exception on non-zero exit codes. Throwing can be re-enabled with `.throws(true)`.
        *
-       * By default, the shell with throw an exception on commands which return non-zero exit codes.
+       * By default, the shell throws an exception on commands that return non-zero exit codes.
        */
       nothrow(): this;
 
       /**
-       * Configure whether or not the shell should throw an exception on non-zero exit codes.
+       * Configure whether the shell should throw an exception on non-zero exit codes.
        *
        * By default, this is configured to `true`.
        */
@@ -205,7 +205,7 @@ declare module "bun" {
     }
 
     /**
-     * ShellError represents an error that occurred while executing a shell command with [the Bun Shell](https://bun.com/docs/runtime/shell).
+     * An error that occurred while executing a shell command with [the Bun Shell](https://bun.com/docs/runtime/shell).
      *
      * @example
      * ```ts
@@ -226,7 +226,7 @@ declare module "bun" {
       /**
        * Read from stdout as a string
        *
-       * @param encoding - The encoding to use when decoding the output
+       * @param encoding The encoding to use when decoding the output
        * @returns Stdout as a string with the given encoding
        *
        * @example
@@ -284,11 +284,11 @@ declare module "bun" {
       blob(): Blob;
 
       /**
-       * Read from stdout as an Uint8Array
+       * Read from stdout as a Uint8Array
        *
-       * @returns Stdout as an Uint8Array
+       * @returns Stdout as a Uint8Array
        * @example
-       *```ts
+       * ```ts
        * const output = await $`echo hello`;
        * console.log(output.bytes()); // Uint8Array { byteLength: 6 }
        * ```
@@ -304,7 +304,7 @@ declare module "bun" {
       /**
        * Read from stdout as a string
        *
-       * @param encoding - The encoding to use when decoding the output
+       * @param encoding The encoding to use when decoding the output
        * @returns Stdout as a string with the given encoding
        *
        * @example
@@ -350,9 +350,9 @@ declare module "bun" {
       arrayBuffer(): ArrayBuffer;
 
       /**
-       * Read from stdout as an Uint8Array
+       * Read from stdout as a Uint8Array
        *
-       * @returns Stdout as an Uint8Array
+       * @returns Stdout as a Uint8Array
        * @example
        *
        * ```ts

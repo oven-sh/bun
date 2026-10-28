@@ -1,0 +1,361 @@
+////: callee-13
+function callee(round: number): number {
+  let sum = 0;
+  for (const step of steps()) sum += step;
+  return sum + (round & 3);
+}
+////: callee-17
+function callee(round: number): number {
+  for (const step of steps()) return step + (round & 3);
+  return -1;
+}
+////: steps
+function* steps(): Generator<number> {
+  try {
+    yield 1;
+    yield 2;
+  } finally {
+    strike();
+  }
+}
+////: steps-2
+function* steps(): Generator<number> {
+  yield 1;
+  strike();
+  yield 2;
+}
+////: steps-3
+function* steps(): Generator<number> {
+  strike();
+  yield 1;
+}
+////: steps-4
+function* steps(): Generator<number> {
+  yield 1;
+  yield strike() ? 10 : 2;
+}
+//// damage-behind-a-call-generators/a-delegating-generator.ts
+// A loop in a typed function steps a generator that delegates to another one with `yield*`. The inner one does the damage. The loop reads its object in every iteration.
+////= Point
+
+let strikes = false;
+function* inner(p: Point): Generator<number> {
+  yield 2;
+  if (strikes) Object.defineProperty(p, "x", { get: () => -7 });
+  yield 3;
+}
+function* outer(p: Point): Generator<number> {
+  yield 1;
+  yield* inner(p);
+  yield 4;
+}
+
+function holder(p: Point): string {
+  let text = "" + p.x;
+  for (const step of outer(p)) text += " " + step + ":" + p.x;
+  return text;
+}
+
+////= for-4
+//// damage-behind-a-call-generators/a-generator-between-two-yields-appends-a-fraction-to-an-array-of-integers.ts
+// A typed caller reads an array, makes a call and reads it again. A generator between two of its yields, in a loop of the callee, appends a fraction to an array that has held only small integers, which its type allows.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+
+let victim: number[] | null = null;
+let spark: number = 0;
+////= hot-19	target.push	0.5
+////= strike-2
+
+////= steps-2
+////= callee-13
+
+////= holder-40
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-generators/a-generator-between-two-yields-stores-a-string-into-a-number-field.ts
+// A typed caller reads an object, makes a call and reads it again. A generator between two of its yields, in a loop of the callee, stores a string into a number field of the object.
+////= Point
+
+let victim: Point | null = null;
+////= strike-9
+
+////= steps-2
+////= callee-13
+
+////= holder-4
+
+////= outer-20
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-generators/a-generator-between-two-yields-stores-null-into-a-reference-field.ts
+// A typed caller reads an object, makes a call and reads it again. A generator between two of its yields, in a loop of the callee, stores null into a field that is declared to hold an object.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+////= Leaf-5
+
+let victim: Branch | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-19	leaf	null
+////= strike
+
+////= steps-2
+////= callee-13
+
+////= holder-2
+
+////= outer-6
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-generators/a-generator-spread-into-an-array-appends-a-fraction-to-an-array-of-integers.ts
+// A typed caller reads an array, makes a call and reads it again. A generator, which a spread in the callee runs to its end, appends a fraction to an array that has held only small integers, which its type allows.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+
+let victim: number[] | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-24	target.push(0.5)
+////= strike
+
+////= steps-4
+function callee(round: number): number {
+  return [...steps()][1] + (round & 3);
+}
+
+////= holder-42
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-generators/a-generator-spread-into-an-array-stores-a-number-into-a-reference-field.ts
+// A typed caller reads an object, makes a call and reads it again. A generator, which a spread in the callee runs to its end, stores a number into a field that is declared to hold an object.
+////= Leaf-5
+
+let victim: Branch | null = null;
+////= strike-6
+
+////= steps-4
+function callee(round: number): number {
+  return [...steps()][1] + (round & 3);
+}
+
+////= holder-47
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-generators/a-generator-spread-into-an-array-stores-a-string-into-a-number-field.ts
+// A typed caller reads an object, makes a call and reads it again. A generator, which a spread in the callee runs to its end, stores a string into a number field of the object.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+////= Point
+
+let victim: Point | null = null;
+let spark: number = 0;
+////= hot-18	x	"text"
+////= strike-2
+
+////= steps-4
+function callee(round: number): number {
+  return [...steps()][1] + (round & 3);
+}
+
+////= holder-4
+
+////= outer-18
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-generators/a-generator-stepped-by-hand-defines-a-getter-above-an-absent-field.ts
+// A typed caller reads an object, makes a call and reads it again. A generator at its first step, which the callee asks for by calling next, defines a getter on the prototype object under the name of an optional field that the object does not have.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+////= Card
+
+let victim: Card | null = null;
+let spark: number = 0;
+////= hot-22	Object.defineProperty(Card.prototype, "note", { get: () => "from above", configurable: true })
+////= strike-2
+
+////= steps-3
+function callee(round: number): number {
+  return steps().next().value + (round & 3);
+}
+
+////= holder-6
+
+////= outer-15
+
+let digest = 0;
+////= for-7
+console.log("digest " + digest);
+//// damage-behind-a-call-generators/a-generator-stepped-by-hand-stores-a-fitting-number-by-name.ts
+// A typed caller reads an object, makes a call and reads it again. A generator at its first step, which the callee asks for by calling next, stores a number into a field of the object by a computed name, so that nothing about the object changes but the value.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+////= Point
+const names = ["x", "y"];
+
+let victim: Point | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-9
+////= strike
+
+////= steps-3
+function callee(round: number): number {
+  return steps().next().value + (round & 3);
+}
+
+////= holder-9
+
+////= outer-17
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-generators/a-generator-stepped-by-hand-takes-the-first-element-away.ts
+// A typed caller reads an array, makes a call and reads it again. A generator at its first step, which the callee asks for by calling next, takes the first element of the array away, in typed code.
+
+let victim: number[] | null = null;
+////= strike-25	target.shift()
+
+////= steps-3
+function callee(round: number): number {
+  return steps().next().value + (round & 3);
+}
+
+////= holder-41
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-generators/the-finally-block-of-a-generator-that-is-left-early-deletes-a-field.ts
+// A typed caller reads an object, makes a call and reads it again. The finally block of a generator, which runs because a loop in the callee is left early, deletes a field of the object.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+////= Point
+
+let victim: Point | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-21	x
+////= strike
+
+////= steps
+////= callee-17
+
+////= holder-13
+
+////= outer-50	Point = new Point(round, round + 1)	.x + p.y	x + "," + p.y + "," + ("x" in p) + "," + Object.keys(p).join("")
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-generators/the-finally-block-of-a-generator-that-is-left-early-makes-a-field-of-a-literal-an-accessor.ts
+// A typed caller reads an object, makes a call and reads it again. The finally block of a generator, which runs because a loop in the callee is left early, makes a field of the object, which an object literal has made, an accessor.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+type Pair = { left: number; right: number; note?: string };
+
+let victim: Pair | null = null;
+let spark: number = 0;
+////= hot-12
+////= strike-2
+
+////= steps
+////= callee-17
+
+////= holder-22
+
+////= outer-30
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-generators/the-finally-block-of-a-generator-that-is-left-early-puts-a-method-in-front-of-an-inherited-one.ts
+// A typed caller reads an object, makes a call and reads it again. The finally block of a generator, which runs because a loop in the callee is left early, gives the class a method of its own under a name that it has inherited so far.
+////= Shape-3
+const areaOfSquare = Square.prototype.area;
+const kindOfShape = Shape.prototype.kind;
+
+let victim: Square | null = null;
+////= strike-25	(Square.prototype as any).kind = () => "now its own"
+
+////= steps
+////= callee-17
+
+////= holder-39
+
+let digest = 0;
+////= for-11
+console.log("digest " + digest);
+//// damage-behind-a-call-generators/the-holder-is-a-generator.ts
+// A generator holds an object across calls and across yields. One of the calls does the damage, and in another round its consumer does it between two steps.
+////= Point
+
+let mode = 0;
+function touch(p: Point): number {
+  if (mode === 1) delete (p as any).x;
+  return 1;
+}
+
+function* holder(p: Point): Generator<string> {
+  const before = p.x;
+  yield before + ":" + p.x;
+  const got = touch(p);
+  yield got + ":" + p.x;
+  yield "last:" + p.x + "," + p.y;
+}
+
+function consume(p: Point): string {
+  let text = "";
+  let steps = 0;
+  for (const told of holder(p)) {
+    text += told + " ";
+    if (++steps === 2 && mode === 2) (p as any).x = "text";
+  }
+  return text + p.x;
+}
+
+////= for-18	300	consume	Point	round	1
+//// damage-behind-a-call-generators/values-sent-thrown-and-returned-into-a-generator.ts
+// A typed function drives a generator by hand with next, throw and return. The generator does the damage in the handler that `throw` enters and in the finally block that `return` enters.
+////= Point
+
+let strikes = false;
+function* listens(p: Point, q: Point): Generator<number, number, number> {
+  try {
+    let sent = 0;
+    try {
+      sent = yield 1;
+    } catch {
+      if (strikes) delete (p as any).x;
+      sent = yield 2;
+    }
+    return sent;
+  } finally {
+    if (strikes) (q as any).x = "text";
+  }
+}
+
+function holder(p: Point, q: Point): string {
+  const before = p.x + q.x;
+  const generator = listens(p, q);
+  const first = generator.next().value;
+  const second = generator.throw(new Error("in")).value;
+  const between = p.x + "," + q.x;
+  const third = generator.return(9).value;
+  return before + " " + first + second + third + " " + between + " " + p.x + "," + q.x;
+}
+
+////= for-24	holder(new Point(round, 1), new Point(round, 2)

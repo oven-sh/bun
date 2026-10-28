@@ -1,17 +1,6 @@
 use core::fmt;
 
-use bun_core::ZigString;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult};
-
-pub(crate) fn get_type_name(global_object: &JSGlobalObject, value: JSValue) -> ZigString {
-    let js_type = value.js_type();
-    if js_type.is_array() {
-        return ZigString::static_("array");
-    }
-    value
-        .js_type_string(global_object)
-        .get_zig_string(global_object)
-}
 
 #[cold]
 pub(crate) fn throw_err_invalid_arg_value(
@@ -43,7 +32,7 @@ pub(crate) fn throw_err_invalid_arg_type(
     expected_type: &str,
     value: JSValue,
 ) -> JsError {
-    let actual_type = get_type_name(global_this, value);
+    let actual_type = value.type_name(global_this);
     throw_err_invalid_arg_type_with_message(
         global_this,
         format_args!(
@@ -54,7 +43,7 @@ pub(crate) fn throw_err_invalid_arg_type(
 }
 
 #[cold]
-pub(crate) fn throw_range_error(global_this: &JSGlobalObject, args: fmt::Arguments<'_>) -> JsError {
+fn throw_range_error(global_this: &JSGlobalObject, args: fmt::Arguments<'_>) -> JsError {
     global_this.err(jsc::ErrorCode::OUT_OF_RANGE, args).throw()
 }
 
@@ -66,29 +55,10 @@ fn throw_range_error_msg(
     msg: &[u8],
 ) -> JsError {
     global_this.throw_range_error(
-        value,
+        bun_core::fmt::NodeNumber(value),
         jsc::RangeErrorOptions {
             field_name: name.as_bytes(),
             msg,
-            ..Default::default()
-        },
-    )
-}
-
-#[inline]
-fn throw_range_error_min_max<V: bun_core::fmt::OutOfRangeValue>(
-    global_this: &JSGlobalObject,
-    value: V,
-    name: &str,
-    min: i64,
-    max: i64,
-) -> JsError {
-    global_this.throw_range_error(
-        value,
-        jsc::RangeErrorOptions {
-            field_name: name.as_bytes(),
-            min,
-            max,
             ..Default::default()
         },
     )
@@ -135,12 +105,12 @@ pub(crate) fn validate_integer(
     let num = value.as_number();
 
     if num < min || num > max {
-        return Err(throw_range_error_min_max(
+        let range = format!(">= {min} && <= {max}");
+        return Err(throw_range_error_msg(
             global_this,
             num,
             name,
-            min as i64,
-            max as i64,
+            range.as_bytes(),
         ));
     }
 
@@ -165,7 +135,10 @@ pub(crate) fn validate_int32(
             value,
         ));
     }
-    if !value.is_any_int() {
+    let num = value.as_number();
+    // Number.isInteger semantics like Node's validateInt32: -0 and integral doubles
+    // outside the int52 range are integers; the range check below rejects out-of-range.
+    if !num.is_finite() || num.fract() != 0.0 {
         let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
         return Err(throw_range_error(
             global_this,
@@ -176,14 +149,13 @@ pub(crate) fn validate_int32(
             ),
         ));
     }
-    let num = value.as_number();
     // Use floating point comparison here to ensure values out of i32 range get caught instead of clamp/truncated.
     if num < (min as f64) || num > (max as f64) {
         let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
         return Err(throw_range_error(
             global_this,
             format_args!(
-                "The value of \"{}\" is out of range. It must be >= {} and <= {}. Received {}",
+                "The value of \"{}\" is out of range. It must be >= {} && <= {}. Received {}",
                 name,
                 min,
                 max,
@@ -208,7 +180,8 @@ pub(crate) fn validate_uint32(
             value,
         ));
     }
-    if !value.is_any_int() {
+    let num = value.as_number();
+    if !num.is_finite() || num.fract() != 0.0 {
         let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
         return Err(throw_range_error(
             global_this,
@@ -219,15 +192,14 @@ pub(crate) fn validate_uint32(
             ),
         ));
     }
-    let num: i64 = value.as_int52();
-    let min: i64 = if greater_than_zero { 1 } else { 0 };
-    let max: i64 = i64::from(u32::MAX);
+    let min: f64 = if greater_than_zero { 1.0 } else { 0.0 };
+    let max: f64 = f64::from(u32::MAX);
     if num < min || num > max {
         let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
         return Err(throw_range_error(
             global_this,
             format_args!(
-                "The value of \"{}\" is out of range. It must be >= {} and <= {}. Received {}",
+                "The value of \"{}\" is out of range. It must be >= {} && <= {}. Received {}",
                 name,
                 min,
                 max,
@@ -252,62 +224,6 @@ pub(crate) fn validate_string(
         ));
     }
     Ok(())
-}
-
-pub(crate) fn validate_number(
-    global_this: &JSGlobalObject,
-    value: JSValue,
-    name: &str,
-    maybe_min: Option<f64>,
-    maybe_max: Option<f64>,
-) -> JsResult<f64> {
-    if !value.is_number() {
-        return Err(global_this.throw_invalid_argument_type_value(name, "number", value));
-    }
-
-    let num: f64 = value.as_number();
-    let mut valid = true;
-    if let Some(min) = maybe_min {
-        if num < min {
-            valid = false;
-        }
-    }
-    if let Some(max) = maybe_max {
-        if num > max {
-            valid = false;
-        }
-    }
-    if (maybe_min.is_some() || maybe_max.is_some()) && num.is_nan() {
-        valid = false;
-    }
-    if !valid {
-        if let (Some(min), Some(max)) = (maybe_min, maybe_max) {
-            return Err(throw_range_error(
-                global_this,
-                format_args!(
-                    "The value of \"{}\" is out of range. It must be >= {} && <= {}. Received {}",
-                    name, min, max, num
-                ),
-            ));
-        } else if let Some(min) = maybe_min {
-            return Err(throw_range_error(
-                global_this,
-                format_args!(
-                    "The value of \"{}\" is out of range. It must be >= {}. Received {}",
-                    name, min, num
-                ),
-            ));
-        } else if let Some(max) = maybe_max {
-            return Err(throw_range_error(
-                global_this,
-                format_args!(
-                    "The value of \"{}\" is out of range. It must be <= {}. Received {}",
-                    name, max, num
-                ),
-            ));
-        }
-    }
-    Ok(num)
 }
 
 pub(crate) fn validate_boolean(
@@ -337,15 +253,15 @@ bitflags::bitflags! {
 
 impl ValidateObjectOptions {
     #[inline]
-    pub(crate) fn allow_nullable(self) -> bool {
+    fn allow_nullable(self) -> bool {
         self.contains(Self::ALLOW_NULLABLE)
     }
     #[inline]
-    pub(crate) fn allow_array(self) -> bool {
+    fn allow_array(self) -> bool {
         self.contains(Self::ALLOW_ARRAY)
     }
     #[inline]
-    pub(crate) fn allow_function(self) -> bool {
+    fn allow_function(self) -> bool {
         self.contains(Self::ALLOW_FUNCTION)
     }
 }
@@ -412,7 +328,7 @@ pub(crate) fn validate_array(
     min_length: Option<i32>,
 ) -> JsResult<()> {
     if !value.js_type().is_array() {
-        let actual_type = get_type_name(global_this, value);
+        let actual_type = value.type_name(global_this);
         return Err(throw_err_invalid_arg_type_with_message(
             global_this,
             format_args!(
@@ -502,9 +418,7 @@ pub(crate) fn validate_string_enum<T: StringEnum>(
     value: JSValue,
     name: impl fmt::Display,
 ) -> JsResult<T> {
-    // `bun_core::String` is `Copy` with no `Drop`;
-    // `OwnedString` is the RAII guard that releases the +1 ref on scope exit.
-    let str = bun_core::OwnedString::new(value.to_bun_string(global_this)?);
+    let str = value.to_bun_string(global_this)?;
     if let Some(v) = T::from_bun_string(&str) {
         return Ok(v);
     }

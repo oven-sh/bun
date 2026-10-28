@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 
 test("use strict causes CommonJS", () => {
   const { stdout, exitCode } = Bun.spawnSync({
@@ -209,3 +209,80 @@ test("math.pow", () => {
   expect(foo2(20.4) + "").toEqual("0.22140372138502384");
   expect(20.4 ** -0.5 + "").toEqual("0.22140372138502384");
 });
+
+describe("unterminated string literals in large files", () => {
+  test("reports an unterminated string literal at the end of a large JavaScript file", async () => {
+    using dir = tempDir("transpiler-long-unterminated-js", {
+      "index.js": `var s = "${Buffer.alloc(1 << 20, "a").toString()}`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("");
+    expect(stderr).toContain("Unterminated string literal");
+    expect(exitCode).toBe(1);
+  });
+
+  test("reports an unterminated string literal at the end of a large JSON file", async () => {
+    using dir = tempDir("transpiler-long-unterminated-json", {
+      "tsconfig.big.json": `{"name": "${Buffer.alloc(1 << 20, "a").toString()}`,
+      "index.js": `require("./tsconfig.big.json");`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("");
+    expect(stderr).toContain("Unterminated string literal");
+    expect(exitCode).toBe(1);
+  });
+});
+
+// 2 GiB through the printer takes over 30 seconds on a debug or ASAN build.
+test.skipIf(isDebug || isASAN)(
+  "printing more than 2 GiB of modules in one process keeps the space after a keyword",
+  async () => {
+    using dir = tempDir("transpiler-printer-position", {
+      "big.cjs": `module.exports = "${Buffer.alloc(1 << 20, "a").toString()}";`,
+      "probe.cjs": `module.exports = function named() { return typeof named; };`,
+      "index.cjs": `
+        const big = require.resolve("./big.cjs");
+        for (let i = 0; i < 2100; i++) {
+          delete require.cache[big];
+          module.children.length = 0;
+          require(big);
+          if (i % 50 === 0) Bun.gc(true);
+        }
+        console.log(require("./probe.cjs")());
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect(stdout).toBe("function\n");
+    expect(exitCode).toBe(0);
+  },
+);

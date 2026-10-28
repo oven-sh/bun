@@ -24,14 +24,18 @@ Or add it in dependencies in your package.json file:
   "cool-pkg": "link:cool-pkg"
 ```
 
-This package can now be "linked" into other projects using `bun link cool-pkg`. This will create a symlink in the `node_modules` directory of the target project, pointing to the local directory.
+You can now "link" this package into other projects using `bun link cool-pkg`. This command creates a symlink in the target project's `node_modules` directory pointing to the local directory.
 
 ```bash terminal icon="terminal"
 cd /path/to/my-app
 bun link cool-pkg
 ```
 
-In addition, the `--save` flag can be used to add `cool-pkg` to the `dependencies` field of your app's package.json with a special version specifier that tells Bun to load from the registered local directory instead of installing from `npm`:
+Pass `--save` to also add `cool-pkg` to the `dependencies` field of your app's package.json, with a version specifier that tells Bun to load from the registered local directory instead of installing from `npm`:
+
+```bash terminal icon="terminal"
+bun link --save cool-pkg
+```
 
 ```json package.json icon="file-json"
 {
@@ -42,6 +46,24 @@ In addition, the `--save` flag can be used to add `cool-pkg` to the `dependencie
   }
 }
 ```
+
+## Linking a directory by path
+
+`link:` also accepts a path, as in Yarn and pnpm. The path is relative to the `package.json` that declares it, and Bun installs a symlink to that directory. Nothing has to be registered with `bun link` first.
+
+```json package.json icon="file-json"
+{
+  "dependencies": {
+    "design-tokens": "link:./vendor/design-tokens",
+    "shared": "link:../shared"
+  }
+}
+```
+
+- Anything that is not a package name is a path: `link:./dir`, `link:../dir`, `link:vendor/dir`, an absolute path. `link:dir` and `link:@scope/dir` are names registered with `bun link`; write `link:./dir` for the directory.
+- The directory must exist. It does not need a `package.json`.
+- The directory's own dependencies are not installed. Use `file:` for a copy whose dependencies are installed, or make the directory a [workspace](/pm/workspaces).
+- Only your project may use a path: the root `package.json`, a workspace, a `file:` directory one of them depends on, or a top-level `overrides` / `resolutions` entry. `bun install` fails when a package from the registry, git or a tarball declares one, so replace a `link:` path before you publish a package.
 
 ## Unlinking
 
@@ -54,6 +76,7 @@ bun unlink
 
 ```txt
 bun unlink v1.3.3 (7416672e)
+success: unlinked package "cool-pkg"
 ```
 
 ---

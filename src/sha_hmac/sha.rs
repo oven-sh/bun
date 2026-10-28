@@ -4,28 +4,19 @@ use core::ptr;
 use bun_boringssl as boringssl;
 use bun_boringssl_sys as boringssl_sys;
 
-// ──────────────────────────────────────────────────────────────────────────
-// BoringSSL FFI surface — thin re-export shim over `bun_boringssl_sys`.
-//
-// Kept as a `pub mod ffi` (rather than deleted outright) so existing path
-// consumers — `s3_signing::credentials`, `runtime::crypto::{PBKDF2,CryptoHasher}`,
-// `crate::hmac` — need no `use`-path edits. All symbols now resolve to the
-// canonical sys-crate definitions, which unifies `EVP_MD`/`EVP_MD_CTX` type
-// identity across crates (eliminating the cross-crate opaque-pointer casts).
-// ──────────────────────────────────────────────────────────────────────────
-pub mod ffi {
-    pub use bun_boringssl_sys::{
-        ENGINE, EVP_Digest, EVP_DigestFinal, EVP_DigestInit, EVP_DigestUpdate, EVP_MD, EVP_MD_CTX,
+/// The `bun_boringssl_sys` symbols this crate calls.
+pub(crate) mod ffi {
+    pub(crate) use bun_boringssl_sys::{
+        EVP_Digest, EVP_DigestFinal, EVP_DigestInit, EVP_DigestUpdate, EVP_MD, EVP_MD_CTX,
         EVP_MD_CTX_cleanup, EVP_MD_CTX_init, EVP_blake2b256, EVP_blake2b512, EVP_md4, EVP_md5,
-        EVP_md5_sha1, EVP_ripemd160, EVP_sha1, EVP_sha3_224, EVP_sha3_256, EVP_sha3_384,
-        EVP_sha3_512, EVP_sha224, EVP_sha256, EVP_sha384, EVP_sha512, EVP_sha512_224,
-        EVP_sha512_256, HMAC,
+        EVP_ripemd160, EVP_sha1, EVP_sha3_224, EVP_sha3_256, EVP_sha3_384, EVP_sha3_512,
+        EVP_sha224, EVP_sha256, EVP_sha384, EVP_sha512, EVP_sha512_224, EVP_sha512_256, HMAC,
     };
 
     /// `#define EVP_MAX_MD_SIZE 64` — SHA-512 is the longest digest. Re-typed
     /// as `usize` (sys crate exposes `c_int`) so `[u8; EVP_MAX_MD_SIZE]` array
     /// lengths in `hmac` / `SASL` / `s3_signing` keep compiling unchanged.
-    pub const EVP_MAX_MD_SIZE: usize = bun_boringssl_sys::EVP_MAX_MD_SIZE as usize;
+    pub(crate) const EVP_MAX_MD_SIZE: usize = bun_boringssl_sys::EVP_MAX_MD_SIZE as usize;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -65,9 +56,9 @@ macro_rules! new_hasher {
 
             pub fn init() -> Self {
                 boringssl::load();
-                // SAFETY: `$ctx` is a BoringSSL POD context struct for which the
-                // all-zero bit pattern is a valid (uninitialised) value.
-                let mut this: Self = unsafe { bun_core::ffi::zeroed_unchecked() };
+                let mut this = Self {
+                    hasher: bun_core::ffi::zeroed(),
+                };
                 // SAFETY: `this.hasher` is a writable, properly sized `$ctx`;
                 // BoringSSL *_Init only writes to it and does not read prior contents.
                 let rc: c_int = unsafe { $init(&mut this.hasher) };
@@ -118,8 +109,9 @@ macro_rules! new_evp {
 
                 // EVP md getters are infallible `safe fn` returning static singletons.
                 let md = ffi::$md_fn();
-                // SAFETY: EVP_MD_CTX_init zero-initialises; reading zeroed POD is fine.
-                let mut this: Self = unsafe { bun_core::ffi::zeroed_unchecked() };
+                let mut this = Self {
+                    ctx: bun_core::ffi::zeroed(),
+                };
 
                 // ctx is zeroed POD; EVP_MD_CTX_init writes it in place.
                 ffi::EVP_MD_CTX_init(&mut this.ctx);
@@ -131,16 +123,11 @@ macro_rules! new_evp {
                 this
             }
 
-            /// # Safety
-            /// `engine` must be null (default engine) or a live `ENGINE*`.
-            pub unsafe fn hash(
-                bytes: &[u8],
-                out: &mut [u8; $digest_size],
-                engine: *mut ffi::ENGINE,
-            ) {
+            pub fn hash(bytes: &[u8], out: &mut [u8; $digest_size]) {
                 let md = ffi::$md_fn();
 
-                // SAFETY: `out` is DIGEST bytes; `size` out-param is nullable.
+                // SAFETY: `out` is DIGEST bytes; the `size` out-param and the
+                // `ENGINE`, which BoringSSL never reads, are nullable.
                 let rc: c_int = unsafe {
                     ffi::EVP_Digest(
                         bytes.as_ptr().cast::<c_void>(),
@@ -148,7 +135,7 @@ macro_rules! new_evp {
                         out.as_mut_ptr(),
                         ptr::null_mut(),
                         md,
-                        engine,
+                        ptr::null_mut(),
                     )
                 };
                 debug_assert!(rc == 1);
@@ -194,15 +181,13 @@ pub mod evp {
     new_evp!(SHA384, SHA384_DIGEST_LENGTH, EVP_sha384);
     new_evp!(SHA256, SHA256_DIGEST_LENGTH, EVP_sha256);
     new_evp!(SHA512_256, SHA512_256_DIGEST_LENGTH, EVP_sha512_256);
-    new_evp!(MD5_SHA1, 36, EVP_md5_sha1); // EVP_md5_sha1 writes MD5(16) || SHA1(20) = 36 bytes
-    new_evp!(Blake2, 256 / 8, EVP_blake2b256);
 
     // ──────────────────────────────────────────────────────────────────────
     // evp::Algorithm — moved from bun_jsc::api::bun::crypto,
     //   so `csrf` and `sha_hmac::hmac` can name it without
     //   depending upward on bun_jsc/bun_runtime.
-    //   Only the enum + `md()` are lowered; `names` (needs bun.String) and
-    //   the name-lookup map stay in the higher-tier EVP wrapper.
+    //   Only the enum + `md()` are lowered; the name-lookup map stays in the
+    //   higher-tier EVP wrapper.
     // ──────────────────────────────────────────────────────────────────────
 
     /// We do this to avoid asking BoringSSL what the digest name is, because
@@ -210,18 +195,6 @@ pub mod evp {
     #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
     #[non_exhaustive]
     pub enum Algorithm {
-        // DsaSha,
-        // DsaSha1,
-        // Md5Sha1,
-        // RsaMd5,
-        // RsaRipemd160,
-        // RsaSha1,
-        // RsaSha1_2,
-        // RsaSha224,
-        // RsaSha256,
-        // RsaSha384,
-        // RsaSha512,
-        // EcdsaWithSha1,
         Blake2b256,
         Blake2b512,
         Blake2s256,
@@ -274,7 +247,6 @@ pub mod evp {
 pub use evp::Algorithm;
 pub use evp::MD4;
 pub use evp::MD5;
-pub use evp::MD5_SHA1;
 pub use evp::SHA1;
 pub use evp::SHA224;
 pub use evp::SHA256;
@@ -297,26 +269,6 @@ pub mod hashers {
     );
 
     new_hasher!(
-        SHA512,
-        SHA512_DIGEST_LENGTH,
-        boringssl_sys::SHA512_CTX,
-        boringssl_sys::SHA512,
-        boringssl_sys::SHA512_Init,
-        boringssl_sys::SHA512_Update,
-        boringssl_sys::SHA512_Final
-    );
-
-    new_hasher!(
-        SHA384,
-        SHA384_DIGEST_LENGTH,
-        boringssl_sys::SHA512_CTX,
-        boringssl_sys::SHA384,
-        boringssl_sys::SHA384_Init,
-        boringssl_sys::SHA384_Update,
-        boringssl_sys::SHA384_Final
-    );
-
-    new_hasher!(
         SHA256,
         SHA256_DIGEST_LENGTH,
         boringssl_sys::SHA256_CTX,
@@ -324,25 +276,5 @@ pub mod hashers {
         boringssl_sys::SHA256_Init,
         boringssl_sys::SHA256_Update,
         boringssl_sys::SHA256_Final
-    );
-
-    new_hasher!(
-        SHA512_256,
-        SHA512_256_DIGEST_LENGTH,
-        boringssl_sys::SHA512_CTX,
-        boringssl_sys::SHA512_256,
-        boringssl_sys::SHA512_256_Init,
-        boringssl_sys::SHA512_256_Update,
-        boringssl_sys::SHA512_256_Final
-    );
-
-    new_hasher!(
-        RIPEMD160,
-        boringssl_sys::RIPEMD160_DIGEST_LENGTH as usize,
-        boringssl_sys::RIPEMD160_CTX,
-        boringssl_sys::RIPEMD160,
-        boringssl_sys::RIPEMD160_Init,
-        boringssl_sys::RIPEMD160_Update,
-        boringssl_sys::RIPEMD160_Final
     );
 }

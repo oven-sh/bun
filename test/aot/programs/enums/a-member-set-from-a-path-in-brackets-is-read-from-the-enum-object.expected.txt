@@ -1,0 +1,6 @@
+ahead of the enums TypeError TypeError TypeError
+the objects {"31":"OnLink","41":"OnLinkAndMember","OnLink":31,"OnLinkAndMember":41} {"1":"A","2":"OnItsOwnPath","A":1,"OnItsOwnPath":2}
+read 31 41 31 31 2
+stored stored stored stored stored stored
+members deleted undefined undefined undefined undefined undefined
+enums deleted TypeError TypeError TypeError TypeError TypeError

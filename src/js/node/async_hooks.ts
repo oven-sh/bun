@@ -18,90 +18,254 @@
 // other checks to ensure that AsyncLocalStorage has virtually no impact on performance when not in
 // use. But the nature of this approach makes the implementation *itself* very low-impact on performance.
 //
-// AsyncContextData is an immutable array managed in here, formatted [key, value, key, value] where
-// each key is an AsyncLocalStorage object and the value is the associated value. There are a ton of
-// calls to $assert which will verify this invariant (only during bun-debug)
+// AsyncContextData is the innermost Frame of a persistent linked list managed in
+// here: each Frame binds one AsyncLocalStorage to a value and points at the frame
+// it was pushed onto, so run() allocates one small object on entry and, when
+// nested, one on exit (re-linking only the frames of other storages above an
+// existing binding of the same storage), getStore() walks a chain no longer
+// than the number of storages, and a captured context is a single reference
+// that shares its tail with every other capture.
 //
 const setAsyncHooksEnabled = $newCppFunction("NodeAsyncHooks.cpp", "jsSetAsyncHooksEnabled", 1);
-const cleanupLater = $newCppFunction("NodeAsyncHooks.cpp", "jsCleanupLater", 0);
 const { validateFunction, validateString, validateObject } = require("internal/validators");
+// SameValue in pure operators. Node compares stores with the primordial
+// ObjectIs; capturing Object.is here would still inherit a patch applied
+// before this module was lazily loaded.
+function sameValue(a, b) {
+  if (a === b) return a !== 0 || 1 / a === 1 / b;
+  return a !== a && b !== b;
+}
+
+class Frame {
+  readonly storage: AsyncLocalStorage;
+  readonly value: unknown;
+  readonly prev: Frame | undefined;
+  // Storages that disable() exited while this frame was current. A lookup that
+  // *starts* here (or at a frame later pushed on top, which inherits the mask)
+  // sees no binding for them; lookups that merely pass through from an older
+  // frame above are unaffected. This is Node deleting the key from the current
+  // frame object: holders of that exact frame and copies made from it later lose
+  // the binding, earlier copies keep it. Usually undefined.
+  masked: AsyncLocalStorage[] | undefined;
+  constructor(
+    storage: AsyncLocalStorage,
+    value: unknown,
+    prev: Frame | undefined,
+    masked: AsyncLocalStorage[] | undefined,
+  ) {
+    this.storage = storage;
+    this.value = value;
+    this.prev = prev;
+    this.masked = masked;
+  }
+}
 
 // Only run during debug
-function assertValidAsyncContextArray(array: unknown): array is ReadonlyArray<any> | undefined {
-  // undefined is OK
-  if (array === undefined) return true;
-  // Otherwise, it must be an array
-  $assert(
-    Array.isArray(array),
-    "AsyncContextData must be an array or undefined, got",
-    Bun.inspect(array, { depth: 1 }),
-  );
-  // the array has to be even
-  $assert(array.length % 2 === 0, "AsyncContextData should be even-length, got", Bun.inspect(array, { depth: 1 }));
-  // if it is zero-length, use undefined instead
-  $assert(array.length > 0, "AsyncContextData should be undefined if empty, got", Bun.inspect(array, { depth: 1 }));
-  for (var i = 0; i < array.length; i += 2) {
+function assertValidFrame(frame: unknown): boolean {
+  for (var f = frame, n = 0; f !== undefined; f = (f as Frame).prev, n++) {
+    // A Bun.ModuleGraph's context is a frame whose storage is the graph: made in
+    // ModuleGraph.cpp (null prototype), or a copy of one made here.
     $assert(
-      array[i] instanceof AsyncLocalStorage,
-      `Odd indexes in AsyncContextData should be an array of AsyncLocalStorage\nIndex %s was %s`,
-      i,
-      array[i],
+      f instanceof Frame || Object.getPrototypeOf(f) === null,
+      "AsyncContextData must be a Frame chain or undefined, got",
+      f,
     );
+    $assert(
+      $isObject((f as Frame).storage),
+      "Frame.storage must be an AsyncLocalStorage, a ModuleGraph, or (leaving a graph's context) the global object",
+    );
+    $assert((f as Frame).masked === undefined || $isJSArray((f as Frame).masked), "Frame.masked must be an array");
+    $assert(n < 10000, "AsyncContextData chain is unreasonably long (cycle?)");
   }
   return true;
 }
 
 // Only run during debug
-function debugFormatContextValue(value: ReadonlyArray<any> | undefined) {
-  if (value === undefined) return "undefined";
-  let str = "{\n";
-  for (var i = 0; i < value.length; i += 2) {
-    str += `  ${value[i].__id__}: typeof = ${typeof value[i + 1]}\n`;
+function debugFormatContextValue(frame: Frame | undefined) {
+  if (frame === undefined) return "undefined";
+  let str = "{";
+  for (var f: Frame | undefined = frame; f !== undefined; f = f.prev) {
+    str += ` ${(f.storage as any).__id__}: ${typeof f.value};`;
   }
-  str += "}";
-  return str;
+  return str + " }";
 }
 
-function get(): ReadonlyArray<any> | undefined {
+// Bumped whenever disable() masks a frame in place, so run() can tell that the
+// chain it installed changed under it even though its identity did not.
+let frameMutations = 0;
+
+function get(): Frame | undefined {
   $debug("get", debugFormatContextValue($getInternalField($asyncContext, 0)));
   return $getInternalField($asyncContext, 0);
 }
 
-function set(contextValue: ReadonlyArray<any> | undefined) {
-  $assert(assertValidAsyncContextArray(contextValue));
-  $debug("set", debugFormatContextValue(contextValue));
-  return $putInternalField($asyncContext, 0, contextValue);
+// Until a frame is put in place for the first time, every context that a job could capture is undefined, and the engine captures and restores nothing.
+// Compiled code waits for that frame, which keeps an await short in a program that only creates an AsyncLocalStorage. Under the JIT an await costs
+// the same either way, and a call in set() that is never made again costs every run(): there the constructors turn tracking on.
+// A job that began after the first constructor ran puts back what was in place in front of it either way: compiled code says when that was.
+let isTrackingEnabled = false;
+let hasConstructorRun = false;
+// Compiled code: whether the constructor of AsyncResource has more to do than to fill the fields.
+let hasResourceConstructorMoreToDo = true;
+
+function constructorRunsForFirstTime() {
+  hasConstructorRun = true;
+  hasResourceConstructorMoreToDo = hasEnabledCreateHook;
+  if (!isTrackingEnabled) setAsyncHooksEnabled(false);
 }
 
-class AsyncLocalStorage {
-  #disabled = false;
-
-  constructor() {
+function set(frame: Frame | undefined) {
+  $assert(assertValidFrame(frame));
+  $debug("set", debugFormatContextValue(frame));
+  if (IS_COMPILED_AHEAD_OF_TIME && !isTrackingEnabled && frame !== undefined) {
+    isTrackingEnabled = true;
     setAsyncHooksEnabled(true);
+  }
+  return $putInternalField($asyncContext, 0, frame);
+}
+
+function isMasked(frame: Frame | undefined, storage: AsyncLocalStorage): boolean {
+  if (frame === undefined || frame.masked === undefined) return false;
+  var masked = frame.masked;
+  for (var i = 0, n = masked.length; i < n; i++) {
+    if (masked[i] === storage) return true;
+  }
+  return false;
+}
+
+function unmask(masked: AsyncLocalStorage[] | undefined, storage: AsyncLocalStorage): AsyncLocalStorage[] | undefined {
+  if (masked === undefined) return undefined;
+  var rest: AsyncLocalStorage[] = [];
+  for (var i = 0, n = masked.length; i < n; i++) {
+    if (masked[i] !== storage) $arrayPush(rest, masked[i]);
+  }
+  return rest.length === 0 ? undefined : rest.length === masked.length ? masked : rest;
+}
+
+// The binding of `storage` visible from `start`, or undefined.
+function lookup(start: Frame | undefined, storage: AsyncLocalStorage): Frame | undefined {
+  if (isMasked(start, storage)) return undefined;
+  return find(start, storage);
+}
+
+// The innermost frame binding `storage` at or below `frame`, ignoring masks.
+function find(frame: Frame | undefined, storage: AsyncLocalStorage): Frame | undefined {
+  for (var f = frame; f !== undefined; f = f.prev) {
+    if (f.storage === storage) return f;
+  }
+  return undefined;
+}
+
+// A new binding on top of `head`; what was visible from `head` stays visible.
+function push(head: Frame | undefined, storage: AsyncLocalStorage, value: unknown): Frame {
+  return new Frame(storage, value, head, head === undefined ? undefined : unmask(head.masked, storage));
+}
+
+// `frame` with the binding of `storage` removed. Frames above it are copied
+// (they may be shared with other captures); the tail below it is shared. The
+// view from the result is the view from `frame` minus that binding, masks
+// included. run() (inlined on entry) and enterWith() both drop the old binding
+// this way, so a chain never holds two bindings of one storage and a capture
+// never keeps a shadowed value alive.
+function without(frame: Frame | undefined, storage: AsyncLocalStorage): Frame | undefined {
+  var found = find(frame, storage);
+  if (found === undefined) return frame;
+  return copyUntil(frame!, found, found.prev);
+}
+
+// Copies [from, stop) onto tail so that the view from the result is the view
+// from `from` minus what was cut out: the new head carries `from`'s mask (a
+// deeper frame's own mask describes lookups that start *there* and is not
+// inherited), interior copies keep theirs.
+function copyUntil(from: Frame, stop: Frame, tail: Frame | undefined): Frame | undefined {
+  if (from === stop) {
+    if (tail === undefined || tail.masked === from.masked) return tail;
+    return new Frame(tail.storage, tail.value, tail.prev, from.masked);
+  }
+  var copied: Frame[] = [];
+  for (var f = from; f !== stop; f = f.prev!) {
+    $arrayPush(copied, f);
+  }
+  for (var i = copied.length - 1; i >= 0; i--) {
+    tail = new Frame(copied[i].storage, copied[i].value, tail, copied[i].masked);
+  }
+  return tail;
+}
+
+function mergeMasks(a: AsyncLocalStorage[] | undefined, b: AsyncLocalStorage[]): AsyncLocalStorage[] {
+  if (a === undefined) return b;
+  var merged: AsyncLocalStorage[] = [];
+  for (var i = 0, n = a.length; i < n; i++) $arrayPush(merged, a[i]);
+  for (var i = 0, n = b.length; i < n; i++) $arrayPush(merged, b[i]);
+  return merged;
+}
+
+// Node parity: dispose() is enterWith(previousStore), which on a fresh ALS
+// leaves a binding to undefined rather than removing it like run(). Like any
+// enterWith() residue, it is dropped at the next top-level checkpoint.
+class RunScope {
+  #storage: AsyncLocalStorage;
+  #previousStore: unknown;
+  #disposed = false;
+
+  constructor(storage: AsyncLocalStorage, store: unknown) {
+    this.#storage = storage;
+    this.#previousStore = storage.getStore();
+    storage.enterWith(store);
+  }
+
+  dispose() {
+    if (this.#disposed) {
+      return;
+    }
+    this.#disposed = true;
+    this.#storage.enterWith(this.#previousStore);
+  }
+
+  [Symbol.dispose]() {
+    this.dispose();
+  }
+}
+
+class AsyncLocalStorage<T = any> {
+  #defaultValue: T | undefined = undefined;
+  #name: string | undefined = undefined;
+
+  constructor(options?) {
+    if (options !== undefined) {
+      validateObject(options, "options");
+      this.#defaultValue = options.defaultValue;
+      const name = options.name;
+      if (name !== undefined) {
+        this.#name = `${name}`;
+      }
+    }
+    if (!IS_COMPILED_AHEAD_OF_TIME) setAsyncHooksEnabled(true);
+    else if (!hasConstructorRun) constructorRunsForFirstTime();
 
     // In debug mode assign every AsyncLocalStorage a unique ID
     if (IS_BUN_DEVELOPMENT) {
       const uid = Math.random().toString(36).slice(2, 8);
       const source = require("bun:jsc").callerSourceOrigin();
 
-      (this as any).__id__ = uid + "@" + require("node:path").basename(source);
+      (this as any).__id__ = uid + "@" + require("node:path").basename(source!);
 
       $debug("new AsyncLocalStorage uid=", (this as any).__id__, source);
     }
   }
 
-  static bind(fn, ...args: any) {
-    validateFunction(fn);
+  static bind(fn: (...args: any[]) => unknown, ...args: any) {
+    validateFunction(fn, "fn");
     return this.snapshot().bind(null, fn, ...args);
   }
 
   static snapshot() {
     var context = get();
-    return (fn, ...args) => {
+    return <R extends unknown>(fn: (...args: any[]) => R, ...args: unknown[]): R => {
       var prev = get();
       set(context);
       try {
-        return fn(...args);
+        return fn.$apply(undefined, args);
       } finally {
         set(prev);
       }
@@ -109,129 +273,93 @@ class AsyncLocalStorage {
   }
 
   enterWith(store) {
-    cleanupLater();
-    // we must renable it when asyncLocalStorage.enterWith() is called https://nodejs.org/api/async_context.html#asynclocalstoragedisable
-    this.#disabled = false;
-    var context = get();
-    if (!context) {
-      set([this, store]);
-      return;
-    }
-    var { length } = context;
-    $assert(length > 0);
-    $assert(length % 2 === 0);
-    for (var i = 0; i < length; i += 2) {
-      if (context[i] === this) {
-        $assert(length > i + 1);
-        const clone = context.slice();
-        clone[i + 1] = store;
-        set(clone);
-        return;
-      }
-    }
-    set(context.concat(this, store));
-    $assert(this.getStore() === store);
+    // Replace rather than shadow an existing binding so repeated enterWith() calls
+    // keep the chain bounded by the number of storages.
+    set(push(without(get(), this), this, store));
+    $assert(sameValue(this.getStore(), store));
   }
 
-  exit(cb, ...args) {
+  exit<R>(cb: (...args: any[]) => R, ...args: unknown[]): R {
     return this.run(undefined, cb, ...args);
   }
 
-  // This function is litered with $asserts to ensure that everything that
-  // is assumed to be true is *actually* true.
-  run(store_value, callback, ...args) {
+  run<R>(store_value: T | undefined, callback: (...args: any[]) => R, ...args: unknown[]): R {
     $debug("run " + (this as any).__id__);
-    var context = get() as any[]; // we make sure to .slice() before mutating
-    var hasPrevious = false;
-    var previous_value;
-    var i = 0;
-    var contextWasAlreadyInit = !context;
-    // we must renable it when asyncLocalStorage.run() is called https://nodejs.org/api/async_context.html#asynclocalstoragedisable
-    const wasDisabled = this.#disabled;
-    this.#disabled = false;
-    if (contextWasAlreadyInit) {
-      set((context = [this, store_value]));
-    } else {
-      // it's safe to mutate context now that it was cloned
-      context = context!.slice();
-      i = context.indexOf(this);
-      if (i > -1) {
-        $assert(i % 2 === 0);
-        hasPrevious = true;
-        previous_value = context[i + 1];
-        context[i + 1] = store_value;
-      } else {
-        i = context.length;
-        context.push(this, store_value);
-        $assert(i % 2 === 0);
-        $assert(context.length % 2 === 0);
-      }
-      set(context);
+    var prior = get();
+    var bound = find(prior, this);
+    var beforeValue = bound !== undefined && !isMasked(prior, this) ? bound.value : this.#defaultValue;
+    // Node short-circuits when the value is unchanged: no enterWith, no
+    // finally-restore. Observable when the callback calls enterWith() —
+    // the new value survives past run() (verified against Node v22/v26).
+    if (sameValue(beforeValue, store_value)) {
+      return callback.$apply(undefined, args);
     }
-    $assert(i > -1, "i was not set");
-    $assert(this.getStore() === store_value, "run: store_value was not set");
+    var mutations = frameMutations;
+    // Replace rather than shadow an outer binding of this storage, so a callback
+    // captured inside exit() or a nested run() does not retain the outer value.
+    // Only frames of other storages pushed since that binding are copied; when
+    // it is the innermost frame (or absent) this is just `prior` / `prior.prev`.
+    var frame = push(bound === undefined ? prior : copyUntil(prior!, bound, bound.prev), this, store_value);
+    set(frame);
     try {
-      return callback(...args);
+      // $apply, not a spread: spreading goes through Array.prototype[Symbol.iterator],
+      // which userland can delete (node uses ReflectApply here for the same reason).
+      return callback.$apply(undefined, args);
     } finally {
-      // Note: early `return` will prevent `throw` above from working. I think...
-      // Set AsyncContextFrame to undefined if we are out of context values
-      if (!wasDisabled) {
-        var context2 = get()! as any[]; // we make sure to .slice() before mutating
-        if (context2 === context && contextWasAlreadyInit) {
-          $assert(context2.length === 2, "context was mutated without copy");
-          set(undefined);
-        } else {
-          context2 = context2.slice(); // array is cloned here
-          $assert(context2[i] === this);
-          if (hasPrevious) {
-            context2[i + 1] = previous_value;
-            set(context2);
-          } else {
-            // i wonder if this is a fair assert to make
-            context2.splice(i, 2);
-            $assert(context2.length % 2 === 0);
-            set(context2.length ? context2 : undefined);
-          }
-        }
-        $assert(
-          this.getStore() === previous_value,
-          "run: previous_value",
-          Bun.inspect(previous_value),
-          "was not restored, i see",
-          this.getStore(),
-        );
+      var head = get();
+      if (
+        mutations === frameMutations &&
+        (head === frame ||
+          (head !== undefined && head.prev === frame.prev && head.storage === this && head.masked === frame.masked))
+      ) {
+        // Node exits through enterWith(prior), a fresh frame object: a later
+        // disable() reaches continuations captured after run() returned but not
+        // ones captured before it, so `prior` itself must not become current
+        // again. An enclosing run() recognises the copy of its frame above.
+        set(prior === undefined ? undefined : new Frame(prior.storage, prior.value, prior.prev, prior.masked));
+      } else {
+        // enterWith()/disable() ran inside the callback. Node's finally is
+        // enterWith(prior store): keep whatever else the callback installed and
+        // rebind this storage to what getStore() returned on entry. Frames may
+        // have been copied since (enterWith() of a storage bound further down
+        // copies everything above it), so go by value, not identity: drop the
+        // binding of this storage and put the prior one back on top. Enclosing
+        // run()s of the same storage restore their own value likewise.
+        set(push(without(head, this), this, beforeValue));
       }
+      $assert(sameValue(this.getStore(), beforeValue), "run: previous value was not restored");
     }
   }
 
   disable() {
     $debug("disable " + (this as any).__id__);
-    // In this case, we actually do want to mutate the context state
-    if (this.#disabled) return;
-    this.#disabled = true;
-    var context = get() as any[];
-    if (context) {
-      var { length } = context;
-      for (var i = 0; i < length; i += 2) {
-        if (context[i] === this) {
-          context.splice(i, 2);
-          set(context.length ? context : undefined);
-          break;
-        }
-      }
+    // Node deletes the key from the current frame object: continuations holding
+    // that exact frame (and frames later pushed onto it) lose the binding, older
+    // ones keep it. Mask it on the current frame rather than unlinking shared
+    // nodes; see Frame.masked.
+    var top = get();
+    if (top !== undefined && lookup(top, this) !== undefined) {
+      top.masked = mergeMasks(top.masked, [this]);
+      frameMutations++;
     }
   }
 
-  getStore() {
+  get name() {
+    return this.#name || "";
+  }
+
+  getStore(): T | undefined {
     $debug("getStore " + (this as any).__id__);
-    // disabled AsyncLocalStorage always returns undefined https://nodejs.org/api/async_context.html#asynclocalstoragedisable
-    if (this.#disabled) return;
-    var context = get();
-    if (!context) return;
-    var { length } = context;
-    for (var i = 0; i < length; i += 2) {
-      if (context[i] === this) return context[i + 1];
+    var start = get();
+    if (start === undefined || isMasked(start, this)) return this.#defaultValue;
+    for (var f: Frame | undefined = start; f !== undefined; f = f.prev) {
+      if (f.storage === this) return f.value as T;
     }
+    return this.#defaultValue;
+  }
+
+  withScope(store) {
+    return new RunScope(this, store);
   }
 
   // Node.js internal function. In Bun's implementation, calling this is not
@@ -244,7 +372,7 @@ class AsyncLocalStorage {
 }
 
 if (IS_BUN_DEVELOPMENT) {
-  AsyncLocalStorage.prototype[Bun.inspect.custom] = function (depth, options) {
+  AsyncLocalStorage.prototype[Bun.inspect.custom] = function (depth: number, options) {
     if (depth < 0) return `AsyncLocalStorage { ${Bun.inspect((this as any).__id__, options)} }`;
     return `AsyncLocalStorage { [${options.stylize("debug id", "special")}]: ${Bun.inspect(
       (this as any).__id__,
@@ -256,26 +384,28 @@ if (IS_BUN_DEVELOPMENT) {
 class AsyncResource {
   type;
   #snapshot;
+  #triggerAsyncId;
 
   constructor(type, opts?) {
     validateString(type, "type");
 
-    let triggerAsyncId = opts;
-    if (opts != null) {
-      if (typeof opts !== "number") {
-        triggerAsyncId = opts.triggerAsyncId === undefined ? 1 : opts.triggerAsyncId;
-      }
-      if (!Number.isSafeInteger(triggerAsyncId) || triggerAsyncId < -1) {
-        throw $ERR_INVALID_ASYNC_ID("triggerAsyncId", triggerAsyncId);
-      }
+    // Node defaults to getDefaultTriggerAsyncId() (the current execution async
+    // id); Bun does not track async ids, so its executionAsyncId() is 0.
+    let triggerAsyncId = typeof opts === "number" ? opts : opts?.triggerAsyncId === undefined ? 0 : opts.triggerAsyncId;
+    if (!Number.isSafeInteger(triggerAsyncId) || triggerAsyncId < -1) {
+      throw $ERR_INVALID_ASYNC_ID("triggerAsyncId", triggerAsyncId);
     }
-    if (hasEnabledCreateHook && type.length === 0) {
-      throw $ERR_ASYNC_TYPE(type);
+    if (IS_COMPILED_AHEAD_OF_TIME ? hasResourceConstructorMoreToDo : hasEnabledCreateHook) {
+      if (hasEnabledCreateHook && type.length === 0) {
+        throw $ERR_ASYNC_TYPE(type);
+      }
+      if (IS_COMPILED_AHEAD_OF_TIME && !hasConstructorRun) constructorRunsForFirstTime();
     }
 
-    setAsyncHooksEnabled(true);
+    if (!IS_COMPILED_AHEAD_OF_TIME) setAsyncHooksEnabled(true);
     this.type = type;
     this.#snapshot = get();
+    this.#triggerAsyncId = triggerAsyncId;
   }
 
   emitBefore() {
@@ -291,14 +421,14 @@ class AsyncResource {
   }
 
   triggerAsyncId() {
-    return 0;
+    return this.#triggerAsyncId;
   }
 
   emitDestroy() {
     //
   }
 
-  runInAsyncScope(fn, thisArg, ...args) {
+  runInAsyncScope<R>(fn: (...args: any[]) => R, thisArg?: unknown, ...args: unknown[]): R {
     var prev = get();
     set(this.#snapshot);
     try {
@@ -310,7 +440,30 @@ class AsyncResource {
 
   bind(fn, thisArg) {
     validateFunction(fn, "fn");
-    return this.runInAsyncScope.bind(this, fn, thisArg ?? this);
+    if (thisArg !== undefined) {
+      const bound = this.runInAsyncScope.bind(this, fn, thisArg);
+      return Object.defineProperty(bound, "length", {
+        __proto__: null,
+        configurable: true,
+        enumerable: false,
+        value: fn.length,
+        writable: false,
+      });
+    }
+    const resource = this;
+    const bound = function (this: unknown, ...args) {
+      return resource.runInAsyncScope(fn, this, ...args);
+    };
+    // A function whose only parameter is a rest parameter is created with the length 0 and these attributes.
+    const length = fn.length;
+    if (sameValue(length, 0)) return bound;
+    return Object.defineProperty(bound, "length", {
+      __proto__: null,
+      configurable: true,
+      enumerable: false,
+      value: length,
+      writable: false,
+    });
   }
 
   static bind(fn, type, thisArg) {
@@ -366,7 +519,15 @@ const createHookNotImpl = createWarning(
 
 let hasEnabledCreateHook = false;
 const kHookEnabled = Symbol("kHookEnabled");
-function createHook(hook) {
+interface HookCallbacks {
+  init?(asyncId: number, type: string, triggerAsyncId: number, resource: object): void;
+  before?(asyncId: number): void;
+  after?(asyncId: number): void;
+  destroy?(asyncId: number): void;
+  promiseResolve?(asyncId: number): void;
+}
+
+function createHook(hook: HookCallbacks) {
   validateObject(hook, "hook");
   const { init, before, after, destroy, promiseResolve } = hook;
   if (init !== undefined && typeof init !== "function") throw $ERR_ASYNC_CALLBACK("hook.init");
@@ -376,7 +537,7 @@ function createHook(hook) {
   if (promiseResolve !== undefined && typeof promiseResolve !== "function")
     throw $ERR_ASYNC_CALLBACK("hook.promiseResolve");
 
-  let enabledInit;
+  let enabledInit: $BunModules["internal/async_hooks_tick"]["tickInitHooks"][number] | undefined;
   return {
     enable() {
       if (init !== undefined && enabledInit === undefined) {
@@ -387,12 +548,15 @@ function createHook(hook) {
         // identity, and removing the other instance's entry would reorder
         // its callback relative to unrelated hooks).
         enabledInit = (asyncId, type, triggerAsyncId, resource) => init(asyncId, type, triggerAsyncId, resource);
+        require("internal/process/next_tick_queue").ring.pushWithInitHooks =
+          require("internal/process/tick_ring").pushWithInitHooks;
         require("internal/async_hooks_tick").tickInitHooks.push(enabledInit);
       }
       if (before !== undefined || after !== undefined || destroy !== undefined || promiseResolve !== undefined) {
         createHookNotImpl(hook);
       }
       hasEnabledCreateHook = true;
+      hasResourceConstructorMoreToDo = true;
       if (!this[kHookEnabled]) {
         this[kHookEnabled] = true;
         require("internal/async_hooks").markHookEnabled();
@@ -495,6 +659,8 @@ const asyncWrapProviders = {
   VERIFYREQUEST: 56,
   INSPECTORJSBINDING: 57,
 };
+
+export type { Frame };
 
 export default {
   AsyncLocalStorage,

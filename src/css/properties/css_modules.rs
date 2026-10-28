@@ -5,8 +5,6 @@ use crate::printer::Printer;
 
 use crate::css_values::ident::{CustomIdent, CustomIdentList};
 
-use crate::dependencies::Location;
-
 use bun_alloc::Arena; // bumpalo::Bump re-export (CSS is an AST/arena crate)
 use bun_wyhash::Wyhash;
 
@@ -18,13 +16,11 @@ pub struct Composes {
     pub from: Option<Specifier>,
     /// The source location of the `composes` property.
     pub loc: bun_ast::Loc,
-    pub cssparser_loc: Location,
 }
 
 impl Composes {
     pub fn parse(input: &mut Parser) -> css::Result<Composes> {
         let loc = input.position();
-        let loc2 = input.current_source_location();
         let mut names = CustomIdentList::default();
         while let Ok(name) = input.try_parse(Self::parse_one_ident) {
             names.append(name);
@@ -49,7 +45,6 @@ impl Composes {
             loc: bun_ast::Loc {
                 start: i32::try_from(loc).expect("int cast"),
             },
-            cssparser_loc: Location::from_source_location(loc2),
         })
     }
 
@@ -78,7 +73,7 @@ impl Composes {
         Ok(name)
     }
 
-    pub fn deep_clone(&self, bump: &Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &Arena) -> Self {
         // `CustomIdent` is `Copy` (arena-ptr payload), so an element-wise copy
         // into a fresh `SmallList` is the deep clone.
         let mut names = CustomIdentList::default();
@@ -89,7 +84,6 @@ impl Composes {
             names,
             from: self.from.as_ref().map(|f| f.deep_clone(bump)),
             loc: self.loc,
-            cssparser_loc: self.cssparser_loc,
         }
     }
 
@@ -107,7 +101,7 @@ impl Composes {
             (Some(a), Some(b)) if Specifier::eql(*a, *b) => {}
             _ => return false,
         }
-        lhs.loc == rhs.loc && lhs.cssparser_loc == rhs.cssparser_loc
+        lhs.loc == rhs.loc
     }
 }
 
@@ -144,6 +138,7 @@ impl Specifier {
     }
 
     pub fn parse(input: &mut Parser) -> css::Result<Specifier> {
+        input.skip_whitespace();
         let start_position = input.position();
         if let Ok(file) = input.try_parse(|i| {
             let s = i.expect_url_or_string()?;
@@ -152,8 +147,13 @@ impl Specifier {
             // (same trick as `css_parser::src_str` — Token payloads are arena-static).
             Ok::<&'static [u8], _>(unsafe { &*std::ptr::from_ref::<[u8]>(s) })
         }) {
-            let import_record_index =
-                input.add_import_record(file, start_position, bun_ast::ImportKind::Composes)?;
+            let end_position = input.position();
+            let import_record_index = input.add_import_record(
+                file,
+                start_position,
+                end_position,
+                bun_ast::ImportKind::Composes,
+            )?;
             return Ok(Specifier::ImportRecordIndex(import_record_index));
         }
         input.expect_ident_matching(b"global")?;
@@ -164,7 +164,7 @@ impl Specifier {
         match self {
             Specifier::Global => dest.write_str(b"global"),
             Specifier::ImportRecordIndex(import_record_index) => {
-                let url = dest.get_import_record_url(*import_record_index)?;
+                let (url, _) = dest.get_import_record_url(*import_record_index)?;
                 // SAFETY: `url` borrows printer-owned import-record storage
                 // which outlives the `serialize_string` call. Detach so `dest`
                 // is reborrowable as the `WriteAll` sink.
@@ -174,12 +174,12 @@ impl Specifier {
         }
     }
 
-    pub fn deep_clone(self, _bump: &Arena) -> Self {
+    pub(crate) fn deep_clone(self, _bump: &Arena) -> Self {
         // Variants are `Copy`; the deep clone is the value itself.
         self
     }
 
-    pub fn hash(self, hasher: &mut Wyhash) {
+    pub(crate) fn hash(self, hasher: &mut Wyhash) {
         match self {
             Specifier::Global => hasher.update(&0u32.to_ne_bytes()),
             Specifier::ImportRecordIndex(i) => {

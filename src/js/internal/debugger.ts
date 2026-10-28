@@ -1,4 +1,31 @@
-import type { ServerWebSocket, Socket, WebSocketHandler, Server as WebSocketServer } from "bun";
+type ServerWebSocket<T> = import("bun").ServerWebSocket<T>;
+
+interface WebSocketHandler<T> {
+  idleTimeout: number;
+  closeOnBackpressureLimit: boolean;
+  open(ws: ServerWebSocket<T>): void;
+  message(ws: ServerWebSocket<T>, message: string | Buffer): void;
+  drain(ws: ServerWebSocket<T>): void;
+  close(ws: ServerWebSocket<T>): void;
+}
+
+interface FramedSocketData {
+  framer: SocketFramer;
+  backend: Backend;
+}
+/** `data` is set in `open`. */
+type FramedSocket = $Node.SocketHandle<FramedSocketData | undefined>;
+
+/** Where `Bun.connect` connects to. */
+interface ConnectTarget {
+  unix?: string;
+  fd?: number;
+  hostname?: string;
+  port?: number;
+}
+
+type InspectorCDPAdapter = InstanceType<$BunModules["internal/inspector/cdp"]["InspectorCDPAdapter"]>;
+
 const enum FramerState {
   WaitingForLength,
   WaitingForMessage,
@@ -26,7 +53,7 @@ class SocketFramer {
     this.sizeBuffer = Buffer.alloc(4);
   }
 
-  send(socket: Socket<{ framer: SocketFramer; backend: Backend }>, data: string): void {
+  send(socket: FramedSocket, data: string): void {
     if (!!$debug) {
       $debug("local:", data);
     }
@@ -36,7 +63,7 @@ class SocketFramer {
     socket.$write(data);
   }
 
-  onData(socket: Socket<{ framer: SocketFramer; backend: Writer }>, data: Buffer): void {
+  onData(socket: FramedSocket, data: Buffer): void {
     this.bufferedData = this.bufferedData.length > 0 ? Buffer.concat([this.bufferedData, data]) : data;
 
     let messagesToDeliver: string[] = [];
@@ -96,6 +123,12 @@ type CreateBackendFn = (
   receive: (...messages: string[]) => void,
 ) => unknown;
 
+// CDP translation is only needed for node:inspector servers, so load it lazily.
+let lazyInspectorCDPAdapter: $BunModules["internal/inspector/cdp"]["InspectorCDPAdapter"] | undefined;
+function cdpAdapterConstructor() {
+  return (lazyInspectorCDPAdapter ??= require("internal/inspector/cdp").InspectorCDPAdapter);
+}
+
 export default function (
   executionContextId: number,
   url: string,
@@ -104,9 +137,111 @@ export default function (
   close: () => void,
   isAutomatic: boolean,
   urlIsServer: boolean,
+  isNodeInspector: boolean,
+  reportNodeInspectorServerStarted: (url: string, controlCallback?: (message: string) => void, error?: string) => void,
 ): void {
   if (urlIsServer) {
     connectToUnixServer(executionContextId, url, createBackend, send, close);
+    return;
+  }
+
+  if (isNodeInspector) {
+    // node:inspector's inspector.open(): connections speak the V8 Chrome
+    // DevTools Protocol, the listening URL is reported back to the inspected
+    // thread (which prints Node's "Debugger listening on ..." line), and a
+    // control callback lets the inspected thread close the server or forward
+    // commands from the in-process inspector.Session.
+    let debug: Debugger | undefined;
+    let sessionBackend: Backend | undefined;
+    let sessionAdapter: InspectorCDPAdapter | undefined;
+    let sessionRefs = 0;
+    const control = (message: string) => {
+      let parsed: any;
+      try {
+        parsed = JSON.parse(message);
+      } catch {
+        return;
+      }
+      switch (parsed?.type) {
+        case "close":
+          try {
+            sessionBackend?.close();
+            sessionBackend = undefined;
+            sessionAdapter = undefined;
+            sessionRefs = 0;
+            debug?.stop();
+            debug = undefined;
+          } finally {
+            // inspector.close() blocks until this lands: the port must already
+            // be refused when close() returns. Signalled from a finally so a
+            // failing stop() cannot hang the inspected thread forever.
+            reportNodeInspectorServerStarted("", control, undefined);
+          }
+          return;
+        case "session-connect":
+          sessionRefs++;
+          return;
+        case "session-disconnect":
+          // Last in-process Session that forwarded Debugger.* commands has
+          // disconnected: release the shared backend so its breakpoints don't
+          // outlive it. Refcounted so one Session can't tear down another's.
+          if (--sessionRefs > 0) return;
+          sessionRefs = 0;
+          sessionBackend?.close();
+          sessionBackend = undefined;
+          sessionAdapter = undefined;
+          return;
+        case "open": {
+          // inspector.open() after inspector.close() or after a failed start:
+          // start a new server on this already-running debugger thread and
+          // report its URL back.
+          try {
+            debug = new Debugger(executionContextId, parsed.url, createBackend, send, close, true);
+            reportNodeInspectorServerStarted(debug.url!.href, control, undefined);
+          } catch (error) {
+            reportNodeInspectorServerStarted("", control, nodeInspectorListenErrorDetail(error));
+          }
+          return;
+        }
+        case "command": {
+          // A CDP command forwarded from the inspected thread's in-process
+          // inspector.Session (e.g. Debugger.setBreakpointByUrl from vitest
+          // --inspect-brk). Responses stay on this thread; the in-process
+          // Session treats these as fire-and-forget.
+          if (!debug) return;
+          if (!sessionAdapter) {
+            let adapter: InspectorCDPAdapter;
+            sessionBackend = debug.createSessionBackend((...messages: string[]) => {
+              for (const backendMessage of messages) {
+                adapter.handleBackendMessage(backendMessage);
+              }
+            });
+            adapter = new (cdpAdapterConstructor())(
+              (backendMessage: string) => void sessionBackend?.write(backendMessage),
+              () => {},
+            );
+            sessionAdapter = adapter;
+            sessionAdapter.handleClientMessage(JSON.stringify({ id: 0, method: "Debugger.enable", params: {} }));
+          }
+          sessionAdapter.handleClientMessage(
+            JSON.stringify({ id: parsed.id ?? 0, method: parsed.method, params: parsed.params ?? {} }),
+          );
+          return;
+        }
+      }
+    };
+
+    try {
+      debug = new Debugger(executionContextId, url, createBackend, send, close, true);
+    } catch (error) {
+      // Register the control callback even though the server failed to start
+      // (e.g. the port is in use), so a later inspector.open() can retry with
+      // an "open" control message on this already-running debugger thread.
+      reportNodeInspectorServerStarted("", control, nodeInspectorListenErrorDetail(error));
+      return;
+    }
+
+    reportNodeInspectorServerStarted(debug.url!.href, control, undefined);
     return;
   }
 
@@ -138,7 +273,7 @@ export default function (
     }
   }
 
-  const notifyUrl = process.env["BUN_INSPECT_NOTIFY"] || "";
+  const notifyUrl: string = process.env["BUN_INSPECT_NOTIFY"] || "";
   if (notifyUrl) {
     // Only send this once.
     process.env["BUN_INSPECT_NOTIFY"] = "";
@@ -159,6 +294,15 @@ export default function (
   }
 }
 
+// Node prints the libuv one-liner ("address already in use"), not the full
+// Bun.serve message, in "Starting inspector on ... failed:".
+function nodeInspectorListenErrorDetail(error: unknown): string {
+  const code = (error as { code?: string } | null)?.code;
+  if (code === "EADDRINUSE") return "address already in use";
+  if (code === "EACCES") return "permission denied";
+  return `${(error as Error)?.message ?? error}`;
+}
+
 function unescapeUnixSocketUrl(href: string) {
   if (href.startsWith("unix://%2F")) {
     return decodeURIComponent(href.substring("unix://".length));
@@ -170,6 +314,10 @@ function unescapeUnixSocketUrl(href: string) {
 class Debugger {
   #url?: URL;
   #createBackend: (refEventLoop: boolean, receive: (...messages: string[]) => void) => Backend;
+  // node:inspector mode: connections speak the V8 Chrome DevTools Protocol and
+  // /json discovery endpoints are served.
+  #nodeInspector = false;
+  #server?: $Node.NativeHTTPServer;
 
   constructor(
     executionContextId: number,
@@ -177,65 +325,75 @@ class Debugger {
     createBackend: CreateBackendFn,
     send: (message: string | string[]) => void,
     close: () => void,
+    isNodeInspector: boolean = false,
   ) {
-    try {
-      this.#createBackend = (refEventLoop, receive) => {
-        const backend = createBackend(executionContextId, refEventLoop, receive);
-        return {
-          write: (message: string | string[]) => {
-            send.$call(backend, message);
-            return true;
-          },
-          close: () => close.$call(backend),
-        };
+    this.#nodeInspector = isNodeInspector;
+    this.#createBackend = (refEventLoop, receive) => {
+      const backend = createBackend(executionContextId, refEventLoop, receive);
+      return {
+        write: (message: string | string[]) => {
+          send.$call(backend, message);
+          return true;
+        },
+        close: () => close.$call(backend),
       };
+    };
 
-      if (url.startsWith("unix://")) {
-        this.#connectOverSocket({
-          unix: unescapeUnixSocketUrl(url),
-        });
-        return;
-      } else if (url.startsWith("fd://")) {
-        this.#connectOverSocket({
-          fd: Number(url.substring("fd://".length)),
-        });
-        return;
-      } else if (url.startsWith("fd:")) {
-        this.#connectOverSocket({
-          fd: Number(url.substring("fd:".length)),
-        });
-        return;
-      } else if (url.startsWith("unix:")) {
-        this.#connectOverSocket({
-          unix: url.substring("unix:".length),
-        });
-        return;
-      } else if (url.startsWith("tcp://")) {
-        const { hostname, port } = new URL(url);
-        this.#connectOverSocket({
-          hostname,
-          port: port && port !== "0" ? Number(port) : undefined,
-        });
-        return;
-      }
-
-      this.#url = parseUrl(url);
-      this.#listen();
-    } catch (error) {
-      console.error(error);
-      throw error;
+    if (url.startsWith("unix://")) {
+      this.#connectOverSocket({
+        unix: unescapeUnixSocketUrl(url),
+      });
+      return;
+    } else if (url.startsWith("fd://")) {
+      this.#connectOverSocket({
+        fd: Number(url.substring("fd://".length)),
+      });
+      return;
+    } else if (url.startsWith("fd:")) {
+      this.#connectOverSocket({
+        fd: Number(url.substring("fd:".length)),
+      });
+      return;
+    } else if (url.startsWith("unix:")) {
+      this.#connectOverSocket({
+        unix: url.substring("unix:".length),
+      });
+      return;
+    } else if (url.startsWith("tcp://")) {
+      const { hostname, port } = new URL(url);
+      this.#connectOverSocket({
+        hostname,
+        port: port && port !== "0" ? Number(port) : undefined,
+      });
+      return;
     }
+
+    this.#url = parseUrl(url);
+    this.#listen();
   }
 
   get url(): URL | undefined {
     return this.#url;
   }
 
+  // Stops the node:inspector server and terminates its connections
+  // (inspector.close() on the inspected thread).
+  stop(): void {
+    this.#server?.stop(true);
+    this.#server = undefined;
+  }
+
+  // A backend connection that is not tied to a WebSocket client, used for
+  // commands forwarded from the in-process inspector.Session.
+  createSessionBackend(receive: (...messages: string[]) => void): Backend {
+    return this.#createBackend(true, receive);
+  }
+
   #listen(): void {
     const { protocol, hostname, port, pathname } = this.#url!;
 
     if (protocol === "ws:" || protocol === "wss:" || protocol === "ws+tcp:") {
-      const server = Bun.serve({
+      const server: $Node.NativeHTTPServer = Bun.serve({
         hostname,
         // empty port from new URL("ws://host/") -> let the OS pick a free port instead of falling back to Bun.serve's default 3000
         port: port || 0,
@@ -243,7 +401,8 @@ class Debugger {
         websocket: this.#websocket,
       });
 
-      this.#url!.hostname = server.hostname;
+      this.#server = server;
+      this.#url!.hostname = server.hostname!;
       this.#url!.port = `${server.port}`;
       return;
     }
@@ -260,47 +419,49 @@ class Debugger {
     throw new TypeError(`Unsupported protocol: '${protocol}' (expected 'ws:' or 'ws+unix:')`);
   }
 
-  #connectOverSocket(networkOptions) {
-    let backend;
-    return Bun.connect<{ framer: SocketFramer; backend: Backend }>({
-      ...networkOptions,
-      socket: {
-        open: socket => {
-          let framer: SocketFramer;
-          const callback = (...messages: string[]) => {
-            for (const message of messages) {
-              framer.send(socket, message);
-            }
-          };
+  #connectOverSocket(networkOptions: ConnectTarget) {
+    let backend: Backend | undefined;
+    return (
+      Bun.connect({
+        ...networkOptions,
+        socket: {
+          open: (socket: FramedSocket) => {
+            let framer: SocketFramer;
+            const callback = (...messages: string[]) => {
+              for (const message of messages) {
+                framer.send(socket, message);
+              }
+            };
 
-          framer = new SocketFramer((message: string | string[]) => {
-            backend.write(message);
-          });
-          backend = this.#createBackend(false, callback);
-          socket.data = {
-            framer,
-            backend,
-          };
-          socket.ref();
+            framer = new SocketFramer((message: string | string[]) => {
+              backend!.write(message);
+            });
+            backend = this.#createBackend(false, callback);
+            socket.data = {
+              framer,
+              backend,
+            };
+            socket.ref();
+          },
+          data: (socket: FramedSocket, bytes: Buffer) => {
+            if (!socket.data) {
+              socket.terminate();
+              return;
+            }
+            socket.data.framer.onData(socket, bytes);
+          },
+          drain: (_socket: FramedSocket) => {},
+          close: (socket: FramedSocket) => {
+            const socketData = socket.data;
+            if (socketData) {
+              const { backend, framer } = socketData;
+              backend.close();
+              framer.reset();
+            }
+          },
         },
-        data: (socket, bytes) => {
-          if (!socket.data) {
-            socket.terminate();
-            return;
-          }
-          socket.data.framer.onData(socket, bytes);
-        },
-        drain: _socket => {},
-        close: socket => {
-          const socketData = socket.data;
-          if (socketData) {
-            const { backend, framer } = socketData;
-            backend.close();
-            framer.reset();
-          }
-        },
-      },
-    }).catch(err => {
+      }) as Promise<FramedSocket>
+    ).catch(err => {
       // Force us to send a disconnect message
       if (!backend) {
         backend = this.#createBackend(false, () => {});
@@ -328,7 +489,31 @@ class Debugger {
     };
   }
 
-  #fetch(request: Request, server: WebSocketServer): Response | undefined {
+  // Node-shaped /json/list payload describing the single debuggable target.
+  // `host` is the request's Host header: a client reaching the server through a
+  // tunnel or port-forward needs URLs for the address it actually connected to,
+  // not the bind address, matching Node's discovery endpoints. Disallowed Host
+  // values are rejected in #fetch before this is called.
+  #nodeInspectorTargets(host: string | null): unknown[] {
+    const { hostname, port, pathname } = this.#url!;
+    const id = pathname.slice(1);
+    const wsAddress = `${host || `${hostname}:${port}`}${pathname}`;
+    return [
+      {
+        description: "bun instance",
+        devtoolsFrontendUrl: `devtools://devtools/bundled/js_app.html?experiments=true&v8only=true&ws=${wsAddress}`,
+        devtoolsFrontendUrlCompat: `devtools://devtools/bundled/inspector.html?experiments=true&v8only=true&ws=${wsAddress}`,
+        faviconUrl: "https://bun.com/favicon.ico",
+        id,
+        title: `bun[${process.pid}]`,
+        type: "node",
+        url: "file://",
+        webSocketDebuggerUrl: `ws://${wsAddress}`,
+      },
+    ];
+  }
+
+  #fetch(request: Request, server: $Node.NativeHTTPServer): Response | undefined {
     const { method, url, headers } = request;
     const { pathname } = new URL(url);
 
@@ -338,23 +523,36 @@ class Debugger {
       });
     }
 
-    switch (pathname) {
-      case "/json/version":
-        return Response.json(versionInfo());
-      case "/json":
-      case "/json/list":
-      // TODO?
-    }
-
-    if (!this.#url!.protocol.includes("unix") && this.#url!.pathname !== pathname) {
+    const isUnix = this.#url!.protocol.includes("unix");
+    if (!isUnix && !isHostAllowed(headers.get("Host"), this.#url!.hostname)) {
       return new Response(null, {
-        status: 404, // Not Found
+        status: 400, // Bad Request
       });
     }
 
     if (!isOriginAllowed(headers.get("Origin"))) {
       return new Response(null, {
         status: 403, // Forbidden
+      });
+    }
+
+    switch (pathname) {
+      case "/json/version":
+        return Response.json(this.#nodeInspector ? nodeVersionInfo() : versionInfo());
+      case "/json":
+      case "/json/list":
+        // Discovery endpoint used by CDP clients (chrome://inspect, vscode-js-debug)
+        // to find the WebSocket URL. Only served for node:inspector servers; the
+        // Bun-protocol inspector has no CDP-speaking clients to discover it.
+        if (this.#nodeInspector) {
+          return Response.json(this.#nodeInspectorTargets(headers.get("Host")));
+        }
+        break;
+    }
+
+    if (!isUnix && this.#url!.pathname !== pathname) {
+      return new Response(null, {
+        status: 404, // Not Found
       });
     }
 
@@ -377,6 +575,30 @@ class Debugger {
     const { refEventLoop } = data;
 
     const client = bufferedWriter(writer);
+
+    if (this.#nodeInspector) {
+      // node:inspector clients speak CDP; the adapter sits between the
+      // WebSocket and the JSC-protocol backend connection. Unlike Bun's own
+      // --inspect connections, an attached client must not keep the process
+      // alive — Node exits with a debugger attached — so never ref the event
+      // loop for these connections (the `true` argument means "do not ref").
+      let adapter: InspectorCDPAdapter;
+      const backend = this.#createBackend(true, (...messages: string[]) => {
+        for (const message of messages) {
+          adapter.handleBackendMessage(message);
+        }
+      });
+      adapter = new (cdpAdapterConstructor())(
+        (message: string) => void backend.write(message),
+        (message: string) => void client.write(message),
+      );
+
+      data.client = client;
+      data.backend = backend;
+      data.adapter = adapter;
+      return;
+    }
+
     const backend = this.#createBackend(refEventLoop, (...messages: string[]) => {
       for (const message of messages) {
         client.write(message);
@@ -389,8 +611,12 @@ class Debugger {
 
   #message(connection: ConnectionOwner, message: string): void {
     const { data } = connection;
-    const { backend } = data;
+    const { backend, adapter } = data;
     $debug("remote:", message);
+    if (adapter) {
+      adapter.handleClientMessage(message);
+      return;
+    }
     backend?.write(message);
   }
 
@@ -418,7 +644,7 @@ async function connectToUnixServer(
   executionContextId: number,
   unix: string,
   createBackend: CreateBackendFn,
-  send: (message: string) => void,
+  send: (message: string | string[]) => void,
   close: () => void,
 ) {
   // Windows uses TCP.
@@ -429,7 +655,7 @@ async function connectToUnixServer(
   // Unix sockets are preferred because there's less of a risk of conflicting
   // with other tools or a port already being used + sometimes machines don't
   // allow binding to TCP ports.
-  let connectionOptions;
+  let connectionOptions: ConnectTarget;
   if (unix.startsWith("unix:")) {
     unix = unescapeUnixSocketUrl(unix);
     if (unix.startsWith("unix://")) {
@@ -456,58 +682,59 @@ async function connectToUnixServer(
     return;
   }
 
-  const socket = await Bun.connect<{ framer: SocketFramer; backend: Backend }>({
-    ...connectionOptions,
-    socket: {
-      open: socket => {
-        const framer = new SocketFramer((message: string | string[]) => {
-          backend.write(message);
-        });
+  const socket = await (
+    Bun.connect({
+      ...connectionOptions,
+      socket: {
+        open: (socket: FramedSocket) => {
+          const framer = new SocketFramer((message: string | string[]) => {
+            backend.write(message);
+          });
 
-        const backendRaw = createBackend(executionContextId, true, (...messages: string[]) => {
-          for (const message of messages) {
-            framer.send(socket, message);
+          const backendRaw = createBackend(executionContextId, true, (...messages: string[]) => {
+            for (const message of messages) {
+              framer.send(socket, message);
+            }
+          });
+
+          const backend: Backend = {
+            write: message => {
+              send.$call(backendRaw, message);
+              return true;
+            },
+            close: () => close.$call(backendRaw),
+          };
+
+          socket.data = {
+            framer,
+            backend,
+          };
+
+          socket.ref();
+        },
+        data: (socket: FramedSocket, bytes: Buffer) => {
+          if (!socket.data) {
+            socket.terminate();
+            return;
           }
-        });
 
-        const backend = {
-          write: message => {
-            send.$call(backendRaw, message);
-            return true;
-          },
-          close: () => close.$call(backendRaw),
-        };
+          socket.data.framer.onData(socket, bytes);
+        },
 
-        socket.data = {
-          framer,
-          backend,
-        };
+        // Ensure we always drain the socket.
+        drain: (_socket: FramedSocket) => {},
 
-        socket.ref();
+        close: (socket: FramedSocket) => {
+          const socketData = socket.data;
+          if (socketData) {
+            const { backend, framer } = socketData;
+            backend.close();
+            framer.reset();
+          }
+        },
       },
-      data: (socket, bytes) => {
-        if (!socket.data) {
-          socket.terminate();
-          return;
-        }
-
-        socket.data.framer.onData(socket, bytes);
-      },
-
-      // Ensure we always drain the socket.
-      // This is necessary due to socket.$write usage.
-      drain: _socket => {},
-
-      close: socket => {
-        const socketData = socket.data;
-        if (socketData) {
-          const { backend, framer } = socketData;
-          backend.close();
-          framer.reset();
-        }
-      },
-    },
-  }).catch(error => {
+    }) as Promise<FramedSocket>
+  ).catch(error => {
     // Force it to close
     const backendRaw = createBackend(executionContextId, true, () => {});
     close.$call(backendRaw);
@@ -526,6 +753,15 @@ function versionInfo(): unknown {
     "WebKit-Version": process.versions.webkit,
     "Bun-Version": Bun.version,
     "Bun-Revision": Bun.revision,
+  };
+}
+
+// Node-shaped /json/version payload, served for node:inspector servers so CDP
+// clients recognize the target the same way they recognize a Node process.
+function nodeVersionInfo(): unknown {
+  return {
+    "Browser": `Bun/${Bun.version}`,
+    "Protocol-Version": "1.1",
   };
 }
 
@@ -556,6 +792,7 @@ function bufferedWriter(writer: Writer): Writer {
             return;
           }
         }
+        pendingMessages.length = 0;
       } finally {
         draining = false;
       }
@@ -629,6 +866,25 @@ function isOriginAllowed(origin: string | null): boolean {
   return hostname === "localhost" || hostname === "[::1]" || /^127(\.\d{1,3}){3}$/.test(hostname);
 }
 
+function isHostAllowed(host: string | null, expectedHostname: string): boolean {
+  if (!host) {
+    return true;
+  }
+  let hostname: string;
+  try {
+    ({ hostname } = new URL(`ws://${host}`));
+  } catch {
+    return false;
+  }
+  if (hostname === expectedHostname || hostname === "localhost" || hostname === "localhost6") {
+    return true;
+  }
+  if (hostname.startsWith("[") && hostname.endsWith("]")) {
+    return true;
+  }
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname);
+}
+
 function randomId() {
   return crypto.randomUUID();
 }
@@ -656,21 +912,25 @@ function reset(): string {
   return "";
 }
 
-function notify(options): void {
-  Bun.connect({
-    ...options,
-    socket: {
-      open: socket => {
-        socket.end("1");
+function notify(options: ConnectTarget): void {
+  (
+    Bun.connect({
+      ...options,
+      socket: {
+        open: (socket: $Node.SocketHandle) => {
+          socket.end("1");
+        },
+        data: () => {}, // required or it errors
       },
-      data: () => {}, // required or it errors
-    },
-  }).catch(() => {
+    }) as Promise<$Node.SocketHandle>
+  ).catch(() => {
     // Best-effort
   });
 }
 
-function exit(...args: unknown[]): never {
+// `process` has no type here, so the checker cannot see that `process.exit()` does not return.
+function exit(...args: unknown[]): never;
+function exit(...args: unknown[]): void {
   console.error(...args);
   process.exit(1);
 }
@@ -683,6 +943,8 @@ type Connection = {
   refEventLoop: boolean;
   client?: Writer;
   backend?: Backend;
+  // Present for node:inspector connections, which speak the V8 protocol.
+  adapter?: InspectorCDPAdapter;
 };
 
 type Writer = {

@@ -5,7 +5,7 @@ description: Use `bun publish` to publish a package to the npm registry
 
 import Publish from "/snippets/cli/publish.mdx";
 
-`bun publish` will automatically pack your package into a tarball, strip catalog and workspace protocols from the `package.json` (resolving versions if necessary), and publish to the registry specified in your configuration files. Both `bunfig.toml` and `.npmrc` files are supported.
+`bun publish` packs your package into a tarball and strips catalog and workspace protocols from the `package.json`, resolving versions if necessary. It then publishes to the registry specified in your configuration files or in the package's `publishConfig`. Both `bunfig.toml` and `.npmrc` files are supported.
 
 ```sh terminal icon="terminal"
 ## Publishing the package from the current working directory
@@ -32,7 +32,7 @@ Registry: http://localhost:4873/
  + publish-1@1.0.0
 ```
 
-Alternatively, you can pack and publish your package separately by using `bun pm pack` followed by `bun publish` with the path to the output tarball.
+To pack and publish separately, run `bun pm pack`, then `bun publish` with the path to the output tarball.
 
 ```sh terminal icon="terminal"
 bun pm pack
@@ -41,19 +41,37 @@ bun publish ./package.tgz
 ```
 
 <Note>
-  `bun publish` will not run lifecycle scripts (`prepublishOnly/prepack/prepare/postpack/publish/postpublish`) if a
-  tarball path is provided. Scripts will only be run if the package is packed by `bun publish`.
+  `bun publish` does not run lifecycle scripts (`prepublishOnly/prepack/prepare/postpack/publish/postpublish`) if you
+  provide a tarball path. Scripts run only when `bun publish` packs the package itself.
 </Note>
+
+<Note>
+  `bun publish` cannot generate provenance statements yet. `--provenance`, `"provenance": true` in `publishConfig` and
+  `NPM_CONFIG_PROVENANCE=true` are errors.
+</Note>
+
+### `--recursive` and `--filter`
+
+In a monorepo, `--recursive` (`-r`) publishes the root package and every workspace package, dependencies before their dependents. `--filter` (`-F`) does the same for the matching workspace packages only.
+
+```sh terminal icon="terminal"
+bun publish --recursive
+bun publish --filter "@acme/*"
+```
+
+Both flags must come after `publish`. `bun --filter "@acme/*" publish` means something else: it runs each matching package's `publish` script, like any other [`--filter`](/pm/filter) command.
+
+Packages that are `"private"` or whose version is already on the registry are skipped. Every package is packed before the first one is published, and the first failure ends the run; running the command again skips what was published.
 
 ### `--access`
 
-The `--access` flag can be used to set the access level of the package being published. The access level can be one of `public` or `restricted`. Unscoped packages are always public, and attempting to publish an unscoped package with `--access restricted` will result in an error.
+`--access` sets the access level of the package being published, either `public` or `restricted`. Unscoped packages are always public, and publishing an unscoped package with `--access restricted` is an error.
 
 ```sh terminal icon="terminal"
 bun publish --access public
 ```
 
-`--access` can also be set in the `publishConfig` field of your `package.json`.
+You can also set `--access` in the `publishConfig` field of your `package.json`.
 
 ```json package.json icon="file-json"
 {
@@ -71,7 +89,7 @@ Set the tag of the package version being published. By default, the tag is `late
 bun publish --tag alpha
 ```
 
-`--tag` can also be set in the `publishConfig` field of your `package.json`.
+You can also set `--tag` in the `publishConfig` field of your `package.json`.
 
 ```json package.json icon="file-json"
 {
@@ -81,9 +99,41 @@ bun publish --tag alpha
 }
 ```
 
+A prerelease version such as `2.0.0-beta.1` needs a tag: without one it would become `latest`, the version `bun add` installs. To publish it as `latest` anyway, pass `--tag latest`.
+
+A tag cannot be a version or a version range, such as `1.2.3` or `v1`.
+
+### `publishConfig.registry`
+
+A package can pin the registry it is published to in the `publishConfig` field of its `package.json`, regardless of the registry configured for installs. `--registry` on the command line still overrides it.
+
+```json package.json icon="file-json"
+{
+  "name": "internal-package",
+  "publishConfig": {
+    "registry": "https://registry.myorg.example/"
+  }
+}
+```
+
+As in npm, `publishConfig.registry` replaces the default registry only. A registry configured for the package's scope (`@myorg:registry` in `.npmrc`, or `[install.scopes]` in `bunfig.toml`) still takes precedence over it; to replace that one, set the scope's key in `publishConfig` instead:
+
+```json package.json icon="file-json"
+{
+  "name": "@myorg/package",
+  "publishConfig": {
+    "@myorg:registry": "https://registry.myorg.example/"
+  }
+}
+```
+
+Credentials are the ones configured for that registry, the same as when it is the default registry: a `//registry.myorg.example/:_authToken=...` line in `.npmrc`, or a registry with the same URL in `bunfig.toml` or `.npmrc`. When there are none, the credentials of the registry the package would otherwise have been published to are used only if the pinned registry has the same origin; otherwise `bun publish` fails with a missing authentication error instead of sending them to a different registry.
+
+As in npm, `publishConfig` is read like the name and the version: from the `package.json` that the `prepublishOnly`, `prepack` and `prepare` scripts leave behind.
+
 ### `--dry-run`
 
-The `--dry-run` flag can be used to simulate the publish process without actually publishing the package. This is useful for verifying the contents of the published package without actually publishing the package.
+`--dry-run` runs the publish process without publishing the package, so you can verify what would be published.
 
 ```sh terminal icon="terminal"
 bun publish --dry-run
@@ -99,11 +149,11 @@ bun publish --tolerate-republish
 
 ### `--gzip-level`
 
-Specify the level of gzip compression to use when packing the package. Only applies to `bun publish` without a tarball path argument. Values range from `0` to `9` (default is `9`).
+Set the gzip compression level used when packing the package, from `0` to `9` (default `9`). Only applies to `bun publish` without a tarball path argument.
 
 ### `--auth-type`
 
-If you have 2FA enabled for your npm account, `bun publish` will prompt you for a one-time password. This can be done through a browser or the CLI. The `--auth-type` flag can be used to tell the npm registry which method you prefer. The possible values are `web` and `legacy`, with `web` being the default.
+If you have 2FA enabled for your npm account, `bun publish` prompts you for a one-time password, either through a browser or in the CLI. `--auth-type` tells the npm registry which method you prefer: `web` (the default) or `legacy`.
 
 ```sh terminal icon="terminal"
 bun publish --auth-type legacy
@@ -115,16 +165,26 @@ Enter OTP: 123456
 
 ### `--otp`
 
-Provide a one-time password directly to the CLI. If the password is valid, this will skip the extra prompt for a one-time password before publishing. Example usage:
+Provide a one-time password directly to the CLI. If the password is valid, `bun publish` skips the extra one-time password prompt before publishing:
 
 ```sh terminal icon="terminal"
 bun publish --otp 123456
 ```
 
 <Note>
-  `bun publish` respects the `NPM_CONFIG_TOKEN` environment variable which can be used when publishing in github actions
-  or automated workflows.
+  `bun publish` respects the `NPM_CONFIG_TOKEN` environment variable, useful when publishing from GitHub Actions or
+  other automated workflows.
 </Note>
+
+### `--provenance`
+
+`bun publish` cannot generate provenance statements yet: `--provenance`, `--provenance-file`, `"provenance": true` in `publishConfig`, `NPM_CONFIG_PROVENANCE=true` and `provenance=true` in `.npmrc` are errors, so that a package is never published without the statement it asked for.
+
+A setting that turns provenance off is fine. As in npm, the command line wins over `publishConfig`, `publishConfig` over the environment, and the environment over `.npmrc`:
+
+```sh terminal icon="terminal"
+bun publish --no-provenance # or --provenance=false
+```
 
 ---
 

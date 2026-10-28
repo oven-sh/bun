@@ -355,3 +355,103 @@ describe("invalid-escape caret points at the backslash (#31134)", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+// https://github.com/oven-sh/bun/issues/30825
+// Two bugs in the variable-length `\u{...}` loop of `decode_escape_sequences`:
+//   1. `value = value * 16 | d` overflowed `i64` once the escape carried enough
+//      hex digits, trapping in debug builds. `is_out_of_range` is sticky and the
+//      value only grows, so saturating the multiply keeps the range error intact.
+//   2. Running out of literal before the closing `}` broke out of the loop and
+//      used the half-parsed value: `"\u{41"` decoded to `"A"` and `"\u{"` to NUL.
+//      esbuild and JSC both reject these.
+describe("pathological `\\u{...}` escapes (#30825)", () => {
+  const run = (source: string) => {
+    using dir = tempDir("u-brace", { "test.js": source });
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), join(dir, "test.js")],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+      cwd: String(dir),
+    });
+    return { stdout: stdout.toString(), stderr: stderr.toString(), exitCode };
+  };
+
+  // Any run of ~16+ significant hex digits pushes the accumulator past `i64::MAX`.
+  const overflowing = Buffer.alloc(64, "f").toString();
+
+  const outOfRange = [
+    { name: "identifier (issue repro)", source: "\\u{3333333316aaaaaaa}a" },
+    { name: "double-quoted string", source: 'var a = "\\u{3333333316aaaaaaa}";' },
+    { name: "single-quoted string", source: "var a = '\\u{3333333316aaaaaaa}';" },
+    { name: "template literal", source: "var a = `\\u{3333333316aaaaaaa}`;" },
+    { name: "64 hex digits", source: `var a = "\\u{${overflowing}}";` },
+    { name: "leading zeros then overflow", source: `var a = "\\u{0000${overflowing}}";` },
+    { name: "one past U+10FFFF", source: 'var a = "\\u{110000}";' },
+    // A template head's text ends at `${`, not at a quote.
+    { name: "template head before a substitution", source: "var x = 1; var a = `\\u{110000}${x}`;" },
+  ];
+
+  test.each(outOfRange)("$name → out-of-range error", ({ source }) => {
+    const { stderr, exitCode } = run(source);
+    expect(stderr).toContain("error: Unicode escape sequence is out of range");
+    expect(exitCode).toBe(1);
+  });
+
+  // The literal ends before `}`. esbuild and JSC both reject; the out-of-range
+  // case is a syntax error too, because the missing brace is found first.
+  const unterminated = [
+    { name: "double-quoted, digits", source: 'var a = "\\u{41";' },
+    { name: "double-quoted, no digits", source: 'var a = "\\u{";' },
+    { name: "single-quoted, digits", source: "var a = '\\u{41';" },
+    { name: "template literal, digits", source: "var a = `\\u{41`;" },
+    { name: "digits are out of range", source: 'var a = "\\u{110000";' },
+    { name: "digits overflow the accumulator", source: `var a = "\\u{${overflowing}";` },
+    // The head's text ends at `${`, so the brace is missing there too. Before the
+    // fix this cooked to "A" + x + "}".
+    { name: "template head before a substitution", source: "var x = 1; var a = `\\u{41${x}}`;" },
+  ];
+
+  test.each(unterminated)("$name → syntax error", ({ source }) => {
+    const { stderr, exitCode } = run(source);
+    expect(stderr).toContain("error: Syntax Error");
+    // The missing brace is reported, not the value it would have produced.
+    expect(stderr).not.toContain("out of range");
+    expect(exitCode).toBe(1);
+  });
+
+  test("in-range escapes still decode, however many leading zeros", () => {
+    const { stdout, exitCode } = run(
+      [
+        `console.log("\\u{41}");`,
+        // Long enough to overflow if the leading zeros were counted as digits.
+        `console.log("\\u{${Buffer.alloc(64, "0").toString()}41}");`,
+        `console.log("\\u{10FFFF}".codePointAt(0).toString(16));`,
+        `console.log("\\u{1F600}".length);`,
+        "console.log(`\\u{42}`);",
+        "const \\u{43} = 3; console.log(C);",
+      ].join("\n"),
+    );
+    expect(stdout).toBe("A\nA\n10ffff\n2\nB\n3\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // Tagged templates keep their raw text and never reach the escape decoder, so
+  // neither new error path may leak into them: the cooked value stays undefined.
+  test("tagged templates still expose raw text for invalid escapes", () => {
+    const { stdout, exitCode } = run(
+      [
+        "const x = 1;",
+        "function tag(s) { return `${s[0]} ${s.raw[0]}`; }",
+        "console.log(tag`\\u{110000}`);",
+        "console.log(tag`\\u{41`);",
+        "console.log(tag`\\u{3333333316aaaaaaa}`);",
+        "console.log(tag`\\u{41${x}}`);",
+      ].join("\n"),
+    );
+    expect(stdout).toBe(
+      "undefined \\u{110000}\nundefined \\u{41\nundefined \\u{3333333316aaaaaaa}\nundefined \\u{41\n",
+    );
+    expect(exitCode).toBe(0);
+  });
+});

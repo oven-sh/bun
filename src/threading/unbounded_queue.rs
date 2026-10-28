@@ -50,13 +50,6 @@ impl<T> Link<T> {
     }
 }
 
-impl<T> Default for Link<T> {
-    #[inline]
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Shorthand for the common [`Node`] case: `T` embeds a [`Link<Self>`] field.
 /// Implement this and the blanket `impl<T: Linked> Node for T` below supplies
 /// the four accessors. Node types with packed/custom link storage (e.g.
@@ -99,8 +92,7 @@ unsafe impl<T: Linked> Node for T {
 }
 
 pub struct Batch<T: Node> {
-    pub front: *mut T,
-    pub last: *mut T,
+    pub(crate) front: *mut T,
     pub count: usize,
 }
 
@@ -115,7 +107,6 @@ impl<T: Node> Default for Batch<T> {
     fn default() -> Self {
         Self {
             front: ptr::null_mut(),
-            last: ptr::null_mut(),
             count: 0,
         }
     }
@@ -182,11 +173,11 @@ impl<T: Node> Batch<T> {
     )),
     repr(align(32))
 )]
-pub struct QueuePadded<T>(pub T);
+pub struct QueuePadded<T>(pub(crate) T);
 
 pub struct UnboundedQueue<T: Node> {
-    pub back: QueuePadded<AtomicPtr<T>>,
-    pub front: QueuePadded<AtomicPtr<T>>,
+    pub(crate) back: QueuePadded<AtomicPtr<T>>,
+    pub(crate) front: QueuePadded<AtomicPtr<T>>,
 }
 
 impl<T: Node> Default for UnboundedQueue<T> {
@@ -214,7 +205,7 @@ impl<T: Node> UnboundedQueue<T> {
 
     /// `first..=last` must form a valid intrusive chain of live `T` nodes. The
     /// caller transfers logical ownership of every node in the chain.
-    pub fn push_batch(&self, first: NonNull<T>, last: NonNull<T>) {
+    pub(crate) fn push_batch(&self, first: NonNull<T>, last: NonNull<T>) {
         let (first, last) = (first.as_ptr(), last.as_ptr());
         // SAFETY: caller guarantees `last` is a live node (NonNull is non-null).
         unsafe { T::set_next(last, ptr::null_mut()) };
@@ -335,7 +326,6 @@ impl<T: Node> UnboundedQueue<T> {
         }
 
         batch.front = first;
-        batch.last = last;
         batch
     }
 

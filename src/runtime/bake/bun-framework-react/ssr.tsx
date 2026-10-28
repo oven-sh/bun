@@ -32,16 +32,19 @@ const createFromNodeStreamOptions: Manifest = {
 // References:
 // - https://github.com/vercel/next.js/blob/15.0.2/packages/next/src/server/app-render/use-flight-response.tsx
 // - https://github.com/devongovett/rsc-html-stream
+/** Bun's ReadableStream. This project loads the DOM lib, whose ReadableStream has no `bytes()`. */
+type BunReadableStream = ReadableStream & { bytes(): Promise<Uint8Array<ArrayBuffer>> };
+
 export function renderToHtml(
   rscPayload: Readable,
   bootstrapModules: readonly string[],
   signal: MiniAbortSignal,
-): ReadableStream {
+): BunReadableStream {
   // Bun supports a special type of readable stream type called "direct",
   // which provides a raw handle to the controller. We can bypass all of
   // the Web Streams API (slow) and use the controller directly.
   let stream: RscInjectionStream | null = null;
-  let abort: () => void;
+  let abort: (reason?: unknown) => void;
   return new ReadableStream({
     type: "direct",
     pull(controller) {
@@ -69,12 +72,12 @@ export function renderToHtml(
         bootstrapModules,
         onError(error) {
           if (!signal.aborted) {
-            // Abort the rendering and close the stream
+            // Abort the rendering and fail the stream with the error (a thrown Response for redirect()/render()).
             signal.aborted = error;
             abort();
             if (signal.abort) signal.abort();
             if (stream) {
-              stream.controller.close();
+              stream.controller.close(error);
             }
           }
         },
@@ -92,7 +95,7 @@ export function renderToHtml(
       }
       abort?.(err);
     },
-  } as Bun.DirectUnderlyingSource as any);
+  } as Bun.DirectUnderlyingSource as any) as BunReadableStream;
 }
 
 // Static builds can not stream suspense boundaries as they finish, but instead
@@ -154,7 +157,7 @@ class RscInjectionStream extends EventEmitter {
 
     const { resolve, promise, reject } = Promise.withResolvers<void>();
     this.finished = promise;
-    this.finalize = x => (controller.close(), resolve(x));
+    this.finalize = () => (controller.close(), resolve());
     this.reject = reject;
 
     rscPayload.on("data", this.writeRscData.bind(this));
@@ -163,9 +166,8 @@ class RscInjectionStream extends EventEmitter {
     });
     rscPayload.on("error", err => {
       this.rscHasEnded = true;
-      // Close the controller
-      controller.close();
-      // Reject the promise instead of resolving it
+      // Fail the stream with the error (a thrown Response for redirect()/render()) and reject pull().
+      controller.close(err);
       this.reject(err);
     });
   }
@@ -298,7 +300,7 @@ class StaticRscInjectionStream extends EventEmitter {
     let string = startScriptTag;
     writeManyFlightScriptData(this.rscPayloadChunks, new TextDecoder("utf-8"), { write: str => (string += str) });
     this.chunks.push(string + closingBodyTag);
-    this.finalize(new Blob(this.chunks, { type: "text/html" }));
+    this.finalize(new Blob(this.chunks as BlobPart[], { type: "text/html" }));
   }
 
   flush() {
@@ -339,19 +341,18 @@ function writeManyFlightScriptData(
   if (chunks.length === 1) return writeSingleFlightScriptData(chunks[0], decoder, controller);
 
   let i = 0;
+  let decoded = "";
   try {
     // Combine all chunks into a single string if possible.
     for (; i < chunks.length; i++) {
       // `decode()` will throw on invalid UTF-8 sequences.
-      const str = toSingleQuote(decoder.decode(chunks[i], { stream: true }));
-      if (i === 0) controller.write("'");
-      controller.write(str);
+      decoded += decoder.decode(chunks[i], { stream: true });
     }
-    controller.write("')</script>");
+    controller.write("'" + toSingleQuote(decoded) + "')</script>");
   } catch {
     // The chunk cannot be embedded as a UTF-8 string in the script tag.
     // Since this is rare, just make the rest of the chunks base64.
-    if (i > 0) controller.write("');__bun_f.push(");
+    if (i > 0) controller.write("'" + toSingleQuote(decoded) + "');__bun_f.push(");
     controller.write('Uint8Array.from(atob("');
     for (; i < chunks.length; i++) {
       const chunk = chunks[i];

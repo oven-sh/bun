@@ -1,8 +1,10 @@
 import type { BunRequest, ServeOptions, Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
+import net from "node:net";
 
 describe("path parameters", () => {
-  let server: Server;
+  let server: Server<undefined>;
 
   beforeAll(() => {
     server = Bun.serve({
@@ -69,10 +71,31 @@ describe("path parameters", () => {
       method: "GET",
     });
   });
+
+  it.each([
+    ["valid UTF-8 bytes", [0xc3, 0xa9], "é"],
+    ["an invalid UTF-8 byte", [0xe9], "�"],
+  ])("decodes raw %s in a parameter segment", async (_label, bytes, expected) => {
+    const request = Buffer.concat([
+      Buffer.from("GET /users/"),
+      Buffer.from(bytes),
+      Buffer.from(" HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"),
+    ]);
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const socket = net.connect(server.port!, "127.0.0.1");
+    const chunks: Buffer[] = [];
+    socket.on("error", reject);
+    socket.on("data", (chunk: Buffer) => chunks.push(chunk));
+    socket.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    socket.on("connect", () => socket.write(request));
+    const response = await promise;
+    expect(response).toContain("HTTP/1.1 200");
+    expect(JSON.parse(response.slice(response.indexOf("\r\n\r\n") + 4))).toEqual({ id: expected, method: "GET" });
+  });
 });
 
 describe("HTTP methods", () => {
-  let server: Server;
+  let server: Server<undefined>;
 
   beforeAll(() => {
     server = Bun.serve({
@@ -261,7 +284,7 @@ describe("implicit HEAD for per-method route objects", () => {
 });
 
 describe("static responses", () => {
-  let server: Server;
+  let server: Server<undefined>;
 
   beforeAll(() => {
     server = Bun.serve({
@@ -305,7 +328,7 @@ describe("static responses", () => {
 });
 
 describe("route precedence", () => {
-  let server: Server;
+  let server: Server<undefined>;
 
   beforeAll(() => {
     server = Bun.serve({
@@ -358,7 +381,7 @@ describe("route precedence", () => {
 });
 
 describe("error handling", () => {
-  let server: Server;
+  let server: Server<undefined>;
 
   beforeAll(() => {
     server = Bun.serve({
@@ -397,7 +420,7 @@ describe("error handling", () => {
 });
 
 describe("request properties", () => {
-  let server: Server;
+  let server: Server<undefined>;
 
   beforeAll(() => {
     server = Bun.serve({
@@ -432,7 +455,7 @@ describe("request properties", () => {
       },
     });
     expect(res.status).toBe(200);
-    const headers = await res.json();
+    const headers: any = await res.json();
     expect(headers["x-test"]).toBe("value");
     expect(headers["user-agent"]).toBe("test-agent");
   });
@@ -446,7 +469,7 @@ describe("request properties", () => {
   it("provides correct URL properties", async () => {
     const res = await fetch(`${server.url}echo-url?foo=bar`);
     expect(res.status).toBe(200);
-    const data = await res.json();
+    const data: any = await res.json();
     expect(data.url).toInclude("echo-url?foo=bar");
     expect(data.pathname).toBe("/echo-url");
   });
@@ -473,7 +496,7 @@ describe("request properties", () => {
 });
 
 describe("route reloading", () => {
-  let server: Server;
+  let server: Server<undefined>;
 
   beforeAll(() => {
     server = Bun.serve({
@@ -595,8 +618,71 @@ describe("route reloading", () => {
   });
 });
 
+describe("reload() keeps the server able to answer", () => {
+  it("rejects routes: {} on a routes-only server, and keeps serving the old routes", async () => {
+    using server = Bun.serve({
+      port: 0,
+      routes: { "/": () => new Response("routes") },
+    });
+    // The routes are the only handler; taking them away without adding a fetch
+    // would leave nothing to answer requests, which is what the same check
+    // refuses at Bun.serve() time.
+    expect(() => server.reload({ routes: {} } as ServeOptions)).toThrow("Bun.serve() needs either:");
+    expect(await (await fetch(server.url)).text()).toBe("routes");
+  });
+
+  it("allows routes: {} when the server keeps its fetch handler", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response("fetch"),
+      routes: { "/": () => new Response("routes") },
+    });
+    server.reload({ routes: {} } as ServeOptions);
+    expect(await (await fetch(server.url)).text()).toBe("fetch");
+  });
+
+  it("allows a reload that names no handler at all on a routes-only server", async () => {
+    using server = Bun.serve({
+      port: 0,
+      routes: { "/": () => new Response("routes") },
+    });
+    server.reload({ development: false } as ServeOptions);
+    expect(await (await fetch(server.url)).text()).toBe("routes");
+  });
+
+  it("allows a reload that names no handler at all on a fetch-only server", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response("fetch"),
+    });
+    server.reload({ error: _err => new Response("error") } as ServeOptions);
+    expect(await (await fetch(server.url)).text()).toBe("fetch");
+  });
+
+  // Unlike callback routes, static routes are replaced by every reload, even
+  // one without a routes object, so they cannot stand in for a missing handler.
+  it("rejects a reload that names no handler on a server whose only routes are static", async () => {
+    using server = Bun.serve({
+      port: 0,
+      routes: { "/": new Response("static") },
+    });
+    expect(() => server.reload({ development: false } as ServeOptions)).toThrow("Bun.serve() needs either:");
+    expect(await (await fetch(server.url)).text()).toBe("static");
+  });
+
+  // Same for node:http's request handler: a reload that omits it clears it.
+  it("rejects a reload that names no handler on a server whose only handler is onNodeHTTPRequest", () => {
+    using server = Bun.serve({
+      port: 0,
+      // @ts-expect-error internal option used by node:http's Server
+      onNodeHTTPRequest() {},
+    });
+    expect(() => server.reload({ development: false } as ServeOptions)).toThrow("Bun.serve() needs either:");
+  });
+});
+
 describe("many route params", () => {
-  let server: Server;
+  let server: Server<undefined>;
 
   beforeAll(() => {
     server = Bun.serve({
@@ -626,7 +712,7 @@ describe("many route params", () => {
     const res = await fetch(new URL(path, server.url).href);
     expect(res.status).toBe(200);
 
-    const params = await res.json();
+    const params: any = await res.json();
     expect(Object.keys(params)).toHaveLength(65);
 
     for (let i = 1; i <= 65; i++) {
@@ -677,6 +763,7 @@ it("fetch() is optional when routes are specified", async () => {
 
 it("throws a validation error when passing invalid routes", () => {
   expect(() => {
+    // @ts-expect-error
     Bun.serve({ routes: { "/test": 123 } });
   }).toThrowErrorMatchingInlineSnapshot(`
     "'routes' expects a Record<string, Response | HTMLBundle | {[method: string]: (req: BunRequest) => Response|Promise<Response>}>
@@ -744,6 +831,7 @@ it("throws a validation error when routes object is empty and fetch is not speci
 
 it("throws a validation error when routes object is undefined and fetch is not specified", async () => {
   expect(() =>
+    // @ts-expect-error
     Bun.serve({
       port: 0,
       routes: undefined,
@@ -895,7 +983,7 @@ it("routes absolute-form request targets by path and derives request.url from th
     let received = "";
     Bun.connect({
       hostname: "127.0.0.1",
-      port: server.port,
+      port: server.port!,
       socket: {
         open(socket) {
           socket.write(
@@ -942,7 +1030,7 @@ it("routes absolute-form request targets by path and derives request.url from th
       let received = "";
       Bun.connect({
         hostname: "127.0.0.1",
-        port: server.port,
+        port: server.port!,
         socket: {
           open(socket) {
             socket.write(`GET ${target} HTTP/1.1\r\nHost: ${hostHeader}\r\nConnection: close\r\n\r\n`);
@@ -969,4 +1057,70 @@ it("routes absolute-form request targets by path and derives request.url from th
     expect(rawUrl.pathname).toBe("/");
     expect(rawUrl.search).toBe(new URL(target).search);
   }
+});
+
+describe.concurrent("false route with no fetch handler", () => {
+  // A route value of `false` must fall through to the default handler. With no
+  // `fetch` configured that default is the built-in 404, not a call through an
+  // empty handler slot (which crashed the server process).
+  const serverSrc = /* ts */ `
+    const srv = Bun.serve({
+      port: 0,
+      development: false,
+      routes: {
+        "/x": new Response("x"),
+        "/off": false,
+        "/off/:id": false,
+        "/wild/*": false,
+      },
+    });
+    process.send!({ port: srv.port });
+  `;
+
+  test.each([
+    ["exact", "/off"],
+    ["param", "/off/7"],
+    ["wildcard", "/wild/z"],
+  ])("%s route 404s and the server survives", async (_label, path) => {
+    const { promise: portPromise, resolve: gotPort } = Promise.withResolvers<number>();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", serverSrc],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      ipc(message: { port: number }) {
+        gotPort(message.port);
+      },
+    });
+    const port = await Promise.race([
+      portPromise,
+      proc.exited.then(code => Promise.reject(new Error(`server exited (${code}) before listening`))),
+    ]);
+
+    const res = await fetch(`http://127.0.0.1:${port}${path}`);
+    expect(res.status).toBe(404);
+
+    // The server must still be serving after the request above.
+    const ok = await fetch(`http://127.0.0.1:${port}/x`);
+    expect(await ok.text()).toBe("x");
+    expect(ok.status).toBe(200);
+
+    proc.kill();
+    await proc.exited;
+  });
+});
+
+it("request.clone() copies a param whose name is an array index", async () => {
+  using server = Bun.serve({
+    port: 0,
+    routes: {
+      "/users/:id": req => {
+        (req.params as Record<string, string>)[0] = "zero";
+        const params = req.clone().params as Record<string, string>;
+        return Response.json({ keys: Object.keys(params), byIndex: params[0] });
+      },
+    },
+  });
+  const res = await fetch(`${server.url}users/42`);
+  expect(await res.json()).toEqual({ keys: ["0", "id"], byIndex: "zero" });
 });

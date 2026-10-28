@@ -13,16 +13,40 @@ const { isArrayBufferView, isAnyArrayBuffer } = require("node:util/types");
 const { kValidatedTransform } = require("internal/streams/iter/types");
 const { checkRangesOrGetDefault, validateFiniteNumber, validateObject } = require("internal/validators");
 
-const NativeZlib = $rust("node_zlib_binding.rs", "NativeZlib");
-const NativeBrotli = $rust("node_zlib_binding.rs", "NativeBrotli");
-const NativeZstd = $rust("node_zlib_binding.rs", "NativeZstd");
-const constants = process.binding("constants").zlib;
+const NativeZlib: $Bindgen.CompressionStreamConstructor<$Bindgen.NativeZlib> = $bindgen(
+  "node_zlib_binding.bind.ts",
+  "NativeZlib",
+);
+const NativeBrotli: $Bindgen.CompressionStreamConstructor<$Bindgen.NativeBrotli> = $bindgen(
+  "node_zlib_binding.bind.ts",
+  "NativeBrotli",
+);
+const NativeZstd: $Bindgen.CompressionStreamConstructor<$Bindgen.NativeZstd> = $bindgen(
+  "node_zlib_binding.bind.ts",
+  "NativeZstd",
+);
+const constants: Record<string, number> = process.binding("constants").zlib;
+
+type OnError = (message: string, errno: number, code: string) => void;
+
+/** A native handle, and the input it holds on to while the thread pool reads it. */
+type Handle = $Bindgen.CompressionStream & { buffer?: ArrayBufferView | null };
+
+interface CreatedHandle {
+  __proto__?: null;
+  handle: Handle;
+  writeState: Uint32Array;
+  chunkSize: number;
+}
+
+type CreateHandle = (processCallback: () => void, onError: OnError) => CreatedHandle;
+type Batch = Uint8Array[] | null;
 
 const Uint8ArraySlice = Uint8Array.prototype.slice;
 
 // Matches node's internal/errors genericNodeError().
 function genericNodeError(message, options) {
-  const error = new Error(message);
+  const error: NodeJS.ErrnoException = new Error(message);
   error.errno = options.errno;
   error.code = options.code;
   return error;
@@ -94,7 +118,7 @@ function validateDictionary(dictionary) {
   throw $ERR_INVALID_ARG_TYPE("options.dictionary", ["Buffer", "TypedArray", "DataView", "ArrayBuffer"], dictionary);
 }
 
-function validateParams(params, maxParam, makeError) {
+function validateParams(params, maxParam: number, makeError: (key) => Error) {
   if (params === undefined) return;
   if (typeof params !== "object" || params === null) {
     throw $ERR_INVALID_ARG_TYPE("options.params", "Object", params);
@@ -139,7 +163,7 @@ const zstdInitDParamsArray = new Uint32Array(kMaxZstdDParam + 1);
  * Create a bare Zlib handle (gzip, gunzip, deflate, inflate).
  * @returns {{ handle: object, writeState: Uint32Array, chunkSize: number }}
  */
-function createZlibHandle(mode, options, processCallback, onError) {
+function createZlibHandle(mode: number, options, processCallback: () => void, onError: OnError): CreatedHandle {
   // Validate all options before creating the native handle to avoid
   // "close before init" assertion if validation throws.
   const chunkSize = validateChunkSize(options);
@@ -179,12 +203,10 @@ function createZlibHandle(mode, options, processCallback, onError) {
  * Create a bare Brotli handle.
  * @returns {{ handle: object, writeState: Uint32Array, chunkSize: number }}
  */
-function createBrotliHandle(mode, options, processCallback, onError) {
+function createBrotliHandle(mode: number, options, processCallback: () => void, onError: OnError): CreatedHandle {
   // Validate before creating native handle.
   const chunkSize = validateChunkSize(options);
-  // Note: bun's NativeBrotli.init() does not take a dictionary parameter;
-  // validate for parity but the dictionary is not passed to the engine.
-  validateDictionary(options.dictionary);
+  const dictionary = validateDictionary(options.dictionary);
   validateParams(options.params, kMaxBrotliParam, key => $ERR_BROTLI_INVALID_PARAM(key));
 
   const handle = new NativeBrotli(mode);
@@ -211,7 +233,7 @@ function createBrotliHandle(mode, options, processCallback, onError) {
   }
 
   handle.onerror = onError;
-  if (!handle.init(brotliInitParamsArray, writeState, processCallback)) {
+  if (!handle.init(brotliInitParamsArray, writeState, processCallback, dictionary)) {
     throw $ERR_ZLIB_INITIALIZATION_FAILED();
   }
 
@@ -222,14 +244,12 @@ function createBrotliHandle(mode, options, processCallback, onError) {
  * Create a bare Zstd handle.
  * @returns {{ handle: object, writeState: Uint32Array, chunkSize: number }}
  */
-function createZstdHandle(mode, options, processCallback, onError) {
+function createZstdHandle(mode: number, options, processCallback: () => void, onError: OnError): CreatedHandle {
   const isCompress = mode === ZSTD_COMPRESS;
 
   // Validate before creating native handle.
   const chunkSize = validateChunkSize(options);
-  // Note: bun's NativeZstd.init() does not take a dictionary parameter;
-  // validate for parity but the dictionary is not passed to the engine.
-  validateDictionary(options.dictionary);
+  const dictionary = validateDictionary(options.dictionary);
   const maxParam = isCompress ? kMaxZstdCParam : kMaxZstdDParam;
   validateParams(options.params, maxParam, key => $ERR_ZSTD_INVALID_PARAM(key));
 
@@ -258,7 +278,7 @@ function createZstdHandle(mode, options, processCallback, onError) {
   }
 
   handle.onerror = onError;
-  handle.init(initArray, pledgedSrcSize, writeState, processCallback);
+  handle.init(initArray, pledgedSrcSize, writeState, processCallback, dictionary);
 
   return { __proto__: null, handle, writeState, chunkSize };
 }
@@ -271,11 +291,11 @@ function createZstdHandle(mode, options, processCallback, onError) {
 // upstream read+transform is started before awaiting the current compression,
 // so I/O and upstream work overlap with threadpool compression.
 // ---------------------------------------------------------------------------
-function makeZlibTransform(createHandleFn, processFlag, finishFlag) {
+function makeZlibTransform(createHandleFn: CreateHandle, processFlag: number, finishFlag: number) {
   return {
     __proto__: null,
     [kValidatedTransform]: true,
-    transform: async function* (source, options) {
+    transform: async function* (source: AsyncIterable<Batch>, options: { signal: AbortSignal }) {
       const { signal } = options;
 
       // Fail fast if already aborted - don't allocate a native handle.
@@ -284,14 +304,14 @@ function makeZlibTransform(createHandleFn, processFlag, finishFlag) {
       // ---- Per-invocation state shared with the write callback ----
       let outBuf;
       let outOffset = 0;
-      let chunkSize;
-      let pending = [];
+      let chunkSize: number;
+      let pending: Uint8Array[] = [];
       let pendingBytes = 0;
 
       // Current write operation state (read by the callback for looping).
-      let resolveWrite, rejectWrite;
-      let writeInput, writeFlush;
-      let writeInOff, writeAvailIn, writeAvailOutBefore;
+      let resolveWrite: (() => void) | undefined, rejectWrite: ((reason: unknown) => void) | undefined;
+      let writeInput: Uint8Array, writeFlush: number;
+      let writeInOff: number, writeAvailIn: number, writeAvailOutBefore: number;
 
       // processCallback: called from the threadpool completion path when
       // compression completes. Collects output, loops if the engine
@@ -348,7 +368,7 @@ function makeZlibTransform(createHandleFn, processFlag, finishFlag) {
 
       // onError: called by the engine when it encounters an error.
       // Fires instead of onWriteComplete - reject the promise.
-      function onError(message, errno, code) {
+      function onError(message: string, errno: number, code: string) {
         const error = genericNodeError(message, { __proto__: null, errno, code });
         error.errno = errno;
         error.code = code;
@@ -378,8 +398,8 @@ function makeZlibTransform(createHandleFn, processFlag, finishFlag) {
       signal.addEventListener("abort", onAbort, { __proto__: null, once: true });
 
       // Dispatch input to the threadpool and return a promise.
-      function processInputAsync(input, flushFlag) {
-        const { promise, resolve, reject } = Promise.withResolvers();
+      function processInputAsync(input: Uint8Array, flushFlag: number) {
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
         resolveWrite = resolve;
         rejectWrite = reject;
         writeInput = input;
@@ -403,10 +423,10 @@ function makeZlibTransform(createHandleFn, processFlag, finishFlag) {
           pendingBytes = 0;
           return batch;
         }
-        const batch = [];
+        const batch: Uint8Array[] = [];
         let batchBytes = 0;
         while (pending.length > 0 && batchBytes < BATCH_HWM) {
-          const buf = pending.shift();
+          const buf = pending.shift()!;
           batch.push(buf);
           const len = buf.byteLength;
           batchBytes += len;
@@ -491,14 +511,14 @@ function makeZlibTransform(createHandleFn, processFlag, finishFlag) {
 // which runs compression directly on the main thread (no threadpool).
 // Returns a stateful sync transform (generator function).
 // ---------------------------------------------------------------------------
-function makeZlibTransformSync(createHandleFn, processFlag, finishFlag) {
+function makeZlibTransformSync(createHandleFn: CreateHandle, processFlag: number, finishFlag: number) {
   return {
     __proto__: null,
-    transform: function* (source) {
+    transform: function* (source: Iterable<Batch>) {
       // The processCallback is never called in sync mode, but handle.init()
       // requires it. Pass a no-op.
-      let error = null;
-      function onError(message, errno, code) {
+      let error: NodeJS.ErrnoException | null = null;
+      function onError(message: string, errno: number, code: string) {
         error = genericNodeError(message, { __proto__: null, errno, code });
         error.errno = errno;
         error.code = code;
@@ -510,10 +530,10 @@ function makeZlibTransformSync(createHandleFn, processFlag, finishFlag) {
       const chunkSize = result.chunkSize;
       let outBuf = Buffer.allocUnsafe(chunkSize);
       let outOffset = 0;
-      let pending = [];
+      let pending: Uint8Array[] = [];
       let pendingBytes = 0;
 
-      function processSyncInput(input, flushFlag) {
+      function processSyncInput(input: Uint8Array, flushFlag: number) {
         let inOff = 0;
         let availIn = input.byteLength;
         let availOutBefore = chunkSize - outOffset;
@@ -571,10 +591,10 @@ function makeZlibTransformSync(createHandleFn, processFlag, finishFlag) {
           pendingBytes = 0;
           return batch;
         }
-        const batch = [];
+        const batch: Uint8Array[] = [];
         let batchBytes = 0;
         while (pending.length > 0 && batchBytes < BATCH_HWM) {
-          const buf = pending.shift();
+          const buf = pending.shift()!;
           const len = buf.byteLength;
           batch.push(buf);
           batchBytes += len;

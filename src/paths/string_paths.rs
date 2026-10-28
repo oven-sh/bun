@@ -12,13 +12,6 @@ use crate::windows;
 use bun_core::strings;
 use bun_core::{WStr, ZStr};
 
-// Generic code-unit bound for fns that operate over both u8 and u16 paths:
-// `crate::PathChar` (provides
-// `from_u8`/`IS_U16`) plus `Into<u32>` + `NoUninit` for `strings::contains_char_t`.
-pub trait Ch: PathChar + Into<u32> + bun_core::NoUninit {}
-impl Ch for u8 {}
-impl Ch for u16 {}
-
 /// Borrow `wbuf[..len]` as a `&WStr`, where `wbuf[len] == 0`. Safe-surface
 /// form of [`WStr::from_raw`] for the dominant call shape in this module: a
 /// stack `WPathBuffer` filled to `len` with a NUL written at `wbuf[len]`.
@@ -27,19 +20,19 @@ impl Ch for u16 {}
 /// caller upholding the documented `wbuf[len] == 0` precondition).
 /// Mirrors [`ZStr::from_buf`].
 #[inline(always)]
-pub(crate) fn wstr_in_buf(wbuf: &[u16], len: usize) -> &WStr {
+fn wstr_in_buf(wbuf: &[u16], len: usize) -> &WStr {
     WStr::from_buf(wbuf, len)
 }
 
 #[inline(always)]
-fn ch<T: Ch>(c: u8) -> T {
+fn ch<T: PathChar>(c: u8) -> T {
     T::from_u8(c)
 }
 
 /// Local helper: `has_prefix_ascii_t` — compare `&[T]` against an ASCII `&[u8]`
 /// literal by widening each prefix byte via `T::from_u8`.
 #[inline]
-fn has_prefix_ascii_t<T: Ch>(s: &[T], prefix: &[u8]) -> bool {
+fn has_prefix_ascii_t<T: PathChar>(s: &[T], prefix: &[u8]) -> bool {
     if s.len() < prefix.len() {
         return false;
     }
@@ -59,7 +52,7 @@ fn has_prefix_ascii_t<T: Ch>(s: &[T], prefix: &[u8]) -> bool {
 /// debug-asserts the precondition `Platform.windows.isAbsoluteT(chars)`
 /// (bun_core can't, as `bun_paths` would be a tier-0 cycle there).
 #[inline]
-pub fn is_windows_absolute_path_missing_drive_letter<T: Ch + From<u8>>(chars: &[T]) -> bool {
+pub fn is_windows_absolute_path_missing_drive_letter<T: PathChar + From<u8>>(chars: &[T]) -> bool {
     debug_assert!(crate::Platform::Windows.is_absolute_t(chars));
     bun_core::strings::is_windows_absolute_path_missing_drive_letter(chars)
 }
@@ -69,13 +62,13 @@ pub fn from_w_path<'a>(buf: &'a mut [u8], utf16: &[u16]) -> &'a ZStr {
     let to_copy = strings::trim_prefix_comptime::<u16>(utf16, &windows::LONG_PATH_PREFIX);
     let last = buf.len() - 1;
     let encode_into_result = strings::copy_utf16_into_utf8(&mut buf[..last], to_copy);
-    let written = encode_into_result.written as usize;
+    let written = encode_into_result.written;
     debug_assert!(written < buf.len());
     buf[written] = 0;
     ZStr::from_buf(buf, written)
 }
 
-pub fn without_nt_prefix<T: Ch>(path: &[T]) -> &[T] {
+pub fn without_nt_prefix<T: PathChar>(path: &[T]) -> &[T] {
     if !cfg!(windows) {
         return path;
     }
@@ -160,7 +153,7 @@ pub fn to_nt_path16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a WStr {
     wstr_in_buf(wbuf, total)
 }
 
-pub(crate) fn add_nt_path_prefix<'a>(wbuf: &'a mut [u16], utf16: &[u16]) -> &'a WStr {
+fn add_nt_path_prefix<'a>(wbuf: &'a mut [u16], utf16: &[u16]) -> &'a WStr {
     let plen = windows::NT_OBJECT_PREFIX.len();
     wbuf[..plen].copy_from_slice(&windows::NT_OBJECT_PREFIX);
     wbuf[plen..plen + utf16.len()].copy_from_slice(utf16);
@@ -180,9 +173,6 @@ pub fn add_nt_path_prefix_if_needed<'a>(wbuf: &'a mut [u16], utf16: &[u16]) -> &
     }
     add_nt_path_prefix(wbuf, utf16)
 }
-
-// These are the same because they don't have rules like needing a trailing slash
-pub use self::to_nt_path as to_nt_dir;
 
 pub fn to_extended_path_normalized<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
     debug_assert!(wbuf.len() > 4);
@@ -225,7 +215,7 @@ pub fn to_w_path_normalized<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
     to_w_path(wbuf, path_to_use)
 }
 
-pub(crate) fn to_w_path_normalized16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a WStr {
+fn to_w_path_normalized16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a WStr {
     // Input (plus the NUL) doesn't fit in `wbuf` — fail-safe to "" like
     // `to_w_path_maybe_dir` does, instead of panicking in the
     // `normalize_slashes_only_t` copy below.
@@ -253,12 +243,7 @@ pub(crate) fn to_w_path_normalized16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &
     wstr_in_buf(wbuf, len)
 }
 
-pub(crate) fn normalize_slashes_only_t<
-    'a,
-    T: Ch,
-    const DESIRED_SLASH: u8,
-    const ALWAYS_COPY: bool,
->(
+fn normalize_slashes_only_t<'a, T: PathChar, const DESIRED_SLASH: u8, const ALWAYS_COPY: bool>(
     buf: &'a mut [T],
     path: &'a [T],
 ) -> &'a [T] {
@@ -364,7 +349,7 @@ pub fn to_kernel32_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
     to_w_path(wbuf, path)
 }
 
-pub(crate) fn to_w_path_maybe_dir<'a, const ADD_TRAILING_LASH: bool>(
+fn to_w_path_maybe_dir<'a, const ADD_TRAILING_LASH: bool>(
     wbuf: &'a mut [u16],
     utf8: &[u8],
 ) -> &'a WStr {
@@ -414,9 +399,7 @@ pub fn clone_normalizing_separators(input: &[u8]) -> Vec<u8> {
     // remove duplicate slashes in the file path
     let base = without_trailing_slash(input);
     let mut buf = vec![0u8; base.len() + 2];
-    if cfg!(debug_assertions) {
-        debug_assert!(!base.is_empty());
-    }
+    debug_assert!(!base.is_empty());
     if base[0] == crate::SEP {
         buf[0] = crate::SEP;
     }
@@ -448,12 +431,7 @@ pub fn path_contains_node_modules_folder(path: &[u8]) -> bool {
 pub use crate::is_sep_any as char_is_any_slash;
 
 #[inline(always)]
-pub fn starts_with_windows_drive_letter(s: &[u8]) -> bool {
-    starts_with_windows_drive_letter_t(s)
-}
-
-#[inline(always)]
-pub fn starts_with_windows_drive_letter_t<T: Ch>(s: &[T]) -> bool {
+pub fn starts_with_windows_drive_letter_t<T: PathChar>(s: &[T]) -> bool {
     s.len() > 2 && s[1] == ch(b':') && {
         let c = s[0];
         (c >= ch(b'a') && c <= ch(b'z')) || (c >= ch(b'A') && c <= ch(b'Z'))
@@ -468,24 +446,18 @@ pub fn without_trailing_slash_windows_path(input: &[u8]) -> &[u8] {
         return without_trailing_slash(input);
     }
 
-    let root_len = resolve_path::windows_filesystem_root(input).len() + 1;
+    let root_len = resolve_path::windows_filesystem_root(input).len();
 
     let mut path = input;
     while path.len() > root_len && matches!(path[path.len() - 1], b'/' | b'\\') {
         path = &path[..path.len() - 1];
     }
 
-    if cfg!(debug_assertions) {
-        debug_assert!(
-            !crate::is_absolute(path) || !is_windows_absolute_path_missing_drive_letter::<u8>(path)
-        );
-    }
+    debug_assert!(
+        !crate::is_absolute(path) || !is_windows_absolute_path_missing_drive_letter::<u8>(path)
+    );
 
     path
-}
-
-pub fn without_leading_slash(this: &[u8]) -> &[u8] {
-    strings::trim_left(this, b"/")
 }
 
 pub fn without_leading_path_separator(this: &[u8]) -> &[u8] {
@@ -493,21 +465,6 @@ pub fn without_leading_path_separator(this: &[u8]) -> &[u8] {
 }
 
 pub use bun_core::strings::remove_leading_dot_slash;
-
-// Copied from std, modified to accept input type — canonical impl lives in
-// `crate::{basename_posix, basename_windows}` (generic over `PathChar`);
-// this is a thin re-wrapper preserving the `Ch` bound for this module's API.
-#[inline]
-pub fn basename<T: Ch>(input: &[T]) -> &[T] {
-    #[cfg(windows)]
-    {
-        return crate::basename_windows::<T>(input);
-    }
-    #[cfg(not(windows))]
-    {
-        crate::basename_posix::<T>(input)
-    }
-}
 
 // Run with `cargo test -p bun_paths` (also the Miri lane,
 // `bun run rust:miri -p bun_paths`). simdutf's C++ implementation is only

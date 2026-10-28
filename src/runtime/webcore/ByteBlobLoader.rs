@@ -1,150 +1,73 @@
+use core::cell::Cell;
+
 use bun_collections::VecExt;
-use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsResult};
+use bun_ptr::RefPtr;
 
 use crate::webcore::blob::store::StoreExt as _;
-use crate::webcore::blob::{self, Blob, BlobExt as _, StoreRef};
+use crate::webcore::blob::{self, Blob, BlobExt as _, Store};
 use crate::webcore::readable_stream;
 use crate::webcore::streams;
 
 pub struct ByteBlobLoader {
-    pub offset: blob::SizeType,
+    pub offset: Cell<blob::SizeType>,
     // LIFETIMES.tsv: SHARED — ref() on setup, deref() in clearData
-    pub store: Option<StoreRef>,
-    pub chunk_size: blob::SizeType,
-    pub remain: blob::SizeType,
-    pub done: bool,
-    pub pulled: bool,
+    pub(crate) store: JsCell<Option<RefPtr<Store>>>,
+    pub(crate) chunk_size: blob::SizeType,
+    pub(crate) remain: Cell<blob::SizeType>,
+    pub(crate) done: Cell<bool>,
 
     /// https://github.com/oven-sh/bun/issues/14988
     /// Necessary for converting a ByteBlobLoader from a Blob -> back into a Blob
     /// Especially for DOMFormData, where the specific content-type might've been serialized into the data.
-    // Always-owned `Box<[u8]>`; the flag is kept because it is
-    // transferred to Blob in to_any_blob.
-    pub content_type: Box<[u8]>,
-    pub content_type_allocated: bool,
+    pub(crate) content_type: JsCell<blob::BlobContentType>,
 }
 
 impl Default for ByteBlobLoader {
     fn default() -> Self {
         Self {
-            offset: 0,
-            store: None,
+            offset: Cell::new(0),
+            store: JsCell::new(None),
             chunk_size: 1024 * 1024 * 2,
-            remain: 1024 * 1024 * 2,
-            done: false,
-            pulled: false,
-            content_type: Box::default(),
-            content_type_allocated: false,
+            remain: Cell::new(1024 * 1024 * 2),
+            done: Cell::new(false),
+            content_type: JsCell::new(blob::BlobContentType::default()),
         }
     }
 }
 
 // A generic `ReadableStreamSource<Ctx>` where `Ctx` impls `SourceContext`.
-pub type Source = readable_stream::NewSource<ByteBlobLoader>;
+pub(crate) type Source = readable_stream::NewSource<ByteBlobLoader>;
 
 impl readable_stream::SourceContext for ByteBlobLoader {
-    const NAME: &'static str = "Blob";
-    // setRefUnrefFn = null
-    const SUPPORTS_REF: bool = false;
     crate::source_context_codegen!(js_BlobInternalReadableStreamSource);
 
-    fn on_start(&mut self) -> streams::Start {
-        Self::on_start(self)
-    }
-    fn on_pull(&mut self, buf: &mut [u8], view: JSValue) -> streams::Result {
-        Self::on_pull(self, buf, view)
-    }
-    fn on_cancel(&mut self) {
-        Self::on_cancel(self)
-    }
-    fn deinit_fn(&mut self) {
-        Self::deinit(self)
-    }
-    fn drain_internal_buffer(&mut self) -> Vec<u8> {
-        Self::drain(self)
-    }
-    fn memory_cost_fn(&self) -> usize {
-        Self::memory_cost(self)
-    }
-    fn to_buffered_value(
-        &mut self,
-        global: &JSGlobalObject,
-        action: streams::BufferActionTag,
-    ) -> Option<JsResult<JSValue>> {
-        Some(Self::to_buffered_value(self, global, action))
-    }
-}
-
-bun_core::impl_field_parent! { ByteBlobLoader => Source.context; pub fn parent_const; pub fn parent; }
-
-impl ByteBlobLoader {
-    pub fn setup(&mut self, blob: &Blob, user_chunk_size: blob::SizeType) {
-        // In-place init — `self` is a pre-allocated slot inside `Source`.
-        let store = blob.store.get().as_ref().unwrap().clone();
-        // `Blob` is not `Clone`, so use the non-mutating `resolved_size()` helper.
-        let (offset, size) = blob.resolved_size();
-        // `content_type` is an always-owned `Box<[u8]>` (we dupe in both
-        // arms), so the flag must be `true` whenever the box is non-empty —
-        // it's later transferred verbatim to a `Blob` in `to_any_blob`, and a
-        // `false` there strands the `into_raw`'d allocation behind
-        // `Blob::free_content_type`'s `content_type_allocated` gate.
-        let (content_type, content_type_allocated) = if blob.content_type_was_set.get() {
-            let ct = blob.content_type_slice();
-            (Box::<[u8]>::from(ct), !ct.is_empty())
-        } else {
-            (Box::default(), false)
-        };
-        *self = ByteBlobLoader {
-            offset,
-            store: Some(store),
-            chunk_size: (if user_chunk_size > 0 {
-                user_chunk_size.min(size)
-            } else {
-                size
-            })
-            .min(1024 * 1024 * 2),
-            remain: size,
-            done: false,
-            pulled: false,
-            content_type,
-            content_type_allocated,
-        };
-    }
-
-    pub fn on_start(&mut self) -> streams::Start {
+    fn on_start(&self) -> streams::Start {
         // `streams::BlobSizeType` and `blob::SizeType` are both u64 in the Rust port.
         streams::Start::ChunkSize(self.chunk_size)
     }
 
-    pub fn on_pull(&mut self, buffer: &mut [u8], array: JSValue) -> streams::Result {
+    fn on_pull(&self, buffer: &mut [u8], array: JSValue) -> streams::Result {
         array.ensure_still_alive();
         let _keep = bun_jsc::EnsureStillAlive(array);
-        self.pulled = true;
-        let Some(store) = self.store.clone() else {
-            return streams::Result::Done;
-        };
-        if self.done {
+        if self.store.get().is_none() || self.done.get() {
             return streams::Result::Done;
         }
 
-        let temporary = store.shared_view();
-        let temporary = &temporary[(self.offset as usize).min(temporary.len())..];
-
-        let take = buffer.len().min(temporary.len().min(self.remain as usize));
-        let temporary = &temporary[..take];
-        if temporary.is_empty() {
+        let rest = self.remaining();
+        let take = buffer.len().min(rest.len());
+        if take == 0 {
             self.clear_data();
-            self.done = true;
+            self.done.set(true);
             return streams::Result::Done;
         }
+        debug_assert!(buffer.as_ptr() != rest.as_ptr());
+        buffer[..take].copy_from_slice(&rest[..take]);
 
-        let copied = blob::SizeType::try_from(temporary.len()).expect("int cast");
-
-        self.remain = self.remain.saturating_sub(copied);
-        self.offset = self.offset.saturating_add(copied);
-        debug_assert!(buffer.as_ptr() != temporary.as_ptr());
-        buffer[..temporary.len()].copy_from_slice(temporary);
-        if self.remain == 0 {
+        let copied = blob::SizeType::try_from(take).expect("int cast");
+        self.remain.set(self.remain.get().saturating_sub(copied));
+        self.offset.set(self.offset.get().saturating_add(copied));
+        if self.remain.get() == 0 {
             return streams::Result::IntoArrayAndDone(streams::IntoArray {
                 value: array,
                 len: copied,
@@ -157,113 +80,151 @@ impl ByteBlobLoader {
         })
     }
 
-    pub fn to_any_blob(&mut self, global: &JSGlobalObject) -> Option<blob::Any> {
-        // Take ownership via detach_store() up front.
-        let store = self.detach_store()?;
-        if self.offset == 0 && self.remain == store.size() && self.content_type.is_empty() {
-            // SAFETY: `StoreRef` deref is `&Store`; `to_any_blob` needs `&mut` to move bytes out.
-            // We hold the only outstanding ref (just detached) so exclusive access is sound.
-            if let Some(blob) = unsafe { (*store.as_ptr()).to_any_blob() } {
-                drop(store); // defer store.deref()
-                return Some(blob);
-            }
-        }
-
-        let blob = Blob::init_with_store(store, global);
-        blob.offset.set(self.offset);
-        blob.size.set(self.remain);
-
-        // Make sure to preserve the content-type.
-        // https://github.com/oven-sh/bun/issues/14988
-        if !self.content_type.is_empty() {
-            let ct = core::mem::take(&mut self.content_type);
-            blob.content_type_was_set.set(!ct.is_empty());
-            blob.content_type
-                .set(bun_core::heap::into_raw(ct).cast_const());
-            // `content_type` is an always-owned `Box<[u8]>` in the Rust port
-            // (see `setup`); `into_raw` just handed the new blob a heap
-            // allocation it must free regardless of the flag's prior value.
-            blob.content_type_allocated.set(true);
-            self.content_type_allocated = false;
-        }
-
-        self.parent_const().is_closed.set(true);
-        Some(blob::Any::Blob(blob))
-    }
-
-    pub fn detach_store(&mut self) -> Option<StoreRef> {
-        if let Some(store) = self.store.take() {
-            self.done = true;
-            return Some(store);
-        }
-        None
-    }
-
-    pub fn on_cancel(&mut self) {
+    fn on_cancel(&self) {
         self.clear_data();
     }
 
-    // Kept as inherent method (not `Drop`) — invoked via `SourceContext::deinit_fn`.
-    // Only side-effect teardown lives here; the enclosing `Box<Source>` is freed by
-    // the caller (`NewSource::decrement_count`) *after* this returns. Freeing the
-    // parent here would deallocate the storage backing `&mut self` (dangling UAF).
-    pub fn deinit(&mut self) {
+    fn deinit_fn(&self) {
         self.clear_data();
     }
 
-    fn clear_data(&mut self) {
-        if self.content_type_allocated {
-            self.content_type = Box::default();
-            self.content_type_allocated = false;
-        }
-
-        if let Some(store) = self.store.take() {
-            drop(store); // store.deref()
-        }
-    }
-
-    pub fn drain(&mut self) -> Vec<u8> {
-        let Some(store) = self.store.clone() else {
-            return Vec::new();
-        };
-        let temporary = store.shared_view();
-        let temporary = &temporary[self.offset as usize..];
-        let take = 16384usize.min(temporary.len().min(self.remain as usize));
-        let temporary = &temporary[..take];
+    fn drain_internal_buffer(&self) -> Vec<u8> {
+        let rest = self.remaining();
 
         // A single owning copy (avoids a `ManuallyDrop` borrow dance).
-        let cloned = Vec::<u8>::from_slice(temporary);
-        self.offset = self.offset.saturating_add(cloned.len() as blob::SizeType);
-        self.remain = self.remain.saturating_sub(cloned.len() as blob::SizeType);
+        let cloned = Vec::<u8>::from_slice(&rest[..rest.len().min(16384)]);
+        self.offset.set(
+            self.offset
+                .get()
+                .saturating_add(cloned.len() as blob::SizeType),
+        );
+        self.remain.set(
+            self.remain
+                .get()
+                .saturating_sub(cloned.len() as blob::SizeType),
+        );
 
         cloned
     }
 
-    pub fn to_buffered_value(
-        &mut self,
-        global: &JSGlobalObject,
+    fn memory_cost_fn(&self) -> usize {
+        // ReadableStreamSource covers @sizeOf(FileReader)
+        if let Some(store) = self.store.get() {
+            return store.memory_cost();
+        }
+        0
+    }
+
+    fn to_buffered_value(
+        &self,
+        cx: &bun_jsc::JsThread<'_>,
         action: streams::BufferActionTag,
     ) -> JsResult<JSValue> {
-        if let Some(mut blob) = self.to_any_blob(global) {
-            let result = blob.to_promise(global, action);
+        if let Some(mut blob) = self.to_any_blob(cx.global()) {
+            let result = blob.to_promise(cx, action);
             blob.detach();
-            return Ok(result?);
+            return result;
         }
 
         // globalThis.ERR(.BODY_ALREADY_USED, "...", .{}).reject()
-        Ok(global
+        Ok(cx
+            .global()
             .err(
                 bun_jsc::ErrorCode::BODY_ALREADY_USED,
                 format_args!("Body already used"),
             )
             .reject())
     }
+}
 
-    pub fn memory_cost(&self) -> usize {
-        // ReadableStreamSource covers @sizeOf(FileReader)
-        if let Some(store) = &self.store {
-            return store.memory_cost();
-        }
-        0
+bun_core::impl_field_parent! { ByteBlobLoader => Source.context; fn shared parent; }
+
+impl ByteBlobLoader {
+    pub(crate) fn setup(&mut self, blob: &Blob, user_chunk_size: blob::SizeType) {
+        // In-place init — `self` is a pre-allocated slot inside `Source`.
+        let store = blob.store.get().as_ref().unwrap().clone();
+        // `Blob` is not `Clone`, so use the non-mutating `resolved_size()` helper.
+        let (offset, size) = blob.resolved_size();
+        let content_type = if blob.content_type_was_set.get() {
+            blob.content_type.get().clone()
+        } else {
+            blob::BlobContentType::default()
+        };
+        *self = ByteBlobLoader {
+            offset: Cell::new(offset),
+            store: JsCell::new(Some(store)),
+            chunk_size: (if user_chunk_size > 0 {
+                user_chunk_size.min(size)
+            } else {
+                size
+            })
+            .min(1024 * 1024 * 2),
+            remain: Cell::new(size),
+            done: Cell::new(false),
+            content_type: JsCell::new(content_type),
+        };
     }
+
+    /// The bytes `drain_internal_buffer` and `on_pull` have yet to hand over.
+    fn remaining(&self) -> &[u8] {
+        let Some(store) = self.store.get() else {
+            return &[];
+        };
+        let view = store.shared_view();
+        let view = &view[(self.offset.get() as usize).min(view.len())..];
+        &view[..view.len().min(self.remain.get() as usize)]
+    }
+
+    pub(crate) fn to_any_blob(&self, global: &JSGlobalObject) -> Option<blob::Any> {
+        // Take ownership via detach_store() up front.
+        let store = self.detach_store()?;
+        if self.offset.get() == 0
+            && self.remain.get() == store.size()
+            && self.content_type.get().is_empty()
+        {
+            // SAFETY: `RefPtr<Store>` deref is `&Store`; `to_any_blob` needs `&mut` to move bytes out.
+            // We hold the only outstanding ref (just detached) so exclusive access is sound.
+            if let Some(blob) = unsafe { (*store.as_ptr()).to_any_blob() } {
+                drop(store);
+                return Some(blob);
+            }
+        }
+
+        let blob = Blob::init_with_store(store, global);
+        blob.offset.set(self.offset.get());
+        blob.size.set(self.remain.get());
+
+        // Make sure to preserve the content-type.
+        // https://github.com/oven-sh/bun/issues/14988
+        if !self.content_type.get().is_empty() {
+            let ct = self.content_type.take();
+            blob.content_type_was_set.set(!ct.is_empty());
+            blob.content_type.set(ct);
+        }
+
+        self.parent().is_closed.set(true);
+        Some(blob::Any::Blob(blob))
+    }
+
+    pub(crate) fn detach_store(&self) -> Option<RefPtr<Store>> {
+        if let Some(store) = self.store.take() {
+            self.done.set(true);
+            return Some(store);
+        }
+        None
+    }
+
+    fn clear_data(&self) {
+        self.content_type.set(blob::BlobContentType::default());
+
+        if let Some(store) = self.store.take() {
+            drop(store); // store.deref()
+        }
+    }
+}
+
+/// What the stream has left, for its reader to size the buffer it pulls into.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__ByteBlobLoader__remaining(source: &Source) -> usize {
+    source.context.remaining().len()
 }

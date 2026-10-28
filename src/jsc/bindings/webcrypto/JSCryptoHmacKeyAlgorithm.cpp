@@ -36,62 +36,6 @@ using namespace JSC;
 
 #if ENABLE(WEB_CRYPTO)
 
-template<> CryptoHmacKeyAlgorithm convertDictionary<CryptoHmacKeyAlgorithm>(JSGlobalObject& lexicalGlobalObject, JSValue value)
-{
-    auto& vm = JSC::getVM(&lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    bool isNullOrUndefined = value.isUndefinedOrNull();
-    auto* object = isNullOrUndefined ? nullptr : value.getObject();
-    if (!isNullOrUndefined && !object) [[unlikely]] {
-        throwTypeError(&lexicalGlobalObject, throwScope);
-        return {};
-    }
-    CryptoHmacKeyAlgorithm result;
-    JSValue nameValue;
-    if (isNullOrUndefined)
-        nameValue = jsUndefined();
-    else {
-        nameValue = object->get(&lexicalGlobalObject, vm.propertyNames->name);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!nameValue.isUndefined()) {
-        result.name = convert<IDLDOMString>(lexicalGlobalObject, nameValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "name"_s, "CryptoHmacKeyAlgorithm"_s, "DOMString"_s);
-        return {};
-    }
-    JSValue hashValue;
-    if (isNullOrUndefined)
-        hashValue = jsUndefined();
-    else {
-        hashValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "hash"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!hashValue.isUndefined()) {
-        result.hash = convert<IDLDictionary<CryptoKeyAlgorithm>>(lexicalGlobalObject, hashValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "hash"_s, "CryptoHmacKeyAlgorithm"_s, "CryptoKeyAlgorithm"_s);
-        return {};
-    }
-    JSValue lengthValue;
-    if (isNullOrUndefined)
-        lengthValue = jsUndefined();
-    else {
-        lengthValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "length"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!lengthValue.isUndefined()) {
-        result.length = convert<IDLUnsignedLong>(lexicalGlobalObject, lengthValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "length"_s, "CryptoHmacKeyAlgorithm"_s, "unsigned long"_s);
-        return {};
-    }
-    return result;
-}
-
 JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const CryptoHmacKeyAlgorithm& dictionary)
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);

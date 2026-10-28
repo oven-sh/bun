@@ -8,7 +8,7 @@
 //!
 //! Corresponds to `src/ReactiveScopes/MergeReactiveScopesThatInvalidateTogether.ts`.
 
-use std::collections::HashSet;
+use crate::collections::FxHashSet as HashSet;
 
 use crate::collections::IdMap;
 use crate::diagnostics::CompilerError;
@@ -31,7 +31,7 @@ use crate::reactive_scopes::visitors::{
 
 /// Merges adjacent reactive scopes that share dependencies (invalidate together).
 /// TS: `mergeReactiveScopesThatInvalidateTogether`
-pub fn merge_reactive_scopes_that_invalidate_together(
+pub(crate) fn merge_reactive_scopes_that_invalidate_together(
     func: &mut ReactiveFunction,
     env: &mut Environment,
 ) -> Result<(), CompilerError> {
@@ -309,7 +309,7 @@ impl<'a> MergeTransform<'a> {
                                     scope_id: next_scope_id,
                                     from: i,
                                     to: i + 1,
-                                    lvalues: HashSet::new(),
+                                    lvalues: HashSet::default(),
                                 });
                             }
                         }
@@ -320,7 +320,7 @@ impl<'a> MergeTransform<'a> {
                                 scope_id: next_scope_id,
                                 from: i,
                                 to: i + 1,
-                                lvalues: HashSet::new(),
+                                lvalues: HashSet::default(),
                             });
                         }
                     }

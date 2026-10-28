@@ -1,0 +1,704 @@
+////: lines-14
+/**
+ * @param {«1»} «2»
+ * @param {«3»} «4»
+ */
+//// unchecked-param-tags-are-false/main.js
+function show(value) {
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "bigint") return value + "n";
+  if (Array.isArray(value)) return "[" + value.map(show).join(", ") + "]";
+  if (typeof value === "object" && value !== null) return "{" + Object.keys(value).join() + "}";
+  return String(value);
+}
+
+////= attempt
+
+////= lines-4
+////= plusOne
+
+////= lines-14	number	a	number	b
+function product(a, b) {
+  return a * b;
+}
+
+/** @param {{ x: number, y: number }} p */
+////= sum
+
+/** @param {string} s */
+////= size	s
+
+/** @param {number[]} list */
+////= total	result
+
+/** @param {number[]} list */
+function totalOf(list) {
+  let result = 0;
+  for (const n of list) result += n;
+  return result;
+}
+
+/** @param {number} i */
+function pick(i) {
+  return [10, 20, 30][i];
+}
+
+/** @param {boolean} b */
+function choose(b) {
+  return b === true ? "yes" : b === false ? "no" : "neither";
+}
+
+////= lines-14	number	n	number	depth
+function deep(n, depth) {
+  try {
+    return depth === 0 ? n + 1 : deep(n, depth - 1);
+  } finally {
+    depth++;
+  }
+}
+
+class Meter {
+  /** @param {number} start */
+  constructor(start) {
+    this.value = start;
+  }
+  /** @param {number} by */
+  add(by) {
+    this.value += by;
+    return this.value;
+  }
+  /** @param {Meter} other */
+  same(other) {
+    return this.value === other.value;
+  }
+}
+
+console.log("honest: " + [plusOne(1), product(2, 3), sum({ x: 1, y: 2 }), size("ab"), total([1, 2]), totalOf([1, 2]), pick(1), choose(true), deep(1, 3), new Meter(1).add(2)].join(" "));
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += plusOne(i) + product(i, 2) + sum({ x: i, y: 1 }) + size("ab") + total([i]) + totalOf([i]) + pick(i % 3) + deep(i, 2) + new Meter(i).add(1);
+console.log("2000 honest rounds: " + warm);
+
+attempt("plusOne", () => [plusOne("1"), plusOne(null), plusOne(undefined), plusOne(true), plusOne([1]), plusOne({ valueOf: () => 1 }), plusOne({}), plusOne()]);
+attempt("plusOne of a bigint", () => plusOne(1n));
+attempt("product", () => [product("2", "3"), product("a", 1), product(null, 1), product([2], [3]), product(2), product(-0, 1), product(0, -1)]);
+attempt("sum", () => [sum({ x: "1", y: 2 }), sum({ y: 2 }), sum({}), sum([1, 2]), sum("xy"), sum(5), sum(() => 1), sum({ y: 1, x: 2, z: 3 })]);
+attempt("sum of null", () => sum(null));
+attempt("sum of nothing", () => sum());
+attempt("size", () => [size([1, 2, 3]), size({ length: "long" }), size(5), size(() => 1), size((a, b) => 1), size(new String("abc")), size({})]);
+attempt("size of null", () => size(null));
+attempt("total", () => [total("12"), total({ length: 2, 0: 1, 1: 2 }), total(["1", 2]), total([1, , 3]), total(new Uint8Array([1, 2])), total(5), total({})]);
+attempt("totalOf", () => [totalOf("12"), totalOf(new Set([1, "2"])), totalOf(["1", 2]), totalOf([1, , 3]), totalOf(new Map([[1, 2]]))]);
+attempt("totalOf something that cannot be iterated", () => totalOf({ length: 1, 0: 1 }));
+attempt("pick", () => [pick("1"), pick(1.5), pick(-1), pick(null), pick("length"), pick(true), pick([2]), pick(-0)]);
+attempt("choose", () => [choose(1), choose(0), choose("true"), choose(null), choose(), choose(new Boolean(false))]);
+attempt("deep", () => [deep("1", 3), deep(null, 0), deep([1], 1), deep(1, "2")]);
+attempt("a constructor and a method", () => [new Meter("1").add(2), new Meter(1).add("2"), new Meter().add(1), new Meter(null).add(null), new Meter([1]).add([2])]);
+attempt("a method that takes an instance", () => [new Meter(1).same(new Meter(1)), new Meter(1).same({ value: 1 }), new Meter(1).same({}), new Meter(1).same(5), new Meter(undefined).same("text")]);
+attempt("a method that takes an instance, null", () => new Meter(1).same(null));
+
+console.log("honest again: " + [plusOne(1), product(2, 3), sum({ x: 1, y: 2 }), size("ab"), total([1, 2]), totalOf([1, 2]), pick(1), choose(false), deep(1, 3), new Meter(1).add(2)].join(" "));
+//// unchecked-param-tags-are-false/tsconfig.json
+////= lines
+//// unchecked-returns-tags-are-false/main.js
+////= show-4
+
+////= attempt
+
+/** @returns {number} */
+////= lines-11	text	"7"
+
+/** @returns {number} */
+function nothing() {}
+
+/** @returns {number} */
+////= lines-11	nil	null
+
+/** @returns {number} */
+const list = () => [7];
+
+/** @returns {string} */
+////= lines-11	count	7
+
+/** @returns {{ x: number, y: number }} */
+function texts() {
+  return { y: "2", x: "1" };
+}
+
+/** @returns {{ x: number, y: number }} */
+function partial() {
+  return { x: 1 };
+}
+
+/** @returns {{ x: number, y: number }} */
+function pair() {
+  return [1, 2];
+}
+
+/** @returns {number[]} */
+function like() {
+  return { length: 2, 0: 1, 1: 2 };
+}
+
+/** @returns {number[]} */
+////= lines-11	letters	"12"
+
+/** @returns {() => number} */
+function maker() {
+  return () => "made";
+}
+
+/** @returns {() => number} */
+////= lines-11	noMaker	5
+
+/** @returns {boolean} */
+////= lines-11	one	1
+
+/** @returns {void} */
+////= lines-11	something	"something"
+
+////= lines-4
+function sometimes(n) {
+  return n % 1000 === 999 ? "late" : n;
+}
+
+/** @returns {Promise<number>} */
+////= lines-13	async	later	"later"
+
+/** @returns {Promise<number>} */
+////= lines-11	notAPromise	7
+
+/** @returns {Generator<number>} */
+function* yields() {
+  yield "a";
+  yield null;
+  yield 3;
+}
+
+class Source {
+  /** @returns {number} */
+  get value() {
+    return "got";
+  }
+  /** @returns {number} */
+  method() {
+    return "called";
+  }
+  /** @returns {Source} */
+  static make() {
+    return { value: 1, method: () => 2 };
+  }
+  /** @returns {this} */
+  chain() {
+    return "not this";
+  }
+}
+
+/** @param {number} n */
+////= plusOne
+
+attempt("a text for a number", () => [text(), typeof text(), text() + 1, text() * 2, plusOne(text()), [1, 2, 3, 4, 5, 6, 7, 8][text()]]);
+attempt("nothing for a number", () => [nothing(), nothing() + 1, plusOne(nothing()), nothing() === undefined]);
+attempt("null for a number", () => [nil(), nil() + 1, plusOne(nil())]);
+attempt("a list for a number", () => [list() + 1, list() * 2, typeof list()]);
+attempt("a number for a text", () => [count() + 1, count() + "!", count().length]);
+attempt("a number for a text, a method", () => count().toUpperCase());
+attempt("texts in a point", () => [texts().x + texts().y, Object.keys(texts()).join()]);
+attempt("a point without y", () => [partial().x + partial().y, "y" in partial()]);
+attempt("a list for a point", () => [pair().x, pair().length, pair()[0]]);
+attempt("an array-like for a list", () => [like().length, like()[1], Array.isArray(like())]);
+attempt("an array-like for a list, a method", () => like().map(plusOne));
+attempt("a text for a list", () => [letters().length, letters()[0] + 1, [...letters()]]);
+attempt("a text for a list, a method", () => letters().map(plusOne));
+attempt("a maker of texts", () => [maker()(), maker()() + 1]);
+attempt("no maker", () => noMaker()());
+attempt("one for true", () => [one() === true, one() ? "truthy" : "falsy", one() + 1]);
+attempt("something for void", () => [something(), something() + "!", something() === undefined]);
+attempt("a result that changes after 999 calls", () => {
+  let total = 0;
+  for (let i = 0; i < 1002; i++) total += sometimes(i);
+  return [typeof total, total.length];
+});
+attempt("a getter, a method, a static method, this", () => [new Source().value + 1, new Source().method() + 1, Source.make().value + 1, Source.make().method(), Source.make() instanceof Source, new Source().chain()]);
+attempt("this, chained", () => new Source().chain().method());
+attempt("yielded", () => [...yields()].map(plusOne));
+
+const awaited = await later();
+attempt("awaited", () => [awaited, awaited + 1]);
+const direct = await notAPromise();
+attempt("awaited what is no promise", () => [direct + 1, typeof notAPromise()]);
+attempt("then of what is no promise", () => notAPromise().then(plusOne));
+//// unchecked-returns-tags-are-false/tsconfig.json
+////= lines
+//// unchecked-tags-on-fields-of-classes-are-false/main.js
+////= show-5
+
+class Account {
+  /** @type {number} */
+  balance = "100";
+
+  /** @type {string} */
+  owner = 7;
+
+  /** @type {number[]} */
+  history = "none";
+
+  /** @type {{ x: number, y: number }} */
+  place = null;
+
+  /** @type {number} */
+  never;
+
+  /** @type {number} */
+  static count = "zero";
+
+  /** @type {number} */
+  #hidden = "hidden";
+
+  constructor() {
+    /** @type {number} */
+    this.limit = [5];
+    /** @type {boolean} */
+    this.open = "yes";
+  }
+
+  /** @returns {number} */
+  total() {
+    return this.balance + this.limit;
+  }
+
+  /** @returns {number} */
+  hidden() {
+    return this.#hidden + 1;
+  }
+
+  /** @param {number} amount */
+  deposit(amount) {
+    this.balance += amount;
+    return this.balance;
+  }
+}
+
+class Honest {
+  /** @type {number} */
+  n = 1;
+  /** @type {string} */
+  s = "s";
+  /** @returns {number} */
+  next() {
+    return this.n + 1;
+  }
+}
+
+class Late {
+  /** @type {number} */
+  n = 1;
+  /** @returns {number} */
+  next() {
+    return this.n + 1;
+  }
+}
+
+class Base {
+  /** @type {number} */
+  value = 1;
+  /** @returns {number} */
+  twice() {
+    return this.value * 2;
+  }
+}
+
+class Heir extends Base {
+  /** @type {number} */
+  value = "heir";
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += new Honest().next() + new Late().next() + new Base().twice();
+console.log("2000 honest rounds: " + warm);
+
+attempt("fields as they were made", () => {
+  const a = new Account();
+  return [a.balance, a.owner, a.history, a.place, a.never, a.limit, a.open, Account.count, Object.keys(a).join(), JSON.stringify(a)];
+});
+attempt("their kinds", () => {
+  const a = new Account();
+  return [typeof a.balance, typeof a.owner, typeof a.history, typeof a.place, typeof a.never, typeof a.limit, typeof a.open, typeof Account.count];
+});
+attempt("arithmetic", () => {
+  const a = new Account();
+  return [a.balance + 1, a.balance * 2, a.owner + 1, a.never + 1, a.limit + 1, Account.count + 1, a.total(), a.hidden()];
+});
+attempt("updates", () => {
+  const a = new Account();
+  return [a.deposit(1), a.deposit("2"), a.balance, ++a.never, a.limit++, a.limit, ++Account.count];
+});
+attempt("a member of a field that is null", () => new Account().place.x);
+attempt("the list that is a text", () => {
+  const a = new Account();
+  return [a.history.length, a.history[0], [...a.history].length];
+});
+attempt("the list that is a text, pushed to", () => new Account().history.push(1));
+attempt("the text that is a number", () => new Account().owner.length);
+attempt("stored honestly afterwards", () => {
+  const a = new Account();
+  a.balance = 1;
+  a.limit = 2;
+  a.owner = "o";
+  a.place = { x: 1, y: 2 };
+  return [a.total(), a.owner.length, a.place.x + a.place.y, JSON.stringify(a)];
+});
+attempt("an honest class gets other values later", () => {
+  const late = new Late();
+  const seen = [late.next()];
+  for (const value of ["1", null, undefined, [1], { valueOf: () => 1 }, 1n === 1n, 2]) {
+    late.n = value;
+    seen.push(late.next());
+  }
+  return seen;
+});
+attempt("a subclass declares the same type and stores another kind", () => [new Heir().value, new Heir().twice(), new Base().twice(), Object.keys(new Heir()).join()]);
+attempt("honest again", () => [new Honest().next(), new Late().next(), new Base().twice()]);
+//// unchecked-tags-on-fields-of-classes-are-false/tsconfig.json
+////= lines
+//// unchecked-tags-that-make-no-sense/main.js
+////= show-6
+
+/** @type {Missing} */
+const unknownName = 1;
+
+/** @type {import("./nowhere.js").Gone} */
+const unknownModule = "text";
+
+/** @type {number */
+const unclosed = "unclosed";
+
+/** @type {} */
+const noType = "no type";
+
+/** @type */
+const bare = "bare";
+
+/** @type {number} @type {string} */
+const two = true;
+
+/** @type {number<string>} */
+const notGeneric = "generic";
+
+/** @type {Array} */
+const rawArray = "raw";
+
+/** @type {Promise} */
+const rawPromise = 5;
+
+/** @type {Object} */
+const rawObject = 6;
+
+/** @type {Function} */
+const rawFunction = { not: "callable" };
+
+/** @type {Number} */
+const boxedName = "Number";
+
+/** @type {String} */
+const boxedText = 7;
+
+/** @type {typeof missingValue} */
+const typeOfNothing = 8;
+
+////= lines-14	number	wrongName	string	alsoWrong
+function otherNames(a, b) {
+  return [a + 1, b + 1];
+}
+
+////= lines-14	string	b	number	a
+function otherOrder(a, b) {
+  return [a + 1, b + 1];
+}
+
+/**
+ * @param {number} a
+ * @param {number} b
+ * @param {number} c
+ */
+function tooMany(a) {
+  return [a + 1, arguments.length];
+}
+
+/** @param {number} a */
+function tooFew(a, b, c) {
+  return [a + 1, b, c];
+}
+
+////= lines-14	number	a	string	a
+function twiceTheSame(a) {
+  return a + 1;
+}
+
+/**
+ * @returns {number}
+ * @returns {string}
+ */
+////= lines-11	twoResults	true
+
+////= lines-16	template	T	U	v	T
+function wrongTemplate(v) {
+  return v;
+}
+
+/** @type {number} */
+////= lines-11	taggedAsANumber	"called"
+
+/** @type {(a: string) => string} */
+function taggedAsAnotherFunction(a, b) {
+  return a + b;
+}
+
+/** @typedef {number} Size */
+/** @typedef {string} Size */
+
+/** @type {Size} */
+const size = [1];
+
+/** @typedef {Loop} Loop */
+
+/** @type {Loop} */
+const loop = "loop";
+
+/** @extends {Missing} */
+////= lines-18	Heir	value	1
+
+/** @implements {Missing} */
+////= lines-18	Doer	value	2
+
+/** @this {Missing} */
+function usesThis() {
+  return typeof this;
+}
+
+/** @enum {Missing} */
+const Kinds = { A: 1, B: "b" };
+
+/** @satisfies {Missing} */
+const satisfied = { a: 1 };
+
+const cast = /** @type {Missing} */ ("cast");
+
+attempt("names that do not exist", () => [unknownName + 1, unknownModule + "!", typeOfNothing + 1, cast + "!"]);
+attempt("comments that cannot be read", () => [unclosed + "!", noType + "!", bare + "!", two, notGeneric + "!"]);
+attempt("names without their operands", () => [rawArray + "!", rawPromise + 1, rawObject + 1, typeof rawFunction, boxedName + "!", boxedText + 1]);
+attempt("what is tagged Function is called", () => rawFunction());
+attempt("parameters under other names", () => [otherNames(1, 2), otherNames("1", "2"), otherOrder(1, "b"), otherOrder("a", 2)]);
+attempt("too many and too few", () => [tooMany(1), tooMany(1, 2, 3), tooFew(1), tooFew(1, 2, 3), twiceTheSame(1), twiceTheSame("1")]);
+attempt("results", () => [twoResults(), wrongTemplate(1) + 1, wrongTemplate("1") + 1]);
+attempt("functions with a type tag", () => [taggedAsANumber(), typeof taggedAsANumber, taggedAsAnotherFunction(1, 2), taggedAsAnotherFunction("1", 2)]);
+attempt("typedefs", () => [size + 1, loop + "!"]);
+attempt("classes", () => [new Heir().value + 1, new Doer().value + 1, Object.getPrototypeOf(Heir) === Function.prototype]);
+attempt("the rest", () => [usesThis.call(5), usesThis(), Kinds.A + 1, Kinds.B + 1, satisfied.a + 1]);
+//// unchecked-tags-that-make-no-sense/tsconfig.json
+////= lines
+//// unchecked-type-tags-on-variables-are-false/main.js
+////= show-6
+
+const table = [10, 20, 30, 40];
+
+/** @type {number} */
+const text = "3";
+attempt("a number that is a text", () => [typeof text, text + 1, text * 2, text | 0, text < 4, text === 3, table[text], `${text}`]);
+attempt("a number that is a text, a method", () => text.toFixed(1));
+
+/** @type {number} */
+const nothing = null;
+attempt("a number that is null", () => [typeof nothing, nothing + 1, nothing === null, nothing ?? "fallback", table[nothing]]);
+
+/** @type {number} */
+const absent = undefined;
+attempt("a number that is undefined", () => [typeof absent, absent + 1, absent === undefined, table[absent]]);
+
+/** @type {number} */
+const truth = true;
+attempt("a number that is true", () => [typeof truth, truth + 1, truth === 1, truth == 1, table[truth]]);
+
+/** @type {number} */
+const big = 3n;
+attempt("a number that is a bigint", () => [typeof big, big * 2n, big == 3]);
+attempt("a number that is a bigint, mixed", () => big + 1);
+
+/** @type {number} */
+const object = { valueOf: () => 3 };
+attempt("a number that is an object", () => [typeof object, object + 1, object * 2, table[object], object === 3]);
+
+/** @type {number} */
+const list = [3];
+attempt("a number that is a list", () => [typeof list, list + 1, list * 2, table[list], list.length]);
+
+/** @type {string} */
+const count = 12;
+attempt("a text that is a number", () => [typeof count, count + 1, count + "!", count.length, count[0], count === "12"]);
+attempt("a text that is a number, a method", () => count.toUpperCase());
+
+/** @type {string} */
+const letters = ["a", "b"];
+attempt("a text that is a list", () => [typeof letters, letters + "!", letters.length, letters[0], letters.slice(1), letters.indexOf("b"), letters.includes("a"), letters.concat("c"), letters.at(-1)]);
+attempt("a text that is a list, a method only texts have", () => letters.toUpperCase());
+
+/** @type {boolean} */
+const zero = 0;
+attempt("a truth that is zero", () => [typeof zero, zero === false, zero == false, !zero, zero ? "truthy" : "falsy", zero + 1]);
+
+/** @type {boolean} */
+const word = "false";
+attempt("a truth that is a text", () => [typeof word, word === false, !word, word ? "truthy" : "falsy", word && 1, word || 2]);
+
+/** @type {bigint} */
+const small = 3;
+attempt("a bigint that is a number", () => [typeof small, small + 1, small === 3]);
+attempt("a bigint that is a number, mixed", () => small + 1n);
+
+/** @type {symbol} */
+const label = "label";
+attempt("a symbol that is a text", () => [typeof label, label + "!", { [label]: 1 }, label.description]);
+
+/** @type {number} */
+let changing = 1;
+attempt("a variable that changes its kind", () => {
+  const seen = [changing + 1];
+  changing = "two";
+  seen.push(changing + 1);
+  changing = null;
+  seen.push(changing + 1);
+  changing = { valueOf: () => 4 };
+  seen.push(changing + 1);
+  changing = 5;
+  seen.push(changing + 1);
+  return seen;
+});
+
+/** @type {number} */
+var hoisted = early();
+function early() {
+  return typeof hoisted + " before";
+}
+attempt("a variable read before its value", () => [hoisted, hoisted + 1]);
+
+function inALoop() {
+  /** @type {number} */
+  let total = 0;
+  for (let i = 0; i < 2000; i++) total += i;
+  total += "!";
+  for (let i = 0; i < 3; i++) total += i;
+  return total;
+}
+attempt("a total that becomes a text after 2000 rounds", inALoop);
+
+function captured() {
+  /** @type {number} */
+  let n = 1;
+  const read = () => n + 1;
+  const first = read();
+  n = "text";
+  return [first, read()];
+}
+attempt("a captured variable", captured);
+//// unchecked-type-tags-on-variables-are-false/tsconfig.json
+////= lines
+//// unchecked-typedefs-and-literals-disagree/main.js
+////= show-5
+
+/** @typedef {{ x: number, y: number }} Point */
+
+/**
+ * @typedef {object} User
+ * @property {number} id
+ * @property {string} name
+ * @property {Point} home
+ * @property {string[]} tags
+ */
+
+/** @typedef {{ kind: "circle", r: number } | { kind: "square", side: number }} Shape */
+
+/** @param {Point} p */
+////= sum
+
+/** @param {User} u */
+function describe(u) {
+  return [u.id + 1, u.name + "!", sum(u.home), u.tags.length];
+}
+
+////= lines-10	Shape	s	returns	number
+function area(s) {
+  switch (s.kind) {
+    case "circle":
+      return s.r * s.r * 3;
+    case "square":
+      return s.side * s.side;
+  }
+}
+
+/** @type {Point} */
+const honest = { x: 1, y: 2 };
+
+/** @type {Point} */
+const texts = { x: "1", y: "2" };
+
+/** @type {Point} */
+const wide = { w: 0, x: 1, y: 2, z: 3 };
+
+/** @type {Point} */
+const narrow = { x: 1 };
+
+/** @type {Point} */
+const other = { a: 1, b: 2 };
+
+/** @type {Point} */
+const accessors = {
+  get x() {
+    return "got";
+  },
+  set y(value) {},
+};
+
+/** @type {Point} */
+const methods = {
+  x() {
+    return 1;
+  },
+  y: () => 2,
+};
+
+/** @type {Point} */
+const computed = { ["x"]: "computed", ["y" + ""]: 2 };
+
+/** @type {Point} */
+const spread = { x: 1, y: 2, ...{ x: "spread" } };
+
+/** @type {Point} */
+const twice = { x: 1, y: 2, x: "again" };
+
+/** @type {Point} */
+const proto = { __proto__: { x: "inherited" }, y: 2 };
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += sum(honest) + sum({ x: i, y: 1 }) + area({ kind: "circle", r: 1 }) + area({ kind: "square", side: i });
+console.log("2000 honest rounds: " + warm);
+
+for (const [name, p] of Object.entries({ honest, texts, wide, narrow, other, accessors, methods, computed, spread, twice, proto })) {
+  attempt(name, () => [p.x, p.y, typeof p.x, sum(p), Object.keys(p).join(), JSON.stringify(p)]);
+  attempt(name + ", stored to", () => {
+    p.x = 5;
+    p.y = 6;
+    return [sum(p), Object.keys(p).join()];
+  });
+}
+
+attempt("a user as declared", () => describe({ id: 1, name: "n", home: { x: 1, y: 2 }, tags: ["t"] }));
+attempt("a user in another order", () => describe({ tags: ["t"], home: { y: 2, x: 1 }, name: "n", id: 1 }));
+attempt("a user of other kinds", () => describe({ id: "1", name: 5, home: [1, 2], tags: "tt" }));
+attempt("a user without a home", () => describe({ id: 1, name: "n", tags: [] }));
+attempt("a user without tags", () => describe({ id: 1, name: "n", home: { x: 1, y: 2 } }));
+
+attempt("shapes", () => [area({ kind: "circle", r: 1 }), area({ kind: "triangle" }), area({ kind: "circle" }), area({ kind: "square", r: 1 }), area({}), area({ kind: "circle", r: "2" }), area("circle")]);
+attempt("no shape", () => area(null));
+attempt("what falls off the end is used", () => [area({ kind: "oval" }) + 1, typeof area({ kind: "oval" })]);
+//// unchecked-typedefs-and-literals-disagree/tsconfig.json
+////= lines

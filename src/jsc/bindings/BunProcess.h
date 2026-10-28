@@ -13,7 +13,9 @@ class GlobalObject;
 namespace Bun {
 using namespace JSC;
 
+// Bytes. phys_footprint (Activity Monitor's number) on macOS, the resident set size elsewhere.
 extern "C" int getRSS(size_t* rss);
+extern "C" int getPeakRSS(size_t* peak);
 
 class Process : public WebCore::JSEventEmitter {
     using Base = WebCore::JSEventEmitter;
@@ -30,36 +32,12 @@ class Process : public WebCore::JSEventEmitter {
     WriteBarrier<JSObject> m_nextTickFunction;
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/bootstrap/switches/does_own_process_state.js#L113-L116
     WriteBarrier<JSString> m_cachedCwd;
-    WriteBarrier<Unknown> m_argv;
-    WriteBarrier<Unknown> m_execArgv;
+    // The JS warning printer (ProcessObjectInternals createOnWarning), built on the first warning.
+    WriteBarrier<JSObject> m_onWarning;
 
-    // Highest OS signal number process.on(<signal>) can install a handler for.
-    static constexpr int maxTrackedSignalNumber = 64;
-    // Per-signal async context captured when the first listener is added.
-    // Node's Signal handle is an async resource, so all the signal's
-    // listeners run in the context that was active at that point.
-    WriteBarrier<Unknown> m_signalAsyncContexts[maxTrackedSignalNumber + 1];
+    void installDefaultWarningListener(JSC::VM&);
 
 public:
-    JSValue signalAsyncContext(int signalNumber) const
-    {
-        if (signalNumber <= 0 || signalNumber > maxTrackedSignalNumber)
-            return {};
-        return m_signalAsyncContexts[signalNumber].get();
-    }
-    void setSignalAsyncContext(JSC::VM& vm, int signalNumber, JSValue value)
-    {
-        if (signalNumber <= 0 || signalNumber > maxTrackedSignalNumber)
-            return;
-        m_signalAsyncContexts[signalNumber].set(vm, this, value);
-    }
-    void clearSignalAsyncContext(int signalNumber)
-    {
-        if (signalNumber <= 0 || signalNumber > maxTrackedSignalNumber)
-            return;
-        m_signalAsyncContexts[signalNumber].clear();
-    }
-
     Process(JSC::Structure* structure, WebCore::JSDOMGlobalObject& globalObject, Ref<WebCore::EventEmitter>&& impl)
         : Base(structure, globalObject, WTF::move(impl))
     {
@@ -77,6 +55,16 @@ public:
 
     bool m_isExitCodeObservable = false;
     bool m_sourceMapsEnabled = false;
+    // Node's per-Environment EmitProcessEnvWarning one-shot for DEP0104.
+    bool m_emitEnvNonstringWarning = true;
+    // Re-entry guard for dispatchExitInternal. Per-Process (i.e. per-VM): a
+    // function-local static would be shared across worker threads, so a
+    // worker's exit would suppress the main thread's 'exit' event.
+    bool m_isExiting = false;
+    // DEP0111/DEP0119 latches. Node's deprecate() closures live in each
+    // Environment's own JS, so every worker warns once itself.
+    bool m_warnedProcessBinding = false;
+    bool m_warnedErrname = false;
 
     static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 
@@ -92,23 +80,22 @@ public:
     // This is equivalent to `process.nextTick(() => process.emit(eventName, event))` from JavaScript.
     void emitOnNextTick(Zig::GlobalObject* globalObject, ASCIILiteral eventName, JSValue event);
 
+    JSObject* ensureOnWarning(Zig::GlobalObject*);
+
     static JSValue emitWarningErrorInstance(JSC::JSGlobalObject* lexicalGlobalObject, JSValue errorInstance);
     static JSValue emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue warning, JSValue type, JSValue code, JSValue ctor);
 
     JSString* cachedCwd() { return m_cachedCwd.get(); }
     void setCachedCwd(JSC::VM& vm, JSString* cwd) { m_cachedCwd.set(vm, this, cwd); }
+    void clearCachedCwd() { m_cachedCwd.clear(); }
 
     JSValue getArgv(JSGlobalObject* globalObject);
-    void setArgv(JSGlobalObject* globalObject, JSValue argv);
-
     JSValue getExecArgv(JSGlobalObject* globalObject);
-    void setExecArgv(JSGlobalObject* globalObject, JSValue execArgv);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject,
         JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype,
-            JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static Process* create(WebCore::JSDOMGlobalObject& globalObject, JSC::Structure* structure)
@@ -126,12 +113,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<Process, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForProcessObject.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForProcessObject = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForProcessObject.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForProcessObject = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<Process, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForProcessObject, m_subspaceForProcessObject));
     }
 
     void finishCreation(JSC::VM& vm);
@@ -153,7 +135,15 @@ public:
     inline JSObject* bindingNatives() { return m_bindingNatives.getInitializedOnMainThread(this); }
 };
 
-bool isSignalName(WTF::String input);
 JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
+
+// Routes its argument onto the uncaught-exception path. Used, via $newCppFunction, by the
+// node-style callback shims in src/js.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionReportUncaughtException);
+
+JSC_DECLARE_HOST_FUNCTION(jsFunctionIsStandardOutputStream);
+
+// process.cwd() as a JSString, cached on the process object until it changes.
+JSC::JSValue getCachedCwd(JSC::JSGlobalObject*);
 
 } // namespace Bun

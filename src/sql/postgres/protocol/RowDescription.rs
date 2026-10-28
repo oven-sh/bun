@@ -14,16 +14,31 @@ impl RowDescription {
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         mut reader: NewReader<Container>,
     ) -> Result<Self, AnyPostgresError> {
-        let mut remaining_bytes = reader.length()?;
-        remaining_bytes = remaining_bytes.saturating_sub(4);
-        let _ = remaining_bytes;
+        // The Int32 message length bounds the field-count and every per-field
+        // read; an overrun is a malformed RowDescription, not a ShortRead.
+        let mut remaining_bytes = reader.length()?.saturating_sub(4) as usize;
 
+        if remaining_bytes < 2 {
+            return Err(AnyPostgresError::InvalidMessage);
+        }
         let field_count: usize = usize::from(reader.short()?);
+        remaining_bytes -= 2;
 
         // `Vec::push` so `?` drops already-decoded elements automatically.
         let mut fields: Vec<FieldDescription> = Vec::with_capacity(field_count);
         for _ in 0..field_count {
-            fields.push(FieldDescription::decode_internal::<Container>(&mut reader)?);
+            let before = reader.peek().len();
+            let field = match FieldDescription::decode_internal::<Container>(&mut reader) {
+                Ok(f) => f,
+                Err(AnyPostgresError::ShortRead) => return Err(AnyPostgresError::InvalidMessage),
+                Err(e) => return Err(e),
+            };
+            let consumed = before.saturating_sub(reader.peek().len());
+            if consumed > remaining_bytes {
+                return Err(AnyPostgresError::InvalidMessage);
+            }
+            remaining_bytes -= consumed;
+            fields.push(field);
         }
 
         Ok(Self {

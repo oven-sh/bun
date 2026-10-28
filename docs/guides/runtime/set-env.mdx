@@ -4,7 +4,7 @@ sidebarTitle: Set env variables
 mode: center
 ---
 
-The current environment variables can be accessed via `process.env` or `Bun.env`.
+Access the current environment variables with `process.env` or `Bun.env`.
 
 ```ts index.ts icon="/icons/typescript.svg"
 Bun.env.API_TOKEN; // => "secret"
@@ -20,6 +20,7 @@ Bun reads the following files automatically (listed in order of increasing prece
 - `.env`
 - `.env.production`, `.env.development`, `.env.test` (depending on value of `NODE_ENV`)
 - `.env.local` (not loaded when `NODE_ENV=test`)
+- `.env.production.local`, `.env.development.local`, `.env.test.local` (depending on value of `NODE_ENV`)
 
 ```ini .env icon="settings"
 FOO=hello
@@ -28,7 +29,7 @@ BAR=world
 
 ---
 
-Variables can also be set via the command line.
+You can also set variables on the command line.
 
 <CodeGroup>
 
@@ -48,4 +49,4 @@ $env:FOO="helloworld"; bun run dev
 
 ---
 
-See [Docs > Runtime > Environment variables](/runtime/environment-variables) for more information on using environment variables with Bun.
+See [Environment variables](/runtime/environment-variables).

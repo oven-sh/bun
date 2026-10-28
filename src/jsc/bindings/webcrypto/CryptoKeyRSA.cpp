@@ -174,6 +174,13 @@ JsonWebKey CryptoKeyRSA::exportJwk() const
     return result;
 }
 
+bool CryptoKeyRSA::isValidRSAAlgorithm(CryptoAlgorithmIdentifier algorithm)
+{
+    return algorithm == CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5
+        || algorithm == CryptoAlgorithmIdentifier::RSA_PSS
+        || algorithm == CryptoAlgorithmIdentifier::RSA_OAEP;
+}
+
 } // namespace WebCore
 
 #endif // ENABLE(WEB_CRYPTO)

@@ -1,0 +1,261 @@
+---
+title: "Troubleshooting"
+description: "The errors and surprises you're most likely to hit when you first build a program with bun compile: the message, the cause and the fix"
+---
+
+<Warning>Ahead-of-time compilation is experimental.</Warning>
+
+## When you build
+
+### The build stops at a type error
+
+```ts port.ts icon="/icons/typescript.svg"
+const port: number = "3000";
+console.log(port);
+```
+
+```bash terminal icon="terminal"
+bun compile ./port.ts
+```
+
+```txt
+error: TS2322: Type 'string' is not assignable to type 'number'.
+    at /path/to/port.ts:1:7
+```
+
+`bun run` and `bun build` remove your types and never check them, so a project can carry type errors for years. `bun compile` relies on the types, so a type error stops the build.
+
+Run [`bun check --aot ./port.ts`](/runtime/check) and fix what it reports. It reports every error that the build reports, and builds nothing. For an error that you can't fix now, put `// @ts-expect-error` above the line. The build accepts it, as `tsc` does.
+
+### Could not find a declaration file for module
+
+```txt
+error: TS7016: Could not find a declaration file for module 'no-types'. '/path/to/node_modules/no-types/index.js' implicitly has an 'any' type.
+  Try `bun add -d @types/no-types` if it exists or add a new declaration (.d.ts) file containing `declare module 'no-types';`
+```
+
+The package is JavaScript and ships no types. It's a type error like any other, so it stops the build. Do what the message says.
+
+### Bun's type declarations aren't installed
+
+`console`, `process`, `Bun`, `fetch` and modules such as `bun:sqlite` and `node:fs` are declared by `@types/bun`. Without it, TypeScript doesn't know them.
+
+```ts hello.ts icon="/icons/typescript.svg"
+console.log("hello");
+```
+
+```bash terminal icon="terminal"
+bun check ./hello.ts
+```
+
+```txt
+hello.ts(1,1): error TS2584: Cannot find name 'console'. Do you need to change your target library? Try changing the 'lib' compiler option to include 'dom'.
+```
+
+`bun compile` still builds the program, and it still knows the types of Bun's and Node.js's APIs. Bun carries a copy of `@types/bun` and of the two packages it depends on, `@types/node` and `undici-types`. A build reads the copy when `@types/bun` isn't installed, and so do `bun check --aot`, `bun run --aot` and `bun test --aot`. Plain `bun check` doesn't.
+
+What you install wins over the copy. With `@types/bun` in `node_modules`, the build doesn't read the copy at all. With only `@types/node` or only `bun-types` installed, the build reads yours and takes the rest from the copy. If your `tsconfig.json` lists a package under `"types"` that isn't installed, the build warns you (TS2688) and continues.
+
+The copy is there so the compiler knows Bun's APIs, not to hold your project to types it hasn't installed. If the program has a type error with the copy, the build starts over with whatever Bun provides typed as `any`. Code that uses it still works but [runs slower](/compiler/explain). These aren't errors in that second build:
+
+- a global that Bun provides, and `require`, `module`, `exports`, `__filename` and `__dirname`
+- an import of one of Bun's modules, and an import of a file that the build loads, such as `./note.txt`
+- a member of `Bun`, of the module `"bun"`, of `import.meta` or of `Error`, such as `Error.captureStackTrace()`
+- a member that Bun adds to a class of TypeScript's DOM library, such as `blob.json()` or `console.write()`
+- in a class that extends a class Bun provides, such as `Event` or `EventEmitter`: arguments for the constructor it inherits, `override` on a member, and an inherited member read as `this.type` under `noPropertyAccessFromIndexSignature`
+- a parameter without a type in a callback that you pass to something Bun provides, as in `process.on("exit", code => {})`
+- in a project without a `tsconfig.json`, a parameter or a variable that's implicitly `any`
+
+A name that Bun doesn't provide, such as `document`, is still an error. So is an `import type` from a package that isn't installed, and every other type error. Install the declarations, and Bun's globals and modules have types in your editor and in `bun check` too.
+
+```bash terminal icon="terminal"
+bun add -d @types/bun
+```
+
+### A package has type errors, so it's compiled without types
+
+```txt
+warn: TS100009: 'typed-pkg' has 2 type errors (the first at /path/to/node_modules/typed-pkg/index.ts:2:9), so it is compiled without its types. It still works, but runs slower.
+
+2 |   const n: number = text;
+            ^
+note: TS2322: Type 'string' is not assignable to type 'number'.
+```
+
+A dependency ships TypeScript source files, and they don't pass the type checker in your project. The build doesn't stop. It compiles that package like JavaScript, which behaves the same and runs slower.
+
+The warning shows the first error only. `bun check` lists all of them.
+
+```bash terminal icon="terminal"
+bun check --all --no-pretty ./app.ts
+```
+
+Common causes:
+
+- A `declare module` in your project, or in another package, changes the interfaces of the package.
+- `@types/bun` and the DOM or Node.js types disagree about a name such as `ReadableStream` or `Event`.
+- The package has a `"bun"` export condition. The bundler takes it and the type checker doesn't. Add `"customConditions": ["bun"]` to `compilerOptions`.
+- The package relies on a declaration file of its own that nothing imports. List that file under `"files"` in your `tsconfig.json`.
+
+### `bun compile` can't cross-compile
+
+```txt
+error: bun compile can't cross-compile. It only builds for the platform it runs on
+note: run this on the target platform, or pass --no-aot to bundle your code with the Bun runtime instead, like bun build --compile
+```
+
+Drop `--target` and run the build where the executable runs: in CI on a runner of that platform, or in a container. Or pass `--no-aot`, and the executable contains JavaScript for the JIT.
+
+### The file passed to `--compile-executable-path` can't run the compiled code
+
+```txt
+error: ./other-bun can't run code compiled by this Bun: it is revision 1f2e3d4c of Bun and this is 9a8b7c6d
+note: use a build of the same revision of Bun with the same configuration
+```
+
+Compiled code relies on the layout of the runtime it is attached to. The file can be another build of the same revision of Bun: stripped, linked differently, position-independent or not, or built with other optimization flags. It can't be another version, another platform, or a build with different features. The message names the first difference.
+
+### --aot does not apply to a package.json script
+
+```txt
+error: --aot does not apply to a package.json script (dev). It compiles a file: put --aot on the bun command inside the script
+```
+
+`bun run --aot` takes a file. Put the flag in the script.
+
+```json title="package.json" icon="file-json"
+{
+  "scripts": {
+    "dev": "bun server.ts" // [!code --]
+    "dev": "bun --aot server.ts" // [!code ++]
+  }
+}
+```
+
+### This build of Bun doesn't support --trim
+
+```txt
+error: this build of Bun doesn't support --trim (NoTrimTable)
+```
+
+[`--trim`](/compiler/size) needs a `bun` that was linked for it. A `bun` that you built yourself may not be.
+
+## When the program runs
+
+### Cannot assign to Array.prototype.push because built-in objects are read-only
+
+```txt
+TypeError: Cannot assign to Array.prototype.push because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+```
+
+Your program or a dependency changes a built-in object. The message has the object and the property, and the stack trace points to the line.
+
+- In your own code, use a function or a subclass. See [Built-in objects are read-only](/compiler/compatibility#built-in-objects-are-read-only).
+- In a dependency, look it up in [Packages that change built-in objects](/compiler/compatibility#packages-that-change-built-in-objects). `core-js`, `sass`, `@colors/colors`, `chai.should()` and the fake timers of `sinon` are there.
+
+### Cannot find module, on another machine
+
+```txt
+error: Cannot find module './plugins/csv.ts' from '/$bunfs/root/app'
+```
+
+Your program imports a module from a dynamic path. On your machine the file is on disk. On the server it isn't. Pass such files to `bun compile` as additional entry points. See [Dynamic imports](/compiler/compatibility#dynamic-imports).
+
+### Cannot load a file: it isn't in this executable
+
+```txt
+error: Cannot load '/home/me/workers/late.ts': it isn't in this executable, which only runs code that was compiled into it. Pass the file to bun compile as another entry point, or build with --aot-allow-code-from-disk.
+```
+
+A dynamic `import()` or `require()` can only load code that's in the executable. The file exists, but it wasn't compiled. To load it from disk, build with [`--aot-allow-code-from-disk`](/compiler/compatibility#load-code-from-disk). See [Code that isn't in the executable](/compiler/compatibility#code-that-isnt-in-the-executable).
+
+### Something was not compiled into this executable
+
+```txt
+Error: None of console._stderr, console._stdout, process.stderr or process.stdout was compiled into this executable because your code never uses them. To keep them, use one of them somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+```
+
+A string passed to `eval` or `new Function` uses an API that your own code never uses. Use it somewhere in your code. See [Code from strings](/compiler/compatibility#code-from-strings).
+
+### bun:ffi: a compiled executable can have 256 JSCallbacks open at a time
+
+The entry points that native code calls are compiled into the executable, so there's a fixed number of them. `callback.close()` gives one back. The rest of `bun:ffi` works as in `bun run`: `dlopen`, `linkSymbols`, `CFunction` and `JSCallback`.
+
+### Cannot compile C code because this process can't create executable memory (PR_SET_MDWE)
+
+On Linux 6.7 or later, the executable tells the kernel at startup that none of its memory will ever be both writable and executable, and that no memory will become executable. All of its code comes from files: the executable itself, shared libraries and native addons. `cc()` compiles C into memory, so it can't work. Compile the C file when you build and load the library with `dlopen()`. Child processes aren't restricted.
+
+A sandbox or launcher can make the same request before it starts the executable (`PR_SET_MDWE` without `PR_MDWE_NO_INHERIT`, on Linux 6.3 or later). The executable runs the same way and leaves the request as it found it. In that case its child processes are restricted too, so a child with a JIT, such as `node`, may not start.
+
+### --preload can't be used with this executable
+
+```txt
+error: --preload can't be used with this executable because it only runs code that was compiled into it. Rebuild it with --compile-inspector to load other code
+```
+
+An option in `BUN_OPTIONS` would load code that isn't in the executable. Import the file from your entry point so that it's compiled too. A `preload` in `bunfig.toml` is ignored.
+
+```txt
+error: BUN_INSPECT can't be used with this executable. Rebuild it with --compile-inspector
+```
+
+A debugger needs a flag of its own. See [Options that load code](/compiler/compatibility#options-that-load-code).
+
+### Breakpoints never bind
+
+In an executable built with `--compile-inspector`, the inspector connects, and its console works. Breakpoints, stepping and `debugger` statements don't. Debug from your source files with `bun --inspect-brk ./app.ts`. To see whether a bug only shows in compiled code, compare with the executable.
+
+### My error tracker shows new groups
+
+Where `bun run` quotes your source in a message, as in `null is not an object (evaluating 'o.a.c')`, an executable quotes the name of the property, as in `(evaluating 'null.c')`, or nothing. See [Error messages](/compiler/compatibility#error-messages).
+
+## Performance
+
+### The executable is slower than `bun run`
+
+Startup and memory improve for every server in [What to expect](/compiler/aot#what-to-expect). Requests per second go up for some and down for others. Look for these causes, in this order.
+
+**Most of the hot code is untyped code from npm.** The `Dependencies:` line at the end of a build has their share, and `bun compile --explain` lists the causes. The count of an entry that only affects dependencies ends with `in dependencies`.
+
+```txt
+Dependencies: 0% of property accesses are one load: 0 free, 0 tested, 2 by name (2)
+```
+
+```txt
+4 | console.log(label(JSON.parse(text)));
+                           ^
+note: 1. unknown-object: An object from untyped code is used as this type here, so it can have any shape.
+   at app.ts:4:24
+
+note: 2 of 2 untyped accesses in dependencies
+note: why (external-data): The value comes from outside the program (JSON.parse, response.json(), structuredClone, a message).
+note: fix: build a new object of this type from it where it enters typed code.
+note: https://bun.com/docs/compiler/explain#unknown-object
+```
+
+A JavaScript package isn't untyped because it's JavaScript. The compiler tracks its objects as it tracks yours. So look first at what your code passes to the package: an object that comes from `JSON.parse`, as here, is unknown inside the package too. For the rest, a package can [point `bun compile` at its TypeScript](/compiler/libraries) with the `"aot"` condition.
+
+**A guard fails in hot code.** A value that doesn't match its declared type sends the function to its slow path, every time. Nothing is printed, because nothing goes wrong. [Find the guards that fail](/compiler/debugging#find-the-guards-that-fail) shows how to list them and how to log them.
+
+**A library generates code at run time.** Bun interprets that code. See [Code from strings](/compiler/compatibility#code-from-strings).
+
+**The program runs WebAssembly that it doesn't import.** A `.wasm` file that your program imports is compiled. Bun interprets every other module, such as bytes that your program downloads. The executable has no JIT, so a tight loop runs about 20 times slower there. See [WebAssembly](/compiler/compatibility#webassembly).
+
+**An `--external` package is loaded from disk.** Bun interprets it, and everything it loads. See [Code that isn't in the executable](/compiler/compatibility#code-that-isnt-in-the-executable).
+
+**One line makes many accesses untyped.** An object from `JSON.parse` that's used as one of your types slows down every access that it can reach. An object that's passed to code that isn't in the executable, or changed with `delete` or `Object.setPrototypeOf`, slows down every access to its type. `bun compile --explain` lists such lines, worst first, with a fix for each. See [Get more of your program typed](/compiler/explain).
+
+### The executable is larger than with `--compile`
+
+It contains the same copy of Bun, plus the machine code of your program.
+
+- [`--trim`](/compiler/size) removes the Bun and Node.js APIs that your code never calls.
+- `--no-compile-function-source` removes the source code of your functions. `toString()` on a function then returns `[native code]`. The executable rejects the [options that load code](/compiler/compatibility#options-that-load-code), with `--compile-inspector` too.
+
+### A trimmed executable is still large
+
+Something in your program, usually `eval` or a dynamic `require()`, could reach any API, so `--trim` kept all of them. `--explain=trim` shows what on its `blocked by` lines. See [See what the compiler found](/compiler/size#see-what-the-compiler-found). [Make it smaller](/compiler/size#make-it-smaller) lists what else you can do.
+
+## Report a bug
+
+If a program passes `bun check --aot` and behaves differently from `bun run` in a way that these pages don't describe, that's a bug in Bun. So is a crash, or exit code `70` from a trimmed executable. [Open an issue](https://github.com/oven-sh/bun/issues) with the smallest program that shows it.

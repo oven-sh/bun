@@ -4,6 +4,7 @@ const RUN_COUNT = 5;
 import { Worker, isMainThread, workerData } from "worker_threads";
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+const rss = process.memoryUsage.rss;
 
 const actions = {
   async ["Bun.connect"](port) {
@@ -54,7 +55,7 @@ if (isMainThread) {
     const promises: Promise<unknown>[] = [];
 
     for (let i = 0; i < CONCURRENCY; i++) {
-      const worker = new Worker(import.meta.url, {
+      const worker = new Worker(new URL(import.meta.url), {
         workerData: {
           action,
           port: server.port,
@@ -76,7 +77,7 @@ if (isMainThread) {
     }
 
     await Promise.all(promises);
-    console.log(`Spawned ${CONCURRENCY} workers`, "RSS", (process.memoryUsage().rss / 1024 / 1024) | 0, "MB");
+    console.log(`Spawned ${CONCURRENCY} workers`, "RSS", (rss() / 1024 / 1024) | 0, "MB");
     Bun.gc(true);
   }
   server.stop(true);

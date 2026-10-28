@@ -1353,7 +1353,7 @@ pub struct Options<'a> {
     /// bare identifiers without a user binding shadowing them.
     pub has_run_symbol_renamer: bool,
 
-    pub require_or_import_meta_for_source_callback: RequireOrImportMetaCallback,
+    pub require_or_import_meta_for_source_callback: RequireOrImportMetaCallback<'a>,
 
     /// Module type of the file being printed. `Esm` prints `__toESM(.., 1)`, which ignores `__esModule`.
     pub input_module_type: bundle_opts::ModuleType,
@@ -1476,22 +1476,23 @@ pub struct RequireOrImportMeta {
     pub was_unwrapped_require: bool,
 }
 
-// Clone/Copy: bitwise OK — `ctx` is a non-owning opaque backref the caller
-// keeps alive for the print pass; `callback` is POD.
+/// A type-erased `&'a T`, and the `T` method to call on it.
 #[derive(Clone, Copy)]
-pub struct RequireOrImportMetaCallback {
+pub struct RequireOrImportMetaCallback<'a> {
     pub(crate) ctx: Option<NonNull<()>>,
-    pub(crate) callback: fn(*mut (), u32, bool) -> RequireOrImportMeta,
+    pub(crate) callback: fn(NonNull<()>, u32, bool) -> RequireOrImportMeta,
+    _ctx: core::marker::PhantomData<&'a ()>,
 }
 
-impl Default for RequireOrImportMetaCallback {
+impl Default for RequireOrImportMetaCallback<'_> {
     fn default() -> Self {
-        fn noop(_: *mut (), _: u32, _: bool) -> RequireOrImportMeta {
+        fn noop(_: NonNull<()>, _: u32, _: bool) -> RequireOrImportMeta {
             RequireOrImportMeta::default()
         }
         Self {
             ctx: None,
             callback: noop,
+            _ctx: core::marker::PhantomData,
         }
     }
 }
@@ -1500,32 +1501,32 @@ impl Default for RequireOrImportMetaCallback {
 /// over `T: RequireOrImportMetaSource`, so `callback` stays a captureless `fn`.
 pub trait RequireOrImportMetaSource {
     fn require_or_import_meta_for_source(
-        &mut self,
+        &self,
         id: u32,
         was_unwrapped_require: bool,
     ) -> RequireOrImportMeta;
 }
 
-impl RequireOrImportMetaCallback {
+impl<'a> RequireOrImportMetaCallback<'a> {
     pub(crate) fn call(&self, id: u32, was_unwrapped_require: bool) -> RequireOrImportMeta {
-        (self.callback)(self.ctx.unwrap().as_ptr(), id, was_unwrapped_require)
+        (self.callback)(self.ctx.unwrap(), id, was_unwrapped_require)
     }
 
-    pub fn init<T: RequireOrImportMetaSource>(ctx: &mut T) -> Self {
+    pub fn init<T: RequireOrImportMetaSource>(ctx: &'a T) -> Self {
         fn thunk<T: RequireOrImportMetaSource>(
-            p: *mut (),
+            p: NonNull<()>,
             id: u32,
             was_unwrapped_require: bool,
         ) -> RequireOrImportMeta {
-            // SAFETY: `p` was constructed from `&mut T` in `init` below; caller guarantees
-            // `ctx` outlives this `RequireOrImportMetaCallback`, so the cast-back
-            // deref is valid and exclusive.
-            unsafe { (*p.cast::<T>()).require_or_import_meta_for_source(id, was_unwrapped_require) }
+            // SAFETY: `p` is the `&'a T` that `init` erased, and `call` needs a
+            // `RequireOrImportMetaCallback<'a>`, so `'a` has not ended.
+            unsafe { p.cast::<T>().as_ref() }
+                .require_or_import_meta_for_source(id, was_unwrapped_require)
         }
         Self {
-            // Type-erased to `*mut ()` and cast back to `*mut T` inside the thunk before dereference.
             ctx: Some(NonNull::from(ctx).cast::<()>()),
             callback: thunk::<T>,
+            _ctx: core::marker::PhantomData,
         }
     }
 }

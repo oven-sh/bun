@@ -673,24 +673,27 @@ impl Lockfile {
                 Err(e) => return LoadResultErr::of(LoadStep::ParseFile, e.into(), lockfile_format),
             };
 
-            if let Err(e) = TextLockfile::parse_into_binary_lockfile(
+            let serializer_result = match TextLockfile::parse_into_binary_lockfile(
                 self,
                 parsed.root,
                 &source,
                 log,
                 manager.as_deref(),
             ) {
-                if matches!(e, TextLockfile::ParseError::OutOfMemory) {
-                    bun_core::out_of_memory();
+                Ok(result) => result,
+                Err(e) => {
+                    if matches!(e, TextLockfile::ParseError::OutOfMemory) {
+                        bun_core::out_of_memory();
+                    }
+                    return LoadResultErr::of(LoadStep::ParseFile, e.into(), lockfile_format);
                 }
-                return LoadResultErr::of(LoadStep::ParseFile, e.into(), lockfile_format);
-            }
+            };
 
             bun_core::analytics::Features::text_lockfile_inc();
 
             return LoadResult::Ok(LoadResultOk {
                 lockfile: self,
-                serializer_result: Serializer::SerializerLoadResult::default(),
+                serializer_result,
                 migrated: Migrated::None,
                 format: lockfile_format,
             });

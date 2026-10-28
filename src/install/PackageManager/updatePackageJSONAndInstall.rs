@@ -284,6 +284,14 @@ fn update_package_json_and_install_with_manager_with_updates(
 
     let dependency_list: &'static [u8] = manager.options.update.prop;
     let mut any_changes = false;
+    // Drops the `"": "."` row that an old `bun add -g .` wrote into the global package.json.
+    let mut dropped_unnamed = false;
+    if manager.options.global {
+        for list in DependencyGroup::FOUR {
+            dropped_unnamed |=
+                PackageJSONEditor::remove_entry(&mut current_package_json_root, list.prop, b"");
+        }
+    }
 
     let mut not_in_workspace_root: Option<&PatchCommitResult> = None;
     match subcommand {
@@ -369,7 +377,10 @@ fn update_package_json_and_install_with_manager_with_updates(
         subcommand,
         Subcommand::Add | Subcommand::Update | Subcommand::Link
     );
-    if (received_requests && manager.update_target_workspaces.is_none()) || any_changes {
+    if (received_requests && manager.update_target_workspaces.is_none())
+        || any_changes
+        || dropped_unnamed
+    {
         super::package_json_write_back::record(
             manager,
             WorkspaceTarget {

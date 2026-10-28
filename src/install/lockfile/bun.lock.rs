@@ -33,6 +33,7 @@ use bun_install_types::DependencyVersionTag;
 // this file is `crate::lockfile_real::bun_lock`; `super` is the
 // real `Lockfile` module, distinct from the `crate::lockfile` stub.
 use super::PackageIDSlice;
+use super::bun_lockb::SerializerLoadResult;
 use super::override_map::ScopedOverride;
 use super::override_selector::{PackageSelector, parse_package_segment};
 use super::package::{Meta, PackageColumns as _, value_loc_of};
@@ -1800,7 +1801,7 @@ pub(crate) fn parse_into_binary_lockfile(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     manager: Option<&PackageManager>,
-) -> Result<(), ParseError> {
+) -> Result<SerializerLoadResult, ParseError> {
     let at_value = |key_loc| value_loc_of(source, key_loc);
     let at_item = |key_loc, index| item_loc(source, key_loc, index);
     macro_rules! fail {
@@ -1811,6 +1812,7 @@ pub(crate) fn parse_into_binary_lockfile(
     }
 
     lockfile.init_empty();
+    let mut result = SerializerLoadResult::default();
 
     let Some(lockfile_version_expr) = root.get(b"lockfileVersion") else {
         fail!(
@@ -2229,6 +2231,7 @@ pub(crate) fn parse_into_binary_lockfile(
             source,
             &mut optional_peers_buf,
             &mut unresolved_rows,
+            &mut result.dropped_unnamed_rows,
             None,
             Some(member_rows.as_slice()),
             true,
@@ -2288,6 +2291,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 source,
                 &mut optional_peers_buf,
                 &mut unresolved_rows,
+                &mut result.dropped_unnamed_rows,
                 None,
                 None,
                 true,
@@ -2581,6 +2585,7 @@ pub(crate) fn parse_into_binary_lockfile(
                             source,
                             &mut optional_peers_buf,
                             &mut unresolved_rows,
+                            &mut result.dropped_unnamed_rows,
                             Some((pkg_path, &bundled_pkgs)),
                             None,
                             res.tag == ResolutionTag::Workspace,
@@ -3039,7 +3044,7 @@ pub(crate) fn parse_into_binary_lockfile(
         }
     }
 
-    Ok(())
+    Ok(result)
 }
 
 /// Resolve a peer dependency edge the way the fresh resolver's
@@ -3352,6 +3357,8 @@ fn parse_append_dependencies(
     optional_peers_buf: &mut HashMap<u64, ()>,
     // Receives the optional dependencies that `obj` lists as "unresolved".
     unresolved_rows: &mut Vec<DependencyID>,
+    // Set when a row with an empty name was skipped.
+    dropped_unnamed_rows: &mut bool,
     // For an entry of `packages`: its path, and the paths that are marked bundled.
     bundled: Option<(&[u8], &PkgPathSet)>,
     // Only for the root: the workspaces, each of which is added as a workspace dependency.
@@ -3414,6 +3421,22 @@ fn parse_append_dependencies(
 
             for row in object_rows(&deps) {
                 let name_str = row.key.slice();
+                // An old `bun add .` wrote `"": "."`. No folder can have that name.
+                if name_str.is_empty() {
+                    log.add_warning_fmt(
+                        Some(source),
+                        row.key_loc,
+                        format_args!(
+                            "skipping unnamed dependency (\"{}\" in \"{}\")",
+                            bun_core::fmt::escape_control_chars(
+                                row.value.as_str().unwrap_or_default()
+                            ),
+                            group_name,
+                        ),
+                    );
+                    *dropped_unnamed_rows = true;
+                    continue;
+                }
 
                 let name_hash = StringBuilder::string_hash(name_str);
                 let name = sbuf!(lockfile).append_external_with_hash(name_str, name_hash)?;

@@ -938,7 +938,17 @@ impl File {
         self.wtf_string
             .get_or_init(|| {
                 let mut s = match self.encoding {
-                    Encoding::Binary => BunString::clone_utf8(self.contents.as_bytes()),
+                    // A file asset that is loaded as a module: the text that a read from disk gives.
+                    Encoding::Binary => {
+                        let (bom, text) =
+                            bun_core::strings::BOM::detect_and_split(self.contents.as_bytes());
+                        match bom {
+                            Some(bun_core::strings::BOM::Utf16Le) => BunString::clone_utf8(
+                                &bun_core::strings::to_utf8_alloc_from_le_bytes(text),
+                            ),
+                            _ => BunString::clone_utf8(text),
+                        }
+                    }
                     Encoding::Latin1 if self.source_hash != 0 => {
                         // Already thread-shareable: hash known, never atomized.
                         return BunString::create_static_external_latin1_with_hash(

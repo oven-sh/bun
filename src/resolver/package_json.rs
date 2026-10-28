@@ -435,7 +435,7 @@ impl PackageJSON {
             r_fs,
             package_json_path,
             dirname_fd,
-            false,
+            fs::BomHandling::Convert,
             None,
             None,
         ) {
@@ -458,7 +458,7 @@ impl PackageJSON {
         };
         // Reshaped for borrowck — `mem::take` the contents (leaving
         // `Contents::Empty` behind) so `entry` stays whole for the close-guard.
-        // Immediately convert to owned `Box<[u8]>`: `use_shared_buffer = false`
+        // Immediately convert to owned `Box<[u8]>`: `arena = None`
         // above guarantees `Contents::Owned`/`Empty`, so the match is exhaustive
         // in practice (the catch-all copy is unreachable but defensive).
         let entry_contents: Box<[u8]> = match core::mem::take(&mut entry.contents) {

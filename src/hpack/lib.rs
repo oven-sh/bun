@@ -846,13 +846,16 @@ mod tests {
 
     #[test]
     fn history_goes_by_the_capacity_in_use() {
-        let mut encoder = Encoder::with_history();
-        encoder.set_max_capacity(1024);
-        encoder.set_max_capacity(65536);
-        // 4096 / 32 / 3 of them fill it, whatever the peer allows.
-        skip_values(&mut encoder, 0..42);
-        let block = encode(&mut encoder, "x-a", "new", Indexing::Add);
-        assert_eq!(representation(&block), "skipped");
+        // 64 bytes leave no room for a history.
+        for low in [1024, 64] {
+            let mut encoder = Encoder::with_history();
+            encoder.set_max_capacity(low);
+            encoder.set_max_capacity(65536);
+            // 4096 / 32 / 3 of them fill it, whatever the peer allows.
+            skip_values(&mut encoder, 0..42);
+            let block = encode(&mut encoder, "x-a", "new", Indexing::Add);
+            assert_eq!(representation(&block), "skipped");
+        }
     }
 
     #[test]
@@ -1040,7 +1043,7 @@ mod tests {
         }
     }
 
-    /// fb24b7a (8 bits of padding), ae2304a and 6b9a958 (padding that is not ones), cf3ac6b (bytes after the end).
+    /// fb24b7a (8 bits of padding), ae2304a and 6b9a958 (padding that is not ones), cf3ac6b (valid padding refused).
     #[test]
     fn ls_hpack_huffman_padding() {
         let invalid = Err(Error::Invalid);

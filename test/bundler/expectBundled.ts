@@ -1952,7 +1952,8 @@ for (const [key, blob] of build.outputs) {
             }
             expect(result).toBe(expected);
           } else {
-            if (!expected.test(result)) {
+            // A copy: test() moves `lastIndex` of a global or sticky expression, and toMatch() starts there.
+            if (!new RegExp(expected).test(result)) {
               console.log(`runtime failed file: ${file}`);
               console.log(`${name} output:`);
               console.log(result);

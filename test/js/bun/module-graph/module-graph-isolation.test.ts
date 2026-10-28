@@ -4065,6 +4065,7 @@ test("ModuleGraph isolation: every node: builtin module is classified", () => {
     cluster: "host", // forks the whole process
     inspector: "host",
     "inspector/promises": "host",
+    "node:test": "host", // the process's test runner, as Bun.jest
     process: "host",
     readline: "host", // process.stdin
     "readline/promises": "host",

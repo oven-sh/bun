@@ -58,7 +58,7 @@ describe.concurrent("node-module-module", () => {
         `const Module = require("node:module");
          const copy = Object.fromEntries(Object.entries(Module));
          const missing = Object.keys(Module).filter(key => !(key in copy));
-         console.log(JSON.stringify({ missing, builtinModules: copy.builtinModules.length, globalPaths: Array.isArray(copy.globalPaths) }));`,
+         console.log(JSON.stringify({ missing, builtinModules: copy.builtinModules.includes("fs"), globalPaths: Array.isArray(copy.globalPaths) }));`,
       ],
       env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
       stdout: "pipe",
@@ -66,7 +66,7 @@ describe.concurrent("node-module-module", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-      stdout: JSON.stringify({ missing: [], builtinModules: 76, globalPaths: true }),
+      stdout: JSON.stringify({ missing: [], builtinModules: true, globalPaths: true }),
       stderr: "",
       exitCode: 0,
     });

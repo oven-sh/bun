@@ -344,6 +344,7 @@ describe.concurrent("the built-in code that is part of every program", () => {
     "inspector",
     "inspector/promises",
     "net",
+    "node:test",
     "readline",
     "readline/promises",
     "repl",

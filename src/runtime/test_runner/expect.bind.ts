@@ -82,12 +82,7 @@ export const ExpectStatic = b.class({
 });
 
 /** `null` and `undefined` are the default message. What is not a string is thrown as it is. */
-export const UnreachableMessage = b.union({
-  absent: b.undefined,
-  none: b.null,
-  text: b.string.allowStringObject,
-  thrown: b.opaque,
-});
+export const UnreachableMessage = b.union({ missing: b.null, text: b.string.allowStringObject, thrown: b.opaque });
 
 export const Expect = b.class({
   rustPath: "crate::test_runner::Expect",

@@ -3,12 +3,11 @@ import * as b from "../../codegen/bindgen-lib.ts";
 const js = { capability: "js", throws: true } as const;
 const method = { returns: b.opaque, ...js } as const;
 
-/** `write` looks at whether the sink is closed before it throws for a `missing` or `other` chunk. */
+/** `write` looks at whether the sink is closed before it throws for any `other` chunk. */
 export const SinkChunk = b.union({
   text: b.string.allowStringObject.view,
-  buffer: b.bufferSource.allowShared,
-  missing: b.null,
-  other: b.ignored,
+  bytes: b.bufferSource.allowShared,
+  other: b.opaque,
 });
 
 /** `start` fails with `EINVAL` if `path` is not a string. */

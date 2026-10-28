@@ -14,7 +14,7 @@ export const FetchTLS = b.dictionary(
 export const ProxyHeaders = b.union({ missing: b.null, headers: Headers, init: b.opaque });
 export const ProxyOptions = b.dictionary(
   {
-    /** What `URL::href_from_js` takes. */
+    /** By its `ToString`, so a `URL` too. */
     url: b.opaque.nullable,
     headers: ProxyHeaders,
     respectNoProxy: { type: b.bool.optional, expected: ["boolean"] },

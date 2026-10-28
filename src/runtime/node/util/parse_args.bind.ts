@@ -17,7 +17,7 @@ export const ParseArgsConfig = b.dictionary(
 
 /** A primitive but `null` has no property, so it is every default. */
 export const ParseArgsArgument = b.union({
-  unset: b.undefined,
+  missing: b.undefined,
   null: b.null,
   config: ParseArgsConfig,
   other: b.ignored,

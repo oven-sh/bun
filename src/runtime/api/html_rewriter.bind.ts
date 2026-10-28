@@ -165,7 +165,7 @@ export const ElementHandlers = b.dictionary(
 
 export const RewriterInput = b.union({
   response: Response,
-  text: b.string.allowStringObject,
+  string: b.stringLike,
   dataView: b.dataView,
   buffer: b.bufferSource.allowShared,
   other: b.ignored,

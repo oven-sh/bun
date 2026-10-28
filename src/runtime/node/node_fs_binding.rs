@@ -7,7 +7,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSArray, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, SysErrorJsc as _};
 use bun_sys_jsc::SystemErrorJsc as _;
 
-use crate::generated_bindgen::node_fs_binding::{self as generated, RmOptions};
+use crate::generated_bindgen::node_fs_binding::{self as generated, ParsedRmOptions};
 use crate::node::ThreadIsolated;
 use crate::node::fs::{
     self, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn, NodeFS,
@@ -60,34 +60,18 @@ fn run_async<A: FsArgument>(
     this: &Binding,
     cx: &mut JsScope<'_>,
     callback: Option<JsLocal<'_, Callable>>,
-    from_js: impl FnOnce(&JSGlobalObject, &mut Parsing) -> JsResult<A>,
+    args: ParsedAsyncArgs<A>,
     create_task: CreateTask<A>,
 ) -> JsResult<JSValue> {
-    /// Does not depend on `from_js`, so the two forms of an operation share one copy.
-    #[inline(never)]
-    fn schedule<A: FsArgument>(
-        this: &Binding,
-        cx: &mut JsScope<'_>,
-        callback: Option<JsLocal<'_, Callable>>,
-        args: A,
-        parsing: Parsing,
-        create_task: CreateTask<A>,
-    ) -> JsResult<JSValue> {
-        let cx = cx.js_thread();
-        let global = cx.global();
-        let callback = callback.map(JsLocal::to_js);
-        let args = match finish_parsing_async_args(global, args, parsing) {
-            ParsedAsyncArgs::Args(args) => args,
-            ParsedAsyncArgs::Rejected(error) => {
-                return reject_before_schedule(global, callback, error);
-            }
-        };
-        let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-        Ok(create_task(&cx, this, args, vm, callback))
-    }
-    let mut parsing = Parsing::new(Flavor::Async);
-    let args = from_js(cx.global(), &mut parsing)?;
-    schedule(this, cx, callback, args, parsing, create_task)
+    let cx = cx.js_thread();
+    let global = cx.global();
+    let callback = callback.map(JsLocal::to_js);
+    let args = match args {
+        ParsedAsyncArgs::Args(args) => args,
+        ParsedAsyncArgs::Rejected(error) => return reject_before_schedule(global, callback, error),
+    };
+    let vm: &mut VirtualMachine = global.bun_vm().as_mut();
+    Ok(create_task(&cx, this, args, vm, callback))
 }
 
 type CreateTask<A> = fn(
@@ -111,15 +95,6 @@ fn parse_async_args<A: FsArgument>(
 ) -> JsResult<ParsedAsyncArgs<A>> {
     let mut parsing = Parsing::new(Flavor::Async);
     let args = from_js(global, &mut parsing)?;
-    Ok(finish_parsing_async_args(global, args, parsing))
-}
-
-/// `args`, parsed with `parsing` under [`Flavor::Async`], or the error that rejects the operation before it is scheduled.
-fn finish_parsing_async_args<A: FsArgument>(
-    global: &JSGlobalObject,
-    args: A,
-    mut parsing: Parsing,
-) -> ParsedAsyncArgs<A> {
     // SAFETY: parsed under [`Flavor::Async`]: its strings are thread-safe and its buffers pinned.
     let args = unsafe { ThreadIsolated::new(args) };
 
@@ -128,13 +103,13 @@ fn finish_parsing_async_args<A: FsArgument>(
             .signal()
             .and_then(|signal| signal.node_abort_error_if_aborted(global))
         {
-            return ParsedAsyncArgs::Rejected(abort_error);
+            return Ok(ParsedAsyncArgs::Rejected(abort_error));
         }
     }
     if let Some(err) = parsing.deferred_error.take() {
-        return ParsedAsyncArgs::Rejected((*err).to_error_instance(global));
+        return Ok(ParsedAsyncArgs::Rejected((*err).to_error_instance(global)));
     }
-    ParsedAsyncArgs::Args(args)
+    Ok(ParsedAsyncArgs::Args(args))
 }
 
 /// An error found before scheduling. The callback goes to nextTick bare: it asserts against an `AsyncContextFrame`.
@@ -344,7 +319,8 @@ macro_rules! node_fs_bindings {
                     cx: &mut JsScope<'_>,
                     $( $arg: $Arg, )*
                 ) -> JsResult<JSValue> {
-                    run_async::<$Args>(self, cx, None, $from_js, async_::$F::create)
+                    let args = parse_async_args::<$Args>(cx.global(), $from_js)?;
+                    run_async(self, cx, None, args, async_::$F::create)
                 }
                 pub(crate) fn $callback(
                     &self,
@@ -352,7 +328,8 @@ macro_rules! node_fs_bindings {
                     callback: JsLocal<'_, Callable>,
                     $( $arg: $Arg, )*
                 ) -> JsResult<()> {
-                    run_async::<$Args>(self, cx, Some(callback), $from_js, async_::$F::create)?;
+                    let args = parse_async_args::<$Args>(cx.global(), $from_js)?;
+                    run_async(self, cx, Some(callback), args, async_::$F::create)?;
                     Ok(())
                 }
             )*
@@ -441,7 +418,7 @@ node_fs_bindings! {
         (path: generated::PathLike<'_>, options: Deferred<'_, generated::EncodingOrOptions<'_>>),
         |global, parsing| args::Readlink::from_js(global, parsing, path, options);
     rm_sync / rm / rm_cb => Rm, args::Rm<'static>, ret::Rm,
-        (path: generated::PathLike<'_>, options: Deferred<'_, generated::RmOptionsArgument>),
+        (path: generated::PathLike<'_>, options: Deferred<'_, generated::RmOptions>),
         |global, parsing| args::Rm::from_js(global, parsing, path, options);
     rmdir_sync / rmdir / rmdir_cb => Rmdir, args::RmDir<'static>, ret::Rmdir,
         (path: generated::PathLike<'_>, options: Deferred<'_, generated::RmdirOptions>),
@@ -523,11 +500,11 @@ pub(crate) fn binding<'a>(cx: &mut JsScope<'a>) -> JsWrapper<'a, Binding> {
 pub(crate) fn rm_options_for_testing(
     cx: &mut JsScope<'_>,
     path: generated::PathLike<'_>,
-    options: Deferred<'_, generated::RmOptionsArgument>,
-) -> JsResult<RmOptions> {
+    options: Deferred<'_, generated::RmOptions>,
+) -> JsResult<ParsedRmOptions> {
     let global = cx.global();
     let parsed = args::Rm::from_js(global, &mut Parsing::new(Flavor::Sync), path, options)?;
-    Ok(RmOptions {
+    Ok(ParsedRmOptions {
         retry_delay: parsed.retry_delay,
         max_retries: parsed.max_retries,
         recursive: parsed.recursive,

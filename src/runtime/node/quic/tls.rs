@@ -4,7 +4,7 @@ use core::ptr::null_mut;
 use bun_boringssl_sys as ssl;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc};
 
-use crate::generated_bindgen::quic::{PemSource, PemValue, QuicTLSOptions};
+use crate::generated_bindgen::quic::{PemSource, QuicTLSOptions, TextOrBuffer};
 
 pub(super) struct TlsConfig {
     pub is_server: bool,
@@ -51,11 +51,11 @@ fn collect_pem(global: &JSGlobalObject, value: PemSource<'_>) -> JsResult<Vec<Ve
                 }
             }
         }
-        PemSource::Value(PemValue::Text(text)) => out.push(text.to_owned_slice()),
-        PemSource::Value(PemValue::Buffer(buffer)) => {
+        PemSource::Value(TextOrBuffer::Text(text)) => out.push(text.to_owned_slice()),
+        PemSource::Value(TextOrBuffer::Buffer(buffer)) => {
             out.extend(value_to_bytes(global, buffer.to_js())?);
         }
-        PemSource::Value(PemValue::Other) => {}
+        PemSource::Value(TextOrBuffer::Other) => {}
     }
     Ok(out)
 }
@@ -117,13 +117,13 @@ impl TlsConfig {
             return Ok(config);
         };
         match tls.alpn(global)? {
-            PemValue::Text(text) => config.alpn = text.to_owned_slice(),
-            PemValue::Buffer(buffer) => {
+            TextOrBuffer::Text(text) => config.alpn = text.to_owned_slice(),
+            TextOrBuffer::Buffer(buffer) => {
                 if let Some(bytes) = value_to_bytes(global, buffer.to_js())? {
                     config.alpn = bytes;
                 }
             }
-            PemValue::Other => {}
+            TextOrBuffer::Other => {}
         }
         if let Some(v) = tls.servername(global)? {
             let mut bytes = v.to_owned_slice();

@@ -26,6 +26,7 @@ export const ImageModulateOptions = b.dictionary(
   { allowArray: true, nonObjectAsEmpty: true },
 );
 
+/** `blob` and `buildArtifact` are by name: their schemas import this one. */
 export const ImageInput = b.union({
   missing: b.null,
   path: b.string.allowStringObject,
@@ -113,7 +114,7 @@ export const Image = b.class({
     /** Process-global: "system" (CoreGraphics/WIC) or "bun" (static codecs). A task reads it when it launches. */
     backend: {
       getter: b.string.local,
-      setter: { type: b.string.allowStringObject.otherAsNull },
+      setter: { type: b.opaque },
       capability: "js",
       throws: true,
     },

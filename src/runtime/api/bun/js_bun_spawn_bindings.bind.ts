@@ -24,10 +24,10 @@ export const StdioValue = b.union(
   },
   { fromJS: true },
 );
-const id = b.i32.validateIntegerRange(-2147483648, 2147483647).nanAs(0).nullable;
+const id = b.i32.validateIntegerRange().nanAs(0).nullable;
 /** A directory, open or by its path. */
 export const SpawnCgroupTarget = b.union({
-  fd: b.i32.validateIntegerRange(0, 2147483647).nanAs(-1),
+  fd: b.i32.validateIntegerRange(0, 2 ** 31 - 1).nanAs(-1),
   path: b.string.allowStringObject.utf8.owned,
 });
 

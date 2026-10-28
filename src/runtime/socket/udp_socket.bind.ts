@@ -19,7 +19,6 @@ export const dgramListenFd = b.fn({ args: { fd: b.i32 }, throws: true });
 export const dgramCloseFd = b.fn({ args: { fd: b.i32 }, throws: true });
 
 const js = { capability: "js", throws: true } as const;
-export const looseString = b.conversion(b.string.loose);
 const membership = {
   ...js,
   args: { multicastAddress: b.opaque, interfaceAddress: b.opaque },
@@ -42,11 +41,9 @@ export const UDPSocketHandler = b.dictionary(
   { data: callback("data"), drain: callback("drain"), error: callback("error") },
   { deferred: true },
 );
-/** A `String` object is converted after the port. */
-export const UDPConnectHostname = b.union({ text: b.string, stringObject: b.stringObject });
 export const UDPConnectOptions = b.dictionary(
   {
-    hostname: { type: UDPConnectHostname.emptyStringAsNull, expected: 'Expected "connect.hostname" to be a string' },
+    hostname: { type: b.stringLike.emptyStringAsNull, expected: 'Expected "connect.hostname" to be a string' },
     port: b.f64.loose.emptyStringAsNull,
   },
   { deferred: true },

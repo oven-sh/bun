@@ -4,7 +4,7 @@ use super::SplitBundlerOptions;
 use crate::bake::{BuiltInModule, router};
 use crate::generated_bindgen::server::{
     BuiltInModuleOptions, ClientPagesValue, FileSystemRouterTypeOptions, FrameworkOptions,
-    FrameworkValue, ReactFastRefreshValue, RouterExtensions, ServerComponentsValue, framework_name,
+    FrameworkValue, ReactFastRefreshValue, RouterExtensions, ServerComponentsValue,
 };
 use bun_collections::StringArrayHashMap;
 use bun_core::Utf8Bytes;
@@ -273,7 +273,7 @@ impl Framework {
         let (name, opts) = match opts {
             FrameworkValue::Name(name) => (Some(name), None),
             FrameworkValue::StringObject(object) => (
-                Some(framework_name(global, object)?),
+                Some(object.to_js().to_bun_string(global)?),
                 Some(FrameworkOptions::new(object)),
             ),
             FrameworkValue::Options(opts) => (None, Some(opts)),
@@ -599,7 +599,7 @@ impl Framework {
         };
 
         if let Some(plugin_array) = opts.plugins(global)? {
-            bundler_options.parse_plugin_array(plugin_array, global)?;
+            bundler_options.parse_plugin_array(plugin_array.to_js(), global)?;
         }
 
         Ok(framework)

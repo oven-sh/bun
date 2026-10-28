@@ -287,7 +287,7 @@ export const RedisClient = b.class({
       ["duplicate", { returns: b.promise, capability: "js", throws: true }] as const,
       [
         "expire",
-        { ...command, args: { key, seconds: b.i32.validateIntegerRange(0, 2147483647).deferred }, length: 2 },
+        { ...command, args: { key, seconds: b.i32.validateIntegerRange(0, 2 ** 31 - 1).deferred }, length: 2 },
       ] as const,
       ["hincrby", { ...command, args: { key: text, field: text, increment: text }, length: 3 }] as const,
       ["hincrbyfloat", { ...command, args: { key: text, field: text, increment: text }, length: 3 }] as const,

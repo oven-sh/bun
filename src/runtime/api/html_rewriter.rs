@@ -422,26 +422,18 @@ impl HTMLRewriter {
             ArrayBuffer,
         }
         let body = match input {
-            RewriterInput::Text(text) if text.length() == 0 => {
-                Some((ResponseKind::String, webcore::body::Value::Empty))
+            RewriterInput::String(string) => Some((ResponseKind::String, BodyInit::String(string))),
+            RewriterInput::DataView(view) => {
+                Some((ResponseKind::ArrayBuffer, BodyInit::DataView(view)))
             }
-            RewriterInput::Text(text) => Some((
-                ResponseKind::String,
-                webcore::body::Value::WTFStringImpl(text.leak_wtf_impl()),
-            )),
-            RewriterInput::DataView(view) => Some((
-                ResponseKind::ArrayBuffer,
-                webcore::body::Value::from_js(cx.global(), BodyInit::DataView(view))?,
-            )),
-            RewriterInput::Buffer(bytes) => Some((
-                ResponseKind::ArrayBuffer,
-                webcore::body::Value::from_js(cx.global(), BodyInit::Buffer(bytes))?,
-            )),
+            RewriterInput::Buffer(buffer) => {
+                Some((ResponseKind::ArrayBuffer, BodyInit::Buffer(buffer)))
+            }
             RewriterInput::Response(_) | RewriterInput::Other => None,
         };
 
-        if let Some((kind, body_value)) = body {
-            let body_value = webcore::body::Body::new(body_value);
+        if let Some((kind, body)) = body {
+            let body_value = webcore::body::extract(cx.global(), body)?;
             let resp = RefPtr::new(Response::init(
                 webcore::response::Init {
                     status_code: 200,

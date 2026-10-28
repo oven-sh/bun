@@ -1264,11 +1264,8 @@ impl<C: SourceContext> NewSource<C> {
         let Some(view) = view else {
             return Ok(JSValue::UNDEFINED);
         };
-        let view = view.to_js();
-        let Some(mut buffer) = view.as_array_buffer(global_this) else {
-            return Ok(JSValue::UNDEFINED);
-        };
-        let result = self.context.on_pull(buffer.slice_mut(), view);
+        let mut buffer = view.as_array_buffer(global_this);
+        let result = self.context.on_pull(buffer.slice_mut(), view.to_js());
         Self::process_result(this_value.to_js(), &cx, flags, result)
     }
 

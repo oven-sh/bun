@@ -68,7 +68,7 @@ export const BodyInit = b.union(
   { fromJS: true },
 );
 
-/** `headers` is copied. `init` is what `FetchHeaders::create_from_js` takes. */
+/** `headers` is copied. `init` is converted as the `HeadersInit` of the Fetch standard. */
 export const HeadersInit = b.union({ missing: b.undefined, headers: Headers, init: b.opaque });
 export const ResponseInit = b.dictionary(
   {
@@ -88,9 +88,8 @@ export const SignalInit = b.union({
   signal: b.abortSignal.shared,
   other: b.ignored,
 });
-/** The name of a value of one of the enumerations of `bun_http_types`. */
 const optionName = (name: string) => ({ type: b.stringLike.nullable, expected: `${name} must be a string` });
-/** `response::Init` reads `headers` and `method`, as a `ResponseInit`. Here they only say whether they are there. */
+/** `headers` and `method` are read as those of a `ResponseInit`. Here they only say whether they are there. */
 export const RequestInit = b.dictionary(
   {
     body: BodyInit,

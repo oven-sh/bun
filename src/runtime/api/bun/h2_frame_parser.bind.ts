@@ -57,11 +57,6 @@ export const H2RequestOptions = b.dictionary(
 );
 export const RequestOptionsArgument = b.union({ missing: b.null, options: H2RequestOptions, other: b.ignored });
 
-/** A `String` object is `other`: its `toString()` runs once the stream is known to take data. */
-export const H2WriteData = b.union({ bytes: b.bufferSource.allowShared, text: b.string, other: b.opaque });
-export const WriteEncoding = b.union({ utf8: b.undefined, name: b.string.view, other: b.opaque });
-export const H2StringObject = b.union({ text: b.string.allowStringObject, other: b.ignored }, { fromJS: true });
-
 export const H2NativeSocket = b.union({ tls: TLSSocket.withValue, tcp: TCPSocket.withValue, other: b.ignored });
 
 export const NumberSetting = b.union({ missing: b.null, number: b.f64, other: b.ignored });
@@ -251,8 +246,8 @@ export const H2FrameParser = b.class({
       ...js,
       args: {
         streamId,
-        data: H2WriteData,
-        encoding: WriteEncoding,
+        data: b.opaque,
+        encoding: b.opaque,
         close: b.bool.loose,
         callback: b.callable.otherAsNull,
         deferCallback: b.bool.loose.default(false),

@@ -32,9 +32,8 @@ use bun_ptr::RefPtr;
 
 use crate::generated_bindgen::h2_frame_parser::{
     FlagSetting, H2FrameCounters, H2FrameParserOptions, H2Handlers, H2NativeSocket, H2Origins,
-    H2SessionState, H2Settings, H2SettingsOption, H2StreamState, H2StringObject, H2WriteData,
-    H2WriteResult, NumberSetting, OptionalStreamId, RequestOptionsArgument, StreamResetBurst,
-    WriteEncoding, js_H2FrameParser as js,
+    H2SessionState, H2Settings, H2SettingsOption, H2StreamState, H2WriteResult, NumberSetting,
+    OptionalStreamId, RequestOptionsArgument, StreamResetBurst, js_H2FrameParser as js,
 };
 
 bun_output::declare_scope!(H2FrameParser, visible);
@@ -5722,17 +5721,19 @@ impl H2FrameParser {
         Ok(())
     }
 
-    pub(crate) fn write_stream<'a>(
+    pub(crate) fn write_stream(
         &self,
-        cx: &mut JsScope<'a>,
+        cx: &mut JsScope<'_>,
         stream_id: Option<f64>,
-        data: H2WriteData<'a>,
-        encoding: WriteEncoding<'_>,
+        data: JsLocal<'_>,
+        encoding: JsLocal<'_>,
         close: bool,
         callback: Option<JsLocal<'_, Callable>>,
         defer_callback: bool,
     ) -> JsResult<H2WriteResult> {
         let global_object = cx.global();
+        let data = data.to_js();
+        let encoding = encoding.to_js();
         let callback = callback.map_or(JSValue::UNDEFINED, JsLocal::to_js);
 
         let stream_ptr = self.stream_from_js(global_object, stream_id)?;
@@ -5744,69 +5745,51 @@ impl H2FrameParser {
             return Ok(H2WriteResult::Refused(false));
         }
 
-        let encoding: Encoding = match encoding {
-            WriteEncoding::Utf8 => Encoding::Utf8,
-            WriteEncoding::Name(name) => match Encoding::from_bun_string(&name) {
-                Some(e) => e,
+        let encoding: Encoding = 'brk: {
+            if encoding.is_undefined() {
+                break 'brk Encoding::Utf8;
+            }
+            if !encoding.is_string() {
+                return Err(global_object.throw_invalid_argument_type_value(
+                    b"write",
+                    b"encoding",
+                    encoding,
+                ));
+            }
+            match Encoding::from_js(encoding, global_object)? {
+                Some(e) => break 'brk e,
                 None => {
                     return Err(global_object.throw_invalid_argument_type_value(
                         b"write",
                         b"encoding",
-                        name.to_js(global_object)?,
+                        encoding,
                     ));
                 }
-            },
-            WriteEncoding::Other(encoding) => {
-                let found = match H2StringObject::from_js(global_object, encoding.to_js())? {
-                    H2StringObject::Text(name) => Encoding::from_bun_string(&name),
-                    H2StringObject::Other => None,
-                };
-                let Some(e) = found else {
-                    return Err(global_object.throw_invalid_argument_type_value(
-                        b"write",
-                        b"encoding",
-                        encoding.to_js(),
-                    ));
-                };
-                e
             }
         };
 
-        let encode = |text: bun_core::String| {
-            if encoding == Encoding::Utf8 || text.is_empty() {
-                StringOrBuffer::String(text.into_utf8_with_string())
-            } else {
-                StringOrBuffer::encoded(global_object, &text, encoding)
+        let buffer = match StringOrBuffer::from_js_with_encoding(global_object, data, encoding)? {
+            Some(b) => b,
+            None => {
+                return Err(global_object.throw_invalid_argument_type_value(
+                    b"write",
+                    b"Buffer or String",
+                    data,
+                ));
             }
         };
-        let mut send = |bytes: &[u8]| {
-            let payload = self.stable_payload(bytes);
-            self.send_data(
-                &mut stream,
-                &payload,
-                callback,
-                SendDataOptions {
-                    close,
-                    suppress_half_closed_local_dispatch: true,
-                    defer_write_callback: defer_callback,
-                },
-            )
-        };
-        let (settled_state, callback_deferred) = match data {
-            H2WriteData::Bytes(bytes) => bytes.with_bytes(&cx.heap, send),
-            H2WriteData::Text(text) => send(encode(text).slice()),
-            H2WriteData::Other(data) => match H2StringObject::from_js(global_object, data.to_js())?
-            {
-                H2StringObject::Text(text) => send(encode(text).slice()),
-                H2StringObject::Other => {
-                    return Err(global_object.throw_invalid_argument_type_value(
-                        b"write",
-                        b"Buffer or String",
-                        data.to_js(),
-                    ));
-                }
+
+        let payload = self.stable_payload(buffer.slice());
+        let (settled_state, callback_deferred) = self.send_data(
+            &mut stream,
+            &payload,
+            callback,
+            SendDataOptions {
+                close,
+                suppress_half_closed_local_dispatch: true,
+                defer_write_callback: defer_callback,
             },
-        };
+        );
 
         // 5 = HALF_CLOSED_LOCAL: the JS caller runs markWritableDone itself instead of
         // the engine re-entering the VM with an onStreamEnd(5) dispatch.

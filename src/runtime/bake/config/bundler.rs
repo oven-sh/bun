@@ -4,7 +4,7 @@ use crate::api::js_bundler::Plugin;
 use crate::api::js_bundler::js_bundler::PluginJscExt as _;
 use crate::bake::jsc;
 use crate::generated_bindgen::server::{
-    BakeMinify, BakePlugin, BakePluginList, BakeSourceMap, BuildConfigSubsetOptions,
+    BakeMinify, BakePlugin, BakeSourceMap, BuildConfigSubsetOptions,
 };
 use bun_jsc::bindgen::JsLocal;
 use bun_jsc::{JSGlobalObject, JSObject, JSValue, JsResult};
@@ -60,7 +60,7 @@ impl SplitBundlerOptions {
 
     pub(super) fn parse_plugin_array(
         &mut self,
-        plugin_array: BakePluginList<'_>,
+        plugin_array: JSValue,
         global: &JSGlobalObject,
     ) -> JsResult<()> {
         // Create the Plugin and assign it to `opts.plugin` BEFORE iterating,
@@ -77,20 +77,12 @@ impl SplitBundlerOptions {
         };
         let empty_object = JSValue::create_empty_object(global, 0);
 
-        let not_an_object =
-            || global.throw_invalid_arguments(format_args!("Expected plugin to be an object"));
-        let plugin_array = match plugin_array {
-            BakePluginList::List(list) => list,
-            // No element of these is an object.
-            BakePluginList::Text(text) if !text.is_empty() => return Err(not_an_object()),
-            BakePluginList::Symbol(_) | BakePluginList::BigInt(_) => return Err(not_an_object()),
-            BakePluginList::Text(_) | BakePluginList::Other => return Ok(()),
-        };
-
-        let mut iter = plugin_array.to_js().array_iterator(global)?;
+        let mut iter = plugin_array.array_iterator(global)?;
         while let Some(plugin_config) = iter.next()? {
             let Some(plugin_config) = JsLocal::<JSObject>::from_js(global, plugin_config) else {
-                return Err(not_an_object());
+                return Err(
+                    global.throw_invalid_arguments(format_args!("Expected plugin to be an object"))
+                );
             };
             let plugin_config = BakePlugin::new(plugin_config);
 

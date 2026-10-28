@@ -141,17 +141,6 @@ export const BakePlugin = b.dictionary(
   { name: text, setup: { type: b.callable.nullable, expected: "setup must be a function" } },
   { deferred: true, reportedAs: "plugins[n]" },
 );
-/**
- * Walked by `length` and index, so any object will do. No element of a string, a symbol or a BigInt is an object.
- * `other` has no elements.
- */
-export const BakePluginList = b.union({
-  text: b.string,
-  symbol: b.symbol,
-  bigInt: b.bigInt,
-  list: b.object,
-  other: b.ignored,
-});
 
 export const ReactFastRefreshOptions = b.dictionary(
   { importSource: b.string.loose.utf8.owned.optional },
@@ -221,7 +210,7 @@ export const FrameworkOptions = b.dictionary(
     serverComponents: ServerComponentsValue,
     builtInModules: { type: b.jsArray.nullable, expected: "builtInModules must be an array" },
     fileSystemRouterTypes: { type: b.jsArray.nullable, expected: "fileSystemRouterTypes must be an array" },
-    plugins: BakePluginList.nullable,
+    plugins: b.opaque.nullable,
   },
   { deferred: true, reportedAs: "framework" },
 );
@@ -230,13 +219,12 @@ export const FrameworkValue = b.union(
   { name: b.string, stringObject: b.stringObject, options: FrameworkOptions, other: b.ignored },
   { fromJS: true },
 );
-export const frameworkName = b.conversion(b.string.loose);
 export const BakeOptions = b.dictionary(
   {
     bundlerOptions: BakeBundlerOptions.otherAsNull,
     framework: FrameworkValue.optional,
     root: text,
-    plugins: BakePluginList.optional,
+    plugins: b.opaque.optional,
   },
   { deferred: true, reportedAs: "app" },
 );

@@ -133,7 +133,7 @@ impl UserOptions {
         };
 
         if let Some(plugin_array) = config.plugins(global)? {
-            bundler_options.parse_plugin_array(plugin_array, global)?;
+            bundler_options.parse_plugin_array(plugin_array.to_js(), global)?;
         }
 
         Ok((framework, root))

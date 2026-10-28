@@ -1620,7 +1620,7 @@ impl Expect {
         let global_this = cx.global();
 
         let error_value = match message {
-            UnreachableMessage::Absent | UnreachableMessage::None => {
+            UnreachableMessage::Missing => {
                 global_this.create_error_instance(format_args!("reached unreachable code"))
             }
             UnreachableMessage::Text(message) => message.to_error_instance(global_this),

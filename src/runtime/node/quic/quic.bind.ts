@@ -97,16 +97,16 @@ export const EndpointOptions = b.dictionary(
   { allowArray: true, nonObjectAsEmpty: true },
 );
 
-export const PemValue = b.union({
+export const TextOrBuffer = b.union({
   text: b.string.allowStringObject,
   buffer: b.bufferSource.allowShared,
   other: b.ignored,
 });
 /** What in `list` is not a string or a buffer is skipped. */
-export const PemSource = b.union({ list: b.jsArray, value: PemValue });
+export const PemSource = b.union({ list: b.jsArray, value: TextOrBuffer });
 export const QuicTLSOptions = b.dictionary(
   {
-    alpn: PemValue,
+    alpn: TextOrBuffer,
     servername: text,
     certs: PemSource,
     keys: PemSource,
@@ -147,7 +147,7 @@ export const ApplicationOptions = b.dictionary(
   { enableConnectProtocol: flag, enableDatagrams: flag, maxHeaderPairs: Uint64Option, maxHeaderLength: Uint64Option },
   { deferred: true },
 );
-/** The options of `connect` and of `listen`, which keeps them and reads the last four for each session. */
+/** The options of `connect` and of `listen`, which keeps them and reads `datagramDropPolicy`, `qlog`, `verifyPeer` and `application` for each session. */
 export const SessionOptions = b.dictionary(
   {
     version: Uint64Option,

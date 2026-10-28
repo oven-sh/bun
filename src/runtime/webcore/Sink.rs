@@ -182,7 +182,12 @@ fn throw_already_closed(global: &JSGlobalObject, name: &str) -> JsError {
 }
 
 #[cold]
-fn throw_invalid_chunk(global: &JSGlobalObject, code: ErrorCode) -> JsError {
+fn throw_invalid_chunk(global: &JSGlobalObject, chunk: JSValue) -> JsError {
+    let code = if chunk.is_undefined_or_null() {
+        ErrorCode::STREAM_NULL_VALUES
+    } else {
+        ErrorCode::INVALID_ARG_TYPE
+    };
     global.throw_value(global.to_type_error(
         code,
         format_args!("write() expects a string, ArrayBufferView, or ArrayBuffer"),
@@ -198,7 +203,7 @@ fn write_chunk<'a, T: JsSinkType>(
     let sink = unsafe { &mut *sink.as_ptr() };
     // The chunk's argument slot holds the bytes for the call, and the sink copies what it keeps.
     let written = match chunk {
-        SinkChunk::Buffer(buffer) => buffer.with_bytes(&cx.heap, |bytes| {
+        SinkChunk::Bytes(buffer) => buffer.with_bytes(&cx.heap, |bytes| {
             if bytes.is_empty() {
                 return streams::Writable::Owned(0);
             }
@@ -207,18 +212,7 @@ fn write_chunk<'a, T: JsSinkType>(
         SinkChunk::Text(text) if text.is_empty() => return Ok(JSValue::js_number(0.0)),
         SinkChunk::Text(text) if text.is_utf16() => sink.write_utf16(text.utf16()),
         SinkChunk::Text(text) => sink.write_latin1(&Temporary(RawSlice::new(text.latin1()))),
-        SinkChunk::Missing => {
-            return Err(throw_invalid_chunk(
-                cx.global(),
-                ErrorCode::STREAM_NULL_VALUES,
-            ));
-        }
-        SinkChunk::Other => {
-            return Err(throw_invalid_chunk(
-                cx.global(),
-                ErrorCode::INVALID_ARG_TYPE,
-            ));
-        }
+        SinkChunk::Other(value) => return Err(throw_invalid_chunk(cx.global(), value.to_js())),
     };
     Ok(written.to_js(&cx.js_thread()))
 }

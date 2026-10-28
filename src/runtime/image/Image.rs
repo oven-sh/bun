@@ -769,21 +769,10 @@ impl Image {
         bun_core::String::static_(<&'static str>::from(&b)).to_js(cx.global())
     }
 
-    pub(crate) fn set_backend(
-        cx: &mut JsScope<'_>,
-        value: Option<bun_core::String>,
-    ) -> JsResult<()> {
-        let global = cx.global();
-        let Some(value) = value else {
-            return Err(
-                global.throw_invalid_arguments(format_args!("Bun.Image.backend must be a string"))
-            );
-        };
-        let Some(&b) = codecs::BACKEND_MAP.get(value.to_utf8().slice()) else {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "Bun.Image.backend must be one of 'system' or 'bun'"
-            )));
-        };
+    pub(crate) fn set_backend(cx: &mut JsScope<'_>, value: JsLocal<'_>) -> JsResult<()> {
+        let b = value
+            .to_js()
+            .to_enum::<codecs::Backend>(cx.global(), "Bun.Image.backend")?;
         codecs::BACKEND.store(b as u8, core::sync::atomic::Ordering::Relaxed);
         Ok(())
     }

@@ -898,7 +898,7 @@ fn parse_args_impl(
 
     let config = match config {
         ParseArgsArgument::Config(config) => Some(config),
-        ParseArgsArgument::Unset | ParseArgsArgument::Other => None,
+        ParseArgsArgument::Missing | ParseArgsArgument::Other => None,
         ParseArgsArgument::Null => {
             // Throws what reading a property of `null` throws.
             JSValue::NULL.get_own(global, &String::static_("args"))?;

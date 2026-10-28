@@ -28,9 +28,7 @@ use libc::sockaddr_storage;
 use libc::{IF_NAMESIZE, if_indextoname, if_nametoindex};
 
 use crate::api::SocketAddress;
-use crate::generated_bindgen::udp_socket::{
-    UDPConnectHostname, UDPSocketOptions, js_UDPSocket as js, loose_string,
-};
+use crate::generated_bindgen::udp_socket::{UDPSocketOptions, js_UDPSocket as js};
 use crate::socket::socket_address::inet::{self, INET6_ADDRSTRLEN, sockaddr_in, sockaddr_in6};
 
 bun_output::declare_scope!(UdpSocket, visible);
@@ -450,10 +448,7 @@ impl UDPSocketConfig {
                 )));
             }
 
-            let connect_host = match connect_host_js {
-                UDPConnectHostname::Text(text) => text,
-                UDPConnectHostname::StringObject(text) => loose_string(global_this, text)?,
-            };
+            let connect_host = connect_host_js.to_js().to_bun_string(global_this)?;
 
             config.connect = Some(ConnectConfig {
                 port: connect_port as u16,

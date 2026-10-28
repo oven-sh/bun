@@ -3574,7 +3574,7 @@ pub(crate) mod args {
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
             path: generated::PathLike<'_>,
-            options: Deferred<'_, generated::RmOptionsArgument>,
+            options: Deferred<'_, generated::RmOptions>,
         ) -> JsResult<Self> {
             let path = PathLike::from_js_required(ctx, path, parsing, "path")?;
             let options = options.convert(ctx)?;
@@ -4302,7 +4302,7 @@ pub(crate) mod args {
             let mut flush = false;
             if matches!(
                 data,
-                generated::WriteFileData::String(_) | generated::WriteFileData::StringObject(_)
+                generated::WriteFileData::Text(_) | generated::WriteFileData::StringObject(_)
             ) {
                 encoding = Encoding::Utf8;
             }
@@ -4330,7 +4330,7 @@ pub(crate) mod args {
                     buffer.to_js(),
                     parsing.flavor,
                 )?),
-                generated::WriteFileData::String(string) => Some(StringOrBuffer::from_bun_string(
+                generated::WriteFileData::Text(string) => Some(StringOrBuffer::from_bun_string(
                     ctx,
                     string,
                     encoding,

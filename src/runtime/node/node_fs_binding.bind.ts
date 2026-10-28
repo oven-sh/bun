@@ -3,12 +3,14 @@ import * as table from "../../codegen/builtins/lib.ts";
 
 export default b.module({ rustPath: "crate::node::node_fs_binding" });
 
-const Fd = b.i32.validateInteger(0, 2 ** 31 - 1);
+const descriptor = b.i32.validateInteger(0, 2 ** 31 - 1);
 /** -1 leaves it as it is. */
-const Id = b.i64.validateInteger(-1, 2 ** 32 - 1);
+const id = b.i64.validateInteger(-1, 2 ** 32 - 1);
+/** From the least 52-bit integer to the largest size of a `Blob`. */
+const ftruncateLength = b.i64.validateInteger(-(2 ** 51), 2 ** 52 - 1);
 
 /**
- * Of the views, `PathLike::from_js` takes a `Uint8Array` and a `DataView`.
+ * Of the views, a `Uint8Array` and a `DataView` are paths.
  * `other` is not a path: each function reports it in its own words.
  */
 export const PathLike = b.union({
@@ -17,7 +19,7 @@ export const PathLike = b.union({
   url: b.wrapped("WebCore::JSDOMURL", "JSDOMURL.h", { rustPath: "bun_jsc::DOMURL", reportedAs: "URL" }),
   other: b.opaque,
 });
-export const PathOrFileDescriptor = b.union({ fd: Fd.reportedAs("fd"), path: PathLike });
+export const PathOrFileDescriptor = b.union({ fd: descriptor.reportedAs("fd"), path: PathLike });
 
 /** `string` is octal digits. */
 export const FileMode = b.union({ number: b.u32.validateInteger().reportedAs("mode"), string: b.string.local });
@@ -77,7 +79,7 @@ export const MkdirOptionsOrMode = b.union({ mode: FileMode, options: MkdirOption
 
 /** A `String` object is refused, unless the encoding is not UTF-8: only then is it converted. */
 export const WriteFileData = b.union({
-  string: b.string,
+  text: b.string,
   stringObject: b.stringObject,
   buffer: b.bufferSource.allowShared,
   other: b.ignored,
@@ -93,7 +95,7 @@ export const RmdirOptions = b.dictionary(
   options,
 );
 /** Node's `validateRmOptions`: own members only, and an own `undefined` is refused. */
-export const RmOptionsArgument = b.dictionary(
+export const RmOptions = b.dictionary(
   {
     recursive: {
       type: b.bool.ifPassed,
@@ -160,7 +162,7 @@ type Operation = (Signature | { overloads: readonly (Signature & { rustName: str
   length: readonly [number, number];
 };
 
-const fd = { fd: Fd };
+const fd = { fd: descriptor };
 const path = { path: PathLike };
 const paths = (from: string, to: string) => ({ [from]: PathLike, [to]: PathLike });
 const times = { atime: TimeLike, mtime: TimeLike };
@@ -174,7 +176,7 @@ const operations: Record<string, Operation> = {
   access: { args: { ...path, mode: accessMode.deferred }, expected: { mode: accessModeExpected }, length: [3, 2] },
   appendFile: { args: writeFile, length: [4, 3] },
   chmod: { args: { ...path, mode: FileMode.deferred }, expected: { mode: ["number"] }, length: [3, 2] },
-  chown: { args: { ...path, uid: Id.deferred, gid: Id.deferred }, length: [4, 3] },
+  chown: { args: { ...path, uid: id.deferred, gid: id.deferred }, length: [4, 3] },
   close: { args: fd, length: [1, 1] },
   copyFile: {
     args: { ...paths("src", "dest"), mode: accessMode.deferred },
@@ -183,14 +185,14 @@ const operations: Record<string, Operation> = {
   },
   exists: { args: path, length: [2, 1] },
   fchmod: { args: { ...fd, mode: FileMode }, expected: { mode: ["number"] }, length: [3, 2] },
-  fchown: { args: { ...fd, uid: Id, gid: Id }, length: [4, 3] },
+  fchown: { args: { ...fd, uid: id, gid: id }, length: [4, 3] },
   fdatasync: { args: fd, length: [2, 1] },
   fstat: { args: { ...fd, options: BigIntOptions }, length: [1, 1] },
   fsync: { args: fd, length: [2, 1] },
-  ftruncate: { args: { ...fd, len: b.i64.validateInteger(-(2 ** 51), 2 ** 52 - 1).default(0) }, length: [1, 1] },
+  ftruncate: { args: { ...fd, len: ftruncateLength.default(0) }, length: [1, 1] },
   futimes: { args: { ...fd, ...times }, length: [4, 3] },
   lchmod: { args: { ...path, mode: FileMode.deferred }, expected: { mode: ["number"] }, length: [3, 2] },
-  lchown: { args: { ...path, uid: Id.deferred, gid: Id.deferred }, length: [4, 3] },
+  lchown: { args: { ...path, uid: id.deferred, gid: id.deferred }, length: [4, 3] },
   link: { args: paths("oldPath", "newPath"), length: [3, 2] },
   lstat: { args: { ...path, options: StatOptions.default({}).deferred }, length: [1, 1] },
   lutimes: { args: { ...path, ...times }, length: [4, 3] },
@@ -224,7 +226,7 @@ const operations: Record<string, Operation> = {
   realpath: { args: { ...path, options: EncodingOrOptions.deferred }, length: [3, 2] },
   realpathNative: { args: { ...path, options: EncodingOrOptions.deferred }, length: [3, 3] },
   rename: { args: paths("oldPath", "newPath"), length: [3, 2] },
-  rm: { args: { ...path, options: RmOptionsArgument.default({}).deferred }, expected: rmdirExpected, length: [3, 2] },
+  rm: { args: { ...path, options: RmOptions.default({}).deferred }, expected: rmdirExpected, length: [3, 2] },
   rmdir: { args: { ...path, options: RmdirOptions.default({}).deferred }, expected: rmdirExpected, length: [3, 2] },
   stat: { args: { ...path, options: StatOptions.default({}).deferred }, length: [1, 1] },
   statfs: { args: { ...path, options: BigIntOptions.default({}).deferred }, length: [2, 2] },
@@ -379,7 +381,7 @@ export const NodeJSFS = b.class({
 
 export const binding = b.value({ returns: NodeJSFS, capability: "js" });
 
-export const RmOptions = b.dictionary({
+export const ParsedRmOptions = b.dictionary({
   retryDelay: b.u32,
   maxRetries: b.u32,
   recursive: b.bool,
@@ -388,9 +390,9 @@ export const RmOptions = b.dictionary({
 /** `(path, options)`, parsed as `fs.rm` parses them. */
 export const rmOptionsForTesting = b.fn({
   ...js,
-  args: { ...path, options: RmOptionsArgument.default({}).deferred },
+  args: { ...path, options: RmOptions.default({}).deferred },
   expected: rmdirExpected,
-  returns: RmOptions,
+  returns: ParsedRmOptions,
   length: 2,
 });
 export const stringToFlagsForTesting = b.fn({ ...js, args: { flags: FileFlags.nullable }, returns: b.i32, length: 1 });

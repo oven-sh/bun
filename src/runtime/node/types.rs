@@ -441,11 +441,7 @@ impl StringOrBuffer<'static> {
         Ok(false)
     }
 
-    pub(crate) fn encoded(
-        global: &JSGlobalObject,
-        str: &bun_core::String,
-        encoding: Encoding,
-    ) -> Self {
+    fn encoded(global: &JSGlobalObject, str: &bun_core::String, encoding: Encoding) -> Self {
         use crate::webcore::encoding::BunStringEncode as _;
         let encoded = str.encode(encoding);
         global.vm().report_extra_memory(encoded.len());

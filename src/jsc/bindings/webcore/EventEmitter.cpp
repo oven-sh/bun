@@ -150,7 +150,7 @@ Vector<Identifier> EventEmitter::getEventNames()
     return data->eventListenerMap.eventTypes();
 }
 
-int EventEmitter::listenerCount(const Identifier& eventType, JSC::JSObject* listener)
+int EventEmitter::listenerCount(const Identifier& eventType)
 {
     auto* data = eventTargetData();
     if (!data)
@@ -161,8 +161,7 @@ int EventEmitter::listenerCount(const Identifier& eventType, JSC::JSObject* list
             if (registeredListener->wasRemoved()) [[unlikely]]
                 continue;
 
-            JSC::JSObject* jsFunction = registeredListener->callback().jsFunction();
-            if (jsFunction && (!listener || jsFunction == listener)) {
+            if (registeredListener->callback().jsFunction()) {
                 result++;
             }
         }

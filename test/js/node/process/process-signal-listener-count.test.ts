@@ -301,29 +301,31 @@ describe("process counts listener registrations like node:events", () => {
   test("listenerCount(event, fn) counts only that function", () => {
     const a = () => {};
     const b = () => {};
-    process.on(event, a);
-    process.on(event, a);
-    process.on(event, b);
-    const ee = new EventEmitter();
-    ee.on(event, a);
-    ee.on(event, a);
-    ee.on(event, b);
+    // Like the wrapper of once(): a function stands for the value in its `listener` property.
+    const wrapper = Object.assign(() => {}, { listener: b });
+    const tagged = Object.assign(() => {}, { listener: "tag" });
+    const register = (emitter: EventEmitter) =>
+      emitter.on(event, a).on(event, a).on(event, b).on(event, wrapper).on(event, tagged);
+    register(process);
+    const ee = register(new EventEmitter());
 
-    // undefined and null mean "no filter". Any other value that is not a registered function matches nothing.
+    // undefined and null mean "no filter". Any other value that no registration matches counts 0.
     const counts = (emitter: EventEmitter) => [
       emitter.listenerCount(event),
       emitter.listenerCount(event, b),
       emitter.listenerCount(event, a),
+      emitter.listenerCount(event, wrapper),
       emitter.listenerCount(event, () => {}),
       emitter.listenerCount(event, undefined),
       emitter.listenerCount(event, null as any),
+      emitter.listenerCount(event, "tag" as any),
       emitter.listenerCount(event, "a" as any),
       emitter.listenerCount(event, 0 as any),
       emitter.listenerCount(event, false as any),
     ];
     expect({ process: counts(process), emitter: counts(ee) }).toEqual({
-      process: [3, 1, 2, 0, 3, 3, 0, 0, 0],
-      emitter: [3, 1, 2, 0, 3, 3, 0, 0, 0],
+      process: [5, 2, 2, 1, 0, 5, 5, 1, 0, 0, 0],
+      emitter: [5, 2, 2, 1, 0, 5, 5, 1, 0, 0, 0],
     });
   });
 

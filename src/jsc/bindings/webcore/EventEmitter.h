@@ -60,8 +60,7 @@ public:
 
     WEBCORE_EXPORT Vector<Identifier> getEventNames();
     WEBCORE_EXPORT Vector<JSObject*> getListeners(const Identifier& eventType);
-    // With `listener`, counts only the registrations of that function (node's `listenerCount(event, fn)`).
-    WEBCORE_EXPORT int listenerCount(const Identifier& eventType, JSC::JSObject* listener = nullptr);
+    WEBCORE_EXPORT int listenerCount(const Identifier& eventType);
 
     bool hasEventListeners() const;
     bool hasEventListeners(const Identifier& eventType) const;

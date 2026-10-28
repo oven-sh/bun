@@ -479,10 +479,25 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_listenerCountB
     JSValue listener = callFrame->argument(1);
     if (listener.isUndefinedOrNull())
         RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsNumber(impl.listenerCount(eventType))));
-    // Only a registered function object can match; any other value counts zero, as in events.ts.
-    if (!listener.isObject())
-        RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsNumber(0)));
-    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsNumber(impl.listenerCount(eventType, listener.getObject()))));
+
+    // As in events.ts: a registration counts when it is `listener`, or when its `listener` property is.
+    JSC::MarkedArgumentBuffer registered;
+    for (auto* function : impl.getListeners(eventType))
+        registered.append(function);
+    auto listenerName = Identifier::fromString(vm, "listener"_s);
+    int count = 0;
+    for (size_t i = 0; i < registered.size(); ++i) {
+        JSValue function = registered.at(i);
+        bool matches = function == listener;
+        if (!matches) {
+            JSValue wrapped = function.get(lexicalGlobalObject, listenerName);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            matches = JSValue::strictEqual(lexicalGlobalObject, wrapped, listener);
+            RETURN_IF_EXCEPTION(throwScope, {});
+        }
+        count += matches;
+    }
+    return JSC::JSValue::encode(JSC::jsNumber(count));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_listenerCount, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

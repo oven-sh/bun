@@ -1,0 +1,57 @@
+//// values-tested-for-a-wider-and-then-a-narrower-type.ts
+const values: any[] = JSON.parse('["abc", null, 5, {"length": 9}, [1, 2], true, ""]');
+values.push(undefined);
+
+class Label {
+  n: number;
+  constructor(s: string | undefined) {
+    this.n = typeof s === "string" ? s.length : -1;
+  }
+}
+
+class Count {
+  n: number;
+  constructor(v: number | null) {
+    this.n = typeof v === "number" ? v + 1 : 0;
+  }
+}
+
+function lengthOf(s: string | undefined): number {
+  return typeof s === "string" ? s.length : -1;
+}
+
+function increment(v: number | undefined): number | string {
+  return typeof v === "number" ? v + 1 : "none";
+}
+
+for (const value of values)
+  console.log(new Label(value).n, new Count(value).n, lengthOf(value), increment(value));
+//// values-that-are-no-numbers-reach-a-number-that-arrows-capture-beside-a-comparison.ts
+// What the declared type does not allow arrives all the same, through an `any`: each arrow answers as under `bun run`, the one behind the comparison and the ones beside it.
+import { EventEmitter } from "node:events";
+function report(limit: number, strict: boolean): string {
+  return typeof limit + " " + String(limit) + " " + String(limit + 1) + " " + Object.is(limit, -0) + " " + (limit > 1) + " " + typeof strict + " " + String(strict);
+}
+function start({ limit = 0, strict = false }: { limit?: number; strict?: boolean } = {}): () => string {
+  if (limit === 0) return () => "zero " + report(limit, strict);
+  return () => "limited " + report(limit, strict);
+}
+function startAtFive({ limit = 5 }: { limit?: number } = {}): () => number {
+  if (limit === 5) return () => limit * 2;
+  if (limit === 2.5) return () => limit * 4;
+  return () => limit - 1;
+}
+////= set
+const values: unknown[] = [0, -0, 0 * 1.5, 5, 2.5, 10 / 4, 10 / 2, "0", "5", "", {}, [], [0], null, NaN, 1e300, 5n, 0n, true, false, new Number(0), new Number(5), EventEmitter.prototype, () => 1, { valueOf() { return 0; } }, undefined];
+for (let round = 0; round < 3; round++) {
+  for (const value of values) {
+    for (const make of [start, startAtFive] as Array<(options?: any) => () => unknown>) {
+      let line: string;
+      try { line = String(make({ limit: value, strict: value })()); } catch (error) { line = "threw " + (error as Error).constructor.name; }
+      let second: string;
+      try { second = String(make(set({}, ["quota", "limit"], value).quota)()); } catch (error) { second = "threw " + (error as Error).constructor.name; }
+      if (round === 2) console.log(make.name, typeof value, line, "|", second);
+    }
+  }
+}
+console.log(start(EventEmitter.prototype as any)(), "|", startAtFive(EventEmitter.prototype as any)());

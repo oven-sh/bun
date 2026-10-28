@@ -18,8 +18,14 @@ impl<'a> ObjectLike<'a> {
         }
     }
 
-    /// It is the type of the only parameter of a function:
-    /// `const fn = ({ foo }: { foo: string }) => {}`.
+    fn node(&self) -> AstNodes<'a> {
+        match self {
+            ObjectLike::ObjectExpression(e, _) => e.as_ast_nodes(),
+            ObjectLike::TSTypeLiteral(ty, _) => ty.as_ast_nodes(),
+        }
+    }
+
+    /// True if it's the type of a function's only parameter: `const fn = ({ foo }: { foo: string }) => {}`.
     pub(crate) fn should_hug(&self, f: &Formatter<'a>) -> bool {
         let Self::TSTypeLiteral(ty, _) = *self else {
             return false;
@@ -40,13 +46,13 @@ impl<'a> ObjectLike<'a> {
         }
     }
 
-    /// `({⏎ a⏎}: {⏎ /* comment */⏎}) => {}`: for Prettier a type with nothing but block comments in it is no group
-    /// of its own where it is hugged.
+    /// `({⏎ a⏎}: {⏎ /* comment */⏎}) => {}`: in Prettier a hugged type that contains only block comments doesn't get
+    /// its own group.
     fn breaks_with_pattern(&self, f: &Formatter<'a>) -> bool {
         if f.options().flavor.is_oxfmt() || f.is_quiet() {
             return false;
         }
-        let comments = f.comments().comments_before_end_of(self.span());
+        let comments = f.comments().of_node(self.node()).dangling;
         !comments.is_empty()
             && comments.iter().all(|comment| !comment.is_line())
             && self.should_hug(f)
@@ -76,7 +82,7 @@ impl<'a> Format<'a> for ObjectLike<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         write!(f, "{");
         if let Some(first_member_start) = self.first_member_start() {
-            // An object that has a line break after its `{` in the source stays broken.
+            // An object with a line break after its `{` in the source stays broken.
             let before_first = Span::new(self.span().start, first_member_start);
             let should_expand = f.options().expand == Expand::Auto
                 && match f.options().flavor.is_oxfmt() {
@@ -88,15 +94,17 @@ impl<'a> Format<'a> for ObjectLike<'a> {
                 soft_block_indent_with_maybe_space(&members, f.options().bracket_spacing.value());
             match self.should_hug(f) {
                 true => write!(f, inner),
-                false => write!(f, group(&inner).should_expand(should_expand)),
+                false => write!(
+                    f,
+                    group(&inner)
+                        .should_expand(should_expand)
+                        .stays_expanded(f.options().expand == Expand::Auto)
+                ),
             }
         } else if self.breaks_with_pattern(f) {
-            write!(f, soft_block_indent(&format_dangling_comments(self.span())));
+            write!(f, soft_block_indent(&dangling_comments(self.node())));
         } else {
-            write!(
-                f,
-                format_dangling_comments(self.span()).with_soft_block_indent()
-            );
+            write!(f, dangling_comments(self.node()).with_soft_block_indent());
         }
         write!(f, "}");
     }

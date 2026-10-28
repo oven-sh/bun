@@ -1,0 +1,1 @@
+{"build": ["--aot-only-passes=AnalyzeFlow"]}

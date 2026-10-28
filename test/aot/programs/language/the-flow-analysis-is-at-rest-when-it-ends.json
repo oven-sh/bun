@@ -1,0 +1,1 @@
+{ "build": ["--aot-check=flow-fixpoint"], "skipInShell": "it uses Headers, which the jsc shell does not have" }

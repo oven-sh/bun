@@ -1,7 +1,9 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { estimateShallowMemoryUsageOf, heapStats } from "bun:jsc";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, withoutAggressiveGC } from "harness";
 import net from "net";
 import perf, { PerformanceObserver, type PerformanceNodeEntry } from "perf_hooks";
+import { MessageChannel, receiveMessageOnPort, Worker } from "worker_threads";
 
 test("stubs", () => {
   expect(perf.performance.nodeTiming).toBeObject();
@@ -9,6 +11,164 @@ test("stubs", () => {
   expect(perf.performance.now()).toBeNumber();
   expect(perf.performance.timeOrigin).toBeNumber();
   expect(perf.performance.eventLoopUtilization()).toBeObject();
+});
+
+// CI runs tests with BUN_GARBAGE_COLLECTOR_LEVEL=1, with which `expect()` collects. So a test of whether the GC runs by
+// itself is in `withoutAggressiveGC`.
+
+// Buckets are allocated 4 KB at a time, when a value is first recorded in them.
+const chunk = 4096;
+// With the default options, a value in each of the 88 chunks: 360 KB.
+const valuesInEveryChunk = [1, 512, 1024, 1536];
+for (let value = 2048; value < Number.MAX_SAFE_INTEGER; value *= 2) valuesInEveryChunk.push(value, value * 1.5);
+
+test("the garbage collector knows the size of a histogram", () => {
+  for (const [figures, chunks] of [
+    [3, 88],
+    [5, 9472],
+  ]) {
+    const histogram = perf.createHistogram({ figures });
+    const size = () => estimateShallowMemoryUsageOf(histogram);
+    expect(size()).toBeLessThan(1024);
+    // 8 bytes for each chunk there can be.
+    const table = chunks * 8;
+    histogram.record(100);
+    histogram.record(101);
+    expect(size()).toBeWithin(table + chunk, table + chunk + 1024);
+    histogram.record(Number.MAX_SAFE_INTEGER);
+    histogram.add(histogram);
+    expect(size()).toBeWithin(table + 2 * chunk, table + 2 * chunk + 1024);
+
+    // A structured clone shares the buckets, and each of the two counts all of them, as with a SharedArrayBuffer.
+    const clone = structuredClone(histogram);
+    expect(estimateShallowMemoryUsageOf(clone)).toBe(size());
+    expect(size()).toBeWithin(table + 2 * chunk, table + 2 * chunk + 1024);
+
+    histogram.reset();
+    expect(estimateShallowMemoryUsageOf(clone)).toBe(size());
+    expect(size()).toBeLessThan(1024);
+  }
+
+  const histogram = perf.createHistogram();
+  for (const value of valuesInEveryChunk) histogram.record(value);
+  expect(estimateShallowMemoryUsageOf(histogram)).toBeWithin(88 * (chunk + 8), 88 * (chunk + 8) + 1024);
+});
+
+// The tests below count them, and a count that is `undefined` would end their loops at once.
+test("heapStats() counts the histograms of each class", () => {
+  const recordable = perf.createHistogram();
+  const held = [recordable, structuredClone(recordable), perf.monitorEventLoopDelay()];
+  held.push(structuredClone(held[2]));
+  const { RecordableHistogram, ELDHistogram, Histogram } = heapStats().objectTypeCounts;
+  expect(RecordableHistogram).toBeGreaterThanOrEqual(2);
+  expect(ELDHistogram).toBeGreaterThanOrEqual(1);
+  expect(Histogram).toBeGreaterThanOrEqual(1);
+  expect(held.map(histogram => histogram.constructor.name)).toEqual([
+    "RecordableHistogram",
+    "RecordableHistogram",
+    "ELDHistogram",
+    "Histogram",
+  ]);
+});
+
+test("histograms that grew are collected without an explicit GC", () => {
+  // How many it takes depends on the size of the heap, but 720 MB is far more than enough.
+  let created = 0;
+  withoutAggressiveGC(() => {
+    do {
+      for (let i = 0; i < 100; i++) {
+        const histogram = perf.createHistogram();
+        for (const value of valuesInEveryChunk) histogram.record(value);
+      }
+      created += 100;
+    } while (created < 2000 && heapStats().objectTypeCounts.RecordableHistogram > created / 2);
+  });
+  expect(created).toBeLessThan(2000);
+});
+
+// A clone did not allocate the buckets, but it keeps them alive once the original is dropped.
+test("structured clones are collected without an explicit GC", () => {
+  const histogram = perf.createHistogram();
+  for (const value of valuesInEveryChunk) histogram.record(value);
+  let created = 0;
+  withoutAggressiveGC(() => {
+    do {
+      for (let i = 0; i < 100; i++) structuredClone(histogram);
+      created += 100;
+    } while (created < 2000 && heapStats().objectTypeCounts.RecordableHistogram > created / 2);
+  });
+  expect(created).toBeLessThan(2000);
+});
+
+test.each([
+  ["full", `histograms = Array.from({ length: 100 }, () => createHistogram()); histograms.forEach(fill);`],
+  [
+    "empty, and again once it has filled them,",
+    `if (step % 2 === 1) histograms = Array.from({ length: 100 }, () => createHistogram());
+    else histograms.forEach(fill);`,
+  ],
+])("histograms that another thread sends %s are collected without an explicit GC", async (_, inWorker) => {
+  const { port1, port2 } = new MessageChannel();
+  const turn = new Int32Array(new SharedArrayBuffer(4));
+  const worker = new Worker(
+    `const { workerData: { port, turn, values } } = require("node:worker_threads");
+    const { createHistogram } = require("node:perf_hooks");
+    const fill = histogram => values.forEach(value => histogram.record(value));
+    let histograms;
+    for (let step = 1; ; step++) {
+      Atomics.wait(turn, 0, step * 2 - 2);
+      if (Atomics.load(turn, 0) < 0) break;
+      try {
+        ${inWorker}
+        for (const histogram of histograms) port.postMessage(histogram);
+      } catch (error) {
+        Atomics.store(turn, 0, -1);
+        Atomics.notify(turn, 0);
+        throw error;
+      }
+      Atomics.store(turn, 0, step * 2);
+      Atomics.notify(turn, 0);
+    }`,
+    { eval: true, workerData: { port: port2, turn, values: valuesInEveryChunk }, transferList: [port2] },
+  );
+  const failed = new Promise(resolve => worker.once("error", resolve));
+  try {
+    let received = 0;
+    withoutAggressiveGC(() => {
+      do {
+        Atomics.add(turn, 0, 1);
+        Atomics.notify(turn, 0);
+        // Not a turn of the event loop, in which an idle GC could run. So nothing would time the test out.
+        expect(Atomics.wait(turn, 0, (received / 100) * 2 + 1, 30_000)).not.toBe("timed-out");
+        if (Atomics.load(turn, 0) < 0) return;
+        for (let i = 0; i < 100; i++) expect(receiveMessageOnPort(port1)).toBeDefined();
+        received += 100;
+      } while (received < 2000 && heapStats().objectTypeCounts.RecordableHistogram > received / 2);
+    });
+    if (Atomics.load(turn, 0) < 0) throw await failed;
+    expect(received).toBeLessThan(2000);
+  } finally {
+    Atomics.store(turn, 0, -1);
+    Atomics.notify(turn, 0);
+    await worker.terminate();
+    port1.close();
+  }
+});
+
+test("the prototypes of a histogram can be printed", () => {
+  const printed: string[] = [];
+  for (const histogram of [perf.createHistogram(), perf.monitorEventLoopDelay()]) {
+    for (let p = Object.getPrototypeOf(histogram); p !== Object.prototype; p = Object.getPrototypeOf(p)) {
+      printed.push(Bun.inspect({ p }).split("\n", 3).join(" "));
+    }
+  }
+  expect(printed).toEqual([
+    "{   p: RecordableHistogram {     record: [Function: record],",
+    // As for every native class: the getter throws for a prototype.
+    "{   p: Histogram {     count: undefined,",
+    "{   p: ELDHistogram {     enable: [Function: enable],",
+    "{   p: Histogram {     count: undefined,",
+  ]);
 });
 
 test("doesn't throw", () => {
@@ -364,4 +524,45 @@ test("mark/measure toJSON and inspection include detail without perf_hooks being
   expect(result.indexOption).toBe("PerformanceMark {");
   expect(result.polluted).toBe("PerformanceMark {");
   expect(exitCode).toBe(0);
+});
+
+// `options.resolution` can be any safe integer >= 1.
+describe("monitorEventLoopDelay with a resolution above the int32 range", () => {
+  const cases = [
+    { resolution: 2 ** 31, earlierCall: false, when: "as the first call" },
+    { resolution: 2 ** 31, earlierCall: true, when: "after an earlier call" },
+    { resolution: 2 ** 32, earlierCall: true, when: "after an earlier call" },
+    { resolution: 2 ** 32 + 1, earlierCall: true, when: "after an earlier call" },
+  ];
+
+  test.concurrent.each(cases)("doesn't wrap resolution $resolution $when", async ({ resolution, earlierCall }) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { monitorEventLoopDelay } = require("node:perf_hooks");
+         ${earlierCall ? "monitorEventLoopDelay();" : ""}
+         const histogram = monitorEventLoopDelay({ resolution: ${resolution} });
+         console.log("enable", histogram.enable());
+         // If the resolution wrapped to 1 ms (2 ** 32 + 1 as an int32), it would record samples during these 10 ms.
+         setTimeout(() => {
+           console.log("count", histogram.count);
+           console.log("disable", histogram.disable());
+         }, 10);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      // If the period wrapped to 0 ms (2 ** 32 as an int32), the timer would re-arm forever and hang the event loop.
+      timeout: 4_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, stdout, exitCode, signalCode: proc.signalCode }).toEqual({
+      stderr: "",
+      stdout: "enable true\ncount 0\ndisable true\n",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
 });

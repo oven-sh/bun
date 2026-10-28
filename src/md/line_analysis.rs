@@ -223,6 +223,8 @@ impl Parser<'_> {
         pos >= self.size || helpers::is_newline(ch(self.text, pos))
     }
 
+    // Only lines that start with `<` get here. Inlined, it costs every other line a few instructions.
+    #[inline(never)]
     pub(crate) fn is_html_block_start_condition(&self, off: OFF) -> u8 {
         if off + 1 >= self.size {
             return 0;
@@ -237,11 +239,14 @@ impl Parser<'_> {
         // Type 1: <script, <pre, <style, <textarea (case insensitive)
         // Only opening tags start type 1 blocks. Closing tags like </pre> are
         // only END conditions for type 1, not start conditions.
+        let (name, name_end) = self.html_tag_name(off);
+        let is_named = |tag: &[u8]| helpers::ascii_case_eql(name, tag);
         if ch(self.text, off + 1) != b'/'
-            && (self.match_html_tag(off, b"script")
-                || self.match_html_tag(off, b"pre")
-                || self.match_html_tag(off, b"style")
-                || self.match_html_tag(off, b"textarea"))
+            && self.can_end_html_tag_name(name_end)
+            && (is_named(b"script")
+                || is_named(b"pre")
+                || is_named(b"style")
+                || is_named(b"textarea"))
         {
             return 1;
         }
@@ -279,7 +284,10 @@ impl Parser<'_> {
         }
 
         // Type 6: block-level tags
-        if self.is_block_level_html_tag(off) {
+        if (self.can_end_html_tag_name(name_end)
+            || (self.ch(name_end) == b'/' && self.ch(name_end + 1) == b'>'))
+            && Self::is_block_level_html_tag(name)
+        {
             return 6;
         }
 
@@ -392,31 +400,29 @@ impl Parser<'_> {
         false
     }
 
-    pub(crate) fn match_html_tag(&self, off: OFF, tag: &[u8]) -> bool {
-        if (off as usize) + 1 + tag.len() >= self.size as usize {
-            return false;
+    /// The letters and digits that the tag at `off` starts with, and where they end. The tag can be a closing tag.
+    fn html_tag_name(&self, off: OFF) -> (&[u8], OFF) {
+        let mut start = off + 1;
+        if self.ch(start) == b'/' {
+            start += 1;
         }
-        let start = off + 1;
-        // Allow optional / for closing tags
-        let mut pos = start;
-        if pos < self.size && ch(self.text, pos) == b'/' {
-            pos += 1;
+        let mut end = start;
+        while self.ch(end).is_ascii_alphanumeric() {
+            end += 1;
         }
-        if (pos as usize) + tag.len() > self.size as usize {
-            return false;
-        }
-        if !helpers::ascii_case_eql(&self.text[pos as usize..pos as usize + tag.len()], tag) {
-            return false;
-        }
-        pos += u32::try_from(tag.len()).expect("int cast");
+        (&self.text[start as usize..end as usize], end)
+    }
+
+    /// Whether what is at `pos` can follow a tag name: the end of the text, `>`, or white space.
+    fn can_end_html_tag_name(&self, pos: OFF) -> bool {
         if pos >= self.size {
             return true;
         }
         let after = ch(self.text, pos);
-        after == b'>' || after == b'/' || helpers::is_blank(after) || helpers::is_newline(after)
+        after == b'>' || helpers::is_blank(after) || helpers::is_newline(after)
     }
 
-    pub(crate) fn is_block_level_html_tag(&self, off: OFF) -> bool {
+    fn is_block_level_html_tag(name: &[u8]) -> bool {
         const BLOCK_TAGS: &[&[u8]] = &[
             b"address",
             b"article",
@@ -482,12 +488,9 @@ impl Parser<'_> {
             b"ul",
         ];
 
-        for tag in BLOCK_TAGS {
-            if self.match_html_tag(off, tag) {
-                return true;
-            }
-        }
-        false
+        BLOCK_TAGS
+            .iter()
+            .any(|tag| helpers::ascii_case_eql(name, tag))
     }
 
     pub(crate) fn is_complete_html_tag(&self, off: OFF) -> bool {
@@ -614,6 +617,7 @@ impl Parser<'_> {
                     pos += 1;
                 } else {
                     // Unquoted value
+                    let value_start = pos;
                     while pos < self.size
                         && !helpers::is_blank(ch(self.text, pos))
                         && !helpers::is_newline(ch(self.text, pos))
@@ -625,6 +629,9 @@ impl Parser<'_> {
                         && ch(self.text, pos) != b'`'
                     {
                         pos += 1;
+                    }
+                    if pos == value_start {
+                        return false;
                     }
                 }
             }

@@ -1,0 +1,1 @@
+function run(x) { const r = Array.from({ length: 2 }, x); return r.sort().length + " " + r.reverse().join("-") + " " + r.toString() + " " + r.flatMap(v => [v]).length + " " + r.toSorted().length + " " + r.with(0, 1).join() + " " + r.copyWithin(0, 1).length; } console.log(run());

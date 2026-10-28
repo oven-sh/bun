@@ -4,6 +4,7 @@ import { afterEach, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBroken, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import {
   copyFileSync,
+  linkSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -784,7 +785,12 @@ const replaceFile = {
     await Bun.write(path, contents);
   },
 };
-for (const [how, replace] of Object.entries(replaceFile)) {
+for (const [how, replace] of [
+  ...Object.entries(replaceFile),
+  // The old inode stays alive, so the watch of the file cannot report the save, whatever
+  // descriptor bun holds.
+  ["rename over, with a second hard link to the module,", replaceFile["rename over"]] as const,
+]) {
   it.skipIf(isWindows)(
     `--watch sees a ${how} save after a failed lookup in the same directory`,
     async () => {
@@ -800,6 +806,7 @@ setInterval(() => {}, 1e6);
 `,
       });
       const cwd = String(dir);
+      if (how.includes("hard link")) linkSync(join(cwd, "a.js"), join(cwd, "a.linked.js"));
       const proc = spawn({
         cwd,
         cmd: [bunExe(), "--watch", "--no-clear-screen", "entry.js"],
@@ -886,7 +893,7 @@ setInterval(() => {}, 1e6);
 // inotify has one watch per inode. A folder that is reached under two
 // spellings, a symlink and its target, has one watch, and the watcher gives
 // each event to the spelling it saw first. The files are in the watchlist
-// under the spelling of their import.
+// under their real path.
 it.skipIf(isWindows)(
   "--watch sees a rename over save in a folder that is also watched through a symlink",
   async () => {
@@ -928,9 +935,10 @@ setInterval(() => {}, 1e6);
 );
 
 // A workspace package is imported through its symlink in node_modules and loaded by its real
-// path. The lookup of the package watches its folder under the spelling of the symlink.
+// path. The resolver lists its folder under the spelling of the symlink, so the real path of the
+// folder has no cached listing.
 it.skipIf(isWindows)(
-  "--watch sees a rename over save of a workspace package",
+  "--watch sees a rename over save of a workspace package, started at the workspace root",
   async () => {
     using dir = tempDir("watch-dir-event-workspace", {
       "package.json": JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"] }),
@@ -1022,6 +1030,8 @@ setInterval(() => {}, 1e6);
     renameSync(join(cwd, "lib", "sub"), join(cwd, "lib", "sub.away"));
     renameSync(join(cwd, "lib", "sub.away"), join(cwd, "lib", "sub"));
     await Bun.write(join(cwd, "other", "a.js"), `export {};`);
+    // The entry point has a shortcut of its own: a file of another folder with its name is not it.
+    await replaceFile["rename over"](join(cwd, "other", "entry.js"), `export {};`);
     await watcherHandled(trace, join(cwd, "fence"));
     await replaceFile["rename over"](join(cwd, "lib", "a.js"), `export const a = 2;`);
     await waitFor("EVAL a = 2\n");

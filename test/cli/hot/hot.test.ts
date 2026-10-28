@@ -4,6 +4,7 @@ import { beforeEach, expect, it } from "bun:test";
 import {
   copyFileSync,
   cpSync,
+  linkSync,
   mkdirSync,
   readFileSync,
   realpathSync,
@@ -1552,40 +1553,66 @@ setInterval(() => {}, 1e6);
 );
 
 // A lookup that fails makes the resolver list the folder again, and the new listing does not know
-// which of its files are loaded.
-it.skipIf(isWindows)(
-  "--hot reloads an import that is saved by rename after a failed import in the same folder",
-  async () => {
-    using dir = tempDir("hot-dir-event-after-miss", {
-      "dep.js": `export const v = 1;`,
-      "main.js": `try {
-  await import("./missing.js");
-} catch {}
-import { v } from "./dep.js";
-console.log("RUN", v);
+// which of its files are loaded. A static import is resolved before the body of the module runs.
+for (const [what, source, dep] of [
+  ["a failed import", `import { v } from "./dep.js";\ntry {\n  await import("./missing.js");\n} catch {}\n`, "dep.js"],
+  // A package name that fails drops the listing of the folder of the importer too.
+  [
+    "a failed import of a package",
+    `import { v } from "./dep.js";\ntry {\n  require("optional-dep");\n} catch {}\n`,
+    "dep.js",
+  ],
+  // The old inode stays alive, so the watch of the file cannot report the save, whatever
+  // descriptor bun holds.
+  [
+    "a failed import, with a second hard link to the module",
+    `import { v } from "./dep.js";\ntry {\n  await import("./missing.js");\n} catch {}\n`,
+    "dep.js",
+  ],
+  // The lookup that fails watches the folder first, under a spelling with no trailing separator.
+  [
+    "a failed import that comes before the first module of the folder",
+    `try {\n  await import("./lib/missing.js");\n} catch {}\nconst { v } = await import("./lib/dep.js");\n`,
+    "lib/dep.js",
+  ],
+] as const) {
+  it.skipIf(isWindows)(
+    `--hot reloads an import that is saved by rename after ${what}`,
+    async () => {
+      using dir = tempDir("hot-dir-event-after-miss", {
+        "trace.log": "",
+        [`src/${dep}`]: `export const v = 1;`,
+        "src/main.js": `${source}console.log("RUN", v);
 if (v === 2) process.exit(0);
 setInterval(() => {}, 1e6);
 `,
-    });
-    const cwd = String(dir);
-    await using proc = spawn({
-      cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
-      cwd,
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "inherit",
-      stdin: "ignore",
-    });
-    const stdout = stdoutOf(proc);
+      });
+      const cwd = join(String(dir), "src");
+      const trace = join(String(dir), "trace.log");
+      if (what.includes("hard link")) linkSync(join(cwd, dep), join(cwd, "dep.linked.js"));
+      await using proc = spawn({
+        cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
+        cwd,
+        env: { ...bunEnv, BUN_WATCHER_TRACE: trace },
+        stdout: "pipe",
+        stderr: "inherit",
+        stdin: "ignore",
+      });
+      const stdout = stdoutOf(proc);
 
-    await stdout.until("RUN 1\n");
-    writeFileSync(join(cwd, "dep.js.tmp"), `export const v = 2;`);
-    renameSync(join(cwd, "dep.js.tmp"), join(cwd, "dep.js"));
-    expect(withoutRepeats(await stdout.toEnd())).toEqual(["RUN 1", "RUN 2", ""]);
-    expect(await proc.exited).toBe(0);
-  },
-  30_000,
-);
+      await stdout.until("RUN 1\n");
+      writeFileSync(join(cwd, dep + ".tmp"), `export const v = 2;`);
+      renameSync(join(cwd, dep + ".tmp"), join(cwd, dep));
+      expect(withoutRepeats(await stdout.toEnd())).toEqual(["RUN 1", "RUN 2", ""]);
+      expect(await proc.exited).toBe(0);
+      // inotify gives the event to the first spelling of the folder.
+      if (isLinux && dep === "lib/dep.js") {
+        expect(readFileSync(trace, "utf8")).toContain(JSON.stringify(join(realpathSync(cwd), "lib")) + ":");
+      }
+    },
+    30_000,
+  );
+}
 
 // https://github.com/oven-sh/bun/issues/30436, for an import: a Bun.build() in the entry lists
 // the folder again, and the new listing does not know which of its files are loaded.
@@ -1687,44 +1714,39 @@ setInterval(() => {}, 1e6);
 }
 
 // A watched file with no stored descriptor, which an import of the `file` loader is on Linux,
-// reports a replaced inode through its own watch. The directory event of the same save must
-// not reload it a second time.
+// reports its changes through its own watch. A directory event must not take it off the
+// watchlist: nothing watches it again when the program does not import it a second time.
 it.skipIf(!isLinux)(
-  "--hot evaluates once for a save by rename of a file loader import",
+  "--hot reloads each save of a file loader import that the program imports once",
   async () => {
     using dir = tempDir("hot-dir-event-file-loader", {
-      "trace.log": "",
-      "src/asset.bin": `one`,
-      "src/fence/f.js": `export {};`,
-      "src/main.js": `import asset from "./asset.bin";
-import "./fence/f.js";
-globalThis.runs = (globalThis.runs ?? 0) + 1;
-console.log("RUN", globalThis.runs, require("fs").readFileSync(asset, "utf8"));
+      "asset.bin": `one`,
+      "main.js": `globalThis.asset ??= (await import("./asset.bin")).default;
+const text = require("fs").readFileSync(globalThis.asset, "utf8");
+console.log("RUN", text);
+if (text === "four") process.exit(0);
 setInterval(() => {}, 1e6);
 `,
     });
-    const cwd = join(String(dir), "src");
-    const trace = join(String(dir), "trace.log");
+    const cwd = String(dir);
     await using proc = spawn({
       cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
       cwd,
-      env: { ...bunEnv, BUN_WATCHER_TRACE: trace },
+      env: bunEnv,
       stdout: "pipe",
       stderr: "inherit",
       stdin: "ignore",
     });
     const stdout = stdoutOf(proc);
 
-    await stdout.until("RUN 1 one\n");
-    writeFileSync(join(cwd, "asset.bin.tmp"), `two`);
-    renameSync(join(cwd, "asset.bin.tmp"), join(cwd, "asset.bin"));
-    await stdout.until("RUN 2 two\n");
-    await watcherHandled(trace, join(cwd, "fence"));
-    writeFileSync(
-      join(cwd, "main.js"),
-      `globalThis.runs += 1;\nconsole.log("DONE", globalThis.runs);\nprocess.exit(0);\n`,
-    );
-    expect(await stdout.toEnd()).toBe("RUN 1 one\nRUN 2 two\nDONE 3\n");
+    await stdout.until("RUN one\n");
+    for (const text of ["two", "three", "four"]) {
+      writeFileSync(join(cwd, "asset.bin"), text);
+      await stdout.until(`RUN ${text}\n`);
+    }
+    // A save in place is a truncation and a write: a reload between the two reads no text.
+    const runs = withoutRepeats(await stdout.toEnd()).filter(line => line !== "RUN ");
+    expect(runs).toEqual(["RUN one", "RUN two", "RUN three", "RUN four", ""]);
     expect(await proc.exited).toBe(0);
   },
   30_000,

@@ -743,7 +743,7 @@ impl Encoder {
     }
 
     /// `BrotliEncoderAttachPreparedDictionary`. The decoder has to be given the same bytes. `false` if there are 15
-    /// dictionaries already, or no memory.
+    /// dictionaries already, if they add up to 2 GiB, or no memory.
     #[must_use]
     pub fn attach_prepared_dictionary(&mut self, dictionary: PreparedDictionary) -> bool {
         self.broken.is_none() && self.params.dictionary.attach(dictionary)

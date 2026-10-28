@@ -138,15 +138,45 @@ pub(crate) struct CompoundDictionary {
 }
 
 impl CompoundDictionary {
-    /// `false` if there are too many already, or if memory runs out.
+    /// `false` if there are too many already, if they add up to 2 GiB, which the decoder refuses, or if memory runs out.
     pub(crate) fn attach(&mut self, dictionary: PreparedDictionary) -> bool {
-        if self.chunks.len() == MAX_COMPOUND_DICTS || self.chunks.try_reserve(1).is_err() {
+        let total_size = self.total_size + dictionary.source.len();
+        if self.chunks.len() == MAX_COMPOUND_DICTS
+            || i32::try_from(total_size).is_err()
+            || self.chunks.try_reserve(1).is_err()
+        {
             return false;
         }
-        self.total_size += dictionary.source.len();
+        self.total_size = total_size;
         self.chunks.push(dictionary);
         self.chunk_offsets
             .put(self.chunks.len(), self.total_size)
             .is_ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// They are zeros that nothing touches, so they take next to no memory.
+    #[test]
+    fn refuses_dictionaries_of_2_gib_in_all() {
+        let dictionary = |size: usize| PreparedDictionary {
+            source: vec![0; size].into(),
+            bucket_bits: 0,
+            slot_bits: 0,
+            slot_offsets: Vec::new(),
+            heads: Vec::new(),
+            items: Vec::new(),
+        };
+        let mut compound = CompoundDictionary::default();
+        assert!(compound.attach(dictionary(1 << 30)));
+        assert!(!compound.attach(dictionary(1 << 30)));
+        assert!(compound.attach(dictionary((1 << 30) - 1)));
+        assert!(!compound.attach(dictionary(1)));
+        assert!(compound.attach(dictionary(0)));
+        assert_eq!(compound.total_size, i32::MAX as usize);
+        assert_eq!(compound.chunks.len(), 3);
     }
 }

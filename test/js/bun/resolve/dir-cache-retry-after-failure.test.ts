@@ -769,7 +769,8 @@ async function runGroup(
   return { stdout: normalizeBunSnapshot(stdout, String(dir)), stderr: stderr.trim(), exitCode };
 }
 
-describe.concurrent("a failed resolution sees files and packages created after the miss", () => {
+// Four blocks, so that few processes of a debug build start at the same time.
+describe.concurrent("a failed resolution sees packages and files created after the miss", () => {
   test("packages and directories created in the node_modules search path", async () => {
     expect(await runGroup("search")).toMatchInlineSnapshot(`
       {
@@ -830,6 +831,41 @@ describe.concurrent("a failed resolution sees files and packages created after t
     `);
   });
 
+  test("a package created in a NODE_PATH directory", async () => {
+    expect(await runGroup("nodepath", dir => ({ NODE_PATH: join(dir, "global") }))).toMatchInlineSnapshot(`
+      {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": 
+      "O1 ERR MODULE_NOT_FOUND
+      O2 OK global/global-pkg/index.js"
+      ,
+      }
+    `);
+  });
+
+  test("require and import of a package or directory", async () => {
+    expect(await runGroup("require")).toMatchInlineSnapshot(`
+      {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": 
+      "A1 ERR Cannot find module 'p1'
+      A2 OK 42
+      A2sub OK 42
+      B1 ERR Cannot find module 'p2'
+      B2 OK 42
+      C1 ERR Cannot find module './dir'
+      C2 OK 42
+      F1 ERR Cannot find package 'p3' imported from <dir>/main.mjs
+      F2 OK 42"
+      ,
+      }
+    `);
+  });
+});
+
+describe.concurrent("a failed resolution sees them from each way to ask the resolver", () => {
   test("tsconfig paths aliases onto directories that gain files later", async () => {
     expect(await runGroup("tsconfig")).toMatchInlineSnapshot(`
       {
@@ -880,42 +916,31 @@ describe.concurrent("a failed resolution sees files and packages created after t
     `);
   });
 
-  test("a package created in a NODE_PATH directory", async () => {
-    expect(await runGroup("nodepath", dir => ({ NODE_PATH: join(dir, "global") }))).toMatchInlineSnapshot(`
+  test("Bun.build() after the package was installed", async () => {
+    expect(await runGroup("build")).toMatchInlineSnapshot(`
       {
         "exitCode": 0,
         "stderr": "",
         "stdout": 
-      "O1 ERR MODULE_NOT_FOUND
-      O2 OK global/global-pkg/index.js"
-      ,
-      }
-    `);
-  });
-
-  test("require and import of a package or directory", async () => {
-    expect(await runGroup("require")).toMatchInlineSnapshot(`
-      {
-        "exitCode": 0,
-        "stderr": "",
-        "stdout": 
-      "A1 ERR Cannot find module 'p1'
-      A2 OK 42
-      A2sub OK 42
-      B1 ERR Cannot find module 'p2'
-      B2 OK 42
-      C1 ERR Cannot find module './dir'
-      C2 OK 42
-      F1 ERR Cannot find package 'p3' imported from <dir>/main.mjs
-      F2 OK 42"
+      "G1a ERR Could not resolve: "dpk1". Maybe you need to "bun install"?
+      G1b OK 1
+      G2a ERR Could not resolve: "dpk2". Maybe you need to "bun install"?
+      G2b OK 1
+      G3a ERR Could not resolve: "dpk3". Maybe you need to "bun install"?
+      G3b OK 1
+      G4a ERR Could not resolve: "dpk4". Maybe you need to "bun install"?
+      G4b OK 1
+      G5a ERR ModuleNotFound resolving "dpk5" (entry point)
+      G5b OK 1
+      G6a ERR Could not resolve: "./late.svg#frag"
+      G6b OK 1"
       ,
       }
     `);
   });
 });
 
-// A second block, so that fewer processes of a debug build start at the same time.
-describe.concurrent("a failed resolution checks again what it read from the caches", () => {
+describe.concurrent("a failed resolution checks again the config files and links it read", () => {
   test("an imports or exports entry added to the package.json next to the importer", async () => {
     expect(await runGroup("manifest")).toMatchInlineSnapshot(`
       {
@@ -927,36 +952,6 @@ describe.concurrent("a failed resolution checks again what it read from the cach
       SR1 ERR MODULE_NOT_FOUND
       SR2 OK m6/feature.cjs
       W1 ERR MODULE_NOT_FOUND"
-      ,
-      }
-    `);
-  });
-
-  // Permissions do not stop the superuser, and Windows has no such mode.
-  test.skipIf(isWindows || process.getuid?.() === 0)("a directory that could not be read at first", async () => {
-    expect(await runGroup("unreadable")).toMatchInlineSnapshot(`
-      {
-        "exitCode": 0,
-        "stderr": "",
-        "stdout": 
-      "UR1 ERR MODULE_NOT_FOUND
-      UR2 ERR MODULE_NOT_FOUND
-      UR3 OK locked/a.cjs"
-      ,
-      }
-    `);
-  });
-
-  test("a name that changes its kind after the miss", async () => {
-    expect(await runGroup("kind")).toMatchInlineSnapshot(`
-      {
-        "exitCode": 0,
-        "stderr": "",
-        "stdout": 
-      "KD1 ERR MODULE_NOT_FOUND
-      KD2 OK kinds/a.cjs
-      KD3 ERR MODULE_NOT_FOUND
-      KD4 OK kinds/b/index.cjs"
       ,
       }
     `);
@@ -1020,48 +1015,6 @@ describe.concurrent("a failed resolution checks again what it read from the cach
     `);
   });
 
-  test("a miss drops no directory when nothing changed on disk", async () => {
-    const steadyFiles = (dir: string) => {
-      const write = (file: string, contents: string | Buffer) => {
-        mkdirSync(dirname(join(dir, file)), { recursive: true });
-        writeFileSync(join(dir, file), contents);
-      };
-      write("node_modules/s0/package.json", JSON.stringify({ name: "s0", exports: { ".": "./i.cjs" } }));
-      write("node_modules/s0/i.cjs", "");
-      const manifest = (name: string) => "\uFEFF" + JSON.stringify({ name, imports: { "#y": "./y.cjs" } });
-      write("s1/package.json", manifest("s1"));
-      write("s2/package.json", Buffer.from(manifest("s2"), "utf16le"));
-      write("s3/package.json", `{ "name": "s3", `);
-      mkdirSync(join(dir, "s3", "src"));
-      const paths = { "s5-utils": ["./nowhere.cjs"] };
-      write(
-        "s5/src/tsconfig.json",
-        "\uFEFF" + JSON.stringify({ extends: "./nowhere.json", compilerOptions: { baseUrl: ".", paths } }),
-      );
-      write("s6.cjs", "");
-      symlinkSync("nowhere.cjs", join(dir, "s7.cjs"), "file");
-    };
-    expect(await runGroup("steady", undefined, steadyFiles)).toMatchInlineSnapshot(`
-      {
-        "exitCode": 0,
-        "stderr": "",
-        "stdout": 
-      "Z1 ERR MODULE_NOT_FOUND
-      Z2 ERR MODULE_NOT_FOUND
-      Z3 ERR MODULE_NOT_FOUND
-      Z4 ERR MODULE_NOT_FOUND
-      Z5 ERR MODULE_NOT_FOUND
-      Z6 ERR MODULE_NOT_FOUND
-      Z7 ERR MODULE_NOT_FOUND
-      Z8 ERR MODULE_NOT_FOUND
-      Z9 ERR MODULE_NOT_FOUND
-      Z10 ERR MODULE_NOT_FOUND
-      directories read again by 200 more misses: 0"
-      ,
-      }
-    `);
-  });
-
   // A watcher drops the directory that changed. The directories below it still point at
   // the entry that was dropped, so a lookup that walks up from them reads the old package.json.
   // Windows is left out: its watcher can start to listen after the first run has printed.
@@ -1110,25 +1063,76 @@ describe.concurrent("a failed resolution checks again what it read from the cach
     writeFileSync(join(String(dir), "server.js"), `console.log("run 2: " + require("./src/x.cjs"));`);
     expect(await line(/run 2: .*/)).toBe("run 2: OK impl");
   });
+});
 
-  test("Bun.build() after the package was installed", async () => {
-    expect(await runGroup("build")).toMatchInlineSnapshot(`
+describe.concurrent("a failed resolution checks again what else it read from the caches", () => {
+  // Permissions do not stop the superuser, and Windows has no such mode.
+  test.skipIf(isWindows || process.getuid?.() === 0)("a directory that could not be read at first", async () => {
+    expect(await runGroup("unreadable")).toMatchInlineSnapshot(`
       {
         "exitCode": 0,
         "stderr": "",
         "stdout": 
-      "G1a ERR Could not resolve: "dpk1". Maybe you need to "bun install"?
-      G1b OK 1
-      G2a ERR Could not resolve: "dpk2". Maybe you need to "bun install"?
-      G2b OK 1
-      G3a ERR Could not resolve: "dpk3". Maybe you need to "bun install"?
-      G3b OK 1
-      G4a ERR Could not resolve: "dpk4". Maybe you need to "bun install"?
-      G4b OK 1
-      G5a ERR ModuleNotFound resolving "dpk5" (entry point)
-      G5b OK 1
-      G6a ERR Could not resolve: "./late.svg#frag"
-      G6b OK 1"
+      "UR1 ERR MODULE_NOT_FOUND
+      UR2 ERR MODULE_NOT_FOUND
+      UR3 OK locked/a.cjs"
+      ,
+      }
+    `);
+  });
+
+  test("a name that changes its kind after the miss", async () => {
+    expect(await runGroup("kind")).toMatchInlineSnapshot(`
+      {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": 
+      "KD1 ERR MODULE_NOT_FOUND
+      KD2 OK kinds/a.cjs
+      KD3 ERR MODULE_NOT_FOUND
+      KD4 OK kinds/b/index.cjs"
+      ,
+      }
+    `);
+  });
+
+  test("a miss drops no directory when nothing changed on disk", async () => {
+    const steadyFiles = (dir: string) => {
+      const write = (file: string, contents: string | Buffer) => {
+        mkdirSync(dirname(join(dir, file)), { recursive: true });
+        writeFileSync(join(dir, file), contents);
+      };
+      write("node_modules/s0/package.json", JSON.stringify({ name: "s0", exports: { ".": "./i.cjs" } }));
+      write("node_modules/s0/i.cjs", "");
+      const manifest = (name: string) => "\uFEFF" + JSON.stringify({ name, imports: { "#y": "./y.cjs" } });
+      write("s1/package.json", manifest("s1"));
+      write("s2/package.json", Buffer.from(manifest("s2"), "utf16le"));
+      write("s3/package.json", `{ "name": "s3", `);
+      mkdirSync(join(dir, "s3", "src"));
+      const paths = { "s5-utils": ["./nowhere.cjs"] };
+      write(
+        "s5/src/tsconfig.json",
+        "\uFEFF" + JSON.stringify({ extends: "./nowhere.json", compilerOptions: { baseUrl: ".", paths } }),
+      );
+      write("s6.cjs", "");
+      symlinkSync("nowhere.cjs", join(dir, "s7.cjs"), "file");
+    };
+    expect(await runGroup("steady", undefined, steadyFiles)).toMatchInlineSnapshot(`
+      {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": 
+      "Z1 ERR MODULE_NOT_FOUND
+      Z2 ERR MODULE_NOT_FOUND
+      Z3 ERR MODULE_NOT_FOUND
+      Z4 ERR MODULE_NOT_FOUND
+      Z5 ERR MODULE_NOT_FOUND
+      Z6 ERR MODULE_NOT_FOUND
+      Z7 ERR MODULE_NOT_FOUND
+      Z8 ERR MODULE_NOT_FOUND
+      Z9 ERR MODULE_NOT_FOUND
+      Z10 ERR MODULE_NOT_FOUND
+      directories read again by 200 more misses: 0"
       ,
       }
     `);

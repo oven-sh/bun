@@ -54,6 +54,74 @@ fn carried_mark(flags: EFlags) -> EFlags {
     }
 }
 
+/// tsc decides at first sight that "()", "(...a", "(a:" and "(a?" start an arrow function. Ask while the first item is the only one: a later item sets the same records.
+#[cold]
+fn is_first_sight_arrow_head(
+    first: Option<&Expr>,
+    type_colon_range: bun_ast::Range,
+    errors: &DeferredErrors,
+) -> bool {
+    let has_type_or_question =
+        type_colon_range.len > 0 || errors.invalid_expr_after_question.is_some();
+    match first.map(|first| &first.data) {
+        None | Some(js_ast::expr::Data::ESpread(_)) => true,
+        Some(js_ast::expr::Data::EIdentifier(_)) => has_type_or_question,
+        // "(a: T = b"
+        Some(js_ast::expr::Data::EBinary(binary)) => {
+            has_type_or_question
+                && binary.op == js_ast::op::Code::BinAssign
+                && matches!(binary.left.data, js_ast::expr::Data::EIdentifier(_))
+        }
+        Some(_) => false,
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn marked_parens(
+    opts: ParenExprOpts,
+    items: &[Expr],
+    first_sight_at_comma: Option<bool>,
+    has_spread: bool,
+    type_colon_range: bun_ast::Range,
+    errors: &DeferredErrors,
+    is_arrow_fn: bool,
+) -> MarkedParens {
+    let is_first_sight = !opts.after_type_parameters
+        && first_sight_at_comma
+            .unwrap_or_else(|| is_first_sight_arrow_head(items.first(), type_colon_range, errors));
+    // The body of a first sight arrow function is a new expression, as in tsc. A body behind a return type is in a typed arrow function.
+    let body_flags = if is_first_sight {
+        EFlags::None
+    } else if is_arrow_fn {
+        opts.flags
+    } else {
+        EFlags::AfterQuestionAndBeforeColonInTypedArrow
+    };
+    // No second ":" is needed for a first sight head in a typed arrow function, as in tsc, and behind type parameters for parentheses that are no cast, as on main.
+    let is_decided = opts.force_arrow_fn
+        || (is_first_sight && opts.flags == EFlags::AfterQuestionAndBeforeColonInTypedArrow)
+        || (opts.after_type_parameters
+            && (type_colon_range.len > 0
+                || errors.invalid_expr_after_question.is_some()
+                || (!opts.is_async && (items.is_empty() || has_spread))));
+    let attempt_flags = if is_decided {
+        None
+    } else if is_first_sight
+        && opts.is_async
+        && opts.flags == EFlags::AfterQuestionAndBeforeColonCarried
+    {
+        // In an arrow function body or an assignment, `async()` is a call only if no reading leaves a ":" for the conditional.
+        Some(EFlags::AfterQuestionAndBeforeColonInTypedArrow)
+    } else {
+        Some(body_flags)
+    };
+    MarkedParens {
+        body_flags,
+        attempt_flags,
+    }
+}
+
 // File-split mixin: Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`,
 // so this is a direct `impl P` block.
 
@@ -456,75 +524,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .all(|invalid| invalid.kind == InvalidLocTag::RestInitializer)
     }
 
-    /// tsc decides at first sight that "()", "(...a", "(a:" and "(a?" start an arrow function. Ask while the first item is the only one: a later item sets the same records.
-    #[cold]
-    fn is_first_sight_arrow_head(
-        first: Option<&Expr>,
-        type_colon_range: bun_ast::Range,
-        errors: &DeferredErrors,
-    ) -> bool {
-        let has_type_or_question =
-            type_colon_range.len > 0 || errors.invalid_expr_after_question.is_some();
-        match first.map(|first| &first.data) {
-            None | Some(js_ast::expr::Data::ESpread(_)) => true,
-            Some(js_ast::expr::Data::EIdentifier(_)) => has_type_or_question,
-            // "(a: T = b"
-            Some(js_ast::expr::Data::EBinary(binary)) => {
-                has_type_or_question
-                    && binary.op == js_ast::op::Code::BinAssign
-                    && matches!(binary.left.data, js_ast::expr::Data::EIdentifier(_))
-            }
-            Some(_) => false,
-        }
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn marked_parens(
-        opts: ParenExprOpts,
-        items: &[Expr],
-        first_sight_at_comma: Option<bool>,
-        has_spread: bool,
-        type_colon_range: bun_ast::Range,
-        errors: &DeferredErrors,
-        is_arrow_fn: bool,
-    ) -> MarkedParens {
-        let is_first_sight = !opts.after_type_parameters
-            && first_sight_at_comma.unwrap_or_else(|| {
-                Self::is_first_sight_arrow_head(items.first(), type_colon_range, errors)
-            });
-        // The body of a first sight arrow function is a new expression, as in tsc. A body behind a return type is in a typed arrow function.
-        let body_flags = if is_first_sight {
-            EFlags::None
-        } else if is_arrow_fn {
-            opts.flags
-        } else {
-            EFlags::AfterQuestionAndBeforeColonInTypedArrow
-        };
-        // No second ":" is needed for a first sight head in a typed arrow function, as in tsc, and behind type parameters for parentheses that are no cast, as on main.
-        let is_decided = opts.force_arrow_fn
-            || (is_first_sight && opts.flags == EFlags::AfterQuestionAndBeforeColonInTypedArrow)
-            || (opts.after_type_parameters
-                && (type_colon_range.len > 0
-                    || errors.invalid_expr_after_question.is_some()
-                    || (!opts.is_async && (items.is_empty() || has_spread))));
-        let attempt_flags = if is_decided {
-            None
-        } else if is_first_sight
-            && opts.is_async
-            && opts.flags == EFlags::AfterQuestionAndBeforeColonCarried
-        {
-            // In an arrow function body or an assignment, `async()` is a call only if no reading leaves a ":" for the conditional.
-            Some(EFlags::AfterQuestionAndBeforeColonInTypedArrow)
-        } else {
-            Some(body_flags)
-        };
-        MarkedParens {
-            body_flags,
-            attempt_flags,
-        }
-    }
-
     /// This assumes that the open parenthesis has already been parsed by the caller
     pub(crate) fn parse_paren_expr(
         &mut self,
@@ -606,7 +605,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && opts.flags.is_after_question_and_before_colon()
                 && first_sight_at_comma.is_none()
             {
-                first_sight_at_comma = Some(Self::is_first_sight_arrow_head(
+                first_sight_at_comma = Some(is_first_sight_arrow_head(
                     items_list.first(),
                     type_colon_range,
                     &errors,
@@ -691,7 +690,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             let marked =
                 if Self::IS_TYPESCRIPT_ENABLED && opts.flags.is_after_question_and_before_colon() {
-                    Some(Self::marked_parens(
+                    Some(marked_parens(
                         opts,
                         items,
                         first_sight_at_comma,

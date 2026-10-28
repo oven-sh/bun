@@ -136,9 +136,7 @@ fn file_ext_of_key(key: &[u8]) -> &[u8] {
     &key[last_dot..]
 }
 
-/// The loader a built-in `Module._extensions` handler uses for a file with the
-/// extension `ext`. Like Node's, the `.js` handler picks the JavaScript flavor
-/// from the file name. The `.ts` handler takes only JSX from it.
+/// The loader a built-in `Module._extensions` handler uses for a file with the extension `ext`.
 pub(crate) fn builtin_handler_loader(
     vm: &VirtualMachine,
     ext: &[u8],
@@ -154,8 +152,7 @@ pub(crate) fn builtin_handler_loader(
     }
 }
 
-/// Whether an entry under `key` (`.ts`, or a compound key such as `.spec.ts`)
-/// overrides a default loader, so `require()` must consult the table.
+/// Whether an entry under `key` (`.ts`, or a compound `.spec.ts`) overrides a default loader.
 fn shadows_default_loader(key: &[u8]) -> bool {
     DEFAULT_LOADERS.get(file_ext_of_key(key)).is_some()
 }

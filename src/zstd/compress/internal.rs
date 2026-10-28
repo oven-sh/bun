@@ -12,7 +12,9 @@ use crate::common::{
     ZSTD_BLOCKHEADERSIZE, ZSTD_REP_NUM,
 };
 use crate::error::{Error, Result};
-use crate::util::{BUG, SliceExt, highbit32, read_le32, read_le64, try_zeroed, write_le24};
+use crate::util::{
+    BUG, SliceExt, highbit32, make_room, read_le32, read_le64, try_zeroed, write_le24,
+};
 
 pub(crate) const K_SEARCH_STRENGTH: u32 = 8;
 pub(crate) const HASH_READ_SIZE: usize = 8;
@@ -360,22 +362,12 @@ impl SeqStore {
 
     /// `ZSTD_resetSeqStore`, with room for the sequences and the literals of a block of `block_size` bytes.
     pub(crate) fn start_block(&mut self, block_size: usize) -> Result<()> {
-        fn room<T>(vec: &mut Vec<T>, len: usize, max: usize) -> Result<()> {
-            if len <= vec.capacity() {
-                return Ok(());
-            }
-            let len = len.max(2 * vec.capacity()).min(max);
-            // What it holds is not worth a copy.
-            *vec = Vec::new();
-            vec.try_reserve_exact(len)
-                .map_err(|_| Error::MemoryAllocation)
-        }
         self.reset();
         let block_size = block_size.min(self.max_nb_lit);
         let nb_seq = (block_size / MINMATCH as usize).min(self.max_nb_seq);
-        room(&mut self.sequences, nb_seq, self.max_nb_seq)?;
+        make_room(&mut self.sequences, nb_seq, self.max_nb_seq)?;
         let len = block_size + WILDCOPY_OVERLENGTH;
-        room(
+        make_room(
             &mut self.lit_buffer,
             len,
             self.max_nb_lit + WILDCOPY_OVERLENGTH,
@@ -389,11 +381,7 @@ impl SeqStore {
     /// Makes `codes` at least as long as `sequences`.
     pub(crate) fn make_room_for_codes(&mut self) -> Result<()> {
         let len = self.sequences.len();
-        if self.codes.capacity() < len {
-            self.codes = Vec::new();
-            (self.codes.try_reserve_exact(self.sequences.capacity()))
-                .map_err(|_| Error::MemoryAllocation)?;
-        }
+        make_room(&mut self.codes, len, self.max_nb_seq)?;
         if self.codes.len() < len {
             self.codes.resize(len, SeqCodes::default());
         }

@@ -251,6 +251,37 @@ pub(crate) fn try_zeroed<T: bun_pod::Zeroable>(len: usize) -> Result<Vec<T>> {
     bun_pod::try_zeroed_vec(len).ok_or(Error::MemoryAllocation)
 }
 
+/// Gives `table` the length `len`. What it holds is 0, or if `clean` is false possibly what it held before.
+pub(crate) fn reset_table<T: bun_pod::Zeroable + Copy + Default>(
+    table: &mut Vec<T>,
+    len: usize,
+    clean: bool,
+) -> Result<()> {
+    if len > table.capacity() {
+        // First, so that both are not allocated at once.
+        *table = Vec::new();
+        *table = try_zeroed(len)?;
+        return Ok(());
+    }
+    if clean {
+        table.clear();
+    }
+    table.resize(len, T::default());
+    Ok(())
+}
+
+/// Makes the capacity of `vec` at least `len`. A `vec` that has to grow is emptied first, so that nothing is copied and
+/// both are not allocated at once. It gets twice its capacity, or `max` if that is less.
+pub(crate) fn make_room<T>(vec: &mut Vec<T>, len: usize, max: usize) -> Result<()> {
+    if len <= vec.capacity() {
+        return Ok(());
+    }
+    let capacity = len.max((2 * vec.capacity()).min(max));
+    *vec = Vec::new();
+    vec.try_reserve_exact(capacity)
+        .map_err(|_| Error::MemoryAllocation)
+}
+
 /// A copy of `bytes`, or [`Error::MemoryAllocation`].
 pub(crate) fn try_copy(bytes: &[u8]) -> Result<Vec<u8>> {
     let mut vec = Vec::new();

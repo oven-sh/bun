@@ -37,7 +37,7 @@ use crate::common::{
 };
 use crate::error::{Error, Result};
 use crate::util::{
-    SliceExt, highbit32, read_le32, try_zeroed, write_le16, write_le24, write_le32, write_le64,
+    SliceExt, highbit32, read_le32, reset_table, write_le16, write_le24, write_le32, write_le64,
 };
 
 /// `ZSTD_compressionStage_e`
@@ -164,25 +164,6 @@ fn invalidate_match_state(ms: &mut MatchState) {
     ms.loaded_dict_end = 0;
     ms.opt.lit_length_sum = 0;
     ms.has_dict_match_state = false;
-}
-
-/// Gives `table` the length `len`. What it holds is 0, or if `clean` is false possibly what it held before.
-pub(crate) fn reset_table<T: bun_pod::Zeroable + Copy + Default>(
-    table: &mut Vec<T>,
-    len: usize,
-    clean: bool,
-) -> Result<()> {
-    if len > table.capacity() {
-        // First, so that both are not allocated at once.
-        *table = Vec::new();
-        *table = try_zeroed(len)?;
-        return Ok(());
-    }
-    if clean {
-        table.clear();
-    }
-    table.resize(len, T::default());
-    Ok(())
 }
 
 /// `ZSTD_cwksp_mark_tables_dirty` and then `ZSTD_cwksp_mark_tables_clean`

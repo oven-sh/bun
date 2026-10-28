@@ -15,10 +15,13 @@ use crate::common::fse_decompress::Spread;
 use crate::common::{
     BlockType, LL_FSE_LOG, LONGNBSEQ, MAX_LL, MAX_ML, MAX_OFF, MIN_CBLOCK_SIZE,
     MIN_LITERALS_FOR_4_STREAMS, MIN_SEQUENCES_SIZE, MINMATCH, ML_FSE_LOG, OFF_FSE_LOG,
-    REP_START_VALUE, SymbolEncodingType, WILDCOPY_OVERLENGTH, ZSTD_BLOCKHEADERSIZE, ZSTD_REP_NUM,
+    REP_START_VALUE, SymbolEncodingType, WILDCOPY_OVERLENGTH, ZSTD_BLOCKHEADERSIZE,
+    ZSTD_BLOCKSIZE_MAX, ZSTD_REP_NUM,
 };
 use crate::error::{Error, Result};
-use crate::util::{BUG, SliceExt, append, append_within, copy, read_le16, read_le24, read_le32};
+use crate::util::{
+    BUG, SliceExt, append, append_within, copy, make_room, read_le16, read_le24, read_le32,
+};
 
 /// `blockProperties_t`
 pub(crate) struct BlockProperties {
@@ -330,10 +333,12 @@ impl Scratch {
 
     fn lit_buffer(&mut self, lit_size: usize) -> Result<&mut [u8]> {
         let needed = lit_size + WILDCOPY_OVERLENGTH;
+        make_room(
+            &mut self.lit_buffer,
+            needed,
+            ZSTD_BLOCKSIZE_MAX + WILDCOPY_OVERLENGTH,
+        )?;
         if self.lit_buffer.len() < needed {
-            self.lit_buffer
-                .try_reserve(needed - self.lit_buffer.len())
-                .map_err(|_| Error::MemoryAllocation)?;
             self.lit_buffer.resize(needed, 0);
         }
         // Literals are copied by more than there are: this much can be read along with the last ones.

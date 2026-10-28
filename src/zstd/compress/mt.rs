@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpmc::{Receiver, Sender, TryRecvError, channel};
 
-use super::cctx::{CDict, FrameCompressor, Input, Span, reset_table, write_last_empty_block};
+use super::cctx::{CDict, FrameCompressor, Input, Span, write_last_empty_block};
 use super::internal::{
     BufId, Buffers, LdmParams, LdmState, ParamSwitch, RawSeq, RawSeqStore, Strategy, Window,
 };
@@ -24,7 +24,7 @@ use super::stream::EndDirective;
 use crate::common::ZSTD_BLOCKSIZE_MAX;
 use crate::common::xxhash::Xxh64;
 use crate::error::{Error, Result};
-use crate::util::{BUG, SliceExt, append, try_copy};
+use crate::util::{BUG, SliceExt, append, make_room, reset_table, try_copy};
 use crate::{InBuffer, OutBuffer};
 
 /// `SerialState`: what has to see the input in order.
@@ -70,8 +70,11 @@ impl SerialState {
             reset_table(&mut self.ldm_state.bucket_offsets, 1 << bucket_log, true)?;
             self.ldm_state.loaded_dict_end = 0;
             self.round_buff.clear();
-            (self.round_buff.try_reserve_exact(round_buff_capacity))
-                .map_err(|_| Error::MemoryAllocation)?;
+            make_room(
+                &mut self.round_buff,
+                round_buff_capacity,
+                round_buff_capacity,
+            )?;
         } else {
             self.ldm_state = LdmState::new();
             self.round_buff = Vec::new();
@@ -159,14 +162,6 @@ struct WorkerState {
 
 const CHUNK_SIZE: usize = 4 * ZSTD_BLOCKSIZE_MAX;
 
-/// Makes `seq` `len` long, in the allocation that it has if that is large enough.
-fn resize_in_place(seq: &mut Vec<RawSeq>, len: usize) -> Result<()> {
-    seq.clear();
-    seq.try_reserve(len).map_err(|_| Error::MemoryAllocation)?;
-    seq.resize(len, RawSeq::default());
-    Ok(())
-}
-
 /// `ZSTDMT_compressionJob`
 fn compression_job(state: &mut WorkerState, job: &Job, cancelled: &AtomicBool) -> Result<()> {
     let mut job_params = job.params;
@@ -185,7 +180,7 @@ fn compression_job(state: &mut WorkerState, job: &Job, cancelled: &AtomicBool) -
     let generated = if cancelled.load(Ordering::SeqCst) {
         Err(Error::Generic)
     } else {
-        resize_in_place(&mut raw_seq_store.seq, job.nb_seq_bound)
+        reset_table(&mut raw_seq_store.seq, job.nb_seq_bound, true)
             .and_then(|()| serial.gen_sequences(&mut raw_seq_store, src, job.round_pos))
     };
     // The receiver is gone if the frame is given up.

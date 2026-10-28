@@ -11,7 +11,7 @@
 // runs when it is registered, as in testharness.js, and the outcome of each
 // subtest is collected.
 
-import { expect, test as bunTest } from "bun:test";
+import { test as bunTest, expect } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { setRegistrar, wptTest } from "../../../third_party/wpt-testharness-shim";

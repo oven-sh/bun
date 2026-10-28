@@ -6498,6 +6498,55 @@ async function eventsOverEmittedConnection(
   }
 }
 
+// The rest of the request and the end of the connection come out of the socket in one read. With the front, the events are Node v26.12.1's. In Node a listener's pause() stops the handle, so nothing waits in the socket.
+describe.each(["Content-Length: 5", "Transfer-Encoding: chunked"])(
+  "a body and the client's FIN that wait in a paused socket, %s",
+  framing => {
+    it.each(["a front that puts the head back", "a 'request' listener"])("paused by %s", async pausedBy => {
+      const events: string[] = [];
+      const { promise: paused, resolve: onPaused } = Promise.withResolvers<void>();
+      const untilEnded = async (socket: import("node:net").Socket) => {
+        onPaused();
+        while (!(socket as any)._readableState.ended) await new Promise(resolve => setImmediate(resolve));
+      };
+      const server = createServer(async (req, res) => {
+        events.push("request");
+        if (pausedBy === "a 'request' listener") await untilEnded(req.socket.pause());
+        req.on("end", () => events.push("end")).resume();
+        req.socket.resume();
+        res.end();
+      });
+      server.on("clientError", (error: NodeJS.ErrnoException, socket) => {
+        events.push(`clientError ${error.code}`);
+        socket.destroy();
+      });
+      const front = createNetServer({ allowHalfOpen: true }, socket => {
+        if (pausedBy === "a 'request' listener") return void server.emit("connection", socket);
+        socket.once("data", async head => {
+          socket.pause().unshift(head);
+          await untilEnded(socket);
+          server.emit("connection", socket);
+          socket.resume();
+        });
+      });
+      await once(front.listen(0, "127.0.0.1"), "listening");
+      const client = connect({ port: (front.address() as AddressInfo).port, host: "127.0.0.1", allowHalfOpen: true });
+      try {
+        client.on("error", () => {}).on("end", () => client.destroy());
+        client.resume().write(`POST / HTTP/1.1\r\nHost: x\r\n${framing}\r\n\r\n`);
+        await paused;
+        client.end(framing === "Content-Length: 5" ? "hello" : "5\r\nhello\r\n0\r\n\r\n");
+        await once(client, "close");
+        expect(events).toEqual(["request", "end"]);
+      } finally {
+        client.destroy();
+        server.closeAllConnections();
+        front.close();
+      }
+    });
+  },
+);
+
 it("the response that closes a connection is sent before the connection's parse error is reported", async () => {
   const { events, received, closed } = await eventsOverEmittedConnection(
     "POST /1 HTTP/1.1\r\nHost: x\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nhi\r\n0\r\n\r\n" +

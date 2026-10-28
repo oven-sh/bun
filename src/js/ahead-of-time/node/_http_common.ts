@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_common.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 22c5bb416950262ff136c20f2d6b11b98b16d92d8dea39e181cefa9cde1cf3d5.
+// Written against that file with the SHA-256 1dd10190f02729fc74566c3328a01d6738fd628dae45459823472c568f445add.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // This is a port of Node.js's lib/_http_common.js
@@ -130,8 +130,9 @@ const MAX_HEADER_PAIRS = 2000;
 // called to process trailing HTTP headers.
 // Node makes kOnHeaders and kOnBody with MakeCallback(), which runs the ticks and microtasks when the read came from the handle. Its other callbacks skip them.
 function runTaskQueues(parser: $Node.HTTPParser) {
-  // A tick could hand the parser what the socket still holds, in the middle of this read.
-  if (parser._consumed && parser.socket!.readableLength === 0) drainMicrotasks();
+  // What the socket held did not come from the handle. A tick could hand the parser the rest of it, or the end, in the middle of this read.
+  const socket = parser.socket!;
+  if (parser._consumed && socket.readableLength === 0 && !socket._readableState.ended) drainMicrotasks();
 }
 
 function parserOnHeaders(this: $Node.HTTPParser, headers: string[], url: string) {

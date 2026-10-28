@@ -144,8 +144,9 @@ const MAX_HEADER_PAIRS = 2000;
 // called to process trailing HTTP headers.
 // Node makes kOnHeaders and kOnBody with MakeCallback(), which runs the ticks and microtasks when the read came from the handle. Its other callbacks skip them.
 function runTaskQueues(parser) {
-  // A tick could hand the parser what the socket still holds, in the middle of this read.
-  if (parser._consumed && parser.socket.readableLength === 0) drainMicrotasks();
+  // What the socket held did not come from the handle. A tick could hand the parser the rest of it, or the end, in the middle of this read.
+  const socket = parser.socket;
+  if (parser._consumed && socket.readableLength === 0 && !socket._readableState.ended) drainMicrotasks();
 }
 
 function parserOnHeaders(headers, url) {

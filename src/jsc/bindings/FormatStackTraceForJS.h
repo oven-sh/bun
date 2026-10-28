@@ -70,6 +70,9 @@ WTF::String formatStackTrace(
     WTF::Vector<JSC::StackFrame>& stackTrace,
     JSC::JSObject* errorInstance);
 
+// Call before an error gets new frames. With no trace, its line and source URL are what a collection or a structured clone left, not the parser's.
+void clearLocationOfErrorWithoutTrace(JSC::ErrorInstance*);
+
 // JSC Host Functions - Error constructor methods
 JSC_DECLARE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace);
 JSC_DECLARE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace);

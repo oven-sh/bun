@@ -742,6 +742,15 @@ JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>& s
     return result;
 }
 
+void clearLocationOfErrorWithoutTrace(JSC::ErrorInstance* error)
+{
+    if (error->returnAddresses() || error->framesBesideReturnAddresses())
+        return;
+    error->setSourceURL(String());
+    error->setLine(0);
+    error->setColumn(0);
+}
+
 JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -767,6 +776,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObj
     }
 
     if (!destination->stackTrace()) {
+        clearLocationOfErrorWithoutTrace(destination);
         destination->captureStackTrace(vm, globalObject, 1);
     }
 
@@ -892,6 +902,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
             errorObject->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
         } else {
             // Not yet materialized — safe to install new frames with a lazy getter.
+            clearLocationOfErrorWithoutTrace(instance);
             instance->setStackFrames(vm, WTF::move(stackTrace));
 
             {

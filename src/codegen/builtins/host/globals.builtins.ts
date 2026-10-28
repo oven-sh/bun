@@ -971,7 +971,7 @@ const serverMembers = {
     ...changesServerState,
     throws: true,
     args: { request: b.any.optional, seconds: b.any.optional },
-    returns: b.union(b.undefined, b.strictNull),
+    returns: b.undefined,
     uses: { this: serverState, request: [b.readsContents(), b.writesContents()], seconds: b.inspected },
   },
   port: readsServerState(b.union(b.f64, b.undefined)),

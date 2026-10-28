@@ -3452,7 +3452,7 @@ class WebSocketServer extends EventEmitter {
 function wrapsNativeConnection(connection: ServerSocket | undefined, socket: ServerSocket): boolean {
   if (connection == null || connection === socket) return false;
   const { kHandle, kUpgradeStream } = require("internal/http");
-  return connection[kUpgradeStream] === socket && connection[kHandle] !== undefined;
+  return (connection[kUpgradeStream] as unknown) === socket && connection[kHandle] !== undefined;
 }
 
 function nativeResponse(req: ServerRequest, socket: ServerSocket): unknown {

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 a9bb62a55443a623320483b8c27c836bc704a6f2bb8870dc415ac208fd16a62f.
+// Written against that file with the SHA-256 c3402ea8cfe932a2dfcde21d1c9eb12237e3ef86aed466844a10e369b11ca53d.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -684,29 +684,23 @@ declare global {
       [kDetachedWhileClosing]?: ServerResponse;
     }
 
-    /** A connection of the native listener: a `net.Socket` or a `tls.TLSSocket` that the accept path of `node:net` made. */
-    interface HttpServerSocket extends HttpSocket {
-      server: HttpServer;
-      parser: HTTPParser | HttpServerParserShim | null;
-      _httpMessage: ServerResponse | null | undefined;
-      _paused: boolean;
-      _handle: SocketHandle<Socket> | null;
-      // Only a connection of an `https.Server` has these.
-      encrypted?: boolean;
-      _secureEstablished?: boolean;
+    /** What the server keeps on a connection. `node:net` makes the object with the layout of `Socket`, which compiled code tests for: a type of its own would fail every test, and a member that `Socket` lacks has no slot. */
+    interface Socket {
+      // The client declares narrower types for these two on its own sockets, which has to stay a conversion from `Socket`.
+      parser?: any;
+      _httpMessage?: any;
+      _paused?: boolean;
       _SNICallback?: NetServer["_SNICallback"];
-      timeout: number;
-      setTimeout(msecs: number, callback?: () => void): this;
-      destroySoon(): void;
-      resetAndDestroy(): this;
-      ref(): this;
-      unref(): this;
-      _onTimeout(): void;
-      _unrefTimer(): void;
-      _getpeername(): SocketName;
-      _final(callback: ErrorCallback): void;
-      $isPrepared: boolean | undefined;
-      $ownReadableState: ReadableState | undefined;
+      requestsCount?: number;
+      $isPrepared?: boolean;
+      $ownReadableState?: ReadableState;
+      $resumeUnlessFlowing?(asksWhetherReadable: boolean): void;
+      [kHandle]?: NodeHTTPServerSocket;
+      [kCloseCallback]?: (this: HttpSocket) => void;
+      [kHandedOff]?: boolean;
+      [kUpgradeStream]?: UpgradeStream;
+      [kKeepAliveTimeoutSet]?: boolean;
+      [kDetachedWhileClosing]?: ServerResponse;
       [kBoundOnAbort]?: (event: number) => void;
       [kLastResponseWrite]?: number;
       [kStopParsingOnCloseListener]?: boolean;
@@ -715,6 +709,9 @@ declare global {
       [kFinishedAtClose]?: ServerResponse;
       [kHandleClosed]?: (this: HttpServerSocket) => void;
     }
+
+    /** A connection of the native listener: a `net.Socket` or a `tls.TLSSocket`. */
+    type HttpServerSocket = Socket;
 
     interface ServerResponseOptions extends OutgoingMessageOptions {
       [kHandle]?: NodeHTTPResponse | null;
@@ -2153,12 +2150,13 @@ function detachFromHttp(socket: $Node.HttpServerSocket, req: $Node.IncomingMessa
   socket.removeListener("pause", onSocketPause);
   socket.removeListener("resume", nativeSocketOnResume);
   socket.removeListener("data", noopOnData);
+  socket.removeListener("newListener", unconsumeForListener);
   delete (socket as any)._onTimeout;
   // Only that function ignores the keep-alive timer, which stays armed while a request is in flight.
   if (socket.timeout === 0) socket.setTimeout(0);
   delete (socket as any)._final;
   delete (socket as any)._destroy;
-  const server = socket.server;
+  const server = socket.server as unknown as $Node.HttpServer;
   server[kTrackedConnections].delete(socket);
   // In Node each socket holds the process itself. Here unref() on the server has always let go of these sockets too.
   server[kHandedOffSockets].add(socket);
@@ -2225,7 +2223,7 @@ function onUpgradeBodyData(this: $Node.IncomingMessage, chunk: Buffer | undefine
 const kUpgradeRequest = Symbol("kUpgradeRequest");
 function emitUpgrade(socket: $Node.HttpServerSocket, req: $Node.IncomingMessage, complete: boolean) {
   if (socket.destroyed) return;
-  const server = socket.server;
+  const server = socket.server as unknown as $Node.HttpServer;
   detachFromHttp(socket, req);
   let stream: $Node.Duplex = socket;
   if (!complete) {
@@ -2962,9 +2960,7 @@ function nativeConnectionListener(server: $Node.HttpServer, socket: $Node.HttpSe
   socket.on("data", noopOnData);
   socket.on("resume", nativeSocketOnResume);
   socket.on("pause", onSocketPause);
-  socket.on = socketOn;
-  socket.addListener = socketOn;
-  socket.prependListener = socketPrependListener;
+  socket.on("newListener", unconsumeForListener);
   socket.setEncoding = socketSetEncoding;
   socket._onTimeout = onSocketTimeoutTimerExpired;
   socket._final = nativeSocketFinal;
@@ -3002,16 +2998,9 @@ function resumeUnlessFlowing(this: $Node.HttpServerSocket, asksWhetherReadable: 
   }
 }
 
-// https://github.com/nodejs/node/blob/v26.5.0/lib/_http_server.js#L1432-L1448
-function socketOn(this: $Node.HttpServerSocket, event: $Node.EventName, listener: $Node.Listener) {
-  const result = NetSocket!.prototype.on.$call(this, event, listener);
+// Node stores functions of its own in socket.on and its like for this: https://github.com/nodejs/node/blob/v26.5.0/lib/_http_server.js#L1432-L1448
+function unconsumeForListener(this: $Node.HttpServerSocket, event: $Node.EventName) {
   if (event === "data" || event === "readable") unconsume(this);
-  return result;
-}
-function socketPrependListener(this: $Node.HttpServerSocket, event: $Node.EventName, listener: $Node.Listener) {
-  const result = NetSocket!.prototype.prependListener.$call(this, event, listener);
-  if (event === "data" || event === "readable") unconsume(this);
-  return result;
 }
 function noopOnData() {}
 // From here on the socket gets every read before the HTTP parser does, like Node's parser.unconsume().
@@ -3044,7 +3033,30 @@ function nativeSocketFinal(this: $Node.HttpServerSocket, callback: $Node.ErrorCa
 
 // net.Socket queues 'close' from here. Node's comes from the handle, so it doesn't run in the AsyncLocalStorage store of the request whose end closes the connection.
 function nativeSocketDestroy(this: $Node.HttpServerSocket, err: Error | null, callback: $Node.ErrorCallback) {
-  AsyncContextFrame.run(AsyncContextFrame.currentGraphFrame(), NetSocket!.prototype._destroy, this, err, callback);
+  const scheduleClose = this[kHandle] !== undefined ? closeWithConnection : undefined;
+  const frame = AsyncContextFrame.currentGraphFrame();
+  AsyncContextFrame.run(frame, NetSocket!.prototype._destroy, this, err, callback, scheduleClose);
+}
+
+// Like in Node, 'close' comes when the connection has closed: behind the read in progress, ahead of what a client in this process does about it. An immediate, if that is sooner.
+function closeWithConnection(
+  emitClose: (socket: $Node.HttpServerSocket, isException: boolean) => void,
+  socket: $Node.HttpServerSocket,
+  isException: boolean,
+) {
+  const http = socket[kHandle]!;
+  const onclose = http.onclose!;
+  let isOwed = true;
+  function emit() {
+    if (!isOwed) return;
+    isOwed = false;
+    emitClose(socket, isException);
+  }
+  http.onclose = function (this: $Node.NodeHTTPServerSocket, left?: $Node.HttpServerSocket) {
+    onclose.$call(this, left);
+    emit();
+  };
+  setImmediate(emit);
 }
 
 // Node's socketOnEnd. What becomes of the connection after a clean end is uWS's decision, right behind this.
@@ -3808,7 +3820,7 @@ function emitResponseFinish(this: $Node.ServerResponse) {
   // Node's clearIncoming: a request that ended before its response did, or that gets no EOF. Any other one is cleared at its EOF.
   const parser = socket?.parser;
   if (parser != null && parser.incoming === req && (req.readableEnded || req.destroyed)) parser.incoming = null;
-  onResponseFinishHandleSocket(socket?.server, socket, this);
+  onResponseFinishHandleSocket(socket?.server as unknown as $Node.HttpServer | null | undefined, socket, this);
   // The dispatcher detached a response that finished synchronously. Sending the next one again here would skip one.
   if (detachedFrom !== null) return;
   if (socket != null) this.detachSocket(socket);
@@ -4195,7 +4207,7 @@ const finishExchange = function emitResponseFinished(exchange: Exchange): void {
     return finishExchangeInSteps(exchange, flags);
   }
   const inFlight = socket._httpMessage;
-  const server = socket.server;
+  const server = socket.server as unknown as $Node.HttpServer;
   if (server == null || (inFlight && inFlight !== res)) {
     ("unlikely");
     return finishExchangeInSteps(exchange, flags);
@@ -4832,19 +4844,12 @@ ServerResponse.prototype.write = function (
     return true;
   }
 
-  const bound = exchange.onWritable;
-  const result = writeToHandle(
-    this,
-    exchange,
-    handle,
-    chunk,
-    encoding,
-    bound !== null ? bound : (exchange.onWritable = allowWritesToContinue.bind(this)),
-    strictContentLength(this, hadHeader, false),
-  );
+  const result = writeToHandle(this, exchange, handle, chunk, encoding, strictContentLength(this, hadHeader, false));
 
   if (result < 0) {
     ("unlikely");
+    // Bound only for a write that the transport didn't take whole.
+    handle.onwritable = exchange.onWritable ??= allowWritesToContinue.bind(this);
     // The write was buffered due to backpressure. Its callback waits until the write goes through.
     if (callback) addPendingCallback(this, callback);
     return false;
@@ -5053,7 +5058,8 @@ ServerResponse.prototype._send = function (
   }
   const hadHeader = !!this._header;
   if (!hadHeader) validateImplicitHead(this);
-  writeToHandle(this, exchange, handle, data, encoding, callback, strictContentLength(this, hadHeader, false));
+  const result = writeToHandle(this, exchange, handle, data, encoding, strictContentLength(this, hadHeader, false));
+  if (result < 0 && callback) handle.onwritable = callback;
 };
 
 // The first write takes the head with it, in one native call that throws before it sends anything.
@@ -5063,10 +5069,9 @@ function writeToHandle(
   handle: $Node.NodeHTTPResponse,
   chunk: $Node.HttpChunk | null | undefined,
   encoding: string | null | undefined,
-  onWritable: $Node.HttpWriteCallback | null | undefined,
   strict: number | undefined,
 ): number {
-  if (res._headerSent) return handle.write(chunk, encoding, onWritable, strict);
+  if (res._headerSent) return handle.write(chunk, encoding, undefined, strict);
   const renderedHeaders = renderNativeHeaders(res, exchange, exchange !== undefined && exchange.response === res);
   const result = handle.writeHeadAndWrite(
     statusCodeToSend(res),
@@ -5074,7 +5079,7 @@ function writeToHandle(
     renderedHeaders as string[],
     chunk,
     encoding,
-    onWritable,
+    undefined,
     strict,
     renderedAutoHeaders,
     renderedKeepAliveSecs,
@@ -5617,17 +5622,11 @@ function writeInFull(
     return true;
   }
 
-  const result = writeToHandle(
-    res,
-    exchange,
-    handle,
-    chunk,
-    encoding,
-    allowWritesToContinue.bind(res),
-    strictContentLength(res, hadHeader, false),
-  );
+  const result = writeToHandle(res, exchange, handle, chunk, encoding, strictContentLength(res, hadHeader, false));
 
   if (result < 0) {
+    // Bound only for a write that the transport didn't take whole.
+    handle.onwritable = allowWritesToContinue.bind(res);
     if (callback) addPendingCallback(res, callback);
     return false;
   }

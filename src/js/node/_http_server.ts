@@ -1547,6 +1547,7 @@ function detachFromHttp(socket, req) {
   socket.removeListener("pause", onSocketPause);
   socket.removeListener("resume", nativeSocketOnResume);
   socket.removeListener("data", noopOnData);
+  socket.removeListener("newListener", unconsumeForListener);
   delete socket._onTimeout;
   // Only that function ignores the keep-alive timer, which stays armed while a request is in flight.
   if (socket.timeout === 0) socket.setTimeout(0);
@@ -2300,9 +2301,7 @@ function nativeConnectionListener(server: Server, socket) {
   socket.on("data", noopOnData);
   socket.on("resume", nativeSocketOnResume);
   socket.on("pause", onSocketPause);
-  socket.on = socketOn;
-  socket.addListener = socketOn;
-  socket.prependListener = socketPrependListener;
+  socket.on("newListener", unconsumeForListener);
   socket.setEncoding = socketSetEncoding;
   socket._onTimeout = onSocketTimeoutTimerExpired;
   socket._final = nativeSocketFinal;
@@ -2319,16 +2318,9 @@ function nativeConnectionListener(server: Server, socket) {
   Object.defineProperties(socket, assignablePeerAddress);
 }
 
-// https://github.com/nodejs/node/blob/v26.5.0/lib/_http_server.js#L1432-L1448
-function socketOn(this: any, event, listener) {
-  const result = NetSocket.prototype.on.$call(this, event, listener);
+// Node stores functions of its own in socket.on and its like for this: https://github.com/nodejs/node/blob/v26.5.0/lib/_http_server.js#L1432-L1448
+function unconsumeForListener(this: any, event) {
   if (event === "data" || event === "readable") unconsume(this);
-  return result;
-}
-function socketPrependListener(this: any, event, listener) {
-  const result = NetSocket.prototype.prependListener.$call(this, event, listener);
-  if (event === "data" || event === "readable") unconsume(this);
-  return result;
 }
 function noopOnData() {}
 // From here on the socket gets every read before the HTTP parser does, like Node's parser.unconsume().
@@ -2361,7 +2353,26 @@ function nativeSocketFinal(this: any, callback) {
 
 // net.Socket queues 'close' from here. Node's comes from the handle, so it doesn't run in the AsyncLocalStorage store of the request whose end closes the connection.
 function nativeSocketDestroy(this: any, err, callback) {
-  AsyncContextFrame.run(AsyncContextFrame.currentGraphFrame(), NetSocket.prototype._destroy, this, err, callback);
+  const scheduleClose = this[kHandle] !== undefined ? closeWithConnection : undefined;
+  const frame = AsyncContextFrame.currentGraphFrame();
+  AsyncContextFrame.run(frame, NetSocket.prototype._destroy, this, err, callback, scheduleClose);
+}
+
+// Like in Node, 'close' comes when the connection has closed: behind the read in progress, ahead of what a client in this process does about it. An immediate, if that is sooner.
+function closeWithConnection(emitClose, socket, isException) {
+  const http = socket[kHandle];
+  const onclose = http.onclose;
+  let isOwed = true;
+  function emit() {
+    if (!isOwed) return;
+    isOwed = false;
+    emitClose(socket, isException);
+  }
+  http.onclose = function (left) {
+    onclose.$call(this, left);
+    emit();
+  };
+  setImmediate(emit);
 }
 
 // Node's socketOnEnd. What becomes of the connection after a clean end is uWS's decision, right behind this.
@@ -3405,16 +3416,11 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
     return true;
   }
 
-  const result = writeToHandle(
-    this,
-    handle,
-    chunk,
-    encoding,
-    allowWritesToContinue.bind(this),
-    strictContentLength(this, hadHeader, false),
-  );
+  const result = writeToHandle(this, handle, chunk, encoding, strictContentLength(this, hadHeader, false));
 
   if (result < 0) {
+    // Bound only for a write that the transport didn't take whole.
+    handle.onwritable = allowWritesToContinue.bind(this);
     if (callback) {
       // The write was buffered due to backpressure.
       // We need to defer the callback until the write actually goes through.
@@ -3572,12 +3578,13 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
   }
   const hadHeader = !!this._header;
   if (!hadHeader) validateImplicitHead(this);
-  writeToHandle(this, handle, data, encoding, callback, strictContentLength(this, hadHeader, false));
+  const result = writeToHandle(this, handle, data, encoding, strictContentLength(this, hadHeader, false));
+  if (result < 0 && callback) handle.onwritable = callback;
 };
 
 // The first write takes the head with it, in one native call that throws before it sends anything.
-function writeToHandle(res, handle, chunk, encoding, onWritable, strict) {
-  if (res._headerSent) return handle.write(chunk, encoding, onWritable, strict);
+function writeToHandle(res, handle, chunk, encoding, strict) {
+  if (res._headerSent) return handle.write(chunk, encoding, undefined, strict);
   const renderedHeaders = renderNativeHeaders(res);
   let result;
   try {
@@ -3587,7 +3594,7 @@ function writeToHandle(res, handle, chunk, encoding, onWritable, strict) {
       renderedHeaders,
       chunk,
       encoding,
-      onWritable,
+      undefined,
       strict,
       renderedAutoHeaders,
       renderedKeepAliveSecs,

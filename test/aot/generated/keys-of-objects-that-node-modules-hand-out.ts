@@ -300,6 +300,8 @@ server.listen(0, "127.0.0.1", async () => {
       }));
       clientRequest.on("close", resolve);
       ${which === "clientRequest" ? "steps[turn](clientRequest);" : ""}
+      // A request that stays corked is never sent, and closes when the server has waited long enough for it.
+      clientRequest.uncork();
     });
   }
   server.close();

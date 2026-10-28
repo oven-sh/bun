@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/http.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 d02ed3e2bc32f48599beb2639e02904120c473cfcec410f3523f5c7399822947.
+// Written against that file with the SHA-256 ae90b11291ac0c16b1f03fac718184b81f983f16609de96d487e075fe132dd4b.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 const { isIPv4 } = require("internal/net/isIP");
@@ -164,6 +164,11 @@ function emitEOFIncomingMessageOuter(self: $Node.IncomingMessage) {
 function clearServerParserIncoming(parser: $Node.HTTPParser | $Node.HttpServerParserShim, req: $Node.IncomingMessage) {
   if (parser.incoming === req) parser.incoming = null;
 }
+// One microtask a request, in their order, and no function object for each.
+const requestsAtTheirEnd: $Node.IncomingMessage[] = [];
+function emitEOFOfNextRequest() {
+  emitEOFIncomingMessageOuter(requestsAtTheirEnd.shift()!);
+}
 function emitEOFIncomingMessage(self: $Node.IncomingMessage) {
   self[eofInProgress] = true;
   queueTick1(emitEOFIncomingMessageOuter, self);
@@ -210,7 +215,8 @@ function onDataIncomingMessage(
       if (chunk) {
         // Node's parser runs the promise jobs of the last chunk's 'data' listeners before parserOnMessageComplete pushes the EOF.
         this[eofInProgress] = true;
-        queueMicrotask(emitEOFIncomingMessageOuter.bind(undefined, this));
+        requestsAtTheirEnd.push(this);
+        queueMicrotask(emitEOFOfNextRequest);
       } else {
         emitEOFIncomingMessage(this);
       }

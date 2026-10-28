@@ -1138,8 +1138,8 @@ static SHARED_REQUEST_HEADERS_BUF: bun_core::RacyCell<
 const MAX_RESPONSE_HEADERS: usize = 1000;
 
 // this doesn't need to be stack memory because it is immediately cloned after use
-static SHARED_RESPONSE_HEADERS_BUF: bun_core::RacyCell<[picohttp::Header; MAX_RESPONSE_HEADERS]> =
-    bun_core::RacyCell::new([picohttp::Header::ZERO; MAX_RESPONSE_HEADERS]);
+static SHARED_RESPONSE_HEADERS_BUF: bun_core::RacyCell<Option<Box<[picohttp::Header]>>> =
+    bun_core::RacyCell::new(None);
 
 // the first packet for Transfer-Encoding: chunked
 // is usually pretty small or sometimes even just a length
@@ -1162,9 +1162,11 @@ mod scratch {
         unsafe { &mut *SHARED_REQUEST_HEADERS_BUF.get() }
     }
     #[inline]
-    pub(super) fn response_headers() -> &'static mut [picohttp::Header; MAX_RESPONSE_HEADERS] {
+    pub(super) fn response_headers() -> &'static mut [picohttp::Header] {
         // SAFETY: see module-level INVARIANT.
-        unsafe { &mut *SHARED_RESPONSE_HEADERS_BUF.get() }
+        unsafe { &mut *SHARED_RESPONSE_HEADERS_BUF.get() }.get_or_insert_with(|| {
+            vec![picohttp::Header::ZERO; MAX_RESPONSE_HEADERS].into_boxed_slice()
+        })
     }
     #[inline]
     pub(super) fn single_packet_small_buffer() -> &'static mut [u8; 16 * 1024] {

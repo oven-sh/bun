@@ -2458,7 +2458,8 @@ declare namespace $Node {
 
   /** The native class `NodeHTTPServerSocket` (src/jsc/bindings/node/JSNodeHTTPServerSocket.cpp): one connection. */
   interface NodeHTTPServerSocket {
-    onclose: (() => void) | undefined;
+    /** With the socket: the connection is open, and it's the socket's from here on. */
+    onclose: ((left?: HttpServerSocket) => void) | undefined;
     duplex: HttpServerSocket | null;
     readonly closed: boolean;
     readonly response: NodeHTTPResponse | null;
@@ -2815,7 +2816,7 @@ declare namespace $Bindgen {
     destroy(error?: unknown): void;
     sendHeaders(kind: number, headers: unknown, flags: number): boolean;
     stopSending(code: bigint | number): void;
-    resetStream(code: bigint | number): void;
+    resetStream(code: bigint | number): boolean;
     abortForDestroy(stopCode: bigint | number | undefined, resetCode: bigint | number | undefined): void;
     setPriority(packed: number): void;
     getPriority(): number;

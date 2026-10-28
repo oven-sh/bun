@@ -663,7 +663,7 @@ impl Route {
         }
     }
 
-    // No body, so production doesn't leak the build error. TODO: render it in development like bake/dev_server/failures.rs.
+    // No body, so production doesn't leak the build error.
     fn end_build_failed(resp: AnyResponse) {
         resp.write_status(b"500 Build Failed");
         resp.write_header_int(b"Content-Length", 0);

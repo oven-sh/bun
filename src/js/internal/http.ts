@@ -119,6 +119,11 @@ function emitEOFIncomingMessageOuter(self) {
 function clearServerParserIncoming(parser, req) {
   if (parser.incoming === req) parser.incoming = null;
 }
+// One microtask a request, in their order, and no function object for each.
+const requestsAtTheirEnd: any[] = [];
+function emitEOFOfNextRequest() {
+  emitEOFIncomingMessageOuter(requestsAtTheirEnd.shift());
+}
 function emitEOFIncomingMessage(self) {
   self[eofInProgress] = true;
   process.nextTick(emitEOFIncomingMessageOuter, self);
@@ -159,7 +164,8 @@ function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPRespon
       if (chunk) {
         // Node's parser runs the promise jobs of the last chunk's 'data' listeners before parserOnMessageComplete pushes the EOF.
         this[eofInProgress] = true;
-        queueMicrotask(emitEOFIncomingMessageOuter.bind(undefined, this));
+        requestsAtTheirEnd.push(this);
+        queueMicrotask(emitEOFOfNextRequest);
       } else {
         emitEOFIncomingMessage(this);
       }

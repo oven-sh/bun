@@ -130,7 +130,7 @@ test("a handler that first hands its request to a shared function", async () => 
   expect((await build(files, false)).isParsedByType).toBe(true);
 });
 
-// Plain Bun parses the string itself, mark included, where the body was made of a string. Of bytes it drops the mark.
+// Plain Bun drops the mark, whether the body was made of a string or of bytes.
 test("a body made of a string that starts with a byte order mark", async () => {
   const source = `type Task = { title: string; points: number };
 async function read(source: Response): Promise<string> {
@@ -143,5 +143,5 @@ async function read(source: Response): Promise<string> {
 const marked = '\\ufeff{"title":"ab","points":3}';
 console.log(await read(new Response(marked)), await read(new Response(new TextEncoder().encode(marked))));
 `;
-  expect((await build({ "main.ts": source }, true)).stdout).toBe('rejected SyntaxError {"title":"ab","points":3}');
+  expect((await build({ "main.ts": source }, true)).stdout).toBe('{"title":"ab","points":3} {"title":"ab","points":3}');
 });

@@ -2448,7 +2448,13 @@ Socket.prototype.end = function end(this: $Node.Socket, data?, encoding?, callba
   return Duplex.prototype.end.$call(this, data, encoding, callback);
 };
 
-Socket.prototype._destroy = function _destroy(this: $Node.Socket, err: Error | null, callback: WriteCallback) {
+// `scheduleClose` is node:http's, for a connection of its server.
+Socket.prototype._destroy = function _destroy(
+  this: $Node.Socket,
+  err: Error | null,
+  callback: WriteCallback,
+  scheduleClose: CloseScheduler = setImmediate,
+) {
   $debug("Socket.prototype._destroy");
 
   this.connecting = false;
@@ -2493,7 +2499,7 @@ Socket.prototype._destroy = function _destroy(this: $Node.Socket, err: Error | n
       currentHandle.pause?.();
       setImmediate(closeAdoptedTLSRawNT, this, currentHandle, isException);
     } else {
-      closeSocketHandle(this, currentHandle, isException);
+      closeSocketHandle(this, currentHandle, isException, false, scheduleClose);
     }
 
     if (!this._closeAfterHandlingError) detachSocket(this);
@@ -4400,7 +4406,15 @@ function initSocketHandle(self: $Node.Socket) {
 // intercepts close on `socket._handle` and invokes it, so always pass one.
 function onSocketHandleClosed() {}
 
-function closeSocketHandle(self: $Node.Socket, handle: SocketHandle, isException: boolean, isCleanupPending = false) {
+type CloseScheduler = (emit: typeof emitClose, self: $Node.Socket, isException: boolean) => unknown;
+
+function closeSocketHandle(
+  self: $Node.Socket,
+  handle: SocketHandle,
+  isException: boolean,
+  isCleanupPending = false,
+  scheduleClose: CloseScheduler = setImmediate,
+) {
   $debug("closeSocketHandle", isException, isCleanupPending);
   // Ahead of the setImmediate below: the transport's 'close' precedes this socket's.
   const transport = transportToDestroy(self);
@@ -4410,7 +4424,7 @@ function closeSocketHandle(self: $Node.Socket, handle: SocketHandle, isException
   handle.close(onSocketHandleClosed);
   // Arguments instead of a closure, so no scope keeps the closed handle alive.
   if (isCleanupPending) setImmediate(emitCloseAndDetachHandle, self, isException, handle);
-  else setImmediate(emitClose, self, isException);
+  else scheduleClose(emitClose, self, isException);
 }
 
 function emitClose(self: $Node.Socket, isException: boolean) {

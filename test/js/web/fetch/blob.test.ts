@@ -127,6 +127,30 @@ for (const info of [
   });
 }
 
+// The "Test double start/end values" block of web-platform-tests
+// FileAPI/blob/Blob-slice.any.js.
+test("Blob.slice rounds double offsets as web-platform-tests expects", async () => {
+  const blob = new Blob(["abcd"]);
+  const expected: { start: number; end?: number; contents: string }[] = [
+    { start: 0.5, contents: "abcd" },
+    { start: 1.5, contents: "cd" },
+    { start: 2.5, contents: "cd" },
+    { start: 3.5, contents: "" },
+    { start: 0, end: 0.5, contents: "" },
+    { start: 0, end: 1.5, contents: "ab" },
+    { start: 0, end: 2.5, contents: "ab" },
+    { start: 0, end: 3.5, contents: "abcd" },
+    { start: 1.5, end: 2.5, contents: "" },
+    { start: 1.5, end: 3.5, contents: "cd" },
+  ];
+  const actual: typeof expected = [];
+  for (const { start, end } of expected) {
+    const slice = end === undefined ? blob.slice(start) : blob.slice(start, end);
+    actual.push({ start, ...(end === undefined ? {} : { end }), contents: await slice.text() });
+  }
+  expect(actual).toEqual(expected);
+});
+
 test("new Blob", () => {
   var blob = new Blob(["Bun", "Foo"], { type: "text/foo" });
   expect(blob.size).toBe(6);

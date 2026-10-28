@@ -6360,24 +6360,19 @@ impl<'a> Resolver<'a> {
     fn intern_extension_path(entry_dir: &[u8], spelled: &[u8]) -> Interned {
         let file_name = bun_paths::basename(spelled);
         let entry_dir = Self::dir_cache_key(entry_dir);
-        let joined: Vec<u8>;
-        let abs_path: &[u8] =
+        let store = Fs::file_system::DirnameStore::instance();
+        let abs_path =
             if Self::dir_cache_key(&spelled[..spelled.len() - file_name.len()]) == entry_dir {
-                spelled
+                store.append_slice(spelled)
             } else {
                 let sep: &[u8] = if entry_dir.ends_with(SEP_STR.as_bytes()) {
                     b""
                 } else {
                     SEP_STR.as_bytes()
                 };
-                joined = [entry_dir, sep, file_name].concat();
-                &joined
+                store.append_parts(&[entry_dir, sep, file_name])
             };
-        Interned::from_static(
-            Fs::file_system::DirnameStore::instance()
-                .append_slice(abs_path)
-                .expect("unreachable"),
-        )
+        Interned::from_static(abs_path.expect("unreachable"))
     }
 
     fn dir_info_uncached(

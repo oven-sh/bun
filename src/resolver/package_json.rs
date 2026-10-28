@@ -392,16 +392,15 @@ impl PackageJSON {
         dirname_fd: Fd,
         joined: &[u8],
     ) -> &'static [u8] {
+        let mut spill = Vec::new();
         // Through `dirname_fd` the file is read as `package.json` in that open directory, so on POSIX its path keeps a backslash of `dir`.
-        if cfg!(not(windows)) && dirname_fd.is_valid() && strings::contains_char(dir, b'\\') {
-            let mut buf = vec![0u8; dir.len() + b"/package.json".len() + 2];
-            if let Some(path) = r_fs.abs_buf_in_dir_checked(dir, b"package.json", &mut buf) {
-                return r_fs.dirname_store.append_slice(path).expect("unreachable");
-            }
-        }
-        r_fs.dirname_store
-            .append_slice(joined)
-            .expect("unreachable")
+        let path =
+            if cfg!(not(windows)) && dirname_fd.is_valid() && strings::contains_char(dir, b'\\') {
+                r_fs.join(&mut spill, &[dir, b"package.json"])
+            } else {
+                joined
+            };
+        r_fs.dirname_store.append_slice(path).expect("unreachable")
     }
 
     #[inline(never)]

@@ -1296,11 +1296,16 @@ const WINDOWS_PATH = /^[a-zA-Z]:/;
 type Drive = string;
 class Paths {
   private separator = "\\";
+  private share = "\\\\";
+  private device = "\\\\.\\";
   #root = "C:";
   isAbsolute(path: string): boolean {
     if (process.platform === "win32") {
       const drive: Drive = this.#root + this.separator;
-      return WINDOWS_PATH.test(path) || path.startsWith(drive);
+      const { share } = this;
+      let device = "";
+      ({ device } = this);
+      return WINDOWS_PATH.test(path) || [drive, share, device].some(prefix => path.startsWith(prefix));
     }
     return path.startsWith("/");
   }

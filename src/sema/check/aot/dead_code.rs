@@ -1,8 +1,10 @@
-use crate::bind::Decl;
+use crate::bind::{Decl, PatParent};
 use crate::check::Checker;
 use crate::check::errors_aliases::Directives;
 use crate::check::sink::Reported;
-use crate::hir::{ExprId, ExprKind, Flags, FnId, StmtId, StmtKind, TypeNodeId, TypeNodeKind};
+use crate::hir::{
+    ExprId, ExprKind, Flags, FnId, PatId, StmtId, StmtKind, TypeNodeId, TypeNodeKind,
+};
 use crate::node::{Node, NodeData};
 use crate::program::FileId;
 use crate::util::SharedSort;
@@ -88,11 +90,21 @@ impl Checker<'_, '_> {
             }
         }
         for id in (0..hir.exprs.len() as u32).map(ExprId) {
-            if matches!(hir[id].kind, ExprKind::Dot { .. } | ExprKind::Index { .. })
-                && !bound.is_unchecked(id.idx())
+            // An assignment may have a pattern: `({ a } = this)`.
+            if matches!(
+                hir[id].kind,
+                ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::Assign { op: None, .. }
+            ) && !bound.is_unchecked(id.idx())
                 && self.is_in_dead_code(hir[id].pos)
             {
                 self.type_of_expr(file, id);
+            }
+        }
+        for id in (0..hir.pats.len() as u32).map(PatId) {
+            if let PatParent::Prop(pattern, _) = bound.pat_parent[id.idx()]
+                && self.is_in_dead_code(hir[id].pos)
+            {
+                self.check_binding_element_accessibility(file, pattern, id);
             }
         }
     }

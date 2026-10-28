@@ -1,0 +1,317 @@
+//// a-loop-is-left-in-one-of-its-turns.ts
+// The odd value comes in the middle of a loop. The turns in front of it, the turn itself and the turns behind it each count once, and what the loop carries from turn to turn goes along.
+type Item = { weight: number; label: string; next: Item | null };
+function total(items: Item[], from: number): string {
+    let sum = from;
+    let labels = "";
+    let longest = 0;
+    for (let index = 0; index < items.length; index++) {
+        const item = items[index];
+        sum += item.weight;
+        labels += item.label[0];
+        if (item.label.length > longest) longest = item.label.length;
+        let depth = 0;
+        for (let link = item.next; link; link = link.next) depth += link.weight;
+        sum += depth * 0.5;
+    }
+    return sum + "|" + labels + "|" + longest;
+}
+const plain = (n: number): Item => ({ weight: n, label: "item" + n, next: n % 3 ? { weight: 1, label: "l", next: null } : null });
+const honest = Array.from({ length: 12 }, (_, n) => plain(n));
+const lines: string[] = [];
+for (let round = 0; round < 300; round++) total(honest, round);
+const oddOnes: unknown[] = [
+    { label: "swapped", weight: 100, next: null },
+    { weight: 1.5, label: "fraction", next: null },
+    { weight: "7", label: "text", next: null },
+    { weight: 3, label: ["a", "rray"], next: null },
+    { weight: 3, label: "odd link", next: { next: null, weight: 4, label: "x" } },
+    { weight: 2 ** 31, label: "large", next: null },
+    { weight: -0, label: "minus zero", next: undefined },
+    { weight: NaN, label: "not a number", next: null },
+];
+for (const odd of oddOnes) {
+    for (const place of [0, 5, 11]) {
+        const items = honest.slice();
+        items[place] = odd as Item;
+        lines.push(place + ": " + total(items, 1));
+    }
+}
+const holes = honest.slice();
+delete (holes as unknown[])[4];
+try {
+    lines.push(total(holes, 0));
+} catch (error) {
+    lines.push((error as Error).constructor.name);
+}
+lines.push(total(honest, 0));
+console.log(lines.join("\n"));
+//// an-object-that-is-not-made-yet.ts
+// An object that never leaves the function need not be made. Where the function goes on in another way it is made, once, with what has been stored into it so far, and it is the same object for everybody from then on.
+type Source = { a: number; b: number };
+const kept: object[] = [];
+function sums(source: Source, keep: boolean): string {
+    const pair = { first: source.a, second: 0, inner: { deep: source.a * 2 } };
+    pair.second = pair.first + 1;
+    const list = [pair.first, pair.second];
+    const b = source.b;
+    pair.inner.deep += b;
+    list.push(b);
+    if (keep) kept.push(pair, pair.inner, list);
+    return pair.first + "," + pair.second + "," + pair.inner.deep + "," + list.join("+");
+}
+const lines: string[] = [];
+for (let round = 0; round < 400; round++) sums({ a: round, b: 1 }, false);
+for (const source of [{ a: 1, b: 2 }, { b: 2, a: 1 }, { a: 1, get b() { return 20; } }, { a: 1 }, { a: 1, b: "two" }, Object.create({ a: 3, b: 4 })]) {
+    lines.push(sums(source as Source, false));
+    lines.push(sums(source as Source, true));
+}
+lines.push(JSON.stringify(kept));
+lines.push(String(kept.length) + " " + new Set(kept).size);
+console.log(lines.join("\n"));
+//// arguments-rest-this-and-captured-variables.ts
+// What a function knows beside its parameters: how many arguments it got, the rest of them, this, new.target, and the variables of the functions around it.
+type Pair = { l: number; r: number };
+function counted(this: unknown, pair: Pair, extra?: number): string {
+    const before = arguments.length;
+    const sum = pair.l + pair.r;
+    return before + ":" + sum + ":" + arguments.length + ":" + Array.prototype.slice.call(arguments, 1).join("/") + ":" + typeof this + ":" + extra;
+}
+function rest(pair: Pair, ...others: number[]): string {
+    const first = others.length;
+    const sum = pair.l + pair.r;
+    others.push(sum);
+    return first + ":" + others.join("/");
+}
+function makeCounter(start: number) {
+    let count = start;
+    return function step(pair: Pair): string {
+        count++;
+        const l = pair.l;
+        count += 10;
+        const r = pair.r;
+        count += 100;
+        return count + ":" + (l + r);
+    };
+}
+class Holder {
+    total = 0;
+    made: unknown;
+    constructor(pair: Pair) {
+        this.total += 1;
+        this.total += pair.l;
+        this.made = new.target === Holder;
+        this.total += pair.r;
+    }
+    add(pair: Pair): this {
+        this.total += pair.l * 2;
+        this.total += pair.r * 3;
+        return this;
+    }
+}
+const lines: string[] = [];
+const step = makeCounter(0);
+for (let round = 0; round < 400; round++) {
+    counted.call(null, { l: 1, r: 2 }, round);
+    rest({ l: 1, r: 2 }, round, round);
+    makeCounter(round)({ l: 1, r: 2 });
+    new Holder({ l: 1, r: 2 }).add({ l: 1, r: 2 });
+}
+for (const pair of [{ l: 1, r: 2 }, { r: 2, l: 1 }, { l: 1, get r() { return 20; } }, { l: "1", r: 2 }, Object.create({ l: 5, r: 6 })] as Pair[]) {
+    lines.push(counted.call("text", pair));
+    lines.push((counted as (...all: unknown[]) => string).call({ }, pair, 1, 2, 3, 4, 5, 6, 7));
+    lines.push(rest(pair));
+    lines.push(rest(pair, 1, 2, 3, 4, 5, 6, 7, 8, 9));
+    lines.push(step(pair));
+    const holder = new Holder(pair);
+    lines.push(holder.total + ":" + holder.made + ":" + (holder.add(pair) === holder) + ":" + holder.total);
+}
+console.log(lines.join("\n"));
+//// async-functions-and-generators.ts
+// A function that stops and goes on again meets the odd value in front of, between and behind its stops.
+type Job = { id: number; cost: number };
+async function work(job: Job, log: string[]): Promise<number> {
+    log.push("start " + job.id);
+    const before = job.cost;
+    await null;
+    log.push("middle " + job.id);
+    const after = job.cost;
+    await Promise.resolve(1);
+    return before + after + job.id;
+}
+function* steps(job: Job): Generator<number, string, number> {
+    let sum = job.cost;
+    const got = yield sum;
+    sum += job.cost + got;
+    const more = yield sum;
+    return job.id + ":" + (sum + more + job.cost);
+}
+const lines: string[] = [];
+const log: string[] = [];
+function drive(job: Job): string {
+    const run = steps(job);
+    return [run.next().value, run.next(10).value, run.next(100).value].join();
+}
+for (let round = 0; round < 300; round++) {
+    await work({ id: round, cost: 1 }, []);
+    drive({ id: round, cost: 2 });
+}
+let reads = 0;
+for (const job of [{ id: 1, cost: 2 }, { cost: 2, id: 1 }, { id: 2, get cost() { return ++reads; } }, { id: "three", cost: 4 }, { id: 4, cost: 0.5 }, Object.create({ id: 5, cost: 6 })]) {
+    lines.push(String(await work(job as Job, log)));
+    lines.push(drive(job as Job));
+}
+lines.push((await Promise.all([{ id: 1, cost: 1 }, { cost: 1, id: 2 }, { id: 3, cost: 1 }].map(job => work(job as Job, log)))).join());
+console.log(lines.join("\n"));
+console.log(log.join(" "));
+//// stack-traces-and-activations.ts
+// A function that has gone on in another way is still one function on the stack, under its own name, at the line of the source. Other activations of it are not disturbed.
+type Node = { value: number; child: Node | null };
+function frames(error: Error): string {
+    return (error.stack ?? "").split("\n").slice(1).map(line => /at (?:async )?(?:new )?([\w.$<>]+)/.exec(line)?.[1] ?? "?").filter(name => /^(walk|leaf|outer|thrower)$/.test(name)).join(">");
+}
+function thrower(): never {
+    throw new Error("here");
+}
+function leaf(node: Node): number {
+    const value = node.value;
+    if (value < 0) thrower();
+    return value;
+}
+function walk(node: Node, depth: number): number {
+    const own = leaf(node);
+    const below = node.child ? walk(node.child, depth + 1) : 0;
+    return own + below * 2 + node.value;
+}
+function outer(node: Node): string {
+    try {
+        return String(walk(node, 0));
+    } catch (error) {
+        return frames(error as Error);
+    }
+}
+const chain = (values: unknown[]): Node => values.reduceRight<Node | null>((child, value) => (typeof value === "number" ? { value, child } : Object.assign(value as object, { child })) as Node, null)!;
+const lines: string[] = [];
+for (let round = 0; round < 400; round++) outer(chain([1, 2, 3, round]));
+lines.push(outer(chain([1, 2, 3])));
+lines.push(outer(chain([1, { extra: 0, value: 2 }, 3])));
+lines.push(outer(chain([{ extra: 0, value: 1 }, 2, { more: 1, value: 3 }, 4])));
+lines.push(outer(chain([1, 2, -1])));
+lines.push(outer(chain([1, { extra: 0, value: 2 }, -1])));
+lines.push(outer(chain([{ extra: 0, value: 1 }, { extra: 0, value: 2 }, { extra: 0, value: -1 }])));
+lines.push(outer(chain([1, { get value() { return thrower(); } }, 3])));
+console.log(lines.join("\n"));
+//// under-a-handler.ts
+// The test fails inside try. What is thrown behind it, by a getter or by the language, is caught where the source says, and finally runs once.
+type Entry = { key: string; size: number };
+const log: string[] = [];
+function measure(entry: Entry, limit: number): number {
+    let result = -1;
+    try {
+        log.push("try");
+        const size = entry.size;
+        if (size > limit) throw new RangeError("too large: " + entry.key);
+        result = size + entry.key.length;
+    } catch (error) {
+        // The engine's own messages quote the source, which an executable need not hold.
+        log.push("caught " + (error as Error).constructor.name + " " + (error as Error).message.replace(/ \(evaluating .*$/, ""));
+        result = -2;
+    } finally {
+        log.push("finally " + result);
+    }
+    return result;
+}
+function nested(entry: Entry): string {
+    try {
+        try {
+            return "inner " + measure(entry, 10) + " " + entry.key.toUpperCase();
+        } finally {
+            log.push("inner finally");
+        }
+    } catch (error) {
+        return "outer caught " + (error as Error).constructor.name;
+    }
+}
+const lines: string[] = [];
+for (let round = 0; round < 400; round++) nested({ key: "k", size: round % 10 });
+log.length = 0;
+for (const entry of [
+    { key: "plain", size: 3 }, { size: 3, key: "swapped" }, { key: "large", size: 30 }, { size: 30, key: "large swapped" },
+    { key: "throws", get size(): number { throw new TypeError("no size"); } },
+    { get key(): string { throw new SyntaxError("no key"); }, size: 1 },
+    { key: 5, size: 1 }, { key: null, size: 1 }, null, undefined, 7,
+]) lines.push(nested(entry as Entry));
+console.log(lines.join("\n"));
+console.log(log.join(" | "));
+//// values-of-every-kind-are-alive-where-it-leaves.ts
+// Integers, fractions, booleans, strings, objects, null and undefined are alive in the function when a test fails. Each goes on with the value it had.
+type Cell = { value: number };
+function mix(cell: Cell, i: number, d: number, flag: boolean, text: string, object: { k: number } | null, nothing: undefined | number): string {
+    const small = (i | 0) + 1;
+    const wide = i * 4294967296 + 1;
+    const fraction = d / 3;
+    const negativeZero = flag ? -0 : 0;
+    const notANumber = d - d === 0 ? 0 / (flag ? 0 : 1) : 1;
+    const both = flag && i > 2;
+    const joined = text + i;
+    const held = object;
+    const read = cell.value;
+    return [small, wide, fraction, Object.is(negativeZero, -0), notANumber, both, joined, held === object, held ? held.k : "none", nothing, read].join();
+}
+const lines: string[] = [];
+const shared = { k: 5 };
+for (let round = 0; round < 400; round++) mix({ value: round }, round, round + 0.5, round % 2 === 0, "t", round % 3 ? shared : null, undefined);
+for (const cell of [{ value: 1 }, { other: 0, value: 2 }, { get value() { return 3; } }, Object.create({ value: 4 }), { value: "five" }, 6, "seven", true]) {
+    lines.push(mix(cell as Cell, 2147483646, 1e300, true, "a", shared, undefined));
+    lines.push(mix(cell as Cell, -2147483648, -0.75, false, "", null, 9));
+    lines.push(mix(cell as Cell, 3, Infinity, true, "\u{1F600}", { k: -1 }, undefined));
+}
+for (const cell of [null, undefined]) {
+    try {
+        lines.push(mix(cell as unknown as Cell, 1, 1, true, "x", null, undefined));
+    } catch (error) {
+        lines.push((error as Error).constructor.name);
+    }
+}
+console.log(lines.join("\n"));
+//// what-was-done-is-not-done-again.ts
+// A test of a type fails in the middle of a function. What the function has done up to there is done once, what comes behind is done once, and in the order of the source.
+type Point = { x: number; y: number };
+type Box = { name: string; at: Point; tags: string[] };
+const log: string[] = [];
+let counter = 0;
+function note(what: string): number {
+    log.push(what + "#" + ++counter);
+    return counter;
+}
+function describe(box: Box, scale: number): string {
+    const first = note("enter " + box.name);
+    const x = box.at.x * scale;
+    const second = note("x " + x);
+    const y = box.at.y * scale;
+    box.tags.push("seen" + first);
+    const third = note("y " + y);
+    return box.name + ":" + x + "," + y + ":" + (third - second) + ":" + box.tags.length;
+}
+const honest = (n: number): Box => ({ name: "b" + n, at: { x: n, y: n + 1 }, tags: [] });
+const lines: string[] = [];
+for (let round = 0; round < 400; round++) describe(honest(round), 2);
+log.length = 0;
+counter = 0;
+const odd: unknown[] = [
+    { name: "other order", tags: [], at: { y: 2, x: 1 } },
+    { at: { x: 1, y: 2 }, name: "at first", tags: [] },
+    { name: "point with more", at: { x: 1, y: 2, z: 3 }, tags: [] },
+    { name: "x is a string", at: { x: "4", y: 2 }, tags: [] },
+    { name: "y is missing", at: { x: 1 }, tags: [] },
+    { name: "tags is array-like", at: { x: 1, y: 2 }, tags: { length: 0, push(this: { length: number }, v: string) { note("push " + v); return ++this.length; } } },
+    { name: "getters", get at() { note("get at"); return { get x() { note("get x"); return 5; }, get y() { note("get y"); return 6; } }; }, tags: [] },
+    Object.create({ name: "inherited", at: { x: 7, y: 8 }, tags: [] }),
+    new Proxy({ name: "proxy", at: { x: 9, y: 10 }, tags: [] as string[] }, { get(target, key, receiver) { note("trap " + String(key)); return Reflect.get(target, key, receiver); } }),
+];
+for (const value of odd) {
+    lines.push(describe(value as Box, 3));
+    lines.push(describe(honest(1), 3));
+}
+console.log(lines.join("\n"));
+console.log(log.join(" "));

@@ -11,6 +11,7 @@ use crate::bind::{
     Decl, Flow, FlowId, FlowTarget, FnOwner, MAX_FLOW_DEPTH, MemberOwner, Parent, PatParent,
     SymbolId, UNREACHABLE, entered_clauses,
 };
+use crate::util::SharedSort;
 use smallvec::{SmallVec, smallvec};
 
 /// See `Checker::access_key`.
@@ -233,6 +234,11 @@ pub(super) struct FlowMemo {
     flow_types_outside_resolutions: FxHashMap<(FileId, ExprId), TypeId>,
     /// How many walks have ended with an incomplete type.
     incomplete_walks: u64,
+    runs: FlowRuns,
+    /// See `parent_of_whole_expression`.
+    pub(super) parents_of_long_expressions: FxHashMap<(FileId, Node), Node>,
+    /// See `check_testing_known_truthy_left_operand`.
+    pub(super) parents_of_logical_chains: FxHashMap<(FileId, ExprId), Parent>,
 }
 
 /// Not in tsgo. The rows of a file's flow graph. A row is a chain of assignments, declarations,
@@ -291,6 +297,101 @@ impl Rows {
         let last = self.assignments[..after].last()?;
         ((last.row, last.root, last.path) == (upto.row, upto.root, upto.path)).then_some(last.node)
     }
+}
+
+/// Not in tsgo. The runs of a file's flow graph: assignments, call statements and array mutations,
+/// each the antecedent of the next. Most of them leave a given reference alone. See
+/// `skip_unrelated_nodes`.
+#[derive(Default)]
+struct FlowRuns {
+    file: Option<FileId>,
+    /// Indexed by flow node: its index in `nodes`, or `u32::MAX`.
+    position: Vec<u32>,
+    /// The runs, one after another. Node numbers ascend within a run.
+    nodes: Vec<RunNode>,
+    /// Indexed like `nodes`: the last node at or before this one in its run that can be a call
+    /// that isn't idle, or `u32::MAX`. Calls only become idle, so an entry only moves down.
+    last_busy_call: Vec<u32>,
+    /// For each assignment and declaration: the `root_key` of its target, the target's first
+    /// property as in `TestSubjects::chains`, and the node. Sorted.
+    assignments: Vec<(u32, u32, u32)>,
+    /// The assignments to `x.a.b` and longer, written with names alone: the `root_key`, the first two
+    /// properties as above, and the node. Sorted. They are not in `assignments`: such a target is the
+    /// reference or a prefix of it only if the reference begins with the same two names. Without
+    /// this, n assignments `F.prototype.m = ..` take n * n steps.
+    deep_assignments: Vec<(u32, u32, u32, u32)>,
+    /// Indexed like `assignments`. For `x += 1` or `x++`: the first of the assignments like it that
+    /// lead up to it in its run, with nothing else that concerns `x` in between, calls aside. For
+    /// any other entry: the entry itself. See `skip_compound_assignments`.
+    first_compound_assignment: Vec<u32>,
+    /// The assignments at which a walk resolves the name of a key, in ascending order.
+    computed_key_nodes: Vec<u32>,
+    /// The array mutations, in ascending order. A walk for a reference of an automatic type may have
+    /// something to do at each.
+    array_mutations: Vec<u32>,
+    /// Indexed like `Bound::flow_edges`: where the stretch of edges from this one on ends, in which
+    /// each edge is a later node of the same run than the edge before it.
+    ascending_edges_end: Vec<u32>,
+}
+
+impl FlowRuns {
+    /// The last node up to `flow` and the first node after it at which a walk for `reference` has
+    /// something to do, calls aside. 0 and `u32::MAX` if there is none.
+    fn nodes_about(&self, root: u32, reference: &Reference, flow: FlowId) -> (u32, u32) {
+        let (mut last, mut next) = (0, u32::MAX);
+        let mut look_at = |first: u32| {
+            let after = (self.assignments).partition_point(|&it| it <= (root, first, flow.0));
+            if let Some(&(its_root, its_first, node)) = self.assignments[..after].last()
+                && (its_root, its_first) == (root, first)
+            {
+                last = last.max(node);
+            }
+            if let Some(&(its_root, its_first, node)) = self.assignments.get(after)
+                && (its_root, its_first) == (root, first)
+            {
+                next = next.min(node);
+            }
+        };
+        look_at(TestSubjects::NO_PROPERTY);
+        look_at(0);
+        if let Some(AccessedName::Some(name)) = reference.path.first().map(|step| step.name.get()) {
+            look_at(name.0.wrapping_add(1));
+            if let Some(AccessedName::Some(second)) = reference.path.get(1).map(|it| it.name.get())
+            {
+                let names = (root, name.0.wrapping_add(1), second.0.wrapping_add(1));
+                let deep = &self.deep_assignments;
+                let after = deep.partition_point(|&it| it <= (names.0, names.1, names.2, flow.0));
+                if let Some(&(its_root, first, second, node)) = deep[..after].last()
+                    && (its_root, first, second) == names
+                {
+                    last = last.max(node);
+                }
+                if let Some(&(its_root, first, second, node)) = deep.get(after)
+                    && (its_root, first, second) == names
+                {
+                    next = next.min(node);
+                }
+            }
+        }
+        let keys = &self.computed_key_nodes;
+        let after = keys.partition_point(|&node| node <= flow.0);
+        if let Some(&node) = keys[..after].last() {
+            last = last.max(node);
+        }
+        if let Some(&node) = keys.get(after) {
+            next = next.min(node);
+        }
+        (last, next)
+    }
+}
+
+#[derive(Copy, Clone)]
+struct RunNode {
+    flow: u32,
+    /// The index of the run's first node.
+    run_start: u32,
+    /// The index of the first shared node at or after this one in the run, or `u32::MAX`.
+    next_shared: u32,
 }
 
 /// `FlowLoopKey`, without the reference.
@@ -531,6 +632,10 @@ struct Walk {
     /// It has passed a node with several antecedents, so it can reach a node a second time.
     has_passed_join: bool,
     steps: u32,
+    /// The walk tries to skip once `steps` is past this. See `skip_unrelated_nodes`.
+    next_skip: u32,
+    /// How many steps the walk takes before it tries again, after a try that passed few nodes.
+    steps_between_skips: u32,
     /// The number of nested `getTypeAtFlowNode` invocations that would be in progress.
     depth: u32,
     /// The depth reached `MAX_FLOW_DEPTH` (`flowAnalysisDisabled`), so the result is errorType.
@@ -538,6 +643,13 @@ struct Walk {
 }
 
 const MAX_STEPS: u32 = 2_000_000;
+/// A walk that has taken this many steps starts to skip. See `skip_unrelated_nodes`.
+const LONG_WALK: u32 = 32;
+/// A try to skip costs about as much as this many steps.
+const WORTHWHILE_SKIP: u32 = 8;
+/// A walk that has this many antecedents of a label ahead of it is long. See
+/// `count_antecedents_with_type_of`.
+const MANY_ANTECEDENTS: usize = 16;
 
 /// After this many steps through a row, a walk looks in `Rows` for where to continue.
 const LONG_ROW: u32 = 32;
@@ -717,6 +829,31 @@ impl CallsBefore {
     };
 }
 
+/// Collects `FlowRuns::assignments` for one node.
+struct AssignmentSubjects<'a> {
+    node: u32,
+    assignments: &'a mut Vec<(u32, u32, u32)>,
+    /// The node concerns the root whatever the reference's first property is.
+    ignores_property: bool,
+    resolves_key: bool,
+}
+
+impl NarrowingSubjects for AssignmentSubjects<'_> {
+    fn add(&mut self, root: u32, first: u32) {
+        if root != 0 {
+            let first = if self.ignores_property { 0 } else { first };
+            self.assignments.push((root, first, self.node));
+        }
+    }
+
+    fn bails_on_computed_key(&mut self, _: ResolvesKey) -> bool {
+        self.resolves_key = true;
+        false
+    }
+
+    fn add_union(&mut self) {}
+}
+
 impl TestSubjects {
     const NO_PROPERTY: u32 = u32::MAX;
     const KNOWN: u32 = 1;
@@ -871,10 +1008,16 @@ fn branch_label_antecedents<'b>(
     flow: FlowId,
     reduced: &[(FlowId, FlowId)],
 ) -> &'b [FlowId] {
+    let (start, len) = branch_label_edges(bound, flow, reduced);
+    bound.edges(start, len)
+}
+
+/// `branch_label_antecedents` as a range of `Bound::flow_edges`: its start and length.
+fn branch_label_edges(bound: &Bound, flow: FlowId, reduced: &[(FlowId, FlowId)]) -> (u32, u32) {
     let reduced = reduced.iter().rev().find(|r| r.0 == flow);
     match bound.flow[reduced.map_or(flow, |r| r.1).idx()] {
-        Flow::Label { start, len } => bound.edges(start, len),
-        _ => &[],
+        Flow::Label { start, len } => (start, len),
+        _ => (0, 0),
     }
 }
 
@@ -893,6 +1036,8 @@ impl Walk {
             back_edges: 0,
             has_passed_join: false,
             steps: 0,
+            next_skip: LONG_WALK,
+            steps_between_skips: 0,
             depth: 0,
             too_deep: false,
         }
@@ -1470,12 +1615,12 @@ impl<'p, 's> Checker<'p, 's> {
         let hir = self.hir(file);
         let ExprKind::Dot {
             mut obj, mut name, ..
-        } = hir[e].kind
+        } = hir.checked_kind(e)
         else {
             return None;
         };
         loop {
-            match hir[obj].kind {
+            match hir.checked_kind(obj) {
                 ExprKind::Dot {
                     obj: inner,
                     name: first,
@@ -1505,10 +1650,13 @@ impl<'p, 's> Checker<'p, 's> {
         let (mut unassigned, mut unsatisfied, mut keyed) = (usize::MAX, usize::MAX, usize::MAX);
         let root = loop {
             is_access = is_access
-                && matches!(hir[at].kind, ExprKind::Dot { .. } | ExprKind::Index { .. })
+                && matches!(
+                    hir.checked_kind(at),
+                    ExprKind::Dot { .. } | ExprKind::Index { .. }
+                )
                 && (at == e || !is_parenthesized(hir, at));
             accesses += is_access as usize;
-            match hir[at].kind {
+            match hir.checked_kind(at) {
                 ExprKind::Ident(name) => break self.root_of_identifier(file, at, name),
                 ExprKind::This => break Root::This,
                 ExprKind::Super => break Root::Super,
@@ -1587,8 +1735,10 @@ impl<'p, 's> Checker<'p, 's> {
     /// `[index]` as a step of a reference.
     fn step_of_element_access(&mut self, file: FileId, index: ExprId) -> Step {
         let hir = self.hir(file);
-        let is_entity_name = matches!(hir[index].kind, ExprKind::Ident(_) | ExprKind::Dot { .. })
-            && !is_parenthesized(hir, index);
+        let is_entity_name = matches!(
+            hir.checked_kind(index),
+            ExprKind::Ident(_) | ExprKind::Dot { .. }
+        ) && !is_parenthesized(hir, index);
         let name: AccessedName = if !is_entity_name {
             self.literal_key(file, index).into()
         } else {
@@ -1646,7 +1796,7 @@ impl<'p, 's> Checker<'p, 's> {
         if is_parenthesized(hir, index) {
             return None;
         }
-        match hir[index].kind {
+        match hir.checked_kind(index) {
             ExprKind::String(s) => Some(s),
             ExprKind::Number(n) => Some(self.number_name(hir.numbers[n as usize])),
             ExprKind::Template { exprs } if exprs.is_empty() => {
@@ -1850,7 +2000,7 @@ impl<'p, 's> Checker<'p, 's> {
             // At this point it's an access, not a `satisfies`, which is only looked through in the
             // source.
             let is_access = remaining != 0 && !(is_source && remaining == reference.satisfies);
-            match hir[at].kind {
+            match hir.checked_kind(at) {
                 ExprKind::NonNull(x) => at = x,
                 ExprKind::Assign { target, .. } if !is_source => at = target,
                 ExprKind::Satisfies { expr, .. } if is_source => at = expr,
@@ -2010,7 +2160,7 @@ impl<'p, 's> Checker<'p, 's> {
         // without `?.` after it (`tryReparseOptionalChain`).
         let mut is_before_link = false;
         loop {
-            let (expression, chain) = match hir[source].kind {
+            let (expression, chain) = match hir.checked_kind(source) {
                 ExprKind::Dot { obj, chain, .. } | ExprKind::Index { obj, chain, .. } => {
                     (obj, chain)
                 }
@@ -2095,7 +2245,7 @@ impl<'p, 's> Checker<'p, 's> {
         if matches!(reference.root, Root::Pattern(_) | Root::Params(_)) {
             return None;
         }
-        let (obj, chain) = match hir[e].kind {
+        let (obj, chain) = match hir.checked_kind(e) {
             ExprKind::Dot { obj, chain, .. } | ExprKind::Index { obj, chain, .. } => (obj, chain),
             _ => return None,
         };
@@ -2104,7 +2254,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // `getDiscriminantPropertyAccess` calls `getAccessedPropertyName` only for a candidate,
         // because resolving a constant key's name resolves a type.
-        let name = match hir[e].kind {
+        let name = match hir.checked_kind(e) {
             ExprKind::Dot { name, .. } => name,
             ExprKind::Index { index, .. } => self.literal_key(reference.file, index)?,
             _ => return None,
@@ -2216,7 +2366,7 @@ impl<'p, 's> Checker<'p, 's> {
         match parent {
             PatParent::Var(d) if hir[d].ty.is_none() && hir[d].init.is_some() => {
                 let init = hir[d].init;
-                match hir[init].kind {
+                match hir.checked_kind(init) {
                     ExprKind::Dot { .. } | ExprKind::Index { .. } => {
                         self.candidate_discriminant_access(reference, init)
                     }
@@ -2339,7 +2489,9 @@ impl<'p, 's> Checker<'p, 's> {
             // recognized.
             let mut at = reference.at;
             for _ in &reference.path {
-                let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = hir[at].kind else {
+                let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) =
+                    hir.checked_kind(at)
+                else {
                     return false;
                 };
                 if is_parenthesized(hir, obj) {
@@ -2369,7 +2521,8 @@ impl<'p, 's> Checker<'p, 's> {
         // For `a.b.c`, neither `b` in `a` nor `c` in `a.b` can be assigned.
         let mut at = reference.at;
         for step in steps {
-            let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = hir[at].kind else {
+            let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = hir.checked_kind(at)
+            else {
                 return false;
             };
             let Some(name) = self.name_of_step(reference, step) else {
@@ -2870,7 +3023,7 @@ impl<'p, 's> Checker<'p, 's> {
                 for argument in hir.ids(call.args) {
                     self.note_chain(file, argument, true, 0, about);
                 }
-                if let ExprKind::Dot { obj, .. } = hir[call.callee].kind {
+                if let ExprKind::Dot { obj, .. } = hir.checked_kind(call.callee) {
                     self.note_chain(file, obj, false, 0, about);
                 }
             }
@@ -2950,7 +3103,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// a pattern, or has neither an annotation nor an initializer, like a `for of` constant.
     fn is_computed_key(&self, file: FileId, index: ExprId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        match hir[index].kind {
+        match hir.checked_kind(index) {
             ExprKind::Dot { .. } => true,
             ExprKind::Ident(_) => {
                 let symbol = bound.symbol_of_expr(index);
@@ -2993,12 +3146,42 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let init = hir[d].init;
         let is_candidate = init.is_some()
-            && match hir[init].kind {
+            && match hir.checked_kind(init) {
                 ExprKind::Dot { .. } | ExprKind::Index { .. } => true,
                 ExprKind::Ident(_) => is_element,
                 _ => false,
             };
         is_candidate.then_some(init)
+    }
+
+    /// For `x.a.b`, `this.a.b.c`: what `note_chain` records for the root, and the two properties next
+    /// to it. `None` for anything but names joined by dots, and for fewer than two of them.
+    fn first_names_of_plain_chain(&self, file: FileId, e: ExprId) -> Option<(u32, u32, u32)> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let (mut at, mut first, mut second) = (e, None, None);
+        let root = loop {
+            match hir.checked_kind(at) {
+                ExprKind::Dot {
+                    obj,
+                    name,
+                    chain: Chain::No,
+                    ..
+                } => {
+                    second = first.replace(name.0.wrapping_add(1));
+                    at = obj;
+                }
+                ExprKind::Ident(name) => {
+                    let symbol = bound.symbol_of_expr(at);
+                    break match symbol.is_none() {
+                        true => Root::Global(name),
+                        false => Root::Symbol(symbol),
+                    };
+                }
+                ExprKind::This => break Root::This,
+                _ => return None,
+            }
+        };
+        Some((root_key(root), first?, second?))
     }
 
     /// Adds to `about` the root of `e`, an expression that a reference is compared with, along with
@@ -3019,7 +3202,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `at` is the `a` of `a?.b` or of a later link of an optional chain.
         let mut is_link = false;
         loop {
-            at = match hir[at].kind {
+            at = match hir.checked_kind(at) {
                 ExprKind::Ident(name) => {
                     // `x?.a` is a test of `x` too.
                     if is_link {
@@ -3098,7 +3281,7 @@ impl<'p, 's> Checker<'p, 's> {
         // The `a` of `a?.b`, `a ?? b` and `a ??= b` is tested for being non-nullish, not for
         // truthiness.
         if let Parent::Expr(parent) = self.bound(file).parent_of_expr(e) {
-            let is_tested_for_presence = match hir[parent].kind {
+            let is_tested_for_presence = match hir.checked_kind(parent) {
                 ExprKind::Dot {
                     obj,
                     chain: Chain::Start,
@@ -3126,7 +3309,7 @@ impl<'p, 's> Checker<'p, 's> {
                 return self.narrow_by_optionality(reference, ty, e, sense);
             }
         }
-        match hir[e].kind {
+        match hir.checked_kind(e) {
             ExprKind::Ident(_) | ExprKind::This | ExprKind::Dot { .. } | ExprKind::Index { .. } => {
                 // `const ok = test; if (ok)`
                 if let ExprKind::Ident(_) = hir[e].kind
@@ -3508,7 +3691,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `isMatchingConstructorReference`
     fn is_matching_constructor_reference(&mut self, reference: &Reference, e: ExprId) -> bool {
         let hir = self.hir(reference.file);
-        let (obj, name) = match hir[e].kind {
+        let (obj, name) = match hir.checked_kind(e) {
             ExprKind::Dot { obj, name, .. } => (obj, name),
             // `IsStringLiteralLike`
             ExprKind::Index { obj, index, .. } if !is_parenthesized(hir, index) => {
@@ -4254,7 +4437,7 @@ impl<'p, 's> Checker<'p, 's> {
         if reference.accesses != 0
             && self.contains_missing_type(ty)
             && let ExprKind::Call(c) = hir[call].kind
-            && let ExprKind::Dot { obj, name, .. } = hir[hir[c].callee].kind
+            && let ExprKind::Dot { obj, name, .. } = hir.checked_kind(hir[c].callee)
             && !is_parenthesized(hir, hir[c].callee)
         {
             let obj = self.reference_candidate(file, obj);
@@ -4298,7 +4481,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.has_matching_argument(reference, c) || !sense && data.chain != Chain::No {
             return None;
         }
-        let sig = match hir[data.callee].kind {
+        let sig = match hir.checked_kind(data.callee) {
             // `checkPropertyAccessExpression` of a member of the reference being narrowed: the type
             // of the object is already available here, and querying it would re-enter.
             ExprKind::Dot { obj, name, .. } if self.matches(reference, obj) => {
@@ -4366,7 +4549,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let callee = hir[c].callee;
-        matches!(hir[callee].kind, ExprKind::Dot { obj, .. }
+        matches!(hir.checked_kind(callee), ExprKind::Dot { obj, .. }
             if !is_parenthesized(hir, callee)
                 && self.is_or_contains_matching_reference(reference, obj))
     }
@@ -4871,7 +5054,7 @@ impl<'p, 's> Checker<'p, 's> {
         if is_parenthesized(hir, e) {
             return false;
         }
-        match hir[parent].kind {
+        match hir.checked_kind(parent) {
             ExprKind::Dot { obj, .. } => obj == e,
             ExprKind::Call(c) | ExprKind::New(c) => hir[c].callee == e,
             // `t[k]` with `t` of type `T` and `k` of type `K` must have type `T[K]`.
@@ -4957,7 +5140,10 @@ impl<'p, 's> Checker<'p, 's> {
             cold_path();
             // These types only occur under `noImplicitAny`. `checkWithStatement` doesn't check the
             // body.
-            if self.is_automatic_type(ty) && !hir.is_in_with(hir[e].pos) {
+            if self.is_automatic_type(ty)
+                && !hir.is_in_with(hir[e].pos)
+                && self.module_options(file).no_implicit_any
+            {
                 let args = [Arg::Sym(sym), Arg::Type(ty)];
                 if let Some(name) = self.span_of_symbol(sym) {
                     self.error_at(name, 7034, &args);
@@ -5069,15 +5255,15 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getFlowTypeOfAccessExpression`'s `assumeUninitialized`, for the access `e` to `prop`.
     fn assumes_uninitialized(&self, file: FileId, e: ExprId, prop: &Prop) -> bool {
-        let options = &self.p.files.options;
-        if !options.strict_null_checks {
+        let options = self.module_options(file);
+        if !self.reports_null_checks(file) {
             return false;
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
         // Every property access reaches this point. `prop.ValueDeclaration` matters for `this.x`
         // and for a property declared by an assignment.
         let by_assignment = SymFlags::ASSIGNMENT | SymFlags::FUNCTION_SCOPED_VARIABLE;
-        if !matches!(hir[e].kind, ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }
+        if !matches!(hir.checked_kind(e), ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }
                 if matches!(hir[obj].kind, ExprKind::This))
             && !matches!(Self::value_declaration(prop), Some(&PropSource::Symbol(sym))
                 if self.files().flags(sym).intersects(by_assignment))
@@ -5124,7 +5310,7 @@ impl<'p, 's> Checker<'p, 's> {
             && decl_file == file
             // The left side of `f[key] = value` isn't a property access.
             && matches!(hir[assignment].kind, ExprKind::Assign { target, .. }
-                if matches!(hir[target].kind, ExprKind::Dot { .. }))
+                if matches!(hir.checked_kind(target), ExprKind::Dot { .. }))
             && container_of(e) == container_of(assignment)
     }
 
@@ -5261,6 +5447,13 @@ impl<'p, 's> Checker<'p, 's> {
                         && matches!(bound.parent_of_stmt(stmt), Parent::Stmt(owner)
                             if matches!(hir[owner].kind, StmtKind::ForIn { .. }));
                     u32::from(is_of_for_in)
+                }
+                // Only `x += 1` and `x++` ask for the type at the antecedent.
+                Flow::Assign {
+                    target: FlowTarget::Expr(e),
+                    ..
+                } => {
+                    u32::from(bound.get_assignment_target_kind(hir, e) == AssignmentKind::Compound)
                 }
                 _ => 1,
             };
@@ -5611,7 +5804,7 @@ impl<'p, 's> Checker<'p, 's> {
                         // error but parses), or what a loop iterates over.
                         let after = match parent {
                             Parent::Stmt(owner) => match hir[owner].kind {
-                                StmtKind::Block(_) => hir[d].init,
+                                StmtKind::Block(_) | StmtKind::With { .. } => hir[d].init,
                                 StmtKind::ForIn { left, expr, .. }
                                 | StmtKind::ForOf { left, expr, .. }
                                     if left == stmt =>
@@ -6065,7 +6258,7 @@ impl<'p, 's> Checker<'p, 's> {
         let reference = Reference::synthetic(file, Root::This, path, parent);
         let mut walk = Walk::new(reference, TypeId::AUTO, initial, Crossing::No);
         let ty = self.get_flow_type_of_reference(&mut walk, exit);
-        if self.p.files.options.no_implicit_any && self.is_automatic_type(ty) {
+        if self.module_options(file).no_implicit_any && self.is_automatic_type(ty) {
             let at = self.span_of_untyped_property(file, value_declaration);
             // `symbolToString`
             let symbol_text = match value_declaration {
@@ -6365,7 +6558,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         // Only the direct syntactic parent of `x.push` and `x[n]` counts. `(x.push)(v)` and
         // `(x[n]) = v` don't qualify.
-        match hir[parent].kind {
+        match hir.checked_kind(parent) {
             ExprKind::Dot { obj, name, .. } if obj == root => {
                 name == known::length
                     || (name == known::push || name == known::unshift)
@@ -6506,7 +6699,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut names: SmallVec<[Atom; 4]> = SmallVec::new();
         let mut has_names = true;
         let root = loop {
-            at = match hir[at].kind {
+            at = match hir.checked_kind(at) {
                 ExprKind::Dot { obj, name, .. } => {
                     names.push(name);
                     obj
@@ -6701,8 +6894,9 @@ impl<'p, 's> Checker<'p, 's> {
         // The invocations waiting for the type at their antecedent, outermost first, each with its
         // `sharedFlow`. They resume afterwards, innermost first.
         let mut pending: SmallVec<[(Pending, FlowId); 8]> = SmallVec::new();
-        // Number of invocations for a condition that doesn't apply to the reference and that have
-        // no `sharedFlow`. They return their input unchanged.
+        // Number of invocations that have no `sharedFlow` and return their input unchanged: for a
+        // condition that doesn't apply to the reference, or for a compound assignment that a later
+        // one follows.
         let mut passed = 0;
         let mut flow = start;
         // `sharedFlow` of the innermost invocation.
@@ -6735,6 +6929,20 @@ impl<'p, 's> Checker<'p, 's> {
                     long_row *= 2;
                 }
                 flow = nearest;
+            }
+            if walk.steps > walk.next_skip
+                && let Some((arrived_at, last_shared)) = self.try_to_skip(walk, flow)
+            {
+                if last_shared.is_some() {
+                    if let Some(known) = walk.shared_flows.get(last_shared) {
+                        incomplete = known.incomplete;
+                        shared_flow = FlowId::NONE;
+                        break known.ty;
+                    }
+                    shared_flow = last_shared;
+                }
+                flow = arrived_at;
+                continue;
             }
             if bound.is_shared(flow) {
                 if let Some(known) = walk.shared_flows.get(flow) {
@@ -6781,7 +6989,19 @@ impl<'p, 's> Checker<'p, 's> {
                     match self.type_at_assignment(walk, flow, target) {
                         AtAssignment::Type(t) => break t,
                         AtAssignment::Antecedent(then) => {
+                            let is_compound = matches!(then, Pending::Compound);
                             pending.push((then, std::mem::take(&mut shared_flow)));
+                            if is_compound
+                                && walk.steps > LONG_WALK
+                                && let Some((arrived_at, assignments, nodes)) =
+                                    self.skip_compound_assignments(walk, flow, depth == 0)
+                                && walk.steps.saturating_add(nodes) < MAX_STEPS
+                            {
+                                passed += assignments;
+                                walk.steps += nodes;
+                                flow = arrived_at;
+                                continue;
+                            }
                         }
                         AtAssignment::Unaffected => unaffected += 1,
                     }
@@ -6861,7 +7081,8 @@ impl<'p, 's> Checker<'p, 's> {
                     break t.ty;
                 }
                 Flow::Label { .. } => {
-                    let antecedents = branch_label_antecedents(bound, flow, &walk.reduced);
+                    let (first_edge, len) = branch_label_edges(bound, flow, &walk.reduced);
+                    let antecedents = bound.edges(first_edge, len);
                     if let [only] = *antecedents {
                         flow = only;
                         continue;
@@ -6874,7 +7095,9 @@ impl<'p, 's> Checker<'p, 's> {
                     // result, because the computation can re-enter here.
                     let mut bypass = None;
                     let mut settled = false;
-                    for &edge in antecedents {
+                    let mut next = 0;
+                    while let Some(&edge) = antecedents.get(next) {
+                        next += 1;
                         if bypass.is_none()
                             && let Flow::Switch {
                                 stmt,
@@ -6897,6 +7120,10 @@ impl<'p, 's> Checker<'p, 's> {
                             types.push(t.ty);
                         }
                         incomplete |= t.incomplete;
+                        if antecedents.len() - next >= MANY_ANTECEDENTS {
+                            let (at, end) = (first_edge + next as u32 - 1, first_edge + len);
+                            next += self.count_antecedents_with_type_of(walk, at, end);
+                        }
                     }
                     if !settled && let Some((edge, stmt)) = bypass {
                         let t = self.flow_type(walk, edge);
@@ -7487,7 +7714,7 @@ impl<'p, 's> Checker<'p, 's> {
                     self.get_type_of_destructured_spread_expression(parent_type)
                 } else {
                     let index = (elem.0 - elems.start) as usize;
-                    self.get_type_of_destructured_array_element(parent_type, index)
+                    self.get_type_of_destructured_array_element(file, parent_type, index)
                 };
                 (ty, hir[elem].default)
             }
@@ -7534,7 +7761,7 @@ impl<'p, 's> Checker<'p, 's> {
                 ExprKind::Array(elements) => {
                     let ty = self.get_assigned_type(file, parent, in_loop);
                     match hir.ids(elements).position(|element| element == node) {
-                        Some(index) => self.get_type_of_destructured_array_element(ty, index),
+                        Some(index) => self.get_type_of_destructured_array_element(file, ty, index),
                         None => TypeId::ERROR,
                     }
                 }
@@ -7591,18 +7818,23 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getTypeOfDestructuredArrayElement`
-    fn get_type_of_destructured_array_element(&mut self, ty: TypeId, index: usize) -> TypeId {
+    fn get_type_of_destructured_array_element(
+        &mut self,
+        file: FileId,
+        ty: TypeId,
+        index: usize,
+    ) -> TypeId {
         if self.parts(ty).iter().all(|&t| self.is_tuple_like(t))
-            && let Some(element_type) = self.get_tuple_element_type(ty, index)
+            && let Some(element_type) = self.get_tuple_element_type(file, ty, index)
         {
             return element_type;
         }
         let element_type = self.iterated_type_of_destructuring_in_flow(ty);
-        self.include_undefined_in_index_signature(element_type)
+        self.include_undefined_in_index_signature(file, element_type)
     }
 
     /// `getTupleElementType`
-    fn get_tuple_element_type(&mut self, ty: TypeId, index: usize) -> Option<TypeId> {
+    fn get_tuple_element_type(&mut self, file: FileId, ty: TypeId, index: usize) -> Option<TypeId> {
         let name = self.number_name(index as f64);
         if let Some(prop_type) = self.type_of_property_of_type(ty, name) {
             return Some(prop_type);
@@ -7611,7 +7843,7 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         let undefined_like_type =
-            (self.p.files.options.no_unchecked_indexed_access).then_some(TypeId::UNDEFINED);
+            (self.module_options(file).no_unchecked_indexed_access).then_some(TypeId::UNDEFINED);
         Some(self.get_tuple_element_type_out_of_start_count(ty, index, undefined_like_type))
     }
 
@@ -7642,8 +7874,8 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `includeUndefinedInIndexSignature`
-    fn include_undefined_in_index_signature(&mut self, ty: TypeId) -> TypeId {
-        if self.p.files.options.no_unchecked_indexed_access {
+    fn include_undefined_in_index_signature(&mut self, file: FileId, ty: TypeId) -> TypeId {
+        if self.module_options(file).no_unchecked_indexed_access {
             self.with_missing(ty)
         } else {
             ty
@@ -7687,7 +7919,7 @@ impl<'p, 's> Checker<'p, 's> {
             .members_for_index_infos(ty)
             .and_then(|members| self.applicable_index_info_for_name(&members, text));
         match index_info {
-            Some(info) => self.include_undefined_in_index_signature(info.value),
+            Some(info) => self.include_undefined_in_index_signature(file, info.value),
             None => TypeId::ERROR,
         }
     }
@@ -7777,11 +8009,11 @@ impl<'p, 's> Checker<'p, 's> {
     fn is_mutation_of(&mut self, reference: &Reference, expr: ExprId) -> bool {
         let hir = self.hir(reference.file);
         let array = match hir[expr].kind {
-            ExprKind::Call(c) => match hir[hir[c].callee].kind {
+            ExprKind::Call(c) => match hir.checked_kind(hir[c].callee) {
                 ExprKind::Dot { obj, .. } if !is_parenthesized(hir, hir[c].callee) => obj,
                 _ => return false,
             },
-            ExprKind::Assign { target, .. } => match hir[target].kind {
+            ExprKind::Assign { target, .. } => match hir.checked_kind(target) {
                 ExprKind::Index { obj, .. } if !is_parenthesized(hir, target) => obj,
                 _ => return false,
             },
@@ -7820,7 +8052,7 @@ impl<'p, 's> Checker<'p, 's> {
                 ty
             }
             ExprKind::Assign { target, value, .. } => {
-                let ExprKind::Index { index, .. } = hir[target].kind else {
+                let ExprKind::Index { index, .. } = hir.checked_kind(target) else {
                     return ty;
                 };
                 let index = self.context_free_type_of_expression(file, index);
@@ -7848,7 +8080,7 @@ impl<'p, 's> Checker<'p, 's> {
         if hir.is_in_with(hir[e].pos) {
             return None;
         }
-        match hir[e].kind {
+        match hir.checked_kind(e) {
             ExprKind::Ident(name) => {
                 let sym = self.symbol_of_identifier(file, e, name)?;
                 self.explicit_type_of_symbol(sym, diagnostic)
@@ -8173,6 +8405,397 @@ impl<'p, 's> Checker<'p, 's> {
         true
     }
 
+    /// Waits twice as long after each try in a row that passed few nodes, so that a walk through
+    /// nodes that can't be skipped doesn't pay for a search at each of them. The steps it takes in
+    /// between are at most as many as it had to take before.
+    fn try_to_skip(&mut self, walk: &mut Walk, flow: FlowId) -> Option<(FlowId, FlowId)> {
+        let steps = walk.steps;
+        let skipped = self.skip_unrelated_nodes(walk, flow);
+        walk.steps_between_skips = if walk.steps - steps >= WORTHWHILE_SKIP {
+            0
+        } else {
+            (walk.steps_between_skips * 2).max(1)
+        };
+        walk.next_skip = walk.steps.saturating_add(walk.steps_between_skips);
+        skipped
+    }
+
+    /// FOR SPEED. Follows a walk from `flow` through the nodes of its run that leave the reference
+    /// alone: idle calls, array mutations, and assignments to something else. Returns where it ends
+    /// up and the last shared node it passed. Only that one can have an entry in `sharedFlows`,
+    /// because every walk for the reference that enters these nodes leaves them at the same place.
+    /// Without this, n references after n assignments take n * n steps.
+    #[inline(never)]
+    fn skip_unrelated_nodes(&mut self, walk: &mut Walk, flow: FlowId) -> Option<(FlowId, FlowId)> {
+        let reference = &walk.reference;
+        let file = reference.file;
+        let bound = self.bound(file);
+        let antecedent = |flow: u32| match bound.flow[flow as usize] {
+            Flow::Assign { before, .. }
+            | Flow::Call { before, .. }
+            | Flow::ArrayMutation { before, .. } => Some(before),
+            _ => None,
+        };
+        antecedent(flow.0)?;
+        let root = root_key(reference.root);
+        if root == 0 || reference.unresolved.get() != 0 || self.task.file != Some(file) {
+            return None;
+        }
+        let is_automatic = self.is_automatic_type(walk.declared);
+        if self.flow_memo.runs.file != Some(file) {
+            self.index_flow_runs(file);
+        }
+        let runs = &self.flow_memo.runs;
+        let (mut last_related, _) = runs.nodes_about(root, reference, flow);
+        if is_automatic {
+            let after = (runs.array_mutations).partition_point(|&node| node <= flow.0);
+            if let Some(&node) = runs.array_mutations[..after].last() {
+                last_related = last_related.max(node);
+            }
+        }
+        let position = runs.position[flow.idx()];
+        let start = runs.nodes[position as usize].run_start;
+        let up_to_here = &runs.nodes[start as usize..=position as usize];
+        let mut first_passed =
+            start + up_to_here.partition_point(|node| node.flow <= last_related) as u32;
+        if first_passed > position {
+            return None;
+        }
+        if let Some(call) = self.find_last_busy_call(file, start, position) {
+            first_passed = first_passed.max(call + 1);
+            if first_passed > position {
+                return None;
+            }
+        }
+        let runs = &self.flow_memo.runs;
+        let first = runs.nodes[first_passed as usize];
+        let last_shared = match runs.nodes.get(first.next_shared as usize) {
+            Some(shared) if first.next_shared <= position => FlowId(shared.flow),
+            _ => FlowId::NONE,
+        };
+        walk.steps = walk.steps.saturating_add(position - first_passed);
+        Some((antecedent(first.flow)?, last_shared))
+    }
+
+    /// FOR SPEED. Follows a walk for a name from `flow`, a compound assignment to it, through the
+    /// earlier ones in its run and what leaves the name alone in between. Returns where it ends up,
+    /// how many compound assignments it passed, and how many nodes. Each of them takes the base
+    /// type of a literal type, as the one at `flow` does afterwards, so only the depth of the walk
+    /// depends on them. Without this, n references between n assignments `x += 1` take n * n steps.
+    ///
+    /// The outermost invocation of a walk passes shared nodes too, which every assignment in a
+    /// `try` block is: `sharedFlows` has no entry until an invocation returns, and the outermost one
+    /// returns last, so nothing looks up what it adds.
+    #[inline(never)]
+    fn skip_compound_assignments(
+        &mut self,
+        walk: &Walk,
+        flow: FlowId,
+        is_outermost: bool,
+    ) -> Option<(FlowId, u32, u32)> {
+        let reference = &walk.reference;
+        let file = reference.file;
+        let root = root_key(reference.root);
+        if root == 0
+            || !reference.path.is_empty()
+            || reference.unkeyed != usize::MAX
+            || self.task.file != Some(file)
+            || self.is_automatic_type(walk.declared)
+        {
+            return None;
+        }
+        if self.flow_memo.runs.file != Some(file) {
+            self.index_flow_runs(file);
+        }
+        let runs = &self.flow_memo.runs;
+        let here = (root, TestSubjects::NO_PROPERTY, flow.0);
+        let here = runs.assignments.binary_search(&here).ok()?;
+        let mut first = runs.first_compound_assignment[here] as usize;
+        if first == here {
+            return None;
+        }
+        let position = runs.position[flow.idx()];
+        if !is_outermost {
+            first += runs.assignments[first..here].partition_point(|it| {
+                runs.nodes[runs.position[it.2 as usize] as usize].next_shared < position
+            });
+            if first == here {
+                return None;
+            }
+        }
+        let start = runs.nodes[position as usize].run_start;
+        let busy_call = self.find_last_busy_call(file, start, position);
+        let runs = &self.flow_memo.runs;
+        if let Some(call) = busy_call {
+            let call = runs.nodes[call as usize].flow;
+            first += runs.assignments[first..here].partition_point(|it| it.2 < call);
+        }
+        let first_passed = runs.assignments[first].2;
+        match self.bound(file).flow[first_passed as usize] {
+            Flow::Assign { before, .. } if first < here => Some((
+                before,
+                (here - first) as u32,
+                position - runs.position[first_passed as usize],
+            )),
+            _ => None,
+        }
+    }
+
+    /// FOR SPEED. `at..end` are antecedents of one label, as indices of `Bound::flow_edges`. Returns
+    /// how many of those after the first are reached from it through nodes that leave the reference
+    /// alone, so the reference has the same type at them. Each statement of a `try` block is an
+    /// antecedent of the handler's label. Without this, n references in the handler of n statements
+    /// take n * n steps.
+    #[inline(never)]
+    fn count_antecedents_with_type_of(&mut self, walk: &Walk, at: u32, end: u32) -> usize {
+        let reference = &walk.reference;
+        let file = reference.file;
+        let root = root_key(reference.root);
+        if root == 0
+            || reference.unresolved.get() != 0
+            || self.task.file != Some(file)
+            || self.is_automatic_type(walk.declared)
+        {
+            return 0;
+        }
+        if self.flow_memo.runs.file != Some(file) {
+            self.index_flow_runs(file);
+        }
+        let runs = &self.flow_memo.runs;
+        let end = runs.ascending_edges_end[at as usize].min(end);
+        let Some((&edge, later @ [_, ..])) = self.bound(file).edges(at, end - at).split_first()
+        else {
+            return 0;
+        };
+        let (_, next_related) = runs.nodes_about(root, reference, edge);
+        let mut count = later.partition_point(|later| later.0 < next_related);
+        let position = runs.position[edge.idx()];
+        let start = runs.nodes[position as usize].run_start;
+        // No call between `edge` and the last one counted may be busy.
+        let is_clear = |c: &mut Self, count: usize| {
+            let last = c.flow_memo.runs.position[later[count - 1].idx()];
+            (c.find_last_busy_call(file, start, last)).is_none_or(|call| call <= position)
+        };
+        if count > 0 && !is_clear(self, count) {
+            let (mut clear, mut blocked) = (0, count);
+            while blocked - clear > 1 {
+                let middle = clear + (blocked - clear) / 2;
+                if is_clear(self, middle) {
+                    clear = middle;
+                } else {
+                    blocked = middle;
+                }
+            }
+            count = clear;
+        }
+        count
+    }
+
+    /// Returns the index of the last node in `start..=position` of `FlowRuns::nodes`, which are in
+    /// one run, that is a call not known to be idle.
+    fn find_last_busy_call(&mut self, file: FileId, start: u32, position: u32) -> Option<u32> {
+        let bound = self.bound(file);
+        let memo = &mut self.flow_memo;
+        let mut at = position;
+        let found = loop {
+            let known = memo.runs.last_busy_call[at as usize];
+            if known != at {
+                if known == u32::MAX {
+                    break known;
+                }
+                at = known;
+                continue;
+            }
+            let flow = FlowId(memo.runs.nodes[at as usize].flow);
+            if matches!(bound.flow[flow.idx()], Flow::Call { .. }) && !memo.is_idle_call(file, flow)
+            {
+                break at;
+            }
+            if at == start {
+                break u32::MAX;
+            }
+            at -= 1;
+        };
+        let mut at = position;
+        while at != found {
+            let known = std::mem::replace(&mut memo.runs.last_busy_call[at as usize], found);
+            if known == u32::MAX || known == at && at == start {
+                break;
+            }
+            at = if known == at { at - 1 } else { known };
+        }
+        (found != u32::MAX).then_some(found)
+    }
+
+    #[inline(never)]
+    fn index_flow_runs(&mut self, file: FileId) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        // The run of each node at first, then its index in `nodes`.
+        let mut position = vec![u32::MAX; bound.flow.len()];
+        let mut is_continued = vec![false; bound.flow.len()];
+        let mut lengths: Vec<u32> = Vec::new();
+        let mut assignments = Vec::new();
+        let mut deep_assignments = Vec::new();
+        let mut computed_key_nodes = Vec::new();
+        let mut array_mutations = Vec::new();
+        for (i, &node) in bound.flow.iter().enumerate() {
+            let (Flow::Assign { before, .. }
+            | Flow::Call { before, .. }
+            | Flow::ArrayMutation { before, .. }) = node
+            else {
+                continue;
+            };
+            // A node that two nodes follow continues in the first one's run.
+            let continues = before.idx() < i
+                && position[before.idx()] != u32::MAX
+                && !std::mem::replace(&mut is_continued[before.idx()], true);
+            if !continues {
+                lengths.push(0);
+            }
+            let run = if continues {
+                position[before.idx()]
+            } else {
+                lengths.len() as u32 - 1
+            };
+            position[i] = run;
+            lengths[run as usize] += 1;
+            if let Flow::ArrayMutation { .. } = node {
+                array_mutations.push(i as u32);
+            }
+            let Flow::Assign { target, .. } = node else {
+                continue;
+            };
+            if let FlowTarget::Expr(e) = target
+                && let Some((root, first, second)) = self.first_names_of_plain_chain(file, e)
+            {
+                if root != 0 {
+                    deep_assignments.push((root, first, second, i as u32));
+                }
+                continue;
+            }
+            let about = &mut AssignmentSubjects {
+                node: i as u32,
+                assignments: &mut assignments,
+                ignores_property: false,
+                resolves_key: false,
+            };
+            let declared = match target {
+                FlowTarget::Expr(e) => {
+                    self.note_chain(file, e, false, TestSubjects::NO_PROPERTY, about);
+                    PatId::NONE
+                }
+                FlowTarget::Var(d) => hir[d].pat,
+                FlowTarget::Pat(p) => p,
+            };
+            if let Some(&symbol) = bound.pat_symbol.get(declared.idx())
+                && symbol.is_some()
+            {
+                about.add(root_key(Root::Symbol(symbol)), TestSubjects::NO_PROPERTY);
+            }
+            // `for (const k in x?.a)` concerns `x`.
+            if let FlowTarget::Var(d) = target
+                && let stmt = bound.var_stmt[d.idx()]
+                && stmt.is_some()
+                && let Parent::Stmt(owner) = bound.parent_of_stmt(stmt)
+                && let StmtKind::ForIn { left, expr, .. } = hir[owner].kind
+                && left == stmt
+            {
+                about.ignores_property = true;
+                self.note_chain(file, expr, false, TestSubjects::NO_PROPERTY, about);
+            }
+            if about.resolves_key {
+                computed_key_nodes.push(i as u32);
+            }
+        }
+        assignments.shared_sort_unstable();
+        deep_assignments.shared_sort_unstable();
+        let mut end = 0;
+        let starts: Vec<u32> = (lengths.iter())
+            .map(|&length| {
+                end += length;
+                end - length
+            })
+            .collect();
+        let mut next_free = starts.clone();
+        let unset = RunNode {
+            flow: 0,
+            run_start: 0,
+            next_shared: u32::MAX,
+        };
+        let mut nodes = vec![unset; end as usize];
+        for (i, position) in position.iter_mut().enumerate() {
+            if let Some(free) = next_free.get_mut(*position as usize) {
+                nodes[*free as usize].flow = i as u32;
+                nodes[*free as usize].run_start = starts[*position as usize];
+                *position = std::mem::replace(free, *free + 1);
+            }
+        }
+        for at in (0..nodes.len()).rev() {
+            nodes[at].next_shared = if bound.is_shared(FlowId(nodes[at].flow)) {
+                at as u32
+            } else {
+                match nodes.get(at + 1) {
+                    Some(next) if next.run_start == nodes[at].run_start => next.next_shared,
+                    _ => u32::MAX,
+                }
+            };
+        }
+        let mut first_compound_assignment: Vec<u32> = (0..assignments.len() as u32).collect();
+        let mut follows_compound_assignment = false;
+        for at in 0..assignments.len() {
+            let (root, first, node) = assignments[at];
+            let is_compound = first == TestSubjects::NO_PROPERTY
+                && matches!(
+                    bound.flow[node as usize],
+                    Flow::Assign { target: FlowTarget::Expr(e), .. }
+                        if matches!(hir[e].kind, ExprKind::Ident(_))
+                            && bound.get_assignment_target_kind(hir, e) == AssignmentKind::Compound
+                );
+            if is_compound && follows_compound_assignment {
+                let earlier = assignments[at - 1];
+                let (from, to) = (position[earlier.2 as usize], position[node as usize]);
+                let count_up_to = |node| assignments.partition_point(|&it| it <= (root, 0, node));
+                let count_keys_up_to = |node| computed_key_nodes.partition_point(|&it| it <= node);
+                if earlier.0 == root
+                    && from < to
+                    && nodes[from as usize].run_start == nodes[to as usize].run_start
+                    && count_up_to(earlier.2) == count_up_to(node)
+                    && count_keys_up_to(earlier.2) == count_keys_up_to(node)
+                {
+                    first_compound_assignment[at] = first_compound_assignment[at - 1];
+                }
+            }
+            follows_compound_assignment = is_compound;
+        }
+        let edges = &bound.flow_edges;
+        let mut ascending_edges_end = vec![0; edges.len()];
+        for at in (0..edges.len()).rev() {
+            let here = position[edges[at].idx()];
+            ascending_edges_end[at] = match edges.get(at + 1).map(|next| position[next.idx()]) {
+                Some(next)
+                    if here < next
+                        && next != u32::MAX
+                        && nodes[here as usize].run_start == nodes[next as usize].run_start =>
+                {
+                    ascending_edges_end[at + 1]
+                }
+                _ => at as u32 + 1,
+            };
+        }
+        self.flow_memo.runs = FlowRuns {
+            file: Some(file),
+            position,
+            ascending_edges_end,
+            last_busy_call: (0..end).collect(),
+            nodes,
+            assignments,
+            deep_assignments,
+            first_compound_assignment,
+            computed_key_nodes,
+            array_mutations,
+        };
+    }
+
     /// FOR SPEED. Follows a walk from `before`, the antecedent of the idle call `flow`, through the
     /// idle calls that only one node follows. Returns where it ends up and how many calls it
     /// passed. Idle calls don't affect any walk. Each reference in n consecutive call statements
@@ -8218,6 +8841,7 @@ impl<'p, 's> Checker<'p, 's> {
             memo.settled_calls.clear();
             memo.settled_calls.resize(words, (0, 0));
             memo.idle_runs.clear();
+            memo.runs.file = None;
         }
         let (word, bit) = (flow.idx() / 64, 1 << (flow.idx() % 64));
         memo.settled_calls[word].0 |= bit;
@@ -8353,6 +8977,9 @@ impl<'p, 's> Checker<'p, 's> {
         const LONG: u32 = 32;
         let mut row: SmallVec<[FlowId; 4]> = SmallVec::new();
         let mut row_len = 0u32;
+        // The type at a compound assignment asks at each assignment on its way back: each walk starts one node in front of the last one and passes the same nodes again: the cube of their number, all told.
+        const LONG_WALK: u32 = 256;
+        let keeps_every_node = reduced.is_empty() && bound.flow_depth >= LONG_WALK;
         let reachable = loop {
             if (file, flow) == (self.last_flow_node.0, self.last_flow_node.1) {
                 break self.last_flow_node.2;
@@ -8379,7 +9006,7 @@ impl<'p, 's> Checker<'p, 's> {
                 row_len += 1;
             }
             // With a label reduced, the answer isn't the one for the node by itself.
-            if bound.is_shared(flow) && reduced.is_empty() {
+            if keeps_every_node || bound.is_shared(flow) && reduced.is_empty() {
                 if let Some(cached_reachable) =
                     self.p.flow_node_reachable.get(&self.task, &(file, flow))
                 {

@@ -112,13 +112,17 @@ impl Checker<'_, '_> {
                 if d.end == NO_LENGTH { d.start } else { d.end },
             )
         };
-        for redeclaration in bound.redeclarations.iter() {
+        for (position, redeclaration) in bound.redeclarations.iter().enumerate() {
             let message = redeclaration.code;
             let Some(mut diag) =
                 self.new_diagnostic_for_declaration_name(file, redeclaration.decl, message)
             else {
                 continue;
             };
+            diag.class = DiagnosticClass::early_error_if(
+                bound.is_early_error_redeclaration(position),
+                diag.class,
+            );
             let did_you_mean = self.did_you_mean_export_type_with_braces(file, redeclaration.decl);
             diag.related_information.extend(did_you_mean);
             let multiple_default_exports = message == 2528;
@@ -130,6 +134,7 @@ impl Checker<'_, '_> {
                 else {
                     continue;
                 };
+                d.class = diag.class;
                 if multiple_default_exports {
                     let here = if index == 0 { 2753 } else { 6204 };
                     d.add_related_info(Reported::bare(span_of_diagnostic(&diag), here));
@@ -144,7 +149,7 @@ impl Checker<'_, '_> {
     /// `createDiagnosticForNode(GetNameOfDeclaration(node) ?? node, message, getDisplayName(node))`. The name argument
     /// is omitted for messages without a placeholder (`messageNeedsName`). Returns `None` if the declaration has no
     /// range to report on.
-    fn new_diagnostic_for_declaration_name(
+    pub(super) fn new_diagnostic_for_declaration_name(
         &mut self,
         file: FileId,
         node: Decl,
@@ -489,8 +494,8 @@ impl Checker<'_, '_> {
         });
         if let Some((home, start)) = first {
             // `ShouldPreserveConstEnums`
-            let preserves_const_enums =
-                self.p.files.options.preserve_const_enums || self.p.files.options.isolated_modules;
+            let options = self.module_options(file);
+            let preserves_const_enums = options.preserve_const_enums || options.isolated_modules;
             for &(of, decl, is_own) in decls {
                 let Decl::Module(m) = decl else { continue };
                 let module = self.hir(of)[m];
@@ -620,6 +625,10 @@ impl Checker<'_, '_> {
             if !is_checked && !self.is_export_of_file_checked_before(id, merged, file) {
                 continue;
             }
+            let runtime_exports = declarations
+                .iter()
+                .filter(|&&it| self.is_runtime_export_declaration(it));
+            let is_early = runtime_exports.count() >= 2;
             for it @ &(of, decl) in declarations.iter() {
                 if of == file
                     && is_not_overload(self, &it)
@@ -630,7 +639,11 @@ impl Checker<'_, '_> {
                         true => Arg::Bytes("\u{FFFD}assignment".as_bytes()),
                         false => Arg::Atom(id),
                     };
-                    self.error_at((file, start, end), 2323, &[name]);
+                    if is_early {
+                        self.early_error_at((file, start, end), 2323, &[name]);
+                    } else {
+                        self.error_at((file, start, end), 2323, &[name]);
+                    }
                 }
             }
         }
@@ -706,7 +719,9 @@ impl Checker<'_, '_> {
         let files = self.files();
         let before = files.rank_of_file(file) as usize;
         files.order.iter().take(before).any(|&other| {
-            !self.bound(other).export_stars.is_empty()
+            // A file with an `export *` isn't a leaf, and a leaf's data is freed after its task.
+            !files.module(other).is_leaf
+                && !self.bound(other).export_stars.is_empty()
                 && files.module(other).is_module()
                 && self.is_checked_no_later_than(other, file)
                 && (files.exports_of_module(files.file_symbol(other))).contains(&(id, symbol))
@@ -862,8 +877,19 @@ impl Checker<'_, '_> {
                     (_, true) => states.push(kind),
                     (at, false) if states[at] == 1 || states[at] == 2 && kind != 2 => {
                         states[at] = 3;
-                        let is_static = Some(is_static);
-                        self.report_duplicate_member_errors(file, members, name, is_static, 2300);
+                        let class = if matches!(member.key, PropKey::Private(_)) {
+                            DiagnosticClass::EarlyError
+                        } else {
+                            DiagnosticClass::Semantic
+                        };
+                        self.report_duplicate_member_errors(
+                            file,
+                            members,
+                            name,
+                            Some(is_static),
+                            2300,
+                            class,
+                        );
                     }
                     _ => {}
                 }
@@ -877,7 +903,8 @@ impl Checker<'_, '_> {
                 let before = private_names[at].1;
                 private_names[at].1 |= if is_static { 2 } else { 1 };
                 if before != 3 && private_names[at].1 == 3 {
-                    self.report_duplicate_member_errors(file, members, name, None, 2804);
+                    let class = DiagnosticClass::EarlyError;
+                    self.report_duplicate_member_errors(file, members, name, None, 2804, class);
                 }
             }
         }
@@ -891,6 +918,7 @@ impl Checker<'_, '_> {
         name: Atom,
         is_static: Option<bool>,
         code: u32,
+        class: DiagnosticClass,
     ) {
         let hir = self.hir(file);
         for m in members.iter() {
@@ -927,14 +955,14 @@ impl Checker<'_, '_> {
                 // `DeclarationNameToString`
                 if self.is_declaration_name_missing(file, declaration) {
                     let at = (file, declaration_span.1, declaration_span.1);
-                    self.error_at(at, code, &[Arg::Bytes(b"(Missing)")]);
+                    self.error_at(at, code, &[Arg::Bytes(b"(Missing)")]).class = class;
                     continue;
                 }
                 let text = match is_stored || self.atoms().is_symbol_name(name) {
                     true => Arg::Bytes(&text),
                     false => Arg::Atom(name),
                 };
-                self.error_at(declaration_span, code, &[text]);
+                self.error_at(declaration_span, code, &[text]).class = class;
             }
         }
     }
@@ -942,7 +970,9 @@ impl Checker<'_, '_> {
     /// `checkClassForStaticPropertyNameConflicts`: 2699
     fn check_static_property_name_conflicts(&mut self, file: FileId) {
         let hir = self.hir(file);
-        if self.files().options.use_define_for_class_fields || hir.kind == FileKind::Declaration {
+        if self.module_options(file).use_define_for_class_fields
+            || hir.kind == FileKind::Declaration
+        {
             return;
         }
         for c in 0..hir.classes.len() {
@@ -971,7 +1001,12 @@ impl Checker<'_, '_> {
 
     /// Reports TS2699 on the name of static member `m`. The arguments are the property name and `symbolToString` of the
     /// class, interface or type literal.
-    fn report_static_property_name_conflict(&mut self, file: FileId, m: MemberId, name: Atom) {
+    pub(super) fn report_static_property_name_conflict(
+        &mut self,
+        file: FileId,
+        m: MemberId,
+        name: Atom,
+    ) -> &mut Reported {
         let at = (
             file,
             self.hir(file)[m].name_pos,
@@ -993,6 +1028,6 @@ impl Checker<'_, '_> {
             }
             _ => Arg::Bytes(b""),
         };
-        self.error_at(at, 2699, &[Arg::Atom(name), container]);
+        self.error_at(at, 2699, &[Arg::Atom(name), container])
     }
 }

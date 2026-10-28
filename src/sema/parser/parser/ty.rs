@@ -2,6 +2,7 @@
 
 use super::class::declared_key;
 use super::declared::Declares;
+use super::runtime_syntax::Prologue;
 use super::stmt::{ModifiersOf, Start};
 use super::{GrammarError, ListKind, Parser, ctx, oxc, take_span};
 use crate::Rejection;
@@ -289,6 +290,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             body: FnBody::None,
             anchor,
             start,
+            text_start: start,
+            is_strict: false,
+            is_strict_by_syntax: false,
         });
         if self.is_odd_function((kind, flags), parameters, &FnBody::None) {
             self.check_function_like_oxc(func, 0);
@@ -2172,6 +2176,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             body: FnBody::None,
             anchor: bracket,
             start: start.pos,
+            text_start: start.pos,
+            is_strict: false,
+            is_strict_by_syntax: false,
         });
         Member {
             kind: MemberKind::IndexSignature,
@@ -2234,6 +2241,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             body: FnBody::None,
             anchor,
             start,
+            text_start: start,
+            is_strict: false,
+            is_strict_by_syntax: false,
         });
         if self.is_odd_function((kind, flags), parameters, &FnBody::None) {
             self.check_function_like_oxc(func, 0);
@@ -2376,10 +2386,13 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             return false;
         }
         let saved = self.enter_context(0, ctx::TYPE);
-        let (body, open) = self.function_block(0);
+        let (body, open) = self.function_block(0, Prologue::Directives);
         self.context = saved;
+        let is_strict = self.is_strict_body(body);
         if let Some(accessor) = self.f.fns.get_mut(func.idx()) {
             accessor.body = body;
+            accessor.is_strict = is_strict;
+            accessor.is_strict_by_syntax = is_strict;
         }
         self.f.body_starts.push((func, open));
         let at = (open, self.prev_end());

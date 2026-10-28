@@ -1,0 +1,15 @@
+////: Failure
+class Failure extends Error {
+  code = 7;
+}
+////: for
+for (let i = 0; i < cases.length; i++) {
+  if (only !== undefined && Number(only) !== i) continue;
+  let said; const before = ran;
+  try { said = String(await cases[i][1]()); } catch (e) { said = "throws " + (e && e.name); }
+  console.log(i + " " + cases[i][0] + ": " + said.slice(0, 60) + " | the getter ran " + (ran - before));
+}
+////: lines
+function «1»(«2»: number): void {
+  total += typeof «2» === "number" ? «3» : «4»;
+}

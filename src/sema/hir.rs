@@ -15,6 +15,19 @@ use std::ops::{Deref, DerefMut};
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicU16;
 
+mod expr_flags;
+mod module_syntax;
+mod runtime_syntax;
+#[cfg(test)]
+mod tests;
+
+pub use crate::check::aot::DiagnosticClass;
+pub use expr_flags::{ExprFlags, MemberKey, TemplatePart, kind_flags};
+pub use runtime_syntax::{
+    find_transpiled_mark, has_runtime_member, is_marked_as_commonjs, is_moved_to_file_start,
+    is_proto_setter,
+};
+
 macro_rules! define_id {
     ($($name:ident),* $(,)?) => {$(
         #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
@@ -125,6 +138,20 @@ macro_rules! impl_run {
         impl<T> std::fmt::Debug for $name<T> {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 write!(f, "{}..+{}", self.start, self.len)
+            }
+        }
+        impl<T> PartialEq for $name<T> {
+            #[inline]
+            fn eq(&self, other: &Self) -> bool {
+                self.start == other.start && self.len == other.len
+            }
+        }
+        impl<T> Eq for $name<T> {}
+        impl<T> std::hash::Hash for $name<T> {
+            #[inline]
+            fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+                self.start.hash(state);
+                self.len.hash(state);
             }
         }
         impl<T> $name<T> {
@@ -239,6 +266,13 @@ impl<T: From<u32>> Span<T> {
         debug_assert!(i < self.len());
         T::from(self.start + i as u32)
     }
+    /// The `i` for which `at(i)` is the id with this `idx()`.
+    #[inline]
+    pub fn position_of(self, idx: usize) -> Option<usize> {
+        self.range()
+            .contains(&idx)
+            .then(|| idx - self.start as usize)
+    }
 }
 
 /// A list that's empty in most files, stored at its final size in an arena. It's one word instead of three. A file has
@@ -345,7 +379,7 @@ impl<'s, K: Ord, V> ArenaFewMap<'s, K, V> {
 
 /// Selects where the lists of a `FileIn` or a `BoundIn` are stored.
 pub trait Storage {
-    type List<T: 'static>: DerefMut<Target = [T]>;
+    type List<T: 'static>: DerefMut<Target = [T]> + Default;
     /// `BoundIn::symbols`
     type Symbols: crate::bind::SymbolList;
     /// A list of nodes of a `FileIn`.
@@ -353,7 +387,7 @@ pub trait Storage {
     /// A `BoundIn` list of ids that is only read by index.
     type Ids<T: Id>: Ids<T> + Default;
     /// A list that is empty in most files.
-    type Few<T: 'static>: DerefMut<Target = [T]>;
+    type Few<T: 'static>: DerefMut<Target = [T]> + Default;
     /// A map that is empty in most files.
     type FewMap<K: 'static, V: 'static>;
     /// A set that is empty in most files.
@@ -364,6 +398,8 @@ pub trait Storage {
     type Text: Deref<Target = [u8]> + Default;
     /// `FileIn::lazy`
     type Lazy;
+    /// `RuntimeBindingsIn::tables`
+    type Boxed<T>: DerefMut<Target = T>;
 }
 
 /// Storage while a file is parsed or bound: on the global heap, with room to grow.
@@ -382,6 +418,7 @@ impl Storage for Growable {
     type Text = Cow<'static, [u8]>;
     /// For `FileBuilder::lend`.
     type Lazy = LazyCells;
+    type Boxed<T> = Box<T>;
 }
 
 /// Storage from then on: at the final size, in the arena of the thread that loaded the file.
@@ -401,6 +438,7 @@ impl<'s> Storage for InArena<'s> {
     /// Same as `Owning`.
     type Text = Cow<'s, [u8]>;
     type Lazy = Lazy<'s>;
+    type Boxed<T> = ArenaBox<'s, T>;
 }
 
 /// A list that neither grows nor shrinks. It either owns an arena block, which it frees when dropped, or borrows from
@@ -409,6 +447,8 @@ impl<'s> Storage for InArena<'s> {
 pub struct Fixed<'s, T>(FixedIn<'s, T>);
 
 enum FixedIn<'s, T> {
+    /// No block if it's empty, because a file without nodes can also be created by a thread that doesn't own the arena
+    /// (`File::empty_in`).
     Arena(ArenaBox<'s, [T]>),
     Lent(&'s mut [T]),
     Shared(&'s [T]),
@@ -562,6 +602,8 @@ impl<'s, T: Id> Narrow<'s, T> {
 /// `FileIn::lazy` of a loaded file.
 pub struct Lazy<'s> {
     pub(crate) session: &'s Session,
+    /// `File::arena`
+    pub(crate) arena: &'s Arena,
     pub(crate) cells: &'s LazyCells,
 }
 
@@ -655,6 +697,8 @@ bitflags::bitflags! {
         /// A namespace that's synthesized from a JSDoc tag of a class element. In tsgo it's an element of that class
         /// (`parseListIndex`). Here it's a statement before the class.
         const CLASS_ELEMENT = 1 << 27;
+        /// A function whose parameters and body a build has written in place of the program's: the output of the React Compiler.
+        const REPLACED_BODY = 1 << 28;
     }
 }
 
@@ -667,7 +711,7 @@ pub enum Chain {
     Continue,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum UnOp {
     Plus,
     Minus,
@@ -682,7 +726,7 @@ pub enum UnOp {
     PostDec,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum BinOp {
     Add,
     Sub,
@@ -735,7 +779,11 @@ pub enum ExprKind {
     Number(u32),
     String(Atom),
     BigInt(Atom),
-    Regex,
+    /// `/pattern/flags`, both as written.
+    Regex {
+        pattern: Atom,
+        flags: Atom,
+    },
     /// The substitutions. The texts between them, one more than the substitutions, directly follow them in
     /// [`File::ids`]. See [`File::template_texts`].
     Template {
@@ -815,10 +863,14 @@ pub enum ExprKind {
     ImportMeta,
     /// `new.target`, with the name as written in the source, because any word forms a meta property.
     NewTarget(Atom),
+    /// Text between the tags of a JSX element: its value, with lines joined and entities decoded. Its tag is `String`.
+    JsxText(Atom),
 }
 
 /// `name_before_end` of a `Dot` whose name position is in [`FileIn::far_names`] instead.
 pub const FAR: u16 = u16::MAX;
+/// [`FAR`] of the `Dot` that a build makes of `a["b"]`. Use [`FileIn::written_kind`].
+pub const FAR_IN_BRACKETS: u16 = FAR - 1;
 
 /// [`FileIn::stmt_modifiers`] for callers that only have the file's list.
 #[inline(always)]
@@ -846,7 +898,7 @@ pub fn name_pos_in(exprs: &[Expr], far_names: &[(ExprId, u32)], e: ExprId) -> u3
             },
             end,
             ..
-        }) if name_before_end != FAR => end - u32::from(name_before_end),
+        }) if name_before_end < FAR_IN_BRACKETS => end - u32::from(name_before_end),
         _ => far_name_pos(far_names, e),
     }
 }
@@ -920,7 +972,7 @@ impl ExprKind {
             ExprKind::Number(..) => ExprTag::Number,
             ExprKind::String(..) => ExprTag::String,
             ExprKind::BigInt(..) => ExprTag::BigInt,
-            ExprKind::Regex => ExprTag::Regex,
+            ExprKind::Regex { .. } => ExprTag::Regex,
             ExprKind::Template { .. } => ExprTag::Template,
             ExprKind::TaggedTemplate(..) => ExprTag::TaggedTemplate,
             ExprKind::Array(..) => ExprTag::Array,
@@ -947,13 +999,17 @@ impl ExprKind {
             ExprKind::ImportCall { .. } => ExprTag::ImportCall,
             ExprKind::ImportMeta => ExprTag::ImportMeta,
             ExprKind::NewTarget(_) => ExprTag::NewTarget,
+            ExprKind::JsxText(..) => ExprTag::String,
         }
     }
 }
 
 /// Declares `$tag`, the kind of a `$kind` without its payload, in the same order, and `$kind::tag`.
 macro_rules! tags {
-    ($(#[$doc:meta])* $tag:ident of $kind:ident { $($variant:ident $shape:tt,)* }) => {
+    (
+        $(#[$doc:meta])* $tag:ident of $kind:ident { $($variant:ident $shape:tt,)* }
+        $($other:ident $other_shape:tt => $shown:ident,)*
+    ) => {
         $(#[$doc])*
         #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
         #[repr(u8)]
@@ -966,7 +1022,10 @@ macro_rules! tags {
         impl $kind {
             #[inline]
             pub fn tag(&self) -> $tag {
-                match self { $(tags!(@pattern $kind $variant $shape) => $tag::$variant,)* }
+                match self {
+                    $(tags!(@pattern $kind $variant $shape) => $tag::$variant,)*
+                    $(tags!(@pattern $kind $other $other_shape) => $tag::$shown,)*
+                }
             }
         }
     };
@@ -1010,6 +1069,8 @@ tags! {
         ExportAssign tuple,
         ExportAsNamespace tuple,
     }
+    With fields => Block,
+    Directive fields => Expr,
 }
 
 tags! {
@@ -1064,16 +1125,17 @@ pub struct ExprsByKind {
 impl ExprsByKind {
     pub fn new(file: &File) -> ExprsByKind {
         let mut starts = [0u32; ExprTag::COUNT + 1];
-        for e in &file.exprs {
-            starts[e.kind.tag() as usize + 1] += 1;
+        let tag_of = |i: usize| file.checked_kind(ExprId(i as u32)).tag();
+        for i in 0..file.exprs.len() {
+            starts[tag_of(i) as usize + 1] += 1;
         }
         for i in 0..ExprTag::COUNT {
             starts[i + 1] += starts[i];
         }
         let mut next = starts;
         let mut ids = vec![ExprId::NONE; file.exprs.len()];
-        for (i, e) in file.exprs.iter().enumerate() {
-            let at = &mut next[e.kind.tag() as usize];
+        for i in 0..file.exprs.len() {
+            let at = &mut next[tag_of(i) as usize];
             ids[*at as usize] = ExprId(i as u32);
             *at += 1;
         }
@@ -1095,6 +1157,8 @@ pub struct Call {
     /// [`INCOMPLETE_TEMPLATE`].
     pub close_pos: u32,
     pub chain: Chain,
+    /// `/* @__PURE__ */` or `/* #__PURE__ */` is the last comment before the first token of the `Call` or `New`, and the member and call chain that starts there ends in a `Call` or a `New`.
+    pub is_pure: bool,
 }
 
 /// [`Call::close_pos`] of a tagged template whose last piece of text is missing or unterminated (`callIsIncomplete`).
@@ -1266,10 +1330,12 @@ pub mod rare {
     pub const ODD_PRIVATE_NAME: u32 = 1 << 5;
     /// `delete a`, `delete a.#b`
     pub const DELETES_A_NAME: u32 = 1 << 6;
-    /// The body of a function starts with a string, which may be a directive.
+    /// The body of a function starts with a string, which may be a directive, in text whose function directives count.
     pub const DIRECTIVE_IN_FUNCTION: u32 = 1 << 7;
     /// A type parameter has a modifier: `<const T>`, `<in T>`.
     pub const TYPE_PARAMETER_MODIFIER: u32 = 1 << 8;
+    /// A function has a `"use strict"` directive that does not count.
+    pub const DROPPED_STRICT_DIRECTIVE: u32 = 1 << 14;
     /// `T?`, `?T`, `T!` or `!T` as a type, outside a comment.
     pub const JSDOC_TYPE: u32 = 1 << 9;
     /// A type predicate: `a is T`, `asserts a`.
@@ -1309,6 +1375,8 @@ pub mod rare {
     pub const TOP_LEVEL_AWAIT: u32 = 1 << 27;
     /// `import.meta`
     pub const IMPORT_META: u32 = 1 << 28;
+    /// `010`, `08`, `"\1"` or `"\8"`, which only sloppy code allows. Only set for text that is compiled.
+    pub const LEGACY_OCTAL: u32 = 1 << 29;
     /// The bits that the parser only sets for oxc's dialect. In another dialect a clear bit means nothing.
     pub const ONLY_IN_OXC_DIALECT: u32 = NESTED_MODULE_SYNTAX | MAY_REDECLARE | ODD_EXPORT;
 }
@@ -1394,6 +1462,21 @@ pub struct Diagnostic {
     pub args: Box<[Box<[u8]>]>,
     /// `AddRelatedInfo`
     pub related: Vec<Diagnostic>,
+    pub class: DiagnosticClass,
+}
+
+/// The class of a diagnostic whose creator names none.
+const fn default_class(kind: DiagnosticKind) -> DiagnosticClass {
+    match kind {
+        DiagnosticKind::Parse
+        | DiagnosticKind::Js
+        | DiagnosticKind::Oxc
+        | DiagnosticKind::OxcFatal
+        | DiagnosticKind::OxcSemantic
+        | DiagnosticKind::OxcSecondReading => DiagnosticClass::EarlyError,
+        DiagnosticKind::JsDoc | DiagnosticKind::Grammar => DiagnosticClass::TypeScriptGrammar,
+        DiagnosticKind::Checker => DiagnosticClass::Semantic,
+    }
 }
 
 impl Diagnostic {
@@ -1408,7 +1491,13 @@ impl Diagnostic {
             code,
             args: args.iter().map(|&arg| arg.into()).collect(),
             related: Vec::new(),
+            class: default_class(kind),
         }
+    }
+
+    pub fn with_class(mut self, class: DiagnosticClass) -> Diagnostic {
+        self.class = class;
+        self
     }
 }
 
@@ -1509,6 +1598,16 @@ pub enum StmtKind {
     /// `export = e`
     ExportAssign(ExprId),
     ExportAsNamespace(Atom),
+    /// Its tag is `Block`.
+    With {
+        object: ExprId,
+        body: StmtId,
+    },
+    /// A statement of the directive prologue of the file or of a function.
+    Directive {
+        expr: ExprId,
+        raw: Atom,
+    },
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -1568,6 +1667,12 @@ pub struct Func {
     /// Position of its first token, including decorators and modifiers. For a method or an accessor, the member's first
     /// token.
     pub start: u32,
+    /// Position of the first token of the ECMAScript production: `async` if written, else `function`, `get`, `set`, `*` or the key.
+    pub text_start: u32,
+    /// Its code is strict mode code. `File::set_strict` and `File::reset_strict` change it.
+    pub is_strict: bool,
+    /// The same as far as the file's own syntax says: a `"use strict"` directive of it, of a function around it or of the file, a class around it, or a module declaration in the file.
+    pub is_strict_by_syntax: bool,
 }
 
 impl Func {
@@ -1695,6 +1800,8 @@ pub struct Class {
     pub members: Span<MemberId>,
     /// Position of its first token, including decorators and modifiers.
     pub start: u32,
+    /// Position of `class`. Decorators and modifiers come before it.
+    pub text_start: u32,
     /// `node.Modifiers()`. For a declaration, its statement's list.
     pub modifiers: Span<ModifierId>,
 }
@@ -1780,6 +1887,8 @@ pub struct Module {
     /// `ModuleDeclaration.Keyword` is `module`. The `b` of `module a.b` has the same value as the
     /// `a`.
     pub specifies_module: bool,
+    /// `bun run` drops the declaration, so it makes no object. See [`FileIn::erases_namespace`].
+    pub is_erased: bool,
     /// The statement node of this declaration.
     pub stmt: StmtId,
 }
@@ -1877,6 +1986,8 @@ pub struct Import {
     pub mode: ResolutionMode,
     /// The statement node of this declaration.
     pub stmt: StmtId,
+    /// The `Object` of `with { .. }`. `NONE` if there is none.
+    pub attributes: ExprId,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -1943,6 +2054,8 @@ pub struct Export {
     pub mode: ResolutionMode,
     /// The statement node of this declaration.
     pub stmt: StmtId,
+    /// The `Object` of `with { .. }`. `NONE` if there is none.
+    pub attributes: ExprId,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -2331,6 +2444,30 @@ pub enum CommentDirectiveKind {
     Ignore,
 }
 
+/// `import { export } from "specifier"` binds the `require` of the file at `path`.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct ImportedRequire {
+    pub specifier: Atom,
+    pub export: Atom,
+    pub path: Atom,
+}
+
+/// What code reads through the import statement `import`: the export `export` of the file that the statement names, or, with a
+/// `member`, that member of the namespace object which `export` holds. `export` is `NONE` for the name behind `* as`.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct ImportedName {
+    pub import: ImportId,
+    pub export: Atom,
+    pub member: Atom,
+}
+
+/// The name holds `value` from the moment it is initialized.
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub struct ImportedConstant {
+    pub name: ImportedName,
+    pub value: crate::fold::Constant,
+}
+
 /// The parser's output for one source file.
 #[derive(Default)]
 pub struct FileIn<S: Storage> {
@@ -2346,6 +2483,12 @@ pub struct FileIn<S: Storage> {
     /// A module even without module syntax: by its extension, or because the options force every
     /// file to be a module. Such a file can still be a CommonJS module.
     pub is_forced_module: bool,
+    /// A script for its project that a build runs as a module: what `bun run` drops of it stays global. Set by the loader.
+    pub is_script_with_code: bool,
+    /// The imports that bind the `require` of another file. Set by the loader.
+    pub imported_requires: S::Few<ImportedRequire>,
+    /// The names of other files that hold a constant, among those that folding the file asked for. Set by the loader.
+    pub imported_constants: S::Few<ImportedConstant>,
     /// Has a top-level `import` or `export`.
     pub has_module_syntax: bool,
     /// The parser rejected the file, so the HIR is partial or empty. Only parse errors are reported for it.
@@ -2511,6 +2654,22 @@ pub struct FileIn<S: Storage> {
     /// The position of each `Identifier` whose text is one of `Atom::is_keyword_identifier`, or the start of its parent
     /// node. In the order the parser encountered them, including those in syntax it abandoned.
     pub keyword_identifier_positions: S::Few<u32>,
+    /// Parallel to `exprs`. Read it with `expr_flags`.
+    pub expr_flags: S::Nodes<ExprFlags>,
+    /// The parts of one template are contiguous. Read them with `template_parts`.
+    pub template_parts: S::Nodes<TemplatePart>,
+    /// Each `Template`, and each `String` that is the template of a tagged template, with the index of its first part.
+    pub template_part_starts: S::Few<(ExprId, u32)>,
+    /// A `String` that is the value of a JSX attribute, and its run-time value where that differs from the `String`.
+    pub jsx_attribute_texts: S::Few<(ExprId, Atom)>,
+    /// An `ExportStar` with `with { .. }`, and the `Object`. Ascending.
+    pub export_star_attributes: S::Few<(StmtId, ExprId)>,
+    /// The position of each BigInt literal that is the name of a property, a class member or a binding element, and the name of the property at run time: `1` for `1n`, `16` for `0x10n`.
+    pub bigint_names: S::Few<(u32, Atom)>,
+    /// The code of the file is strict mode code. `set_strict` and `reset_strict` change it.
+    pub is_strict: bool,
+    /// The same as far as the file's own syntax says: a `"use strict"` directive or a module declaration.
+    pub is_strict_by_syntax: bool,
 }
 
 /// The HIR of a file that has been loaded.
@@ -2519,9 +2678,9 @@ pub type File<'s> = FileIn<InArena<'s>>;
 pub type FileBuilder = FileIn<Growable>;
 
 macro_rules! arenas {
-    ($($field:ident: $node:ident => $id:ident, $add:ident, $add_all:ident;)*) => {
+    ($($field:ident: $node:ident => $id:ident $(, $add:ident, $add_all:ident)?;)*) => {
         impl FileBuilder {
-            $(
+            $($(
                 #[inline]
                 pub fn $add(&mut self, node: $node) -> $id {
                     let id = $id(self.$field.len() as u32);
@@ -2535,7 +2694,7 @@ macro_rules! arenas {
                     self.$field.extend_from_slice(nodes);
                     Span::new(start, nodes.len() as u32)
                 }
-            )*
+            )?)*
         }
         $(
             impl<S: Storage> std::ops::Index<$id> for FileIn<S> {
@@ -2556,7 +2715,7 @@ macro_rules! arenas {
 }
 
 arenas! {
-    exprs: Expr => ExprId, add_expr_node, add_expr_nodes;
+    exprs: Expr => ExprId;
     stmts: Stmt => StmtId, add_stmt_node, add_stmt_nodes;
     types: TypeNode => TypeNodeId, add_type_node, add_type_nodes;
     pats: Pat => PatId, add_pat_node, add_pat_nodes;
@@ -2866,7 +3025,10 @@ impl FileBuilder {
     }
     #[inline]
     pub fn expr(&mut self, kind: ExprKind, pos: u32, end: u32) -> ExprId {
-        self.add_expr_node(Expr { kind, pos, end })
+        let id = ExprId(self.exprs.len() as u32);
+        self.exprs.push(Expr { kind, pos, end });
+        self.expr_flags.push(kind_flags(&kind));
+        id
     }
     #[inline]
     pub fn stmt(&mut self, kind: StmtKind, pos: u32) -> StmtId {
@@ -2921,7 +3083,8 @@ impl FileBuilder {
     ) -> ExprKind {
         let before_end = end.checked_sub(name_pos);
         let near = before_end.and_then(|it| u16::try_from(it).ok());
-        let name_before_end = near.filter(|&it| it != FAR).unwrap_or_else(|| {
+        let is_near = |&it: &u16| it < FAR_IN_BRACKETS;
+        let name_before_end = near.filter(is_near).unwrap_or_else(|| {
             cold_path();
             let next = ExprId(self.exprs.len() as u32);
             self.far_names.push((next, name_pos));
@@ -2932,6 +3095,21 @@ impl FileBuilder {
             name,
             chain,
             name_before_end,
+        }
+    }
+    /// [`Self::dot`] for `obj["name"]`, whose literal starts at `name_pos`.
+    pub fn dot_in_brackets(
+        &mut self,
+        (obj, chain): (ExprId, Chain),
+        (name, name_pos): (Atom, u32),
+    ) -> ExprKind {
+        let next = ExprId(self.exprs.len() as u32);
+        self.far_names.push((next, name_pos));
+        ExprKind::Dot {
+            obj,
+            name,
+            chain,
+            name_before_end: FAR_IN_BRACKETS,
         }
     }
     /// `A.B.C`: each name with its position.
@@ -2978,7 +3156,9 @@ macro_rules! long_lists {
             modifiers,
             names,
             body_starts,
-            modifiers_of_stmts
+            modifiers_of_stmts,
+            expr_flags,
+            template_parts
         );
     };
 }
@@ -2987,13 +3167,35 @@ macro_rules! long_lists {
 /// list that's empty in most files (`$few`), a list whose elements own memory (`$owning`), and the text
 /// (`$source_text`).
 macro_rules! file_in_arena {
-    ($this:ident, $session:ident, $cells:expr, $long:ident, $few:ident, $owning:ident, $source_text:ident) => {
-        File {
+    ($this:ident, $arena:ident, $session:ident, $cells:expr, $long:ident, $few:ident, $owning:ident, $source_text:ident) => {
+        file_in_storage!(
+            File,
+            $this,
+            Lazy {
+                session: $session,
+                arena: $arena,
+                cells: $cells,
+            },
+            $long,
+            $few,
+            $owning,
+            $source_text
+        )
+    };
+}
+
+/// The same for `$file`, a `File` or a `FileBuilder`, whose `lazy` is `$lazy`.
+macro_rules! file_in_storage {
+    ($file:ident, $this:ident, $lazy:expr, $long:ident, $few:ident, $owning:ident, $source_text:ident) => {
+        $file {
             kind: $this.kind,
             is_js: $this.is_js,
             is_flow: $this.is_flow,
             check_directive: $this.check_directive,
             is_forced_module: $this.is_forced_module,
+            is_script_with_code: $this.is_script_with_code,
+            imported_requires: $few!($this.imported_requires),
+            imported_constants: $few!($this.imported_constants),
             has_module_syntax: $this.has_module_syntax,
             has_errors: $this.has_errors,
             ran_out_of_stack: $this.ran_out_of_stack,
@@ -3074,11 +3276,16 @@ macro_rules! file_in_arena {
             modifiers: $long!($this.modifiers),
             names: $long!($this.names),
             bases: $this.bases,
-            lazy: Lazy {
-                session: $session,
-                cells: $cells,
-            },
+            lazy: $lazy,
             keyword_identifier_positions: $few!($this.keyword_identifier_positions),
+            expr_flags: $long!($this.expr_flags),
+            template_parts: $long!($this.template_parts),
+            template_part_starts: $few!($this.template_part_starts),
+            jsx_attribute_texts: $few!($this.jsx_attribute_texts),
+            export_star_attributes: $few!($this.export_star_attributes),
+            bigint_names: $few!($this.bigint_names),
+            is_strict: $this.is_strict,
+            is_strict_by_syntax: $this.is_strict_by_syntax,
         }
     };
 }
@@ -3096,7 +3303,10 @@ macro_rules! moved_lists {
         }
         macro_rules! owning {
             ($list:expr) => {
-                Cow::Owned(std::mem::take(&mut $list))
+                match $list.is_empty() {
+                    true => Cow::Borrowed(&[][..]),
+                    false => Cow::Owned(std::mem::take(&mut $list)),
+                }
             };
         }
         macro_rules! source_text {
@@ -3126,6 +3336,7 @@ impl FileBuilder {
         session: &'s Session,
         cells: &'s LazyCells,
     ) -> (File<'s>, FileBuilder) {
+        // An empty list doesn't allocate in the arena. See `File::empty_in`.
         macro_rules! copied {
             ($list:expr) => {{
                 let exact = Fixed::copied_in(arena, &$list);
@@ -3134,7 +3345,16 @@ impl FileBuilder {
             }};
         }
         moved_lists!(arena);
-        let file = file_in_arena!(self, session, cells, copied, few, owning, source_text);
+        let file = file_in_arena!(
+            self,
+            arena,
+            session,
+            cells,
+            copied,
+            few,
+            owning,
+            source_text
+        );
         let mut emptied = FileBuilder::default();
         macro_rules! each {
             ($($f:ident),*) => { $(emptied.$f = self.$f;)* };
@@ -3153,7 +3373,39 @@ impl FileBuilder {
             };
         }
         moved_lists!(arena);
-        file_in_arena!(self, session, &self.lazy, lent, few, owning, source_text)
+        file_in_arena!(
+            self,
+            arena,
+            session,
+            &self.lazy,
+            lent,
+            few,
+            owning,
+            source_text
+        )
+    }
+
+    /// A copy of `file` that can grow. Every list keeps its order, so every id keeps its meaning.
+    pub fn from_file(file: &File<'_>) -> FileBuilder {
+        macro_rules! copied {
+            ($list:expr) => {
+                $list.to_vec()
+            };
+        }
+        macro_rules! owned {
+            ($text:expr) => {
+                Cow::Owned($text.to_vec())
+            };
+        }
+        file_in_storage!(
+            FileBuilder,
+            file,
+            LazyCells::default(),
+            copied,
+            copied,
+            copied,
+            owned
+        )
     }
 }
 
@@ -3184,6 +3436,7 @@ impl File<'_> {
         }
         file_in_arena!(
             self,
+            arena,
             session,
             self.lazy.cells,
             shared,
@@ -3195,19 +3448,25 @@ impl File<'_> {
 }
 
 impl<'s> File<'s> {
-    /// Returns a file without nodes. It allocates nothing.
+    /// Returns a file without nodes. It allocates nothing, so any thread can create one for another thread's arena
+    /// (`Files::free_tree`). Only the thread that owns an arena can allocate in it.
     pub fn empty_in(arena: &'s Arena, session: &'s Session) -> File<'s> {
         let no_nodes = FileBuilder::default();
         no_nodes
             .into_arena_with(arena, session, &EMPTY_FILE_CELLS)
             .0
     }
+
+    /// The arena that holds the lists.
+    pub fn arena(&self) -> &'s Arena {
+        self.lazy.arena
+    }
 }
 
 /// `IsParenthesizedExpression` for the immediate parent of `e`.
 #[inline]
 pub fn is_parenthesized(hir: &File, e: ExprId) -> bool {
-    open_parenthesis(hir, e).is_some()
+    hir.expr_flags(e).contains(ExprFlags::PARENTHESIZED)
 }
 
 /// The start of the outermost parentheses around `e`, if any.
@@ -3284,7 +3543,7 @@ pub fn is_bigint_literal_at(hir: &File, pos: u32) -> bool {
 
 /// `GetFirstIdentifier`: `a` of `a.b.c`.
 pub fn first_identifier(hir: &File, mut e: ExprId) -> ExprId {
-    while let ExprKind::Dot { obj, .. } = hir[e].kind {
+    while let ExprKind::Dot { obj, .. } = hir.checked_kind(e) {
         e = obj;
     }
     e
@@ -3300,7 +3559,7 @@ pub fn is_entity_name_expression(hir: &File, e: ExprId) -> bool {
 
 /// `IsPropertyAccessEntityNameExpression` for `e` itself, ignoring enclosing parentheses.
 pub fn is_property_access_entity_name_expression(hir: &File, e: ExprId) -> bool {
-    matches!(hir[e].kind, ExprKind::Dot { obj, .. }
+    matches!(hir.checked_kind(e), ExprKind::Dot { obj, .. }
         if !is_private_name_at(hir, hir.name_pos(e)) && is_entity_name_expression(hir, obj))
 }
 
@@ -3348,7 +3607,7 @@ pub fn is_dynamic_name(hir: &File, e: ExprId) -> bool {
 
 /// `IsDottedName`
 pub fn is_dotted_name(hir: &File, e: ExprId) -> bool {
-    match hir[e].kind {
+    match hir.checked_kind(e) {
         ExprKind::Ident(_)
         | ExprKind::This
         | ExprKind::Super
@@ -3372,7 +3631,7 @@ pub fn is_narrowable_reference(hir: &File, mut e: ExprId) -> bool {
 /// `isNarrowableReference` of `e`, or the expression that has the same answer.
 #[inline(always)]
 pub(crate) fn narrowable_reference_step(hir: &File, e: ExprId) -> Result<bool, ExprId> {
-    match hir[e].kind {
+    match hir.checked_kind(e) {
         ExprKind::Ident(_)
         | ExprKind::This
         | ExprKind::Super
@@ -3450,9 +3709,11 @@ pub fn names_bound_by(hir: &File, pat: PatId, into: &mut Vec<(Atom, PatId)>) {
 }
 
 /// `NodeFlagsNestedNamespace`: the statement `s` is the `B` of `namespace A.B`. It starts with its name.
-pub fn is_nested_namespace(hir: &File, s: StmtId) -> bool {
+pub fn is_nested_namespace<S: Storage>(hir: &FileIn<S>, s: StmtId) -> bool {
     matches!(hir[s].kind, StmtKind::Module(m) if hir[s].start == hir[m].name_pos)
 }
 
 const _: () = assert!(std::mem::size_of::<Expr>() <= 20);
+const _: () = assert!(std::mem::size_of::<StmtKind>() <= 20);
+const _: () = assert!(std::mem::size_of::<Call>() <= 24);
 const _: () = assert!(std::mem::size_of::<TypeNode>() <= 32);

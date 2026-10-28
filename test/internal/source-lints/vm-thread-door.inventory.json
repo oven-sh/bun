@@ -61,6 +61,7 @@
   "src/jsc/web_worker.rs": {
     "thread spawn": 1,
     "unsafe impl Send": [
+      "OwnedByThread",
       "ThreadStart"
     ]
   },
@@ -105,6 +106,9 @@
       "LoopToWake"
     ]
   },
+  "src/runtime/cli/fuzzilli_compile_loop.rs": {
+    "thread spawn": 1
+  },
   "src/runtime/cli/lint_js.rs": {
     "thread spawn": 1,
     "unsafe impl Send": [
@@ -120,6 +124,11 @@
   },
   "src/runtime/cli/run_command.rs": {
     "HTTPThread::schedule": 1
+  },
+  "src/runtime/cli/run_compiled.rs": {
+    "unsafe impl Send": [
+      "SharedWatcher"
+    ]
   },
   "src/runtime/dns_jsc/dns.rs": {
     "WorkPool::schedule*": 1,

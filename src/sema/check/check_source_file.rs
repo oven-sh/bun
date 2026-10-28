@@ -9,7 +9,6 @@ use super::errors_operators::{
     check_grammar_rest_element, check_instance_of_expression, check_satisfies,
     check_tagged_template, check_template_spans, check_yield_result,
 };
-use super::errors_statements::is_with_statement;
 use super::shape::ThisAssignmentDeclaration;
 use super::sink::MAX_SERIALIZATION_LEVEL;
 use super::*;
@@ -25,6 +24,11 @@ use smallvec::SmallVec;
 /// frames come out of it too.
 const TASK_STACK: usize = 3 << 20;
 
+/// The same on a thread with `bun_sema_driver::WORKER_STACK_SIZE`, which the product checks on. What recurses between two
+/// looks at the stack has the rest.
+const TASK_STACK_OF_WORKER: usize = 24 << 20;
+const WORKER_STACK_LEFT_OVER: usize = 4 << 20;
+
 impl<'s> Checker<'_, 's> {
     /// Call this before the checker is used. See `TASK_STACK`.
     pub fn begin_stack_budget(&mut self) {
@@ -34,7 +38,10 @@ impl<'s> Checker<'_, 's> {
             "the thread has too little stack for a task"
         );
         self.stack_base = stack_pointer();
-        self.stack_limit = TASK_STACK;
+        self.stack_limit = match left >= TASK_STACK_OF_WORKER + WORKER_STACK_LEFT_OVER {
+            true => TASK_STACK_OF_WORKER,
+            false => TASK_STACK,
+        };
     }
 
     /// Call this before `check_file`. `round` counts from 0, and no other task of the round has `index`. Without this
@@ -44,6 +51,7 @@ impl<'s> Checker<'_, 's> {
         self.task.own.set_sharing(Sharing::Publishes);
 
         self.order_dependent.clear();
+        self.fixed_length_asked_last = None;
     }
 
     /// Call after `check_file`. Returns true if the native stack ran out in that file, and resets
@@ -158,6 +166,8 @@ impl<'s> Checker<'_, 's> {
         never_checked
             .iter()
             .any(|&(from, to)| (from..to).contains(&pos))
+            || self.is_in_left_out_function(pos)
+            || self.is_in_dead_code(pos)
     }
 
     /// Records that `getTypeFromBindingElement` has checked `initializer`, in the parameter `root`.
@@ -251,6 +261,7 @@ impl<'s> Checker<'_, 's> {
     fn check_deferred_node(&mut self, file: FileId, e: ExprId) {
         let hir = self.hir(file);
         match hir[e].kind {
+            ExprKind::Fn(func) if self.is_left_out(file, func) => {}
             // `checkFunctionExpressionOrObjectLiteralMethodDeferred`, `checkAccessorDeclaration`
             ExprKind::Fn(func) => {
                 if matches!(hir[func].kind, FnKind::Getter | FnKind::Setter) {
@@ -335,6 +346,9 @@ impl<'s> Checker<'_, 's> {
 
     /// `checkSourceElement(node.Body())`, `checkExpressionCached(node.Body())`
     fn check_function_body(&mut self, file: FileId, func: FnId) {
+        if self.is_left_out(file, func) {
+            return;
+        }
         let function = &self.hir(file)[func];
         // `checkBlock`
         if matches!(function.body, FnBody::Block(_)) {
@@ -475,6 +489,9 @@ impl<'s> Checker<'_, 's> {
 
     /// `checkSignatureDeclaration`
     fn check_signature_declaration(&mut self, file: FileId, func: FnId) {
+        if self.is_left_out(file, func) {
+            return;
+        }
         let hir = self.hir(file);
         if matches!(
             hir[func].kind,
@@ -620,7 +637,7 @@ impl<'s> Checker<'_, 's> {
 
     /// `shouldCheckErasableSyntax`
     fn should_check_erasable_syntax(&self, file: FileId) -> bool {
-        self.p.files.options.erasable_syntax_only && !self.hir(file).is_js
+        self.module_options(file).erasable_syntax_only && !self.hir(file).is_js
     }
 
     /// From `checkAssertion`, for `<T>operand`: reports 7059 in a `.mts` or `.cts` file, and 1294 from the `<` up to
@@ -645,7 +662,7 @@ impl<'s> Checker<'_, 's> {
 
     /// `checkFunctionOrMethodDeclaration`: the body isn't deferred.
     fn check_function_or_method_declaration(&mut self, file: FileId, func: FnId) {
-        if func.is_none() {
+        if func.is_none() || self.is_left_out(file, func) {
             return;
         }
         let hir = self.hir(file);
@@ -1009,7 +1026,8 @@ impl<'s> Checker<'_, 's> {
                         if hir[member.func].flags.contains(Flags::GENERATOR)
                             && self.is_identifier_named_constructor(file, m)
                         {
-                            self.error(file, hir.name(hir.node(m)), 1368, &[]);
+                            let class = self.special_constructor_error_class(file, m);
+                            self.error(file, hir.name(hir.node(m)), 1368, &[]).class = class;
                         }
                     }
                 }
@@ -1022,7 +1040,8 @@ impl<'s> Checker<'_, 's> {
                     if self.is_identifier_named_constructor(file, m)
                         && hir.kind(hir.parent(hir.node(m))).is_class_like()
                     {
-                        self.error(file, hir.name(hir.node(m)), 1341, &[]);
+                        let class = self.special_constructor_error_class(file, m);
+                        self.error(file, hir.name(hir.node(m)), 1341, &[]).class = class;
                     }
                 }
                 _ => {}
@@ -1057,6 +1076,7 @@ impl<'s> Checker<'_, 's> {
             // `return` requests the signature's return type, which is a separate resolution.
             if matches!(member.kind, MemberKind::Getter | MemberKind::Setter)
                 && self.bound(file).member_symbol[m.idx()].is_some()
+                && !self.is_left_out(file, member.func)
             {
                 let symbol = self.symbol_of_member(file, m);
                 self.type_of_symbol(symbol);
@@ -1378,7 +1398,7 @@ impl<'s> Checker<'_, 's> {
                 self.current_source_element = saved;
                 self.check_type_node(file, hir[mapped].name_ty);
                 self.check_type_node(file, hir[mapped].ty);
-                if hir[mapped].ty.is_none() && self.p.files.options.no_implicit_any {
+                if hir[mapped].ty.is_none() && self.module_options(file).no_implicit_any {
                     self.error(file, node, 7039, &[]);
                 }
                 self.type_from_node(file, node);
@@ -1394,7 +1414,7 @@ impl<'s> Checker<'_, 's> {
     /// `checkSourceElement(node.ElseStatement)`, is the next loop iteration here, so a chain of
     /// `else if` doesn't use any stack.
     fn check_source_element(&mut self, file: FileId, s: StmtId) {
-        if s.is_none() || self.is_stack_low() {
+        if s.is_none() || self.is_stack_low() || self.is_dead_statement(file, s) {
             return;
         }
         let hir = self.hir(file);
@@ -1404,14 +1424,16 @@ impl<'s> Checker<'_, 's> {
         loop {
             self.enter_source_element(CurrentNode::Node(file, hir.node(node)));
             if !self.within_unreachable_code
-                && self.p.files.options.allow_unreachable_code != Some(true)
+                && self.module_options(file).allow_unreachable_code != Some(true)
                 && self.check_source_element_unreachable(file, node)
             {
                 self.within_unreachable_code = true;
             }
             self.check_source_element_worker(file, node);
             match hir[node].kind {
-                StmtKind::If { no, .. } if no.is_some() => node = no,
+                StmtKind::If { no, .. } if no.is_some() && !self.is_dead_statement(file, no) => {
+                    node = no
+                }
                 _ => break,
             }
         }
@@ -1419,8 +1441,7 @@ impl<'s> Checker<'_, 's> {
         self.within_unreachable_code = save_within_unreachable_code;
     }
 
-    /// `checkSourceElementWorker`. The head of a `for` and the object of a `with` are stored as
-    /// statements but aren't statements.
+    /// `checkSourceElementWorker`.
     fn check_source_element_worker(&mut self, file: FileId, s: StmtId) {
         if s.is_none() {
             return;
@@ -1429,18 +1450,19 @@ impl<'s> Checker<'_, 's> {
         // `checkGrammarStatementInAmbientContext`, for the statements that continue regardless of
         // its result.
         if self.has_ambient_context
-            && match hir[s].kind {
+            && matches!(
+                hir[s].kind,
                 StmtKind::Empty
-                | StmtKind::Debugger
-                | StmtKind::Expr(_)
-                | StmtKind::If { .. }
-                | StmtKind::While { .. }
-                | StmtKind::DoWhile { .. }
-                | StmtKind::Switch { .. }
-                | StmtKind::Try { .. } => true,
-                StmtKind::Block(_) => !is_with_statement(hir, s),
-                _ => false,
-            }
+                    | StmtKind::Debugger
+                    | StmtKind::Expr(_)
+                    | StmtKind::Directive { .. }
+                    | StmtKind::Block(_)
+                    | StmtKind::If { .. }
+                    | StmtKind::While { .. }
+                    | StmtKind::DoWhile { .. }
+                    | StmtKind::Switch { .. }
+                    | StmtKind::Try { .. }
+            )
         {
             self.check_grammar_statement_in_ambient_context(file, s);
         }
@@ -1448,14 +1470,16 @@ impl<'s> Checker<'_, 's> {
             self.check_grammar_modifiers_of_statement(file, s);
         }
         match hir[s].kind {
-            StmtKind::Expr(e) => self.check_expression(file, e),
+            StmtKind::Expr(e) | StmtKind::Directive { expr: e, .. } => {
+                self.check_expression(file, e)
+            }
             // `checkThrowStatement`: after a line break the thrown expression is missing.
             StmtKind::Throw(e) => {
                 if !self.check_grammar_statement_in_ambient_context(file, s)
                     && matches!(hir[e].kind, ExprKind::Missing)
                 {
                     let at = (file, hir[e].pos, super::explain::NO_LENGTH);
-                    self.grammar_error_at(at, 1142, &[]);
+                    self.early_grammar_error_at(at, 1142, &[]);
                 }
                 self.check_expression(file, e);
             }
@@ -1646,9 +1670,7 @@ impl<'s> Checker<'_, 's> {
                 self.check_truthiness_expression(file, test);
             }
             // `checkWithStatement`: checks the object, not the body.
-            StmtKind::Block(list) if is_with_statement(hir, s) => {
-                self.check_with_statement(file, s, list)
-            }
+            StmtKind::With { object, body } => self.check_with_statement(file, s, object, body),
             StmtKind::Block(list) => self.check_source_elements(file, list),
             StmtKind::Switch { expr, cases } => {
                 self.check_expression(file, expr);
@@ -1660,7 +1682,7 @@ impl<'s> Checker<'_, 's> {
                     }
                     self.check_source_elements(file, hir[c].body);
                     let fallthrough = bound.case_fallthrough[c.idx()];
-                    if self.p.files.options.no_fallthrough_cases_in_switch
+                    if self.module_options(file).no_fallthrough_cases_in_switch
                         && fallthrough.is_some()
                         && self.is_reachable(file, fallthrough)
                     {
@@ -1693,7 +1715,7 @@ impl<'s> Checker<'_, 's> {
                 if !self.check_grammar_statement_in_ambient_context(file, s) {
                     self.check_grammar_duplicate_label(file, s, label);
                 }
-                if self.p.files.options.allow_unused_labels == Some(false)
+                if self.module_options(file).allow_unused_labels == Some(false)
                     && bound.unused_labels.contains(&s)
                 {
                     self.error_at(self.span_of_token(file, hir[s].start), 7028, &[]);
@@ -1709,7 +1731,7 @@ impl<'s> Checker<'_, 's> {
                     if let ModuleName::Ident(name) = hir[module].name {
                         self.check_collisions_for_declaration_name(file, s, name);
                     }
-                    let options = &self.p.files.options;
+                    let options = self.module_options(file);
                     // `ShouldPreserveConstEnums`
                     let preserves_const_enums =
                         options.preserve_const_enums || options.isolated_modules;
@@ -1766,7 +1788,7 @@ impl<'s> Checker<'_, 's> {
                 self.check_const_enum_access(file, e, ty);
             }
             // FOR SPEED: half of all expressions are one of these.
-            match hir[e].kind {
+            match hir.checked_kind(e) {
                 ExprKind::Ident(_)
                 | ExprKind::This
                 | ExprKind::Null
@@ -1818,7 +1840,7 @@ impl<'s> Checker<'_, 's> {
     #[inline(never)]
     fn check_subexpressions(&mut self, file: FileId, e: ExprId, ty: TypeId) {
         let hir = self.hir(file);
-        match hir[e].kind {
+        match hir.checked_kind(e) {
             ExprKind::Template { exprs, .. } | ExprKind::Array(exprs) => {
                 for x in hir.ids(exprs) {
                     self.check_expression(file, x);
@@ -1920,7 +1942,7 @@ impl<'s> Checker<'_, 's> {
                 self.check_expression(file, x);
             }
             ExprKind::Super => self.mark_super_property_in_static_initializer(file, e),
-            ExprKind::Regex => self.check_grammar_regular_expression_literal(file, e),
+            ExprKind::Regex { .. } => self.check_grammar_regular_expression_literal(file, e),
             ExprKind::Unary { op: UnOp::Void, .. } => self.check_node_deferred(file, e),
             ExprKind::Unary { operand: x, .. } => self.check_expression(file, x),
             // `checkAssertion`

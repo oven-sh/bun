@@ -45,6 +45,7 @@
 //! `--parser flow` (flow-parser 0.322) and `--parser babel-flow`, both for its tests in `tests/format/flow` and for
 //! real files run through the npm package.
 
+use super::runtime_syntax::Prologue;
 use super::stmt::Start;
 use super::{Parser, ctx, take_span};
 use crate::token::T;
@@ -261,6 +262,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             body: FnBody::None,
             anchor,
             start,
+            text_start: start,
+            is_strict: false,
+            is_strict_by_syntax: false,
         });
         self.finish_type(TypeNodeKind::Fn(func), start)
     }
@@ -934,6 +938,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             body: FnBody::None,
             anchor,
             start,
+            text_start: start,
+            is_strict: false,
+            is_strict_by_syntax: false,
         })
     }
 
@@ -1137,6 +1144,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             body: FnBody::None,
             anchor: bracket,
             start: start.pos,
+            text_start: start.pos,
+            is_strict: false,
+            is_strict_by_syntax: false,
         });
     }
 
@@ -1503,6 +1513,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             other_implements,
             members,
             start: start.pos,
+            text_start: start.pos,
             modifiers,
         });
         self.add_stmt(StmtKind::Class(class), start, modifiers)
@@ -1542,6 +1553,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             body: FnBody::None,
             anchor,
             start: start.pos,
+            text_start: start.pos,
+            is_strict: false,
+            is_strict_by_syntax: false,
         });
         let modifiers = self.take_modifiers(base);
         self.add_stmt(StmtKind::Fn(func), start, modifiers)
@@ -1651,13 +1665,14 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         };
         // In an ambient context, such as a `.js.flow` file, it has no body either.
         let (body, open) = match self.token() {
-            T::OpenBrace if !is_ambient => self.function_block(context),
+            T::OpenBrace if !is_ambient => self.function_block(context, Prologue::Directives),
             _ => {
                 self.semicolon();
                 (FnBody::None, 0)
             }
         };
         let retained_flags = Flags::AMBIENT | Flags::EXPORT | Flags::DEFAULT | Flags::ASYNC;
+        let is_strict = self.is_strict_body(body);
         let func = self.f.add_fn(Func {
             kind: FnKind::Decl,
             flags: flags & retained_flags,
@@ -1670,6 +1685,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             body,
             anchor,
             start: start.pos,
+            text_start: start.pos,
+            is_strict,
+            is_strict_by_syntax: is_strict,
         });
         if matches!(body, FnBody::Block(_)) {
             self.f.body_starts.push((func, open));
@@ -1769,6 +1787,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             body: FnBody::None,
             anchor,
             start,
+            text_start: start,
+            is_strict: false,
+            is_strict_by_syntax: false,
         });
         self.finish_type(TypeNodeKind::Fn(func), start)
     }
@@ -1883,6 +1904,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             type_args,
             close_pos: u32::MAX,
             chain: Chain::No,
+            is_pure: false,
         });
         self.finish_expr(ExprKind::New(call), start)
     }
@@ -2204,6 +2226,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             other_implements: IdList::EMPTY,
             members,
             start: start.pos,
+            text_start: start.pos,
             modifiers,
         });
         self.add_stmt(StmtKind::Class(class), start, modifiers)

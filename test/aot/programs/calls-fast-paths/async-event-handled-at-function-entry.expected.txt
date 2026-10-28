@@ -1,0 +1,3 @@
+the result: 304
+rounds whose result differs: 0
+the poll at an entry was entered: true

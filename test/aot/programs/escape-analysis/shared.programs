@@ -1,0 +1,8 @@
+////: split-2
+function split(source: string): Split {
+  const at = source.lastIndexOf("@");
+  if (at < 0) {
+    return { name: source };
+  }
+  return { name: «1») };
+}

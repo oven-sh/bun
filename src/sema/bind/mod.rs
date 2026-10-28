@@ -3,10 +3,27 @@
 //! thread.
 
 mod binder;
+mod closed_module;
+pub mod decorator_metadata;
 mod lint;
 mod parents;
+mod runtime;
+pub mod static_referent;
 
+pub use closed_module::specifiers_of_closed_module;
 pub use parents::{bind_for_format_in, try_bind_for_format_in};
+pub use runtime::{
+    AnnexBFunction, Binding, BindingInitializer, BindingKind, BindingStability, CodeUnit,
+    CommonJsVariable, EarlyRedeclaration, EvalScope, FunctionFlags, ImplicitReference,
+    ImplicitReferenceKind, InitialState, ParameterVarCopy, PrivateMembers, PrivateName,
+    PrivateNameId, RuntimeBindOptions, RuntimeBindings, RuntimeBindingsIn, RuntimeTablesIn,
+    StoreKind, SymbolStore, has_mapped_arguments, has_simple_parameter_list, is_among_parameters,
+};
+pub use static_referent::{
+    LinkedBinding, LoadedValue, NamespaceReferent, ReferentCertainty, ReferentContext,
+    ResolvedReferent, StaticReferent, UnknownReferent, export_referent, static_referent,
+    symbol_referent,
+};
 
 use crate::atom::{Atom, known};
 use crate::hir::*;
@@ -228,7 +245,7 @@ pub fn is_module_exports(hir: &File, e: ExprId) -> bool {
 
 /// Same, but ignores the parentheses around `e`.
 pub fn is_module_exports_inside_parentheses(hir: &File, e: ExprId) -> bool {
-    let (obj, name) = match hir[e].kind {
+    let (obj, name) = match hir.checked_kind(e) {
         ExprKind::Dot { obj, name, .. } => (obj, name),
         ExprKind::Index { obj, index, .. } => (obj, string_literal_text(hir, index)),
         _ => return false,
@@ -266,7 +283,7 @@ pub fn assignment_declaration_kind(hir: &File, e: ExprId) -> JsDeclarationKind {
         return JsDeclarationKind::ModuleExports;
     }
     // `GetElementOrPropertyAccessName`
-    let (obj, name) = match hir[target].kind {
+    let (obj, name) = match hir.checked_kind(target) {
         ExprKind::Dot { obj, name, .. } => (
             obj,
             (!is_private_name_at(hir, hir.name_pos(target))).then_some(name),
@@ -295,7 +312,7 @@ pub fn assignment_declaration_kind(hir: &File, e: ExprId) -> JsDeclarationKind {
 /// `IsBindableStaticNameExpression` with `excludeThisKeyword`: `a`, `a.b`, `a["b"]`, `a[0]`.
 fn is_bindable_static_name(hir: &File, e: ExprId) -> bool {
     !is_parenthesized(hir, e)
-        && match hir[e].kind {
+        && match hir.checked_kind(e) {
             ExprKind::Ident(_) => true,
             ExprKind::Dot { obj, .. } => {
                 !is_private_name_at(hir, hir.name_pos(e)) && is_bindable_static_name(hir, obj)
@@ -322,7 +339,7 @@ pub fn define_property_call(hir: &File, e: ExprId) -> Option<(ExprId, ExprId)> {
         obj,
         name: known::defineProperty,
         ..
-    } = hir[call.callee].kind
+    } = hir.checked_kind(call.callee)
     else {
         return None;
     };
@@ -752,6 +769,11 @@ pub enum ScopeKind {
     PropertyDeclaration(MemberId, FnId),
     /// Same for the property's type.
     PropertyType(MemberId, FnId),
+    /// `With`, `FieldInitializer`, `ClassDecorators` and `ImplicitBlock` declare nothing and exist only with `BindOptions::runtime`.
+    With(StmtId),
+    FieldInitializer(MemberId),
+    ClassDecorators(ClassId),
+    ImplicitBlock(FnId),
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -859,6 +881,12 @@ macro_rules! packed {
                 }
             }
         };
+
+        impl std::fmt::Debug for $packed {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                self.get().fmt(f)
+            }
+        }
     };
 }
 
@@ -1457,6 +1485,8 @@ pub struct Redeclaration {
 pub struct BoundIn<S: Storage> {
     /// The HIR was too deep to bind. No other field is filled in.
     pub ran_out_of_stack: bool,
+    /// `Bound::unbound_in`
+    pub is_unbound: bool,
     pub symbols: S::Symbols,
     pub scopes: S::List<Scope>,
     /// Each table is a contiguous range of `entries`, in symbol creation order. This is where it ends. It starts where
@@ -1684,6 +1714,7 @@ pub struct BoundIn<S: Storage> {
     /// other counts. See [`kind_counts`]. If it isn't empty, every statement has a `stmt_parent`
     /// and every type has a `type_scope`.
     pub kind_counts: S::List<u32>,
+    pub runtime: RuntimeBindingsIn<S>,
 }
 
 /// The layout of [`BoundIn::kind_counts`].
@@ -1756,6 +1787,13 @@ impl<S: Storage> BoundIn<S> {
             Decl::ImportEquals(it) => f[it].flags,
             _ => Flags::empty(),
         }
+    }
+
+    /// Whether the declaration makes the object of a namespace, or adds to it, when it runs.
+    pub fn makes_namespace_object(&self, f: &File, m: ModuleId) -> bool {
+        matches!(f[m].name, ModuleName::Ident(_))
+            && !f[m].is_erased
+            && self.module_instance_state[m.idx()] != ModuleInstanceState::NonInstantiated
     }
 
     #[inline]
@@ -2332,7 +2370,7 @@ impl Bound<'_> {
                 {
                     return None;
                 }
-                match hir[left].kind {
+                match hir.checked_kind(left) {
                     ExprKind::Ident(_) => Some(hir[left].pos),
                     ExprKind::Dot { .. } => Some(hir.name_pos(left)),
                     // `IsStringOrNumericLiteralLike(SkipParentheses(argument))`
@@ -2640,11 +2678,18 @@ fn few_map_to_arena<K: Ord, V>(map: FxHashMap<K, V>, arena: &Arena) -> ArenaFewM
 }
 
 impl BoundBuilder {
+    /// Moves the side tables into `arena`, with every list at its final size.
+    #[cfg(test)]
+    pub fn into_arena<'s>(mut self, arena: &'s Arena) -> Bound<'s> {
+        self.move_to_arena(arena)
+    }
+
     /// Resets it to `BoundBuilder::default()`, except that the lists keep their capacity.
     fn clear(&mut self) {
         // Destructures every field so that a newly added one can't be forgotten.
         let BoundIn {
             ran_out_of_stack,
+            is_unbound,
             symbols,
             scopes,
             tables,
@@ -2741,8 +2786,10 @@ impl BoundBuilder {
             expr_kinds,
             expr_kind_counts,
             kind_counts,
+            runtime,
         } = self;
         *ran_out_of_stack = Default::default();
+        *is_unbound = Default::default();
         symbols.clear();
         scopes.clear();
         tables.clear();
@@ -2839,6 +2886,7 @@ impl BoundBuilder {
         expr_kinds.clear();
         expr_kind_counts.clear();
         kind_counts.clear();
+        runtime.clear();
     }
 
     /// Moves the side tables into `arena`, with every list at its final size. Leaves `self` empty,
@@ -2846,6 +2894,7 @@ impl BoundBuilder {
     fn move_to_arena<'s>(&mut self, arena: &'s Arena) -> Bound<'s> {
         Bound {
             ran_out_of_stack: self.ran_out_of_stack,
+            is_unbound: self.is_unbound,
             symbols: {
                 let exact = Symbols::of(&self.symbols, arena);
                 self.symbols.clear();
@@ -2979,6 +3028,7 @@ impl BoundBuilder {
             expr_kinds: copy_to_arena(&mut self.expr_kinds, arena),
             expr_kind_counts: copy_to_arena(&mut self.expr_kind_counts, arena),
             kind_counts: copy_to_arena(&mut self.kind_counts, arena),
+            runtime: self.runtime.move_to_arena(arena),
         }
     }
 }
@@ -2989,6 +3039,7 @@ impl Bound<'_> {
     pub fn share<'s>(&'s self, arena: &'s Arena) -> Bound<'s> {
         Bound {
             ran_out_of_stack: self.ran_out_of_stack,
+            is_unbound: self.is_unbound,
             symbols: self.symbols.copy_in(arena),
             scopes: Fixed::shared(&self.scopes),
             tables: Fixed::shared(&self.tables),
@@ -3142,6 +3193,7 @@ impl Bound<'_> {
             expr_kinds: Fixed::shared(&self.expr_kinds),
             expr_kind_counts: Fixed::shared(&self.expr_kind_counts),
             kind_counts: Fixed::shared(&self.kind_counts),
+            runtime: self.runtime.share(),
         }
     }
 }
@@ -3158,6 +3210,16 @@ impl<'s> Bound<'s> {
     pub fn empty_in(arena: &'s Arena) -> Bound<'s> {
         BoundBuilder::default().move_to_arena(arena)
     }
+
+    /// In place of the side tables of a module that is bound once a file that is read refers to it.
+    pub fn unbound_in(arena: &'s Arena, specifiers: Vec<Atom>) -> Bound<'s> {
+        let mut unbound = BoundBuilder {
+            is_unbound: true,
+            specifiers,
+            ..Default::default()
+        };
+        unbound.move_to_arena(arena)
+    }
 }
 
 /// The compiler options `requiresScopeChangeWorker` reads.
@@ -3168,6 +3230,7 @@ pub struct BindOptions {
     /// `GetEmitScriptTarget` is older than ES2020.
     pub before_es2020: bool,
     pub before_es2017: bool,
+    pub runtime: Option<RuntimeBindOptions>,
 }
 
 /// `bindSourceFile`

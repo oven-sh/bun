@@ -1,0 +1,361 @@
+////: names-of-an-es-module
+export const n = 10;
+export function f(a: number) {
+  return a + 1;
+}
+export class C {
+  v = 7;
+}
+export const s = "s";
+////: names-of-a-commonjs-file
+exports.n = 10;
+exports.f = function (a) {
+  return a + 1;
+};
+exports.C = class C {
+  v = 7;
+};
+exports.s = "s";
+////: needs-require
+{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+////: a-factory-of-an-es-module
+export function h(tag: any, props: any, ...children: any[]) {
+  return [typeof tag === "string" ? tag : typeof tag, props && Object.keys(props).join(), children.flat().join("|")].join(":");
+}
+export const Fragment = "fragment";
+export const s = "s";
+////: a-factory-of-a-commonjs-file
+exports.h = function (tag, props, ...children) {
+  return [typeof tag === "string" ? tag : typeof tag, props && Object.keys(props).join(), children.flat().join("|")].join(":");
+};
+exports.Fragment = "fragment";
+exports.s = "s";
+////: every-tag-is-known
+declare global { namespace JSX { interface IntrinsicElements { [name: string]: any } } }
+////: metadata-is-printed
+(Reflect as any).metadata = (key: string, value: any) => (target: any, name?: any) => {
+  const show = (it: any) => (it === Object ? "Object" : it === Number ? "Number" : it === Function ? "Function" : new it().v);
+  console.log(key, String(name), Array.isArray(value) ? value.map(show).join() : show(value));
+};
+function decorated(...parts: any[]): any {}
+////: decorators-with-metadata
+{ "compilerOptions": { "experimentalDecorators": true, "emitDecoratorMetadata": true, "strict": true, "target": "esnext", "module": "preserve", "moduleResolution": "bundler", "types": [] } }
+////: the-helper-of-modules-written-as-callbacks
+var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+//// an-exported-import-alias-names-a-constant-of-a-required-es-module/between.ts
+import ns = require("./lib");
+export import n = ns.n;
+//// an-exported-import-alias-names-a-constant-of-a-required-es-module/lib.ts
+////= names-of-an-es-module
+//// an-exported-import-alias-names-a-constant-of-a-required-es-module/main.ts
+// between.ts says `export import n = ns.n`, and nothing there reads `n`.
+import * as between from "./between";
+import { n } from "./between";
+console.log(n + 1, Object.keys(between).join());
+//// an-exported-import-alias-names-a-constant-of-a-required-es-module.json
+////= needs-require
+//// an-import-alias-names-a-constant-of-a-required-es-module/lib.ts
+////= names-of-an-es-module
+//// an-import-alias-names-a-constant-of-a-required-es-module/main.ts
+// `import n = ns.n` is the only mention of what `import ns = require(..)` of an ES module answers.
+import ns = require("./lib");
+import n = ns.n;
+console.log(n + 1);
+//// an-import-alias-names-a-constant-of-a-required-es-module.json
+////= needs-require
+//// an-import-alias-names-a-constant-of-a-required-es-module-beside-a-read-of-another-name/lib.ts
+////= names-of-an-es-module
+//// an-import-alias-names-a-constant-of-a-required-es-module-beside-a-read-of-another-name/main.ts
+// `import n = ns.n` stands beside `ns.s`, where `ns` is what `import ns = require(..)` of an ES module answers.
+import ns = require("./lib");
+import n = ns.n;
+console.log(n + 1, ns.s);
+//// an-import-alias-names-a-constant-of-a-required-es-module-beside-a-read-of-another-name.json
+////= needs-require
+//// an-import-alias-names-a-constant-of-the-namespace-of-a-commonjs-file-beside-a-read-of-another-name/lib.cjs
+////= names-of-a-commonjs-file
+//// an-import-alias-names-a-constant-of-the-namespace-of-a-commonjs-file-beside-a-read-of-another-name/main.ts
+// `import n = ns.n` stands beside `ns.s`, where `ns` is `import * as ns` of a CommonJS file.
+import * as ns from "./lib.cjs";
+import n = ns.n;
+console.log(n + 1, ns.s);
+//// an-import-alias-names-a-constant-of-the-namespace-of-a-commonjs-file-beside-a-read-of-another-name.json
+////= needs-require
+//// an-import-alias-names-a-value-of-the-namespace-of-a-json-file/data.json
+{ "n": 10, "s": "s" }
+//// an-import-alias-names-a-value-of-the-namespace-of-a-json-file/main.ts
+// `import n = ns.n` is the only mention of `import * as ns` of a JSON file.
+import * as ns from "./data.json";
+import n = ns.n;
+console.log(n + 1);
+//// an-import-alias-names-a-value-on-the-exports-of-its-own-commonjs-file/lib.cts
+// @ts-nocheck
+exports.n = 10;
+import n = exports.n;
+import all = module.exports;
+exports.more = n + 1;
+exports.keys = Object.keys(all).join();
+//// an-import-alias-names-a-value-on-the-exports-of-its-own-commonjs-file/main.cts
+// lib.cts says `import n = exports.n` and `import all = module.exports`, which the type checker is told not to look at.
+const lib = require("./lib.cts");
+console.log(lib.n, lib.more, lib.keys);
+//// an-import-alias-names-a-value-on-the-exports-of-its-own-commonjs-file.json
+////= needs-require
+//// an-import-alias-names-the-whole-namespace-of-a-json-file/data.json
+{ "n": 10, "s": "s" }
+//// an-import-alias-names-the-whole-namespace-of-a-json-file/main.ts
+// `import all = ns` is the only mention of `import * as ns` of a JSON file.
+import * as ns from "./data.json";
+import all = ns;
+console.log(all.n + 1, all.s, Object.keys(all).sort().join());
+//// an-import-alias-that-only-types-name-leaves-a-required-es-module-alone/lib.ts
+////= names-of-an-es-module
+console.log("lib runs");
+//// an-import-alias-that-only-types-name-leaves-a-required-es-module-alone/main.ts
+// `import C = ns.C` is named by a type alone, and `import n = ns.n` by nothing.
+import ns = require("./lib");
+import C = ns.C;
+import n = ns.n;
+let c: C | undefined;
+console.log(typeof c, ns.s);
+//// an-import-alias-that-only-types-name-leaves-a-required-es-module-alone.json
+////= needs-require
+//// import-aliases-in-namespaces-name-constants-of-a-required-es-module/lib.ts
+////= names-of-an-es-module
+//// import-aliases-in-namespaces-name-constants-of-a-required-es-module/main.ts
+// One alias is read inside its namespace, the other is exported from its namespace.
+import ns = require("./lib");
+namespace Inside {
+  import n = ns.n;
+  export const more = n + 1;
+}
+namespace Outside {
+  export import s = ns.s;
+}
+console.log(Inside.more, Outside.s, Object.keys(Outside).join());
+//// import-aliases-in-namespaces-name-constants-of-a-required-es-module.json
+////= needs-require
+//// import-aliases-name-a-function-and-a-class-of-a-required-es-module/lib.ts
+////= names-of-an-es-module
+//// import-aliases-name-a-function-and-a-class-of-a-required-es-module/main.ts
+// The function is called inside another function, and the class is constructed, is a type and has a class below it.
+import ns = require("./lib");
+import f = ns.f;
+import C = ns.C;
+class D extends C {
+  w = 1;
+}
+function twice(a: number) {
+  return f(f(a));
+}
+const c: C = new C();
+console.log(twice(1), c.v, c instanceof C, new D().v, new D().w);
+//// import-aliases-name-a-function-and-a-class-of-a-required-es-module.json
+////= needs-require
+//// import-aliases-name-a-function-and-a-class-of-the-namespace-of-a-commonjs-file-beside-a-read-of-another-name/lib.cjs
+////= names-of-a-commonjs-file
+//// import-aliases-name-a-function-and-a-class-of-the-namespace-of-a-commonjs-file-beside-a-read-of-another-name/main.ts
+// The function is called and the class is constructed.
+import * as ns from "./lib.cjs";
+import f = ns.f;
+import C = ns.C;
+console.log(f(1), new C().v, ns.s);
+//// import-aliases-name-a-function-and-a-class-of-the-namespace-of-a-commonjs-file-beside-a-read-of-another-name.json
+////= needs-require
+//// import-aliases-name-what-lies-two-namespaces-below-a-required-es-module/inner.ts
+export * as x from "./innermost";
+export const n = 20;
+//// import-aliases-name-what-lies-two-namespaces-below-a-required-es-module/innermost.ts
+////= names-of-an-es-module
+//// import-aliases-name-what-lies-two-namespaces-below-a-required-es-module/lib.ts
+export * as x from "./inner";
+//// import-aliases-name-what-lies-two-namespaces-below-a-required-es-module/main.ts
+// `import n = ns.x.x.n` in one step, and link by link through aliases of the namespaces between.
+import ns = require("./lib");
+import n = ns.x.x.n;
+import first = ns.x;
+import second = first.x;
+import f = second.f;
+console.log(n + 1, f(1), first.n);
+//// import-aliases-name-what-lies-two-namespaces-below-a-required-es-module.json
+////= needs-require
+//// the-factory-of-jsx-elements-by-tsconfig-lies-a-namespace-below-a-required-es-module/inner.ts
+////= a-factory-of-an-es-module
+//// the-factory-of-jsx-elements-by-tsconfig-lies-a-namespace-below-a-required-es-module/lib.ts
+export * as x from "./inner";
+//// the-factory-of-jsx-elements-by-tsconfig-lies-a-namespace-below-a-required-es-module/main.tsx
+// tsconfig.json says `"jsxFactory": "ns.x.h"` and `"jsxFragmentFactory": "ns.x.Fragment"`.
+import ns = require("./lib");
+////= every-tag-is-known
+console.log(<div a="1">x</div>);
+console.log(<><b /></>);
+//// the-factory-of-jsx-elements-by-tsconfig-lies-a-namespace-below-a-required-es-module/tsconfig.json
+{ "extends": "../../tsconfig.json", "compilerOptions": { "jsx": "react", "jsxFactory": "ns.x.h", "jsxFragmentFactory": "ns.x.Fragment" } }
+//// the-factory-of-jsx-elements-by-tsconfig-lies-a-namespace-below-a-required-es-module.json
+////= needs-require
+//// the-factory-of-jsx-elements-is-a-function-of-a-required-es-module/lib.ts
+////= a-factory-of-an-es-module
+//// the-factory-of-jsx-elements-is-a-function-of-a-required-es-module/main.tsx
+// `@jsx ns.h` and `@jsxFrag ns.Fragment` are the only mentions of what `import ns = require(..)` of an ES module answers.
+/** @jsxRuntime classic */
+/** @jsx ns.h */
+/** @jsxFrag ns.Fragment */
+import ns = require("./lib");
+////= every-tag-is-known
+function element() {
+  return <div a="1">x</div>;
+}
+console.log(element(), element());
+console.log(<><b /></>);
+//// the-factory-of-jsx-elements-is-a-function-of-a-required-es-module.json
+////= needs-require
+//// the-factory-of-jsx-elements-is-a-function-of-an-es-module-that-a-constant-holds-beside-a-read-of-another-name/lib.ts
+////= a-factory-of-an-es-module
+//// the-factory-of-jsx-elements-is-a-function-of-an-es-module-that-a-constant-holds-beside-a-read-of-another-name/main.tsx
+// `@jsx ns.h` stands beside `ns.s`, where `const ns = require(..)` holds an ES module.
+/** @jsxRuntime classic */
+/** @jsx ns.h */
+export {};
+const ns = require("./lib");
+////= every-tag-is-known
+console.log(<div a="1">x</div>, ns.s);
+//// the-factory-of-jsx-elements-is-a-function-of-an-es-module-that-a-constant-holds-beside-a-read-of-another-name.json
+////= needs-require
+//// the-factory-of-jsx-elements-is-a-function-of-the-namespace-of-a-commonjs-file-beside-a-read-of-another-name/lib.cjs
+////= a-factory-of-a-commonjs-file
+//// the-factory-of-jsx-elements-is-a-function-of-the-namespace-of-a-commonjs-file-beside-a-read-of-another-name/main.tsx
+// `@jsx ns.h` stands beside `ns.s`, where `ns` is `import * as ns` of a CommonJS file.
+/** @jsxRuntime classic */
+/** @jsx ns.h */
+import * as ns from "./lib.cjs";
+////= every-tag-is-known
+console.log(<div a="1">x</div>, ns.s);
+//// the-factory-of-jsx-elements-is-a-function-of-the-namespace-of-a-commonjs-file-beside-a-read-of-another-name.json
+////= needs-require
+//// the-factory-of-jsx-elements-is-a-function-on-module-exports-of-its-own-commonjs-file/main.js
+// view.js says `@jsx module.exports.h`, and an ES module imports a name of it.
+import { v } from "./view.js";
+console.log(v);
+//// the-factory-of-jsx-elements-is-a-function-on-module-exports-of-its-own-commonjs-file/view.js
+/** @jsxRuntime classic */
+/** @jsx module.exports.h */
+module.exports.h = function (tag) {
+  return "h:" + tag;
+};
+module.exports.v = <div />;
+//// the-factory-of-jsx-elements-is-a-function-on-module-exports-of-its-own-commonjs-file.json
+////= needs-require
+//// the-factory-of-jsx-elements-is-a-function-on-the-exports-of-its-own-commonjs-file/main.js
+// view.js says `@jsx exports.h`, and stores to `exports.h` and `exports.v`.
+console.log(require("./view.js").v);
+//// the-factory-of-jsx-elements-is-a-function-on-the-exports-of-its-own-commonjs-file/view.js
+/** @jsxRuntime classic */
+/** @jsx exports.h */
+exports.h = function (tag) {
+  return "h:" + tag + ":" + Object.keys(this).join();
+};
+exports.v = <div />;
+//// the-factory-of-jsx-elements-is-a-function-on-the-exports-of-its-own-commonjs-file.json
+////= needs-require
+//// the-factory-of-jsx-elements-is-a-function-on-the-exports-parameter-of-a-module-written-as-a-callback.js
+// `@jsx exports.h`, where `exports` is the first parameter of the callback that `__commonJS(..)` takes.
+/** @jsxRuntime classic */
+/** @jsx exports.h */
+////= the-helper-of-modules-written-as-callbacks
+var require_lib = __commonJS((exports, module) => {
+  exports.h = tag => "h:" + tag;
+  exports.v = <div />;
+});
+console.log(require_lib().v);
+//// the-factory-of-jsx-elements-is-a-function-on-the-module-parameter-of-a-module-written-as-a-callback.js
+// `@jsx module.exports.h`, where `module` is the second parameter of the callback that `__commonJS(..)` takes.
+/** @jsxRuntime classic */
+/** @jsx module.exports.h */
+////= the-helper-of-modules-written-as-callbacks
+var require_lib = __commonJS((exports, module) => {
+  module.exports.h = tag => "h:" + tag;
+  module.exports.v = <div />;
+});
+console.log(require_lib().v);
+//// the-factory-of-jsx-elements-is-an-import-alias-of-a-function-of-a-required-es-module/lib.ts
+////= a-factory-of-an-es-module
+//// the-factory-of-jsx-elements-is-an-import-alias-of-a-function-of-a-required-es-module/main.tsx
+// `@jsx h` is the only mention of `import h = ns.h`, which is the only mention of `ns`.
+/** @jsxRuntime classic */
+/** @jsx h */
+import ns = require("./lib");
+import h = ns.h;
+////= every-tag-is-known
+console.log(<div a="1">x</div>);
+//// the-factory-of-jsx-elements-is-an-import-alias-of-a-function-of-a-required-es-module.json
+////= needs-require
+//// the-factory-of-jsx-elements-is-the-function-that-starts-a-module-written-as-a-callback.js
+// `@jsx require_lib` names what `__commonJS(..)` answers, so that each element starts the module or answers its exports.
+/** @jsxRuntime classic */
+/** @jsx require_lib */
+////= the-helper-of-modules-written-as-callbacks
+var require_lib = __commonJS((exports, module) => {
+  exports.n = 10;
+  console.log("lib runs");
+});
+console.log("start");
+console.log((<div />).n, require_lib().n);
+//// the-fragment-of-jsx-elements-is-a-value-on-the-exports-of-its-own-commonjs-file/main.js
+// view.js says `@jsxFrag exports.F`.
+console.log(require("./view.js").v);
+//// the-fragment-of-jsx-elements-is-a-value-on-the-exports-of-its-own-commonjs-file/view.js
+/** @jsxRuntime classic */
+/** @jsx h */
+/** @jsxFrag exports.F */
+function h(tag) {
+  return "h:" + tag;
+}
+exports.F = "fragment";
+exports.v = <></>;
+//// the-fragment-of-jsx-elements-is-a-value-on-the-exports-of-its-own-commonjs-file.json
+////= needs-require
+//// the-types-of-decorated-members-are-a-class-of-a-required-es-module/lib.ts
+////= names-of-an-es-module
+//// the-types-of-decorated-members-are-a-class-of-a-required-es-module/main.ts
+// With `emitDecoratorMetadata` the type `ns.C` of a parameter, a result and a field is read as a value, and nothing else names what `import ns = require(..)` of an ES module answers.
+import ns = require("./lib");
+////= metadata-is-printed
+@decorated
+class A {
+  constructor(c: ns.C) {}
+  @decorated m(a: ns.C, b: number): ns.C {
+    return a;
+  }
+  @decorated p!: ns.C;
+}
+console.log(typeof A);
+//// the-types-of-decorated-members-are-a-class-of-a-required-es-module/tsconfig.json
+////= decorators-with-metadata
+//// the-types-of-decorated-members-are-a-class-of-a-required-es-module.json
+{ "reference": "compiled", "skipInShell": "it needs Bun's CommonJS modules and require()" }
+//// the-types-of-decorated-members-are-a-class-of-the-namespace-of-a-commonjs-file-beside-a-read-of-another-name/lib.cjs
+////= names-of-a-commonjs-file
+//// the-types-of-decorated-members-are-a-class-of-the-namespace-of-a-commonjs-file-beside-a-read-of-another-name/lib.d.cts
+export const n: number;
+export function f(a: number): number;
+export class C {
+  v: number;
+}
+export const s: string;
+//// the-types-of-decorated-members-are-a-class-of-the-namespace-of-a-commonjs-file-beside-a-read-of-another-name/main.ts
+// With `emitDecoratorMetadata` the type `ns.C` of a parameter, a result and a field is read as a value. `ns` is `import * as ns` of a CommonJS file, and `ns.s` stands beside.
+import * as ns from "./lib.cjs";
+////= metadata-is-printed
+@decorated
+class A {
+  constructor(c: ns.C) {}
+  @decorated m(a: ns.C, b: number): ns.C {
+    return a;
+  }
+  @decorated p!: ns.C;
+}
+console.log(typeof A, ns.s);
+//// the-types-of-decorated-members-are-a-class-of-the-namespace-of-a-commonjs-file-beside-a-read-of-another-name/tsconfig.json
+////= decorators-with-metadata
+//// the-types-of-decorated-members-are-a-class-of-the-namespace-of-a-commonjs-file-beside-a-read-of-another-name.json
+////= needs-require

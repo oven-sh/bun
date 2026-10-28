@@ -1024,7 +1024,7 @@ impl Checker<'_, '_> {
             if of != file {
                 return false;
             }
-            let is_requesting = match hir[e].kind {
+            let is_requesting = match hir.checked_kind(e) {
                 ExprKind::Dot { .. } => is_private_name_at(hir, hir.name_pos(e)),
                 ExprKind::PrivateIdentifier(_)
                 | ExprKind::Yield { .. }
@@ -1240,7 +1240,7 @@ impl Checker<'_, '_> {
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
         for &e in index.of(ExprTag::Dot) {
-            let ExprKind::Dot { .. } = hir[e].kind else {
+            let ExprKind::Dot { .. } = hir.checked_kind(e) else {
                 continue;
             };
             if !is_private_name_at(hir, hir.name_pos(e)) {

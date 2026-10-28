@@ -1,0 +1,1 @@
+error: TS17012: 'defer' is not a valid meta-property for keyword 'import'. Did you mean 'meta'?

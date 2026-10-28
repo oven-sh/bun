@@ -1,0 +1,1 @@
+{ "skipWithASAN": "a clock", "skipInVariants": "a clock, and no flag of the build changes the code of a pattern", "skipInShell": "a clock" }

@@ -6,7 +6,7 @@
 //! - One reported inside a query belongs to the query. A hit on the query's entry reports nothing,
 //!   but several tasks may each have evaluated the query. The first task that commits a diagnostic
 //!   under the query reports. Diagnostics that later tasks commit under it are dropped
-//!   (`Program::publish_reported`).
+//!   (`Program::publish_reported`). That's decided for each file it reports in.
 //!
 //! `add_diagnostic` pushes onto `Checker::reported`. A frame's diagnostics are the suffix from
 //! `QueryFrame::reported_from`. `Checker::leave` calls `settle_reported` for them:
@@ -29,8 +29,10 @@
 //! dropped with a frame, like a diagnostic. `call_deferred_diagnostics` creates the message.
 //!
 //! A diagnostic that leaves its task is settled (`Checker::settled`): every field that only its
-//! file's HIR can provide has been filled in, and `finish_file` doesn't read any HIR.
+//! file's HIR can provide has been filled in. The HIR of a file that nothing imports is freed at
+//! the end of its task, and `finish_file` doesn't read any HIR.
 
+use super::aot::{DiagnosticClass, DiagnosticSubject};
 use super::explain::NOWHERE;
 use super::*;
 use crate::content_mapper::ExternalDiagnostic;
@@ -91,6 +93,8 @@ pub(super) struct Reported {
     /// span at `start`.
     pub(super) end: u32,
     pub(super) code: u32,
+    pub(super) class: DiagnosticClass,
+    pub(super) subject: DiagnosticSubject,
     pub(super) args: Args,
     pub(super) message_chain: Vec<Reported>,
     pub(super) related_information: Vec<Reported>,
@@ -158,6 +162,8 @@ impl Reported {
             start: at.1,
             end: at.2,
             code,
+            class: DiagnosticClass::of_code(code),
+            subject: DiagnosticSubject::None,
             args,
             message_chain: Vec::new(),
             related_information: Vec::new(),
@@ -209,9 +215,15 @@ impl Reported {
             .iter()
             .map(|related| Reported::from_hir(file, related));
         Reported {
+            class: d.class,
             related_information: related.collect(),
             ..Reported::new((file, d.start, d.end), d.code, d.args.clone())
         }
+    }
+
+    pub(super) fn with_class(mut self, class: DiagnosticClass) -> Reported {
+        self.class = class;
+        self
     }
 
     /// Placeholder left in `Task::diagnostics` for a diagnostic that a commit took out while a file was being checked.
@@ -291,6 +303,8 @@ pub(super) struct Sink<'s> {
     /// The queries under which a task has reported, each with the `Task::number` of the first task that did. Any thread
     /// can add to it, so it's on the regular heap too.
     owners: Guarded<FxHashMap<(Query, FileId), u64>>,
+    /// See `Program::keep_what_is_reported`.
+    keeps_buffers: bool,
 }
 
 impl<'s> Sink<'s> {
@@ -298,6 +312,7 @@ impl<'s> Sink<'s> {
         Sink {
             by_file: vec_from_iter_in((0..files).map(|_| Guarded::default()), arena),
             owners: Guarded::default(),
+            keeps_buffers: false,
         }
     }
 
@@ -436,7 +451,17 @@ impl super::Program<'_> {
 
     /// Takes the diagnostics the tasks have reported in `file`.
     pub(super) fn take_buffer(&self, file: FileId) -> Vec<Reported> {
-        std::mem::take(&mut *self.sink.by_file[file.idx()].lock())
+        let mut buffer = self.sink.by_file[file.idx()].lock();
+        match self.sink.keeps_buffers {
+            true => buffer.clone(),
+            false => std::mem::take(&mut *buffer),
+        }
+    }
+
+    /// A query reports when it is evaluated, which is once. True: the files are checked again later, for another of the programs
+    /// that hold them, and what the queries have reported in a file until then is reported in it again.
+    pub fn keep_what_is_reported(&mut self, keeps: bool) {
+        self.sink.keeps_buffers = keeps;
     }
 
     /// `CompareDiagnostics`
@@ -474,6 +499,8 @@ impl super::Program<'_> {
         reported.dedup_by(|next, first| {
             let is_same = equal_diagnostics_no_related_info(next, first);
             if is_same {
+                first.class = first.class.stricter(next.class);
+                first.subject = first.subject.or(next.subject);
                 let related = &mut first.related_information;
                 related.append(&mut next.related_information);
                 related.shared_sort_by(|a, b| self.compare_diagnostics(a, b));
@@ -577,7 +604,7 @@ impl Checker<'_, '_> {
         if has_parse_diagnostics(self.hir(at.0)) {
             return false;
         }
-        self.error_at(at, code, args);
+        self.error_at(at, code, args).class = DiagnosticClass::of_grammar_code(code);
         true
     }
 
@@ -853,7 +880,8 @@ impl Checker<'_, '_> {
     ///   resolutions.
     /// - `None` means it belongs to the task. Used for a limit, after which no query in progress is
     ///   cacheable, and for a cycle that has no query.
-    pub(super) fn add_diagnostic_of(&mut self, owner: Option<Query>, diagnostic: Reported) {
+    pub(super) fn add_diagnostic_of(&mut self, owner: Option<Query>, mut diagnostic: Reported) {
+        self.locate_global_diagnostic(owner, &mut diagnostic);
         // As in `add_diagnostic`. For a diagnostic in another file, tsgo's result depends on file
         // order, and the entry is already stored, so the diagnostic stays with it.
         if self.serialization_level >= MAX_SERIALIZATION_LEVEL

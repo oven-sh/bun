@@ -664,6 +664,9 @@ describe("consuming a slice's stream after the Blobs were collected", () => {
       return blob;
     });
     while (collected < tracked) await gcTick();
+    // Bun: `bun run` keeps every local variable of a function that waits alive. Compiled ahead of time, a registry that
+    // nothing names behind the loop is collected while the loop waits, and its callback never runs. So it is named here.
+    registry.unregister(registry);
     return result;
   }
 

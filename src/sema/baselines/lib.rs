@@ -1308,6 +1308,9 @@ fn merge_pre_and_post_emit_errors(pre: Report, mut post: Report) -> Report {
         project: 0,
         external_source: Box::default(),
         found_at: None,
+        class: bun_sema::check::aot::DiagnosticClass::Semantic,
+        subject: bun_sema::check::aot::DiagnosticSubject::None,
+        file: None,
     };
     let (longer, mut shorter) = match before > after {
         true => (pre.diagnostics, post.diagnostics),

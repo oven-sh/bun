@@ -12,6 +12,7 @@
 //! Comment directives: `Directives` determines which directive suppresses a diagnostic, `expected_errors` creates the
 //! TS2578 for each `@ts-expect-error`, and `Program::finish_file` drops those whose directive was used.
 
+use super::aot::DiagnosticSubject;
 use super::errors_operators::language_version;
 use super::explain::NOWHERE;
 use super::sink::{NO_DIRECTIVE, held};
@@ -216,7 +217,7 @@ impl Checker<'_, '_> {
     /// emitted depends on `outDir`. tsgo emits all the files and then checks them. Here it's done file by file.
     pub(super) fn inline_const_enums(&mut self, file: FileId) {
         let (files, hir, bound) = (self.files(), self.hir(file), self.bound(file));
-        let (options, module) = (&files.options, files.module(file));
+        let (options, module) = (self.module_options(file), files.module(file));
         // `emitJSFile`, `sourceFileMayBeEmitted`, `GetIsolatedModules`
         if options.no_emit
             || options.emit_declaration_only
@@ -237,7 +238,7 @@ impl Checker<'_, '_> {
             .filter(|&e| !bound.is_unchecked(e.idx()) && !bound.is_in_type_query(e))
             // `visitPropertyAccessExpression` of the class fields transformer, which runs earlier, has turned `a.#b`
             // into a helper call.
-            .filter(|&e| match hir[e].kind {
+            .filter(|&e| match hir.checked_kind(e) {
                 ExprKind::Dot { name, .. } => {
                     !(transforms_private_elements
                         && self.atoms().is_private_name(name)
@@ -308,7 +309,9 @@ impl Checker<'_, '_> {
             .take(files.rank_of_file(file) as usize + 1);
         self.are_module_exports_checked(module, file)
             || checked.copied().any(|other| {
-                self.is_checked_no_later_than(other, file)
+                // A leaf's data is freed after its task.
+                (other == file || !files.module(other).is_leaf)
+                    && self.is_checked_no_later_than(other, file)
                     && self.has_alias_from_exports_of_module(other, module)
             })
     }
@@ -388,7 +391,7 @@ impl Checker<'_, '_> {
             return;
         };
         let files = self.files();
-        let (hir, bound, options) = (self.hir(file), self.bound(file), &files.options);
+        let (hir, bound, options) = (self.hir(file), self.bound(file), self.module_options(file));
         // `getTargetOfImportEqualsDeclaration`
         if let Decl::ImportEquals(x) = decl
             && let ImportEqualsTarget::Entity(names) = hir[x].target
@@ -667,7 +670,7 @@ impl Checker<'_, '_> {
     fn aliases_imports_hiding_global_values(&mut self, file: FileId) {
         let files = self.files();
         let (hir, bound) = (self.hir(file), self.bound(file));
-        if !files.options.isolated_modules_reported {
+        if !self.module_options(file).isolated_modules_reported {
             return;
         }
         for &(e, scope) in &bound.alias_idents {
@@ -694,7 +697,7 @@ impl Checker<'_, '_> {
         let (files, bound) = (self.files(), self.bound(file));
         let name = files.symbol(result).name;
         // `compilerOptions.isolatedModules` itself, not `GetIsolatedModules`. `isInExternalModule`, `isGlobal`
-        if !files.options.isolated_modules_reported
+        if !self.module_options(file).isolated_modules_reported
             || !files.module(file).is_module()
             || !meaning.contains(SymFlags::VALUE)
             || files.global(name, meaning) != Some(result)
@@ -729,7 +732,7 @@ impl Checker<'_, '_> {
     fn aliases_decorator_metadata(&mut self, file: FileId) {
         let files = self.files();
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let options = &files.options;
+        let options = self.module_options(file);
         // `canCollectSymbolAliasAccessibilityData`, `GetIsolatedModules`, `GetEmitModuleKind`
         if !options.emit_decorator_metadata
             || options.verbatim_module_syntax
@@ -971,7 +974,7 @@ impl Checker<'_, '_> {
         module_not_found_error: Option<u32>,
     ) -> bool {
         let files = self.files();
-        let (options, importing) = (&files.options, files.module(file));
+        let (options, importing) = (self.module_options(file), files.module(file));
         let SpecifierUse {
             spec,
             pos: start,
@@ -1225,7 +1228,8 @@ impl Checker<'_, '_> {
         } else if site.is_for_augmentation {
             self.error_at(at, 2664, &[Arg::Atom(spec)]);
         } else if is_side_effect {
-            self.error_at(at, 2882, &[Arg::Atom(spec)]);
+            self.error_at(at, 2882, &[Arg::Atom(spec)]).subject =
+                DiagnosticSubject::ModuleSpecifier(spec);
         // `getCannotResolveModuleNameErrorForSpecificModule`: only for a string literal, not for a template.
         } else if crate::resolve::is_node_core_module(text)
             && self.hir(file).text.get(start as usize) != Some(&b'`')
@@ -1235,7 +1239,8 @@ impl Checker<'_, '_> {
             let code = if uses_wildcard_types { 2580 } else { 2591 };
             self.error_at(at, code, &[Arg::Atom(spec)]);
         } else {
-            self.error_at(at, 2307, &[Arg::Atom(spec)]);
+            self.error_at(at, 2307, &[Arg::Atom(spec)]).subject =
+                DiagnosticSubject::ModuleSpecifier(spec);
         }
         false
     }
@@ -1320,7 +1325,7 @@ impl Checker<'_, '_> {
             }
             // `checkImportMetaProperty`
             kind @ (ExprKind::ImportMeta | ExprKind::Missing) => {
-                let module = files.options.module;
+                let module = self.module_options(file).module;
                 let code = if module.is_node() {
                     if files.module(file).is_esm {
                         return;
@@ -1344,7 +1349,10 @@ impl Checker<'_, '_> {
             ExprKind::NewTarget(_) => {
                 let node = self.hir(file).node(e);
                 if self.hir(file).get_new_target_container(node).is_none() {
-                    self.error(file, e, 17013, &[Arg::Bytes(b"new.target")]);
+                    let is_early_error = self.is_new_target_outside_function(file, e);
+                    self.error(file, e, 17013, &[Arg::Bytes(b"new.target")])
+                        .class =
+                        DiagnosticClass::early_error_if(is_early_error, DiagnosticClass::Semantic);
                 }
             }
             _ => {}

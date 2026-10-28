@@ -1,6 +1,7 @@
 //! Diagnostics formatted for display.
 
 use super::Checker;
+use super::aot::{DiagnosticClass, DiagnosticSubject};
 use super::sink::{Args, Reported};
 use crate::messages::{self, Category};
 use crate::program::FileId;
@@ -94,6 +95,8 @@ pub struct Explained {
     /// `Source()`: the prefix of the code, for an error that a content mapper wrote. Its span is in the original text.
     /// Empty for TypeScript's own errors.
     pub external_source: Box<[u8]>,
+    pub class: DiagnosticClass,
+    pub subject: DiagnosticSubject,
 }
 
 impl Checker<'_, '_> {
@@ -140,6 +143,7 @@ impl Explained {
             (category, super::print::to_valid_utf8(text), message_chain)
         }
         let mut d = d;
+        let (class, subject) = (d.class, d.subject);
         if d.is_external
             && let [text, source] = &mut d.args[..]
         {
@@ -153,6 +157,8 @@ impl Explained {
                 args: d.args,
                 message_chain: Vec::new(),
                 related: Vec::new(),
+                class,
+                subject,
             };
         }
         let (category, text, message_chain) = reported(&mut d, Category::Error);
@@ -187,6 +193,8 @@ impl Explained {
                     }
                 })
                 .collect(),
+            class,
+            subject,
         }
     }
 }

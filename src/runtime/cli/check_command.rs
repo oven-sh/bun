@@ -22,6 +22,21 @@ use bun_sema_driver::{
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
 
+#[path = "check_command/compile_check.rs"]
+mod compile_check;
+#[path = "check_command/declarations.rs"]
+mod declarations;
+#[path = "check_command/typed_files.rs"]
+mod typed_files;
+
+pub(crate) use declarations::{
+    DeclarationFile, check_and_emit_declarations, take_declaration_files, take_module_types,
+};
+pub(crate) use typed_files::{
+    CompilerOptions, TypedFilesRequest, WrittenJavaScript, typed_files_for_build,
+    warn_about_skipped_typed_files, warn_unless_package_states,
+};
+
 pub(crate) struct CheckCommand;
 
 #[derive(Default)]
@@ -36,6 +51,13 @@ struct Options {
     timing: bool,
     /// `--runExternalCode`. See `is_allowed_to_run_code`.
     runs_external_code: bool,
+    aot: bool,
+    explain: Vec<&'static [u8]>,
+    code_generation_flag: Option<&'static [u8]>,
+    defines: Vec<&'static [u8]>,
+    report_path: Option<&'static [u8]>,
+    report_detail: Option<&'static [u8]>,
+    trim: bool,
 }
 
 fn usage_error(args: core::fmt::Arguments<'_>) -> ! {
@@ -68,6 +90,19 @@ const OTHERS: &[clap::Param<clap::Help>] = &[
     ),
     clap::param!("--threads <n>      Number of threads <d>(default: one per CPU core)<r>"),
     clap::param!("--timing           Print load and check times"),
+    clap::param!(
+        "--aot              Also report the errors <b>bun compile<r> would report for these entry points"
+    ),
+    clap::param!(
+        "--explain <report>?...  With --aot: print a report. <b>guards<r> lists every type guard that can fail at run time"
+    ),
+    clap::param!(
+        "--define <k=v>...  With --aot: substitute k with v while parsing, like <b>bun compile --define<r>"
+    ),
+    clap::param!("--disallow-code-generation-from-strings <level>?"),
+    clap::param!("--aot-report <path>"),
+    clap::param!("--aot-report-detail <detail>"),
+    clap::param!("--trim"),
     clap::param!("--cwd <path>       Set the working directory"),
     // Handled by `script_or_command`.
     clap::param!(
@@ -139,8 +174,18 @@ fn parse(args: &[&ZStr]) -> Options {
     let mut options = Options {
         all: parsed.flag(b"--all"),
         timing: parsed.flag(b"--timing"),
+        aot: parsed.flag(b"--aot"),
+        explain: parsed.options(b"--explain").to_vec(),
+        code_generation_flag: parsed.option(b"--disallow-code-generation-from-strings"),
+        defines: parsed.options(b"--define").to_vec(),
+        report_path: parsed.option(b"--aot-report"),
+        report_detail: parsed.option(b"--aot-report-detail"),
+        trim: parsed.flag(b"--trim"),
         ..Default::default()
     };
+    if !options.aot {
+        compile_check::reject_flags_requiring_aot(&options);
+    }
     if let Some(threads) = parsed.option(b"--threads") {
         match bun_core::fmt::parse_decimal::<usize>(threads) {
             Some(n) if n > 0 => options.threads = n,
@@ -180,6 +225,9 @@ fn parse(args: &[&ZStr]) -> Options {
         false => bun_sema_driver::tristate(&command_line.compiler_options, b"pretty"),
     };
     options.runs_external_code = command_line.runs_external_code && is_allowed_to_run_code(args, 0);
+    if options.aot {
+        compile_check::check_arguments(&command_line);
+    }
     options.command_line = command_line;
     options
 }
@@ -500,6 +548,9 @@ impl CheckCommand {
     }
 
     fn exec_with(options: &Options) -> ! {
+        if options.aot {
+            compile_check::exec(options)
+        }
         let (cwd, command_line) = (working_directory(), &options.command_line);
         // The closure returns the report so that it's never dropped. The process exits instead.
         let (exit_code, _report) = run(
@@ -920,7 +971,9 @@ fn imports_of_page(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
 
 /// Type-checks the project containing the working directory, like `bun check`, before running one
 /// of its scripts or `bun bake`'s app. For `before_read`, see `watching`.
+#[inline(never)]
 pub(crate) fn check_project_before(before_read: Option<BeforeRead>) -> bool {
+    bun_removable_features::removable_definition!(Check, check_project_before);
     let provided = Provided {
         before_read,
         content_mapper_transport: content_mapper_transport_of_command(command_runs_external_code()),
@@ -938,7 +991,9 @@ fn tsconfig_override() -> Option<&'static [u8]> {
 }
 
 /// Returns true if there are no errors.
+#[inline(never)]
 fn check_and_report(paths: &Paths, provided: Provided) -> bool {
+    bun_removable_features::removable_definition!(Check, check_and_report);
     let cwd = working_directory();
     let then = |report| report;
     let report = run(&cwd, tsconfig_override(), paths, &[], 0, provided, then);

@@ -1,0 +1,1 @@
+{ "skipInShell": "it starts a worker, which the jsc shell does not have" }

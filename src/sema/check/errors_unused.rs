@@ -137,11 +137,16 @@ impl Checker<'_, '_> {
     }
 
     pub(super) fn check_unused(&mut self, file: FileId) {
-        let options = &self.p.files.options;
+        let options = self.module_options(file);
         let (locals, parameters) = (options.no_unused_locals, options.no_unused_parameters);
         let renamed = std::mem::take(&mut self.renamed_binding_elements_in_types);
         let (hir, bound) = (self.hir(file), self.bound(file));
         if !(locals || parameters || !renamed.is_empty()) || hir.kind == FileKind::Declaration {
+            return;
+        }
+        // What only a function that is left out refers to would count as unused.
+        let is_replaced = |function: &Func| function.flags.contains(Flags::REPLACED_BODY);
+        if self.has_left_out_functions() || hir.fns.iter().any(is_replaced) {
             return;
         }
         let parse_errors = hir
@@ -199,14 +204,12 @@ impl Checker<'_, '_> {
         self.note_module_references(file, u);
         self.note_unresolved_type_references(file, u);
         self.note_untyped_signature_parameters(file, u);
-        for &(of, scope, name, meaning) in &self.tracked_names {
-            if of == file {
-                u.note_name(scope, name, meaning);
-            }
+        for &(scope, name, meaning) in self.tracked_names.get(&file).into_iter().flatten() {
+            u.note_name(scope, name, meaning);
         }
         // `Resolve` records the reference before `OnPropertyWithInvalidInitializer` makes it return nil, and the binder
         // has no symbol for the name.
-        if !self.p.files.options.emit_standard_class_fields {
+        if !self.module_options(file).emit_standard_class_fields {
             for &(e, scope) in &bound.free_idents {
                 if let ExprKind::Ident(name) = hir[e].kind
                     && let Err((2301 | 2844, _)) =
@@ -366,7 +369,7 @@ impl Checker<'_, '_> {
     fn note_module_references(&mut self, file: FileId, u: &mut Unused) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `canCollectSymbolAliasAccessibilityData`
-        let marks_aliases = !self.p.files.options.verbatim_module_syntax;
+        let marks_aliases = !self.module_options(file).verbatim_module_syntax;
         let mut aliases = None;
         for (i, import) in hir.import_equals.iter().enumerate() {
             let ImportEqualsTarget::Entity(names) = import.target else {
@@ -443,7 +446,8 @@ impl Checker<'_, '_> {
             .iter()
             .chain(index.of(ExprTag::Index))
         {
-            let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = hir[e].kind else {
+            let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = hir.checked_kind(e)
+            else {
                 continue;
             };
             if !is_property_access_entity_name_expression(hir, obj) || !is_checked(u, e) {
@@ -477,7 +481,7 @@ impl Checker<'_, '_> {
         // `getAccessedPropertyName(e)` resolves the key of `x[a.b]`. `getFlowTypeOfReference` calls it where it
         // compares `e` with another reference.
         for &e in index.of(ExprTag::Index) {
-            let ExprKind::Index { index: key, .. } = hir[e].kind else {
+            let ExprKind::Index { index: key, .. } = hir.checked_kind(e) else {
                 continue;
             };
             if !is_parenthesized(hir, key)
@@ -538,7 +542,7 @@ impl Checker<'_, '_> {
     fn note_qualified_name(&self, file: FileId, u: &mut Unused, e: ExprId) {
         let hir = self.hir(file);
         let mut first = e;
-        while let ExprKind::Dot { obj, .. } = hir[first].kind {
+        while let ExprKind::Dot { obj, .. } = hir.checked_kind(first) {
             first = obj;
         }
         if let ExprKind::Ident(name) = hir[first].kind {
@@ -554,7 +558,7 @@ impl Checker<'_, '_> {
         let mut operands = smallvec::SmallVec::<[(ExprId, Location); 8]>::new();
         operands.push((e, location));
         while let Some((e, location)) = operands.pop() {
-            match hir[e].kind {
+            match hir.checked_kind(e) {
                 ExprKind::Unary {
                     op:
                         UnOp::Plus
@@ -621,7 +625,7 @@ impl Checker<'_, '_> {
     /// module is imported for it implicitly (`getJsxNamespaceContainerForImplicitImport`).
     fn note_jsx_factories(&self, file: FileId, index: &ExprsByKind, u: &mut Unused) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let (options, atoms) = (&self.p.files.options, self.atoms());
+        let (options, atoms) = (self.module_options(file), self.atoms());
         let runtime = crate::program::jsx_runtime_of(options, hir, &self.p.files.atoms);
         if runtime.is_some_and(|spec| {
             self.files()
@@ -631,8 +635,8 @@ impl Checker<'_, '_> {
             return;
         }
         let (factory, fragment_factory) = (
-            super::errors_jsx::jsx_namespace(self.files(), self.atoms(), hir, false),
-            super::errors_jsx::jsx_namespace(self.files(), self.atoms(), hir, true),
+            super::errors_jsx::jsx_namespace(options, self.atoms(), hir, false),
+            super::errors_jsx::jsx_namespace(options, self.atoms(), hir, true),
         );
         // `shouldFactoryRefErr`
         let meaning = match options.jsx {
@@ -731,7 +735,7 @@ impl Checker<'_, '_> {
         at: Option<ExprId>,
         from_this: Option<ExprId>,
     ) {
-        if !self.reports_unused() {
+        if !self.can_mark_properties_as_referenced(file) {
             return;
         }
         let is_this_type = matches!(self.data(receiver), TypeData::ThisParam(_));
@@ -739,6 +743,10 @@ impl Checker<'_, '_> {
         let Some(symbol) = self.private_property_read(file, receiver, name, at) else {
             return;
         };
+        let options = self.module_options(symbol.file);
+        if !(options.no_unused_locals || options.no_unused_parameters) {
+            return;
+        }
         let files = self.files();
         if symbol.file != file {
             // `checkUnusedClassMembers` runs at the end of the declaration's file.
@@ -775,7 +783,7 @@ impl Checker<'_, '_> {
 
     pub(super) fn reports_unused(&self) -> bool {
         let options = &self.p.files.options;
-        options.no_unused_locals || options.no_unused_parameters
+        self.p.files.is_compile_build() || options.no_unused_locals || options.no_unused_parameters
     }
 
     /// False if `markPropertyAsReferenced(prop, ..)` marks nothing new.
@@ -796,6 +804,12 @@ impl Checker<'_, '_> {
             NodeData::Member(m) => Some(m),
             _ => None,
         }
+    }
+
+    /// False if no file reports a member as unused that an access in `file` refers to.
+    pub(super) fn can_mark_properties_as_referenced(&self, file: FileId) -> bool {
+        let options = self.module_options(file);
+        self.is_in_compile_build(file) || options.no_unused_locals || options.no_unused_parameters
     }
 
     /// The start of `markPropertyAsReferenced`, up to `isSelfTypeAccess`, for the property `name` of the apparent type
@@ -880,7 +894,7 @@ impl Checker<'_, '_> {
     /// `isSelfTypeAccess` for `e`: `obj.name`, or `obj[key]` where `of` is the type a property access uses for `obj`.
     fn is_self_type_access(&self, file: FileId, e: ExprId, of: TypeId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let (obj, is_dot) = match hir[e].kind {
+        let (obj, is_dot) = match hir.checked_kind(e) {
             ExprKind::Dot { obj, .. } => (obj, true),
             ExprKind::Index { obj, .. } => (obj, false),
             _ => return false,

@@ -1,0 +1,3 @@
+{
+  "skipWithASAN": "TODO: with AddressSanitizer and assertions a frame of a built-in that is written in JavaScript has the position 1:11 in the executable, and its own (26:40) in plain Bun"
+}

@@ -5385,9 +5385,8 @@ pub mod bv2_impl {
                                     .filter(|_| path.text == &*resolve.import_record.specifier),
                             );
 
-                            this.graph
-                                .input_files
-                                .append(crate::Graph::InputFile {
+                            bun_core::handle_oom(this.graph.input_files.append(
+                                crate::Graph::InputFile {
                                     source: bun_ast::Source {
                                         path,
                                         contents: std::borrow::Cow::Borrowed(&b""[..]),
@@ -5397,8 +5396,8 @@ pub mod bv2_impl {
                                     loader,
                                     side_effects: bun_ast::SideEffects::HasSideEffects,
                                     ..Default::default()
-                                })
-                                .expect("unreachable");
+                                },
+                            ));
                             let task_val = ParseTask {
                                 // SAFETY: `from_mut(this)` is the live bundle (write provenance);
                                 // outlives the task.
@@ -7426,10 +7425,7 @@ pub mod bv2_impl {
 
                     diff += 1;
 
-                    self.graph
-                        .input_files
-                        .append(new_input_file)
-                        .expect("unreachable");
+                    bun_core::handle_oom(self.graph.input_files.append(new_input_file));
                     bun_core::handle_oom(self.graph.ast.append(JSAst::empty_in(self.graph.heap)));
 
                     if is_html_entrypoint {

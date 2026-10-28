@@ -2228,12 +2228,16 @@ test("Error.captureStackTrace adds an `at <parse>` line only to a SyntaxError th
 });
 
 test("a SyntaxError from node:vm has an `at <parse>` line only if the source has a filename", () => {
+  // The `<parse>` line of the SyntaxError that fn() throws. A row with none reads `undefined`.
   const parseLineOf = fn => {
+    let error;
     try {
       fn();
     } catch (e) {
-      return e.stack.split("\n").find(line => line.includes("<parse>"));
+      error = e;
     }
+    expect(error).toBeInstanceOf(SyntaxError);
+    return error.stack.split("\n").find(line => line.includes("<parse>"));
   };
   // An options object without a filename gets Node's default name. compileFunction has no default, and
   // neither has an empty filename.

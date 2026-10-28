@@ -1489,3 +1489,98 @@ pub fn run_reach(seed: u64, qualities: u64) {
         println!("quality {q}: {} -> {}, {} words known, {placed} of them put where they are the last within reach", case.data.len(), out.len(), words.len());
     }
 }
+
+/// Qualities 10 and 11 tell UTF-8 from other data, by whether more than three quarters of the bytes of a meta-block belong to
+/// well-formed characters, and write the answer to the stream. Here it depends on the first or the last character of a
+/// length, on what is just not a character, or on a few bytes more or less.
+pub fn run_utf8(seed0: u64, iters: u64, qualities: u64) {
+    const EDGES: [&[u8]; 34] = [
+        &[0x00],
+        &[0x01],
+        &[0x7F],
+        &[0x80],
+        &[0xBF],
+        &[0xC0, 0x80],
+        &[0xC1, 0xBF],
+        &[0xC2, 0x80],
+        &[0xC2, 0x7F],
+        &[0xC2, 0xC0],
+        &[0xDF, 0x80],
+        &[0xDF, 0xBF],
+        &[0xE0, 0x80, 0x80],
+        &[0xE0, 0x9F, 0xBF],
+        &[0xE0, 0xA0, 0x80],
+        &[0xE0, 0xA0, 0x7F],
+        &[0xE0, 0xA0, 0xC0],
+        &[0xE0, 0x7F, 0x80],
+        &[0xE0, 0xC0, 0x80],
+        &[0xEF, 0xBF, 0xBF],
+        &[0xF0, 0x80, 0x80, 0x80],
+        &[0xF0, 0x8F, 0xBF, 0xBF],
+        &[0xF0, 0x90, 0x80, 0x80],
+        &[0xF0, 0x90, 0x80, 0x7F],
+        &[0xF0, 0x90, 0x80, 0xC0],
+        &[0xF0, 0x90, 0x7F, 0x80],
+        &[0xF0, 0x90, 0xC0, 0x80],
+        &[0xF0, 0x7F, 0x80, 0x80],
+        &[0xF0, 0xC0, 0x80, 0x80],
+        &[0xF4, 0x8F, 0xBF, 0xBF],
+        &[0xF4, 0x90, 0x80, 0x80],
+        &[0xF7, 0xBF, 0xBF, 0xBF],
+        &[0xF8, 0x88, 0x80, 0x80],
+        &[0xFF],
+    ];
+    let qs = crate::args::qualities(qualities, 10..12);
+    let mut totals = (0usize, 0usize);
+    for it in 0..iters {
+        let seed = seed0.wrapping_add(it);
+        let mut rng = Rng(seed);
+        let q = *rng.pick(&qs);
+        let most = if rng.chance(1, 4) { 100_000 } else { 2000 };
+        let len = rng.range(16, most);
+        let mut data = Vec::new();
+        if rng.chance(2, 3) {
+            // The same few bytes again and again, and 10 to 20 % of bytes that are not part of any character.
+            let unit: Vec<u8> = if rng.chance(1, 2) {
+                rng.pick(&EDGES).to_vec()
+            } else {
+                let first = rng.next() as u8;
+                let more = match first {
+                    0xC0..=0xDF => 1,
+                    0xE0..=0xEF => 2,
+                    0xF0..=0xFF => 3,
+                    _ => rng.below(4),
+                };
+                let mut unit = vec![first];
+                unit.extend((0..more).map(|_| *rng.pick(&[0x7F, 0x80, 0x81, 0x8F, 0x90, 0x9F, 0xA0, 0xBF, 0xC0])));
+                unit
+            };
+            let percent = rng.range(10, 20);
+            let mut others = 0;
+            while data.len() < len {
+                data.extend_from_slice(&unit);
+                if others * 100 < percent * data.len() {
+                    data.push(0xFF);
+                    others += 1;
+                }
+            }
+        } else {
+            // About three quarters.
+            let unit: &[u8] = *rng.pick(&[&b"a"[..], &[0xC2, 0x80], &[0xE0, 0xA0, 0x80], &[0xF0, 0x90, 0x80, 0x80]]);
+            let wanted = if rng.chance(1, 2) { len * 3 / 4 + rng.below(7) - 3 } else { len * rng.range(700, 800) / 1000 };
+            let units = wanted / unit.len();
+            let mut pieces: Vec<&[u8]> = vec![unit; units];
+            pieces.resize(units + len - units * unit.len(), &[0xFF]);
+            for i in (1..pieces.len()).rev() {
+                pieces.swap(i, rng.below(i + 1));
+            }
+            data = pieces.concat();
+        }
+        let mut params = vec![(1, q), (2, rng.range(10, 24) as u32)];
+        if rng.chance(1, 4) {
+            params.push((0, rng.range(1, 2) as u32));
+        }
+        check("utf8", seed, &mut rng, &data, &params, &[], &mut totals);
+    }
+    println!("ok: {iters} iterations, {} -> {}", totals.0, totals.1);
+}

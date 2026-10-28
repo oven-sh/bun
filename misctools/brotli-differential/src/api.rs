@@ -401,8 +401,8 @@ fn decoder(text: &[u8]) -> Result<usize, String> {
     Ok(n)
 }
 
-/// Dictionaries of 2 GiB in all. Rust only: the reference decoder adds their sizes up in an `int` and does not look at the
-/// result. They are zeros that nothing touches, so they take next to no memory.
+/// Dictionaries of 2 GiB in all. Rust only: the reference adds their sizes up, the decoder in an `int`, and does not look at
+/// the result. They are zeros that nothing writes to, so they take next to no memory.
 fn huge_dictionaries() -> Result<usize, String> {
     const MOST: usize = i32::MAX as usize;
     let zeros = |n: usize| vec![0u8; n].into_boxed_slice();
@@ -449,7 +449,43 @@ fn huge_dictionaries() -> Result<usize, String> {
         }
         n += 1;
     }
-    Ok(n)
+    // The encoder reads a dictionary to index it, and takes 4 bytes for each of its bytes while it does. So there are many.
+    const PART: usize = 170_000_000;
+    const ROOM: usize = MOST - 12 * PART;
+    let mut e = Encoder::new();
+    assert!(e.set_parameter(EncoderParameter::Quality, 9));
+    let long = [&last[..], b"!"].concat();
+    let sizes = [(PART, true); 12].into_iter().chain([(ROOM + 1, false), (ROOM - 1000, true)]);
+    let dictionaries = sizes.map(|(size, accepted)| (zeros(size), accepted)).chain([
+        (long.into(), false),
+        (last.clone().into(), true),
+        (zeros(1), false),
+        (zeros(0), true),
+        (zeros(0), false),
+    ]);
+    for (dictionary, accepted) in dictionaries {
+        let size = dictionary.len();
+        let prepared = PreparedDictionary::new(dictionary).ok_or("encoder: no memory for a dictionary")?;
+        if e.attach_prepared_dictionary(prepared) != accepted {
+            return Err(format!("encoder: dictionary {n} of {size} bytes {}", if accepted { "refused" } else { "accepted" }));
+        }
+        n += 1;
+    }
+    let mut stream = Vec::with_capacity(1 << 16);
+    let result = e.compress_stream(EncoderOperation::Finish, &mut &data[..], &mut SpareCapacity::new(&mut stream, 1 << 16));
+    if result.is_err() || !e.is_finished() {
+        return Err(format!("encoder: with 2 GiB - 1 of dictionaries: {result:?}, finished: {}", e.is_finished()));
+    }
+    let mut r = Decoder::new();
+    assert!(r.attach_dictionary(zeros(MOST - 1000)) && r.attach_dictionary(last.into()));
+    let mut out = vec![0u8; 1 << 16];
+    let mut room: &mut [u8] = &mut out;
+    let result = r.decompress_stream(&mut &stream[..], &mut room) as i32;
+    let made = (1 << 16) - room.len();
+    if result != 1 || out[..made] != data[..] || stream.len() >= data.len() / 4 {
+        return Err(format!("encoder: with 2 GiB - 1 of dictionaries: {} bytes, result {result}, error {:?}, {made} bytes", stream.len(), r.error_code()));
+    }
+    Ok(n + 1)
 }
 
 /// The spare capacity of a `Vec` as the output of the encoder has to act like a slice of that size.

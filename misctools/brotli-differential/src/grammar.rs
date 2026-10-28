@@ -162,6 +162,66 @@ impl Evil {
     }
 }
 
+/// Codes that need a large table, with a root table of 8 bits: the number of symbols, how many codes of 8 bits are left for
+/// the longer ones, and how many have 9 bits. The other symbols have 10 and 11 bits, but for a chain at the end. With 26,
+/// 258 and 272 symbols, and from 544 on, the table takes all the room that the decoders have for it, otherwise 2 to 6
+/// entries less. Found by trying, with a model of how the table is built.
+const LARGEST_TABLES: [(usize, usize, usize); 39] = [
+    (26, 4, 1),
+    (32, 4, 3),
+    (64, 16, 9),
+    (96, 16, 1),
+    (128, 16, 1),
+    (160, 64, 103),
+    (192, 64, 71),
+    (224, 64, 39),
+    (256, 64, 7),
+    (258, 64, 5),
+    (272, 64, 3),
+    (288, 64, 3),
+    (320, 64, 3),
+    (352, 64, 3),
+    (384, 64, 3),
+    (416, 64, 3),
+    (448, 64, 3),
+    (480, 64, 3),
+    (512, 96, 3),
+    (544, 256, 485),
+    (576, 256, 453),
+    (608, 256, 421),
+    (640, 256, 389),
+    (672, 256, 357),
+    (704, 256, 325),
+    (736, 256, 293),
+    (768, 256, 261),
+    (800, 256, 229),
+    (832, 256, 197),
+    (864, 256, 165),
+    (896, 256, 133),
+    (928, 256, 101),
+    (960, 256, 69),
+    (992, 256, 37),
+    (1024, 256, 5),
+    (1056, 256, 1),
+    (1088, 256, 1),
+    (1120, 256, 1),
+    (1152, 256, 1),
+];
+
+/// The lengths of the largest of those codes that has from `least` to `most` symbols.
+fn largest_table(least: usize, most: usize) -> Option<Vec<u8>> {
+    let &(symbols, free, nine) = LARGEST_TABLES.iter().rev().find(|t| t.0 <= most).filter(|t| t.0 >= least)?;
+    // As few short codes as possible.
+    let mut lengths: Vec<u8> = (1..=8).filter(|l| (256 - free) >> (8 - l) & 1 != 0).collect();
+    let room = 2 * (2 * free - nine);
+    let ten = nine + 2 * room + 4 + lengths.len() - symbols;
+    for (length, n) in [(9, nine), (10, ten), (11, 2 * (room - ten) - 1), (12, 1), (13, 1), (14, 1), (15, 2)] {
+        lengths.resize(lengths.len() + n, length);
+    }
+    assert_eq!(lengths.len(), symbols);
+    Some(lengths)
+}
+
 /// Writes a prefix code that has at least the symbols in `used`, and returns it.
 fn write_code(w: &mut Bits, rng: &mut Rng, evil: &mut Evil, used: &BTreeSet<usize>, alphabet_max: usize, alphabet_limit: usize) -> Code {
     let mut symbols: Vec<usize> = used.iter().copied().collect();
@@ -179,6 +239,17 @@ fn write_code(w: &mut Bits, rng: &mut Rng, evil: &mut Evil, used: &BTreeSet<usiz
         let s = if rng.chance(1, 8) { alphabet_limit - 1 } else { rng.below(alphabet_limit) };
         if !symbols.contains(&s) {
             symbols.push(s);
+        }
+    }
+    let largest = if rng.chance(1, 8) { largest_table(symbols.len(), alphabet_limit) } else { None };
+    if let Some(largest) = &largest {
+        let mut others: Vec<usize> = (0..alphabet_limit).filter(|s| !symbols.contains(s)).collect();
+        for i in (1..others.len()).rev() {
+            others.swap(i, rng.below(i + 1));
+        }
+        symbols.extend(&others[..largest.len() - symbols.len()]);
+        for i in (1..symbols.len()).rev() {
+            symbols.swap(i, rng.below(i + 1));
         }
     }
     let k = symbols.len();
@@ -219,7 +290,7 @@ fn write_code(w: &mut Bits, rng: &mut Rng, evil: &mut Evil, used: &BTreeSet<usiz
         }
         return Code::from_lengths(lengths);
     }
-    for (&s, l) in symbols.iter().zip(random_lengths(rng, k, 15)) {
+    for (&s, l) in symbols.iter().zip(largest.unwrap_or_else(|| random_lengths(rng, k, 15))) {
         lengths[s] = l;
     }
     if evil.now(rng, "complex code: the lengths do not fill the space") {

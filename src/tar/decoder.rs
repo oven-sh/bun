@@ -240,6 +240,17 @@ pub struct MemoryDecoder<'a> {
     data: &'a [u8],
     pos: usize,
     decoder: Decoder,
+    /// Zeros that `read_data` has written for holes.
+    holes: usize,
+}
+
+/// A sparse map of a few bytes declares up to 2^60 zeros. Held to what gzip can make of the same input, about 1,000 times.
+fn holes_limit(archive: &[u8]) -> usize {
+    const MIB: usize = 1024 * 1024;
+    archive
+        .len()
+        .saturating_mul(1024)
+        .clamp(64 * MIB, 1024 * MIB)
 }
 
 impl<'a> MemoryDecoder<'a> {
@@ -249,6 +260,7 @@ impl<'a> MemoryDecoder<'a> {
             data,
             pos: 0,
             decoder: Decoder::new(options, false)?,
+            holes: 0,
         };
         loop {
             let rest = data.get(this.pos..).unwrap_or_default();
@@ -304,27 +316,32 @@ impl<'a> MemoryDecoder<'a> {
     /// Appends at most `size` bytes of the current entry's contents. Holes read as zeros.
     pub fn read_data(&mut self, size: usize, out: &mut Vec<u8>) -> Result<()> {
         let start = out.len();
-        let zeros_up_to = |out: &mut Vec<u8>, offset: i64| -> Result<()> {
+        let limit = holes_limit(self.data);
+        let zeros_up_to = |out: &mut Vec<u8>, holes: &mut usize, offset: i64| -> Result<()> {
             let have = out.len().saturating_sub(start);
             let offset = usize::try_from(offset).map_err(|_| Error::OutOfOrderSparse)?;
             if offset < have {
                 return Err(Error::OutOfOrderSparse);
             }
             let zeros = offset.min(size).saturating_sub(have);
+            *holes = holes.saturating_add(zeros);
+            if *holes > limit {
+                return Err(Error::HolesTooLarge { limit });
+            }
             out.try_reserve(zeros)?;
             out.resize(out.len().saturating_add(zeros), 0);
             Ok(())
         };
         while out.len().saturating_sub(start) < size {
-            match self.next()? {
+            match next(&mut self.decoder, self.data, &mut self.pos)? {
                 Event::Data { offset, bytes } => {
-                    zeros_up_to(out, offset)?;
+                    zeros_up_to(out, &mut self.holes, offset)?;
                     let room = size.saturating_sub(out.len().saturating_sub(start));
                     let bytes = bytes.get(..room.min(bytes.len())).unwrap_or_default();
                     out.write(bytes)?;
                 }
                 Event::EndOfEntry { size: end } => {
-                    zeros_up_to(out, end)?;
+                    zeros_up_to(out, &mut self.holes, end)?;
                     break;
                 }
                 Event::NeedInput | Event::Entry(_) | Event::EndOfArchive => break,
@@ -335,10 +352,12 @@ impl<'a> MemoryDecoder<'a> {
 
     /// Never returns [`Event::NeedInput`].
     pub fn next(&mut self) -> Result<Event<'_>> {
-        let (used, event) = self
-            .decoder
-            .next(self.data.get(self.pos..).unwrap_or_default(), true)?;
-        self.pos = self.pos.saturating_add(used);
-        Ok(event)
+        next(&mut self.decoder, self.data, &mut self.pos)
     }
+}
+
+fn next<'a>(decoder: &'a mut Decoder, data: &'a [u8], pos: &mut usize) -> Result<Event<'a>> {
+    let (used, event) = decoder.next(data.get(*pos..).unwrap_or_default(), true)?;
+    *pos = pos.saturating_add(used);
+    Ok(event)
 }

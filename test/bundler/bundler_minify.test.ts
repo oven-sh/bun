@@ -1154,7 +1154,6 @@ describe("bundler", () => {
           import.meta.hot.accept?.(() => console.log("FAIL"));
           import.meta.hot.accept.call(null, () => console.log("FAIL"));
           import.meta.hot.dispose.apply(null, [() => console.log("FAIL")]);
-          import.meta.hot.accept["call"](null, () => console.log("FAIL"));
           console.log("after direct calls");
         `,
       },

@@ -909,8 +909,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.visit_expr_in_out(
             &mut e_.target,
             ExprIn {
-                property_access_for_method_call_maybe_should_replace_with_undefined: in_
-                    .property_access_for_method_call_maybe_should_replace_with_undefined,
                 is_property_access_target: !is_delete_target,
                 ..Default::default()
             },

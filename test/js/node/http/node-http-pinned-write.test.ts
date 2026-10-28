@@ -264,6 +264,8 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
         const CHUNK_SIZE = ${CHUNK_SIZE};
         const PATTERN = Buffer.from(Array.from({ length: 256 }, (_, i) => i));
         let detachedWhilePending;
+        let responseClosed = false;
+        const firstData = Promise.withResolvers();
         const closed = Promise.withResolvers();
         const server = http.createServer((req, res) => {
           try {
@@ -275,22 +277,28 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
             const copy = payload.buffer.transfer();
             detachedWhilePending = payload.buffer.detached;
             res.once("close", () => {
+              responseClosed = true;
               // The close path unpinned the backing store, so transfer() detaches. If the
               // first transfer() already detached the buffer, "copy" owns its storage.
               const moved = detachedWhilePending ? copy : payload.buffer.transfer();
               closed.resolve({ detachedAfterClose: payload.buffer.detached, movedByteLength: moved.byteLength });
             });
           } catch (e) {
-            closed.reject(e);
+            firstData.reject(e);
           }
         });
         await once(server.listen(0), "listening");
         const port = server.address().port;
         const s = net.connect(port, "127.0.0.1");
         await once(s, "connect");
+        // The wait for data ends with an error if the handler throws or the socket fails first.
+        s.once("data", firstData.resolve);
+        s.once("error", firstData.reject);
+        s.once("close", () => firstData.reject(new Error("the socket closed before any data")));
         s.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
-        // A handler that throws rejects "closed", and that ends the wait for data.
-        await Promise.race([once(s, "data"), closed.promise]);
+        await firstData.promise;
+        // Only the disconnect of the client may close the response.
+        if (responseClosed) throw new Error("the response closed before the client disconnected");
         s.destroy();
         // Wait for the server to observe the close.
         console.log(JSON.stringify({ detachedWhilePending, ...(await closed.promise) }));

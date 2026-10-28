@@ -665,6 +665,12 @@ describe("hpackHuffmanDecodeShort", () => {
   const all = SYMBOLS.join("");
   const textOf = (length: number, seed: number) =>
     Array.from({ length }, (_, i) => all[(i * 31 + seed * 7) % all.length]).join("");
+  const repeat = (bit: string, count: number) => Buffer.alloc(count, bit).toString();
+  /** The bit it stopped at, and how many symbols it says it decoded. */
+  function run(src: Uint8Array, out: Uint8Array) {
+    const result = hw("hpackHuffmanDecodeShort", src, out);
+    return [Math.floor(result / 65536), result % 65536];
+  }
 
   /** Bytes from a string of "0" and "1", filled up with ones. */
   function pack(bits: string, off = 0) {
@@ -685,11 +691,12 @@ describe("hpackHuffmanDecodeShort", () => {
     const out = new Uint8Array(room + 1).fill(0xaa);
     out[0] = skipped.length;
     const src = pack(skipped + Array.from(text, symbol => codes.get(symbol)).join("") + rest, off);
-    const stopped = hw("hpackHuffmanDecodeShort", src, out.subarray(0, room));
+    const [stopped, decoded] = run(src, out.subarray(0, room));
     let count = 0;
     let bit = skipped.length;
     while (bit < stopped && count < text.length) bit += codes.get(text[count++])!.length;
     expect(bit, at).toBe(stopped);
+    expect(decoded, at).toBe(count);
     expect(Buffer.from(out.subarray(0, count)).toString(), at).toBe(text.slice(0, count));
     expect(out[room], at).toBe(0xaa);
     return count;
@@ -699,9 +706,9 @@ describe("hpackHuffmanDecodeShort", () => {
     for (const symbol of all) {
       for (let skipped = 0; skipped < 24; skipped++) {
         const at = `symbol=${symbol} skipped=${skipped}`;
-        expect(decode("0".repeat(skipped), symbol, "", at), at).toBe(1);
+        expect(decode(repeat("0", skipped), symbol, "", at), at).toBe(1);
         // With zeros after it instead of the padding.
-        expect(decode("0".repeat(skipped), symbol + "0", "", at), at).toBe(2);
+        expect(decode(repeat("0", skipped), symbol + "0", "", at), at).toBe(2);
       }
     }
   });
@@ -712,7 +719,17 @@ describe("hpackHuffmanDecodeShort", () => {
       for (const rest of ["", "1111111000" + "00000", "111111111111111111111111111100" + "00000"]) {
         const at = `length=${length} rest=${rest}`;
         const off = OFFSETS[length % OFFSETS.length];
-        expect(decode("1".repeat(length % 8), textOf(length, length), rest, at, undefined, off), at).toBe(length);
+        expect(decode(repeat("1", length % 8), textOf(length, length), rest, at, undefined, off), at).toBe(length);
+      }
+    }
+  });
+
+  it.skipIf(!hasKernel)("blocks of twelve symbols, which is the most", () => {
+    for (let length = 0; length <= 40; length++) {
+      const text = Array.from({ length }, (_, i) => SYMBOLS[0][(i * 3 + length) % SYMBOLS[0].length]).join("");
+      for (let skipped = 0; skipped < 8; skipped++) {
+        const at = `length=${length} skipped=${skipped}`;
+        expect(decode(repeat("1", skipped), text, "", at), at).toBe(length);
       }
     }
   });
@@ -722,8 +739,8 @@ describe("hpackHuffmanDecodeShort", () => {
       const text = textOf(length, 3);
       const lengths = Array.from(text, symbol => codes.get(symbol)!.length);
       const bits = lengths.reduce((a, b) => a + b, 0);
-      // With ones after it, this would be "1", "9" or "Y".
-      const rest = "0".repeat(8 - (bits % 8));
+      // With ones after it, this would be "9", "o", "a" or "1".
+      const rest = repeat("0", 8 - (bits % 8));
       if (rest.length > 4) continue;
       // It gives up on the block that this is in, the last 7 bytes at most.
       let sure = 0;
@@ -733,7 +750,7 @@ describe("hpackHuffmanDecodeShort", () => {
     }
   });
 
-  it.skipIf(!hasKernel)("stops when there is no room for 16 symbols", () => {
+  it.skipIf(!hasKernel)("stops when there is no room for the 16 bytes it stores at a time", () => {
     const text = textOf(200, 1);
     for (let room = 1; room <= 60; room++) {
       const count = decode("", text, "", `room=${room}`, room);
@@ -754,7 +771,7 @@ describe("hpackHuffmanDecodeShort", () => {
       for (let skipped = 0; skipped < 8; skipped++) {
         const out = new Uint8Array(((length * 8) / 5 + 17) | 0);
         out[0] = skipped;
-        const stopped = hw("hpackHuffmanDecodeShort", src, out);
+        const [stopped] = run(src, out);
         expect(stopped, `length=${length} skipped=${skipped}`).toBeWithin(skipped, Math.max(skipped, length * 8) + 1);
       }
     }
@@ -763,7 +780,7 @@ describe("hpackHuffmanDecodeShort", () => {
   it.skipIf(!hasKernel)("writes nothing after the output", () => {
     const src = new Uint8Array(100);
     for (let room = 1; room <= 80; room++) {
-      expect(hw("hpackHuffmanDecodeShort", src, atEnd(room)), `room=${room}`).toBeWithin(0, src.length * 8 + 1);
+      expect(run(src, atEnd(room))[0], `room=${room}`).toBeWithin(0, src.length * 8 + 1);
     }
   });
 });

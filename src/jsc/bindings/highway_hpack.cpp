@@ -46,6 +46,8 @@ inline constexpr Tables kTables = [] {
     }
     return tables;
 }();
+// The four strings fill the table up to 0xfe, where the kernel stops looking.
+static_assert(kTables.symbol[0xfd] == 'Z' && kTables.symbol[0xfe] == 0 && kTables.length[0xb7 >> 2] == 6 && kTables.length[0xb8 >> 2] == 7);
 
 } // namespace hpack_huffman
 } // namespace bun
@@ -65,13 +67,13 @@ bool HpackHuffmanHasKernelImpl()
     return true;
 }
 
-// Moves `*bit_pos` on to where it stopped and returns how many bytes it wrote.
+// Moves `*bit_pos` on to where it stopped and returns how many symbols it decoded.
 size_t HpackHuffmanDecodeShortImpl(const uint8_t* HWY_RESTRICT src, size_t src_len, size_t* HWY_RESTRICT bit_pos, uint8_t* HWY_RESTRICT out, size_t out_len)
 {
     using bun::hpack_huffman::kTables;
     constexpr size_t kBlockBits = 56;
-    // HPACK_HUFFMAN_SPARE_OUT in src/highway/lib.rs
-    constexpr size_t kMaxSymbols = 16;
+    // What a block stores, of which 12 at most are symbols. HPACK_HUFFMAN_SPARE_OUT in src/highway/lib.rs
+    constexpr size_t kStoreBytes = 16;
 
     const hn::FixedTag<uint8_t, 64> d;
     const hn::FixedTag<uint8_t, 16> d16;
@@ -96,7 +98,7 @@ size_t HpackHuffmanDecodeShortImpl(const uint8_t* HWY_RESTRICT src, size_t src_l
     size_t base = *bit_pos / 8;
     size_t first = *bit_pos % 8;
     size_t written = 0;
-    while (base < src_len && written + kMaxSymbols <= out_len) {
+    while (base < src_len && written + kStoreBytes <= out_len) {
         const size_t left = src_len - base;
         // Ones after the end, like the padding. No short code starts with 8 of them.
         const auto input = left >= 16 ? hn::LoadU(d16, src + base) : hn::MaskedLoadOr(hn::Set(d16, uint8_t { 0xff }), hn::FirstN(d16, left), d16, src + base);
@@ -120,7 +122,7 @@ size_t HpackHuffmanDecodeShortImpl(const uint8_t* HWY_RESTRICT src, size_t src_l
         starts = hn::IfThenElse(uses_jump8, lookup(jump8, starts), starts);
 
         const auto low7 = hn::And(bits, hn::Set(d, uint8_t { 0x7f }));
-        const auto symbols = hn::IfThenElse(hn::MaskFromVec(bits), lookup2(symbols2, symbols3, low7), lookup2(symbols0, symbols1, low7));
+        const auto symbols = hn::IfThenElse(hn::TestBit(bits, hn::Set(d, uint8_t { 0x80 })), lookup2(symbols2, symbols3, low7), lookup2(symbols0, symbols1, low7));
         hn::StoreU(hn::ResizeBitCast(d16, lookup(symbols, starts)), d16, out + written);
         written += hn::CountTrue(d16, hn::Lt(hn::ResizeBitCast(d16, starts), hn::Set(d16, static_cast<uint8_t>(stop))));
 

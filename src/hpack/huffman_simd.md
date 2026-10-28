@@ -16,7 +16,7 @@ Take the lookups off the chain by doing them for every place a code could start.
 1. Take 64 bits of input and look at all 64 bit offsets at once, as if a code started at each.
    `vpmultishiftqb` yields the 8 bits from every offset on. That is enough to tell the length and
    the symbol of a code of up to 8 bits: all of `[0-9A-Za-z]` and ` %&*,-./:;=_` and the space,
-   98.6% of the bytes in the header corpus of http2jp/hpack-test-case.
+   99.2% of the bytes of the header values in the corpus of http2jp/hpack-test-case.
 2. `jump[offset] = offset + length` is where the next code starts. Applying that table to itself
    (`vpermb`) gives the tables for 2, 4, 8 and 16 codes ahead. None of this depends on where the
    first code starts, so the blocks of a long string are worked out side by side.

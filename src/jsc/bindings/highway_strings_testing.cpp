@@ -46,7 +46,7 @@ namespace Bun {
 // writes its three bitmaps into `arg`, a third of the view each, and returns 0.
 // lineStarts writes uint32 offsets into `arg` and returns how many.
 // oddBlocks writes its uint64 words into `arg` and returns 0.
-// hpackHuffmanDecodeShort starts at bit `arg[0]`, fills `arg`, returns the bit it stopped at, -1 = no kernel.
+// hpackHuffmanDecodeShort starts at bit `arg[0]`, fills `arg`, returns the bit it stopped at * 65536 + its count, -1 = no kernel.
 // The kernels that look for slashes ignore `arg`. commonPrefixLength compares `haystack` with `arg`.
 BUN_DEFINE_HOST_FUNCTION(Bun__highwayStringsForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -152,7 +152,8 @@ BUN_DEFINE_HOST_FUNCTION(Bun__highwayStringsForTesting, (JSC::JSGlobalObject * g
             return {};
         }
         result = needle[0];
-        highway_hpack_huffman_decode_short(haystack, len, &result, const_cast<uint8_t*>(needle), needle_len);
+        size_t count = highway_hpack_huffman_decode_short(haystack, len, &result, const_cast<uint8_t*>(needle), needle_len);
+        result = result * 65536 + count;
     } else {
         throwTypeError(globalObject, scope, "unknown op"_s);
         return {};

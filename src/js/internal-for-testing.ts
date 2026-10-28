@@ -39,7 +39,7 @@ export const xxHash3ForTesting: (view: ArrayBufferView, seed?: number | bigint) 
 // scannerRunStops fills `arg` with its three bitmaps and returns 0. lineStarts
 // fills `arg` with uint32 offsets and returns how many. oddBlocks fills `arg`
 // with uint64 words and returns 0.
-// hpackHuffmanDecodeShort starts at bit `arg[0]`, fills `arg`, returns the bit it stopped at, -1 = no kernel.
+// hpackHuffmanDecodeShort starts at bit `arg[0]`, fills `arg`, returns the bit it stopped at * 65536 + its count, -1 = no kernel.
 export const highwayStringsForTesting: (
   op:
     | "indexOfChar"

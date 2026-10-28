@@ -148,12 +148,12 @@ export default function compose(...streams) {
   if (readable) {
     if (isNodeStream(tail)) {
       d._read = function () {
-        tail.resume();
+        tail.resume!();
       };
 
       tail.on("data", function (chunk) {
         if (!d.push(chunk)) {
-          tail.pause();
+          tail.pause!();
         }
       });
 

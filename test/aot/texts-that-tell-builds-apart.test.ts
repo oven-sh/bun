@@ -111,7 +111,11 @@ describe.skipIf(!isLinux)("the file of the Bun under test", () => {
   // CI starts this file with the stripped Bun, and the same link with its symbols lies beside it.
   test("names each text that it holds, and no other, in its symbol table if it has one", () => {
     const names = marks.map(mark => mark.symbol);
-    const files = [process.execPath, join(dirname(process.execPath), "bun-profile")].filter(path => existsSync(path));
+    const files = [
+      process.execPath,
+      join(dirname(process.execPath), "bun-profile"),
+      process.execPath.replace(/-stripped$/, ""),
+    ].filter((path, index, paths) => paths.indexOf(path) === index && existsSync(path));
     for (const path of files) {
       const bytes = path === process.execPath ? file : readFileSync(path);
       const symbols = symbolsOf(path, bytes, names);
@@ -122,7 +126,7 @@ describe.skipIf(!isLinux)("the file of the Bun under test", () => {
       );
       return;
     }
-    // A step of CI (EXPECTED_PLATFORM_OS, .buildkite/ci.ts) has the symbols in one of the two.
+    // A step of CI (EXPECTED_PLATFORM_OS, .buildkite/ci.ts) has the symbols in one of them.
     if (process.env.EXPECTED_PLATFORM_OS)
       expect(`no file has its symbols: ${files.join(", ")}`).toBe("one of the files has its symbols");
   });

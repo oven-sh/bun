@@ -77,7 +77,7 @@ that runs and is red for a file that nothing reaches.
   limit a test gives itself, the file is killed then, with all that it has started (`BUN_FEATURE_FLAG_NO_ORPHANS`). Where two
   or three files run beside one another in processes of their own, the limit is two or three times as long.
 - **A file runs beside others.** One that takes under fifteen seconds on every lane runs in a bucket, many files to a process
-  (`test/parallel-allowlist.json`). The longer ones run beside one another too, each in a process of its own: one for every three
+  (`test/parallel-allowlist.json`), with no more of its concurrent tests under way than its share of the processors. The longer ones run beside one another too, each in a process of its own: one for every three
   processors, and no more than one for every three gigabytes of the machine. A file that judges by a clock, or by the memory that is
   held or left, says so in a line `// Runs alone: <why>`, and nothing else of the shard runs beside it.
 - **Every test runs on every push, on Alpine (x64 and arm64). The other lanes run what asks the system**: processes, Workers and
@@ -92,7 +92,9 @@ that runs and is red for a file that nothing reaches.
 - **The ASAN lane** gives a file twice the time. The runner sets `BUN_JSC_validateExceptionChecks=1` there for every file that
   `test/no-validate-exceptions.txt` does not list, and the builds and executables that a test starts inherit it. It also lays an
   unpacked copy of Bun's debug information where a symbolizer looks first (`LLVM_SYMBOLIZER_OPTS`): unpacking it takes seconds, and
-  without the copy every process that ends with something to hold against `test/leaksan.supp` does it again.
+  without the copy every process that ends with something to hold against `test/leaksan.supp` does it again. The files of this
+  folder run there on a copy of `bun-asan` without the debug information, half the size, and so are the executables that they build.
+  It has the build ID of `bun-asan`, so a symbolizer answers for it as for `bun-asan`. A file that fails is tried again on `bun-asan`.
 - **A group that needs more than a Bun** is switched on by an environment variable named `AOT_<GROUP>`, and without it every test of
   the group is skipped, so that `bun test test/aot` never needs more than a Bun. The top of each such test file says what its
   variables mean: `AOT_SERVERS` and `AOT_BACKEND` need npm, the second also a PostgreSQL.

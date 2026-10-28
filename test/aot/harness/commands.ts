@@ -1,6 +1,6 @@
 // How the tests of test/aot start a command, and what they make of how it ended.
 import { expect, setDefaultTimeout } from "bun:test";
-import { existsSync, readdirSync, renameSync, rmSync, statSync, utimesSync } from "fs";
+import { closeSync, existsSync, openSync, readdirSync, readSync, renameSync, rmSync, statSync, utimesSync } from "fs";
 import { bunExe, isASAN, isLinux, isWindows } from "harness";
 import { availableParallelism, tmpdir } from "os";
 import { join } from "path";
@@ -174,6 +174,26 @@ export function built(build: { stderr: string; exitCode: number }) {
   });
 }
 
+/** The names of the sections of an ELF file of 64 bits. */
+export function namesOfSections(path: string) {
+  const file = openSync(path, "r");
+  const read = (at: number, length: number) => {
+    const bytes = Buffer.alloc(length);
+    readSync(file, bytes, 0, length, at);
+    return bytes;
+  };
+  try {
+    const header = read(0, 64);
+    const [size, names] = [header.readUInt16LE(0x3a), header.readUInt16LE(0x3e)];
+    const section = read(Number(header.readBigUInt64LE(0x28)) + names * size, size);
+    return read(Number(section.readBigUInt64LE(0x18)), Number(section.readBigUInt64LE(0x20)))
+      .toString("latin1")
+      .split("\0");
+  } finally {
+    closeSync(file);
+  }
+}
+
 // Every build writes the Bun that runs it once more, and CI tests bun-profile, which on Linux has its debug information in it:
 // three times the bytes of the Bun that ships. A file of many programs builds on a copy without it. The copy lies in the
 // temporary directory under a name that tells this Bun from any other. It is made once and found again by every test file,
@@ -181,7 +201,8 @@ export function built(build: { stderr: string; exitCode: number }) {
 export function withoutDebugInformation(_folder?: string): string[] {
   const strip = isLinux && Bun.which("strip");
   const { ino, size, mtimeMs } = statSync(bunExe());
-  if (!strip || size < 200 * 1024 * 1024) return [];
+  // A Bun with AddressSanitizer is large without it too.
+  if (!strip || size < 200 * 1024 * 1024 || !namesOfSections(bunExe()).includes(".debug_info")) return [];
   const prefix = "bun-without-debug-information-";
   const copy = join(tmpdir(), `${prefix}${ino}-${size}-${Math.trunc(mtimeMs)}`);
   if (existsSync(copy)) {

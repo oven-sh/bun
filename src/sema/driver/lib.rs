@@ -1393,6 +1393,8 @@ pub struct Report {
     pub check_time: Duration,
     /// The maximum stack usage of any file, in bytes.
     pub deepest_stack: usize,
+    /// `Checker::work` of all the checkers together.
+    pub queries: usize,
 }
 
 impl Report {
@@ -1430,6 +1432,7 @@ impl Report {
         self.rounds.extend(other.rounds);
         self.check_time += other.check_time;
         self.deepest_stack = self.deepest_stack.max(other.deepest_stack);
+        self.queries += other.queries;
     }
 
     /// `BuildTask.report`
@@ -4428,6 +4431,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
     let emit_diagnostics: Guarded<Vec<Vec<Diagnostic>>> = Guarded::new(Vec::new());
     let incomplete: Guarded<Vec<Incomplete>> = Guarded::new(Vec::new());
     let deepest_stack = AtomicUsize::new(0);
+    let queries = AtomicUsize::new(0);
     // `Files::parse_and_bind` retains the text of every file except those of the default library.
     let text_of = |file: FileId| {
         let module = &program.files.modules[file.idx()];
@@ -4568,6 +4572,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
             }
         }
         deepest_stack.fetch_max(checker.deepest_stack(), Ordering::Relaxed);
+        queries.fetch_add(checker.work as usize, Ordering::Relaxed);
         Outcome {
             checked,
             incomplete,
@@ -4924,6 +4929,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                 }
             };
             deepest_stack.fetch_max(checker.deepest_stack(), Ordering::Relaxed);
+            queries.fetch_add(checker.work as usize, Ordering::Relaxed);
             tasks_run.fetch_add(1, Ordering::Relaxed);
             checker.end_task_after_commits();
             // The checker borrows the files' HIR, so it must be gone before their trees are freed.
@@ -5292,6 +5298,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         }
     }
     report.deepest_stack = deepest_stack.into_inner();
+    report.queries = queries.into_inner();
     report.tasks_run = tasks_run.into_inner();
     #[cfg(test)]
     {

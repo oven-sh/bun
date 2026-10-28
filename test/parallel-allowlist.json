@@ -695,6 +695,7 @@
     "aot/build-scaling/build-scaling-6.test.ts",
     "aot/build-without-memory-or-threads.test.ts",
     "aot/built-in-functions-by-use.test.ts",
+    "aot/builtins/native-contract.test.ts",
     "aot/bun-build-takes-aot-disable-and-aot-heat.test.ts",
     "aot/calls-made-at-build-time.test.ts",
     "aot/channel-of-process-by-use.test.ts",

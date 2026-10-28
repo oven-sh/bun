@@ -260,11 +260,13 @@ export const printsTheIdOf = (build: { stdout: string }) => ({
   exitCode: 0,
 });
 
+/** In its turn, as a build: one test asks for more than a hundred starts at once, and builds are started beside them. */
 export async function started(folder: string, name: string, options?: string, args: string[] = []) {
   const cmd = [join(folder, "program"), ...args];
-  if (!neverEnd.includes(name)) return await spawned(cmd, folder, { ...bunEnv, BUN_OPTIONS: options }, 60_000);
+  const env = { ...bunEnv, BUN_OPTIONS: options };
+  if (!neverEnd.includes(name)) return await slot(() => spawned(cmd, folder, env, 60_000));
   // Not a time from its start: the first start of a new executable on a busy Mac has taken more than five seconds.
-  const killed = await spawned(cmd, folder, { ...bunEnv, BUN_OPTIONS: options }, 60_000, 2_000);
+  const killed = await slot(() => spawned(cmd, folder, env, 60_000, 2_000));
   return { ...killed, stdout: eachLineOnce(killed.stdout), stderr: eachLineOnce(killed.stderr) };
 }
 

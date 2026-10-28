@@ -6971,18 +6971,30 @@ const wrong: number = "";
     // The return type of each function is found through the next. Up to some length the ring closes on the stack, and every
     // member is reported. A longer one is resolved piece by piece from lower on the stack, and closes at the member that
     // waits for the pieces. Where that length is depends on the platform and the build, so this tries many.
+    //
+    // What is unwound is asked for again, so a function of a long ring takes up to two and a half times the queries that
+    // one of a short ring takes. A ring that doesn't close is followed anew from each of its members. The queries are
+    // counted, so nothing here depends on how busy the machine is.
+    async function checkRing(length: number) {
+      const ring = Array.from(
+        { length },
+        (_, index) => `function f${index}(x: number) { return x > 0 ? f${(index + 1) % length}(x - 1) + 1 : 0; }\n`,
+      );
+      using dir = project({
+        "a.ts": `${ring.join("")}export const wrong: number = "";\nexport const any: string = f0(1);\n`,
+      });
+      const { stdout, stderr, exitCode } = await check(dir, ["--all", "--timing"]);
+      const queriesForEachFunction = Number(/ (\d+) queries,/.exec(stderr)?.[1]) / length;
+      return { lines: stdout.split("\n"), stderr, exitCode, queriesForEachFunction };
+    }
+    let shortRing: ReturnType<typeof checkRing> | undefined;
     test.skipIf(isDebug || isASAN).each([3_000, 3_600, 3_800, 4_000, 5_000, 8_000, 20_000])(
-      "finishes within 10 s on a ring of %d functions that don't say what they return",
+      "a function in a ring of %d that don't say what they return takes at most 3 times the queries of one in a ring of 100",
       async length => {
-        const ring = Array.from(
-          { length },
-          (_, index) => `function f${index}(x: number) { return x > 0 ? f${(index + 1) % length}(x - 1) + 1 : 0; }\n`,
-        );
-        using dir = project({
-          "a.ts": `${ring.join("")}export const wrong: number = "";\nexport const any: string = f0(1);\n`,
-        });
-        const { stdout, stderr, exitCode } = await check(dir, ["--all"], {}, 10_000);
-        const lines = stdout.split("\n");
+        const [short, { lines, stderr, exitCode, queriesForEachFunction }] = await Promise.all([
+          (shortRing ??= checkRing(100)),
+          checkRing(length),
+        ]);
         const circular = lines.filter(line => line.includes("error TS7023:"));
         expect(lines.filter(line => !line.includes("error TS7023:"))).toEqual([
           `a.ts(${length + 1},14): error TS2322: Type 'string' is not assignable to type 'number'.`,
@@ -6991,9 +7003,10 @@ const wrong: number = "";
         expect(circular.length).toBeGreaterThan(0);
         if (isWhole) expect(circular).toHaveLength(length);
         expect(exitCode).toBe(1);
+        expect(queriesForEachFunction / short.queriesForEachFunction).toBeLessThan(3);
       },
       // Longer than the child's own timeout, so the child never outlives the test.
-      20_000,
+      90_000,
     );
 
     // The `include` pattern matcher used to recurse for each `**` and try every number of directories for each one.

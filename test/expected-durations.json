@@ -779,6 +779,13 @@
     "windows": 100,
     "windows-aarch64": 100
   },
+  "aot/builtins/native-contract.test.ts": {
+    "default": 28000,
+    "asan": 259200,
+    "musl": 31800,
+    "windows": 36200,
+    "windows-aarch64": 49800
+  },
   "aot/builtins/native-contract/noticed-changes.test.ts": {
     "default": 400,
     "asan": 9000,

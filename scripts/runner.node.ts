@@ -464,6 +464,9 @@ const withSymbols = (execPath: string) =>
   [...strippedBuns].find(([, stripped]) => stripped === execPath)?.[0] ?? execPath;
 const bunFor = (execPath: string, testPath: string) =>
   (buildsManyExecutables(testPath) && strippedBuns.get(execPath)) || execPath;
+// With AddressSanitizer what has failed is tried again on the Bun that has its debug information in it. An executable is a copy of it, so its reports too then name files, lines and inlined functions.
+const bunForTry = (execPath: string, testPath: string, attempt: number) =>
+  attempt > 1 && basename(execPath).includes("asan") ? execPath : bunFor(execPath, testPath);
 const spawnTimeout = 5_000;
 const spawnBunTimeout = 20_000; // when running with ASAN/LSAN bun can take a bit longer to exit, not a bug.
 const testTimeout = 3 * 60_000;
@@ -1362,10 +1365,11 @@ async function runTests(): Promise<TestResult[]> {
           concurrent,
         );
       } else {
+        let attempt = 0;
         return runTest(
           title,
           async () =>
-            spawnBunTest(bunFor(execPath, testPath), join("test", testPath), {
+            spawnBunTest(bunForTry(execPath, testPath, ++attempt), join("test", testPath), {
               cwd,
               filesAtATime: saysDuration ? buildingFilesWidth : 1,
               stdout: concurrent ? () => {} : pipeTestStdout(process.stdout),
@@ -1414,6 +1418,11 @@ async function runTests(): Promise<TestResult[]> {
           args: [
             "test",
             `--parallel=${width}`,
+            // A test holds the executables that it has built until it ends. The files of the bucket share the processors, and
+            // more tests under way in a file than its share of them end no sooner: their executables only lie there together.
+            ...(buildsManyExecutables(bucketFiles[0]!)
+              ? [`--max-concurrency=${Math.ceil(availableParallelism() / width)}`]
+              : []),
             `--timeout=${perTestTimeout}`,
             "--dots",
             "--reporter=junit",
@@ -3446,7 +3455,17 @@ function unpackDebugInformation(execPath: string): void {
     stdio: "inherit",
     timeout: 120_000,
   });
-  if (status === 0) process.env.LLVM_SYMBOLIZER_OPTS = `--debug-file-directory=${directory}`;
+  if (status !== 0) return;
+  process.env.LLVM_SYMBOLIZER_OPTS = `--debug-file-directory=${directory}`;
+  // More than half of the file is debug information, and every executable is a copy of the Bun that builds it. Files that
+  // build side by side then write more than the system keeps unwritten, and every write waits for the disk. A copy without
+  // the debug information has the same build ID, so a symbolizer answers for it as for the whole file. An executable built
+  // with --aot has a build ID of its own: for its sake the table of symbols stays.
+  const strip = which(["llvm-strip", "strip"]);
+  if (!strip) return;
+  const stripped = join(dirname(execPath), `${basename(execPath)}-stripped`);
+  const made = spawnSync(strip, ["--strip-debug", "-o", stripped, execPath], { stdio: "inherit", timeout: 120_000 });
+  if (made.status === 0 && getRevision(stripped) === getRevision(execPath)) strippedBuns.set(execPath, stripped);
 }
 
 function getRevision(execPath: string): string {

@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
-import { symlinkSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { symlinkSync } from "node:fs";
 import { text } from "node:stream/consumers";
 import { unsupported as aotUnsupported } from "../../aot/supported";
 

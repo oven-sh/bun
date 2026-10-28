@@ -132,14 +132,17 @@ describe("DOMException in Node.js environment", () => {
          console.log(JSON.stringify(new DOMException("boom", "AbortError").stack));
          console.log(JSON.stringify(new DOMException("", "AbortError").stack));
          console.log(JSON.stringify(new DOMException("boom", "").stack));
-         console.log(JSON.stringify(new Sub("boom", "AbortError").stack));`,
+         console.log(JSON.stringify(new Sub("boom", "AbortError").stack));
+         const renamed = new DOMException("boom", "AbortError");
+         Object.defineProperty(renamed, "name", { value: "CustomError" });
+         console.log(JSON.stringify(renamed.stack));`,
       ],
       env: bunEnv,
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: '"AbortError: boom"\n"AbortError: boom"\n"AbortError"\n"boom"\n"AbortError: boom"\n',
+      stdout: '"AbortError: boom"\n"AbortError: boom"\n"AbortError"\n"boom"\n"AbortError: boom"\n"CustomError: boom"\n',
       stderr: "",
       exitCode: 0,
     });
@@ -174,6 +177,20 @@ describe("DOMException in Node.js environment", () => {
     expect(Object.getOwnPropertyNames(clone)).toEqual(["stack"]);
   });
 
+  it("structuredClone does not make up a stack when the original's is not a string", () => {
+    const clones = [undefined, null, 5].map(stack => {
+      const original = new DOMException("boom", "AbortError");
+      original.stack = stack;
+      const clone = structuredClone(original);
+      return { stack: clone.stack, own: Object.getOwnPropertyNames(clone) };
+    });
+    expect(clones).toEqual([
+      { stack: undefined, own: ["stack"] },
+      { stack: undefined, own: ["stack"] },
+      { stack: undefined, own: ["stack"] },
+    ]);
+  });
+
   it("works with Error.captureStackTrace", () => {
     function frameName() {
       const error = new DOMException("boom", "NetworkError");
@@ -192,12 +209,22 @@ describe("DOMException in Node.js environment", () => {
   });
 
   it("own name/message properties win in the stack header, like a plain Error", () => {
-    const define = error => {
-      Object.defineProperty(error, "name", { value: "CustomError", configurable: true });
-      Object.defineProperty(error, "message", { value: "custom message", configurable: true });
+    const define = (error, name, message) => {
+      Object.defineProperty(error, "name", { value: name, configurable: true });
+      Object.defineProperty(error, "message", { value: message, configurable: true });
       return error.stack.split("\n")[0];
     };
-    expect(define(new DOMException("boom", "AbortError"))).toBe(define(new Error("boom")));
+    expect(define(new DOMException("boom", "AbortError"), "CustomError", "custom message")).toBe(
+      define(new Error("boom"), "CustomError", "custom message"),
+    );
+    // Concatenation makes ropes; a number is a primitive like the strings.
+    const long = Buffer.alloc(100, "A").toString();
+    expect(define(new DOMException("boom", "AbortError"), long + "Error", long + "message")).toBe(
+      define(new Error("boom"), long + "Error", long + "message"),
+    );
+    expect(define(new DOMException("boom", "AbortError"), 42, "custom message")).toBe(
+      define(new Error("boom"), 42, "custom message"),
+    );
   });
 
   it("own name property wins in the uncaught exception report", async () => {
@@ -258,6 +285,7 @@ describe("DOMException in Node.js environment", () => {
          for (let i = 0; i < 50; i++) errors.push(make());
          Bun.gc(true);
          Bun.gc(true);
+         Object.defineProperty(errors[0], "name", { value: "CustomError" });
          const headers = new Set(errors.map(e => e.stack.split("\\n")[0]));
          console.log(JSON.stringify([...headers]), errors.every(e => e.stack.includes("\\n    at ")));`,
       ],
@@ -266,7 +294,7 @@ describe("DOMException in Node.js environment", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: '["AbortError: dead frame"] true\n',
+      stdout: '["CustomError: dead frame","AbortError: dead frame"] true\n',
       stderr: "",
       exitCode: 0,
     });

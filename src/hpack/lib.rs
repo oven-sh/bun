@@ -572,6 +572,11 @@ mod tests {
             "0f",                // integer cut off
             "3f",                // the same in a size update
             "7fffffffff10",      // integer over 32 bits
+            "007f",              // the length of a name cut off
+            "00ff",              // the same for a Huffman coded one
+            "007fffffffff7f",    // the length of a name over 32 bits
+            "01 7f",             // the length of a value cut off
+            "01 7fffffffff7f",   // the length of a value over 32 bits
             "000161 0261",       // string cut off
             "000161 81ff",       // 8 bits of padding
             "000161 8100",       // padding that is not ones: "0" and 000
@@ -599,7 +604,7 @@ mod tests {
             encoder.set_max_capacity(value_len as u32 % 4096);
             let encoded =
                 encoder.encode(&mut block, name.as_bytes(), value.as_bytes(), Indexing::Add);
-            assert_eq!(encoded.is_ok(), fits);
+            assert_eq!(encoded, if fits { Ok(()) } else { Err(Error::TooLarge) });
             if !fits {
                 // A field that is refused leaves no trace, in the block or in the table.
                 assert_eq!((&block[..], encoder.table_size()), (&[][..], 0));
@@ -783,6 +788,14 @@ mod tests {
         skip_values(&mut encoder, 0..42);
         let block = encode(&mut encoder, "x-a", "new", Indexing::Never);
         assert_eq!(representation(&block), "never indexed");
+    }
+
+    #[test]
+    fn history_tells_a_value_under_two_names_apart() {
+        let mut encoder = Encoder::with_history();
+        skip_values(&mut encoder, 0..42);
+        let block = encode(&mut encoder, "x-b", "41", Indexing::Add);
+        assert_eq!(representation(&block), "skipped");
     }
 
     #[test]

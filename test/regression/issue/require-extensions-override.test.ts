@@ -259,7 +259,8 @@ test("Module._extensions override should handle cross-assignment correctly", asy
       }
     `,
     "typescript-syntax.js": `
-      const value: string = "typescript";
+      // An angle-bracket cast only parses with the TS loader, not TSX.
+      const value: string = <string>"typescript";
       module.exports = { value };
     `,
     "typescript-syntax.ts": `

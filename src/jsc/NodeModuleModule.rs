@@ -146,7 +146,7 @@ pub(crate) fn builtin_handler_loader(
     match handler {
         ApiLoader::JS if by_name.is_javascript_like() => by_name,
         ApiLoader::JS => Loader::Js,
-        ApiLoader::TS if matches!(by_name, Loader::Jsx | Loader::Tsx) => Loader::Tsx,
+        ApiLoader::TS if by_name == Loader::Tsx => Loader::Tsx,
         ApiLoader::TS => Loader::Ts,
         _ => Loader::from_api(handler.to_schema()),
     }

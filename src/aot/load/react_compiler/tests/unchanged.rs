@@ -177,6 +177,29 @@ fn use_no_memo_opts_out() {
 }
 
 #[test]
+fn file_that_imports_the_memo_cache_is_not_compiled() {
+    let compiled = "import { c as _c } from 'react/compiler-runtime';\n";
+    let compiled_for_react_18 = "import { c as _c } from 'react-compiler-runtime';\n";
+    let written = "import { other as c } from 'react/compiler-runtime';\n";
+    for (import, is_compiled) in [
+        (compiled, false),
+        (compiled_for_react_18, false),
+        (written, true),
+    ] {
+        with_workbench(&[import, HELLO].concat(), |bench| {
+            let (bound, analysis) = bench.analyze(&[]);
+            let (change, source) = bench.transform(ReactCompilerMode::Client, &bound, &analysis);
+            let expected = match is_compiled {
+                true => TreeChange::Changed,
+                false => TreeChange::Unchanged,
+            };
+            assert_eq!(change, expected, "{import}");
+            assert_eq!(source.has_compiled_components, is_compiled, "{import}");
+        });
+    }
+}
+
+#[test]
 fn plain_function_is_left_alone() {
     let text = [
         "function double(value: number) {\nreturn value * 2;\n}\n",

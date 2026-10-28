@@ -1251,17 +1251,17 @@ fn second_parser_rejects<'a>(file: &'a File<'a>) -> bool {
 
 // ───────────────────────────── the file ─────────────────────────────
 
-/// True if the program already imports the `c` memo-cache helper from `module_name`, which means the file has already
+/// True if the program already imports the `c` memo-cache helper from one of `module_names`, which means the file has already
 /// been compiled and must be skipped. The plugin also counts a type-only import, and one inside a `declare module`.
-fn has_memo_cache_function_import<'a>(
+pub(crate) fn has_memo_cache_function_import<'a>(
     file: &'a File<'a>,
-    module_name: &str,
+    module_names: &[&str],
     flavor: Flavor,
 ) -> bool {
     let skips_types = flavor == Flavor::Oxlint;
     let imports_it = |stmt: Stmt<'a>| match stmt.kind() {
         StmtKind::Import(import) => {
-            import.spec().is(module_name)
+            module_names.iter().any(|name| import.spec().is(name))
                 && !(skips_types && import.is_type_only())
                 && import.named().iter().any(|specifier| {
                     !(skips_types && specifier.is_type_only())
@@ -1270,7 +1270,7 @@ fn has_memo_cache_function_import<'a>(
         }
         _ => false,
     };
-    file.mentions(module_name)
+    file.mentions_any(module_names)
         && match flavor {
             Flavor::Oxlint => file.body().iter().any(imports_it),
             Flavor::Eslint => file.stmts_of_kind(StmtTag::Import).any(imports_it),
@@ -1287,7 +1287,7 @@ pub(crate) fn compile_program<'a>(
     flavor: Flavor,
     wanted: Categories,
 ) -> Vec<Finding> {
-    if has_memo_cache_function_import(file, REACT_COMPILER_RUNTIME_MODULE, flavor) {
+    if has_memo_cache_function_import(file, &[REACT_COMPILER_RUNTIME_MODULE], flavor) {
         return Vec::new();
     }
 

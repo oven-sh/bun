@@ -1,5 +1,6 @@
 use crate::compile::Flavor;
 use crate::convert::{ConvertError, Converted, Root, convert};
+use crate::program::has_memo_cache_function_import;
 use crate::suppression::find_program_suppressions;
 use bun_alloc::Arena;
 use bun_ast::{
@@ -10,8 +11,8 @@ use bun_lint::ast::walk::{Visitor, walk_node};
 use bun_lint::ast::{Expr, ExprKind, File, Func, Ident, List, Name, Node, Stmt, StmtKind};
 use bun_lint::span::Span;
 use bun_react_compiler::{
-    CompileOutput, Host, JsxImportKind, PendingCompile, ReactCompilerOptions, ReactCompilerState,
-    finish, maybe_compile_pending,
+    CompileOutput, Host, JsxImportKind, PendingCompile, REACT_COMPILER_RUNTIME_MODULES,
+    ReactCompilerOptions, ReactCompilerState, finish, maybe_compile_pending,
 };
 use std::fmt;
 
@@ -88,6 +89,11 @@ pub struct GeneratedFunction<'g> {
 #[derive(Debug)]
 pub struct GenerationError {
     pub text: String,
+}
+
+/// Upstream `should_skip_compilation`, as the parser asks it: the file imports `c` from the compiler runtime.
+pub fn should_skip_compilation<'a>(file: &'a File<'a>) -> bool {
+    has_memo_cache_function_import(file, &REACT_COMPILER_RUNTIME_MODULES, Flavor::Oxlint)
 }
 
 pub fn has_module_scope_opt_out<'a>(file: &'a File<'a>) -> bool {
@@ -780,6 +786,23 @@ mod tests {
         assert!(opts_out("'use client';\n'use no memo';\nfunction A() {}"));
         assert!(!opts_out("'use client';\nfunction A() {}"));
         assert!(!opts_out("function A() { 'use no memo'; }"));
+    }
+
+    #[test]
+    fn memo_cache_import_skips_the_file() {
+        let skips = |text: &str| with_file(text, should_skip_compilation);
+        assert!(skips("import { c as _c } from 'react/compiler-runtime';"));
+        assert!(skips("import { c } from 'react-compiler-runtime';"));
+        assert!(skips(
+            "f();\nimport { a, c } from 'react/compiler-runtime';"
+        ));
+        assert!(!skips("import { a as c } from 'react/compiler-runtime';"));
+        assert!(!skips("import c from 'react/compiler-runtime';"));
+        assert!(!skips("import * as c from 'react/compiler-runtime';"));
+        assert!(!skips("import type { c } from 'react/compiler-runtime';"));
+        assert!(!skips("import { type c } from 'react/compiler-runtime';"));
+        assert!(!skips("import { c } from './compiler-runtime';"));
+        assert!(!skips("export { c } from 'react/compiler-runtime';"));
     }
 
     #[test]

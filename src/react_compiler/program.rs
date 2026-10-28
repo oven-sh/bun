@@ -37,7 +37,7 @@ use crate::collections::IndexMap;
 use crate::compile_result::{CompileDiagnostic, CompileOutput};
 use crate::hir::VariableBinding;
 use crate::imports::{
-    ProgramContext, add_imports_to_program, is_react_compiler_runtime_module,
+    ProgramContext, REACT_COMPILER_RUNTIME_MODULES, add_imports_to_program,
     validate_restricted_imports,
 };
 use crate::lowering::FunctionNode;
@@ -200,7 +200,8 @@ pub enum ImportBindings {
 
 /// Upstream `has_memo_cache_function_import`, asked of one import statement and for every target.
 fn has_memo_cache_function_import(import: &S::Import, record: &ImportRecord) -> bool {
-    is_react_compiler_runtime_module(record.path.text)
+    let is_runtime = |module: &&str| module.as_bytes() == record.path.text;
+    REACT_COMPILER_RUNTIME_MODULES.iter().any(is_runtime)
         && import
             .items
             .slice()

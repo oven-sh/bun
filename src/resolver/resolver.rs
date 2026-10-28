@@ -7713,7 +7713,7 @@ impl<'a> Resolver<'a> {
             return None;
         }
         let stated = manifests.into_iter().find_map(|manifest| {
-            let parsed = self.parse_tsconfig(manifest.source.path.text, FD::INVALID);
+            let parsed = self.parse_tsconfig(manifest.source.path.text, FD::INVALID, &mut None);
             parsed.ok().flatten().filter(|it| it.has_compiler_options)
         });
         Some(Arc::from(stated.unwrap_or_default()))

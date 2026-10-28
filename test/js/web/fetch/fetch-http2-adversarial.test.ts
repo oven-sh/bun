@@ -1045,3 +1045,117 @@ test("a header block for a finished stream that does not decode is fatal to the 
     },
   );
 });
+
+describe.concurrent("HPACK in fetch() over HTTP/2", () => {
+  const h2 = { protocol: "http2" as const, tls: { rejectUnauthorized: false } };
+  const string = (bytes: string) => Buffer.concat([hpackInt(7, 0, bytes.length), Buffer.from(bytes)]);
+  /** Entry 62 from then on. */
+  const insert = (name: string, value: string) => Buffer.concat([Buffer.from([0x40]), string(name), string(value)]);
+  const seen = (res: Response) => [res.status, ...res.headers];
+
+  test.each([
+    [65536, 200],
+    [65537, "HTTP2CompressionError"],
+  ])("a response field of %d bytes", async (total, expected) => {
+    const block = Buffer.concat([
+      hpackStatus200,
+      Buffer.from([0x00]),
+      string("x-a"),
+      string(Buffer.alloc(total - 3, "v").toString()),
+    ]);
+    const frames: Buffer[] = [];
+    for (let at = 0; at < block.length; at += 16384) {
+      const flags = (at ? 0 : 1) | (at + 16384 < block.length ? 0 : 4);
+      frames.push(frame(at ? 9 : 1, flags, 1, block.subarray(at, at + 16384)));
+    }
+    await withAdversarialServer({ onStream: socket => socket.write(Buffer.concat(frames)) }, async url => {
+      const result = await fetch(url, h2).then(
+        res => [res.status, res.headers.get("x-a")?.length],
+        e => [e.code],
+      );
+      expect(result).toEqual(expected === 200 ? [200, total - 3] : [expected]);
+    });
+  });
+
+  test("the response to an aborted request still reaches the decoder", async () => {
+    const streams: [RawSock, number][] = [];
+    let onStream = Promise.withResolvers<void>();
+    await withAdversarialServer(
+      {
+        onStream: (socket, id) => {
+          streams.push([socket, id]);
+          onStream.resolve();
+        },
+      },
+      async (url, state) => {
+        const sibling = fetch(url, h2).then(seen);
+        await onStream.promise;
+        onStream = Promise.withResolvers();
+        const controller = new AbortController();
+        const aborted = fetch(url, { ...h2, signal: controller.signal });
+        await onStream.promise;
+        controller.abort();
+        expect(await aborted.catch(e => e.name)).toBe("AbortError");
+        const [[socket, first], [, second]] = streams;
+        const block = Buffer.concat([hpackStatus200, insert("x-first", "1"), insert("x-second", "2")]);
+        // Cut inside the first literal.
+        socket.write(frame(1, 0, second, block.subarray(0, 5)));
+        socket.write(frame(9, 4, second, block.subarray(5)));
+        socket.write(frame(1, 5, first, Buffer.concat([hpackStatus200, Buffer.from([0x80 | 63, 0x80 | 62])])));
+        expect(await sibling).toEqual([200, ["x-first", "1"], ["x-second", "2"]]);
+        expect(state.connections).toBe(1);
+      },
+    );
+  });
+
+  test("1xx blocks and trailers still reach the decoder", async () => {
+    const responses = [
+      [
+        frame(1, 4, 1, Buffer.concat([hpackStatus("103"), insert("x-early", "1")])),
+        frame(1, 4, 1, Buffer.concat([hpackStatus200, Buffer.from([0x80 | 62])])),
+        frame(0, 0, 1, Buffer.from("body")),
+        frame(1, 5, 1, insert("x-trailer", "2")),
+      ],
+      [frame(1, 5, 3, Buffer.concat([hpackStatus200, Buffer.from([0x80 | 63, 0x80 | 62])]))],
+    ];
+    await withAdversarialServer(
+      { onStream: (socket, id) => socket.write(Buffer.concat(responses[(id - 1) / 2])) },
+      async (url, state) => {
+        const first = await fetch(url, h2);
+        expect([...seen(first), await first.text()]).toEqual([200, ["x-early", "1"], "body"]);
+        expect(seen(await fetch(url, h2))).toEqual([200, ["x-early", "1"], ["x-trailer", "2"]]);
+        expect(state.connections).toBe(1);
+      },
+    );
+  });
+
+  test("what the static table has is no reference if it is never indexed, and too large a field leaves the table alone", async () => {
+    const blocks: string[] = [];
+    await withAdversarialServer(
+      {
+        onStream: (socket, id, _, block) => {
+          blocks.push(block.toString("hex"));
+          socket.write(frame(1, 5, id, hpackStatus200));
+        },
+      },
+      async (url, state) => {
+        for (const headers of [
+          {},
+          {},
+          // The static table has both with this value, as entries 23 and 32.
+          { authorization: "", cookie: "" },
+          // One byte more than the table holds.
+          { "x-l": Buffer.alloc(4096 - 32 - "x-l".length + 1, "~").toString() },
+          {},
+        ]) {
+          expect((await fetch(url, { ...h2, headers })).status).toBe(200);
+        }
+        expect(state.connections).toBe(1);
+        expect(blocks[2]).toContain("1f0800");
+        expect(blocks[2]).toContain("1f1100");
+        // Nothing but references, as before.
+        expect(blocks[4]).toBe(blocks[1]);
+      },
+    );
+  });
+});

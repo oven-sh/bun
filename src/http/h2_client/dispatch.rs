@@ -744,8 +744,7 @@ fn strip_padding(payload: &[u8]) -> Option<&[u8]> {
 }
 
 /// RFC 9113 §8.2.1/§8.2.2 response-side validation: lowercase names, no
-/// hop-by-hop fields. Names from the decoder are already lowercase for table
-/// hits but a literal can carry anything.
+/// hop-by-hop fields. A literal can carry anything, and so can the table entry it made.
 pub(crate) fn is_malformed_response_field(name: &[u8]) -> bool {
     if name.is_empty() {
         return true;

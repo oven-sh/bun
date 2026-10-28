@@ -218,9 +218,9 @@ mod tests {
     #[test]
     fn memory_stays_bounded() {
         let (mut encoder, mut decoder) = (Encoder::new(), Decoder::new());
-        // The table holds about ten of these, so it turns over many times. One does not fit at all.
+        // The table holds about ten of these, so it turns over many times. Every eighth does not fit at all.
         for i in 0..160 {
-            let len = if i == 80 { 60_000 } else { 300 + i % 100 };
+            let len = if i % 8 == 7 { i * 400 } else { 300 + i % 100 };
             let block = encode(
                 &mut encoder,
                 &format!("x-{i}"),
@@ -232,7 +232,7 @@ mod tests {
             // What the large field took is given back at the end of its block.
             let heap_sizes = (encoder.heap_size(), decoder.heap_size());
             assert!(
-                heap_sizes.0 < 24 * 1024 && heap_sizes.1 < 24 * 1024,
+                heap_sizes.0 < 18 * 1024 && heap_sizes.1 < 18 * 1024,
                 "{i}: {heap_sizes:?}"
             );
         }
@@ -298,7 +298,7 @@ mod tests {
         let (mut encoder, mut decoder) = (Encoder::new(), Decoder::new());
         for (name, value, first_byte) in [
             ("n047767", "a", 0x40),
-            ("n055637", "b", 0x40),
+            ("n055637", "a", 0x40),
             ("x-c", "024993", 0x40),
             ("x-c", "070489", 0x7e),
         ] {
@@ -416,6 +416,15 @@ mod tests {
         }
         // 13 zeros, the first entry of the decoder's table.
         check_huffman(b"000");
+    }
+
+    /// Coding and decoding with one wrong table would agree. The hash is of the 583 bytes that Go's encoder and the RFC's table give.
+    #[test]
+    fn huffman_codes_are_those_of_the_rfc() {
+        let every_byte: Vec<u8> = (0..=255).collect();
+        let mut coded = Vec::new();
+        huffman::encode(&every_byte, &mut coded);
+        assert_eq!(bun_wyhash::hash(&coded), 12907497261869469722);
     }
 
     #[test]
@@ -571,6 +580,38 @@ mod tests {
     }
 
     #[test]
+    fn field_length_limit_however_the_strings_are_coded() {
+        let string = |len, coded| {
+            let (bytes, mut out) = (vec![b'a'; len], Vec::new());
+            if coded {
+                integer::encode(&mut out, 0x80, 7, huffman::encoded_len(&bytes) as u32);
+                huffman::encode(&bytes, &mut out);
+            } else {
+                integer::encode(&mut out, 0x00, 7, len as u32);
+                out.extend_from_slice(&bytes);
+            }
+            out
+        };
+        for (name_coded, value_coded) in [(false, true), (true, false), (true, true)] {
+            for (value_len, fits) in [(MAX_FIELD_LEN - 6, true), (MAX_FIELD_LEN - 5, false)] {
+                let mut block = vec![0x00];
+                block.extend(string(6, name_coded));
+                block.extend(string(value_len, value_coded));
+                let decoded = decode(&mut Decoder::new(), &block).map(|fields| fields.len());
+                assert_eq!(decoded, if fits { Ok(1) } else { Err(Error::TooLarge) });
+            }
+        }
+    }
+
+    #[test]
+    fn the_length_limit_is_not_on_what_is_left_of_the_block() {
+        let fields = MAX_FIELD_LEN / 5 + 1;
+        let block = hex("00 0161 0162").repeat(fields);
+        let decoded = decode(&mut Decoder::new(), &block).map(|fields| fields.len());
+        assert_eq!(decoded, Ok(fields));
+    }
+
+    #[test]
     fn never_indexed_fields_are_spelled_out() {
         let (mut encoder, mut decoder) = (Encoder::new(), Decoder::new());
         for (name, value, indexing, expected) in [
@@ -588,6 +629,16 @@ mod tests {
             );
             assert_eq!(decode(&mut decoder, &block), Ok(vec![field]));
         }
+    }
+
+    #[test]
+    fn a_never_indexed_field_takes_its_name_from_the_tables() {
+        let mut encoder = Encoder::new();
+        encode(&mut encoder, "x-a", "1", Indexing::Add);
+        let block = encode(&mut encoder, "x-a", "2", Indexing::Never);
+        assert_eq!(block, hex("1f2f 8117"));
+        let block = encode(&mut encoder, ":method", "2", Indexing::Never);
+        assert_eq!(block, hex("12 8117"));
     }
 
     #[test]
@@ -645,12 +696,15 @@ mod tests {
 
     #[test]
     fn history_keeps_one_off_fields_out_of_the_table() {
-        let mut encoder = Encoder::with_history();
-        let mut add = |value| representation(&encode(&mut encoder, "x-a", value, Indexing::Add));
-        assert_eq!(add("before it is full"), "added");
+        // It holds 4096 / 32 / 3 hashes. The field that fills it goes by it already.
+        for (before, expected) in [(0, "added"), (40, "added"), (41, "skipped")] {
+            let mut encoder = Encoder::with_history();
+            skip_values(&mut encoder, 0..before);
+            let block = encode(&mut encoder, "x-a", "new", Indexing::Add);
+            assert_eq!(representation(&block), expected);
+        }
 
         let mut encoder = Encoder::with_history();
-        // It holds 4096 / 32 / 3 hashes.
         skip_values(&mut encoder, 0..42);
         let mut add = |value| representation(&encode(&mut encoder, "x-a", value, Indexing::Add));
         assert_eq!(add("new"), "skipped");
@@ -658,6 +712,34 @@ mod tests {
         // Those two pushed out 0 and 1.
         assert_eq!(add("1"), "skipped");
         assert_eq!(add("5"), "added");
+    }
+
+    #[test]
+    fn history_takes_note_of_fields_sent_as_an_index() {
+        for (name, value, index) in [(":method", "GET", 0x82), ("x-b", "1", 0xbe)] {
+            let mut encoder = Encoder::with_history();
+            encode(&mut encoder, "x-b", "1", Indexing::Add);
+            skip_values(&mut encoder, 0..42);
+            // All but the last of those 42 make way.
+            for _ in 0..41 {
+                assert_eq!(encode(&mut encoder, name, value, Indexing::Add), [index]);
+            }
+            let mut add =
+                |value| representation(&encode(&mut encoder, "x-a", value, Indexing::Add));
+            assert_eq!(add("41"), "added");
+            assert_eq!(add("40"), "skipped");
+        }
+    }
+
+    #[test]
+    fn history_goes_by_the_capacity_in_use() {
+        let mut encoder = Encoder::with_history();
+        encoder.set_max_capacity(1024);
+        encoder.set_max_capacity(65536);
+        // 4096 / 32 / 3 of them fill it, whatever the peer allows.
+        skip_values(&mut encoder, 0..42);
+        let block = encode(&mut encoder, "x-a", "new", Indexing::Add);
+        assert_eq!(representation(&block), "skipped");
     }
 
     #[test]

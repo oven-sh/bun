@@ -34,6 +34,13 @@ impl Storage {
         }
     }
 
+    /// After [`Self::clear_scratch`], which leaves more room so as not to do this for every field.
+    pub(crate) fn shrink(&mut self) {
+        if self.bytes.capacity() > self.end + 2 * SPARE_CAPACITY {
+            self.bytes.shrink_to(self.end + SPARE_CAPACITY);
+        }
+    }
+
     /// The scratch space is written by appending to this.
     pub(crate) fn bytes_mut(&mut self) -> &mut Vec<u8> {
         &mut self.bytes

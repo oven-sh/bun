@@ -150,9 +150,7 @@ pub(crate) fn write_request(
     for h in request.headers {
         // §8.2.1: field names MUST be lowercase on the wire. copy_lowercase_if_needed
         // returns the input slice unchanged when it's already lowercase, so
-        // the common (Fetch-normalised) case is zero-copy. The encoder rejects
-        // names+values >64KiB anyway, so the heap fallback only ever holds a
-        // few hundred bytes.
+        // the common (Fetch-normalised) case is zero-copy.
         let mut heap: Vec<u8>;
         let name: &[u8] = if h.name().len() <= lower_buf.len() {
             strings::copy_lowercase_if_needed(h.name(), &mut lower_buf)

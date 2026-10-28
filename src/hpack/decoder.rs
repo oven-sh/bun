@@ -85,6 +85,7 @@ impl Decoder {
         if *pos >= block.len() {
             // The connection may send no block for a long time, so the room the last field took is given back now.
             self.storage.clear_scratch();
+            self.storage.shrink();
             return None;
         }
         Some(self.decode_field(block, pos))

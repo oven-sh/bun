@@ -1,6 +1,7 @@
 use crate::bind::Parent;
 use crate::check::explain::NO_LENGTH;
 use crate::check::*;
+use crate::hir::ImportPhase;
 
 #[derive(Copy, Clone)]
 enum BodyDeclaration {
@@ -86,11 +87,21 @@ impl Checker<'_, '_> {
                 }
             }
             StmtKind::Import(_) if hir.is_in_jsdoc(hir[s].start) => {}
-            StmtKind::Import(_) => {
+            StmtKind::Import(import) => {
                 let code = if hir.is_js { 1473 } else { 1232 };
                 self.check_module_syntax_position(file, s, code);
                 self.check_module_syntax_in_namespace(file, s, 1147);
                 self.check_import_attribute_values(file, s);
+                // To `bun run`, `source` is the name of the default import.
+                let import = &hir[import];
+                if import.phase == ImportPhase::Source {
+                    let after_source = match import.default.is_some() {
+                        true => import.default_pos,
+                        false => import.clause_end,
+                    };
+                    let at = self.span_of_token(file, after_source);
+                    self.early_grammar_error_at(at, 1005, &[Arg::Bytes(b"from")]);
+                }
             }
             StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. } => {
                 let code = if hir.is_js { 1474 } else { 1233 };

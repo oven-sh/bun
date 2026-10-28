@@ -6932,8 +6932,7 @@ pub mod bv2_impl {
                 // SAFETY: see note above — raw `*mut Transpiler` lives for `'a`.
                 let transpiler: &mut Transpiler<'a> = unsafe { &mut *transpiler_ptr };
 
-                // A root-relative HTML URL (`/favicon.png`) stays as written in the record.
-                // Resolution tries each file it can name, see `RootRelativeBases`.
+                // A root-relative HTML URL stays as written; each `RootRelativeBases` candidate is tried.
                 let mut specifier: &'a [u8] = import_record.path.text;
                 let mut root_relative = if loader == Loader::Html {
                     crate::html_scanner::RootRelativeUrl::of_record(

@@ -174,8 +174,7 @@ pub fn rebase_root_relative_url<'r>(root: &'r [u8], url: &[u8]) -> &'r [u8] {
     resolve_path::join_abs_string::<platform::Auto>(root, &[&url[1..]])
 }
 
-/// Where a root-relative HTML URL is looked up, in order: `root_dir` when set, the HTML
-/// file's directory, then `cwd`. No repeats.
+/// Lookup order of a root-relative HTML URL: `root_dir` when set, the HTML file's directory, `cwd`.
 pub struct RootRelativeBases<'a> {
     dirs: [&'a [u8]; 3],
     len: usize,
@@ -191,7 +190,7 @@ impl<'a> RootRelativeBases<'a> {
             bases.push(root_dir);
         }
         let dir = resolve_path::dirname::<platform::Auto>(importer);
-        // On Windows the dirname of `C:\index.html` is the bare `C:`. Keep the separator.
+        // On Windows the dirname of `C:\index.html` is `C:`, not a base.
         let dir = if cfg!(windows) && dir.len() == 2 && importer.len() > 2 {
             &importer[..3]
         } else {

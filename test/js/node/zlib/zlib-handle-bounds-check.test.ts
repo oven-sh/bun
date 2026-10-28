@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { pbkdf2Sync } from "node:crypto";
+import { totalmem } from "node:os";
 import zlib from "node:zlib";
 
 // Tests for bounds checking on native zlib handle write/writeSync methods.
@@ -403,9 +404,9 @@ describe.concurrent("zlib native handle driven outside the zlib.ts lifecycle", (
 });
 
 describe.concurrent("zlib native handle argument validation", () => {
-  async function run(body: string) {
+  async function run(body: string, ...flags: string[]) {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", `const zlib = require("node:zlib");\n${body}`],
+      cmd: [bunExe(), ...flags, "-e", `const zlib = require("node:zlib");\n${body}`],
       env: bunEnv,
       stderr: "pipe",
     });
@@ -532,6 +533,109 @@ describe.concurrent("zlib native handle argument validation", () => {
          console.log("ok " + zlib.inflateRawSync(out.subarray(0, written)).toString());`,
       ),
     ).toEqual({ stdout: "ok hello world", exitCode: 0 });
+  });
+
+  test.concurrent.each(["writeSync", "write"])(
+    "%s() rejects an offset or a length that is not a uint32",
+    async method => {
+      expect(
+        await run(
+          `const Handle = zlib.createDeflateRaw()._handle.constructor;
+         for (const value of [2 ** 32, Infinity, -1, 2 ** 32 - 0.5, -0.5]) {
+           for (const at of [2, 3, 5, 6]) {
+             const handle = new Handle(zlib.constants.DEFLATERAW);
+             handle.init(15, 6, 8, 0, new Uint32Array(2), () => {}, undefined);
+             const args = [zlib.constants.Z_NO_FLUSH, new Uint8Array(16), 0, 0, new Uint8Array(64), 0, 0];
+             args[at] = value;
+             try { handle.${method}(...args); console.log("handled"); }
+             catch (e) { console.log("threw " + e.code + ": " + e.message); }
+           }
+         }`,
+        ),
+      ).toEqual({
+        stdout: [
+          ...["4294967296", "Infinity", "-1"].flatMap(received =>
+            ["in_off", "in_len", "out_off", "out_len"].map(
+              name =>
+                `threw ERR_OUT_OF_RANGE: The value of "${name}" is out of range. It must be >= 0 && <= 4294967295. Received ${received}`,
+            ),
+          ),
+          // Truncated, like a fractional chunkSize: 2 ** 32 - 1 gets as far as the bounds check, and -0.5 is 0.
+          "threw ERR_OUT_OF_RANGE: in_off + in_len (4294967295) exceeds input buffer length (16)",
+          "threw ERR_OUT_OF_RANGE: in_off + in_len (4294967295) exceeds input buffer length (16)",
+          "threw ERR_OUT_OF_RANGE: out_off + out_len (4294967295) exceeds output buffer length (64)",
+          "threw ERR_OUT_OF_RANGE: out_off + out_len (4294967295) exceeds output buffer length (64)",
+          ...Array(4).fill("handled"),
+        ].join("\n"),
+        exitCode: 0,
+      });
+    },
+  );
+
+  // The native streams count in 32 bits, and zlib.ts works out what was consumed from the length that it passed. The
+  // length is rejected before anything is read, so the buffer stays virtual (cheap).
+  test.concurrent.skipIf(totalmem() < 10 * 1024 ** 3)(
+    "a chunk of 2**32 bytes is an error instead of losing a byte",
+    async () => {
+      const error =
+        'ERR_OUT_OF_RANGE: The value of "chunk.byteLength" is out of range. It must be <= 4294967295. Received 4294967296';
+      expect(
+        await run(
+          `const { once } = require("node:events");
+         const input = Buffer.alloc(2 ** 32);
+         for (const [sync, create] of [
+           ["deflateRawSync", "createDeflateRaw"],
+           ["brotliCompressSync", "createBrotliCompress"],
+           ["zstdCompressSync", "createZstdCompress"],
+         ]) {
+           try { zlib[sync](input); console.log("handled"); }
+           catch (e) { console.log("threw " + e.code + ": " + e.message); }
+           const stream = zlib[create]();
+           stream.write(input, e => console.log("write called back with " + e.code));
+           const [e] = await once(stream, "error");
+           console.log("emitted " + e.code + ": " + e.message + ", destroyed: " + stream.destroyed);
+         }
+         zlib.brotliCompress(input, e => console.log("called back with " + e.code + ": " + e.message));`,
+        ),
+      ).toEqual({
+        stdout: [
+          ...Array(3).fill(
+            `threw ${error}\nwrite called back with ERR_OUT_OF_RANGE\nemitted ${error}, destroyed: true`,
+          ),
+          `called back with ${error}`,
+        ].join("\n"),
+        exitCode: 0,
+      });
+    },
+  );
+
+  const chunkSizeError = {
+    code: "ERR_OUT_OF_RANGE",
+    message: 'The value of "options.chunkSize" is out of range. It must be <= 4294967295. Received 4294967296',
+  };
+
+  test.each(["createDeflateRaw", "createBrotliCompress", "createZstdCompress"] as const)(
+    "%s rejects a chunkSize of 2**32",
+    create => {
+      expect(() => zlib[create]({ chunkSize: 2 ** 32 })).toThrow(expect.objectContaining(chunkSizeError));
+    },
+  );
+
+  test.concurrent("zlib/iter rejects a chunkSize of 2**32", async () => {
+    expect(
+      await run(
+        `const { bytes, bytesSync, from, fromSync, pull, pullSync } = require("node:stream/iter");
+         const { compressDeflate, compressDeflateSync } = require("node:zlib/iter");
+         try { bytesSync(pullSync(fromSync("hello"), compressDeflateSync({ chunkSize: 2 ** 32 }))); console.log("handled"); }
+         catch (e) { console.log("threw " + e.code + ": " + e.message); }
+         try { await bytes(pull(from("hello"), compressDeflate({ chunkSize: 2 ** 32 }))); console.log("handled"); }
+         catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
+        "--experimental-stream-iter",
+      ),
+    ).toEqual({
+      stdout: Array(2).fill(`threw ${chunkSizeError.code}: ${chunkSizeError.message}`).join("\n"),
+      exitCode: 0,
+    });
   });
 });
 

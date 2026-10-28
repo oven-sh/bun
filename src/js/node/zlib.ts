@@ -23,6 +23,10 @@ const isArrayBufferView = ArrayBuffer.isView;
 const isAnyArrayBuffer = (b: unknown): b is ArrayBuffer | SharedArrayBuffer =>
   b instanceof ArrayBuffer || b instanceof SharedArrayBuffer;
 const kMaxLength = $requireMap.$get("buffer")?.exports.kMaxLength ?? BufferModule.kMaxLength;
+// The native streams count in 32 bits, and a buffer can be 2 ** 32 bytes long. Node.js takes a length modulo 2 ** 32:
+// it compresses nothing of such a chunk, and does not return from a write with such a chunkSize.
+// https://github.com/nodejs/node/blob/v24.20.0/src/node_zlib.cc#L520-L532
+const kMaxUint32 = 2 ** 32 - 1;
 
 const { Transform, finished } = require("node:stream");
 const owner_symbol = Symbol("owner_symbol");
@@ -271,6 +275,8 @@ function ZlibBase(
       chunkSize = Z_DEFAULT_CHUNK;
     } else if (chunkSize < Z_MIN_CHUNK) {
       throw $ERR_OUT_OF_RANGE("options.chunkSize", `>= ${Z_MIN_CHUNK}`, chunkSize);
+    } else if (chunkSize > kMaxUint32) {
+      throw $ERR_OUT_OF_RANGE("options.chunkSize", `<= ${kMaxUint32}`, chunkSize);
     }
 
     // prettier-ignore
@@ -438,6 +444,11 @@ function takeOutput(buffer: Buffer, offset: number, have: number): Buffer {
 }
 
 function processChunkSync(self: $Node.ZlibBase, chunk: View, flushFlag: number): Buffer {
+  if (chunk.byteLength > kMaxUint32) {
+    _close(self);
+    throw $ERR_OUT_OF_RANGE("chunk.byteLength", `<= ${kMaxUint32}`, chunk.byteLength);
+  }
+
   let availInBefore = chunk.byteLength;
   let availOutBefore = self._chunkSize - self._outOffset;
   let inOff = 0;
@@ -526,9 +537,12 @@ function processChunkSync(self: $Node.ZlibBase, chunk: View, flushFlag: number):
   return buffers.length === 1 ? buffers[0] : Buffer.concat(buffers, nread);
 }
 
-function processChunk(self: $Node.ZlibBase, chunk: View, flushFlag: number, cb: () => void) {
+function processChunk(self: $Node.ZlibBase, chunk: View, flushFlag: number, cb: (error?: Error) => void) {
   const handle = self._handle;
   if (!handle) return process.nextTick(cb);
+  if (chunk.byteLength > kMaxUint32) {
+    return process.nextTick(cb, $ERR_OUT_OF_RANGE("chunk.byteLength", `<= ${kMaxUint32}`, chunk.byteLength));
+  }
 
   handle.buffer = chunk;
   handle.cb = cb;

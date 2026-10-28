@@ -107,6 +107,9 @@ function validateChunkSize(options) {
     chunkSize = DEFAULT_OUTPUT_SIZE;
   } else if (chunkSize < Z_MIN_CHUNK) {
     throw $ERR_OUT_OF_RANGE("options.chunkSize", `>= ${Z_MIN_CHUNK}`, chunkSize);
+  } else if (chunkSize > 2 ** 32 - 1) {
+    // As in node:zlib: the native streams count in 32 bits.
+    throw $ERR_OUT_OF_RANGE("options.chunkSize", `<= ${2 ** 32 - 1}`, chunkSize);
   }
   return chunkSize;
 }

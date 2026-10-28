@@ -220,8 +220,6 @@
 "unsafe_send_covers_more_than_pointers:src/runtime/node/fs_events.rs" = 1
 "unsafe_send_covers_more_than_pointers:src/runtime/node/node_fs.rs" = 1
 "unsafe_send_covers_more_than_pointers:src/runtime/node/path_watcher.rs" = 1
-"unsafe_send_covers_more_than_pointers:src/runtime/shell/IOReader.rs" = 2
-"unsafe_send_covers_more_than_pointers:src/runtime/shell/IOWriter.rs" = 1
 "unsafe_send_covers_more_than_pointers:src/runtime/webcore/blob/copy_file.rs" = 1
 "unsafe_send_covers_more_than_pointers:src/runtime/webcore/blob/read_file.rs" = 1
 

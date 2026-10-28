@@ -1,10 +1,9 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { chmodSync, existsSync } from "fs";
-import { bunEnv, bunExe, isLinux, readdirSorted, runBunInstall, tempDir } from "harness";
+import { chmodSync, existsSync, mkdirSync } from "fs";
+import { bunEnv, bunExe, isLinux, isMusl, readdirSorted, runBunInstall, tempDir } from "harness";
 import { dirname, join } from "path";
 import { TestRegistry } from "registry";
-import { androidSeccompWrap } from "./android-seccomp";
 
 const registry = new TestRegistry();
 beforeAll(async () => {
@@ -57,7 +56,7 @@ type VolumeRow = {
   globalStore?: true;
   args: string[];
   then?: Record<string, string>;
-  // The kernel calls no `openat2`: bun runs under Android's seccomp policy, and knows it.
+  // bun calls no `openat2`, as on Android and on a kernel that has none.
   openat2?: false;
   // bun is not allowed to remove the mount point from the directory that it is in.
   refused?: true;
@@ -99,6 +98,7 @@ const busy = {
   exitCode: 0,
   again: true,
 } as const;
+const withoutOpenat2 = { BUN_FEATURE_FLAG_DISABLE_RESOLVE_BENEATH: "1" };
 const atThePackage = { where: "", volume: ["host.js", "package.json"] };
 const volumeRows: VolumeRow[] = [
   { ...hoisted, ...bump },
@@ -167,19 +167,14 @@ for (const row of volumeRows) {
   const { name = "no-deps", where = "vol", exitCode: expectedExitCode = 0 } = row;
   const manifest = (dependencies: Record<string, string>) =>
     JSON.stringify({ name: "root", dependencies, trustedDependencies: [failing] });
-  const wrap = [...(row.refused ? withoutDacOverride : []), ...(row.openat2 === false ? [androidSeccompWrap!] : [])];
   const title = [
     `${row.linker} on ${row.on}`,
     row.what,
-    ...(row.openat2 === false ? ["a kernel without openat2"] : []),
+    ...(row.openat2 === false ? ["without openat2"] : []),
     ...(row.refused ? ["its removal is refused"] : []),
   ].join(", ");
   test
-    .skipIf(
-      !(row.on === "an overlay" ? canMountOverlay : canMount) ||
-        (row.openat2 === false && !androidSeccompWrap) ||
-        (row.refused === true && !canDropDacOverride),
-    )
+    .skipIf(!(row.on === "an overlay" ? canMountOverlay : canMount) || (row.refused === true && !canDropDacOverride))
     .concurrent(
       `no delete goes into a volume that is mounted ${where ? "in" : "on"} a package folder: ${title}`,
       async () => {
@@ -191,15 +186,14 @@ for (const row of volumeRows) {
           "upper/.keep": "",
           "work/.keep": "",
           "merged/.keep": "",
-          "android/bin/linker64": "",
         });
         const root = String(dir);
         await registry.writeBunfig(join(root, "project"), { linker: row.linker, globalStore: row.globalStore });
         const env = {
           ...bunEnv,
+          ...(row.openat2 === false ? withoutOpenat2 : {}),
           // Not in the project: a cache of a lower layer is another matter.
           BUN_INSTALL_CACHE_DIR: join(root, "cache"),
-          ANDROID_ROOT: row.openat2 === false ? join(root, "android") : undefined,
           BUN: bunExe(),
           PACKAGE: name,
           WHERE: where,
@@ -229,7 +223,7 @@ if [ -n "$REFUSED" ]; then find node_modules -name "$REFUSED" -exec chmod 755 {}
 cat "node_modules/$PACKAGE/package.json" 2>/dev/null
 exit $code`,
             "sh",
-            ...wrap,
+            ...(row.refused ? withoutDacOverride : []),
             bunExe(),
             ...row.args,
           ],
@@ -267,9 +261,9 @@ exit $code`,
 // `bun pm cache rm` opens the cache directory and deletes its entries: what is mounted on it is the cache.
 for (const openat2 of [true, false]) {
   test
-    .skipIf(!canMount || (!openat2 && !androidSeccompWrap))
+    .skipIf(!canMount)
     .concurrent(
-      `bun pm cache rm empties a volume at the cache directory, and not one on an entry of it${openat2 ? "" : ", a kernel without openat2"}`,
+      `bun pm cache rm empties a volume at the cache directory, and not one on an entry of it${openat2 ? "" : ", without openat2"}`,
       async () => {
         using dir = tempDir("pm-cache-rm-volumes", {
           "project/package.json": JSON.stringify({ name: "root" }),
@@ -278,7 +272,6 @@ for (const openat2 of [true, false]) {
           "cache-volume/bar@0.0.2@@@1/package.json": "{}",
           "cache-volume/links/.keep": "",
           "links-volume/baz@1.0.0/package.json": "{}",
-          "android/bin/linker64": "",
         });
         const root = String(dir);
 
@@ -290,7 +283,6 @@ for (const openat2 of [true, false]) {
             "-c",
             'mount -o bind cache-volume cache && mount -o bind links-volume cache/links || exit 125; cd project && "$@"',
             "sh",
-            ...(openat2 ? [] : [androidSeccompWrap!]),
             bunExe(),
             "pm",
             "cache",
@@ -299,10 +291,10 @@ for (const openat2 of [true, false]) {
           cwd: root,
           env: {
             ...bunEnv,
+            ...(openat2 ? {} : withoutOpenat2),
             // The command also deletes what `bunx` left in the temporary directory.
             TMPDIR: join(root, "tmp"),
             BUN_INSTALL_CACHE_DIR: join(root, "cache"),
-            ANDROID_ROOT: openat2 ? undefined : join(root, "android"),
           },
           stdin: "ignore",
           stdout: "pipe",
@@ -322,6 +314,64 @@ for (const openat2 of [true, false]) {
           links: ["baz@1.0.0"],
         });
         expect(exitCode).toBe(1);
+      },
+    );
+}
+
+// Without `openat2`, bun asks `rmdir` before it opens a directory that it is to delete.
+// sshfs answers EPERM there for a directory that has entries, which is no mount point.
+const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+const rmdirSaysEperm = `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <fcntl.h>
+
+int unlinkat(int dirfd, const char *path, int flags) {
+  static int (*real)(int, const char *, int);
+  if (!real) real = dlsym(RTLD_NEXT, "unlinkat");
+  int rc = real(dirfd, path, flags);
+  if (rc != 0 && (flags & AT_REMOVEDIR) && errno == ENOTEMPTY) errno = EPERM;
+  return rc;
+}
+`;
+for (const eperm of [false, true]) {
+  test
+    .skipIf(!isLinux || (eperm && (isMusl || !cc)))
+    .concurrent(
+      `without openat2, the previous copy of a package is deleted${eperm ? ", rmdir says EPERM for a directory with entries" : ""}`,
+      async () => {
+        // A hoisted `file:` package with a directory that has entries.
+        using dir = tempDir("delete-without-openat2", {
+          "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { dep: "file:./dep" } }),
+          "bunfig.toml": `[install]\nlinker = "hoisted"\n`,
+          "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0", bin: { dep: "bin/dep.js" } }),
+          "dep/bin/dep.js": "#!/usr/bin/env node\nconsole.log('ok');\n",
+          "shim.c": rmdirSaysEperm,
+        });
+        const root = String(dir);
+        const modules = join(root, "node_modules");
+        const env: NodeJS.Dict<string> = { ...bunEnv, ...withoutOpenat2, BUN_INSTALL_CACHE_DIR: join(root, ".cache") };
+        const run = async (...cmd: string[]) => {
+          await using proc = spawn({ cmd, cwd: root, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+        };
+        if (eperm) {
+          await run(cc!, "-shared", "-fPIC", "-o", "shim.so", "shim.c", "-ldl");
+          env.LD_PRELOAD = [join(root, "shim.so"), bunEnv.LD_PRELOAD].filter(Boolean).join(":");
+        }
+
+        await run(bunExe(), "install");
+        mkdirSync(join(modules, "dep", "empty"));
+        await run(bunExe(), "install", "--force");
+        expect({ node_modules: await readdirSorted(modules), dep: await readdirSorted(join(modules, "dep")) }).toEqual({
+          node_modules: [".bin", "dep"],
+          dep: ["bin", "package.json"],
+        });
+
+        await run(bunExe(), "remove", "dep");
+        expect(await readdirSorted(modules)).toEqual([".bin"]);
       },
     );
 }

@@ -2761,11 +2761,8 @@ impl ExpectMatcherContext {
     ) -> JsResult<bool> {
         let global_this = cx.global();
         let (a, b, custom_testers) = (a.to_js(), b.to_js(), custom_testers.to_js());
-        let custom_testers = if custom_testers.is_undefined() {
-            JSValue::ZERO
-        } else if !custom_testers.js_type().is_array() {
-            return Err(global_this.throw_invalid_argument_type_value("customTesters", "array", custom_testers));
-        } else if custom_testers.get_length(global_this)? == 0 {
+        // Only an array has testers: `null` is an empty list in Jest and Vitest, and Bun used to ignore this argument.
+        let custom_testers = if !custom_testers.js_type().is_array() || custom_testers.get_length(global_this)? == 0 {
             JSValue::ZERO
         } else {
             custom_testers

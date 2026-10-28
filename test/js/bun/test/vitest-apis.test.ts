@@ -1188,20 +1188,29 @@ describe("expect.addEqualityTesters", () => {
     expect(customTesters).not.toContain(marker);
   });
 
-  test("this.equals rejects testers that are not an array of functions", () => {
-    const messages: string[] = [];
+  test("this.equals rejects a tester that is not a function", () => {
+    let message = "";
     expect.extend({
       toPassBadTesters() {
-        messages.push(messageOf(() => this.equals(1, 2, "nope" as any)));
-        messages.push(messageOf(() => this.equals(1, 2, [1 as any])));
+        message = messageOf(() => this.equals(1, 2, [1 as any]));
         return { pass: true, message: () => "" };
       },
     });
     (expect(1) as any).toPassBadTesters();
-    expect(messages).toEqual([
-      "The \"customTesters\" argument must be of type array. Received type string ('nope')",
-      'The "customTesters[0]" argument must be of type function. Received type number (1)',
-    ]);
+    expect(message).toBe('The "customTesters[0]" argument must be of type function. Received type number (1)');
+  });
+
+  test.each([undefined, null, false, 0, "", true, 1, {}, "nope"])("this.equals has no testers in %p", testers => {
+    let results: boolean[] = [];
+    expect.extend({
+      toPassNoTesters() {
+        const [a, b] = [{ a: 1, b: undefined }, { a: 1 }];
+        results = [this.equals(a, b, testers as any), this.equals(a, b, testers as any, true)];
+        return { pass: true, message: () => "" };
+      },
+    });
+    (expect(1) as any).toPassNoTesters();
+    expect(results).toEqual([true, false]);
   });
 
   test("testers still run when the two values are identical", () => {

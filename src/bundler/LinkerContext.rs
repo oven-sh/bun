@@ -4533,12 +4533,7 @@ impl<'a> LinkerContext<'a> {
             && ast_flags.contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
     }
 
-    /// Is `target` CommonJS to a `require()` call, although the parser lifted
-    /// it to an ES module? Its namespace object then stands in for
-    /// `module.exports`, and a `require()` in the same chunk evaluates to
-    /// that object with no `__toCommonJS` copy. A lifted
-    /// `module.exports = require("./impl")` is an `export *`, so `./impl`
-    /// decides.
+    /// Is `target` a lifted CommonJS file, whose namespace object `require()` returns with no copy?
     pub(crate) fn require_returns_namespace(
         ast_flags: &[AstFlags],
         exports_kinds: &[ExportsKind],
@@ -4547,11 +4542,8 @@ impl<'a> LinkerContext<'a> {
         target: u32,
     ) -> bool {
         let mut file = target as usize;
-        // Each step follows one export star. A longer walk is a cycle of
-        // files that all passed the test.
         for _ in 0..ast_flags.len() {
-            // A file of a listed package also has the flag when it stays
-            // CommonJS, and when it is JSON, text or empty.
+            // The flag is also on CommonJS, JSON, text and empty files of a listed package.
             if !ast_flags[file].contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
                 || !matches!(
                     exports_kinds[file],
@@ -4560,6 +4552,7 @@ impl<'a> LinkerContext<'a> {
             {
                 return false;
             }
+            // A lifted `module.exports = require("./impl")` is an `export *`: `./impl` decides.
             let Some(&star) = export_star_import_records[file].first() else {
                 return true;
             };
@@ -4570,6 +4563,7 @@ impl<'a> LinkerContext<'a> {
             }
             file = source.get() as usize;
         }
+        // The walk is a cycle of lifted files.
         true
     }
 

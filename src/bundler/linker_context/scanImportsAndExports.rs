@@ -1278,10 +1278,7 @@ pub(crate) fn scan_imports_and_exports(
                             // code should see "__esModule". This is an extremely complex
                             // and subtle set of transpiler interop issues. See for example
                             // https://github.com/evanw/esbuild/issues/1591.
-                            //
-                            // A lifted CommonJS module was never an ES module: its
-                            // exports object is its `module.exports`. Only ESM
-                            // output lifts.
+                            // Not for a lifted CommonJS file, which only ESM output has.
                             if kind == ImportKind::Require
                                 && !(output_format == Format::Esm
                                     && LinkerContext::require_returns_namespace(

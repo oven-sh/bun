@@ -260,17 +260,25 @@ __attribute__((minsize)) bool parseMIMEParamsString(JSGlobalObject* globalObject
                     }
                     position++;
                 }
-                valueView = input.substring(valueStart, position - valueStart);
-                valueStr = removeBackslashes(valueView);
-
-                if (position < length && input[position] == '"') {
-                    position++; // Skip closing quote
+                size_t valueEnd = position;
+                if (position < length) {
+                    // https://mimesniff.spec.whatwg.org/#parse-a-mime-type step 11.8.2: 'a/b;a="b"x=y' is a=b, the text up to the next ';' is ignored.
+                    position++;
+                    while (position < length && input[position] != ';') {
+                        position++;
+                    }
                 } else {
-                    // Node.js behavior seems to allow this, just consuming until the end or next semicolon
-                    valueStr = removeBackslashes(valueView);
-                    size_t semicolonPos = input.find(';', position);
-                    position = (semicolonPos == notFound) ? length : semicolonPos;
+                    // Step 1 removes the input's trailing HTTP whitespace, and only a value with no closing quote can reach it: 'a/b;a="b\n' is a=b.
+                    while (valueEnd > valueStart) {
+                        char16_t c = input[valueEnd - 1];
+                        if (c != '\t' && c != ' ' && c != '\r' && c != '\n') {
+                            break;
+                        }
+                        valueEnd--;
+                    }
                 }
+                valueView = input.substring(valueStart, valueEnd - valueStart);
+                valueStr = removeBackslashes(valueView);
             } else {
                 // Token value (potentially empty)
                 size_t valueEnd = position;

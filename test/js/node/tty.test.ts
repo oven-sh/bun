@@ -1,6 +1,8 @@
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, nodeExeAtLeast, tempDir } from "harness";
 import { spawn } from "node:child_process";
+import { constants } from "node:os";
+import { join } from "node:path";
 import { WriteStream } from "node:tty";
 
 describe("ReadStream.prototype.setRawMode", () => {
@@ -190,6 +192,373 @@ describe("ReadStream.prototype.setRawMode", () => {
       afterStdinCooked: false,
     });
     expect(await proc.exited).toBe(0);
+  });
+
+  // What the pty is set to, read from its master: "cooked" has ICANON and ECHO, "raw" has neither and still
+  // post-processes output (OPOST), "io" is cfmakeraw(), which turns OPOST off as well.
+  function modeOf(terminal: Bun.Terminal) {
+    const OPOST = 0x1;
+    const ICANON = process.platform === "darwin" ? 0x100 : 0x2;
+    const ECHO = 0x8;
+    const line = terminal.localFlags & (ICANON | ECHO);
+    const opost = (terminal.outputFlags & OPOST) !== 0;
+    if (line === (ICANON | ECHO) && opost) return "cooked";
+    if (line === 0) return opost ? "raw" : "io";
+    return `lflag ${terminal.localFlags.toString(16)}, oflag ${terminal.outputFlags.toString(16)}`;
+  }
+
+  // Runs `apply(input)` for each input in a child on a pty. After each call the child prints a marker and waits
+  // for a byte on stdin, so the mode of the pty is read here while the child is alive. Resolves to a row of
+  // [input, mode of the pty, what apply() returned] per input.
+  async function eachStepOnPty(cmd: string[], inputs: readonly unknown[], apply: string) {
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let wake = () => {};
+    await using terminal = new Bun.Terminal({
+      data(_terminal, chunk: Uint8Array) {
+        buffer += decoder.decode(chunk, { stream: true });
+        wake();
+      },
+    });
+    const before = modeOf(terminal);
+
+    const proc = Bun.spawn({
+      cmd: [
+        ...cmd,
+        "-e",
+        `
+          const stdin = process.stdin;
+          const stop = text =>
+            new Promise(resolve => {
+              stdin.once("data", resolve);
+              process.stdout.write(text + "\\n");
+            });
+          (async () => {
+            stdin.resume();
+            const apply = ${apply};
+            const inputs = ${JSON.stringify(inputs)};
+            const results = [];
+            for (let i = 0; i < inputs.length; i++) {
+              results.push(apply(inputs[i]));
+              await stop("<" + i + ">");
+            }
+            await stop("RESULT " + JSON.stringify(results) + " END");
+            process.exit(0);
+          })();
+        `,
+      ],
+      env: bunEnv,
+      terminal,
+    });
+    let exitCode: number | undefined;
+    proc.exited.then(code => {
+      exitCode = code;
+      wake();
+    });
+    // A child that dies early must fail the wait rather than hang it.
+    const stopped = async (marker: string) => {
+      while (!buffer.includes(marker)) {
+        if (exitCode !== undefined) {
+          throw new Error(`child exited with code ${exitCode} before ${marker}; output: ${JSON.stringify(buffer)}`);
+        }
+        await new Promise<void>(resolve => (wake = resolve));
+      }
+    };
+
+    const modes: string[] = [];
+    for (let i = 0; i < inputs.length; i++) {
+      await stopped(`<${i}>`);
+      modes.push(modeOf(terminal));
+      terminal.write("\n");
+    }
+    await stopped(" END");
+    const results = JSON.parse(buffer.slice(buffer.indexOf("RESULT ") + "RESULT ".length, buffer.indexOf(" END")));
+    terminal.write("\n");
+    expect(await proc.exited).toBe(0);
+    return { before, rows: inputs.map((input, i) => [input, modes[i], results[i]]) };
+  }
+
+  // Runs `body`, the body of a function, in a child whose stdin is a terminal, on every platform, and resolves
+  // to what it returns. The result goes through a file: ConPTY re-renders what a child prints.
+  async function resultOnTerminal(cmd: string[], body: string) {
+    using dir = tempDir("tty-set-raw-mode", {});
+    const resultPath = join(String(dir), "result.json");
+    let output = "";
+    const decoder = new TextDecoder();
+    const done = Promise.withResolvers<void>();
+    const eof = Promise.withResolvers<void>();
+
+    const proc = Bun.spawn({
+      cmd: [
+        ...cmd,
+        "-e",
+        `
+          const result = (() => {${body}})();
+          require("node:fs").writeFileSync(process.env.TTY_TEST_RESULT, JSON.stringify(result));
+          process.stdout.write("DONE");
+          process.exit(0);
+        `,
+      ],
+      env: { ...bunEnv, TTY_TEST_RESULT: resultPath },
+      terminal: {
+        cols: 200,
+        rows: 24,
+        data(_t, chunk: Uint8Array) {
+          output += decoder.decode(chunk, { stream: true });
+          if (output.includes("DONE")) done.resolve();
+        },
+        exit() {
+          eof.resolve();
+        },
+      },
+    });
+
+    await Promise.race([done.promise, eof.promise]);
+    proc.kill();
+    await proc.exited;
+    proc.terminal?.close();
+
+    const file = Bun.file(resultPath);
+    if (!(await file.exists())) {
+      throw new Error("child did not write its result; terminal output was: " + JSON.stringify(output));
+    }
+    return await file.json();
+  }
+
+  // Node v26.8 (nodejs/node#64140) made `mode` boolean | "raw" | "io". "raw" is the mode `true` selects, "io" is
+  // libuv's binary-safe UV_TTY_MODE_IO, and every other string throws before the stream or the terminal is
+  // touched. `rawMode` says which of the three modes the stream is in. The tables below are what Node v26.12.1
+  // answers. Where PATH has a Node with that change, the same children run under it as well.
+  describe.each([
+    ["bun", bunExe()],
+    ["node", nodeExeAtLeast("26.8.0")],
+  ])("as Node v26.8 does, on %s", (runtime, exe) => {
+    // Node warns about process.binding(), and about the localStorage that Bun's copy of test/common reads.
+    const cmd = runtime === "node" ? [exe!, "--no-warnings"] : [exe!];
+
+    test.skipIf(!exe)("takes 'raw' and 'io', rejects every other string, and reports rawMode", async () => {
+      const rejected = ["false", "off", "0", "", "true", "RAW", "IO", "io ", "raw-vt"];
+      const result = await resultOnTerminal(
+        cmd,
+        `
+          const stdin = process.stdin;
+          const errors = [];
+          stdin.on("error", e => errors.push({ code: e.code, errno: e.errno, syscall: e.syscall, message: e.message }));
+          const state = () => ({ isRaw: stdin.isRaw, rawMode: stdin.rawMode });
+          const outcome = fn => {
+            try {
+              return { returnsThis: fn() === stdin, ...state() };
+            } catch (e) {
+              return { thrown: e.name + " [" + e.code + "]: " + e.message, ...state() };
+            }
+          };
+          const setRawMode = mode => outcome(() => stdin.setRawMode(mode));
+          const accepted = {};
+          for (const [label, mode] of [
+            ["true", true],
+            ['"raw"', "raw"],
+            ["1", 1],
+            ["{}", {}],
+            ['Object("io")', Object("io")],
+            ["false", false],
+            ["0", 0],
+            ["null", null],
+            ["undefined", undefined],
+          ]) {
+            accepted[label] = setRawMode(mode);
+            stdin.setRawMode(false);
+          }
+          const result = {
+            isTTY: stdin.isTTY,
+            initial: state(),
+            descriptor: Object.getOwnPropertyDescriptor(stdin, "rawMode"),
+            keys: Object.keys(stdin).filter(key => key === "isRaw" || key === "rawMode" || key === "isTTY"),
+            accepted,
+            rejected: ${JSON.stringify(rejected)}.map(setRawMode),
+            rejectedWhileRaw: (stdin.setRawMode(true), setRawMode("false")),
+            anyReceiver: (stdin.setRawMode(false), outcome(() => stdin.setRawMode.call(undefined, "a"))),
+            throughReadline: outcome(() =>
+              require("node:readline").Interface.prototype._setRawMode.call({ input: stdin }, "bogus"),
+            ),
+            io: setRawMode("io"),
+            errors,
+          };
+          stdin.setRawMode(false);
+          return result;
+        `,
+      );
+
+      const cooked = { isRaw: false, rawMode: false };
+      const raw = { isRaw: true, rawMode: "raw" };
+      const thrown = (mode: string) =>
+        `TypeError [ERR_INVALID_ARG_VALUE]: The argument 'mode' must be true, false, 'raw', or 'io'. Received '${mode}'`;
+      expect(result).toEqual({
+        isTTY: true,
+        initial: cooked,
+        descriptor: { value: false, writable: true, enumerable: true, configurable: true },
+        keys: ["isRaw", "rawMode", "isTTY"],
+        accepted: {
+          "true": { returnsThis: true, ...raw },
+          '"raw"': { returnsThis: true, ...raw },
+          "1": { returnsThis: true, ...raw },
+          "{}": { returnsThis: true, ...raw },
+          // Only a primitive string names a mode. Every other value goes by its truthiness.
+          'Object("io")': { returnsThis: true, ...raw },
+          "false": { returnsThis: true, ...cooked },
+          "0": { returnsThis: true, ...cooked },
+          "null": { returnsThis: true, ...cooked },
+          "undefined": { returnsThis: true, ...cooked },
+        },
+        rejected: rejected.map(mode => ({ thrown: thrown(mode), ...cooked })),
+        rejectedWhileRaw: { thrown: thrown("false"), ...raw },
+        // The check comes before anything reads the receiver.
+        anyReceiver: { thrown: thrown("a"), ...cooked },
+        throughReadline: { thrown: thrown("bogus"), ...cooked },
+        // libuv has no UV_TTY_MODE_IO on Windows: uv_tty_set_mode() answers UV_ENOTSUP, which Node emits as 'error'.
+        io: isWindows ? { returnsThis: true, ...cooked } : { returnsThis: true, isRaw: true, rawMode: "io" },
+        errors: isWindows
+          ? [{ code: "ENOTSUP", errno: -4049, syscall: "setRawMode", message: "setRawMode ENOTSUP" }]
+          : [],
+      });
+    });
+
+    // The binding takes its mode with Int32Value(), so `true` is 1 and no argument is 0:
+    // https://github.com/nodejs/node/blob/v26.12.1/src/tty_wrap.cc#L135-L136
+    // Bun threw a TypeError for both. This runs on Windows too, where libuv has no UV_TTY_MODE_IO.
+    test.skipIf(!exe)("tty_wrap TTY#setRawMode coerces its mode", async () => {
+      // [arguments, what the call returns]
+      const expected = [
+        [[true], 0],
+        [[], 0],
+        [[2], isWindows ? -4049 /* UV_ENOTSUP */ : 0],
+        // 7 is none of libuv's modes. libuv answers UV_EINVAL for it on Windows, and on POSIX since v1.53.0
+        // (libuv/libuv#5174). Node v26.12.1 has libuv 1.52.1, which aborts on POSIX. On POSIX this binding has
+        // always answered a failure as a positive errno.
+        ...(isWindows ? [[[7], -4071 /* UV_EINVAL */]] : runtime === "bun" ? [[[7], constants.errno.EINVAL]] : []),
+        [[0], 0],
+      ];
+      const returned = await resultOnTerminal(
+        cmd,
+        `
+          const tty = new (process.binding("tty_wrap").TTY)(0);
+          return ${JSON.stringify(expected.map(row => row[0]))}.map(args => {
+            try {
+              return tty.setRawMode(...args);
+            } catch (e) {
+              return String(e);
+            }
+          });
+        `,
+      );
+      expect(expected.map((row, i) => [row[0], returned[i]])).toEqual(expected);
+    });
+
+    // Bun turned "io" into `true`: the call returned with isRaw set and the terminal in plain raw mode, so a
+    // program that asked for binary-safe output still had every "\n" it wrote turned into "\r\n".
+    test.skipIf(!exe || isWindows)("'io' turns output processing off, 'raw' and true leave it on", async () => {
+      // [mode, the pty after the call, rawMode after the call]
+      const expected = [
+        ["nope", "cooked", "ERR_INVALID_ARG_VALUE, still false"],
+        ["io", "io", "io"],
+        ["nope", "io", "ERR_INVALID_ARG_VALUE, still io"],
+        ["raw", "raw", "raw"],
+        ["nope", "raw", "ERR_INVALID_ARG_VALUE, still raw"],
+        [false, "cooked", false],
+        [true, "raw", "raw"],
+        ["io", "io", "io"],
+        [false, "cooked", false],
+      ];
+      const { before, rows } = await eachStepOnPty(
+        cmd,
+        expected.map(row => row[0]),
+        `mode => {
+          try {
+            stdin.setRawMode(mode);
+            return stdin.rawMode;
+          } catch (e) {
+            return e.code + ", still " + stdin.rawMode;
+          }
+        }`,
+      );
+      expect(before).toBe("cooked");
+      expect(rows).toEqual(expected);
+    });
+
+    // Node's tty.js hands UV_TTY_MODE_RAW_VT (3) to the handle for raw mode, and libuv folds it into
+    // UV_TTY_MODE_RAW on POSIX. Bun's setter had no arm for 3: the call answered 0 and left the terminal cooked.
+    test.skipIf(!exe || isWindows)("tty_wrap TTY#setRawMode takes libuv's mode numbers", async () => {
+      // [arguments, the pty after the call, what the call returned]
+      const expected = [
+        [[3], "raw", 0],
+        [[2], "io", 0],
+        [[3], "raw", 0],
+        // Bun only: Node v26.12.1 aborts on a mode that is none of libuv's (see the test above).
+        ...(runtime === "bun"
+          ? [
+              [[7], "raw", constants.errno.EINVAL],
+              [[-1], "raw", constants.errno.EINVAL],
+            ]
+          : []),
+        [[0], "cooked", 0],
+        [[true], "raw", 0],
+        [[], "cooked", 0],
+        [["3"], "raw", 0],
+        [[{}], "cooked", 0],
+      ];
+      const { before, rows } = await eachStepOnPty(
+        cmd,
+        expected.map(row => row[0]),
+        `(tty => args => {
+          try {
+            return tty.setRawMode(...args);
+          } catch (e) {
+            return String(e);
+          }
+        })(new (process.binding("tty_wrap").TTY)(0))`,
+      );
+      expect(before).toBe("cooked");
+      expect(rows).toEqual(expected);
+    });
+
+    // Node's own test for nodejs/node#64140, unedited. Node's harness (tools/pseudo-tty.py) runs it on a pty that
+    // has ONLCR and ECHOCTL off and compares what it prints with the .out file. From that start raw mode turns
+    // ONLCR on and "io" leaves it off, which is the half of the difference that modeOf() does not look at.
+    test.skipIf(!exe || isWindows || !Bun.which("stty"))(
+      "node's test/pseudo-tty/test-set-raw-mode-modes.js",
+      async () => {
+        const ONLCR = process.platform === "darwin" ? 0x2 : 0x4;
+        const ECHOCTL = process.platform === "darwin" ? 0x40 : 0x200;
+        const file = join(import.meta.dir, "test", "pseudo-tty", "test-set-raw-mode-modes.js");
+        const decoder = new TextDecoder();
+        let output = "";
+        const ended = Promise.withResolvers<void>();
+        await using terminal = new Bun.Terminal({
+          data(_terminal, chunk: Uint8Array) {
+            output += decoder.decode(chunk, { stream: true });
+            if (/^exit \d+$/m.test(output.replaceAll("\r", ""))) ended.resolve();
+          },
+        });
+        terminal.outputFlags &= ~ONLCR;
+        terminal.localFlags &= ~ECHOCTL;
+
+        // Output can arrive after the child has exited. The shell prints one more line behind it, so all of the
+        // test's output is here once that line is.
+        const proc = Bun.spawn({
+          cmd: ["sh", "-c", '"$@"; echo "exit $?"', "sh", ...cmd, file],
+          env: bunEnv,
+          terminal,
+        });
+        await ended.promise;
+        await proc.exited;
+
+        const lines = (text: string) =>
+          text
+            .replaceAll("\r", "")
+            .split("\n")
+            .filter(line => line !== "");
+        expect(lines(output)).toEqual([...lines(await Bun.file(file.replace(/\.js$/, ".out")).text()), "exit 0"]);
+      },
+    );
   });
 });
 

@@ -5932,9 +5932,7 @@ node:tty.ReadStream.prototype setRawMode()
   throws TypeError: Attempted to assign to readonly property. <- a number, a string
   throws TypeError: Cannot access property of undefined or null <- undefined, null
 node:tty.ReadStream.prototype setRawMode("a", 1)
-  throws TypeError: fd must be a number, stores [rawModeState] <- every object
-  throws TypeError: Attempted to assign to readonly property. <- a number, a string
-  throws TypeError: Cannot access property of undefined or null <- undefined, null
+  throws TypeError ERR_INVALID_ARG_VALUE: The argument 'mode' must be true, false, 'raw', or 'io'. Received 'a' <- every receiver
 "
 `;
 
@@ -5961,10 +5959,7 @@ node:tty.ReadStream.prototype setRawMode()
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:tty.ReadStream.prototype setRawMode("a", 1)
-  throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
-  throws Error: setRawMode failed because it was called on something that is not a TTY <- an heir of the prototype object, a proxy of such an heir, the prototype object
-  throws TypeError: undefined is not an object <- undefined
-  throws TypeError: null is not an object <- null
+  throws TypeError ERR_INVALID_ARG_VALUE: The argument 'mode' must be true, false, 'raw', or 'io'. Received 'a' <- every receiver
 "
 `;
 

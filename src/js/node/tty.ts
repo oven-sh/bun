@@ -9,8 +9,8 @@ const {
   getWindowSize: _getWindowSize,
   rawModeStateSize,
 }: {
-  /** The errno, or 0. On Windows, for stdin: `(flag)`. */
-  setRawMode(fdOrFlag: number | boolean | null, flag?: boolean, state?: Uint8Array): number;
+  /** The errno, or 0. `mode` is a uv_tty_mode_t. On Windows, for stdin: `(flag)`. */
+  setRawMode(fdOrFlag: number | boolean | null, mode?: number, state?: Uint8Array): number;
   isatty(fd: unknown): boolean;
   /** Fills `size` with [columns, rows]. */
   getWindowSize(fd: number | null, size: number[]): boolean;
@@ -25,6 +25,13 @@ const fs = require("internal/fs/streams");
 // that state per ReadStream rather than per process.
 const kRawModeState = Symbol("rawModeState");
 
+// libuv's uv_tty_mode_t. RAW_VT is the raw mode Node asks for.
+const enum TTYMode {
+  NORMAL = 0,
+  IO = 2,
+  RAW_VT = 3,
+}
+
 type Environment = Record<string, string | undefined>;
 type DoneCallback = (error?: Error | null) => void;
 
@@ -32,6 +39,7 @@ declare global {
   namespace $Node {
     interface TTYReadStream extends ReadStream {
       isRaw: boolean;
+      rawMode: false | "raw" | "io";
       isTTY: boolean;
       /** On `process.stdin`, which is a native readable. */
       $bunNativePtr?: $Bindgen.FileInternalReadableStreamSource;
@@ -39,7 +47,7 @@ declare global {
       [kRawModeState]?: Uint8Array;
       ref(): this;
       unref(): this;
-      setRawMode(flag: boolean): this;
+      setRawMode(mode: boolean | "raw" | "io"): this;
     }
 
     interface TTYWriteStream extends WriteStream {
@@ -64,6 +72,7 @@ function ReadStream(this: $Node.TTYReadStream, fd: number | null): void {
   }
   fs.ReadStream.$apply(this, ["", { fd }]);
   this.isRaw = false;
+  this.rawMode = false;
   // Only set isTTY to true if the fd is actually a TTY
   this.isTTY = isatty(fd);
 }
@@ -93,8 +102,26 @@ Object.defineProperty(ReadStream, "prototype", {
       return this;
     };
 
-    Prototype.setRawMode = function (this: $Node.TTYReadStream, flag: boolean) {
-      flag = !!flag;
+    // https://github.com/nodejs/node/blob/v26.12.1/lib/tty.js#L85-L109
+    Prototype.setRawMode = function (this: $Node.TTYReadStream, mode: boolean | string) {
+      let rawMode: false | "raw" | "io";
+      if (mode === "io" || mode === "raw") {
+        rawMode = mode;
+      } else if (typeof mode === "string") {
+        throw $ERR_INVALID_ARG_VALUE("mode", mode, "must be true, false, 'raw', or 'io'");
+      } else {
+        rawMode = mode ? "raw" : false;
+      }
+
+      if (process.platform === "win32" && rawMode === "io") {
+        // libuv has no UV_TTY_MODE_IO on Windows:
+        // https://github.com/nodejs/node/blob/v26.12.1/deps/uv/src/win/tty.c#L395-L396
+        const UV_ENOTSUP = -4049;
+        const { ErrnoException } = require("internal/shared");
+        this.emit("error", new ErrnoException(UV_ENOTSUP, "setRawMode"));
+        return this;
+      }
+      const isRaw = rawMode !== false;
 
       // On windows, this goes through the stream handle itself, as it must call
       // uv_tty_set_mode on the uv_tty_t.
@@ -105,7 +132,7 @@ Object.defineProperty(ReadStream, "prototype", {
         // Special case for stdin, as it has a shared uv_tty handle
         // and it's stream is constructed differently
         if (this.fd === 0) {
-          const err = ttySetMode(flag);
+          const err = ttySetMode(isRaw);
           if (err) {
             this.emit("error", new Error("setRawMode failed with errno: " + err));
             return this;
@@ -122,22 +149,29 @@ Object.defineProperty(ReadStream, "prototype", {
           // This corresponds to the `ensureConstructed` function in `native-readable.ts`
           this.$start();
 
-          const err = handle.setRawMode(flag);
+          const err = handle.setRawMode(isRaw);
           if (err) {
             this.emit("error", err);
             return this;
           }
         }
       } else {
+        let ttyMode = TTYMode.NORMAL;
+        if (rawMode === "io") {
+          ttyMode = TTYMode.IO;
+        } else if (rawMode === "raw") {
+          ttyMode = TTYMode.RAW_VT;
+        }
         const state = (this[kRawModeState] ??= new Uint8Array(rawModeStateSize));
-        const err = ttySetMode(this.fd, flag, state);
+        const err = ttySetMode(this.fd, ttyMode, state);
         if (err) {
           this.emit("error", new Error("setRawMode failed with errno: " + err));
           return this;
         }
       }
 
-      this.isRaw = flag;
+      this.isRaw = isRaw;
+      this.rawMode = rawMode;
 
       return this;
     };

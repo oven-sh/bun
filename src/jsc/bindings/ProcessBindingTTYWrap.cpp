@@ -236,12 +236,7 @@ JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionSetMode,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
-    auto argCount = callFrame->argumentCount();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    if (argCount == 0) {
-        JSC::throwTypeError(globalObject, throwScope, "setRawMode requires 1 argument (a number)"_s);
-        return {};
-    }
 
     TTYWrapObject* ttyWrap = dynamicDowncast<TTYWrapObject>(callFrame->thisValue());
     if (!ttyWrap) [[unlikely]] {
@@ -249,14 +244,10 @@ JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionSetMode,
         return {};
     }
 
-    int fd = ttyWrap->fd;
-    JSValue mode = callFrame->argument(0);
-    if (!mode.isNumber()) {
-        throwTypeError(globalObject, throwScope, "mode must be a number"_s);
-        return {};
-    }
+    // https://github.com/nodejs/node/blob/v26.12.1/src/tty_wrap.cc#L135-L136
+    int modeInt = callFrame->argument(0).toInt32(globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
 
-    int modeInt = JSC::toInt32(mode.asNumber());
 #if OS(WINDOWS)
     if (modeInt == 0) {
         Bun__setCTRLHandler(1);
@@ -265,7 +256,7 @@ JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionSetMode,
     int err = uv_tty_set_mode(ttyWrap->handle->tty(), modeInt);
 #else
     // Nodejs does not throw when ttySetMode fails. An Error event is emitted instead.
-    int err = Bun__ttySetMode(fd, modeInt, &ttyWrap->ttyState, 1);
+    int err = Bun__ttySetMode(ttyWrap->fd, modeInt, &ttyWrap->ttyState, 1);
 #endif
     return JSValue::encode(jsNumber(err));
 }
@@ -522,6 +513,12 @@ JSValue createNodeTTYWrapObject(JSC::JSGlobalObject* globalObject)
     auto* obj = constructEmptyObject(globalObject);
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "isTTY"_s)), JSFunction::create(vm, globalObject, 0, "isatty"_s, Zig::jsFunctionTty_isatty, ImplementationVisibility::Public), 0);
+
+    // https://github.com/nodejs/node/blob/v26.12.1/src/tty_wrap.cc#L75-L77
+    const unsigned constant = JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete;
+    obj->putDirect(vm, Identifier::fromString(vm, "UV_TTY_MODE_NORMAL"_s), jsNumber(0), constant);
+    obj->putDirect(vm, Identifier::fromString(vm, "UV_TTY_MODE_IO"_s), jsNumber(2), constant);
+    obj->putDirect(vm, Identifier::fromString(vm, "UV_TTY_MODE_RAW_VT"_s), jsNumber(3), constant);
 
     TTYWrapPrototype* prototype = TTYWrapPrototype::create(vm, globalObject, TTYWrapPrototype::createStructure(vm, globalObject));
     TTYWrapConstructor* constructor = TTYWrapConstructor::create(vm, globalObject, TTYWrapConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), prototype);

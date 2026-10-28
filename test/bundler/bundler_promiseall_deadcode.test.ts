@@ -150,7 +150,7 @@ describe("bundler", () => {
         await Promise.resolve();
         AsyncEntryPoint();
 
-        //# debugId=B32D841C51E7E47364756E2164756E21
+        //# debugId=6A58830872B12DFA64756E2164756E21
         //# sourceMappingURL=out.js.map
         "
       `);
@@ -379,7 +379,7 @@ describe("bundler", () => {
         await Promise.resolve();
         AsyncEntryPoint();
 
-        //# debugId=27257954F691791C64756E2164756E21
+        //# debugId=2AAB94494647B3DB64756E2164756E21
         //# sourceMappingURL=out.js.map
         "
       `);

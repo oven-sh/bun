@@ -66,9 +66,9 @@ NS.then(({ fn }) => {
 "
 `;
 
-exports[`Bun.build BuildArtifact properties: hash 1`] = `"3ev1myqp"`;
+exports[`Bun.build BuildArtifact properties: hash 1`] = `"a6745pw5"`;
 
-exports[`Bun.build BuildArtifact properties + entry.naming: hash 1`] = `"54y07svz"`;
+exports[`Bun.build BuildArtifact properties + entry.naming: hash 1`] = `"zaa2wmv7"`;
 
 exports[`Bun.build BuildArtifact properties sourcemap: hash index.js.map 1`] = `"00000000"`;
 

@@ -1,7 +1,7 @@
 import { Subprocess, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isPosix, randomPort, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isPosix, randomPort, tempDir } from "harness";
 import { join } from "node:path";
 import stripAnsi from "strip-ansi";
 import { WebSocket } from "ws";
@@ -670,4 +670,367 @@ test("LifecycleReporter.getModuleGraph reports an empty argv when process.argv i
 
   expect(child.exitCode).toBe(null);
   webSocket.close();
+});
+
+// The time that a test file of a `bun test` child can wait for the test, so that no child stays behind.
+const childTestTimeout = 30_000;
+
+/** A `bun test` child. Its test files report on stderr, and wait for the test to let them continue. */
+class TestRun {
+  readonly process: Subprocess<"ignore", "ignore", "pipe">;
+  readonly #cwd: string;
+  readonly #end = Promise.withResolvers<never>();
+  #stderr = "";
+  #ended = false;
+  #grew = Promise.withResolvers<void>();
+
+  constructor(cwd: string, args: string[], env: NodeJS.Dict<string>) {
+    this.#cwd = cwd;
+    this.#end.promise.catch(() => {});
+    this.process = spawn({
+      cmd: [bunExe(), "test", `--timeout=${childTestTimeout}`, ...args],
+      cwd,
+      env,
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    (async () => {
+      const decoder = new TextDecoder();
+      for await (const chunk of this.process.stderr) {
+        this.#stderr += decoder.decode(chunk, { stream: true });
+        this.#wake();
+      }
+      this.#ended = true;
+      this.#end.reject(new Error(`bun test ended:\n${this.#stderr}`));
+      this.#wake();
+    })();
+  }
+
+  #wake() {
+    const grew = this.#grew;
+    this.#grew = Promise.withResolvers<void>();
+    grew.resolve();
+  }
+
+  /** The first match of `pattern` in stderr. Rejects when the process ends without one. */
+  async stderrMatch(pattern: RegExp): Promise<RegExpMatchArray> {
+    for (;;) {
+      const match = this.#stderr.match(pattern);
+      if (match) return match;
+      if (this.#ended) throw new Error(`bun test ended before ${pattern} in stderr:\n${this.#stderr}`);
+      await this.#grew.promise;
+    }
+  }
+
+  /** Resolves when a test file reports that it waits for `name`. */
+  async reached(name: string): Promise<void> {
+    await this.stderrMatch(new RegExp(`^READY ${name}$`, "m"));
+  }
+
+  /** Lets the test files that wait for `name` continue. */
+  release(name: string): void {
+    fs.writeFileSync(join(this.#cwd, `continue-${name}`), "");
+  }
+
+  /** `promise`, or a rejection with stderr when the process ends first. */
+  unlessEnded<T>(promise: Promise<T>): Promise<T> {
+    return Promise.race([promise, this.#end.promise]);
+  }
+
+  /** The result of the run. It has stderr only when the run did not end with exit code 0. */
+  async finished() {
+    const exitCode = await this.process.exited;
+    while (!this.#ended) await this.#grew.promise;
+    return {
+      pass: Number(this.#stderr.match(/^\s*(\d+) pass$/m)?.[1]),
+      fail: Number(this.#stderr.match(/^\s*(\d+) fail$/m)?.[1]),
+      exitCode,
+      signalCode: this.process.signalCode,
+      ...(exitCode !== 0 && { stderr: this.#stderr }),
+    };
+  }
+
+  async [Symbol.asyncDispose]() {
+    this.process.kill();
+    await this.process.exited;
+  }
+}
+
+/**
+ * What an editor does for the processes of its terminals. It listens, each bun process dials it
+ * (BUN_INSPECT_CONNECT_TO), and it enables the domains that the VS Code extension enables.
+ */
+function listenAsEditor(dialers = 1) {
+  const enable = [
+    "Inspector.enable",
+    "Runtime.enable",
+    "Console.enable",
+    "LifecycleReporter.enable",
+    "TestReporter.enable",
+  ];
+  const attached = Promise.withResolvers<void>();
+  const closed = Promise.withResolvers<void>();
+  attached.promise.catch(() => {});
+  const sockets: { end(): void }[] = [];
+  let answered = 0;
+  let closedCount = 0;
+  const listener = Bun.listen<SocketFramer>({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open(socket) {
+        // The reply to the last command shows that the inspected thread attached this socket.
+        socket.data = new SocketFramer(message => {
+          if (JSON.parse(message).id === enable.length && ++answered === dialers) attached.resolve();
+        });
+        sockets.push(socket);
+        enable.forEach((method, index) => socket.data.send(socket, JSON.stringify({ id: index + 1, method })));
+      },
+      data(socket, bytes) {
+        socket.data.onData(socket, bytes);
+      },
+      close() {
+        attached.reject(new Error("bun closed the inspector socket before it answered"));
+        if (++closedCount === dialers) closed.resolve();
+      },
+    },
+  });
+  return {
+    url: `tcp://127.0.0.1:${listener.port}`,
+    /** Resolves when each process that dialed has answered. */
+    attached: attached.promise,
+    /** Closes each socket, as an editor that goes away does. */
+    async close(): Promise<void> {
+      for (const socket of sockets) socket.end();
+      await closed.promise;
+    },
+    [Symbol.dispose]() {
+      listener.stop(true);
+    },
+  };
+}
+
+// `bun test --isolate` gives each test file a new global object. The GC destroys the global object
+// of a file that finished, and with it the inspector controller that a client attached to.
+describe.concurrent("bun test --isolate", () => {
+  // A debug build needs more than a second to start one `bun test` child with an inspector, and a case
+  // here often needs more than the default of 5 s.
+  const timeout = isDebug || isASAN ? 120_000 : undefined;
+  const env = {
+    ...bunEnv,
+    // The exit destroys each global object that the GC did not destroy.
+    BUN_DESTRUCT_VM_ON_EXIT: "1",
+    // `bun test` sets no time zone for an empty TZ. When it sets one, a debug build keeps the
+    // global object of the first test file alive to the end of the run.
+    TZ: "",
+  };
+  // A compilation that waits for a JIT thread keeps the global object of a finished file alive.
+  const envWithoutJITThreads = { ...env, BUN_JSC_useConcurrentJIT: "0" };
+  const passed = (pass: number) => ({ pass, fail: 0, exitCode: 0, signalCode: null });
+
+  // The GC destroys the global object of each file that finished, if nothing keeps it alive.
+  const collect = `
+      Bun.gc(true);
+      await new Promise(resolve => setImmediate(resolve));
+      Bun.gc(true);`;
+
+  const collectingTestFile = `
+    import { test } from "bun:test";
+    test("collects", async () => {${collect}
+    });
+  `;
+
+  // Reports `READY <name>` on stderr, waits for the file `continue-<name>`, and collects.
+  const waitingTestFile = (name: string, before = "") => `
+    import { test } from "bun:test";
+    import { existsSync } from "node:fs";
+    import { join } from "node:path";
+    test("waits for ${name}", async () => {${before}
+      process.stderr.write("READY ${name}\\n");
+      while (!existsSync(join(import.meta.dir, "continue-${name}"))) await Bun.sleep(1);${collect}
+    });
+  `;
+
+  test(
+    "a file that closed the client of its own node:inspector does not make a later file abort",
+    async () => {
+      using dir = tempDir("inspect-isolate-node-inspector", {
+        "a.test.ts": `
+          import { test, expect } from "bun:test";
+          import inspector from "node:inspector";
+          test("is the client of its own inspector", async () => {
+            inspector.open(0, "127.0.0.1");
+            const socket = new WebSocket(inspector.url());
+            const reply = Promise.withResolvers();
+            socket.onopen = () => socket.send(JSON.stringify({ id: 1, method: "Debugger.enable" }));
+            socket.onmessage = ({ data }) => {
+              const message = JSON.parse(data);
+              if (message.id === 1) reply.resolve(message.result);
+            };
+            socket.onclose = () => reply.reject(new Error("the inspector closed the socket"));
+            // The reply shows that the global object of this file attached the client.
+            expect(await reply.promise).toEqual({ debuggerId: "(bun)" });
+            // Returns after the inspector dropped the client.
+            inspector.close();
+          });
+        `,
+        "b.test.ts": collectingTestFile,
+      });
+      await using run = new TestRun(String(dir), ["--isolate", "./a.test.ts", "./b.test.ts"], envWithoutJITThreads);
+      expect(await run.finished()).toEqual(passed(2));
+    },
+    timeout,
+  );
+
+  test(
+    "BUN_INSPECT_CONNECT_TO: an editor that goes away during a later file does not make the run abort",
+    async () => {
+      using dir = tempDir("inspect-isolate-editor", {
+        "a.test.ts": waitingTestFile("A"),
+        "b.test.ts": waitingTestFile("B"),
+      });
+      using editor = listenAsEditor();
+      await using run = new TestRun(String(dir), ["--isolate", "./a.test.ts", "./b.test.ts"], {
+        ...envWithoutJITThreads,
+        BUN_INSPECT_CONNECT_TO: editor.url,
+      });
+      // The first file waits, so its global object is the one that attaches the editor.
+      await run.unlessEnded(editor.attached);
+      run.release("A");
+      await run.reached("B");
+      await run.unlessEnded(editor.close());
+      // The second file now collects the global object of the first file.
+      run.release("B");
+      expect(await run.finished()).toEqual(passed(2));
+    },
+    timeout,
+  );
+
+  test(
+    "--parallel with BUN_INSPECT_CONNECT_TO: an editor that goes away does not make a worker abort",
+    async () => {
+      const workers = 2;
+      using dir = tempDir("inspect-parallel-editor", {
+        "a.test.ts": waitingTestFile("all"),
+        "b.test.ts": waitingTestFile("all"),
+        "c.test.ts": waitingTestFile("all"),
+      });
+      // Each worker dials the editor, and the coordinator does too.
+      using editor = listenAsEditor(workers + 1);
+      await using run = new TestRun(String(dir), [`--parallel=${workers}`, "--parallel-delay=0"], {
+        ...envWithoutJITThreads,
+        BUN_INSPECT_CONNECT_TO: editor.url,
+      });
+      await run.unlessEnded(editor.attached);
+      await run.unlessEnded(editor.close());
+      // The worker that runs a second file collects the global object of its first file there.
+      run.release("all");
+      expect(await run.finished()).toEqual(passed(3));
+    },
+    timeout,
+  );
+
+  test.each([[["--isolate"]], [[]]])(
+    "%j with BUN_INSPECT_CONNECT_TO: the process exits cleanly while the editor of the first file is attached",
+    async flags => {
+      using dir = tempDir("inspect-isolate-exit", {
+        "a.test.ts": waitingTestFile("A"),
+        "b.test.ts": collectingTestFile,
+      });
+      using editor = listenAsEditor();
+      await using run = new TestRun(String(dir), [...flags, "./a.test.ts", "./b.test.ts"], {
+        ...env,
+        BUN_INSPECT_CONNECT_TO: editor.url,
+      });
+      await run.unlessEnded(editor.attached);
+      run.release("A");
+      expect(await run.finished()).toEqual(passed(2));
+    },
+    timeout,
+  );
+
+  test(
+    "a client that attaches after the swap to the next file detaches from the global object that attached it",
+    async () => {
+      using dir = tempDir("inspect-isolate-attach-after-swap", {
+        // The immediate runs when the file has finished, after the last time its event loop takes
+        // tasks from other threads, and it holds the inspected thread there. So the debugger thread
+        // creates the connection of a client for the global object of this file, and the inspected
+        // thread attaches the client to the global object of the next file.
+        "a.test.ts": `
+          import { test } from "bun:test";
+          import { existsSync, writeSync } from "node:fs";
+          import { join } from "node:path";
+          test("holds the inspected thread after its last turn", () => {
+            setImmediate(() => {
+              writeSync(2, "READY A\\n");
+              const deadline = Date.now() + ${childTestTimeout};
+              while (!existsSync(join(import.meta.dir, "continue-A")) && Date.now() < deadline) Bun.sleepSync(1);
+            });
+          });
+        `,
+        // It collects before it reports: the GC has then destroyed the global object of the first file.
+        "b.test.ts": `globalThis.marker = "B";` + waitingTestFile("B", collect),
+        "c.test.ts": collectingTestFile,
+      });
+      await using run = new TestRun(
+        String(dir),
+        ["--isolate", "--inspect=127.0.0.1:0", "./a.test.ts", "./b.test.ts", "./c.test.ts"],
+        envWithoutJITThreads,
+      );
+      const [, url] = await run.stderrMatch(/^\s*(ws:\/\/\S+)$/m);
+      const versionUrl = `http://${new URL(url).host}/json/version`;
+      await run.reached("A");
+
+      const socket = new WebSocket(url);
+      const opened = Promise.withResolvers<void>();
+      const closed = Promise.withResolvers<void>();
+      socket.addEventListener("open", () => opened.resolve());
+      socket.addEventListener("error", () => opened.reject(new Error(`cannot connect to the inspector at ${url}`)));
+      socket.addEventListener("close", () => closed.resolve());
+      /** The reply to one command. Rejects when the socket closes or the process ends first. */
+      const command = (id: number, method: string, params: object = {}) => {
+        const reply = Promise.withResolvers<any>();
+        socket.addEventListener("message", ({ data }) => {
+          const message = JSON.parse(data.toString());
+          if (message.id === id) reply.resolve(message.result);
+        });
+        socket.addEventListener("close", () =>
+          reply.reject(new Error(`the inspector closed the socket before ${method}`)),
+        );
+        socket.send(JSON.stringify({ id, method, params }));
+        return run.unlessEnded(reply.promise);
+      };
+      // The debugger thread answers this request after it handled what the client sent before. If
+      // the request fails, the answer has the error and how the process ended.
+      const debuggerThreadCaughtUp = async () => {
+        const answer = await fetch(versionUrl).then(
+          response => ({ status: response.status }),
+          async error => ({ error: String(error), ...(await run.finished()) }),
+        );
+        expect(answer).toEqual({ status: 200 });
+      };
+      await run.unlessEnded(opened.promise);
+      const enabled = command(1, "Inspector.enable");
+      // The debugger thread has created the connection of the client, and has the command for it.
+      await debuggerThreadCaughtUp();
+      run.release("A");
+      expect(await enabled).toEqual({});
+
+      await run.reached("B");
+      // The global object of the second file attached the client, so it answers.
+      expect(await command(2, "Runtime.evaluate", { expression: "globalThis.marker", returnByValue: true })).toEqual({
+        result: { type: "string", value: "B" },
+        wasThrown: false,
+      });
+      socket.close();
+      await closed.promise;
+      // The debugger thread has told the inspected thread to detach the client.
+      await debuggerThreadCaughtUp();
+      run.release("B");
+      expect(await run.finished()).toEqual(passed(3));
+    },
+    timeout,
+  );
 });

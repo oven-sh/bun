@@ -153,7 +153,8 @@ describe("zlib", () => {
 
   // libdeflate never emits a block bigger than a stored one, so output longer than the input plus
   // its overhead (5 bytes, plus 18 for gzip) means it wrote past the allocation.
-  it.concurrent.each(["gzip", "deflate"])(
+  // One child at a time: each keeps two threads busy, and two at once come close to the timeout on a debug build.
+  it.each(["gzip", "deflate"])(
     "libdeflate %s doesn't write past its output buffer while another thread writes to the shared input",
     async kind => {
       const fixture = `
@@ -217,7 +218,6 @@ describe("zlib", () => {
       expect({ stdout, stderr }).toEqual({ stdout: "ok\n", stderr: "" });
       expect(exitCode).toBe(0);
     },
-    isDebug ? 60_000 : undefined,
   );
 
   describe("memLevel and strategy", () => {

@@ -1,0 +1,251 @@
+////: Object-defineProperty-18
+Object.defineProperty(trapped.inner, "x", {
+  get() {
+    strike();
+    return 2;
+  },
+  enumerable: true,
+  configurable: true,
+});
+////: for-15
+for (let round = 0; round < 400; round++) {
+  const strikes = round === 150 || round === 151 || round === 399;
+  const restarts = strikes || round % 50 === 49;
+  const line = outer(round, restarts ? trapped : calm, strikes);
+  for (let index = 0; index < line.length; index++) digest = (digest * 31 + line.charCodeAt(index)) | 0;
+  if (round < 2 || restarts) console.log(round + ": " + line);
+}
+////: strike-20
+function strike(): void {
+  const target = victim;
+  if (target === null) return;
+  victim = null;
+  delete (target as any).x;
+}
+//// damage-behind-a-call-more-about-stubs/a-body-that-returns-a-fraction-begins-again-in-its-generic-version.ts
+// A typed body reads an object out of a typed field and finds its state changed before it has done anything, so the call begins again in the generic version.
+// The body returns a fraction in a register of its own and the generic version returns a boxed value: the restart is a call and a return, not a jump.
+// The generic version reads by name and runs a getter, which deletes a field of ANOTHER object: one that the two callers above hold proven and never hand down.
+////= Point
+////= Box
+
+let victim: Point | null = null;
+////= strike-20
+
+function weigh(box: Box, steps: number): number {
+  const p = box.inner;
+  let sum = p.x * 0.5 + p.y * 0.25;
+  for (let step = 1; step <= steps; step++) {
+    const a = p.x * step + 0.125;
+    const b = p.y / step - 0.375;
+    const c = a * a - b * b + a * b * 0.5;
+    const d = Math.sqrt(a * a + b * b) + Math.abs(c) * 0.0625;
+    const e = (a + b + c + d) * 0.03125 - (a - b) * (c - d) * 0.001953125;
+    sum += e - Math.floor(e) + (d > c ? a : b) * 0.015625;
+  }
+  return sum;
+}
+
+function holder(q: Point, box: Box): string {
+  const before = q.x + q.y;
+  const got = weigh(box, 3);
+  return before + " " + got + " " + q.x + "," + q.y + "," + ("x" in q);
+}
+
+function outer(round: number, box: Box, strikes: boolean): string {
+  const q = new Point(round + 0.5, round + 1);
+  const before = q.x + q.y;
+  if (strikes) victim = q;
+  const inner = holder(q, box);
+  return before + " [" + inner + "] " + q.x + "," + q.y + "," + ("x" in q);
+}
+
+const calm = new Box(new Point(2, 4));
+const trapped = new Box(new Point(2, 4));
+////= Object-defineProperty-18
+
+let digest = 0;
+////= for-15
+console.log("digest " + digest);
+//// damage-behind-a-call-more-about-stubs/a-result-that-does-not-fit-comes-out-of-a-wide-tail-callee.ts
+// `narrow` promises a Point and keeps the promise through a call in tail position of `wide`, which promises the same and tests what it returns. In some rounds `wide` returns something else.
+// Build it with --aot-disable=ChooseCallingConventions, with clean returns and with --aot-disable=CleanReturns: then no caller reserves the stack words of a tail call, the fourteen arguments lie in a frame of their own,
+// and the word on top of the stack where `wide` returns is the address of the stub that drops that frame. Whoever looks only that word up finds no landing,
+// and the value arrives at the plain return point of `holder`, which tests nothing and reads fields in place.
+////= Point
+
+let other: any = null;
+function wide(a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number): Point {
+  if (other !== null) return other;
+  return new Point(a + c + e + g + i + k + m, b + d + f + h + j + l + n);
+}
+
+function narrow(y: number): Point {
+  return wide(y, y + 1, y + 2, y + 3, y + 4, y + 5, y + 6, y + 7, y + 8, y + 9, y + 10, y + 11, y + 12, y + 13);
+}
+
+function holder(y: number): string {
+  const got = narrow(y);
+  return got.x + "," + got.y;
+}
+
+const misfits: any[] = [7, "text", { y: 1 }, [1, 2], true, 0.5, { x: "a", y: "b", z: "c" }];
+
+let digest = 0;
+for (let round = 0; round < 400; round++) {
+  const lies = round % 50 === 49;
+  other = lies ? misfits[(round / 50) % misfits.length | 0] : null;
+  const line = holder(round);
+  for (let index = 0; index < line.length; index++) digest = (digest * 31 + line.charCodeAt(index)) | 0;
+  if (round < 2 || lies) console.log(round + ": " + line);
+}
+console.log("digest " + digest);
+//// damage-behind-a-call-more-about-stubs/the-generic-version-is-entered-over-an-argument-list-frame.ts
+// `narrow` calls `wide` in tail position, and `wide` ends in a call in tail position too, so its typed body begins again in its generic version by a jump: three jumps hand on the return address of `holder`'s call.
+// The first act of the generic version is to put the landing of that call in the place of its return address. Then it runs a getter that deletes a field of an object that only the callers hold.
+// Build it a second time with --aot-disable=ChooseCallingConventions: then no caller reserves the stack words of a tail call, the thirteen arguments lie in a frame of their own,
+// `wide` and its generic version return into the stub that drops that frame, and the address to replace is not the word on top of the stack but the one in the record of that frame.
+////= Point
+////= Box
+
+let victim: Point | null = null;
+////= strike-20
+
+function finish(sum: number, scale: number): number {
+  return sum * scale + 0.25;
+}
+
+function wide(box: Box, a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number): number {
+  const p = box.inner;
+  const first = p.x * a + p.y * b + c * d - e * f;
+  const second = g * h + i * j - k * l + p.x * 0.5;
+  const third = Math.sqrt(first * first + second * second) + Math.abs(first - second) * 0.125;
+  const fourth = (a + c + e + g + i + k) * 0.0625 - (b + d + f + h + j + l) * 0.03125;
+  return finish(first + second + third + fourth, p.y * 0.5);
+}
+
+function narrow(box: Box, n: number): number {
+  return wide(box, n + 0.5, n + 1.5, n + 2.5, n + 3.5, n + 4.5, n + 5.5, n + 6.5, n + 7.5, n + 8.5, n + 9.5, n + 10.5, n + 11.5);
+}
+
+function holder(q: Point, box: Box, n: number): string {
+  const before = q.x + q.y;
+  const got = narrow(box, n);
+  return before + " " + got + " " + q.x + "," + q.y + "," + ("x" in q);
+}
+
+function outer(round: number, box: Box, strikes: boolean): string {
+  const q = new Point(round + 0.5, round + 1);
+  const before = q.x + q.y;
+  if (strikes) victim = q;
+  const inner = holder(q, box, round & 7);
+  return before + " [" + inner + "] " + q.x + "," + q.y + "," + ("x" in q);
+}
+
+const calm = new Box(new Point(2, 4));
+const trapped = new Box(new Point(2, 4));
+////= Object-defineProperty-18
+
+let digest = 0;
+////= for-15
+console.log("digest " + digest);
+//// damage-behind-a-call-more-about-stubs/the-generic-version-returns-what-the-typed-body-promised-not-to-return.ts
+// The typed body promises its callers a Point and tests what it cannot prove. Before it has done anything it finds the state of an object changed and begins again in its generic version, which returns in its place.
+// The generic version hands back the second argument, which is no Point in some rounds. The caller tests no result at its plain return point, so that value has to arrive at the landing:
+// either the generic version sends its return there, or it keeps the promise of the typed body by itself. A generic version that does neither hands a number to code that reads fields in place.
+////= Point
+////= Box
+
+function pick(box: Box, other: any, steps: number): Point {
+  const p = box.inner;
+  let sum = p.x * 0.5 + p.y * 0.25;
+  for (let step = 1; step <= steps; step++) {
+    const a = p.x * step + 0.125;
+    const b = p.y / step - 0.375;
+    const c = a * a - b * b + a * b * 0.5;
+    const d = Math.sqrt(a * a + b * b) + Math.abs(c) * 0.0625;
+    sum += (a + b + c + d) * 0.03125 - Math.floor(d) + (d > c ? a : b) * 0.015625;
+  }
+  return sum > 1000 ? p : other;
+}
+
+function holder(box: Box, other: any): string {
+  const got = pick(box, other, 3);
+  return got.x + "," + got.y;
+}
+
+function outer(box: Box, other: any): string {
+  const first = holder(box, other);
+  const second = holder(box, other);
+  return first + " " + second;
+}
+
+const calm = new Box(new Point(2, 4));
+const trapped = new Box(new Point(2, 4));
+Object.defineProperty(trapped.inner, "x", { get: () => 2, enumerable: true, configurable: true });
+
+const fits = new Point(7, 8);
+const misfits: any[] = [7, "text", { y: 1 }, [1, 2], true, null === undefined, 0.5, { x: "a", y: "b", z: "c" }];
+
+let digest = 0;
+for (let round = 0; round < 400; round++) {
+  const restarts = round % 50 >= 48;
+  const lies = round % 100 === 49 || round % 100 === 97;
+  const other = lies ? misfits[(round >> 4) % misfits.length] : fits;
+  const line = outer(restarts ? trapped : calm, other);
+  for (let index = 0; index < line.length; index++) digest = (digest * 31 + line.charCodeAt(index)) | 0;
+  if (round < 2 || restarts || lies) console.log(round + ": " + line);
+}
+console.log("digest " + digest);
+//// damage-behind-a-call-more-about-stubs/whoever-catches-stands-on-an-argument-list-frame.ts
+// A function with one parameter calls a function with fourteen in tail position. The wide one catches what a callee throws behind the damage and returns as usual. The unwinder makes it dirty.
+// Build it with --aot-disable=ChooseCallingConventions: then no caller reserves the stack words of a tail call, the wide one returns into the stub that drops the frame of its arguments,
+// and the address to replace lies in the record of that frame, not above the frame of the function that catches.
+// The call under the handler counts in full for the callers, so the answers are right either way: add --aot-validate, where a swap that was lost is a dirty event behind a clean return.
+////= Point
+
+let victim: Point | null = null;
+function deep(n: number): number {
+  const target = victim;
+  if (target === null) return n;
+  victim = null;
+  delete (target as any).x;
+  throw new RangeError("behind the damage");
+}
+
+function wide(a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number): number {
+  let got = 0;
+  try {
+    got = deep(a + n);
+  } catch {
+    got = -1;
+  }
+  return got + a + b + c + d + e + f + g + h + i + j + k + l + m + n;
+}
+
+function narrow(y: number): number {
+  return wide(y, y + 1, y + 2, y + 3, y + 4, y + 5, y + 6, y + 7, y + 8, y + 9, y + 10, y + 11, y + 12, y + 13);
+}
+
+function holder(q: Point): string {
+  const before = q.x + q.y;
+  const got = narrow(q.y);
+  return before + " " + got + " " + q.x + "," + q.y + "," + ("x" in q);
+}
+
+function outer(round: number, strikes: boolean): string {
+  const q = new Point(round + 0.5, round + 1);
+  const before = q.x + q.y;
+  if (strikes) victim = q;
+  const inner = holder(q);
+  return before + " [" + inner + "] " + q.x + "," + q.y + "," + ("x" in q);
+}
+
+let digest = 0;
+for (let round = 0; round < 400; round++) {
+  const strikes = round === 150 || round === 151 || round === 399;
+  const line = outer(round, strikes);
+  for (let index = 0; index < line.length; index++) digest = (digest * 31 + line.charCodeAt(index)) | 0;
+  if (round < 2 || strikes) console.log(round + ": " + line);
+}
+console.log("digest " + digest);

@@ -20,9 +20,6 @@
 #include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/NativeCallee.h>
 #include <JavaScriptCore/Interpreter.h>
-#include <JavaScriptCore/InternalFunction.h>
-#include <JavaScriptCore/JSBoundFunction.h>
-#include <JavaScriptCore/JSRemoteFunction.h>
 #include <JavaScriptCore/VMEntryRecord.h>
 #include <wtf/IterationStatus.h>
 #include <wtf/ScopedLambda.h>
@@ -30,6 +27,9 @@
 #include <JavaScriptCore/FunctionCodeBlock.h>
 
 #include "ErrorStackFrame.h"
+
+#include <array>
+#include <bit>
 
 using namespace JSC;
 using namespace WebCore;
@@ -82,6 +82,12 @@ bool isImplementationVisibilityPrivate(const JSC::StackFrame& frame)
             return ImplementationVisibility::Public;
 #endif
 
+#if ENABLE(AOT)
+        // The walk over compiled code lists the frames that are shown. The function object that names such a frame enters compiled code through an executable that is shown nowhere.
+        if (frame.isCompiledFrame())
+            return ImplementationVisibility::Public;
+#endif
+
         if (auto* callee = frame.callee()) {
             if (auto* jsFunction = dynamicDowncast<JSFunction>(callee)) {
                 if (auto* executable = jsFunction->executable())
@@ -118,7 +124,9 @@ JSCStackTrace JSCStackTrace::fromExisting(JSC::VM& vm, const WTF::Vector<JSC::St
     return JSCStackTrace(newFrames);
 }
 
-// Which entry into the VM the frames of suspended async functions follow is decided among all entries that resumed one.
+// Which entry into the VM the frames of suspended async functions follow is decided
+// among all entries that resumed one. A walk that ends early decides alike if there
+// is no second one.
 static bool severalEntriesResumedAsyncFunctions(JSC::VM& vm)
 {
     bool hasFoundOne = false;
@@ -136,26 +144,62 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
 {
     UNUSED_PARAM(callFrame);
 
-    // V8 searches the stack for a JSFunction only. A bound function, a Proxy and a value that is not callable select no frame.
-    JSC::JSObject* callerObject = nullptr;
-    if (caller.inherits<JSC::InternalFunction>() || (caller.inherits<JSC::JSFunction>() && !caller.inherits<JSC::JSBoundFunction>() && !caller.inherits<JSC::JSRemoteFunction>()))
-        callerObject = caller.getObject();
+    JSC::JSObject* callerObject = caller.getObject();
+    // Made at the first frame that is not the caller's by identity.
     std::optional<WTF::String> nameOfCaller;
 
-    // The callee of a generator or async function body is not the function that the program holds, so only such a frame is matched by name.
+    // A deep stack holds the same few functions over and over, and their names take
+    // longer to make than to compare.
+    struct FunctionOfFrame {
+        const void* callee { nullptr };
+        uintptr_t code { 0 };
+        bool operator==(const FunctionOfFrame&) const = default;
+    };
+    std::array<FunctionOfFrame, 8> functionsWithOtherNames;
+
+    // We match by cell identity first, then by name — name matching is needed
+    // because a resumed async function's frame callee is the generator's `next`
+    // function (a different cell) but Zig::functionName still reports the
+    // original async function's name.
     auto isFrameOfCaller = [&](const JSC::StackFrame& frame) {
         if (frame.callee() == callerObject)
             return true;
-        auto* codeBlock = frame.codeBlock();
-        if (!codeBlock || !JSC::isGeneratorOrAsyncFunctionBodyParseMode(codeBlock->unlinkedCodeBlock()->parseMode()))
+        FunctionOfFrame function { frame.callee(), std::bit_cast<uintptr_t>(frame.codeBlock()) };
+#if ENABLE(AOT)
+        if (frame.isCompiledFrame()) {
+            const auto& compiledFrame = frame.compiledFrame();
+            function.code = static_cast<uintptr_t>(compiledFrame.function.index()) << 2 | (compiledFrame.calleeLiesInFrame ? 2 : 0) | 1;
+        }
+#endif
+        auto& functionWithOtherName = functionsWithOtherNames[((std::bit_cast<uintptr_t>(function.callee) >> 4) + (function.code >> 2)) % functionsWithOtherNames.size()];
+        if (functionWithOtherName == function)
             return false;
+#if ENABLE(AOT)
+        if (frame.isCompiledFrame() && JSC::AOT::isClosureOf(callerObject, frame.compiledFrame().function))
+            return true;
+#endif
         if (!nameOfCaller)
             nameOfCaller = Zig::functionName(vm, callerObject);
-        return !nameOfCaller->isEmpty() && Zig::functionName(vm, frame, nullptr) == *nameOfCaller;
+        const WTF::String& callerName = *nameOfCaller;
+        if (callerName.isEmpty())
+            return false;
+        if (Zig::functionName(vm, frame, nullptr) == callerName)
+            return true;
+        functionWithOtherName = function;
+        return false;
     };
 
-    // stackTraceLimit applies to visible frames AFTER Bun's filter and AFTER caller removal, so both are decided while JSC walks.
-    bool hasFoundCaller = !callerObject;
+    // stackTraceLimit must apply to visible frames AFTER Bun's filter and AFTER
+    // caller removal, not to raw frames from JSC, so both are decided while JSC
+    // walks: the walk ends at the last frame that is shown, however deep the stack is.
+    //
+    // JSC's getStackTrace uses StackVisitor::isImplementationVisibilityPrivate
+    // which differs from Bun's helper — filter to keep behavior consistent
+    // with new Error() stack formatting.
+    //
+    // The frame of the caller is kept until the walk is over. It tells whether the
+    // frames of suspended async functions come in front of the caller or behind it.
+    bool hasFoundCaller = false;
     auto isWanted = [&](const JSC::StackFrame& frame) {
         if (isImplementationVisibilityPrivate(frame))
             return false;
@@ -165,47 +209,42 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
     };
     JSC::Interpreter::StackFrameFilter filter = isWanted;
 
-    // The frame of the caller is kept until the walk is over: it tells whether the await chain comes in front of the caller.
-    size_t framesToCollect = callerObject ? stackTraceLimit + 1 : stackTraceLimit;
-
-    // Delegate to Interpreter::getStackTrace which includes async stack frames
-    // (from the await chain via getAsyncStackTrace). The previous hand-rolled
-    // StackVisitor::visit walk only collected synchronous frames.
-    //
-    // We always collect with framesToSkip=1 (to drop Error.captureStackTrace
-    // itself) and without the caller argument, because Interpreter::getStackTrace's
-    // built-in caller filtering skips entry-frame tracking during the skip phase,
-    // which loses async frames when the caller is the innermost sync frame.
-    vm.interpreter.getStackTrace(owner, stackTrace, 1, framesToCollect, nullptr, nullptr, nullptr, &filter);
-
-    if (hasFoundCaller && stackTrace.size() >= framesToCollect) {
-        stackTrace.shrink(framesToCollect);
-        bool hasAsyncFrame = stackTrace.containsIf([](const JSC::StackFrame& frame) {
-            return frame.isAsyncFrame();
-        });
-
-        // A walk that ends early can take the await chain of another entry into the VM than a walk of the whole stack takes.
-        if (hasAsyncFrame && severalEntriesResumedAsyncFunctions(vm)) {
-            size_t framesInFront = 0;
-            auto isWantedInFront = [&](const JSC::StackFrame& frame) {
-                if (framesInFront == framesToCollect || !isWanted(frame))
-                    return false;
-                framesInFront++;
-                return true;
-            };
-            JSC::Interpreter::StackFrameFilter filterInFront = isWantedInFront;
-
-            // This walk visits every frame and keeps as many as the first one, so its limit only ends the await chain.
-            hasFoundCaller = !callerObject;
-            stackTrace.shrink(0);
-            vm.interpreter.getStackTrace(owner, stackTrace, 1, framesToCollect + 1, nullptr, nullptr, nullptr, &filterInFront);
-        }
-    }
-
-    // Match V8: if the caller is not found anywhere in the sync portion of the stack, remove everything.
-    if (!hasFoundCaller) {
+    constexpr size_t everyFrame = std::numeric_limits<size_t>::max();
+    size_t framesToCollect = stackTraceLimit == everyFrame || !callerObject ? stackTraceLimit : stackTraceLimit + 1;
+    for (;; framesToCollect = everyFrame) {
+        // Delegate to Interpreter::getStackTrace which includes async stack frames
+        // (from the await chain via getAsyncStackTrace). The previous hand-rolled
+        // StackVisitor::visit walk only collected synchronous frames.
+        //
+        // We always collect with framesToSkip=1 (to drop Error.captureStackTrace
+        // itself) and without the caller argument, because Interpreter::getStackTrace's
+        // built-in caller filtering skips entry-frame tracking during the skip phase,
+        // which loses async frames when the caller is the innermost sync frame.
+        hasFoundCaller = !callerObject;
         stackTrace.shrink(0);
-        return;
+        vm.interpreter.getStackTrace(owner, stackTrace, 1, framesToCollect, nullptr, nullptr, nullptr, &filter);
+
+        // Match V8: if the caller is not found anywhere in the sync portion of the
+        // stack, remove everything.
+        if (!hasFoundCaller) {
+            stackTrace.shrink(0);
+            return;
+        }
+
+        bool hasEveryFrame = stackTrace.size() < framesToCollect;
+        if (hasEveryFrame)
+            break;
+        stackTrace.shrink(framesToCollect);
+        bool hasAsyncFrame = false;
+        bool hasPrivateAsyncFrame = false;
+        for (const auto& frame : stackTrace) {
+            if (!frame.isAsyncFrame())
+                continue;
+            hasAsyncFrame = true;
+            hasPrivateAsyncFrame |= isImplementationVisibilityPrivate(frame);
+        }
+        if (!hasPrivateAsyncFrame && !(hasAsyncFrame && severalEntriesResumedAsyncFunctions(vm)))
+            break;
     }
 
     stackTrace.removeAllMatching([](const JSC::StackFrame& frame) {
@@ -263,6 +302,16 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
         if (codeType == JSC::FunctionCode || codeType == JSC::EvalCode) {
             m_isFunctionOrEval = true;
         }
+#if ENABLE(AOT)
+    } else if (frame.isCompiledFrame()) {
+        m_isAOTCompiled = true;
+        if (auto position = frame.compiledPosition(); position && frame.hasLineAndColumnInfo()) {
+            m_sourcePositions = { OrdinalNumber::fromOneBasedInt(position->startOfExpression().line), OrdinalNumber::fromOneBasedInt(position->startOfExpression().column) };
+            m_sourcePositionsState = SourcePositionsState::Calculated;
+            m_isFunctionOrEval = frame.codeType() == JSC::FunctionCode || frame.codeType() == JSC::EvalCode;
+        }
+        return;
+#endif
     }
 
     if (!m_codeBlock && frame.hasLineAndColumnInfo()) {
@@ -316,7 +365,7 @@ ALWAYS_INLINE String JSCStackFrame::retrieveSourceURL()
         return String(sourceURLWasmString);
     }
 
-    auto url = Zig::sourceURL(m_codeBlock);
+    auto url = m_isAOTCompiled ? Zig::sourceURL(m_vm, *m_stackFrame) : Zig::sourceURL(m_codeBlock);
     if (!url.isEmpty()) {
         return url;
     }
@@ -368,6 +417,9 @@ ALWAYS_INLINE String JSCStackFrame::retrieveFunctionName()
             return functionName;
         }
     }
+
+    if (m_isAOTCompiled)
+        return Zig::functionName(m_vm, *m_stackFrame, nullptr);
 
     return emptyString();
 }
@@ -442,6 +494,25 @@ String sourceURL(JSC::CodeBlock* codeBlock)
     return Zig::sourceURL(*codeBlock);
 }
 
+#if ENABLE(AOT)
+String externalSourceMapFileURL()
+{
+#if OS(WINDOWS)
+    static const auto url = MAKE_STATIC_STRING_IMPL("B:\\~BUN\\root\\compiled.js");
+#else
+    static const auto url = MAKE_STATIC_STRING_IMPL("/$bunfs/root/compiled.js");
+#endif
+    return String(url);
+}
+
+String sourceURL(const JSC::AOT::SourcePosition& position)
+{
+    if (position.source)
+        return JSC::AOT::sourceURLOf(position.source);
+    return hasExternalSourceMap() ? externalSourceMapFileURL() : String();
+}
+#endif
+
 String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame)
 {
     if (frame.isWasmFrame()) {
@@ -451,6 +522,13 @@ String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame)
     if (!frame.hasLineAndColumnInfo()) [[unlikely]] {
         return "[native code]"_s;
     }
+
+#if ENABLE(AOT)
+    if (frame.isCompiledFrame()) [[unlikely]] {
+        auto position = frame.compiledPosition();
+        return position ? sourceURL(*position) : String();
+    }
+#endif
 
     return sourceURL(frame.codeBlock());
 }
@@ -462,6 +540,10 @@ String sourceURL(JSC::StackVisitor& visitor)
     case JSC::StackVisitor::Frame::Module:
     case JSC::StackVisitor::Frame::Function:
     case JSC::StackVisitor::Frame::Global: {
+#if ENABLE(AOT)
+        if (visitor->isCompiledFrame())
+            return hasExternalSourceMap() ? externalSourceMapFileURL() : visitor->compiledFrame().sourceURL();
+#endif
         return sourceURL(visitor->codeBlock());
     }
     case JSC::StackVisitor::Frame::Native:
@@ -547,8 +629,46 @@ String functionName(JSC::VM& vm, JSC::JSObject* object)
     return functionName;
 }
 
+#if ENABLE(AOT)
+static String compiledFunctionName(JSC::VM& vm, const JSC::StackFrame& frame)
+{
+    JSC::AOT::FunctionDescription description(frame.compiledFrame().function);
+    return frame.isAsyncFrame() ? description.name(vm) : description.nameInFrames(vm, frame.callee(), frame.compiledFrame().calleeLiesInFrame);
+}
+
+static String functionNameOfCompiledFrame(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* flags)
+{
+    if (!frame.hasLineAndColumnInfo())
+        return compiledFunctionName(vm, frame);
+
+    auto codeType = frame.codeType();
+    if (flags && (codeType == JSC::CodeType::FunctionCode || codeType == JSC::CodeType::EvalCode)) {
+        *flags |= static_cast<unsigned int>(codeType == JSC::CodeType::EvalCode ? FunctionNameFlags::Eval : FunctionNameFlags::Function);
+        if (frame.isBuiltinFunction())
+            *flags |= static_cast<unsigned int>(FunctionNameFlags::Builtin);
+    }
+
+    WTF::String functionName;
+    if (codeType == JSC::CodeType::FunctionCode && !(frame.isAsyncFrame() && JSC::AOT::FunctionDescription(frame.compiledFrame().function).isNamedByOwner()))
+        functionName = compiledFunctionName(vm, frame);
+    // `bun run` evaluates a module of the library as a function that has the name of the module.
+    else if (codeType == JSC::CodeType::ModuleCode && JSC::AOT::FunctionDescription(frame.compiledFrame().function).isInRuntimeModule())
+        functionName = sourceURL(vm, frame);
+
+    if ((flags && (*flags & static_cast<unsigned int>(FunctionNameFlags::AddNewKeyword))) && frame.isConstructor() && !functionName.isEmpty())
+        return makeString("new "_s, functionName);
+
+    return functionName;
+}
+#endif
+
 String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* flags)
 {
+#if ENABLE(AOT)
+    if (frame.isCompiledFrame()) [[unlikely]]
+        return functionNameOfCompiledFrame(vm, frame, flags);
+#endif
+
     bool isConstructor = false;
     WTF::String functionName;
     JSC::JSObject* callee = frame.callee() ? frame.callee()->getObject() : nullptr;

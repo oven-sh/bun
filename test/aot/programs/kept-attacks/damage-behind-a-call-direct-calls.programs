@@ -1,0 +1,606 @@
+////: Clerk
+class Clerk {
+  done = 0;
+  work(round: number): number {
+    strike();
+    return ++this.done + round;
+  }
+}
+////: third
+function third(round: number): number {
+  strike();
+  return round & 3;
+}
+//// damage-behind-a-call-direct-calls/a-callee-that-leaves-its-typed-paths-again-and-again.ts
+// One activation of the callee does damage five times over, to five objects, with typed work in between. It has one return address to swap, and swapping it again changes nothing.
+////= Point
+
+let strikes = false;
+function spoil(list: Point[]): number {
+  let sum = 0;
+  for (let index = 0; index < list.length; index++) {
+    const p = list[index];
+    sum += p.x + p.y;
+    if (strikes) {
+      if (index & 1) delete (p as any).x;
+      else (p as any).y = "T";
+    }
+    sum += index;
+  }
+  return sum;
+}
+
+function holder(a: Point, b: Point, c: Point, d: Point, e: Point): string {
+  const before = a.x + b.x + c.x + d.x + e.x;
+  const got = spoil([a, b, c, d, e]);
+  return before + " " + got + " " + [a.x, a.y, b.x, b.y, c.x, c.y, d.x, d.y, e.x, e.y].join();
+}
+
+////= for-24	holder(new Point(round, 1), new Point(round, 2), new Point(round, 3), new Point(round, 4), new Point(round, 5)
+//// damage-behind-a-call-direct-calls/a-callee-with-rest-parameters-and-one-that-reads-arguments.ts
+// One callee gathers its arguments in a rest parameter, another one reads the arguments object, a third one is called with fewer and with more arguments than it declares. Each does the damage now and then.
+////= Point
+
+let strikes = false;
+function withRest(p: Point, ...rest: number[]): number {
+  if (strikes) delete (p as any).x;
+  let sum = 0;
+  for (const value of rest) sum += value;
+  return sum;
+}
+function withArguments(p: Point, a: number, b: number): number {
+  if (strikes) (p as any).y = "T";
+  return arguments.length * 100 + a + b + (arguments[3] ?? 0);
+}
+function withDefaults(p: Point, a?: number, b: number = 7): number {
+  if (strikes) Object.defineProperty(p, "x", { get: () => -7, configurable: true });
+  return (a ?? 1) + b;
+}
+
+function holder(p: Point, q: Point, r: Point, n: number): string {
+  const before = p.x + q.y + r.x;
+  const first = withRest(p, n, n + 1, n + 2, n + 3, n + 4, n + 5, n + 6, n + 7);
+  const afterFirst = p.x;
+  const second = (withArguments as any)(q, 1, 2, 3, 4);
+  const afterSecond = q.y;
+  const third = withDefaults(r) + withDefaults(r, 2) + withDefaults(r, 2, 3);
+  return before + " " + first + ":" + afterFirst + " " + second + ":" + afterSecond + " " + third + ":" + r.x;
+}
+
+////= for-24	holder(new Point(round, 1), new Point(round, 2), new Point(round, 3), round
+//// damage-behind-a-call-direct-calls/a-function-three-calls-down-appends-a-fraction-to-an-array-of-integers.ts
+// A typed caller reads an array, makes a call and reads it again. A function three calls further down appends a fraction to an array that has held only small integers, which its type allows.
+
+let victim: number[] | null = null;
+////= strike-19
+
+////= third
+////= lines-32	second	third
+////= lines-32	callee	second
+
+////= holder-41
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-direct-calls/a-function-three-calls-down-stores-a-number-into-a-reference-field.ts
+// A typed caller reads an object, makes a call and reads it again. A function three calls further down stores a number into a field that is declared to hold an object.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+////= Leaf-5
+
+let victim: Branch | null = null;
+let spark: number = 0;
+////= hot-6
+////= strike-2
+
+////= third
+////= lines-32	second	third
+////= lines-32	callee	second
+
+////= holder-45
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-direct-calls/a-function-three-calls-down-stores-a-string-into-a-number-field.ts
+// A typed caller reads an object, makes a call and reads it again. A function three calls further down stores a string into a number field of the object.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+////= Point
+
+let victim: Point | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-7
+////= strike
+
+////= third
+////= lines-32	second	third
+////= lines-32	callee	second
+
+////= holder-46
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-direct-calls/a-method-called-on-another-object-fills-an-optional-field.ts
+// A typed caller reads an object, makes a call and reads it again. A method of another object, which the callee calls, fills an optional field of the object, in typed code.
+////= Card
+
+let victim: Card | null = null;
+////= strike-4
+
+////= Clerk
+const clerk = new Clerk();
+function callee(round: number): number {
+  return clerk.work(round) & 3;
+}
+
+////= holder-6
+
+////= outer-24
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-direct-calls/a-method-called-on-another-object-stores-a-fitting-number-by-name.ts
+// A typed caller reads an object, makes a call and reads it again. A method of another object, which the callee calls, stores a number into a field of the object by a computed name, so that nothing about the object changes but the value.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+////= Point
+const names = ["x", "y"];
+
+let victim: Point | null = null;
+let spark: number = 0;
+////= hot-11
+////= strike-2
+
+////= Clerk
+const clerk = new Clerk();
+function callee(round: number): number {
+  return clerk.work(round) & 3;
+}
+
+////= holder-9
+
+////= outer-19
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-direct-calls/a-method-called-on-another-object-takes-the-first-element-away.ts
+// A typed caller reads an array, makes a call and reads it again. A method of another object, which the callee calls, takes the first element of the array away, in typed code.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+
+let victim: number[] | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-17
+////= strike
+
+////= Clerk
+const clerk = new Clerk();
+function callee(round: number): number {
+  return clerk.work(round) & 3;
+}
+
+////= holder-42
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-direct-calls/a-method-of-one-of-three-classes.ts
+// The receiver of a method call is an instance of one of three classes. The method of one of them damages the object that the caller holds, the other two leave it alone.
+////= Point
+abstract class Visitor {
+  abstract visit(p: Point): number;
+}
+class Reader extends Visitor {
+  visit(p: Point): number {
+    return p.y;
+  }
+}
+class Writer extends Visitor {
+  visit(p: Point): number {
+    p.y += 1;
+    return p.y;
+  }
+}
+class Breaker extends Visitor {
+  visit(p: Point): number {
+    delete (p as any).x;
+    return -1;
+  }
+}
+const visitors: Visitor[] = [new Reader(), new Writer(), new Breaker()];
+
+function holder(p: Point, visitor: Visitor): string {
+  const before = p.x + p.y;
+  const got = visitor.visit(p);
+  return before + " " + got + " " + p.x + "," + p.y;
+}
+
+for (let round = 0; round < 300; round++) {
+  const which = round % 100 === 99 ? 2 : round & 1;
+  const line = holder(new Point(round, 1), visitors[which]);
+  if (round % 100 >= 98 || round === 0) console.log(round + ": " + line);
+}
+//// damage-behind-a-call-direct-calls/an-argument-of-the-call-deletes-a-field.ts
+// A typed caller reads an object, makes a call and reads it again. The second argument of the call, which is evaluated behind the first, deletes a field of the object.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+////= Point
+
+let victim: Point | null = null;
+let spark: number = 0;
+////= hot-16
+////= strike-2
+
+function callee(first: number, struck: boolean): number {
+  return struck ? -first : first;
+}
+
+////= holder-37	round & 3, strike()	p.x + "," + p.y + "," + ("x" in p) + "," + Object.keys(p).join("")
+
+////= outer-31
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-direct-calls/an-argument-of-the-call-makes-a-field-of-a-literal-an-accessor.ts
+// A typed caller reads an object, makes a call and reads it again. The second argument of the call, which is evaluated behind the first, makes a field of the object, which an object literal has made, an accessor.
+type Pair = { left: number; right: number; note?: string };
+
+let victim: Pair | null = null;
+////= strike-11
+
+function callee(first: number, struck: boolean): number {
+  return struck ? -first : first;
+}
+
+////= holder-36	callee(round & 3, strike())	p.right + "," + JSON.stringify(p)
+
+////= outer-34
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-direct-calls/an-argument-of-the-call-replaces-a-method-of-the-base-class.ts
+// A typed caller reads an object, makes a call and reads it again. The second argument of the call, which is evaluated behind the first, replaces a method on the prototype object of the base class.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+////= Shape-3
+const areaOfSquare = Square.prototype.area;
+const kindOfShape = Shape.prototype.kind;
+
+let victim: Square | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-14
+////= strike
+
+function callee(first: number, struck: boolean): number {
+  return struck ? -first : first;
+}
+
+////= holder-38	callee(round & 3, strike())
+
+////= outer-4
+
+let digest = 0;
+////= for-6
+console.log("digest " + digest);
+//// damage-behind-a-call-direct-calls/an-object-literal-argument-is-taken-apart.ts
+// The callee takes an object literal as its only argument, so its fields may travel as arguments of their own and the object may never be made. One field is the object that the caller holds. On a rare path the callee damages it and keeps the literal.
+////= Point
+
+type Order = { target: Point; by: number; label: string };
+let strikes = false;
+let kept = null as Order | null;
+function apply(order: Order): number {
+  if (strikes) {
+    delete (order.target as any).x;
+    kept = order;
+  }
+  return order.by + order.label.length;
+}
+
+function holder(p: Point, n: number): string {
+  const before = p.x;
+  const got = apply({ target: p, by: n, label: "l" + n });
+  return before + " " + got + " " + p.x + "," + p.y;
+}
+
+////= for-25	=== 0) console.log(round + ": " + line + " " + (kept === null ? "-" : kept.by + kept.label + kept.target.y)
+//// damage-behind-a-call-direct-calls/more-call-sites-than-any-table-of-them-has-room-for.ts
+// A hundred and fifty functions each hold an object across a call site of their own. The callee does the damage at one site in seven, another one in every round, so whatever remembers the second return point of a site is filled, missed and overwritten.
+////= Point
+
+let strikes = false;
+////= touch
+
+const sites: ((p: Point) => string)[] = [];
+sites.push(function s0(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 0); });
+sites.push(function s1(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 1); });
+sites.push(function s2(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 2); });
+sites.push(function s3(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 3); });
+sites.push(function s4(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 4); });
+sites.push(function s5(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 5); });
+sites.push(function s6(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 6); });
+sites.push(function s7(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 7); });
+sites.push(function s8(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 8); });
+sites.push(function s9(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 9); });
+sites.push(function s10(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 10); });
+sites.push(function s11(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 11); });
+sites.push(function s12(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 12); });
+sites.push(function s13(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 13); });
+sites.push(function s14(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 14); });
+sites.push(function s15(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 15); });
+sites.push(function s16(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 16); });
+sites.push(function s17(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 17); });
+sites.push(function s18(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 18); });
+sites.push(function s19(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 19); });
+sites.push(function s20(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 20); });
+sites.push(function s21(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 21); });
+sites.push(function s22(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 22); });
+sites.push(function s23(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 23); });
+sites.push(function s24(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 24); });
+sites.push(function s25(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 25); });
+sites.push(function s26(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 26); });
+sites.push(function s27(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 27); });
+sites.push(function s28(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 28); });
+sites.push(function s29(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 29); });
+sites.push(function s30(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 30); });
+sites.push(function s31(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 31); });
+sites.push(function s32(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 32); });
+sites.push(function s33(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 33); });
+sites.push(function s34(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 34); });
+sites.push(function s35(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 35); });
+sites.push(function s36(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 36); });
+sites.push(function s37(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 37); });
+sites.push(function s38(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 38); });
+sites.push(function s39(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 39); });
+sites.push(function s40(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 40); });
+sites.push(function s41(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 41); });
+sites.push(function s42(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 42); });
+sites.push(function s43(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 43); });
+sites.push(function s44(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 44); });
+sites.push(function s45(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 45); });
+sites.push(function s46(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 46); });
+sites.push(function s47(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 47); });
+sites.push(function s48(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 48); });
+sites.push(function s49(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 49); });
+sites.push(function s50(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 50); });
+sites.push(function s51(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 51); });
+sites.push(function s52(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 52); });
+sites.push(function s53(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 53); });
+sites.push(function s54(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 54); });
+sites.push(function s55(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 55); });
+sites.push(function s56(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 56); });
+sites.push(function s57(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 57); });
+sites.push(function s58(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 58); });
+sites.push(function s59(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 59); });
+sites.push(function s60(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 60); });
+sites.push(function s61(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 61); });
+sites.push(function s62(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 62); });
+sites.push(function s63(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 63); });
+sites.push(function s64(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 64); });
+sites.push(function s65(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 65); });
+sites.push(function s66(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 66); });
+sites.push(function s67(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 67); });
+sites.push(function s68(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 68); });
+sites.push(function s69(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 69); });
+sites.push(function s70(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 70); });
+sites.push(function s71(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 71); });
+sites.push(function s72(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 72); });
+sites.push(function s73(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 73); });
+sites.push(function s74(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 74); });
+sites.push(function s75(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 75); });
+sites.push(function s76(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 76); });
+sites.push(function s77(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 77); });
+sites.push(function s78(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 78); });
+sites.push(function s79(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 79); });
+sites.push(function s80(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 80); });
+sites.push(function s81(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 81); });
+sites.push(function s82(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 82); });
+sites.push(function s83(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 83); });
+sites.push(function s84(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 84); });
+sites.push(function s85(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 85); });
+sites.push(function s86(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 86); });
+sites.push(function s87(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 87); });
+sites.push(function s88(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 88); });
+sites.push(function s89(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 89); });
+sites.push(function s90(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 90); });
+sites.push(function s91(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 91); });
+sites.push(function s92(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 92); });
+sites.push(function s93(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 93); });
+sites.push(function s94(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 94); });
+sites.push(function s95(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 95); });
+sites.push(function s96(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 96); });
+sites.push(function s97(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 97); });
+sites.push(function s98(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 98); });
+sites.push(function s99(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 99); });
+sites.push(function s100(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 100); });
+sites.push(function s101(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 101); });
+sites.push(function s102(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 102); });
+sites.push(function s103(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 103); });
+sites.push(function s104(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 104); });
+sites.push(function s105(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 105); });
+sites.push(function s106(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 106); });
+sites.push(function s107(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 107); });
+sites.push(function s108(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 108); });
+sites.push(function s109(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 109); });
+sites.push(function s110(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 110); });
+sites.push(function s111(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 111); });
+sites.push(function s112(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 112); });
+sites.push(function s113(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 113); });
+sites.push(function s114(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 114); });
+sites.push(function s115(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 115); });
+sites.push(function s116(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 116); });
+sites.push(function s117(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 117); });
+sites.push(function s118(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 118); });
+sites.push(function s119(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 119); });
+sites.push(function s120(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 120); });
+sites.push(function s121(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 121); });
+sites.push(function s122(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 122); });
+sites.push(function s123(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 123); });
+sites.push(function s124(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 124); });
+sites.push(function s125(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 125); });
+sites.push(function s126(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 126); });
+sites.push(function s127(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 127); });
+sites.push(function s128(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 128); });
+sites.push(function s129(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 129); });
+sites.push(function s130(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 130); });
+sites.push(function s131(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 131); });
+sites.push(function s132(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 132); });
+sites.push(function s133(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 133); });
+sites.push(function s134(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 134); });
+sites.push(function s135(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 135); });
+sites.push(function s136(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 136); });
+sites.push(function s137(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 137); });
+sites.push(function s138(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 138); });
+sites.push(function s139(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 139); });
+sites.push(function s140(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 140); });
+sites.push(function s141(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 141); });
+sites.push(function s142(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 142); });
+sites.push(function s143(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 143); });
+sites.push(function s144(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 144); });
+sites.push(function s145(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 145); });
+sites.push(function s146(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 146); });
+sites.push(function s147(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 147); });
+sites.push(function s148(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 148); });
+sites.push(function s149(p: Point): string { const before = p.x; const got = touch(p); return before + ">" + p.x + "," + (p.y + got + 149); });
+
+let wrong = 0;
+let struck = 0;
+for (let round = 0; round < 40; round++) {
+  for (let site = 0; site < sites.length; site++) {
+    strikes = (site + round) % 7 === 0;
+    const told = sites[site](new Point(round, site));
+    const expected = round + ">" + (strikes ? "undefined" : round) + "," + (site + 1 + site);
+    if (strikes) struck++;
+    if (told !== expected) {
+      if (wrong++ < 5) console.log(round + " " + site + ": " + told + " and not " + expected);
+    }
+  }
+}
+console.log(struck + " struck, " + wrong + " wrong");
+//// damage-behind-a-call-direct-calls/the-callee-deletes-a-field.ts
+// A typed caller reads an object, makes a call and reads it again. The function that it calls deletes a field of the object.
+////= Point
+
+let victim: Point | null = null;
+////= strike-17
+
+////= callee-2
+
+////= holder-13
+
+////= outer-35
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-direct-calls/the-callee-makes-a-field-of-a-literal-an-accessor.ts
+// A typed caller reads an object, makes a call and reads it again. The function that it calls makes a field of the object, which an object literal has made, an accessor.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+type Pair = { left: number; right: number; note?: string };
+
+let victim: Pair | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-10
+////= strike
+
+////= callee-2
+
+////= holder-22
+
+////= outer-28
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-direct-calls/the-callee-puts-a-method-in-front-of-an-inherited-one.ts
+// A typed caller reads an object, makes a call and reads it again. The function that it calls gives the class a method of its own under a name that it has inherited so far.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+////= Shape-3
+const areaOfSquare = Square.prototype.area;
+const kindOfShape = Shape.prototype.kind;
+
+let victim: Square | null = null;
+let spark: number = 0;
+////= hot-5
+////= strike-2
+
+////= callee-2
+
+////= holder-44
+
+let digest = 0;
+////= for-11
+console.log("digest " + digest);
+//// damage-behind-a-call-direct-calls/the-head-of-the-callee-is-taken-into-the-caller.ts
+// The callee begins with a short way out, which a caller may take in, and goes on with a long body that is called only where the short way is not taken. The damage is done in the long body.
+////= Point
+
+const cache = new Map<number, number>();
+let strikes = false;
+function lookUp(p: Point, key: number): number {
+  if (key < 8) return key;
+  let found = cache.get(key);
+  if (found === undefined) {
+    found = 0;
+    for (let index = 0; index < 5; index++) found = (found * 31 + key + index) | 0;
+    cache.set(key, found);
+  }
+  if (strikes) delete (p as any).x;
+  return found & 7;
+}
+
+////= holder-31	key	lookUp
+
+for (let round = 0; round < 300; round++) {
+  strikes = round % 100 === 99;
+  const line = holder(new Point(round, 1), round % 16);
+  const other = holder(new Point(round, 2), 12);
+  if (strikes || round === 0) console.log(round + ": " + line + " | " + other);
+}
+//// damage-behind-a-call-direct-calls/the-object-never-leaves-the-caller-but-as-an-argument.ts
+// The caller makes an object that nothing else ever refers to and lends it to a callee, so it may live in the caller's frame. On a rare path the callee damages it, and on a rarer one it keeps it for later.
+////= Point
+
+let mode = 0;
+let kept = null as Point | null;
+function borrow(p: Point): number {
+  if (mode === 1) delete (p as any).x;
+  else if (mode === 2) (p as any).z = 3;
+  else if (mode === 3) {
+    (p as any).y = "kept";
+    kept = p;
+  }
+  return p.y === 1 ? 1 : 2;
+}
+
+function overwrite(depth: number): number {
+  const a = new Point(-1, -1), b = new Point(-2, -2);
+  return depth === 0 ? a.x + b.y : overwrite(depth - 1) + a.y + b.x;
+}
+
+function holder(n: number): string {
+  const p = new Point(n, 1);
+  const before = p.x + p.y;
+  const got = borrow(p);
+  return before + " " + got + " " + p.x + "," + p.y + "," + Object.keys(p).join("");
+}
+
+for (let round = 0; round < 400; round++) {
+  mode = round % 100 === 99 ? (round + 1) / 100 : 0;
+  const line = holder(round);
+  overwrite(20);
+  if (mode || round === 0) console.log(round + ": " + line + " " + (kept === null ? "-" : kept.x + "," + kept.y));
+}

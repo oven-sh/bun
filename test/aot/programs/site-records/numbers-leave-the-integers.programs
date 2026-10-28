@@ -1,0 +1,2184 @@
+////: attempt-5
+function attempt(run: () => unknown): string {
+  try {
+    const value = run();
+    return typeof value «1» String(value);
+  } catch (error) {
+    return "throws " + (error as Error).constructor.name;
+  }
+}
+////: lines-14
+function «1»(«2»: «3»): Promise<string> {
+  return new Promise(resolve => {
+    const «4» = new Worker(new URL(import.meta.url), { workerData: «2» });
+    «4».once("message", (answer: string) => {
+      void «4».terminate().then(() => resolve(answer));
+    });
+  });
+}
+////: lines-20
+interface «1» {
+  «2»: «3»;
+  «4»: «5»;
+}
+//// numbers-leave-the-integers-and-come-back.ts
+// A field declared `number` starts with a small integer. Honest stores then bring fractions, minus zero, NaN, infinities and integers beyond 32 and 53 bits, and small integers again. Each value is read back exactly, by typed reads, updates and copies.
+class Meter {
+  reading = 0;
+  label = "meter";
+  total = 0;
+}
+class FractionMeter {
+  reading = 0.5;
+  label = "fractions";
+  total = 0.25;
+}
+
+function show(value: number): string {
+  return Object.is(value, -0) ? "-0" : String(value);
+}
+////= lines	readingOf	meter	Meter	number	meter.reading
+////= lines-2	setReading	meter	Meter	value	number	meter.reading
+function accumulate(meter: Meter): number {
+  return (meter.total += meter.reading);
+}
+function increment(meter: Meter): number {
+  return ++meter.reading;
+}
+function negate(meter: Meter): number {
+  return (meter.reading = -meter.reading);
+}
+function halve(meter: Meter): number {
+  return (meter.reading /= 2);
+}
+function toInteger(meter: Meter): number {
+  return (meter.reading |= 0);
+}
+function copy(meter: Meter): Meter {
+  return { reading: meter.reading, label: meter.label, total: meter.total };
+}
+
+const values = [0, 1, -1, 2 ** 30, 2 ** 31 - 1, 2 ** 31, -(2 ** 31), -(2 ** 31) - 1, 2 ** 32, 2 ** 52, 2 ** 53, 2 ** 53 + 2, 0.5, -0.5, 1e-300, 1e300, -0, NaN, Infinity, -Infinity, Number.MIN_VALUE, Number.MAX_VALUE, 3];
+
+function exercise(mark: string, make: () => Meter): void {
+  const reused = make();
+  for (const value of values) {
+    const fresh = make();
+    setReading(fresh, value);
+    setReading(reused, value);
+    const copied = copy(fresh);
+    console.log(
+      mark,
+      show(value) + ":",
+      show(readingOf(fresh)),
+      show(readingOf(reused)),
+      show(readingOf(copied)),
+      Object.is(readingOf(fresh), value),
+      "| total",
+      show(accumulate(reused)),
+      "| ++",
+      show(increment(fresh)),
+      "| -",
+      show(negate(fresh)),
+      "| /2",
+      show(halve(fresh)),
+      "| |0",
+      show(toInteger(fresh)),
+      show(readingOf(fresh)),
+      fresh.label,
+      JSON.stringify(copied),
+    );
+  }
+  setReading(reused, 7);
+  console.log(mark, "at last:", show(readingOf(reused)), show(increment(reused)), reused.label, Object.keys(reused).join());
+}
+
+exercise("integers first", () => new Meter());
+exercise("fractions first", () => new FractionMeter());
+exercise("literal", () => ({ reading: 0, label: "literal", total: 0 }));
+exercise("parsed", () => JSON.parse('{"total":0,"label":"parsed","reading":0}'));
+
+const list: Meter[] = [new Meter(), new FractionMeter(), { reading: 1, label: "l", total: 1 }];
+let sum = 0;
+for (const meter of list) {
+  setReading(meter, readingOf(meter) + 2 ** 31);
+  sum += readingOf(meter);
+  setReading(meter, readingOf(meter) - 2 ** 31);
+  sum += readingOf(meter);
+}
+console.log(sum, JSON.stringify(list));
+
+export {};
+//// objects-are-seen-before-their-fields-are-there.ts
+// An object gets out of its constructor before all fields are defined: through a call in a field initializer, a method that a subclass overrides, an exception, an early return. A field that is not there yet is absent, not zero and not empty.
+const seen: string[] = [];
+
+////= lines-20	Pair	left	number	right	string
+
+////= lines	leftOf	pair	Pair	unknown	pair.left
+////= lines	rightOf	pair	Pair	unknown	pair.right
+////= lines-2	setRight	pair	Pair	to	string	pair.right
+function snapshot(mark: string, pair: Pair): number {
+  seen.push(mark + ": " + String(leftOf(pair)) + "," + String(rightOf(pair)) + "," + ("left" in pair) + "," + ("right" in pair) + ",[" + Object.keys(pair).join() + "]");
+  return 1;
+}
+function report(mark: string, value: unknown): void {
+  console.log(mark + ":", JSON.stringify(value), "|", seen.splice(0).join(" | "));
+}
+
+class InInitializers implements Pair {
+  before = snapshot("before left", this);
+  left = 5;
+  between = snapshot("between", this);
+  right = "right";
+  after = snapshot("after right", this);
+}
+report("initializers", new InInitializers());
+report("initializers again", new InInitializers());
+
+class Parent {
+  parentField = "parent";
+  constructor() {
+    this.hook();
+  }
+  hook(): void {}
+}
+class Child extends Parent implements Pair {
+  left = 6;
+  right = "child";
+  hook(): void {
+    snapshot("from the parent's constructor", this);
+  }
+}
+report("overridden hook", new Child());
+
+class StoresEarly extends Parent implements Pair {
+  left = 7;
+  right = "defined by the initializer";
+  hook(): void {
+    setRight(this, "stored early");
+    snapshot("after the early store", this);
+  }
+}
+report("a store before the definition", new StoresEarly());
+
+let escaped: Pair | undefined;
+class Throws implements Pair {
+  left = 8;
+  middle = (() => {
+    escaped = this;
+    throw new RangeError("midway");
+  })();
+  right = "never";
+}
+try {
+  new Throws();
+} catch (error) {
+  snapshot("after the exception", escaped!);
+  setRight(escaped!, "stored afterwards");
+  snapshot("after a store", escaped!);
+  report("an initializer throws", escaped);
+}
+
+class AssignsInConstructor implements Pair {
+  declare left: number;
+  declare right: string;
+  constructor(stopEarly: boolean) {
+    snapshot("empty", this);
+    this.right = "right first";
+    snapshot("right only", this);
+    if (stopEarly) return;
+    this.left = 9;
+  }
+}
+report("stops early", new AssignsInConstructor(true));
+report("runs through", new AssignsInConstructor(false));
+report("stops early again", new AssignsInConstructor(true));
+const partial = new AssignsInConstructor(true);
+seen.length = 0;
+partial.left = 10;
+snapshot("completed later", partial);
+report("completed later", partial);
+
+function OldStyle(this: any, withLeft: boolean) {
+  snapshot("old style, empty", this);
+  if (withLeft) this.left = 11;
+  this.right = "old style";
+  snapshot("old style, done", this);
+}
+report("old style with left", new (OldStyle as any)(true));
+report("old style without left", new (OldStyle as any)(false));
+report("old style with left", new (OldStyle as any)(true));
+
+export {};
+//// objects-change-while-a-function-is-suspended.ts
+// An async function or a generator reads a field, is suspended, and reads the field again. While it waits, other code deletes, moves and redefines the field, exchanges the prototype, or collects. The second read sees the object as it is then.
+class Ticket {
+  id = 1;
+  state = "open";
+  close(): string {
+    return "closed " + this.id;
+  }
+}
+
+function describe(ticket: Ticket): string {
+  try {
+    return String(ticket.id) + "/" + String(ticket.state) + "/" + ticket.close() + "/" + Object.keys(ticket).join("+");
+  } catch (error) {
+    return "throws " + (error as Error).constructor.name;
+  }
+}
+
+async function readAroundAwait(ticket: Ticket, gate: Promise<void>): Promise<string> {
+  const before = describe(ticket);
+  const stateBefore = ticket.state;
+  await gate;
+  const stateAfter = ticket.state;
+  ticket.state = "seen";
+  return before + " -> " + String(stateBefore) + "," + String(stateAfter) + " -> " + describe(ticket);
+}
+function* readAroundYield(ticket: Ticket): Generator<string, string, void> {
+  const idBefore = ticket.id;
+  yield describe(ticket);
+  const idAfter = ticket.id;
+  yield String(idBefore) + "," + String(idAfter);
+  ticket.id = 100;
+  return describe(ticket);
+}
+
+const changes: [string, (ticket: any) => void][] = [
+  ["nothing", () => {}],
+  ["deleted", ticket => delete ticket.state],
+  ["deleted and added behind", ticket => {
+    delete ticket.state;
+    delete ticket.id;
+    ticket.extra = 0;
+    ticket.state = "reopened";
+    ticket.id = 2;
+  }],
+  ["other kinds of values", ticket => {
+    ticket.state = 404;
+    ticket.id = "three";
+  }],
+  ["accessors", ticket => {
+    Object.defineProperty(ticket, "state", { get: () => "computed", set() {}, configurable: true, enumerable: true });
+    Object.defineProperty(ticket, "id", { get: () => 4, set() {}, configurable: true, enumerable: true });
+  }],
+  ["frozen", ticket => Object.freeze(ticket)],
+  ["own method", ticket => {
+    ticket.close = () => "closed otherwise";
+  }],
+  ["another prototype", ticket => Object.setPrototypeOf(ticket, { close: () => "closed elsewhere", state: "above" })],
+  ["no prototype", ticket => Object.setPrototypeOf(ticket, null)],
+  ["many more fields", ticket => {
+    for (let i = 0; i < 30; i++) ticket["more" + i] = i;
+    for (let i = 0; i < 30; i++) delete ticket["more" + i];
+  }],
+  ["a collection", () => Bun.gc(true)],
+];
+
+for (const [name, change] of changes) {
+  const awaited = new Ticket();
+  let open: () => void = () => {};
+  const result = readAroundAwait(awaited, new Promise<void>(resolve => (open = resolve))).catch(error => "rejects " + error.constructor.name);
+  change(awaited);
+  open();
+  console.log(name + ", await:", await result);
+
+  const yielded = new Ticket();
+  const steps = readAroundYield(yielded);
+  const first = steps.next().value;
+  change(yielded);
+  let rest: string;
+  try {
+    rest = steps.next().value + " -> " + steps.next().value;
+  } catch (error) {
+    rest = "throws " + (error as Error).constructor.name;
+  }
+  console.log(name + ", yield:", first, "->", rest);
+}
+
+export {};
+//// optional-fields-present-in-every-combination.ts
+// One declared type with optional fields is many layouts: literals give every combination of the fields, in the declared order and in others, some give `undefined` outright. One set of reads, stores and tests serves them all.
+interface Style {
+  color?: string;
+  width?: number;
+  bold?: boolean;
+  parent?: Style;
+}
+
+////= lines-16	colorOf	style	Style	string	style.color
+////= lines-16	widthOf	style	Style	number	style.width
+////= lines-16	boldOf	style	Style	boolean	style.bold
+function parentColor(style: Style): string | undefined {
+  return style.parent?.color;
+}
+function widthOrDefault(style: Style): number {
+  return style.width ?? -1;
+}
+function setWidth(style: Style, width: number | undefined): void {
+  style.width = width;
+}
+////= lines-2	setColor	style	Style	color	string	style.color
+function present(style: Style): string {
+  return ("color" in style ? "c" : "-") + ("width" in style ? "w" : "-") + ("bold" in style ? "b" : "-") + ("parent" in style ? "p" : "-");
+}
+function look(mark: string, style: Style): void {
+  const before = [colorOf(style), widthOf(style), boldOf(style), parentColor(style), widthOrDefault(style), present(style), Object.keys(style).join("")].map(String).join(" ");
+  setWidth(style, 9);
+  setColor(style, "set");
+  const stored = [colorOf(style), widthOf(style), present(style), Object.keys(style).join("+")].map(String).join(" ");
+  setWidth(style, undefined);
+  console.log(mark + ":", before, "|", stored, "|", String(widthOf(style)), widthOrDefault(style), present(style), JSON.stringify(style));
+}
+
+const root: Style = { color: "root" };
+
+look("none", {});
+look("c", { color: "c" });
+look("w", { width: 1 });
+look("b", { bold: true });
+look("p", { parent: root });
+look("cw", { color: "c", width: 1 });
+look("wc", { width: 1, color: "c" });
+look("cb", { color: "c", bold: false });
+look("bc", { bold: false, color: "c" });
+look("wb", { width: 1.5, bold: true });
+look("cp", { color: "c", parent: root });
+look("cwb", { color: "c", width: 1, bold: true });
+look("bwc", { bold: true, width: 1, color: "c" });
+look("wbp", { width: 0, bold: false, parent: {} });
+look("cwbp", { color: "c", width: 1, bold: true, parent: root });
+look("pbwc", { parent: { parent: root }, bold: true, width: 1, color: "c" });
+look("undefined outright", { color: undefined, width: undefined, bold: undefined, parent: undefined });
+look("some undefined", { color: "c", width: undefined });
+look("none", {});
+look("cwbp", { color: "c", width: 1, bold: true, parent: root });
+
+function build(withColor: boolean, withWidth: boolean, withBold: boolean): Style {
+  const style: Style = {};
+  if (withBold) style.bold = true;
+  if (withColor) style.color = "built";
+  if (withWidth) style.width = 3;
+  return style;
+}
+look("built ---", build(false, false, false));
+look("built c--", build(true, false, false));
+look("built -w-", build(false, true, false));
+look("built cw-", build(true, true, false));
+look("built --b", build(false, false, true));
+look("built cwb", build(true, true, true));
+
+function conditional(flag: boolean): Style {
+  return { ...(flag ? { color: "conditional" } : {}), width: 4, ...(flag ? {} : { bold: true }) };
+}
+look("conditional, true", conditional(true));
+look("conditional, false", conditional(false));
+console.log(JSON.stringify(root));
+
+export {};
+//// primitives-null-and-undefined-arrive-at-a-read.ts
+// A read that expects an object gets null, undefined and every kind of primitive value, first of all and between honest objects.
+interface Sized {
+  length: number;
+  description: string;
+  size?: number;
+}
+
+////= attempt-5	+ " " +
+
+////= lines	lengthOf	value	Sized	number	value.length
+////= lines	descriptionOf	value	Sized	string	value.description
+////= lines-16	sizeOf	value	Sized	number	value.size
+function lengthIfAny(value: Sized | null | undefined): number | undefined {
+  return value?.length;
+}
+function look(mark: string, value: unknown): void {
+  const sized = value as Sized;
+  console.log(mark + ":", attempt(() => lengthOf(sized)), "|", attempt(() => descriptionOf(sized)), "|", attempt(() => sizeOf(sized)), "|", attempt(() => lengthIfAny(sized)));
+}
+
+function joined(count: number): string {
+  let text = "";
+  for (let i = 0; i < count; i++) text = text + "piece " + i + ", ";
+  return text;
+}
+
+const honest: Sized = { length: 12, description: "honest", size: 3 };
+
+look("null first", null);
+look("undefined", undefined);
+look("honest", honest);
+look("null", null);
+look("zero", 0);
+look("minus zero", -0);
+look("integer", 41);
+look("large integer", 2 ** 31);
+look("fraction", 1.5);
+look("not a number", NaN);
+look("infinity", -Infinity);
+look("honest", honest);
+look("true", true);
+look("false", false);
+look("empty text", "");
+look("text", "text");
+look("text in two bytes", "世界");
+look("joined text", joined(5));
+look("part of a text", joined(9).slice(3, 40));
+look("one character", joined(1)[2]);
+look("honest", honest);
+look("symbol", Symbol("described"));
+look("symbol without description", Symbol());
+look("registered symbol", Symbol.for("registered"));
+look("well-known symbol", Symbol.iterator);
+look("small bigint", 10n);
+look("negative bigint", -(2n ** 70n));
+look("large bigint", 2n ** 200n);
+look("honest", honest);
+look("undefined at last", undefined);
+
+export {};
+//// private-members-and-objects-that-were-given-them.ts
+// A private member belongs to the objects that ran the class's initializers, whatever their layout: instances, subclass instances, and any object that a base constructor handed back. Everything else throws a TypeError, a Proxy around an instance too.
+class Vault {
+  #secret = "secret";
+  #count = 0;
+  open = "open";
+  #bump(): number {
+    return ++this.#count;
+  }
+  get #view(): string {
+    return this.#secret + "/" + this.#count;
+  }
+  static secretOf(value: Vault): string {
+    return value.#secret;
+  }
+  static setSecret(value: Vault, to: string): void {
+    value.#secret = to;
+  }
+  static bump(value: Vault): number {
+    return value.#bump();
+  }
+  static viewOf(value: Vault): string {
+    return value.#view;
+  }
+  static has(value: unknown): boolean {
+    return typeof value === "object" && value !== null && #secret in value;
+  }
+}
+class DeepVault extends Vault {
+  more = "more";
+  #secret = "another secret of the same name";
+  static deepSecretOf(value: DeepVault): string {
+    return value.#secret;
+  }
+}
+
+class HandsBack {
+  constructor(value: object) {
+    return value;
+  }
+}
+class Stamp extends HandsBack {
+  #mark = "stamped";
+  #times = 1;
+  static markOf(value: unknown): string {
+    return (value as Stamp).#mark + " " + (value as Stamp).#times;
+  }
+  static again(value: unknown): number {
+    return ++(value as Stamp).#times;
+  }
+  static has(value: object): boolean {
+    return #mark in value;
+  }
+}
+
+////= attempt
+function look(mark: string, value: unknown): void {
+  const vault = value as Vault;
+  console.log(mark + ":", attempt(() => Vault.secretOf(vault)), attempt(() => Vault.setSecret(vault, "changed")), attempt(() => Vault.secretOf(vault)), attempt(() => Vault.bump(vault)), attempt(() => Vault.viewOf(vault)), attempt(() => Vault.has(vault)), attempt(() => DeepVault.deepSecretOf(vault as DeepVault)));
+}
+function lookAtStamp(mark: string, value: object): void {
+  console.log(mark + ":", attempt(() => Stamp.has(value)), attempt(() => Stamp.markOf(value)), attempt(() => new Stamp(value) === value), attempt(() => Stamp.has(value)), attempt(() => Stamp.markOf(value)), attempt(() => Stamp.again(value)), attempt(() => Stamp.markOf(value)), attempt(() => new Stamp(value)), Object.keys(value).join());
+}
+
+look("instance", new Vault());
+look("subclass instance", new DeepVault());
+look("instance", new Vault());
+look("look-alike", { open: "open" });
+look("heir of an instance", Object.create(new Vault()));
+look("proxy around an instance", new Proxy(new Vault(), {}));
+look("same prototype, not constructed", Object.create(Vault.prototype));
+look("null", null);
+look("number", 5);
+look("frozen instance", Object.freeze(new Vault()));
+look("instance with a deleted field", (() => {
+  const vault = new Vault();
+  delete (vault as any).open;
+  return vault;
+})());
+look("instance with another prototype", Object.setPrototypeOf(new Vault(), null));
+look("instance", new Vault());
+
+lookAtStamp("literal", { a: 1 });
+lookAtStamp("parsed", JSON.parse('{"b":2}'));
+lookAtStamp("instance of another class", new Vault());
+lookAtStamp("array", [1]);
+lookAtStamp("function", function () {});
+lookAtStamp("frozen", Object.freeze({ c: 3 }));
+lookAtStamp("proxy", new Proxy({}, {}));
+lookAtStamp("no prototype", Object.create(null));
+
+export {};
+//// special-properties-of-arrays-functions-and-host-objects.ts
+// `length`, `name`, `size`, `lastIndex`, `byteLength`, `prototype`: on some kinds of objects the engine computes them, refuses stores to them, or does more than store. Such objects arrive at reads and stores that expect a plain field.
+interface Plain {
+  length: number;
+  name: string;
+  size: number;
+  lastIndex: number;
+  byteLength: number;
+  prototype: unknown;
+}
+
+////= attempt-5	=== "object" && value !== null ? "object" : typeof value === "function" ? "function" :
+function readAll(plain: Plain): string {
+  return [attempt(() => plain.length), attempt(() => plain.name), attempt(() => plain.size), attempt(() => plain.lastIndex), attempt(() => plain.byteLength), attempt(() => plain.prototype)].join(" ");
+}
+////= lines-2	setLength	plain	Plain	to	number	plain.length
+////= lines-2	setName	plain	Plain	to	string	plain.name
+////= lines-2	setSize	plain	Plain	to	number	plain.size
+////= lines-2	setLastIndex	plain	Plain	to	number	plain.lastIndex
+////= lines-2	setPrototypeField	plain	Plain	to	unknown	plain.prototype
+function look(mark: string, value: unknown, after: () => unknown = () => ""): void {
+  const plain = value as Plain;
+  console.log(mark + ":", readAll(plain));
+  console.log("  stores:", attempt(() => setLength(plain, 1)), attempt(() => setName(plain, "renamed")), attempt(() => setSize(plain, 2)), attempt(() => setLastIndex(plain, 3)), attempt(() => setPrototypeField(plain, null)));
+  console.log("  then:", readAll(plain), Object.keys(plain).join(), String(after()));
+}
+
+function honest(): Plain {
+  return { length: 9, name: "honest", size: 9, lastIndex: 9, byteLength: 9, prototype: 9 };
+}
+function ordinary(first: number, second: number) {
+  return first + second;
+}
+class Klass {
+  static size = 4;
+}
+
+const list = [1, 2, 3];
+const sparse = [1, , 3, , 5];
+const pattern = /a/g;
+const frozenList = Object.freeze([1, 2, 3]);
+
+look("honest", honest());
+look("array", list, () => JSON.stringify(list));
+look("array with holes", sparse, () => JSON.stringify(sparse));
+look("frozen array", frozenList, () => JSON.stringify(frozenList));
+look("honest", honest());
+look("function", ordinary, () => ordinary(1, 2));
+look("arrow", () => 0);
+look("class", Klass, () => Klass.size);
+look("bound function", ordinary.bind(null));
+look("method", { method() {} }.method);
+look("honest", honest());
+look("map", new Map([[1, 1]]));
+look("set", new Set([1, 2]));
+look("regular expression", pattern, () => pattern.test("aaaa") + " " + pattern.lastIndex);
+look("array buffer", new ArrayBuffer(8));
+look("typed array", new Float64Array(4));
+look("data view", new DataView(new ArrayBuffer(16), 4));
+look("string object", new String("boxed"));
+look("arguments", (function (..._: number[]) {
+  return arguments;
+})(1, 2, 3));
+look("honest", honest());
+
+console.log("negative length:", attempt(() => setLength([1, 2] as any, -1)), "fraction:", attempt(() => setLength([1, 2] as any, 1.5)), "text:", attempt(() => setLength([1, 2] as any, "1" as any)));
+
+export {};
+//// static-members-and-classes-as-receivers.ts
+// Classes are objects: static fields are read, stored and called on the class that declares them, on subclasses that inherit them through the chain of constructors, and on look-alikes. A store on a subclass creates a field of its own.
+class Registry {
+  static count = 0;
+  static label = "registry";
+  static next(): number {
+    return ++this.count;
+  }
+  static get doubled(): number {
+    return this.count * 2;
+  }
+}
+class SubRegistry extends Registry {
+  static extra = "extra";
+}
+class Overriding extends Registry {
+  static label = "overriding";
+  static next(): number {
+    return super.next() + 1000;
+  }
+}
+
+type RegistryLike = typeof Registry;
+
+////= attempt
+////= lines	countOf	registry	RegistryLike	unknown	registry.count
+////= lines	labelOf	registry	RegistryLike	unknown	registry.label
+////= lines	doubledOf	registry	RegistryLike	unknown	registry.doubled
+////= lines-3	next	registry	RegistryLike	unknown	registry.next
+////= lines-2	setCount	registry	RegistryLike	to	number	registry.count
+function look(mark: string, value: unknown): void {
+  const registry = value as RegistryLike;
+  console.log(mark + ":", attempt(() => countOf(registry)), attempt(() => labelOf(registry)), attempt(() => doubledOf(registry)), attempt(() => next(registry)), attempt(() => countOf(registry)), Object.hasOwn(registry as object, "count"));
+}
+
+look("the class", Registry);
+look("the class", Registry);
+look("a subclass", SubRegistry);
+look("the class after the subclass counted", Registry);
+look("a subclass that has its own count now", SubRegistry);
+look("an overriding subclass", Overriding);
+look("the class", Registry);
+setCount(Registry, 50);
+look("after a store on the class", Registry);
+look("the subclass keeps its own", SubRegistry);
+delete (SubRegistry as any).count;
+look("the subclass inherits again", SubRegistry);
+look("a literal", { count: 7, label: "literal", doubled: "no getter", next: () => "literal next" });
+look("an instance", new Registry());
+look("a function", Object.assign(function () {}, { count: 1, label: "function" }));
+Object.setPrototypeOf(SubRegistry, Overriding);
+delete (SubRegistry as any).count;
+look("the subclass hangs below the other", SubRegistry);
+Object.setPrototypeOf(SubRegistry, Function.prototype);
+look("the subclass hangs below no class", SubRegistry);
+Object.setPrototypeOf(SubRegistry, Registry);
+Registry.next = () => -1;
+look("next replaced", Registry);
+look("next replaced, seen from below", SubRegistry);
+look("next replaced, seen through super", Overriding);
+Object.defineProperty(Registry, "count", { get: () => "a getter now", configurable: true });
+look("count is a getter", Registry);
+look("count is a getter, seen from below", SubRegistry);
+Object.freeze(Overriding);
+look("a frozen class", Overriding);
+
+export {};
+//// stores-that-create-a-field.ts
+// A store creates the field: an optional field of the layout, a name the layout does not know, on objects of the expected layout and on others, up to many more fields than the object had room for.
+class Entry {
+  id = 1;
+  declare note?: string;
+  declare score?: number;
+}
+
+////= attempt
+////= lines-2	setNote	entry	Entry	note	string	entry.note
+////= lines-2	setScore	entry	Entry	score	number	entry.score
+////= lines	noteOf	entry	Entry	unknown	entry.note
+////= lines	scoreOf	entry	Entry	unknown	entry.score
+////= lines-2	setUnknown	entry	any	value	unknown	entry.unknownToTheLayout
+function addMany(entry: any): void {
+  entry.a0 = 0;
+  entry.a1 = "one";
+  entry.a2 = 2.5;
+  entry.a3 = null;
+  entry.a4 = [4];
+  entry.a5 = true;
+  entry.a6 = 6;
+  entry.a7 = 7;
+  entry.a8 = 8;
+  entry.a9 = 9;
+  entry.a10 = 10;
+  entry.a11 = 11;
+  entry.a12 = 12;
+  entry.a13 = 13;
+  entry.a14 = 14;
+  entry.a15 = 15;
+  entry.a16 = 16;
+  entry.a17 = 17;
+  entry.a18 = 18;
+  entry.a19 = 19;
+}
+function look(mark: string, value: unknown): void {
+  const entry = value as Entry;
+  const before = String(noteOf(entry)) + "," + String(scoreOf(entry));
+  const stores = [attempt(() => setScore(entry, 9.5)), attempt(() => setNote(entry, "noted")), attempt(() => setUnknown(entry, mark)), attempt(() => setNote(entry, "noted twice"))].join();
+  console.log(mark + ":", before, stores, String(noteOf(entry)) + "," + String(scoreOf(entry)), Reflect.ownKeys(entry as object).map(String).join(), JSON.stringify(entry));
+}
+
+look("expected", new Entry());
+look("expected", new Entry());
+look("literal", { id: 2 });
+look("literal that has one of them", { note: "had it", id: 3 });
+look("parsed", JSON.parse('{"id":4}'));
+look("parsed, empty", JSON.parse("{}"));
+look("no prototype", Object.create(null));
+look("array", [5]);
+look("function", function () {});
+look("map", new Map());
+look("set", new Set([1]));
+look("expected", new Entry());
+
+const grown = new Entry();
+addMany(grown);
+setNote(grown, "after twenty");
+console.log(JSON.stringify(grown), Object.keys(grown).length);
+const grownFirst = new Entry();
+setNote(grownFirst, "before twenty");
+addMany(grownFirst);
+setScore(grownFirst, 1);
+console.log(JSON.stringify(grownFirst), Object.keys(grownFirst).length);
+const grownParsed = JSON.parse('{"a5":"had a5"}');
+addMany(grownParsed);
+addMany(grownParsed);
+setNote(grownParsed, "parsed");
+console.log(JSON.stringify(grownParsed), Object.keys(grownParsed).length);
+
+const one = new Entry();
+const two = new Entry();
+setNote(one, "one");
+setScore(two, 2);
+setScore(one, 1);
+setNote(two, "two");
+console.log(Object.keys(one).join(), Object.keys(two).join(), noteOf(one), noteOf(two), scoreOf(one), scoreOf(two));
+
+export {};
+//// stores-through-a-setter-on-the-chain.ts
+// A store to a field that the object lacks asks the chain first: a setter, a getter without a setter, a read-only property or a Proxy up there decides. They appear and go away after the store has created the field on earlier objects.
+////= lines-17	Root	kind	"root"
+class Leaf extends Root {
+  id = 1;
+  declare color?: string;
+}
+
+const trail: string[] = [];
+
+////= attempt
+////= lines-2	paint	leaf	Leaf	color	string	leaf.color
+////= lines	colorOf	leaf	Leaf	unknown	leaf.color
+function look(mark: string, leaf: Leaf = new Leaf()): void {
+  console.log(mark + ":", attempt(() => paint(leaf, "red")), String(colorOf(leaf)), Object.hasOwn(leaf, "color"), attempt(() => paint(leaf, "blue")), String(colorOf(leaf)), Object.keys(leaf).join(), trail.splice(0).join(";"));
+}
+
+const early = new Leaf();
+look("nothing above", early);
+look("nothing above");
+
+Object.defineProperty(Leaf.prototype, "color", {
+  set(value: string) {
+    trail.push("setter " + value + " for " + (this as Leaf).id);
+  },
+  get() {
+    return "from the getter";
+  },
+  configurable: true,
+});
+look("a setter on the prototype");
+look("an object that has the field already", early);
+
+Object.defineProperty(Leaf.prototype, "color", { get: () => "getter alone", set: undefined, configurable: true });
+look("a getter alone");
+look("an object that has the field already", early);
+
+Object.defineProperty(Leaf.prototype, "color", { value: "read-only above", writable: false, configurable: true });
+look("read-only above");
+
+Object.defineProperty(Leaf.prototype, "color", { value: "writable above", writable: true, configurable: true });
+look("writable above");
+
+delete (Leaf.prototype as any).color;
+look("nothing above again");
+
+Object.defineProperty(Root.prototype, "color", {
+  set(value: string) {
+    trail.push("setter two levels up " + value);
+    Object.defineProperty(this, "color", { value: value + " defined by the setter", writable: true, enumerable: true, configurable: true });
+  },
+  configurable: true,
+});
+look("a setter two levels up that defines the field");
+delete (Root.prototype as any).color;
+
+const underProxy = new Leaf();
+Object.setPrototypeOf(
+  underProxy,
+  new Proxy(Leaf.prototype, {
+    set(target, key, value, receiver) {
+      trail.push("trap " + String(key) + " " + value + " " + (receiver === underProxy));
+      return key !== "color" || value !== "blue";
+    },
+  }),
+);
+look("a proxy above that swallows the store", underProxy);
+
+const underSilentProxy = new Leaf();
+Object.setPrototypeOf(underSilentProxy, new Proxy(Leaf.prototype, {}));
+look("a proxy above without traps", underSilentProxy);
+
+const underLiteral: Leaf = Object.setPrototypeOf(new Leaf(), {
+  set color(value: string) {
+    trail.push("setter of a literal " + value);
+  },
+});
+look("another prototype with a setter", underLiteral);
+
+const parsed: Leaf = Object.setPrototypeOf(JSON.parse('{"id":2,"kind":"parsed"}'), {
+  set color(value: string) {
+    trail.push("setter above a parsed object " + value);
+  },
+});
+look("a parsed object below a setter", parsed);
+look("a parsed object", JSON.parse('{"id":3,"kind":"parsed"}'));
+look("nothing above at last");
+
+export {};
+//// stores-to-primitives-null-and-undefined-in-sloppy-code.cjs
+// In sloppy code a store to a primitive value does nothing and throws nothing; a store to null or undefined throws. The right side runs first.
+function Target() {
+  this.field = 1;
+}
+
+var trail = [];
+
+////= attempt-2
+function noted(value) {
+  trail.push("right side " + value);
+  return value;
+}
+function store(target) {
+  target.field = noted(2);
+}
+function create(target) {
+  target.extra = noted(3);
+}
+function update(target) {
+  return (target.field += noted(4));
+}
+function increment(target) {
+  return target.field++;
+}
+function storeLength(target) {
+  target.length = noted(0);
+}
+function look(mark, target) {
+  console.log(mark + ":", attempt(() => store(target)), attempt(() => create(target)), attempt(() => update(target)), attempt(() => increment(target)), attempt(() => storeLength(target)), trail.splice(0).join(";"));
+}
+
+look("null first", null);
+look("honest", new Target());
+look("undefined", undefined);
+look("zero", 0);
+look("fraction", 0.5);
+look("not a number", NaN);
+look("true", true);
+look("false", false);
+look("honest", new Target());
+look("empty text", "");
+look("text", "text");
+look("joined text", ["a", "b"].join("-") + "c".repeat(30));
+look("symbol", Symbol("s"));
+look("bigint", 5n);
+look("large bigint", 2n ** 100n);
+look("null", null);
+look("honest", new Target());
+console.log((5).field, "text".extra, "text".length);
+//// stores-to-primitives-null-and-undefined-in-strict-code.ts
+// A store that expects an object gets null, undefined and primitive values. The right side runs first, then the store throws, or finds a setter on the wrapper's prototype chain. Nothing is created anywhere.
+class Target {
+  field = 1;
+  declare extra?: number;
+}
+
+const trail: string[] = [];
+
+////= attempt
+////= noted-2	"right side "
+function store(target: Target): void {
+  target.field = noted(2);
+}
+function create(target: Target): void {
+  target.extra = noted(3);
+}
+function update(target: Target): number {
+  return (target.field += noted(4));
+}
+function increment(target: Target): number {
+  return target.field++;
+}
+function storeLength(target: { length: number }): void {
+  target.length = noted(0);
+}
+function look(mark: string, value: unknown): void {
+  const target = value as Target;
+  console.log(mark + ":", attempt(() => store(target)), attempt(() => create(target)), attempt(() => update(target)), attempt(() => increment(target)), attempt(() => storeLength(value as { length: number })), trail.splice(0).join(";"));
+}
+
+look("null first", null);
+look("honest", new Target());
+look("undefined", undefined);
+look("zero", 0);
+look("fraction", 0.5);
+look("not a number", NaN);
+look("true", true);
+look("false", false);
+look("honest", new Target());
+look("empty text", "");
+look("text", "text");
+look("joined text", ["a", "b"].join("-") + "c".repeat(30));
+look("symbol", Symbol("s"));
+look("bigint", 5n);
+look("large bigint", 2n ** 100n);
+look("null", null);
+look("honest", new Target());
+console.log((5 as any).field, ("text" as any).extra, "text".length);
+
+export {};
+//// structures-die-and-their-ids-come-back-at-a-method-call.js
+// A method call learns the structure of a receiver and the method found for it, on the receiver or on its prototype. Receiver, prototype and method die. New receivers, whose structures get the old ids, have other methods.
+const unknown = value => new CustomEvent("unknown", { detail: value }).detail; // what native code hands back is unknown to the compiler
+
+class Expected {
+  act(argument) {
+    return "expected " + argument;
+  }
+}
+
+function act(receiver) {
+  return receiver.act(1);
+}
+function actTwice(receiver) {
+  return receiver.act(2) + "/" + receiver.act(3);
+}
+
+function teach(round) {
+  const own = {};
+  own["only in round " + round] = 0;
+  own.act = argument => "own of round " + round + " " + argument;
+  const prototype = {};
+  prototype["prototype of round " + round] = 0;
+  prototype.act = function (argument) {
+    return "inherited in round " + round + " " + argument + " " + this.id;
+  };
+  const heir = Object.create(prototype);
+  heir.id = "heir";
+  const ShortLived = class {
+    act(argument) {
+      return "class of round " + round + " " + argument;
+    }
+  };
+  return [act(unknown(own)), act(unknown(own)), act(unknown(heir)), actTwice(unknown(heir)), act(unknown(new ShortLived())), actTwice(unknown(new ShortLived()))].join(" | ");
+}
+////= fillStack
+
+let wrong = 0;
+////= check
+
+function successor(round, index) {
+  const name = "successor " + round + " " + index;
+  switch (index % 4) {
+    case 0: {
+      const value = {};
+      value[name] = 0;
+      value.act = argument => name + " own " + argument;
+      return [value, name + " own "];
+    }
+    case 1: {
+      const prototype = {};
+      prototype[name] = 0;
+      prototype.pad = 0;
+      prototype.act = argument => name + " inherited " + argument;
+      const value = Object.create(prototype);
+      value.id = index;
+      return [value, name + " inherited "];
+    }
+    case 2: {
+      const value = new (class {
+        act(argument) {
+          return name + " class " + argument;
+        }
+      })();
+      return [value, name + " class "];
+    }
+    default: {
+      const value = Object.create(Expected.prototype);
+      value[name] = 0;
+      return [value, "expected "];
+    }
+  }
+}
+
+for (let round = 0; round < 8; round++) {
+  console.log(act(new Expected()), "|", teach(round));
+  fillStack(50);
+  Bun.gc(true);
+  const kept = [];
+  for (let index = 0; index < 600; index++) {
+    const [value, prefix] = successor(round, index);
+    kept.push(value);
+    check(act(unknown(value)), prefix + 1);
+    check(actTwice(unknown(value)), prefix + 2 + "/" + prefix + 3);
+  }
+  console.log("round", round, "kept", kept.length, "wrong", wrong, act(new Expected()));
+}
+
+export {};
+//// structures-die-and-their-ids-come-back-at-a-read.js
+// A read learns where an ordinary object keeps the field. All objects of that structure die, a collection frees the structure, and hundreds of new structures are made, one of which gets the old one's id. In them the field stands elsewhere, is an accessor, or is missing.
+const unknown = value => new CustomEvent("unknown", { detail: value }).detail; // what native code hands back is unknown to the compiler
+
+class Expected {
+  constructor() {
+    this.name = "expected";
+    this.size = 1;
+  }
+}
+
+////= lines-6	nameOf	value	value.name
+////= lines-6	sizeOf	value	value.size
+function hasName(value) {
+  return "name" in value;
+}
+
+function shortLived(round) {
+  // The key that depends on the round gives each round a structure of its own.
+  const value = {};
+  value["only in round " + round] = 0;
+  value.pad = 1;
+  value.name = "short-lived " + round;
+  value.size = round;
+  return value;
+}
+function teach(round) {
+  const value = unknown(shortLived(round));
+  return [nameOf(value), nameOf(value), sizeOf(value), sizeOf(value), hasName(value)].join();
+}
+////= fillStack
+
+let wrong = 0;
+function check(actual, expected, what) {
+  if (actual !== expected) {
+    wrong++;
+    if (wrong < 10) console.log("WRONG:", what, String(actual), "instead of", String(expected));
+  }
+}
+
+function successor(round, index) {
+  const value = {};
+  value["successor " + round + " " + index] = "not the name";
+  switch (index % 6) {
+    case 0:
+      value.name = "name " + index;
+      value.size = index;
+      return [value, "name " + index, index];
+    case 1:
+      value.size = index;
+      value.a = "not the name either";
+      value.b = "nor this";
+      value.name = "name " + index;
+      return [value, "name " + index, index];
+    case 2:
+      value.a = "a";
+      value.b = "b";
+      value.c = "c";
+      return [value, undefined, undefined];
+    case 3:
+      value.pad = "pad";
+      Object.defineProperty(value, "name", { get: () => "getter " + index, enumerable: true, configurable: true });
+      value.size = index;
+      return [value, "getter " + index, index];
+    case 4:
+      value.pad = 1;
+      value.size = "size first";
+      value.name = index;
+      return [value, index, "size first"];
+    default:
+      value.pad = 1;
+      value.name = 0.5 + index;
+      return [Object.freeze(value), 0.5 + index, undefined];
+  }
+}
+
+for (let round = 0; round < 8; round++) {
+  console.log(nameOf(new Expected()), teach(round));
+  fillStack(50);
+  Bun.gc(true);
+  const kept = [];
+  for (let index = 0; index < 600; index++) {
+    const [value, name, size] = successor(round, index);
+    kept.push(value);
+    const hidden = unknown(value);
+    check(nameOf(hidden), name, "name");
+    check(sizeOf(hidden), size, "size");
+    check(hasName(hidden), name !== undefined, "has");
+  }
+  console.log("round", round, "kept", kept.length, "wrong", wrong, nameOf(new Expected()), sizeOf(new Expected()));
+}
+
+export {};
+//// structures-die-and-their-ids-come-back-at-a-store.js
+// A store learns where an ordinary object keeps the field, or which structure the object gets when the store creates the field. Those structures die, and new ones get their ids. A store by the old knowledge would overwrite a neighbor, write past the object, or give it a dead structure.
+const unknown = value => new CustomEvent("unknown", { detail: value }).detail; // what native code hands back is unknown to the compiler
+
+class Expected {
+  constructor() {
+    this.level = 1;
+  }
+}
+
+////= lines-12	setLevel	value	level	value.level
+////= lines-12	setExtra	value	extra	value.extra
+
+function teach(round) {
+  const replaces = {};
+  replaces["only in round " + round] = 0;
+  replaces.pad = "pad";
+  replaces.level = "old";
+  const creates = {};
+  creates["created in round " + round] = 0;
+  setLevel(unknown(replaces), "replaced");
+  setLevel(unknown(replaces), "replaced twice");
+  setLevel(unknown(creates), "created");
+  setExtra(unknown(creates), "extra");
+  const createsAgain = {};
+  createsAgain["created in round " + round] = 0;
+  setLevel(unknown(createsAgain), "created again");
+  setExtra(unknown(createsAgain), "extra again");
+  return JSON.stringify([replaces, creates, createsAgain]);
+}
+////= fillStack
+
+let wrong = 0;
+////= check
+
+function successor(round, index) {
+  const first = "successor " + round + " " + index;
+  const value = {};
+  value[first] = "first";
+  const stored = "L" + index;
+  switch (index % 6) {
+    case 0:
+      value.level = "old";
+      value.after = "after";
+      return [value, { [first]: "first", level: stored, after: "after", extra: index }];
+    case 1:
+      value.a = "a";
+      value.b = "b";
+      value.c = "c";
+      value.level = "old";
+      return [value, { [first]: "first", a: "a", b: "b", c: "c", level: stored, extra: index }];
+    case 2:
+      return [value, { [first]: "first", level: stored, extra: index }];
+    case 3:
+      value.pad = "pad";
+      value.other = "other";
+      return [value, { [first]: "first", pad: "pad", other: "other", level: stored, extra: index }];
+    case 4:
+      value.extra = "old extra";
+      value.pad = "pad";
+      return [value, { [first]: "first", extra: index, pad: "pad", level: stored }];
+    default:
+      value.pad = "pad";
+      value.level = "old";
+      return [value, { [first]: "first", pad: "pad", level: stored, extra: index }];
+  }
+}
+
+for (let round = 0; round < 8; round++) {
+  const honest = new Expected();
+  setLevel(honest, round);
+  console.log(JSON.stringify(honest), teach(round));
+  fillStack(50);
+  Bun.gc(true);
+  const kept = [];
+  for (let index = 0; index < 600; index++) {
+    const [value, expected] = successor(round, index);
+    kept.push(value);
+    setLevel(unknown(value), "L" + index);
+    setExtra(unknown(value), index);
+    check(JSON.stringify(value), JSON.stringify(expected));
+  }
+  Bun.gc(true);
+  let length = 0;
+  for (const value of kept) length += JSON.stringify(value).length;
+  console.log("round", round, "kept", kept.length, "wrong", wrong, "length", length);
+}
+
+export {};
+//// subclasses-arrive-where-the-base-is-expected.ts
+// Instances of subclasses arrive where reads, stores and method calls expect the base class: with more fields, with the field declared again, with an accessor or a method under the field's name.
+const stores: string[] = [];
+
+class Shape {
+  name = "shape";
+  sides = 0;
+  area(): number {
+    return this.sides;
+  }
+  describe(): string {
+    return this.name + " " + this.sides + " " + this.area();
+  }
+}
+class Square extends Shape {
+  edge = 2;
+  name = "square";
+  sides = 4;
+  area(): number {
+    return this.edge * this.edge;
+  }
+}
+class Tall extends Square {
+  height = 3;
+  area(): number {
+    return super.area() * this.height;
+  }
+}
+class Quiet extends Shape {}
+class Computed extends Shape {
+  constructor() {
+    super();
+    delete (this as any).sides;
+    delete (this as any).name;
+  }
+}
+Object.defineProperty(Computed.prototype, "sides", {
+  get() {
+    return 99;
+  },
+  set(value: number) {
+    stores.push("sides=" + value);
+  },
+  configurable: true,
+});
+Object.defineProperty(Computed.prototype, "name", {
+  get() {
+    return "computed";
+  },
+  configurable: true,
+});
+class EarlyReader extends Shape {
+  seen: string;
+  late = "late";
+  constructor() {
+    super();
+    this.seen = nameOf(this) + "/" + sidesOf(this);
+  }
+}
+class FromFunction extends (function (this: any) {
+  this.name = "from a function";
+  this.sides = -1;
+} as unknown as new () => { name: string; sides: number }) {
+  area(): number {
+    return 0.5;
+  }
+  describe(): string {
+    return "described below a function";
+  }
+}
+
+////= attempt
+////= lines	nameOf	shape	Shape	string	shape.name
+////= lines	sidesOf	shape	Shape	number	shape.sides
+////= lines-2	setSides	shape	Shape	sides	number	shape.sides
+////= lines-3	areaOf	shape	Shape	number	shape.area
+////= lines-3	describe	shape	Shape	string	shape.describe
+function look(mark: string, shape: Shape): void {
+  const before = [attempt(() => nameOf(shape)), attempt(() => sidesOf(shape)), attempt(() => areaOf(shape)), "[" + attempt(() => describe(shape)) + "]"].join(" ");
+  const stored = attempt(() => setSides(shape, sidesOf(shape) + 1));
+  console.log(mark + ":", before, stored, "->", attempt(() => sidesOf(shape)), attempt(() => areaOf(shape)), Object.keys(shape).join(), shape instanceof Shape, stores.splice(0).join());
+}
+
+look("base", new Shape());
+look("square", new Square());
+look("base", new Shape());
+look("tall", new Tall());
+look("square", new Square());
+look("quiet", new Quiet());
+look("computed", new Computed());
+look("computed", new Computed());
+look("early reader", new EarlyReader());
+console.log(new EarlyReader().seen);
+look("below a function", new FromFunction());
+look("tall", new Tall());
+look("base", new Shape());
+
+const borrowed = Object.create(new Square());
+look("below an instance", borrowed);
+look("below an instance, after the store", borrowed);
+
+const constructedFor = Reflect.construct(Shape, [], Tall);
+look("the base constructed for a subclass", constructedFor);
+const constructedForFunction = Reflect.construct(Square, [], function () {});
+look("a subclass constructed for a function", constructedForFunction);
+
+export {};
+//// super-calls-after-the-chain-changes.ts
+// `super.method()` starts at the prototype of the object that the method was defined in, at the moment of the call. That prototype's method is replaced, deleted, becomes a getter, and the chain is hung elsewhere. `super()` calls whatever the class hangs below.
+class Bottom {
+  tag = "bottom";
+  name(): string {
+    return "Bottom.name of " + this.tag;
+  }
+  static make(): string {
+    return "Bottom.make";
+  }
+}
+class Middle extends Bottom {
+  name(): string {
+    return "Middle.name > " + super.name();
+  }
+  static make(): string {
+    return "Middle.make > " + super.make();
+  }
+}
+class Top extends Middle {
+  tag = "top";
+  name(): string {
+    return "Top.name > " + super.name();
+  }
+  viaArrow(): string {
+    return (() => super.name())();
+  }
+  static make(): string {
+    return "Top.make > " + super.make();
+  }
+}
+class Elsewhere {
+  name(): string {
+    return "Elsewhere.name of " + (this as any).tag;
+  }
+  static make(): string {
+    return "Elsewhere.make";
+  }
+}
+
+////= attempt
+
+const top = new Top();
+const originalMiddle = Middle.prototype.name;
+const borrowed = { tag: "borrower", name: Top.prototype.name };
+
+function look(mark: string): void {
+  console.log(mark + ":", attempt(() => top.name()), "|", attempt(() => top.viaArrow()), "|", attempt(() => borrowed.name()), "|", attempt(() => Top.make()));
+}
+
+look("at first");
+look("again");
+Middle.prototype.name = function (this: Bottom) {
+  return "replaced Middle.name of " + this.tag;
+};
+look("Middle.name replaced");
+delete (Middle.prototype as any).name;
+look("Middle.name deleted");
+Object.defineProperty(Middle.prototype, "name", { get: () => () => "from a getter", configurable: true });
+look("Middle.name is a getter");
+Object.defineProperty(Middle.prototype, "name", { value: 5, writable: true, configurable: true });
+look("Middle.name is a number");
+Middle.prototype.name = originalMiddle;
+look("the original");
+Object.setPrototypeOf(Top.prototype, Elsewhere.prototype);
+look("Top.prototype hangs elsewhere");
+Object.setPrototypeOf(Top.prototype, Middle.prototype);
+Object.setPrototypeOf(Middle.prototype, Elsewhere.prototype);
+look("Middle.prototype hangs elsewhere");
+Object.setPrototypeOf(Middle.prototype, null);
+look("Middle.prototype hangs nowhere");
+Object.setPrototypeOf(Middle.prototype, Bottom.prototype);
+look("as at first");
+Object.setPrototypeOf(Top, Elsewhere);
+look("Top hangs below Elsewhere");
+console.log("constructed:", attempt(() => JSON.stringify(new Top())), attempt(() => new Top() instanceof Middle), attempt(() => new Top().name()));
+Object.setPrototypeOf(Top, Middle);
+(Middle as any).make = () => "replaced Middle.make";
+look("Middle.make replaced");
+delete (Middle as any).make;
+look("Middle.make deleted");
+
+function Plain(this: any) {
+  this.tag = "made by a function";
+  this.more = true;
+}
+Object.setPrototypeOf(Top, Plain);
+console.log("below a function:", attempt(() => JSON.stringify(new Top())), attempt(() => new Top().name()));
+Object.setPrototypeOf(Top, null);
+console.log("below nothing:", attempt(() => new Top()));
+Object.setPrototypeOf(Top, Middle);
+console.log("as at first:", attempt(() => JSON.stringify(new Top())), attempt(() => new Top().name()));
+
+export {};
+//// super-property-reads-and-stores.js
+// `super.field` reads from the chain above the home object with `this` as the receiver; `super.field = value` asks that chain for a setter and otherwise stores on `this`. In classes and in object literals, while the chain changes.
+const trail = [];
+
+class Below {
+  get level() {
+    return "Below.level of " + this.id;
+  }
+  set level(value) {
+    trail.push("Below.level = " + value + " on " + this.id);
+  }
+}
+Below.prototype.plain = "plain on Below.prototype";
+
+class Above extends Below {
+  id = "above";
+  readLevel() {
+    return super.level;
+  }
+  storeLevel(value) {
+    super.level = value;
+  }
+  readPlain() {
+    return super.plain;
+  }
+  storePlain(value) {
+    super.plain = value;
+  }
+  readMissing() {
+    return super.missing;
+  }
+  updatePlain() {
+    return (super.plain += "+");
+  }
+}
+
+////= attempt-2
+function look(mark, above) {
+  console.log(mark + ":", attempt(() => above.readLevel()), "|", attempt(() => above.storeLevel("L")), "|", attempt(() => above.readPlain()), "|", attempt(() => above.storePlain("P")), "|", attempt(() => above.readPlain()), "|", attempt(() => above.plain), "|", attempt(() => above.updatePlain()), "|", attempt(() => above.plain), "|", attempt(() => above.readMissing()));
+  console.log("  ", Object.keys(above).join(), trail.splice(0).join(";"));
+}
+
+look("at first", new Above());
+look("again", new Above());
+look("frozen", Object.freeze(new Above()));
+Below.prototype.missing = "no longer missing";
+look("the missing one appears", new Above());
+delete Below.prototype.missing;
+Object.defineProperty(Below.prototype, "plain", { value: "read-only", writable: false, configurable: true });
+look("read-only above", new Above());
+Object.defineProperty(Below.prototype, "plain", {
+  get() {
+    return "getter for " + this.id;
+  },
+  set(value) {
+    trail.push("plain setter " + value);
+  },
+  configurable: true,
+});
+look("an accessor above", new Above());
+delete Below.prototype.plain;
+look("nothing above", new Above());
+Object.setPrototypeOf(Above.prototype, { level: "level of a literal", plain: "plain of a literal" });
+look("hung below a literal", new Above());
+Object.setPrototypeOf(Above.prototype, Below.prototype);
+
+const base = {
+  who() {
+    return "base.who";
+  },
+  value: "base.value",
+};
+const derived = {
+  __proto__: base,
+  id: "derived",
+  who() {
+    return "derived.who > " + super.who();
+  },
+  readValue() {
+    return super.value;
+  },
+  storeValue(value) {
+    super.value = value;
+  },
+};
+console.log(derived.who(), derived.readValue(), attempt(() => derived.storeValue("stored")), derived.readValue(), derived.value, base.value, Object.keys(derived).join());
+Object.setPrototypeOf(derived, { who: () => "elsewhere.who", value: "elsewhere.value" });
+console.log(derived.who(), derived.readValue(), derived.value);
+const heir = Object.create(derived);
+heir.storeValue("on the heir");
+console.log(heir.who(), heir.readValue(), heir.value, Object.keys(heir).join());
+
+export {};
+//// symbols-and-number-like-names.ts
+// Fields whose names are symbols, array indices, or texts that look like numbers and are not. Each is read and stored under a constant key, on the class that declares it and on look-alikes.
+const mark = Symbol("mark");
+const shared = Symbol.for("shared");
+
+class Odd {
+  [mark] = "mark";
+  [shared] = "shared";
+  [Symbol.toStringTag] = "OddTag";
+  0 = "zero";
+  7 = "seven";
+  "01" = "leading zero";
+  "-1" = "minus one";
+  "-0" = "minus zero";
+  "1.5" = "fraction";
+  "1e3" = "exponent";
+  "4294967294" = "largest index";
+  "4294967295" = "past the largest index";
+  "NaN" = "not a number";
+  "Infinity" = "infinity";
+  "" = "empty";
+  " " = "space";
+  "a b" = "with a space";
+}
+
+function readAll(value: any): string {
+  return [
+    value[mark],
+    value[shared],
+    value[Symbol.toStringTag],
+    value[0],
+    value["0"],
+    value[7],
+    value["01"],
+    value[-1],
+    value["-1"],
+    value[-0],
+    value["-0"],
+    value[1.5],
+    value["1.5"],
+    value[1e3],
+    value["1e3"],
+    value[4294967294],
+    value["4294967295"],
+    value[NaN],
+    value[Infinity],
+    value[""],
+    value[" "],
+    value["a b"],
+    value["constructor"],
+  ]
+    .map(each => (typeof each === "function" ? "function" : String(each)))
+    .join("|");
+}
+function readTyped(value: Odd): string {
+  return [value[mark], value[shared], value[0], value[7], value["01"], value["-1"], value["1.5"], value["1e3"], value["4294967294"], value["4294967295"], value["NaN"], value[""], value["a b"]].map(String).join("|");
+}
+function storeTyped(value: Odd, text: string): void {
+  value[mark] = text + 1;
+  value[shared] = text + 2;
+  value[0] = text + 3;
+  value[7] = text + 4;
+  value["01"] = text + 5;
+  value["-1"] = text + 6;
+  value["1.5"] = text + 7;
+  value["4294967294"] = text + 8;
+  value["4294967295"] = text + 9;
+  value[""] = text + 10;
+}
+function keysOf(value: object): string {
+  return Reflect.ownKeys(value).map(String).join("|");
+}
+
+const odd = new Odd();
+console.log(readAll(odd));
+console.log(readTyped(odd));
+console.log(keysOf(odd));
+console.log(String(odd), JSON.stringify(odd));
+storeTyped(odd, "s");
+console.log(readAll(odd));
+console.log(keysOf(odd));
+
+const list: any = ["in a list"];
+list[7] = "seventh";
+list[mark] = "mark of a list";
+list["01"] = "no index";
+console.log(readAll(list));
+console.log(readTyped(list));
+storeTyped(list, "l");
+console.log(readTyped(list), list.length);
+console.log(keysOf(list).length);
+
+const text: any = "0123456789";
+console.log(readAll(text));
+console.log(readTyped(text));
+
+const bytes: any = new Uint8Array([10, 11, 12, 13, 14, 15, 16, 17, 18]);
+console.log(readAll(bytes));
+console.log(readTyped(bytes));
+storeTyped(bytes, "2");
+console.log(readTyped(bytes), keysOf(bytes));
+
+const parsed: any = JSON.parse('{"1.5":"p","7":"q","01":"r","0":"s","-1":"t","":"u"}');
+console.log(readAll(parsed));
+console.log(readTyped(parsed));
+storeTyped(parsed, "p");
+console.log(readTyped(parsed));
+console.log(keysOf(parsed));
+console.log(readTyped(odd));
+
+export {};
+//// the-chain-changes-behind-reads-of-fields-that-are-absent.ts
+// An optional field that an object lacks is answered by the chain above it. The chain changes between the reads: a property appears on the prototype, becomes a getter, goes away, the prototype is exchanged.
+////= lines-17	Base	kind	"base"
+class Item extends Base {
+  id = 1;
+  declare label?: string;
+  declare weight?: number;
+}
+
+const trail: string[] = [];
+
+////= lines	labelOf	item	Item	unknown	item.label
+////= lines	weightOf	item	Item	unknown	item.weight
+function labelOrDefault(item: Item): string {
+  return item.label ?? "none";
+}
+function look(mark: string, item: Item): void {
+  console.log(mark + ":", String(labelOf(item)), String(labelOf(item)), String(weightOf(item)), labelOrDefault(item), "label" in item, Object.keys(item).join(), trail.splice(0).join(";"));
+}
+
+const item = new Item();
+const withLabel = new Item();
+withLabel.label = "own";
+
+look("absent", item);
+look("present", withLabel);
+(Item.prototype as any).label = "on the prototype";
+look("on the prototype", item);
+look("present", withLabel);
+(Base.prototype as any).weight = 70;
+look("weight two levels up", item);
+Object.defineProperty(Item.prototype, "label", {
+  get() {
+    trail.push("getter for " + (this as Item).id);
+    return "from a getter";
+  },
+  configurable: true,
+});
+look("a getter on the prototype", item);
+look("present", withLabel);
+delete (Item.prototype as any).label;
+look("gone again", item);
+(Base.prototype as any).label = "two levels up";
+look("label two levels up", item);
+(Item.prototype as any).label = undefined;
+look("undefined in between", item);
+delete (Item.prototype as any).label;
+delete (Base.prototype as any).label;
+delete (Base.prototype as any).weight;
+look("all gone", item);
+
+const other = { label: "another prototype", weight: 1.5 };
+Object.setPrototypeOf(item, other);
+look("another prototype", item);
+other.label = "changed there";
+look("changed there", item);
+delete (other as any).label;
+look("deleted there", item);
+Object.setPrototypeOf(item, null);
+look("no prototype", item);
+Object.setPrototypeOf(item, Item.prototype);
+look("the old prototype", item);
+Object.setPrototypeOf(Item.prototype, { label: "above the class", weight: 2 });
+look("the class hangs elsewhere", item);
+look("a new object", new Item());
+look("present", withLabel);
+Object.setPrototypeOf(Item.prototype, Base.prototype);
+look("as at first", item);
+
+export {};
+//// the-main-thread-and-workers-teach-the-same-sites-different-layouts.ts
+// What the compiler expects at a site is shared by all threads; what the site learns belongs to one thread. The main thread and each Worker send layouts, structures, methods and callees of their own through the same functions, and each changes its own copy of a class.
+import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
+
+class Message {
+  kind = "message";
+  size = 1;
+  render(): string {
+    return this.kind + ":" + this.size;
+  }
+}
+class Reordered {
+  size = 2;
+  kind = "reordered";
+  render(): string {
+    return "<" + this.kind + ":" + this.size + ">";
+  }
+}
+class Wider {
+  a = 0;
+  b = 0;
+  kind = "wider";
+  c = 0;
+  size = 3;
+  render(): string {
+    return "[" + this.kind + ":" + this.size + "]";
+  }
+}
+
+////= lines	kindOf	message	Message	string	message.kind
+////= lines	sizeOf	message	Message	number	message.size
+////= lines-2	resize	message	Message	size	number	message.size
+////= lines-3	render	message	Message	string	message.render
+function call(callee: () => string): string {
+  return callee();
+}
+
+function impostor(order: string): Message {
+  if (order === "reordered") return new Reordered();
+  if (order === "wider") return new Wider();
+  if (order === "parsed") return Object.assign(JSON.parse('{"p":0,"size":4,"q":0,"kind":"parsed"}'), { render: () => "parsed renders" });
+  if (order === "parsed otherwise") return Object.assign(JSON.parse('{"kind":"parsed otherwise","size":5}'), { render: () => "parsed otherwise renders" });
+  return new Message();
+}
+
+function facts(order: string): string {
+  const parts: string[] = [];
+  const mine = impostor(order);
+  const honest = new Message();
+  for (let round = 0; round < 3; round++) {
+    parts.push(kindOf(mine), String(sizeOf(mine)), render(mine), kindOf(honest), String(sizeOf(honest)), render(honest), call(() => order + round), call(mine.render.bind(mine)));
+    resize(mine, sizeOf(mine) + 10);
+    resize(honest, sizeOf(honest) + 100);
+    if (round === 1) Bun.gc(true);
+  }
+  return parts.join(" ") + " " + JSON.stringify(mine);
+}
+
+////= lines-14	ask	order	string	worker
+
+if (isMainThread) {
+  console.log("main, reordered: " + facts("reordered"));
+  console.log(await ask("wider"));
+  console.log("main, reordered: " + facts("reordered"));
+  console.log(await ask("parsed"));
+  console.log("main, parsed otherwise: " + facts("parsed otherwise"));
+  const together = await Promise.all([ask("reordered"), ask("wider"), ask("parsed"), ask("parsed otherwise"), ask("honest"), ask("replaces the method")]);
+  for (const answer of together) console.log(answer);
+  Message.prototype.render = () => "main's own render";
+  console.log("main, after its own replacement: " + facts("honest"));
+  console.log(await ask("honest"));
+  console.log(await ask("replaces the method"));
+  console.log("main, at last: " + facts("wider"));
+} else {
+  const order = String(workerData);
+  const before = facts(order);
+  if (order === "replaces the method") Message.prototype.render = () => "the worker's own render";
+  parentPort?.postMessage("worker, " + order + ": " + before + " then " + facts(order));
+}
+
+export {};
+//// the-object-changes-in-the-middle-of-an-operation.ts
+// Between the two halves of one operation the object changes its layout: the right side of a store, the argument of a method call, a getter or a conversion deletes, adds or redefines the field that the operation is about.
+class Cell {
+  value = 1;
+  other = "other";
+  twice(by: number): number {
+    return this.value * by;
+  }
+}
+
+////= attempt
+function state(cell: Cell): string {
+  return JSON.stringify(cell) + " " + Object.keys(cell).join();
+}
+
+function storeResultOf(cell: Cell, change: (cell: any) => number): void {
+  cell.value = change(cell);
+}
+function addResultOf(cell: Cell, change: (cell: any) => number): number {
+  return (cell.value += change(cell));
+}
+function callWithResultOf(cell: Cell, change: (cell: any) => number): number {
+  return cell.twice(change(cell));
+}
+function readAroundCall(cell: Cell, change: (cell: any) => number): string {
+  return cell.value + "," + change(cell) + "," + cell.value + "," + cell.other;
+}
+function incrementConverted(cell: Cell): number {
+  return cell.value++;
+}
+
+const changes: [string, (cell: any) => number][] = [
+  ["nothing", () => 5],
+  ["deletes it", cell => (delete cell.value, 5)],
+  ["deletes the other", cell => (delete cell.other, 5)],
+  ["deletes it and adds it behind", cell => (delete cell.value, (cell.late = 0), (cell.value = 40), 5)],
+  ["adds fields", cell => ((cell.a = 1), (cell.b = 2), (cell.c = 3), (cell.d = 4), (cell.e = 5), (cell.f = 6), (cell.g = 7), 5)],
+  ["makes it a getter", cell => (Object.defineProperty(cell, "value", { get: () => 70, set() {}, configurable: true, enumerable: true }), 5)],
+  ["makes it read-only", cell => (Object.defineProperty(cell, "value", { writable: false }), 5)],
+  ["freezes", cell => (Object.freeze(cell), 5)],
+  ["stores a text", cell => ((cell.value = "text"), 5)],
+  ["replaces the method on it", cell => ((cell.twice = () => -1), 5)],
+  ["exchanges the prototype", cell => (Object.setPrototypeOf(cell, { twice: () => -2, value: -3 }), 5)],
+  ["exchanges the prototype and deletes it", cell => (Object.setPrototypeOf(cell, { twice: () => -2, value: -3 }), delete cell.value, 5)],
+  ["collects", () => (Bun.gc(true), 5)],
+  ["throws", () => {
+    throw new RangeError("midway");
+  }],
+];
+
+for (const [name, change] of changes) {
+  const stored = new Cell();
+  const added = new Cell();
+  const called = new Cell();
+  const read = new Cell();
+  console.log(name + ":");
+  console.log("  store:", attempt(() => storeResultOf(stored, change)), state(stored));
+  console.log("  add:", attempt(() => addResultOf(added, change)), state(added));
+  console.log("  call:", attempt(() => callWithResultOf(called, change)), state(called));
+  console.log("  read:", attempt(() => readAroundCall(read, change)), state(read));
+}
+
+const converted = new Cell();
+(converted as any).value = {
+  valueOf() {
+    delete (converted as any).value;
+    (converted as any).first = "first";
+    return 8;
+  },
+};
+console.log("increment of an object that deletes the field:", attempt(() => incrementConverted(converted)), state(converted));
+
+const replaced = new Cell();
+(replaced as any).value = {
+  valueOf() {
+    Object.defineProperty(replaced, "value", { set() {}, get: () => "getter", configurable: true });
+    return 8;
+  },
+};
+console.log("increment of an object that makes the field an accessor:", attempt(() => incrementConverted(replaced)), attempt(() => replaced.value));
+
+export {};
+//// this-of-a-method-call-on-a-primitive-in-sloppy-code.cjs
+// In sloppy code a method that is called on a primitive value sees a wrapper object as `this`, and a function called by value sees the global object. In strict functions of the same file `this` is the value itself.
+function kindOfThis() {
+  return typeof this + " " + (this === globalThis ? "global" : Object.prototype.toString.call(this));
+}
+function strictKindOfThis() {
+  "use strict";
+  return typeof this + " " + String(typeof this === "symbol" ? "symbol" : this);
+}
+function Holder() {
+  this.sloppy = kindOfThis;
+  this.strict = strictKindOfThis;
+}
+
+////= attempt-2
+////= lines-19	callSloppy	holder	holder.sloppy
+////= lines-19	callStrict	holder	holder.strict
+function callByValue(callee) {
+  return callee();
+}
+function look(mark, holder) {
+  console.log(mark + ":", attempt(() => callSloppy(holder)), "|", attempt(() => callStrict(holder)));
+}
+
+// String.prototype takes new names under --aot too.
+String.prototype.sloppy = kindOfThis;
+String.prototype.strict = strictKindOfThis;
+
+look("holder", new Holder());
+look("literal", { sloppy: kindOfThis, strict: strictKindOfThis });
+look("text", "text");
+look("empty text", "");
+look("joined text", ["a", "b"].join("-") + "c".repeat(30));
+look("holder", new Holder());
+look("string object", new String("boxed"));
+look("text", "text");
+look("number", 5);
+look("null", null);
+look("undefined", undefined);
+console.log(callByValue(kindOfThis), "|", callByValue(strictKindOfThis), "|", callByValue(new Holder().sloppy), "|", callByValue(new Holder().strict), "|", callByValue("text".sloppy), "|", callByValue("text".strict));
+console.log(kindOfThis.call(5), "|", strictKindOfThis.call(5), "|", kindOfThis.call(null), "|", strictKindOfThis.call(null), "|", kindOfThis.apply(undefined), "|", kindOfThis.call("text"), "|", kindOfThis.call(true), "|", kindOfThis.call(5n), "|", kindOfThis.call(Symbol("s")));
+delete String.prototype.sloppy;
+delete String.prototype.strict;
+look("text, after the names are gone", "text");
+//// two-call-sites-share-what-they-expect-and-see-different-callees.ts
+// Two calls of one method name with one argument count on one class share what they expect and what they learn. Each keeps getting receivers of its own, whose methods differ.
+class Handler {
+  id = "handler";
+  handle(input: number): string {
+    return this.id + " handles " + input;
+  }
+}
+class Doubler {
+  id = "doubler";
+  handle(input: number): string {
+    return this.id + " doubles to " + input * 2;
+  }
+}
+class Negator {
+  spare = 0;
+  id = "negator";
+  handle(input: number): string {
+    return this.id + " negates to " + -input;
+  }
+}
+
+////= lines-15	here	handler	Handler	string	handler.handle	1
+////= lines-15	there	handler	Handler	string	handler.handle	2
+function hereWithTwo(handler: Handler): string {
+  return (handler as any).handle(3, 4);
+}
+////= lines-18	byValueHere	handle	input	string	5
+////= lines-18	byValueThere	handle	input	string	6
+
+const handler = new Handler();
+const doubler = new Doubler();
+const negator = new Negator();
+const literal = { id: "literal", handle: (input: number) => "literal takes " + input };
+const ownMethod = new Handler();
+ownMethod.handle = input => "own method takes " + input;
+
+function round(mark: string): void {
+  console.log(mark, "|", here(doubler), "|", there(negator), "|", here(doubler), "|", there(negator));
+  console.log(mark, "|", here(negator), "|", there(doubler), "|", hereWithTwo(doubler), "|", hereWithTwo(negator));
+  console.log(mark, "|", here(handler), "|", there(literal), "|", here(ownMethod), "|", there(handler));
+  console.log(mark, "|", byValueHere(literal.handle), "|", byValueThere(ownMethod.handle), "|", byValueHere(ownMethod.handle), "|", byValueThere(literal.handle));
+  console.log(mark, "|", byValueHere(doubler.handle.bind(doubler)), "|", byValueThere(negator.handle.bind(negator)), "|", byValueHere(handler.handle.bind(negator)));
+}
+
+round("first");
+round("second");
+Doubler.prototype.handle = function (this: Doubler, input: number) {
+  return this.id + " now triples to " + input * 3;
+};
+round("third");
+
+export {};
+//// two-hundred-thousand-structures-arrive-at-one-read.js
+// So many different ordinary structures arrive at one read, one store and one method call that their ids take on every pattern of bits. None of them is mistaken for the layout that the site expects, whatever part of the cell's header the test looks at.
+const unknown = value => new CustomEvent("unknown", { detail: value }).detail; // what native code hands back is unknown to the compiler
+
+class Expected {
+  constructor(value) {
+    this.first = "first of expected";
+    this.wanted = value;
+    this.last = "last of expected";
+  }
+  tell() {
+    return "expected";
+  }
+}
+
+////= lines-6	wantedOf	value	value.wanted
+////= lines-12	setWanted	value	to	value.wanted
+////= lines-19	tell	value	value.tell
+function tellOther() {
+  return "other";
+}
+
+const hide = unknown({ pass: value => value }).pass;
+const honest = new Expected(-1);
+let wrong = 0;
+let sum = 0;
+let kept = [];
+
+for (let index = 0; index < 200000; index++) {
+  const value = {};
+  value["k" + index] = "not wanted";
+  if (index & 1) value.pad = "not wanted either";
+  value.wanted = index;
+  value.tell = tellOther;
+  const hidden = hide(value);
+  const read = wantedOf(hidden);
+  if (read !== index) wrong++;
+  setWanted(hidden, index + 1);
+  if (value.wanted !== index + 1 || value["k" + index] !== "not wanted" || Object.keys(value).length !== (index & 1 ? 4 : 3)) wrong++;
+  if (tell(hidden) !== "other") wrong++;
+  sum += read;
+  kept.push(value);
+  if ((index & 1023) === 0) {
+    if (wantedOf(honest) !== -1 || tell(honest) !== "expected") wrong++;
+    setWanted(honest, -1);
+  }
+  if (kept.length === 50000) {
+    // Half of the structures stay alive, so that the ids in use keep spreading.
+    kept = kept.filter((_each, place) => place & 1);
+  }
+}
+console.log("wrong", wrong, "sum", sum, "kept", kept.length, JSON.stringify(honest));
+
+export {};
+//// two-sites-share-what-they-expect-and-see-different-layouts.ts
+// Two reads of one field of one layout share what they expect and what they learn, and so do two stores. Each of them keeps getting a layout of its own.
+////= lines-4	Expected	id	1	label	"expected"
+////= lines-4	Left	label	"left"	id	2
+class Right {
+  extra = "x";
+  other = 0.25;
+  label = "right";
+  id = 3;
+}
+
+////= lines	labelHere	value	Expected	string	value.label
+////= lines	labelThere	value	Expected	string	value.label
+////= lines	idHere	value	Expected	number	value.id
+////= lines	idThere	value	Expected	number	value.id
+////= lines-2	renameHere	value	Expected	label	string	value.label
+////= lines-2	renameThere	value	Expected	label	string	value.label
+
+const expected = new Expected();
+const left = new Left();
+const right = new Right();
+const parsedLeft: Expected = JSON.parse('{"label":"parsed left","id":4}');
+const parsedRight: Expected = JSON.parse('{"a":0,"b":0,"c":0,"id":5,"label":"parsed right"}');
+
+function round(mark: string): void {
+  console.log(mark, "layouts:", labelHere(left), labelThere(right), labelHere(left), labelThere(right), idHere(left), idThere(right), idHere(left), idThere(right));
+  console.log(mark, "crossed:", labelHere(right), labelThere(left), idHere(right), idThere(left));
+  console.log(mark, "parsed:", labelHere(parsedLeft), labelThere(parsedRight), labelHere(parsedLeft), labelThere(parsedRight), idHere(parsedLeft), idThere(parsedRight));
+  console.log(mark, "mixed:", labelHere(left), labelThere(parsedRight), labelHere(expected), labelThere(expected), idHere(parsedLeft), idThere(right));
+  renameHere(left, "left " + mark);
+  renameThere(right, "right " + mark);
+  renameHere(parsedLeft, "parsed left " + mark);
+  renameThere(parsedRight, "parsed right " + mark);
+  renameHere(expected, "expected " + mark);
+  console.log(mark, "renamed:", JSON.stringify([expected, left, right, parsedLeft, parsedRight]));
+  console.log(mark, "read back:", labelThere(left), labelHere(right), labelThere(parsedLeft), labelHere(parsedRight), labelThere(expected));
+}
+
+round("first");
+round("second");
+round("third");
+
+export {};
+//// unions-of-layouts-and-tags-that-lie.ts
+// A site whose type is a union of layouts reads the tag and then the fields of the member that the tag names. Honest members arrive in every order; then objects whose tag names another member, an unknown member, or changes between the test and the read.
+////= lines-20	Circle	kind	"circle"	radius	number
+interface Rectangle {
+  kind: "rectangle";
+  width: number;
+  height: number;
+}
+////= lines-20	Label	text	string	kind	"label"
+type Figure = Circle | Rectangle | Label;
+
+////= attempt
+////= lines	kindOf	figure	Figure	string	figure.kind
+function measure(figure: Figure): number | string {
+  switch (figure.kind) {
+    case "circle":
+      return figure.radius * 2;
+    case "rectangle":
+      return figure.width * figure.height;
+    case "label":
+      return figure.text.length;
+  }
+}
+function measureByFields(figure: Figure): number | string {
+  if ("radius" in figure) return figure.radius;
+  if ("width" in figure) return figure.width + figure.height;
+  return figure.text;
+}
+function grow(figure: Figure): void {
+  if (figure.kind === "circle") figure.radius += 1;
+  else if (figure.kind === "rectangle") figure.width += 1;
+  else figure.text += "+";
+}
+function look(mark: string, value: unknown): void {
+  const figure = value as Figure;
+  console.log(mark + ":", attempt(() => kindOf(figure)), attempt(() => measure(figure)), attempt(() => measureByFields(figure)), attempt(() => grow(figure)), attempt(() => measure(figure)), attempt(() => JSON.stringify(figure)));
+}
+
+look("circle", { kind: "circle", radius: 1 });
+look("rectangle", { kind: "rectangle", width: 2, height: 3 });
+look("label", { text: "label", kind: "label" });
+look("circle", { kind: "circle", radius: 1.5 });
+look("label", { text: "", kind: "label" });
+look("rectangle", { kind: "rectangle", width: 2, height: 3 });
+look("circle, fields in another order", { radius: 4, kind: "circle" });
+look("rectangle, one more field", { kind: "rectangle", depth: 9, width: 2, height: 3 });
+look("a circle that says rectangle", { kind: "rectangle", radius: 1 });
+look("a rectangle that says circle", { kind: "circle", width: 2, height: 3 });
+look("a label that says circle", { text: "label", kind: "circle" });
+look("a circle that says label", { kind: "label", radius: 1 });
+look("an unknown tag", { kind: "triangle", radius: 1, width: 2, height: 3, text: "all of them" });
+look("no tag", { radius: 1 });
+look("a tag put together", { kind: ["cir", "cle"].join(""), radius: 5 });
+look("a tag that is a string object", { kind: new String("circle"), radius: 5 });
+look("a tag that is a number", { kind: 0, radius: 5 });
+look("parsed circle", JSON.parse('{"radius":6,"kind":"circle"}'));
+look("parsed rectangle", JSON.parse('{"height":2,"kind":"rectangle","width":"3"}'));
+
+let reads = 0;
+look("a tag that changes with every read", {
+  get kind() {
+    return ["circle", "rectangle", "label"][reads++ % 3];
+  },
+  radius: 1,
+  width: 2,
+  height: 3,
+  text: "text",
+});
+look("a tag whose getter removes the field", {
+  get kind() {
+    delete (this as any).radius;
+    return "circle";
+  },
+  radius: 1,
+});
+look("null", null);
+look("a text", "circle");
+look("circle", { kind: "circle", radius: 1 });
+
+export {};
+//// workers-collect-and-make-structures-beside-each-other.ts
+// Several Workers run the same sites at the same time. Each teaches them short-lived structures and closures, collects, and sends their successors through. A Worker's collection clears what that Worker's sites learned and nothing of the others'.
+import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
+
+interface Holder {
+  wanted: unknown;
+  act(): unknown;
+}
+
+////= lines	wantedOf	holder	Holder	unknown	holder.wanted
+////= lines-2	setWanted	holder	Holder	to	unknown	holder.wanted
+////= lines-3	act	holder	Holder	unknown	holder.act
+function call(callee: () => unknown): unknown {
+  return callee();
+}
+
+function made(worker: number, round: number, index: number): Holder {
+  const holder: any = {};
+  holder["w" + worker + "r" + round + "i" + index] = "not wanted";
+  if ((index + worker) % 3 === 0) holder.pad = "not wanted";
+  if ((index + worker) % 3 === 1) holder.act = () => "early " + index;
+  holder.wanted = index * worker;
+  holder.act ??= () => "late " + index;
+  return holder;
+}
+
+function work(worker: number): string {
+  let wrong = 0;
+  let sum = 0;
+  const honest: Holder = { wanted: "honest", act: () => "honest acts" };
+  for (let round = 0; round < 12; round++) {
+    const kept: Holder[] = [];
+    for (let index = 0; index < 400; index++) {
+      const holder = made(worker, round, index);
+      if (index % 2) kept.push(holder);
+      if (wantedOf(holder) !== index * worker) wrong++;
+      setWanted(holder, index + round);
+      if (wantedOf(holder) !== index + round) wrong++;
+      const expected = ((index + worker) % 3 === 1 ? "early " : "late ") + index;
+      if (act(holder) !== expected) wrong++;
+      if (call(holder.act) !== expected) wrong++;
+      if (call(() => index) !== index) wrong++;
+      sum += index + round;
+    }
+    if (wantedOf(honest) !== "honest" || act(honest) !== "honest acts") wrong++;
+    Bun.gc(true);
+    for (const holder of kept) if (typeof wantedOf(holder) !== "number" || typeof act(holder) !== "string") wrong++;
+  }
+  return "worker " + worker + ": wrong " + wrong + ", sum " + sum;
+}
+
+////= lines-14	start	worker	number	thread
+
+if (isMainThread) {
+  const others = [start(1), start(2), start(3), start(4)];
+  console.log(work(0).replace("worker 0", "main"));
+  for (const answer of await Promise.all(others)) console.log(answer);
+  console.log(work(5).replace("worker 5", "main again"));
+} else {
+  parentPort?.postMessage(work(Number(workerData)));
+}
+
+export {};

@@ -1,0 +1,1 @@
+{ "build": ["--external", "outside"], "skipInShell": "it names an external package, which the jsc shell does not have" }

@@ -1,0 +1,179 @@
+sloppy, only called, typeof: function
+sloppy, only called, name: sloppy
+sloppy, only called, length: 2
+sloppy, only called, source text: function sloppy(a, b) { return a; }
+sloppy, only called, name after bind: bound sloppy
+sloppy, only called, length after bind: 1
+sloppy, only called, class string: [object Function]
+sloppy, only called, caller: null
+sloppy, with an own property, typeof: function
+sloppy, with an own property, name: sloppy
+sloppy, with an own property, length: 2
+sloppy, with an own property, source text: function sloppy(a, b) { return a; }
+sloppy, with an own property, name after bind: bound sloppy
+sloppy, with an own property, length after bind: 1
+sloppy, with an own property, class string: [object Function]
+sloppy, with an own property, caller: null
+strict, only called, typeof: function
+strict, only called, name: strict
+strict, only called, length: 3
+strict, only called, source text: function strict(a, b, c) { "use strict"; return a; }
+strict, only called, name after bind: bound strict
+strict, only called, length after bind: 2
+strict, only called, class string: [object Function]
+strict, only called, caller: null
+strict, with an own property, typeof: function
+strict, with an own property, name: strict
+strict, with an own property, length: 3
+strict, with an own property, source text: function strict(a, b, c) { "use strict"; return a; }
+strict, with an own property, name after bind: bound strict
+strict, with an own property, length after bind: 2
+strict, with an own property, class string: [object Function]
+strict, with an own property, caller: null
+arrow, only called, typeof: function
+arrow, only called, name: arrow
+arrow, only called, length: 2
+arrow, only called, source text: (a, b) => a
+arrow, only called, name after bind: bound arrow
+arrow, only called, length after bind: 1
+arrow, only called, class string: [object Function]
+arrow, only called, caller: TypeError
+arrow, with an own property, typeof: function
+arrow, with an own property, name: arrow
+arrow, with an own property, length: 2
+arrow, with an own property, source text: (a, b) => a
+arrow, with an own property, name after bind: bound arrow
+arrow, with an own property, length after bind: 1
+arrow, with an own property, class string: [object Function]
+arrow, with an own property, caller: TypeError
+method, only called, typeof: function
+method, only called, name: method
+method, only called, length: 1
+method, only called, source text: method(a) { return a; }
+method, only called, name after bind: bound method
+method, only called, length after bind: 0
+method, only called, class string: [object Function]
+method, only called, caller: TypeError
+method, with an own property, typeof: function
+method, with an own property, name: method
+method, with an own property, length: 1
+method, with an own property, source text: method(a) { return a; }
+method, with an own property, name after bind: bound method
+method, with an own property, length after bind: 0
+method, with an own property, class string: [object Function]
+method, with an own property, caller: TypeError
+class, only called, typeof: function
+class, only called, name: Point
+class, only called, length: 2
+class, only called, source text: class Point { constructor(x, y) { this.x = x; } }
+class, only called, name after bind: bound Point
+class, only called, length after bind: 1
+class, only called, class string: [object Function]
+class, only called, caller: TypeError
+class, with an own property, typeof: function
+class, with an own property, name: Point
+class, with an own property, length: 2
+class, with an own property, source text: class Point { constructor(x, y) { this.x = x; } }
+class, with an own property, name after bind: bound Point
+class, with an own property, length after bind: 1
+class, with an own property, class string: [object Function]
+class, with an own property, caller: TypeError
+generator, only called, typeof: function
+generator, only called, name: generator
+generator, only called, length: 1
+generator, only called, source text: function* generator(a) { yield a; }
+generator, only called, name after bind: bound generator
+generator, only called, length after bind: 0
+generator, only called, class string: [object GeneratorFunction]
+generator, only called, caller: TypeError
+generator, with an own property, typeof: function
+generator, with an own property, name: generator
+generator, with an own property, length: 1
+generator, with an own property, source text: function* generator(a) { yield a; }
+generator, with an own property, name after bind: bound generator
+generator, with an own property, length after bind: 0
+generator, with an own property, class string: [object GeneratorFunction]
+generator, with an own property, caller: TypeError
+async, only called, typeof: function
+async, only called, name: asynchronous
+async, only called, length: 2
+async, only called, source text: async function asynchronous(a, b) { return a; }
+async, only called, name after bind: bound asynchronous
+async, only called, length after bind: 1
+async, only called, class string: [object AsyncFunction]
+async, only called, caller: TypeError
+async, with an own property, typeof: function
+async, with an own property, name: asynchronous
+async, with an own property, length: 2
+async, with an own property, source text: async function asynchronous(a, b) { return a; }
+async, with an own property, name after bind: bound asynchronous
+async, with an own property, length after bind: 1
+async, with an own property, class string: [object AsyncFunction]
+async, with an own property, caller: TypeError
+async generator, only called, typeof: function
+async generator, only called, name: asyncGenerator
+async generator, only called, length: 1
+async generator, only called, source text: async function* asyncGenerator(a) { yield a; }
+async generator, only called, name after bind: bound asyncGenerator
+async generator, only called, length after bind: 0
+async generator, only called, class string: [object AsyncGeneratorFunction]
+async generator, only called, caller: TypeError
+async generator, with an own property, typeof: function
+async generator, with an own property, name: asyncGenerator
+async generator, with an own property, length: 1
+async generator, with an own property, source text: async function* asyncGenerator(a) { yield a; }
+async generator, with an own property, name after bind: bound asyncGenerator
+async generator, with an own property, length after bind: 0
+async generator, with an own property, class string: [object AsyncGeneratorFunction]
+async generator, with an own property, caller: TypeError
+bound, only called, typeof: function
+bound, only called, name: bound target
+bound, only called, length: 3
+bound, only called, source text: function target() { [native code] }
+bound, only called, name after bind: bound bound target
+bound, only called, length after bind: 2
+bound, only called, class string: [object Function]
+bound, only called, caller: TypeError
+bound, with an own property, typeof: function
+bound, with an own property, name: bound target
+bound, with an own property, length: 3
+bound, with an own property, source text: function target() { [native code] }
+bound, with an own property, name after bind: bound bound target
+bound, with an own property, length after bind: 2
+bound, with an own property, class string: [object Function]
+bound, with an own property, caller: TypeError
+bound method, only called, typeof: function
+bound method, only called, name: bound method
+bound method, only called, length: 3
+bound method, only called, source text: function method() { [native code] }
+bound method, only called, name after bind: bound bound method
+bound method, only called, length after bind: 2
+bound method, only called, class string: [object Function]
+bound method, only called, caller: TypeError
+bound method, with an own property, typeof: function
+bound method, with an own property, name: bound method
+bound method, with an own property, length: 3
+bound method, with an own property, source text: function method() { [native code] }
+bound method, with an own property, name after bind: bound bound method
+bound method, with an own property, length after bind: 2
+bound method, with an own property, class string: [object Function]
+bound method, with an own property, caller: TypeError
+bound arrow, only called, typeof: function
+bound arrow, only called, name: bound arrow
+bound arrow, only called, length: 3
+bound arrow, only called, source text: function arrow() { [native code] }
+bound arrow, only called, name after bind: bound bound arrow
+bound arrow, only called, length after bind: 2
+bound arrow, only called, class string: [object Function]
+bound arrow, only called, caller: TypeError
+bound arrow, with an own property, typeof: function
+bound arrow, with an own property, name: bound arrow
+bound arrow, with an own property, length: 3
+bound arrow, with an own property, source text: function arrow() { [native code] }
+bound arrow, with an own property, name after bind: bound bound arrow
+bound arrow, with an own property, length after bind: 2
+bound arrow, with an own property, class string: [object Function]
+bound arrow, with an own property, caller: TypeError
+new.target is a class: true,true,true
+new.target is a class: true,true,true
+new.target is a function: false,false,true

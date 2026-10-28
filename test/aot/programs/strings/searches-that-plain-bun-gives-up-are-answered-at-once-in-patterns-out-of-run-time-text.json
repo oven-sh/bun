@@ -1,0 +1,1 @@
+{ "skipWithASAN": "the clock says nothing there", "skipInVariants": "a clock is read, and no flag of the build changes what is timed" }

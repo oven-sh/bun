@@ -1,0 +1,458 @@
+//// a-list-walked-by-its-links.js
+// One link of a list of a hundred thousand is an object out of JSON.parse. The link is what goes around the loop, so the links behind the odd one are fast only if the slow path comes back into the loop.
+class N { constructor(v, next) { this.v = v; this.next = next; } }
+function walk(head) {
+  let total = 0;
+  for (let n = head; n; n = n.next) total = (total + n.v) | 0;
+  return total;
+}
+let head = null;
+for (let i = 0; i < 100000; i++) {
+  if (i === 99990) { const odd = JSON.parse('{"next":null,"v":5,"x":1}'); odd.next = head; head = odd; } else head = new N(i, head);
+}
+let r = 0;
+for (let k = 0; k < 200; k++) r = (r + walk(head)) | 0;
+console.log(r);
+//// a-number-carried-around-the-loop.js
+// One field of a hundred thousand holds a string out of JSON.parse. What is read from the field is carried around the loop, so the turns behind the odd one are fast only if the slow path comes back into the loop.
+class P { constructor(a, b) { this.a = a; this.b = b; } }
+function sum(list) {
+  let total = 0;
+  let last = 0;
+  for (let i = 0; i < list.length; i++) {
+    const p = list[i];
+    total = (total + last * 2 + p.b) | 0;
+    last = p.a;
+  }
+  return total;
+}
+const odd = JSON.parse('["7"]')[0];
+const list = [];
+for (let i = 0; i < 100000; i++) list.push(new P(i === 10 ? odd : i, 1));
+let r = 0;
+for (let k = 0; k < 200; k++) r = (r + sum(list)) | 0;
+console.log(r);
+//// a-value-of-the-odd-object-is-used-to-the-end.js
+// The first argument is an object out of JSON.parse. A number read from it is used to the end of the function, beside an object whose class is known: that object's reads stay fast only if the slow path of the first read ends early.
+class P { constructor(a, b) { this.a = a; this.b = b; } }
+let calls = 0;
+function note(x) { calls = (calls + x) | 0; if (calls === -1) console.log(calls); }
+function work(p, q) {
+  const a = p.a;
+  let total = p.b | 0;
+  note(total);
+  total = (total + q.b * a) | 0; note(total);
+  total = (total + q.b * a) | 0; note(total);
+  total = (total + q.b * a) | 0; note(total);
+  total = (total + q.b * a) | 0; note(total);
+  total = (total + q.b * a) | 0; note(total);
+  total = (total + q.b * a) | 0; note(total);
+  return total;
+}
+const odd = JSON.parse('{"b":1,"a":2,"c":3}');
+const q = new P(3, 4);
+let r = work(new P(1, 2), q);
+for (let k = 0; k < 3000000; k++) r = (r + work(odd, q)) | 0;
+console.log(r);
+//// members-that-are-left-out-are-compared.ts
+// Optional members of each kind are compared with each other and with a value that was kept, strictly and loosely. Most calls give what the types say, some leave members out, and some give values of other kinds.
+interface Options {
+  flag?: boolean;
+  name?: string | null;
+  size?: number;
+  owner?: { id: number };
+  run?: () => number;
+  list?: number[];
+}
+
+const owner = { id: 1 };
+const run = () => 1;
+const list = [1];
+const one = { valueOf: () => 1 };
+const text = { toString: () => "a" };
+
+const values: any[] = [
+  undefined,
+  null,
+  true,
+  false,
+  0,
+  -0,
+  1,
+  1.5,
+  NaN,
+  "",
+  "a",
+  "1",
+  "true",
+  ["a", "b"].join("").slice(0, 1),
+  1n,
+  0n,
+  Symbol.for("a"),
+  owner,
+  { id: 1 },
+  run,
+  list,
+  [1],
+  one,
+  text,
+];
+
+function strictly(a: Options, b: Options): number {
+  let bits = 0;
+  if (a.flag === b.flag) bits |= 1;
+  if (a.name === b.name) bits |= 2;
+  if (a.size === b.size) bits |= 4;
+  if (a.owner === b.owner) bits |= 8;
+  if (a.run === b.run) bits |= 16;
+  if (a.list === b.list) bits |= 32;
+  if (a.flag !== b.flag) bits |= 64;
+  if (a.name !== b.name) bits |= 128;
+  if (a.size !== b.size) bits |= 256;
+  return bits;
+}
+
+function loosely(a: Options, b: Options): number {
+  let bits = 0;
+  if (a.flag == b.flag) bits |= 1;
+  if (a.name == b.name) bits |= 2;
+  if (a.size == b.size) bits |= 4;
+  if (a.owner == b.owner) bits |= 8;
+  if (a.run == b.run) bits |= 16;
+  if (a.list == b.list) bits |= 32;
+  if (a.flag != b.flag) bits |= 64;
+  if (a.name != b.name) bits |= 128;
+  if (a.size != b.size) bits |= 256;
+  return bits;
+}
+
+function withWhatWasKept(kept: any[], { flag, name, size, owner, run, list }: Options): number {
+  let bits = 0;
+  if (kept[0] !== flag) bits |= 1;
+  if (kept[1] !== name) bits |= 2;
+  if (kept[2] !== size) bits |= 4;
+  if (kept[3] !== owner) bits |= 8;
+  if (kept[4] !== run) bits |= 16;
+  if (kept[5] !== list) bits |= 32;
+  if (kept[0] != flag) bits |= 64;
+  if (kept[1] != name) bits |= 128;
+  if (kept[2] != size) bits |= 256;
+  if (kept[3] != owner) bits |= 512;
+  return bits;
+}
+
+const asDeclared: Options[] = [
+  { flag: true, name: "a", size: 1, owner, run, list },
+  { flag: false, name: "b", size: 1.5, owner, run, list },
+  { name: null },
+  { flag: true },
+  {},
+];
+
+let sum = 0;
+for (let round = 0; round < 2000; round++) {
+  const a = asDeclared[round % 5];
+  const b = asDeclared[(round >> 2) % 5];
+  sum =
+    (sum * 31 +
+      strictly(a, b) +
+      loosely(a, b) * 3 +
+      withWhatWasKept([b.flag, b.name, b.size, b.owner, b.run, b.list], a) * 7) %
+    1000003;
+}
+console.log(sum);
+
+const all = (value: any): any => ({ flag: value, name: value, size: value, owner: value, run: value, list: value });
+for (const left of values) {
+  const row: string[] = [];
+  for (const right of values) {
+    const a = all(left);
+    const b = all(right);
+    row.push(
+      [strictly(a, b), loosely(a, b), withWhatWasKept([right, right, right, right, right, right], a)]
+        .map(bits => bits.toString(36))
+        .join("."),
+    );
+  }
+  console.log(row.join(" "));
+}
+for (const value of values)
+  console.log(
+    strictly(all(value), {}),
+    loosely(all(value), {}),
+    strictly({}, all(value)),
+    loosely({}, all(value)),
+    withWhatWasKept([], all(value)),
+    withWhatWasKept([value, value, value, value, value, value], {}),
+  );
+//// odd-elements-inside-nested-iterations.ts
+// A value that does not fit its type turns up inside an iteration that was opened behind another typed read: in the inner of two loops, in a pattern in the head of a loop, in the second of two loops.
+// The loop goes on with the iterator it has, each iterator is closed once and in the order of the language, and the elements behind the odd one are handled as before.
+type Item = { n: number; tag: string };
+type Box = { label: string; items: Item[] };
+
+const log: string[] = [];
+
+// The text of an error of the language quotes the source.
+function describe(error: unknown): string {
+  return error instanceof TypeError ? "TypeError" : (error as Error).message;
+}
+
+function listed<T>(name: string, values: T[]): Iterable<T> {
+  return {
+    [Symbol.iterator]() {
+      let index = 0;
+      return {
+        next() {
+          log.push(name + ".next");
+          return index < values.length ? { done: false, value: values[index++] } : { done: true, value: undefined as any };
+        },
+        return() {
+          log.push(name + ".return");
+          return { done: true, value: undefined as any };
+        },
+      };
+    },
+  };
+}
+
+function sumNested(boxes: Box[]): string {
+  let sum = 0;
+  let tags = "";
+  for (const box of boxes) {
+    for (const item of box.items) {
+      sum += item.n;
+      tags += item.tag;
+    }
+  }
+  return sum + ":" + tags;
+}
+
+function sumBehindARead(holder: { scale: number; boxes: Box[] }): string {
+  const scale = holder.scale;
+  let sum = 0;
+  for (const box of holder.boxes) {
+    let local = 0;
+    for (const item of box.items) local += item.n * scale;
+    sum += local;
+  }
+  return String(sum);
+}
+
+function firstLarge(boxes: Box[], limit: number): string {
+  for (const box of boxes) {
+    for (const item of box.items) {
+      if (item.n > limit) return box.label + "/" + item.tag;
+    }
+  }
+  return "none";
+}
+
+function untilNegative(boxes: Box[]): string {
+  let seen = "";
+  outer: for (const box of boxes) {
+    for (const item of box.items) {
+      if (item.n < 0) break outer;
+      if (item.n === 0) break;
+      if (item.n === 1) continue outer;
+      seen += item.tag;
+    }
+    seen += "|";
+  }
+  return seen;
+}
+
+function throwsOn(boxes: Box[], bad: string): string {
+  let seen = "";
+  try {
+    for (const box of boxes) {
+      for (const item of box.items) {
+        if (item.tag === bad) throw new Error("bad " + item.n);
+        seen += item.tag;
+      }
+    }
+  } catch (error) {
+    return seen + "!" + describe(error);
+  }
+  return seen;
+}
+
+function twoLoops(first: Item[], second: Item[]): string {
+  let sum = 0;
+  for (const item of first) sum += item.n;
+  let tags = "";
+  for (const item of second) tags += item.tag + item.n;
+  return sum + ":" + tags;
+}
+
+function pairs(list: [string, Item][]): string {
+  let out = "";
+  for (const [key, item] of list) out += key + "=" + item.n + item.tag + ";";
+  return out;
+}
+
+function entries(map: Map<string, Item>): string {
+  let out = "";
+  for (const [key, item] of map) out += key.length + item.tag + item.n + ";";
+  return out;
+}
+
+function patternInLoop(rows: number[][]): string {
+  let sum = 0;
+  for (const row of rows) {
+    const [a, b = 10, ...rest] = row;
+    sum += a + b + rest.length;
+  }
+  return String(sum);
+}
+
+function show(name: string, body: () => string) {
+  log.length = 0;
+  let result: string;
+  try {
+    result = body();
+  } catch (error) {
+    result = "threw " + describe(error);
+  }
+  console.log(name, result, log.join(" "));
+}
+
+const item = (n: number, tag: string): Item => ({ n, tag });
+const box = (label: string, ...items: Item[]): Box => ({ label, items });
+const good = () => [box("a", item(2, "p"), item(3, "q")), box("b", item(4, "r")), box("c", item(5, "s"), item(6, "t"), item(7, "u"))];
+const outside = (text: string): any => JSON.parse(text);
+
+for (let round = 0; round < 3; round++) {
+  show("good", () => sumNested(good()));
+
+  // An odd element of the inner loop: first, in the middle, last.
+  for (const position of [0, 1, 2]) {
+    const boxes = good();
+    boxes[2].items[position] = outside('{"n":"x","tag":7}');
+    show("odd item " + position, () => sumNested(boxes));
+    show("odd item " + position + " scaled", () => sumBehindARead({ scale: 2, boxes }));
+  }
+  for (const odd of ["null", "5", '"text"', "[1,2]", "{}"]) {
+    const boxes = good();
+    boxes[1].items.push(outside(odd), item(9, "z"));
+    show("item " + odd, () => sumNested(boxes));
+    show("item " + odd + " large", () => firstLarge(boxes, 8));
+    show("item " + odd + " throws", () => throwsOn(boxes, "z"));
+  }
+
+  // An odd element of the outer loop, and items that are no array.
+  for (const odd of ["null", "5", '{"label":"o"}', '{"label":"o","items":"xy"}', '{"label":"o","items":[{"n":1.5,"tag":"h"}]}', '{"label":"o","items":{}}']) {
+    const boxes = good();
+    boxes.splice(1, 0, outside(odd));
+    show("box " + odd, () => sumNested(boxes));
+    show("box " + odd + " scaled", () => sumBehindARead({ scale: 3, boxes }));
+  }
+  {
+    const boxes = good();
+    boxes[1].items = new Set([item(1, "x"), item(2, "y")]) as any;
+    show("items are a set", () => sumNested(boxes));
+    boxes[1].items = listed("inner", [item(1, "x"), outside('{"n":true,"tag":null}'), item(3, "w")]) as any;
+    show("items are listed", () => sumNested(boxes));
+    show("listed, found", () => firstLarge(boxes, 2));
+    show("listed, thrown", () => throwsOn(boxes, "w"));
+    show("listed, left", () => untilNegative(boxes));
+    show("both listed", () => firstLarge(listed("outer", boxes) as any, 2));
+    show("both listed, thrown", () => throwsOn(listed("outer", boxes) as any, "w"));
+    show("both listed, to the end", () => sumNested(listed("outer", boxes) as any));
+  }
+  {
+    const boxes = [box("a", item(2, "p"), item(0, "q"), item(3, "r")), box("b", item(1, "s"), item(4, "t")), box("c", item(5, "u"), outside('{"n":"-1","tag":"v"}'), item(-1, "w"), item(6, "x")), box("d", item(7, "y"))];
+    show("breaks and continues", () => untilNegative(boxes));
+  }
+  show("scale is odd", () => sumBehindARead({ scale: outside('"3"'), boxes: good() }));
+  show("holder is odd", () => sumBehindARead(outside('{"scale":2,"boxes":[{"label":"j","items":[{"n":4,"tag":"k"}]}]}')));
+
+  // The second of two loops.
+  show("second loop", () => twoLoops([item(1, "a")], [item(2, "b"), outside('{"n":{},"tag":[]}'), item(3, "c")]));
+  show("first loop", () => twoLoops([item(1, "a"), outside('{"n":"1"}'), item(2, "b")], [item(3, "c")]));
+  show("second is listed", () => twoLoops([item(1, "a")], listed("second", [item(2, "b"), outside("{}")]) as any));
+
+  // Patterns.
+  show("pairs", () => pairs([["a", item(1, "p")], ["b", item(2, "q")]]));
+  show("odd key", () => pairs([["a", item(1, "p")], outside('[5,{"n":2,"tag":"q"}]'), ["c", item(3, "r")]]));
+  show("odd value", () => pairs([["a", item(1, "p")], outside('["b",{"n":"2"}]'), ["c", item(3, "r")]]));
+  show("short pair", () => pairs([["a", item(1, "p")], outside('["b"]'), ["c", item(3, "r")]]));
+  show("pair is text", () => pairs([["a", item(1, "p")], outside('"xy"'), ["c", item(3, "r")]]));
+  show("pair is listed", () => pairs([["a", item(1, "p")], listed("pair", ["b", item(2, "q"), "more"]) as any, ["c", item(3, "r")]]));
+  show("pair is null", () => pairs([["a", item(1, "p")], outside("null"), ["c", item(3, "r")]]));
+  show("pairs are listed", () => pairs(listed("pairs", [["a", item(1, "p")], outside("null")]) as any));
+  show("entries", () => entries(new Map([["a", item(1, "p")], ["bb", outside('{"n":null,"tag":2}')], ["ccc", item(3, "r")]])));
+  show("odd keys", () => entries(new Map<any, Item>([["a", item(1, "p")], [5, item(2, "q")], ["ccc", item(3, "r")]])));
+  show("rows", () => patternInLoop([[1, 2, 3], [4], outside('["5",null,6,7]'), [], [8, undefined as any, 9]]));
+  show("row is listed", () => patternInLoop([[1, 2], listed("row", [3]) as any, listed("row", [4, 5, 6, 7]) as any]));
+}
+//// one-odd-object-in-a-loop.js
+// One element of a hundred thousand is an object out of JSON.parse with its fields in another order.
+class P { constructor(a, b) { this.a = a; this.b = b; } }
+function sum(list) {
+  let total = 0;
+  let scale = list[0].b;
+  for (let i = 0; i < list.length; i++) {
+    const p = list[i];
+    total = (total + p.a * scale + p.b) | 0;
+  }
+  return total;
+}
+const list = [];
+for (let i = 0; i < 100000; i++) list.push(i === 10 ? JSON.parse('{"b":1,"a":2,"c":3}') : new P(i, 1));
+let r = 0;
+for (let k = 0; k < 200; k++) r = (r + sum(list)) | 0;
+console.log(r);
+//// one-odd-string-in-a-loop.js
+// One field of a hundred thousand holds a string out of JSON.parse, and the loop turns what it reads into an integer at once.
+class P { constructor(a, b) { this.a = a; this.b = b; } }
+function sum(list) {
+  let total = 0;
+  for (let i = 0; i < list.length; i++) {
+    const p = list[i];
+    total = (total + (p.a | 0) + p.b) | 0;
+  }
+  return total;
+}
+const odd = JSON.parse('["7"]')[0];
+const list = [];
+for (let i = 0; i < 100000; i++) list.push(new P(i === 10 ? odd : i, 1));
+let r = 0;
+for (let k = 0; k < 200; k++) r = (r + sum(list)) | 0;
+console.log(r);
+//// the-odd-object-is-read-in-front-of-a-loop.js
+// The first argument is an object out of JSON.parse and is read in front of a loop that does not use it.
+class P { constructor(a, b) { this.a = a; this.b = b; } }
+function work(p, q, n) {
+  let total = (p.a + p.b) | 0;
+  const scale = q.a;
+  for (let i = 0; i < n; i++) total = (total + q.b * scale + i) | 0;
+  return total;
+}
+const odd = JSON.parse('{"b":1,"a":2,"c":3}');
+const q = new P(3, 4);
+let r = work(new P(1, 2), q, 10);
+for (let k = 0; k < 2000; k++) r = (r + work(odd, q, 10000)) | 0;
+console.log(r);
+//// the-odd-object-is-read-in-front-of-calls.js
+// The first argument is an object out of JSON.parse. Behind its reads the function only uses an object whose class is known, between calls.
+class P { constructor(a, b) { this.a = a; this.b = b; } }
+let calls = 0;
+function note(x) { calls = (calls + x) | 0; if (calls === -1) console.log(calls); }
+function work(p, q) {
+  let total = (p.a + p.b) | 0;
+  const scale = q.a;
+  note(total);
+  total = (total + q.b * scale) | 0; note(total);
+  total = (total + q.b * scale) | 0; note(total);
+  total = (total + q.b * scale) | 0; note(total);
+  total = (total + q.b * scale) | 0; note(total);
+  total = (total + q.b * scale) | 0; note(total);
+  total = (total + q.b * scale) | 0; note(total);
+  return total;
+}
+const odd = JSON.parse('{"b":1,"a":2,"c":3}');
+const q = new P(3, 4);
+let r = work(new P(1, 2), q);
+for (let k = 0; k < 3000000; k++) r = (r + work(odd, q)) | 0;
+console.log(r);

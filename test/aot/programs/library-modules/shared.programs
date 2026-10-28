@@ -1,0 +1,6 @@
+////: lines-3
+try {
+  «1»);
+} catch (error) {
+  console.log(error.code);
+}

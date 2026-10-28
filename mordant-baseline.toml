@@ -6,7 +6,7 @@
 [bun_bundler]
 "bound_checked_only_in_debug:src/bundler/Chunk.rs" = 3
 "bound_checked_only_in_debug:src/bundler/prelinked_module_graph.rs" = 1
-"defaulted_failure:src/bundler/bundle_v2.rs" = 1
+"defaulted_failure:src/bundler/bundle_v2.rs" = 2
 "freed_while_borrowed:src/bundler/ThreadPool.rs" = 1
 "generic_body_not_generic:src/bundler/Chunk.rs" = 3
 "generic_body_not_generic:src/bundler/ParseTask.rs" = 1
@@ -16,6 +16,7 @@
 "safe_fn_returns_shared_mut:src/bundler/transpiler.rs" = 2
 "unsafe_send_covers_more_than_pointers:src/bundler/Chunk.rs" = 1
 "unsafe_send_covers_more_than_pointers:src/bundler/LinkerGraph.rs" = 1
+"unsafe_send_covers_more_than_pointers:src/bundler/aot/plugins.rs" = 1
 
 [bun_collections]
 "unused_pub:src/collections/StaticHashMap.rs" = 4

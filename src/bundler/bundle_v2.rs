@@ -3343,9 +3343,11 @@ pub mod bv2_impl {
             this.transpiler.options.tree_shaking = tree_shaking;
             this.transpiler.resolver.opts.tree_shaking = tree_shaking;
 
-            // BACKREF: `LinkerContext<'a>.resolver` is `ParentRef<Resolver<'a>>`;
-            // the resolver lives in `transpiler` which outlives `self` (same `'a`).
-            this.linker.resolver = Some(bun_ptr::ParentRef::new(&this.transpiler.resolver));
+            // SAFETY: the resolver lives in `transpiler`, which outlives `self` (same `'a`). Whoever
+            // configured the transpiler set those fields before handing it over.
+            this.linker.resolver_options = Some(unsafe {
+                crate::linker_context_mod::ResolverOptions::new(&this.transpiler.resolver)
+            });
             this.linker.graph.code_splitting = this.transpiler.options.code_splitting;
 
             // Cross-chunk imports/exports are only generated for ESM (see
@@ -5781,8 +5783,8 @@ pub mod bv2_impl {
 
             // Write metafile outputs to disk and add them as OutputFiles.
             // Metafile paths are relative to outdir, like all other output files.
-            // `LinkerContext::resolver()` wraps the `*mut Resolver` backref deref.
-            let outdir = &self.linker.resolver().opts.output_dir;
+            let resolver_options = self.linker.resolver_options();
+            let outdir = resolver_options.output_dir();
             if !self.linker.options.metafile_json_path.is_empty() {
                 if let Some(mf) = &metafile {
                     write_metafile_output(

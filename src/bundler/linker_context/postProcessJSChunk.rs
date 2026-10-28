@@ -245,7 +245,7 @@ pub(crate) fn post_process_js_chunk(
             .to_ast(),
         );
         let source = c.get_source(chunk.entry_point.source_index());
-        let target = c.resolver().opts.target;
+        let target = c.resolver_options().target();
 
         // Hoist the StoreSlice extraction so the two `&mut chunk` borrows below
         // (content vs renamer) don't overlap inside a single expression.
@@ -796,15 +796,14 @@ pub(crate) fn post_process_js_chunk(
             chunk.intermediate_output,
             crate::chunk::IntermediateOutput::Pieces(_)
         );
-        // Copy the `ParentRef` out (not `c.resolver()`) so the arg borrows the
-        // local, not `c`, avoiding the split-borrow with
-        // `c.generate_source_map_for_chunk(&mut self, …)`.
-        let resolver = c.resolver.expect("resolver set in load()");
+        // The arg borrows the local, not `c`, which
+        // `generate_source_map_for_chunk(&mut self, …)` takes.
+        let resolver_options = c.resolver_options();
         chunk.output_source_map = c.generate_source_map_for_chunk(
             chunk.isolated_hash,
             worker,
             &compile_results_for_source_map,
-            &resolver.opts.output_dir,
+            resolver_options.output_dir(),
             can_have_shifts,
         )?;
     }
@@ -1298,7 +1297,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
     CompileResult::Javascript {
         result: js_printer::print::<false>(
             arena,
-            c.resolver().opts.target,
+            c.resolver_options().target(),
             &ast_view,
             c.get_source(source_index),
             print_options,

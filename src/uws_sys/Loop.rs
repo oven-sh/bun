@@ -256,12 +256,6 @@ impl PosixLoop {
         NonNull::new(p).map(OwnedLoop)
     }
 
-    /// From the loop's own thread. Another thread has no `&Loop`: it calls [`us_wakeup_loop`].
-    pub fn wakeup(&self) {
-        // SAFETY: a live loop.
-        unsafe { c::us_wakeup_loop(self.as_ptr()) };
-    }
-
     pub fn tick(&self) {
         c::us_loop_run_bun_tick(self, None, NOW_NS_UNKNOWN);
     }

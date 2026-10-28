@@ -75,18 +75,14 @@ pub struct LinkerContext<'a> {
     pub(crate) parse_graph: *mut Graph<'a>,
     pub graph: LinkerGraph<'a>,
     /// Backref into `Transpiler.log`, assigned in [`Self::load`]. Stored as a
-    /// raw pointer (like `parse_graph` / `resolver`) so `Default` can be
+    /// raw pointer (like `parse_graph`) so `Default` can be
     /// `null_mut()` instead of a dangling `&mut` (instant UB). Use
     /// [`Self::log`] / [`Self::log_mut`]; deref the field directly only for
     /// split-borrow patterns that hold other `self` borrows across the access.
     pub(crate) log: *mut Log,
 
-    /// Backref into `BundleV2.transpiler.resolver` (LIFETIMES.tsv:
-    /// GRAPHBACKED). `ParentRef` (not `*mut`) so the accessor and the
-    /// split-borrow sites in `linker_context/*.rs` deref it via safe `Deref`
-    /// instead of open-coding a raw deref. `Option` because `Default` precedes
-    /// [`Self::load`]. Read-only — never `assume_mut`.
-    pub(crate) resolver: Option<bun_ptr::ParentRef<Resolver<'a>>>,
+    /// Of `BundleV2.transpiler.resolver`. `Option` because `Default` precedes [`Self::load`].
+    pub(crate) resolver_options: Option<ResolverOptions>,
     pub(crate) cycle_detector: Vec<ImportTracker>,
 
     /// We may need to refer to the "__esm" and/or "__commonJS" runtime symbols
@@ -144,8 +140,56 @@ pub struct LinkerContext<'a> {
     pub(crate) entry_point_part_indices: Vec<u32>,
 }
 
+/// What the link step, on whichever thread, reads of the options of the bundle's resolver.
+#[derive(Clone, Copy)]
+pub(crate) struct ResolverOptions(core::ptr::NonNull<bun_resolver::options::BundleOptions>);
+
+// SAFETY: reaches only the fields that `new`'s caller keeps unwritten, none of them a cell.
+unsafe impl Send for ResolverOptions {}
+// SAFETY: as `Send`.
+unsafe impl Sync for ResolverOptions {}
+
+impl ResolverOptions {
+    /// # Safety
+    /// `resolver` outlives every copy of the result, and until the last one is gone nothing
+    /// writes the fields that the methods below read.
+    pub(crate) unsafe fn new(resolver: &Resolver<'_>) -> Self {
+        Self(core::ptr::NonNull::from(&resolver.opts))
+    }
+
+    pub(crate) fn target(&self) -> Target {
+        // SAFETY: `new`'s contract.
+        unsafe { (*self.0.as_ptr()).target }
+    }
+
+    pub(crate) fn compile(&self) -> bool {
+        // SAFETY: `new`'s contract.
+        unsafe { (*self.0.as_ptr()).compile }
+    }
+
+    pub(crate) fn supports_multiple_outputs(&self) -> bool {
+        // SAFETY: `new`'s contract.
+        unsafe { (*self.0.as_ptr()).supports_multiple_outputs }
+    }
+
+    pub(crate) fn output_dir(&self) -> &[u8] {
+        // SAFETY: `new`'s contract.
+        unsafe { &(*self.0.as_ptr()).output_dir }
+    }
+
+    pub(crate) fn root_dir(&self) -> &[u8] {
+        // SAFETY: `new`'s contract.
+        unsafe { &(*self.0.as_ptr()).root_dir }
+    }
+
+    pub(crate) fn public_path(&self) -> &[u8] {
+        // SAFETY: `new`'s contract.
+        unsafe { &(*self.0.as_ptr()).public_path }
+    }
+}
+
 // SAFETY: `LinkerContext` is shared across the worker pool via `each_ptr` /
-// `SourceMapDataTask`. The raw-pointer fields (`parse_graph`, `resolver`,
+// `SourceMapDataTask`. The raw-pointer fields (`parse_graph`,
 // `r#loop`, `framework`) are backrefs into `BundleV2`/`Transpiler` whose
 // lifetimes strictly outlive every parallel section, and per-thread writes go
 // to disjoint SoA slots (see `compute_line_offsets`).
@@ -159,7 +203,7 @@ impl<'a> Default for LinkerContext<'a> {
             parse_graph: core::ptr::null_mut(),
             graph: Default::default(),
             log: core::ptr::null_mut(),
-            resolver: None,
+            resolver_options: None,
             cycle_detector: Vec::new(),
             cjs_runtime_ref: Ref::NONE,
             esm_runtime_ref: Ref::NONE,
@@ -247,17 +291,11 @@ impl<'a> LinkerContext<'a> {
         unsafe { &mut *self.parse_graph }
     }
 
-    /// Shared-read accessor for the resolver.
-    ///
-    /// `resolver` is a backref into `BundleV2.transpiler.resolver`, assigned
-    /// in [`Self::load`] (LIFETIMES.tsv: GRAPHBACKED). Non-null and valid for
-    /// the link step; never mutated through this pointer.
+    /// By value, so that what it lends does not borrow `self`.
     #[inline]
-    pub(crate) fn resolver(&self) -> &Resolver<'a> {
-        self.resolver
-            .as_ref()
-            .expect("LinkerContext.resolver accessed before load()")
-            .get()
+    pub(crate) fn resolver_options(&self) -> ResolverOptions {
+        self.resolver_options
+            .expect("LinkerContext.resolver_options accessed before load()")
     }
 
     /// Shared-read accessor for the bundler log.
@@ -535,16 +573,9 @@ impl<'a> LinkerContext<'a> {
         // `*mut Log` (same value aliased into `linker.log` / `resolver.log`).
         self.log = transpiler.log_ptr();
 
-        // Note: lifetime — `self.resolver` is `ParentRef<Resolver<'a>>`
-        // but `transpiler.resolver` is `Resolver<'_>` (anonymous `bundle`
-        // lifetime); erase via a pointer cast (LIFETIMES.tsv: GRAPHBACKED —
-        // resolver outlives the link step). Read-only — `from_raw` provenance
-        // is sufficient.
-        // SAFETY: `transpiler.resolver` is a stable field of the
-        // bundle-lifetime `Transpiler`, valid for the entire link step.
-        self.resolver = Some(unsafe {
-            bun_ptr::ParentRef::from_raw(core::ptr::from_ref(&transpiler.resolver).cast())
-        });
+        // SAFETY: `transpiler.resolver` is a stable field of the bundle-lifetime `Transpiler`.
+        // Whoever configured the transpiler set those fields before the bundle started.
+        self.resolver_options = Some(unsafe { ResolverOptions::new(&transpiler.resolver) });
         self.cycle_detector = Vec::new();
         self.inits_already_done = None;
 
@@ -4092,7 +4123,7 @@ impl<'a> LinkerContext<'a> {
                         // at run time too, so there is nothing to say.
                         if self.is_call_record(prev_source_index, named_import.import_record_index)
                         {
-                        } else if self.resolver().opts.target == Target::Browser
+                        } else if self.resolver_options().target() == Target::Browser
                             && bun_resolve_builtins::Alias::has(
                                 next_source.path.pretty,
                                 Target::Bun,
@@ -4119,7 +4150,7 @@ impl<'a> LinkerContext<'a> {
                                 ),
                             );
                         }
-                    } else if self.resolver().opts.target == Target::Browser
+                    } else if self.resolver_options().target() == Target::Browser
                         && next_source
                             .path
                             .text

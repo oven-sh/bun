@@ -761,8 +761,9 @@ pub(crate) fn compute_chunks<'a>(
                 }
             };
 
-            let root_dir = &this.resolver().opts.root_dir;
-            chunk.template.placeholder.dir = resolve_path::relative_alloc(root_dir, dir)?;
+            let resolver_options = this.resolver_options();
+            chunk.template.placeholder.dir =
+                resolve_path::relative_alloc(resolver_options.root_dir(), dir)?;
         }
     }
 

@@ -218,7 +218,7 @@ pub(crate) fn write_output_files_to_disk(
             }
         }
         let mut display_size: usize = 0;
-        let resolver_opts = &c.resolver().opts;
+        let resolver_options = c.resolver_options();
         let public_path: &[u8] = if chunk
             .flags
             .contains(ChunkFlags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
@@ -227,7 +227,7 @@ pub(crate) fn write_output_files_to_disk(
                 .options
                 .public_path
         } else {
-            &resolver_opts.public_path
+            resolver_options.public_path()
         };
 
         // Take `intermediate_output` by value so its `&mut self` is
@@ -264,7 +264,7 @@ pub(crate) fn write_output_files_to_disk(
                 chunk,
                 chunks,
                 Some(&mut display_size),
-                ReferencePathStyle::for_chunk(chunk, resolver_opts.compile),
+                ReferencePathStyle::for_chunk(chunk, resolver_options.compile()),
                 SourceMapShiftTracking::for_source_map(
                     chunk.content.sourcemap(c.options.source_maps),
                 ),

@@ -401,7 +401,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
         let mut has_unusable_output_path = false;
         // Without an output directory the paths are only returned, so they can have any length.
         let opens_output_paths =
-            !c.resolver().opts.output_dir.is_empty() || c.options.compile_mode.is_executable();
+            !c.resolver_options().output_dir().is_empty() || c.options.compile_mode.is_executable();
 
         // Compute the final hashes of each chunk, then use those to create the final
         // paths of each chunk.
@@ -705,12 +705,10 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
     let mut output_files =
         OutputFileListBuilder::init(c, chunks, c.parse_graph().additional_output_files.len())?;
 
-    // Copy the `ParentRef` out (not `c.resolver()`) so `root_path` borrows the
-    // local, not `c`, avoiding the split-borrow with `&mut *c` passed to
-    // `write_output_files_to_disk` below — `output_dir` lives in the resolver,
-    // disjoint from anything `c` mutates.
-    let resolver = c.resolver.expect("resolver set in load()");
-    let root_path: &[u8] = &resolver.opts.output_dir;
+    // `root_path` borrows the local, not `c`, which `write_output_files_to_disk` below takes
+    // as `&mut`.
+    let resolver_options = c.resolver_options();
+    let root_path: &[u8] = resolver_options.output_dir();
     let is_standalone = c.options.compile_mode.is_standalone_html();
     let more_than_one_output = !is_standalone
         && (c.parse_graph().additional_output_files.len() > 0
@@ -718,9 +716,9 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
             || (has_css_chunk && has_js_chunk)
             || (has_html_chunk && (has_js_chunk || has_css_chunk)));
 
-    if !c.resolver().opts.compile
+    if !resolver_options.compile()
         && more_than_one_output
-        && !c.resolver().opts.supports_multiple_outputs
+        && !resolver_options.supports_multiple_outputs()
     {
         c.log_mut().add_error(
             None,
@@ -1023,7 +1021,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                     chunk,
                     chunks,
                     &mut display_size,
-                    ReferencePathStyle::for_chunk(chunk, c.resolver().opts.compile),
+                    ReferencePathStyle::for_chunk(chunk, c.resolver_options().compile()),
                     SourceMapShiftTracking::for_source_map(
                         chunk.content.sourcemap(c.options.source_maps),
                     ),

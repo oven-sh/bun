@@ -50,7 +50,7 @@ pub struct OutBuffer<'a> {
     pub pos: usize,
 }
 
-/// Output at the end of a `Vec`. The codecs write to initialized memory only: this zeroes about as much as gets
+/// Output at the end of a `Vec`. The codecs write to initialized memory only: this zeroes little more than gets
 /// written, however many calls that takes and however much capacity the `Vec` has to spare.
 pub struct VecOutput<'a> {
     vec: &'a mut Vec<u8>,
@@ -60,6 +60,9 @@ pub struct VecOutput<'a> {
 }
 
 impl<'a> VecOutput<'a> {
+    /// Memory that is zeroed and not written stays resident with the output.
+    const MOST_STEPS_AT_ONCE: usize = 64;
+
     pub fn new(vec: &'a mut Vec<u8>) -> Self {
         let filled = vec.len();
         Self {
@@ -74,13 +77,14 @@ impl<'a> VecOutput<'a> {
         self.filled
     }
 
-    /// Room for one call of a codec: `step` bytes or more, but never past `limit`. [`advance`](Self::advance) by
-    /// what it wrote.
+    /// Room for one call of a codec: `step` bytes, or more of them after much output, but never past `limit`.
+    /// [`advance`](Self::advance) by what it wrote.
     pub fn buffer(&mut self, step: usize, limit: usize) -> Result<OutBuffer<'_>, ErrorCode> {
         let room = self.vec.len() - self.filled;
         let budget = limit.saturating_sub(self.filled);
         if room < step.min(budget) {
-            let more = step.max(self.filled - self.start).min(budget) - room;
+            let most = step.saturating_mul(Self::MOST_STEPS_AT_ONCE);
+            let more = (self.filled - self.start).clamp(step, most).min(budget) - room;
             self.vec
                 .try_reserve(more)
                 .map_err(|_| ErrorCode::MemoryAllocation)?;
@@ -460,4 +464,24 @@ pub fn inflate_embedded_nul(compressed: &'static [u8]) -> Box<[u8]> {
     inflated.reserve_exact(1);
     inflated.push(0);
     inflated.into_boxed_slice()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn little_more_is_zeroed_than_is_written() {
+        const STEP: usize = 16;
+        const MOST: usize = STEP * VecOutput::MOST_STEPS_AT_ONCE;
+        let mut vec = Vec::new();
+        let mut out = VecOutput::new(&mut vec);
+        while out.filled() < 4 * MOST {
+            let room = out
+                .buffer(STEP, usize::MAX)
+                .map_or(0, |buffer| buffer.dst.len());
+            assert!((STEP..=MOST).contains(&room));
+            out.advance(room);
+        }
+    }
 }

@@ -576,6 +576,25 @@ const IS_UV_FS_COPYFILE_DISABLED =
       });
     });
 
+    it("to a shared stdout/stderr file preserves earlier content", async () => {
+      using dir = tempDir("bun-write-empty-shared-stdio", { "out.log": "existing\n" });
+      const out = path.join(String(dir), "out.log");
+      const fd = fs.openSync(out, "a");
+      try {
+        for (const source of emptySourceExprs) {
+          const script = `
+            process.stdout.write("before\\n");
+            const counts = [await Bun.write(Bun.stdout, ${source}), await Bun.write(Bun.stderr, ${source})];
+            process.stderr.write(JSON.stringify(counts) + "\\nafter\\n");
+          `;
+          await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: fd, stderr: fd });
+          expect(await proc.exited).toBe(0);
+        }
+      } finally {
+        fs.closeSync(fd);
+      }
+      expect(fs.readFileSync(out, "utf8")).toBe("existing\n" + "before\n[0,0]\nafter\n".repeat(emptySourceExprs.length));
+    });
     it("to a regular-file path still empties the file", async () => {
       using dir = tempDir("bun-write-empty-truncate", { "out.txt": "EXISTING" });
       const p = path.join(String(dir), "out.txt");

@@ -5,6 +5,7 @@
 
 import { highwayStringsForTesting as hw } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
+import { readFileSync } from "node:fs";
 
 // Lengths that straddle 16/32/64-byte lanes and the scalar tails on either side.
 const LENGTHS = [0, 1, 2, 3, 8, 15, 16, 17, 31, 32, 33, 48, 63, 64, 65, 127, 128, 129, 255, 256, 257, 1024, 1029];
@@ -644,7 +645,20 @@ describe("oddBlocks", () => {
 
 // src/jsc/bindings/highway_hpack.cpp
 describe("hpackHuffmanDecodeShort", () => {
+  // Only an x64 CPU with AVX-512 VBMI has the kernel. CI's x64 Linux and Windows machines do.
   const hasKernel = hw("hpackHuffmanDecodeShort", new Uint8Array(0), new Uint8Array(1)) !== -1;
+
+  it.skipIf(process.platform !== "linux" || process.arch !== "x64")("is there on every CPU that can run it", () => {
+    const flags = /^flags\s*:(.*)$/m.exec(readFileSync("/proc/cpuinfo", "utf8"))![1].split(" ");
+    // What Highway's AVX3_DL target takes.
+    const needed =
+      "avx512f avx512vl avx512dq avx512bw avx512cd avx512_vnni vpclmulqdq avx512vbmi avx512_vbmi2 vaes avx512_vpopcntdq avx512_bitalg gfni";
+    expect(hasKernel).toBe(needed.split(" ").every(flag => flags.includes(flag)));
+  });
+
+  it.skipIf(!hasKernel)("rejects a buffer without the bit to start at", () => {
+    expect(() => hw("hpackHuffmanDecodeShort", new Uint8Array(1), new Uint8Array(0))).toThrow(RangeError);
+  });
 
   // The codes of 5, 6, 7 and 8 bits in RFC 7541 Appendix B, which count up in this order.
   const SYMBOLS = "012aceiost| %-./3456789=A_bdfghlmnpru|:BCDEFGHIJKLMNOPQRSTUVWYjkqvwxyz|&*,;XZ".split("|");

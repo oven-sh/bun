@@ -330,15 +330,15 @@ describe.concurrent("Bun.serve http2 protocol", () => {
   ]) {
     test(`malformed field (${what}) replayed from the dynamic table → RST_STREAM PROTOCOL_ERROR`, async () => {
       const raw = await RawH2.connect(fx.port, secure);
-      const request = hpackLiteral(baseHeaders("/hello"));
+      const hello = hpackLiteral(baseHeaders("/hello"));
       // Literal with incremental indexing: index 62 from here on.
       const insert = Buffer.from(
         `\x40${String.fromCharCode(name.length)}${name}${String.fromCharCode(value.length)}${value}`,
         "latin1",
       );
-      raw.write(frame(T.HEADERS, F.END_HEADERS | F.END_STREAM, 1, Buffer.concat([request, insert])));
+      raw.write(frame(T.HEADERS, F.END_HEADERS | F.END_STREAM, 1, Buffer.concat([hello, insert])));
       expect(await raw.rst(1)).toBe(1);
-      raw.write(frame(T.HEADERS, F.END_HEADERS | F.END_STREAM, 3, Buffer.concat([request, Buffer.from([0x80 | 62])])));
+      raw.write(frame(T.HEADERS, F.END_HEADERS | F.END_STREAM, 3, Buffer.concat([hello, Buffer.from([0x80 | 62])])));
       expect(await raw.rst(3)).toBe(1);
       raw.headers(5, baseHeaders("/hello"));
       const d = await raw.waitFor(f => f.type === T.DATA && f.streamId === 5);
@@ -1110,14 +1110,15 @@ describe.concurrent("Bun.serve http2 protocol", () => {
       return Buffer.concat([Buffer.from([...name, value.length]), Buffer.from(value)]);
     };
     // :method GET, :scheme https, :authority localhost
-    const request = Buffer.concat([Buffer.from([0x82, 0x87]), named(1, "localhost")]);
+    const start = Buffer.concat([Buffer.from([0x82, 0x87]), named(1, "localhost")]);
+    const CONTENT_LENGTH = 28;
     const HOST = 38;
     const TRANSFER_ENCODING = 57;
 
     test(":path /index.html is a :path", async () => {
       const raw = await RawH2.connect(fx.port, secure);
       try {
-        raw.write(frame(T.HEADERS, end, 1, Buffer.concat([request, Buffer.from([0x85])])));
+        raw.write(frame(T.HEADERS, end, 1, Buffer.concat([start, Buffer.from([0x85])])));
         const { payload } = await raw.waitFor(
           f => (f.type === T.HEADERS || f.type === T.RST_STREAM) && f.streamId === 1,
         );
@@ -1129,10 +1130,11 @@ describe.concurrent("Bun.serve http2 protocol", () => {
 
     test.each([
       ["transfer-encoding", [named(TRANSFER_ENCODING, "chunked", 0x40)]],
+      ["a content-length that is no number", [named(CONTENT_LENGTH, "abc", 0x40)]],
       ["a second host", [named(HOST, "localhost", 0x40), Buffer.from([0x80 | 62])]],
     ])("%s is malformed, also when it comes back from the dynamic table", async (_, fields) => {
       const raw = await RawH2.connect(fx.port, secure);
-      const hello = Buffer.concat([request, named(4, "/hello")]);
+      const hello = Buffer.concat([start, named(4, "/hello")]);
       try {
         raw.write(frame(T.HEADERS, end, 1, Buffer.concat([hello, ...fields])));
         expect(await raw.rst(1)).toBe(1);
@@ -1184,6 +1186,7 @@ describe.concurrent("Bun.serve http2 protocol", () => {
       raw.close();
     }
   });
+
   test("peer SETTINGS_HEADER_TABLE_SIZE below the default: a field still enters the table the first time it is sent", async () => {
     const raw = await RawH2.connect(fx.port, secure, { settings: setting(1, 2048) });
     try {
@@ -1201,6 +1204,7 @@ describe.concurrent("Bun.serve http2 protocol", () => {
       raw.close();
     }
   });
+
   test.each([
     // With "x-pad", 65536 bytes. "p" is 101011, so four of them are ae ba eb. Three and the padding follow.
     {

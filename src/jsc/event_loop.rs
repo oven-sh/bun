@@ -450,8 +450,15 @@ impl EventLoop {
         // `Cell` write through `&VirtualMachine` — no `&mut VM` formed (would
         // overlap `&mut self: EventLoop`, which is a value field of the VM).
         vm.is_inside_deferred_task_queue.set(true);
-        self.deferred_tasks.run();
+        let left_behind = self.deferred_tasks.run();
         vm.is_inside_deferred_task_queue.set(false);
+        // A pass that stopped at its cap left deferred work behind, such as
+        // response sinks that have not flushed. Make the loop come back for it
+        // now; otherwise an idle loop would sleep on it until unrelated I/O or
+        // a timer.
+        if left_behind {
+            self.wakeup();
+        }
 
         // Guard on `event_loop_handle` being set, but drain via `uws_loop_mut()`:
         // on Windows the uSockets loop (`uws::Loop::get()`) is NOT

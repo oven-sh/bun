@@ -33,7 +33,11 @@
 //! started; that cap is a livelock bound, not a strict "no new entries this pass" frontier, because
 //! a swap-remove can pull a freshly appended entry forward. Every callback flushes its own object's
 //! buffer to its own fd or socket, so relative order within a pass has no correctness effect, and
-//! anything a pass skips runs on the next one.
+//! anything a pass skips runs on the next one. `run()` reports a pass that stopped at its cap with
+//! entries it never reached, and the event loop then wakes itself so the next pass comes on the
+//! next turn. Without that, an idle loop would leave those entries until unrelated I/O or a timer
+//! woke it. An entry that posts work during the pass consumes the cap too: the HTTP/2 server's
+//! drain task, which each response sink's flush posts, is one.
 
 use core::ffi::c_void;
 use core::ptr::NonNull;
@@ -71,7 +75,11 @@ impl DeferredTaskQueue {
         self.map.swap_remove(&ctx)
     }
 
-    pub fn run(&mut self) {
+    /// Run one capped pass. Returns whether the pass stopped at its cap with
+    /// entries it never reached; the caller then makes sure another pass runs
+    /// soon. Entries the pass ran and that asked to stay registered are not
+    /// counted: they wait for their own wakeup, such as a writable socket.
+    pub fn run(&mut self) -> bool {
         // Callbacks may re-entrantly mutate `self.map` (see the re-entrancy
         // note in the file doc), so re-read `len()` every iteration and
         // re-check slot `i` after each callback. `remaining` is a livelock bound.
@@ -99,5 +107,7 @@ impl DeferredTaskQueue {
                 i += 1;
             }
         }
+        // Slots from `i` on were never reached: the cap ran out first.
+        i < self.map.len()
     }
 }

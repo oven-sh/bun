@@ -646,6 +646,88 @@ describe("Bun.serve http2 with SNI (serverName + tls[])", () => {
   });
 });
 
+describe("Bun.serve http2 streaming responses on an idle server", () => {
+  // The server runs in a process of its own, so its event loop sleeps between
+  // events as a real server's does. A client in the same process keeps the
+  // loop awake and hides what this test looks for: response sinks that the
+  // deferred task queue's capped pass left unflushed, which then waited for an
+  // unrelated wakeup, about a second later.
+  const fixture = `
+    const subscribers = [];
+    const server = Bun.serve({
+      port: 0,
+      http2: true,
+      idleTimeout: 0,
+      fetch(req) {
+        if (new URL(req.url).pathname === "/publish") {
+          for (const controller of subscribers) controller.enqueue("data: event\\n\\n");
+          return new Response("published");
+        }
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              subscribers.push(controller);
+              controller.enqueue(": open\\n\\n");
+            },
+          }),
+          { headers: { "content-type": "text/event-stream" } },
+        );
+      },
+    });
+    console.log(JSON.stringify({ port: server.port }));
+    setInterval(() => {}, 1 << 30);
+  `;
+
+  test("an event enqueued on every open stream reaches each one without waiting for a wakeup", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const reader = proc.stdout.getReader();
+    let line = "";
+    while (!line.includes("\n")) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error("fixture exited");
+      line += Buffer.from(value).toString();
+    }
+    reader.releaseLock();
+    const port = JSON.parse(line).port as number;
+
+    // 300 streams over two connections, under the server's 256 per connection.
+    const sessions = [await connectH2(port, false), await connectH2(port, false)];
+    const opened: Promise<void>[] = [];
+    const delivered: Promise<number>[] = [];
+    let published = 0;
+    for (let i = 0; i < 300; i++) {
+      const stream = sessions[i < 250 ? 0 : 1].request({ ":path": "/events" });
+      const open = Promise.withResolvers<void>();
+      const event = Promise.withResolvers<number>();
+      stream.on("data", (chunk: Buffer) => {
+        if (chunk.toString().includes(": open")) open.resolve();
+        if (chunk.toString().includes("data: event")) event.resolve(performance.now() - published);
+      });
+      stream.on("error", error => {
+        open.reject(error);
+        event.reject(error);
+      });
+      opened.push(open.promise);
+      delivered.push(event.promise);
+    }
+    await Promise.all(opened);
+
+    const control = await connectH2(port, false);
+    published = performance.now();
+    expect((await request(control, { ":path": "/publish" })).body.toString()).toBe("published");
+    const delays = await Promise.all(delivered);
+    const late = delays.flatMap((ms, index) => (ms > 500 ? [`stream ${index}: ${Math.round(ms)} ms`] : []));
+    expect(late).toEqual([]);
+
+    for (const session of [...sessions, control]) session.destroy();
+  });
+});
+
 describe("Bun.serve http2 with http1: false", () => {
   test("TLS: h2 works, http/1.1-only ALPN is refused, no-ALPN client gets 505", async () => {
     await using fx = await startFixture({ tls: true, http1: false });

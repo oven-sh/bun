@@ -9,6 +9,7 @@
 #include "JavaScriptCore/LazyClassStructureInlines.h"
 #include "JavaScriptCore/TypeError.h"
 #include "BunClientData.h"
+#include <JavaScriptCore/Options.h>
 
 namespace Bun {
 
@@ -18,6 +19,12 @@ void GlobalScope::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
+
+    // JSGlobalObject seeds Math.random from WTF's process-wide ARC4 stream, which a restored VM
+    // snapshot duplicates. Seed from BoringSSL instead: it reseeds when Bun.reseedRandom() moves
+    // the fork generation, so a global created after the call is fresh in every clone.
+    if (!JSC::Options::forceWeakRandomSeed())
+        weakRandom().setSeed(freshWeakRandomSeed());
 
     m_encodeIntoObjectStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {

@@ -807,6 +807,10 @@ pub(crate) fn shrink(cx: &mut JsScope<'_>) {
     cx.global().vm().shrink_footprint();
 }
 
+pub(crate) fn reseed_random(cx: &mut JsScope<'_>) {
+    cx.global().bun_vm().as_mut().reseed_random_state();
+}
+
 enum Resolved {
     Found(BunString),
     /// The resolver's `ResolveMessage` for a specifier it could not resolve; not thrown yet.

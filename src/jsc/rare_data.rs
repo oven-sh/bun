@@ -732,6 +732,15 @@ impl RareData {
         UUID::init_with(&bytes)
     }
 
+    /// Drop every random value this VM drew ahead of time. The next use fills
+    /// them again from `rand_bytes`. Part of `VirtualMachine::reseed_random_state`:
+    /// after an address-space duplication (a restored VM snapshot) the pre-drawn
+    /// bytes are the same in every copy.
+    pub fn forget_random_state(&mut self) {
+        self.entropy_cache = None;
+        self.default_csrf_secret = Box::default();
+    }
+
     // ── lazy-init: misc heap slots ────────────────────────────────────────
 
     /// Take the padded-frame scratch out of its slot (lazily allocated). By value rather

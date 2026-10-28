@@ -6170,6 +6170,42 @@ declare module "bun" {
   function shrink(): void;
 
   /**
+   * Reseed the random number generators Bun keeps in user space, after the
+   * process was duplicated in a way the kernel does not report as a fork, for
+   * example when a VM memory snapshot taken while Bun was running is restored
+   * into several clones. Without this call, every clone continues the same
+   * random sequence.
+   *
+   * Call it from the code your platform runs right after a restore. This
+   * refreshes:
+   * - the CSPRNG behind `crypto.getRandomValues()`, `crypto.randomBytes()`,
+   *   `crypto.subtle` key generation and TLS, on every thread (the main
+   *   thread, Workers and the network thread), before its next output
+   * - the buffered random bytes behind `crypto.randomUUID()`, `Bun.randomUUIDv7()`,
+   *   `crypto.randomInt()`, small `crypto.randomBytes()` calls, blob URLs,
+   *   WebSocket keys and the default `Bun.CSRF` secret, in every Worker
+   * - the seed of `Math.random()` in every global object, including `node:vm`
+   *   contexts, and of every global created afterwards
+   *
+   * Bun reseeds from the operating system. The kernel's own generator is part
+   * of the snapshot too, so the platform must re-key it before this call (on
+   * Linux 5.18 and later a VM generation ID device does this on restore, and
+   * `RNDADDENTROPY` plus `RNDRESEEDCRNG` does it on any kernel).
+   *
+   * It does not reach random values already copied into JavaScript values or
+   * user buffers, a Worker's buffered values and `Math.random()` seeds before
+   * its event loop next runs, DNS transaction IDs the resolver already
+   * buffered, or the `random()` functions of `bun:sqlite` and `node:sqlite`.
+   *
+   * @example
+   * ```ts
+   * // in the handler your platform invokes after a snapshot restore
+   * Bun.reseedRandom();
+   * ```
+   */
+  function reseedRandom(): void;
+
+  /**
    * Open a file in your local editor. The editor is detected from `$VISUAL` or `$EDITOR`
    *
    * @param path Path of the file to open

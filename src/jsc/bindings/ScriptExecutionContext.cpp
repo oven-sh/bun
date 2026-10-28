@@ -303,6 +303,26 @@ bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identif
     return true;
 }
 
+void ScriptExecutionContext::postToEveryOtherVM(const BunVmHandleRef* caller, void (*task)(ScriptExecutionContext&))
+{
+    // Same contract as postTaskTo: the lock covers the lookup, the retained VM handles carry
+    // the posts. The map holds one context per global and per module graph, so the handles
+    // are deduplicated to one post per VM.
+    Vector<const BunVmHandleRef*, 8> retained;
+    {
+        Locker locker { allScriptExecutionContextsMapLock };
+        for (auto* context : allScriptExecutionContextsMap().values()) {
+            if (context->m_vmHandle == caller || context->isTerminating() || retained.contains(context->m_vmHandle))
+                continue;
+            retained.append(context->m_vmHandle);
+        }
+        for (auto*& handle : retained)
+            handle = Bun__VmHandle__retainRef(handle);
+    }
+    for (auto* handle : retained)
+        Bun__VmHandle__postAndRelease(handle, new EventLoopTask(task), BunLoopKind::Regular);
+}
+
 void ScriptExecutionContext::didCreateDestructionObserver(ContextDestructionObserver& observer)
 {
 #if ASSERT_ENABLED

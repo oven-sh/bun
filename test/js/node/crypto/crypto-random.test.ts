@@ -492,5 +492,65 @@ describe.concurrent.skipIf(!isLinux || isMusl || !cc)(
       // starts during the loop seeds its own DRBG, so allow a few.
       expect(reseeds).toBeLessThan(8);
     });
+
+    // Bun.reseedRandom() advances BoringSSL's fork generation. Every thread's
+    // DRBG then reseeds from the OS (one syscall(SYS_getrandom)) before its
+    // next output, and not again until the next call.
+    it("Bun.reseedRandom() reseeds the DRBG of every thread exactly once", async () => {
+      const script = `
+        const { statSync } = require("fs");
+        const reseeds = () => statSync(process.env.GETRANDOM_SYSCALL_COUNT_FILE).size;
+        const draw = () => crypto.getRandomValues(new Uint8Array(1024));
+        const source = \`
+          const draw = () => crypto.getRandomValues(new Uint8Array(1024));
+          self.onmessage = () => { for (let i = 0; i < 10; i++) draw(); postMessage(0); };
+          draw();
+          postMessage(0);
+        \`;
+        const worker = new Worker("data:text/javascript," + encodeURIComponent(source));
+        const next = () => new Promise(resolve => (worker.onmessage = () => resolve()));
+        // Seed both DRBGs before measuring.
+        draw();
+        await next();
+        const workerDraws = async () => { worker.postMessage(0); await next(); };
+
+        const before = reseeds();
+        for (let i = 0; i < 10; i++) draw();
+        await workerDraws();
+        const control = reseeds() - before;
+
+        Bun.reseedRandom();
+        for (let i = 0; i < 10; i++) draw();
+        await workerDraws();
+        const afterReseed = reseeds() - before - control;
+
+        for (let i = 0; i < 10; i++) draw();
+        await workerDraws();
+        const afterwards = reseeds() - before - control - afterReseed;
+
+        worker.terminate();
+        console.log(control, afterReseed, afterwards);
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: {
+          ...bunEnv,
+          LD_PRELOAD: so,
+          GETRANDOM_SYSCALL_COUNT_FILE: join(dirPath, "syscall-count-reseedRandom.txt"),
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), exitCode, stderr }).toMatchObject({
+        stdout: expect.stringMatching(/^\d+ \d+ \d+$/),
+        exitCode: 0,
+      });
+      const [control, afterReseed, afterwards] = stdout.trim().split(" ").map(Number);
+      // Seeded DRBGs do not touch the OS: 0 without the call, and 0 once both
+      // threads have reseeded. The call costs one reseed on the main thread and
+      // one on the worker thread.
+      expect({ control, afterReseed, afterwards }).toEqual({ control: 0, afterReseed: 2, afterwards: 0 });
+    });
   },
 );

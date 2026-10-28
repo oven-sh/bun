@@ -1,0 +1,341 @@
+Add CRYPTO_fork_detect_bump_generation for address-space clones.
+
+A VM snapshot restored into several clones duplicates the address space without
+a fork. MADV_WIPEONFORK and pthread_atfork do not fire, so every clone keeps the
+same per-thread CTR-DRBG state and emits the same RAND_bytes output.
+
+CRYPTO_fork_detect_bump_generation advances the fork generation on demand. The
+existing per-call compare in BCM_rand_bytes_with_additional_data then reseeds
+each thread's DRBG from the OS before its next output. The call is safe while
+other threads use BoringSSL:
+
+- WIPEONFORK (Linux, FreeBSD, OpenBSD): clear the flag page under the fork
+  detect lock, exactly as the kernel does after a fork. The next read on any
+  thread takes the existing locked increment. The generation word becomes an
+  Atomic<uint64_t>, because that increment can now run while other threads
+  read it without the lock (TSAN clean; the x86-64 fast path is unchanged).
+- pthread_atfork (macOS): the generation becomes an Atomic<uint64_t> and the
+  bump is a compare-exchange loop that skips zero.
+- OPENSSL_DOES_NOT_FORK (Windows): the constant becomes an atomic seeded with
+  the same value, so the bump still works.
+- No fork detection: the generation stays zero, which already means OS entropy
+  on every call, so the bump is a no-op.
+
+--- a/crypto/rand/fork_detect.cc
++++ b/crypto/rand/fork_detect.cc
+@@ -16,6 +16,8 @@
+ #define _GNU_SOURCE  // needed for madvise() and MAP_ANONYMOUS on Linux.
+ #endif
+ 
++#include <openssl/rand.h>
++
+ #include "../bcm_support.h"
+ #include "../internal.h"
+ #include "internal.h"
+@@ -80,7 +82,9 @@ static int g_force_madv_wipeonfork_enabled;
+ static CRYPTO_once_t g_fork_detect_once = CRYPTO_ONCE_INIT;
+ static StaticMutex g_fork_detect_lock;
+ static Atomic<uint32_t> *g_fork_detect_addr;
+-static uint64_t g_fork_generation;
++// Atomic because `CRYPTO_fork_detect_bump_generation` lets the locked
++// increment below run while other threads read it without the lock.
++static Atomic<uint64_t> g_fork_generation;
+ 
+ static void init_fork_detect() {
+   if (g_force_madv_wipeonfork) {
+@@ -104,7 +108,7 @@ static void init_fork_detect() {
+   }
+ 
+   g_fork_detect_addr = new (addr) Atomic<uint32_t>(1);
+-  g_fork_generation = 1;
++  g_fork_generation.store(1);
+ }
+ 
+ uint64_t bssl::CRYPTO_get_fork_generation() {
+@@ -141,19 +145,21 @@ uint64_t bssl::CRYPTO_get_fork_generation() {
+ 
+   // In the common case, try to observe the flag without taking a lock. This
+   // avoids cacheline contention in the PRNG.
+-  uint64_t *const generation_ptr = &g_fork_generation;
++  Atomic<uint64_t> *const generation_ptr = &g_fork_generation;
+   if (flag_ptr->load() != 0) {
+     // If we observe a non-zero flag, it is safe to read `generation_ptr`
+-    // without a lock. The flag and generation number are fixed for this copy of
+-    // the address space.
+-    return *generation_ptr;
++    // without a lock: the generation is stored before the flag, so a reader
++    // that sees the flag sees a generation at least as new as the one
++    // published with it. A concurrent bump may advance it afterwards; the
++    // caller compares again on its next call.
++    return generation_ptr->load();
+   }
+ 
+   // The flag was zero. The generation number must be incremented, but other
+   // threads may have concurrently observed the zero, so take a lock before
+   // incrementing.
+   MutexWriteLock lock(&g_fork_detect_lock);
+-  uint64_t current_generation = *generation_ptr;
++  uint64_t current_generation = generation_ptr->load();
+   if (flag_ptr->load() == 0) {
+     // A fork has occurred.
+     current_generation++;
+@@ -164,7 +170,7 @@ uint64_t bssl::CRYPTO_get_fork_generation() {
+ 
+     // We must update `generation_ptr` before `flag_ptr`. Other threads may
+     // observe `flag_ptr` without taking a lock.
+-    *generation_ptr = current_generation;
++    generation_ptr->store(current_generation);
+     flag_ptr->store(1);
+   }
+ 
+@@ -176,40 +182,88 @@ void bssl::CRYPTO_fork_detect_force_madv_wipeonfork_for_testing(int on) {
+   g_force_madv_wipeonfork_enabled = on;
+ }
+ 
++void CRYPTO_fork_detect_bump_generation() {
++  CRYPTO_once(&g_fork_detect_once, init_fork_detect);
++
++  Atomic<uint32_t> *const flag_ptr = g_fork_detect_addr;
++  if (flag_ptr == nullptr) {
++    // Without `MADV_WIPEONFORK` the generation is zero and every `RAND_bytes`
++    // call already draws OS entropy, so there is nothing to advance.
++    return;
++  }
++
++  // Clear the flag exactly as the kernel does after a fork. The next
++  // `CRYPTO_get_fork_generation` call on any thread then takes the lock above
++  // and advances the generation. The lock orders this store after any
++  // increment that is in flight, so that increment cannot overwrite the
++  // cleared flag with one and lose this bump.
++  MutexWriteLock lock(&g_fork_detect_lock);
++  flag_ptr->store(0);
++}
++
+ #elif defined(OPENSSL_FORK_DETECTION_PTHREAD_ATFORK)
+ 
+ static CRYPTO_once_t g_pthread_fork_detection_once = CRYPTO_ONCE_INIT;
+-static uint64_t g_atfork_fork_generation;
++static Atomic<uint64_t> g_atfork_fork_generation;
+ 
+ static void we_are_forked() {
+   // Immediately after a fork, the process must be single-threaded.
+-  uint64_t value = g_atfork_fork_generation + 1;
++  uint64_t value = g_atfork_fork_generation.load() + 1;
+   if (value == 0) {
+     value = 1;
+   }
+-  g_atfork_fork_generation = value;
++  g_atfork_fork_generation.store(value);
+ }
+ 
+ static void init_pthread_fork_detection() {
+   if (pthread_atfork(nullptr, nullptr, we_are_forked) != 0) {
+     abort();
+   }
+-  g_atfork_fork_generation = 1;
++  g_atfork_fork_generation.store(1);
+ }
+ 
+ uint64_t bssl::CRYPTO_get_fork_generation() {
+   CRYPTO_once(&g_pthread_fork_detection_once, init_pthread_fork_detection);
+ 
+-  return g_atfork_fork_generation;
++  return g_atfork_fork_generation.load();
++}
++
++void CRYPTO_fork_detect_bump_generation() {
++  CRYPTO_once(&g_pthread_fork_detection_once, init_pthread_fork_detection);
++
++  uint64_t old_value = g_atfork_fork_generation.load();
++  uint64_t new_value;
++  do {
++    new_value = old_value + 1;
++    if (new_value == 0) {
++      new_value = 1;
++    }
++  } while (
++      !g_atfork_fork_generation.compare_exchange_weak(old_value, new_value));
+ }
+ 
+ #elif defined(OPENSSL_DOES_NOT_FORK)
+ 
+ // These platforms are guaranteed not to fork, and therefore do not require
+-// fork detection support. Returning a constant non zero value makes BoringSSL
+-// assume address space duplication is not a concern and adding entropy to
+-// every RAND_bytes call is not needed.
+-uint64_t bssl::CRYPTO_get_fork_generation() { return 0xc0ffee; }
++// fork detection support. A constant non zero value makes BoringSSL assume
++// address space duplication is not a concern and adding entropy to every
++// RAND_bytes call is not needed. `CRYPTO_fork_detect_bump_generation` still
++// advances it, for duplication that happens outside the process, such as a
++// restored VM snapshot.
++static Atomic<uint64_t> g_fork_generation(0xc0ffee);
++
++uint64_t bssl::CRYPTO_get_fork_generation() { return g_fork_generation.load(); }
++
++void CRYPTO_fork_detect_bump_generation() {
++  uint64_t old_value = g_fork_generation.load();
++  uint64_t new_value;
++  do {
++    new_value = old_value + 1;
++    if (new_value == 0) {
++      new_value = 1;
++    }
++  } while (!g_fork_generation.compare_exchange_weak(old_value, new_value));
++}
+ 
+ #else
+ 
+@@ -219,4 +273,7 @@ uint64_t bssl::CRYPTO_get_fork_generation() { return 0xc0ffee; }
+ // every RAND_bytes call.
+ uint64_t bssl::CRYPTO_get_fork_generation() { return 0; }
+ 
++// Every call already draws OS entropy, so there is nothing to advance.
++void CRYPTO_fork_detect_bump_generation() {}
++
+ #endif
+--- a/crypto/rand/fork_detect_test.cc
++++ b/crypto/rand/fork_detect_test.cc
+@@ -13,6 +13,7 @@
+ // limitations under the License.
+ 
+ #include <openssl/base.h>
++#include <openssl/rand.h>
+ 
+ #include "../bcm_support.h"
+ #include "internal.h"
+@@ -66,7 +67,7 @@ static pid_t WaitpidEINTR(pid_t pid, int *out_status, int options) {
+ // `stderr` and `_exit` rather than GTest.
+ 
+ static void CheckGenerationAtLeastInChild(const char *name,
+-                                   uint64_t minimum_expected) {
++                                          uint64_t minimum_expected) {
+   uint64_t generation = CRYPTO_get_fork_generation();
+   if (generation < minimum_expected) {
+     fprintf(stderr, "%s generation (#1) was %" PRIu64 ", wanted %" PRIu64 ".\n",
+@@ -300,7 +301,101 @@ TEST(ForkDetect, TestAlternateFork) {
+   EXPECT_EQ(start, CRYPTO_get_fork_generation());
+ }
+ 
++TEST(ForkDetect, BumpGenerationThenFork) {
++  uint64_t start = CRYPTO_get_fork_generation();
++  if (start == 0) {
++    GTEST_SKIP() << "Fork detection not supported. Skipping test.\n";
++  }
++
++  CRYPTO_fork_detect_bump_generation();
++  uint64_t bumped = CRYPTO_get_fork_generation();
++  EXPECT_NE(bumped, start);
++  EXPECT_NE(bumped, uint64_t{0});
++
++  // A real fork after a bump still advances the generation.
++  ForkInChild([&] { CheckGenerationAtLeastInChild("Child", bumped + 1); });
++
++  // We still observe `bumped`.
++  EXPECT_EQ(bumped, CRYPTO_get_fork_generation());
++}
++
+ }  // namespace
+ BSSL_NAMESPACE_END
+ 
+ #endif  // OPENSSL_FORK_DETECTION && !OPENSSL_TSAN && !OPENSSL_IOS
++
++// The bump exists on every platform, including those without fork detection.
++#include <gtest/gtest.h>
++
++#if defined(OPENSSL_THREADS)
++#include <atomic>
++#include <thread>
++#include <vector>
++#endif
++
++BSSL_NAMESPACE_BEGIN
++namespace {
++
++TEST(ForkDetect, BumpGeneration) {
++  uint64_t start = CRYPTO_get_fork_generation();
++  CRYPTO_fork_detect_bump_generation();
++  uint64_t bumped = CRYPTO_get_fork_generation();
++
++  if (start == 0) {
++    // Without fork detection every call draws OS entropy. The generation
++    // stays zero so that behaviour is kept.
++    EXPECT_EQ(bumped, uint64_t{0});
++    return;
++  }
++
++  EXPECT_NE(bumped, start);
++  EXPECT_NE(bumped, uint64_t{0});
++  // The generation is stable until the next bump.
++  EXPECT_EQ(bumped, CRYPTO_get_fork_generation());
++
++  CRYPTO_fork_detect_bump_generation();
++  uint64_t bumped_again = CRYPTO_get_fork_generation();
++  EXPECT_NE(bumped_again, bumped);
++  EXPECT_NE(bumped_again, uint64_t{0});
++
++#if defined(OPENSSL_THREADS)
++  // Readers run concurrently with the bumps. Each reader must observe a
++  // non-decreasing sequence and never zero. The readers keep going until the
++  // bumps are done, so the two really interleave.
++  std::vector<std::thread> threads;
++  std::atomic<bool> failed(false);
++  std::atomic<int> ready(0);
++  std::atomic<bool> done(false);
++  for (int i = 0; i < 4; i++) {
++    threads.emplace_back([&] {
++      uint64_t last = CRYPTO_get_fork_generation();
++      ready.fetch_add(1);
++      while (!done.load()) {
++        uint64_t now = CRYPTO_get_fork_generation();
++        if (now == 0 || now < last) {
++          failed.store(true);
++        }
++        last = now;
++      }
++    });
++  }
++  while (ready.load() < 4) {
++    std::this_thread::yield();
++  }
++  for (int i = 0; i < 100; i++) {
++    CRYPTO_fork_detect_bump_generation();
++    std::this_thread::yield();
++  }
++  done.store(true);
++  for (auto &t : threads) {
++    t.join();
++  }
++  EXPECT_FALSE(failed.load());
++  uint64_t final_generation = CRYPTO_get_fork_generation();
++  EXPECT_NE(final_generation, bumped_again);
++  EXPECT_NE(final_generation, uint64_t{0});
++#endif  // OPENSSL_THREADS
++}
++
++}  // namespace
++BSSL_NAMESPACE_END
+--- a/include/openssl/rand.h
++++ b/include/openssl/rand.h
+@@ -59,6 +59,21 @@ OPENSSL_EXPORT void RAND_enable_fork_unsafe_buffering(int fd);
+ OPENSSL_EXPORT void RAND_disable_fork_unsafe_buffering(void);
+ #endif
+ 
++// CRYPTO_fork_detect_bump_generation tells BoringSSL that the address space
++// was duplicated by a mechanism it cannot observe, for example a VM snapshot
++// that was restored into several clones. It advances the fork generation, so
++// every thread reseeds its PRNG state from the operating system before its next
++// `RAND_bytes` output. It is safe to call while other threads use BoringSSL.
++//
++// On platforms where fork detection is unavailable (the generation is zero),
++// BoringSSL already draws OS entropy on every call and this function does
++// nothing.
++//
++// WARNING: This function affects BoringSSL for the entire address space. Only
++// code with global knowledge of the application should call it, directly
++// after the duplication it knows about.
++OPENSSL_EXPORT void CRYPTO_fork_detect_bump_generation(void);
++
+ #if defined(FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION)
+ // RAND_reset_for_fuzzing resets the fuzzer-only deterministic RNG. This
+ // function is only defined in the fuzzer-only build configuration.

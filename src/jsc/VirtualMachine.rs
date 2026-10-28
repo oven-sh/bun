@@ -513,6 +513,10 @@ unsafe extern "C" {
     safe fn Zig__GlobalObject__retireForTestIsolation(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
     safe fn WebWorker__teardownJSCVM(global: &JSGlobalObject);
+    /// BunReseedRandom.cpp: give every live global of this VM a new `Math.random` seed.
+    safe fn Bun__reseedMathRandomForAllGlobals(vm: &VM);
+    /// BunReseedRandom.cpp: post `Bun__VM__rederiveLocalRandomState` to every other live VM.
+    safe fn Bun__postReseedRandomToOtherVMs(vm: &VM);
 }
 
 bun_core::define_scoped_log!(teardown_log, Worker, hidden);
@@ -1901,6 +1905,26 @@ impl VirtualMachine {
             bun_core::Global::mimalloc_cleanup(true);
         }
         size
+    }
+
+    /// `Bun.reseedRandom()`: re-derive every random state an address-space
+    /// duplication (a restored VM snapshot) copied into this process. The
+    /// BoringSSL bump reaches every thread's CTR-DRBG lazily. The per-VM part
+    /// runs here now and on every other live VM when its event loop next runs.
+    pub fn reseed_random_state(&mut self) {
+        bun_boringssl::bump_fork_generation();
+        self.rederive_local_random_state();
+        Bun__postReseedRandomToOtherVMs(self.jsc_vm());
+    }
+
+    /// The per-VM part of [`Self::reseed_random_state`]: drop the pre-drawn
+    /// random bytes and give every live global a fresh `Math.random` seed.
+    /// Runs on this VM's thread, after the BoringSSL bump.
+    pub fn rederive_local_random_state(&mut self) {
+        if let Some(rare_data) = self.rare_data.as_mut() {
+            rare_data.forget_random_state();
+        }
+        Bun__reseedMathRandomForAllGlobals(self.jsc_vm());
     }
 
     #[inline]

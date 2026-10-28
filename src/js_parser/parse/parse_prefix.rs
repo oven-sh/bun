@@ -75,8 +75,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             loc,
             level,
             ParenExprOpts {
-                is_after_question_and_before_colon: flags == EFlags::AfterQuestionAndBeforeColon,
-                is_cast_operand: flags == EFlags::TsCastOperand,
+                flags,
                 ..Default::default()
             },
         )
@@ -285,7 +284,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 needs_async_loc: loc,
                 ..Default::default()
             };
-            let arrow_result = p.parse_arrow_body(args, &mut fn_or_arrow_data);
+            let arrow_result = p.parse_arrow_body(args, &mut fn_or_arrow_data, flags);
             p.pop_scope();
             return Ok(p.new_expr(arrow_result?, loc));
         }
@@ -995,7 +994,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ParenExprOpts {
                             force_arrow_fn: result
                                 == SkipTypeParameterResult::DefinitelyTypeParameters,
-                            is_cast_operand: flags == EFlags::TsCastOperand,
+                            flags,
+                            after_type_parameters: true,
                             ..Default::default()
                         },
                     );

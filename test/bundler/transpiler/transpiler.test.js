@@ -551,6 +551,510 @@ describe("Bun.Transpiler", () => {
       }
     });
 
+    it("the ? and : of a conditional reach an arrow function body and the right side of an assignment", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      // An arrow function body is still between the "?" and ":". "(c) : d => e"
+      // in it is an arrow function only when another ":" follows.
+      exp("x = a ? b => (c) : d => e", "x = a ? (b) => c : (d) => e;\n");
+      exp("x = a ? b => ({ c }) : d => ({ d })", "x = a ? (b) => ({ c }) : (d) => ({ d });\n");
+      exp("x = a ? (b) => (c) : d => e", "x = a ? (b) => c : (d) => e;\n");
+      exp("x = a ? (b, c) => (d) : e => f", "x = a ? (b, c) => d : (e) => f;\n");
+      exp("x = a ? async b => (c) : d => e", "x = a ? async (b) => c : (d) => e;\n");
+      exp("x = a ? async (b) => (c) : d => e", "x = a ? async (b) => c : (d) => e;\n");
+      exp("x = a ? async => (c) : d => e", "x = a ? (async) => c : (d) => e;\n");
+      exp("x = a ? b => c => (d) : e => f", "x = a ? (b) => (c) => d : (e) => f;\n");
+      exp("x = a ? b => (c) : d => e : f", "x = a ? (b) => (c) => e : f;\n");
+      exp("x = a ? b => (c): T => d : e", "x = a ? (b) => (c) => d : e;\n");
+      exp("x = a ? b => async (c) : d => e", "x = a ? (b) => async(c) : (d) => e;\n");
+      exp("x = a ? b => async (c): T => d : e", "x = a ? (b) => async (c) => d : e;\n");
+
+      // The body of an arrow function with a return type. Without the rule this
+      // printed "x = a ? b : (T) => (c) => e".
+      exp("x = a ? (b): T => (c) : d => e", "x = a ? (b) => c : (d) => e;\n");
+      exp("x = a ? (b): T => (c) : d => e : f", "x = a ? (b) => (c) => e : f;\n");
+      exp("x = a ? async (b): T => (c) : d => e", "x = a ? async (b) => c : (d) => e;\n");
+      exp("x = a ? (b): T => (c): U => d : e", "x = a ? (b) => (c) => d : e;\n");
+      exp("x = a ? (b): T => c ? (d) : e => f : g", "x = a ? b : (T) => c ? (d) => f : g;\n");
+      exp("x = a ? (b): T => c ? (d) : e => f : g : h", "x = a ? (b) => c ? (d) => f : g : h;\n");
+
+      // TypeScript gives the first ":" to "(b)" in each of these: "(b): c => (d)" is an arrow function
+      // that ends before the second ":". "T => e" is then the false branch, and "T[] => e" is an error.
+      exp("x = a ? (b) : c => (d): T => e", "x = a ? (b) => d : (T) => e;\n");
+      err("x = a ? (b) : c => (d): T[] => e", "Unexpected ]");
+      err("x = a ? (b) : c => async (d): Promise<T> => e", 'Expected ";" but found "=>"');
+      exp("x = a ? b : c => (d): T[] => e", "x = a ? b : (c) => (d) => e;\n");
+      exp("x = a ? (b.c) : d => (e): T[] => f", "x = a ? b.c : (d) => (e) => f;\n");
+
+      // TypeScript reports an error for each of these, and main prints "x = a ? b : ...". The attempt
+      // for "(b)" finds its second ":", and what follows is read as main reads it elsewhere: type
+      // arguments in parentheses before "=>", "<T, U>(d)" as a cast, and "(d,)" as an expression.
+      exp("x = a ? (b) : c => (d): (P<R>) => e", "x = a ? (b) => d : (P) => e;\n");
+      exp("x = a ? (b) : c => <T, U>(d): R => e", "x = a ? (b) => d : (R) => e;\n");
+      exp("x = a ? (b) : c => (d,): T => e", "x = a ? (b) => d : (T) => e;\n");
+
+      // The operand of "yield" is a new expression too. This is JavaScript that TypeScript 6.0 and main refuse.
+      err("function* g() { x = a ? yield (c) : d => e }", 'Expected ":" but found "}"');
+
+      // The right side of each assignment operator
+      exp("x = a ? b = (c) : d => e", "x = a ? b = c : (d) => e;\n");
+      exp("x = a ? b = (c) : d => e : f", "x = a ? b = (c) => e : f;\n");
+      exp("x = a ? b = c = (d) : e => f", "x = a ? b = c = d : (e) => f;\n");
+      exp("x = a ? b = c => (d) : e => f", "x = a ? b = (c) => d : (e) => f;\n");
+      exp("x = a ? b => c = (d) : e => f", "x = a ? (b) => c = d : (e) => f;\n");
+      for (const op of [
+        "+=",
+        "-=",
+        "*=",
+        "**=",
+        "/=",
+        "%=",
+        "<<=",
+        ">>=",
+        ">>>=",
+        "|=",
+        "&=",
+        "^=",
+        "||=",
+        "&&=",
+        "??=",
+      ]) {
+        exp(`x = a ? b ${op} (c) : d => e`, `x = a ? b ${op} c : (d) => e;\n`);
+        exp(`x = a ? b ${op} (c) : d => e : f`, `x = a ? b ${op} (c) => e : f;\n`);
+      }
+
+      // Type parameters before the parentheses
+      exp("x = a ? <T>(b) : c => d", "x = a ? b : (c) => d;\n");
+      exp("x = a ? <T>(b): c => d : e", "x = a ? (b) => d : e;\n");
+      exp("x = a ? <T>(b) => (c) : d => e", "x = a ? (b) => c : (d) => e;\n");
+      exp("x = a ? <T,>(b) => (c) : d => e", "x = a ? (b) => c : (d) => e;\n");
+      exp("x = a ? async <T>(b) : c => d", "x = a ? async(b) : (c) => d;\n");
+      exp("x = a ? async <T>(b): c => d : e", "x = a ? async (b) => d : e;\n");
+      exp("x = a ? async <T>(b) => (c) : d => e", "x = a ? async (b) => c : (d) => e;\n");
+
+      // The false branch of a conditional in one of these positions
+      exp("x = a ? b ? c : d = (e) : f => g", "x = a ? b ? c : d = e : (f) => g;\n");
+      exp("x = a ? b ? c : q => (e) : f => g", "x = a ? b ? c : (q) => e : (f) => g;\n");
+      exp("x = a ? q => b ? c : (d) : e => f", "x = a ? (q) => b ? c : d : (e) => f;\n");
+      exp("x = a ? q = b ? c : (d) : e => f", "x = a ? q = b ? c : d : (e) => f;\n");
+      exp("x = a ? q => b ? (c) : d => e : f : g", "x = a ? (q) => b ? (c) => e : f : g;\n");
+      exp("x = a ? (b): T => c ? d : (e) : f => g", "x = a ? (b) => c ? d : e : (f) => g;\n");
+
+      // TypeScript starts again inside brackets and in a block body
+      exp("x = a ? b => [(c): T => d] : e", "x = a ? (b) => [(c) => d] : e;\n");
+      exp("x = a ? b => f((c): T => d) : e", "x = a ? (b) => f((c) => d) : e;\n");
+      exp("x = a ? b => { return (c) } : d => e", "x = a ? (b) => {\n  return c;\n} : (d) => e;\n");
+      exp("x = a ? b => `${(c)}` : d => e", "x = a ? (b) => `${c}` : (d) => e;\n");
+
+      // ... and after "()", "(...b", "(b:" and "(b?", which can only be parameters
+      exp("x = a ? () => (b): T => c : d", "x = a ? () => (b) => c : d;\n");
+      exp("x = a ? (b: B) => (c): T => d : e", "x = a ? (b) => (c) => d : e;\n");
+      exp("x = a ? (...b) => (c): T => d : e", "x = a ? (...b) => (c) => d : e;\n");
+      exp("x = a ? (b?) => (c): T => d : e", "x = a ? (b) => (c) => d : e;\n");
+      exp("x = a ? async () => (b): T => c : d", "x = a ? async () => (b) => c : d;\n");
+      exp("x = a ? (): T => (b): U => c : d", "x = a ? () => (b) => c : d;\n");
+      err("x = a ? () => (b) : c => d", 'Expected ":" but found end of file');
+      err("x = a ? (b: B) => (c) : d => e", 'Expected ":" but found end of file');
+      err("x = a ? (...b) => (c) : d => e", 'Expected ":" but found end of file');
+      err("x = a ? (b?) => (c) : d => e", 'Expected ":" but found end of file');
+
+      // Such a body takes "(d) : e => f" as an arrow function, so no ":" is left for "(b)"
+      exp("x = a ? (b) : c => () => (d) : e => f", "x = a ? b : (c) => () => (d) => f;\n");
+      exp("x = a ? (b): T => () => (b) : d => e", "x = a ? b : (T) => () => (b) => e;\n");
+      exp("x = a ? (b): T => (q: Q) => (c) : d => e", "x = a ? b : (T) => (q) => (c) => e;\n");
+      exp("x = a ? (b): T => (...r) => (c) : d => e", "x = a ? b : (T) => (...r) => (c) => e;\n");
+      exp("x = a ? q => (b): T => () => (c) : d => e", "x = a ? (q) => b : (T) => () => (c) => e;\n");
+      exp("x = a ? q = (b): T => () => (c) : d => e", "x = a ? q = b : (T) => () => (c) => e;\n");
+      exp("x = a ? (b) : c => async (...r): R => d", "x = a ? b : (c) => async (...r) => d;\n");
+      exp("x = a ? (b) : c => async (): R => d", "x = a ? b : (c) => async () => d;\n");
+      exp("x = a ? (b) : c => async (r: R): S => d", "x = a ? b : (c) => async (r) => d;\n");
+      exp("x = a ? (b?): T => c : d", "x = a ? (b) => c : d;\n");
+      exp("x = a ? (b?, c): T => d : e", "x = a ? (b, c) => d : e;\n");
+      exp("x = a ? (b): T => (c?): U => (d) : e => f", "x = a ? b : (T) => (c) => (d) => f;\n");
+      exp("x = a ? q => (b?): T => (c) : d => e : f", "x = a ? (q) => (b) => (c) => e : f;\n");
+
+      // "({ b }: B)" and "<T>()" are not decided at first sight, so their body is still between the "?" and ":"
+      exp("x = a ? ({ b }: B) => (c) : d => e", "x = a ? ({ b }) => c : (d) => e;\n");
+      exp("x = a ? ({ b }: B): T => (c) : d => e", "x = a ? ({ b }) => c : (d) => e;\n");
+      exp("x = a ? <T>() => (b) : c => d", "x = a ? () => b : (c) => d;\n");
+      exp("x = a ? <T>(b: B) => (c) : d => e", "x = a ? (b) => c : (d) => e;\n");
+      exp("x = a ? async <T>() => (b) : c => d", "x = a ? async () => b : (c) => d;\n");
+      exp("x = a ? async <T>(b: B) => (c) : d => e", "x = a ? async (b) => c : (d) => e;\n");
+
+      // "async (" is read as before: a call, unless a second ":" follows the body
+      exp("x = a ? async() : d => e", "x = a ? async() : (d) => e;\n");
+      exp("x = a ? async() : 0", "x = a ? async() : 0;\n");
+      exp("x = a ? b ? async() : 0 : c", "x = a ? b ? async() : 0 : c;\n");
+      exp("x = a ? async(...b) : c => d", "x = a ? async(...b) : (c) => d;\n");
+      exp("x = a ? async (): T => b : () => c", "x = a ? async () => b : () => c;\n");
+      exp("x = a ? async (): T => { return b; } : () => c", "x = a ? async () => {\n  return b;\n} : () => c;\n");
+      exp("x = a ? async (): T => b ? async() : 0 : () => c", "x = a ? async () => b ? async() : 0 : () => c;\n");
+      exp("x = a ? async (): T => (b): U => c : d", "x = a ? async () => (b) => c : d;\n");
+
+      // ... also in an arrow function body and on the right side of an assignment
+      exp("x = a ? q => async() : d => e", "x = a ? (q) => async() : (d) => e;\n");
+      exp("x = a ? (q) => async() : d => e", "x = a ? (q) => async() : (d) => e;\n");
+      exp("x = a ? async q => async(...r) : d => e", "x = a ? async (q) => async(...r) : (d) => e;\n");
+      exp("x = a ? q = async() : d => e", "x = a ? q = async() : (d) => e;\n");
+      exp("x = a ? b ? c : q => async() : d => e", "x = a ? b ? c : (q) => async() : (d) => e;\n");
+      exp("x = a ? q => async (): T => b : c", "x = a ? (q) => async () => b : c;\n");
+      exp("x = a ? q = async (): T => b : c", "x = a ? q = async () => b : c;\n");
+
+      // ... but there only if no reading leaves a ":" for the conditional. Each of these has an "async"
+      // arrow function with a return type that leaves one, so they stay the errors that they are on
+      // main and in TypeScript 6.0.
+      err("x = a ? q => async (): T => (d) : e => f", 'Expected ":" but found end of file');
+      err("x = a ? q = async (): T => (d) : e => f", 'Expected ":" but found end of file');
+      err("x = a ? q += async (...b): T => (d) : e => f", 'Expected ":" but found end of file');
+      err("x = a ? q => async() : T => (b): number => b", 'Expected ":" but found end of file');
+      err("x = a ? q => b ? c : async (): T => (d) : e => f", 'Expected ":" but found end of file');
+      // Directly in the branch the call stays, as on main
+      exp("x = a ? async (): T => (d) : e => f", "x = a ? async() : (T) => (d) => f;\n");
+      exp("x = a ? async() : T => (b): number => b", "x = a ? async() : (T) => (b) => b;\n");
+
+      // ... but not in the body of "(b): c =>". There "async ():" starts an arrow function at first
+      // sight, as in TypeScript: a call would leave its ":" to "(b)".
+      exp("x = a ? (b) : c => q => async (): S => d", "x = a ? b : (c) => (q) => async () => d;\n");
+      exp("x = a ? (b) : c => q = async (): S => d", "x = a ? b : (c) => q = async () => d;\n");
+      exp("x = a ? (b) : c => (q) => async (): S => d", "x = a ? b : (c) => (q) => async () => d;\n");
+      exp("x = a ? (b) : c => k ? d : async (...r): S => e", "x = a ? b : (c) => k ? d : async (...r) => e;\n");
+
+      // The first item decides what is seen at first sight, whatever follows it
+      exp("x = a ? (b, c?) => (d) : e => f", "x = a ? (b, c) => d : (e) => f;\n");
+      exp("x = a ? (b, c?, d) => (e) : f => g", "x = a ? (b, c, d) => e : (f) => g;\n");
+      exp("x = a ? (b, c: C) => (d) : e => f", "x = a ? (b, c) => d : (e) => f;\n");
+      exp("x = a ? (b = 1, c: C) => (d) : e => f", "x = a ? (b = 1, c) => d : (e) => f;\n");
+      exp("x = a ? ({ b }: B, c?) => (d) : e => f", "x = a ? ({ b }, c) => d : (e) => f;\n");
+      exp("x = a ? ([b]: B = g) => (d) : e => f", "x = a ? ([b] = g) => d : (e) => f;\n");
+      err("x = a ? (b?, c) => (d) : e => f", 'Expected ":" but found end of file');
+      err("x = a ? (b?, c?) => (d) : e => f", 'Expected ":" but found end of file');
+      err("x = a ? (b: B, c) => (d) : e => f", 'Expected ":" but found end of file');
+      err("x = a ? (b: B = 1) => (d) : e => f", 'Expected ":" but found end of file');
+      err("x = a ? (b: B = 1, c) => (d) : e => f", 'Expected ":" but found end of file');
+
+      // Directly between the "?" and ":", such a head with a return type is read as before: it
+      // needs a second ":", and its return type is read again with errors on
+      exp("x = a ? async (b: B): T => (c) : d => e : f", "x = a ? async (b) => (c) => e : f;\n");
+      exp("x = a ? async (...b): T => c", "x = a ? async(...b) : (T) => c;\n");
+      err("x = a ? (): T => b", 'Expected "=>" but found ":"');
+      err("x = a ? (b: B): T => c", 'Unexpected ":"');
+      err("x = a ? (): => b : c", "Unexpected =>");
+      err("x = a ? (b: B): => c : d", "Unexpected =>");
+      // ... and so is a head in an arrow function body now
+      err("x = a ? q => (b): => c : d", "Unexpected =>");
+      err("x = a ? q => (b?): T => c", "Unexpected )");
+
+      // The two carries together: the right side of an assignment in the body of "(b): T =>"
+      exp("x = a ? (b): T => q = (c) : d => e", "x = a ? (b) => q = c : (d) => e;\n");
+      exp("x = a ? (b): T => q += (c) : d => e", "x = a ? (b) => q += c : (d) => e;\n");
+      exp("x = a ? async (b): T => q = (c) : d => e", "x = a ? async (b) => q = c : (d) => e;\n");
+      exp("x = a ? r => (b): T => q = (c) : d => e", "x = a ? (r) => (b) => q = c : (d) => e;\n");
+      exp("x = a ? (b): T => q => (c) : d => e", "x = a ? (b) => (q) => c : (d) => e;\n");
+      exp("x = a ? (b): T => q = r => (c) : d => e", "x = a ? (b) => q = (r) => c : (d) => e;\n");
+      exp("x = a ? (b): T => q = (c): U => d : e", "x = a ? (b) => q = (c) => d : e;\n");
+      exp("x = a ? q = (b): T => r = (c) : d => e", "x = a ? q = (b) => r = c : (d) => e;\n");
+
+      // Parentheses behind "<T extends X>" can only be parameters, so they need no second ":"
+      exp("x = a ? <T extends X>(b): U => (c) : d => e", "x = a ? (b) => c : (d) => e;\n");
+      exp("x = a ? <T extends X>(b): U => (c) : d => e : f", "x = a ? (b) => (c) => e : f;\n");
+      exp("x = a ? async <T extends X>(b): U => (c) : d => e", "x = a ? async (b) => c : (d) => e;\n");
+      err("x = a ? <T extends X>(b): U => c", 'Expected ":" but found end of file');
+      err("x = a ? <T extends X>(b): U => async() : d => e", 'Expected ":" but found end of file');
+
+      // Nor do "<T>(b: B)", "<T>()" and "<T>(...b)", which are no cast. They are read as on main: an
+      // error is the one of the body or of the conditional, not an unexpected ":" at the parameter.
+      exp("x = a ? <T>(b: B): U => (c) : d => e", "x = a ? (b) => c : (d) => e;\n");
+      exp("x = a ? <T>(): U => (c) : d => e", "x = a ? () => c : (d) => e;\n");
+      exp("x = a ? <T>(...b): U => (c) : d => e", "x = a ? (...b) => c : (d) => e;\n");
+      exp("x = a ? async <T>(): U => (c) : d => e", "x = a ? async () => c : (d) => e;\n");
+      err("x = a ? <T>(b: B): U => c", 'Expected ":" but found end of file');
+      err("x = a ? <T>(b: B): U => { return (c; } : d", 'Expected ")" but found ";"');
+
+      // The operand of a "<T>" cast in these positions takes no return type either
+      exp("x = a ? q => <B[]>(b) : d => e", "x = a ? (q) => b : (d) => e;\n");
+      exp("x = a ? (p): T => <B[]>async (b) : d => e", "x = a ? (p) => async(b) : (d) => e;\n");
+      exp("x = a ? <B[]>(b) : d => (e) : f => g", "x = a ? b : (d) => (e) => g;\n");
+      exp("x = a ? <B[]>async (b) : d => (e) : f => g", "x = a ? async(b) : (d) => (e) => g;\n");
+      exp(
+        "x = a ? q => async (): T => <B[]>({ c }) : T => async()",
+        "x = a ? (q) => async () => ({ c }) : (T) => async();\n",
+      );
+      exp("x = a ? (b) : c => async (d?): T => <B[]>(e) : f => g", "x = a ? (b) => async (d) => e : (f) => g;\n");
+
+      // A cast in parentheses before "=>" is read as it was, and its body is between the "?" and ":"
+      exp("x = a ? (b as B) => (c) : d => e", "x = a ? (b) => c : (d) => e;\n");
+    });
+
+    it("arrow function attempts between the ? and : of a conditional leave nothing behind and run once", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      // Scopes, private names, "in" and enum values
+      exp(
+        "x = a ? q => (b) : c => { function f(p = () => { let z = 1; return z }) { class K { #p; m() { return this.#p } } return new K } return f() }",
+        "x = a ? (q) => b : (c) => {\n  function f(p = () => {\n    let z = 1;\n    return z;\n  }) {\n\n    class K {\n      #p;\n      m() {\n        return this.#p;\n      }\n    }\n    return new K;\n  }\n  return f();\n};\n",
+      );
+      exp(
+        "x = a ? (b = () => { let z = 1; return z }, c = class { #p; m() { return this.#p } }): T => b : e",
+        "x = a ? (b = () => {\n  let z = 1;\n  return z;\n}, c = class {\n  #p;\n  m() {\n    return this.#p;\n  }\n}) => b : e;\n",
+      );
+      exp(
+        "x = a ? (b = () => { let z = 1; return z }, c = class { #p; m() { return this.#p } }) : T => b",
+        "x = a ? (b = () => {\n  let z = 1;\n  return z;\n}, c = class {\n  #p;\n  m() {\n    return this.#p;\n  }\n}) : (T) => b;\n",
+      );
+      exp(
+        "x = a ? q => (b = function () { var v; return v }): T => { let y = b; return y } : e",
+        "x = a ? (q) => (b = function() {\n  var v;\n  return v;\n}) => {\n  let y = b;\n  return y;\n} : e;\n",
+      );
+      exp(
+        "x = a ? q => (b): T => { enum E { A = 1, B = A * 2 } return E.B } : e",
+        'x = a ? (q) => (b) => {\n  let E;\n  ((E) => {\n    E[E["A"] = 1] = "A";\n    E[E["B"] = 2] = "B";\n  })(E ||= {});\n  return 2 /* B */;\n} : e;\n',
+      );
+      exp(
+        "x = a ? q => (b) : c => { import('d'); return import.meta.url }",
+        'x = a ? (q) => b : (c) => {\n  import("d");\n  return import.meta.url;\n};\n',
+      );
+      exp(
+        "x = class { #y; y = a ? q => (b): T => this.#y : c }",
+        "x = class {\n  #y;\n  y = a ? (q) => (b) => this.#y : c;\n};\n",
+      );
+      exp(
+        "for (x = a ? q => (b = c in d): T => e in f : g; ; ) ;",
+        "for (x = a ? (q) => (b = c in d) => (e in f) : g;; )\n  ;\n",
+      );
+      exp(
+        "function* g() { x = a ? q => (b) : c => d; x = a ? yield (b): T => c : d }",
+        "function* g() {\n  x = a ? (q) => b : (c) => d;\n  x = a ? yield (b) => c : d;\n}",
+      );
+
+      // A legal comment is printed once
+      exp("x = a ? (/*! L */ b): T => { let y = 1 } : c", "x = a ? (b) => {\n  /*! L */\n  let y = 1;\n} : c;\n");
+      exp(
+        "x = a ? (b = /*! L */ 1): T => { let y = 1 } : c",
+        "x = a ? (b = 1) => {\n  /*! L */\n  let y = 1;\n} : c;\n",
+      );
+      exp(
+        "x = a ? q => /*! L */ (b): T => { let y = 1 } : c",
+        "x = a ? (q) => (b) => {\n  /*! L */\n  let y = 1;\n} : c;\n",
+      );
+      exp(
+        "x = a ? q => /*! L */ (b) : c => { return d }",
+        "x = a ? (q) => b : (c) => {\n  /*! L */\n  return d;\n};\n",
+      );
+      exp("x = a ? q = /*! L */ (b) : c => { return d }", "x = a ? q = b : (c) => {\n  /*! L */\n  return d;\n};\n");
+
+      // Each attempt runs once. An attempt nested in a body or in parameters that ran again when
+      // they are parsed for real would take 2^40 parses here.
+      const chains = [
+        [s => `a ? q => (p): T => ${s} : e`, s => `a ? (q) => (p) => ${s} : e`],
+        [s => `a ? q => (p) : c => ${s}`, s => `a ? (q) => p : (c) => ${s}`],
+        [s => `a ? q = (p): T => ${s} : e`, s => `a ? q = (p) => ${s} : e`],
+        [s => `a ? q = (p) : c => ${s}`, s => `a ? q = p : (c) => ${s}`],
+        [s => `a ? <T>(p): T => ${s} : e`, s => `a ? (p) => ${s} : e`],
+        [s => `a ? (p = ${s}): T => p : e`, s => `a ? (p = ${s}) => p : e`],
+      ];
+      for (const [wrap, wrapOut] of chains) {
+        let code = "d";
+        let out = "d";
+        for (let i = 0; i < 40; i++) {
+          code = wrap(code);
+          out = wrapOut(out);
+        }
+        exp(`x = ${code}`, `x = ${out};\n`);
+      }
+
+      // TypeScript reads "(p = await /x? ... : no)" as parameters first, where "await" is a name and
+      // "/" divides, so it gives up on "async (h, k)" and takes both scripts. The attempt here reads
+      // "await" as the operator: "/x? async (a, c = /" is then a regular expression, the parentheses
+      // end behind "/.y/g", and the ":" behind them ends the attempt. Only a name "await" before "/"
+      // does this. TypeScript and main print "x = y ? async(h, k) : (R) => ..." for each of these.
+      err(
+        "x = y ? async (h, k) : R => (p = await /x? async (a, c = /.y/g) : T => await z : no) => body;",
+        '"await" can only be used inside an "async" function',
+      );
+      err(
+        "x = y ? async (h, k) : R => (p = await /x? async w => async (a, c = /.y/g) : T => await /u ? 1 /g : no) => body;",
+        'Expected ";" but found ")"',
+      );
+      // ... and not each is an error
+      exp(
+        'x = y ? async (h, k) : R => (p = await /x? async (a, c = ")" + /.y/g) : T => await /u + / + "[" : no) => body + "]" /g;',
+        'x = y ? async (h, k) => p = await /x? async (a, c = ")" + /.y / g : (T) => await / u + / + "[" : no) => body + "]" /g;\n',
+      );
+      // "async (h, k!)" cannot be parameters, so there is no attempt
+      exp(
+        "x = y ? async (h, k!) : R => (p = await /x? async (a, c = /.y/g) : T => await z : no) => body;",
+        "x = y ? async(h, k) : (R) => (p = await / x ? async (a, c = /.y/g) => await z : no) => body;\n",
+      );
+      // The attempt for "async (h)" reaches ": T" after "async (p = await /x? async (...a, c = /.y/g)", whose
+      // body is still between the "?" and ":". The real parse reaches it after "async (...a, c = /.y/g)",
+      // which starts an arrow function at first sight: its body is a new expression.
+      exp(
+        "x = y ? async (h) : R => Q ? async (p = await /x? async (...a, c = /.y/g) : T => (d) : e => f) : w;",
+        "x = y ? async(h) : (R) => Q ? async(p = await / x ? async(...a, c = /.y/g) : (T) => (d) => f) : w;\n",
+      );
+    });
+
+    it("the ? and : of a conditional in TSX", () => {
+      const tsx = new Bun.Transpiler({ loader: "tsx" });
+      const exp = (code, out) => expect(tsx.transformSync(code)).toBe(out);
+      const err = (code, message) => {
+        let error;
+        try {
+          tsx.transformSync(code);
+        } catch (e) {
+          error = e instanceof AggregateError ? e.errors[0] : e;
+        }
+        expect(error?.message).toBe(message);
+      };
+
+      exp("x = a ? b => (c) : d => e", "x = a ? (b) => c : (d) => e;\n");
+      exp("x = a ? (b): T => (c) : d => e", "x = a ? (b) => c : (d) => e;\n");
+      exp("x = a ? b = (c) : d => e", "x = a ? b = c : (d) => e;\n");
+      exp("x = a ? q => <T,>(b): T => c : d", "x = a ? (q) => (b) => c : d;\n");
+
+      // "<T,>(" starts an arrow function at first sight in TSX, so its body is read as if outside the conditional
+      exp("x = a ? <T,>(b): T => (c): U => d : e", "x = a ? (b) => (c) => d : e;\n");
+      exp("x = a ? async <T,>(b): T => (c): U => d : e", "x = a ? async (b) => (c) => d : e;\n");
+      err("x = a ? <T,>(b) => (c) : d => e", 'Expected ":" but found end of file');
+      err("x = a ? async <T,>(b) => (c) : d => e", 'Expected ":" but found end of file');
+    });
+
+    it("every transpiler API takes a conditional whose branches are arrow functions", async () => {
+      const code = `import { v } from "m";
+import type { T } from "n";
+export const pick = byId ? id => ({ id, v }) : name => ({ name });
+export const next = byId ? (n): number => (n) : n => n + 1;
+`;
+      const out = `import { v } from "m";
+export const pick = byId ? (id) => ({ id, v }) : (name) => ({ name });
+export const next = byId ? (n) => n : (n) => n + 1;
+`;
+      for (const loader of ["ts", "tsx"]) {
+        const t = new Bun.Transpiler({ loader });
+        expect(t.transformSync(code)).toBe(out);
+        expect(await t.transform(code)).toBe(out);
+        expect(t.scan(code)).toEqual({
+          exports: ["next", "pick"],
+          imports: [{ kind: "import-statement", path: "m" }],
+        });
+        expect(t.scanImports(code)).toEqual([{ kind: "import-statement", path: "m" }]);
+      }
+    });
+
+    it("runs conditionals whose branches are arrow functions", async () => {
+      using dir = tempDir("ts-conditional-arrow-branches", {
+        "index.ts": `
+          const byId = false;
+          const pick = byId ? id => ({ id }) : name => ({ name });
+          console.log(JSON.stringify(pick("a")));
+          const next = byId ? (n): number => (n) : n => n + 1;
+          console.log(typeof next, next(1));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: '{"name":"a"}\nfunction 2\n', stderr: "", exitCode: 0 });
+    });
+
+    it("bun -e runs JavaScript with a conditional whose branches are arrow functions", async () => {
+      // "bun -e" reads its argument with the TypeScript parser. This is TypeScript's
+      // parserArrowFunctionExpression8, which is JavaScript too.
+      const script = "const f = 1 ? y => ({ y }) : z => ({ z }); console.log(JSON.stringify(f(2)));";
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: '{"y":2}\n', stderr: "", exitCode: 0 });
+    });
+
+    it("prints TypeScript's parserArrowFunctionExpression8 to 17 as TypeScript does", () => {
+      // tests/cases/conformance/parser/ecmascript5/ArrowFunctionExpressions of microsoft/TypeScript
+      const transpiler = new Bun.Transpiler({ loader: "ts", deadCodeElimination: false });
+      const cases = [
+        ["x ? y => ({ y }) : z => ({ z })", "x ? (y) => ({ y }) : (z) => ({ z })"],
+        ["b ? (c) : d => e", "b ? c : (d) => e"],
+        ["a ? (b) : c => (d) : e => f", "a ? (b) => d : (e) => f"],
+        ["a ? b ? c : (d) : e => f", "a ? b ? c : d : (e) => f"],
+        ["a ? (b) => (c): d => e", "a ? (b) => c : (d) => e"],
+        ["a ? () => a() : (): any => null", "a ? () => a() : () => null"],
+        ["a() ? (b: number, c?: string): void => d() : e", "a() ? (b, c) => d() : e"],
+        ["false ? (param): string => param : null", "false ? (param) => param : null"],
+        ["true ? false ? (param): string => param : null : null", "true ? false ? (param) => param : null : null"],
+        ["a ? b : (c) : d => e", "a ? b : (c) => e"],
+      ];
+      for (const [code, out] of cases) expect(transpiler.transformSync(`${code};`)).toBe(`${out};\n`);
+    });
+
+    it("reads the lines of TypeScript's test for `async(` between the ? and : as TypeScript's fix does", () => {
+      const exp = ts.expectPrinted_;
+
+      // From tests/cases/compiler/parenthesizedAsyncArrowFunction.ts of
+      // https://github.com/microsoft/TypeScript/pull/64233, which was open when this was written:
+      // the conditionals that this parser reads as that fix does. TypeScript 6.0 reports an error
+      // where a ":" follows "async()" or "async(...c)".
+      const lines = [
+        ["a ? async() : 0", "a ? async() : 0"],
+        ["a ? async() : x => x", "a ? async() : (x) => x"],
+        ["a ? a ? async() : 0 : b", "a ? a ? async() : 0 : b"],
+        ["a ? x => async() : x => x", "a ? (x) => async() : (x) => x"],
+        ["a ? async (): Promise<number> => b : () => b", "a ? async () => b : () => b"],
+        ["a ? async (): Promise<number> => { return b; } : () => b", "a ? async () => {\n  return b;\n} : () => b"],
+        ["a ? async (): Promise<number> => a ? async() : 0 : () => b", "a ? async () => a ? async() : 0 : () => b"],
+        ["a ? (): number => b : () => b", "a ? () => b : () => b"],
+        ["a ? async(...c) : 0", "a ? async(...c) : 0"],
+        ["a ? async(...c) : x => x", "a ? async(...c) : (x) => x"],
+        ["a ? async (...c: number[]): Promise<number> => c.length : () => 0", "a ? async (...c) => c.length : () => 0"],
+        [
+          "a ? async() : x => async (...c): Promise<number> => c.length",
+          "a ? async() : (x) => async (...c) => c.length",
+        ],
+        ["a ? async() : x => async (): Promise<number> => b", "a ? async() : (x) => async () => b"],
+        ["a ? (b) : x => async (): T => 0", "a ? b : (x) => async () => 0"],
+        ["a ? (x): number => (b): T => 0", "a ? (x) => b : (T) => 0"],
+        ["a ? async <U>(): Promise<number> => (b): T => 0", "a ? async () => b : (T) => 0"],
+        ["a ? async() : {}", "a ? async() : {}"],
+        ["a ? (c): U => (b) : x => x", "a ? (c) => b : (x) => x"],
+        ["a ? async() : function() {}", "a ? async() : function() {}"],
+        ['a ? async() : "b"', 'a ? async() : "b"'],
+        ["a ? (c) : 0", "a ? c : 0"],
+        ["a ? async (): T => async() : b", "a ? async () => async() : b"],
+        ["a ? a ? async() : T => b : async (): T => b", "a ? a ? async () => b : async() : (T) => b"],
+        ["a ? async (): T => async() : (d): number => d", "a ? async () => async() : (d) => d"],
+        ["a ? async (): T => a ? async() : b : d => d", "a ? async () => a ? async() : b : (d) => d"],
+        [
+          "a ? d => a ? (0) : a ? async(b) : async() : (d => d = a)",
+          "a ? (d) => a ? 0 : a ? async(b) : async() : (d) => d = a",
+        ],
+        ["a ? d => d = async () => async() : (d => d = 0)", "a ? (d) => d = async () => async() : (d) => d = 0"],
+        ["a ? d = (d): T => a ? 0 : async(...c) : T => b", "a ? d = d : (T) => a ? 0 : async (...c) => b"],
+        [
+          "a ? async (): T => async (): T => (d): T => b : a ? d => (d): T => async(...c) : T => b",
+          "a ? async () => async () => (d) => b : a ? (d) => d : (T) => async (...c) => b",
+        ],
+        ["a ? async (): T => (d): T => async() : b", "a ? async () => (d) => async() : b"],
+        ["(a ? async (): T => (d): T => async() : b)", "a ? async () => (d) => async() : b"],
+        [
+          "a ? d = (d): T => a ? 0 : async(...c) : T => a ? d = (d): T => a ? 0 : async(...c) : T => b",
+          "a ? d = d : (T) => a ? 0 : async (...c) => a ? d = d : (T) => a ? 0 : async (...c) => b",
+        ],
+        [
+          "a ? async (c = a ? async() : d => d): T => async() : b",
+          "a ? async (c = a ? async() : (d) => d) => async() : b",
+        ],
+        ["a ? a ? (d): T => a ? async() : b : d => d : b", "a ? a ? (d) => a ? async() : b : (d) => d : b"],
+        ["a ? async() : (d => d)", "a ? async() : (d) => d"],
+        ["a ? async() : d => (a ? async() : d => d)", "a ? async() : (d) => a ? async() : (d) => d"],
+        ["a ? async (x): T => async (): T => b", "a ? async(x) : (T) => async () => b"],
+        ["a ? async (x): T => async() : x => x", "a ? async(x) : (T) => async () => x"],
+      ];
+      for (const [code, out] of lines) exp(`x = ${code};`, `x = ${out};\n`);
+    });
+
     it('a call of "async" before a ":" stays a call', async () => {
       const exp = ts.expectPrinted_;
       const err = ts.expectParseError;
@@ -638,6 +1142,22 @@ describe("Bun.Transpiler", () => {
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
       expect(stdout).toBe("() Date Map\n(b) Date Map\n(b: B) Date Map\n");
       expect(exitCode).toBe(0);
+    });
+
+    it("emitDecoratorMetadata behind an arrow function attempt in an arrow function body", () => {
+      const tsconfig = { compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true } };
+      const transpiler = new Bun.Transpiler({ loader: "ts", tsconfig });
+      const body = "{ class A { @d() p: Date; @d() q: Map<K, V>; } return A; }";
+      const types = code =>
+        [...transpiler.transformSync(code).matchAll(/"design:type", typeof (\w+)/g)].map(match => match[1]);
+
+      // The attempt for "(b): T =>" is kept
+      expect(types(`x = a ? q => (b): T => ${body} : null;`)).toEqual(["Date", "Map"]);
+      expect(types(`x = a ? q = (b): T => ${body} : null;`)).toEqual(["Date", "Map"]);
+      // ... and discarded: the class is in the false branch
+      expect(types(`x = a ? q => (b) : T => ${body};`)).toEqual(["Date", "Map"]);
+      expect(types(`x = a ? q = (b) : T => ${body};`)).toEqual(["Date", "Map"]);
+      expect(types(`x = a ? q => async (b) : T => ${body};`)).toEqual(["Date", "Map"]);
     });
 
     it("a discarded arrow function attempt leaves no JSX import behind", () => {
@@ -808,7 +1328,7 @@ describe("Bun.Transpiler", () => {
         `${item}<T>`,
         `${item}<<T>() => void>`,
       ];
-      const items = ["(b)", ...wrapped("b"), ...wrapped("(b)")];
+      const items = ["b", "(b)", ...wrapped("b"), ...wrapped("(b)")];
       const heads = items.flatMap(item => [
         `(${item})`,
         `(c, ${item})`,
@@ -865,6 +1385,124 @@ describe("Bun.Transpiler", () => {
       const different = accepted.filter((code, i) => print(asTypeScript, code) !== print(asJavaScript, emitted[i]));
       expect(different).toEqual([]);
     });
+
+    // TypeScript is the oracle here too. The statements come from a generator with a fixed seed, so a
+    // failure lists the statements that differ.
+    it.skipIf(isDebug || isASAN).each(["ts", "tsx"])(
+      "prints what TypeScript prints for generated conditionals with arrow functions: %s",
+      loader => {
+        const typescript = require("typescript");
+        const tsx = loader === "tsx";
+        let seed = 11;
+        const random = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 2 ** 32;
+        const pick = list => list[Math.floor(random() * list.length)];
+        const names = ["b", "c", "d", "e"];
+        const parameters = [
+          ...["(b)", "(b)", "()", "(b, c)", "(b: B)", "(b?)", "(...b)", "(b = c)"],
+          ...["({ b })", "({ b }: B)", "([b])", "(b, c: C)", "(b?, c)", "(...b: B[])"],
+        ];
+        const parentheses = [
+          "(b)",
+          "(b)",
+          "(b, c)",
+          "(b = c)",
+          "({ b })",
+          "([b])",
+          "(b as B)",
+          "(b!)",
+          "((b))",
+          "(b.c)",
+        ];
+        const typeParameters = tsx ? ["<T,>", "<T extends X>"] : ["<T>", "<T extends X>", "<T,>"];
+        const prefixes = ["", "", "", "async ", "async ", ...typeParameters, `async ${typeParameters[0]}`];
+        const operators = [
+          "=",
+          "+=",
+          "-=",
+          "*=",
+          "**=",
+          "/=",
+          "%=",
+          "<<=",
+          ">>=",
+          ">>>=",
+          "|=",
+          "&=",
+          "^=",
+          "||=",
+          "&&=",
+          "??=",
+        ];
+        const atom = () => pick(["c", "(c)", "({ c })", "async()", "async(c)", "f(c)", "[c]", "c.d", "c as C", "0"]);
+        const head = () => {
+          const r = random();
+          if (r < 0.2) return pick(names);
+          if (r < 0.27) return "async " + pick(names);
+          const returnType = random() < 0.45 ? ": " + pick(["T", "U", "T[]", "(T)", "Promise<T>"]) : "";
+          return pick(prefixes) + pick(parameters) + returnType;
+        };
+        const expression = depth => {
+          const r = random();
+          if (depth <= 0 || r < 0.2) return atom();
+          if (r < 0.5) return `${head()} => ${expression(depth - 1)}`;
+          if (r < 0.62)
+            return pick(tsx ? ["", "", "", "async "] : ["", "", "", "async ", "<T>", "async <T>"]) + pick(parentheses);
+          if (r < 0.74) return `${pick(names)} ${pick(operators)} ${expression(depth - 1)}`;
+          if (r < 0.82) return `k ? ${expression(depth - 1)} : ${expression(depth - 1)}`;
+          if (r < 0.87) return tsx ? `${expression(depth - 1)} as B` : `<B[]>${expression(depth - 1)}`;
+          if (r < 0.91) return `(${expression(depth - 1)})`;
+          if (r < 0.94) return `[${expression(depth - 1)}]`;
+          if (r < 0.97) return `f(${expression(depth - 1)})`;
+          return `${pick(names)} => { return ${expression(depth - 1)}; }`;
+        };
+        const tail = depth => {
+          const r = random();
+          if (r < 0.45) return `${pick(names)} => ${expression(depth)}`;
+          if (r < 0.55) return `T => ${expression(depth)}`;
+          if (r < 0.65) return `(${pick(names)}) => ${expression(depth)}`;
+          return expression(depth);
+        };
+        const inputs = new Set();
+        while (inputs.size < 2000) {
+          const depth = 1 + Math.floor(random() * 3);
+          const r = random();
+          const branches = `a ? ${expression(depth)} : ${tail(depth - 1)}`;
+          inputs.add(
+            r < 0.55
+              ? `x = ${branches};`
+              : r < 0.8
+                ? `x = ${branches} : ${tail(0)};`
+                : `x = y ? ${branches} : ${tail(0)};`,
+          );
+        }
+
+        const file = `x.${loader}`;
+        const accepted = [...inputs].filter(
+          code => typescript.createSourceFile(file, code, typescript.ScriptTarget.ESNext).parseDiagnostics.length === 0,
+        );
+        expect(accepted.length).toBeGreaterThan(inputs.size / 2);
+        const emitted = typescript
+          .transpileModule(accepted.map((code, i) => `"#${i}";\n${code}\n`).join(""), {
+            fileName: file,
+            compilerOptions: { target: "esnext", module: "esnext", jsx: "preserve" },
+          })
+          .outputText.split(/^"#\d+";\n/m)
+          .slice(1);
+        expect(emitted.length).toBe(accepted.length);
+
+        const asTypeScript = new Bun.Transpiler({ loader, deadCodeElimination: false });
+        const asJavaScript = new Bun.Transpiler({ loader: tsx ? "jsx" : "js", deadCodeElimination: false });
+        const print = (transpiler, code) => {
+          try {
+            return transpiler.transformSync(code);
+          } catch (e) {
+            return `error: ${(e instanceof AggregateError ? e.errors[0] : e).message}`;
+          }
+        };
+        const different = accepted.filter((code, i) => print(asTypeScript, code) !== print(asJavaScript, emitted[i]));
+        expect(different).toEqual([]);
+      },
+    );
 
     it("type-only import syntax", () => {
       const exp = ts.expectPrinted_;

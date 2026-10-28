@@ -80,7 +80,8 @@ bun_core::declare_scope!(cache, visible);
 /// Version 44: TypeScript `a ? async(...b) : c` keeps its spread.
 /// Version 45: TypeScript `a ? (b) : c => d : e` does not take the outcome of an arrow function attempt from another parser state.
 /// Version 46: TypeScript `(b as B) : c => d` is not an arrow function with a return type.
-const EXPECTED_VERSION: u32 = 46;
+/// Version 47: TypeScript `a ? b => (c) : d => e` and `a ? (b): T => (c) : d => e` keep `d => e` as the false branch.
+const EXPECTED_VERSION: u32 = 47;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

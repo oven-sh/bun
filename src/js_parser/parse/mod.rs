@@ -660,7 +660,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             // Not in esbuild, which accepts "(a,)". Node refuses it.
-            // "b || (a,)" gets the same message from the lexer.
             if !close_paren_after_comma.is_empty() {
                 p.log().add_range_error(
                     Some(p.source),

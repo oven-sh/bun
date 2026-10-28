@@ -78,7 +78,6 @@ bun_core::declare_scope!(cache, visible);
 /// binding that holds what the decorators return.
 /// Version 43: A `bun:` specifier that names no builtin is printed as it is written.
 /// Version 44: A parenthesized expression that ends with a comma, `(a,)`, is a syntax error.
-/// Older entries hold the output of a file that has one.
 const EXPECTED_VERSION: u32 = 44;
 
 /// Source files smaller than this are not written to / read from the on-disk

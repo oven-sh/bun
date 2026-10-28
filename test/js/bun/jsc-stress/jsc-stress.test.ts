@@ -121,8 +121,6 @@ const jsFixtures = [
   "varargs-inlined-simple-exit.js",
   "loop-unrolling.js",
   "licm-no-pre-header.js",
-  // RegExp
-  "regexp-legacy-static-properties-rematch-failure.js",
 ];
 
 const wasmFixtures = [

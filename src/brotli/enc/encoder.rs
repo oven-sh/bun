@@ -1268,6 +1268,8 @@ impl Encoder {
     /// `BrotliEncoderCompressStream`. Takes bytes off the front of `input` and appends to `output`. All the input was
     /// taken and `op` was carried out once `input` is empty and [`Self::has_more_output`] is `false`; until then, call
     /// again with the same `op` and the rest of the input.
+    // `src/trim/features/bun.def` names it.
+    #[inline(never)]
     pub fn compress_stream(
         &mut self,
         op: EncoderOperation,

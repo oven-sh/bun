@@ -201,7 +201,7 @@ trim-feature password : Password
 
 trim-feature brotli : BrotliEncoder BrotliDecoder
   about "Brotli in `node:zlib`, `CompressionStream`, `DecompressionStream` and `fetch`. Without it, `fetch` doesn't offer `br` in `Accept-Encoding`."
-  saves 0.4 0.3
+  saves 0.8 0.6
 
 trim-feature intl : IntlSegmenter IntlDisplayNames IntlOther IntlCollation IntlUnits IntlDateTimeFormat IntlNumberFormat IntlLocale IntlPluralRules
   about "All of `Intl`, plus `localeCompare()`, `toLocaleString()`, `toLocaleDateString()` and `toLocaleTimeString()`, with their locale data. Includes `\"intl-segmenter\"`. On macOS, Bun uses the system's ICU, so this is only the bindings."

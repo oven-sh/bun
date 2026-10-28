@@ -2221,6 +2221,8 @@ impl Decoder {
     /// Consumes bytes from the front of `input` and writes what they decode to into `output`, as far as both allow.
     ///
     /// The input is never consumed past the end of the stream. If more input is needed, all of it was consumed.
+    // `src/trim/features/bun.def` names it.
+    #[inline(never)]
     pub fn decompress_stream(
         &mut self,
         input: &mut &[u8],

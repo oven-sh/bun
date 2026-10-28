@@ -42,6 +42,8 @@ pub struct PreparedDictionary {
 
 impl PreparedDictionary {
     /// `None` if `source` is 2 GiB or more, or if memory runs out.
+    // `src/trim/features/bun.def` names it.
+    #[inline(never)]
     pub fn new(source: Box<[u8]>) -> Option<Self> {
         if i32::try_from(source.len()).is_err() {
             return None;

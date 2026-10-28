@@ -363,6 +363,10 @@ mod _impl {
 
         /// As in node, the new stream has the dictionary and the parameters of the old one.
         pub(crate) fn reset(&mut self) -> Error {
+            // `init` was not called, or it refused.
+            if matches!(self.state, State::None) {
+                return Error::ok();
+            }
             let old = mem::take(&mut self.state);
             let params = mem::take(&mut self.params);
             self.start();

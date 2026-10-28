@@ -104,9 +104,9 @@ feature LibdeflateCompressor "gzip and deflate compression with libdeflate"
   c-function libdeflate_zlib_compress libdeflate_zlib_compress_bound
 
 feature BrotliEncoder "Brotli compression"
-  c-function BrotliEncoderCreateInstance BrotliEncoderDestroyInstance BrotliEncoderSetParameter
-  c-function BrotliEncoderCompress BrotliEncoderCompressStream BrotliEncoderMaxCompressedSize
-  c-function BrotliEncoderPrepareDictionary BrotliEncoderDestroyPreparedDictionary BrotliEncoderAttachPreparedDictionary
+  cxx-function compress_stream ^<bun_brotli::enc::encoder::Encoder>::compress_stream\b
+  cxx-function PreparedDictionary ^<bun_brotli::enc::compound_dictionary::PreparedDictionary>::new\b
+  minimum 250000
 
 feature ZstdCompressor "zstd compression"
   c-function ZSTD_compress ZSTD_compressBound ZSTD_compressStream2 ZSTD_createCCtx ZSTD_freeCCtx
@@ -158,8 +158,8 @@ feature S3Responses "S3 response parsing"
 feature S3Client "Bun.s3, Bun.S3Client and s3: URLs"
 
 feature BrotliDecoder "Brotli decompression"
-  c-function BrotliDecoderCreateInstance BrotliDecoderDestroyInstance BrotliDecoderSetParameter BrotliDecoderAttachDictionary
-  c-function BrotliDecoderDecompressStream BrotliDecoderGetErrorCode BrotliDecoderErrorString BrotliDecoderHasMoreOutput
+  cxx-function decompress_stream ^<bun_brotli::dec::decoder::Decoder>::decompress_stream\b
+  minimum 70000
 
 feature Http3 "HTTP/3 in Bun.serve and fetch"
   c-function us_quic_loop_process us_quic_loop_flush_if_pending

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -1172,4 +1172,98 @@ test("two threads that miss find the module when a config file changes", async (
     ,
     }
   `);
+});
+
+// The old retry dropped one directory and looked up again only if that drop removed something.
+// When another thread had dropped the directory first, the miss was final: "Cannot find module
+// './gen0_3.mjs'" for a file that is there. The other thread is the watcher of `bun --hot` and
+// `bun --watch`, which drops the directory of each change that it sees, or a Worker that missed
+// in the same directory. These tests do not share the machine: each needs its threads at work.
+describe("a module that is written and looked up at once, while another thread drops its directory", () => {
+  const files = {
+    "fresh.mjs": `
+      import fs from "node:fs";
+      import { createRequire } from "node:module";
+      import path from "node:path";
+
+      const here = import.meta.dirname;
+      const require = createRequire(import.meta.url);
+
+      // Writes new modules beside this file and looks each one up at once. Returns what failed.
+      export async function writeAndLookUp(id, { others, lookups }) {
+        const failed = [];
+        const fresh = async (i, lookUp) => {
+          const specifier = "./gen" + id + "_" + i + ".mjs";
+          fs.writeFileSync(path.join(here, specifier), "export const v = " + i + ";");
+          try {
+            await lookUp(specifier);
+          } catch (e) {
+            failed.push(e.message.split("\\n")[0]);
+          }
+        };
+        // As a program does it.
+        for (let i = 0; i < 10; i++) await fresh(i, specifier => import(specifier));
+        // Then with more directories to look in, which do not exist: a lookup is at work for
+        // longer. Thread 0 reads this directory first. Thread 1 looks in most of the others
+        // first. So one of them drops this directory while the other is still at work.
+        const nowhere = Array.from({ length: others }, (_, i) => path.join(here, "nowhere", String(i)));
+        const paths = id ? [...nowhere.slice(0, (others * 3) / 4), here] : [here, ...nowhere];
+        for (let i = 10; i < 10 + lookups; i++) await fresh(i, specifier => require.resolve(specifier, { paths }));
+        return failed;
+      }
+    `,
+  };
+  const run = async (flags: string[], entry: string) => {
+    using dir = tempDir("dir-cache-retry-fresh", { ...files, "main.mjs": entry });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...flags, "main.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    return { failed: stdout.trim(), exitCode };
+  };
+
+  test("the watcher of bun --hot", async () => {
+    const entry = `
+      import { writeAndLookUp } from "./fresh.mjs";
+      // A reload evaluates this file again while the first run is still at work.
+      if (!globalThis.started) {
+        globalThis.started = true;
+        console.log(JSON.stringify(await writeAndLookUp(0, { others: 192, lookups: 96 })));
+        process.exit(0);
+      }
+    `;
+    expect(await run(["--hot", "--no-clear-screen"], entry)).toEqual({ failed: "[]", exitCode: 0 });
+  });
+
+  test("a Worker and the main thread", async () => {
+    // A debug build takes a second to start the Worker, and its lookups are slow.
+    const size = isDebug || isASAN ? { others: 48, lookups: 16 } : { others: 192, lookups: 256 };
+    const entry = `
+      import { Worker, isMainThread, parentPort, workerData } from "node:worker_threads";
+      import { writeAndLookUp } from "./fresh.mjs";
+      if (isMainThread) {
+        const up = new Int32Array(new SharedArrayBuffer(4));
+        const theirs = new Promise((resolve, reject) => {
+          const worker = new Worker(new URL(import.meta.url), { workerData: up });
+          worker.once("message", resolve);
+          worker.once("error", reject);
+          worker.once("exit", code => reject(new Error("worker exited with " + code + " before posting")));
+        });
+        // Both threads start when the Worker is up.
+        Atomics.wait(up, 0, 0);
+        const mine = await writeAndLookUp(0, ${JSON.stringify(size)});
+        console.log(JSON.stringify([...mine, ...(await theirs)]));
+      } else {
+        Atomics.store(workerData, 0, 1);
+        Atomics.notify(workerData, 0);
+        parentPort.postMessage(await writeAndLookUp(1, ${JSON.stringify(size)}));
+      }
+    `;
+    expect(await run([], entry)).toEqual({ failed: "[]", exitCode: 0 });
+  });
 });

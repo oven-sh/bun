@@ -1752,8 +1752,8 @@ impl<'a> Resolver<'a> {
         } else {
             None
         };
-        let at_source_path = core::cell::Cell::new(None);
-        let tmp = self.retry_while_stale(
+        // The flag is set for what an executable compiled in place holds at the path.
+        let (tmp, is_at_source_path) = self.retry_while_stale(
             source_dir_normalized,
             import_path,
             |this| {
@@ -1764,16 +1764,23 @@ impl<'a> Resolver<'a> {
                     global_cache,
                 );
                 if !matches!(as_written, ResultUnion::NotFound) {
-                    return as_written;
+                    return (as_written, false);
                 }
                 if let Some(path) =
                     this.resolve_at_source_path(source_dir_normalized, import_path, kind)
                 {
-                    at_source_path.set(Some(path));
-                    return as_written;
+                    let at_source_path = Result {
+                        import_kind: kind,
+                        path_pair: PathPair {
+                            primary: Path::init(path),
+                            secondary: None,
+                        },
+                        ..Default::default()
+                    };
+                    return (ResultUnion::Success(at_source_path), true);
                 }
                 let Some(suffix) = css_suffix else {
-                    return as_written;
+                    return (as_written, false);
                 };
                 if let Some(debug) = this.debug_logs.as_mut() {
                     debug.add_note_fmt(format_args!(
@@ -1781,25 +1788,19 @@ impl<'a> Resolver<'a> {
                         bstr::BStr::new(&import_path[suffix..])
                     ));
                 }
-                this.resolve_without_symlinks(
+                let without_suffix = this.resolve_without_symlinks(
                     source_dir_normalized,
                     &import_path[0..suffix],
                     kind,
                     global_cache,
-                )
+                );
+                (without_suffix, false)
             },
-            |result| matches!(result, ResultUnion::NotFound) && at_source_path.get().is_none(),
+            |(result, _): &(ResultUnion, bool)| matches!(result, ResultUnion::NotFound),
         );
-        if let Some(path) = at_source_path.get() {
+        if is_at_source_path {
             self.extension_order = original_order;
-            return ResultUnion::Success(Result {
-                import_kind: kind,
-                path_pair: PathPair {
-                    primary: Path::init(path),
-                    secondary: None,
-                },
-                ..Default::default()
-            });
+            return tmp;
         }
 
         let ret = match tmp {

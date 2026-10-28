@@ -253,6 +253,10 @@ static void die(const char *fmt, ...) {
     exit(1);
 }
 
+// The lshpack objects report a failed allocation of their Huffman tables through this function
+// (LS_HPACK_OOM in scripts/build/deps/lshpack.ts). Bun's runtime defines it, and this program links without that.
+void Bun__outOfMemory(void) { die("out of memory"); }
+
 static uint64_t now_ns(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);

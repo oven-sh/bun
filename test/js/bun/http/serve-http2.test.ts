@@ -704,14 +704,23 @@ describe("Bun.serve http2 streaming responses on an idle server", () => {
       const stream = sessions[i < 250 ? 0 : 1].request({ ":path": "/events" });
       const open = Promise.withResolvers<void>();
       const event = Promise.withResolvers<number>();
-      stream.on("data", (chunk: Buffer) => {
-        if (chunk.toString().includes(": open")) open.resolve();
-        if (chunk.toString().includes("data: event")) event.resolve(performance.now() - published);
+      // Match whole frames of the event stream, however HTTP/2 splits them.
+      let received = "";
+      stream.setEncoding("utf8");
+      stream.on("data", (chunk: string) => {
+        received += chunk;
+        if (received.includes(": open\n\n")) open.resolve();
+        if (received.includes("data: event\n\n")) event.resolve(performance.now() - published);
       });
-      stream.on("error", error => {
+      // A stream that ends early fails the test instead of leaving it waiting.
+      // Settled promises ignore these.
+      const fail = (error: Error) => {
         open.reject(error);
         event.reject(error);
-      });
+      };
+      stream.on("error", fail);
+      stream.on("aborted", () => fail(new Error(`stream ${i} aborted`)));
+      stream.on("close", () => fail(new Error(`stream ${i} closed before its event`)));
       opened.push(open.promise);
       delivered.push(event.promise);
     }

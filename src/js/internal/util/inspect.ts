@@ -1811,8 +1811,18 @@ function identicalSequenceRange(a: string[], b: string[]) {
   return { len: 0, offset: 0 };
 }
 
-function getStackString(error: Error): string {
-  return error.stack ? String(error.stack) : ErrorPrototypeToString.$call(error);
+function getStackString(error: Error): string | undefined {
+  let stack: unknown;
+  try {
+    stack = error.stack;
+  } catch {
+    // If stack is a getter that throws, ignore it.
+  }
+  try {
+    return stack ? String(stack) : ErrorPrototypeToString.$call(error);
+  } catch {
+    // The stack, name or message cannot be a string: the callers get undefined.
+  }
 }
 
 function getStackFrames(ctx: Context, err: Error, stack: string) {
@@ -1828,7 +1838,7 @@ function getStackFrames(ctx: Context, err: Error, stack: string) {
   // Remove stack frames identical to frames in cause.
   if (cause != null && (isNativeError(cause) || cause instanceof Error)) {
     const causeStack = getStackString(cause);
-    const causeStackStart = StringPrototypeIndexOf.$call(causeStack, "\n    at");
+    const causeStackStart = causeStack === undefined ? -1 : StringPrototypeIndexOf.$call(causeStack, "\n    at");
     if (causeStackStart !== -1) {
       const causeFrames = StringPrototypeSplit.$call(StringPrototypeSlice.$call(causeStack, causeStackStart + 1), "\n");
       const { len, offset } = identicalSequenceRange(frames, causeFrames);
@@ -1882,9 +1892,14 @@ function removeDuplicateErrorKeys(ctx: Context, keys: Key[], err: Error, stack: 
   if (!ctx.showHidden && keys.length !== 0) {
     for (const name of ["name", "message", "stack"]) {
       const index = ArrayPrototypeIndexOf.$call(keys, name);
-      // Only hide the property in case it's part of the original stack
-      if (index !== -1 && StringPrototypeIncludes.$call(stack, err[name])) {
-        ArrayPrototypeSplice.$call(keys, index, 1);
+      if (index === -1) continue;
+      try {
+        // Only hide the property in case it's part of the original stack
+        if (StringPrototypeIncludes.$call(stack, err[name])) {
+          ArrayPrototypeSplice.$call(keys, index, 1);
+        }
+      } catch {
+        // A getter that throws, or a value that cannot be a string, stays in the keys.
       }
     }
   }
@@ -1943,11 +1958,28 @@ function safeGetCWD() {
 }
 
 function formatError(err, constructor: string | null, tag: string, ctx: Context, keys: Key[]) {
-  const name = err.name != null ? String(err.name) : "Error";
   let stack = getStackString(err);
+  if (stack === undefined) return ObjectPrototypeToString.$call(err);
+
+  let message;
+  let messageIsGetterThatThrows = false;
+  try {
+    message = err.message;
+  } catch {
+    messageIsGetterThatThrows = true;
+  }
+  let name = "Error";
+  try {
+    const value = err.name;
+    if (value != null) name = String(value);
+  } catch {
+    // If name is a getter that throws, or a value that cannot be a string, ignore it.
+  }
 
   //! temp fix for Bun losing the error name from inherited errors + extraneous ": " with no message
-  stack = stack.replace(/^Error: /, `${name}${err.message ? ": " : ""}`);
+  if (!messageIsGetterThatThrows && StringPrototypeStartsWith.$call(stack, "Error: ")) {
+    stack = `${name}${message ? ": " : ""}${StringPrototypeSlice.$call(stack, 7)}`;
+  }
 
   removeDuplicateErrorKeys(ctx, keys, err, stack);
 
@@ -1956,15 +1988,19 @@ function formatError(err, constructor: string | null, tag: string, ctx: Context,
   }
 
   // Print errors aggregated into AggregateError
-  if ($isJSArray(err.errors) && (keys.length === 0 || !ArrayPrototypeIncludes.$call(keys, "errors"))) {
-    ArrayPrototypePush.$call(keys, "errors");
+  try {
+    if ($isJSArray(err.errors) && (keys.length === 0 || !ArrayPrototypeIncludes.$call(keys, "errors"))) {
+      ArrayPrototypePush.$call(keys, "errors");
+    }
+  } catch {
+    // If errors is a getter that throws, ignore it.
   }
 
   stack = improveStack(stack, constructor, name, tag);
 
   // Ignore the error message if it's contained in the stack.
-  let pos = (err.message && StringPrototypeIndexOf.$call(stack, err.message)) || -1;
-  if (pos !== -1) pos += err.message.length;
+  let pos = (typeof message === "string" && message && StringPrototypeIndexOf.$call(stack, message)) || -1;
+  if (pos !== -1) pos += message.length;
   // Wrap the error in brackets in case it has no stack trace.
   const stackStart = StringPrototypeIndexOf.$call(stack, "\n    at", pos);
   if (stackStart === -1) {

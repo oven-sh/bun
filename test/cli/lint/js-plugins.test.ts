@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
-import { mkdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { endChildren, spawn } from "../children";

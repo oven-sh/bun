@@ -708,10 +708,10 @@ describe("DirectBuild groups and steps", () => {
     });
     const root = String(dir);
     const buildDir = join(root, "build");
-    const cfg = linux({ buildDir, asan: false, localDeps: `zstd=${join(root, "src")}` });
-    const out = join(buildDir, "deps", "zstd");
+    const cfg = linux({ buildDir, asan: false, localDeps: `zlib=${join(root, "src")}` });
+    const out = join(buildDir, "deps", "zlib");
     const dep: Dependency = {
-      name: "zstd",
+      name: "zlib",
       source: () => ({ kind: "github-archive", repo: "x/y", commit: "0" }),
       build: () => ({
         kind: "direct",
@@ -751,9 +751,9 @@ describe("DirectBuild groups and steps", () => {
     const rel = (p: string) => relative(buildDir, p);
 
     // The tool's object is not bun's; the generated header is order-only for consumers.
-    expect(resolved.objects.map(rel)).toEqual(["obj/vendor/zstd/a.cpp.o", "obj/vendor/zstd/b.c.o"]);
+    expect(resolved.objects.map(rel)).toEqual(["obj/vendor/zlib/a.cpp.o", "obj/vendor/zlib/b.c.o"]);
     expect(resolved.libs).toEqual(["/outside/libicu.a"]);
-    expect(resolved.generatedHeaders.map(rel)).toEqual(["deps/zstd/gen.h"]);
+    expect(resolved.generatedHeaders.map(rel)).toEqual(["deps/zlib/gen.h"]);
     expect(resolved.outputs).toEqual([]);
 
     const lines = n
@@ -767,17 +767,17 @@ describe("DirectBuild groups and steps", () => {
       for (let i = at + 1; lines[i]?.startsWith("  "); i++) vars.push(lines[i]!.trim());
       return { line: lines[at]!.replace(/ \| \S+(?=: )/, ""), vars: vars.join("\n") };
     };
-    expect(edge("deps/zstd/gen.h").line).toBe("build deps/zstd/gen.h: dep_gen deps/zstd/bin/tool");
-    expect(edge("deps/zstd/gen.h").vars).toContain(`opts = --cwd=${out} --env=K=V --stdout=${join(out, "gen.h")}`);
-    expect(edge("deps/zstd/gen.h").vars).toContain("cmd = ruby gen.rb");
-    expect(edge("deps/zstd/bin/tool").line).toStartWith("build deps/zstd/bin/tool: link obj/vendor/zstd/tool.cpp.o |");
-    expect(edge("deps/zstd/.lib-ready").line).toBe("build deps/zstd/.lib-ready: phony deps/zstd/gen.h");
-    expect(edge("pch/prefix.h.hxx.pch").line).toEndWith("|| pch/.dir deps/zstd/.lib-ready");
-    expect(edge("obj/vendor/zstd/a.cpp.o").line).toContain(": cxx_pch ");
-    expect(edge("obj/vendor/zstd/a.cpp.o").line).toEndWith("|| obj/.dir deps/zstd/.lib-ready");
-    expect(edge("obj/vendor/zstd/a.cpp.o").vars).toContain("-DLIB -std=c++23");
-    expect(edge("obj/vendor/zstd/b.c.o").vars).toStartWith("cflags = -x c++ ");
-    expect(edge("lib").line).toBe("build lib: phony obj/vendor/zstd/a.cpp.o obj/vendor/zstd/b.c.o");
+    expect(edge("deps/zlib/gen.h").line).toBe("build deps/zlib/gen.h: dep_gen deps/zlib/bin/tool");
+    expect(edge("deps/zlib/gen.h").vars).toContain(`opts = --cwd=${out} --env=K=V --stdout=${join(out, "gen.h")}`);
+    expect(edge("deps/zlib/gen.h").vars).toContain("cmd = ruby gen.rb");
+    expect(edge("deps/zlib/bin/tool").line).toStartWith("build deps/zlib/bin/tool: link obj/vendor/zlib/tool.cpp.o |");
+    expect(edge("deps/zlib/.lib-ready").line).toBe("build deps/zlib/.lib-ready: phony deps/zlib/gen.h");
+    expect(edge("pch/prefix.h.hxx.pch").line).toEndWith("|| pch/.dir deps/zlib/.lib-ready");
+    expect(edge("obj/vendor/zlib/a.cpp.o").line).toContain(": cxx_pch ");
+    expect(edge("obj/vendor/zlib/a.cpp.o").line).toEndWith("|| obj/.dir deps/zlib/.lib-ready");
+    expect(edge("obj/vendor/zlib/a.cpp.o").vars).toContain("-DLIB -std=c++23");
+    expect(edge("obj/vendor/zlib/b.c.o").vars).toStartWith("cflags = -x c++ ");
+    expect(edge("lib").line).toBe("build lib: phony obj/vendor/zlib/a.cpp.o obj/vendor/zlib/b.c.o");
   });
 });
 
@@ -805,13 +805,13 @@ describe("Provides.files", () => {
   test("are only for a prebuilt source", () => {
     using g = graph();
     const dep: Dependency = {
-      name: "zstd",
+      name: "zlib",
       source: () => ({ kind: "github-archive", repo: "x/y", commit: "0" }),
       build: () => ({ kind: "direct", sources: [] }),
       provides: () => ({ libs: [], includes: [], files: ["COPYING"] }),
     };
     expect(() => resolveDep(g.n, g.cfg, dep, new Map<DepName, ResolvedDep>())).toThrow(
-      "zstd: Provides.files is for a prebuilt source",
+      "zlib: Provides.files is for a prebuilt source",
     );
   });
 });

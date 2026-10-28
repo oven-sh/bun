@@ -777,15 +777,14 @@ describe("sync compression argument handling", () => {
   }, 60_000);
 });
 
-// x64 builds target nehalem, so zstd picks its BMI2 kernels at run time. It used to ask CPUID in
-// every CCtx and DCtx init. CPUID is a VM exit under a hypervisor, about 2 us each, two per init.
-// arch_prctl(ARCH_SET_CPUID, 0) makes CPUID raise SIGSEGV on the calling thread, so a context that
-// still probes the CPU kills the child. The first context of each kind is allowed to probe.
+// CPUID is a VM exit under a hypervisor, about 2 us each. The C library once asked it twice in every
+// CCtx and DCtx init. arch_prctl(ARCH_SET_CPUID, 0) makes CPUID raise SIGSEGV on the calling thread,
+// so a context that probes the CPU kills the child. The first round trip loads what else may probe.
 describe("zstd context setup", () => {
   const canFaultOnCpuid =
     isLinux && process.arch === "x64" && /^flags\s*:.*\bcpuid_fault\b/m.test(readFileSync("/proc/cpuinfo", "utf8"));
 
-  it.skipIf(!canFaultOnCpuid)("asks CPUID once, not for each context", async () => {
+  it.skipIf(!canFaultOnCpuid)("does not ask CPUID", async () => {
     const script = `
       const { dlopen } = require("bun:ffi");
       const zlib = require("node:zlib");

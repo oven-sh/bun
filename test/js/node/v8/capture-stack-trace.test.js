@@ -2252,15 +2252,17 @@ test("a SyntaxError from node:vm has an `at <parse>` line only if the source has
   });
 });
 
-test.concurrent("a SyntaxError from import() keeps its `at <parse>` line, with and without captured frames", async () => {
-  // Bun's transpiler accepts these modules and JavaScriptCore's parser rejects the regular expression.
-  // A top-level `await import()` fails with no JavaScript frame on the stack, so each error has only the
-  // frames that Error.captureStackTrace gives it.
-  const badModule = `module.exports = 1;\n"".match(/[a-0]/);\n`;
-  using dir = tempDir("syntax-error-import", {
-    "bad-a.cjs": badModule,
-    "bad-b.cjs": badModule,
-    "index.mjs": `
+test.concurrent(
+  "a SyntaxError from import() keeps its `at <parse>` line, with and without captured frames",
+  async () => {
+    // Bun's transpiler accepts these modules and JavaScriptCore's parser rejects the regular expression.
+    // A top-level `await import()` fails with no JavaScript frame on the stack, so each error has only the
+    // frames that Error.captureStackTrace gives it.
+    const badModule = `module.exports = 1;\n"".match(/[a-0]/);\n`;
+    using dir = tempDir("syntax-error-import", {
+      "bad-a.cjs": badModule,
+      "bad-b.cjs": badModule,
+      "index.mjs": `
       const a = await import("./bad-a.cjs").catch(e => e);
       const b = await import("./bad-b.cjs").catch(e => e);
       // Math.max is not on the stack, so no frame is captured.
@@ -2268,28 +2270,29 @@ test.concurrent("a SyntaxError from import() keeps its `at <parse>` line, with a
       Error.captureStackTrace(b);
       console.log(JSON.stringify({ withoutFrames: a.stack.split("\\n"), withFrames: b.stack.split("\\n").slice(0, 3) }));
     `,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "index.mjs"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout && JSON.parse(stdout), stderr }).toEqual({
-    stdout: {
-      withoutFrames: [
-        expect.stringMatching(/^SyntaxError: /),
-        expect.stringMatching(/^    at <parse> \(.*bad-a\.cjs:\d+\)$/),
-      ],
-      withFrames: [
-        expect.stringMatching(/^SyntaxError: /),
-        expect.stringMatching(/^    at <parse> \(.*bad-b\.cjs:\d+\)$/),
-        expect.stringMatching(/^    at .*index\.mjs:\d+:\d+\)?$/),
-      ],
-    },
-    stderr: "",
-  });
-  expect(exitCode).toBe(0);
-});
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout && JSON.parse(stdout), stderr }).toEqual({
+      stdout: {
+        withoutFrames: [
+          expect.stringMatching(/^SyntaxError: /),
+          expect.stringMatching(/^    at <parse> \(.*bad-a\.cjs:\d+\)$/),
+        ],
+        withFrames: [
+          expect.stringMatching(/^SyntaxError: /),
+          expect.stringMatching(/^    at <parse> \(.*bad-b\.cjs:\d+\)$/),
+          expect.stringMatching(/^    at .*index\.mjs:\d+:\d+\)?$/),
+        ],
+      },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);

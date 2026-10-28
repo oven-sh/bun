@@ -19,6 +19,12 @@ test("response heads", () => {
   expect(wrong).toEqual([]);
 });
 
+test("the most slots there are", () => {
+  const head = Buffer.from("HTTP/1.1 200 OK\r\na: b\r\n\r\n").toString("hex");
+  expect(parsed(65535, head)).toBe("1.1 200 13+2 25 17+1:20+1");
+  expect(() => parsed(65536, head)).toThrow(RangeError);
+});
+
 test("chunked bodies", () => {
   const wrong = cases.bodies.flatMap(([cuts, data, expected]) => {
     const actual = decoded(cuts, data);

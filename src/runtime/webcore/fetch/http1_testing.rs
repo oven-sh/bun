@@ -8,8 +8,8 @@ use bun_picohttp::{ChunkedDecoder, ChunkedStatus, Header, ParseResponseError, Re
 /// `parseResponse(data, slots)`: `malformed`, `incomplete`, or
 /// `1.<minor> <status> <reason> <length of the head>` and a `<name>:<value>`
 /// per header. Each part is `<offset in data>+<length>`.
-pub(crate) fn parse_response(data: &[u8], slots: usize) -> String {
-    let mut headers = vec![Header::ZERO; slots];
+pub(crate) fn parse_response(data: &[u8], slots: u16) -> String {
+    let mut headers = vec![Header::ZERO; usize::from(slots)];
     let response = match Response::parse(data, &mut headers) {
         Ok(response) => response,
         Err(ParseResponseError::MalformedHttpResponse) => return "malformed".into(),

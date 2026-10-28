@@ -128,7 +128,7 @@ function getRemainingChunk(stream: NativeReadable, maxToRead?: number) {
 
 // destroy(falsy) emits no 'error'. Node's adapter makes it an AbortError (destroyer()).
 function failPull(stream: NativeReadable, reason: unknown) {
-  errorOrDestroy(stream, reason || $makeAbortError());
+  errorOrDestroy(stream, (reason as Error) || $makeAbortError());
 }
 
 function read(this: NativeReadable, maxToRead: number) {

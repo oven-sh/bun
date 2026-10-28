@@ -196,7 +196,7 @@ Places that are not required to be dce'd contain `POSSIBLE_REMOVAL` and do not t
 
 The check needs no `run` step, and it also reads the code that a run does not reach.
 
-A name that the fixture spells out is its own and is left alone: in one of the `files`, in `banner`, `footer`, a `define` value or a JSX option, or in a package that `install` adds.
+A name that the fixture spells out is its own and is left alone: in one of the `files`, in `banner`, `footer`, a `define` value or a JSX option, in the source of a plugin, or in a package that `install` adds.
 
 Two options turn a failure off for one fixture. Each of them fails the fixture when it excuses nothing, so that it goes away with the bug.
 
@@ -218,7 +218,8 @@ The check does not see:
 
 - a `compile` fixture, whose output is an executable;
 - the output of an entry point that is a stylesheet;
-- an output over 64 MB, or over 1 MB on a debug or ASAN build, where acorn is slow;
+- an output over 4 MB, or over 1 MB on a debug or ASAN build, where acorn is slow;
+- a file under the `node_modules` of the fixture, which holds its packages;
 - a generated name that `minifyIdentifiers` renamed, or one of a shape that is not in the list above;
 - a name that is declared, but only after the statement that reads it;
 - any format or target other than the one the fixture builds.

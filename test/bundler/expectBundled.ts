@@ -151,10 +151,10 @@ const BUN_EXE = (process.env.BUN_EXE && Bun.which(process.env.BUN_EXE)) ?? bunEx
 const COMPILES_AHEAD_OF_TIME = process.env.BUN_BUNDLER_TEST_AOT;
 export const RUN_UNCHECKED_TESTS = false;
 /**
- * The output check does not read a larger output. acorn needs about 10 seconds for a megabyte on a debug build of
- * JavaScriptCore, and `edgecase/AwsCdkLib` writes 36 MB.
+ * The output check does not read a larger output. For a megabyte acorn needs about 0.1 s and 20 MB of memory, or
+ * 10 s on a debug build of JavaScriptCore. `edgecase/AwsCdkLib` writes 36 MB.
  */
-const largestCheckedOutput = (isDebug || isASAN ? 1 : 64) * 1024 * 1024;
+export const largestCheckedOutput = (isDebug || isASAN ? 1 : 4) * 1024 * 1024;
 
 const tempDirectoryTemplate = path.join(realpathSync(tmpdir()), "bun-build-tests", `${ESBUILD ? "esbuild" : "bun"}-`);
 if (!existsSync(path.dirname(tempDirectoryTemplate)))
@@ -1714,15 +1714,24 @@ for (const [key, blob] of build.outputs) {
           : outdir
             ? [...new Glob("**/*.{js,mjs,cjs}").scanSync(outdir)].map(file => path.join(outdir!, file))
             : [];
-        const ownText = [files, define ?? {}, { banner, footer, ...jsx }].flatMap(part =>
-          Object.values(part).map(String),
-        );
+        // What the fixture spells out itself: its files, its options and the source of its plugins.
+        const readOwnText = () =>
+          [
+            ...Object.values(files),
+            ...Object.values(define ?? {}),
+            ...Object.values({ banner, footer, ...jsx }),
+            ...[plugins ?? []].flat().map(plugin => (typeof plugin === "function" ? plugin : plugin.setup)),
+          ].map(String);
+        let ownText: string[] | undefined;
         let installedText: string[] | undefined;
+        // The packages of the fixture are input files, also when the output directory holds them.
+        const packages = path.join(root, "node_modules") + path.sep;
         const excused = new Set<string>();
         const problems: string[] = [];
         let unread = 0;
         let unparsed = 0;
         for (const file of outputs.sort()) {
+          if (file.startsWith(packages)) continue;
           const code = readFileSync(file, "utf8");
           // An input file that is in the output directory, and that the build did not write over.
           if (inputText.get(file) === code) continue;
@@ -1750,15 +1759,15 @@ for (const [key, blob] of build.outputs) {
           for (const [name, offset] of undeclared) {
             const whole = new RegExp(`(?<![\\w$])${name.replaceAll("$", "\\$")}(?![\\w$])`);
             // A name that the fixture spells out is its own, and so is one that a package it installs spells out.
+            ownText ??= readOwnText();
             if (ownText.some(text => whole.test(text))) continue;
             if (allowUndeclaredGeneratedNames?.includes(name)) {
               excused.add(name);
               continue;
             }
             if (install) {
-              const installed = path.join(root, "node_modules");
-              installedText ??= [...new Glob("**/*.{js,mjs,cjs}").scanSync(installed)].map(file =>
-                readFileSync(path.join(installed, file), "utf8"),
+              installedText ??= [...new Glob("**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx}").scanSync(packages)].map(file =>
+                readFileSync(path.join(packages, file), "utf8"),
               );
               if (installedText.some(text => whole.test(text))) continue;
             }

@@ -3,7 +3,7 @@ import type { BuildOutput } from "bun";
 import { describe, expect, test } from "bun:test";
 import { writeFileSync } from "fs";
 import path from "path";
-import { type BundlerTestInput, expectBundled } from "./expectBundled";
+import { type BundlerTestInput, expectBundled, largestCheckedOutput } from "./expectBundled";
 import { findUndeclaredGeneratedNames } from "./outputCheck";
 
 describe("findUndeclaredGeneratedNames", () => {
@@ -197,10 +197,17 @@ describe("the output check of expectBundled", () => {
     );
   });
 
-  test("reads an output that is just under a megabyte", async () => {
-    const padding = `/*${Buffer.alloc(1024 * 1024 - 64, "*").toString()}*/\n`;
-    const options = { files, onAfterApiBundle: write("out.js", fault + padding) };
-    await expect(bundle("outputCheck/LargeOutput", options)).rejects.toThrow(failed + names("/out.js"));
+  test("reads an output of the largest size that it reads, and no larger one", async () => {
+    const sized = (length: number) => `${fault}/*${Buffer.alloc(length - fault.length - 4, "*").toString()}*/`;
+    const largest = { files, onAfterApiBundle: write("out.js", sized(largestCheckedOutput)) };
+    await expect(bundle("outputCheck/LargestOutput", largest)).rejects.toThrow(failed + names("/out.js"));
+    // An entry can be for the output that was not read, so it does not count as one that excuses nothing.
+    const tooLarge = {
+      files,
+      allowUndeclaredGeneratedNames: ["init_lib"],
+      onAfterApiBundle: write("out.js", sized(largestCheckedOutput + 1)),
+    };
+    expect(await bundle("outputCheck/TooLargeOutput", tooLarge)).toMatchObject({ id: "outputCheck/TooLargeOutput" });
   });
 
   test("reads an output that takes the place of an input file, and no input file that the build left alone", async () => {
@@ -209,6 +216,17 @@ describe("the output check of expectBundled", () => {
       bundle(id, { files: inputs, outdir: "/", onAfterApiBundle: write("entry.js", code) });
     expect(await inPlace("outputCheck/InputInOutdir", "var a;\n")).toMatchObject({ id: "outputCheck/InputInOutdir" });
     await expect(inPlace("outputCheck/OutputOverInput", fault)).rejects.toThrow(failed + names("/entry.js"));
+  });
+
+  test("does not read the packages of the fixture when the outdir holds them", async () => {
+    const options = {
+      files: {
+        "/entry.js": `console.log("entry");`,
+        "/node_modules/pkg/index.js": Buffer.from("A package, not JavaScript."),
+      },
+      outdir: "/",
+    };
+    expect(await bundle("outputCheck/PackagesInOutdir", options)).toMatchObject({ id: "outputCheck/PackagesInOutdir" });
   });
 
   test("allowUndeclaredGeneratedNames excuses the names it lists, and fails on an entry that excuses nothing", async () => {
@@ -234,6 +252,19 @@ describe("the output check of expectBundled", () => {
 
   test.each([
     ["a file", { files: { "/entry.js": `console.log(typeof exports_lib);` } }],
+    ["a file that is a Buffer", { files: { "/entry.js": Buffer.from(`console.log(typeof exports_lib);`) } }],
+    [
+      "the source of a plugin",
+      {
+        files: { "/entry.js": `import "virtual";` },
+        plugins(builder) {
+          builder.onResolve({ filter: /^virtual$/ }, () => ({ path: "virtual", namespace: "virtual" }));
+          builder.onLoad({ filter: /.*/, namespace: "virtual" }, () => ({
+            contents: `console.log(typeof exports_lib);`,
+          }));
+        },
+      },
+    ],
     ["the banner", { files: { "/entry.js": `console.log("entry");` }, banner: "var banner = typeof exports_lib;" }],
     ["the footer", { files: { "/entry.js": `console.log("entry");` }, footer: "var footer = typeof exports_lib;" }],
     ["a define", { files: { "/entry.js": `console.log(typeof DEFINED);` }, define: { DEFINED: "exports_lib" } }],

@@ -550,6 +550,22 @@ if (isBun) {
   const { TestRegistry } = await import("registry");
   const isPosix = process.platform !== "win32";
 
+  // The two tests below that are not concurrent keep the child processes in three groups. A debug
+  // build starts slowly: with one group for all of them, each test runs close to its timeout.
+
+  // The rows that hold for Node.js are Node's own answers. This file is also a node:test file.
+  const node = nodeExeAtLeast("26.3.0");
+  test.skipIf(!node)("the options.paths tests pass in Node.js", async () => {
+    await using proc = Bun.spawn({
+      cmd: [node, import.meta.path],
+      env: childEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ exitCode, output: exitCode === 0 ? "" : stdout + stderr }).toEqual({ exitCode: 0, output: "" });
+  });
+
   const missing = request => `Cannot find module '${request}'`;
   const refusal = request =>
     `Cannot find package "${request}": auto-install is off because a security scanner is configured. Run "bun install"`;
@@ -640,6 +656,76 @@ if (isBun) {
       requests,
     });
   });
+
+  // The executable is a copy of the runtime, which is more than 1 GB in a debug build.
+  test.skipIf(isDebug || isASAN)(
+    "options.paths: a module inside a compiled executable has no package scope",
+    async () => {
+      // With these flags the executable reads the package.json and the tsconfig.json of the
+      // directory where it runs. They are the user's, not the calling file's.
+      const { path: dir, cleanup } = createTempDir("resolve-paths-compiled", {
+        "src/entry.cjs": `
+        const path = require("node:path");
+        const resolve = request => {
+          try {
+            const file = require.resolve(request, { paths: [path.resolve("../other")] });
+            return path.relative(path.dirname(process.cwd()), file).split(path.sep).join("/");
+          } catch (error) {
+            return error.code;
+          }
+        };
+        console.log(JSON.stringify(["cwd-pkg", "#imp", "@alias/thing", "dep"].map(resolve)));
+      `,
+        "run/package.json": JSON.stringify({ name: "cwd-pkg", imports: { "#imp": "./imp.js" }, exports: "./main.js" }),
+        "run/tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@alias/*": ["./lib/*"] } } }),
+        "run/main.js": "",
+        "run/imp.js": "",
+        "run/lib/thing.js": "",
+        "other/node_modules/cwd-pkg/index.js": "",
+        "other/node_modules/dep/index.js": "",
+      });
+      try {
+        const exe = join(dir, "run", isPosix ? "app" : "app.exe");
+        const build = Bun.spawn({
+          cmd: [
+            childExe,
+            "build",
+            "--compile",
+            "--compile-autoload-package-json",
+            "--compile-autoload-tsconfig",
+            join(dir, "src", "entry.cjs"),
+            "--outfile",
+            exe,
+          ],
+          cwd: dir,
+          env: childEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [buildStderr, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+        expect({ buildStderr: buildExitCode === 0 ? "" : buildStderr, buildExitCode }).toEqual({
+          buildStderr: "",
+          buildExitCode: 0,
+        });
+
+        const proc = Bun.spawn({ cmd: [exe], cwd: join(dir, "run"), env: childEnv, stdout: "pipe", stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({
+          stdout:
+            JSON.stringify([
+              "other/node_modules/cwd-pkg/index.js",
+              "MODULE_NOT_FOUND",
+              "MODULE_NOT_FOUND",
+              "other/node_modules/dep/index.js",
+            ]) + "\n",
+          stderr: "",
+          exitCode: 0,
+        });
+      } finally {
+        cleanup();
+      }
+    },
+  );
 
   test.concurrent("options.paths: a refusal to install comes after every entry was searched", async () => {
     // The project of the calling file has a security scanner, so auto-install is off for it.
@@ -781,76 +867,6 @@ if (isBun) {
     });
   });
 
-  // The executable is a copy of the runtime, which is more than 1 GB in a debug build.
-  test.skipIf(isDebug || isASAN)(
-    "options.paths: a module inside a compiled executable has no package scope",
-    async () => {
-      // With these flags the executable reads the package.json and the tsconfig.json of the
-      // directory where it runs. They are the user's, not the calling file's.
-      const { path: dir, cleanup } = createTempDir("resolve-paths-compiled", {
-        "src/entry.cjs": `
-        const path = require("node:path");
-        const resolve = request => {
-          try {
-            const file = require.resolve(request, { paths: [path.resolve("../other")] });
-            return path.relative(path.dirname(process.cwd()), file).split(path.sep).join("/");
-          } catch (error) {
-            return error.code;
-          }
-        };
-        console.log(JSON.stringify(["cwd-pkg", "#imp", "@alias/thing", "dep"].map(resolve)));
-      `,
-        "run/package.json": JSON.stringify({ name: "cwd-pkg", imports: { "#imp": "./imp.js" }, exports: "./main.js" }),
-        "run/tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@alias/*": ["./lib/*"] } } }),
-        "run/main.js": "",
-        "run/imp.js": "",
-        "run/lib/thing.js": "",
-        "other/node_modules/cwd-pkg/index.js": "",
-        "other/node_modules/dep/index.js": "",
-      });
-      try {
-        const exe = join(dir, "run", isPosix ? "app" : "app.exe");
-        const build = Bun.spawn({
-          cmd: [
-            childExe,
-            "build",
-            "--compile",
-            "--compile-autoload-package-json",
-            "--compile-autoload-tsconfig",
-            join(dir, "src", "entry.cjs"),
-            "--outfile",
-            exe,
-          ],
-          cwd: dir,
-          env: childEnv,
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [buildStderr, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
-        expect({ buildStderr: buildExitCode === 0 ? "" : buildStderr, buildExitCode }).toEqual({
-          buildStderr: "",
-          buildExitCode: 0,
-        });
-
-        const proc = Bun.spawn({ cmd: [exe], cwd: join(dir, "run"), env: childEnv, stdout: "pipe", stderr: "pipe" });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect({ stdout, stderr, exitCode }).toEqual({
-          stdout:
-            JSON.stringify([
-              "other/node_modules/cwd-pkg/index.js",
-              "MODULE_NOT_FOUND",
-              "MODULE_NOT_FOUND",
-              "other/node_modules/dep/index.js",
-            ]) + "\n",
-          stderr: "",
-          exitCode: 0,
-        });
-      } finally {
-        cleanup();
-      }
-    },
-  );
-
   test.concurrent("options.paths: nothing is installed without an entry or without a calling file", async () => {
     const result = await runWithRegistry({
       files: { "project/.keep": "" },
@@ -867,18 +883,5 @@ if (isBun) {
       exitCode: 0,
       requests: [],
     });
-  });
-
-  // The rows that hold for Node.js are Node's own answers. This file is also a node:test file.
-  const node = nodeExeAtLeast("26.3.0");
-  test.skipIf(!node)("the options.paths tests pass in Node.js", async () => {
-    await using proc = Bun.spawn({
-      cmd: [node, import.meta.path],
-      env: childEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ exitCode, output: exitCode === 0 ? "" : stdout + stderr }).toEqual({ exitCode: 0, output: "" });
   });
 }

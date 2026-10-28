@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, nodeExeAtLeast, tempDir } from "harness";
 import { join } from "node:path";
-import { responseCorkOracle } from "./node-http-cork-oracle.fixture";
 import { unsupported as aotUnsupported } from "../../../aot/supported";
+import { responseCorkOracle } from "./node-http-cork-oracle.fixture";
 
 const corkRuntimes: Array<[string, string]> = [["bun", bunExe()]];
 const corkNode = nodeExeAtLeast("24.0.0");

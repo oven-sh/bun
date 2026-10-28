@@ -1984,6 +1984,26 @@ describe("node v26 stream semantics", () => {
     expect(await waitFor(() => ended)).toBe(true);
   });
 
+  // The last read of a web stream is { value: undefined, done: true }. In
+  // object mode push(undefined) is a chunk. A push before the done check gives
+  // the consumer one chunk too many, and each other reader loop then pushes
+  // after EOF: ERR_STREAM_PUSH_AFTER_EOF where the stream has to end.
+  it("compose with an object mode web stream tail ends without an extra chunk", async () => {
+    // compose() takes readableObjectMode from its last stream. A web stream has no such property of its own.
+    const objectModeTail = () => Object.assign(new TransformStream(), { readableObjectMode: true });
+
+    const composed = compose(Readable.from([1, 2]), objectModeTail());
+    const events = [];
+    composed.on("data", chunk => events.push(chunk));
+    composed.on("end", () => events.push("end"));
+    composed.on("error", err => events.push(err));
+    await new Promise(resolve => composed.on("close", resolve));
+    expect(events).toEqual([1, 2, "end"]);
+    expect(composed.errored).toBeNull();
+
+    expect(await compose(Readable.from([1, 2]), objectModeTail()).toArray()).toEqual([1, 2]);
+  });
+
   // Upstream: v26 test-stream-writable-decoded-encoding.js.
   it("write(string, 'buffer') throws ERR_UNKNOWN_ENCODING", () => {
     for (const opts of [{ decodeStrings: false }, {}]) {

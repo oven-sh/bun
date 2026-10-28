@@ -472,6 +472,32 @@ describe("decompressing frames whose size is known", () => {
     },
   );
 
+  it.each([1, 2, 8])("short matches from less than 16 bytes back, in one sequence out of %i", others => {
+    const data = noise(60_000);
+    // Where the first 24 bytes are a dictionary, these two reach into the part of it that matches are looked for in.
+    data.copyWithin(24, 9, 13);
+    data.copyWithin(29, 14, 18);
+    for (let at = 33, i = 0; at < data.length - 40; i++) {
+      at += 1 + (i % 7);
+      const offset = i % others === 0 || at < 320 ? 15 - (i % 15) : 16 + (i % 300);
+      for (const end = at + 3 + ((i + 2) % 31); at < end; at++) data[at] = data[at - offset];
+    }
+    const frame = zstdCompressSync(data, { level: 19 });
+    expect(blocks(frame)[0]).toBeGreaterThan(2_000);
+    expect(zstdDecompressSync(frame).equals(data)).toBe(true);
+    expect(zlib.zstdDecompressSync(frame).equals(data)).toBe(true);
+
+    // After a dictionary, and in a buffer that is written to from its start again.
+    const params = { [zlib.constants.ZSTD_c_compressionLevel]: 19, [zlib.constants.ZSTD_c_windowLog]: 10 };
+    const dictionary = data.subarray(0, 24);
+    const afterDictionary = zlib.zstdCompressSync(data.subarray(24), { params, dictionary });
+    expect(blocks(afterDictionary)[0]).toBeGreaterThan(32);
+    expect(zlib.zstdDecompressSync(afterDictionary, { dictionary }).equals(data.subarray(24))).toBe(true);
+    const inSmallWindow = zlib.zstdCompressSync(data, { params });
+    expect(blocks(inSmallWindow)[1]).toBeGreaterThan(32);
+    expect(zlib.zstdDecompressSync(inSmallWindow).equals(data)).toBe(true);
+  });
+
   it("a frame that makes more than it says is refused", () => {
     for (const piece of pieces.filter(piece => piece.length >= 135_000)) {
       const frame = zstdCompressSync(piece.subarray(0, 135_000), { level: 1 });

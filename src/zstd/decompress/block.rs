@@ -1237,16 +1237,79 @@ const NO_EXT: u8 = 0;
 const EXT_DICT: u8 = 1;
 const EXT_WITHIN: u8 = 2;
 
-/// Copies 16 bytes within `buf`, between positions that do not overflow. Whether they are in `buf`.
+/// Copies `N` bytes within `buf`, between positions that do not overflow. Whether they are in `buf`.
 #[inline(always)]
-fn copy_16(buf: &mut [u8], src: usize, dst: usize) -> bool {
-    let Some(Ok(chunk)) = buf.get(src..src + 16).map(<[u8; 16]>::try_from) else {
+fn copy_chunk<const N: usize>(buf: &mut [u8], src: usize, dst: usize) -> bool {
+    let Some(Ok(chunk)) = buf.get(src..src + N).map(<[u8; N]>::try_from) else {
         return false;
     };
-    let Some(to) = buf.get_mut(dst..dst + 16) else {
+    let Some(to) = buf.get_mut(dst..dst + N) else {
         return false;
     };
     to.copy_from_slice(&chunk);
+    true
+}
+
+/// The least offset value of a match that can be copied 16 bytes at a time.
+const MIN_FAR_OFFSET_VALUE: u32 = 16 + 3;
+/// How many literals a sequence can have for [`Executor::exec_batch`].
+const MAX_BATCH_LITERALS: u32 = 32;
+/// How long a match from closer can be for [`copy_short_close_match`].
+const MAX_CLOSE_MATCH: u32 = 32;
+
+/// Whether `sequences[index]` and the few after it look like they are for [`Executor::exec_batch`] with `CLOSE`.
+#[inline(always)]
+fn starts_close_run(sequences: &[RawSequence], index: usize) -> bool {
+    let Some(run) = sequences.get(index..index + 4) else {
+        return false;
+    };
+    (run.first()).is_some_and(|first| first.offset_value > 3)
+        && run.iter().all(|next| {
+            next.offset_value < MIN_FAR_OFFSET_VALUE
+                && next.lit_length <= MAX_BATCH_LITERALS
+                && next.match_length + MINMATCH <= MAX_CLOSE_MATCH
+        })
+}
+
+/// [`Executor::copy_close_match`] for what is short: `offset` is below 16, and up to 7 bytes more than `len` are written.
+/// Whether all that is in `buf`.
+#[inline(always)]
+fn copy_short_close_match(buf: &mut [u8], dst: usize, offset: usize, len: usize) -> bool {
+    /// For each offset below 8: what leaves as many bytes, what repeats them, and how many of the 8 are whole periods.
+    const REPEAT: [(u64, u64, usize); 8] = [
+        (0, 0, 8),
+        (0xFF, 0x0101_0101_0101_0101, 8),
+        (0xFFFF, 0x0001_0001_0001_0001, 8),
+        (0xFF_FFFF, 0x0001_0000_0100_0001, 6),
+        (0xFFFF_FFFF, 0x0000_0001_0000_0001, 8),
+        (0xFF_FFFF_FFFF, 1 | 1 << 40, 5),
+        (0xFFFF_FFFF_FFFF, 1 | 1 << 48, 6),
+        (0xFF_FFFF_FFFF_FFFF, 1 | 1 << 56, 7),
+    ];
+    let Some(src) = dst.checked_sub(offset).filter(|_| offset != 0) else {
+        return false;
+    };
+    let mut done = 0;
+    if let Some(&(mask, repeat, step)) = REPEAT.get(offset) {
+        let Some(Ok(bytes)) = buf.get(src..src + 8).map(<[u8; 8]>::try_from) else {
+            return false;
+        };
+        let pattern = (u64::from_le_bytes(bytes) & mask).wrapping_mul(repeat);
+        while done < len {
+            let Some(to) = buf.get_mut(dst + done..dst + done + 8) else {
+                return false;
+            };
+            to.copy_from_slice(&pattern.to_le_bytes());
+            done += step;
+        }
+    } else {
+        while done < len {
+            if !copy_chunk::<8>(buf, src + done, dst + done) {
+                return false;
+            }
+            done += 8;
+        }
+    }
     true
 }
 
@@ -1576,37 +1639,11 @@ impl<'a> Executor<'_, 'a> {
     /// it is 0 if that is not valid.
     ///
     /// The last offsets are those of the 3 sequences before, which are rewritten for that where it takes it.
+    ///
+    /// Matches in what comes before the output are of the common kind if `EXT` tells that it is `dict`, or `within` of the
+    /// buffer that the output goes to. So are, with `CLOSE`, short matches from less than 16 bytes back.
     #[inline(never)]
-    fn exec_batch(&mut self, sequences: &mut [RawSequence], index: usize) -> usize {
-        self.exec_batch_with::<NO_EXT>(sequences, index, &[], 0..0, 0)
-    }
-
-    /// The same where matches in `dict`, which comes before the output, are of the common kind too.
-    #[inline(never)]
-    fn exec_batch_after_dict(
-        &mut self,
-        sequences: &mut [RawSequence],
-        index: usize,
-        dict: &[u8],
-    ) -> usize {
-        self.exec_batch_with::<EXT_DICT>(sequences, index, dict, 0..0, 0)
-    }
-
-    /// The same for `within` of the buffer that the output goes to.
-    #[inline(never)]
-    fn exec_batch_after_wrap(
-        &mut self,
-        sequences: &mut [RawSequence],
-        index: usize,
-        within: Range<usize>,
-        window: usize,
-    ) -> usize {
-        self.exec_batch_with::<EXT_WITHIN>(sequences, index, &[], within, window)
-    }
-
-    /// What comes before the output is nothing of the common kind, `dict` or `within`, as `EXT` tells.
-    #[inline(always)]
-    fn exec_batch_with<const EXT: u8>(
+    fn exec_batch<const EXT: u8, const CLOSE: bool>(
         &mut self,
         sequences: &mut [RawSequence],
         mut index: usize,
@@ -1633,11 +1670,13 @@ impl<'a> Executor<'_, 'a> {
             let lit_length = raw.lit_length as usize;
             let match_length = raw.match_length as usize + MINMATCH as usize;
             let mut offset_value = raw.offset_value;
-            if offset_value < 16 + 3 {
+            if offset_value < MIN_FAR_OFFSET_VALUE {
                 if offset_value <= 3 {
                     offset_value = resolve_offset(sequences, index);
                 }
-                if offset_value < 16 + 3 {
+                if offset_value < MIN_FAR_OFFSET_VALUE
+                    && !(CLOSE && offset_value > 3 && match_length <= MAX_CLOSE_MATCH as usize)
+                {
                     break;
                 }
             }
@@ -1647,8 +1686,9 @@ impl<'a> Executor<'_, 'a> {
             let lit_end = lit_pos as usize + lit_length;
             if o_match_end + WILDCOPY_OVERLENGTH > buf.len()
                 || lit_end + WILDCOPY_OVERLENGTH > lits.len()
-                || lit_length > 32
-                || (EXT == NO_EXT || match_length > 64) && offset_value as usize > o_lit_end + 3
+                || lit_length > MAX_BATCH_LITERALS as usize
+                || (EXT == NO_EXT || match_length > 64 || offset_value < MIN_FAR_OFFSET_VALUE)
+                    && offset_value as usize > o_lit_end + 3
             {
                 break;
             }
@@ -1658,6 +1698,17 @@ impl<'a> Executor<'_, 'a> {
             ) else {
                 break;
             };
+            if CLOSE && offset_value < MIN_FAR_OFFSET_VALUE {
+                to.copy_from_slice(from);
+                let offset = offset_value as usize - 3;
+                if !copy_short_close_match(buf, o_lit_end, offset, match_length) {
+                    break;
+                }
+                op = o_match_end as u32;
+                lit_pos = lit_end as u32;
+                index += 1;
+                continue;
+            }
             if EXT == EXT_DICT && offset_value as usize > o_lit_end + 3 {
                 let back = offset_value as usize - 3 - o_lit_end;
                 let Some(match_pos) = dict.len().checked_sub(back) else {
@@ -1699,11 +1750,11 @@ impl<'a> Executor<'_, 'a> {
             let is_copied = if match_length > 64 {
                 copy_match_exact(buf, match_pos, o_lit_end, match_length).is_ok()
             } else {
-                copy_16(buf, match_pos, o_lit_end)
-                    && copy_16(buf, match_pos + 16, o_lit_end + 16)
+                copy_chunk::<16>(buf, match_pos, o_lit_end)
+                    && copy_chunk::<16>(buf, match_pos + 16, o_lit_end + 16)
                     && (match_length <= 32
-                        || copy_16(buf, match_pos + 32, o_lit_end + 32)
-                            && copy_16(buf, match_pos + 48, o_lit_end + 48))
+                        || copy_chunk::<16>(buf, match_pos + 32, o_lit_end + 32)
+                            && copy_chunk::<16>(buf, match_pos + 48, o_lit_end + 48))
             };
             if !is_copied {
                 break;
@@ -1720,7 +1771,7 @@ impl<'a> Executor<'_, 'a> {
     }
 
     /// Executes `sequences[index]` and those after it that are not for [`Self::exec_batch`]. Returns the index of the
-    /// first that is.
+    /// first that is, or that [`starts_close_run`].
     #[inline(never)]
     fn exec_others(&mut self, sequences: &mut [RawSequence], first: usize) -> Result<usize> {
         let mut exec = self.fork();
@@ -1730,7 +1781,10 @@ impl<'a> Executor<'_, 'a> {
             if (1..=3).contains(&offset_value) {
                 offset_value = resolve_offset(sequences, index);
             }
-            if index != first && raw.lit_length <= 32 && offset_value >= 16 + 3 {
+            if index != first
+                && raw.lit_length <= MAX_BATCH_LITERALS
+                && (offset_value >= MIN_FAR_OFFSET_VALUE || starts_close_run(sequences, index))
+            {
                 break;
             }
             exec.exec_sequence::<false>(Sequence {
@@ -1875,24 +1929,43 @@ impl<'a> Executor<'_, 'a> {
         for (last, offset) in sequences.iter_mut().zip(prev_offset.iter().rev()) {
             last.offset_value = *offset as u32 + 3;
         }
-        let mut index = 3;
-        loop {
-            index = match self.ext_dict {
-                ExtDict::Dict(dict) if !dict.is_empty() => {
-                    self.exec_batch_after_dict(sequences, index, dict)
-                }
-                ExtDict::Within { end, len, window } if len != 0 => {
-                    self.exec_batch_after_wrap(sequences, index, end - len..end, window)
-                }
-                _ => self.exec_batch(sequences, index),
-            };
-            if index >= sequences.len() {
-                break;
+        match self.ext_dict {
+            ExtDict::Dict(dict) if !dict.is_empty() => {
+                self.exec_in_turns::<EXT_DICT>(sequences, dict, 0..0, 0)
             }
-            index = self.exec_others(sequences, index)?;
-        }
+            ExtDict::Within { end, len, window } if len != 0 => {
+                self.exec_in_turns::<EXT_WITHIN>(sequences, &[], end - len..end, window)
+            }
+            _ => self.exec_in_turns::<NO_EXT>(sequences, &[], 0..0, 0),
+        }?;
         for (last, offset) in sequences.iter().rev().zip(prev_offset) {
             *offset = last.offset_value as usize - 3;
+        }
+        Ok(())
+    }
+
+    /// Executes `sequences` but the first 3. What else it gets is for [`Self::exec_batch`].
+    #[inline(always)]
+    fn exec_in_turns<const EXT: u8>(
+        &mut self,
+        sequences: &mut [RawSequence],
+        dict: &[u8],
+        within: Range<usize>,
+        window: usize,
+    ) -> Result<()> {
+        let mut index = 3;
+        let mut close = false;
+        while index < sequences.len() {
+            index = if close {
+                self.exec_batch::<EXT, true>(sequences, index, dict, within.clone(), window)
+            } else {
+                self.exec_batch::<EXT, false>(sequences, index, dict, within.clone(), window)
+            };
+            if index < sequences.len() {
+                index = self.exec_others(sequences, index)?;
+                close = (sequences.get(index))
+                    .is_some_and(|next| next.offset_value < MIN_FAR_OFFSET_VALUE);
+            }
         }
         Ok(())
     }
@@ -1914,6 +1987,38 @@ impl<'a> Executor<'_, 'a> {
                 self.op += part.len();
             }
         }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_close_matches_repeat_what_is_before_them() -> Result<()> {
+        const DST: usize = 20;
+        let start: Vec<u8> = (0..DST as u8).collect();
+        for offset in 1..16 {
+            for len in 1..=MAX_CLOSE_MATCH as usize {
+                let mut expected = start.clone();
+                for i in 0..len {
+                    expected.push(expected.at(DST - offset + i)?);
+                }
+                let mut buf = [start.as_slice(), &[0xEE; MAX_CLOSE_MATCH as usize + 8]].concat();
+                assert!(copy_short_close_match(&mut buf, DST, offset, len));
+                assert_eq!(
+                    *buf.sub(..DST + len)?,
+                    *expected,
+                    "{len} bytes from {offset} back"
+                );
+                assert!(buf.sub(DST + len + 7..)?.iter().all(|&byte| byte == 0xEE));
+                let too_short = buf.sub_mut(..DST + len - 1)?;
+                assert!(!copy_short_close_match(too_short, DST, offset, len));
+            }
+        }
+        assert!(!copy_short_close_match(&mut [0; 64], 3, 4, 5));
+        assert!(!copy_short_close_match(&mut [0; 64], 3, 0, 5));
         Ok(())
     }
 }

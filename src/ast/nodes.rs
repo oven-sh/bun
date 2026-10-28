@@ -152,8 +152,7 @@ const fn empty_arena_str() -> ArenaStr {
 // (~100 types, 12 downstream crates) — that cascade is the follow-up round
 // once `StoreRef` itself carries `'arena`.
 // Layout matches `StoreSlice<u8>`: `packed(4)` lowers `NonNull<u8>` to align 4
-// so the struct is 12 bytes instead of 16. The `u32` length keeps the 4 GB
-// source-file limit explicit.
+// so the struct is 12 bytes instead of 16.
 #[derive(Copy, Clone)]
 #[repr(C, packed(4))]
 pub struct StoreStr {
@@ -179,18 +178,30 @@ impl StoreStr {
         len: 0,
     };
 
+    /// The most bytes one `StoreStr` holds.
+    pub const MAX_LEN: usize = u32::MAX as usize;
+
     /// Wrap an arena-owned (or `'static`) slice. Safe: no lifetime is forged;
     /// the pointer is stored raw and re-borrowed under the `StoreRef` contract
     /// (valid until the owning arena resets).
     #[inline]
     pub const fn new(s: &[u8]) -> Self {
-        debug_assert!(s.len() <= u32::MAX as usize);
+        debug_assert!(s.len() <= Self::MAX_LEN);
         // SAFETY: `&[u8]` always has a non-null data pointer.
         let ptr = unsafe { NonNull::new_unchecked(s.as_ptr().cast_mut()) };
         StoreStr {
             ptr,
             len: s.len() as u32,
         }
+    }
+
+    /// `None` past [`Self::MAX_LEN`], which [`Self::new`] checks in debug builds only.
+    #[inline]
+    pub const fn try_new(s: &[u8]) -> Option<Self> {
+        if s.len() > Self::MAX_LEN {
+            return None;
+        }
+        Some(Self::new(s))
     }
 
     #[inline]

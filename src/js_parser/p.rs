@@ -9552,14 +9552,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// it (e.g. via `assume_init`); on `Err`, `*out` is left untouched.
     /// Taking `&mut MaybeUninit<Self>` (vs the previous `*mut Self`) makes the
     /// alignment/writability precondition a type guarantee, so this fn is safe.
+    #[inline]
     pub fn init(
         out: &mut core::mem::MaybeUninit<Self>,
         arena: &'a Bump,
         log: core::ptr::NonNull<bun_ast::Log>,
         source: &'a bun_ast::Source<'a>,
         define: &'a Define,
+        lexer: js_lexer::Lexer<'a>,
+        opts: ParserOptions<'a>,
+    ) -> Result<(), crate::Error> {
+        let text_len = source.contents.len();
+        Self::init_with_text_len(out, arena, log, source, define, lexer, opts, text_len)
+    }
+
+    /// [`Self::init`], where `text_len` sizes the symbol tables: the bytes that a parse pass reads.
+    pub(crate) fn init_with_text_len(
+        out: &mut core::mem::MaybeUninit<Self>,
+        arena: &'a Bump,
+        log: core::ptr::NonNull<bun_ast::Log>,
+        source: &'a bun_ast::Source,
+        define: &'a Define,
         mut lexer: js_lexer::Lexer<'a>,
         mut opts: ParserOptions<'a>,
+        text_len: usize,
     ) -> Result<(), crate::Error> {
         // Pre-size the parser's per-file name/ref-keyed symbol maps so the
         // common case never re-hashes while it grows. Profiling the runtime
@@ -9567,13 +9583,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // `hashbrown` `make_hash` / `reserve_rehash` churn from the module
         // scope's member map and the visit-pass `symbol_uses` map being created
         // at zero capacity and reserved one identifier reference at a time. A
-        // `source.len() / 16` hint (≈ one symbol per 16 source bytes) covers
+        // `text_len / 16` hint (≈ one symbol per 16 source bytes) covers
         // the vast majority of real files in a single allocation.
-        let estimated_symbol_count = source.contents.len() / 16;
+        let estimated_symbol_count = text_len / 16;
 
         // ~one scope per 64 source bytes covers most files without regrowth.
-        let mut scope_order =
-            ScopeOrderList::with_capacity_in((source.contents.len() / 64).max(1), arena);
+        let mut scope_order = ScopeOrderList::with_capacity_in((text_len / 64).max(1), arena);
         let scope_obj = arena.alloc(Scope {
             members: Default::default(),
             children: bun_alloc::AstAlloc::vec(),

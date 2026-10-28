@@ -40,11 +40,14 @@ type BumpVec<'bump, T> = bun_alloc::ArenaVec<'bump, T>;
 /// `assume_init_drop` would be UB; the macro `?`-returns *before* arming the
 /// guard. (`P::init` itself only fails before `out.write` — see its doc.)
 macro_rules! init_p {
-    ($ty:ty; $($arg:expr),* $(,)?) => {{
+    ($ty:ty; $($arg:expr),* $(,)?) => {
+        init_p!($ty, init; $($arg),*)
+    };
+    ($ty:ty, $init:ident; $($arg:expr),* $(,)?) => {{
         let mut __slot = MaybeUninit::<$ty>::uninit();
         // `P::init` takes `&mut MaybeUninit<Self>` and writes a
         // fully-initialized value on `Ok` (safe call; type guarantees align).
-        <$ty>::init(&mut __slot, $($arg),*)?;
+        <$ty>::$init(&mut __slot, $($arg),*)?;
         // SAFETY: `init` returned `Ok`, so `*__slot` is initialized; the
         // guard's drop closure is the sole owner of the slot from here.
         scopeguard::guard(__slot, |mut s| unsafe { s.assume_init_drop() })
@@ -701,8 +704,8 @@ impl<'a> Parser<'a> {
         // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
         // field docs), so handing the same raw pointer to both is defined —
         // no `&mut` is materialized.
-        let mut __p = init_p!(JavaScriptParser<'_>;
-            self.bump, self.log, self.source, self.define, lexer, options);
+        let mut __p = init_p!(JavaScriptParser<'_>, init_with_text_len;
+            self.bump, self.log, self.source, self.define, lexer, options, 0);
         // SAFETY: `init_p!` only yields after `init` succeeded.
         let p: &mut JavaScriptParser<'_> = unsafe { __p.assume_init_mut() };
 

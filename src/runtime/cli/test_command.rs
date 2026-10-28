@@ -1841,11 +1841,8 @@ impl TestCommand {
 
         jsc::virtual_machine::isBunTest.store(true, core::sync::atomic::Ordering::Relaxed);
 
-        // Borrowed-slice views (`&[&[u8]]`) over owned `Vec<Box<[u8]>>` config so the
-        // TestRunner / Scanner field types (`Option<&[&[u8]]>`) line up. The owned
-        // backing `Vec`s live in `ctx` for the process lifetime, so each element
-        // is detached to `&'static [u8]` up front (lets the outer view detach to
-        // `&'static [&'static [u8]]` below without a nested-lifetime bitcast).
+        // The global `TestRunner` is `'static`: each glob is detached here, and the slice
+        // over them below.
         let concurrent_test_glob_view: Option<Vec<bun_glob::Prepared<&'static [u8]>>> =
             ctx.test_options.concurrent_test_glob.as_ref().map(|v| {
                 v.iter()
@@ -1856,12 +1853,6 @@ impl TestCommand {
                     })
                     .collect()
             });
-        let path_ignore_patterns_view: Vec<bun_glob::Prepared<&[u8]>> = ctx
-            .test_options
-            .path_ignore_patterns
-            .iter()
-            .map(|b| bun_glob::Prepared::new(&**b))
-            .collect();
 
         // Keep an owned `Box` local — `exec()` never returns before process
         // exit, so the heap allocation outlives all raw-pointer observers
@@ -2048,11 +2039,14 @@ impl TestCommand {
         vm.ensure_debugger(false)?;
 
         // Declared before the scanner, which borrows them.
-        let filter_names_owned: Vec<&[u8]>;
+        let path_ignore_patterns_view: Vec<bun_glob::Prepared<&[u8]>> = ctx
+            .test_options
+            .path_ignore_patterns
+            .iter()
+            .map(|b| bun_glob::Prepared::new(&**b))
+            .collect();
         #[cfg(windows)]
-        let filter_names_normalized_storage: Vec<Box<[u8]>>;
-        #[cfg(windows)]
-        let filter_names_normalized: Vec<&[u8]>;
+        let filter_names_normalized: Vec<Box<[u8]>>;
 
         let mut scanner = Scanner::init(&vm.transpiler, ctx.positionals.len()).expect("oom");
         scanner.path_ignore_patterns = &path_ignore_patterns_view[..];
@@ -2107,35 +2101,20 @@ impl TestCommand {
             }
         } else {
             // Treat arguments as filters and scan the codebase
-            filter_names_owned = if ctx.positionals.is_empty() {
-                Vec::new()
-            } else {
-                ctx.positionals[1..].iter().map(|b| &**b).collect()
-            };
+            let filter_names = ctx.positionals.get(1..).unwrap_or_default();
             #[cfg(windows)]
-            let filter_names: &[&[u8]] = &filter_names_owned;
-
-            // Both platforms use a `Vec<&[u8]>` view (already built above as
-            // `filter_names_owned`); the Windows branch additionally needs an
-            // owned backing `Vec<Box<[u8]>>` for the `/`→`\`-rewritten bytes
-            // plus a second view vec over those boxes.
-            #[cfg(windows)]
-            {
-                let mut normalized = Vec::with_capacity(filter_names.len());
-                for in_ in filter_names {
-                    let mut to_normalize = in_.to_vec();
-                    bun_path::resolve_path::posix_to_platform_in_place::<u8>(&mut to_normalize);
-                    normalized.push(to_normalize.into_boxed_slice());
-                }
-                filter_names_normalized_storage = normalized;
-                filter_names_normalized = filter_names_normalized_storage
+            let filter_names = {
+                filter_names_normalized = filter_names
                     .iter()
-                    .map(|b| &**b)
+                    .map(|in_| {
+                        let mut to_normalize = in_.to_vec();
+                        bun_path::resolve_path::posix_to_platform_in_place::<u8>(&mut to_normalize);
+                        to_normalize.into_boxed_slice()
+                    })
                     .collect();
-            }
-            #[cfg(not(windows))]
-            let filter_names_normalized: &Vec<&[u8]> = &filter_names_owned;
-            scanner.filter_names = &filter_names_normalized[..];
+                &filter_names_normalized[..]
+            };
+            scanner.filter_names = filter_names;
 
             // Own the joined path in a hoisted buffer and borrow from it.
             let dir_to_scan_owned: Vec<u8>;

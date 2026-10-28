@@ -195,7 +195,9 @@ function ClientRequest(input?, options?, cb?): void {
   let agent = options.agent;
   const defaultAgent = options._defaultAgent || Agent.globalAgent;
   if (agent === false) {
-    agent = new defaultAgent.constructor();
+    // A fresh agent of the module's own class. Node makes one of the global agent's class, `new defaultAgent.constructor()`: at that read the
+    // compiler cannot tell an agent from a function, so `new Function()` kept eval in every trimmed executable that uses the client (#47155).
+    agent = new Agent.Agent();
   } else if (agent === null || agent === undefined) {
     if (typeof options.createConnection !== "function") {
       agent = defaultAgent;

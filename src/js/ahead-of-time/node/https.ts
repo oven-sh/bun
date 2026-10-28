@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/https.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 0371a4de7a30005d724a619bf5d17767c9129f70317b0886790d29f1401b8a9b.
+// Written against that file with the SHA-256 bc160efe7a024dde84eb11916e7f5bb8682d48734277c52fcf68abc5a68d875e.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:https"
@@ -52,6 +52,8 @@ function request(...args: [input?: unknown, options?: unknown, cb?: unknown]) {
   }
 
   options._defaultAgent = https.globalAgent;
+  // `agent: false` is resolved here, where the class is this module's: ClientRequest makes an http.Agent (see there, #47155).
+  if (options.agent === false) options.agent = new Agent();
   ArrayPrototypeUnshift.$call(args, options);
 
   return new http.ClientRequest(...(args as any));

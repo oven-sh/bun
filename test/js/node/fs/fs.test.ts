@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it, spyOn } from "bun:test";
+import { beforeAll, describe, expect, it, mock, spyOn } from "bun:test";
 import {
   bunEnv,
   bunExe,
@@ -17,6 +17,7 @@ import {
   tempDirWithFiles,
   tmpdirSync,
 } from "harness";
+import { once } from "node:events";
 import fs, {
   closeSync,
   constants,
@@ -70,6 +71,7 @@ import { spawnSync } from "bun";
 import { mkfifo } from "mkfifo";
 import { ReadStream as ReadStream_, WriteStream as WriteStream_ } from "./export-from.js";
 import { ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_ } from "./export-star-from.js";
+import { rows as utf8StreamCallOrders } from "./fs-utf8stream-call-orders-fixture.cjs";
 
 const Buffer = globalThis.Buffer || Uint8Array;
 
@@ -8028,6 +8030,262 @@ describe("fs.Utf8Stream", () => {
       });
     });
     await done;
+  });
+
+  const textOf = (data: string | NodeJS.ArrayBufferView) =>
+    typeof data === "string" ? data : Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString();
+
+  // node:fs, with each write, fsync and close that the stream makes appended to `calls`.
+  const recordingFs = (calls: string[]) => ({
+    write(fd: number, data: string | NodeJS.ArrayBufferView, ...rest: any[]) {
+      calls.push(`write ${JSON.stringify(textOf(data))}`);
+      return (fs.write as any)(fd, data, ...rest);
+    },
+    fsync(fd: number, callback: (err: Error | null) => void) {
+      calls.push("fsync");
+      return fs.fsync(fd, callback);
+    },
+    close(fd: number, callback: (err: Error | null) => void) {
+      calls.push("close");
+      return fs.close(fd, callback);
+    },
+  });
+
+  // An fs.write that puts the data in the file at once and keeps the stream's
+  // callback, so the stream has a write in flight until finish() is called.
+  function heldWrite() {
+    const held = {
+      writes: [] as string[],
+      finish: () => {},
+      write(fd: number, data: string | NodeJS.ArrayBufferView, ...rest: any[]) {
+        const callback = rest.pop();
+        held.writes.push(textOf(data));
+        const written = writeSync(fd, data as string);
+        held.finish = () => callback(null, written);
+      },
+    };
+    return held;
+  }
+
+  describe.each(["utf8", "buffer"] as const)("contentMode %s", contentMode => {
+    const chunk = (text: string) => (contentMode === "buffer" ? Buffer.from(text) : text);
+
+    it.concurrent.each([0, 10])(
+      "write(), flush(cb), end() before 'ready' with minLength %d: one write, the callback, then the close",
+      async minLength => {
+        using dir = tempDir("utf8stream-flush-end", {});
+        const dest = path.join(String(dir), "out.log");
+        const calls: string[] = [];
+        using stream = new fs.Utf8Stream({ dest, minLength, contentMode, fs: recordingFs(calls) });
+        stream.write(chunk("abc"));
+        stream.flush(err => calls.push(`flush callback ${err ?? "ok"}`));
+        stream.end();
+        await once(stream, "close");
+        expect(calls).toEqual([`write "abc"`, "fsync", "flush callback ok", "fsync", "close"]);
+        expect(readFileSync(dest, "utf8")).toBe("abc");
+      },
+    );
+
+    it.concurrent("write(), flush(cb) before 'ready': the callback comes after the write", async () => {
+      using dir = tempDir("utf8stream-flush-opening", {});
+      const dest = path.join(String(dir), "out.log");
+      using stream = new fs.Utf8Stream({ dest, contentMode });
+      const { promise: flushed, resolve, reject } = Promise.withResolvers<{ err: unknown; file: string | null }>();
+      stream.on("error", reject);
+      stream.write(chunk("abc"));
+      stream.flush(err => resolve({ err: err ?? null, file: existsSync(dest) ? readFileSync(dest, "utf8") : null }));
+      expect(await flushed).toEqual({ err: null, file: "abc" });
+      stream.end();
+      await once(stream, "close");
+    });
+
+    it.concurrent("flush(cb) with a write in flight: the callback comes after that write", async () => {
+      using dir = tempDir("utf8stream-flush-in-flight", {});
+      const dest = path.join(String(dir), "out.log");
+      const held = heldWrite();
+      const calls: string[] = [];
+      using stream = new fs.Utf8Stream({ dest, contentMode, fs: { write: held.write } });
+      await once(stream, "ready");
+      const { promise: flushed, resolve, reject } = Promise.withResolvers<void>();
+      stream.on("error", reject);
+      stream.write(chunk("abc"));
+      stream.flush(err => {
+        calls.push(`flush callback ${err ?? "ok"}`);
+        resolve();
+      });
+      calls.push("flush() returned");
+      held.finish();
+      await flushed;
+      expect(calls).toEqual(["flush() returned", "flush callback ok"]);
+      expect(held.writes).toEqual(["abc"]);
+      stream.end();
+      await once(stream, "close");
+    });
+
+    it.concurrent(
+      "destroy() with a write in flight: when that write completes in full, no other write starts",
+      async () => {
+        using dir = tempDir("utf8stream-destroy-in-flight", {});
+        const dest = path.join(String(dir), "out.log");
+        const held = heldWrite();
+        using stream = new fs.Utf8Stream({ dest, contentMode, fs: { write: held.write } });
+        await once(stream, "ready");
+        stream.write(chunk("a"));
+        stream.write(chunk("b"));
+        stream.destroy();
+        held.finish();
+        await once(stream, "close");
+        expect({ writes: held.writes, writing: stream.writing }).toEqual({ writes: ["a"], writing: false });
+        expect(readFileSync(dest, "utf8")).toBe("a");
+      },
+    );
+  });
+
+  it.concurrent("flush(cb) before 'ready' with nothing written: one empty write, then the callback", async () => {
+    using dir = tempDir("utf8stream-flush-empty", {});
+    const dest = path.join(String(dir), "out.log");
+    const calls: string[] = [];
+    using stream = new fs.Utf8Stream({ dest, fs: recordingFs(calls) });
+    const { promise: flushed, resolve, reject } = Promise.withResolvers<void>();
+    stream.on("error", reject);
+    stream.flush(err => {
+      calls.push(`flush callback ${err ?? "ok"}`);
+      resolve();
+    });
+    await flushed;
+    expect(calls).toEqual([`write ""`, "fsync", "flush callback ok"]);
+    stream.end();
+    await once(stream, "close");
+  });
+
+  it.concurrent("sync: 'drain' comes to a listener added after a write that found no listener", async () => {
+    using dir = tempDir("utf8stream-sync-drain", {});
+    using stream = new fs.Utf8Stream({ dest: path.join(String(dir), "out.log"), sync: true });
+    stream.write("a");
+    // The 'drain' of the first write runs in this turn and finds no listener.
+    await new Promise(resolve => setImmediate(resolve));
+    stream.write("b");
+    const onDrain = mock();
+    stream.once("drain", onDrain);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(onDrain).toHaveBeenCalledTimes(1);
+  });
+
+  // fs.fsync() fails on a pipe and on the null device. flush(cb) reports no error for that.
+  describe.if(isPosix)("flush(cb) on an fd that cannot be synced", () => {
+    it.concurrent.each(["pipe", "ignore"] as const)("stdout: %s", async stdout => {
+      const script = `
+        const fs = require("node:fs");
+        const stream = new fs.Utf8Stream({ fd: 1, minLength: 4096 });
+        stream.write("hello\\n");
+        stream.flush(err => fs.writeSync(2, "flush: " + (err ? err.code : "ok")));
+      `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout, stderr: "pipe" });
+      const [out, err, exitCode] = await Promise.all([proc.stdout?.text() ?? "", proc.stderr.text(), proc.exited]);
+      expect({ stdout: out, stderr: err, exitCode }).toEqual({
+        stdout: stdout === "pipe" ? "hello\n" : "",
+        stderr: "flush: ok",
+        exitCode: 0,
+      });
+    });
+  });
+
+  // The rows and their traces are in the fixture. The traces are those of Node.js v26.12.1.
+  it.concurrent.each(Object.entries(utf8StreamCallOrders))("call order: %s", async (_name, row) => {
+    expect(await row.run()).toEqual(row.expected);
+  });
+
+  it.concurrent("periodicFlush writes what is below minLength", async () => {
+    using dir = tempDir("utf8stream-periodic-flush", {
+      "periodic-flush-fixture.mjs": `
+        import { once } from "node:events";
+        import fs from "node:fs";
+        // The stream's interval is unref'd. This handle keeps the process alive until both streams have written.
+        const keepAlive = setInterval(() => {}, 1000);
+        async function written(contentMode) {
+          const dest = contentMode + ".log";
+          const stream = new fs.Utf8Stream({ dest, contentMode, minLength: 100, periodicFlush: 10 });
+          stream.write(contentMode === "buffer" ? Buffer.from("abc") : "abc");
+          await once(stream, "write");
+          const text = fs.readFileSync(dest, "utf8");
+          stream.destroy();
+          return text;
+        }
+        Promise.all([written("utf8"), written("buffer")]).then(([utf8, buffer]) => {
+          clearInterval(keepAlive);
+          console.log(JSON.stringify({ utf8, buffer }));
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "periodic-flush-fixture.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: `{"utf8":"abc","buffer":"abc"}`, exitCode: 0 });
+  });
+
+  it.concurrent("a chunk queued behind a non-ASCII chunk is written before 'drain'", async () => {
+    using dir = tempDir("utf8stream-non-ascii", {});
+    const dest = path.join(String(dir), "out.log");
+    using stream = new fs.Utf8Stream({ dest });
+    await once(stream, "ready");
+    stream.write("éééé");
+    stream.write("èèèè");
+    await once(stream, "drain");
+    expect(readFileSync(dest, "utf8")).toBe("ééééèèèè");
+    stream.end();
+    await once(stream, "close");
+    expect(readFileSync(dest, "utf8")).toBe("ééééèèèè");
+  });
+
+  // https://github.com/oven-sh/bun/issues/45719
+  it.concurrent("end() writes every queued non-ASCII chunk", async () => {
+    using dir = tempDir("utf8stream-non-ascii-end", {});
+    const dest = path.join(String(dir), "out.log");
+    using stream = new fs.Utf8Stream({ dest, sync: false, minLength: 0 });
+    // 1000 times "€😀": 3000 UTF-16 code units in 7000 bytes.
+    const text = Buffer.alloc(7000, "€😀").toString();
+    for (let i = 0; i < 50; i++) stream.write(text);
+    stream.end();
+    await once(stream, "close");
+    const written = readFileSync(dest, "utf8");
+    expect(written.length).toBe(150_000);
+    expect(written === Buffer.alloc(350_000, "€😀").toString()).toBe(true);
+  });
+
+  it.concurrent("sync: end() writes every queued non-ASCII chunk", async () => {
+    using dir = tempDir("utf8stream-non-ascii-sync", {});
+    const dest = path.join(String(dir), "out.log");
+    // minLength holds the first chunk back. maxWrite gives each chunk its own queue entry.
+    using stream = new fs.Utf8Stream({ dest, sync: true, minLength: 4, maxWrite: 5 });
+    stream.write("€€€");
+    stream.write("€€€");
+    stream.write("€€€");
+    stream.end();
+    await once(stream, "close");
+    expect(readFileSync(dest, "utf8")).toBe("€€€€€€€€€");
+  });
+
+  it.concurrent("contentMode buffer writes every chunk, and the bytes of a view that is not a Buffer", async () => {
+    using dir = tempDir("utf8stream-buffer-views", {});
+    const dest = path.join(String(dir), "out.log");
+    using stream = new fs.Utf8Stream({ dest, contentMode: "buffer" });
+    stream.write(Buffer.from("ab"));
+    stream.write(new Uint8Array([0x63]));
+    stream.write(new DataView(new Uint8Array([0x64]).buffer));
+    stream.write(new Uint16Array(new Uint8Array([0x65, 0x66]).buffer));
+    expect(() => stream.write("gh" as any)).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "data" argument must be an instance of Buffer, TypedArray, or DataView. Received type string ('gh')`,
+      }),
+    );
+    stream.end();
+    await once(stream, "close");
+    expect(readFileSync(dest, "utf8")).toBe("abcdef");
   });
 });
 

@@ -316,7 +316,6 @@ const keyStrRegExp = /^[a-zA-Z_][a-zA-Z_0-9]*$/;
 const numberRegExp = /^(0|[1-9][0-9]*)$/;
 
 const coreModuleRegExp = /^ {4}at (?:[^/\\(]+ \(|)node:(.+):\d+:\d+\)?$/;
-const nodeModulesRegExp = /[/\\]node_modules[/\\](.+?)(?=[/\\])/g;
 
 const classRegExp = /^(\s+[^(]*?)\s*{/;
 const stripCommentsRegExp = /(\/\/.*?\n)|(\/\*(.|\n)*?\*\/)/g;
@@ -1215,7 +1214,11 @@ function getPrefix(constructor: string | null, tag: string, fallback: string, si
     return `[${fallback}${size}: null prototype] `;
   }
 
-  if (tag !== "" && constructor !== tag) {
+  if (tag !== "") {
+    const dot = StringPrototypeLastIndexOf.$call(tag, ".");
+    if (constructor === (dot >= 1 ? StringPrototypeSlice.$call(tag, dot + 1) : tag)) {
+      return `${tag}${size} `;
+    }
     return `${constructor}${size} [${tag}] `;
   }
   return `${constructor}${size} `;
@@ -1892,16 +1895,49 @@ function removeDuplicateErrorKeys(ctx: Context, keys: Key[], err: Error, stack: 
 
 function markNodeModules(ctx: Context, line: string) {
   let tempLine = "";
-  let nodeModule: RegExpExecArray | null;
-  let pos = 0;
-  while ((nodeModule = nodeModulesRegExp.exec(line)) !== null) {
-    // '/node_modules/'.length === 14
-    tempLine += StringPrototypeSlice.$call(line, pos, nodeModule.index + 14);
-    tempLine += ctx.stylize(nodeModule[1], "module");
-    pos = nodeModule.index + nodeModule[0].length;
+  let lastPos = 0;
+  let searchFrom = 0;
+
+  while (true) {
+    const nodeModulePosition = StringPrototypeIndexOf.$call(line, "node_modules", searchFrom);
+    if (nodeModulePosition === -1) {
+      break;
+    }
+
+    // Ensure it's a path segment: must have a path separator before and after
+    const separator = line[nodeModulePosition - 1];
+    const after = line[nodeModulePosition + 12]; // 'node_modules'.length === 12
+
+    if ((after !== "/" && after !== "\\") || (separator !== "/" && separator !== "\\")) {
+      searchFrom = nodeModulePosition + 1;
+      continue;
+    }
+
+    const moduleStart = nodeModulePosition + 13; // Include trailing separator
+
+    tempLine += StringPrototypeSlice.$call(line, lastPos, moduleStart);
+
+    let moduleEnd = StringPrototypeIndexOf.$call(line, separator, moduleStart);
+    if (moduleEnd === -1) {
+      // No trailing separator: the module name runs to the end of the line.
+      moduleEnd = line.length;
+    } else if (line[moduleStart] === "@") {
+      // Namespaced modules have an extra slash: @namespace/package
+      moduleEnd = StringPrototypeIndexOf.$call(line, separator, moduleEnd + 1);
+      if (moduleEnd === -1) {
+        moduleEnd = line.length;
+      }
+    }
+
+    const nodeModule = StringPrototypeSlice.$call(line, moduleStart, moduleEnd);
+    tempLine += ctx.stylize(nodeModule, "module");
+
+    lastPos = moduleEnd;
+    searchFrom = moduleEnd;
   }
-  if (pos !== 0) {
-    line = tempLine + StringPrototypeSlice.$call(line, pos);
+
+  if (lastPos !== 0) {
+    line = tempLine + StringPrototypeSlice.$call(line, lastPos);
   }
   return line;
 }
@@ -1958,6 +1994,20 @@ function formatError(err, constructor: string | null, tag: string, ctx: Context,
   // Print errors aggregated into AggregateError
   if ($isJSArray(err.errors) && (keys.length === 0 || !ArrayPrototypeIncludes.$call(keys, "errors"))) {
     ArrayPrototypePush.$call(keys, "errors");
+  }
+
+  // Print the wrapped errors of a SuppressedError.
+  if (
+    ObjectPrototypeHasOwnProperty.$call(err, "error") &&
+    (keys.length === 0 || !ArrayPrototypeIncludes.$call(keys, "error"))
+  ) {
+    ArrayPrototypePush.$call(keys, "error");
+  }
+  if (
+    ObjectPrototypeHasOwnProperty.$call(err, "suppressed") &&
+    (keys.length === 0 || !ArrayPrototypeIncludes.$call(keys, "suppressed"))
+  ) {
+    ArrayPrototypePush.$call(keys, "suppressed");
   }
 
   stack = improveStack(stack, constructor, name, tag);
@@ -2138,28 +2188,32 @@ function addNumericSeparatorEnd(integerString: string) {
 const remainingText = (remaining: number) => `... ${remaining} more item${remaining > 1 ? "s" : ""}`;
 
 function formatNumber(fn: Stylize, number: number, numericSeparator: boolean) {
+  // Format -0 as '-0'. Checking `number === -0` won't distinguish 0 from -0.
+  if (ObjectIs(number, -0)) {
+    return fn("-0", "number");
+  }
   if (!numericSeparator) {
-    // Format -0 as '-0'. Checking `number === -0` won't distinguish 0 from -0.
-    if (ObjectIs(number, -0)) {
-      return fn("-0", "number");
-    }
     return fn(`${number}`, "number");
   }
+
+  const numberString = String(number);
   const integer = MathTrunc(number);
-  const string = String(integer);
+
   if (integer === number) {
-    if (!NumberIsFinite(number) || StringPrototypeIncludes.$call(string, "e")) {
-      return fn(string, "number");
+    if (!NumberIsFinite(number) || StringPrototypeIncludes.$call(numberString, "e")) {
+      return fn(numberString, "number");
     }
-    return fn(`${addNumericSeparator(string)}`, "number");
+    return fn(addNumericSeparator(numberString), "number");
   }
-  if (NumberIsNaN(number)) {
-    return fn(string, "number");
+  if (NumberIsNaN(number) || StringPrototypeIncludes.$call(numberString, "e")) {
+    return fn(numberString, "number");
   }
-  return fn(
-    `${addNumericSeparator(string)}.${addNumericSeparatorEnd(StringPrototypeSlice.$call(String(number), string.length + 1))}`,
-    "number",
-  );
+
+  const decimalIndex = StringPrototypeIndexOf.$call(numberString, ".");
+  const integerPart = StringPrototypeSlice.$call(numberString, 0, decimalIndex);
+  const fractionalPart = StringPrototypeSlice.$call(numberString, decimalIndex + 1);
+
+  return fn(`${addNumericSeparator(integerPart)}.${addNumericSeparatorEnd(fractionalPart)}`, "number");
 }
 
 function formatBigInt(fn: Stylize, bigint: bigint, numericSeparator: boolean) {
@@ -2471,8 +2525,10 @@ function formatPromise(ctx: Context, value, recurseTimes: number) {
 }
 
 function formatExtraProperties(ctx: Context, value, recurseTimes: number, key: string, typedArray?: boolean) {
+  // This read throws for a detached DataView and formatRaw() retries: do it before the indent.
+  const extraValue = value[key];
   ctx.indentationLvl += 2;
-  const str = formatValue(ctx, value[key], recurseTimes, typedArray);
+  const str = formatValue(ctx, extraValue, recurseTimes, typedArray);
   ctx.indentationLvl -= 2;
 
   // These entries are mainly getters. Should they be formatted like getters?
@@ -2512,22 +2568,22 @@ function formatProperty(
         (ctx.getters === "get" && desc.set === undefined) ||
         (ctx.getters === "set" && desc.set !== undefined))
     ) {
+      ctx.indentationLvl += 2;
       try {
         const tmp = descGet.$call(original);
-        ctx.indentationLvl += 2;
         if (tmp === null) {
           str = `${s(`[${label}:`, sp)} ${s("null", "null")}${s("]", sp)}`;
-        } else if (typeof tmp === "object") {
+        } else if (typeof tmp === "object" || typeof tmp === "function") {
           str = `${s(`[${label}]`, sp)} ${formatValue(ctx, tmp, recurseTimes)}`;
         } else {
           const primitive = formatPrimitive(s, tmp, ctx);
           str = `${s(`[${label}:`, sp)} ${primitive}${s("]", sp)}`;
         }
-        ctx.indentationLvl -= 2;
       } catch (err) {
-        const message = `<Inspection threw (${(err as Error).message})>`;
+        const message = `<Inspection threw (${err == null ? err : (err as Error).message})>`;
         str = `${s(`[${label}:`, sp)} ${message}${s("]", sp)}`;
       }
+      ctx.indentationLvl -= 2;
     } else {
       str = ctx.stylize(`[${label}]`, sp);
     }
@@ -2563,16 +2619,19 @@ function isBelowBreakLength(ctx: Context, output: string[], start: number, base:
   // TODO(BridgeAR): Add unicode support. Use the readline getStringWidth
   // function. Check the performance overhead and make it an opt-in in case it's
   // significant.
-  let totalLength = output.length + start;
-  if (totalLength + output.length > ctx.breakLength) return false;
-  for (let i = 0; i < output.length; i++) {
-    if (ctx.colors) {
-      totalLength += StringPrototypeReplaceAll.$call(output[i], /\u001B\[\d\d?m/g, "").length; // remove colors
-    } else {
-      totalLength += output[i].length;
-    }
-    if (totalLength > ctx.breakLength) {
-      return false;
+  const breakLength = ctx.breakLength;
+  if (breakLength !== Infinity) {
+    let totalLength = output.length + start;
+    if (totalLength + output.length > breakLength) return false;
+    for (let i = 0; i < output.length; i++) {
+      if (ctx.colors) {
+        totalLength += StringPrototypeReplaceAll.$call(output[i], /\u001B\[\d\d?m/g, "").length; // remove colors
+      } else {
+        totalLength += output[i].length;
+      }
+      if (totalLength > breakLength) {
+        return false;
+      }
     }
   }
   // Do not line up properties on the same line if `base` contains line breaks.
@@ -2637,7 +2696,11 @@ function reduceToSingleString(
   // Line up all entries on a single line in case the entries do not exceed
   // `breakLength`.
   if (isBelowBreakLength(ctx, output, 0, base)) {
-    return `${braces[0]}${base ? ` ${base}` : ""} ${ArrayPrototypeJoin.$call(output, ", ")} ` + braces[1];
+    const joinedOutput = ArrayPrototypeJoin.$call(output, ", ");
+    // nodejs/node#64238 rejects an entry with "\n" under breakLength: Infinity. One scan of the joined text does that.
+    if (ctx.breakLength !== Infinity || !StringPrototypeIncludes.$call(joinedOutput, "\n")) {
+      return `${braces[0]}${base ? ` ${base}` : ""} ${joinedOutput} ` + braces[1];
+    }
   }
   const indentation = StringPrototypeRepeat.$call(" ", ctx.indentationLvl);
   // If the opening "brace" is too large, like in the case of "Set {",

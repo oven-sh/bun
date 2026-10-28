@@ -177,10 +177,21 @@ test("no assertion failures", () => {
 
   {
     const ab = new ArrayBuffer(42);
+    const dv = new DataView(ab);
+
     assert.strictEqual(ab.byteLength, 42);
     new MessageChannel().port1.postMessage(ab, [ab]);
     assert.strictEqual(ab.byteLength, 0);
     assert.strictEqual(util.inspect(ab), "ArrayBuffer { (detached), [byteLength]: 0 }");
+
+    assert.strictEqual(
+      util.inspect(dv),
+      "DataView {\n" +
+        "  [byteLength]: 0,\n" +
+        "  [byteOffset]: undefined,\n" +
+        "  [buffer]: ArrayBuffer { (detached), [byteLength]: 0 }\n" +
+        "}",
+    );
   }
 
   // Truncate output for ArrayBuffers using plural or singular bytes
@@ -633,6 +644,42 @@ test("no assertion failures 2", () => {
     assert.match(util.inspect(falsyCause1), /^\[Error\] \{ .*\[cause\]: false.* \}$/);
     assert.match(util.inspect(falsyCause2), /^\[Error\] \{ .*\[cause\]: null.* \}$/);
     assert.match(util.inspect(undefinedCause), /^\[Error\] \{ .*\[cause\]: undefined.* \}$/);
+  }
+
+  {
+    // The `error` and `suppressed` properties of a SuppressedError should be
+    // shown during inspection, same as `cause` and AggregateError's `errors`.
+    const { stackTraceLimit } = Error;
+    Error.stackTraceLimit = 0;
+
+    const disposeError = new Error("dispose error");
+    const bodyError = new Error("body error");
+    const suppressedError = new SuppressedError(disposeError, bodyError, "An error was suppressed during disposal");
+
+    assert.strictEqual(
+      util.inspect(suppressedError),
+      "[SuppressedError: An error was suppressed during disposal] " +
+        "{\n  [error]: [Error: dispose error],\n  [suppressed]: [Error: body error]\n}",
+    );
+
+    // Nested SuppressedErrors (multiple failed disposals) must recurse.
+    const outer = new SuppressedError(new Error("second dispose error"), suppressedError, "outer");
+    assert.strictEqual(
+      util.inspect(outer),
+      "[SuppressedError: outer] {\n" +
+        "  [error]: [Error: second dispose error],\n" +
+        "  [suppressed]: [SuppressedError: An error was suppressed during disposal] {\n" +
+        "    [error]: [Error: dispose error],\n" +
+        "    [suppressed]: [Error: body error]\n" +
+        "  }\n" +
+        "}",
+    );
+
+    const custom = new Error("No own error/suppressed property");
+    Object.setPrototypeOf(custom, suppressedError);
+    assert.strictEqual(util.inspect(custom), "[SuppressedError: No own error/suppressed property]");
+
+    Error.stackTraceLimit = stackTraceLimit;
   }
 
   {
@@ -2321,6 +2368,17 @@ test("no assertion failures 3", () => {
     );
   }
 
+  // Getter returning a function.
+  // https://github.com/nodejs/node/issues/64838
+  {
+    const obj = {
+      get foo() {
+        return function bar() {};
+      },
+    };
+    assert.strictEqual(inspect(obj, { getters: true }), "{ foo: [Getter] [Function: bar] }");
+  }
+
   // Check compact number mode.
   {
     let obj = {
@@ -2802,6 +2860,17 @@ test("no assertion failures 3", () => {
     process.cwd = originalCWD;
   }
 
+  {
+    // A node_modules segment that is the last path component (no trailing
+    // separator after the module name) must not send markNodeModules into an
+    // infinite loop that exhausts the heap.
+    // https://github.com/nodejs/node/issues/64011
+    const err = new Error("boom");
+    err.stack = "Error: boom\n    at /app/node_modules/foo.js:1:1";
+    const out = util.inspect(err, { colors: true });
+    assert.strictEqual(out, "Error: boom\n" + "    at /app/node_modules/\x1B[4mfoo.js:1:1\x1B[24m");
+  }
+
   // This starts to work in node 15
   {
     // Cross platform checks.
@@ -2912,22 +2981,21 @@ test("no assertion failures 3", () => {
 
     assert.strictEqual(
       inspect(Object.getPrototypeOf(bar), { showHidden: true, getters: true }),
-      "<ref *1> Foo [Map] {\n" +
-        "    [constructor]: [class Bar extends Foo] {\n" +
-        "      [length]: 0,\n" +
-        `      [name]: 'Bar',\n      [prototype]: [Circular *1],\n` +
-        "      [Symbol(Symbol.species)]: [Getter: <Inspection threw " +
-        "(Symbol.prototype.toString requires that |this| be a symbol or a symbol object)>]\n" +
-        "    },\n" +
-        "    [xyz]: [Getter: 'YES!'],\n" +
-        "    [Symbol(nodejs.util.inspect.custom)]: " +
-        "[Function: [nodejs.util.inspect.custom]] {\n" +
-        "      [length]: 0,\n" +
-        "      [name]: '[nodejs.util.inspect.custom]'\n" +
-        "    },\n" +
-        "    [abc]: [Getter: true],\n" +
-        "    [def]: [Getter/Setter: false]\n" +
-        "  }",
+      "<ref *2> Foo [Map] {\n" +
+        "  [constructor]: <ref *1> [class Bar extends Foo] {\n" +
+        "    [length]: 0,\n" +
+        "    [name]: 'Bar',\n" +
+        "    [prototype]: [Circular *2],\n" +
+        "    [Symbol(Symbol.species)]: [Getter] [Circular *1]\n" +
+        "  },\n" +
+        "  [xyz]: [Getter: 'YES!'],\n" +
+        "  [Symbol(nodejs.util.inspect.custom)]: [Function: [nodejs.util.inspect.custom]] {\n" +
+        "    [length]: 0,\n" +
+        "    [name]: '[nodejs.util.inspect.custom]'\n" +
+        "  },\n" +
+        "  [abc]: [Getter: true],\n" +
+        "  [def]: [Getter/Setter: false]\n" +
+        "}",
     );
 
     assert.strictEqual(inspect(Object.getPrototypeOf(bar)), "Foo [Map] {}");
@@ -3166,6 +3234,7 @@ test("no assertion failures 3", () => {
     assert.strictEqual(util.inspect(NaN), "NaN");
     assert.strictEqual(util.inspect(Infinity), "Infinity");
     assert.strictEqual(util.inspect(-Infinity), "-Infinity");
+    assert.strictEqual(util.inspect(-0), "-0");
 
     assert.strictEqual(util.inspect(new Float64Array([100_000_000])), "Float64Array(1) [ 100_000_000 ]");
     assert.strictEqual(util.inspect(new BigInt64Array([9_100_000_100n])), "BigInt64Array(1) [ 9_100_000_100n ]");
@@ -3178,6 +3247,30 @@ test("no assertion failures 3", () => {
     assert.strictEqual(util.inspect(123456789.12345678, { numericSeparator: true }), "123_456_789.123_456_78");
 
     assert.strictEqual(util.inspect(-123456789.12345678, { numericSeparator: true }), "-123_456_789.123_456_78");
+
+    // -0 should be formatted as '-0' even with numericSeparator enabled
+    assert.strictEqual(util.inspect(-0, { numericSeparator: true }), "-0");
+
+    // Regression test for https://github.com/nodejs/node/issues/59376
+    // numericSeparator should work correctly for negative fractional numbers
+    {
+      // Test the exact values from the GitHub issue
+      const values = [0.1234, -0.12, -0.123, -0.1234, -1.234];
+      assert.strictEqual(
+        util.inspect(values, { numericSeparator: true }),
+        "[ 0.123_4, -0.12, -0.123, -0.123_4, -1.234 ]",
+      );
+
+      // Test individual negative fractional numbers between -1 and 0
+      assert.strictEqual(util.inspect(-0.1234, { numericSeparator: true }), "-0.123_4");
+      assert.strictEqual(util.inspect(-0.12345, { numericSeparator: true }), "-0.123_45");
+    }
+
+    // Numbers in scientific notation should not get malformed separators
+    assert.strictEqual(util.inspect(1e-7, { numericSeparator: true }), "1e-7");
+    assert.strictEqual(util.inspect(1.5e-10, { numericSeparator: true }), "1.5e-10");
+    assert.strictEqual(util.inspect(1.23e-100, { numericSeparator: true }), "1.23e-100");
+    assert.strictEqual(util.inspect(1.23456789e-12, { numericSeparator: true }), "1.23456789e-12");
   }
 
   // Regression test for https://github.com/nodejs/node/issues/41244
@@ -3190,6 +3283,25 @@ test("no assertion failures 3", () => {
       }),
       "{ Symbol(Symbol.iterator): [Getter] }",
     );
+  }
+
+  {
+    const obj = { a: "short string", b: [1, 2], c: { d: true } };
+    const expected = "{ a: 'short string', b: [ 1, 2 ], c: { d: true } }";
+    assert.strictEqual(util.inspect(obj, { breakLength: Infinity }), expected);
+  }
+
+  {
+    class Class {
+      get [Symbol.toStringTag]() {
+        return "Namespaced.Class";
+      }
+    }
+
+    class DerivedClass extends Class {}
+
+    assert.strictEqual(inspect(new Class()), "Namespaced.Class {}");
+    assert.strictEqual(inspect(new DerivedClass()), "DerivedClass [Namespaced.Class] {}");
   }
 });
 

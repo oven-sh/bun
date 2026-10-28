@@ -237,6 +237,7 @@ pub(crate) fn perform_security_scan_after_resolution(
         seeds,
         command_ctx,
         original_cwd,
+        PackageJson::Parsed,
     )
 }
 
@@ -256,7 +257,14 @@ pub fn perform_security_scan_for_all(
         &[],
         command_ctx,
         original_cwd,
+        PackageJson::NotParsed,
     )
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PackageJson {
+    Parsed,
+    NotParsed,
 }
 
 fn scan_installing_scanner_if_needed(
@@ -266,6 +274,7 @@ fn scan_installing_scanner_if_needed(
     seeds: &[PackageID],
     command_ctx: CommandContext,
     original_cwd: &[u8],
+    package_json: PackageJson,
 ) -> Result<Option<SecurityScanResults>, Error> {
     match attempt_security_scan(
         manager,
@@ -278,6 +287,10 @@ fn scan_installing_scanner_if_needed(
         ScanAttemptResult::Success(scan_results) => Ok(Some(scan_results)),
         ScanAttemptResult::NeedsInstall(pkg_id) => {
             bun_core::prettyln!("<r><yellow>Attempting to install security scanner from npm...<r>");
+            // Only a package.json parse looks for the workspaces behind a symlink.
+            if package_json == PackageJson::NotParsed {
+                manager.lockfile.look_at_members(None);
+            }
             let log_level = manager.options.log_level;
             do_partial_install_of_security_scanner(manager, command_ctx, log_level, pkg_id)?;
             bun_core::prettyln!("<r><green><b>Security scanner installed successfully.<r>");

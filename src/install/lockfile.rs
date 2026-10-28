@@ -160,7 +160,7 @@ pub struct Lockfile {
     /// Name hashes of the self-contained workspaces, from the manifests. Not saved.
     pub self_contained_workspaces: ArrayHashMap<PackageNameHash, (), ArrayIdentityContextU64>,
     /// The workspaces that are reached through a symlink. They are found on disk while the
-    /// workspaces' package.json files are parsed, and are not saved in the lockfile.
+    /// package.json files are parsed and in `look_at_members`, and are not saved in the lockfile.
     pub(crate) linked_members: LinkedMembers,
 
     /// Optional because `trustedDependencies` in package.json might be an
@@ -214,6 +214,8 @@ pub(crate) struct LinkedMembers {
     members: StringHashMap<LinkedMember>,
     /// Folders that are known not to be symlinks, so that each one is only checked once.
     real_folders: StringHashMap<()>,
+    /// Folders that are known not to exist, so that nothing below one is checked again.
+    missing_folders: StringHashMap<()>,
     real_root: Box<[u8]>,
 }
 
@@ -249,7 +251,7 @@ impl LinkedMembers {
     /// workspace that no directory listing covered.
     pub(crate) fn look_at(&mut self, path: &[u8]) {
         let path = strings::without_trailing_slash(path);
-        if crate::bin::path_climbs_out(path) || self.get(path).is_some() {
+        if self.get(path).is_some() {
             return;
         }
         let mut buf = bun_paths::path_buffer_pool::get();
@@ -260,17 +262,24 @@ impl LinkedMembers {
             if self.real_folders.contains_key(folder) {
                 continue;
             }
-            let is_link = !resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
+            if self.missing_folders.contains_key(folder) {
+                return;
+            }
+            let found = resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
                 FileSystem::instance().top_level_dir(),
                 &mut buf.0,
                 &[folder],
             )
-            .and_then(|folder| sys::lstat(folder).ok())
-            .is_some_and(|st| {
-                sys::kind_from_mode(st.st_mode as sys::Mode) != sys::EntryKind::SymLink
-            });
-            if is_link {
-                return self.add(path);
+            .map(sys::lstat);
+            match found {
+                Some(Ok(st))
+                    if sys::kind_from_mode(st.st_mode as sys::Mode) != sys::EntryKind::SymLink => {}
+                // No folder is no symlink. The linker that opens the path reports it as missing.
+                Some(Err(err)) if err.get_errno() == sys::E::ENOENT => {
+                    self.missing_folders.put(folder, ()).unwrap_or_oom();
+                    return;
+                }
+                _ => return self.add(path),
             }
             self.real_folders.put(folder, ()).unwrap_or_oom();
         }
@@ -279,7 +288,7 @@ impl LinkedMembers {
     /// Records the workspace at `path`, which is known to be reached through a symlink.
     pub(crate) fn add(&mut self, path: &[u8]) {
         let path = strings::without_trailing_slash(path);
-        if crate::bin::path_climbs_out(path) || self.get(path).is_some() {
+        if self.get(path).is_some() {
             return;
         }
         if self.real_root.is_empty() {
@@ -983,6 +992,44 @@ impl Lockfile {
     pub(crate) fn is_member_path_outside(&self, path: &[u8]) -> bool {
         crate::bin::path_climbs_out(path)
             || (self.linked_members.get(path)).is_some_and(|member| member.is_outside)
+    }
+
+    /// Looks at the folder of the workspace `pkg_id`, which no package.json lists.
+    pub(crate) fn look_at_member(&mut self, pkg_id: PackageID) {
+        let resolution = &self.packages.items_resolution()[pkg_id as usize];
+        if resolution.tag == ResolutionTag::Workspace {
+            (self.linked_members).look_at(resolution.workspace().slice(&self.buffers.string_bytes));
+        }
+    }
+
+    /// Takes the symlinked workspaces that `parsed` found, then looks at the ones it did not list.
+    pub(crate) fn take_linked_members(&mut self, parsed: &mut Lockfile) {
+        self.linked_members = core::mem::take(&mut parsed.linked_members);
+        self.look_at_members(Some(parsed));
+    }
+
+    /// Looks at each workspace of this loaded lockfile that no package.json of this run lists.
+    pub(crate) fn look_at_members(&mut self, parsed: Option<&Lockfile>) {
+        let buf = self.buffers.string_bytes.as_slice();
+        let packages = self.packages.slice();
+        for (name_hash, resolution) in
+            (packages.items_name_hash().iter()).zip(packages.items_resolution())
+        {
+            if resolution.tag != ResolutionTag::Workspace {
+                continue;
+            }
+            let path = resolution.workspace().slice(buf);
+            // `workspace:*` on a name that no workspace has lists the path `*`, without a look.
+            let listed = path != b"*"
+                && parsed.is_some_and(|parsed| {
+                    (parsed.workspace_paths.get(name_hash)).is_some_and(|listed| {
+                        listed.slice(parsed.buffers.string_bytes.as_slice()) == path
+                    })
+                });
+            if !listed {
+                self.linked_members.look_at(path);
+            }
+        }
     }
 
     /// The workspace (or root, 0) package that owns tree `id`: walk up until a

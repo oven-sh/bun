@@ -669,7 +669,7 @@ pub(crate) fn exit_unless_lockfile_matches_package_json(
     for key in to_lockfile.self_contained_workspaces.keys() {
         manager.lockfile.self_contained_workspaces.put(*key, ())?;
     }
-    manager.lockfile.linked_members = core::mem::take(&mut to_lockfile.linked_members);
+    manager.lockfile.take_linked_members(&mut to_lockfile);
 
     if summary.changes_dependencies() {
         if !quiet {

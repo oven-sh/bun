@@ -203,8 +203,6 @@ template<typename Arguments> ALWAYS_INLINE JSC::EncodedJSValue validatePort(JSC:
     auto port_num = port.toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (std::isnan(port_num)) return Bun::ERR::SOCKET_BAD_PORT(scope, globalObject, name, port, allowZero_b);
-    if (std::isinf(port_num)) return Bun::ERR::SOCKET_BAD_PORT(scope, globalObject, name, port, allowZero_b);
     if (!JSC::isInteger(port_num)) return Bun::ERR::SOCKET_BAD_PORT(scope, globalObject, name, port, allowZero_b);
     if (port_num < 0) return Bun::ERR::SOCKET_BAD_PORT(scope, globalObject, name, port, allowZero_b);
     if (port_num > 0xffff) return Bun::ERR::SOCKET_BAD_PORT(scope, globalObject, name, port, allowZero_b);

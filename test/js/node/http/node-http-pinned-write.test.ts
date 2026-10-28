@@ -266,30 +266,34 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
         let detachedWhilePending;
         const closed = Promise.withResolvers();
         const server = http.createServer((req, res) => {
-          // A pending write pins only a Buffer that already has an ArrayBuffer behind it.
-          const payload = Buffer.from(new ArrayBuffer(CHUNK_SIZE)).fill(PATTERN);
-          res.writeHead(200, { "Content-Type": "application/octet-stream" });
-          res.write(payload);
-          // The tail is pending, so the ArrayBuffer is pinned and transfer() copies.
-          payload.buffer.transfer();
-          detachedWhilePending = payload.buffer.detached;
-          res.once("close", () => {
-            // The close path unpinned the backing store, so transfer() detaches.
-            // It throws if the first transfer() already detached the buffer.
-            if (!detachedWhilePending) payload.buffer.transfer();
-            closed.resolve(payload.buffer.detached);
-          });
+          try {
+            // A Buffer over an ArrayBuffer: a pending write pins that ArrayBuffer.
+            const payload = Buffer.from(new ArrayBuffer(CHUNK_SIZE)).fill(PATTERN);
+            res.writeHead(200, { "Content-Type": "application/octet-stream" });
+            res.write(payload);
+            // The tail is pending, so the ArrayBuffer is pinned and transfer() copies.
+            const copy = payload.buffer.transfer();
+            detachedWhilePending = payload.buffer.detached;
+            res.once("close", () => {
+              // The close path unpinned the backing store, so transfer() detaches. If the
+              // first transfer() already detached the buffer, "copy" owns its storage.
+              const moved = detachedWhilePending ? copy : payload.buffer.transfer();
+              closed.resolve({ detachedAfterClose: payload.buffer.detached, movedByteLength: moved.byteLength });
+            });
+          } catch (e) {
+            closed.reject(e);
+          }
         });
         await once(server.listen(0), "listening");
         const port = server.address().port;
         const s = net.connect(port, "127.0.0.1");
         await once(s, "connect");
         s.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
-        await once(s, "data");
+        // A handler that throws rejects "closed", and that ends the wait for data.
+        await Promise.race([once(s, "data"), closed.promise]);
         s.destroy();
         // Wait for the server to observe the close.
-        const detachedAfterClose = await closed.promise;
-        console.log(JSON.stringify({ detachedWhilePending, detachedAfterClose }));
+        console.log(JSON.stringify({ detachedWhilePending, ...(await closed.promise) }));
         server.close();
         `,
       ],
@@ -300,7 +304,7 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-      stdout: JSON.stringify({ detachedWhilePending: false, detachedAfterClose: true }),
+      stdout: JSON.stringify({ detachedWhilePending: false, detachedAfterClose: true, movedByteLength: CHUNK_SIZE }),
       stderr: expect.any(String),
       exitCode: 0,
     });
@@ -505,14 +509,16 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
         });
         res.write(first);
         // The tail of `first` is pending, so its ArrayBuffer is pinned and transfer() copies.
-        first.buffer.transfer();
+        const copy = first.buffer.transfer();
         detachedWhilePending = first.buffer.detached;
         res.write(second);
         // The second write spilled first's tail into uWS backpressure and
-        // released the pin, so transfer() detaches again. It throws if the
-        // first transfer() already detached the buffer.
-        if (!detachedWhilePending) first.buffer.transfer();
+        // released the pin, so transfer() detaches again. If the first
+        // transfer() already detached the buffer, `copy` owns its storage.
+        const moved = detachedWhilePending ? copy : first.buffer.transfer();
         detachedAfterSecondWrite = first.buffer.detached;
+        // The spill copied the tail, so bytes written over the moved storage must not reach the client.
+        new Uint8Array(moved).fill(0xff);
         res.end();
         serverReady.resolve();
       } catch (e) {
@@ -542,7 +548,7 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
 
     const body = received.subarray(received.indexOf("\r\n\r\n") + 4);
     expect(body.length).toBe(total);
-    // The spill copied the tail of `first`, so its bytes arrive intact after the detach.
+    // The client gets the bytes of `first`, not the 0xff written over its moved storage.
     expect(sha1(body.subarray(0, CHUNK_SIZE))).toBe(firstHash);
     expect(Buffer.compare(body.subarray(CHUNK_SIZE), second)).toBe(0);
     expect({ detachedWhilePending, detachedAfterSecondWrite }).toEqual({

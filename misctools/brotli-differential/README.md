@@ -40,6 +40,7 @@ quality `q`: `0xFFF` for all of them.
 | `enc-lengths <seed> <iterations> <max length> <mask>` | runs of literals, copies and distances whose lengths are at the edges of the ranges of their codes |
 | `enc-dict <seed> <iterations> <max length> <mask>` | compound dictionaries: long copies from them, copies that go on in the next dictionary or in the next block of input, more matches than a search has room for |
 | `enc-far-dict <seed> <mask>` | 36 MiB with a window of 32 MiB: a copy from an attached dictionary, then what is as far back in the input as that copy's distance. Version 1.2.1 of the C encoder takes that for a match at the last distance at quality 4 (H55) |
+| `enc-reach <seed> <mask>` | dictionaries of almost 64 MiB in all, so that distances get to the largest one that there is a code for, 2^26 - 4 and the number of direct codes: copies from the dictionaries at that distance and up to 2 more or less, and words of the static dictionary, which comes after them, that are the last within reach or next to it. Only words that the quality in question finds, which is tried first. Qualities 2 to 4 do not search attached dictionaries, 2 and 3 find no words. About 10 s for each quality, 1.1 GB of memory |
 | `enc-offset-dict <seed> <iterations> <mask>` | a stream offset and a dictionary: a copy from the dictionary that ends with a block of input, and then what the dictionary has that many bytes earlier. The C encoder goes on with the copy. Qualities 5 and up |
 | `enc-blocks <seed> <iterations> <max length> <mask>` | stretches of many different kinds: many blocks, block types and histograms to cluster |
 | `enc-parts <seed> <iterations> <max length> <mask>` | a stream in parts, each by an encoder of its own with a stream offset, with dictionaries, and more input than the window holds. After a copy from a dictionary comes what could be taken for more of it. The whole has to decode. Also dictionaries that one encoder or decoder hands on to the next |
@@ -108,5 +109,6 @@ what the tail of the ring buffer holds after the first lap matters, but only `en
 of a code's range need `enc-lengths`; most of the search in the static dictionary needs `enc-words`; a copy from a compound
 dictionary is only taken up again in the next block in `enc-dict`; the queue of pairs of histograms only fills up with more
 than 8000 blocks (`enc-blocks`); that a chain of the hashers of small windows ends at a gap of 65536 positions or more is
-only seen where the hasher left out a position, in a long stretch of literals (`enc-chain`). A change that survives a few
-hundred iterations of `enc-fuzz` is not thereby harmless.
+only seen where the hasher left out a position, in a long stretch of literals (`enc-chain`); the largest distance with a
+code takes 64 MiB of dictionaries, and the encoder has stopped looking for words by then unless it kept finding some
+(`enc-reach`). A change that survives a few hundred iterations of `enc-fuzz` is not thereby harmless.

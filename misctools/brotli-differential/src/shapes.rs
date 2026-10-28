@@ -1395,3 +1395,97 @@ pub fn run_chain(seed0: u64, iters: u64, qualities: u64, corpus: &r#gen::Corpus)
     }
     println!("ok: {iters} iterations, {} -> {}", totals.0, totals.1);
 }
+
+/// The words of 7 bytes and more that an encoder of quality `q` finds in the static dictionary. Below quality 10 its table
+/// knows 4 in 10 of them, and qualities 2 and 3 find next to nothing.
+fn words_found(q: u32) -> Vec<(usize, usize)> {
+    let mut found = Vec::new();
+    let mut out = [0u8; 200];
+    for len in 7..=24 {
+        for index in 0..1usize << crate::grammar::size_bits(len) {
+            let mut data = vec![0xFE; 2];
+            data.extend(crate::grammar::dictionary_word(len, index, 0));
+            data.extend_from_slice(&[0xFF; 16]);
+            // 13 to 15 bytes with the word from the dictionary. As literals, all but a few in a thousand take 19 and more.
+            if bun_brotli::compress(q as i32, 16, bun_brotli::EncoderMode::Generic, &data, &mut out).unwrap() <= 15 {
+                found.push((len, index));
+            }
+        }
+    }
+    found
+}
+
+/// Dictionaries of almost 64 MiB in all. The distances into them, and to the words of the static dictionary, which come
+/// after them, get to the largest distance that there is a code for: 2^26 - 4 and the number of direct codes, without a
+/// large window. The window is not full, so all of these distances grow with the position.
+pub fn run_reach(seed: u64, qualities: u64) {
+    let mut rng = Rng(seed);
+    let total = (1usize << 26) - 4 - 40_000;
+    let dictionary: Vec<u8> = (0..total).map(|_| b'0' + (rng.next() & 63) as u8).collect();
+    let mut dicts = Vec::new();
+    let mut rest = &dictionary[..];
+    // The copies below are from the first 8000 bytes or so.
+    for _ in 0..seed % 3 {
+        let (chunk, tail) = rest.split_at(rng.range(1, 4000));
+        dicts.push(chunk.to_vec());
+        rest = tail;
+    }
+    dicts.push(rest.to_vec());
+    let direct = if seed % 2 == 0 { 0 } else { rng.range(1, 15) };
+    for q in crate::args::qualities(qualities, 2..12) {
+        // At this position the first byte of the dictionaries is as far back as it gets.
+        let edge = 40_000 + if q >= 4 { direct } else { 0 };
+        // A copy of `n` bytes at the distance `period`, so that the encoder looks at every position after it, and a byte
+        // that an earlier one does not go on with.
+        let mark = |rng: &mut Rng, data: &mut Vec<u8>, period: usize, n: usize| {
+            let start = data.len();
+            data.extend((0..period).map(|_| 0x80 | rng.next() as u8));
+            data[start] = 0x80 | data[start + period - 1].wrapping_add(1);
+            for i in start..start + n {
+                data.push(data[i]);
+            }
+            data.push(0x80 | data[data.len() - period].wrapping_add(1 + (rng.next() % 126) as u8));
+        };
+        let mut data = Vec::new();
+        // The static dictionary is given up on when fewer than 1 lookup in 128 finds something. Where there is a copy,
+        // there is no lookup.
+        let words = words_found(q);
+        mark(&mut rng, &mut data, 1, 30_000);
+        while data.len() < edge - 2200 && !words.is_empty() {
+            let &(len, index) = rng.pick(&words);
+            data.extend(crate::grammar::dictionary_word(len, index, 0));
+            data.push(0x80 | rng.next() as u8);
+        }
+        // Words that are the last one within reach, or next to it.
+        let mut placed = 0;
+        loop {
+            mark(&mut rng, &mut data, 1, 12);
+            let Some(reach) = (edge - 1).checked_sub(data.len()) else { break };
+            let near: Vec<(usize, usize)> = words.iter().copied().filter(|&(_, index)| index + 2 >= reach && index <= reach + 2).collect();
+            let last: Vec<(usize, usize)> = near.iter().copied().filter(|&(_, index)| index == reach).collect();
+            if !near.is_empty() {
+                let from = if last.is_empty() || rng.chance(1, 2) { &near } else { &last };
+                let &(len, index) = rng.pick(from);
+                data.extend(crate::grammar::dictionary_word(len, index, 0));
+                placed += usize::from(index == reach);
+            }
+        }
+        // Copies from the dictionaries at the largest distance, or next to it. Before each, four others, or this distance
+        // would be tried for being close to one of the last, whatever it is.
+        for _ in 0..60 {
+            for period in [1, 2, 3, 5] {
+                mark(&mut rng, &mut data, period, 24);
+            }
+            let address = (data.len() - edge + 2).saturating_sub(rng.below(5));
+            data.extend_from_slice(&dictionary[address..address + rng.range(7, 40)]);
+        }
+        mark(&mut rng, &mut data, 1, 12);
+        let mut params = vec![(1, q), (2, rng.range(16, 24) as u32)];
+        if direct != 0 {
+            params.push((8, direct as u32));
+        }
+        let case = EncCase { data, params, dicts: dicts.clone(), schedule: 0, misuse: false };
+        let out = enc::compare(&case).and_then(|out| enc::round_trip(&out, &case.data, &dicts, false, 0).map(|()| out)).unwrap_or_else(|e| panic!("seed {seed} quality {q}: {e}\nparams {:?}", case.params));
+        println!("quality {q}: {} -> {}, {} words known, {placed} of them put where they are the last within reach", case.data.len(), out.len(), words.len());
+    }
+}

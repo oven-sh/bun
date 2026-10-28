@@ -63,27 +63,107 @@ describe.concurrent("node-module-module", () => {
     });
   });
 
-  test("Module._findPath propagates an error thrown by an onResolve plugin", async () => {
+  test("Module._findPath looks in the directories of paths and does not call onResolve plugins", async () => {
+    // As in Node, Module._findPath resolves no specifier. Plugins take part in require() and import.
+    using dir = tempDir("findpath-onresolve", { "thing.findpathprobe": "" });
     // Plugins are process-global; run in a child so the throwing resolver can't affect other tests.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
-        `Bun.plugin({ name: "throws", setup(b) { b.onResolve({ filter: /\\.findpathprobe$/ }, () => { throw new Error("onResolve threw"); }); } });
-        try {
-          console.log("returned", require("module")._findPath("thing.findpathprobe", [process.cwd()]));
-        } catch (e) {
-          console.log("threw", e.message);
-        }`,
+        `let calls = 0;
+        Bun.plugin({ name: "throws", setup(b) { b.onResolve({ filter: /\\.findpathprobe$/ }, () => { calls++; throw new Error("onResolve threw"); }); } });
+        const { _findPath } = require("module");
+        const found = ["thing.findpathprobe", "other.findpathprobe"].map(request => _findPath(request, [process.cwd()]));
+        console.log(JSON.stringify({ found: found.map(file => file && require("path").basename(file)), calls }));`,
       ],
-      env: bunEnv,
+      env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+      cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toBe("threw onResolve threw");
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ found: ["thing.findpathprobe", false], calls: 0 }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("the directories of NODE_PATH are in Module.globalPaths and in the lookup paths of a package name", async () => {
+    using dir = tempDir("module-node-path", {
+      "global-a": {
+        "from-node-path": { "index.js": "" },
+        "exports-in-node-path": {
+          "package.json": JSON.stringify({ exports: "./lib/main.js" }),
+          "lib": { "main.js": "" },
+          "index.js": "",
+        },
+      },
+      "global-b": { ".keep": "" },
+      "app": {
+        "entry.cjs": `
+          const Module = require("node:module");
+          const path = require("node:path");
+          const [a, b] = ["global-a", "global-b"].map(name => path.join(__dirname, "..", name));
+          const lookupPaths = Module._resolveLookupPaths("from-node-path", module);
+          console.log(JSON.stringify({
+            "Module.globalPaths starts with the directories": Module.globalPaths.slice(0, 2).map(entry => path.relative(__dirname, entry)),
+            "Module._resolveLookupPaths(name, module)": lookupPaths.join() === [...module.paths, ...Module.globalPaths].join(),
+            "Module._resolveLookupPaths(name, module) has the directories": lookupPaths.includes(a) && lookupPaths.includes(b),
+            "Module._resolveLookupPaths(name, { paths })": Module._resolveLookupPaths("from-node-path", { paths: ["x"] }).join() === ["x", ...Module.globalPaths].join(),
+            "Module._resolveLookupPaths(name)": Module._resolveLookupPaths("from-node-path").join() === Module.globalPaths.join(),
+            "require.resolve.paths(name)": require.resolve.paths("from-node-path").join() === lookupPaths.join(),
+            "Module._resolveLookupPaths('./relative', module)": Module._resolveLookupPaths("./relative", module).join() === __dirname,
+            "module.paths has the directories": module.paths.includes(a) || module.paths.includes(b),
+            "Module._findPath(name, lookup paths)": path.relative(__dirname, Module._findPath("from-node-path", lookupPaths) || ""),
+            "require.resolve(name)": path.relative(__dirname, require.resolve("from-node-path")),
+            "Module._findPath(a package with exports, lookup paths)": path.relative(__dirname, Module._findPath("exports-in-node-path", lookupPaths) || ""),
+            "require.resolve(a package with exports)": path.relative(__dirname, require.resolve("exports-in-node-path")),
+          }));
+        `,
+      },
+    });
+    const root = String(dir);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.cjs"],
+      // An empty entry is no directory.
+      env: {
+        ...bunEnv,
+        NODE_PATH: [path.join(root, "global-a"), "", path.join(root, "global-b")].join(path.delimiter),
+      },
+      cwd: path.join(root, "app"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const found = path.join("..", "global-a", "from-node-path", "index.js");
+    // node v26.3.0 prints the same line, but for the last value: there it is lib/main.js too.
+    // Bun's require() does not read the exports of a package that it finds through NODE_PATH.
+    expect({ stdout: stdout.trim() && JSON.parse(stdout), stderr, exitCode }).toEqual({
+      stdout: {
+        "Module.globalPaths starts with the directories": [path.join("..", "global-a"), path.join("..", "global-b")],
+        "Module._resolveLookupPaths(name, module)": true,
+        "Module._resolveLookupPaths(name, module) has the directories": true,
+        "Module._resolveLookupPaths(name, { paths })": true,
+        "Module._resolveLookupPaths(name)": true,
+        "require.resolve.paths(name)": true,
+        "Module._resolveLookupPaths('./relative', module)": true,
+        "module.paths has the directories": false,
+        "Module._findPath(name, lookup paths)": found,
+        "require.resolve(name)": found,
+        "Module._findPath(a package with exports, lookup paths)": path.join(
+          "..",
+          "global-a",
+          "exports-in-node-path",
+          "lib",
+          "main.js",
+        ),
+        "require.resolve(a package with exports)": path.join("..", "global-a", "exports-in-node-path", "index.js"),
+      },
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   test("Module.prototype is not enumerable", async () => {
@@ -1157,11 +1237,12 @@ console.log("survived", require("./late.js"));`,
   });
 
   test("Module._resolveLookupPaths", () => {
-    expect(Module._resolveLookupPaths("foo")).toEqual([]);
+    // Module.globalPaths is the directories of NODE_PATH.
+    expect(Module._resolveLookupPaths("foo")).toEqual(Module.globalPaths);
     expect(Module._resolveLookupPaths("./bar", { id: "1", filename: "/baz/abc" })).toEqual(["/baz"]);
     expect(Module._resolveLookupPaths("./bar", {})).toEqual(["."]);
     expect(Module._resolveLookupPaths("./bar", { paths: ["a"] })).toEqual(["."]);
-    expect(Module._resolveLookupPaths("bar", { paths: ["a"] })).toEqual(["a"]);
+    expect(Module._resolveLookupPaths("bar", { paths: ["a"] })).toEqual(["a", ...Module.globalPaths]);
   });
 
   test("Module.findSourceMap doesn't throw", () => {

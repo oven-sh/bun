@@ -1,12 +1,15 @@
+use core::ptr::NonNull;
+
 use crate::{
-    self as jsc, JSArray, JSGlobalObject, JSValue, JsResult, StringJsc, Strong,
-    VirtualMachineRef as VirtualMachine,
+    self as jsc, JSGlobalObject, JSValue, JsResult, Strong, VirtualMachineRef as VirtualMachine,
+    bun_string_jsc,
 };
 use bun_ast::Loader;
 use bun_bundler::options::DEFAULT_LOADERS;
-use bun_core::{String as BunString, strings};
+use bun_core::{String as BunString, Utf8Bytes, strings};
 use bun_options_types::LoaderExt as _;
 use bun_options_types::schema::api;
+use bun_resolver::{FoundInDirectory, Resolver};
 
 // `bun.schema.api.Loader` — bindgen-emitted schema enum.
 // Mirrored as a transparent `u8` because the schema enum is *open*
@@ -30,74 +33,107 @@ impl ApiLoader {
     }
 }
 
-// The C++ caller (NodeModuleModule.cpp
-// `jsFunctionFindPath`) does the CallFrame → (BunString, JSArray*) extraction itself and
-// invokes this with the coerced args directly — there is no CallFrame here.
+// The C++ caller (NodeModuleModule.cpp `jsFunctionFindPath`) checks that the request is a string and
+// passes `paths` as it is.
 #[unsafe(no_mangle)]
 extern "C" fn NodeModuleModule__findPath(
     global: &JSGlobalObject,
     request_bun_str: &BunString,
-    paths_maybe: *mut JSArray,
+    paths: JSValue,
 ) -> JSValue {
-    // `JSArray` is an `opaque_ffi!` ZST handle; `opaque_ref` is the centralised
-    // non-null-ZST deref proof. Nullable per the C++ caller contract.
-    let paths_maybe: Option<&JSArray> =
-        (!paths_maybe.is_null()).then(|| JSArray::opaque_ref(paths_maybe));
-    jsc::host_fn::to_js_host_call(global, || find_path(global, request_bun_str, paths_maybe))
+    jsc::host_fn::to_js_host_call(global, || find_path(global, request_bun_str, paths))
 }
 
-// https://github.com/nodejs/node/blob/40ef9d541ed79470977f90eb445c291b95ab75a0/lib/internal/modules/cjs/loader.js#L666
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L728-L839
 fn find_path(
     global: &JSGlobalObject,
     request_bun_str: &BunString,
-    paths_maybe: Option<&JSArray>,
+    paths: JSValue,
 ) -> JsResult<JSValue> {
     let request_slice = request_bun_str.to_utf8();
     let request = request_slice.slice();
 
+    // Node replaces `paths` with `['']` for an absolute request, and reads it no further.
     let absolute_request = bun_paths::is_absolute(request);
-    if !absolute_request && paths_maybe.is_none() {
-        return Ok(JSValue::FALSE);
-    }
-
-    // for each path
-    let found = if let Some(paths) = paths_maybe {
-        'found: {
-            let mut iter = paths.iterator(global)?;
-            while let Some(path) = iter.next()? {
-                let cur_path = BunString::from_js(path, global)?;
-
-                if let Some(found) = find_path_inner(request_bun_str, &cur_path, global)? {
-                    break 'found Some(found);
-                }
-            }
-
-            break 'found None;
-        }
+    let mut len = if absolute_request {
+        1
     } else {
-        find_path_inner(request_bun_str, &BunString::EMPTY, global)?
+        paths_length(global, paths)?
     };
 
-    if let Some(str) = found {
-        return str.into_js(global);
+    // What the resolver logs for a directory of `paths` is no error of the caller.
+    let mut log = bun_ast::Log::default();
+
+    // The first look is in the resolver's cache of the directories, where `require()` looks. If no
+    // entry has the request, the cache can be older than the disk: it forgets each entry, and the
+    // second look reads the disk.
+    for is_second_look in [false, true] {
+        for i in 0..len {
+            let cur_path_slice = if absolute_request {
+                Utf8Bytes::Borrowed(b"")
+            } else {
+                let cur_path = paths.get_index(global, i)?;
+                if !cur_path.is_string_literal() {
+                    return Err(global.throw_invalid_argument_type_value2(
+                        "paths",
+                        "array of strings",
+                        paths,
+                    ));
+                }
+                cur_path.to_utf8(global)?
+            };
+            let cur_path = cur_path_slice.slice();
+
+            // `paths[i]` may have run JS that resolves a module. That puts the log of the VM back,
+            // so the log is set for each entry, and the VM is read again.
+            // SAFETY: the VM and its resolver outlive this call, and this is dropped before `log`.
+            // The slot comes from the raw pointer to the VM, so `as_mut()` below leaves it valid.
+            let _restore_log = unsafe {
+                Resolver::scoped_log(
+                    &raw mut (*global.bun_vm_ptr()).transpiler.resolver,
+                    NonNull::from(&mut log),
+                )
+            };
+            let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
+            if is_second_look {
+                resolver.forget_in_directory(cur_path, request);
+            }
+            match resolver.find_in_directory(cur_path, request) {
+                FoundInDirectory::Found(path) => {
+                    return bun_string_jsc::create_utf8_for_js(global, path);
+                }
+                FoundInDirectory::NotFound => {}
+                // Node throws here. Like Node, look in no later entry.
+                FoundInDirectory::NotExported => {
+                    len = i;
+                    break;
+                }
+            }
+        }
     }
 
     Ok(JSValue::FALSE)
 }
 
-fn find_path_inner(
-    request: &BunString,
-    cur_path: &BunString,
-    global: &JSGlobalObject,
-) -> JsResult<Option<BunString>> {
-    Ok(VirtualMachine::resolve_maybe_needs_trailing_slash::<true>(
-        global,
-        request,
-        cur_path,
-        None,
-        crate::virtual_machine::ResolveMode::RequireResolve,
-    )?
-    .ok())
+/// How many entries Node's loop `for (let i = 0; i < paths.length; i++)` reads. It takes `paths` as it
+/// comes: an array, an object with a `length`, or a string.
+fn paths_length(global: &JSGlobalObject, paths: JSValue) -> JsResult<u32> {
+    let length = if paths.is_array() || paths.is_string_literal() {
+        paths.get_length(global)? as f64
+    } else if paths.is_object() {
+        match paths.get(global, "length")? {
+            Some(length) => length.to_number(global)?,
+            None => 0.0,
+        }
+    } else {
+        0.0
+    };
+    // `NaN` compares false, and a fraction is one more index.
+    Ok(if length > 0.0 {
+        length.ceil().min(u32::MAX as f64) as u32
+    } else {
+        0
+    })
 }
 
 pub(crate) fn stat(path: &[u8]) -> i32 {

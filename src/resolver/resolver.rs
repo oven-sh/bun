@@ -269,9 +269,9 @@ pub use ::bun_options_types::global_cache::GlobalCache;
 // inside `impl Resolver` resolve unchanged.
 use crate::options;
 use crate::result::{
-    DebugLogs, DirEntryResolveQueueItem, ExternalKind, FlushMode, LoadResult, MatchResult,
-    MatchStatus, PathPair, PendingResolution, PendingResolutionTag, Result, ResultFlags,
-    ResultUnion,
+    DebugLogs, DirEntryResolveQueueItem, ExternalKind, FlushMode, FoundInDirectory, LoadResult,
+    MatchResult, MatchStatus, PathPair, PendingResolution, PendingResolutionTag, Result,
+    ResultFlags, ResultUnion,
 };
 use crate::standalone_module_graph::StandaloneModuleGraph;
 use bun_alloc as allocators;
@@ -947,6 +947,20 @@ impl<'a> Resolver<'a> {
         // borrow. Returned as `&'a` (not tied to `&self`) so callers may keep
         // the env borrow across `&mut self` resolver calls.
         self.env_loader.map(|p| unsafe { p.as_ref() })
+    }
+
+    /// The directories of the `NODE_PATH` that the process started with, for `Module.globalPaths`.
+    /// `load_node_modules` searches them after every `node_modules` directory. It splits the variable
+    /// itself: this iterator there costs each resolve of a package 7 instructions.
+    pub fn node_path(&self) -> impl Iterator<Item = &'a [u8]> + use<'a> {
+        let node_path: &'a [u8] = self
+            .env_loader()
+            .and_then(|env| env.get(b"NODE_PATH"))
+            .unwrap_or(b"");
+        let delim = if cfg!(windows) { b';' } else { b':' };
+        node_path
+            .split(move |&b| b == delim)
+            .filter(|directory| !directory.is_empty())
     }
 
     #[inline]
@@ -4386,6 +4400,271 @@ impl<'a> Resolver<'a> {
         self.dir_info_cached_maybe_log(false, path).ok().flatten()
     }
 
+    /// What Node's `Module._findPath` does with one entry of `paths`: `request` is looked up in `dir`
+    /// and nowhere else. The `exports` of the package `<dir>/<name>` come first. Then
+    /// `<dir>/<request>` is a file, a file with an extension added, or a directory. This does not
+    /// resolve a specifier: plugins, builtin names, tsconfig `paths`, the `node_modules` walk and
+    /// auto-install have no part in it. Like `require()`, it reads the directory cache and not the
+    /// disk: see `refresh_in_directory`.
+    /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L765-L838
+    pub fn find_in_directory(&mut self, dir: &[u8], request: &[u8]) -> FoundInDirectory {
+        if Self::is_never_in_directory(dir) || Self::is_never_in_directory(request) {
+            return FoundInDirectory::NotFound;
+        }
+        let original_order = self.extension_order;
+        let found = self.find_in_directory_as_require(dir, request);
+        self.extension_order = original_order;
+        found
+    }
+
+    /// A path with a null byte cannot exist on the disk. On POSIX a backslash is a character of a
+    /// file name, and the directory cache reads it as a separator.
+    fn is_never_in_directory(path: &[u8]) -> bool {
+        strings::index_of_any(path, if cfg!(windows) { b"\0" } else { b"\0\\" }).is_some()
+    }
+
+    /// Node's `path.resolve(...parts)`, into `buf`. The separators are those of the host: on POSIX
+    /// `c:` does not start an absolute path.
+    fn join_in_directory<'b>(&self, parts: &[&[u8]], buf: &'b mut [u8]) -> Option<&'b [u8]> {
+        bun_paths::join_abs_string_buf_checked(
+            self.fs_ref().top_level_dir(),
+            buf,
+            parts,
+            bun_paths::Platform::AUTO,
+        )
+    }
+
+    /// The extension order of a `require()` of the path `abs_path`, as `check_relative_path` sets it.
+    fn require_extension_order(&self, abs_path: &[u8]) -> options::ExtOrder {
+        let is_in_node_modules = strings::path_contains_node_modules_folder(abs_path);
+        self.opts
+            .extension_order
+            .kind(ast::ImportKind::Require, is_in_node_modules)
+    }
+
+    /// Leaves `self.extension_order` set for the caller to restore.
+    fn find_in_directory_as_require(&mut self, dir: &[u8], request: &[u8]) -> FoundInDirectory {
+        let kind = ast::ImportKind::Require;
+
+        // The files of a standalone executable are not on the disk.
+        if self.standalone_module_graph.is_some() {
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let Some(path) = self.join_in_directory(&[dir, request], &mut buf[..]) else {
+                return FoundInDirectory::NotFound;
+            };
+            if ::bun_options_types::standalone_path::is_bun_standalone_file_path(path) {
+                return match self.resolve_embedded_package_in(dir, request, kind) {
+                    PackageLookup::Found(name) => FoundInDirectory::Found(name),
+                    PackageLookup::Hidden => FoundInDirectory::NotExported,
+                    PackageLookup::Unknown => match self.resolve_embedded_module(b"", path, kind) {
+                        Some(name) => FoundInDirectory::Found(name),
+                        None => FoundInDirectory::NotFound,
+                    },
+                };
+            }
+        }
+
+        // Node skips an entry that is not a directory, unless the request starts by leaving it.
+        if !dir.is_empty() && !request_leaves_directory(request) {
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let is_directory = self
+                .join_in_directory(&[dir], &mut buf[..])
+                .is_some_and(|path| self.is_listed_directory(path));
+            if !is_directory {
+                return FoundInDirectory::NotFound;
+            }
+        }
+
+        if !bun_paths::is_absolute(request)
+            && let Some((name, expansion)) = split_package_request(request)
+            && let Some(package_path) =
+                self.join_in_directory(&[dir, name], bufs!(esm_absolute_package_path))
+            && let Ok(Some(package_dir_info)) = self.dir_info_cached(package_path)
+            && let Some(package_json) = package_dir_info.package_json()
+            && let Some(exports_map) = package_json.exports.as_ref()
+        {
+            let mut subpath: &[u8] = b"";
+            crate::package_json::Package::parse_subpath(
+                &mut subpath,
+                expansion,
+                bufs!(esm_subpath),
+            );
+            // As the `node_modules` walk sets it for a package.
+            self.extension_order = self.opts.extension_order.kind(kind, true);
+            let resolution = ESModule {
+                conditions: &self.opts.conditions.require,
+                debug_logs: self.debug_logs.as_mut(),
+                stack_check: StackCheck::init(),
+            }
+            .resolve(b"/", subpath, &exports_map.root);
+            let mut out = MatchResult::default();
+            let status = self.handle_esm_resolution(
+                resolution,
+                package_dir_info.abs_path,
+                kind,
+                package_json,
+                subpath,
+                &mut out,
+            );
+            if !status.is_success() {
+                return FoundInDirectory::NotExported;
+            }
+            return self.finalize_found_in_directory(
+                Result {
+                    path_pair: out.path_pair,
+                    dirname_fd: out.dirname_fd,
+                    file_fd: out.file_fd,
+                    package_json: out.package_json,
+                    module_type: out.module_type,
+                    ..Default::default()
+                },
+                kind,
+            );
+        }
+
+        let Some(abs_path) = self.join_in_directory(&[dir, request], bufs!(relative_abs_path))
+        else {
+            return FoundInDirectory::NotFound;
+        };
+        self.extension_order = self.require_extension_order(abs_path);
+        // Node adds no extension to a request that names a directory.
+        if !Self::import_path_names_directory(request)
+            && let Some(file) = self.load_as_file_matching::<true>(abs_path, self.extension_order)
+        {
+            return self.finalize_found_in_directory(
+                Result {
+                    path_pair: PathPair {
+                        primary: Path::init(file.path),
+                        secondary: None,
+                    },
+                    dirname_fd: file.dirname_fd,
+                    file_fd: file.file_fd,
+                    ..Default::default()
+                },
+                kind,
+            );
+        }
+        let mut out = MatchResult::default();
+        if !self
+            .load_as_directory(abs_path, kind, self.extension_order, &mut out)
+            .is_success()
+        {
+            return FoundInDirectory::NotFound;
+        }
+        self.finalize_found_in_directory(
+            Result {
+                path_pair: out.path_pair,
+                dirname_fd: out.dirname_fd,
+                file_fd: out.file_fd,
+                package_json: out.package_json,
+                ..Default::default()
+            },
+            kind,
+        )
+    }
+
+    /// In an executable compiled ahead of time, which lists its packages by the `node_modules`
+    /// directory that holds them: the package that `request` names in the `node_modules` directory
+    /// `dir`, with its `exports`.
+    fn resolve_embedded_package_in(
+        &self,
+        dir: &[u8],
+        request: &[u8],
+        kind: ast::ImportKind,
+    ) -> PackageLookup {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let Some(dir) = self.join_in_directory(&[dir], &mut buf[..]) else {
+            return PackageLookup::Unknown;
+        };
+        let is_node_modules = bun_paths::basename(dir) == b"node_modules";
+        let Some(parent) = bun_paths::dirname(dir).filter(|_| is_node_modules) else {
+            return PackageLookup::Unknown;
+        };
+        match self.resolve_embedded_package(parent, request, kind) {
+            // It looks in the `node_modules` directories above `dir` too.
+            PackageLookup::Found(path)
+                if !path.strip_prefix(dir).is_some_and(|rest| {
+                    rest.first().is_some_and(|&c| bun_paths::is_sep_any(c))
+                }) =>
+            {
+                PackageLookup::Unknown
+            }
+            found => found,
+        }
+    }
+
+    fn finalize_found_in_directory(
+        &mut self,
+        mut result: Result<'static>,
+        kind: ast::ImportKind,
+    ) -> FoundInDirectory {
+        if self.finalize_result(&mut result, kind).is_err() {
+            return FoundInDirectory::NotFound;
+        }
+        match result.path_const() {
+            Some(path) => FoundInDirectory::Found(path.text),
+            None => FoundInDirectory::NotFound,
+        }
+    }
+
+    /// For a second look by `find_in_directory`, after no directory had the request: the directory
+    /// cache can be older than the disk. Forgets what the cache holds of `<dir>/<request>`, and of
+    /// `dir` if the cache does not have it as a directory.
+    pub fn forget_in_directory(&mut self, dir: &[u8], request: &[u8]) {
+        if Self::is_never_in_directory(dir) || Self::is_never_in_directory(request) {
+            return;
+        }
+        let mut buf = bun_paths::path_buffer_pool::get();
+        if !dir.is_empty()
+            && !request_leaves_directory(request)
+            && let Some(entry) = self.join_in_directory(&[dir], &mut buf[..])
+            && !self.is_listed_directory(entry)
+        {
+            self.bust_dir_cache_and_parent(entry);
+        }
+        if let Some(path) = self.join_in_directory(&[dir, request], &mut buf[..]) {
+            self.bust_dir_cache_and_parent(path);
+        }
+    }
+
+    /// Whether the listing of its parent directory has `path` as a directory. This stores nothing
+    /// about `path`: `dir_info_cached` would mark a missing `path` as missing, and `require()` takes
+    /// that mark for the truth when the directory is created later.
+    fn is_listed_directory(&mut self, path: &[u8]) -> bool {
+        let name = bun_paths::basename(path);
+        if name.is_empty() {
+            // The root of a file system is in no listing.
+            return true;
+        }
+        let parent = strings::without_trailing_slash_windows_path(Dirname::dirname(path));
+        // SAFETY: `rfs_ptr()` points at the process-global RealFS singleton.
+        let listing = unsafe { &mut *self.rfs_ptr() }.read_directory(
+            parent,
+            None,
+            self.generation,
+            self.store_fd,
+        );
+        let missing = |err: &crate::Error| {
+            matches!(
+                err,
+                crate::Error::Sys(bun_errno::SystemErrno::ENOENT | bun_errno::SystemErrno::ENOTDIR)
+            )
+        };
+        match listing {
+            Ok(Fs::file_system::real_fs::EntriesOption::Err(err)) if missing(&err.original_err) => {
+                false
+            }
+            Err(err) if missing(&err) => false,
+            // The parent cannot be listed. `path` can still be a directory.
+            Ok(Fs::file_system::real_fs::EntriesOption::Err(_)) | Err(_) => {
+                matches!(self.dir_info_cached(path), Ok(Some(_)))
+            }
+            Ok(listing) => listing.lookup(name).0.is_some_and(|query| {
+                query.entry().kind(self.rfs_ref(), self.store_fd) == Fs::file_system::EntryKind::Dir
+            }),
+        }
+    }
+
     // NOTE: `follow_symlinks` is `true` at every call
     // site, so it's dropped here; `enable_logging` is a plain runtime parameter
     // (it gates one cold error-formatting branch) so this large dir-walk function
@@ -5827,6 +6106,19 @@ impl<'a> Resolver<'a> {
             return MatchStatus::Success;
         }
 
+        self.load_as_directory(path, kind, extension_order, out)
+    }
+
+    /// The second half of `load_as_file_or_directory`: the "main" of the `package.json` in the
+    /// directory `path`, or its index file.
+    #[inline(always)]
+    fn load_as_directory(
+        &mut self,
+        path: &[u8],
+        kind: ast::ImportKind,
+        extension_order: options::ExtOrder,
+        out: &mut MatchResult,
+    ) -> MatchStatus {
         // Is this a directory?
         if let Some(debug) = self.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!(
@@ -6035,6 +6327,19 @@ impl<'a> Resolver<'a> {
         path: &[u8],
         extension_order: options::ExtOrder,
     ) -> Option<LoadResult> {
+        self.load_as_file_matching::<false>(path, extension_order)
+    }
+
+    /// The listing of a directory finds a name in any case, and a file keeps the path that it was
+    /// first found by. With `MATCH_CASE`, a name in another case is found only if the file system has
+    /// the file under that name too. `find_in_directory` asks for that: it looks for a name that no
+    /// source file wrote.
+    #[inline(always)]
+    fn load_as_file_matching<const MATCH_CASE: bool>(
+        &mut self,
+        path: &[u8],
+        extension_order: options::ExtOrder,
+    ) -> Option<LoadResult> {
         if let Some(debug) = self.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!(
                 "Attempting to load \"{}\" as a file",
@@ -6105,6 +6410,7 @@ impl<'a> Resolver<'a> {
         let (plain_query, plain_dirname_fd) = dir_entry.get().lookup(base);
         if let Some(query) = plain_query {
             if query.entry().kind(self.rfs_ref(), self.store_fd) == Fs::file_system::EntryKind::File
+                && (!MATCH_CASE || query.entry().is_named(base))
             {
                 if let Some(debug) = self.debug_logs.as_mut() {
                     debug.add_note_fmt(format_args!("Found file \"{}\" ", bstr::BStr::new(base)));
@@ -6148,7 +6454,13 @@ impl<'a> Resolver<'a> {
             // body can take `&mut self`. Backing `Box<[u8]>` is owned by
             // `self.opts` and never mutated while the resolver runs.
             let ext = bun_ptr::RawSlice::new(&*self.opts.ext_order_slice(extension_order)[i]);
-            if let Some(result) = self.load_extension(base, path, &ext, dir_entry) {
+            if MATCH_CASE {
+                if let Some(result) =
+                    self.load_extension_matching::<true>(base, path, &ext, dir_entry)
+                {
+                    dec_ret!(Some(result));
+                }
+            } else if let Some(result) = self.load_extension(base, path, &ext, dir_entry) {
                 dec_ret!(Some(result));
             }
         }
@@ -6161,7 +6473,13 @@ impl<'a> Resolver<'a> {
             // BACKREF: see `RawSlice` note above — backing `Box<[u8]>` in
             // `extra_cjs_extensions` is heap-stable for the resolver's life.
             let ext = bun_ptr::RawSlice::new(&*self.opts.extra_cjs_extensions[i]);
-            if let Some(result) = self.load_extension(base, path, &ext, dir_entry) {
+            if MATCH_CASE {
+                if let Some(result) =
+                    self.load_extension_matching::<true>(base, path, &ext, dir_entry)
+                {
+                    dec_ret!(Some(result));
+                }
+            } else if let Some(result) = self.load_extension(base, path, &ext, dir_entry) {
                 dec_ret!(Some(result));
             }
         }
@@ -6189,6 +6507,7 @@ impl<'a> Resolver<'a> {
                     if let Some(query) = ts_query {
                         if query.entry().kind(self.rfs_ref(), self.store_fd)
                             == Fs::file_system::EntryKind::File
+                            && (!MATCH_CASE || query.entry().is_named(&buffer[..]))
                         {
                             if let Some(debug) = self.debug_logs.as_mut() {
                                 debug.add_note_fmt(format_args!(
@@ -6266,6 +6585,17 @@ impl<'a> Resolver<'a> {
         ext: &[u8],
         dir_entry: bun_ptr::BackRef<Fs::file_system::real_fs::EntriesOption>,
     ) -> Option<LoadResult> {
+        self.load_extension_matching::<false>(base, path, ext, dir_entry)
+    }
+
+    #[inline(always)]
+    fn load_extension_matching<const MATCH_CASE: bool>(
+        &mut self,
+        base: &[u8],
+        path: &[u8],
+        ext: &[u8],
+        dir_entry: bun_ptr::BackRef<Fs::file_system::real_fs::EntriesOption>,
+    ) -> Option<LoadResult> {
         if path.len() + ext.len() >= MAX_PATH_BYTES {
             return None;
         }
@@ -6283,6 +6613,7 @@ impl<'a> Resolver<'a> {
         let (ext_query, dirname_fd) = dir_entry.get().lookup(file_name);
         if let Some(query) = ext_query {
             if query.entry().kind(self.rfs_ref(), self.store_fd) == Fs::file_system::EntryKind::File
+                && (!MATCH_CASE || query.entry().is_named(file_name))
             {
                 if let Some(debug) = self.debug_logs.as_mut() {
                     debug.add_note_fmt(format_args!(
@@ -7094,6 +7425,46 @@ fn primary_side_effects(
     } else {
         SideEffects::NoSideEffectsPackageJsonArray
     }
+}
+
+/// Node's `EXPORTS_PATTERN`: the package name that starts `request` (`name` or `@scope/name`), and the
+/// rest, which is empty or starts with `/`.
+/// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L690
+fn split_package_request(request: &[u8]) -> Option<(&[u8], &[u8])> {
+    let name_end = |start: usize| -> Option<usize> {
+        let name = request.get(start..)?;
+        if name.first() == Some(&b'.') {
+            return None;
+        }
+        let len = strings::index_of_any(name, b"/\\%").unwrap_or(name.len());
+        (len > 0 && name.get(len).is_none_or(|&c| c == b'/')).then_some(start + len)
+    };
+    let scoped_name_end = || -> Option<usize> {
+        let scope = request.strip_prefix(b"@")?;
+        let len = strings::index_of_any(scope, b"/\\%")?;
+        (len > 0 && scope[len] == b'/').then(|| name_end(len + 2))?
+    };
+    let end = scoped_name_end().or_else(|| name_end(0))?;
+    Some(request.split_at(end))
+}
+
+/// Whether `request` is relative and starts by leaving the directory that it is looked up in. Node
+/// then looks it up from an entry of `paths` that is not a directory too.
+/// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L755-L761
+fn request_leaves_directory(request: &[u8]) -> bool {
+    if is_package_path(request) {
+        return false;
+    }
+    let mut depth: usize = 0;
+    for segment in strings::tokenize_any(request, if cfg!(windows) { b"/\\" } else { b"/" }) {
+        match segment {
+            b"." => {}
+            b".." if depth == 0 => return true,
+            b".." => depth -= 1,
+            _ => depth += 1,
+        }
+    }
+    false
 }
 
 #[inline]

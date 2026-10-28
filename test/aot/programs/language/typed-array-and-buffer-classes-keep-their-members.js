@@ -16,7 +16,7 @@ const objects = [
   ["%TypedArray%", TypedArray, ["from", "of", "prototype", Symbol.species], ofFunctionPrototype],
   ["Uint8Array", Uint8Array, ["BYTES_PER_ELEMENT", "prototype"], ["from", "of", ...ofFunctionPrototype]],
   ["BigInt64Array", BigInt64Array, ["BYTES_PER_ELEMENT", "prototype"], ["from", "of", ...ofFunctionPrototype]],
-  ["Buffer", Buffer, ["from", "alloc", "concat", "isBuffer", "byteLength", "prototype"], ["of", "fromHex", "BYTES_PER_ELEMENT", ...ofFunctionPrototype]],
+  ["Buffer", Buffer, ["from", "of", "alloc", "concat", "isBuffer", "byteLength", "prototype"], ["fromHex", "BYTES_PER_ELEMENT", ...ofFunctionPrototype]],
 ];
 for (const [name, object, members, inherited] of objects) {
   tryToChange(name + ": a member", object, members);

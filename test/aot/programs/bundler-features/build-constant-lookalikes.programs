@@ -1,0 +1,725 @@
+//// build-constant-lookalikes.ts
+// What only looks like a build-time constant decides nothing: a local of the same name, a variable that is assigned to, a function named `feature` that is not the bundler's.
+const log: unknown[] = []
+function shadowed(process: { env: { APP_CHANNEL: string } }) {
+  return process.env.APP_CHANNEL === "internal" ? 1 : "public"
+}
+const either: number | string = shadowed({ env: { APP_CHANNEL: "internal" } })
+log.push(either, shadowed({ env: { APP_CHANNEL: "public" } }))
+
+function feature(name: string): boolean {
+  return name === "OFF"
+}
+log.push(feature("OFF") ? "own function says on" : "off", feature("ON") ? "on" : "own function says off")
+
+let channel = process.env.APP_CHANNEL === "internal"
+function flip() {
+  channel = !channel
+}
+log.push(channel ? "internal" : "public")
+flip()
+log.push(channel ? "internal" : "public")
+
+function perCall(flag: boolean) {
+  const local = flag
+  return local ? "yes" : "no"
+}
+log.push(perCall(true), perCall(false))
+
+const other = process.env.OTHER_CHANNEL === "internal" ? "internal" : "not defined by the build"
+log.push(other)
+
+function effects(): string[] {
+  const seen: string[] = []
+  const note = (text: string) => (seen.push(text), text)
+  const first = note("left of and") && process.env.APP_CHANNEL === "internal" && note("never")
+  const second = note("") || process.env.APP_CHANNEL === "public" || note("never")
+  const third = (note("test"), process.env.APP_CHANNEL === "internal") ? note("never") : note("other arm")
+  if (note("in if") && process.env.APP_CHANNEL === "internal") note("never")
+  seen.push(String(first), String(second), String(third))
+  return seen
+}
+log.push(...effects())
+console.log(log.map(String).join("\n"))
+//// build-constants-across-modules/again.ts
+export { IS_INTERNAL as INTERNAL_AGAIN, isInternal as isInternalAgain } from "./flags"
+//// build-constants-across-modules/flags.ts
+import { feature } from "bun:bundle"
+export const IS_INTERNAL = process.env.APP_CHANNEL === "internal"
+export const HAS_FEATURE = feature("ON") ? true : false
+export function isInternal() {
+  return process.env.APP_CHANNEL === "internal"
+}
+export const hasFeature = () => (feature("ON") ? true : false)
+export function decidesInSteps() {
+  if (feature("OFF")) return "off"
+  if (IS_INTERNAL) {
+    return "internal"
+  }
+  return ""
+}
+export enum Level {
+  Quiet,
+  Loud,
+  Louder = Loud * 2,
+}
+export const enum Channel {
+  Public = "public",
+  Internal = "internal",
+}
+export const LEVEL = Level.Quiet
+export let calls = 0
+export function countsCalls() {
+  calls++
+  return false
+}
+export function dependsOnItsArgument(flag: boolean) {
+  return flag
+}
+export let reassigned = false
+export function reassign() {
+  reassigned = true
+}
+//// build-constants-across-modules/main.ts
+// A build-time constant decides a condition also where it comes through another module, a namespace import, an enum, or a function that returns it. No call of `wrong` runs: each would leave a line in the log.
+import { Channel, HAS_FEATURE, IS_INTERNAL, LEVEL, Level, calls, countsCalls, decidesInSteps, dependsOnItsArgument, hasFeature, isInternal, reassign, reassigned } from "./flags"
+import * as flags from "./flags"
+import { INTERNAL_AGAIN, isInternalAgain } from "./again"
+const log: unknown[] = []
+function wrong(n: string): string {
+  log.push("this ran: " + n)
+  return n
+}
+
+const imported = IS_INTERNAL ? wrong("imported") : "imported constant"
+const importedFeature = HAS_FEATURE ? "imported feature" : wrong("importedFeature")
+const throughNamespace = flags.IS_INTERNAL ? wrong("throughNamespace") : "through a namespace"
+const exportedAgain = INTERNAL_AGAIN ? wrong("exportedAgain") : "exported again"
+log.push(imported, importedFeature, throughNamespace, exportedAgain)
+
+const called = isInternal() ? wrong("called") : "a function that returns a constant"
+const calledArrow = hasFeature() ? "an arrow function that returns a constant" : wrong("calledArrow")
+const calledAgain = isInternalAgain() ? wrong("calledAgain") : "a function exported again"
+const steps = decidesInSteps() ? wrong("steps") : "a function that decides in steps"
+log.push(called, calledArrow, calledAgain, steps)
+
+const byEnum = LEVEL === Level.Quiet ? "an enum member" : wrong("byEnum")
+const byArithmetic = Level.Louder === 2 ? "an enum member that is calculated" : wrong("byArithmetic")
+const byConstEnum = process.env.APP_CHANNEL === Channel.Public ? "a const enum member" : wrong("byConstEnum")
+log.push(byEnum, byArithmetic, byConstEnum)
+
+const counted = countsCalls() ? wrong("counted") : "the call is still made"
+log.push(counted, calls)
+const open: string | number = dependsOnItsArgument(calls > 0) ? 13 : "not this one"
+log.push(open)
+log.push(reassigned ? "reassigned" : "not yet")
+reassign()
+log.push(reassigned ? "reassigned" : "not yet")
+console.log(log.map(String).join("\n"))
+//// constant-text-where-code-generation-is-disallowed.ts
+// With --disallow-code-generation-from-strings `new Function("")` throws although its text is a constant that could be compiled ahead of time. Libraries ask exactly that way whether they may generate code (zod: `const F = Function; new F("")`) and take their other path when it throws.
+declare const console: { log(...values: unknown[]): void };
+function attempt(label: string, action: () => unknown): void {
+    try { console.log(label, String(action())); } catch (error) { console.log(label, (error as Error).constructor.name); }
+}
+function allowsEval(): boolean {
+    try {
+        const F = Function;
+        new F("");
+        return true;
+    } catch {
+        return false;
+    }
+}
+attempt("the question libraries ask", allowsEval);
+attempt("new Function, constant text", () => new Function("a", "return a + 1")(1));
+attempt("Function, constant text", () => Function("return 2")());
+attempt("indirect eval, constant text", () => (0, eval)("3"));
+attempt("new Function, text made at run time", () => new Function("return " + [4].join())());
+//// dead-code-not-type-checked.ts
+// Code that a build-time constant cuts is not checked. Each call of `wrong` with a text is a type error, which stops the build unless the checker knows that the call never runs.
+import { feature } from "bun:bundle"
+declare const INTERNAL: boolean
+declare const PUBLIC: boolean
+const log: unknown[] = []
+function wrong(n: number): number {
+  log.push("this ran: " + n)
+  return n
+}
+
+log.push(process.env.APP_CHANNEL === "internal" ? wrong("an arm") : "public")
+log.push(feature("OFF") ? wrong("a feature that is off") : "off")
+log.push(INTERNAL && wrong("behind and"), PUBLIC || wrong("behind or"), process.env.APP_CHANNEL ?? wrong("behind ??"))
+log.push(PUBLIC && "taken", INTERNAL || "taken too")
+
+function returnsInDeadBranch() {
+  if (process.env.APP_CHANNEL === "internal") return wrong("a branch")
+  return "text"
+}
+function returnsEarly() {
+  if (feature("ON")) return "early"
+  return wrong("after a return")
+}
+function switches() {
+  switch (process.env.APP_CHANNEL) {
+    case "internal":
+      return wrong("a case")
+    case "public":
+      return "public case"
+    default:
+      return wrong("the default")
+  }
+}
+log.push(returnsInDeadBranch(), returnsEarly(), switches())
+
+const isInternal = process.env.APP_CHANNEL === "internal"
+log.push(isInternal ? wrong("through a constant") : "through a constant")
+function throughLocal() {
+  const found = process.env.APP_CHANNEL === "internal" ? { suffix: 1 } : undefined
+  if (found) return wrong("through a local")
+  return "through a local"
+}
+log.push(throughLocal())
+
+function notTheFirstOperand(live: string) {
+  return live && INTERNAL && wrong("the third operand")
+}
+function decidedThoughEvaluated(live: string) {
+  return live && INTERNAL ? wrong("an arm") : "the other arm"
+}
+log.push(notTheFirstOperand("live"), decidedThoughEvaluated("live"))
+
+function loops() {
+  while (INTERNAL) wrong("a loop")
+  for (; process.env.APP_CHANNEL === "internal"; ) wrong("another loop")
+  return "no loop ran"
+}
+log.push(loops())
+
+const STAGING = process.env.APP_CHANNEL === "internal" ? ({ host: "staging.example" } as const) : undefined
+function host(): string {
+  return STAGING ? STAGING.host + wrong("where the constant is an object") : "example.com"
+}
+log.push(STAGING, host(), STAGING?.host.notAMember)
+
+const spread = { name: "spread", ...(INTERNAL && { secret: wrong("in a spread") }), ...(process.env.APP_CHANNEL === "internal" ? { other: wrong("in another") } : {}) }
+log.push(...Object.keys(spread))
+
+if (feature("OFF")) {
+  const text: number = "not a number"
+  log.push(text, missingName)
+}
+console.log(log.map(String).join("\n"))
+//// dead-code-still-widens-inferred-types.ts
+// Where the type of a place that can be stored to is inferred from an expression, code that a build-time constant cuts still says what the place may hold. Each store below fits the type TypeScript infers, so it must neither stop the build nor throw.
+declare const INTERNAL: boolean
+const log: unknown[] = []
+function useState<S>(initial: S): [() => S, (next: S) => void] {
+  let held = initial
+  return [() => held, next => void (held = next)]
+}
+function parse(text: string): any {
+  return JSON.parse(text)
+}
+
+const [state, setState] = useState(INTERNAL ? { a: 1 } : null)
+log.push(state())
+setState({ a: 2 })
+log.push(state()?.a)
+setState(parse('{"a":3}'))
+log.push(state()?.a)
+
+let either = INTERNAL ? 1 : "text"
+log.push(either)
+either = 2
+log.push(either)
+either = parse("3")
+log.push(either)
+
+const list = [1, ...(INTERNAL ? ["x"] : [])]
+list.push("y")
+log.push(list.join())
+
+const handlers = { onEvent: INTERNAL ? (n: number) => n : undefined }
+log.push(typeof handlers.onEvent)
+handlers.onEvent = n => n + 1
+log.push(handlers.onEvent(1))
+
+const initial = INTERNAL ? { a: 1 } : null
+const [second, setSecond] = useState(initial)
+setSecond({ a: 4 })
+log.push(second()?.a)
+const boxes = [initial]
+boxes.push({ a: 5 })
+log.push(boxes.length, boxes[1]?.a)
+
+const config = INTERNAL ? { a: 1, internal: 2 } : { a: 1 }
+log.push(config.a, config.internal)
+
+function pick() {
+  if (INTERNAL) return { kind: "internal" as const, extra: 1 }
+  return { kind: "public" as const }
+}
+const picked = pick()
+if (picked.kind === "internal") log.push(picked.extra)
+switch (picked.kind) {
+  case "internal":
+    log.push("never")
+    break
+  case "public":
+    log.push("public")
+}
+
+let client: { send(): string } | null = null
+if (INTERNAL) client = { send: () => "sent" }
+if (client) log.push(client.send())
+function later(): string {
+  return client ? client.send() : "no client"
+}
+log.push(later())
+
+type Loaded = { g(n: number): number; extra: { a: number } }
+function load(): Loaded {
+  return { g: n => n, extra: { a: 1 } }
+}
+const internalModule = INTERNAL ? load() : null
+const g = INTERNAL ? internalModule?.g : undefined
+const callsG = (n: number) => g!(n)
+function take(o: { a?: number; b: number }) {
+  return o.b
+}
+const options = INTERNAL ? internalModule?.extra : undefined
+log.push(typeof callsG, take({ b: 1, ...(INTERNAL ? internalModule?.extra : {}) }), take({ b: 2, ...options }))
+
+const annotated: { a: number } | undefined = INTERNAL ? { a: 1 } : undefined
+log.push(take({ b: 3, ...annotated }))
+let stored: { a: number } | undefined
+stored = INTERNAL ? { a: 1 } : undefined
+log.push(take({ b: 4, ...stored }))
+function extra() {
+  if (INTERNAL) return { a: 1 }
+  return undefined
+}
+let merged: { a?: number; b: number }
+merged = { b: 5, ...(log.length > 0 && extra()) }
+log.push(merged.b)
+
+const loaded = INTERNAL ? { run: (n: number) => n, names: ["a"] } : null
+log.push(loaded?.run(1), loaded?.names.map(name => name.length), [...(loaded?.names ?? [])].length)
+console.log(log.map(String).join("\n"))
+//// define-filename-and-dirname.ts
+// `--define` replaces `__filename`, `__dirname` and `require`, which no file declares, as it replaces any other free name. `module` and `exports` are variables of the file and stay.
+declare const console: { log(...values: unknown[]): void };
+declare const __filename: string;
+declare const __dirname: string;
+function inFunction(): string { return __dirname + "|" + __filename; }
+function shadowed(__filename: string): string { return __filename; }
+console.log(__filename, __dirname, typeof __filename);
+console.log(inFunction(), shadowed("own"));
+console.log(__filename.endsWith("tool.js"), __dirname.length);
+//// define-global-path.ts
+// A `--define` whose value is a global name or a dotted path of global names stands for that path wherever the defined name is written: read, called with the holder as `this`, under `typeof`, on either side of `in`, stored to, updated, destructured into and deleted.
+declare const LOG: (...values: unknown[]) => void;
+declare let ROOT: any;
+declare let NAME: any;
+declare const DESCRIBE: (label: string) => string;
+declare const FLOOR: (value: number) => number;
+declare const ITERATOR: typeof Symbol.iterator;
+
+const globals = globalThis as any;
+
+function attempt(action: () => unknown): unknown {
+  try {
+    return action();
+  } catch (error) {
+    return (error as Error).constructor.name;
+  }
+}
+
+LOG("typeof before the globals exist:", typeof NAME, attempt(() => typeof ROOT));
+LOG("read before the globals exist:", attempt(() => NAME), attempt(() => ROOT));
+LOG("store before the globals exist:", attempt(() => (NAME = 1)), attempt(() => (ROOT = 1)), "target" in globals, "holder" in globals);
+
+const record: any = {
+  inner: {
+    describe(label: string): string {
+      return `${label}: this is ${this === record.inner ? "the holder" : String(this)}`;
+    },
+  },
+};
+let holderReads = 0;
+function countHolderReads(): number {
+  const count = holderReads;
+  holderReads = 0;
+  return count;
+}
+Object.defineProperty(globalThis, "holder", {
+  configurable: true,
+  get() {
+    holderReads++;
+    return record;
+  },
+});
+globals.target = "value";
+
+LOG("typeof of a member that is not there:", typeof ROOT, ROOT, countHolderReads());
+record.inner.value = 5;
+LOG("read:", ROOT, NAME, typeof ROOT, typeof NAME, typeof LOG, countHolderReads());
+LOG("shorthand:", JSON.stringify({ ROOT, NAME }), JSON.stringify({ ROOT: 1, NAME: 2 }), { ROOT: 3 }.ROOT, countHolderReads());
+
+function callDetached(detached: (label: string) => string): string {
+  return detached("read, then called");
+}
+LOG("call:", DESCRIBE("called by the defined name"), countHolderReads());
+// prettier-ignore
+LOG("call:", (DESCRIBE)("parenthesized"), DESCRIBE?.("optional call"), callDetached(DESCRIBE), countHolderReads());
+LOG("call:", DESCRIBE.call("another receiver", "through call"), [1].map(() => DESCRIBE("in a closure"))[0], countHolderReads());
+LOG("call of built-ins:", FLOOR(2.5), typeof FLOOR, [7, 8][ITERATOR]().next().value, ITERATOR === Symbol.iterator);
+
+ROOT = { value: 1, other: 2 };
+LOG("in:", "other" in ROOT, "absent" in ROOT, NAME in ROOT, NAME in { value: 0 }, NAME in {}, countHolderReads());
+
+ROOT = 10;
+NAME = 20;
+LOG("store:", ROOT, record.inner.value, NAME, globals.target, (ROOT = 11), (NAME = 21), record.inner.value, globals.target);
+
+countHolderReads();
+ROOT += 2;
+LOG("compound:", ROOT, countHolderReads());
+NAME += 3;
+ROOT -= 1;
+ROOT *= 2;
+NAME **= 2;
+LOG("compound:", ROOT, NAME, (ROOT += 1), (NAME %= 100));
+ROOT ||= "not stored";
+NAME &&= 0;
+LOG("logical:", ROOT, NAME);
+ROOT &&= null;
+NAME ||= undefined;
+LOG("logical:", ROOT, NAME);
+ROOT ??= 1;
+NAME ??= 2;
+LOG("logical:", ROOT, NAME, (ROOT ??= "not stored"), (NAME ||= "not stored"));
+
+countHolderReads();
+LOG("update:", ROOT++, ROOT, countHolderReads());
+LOG("update:", ++ROOT, ROOT--, --ROOT, NAME++, ++NAME, NAME--, --NAME, record.inner.value, globals.target);
+
+const a = [30];
+[NAME] = a;
+[ROOT] = [31];
+LOG("array pattern:", NAME, ROOT, globals.target, record.inner.value);
+[NAME, ROOT] = [ROOT, NAME];
+LOG("array pattern:", NAME, ROOT);
+[NAME = 50, ROOT = 51] = [];
+LOG("defaults:", NAME, ROOT);
+({ a: NAME, b: ROOT } = { a: 40, b: 41 });
+LOG("object pattern:", NAME, ROOT);
+({ NAME, ROOT } = { NAME: 42, ROOT: 43 });
+LOG("shorthand pattern:", NAME, ROOT, globals.target, record.inner.value);
+[, ...ROOT] = [1, 2, 3];
+({ a: {}, ...NAME } = { a: 1, b: 2 });
+LOG("rest:", JSON.stringify(ROOT), JSON.stringify(NAME));
+
+const visited: unknown[] = [];
+for (NAME of [1, 2]) visited.push(globals.target);
+for (ROOT in { first: 0, second: 0 }) visited.push(record.inner.value);
+LOG("loop heads:", visited.join());
+
+record.inner.extra = "extra";
+LOG("dotted name:", process.env.ALIAS, typeof process.env.ALIAS);
+LOG("delete:", delete process.env.ALIAS, "extra" in record.inner, process.env.ALIAS, delete process.env.ALIAS);
+Object.defineProperty(record.inner, "extra", { value: "fixed", configurable: false });
+LOG("delete:", attempt(() => delete process.env.ALIAS), process.env.ALIAS);
+process.env.ALIAS = "in the environment";
+LOG("store to a dotted name:", process.env.ALIAS, Reflect.get(process.env, "ALIAS"));
+
+function shadowed(ROOT: number, NAME: number, LOG: (value: number) => number): number {
+  ROOT += 1;
+  NAME++;
+  return LOG(ROOT + NAME);
+}
+ROOT = "unchanged";
+NAME = "unchanged";
+LOG("parameters of the same names:", shadowed(1, 2, value => value * 10), ROOT, NAME);
+{
+  const ROOT = "block";
+  let NAME = "block";
+  NAME += " scoped";
+  LOG("block bindings of the same names:", ROOT, NAME, record.inner.value, globals.target);
+}
+
+class Reader {
+  field = ROOT;
+  static key = NAME;
+  read(fallback = ROOT): unknown {
+    return fallback;
+  }
+  write(value: unknown): void {
+    ROOT = value;
+  }
+}
+const reader = new Reader();
+reader.write("written in a method");
+LOG("in a class:", reader.field, Reader.key, reader.read(), record.inner.value);
+
+delete globals.target;
+delete globals.holder;
+LOG("after the globals are deleted:", typeof NAME, attempt(() => typeof ROOT), attempt(() => NAME++), attempt(() => (ROOT += 1)));
+
+export {};
+//// define-object-literal.ts
+// A `--define` whose value is an object literal.
+declare const OBJ: { A: string, N: { B: number }, L: number[], U: string, missing?: string }
+console.log(OBJ.A, OBJ.N.B, OBJ.L.length, OBJ.L[1], OBJ.U, OBJ.missing, typeof OBJ.toString)
+console.log(JSON.stringify(OBJ), OBJ === OBJ, OBJ.N === OBJ.N)
+if (OBJ.A === "x") console.log("folded"); else console.log("not reached")
+const copy = OBJ
+;(copy as any).A = "changed"
+console.log(copy.A, OBJ.A)
+//// embedded-file-path-import/asset/data.bin
+asset bytes
+//// embedded-file-path-import/asset/types.d.ts
+declare module "*.bin" { const path: string; export default path }
+//// embedded-file-path-import/main.ts
+// A file is embedded in the executable and imported for its path.
+/// <reference path="./asset/types.d.ts" />
+import path from "./asset/data.bin" with { type: "file" }
+import { readFileSync } from "node:fs"
+console.log(typeof path, path.endsWith(".bin"), readFileSync(path, "utf8").trim())
+////! function-source-non-ascii/main.js
+function greet() { return "é"; }
+console.log(String(greet).includes("[native code]"), String(greet).includes("return"), greet());
+// bun --aot: this file is not UTF-8: read as the runtime reads it
+//// html-import-in-server/client.ts
+import { greeting } from "./shared";
+
+document.body.textContent = greeting("the browser");
+//// html-import-in-server/index.html
+<!doctype html>
+<html>
+  <head>
+    <title>A page</title>
+    <script type="module" src="./client.ts"></script>
+  </head>
+  <body></body>
+</html>
+//// html-import-in-server/main.ts
+// A server that imports a page: the page's scripts are bundled for the browser while the server itself is compiled, and both import one module.
+import page from "./index.html";
+import { greeting } from "./shared";
+
+console.log(greeting("the server"));
+const files: { path: string; loader: string }[] = (page as any).files ?? [];
+console.log(files.map(file => file.loader).sort().join(" "));
+for (const file of files) {
+  if (file.loader !== "js") continue;
+  const text = await Bun.file(file.path).text();
+  console.log(text.includes("the browser"), text.includes("Hello from a module that both import"));
+}
+//// html-import-in-server/shared.ts
+export function greeting(who: string): string {
+  return `Hello from a module that both import, ${who}`;
+}
+//// imports-from-external-module/ext-lib.js
+export default "default export";
+export function add(a, b) { return a + b; }
+export let counter = 0;
+export function bump() { counter++; }
+export class Thing { constructor(n) { this.n = n; } twice() { return this.n * 2; } }
+//// imports-from-external-module/main.ts
+// Imports from a module that is not compiled together with the program.
+import def, { add, counter, bump, Thing } from "./ext-lib.js"
+import * as lib from "./ext-lib.js"
+console.log(def, add(2, 3), counter, lib.counter)
+bump()
+console.log(counter, lib.counter, new Thing(4).twice(), typeof lib, Object.keys(lib).join())
+//// inline-type-import/files/only_types.ts
+console.log("only_types is evaluated")
+export interface Point { x: number }
+//// inline-type-import/files/shapes.ts
+console.log("shapes is evaluated")
+export interface Shape { sides: number }
+export type Name = string
+export const square: Shape = { sides: 4 }
+//// inline-type-import/main.ts
+// `import { type A } from ..` with only type names is erased completely, so the module is not evaluated because of it.
+import { type Point } from "./files/only_types.ts"
+import { type Shape, type Name } from "./files/shapes.ts"
+import { square } from "./files/shapes.ts"
+export { type Point as P } from "./files/only_types.ts"
+const point: Point = { x: 1 }
+const shape: Shape = square
+const name: Name = "square"
+console.log(point.x, shape.sides, name)
+//// json-named-exports/files/escaping.json
+{ "x": 10, "y": 20, "with space": 30 }
+//// json-named-exports/files/imported-by-call.json
+{ "p": "by call p", "q": "by call q" }
+//// json-named-exports/files/imported-by-computed-call.json
+{ "r": "computed r" }
+//// json-named-exports/files/member-reads.json
+{ "first": "1st", "second": "2nd", "third": "3rd" }
+//// json-named-exports/files/only-default.json
+{ "a": 1, "b": { "c": 2 }, "text/plain": true }
+//// json-named-exports/files/reexported-by-star.json
+{ "starred": "*", "also": "**" }
+//// json-named-exports/files/reexported.json
+{ "one": 1, "two": 2, "three": 3 }
+//// json-named-exports/files/required.json
+{ "a": "required a", "b-c": "required b-c" }
+//// json-named-exports/files/seen-by-eval.json
+{ "secret": "read by eval" }
+//// json-named-exports/files/settings.json
+{
+  "name": "settings",
+  "level": 3,
+  "nested": { "deep": [1, 2, 3] },
+  "not-an-identifier": "dashed",
+  "application/json": { "source": "iana" },
+  "unused": "nobody imports this name",
+  "default": "a key named default"
+}
+//// json-named-exports/main.ts
+// A JSON module exports each top-level key by name. Only the names that somebody can read are initialized: every way to read one.
+import settings, { name, level as depth, nested, "not-an-identifier" as dashed, "application/json" as mime } from "./files/settings.json"
+import onlyDefault from "./files/only-default.json"
+import * as members from "./files/member-reads.json"
+import * as escaping from "./files/escaping.json"
+import { readByEval } from "./seen-by-eval.mjs"
+import { one, renamed, starred, also, whole } from "./middle.ts"
+import * as middle from "./middle.ts"
+import required from "./required.cjs"
+
+console.log(name, depth, nested.deep.join(), dashed, mime.source)
+console.log(settings.name, settings.unused, settings["default"], Object.keys(settings).join())
+console.log(nested === settings.nested, mime === settings["application/json"])
+
+console.log(onlyDefault.a, onlyDefault.b.c, onlyDefault["text/plain"], Object.keys(onlyDefault).join())
+
+console.log(members.first, members.third, members.default.second)
+
+function describe(namespace: object): string {
+  return Object.keys(namespace).sort().join() + " " + JSON.stringify(namespace)
+}
+console.log(describe(escaping))
+console.log((escaping as Record<string, unknown>)["with space"], "y" in escaping, escaping.x)
+
+console.log(one, renamed, starred, also, whole.second, describe(whole))
+console.log(describe(middle))
+
+console.log(required.a, required.dashed, required.keys)
+
+const byCall = await import("./files/imported-by-call.json")
+console.log(byCall.p, byCall.q, describe(byCall))
+
+const which = ["imported-by-computed-call"]
+const byComputedCall = await import(`./files/${which[0]}.json`)
+console.log(byComputedCall.r, describe(byComputedCall))
+
+console.log(readByEval())
+//// json-named-exports/middle.ts
+export { one, two as renamed } from "./files/reexported.json"
+export * from "./files/reexported-by-star.json"
+export * as whole from "./files/member-reads.json"
+//// json-named-exports/required.cjs
+const required = require("./files/required.json")
+exports.a = required.a
+exports.dashed = require("./files/required.json")["b-c"]
+exports.keys = Object.keys(required).join()
+//// json-named-exports/seen-by-eval.mjs
+import * as seenByEval from "./files/seen-by-eval.json"
+export function readByEval() {
+  return eval("seenByEval.secret + ' ' + Object.keys(seenByEval).sort().join()")
+}
+////! namespace-import-of-primitive-module/files/data.bin
+bytes
+//// namespace-import-of-primitive-module/files/note.md
+# a note
+more
+//// namespace-import-of-primitive-module/files/null.json
+null
+//// namespace-import-of-primitive-module/files/number.cjs
+module.exports = 42;
+//// namespace-import-of-primitive-module/files/number.json
+42
+//// namespace-import-of-primitive-module/files/string.json
+"just a string"
+//// namespace-import-of-primitive-module/files/text.cjs
+module.exports = "from commonjs";
+//// namespace-import-of-primitive-module/files/true.json
+true
+//// namespace-import-of-primitive-module/files/types.d.ts
+declare module "*.md" { const text: string; export default text }
+declare module "*.bin" { const path: string; export default path }
+//// namespace-import-of-primitive-module/files/words.txt
+some words
+//// namespace-import-of-primitive-module/main.ts
+// `import * as all` of a module whose value is a string, a number, a boolean or null: a text file, a file imported for its path, a JSON file
+// that holds a scalar, a CommonJS module that exports one. What runs has a namespace object with `default`, so that is its type.
+// The executable lists what `bun run` lists, but for the file imported for its path: plain Bun lists `__esModule` beside `default` there, the executable `default` alone. That line is stored.
+/// <reference path="./files/types.d.ts" />
+import * as text from "./files/words.txt"
+import * as note from "./files/note.md" with { type: "text" }
+import * as file from "./files/data.bin" with { type: "file" }
+import * as jsonString from "./files/string.json"
+import * as jsonNumber from "./files/number.json"
+import * as jsonNull from "./files/null.json"
+import * as jsonTrue from "./files/true.json"
+import * as commonjsString from "./files/text.cjs"
+import * as commonjsNumber from "./files/number.cjs"
+import words from "./files/words.txt"
+import { default as again } from "./files/words.txt"
+import { reexported } from "./middle"
+function keys(value: object) { return Object.keys(value).join() }
+function length(value: { default: string }) { return value.default.length }
+console.log(typeof text, keys(text), JSON.stringify(text.default), length(text), "default" in text, JSON.stringify(text), JSON.stringify({ ...text }))
+console.log(typeof note, keys(note), JSON.stringify(note.default))
+console.log(typeof file, keys(file), typeof file.default, file.default.endsWith(".bin"))
+console.log(typeof jsonString, keys(jsonString), JSON.stringify(jsonString.default))
+console.log(typeof jsonNumber, keys(jsonNumber), jsonNumber.default + 1, typeof jsonNull, keys(jsonNull), jsonNull.default, typeof jsonTrue, jsonTrue.default === true)
+console.log(typeof commonjsString, keys(commonjsString), JSON.stringify(commonjsString.default), typeof commonjsNumber, commonjsNumber.default + 1)
+console.log(text.default === words, words === again, words.length, typeof reexported, keys(reexported), reexported.default.trim())
+const seen: unknown = text
+console.log(typeof seen, seen !== null && typeof seen === "object" && "default" in seen ? seen.default : "no default")
+//// namespace-import-of-primitive-module/middle.ts
+import * as reexported from "./files/words.txt"
+export { reexported }
+//// text-imports/main.tsx
+// Files imported as strings, an import of a declaration file, a type-only import, and a .tsx file without JSX.
+import "./txt/types.d.ts"
+import hello from "./txt/hello.txt"
+import note from "./txt/note.md" with { type: "text" }
+import { type Node } from "./mini/jsx-runtime"
+const node: Node | null = null
+console.log(hello.length, JSON.stringify(hello), note.split("\n")[0], node)
+//// text-imports/mini/jsx-runtime.ts
+export const Fragment = "<>"
+export type Node = { type: unknown, props: Record<string, unknown>, key: unknown }
+export function jsx(type: unknown, props: Record<string, unknown>, key?: unknown): Node { return { type, props, key } }
+export const jsxs = jsx
+export function jsxDEV(type: unknown, props: Record<string, unknown>, key?: unknown): Node { return { type, props, key } }
+export namespace JSX { export type Element = Node; export interface IntrinsicElements { [name: string]: any }; export interface IntrinsicAttributes { key?: unknown }; export interface ElementChildrenAttribute { children: {} } }
+//// text-imports/txt/hello.txt
+hello, text
+second line — ünïcode
+//// text-imports/txt/note.md
+# Note
+
+body
+//// text-imports/txt/types.d.ts
+declare module "*.txt" { const text: string; export default text }
+declare module "*.md" { const text: string; export default text }
+//// text-requires/main.ts
+// Files that are loaded as strings with `require()`.
+declare const require: (specifier: string) => unknown
+const text = require("./txt/hello.txt")
+const note = require
+console.log(typeof text, JSON.stringify(text), typeof note, JSON.stringify(note))
+//// text-requires/txt/hello.txt
+hello, text
+second line — ünïcode
+//// text-requires/txt/note.md
+# Note
+
+body

@@ -1,0 +1,2985 @@
+////: create
+function create«1» {
+  let a = scramble(x);
+  let b = scramble(x + 1);
+  for (let i = 0; i < 2; i++) {
+    a += scramble(a & 7);
+    b += scramble(b & 7);
+    if (a > 1e12) a = 1;
+    if (b > 1e12) b = 2;
+  }
+  return «2»;
+}
+////: lines-22
+function «1»(«2»: «3»): Promise<unknown> {
+  return Promise.resolve(«2»);
+}
+////: lines-38
+function* «1»(depth: number): Numbers {
+  made++;
+  try {
+    if (!depth) return bottom();
+    return «2» + 1;
+  } finally {
+    cleanUp(depth);
+  }
+}
+////: main
+async function main(): Promise<void> {
+  await «1»();
+  await «2»();
+  await «3»();
+  await «4»();
+  await «5»();
+  console.log(log.join("\n"));
+}
+//// next-requests-while-pending.ts
+// next() written out on async generators that wait for something before they yield: who awaits the promise that next() handed back:
+// an async function, an async generator, a then() callback, two of them, nobody yet, nobody ever; one request at a time and several at once;
+// numbers, records and thenables yielded; the step objects are kept and compared: each step is an object of its own.
+let log: string[] = [];
+////= note-2
+const thenable = { then(resolve: (value: string) => void): void { note("then is called"); resolve("from then"); } };
+type Source = AsyncGenerator<unknown, unknown>;
+const sources: [string, () => Source][] = [
+    ["numbers", async function* () { for (let i = 0; i < 3; i++) { await outside(); note("yields " + i); yield i; } return "over"; }],
+    ["records", async function* () { for (let i = 0; i < 3; i++) { await outside(); note("yields " + i); yield { n: i }; } return { last: true }; }],
+    ["a thenable among them", async function* () { await outside(); yield 1; await outside(); yield thenable; await outside(); yield 3; }],
+    ["two yields a wait", async function* () { for (let i = 0; i < 2; i++) { await outside(); yield "a" + i; yield "b" + i; } }],
+    ["no wait", async function* () { yield 1; yield 2; }],
+    ["a job queued ahead of the yield", async function* () { for (let i = 0; i < 2; i++) { await outside(); Promise.resolve().then(() => note("the source's job " + i)); yield i; } }],
+    ["it throws", async function* () { await outside(); yield 1; await outside(); throw new Error("thrown by the source"); }],
+    ["through yield*", async function* () { yield* (async function* () { await outside(); yield "inner"; await outside(); return "inner is over"; })(); yield "outer"; }],
+];
+function show(step: IteratorResult<unknown, unknown>): string {
+    return (step.done ? "done " : "step ") + JSON.stringify(step.value) + " " + Object.keys(step).join(",");
+}
+const kept: object[] = [];
+function keep(step: IteratorResult<unknown, unknown>): IteratorResult<unknown, unknown> {
+    if (kept.includes(step)) note("THE SAME OBJECT TWICE");
+    kept.push(step);
+    return step;
+}
+async function byFunction(source: Source): Promise<void> {
+    try {
+        for (;;) { const step = keep(await source.next()); note(show(step)); if (step.done) return; }
+    } catch (error) {
+        note("caught " + (error as Error).message);
+    }
+}
+async function* byGenerator(source: Source): AsyncGenerator<string> {
+    try {
+        for (;;) { const step = keep(await source.next()); yield show(step); if (step.done) return; }
+    } catch (error) {
+        yield "caught " + (error as Error).message;
+    }
+}
+async function* relayed(source: Source): AsyncGenerator<unknown, unknown> {
+    async function pulled(): Promise<IteratorResult<unknown, unknown>> {
+        try { return await source.next(); } catch (error) { note("pulled caught"); throw error; }
+    }
+    while (true) {
+        const step = keep(await pulled());
+        if (step.done === true) return step.value;
+        yield step.value;
+    }
+}
+function byThen(source: Source): Promise<void> {
+    return new Promise(resolve => {
+        const pull = (): void => { source.next().then(step => { note(show(keep(step))); if (step.done) resolve(); else pull(); }, error => { note("then caught " + error.message); resolve(); }); };
+        pull();
+    });
+}
+async function collect(source: AsyncIterable<unknown>): Promise<void> {
+    try {
+        for await (const x of source) note("got " + JSON.stringify(x));
+    } catch (error) {
+        note("caught " + (error as Error).message);
+    }
+}
+async function severalAtOnce(source: Source): Promise<void> {
+    const steps = await Promise.allSettled([source.next(), source.next(), source.next(), source.next(), source.next()]);
+    for (const step of steps) note(step.status === "fulfilled" ? show(keep(step.value)) : "rejected " + step.reason.message);
+}
+async function awaitedLater(source: Source): Promise<void> {
+    const first = source.next();
+    for (let i = 0; i < 6; i++) await outside();
+    note("now awaited");
+    try { note(show(keep(await first))); } catch (error) { note("caught " + (error as Error).message); }
+    await byFunction(source);
+}
+async function awaitedByTwo(source: Source): Promise<void> {
+    const first = source.next();
+    const both = await Promise.allSettled([(async () => show(await first))(), (async () => show(await first))()]);
+    for (const one of both) note(one.status === "fulfilled" ? one.value : "rejected");
+    note("one object for both: " + ((await first) === (await first)));
+    await byFunction(source);
+}
+async function neverAwaited(source: Source): Promise<void> {
+    source.next().catch(() => undefined); source.next().catch(() => undefined);
+    for (let i = 0; i < 8; i++) await outside();
+    await byFunction(source);
+}
+async function* yieldsWhatNextHandsBack(source: Source): AsyncGenerator<IteratorResult<unknown, unknown>> {
+    for (let i = 0; i < 5; i++) yield source.next();
+}
+async function* returnsWhatNextHandsBack(source: Source): AsyncGenerator<never, IteratorResult<unknown, unknown>> {
+    return source.next();
+}
+async function yielded(source: Source): Promise<void> {
+    try {
+        for await (const step of yieldsWhatNextHandsBack(source)) note(show(keep(step)));
+    } catch (error) {
+        note("caught " + (error as Error).message);
+    }
+}
+async function returned(source: Source): Promise<void> {
+    try {
+        const last = await returnsWhatNextHandsBack(source).next();
+        note("returned " + last.done + " " + show(keep(last.value)));
+    } catch (error) {
+        note("caught " + (error as Error).message);
+    }
+    await byFunction(source);
+}
+const ways: [string, (source: Source) => Promise<void>][] = [
+    ["the promise is yielded", yielded],
+    ["the promise is returned", returned],
+    ["an async function awaits", byFunction],
+    ["an async generator awaits", source => collect(byGenerator(source))],
+    ["relayed", source => collect(relayed(source))],
+    ["relayed twice", source => collect(relayed(relayed(source)))],
+    ["then", byThen],
+    ["several at once", severalAtOnce],
+    ["awaited later", awaitedLater],
+    ["awaited by two", awaitedByTwo],
+    ["never awaited", neverAwaited],
+];
+const lines: string[] = [];
+async function scene(title: string, run: () => Promise<unknown>): Promise<void> {
+    log = []; kept.length = 0;
+    await run();
+    lines.push(title + ": " + log.join(" | "));
+}
+for (const [way, go] of ways) {
+    for (const [kind, make] of sources) {
+        await scene(way + ", " + kind + ", alone", () => go(make()));
+        await scene(way + ", " + kind + ", beside jobs", () => Promise.all([ticker("t", 20), go(make())]));
+        await scene(way + ", " + kind + ", two at once", () => Promise.all([go(make()), go(make())]));
+    }
+}
+console.log(lines.join("\n"));
+//// object-literal-in-generator-frame.ts
+// A generator that suspends in very many places keeps what lives across a suspension in its frame. An object literal that lives on is saved there when it is whole: behind the last of its first stores, though what those store is fetched out of the frame between them. The record also admits objects from elsewhere, so a store by its layout is only right while nobody else can have the object.
+type Options = { first: unknown; second: unknown; third: unknown };
+declare function give(): Options;
+(globalThis as any).give = () => JSON.parse('{"first":1,"second":2,"third":"from outside"}');
+function outside(): Options { const given: Options = give(); return given; }
+const readers: (() => unknown)[] = [];
+function* run(seed: number, given: unknown[]): Generator<number, string, number> {
+  let total = seed;
+  const one = given[0], two = given[1], three = given[2];
+  total += yield total; total += yield total; total += yield total; total += yield total; total += yield total; total += yield total;
+  total += yield total; total += yield total; total += yield total; total += yield total; total += yield total; total += yield total;
+  total += yield total; total += yield total; total += yield total; total += yield total; total += yield total; total += yield total;
+  total += yield total; total += yield total; total += yield total; total += yield total; total += yield total; total += yield total;
+  total += yield total; total += yield total; total += yield total; total += yield total; total += yield total; total += yield total;
+  total += yield total; total += yield total; total += yield total; total += yield total; total += yield total; total += yield total;
+  const options: Options = { first: one, second: two, third: three };
+  readers.push(() => options.first);
+  total += yield total;
+  return options.first + ":" + options.second + ":" + options.third + ":" + outside().third + ":" + total;
+}
+function drive(seed: number, given: unknown[]): string {
+  const running = run(seed, given);
+  let step = running.next(0);
+  while (!step.done) step = running.next(1);
+  return step.value;
+}
+console.log(drive(1, [1, "b", true]), drive(2, [null, undefined, 2.5]), readers.length, readers[0](), readers[1]());
+//// one-throw-through-many-generator-frames.ts
+// Three thousand generators, each stepping the next, and the innermost one throws: one error passes through three thousand frames, far from the end of the stack. It arrives as the value that was
+// thrown, every finally runs, innermost first, every generator is completed afterwards, and the function that catches it finds its own values as they were. The same for frames that have been
+// suspended before and are resumed for the throw, for throw() and return() sent in from outside, and for async generators. Beside each chain that throws stands the same chain that returns, so that
+// the times behind the lines, which are not compared, tell the cost of the throw from the cost of making and stepping the generators.
+// The program counts the entries of the two operations behind the creation of a generator, which only the jsc shell can.
+declare const aotOperationCount: undefined | ((name: string) => number);
+const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
+////= lines-20	entries	"operationAOTNewGenerator"	"operationAOTSaveFrameAndYield"
+const lines: string[] = [];
+const frames = 3_000;
+const rounds = 2;
+type Numbers = Generator<number, number, unknown>;
+type NumbersLater = AsyncGenerator<number, number, unknown>;
+class Failure extends Error {
+  constructor(readonly code: number) {
+    super("failure " + code);
+  }
+}
+
+let state = 20261019;
+function draw(): number {
+  state = (state * 48271) % 2147483647;
+  return state % 1000;
+}
+let made = 0;
+let cleaned = 0;
+let lastCleaned = -1;
+let outOfOrder = 0;
+let isThrowing = false;
+let thrownValue: unknown = undefined;
+function bottom(): number {
+  if (isThrowing) throw thrownValue;
+  return 0;
+}
+function cleanUp(depth: number): void {
+  cleaned++;
+  if (depth !== lastCleaned + 1) outOfOrder++;
+  lastCleaned = depth;
+}
+////= last
+function describe(value: unknown): string {
+  if (value instanceof Error) return value.name + " (" + value.message + ")";
+  return typeof value + " " + String(value);
+}
+
+function* byNext(depth: number): Numbers {
+  made++;
+  if (!depth) return bottom();
+  return byNext(depth - 1).next().value + 1;
+}
+function* byYieldStar(depth: number): Numbers {
+  made++;
+  if (!depth) return bottom();
+  return (yield* byYieldStar(depth - 1)) + 1;
+}
+function* byForOf(depth: number): Numbers {
+  made++;
+  if (!depth) return bottom();
+  for (const value of byForOf(depth - 1)) yield value;
+  return depth;
+}
+function* bySpread(depth: number): Numbers {
+  made++;
+  if (!depth) return bottom();
+  return [...bySpread(depth - 1)].length + depth;
+}
+function stepsTheNext(depth: number): number {
+  return last(throughPlainFunctions(depth)) + 1;
+}
+function* throughPlainFunctions(depth: number): Numbers {
+  made++;
+  if (!depth) return bottom();
+  return stepsTheNext(depth - 1) + 1;
+}
+class Walker {
+  constructor(readonly step: number) {}
+  *walk(depth: number): Numbers {
+    made++;
+    if (!depth) return bottom();
+    return (yield* this.walk(depth - 1)) + this.step;
+  }
+}
+const walker = new Walker(2);
+function* keepsValues(depth: number): Numbers {
+  made++;
+  if (!depth) return bottom();
+  const a = depth + 1, b = depth * 0.5, c = "c" + (depth % 10), d = [depth];
+  const below = keepsValues(depth - 1).next().value;
+  return (below + a + b + c.length + d.length) % 1009;
+}
+////= lines-38	hasAFinally	(yield* hasAFinally(depth - 1))
+////= lines-38	hasAFinallyAroundNext	hasAFinallyAroundNext(depth - 1).next().value
+function* catchesAndRethrows(depth: number): Numbers {
+  made++;
+  try {
+    if (!depth) return bottom();
+    return catchesAndRethrows(depth - 1).next().value + 1;
+  } catch (error) {
+    cleanUp(depth);
+    throw error;
+  }
+}
+function* everyTenthHasAFinally(depth: number): Numbers {
+  made++;
+  if (!depth) return bottom();
+  if (depth % 10) return (yield* everyTenthHasAFinally(depth - 1)) + 1;
+  try {
+    return (yield* everyTenthHasAFinally(depth - 1)) + 1;
+  } finally {
+    cleaned++;
+  }
+}
+
+// The function that catches holds values of its own across the whole descent.
+function catches(start: (depth: number) => Numbers, depth: number): string {
+  const a = draw(), b = draw(), c = draw(), d = draw() / 8, e = "e" + draw(), f = { n: draw() }, g = draw(), h = draw() / 16;
+  const before = [a, b, c, d, e, f.n, g, h].join();
+  let outcome: string;
+  try {
+    outcome = "returned " + last(start(depth));
+  } catch (error) {
+    outcome = "caught " + describe(error) + (error === thrownValue ? "" : ", WHICH IS NOT WHAT WAS THROWN");
+  }
+  const after = [a, b, c, d, e, f.n, g, h].join();
+  return before === after ? outcome : outcome + ", THE VALUES OF THE CATCHER CHANGED FROM " + before + " TO " + after;
+}
+const endings: [ending: string, make: (() => unknown) | null][] = [
+  ["returns", null],
+  ["throws an error", () => new Failure(1)],
+  ["throws a string", () => "a string"],
+  ["throws undefined", () => undefined],
+];
+function reset(make: (() => unknown) | null): void {
+  isThrowing = make !== null;
+  thrownValue = make ? make() : undefined;
+  lastCleaned = -1;
+}
+function counts(entriesBefore: number, start: number): string {
+  const inRuntime = entries() - entriesBefore;
+  const elapsed = Math.round(performance.now() - start);
+  return made + " generators" + (cleaned ? ", " + cleaned + " cleaned up, " + outOfOrder + " out of order" : "") + ", " + (inRuntime < 5 + made / 20 ? "few entries" : inRuntime + " ENTRIES") + " " + elapsed + "ms";
+}
+function clearCounts(): void {
+  made = 0;
+  cleaned = 0;
+  outOfOrder = 0;
+}
+function measure(label: string, depth: number, start: (depth: number) => Numbers, numberOfEndings: number = 2): void {
+  for (const [ending, make] of endings.slice(0, numberOfEndings)) {
+    clearCounts();
+    const entriesBefore = entries();
+    const begin = performance.now();
+    const outcomes = new Set<string>();
+    for (let round = 0; round < rounds; round++) {
+      reset(make);
+      outcomes.add(catches(start, depth));
+    }
+    lines.push(label + ", the innermost " + ending + ": " + [...outcomes].join(" / ") + ", " + counts(entriesBefore, begin));
+  }
+}
+
+// Every frame of these chains is suspended once, by a yield of the innermost generator, before the step that ends the chain.
+function* yieldsFirst(depth: number): Numbers {
+  made++;
+  if (!depth) {
+    yield 0;
+    return bottom();
+  }
+  return (yield* yieldsFirst(depth - 1)) + 1;
+}
+function* yieldsFirstInATry(depth: number): Numbers {
+  made++;
+  try {
+    if (!depth) {
+      yield 0;
+      return bottom();
+    }
+    return (yield* yieldsFirstInATry(depth - 1)) + 1;
+  } finally {
+    cleanUp(depth);
+  }
+}
+function* yieldsFirstThroughForOf(depth: number): Numbers {
+  made++;
+  if (!depth) {
+    yield 0;
+    return bottom();
+  }
+  for (const value of yieldsFirstThroughForOf(depth - 1)) yield value;
+  return depth;
+}
+function show(step: IteratorResult<number, number>): string {
+  return (step.done ? "returned " : "yielded ") + step.value;
+}
+function attempt(run: () => IteratorResult<number, number>): string {
+  const a = draw(), b = draw(), c = draw() / 8, d = "d" + draw();
+  const before = [a, b, c, d].join();
+  let outcome: string;
+  try {
+    outcome = show(run());
+  } catch (error) {
+    outcome = "caught " + describe(error) + (error === thrownValue ? "" : ", WHICH IS NOT WHAT WAS THROWN");
+  }
+  return before === [a, b, c, d].join() ? outcome : outcome + ", THE VALUES OF THE CATCHER CHANGED";
+}
+function measureSuspended(label: string, start: (depth: number) => Numbers): void {
+  const ways: [way: string, make: (() => unknown) | null, end: (generator: Numbers) => IteratorResult<number, number>][] = [
+    ["is resumed and returns", null, generator => generator.next()],
+    ["is resumed and throws", () => new Failure(2), generator => generator.next()],
+    ["gets throw() from outside", () => new Failure(3), generator => generator.throw(thrownValue)],
+    ["gets throw() of a string from outside", () => "a string", generator => generator.throw(thrownValue)],
+    ["gets return() from outside", null, generator => generator.return(-5)],
+  ];
+  for (const [way, make, end] of ways) {
+    clearCounts();
+    const entriesBefore = entries();
+    const begin = performance.now();
+    const outcomes = new Set<string>();
+    for (let round = 0; round < rounds; round++) {
+      reset(make);
+      const generator = start(frames);
+      outcomes.add(show(generator.next()) + ", then " + attempt(() => end(generator)) + ", then " + show(generator.next()));
+    }
+    lines.push(label + ", the innermost " + way + ": " + [...outcomes].join(" / ") + ", " + counts(entriesBefore, begin));
+  }
+}
+
+const kept: Numbers[] = [];
+function* keepsSome(depth: number): Numbers {
+  made++;
+  if (!depth) return bottom();
+  const inner = keepsSome(depth - 1);
+  if (depth % 500 === 1) kept.push(inner);
+  return inner.next().value + 1;
+}
+// A generator in the middle catches, and the frames above it go on as if nothing had happened.
+function* oneCatches(depth: number, catcher: number): Numbers {
+  made++;
+  if (!depth) return bottom();
+  if (depth !== catcher) return (yield* oneCatches(depth - 1, catcher)) + 1;
+  try {
+    return (yield* oneCatches(depth - 1, catcher)) + 1;
+  } catch (error) {
+    return error === thrownValue ? -1000 : -2000;
+  }
+}
+
+async function* laterByForAwait(depth: number): NumbersLater {
+  made++;
+  try {
+    if (!depth) return bottom();
+    for await (const value of laterByForAwait(depth - 1)) yield value;
+    return depth;
+  } finally {
+    cleanUp(depth);
+  }
+}
+async function* laterByYieldStar(depth: number): NumbersLater {
+  made++;
+  if (!depth) return bottom();
+  return (yield* laterByYieldStar(depth - 1)) + 1;
+}
+async function* laterBehindAnAwait(depth: number): NumbersLater {
+  made++;
+  if (!depth) {
+    await null;
+    return bottom();
+  }
+  return (await laterBehindAnAwait(depth - 1).next()).value + 1;
+}
+async function measureLater(label: string, depth: number, start: (depth: number) => NumbersLater): Promise<void> {
+  for (const [ending, make] of endings) {
+    clearCounts();
+    const entriesBefore = entries();
+    const begin = performance.now();
+    const outcomes = new Set<string>();
+    for (let round = 0; round < rounds; round++) {
+      reset(make);
+      const a = draw(), b = draw() / 8, c = "c" + draw();
+      const before = [a, b, c].join();
+      const stream = start(depth);
+      let outcome: string;
+      try {
+        let step = await stream.next();
+        while (!step.done) step = await stream.next();
+        outcome = "returned " + step.value;
+      } catch (error) {
+        outcome = "caught " + describe(error) + (error === thrownValue ? "" : ", WHICH IS NOT WHAT WAS THROWN");
+      }
+      const after = await stream.next();
+      outcomes.add(outcome + ", then " + after.done + " " + after.value + (before === [a, b, c].join() ? "" : ", THE VALUES OF THE CATCHER CHANGED"));
+    }
+    lines.push(label + ", the innermost " + ending + ": " + [...outcomes].join(" / ") + ", " + counts(entriesBefore, begin));
+  }
+}
+
+lines.push("== frames that are entered for the first time");
+measure("next()", frames, byNext, endings.length);
+measure("yield*", frames, byYieldStar, endings.length);
+measure("for-of", frames, byForOf);
+measure("a spread, 300 frames", 300, bySpread);
+measure("a plain function between the generators", frames, throughPlainFunctions);
+measure("a method", frames, depth => walker.walk(depth));
+measure("values that are used behind the step", frames, keepsValues);
+measure("a finally in every frame, yield*", frames, hasAFinally);
+measure("a finally in every frame, next()", frames, hasAFinallyAroundNext);
+measure("a catch that throws again in every frame", frames, catchesAndRethrows);
+measure("a finally in every tenth frame", frames, everyTenthHasAFinally);
+for (const depth of [0, 1, 2, 3, 10, 100]) measure(depth + " frames above the innermost", depth, hasAFinally, endings.length);
+lines.push("== frames that have been suspended");
+measureSuspended("yield*", yieldsFirst);
+measureSuspended("yield* in a try", yieldsFirstInATry);
+measureSuspended("for-of", yieldsFirstThroughForOf);
+lines.push("== afterwards");
+clearCounts();
+reset(() => new Failure(4));
+kept.length = 0;
+lines.push("some of the generators are kept: " + catches(keepsSome, frames) + ", then " + kept.map(generator => show(generator.next())).join(", "));
+for (const catcher of [1, 2, 1_500, frames - 1, frames]) {
+  reset(() => new Failure(5));
+  lines.push("the generator " + catcher + " above the innermost catches: " + catches(depth => oneCatches(depth, catcher), frames));
+}
+lines.push("== async generators, 500 frames");
+await measureLater("for await in a try", 500, laterByForAwait);
+await measureLater("yield*", 500, laterByYieldStar);
+await measureLater("next(), the innermost behind an await", 500, laterBehindAnAwait);
+console.log(lines.join("\n"));
+
+export {};
+//// only-async-functions-are-async-frames.js
+// Only async functions wait, so only they are async frames of an error that native code creates. A plain function between two of them has handed on the promise and returned.
+const { promises } = require("node:fs");
+const missing = "/nonexistent-path/does-not-exist.txt";
+const framesOf = error => JSON.stringify((error.stack ?? "").split("\n").slice(1).map(line => line.trim().replace(/\(.*[\\\/]/, "(")));
+async function innermost() { return await promises.readFile(missing); }
+function handsOn() { return innermost(); }
+const arrowHandsOn = () => handsOn();
+async function throughPlainFunctions() { return await arrowHandsOn(); }
+async function inLoop() {
+  let last;
+  for (let i = 0; i < 3; i++) {
+    try { last = await arrowHandsOn(); } catch (error) { last = error; }
+  }
+  throw last;
+}
+async function inTryFinally() {
+  let finished = 0;
+  try { return await handsOn(); } finally { finished++; await null; }
+}
+async function awaitsTwice() {
+  await null;
+  const first = handsOn();
+  await null;
+  return await first;
+}
+const asyncArrow = async () => await handsOn();
+async function throughAsyncArrow() { return await asyncArrow(); }
+class Reader {
+  read() { return innermost(); }
+  async readAll() { return await this.read(); }
+  static async open() { return await new Reader().readAll(); }
+}
+async function* generates() { yield await handsOn(); }
+async function throughGenerator() { for await (const value of generates()) return value; }
+async function report(name, run) {
+  try { await run(); console.log(name, "fulfilled"); } catch (error) { console.log(name, framesOf(error)); }
+}
+async function main() {
+  for (const limit of [2, 10]) {
+    Error.stackTraceLimit = limit;
+    await report("plain functions " + limit, throughPlainFunctions);
+    await report("an arrow handed in " + limit, () => throughPlainFunctions());
+    await report("in a loop " + limit, inLoop);
+    await report("try and finally " + limit, inTryFinally);
+    await report("awaits twice " + limit, awaitsTwice);
+    await report("an async arrow " + limit, throughAsyncArrow);
+    await report("methods " + limit, Reader.open);
+    await report("an async generator " + limit, throughGenerator);
+  }
+}
+main();
+//// pending-request-handler-keeps-alive.ts
+// A request handler that waits keeps alive only what it and its listeners still refer to: the body it has read is collected while its timer, its event listener and its abort listener stay.
+// "an event listener" says what plain Bun says too: `body` is stored to by a closure, so it lies in the one environment of the scope, which the listener holds for `events`: the second buffer
+// stays. The stored output may get better one day.
+let round = 0;
+let made = 0;
+let collected = 0;
+const registry = new FinalizationRegistry<number>(madeIn => {
+  if (madeIn === round) collected++;
+});
+function watch<T extends object>(value: T): T {
+  made++;
+  registry.register(value, round);
+  return value;
+}
+function once(f: () => number): number {
+  return f();
+}
+let total = 0;
+let release: () => void = () => {};
+let parked: Promise<void> = Promise.resolve();
+const timers: ReturnType<typeof setInterval>[] = [];
+const target = new EventTarget();
+let controller = new AbortController();
+
+async function withAnAbortListener(request: Request) {
+  const body = watch(await request.arrayBuffer());
+  let state = 0;
+  controller.signal.addEventListener("abort", () => {
+    state++;
+  });
+  total += once(() => body.byteLength);
+  await parked;
+  return state;
+}
+async function withAnInterval(request: Request) {
+  const body = watch(await request.arrayBuffer());
+  let ticks = 0;
+  timers.push(setInterval(() => {
+    ticks++;
+  }, 1000));
+  total += once(() => body.byteLength);
+  await parked;
+  return ticks;
+}
+async function withAnEventListener(request: Request) {
+  let body = watch(await request.arrayBuffer());
+  let events = 0;
+  target.addEventListener("ping", () => {
+    events++;
+  });
+  total += once(() => {
+    const length = body.byteLength;
+    body = watch(new ArrayBuffer(8));
+    return length;
+  });
+  await parked;
+  return events;
+}
+async function withAResponse(request: Request) {
+  const response = watch(new Response(await request.arrayBuffer()));
+  let status = 0;
+  const finish = () => ++status;
+  total += once(() => response.status);
+  await parked;
+  return finish();
+}
+function notAsync(request: Request) {
+  const copy = watch(request.clone());
+  let calls = 0;
+  total += once(() => copy.url.length);
+  target.addEventListener("ping", () => {
+    calls++;
+  });
+  return parked.then(() => calls);
+}
+
+async function judge(name: string, handler: (request: Request) => Promise<number>) {
+  round++;
+  made = collected = 0;
+  controller = new AbortController();
+  parked = new Promise<void>(resolve => {
+    release = resolve;
+  });
+  const results: Promise<number>[] = [];
+  for (let i = 0; i < 16; i++) results.push(handler(new Request("http://localhost/", { method: "POST", body: new Uint8Array(1024) })));
+  for (let i = 0; i < 4; i++) {
+    await Bun.sleep(1);
+    Bun.gc(true);
+  }
+  await Bun.sleep(1);
+  const verdict = collected * 4 >= made * 3 ? "collected" : collected * 4 <= made ? "kept" : collected + " of " + made;
+  controller.abort();
+  target.dispatchEvent(new Event("ping"));
+  release();
+  let sum = 0;
+  for (const result of results) sum += await result;
+  for (const timer of timers.splice(0)) clearInterval(timer);
+  console.log(name + ": " + verdict + ", " + sum);
+}
+
+await judge("an abort listener", withAnAbortListener);
+await judge("an interval", withAnInterval);
+await judge("an event listener", withAnEventListener);
+await judge("a response", withAResponse);
+await judge("not async", notAsync);
+console.log(total);
+//// promise-all-and-who-waits-for-a-settled-promise.ts
+// Promise.all over async calls, promises and plain values, and what happens when a promise is settled by a job: whoever waits for it, a coroutine, a handler or nobody, gets its turn in its place.
+import { AsyncLocalStorage } from "node:async_hooks";
+
+const lines: string[] = [];
+function log(line: string) { lines.push(line); }
+////= show
+////= ticks
+async function turns(count: number) { for (let i = 0; i < count; i++) await null; }
+async function after<T>(count: number, value: T): Promise<T> { await turns(count); log("ready " + show(value)); return value; }
+async function failsAfter(count: number, message: string): Promise<never> { await turns(count); log("fails " + message); throw new Error(message); }
+
+log("== all of async calls");
+{
+  ticks("a", 8);
+  log(show(await Promise.all([after(1, 1), after(3, 2), after(2, 3)])));
+  log(show(await Promise.all([after(0, "x")])));
+  log(show(await Promise.all([])));
+  const [first, second] = await Promise.all([after(2, { a: 1 }), after(1, [1, 2])]);
+  log(show(first) + " " + show(second));
+}
+log("== all of everything");
+{
+  ticks("b", 8);
+  const thenable = { then(resolve: (value: string) => void) { log("then of the thenable"); resolve("thenable"); } };
+  const mixed = await Promise.all([1, "two", null, undefined, Promise.resolve(5), after(2, 6), thenable, new Promise(resolve => setTimeout(resolve, 1, "timer")), Promise.resolve().then(() => "handler"), { plain: true }]);
+  log(show(mixed) + " " + Array.isArray(mixed) + " " + mixed.length);
+}
+log("== one fails");
+{
+  ticks("c", 8);
+  for (const make of [
+    () => [after(1, 1), failsAfter(2, "second"), after(3, 3)],
+    () => [failsAfter(0, "first"), after(1, 2)],
+    () => [after(1, 1), after(1, 2), failsAfter(1, "last")],
+    () => [failsAfter(1, "one"), failsAfter(1, "other")],
+    () => [Promise.reject(new Error("rejected already")), after(1, 1)],
+  ]) {
+    try { log(show(await Promise.all(make()))); } catch (error) { log("caught " + show(error)); }
+    await turns(4);
+  }
+}
+log("== who waits for the promise of all");
+{
+  const all = Promise.all([after(1, 1), after(2, 2)]);
+  all.then(value => log("a handler " + show(value)));
+  (async () => log("a coroutine " + show(await all)))();
+  all.then(value => log("another handler " + show(value)));
+  await turns(6);
+  const alone = Promise.all([after(1, 3)]);
+  (async () => log("a coroutine alone " + show(await alone)))();
+  await turns(5);
+  const handled = Promise.all([after(1, 4)]);
+  handled.then(value => log("a handler alone " + show(value)));
+  await turns(5);
+  const unwatched = Promise.all([after(1, 5)]);
+  await turns(5);
+  log("nobody waited: " + show(await unwatched));
+  async function* yieldsAll() { yield await Promise.all([after(1, 6)]); yield Promise.all([after(1, 7)]); }
+  for await (const value of yieldsAll()) log("a generator " + show(value));
+}
+log("== who waits for what a handler settles");
+{
+  ticks("d", 10);
+  log("awaited " + (await Promise.resolve(1).then(value => value + 1)));
+  log("awaited behind two " + (await Promise.resolve(1).then(value => value + 1).then(value => value + 1)));
+  log("awaited a catch " + (await Promise.reject(1).catch(reason => (reason as number) + 1)));
+  async function* inGenerator() { const got = await Promise.resolve("g").then(value => value + "!"); yield got; yield Promise.resolve("h").then(value => value + "!"); }
+  for await (const value of inGenerator()) log("in a generator " + value);
+  const shared = Promise.resolve("s").then(value => value + "!");
+  const waiting = [1, 2, 3].map(async n => log("waiter " + n + " " + (await shared)));
+  await Promise.all(waiting);
+  let settle!: (value: string) => void;
+  const deferred = new Promise<string>(resolve => { settle = resolve; });
+  (async () => log("deferred " + (await deferred)))();
+  Promise.resolve("by a handler").then(settle);
+  await turns(4);
+}
+log("== under stores");
+{
+  const storage = new AsyncLocalStorage<string>();
+  const here = () => String(storage.getStore());
+  const results = await Promise.all([
+    storage.run("one", async () => { const value = await Promise.all([after(1, 1), after(2, 2)]); return here() + " " + show(value); }),
+    storage.run("two", async () => { const value = await Promise.resolve(3).then(x => { log("handler under " + here()); return x; }); return here() + " " + value; }),
+    (async () => { await Promise.all([after(1, 4)]); return here(); })(),
+  ]);
+  log(show(results) + " behind: " + here());
+}
+log("== many and large");
+{
+  const large = await Promise.all(Array.from({ length: 2000 }, (_, i) => (i % 3 ? after2(i) : i)));
+  async function after2(i: number) { await null; return i; }
+  log("large " + large.length + " " + large.reduce((a, b) => a + b, 0));
+  let sum = 0;
+  for (let i = 0; i < 3000; i++) { const [a, b] = await Promise.all([after2(i), after2(i + 1)]); sum += a + b; }
+  log("many " + sum);
+  const objects = await Promise.all(Array.from({ length: 500 }, async (_, i) => { await null; return { i, list: [i, i + 1] }; }));
+  log("objects " + objects.reduce((a, b) => a + b.list[1], 0));
+}
+console.log(lines.filter(line => !line.startsWith("ready ") || lines.length < 400).join("\n"));
+//// promise-all-host-queues.ts
+// `Promise.all([f(), g()])` with what only a whole runtime shows: unhandled rejections of calls whose list was never made, microtasks drained while the list is being made, AsyncLocalStorage, process.nextTick.
+import { AsyncLocalStorage } from "node:async_hooks";
+import { drainMicrotasks } from "bun:jsc";
+const log: string[] = [];
+const storage = new AsyncLocalStorage<string>();
+const settled = Promise.resolve(0);
+
+////= lines-8	atOnce	n	number	number
+async function later(n: number, turns: number): Promise<number> {
+  for (let i = 0; i < turns; i++) await settled;
+  log.push("later ends " + n + " in " + storage.getStore());
+  return n;
+}
+////= lines-25	failsAtOnce	number	throw	Error	"fails at once "
+async function failsLater(n: number, turns: number): Promise<number> {
+  for (let i = 0; i < turns; i++) await settled;
+  throw new Error("fails later " + n);
+}
+function throwsPlainly(): number {
+  throw new Error("thrown while the list is made");
+}
+function drains(n: number): number {
+  log.push("draining " + n);
+  drainMicrotasks();
+  log.push("drained " + n);
+  return n;
+}
+function pause(): Promise<void> {
+  return new Promise<void>(resolve => setTimeout(resolve, 3));
+}
+
+process.on("unhandledRejection", reason => {
+  log.push("unhandled: " + (reason as Error).message);
+});
+process.on("rejectionHandled", () => {
+  log.push("handled late");
+});
+
+async function attempt(name: string, run: () => Promise<unknown>): Promise<void> {
+  try {
+    log.push(name + " gives " + JSON.stringify(await run()));
+  } catch (error) {
+    log.push(name + " throws " + (error as Error).message);
+  }
+  await pause();
+}
+
+async function main(): Promise<void> {
+  await attempt("two fail", async () => await Promise.all([failsLater(1, 2), failsLater(2, 1), failsAtOnce(3)]));
+  await attempt("the list is never made", async () => await Promise.all([failsLater(4, 1), failsAtOnce(5), later(6, 2), throwsPlainly()]));
+  await attempt("drained between the calls", async () => await Promise.all([later(7, 1), later(8, 3), drains(9), atOnce(10)]));
+  await attempt("a failure drained between the calls", async () => await Promise.all([failsLater(11, 1), drains(12), later(13, 1)]));
+  await attempt("drained, then never made", async () => await Promise.all([failsLater(14, 1), later(15, 1), drains(16), throwsPlainly()]));
+  await attempt("in a store", () => storage.run("outer", async () => {
+    const values = await Promise.all([later(17, 1), storage.run("inner", () => later(18, 2)), atOnce(19)]);
+    return [values, storage.getStore()];
+  }));
+  await attempt("with ticks", async () => {
+    process.nextTick(() => log.push("a tick"));
+    const values = await Promise.all([later(20, 1), atOnce(21)]);
+    process.nextTick(() => log.push("another tick"));
+    return values;
+  });
+}
+main().then(() => console.log(log.join("\n")));
+//// promise-all-of-direct-calls.ts
+// `Promise.all([f(), g()])` over an array literal of calls of async functions: the order of jobs, which rejection wins, what each kind of element does, and that the result is an ordinary array.
+const log: string[] = [];
+const settled = Promise.resolve(0);
+const collect: (sync?: boolean) => void = (globalThis as any).gc ?? (globalThis as any).Bun?.gc ?? (() => undefined);
+////= ticks-2
+function text(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function atOnce(n: number): Promise<number> {
+  log.push("atOnce " + n);
+  return n;
+}
+async function later(n: number, turns: number): Promise<number> {
+  log.push("later enters " + n);
+  for (let i = 0; i < turns; i++) await settled;
+  log.push("later ends " + n);
+  return n;
+}
+async function object(n: number): Promise<{ n: number }> {
+  if (n & 1) await settled;
+  return { n };
+}
+////= lines-25	failsAtOnce	number	throw	Error	"fails at once "
+async function failsLater(n: number, turns: number): Promise<number> {
+  for (let i = 0; i < turns; i++) await settled;
+  throw new Error("fails later " + n);
+}
+async function givesPromise(n: number): Promise<number> {
+  return Promise.resolve(n);
+}
+async function givesThenable(n: number): Promise<number> {
+  await settled;
+  return { then(resolve: (value: number) => void) { log.push("the thenable is asked " + n); resolve(n); } } as PromiseLike<number>;
+}
+async function nested(n: number): Promise<number> {
+  const [a, b] = await Promise.all([later(n, 1), atOnce(n + 1)]);
+  return a + b;
+}
+function throwsPlainly(): number {
+  throw new Error("thrown while the list is made");
+}
+const thenable: PromiseLike<string> = { then(resolve: any) { log.push("the plain thenable is asked"); resolve("from a thenable"); return undefined as any; } };
+
+async function show(name: string, run: () => Promise<unknown>): Promise<void> {
+  ticks(name, 9);
+  try {
+    log.push(name + " gives " + JSON.stringify(await run()));
+  } catch (error) {
+    log.push(name + " throws " + text(error));
+  }
+  for (let i = 0; i < 12; i++) await settled;
+}
+
+async function main(): Promise<void> {
+  await show("both at once", async () => await Promise.all([atOnce(1), atOnce(2)]));
+  await show("both later", async () => await Promise.all([later(1, 1), later(2, 3)]));
+  await show("the first is slower", async () => await Promise.all([later(1, 4), later(2, 1), atOnce(3)]));
+  await show("objects", async () => await Promise.all([object(1), object(2), object(3)]));
+  await show("one element", async () => await Promise.all([later(1, 2)]));
+  await show("no element", async () => await Promise.all([]));
+  await show("values among calls", async () => await Promise.all([1, atOnce(2), "three", later(4, 1), null, undefined, { five: 5 }]));
+  await show("promises among calls", async () => await Promise.all([settled, atOnce(2), Promise.resolve("three"), later(4, 2), new Promise(resolve => settled.then(() => resolve("five")))]));
+  await show("a thenable among calls", async () => await Promise.all([later(1, 1), thenable, atOnce(3)]));
+  await show("results that are promises", async () => await Promise.all([givesPromise(1), givesThenable(2), atOnce(3)]));
+  await show("a conditional element", async () => await Promise.all([atOnce(1), log.length > 0 ? later(2, 1) : null, log.length < 0 ? later(3, 1) : null]));
+  await show("an await in the list", async () => await Promise.all([later(1, 1), await later(2, 3), later(3, 1)]));
+  await show("nested", async () => await Promise.all([nested(1), nested(10), Promise.all([atOnce(20), later(21, 2)])]));
+  await show("fails at once", async () => await Promise.all([failsAtOnce(1), later(2, 2)]));
+  await show("fails later", async () => await Promise.all([later(1, 3), failsLater(2, 1)]));
+  await show("two fail, the second first", async () => await Promise.all([failsLater(1, 3), failsLater(2, 1), later(3, 5)]));
+  await show("two fail at once", async () => await Promise.all([failsAtOnce(1), failsAtOnce(2)]));
+  await show("the list is never made", async () => await Promise.all([later(1, 2), atOnce(2), throwsPlainly()]));
+  await show("the pattern", async () => {
+    const [a, { n }, c = "default"] = await Promise.all([later(1, 1), object(2), undefined]);
+    return [a, n, c];
+  });
+  await show("the promise is kept", async () => {
+    const all = Promise.all([later(1, 2), atOnce(2)]);
+    log.push("kept is a promise " + (all instanceof Promise));
+    all.then(values => log.push("then sees " + values.join()));
+    const first = await all;
+    const second = await all;
+    return [first === second, Array.isArray(first), first.length];
+  });
+  await show("the result is an ordinary array", async () => {
+    const values = await Promise.all([atOnce(1), later(2, 1)]);
+    values.push(3);
+    values[0] = 10;
+    return [values, Object.getPrototypeOf(values) === Array.prototype, Object.keys(values)];
+  });
+  await show("not awaited", async () => {
+    void Promise.all([later(1, 1), atOnce(2)]).then(values => log.push("unawaited gives " + values.join()));
+    return "went on";
+  });
+  await show("returned", () => Promise.all([later(1, 1), atOnce(2)]));
+  await show("in a plain function", async () => await ((): Promise<number[]> => Promise.all([later(1, 1), atOnce(2)]))());
+  await show("with collections", async () => {
+    const all = Promise.all([object(1), object(3), later(5, 4)]);
+    collect(true);
+    await settled;
+    collect(true);
+    const values = await all;
+    collect(true);
+    return values;
+  });
+  const many: Promise<number[]>[] = [];
+  for (let i = 0; i < 100; i++) many.push(Promise.all([later(i, i % 4), atOnce(i), nested(i)]));
+  const sums = (await Promise.all(many)).map(([a, b, c]) => a + b + c);
+  log.push("many " + sums.reduce((a, b) => a + b, 0));
+}
+
+main().then(() => {
+  let hash = 0;
+  for (const line of log) for (let i = 0; i < line.length; i++) hash = (hash * 31 + line.charCodeAt(i)) | 0;
+  for (const line of log.slice(0, 420)) console.log(line);
+  console.log(log.length + " lines, hash " + hash);
+});
+//// promise-constructor-getter-throws.ts
+// A promise whose `constructor` getter throws makes `await` throw at once, without a tick:
+// in async functions and in async generators, at await, yield, yield* and return, caught and not caught.
+const log: string[] = [];
+////= note
+
+function broken(id: string): Promise<number> {
+    const promise = Promise.resolve(1);
+    Object.defineProperty(promise, "constructor", {
+        get() {
+            note("constructor of " + id + " is read");
+            throw new Error("broken " + id);
+        },
+    });
+    return promise;
+}
+
+function tick(id: string): void {
+    Promise.resolve().then(() => note("tick " + id));
+}
+
+function messageOf(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
+function watch(label: string, promise: Promise<unknown>): Promise<void> {
+    return promise.then(value => note(label + " resolved " + JSON.stringify(value)), error => note(label + " rejected " + messageOf(error)));
+}
+
+async function awaitsInFunction(): Promise<void> {
+    tick("f1");
+    await broken("f1");
+    note("f1 goes on");
+}
+async function catchesInFunction(): Promise<string> {
+    tick("f2");
+    try {
+        await broken("f2");
+    } catch (error) {
+        note("f2 caught " + messageOf(error));
+    }
+    await null;
+    return "f2 ends";
+}
+async function returnsInFunction(): Promise<number> {
+    tick("f3");
+    return broken("f3");
+}
+async function awaitsLater(): Promise<string> {
+    await null;
+    tick("f4");
+    try {
+        await broken("f4");
+    } catch (error) {
+        note("f4 caught " + messageOf(error));
+    }
+    try {
+        await broken("f4 again");
+    } finally {
+        note("f4 finally");
+    }
+    return "never";
+}
+
+async function* awaits(): AsyncGenerator<number> {
+    tick("g1");
+    await broken("g1");
+    note("g1 goes on");
+}
+async function* catchesAwait(): AsyncGenerator<number> {
+    tick("g2");
+    try {
+        await broken("g2");
+    } catch (error) {
+        note("g2 caught " + messageOf(error));
+    }
+    yield 2;
+    yield 22;
+}
+async function* yields(): AsyncGenerator<number> {
+    tick("g3");
+    yield broken("g3");
+    note("g3 goes on");
+}
+async function* catchesYield(): AsyncGenerator<number> {
+    tick("g4");
+    try {
+        yield broken("g4");
+    } catch (error) {
+        note("g4 caught " + messageOf(error));
+    }
+    yield 4;
+}
+async function* returns(): AsyncGenerator<number, number> {
+    tick("g5");
+    return broken("g5");
+}
+async function* catchesReturn(): AsyncGenerator<number, number> {
+    tick("g6");
+    try {
+        return broken("g6");
+    } catch (error) {
+        note("g6 caught " + messageOf(error));
+    }
+    return 6;
+}
+async function* delegates(): AsyncGenerator<number> {
+    tick("g7");
+    yield* yields();
+    note("g7 goes on");
+}
+async function* catchesDelegate(): AsyncGenerator<number> {
+    tick("g8");
+    try {
+        yield* [1, broken("g8"), 3];
+    } catch (error) {
+        note("g8 caught " + messageOf(error));
+    }
+    yield 8;
+}
+async function* awaitsThenAwaits(): AsyncGenerator<number> {
+    try {
+        await broken("g9");
+    } catch (error) {
+        note("g9 caught " + messageOf(error));
+    }
+    await null;
+    yield 9;
+    try {
+        await broken("g9 again");
+    } catch (error) {
+        note("g9 caught " + messageOf(error));
+        yield 99;
+    }
+    await broken("g9 at last");
+}
+async function* plain(): AsyncGenerator<number> {
+    yield 1;
+    yield 2;
+}
+
+async function consume(label: string, source: AsyncGenerator<number, unknown>): Promise<void> {
+    try {
+        for await (const value of source)
+            note(label + " sees " + value);
+        note(label + " ends");
+    } catch (error) {
+        note(label + " caught " + messageOf(error));
+    }
+}
+
+async function main(): Promise<void> {
+    await Promise.all([
+        watch("f1", awaitsInFunction()),
+        watch("f2", catchesInFunction()),
+        watch("f3", returnsInFunction()),
+        watch("f4", awaitsLater()),
+        watch("g1", awaits().next()),
+        watch("g2", catchesAwait().next()),
+        watch("g3", yields().next()),
+        watch("g4", catchesYield().next()),
+        watch("g5", returns().next()),
+        watch("g6", catchesReturn().next()),
+        watch("g7", delegates().next()),
+        watch("g8", catchesDelegate().next()),
+        note("all are started"),
+    ]);
+    note("--- consumed by for await");
+    for (const [label, make] of [["g1", awaits], ["g2", catchesAwait], ["g3", yields], ["g4", catchesYield], ["g5", returns], ["g6", catchesReturn], ["g7", delegates], ["g8", catchesDelegate], ["g9", awaitsThenAwaits]] as const)
+        await consume(label, make());
+    note("--- several requests at once");
+    for (const make of [awaits, catchesAwait, yields, catchesYield, returns, catchesReturn, awaitsThenAwaits]) {
+        const generator = make();
+        await Promise.all([watch("first", generator.next()), watch("second", generator.next()), watch("third", generator.next()), watch("fourth", generator.next())]);
+    }
+    note("--- return() and throw() with a broken promise");
+    const unstarted = plain();
+    await watch("return on one not started", unstarted.return(broken("r1")));
+    await watch("next behind it", unstarted.next());
+    const started = plain();
+    await watch("next", started.next());
+    await watch("return on one that is suspended", started.return(broken("r2")));
+    await watch("next behind it", started.next());
+    const ended = plain();
+    for await (const value of ended)
+        note("ended sees " + value);
+    await Promise.all([watch("return on one that has ended", ended.return(broken("r3"))), watch("next in the same turn", ended.next()), watch("return again", ended.return(broken("r4")))]);
+    const thrown = plain();
+    await watch("next", thrown.next());
+    await watch("throw", thrown.throw(broken("t1")));
+    console.log(log.join("\n"));
+}
+
+main();
+//// promise-executor-settles-once.js
+// The resolving functions of `new Promise(executor)` settle the promise once. Every later call, and a later throw from the executor, is ignored.
+async function report(label, promise) {
+  try {
+    console.log(label, "fulfilled", await promise);
+  } catch (error) {
+    console.log(label, "rejected", error.message);
+  }
+}
+
+async function runJobs() {
+  for (let turn = 0; turn < 8; turn++) await undefined;
+}
+
+await report("resolve, resolve", new Promise(resolve => { resolve(1); resolve(2); }));
+await report("resolve, reject", new Promise((resolve, reject) => { resolve(1); reject(new Error("late")); }));
+await report("resolve, throw", new Promise(resolve => { resolve(1); throw new Error("late"); }));
+await report("reject, resolve", new Promise((resolve, reject) => { reject(new Error("first")); resolve(2); }));
+await report("reject, reject", new Promise((resolve, reject) => { reject(new Error("first")); reject(new Error("second")); }));
+await report("reject, throw", new Promise((resolve, reject) => { reject(new Error("first")); throw new Error("late"); }));
+await report("throw", new Promise(() => { throw new Error("only"); }));
+
+let resolveLater;
+const resolvedInExecutor = new Promise(resolve => { resolveLater = resolve; resolve(1); });
+resolveLater(2);
+await report("resolve, resolve after the executor returned", resolvedInExecutor);
+
+let fulfillInner;
+const inner = new Promise(resolve => { fulfillInner = resolve; });
+let outcome = "pending";
+new Promise((resolve, reject) => { resolve(inner); resolve(4); reject(new Error("late")); }).then(
+  value => { outcome = "fulfilled " + value; },
+  error => { outcome = "rejected " + error.message; },
+);
+await runJobs();
+console.log("resolve with a pending promise, resolve, reject:", outcome);
+fulfillInner(3);
+await runJobs();
+console.log("after the pending promise is fulfilled:", outcome);
+
+new Promise((resolve, reject) => console.log("results", resolve(1), resolve(2), reject(new Error("late"))));
+//// promise-of-an-async-function-changed-by-evaluated-text.js
+// Evaluated text calls an async function of the program, changes the promise that it gets and hands that promise back. With a `then` of its own alone an await still
+// gives what the function returned: an await of a promise of the realm asks for `constructor` and not for `then`. With another `constructor` too, the `then` runs.
+// The promises that the program gets from its own calls of the same functions are other objects: nothing was done to them.
+async function count(n) {
+  return n * 2;
+}
+async function label(n) {
+  return { text: "n" + n };
+}
+const changeThen = new Function("f", "n", "const p = f(n); p.then = function (resolve) { resolve('changed ' + n); }; return p;");
+const changeBoth = new Function("f", "n", "const p = f(n); p.constructor = Object; p.then = function (resolve) { resolve('changed ' + n); }; return p;");
+const withThen = changeThen(count, process.argv.length);
+const withBoth = changeBoth(count, process.argv.length);
+console.log(await withThen, await withBoth, await changeBoth(label, process.argv.length + 1));
+console.log(await count(process.argv.length), (await label(process.argv.length)).text);
+const own = count(5);
+console.log(own.then === Promise.prototype.then, withThen.then === Promise.prototype.then, own.constructor === Promise, withBoth.constructor === Promise, await own);
+//// promise-resolve-of-literals-and-thenables.js
+// Promise.resolve reads `then` of its argument at the call: literals with and without the member, and stores to it before and after.
+function numberOrThenable(flag) {
+  return Promise.resolve(flag ? 1 : { then(resolve) { resolve("from thenable"); } });
+}
+
+const shared = { v: 1 };
+function install() { shared.then = function (resolve) { resolve("late"); }; }
+async function awaited() { return typeof await Promise.resolve(shared); }
+
+const steps = {
+  [Symbol.asyncIterator]() {
+    let i = 0;
+    return { next() { return Promise.resolve({ done: i++ >= 2, value: "step " + i }); } };
+  },
+};
+
+function overwritten(tag) {
+  const holder = { then: undefined, v: tag };
+  holder.then = function (resolve) { resolve("thenable " + tag); };
+  const promise = Promise.resolve(holder);
+  holder.then = undefined;
+  return promise;
+}
+
+function storedLate(tag) {
+  const holder = { then: undefined, v: tag };
+  const promise = Promise.resolve(holder);
+  holder.then = function (resolve) { resolve("thenable " + tag); };
+  return promise;
+}
+
+function inherited(tag) {
+  const base = { then: undefined };
+  const heir = Object.create(base);
+  base.then = function (resolve) { resolve("inherited " + tag); };
+  const promise = Promise.resolve(heir);
+  base.then = undefined;
+  return promise;
+}
+
+let kept = null;
+function escapedFirst(tag) {
+  const holder = { then: undefined, v: tag };
+  kept = holder;
+  holder.then = function (resolve) { resolve("escaped " + tag); };
+  const promise = Promise.resolve(holder);
+  holder.then = undefined;
+  return promise;
+}
+
+async function returned(tag) {
+  const holder = { then: undefined, v: tag };
+  holder.then = function (resolve) { resolve("returned " + tag); };
+  queueMicrotask(() => { holder.then = undefined; });
+  return holder;
+}
+
+async function main() {
+  console.log(await numberOrThenable(true), await numberOrThenable(false));
+  console.log(await awaited());
+  install();
+  console.log(await awaited());
+  for await (const step of steps) console.log(step);
+  for (let i = 0; i < 3; i++) {
+    console.log("overwritten", await overwritten(i));
+    console.log("stored late", typeof await storedLate(i));
+    console.log("inherited", await inherited(i));
+    console.log("escaped first", await escapedFirst(i), kept.then);
+    console.log("returned", await returned(i));
+  }
+  console.log(await Promise.all([overwritten(7), { then(resolve) { resolve("in all"); } }, 3]));
+}
+main();
+//// promise-resolve-thenables.ts
+// Promise.resolve fulfills a new promise with a class instance directly, and adopts every value that has, gains or inherits a `then`.
+const log: string[] = [];
+
+type Settle = (value: unknown) => void;
+
+////= Point
+
+////= lines-11	Late	public	label	string
+
+////= lines-11	Moved	public	label	string
+
+class Derived<T> extends Promise<T> {}
+
+function describe(value: unknown): string {
+  if (value instanceof Point) return `Point(${value.x}, ${value.y})`;
+  if (value instanceof Late) return `Late(${value.label})`;
+  if (value instanceof Moved) return `Moved(${value.label})`;
+  if (value instanceof Error) return `${value.name}(${value.message})`;
+  return String(value);
+}
+
+async function report(label: string, promise: Promise<unknown>): Promise<void> {
+  const seen = { outcome: "" };
+  promise.then(
+    value => {
+      seen.outcome = "fulfilled with " + describe(value);
+    },
+    reason => {
+      seen.outcome = "rejected with " + describe(reason);
+    },
+  );
+  let turns = 0;
+  while (!seen.outcome) {
+    await undefined;
+    turns++;
+  }
+  log.push(`${label}: ${seen.outcome} after ${turns}`);
+}
+
+////= lines-22	resolvePoint	point	Point
+
+////= lines-22	resolveLate	late	Late
+
+////= lines-22	resolveMoved	moved	Moved
+
+function resolveNumberOrPoint(value: number | Point): Promise<unknown> {
+  return Promise.resolve(value);
+}
+
+function resolveStringOrPoint(value: string | Point): Promise<unknown> {
+  return Promise.resolve(value);
+}
+
+////= lines-22	resolveAnything	value	unknown
+
+async function instances(): Promise<void> {
+  const plain = new Point(1, 2);
+  await report("instance", resolvePoint(plain));
+
+  const thenable = new Point(3, 4);
+  (thenable as any).then = function (this: Point, resolve: Settle): void {
+    log.push(`then runs on ${describe(this)}`);
+    resolve("adopted");
+  };
+  log.push("before the call");
+  const adopted = resolvePoint(thenable);
+  log.push("after the call");
+  await report("instance with an own then", adopted);
+
+  delete (thenable as any).then;
+  await report("instance whose then is deleted", resolvePoint(thenable));
+
+  const rejecting = new Point(5, 6);
+  (rejecting as any).then = function (resolve: Settle, reject: Settle): void {
+    reject("the reason");
+    resolve("ignored");
+  };
+  await report("instance whose then rejects", resolvePoint(rejecting));
+
+  const notCallable = new Point(7, 8);
+  (notCallable as any).then = 9;
+  await report("instance whose then is a number", resolvePoint(notCallable));
+
+  const watched = new Point(10, 11);
+  Object.defineProperty(watched, "then", {
+    get() {
+      log.push("then is read");
+      return undefined;
+    },
+  });
+  await report("instance whose then is a getter", resolvePoint(watched));
+
+  const throwing = new Point(12, 13);
+  Object.defineProperty(throwing, "then", {
+    get() {
+      throw new RangeError("then throws");
+    },
+  });
+  await report("instance whose then throws", resolvePoint(throwing));
+
+  const other = new Point(14, 15);
+  (other as any).extra = "extra";
+  await report("instance with another extra property", resolvePoint(other));
+  await report("the first instance again", resolvePoint(plain));
+}
+
+async function prototypes(): Promise<void> {
+  const late = new Late("first");
+  await report("before the prototype has a then", resolveLate(late));
+  (Late.prototype as any).then = function (this: Late, resolve: Settle): void {
+    resolve(`then of ${this.label}`);
+  };
+  await report("after the prototype gained a then", resolveLate(late));
+  await report("an instance created afterwards", resolveLate(new Late("second")));
+  delete (Late.prototype as any).then;
+  await report("after the prototype lost its then", resolveLate(late));
+
+  const moved = new Moved("moved");
+  await report("before the prototype is replaced", resolveMoved(moved));
+  Object.setPrototypeOf(moved, {
+    then(this: Moved, resolve: Settle): void {
+      resolve(`then of ${this.label}`);
+    },
+  });
+  await report("after the prototype is replaced", resolveMoved(moved));
+  await report("an instance with the original prototype", resolveMoved(new Moved("unmoved")));
+}
+
+async function promises(): Promise<void> {
+  const pristine = Promise.resolve("pristine");
+  log.push(`promise: ${Promise.resolve(pristine) === pristine}`);
+
+  const derived = new Derived<string>(resolve => resolve("derived"));
+  const wrapped = Promise.resolve(derived);
+  log.push(`subclass: ${wrapped === derived} ${wrapped instanceof Derived} ${wrapped.constructor === Promise}`);
+  await report("subclass", wrapped);
+  log.push(`resolve of the subclass: ${Derived.resolve(derived) === derived} ${Derived.resolve(pristine) === pristine} ${Derived.resolve(1) instanceof Derived}`);
+
+  const ownConstructor = Promise.resolve("own constructor");
+  (ownConstructor as any).constructor = Derived;
+  const rewrapped = Promise.resolve(ownConstructor);
+  log.push(`own constructor: ${rewrapped === ownConstructor} ${rewrapped instanceof Derived}`);
+  await report("own constructor", rewrapped);
+
+  const sameConstructor = Promise.resolve("same constructor");
+  (sameConstructor as any).constructor = Promise;
+  log.push(`own constructor that is Promise: ${Promise.resolve(sameConstructor) === sameConstructor}`);
+
+  const watched = Promise.resolve("watched");
+  Object.defineProperty(watched, "constructor", {
+    get() {
+      log.push("constructor is read");
+      return Promise;
+    },
+  });
+  log.push(`constructor getter: ${Promise.resolve(watched) === watched}`);
+
+  const throwing = Promise.resolve("throwing");
+  Object.defineProperty(throwing, "constructor", {
+    get() {
+      throw new RangeError("constructor throws");
+    },
+  });
+  try {
+    Promise.resolve(throwing);
+    log.push("no error");
+  } catch (error) {
+    log.push(`caught ${describe(error)}`);
+  }
+
+  const ownThen = Promise.resolve("own then");
+  (ownThen as any).then = function (resolve: Settle): void {
+    resolve("from the own then");
+  };
+  log.push(`own then: ${Promise.resolve(ownThen) === ownThen}`);
+  await report("own then", Promise.resolve(ownThen));
+  await report("own then in a subclass promise", Derived.resolve(ownThen));
+}
+
+async function values(): Promise<void> {
+  await report("no argument", Promise.resolve());
+  await report("number", resolveNumberOrPoint(1.5));
+  await report("instance where a number may come", resolveNumberOrPoint(new Point(16, 17)));
+  await report("string", resolveStringOrPoint("text"));
+  await report("instance where a string may come", resolveStringOrPoint(new Point(18, 19)));
+  for (const value of [undefined, null, true, 0, NaN, "", 10n, Symbol("symbol"), [1, 2]]) await report(typeof value, resolveAnything(value));
+
+  const callable = function (): void {};
+  (callable as any).then = (resolve: Settle): void => resolve("from a function");
+  await report("function with a then", resolveAnything(callable));
+
+  const list = [1, 2];
+  (list as any).then = (resolve: Settle): void => resolve("from an array");
+  await report("array with a then", resolveAnything(list));
+
+  await report(
+    "literal with a then",
+    Promise.resolve({
+      then(resolve: Settle): void {
+        resolve("from a literal");
+      },
+    }),
+  );
+}
+
+async function hotLoop(): Promise<void> {
+  let direct = 0;
+  let adopted = 0;
+  for (let i = 0; i < 20000; i++) {
+    const point = new Point(i, -i);
+    if (i % 1000 === 999) (point as any).then = (resolve: Settle): void => resolve(i);
+    const value = await resolvePoint(point);
+    if (value === point) direct++;
+    else if (value === i) adopted++;
+  }
+  log.push(`${direct} direct, ${adopted} adopted`);
+}
+
+////= main	instances	prototypes	promises	values	hotLoop
+
+main();
+
+export {};
+//// promise-subclass-construction.ts
+// `super(executor)` in a class that extends Promise: what a program can see of it stays as the language says.
+const log: string[] = [];
+const say = (...parts: unknown[]) => log.push(parts.map(String).join(" "));
+
+class Plain<T> extends Promise<T> {}
+
+class WithField<T> extends Promise<T> {
+  label = "field";
+  constructor(executor: (resolve: (value: T | PromiseLike<T>) => void, reject: (reason?: unknown) => void) => void, readonly tag: string) {
+    super(executor);
+  }
+}
+
+class Keeps<T> extends Promise<T> {
+  static get [Symbol.species]() {
+    return Promise;
+  }
+  resolveLater!: (value: T) => void;
+  rejectLater!: (reason: unknown) => void;
+  constructor() {
+    let resolveFunction: (value: T) => void, rejectFunction: (reason: unknown) => void;
+    super((resolve, reject) => {
+      resolveFunction = resolve;
+      rejectFunction = reject;
+    });
+    this.resolveLater = resolveFunction!;
+    this.rejectLater = rejectFunction!;
+  }
+}
+
+class Lazy<T> extends Promise<T> {
+  static get [Symbol.species]() {
+    return Promise;
+  }
+  started = 0;
+  then<A = T, B = never>(onFulfilled?: ((value: T) => A | PromiseLike<A>) | null, onRejected?: ((reason: unknown) => B | PromiseLike<B>) | null): Promise<A | B> {
+    this.started++;
+    return super.then(onFulfilled, onRejected);
+  }
+}
+
+class Deeper<T> extends WithField<T> {
+  constructor(executor: (resolve: (value: T) => void) => void) {
+    super(executor, "deeper");
+  }
+}
+
+const Alias = Promise;
+class ThroughAlias<T> extends Alias<T> {
+  constructor(executor: (resolve: (value: T) => void) => void) {
+    super(executor);
+  }
+}
+
+async function basics(): Promise<void> {
+  const plain = new Plain<number>(resolve => resolve(1));
+  say("plain", plain instanceof Plain, plain instanceof Promise, Object.getPrototypeOf(plain) === Plain.prototype, await plain);
+  const field = new WithField<string>(resolve => resolve("value"), "tag");
+  say("field", field.label, field.tag, Object.keys(field).join(), await field);
+  const deeper = new Deeper<number>(resolve => resolve(3));
+  say("deeper", deeper.tag, deeper instanceof WithField, Object.getPrototypeOf(deeper) === Deeper.prototype, await deeper);
+  const alias = new ThroughAlias<number>(resolve => resolve(4));
+  say("alias", alias instanceof ThroughAlias, await alias);
+  const derived = plain.then(value => value + 1);
+  say("derived", derived instanceof Plain, derived.constructor === Plain, await derived);
+  const lazy = new Lazy<number>(resolve => resolve(5));
+  const fromLazy = lazy.then(value => value * 2);
+  say("lazy", lazy.started, fromLazy instanceof Lazy, fromLazy.constructor === Promise, await fromLazy, await lazy, lazy.started);
+}
+
+async function resolvingFunctions(): Promise<void> {
+  const keeps = new Keeps<number>();
+  say("functions", typeof keeps.resolveLater, keeps.resolveLater.length, keeps.rejectLater.length, JSON.stringify(keeps.resolveLater.name), Object.getPrototypeOf(keeps.resolveLater) === Function.prototype);
+  say("result of resolve", keeps.resolveLater(1));
+  keeps.resolveLater(2);
+  keeps.rejectLater(new Error("late"));
+  say("first wins", await keeps);
+  const rejected = new Keeps<number>();
+  rejected.rejectLater("reason");
+  rejected.resolveLater(1);
+  say("rejected", await rejected.catch(reason => "caught " + reason));
+  const self = new Keeps<unknown>();
+  self.resolveLater(self);
+  say("self", await self.catch(error => (error as Error).constructor.name));
+  const chained = new Keeps<unknown>();
+  chained.resolveLater(new Plain<string>(resolve => resolve("inner")));
+  say("chained", await chained);
+  const thenable = new Keeps<unknown>();
+  thenable.resolveLater({ then(resolve: (value: string) => void) { say("then called"); resolve("from thenable"); } });
+  say("before");
+  say("thenable", await thenable);
+}
+
+async function failures(): Promise<void> {
+  const thrown = new Plain<number>(() => {
+    throw new RangeError("in the executor");
+  });
+  say("thrown", await thrown.catch(error => (error as Error).message));
+  const afterResolve = new Plain<number>(resolve => {
+    resolve(7);
+    throw new Error("ignored");
+  });
+  say("after resolve", await afterResolve);
+  for (const executor of [undefined, null, 1, "text", {}, Symbol.iterator]) {
+    try {
+      new Plain<number>(executor as any);
+      say("no error");
+    } catch (error) {
+      say("not callable", (error as Error).constructor.name, (error as Error).message);
+    }
+  }
+  try {
+    Reflect.construct(Plain, []);
+  } catch (error) {
+    say("no arguments", (error as Error).constructor.name);
+  }
+  say("more arguments", await Reflect.construct(Plain, [(resolve: (value: number) => void) => resolve(8), 1, 2]));
+  try {
+    (Plain as unknown as (executor: unknown) => unknown)(() => {});
+  } catch (error) {
+    say("called", (error as Error).constructor.name);
+  }
+}
+
+async function newTargets(): Promise<void> {
+  function Other() {}
+  Other.prototype = { marker: "other" };
+  const constructed = Reflect.construct(Plain, [(resolve: (value: number) => void) => resolve(1)], Other) as Promise<number> & { marker?: string };
+  say("new.target", constructed.marker, constructed instanceof Plain, Object.getPrototypeOf(constructed) === Other.prototype);
+  say("still a promise", await Promise.prototype.then.call(constructed, value => value));
+  const order: string[] = [];
+  const watched = new Proxy(function () {}, {
+    get(target, key, receiver) {
+      order.push("get " + String(key));
+      return key === "prototype" ? Plain.prototype : Reflect.get(target, key, receiver);
+    },
+  });
+  Reflect.construct(Plain, [() => order.push("executor")], watched);
+  say("order", order.join());
+  const orderWithBadExecutor: string[] = [];
+  const watchedAgain = new Proxy(function () {}, {
+    get(target, key, receiver) {
+      orderWithBadExecutor.push("get " + String(key));
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  try {
+    Reflect.construct(Plain, [1], watchedAgain);
+  } catch (error) {
+    say("bad executor first", (error as Error).constructor.name, orderWithBadExecutor.join());
+  }
+  try {
+    Reflect.construct(Plain, [() => say("the executor ran")], new Proxy(function () {}, {
+      get(target, key, receiver) {
+        if (key === "prototype") throw new ReferenceError("from the proxy");
+        return Reflect.get(target, key, receiver);
+      },
+    }));
+  } catch (error) {
+    say("new.target throws", (error as Error).constructor.name, (error as Error).message);
+  }
+  function Primitive() {}
+  Primitive.prototype = 1 as any;
+  const fallsBack = Reflect.construct(Plain, [() => {}], Primitive);
+  say("primitive prototype", Object.getPrototypeOf(fallsBack) === Promise.prototype);
+}
+
+async function order(): Promise<void> {
+  const steps: string[] = [];
+  const first = new Lazy<string>(resolve => {
+    steps.push("executor");
+    resolve("value");
+  });
+  steps.push("constructed");
+  Promise.resolve().then(() => steps.push("job 1")).then(() => steps.push("job 2")).then(() => steps.push("job 3")).then(() => steps.push("job 4"));
+  first.then(() => steps.push("reaction"));
+  (async () => {
+    await first;
+    steps.push("awaited");
+  })();
+  for (let turn = 0; turn < 12; turn++) await undefined;
+  say(steps.join());
+}
+
+function framesOf(error: Error): string {
+  const names = String(error.stack).split("\n").map(line => line.replace(/@.*|\s*\(.*|^\s*at\s+/g, "").trim().replace(/^new /, ""));
+  return names.filter(name => /^[A-Za-z]+$/.test(name) && name !== "construct").slice(0, 3).join(" < ");
+}
+
+function stackTraces(): void {
+  let seen: Error | undefined;
+  function looksFromExecutor(): void {
+    new WithField<number>(() => {
+      seen = new Error("look");
+    }, "t");
+  }
+  for (let turn = 0; turn < 40; turn++) looksFromExecutor();
+  say("from an executor:", framesOf(seen!));
+  function looksThroughImplicitConstructor(): void {
+    new Plain<number>(() => {
+      seen = new Error("look");
+    });
+  }
+  for (let turn = 0; turn < 40; turn++) looksThroughImplicitConstructor();
+  say("through an implicit constructor:", framesOf(seen!));
+}
+
+async function many(): Promise<void> {
+  let total = 0;
+  for (let i = 0; i < 2000; i++) total += await new WithField<number>(resolve => resolve(i), "t");
+  say("many", total);
+}
+
+await basics();
+await resolvingFunctions();
+await failures();
+await newTargets();
+await order();
+stackTraces();
+await many();
+console.log(log.join("\n"));
+//// promise-subclass-replaced-parent.js
+// The parent of a class that extends Promise is looked up at every `super(executor)`.
+class Plain extends Promise {}
+class Child extends Promise {
+  constructor(executor) {
+    super(executor);
+  }
+}
+class Impostor {
+  constructor(executor) {
+    this.seen = typeof executor;
+  }
+}
+console.log("before", (await new Child(resolve => resolve(1))) === 1);
+Object.setPrototypeOf(Child, Impostor);
+const built = new Child(resolve => resolve(2));
+console.log("replaced", built.seen, built instanceof Promise, Object.getPrototypeOf(built) === Child.prototype);
+Object.setPrototypeOf(Child, Plain);
+const throughPlain = new Child(resolve => resolve(3));
+console.log("through another subclass", await throughPlain, Object.getPrototypeOf(throughPlain) === Child.prototype);
+Object.setPrototypeOf(Child, Promise);
+console.log("back", await new Child(resolve => resolve(4)));
+Object.setPrototypeOf(Child, null);
+try {
+  new Child(resolve => resolve(5));
+} catch (error) {
+  console.log("no parent", error.constructor.name);
+}
+//// resolve-late-thenables.ts
+// An async function's result and an awaited value are adopted through `then` once the object or its prototype chain has one, and pass through unchanged otherwise.
+const log: string[] = [];
+
+type Resolve = (value: unknown) => void;
+type Then = (resolve: Resolve) => void;
+
+////= lines-11	Account	public	id	number
+////= Point
+////= lines-11	Shape	public	sides	number
+interface Download {
+  url: string;
+  then?: Then;
+}
+interface Upload {
+  path: string;
+  then?: unknown;
+}
+////= lines-4	Settings	depth	number	label	string
+
+const returnAccount = async (account: Account): Promise<unknown> => account;
+const awaitAccount = async (account: Account): Promise<unknown> => await account;
+const returnDownload = async (download: Download): Promise<unknown> => download as unknown;
+const awaitDownload = async (download: Download): Promise<unknown> => await (download as unknown);
+const returnUpload = async (upload: Upload): Promise<unknown> => upload;
+const awaitUpload = async (upload: Upload): Promise<unknown> => await upload;
+const returnPoint = async (point: Point): Promise<unknown> => point;
+const awaitPoint = async (point: Point): Promise<unknown> => await point;
+const returnShape = async (shape: Shape): Promise<unknown> => shape;
+const awaitShape = async (shape: Shape): Promise<unknown> => await shape;
+const returnSettings = async (settings: Settings): Promise<unknown> => settings;
+const awaitSettings = async (settings: Settings): Promise<unknown> => await settings;
+const returnList = async (list: number[]): Promise<unknown> => list;
+const awaitList = async (list: number[]): Promise<unknown> => await list;
+const returnTable = async (table: Map<string, number>): Promise<unknown> => table;
+const awaitTable = async (table: Map<string, number>): Promise<unknown> => await table;
+
+function describe(value: unknown): string {
+  if (value instanceof Map) return `Map(${value.size})`;
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+////= adopt
+
+////= observe
+
+async function classInstances(): Promise<void> {
+  const first = new Account(1);
+  await observe("instance", returnAccount(first), awaitAccount(first));
+  (Account.prototype as any).then = function (this: Account, resolve: Resolve): void {
+    log.push(`then of account ${this.id}`);
+    resolve(`adopted from account ${this.id}`);
+  };
+  const second = new Account(2);
+  await observe("instance created after the class gained then", returnAccount(second), awaitAccount(second));
+  await observe("instance created before the class gained then", returnAccount(first), awaitAccount(first));
+  delete (Account.prototype as any).then;
+  await observe("instance after the class lost then", returnAccount(second), awaitAccount(second));
+}
+
+async function optionalFields(): Promise<void> {
+  const plainDownload: Download = { url: "a" };
+  const thenableDownload: Download = { url: "b", then: adopt("download b") };
+  await observe("absent field, first of its type", returnDownload(plainDownload), awaitDownload(plainDownload));
+  await observe("present field, second of its type", returnDownload(thenableDownload), awaitDownload(thenableDownload));
+  plainDownload.then = adopt("download a");
+  await observe("field assigned later", returnDownload(plainDownload), awaitDownload(plainDownload));
+
+  const thenableUpload: Upload = { path: "c", then: adopt("upload c") };
+  const plainUpload: Upload = { path: "d" };
+  await observe("present field, first of its type", returnUpload(thenableUpload), awaitUpload(thenableUpload));
+  await observe("absent field, second of its type", returnUpload(plainUpload), awaitUpload(plainUpload));
+}
+
+async function extraProperties(): Promise<void> {
+  const point = new Point(1, 2);
+  await observe("instance without extra properties", returnPoint(point), awaitPoint(point));
+  (point as any).then = adopt("point");
+  await observe("instance with an extra then", returnPoint(point), awaitPoint(point));
+  const sibling = new Point(3, 4);
+  await observe("sibling without extra properties", returnPoint(sibling), awaitPoint(sibling));
+  (sibling as any).label = "sibling";
+  await observe("sibling with another extra property", returnPoint(sibling), awaitPoint(sibling));
+  delete (point as any).then;
+  await observe("instance after its extra then is deleted", returnPoint(point), awaitPoint(point));
+}
+
+async function createdPrototypes(): Promise<void> {
+  const root = Object.create(Object.prototype);
+  Object.setPrototypeOf(Shape.prototype, Object.create(root));
+  const shape = new Shape(3);
+  await observe("created objects on the chain", returnShape(shape), awaitShape(shape));
+  root.then = adopt("created prototype");
+  await observe("created prototype with then", returnShape(shape), awaitShape(shape));
+  delete root.then;
+  await observe("created prototype after then is deleted", returnShape(shape), awaitShape(shape));
+
+  const derived: Shape = Object.create(shape);
+  await observe("object created from an instance", returnShape(derived), awaitShape(derived));
+  (shape as any).then = adopt("instance used as a prototype");
+  await observe("object created from a thenable instance", returnShape(derived), awaitShape(derived));
+}
+
+async function plainData(): Promise<void> {
+  const settings: Settings = { depth: 2, label: "plain" };
+  await observe("data object", returnSettings(settings), awaitSettings(settings));
+  const list = [1, 2, 3];
+  await observe("array", returnList(list), awaitList(list));
+  const table = new Map([["one", 1]]);
+  await observe("map", returnTable(table), awaitTable(table));
+}
+
+////= main	classInstances	optionalFields	extraProperties	createdPrototypes	plainData
+
+main();
+
+export {};
+//// returned-object-read-after-await.ts
+// A call returns a small object or array, and an await lies between the call and the reads of its fields. While the caller is suspended, only its saved frame refers to the strings and objects in those fields.
+interface Tag {
+  id: number;
+}
+type Entry = { flag: boolean; count: number; name: string; tag: Tag | null };
+
+const host = globalThis as unknown as { Bun?: { gc(force: boolean): void }; gc(): void };
+const collect: () => void = host.Bun ? () => host.Bun!.gc(true) : host.gc;
+
+function scramble(x: number): number {
+  let sum = 0;
+  for (let i = 0; i < 3; i++) {
+    sum += (x + i) * (x - i);
+    if (sum > 1e9) sum -= 1e9;
+  }
+  return sum;
+}
+
+// The functions that create the results are too large to inline.
+////= create	Entry(x: number): Entry	{ flag: a > b, count: a & 1023, name: "entry " + (b & 15), tag: a & 1 ? { id: a & 255 } : null }
+
+////= create	Names(x: number): [string, string]	["first " + (a & 31), "second " + (b & 31)]
+
+////= create	Range(x: number): { low: number; high: number }	{ low: a, high: b + 0.5 }
+
+// This one returns a new object only after entryOf() has been inlined into it.
+function entryOf(flag: boolean, count: number, name: string, tag: Tag | null): Entry {
+  return { flag, count, name, tag };
+}
+////= create	EntryThroughCall(x: number): Entry	entryOf(a > b, a & 1023, "entry " + (b & 15), a & 1 ? { id: a & 255 } : null)
+
+function format(flag: boolean, count: number, name: string, tag: Tag | null): string {
+  return flag + " " + count + " " + name + " " + (tag ? tag.id : "none");
+}
+
+let spares: Entry[] = [];
+
+// The caller is suspended by the time the collection runs, and the new objects reuse the cells that it freed.
+async function pause(): Promise<void> {
+  await null;
+  collect();
+  spares = [];
+  for (let i = 0; i < 64; i++) spares.push({ flag: false, count: i, name: "spare " + i, tag: { id: i } });
+}
+
+async function pauseAndThrow(): Promise<void> {
+  await pause();
+  throw new Error("thrown after the pause");
+}
+
+async function readAfterAwait(x: number): Promise<string> {
+  const entry = createEntry(x);
+  await pause();
+  return format(entry.flag, entry.count, entry.name, entry.tag);
+}
+
+async function readBeforeAndAfterAwait(x: number): Promise<string> {
+  const entry = createEntry(x);
+  const name = entry.name;
+  await pause();
+  return name + " " + format(entry.flag, entry.count, entry.name, entry.tag);
+}
+
+async function readOneFieldAfterAwait(x: number): Promise<string> {
+  const entry = createEntry(x);
+  const count = entry.count;
+  await pause();
+  return count + " " + entry.name;
+}
+
+async function readAfterTwoAwaits(x: number): Promise<string> {
+  const entry = createEntry(x);
+  await pause();
+  const name = entry.name;
+  await pause();
+  return name + " " + (entry.tag ? entry.tag.id : "none");
+}
+
+async function readElementsAfterAwait(x: number): Promise<string> {
+  const names = createNames(x);
+  await pause();
+  return names[0] + " " + names[1];
+}
+
+async function destructureAfterAwait(x: number): Promise<string> {
+  const names = createNames(x);
+  await pause();
+  const [first, second] = names;
+  return first + " " + second;
+}
+
+async function readNumbersAfterAwait(x: number): Promise<string> {
+  const range = createRange(x);
+  await pause();
+  return range.low + " " + range.high;
+}
+
+async function readAfterInlinedCall(x: number): Promise<string> {
+  const entry = createEntryThroughCall(x);
+  await pause();
+  return format(entry.flag, entry.count, entry.name, entry.tag);
+}
+
+async function readInLoop(x: number): Promise<string> {
+  let text = "";
+  for (let i = 0; i < 3; i++) {
+    const entry = createEntry(x + i);
+    await pause();
+    text += entry.name + (entry.tag ? "#" + entry.tag.id : "") + ";";
+  }
+  return text;
+}
+
+async function readInHandler(x: number): Promise<string> {
+  const entry = createEntry(x);
+  try {
+    await pauseAndThrow();
+    return "not thrown";
+  } catch (error) {
+    return entry.name + " " + (error as Error).message;
+  }
+}
+
+async function readMatchAfterAwait(x: number): Promise<string> {
+  const match = /([a-z]+)-(\d+)/.exec("prefix item-" + x * 3);
+  if (!match) return "no match";
+  await pause();
+  return match[1] + " " + match[2] + " " + match.index;
+}
+
+async function readSeveralCallsAfterAwait(x: number): Promise<string> {
+  const entry = createEntry(x);
+  const other = createEntryThroughCall(x + 1);
+  const names = createNames(x + 2);
+  const range = createRange(x + 3);
+  await pause();
+  return [format(entry.flag, entry.count, entry.name, entry.tag), format(other.flag, other.count, other.name, other.tag), names[0], names[1], range.low, range.high].join(" ");
+}
+
+async function main(): Promise<void> {
+  for (let round = 0; round < 12; round++) {
+    console.log(
+      [
+        await readAfterAwait(round),
+        await readBeforeAndAfterAwait(round),
+        await readOneFieldAfterAwait(round),
+        await readAfterTwoAwaits(round),
+        await readElementsAfterAwait(round),
+        await destructureAfterAwait(round),
+        await readNumbersAfterAwait(round),
+        await readAfterInlinedCall(round),
+        await readInLoop(round),
+        await readInHandler(round),
+        await readMatchAfterAwait(round),
+        await readSeveralCallsAfterAwait(round),
+      ].join(" | "),
+    );
+  }
+}
+
+main().then(undefined, error => console.log("main rejected", error));
+//// slice-read-after-await.ts
+// A slice that is only inspected is read after an await. By then nothing but the suspended function refers to the line it was taken from.
+class LineReader {
+  private round = 0;
+  private spares: string[] = [];
+
+  async read(): Promise<string> {
+    const round = this.round++;
+    return [(round % 3 ? "#" : "!") + round, round * 7, "the rest of the line"].join(" ");
+  }
+
+  async skip(): Promise<void> {
+    Bun.gc(true);
+    this.spares = [];
+    for (let i = 0; i < 64; i++) this.spares.push(["?" + i, i * 7, "the rest of the line"].join(" "));
+  }
+}
+
+async function startsWithHash(reader: LineReader): Promise<boolean> {
+  const line = await reader.read();
+  const tag = line.slice(0, 1);
+  await reader.skip();
+  return tag === "#";
+}
+
+async function firstCodeUnit(reader: LineReader): Promise<number> {
+  const line = await reader.read();
+  const tag = line.slice(0, 1);
+  await reader.skip();
+  return tag.charCodeAt(0);
+}
+
+async function main(): Promise<void> {
+  const reader = new LineReader();
+  let comparedEqual = 0;
+  let readAsHash = 0;
+  for (let round = 0; round < 200; round++) {
+    if (await startsWithHash(reader)) comparedEqual++;
+    if ((await firstCodeUnit(reader)) === 35) readAsHash++;
+  }
+  console.log(comparedEqual, readAsHash);
+}
+
+main().then(undefined, error => console.log("main rejected", error));
+//// small-async-functions.ts
+// Small async functions of the kinds that real programs contain.
+declare const console: { log(...v: unknown[]): void };
+async function g(a: number): Promise<number> { return a * 2; }
+async function one(a: number): Promise<number> { const x = await g(a); return x + 1; }
+async function two(a: number, b: number): Promise<number> { const x = await g(a); const y = await g(b); return x + y; }
+async function none(a: number): Promise<number> { return a + 1; }
+async function nothing(): Promise<void> {}
+async function guarded(a: number): Promise<number> { try { return await g(a); } catch (e) { return -1; } }
+async function looped(n: number): Promise<number> { let s = 0; for (let i = 0; i < n; i++) s += await g(i); return s; }
+async function branchy(a: number): Promise<string> { if (a < 0) return "neg"; const x = await g(a); if (x > 10) return "big"; return "small"; }
+class Store { items: number[] = []; async add(x: number): Promise<number> { const y = await g(x); this.items.push(y); return this.items.length; } async size(): Promise<number> { return this.items.length; } }
+const arrow = async (a: number): Promise<number> => (await g(a)) + 3;
+async function passes(a: number): Promise<number> { return g(a); }
+async function many(a: number, b: string, c: boolean, d: number[]): Promise<string> { const x = await g(a); const y = await g(d.length); return b + x + c + y; }
+(globalThis as any).kept = [g, one, two, none, nothing, guarded, looped, branchy, arrow, passes, many, Store];
+const s = new Store();
+Promise.all([one(1), two(1, 2), none(1), nothing(), guarded(2), looped(3), branchy(7), s.add(4), s.size(), arrow(5), passes(6), many(1, "b", true, [1, 2])]).then(r => console.log(r.join()));
+//// spread-of-generators-and-user-iterables.ts
+// [...x] where x is a generator or an object that a user wrote
+const lines: string[] = [];
+////= say
+class Mine extends Error {}
+////= attempt
+const kept: any[] = [];
+////= lines-21	hide	kept
+function all(values: Iterable<unknown>): unknown[] {
+  return [...values];
+}
+function around(values: Iterable<unknown>): unknown[] {
+  return ["before", ...values, "between", ...values, "after"];
+}
+function allOfAny(values: any): unknown[] {
+  return [...values];
+}
+////= lines-23	upTo	"not part of the spread"
+function* mixed(): Generator<unknown, void, unknown> {
+  yield 1;
+  yield 1.5;
+  yield "text";
+  yield undefined;
+  yield null;
+  yield { a: 1 };
+  yield [2];
+  yield NaN;
+  yield -0;
+  yield 2 ** 40;
+}
+function counting(to: number) {
+  let at = 0;
+  return { next: () => (at < to ? { value: at++, done: false } : { value: undefined, done: true }) };
+}
+class Range {
+  constructor(
+    readonly from: number,
+    readonly to: number,
+  ) {}
+  [Symbol.iterator]() {
+    let at = this.from;
+    const to = this.to;
+    return { next: () => (at < to ? { value: at++, done: false } : { value: undefined, done: true }) };
+  }
+}
+class Walk {
+  constructor(readonly items: string[]) {}
+  *[Symbol.iterator](): Generator<string, void, unknown> {
+    for (const item of this.items) yield item.toUpperCase();
+  }
+}
+say("a generator", all(hide(upTo(5))), all(hide(upTo(0))), allOfAny(hide(upTo(2))));
+say("values of every kind", all(hide(mixed())), Object.is((all(hide(mixed())) as number[])[8], -0));
+say("numbers, then doubles", all(hide((function* () { yield 1; yield 2; yield 2.5; yield 3; })())));
+say("doubles, then a string", all(hide((function* () { yield 0.5; yield "s"; })())));
+say("around", around(hide(new Range(0, 2))), around(hide(upTo(2))));
+say("a class", all(new Range(3, 6)), all(new Walk(["a", "b"])), allOfAny(new Walk([])));
+say("an object", all({ [Symbol.iterator]: () => counting(3) }));
+{
+  const started = hide(upTo(4));
+  started.next();
+  say("one that has started", all(started), all(started));
+  const changed = hide(upTo(4));
+  (changed as any).next = () => ({ done: true });
+  say("its own next", all(changed));
+  const other = hide(upTo(4));
+  Object.setPrototypeOf(other, { [Symbol.iterator]: () => counting(1) });
+  say("another prototype", all(other));
+}
+{
+  const log: string[] = [];
+  function* guarded(): Generator<number, void, unknown> {
+    try {
+      yield 1;
+      throw new Mine("from the body");
+    } finally {
+      log.push("finally");
+    }
+  }
+  attempt("the body throws", () => all(hide(guarded())));
+  say("log", log);
+  attempt("next throws; return is not called", () =>
+    all({
+      [Symbol.iterator]: () => ({
+        next() {
+          throw new Mine("from next");
+        },
+        return() {
+          log.push("return was called");
+          return { value: undefined, done: true };
+        },
+      }),
+    }),
+  );
+  say("log", log);
+  let self: Generator<unknown, void, unknown>;
+  function* spreadsItself(): Generator<unknown, void, unknown> {
+    yield [...self];
+  }
+  self = spreadsItself();
+  attempt("a generator that spreads itself", () => all(self));
+}
+for (const [title, value] of [
+  ["a plain object", {}],
+  ["Symbol.iterator is a number", { [Symbol.iterator]: 1 }],
+  ["it returns a number", { [Symbol.iterator]: () => 1 }],
+  ["next is missing", { [Symbol.iterator]: () => ({}) }],
+  ["next returns a number", { [Symbol.iterator]: () => ({ next: () => 1 }) }],
+] as [string, unknown][])
+  attempt(title, () => allOfAny(value));
+{
+  const log: string[] = [];
+  let count = 0;
+  say(
+    "the order of what is observable",
+    all({
+      get [Symbol.iterator]() {
+        log.push("get Symbol.iterator");
+        return () => ({
+          get next() {
+            log.push("get next");
+            return () => {
+              const now = count++;
+              log.push(`next ${now}`);
+              return {
+                get done() {
+                  log.push(`done ${now}`);
+                  return now >= 2;
+                },
+                get value() {
+                  log.push(`value ${now}`);
+                  return now;
+                },
+              };
+            };
+          },
+        });
+      },
+    }),
+    log,
+  );
+}
+{
+  const big = all(hide(upTo(100000)));
+  say("many", big.length, big[99999], all(new Range(0, 70000)).length);
+  const texts = all(hide((function* () { for (let i = 0; i < 50000; i++) yield `item ${i}`; })())) as string[];
+  say("many strings", texts.length, texts[49999]);
+  let total = 0;
+  for (let round = 0; round < 40000; round++) total += all(hide(upTo(3))).length + all(new Range(0, 2)).length;
+  say("many short ones", total);
+  function* nested(depth: number): Generator<number, void, unknown> {
+    yield depth;
+    if (depth) for (const value of [...nested(depth - 1)]) yield value;
+  }
+  say("spreads inside generators", all(nested(6)));
+}
+console.log(lines.join("\n"));
+//// stack-traces-through-generator-steps.ts
+// which functions a stack trace made inside a generator's body names, for each way of stepping the generator
+const lines: string[] = [];
+function namesIn(stack: string | undefined): string {
+  const names: string[] = [];
+  for (const line of (stack ?? "").split("\n")) {
+    if (line.endsWith("@[native code]")) continue;
+    const found = /^\s*at (?:async )?(?:([^\s(]+) \()?/.exec(line) ?? /^([^@]*)@/.exec(line);
+    if (!found) continue;
+    const name = found[1] ?? "";
+    if (name === "" || name === "module code" || name === "global code") break;
+    names.push(name);
+  }
+  return names.join(" < ");
+}
+function* body(): Generator<string, void, unknown> {
+  yield namesIn(new Error("in the body").stack);
+  yield namesIn(new Error("in the body").stack);
+}
+function* throws(): Generator<string, void, unknown> {
+  throw new Error("thrown in the body");
+}
+function* guarded(): Generator<string, string, unknown> {
+  try {
+    yield "first";
+    return "not reached";
+  } catch (error) {
+    return "caught: " + namesIn(new Error("in catch").stack);
+  } finally {
+    lines.push("finally: " + namesIn(new Error("in finally").stack));
+  }
+}
+const kept: any[] = [];
+////= lines-21	keep	kept
+function byName(iterator: any): unknown {
+  return iterator.next().value;
+}
+function declared(generator: Generator<string, unknown, unknown>): unknown {
+  return generator.next().value;
+}
+function loop(values: Iterable<string>): unknown {
+  for (const value of values) return value;
+}
+function pattern(values: Iterable<string>): unknown {
+  const [first] = values;
+  return first;
+}
+function* delegates(inner: Iterable<string>): Generator<string, void, unknown> {
+  yield* inner;
+}
+function spread(values: Iterable<string>): unknown {
+  return [...values][0];
+}
+function returnsByName(iterator: any): unknown {
+  iterator.next();
+  return iterator.return("asked").value;
+}
+function throwsByName(iterator: any): unknown {
+  iterator.next();
+  return iterator.throw(new Error("thrown in")).value;
+}
+function returnsDeclared(generator: Generator<string, string, unknown>): unknown {
+  generator.next();
+  return generator.return("asked").value;
+}
+function throwsDeclared(generator: Generator<string, string, unknown>): unknown {
+  generator.next();
+  return generator.throw(new Error("thrown in")).value;
+}
+const ways: [string, (x: any) => unknown][] = [
+  ["by name", byName],
+  ["declared", declared],
+  ["for..of", loop],
+  ["pattern", pattern],
+  ["spread", spread],
+];
+for (const [title, run] of ways) lines.push(`${title}: ${run(keep(body()))}`);
+lines.push(`yield*, by name: ${byName(keep(delegates(keep(body()))))}`);
+lines.push(`yield*, for..of: ${loop(keep(delegates(keep(body()))))}`);
+for (const [title, run] of ways) {
+  try {
+    run(keep(throws()));
+  } catch (error) {
+    lines.push(`thrown, ${title}: ${namesIn((error as Error).stack)}`);
+  }
+}
+lines.push(`return() by name: ${returnsByName(keep(guarded()))}`);
+lines.push(`throw() by name: ${throwsByName(keep(guarded()))}`);
+lines.push(`return() declared: ${returnsDeclared(keep(guarded()))}`);
+lines.push(`throw() declared: ${throwsDeclared(keep(guarded()))}`);
+console.log(lines.join("\n"));
+//// state-changed-by-another-task-during-an-await.ts
+// An async function or a generator that was started earlier holds an object in its suspended frame and stores to it while the caller waits: what the caller reads behind its own await is the new state.
+async function report(name: string, run: () => unknown) {
+  let result: string;
+  try {
+    result = String(await run());
+  } catch (error) {
+    result = "threw " + (error instanceof Error ? error.name : typeof error);
+  }
+  console.log(name, result);
+}
+class Dog {
+  legs = 4;
+}
+const later = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 0));
+
+await report("cleared by an async arrow", async () => {
+  const owner: { pet: Dog | null } = { pet: new Dog() };
+  const other = (async () => {
+    await later();
+    owner.pet = null;
+  })();
+  if (owner.pet === null) return "null";
+  await other;
+  return owner.pet.legs;
+});
+
+async function clearLater(owner: { pet: Dog | null }) {
+  await later();
+  owner.pet = null;
+}
+await report("cleared by an async function that takes the object", async () => {
+  const owner: { pet: Dog | null } = { pet: new Dog() };
+  const other = clearLater(owner);
+  const before = owner.pet === null;
+  await other;
+  return [before, owner.pet === null].join();
+});
+
+await report("counted by an async function that is not awaited", async () => {
+  const counter = { n: 1 };
+  (async () => {
+    await null;
+    counter.n += 10;
+    await null;
+    counter.n += 100;
+  })();
+  const first = counter.n;
+  await later();
+  return [first, counter.n].join();
+});
+
+function* steps(state: { n: number }) {
+  state.n += 1;
+  yield state.n;
+  state.n += 10;
+  yield state.n;
+}
+await report("changed by a generator between two reads", () => {
+  const state = { n: 0 };
+  const iterator = steps(state);
+  const before = state.n;
+  iterator.next();
+  const between = state.n;
+  iterator.next();
+  return [before, between, state.n].join();
+});
+
+await report("an element stored while the caller waits", async () => {
+  const list = [1, 2, 3];
+  const other = (async () => {
+    await later();
+    list[1] = 20;
+    list.push(4);
+  })();
+  const before = list[1] + list.length;
+  await other;
+  return [before, list[1] + list.length].join();
+});
+//// steps-by-hand-and-delegations-under-their-own-stores.ts
+// An await goes on under the AsyncLocalStorage store that it was reached under, so whoever steps a shared async generator by `await generator.next()` keeps its own store,
+// whichever store the generator is resumed under. A loop and `yield*` go on under the store that is active where their step is finished.
+import { AsyncLocalStorage } from "node:async_hooks";
+const storage = new AsyncLocalStorage<string>();
+const lines: string[] = [];
+async function* reads(name: string, count: number): AsyncGenerator<string> {
+  for (let i = 0; i < count; i++) { await null; yield name + " " + i + " made under " + storage.getStore(); }
+}
+async function loop(name: string, source: AsyncIterable<string>): Promise<string> {
+  for await (const value of source) lines.push(name + " under " + storage.getStore() + ": " + value);
+  return name + " ends under " + storage.getStore();
+}
+async function byHand(name: string, source: AsyncGenerator<string>, awaitsFirst: boolean): Promise<string> {
+  if (awaitsFirst) await null;
+  for (let step = await source.next(); !step.done; step = await source.next()) lines.push(name + " under " + storage.getStore() + ": " + step.value);
+  return name + " ends under " + storage.getStore();
+}
+async function* delegates(source: AsyncIterable<string>): AsyncGenerator<string> { yield* source; lines.push("delegator ends under " + storage.getStore()); }
+async function* stepsByHand(name: string, source: AsyncGenerator<string>): AsyncGenerator<string> {
+  for (let step = await source.next(); !step.done; step = await source.next()) yield name + " under " + storage.getStore() + ": " + step.value;
+}
+for (const awaitsFirst of [false, true]) {
+  const shared = reads("by hand " + awaitsFirst, 5);
+  lines.push(...(await Promise.all([storage.run("one", () => loop("a", shared)), storage.run("two", () => byHand("b", shared, awaitsFirst))])));
+}
+for (const awaitsFirst of [false, true]) {
+  const shared = reads("both by hand " + awaitsFirst, 5);
+  lines.push(...(await Promise.all([storage.run("one", () => byHand("a", shared, awaitsFirst)), storage.run("two", () => byHand("b", shared, awaitsFirst))])));
+}
+{
+  const shared = reads("delegated", 5);
+  lines.push(...(await Promise.all([storage.run("one", () => loop("a", delegates(shared))), storage.run("two", () => loop("b", delegates(shared)))])));
+}
+{
+  const shared = reads("delegated, by hand", 5);
+  lines.push(...(await Promise.all([storage.run("one", () => byHand("a", delegates(shared), false)), storage.run("two", () => byHand("b", delegates(shared), true))])));
+}
+{
+  const shared = reads("by hand in a generator", 5);
+  lines.push(...(await Promise.all([storage.run("one", () => loop("a", stepsByHand("p", shared))), storage.run("two", () => byHand("b", stepsByHand("q", shared), false))])));
+}
+{
+  // Outside of every store, beside a loop under one.
+  const shared = reads("outside", 4);
+  lines.push(...(await Promise.all([storage.run("one", () => loop("a", shared)), byHand("b", shared, false), byHand("c", shared, true)])));
+}
+{
+  // What is sent in arrives, and the steps of one function stand in their order.
+  async function* echoes(): AsyncGenerator<string, void, string> { let got = "nothing"; for (let i = 0; i < 3; i++) got = yield "got " + got + " under " + storage.getStore(); }
+  const shared = echoes();
+  lines.push(await storage.run("one", async () => { const first = await shared.next("lost"); const second = await shared.next("x"); return first.value + " | " + second.value + " | " + storage.getStore(); }));
+  lines.push(await storage.run("two", async () => { const third = await shared.next("y"); const last = await shared.next("z"); return third.value + " | " + last.done + " | " + storage.getStore(); }));
+}
+console.log(lines.join("\n"));
+//// steps-taken-by-loops-in-async-generators.js
+// The result object of a step that only a `for await` or a `yield*` takes is the engine's own, and the producer keeps it for its next step. Whoever takes the step gets the value that was
+// yielded to it: a loop in an async generator, a `yield*`, two loops that take turns over one generator, and a loop that goes on while another still waits.
+async function* inner() { yield { n: 1 }; yield { n: 2 }; return { n: 3 }; }
+function* plain() { yield { n: 4 }; yield { n: 5 }; }
+async function* delegates() { const last = yield* inner(); yield last; yield* plain(); }
+async function* loops() { for await (const each of delegates()) yield each.n; }
+async function collect(source) { const all = []; for await (const each of source) all.push(each); return JSON.stringify(all); }
+console.log("one loop", await collect(loops()), await collect(delegates()));
+
+async function* shared() { for (let i = 0; i < 6; i++) yield { i }; }
+async function* relays(source) { for await (const each of source) { await null; yield each; } }
+const one = shared();
+console.log("two loops", ...(await Promise.all([collect(one), collect(one)])));
+const other = shared();
+console.log("two relays", ...(await Promise.all([collect(relays(other)), collect(relays(other))])));
+
+// The value that a loop holds is its own: the next step of the producer does not change it.
+async function* holds(source) {
+  let before;
+  for await (const each of source) {
+    if (before) yield [before.i, each.i];
+    before = each;
+  }
+}
+console.log("held", await collect(holds(shared())));
+
+// Steps that are asked for by hand get result objects of their own.
+const byHand = shared();
+const results = [await byHand.next(), await byHand.next()];
+for await (const each of byHand) if (each.i === 3) break;
+console.log("by hand", JSON.stringify(results), JSON.stringify(await byHand.next()));
+//// suspend-and-resume-paths.ts
+const collect: (sync: boolean) => void = (globalThis as any).gc ?? (globalThis as any).Bun?.gc ?? (() => undefined);
+const tick = Promise.resolve();
+const log: string[] = [];
+
+function mix(a: number, b: number): number {
+    return (a * 31 + b) % 1000003;
+}
+
+type Box = { value: number; name: string };
+
+function box(value: number): Box {
+    return { value, name: "b" + value };
+}
+
+function names(error: unknown): string {
+    const frames: string[] = [];
+    for (const line of ((error as Error).stack ?? "").split("\n")) {
+        const frame = /^\s*at (async )?(?:(.*?) \()?[^()]*?:(\d+):(\d+)\)?$/.exec(line) ?? /^(async )?(.*?)@.*?:(\d+):(\d+)$/.exec(line);
+        if (frame && frame[2] && frame[2] !== "module code" && frame[2] !== "<anonymous>")
+            frames.push((frame[1] ?? "") + frame[2]);
+    }
+    return frames.join(" < ");
+}
+
+function* counts(seed: number): Generator<number, number, number> {
+    const a = mix(seed, 1);
+    const b = mix(a, 2);
+    const c = box(mix(b, 3));
+    let sent = yield mix(a, b);
+    const d = mix(sent, c.value);
+    try {
+        sent = yield mix(d, a);
+        const e = mix(sent, b);
+        sent = yield mix(e, d);
+        return mix(mix(a, b), mix(mix(c.value, d), mix(e, sent)));
+    } catch (error) {
+        log.push("caught in counts " + (error as Error).message + " " + mix(a, d));
+        return mix(c.value, b);
+    } finally {
+        log.push("finally in counts " + mix(b, c.value));
+    }
+}
+
+async function* streams(seed: number): AsyncGenerator<number, number, number> {
+    const a = mix(seed, 4);
+    const b = box(mix(a, 5));
+    await tick;
+    const c = mix(b.value, a);
+    try {
+        let sent = yield mix(a, c);
+        const d = mix(sent, b.value);
+        await tick;
+        sent = yield mix(d, c);
+        return mix(mix(a, b.value), mix(c, mix(d, sent)));
+    } finally {
+        await tick;
+        log.push("finally in streams " + mix(a, mix(b.value, c)));
+    }
+}
+
+async function thrownInto(seed: number, fails: Promise<number>): Promise<number> {
+    const a = mix(seed, 6);
+    const b = box(mix(a, 7));
+    const c = mix(b.value, 8);
+    const d = box(mix(c, a));
+    try {
+        const got = await fails;
+        return mix(got, a);
+    } catch (error) {
+        collect(true);
+        return mix(mix(a, b.value), mix(c, d.value)) + (error as Error).message.length;
+    }
+}
+
+async function thrownThrough(seed: number, fails: Promise<number>): Promise<number> {
+    const a = mix(seed, 9);
+    const b = box(mix(a, 10));
+    const got = await fails;
+    return mix(mix(a, b.value), got);
+}
+
+async function inner(seed: number): Promise<Error> {
+    const a = mix(seed, 11);
+    const b = box(mix(a, 12));
+    await tick;
+    const c = mix(a, b.value);
+    const error = new Error("made at " + c);
+    log.push("inner keeps " + mix(a, mix(b.value, c)));
+    return error;
+}
+
+async function outer(seed: number): Promise<string> {
+    const a = mix(seed, 13);
+    const b = box(mix(a, 14));
+    const error = await inner(a);
+    collect(true);
+    return names(error) + " " + mix(a, b.value);
+}
+
+async function cellsAcrossCollections(seed: number): Promise<number> {
+    const boxes: Box[] = [];
+    const first = box(mix(seed, 15));
+    const second = box(mix(first.value, 16));
+    const third = box(mix(second.value, 17));
+    const fourth = box(mix(third.value, 18));
+    const fifth = box(mix(fourth.value, 19));
+    const sixth = box(mix(fifth.value, 20));
+    const seventh = box(mix(sixth.value, 21));
+    for (let i = 0; i < 4; i++) {
+        boxes.push(box(mix(i, first.value)));
+        collect(true);
+        await tick;
+        collect(true);
+        boxes.push(box(mix(i, seventh.value)));
+    }
+    let sum = 0;
+    for (const each of [first, second, third, fourth, fifth, sixth, seventh, ...boxes])
+        sum = mix(sum, each.value + each.name.length);
+    return sum;
+}
+
+async function main(): Promise<void> {
+    const results: (number | string)[] = [];
+
+    const whole = counts(1);
+    results.push(whole.next(0).value, whole.next(2).value, whole.next(3).value, whole.next(4).value);
+    const thrown = counts(2);
+    results.push(thrown.next(0).value, thrown.next(5).value, thrown.throw(new Error("from outside")).value);
+    const returned = counts(3);
+    results.push(returned.next(0).value, returned.next(6).value, returned.return(77).value, String(returned.next(0).done));
+
+    const stream = streams(4);
+    results.push((await stream.next(0)).value, (await stream.next(7)).value, (await stream.next(8)).value);
+    const cut = streams(5);
+    results.push((await cut.next(0)).value, (await cut.return(88)).value, String((await cut.next(0)).done));
+    const broken = streams(6);
+    results.push((await broken.next(0)).value);
+    try {
+        await broken.throw(new Error("into the stream"));
+    } catch (error) {
+        results.push((error as Error).message);
+    }
+
+    results.push(await thrownInto(7, tick.then((): number => { throw new Error("late"); })));
+    results.push(await thrownInto(8, Promise.reject(new Error("at once"))));
+    try {
+        results.push(await thrownThrough(9, tick.then((): number => { throw new RangeError("through"); })));
+    } catch (error) {
+        results.push((error as Error).name);
+    }
+    results.push(await outer(10));
+    results.push(...await Promise.all([cellsAcrossCollections(11), cellsAcrossCollections(12), outer(13)]));
+    console.log(results.join("\n"));
+    console.log(log.join("\n"));
+}
+
+main();
+//// sync-iterables-delegated-to-and-awaited-over.ts
+// `yield*` in an async generator and `for await` over what is iterable only synchronously: lists, their iterators, other collections, generators and iterators written by hand.
+// Each value is awaited, each step takes its turns of the job queue, and what the consumer sends, throws or returns goes to the wrapper of the iterator.
+const lines: string[] = [];
+function log(line: string) { lines.push(line); }
+////= show
+////= ticks
+async function turns(count: number) { for (let i = 0; i < count; i++) await null; }
+async function drain(name: string, iterable: AsyncIterable<unknown>) {
+  try { for await (const value of iterable) log(name + " got " + show(value)); log(name + " ends"); } catch (error) { log(name + " threw " + show(error)); }
+}
+async function* delegate(name: string, inner: Iterable<unknown>): AsyncGenerator<unknown, unknown, unknown> {
+  log(name + " starts");
+  try { const result = yield* inner as Iterable<unknown, unknown, unknown>; log(name + " result " + show(result)); return "returned by " + name; } finally { log(name + " finally"); }
+}
+
+log("== lists among other jobs");
+for (const list of [[], [1], [1, 2, 3]]) { ticks("t" + list.length, 9); await drain("list" + list.length, delegate("d" + list.length, list)); await turns(10); }
+
+log("== what the elements are");
+{
+  const thenable = { then(resolve: (value: string) => void) { log("then is called"); resolve("from a thenable"); } };
+  ticks("e", 14);
+  await drain("elements", delegate("d", [Promise.resolve("a promise"), thenable, undefined, null, { plain: 1 }, new Promise(resolve => setTimeout(resolve, 1, "late"))]));
+  await drain("rejected", delegate("d", [1, Promise.reject(new Error("second is rejected")), 3]));
+  await drain("rejected thenable", delegate("d", [{ then(_: unknown, reject: (reason: Error) => void) { reject(new Error("thenable rejects")); } }, 2]));
+}
+
+log("== iterators of lists");
+{
+  const list = ["a", "b", "c"];
+  await drain("values", delegate("d", list.values()));
+  await drain("keys", delegate("d", list.keys()));
+  await drain("entries", delegate("d", list.entries()));
+  const begun = list.values(); begun.next();
+  await drain("begun", delegate("d", begun));
+  await drain("exhausted", delegate("d", begun));
+  log("left " + show(begun.next()));
+  const shared = list.values();
+  const first = delegate("first", shared), second = delegate("second", shared);
+  log(show(await first.next()) + show(await second.next()) + show(await first.next()) + show(await second.next()) + show(await first.next()));
+}
+
+log("== other iterables");
+{
+  function* generator(): Generator<number, string, unknown> { try { const sent = yield 1; log("generator was sent " + show(sent)); yield 2; return "of the generator"; } finally { log("generator finally"); } }
+  function list() { return arguments; }
+  await drain("typed array", delegate("d", new Uint8Array([7, 8])));
+  await drain("iterator of a typed array", delegate("d", new Uint8Array([7, 8]).values()));
+  await drain("text", delegate("d", "h\u{1F600}"));
+  await drain("set", delegate("d", new Set(["x", "y"])));
+  await drain("map", delegate("d", new Map([["k", 1]])));
+  await drain("arguments", delegate("d", (list as (...all: number[]) => Iterable<number>)(4, 5)));
+  await drain("generator", delegate("d", generator()));
+  class Sub extends Array<number> {}
+  await drain("subclass", delegate("d", Sub.from([1, 2])));
+  class Own extends Array<number> { *[Symbol.iterator](): ArrayIterator<number> { yield 42; } }
+  await drain("own iterator method", delegate("d", Own.from([1, 2])));
+  const holes = [1, , 3]; Object.defineProperty(holes, 1, { get() { log("getter of an element"); return "got"; } });
+  await drain("getter", delegate("d", holes));
+  await drain("array-like behind the method of lists", delegate("d", { length: 2, 0: "p", 1: "q", [Symbol.iterator]: Array.prototype.values } as unknown as Iterable<string>));
+}
+
+log("== the list changes meanwhile");
+{
+  const grows = [1, 2];
+  for await (const value of delegate("d", grows)) { log("grows " + show(value)); if (grows.length < 4) grows.push(grows.length + 1); }
+  const shrinks = [1, 2, 3, 4];
+  for await (const value of delegate("d", shrinks)) { log("shrinks " + show(value)); shrinks.length = 2; }
+}
+
+log("== sent, thrown, returned");
+{
+  const sent = delegate("sent", [1, 2]);
+  log(show(await sent.next("a")) + show(await sent.next("b")) + show(await sent.next("c")) + show(await sent.next("d")));
+  ticks("r", 8);
+  const returned = delegate("returned", [1, 2]);
+  log(show(await returned.next())); log(show(await returned.return("asked")) + show(await returned.next()));
+  const returnedPromise = delegate("returned a promise", [1, 2]);
+  await returnedPromise.next(); log(show(await returnedPromise.return(Promise.resolve("asked by a promise"))));
+  ticks("w", 8);
+  const thrown = delegate("thrown", [1, 2]);
+  log(show(await thrown.next()));
+  try { log(show(await thrown.throw(new Error("into a list")))); } catch (error) { log("rejected with " + show(error)); }
+  log(show(await thrown.next()));
+  for await (const value of delegate("left early", [1, 2, 3])) { log("leaves at " + show(value)); break; }
+  const byHand = {
+    [Symbol.iterator]() { return this; }, i: 0,
+    next(value: unknown) { log("next(" + show(value) + ", " + arguments.length + ")"); return { value: this.i, done: this.i++ > 1 }; },
+    return(value: unknown) { log("return(" + show(value) + ")"); return { value: "closed", done: true }; },
+    throw(error: unknown) { log("throw(" + show(error) + ")"); return { value: "recovered", done: false }; },
+  };
+  const hand = delegate("by hand", byHand);
+  log(show(await hand.next("x")) + show(await hand.next("y")) + show(await hand.throw(new Error("z"))) + show(await hand.return("w")) + show(await hand.next()));
+}
+
+log("== an iterator of a list with a `next` of its own");
+{
+  const own = [5, 6].values(); (own as unknown as { next: unknown }).next = function () { log("own next"); return { done: true, value: "own" }; };
+  await drain("own next", delegate("d", own));
+  const counted = [5, 6].values(); const original = counted.next; let calls = 0;
+  (counted as unknown as { next: unknown }).next = function (this: unknown) { calls++; return original.call(this); };
+  await drain("counted", delegate("d", counted));
+  log("calls " + calls);
+  const none = [5].values(); (none as unknown as { next: unknown }).next = undefined;
+  await drain("no next", delegate("d", none));
+  const withReturn = [5, 6].values(); (withReturn as unknown as { return: unknown }).return = function (value: unknown) { log("own return(" + show(value) + ")"); return { done: true, value: "closed" }; };
+  for await (const value of delegate("left early", withReturn)) { log("leaves at " + show(value)); break; }
+  const withThrow = [5, 6].values(); (withThrow as unknown as { throw: unknown }).throw = function (error: unknown) { log("own throw(" + show(error) + ")"); return { done: false, value: "recovered" }; };
+  const thrownInto = delegate("thrown into", withThrow);
+  log(show(await thrownInto.next()) + show(await thrownInto.throw(new Error("e"))) + show(await thrownInto.next()) + show(await thrownInto.next()));
+}
+
+log("== for await");
+{
+  async function* inGenerator(list: Iterable<unknown>) { for await (const value of list) yield value; }
+  ticks("f", 10);
+  await drain("in a generator", inGenerator([1, Promise.resolve(2)]));
+  await drain("in a generator, rejected", inGenerator([1, Promise.reject(new Error("no")), 3]));
+  await drain("in a generator, iterator", inGenerator(["a", "b"].entries()));
+  for await (const value of [1, 2].values()) log("in a function " + show(value));
+  for await (const value of new Set([Promise.resolve("in a set")])) log("in a function " + show(value));
+}
+
+log("== many");
+{
+  const pending: number[] = [];
+  async function* frames(count: number) { for (let i = 0; i < count; i++) { yield* pending; yield* [i]; yield* [i, i].keys(); } }
+  let sum = 0;
+  for await (const value of frames(3000)) sum += value;
+  log("sum " + sum);
+}
+console.log(lines.join("\n"));
+//// the-async-context-follows-awaits-timers-ticks-and-promises.js
+// What AsyncLocalStorage.getStore() answers behind every kind of wait, in functions that run side by side under different stores, under none, and under a store entered half way.
+const { AsyncLocalStorage, AsyncResource } = require("node:async_hooks");
+const first = new AsyncLocalStorage();
+const second = new AsyncLocalStorage();
+const lines = [];
+const seen = where => lines.push(where + " " + String(first.getStore()) + " " + String(second.getStore()));
+
+const later = ms => new Promise(resolve => setTimeout(resolve, ms));
+const tick = () => new Promise(resolve => process.nextTick(resolve));
+const immediate = () => new Promise(resolve => setImmediate(resolve));
+const micro = () => new Promise(resolve => queueMicrotask(resolve));
+const thenable = value => ({ then(resolve) { seen("then of a thenable " + value); resolve(value); } });
+
+async function finishesAtOnce(value) {
+  return value;
+}
+async function suspendsOnce(value) {
+  await null;
+  return value;
+}
+async function suspendsTwice(name, value) {
+  await null;
+  seen(name + " inside, after one");
+  await undefined;
+  seen(name + " inside, after two");
+  return value;
+}
+async function throwsLater(name) {
+  await null;
+  throw new Error(name);
+}
+async function* counts(name) {
+  seen(name + " generator starts");
+  yield 1;
+  await null;
+  seen(name + " generator goes on");
+  yield 2;
+}
+
+async function everyWait(name) {
+  seen(name + " start");
+  await 1;
+  seen(name + " number");
+  await finishesAtOnce(1);
+  seen(name + " call that finishes at once");
+  await suspendsOnce(1);
+  seen(name + " call that suspends");
+  await suspendsTwice(name, 1);
+  seen(name + " call that suspends twice");
+  await Promise.resolve(1);
+  seen(name + " settled promise");
+  await micro();
+  seen(name + " microtask");
+  await tick();
+  seen(name + " tick");
+  await later(1);
+  seen(name + " timer");
+  await immediate();
+  seen(name + " immediate");
+  await thenable(name);
+  seen(name + " thenable");
+  await Promise.all([suspendsOnce(1), later(1), 2, finishesAtOnce(3)]);
+  seen(name + " all");
+  await Promise.race([later(1), later(2)]);
+  seen(name + " race");
+  try {
+    await throwsLater(name);
+  } catch {
+    seen(name + " caught");
+  }
+  for await (const count of counts(name)) seen(name + " step " + count);
+  await suspendsOnce(1).then(() => seen(name + " then"));
+  seen(name + " after then");
+  await suspendsOnce(1).finally(() => seen(name + " finally"));
+  seen(name + " end");
+}
+
+// The promise is made under one store, awaited under a second and resolved under a third.
+async function awaitsWhatOthersResolve() {
+  let resolve;
+  const promise = first.run("maker", () => new Promise(r => (resolve = r)));
+  const waiting = first.run("waiter", async () => {
+    await promise;
+    seen("resolved by another");
+    await suspendsOnce(1);
+    seen("resolved by another, one wait on");
+  });
+  first.run("resolver", () => resolve(1));
+  await waiting;
+  seen("behind the waiter");
+}
+
+// A store that is entered half way holds for the rest of the function and for what it starts, and ends with the job for everybody else.
+async function entersHalfWay() {
+  await null;
+  seen("before enterWith");
+  first.enterWith("entered");
+  seen("after enterWith");
+  await suspendsOnce(1);
+  seen("after enterWith, one wait on");
+  const inner = suspendsTwice("started after enterWith", 1);
+  first.enterWith("entered again");
+  await inner;
+  seen("after the second enterWith");
+}
+async function runsBesideIt() {
+  for (let i = 0; i < 6; i++) {
+    await null;
+    seen("beside " + i);
+  }
+}
+
+async function leavesAndBinds() {
+  await first.run("outer", async () => {
+    await null;
+    first.exit(() => seen("exit"));
+    await first.exit(async () => {
+      await null;
+      seen("exit, one wait on");
+    });
+    seen("behind exit");
+    const bound = AsyncLocalStorage.bind(() => seen("bound"));
+    const snapshot = AsyncLocalStorage.snapshot();
+    const resource = new AsyncResource("test");
+    await second.run("other", async () => {
+      await first.run("inner", async () => {
+        await null;
+        bound();
+        snapshot(() => seen("snapshot"));
+        resource.runInAsyncScope(() => seen("resource"));
+        seen("behind the three");
+      });
+      seen("behind inner");
+    });
+    seen("behind other");
+  });
+  seen("behind outer");
+}
+
+async function main() {
+  seen("nothing entered yet");
+  await everyWait("none");
+  const before = lines.length;
+  await Promise.all([
+    first.run("a", () => everyWait("a")),
+    everyWait("beside"),
+    first.run("b", () => second.run("c", () => everyWait("bc"))),
+    second.run("d", () => everyWait("d")),
+  ]);
+  // Whether the timer of one comes due in front of the immediate of another is the clock's to say, so the lines of the four are printed function by function.
+  const sideBySide = lines.splice(before);
+  for (const name of ["a", "beside", "bc", "d"]) lines.push(...sideBySide.filter(line => line.startsWith(name + " ") || line.startsWith("then of a thenable " + name + " ")));
+  seen("behind all four");
+  await awaitsWhatOthersResolve();
+  await Promise.all([entersHalfWay(), runsBesideIt()]);
+  seen("behind enterWith");
+  await leavesAndBinds();
+  first.disable();
+  await first.run("again", () => suspendsTwice("after disable", 1));
+  seen("end");
+}
+main().then(() => console.log(lines.join("\n")));

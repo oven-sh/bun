@@ -1,0 +1,14 @@
+a class called without new: THROWS TypeError: Cannot call a class constructor Point without |new|
+a constructor that returns another object: 9 true false
+Reflect.construct with another new.target: 1 false true
+a method taken off and called on plain data: 7
+a method taken off and called on nothing: THROWS TypeError: undefined is not an object (evaluating 'undefined.x')
+extends Array: 6 3 true true
+extends Error: Fault m 7 true Fault: m string
+extends Map: 3 2 true
+Symbol.hasInstance: true false
+an extra property on an instance: x,y,z {"x":1,"y":2,"z":3}
+a field deleted from an instance: true y NaN
+private names and brands: true false TypeError
+the class as a value: function Point 2 constructor,sum 3 0
+toString of a class and of a function: function f(a class Point

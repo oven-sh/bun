@@ -1,0 +1,489 @@
+////: parse
+function parse(text: string, reviver?: any): any {
+  return JSON.parse(text, reviver);
+}
+////: show
+function show(text: string) {
+  const value = parse(text);
+  console.log(«1»);
+}
+////: texts
+const texts = [
+  '{"id":7,"name":"row"}',
+  '{"id":7,"name":"row","ok":true}',
+  '{"ok":true,"id":7,"name":"row"}',
+  '{"id":7,"ok":true,"name":"row"}',
+  '{"name":"row","id":7}',
+  '{"name":"row","extra":{"id":1,"name":"inner","more":[1,2]},"id":7}',
+  '{"id":7,"name":"row","id":8}',
+  '{"id":7,"name":"row","ok":1,"ok":2}',
+  '{"id":7,"name":"row","__proto__":{"x":1}}',
+  '{"id":7,"name":"row","0":"zero","1":"one"}',
+  '{"1":"one","id":7,"0":"zero","name":"row"}',
+  '{"id":7}',
+  '{"ok":1}',
+  '{}',
+  '{"id":"text","name":5,"ok":null}',
+  ' { "id" : 7 , "name" : "row" , "ok" : [ ] } ',
+  '{"id":7,"name":"row","\\u006fk":true}',
+  '{"id":7,"n\\u0061me":"escaped","ok":true}',
+  '{"id":7,"name":"row","constructor":1,"toString":2,"hasOwnProperty":3}',
+];
+//// bodies-and-files.ts
+const leak = new Function("value", process.argv.length > 99 ? "" : "return value");
+////= parse
+interface Task { id: number; title: string; done: boolean }
+function line(task: Task): string {
+  return `${task.id} ${task.title} ${task.done ? "x" : " "}`;
+}
+leak({ id: 0, title: "", done: false } satisfies Task);
+console.log(line({ id: 1, title: "a", done: true }));
+const text = '{"id":7,"title":"Zoë ✓","done":false}';
+const list = `[${text},${text},{"id":8,"title":"b","done":true,"extra":null}]`;
+for (let round = 0; round < 3; round++) {
+  console.log(line(await new Response(text).json()), line(await new Request("http://localhost/", { method: "POST", body: text }).json()), line(await new Blob([text]).json()));
+  console.log(((await new Response(list).json()) as Task[]).map(line).join("|"));
+  console.log(line(await new Response(new TextEncoder().encode(text)).json()), JSON.stringify(await Response.json(parse(text)).json()));
+  console.log(line(parse(Buffer.from(text).toString())), line(parse(new String(text) as string)), line(parse({ toString: () => text } as any)));
+}
+for (const bad of ['{"id":7,"title":"a","done":', '{"id":7,,"title":"a"}', '{"id":7 "title":"a"}', "{'id':7}", '{"id":07,"title":"a","done":true}', '{"id":7,"title":"a","done":true}}', '{"id":7,"title":"a\n","done":true}']) {
+  try {
+    console.log(parse(bad));
+  } catch (error) {
+    console.log((error as Error).name, (error as Error).message);
+  }
+  try {
+    console.log(await new Response(bad).json());
+  } catch (error) {
+    console.log((error as Error).name);
+  }
+}
+export {};
+//// booleans-nulls-and-values-that-do-not-fit-behind-them.ts
+// JSON.parse makes records whose fields are booleans, numbers of every width and texts that may be null. A value that its field does not take, behind values that theirs have taken, gives the record up; collections run in between and find every cell whole.
+const leak = new Function("value", process.argv.length > 99 ? "" : "return value");
+function parse(text: string): any {
+  return JSON.parse(text);
+}
+interface Row { id: number; on: boolean; off: boolean; maybe: boolean | null; name: string | null; count: number | null; ratio: number; inner: { deep: boolean }; tags: string[]; last: boolean }
+function read(row: Row): string {
+  return [row.id, row.on, row.off, row.maybe, row.name, row.count, row.ratio, JSON.stringify(row.inner), JSON.stringify(row.tags), row.last, typeof row.on, typeof row.maybe, row.on ? 1 : 0, row.off === false, row.maybe === null, Object.keys(row).join("")].join(" ");
+}
+leak({ id: 0, on: true, off: false, maybe: null, name: null, count: null, ratio: 0.5, inner: { deep: true }, tags: [], last: true } satisfies Row);
+console.log(read({ id: 1, on: false, off: true, maybe: true, name: "n", count: 1, ratio: 1, inner: { deep: false }, tags: ["t"], last: false }));
+
+const fitting: Record<string, string> = { id: "7", on: "true", off: "false", maybe: "null", name: '"n"', count: "3", ratio: "0.25", inner: '{"deep":true}', tags: '["a","b"]', last: "false" };
+const odd = ["null", "true", "0", "1.5", '"text"', "[]", "{}", "[true]", '{"deep":1}', "-0", "1e400", "2147483648"];
+const textWith = (changed: string, value: string) => `{${Object.keys(fitting).map(key => `"${key}":${key === changed ? value : fitting[key]}`).join(",")}}`;
+const lines: string[] = [];
+const kept: unknown[] = [];
+for (let round = 0; round < 3; round++) {
+  lines.push(read(parse(textWith("", ""))));
+  for (const key of Object.keys(fitting)) {
+    for (const value of odd) {
+      const row = parse(textWith(key, value));
+      kept.push(row);
+      lines.push(`${key} ${value}: ${read(row)}`);
+    }
+    Bun.gc(true);
+  }
+  const many = parse(`[${Array.from({ length: 200 }, (_, index) => textWith(index % 7 === 3 ? "last" : index % 7 === 5 ? "off" : "id", index % 7 === 3 ? '"no"' : index % 7 === 5 ? "null" : String(index))).join(",")}]`) as Row[];
+  Bun.gc(true);
+  lines.push(many.map(row => `${row.id}${row.on}${row.off}${row.last}`).join("|"));
+}
+console.log(lines.join("\n"));
+console.log(kept.length, JSON.stringify(kept[kept.length - 1]));
+export {};
+//// changes-after-the-parse.ts
+const leak = new Function("value", process.argv.length > 99 ? "" : "return value");
+////= parse
+interface Config { host: string; port: number; secure?: boolean }
+function url(config: Config): string {
+  return `${config.secure ? "https" : "http"}://${config.host}:${config.port}`;
+}
+leak({ host: "", port: 0, secure: false } satisfies Config);
+console.log(url({ host: "h", port: 1 }));
+const text = '{"host":"example.com","port":8080,"secure":true}';
+function parseText(): any {
+  return parse(text);
+}
+function report(label: string, value: any) {
+  let shown: string;
+  try {
+    shown = url(value);
+  } catch (error) {
+    shown = String(error);
+  }
+  console.log(label, shown, Object.keys(value).join(), JSON.stringify(value), JSON.stringify(Object.getOwnPropertyDescriptors(value)));
+}
+for (let round = 0; round < 3; round++) {
+  let value = parseText();
+  delete value.port;
+  report("delete", value);
+  value.port = 1;
+  report("add again", value);
+  value = parseText();
+  value.extra = [1];
+  value[5] = "five";
+  value[Symbol.for("s")] = 1;
+  report("add", value);
+  console.log(Object.getOwnPropertySymbols(value).length, Reflect.ownKeys(value).length);
+  value = parseText();
+  value.port = "eighty";
+  value.host = 5;
+  value.secure = null;
+  report("other types", value);
+  value = parseText();
+  Object.defineProperty(value, "port", { get: () => 99, enumerable: false, configurable: true });
+  report("getter", value);
+  value = parseText();
+  Object.defineProperty(value, "host", { value: "fixed", writable: false });
+  try {
+    "use strict";
+    value.host = "changed";
+  } catch (error) {
+    console.log((error as Error).constructor.name);
+  }
+  report("read-only", value);
+  value = parseText();
+  Object.freeze(value);
+  console.log(Object.isFrozen(value), Object.isSealed(value), Object.isExtensible(value));
+  try {
+    value.port = 2;
+  } catch (error) {
+    console.log((error as Error).constructor.name);
+  }
+  report("frozen", value);
+  value = parseText();
+  Object.setPrototypeOf(value, { inherited: 1, get port2() { return (this as any).port + 1; } });
+  console.log(value.inherited, value.port2, value instanceof Object);
+  report("prototype", value);
+  value = parseText();
+  Object.setPrototypeOf(value, null);
+  report("no prototype", value);
+  value = parseText();
+  const proxy = new Proxy(value, {});
+  report("proxy", proxy);
+  console.log(structuredClone(parseText()), Bun.deepEquals(parseText(), parseText()), Bun.inspect(parseText()));
+  const map = new Map([[parseText(), 1]]);
+  const weak = new WeakMap([[value, 2]]);
+  console.log(map.size, weak.get(value));
+}
+export {};
+//// collections-during-a-parse.ts
+const leak = new Function("value", process.argv.length > 99 ? "" : "return value");
+////= parse
+interface Entry { id: number; name: string; tags: string[]; child: { value: number; text: string } }
+function check(entry: Entry, n: number): boolean {
+  return entry.id === n && entry.name === `name-${n}` && entry.tags.length === 3 && entry.tags[2] === `t${n}-2` && entry.child.value === n * 2 && entry.child.text === `text ${n} ${"x".repeat(n % 50)}`;
+}
+leak({ id: 0, name: "", tags: [], child: { value: 0, text: "" } } satisfies Entry);
+console.log(check({ id: 1, name: "name-1", tags: ["", "", "t1-2"], child: { value: 2, text: "text 1 x" } }, 1));
+function text(count: number): string {
+  const parts: string[] = [];
+  for (let n = 0; n < count; n++) parts.push(`{"id":${n},"name":"name-${n}","tags":["t${n}-0","t${n}-1","t${n}-2"],"child":{"value":${n * 2},"text":"text ${n} ${"x".repeat(n % 50)}"}}`);
+  return `[${parts.join()}]`;
+}
+const large = text(60000);
+let kept: Entry[][] = [];
+for (let round = 0; round < 6; round++) {
+  const entries: Entry[] = parse(large);
+  let right = 0;
+  for (let n = 0; n < entries.length; n++) if (check(entries[n]!, n)) right++;
+  console.log(entries.length, right);
+  kept.push(entries);
+  if (kept.length > 2) kept.shift();
+  Bun.gc(true);
+  let stillRight = 0;
+  for (const list of kept) for (let n = 0; n < list.length; n += 997) if (check(list[n]!, n)) stillRight++;
+  console.log(stillRight);
+}
+for (let round = 0; round < 20000; round++) {
+  const entry: Entry = parse(`{"id":${round},"name":"name-${round}","tags":["a","b","t${round}-2"],"child":{"value":${round * 2},"text":"text ${round} ${"x".repeat(round % 50)}"}}`);
+  if (!check(entry, round)) console.log("wrong", round);
+  if (round % 5000 === 0) Bun.gc(true);
+}
+console.log("done");
+export {};
+//// duplicate-and-proto-keys.ts
+const leak = new Function("value", process.argv.length > 99 ? "" : "return value");
+////= parse
+interface Pair { first: number; second: number }
+function sum(pair: Pair): number {
+  return pair.first + pair.second;
+}
+////= show	sum(value), Object.keys(value).join(), JSON.stringify(value), Object.getPrototypeOf(value) === Object.prototype, typeof value.__proto__
+leak({ first: 0, second: 0 } satisfies Pair);
+console.log(sum({ first: 1, second: 2 }));
+for (let round = 0; round < 3; round++) {
+  show('{"first":1,"second":2}');
+  show('{"first":1,"first":5,"second":2}');
+  show('{"first":1,"second":2,"first":7}');
+  show('{"first":1,"second":2,"second":3,"first":4}');
+  show('{"__proto__":{"first":9},"second":2}');
+  show('{"first":1,"__proto__":null,"second":2}');
+  show('{"first":1,"second":2,"__proto__":{"third":3}}');
+  show('{"first":1,"second":2,"constructor":1,"toString":2,"hasOwnProperty":3}');
+}
+export {};
+//// every-order-of-the-members-with-undeclared-ones-between.ts
+// Every order of the members of one type, each with members that the type does not declare in front, between and behind: the keys come back in the order of the text.
+type Row = { a: number; b: number; c: number; d: number; e: number; f: number };
+const names = ["a", "b", "c", "d", "e", "f"];
+function permutations(list: string[]): string[][] {
+  if (list.length < 2) return [list];
+  const all: string[][] = [];
+  for (let i = 0; i < list.length; i++) for (const rest of permutations([...list.slice(0, i), ...list.slice(i + 1)])) all.push([list[i], ...rest]);
+  return all;
+}
+function parse(text: string): Row { return JSON.parse(text) as Row; }
+let wrong = 0, checked = 0, sum = 0;
+const orders = permutations(names);
+for (let round = 0; round < 3; round++) {
+  for (let k = 0; k < orders.length; k++) {
+    const order = orders[k];
+    for (const at of [6, 0, 3]) {
+      const keys = [...order.slice(0, at), "x", ...order.slice(at)];
+      if (k & 1) keys.push("y");
+      const row = parse("{" + keys.map((key, i) => JSON.stringify(key) + ":" + i).join(",") + "}");
+      sum += row.a + row.f;
+      checked++;
+      if (Object.keys(row).join() !== keys.join() || JSON.stringify(row) !== "{" + keys.map((key, i) => JSON.stringify(key) + ":" + i).join(",") + "}") wrong++;
+    }
+  }
+}
+console.log(checked, wrong, sum);
+//// extra-and-missing-keys.ts
+const leak = new Function("value", process.argv.length > 99 ? "" : "return value");
+////= parse
+interface User { id: number; name: string; email?: string }
+function greet(user: User): string {
+  return `${user.id}:${user.name}:${user.email}`;
+}
+////= show	greet(value), Object.keys(value).join(), JSON.stringify(value), "email" in value, Object.hasOwn(value, "name"), value.extra
+leak({ id: 0, name: "", email: "" } satisfies User);
+console.log(greet({ id: 1, name: "a" }));
+for (let round = 0; round < 3; round++) {
+  show('{"id":1,"name":"a"}');
+  show('{"id":1,"name":"a","email":"a@b"}');
+  show('{"id":1,"name":"a","extra":true}');
+  show('{"extra":true,"id":1,"name":"a"}');
+  show('{"id":1,"extra":[1,2],"name":"a","email":"e"}');
+  show('{"id":1}');
+  show('{"name":"a"}');
+  show('{"email":"e"}');
+  show("{}");
+  show('{"id":1,"name":"a","0":"zero","10":"ten"}');
+  show('{"1":"one","id":1,"name":"a"}');
+}
+export {};
+//// members-that-the-objects-the-program-makes-never-have.ts
+// Texts that hold members which the program's own objects of that shape never have.
+type Row = { id: number; name: string };
+type Nested = { row: Row; rows: Row[]; tag?: string };
+const made: Row = { id: 1, name: "made" };
+const nest: Nested = { row: made, rows: [made, { id: 2, name: "two" }] };
+const out: string[] = [];
+function show(label: string, value: unknown) {
+  out.push(label + " " + JSON.stringify(value) + " " + (value && typeof value === "object" ? Object.keys(value as object).join() : ""));
+}
+function row(text: string): Row { return JSON.parse(text) as Row; }
+function nested(text: string): Nested { return JSON.parse(text) as Nested; }
+function use(r: Row): string { return r.id + ":" + r.name + ":" + ("ok" in r) + ":" + Object.keys(r).length; }
+////= texts
+for (let round = 0; round < 60; round++) {
+  out.length = 0;
+  for (const text of texts) { const r = row(text); show(text, r); out.push(use(r)); }
+  show("made", made); out.push(use(made));
+  for (const text of [
+    '{"row":{"id":1,"name":"a","x":1},"rows":[{"id":2,"name":"b"},{"id":3,"name":"c","y":2},{"z":0,"id":4,"name":"d"}]}',
+    '{"row":{"id":1,"name":"a"},"rows":[],"tag":"t","more":{"row":{"id":9,"name":"deep","w":1}}}',
+    '{"more":1,"row":{"id":1,"name":"a"},"rows":[{"id":2,"name":"b"}]}',
+  ]) { const n = nested(text); show(text, n); out.push(use(n.row) + "|" + n.rows.map(use).join("|") + "|" + n.tag); }
+  for (const bad of ['{"id":7,"name":"row","ok":}', '{"id":7,"name":"row","ok":true', '{"id":7,"name":"row",}', '{"id":7,"name":"row" "ok":1}', '{"id":7,"ok":tru,"name":"x"}']) {
+    try { show(bad, row(bad)); } catch (e) { out.push(bad + " " + (e as Error).name); }
+  }
+  const revived = JSON.parse('{"id":7,"name":"row","ok":true}', (k, v) => (k === "ok" ? undefined : v)) as Row;
+  show("revived", revived);
+  const written = row('{"id":7,"name":"row","ok":true}'); written.id = 9; (written as any).later = 1; delete (written as any).ok; show("written", written);
+}
+show("nest", nest);
+console.log(out.join("\n"));
+//// members-that-the-objects-the-program-makes-never-have-in-untyped-code.js
+// Texts that hold members which the program's own objects of that shape never have.
+
+
+const made = { id: 1, name: "made" };
+const nest = { row: made, rows: [made, { id: 2, name: "two" }] };
+const out = [];
+function show(label, value) {
+  out.push(label + " " + JSON.stringify(value) + " " + (value && typeof value === "object" ? Object.keys(value).join() : ""));
+}
+function row(text) { return JSON.parse(text); }
+function nested(text) { return JSON.parse(text); }
+function use(r) { return r.id + ":" + r.name + ":" + ("ok" in r) + ":" + Object.keys(r).length; }
+////= texts
+for (let round = 0; round < 60; round++) {
+  out.length = 0;
+  for (const text of texts) { const r = row(text); show(text, r); out.push(use(r)); }
+  show("made", made); out.push(use(made));
+  for (const text of [
+    '{"row":{"id":1,"name":"a","x":1},"rows":[{"id":2,"name":"b"},{"id":3,"name":"c","y":2},{"z":0,"id":4,"name":"d"}]}',
+    '{"row":{"id":1,"name":"a"},"rows":[],"tag":"t","more":{"row":{"id":9,"name":"deep","w":1}}}',
+    '{"more":1,"row":{"id":1,"name":"a"},"rows":[{"id":2,"name":"b"}]}',
+  ]) { const n = nested(text); show(text, n); out.push(use(n.row) + "|" + n.rows.map(use).join("|") + "|" + n.tag); }
+  for (const bad of ['{"id":7,"name":"row","ok":}', '{"id":7,"name":"row","ok":true', '{"id":7,"name":"row",}', '{"id":7,"name":"row" "ok":1}', '{"id":7,"ok":tru,"name":"x"}']) {
+    try { show(bad, row(bad)); } catch (e) { out.push(bad + " " + e.name); }
+  }
+  const revived = JSON.parse('{"id":7,"name":"row","ok":true}', (k, v) => (k === "ok" ? undefined : v));
+  show("revived", revived);
+  const written = row('{"id":7,"name":"row","ok":true}'); written.id = 9; written.later = 1; delete written.ok; show("written", written);
+}
+show("nest", nest);
+console.log(out.join("\n"));
+//// nested-objects-and-arrays.ts
+const leak = new Function("value", process.argv.length > 99 ? "" : "return value");
+////= parse
+interface Item { sku: string; quantity: number }
+interface Customer { id: number; name: string }
+interface Order { customer: Customer; items: Item[]; note?: string; history: Order[] }
+function count(order: Order): number {
+  let sum = order.customer.id;
+  for (const item of order.items) sum += item.quantity * item.sku.length;
+  for (const earlier of order.history) sum += count(earlier);
+  return sum;
+}
+function names(order: Order): string {
+  return [order.customer.name, ...order.items.map(item => item.sku), ...order.history.map(names)].join("/");
+}
+const made: Order = { customer: { id: 1, name: "a" }, items: [{ sku: "s", quantity: 2 }], history: [] };
+leak(made);
+console.log(count(made), names(made));
+function text(depth: number): string {
+  const items = Array.from({ length: depth + 1 }, (_, n) => `{"sku":"sku-${n}","quantity":${n + 1}}`).join();
+  const history = depth ? `${text(depth - 1)},${text(depth - 1)}` : "";
+  return `{"customer":{"id":${depth},"name":"c${depth}"},"items":[${items}],"history":[${history}]}`;
+}
+for (let round = 0; round < 3; round++) {
+  for (let depth = 0; depth < 5; depth++) {
+    const order = parse(text(depth));
+    console.log(count(order), names(order).length, JSON.stringify(order) === text(depth));
+  }
+  const mixed = parse('[{"sku":"a","quantity":1},{"quantity":2,"sku":"b"},{"sku":"c"},{"sku":"d","quantity":4,"x":1},[{"sku":"e","quantity":5}],null,7,{"id":1,"name":"n"}]');
+  console.log(JSON.stringify(mixed), mixed.map((value: any) => (value && typeof value === "object" ? Object.keys(value).join("+") : String(value))).join());
+  const shared = parse('{"customer":{"id":1,"name":"x"},"items":[],"history":[]}');
+  const other = parse('{"customer":{"id":1,"name":"x"},"items":[],"history":[]}');
+  console.log(shared !== other, shared.customer !== other.customer, shared.items !== other.items);
+}
+export {};
+//// parsed-in-untyped-module/decode.js
+export const leak = new Function("value", process.argv.length > 99 ? "" : "return value");
+const seen = new Map();
+export function decode(text) {
+  return JSON.parse(text);
+}
+export function decodeLater(text) {
+  return Promise.resolve(text).then(value => JSON.parse(value));
+}
+export function cached(text) {
+  let value = seen.get(text);
+  if (!value) seen.set(text, (value = JSON.parse(text)));
+  return value;
+}
+//// parsed-in-untyped-module/main.ts
+import { cached, decode, decodeLater, leak } from "./decode.js";
+interface Address { city: string; zip: string }
+interface Person { name: string; age: number; address: Address; previous: Address[] }
+function summary(person: Person): string {
+  return `${person.name} (${person.age}) ${person.address.city} ${person.address.zip} ${person.previous.map(address => address.city).join("+")}`;
+}
+leak({ name: "", age: 0, address: { city: "", zip: "" }, previous: [] } satisfies Person);
+console.log(summary({ name: "a", age: 1, address: { city: "c", zip: "z" }, previous: [] }));
+const text = '{"name":"Ann","age":41,"address":{"city":"Oslo","zip":"0150"},"previous":[{"city":"Lisbon","zip":"1000"},{"zip":"80202","city":"Denver"}]}';
+for (let round = 0; round < 3; round++) {
+  console.log(summary(decode(text) as Person));
+  console.log(summary((await decodeLater(text)) as Person));
+  const holder = { body: undefined as unknown };
+  holder.body = decode(text);
+  console.log(summary(holder.body as Person));
+  console.log(cached(text) === cached(text), summary(cached(text) as Person));
+}
+//// reviver.ts
+const leak = new Function("value", process.argv.length > 99 ? "" : "return value");
+////= parse
+interface Money { amount: number; currency: string }
+function format(money: Money): string {
+  return `${money.amount} ${money.currency}`;
+}
+leak({ amount: 0, currency: "" } satisfies Money);
+console.log(format({ amount: 1, currency: "USD" }));
+const text = '{"price":{"amount":5,"currency":"EUR"},"list":[{"amount":1,"currency":"a"},{"amount":2,"currency":"b"}]}';
+for (let round = 0; round < 3; round++) {
+  const seen: string[] = [];
+  const doubled = parse(text, function (this: any, key: string, value: any) {
+    seen.push(`${key}:${typeof value}:${Object.keys(this).join("+")}`);
+    return typeof value === "number" ? value * 2 : value;
+  });
+  console.log(seen.join(" "), format(doubled.price), doubled.list.map(format).join(), JSON.stringify(doubled));
+  const dropped = parse(text, (key: string, value: any) => (key === "currency" ? undefined : value));
+  console.log(format(dropped.price), Object.keys(dropped.price).join(), JSON.stringify(dropped));
+  const replaced = parse(text, (key: string, value: any) => (key === "price" ? { currency: "X", amount: 0, more: 1 } : value));
+  console.log(format(replaced.price), JSON.stringify(replaced));
+  for (const notCallable of [undefined, null, 1, "f", {}, []] as any[]) {
+    const value = parse(text, notCallable);
+    console.log(format(value.price), value.list.map(format).join());
+  }
+}
+export {};
+//// texts-that-fit-their-type-texts-that-do-not-and-texts-that-are-no-json.ts
+// JSON.parse `as` a record: texts that fit the type in any order of keys, texts whose values do not fit, repeated keys, __proto__, extra keys, every kind of malformed text, primitives and arrays in place of the record, revivers.
+type Inner = { x: number; y?: string };
+type Rec = { id: number; name: string; ok: boolean; tags: string[]; inner: Inner; opt?: number; nul: null; list: Inner[] };
+function show(v: unknown) { return Bun.inspect(v, { depth: 9, sorted: false }).replace(/\s+/g, " "); }
+function tryParse(t: string) { try { const r = JSON.parse(t) as Rec; return show(r) + " | " + Object.keys(r as any).join(); } catch (e: any) { return e.constructor.name + ": " + e.message.split(" (evaluating")[0]; } }
+const texts = [
+  '{"id":1,"name":"a","ok":true,"tags":["x"],"inner":{"x":1},"nul":null,"list":[]}',
+  '{"name":"a","id":1,"list":[{"x":1,"y":"q"},{"y":"r","x":2}],"ok":false,"tags":[],"inner":{"y":"s","x":-0},"nul":null}',
+  '{"id":"not a number","name":5,"ok":null,"tags":{"0":"x"},"inner":[1],"nul":1,"list":"no"}',
+  '{"id":1,"id":2,"name":"a","name":"b"}', '{"__proto__":{"evil":1},"id":1}', '{"id":1,"extra":{"deep":[1,{"a":null}]},"constructor":1,"toString":2}',
+  '{"id":1e400,"name":"\\u0041\\ud83d\\ude00\\n","ok":true}', '{"id":-0,"opt":0.1e1,"inner":{"x":1E+2}}', '{"id":01}', '{"id":1,}', '{"id":+1}', "{'id':1}", '{"id":1}x', ' \n\t{"id" : 1 } \r', '{"id":.5}', '{"id":1.}', '{"id":-}', '{"name":"\t"}', '{"name":"\\x41"}', '{"name":"\\u12"}', '{"name":"unterminated', '', 'null', '[]', '1', '"s"', 'true', '[1,2,,3]', '{"10":1,"2":2,"a":3,"1":4}', '{"":1," ":2}', '﻿{"id":1}', '{"id":123456789012345678901234567890}', '{"id":9007199254740993}', '{"tags":["a","b",3,null,["n"]]}', '{"list":[{"x":1},null,5,{"x":"s"}]}', '{"inner":null}', '{"inner":{"x":1,"x":{"y":2}}}',
+];
+for (const t of texts) console.log(tryParse(t));
+const r = JSON.parse(texts[0]) as Rec; console.log(r.id + 1, r.name.length, r.tags.length, r.inner.x * 2, r.opt === undefined, r.list.length, Object.getPrototypeOf(r) === Object.prototype, Array.isArray(r.tags));
+const bad = JSON.parse(texts[2]) as Rec; console.log(typeof bad.id, typeof bad.name, bad.ok, typeof bad.tags, Array.isArray(bad.inner), bad.nul, typeof bad.list);
+console.log(show(JSON.parse('{"a":1,"b":[1,2,{"c":3}]}', function (k, v) { return typeof v === "number" ? v * 2 : v; })), show(JSON.parse('{"a":1,"b":2}', (k, v) => (k === "a" ? undefined : v))));
+function sum(n: number) { let t = 0; for (let i = 0; i < n; i++) { const o = JSON.parse('{"id":' + i + ',"name":"n","ok":true,"tags":["a","b"],"inner":{"x":' + i / 2 + '},"nul":null,"list":[{"x":1}]}') as Rec; t += o.id + o.inner.x + o.tags.length + o.list[0].x; } return t; } console.log(sum(300));
+//// values-that-do-not-fit.ts
+const leak = new Function("value", process.argv.length > 99 ? "" : "return value");
+////= parse
+interface Row { count: number; ok: boolean; name: string; tags: string[]; inner: { depth: number } }
+function read(row: Row): string {
+  return [typeof row.count, row.count, typeof row.ok, row.ok, typeof row.name, row.name, Array.isArray(row.tags), JSON.stringify(row.tags), JSON.stringify(row.inner)].join(" ");
+}
+function total(rows: Row[]): number {
+  let sum = 0;
+  for (const row of rows) sum += row.count;
+  return sum;
+}
+////= show	read(value), JSON.stringify(value)
+leak({ count: 0, ok: true, name: "", tags: [], inner: { depth: 0 } } satisfies Row);
+const rows: Row[] = [];
+for (let i = 0; i < 4; i++) rows.push({ count: i, ok: i % 2 === 0, name: `n${i}`, tags: [`t${i}`], inner: { depth: i } });
+console.log(total(rows), read(rows[3]!));
+const fits = '"ok":true,"name":"n","tags":["a"],"inner":{"depth":1}';
+for (let round = 0; round < 3; round++) {
+  for (const count of ["1", "-1", "0", "-0", "1.5", "1e3", "1e21", "2147483647", "2147483648", "-2147483648", "-2147483649", "9007199254740993", "1e400", "null", '"7"', "true", "[]", "{}"])
+    show(`{"count":${count},${fits}}`);
+  show('{"count":1,"ok":null,"name":"n","tags":["a"],"inner":{"depth":1}}');
+  show('{"count":1,"ok":0,"name":"n","tags":["a"],"inner":{"depth":1}}');
+  show('{"count":1,"ok":true,"name":null,"tags":["a"],"inner":{"depth":1}}');
+  show('{"count":1,"ok":true,"name":5,"tags":["a"],"inner":{"depth":1}}');
+  show('{"count":1,"ok":true,"name":"n","tags":{"0":"a"},"inner":{"depth":1}}');
+  show('{"count":1,"ok":true,"name":"n","tags":[1,null,{}],"inner":{"depth":1}}');
+  show('{"count":1,"ok":true,"name":"n","tags":null,"inner":null}');
+  show('{"count":1,"ok":true,"name":"n","tags":["a"],"inner":{"depth":"deep"}}');
+  show('{"count":1,"ok":true,"name":"n","tags":["a"],"inner":[1]}');
+  show('{"count":1,"ok":true,"name":"n","tags":["a"],"inner":{"depth":1,"more":2}}');
+  console.log(total(parse(`[{"count":1,${fits}},{"count":2.5,${fits}},{"count":"x",${fits}}]`)));
+}
+export {};

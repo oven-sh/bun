@@ -6495,6 +6495,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
+    pub(crate) fn should_remove_dead_statements(&self) -> bool {
+        let features = &self.options.features;
+        features.minify_syntax || (features.is_library && features.dead_code_elimination)
+    }
+
     pub(crate) fn select_local_kind(&self, kind: js_ast::s::Kind) -> js_ast::s::Kind {
         // Use "var" instead of "let" and "const" if the variable declaration may
         // need to be separated from the initializer. This allows us to safely move
@@ -6503,6 +6508,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
             && self.current_scope().parent.is_none()
             && !kind.is_using()
+            && !(kind == js_ast::s::Kind::KConst
+                && self.options.features.is_library
+                && !self.will_wrap_module_in_try_catch_for_using)
         {
             return js_ast::s::Kind::KVar;
         }
@@ -6512,6 +6520,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if self.options.bundle
             && kind == js_ast::s::Kind::KConst
             && self.options.features.minify_syntax
+            && !self.options.features.is_library
         {
             return js_ast::s::Kind::KLet;
         }
@@ -8987,6 +8996,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // `part` is `ManuallyDrop`; falls out of scope without dropping.
                     }
                 }
+
+                // SAFETY: `parts_end <= parts.len()`; tail slots are abandoned (arena-/process-lifetime).
+                unsafe { parts.set_len(parts_end) };
 
                 // We need to iterate multiple times if an import-equals statement was
                 // removed and there are more import-equals statements that may be removed

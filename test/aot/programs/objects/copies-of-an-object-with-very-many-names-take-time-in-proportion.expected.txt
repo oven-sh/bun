@@ -1,0 +1,11 @@
+a spread of what was parsed: 400000 names, the last holds 399999
+a spread of the copy, whose keys were listed: 400000 names, the last holds 399999
+0
+a spread after its symbols were listed: 400000 names, the last holds 399999
+a spread with one more name: 400001 names, the last holds 399999
+a spread of two: 400001 names, the last holds 399999
+Object.assign to an empty object: 400001 names, the last holds 399999
+Object.assign to itself and another: 400001 names, the last holds 399999
+a rest pattern: 400000 names, the last holds 399999
+walked
+a spread after a walk over its names: 400000 names, the last holds 399999

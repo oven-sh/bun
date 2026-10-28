@@ -1,0 +1,46 @@
+error: TS100306: Expected "{" but found "("
+error: TS100306: Expected identifier but found ")"
+error: TS1009: Trailing comma not allowed.
+error: TS100306: "#x" has already been declared
+error: TS100306: Expected identifier but found "["
+error: TS100306: Invalid field name
+error: TS100306: Cannot use "let" as an identifier here
+error: TS100306: Expected identifier but found "@"
+error: TS100306: Expected ")" but found "dec"
+error: TS100306: Expected ";" but found "a"
+error: TS100306: Unexpected )
+error: TS100306: Expected "class" but found "abstract"
+error: TS100306: Unexpected {
+error: TS100306: Expected ">" but found "T"
+error: TS100306: Expected identifier but found ">"
+error: TS100306: Expected ")" but found "("
+error: TS100306: Expected ";" but found ")"
+error: TS100306: Expected ")" but found "a"
+error: TS100306: Unexpected =>
+error: TS100306: Unexpected #a
+error: TS100306: Unexpected =
+error: TS100306: Unexpected if
+error: TS100306: Expected ")" but found ","
+error: TS100306: Expected ")" but found "b"
+error: TS100306: Expected "from" but found ","
+error: TS100306: Expected identifier but found "{"
+error: TS100306: Expected ";" but found "x"
+error: TS100306: Expected string but found "x"
+error: TS100306: Expected "]" but found ","
+error: TS100306: Expected ":" but found "j"
+error: TS100306: Unexpected :
+error: TS100306: Expected ";" but found "]"
+error: TS100306: Expected identifier but found ":"
+error: TS100306: Expected ":" but found ";"
+error: TS100306: Unexpected }
+error: TS100306: Expected ")" but found "="
+error: TS100306: Expected ")" but found "1"
+error: TS100306: Expected "{" but found end of file
+error: TS100306: Unexpected "import"
+error: TS100306: Cannot use "declare" with a "using" declaration
+error: TS100306: Unexpected "async"
+error: TS100306: Expected ";" but found "var"
+error: TS100306: Expected ";" but found "declare"
+error: TS100306: Unexpected ?
+error: TS100306: Expected ";" but found "A"
+error: TS100306: The modifier "in" is not valid here

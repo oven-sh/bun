@@ -1,0 +1,154 @@
+////: attempt
+function attempt(label, run) {
+  try {
+    console.log(label, show(run()));
+  } catch (error) {
+    console.log(label, "threw", error.constructor.name);
+  }
+}
+////: attempt-2
+export function attempt(label, run) {
+  try {
+    console.log(label, show(run()));
+  } catch (error) {
+    console.log(label, "threw", error.constructor.name);
+  }
+}
+////: console-log
+console.log("this file is strict:", (function () {
+  return this === undefined;
+})());
+////: for
+for (let i = 0; i < 2000; i++) {
+  for (const name in uses) {
+    const answer = uses[name]({ x: i, y: 2 });
+    checksum += typeof answer === "number" ? answer : 1;
+  }
+}
+////: lines
+{
+  «1»: «2»,
+  «3»: «4»
+}
+////: lines-10
+«1» = function () {
+  return «2»;
+};
+////: lines-11
+exports.«1» = function () {
+  return «2»(«3»);
+};
+////: lines-12
+function «1»(«2») {
+  return «3»(«4»);
+}
+////: lines-15
+exports.«1» = function () {
+  return «2»;
+};
+////: lines-17
+function «1»(«2») {
+  return «3»;
+}
+////: lines-19
+function «1»(«2», «3») {
+  this.«2» = «2»;
+  this.«3» = «3»;
+}
+////: lines-21
+«1»(point) {
+  point.z = 3;
+  return "z" in point;
+}
+////: lines-5
+{
+  "name": «1»,
+  «2»: «3»,
+  «4»: «5»
+}
+////: lines-6
+{
+  "name": «1»,
+  «2»: «3»,
+  "dependencies": {
+    «4»: «5»
+  }
+}
+////: lines-8
+exports.«1» = function («2», «3») {
+  return «4»(«3»);
+};
+////: show
+function show(value, depth) {
+  depth = depth || 0;
+  switch (typeof value) {
+    case "number":
+      return Object.is(value, -0) ? "-0" : String(value);
+    case "string":
+      return JSON.stringify(value);
+    case "bigint":
+      return value + "n";
+    case "function":
+      return "function " + value.name;
+    case "symbol":
+    case "undefined":
+    case "boolean":
+      return String(value);
+  }
+  if (value === null) return "null";
+  if (depth > 2) return "...";
+  var parent = Object.getPrototypeOf(value);
+  var kind = parent === null ? "no-prototype" : typeof parent.constructor === "function" ? parent.constructor.name : "odd-prototype";
+  var parts = [];
+  if (Array.isArray(value)) {
+    for (var i = 0; i < value.length; i++) parts.push(i in value ? show(value[i], depth + 1) : "hole");
+    return kind + "[" + parts.join(", ") + "]";
+  }
+  if (value instanceof Map || value instanceof Set) return kind + "(" + show(Array.from(value), depth + 1) + ")";
+  Reflect.ownKeys(value).forEach(function (key) {
+    var property = Reflect.getOwnPropertyDescriptor(value, key);
+    parts.push(String(key) + ": " + ("value" in property ? show(property.value, depth + 1) : "accessor"));
+  });
+  return kind + "{" + parts.join(", ") + "}";
+}
+////: show-2
+export function show(value, depth) {
+  depth = depth || 0;
+  switch (typeof value) {
+    case "number":
+      return Object.is(value, -0) ? "-0" : String(value);
+    case "string":
+      return JSON.stringify(value);
+    case "bigint":
+      return value + "n";
+    case "function":
+      return "function " + value.name;
+    case "symbol":
+    case "undefined":
+    case "boolean":
+      return String(value);
+  }
+  if (value === null) return "null";
+  if (depth > 2) return "...";
+  var parent = Object.getPrototypeOf(value);
+  var kind = parent === null ? "no-prototype" : typeof parent.constructor === "function" ? parent.constructor.name : "odd-prototype";
+  var parts = [];
+  if (Array.isArray(value)) {
+    for (var i = 0; i < value.length; i++) parts.push(i in value ? show(value[i], depth + 1) : "hole");
+    return kind + "[" + parts.join(", ") + "]";
+  }
+  if (value instanceof Map || value instanceof Set) return kind + "(" + show(Array.from(value), depth + 1) + ")";
+  Reflect.ownKeys(value).forEach(function (key) {
+    var property = Reflect.getOwnPropertyDescriptor(value, key);
+    parts.push(String(key) + ": " + ("value" in property ? show(property.value, depth + 1) : "accessor"));
+  });
+  return kind + "{" + parts.join(", ") + "}";
+}
+////: show-3
+////= show
+
+////= attempt
+////: show-4
+////= show-2
+
+////= attempt-2

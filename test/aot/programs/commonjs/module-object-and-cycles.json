@@ -1,0 +1,10 @@
+{
+  "entryPoints": [
+    "./cycle-a.js",
+    "./cycle-b.js",
+    "./function-exports.js",
+    "./module-object.js",
+    "./primitive-exports.js"
+  ],
+  "skipInShell": "it needs Bun's CommonJS modules"
+}

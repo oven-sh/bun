@@ -2664,9 +2664,12 @@ impl<'a> Resolver<'a> {
         if let Some(package_json) = package_json {
             let mut buf = ::bun_paths::path_buffer_pool::get();
             for main in package_json.main_fields.values() {
-                let target = ::bun_paths::resolve_path::join_abs_string_buf::<
+                // A main field is file content of any length. The resolver looks up only one that fits a path buffer.
+                let Some(target) = ::bun_paths::resolve_path::join_abs_string_buf_checked::<
                     ::bun_paths::resolve_path::platform::Auto,
-                >(path, &mut buf.0, &[&main[..]]);
+                >(path, &mut buf.0, &[&main[..]]) else {
+                    continue;
+                };
                 busted |= self.bust_dir_cache_and_missing_parents(target);
             }
         }

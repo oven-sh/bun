@@ -298,6 +298,18 @@ describe("fake node cli", () => {
       });
     });
 
+    test("a main field that is longer than a path is not found", async () => {
+      using temp = tempDir("fake-node-main", {
+        "pkg/package.json": JSON.stringify({ main: "./" + Buffer.alloc(8192, "a").toString() + ".js" }),
+      });
+      const { stdout, stderr, exitCode } = await runAsNode(String(temp), ["./pkg"]);
+      expect({ stdout, error: stderr.split("\n")[0].slice(0, 24), exitCode }).toEqual({
+        stdout: "",
+        error: "error: Module not found ",
+        exitCode: 1,
+      });
+    });
+
     test("a package.json that does not parse adds no output", async () => {
       using temp = tempDir("fake-node-main", {
         "pkg/package.json": "{",

@@ -387,9 +387,12 @@ impl<'h> HirBuilder<'h> {
         self.import_bindings
     }
 
-    /// See [`Host::namespace_member`].
+    /// See [`Host::namespace_member`]. The visit pass makes such an item a symbol of its own.
     pub(crate) fn namespace_member(&self, item: Ref) -> Option<NamespaceMember> {
-        self.host.namespace_member(self.resolve_ref(item))
+        if !item.is_symbol() {
+            return None;
+        }
+        self.host.namespace_member(item)
     }
 
     /// What the namespace of `member` is bound to, where that is an import of a module that is known here.

@@ -22,7 +22,7 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { resolve } from "node:path";
 
@@ -105,6 +105,21 @@ if (extraArgs.length > 0) {
   process.exit(run("cargo", ["miri", "test", ...extraArgs], { env }).status ?? 1);
 }
 
+// How long one crate gets for its wait on cargo's build lock, its build and
+// its tests. Past that the crate is stopped and fails, and its output is
+// printed: under Miri libtest runs one test at a time and prints each name
+// first, so the output ends at the test that did not finish.
+const requestedLimit = process.env.BUN_MIRI_CRATE_LIMIT_MINUTES;
+const CRATE_LIMIT_MINUTES = requestedLimit ? Number(requestedLimit) : 45;
+if (!(CRATE_LIMIT_MINUTES > 0)) {
+  console.error(
+    `\x1b[31m[error]\x1b[0m BUN_MIRI_CRATE_LIMIT_MINUTES is "${requestedLimit}": it takes a number of minutes above 0`,
+  );
+  process.exit(1);
+}
+// A longer delay than this overflows in `setTimeout` and fires at once.
+const CRATE_LIMIT_MS = Math.min(CRATE_LIMIT_MINUTES * 60_000, 2 ** 31 - 1);
+
 // Default set: Miri interprets one test at a time per process, so a single
 // `cargo miri test -p a -p b ...` is serial end to end. Build everything once,
 // then run one `cargo miri test -p <crate>` per crate concurrently.
@@ -112,16 +127,24 @@ const allCrates = MIRI_CRATES.flatMap(c => ["-p", c]);
 console.log(`\x1b[36m[miri]\x1b[0m cargo miri test --no-run ${allCrates.join(" ")}`);
 if (run("cargo", ["miri", "test", "--no-run", ...allCrates], { env }).status !== 0) process.exit(1);
 
-// How long one crate gets for its wait on cargo's build lock, its build and
-// its tests. Past that the crate is stopped and fails, and its output is
-// printed: under Miri libtest runs one test at a time and prints each name
-// first, so the output ends at the test that did not finish.
-const requestedLimit = Number(process.env.BUN_MIRI_CRATE_LIMIT_MINUTES);
-const CRATE_LIMIT_MINUTES = requestedLimit > 0 ? requestedLimit : 45;
-// A longer delay than this overflows in `setTimeout` and fires at once.
-const CRATE_LIMIT_MS = Math.min(CRATE_LIMIT_MINUTES * 60_000, 2 ** 31 - 1);
-
 type Result = { crate: string; ok: boolean; overLimit: boolean; seconds: number; output: string };
+
+// The processes that `pid` started. Linux lists them under each thread of
+// `pid`. `pgrep` does it elsewhere, and on a kernel without that list.
+function childrenOf(pid: number): number[] {
+  let list: string;
+  try {
+    const threads = readdirSync(`/proc/${pid}/task`);
+    list = threads.map(thread => readFileSync(`/proc/${pid}/task/${thread}/children`, "utf8")).join(" ");
+  } catch {
+    const listed = spawnSync("pgrep", ["-P", `${pid}`], { encoding: "utf8" });
+    if (listed.error) {
+      console.error(`\x1b[31m[miri]\x1b[0m \`pgrep\` did not run: the processes that ${pid} started are not stopped`);
+    }
+    list = listed.stdout ?? "";
+  }
+  return list.split(/\s+/).filter(Boolean).map(Number);
+}
 
 // Stops `cargo miri test` and every process under it, Miri among them. A
 // process is frozen before its children are listed, so that it starts no more.
@@ -135,8 +158,7 @@ function stopTree(pid: number) {
   } catch {
     return;
   }
-  const children = spawnSync("pgrep", ["-P", `${pid}`], { encoding: "utf8" }).stdout ?? "";
-  children.split("\n").filter(Boolean).map(Number).forEach(stopTree);
+  childrenOf(pid).forEach(stopTree);
   try {
     process.kill(pid, "SIGKILL");
   } catch {
@@ -151,11 +173,16 @@ function testCrate(crate: string): Promise<Result> {
     const child = spawn("cargo", ["miri", "test", "-p", crate, "--color", "always"], { cwd: repo, env });
     let overLimit = false;
     let timer = setTimeout(() => {
-      overLimit = true;
-      if (child.pid !== undefined) stopTree(child.pid);
+      // Once `cargo` has exited, its process id can be that of another process.
+      overLimit = child.exitCode === null && child.signalCode === null;
+      if (overLimit && child.pid !== undefined) stopTree(child.pid);
       // `close` comes when every process that holds the pipes is gone. Do not
       // wait for one that `stopTree` did not reach.
-      timer = setTimeout(finish, 5_000, null);
+      timer = setTimeout(() => {
+        child.stdout.destroy();
+        child.stderr.destroy();
+        finish(child.exitCode);
+      }, 5_000);
     }, CRATE_LIMIT_MS);
     const finish = (code: number | null) => {
       clearTimeout(timer);

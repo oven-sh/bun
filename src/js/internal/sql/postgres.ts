@@ -682,7 +682,7 @@ class ListenConnection {
 // COPY. The native query calls `copy(chunk)` when the server enters copy mode, then with each chunk (TO STDOUT) or
 // each time the socket has drained (FROM STDIN). The stream ends as the query does. START_REPLICATION on a
 // replication connection opens both directions at once: the readable carries the server's CopyData, the writable
-// the client's, and `copy(null)` says that the server has sent its CopyDone.
+// the client's.
 
 type CopyHandle = $Bindgen.PostgresSQLQuery;
 
@@ -718,19 +718,25 @@ class CopyStreams {
     this.handle?.setCopy(onCopy.bind(this), source === null ? 1 : sink === null ? 0 : 2);
   }
 
-  readable() {
-    if (this.source !== null) {
-      throw $ERR_INVALID_STATE("readable() was already called on this query");
+  /** The other direction can be added while the server has not answered. */
+  #another(method: string, has: boolean) {
+    if (has) {
+      throw $ERR_INVALID_STATE(`${method}() was already called on this query`);
     }
+    if (this.opened) {
+      throw $ERR_INVALID_STATE("readable() and writable() must be called before the server answers the query");
+    }
+  }
+
+  readable() {
+    this.#another("readable", this.source !== null);
     const source = (this.source = new CopySource(this));
     this.#setCopy();
     return new ReadableStream(source, new ByteLengthQueuingStrategy({ highWaterMark: 64 * 1024 }));
   }
 
   writable() {
-    if (this.sink !== null) {
-      throw $ERR_INVALID_STATE("writable() was already called on this query");
-    }
+    this.#another("writable", this.sink !== null);
     const sink = (this.sink = new CopySink(this));
     this.#setCopy();
     return new WritableStream(sink);
@@ -744,21 +750,19 @@ class CopyStreams {
 }
 
 /** @returns false when the socket is to be paused until pull() */
-function onCopy(this: CopyStreams, chunk: Uint8Array | null | undefined) {
-  if (chunk === undefined) {
-    this.opened = true;
-    this.sink?.drained();
-    return true;
+function onCopy(this: CopyStreams, chunk: Uint8Array | undefined) {
+  if (chunk !== undefined) {
+    return this.source?.push(chunk) ?? true;
   }
-  const source = this.source;
-  if (source === null) {
-    return true;
+  this.opened = true;
+  const { source, sink } = this;
+  if (sink !== null) {
+    sink.drained();
+  } else if (source !== null && source.controller === null) {
+    // Cancelled before the server answered: a CopyBoth session ends with the client's CopyDone.
+    this.handle!.copyDone();
   }
-  if (chunk === null) {
-    source.end();
-    return true;
-  }
-  return source.push(chunk);
+  return true;
 }
 
 class CopySource {
@@ -780,6 +784,7 @@ class CopySource {
     this.streams.handle?.copyResume();
   }
 
+  /** `controller` stays null: the chunks that still arrive are dropped. */
   cancel() {
     this.controller = null;
     this.streams.query.cancel();
@@ -799,15 +804,6 @@ class CopySource {
     }
     controller.enqueue(chunk);
     return controller.desiredSize! > 0;
-  }
-
-  /** The server has sent its CopyDone; the query ends with the writable. */
-  end() {
-    const controller = this.controller;
-    if (controller !== null) {
-      this.controller = null;
-      controller.close();
-    }
   }
 }
 
@@ -854,9 +850,6 @@ class CopySink {
     this.controller = controller;
     const query = this.streams.query;
     query.$then(onCopyInEnd.bind(this), onCopyInError.bind(this));
-    if (this.streams.opened) {
-      return;
-    }
     const waiting = (this.waiting = $newPromise<void>());
     query.execute();
     return waiting;

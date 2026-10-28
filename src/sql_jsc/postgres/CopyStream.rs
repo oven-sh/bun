@@ -1,12 +1,11 @@
 //! The query's one callback, `copy(chunk)`, is called when the server enters copy mode, then with
 //! each chunk (out) or each time the socket has drained (in). In a CopyBoth session, the one that
-//! START_REPLICATION opens on a replication connection, it is also called with `null` when the
-//! server has sent its CopyDone.
+//! START_REPLICATION opens on a replication connection, it is called with both.
 
 use super::{MAX_PIPELINE_SIZE, PostgresSQLConnection, Socket};
 use crate::jsc::{AutoFlush as _, JSValue, JsResult, js_error_to_postgres};
 use crate::postgres::PostgresSQLQuery;
-use crate::postgres::error_jsc::postgres_error_to_js;
+use crate::postgres::error_jsc::{create_postgres_error, postgres_error_to_js};
 use crate::postgres::postgres_request as PostgresRequest;
 use crate::postgres::postgres_sql_query::{CopyStream, js};
 use bun_core::String as BunString;
@@ -15,12 +14,15 @@ use bun_jsc::JSUint8Array;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_ptr::{ParentRef, RefPtr};
 use bun_sql::postgres::AnyPostgresError;
+use bun_sql::postgres::PostgresErrorOptions;
 use bun_sql::postgres::postgres_protocol as protocol;
 use bun_sql::shared::ConnectionFlags;
 
 const COPY_DONE: [u8; 5] = [b'c', 0, 0, 0, 4];
 const COPY_NEEDS_STREAM: &[u8] =
     b"COPY ... FROM STDIN needs query.writable() and COPY ... TO STDOUT needs query.readable()";
+const COPY_IN_HAS_NO_READABLE: &[u8] = b"COPY ... FROM STDIN has no readable()";
+const COPY_OUT_HAS_NO_WRITABLE: &[u8] = b"COPY ... TO STDOUT has no writable()";
 
 // The server ends the session for a longer message.
 const MAX_COPY_DATA_LENGTH: usize = 0x3fff_fffe - 4;
@@ -135,6 +137,15 @@ impl PostgresSQLConnection {
         );
     }
 
+    fn reject_copy_without(&self, request: &PostgresSQLQuery, both: &[u8]) {
+        let message = if request.flags.get().copy == CopyStream::Both {
+            both
+        } else {
+            COPY_NEEDS_STREAM
+        };
+        self.reject_copy(request, message);
+    }
+
     pub(super) fn on_copy_in_response(
         &self,
         request: &PostgresSQLQuery,
@@ -148,13 +159,13 @@ impl PostgresSQLConnection {
             self.writer().write(&protocol::SYNC)?;
         }
         self.flush_data();
-        self.reject_copy(request, COPY_NEEDS_STREAM);
+        self.reject_copy_without(request, COPY_IN_HAS_NO_READABLE);
         Ok(())
     }
 
     pub(super) fn on_copy_out_response(&self, request: &PostgresSQLQuery) {
         if !self.open_copy(request, &[CopyStream::Readable], CopyStream::ReadableOpen) {
-            self.reject_copy(request, COPY_NEEDS_STREAM);
+            self.reject_copy_without(request, COPY_OUT_HAS_NO_WRITABLE);
         }
     }
 
@@ -181,7 +192,22 @@ impl PostgresSQLConnection {
 
     /// `upcoming`: how many bytes the read still holds, `data` included.
     pub(super) fn on_copy_data(&self, data: &[u8], upcoming: usize) {
-        if self.copying(CopyStream::reads).is_none() {
+        let Some(request) = self.copying(CopyStream::reads) else {
+            return;
+        };
+        let state = request.flags.get().copy;
+        if state != CopyStream::ReadableOpen {
+            // One chunk per message: an XLogData carries no length of its own.
+            match JSUint8Array::from_bytes(self.global(), data.into()) {
+                Ok(chunk) => {
+                    if self.call_copy(&request, chunk) == JSValue::FALSE
+                        && state == CopyStream::BothOpen
+                    {
+                        self.set_reading(false);
+                    }
+                }
+                Err(err) => self.fail(b"Failed to read data", js_error_to_postgres(err)),
+            }
             return;
         }
         self.copy_out.with_mut(|out| {
@@ -216,12 +242,13 @@ impl PostgresSQLConnection {
         let Some(request) = self.copying(CopyStream::reads) else {
             return;
         };
-        if request.flags.get().copy == CopyStream::BothOpen {
-            // The reply ends with the CopyDone that the writable sends.
-            request.update_flags(|f| f.copy = CopyStream::BothSending);
-            self.call_copy(&request, JSValue::NULL);
-        } else {
-            request.update_flags(|f| f.copy = CopyStream::Readable);
+        let both = request.flags.get().copy == CopyStream::BothOpen;
+        request.update_flags(|f| f.copy = CopyStream::Readable);
+        if both {
+            // The reply ends once the client has sent its CopyDone too, and what is left of it
+            // is read however full the readable is.
+            self.set_reading(true);
+            self.write_copy_end(None);
         }
     }
 
@@ -305,22 +332,45 @@ impl PostgresSQLQuery {
         let Some(connection) = self.copy_connection(CopyStream::writes) else {
             return;
         };
-        // A walsender ends the session on a CopyFail: a CopyDone ends the stream either way.
-        let (next, failure) = match self.flags.get().copy {
-            CopyStream::BothOpen => (CopyStream::ReadableOpen, None),
-            CopyStream::BothSending => (CopyStream::None, None),
-            _ => (CopyStream::None, failure),
-        };
-        self.update_flags(|f| f.copy = next);
-        connection.write_copy_end(failure);
+        if self.flags.get().copy != CopyStream::BothOpen {
+            self.update_flags(|f| f.copy = CopyStream::None);
+            connection.write_copy_end(failure);
+            return;
+        }
+        self.end_copy_both(&connection);
+        if let Some(message) = failure {
+            let err = create_postgres_error(
+                connection.global(),
+                message,
+                &PostgresErrorOptions {
+                    code: b"ERR_POSTGRES_QUERY_CANCELLED",
+                    ..Default::default()
+                },
+            )
+            .unwrap_or_else(|err| connection.global().take_error(err));
+            self.reject_in_flight(err, connection.global());
+        }
+    }
+
+    /// The client's CopyDone: the server answers with its own and ends the command. A walsender
+    /// ends the session on a CopyFail, so that is what an abort sends too. The server's answer has
+    /// to be read, however full the readable is.
+    fn end_copy_both(&self, connection: &PostgresSQLConnection) {
+        self.update_flags(|f| f.copy = CopyStream::BothClosing);
+        connection.set_reading(true);
+        connection.write_copy_end(None);
     }
 
     /// A backend waiting for room in an unread socket ignores a CancelRequest.
     pub(super) fn cancel_copy(&self) {
-        if let Some(connection) = self.copy_connection(CopyStream::reads) {
-            connection.set_reading(true);
-            self.reject_in_flight(connection.cancelled_error(None), connection.global());
+        let Some(connection) = self.copy_connection(CopyStream::reads) else {
+            return;
+        };
+        if self.flags.get().copy == CopyStream::BothOpen {
+            self.end_copy_both(&connection);
         }
+        connection.set_reading(true);
+        self.reject_in_flight(connection.cancelled_error(None), connection.global());
     }
 
     /// `mode`: 0 for `readable()`, 1 for `writable()`, 2 for both.

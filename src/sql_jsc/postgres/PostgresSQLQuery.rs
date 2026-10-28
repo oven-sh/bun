@@ -89,7 +89,7 @@ pub struct Flags {
 pub enum CopyStream {
     None,
     Readable,
-    /// Between CopyOutResponse and CopyDone. Also a CopyBoth session whose writable has ended.
+    /// Between CopyOutResponse and CopyDone.
     ReadableOpen,
     Writable,
     /// Between CopyInResponse and the CopyDone or CopyFail that the stream ends with.
@@ -97,22 +97,22 @@ pub enum CopyStream {
     Both,
     /// Between CopyBothResponse and the first CopyDone of either side.
     BothOpen,
-    /// The server sent its CopyDone. What is left is the CopyDone that the writable ends with.
-    BothSending,
+    /// The client's CopyDone went out. What the server still sends is bounded: it is not paused.
+    BothClosing,
 }
 
 impl CopyStream {
     /// The server sends CopyData.
     pub(crate) fn reads(self) -> bool {
-        matches!(self, Self::ReadableOpen | Self::BothOpen)
+        matches!(
+            self,
+            Self::ReadableOpen | Self::BothOpen | Self::BothClosing
+        )
     }
 
     /// The client sends CopyData.
     pub(crate) fn writes(self) -> bool {
-        matches!(
-            self,
-            Self::WritableOpen | Self::BothOpen | Self::BothSending
-        )
+        matches!(self, Self::WritableOpen | Self::BothOpen)
     }
 
     /// What `setCopy` asks for. Once the server has answered, the streams it asks for are set.

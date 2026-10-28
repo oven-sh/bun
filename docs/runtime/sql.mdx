@@ -1592,7 +1592,10 @@ const { count } = await query; // 2
 
 ### Streaming replication
 
-On a replication connection, `START_REPLICATION` streams the write-ahead log through the same two streams. `readable()` carries the server's `CopyData` payloads, one per chunk: `w` XLogData and `k` keepalive messages, as PostgreSQL sends them. `writable()` takes the client's `CopyData` payloads, the `r` standby status updates that PostgreSQL needs within `wal_sender_timeout`. Bun decodes neither: the output plugin's format belongs to the application.
+On a replication connection, `START_REPLICATION` streams the write-ahead log through the same two streams. Bun carries the bytes of the `CopyData` messages and decodes nothing: the format of the output plugin belongs to the application.
+
+- `readable()` gives one chunk per message that the server sends: `w` XLogData (the plugin's bytes behind a 25-byte header) and `k` keepalive.
+- `writable()` takes the messages of the client: the `r` standby status updates that PostgreSQL needs within `wal_sender_timeout`, and that move the slot forward.
 
 ```ts
 const sql = new SQL("postgres://repl:secret@localhost:5432/app", {
@@ -1600,23 +1603,34 @@ const sql = new SQL("postgres://repl:secret@localhost:5432/app", {
   connection: { replication: "database" },
 });
 
+// The standby status update: 'r', then the LSN written, flushed and applied, the time, and a reply flag.
+function standbyStatusUpdate(lsn: bigint) {
+  const message = Buffer.alloc(34);
+  message.write("r");
+  for (const offset of [1, 9, 17]) message.writeBigUInt64BE(lsn, offset);
+  message.writeBigInt64BE(BigInt(Date.now() - Date.UTC(2000, 0, 1)) * 1000n, 25);
+  return message;
+}
+
 await sql.unsafe("CREATE_REPLICATION_SLOT my_slot TEMPORARY LOGICAL pgoutput").simple();
 const query = sql.unsafe("START_REPLICATION SLOT my_slot LOGICAL 0/0 (proto_version '4', publication_names 'my_pub')");
 const writer = query.writable().getWriter();
 for await (const message of query.readable()) {
+  const view = new DataView(message.buffer, message.byteOffset, message.byteLength);
   if (message[0] === 0x77 /* 'w' */) {
-    handle(message.subarray(25)); // the output plugin's bytes
+    decode(message.subarray(25)); // the output plugin's bytes
+    await writer.write(standbyStatusUpdate(view.getBigUint64(9))); // the end of this record
+  } else if (message[0] === 0x6b /* 'k' */ && message[17] === 1) {
+    await writer.write(standbyStatusUpdate(view.getBigUint64(1))); // the server asked for a reply
   }
-  await writer.write(standbyStatusUpdate(confirmedLsn));
 }
 ```
 
 - A replication connection takes simple queries only, so use `sql.unsafe(...).simple()` for `IDENTIFY_SYSTEM` and the slot commands.
-- `writer.close()` ends the replication: the server ends the stream, the query resolves, and the connection runs the next query. `reader.cancel()` and `query.cancel()` end it too.
-- The server can end its side first, at the end of a timeline for example. The readable then ends while the writable stays open. Close it to let the query resolve.
-- Without a `writable()`, the server ends the session after `wal_sender_timeout`.
-
----
+- Call `readable()` and `writable()` before the server answers the query: both in the same tick, as above. `readable()` is required. Without `writable()`, the server ends the session after `wal_sender_timeout`.
+- `writer.close()` ends the replication: the server ends the stream, the query resolves, and the connection runs the next query. `reader.cancel()`, `query.cancel()` and leaving the `for await` loop end it the same way, and reject the query with `ERR_POSTGRES_QUERY_CANCELLED`. `writer.abort(reason)` does too, with `reason` as the message.
+- The server can end its side first, at the end of a timeline for example. Bun then ends the client's side, the query resolves, and the readable ends once its last chunks are read. Later writes are dropped.
+- The query resolves with one empty result per `CommandComplete` of the walsender.
 
 ## Prepared Statements
 

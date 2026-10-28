@@ -1103,8 +1103,12 @@ declare namespace $Bindgen {
   }
   interface PostgresSQLQuery extends MySQLQuery {
     run(connection: PostgresSQLConnection, query: object): void;
-    /** `callback()` when the server enters copy mode; then `callback(chunk)` for each chunk (TO STDOUT, `false` pauses the socket) or `callback()` each time the socket has drained (FROM STDIN). */
-    setCopy(callback: ((chunk?: Uint8Array) => unknown) | undefined, writable: boolean): void;
+    /**
+     * `callback()` when the server enters copy mode; then `callback(chunk)` for each chunk (TO STDOUT, `false` pauses
+     * the socket) or `callback()` each time the socket has drained (FROM STDIN). A CopyBoth session calls it with both.
+     * `mode`: 0 for `readable()`, 1 for `writable()`, 2 for both.
+     */
+    setCopy(callback: ((chunk?: Uint8Array) => unknown) | undefined, mode: 0 | 1 | 2): void;
     /** `false`: the socket has no room, wait for the callback. */
     copyWrite(chunk: string | ArrayBufferView | ArrayBufferLike): boolean;
     copyDone(): void;

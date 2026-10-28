@@ -967,8 +967,8 @@ declare module "bun" {
        * A failure reaches the stream, so the query needs no handler of its own.
        *
        * On a replication connection, `START_REPLICATION` streams the server's
-       * `CopyData` payloads, one per chunk, undecoded. `writable()` on the same
-       * query takes the client's replies.
+       * `CopyData` messages, one per chunk, undecoded. `writable()` on the same
+       * query takes the client's replies. Call both before the server answers.
        *
        * @example
        * ```ts
@@ -992,8 +992,9 @@ declare module "bun" {
        * resolves with the row count in `count`.
        *
        * On a replication connection, `START_REPLICATION` takes the client's
-       * `CopyData` payloads (standby status updates) through it, and `close()`
-       * ends the replication. The connection stays usable.
+       * `CopyData` messages (standby status updates) through it, and `close()`
+       * ends the replication. `abort(reason)` ends it too, and rejects the
+       * query with `reason`. The connection stays usable.
        *
        * @example
        * ```ts

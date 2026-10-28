@@ -201,6 +201,7 @@ DIFFERS test/js/bun/resolve/load-same-js-file-a-lot.test.ts > load the same empt
 DIFFERS test/js/bun/resolve/load-same-js-file-a-lot.test.ts > load the same file 10000 times: a file by a path that is computed or made at run time
 DIFFERS test/js/bun/resolve/resolve-error.test.ts > ResolveMessage > preserves non-ASCII specifier in .message and .specifier (require node:): open: a written require of an unknown node: module has the code MODULE_NOT_FOUND
 DIFFERS test/js/bun/shell/bunshell.test.ts > bunshell > unicode > escape unicode: the compiled run is right: the raw text of a template is as written
+DIFFERS test/js/bun/shell/shelloutput.test.ts > ShellOutput + ShellError > blob() does not read Blob from globalThis: a built-in module reads the class off globalThis
 DIFFERS test/js/bun/spawn/spawn-signal.test.ts > spawnSync AbortSignal works as timeout: the clock
 DIFFERS test/js/bun/spawn/spawnSync.test.ts > spawnSync > should not set a timeout if timeout is 0 and ignore is used for stdout: the clock
 DIFFERS test/js/bun/spawn/spawnSync.test.ts > spawnSync > should not set a timeout if timeout is 0 and inherit is used for stdout: the clock
@@ -210,6 +211,23 @@ DIFFERS test/js/bun/sqlite/sqlite.test.js > db.function() > terminating a Worker
 DIFFERS test/js/bun/sqlite/sqlite.test.js > db.function() > terminating a Worker that is inside a hook ends it: a file by a path that is computed or made at run time
 DIFFERS test/js/bun/sqlite/sqlite.test.js > db.onInsert, db.onUpdate and db.onDelete > the database keeps a hook alive, and nothing else > hooks that were replaced or removed, those of a closed database, and databases that their own hooks hold, are collected: the clock, and what is collected when
 DIFFERS test/js/bun/test/describe.test.ts > blocks should handle a number, string, anonymous class, named class, or function for the first arg > MyClass > Should also pass: the name of the test is made of a function's text, or the plain run was cut
+DIFFERS test/js/bun/test/expect.test.js > expect() > asymmetric matchers > objects with an asymmetricMatch() method > an error thrown by asymmetricMatch() fails the assertion: asymmetricMatch() is looked up in the Structure, which has none of a compiled object's fields
+DIFFERS test/js/bun/test/expect.test.js > expect() > asymmetric matchers > objects with an asymmetricMatch() method > asymmetricMatch() also works on the received value: asymmetricMatch() is looked up in the Structure, which has none of a compiled object's fields
+DIFFERS test/js/bun/test/expect.test.js > expect() > asymmetric matchers > objects with an asymmetricMatch() method > asymmetricMatch() can be a class method: asymmetricMatch() is looked up in the Structure, which has none of a compiled object's fields
+DIFFERS test/js/bun/test/expect.test.js > expect() > asymmetric matchers > objects with an asymmetricMatch() method > expect.objectContaining() and expect.arrayContaining() call asymmetricMatch(): asymmetricMatch() is looked up in the Structure, which has none of a compiled object's fields
+DIFFERS test/js/bun/test/expect.test.js > expect() > asymmetric matchers > objects with an asymmetricMatch() method > mock function matchers call asymmetricMatch(): asymmetricMatch() is looked up in the Structure, which has none of a compiled object's fields
+DIFFERS test/js/bun/test/expect.test.js > expect() > asymmetric matchers > objects with an asymmetricMatch() method > toEqual() and toStrictEqual() call asymmetricMatch(): asymmetricMatch() is looked up in the Structure, which has none of a compiled object's fields
+DIFFERS test/js/bun/test/expect.test.js > expect() > asymmetric matchers > objects with an asymmetricMatch() method > toMatchObject(), toContainEqual() and toHaveProperty() call asymmetricMatch(): asymmetricMatch() is looked up in the Structure, which has none of a compiled object's fields
+DIFFERS test/js/bun/test/mock-fn.test.js > mocks made through vi behave as Vitest's, the others as Jest's > restoring a native accessor that was made non-configurable meanwhile: the lock of the built-ins
+DIFFERS test/js/bun/test/mock-fn.test.js > spyOn > getters and setters > a name that a module namespace object does not export: a spy or a mock on what a module exports
+DIFFERS test/js/bun/test/mock-fn.test.js > spyOn > getters and setters > accessors implemented natively: the lock of the built-ins
+DIFFERS test/js/bun/test/mock-fn.test.js > spyOn > getters and setters > the exports of a module namespace object are not accessors: a spy or a mock on what a module exports
+DIFFERS test/js/bun/test/mock-fn.test.js > spyOn > spyOn works on Bun.$: the lock of the built-ins
+DIFFERS test/js/bun/test/mock-fn.test.js > spyOn > spyOn works on Bun.postgres: the lock of the built-ins
+DIFFERS test/js/bun/test/mock-fn.test.js > spyOn > spyOn works on Bun.sql: the lock of the built-ins
+DIFFERS test/js/bun/test/mock-fn.test.js > static members of the implementation > fetch.preconnect survives spyOn(globalThis, 'fetch'): the lock of the built-ins
+DIFFERS test/js/bun/test/mock-fn.test.js > vi.mockObject > modules > automock: a module namespace object: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/test/mock-fn.test.js > vi.mockObject > modules > spy: a module namespace object: a file by a path that is computed or made at run time
 DIFFERS test/js/bun/test/mock/6879/6879.test.ts > mocks named re-export: a spy or a mock on what a module exports
 DIFFERS test/js/bun/test/mock/6879/6879.test.ts > mocks re-export from export list: a spy or a mock on what a module exports
 DIFFERS test/js/bun/test/mock/mock-module-non-string.test.ts > mock.module still works with valid string argument: a spy or a mock on what a module exports
@@ -235,6 +253,7 @@ DIFFERS test/js/bun/test/mock/mock-module.test.ts > mocking a non-existant relat
 DIFFERS test/js/bun/test/mock/mock-module.test.ts > mocking a package: a spy or a mock on what a module exports
 DIFFERS test/js/bun/test/mock/mock-module.test.ts > onResolve plugin errors surface from mock.module; an unresolvable specifier is still mockable: a file by a path that is computed or made at run time
 DIFFERS test/js/bun/test/mock/mock-module.test.ts > spyOn: a spy or a mock on what a module exports
+DIFFERS test/js/bun/test/stack.test.ts > bun test turns off tail calls, so a function that ends in a call keeps its frame: compiled code makes tail calls, which `bun test` turns off in the interpreter and the JITs
 DIFFERS test/js/bun/udp/dgram.test.ts > a worker exiting from its first 'message' of a batch does not crash: a file by a path that is computed or made at run time
 DIFFERS test/js/bun/util/BunObject.test.ts > hasNonReifiedStatic: a file by a path that is computed or made at run time
 DIFFERS test/js/bun/util/csrf.test.ts > Bun.CSRF > options are read in order, each once, and not from Object.prototype: the lock of the built-ins
@@ -542,6 +561,7 @@ DIFFERS test/js/node/events/event-emitter.test.ts > EventEmitter constructors > 
 DIFFERS test/js/node/events/event-emitter.test.ts > EventEmitter constructors > new (class extends EventEmitter {})() should work: the name of the test is made of a function's text, or the plain run was cut
 DIFFERS test/js/node/events/event-emitter.test.ts > EventEmitter constructors > new EventEmitter() should work: the name of the test is made of a function's text, or the plain run was cut
 DIFFERS test/js/node/http/node-http-backpressure.test.ts > backpressure > 'drain' after a later write() flushes the backlog > (unnamed): the name of the test is made of a function's text, or the plain run was cut
+DIFFERS test/js/node/http/node-http-primoridals.test.ts > does not read URL from globalThis: a built-in module reads the class off globalThis
 DIFFERS test/js/node/inspector/inspector.test.ts > Object.prototype pollution does not cause Runtime.enable to hook extra console methods: the lock of the built-ins
 DIFFERS test/js/node/inspector/inspector.test.ts > a tampered Set.prototype[Symbol.iterator] or Date.now does not break console.log while Runtime is enabled: the lock of the built-ins
 DIFFERS test/js/node/module/module-resolve-filename-paths.test.js > Module._resolveFilename with overridden function receives options.paths: the lock of the built-ins
@@ -761,6 +781,8 @@ DIFFERS test/js/node/util/test-util-types.test.js > #11780: a file by a path tha
 DIFFERS test/js/node/v8/capture-stack-trace.test.js > CallFrame isTopLevel returns false for Function constructor: a compiled frame gives no function object
 DIFFERS test/js/node/v8/capture-stack-trace.test.js > CallFrame.p.getScriptNameOrSourceURL inside eval: a compiled frame gives no function object
 DIFFERS test/js/node/visible-surface.test.ts > the visible surface of the modules of Node.js: a file by a path that is computed or made at run time
+DIFFERS test/js/node/vm/vm-sourceUrl.test.ts > can get sourceURL from eval inside node:vm: compiled code makes tail calls, which `bun test` turns off in the interpreter and the JITs
+DIFFERS test/js/node/vm/vm-sourceUrl.test.ts > can get sourceURL inside node:vm: compiled code makes tail calls, which `bun test` turns off in the interpreter and the JITs
 DIFFERS test/js/node/vm/vm.test.ts > can extend generated globals & WebCore globals: the lock of the built-ins
 DIFFERS test/js/node/vm/vm.test.ts > the file: a file by a path that is computed or made at run time
 DIFFERS test/js/node/vm/vm.test.ts > the options argument > Script#runInThisContext() > rejects a Proxy around an array: open: the library's error text for a proxy around an array
@@ -1012,6 +1034,7 @@ NOT-BUILT test/js/bun/resolve/toml/toml.test.js: the compiler's own refusal at t
 NOT-BUILT test/js/bun/resolve/xml/xml.test.js: a fixture that is no valid XML is an error of the build
 NOT-BUILT test/js/bun/runtime-error.test.ts: the check refuses the test's own text (a type error)
 NOT-BUILT test/js/bun/shell/brace.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/bun/test/fake-timers/fake-timers.test.ts: the check refuses the test's own text (a type error)
 NOT-BUILT test/js/bun/test/mock/6874/A.test.ts: a spy or a mock on what a module exports
 NOT-BUILT test/js/bun/test/mock/6874/B.test.ts: a spy or a mock on what a module exports
 NOT-BUILT test/js/bun/test/require-bun-test.test.ts: the check refuses the test's own text (a type error)

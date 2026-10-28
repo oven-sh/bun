@@ -816,11 +816,9 @@ const CSSLOT_CODEDIRECTORY: u32 = 0;
 const SEC_CODE_SIGNATURE_HASH_SHA256: u8 = 2;
 const CS_EXECSEG_MAIN_BINARY: u64 = 0x1;
 
-/// `bun.sha.SHA256.hash(bytes, out, null)`.
 #[inline]
 pub(crate) fn sha256_hash(bytes: &[u8], out: &mut [u8; 32]) {
-    // SAFETY: engine is null (default).
-    unsafe { bun_sha_hmac::sha::SHA256::hash(bytes, out, core::ptr::null_mut()) };
+    bun_sha_hmac::sha::SHA256::hash(bytes, out);
 }
 
 #[cfg(test)]

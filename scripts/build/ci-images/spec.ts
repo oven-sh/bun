@@ -820,6 +820,8 @@ function nodejs(image: Image): Tool {
   return { name: "nodejs", identity: pinned(version), steps: image.os === "windows" ? onWindows() : elsewhere(image) };
 
   function onWindows(): Step[] {
+    // scripts/agent.ts names no account for the agent's service: its jobs, and their node-gyp, run as LocalSystem.
+    const cache = `C:/Windows/System32/config/systemprofile/AppData/Local/node-gyp/Cache/${version}`;
     return [
       scoopInstall(`nodejs@${version}`),
       ...headers,
@@ -829,14 +831,8 @@ function nodejs(image: Image): Tool {
         scratch("node.lib"),
         sha256[platform(image)],
       ),
-      comment("Two caches: the one of the user who runs this, and the one of the agent's service account."),
-      ...[environment("LOCALAPPDATA"), `${windowsAgentHome}/AppData/Local`].flatMap(base => {
-        const cache = text`${base}/node-gyp/Cache/${version}`;
-        return gypCache(cache, [
-          directory(text`${cache}/${arch}`),
-          copy(scratch("node.lib"), text`${cache}/${arch}/node.lib`),
-        ]);
-      }),
+      comment("The cache of SYSTEM, which the agent's jobs run as. This script's LOCALAPPDATA is the bake user's."),
+      ...gypCache(cache, [directory(`${cache}/${arch}`), copy(scratch("node.lib"), `${cache}/${arch}/node.lib`)]),
     ];
   }
 

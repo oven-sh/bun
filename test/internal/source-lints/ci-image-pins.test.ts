@@ -2,9 +2,10 @@
 // places they go are written. Some files cannot import it: other programs read
 // them, or they run somewhere the spec is not. They have to say the same thing.
 import { expect, test } from "bun:test";
+import { tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { locations, pins } from "../../../scripts/build/ci-images/spec.ts";
+import { generateImage, images, locations, pins } from "../../../scripts/build/ci-images/spec.ts";
 
 const root = join(import.meta.dir, "../../..");
 
@@ -55,6 +56,29 @@ test("scripts/darwin-ci, which is copied to its hosts, names the agent and the L
 
 test("scripts/agent.ts, which runs on the machines alone, puts the spec's Rust directory on a Mac's PATH", () => {
   expect(readFileSync(join(root, "scripts/agent.ts"), "utf8")).toContain(`<string>${locations.rust.darwin}/bin:`);
+});
+
+// A job runs as SYSTEM, and its node-gyp reads %LOCALAPPDATA%\node-gyp\Cache of that account. A bake
+// runs as another user. scripts/runner.node.ts checks the directory on the machine (assertNodeGypCache).
+test("a Windows bake writes node-gyp's cache into the profile of SYSTEM, the account that runs jobs", () => {
+  using dir = tempDir("ci-image-pins", {});
+  const cache = `C:\\Windows\\System32\\config\\systemprofile\\AppData\\Local\\node-gyp\\Cache\\${pins.nodejs.version}`;
+  const written = (["x64", "aarch64"] as const).map(arch => {
+    const image = images.find(image => image.os === "windows" && image.arch === arch)!;
+    const { directory } = generateImage(image, String(dir));
+    return readFileSync(join(directory, "bootstrap.ps1"), "utf8")
+      .split("\n")
+      .filter(line => line.includes(cache));
+  });
+  expect(written).toEqual(
+    ["x64", "arm64"].map(arch => [
+      `New-Item -ItemType Directory -Force '${cache}' | Out-Null`,
+      `Copy-Item "$scratch\\headers\\include" '${cache}' -Recurse -Force`,
+      `New-Item -ItemType Directory -Force '${cache}\\${arch}' | Out-Null`,
+      `Copy-Item "$scratch\\node.lib" '${cache}\\${arch}\\node.lib' -Recurse -Force`,
+      `Set-Content -Path '${cache}\\installVersion' -Encoding ascii -Value @(`,
+    ]),
+  );
 });
 
 test("the Node-API tests build against the headers of the Node.js the CI images install, with their clang", () => {

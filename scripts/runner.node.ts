@@ -53,6 +53,7 @@ import {
   tmpdir,
   which,
 } from "./agent.ts";
+import { pins } from "./build/ci-images/spec.ts";
 import {
   escapeCodeBlock,
   escapeHtml,
@@ -887,6 +888,53 @@ function assertExpectedPlatform() {
     );
 }
 
+/**
+ * Checks that node-gyp's cache has the headers of the pinned Node.js, and on Windows its node.lib,
+ * where a test's node-gyp looks for them. An image's bake puts them there for the account that runs
+ * jobs (the `nodejs` tool of scripts/build/ci-images/spec.ts). Without them every job downloads them
+ * from nodejs.org and still passes, until that download fails. CI bakes the Linux and Windows images.
+ */
+function assertNodeGypCache() {
+  if (!isBuildkite || !(isLinux || isWindows)) {
+    return;
+  }
+
+  const { version, nodeGypInstallVersion } = pins.nodejs;
+  // node-gyp's default directory, from the home and the environment spawnBun() gives a test.
+  const { username, homedir } = userInfo();
+  const cache = isWindows
+    ? join(process.env.LOCALAPPDATA || join(homedir, "AppData", "Local"), "node-gyp", "Cache", version)
+    : join(process.env.XDG_CACHE_HOME || join(homedir, ".cache"), "node-gyp", version);
+
+  const problems: string[] = [];
+  const installVersionPath = join(cache, "installVersion");
+  if (!existsSync(installVersionPath)) {
+    problems.push("installVersion is missing");
+  } else {
+    // node-gyp reads it with parseInt, and downloads everything again if it is lower than its own.
+    const installVersion = parseInt(readFileSync(installVersionPath, "ascii"), 10);
+    if (installVersion !== parseInt(nodeGypInstallVersion, 10)) {
+      problems.push(`installVersion is ${installVersion}, the bake writes ${nodeGypInstallVersion}`);
+    }
+  }
+  for (const file of [join("include", "node", "node_api.h"), ...(isWindows ? [join(process.arch, "node.lib")] : [])]) {
+    if (!existsSync(join(cache, file))) {
+      problems.push(`${file} is missing`);
+    }
+  }
+
+  if (problems.length) {
+    console.error(
+      `node-gyp cache check FAILED, this machine is not the image scripts/build/ci-images/spec.ts describes.\n` +
+        `Its \`nodejs\` tool bakes the Node.js ${version} headers into node-gyp's cache of the account that runs jobs.\n` +
+        `This job runs as ${username}, and node-gyp reads ${cache}:\n  ${problems.join("\n  ")}`,
+    );
+    process.exit(1);
+  }
+
+  !isQuiet && console.log("node-gyp cache:", cache, "(ok)");
+}
+
 type Limit = <T>(fn: () => Promise<T>) => Promise<T>;
 
 /**
@@ -916,6 +964,7 @@ function createLimit(concurrency: number): Limit {
 
 async function runTests(): Promise<TestResult[]> {
   assertExpectedPlatform();
+  assertNodeGypCache();
 
   let execPath: string;
   if (options.step) {

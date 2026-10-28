@@ -2982,30 +2982,33 @@ pub mod bv2_impl {
             path.assert_pretty_is_valid();
             path.assert_file_path_is_absolute();
 
-            let loader: Loader = 'brk: {
-                let record: &ImportRecord = &self.graph.ast.items_import_records()
-                    [import_record.importer_source_index as usize]
-                    .as_slice()[import_record.import_record_index as usize];
-                if let Some(out_loader) = record.loader {
-                    break 'brk out_loader;
-                }
-                // SAFETY: see `transpiler` note above.
-                break 'brk path
-                    .loader(unsafe { &(*transpiler).options.loaders })
-                    .unwrap_or(Loader::File);
-                // HTML is only allowed at the entry point.
-            };
-            let shared = self.is_stylesheet_shared_across_graphs(loader, &path);
-
             // borrowck: get-then-put (instead of a single get-or-put) so the map
             // borrow doesn't span `enqueue_parse_task` (which needs `&mut self`).
-            let existing = match self.path_to_source_index_map(target).get(path.text) {
-                None if shared => self.adopt_shared_stylesheet(target, path.text),
-                existing => existing,
-            };
-            if let Some(existing) = existing {
-                out_source_index = Some(Index::init(existing));
-            } else {
+            let mut existing = self.path_to_source_index_map(target).get(path.text);
+            let mut new_file: Option<(Loader, bool)> = None;
+            if existing.is_none() {
+                let loader: Loader = 'brk: {
+                    let record: &ImportRecord = &self.graph.ast.items_import_records()
+                        [import_record.importer_source_index as usize]
+                        .as_slice()[import_record.import_record_index as usize];
+                    if let Some(out_loader) = record.loader {
+                        break 'brk out_loader;
+                    }
+                    // SAFETY: see `transpiler` note above.
+                    break 'brk path
+                        .loader(unsafe { &(*transpiler).options.loaders })
+                        .unwrap_or(Loader::File);
+                    // HTML is only allowed at the entry point.
+                };
+                let shared = self.is_stylesheet_shared_across_graphs(loader, &path);
+                if shared {
+                    existing = self.adopt_shared_stylesheet(target, path.text);
+                }
+                if existing.is_none() {
+                    new_file = Some((loader, shared));
+                }
+            }
+            if let Some((loader, shared)) = new_file {
                 let path = self
                     .path_with_pretty_initialized(
                         &path,
@@ -3050,6 +3053,8 @@ pub mod bv2_impl {
                         self.graph.has_any_secondary_paths = true;
                     }
                 }
+            } else {
+                out_source_index = existing.map(Index::init);
             }
 
             if let Some(source_index) = out_source_index {

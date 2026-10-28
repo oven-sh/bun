@@ -173,20 +173,24 @@ test.skipIf(!isDebug)("a call throws when the copy of its arguments cannot be al
       "-e",
       `const path = require("node:path");
 const rest = new Array(40000).fill("b");
+const underTheCap = rest.slice(0, 20000);
 const outcome = fn => {
   try {
-    return "returned a string of length " + fn().length;
+    return fn();
   } catch (e) {
     return e.name + ": " + e.message;
   }
 };
+const length = string => "returned a string of length " + string.length;
 const results = {};
 for (const ns of ["posix", "win32"]) {
   for (const fn of ["join", "resolve"]) {
-    results[ns + "." + fn] = outcome(() => path[ns][fn](new String("a"), ...rest));
+    results[ns + "." + fn] = outcome(() => length(path[ns][fn](new String("a"), ...rest)));
   }
   // Under the cap, so the copy is made.
-  results[ns + ".join, 20001 arguments"] = outcome(() => path[ns].join(new String("a"), ...rest.slice(0, 20000)));
+  results[ns + ".join, 20001 arguments, is the joined path"] = outcome(
+    () => path[ns].join(new String("a"), ...underTheCap) === ["a", ...underTheCap].join(path[ns].sep),
+  );
 }
 // The copy fails before the last argument, so that argument is not converted.
 let conversions = 0;
@@ -196,7 +200,7 @@ const last = Object.assign(new String("c"), {
     return "c";
   },
 });
-results["join, a String object last"] = outcome(() => path.posix.join(new String("a"), ...rest, last));
+results["join, a String object last"] = outcome(() => length(path.posix.join(new String("a"), ...rest, last)));
 results.conversions = conversions;
 console.log(JSON.stringify(results));`,
     ],
@@ -210,10 +214,10 @@ console.log(JSON.stringify(results));`,
     stdout: JSON.stringify({
       "posix.join": outOfMemory,
       "posix.resolve": outOfMemory,
-      "posix.join, 20001 arguments": "returned a string of length 40001",
+      "posix.join, 20001 arguments, is the joined path": true,
       "win32.join": outOfMemory,
       "win32.resolve": outOfMemory,
-      "win32.join, 20001 arguments": "returned a string of length 40001",
+      "win32.join, 20001 arguments, is the joined path": true,
       "join, a String object last": outOfMemory,
       conversions: 0,
     }),

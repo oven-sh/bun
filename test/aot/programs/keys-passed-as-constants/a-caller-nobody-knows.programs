@@ -1,0 +1,1247 @@
+////: Emitter
+function Emitter() {
+  this.events = Object.create(null);
+}
+////: Emitter-2
+////= Emitter
+////= Emitter-prototype-on
+////= Emitter-prototype-emit
+////= Request
+////= Response
+////= Failure
+////: Emitter-prototype-emit
+Emitter.prototype.emit = function (type, a, b) {
+  const handler = this.events[type];
+  if (handler === undefined) return false;
+  handler.call(this, a, b);
+  return true;
+};
+////: Emitter-prototype-on
+Emitter.prototype.on = function (type, listener) {
+  this.events[type] = listener;
+  return this;
+};
+////: Failure
+class Failure {
+  constructor(code) {
+    this.code = code;
+  }
+}
+////: Request
+class Request {
+  constructor(url) {
+    this.url = url;
+    this.method = "GET";
+  }
+}
+////: Response
+class Response {
+  constructor() {
+    this.status = 200;
+    this.body = "";
+  }
+}
+////: attempt
+const attempt = run => {
+  try {
+    return run();
+  } catch (error) {
+    return error.constructor.name;
+  }
+};
+////: describe
+function describe(value) {
+  if (value === undefined) return "undefined";
+  if (value instanceof Request) return "Request " + value.method + " " + value.url;
+  if (value instanceof Response) return "Response " + value.status;
+  if (value instanceof Failure) return "Failure " + value.code;
+  return typeof value + " " + String(value);
+}
+////: describe-2
+////= describe
+////= listen
+////: listen
+function listen(emitter) {
+  emitter.on("request", function (req, res) {
+    lines.push("request: " + describe(req) + ", " + describe(res));
+  });
+  emitter.on("failure", function (failure) {
+    lines.push("failure: " + describe(failure));
+  });
+  emitter.on("tick", function (count) {
+    lines.push("tick: " + describe(count));
+  });
+}
+//// a-caller-nobody-knows-passes-operands-to-a-rest-parameter.js
+// A function that takes a name and a rest parameter is called through a value that nobody follows. What that caller passes lies in the rest array, index by index.
+const table = {};
+function isText(name, ...rest) {
+  table[name] = true;
+  const first = rest[0];
+  const value = first === undefined ? "none" : first;
+  if (typeof value === "string") return "a text";
+  return "no text";
+}
+function join(name, ...rest) {
+  table[name] = true;
+  const first = rest[0];
+  const value = first === undefined ? "none" : first;
+  return value + "!";
+}
+function lengthOf(name, ...rest) {
+  table[name] = true;
+  const second = rest[1];
+  const value = second === undefined ? "none" : second;
+  return value.length;
+}
+const handlers = {
+  twice(value) {
+    return value + value;
+  },
+};
+function emit(type, ...args) {
+  const first = args[0];
+  return handlers[type](first === undefined ? "none" : first);
+}
+
+const list = new Proxy([], {});
+list.push(isText, join, lengthOf, emit);
+console.log(list[0]("k", 21), list[0]("k", "text"), list[0]("k"));
+console.log(list[1]("k", 21), list[1]("k", "text"), list[1]("k"));
+console.log(list[2]("k", 0, [1, 2, 3]), list[2]("k", 0, 21), list[2]("k", 0, "text"), list[2]("k"));
+console.log(list[3]("twice", 21), list[3]("twice", "text"), list[3]("twice"));
+
+const holder = new Proxy({ isText, join }, {});
+console.log(holder.isText("k", {}), holder.join("k", null));
+console.log(isText("k", "seen"), join("k", "seen"), lengthOf("k", 0, "seen"), emit("twice", "seen"));
+//// a-closure-over-a-name-is-itself-captured-called-by-name-and-calls-itself.js
+// The closure that uses the name as a key is a declared function: other closures of the same maker capture it, it calls itself, and it is kept in variables that closures assign.
+const lines = [];
+const say = (...parts) => lines.push(parts.map(String).join(" "));
+const hidden = process.argv.length > 9 ? "x" : "";
+function makeReader(name) {
+  function read(from) {
+    return from[name];
+  }
+  return function (from) {
+    return read(from) + ":" + read.name + ":" + read.length;
+  };
+}
+function makeWalker(name) {
+  function walk(from, depth) {
+    return from[name] === undefined ? depth : walk(from[name], depth + 1);
+  }
+  const again = from => walk(from, 0);
+  return { walk, again };
+}
+function makeSwapped(name) {
+  let current = function (from) {
+    return "first " + from[name];
+  };
+  const swap = () => {
+    current = function (from) {
+      return "second " + from[name];
+    };
+  };
+  return { call: from => current(from), swap };
+}
+function makePair(name) {
+  const get = from => from[name];
+  const set = (into, value) => {
+    into[name] = value;
+    return get(into);
+  };
+  return [get, set];
+}
+class Holder {
+  static make(name) {
+    const read = from => from[name];
+    return class {
+      read(from) {
+        return read(from);
+      }
+    };
+  }
+}
+const box = { width: 3, height: 4, next: { next: { next: {} } } };
+say(makeReader("width")(box), makeReader("height")(box), makeReader("wid" + hidden + "th")(box));
+const walker = makeWalker("next");
+say(walker.walk(box, 0), walker.again(box), makeWalker("ne" + hidden + "xt").again(box), makeWalker("none").again(box));
+const swapped = makeSwapped("width");
+say(swapped.call(box));
+swapped.swap();
+say(swapped.call(box), makeSwapped("height").call(box));
+const [get, set] = makePair("width");
+say(get(box), set(box, 9), get(box), makePair("height")[1](box, 8), box.height);
+say(new (Holder.make("width"))().read(box), new (Holder.make("hei" + hidden + "ght"))().read(box));
+console.log(lines.join("\n"));
+//// a-function-that-makes-closures-over-a-name-is-handed-every-kind-of-name.js
+// A function that makes a closure over its parameter, where the closure uses the parameter as a key, is called with written texts and with everything else.
+const lines = [];
+const say = (...parts) => lines.push(parts.map(part => (typeof part === "symbol" ? part.toString() : String(part))).join(" "));
+function reader(name) {
+  return function (from) {
+    return from[name];
+  };
+}
+function writer(name) {
+  return function (into, value) {
+    into[name] = value;
+    return name in into;
+  };
+}
+function remover(name) {
+  return function (from) {
+    return delete from[name];
+  };
+}
+const hidden = process.argv.length > 9 ? "x" : "";
+////= attempt
+const mark = Symbol("mark");
+const box = { width: 1, height: 2, 0: "zero", 7: "seven", "-1": "minus", "1.5": "half", "": "empty", [mark]: "marked", undefined: "u", null: "n", true: "t" };
+// Written texts.
+say(reader("width")(box), reader("height")(box), reader("depth")(box));
+// Texts that are indexes, nearly indexes, empty.
+say(reader("0")(box), reader("7")(box), reader("-1")(box), reader("1.5")(box), reader("")(box), reader("00")(box), reader("4294967295")(box), reader("4294967294")([1]));
+say(reader("0")("ab"), reader("length")("ab"), reader("1")([5, 6]), reader("length")([5, 6]));
+// The same texts, made at run time: ropes, texts out of other texts, numbers, symbols, objects that turn into texts.
+say(reader("wid" + hidden + "th")(box), reader(["height"].join(hidden))(box), reader(`${hidden}width`)(box), reader("xwidth".slice(1))(box));
+say(reader(0)(box), reader(7)(box), reader(-1)(box), reader(1.5)(box), reader(mark)(box), reader(undefined)(box), reader(null)(box), reader(true)(box), reader()(box));
+let turned = 0;
+const turning = {
+  toString() {
+    turned++;
+    return "width";
+  },
+};
+const readTurning = reader(turning);
+say(readTurning(box), readTurning(box), turned);
+say(reader(new String("height"))(box), reader(Object("width"))(box));
+// __proto__, constructor, prototype.
+const above = { inherited: "from above" };
+const below = { __proto__: above, own: 1 };
+say(reader("__proto__")(below) === above, reader("constructor")(below) === Object, reader("inherited")(below), reader("prototype")(function () {}) !== undefined);
+const target = {};
+say(writer("__proto__")(target, above), Object.getPrototypeOf(target) === above, Object.keys(target).length, target.inherited);
+say(writer("width")(target, 3), target.width, writer("0")(target, "z"), target[0], writer(mark)(target, 1), target[mark]);
+say(remover("width")(target), "width" in target, remover("missing")(target), remover("0")(target), 0 in target);
+// Frozen, sealed, accessors that throw, proxies.
+const frozen = Object.freeze({ width: 1 });
+say(attempt(() => writer("width")(frozen, 9)), attempt(() => writer("wid" + hidden + "th")(frozen, 9)), frozen.width, attempt(() => remover("width")(frozen)), attempt(() => remover(hidden + "width")(frozen)));
+const throwing = {
+  get width() {
+    throw new RangeError("no width");
+  },
+};
+for (const read of [reader("width"), reader("wid" + hidden + "th")]) {
+  try {
+    say(read(throwing));
+  } catch (error) {
+    say(error.constructor.name, error.message);
+  }
+}
+const seen = [];
+const watched = new Proxy(
+  { width: 4 },
+  {
+    get(of, key, receiver) {
+      seen.push("get " + String(key));
+      return Reflect.get(of, key, receiver);
+    },
+    set(of, key, value, receiver) {
+      seen.push("set " + String(key));
+      return Reflect.set(of, key, value, receiver);
+    },
+    has(of, key) {
+      seen.push("has " + String(key));
+      return Reflect.has(of, key);
+    },
+    deleteProperty(of, key) {
+      seen.push("delete " + String(key));
+      return Reflect.deleteProperty(of, key);
+    },
+  },
+);
+say(reader("width")(watched), writer("width")(watched, 5), remover("width")(watched), seen.join());
+// undefined and null as what is read from.
+for (const nothing of [undefined, null]) {
+  try {
+    reader("width")(nothing);
+  } catch (error) {
+    say(error.constructor.name);
+  }
+}
+// What the functions themselves look like.
+say(reader.name, reader.length, reader("width").name, reader("width").length, reader("width") === reader("width"), reader("width").toString() === reader(hidden + "q").toString());
+say(typeof reader.prototype, new reader("width")(box), reader.call({ any: 1 }, "height")(box), reader.apply(null, ["width", "more"])(box), Reflect.apply(reader, undefined, ["height"])(box));
+say(reader.bind(null, "width")()(box), [..."ab"].map(reader).length, ["width", "height"].map(reader).map(read => read(box)).join());
+// The stack of an error thrown inside names each function once.
+function thrower(name) {
+  return function (from) {
+    if (from[name] === undefined) throw new Error("nothing under " + name);
+    return from[name];
+  };
+}
+function failing(name) {
+  if (name === "width") throw new Error("refused " + name);
+  return function (from) {
+    return from[name];
+  };
+}
+for (const make of [() => thrower("depth")(box), () => failing("width"), () => failing("wid" + hidden + "th")]) {
+  try {
+    make();
+  } catch (error) {
+    say(error.message, error.stack.split("\n").filter(line => /thrower|failing/.test(line)).length);
+  }
+}
+console.log(lines.join("\n"));
+//// a-maker-of-closures-over-a-name-itself-captures-typed-variables.ts
+// The function that makes closures over its parameter is itself a closure: it captures variables with declared types, a variable that is assigned later, a function and `this`.
+const lines: string[] = [];
+const say = (...parts: unknown[]) => lines.push(parts.map(String).join(" "));
+const hidden = process.argv.length > 9 ? "x" : "";
+interface Box {
+  width: number;
+  height: number;
+  [name: string]: number;
+}
+function outer(prefix: string, scale: number, box: Box, label?: string) {
+  let calls = 0;
+  const describe = (value: number) => prefix + value * scale + (label ?? "");
+  function reader(name: string) {
+    return () => {
+      calls++;
+      return describe(box[name]) + "#" + calls;
+    };
+  }
+  const arrow = (name: string) => (by: number) => prefix + (box[name] += by);
+  return { width: reader("width"), height: reader("height"), other: reader("wid" + hidden + "th"), grow: arrow("width"), shrink: arrow("height") };
+}
+class Shelf {
+  boxes: Record<string, Box> = { low: { width: 1, height: 2 }, high: { width: 3, height: 4 } };
+  constructor(public title: string) {}
+  readers() {
+    const pick = (name: string) => () => this.title + ":" + this.boxes[name].width;
+    return [pick("low"), pick("high"), pick("lo" + hidden + "w")];
+  }
+}
+const made = outer(">", 2, { width: 5, height: 6 });
+say(made.width(), made.height(), made.other(), made.grow(1), made.shrink(-1), made.width());
+const labelled = outer("<", 1, { width: 7, height: 8 }, "!");
+say(labelled.width(), labelled.height(), made.height());
+say(
+  new Shelf("s")
+    .readers()
+    .map(read => read())
+    .join(),
+);
+console.log(lines.join("\n"));
+//// a-name-made-at-run-time-equals-a-constant.js
+// "re" + "quest", a template, a slice, String(..), an object that converts to the name: each is the name "request" at run time.
+////= Emitter-2
+const lines = [];
+////= describe-2
+const server = new Emitter();
+listen(server);
+const half = process.argv.length > 0 ? "re" : "fail";
+server.emit(half + "quest", 1, 2);
+server.emit(`${half}quest`, "template", undefined);
+server.emit("xrequestx".slice(1, 8), new Failure(1), new Failure(2));
+server.emit(String(["request"]), true, null);
+server.emit({ toString: () => "tick" }, new Request("/object"));
+server.emit(["failure"], 7n);
+server.on(half + "quest", function (a, b) {
+  lines.push("replaced under a name made at run time: " + describe(a) + ", " + describe(b));
+});
+server.emit("request", new Request("/b"), new Response());
+console.log(lines.join("\n"));
+//// a-name-nobody-knows-at-emit-reaches-every-listener.js
+// The names at `on` are constants. One `emit` takes its name from the command line: its operands may reach any listener.
+////= Emitter-2
+const lines = [];
+////= describe-2
+const server = new Emitter();
+listen(server);
+server.emit("request", new Request("/a"), new Response());
+server.emit("failure", new Failure(3));
+server.emit("tick", 1);
+const names = ["tick", "request", "failure", "nothing"];
+for (let i = 0; i < names.length; i++) server.emit(names[(i + process.argv.length) % names.length], "text " + i, i);
+console.log(lines.join("\n"));
+//// a-name-nobody-knows-at-on-takes-the-place-of-any-listener.js
+// One `on` takes its name from the command line: its listener may stand under any name, and gets what is emitted there.
+////= Emitter-2
+const lines = [];
+////= describe-2
+const server = new Emitter();
+listen(server);
+const names = ["request", "failure", "tick"];
+server.on(names[process.argv.length % names.length], function (first, second) {
+  lines.push("the late listener: " + describe(first) + ", " + describe(second));
+});
+server.emit("request", new Request("/a"), new Response());
+server.emit("failure", new Failure(3));
+server.emit("tick", 1);
+console.log(lines.join("\n"));
+//// a-proxy-as-the-dictionary-and-as-the-emitter.js
+// The dictionary is a Proxy that answers under other names; the emitter is a Proxy; a getter stands under a name.
+////= Emitter-2
+const lines = [];
+////= describe-2
+const server = new Emitter();
+listen(server);
+const real = server.events;
+server.events = new Proxy(real, {
+  get(target, name) {
+    lines.push("get " + String(name));
+    return name === "tick" ? target.failure : name === "failure" ? target.request : target[name];
+  },
+  set(target, name, value) {
+    lines.push("set " + String(name));
+    target["moved " + String(name)] = value;
+    return true;
+  },
+});
+server.emit("tick", new Failure(1));
+server.emit("failure", new Request("/proxy"), new Response());
+server.emit("request", 1, 2);
+server.on("tick", () => lines.push("never under tick"));
+lines.push(Object.keys(real).join());
+server.emit("moved tick");
+
+const wrapped = new Proxy(new Emitter(), {
+  get(target, name, receiver) {
+    if (name === "emit") return (type, a) => target.emit("tick", type + " through the proxy, " + describe(a));
+    return Reflect.get(target, name, receiver);
+  },
+});
+listen(wrapped);
+wrapped.emit("request", new Request("/wrapped"));
+
+const withGetter = new Emitter();
+let reads = 0;
+Object.defineProperty(withGetter.events, "request", {
+  get() {
+    reads++;
+    return reads % 2 ? a => lines.push("odd read: " + describe(a)) : a => lines.push("even read: " + describe(a));
+  },
+});
+withGetter.emit("request", new Failure(2));
+withGetter.emit("request", "three");
+console.log(lines.join("\n"));
+//// accessors-a-helper-has-defined-are-redefined-deleted-and-shadowed.js
+// A helper object defines accessors on a holder under names it is handed; each forwards to a member of the receiver. Then everything they rest on changes.
+const lines = [];
+const say = (...parts) => lines.push(parts.map(String).join(" "));
+function Forwarder(holder, member) {
+  if (!(this instanceof Forwarder)) return new Forwarder(holder, member);
+  this.holder = holder;
+  this.member = member;
+  this.names = [];
+}
+Forwarder.prototype.getter = function (name) {
+  var holder = this.holder,
+    member = this.member;
+  this.names.push(name);
+  holder.__defineGetter__(name, function () {
+    return this[member][name];
+  });
+  return this;
+};
+Forwarder.prototype.setter = function (name) {
+  var holder = this.holder,
+    member = this.member;
+  this.names.push(name);
+  holder.__defineSetter__(name, function (value) {
+    return (this[member][name] = value);
+  });
+  return this;
+};
+Forwarder.prototype.access = function (name) {
+  return this.getter(name).setter(name);
+};
+const hidden = process.argv.length > 9 ? "x" : "";
+////= attempt
+const exchange = {};
+const toAnswer = Forwarder(exchange, "answer").access("code").access("size").getter("sent");
+const toQuestion = Forwarder(exchange, "question").access("path").getter("verb");
+function make() {
+  const made = Object.create(exchange);
+  made.question = { path: "/", verb: "GET" };
+  made.answer = { code: 200, size: 0, sent: false };
+  return made;
+}
+function look(made) {
+  return [made.code, made.size, made.sent, made.path, made.verb].join();
+}
+let made = make();
+say(look(made), toAnswer.names.join(), toQuestion.names.join());
+made.code = 404;
+made.path = "/x";
+say(attempt(() => (made.sent = true)), attempt(() => (made.verb = "PUT")));
+say(look(made), made.answer.code, made.question.path, Object.keys(made).join());
+// The helper is called with a name made at run time, and with the same name for the other member.
+toAnswer.getter("la" + hidden + "te");
+made.answer.late = "late";
+say(made.late);
+toQuestion.getter("code");
+made.question.code = "of the question";
+say(made.code, look(make()));
+toAnswer.getter("code");
+say(made.code);
+// The member is swapped, is missing, is a primitive.
+made.answer = { code: 1, size: 2, sent: 3 };
+say(look(made));
+made.answer = "text";
+say(made.code, made.size);
+delete made.answer;
+try {
+  say(made.code);
+} catch (error) {
+  say(error.constructor.name);
+}
+// An accessor is shadowed on the object, on an object between, deleted from the holder, redefined as a value.
+made = make();
+Object.defineProperty(made, "code", { value: "own", configurable: true });
+say(made.code, make().code);
+delete made.code;
+say(made.code);
+const between = Object.create(exchange);
+between.__defineGetter__("size", function () {
+  return "between";
+});
+const lower = Object.create(between);
+lower.answer = { size: 5, code: 6, sent: 7 };
+lower.question = { path: "p", verb: "v" };
+say(look(lower));
+delete exchange.sent;
+say(look(make()), "sent" in make());
+Object.defineProperty(exchange, "verb", { value: "fixed", writable: true, configurable: true });
+say(look(make()));
+exchange.__defineGetter__("path", function () {
+  return "another getter";
+});
+say(look(make()));
+made = make();
+made.path = "stored through the old setter";
+say(made.question.path, made.path);
+// The accessors taken off the holder and called on something else.
+const taken = Object.getOwnPropertyDescriptor(exchange, "code");
+say(typeof taken.get, typeof taken.set, taken.enumerable, taken.configurable, taken.get.call({ answer: { code: "elsewhere" } }), taken.get.name, taken.get.length, taken.set.length);
+say(exchange.__lookupGetter__("code") === taken.get, exchange.__lookupGetter__("size") === taken.get, exchange.__lookupGetter__("size").toString() === taken.get.toString());
+// The helper's own method is replaced, and the built-in it calls is shadowed on the holder.
+const original = Forwarder.prototype.getter;
+Forwarder.prototype.getter = function (name) {
+  say("replaced", name);
+  return original.call(this, name);
+};
+toAnswer.getter("more");
+Forwarder.prototype.getter = original;
+const odd = {
+  __defineGetter__(name, getter) {
+    say("own definer", name, typeof getter);
+  },
+};
+Forwarder(odd, "answer").getter("code");
+say(Object.keys(odd).join());
+// Names that are indexes, __proto__, symbols.
+const other = {};
+const mark = Symbol("mark");
+Forwarder(other, "inner").getter("0").getter("__proto__").getter(mark).getter("");
+const under = Object.create(other);
+under.inner = { 0: "zero", [mark]: "marked", "": "empty" };
+say(under[0], under.__proto__ === Object.prototype, Object.getPrototypeOf(under) === other, under[mark], under[""]);
+console.log(lines.join("\n"));
+//// keys-handed-on-and-rest-parameters.js
+// The name goes through helpers; the operands come through a rest parameter, read by index, spread, changed and handed on.
+////= Emitter-2
+const lines = [];
+////= describe-2
+function store(target, type, listener) {
+  target.events[type] = listener;
+}
+function lookUp(target, type) {
+  return target.events[type];
+}
+function Relay() {
+  this.events = Object.create(null);
+}
+Relay.prototype.addListener = function (type, listener) {
+  store(this, type, listener);
+  return this;
+};
+Relay.prototype.on = Relay.prototype.addListener;
+Relay.prototype.once = function (type, listener) {
+  const self = this;
+  return this.on(type, function wrapper(...operands) {
+    delete self.events[type];
+    return listener.apply(this, operands);
+  });
+};
+Relay.prototype.emit = function (type, ...args) {
+  const handler = lookUp(this, type);
+  if (handler === undefined) return false;
+  switch (args.length) {
+    case 0:
+      handler.call(this);
+      break;
+    case 1:
+      handler.call(this, args[0]);
+      break;
+    case 2:
+      handler.call(this, args[0], args[1]);
+      break;
+    default:
+      handler.apply(this, args);
+  }
+  return true;
+};
+Relay.prototype.emitReversed = function (type, ...args) {
+  args.reverse();
+  const handler = lookUp(this, type);
+  if (handler !== undefined) handler.call(this, args[0], args[1]);
+};
+Relay.prototype.emitChanged = function (type, ...args) {
+  args[0] = "changed";
+  args.push("pushed");
+  const handler = lookUp(this, type);
+  if (handler !== undefined) handler.call(this, args[0], args[1], args[2]);
+};
+const relay = new Relay();
+listen(relay);
+relay.emit("request", new Request("/relay"), new Response());
+relay.emit("failure", new Failure(1));
+relay.emit("tick", 2);
+relay.emit("tick");
+relay.emit("request", 1, 2, 3, 4);
+relay.emitReversed("request", new Response(), new Request("/reversed"));
+relay.emitReversed("tick", "dropped", 3);
+relay.emitChanged("request", new Request("/never seen"), new Response());
+relay.emitChanged("tick", 4);
+relay.once("late", (a, b, c) => lines.push("late: " + describe(a) + ", " + describe(b) + ", " + describe(c)));
+lines.push(String(relay.emit("late", new Failure(5), "six", 7)), String(relay.emit("late", 8)));
+console.log(lines.join("\n"));
+//// listeners-replaced-removed-and-kept-in-arrays.js
+// A listener is replaced, removed by delete and by undefined, and the dictionary holds arrays of listeners.
+////= Emitter-2
+const lines = [];
+////= describe-2
+const server = new Emitter();
+listen(server);
+server.emit("tick", 1);
+server.on("tick", function (count) {
+  lines.push("the second tick listener: " + describe(count));
+});
+server.emit("tick", new Failure(2));
+delete server.events.tick;
+lines.push(String(server.emit("tick", 3)));
+server.on("failure", undefined);
+lines.push(String(server.emit("failure", new Failure(4))));
+server.events["request"] = function (only) {
+  lines.push("stored without on: " + describe(only));
+};
+server.emit("request", "five");
+
+function Many() {
+  this.events = Object.create(null);
+}
+Many.prototype.on = function (type, listener) {
+  const list = this.events[type];
+  if (list === undefined) this.events[type] = [listener];
+  else list.push(listener);
+  return this;
+};
+Many.prototype.off = function (type, listener) {
+  const list = this.events[type];
+  if (list === undefined) return this;
+  const index = list.indexOf(listener);
+  if (index >= 0) list.splice(index, 1);
+  return this;
+};
+Many.prototype.emit = function (type, a, b) {
+  const list = this.events[type];
+  if (list === undefined) return 0;
+  for (const listener of list.slice()) listener.call(this, a, b);
+  return list.length;
+};
+const many = new Many();
+const first = a => lines.push("first: " + describe(a));
+const second = (a, b) => lines.push("second: " + describe(a) + ", " + describe(b));
+many.on("request", first).on("request", second).on("failure", first);
+lines.push(String(many.emit("request", new Request("/many"), new Response())));
+lines.push(String(many.emit("failure", new Failure(6))));
+many.off("request", first);
+lines.push(String(many.emit("request", 7, 8)));
+many.off("nothing", first).off("failure", second);
+lines.push(String(many.emit("failure", "nine")));
+console.log(lines.join("\n"));
+//// more-constants-than-are-told-apart.js
+// One call site may pass any of twelve constants, and one emitter has a hundred names.
+////= Emitter-2
+const lines = [];
+////= describe-2
+const server = new Emitter();
+listen(server);
+function pick(i) {
+  switch (i % 12) {
+    case 0: return "request";
+    case 1: return "failure";
+    case 2: return "tick";
+    case 3: return "n3";
+    case 4: return "n4";
+    case 5: return "n5";
+    case 6: return "n6";
+    case 7: return "n7";
+    case 8: return "n8";
+    case 9: return "n9";
+    case 10: return "n10";
+    default: return "n11";
+  }
+}
+for (let i = 3; i < 12; i++) server.on(pick(i), a => lines.push(pick(i) + ": " + describe(a)));
+for (let i = 0; i < 12; i++) server.emit(pick(i + process.argv.length - process.argv.length), i % 2 ? new Failure(i) : i);
+const wide = new Emitter();
+wide.on("name0", a => lines.push("name0: " + describe(a)));
+wide.on("name1", a => lines.push("name1: " + describe(a)));
+wide.on("name2", a => lines.push("name2: " + describe(a)));
+wide.on("name3", a => lines.push("name3: " + describe(a)));
+wide.on("name4", a => lines.push("name4: " + describe(a)));
+wide.on("name5", a => lines.push("name5: " + describe(a)));
+wide.on("name6", a => lines.push("name6: " + describe(a)));
+wide.on("name7", a => lines.push("name7: " + describe(a)));
+wide.on("name8", a => lines.push("name8: " + describe(a)));
+wide.on("name9", a => lines.push("name9: " + describe(a)));
+wide.on("name10", a => lines.push("name10: " + describe(a)));
+wide.on("name11", a => lines.push("name11: " + describe(a)));
+wide.on("name12", a => lines.push("name12: " + describe(a)));
+wide.on("name13", a => lines.push("name13: " + describe(a)));
+wide.on("name14", a => lines.push("name14: " + describe(a)));
+wide.on("name15", a => lines.push("name15: " + describe(a)));
+wide.on("name16", a => lines.push("name16: " + describe(a)));
+wide.on("name17", a => lines.push("name17: " + describe(a)));
+wide.on("name18", a => lines.push("name18: " + describe(a)));
+wide.on("name19", a => lines.push("name19: " + describe(a)));
+wide.on("name20", a => lines.push("name20: " + describe(a)));
+wide.on("name21", a => lines.push("name21: " + describe(a)));
+wide.on("name22", a => lines.push("name22: " + describe(a)));
+wide.on("name23", a => lines.push("name23: " + describe(a)));
+wide.on("name24", a => lines.push("name24: " + describe(a)));
+wide.on("name25", a => lines.push("name25: " + describe(a)));
+wide.on("name26", a => lines.push("name26: " + describe(a)));
+wide.on("name27", a => lines.push("name27: " + describe(a)));
+wide.on("name28", a => lines.push("name28: " + describe(a)));
+wide.on("name29", a => lines.push("name29: " + describe(a)));
+wide.on("name30", a => lines.push("name30: " + describe(a)));
+wide.on("name31", a => lines.push("name31: " + describe(a)));
+wide.on("name32", a => lines.push("name32: " + describe(a)));
+wide.on("name33", a => lines.push("name33: " + describe(a)));
+wide.on("name34", a => lines.push("name34: " + describe(a)));
+wide.on("name35", a => lines.push("name35: " + describe(a)));
+wide.on("name36", a => lines.push("name36: " + describe(a)));
+wide.on("name37", a => lines.push("name37: " + describe(a)));
+wide.on("name38", a => lines.push("name38: " + describe(a)));
+wide.on("name39", a => lines.push("name39: " + describe(a)));
+wide.on("name40", a => lines.push("name40: " + describe(a)));
+wide.on("name41", a => lines.push("name41: " + describe(a)));
+wide.on("name42", a => lines.push("name42: " + describe(a)));
+wide.on("name43", a => lines.push("name43: " + describe(a)));
+wide.on("name44", a => lines.push("name44: " + describe(a)));
+wide.on("name45", a => lines.push("name45: " + describe(a)));
+wide.on("name46", a => lines.push("name46: " + describe(a)));
+wide.on("name47", a => lines.push("name47: " + describe(a)));
+wide.on("name48", a => lines.push("name48: " + describe(a)));
+wide.on("name49", a => lines.push("name49: " + describe(a)));
+wide.on("name50", a => lines.push("name50: " + describe(a)));
+wide.on("name51", a => lines.push("name51: " + describe(a)));
+wide.on("name52", a => lines.push("name52: " + describe(a)));
+wide.on("name53", a => lines.push("name53: " + describe(a)));
+wide.on("name54", a => lines.push("name54: " + describe(a)));
+wide.on("name55", a => lines.push("name55: " + describe(a)));
+wide.on("name56", a => lines.push("name56: " + describe(a)));
+wide.on("name57", a => lines.push("name57: " + describe(a)));
+wide.on("name58", a => lines.push("name58: " + describe(a)));
+wide.on("name59", a => lines.push("name59: " + describe(a)));
+wide.on("name60", a => lines.push("name60: " + describe(a)));
+wide.on("name61", a => lines.push("name61: " + describe(a)));
+wide.on("name62", a => lines.push("name62: " + describe(a)));
+wide.on("name63", a => lines.push("name63: " + describe(a)));
+wide.on("name64", a => lines.push("name64: " + describe(a)));
+wide.on("name65", a => lines.push("name65: " + describe(a)));
+wide.on("name66", a => lines.push("name66: " + describe(a)));
+wide.on("name67", a => lines.push("name67: " + describe(a)));
+wide.on("name68", a => lines.push("name68: " + describe(a)));
+wide.on("name69", a => lines.push("name69: " + describe(a)));
+wide.on("name70", a => lines.push("name70: " + describe(a)));
+wide.on("name71", a => lines.push("name71: " + describe(a)));
+wide.on("name72", a => lines.push("name72: " + describe(a)));
+wide.on("name73", a => lines.push("name73: " + describe(a)));
+wide.on("name74", a => lines.push("name74: " + describe(a)));
+wide.on("name75", a => lines.push("name75: " + describe(a)));
+wide.on("name76", a => lines.push("name76: " + describe(a)));
+wide.on("name77", a => lines.push("name77: " + describe(a)));
+wide.on("name78", a => lines.push("name78: " + describe(a)));
+wide.on("name79", a => lines.push("name79: " + describe(a)));
+wide.on("name80", a => lines.push("name80: " + describe(a)));
+wide.on("name81", a => lines.push("name81: " + describe(a)));
+wide.on("name82", a => lines.push("name82: " + describe(a)));
+wide.on("name83", a => lines.push("name83: " + describe(a)));
+wide.on("name84", a => lines.push("name84: " + describe(a)));
+wide.on("name85", a => lines.push("name85: " + describe(a)));
+wide.on("name86", a => lines.push("name86: " + describe(a)));
+wide.on("name87", a => lines.push("name87: " + describe(a)));
+wide.on("name88", a => lines.push("name88: " + describe(a)));
+wide.on("name89", a => lines.push("name89: " + describe(a)));
+wide.on("name90", a => lines.push("name90: " + describe(a)));
+wide.on("name91", a => lines.push("name91: " + describe(a)));
+wide.on("name92", a => lines.push("name92: " + describe(a)));
+wide.on("name93", a => lines.push("name93: " + describe(a)));
+wide.on("name94", a => lines.push("name94: " + describe(a)));
+wide.on("name95", a => lines.push("name95: " + describe(a)));
+wide.on("name96", a => lines.push("name96: " + describe(a)));
+wide.on("name97", a => lines.push("name97: " + describe(a)));
+wide.on("name98", a => lines.push("name98: " + describe(a)));
+wide.on("name99", a => lines.push("name99: " + describe(a)));
+wide.emit("name0", 0);
+wide.emit("name1", "text 1");
+wide.emit("name2", new Failure(2));
+wide.emit("name3", new Request("/3"));
+wide.emit("name4", 4);
+wide.emit("name5", "text 5");
+wide.emit("name6", new Failure(6));
+wide.emit("name7", new Request("/7"));
+wide.emit("name8", 8);
+wide.emit("name9", "text 9");
+wide.emit("name10", new Failure(10));
+wide.emit("name11", new Request("/11"));
+wide.emit("name12", 12);
+wide.emit("name13", "text 13");
+wide.emit("name14", new Failure(14));
+wide.emit("name15", new Request("/15"));
+wide.emit("name16", 16);
+wide.emit("name17", "text 17");
+wide.emit("name18", new Failure(18));
+wide.emit("name19", new Request("/19"));
+wide.emit("name20", 20);
+wide.emit("name21", "text 21");
+wide.emit("name22", new Failure(22));
+wide.emit("name23", new Request("/23"));
+wide.emit("name24", 24);
+wide.emit("name25", "text 25");
+wide.emit("name26", new Failure(26));
+wide.emit("name27", new Request("/27"));
+wide.emit("name28", 28);
+wide.emit("name29", "text 29");
+wide.emit("name30", new Failure(30));
+wide.emit("name31", new Request("/31"));
+wide.emit("name32", 32);
+wide.emit("name33", "text 33");
+wide.emit("name34", new Failure(34));
+wide.emit("name35", new Request("/35"));
+wide.emit("name36", 36);
+wide.emit("name37", "text 37");
+wide.emit("name38", new Failure(38));
+wide.emit("name39", new Request("/39"));
+wide.emit("name40", 40);
+wide.emit("name41", "text 41");
+wide.emit("name42", new Failure(42));
+wide.emit("name43", new Request("/43"));
+wide.emit("name44", 44);
+wide.emit("name45", "text 45");
+wide.emit("name46", new Failure(46));
+wide.emit("name47", new Request("/47"));
+wide.emit("name48", 48);
+wide.emit("name49", "text 49");
+wide.emit("name50", new Failure(50));
+wide.emit("name51", new Request("/51"));
+wide.emit("name52", 52);
+wide.emit("name53", "text 53");
+wide.emit("name54", new Failure(54));
+wide.emit("name55", new Request("/55"));
+wide.emit("name56", 56);
+wide.emit("name57", "text 57");
+wide.emit("name58", new Failure(58));
+wide.emit("name59", new Request("/59"));
+wide.emit("name60", 60);
+wide.emit("name61", "text 61");
+wide.emit("name62", new Failure(62));
+wide.emit("name63", new Request("/63"));
+wide.emit("name64", 64);
+wide.emit("name65", "text 65");
+wide.emit("name66", new Failure(66));
+wide.emit("name67", new Request("/67"));
+wide.emit("name68", 68);
+wide.emit("name69", "text 69");
+wide.emit("name70", new Failure(70));
+wide.emit("name71", new Request("/71"));
+wide.emit("name72", 72);
+wide.emit("name73", "text 73");
+wide.emit("name74", new Failure(74));
+wide.emit("name75", new Request("/75"));
+wide.emit("name76", 76);
+wide.emit("name77", "text 77");
+wide.emit("name78", new Failure(78));
+wide.emit("name79", new Request("/79"));
+wide.emit("name80", 80);
+wide.emit("name81", "text 81");
+wide.emit("name82", new Failure(82));
+wide.emit("name83", new Request("/83"));
+wide.emit("name84", 84);
+wide.emit("name85", "text 85");
+wide.emit("name86", new Failure(86));
+wide.emit("name87", new Request("/87"));
+wide.emit("name88", 88);
+wide.emit("name89", "text 89");
+wide.emit("name90", new Failure(90));
+wide.emit("name91", new Request("/91"));
+wide.emit("name92", 92);
+wide.emit("name93", "text 93");
+wide.emit("name94", new Failure(94));
+wide.emit("name95", new Request("/95"));
+wide.emit("name96", 96);
+wide.emit("name97", "text 97");
+wide.emit("name98", new Failure(98));
+wide.emit("name99", new Request("/99"));
+console.log(lines.join("\n"));
+//// names-out-of-a-written-list-become-members-and-the-list-changes.js
+// A loop over a written list of names gives objects one member a name; each member is a closure over the name.
+const lines = [];
+const say = (...parts) => lines.push(parts.map(String).join(" "));
+const hidden = process.argv.length > 9 ? "x" : "";
+class Counter {
+  counts = { get: 0, put: 0, head: 0, late: 0 };
+}
+const verbs = ["get", "put", "head"];
+verbs.forEach(function (verb, index, list) {
+  Counter.prototype[verb] = function (by) {
+    this.counts[verb] += by;
+    return this;
+  };
+  if (index === 0) list.push("la" + hidden + "te");
+});
+const counter = new Counter();
+counter.get(1).put(2).head(3).get(5);
+say(typeof counter.late, verbs.join());
+verbs.forEach(function (verb) {
+  Counter.prototype[verb + hidden] = function (by) {
+    this.counts[verb] -= by;
+    return this;
+  };
+});
+counter.get(1).late(4);
+say(JSON.stringify(counter.counts), Object.getOwnPropertyNames(Counter.prototype).join());
+// The callback is called by hand, with other names, with none.
+function define(name) {
+  Counter.prototype[name] = function () {
+    return name + ":" + typeof this.counts[name];
+  };
+}
+["get", "put"].forEach(define);
+define("head");
+define("no" + hidden + "ne");
+define();
+define(7);
+say(counter.get(), counter.put(), counter.head(), counter.none(), counter.undefined(), counter[7]());
+// map, filter, some, for-of, a Set, and a list with holes and other things in it.
+const made = ["a", "b"].map(name => () => ({ [name]: name }));
+say(JSON.stringify(made.map(make => make())));
+const mixed = ["a", , 1, null, undefined, "b", { toString: () => "c" }];
+const readers = [];
+mixed.forEach(name => readers.push(from => from[name]));
+const from = { a: 1, b: 2, c: 3, 1: "one", null: "n", undefined: "u" };
+say(readers.map(read => read(from)).join());
+const holder = {};
+for (const name of ["x", "y", "x"]) {
+  Object.defineProperty(holder, name, {
+    get() {
+      return this.values[name];
+    },
+    set(value) {
+      this.values[name] = value;
+    },
+    configurable: true,
+    enumerable: name === "x",
+  });
+}
+holder.values = { x: 1, y: 2 };
+holder.x = 10;
+holder.y += 5;
+say(holder.x, holder.y, Object.keys(holder).join(), JSON.stringify(holder.values));
+// forEach of somebody else.
+const impostor = {
+  forEach(callback) {
+    callback("put");
+    callback("imp" + hidden + "ostor");
+  },
+};
+const stored = {};
+impostor.forEach(function (name) {
+  stored[name] = function () {
+    return this === stored && name;
+  };
+});
+say(stored.put(), stored.impostor());
+console.log(lines.join("\n"));
+//// names-out-of-written-lists-that-change-behind-their-birth.js
+// Names out of written lists are keys of reads, stores, definitions and calls; the lists are changed, shared, frozen, copied and emptied behind their birth.
+const table = { run: 1, stop: 2, toString: 3 };
+const names = ["run", "stop"];
+function read(i) {
+  return table[names[i]];
+}
+console.log(read(0), read(1), read(2));
+names.push("toString");
+console.log(read(2));
+names[0] = "valueOf";
+console.log(typeof read(0));
+names[1] = "written" + "-at-run-time".slice(0, 3);
+console.log(read(1));
+names.length = 0;
+console.log(read(0));
+
+const inherited = ["run", "hasOwnProperty", "__proto__", "constructor"];
+for (const name of inherited) console.log(name, typeof table[name], name in table, Object.hasOwn(table, name));
+
+const sink = {};
+for (const name of ["a", "b", "__proto__", "constructor", "a"]) sink[name] = name.length;
+console.log(JSON.stringify(sink), Object.keys(sink).join(), Object.getPrototypeOf(sink) === Object.prototype);
+
+class Route {
+  counts = { get: 0, post: 0, head: 0 };
+}
+const verbs = ["get", "post", "head"];
+verbs.forEach(function (verb) {
+  Route.prototype[verb] = function (by) {
+    this.counts[verb] += by;
+    return this;
+  };
+});
+const route = new Route();
+route.get(1).post(2).head(3).get(4);
+console.log(JSON.stringify(route.counts), Object.keys(Route.prototype).join());
+verbs.push("trace");
+console.log(typeof route[verbs[3]], typeof route[verbs[0]]);
+Route.prototype[verbs[0]] = () => "replaced";
+console.log(route.get(1), route[verbs[1]](5).counts.post);
+
+const handlers = {
+  up: n => n + 1,
+  down: n => n - 1,
+};
+const script = ["up", "down", "up", "sideways"];
+for (const step of script) {
+  try {
+    console.log(step, handlers[step](10));
+  } catch (error) {
+    console.log(step, error instanceof TypeError);
+  }
+}
+
+const mixed = ["run", 1, null, undefined, true, "stop", 2.5, ["run"], { run: "stop" }];
+for (const key of mixed) console.log(String(key), table[key]);
+console.log(table[mixed[7][0]], table[mixed[8].run]);
+
+const holes = ["run", , "stop"];
+console.log(table[holes[0]], table[holes[1]], table[holes[2]], 1 in holes);
+
+const frozen = Object.freeze(["run", "stop"]);
+try {
+  "use strict";
+  frozen[0] = "toString";
+} catch {}
+console.log(table[frozen[0]]);
+
+const copies = [...["run", "stop"], ...["toString"]].concat(["missing"]).map(name => table[name]);
+console.log(copies.join());
+const upper = ["run", "stop"].map(name => name.toUpperCase());
+console.log(table[upper[0]], table[upper[0].toLowerCase()]);
+
+function fill(target, list) {
+  for (let i = 0; i < list.length; i++) Object.defineProperty(target, list[i], { get: () => list[i] + i, enumerable: true, configurable: true });
+  return target;
+}
+const filled = fill({}, ["id", "size"]);
+console.log(filled.id, filled.size, JSON.stringify(filled));
+const other = fill({ id: 0 }, ["size", "rank"]);
+console.log(other.id, other.size, other.rank);
+
+const removed = { run: 1, stop: 2, keep: 3 };
+for (const name of ["run", "stop", "absent"]) delete removed[name];
+console.log(JSON.stringify(removed));
+
+const symbols = { [Symbol.iterator]: 1, iterator: 2 };
+console.log(symbols[["iterator"][0]], symbols[[Symbol.iterator][0]]);
+const numeric = { 0: "zero", 1: "one", "01": "text" };
+for (const key of ["0", "1", "01", "-0"]) console.log(key, numeric[key]);
+const list = ["a", "b"];
+for (const key of ["0", "1", "length", "2"]) console.log(key, list[key]);
+//// symbols-and-odd-names.js
+// Symbols, "__proto__", "constructor", "toString", an index, the empty text, undefined and null as names.
+////= Emitter-2
+const lines = [];
+////= describe-2
+const server = new Emitter();
+listen(server);
+const mark = Symbol("mark");
+const odd = [mark, Symbol.iterator, Symbol.for("shared"), "__proto__", "constructor", "toString", "0", 0, "", undefined, null, "hasOwnProperty"];
+server.on(mark, a => lines.push("mark: " + describe(a)));
+server.on(Symbol.iterator, a => lines.push("iterator: " + describe(a)));
+server.on(Symbol.for("shared"), a => lines.push("shared: " + describe(a)));
+server.on("__proto__", a => lines.push("__proto__: " + describe(a)));
+server.on("constructor", a => lines.push("constructor: " + describe(a)));
+server.on("toString", a => lines.push("toString: " + describe(a)));
+server.on("0", a => lines.push("zero: " + describe(a)));
+server.on("", a => lines.push("empty: " + describe(a)));
+server.on(undefined, a => lines.push("undefined: " + describe(a)));
+server.on(null, a => lines.push("null: " + describe(a)));
+server.emit(mark, new Request("/mark"));
+server.emit(Symbol.iterator, new Response());
+server.emit(Symbol.for("shared"), new Failure(1));
+server.emit("__proto__", 1);
+server.emit("constructor", "two");
+server.emit("toString", 3n);
+server.emit(0, new Failure(0));
+server.emit("", false);
+server.emit("undefined", new Request("/undefined"));
+server.emit("null", new Response());
+lines.push(String(server.emit("hasOwnProperty", 1)), String(server.emit("valueOf")));
+for (const name of odd) lines.push(typeof server.events[name]);
+
+// The same names on a dictionary that inherits from Object.prototype.
+function Ordinary() {
+  this.events = {};
+}
+Ordinary.prototype.on = Emitter.prototype.on;
+Ordinary.prototype.emit = Emitter.prototype.emit;
+const ordinary = new Ordinary();
+try {
+  lines.push(String(ordinary.emit("hasOwnProperty", "events")));
+  lines.push(String(ordinary.emit("toString")));
+  ordinary.on("__proto__", { inherited: a => lines.push("inherited: " + describe(a)) });
+  lines.push(String(ordinary.emit("inherited", new Failure(9))));
+  lines.push(String(ordinary.emit("__proto__", 1)));
+} catch (error) {
+  lines.push(error.constructor.name);
+}
+console.log(lines.join("\n"));
+//// the-dictionary-in-other-hands.js
+// The dictionary is handed to code that nobody sees, walked by Object.keys, for-in and Object.entries, copied and frozen.
+////= Emitter-2
+const lines = [];
+////= describe-2
+const server = new Emitter();
+listen(server);
+const unseen = new Function("events", "make", "events.tick = function (a) { make('stored by evaluated text', a); }; const kept = events.request; events.request = events.failure; events.failure = kept; return Object.keys(events).join();");
+lines.push(unseen(server.events, (text, a) => lines.push(text + ": " + describe(a))));
+server.emit("request", new Request("/swapped"), new Response());
+server.emit("failure", new Failure(1));
+server.emit("tick", 2);
+for (const name of Object.keys(server.events)) server.events[name].call(server, name.length, name);
+for (const name in server.events) lines.push(name + " " + server.events[name].length);
+for (const [name, listener] of Object.entries(server.events)) listener.call(null, new Failure(name.length));
+const copy = { ...server.events };
+copy.request(new Response(), 1);
+Object.freeze(server.events);
+try {
+  server.on("tick", () => lines.push("never stored"));
+} catch (error) {
+  lines.push(error.constructor.name);
+}
+server.emit("tick", 3);
+console.log(lines.join("\n"));
+//// two-emitters-a-subclass-and-borrowed-methods.js
+// Two emitters with the same names, a subclass that overrides emit, emit.call and apply on another object, bound methods, methods read into variables.
+////= Emitter-2
+const lines = [];
+////= describe-2
+const server = new Emitter();
+const client = new Emitter();
+listen(server);
+client.on("request", function (text) {
+  lines.push("the client's request: " + describe(text));
+});
+client.on("tick", function (a, b) {
+  lines.push("the client's tick: " + describe(a) + ", " + describe(b));
+});
+server.emit("request", new Request("/server"), new Response());
+client.emit("request", "text");
+client.emit("tick", new Failure(1), new Request("/client"));
+server.emit("tick", 2);
+
+class Loud extends Emitter {
+  emit(type, a, b) {
+    lines.push("loud " + String(type));
+    return super.emit(type === "alias" ? "request" : type, b, a);
+  }
+}
+const loud = new Loud();
+listen(loud);
+loud.emit("request", new Response(), new Request("/loud"));
+loud.emit("alias", 1, 2);
+loud.emit("tick", "swapped away", 3);
+
+const other = { events: { request: (a, b) => lines.push("another object: " + describe(a) + ", " + describe(b)) } };
+Emitter.prototype.emit.call(other, "request", new Failure(4), 5);
+Emitter.prototype.emit.apply(other, ["request", "six"]);
+Reflect.apply(Emitter.prototype.emit, other, ["request", 7n, new Response()]);
+Emitter.prototype.on.call(other, "tick", a => lines.push("another object's tick: " + describe(a)));
+other.events.tick(8);
+const bound = server.emit.bind(server, "failure");
+bound(new Failure(9));
+const boundLater = server.emit.bind(server);
+boundLater("tick", 10);
+const { emit, on } = Emitter.prototype;
+on.call(client, "failure", a => lines.push("the client's failure: " + describe(a)));
+emit.call(client, "failure", new Failure(11));
+[["tick", 12], ["failure", new Failure(13)]].forEach(([type, a]) => server.emit(type, a));
+console.log(lines.join("\n"));
+//// two-makers-of-one-name-take-names-of-different-types.ts
+// Two classes have a method of one name that makes a closure over its parameter. The parameter of one is a union of two texts, that of the other any text, a third takes a key of a type parameter, a fourth a member of an enum.
+const lines: string[] = [];
+const say = (...parts: unknown[]) => lines.push(parts.map(String).join(" "));
+const hidden = process.argv.length > 9 ? "x" : "";
+class Narrow {
+  values = { a: 1, b: 2 };
+  reader(name: "a" | "b") {
+    return () => this.values[name];
+  }
+}
+class Wide {
+  values: Record<string, number> = { a: 10, zebra: 20, c: 30 };
+  reader(name: string) {
+    return () => this.values[name];
+  }
+}
+class Keyed<T extends object> {
+  constructor(public values: T) {}
+  reader<K extends keyof T>(name: K) {
+    return () => this.values[name];
+  }
+}
+enum Color {
+  Red = "red",
+  Blue = "blue",
+}
+class Painted {
+  values = { red: 100, blue: 200 };
+  reader(name: Color) {
+    return () => this.values[name];
+  }
+}
+class Numbered {
+  values = [7, 8, 9];
+  reader(name: number) {
+    return () => this.values[name];
+  }
+}
+const narrow = new Narrow(),
+  wide = new Wide(),
+  keyed = new Keyed({ left: "l", right: "r" }),
+  painted = new Painted(),
+  numbered = new Numbered();
+say(narrow.reader("a")(), narrow.reader("b")());
+say(wide.reader("a")(), wide.reader("zebra")(), wide.reader("c" + hidden)(), wide.reader("left")());
+say(keyed.reader("left")(), keyed.reader("right")());
+say(painted.reader(Color.Red)(), painted.reader(Color.Blue)());
+say(numbered.reader(0)(), numbered.reader(2)());
+console.log(lines.join("\n"));

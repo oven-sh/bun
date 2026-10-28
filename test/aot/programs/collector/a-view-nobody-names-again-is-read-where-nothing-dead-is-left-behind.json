@@ -1,0 +1,9 @@
+{
+  "build": ["--aot-testing=OverwriteDeadValuesAtCollections"],
+  "env": {
+    "BUN_JSC_collectContinuously": "1",
+    "BUN_JSC_forceDidDeferGCWork": "1",
+    "ASAN_OPTIONS": "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0:abort_on_error=1:max_free_fill_size=1048576:free_fill_byte=85"
+  },
+  "runWithASAN": "a byte read in front of a call that may collect is compared behind the call"
+}

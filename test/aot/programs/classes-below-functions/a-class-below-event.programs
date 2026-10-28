@@ -1,0 +1,789 @@
+////: A
+function A() {
+  this.v = 1;
+}
+////: lines
+class «1» extends «2» {
+  set «3»(«4») {}
+}
+////: str
+function str(v) {
+  return v;
+}
+//// a-class-below-event-emitter.mjs
+// A class of the program extends EventEmitter, under each of the names that node:events gives it.
+import Default, { EventEmitter } from "node:events";
+import * as events from "node:events";
+class Bus extends EventEmitter {
+  constructor() { super(); this.total = 0; }
+  send(n) { return this.emit("n", n); }
+}
+class Quiet extends Default { heard = []; }
+class Named extends events.EventEmitter { constructor(name) { super({ captureRejections: true }); this.name = name; } }
+const bus = new Bus();
+bus.on("n", function (n) { this.total += n; });
+bus.once("n", n => console.log("first", n));
+for (let i = 1; i <= 500; i++) bus.send(i);
+console.log(bus.total, bus.listenerCount("n"), bus.eventNames().join(), Object.keys(bus).join());
+const quiet = new Quiet();
+quiet.on("word", word => quiet.heard.push(word)).emit("word", "a");
+console.log(quiet.emit("word", "b"), quiet.emit("nothing"), quiet.heard.join(), Object.keys(quiet).join());
+const named = new Named("n");
+console.log(named.name, named.getMaxListeners(), Object.keys(named).join(), named instanceof Default, Default === EventEmitter);
+try { named.emit("error", new Error("nobody listens")); } catch (error) { console.log(error.message); }
+//// a-class-below-readable-of-node-stream.mjs
+// A class of the program extends a constructor function of Bun's own modules: its objects pass through the methods of that function.
+import { Readable, Stream } from "node:stream";
+import { EventEmitter } from "node:events";
+class Numbers extends Readable {
+  constructor(limit) { super({ objectMode: true }); this.n = 0; this.limit = limit; }
+  _read() { this.push(this.n < this.limit ? { n: this.n++ } : null); }
+}
+let sum = 0;
+const numbers = new Numbers(300);
+for await (const item of numbers) sum += item.n;
+console.log(sum, numbers.n, numbers.destroyed, numbers.readableEnded, numbers.readableObjectMode);
+console.log(numbers instanceof Readable, numbers instanceof Stream, numbers instanceof EventEmitter, numbers instanceof Numbers);
+console.log(Object.keys(numbers).join(), Object.getPrototypeOf(Numbers) === Readable, Object.getPrototypeOf(Numbers.prototype) === Readable.prototype);
+console.log(new Readable({ read() {} }) instanceof Numbers, numbers.constructor.name, typeof numbers._readableState);
+//// a-constructor-function-below-a-class.js
+// The mirror: the prototype object of a function is hung below that of a class, whose constructor never runs for its objects.
+class Base {
+  size = 1;
+  constructor() { this.made = "by the class"; }
+  describe() { return this.made + " " + this.size + " " + this.own; }
+  static create() { return new this(); }
+}
+function Below() { this.own = "own"; }
+Object.setPrototypeOf(Below.prototype, Base.prototype);
+Object.setPrototypeOf(Below, Base);
+function Wrapped() { const self = Reflect.construct(Base, [], new.target); self.own = "wrapped"; return self; }
+Wrapped.prototype = Object.create(Base.prototype, { constructor: { value: Wrapped } });
+class Leaf extends Below { constructor() { super(); this.leaf = true; } }
+function all(list) { return list.map(each => each.describe() + " | " + Object.keys(each).join()).join("\n"); }
+const list = [];
+for (let i = 0; i < 50; i++) list.push(new Base(), new Below(), new Wrapped(), new Leaf());
+console.log(all(list.slice(0, 4)));
+console.log(list.every(each => each instanceof Base), Below.create() instanceof Below, new Leaf() instanceof Below, new Wrapped() instanceof Wrapped);
+try { Base.call(new Below()); } catch (error) { console.log(error.constructor.name); }
+//// a-constructor-function-below-a-library-function.cjs
+// The old way: a function of the program calls a function of the library on its `this` and links the prototype objects.
+const util = require("node:util");
+const EventEmitter = require("node:events");
+const { Readable, Writable } = require("node:stream");
+function Bus(name) { EventEmitter.call(this); this.name = name; this.count = 0; }
+util.inherits(Bus, EventEmitter);
+Bus.prototype.send = function (n) { this.count++; return this.emit("n", n); };
+function Counter(limit) { Readable.call(this, { objectMode: true }); this.next = 0; this.limit = limit; }
+Object.setPrototypeOf(Counter.prototype, Readable.prototype);
+Object.setPrototypeOf(Counter, Readable);
+Counter.prototype._read = function () { this.push(this.next < this.limit ? this.next++ : null); };
+function Sink() { if (!(this instanceof Sink)) return new Sink(); Writable.call(this, { objectMode: true }); this.sum = 0; }
+Sink.prototype = Object.create(Writable.prototype, { constructor: { value: Sink, writable: true, configurable: true } });
+Sink.prototype._write = function (chunk, encoding, done) { this.sum += chunk; done(); };
+class Loud extends Bus { constructor() { super("loud"); this.volume = 11; } }
+const bus = new Bus("b"), loud = new Loud();
+let total = 0;
+for (const each of [bus, loud]) each.on("n", n => { total += n; });
+for (let i = 0; i < 200; i++) { bus.send(i); loud.send(1); }
+console.log(total, bus.count, loud.count, loud.volume, Object.keys(loud).join(), loud instanceof EventEmitter, Bus.super_ === EventEmitter);
+const sink = Sink();
+new Counter(100).pipe(sink).on("finish", () => console.log(sink.sum, sink instanceof Writable, sink.constructor === Sink, Object.keys(sink).includes("sum")));
+//// a-constructor-function-is-constructed-for-a-class-below-whose-setter-takes-its-store.js
+// new.target is the class below, so the object inherits the setter, and the store in the function makes no property of the object.
+function Base() {
+  this.value = { inner: 1 };
+}
+////= lines	Below	Base	value	stored
+const made = Reflect.construct(Base, [], Below);
+console.log(typeof made.value, made.value?.inner, Object.keys(made).join() || "-", made instanceof Below);
+console.log(new Base().value.inner, typeof new Below().value);
+//// a-constructor-function-is-constructed-for-a-class-two-below-and-one-of-its-two-stores-is-taken.js
+function Base() {
+  this.taken = { inner: 1 };
+  this.kept = { inner: 2 };
+}
+////= lines	Middle	Base	taken	stored
+class Below extends Middle {}
+const made = Reflect.construct(Base, [], Below);
+console.log(typeof made.taken, made.kept.inner, Object.keys(made).join(), made instanceof Below);
+//// a-field-of-the-class-has-the-name-of-a-field-of-the-library-function.mjs
+// The class declares, with other kinds of values, names that the function of the library stores into the same object.
+import { EventEmitter } from "node:events";
+import { Readable } from "node:stream";
+class Odd extends EventEmitter { _eventsCount = "many"; _maxListeners = 1; }
+const odd = new Odd();
+odd.on("a", () => {});
+console.log(odd._eventsCount, odd._maxListeners, odd.getMaxListeners(), odd.listenerCount("a"), Object.keys(odd).join());
+class Early extends EventEmitter { constructor() { super(); this._events = { __proto__: null, a: () => console.log("planted") }; } }
+console.log(new Early().emit("a"), new Early().eventNames().join());
+class Hidden extends Readable {
+  _readableState = "mine";
+  get own() { return this._readableState; }
+}
+const hidden = new Hidden();
+console.log(hidden.own, typeof hidden._readableState);
+try { console.log(hidden.readableFlowing); } catch (error) { console.log(error.constructor.name); }
+class Accessor extends EventEmitter {
+  get _events() { return this.kept; }
+  set _events(value) { this.kept = value; this.stores = (this.stores ?? 0) + 1; }
+}
+const accessor = new Accessor();
+accessor.on("x", () => {});
+console.log(accessor.stores, accessor.listenerCount("x"), Object.keys(accessor).join());
+//// a-field-of-the-class-has-the-name-of-a-property-of-the-function.js
+function show(o) { return JSON.stringify(o) + " " + Object.keys(o).join() + " " + Object.getOwnPropertyNames(o).length; }
+function Meter() { this.made = 1; this.extra = "of the function"; this.last = 3; }
+class Fine extends Meter { extra = "of the class"; made; }
+const fine = new Fine();
+console.log(show(fine), fine.made, fine.extra, fine.last, new Meter().extra);
+//// a-function-written-in-another-module/main.cjs
+function show(o) { return JSON.stringify(o) + " " + Object.keys(o).join() + " " + Object.getOwnPropertyNames(o).length; }
+let Fine;
+function getFine() { if (Fine) return Fine; const { Meter: Base } = require("./meter.cjs"); Fine = class Fine extends Base { extra = 2; sum() { return this.read() + this.extra; } }; return Fine; }
+const exported = require("./meter.cjs");
+console.log(show(new (getFine())()), new (getFine())().sum());
+exported.Meter = function () { this.z = 26; };
+console.log(show(new (getFine())()), show(new exported.Meter()));
+//// a-function-written-in-another-module/meter.cjs
+function Meter() { this.made = 1; this.name = "m"; }
+Meter.prototype.read = function () { return this.made; };
+module.exports = { Meter };
+//// a-library-function-is-called-on-other-objects.cjs
+// `EventEmitter.call(x)` and `Readable.call(x)` with receivers that no class of theirs has made.
+const EventEmitter = require("node:events");
+const { Readable } = require("node:stream");
+class Bus extends EventEmitter { constructor() { super(); this.tag = "bus"; } }
+class Plain { constructor() { this.tag = "plain"; } }
+const literal = { tag: "literal" };
+EventEmitter.call(literal);
+console.log(Object.keys(literal).join(), typeof literal.on);
+const plain = new Plain();
+EventEmitter.call(plain);
+console.log(Object.keys(plain).join(), plain instanceof EventEmitter);
+Object.setPrototypeOf(plain, EventEmitter.prototype);
+plain.on("x", function () { console.log("heard by", this.tag); });
+plain.emit("x");
+const bus = new Bus();
+bus.on("x", () => console.log("bus"));
+EventEmitter.call(bus);
+console.log(bus.listenerCount("x"), bus.emit("x"));
+const made = Object.create(Readable.prototype);
+Readable.call(made, { read() { this.push(null); } });
+made.on("end", () => console.log("ended", made instanceof Readable, Object.keys(made).length > 2));
+made.resume();
+const returned = Readable.call(literal);
+console.log(returned instanceof Readable, literal instanceof Readable, "_readableState" in literal);
+for (const receiver of [undefined, null, 1, "s"]) {
+  try { console.log(typeof EventEmitter.call(receiver)); } catch (error) { console.log(error.constructor.name); }
+}
+//// a-setter-of-new-target-below-a-class-and-below-a-plain-function.js
+// `Reflect.construct(A, [], B)` runs A with an object below B.prototype. A setter there takes the store `this.v = ..`, so the object has no `v` of its own: it is not what `new A()` makes.
+class A { constructor() { this.v = 1; } }
+class B extends A { set v(x) {} }
+const o = Reflect.construct(A, [], B);
+console.log("a class as the target:", o.v, Object.keys(o).join() || "-");
+function T() {} T.prototype = { set v(x) {} };
+function C() { this.v = 1; }
+const p = Reflect.construct(C, [], T);
+console.log("new.target a plain function:", p.v, Object.keys(p).join() || "-");
+//// a-setter-of-new-target-in-the-form-that-a-class-compiled-to-es5-has.js
+// `Reflect.construct(A, [], B)` runs A with an object below B.prototype. A setter there takes the store `this.v = ..`, so the object has no `v` of its own: it is not what `new A()` makes.
+// the helper that Babel writes for a class compiled to ES5
+function _createSuper(Derived) { return function () { var Super = Object.getPrototypeOf(Derived), NewTarget = Object.getPrototypeOf(this).constructor; return Reflect.construct(Super, arguments, NewTarget); }; }
+function Base() { this.v = 1; this.name = "base"; }
+function Derived() { return _super.apply(this, arguments); }
+Object.setPrototypeOf(Derived, Base); Derived.prototype = Object.create(Base.prototype, { constructor: { value: Derived, writable: true, configurable: true } });
+Object.defineProperty(Derived.prototype, "v", { set: function (x) { this._v = x * 2; }, get: function () { return this._v; }, configurable: true });
+var _super = _createSuper(Derived);
+var d = new Derived();
+console.log("babel's form:", d.v, d._v, d.name, Object.keys(d).join());
+//// a-setter-of-new-target-takes-the-store-of-a-string-in-the-constructor.js
+// `Reflect.construct(A, [], B)` runs A with an object below B.prototype. A setter there takes the store `this.v = ..`, so the object has no `v` of its own: it is not what `new A()` makes.
+function A() { this.v = "text"; this.w = 2; }
+class B extends A { set v(x) {} }
+const o = Reflect.construct(A, [], B);
+console.log("read", o.v, o.w, Object.keys(o).join());
+console.log("length", o.v === undefined ? "undefined" : o.v.length);
+//// a-setter-of-new-target-takes-the-store-of-an-object-in-the-constructor.js
+// `Reflect.construct(A, [], B)` runs A with an object below B.prototype. A setter there takes the store `this.v = ..`, so the object has no `v` of its own: it is not what `new A()` makes.
+function A() { this.v = { a: 1 }; }
+class B extends A { set v(x) {} }
+const o = Reflect.construct(A, [], B);
+console.log("typeof", typeof o.v);
+console.log("member", o.v?.a);
+//// a-setter-of-new-target-takes-the-store-when-reflect-construct-is-called-through-call.js
+// `Reflect.construct(A, [], B)` runs A with an object below B.prototype. A setter there takes the store `this.v = ..`, so the object has no `v` of its own: it is not what `new A()` makes.
+function A() { this.v = 1; }
+class B extends A { set v(x) {} }
+const o = Reflect.construct.call(null, A, [], B);
+console.log("Reflect.construct.call(null, A, [], B):", o.v, Object.keys(o).join() || "-", o instanceof B);
+//// a-setter-on-new-target-intercepts-a-number-stored-by-the-constructor/concatenated-to-a-string.js
+function print(text) { console.log(text); }
+////= str
+////= A
+
+////= lines	B	A	v	x
+try {
+  const o = Reflect.construct.call(null, A, [], B);
+  print("o $.v: " + o.v);
+} catch (e) {}
+//// a-setter-on-new-target-intercepts-a-number-stored-by-the-constructor/outside-a-try.js
+function print(text) { console.log(text); }
+////= str
+////= A
+
+class B extends A {
+  set v(x) {}
+}
+  const o = Reflect.construct.call(null, A, [], B);
+  print("o $.v: " + str(o.v));
+//// a-setter-on-new-target-intercepts-a-number-stored-by-the-constructor/read-through-a-helper-in-a-try.js
+function print(text) { console.log(text); }
+////= str
+////= A
+
+////= lines	B	A	v	x
+try {
+  const o = Reflect.construct.call(null, A, [], B);
+  print("o $.v: " + str(o.v));
+} catch (e) {}
+//// a-setter-on-new-target-intercepts-a-number-stored-by-the-constructor/with-plain-reflect-construct.js
+function print(text) { console.log(text); }
+////= str
+////= A
+
+////= lines	B	A	v	x
+try {
+  const o = Reflect.construct(A, [], B);
+  print("o $.v: " + str(o.v));
+} catch (e) {}
+//// a-static-method-constructs-the-function-above-for-its-own-class.js
+function Base() {
+  this.value = { inner: 1 };
+}
+class Below extends Base {
+  static make() {
+    return Reflect.construct(Base, [], this);
+  }
+  set value(stored) {}
+}
+class Lowest extends Below {}
+console.log(typeof Below.make().value, typeof Lowest.make().value, Lowest.make() instanceof Lowest);
+//// a-typed-class-below-transform-of-node-stream.ts
+// Typed code: the class, its fields and the options are declared, and the methods of the library are called on its objects.
+import { Transform, type TransformCallback, Writable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+class Upper extends Transform {
+  chunks: number = 0;
+  readonly label: string;
+  constructor(label: string) { super({ decodeStrings: false, encoding: "utf8" }); this.label = label; }
+  override _transform(chunk: string, encoding: BufferEncoding, done: TransformCallback): void {
+    this.chunks++;
+    done(null, chunk.toUpperCase());
+  }
+  override _flush(done: TransformCallback): void { done(null, "!" + this.label); }
+}
+class Collect extends Writable {
+  text: string = "";
+  override _write(chunk: Buffer | string, encoding: BufferEncoding, done: (error?: Error | null) => void): void { this.text += chunk.toString(); done(); }
+}
+const upper = new Upper("end"), collect = new Collect();
+const written: Promise<void> = pipeline(upper, collect);
+for (let i = 0; i < 40; i++) upper.write("ab");
+upper.end("c");
+await written;
+console.log(collect.text.length, collect.text.slice(-6), upper.chunks, upper.label, upper.writableFinished, collect.writableFinished);
+console.log(upper instanceof Transform, upper instanceof Writable, Object.keys(upper).includes("chunks"), Object.keys(collect).includes("text"));
+//// a-var-holds-one-of-two-functions.js
+function show(o) { return JSON.stringify(o) + " " + Object.keys(o).join() + " " + Object.getOwnPropertyNames(o).length; }
+var Meter = function () { this.made = 1; };
+if (process.argv.length < 99) Meter = function () { this.z = 26; this.y = 25; };
+class Fine extends Meter { extra = 2; }
+console.log(show(new Fine()), new Fine().made);
+//// an-object-of-a-library-function-is-used-and-its-methods-change-later.ts
+import { EventEmitter } from "node:events";
+import { Readable, Writable } from "node:stream";
+
+let heard = 0;
+const emitter = new EventEmitter();
+const listener = (n: number) => void (heard += n);
+emitter.on("n", listener);
+
+function send(target: EventEmitter, n: number): boolean {
+  return target.emit("n", n);
+}
+function hot(target: EventEmitter): string {
+  let answered = 0;
+  for (let i = 0; i < 3000; i++) if (send(target, 1)) answered++;
+  return answered + " " + heard + " " + target.listenerCount("n");
+}
+
+console.log(hot(emitter));
+
+const heir = new Readable({ read() {} });
+heir.on("n", listener);
+console.log(hot(heir));
+const other: EventEmitter = new Writable();
+console.log(hot(other));
+const bare: EventEmitter = Object.create(EventEmitter.prototype);
+console.log(hot(bare));
+bare.on("n", listener);
+console.log(hot(bare));
+const called = {} as EventEmitter;
+Object.setPrototypeOf(called, EventEmitter.prototype);
+EventEmitter.call(called);
+called.once("n", listener);
+console.log(hot(called));
+console.log(hot(EventEmitter.prototype));
+
+const emit = EventEmitter.prototype.emit;
+EventEmitter.prototype.emit = function (this: EventEmitter, name: string | symbol, ...rest: unknown[]) {
+  heard += 1000;
+  return emit.call(this, name, ...rest);
+};
+console.log(hot(emitter), hot(heir));
+EventEmitter.prototype.emit = emit;
+console.log(hot(emitter));
+
+emitter.emit = () => false;
+console.log(hot(emitter), Object.keys(emitter).includes("emit"));
+delete (emitter as Partial<EventEmitter>).emit;
+console.log(hot(emitter));
+
+const listenerCount = EventEmitter.prototype.listenerCount;
+Object.defineProperty(EventEmitter.prototype, "listenerCount", { get: () => () => "from a getter", configurable: true });
+console.log(hot(emitter));
+Object.defineProperty(EventEmitter.prototype, "listenerCount", { value: listenerCount, writable: true, configurable: true, enumerable: true });
+console.log(hot(emitter));
+
+Object.setPrototypeOf(emitter, { emit: () => true, listenerCount: () => -1 });
+console.log(hot(emitter), emitter instanceof EventEmitter);
+
+console.log(Object.keys(EventEmitter.prototype).join());
+console.log(Object.getPrototypeOf(EventEmitter.prototype) === Object.prototype, EventEmitter.prototype.constructor === EventEmitter);
+console.log(JSON.stringify(Object.getOwnPropertyDescriptor(EventEmitter.prototype, "constructor"), (key, value) => (typeof value === "function" ? value.name : value)));
+//// doubles-that-a-helper-stores-under-computed-names-onto-an-object-made-by-a-function-below-a-function.js
+// The form that TypeScript and Babel write for a class compiled to ES5, with _defineProperty for its fields. A validating build once gave every later double the first one's value.
+function put(e, r, t) { e[r] = t; return e; }
+function A() { this.f0 = 0.5; }
+function B() { var _this = A.call(this) || this; put(_this, "g2", 2); put(_this, "g3", 3.5); put(_this, "g20", 20); put(_this, "g21", 21.5); put(_this, "g24", 24.5); return _this; }
+B.prototype = Object.create(A.prototype);
+console.log(JSON.stringify(new B()));
+//// objects-of-a-constructor-function-with-and-without-the-property-are-read-in-one-place.js
+function Base() {
+  this.value = { inner: 1 };
+}
+////= lines	Below	Base	value	stored
+function read(object) {
+  return object.value;
+}
+const list = [new Base(), Reflect.construct(Base, [], Below), new Base()];
+console.log(list.map(object => typeof read(object)).join(), list.map(object => read(object)?.inner).join());
+//// private-names-and-a-function-that-returns-a-proxy.js
+const seen = [];
+function Meter(wrap) { this.made = 1; if (wrap) return new Proxy(this, { defineProperty(target, key, descriptor) { seen.push("define " + String(key)); return Reflect.defineProperty(target, key, descriptor); }, get(target, key, receiver) { return Reflect.get(target, key, receiver); } }); }
+class Fine extends Meter { #secret = 7; extra = 2; read() { return this.#secret + this.extra + this.made; } static has(it) { return #secret in it; } }
+const plain = new Fine(false), wrapped = new Fine(true);
+console.log(plain.read(), wrapped.read(), Fine.has(plain), Fine.has(wrapped), seen.join(), JSON.stringify(wrapped));
+//// private-names-in-classes-below-library-functions.mjs
+// Classes with private state extend functions of Bun's own modules: private fields between public ones, a private method, a private accessor, `accessor`, `#name in`,
+// a class below such a class, a private name read by a closure and by a static method, and a second initialization of one object.
+import { EventEmitter } from "node:events";
+import { Readable, Writable } from "node:stream";
+class Counter extends EventEmitter {
+  #count = 0;
+  step = 2;
+  #limit = 7;
+  bump() { if (this.#count < this.#limit) this.#count += this.step; this.emit("count", this.#count); return this; }
+  get count() { return this.#count; }
+  static is(it) { return #limit in it; }
+  static peek(it) { return it.#count + ":" + it.#limit; }
+}
+class Guarded extends EventEmitter {
+  open = true;
+  #check() { return this.open ? "open" : "shut"; }
+  get #state() { return this.#check() + this.listenerCount("x"); }
+  set #state(value) { this.open = value; }
+  accessor label = "g";
+  toggle() { this.#state = !this.open; return this.#state; }
+}
+class Deeper extends Counter {
+  #own = "deep";
+  name = "d";
+  describe() { const read = () => this.#own + this.name + this.count; return read(); }
+}
+class Numbers extends Readable {
+  #next = 0;
+  #last;
+  constructor(last) { super({ objectMode: true }); this.#last = last; }
+  _read() { this.push(this.#next < this.#last ? this.#next++ : null); }
+}
+class Sum extends Writable {
+  #total = 0;
+  constructor() { super({ objectMode: true }); }
+  _write(chunk, encoding, done) { this.#total += chunk; done(); }
+  get total() { return this.#total; }
+}
+const counter = new Counter();
+const heard = [];
+counter.on("count", n => heard.push(n));
+for (let i = 0; i < 6; i++) counter.bump();
+console.log(counter.count, heard.join(), Counter.is(counter), Counter.is(new EventEmitter()), Counter.peek(counter), Object.keys(counter).join());
+try { Counter.peek(new EventEmitter()); } catch (error) { console.log(error.constructor.name); }
+const guarded = new Guarded();
+guarded.on("x", () => {});
+console.log(guarded.toggle(), guarded.toggle(), guarded.label, Object.keys(guarded).join());
+const deeper = new Deeper();
+deeper.on("count", n => heard.push(-n));
+console.log(deeper.bump().bump().describe(), Counter.is(deeper), Counter.peek(deeper), heard.slice(-2).join(), Object.keys(deeper).join());
+let made = 0;
+for (let i = 0; i < 2000; i++) made += new Counter().bump().count + new Deeper().bump().describe().length;
+console.log(made);
+function Same() { return counter; }
+Object.setPrototypeOf(Counter, Same);
+try { new Counter(); } catch (error) { console.log(error.constructor.name, counter.step, Counter.peek(counter)); }
+Object.setPrototypeOf(Counter, EventEmitter);
+console.log(new Counter().bump().count);
+const sum = new Sum();
+sum.on("finish", () => console.log("total", sum.total, Object.keys(sum).filter(key => !key.startsWith("_")).join()));
+new Numbers(100).pipe(sum);
+//// properties-are-added-after-the-construction.js
+function show(o) { return JSON.stringify(o) + " " + Object.keys(o).join() + " " + Object.getOwnPropertyNames(o).length; }
+function Meter() { this.made = 1; }
+class Fine extends Meter { extra = 2; }
+const fine = new Fine(); fine.later = 3; fine.name = "n"; delete fine.extra; fine.extra = 4;
+const meter = new Meter(); meter.extra = 5;
+console.log(show(fine), show(meter), show(new Fine()));
+//// reflect-construct-mixes-a-library-function-and-a-class.mjs
+// new.target and the function that is constructed come from different sides.
+import { EventEmitter } from "node:events";
+import { Readable } from "node:stream";
+class Bus extends EventEmitter { constructor() { super(); this.bus = true; } hello() { return "bus"; } }
+class Other { constructor() { this.other = true; } hello() { return "other"; } }
+function show(o) { return Object.keys(o).join() + " " + (typeof o.hello === "function" ? o.hello() : "-") + " " + (o instanceof EventEmitter) + " " + (o instanceof Bus) + " " + (o instanceof Other); }
+console.log(show(Reflect.construct(EventEmitter, [], Bus)));
+console.log(show(Reflect.construct(EventEmitter, [], Other)));
+console.log(show(Reflect.construct(Bus, [], Other)));
+console.log(show(Reflect.construct(Bus, [], EventEmitter)));
+console.log(show(Reflect.construct(Other, [], Bus)));
+console.log(show(Reflect.construct(Readable, [{ read() {} }], Bus)));
+const mixed = Reflect.construct(EventEmitter, [], Other);
+try { mixed.on("x", () => {}); } catch (error) { console.log(error.constructor.name); }
+const asBus = Reflect.construct(EventEmitter, [], Bus);
+asBus.on("x", function () { console.log("heard", this.bus, this.hello()); });
+asBus.emit("x");
+function NoPrototype() {}
+NoPrototype.prototype = 5;
+console.log(Object.getPrototypeOf(Reflect.construct(EventEmitter, [], NoPrototype)) === Object.prototype);
+//// reflect-construct-mixes-the-function-and-the-class.js
+function show(o) { return JSON.stringify(o) + " " + Object.keys(o).join() + " " + Object.getOwnPropertyNames(o).length; }
+function Meter() { this.made = 1; this.name = "m"; }
+Meter.prototype.kind = "meter";
+class Fine extends Meter { extra = 2; get kind() { return "fine"; } }
+function Third() {} Third.prototype.kind = "third";
+const a = Reflect.construct(Meter, [], Fine), b = Reflect.construct(Fine, [], Meter), c = Reflect.construct(Fine, [], Third), d = Reflect.construct(Meter, [], Third);
+for (const it of [a, b, c, d]) console.log(show(it), it.kind, it instanceof Fine, it instanceof Meter, it instanceof Third);
+//// setters-of-new-target-against-every-way-of-making-the-object.cjs
+// `Reflect.construct(A, [], B)` runs A with an object below B.prototype. A setter there takes the store `this.v = ..`, so the object has no `v` of its own: it is not what `new A()` makes.
+function show(name, o) { console.log(name + ":", o.v, Object.keys(o).join() || "-", Object.getPrototypeOf(o).constructor.name); }
+function A() { this.v = 1; }
+class B extends A { set v(x) {} }
+show("new B()", new B());
+show("Reflect.construct(A, [], B)", Reflect.construct(A, [], B));
+show("new A()", new A());
+function A2() { this.v = 1; }
+class B2 extends A2 { set v(x) { this.seen = x; } get v() { return "got"; } }
+show("a getter and a setter, new", new B2());
+show("a getter and a setter, Reflect.construct", Reflect.construct(A2, [], B2));
+class A3 { constructor() { this.v = 1; } }
+class B3 extends A3 { set v(x) {} }
+show("a class below a class, new", new B3());
+show("a class below a class, Reflect.construct", Reflect.construct(A3, [], B3));
+function A4() { this.v = 1; }
+function T4() {} T4.prototype = { set v(x) {}, constructor: T4 };
+show("new.target a plain function", Reflect.construct(A4, [], T4));
+function A5() { this.v = 1; }
+function T5() {} Object.defineProperty(T5.prototype, "v", { value: 9, writable: false });
+show("a read-only member above", Reflect.construct(A5, [], T5));
+class A6 { v = 1; }
+class B6 extends A6 { set v(x) {} }
+show("a field (defined, not stored)", new B6());
+function A7() { this.v = 1; }
+const bound = A7.bind(null); class B7 extends A7 { set v(x) {} }
+show("a bound constructor", Reflect.construct(bound, [], B7));
+//// species-of-a-class-below-a-function.js
+// A function makes further objects with what it finds under Symbol.species of the constructor of its `this`.
+function Bag(items) { this.items = items; this.kind = "bag"; }
+Object.defineProperty(Bag, Symbol.species, { get() { return this; }, configurable: true });
+Bag.prototype.map = function (f) { const Species = this.constructor[Symbol.species]; return new Species(this.items.map(f)); };
+Bag.prototype.sum = function () { let sum = 0; for (const item of this.items) sum += item; return sum; };
+class Sack extends Bag { constructor(items) { super(items); this.tied = true; } }
+class Purse extends Bag { static get [Symbol.species]() { return Bag; } constructor(items) { super(items); this.small = true; } }
+class Trick extends Bag { static get [Symbol.species]() { return function (items) { return { items, sum() { return -1; } }; }; } }
+function show(o) { return o.constructor.name + " " + Object.keys(o).join() + " " + o.sum(); }
+let total = 0;
+for (let i = 0; i < 100; i++) total += new Sack([i, 1]).map(x => x * 2).sum() + new Purse([i]).map(x => x + 1).sum();
+console.log(total);
+for (const bag of [new Bag([1]), new Sack([2]), new Purse([3]), new Trick([4])]) console.log(show(bag), "->", show(bag.map(x => x * 10)));
+//// the-class-is-evaluated-many-times.js
+function show(o) { return JSON.stringify(o) + " " + Object.keys(o).join() + " " + Object.getOwnPropertyNames(o).length; }
+function Meter(n) { this.made = n; }
+const classes = [];
+for (let i = 0; i < 3; i++) classes.push(class Fine extends Meter { extra = i; static index = i; });
+console.log(classes.map(C => show(new C(C.index * 10)) + " " + (new C(0) instanceof classes[0])).join(" | "));
+//// the-export-is-replaced-before-the-class-is-made/main.cjs
+function show(o) { return JSON.stringify(o) + " " + Object.keys(o).join() + " " + Object.getOwnPropertyNames(o).length; }
+const exported = require("./meter.cjs");
+exported.Meter = function () { this.z = 26; this.y = 25; this.x = 24; };
+function getFine() { const { Meter: Base } = require("./meter.cjs"); return class Fine extends Base { extra = 2; }; }
+const fine = new (getFine())();
+console.log(show(fine), fine.made, fine.z);
+//// the-export-is-replaced-before-the-class-is-made/meter.cjs
+function Meter() { this.made = 1; this.name = "m"; }
+Meter.prototype.read = function () { return this.made; };
+module.exports = { Meter };
+//// the-export-of-the-library-is-replaced-before-the-class-is-made/classes.cjs
+const { Readable } = require("node:stream");
+const { EventEmitter } = require("node:events");
+exports.Reader = class Reader extends Readable { constructor() { super(); this.mine = 1; } };
+exports.Bus = class Bus extends EventEmitter { constructor() { super(); this.mine = 2; } };
+//// the-export-of-the-library-is-replaced-before-the-class-is-made/main.cjs
+// The program stores another class under the name that a module of the library exports. A class that extends what it finds there is below that one.
+const stream = require("node:stream");
+const events = require("node:events");
+const original = stream.Readable;
+class Fake { constructor() { this.fake = true; } push() { return "fake push"; } }
+stream.Readable = Fake;
+events.EventEmitter = function Silent() { this.silent = true; };
+const { Reader, Bus } = require("./classes.cjs");
+const reader = new Reader();
+console.log(reader.fake, reader.mine, reader.push(1), reader instanceof Fake, reader instanceof original, Object.keys(reader).join());
+const bus = new Bus();
+console.log(bus.silent, bus.mine, typeof bus.on, bus instanceof events, Object.keys(bus).join());
+stream.Readable = original;
+console.log(new Reader() instanceof original, Object.getPrototypeOf(Reader) === Fake);
+//// the-function-calls-a-method-that-the-class-overrides.js
+function show(o) { return JSON.stringify(o) + " " + Object.keys(o).join() + " " + Object.getOwnPropertyNames(o).length; }
+function Meter() { this.made = 1; this.seen = this.look(); this.after = 3; }
+Meter.prototype.look = function () { return "of the function"; };
+class Fine extends Meter { extra = 2; look() { return "of the class " + this.extra + " " + this.made + " " + this.after; } }
+console.log(show(new Fine()), show(new Meter()));
+//// the-function-defines-accessors-on-what-it-makes.js
+function show(o) { return JSON.stringify(o) + " " + Object.keys(o).join() + " " + Object.getOwnPropertyNames(o).length; }
+function Meter() { let hidden = 1; Object.defineProperty(this, "made", { get() { return hidden; }, set(v) { hidden = v * 2; }, enumerable: true, configurable: true }); this.name = "m"; }
+class Fine extends Meter { extra = 2; bump() { this.made = this.made + 1; return this.made; } }
+const fine = new Fine();
+console.log(show(fine), fine.bump(), fine.bump(), Object.getOwnPropertyDescriptor(fine, "made").get !== undefined);
+//// the-function-deletes-what-it-has-stored.js
+function show(o) { return JSON.stringify(o) + " " + Object.keys(o).join() + " " + Object.getOwnPropertyNames(o).length; }
+function Meter() { this.made = 1; this.name = "m"; delete this.made; }
+class Fine extends Meter { extra = 2; put() { this.made = 9; return this; } }
+console.log(show(new Fine()), "made" in new Fine(), show(new Fine().put()));
+//// the-function-freezes-what-it-makes.js
+function show(o) { return JSON.stringify(o) + " " + Object.keys(o).join() + " " + Object.getOwnPropertyNames(o).length; }
+function Meter(how) { this.made = 1; how(this); }
+class Fine extends Meter { extra = 2; }
+for (const how of [Object.freeze, Object.seal, Object.preventExtensions]) { try { console.log(show(new Fine(how))); } catch (error) { console.log(how.name, error.constructor.name, error.message); } }
+console.log(show(new Fine(() => {})));
+//// the-function-hands-this-out-before-the-fields-are-there.js
+function show(o) { return JSON.stringify(o) + " " + Object.keys(o).join() + " " + Object.getOwnPropertyNames(o).length; }
+const held = [];
+function Meter() { this.made = 1; held.push(this); held.push(show(this)); }
+class Fine extends Meter { extra = 2; more = 3; }
+const fine = new Fine();
+console.log(held[1], show(held[0]), held[0] === fine);
+//// the-function-has-a-parent-of-its-own.js
+function show(o) { return JSON.stringify(o) + " " + Object.keys(o).join() + " " + Object.getOwnPropertyNames(o).length; }
+function Root() { this.root = 0; }
+Root.prototype.where = function () { return "root " + this.root; };
+function Meter() { Root.call(this); this.made = 1; }
+Object.setPrototypeOf(Meter.prototype, Root.prototype); Object.setPrototypeOf(Meter, Root);
+class Fine extends Meter { extra = 2; }
+const fine = new Fine();
+console.log(show(fine), fine.where(), fine instanceof Root, show(new Meter()));
+//// the-function-is-also-called-on-other-objects.js
+function show(o) { return JSON.stringify(o) + " " + Object.keys(o).join() + " " + Object.getOwnPropertyNames(o).length; }
+function Meter() { this.made = 1; this.name = "m"; }
+class Fine extends Meter { extra = 2; }
+const plain = { before: 0 }; Meter.call(plain);
+const list = []; Meter.call(list);
+class Alone { own = 9; } const alone = new Alone(); Meter.call(alone);
+const again = new Fine(); again.made = 5; Meter.call(again);
+console.log(show(plain), list.made, list.length, show(alone), show(again), show(new Fine()));
+//// the-function-is-made-many-times.js
+function show(o) { return JSON.stringify(o) + " " + Object.keys(o).join() + " " + Object.getOwnPropertyNames(o).length; }
+function make(tag) { function Meter() { this.made = tag; this[tag] = 1; } return class Fine extends Meter { extra = tag; }; }
+const A = make("a"), B = make("b");
+console.log(show(new A()), show(new B()), new A() instanceof B, Object.getPrototypeOf(A) === Object.getPrototypeOf(B));
+//// the-function-returns-a-primitive.js
+function show(o) { return JSON.stringify(o) + " " + Object.keys(o).join() + " " + Object.getOwnPropertyNames(o).length; }
+function Meter() { this.made = 1; return 5; }
+class Fine extends Meter { extra = 2; }
+console.log(show(new Fine()), new Fine() instanceof Meter);
+//// the-function-returns-an-object-of-another-class.js
+function show(o) { return JSON.stringify(o) + " " + Object.keys(o).join() + " " + Object.getOwnPropertyNames(o).length; }
+class Other { a = 1; b = 2; c = 3; }
+function Meter(pick) { this.made = 1; this.name = "m"; if (pick) return new Other(); }
+class Fine extends Meter { extra = 2; }
+for (const pick of [false, true, false, true]) { const fine = new Fine(pick); console.log(show(fine), fine instanceof Other, fine instanceof Fine, fine.extra, fine.made, fine.a); }
+//// the-function-returns-another-object.js
+function show(o) { return JSON.stringify(o) + " " + Object.keys(o).join() + " " + Object.getOwnPropertyNames(o).length; }
+function Meter() { this.made = 1; return { other: 7 }; }
+class Fine extends Meter { extra = 2; read() { return this.made; } }
+const fine = new Fine();
+console.log(show(fine), fine instanceof Fine, fine instanceof Meter, fine.made, fine.other, fine.extra, typeof fine.read);
+//// the-function-stores-in-one-order-or-the-other.js
+function show(o) { return JSON.stringify(o) + " " + Object.keys(o).join() + " " + Object.getOwnPropertyNames(o).length; }
+function Meter(swap) { if (swap) { this.name = "m"; this.made = 1; } else { this.made = 1; this.name = "m"; } }
+class Fine extends Meter { extra = 2; }
+console.log(show(new Fine(false)), show(new Fine(true)), show(new Meter(true)));
+//// the-function-stores-only-some-of-its-properties.js
+function show(o) { return JSON.stringify(o) + " " + Object.keys(o).join() + " " + Object.getOwnPropertyNames(o).length; }
+function Meter(some) { this.made = 1; if (some) this.name = "m"; if (some > 1) this.third = 3; }
+class Fine extends Meter { extra = 2; }
+for (const some of [0, 1, 2, 0]) { const fine = new Fine(some); console.log(show(fine), "name" in fine, fine.third, Object.hasOwn(fine, "third")); }
+//// the-function-stores-under-computed-keys.js
+function show(o) { return JSON.stringify(o) + " " + Object.keys(o).join() + " " + Object.getOwnPropertyNames(o).length; }
+function Meter(keys) { this.made = 1; for (const key of keys) this[key] = key.length; }
+class Fine extends Meter { extra = 2; }
+console.log(show(new Fine(["a", "extra", "made", "0", "zz"])), show(new Fine([])));
+//// the-function-tests-what-it-is-constructed-with.js
+function show(o) { return JSON.stringify(o) + " " + Object.keys(o).join() + " " + Object.getOwnPropertyNames(o).length; }
+function Meter(n) { if (!(this instanceof Meter)) return new Meter(n); this.made = n; this.target = new.target === undefined ? "none" : new.target.name; }
+class Fine extends Meter { extra = 2; }
+console.log(show(new Fine(1)), show(new Meter(2)), show(Meter(3)));
+//// the-heritage-is-chosen-at-run-time.mjs
+// Which function of the library a class extends is known only when the class is made.
+import { Readable, Writable, Duplex } from "node:stream";
+import { EventEmitter } from "node:events";
+function below(Base, name) {
+  return { [name]: class extends Base { constructor(options) { super(options); this.mark = name; } } }[name];
+}
+const bases = [Readable, Writable, Duplex, EventEmitter, Object, function Own() { this.own = 1; }];
+for (const Base of bases) {
+  const Made = below(Base, "Below" + Base.name);
+  const made = new Made();
+  console.log(Made.name, made.mark, made instanceof Base, made instanceof EventEmitter, Object.keys(made).includes("mark"), made.own);
+}
+const flag = process.argv.length > 100;
+class Either extends (flag ? Readable : Writable) { constructor() { super(); this.side = flag; } }
+const either = new Either();
+console.log(either instanceof Writable, either instanceof Readable, either.side, typeof either.write, typeof either.read);
+let Chosen = Readable;
+Chosen = Writable;
+class Late extends Chosen {}
+console.log(new Late() instanceof Writable, new Late() instanceof Readable);
+//// the-name-of-the-function-is-assigned-again.js
+function show(o) { return JSON.stringify(o) + " " + Object.keys(o).join() + " " + Object.getOwnPropertyNames(o).length; }
+let Meter = function () { this.made = 1; this.name = "m"; };
+function define() { return class Fine extends Meter { extra = 2; }; }
+const First = define();
+Meter = function () { this.z = 26; };
+const Second = define();
+console.log(show(new First()), show(new Second()), new Second().made, new First().z);
+//// the-parent-of-a-class-below-a-library-function-is-replaced.mjs
+// After its definition the class is hung below another function of the library, below a class of the program, and below nothing.
+import { Readable, Writable } from "node:stream";
+class Pipe extends Readable { constructor(options) { super(options); this.mine = 1; } }
+const before = new Pipe();
+Object.setPrototypeOf(Pipe, Writable);
+Object.setPrototypeOf(Pipe.prototype, Writable.prototype);
+const after = new Pipe();
+console.log(before instanceof Writable, "_readableState" in before, "_writableState" in before, typeof before.read, typeof before.write);
+console.log(after instanceof Writable, after instanceof Readable, "_readableState" in after, "_writableState" in after, after.mine);
+class Own { constructor() { this.own = 2; } }
+Object.setPrototypeOf(Pipe, Own);
+const third = new Pipe();
+console.log(Object.keys(third).join(), third instanceof Own, third instanceof Writable);
+Object.setPrototypeOf(Pipe, Function.prototype);
+try { new Pipe(); } catch (error) { console.log(error.constructor.name); }
+Object.setPrototypeOf(Pipe, null);
+try { new Pipe(); } catch (error) { console.log(error.constructor.name); }
+//// the-parent-of-the-class-is-replaced.js
+function show(o) { return JSON.stringify(o) + " " + Object.keys(o).join() + " " + Object.getOwnPropertyNames(o).length; }
+function Meter() { this.made = 1; this.name = "m"; }
+function Other() { this.z = 26; }
+class Fine extends Meter { extra = 2; }
+console.log(show(new Fine()));
+Object.setPrototypeOf(Fine, Other);
+const fine = new Fine();
+console.log(show(fine), fine.made, fine.z, fine instanceof Meter, fine instanceof Other);
+Object.setPrototypeOf(Fine, Meter);
+console.log(show(new Fine()));
+//// the-parent-of-the-class-is-replaced-by-a-class.js
+function show(o) { return JSON.stringify(o) + " " + Object.keys(o).join() + " " + Object.getOwnPropertyNames(o).length; }
+function Meter() { this.made = 1; this.name = "m"; }
+class Other { p = 1; q = 2; r = 3; s = 4; }
+class Fine extends Meter { extra = 2; sum() { return [this.made, this.name, this.extra, this.p, this.s].join(); } }
+console.log(new Fine().sum());
+Object.setPrototypeOf(Fine, Other);
+console.log(new Fine().sum(), show(new Fine()));
+//// the-prototype-object-of-a-library-function-is-changed-later.mjs
+// The methods that a class inherits from a function of the library are replaced after objects of the class exist.
+import { EventEmitter } from "node:events";
+import { Readable } from "node:stream";
+class Bus extends EventEmitter { constructor() { super(); this.sent = 0; } send(n) { this.sent++; return this.emit("n", n); } }
+class Letters extends Readable { constructor() { super(); this.left = 3; } _read() { this.push(this.left-- > 0 ? "x" : null); } }
+const bus = new Bus();
+let heard = 0;
+bus.on("n", n => { heard += n; });
+for (let i = 0; i < 100; i++) bus.send(1);
+const emit = EventEmitter.prototype.emit;
+EventEmitter.prototype.emit = function (name, ...rest) { if (name === "n") heard += 1000; return emit.call(this, name, ...rest); };
+for (let i = 0; i < 3; i++) bus.send(1);
+console.log(heard, bus.sent);
+EventEmitter.prototype.emit = emit;
+bus.send(1);
+console.log(heard, bus.sent);
+const push = Readable.prototype.push;
+let pushed = 0;
+Readable.prototype.push = function (chunk, encoding) { pushed++; return push.call(this, chunk, encoding); };
+let text = "";
+for await (const chunk of new Letters()) text += chunk;
+console.log(text, pushed);
+Readable.prototype.extra = function () { return this.left; };
+console.log(new Letters().extra());
+Object.defineProperty(EventEmitter.prototype, "sent", { get() { return "inherited"; }, set(value) { console.log("set", value); }, configurable: true });
+console.log(new Bus().sent, bus.sent);
+delete EventEmitter.prototype.sent;
+console.log(new Bus().sent);
+//// the-prototype-object-of-the-function-has-an-accessor-of-the-name-of-a-field.js
+function show(o) { return JSON.stringify(o) + " " + Object.keys(o).join() + " " + Object.getOwnPropertyNames(o).length; }
+const log = [];
+function Meter() { this.made = 1; }
+Object.defineProperty(Meter.prototype, "extra", { get() { return "got"; }, set(v) { log.push("set " + v); }, configurable: true });
+Object.defineProperty(Meter.prototype, "late", { get() { return "late got"; }, set(v) { log.push("late set " + v); }, configurable: true });
+class Fine extends Meter { extra = 2; constructor() { super(); this.late = 3; } }
+const fine = new Fine();
+console.log(show(fine), fine.extra, fine.late, log.join());
+//// the-prototype-property-of-the-function-is-replaced.js
+function show(o) { return JSON.stringify(o) + " " + Object.keys(o).join() + " " + Object.getOwnPropertyNames(o).length; }
+function Meter() { this.made = 1; }
+Meter.prototype = { read() { return "first " + this.made; } };
+class Fine extends Meter { extra = 2; }
+Meter.prototype = { read() { return "second " + this.made; } };
+class Later extends Meter { extra = 3; }
+console.log(new Fine().read(), new Later().read(), new Fine() instanceof Meter, new Later() instanceof Meter, show(new Fine()));
+//// this-is-read-before-the-function-has-run.js
+function Meter() { this.made = 1; }
+class Fine extends Meter { constructor(early) { if (early) { try { this.extra = 1; } catch (error) { console.log(error.constructor.name); } } super(); this.extra = 2; } }
+console.log(JSON.stringify(new Fine(true)), JSON.stringify(new Fine(false)));
+class Never extends Meter { constructor() { } }
+try { new Never(); } catch (error) { console.log(error.constructor.name); }
+class Twice extends Meter { constructor() { super(); try { super(); } catch (error) { console.log(error.constructor.name, JSON.stringify(this)); } } }
+new Twice();
+//// two-classes-and-a-class-below-one-of-them.js
+function show(o) { return JSON.stringify(o) + " " + Object.keys(o).join() + " " + Object.getOwnPropertyNames(o).length; }
+function Meter(n) { this.made = n; this.name = "m"; }
+Meter.prototype.read = function () { return this.made + ":" + this.name; };
+class Fine extends Meter { extra = 2; }
+class Coarse extends Meter { wide = 3; wider = 4; }
+class Finest extends Fine { most = 5; constructor(n) { super(n + 1); this.end = 6; } }
+function readAll(list) { return list.map(it => it.read() + " " + show(it)).join(" | "); }
+console.log(readAll([new Meter(1), new Fine(2), new Coarse(3), new Finest(4), new Fine(5)]));
+//// what-cannot-construct-is-no-heritage.js
+const arrow = () => {}; async function later() {} function* many() {} const method = { m() {} }.m;
+for (const [name, heritage] of [["arrow", arrow], ["async", later], ["generator", many], ["method", method]]) { try { class Fine extends heritage {} console.log(name, "defined"); } catch (error) { console.log(name, error.constructor.name); } }
+try { class Fine extends later { extra = 1; } } catch (error) { console.log(error.constructor.name); }
+try { class Fine extends many { extra = 1; } } catch (error) { console.log(error.constructor.name); }

@@ -1,0 +1,3159 @@
+////: Json
+class Json {
+  constructor(public fire: () => void) {}
+  toJSON(): string {
+    this.fire();
+    return "json";
+  }
+}
+////: MissingBox
+declare class MissingBox {
+  value: number;
+  constructor(value: number);
+  get(): number;
+  static make(): MissingBox;
+  static count: number;
+}
+////: MissingTools
+declare namespace MissingTools {
+  const scale: number;
+  let title: string;
+  function grow(n: number): number;
+  class Gear {
+    teeth: number;
+  }
+  namespace Inner {
+    const depth: number;
+  }
+  enum Mode {
+    On,
+    Off,
+  }
+}
+////: Primitive
+class Primitive {
+  constructor(public fire: () => void) {}
+  [Symbol.toPrimitive](hint: string): string {
+    this.fire();
+    return hint;
+  }
+}
+////: Text
+class Text {
+  constructor(public fire: () => void) {}
+  toString(): string {
+    this.fire();
+    return "text";
+  }
+}
+////: Text-2
+////= Text
+
+////= Value
+
+////= Primitive
+
+////= Json
+////: UnderComparison
+class UnderComparison {
+  n = 1;
+  norm(): number {
+    return this.n;
+  }
+}
+////: UnderJoin
+class UnderJoin {
+  n = 1;
+  norm(): number {
+    return this.n;
+  }
+}
+////: UnderJson
+class UnderJson {
+  n = 1;
+  norm(): number {
+    return this.n;
+  }
+}
+////: UnderNumber
+class UnderNumber {
+  n = 1;
+  norm(): number {
+    return this.n;
+  }
+}
+////: UnderPlus
+class UnderPlus {
+  n = 1;
+  norm(): number {
+    return this.n;
+  }
+}
+////: UnderString
+class UnderString {
+  n = 1;
+  norm(): number {
+    return this.n;
+  }
+}
+////: UnderTemplate
+class UnderTemplate {
+  n = 1;
+  norm(): number {
+    return this.n;
+  }
+}
+////: UnderToPrimitive
+class UnderToPrimitive {
+  n = 1;
+  norm(): number {
+    return this.n;
+  }
+}
+////: UnderUnaryPlus
+class UnderUnaryPlus {
+  n = 1;
+  norm(): number {
+    return this.n;
+  }
+}
+////: Value
+class Value {
+  constructor(public fire: () => void) {}
+  valueOf(): number {
+    this.fire();
+    return 1;
+  }
+}
+////: for-54
+for (let i = 0; i < 2000; i++) {
+  try {
+    «1»;
+  } catch (error) {
+    if (error instanceof ReferenceError) failures++;
+  }
+}
+////: lines-212
+export function «1»(i) {
+  return makers.«2»[i]();
+}
+////: lines-231
+function «1»(n: number = «2»]): string {
+  return use(n);
+}
+////: noted
+function noted(n: number): number {
+  log.push("ran " + n);
+  return n;
+}
+////: show-19
+show("in a switch", () => {
+  const mode: MissingMode = 1;
+  switch (mode) {
+    case MissingMode.Off:
+      return "off";
+    case MissingMode.On:
+      return "on";
+    default:
+      return "neither";
+  }
+});
+////: show-22
+show("extended in a function that is never called", () => {
+  function later(): unknown {
+    return class extends MissingBox {};
+  }
+  return typeof later;
+});
+////: show-23
+show("extended", () => {
+  class Bigger extends MissingBox {
+    extra: number = 1;
+  }
+  return new Bigger(1).extra;
+});
+////: standIn
+const standIn: MissingBox = {
+  value: 5,
+  get(): number {
+    return this.value + 1;
+  },
+};
+////: underComparison
+function underComparison(p: UnderComparison, fire: () => void): string {
+  const before = p.norm();
+  const made = new Value(fire) < new Value(fire);
+  return before + " " + String(made) + " " + p.norm();
+}
+////: underJoin
+function underJoin(p: UnderJoin, fire: () => void): string {
+  const before = p.norm();
+  const made = [new Text(fire)].join();
+  return before + " " + String(made) + " " + p.norm();
+}
+////: underJson
+function underJson(p: UnderJson, fire: () => void): string {
+  const before = p.norm();
+  const made = JSON.stringify(new Json(fire));
+  return before + " " + String(made) + " " + p.norm();
+}
+////: underNumber
+function underNumber(p: UnderNumber, fire: () => void): string {
+  const before = p.norm();
+  const made = Number(new Value(fire));
+  return before + " " + String(made) + " " + p.norm();
+}
+////: underPlus
+function underPlus(p: UnderPlus, fire: () => void): string {
+  const before = p.norm();
+  const made = "" + new Text(fire);
+  return before + " " + String(made) + " " + p.norm();
+}
+////: underString
+function underString(p: UnderString, fire: () => void): string {
+  const before = p.norm();
+  const made = String(new Text(fire));
+  return before + " " + String(made) + " " + p.norm();
+}
+////: underTemplate
+function underTemplate(p: UnderTemplate, fire: () => void): string {
+  const before = p.norm();
+  const made = `${new Text(fire)}`;
+  return before + " " + String(made) + " " + p.norm();
+}
+////: underToPrimitive
+function underToPrimitive(p: UnderToPrimitive, fire: () => void): string {
+  const before = p.norm();
+  const made = `${new Primitive(fire)}`;
+  return before + " " + String(made) + " " + p.norm();
+}
+////: underUnaryPlus
+function underUnaryPlus(p: UnderUnaryPlus, fire: () => void): string {
+  const before = p.norm();
+  const made = +new Value(fire);
+  return before + " " + String(made) + " " + p.norm();
+}
+//// a-constructor-returns-something-else.ts
+class Token {
+  text = "token";
+  size = 5;
+  static pool: Token[] = [];
+  constructor(mode: number) {
+    if (mode === 1) return { text: "literal", size: 7, upper: () => "LITERAL FROM THE CONSTRUCTOR" };
+    if (mode === 2 && Token.pool.length > 0) return Token.pool[0];
+    if (mode === 3) return new Impostor();
+    if (mode === 4) return Object.create(Token.prototype);
+    Token.pool.push(this);
+  }
+  upper(): string {
+    return this.text.toUpperCase();
+  }
+}
+
+class Impostor {
+  size = -1;
+  extra = "extra";
+  text = "impostor";
+  upper(): string {
+    return "impostor's upper";
+  }
+}
+
+////= attempt-7
+
+function inspect(t: Token): string {
+  return [t.text, t.size, t.upper(), t instanceof Token, t.constructor.name, Object.keys(t).join("+")].join(" ");
+}
+
+function make(mode: number): Token {
+  return new Token(mode);
+}
+
+for (let mode = 0; mode < 5; mode++) {
+  attempt("mode " + mode, () => inspect(new Token(mode)));
+  attempt("mode " + mode + " through a function", () => inspect(make(mode)));
+}
+
+console.log("pooled is the same object: " + (new Token(2) === new Token(2)) + " " + Token.pool.length);
+
+const direct = new Token(1);
+console.log("used at once: " + direct.upper() + " " + direct.text.length + " " + (direct instanceof Token));
+
+for (let i = 0; i < 2000; i++) make(2).upper();
+attempt("after 2000 honest", () => inspect(make(3)));
+attempt("and a literal", () => inspect(make(1)));
+attempt("and honest", () => inspect(make(2)));
+
+class Sub extends Token {
+  added = "added";
+  constructor(mode: number) {
+    super(mode);
+  }
+  both(): string {
+    return this.added + " " + this.text;
+  }
+}
+
+for (let mode = 0; mode < 5; mode++) {
+  attempt("subclass, mode " + mode, () => {
+    const s = new Sub(mode);
+    return [s.added, s.text, s instanceof Sub, s instanceof Token, Object.keys(s).join("+")].join(" ");
+  });
+  attempt("subclass method, mode " + mode, () => new Sub(mode).both());
+}
+
+const list: Token[] = [0, 1, 2, 3].map(make);
+console.log("elements: " + list.map(t => t.upper()).join());
+console.log("json: " + JSON.stringify(list));
+
+export {};
+//// a-constructor-that-takes-a-dog-is-given-a-cat.ts
+////= Person-5
+
+class Yard {
+  size: number;
+  constructor(a: Animal) {
+    this.size = a.name.length;
+  }
+  describe(): string {
+    return "yard " + this.size;
+  }
+}
+
+class DogYard extends Yard {
+  legs: number;
+  tag: string;
+  owner: Person;
+  constructor(d: Dog) {
+    super(d);
+    this.legs = d.legs;
+    this.tag = d.tag;
+    this.owner = d.owner;
+  }
+  describe(): string {
+    return "dog yard " + this.size + " " + this.legs + " " + this.tag;
+  }
+}
+
+class LoudYard extends Yard {
+  sound: string;
+  constructor(public d: Dog) {
+    super(d);
+    this.sound = d.bark();
+  }
+}
+
+function build(Make: typeof Yard, a: Animal): Yard {
+  return new Make(a);
+}
+
+const makers: (typeof Yard)[] = [Yard, DogYard, LoudYard];
+const animals: Animal[] = [new Dog("rex"), new Cat("tom"), new Spider("boris"), new Animal("thing")];
+
+for (const Make of makers) {
+  for (const animal of animals) {
+    const label = Make.name + " of " + animal.constructor.name;
+    show(label, () => build(Make, animal));
+    show(label + " describe", () => build(Make, animal).describe());
+  }
+}
+
+const Chosen: typeof Yard = DogYard;
+const built = new Chosen(new Cat("direct"));
+show("direct", () => built);
+if (built instanceof DogYard) {
+  show("legs", () => built.legs);
+  show("legs + 1", () => built.legs + 1);
+  show("tag", () => built.tag);
+  show("tag length", () => built.tag.length);
+  show("owner", () => built.owner);
+  show("owner's name", () => built.owner.first);
+  show("keys", () => Object.keys(built).join());
+}
+
+show("honest", () => new DogYard(new Dog("honest")).describe());
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += new DogYard(animals[0] instanceof Dog ? animals[0] : new Dog("never")).legs;
+show("2000 honest constructions", () => sum);
+show("a cat after them", () => build(DogYard, animals[1]).describe());
+show("by Reflect.construct", () => Reflect.construct(Chosen, [new Cat("reflected")]).describe());
+//// a-constructor-throws-halfway-and-the-object-is-kept.ts
+////= text-21
+
+const kept: Account[] = [];
+
+class Account {
+  id: number;
+  balance: number;
+  name: string;
+  owner: Person;
+  history: number[];
+  ready: boolean = true;
+  constructor(stopAfter: number) {
+    kept.push(this);
+    if (stopAfter === 0) throw new RangeError("stopped");
+    this.id = 7;
+    if (stopAfter === 1) throw new RangeError("stopped");
+    this.balance = 1.5;
+    if (stopAfter === 2) throw new RangeError("stopped");
+    this.name = "acct";
+    if (stopAfter === 3) throw new RangeError("stopped");
+    this.owner = new Person();
+    if (stopAfter === 4) throw new RangeError("stopped");
+    this.history = [1];
+  }
+  worth(): number {
+    return this.id + this.balance;
+  }
+  title(): string {
+    return this.name.toUpperCase() + " of " + this.owner.first;
+  }
+  entries(): number {
+    return this.history.length;
+  }
+}
+
+for (let stop = 0; stop <= 5; stop++) {
+  show("stop after " + stop, () => new Account(stop).id);
+}
+
+for (let i = 0; i < kept.length; i++) {
+  const account = kept[i];
+  show(i + " id", () => account.id);
+  show(i + " balance", () => account.balance);
+  show(i + " name", () => account.name);
+  show(i + " owner", () => account.owner);
+  show(i + " history", () => account.history);
+  show(i + " ready", () => account.ready);
+  show(i + " worth", () => account.worth());
+  show(i + " title", () => account.title());
+  show(i + " entries", () => account.entries());
+  show(i + " keys", () => Object.keys(account).join());
+  show(i + " JSON", () => JSON.stringify(account));
+}
+
+////= lines-29	Base	low	number	1
+class Late extends Base {
+  high: number = 2;
+  constructor(fail: boolean) {
+    if (fail) throw new RangeError("before super");
+    super();
+  }
+}
+show("thrown before super", () => new Late(true));
+show("not thrown", () => new Late(false));
+
+let total = 0;
+for (const account of kept) total += account.balance;
+show("all balances added", () => total);
+let ids = 0;
+for (const account of kept) ids += account.id | 0;
+show("all ids added as whole numbers", () => ids);
+//// a-conversion-to-a-string-or-a-number-between-two-calls-covers-the-method-with-an-own-member.ts
+////= Text-2
+
+const nothing = (): void => {};
+
+////= drive-2
+
+////= UnderTemplate
+
+////= underTemplate
+
+drive("a template", new UnderTemplate(), underTemplate);
+
+////= UnderPlus
+
+////= underPlus
+
+drive("a plus with a string", new UnderPlus(), underPlus);
+
+////= UnderUnaryPlus
+
+////= underUnaryPlus
+
+drive("a unary plus", new UnderUnaryPlus(), underUnaryPlus);
+
+////= UnderComparison
+
+////= underComparison
+
+drive("a comparison", new UnderComparison(), underComparison);
+
+////= UnderString
+
+////= underString
+
+drive("String", new UnderString(), underString);
+
+////= UnderNumber
+
+////= underNumber
+
+drive("Number", new UnderNumber(), underNumber);
+
+////= UnderJoin
+
+////= underJoin
+
+drive("join", new UnderJoin(), underJoin);
+
+////= UnderJson
+
+////= underJson
+
+drive("JSON.stringify", new UnderJson(), underJson);
+
+////= UnderToPrimitive
+
+////= underToPrimitive
+
+drive("Symbol.toPrimitive", new UnderToPrimitive(), underToPrimitive);
+
+export {};
+//// a-conversion-to-a-string-or-a-number-between-two-calls-honest.ts
+////= Text-2
+
+const nothing = (): void => {};
+
+////= drive-3
+
+////= UnderTemplate
+
+////= underTemplate
+
+drive("a template", new UnderTemplate(), underTemplate);
+
+////= UnderPlus
+
+////= underPlus
+
+drive("a plus with a string", new UnderPlus(), underPlus);
+
+////= UnderUnaryPlus
+
+////= underUnaryPlus
+
+drive("a unary plus", new UnderUnaryPlus(), underUnaryPlus);
+
+////= UnderComparison
+
+////= underComparison
+
+drive("a comparison", new UnderComparison(), underComparison);
+
+////= UnderString
+
+////= underString
+
+drive("String", new UnderString(), underString);
+
+////= UnderNumber
+
+////= underNumber
+
+drive("Number", new UnderNumber(), underNumber);
+
+////= UnderJoin
+
+////= underJoin
+
+drive("join", new UnderJoin(), underJoin);
+
+////= UnderJson
+
+////= underJson
+
+drive("JSON.stringify", new UnderJson(), underJson);
+
+////= UnderToPrimitive
+
+////= underToPrimitive
+
+drive("Symbol.toPrimitive", new UnderToPrimitive(), underToPrimitive);
+
+export {};
+//// a-conversion-to-a-string-or-a-number-between-two-calls-replaces-the-method-on-the-prototype.ts
+////= Text-2
+
+const nothing = (): void => {};
+
+////= drive
+
+////= UnderTemplate
+
+////= underTemplate
+
+drive("a template", new UnderTemplate(), UnderTemplate.prototype, underTemplate);
+
+////= UnderPlus
+
+////= underPlus
+
+drive("a plus with a string", new UnderPlus(), UnderPlus.prototype, underPlus);
+
+////= UnderUnaryPlus
+
+////= underUnaryPlus
+
+drive("a unary plus", new UnderUnaryPlus(), UnderUnaryPlus.prototype, underUnaryPlus);
+
+////= UnderComparison
+
+////= underComparison
+
+drive("a comparison", new UnderComparison(), UnderComparison.prototype, underComparison);
+
+////= UnderString
+
+////= underString
+
+drive("String", new UnderString(), UnderString.prototype, underString);
+
+////= UnderNumber
+
+////= underNumber
+
+drive("Number", new UnderNumber(), UnderNumber.prototype, underNumber);
+
+////= UnderJoin
+
+////= underJoin
+
+drive("join", new UnderJoin(), UnderJoin.prototype, underJoin);
+
+////= UnderJson
+
+////= underJson
+
+drive("JSON.stringify", new UnderJson(), UnderJson.prototype, underJson);
+
+////= UnderToPrimitive
+
+////= underToPrimitive
+
+drive("Symbol.toPrimitive", new UnderToPrimitive(), UnderToPrimitive.prototype, underToPrimitive);
+
+export {};
+//// a-copy-made-by-spread-holds-an-instance-and-is-cloned.ts
+////= lines-48	Owner	name	"ann"	age	3
+const full = { owner: new Owner() };
+console.log(JSON.stringify(structuredClone({ ...full })));
+//// a-copy-without-a-prototype-is-used-as-a-config.ts
+////= show-39
+
+function orphan(source: Config): Config {
+  return Object.assign(Object.create(null), source);
+}
+
+////= uses-6
+
+let warm = 0;
+////= for-27
+for (const [, use] of uses) for (let i = 0; i < 200; i++) use(config(i));
+console.log("after the honest configs", warm);
+
+////= for-44	orphan
+////= lines-37	orphan
+attempt("honest again", () => [address(config(80)), budget(config(80)), move(config(80), 1)]);
+//// a-declaration-file-describes-a-commonjs-module-wrongly/library.cjs
+exports.count = "7";
+exports.twice = function (n) {
+  return [n, n];
+};
+exports.settings = { depth: "deep" };
+Object.defineProperty(exports, "lazy", {
+  enumerable: true,
+  get() {
+    exports.reads = (exports.reads || 0) + 1;
+    return exports.reads % 2 ? 1 : "one";
+  },
+});
+exports.Dog = function Dog() {
+  this.paws = 4;
+};
+exports.later = undefined;
+exports.fill = function () {
+  exports.later = "filled";
+  exports.count = null;
+};
+//// a-declaration-file-describes-a-commonjs-module-wrongly/library.d.cts
+export declare const count: number;
+export declare function twice(n: number): number;
+export declare const settings: { depth: number; width: number };
+export declare const lazy: number;
+export declare class Dog {
+  legs: number;
+  bark(): number;
+}
+export declare const later: number;
+export declare function fill(): void;
+//// a-declaration-file-describes-a-commonjs-module-wrongly/main.ts
+import * as library from "./library.cjs";
+import { count, Dog, fill, later, lazy, settings, twice } from "./library.cjs";
+
+////= show-4
+
+const log: string[] = [];
+
+////= attempt-97
+
+attempt("honest", () => plusOne(1));
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += plusOne(i);
+console.log("2000 honest rounds", warm);
+
+attempt("a constant", () => [count, plusOne(count), library.count, typeof count]);
+attempt("a function", () => [twice(2), plusOne(twice(2)), library.twice(2)]);
+attempt("an object", () => [settings.depth, plusOne(settings.depth), settings.width, plusOne(settings.width)]);
+attempt("a getter of the exports object", () => [library.lazy, library.lazy, plusOne(library.lazy), plusOne(library.lazy)]);
+attempt("the getter as a named import", () => [lazy, lazy, plusOne(lazy)]);
+attempt("a constructor function for a class", () => {
+  const d = new Dog();
+  return [d.legs, plusOne(d.legs), Object.keys(d), d instanceof Dog];
+});
+attempt("a method that is not there", () => new Dog().bark());
+attempt("before fill", () => [later, library.later, plusOne(later)]);
+fill();
+attempt("after fill", () => [later, library.later, plusOne(library.later), count, library.count, plusOne(library.count)]);
+attempt("the keys", () => Object.keys(library).sort());
+//// a-declaration-file-describes-a-js-module-wrongly/library.d.ts
+export declare function count(): number;
+export declare function label(): string;
+export declare function list(): number[];
+export declare function point(): { x: number; y: number };
+export declare function step(): (n: number) => number;
+export declare function maybe(): number;
+export declare const limit: number;
+export declare const version: 3;
+export declare const names: readonly string[];
+export declare let mutable: number;
+export declare function spoil(): void;
+export declare class Dog {
+  legs: number;
+  name: string;
+  static kinds: number;
+  constructor(name: string);
+  bark(): number;
+  wag(): number;
+}
+export declare function takes(n: number, s: string): string;
+export declare enum Color {
+  Red = 0,
+  Green = 1,
+}
+////= lines-311	export declare const enum Level
+export declare function callBack(f: (n: number) => number): number[];
+export default function main(): number;
+//// a-declaration-file-describes-a-js-module-wrongly/library.js
+////= lines-149	count	"7"
+
+////= lines-149	label	42
+
+export function list() {
+  return { length: 2, 0: 1, 1: "2" };
+}
+
+export function point() {
+  return { y: "2", get x() { return 1; } };
+}
+
+export function step() {
+  return n => String(n) + "!";
+}
+
+export function maybe() {}
+
+export const limit = "10";
+export const version = 4;
+export const names = new Set(["a", "b"]);
+export let mutable = 1;
+
+export function spoil() {
+  mutable = "spoiled";
+}
+
+export class Dog {
+  constructor(name) {
+    this.title = name;
+  }
+  bark() {
+    return "woof";
+  }
+}
+
+export function takes(s, n) {
+  return typeof s + ":" + typeof n;
+}
+
+export const Color = { Red: "red", Green: 5 };
+export const Level = { Low: 10, High: 20 };
+
+export function callBack(f) {
+  return [f("8"), f(null), f()];
+}
+
+export default function main() {
+  return null;
+}
+//// a-declaration-file-describes-a-js-module-wrongly/main.ts
+import main, { callBack, Color, count, Dog, label, Level, limit, list, maybe, mutable, names, point, spoil, step, takes, version } from "./library.js";
+
+////= show-4
+
+const log: string[] = [];
+
+////= attempt-100
+
+////= sum-6
+
+attempt("honest", () => [half(4), plusOne(1), size("ab"), total([1, 2]), sum({ x: 1, y: 2 })]);
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += half(i) + plusOne(i) + size("ab") + total([i, 1]) + sum({ x: i, y: 1 });
+console.log("2000 honest rounds", warm);
+
+attempt("count: read", () => [count(), typeof count()]);
+attempt("count: a parameter", () => [half(count()), plusOne(count())]);
+attempt("count: a local", () => {
+  const n: number = count();
+  return [n + 1, n * 2, n === 7, n > 6, -n, n | 0];
+});
+attempt("count: a field", () => {
+  class Holder {
+    n = count();
+    next(): number {
+      return this.n + 1;
+    }
+  }
+  return new Holder().next();
+});
+attempt("count: an element", () => {
+  const values: number[] = [1, count(), 3];
+  return [total(values), values];
+});
+attempt("count: captured", () => {
+  let n = 0;
+  const take = () => {
+    n = count();
+  };
+  const read = () => n + 1;
+  take();
+  return read();
+});
+attempt("label", () => [label(), typeof label(), label() + "!"]);
+attempt("label: size", () => size(label()));
+attempt("label: a method", () => label().toUpperCase());
+attempt("list: total", () => total(list()));
+attempt("list: length and elements", () => [list().length, list()[1] + 1, Array.isArray(list())]);
+attempt("list: iterated", () => {
+  let result = 0;
+  for (const n of list()) result += n;
+  return result;
+});
+attempt("list: a method", () => list().map(n => n + 1));
+attempt("point", () => [sum(point()), Object.keys(point()), JSON.stringify(point())]);
+attempt("point: destructured", () => {
+  const { x, y } = point();
+  return [x - y, x + y];
+});
+attempt("point: stored to", () => {
+  const p = point();
+  p.y = 5;
+  p.x = 6;
+  return sum(p);
+});
+attempt("step", () => [step()(1), step()(1) + 1, half(step()(1)), [1, 2].map(step())]);
+attempt("maybe", () => [maybe(), maybe() + 1, half(maybe()), typeof maybe()]);
+attempt("limit", () => [limit, limit + 1, half(limit), typeof limit, limit === 10]);
+attempt("version", () => [version, version === 3, version + 1]);
+attempt("names: length", () => names.length);
+attempt("names: iterated", () => [...names]);
+attempt("names: an element", () => names[0].length);
+attempt("names: a method", () => names.join("+"));
+attempt("mutable before", () => [mutable, mutable + 1]);
+spoil();
+attempt("mutable after", () => [mutable, mutable + 1, half(mutable), typeof mutable]);
+attempt("a class: fields", () => {
+  const d = new Dog("rex");
+  return [d.legs, d.name, d.legs + 1, Object.keys(d), Dog.kinds];
+});
+attempt("a class: a field used", () => new Dog("rex").name.length);
+attempt("a class: a method", () => [new Dog("rex").bark(), new Dog("rex").bark() + 1, half(new Dog("rex").bark())]);
+attempt("a class: a method that is not there", () => new Dog("rex").wag());
+attempt("a class: extended", () => {
+  class Puppy extends Dog {
+    small = true;
+    bark(): number {
+      return super.bark() + 1;
+    }
+  }
+  const p = new Puppy("pup");
+  return [p.bark(), p.legs, Object.keys(p)];
+});
+attempt("parameters in another order", () => takes(1, "s"));
+attempt("an enum", () => [Color.Red, Color.Green, Color.Red === 0, Color.Green + 1, typeof Color.Red, Color[0]]);
+attempt("an enum: switch", () => {
+  const name = (c: Color): string => {
+    switch (c) {
+      case Color.Red:
+        return "red";
+      case Color.Green:
+        return "green";
+    }
+  };
+  return [name(Color.Red), name(Color.Green), name(0), name(1)];
+});
+attempt("a const enum", () => [Level.Low, Level.High, Level.Low + 1]);
+attempt("the module calls back", () => callBack(half));
+attempt("the module calls back a closure", () => callBack(n => n + 1));
+attempt("the default export", () => [main(), main() + 1, typeof main()]);
+attempt("honest again", () => [half(4), plusOne(1), size("ab"), total([1, 2]), sum({ x: 1, y: 2 })]);
+//// a-declaration-file-hides-what-a-js-class-really-does/library.d.ts
+export declare class Account {
+  balance: number;
+  constructor(balance: number);
+  deposit(amount: number): number;
+}
+////= lines-209	Frozen	size
+export declare class Lazy {
+  items: number[];
+}
+export declare function makeList(): number[];
+export declare function makeMap(): Map<string, number>;
+export declare function makePromise(): Promise<number>;
+//// a-declaration-file-hides-what-a-js-class-really-does/library.js
+export class Account {
+  constructor(balance) {
+    let held = balance;
+    Object.defineProperty(this, "balance", {
+      get() {
+        Account.reads++;
+        return Account.reads % 3 === 0 ? String(held) : held;
+      },
+      set(value) {
+        held = value * 2;
+      },
+      enumerable: true,
+      configurable: true,
+    });
+  }
+  deposit(amount) {
+    this.balance = this.balance + amount;
+    return this;
+  }
+  static reads = 0;
+}
+
+export class Frozen {
+  constructor() {
+    this.size = 1;
+    Object.freeze(this);
+  }
+}
+
+export class Lazy {
+  get items() {
+    delete Lazy.prototype.items;
+    return undefined;
+  }
+}
+
+export function makeList() {
+  class Odd extends Array {
+    push() {
+      return 42;
+    }
+    get length() {
+      return super.length;
+    }
+    map() {
+      return "mapped";
+    }
+  }
+  return Odd.from([1, 2, 3]);
+}
+
+export function makeMap() {
+  return new (class extends Map {
+    get(key) {
+      return String(super.get(key));
+    }
+  })([["a", 1]]);
+}
+
+export function makePromise() {
+  return { then(resolve) { resolve("not a number"); } };
+}
+//// a-declaration-file-hides-what-a-js-class-really-does/main.ts
+import { Account, Frozen, Lazy, makeList, makeMap, makePromise } from "./library.js";
+
+////= show-4
+
+const log: string[] = [];
+
+////= attempt-97
+
+////= lines-21	balanceOf	a	Account	number	a.balance
+
+////= total
+
+attempt("honest", () => [plusOne(1), total([1, 2])]);
+attempt("a field that is an accessor", () => {
+  const a = new Account(10);
+  return [balanceOf(a), balanceOf(a), balanceOf(a), balanceOf(a)];
+});
+attempt("a store that the setter doubles", () => {
+  const a = new Account(10);
+  a.balance = 5;
+  return [a.balance, a.balance, a.balance];
+});
+attempt("read twice in one expression", () => {
+  const a = new Account(1);
+  return [a.balance + a.balance, a.balance + a.balance, a.balance + a.balance];
+});
+attempt("a method that answers the object", () => {
+  const a = new Account(1);
+  return [typeof a.deposit(1), plusOne(a.deposit(1))];
+});
+attempt("in a loop", () => {
+  const a = new Account(1);
+  let sum = 0;
+  for (let i = 0; i < 7; i++) sum += a.balance;
+  return sum;
+});
+attempt("a frozen instance is stored to", () => {
+  const f = new Frozen();
+  f.size = 2;
+  return f.size;
+});
+attempt("a frozen instance is incremented", () => {
+  const f = new Frozen();
+  f.size++;
+  return f.size;
+});
+attempt("a member that removes itself", () => new Lazy().items);
+attempt("a member that removes itself: used", () => total(new Lazy().items));
+attempt("a list that is a subclass", () => {
+  const list = makeList();
+  return [total(list), list.push(4), list.length, list.map(plusOne), Array.isArray(list)];
+});
+attempt("a map that is a subclass", () => {
+  const m = makeMap();
+  const a = m.get("a");
+  return [a, a === undefined ? -1 : plusOne(a), m.size];
+});
+console.log("a promise that is a thenable ->", show(plusOne(await makePromise())));
+attempt("honest again", () => [plusOne(1), total([1, 2])]);
+//// a-declaration-file-promises-classes-and-interfaces-of-checked-files/library.d.ts
+import type { Color, Dog, Kennel, Point, Shape } from "./shapes.ts";
+
+export declare function count(kind: "point" | "dog" | "shape" | "color"): number;
+export declare function makePoint(i: number): Point;
+export declare function makeDog(i: number): Dog;
+export declare function makeShape(i: number): Shape;
+export declare function makeColor(i: number): Color;
+export declare function makeDogs(): Dog[];
+export declare const spoilerCount: number;
+export declare function spoil(dog: Dog, i: number): void;
+export declare function fillKennel(kennel: Kennel): void;
+//// a-declaration-file-promises-classes-and-interfaces-of-checked-files/library.js
+const makers = {
+  point: [() => ({ x: 1, y: 2 }), () => ({ y: 2, x: 1 }), () => ({ x: "1", y: 2 }), () => ({ x: 1 }), () => [1, 2], () => "xy", () => 5, () => null, () => undefined],
+  dog: [
+    () => ({ legs: 3, name: "literal", bark() { return "literal bark"; } }),
+    () => ({ name: "other order", legs: "three" }),
+    () => ({}),
+    () => new (class Dog { legs = "class of the same name"; bark() { return -1; } })(),
+    () => Object.create({ legs: 5, name: "inherited", bark() { return this.legs; } }),
+    () => new Proxy({ legs: 6, name: "proxy", bark() { return 60; } }, {}),
+    () => "dog",
+    () => 7,
+    () => null,
+  ],
+  shape: [() => ({ kind: "circle", radius: 1 }), () => ({ kind: "circle", side: 2 }), () => ({ kind: "triangle" }), () => ({ radius: 1 }), () => ({ kind: "square", side: "2" }), () => null],
+  color: [() => 0, () => 1, () => 7, () => "Red", () => 0.5, () => null],
+};
+
+export function count(kind) {
+  return makers[kind].length;
+}
+////= lines-212	makePoint	point
+////= lines-212	makeDog	dog
+////= lines-212	makeShape	shape
+////= lines-212	makeColor	color
+export function makeDogs() {
+  return makers.dog.slice(0, 3).map(make => make());
+}
+
+const spoilers = [
+  dog => { dog.legs = "many"; },
+  dog => { delete dog.legs; },
+  dog => { dog.bark = () => "own bark"; },
+  dog => { Object.setPrototypeOf(dog, { bark() { return "other prototype"; } }); },
+  dog => { Object.setPrototypeOf(dog, null); },
+  dog => { Object.defineProperty(dog, "legs", { get() { return "getter"; }, configurable: true }); },
+  dog => { Object.freeze(dog); },
+  dog => { dog.extra = 1; delete dog.name; dog.name = 5; },
+];
+export const spoilerCount = spoilers.length;
+export function spoil(dog, i) {
+  spoilers[i](dog);
+}
+export function fillKennel(kennel) {
+  kennel.dogs.push({ legs: "pushed" }, null);
+  kennel.at = "nowhere";
+}
+//// a-declaration-file-promises-classes-and-interfaces-of-checked-files/main.ts
+import { count, fillKennel, makeColor, makeDog, makeDogs, makePoint, makeShape, spoil, spoilerCount } from "./library.js";
+import { Color, Dog, Kennel, type Point, type Shape } from "./shapes.ts";
+
+////= show-4
+
+const log: string[] = [];
+
+////= attempt-2
+
+////= sum-2
+
+////= lines-21	legs	d	Dog	number	d.legs
+
+////= lines-19	bark	d	Dog	number	d.bark
+
+////= lines-90	title	d	Dog	string	d.name.toUpperCase
+
+////= area-2
+
+function colorName(c: Color): string {
+  return c === Color.Red ? "red" : c === Color.Green ? "green" : "other";
+}
+
+attempt("honest", () => [sum({ x: 1, y: 2 }), legs(new Dog()), bark(new Dog()), title(new Dog()), area({ kind: "circle", radius: 1 }), colorName(Color.Green)]);
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += sum({ x: i, y: 1 }) + legs(new Dog()) + bark(new Dog()) + title(new Dog()).length + area({ kind: "square", side: i });
+console.log("2000 honest rounds", warm);
+
+for (let i = 0; i < count("point"); i++) {
+  attempt("point " + i + ": sum", () => sum(makePoint(i)));
+  attempt("point " + i + ": kept", () => {
+    const p: Point = makePoint(i);
+    const list: Point[] = [p];
+    return [p.x, list[0].y];
+  });
+}
+for (let i = 0; i < count("dog"); i++) {
+  attempt("dog " + i + ": legs", () => legs(makeDog(i)));
+  attempt("dog " + i + ": bark", () => bark(makeDog(i)));
+  attempt("dog " + i + ": title", () => title(makeDog(i)));
+  attempt("dog " + i + ": instanceof and keys", () => [makeDog(i) instanceof Dog, Object.keys(makeDog(i))]);
+  attempt("dog " + i + ": in a kennel", () => {
+    const k = new Kennel();
+    k.dogs.push(new Dog(), makeDog(i));
+    return k.dogs.map(d => d.legs);
+  });
+}
+for (let i = 0; i < count("shape"); i++) attempt("shape " + i, () => area(makeShape(i)));
+for (let i = 0; i < count("color"); i++) attempt("color " + i, () => [colorName(makeColor(i)), makeColor(i) + 1, Color[makeColor(i)]]);
+attempt("a list of dogs", () => makeDogs().map(d => d.legs));
+attempt("a list of dogs: a method", () => makeDogs().map(bark));
+
+for (let i = 0; i < spoilerCount; i++) {
+  attempt("a real dog spoiled " + i + ": legs", () => {
+    const d = new Dog();
+    spoil(d, i);
+    return [legs(d), d.legs];
+  });
+  attempt("a real dog spoiled " + i + ": bark", () => {
+    const d = new Dog();
+    spoil(d, i);
+    return bark(d);
+  });
+  attempt("a real dog spoiled " + i + ": stored to", () => {
+    const d = new Dog();
+    spoil(d, i);
+    d.legs = 8;
+    return [d.legs, Object.keys(d), d instanceof Dog];
+  });
+  attempt("a real dog spoiled " + i + ": title", () => {
+    const d = new Dog();
+    spoil(d, i);
+    return title(d);
+  });
+}
+attempt("a kennel filled by the module", () => {
+  const k = new Kennel();
+  k.dogs.push(new Dog());
+  fillKennel(k);
+  return [k.dogs.length, k.first().legs, k.dogs[1].legs, k.dogs[2], k.at];
+});
+attempt("a kennel filled by the module: used", () => {
+  const k = new Kennel();
+  fillKennel(k);
+  return [legs(k.first()), sum(k.at)];
+});
+attempt("a kennel filled by the module: a method", () => {
+  const k = new Kennel();
+  fillKennel(k);
+  return bark(k.first());
+});
+attempt("honest again", () => [sum({ x: 1, y: 2 }), legs(new Dog()), bark(new Dog()), title(new Dog()), area({ kind: "circle", radius: 1 })]);
+//// a-declaration-file-promises-classes-and-interfaces-of-checked-files/shapes.ts
+////= Point-14
+
+export class Dog {
+  legs = 4;
+  name = "rex";
+  bark(): number {
+    return this.legs * 2;
+  }
+}
+
+export class Kennel {
+  dogs: Dog[] = [];
+  at: Point = { x: 0, y: 0 };
+  first(): Dog {
+    return this.dogs[0];
+  }
+}
+
+export type Shape = { kind: "circle"; radius: number } | { kind: "square"; side: number };
+
+////= lines-164	export	Color	Red	Green
+//// a-declaration-file-swaps-functions-classes-and-namespaces/library.cjs
+exports.Factory = function Factory(width) {
+  return { width: String(width), grow: () => "grown" };
+};
+
+exports.Build = class Build {
+  constructor(width) {
+    this.width = width;
+  }
+};
+
+exports.Arrow = () => ({ n: 1 });
+
+exports.count = 5;
+exports.label = "label";
+
+exports.tools = function tools() {
+  return "tools is a function";
+};
+exports.tools.limit = "ten";
+
+exports.settings = class Settings {
+  static depth = "deep";
+};
+
+exports.callable = { call: () => 1, apply: () => 2 };
+
+exports.list = new Set([1, 2]);
+
+let reads = 0;
+Object.defineProperty(exports, "getter", { get: () => ++reads, enumerable: true });
+
+exports.counter = 0;
+exports.bump = function () {
+  exports.counter = "bumped";
+};
+//// a-declaration-file-swaps-functions-classes-and-namespaces/library.d.cts
+////= lines-182	Factory	width	width	grow
+export declare function Build(width: number): { width: number };
+////= lines-209	Arrow	n
+export declare const count: string;
+export declare const label: number;
+export declare function missing(): number;
+export declare const absent: number;
+////= lines-209	Gone	n
+export declare namespace tools {
+  function plusOne(n: number): number;
+  const limit: number;
+}
+export declare const settings: { depth: number; name: string };
+export declare function callable(n: number): number;
+export declare const list: number[];
+export declare const getter: number;
+export declare let counter: number;
+export declare function bump(): void;
+//// a-declaration-file-swaps-functions-classes-and-namespaces/main.ts
+import * as library from "./library.cjs";
+import { Arrow, Build, bump, callable, count, counter, Factory, getter, label, list, settings, tools } from "./library.cjs";
+
+////= show-37
+
+////= plusOne-4
+
+attempt("a function for a class", () => {
+  const made = new Factory(1);
+  return [made.width, made.width + 1, made.grow(), plusOne(made.grow()), made instanceof Factory, Object.keys(made).join()];
+});
+attempt("a function for a class, extended", () => {
+  class Wide extends Factory {
+    extra = 1;
+    both(): number {
+      return this.width + this.extra;
+    }
+  }
+  const wide = new Wide(1);
+  return [Object.keys(wide).join(), wide instanceof Wide, typeof wide.both];
+});
+attempt("a class for a function", () => Build(1).width);
+attempt("an arrow for a class", () => new Arrow().n);
+attempt("a number for a text and a text for a number", () => [count, count + "!", label, label + 1, plusOne(label)]);
+attempt("the size of a text that is a number", () => size(count));
+attempt("members that are not there", () => [typeof library.missing, library.absent, library.absent + 1, plusOne(library.absent), typeof library.Gone]);
+attempt("a function that is not there, called", () => library.missing());
+attempt("a class that is not there, constructed", () => new library.Gone());
+attempt("a function for a namespace", () => [typeof tools, tools.limit, tools.limit + 1, plusOne(tools.limit), typeof tools.plusOne]);
+attempt("a function of the namespace", () => tools.plusOne(1));
+attempt("a class for an object", () => [typeof settings, settings.depth, settings.depth + 1, settings.name, size(settings.name)]);
+attempt("an object for a function", () => [typeof callable, callable.call(undefined, 1), callable.apply(undefined, [1])]);
+attempt("an object for a function, called", () => callable(1));
+attempt("a set for a list", () => [typeof list, list.length, list[0], Array.isArray(list)]);
+////= lines-128	attempt	"a set for a list, iterated"	total	list
+attempt("a set for a list, mapped", () => list.map(plusOne));
+attempt("a getter for a constant", () => [typeof getter, typeof library.getter, library.getter < library.getter]);
+attempt("a variable that changes", () => {
+  const before = [counter, library.counter];
+  bump();
+  return [before, counter, library.counter, typeof library.counter];
+});
+//// a-declaration-file-swaps-functions-classes-and-namespaces/tsconfig.json
+////= lines-3
+//// a-declare-global-that-is-wrong/globals.ts
+export {};
+
+declare global {
+  var buildNumber: number;
+  var featureFlags: { fast: boolean; level: number };
+  var registry: string[];
+  function double(n: number): number;
+  function missing(n: number): number;
+  const fixedLimit: 10;
+  const neverSet: number;
+  class Gadget {
+    size: number;
+    constructor(size: number);
+    grow(): number;
+    shrink(): number;
+  }
+  interface Math {
+    half(n: number): number;
+    third(n: number): number;
+  }
+}
+//// a-declare-global-that-is-wrong/main.ts
+import "./globals.ts";
+import { change } from "./setup.js";
+
+////= show-4
+
+const log: string[] = [];
+
+////= attempt-97
+
+////= half
+
+attempt("honest", () => [plusOne(1), half(4)]);
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += plusOne(i) + half(i);
+console.log("2000 honest rounds", warm);
+
+attempt("a global variable: read", () => [buildNumber, typeof buildNumber, globalThis.buildNumber]);
+attempt("a global variable: arithmetic", () => [buildNumber + 1, plusOne(buildNumber), half(buildNumber), buildNumber === 17, buildNumber > 16]);
+////= attempt-42	"a global variable: a local, a field, an element"	buildNumber
+attempt("a global variable: in a loop", () => {
+  let sum = 0;
+  for (let i = 0; i < 3; i++) sum += buildNumber;
+  return sum;
+});
+attempt("a global object", () => [featureFlags.fast, featureFlags.fast ? "fast" : "slow", featureFlags.fast === true, featureFlags.level, featureFlags.level + 1]);
+attempt("a global list: length and element", () => [registry.length, registry[0].length, Array.isArray(registry)]);
+attempt("a global list: a method", () => registry.join("+"));
+attempt("a global list: iterated", () => [...registry]);
+attempt("a global function", () => [double(4), double(4) + 1, half(double(4)), typeof double(4), [1, 2].map(double)]);
+attempt("a global function that is not there", () => missing(1));
+attempt("a global function that is not there: typeof", () => typeof missing);
+attempt("a global constant with a literal type", () => [fixedLimit, fixedLimit === 10, fixedLimit + 1, half(fixedLimit)]);
+attempt("a global constant that is not there", () => neverSet + 1);
+attempt("a global constant that is not there: typeof", () => typeof neverSet);
+attempt("a global class: fields", () => {
+  const g = new Gadget(3);
+  return [g.size, g.size + 1, Object.keys(g)];
+});
+attempt("a global class: a method", () => [new Gadget(3).grow(), new Gadget(3).grow() + 1]);
+attempt("a global class: a method that is not there", () => new Gadget(3).shrink());
+attempt("a global class: extended", () => {
+  class Big extends Gadget {
+    extra = 1;
+    grow(): number {
+      return super.grow() + this.extra;
+    }
+  }
+  return [new Big(1).grow(), Object.keys(new Big(1))];
+});
+attempt("a member added to Math", () => [Math.half(4), Math.half(4) + 1, plusOne(Math.half(4))]);
+attempt("a member of Math that is not there", () => Math.third(3));
+attempt("stored to", () => {
+  buildNumber = 5;
+  const first = buildNumber + 1;
+  globalThis.buildNumber = 6;
+  return [first, buildNumber + 1];
+});
+change();
+attempt("after the other module changed them: the variable", () => [buildNumber, buildNumber + 1, typeof buildNumber]);
+attempt("after the other module changed them: the object", () => featureFlags.level);
+attempt("after the other module changed them: typeof", () => typeof featureFlags);
+attempt("honest again", () => [plusOne(1), half(4)]);
+//// a-declare-global-that-is-wrong/setup.js
+Object.assign(globalThis, {
+  buildNumber: "17",
+  featureFlags: { fast: "no" },
+  double: n => String(n) + String(n),
+  fixedLimit: 20,
+  registry: { length: 1, 0: "only" },
+  Gadget: class Gadget {
+    constructor(size) {
+      this.volume = size;
+    }
+    grow() {
+      return "grown";
+    }
+  },
+});
+
+Object.assign(Math, { half: n => n + "/2" });
+
+export function change() {
+  Reflect.set(globalThis, "buildNumber", null);
+  Reflect.deleteProperty(globalThis, "featureFlags");
+}
+//// a-declared-class-appears-on-the-global-object-with-other-members.ts
+////= text-11
+
+////= MissingBox
+
+const log: string[] = [];
+////= noted
+
+////= lines-20	valueOf	box	MissingBox	number	return	box.value
+
+////= lines-19	getOf	box	MissingBox	number	box.get
+
+function isBox(value: unknown): boolean {
+  return value instanceof MissingBox;
+}
+
+show("typeof", () => typeof MissingBox);
+show("constructed", () => new MissingBox(1));
+show("the argument does not run", () => new MissingBox(noted(1)));
+show("the log", () => log.join());
+show("a static method", () => MissingBox.make());
+show("a static member", () => MissingBox.count);
+show("instanceof", () => isBox({}));
+show("its prototype", () => MissingBox.prototype);
+////= show-23
+////= show-22
+show("guarded by typeof", () => (typeof MissingBox === "function" ? new MissingBox(1).value : -1));
+
+////= standIn
+show("a literal of its type", () => [valueOf(standIn), getOf(standIn), Object.keys(standIn)]);
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += valueOf(standIn) + getOf(standIn);
+show("2000 uses of the literal", () => sum);
+show("is the literal one of them", () => isBox(standIn));
+
+Object.assign(globalThis, {
+  MissingBox: class MissingBox {
+    held: number;
+    constructor(value: number) {
+      this.held = value;
+    }
+    get(): string {
+      return "held " + this.held;
+    }
+  },
+});
+show("after the global object has another class of that name", () => typeof MissingBox);
+const real = new MissingBox(3);
+show("its member", () => [real.value, valueOf(real), valueOf(real) + 1]);
+show("its method", () => [real.get(), typeof getOf(real), getOf(real) + 1]);
+show("its keys", () => Object.keys(real));
+show("instanceof", () => [isBox(real), isBox(standIn)]);
+show("a static method", () => MissingBox.make());
+show("extended", () => {
+  class Bigger extends MissingBox {
+    extra: number = 1;
+  }
+  const bigger = new Bigger(4);
+  return [Object.keys(bigger), bigger.value, bigger.extra, bigger.get()];
+});
+show("the literal again", () => [valueOf(standIn), getOf(standIn)]);
+//// a-declared-class-that-does-not-exist.ts
+////= text-11
+
+////= MissingBox
+
+const log: string[] = [];
+////= noted
+
+////= lines-20	valueOf	box	MissingBox	number	return	box.value
+
+////= lines-19	getOf	box	MissingBox	number	box.get
+
+function isBox(value: unknown): boolean {
+  return value instanceof MissingBox;
+}
+
+show("typeof", () => typeof MissingBox);
+show("constructed", () => new MissingBox(1));
+show("the argument does not run", () => new MissingBox(noted(1)));
+show("the log", () => log.join());
+show("a static method", () => MissingBox.make());
+show("a static member", () => MissingBox.count);
+show("instanceof", () => isBox({}));
+show("its prototype", () => MissingBox.prototype);
+////= show-23
+////= show-22
+show("guarded by typeof", () => (typeof MissingBox === "function" ? new MissingBox(1).value : -1));
+
+////= standIn
+show("a literal of its type", () => [valueOf(standIn), getOf(standIn), Object.keys(standIn)]);
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += valueOf(standIn) + getOf(standIn);
+show("2000 uses of the literal", () => sum);
+show("is the literal one of them", () => isBox(standIn));
+//// a-declared-constant-of-a-literal-type-has-another-value.ts
+////= text-11
+
+declare const DEBUG_MODE: false;
+declare const RELEASE_MODE: true;
+declare const API_LEVEL: 3;
+declare const CHANNEL: "stable";
+declare const NOTHING: null;
+declare const ABSENT: undefined;
+declare const SIDE: "left" | "right";
+
+Object.assign(globalThis, {
+  DEBUG_MODE: true,
+  RELEASE_MODE: false,
+  API_LEVEL: 4,
+  CHANNEL: "beta",
+  NOTHING: 0,
+  ABSENT: "here",
+  SIDE: "middle",
+});
+
+function debugWord(): string {
+  if (DEBUG_MODE) return "debugging";
+  return "quiet";
+}
+
+function releaseWord(): string {
+  return RELEASE_MODE ? "release" : "not a release";
+}
+
+////= lines-240	nextLevel	API_LEVEL
+
+////= sideWord	SIDE
+
+show("false: read", () => DEBUG_MODE);
+show("false: as a condition", () => debugWord());
+show("false: not", () => !DEBUG_MODE);
+show("false: is it what its type says", () => DEBUG_MODE === false);
+show("false: and", () => DEBUG_MODE && "the right side");
+show("true: read", () => RELEASE_MODE);
+show("true: as a condition", () => releaseWord());
+show("true: or", () => RELEASE_MODE || "the right side");
+show("the number: read", () => API_LEVEL);
+show("the number: plus one", () => [API_LEVEL + 1, nextLevel()]);
+show("the number: is it what its type says", () => API_LEVEL === 3);
+show("the number: as an index", () => ["a", "b", "c", "d", "e"][API_LEVEL]);
+show("the text: read", () => CHANNEL);
+show("the text: is it what its type says", () => CHANNEL === "stable");
+show("the text: length", () => CHANNEL.length);
+show("the text: in a template", () => `on ${CHANNEL}`);
+show("null: read", () => NOTHING);
+show("null: is it what its type says", () => NOTHING === null);
+show("null: or a default", () => NOTHING ?? "default");
+show("undefined: read", () => ABSENT);
+show("undefined: is it what its type says", () => ABSENT === undefined);
+show("undefined: or a default", () => ABSENT ?? "default");
+show("undefined: typeof", () => typeof ABSENT);
+show("one of two: read", () => SIDE);
+show("one of two: a switch over both", () => sideWord());
+show("one of two: if it is not left", () => (SIDE === "left" ? "left" : "so it is right"));
+
+let debugging = 0;
+for (let i = 0; i < 2000; i++) if (debugWord() === "debugging" && nextLevel() === 5) debugging++;
+show("2000 rounds", () => debugging);
+//// a-declared-constant-that-does-not-exist.ts
+////= text-11
+
+declare const missingCount: number;
+declare const missingText: string;
+declare const missingPoint: { x: number; y: number };
+declare const missingList: number[];
+
+const log: string[] = [];
+////= noted
+
+////= plusOne
+
+////= lines-34	readCount	number	return	missingCount
+
+function countOr(fallback: number): number {
+  return typeof missingCount === "number" ? missingCount : fallback;
+}
+
+////= lines-29	Holder	count	number	missingCount
+
+show("typeof", () => [typeof missingCount, typeof missingText, typeof missingPoint, typeof missingList]);
+show("read", () => missingCount);
+show("plus one", () => missingCount + 1);
+show("what stands on the left runs first", () => noted(1) + missingCount);
+show("what stands on the right does not run", () => missingCount + noted(2));
+show("the log", () => log.join());
+show("through a function", () => readCount());
+show("given to a typed function", () => plusOne(missingCount));
+show("guarded by typeof", () => countOr(7));
+show("behind a false condition", () => (log.length > 100 ? missingCount : -1));
+show("behind &&", () => log.length > 100 && missingCount);
+show("in a template", () => `${missingCount}`);
+show("as the value of a field", () => new Holder().count);
+show("as the default of a parameter", () => ((n: number = missingCount) => n)());
+show("as the default of a parameter that is given", () => ((n: number = missingCount) => n)(3));
+show("in a list", () => [1, missingCount]);
+show("in an object", () => ({ count: missingCount }));
+show("in a closure that is never called", () => typeof (() => missingCount));
+show("the text: length", () => missingText.length);
+show("the text: followed by a string", () => missingText + "!");
+show("the point: a member", () => missingPoint.x);
+show("the point: a member if there", () => missingPoint?.x);
+show("the list: length", () => missingList.length);
+show("the list: iterated", () => [...missingList]);
+show("on the global object", () => "missingCount" in globalThis);
+
+let failures = 0;
+////= for-54	readCount()
+show("2000 reads", () => failures);
+show("2000 guarded reads", () => {
+  let sum = 0;
+  for (let i = 0; i < 2000; i++) sum += countOr(1);
+  return sum;
+});
+//// a-declared-enum-appears-on-the-global-object-with-other-members.ts
+////= text-11
+
+declare enum MissingMode {
+  Off,
+  On,
+  Auto = 10,
+}
+
+////= lines-123	declare	MissingWord	Yes	"yes"	No	"no"
+
+////= lines-311	declare const enum FoldedMode
+
+////= lines-41	onValue	MissingMode	MissingMode.On
+
+////= lines-40	nameOf	mode	MissingMode	string	MissingMode[mode
+
+////= lines-186	isOn	mode	MissingMode	MissingMode.On
+
+show("typeof", () => [typeof MissingMode, typeof MissingWord]);
+show("a member", () => MissingMode.On);
+show("a member plus one", () => MissingMode.On + 1);
+show("a member with a value", () => MissingMode.Auto);
+show("through a function", () => onValue());
+show("compared", () => isOn(1));
+show("a name by number", () => nameOf(1));
+show("a member by a computed name", () => {
+  const names: ("Off" | "On")[] = ["Off", "On"];
+  return names.map(name => MissingMode[name]);
+});
+show("a member of the one with strings", () => MissingWord.Yes);
+show("its length", () => MissingWord.Yes.length);
+show("keys", () => Object.keys(MissingMode));
+////= show-19
+show("a member of the const one", () => [FoldedMode.Low, FoldedMode.High, FoldedMode.Low + FoldedMode.High]);
+
+Object.assign(globalThis, { MissingMode: { Off: "off", On: 7, 7: "On" }, MissingWord: { Yes: 1 } });
+show("after the global object has them: typeof", () => [typeof MissingMode, typeof MissingWord]);
+show("a member", () => [MissingMode.On, MissingMode.On + 1, onValue()]);
+show("a member that is text", () => [MissingMode.Off, typeof MissingMode.Off]);
+show("a member that is not there", () => [MissingMode.Auto, MissingMode.Auto + 1]);
+show("compared", () => [isOn(1), isOn(7)]);
+show("a name by number", () => [nameOf(1), nameOf(7)]);
+show("a member of the one with strings", () => [MissingWord.Yes, typeof MissingWord.Yes]);
+show("keys", () => Object.keys(MissingMode));
+//// a-declared-enum-merges-with-a-real-one.ts
+////= text-11
+
+////= lines-123	declare	Level	Promised	10	AlsoPromised	11
+////= lines-70	Level	Made	1	AlsoMade	2
+
+////= lines-207	Grade	Made	1
+declare enum Grade {
+  Promised = 5,
+}
+
+////= lines-41	promised	Level	Level.Promised
+
+function byName(name: "Promised" | "AlsoPromised" | "Made" | "AlsoMade"): Level {
+  return Level[name];
+}
+
+////= lines-40	nameOf	level	Level	string	Level[level
+
+show("typeof", () => [typeof Level, typeof Grade]);
+show("what is made", () => [Level.Made, Level.AlsoMade, byName("Made"), nameOf(1)]);
+show("what is promised, by a dot", () => [Level.Promised, Level.Promised + 1, promised()]);
+show("what is promised, by a computed name", () => [byName("Promised"), byName("Promised") + 1, byName("AlsoPromised")]);
+show("the name of what is promised", () => [nameOf(10), Level[10], nameOf(Level.Promised)]);
+show("keys", () => Object.keys(Level));
+show("in", () => ["Promised" in Level, "Made" in Level]);
+show("in a switch", () => {
+  const level: Level = byName("Made");
+  switch (level) {
+    case Level.Promised:
+      return "promised";
+    case Level.Made:
+      return "made";
+    default:
+      return "neither";
+  }
+});
+show("the declared part comes second", () => [Grade.Made, Grade.Promised, Grade.Promised + 1, Grade[5], Object.keys(Grade)]);
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += byName(i % 2 === 0 ? "Made" : "AlsoMade");
+show("2000 honest reads", () => sum);
+show("then a promised one", () => [byName("Promised"), byName("Promised") + 1]);
+//// a-declared-enum-that-does-not-exist.ts
+////= text-11
+
+declare enum MissingMode {
+  Off,
+  On,
+  Auto = 10,
+}
+
+////= lines-123	declare	MissingWord	Yes	"yes"	No	"no"
+
+////= lines-311	declare const enum FoldedMode
+
+////= lines-41	onValue	MissingMode	MissingMode.On
+
+////= lines-40	nameOf	mode	MissingMode	string	MissingMode[mode
+
+////= lines-186	isOn	mode	MissingMode	MissingMode.On
+
+show("typeof", () => [typeof MissingMode, typeof MissingWord]);
+show("a member", () => MissingMode.On);
+show("a member plus one", () => MissingMode.On + 1);
+show("a member with a value", () => MissingMode.Auto);
+show("through a function", () => onValue());
+show("compared", () => isOn(1));
+show("a name by number", () => nameOf(1));
+show("a member by a computed name", () => {
+  const names: ("Off" | "On")[] = ["Off", "On"];
+  return names.map(name => MissingMode[name]);
+});
+show("a member of the one with strings", () => MissingWord.Yes);
+show("its length", () => MissingWord.Yes.length);
+show("keys", () => Object.keys(MissingMode));
+////= show-19
+show("a member of the const one", () => [FoldedMode.Low, FoldedMode.High, FoldedMode.Low + FoldedMode.High]);
+
+let failures = 0;
+////= for-54	if (isOn(onValue())) failures--
+show("2000 reads", () => failures);
+//// a-declared-field-among-number-fields.ts
+////= text-11
+
+class Reading {
+  low: number = 1.5;
+  declare middle: number;
+  high: number = 3.5;
+  private declare hidden: number;
+  declare readonly fixed: number;
+  last: number = 4;
+  spread(): number {
+    return this.high - this.low;
+  }
+  average(): number {
+    return (this.low + this.middle + this.high) / 3;
+  }
+  secret(): number {
+    return this.hidden;
+  }
+  setSecret(n: number): void {
+    this.hidden = n;
+  }
+  parts(): unknown[] {
+    return [this.low, this.middle, this.high, this.hidden, this.fixed, this.last];
+  }
+}
+
+////= lines-20	middleOf	reading	Reading	number	return	reading.middle
+
+const bare = new Reading();
+show("parts", () => bare.parts());
+show("the made ones", () => [bare.low, bare.high, bare.last, bare.spread()]);
+show("the declared one", () => [bare.middle, typeof bare.middle, middleOf(bare)]);
+show("average", () => bare.average());
+show("the private one", () => bare.secret());
+show("the readonly one", () => [bare.fixed, bare.fixed + 1]);
+show("keys", () => Object.keys(bare));
+show("JSON", () => JSON.stringify(bare));
+show("values", () => Object.values(bare));
+show("entries", () => Object.entries(bare));
+
+const full = new Reading();
+full.middle = 2.5;
+full.setSecret(9);
+show("filled: parts", () => full.parts());
+show("filled: average", () => full.average());
+show("filled: keys", () => Object.keys(full));
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += middleOf(full) + full.average() + full.secret();
+show("2000 filled", () => sum);
+show("then a bare one", () => [middleOf(new Reading()), new Reading().average(), new Reading().secret()]);
+
+const list: Reading[] = [full, bare, full];
+show("the middle of three", () => list.map(middleOf));
+show("as doubles", () => Array.from(Float64Array.from(list, middleOf)));
+show("the largest", () => Math.max(...list.map(middleOf)));
+show("copied field by field", () => {
+  const copy = new Reading();
+  copy.middle = bare.middle;
+  return [copy.middle, Object.keys(copy), JSON.stringify(copy)];
+});
+//// a-declared-field-is-made-by-only-one-of-two-subclasses.ts
+////= text-11
+
+class Widget {
+  declare width: number;
+  declare title: string;
+  id: number = 1;
+  doubleWidth(): number {
+    return this.width * 2;
+  }
+  banner(): string {
+    return "[" + this.title + "]";
+  }
+}
+
+class Sized extends Widget {
+  width: number = 10;
+  title: string = "sized";
+}
+
+////= lines-198	Stored	Widget	title	"stored"	width	20
+
+////= lines-87	Unsized	Widget	color	string	"red"
+
+class AgainDeclared extends Widget {
+  declare width: number;
+  depth: number = 2;
+}
+
+////= lines-20	widthOf	widget	Widget	number	return	widget.width
+
+show("the first call gets one without", () => widthOf(new Unsized()));
+let sum = 0;
+for (let i = 0; i < 2000; i++) {
+  const widget = i % 2 === 0 ? new Sized() : new Stored();
+  sum += widthOf(widget) + widget.doubleWidth() + widget.banner().length;
+}
+show("2000 that make it", () => sum);
+
+for (const widget of [new Sized(), new Stored(), new Unsized(), new AgainDeclared(), new Widget()]) {
+  const kind = widget.constructor.name;
+  show(kind + ": width", () => widthOf(widget));
+  show(kind + ": double", () => widget.doubleWidth());
+  show(kind + ": banner", () => widget.banner());
+  show(kind + ": the length of the title", () => widget.title.length);
+  show(kind + ": keys", () => Object.keys(widget));
+}
+//// a-declared-field-narrows-a-base-field-that-base-code-stores-wider.ts
+////= text-11
+
+class Cell {
+  value: number | string = "start";
+  put(value: number | string): void {
+    this.value = value;
+  }
+  reset(): void {
+    this.value = "reset";
+  }
+}
+
+class NumberCell extends Cell {
+  declare value: number;
+  twice(): number {
+    return this.value * 2;
+  }
+  next(): number {
+    return this.value + 1;
+  }
+  whole(): number {
+    return this.value | 0;
+  }
+  fixed(): string {
+    return this.value.toFixed(1);
+  }
+}
+
+////= lines-20	valueOf	cell	NumberCell	number	return	cell.value
+
+function all(label: string, cell: NumberCell): void {
+  show(label + ": read", () => cell.value);
+  show(label + ": through a function", () => valueOf(cell));
+  show(label + ": twice", () => cell.twice());
+  show(label + ": next", () => cell.next());
+  show(label + ": whole", () => cell.whole());
+  show(label + ": fixed", () => cell.fixed());
+  show(label + ": keys", () => Object.keys(cell));
+}
+
+all("as the base class made it", new NumberCell());
+
+const honest = new NumberCell();
+honest.value = 2.5;
+all("after an honest store", honest);
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) {
+  honest.value = i;
+  sum += valueOf(honest) + honest.twice() + honest.next();
+}
+show("2000 honest rounds", () => sum);
+
+honest.put("7");
+all("after the base class stored a string", honest);
+honest.put(8);
+all("after the base class stored a number", honest);
+honest.reset();
+all("after the base class reset it", honest);
+
+const wide: Cell = honest;
+wide.value = "wide";
+all("after a store through the base type", honest);
+
+show("in a loop where the base class steps in", () => {
+  const cell = new NumberCell();
+  const seen: unknown[] = [];
+  for (let i = 0; i < 4; i++) {
+    cell.value = i;
+    if (i === 2) cell.reset();
+    seen.push(cell.next());
+  }
+  return seen;
+});
+//// a-declared-field-narrows-a-base-field-to-a-subclass.ts
+////= text-11
+
+class Animal {
+  legs: number = 4;
+  sound(): string {
+    return "...";
+  }
+}
+
+class Dog extends Animal {
+  tricks: number = 3;
+  sound(): string {
+    return "woof";
+  }
+  fetch(): string {
+    return "fetched " + this.tricks;
+  }
+}
+
+class Cat extends Animal {
+  lives: number = 9;
+  sound(): string {
+    return "meow";
+  }
+}
+
+class Kennel {
+  guest: Animal = new Cat();
+  admit(guest: Animal): void {
+    this.guest = guest;
+  }
+}
+
+class DogKennel extends Kennel {
+  declare guest: Dog;
+  play(): string {
+    return this.guest.fetch();
+  }
+  tricks(): number {
+    return this.guest.tricks + 1;
+  }
+}
+
+////= lines-32	guestTricks	kennel	DogKennel	number	kennel.guest.tricks
+
+function all(label: string, kennel: DogKennel): void {
+  show(label + ": who", () => kennel.guest.constructor.name);
+  show(label + ": sound", () => kennel.guest.sound());
+  show(label + ": tricks", () => guestTricks(kennel));
+  show(label + ": tricks plus one", () => kennel.tricks());
+  show(label + ": play", () => kennel.play());
+  show(label + ": keys of the guest", () => Object.keys(kennel.guest));
+  show(label + ": instanceof", () => kennel.guest instanceof Dog);
+}
+
+all("as the base class made it", new DogKennel());
+
+const kennel = new DogKennel();
+kennel.guest = new Dog();
+all("after an honest store", kennel);
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += guestTricks(kennel) + kennel.tricks() + kennel.play().length;
+show("2000 honest rounds", () => sum);
+
+kennel.admit(new Cat());
+all("after the base class admitted a cat", kennel);
+kennel.admit(new Animal());
+all("after the base class admitted an animal", kennel);
+kennel.admit(new Dog());
+all("after the base class admitted a dog", kennel);
+//// a-declared-function-appears-on-the-global-object-and-changes.ts
+////= text-11
+
+declare function missingTwice(n: number): number;
+declare function missingJoin(...parts: string[]): string;
+declare const missingStep: (n: number) => number;
+
+const log: string[] = [];
+////= noted
+
+////= apply
+
+////= lines-60	callIt	n	number	number	missingTwice	n
+
+function callItIfThere(n: number): number {
+  return typeof missingTwice === "function" ? missingTwice(n) : -1;
+}
+
+show("typeof", () => [typeof missingTwice, typeof missingJoin, typeof missingStep]);
+show("called", () => missingTwice(1));
+show("the argument does not run", () => missingTwice(noted(1)));
+show("the log", () => log.join());
+show("its result used", () => missingTwice(1) + 1);
+show("called with many", () => missingJoin("a", "b"));
+show("the constant called", () => missingStep(1));
+show("read", () => missingTwice);
+show("called if there", () => missingTwice?.(1));
+show("call", () => missingTwice.call(undefined, 1));
+show("through a function", () => callIt(1));
+show("guarded by typeof", () => callItIfThere(1));
+show("given to a typed function", () => apply(missingTwice, 1));
+show("as a callback", () => [1, 2].map(missingTwice));
+show("as a callback of an empty list", () => {
+  const none: number[] = [];
+  return none.map(missingTwice);
+});
+show("with new", () => Reflect.construct(missingTwice, []));
+show("an honest caller of the same function", () => apply(n => n * 2, 2));
+
+Object.assign(globalThis, {
+  missingTwice(n: number): number {
+    return n * 2;
+  },
+});
+show("after the global object has it", () => [typeof missingTwice, missingTwice(2), callIt(3), callItIfThere(4), apply(missingTwice, 5), [1, 2].map(missingTwice)]);
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += callIt(i);
+show("2000 calls", () => sum);
+
+Object.assign(globalThis, { missingTwice: (n: number): string => "text " + n });
+show("after it is another function", () => [missingTwice(2), typeof callIt(3), callIt(3) + 1]);
+
+Reflect.deleteProperty(globalThis, "missingTwice");
+show("after it is deleted", () => [typeof missingTwice, callItIfThere(1)]);
+show("after it is deleted: called", () => callIt(1));
+//// a-declared-function-class-namespace-and-enum-are-stored-on-the-global-object-by-name.ts
+////= text-11
+
+declare function lateTwice(n: number): number;
+////= lines-181	LateBox	value	get
+declare namespace LateTools {
+  const scale: number;
+  function grow(n: number): number;
+}
+////= lines-164	declare	LateMode	Off	On
+declare const lateFlag: false;
+
+const everything: Record<string, unknown> = globalThis;
+
+////= lines-60	twiceOf	n	number	number	lateTwice	n
+
+////= lines-216	boxValue	n	number	number	LateBox	value
+
+function boxGet(n: number): number {
+  return new LateBox(n).get();
+}
+
+////= lines-41	scaleOf	number	LateTools.scale
+
+////= lines-41	onValue	LateMode	LateMode.On
+
+function flagWord(): string {
+  return lateFlag ? "set" : "clear";
+}
+
+////= attempt-23
+
+function all(label: string): void {
+  show(label + ": typeof", () => [typeof lateTwice, typeof LateBox, typeof LateTools, typeof LateMode, typeof lateFlag]);
+  show(label + ": the function", () => [attempt(() => twiceOf(2)), attempt(() => twiceOf(2) + 1)]);
+  show(label + ": the class", () => [attempt(() => boxValue(3)), attempt(() => boxValue(3) + 1), attempt(() => boxGet(3)), attempt(() => boxGet(3) + 1), attempt(() => Object.keys(new LateBox(3)).join())]);
+  show(label + ": the namespace", () => [attempt(scaleOf), attempt(() => scaleOf() + 1), attempt(() => LateTools.grow(1))]);
+  show(label + ": the enum", () => [attempt(onValue), attempt(() => onValue() + 1), attempt(() => LateMode[1]), attempt(() => LateMode.Off)]);
+  show(label + ": the constant typed false", () => [attempt(() => lateFlag), attempt(flagWord)]);
+}
+
+all("before");
+
+everything["lateTwice"] = (n: number): number => n * 2;
+everything["LateBox"] = class LateBox {
+  value: number;
+  constructor(value: number) {
+    this.value = value;
+  }
+  get(): number {
+    return this.value + 1;
+  }
+};
+everything["LateTools"] = { scale: 2, grow: (n: number): number => n + 1 };
+everything["LateMode"] = { Off: 0, On: 1, 0: "Off", 1: "On" };
+everything["lateFlag"] = false;
+all("honest");
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += twiceOf(i) + boxValue(i) + boxGet(i) + scaleOf() + onValue() + flagWord().length;
+show("2000 honest rounds", () => sum);
+
+everything["lateTwice"] = (n: number): string => "text " + n;
+everything["LateBox"] = class Other {
+  held: string;
+  constructor(value: number) {
+    this.held = "held " + value;
+  }
+  get(): string {
+    return this.held;
+  }
+};
+everything["LateTools"] = { scale: "two" };
+everything["LateMode"] = { Off: "off", On: "on" };
+everything["lateFlag"] = true;
+all("other types");
+
+delete everything["lateTwice"];
+delete everything["LateBox"];
+delete everything["LateTools"];
+delete everything["LateMode"];
+delete everything["lateFlag"];
+all("deleted");
+
+export {};
+//// a-declared-function-that-does-not-exist.ts
+////= text-11
+
+declare function missingTwice(n: number): number;
+declare function missingJoin(...parts: string[]): string;
+declare const missingStep: (n: number) => number;
+
+const log: string[] = [];
+////= noted
+
+////= apply
+
+////= lines-60	callIt	n	number	number	missingTwice	n
+
+function callItIfThere(n: number): number {
+  return typeof missingTwice === "function" ? missingTwice(n) : -1;
+}
+
+show("typeof", () => [typeof missingTwice, typeof missingJoin, typeof missingStep]);
+show("called", () => missingTwice(1));
+show("the argument does not run", () => missingTwice(noted(1)));
+show("the log", () => log.join());
+show("its result used", () => missingTwice(1) + 1);
+show("called with many", () => missingJoin("a", "b"));
+show("the constant called", () => missingStep(1));
+show("read", () => missingTwice);
+show("called if there", () => missingTwice?.(1));
+show("call", () => missingTwice.call(undefined, 1));
+show("through a function", () => callIt(1));
+show("guarded by typeof", () => callItIfThere(1));
+show("given to a typed function", () => apply(missingTwice, 1));
+show("as a callback", () => [1, 2].map(missingTwice));
+show("as a callback of an empty list", () => {
+  const none: number[] = [];
+  return none.map(missingTwice);
+});
+show("with new", () => Reflect.construct(missingTwice, []));
+show("an honest caller of the same function", () => apply(n => n * 2, 2));
+
+let failures = 0;
+let guarded = 0;
+////= for-51	guarded += callItIfThere(i	callIt(i
+show("2000 calls", () => [failures, guarded]);
+//// a-declared-function-that-never-returns-comes-back/library.d.ts
+export declare function fail(message: string): never;
+export declare function assertNumber(value: unknown): asserts value is number;
+export declare function assertPresent<T>(value: T): asserts value is NonNullable<T>;
+export declare function assertTrue(condition: unknown): asserts condition;
+export declare function isText(value: unknown): value is string;
+export declare class Guard {
+  stop(): never;
+  check(value: unknown): asserts value is string;
+  ready(): this is Ready;
+}
+export declare class Ready extends Guard {
+  level: number;
+}
+export declare const impossible: never;
+export declare function nothing(): void;
+export declare function absent(): undefined;
+export declare function nil(): null;
+//// a-declared-function-that-never-returns-comes-back/library.js
+////= lines-210	fail	message	"came back: "	message
+
+export function assertNumber(value) {}
+
+export function assertPresent(value) {}
+
+////= lines-148	assertTrue	condition	condition
+
+////= lines-148	isText	value	true
+
+export class Guard {
+  stop() {
+    return "came back";
+  }
+  check(value) {}
+  ready() {
+    return true;
+  }
+}
+
+export class Ready extends Guard {
+  level = 1;
+}
+
+export const impossible = "here";
+
+////= lines-149	nothing	"something"
+
+////= lines-149	absent	5
+
+export function nil() {
+  return { x: 1 };
+}
+//// a-declared-function-that-never-returns-comes-back/main.ts
+import { absent, assertNumber, assertPresent, assertTrue, fail, Guard, impossible, isText, nil, nothing } from "./library.js";
+
+////= show-37
+
+function afterFail(): string {
+  fail("first");
+  return "the statement after the call ran";
+}
+
+function resultOfFail(): unknown {
+  const result = fail("second");
+  return [typeof result, result];
+}
+
+function narrowedByFail(n: number | undefined): number {
+  if (n === undefined) fail("third");
+  return n + 1;
+}
+
+function everyPathFails(n: number): number {
+  if (n > 0) return n;
+  fail("fourth");
+}
+
+function inASwitch(kind: "a" | "b"): number {
+  switch (kind) {
+    case "a":
+      return 1;
+    default:
+      fail("fifth");
+  }
+}
+
+function assigned(flag: boolean): number {
+  let n: number;
+  if (flag) n = 1;
+  else fail("sixth");
+  return n + 1;
+}
+
+function asserted(v: unknown): unknown {
+  assertNumber(v);
+  return [v + 1, v * 2, typeof v];
+}
+
+function present(p: { x: number } | null | undefined): number {
+  assertPresent(p);
+  return p.x;
+}
+
+function condition(v: string | number): number {
+  assertTrue(typeof v === "string");
+  return v.length;
+}
+
+function guarded(v: unknown): unknown {
+  return isText(v) ? [v.length, v + "!"] : "no text";
+}
+
+function afterAMethod(): string {
+  const guard: Guard = new Guard();
+  guard.stop();
+  return "the statement after the method ran";
+}
+
+function checkedByAMethod(v: unknown): unknown {
+  const guard: Guard = new Guard();
+  guard.check(v);
+  return [v.length, v + "!"];
+}
+
+function thisIsReady(): unknown {
+  const guard = new Guard();
+  return guard.ready() ? [guard.level, guard.level + 1] : "not ready";
+}
+
+attempt("after a call", afterFail);
+attempt("its result", resultOfFail);
+attempt("narrowed", () => [narrowedByFail(1), narrowedByFail(undefined)]);
+attempt("every path", () => [everyPathFails(1), everyPathFails(0), everyPathFails(0) + 1]);
+attempt("in a switch", () => [inASwitch("a"), inASwitch("b")]);
+attempt("a variable that was never assigned", () => [assigned(true), assigned(false)]);
+attempt("an assertion for numbers", () => [asserted(1), asserted("1"), asserted(null), asserted([2])]);
+attempt("an assertion that something is there", () => present({ x: 1 }));
+attempt("an assertion that something is there, null", () => present(null));
+attempt("an assertion of a condition", () => [condition("ab"), condition(5)]);
+attempt("a guard", () => [guarded("ab"), guarded([1, 2]), guarded(5)]);
+attempt("a guard, null", () => guarded(null));
+attempt("after a method", afterAMethod);
+attempt("checked by a method", () => [checkedByAMethod("ab"), checkedByAMethod(7)]);
+attempt("this is ready", thisIsReady);
+attempt("a constant of type never", () => [typeof impossible, show(impossible)]);
+attempt("void, undefined and null", () => {
+  const a = nothing();
+  const b = absent();
+  const c = nil();
+  return [show(a), typeof a, b === undefined, typeof b, b ?? "fallback", c === null, typeof c, c ?? "fallback"];
+});
+//// a-declared-function-that-never-returns-comes-back/tsconfig.json
+////= lines-3
+//// a-declared-global-is-an-accessor-of-the-global-object.ts
+////= text-11
+
+declare const ticking: number;
+declare let guarded: number;
+declare const shifting: number;
+
+const log: string[] = [];
+let ticks = 0;
+let held = 0;
+
+Object.defineProperty(globalThis, "ticking", {
+  get(): number {
+    log.push("get ticking");
+    return ++ticks;
+  },
+  configurable: true,
+});
+
+Object.defineProperty(globalThis, "guarded", {
+  get(): number {
+    log.push("get guarded");
+    return held;
+  },
+  set(value: number) {
+    log.push("set guarded " + value);
+    held = value * 2;
+  },
+  configurable: true,
+});
+
+Object.defineProperty(globalThis, "shifting", {
+  get(): unknown {
+    return ticks % 2 === 0 ? ticks : "odd " + ticks;
+  },
+  configurable: true,
+});
+
+////= lines-34	tick	number	return	ticking
+
+function flush(): string {
+  const all = log.join();
+  log.length = 0;
+  return all;
+}
+
+show("each read runs the getter", () => [ticking, ticking, tick()]);
+show("what ran", () => flush());
+show("twice in one sum", () => ticking + ticking);
+show("compared with itself", () => ticking === ticking);
+show("typeof runs it too", () => typeof ticking);
+show("what ran", () => flush());
+show("in a loop", () => {
+  let sum = 0;
+  for (let i = 0; i < 3; i++) sum += ticking;
+  return sum;
+});
+show("what ran", () => flush());
+show("a read whose value is dropped", () => {
+  ticking;
+  return ticks;
+});
+show("what ran", () => flush());
+
+show("a store runs the setter", () => (guarded = 4));
+show("and the read sees what the setter kept", () => guarded);
+show("+=", () => (guarded += 1));
+show("++", () => [guarded++, guarded]);
+show("what ran", () => flush());
+
+show("a getter that answers two types", () => {
+  const seen: unknown[] = [];
+  for (let i = 0; i < 4; i++) {
+    seen.push(shifting, shifting + 1);
+    tick();
+  }
+  return seen;
+});
+flush();
+
+const before = ticks;
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += tick();
+show("2000 reads", () => [sum, ticks - before, log.length]);
+//// a-declared-module-describes-other-types-than-the-package-exports/gadgets.d.ts
+declare module "gadgets" {
+  export const count: number;
+  export const label: string;
+  export const sizes: number[];
+  export const ready: boolean;
+  export function half(n: number): number;
+  export const settings: { depth: number; width: number };
+  export class Lamp {
+    watts: number;
+    constructor(watts: number);
+    brighter(): number;
+  }
+}
+//// a-declared-module-describes-other-types-than-the-package-exports/main.ts
+/// <reference path="./gadgets.d.ts" />
+import { count, half, label, Lamp, ready, settings, sizes } from "gadgets";
+
+////= text-26
+
+////= lengthOf
+
+////= total
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += plusOne(i) + lengthOf("ab") + total([i, 1]);
+show("2000 honest rounds", () => warm);
+
+show("the number is text", () => [count, typeof count, count + 1, plusOne(count), count * 2]);
+show("the text is a number", () => [label, typeof label, label + "!", lengthOf(label)]);
+show("the text in capitals", () => label.toUpperCase());
+show("the list is an array-like", () => [sizes.length, sizes[0], total(sizes), Array.isArray(sizes)]);
+show("a method of the list", () => sizes.map(plusOne));
+show("the list iterated", () => [...sizes]);
+show("the boolean is text", () => [ready, ready ? "yes" : "no", ready === true, ready === false, !ready]);
+show("the function answers text", () => [half(4), typeof half(4), plusOne(half(4))]);
+show("a member is null and another is not there", () => [settings.depth, settings.depth + 1, settings.width, settings.width + 1]);
+show("the class makes another member", () => {
+  const lamp = new Lamp(60);
+  return [lamp.watts, plusOne(lamp.watts), Object.keys(lamp)];
+});
+show("its method answers text", () => [new Lamp(60).brighter(), plusOne(new Lamp(60).brighter())]);
+show("extended", () => {
+  class Bright extends Lamp {
+    extra: number = 1;
+    both(): number {
+      return this.watts + this.extra;
+    }
+  }
+  const bright = new Bright(40);
+  return [bright.both(), bright.brighter(), Object.keys(bright)];
+});
+show("honest again", () => [plusOne(1), lengthOf("ab"), total([1, 2])]);
+//// a-declared-module-describes-other-types-than-the-package-exports/node_modules/gadgets/index.js
+function Lamp(watts) {
+  this.power = String(watts);
+}
+Lamp.prototype.brighter = function () {
+  return this.power + "+";
+};
+
+module.exports = {
+  count: "3",
+  label: 7,
+  sizes: { length: 2, 0: 1, 1: 2 },
+  ready: "no",
+  half: function (n) {
+    return n / 2 + " halves";
+  },
+  settings: { depth: null },
+  Lamp: Lamp,
+};
+//// a-declared-module-describes-other-types-than-the-package-exports/node_modules/gadgets/package.json
+{
+  "name": "gadgets",
+  "version": "1.0.0",
+  "main": "index.js"
+}
+//// a-declared-module-describes-other-types-than-the-package-exports/package.json
+{
+  "name": "a-declared-module-describes-other-types-than-the-package-exports",
+  "type": "module"
+}
+//// a-declared-module-promises-more-than-the-js-file-exports/main.ts
+/// <reference path="./toolkit.d.ts" />
+import * as toolkit from "#toolkit";
+import { Gear, limit, twice } from "#toolkit";
+
+////= text-26
+
+////= lines-20	wearOf	gear	Gear	number	return	gear.missingWear
+
+show("what is exported", () => [limit, twice(2), new Gear(3).teeth, plusOne(limit), plusOne(twice(1))]);
+show("a number that is not", () => [toolkit.missingLimit, typeof toolkit.missingLimit]);
+show("plus one", () => [toolkit.missingLimit + 1, plusOne(toolkit.missingLimit)]);
+show("a text that is not", () => toolkit.missingTitle);
+show("its length", () => toolkit.missingTitle.length);
+show("a list that is not", () => toolkit.missingList);
+show("its length", () => toolkit.missingList.length);
+show("typeof a function that is not", () => typeof toolkit.missingThrice);
+show("called", () => toolkit.missingThrice(1));
+show("a class that is not", () => new toolkit.MissingWheel());
+show("instanceof it", () => ({}) instanceof toolkit.MissingWheel);
+show("a member the class never makes", () => [new Gear(1).missingWear, wearOf(new Gear(1)), wearOf(new Gear(1)) + 1]);
+show("a method the class never had", () => new Gear(1).missingTurn());
+show("a static method the class never had", () => Gear.missingMake());
+show("keys of an instance", () => Object.keys(new Gear(1)));
+show("keys of the module", () => Object.keys(toolkit));
+show("in", () => ["missingLimit" in toolkit, "limit" in toolkit]);
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += twice(i) + new Gear(i).teeth + limit;
+show("2000 honest rounds", () => sum);
+show("a number that is not, again", () => plusOne(toolkit.missingLimit));
+//// a-declared-module-promises-more-than-the-js-file-exports/package.json
+////= lines-200	"a-declared-module-promises-more-than-the-js-file-exports"	"#toolkit"	"./toolkit.js"
+//// a-declared-module-promises-more-than-the-js-file-exports/toolkit.d.ts
+declare module "#toolkit" {
+  export const limit: number;
+  export const missingLimit: number;
+  export const missingTitle: string;
+  export const missingList: number[];
+  export function twice(n: number): number;
+  export function missingThrice(n: number): number;
+  export class Gear {
+    teeth: number;
+    missingWear: number;
+    constructor(teeth: number);
+    missingTurn(): number;
+    static missingMake(): Gear;
+  }
+  export class MissingWheel {
+    spokes: number;
+  }
+}
+//// a-declared-module-promises-more-than-the-js-file-exports/toolkit.js
+export const limit = 10;
+
+export function twice(n) {
+  return n * 2;
+}
+
+export class Gear {
+  constructor(teeth) {
+    this.teeth = teeth;
+  }
+}
+//// a-declared-name-is-a-variable-of-another-module/main.ts
+import { rename, report } from "./other.ts";
+
+////= text-11
+
+declare const hiddenCount: number;
+declare let hiddenTitle: string;
+declare function hiddenHelper(n: number): number;
+////= lines-253	declare	class	HiddenBox	value	number
+
+show("the other module has them", () => report());
+show("typeof here", () => [typeof hiddenCount, typeof hiddenTitle, typeof hiddenHelper, typeof HiddenBox]);
+show("the constant", () => hiddenCount);
+show("the constant plus one", () => hiddenCount + 1);
+show("the variable", () => hiddenTitle);
+show("a store to the variable", () => (hiddenTitle = "stored from main"));
+show("the function", () => hiddenHelper(1));
+show("the class", () => new HiddenBox().value);
+show("the other module is untouched", () => report());
+//// a-declared-name-is-a-variable-of-another-module/other.ts
+const hiddenCount = 5;
+let hiddenTitle = "hidden";
+
+////= lines-42	hiddenHelper	n	number	number	n	hiddenCount
+
+////= lines-29	HiddenBox	value	number	hiddenCount
+
+export function report(): string {
+  return hiddenCount + " " + hiddenTitle + " " + hiddenHelper(1) + " " + new HiddenBox().value;
+}
+
+////= lines-213	rename	title	string	hiddenTitle
+//// a-declared-name-is-a-variable-of-another-module-and-then-a-global/main.ts
+import { rename, report } from "./other.ts";
+
+////= text-11
+
+declare const hiddenCount: number;
+declare let hiddenTitle: string;
+declare function hiddenHelper(n: number): number;
+////= lines-253	declare	class	HiddenBox	value	number
+
+show("the other module has them", () => report());
+show("typeof here", () => [typeof hiddenCount, typeof hiddenTitle, typeof hiddenHelper, typeof HiddenBox]);
+show("the constant", () => hiddenCount);
+show("the constant plus one", () => hiddenCount + 1);
+show("the variable", () => hiddenTitle);
+show("a store to the variable", () => (hiddenTitle = "stored from main"));
+show("the function", () => hiddenHelper(1));
+show("the class", () => new HiddenBox().value);
+show("the other module is untouched", () => report());
+
+Object.assign(globalThis, { hiddenCount: 100, hiddenTitle: "global" });
+show("after the global object has two of them", () => [hiddenCount, hiddenCount + 1, hiddenTitle]);
+show("the other module still reads its own", () => report());
+hiddenTitle = "stored from main";
+show("a store goes to the global object", () => [hiddenTitle, Reflect.get(globalThis, "hiddenTitle"), report()]);
+rename("renamed");
+show("a store in the other module stays there", () => [hiddenTitle, report()]);
+//// a-declared-name-is-a-variable-of-another-module-and-then-a-global/other.ts
+const hiddenCount = 5;
+let hiddenTitle = "hidden";
+
+////= lines-42	hiddenHelper	n	number	number	n	hiddenCount
+
+////= lines-29	HiddenBox	value	number	hiddenCount
+
+export function report(): string {
+  return hiddenCount + " " + hiddenTitle + " " + hiddenHelper(1) + " " + new HiddenBox().value;
+}
+
+////= lines-213	rename	title	string	hiddenTitle
+//// a-declared-namespace-appears-on-the-global-object-with-other-members.ts
+////= text-11
+
+////= MissingTools
+
+////= lines-41	scaleOf	number	MissingTools.scale
+
+function scaleOr(fallback: number): number {
+  return typeof MissingTools === "object" ? MissingTools.scale : fallback;
+}
+
+show("typeof", () => typeof MissingTools);
+show("a constant", () => MissingTools.scale);
+show("a constant plus one", () => MissingTools.scale + 1);
+show("through a function", () => scaleOf());
+show("guarded by typeof", () => scaleOr(3));
+show("typeof a member", () => typeof MissingTools.scale);
+show("a variable", () => MissingTools.title);
+show("a store to the variable", () => (MissingTools.title = "stored"));
+show("a function", () => MissingTools.grow(1));
+show("a class", () => new MissingTools.Gear());
+show("an inner namespace", () => MissingTools.Inner.depth);
+show("an enum inside", () => MissingTools.Mode.On);
+show("if there", () => MissingTools?.scale);
+show("keys", () => Object.keys(MissingTools));
+
+Object.assign(globalThis, { MissingTools: { scale: "2", grow: (n: number) => [n] } });
+show("after the global object has one: typeof", () => typeof MissingTools);
+show("the constant is text", () => [MissingTools.scale, scaleOf(), scaleOr(3), typeof scaleOf()]);
+show("the constant plus one", () => [MissingTools.scale + 1, scaleOf() + 1, scaleOf() * 2]);
+show("the variable is not there", () => MissingTools.title);
+show("the length of the variable", () => MissingTools.title.length);
+show("the function answers a list", () => [MissingTools.grow(1), typeof MissingTools.grow(1), MissingTools.grow(1) + 1]);
+show("the class is not there", () => new MissingTools.Gear());
+show("the inner namespace is not there", () => MissingTools.Inner.depth);
+show("the enum inside is not there", () => MissingTools.Mode.On);
+show("keys", () => Object.keys(MissingTools));
+
+let latest = "";
+for (let i = 0; i < 2000; i++) latest = String(scaleOf() + i);
+show("2000 reads", () => latest);
+//// a-declared-namespace-promises-members-of-a-function-a-class-and-an-enum.ts
+////= text-11
+
+////= lines-42	greet	who	string	string	"hello "	who
+declare namespace greet {
+  const times: number;
+  let punctuation: string;
+  function loudly(who: string): string;
+}
+
+class Engine {
+  power: number = 1;
+  boosted(): number {
+    return this.power * Engine.factor;
+  }
+}
+declare namespace Engine {
+  const factor: number;
+  const parts: string[];
+  function build(): Engine;
+}
+
+////= lines-208	Size	Small	Large
+declare namespace Size {
+  const preferred: Size;
+  function parse(text: string): Size;
+}
+
+////= lines-41	timesOf	number	greet.times
+
+show("the function: it runs", () => greet("ann"));
+show("the function: the number", () => [greet.times, typeof greet.times, timesOf()]);
+show("the function: the number plus one", () => [greet.times + 1, timesOf() * 2]);
+show("the function: the text", () => greet.punctuation);
+show("the function: the length of the text", () => greet.punctuation.length);
+show("the function: the helper", () => typeof greet.loudly);
+show("the function: the helper called", () => greet.loudly("ann"));
+show("the function: keys", () => Object.keys(greet));
+show("the function: in", () => "times" in greet);
+greet.punctuation = "!";
+show("the function: after a store", () => [greet.punctuation, greet.punctuation.length, Object.keys(greet)]);
+
+show("the class: the number", () => [Engine.factor, typeof Engine.factor, Engine.factor + 1]);
+show("the class: in a method", () => new Engine().boosted());
+show("the class: the list", () => Engine.parts);
+show("the class: the length of the list", () => Engine.parts.length);
+show("the class: the helper called", () => Engine.build());
+show("the class: keys", () => Object.keys(Engine));
+
+show("the enum: the member", () => [Size.preferred, typeof Size.preferred, Size.preferred === Size.Small]);
+show("the enum: its name", () => Size[Size.preferred]);
+show("the enum: the helper called", () => Size.parse("Small"));
+show("the enum: keys", () => Object.keys(Size));
+show("the enum: the real members", () => [Size.Small, Size.Large, Size[1]]);
+
+let nans = 0;
+for (let i = 0; i < 2000; i++) if (Number.isNaN(new Engine().boosted()) && Number.isNaN(timesOf() + i)) nans++;
+show("2000 rounds", () => nans);
+//// a-declared-namespace-that-does-not-exist.ts
+////= text-11
+
+////= MissingTools
+
+////= lines-41	scaleOf	number	MissingTools.scale
+
+function scaleOr(fallback: number): number {
+  return typeof MissingTools === "object" ? MissingTools.scale : fallback;
+}
+
+show("typeof", () => typeof MissingTools);
+show("a constant", () => MissingTools.scale);
+show("a constant plus one", () => MissingTools.scale + 1);
+show("through a function", () => scaleOf());
+show("guarded by typeof", () => scaleOr(3));
+show("typeof a member", () => typeof MissingTools.scale);
+show("a variable", () => MissingTools.title);
+show("a store to the variable", () => (MissingTools.title = "stored"));
+show("a function", () => MissingTools.grow(1));
+show("a class", () => new MissingTools.Gear());
+show("an inner namespace", () => MissingTools.Inner.depth);
+show("an enum inside", () => MissingTools.Mode.On);
+show("if there", () => MissingTools?.scale);
+show("keys", () => Object.keys(MissingTools));
+
+let failures = 0;
+let guarded = 0;
+////= for-51	guarded += scaleOr(1	scaleOf(
+show("2000 reads", () => [failures, guarded]);
+//// a-declared-static-field-is-never-created.ts
+////= text-11
+
+class Registry {
+  declare static count: number;
+  declare static title: string;
+  declare static items: string[];
+  declare static make: () => Registry;
+  static made: number = 1;
+  static next(): number {
+    return Registry.count + 1;
+  }
+  static viaThis(): number {
+    return this.count + this.made;
+  }
+  static heading(): string {
+    return Registry.title + "!";
+  }
+}
+
+class Sub extends Registry {
+  static own: number = 2;
+}
+
+show("read", () => Registry.count);
+show("typeof", () => typeof Registry.count);
+show("plus one", () => Registry.count + 1);
+show("in a static method", () => Registry.next());
+show("by this in a static method", () => Registry.viaThis());
+show("the text", () => Registry.title);
+show("the length of the text", () => Registry.title.length);
+show("the text in a static method", () => Registry.heading());
+show("the list", () => Registry.items);
+show("a push into the list", () => Registry.items.push("x"));
+show("the function", () => Registry.make);
+show("the function called", () => Registry.make());
+show("through the subclass", () => [Sub.count, Sub.title, Sub.made]);
+show("in", () => ["count" in Registry, "made" in Registry]);
+show("keys", () => Object.keys(Registry));
+show("own names", () => Object.getOwnPropertyNames(Registry).sort());
+
+Registry.count = 5;
+show("after a store", () => [Registry.count, Registry.next(), Registry.viaThis(), Sub.count, Object.keys(Registry)]);
+Sub.count = 7;
+show("after a store on the subclass", () => [Registry.count, Sub.count, Sub.next(), Sub.viaThis(), Object.keys(Sub)]);
+Registry.count++;
+show("after ++", () => [Registry.count, Sub.count]);
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += Registry.next();
+show("2000 calls", () => sum);
+//// a-declared-this-parameter-is-forgotten-by-a-function-type.ts
+////= Person-5
+
+////= lines-20	legs	this	Dog	number	return	this.legs
+////= lines-20	tag	this	Dog	string	return	this.tag
+////= lines-32	owner	this	Dog	string	this.owner.first
+////= lines-19	speak	this	Dog	string	this.bark
+////= lines-80	shoe	this	Dog	n	number	this.legs
+////= lines-57	kind	this	Dog
+
+const freeLegs: () => number = legs;
+const freeTag: () => string = tag;
+const freeOwner: () => string = owner;
+const freeSpeak: () => string = speak;
+const freeShoe: (n: number) => void = shoe;
+const freeKind: () => string = kind;
+
+const rex = new Dog("rex");
+show("honest legs", () => legs.call(rex));
+show("honest tag", () => tag.call(rex));
+show("honest owner", () => owner.call(rex));
+show("honest speak", () => speak.call(rex));
+show("honest shoe", () => shoe.call(rex, 3));
+show("honest legs after", () => legs.call(rex));
+
+show("free legs", () => freeLegs());
+show("free tag", () => freeTag());
+show("free owner", () => freeOwner());
+show("free speak", () => freeSpeak());
+show("free shoe", () => freeShoe(2));
+show("free kind", () => freeKind());
+
+const onCat = { cat: new Cat("tom"), legs: freeLegs, tag: freeTag, owner: freeOwner, speak: freeSpeak, shoe: freeShoe, kind: freeKind };
+show("as a member of another object: legs", () => onCat.legs());
+show("as a member of another object: tag", () => onCat.tag());
+show("as a member of another object: owner", () => onCat.owner());
+show("as a member of another object: speak", () => onCat.speak());
+show("as a member of another object: kind", () => onCat.kind());
+show("as a member of another object: shoe", () => onCat.shoe(7));
+show("what legs is now", () => typeof onCat.legs);
+
+class Kennel {
+  legs: string = "none";
+  tag: number = 1;
+  read: () => number = freeLegs;
+  label: () => string = freeTag;
+}
+const kennel = new Kennel();
+show("as a field of a class: legs", () => kennel.read());
+show("as a field of a class: tag", () => kennel.label());
+
+show("handed to map", () => [1, 2].map(freeLegs));
+show("handed to map with a cat as this", () => [1, 2].map(freeLegs, new Cat("tom")));
+show("handed to map with a spider as this", () => [1, 2].map(freeLegs, new Spider("boris")));
+show("handed to map with a dog as this", () => [1, 2].map(freeLegs, rex));
+//// a-declared-variable-that-does-not-exist-is-stored-to.ts
+////= text-11
+
+declare let missingTotal: number;
+declare var missingName: string;
+declare let missingItems: number[];
+
+const log: string[] = [];
+////= noted
+
+function store(n: number): void {
+  missingTotal = n;
+}
+
+////= lines-34	read	number	return	missingTotal
+
+show("is this strict code", () => (function (this: unknown) {
+  return this === undefined;
+})());
+show("typeof before", () => [typeof missingTotal, typeof missingName]);
+show("a store", () => (missingTotal = 5));
+show("typeof after the store", () => typeof missingTotal);
+show("the right side runs before the store fails", () => (missingTotal = noted(1)));
+show("the log", () => log.join());
+show("through a function", () => store(6));
+show("+=", () => (missingTotal += 1));
+show("++", () => missingTotal++);
+show("??=", () => (missingTotal ??= 1));
+show("a store to the var", () => (missingName = "text"));
+show("taken apart into it", () => {
+  [missingTotal] = [7];
+  return "stored";
+});
+show("a store to an element of the list", () => (missingItems[0] = 1));
+show("on the global object", () => ["missingTotal" in globalThis, "missingName" in globalThis]);
+
+let failures = 0;
+for (let i = 0; i < 2000; i++) {
+  try {
+    store(i);
+  } catch (error) {
+    if (error instanceof ReferenceError) failures++;
+  }
+  try {
+    read();
+  } catch (error) {
+    if (error instanceof ReferenceError) failures++;
+  }
+}
+show("2000 stores and reads", () => failures);
+show("typeof at the end", () => typeof missingTotal);
+//// a-declared-variable-that-does-not-exist-is-stored-to-in-sloppy-code.cts
+////= text-11
+
+declare let sloppyTotal: number;
+declare var sloppyName: string;
+declare const sloppyFixed: number;
+declare function sloppyHelper(n: number): number;
+
+function store(n: number): void {
+  sloppyTotal = n;
+}
+
+////= lines-34	read	number	return	sloppyTotal
+
+show("is this strict code", () =>
+  (function (this: unknown) {
+    return this === undefined;
+  })(),
+);
+show("typeof before", () => [typeof sloppyTotal, typeof sloppyName, typeof sloppyFixed, typeof sloppyHelper]);
+show("read before", () => read());
+show("++ before", () => sloppyTotal++);
+show("+= before", () => (sloppyTotal += 1));
+show("typeof after the failed ones", () => typeof sloppyTotal);
+show("a store makes a global", () => (sloppyTotal = 5));
+show("after it", () => [sloppyTotal, read(), typeof sloppyTotal, "sloppyTotal" in globalThis]);
+show("through a function", () => {
+  store(6);
+  return [read(), read() + 1];
+});
+show("++ now", () => [sloppyTotal++, sloppyTotal]);
+show("a store to the var", () => [(sloppyName = "text"), sloppyName.length, "sloppyName" in globalThis]);
+show("taken apart into both", () => {
+  [sloppyTotal, sloppyName] = [7, "seven"];
+  return [sloppyTotal, sloppyName];
+});
+show("the function is still not there", () => sloppyHelper(1));
+show("the constant is still not there", () => sloppyFixed);
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) {
+  store(i);
+  sum += read();
+}
+show("2000 stores and reads", () => sum);
+
+const everything: Record<string, unknown> = globalThis;
+show("deleted by name", () => delete everything["sloppyTotal"]);
+show("after it", () => [typeof sloppyTotal, "sloppyTotal" in globalThis]);
+show("read after it", () => read());
+show("a store makes it again", () => {
+  store(1);
+  return read();
+});
+//// a-default-type-argument-names-a-number-and-a-string-arrives.ts
+////= show-32
+
+function parse<T = number>(text: string): T {
+  return JSON.parse(text);
+}
+
+////= lines-27	Config	port	number	host	string
+
+function load<T = Config>(text: string): T {
+  return JSON.parse(text);
+}
+
+class Cell<T = number> {
+  value: T;
+  constructor(text: string) {
+    this.value = JSON.parse(text);
+  }
+}
+
+function address(c: Config): string {
+  return c.host.toLowerCase() + ":" + (c.port + 1);
+}
+
+////= lines-21	next	cell	Cell	number	cell.value
+
+let total = 0;
+for (let i = 0; i < 2000; i++) total += parse(String(i)) + address(load('{"port":' + i + ',"host":"H"}')).length + next(new Cell(String(i)));
+console.log("2000 honest rounds: " + total);
+
+for (const text of ["1", "1.5", "-0", "1e400", '"text"', "null", "true", "[1]", '{"a":1}']) {
+  console.log("parsed from " + text);
+  attempt("  typeof", () => typeof parse(text));
+  attempt("  + 1", () => parse(text) + 1);
+  attempt("  * 2", () => parse(text) * 2);
+  attempt("  | 0", () => parse(text) | 0);
+  attempt("  toFixed(1)", () => parse(text).toFixed(1));
+  attempt("  a local", () => {
+    const n = parse(text);
+    return n - n;
+  });
+  attempt("  a cell", () => next(new Cell(text)));
+  attempt("  a cell's JSON", () => JSON.stringify(new Cell(text)));
+}
+
+for (const text of ['{"port":80,"host":"A"}', '{"host":"A","port":80}', '{"port":"80","host":"A"}', '{"port":80,"host":5}', '{"port":80}', "{}", "[]", "null", "5", '{"port":80,"host":"A","more":1}']) {
+  console.log("loaded from " + text);
+  attempt("  address", () => address(load(text)));
+  attempt("  port", () => load(text).port);
+  attempt("  keys", () => Object.keys(load<object>(text)));
+}
+
+attempt("another type argument", () => parse<string>('"text"').toUpperCase());
+attempt("another type argument, a cell", () => new Cell<string>('"text"').value.toUpperCase());
+
+export {};
+//// a-default-value-is-not-what-its-type-says.ts
+////= text-14
+
+const table: number[] = [1, 2];
+const holes: number[] = new Array<number>(3);
+const record: Record<string, number> = { one: 1 };
+const words: string[] = ["a"];
+
+////= lines-193	short	number	void	1
+const spent: Iterator<number> = short();
+spent.next();
+spent.next();
+
+class Sink {
+  last: number = 0;
+  all: number[] = [];
+  reals: Float64Array = new Float64Array(1);
+}
+const sink = new Sink();
+
+function use(n: number): string {
+  const read = (): number => n;
+  const next = (): number => n + 1;
+  sink.last = n;
+  sink.all.push(n);
+  sink.reals[0] = n;
+  let fixed: string;
+  try {
+    fixed = n.toFixed(1);
+  } catch (error) {
+    fixed = failure(error);
+  }
+  return text(n) + ", captured " + text(read()) + ", next " + text(next()) + ", whole " + text(n | 0) + ", field " + text(sink.last) + ", element " + text(sink.all[sink.all.length - 1]) + ", real " + text(sink.reals[0]) + ", " + fixed;
+}
+
+////= lines-231	pastTheEnd	table[9
+////= lines-231	fromAHole	holes[1
+////= lines-231	missingKey	record["missing"
+function parsedText(n: number = JSON.parse('"text"')): string {
+  return use(n);
+}
+function parsedNull(n: number = JSON.parse("null")): string {
+  return use(n);
+}
+function afterTheEnd(n: number = spent.next().value): string {
+  return use(n);
+}
+function reflected(n: number = Reflect.get(record, "nothing")): string {
+  return use(n);
+}
+////= lines-231	honest	table[1
+function fromAPattern({ n = table[9] }: { n?: number } = {}): string {
+  return use(n);
+}
+function fromAnArrayPattern([n = holes[0]]: number[] = []): string {
+  return use(n);
+}
+function chained(a: number = table[9], b: number = a): string {
+  return use(b);
+}
+function word(w: string = words[5]): string {
+  const read = (): string => w;
+  let length: string;
+  try {
+    length = text(w.length);
+  } catch (error) {
+    length = failure(error);
+  }
+  return text(w) + ", captured " + text(read()) + ", added " + text(w + "!") + ", length " + length;
+}
+
+const functions: [string, (n?: number) => string][] = [
+  ["honest", honest],
+  ["past the end of a list", pastTheEnd],
+  ["a hole", fromAHole],
+  ["a missing key", missingKey],
+  ["a parsed text", parsedText],
+  ["a parsed null", parsedNull],
+  ["an iterator that has ended", afterTheEnd],
+  ["Reflect.get", reflected],
+  ["two defaults in a chain", chained],
+];
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) for (const [, f] of functions) warm += f(i & 7).length;
+sink.all.length = 0;
+console.log("2000 rounds with the argument given: " + warm);
+
+for (const [label, f] of functions) {
+  console.log(label + ", given: " + f(5));
+  console.log(label + ", not given: " + f());
+  console.log(label + ", undefined given: " + f(undefined));
+}
+console.log("an object pattern: " + fromAPattern() + " | " + fromAPattern({}) + " | " + fromAPattern({ n: 5 }));
+console.log("an array pattern: " + fromAnArrayPattern() + " | " + fromAnArrayPattern([5]));
+console.log("a string parameter: " + word() + " | " + word("given"));
+console.log("the list of numbers: " + sink.all.map(text).join(", "));
+console.log("as json: " + JSON.stringify(sink.all));

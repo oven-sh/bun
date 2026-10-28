@@ -1,0 +1,2257 @@
+//// member.dot
+interface P { x: number; y: number }
+const p: P = { x: 3, y: 4 };
+function turn(i: number): number {
+  p.x = i & 7;
+  return p.x + p.y;
+}
+//// member.bracket-string
+interface P { x: number; y: number }
+const p: P = { x: 3, y: 4 };
+function turn(i: number): number {
+  p["x"] = i & 7;
+  return p["x"] + p["y"];
+}
+//// member.bracket-const
+interface P { x: number; y: number }
+const p: P = { x: 3, y: 4 };
+const kx = "x", ky = "y";
+function turn(i: number): number {
+  p[kx] = i & 7;
+  return p[kx] + p[ky];
+}
+//// member.bracket-template
+interface P { x: number; y: number }
+const p: P = { x: 3, y: 4 };
+function turn(i: number): number {
+  p[`x`] = i & 7;
+  return p[`x`] + p[`y`];
+}
+//// loop.for
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  let s = i & 1;
+  for (let k = 0; k < xs.length; k++) s += xs[k];
+  return s;
+}
+//// loop.for-cached-length
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  let s = i & 1;
+  for (let k = 0, n = xs.length; k < n; k++) s += xs[k];
+  return s;
+}
+//// loop.for-down
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  let s = i & 1;
+  for (let k = xs.length - 1; k >= 0; k--) s += xs[k];
+  return s;
+}
+//// loop.while
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  let s = i & 1;
+  let k = 0;
+  while (k < xs.length) {
+    s += xs[k];
+    k++;
+  }
+  return s;
+}
+//// loop.do-while
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  let s = i & 1;
+  let k = 0;
+  do {
+    s += xs[k];
+    k++;
+  } while (k < xs.length);
+  return s;
+}
+//// loop.for-of
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  let s = i & 1;
+  for (const x of xs) s += x;
+  return s;
+}
+//// loop.for-of-entries
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  let s = i & 1;
+  for (const [, x] of xs.entries()) s += x;
+  return s;
+}
+//// loop.for-of-values
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  let s = i & 1;
+  for (const x of xs.values()) s += x;
+  return s;
+}
+//// loop.for-of-keys
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  let s = i & 1;
+  for (const k of xs.keys()) s += xs[k];
+  return s;
+}
+//// loop.for-in
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  let s = i & 1;
+  for (const k in xs) s += xs[k];
+  return s;
+}
+//// loop.for-each
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  let s = i & 1;
+  xs.forEach(x => {
+    s += x;
+  });
+  return s;
+}
+//// loop.for-each-function
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  let s = i & 1;
+  xs.forEach(function (x) {
+    s += x;
+  });
+  return s;
+}
+//// loop.reduce
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  return xs.reduce((s, x) => s + x, i & 1);
+}
+//// loop.reduce-named-function
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function add(s: number, x: number): number {
+  return s + x;
+}
+function turn(i: number): number {
+  return xs.reduce(add, i & 1);
+}
+//// callee.function
+function f(a: number, b: number): number {
+  return (a ^ b) + 1;
+}
+function turn(i: number): number {
+  return f(i, 3);
+}
+//// callee.function-expression
+const f = function (a: number, b: number): number {
+  return (a ^ b) + 1;
+};
+function turn(i: number): number {
+  return f(i, 3);
+}
+//// callee.arrow
+const f = (a: number, b: number): number => (a ^ b) + 1;
+function turn(i: number): number {
+  return f(i, 3);
+}
+//// callee.let-arrow
+let f = (a: number, b: number): number => (a ^ b) + 1;
+function turn(i: number): number {
+  return f(i, 3);
+}
+//// callee.var-function
+var f = function (a: number, b: number): number {
+  return (a ^ b) + 1;
+};
+function turn(i: number): number {
+  return f(i, 3);
+}
+//// callee.method-of-a-class
+class C {
+  f(a: number, b: number): number {
+    return (a ^ b) + 1;
+  }
+}
+const c = new C();
+function turn(i: number): number {
+  return c.f(i, 3);
+}
+//// callee.static-method
+class C {
+  static f(a: number, b: number): number {
+    return (a ^ b) + 1;
+  }
+}
+function turn(i: number): number {
+  return C.f(i, 3);
+}
+//// callee.class-field-arrow
+class C {
+  f = (a: number, b: number): number => (a ^ b) + 1;
+}
+const c = new C();
+function turn(i: number): number {
+  return c.f(i, 3);
+}
+//// callee.private-method
+class C {
+  #f(a: number, b: number): number {
+    return (a ^ b) + 1;
+  }
+  g(a: number): number {
+    return this.#f(a, 3);
+  }
+}
+const c = new C();
+function turn(i: number): number {
+  return c.g(i);
+}
+//// callee.method-of-a-literal
+const c = {
+  f(a: number, b: number): number {
+    return (a ^ b) + 1;
+  },
+};
+function turn(i: number): number {
+  return c.f(i, 3);
+}
+//// callee.arrow-in-a-literal
+const c = {
+  f: (a: number, b: number): number => (a ^ b) + 1,
+};
+function turn(i: number): number {
+  return c.f(i, 3);
+}
+//// callee.function-in-a-literal
+const c = {
+  f: function (a: number, b: number): number {
+    return (a ^ b) + 1;
+  },
+};
+function turn(i: number): number {
+  return c.f(i, 3);
+}
+//// callee.call
+function f(a: number, b: number): number {
+  return (a ^ b) + 1;
+}
+function turn(i: number): number {
+  return f.call(undefined, i, 3);
+}
+//// callee.apply
+function f(a: number, b: number): number {
+  return (a ^ b) + 1;
+}
+function turn(i: number): number {
+  return f.apply(undefined, [i, 3]);
+}
+//// callee.reflect-apply
+function f(a: number, b: number): number {
+  return (a ^ b) + 1;
+}
+function turn(i: number): number {
+  return Reflect.apply(f, undefined, [i, 3]);
+}
+//// callee.bound
+function f(a: number, b: number): number {
+  return (a ^ b) + 1;
+}
+const g = f.bind(undefined);
+function turn(i: number): number {
+  return g(i, 3);
+}
+//// callee.immediately-invoked
+function turn(i: number): number {
+  return ((a: number, b: number): number => (a ^ b) + 1)(i, 3);
+}
+//// callee.prototype-function
+function C(this: any) {}
+C.prototype.f = function (a: number, b: number): number {
+  return (a ^ b) + 1;
+};
+const c = new (C as any)();
+function turn(i: number): number {
+  return c.f(i, 3);
+}
+//// default-value.nullish
+const values: (number | undefined)[] = [1, undefined, 3, undefined];
+function turn(i: number): number {
+  const a = values[i & 3];
+  return a ?? 7;
+}
+//// default-value.compare-undefined
+const values: (number | undefined)[] = [1, undefined, 3, undefined];
+function turn(i: number): number {
+  const a = values[i & 3];
+  return a === undefined ? 7 : a;
+}
+//// default-value.compare-not-undefined
+const values: (number | undefined)[] = [1, undefined, 3, undefined];
+function turn(i: number): number {
+  const a = values[i & 3];
+  return a !== undefined ? a : 7;
+}
+//// default-value.loose-null
+const values: (number | undefined)[] = [1, undefined, 3, undefined];
+function turn(i: number): number {
+  const a = values[i & 3];
+  return a == null ? 7 : a;
+}
+//// default-value.typeof
+const values: (number | undefined)[] = [1, undefined, 3, undefined];
+function turn(i: number): number {
+  const a = values[i & 3];
+  return typeof a === "undefined" ? 7 : a;
+}
+//// default-value.void-0
+const values: (number | undefined)[] = [1, undefined, 3, undefined];
+function turn(i: number): number {
+  const a = values[i & 3];
+  return a === void 0 ? 7 : a;
+}
+//// default-value.or
+const values: (number | undefined)[] = [1, undefined, 3, undefined];
+function turn(i: number): number {
+  const a = values[i & 3];
+  return a || 7;
+}
+//// default-value.if
+const values: (number | undefined)[] = [1, undefined, 3, undefined];
+function turn(i: number): number {
+  let a = values[i & 3];
+  if (a === undefined) a = 7;
+  return a;
+}
+//// default-value.nullish-assign
+const values: (number | undefined)[] = [1, undefined, 3, undefined];
+function turn(i: number): number {
+  let a = values[i & 3];
+  a ??= 7;
+  return a;
+}
+//// default-value.parameter
+const values: (number | undefined)[] = [1, undefined, 3, undefined];
+function pick(a: number = 7): number {
+  return a;
+}
+function turn(i: number): number {
+  return pick(values[i & 3]);
+}
+//// default-value.pattern
+const values: { a?: number }[] = [{ a: 1 }, {}, { a: 3 }, {}];
+function turn(i: number): number {
+  const { a = 7 } = values[i & 3];
+  return a;
+}
+//// default-value.member-nullish
+const values: { a?: number }[] = [{ a: 1 }, {}, { a: 3 }, {}];
+function turn(i: number): number {
+  return values[i & 3].a ?? 7;
+}
+//// text.plus
+const names: string[] = ["ab", "cd", "ef", "gh"];
+function turn(i: number): number {
+  const s = "<" + names[i & 3] + ":" + (i & 7) + ">";
+  return s.length;
+}
+//// text.template
+const names: string[] = ["ab", "cd", "ef", "gh"];
+function turn(i: number): number {
+  const s = `<${names[i & 3]}:${i & 7}>`;
+  return s.length;
+}
+//// text.concat
+const names: string[] = ["ab", "cd", "ef", "gh"];
+function turn(i: number): number {
+  const s = "<".concat(names[i & 3], ":", String(i & 7), ">");
+  return s.length;
+}
+//// text.join
+const names: string[] = ["ab", "cd", "ef", "gh"];
+function turn(i: number): number {
+  const s = ["<", names[i & 3], ":", i & 7, ">"].join("");
+  return s.length;
+}
+//// text.plus-assign
+const names: string[] = ["ab", "cd", "ef", "gh"];
+function turn(i: number): number {
+  let s = "<";
+  s += names[i & 3];
+  s += ":";
+  s += i & 7;
+  s += ">";
+  return s.length;
+}
+//// text-of-a-number.string-call
+function turn(i: number): number {
+  return String(i & 1023).length;
+}
+//// text-of-a-number.to-string
+function turn(i: number): number {
+  return (i & 1023).toString().length;
+}
+//// text-of-a-number.plus-empty
+function turn(i: number): number {
+  return ("" + (i & 1023)).length;
+}
+//// text-of-a-number.template
+function turn(i: number): number {
+  return `${i & 1023}`.length;
+}
+//// number-of-a-text.number-call
+const texts: string[] = ["12", "345", "6", "7890"];
+function turn(i: number): number {
+  return Number(texts[i & 3]);
+}
+//// number-of-a-text.unary-plus
+const texts: string[] = ["12", "345", "6", "7890"];
+function turn(i: number): number {
+  return +texts[i & 3];
+}
+//// number-of-a-text.parse-int
+const texts: string[] = ["12", "345", "6", "7890"];
+function turn(i: number): number {
+  return parseInt(texts[i & 3], 10);
+}
+//// number-of-a-text.number-parse-int
+const texts: string[] = ["12", "345", "6", "7890"];
+function turn(i: number): number {
+  return Number.parseInt(texts[i & 3], 10);
+}
+//// number-of-a-text.parse-float
+const texts: string[] = ["12", "345", "6", "7890"];
+function turn(i: number): number {
+  return parseFloat(texts[i & 3]);
+}
+//// append.push
+function turn(i: number): number {
+  const a: number[] = [1, 2, 3];
+  a.push(i & 7);
+  return a.length + a[3];
+}
+//// append.spread
+function turn(i: number): number {
+  const a: number[] = [1, 2, 3];
+  const b = [...a, i & 7];
+  return b.length + b[3];
+}
+//// append.concat
+function turn(i: number): number {
+  const a: number[] = [1, 2, 3];
+  const b = a.concat(i & 7);
+  return b.length + b[3];
+}
+//// append.concat-list
+function turn(i: number): number {
+  const a: number[] = [1, 2, 3];
+  const b = a.concat([i & 7]);
+  return b.length + b[3];
+}
+//// append.store-at-length
+function turn(i: number): number {
+  const a: number[] = [1, 2, 3];
+  a[a.length] = i & 7;
+  return a.length + a[3];
+}
+//// copy-a-list.spread
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  const b = [...xs];
+  return b[i & 7];
+}
+//// copy-a-list.slice
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  const b = xs.slice();
+  return b[i & 7];
+}
+//// copy-a-list.slice-0
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  const b = xs.slice(0);
+  return b[i & 7];
+}
+//// copy-a-list.array-from
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  const b = Array.from(xs);
+  return b[i & 7];
+}
+//// copy-a-list.concat
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  const b = xs.concat();
+  return b[i & 7];
+}
+//// copy-a-list.map-identity
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  const b = xs.map(x => x);
+  return b[i & 7];
+}
+//// copy-a-list.loop-push
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  const b: number[] = [];
+  for (let k = 0; k < xs.length; k++) b.push(xs[k]);
+  return b[i & 7];
+}
+//// copy-a-list.array-of-spread
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  const b = Array.of(...xs);
+  return b[i & 7];
+}
+//// class.class
+class V {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+  sum(): number {
+    return this.x + this.y;
+  }
+}
+function turn(i: number): number {
+  return new V(i & 7, 2).sum();
+}
+//// class.class-expression
+const V = class {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+  sum(): number {
+    return this.x + this.y;
+  }
+};
+function turn(i: number): number {
+  return new V(i & 7, 2).sum();
+}
+//// class.parameter-properties
+class V {
+  constructor(
+    public x: number,
+    public y: number,
+  ) {}
+  sum(): number {
+    return this.x + this.y;
+  }
+}
+function turn(i: number): number {
+  return new V(i & 7, 2).sum();
+}
+//// class.function-and-prototype
+function V(this: any, x: number, y: number) {
+  this.x = x;
+  this.y = y;
+}
+V.prototype.sum = function (): number {
+  return this.x + this.y;
+};
+function turn(i: number): number {
+  return new (V as any)(i & 7, 2).sum();
+}
+//// class.function-and-prototype-literal
+function V(this: any, x: number, y: number) {
+  this.x = x;
+  this.y = y;
+}
+V.prototype = {
+  constructor: V,
+  sum(this: any): number {
+    return this.x + this.y;
+  },
+};
+function turn(i: number): number {
+  return new (V as any)(i & 7, 2).sum();
+}
+//// class.factory-with-closures
+function makeV(x: number, y: number) {
+  return { sum: () => x + y };
+}
+function turn(i: number): number {
+  return makeV(i & 7, 2).sum();
+}
+//// class.factory-with-a-literal
+function makeV(x: number, y: number) {
+  return {
+    x,
+    y,
+    sum(): number {
+      return this.x + this.y;
+    },
+  };
+}
+function turn(i: number): number {
+  return makeV(i & 7, 2).sum();
+}
+//// class.object-create
+const proto = {
+  x: 0,
+  y: 0,
+  sum(): number {
+    return this.x + this.y;
+  },
+};
+function turn(i: number): number {
+  const v = Object.create(proto);
+  v.x = i & 7;
+  v.y = 2;
+  return v.sum();
+}
+//// class.private-names
+class V {
+  #x: number;
+  #y: number;
+  constructor(x: number, y: number) {
+    this.#x = x;
+    this.#y = y;
+  }
+  sum(): number {
+    return this.#x + this.#y;
+  }
+}
+function turn(i: number): number {
+  return new V(i & 7, 2).sum();
+}
+//// derived.explicit-constructor
+class A {
+  a: number;
+  constructor(a: number) {
+    this.a = a;
+  }
+}
+class B extends A {
+  b = 2;
+  constructor(a: number) {
+    super(a);
+  }
+}
+function turn(i: number): number {
+  const v = new B(i & 7);
+  return v.a + v.b;
+}
+//// derived.implicit-constructor
+class A {
+  a: number;
+  constructor(a: number) {
+    this.a = a;
+  }
+}
+class B extends A {
+  b = 2;
+}
+function turn(i: number): number {
+  const v = new B(i & 7);
+  return v.a + v.b;
+}
+//// derived.rest-constructor
+class A {
+  a: number;
+  constructor(a: number) {
+    this.a = a;
+  }
+}
+class B extends A {
+  b = 2;
+  constructor(...rest: [number]) {
+    super(...rest);
+  }
+}
+function turn(i: number): number {
+  const v = new B(i & 7);
+  return v.a + v.b;
+}
+//// derived.two-implicit
+class A {
+  a: number;
+  constructor(a: number) {
+    this.a = a;
+  }
+}
+class M extends A {}
+class B extends M {
+  b = 2;
+}
+function turn(i: number): number {
+  const v = new B(i & 7);
+  return v.a + v.b;
+}
+//// derived.function-call-parent
+function A(this: any, a: number) {
+  this.a = a;
+}
+function B(this: any, a: number) {
+  A.call(this, a);
+  this.b = 2;
+}
+Object.setPrototypeOf(B.prototype, A.prototype);
+function turn(i: number): number {
+  const v = new (B as any)(i & 7);
+  return v.a + v.b;
+}
+//// read-fields.members
+interface O { a: number; b: number; c: number }
+const os: O[] = [{ a: 1, b: 2, c: 3 }, { a: 4, b: 5, c: 6 }];
+function turn(i: number): number {
+  const o = os[i & 1];
+  return o.a + o.b + o.c;
+}
+//// read-fields.pattern
+interface O { a: number; b: number; c: number }
+const os: O[] = [{ a: 1, b: 2, c: 3 }, { a: 4, b: 5, c: 6 }];
+function turn(i: number): number {
+  const { a, b, c } = os[i & 1];
+  return a + b + c;
+}
+//// read-fields.pattern-renamed
+interface O { a: number; b: number; c: number }
+const os: O[] = [{ a: 1, b: 2, c: 3 }, { a: 4, b: 5, c: 6 }];
+function turn(i: number): number {
+  const { a: x, b: y, c: z } = os[i & 1];
+  return x + y + z;
+}
+//// read-fields.pattern-parameter
+interface O { a: number; b: number; c: number }
+const os: O[] = [{ a: 1, b: 2, c: 3 }, { a: 4, b: 5, c: 6 }];
+function sum({ a, b, c }: O): number {
+  return a + b + c;
+}
+function turn(i: number): number {
+  return sum(os[i & 1]);
+}
+//// read-fields.pattern-assignment
+interface O { a: number; b: number; c: number }
+const os: O[] = [{ a: 1, b: 2, c: 3 }, { a: 4, b: 5, c: 6 }];
+function turn(i: number): number {
+  let a: number, b: number, c: number;
+  ({ a, b, c } = os[i & 1]);
+  return a + b + c;
+}
+//// read-fields.pattern-with-rest
+interface O { a: number; b: number; c: number }
+const os: O[] = [{ a: 1, b: 2, c: 3 }, { a: 4, b: 5, c: 6 }];
+function turn(i: number): number {
+  const { a, ...rest } = os[i & 1];
+  return a + rest.b + rest.c;
+}
+//// read-fields.pattern-computed
+interface O { a: number; b: number; c: number }
+const os: O[] = [{ a: 1, b: 2, c: 3 }, { a: 4, b: 5, c: 6 }];
+function turn(i: number): number {
+  const { ["a"]: a, ["b"]: b, ["c"]: c } = os[i & 1];
+  return a + b + c;
+}
+//// read-elements.index
+const pairs: [number, number][] = [[1, 2], [3, 4]];
+function turn(i: number): number {
+  const p = pairs[i & 1];
+  return p[0] + p[1];
+}
+//// read-elements.pattern
+const pairs: [number, number][] = [[1, 2], [3, 4]];
+function turn(i: number): number {
+  const [a, b] = pairs[i & 1];
+  return a + b;
+}
+//// read-elements.pattern-parameter
+const pairs: [number, number][] = [[1, 2], [3, 4]];
+function sum([a, b]: [number, number]): number {
+  return a + b;
+}
+function turn(i: number): number {
+  return sum(pairs[i & 1]);
+}
+//// read-elements.at
+const pairs: [number, number][] = [[1, 2], [3, 4]];
+function turn(i: number): number {
+  const p = pairs[i & 1];
+  return p.at(0)! + p.at(1)!;
+}
+//// swap.temporary
+function turn(i: number): number {
+  let a = i & 7, b = i & 3;
+  const t = a;
+  a = b;
+  b = t;
+  return a * 2 + b;
+}
+//// swap.pattern
+function turn(i: number): number {
+  let a = i & 7, b = i & 3;
+  [a, b] = [b, a];
+  return a * 2 + b;
+}
+//// last-element.length-minus-one
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  return xs[xs.length - 1] + (i & 1);
+}
+//// last-element.at
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  return xs.at(-1)! + (i & 1);
+}
+//// last-element.slice
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  return xs.slice(-1)[0] + (i & 1);
+}
+//// chain.and
+interface N { next?: N; value: number }
+const ns: (N | undefined)[] = [{ value: 1, next: { value: 2 } }, { value: 3 }, undefined, { value: 4, next: { value: 5 } }];
+function turn(i: number): number {
+  const n = ns[i & 3];
+  const v = n && n.next && n.next.value;
+  return v === undefined ? 0 : v;
+}
+//// chain.optional
+interface N { next?: N; value: number }
+const ns: (N | undefined)[] = [{ value: 1, next: { value: 2 } }, { value: 3 }, undefined, { value: 4, next: { value: 5 } }];
+function turn(i: number): number {
+  const v = ns[i & 3]?.next?.value;
+  return v === undefined ? 0 : v;
+}
+//// chain.ifs
+interface N { next?: N; value: number }
+const ns: (N | undefined)[] = [{ value: 1, next: { value: 2 } }, { value: 3 }, undefined, { value: 4, next: { value: 5 } }];
+function turn(i: number): number {
+  const n = ns[i & 3];
+  if (n === undefined) return 0;
+  if (n.next === undefined) return 0;
+  return n.next.value;
+}
+//// chain.optional-nullish
+interface N { next?: N; value: number }
+const ns: (N | undefined)[] = [{ value: 1, next: { value: 2 } }, { value: 3 }, undefined, { value: 4, next: { value: 5 } }];
+function turn(i: number): number {
+  return ns[i & 3]?.next?.value ?? 0;
+}
+//// chain.optional-call
+interface N { get?(): number }
+const ns: N[] = [{ get: () => 1 }, {}, { get: () => 3 }, {}];
+function turn(i: number): number {
+  return ns[i & 3].get?.() ?? 0;
+}
+//// chain.call-behind-a-test
+interface N { get?(): number }
+const ns: N[] = [{ get: () => 1 }, {}, { get: () => 3 }, {}];
+function turn(i: number): number {
+  const n = ns[i & 3];
+  return n.get ? n.get() : 0;
+}
+//// filled-list.array-fill
+function turn(i: number): number {
+  const a: number[] = Array(16).fill(0);
+  a[i & 15] = 1;
+  return a[3] + a.length;
+}
+//// filled-list.new-array-fill
+function turn(i: number): number {
+  const a: number[] = new Array(16).fill(0);
+  a[i & 15] = 1;
+  return a[3] + a.length;
+}
+//// filled-list.new-array-typed-fill
+function turn(i: number): number {
+  const a = new Array<number>(16).fill(0);
+  a[i & 15] = 1;
+  return a[3] + a.length;
+}
+//// filled-list.loop-push
+function turn(i: number): number {
+  const a: number[] = [];
+  for (let k = 0; k < 16; k++) a.push(0);
+  a[i & 15] = 1;
+  return a[3] + a.length;
+}
+//// filled-list.loop-store
+function turn(i: number): number {
+  const a: number[] = new Array(16);
+  for (let k = 0; k < 16; k++) a[k] = 0;
+  a[i & 15] = 1;
+  return a[3] + a.length;
+}
+//// filled-list.array-from-length
+function turn(i: number): number {
+  const a: number[] = Array.from({ length: 16 }, () => 0);
+  a[i & 15] = 1;
+  return a[3] + a.length;
+}
+//// filled-list.spread-map
+function turn(i: number): number {
+  const a: number[] = [...Array(16)].map(() => 0);
+  a[i & 15] = 1;
+  return a[3] + a.length;
+}
+//// filled-list.literal
+function turn(i: number): number {
+  const a: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  a[i & 15] = 1;
+  return a[3] + a.length;
+}
+//// return-a-call.direct
+function g(a: number): number {
+  return (a & 7) + 1;
+}
+function f(a: number): number {
+  return g(a);
+}
+function turn(i: number): number {
+  return f(i);
+}
+//// return-a-call.through-a-constant
+function g(a: number): number {
+  return (a & 7) + 1;
+}
+function f(a: number): number {
+  const r = g(a);
+  return r;
+}
+function turn(i: number): number {
+  return f(i);
+}
+//// return-a-pair.direct
+function g(a: number): [number, number] {
+  return [a & 7, a & 3];
+}
+function f(a: number): [number, number] {
+  return g(a);
+}
+function turn(i: number): number {
+  const [x, y] = f(i);
+  return x + y;
+}
+//// return-a-pair.through-a-constant
+function g(a: number): [number, number] {
+  return [a & 7, a & 3];
+}
+function f(a: number): [number, number] {
+  const r = g(a);
+  return r;
+}
+function turn(i: number): number {
+  const [x, y] = f(i);
+  return x + y;
+}
+//// return-a-literal.direct
+function g(a: number) {
+  return { x: a & 7, y: a & 3 };
+}
+function f(a: number) {
+  return g(a);
+}
+function turn(i: number): number {
+  const r = f(i);
+  return r.x + r.y;
+}
+//// return-a-literal.through-a-constant
+function g(a: number) {
+  return { x: a & 7, y: a & 3 };
+}
+function f(a: number) {
+  const r = g(a);
+  return r;
+}
+function turn(i: number): number {
+  const r = f(i);
+  return r.x + r.y;
+}
+//// return-a-new.direct
+class V {
+  constructor(public x: number) {}
+}
+function f(a: number): V {
+  return new V(a & 7);
+}
+function turn(i: number): number {
+  return f(i).x;
+}
+//// return-a-new.through-a-constant
+class V {
+  constructor(public x: number) {}
+}
+function f(a: number): V {
+  const v = new V(a & 7);
+  return v;
+}
+function turn(i: number): number {
+  return f(i).x;
+}
+//// return-a-method-call.direct
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function f(a: number): number {
+  return xs.indexOf(a);
+}
+function turn(i: number): number {
+  return f(i & 7);
+}
+//// return-a-method-call.through-a-constant
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function f(a: number): number {
+  const r = xs.indexOf(a);
+  return r;
+}
+function turn(i: number): number {
+  return f(i & 7);
+}
+//// return-a-map.direct
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function f(a: number): number[] {
+  return xs.map(x => x + a);
+}
+function turn(i: number): number {
+  return f(i & 7)[3];
+}
+//// return-a-map.through-a-constant
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function f(a: number): number[] {
+  const r = xs.map(x => x + a);
+  return r;
+}
+function turn(i: number): number {
+  return f(i & 7)[3];
+}
+//// return-a-closure-call.direct
+function f(a: number, k: (n: number) => number): number {
+  return k(a);
+}
+function turn(i: number): number {
+  return f(i, n => (n & 7) + 1);
+}
+//// return-a-closure-call.through-a-constant
+function f(a: number, k: (n: number) => number): number {
+  const r = k(a);
+  return r;
+}
+function turn(i: number): number {
+  return f(i, n => (n & 7) + 1);
+}
+//// recursion.tail
+function sum(n: number, total: number): number {
+  if (n === 0) return total;
+  return sum(n - 1, total + n);
+}
+function turn(i: number): number {
+  return sum(i & 15, 0);
+}
+//// recursion.tail-conditional
+function sum(n: number, total: number): number {
+  return n === 0 ? total : sum(n - 1, total + n);
+}
+function turn(i: number): number {
+  return sum(i & 15, 0);
+}
+//// recursion.loop
+function sum(n: number, total: number): number {
+  while (n !== 0) {
+    total += n;
+    n--;
+  }
+  return total;
+}
+function turn(i: number): number {
+  return sum(i & 15, 0);
+}
+//// recursion.not-tail
+function sum(n: number): number {
+  if (n === 0) return 0;
+  return n + sum(n - 1);
+}
+function turn(i: number): number {
+  return sum(i & 15);
+}
+//// literal-copy.spread
+interface O { a: number; b: number; c: number }
+const o: O = { a: 1, b: 2, c: 3 };
+function turn(i: number): number {
+  const c = { ...o, b: i & 7 };
+  return c.a + c.b + c.c;
+}
+//// literal-copy.listed
+interface O { a: number; b: number; c: number }
+const o: O = { a: 1, b: 2, c: 3 };
+function turn(i: number): number {
+  const c = { a: o.a, b: i & 7, c: o.c };
+  return c.a + c.b + c.c;
+}
+//// literal-copy.object-assign
+interface O { a: number; b: number; c: number }
+const o: O = { a: 1, b: 2, c: 3 };
+function turn(i: number): number {
+  const c = Object.assign({}, o, { b: i & 7 });
+  return c.a + c.b + c.c;
+}
+//// literal.shorthand
+function turn(i: number): number {
+  const a = i & 7, b = i & 3;
+  const o = { a, b };
+  return o.a + o.b;
+}
+//// literal.listed
+function turn(i: number): number {
+  const a = i & 7, b = i & 3;
+  const o = { a: a, b: b };
+  return o.a + o.b;
+}
+//// literal.quoted-names
+function turn(i: number): number {
+  const a = i & 7, b = i & 3;
+  const o = { "a": a, "b": b };
+  return o.a + o.b;
+}
+//// literal.computed-names
+function turn(i: number): number {
+  const a = i & 7, b = i & 3;
+  const o = { ["a"]: a, ["b"]: b };
+  return o.a + o.b;
+}
+//// literal.stores-behind-an-empty-literal
+function turn(i: number): number {
+  const a = i & 7, b = i & 3;
+  const o: { a?: number; b?: number } = {};
+  o.a = a;
+  o.b = b;
+  return o.a + o.b;
+}
+//// literal.new-object
+function turn(i: number): number {
+  const a = i & 7, b = i & 3;
+  const o: any = new Object();
+  o.a = a;
+  o.b = b;
+  return o.a + o.b;
+}
+//// has-a-name.in
+const o: Record<string, number> = { a: 1, b: 2 };
+const names: string[] = ["a", "b", "c", "d"];
+function turn(i: number): number {
+  return names[i & 3] in o ? 1 : 0;
+}
+//// has-a-name.has-own
+const o: Record<string, number> = { a: 1, b: 2 };
+const names: string[] = ["a", "b", "c", "d"];
+function turn(i: number): number {
+  return Object.hasOwn(o, names[i & 3]) ? 1 : 0;
+}
+//// has-a-name.has-own-property
+const o: Record<string, number> = { a: 1, b: 2 };
+const names: string[] = ["a", "b", "c", "d"];
+function turn(i: number): number {
+  return o.hasOwnProperty(names[i & 3]) ? 1 : 0;
+}
+//// has-a-name.has-own-property-call
+const o: Record<string, number> = { a: 1, b: 2 };
+const names: string[] = ["a", "b", "c", "d"];
+function turn(i: number): number {
+  return Object.prototype.hasOwnProperty.call(o, names[i & 3]) ? 1 : 0;
+}
+//// has-a-name.not-undefined
+const o: Record<string, number> = { a: 1, b: 2 };
+const names: string[] = ["a", "b", "c", "d"];
+function turn(i: number): number {
+  return o[names[i & 3]] !== undefined ? 1 : 0;
+}
+//// branch.ifs
+function turn(i: number): number {
+  const k = i & 3;
+  if (k === 0) return 10;
+  if (k === 1) return 21;
+  if (k === 2) return 35;
+  return 47;
+}
+//// branch.switch
+function turn(i: number): number {
+  switch (i & 3) {
+    case 0:
+      return 10;
+    case 1:
+      return 21;
+    case 2:
+      return 35;
+    default:
+      return 47;
+  }
+}
+//// branch.conditional
+function turn(i: number): number {
+  const k = i & 3;
+  return k === 0 ? 10 : k === 1 ? 21 : k === 2 ? 35 : 47;
+}
+//// branch.table
+const table: number[] = [10, 21, 35, 47];
+function turn(i: number): number {
+  return table[i & 3];
+}
+//// branch-on-text.ifs
+const kinds: string[] = ["add", "sub", "mul", "div"];
+function turn(i: number): number {
+  const k = kinds[i & 3];
+  if (k === "add") return 10;
+  if (k === "sub") return 21;
+  if (k === "mul") return 35;
+  return 47;
+}
+//// branch-on-text.switch
+const kinds: string[] = ["add", "sub", "mul", "div"];
+function turn(i: number): number {
+  switch (kinds[i & 3]) {
+    case "add":
+      return 10;
+    case "sub":
+      return 21;
+    case "mul":
+      return 35;
+    default:
+      return 47;
+  }
+}
+//// branch-on-text.literal-types
+type Kind = "add" | "sub" | "mul" | "div";
+const kinds: Kind[] = ["add", "sub", "mul", "div"];
+function turn(i: number): number {
+  switch (kinds[i & 3]) {
+    case "add":
+      return 10;
+    case "sub":
+      return 21;
+    case "mul":
+      return 35;
+    case "div":
+      return 47;
+  }
+}
+//// branch-on-text.record
+const kinds: string[] = ["add", "sub", "mul", "div"];
+const table: Record<string, number> = { add: 10, sub: 21, mul: 35, div: 47 };
+function turn(i: number): number {
+  return table[kinds[i & 3]];
+}
+//// branch-on-an-enum.enum
+enum Kind { Add, Sub, Mul, Div }
+const kinds: Kind[] = [Kind.Add, Kind.Sub, Kind.Mul, Kind.Div];
+function turn(i: number): number {
+  switch (kinds[i & 3]) {
+    case Kind.Add:
+      return 10;
+    case Kind.Sub:
+      return 21;
+    case Kind.Mul:
+      return 35;
+    default:
+      return 47;
+  }
+}
+//// branch-on-an-enum.const-enum
+const enum Kind { Add, Sub, Mul, Div }
+const kinds: Kind[] = [Kind.Add, Kind.Sub, Kind.Mul, Kind.Div];
+function turn(i: number): number {
+  switch (kinds[i & 3]) {
+    case Kind.Add:
+      return 10;
+    case Kind.Sub:
+      return 21;
+    case Kind.Mul:
+      return 35;
+    default:
+      return 47;
+  }
+}
+//// branch-on-an-enum.numbers
+const kinds: number[] = [0, 1, 2, 3];
+function turn(i: number): number {
+  switch (kinds[i & 3]) {
+    case 0:
+      return 10;
+    case 1:
+      return 21;
+    case 2:
+      return 35;
+    default:
+      return 47;
+  }
+}
+//// branch-on-an-enum.frozen-literal
+const Kind = Object.freeze({ Add: 0, Sub: 1, Mul: 2, Div: 3 });
+const kinds: number[] = [Kind.Add, Kind.Sub, Kind.Mul, Kind.Div];
+function turn(i: number): number {
+  switch (kinds[i & 3]) {
+    case Kind.Add:
+      return 10;
+    case Kind.Sub:
+      return 21;
+    case Kind.Mul:
+      return 35;
+    default:
+      return 47;
+  }
+}
+//// branch-on-an-enum.as-const-literal
+const Kind = { Add: 0, Sub: 1, Mul: 2, Div: 3 } as const;
+const kinds: number[] = [Kind.Add, Kind.Sub, Kind.Mul, Kind.Div];
+function turn(i: number): number {
+  switch (kinds[i & 3]) {
+    case Kind.Add:
+      return 10;
+    case Kind.Sub:
+      return 21;
+    case Kind.Mul:
+      return 35;
+    default:
+      return 47;
+  }
+}
+//// branch-on-an-enum.string-enum
+enum Kind { Add = "add", Sub = "sub", Mul = "mul", Div = "div" }
+const kinds: Kind[] = [Kind.Add, Kind.Sub, Kind.Mul, Kind.Div];
+function turn(i: number): number {
+  switch (kinds[i & 3]) {
+    case Kind.Add:
+      return 10;
+    case Kind.Sub:
+      return 21;
+    case Kind.Mul:
+      return 35;
+    default:
+      return 47;
+  }
+}
+//// arguments.listed
+function f(a: number, b: number, c: number): number {
+  return a + b * c;
+}
+function turn(i: number): number {
+  return f(i & 7, 2, 3);
+}
+//// arguments.rest
+function f(...r: number[]): number {
+  return r[0] + r[1] * r[2];
+}
+function turn(i: number): number {
+  return f(i & 7, 2, 3);
+}
+//// arguments.arguments-object
+function f(a?: number, b?: number, c?: number): number {
+  return arguments[0] + arguments[1] * arguments[2];
+}
+function turn(i: number): number {
+  return f(i & 7, 2, 3);
+}
+//// arguments.spread-of-a-literal
+function f(a: number, b: number, c: number): number {
+  return a + b * c;
+}
+function turn(i: number): number {
+  return f(...([i & 7, 2, 3] as [number, number, number]));
+}
+//// arguments.options-literal
+function f({ a, b, c }: { a: number; b: number; c: number }): number {
+  return a + b * c;
+}
+function turn(i: number): number {
+  return f({ a: i & 7, b: 2, c: 3 });
+}
+//// arguments.forwarded-rest
+function f(a: number, b: number, c: number): number {
+  return a + b * c;
+}
+function g(...r: [number, number, number]): number {
+  return f(...r);
+}
+function turn(i: number): number {
+  return g(i & 7, 2, 3);
+}
+//// arguments.forwarded-arguments
+function f(a: number, b: number, c: number): number {
+  return a + b * c;
+}
+function g(a: number, b: number, c: number): number {
+  return f.apply(undefined, arguments as any);
+}
+function turn(i: number): number {
+  return g(i & 7, 2, 3);
+}
+//// integer.or-zero
+function turn(i: number): number {
+  return ((i & 1023) / 3) | 0;
+}
+//// integer.math-floor
+function turn(i: number): number {
+  return Math.floor((i & 1023) / 3);
+}
+//// integer.math-trunc
+function turn(i: number): number {
+  return Math.trunc((i & 1023) / 3);
+}
+//// integer.double-not
+function turn(i: number): number {
+  return ~~((i & 1023) / 3);
+}
+//// integer.shift
+function turn(i: number): number {
+  return ((i & 1023) / 3) >> 0;
+}
+//// power.operator
+function turn(i: number): number {
+  return (i & 15) ** 2;
+}
+//// power.math-pow
+function turn(i: number): number {
+  return Math.pow(i & 15, 2);
+}
+//// power.multiply
+function turn(i: number): number {
+  const a = i & 15;
+  return a * a;
+}
+//// least.math-min
+function turn(i: number): number {
+  return Math.min(i & 15, 9);
+}
+//// least.conditional
+function turn(i: number): number {
+  const a = i & 15;
+  return a < 9 ? a : 9;
+}
+//// least.math-min-spread
+const xs: number[] = [5, 3, 8, 1];
+function turn(i: number): number {
+  return Math.min(...xs) + (i & 1);
+}
+//// least.math-min-apply
+const xs: number[] = [5, 3, 8, 1];
+function turn(i: number): number {
+  return Math.min.apply(null, xs) + (i & 1);
+}
+//// least.loop
+const xs: number[] = [5, 3, 8, 1];
+function turn(i: number): number {
+  let m = Infinity;
+  for (let k = 0; k < xs.length; k++) if (xs[k] < m) m = xs[k];
+  return m + (i & 1);
+}
+//// truth.double-not
+const xs: (string | undefined)[] = ["a", undefined, "", "b"];
+function turn(i: number): number {
+  return !!xs[i & 3] ? 1 : 0;
+}
+//// truth.boolean-call
+const xs: (string | undefined)[] = ["a", undefined, "", "b"];
+function turn(i: number): number {
+  return Boolean(xs[i & 3]) ? 1 : 0;
+}
+//// truth.plain
+const xs: (string | undefined)[] = ["a", undefined, "", "b"];
+function turn(i: number): number {
+  return xs[i & 3] ? 1 : 0;
+}
+//// is-a-list.array-is-array
+const xs: (number[] | number)[] = [[1], 2, [3], 4];
+function turn(i: number): number {
+  const x = xs[i & 3];
+  return Array.isArray(x) ? x[0] : x;
+}
+//// is-a-list.instanceof
+const xs: (number[] | number)[] = [[1], 2, [3], 4];
+function turn(i: number): number {
+  const x = xs[i & 3];
+  return x instanceof Array ? x[0] : x;
+}
+//// is-a-list.typeof-number
+const xs: (number[] | number)[] = [[1], 2, [3], 4];
+function turn(i: number): number {
+  const x = xs[i & 3];
+  return typeof x === "number" ? x : x[0];
+}
+//// is-a-list.typeof-object
+const xs: (number[] | number)[] = [[1], 2, [3], 4];
+function turn(i: number): number {
+  const x = xs[i & 3];
+  return typeof x === "object" ? x[0] : x;
+}
+//// union.tag-switch
+type S = { kind: "c"; r: number } | { kind: "s"; w: number };
+const ss: S[] = [{ kind: "c", r: 2 }, { kind: "s", w: 3 }];
+function turn(i: number): number {
+  const s = ss[i & 1];
+  switch (s.kind) {
+    case "c":
+      return s.r;
+    case "s":
+      return s.w;
+  }
+}
+//// union.tag-if
+type S = { kind: "c"; r: number } | { kind: "s"; w: number };
+const ss: S[] = [{ kind: "c", r: 2 }, { kind: "s", w: 3 }];
+function turn(i: number): number {
+  const s = ss[i & 1];
+  if (s.kind === "c") return s.r;
+  return s.w;
+}
+//// union.in
+type S = { kind: "c"; r: number } | { kind: "s"; w: number };
+const ss: S[] = [{ kind: "c", r: 2 }, { kind: "s", w: 3 }];
+function turn(i: number): number {
+  const s = ss[i & 1];
+  if ("r" in s) return s.r;
+  return s.w;
+}
+//// union.instanceof
+class C { constructor(public r: number) {} }
+class Q { constructor(public w: number) {} }
+const ss: (C | Q)[] = [new C(2), new Q(3)];
+function turn(i: number): number {
+  const s = ss[i & 1];
+  if (s instanceof C) return s.r;
+  return s.w;
+}
+//// union.virtual-method
+abstract class S { abstract get(): number }
+class C extends S { constructor(public r: number) { super(); } get(): number { return this.r; } }
+class Q extends S { constructor(public w: number) { super(); } get(): number { return this.w; } }
+const ss: S[] = [new C(2), new Q(3)];
+function turn(i: number): number {
+  return ss[i & 1].get();
+}
+//// union.type-predicate
+type S = { kind: "c"; r: number } | { kind: "s"; w: number };
+const ss: S[] = [{ kind: "c", r: 2 }, { kind: "s", w: 3 }];
+function isC(s: S): s is { kind: "c"; r: number } {
+  return s.kind === "c";
+}
+function turn(i: number): number {
+  const s = ss[i & 1];
+  if (isC(s)) return s.r;
+  return s.w;
+}
+//// accessor.field
+class T { v = 3 }
+const t = new T();
+function turn(i: number): number {
+  t.v = i & 7;
+  return t.v;
+}
+//// accessor.getter-setter
+class T {
+  #v = 3;
+  get v(): number { return this.#v; }
+  set v(n: number) { this.#v = n; }
+}
+const t = new T();
+function turn(i: number): number {
+  t.v = i & 7;
+  return t.v;
+}
+//// accessor.methods
+class T {
+  #v = 3;
+  getV(): number { return this.#v; }
+  setV(n: number) { this.#v = n; }
+}
+const t = new T();
+function turn(i: number): number {
+  t.setV(i & 7);
+  return t.getV();
+}
+//// accessor.define-property
+const t: { v: number } = Object.defineProperty({ w: 3 } as any, "v", {
+  get(this: any) { return this.w; },
+  set(this: any, n: number) { this.w = n; },
+});
+function turn(i: number): number {
+  t.v = i & 7;
+  return t.v;
+}
+//// accessor.literal-getter-setter
+const t = {
+  w: 3,
+  get v(): number { return this.w; },
+  set v(n: number) { this.w = n; },
+};
+function turn(i: number): number {
+  t.v = i & 7;
+  return t.v;
+}
+//// accessor.accessor-keyword
+class T { accessor v = 3 }
+const t = new T();
+function turn(i: number): number {
+  t.v = i & 7;
+  return t.v;
+}
+//// static.static-field
+class K { static n = 0 }
+function turn(i: number): number {
+  K.n = (K.n + i) & 255;
+  return K.n;
+}
+//// static.module-variable
+let n = 0;
+function turn(i: number): number {
+  n = (n + i) & 255;
+  return n;
+}
+//// static.literal-field
+const K = { n: 0 };
+function turn(i: number): number {
+  K.n = (K.n + i) & 255;
+  return K.n;
+}
+//// static.namespace
+namespace K { export let n = 0 }
+function turn(i: number): number {
+  K.n = (K.n + i) & 255;
+  return K.n;
+}
+//// static.static-private
+class K {
+  static #n = 0;
+  static step(i: number): number {
+    K.#n = (K.#n + i) & 255;
+    return K.#n;
+  }
+}
+function turn(i: number): number {
+  return K.step(i);
+}
+//// static.function-property
+function K() {}
+K.n = 0;
+function turn(i: number): number {
+  K.n = (K.n + i) & 255;
+  return K.n;
+}
+//// static.global-this
+(globalThis as any).spellingsN = 0;
+declare var spellingsN: number;
+function turn(i: number): number {
+  spellingsN = (spellingsN + i) & 255;
+  return spellingsN;
+}
+//// constant.const
+const LIMIT = 255;
+function turn(i: number): number {
+  return i & LIMIT;
+}
+//// constant.static-readonly
+class K { static readonly LIMIT = 255 }
+function turn(i: number): number {
+  return i & K.LIMIT;
+}
+//// constant.enum-member
+enum K { LIMIT = 255 }
+function turn(i: number): number {
+  return i & K.LIMIT;
+}
+//// constant.literal-as-const
+const K = { LIMIT: 255 } as const;
+function turn(i: number): number {
+  return i & K.LIMIT;
+}
+//// constant.frozen-literal
+const K = Object.freeze({ LIMIT: 255 });
+function turn(i: number): number {
+  return i & K.LIMIT;
+}
+//// constant.let-never-stored
+let LIMIT = 255;
+function turn(i: number): number {
+  return i & LIMIT;
+}
+//// constant.namespace
+namespace K { export const LIMIT = 255 }
+function turn(i: number): number {
+  return i & K.LIMIT;
+}
+//// includes.includes
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  return xs.includes(i & 15) ? 1 : 0;
+}
+//// includes.index-of
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  return xs.indexOf(i & 15) !== -1 ? 1 : 0;
+}
+//// includes.some
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  const w = i & 15;
+  return xs.some(x => x === w) ? 1 : 0;
+}
+//// includes.find-index
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  const w = i & 15;
+  return xs.findIndex(x => x === w) >= 0 ? 1 : 0;
+}
+//// includes.loop
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  const w = i & 15;
+  for (let k = 0; k < xs.length; k++) if (xs[k] === w) return 1;
+  return 0;
+}
+//// includes.for-of
+const xs: number[] = [1, 2, 3, 4, 5, 6, 7, 8];
+function turn(i: number): number {
+  const w = i & 15;
+  for (const x of xs) if (x === w) return 1;
+  return 0;
+}
+//// text-starts.starts-with
+const texts: string[] = ["/api/users", "/static/a.js", "/api/items", "/"];
+function turn(i: number): number {
+  return texts[i & 3].startsWith("/api") ? 1 : 0;
+}
+//// text-starts.index-of
+const texts: string[] = ["/api/users", "/static/a.js", "/api/items", "/"];
+function turn(i: number): number {
+  return texts[i & 3].indexOf("/api") === 0 ? 1 : 0;
+}
+//// text-starts.slice
+const texts: string[] = ["/api/users", "/static/a.js", "/api/items", "/"];
+function turn(i: number): number {
+  return texts[i & 3].slice(0, 4) === "/api" ? 1 : 0;
+}
+//// text-starts.substring
+const texts: string[] = ["/api/users", "/static/a.js", "/api/items", "/"];
+function turn(i: number): number {
+  return texts[i & 3].substring(0, 4) === "/api" ? 1 : 0;
+}
+//// text-starts.regexp
+const texts: string[] = ["/api/users", "/static/a.js", "/api/items", "/"];
+function turn(i: number): number {
+  return /^\/api/.test(texts[i & 3]) ? 1 : 0;
+}
+//// character.index
+const text: string = "hello, world";
+function turn(i: number): number {
+  return text[i & 7] === "l" ? 1 : 0;
+}
+//// character.char-at
+const text: string = "hello, world";
+function turn(i: number): number {
+  return text.charAt(i & 7) === "l" ? 1 : 0;
+}
+//// character.char-code-at
+const text: string = "hello, world";
+function turn(i: number): number {
+  return text.charCodeAt(i & 7) === 108 ? 1 : 0;
+}
+//// character.code-point-at
+const text: string = "hello, world";
+function turn(i: number): number {
+  return text.codePointAt(i & 7) === 108 ? 1 : 0;
+}
+//// character.at
+const text: string = "hello, world";
+function turn(i: number): number {
+  return text.at(i & 7) === "l" ? 1 : 0;
+}
+//// keys-loop.for-in
+const o: Record<string, number> = { a: 1, b: 2, c: 3, d: 4 };
+function turn(i: number): number {
+  let s = i & 1;
+  for (const k in o) s += o[k];
+  return s;
+}
+//// keys-loop.object-keys
+const o: Record<string, number> = { a: 1, b: 2, c: 3, d: 4 };
+function turn(i: number): number {
+  let s = i & 1;
+  for (const k of Object.keys(o)) s += o[k];
+  return s;
+}
+//// keys-loop.object-values
+const o: Record<string, number> = { a: 1, b: 2, c: 3, d: 4 };
+function turn(i: number): number {
+  let s = i & 1;
+  for (const v of Object.values(o)) s += v;
+  return s;
+}
+//// keys-loop.object-entries
+const o: Record<string, number> = { a: 1, b: 2, c: 3, d: 4 };
+function turn(i: number): number {
+  let s = i & 1;
+  for (const [, v] of Object.entries(o)) s += v;
+  return s;
+}
+//// keys-loop.object-keys-for-each
+const o: Record<string, number> = { a: 1, b: 2, c: 3, d: 4 };
+function turn(i: number): number {
+  let s = i & 1;
+  Object.keys(o).forEach(k => {
+    s += o[k];
+  });
+  return s;
+}
+//// async.await-a-value
+async function turn(i: number): Promise<number> {
+  return (await (i & 7)) + 1;
+}
+//// async.await-resolved
+async function turn(i: number): Promise<number> {
+  return (await Promise.resolve(i & 7)) + 1;
+}
+//// async.then
+async function turn(i: number): Promise<number> {
+  return await Promise.resolve(i & 7).then(v => v + 1);
+}
+//// async.await-an-async-call
+async function g(i: number): Promise<number> {
+  return i & 7;
+}
+async function turn(i: number): Promise<number> {
+  return (await g(i)) + 1;
+}
+//// async.return-an-async-call
+async function g(i: number): Promise<number> {
+  return (i & 7) + 1;
+}
+async function turn(i: number): Promise<number> {
+  return g(i);
+}
+//// async.return-await
+async function g(i: number): Promise<number> {
+  return (i & 7) + 1;
+}
+async function turn(i: number): Promise<number> {
+  return await g(i);
+}
+//// async.new-promise
+async function turn(i: number): Promise<number> {
+  return await new Promise<number>(resolve => resolve((i & 7) + 1));
+}
+//// this-in-a-callback.arrow
+class T {
+  k = 3;
+  sum(xs: number[]): number {
+    let s = 0;
+    xs.forEach(x => {
+      s += x * this.k;
+    });
+    return s;
+  }
+}
+const t = new T();
+const xs: number[] = [1, 2, 3, 4];
+function turn(i: number): number {
+  return t.sum(xs) + (i & 1);
+}
+//// this-in-a-callback.self
+class T {
+  k = 3;
+  sum(xs: number[]): number {
+    let s = 0;
+    const self = this;
+    xs.forEach(function (x) {
+      s += x * self.k;
+    });
+    return s;
+  }
+}
+const t = new T();
+const xs: number[] = [1, 2, 3, 4];
+function turn(i: number): number {
+  return t.sum(xs) + (i & 1);
+}
+//// this-in-a-callback.this-argument
+class T {
+  k = 3;
+  sum(xs: number[]): number {
+    let s = 0;
+    xs.forEach(function (this: T, x) {
+      s += x * this.k;
+    }, this);
+    return s;
+  }
+}
+const t = new T();
+const xs: number[] = [1, 2, 3, 4];
+function turn(i: number): number {
+  return t.sum(xs) + (i & 1);
+}
+//// this-in-a-callback.bind
+class T {
+  k = 3;
+  sum(xs: number[]): number {
+    let s = 0;
+    xs.forEach(
+      function (this: T, x: number) {
+        s += x * this.k;
+      }.bind(this),
+    );
+    return s;
+  }
+}
+const t = new T();
+const xs: number[] = [1, 2, 3, 4];
+function turn(i: number): number {
+  return t.sum(xs) + (i & 1);
+}
+//// variable.const
+function turn(i: number): number {
+  const a = i & 7;
+  const b = a + 1;
+  return a * b;
+}
+//// variable.let
+function turn(i: number): number {
+  let a = i & 7;
+  let b = a + 1;
+  return a * b;
+}
+//// variable.var
+function turn(i: number): number {
+  var a = i & 7;
+  var b = a + 1;
+  return a * b;
+}
+//// loop-closure.let
+const fs: (() => number)[] = [];
+function turn(i: number): number {
+  fs.length = 0;
+  for (let k = 0; k < 4; k++) fs.push(() => k + i);
+  return fs[2]() & 255;
+}
+//// loop-closure.const-copy
+const fs: (() => number)[] = [];
+function turn(i: number): number {
+  fs.length = 0;
+  for (var k = 0; k < 4; k++) {
+    const c = k;
+    fs.push(() => c + i);
+  }
+  return fs[2]() & 255;
+}
+//// throw.try-catch
+function risky(i: number): number {
+  if ((i & 1023) === 1023) throw new Error("no");
+  return i & 7;
+}
+function turn(i: number): number {
+  try {
+    return risky(i);
+  } catch {
+    return -1;
+  }
+}
+//// throw.no-try
+function risky(i: number): number {
+  if ((i & 1023) === 1023) return -1;
+  return i & 7;
+}
+function turn(i: number): number {
+  return risky(i);
+}
+//// throw.try-finally
+let done = 0;
+function risky(i: number): number {
+  return i & 7;
+}
+function turn(i: number): number {
+  try {
+    return risky(i);
+  } finally {
+    done = 1;
+  }
+}
+//// generic.generic
+function first<T>(xs: T[]): T {
+  return xs[0];
+}
+const ns: number[] = [4, 5];
+function turn(i: number): number {
+  return first(ns) + (i & 1);
+}
+//// generic.concrete
+function first(xs: number[]): number {
+  return xs[0];
+}
+const ns: number[] = [4, 5];
+function turn(i: number): number {
+  return first(ns) + (i & 1);
+}
+//// generic.generic-class
+class Box<T> {
+  constructor(public value: T) {}
+  get(): T {
+    return this.value;
+  }
+}
+const b = new Box<number>(4);
+function turn(i: number): number {
+  return b.get() + (i & 1);
+}
+//// generic.concrete-class
+class Box {
+  constructor(public value: number) {}
+  get(): number {
+    return this.value;
+  }
+}
+const b = new Box(4);
+function turn(i: number): number {
+  return b.get() + (i & 1);
+}
+//// generic.generic-two-uses
+function first<T>(xs: T[]): T {
+  return xs[0];
+}
+const ns: number[] = [4, 5];
+const ts: string[] = ["ab", "c"];
+function turn(i: number): number {
+  return first(ns) + first(ts).length + (i & 1);
+}
+//// list-type.array
+const xs: number[] = [1, 2, 3, 4];
+function turn(i: number): number {
+  return xs[i & 3];
+}
+//// list-type.readonly-array
+const xs: readonly number[] = [1, 2, 3, 4];
+function turn(i: number): number {
+  return xs[i & 3];
+}
+//// list-type.array-generic
+const xs: Array<number> = [1, 2, 3, 4];
+function turn(i: number): number {
+  return xs[i & 3];
+}
+//// list-type.tuple
+const xs: [number, number, number, number] = [1, 2, 3, 4];
+function turn(i: number): number {
+  return xs[i & 3];
+}
+//// list-type.as-const
+const xs = [1, 2, 3, 4] as const;
+function turn(i: number): number {
+  return xs[i & 3];
+}
+//// list-type.inferred
+const xs = [1, 2, 3, 4];
+function turn(i: number): number {
+  return xs[i & 3];
+}
+//// list-type.array-like
+const xs: ArrayLike<number> = [1, 2, 3, 4];
+function turn(i: number): number {
+  return xs[i & 3];
+}
+//// list-type.iterable
+const xs: Iterable<number> = [1, 2, 3, 4];
+function turn(i: number): number {
+  let s = i & 1;
+  for (const x of xs) s += x;
+  return s;
+}
+//// object-type.interface
+interface P { x: number; y: number }
+function make(i: number): P {
+  return { x: i & 7, y: 2 };
+}
+function turn(i: number): number {
+  const p = make(i);
+  return p.x + p.y;
+}
+//// object-type.alias
+type P = { x: number; y: number };
+function make(i: number): P {
+  return { x: i & 7, y: 2 };
+}
+function turn(i: number): number {
+  const p = make(i);
+  return p.x + p.y;
+}
+//// object-type.inline
+function make(i: number): { x: number; y: number } {
+  return { x: i & 7, y: 2 };
+}
+function turn(i: number): number {
+  const p = make(i);
+  return p.x + p.y;
+}
+//// object-type.inferred
+function make(i: number) {
+  return { x: i & 7, y: 2 };
+}
+function turn(i: number): number {
+  const p = make(i);
+  return p.x + p.y;
+}
+//// object-type.readonly
+interface P { readonly x: number; readonly y: number }
+function make(i: number): P {
+  return { x: i & 7, y: 2 };
+}
+function turn(i: number): number {
+  const p = make(i);
+  return p.x + p.y;
+}
+//// object-type.intersection
+type P = { x: number } & { y: number };
+function make(i: number): P {
+  return { x: i & 7, y: 2 };
+}
+function turn(i: number): number {
+  const p = make(i);
+  return p.x + p.y;
+}
+//// object-type.extends
+interface X { x: number }
+interface P extends X { y: number }
+function make(i: number): P {
+  return { x: i & 7, y: 2 };
+}
+function turn(i: number): number {
+  const p = make(i);
+  return p.x + p.y;
+}
+//// object-type.pick
+interface W { x: number; y: number; z: number }
+type P = Pick<W, "x" | "y">;
+function make(i: number): P {
+  return { x: i & 7, y: 2 };
+}
+function turn(i: number): number {
+  const p = make(i);
+  return p.x + p.y;
+}
+//// object-type.satisfies
+interface P { x: number; y: number }
+function make(i: number) {
+  return { x: i & 7, y: 2 } satisfies P;
+}
+function turn(i: number): number {
+  const p = make(i);
+  return p.x + p.y;
+}
+//// object-type.as
+interface P { x: number; y: number }
+function make(i: number) {
+  return { x: i & 7, y: 2 } as P;
+}
+function turn(i: number): number {
+  const p = make(i);
+  return p.x + p.y;
+}
+//// object-type.record
+function make(i: number): Record<"x" | "y", number> {
+  return { x: i & 7, y: 2 };
+}
+function turn(i: number): number {
+  const p = make(i);
+  return p.x + p.y;
+}
+//// map-get.get-nullish
+const m = new Map<string, number>([["a", 1], ["b", 2]]);
+const names: string[] = ["a", "b", "c", "a"];
+function turn(i: number): number {
+  return m.get(names[i & 3]) ?? 0;
+}
+//// map-get.has-then-get
+const m = new Map<string, number>([["a", 1], ["b", 2]]);
+const names: string[] = ["a", "b", "c", "a"];
+function turn(i: number): number {
+  const k = names[i & 3];
+  return m.has(k) ? m.get(k)! : 0;
+}
+//// map-loop.for-of
+const m = new Map<number, number>([[1, 2], [3, 4], [5, 6]]);
+function turn(i: number): number {
+  let s = i & 1;
+  for (const [k, v] of m) s += k + v;
+  return s;
+}
+//// map-loop.for-of-entries
+const m = new Map<number, number>([[1, 2], [3, 4], [5, 6]]);
+function turn(i: number): number {
+  let s = i & 1;
+  for (const [k, v] of m.entries()) s += k + v;
+  return s;
+}
+//// map-loop.for-each
+const m = new Map<number, number>([[1, 2], [3, 4], [5, 6]]);
+function turn(i: number): number {
+  let s = i & 1;
+  m.forEach((v, k) => {
+    s += k + v;
+  });
+  return s;
+}
+//// map-loop.keys-and-get
+const m = new Map<number, number>([[1, 2], [3, 4], [5, 6]]);
+function turn(i: number): number {
+  let s = i & 1;
+  for (const k of m.keys()) s += k + m.get(k)!;
+  return s;
+}
+//// comma.sequence
+function turn(i: number): number {
+  let a = 0, b = 0;
+  (a = i & 7), (b = a + 1);
+  return a * b;
+}
+//// comma.statements
+function turn(i: number): number {
+  let a = 0, b = 0;
+  a = i & 7;
+  b = a + 1;
+  return a * b;
+}
+//// increment.postfix
+function turn(i: number): number {
+  let a = i & 7;
+  a++;
+  return a;
+}
+//// increment.prefix
+function turn(i: number): number {
+  let a = i & 7;
+  ++a;
+  return a;
+}
+//// increment.plus-assign
+function turn(i: number): number {
+  let a = i & 7;
+  a += 1;
+  return a;
+}
+//// increment.field-postfix
+const o = { n: 0 };
+function turn(i: number): number {
+  o.n++;
+  return o.n & 255;
+}
+//// increment.field-plus-assign
+const o = { n: 0 };
+function turn(i: number): number {
+  o.n += 1;
+  return o.n & 255;
+}
+//// increment.field-written-out
+const o = { n: 0 };
+function turn(i: number): number {
+  o.n = o.n + 1;
+  return o.n & 255;
+}
+//// increment.element-postfix
+const a: number[] = [0, 0, 0, 0];
+function turn(i: number): number {
+  a[i & 3]++;
+  return a[i & 3] & 255;
+}
+//// increment.element-written-out
+const a: number[] = [0, 0, 0, 0];
+function turn(i: number): number {
+  a[i & 3] = a[i & 3] + 1;
+  return a[i & 3] & 255;
+}

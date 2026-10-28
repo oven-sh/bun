@@ -1,15 +1,15 @@
-/// <reference types="../../build/debug/codegen/generated.d.ts" />
-/// <reference types="../../build/debug/codegen/ErrorCode.d.ts" />
-/// <reference types="../../build/debug/codegen/ZigGeneratedClasses.d.ts" />
-/// <reference types="../../build/debug/codegen/WebCoreJSBuiltins.d.ts" />
+/// <reference types="../../build/types/generated.d.ts" />
+/// <reference types="../../build/types/ErrorCode.d.ts" />
+/// <reference types="../../build/types/WebCoreJSBuiltins.d.ts" />
+/// <reference types="../../build/types/Bindgen.d.ts" />
 
 // Typedefs for JSC intrinsics. Instead of @, we use $
 type TODO = any;
 
 declare module "bun" {
   interface Socket {
-    $write(data: string | BufferSource, byteOffset?: number, byteLength?: number): number;
-    $end(): void;
+    $write(data: string | BufferSource, encoding?: string): boolean | number;
+    $end(data?: string | BufferSource, encoding?: string): boolean;
   }
 }
 
@@ -40,6 +40,25 @@ declare function $isPromiseRejected(promise: Promise<any>): boolean;
 declare function $isPromisePending(promise: Promise<any>): boolean;
 
 declare const IS_BUN_DEVELOPMENT: boolean;
+/** False in an executable that was compiled ahead of time without `--compile-inspector` and without `--external`. */
+declare const CAN_LOAD_CODE_AT_RUN_TIME: boolean;
+/** False in an executable that was compiled ahead of time from a program that never names `node:cluster`. */
+declare const CAN_BE_CLUSTER_WORKER: boolean;
+/** True in an executable that was compiled ahead of time, false in `bun run`. Only for a choice between two ways that a program cannot tell apart. */
+declare const IS_COMPILED_AHEAD_OF_TIME: boolean;
+/** Calls `callee`. A compiled executable never inlines the call. Only a compiled executable has it: use it behind `IS_COMPILED_AHEAD_OF_TIME`. */
+declare function $callNoInline<This, Arguments extends unknown[], Result>(
+  callee: (this: This, ...args: Arguments) => Result,
+  thisValue: This,
+  ...args: Arguments
+): Result;
+
+/**
+ * True only where a lookup of `name` on `object` finds the method or accessor that the class of `object` declares or inherits, as the source text defines it.
+ * That class may be an heir of the one you mean: ask for the prototype of `object` as well. False says nothing: ask the object and its prototypes then.
+ * Only a compiled executable has it: use it behind `IS_COMPILED_AHEAD_OF_TIME`.
+ */
+declare function $findsDeclaredMember(object: object, name: string): boolean;
 
 /** Place this directly above a function declaration (like a decorator) to make it a getter. */
 declare const $getter: never;
@@ -58,11 +77,28 @@ declare var $alwaysInline;
  * Overrides **
  */
 
-interface ReadableStream<R = any> extends _ReadableStream<R> {}
+interface ReadableStream<R = any> extends _ReadableStream<R> {
+  /** The native source behind a Bun-created stream: `undefined` when there is none, `-1` once it is detached. */
+  $bunNativePtr: TODO | undefined;
+}
 
 declare var ReadableStream: {
   prototype: ReadableStream;
-  new (): ReadableStream;
+  new (
+    underlyingSource: import("node:stream/web").UnderlyingByteSource,
+    strategy?: { highWaterMark?: number },
+  ): ReadableStream<Uint8Array>;
+  new <R = any>(
+    underlyingSource?: Omit<Bun.UnderlyingSource<R>, "type"> & { type?: "bytes" | undefined },
+    strategy?: QueuingStrategy<R>,
+  ): ReadableStream<R>;
+  new <R = any>(underlyingSource?: Bun.DirectUnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
+};
+
+// The public constructor only accepts a known `Bun.Encoding`; builtins pass arbitrary labels and catch the throw.
+declare var TextDecoder: {
+  prototype: TextDecoder;
+  new (label?: string, options?: { __proto__?: null; fatal?: boolean; ignoreBOM?: boolean }): TextDecoder;
 };
 
 interface Console {
@@ -131,6 +167,21 @@ declare function $rejectPromiseWithFirstResolvingFunctionCallCheck(promise: Prom
 
 declare function $loadEsmIntoCjs(...args: any[]): TODO;
 declare function $getProxyInternalField(): TODO;
+// Helper types for the `$isObject` / `$isCallable` / `$isArray` guards. Each guard has two overloads: a
+// generic one that narrows the argument's own type and rejects `any`, and a plain one for `any`. A single generic
+// predicate evaluates to `any` for an `any` argument, which TypeScript narrows to `never` in the false branch.
+type $NotAny<T> = 0 extends 1 & T ? never : unknown;
+/** Keeps the members of `T` that can be a `U`. */
+type $GuardNarrow<T, U> = T extends U ? T : U extends T ? U : never;
+type $AnyObject = Record<PropertyKey, any>;
+/** `x.$$iterator` is `x[Symbol.iterator]` without a look at `Symbol`. Any value may be asked for it. */
+declare interface Object {
+  $$asyncDispose: any;
+  $$asyncIterator: any;
+  $$dispose: any;
+  $$iterator: any;
+}
+type $AnyCallable = ((...args: any[]) => any) & $AnyObject;
 /**
  * True for object-like `JSCell`s. That is, this is roughly equivalent to this
  * JS code:
@@ -144,12 +195,16 @@ declare function $getProxyInternalField(): TODO;
  * @see [JSCell.h](https://github.com/oven-sh/WebKit/blob/main/Source/JavaScriptCore/runtime/JSCell.h)
  * @see [JIT implementation](https://github.com/oven-sh/WebKit/blob/433f7598bf3537a295d0af5ffd83b9a307abec4e/Source/JavaScriptCore/jit/JITOpcodes.cpp#L311)
  */
-declare function $isObject(obj: unknown): obj is object;
-declare function $isArray<T>(obj: T): obj is Extract<T, any[]> | Extract<T, readonly any[]>;
-declare function $isArray(obj: unknown): obj is any[];
-declare function $isCallable(fn: unknown): fn is CallableFunction;
+declare function $isObject<T>(obj: T & $NotAny<T>): obj is $GuardNarrow<T, object> & $NotAny<T>;
+declare function $isObject(obj: any): obj is $AnyObject;
+declare function $isArray<T>(
+  obj: T & $NotAny<T>,
+): obj is ([Extract<T, readonly any[]>] extends [never] ? T & any[] : Extract<T, readonly any[]>) & $NotAny<T>;
+declare function $isArray(obj: any): obj is any[];
+declare function $isCallable<T>(fn: T & $NotAny<T>): fn is $GuardNarrow<T, CallableFunction> & $NotAny<T>;
+declare function $isCallable(fn: any): fn is $AnyCallable;
 declare function $isJSArray(obj: unknown): obj is any[];
-declare function $isProxyObject(obj: unknown): obj is Proxy;
+declare function $isProxyObject(obj: unknown): boolean;
 declare function $isRegExpObject(obj: unknown): obj is RegExp;
 declare function $isMap<K, V>(obj: unknown): obj is Map<K, V>;
 declare function $isSet<V>(obj: unknown): obj is Set<V>;
@@ -202,7 +257,7 @@ declare const $processBindingConstants: {
   crypto: typeof import("crypto").constants;
   zlib: typeof import("zlib").constants;
 };
-declare const $asyncContext: InternalFieldObject<[ReadonlyArray<any> | undefined]>;
+declare const $asyncContext: InternalFieldObject<[import("./node/async_hooks").Frame | undefined]>;
 
 // We define our intrinsics in ./BunBuiltinNames.h. Some of those are globals.
 
@@ -231,6 +286,9 @@ declare function $esmNamespaceForCjs(key: string, requirer?: JSCommonJSModule): 
 declare function $esmRegistryDelete(key: string, requirer?: JSCommonJSModule): boolean;
 declare function $esmRegistryEvaluatedKeys(requirer?: JSCommonJSModule): string[];
 declare function $esmRegistryHasEvaluated(key: string, requirer?: JSCommonJSModule): boolean;
+declare function $requireCacheWillSet(key: string, value: unknown, requirer?: JSCommonJSModule): void;
+/** Without a key: does this process hide any file from require.cache? */
+declare function $isHiddenFromRequireCache(key?: string | symbol): boolean;
 declare function $esmLoadSync(key: string, requirer?: JSCommonJSModule): any;
 declare function $get(): TODO;
 declare function $handleEvent(): TODO;
@@ -259,7 +317,16 @@ declare function $removeAbortAlgorithmFromSignal(signal: AbortSignal, algorithmI
 declare function $redirect(): TODO;
 declare function $relative(): TODO;
 declare function $require(): TODO;
+/** Loads `id` into `mod`. Returns -1 when the module is ESM and must be loaded from the ESM registry. */
+declare function $requireCommonJS(
+  id: string,
+  mod: JSCommonJSModule,
+  parentFilename: unknown,
+  userArgumentCount: number,
+  userOptions: unknown,
+): JSCommonJSModule | -1;
 declare function $requireESM(path: string, requirer?: JSCommonJSModule): any;
+declare function $requireNativeModule(id: string): any;
 declare const $requireMap: Map<string, JSCommonJSModule>;
 declare const $internalModuleRegistry: InternalFieldObject<any[]>;
 declare function $resolve(name: string, from: string): Promise<string>;
@@ -311,14 +378,36 @@ interface InternalFieldObject<T extends any[]> {
   [__internal]: T;
 }
 
-// You can also `@` on any method on a classes to avoid prototype pollution and secret internals
-type ClassWithIntrinsics<T> = { [K in keyof T as T[K] extends Function ? `$${K}` : never]: T[K] };
-
-declare interface Map<K, V> extends ClassWithIntrinsics<Map<K, V>> {}
-declare interface CallableFunction extends ClassWithIntrinsics<CallableFunction> {}
-declare interface Promise<T> extends ClassWithIntrinsics<Promise<T>> {}
-declare interface ArrayBufferConstructor extends ClassWithIntrinsics<ArrayBufferConstructor> {}
-declare interface PromiseConstructor extends ClassWithIntrinsics<PromiseConstructor> {}
+// You can also `@` on any method on a classes to avoid prototype pollution and secret internals.
+declare interface CallableFunction {
+  $call: CallableFunction["call"];
+  $bind: CallableFunction["bind"];
+  $toString: CallableFunction["toString"];
+}
+// `apply` takes any array-like list; the standard library's declaration leaves out `arguments`.
+declare interface CallableFunction {
+  $apply<T, R>(this: (this: T) => R, thisArg: T): R;
+  $apply<T, A extends any[], R>(this: (this: T, ...args: A) => R, thisArg: T, args: A): R;
+  $apply<T, R>(this: (this: T, ...args: any[]) => R, thisArg: T, args: IArguments | $AnyObject): R;
+}
+declare interface Promise<T> {
+  $then: Promise<T>["then"];
+  $catch: Promise<T>["catch"];
+  $finally: Promise<T>["finally"];
+}
+declare interface ArrayBufferConstructor {
+  $isView: ArrayBufferConstructor["isView"];
+}
+declare interface PromiseConstructor {
+  $all: PromiseConstructor["all"];
+  $allSettled: PromiseConstructor["allSettled"];
+  $any: PromiseConstructor["any"];
+  $race: PromiseConstructor["race"];
+  $reject: PromiseConstructor["reject"];
+  $resolve: PromiseConstructor["resolve"];
+  $try: PromiseConstructor["try"];
+  $withResolvers: PromiseConstructor["withResolvers"];
+}
 
 declare interface UnderlyingSource {
   $lazy?: boolean;
@@ -370,24 +459,32 @@ interface String {
   // add others as needed
 }
 
-interface Set {
-  $add: Set["add"];
-  $clear: Set["clear"];
-  $delete: Set["delete"];
-  $has: Set["has"];
+interface Set<T> {
+  $add: Set<T>["add"];
+  $clear: Set<T>["clear"];
+  $delete: Set<T>["delete"];
+  $has: Set<T>["has"];
 }
 
-interface Map {
-  $clear: Map["clear"];
-  $delete: Map["delete"];
-  $has: Map["has"];
-  $set: Map["set"];
-  $get: Map["get"];
+interface Map<K, V> {
+  $clear: Map<K, V>["clear"];
+  $delete: Map<K, V>["delete"];
+  $has: Map<K, V>["has"];
+  $set: Map<K, V>["set"];
+  $get: Map<K, V>["get"];
+  $forEach: Map<K, V>["forEach"];
+  $entries: Map<K, V>["entries"];
+  $keys: Map<K, V>["keys"];
+  $values: Map<K, V>["values"];
+  readonly $size: Map<K, V>["size"];
 }
 
+declare var $Array: ArrayConstructor;
 declare var $Buffer: {
+  byteLength: typeof Buffer.byteLength;
   new (array: Array): Buffer;
   new (arrayBuffer: ArrayBuffer, byteOffset?: number, length?: number): Buffer;
+  new (view: ArrayBufferView, byteOffset?: number, length?: number): Buffer;
   new (buffer: Buffer): Buffer;
   new (size: number): Buffer;
   new (string: string, encoding?: BufferEncoding): Buffer;
@@ -397,7 +494,7 @@ declare interface Error {
   code?: string;
 }
 
-declare function $makeAbortError(message?: string, options?: { cause: Error }): Error;
+declare function $makeAbortError(message?: string, options?: ErrorOptions): Error;
 
 /**
  * -- Error Codes with manual messages
@@ -405,6 +502,7 @@ declare function $makeAbortError(message?: string, options?: { cause: Error }): 
 declare function $ERR_INVALID_ARG_TYPE(argName: string, expectedType: string, actualValue: any): TypeError;
 declare function $ERR_INVALID_ARG_TYPE(argName: string, expectedTypes: string[], actualValue: any): TypeError;
 declare function $ERR_INVALID_ARG_VALUE(name: string, value: any, reason?: string): TypeError;
+declare function $ERR_INVALID_ARG_VALUE_RangeError(name: string, value: any, reason?: string): RangeError;
 declare function $ERR_UNKNOWN_ENCODING(enc: string): TypeError;
 declare function $ERR_STREAM_DESTROYED(method: string): Error;
 declare function $ERR_METHOD_NOT_IMPLEMENTED(method: string): Error;
@@ -418,6 +516,7 @@ declare function $ERR_MISSING_ARGS(...args: [string, ...string[]]): TypeError;
 declare function $ERR_MISSING_ARGS(oneOf: string[]): TypeError;
 declare function $ERR_INVALID_RETURN_VALUE(expected_type: string, name: string, actual_value: any): TypeError;
 declare function $ERR_TLS_INVALID_PROTOCOL_VERSION(a: string, b: string): TypeError;
+declare function $ERR_TLS_PROTOCOL_VERSION_CONFLICT(version: string, secureProtocol: string): TypeError;
 declare function $ERR_INVALID_IP_ADDRESS(ip: any): TypeError;
 declare function $ERR_INVALID_ADDRESS_FAMILY(addressType, host, port): RangeError;
 declare function $ERR_OUT_OF_RANGE(name: string, reason: string, value): RangeError;
@@ -439,11 +538,13 @@ declare function $ERR_INVALID_CHAR(name, field?): TypeError;
 declare function $ERR_HTTP_INVALID_HEADER_VALUE(value: string, name: string): TypeError;
 declare function $ERR_HTTP_HEADERS_SENT(action: string): Error;
 declare function $ERR_INVALID_PROTOCOL(proto, expected): TypeError;
+declare function $ERR_INVALID_URL_SCHEME(expected: string): TypeError;
 declare function $ERR_INVALID_STATE(message: string): Error;
 declare function $ERR_INVALID_STATE_TypeError(message: string): TypeError;
 declare function $ERR_INVALID_STATE_RangeError(message: string): RangeError;
 declare function $ERR_UNESCAPED_CHARACTERS(arg): TypeError;
 declare function $ERR_HTTP_INVALID_STATUS_CODE(code): RangeError;
+declare function $ERR_HTTP_CONTENT_LENGTH_MISMATCH(actual: number, expected: number): Error;
 declare function $ERR_UNHANDLED_ERROR(err?): Error;
 declare function $ERR_BUFFER_OUT_OF_BOUNDS(name?: string): RangeError;
 declare function $ERR_CHILD_PROCESS_IPC_REQUIRED(where): Error;
@@ -455,6 +556,7 @@ declare function $ERR_AMBIGUOUS_ARGUMENT(arg, message): TypeError;
 declare function $ERR_INVALID_FD_TYPE(type): TypeError;
 declare function $ERR_IP_BLOCKED(ip): Error;
 
+declare function $ERR_IPC_CHANNEL_CLOSED(): Error;
 declare function $ERR_IPC_DISCONNECTED(): Error;
 declare function $ERR_INSPECTOR_ALREADY_ACTIVATED(message?: string): Error;
 declare function $ERR_INSPECTOR_NOT_ACTIVE(): Error;
@@ -473,9 +575,11 @@ declare function $ERR_SOCKET_DGRAM_IS_CONNECTED(): Error;
 declare function $ERR_SOCKET_DGRAM_NOT_CONNECTED(): Error;
 declare function $ERR_SOCKET_DGRAM_NOT_RUNNING(): Error;
 declare function $ERR_INVALID_CURSOR_POS(): Error;
+declare function $ERR_SCRIPT_EXECUTION_INTERRUPTED(): Error;
 declare function $ERR_MULTIPLE_CALLBACK(): Error;
 declare function $ERR_STREAM_PREMATURE_CLOSE(): Error;
 declare function $ERR_STREAM_NULL_VALUES(): TypeError;
+declare function $ERR_STREAM_ITER_MISSING_FLAG(): TypeError;
 declare function $ERR_STREAM_CANNOT_PIPE(): Error;
 declare function $ERR_STREAM_WRITE_AFTER_END(): Error;
 declare function $ERR_STREAM_UNSHIFT_AFTER_END_EVENT(): Error;
@@ -486,8 +590,11 @@ declare function $ERR_SERVER_ALREADY_LISTEN(): Error;
 declare function $ERR_SOCKET_CLOSED(): Error;
 declare function $ERR_SOCKET_CLOSED_BEFORE_CONNECTION(): Error;
 declare function $ERR_TLS_RENEGOTIATION_DISABLED(): Error;
+declare function $ERR_TLS_RENEGOTIATION_UNSUPPORTED(): Error;
+declare function $ERR_TLS_INVALID_STATE(): Error;
 declare function $ERR_UNAVAILABLE_DURING_EXIT(): Error;
 declare function $ERR_TLS_CERT_ALTNAME_FORMAT(): SyntaxError;
+declare function $ERR_TLS_REQUIRED_SERVER_NAME(): Error;
 declare function $ERR_TLS_SNI_FROM_SERVER(): Error;
 declare function $ERR_SSL_NO_CIPHER_MATCH(): Error;
 declare function $ERR_INVALID_URI(): URIError;
@@ -512,6 +619,7 @@ declare function $ERR_HTTP2_ALTSVC_LENGTH(): TypeError;
 declare function $ERR_HTTP2_PING_LENGTH(): RangeError;
 declare function $ERR_HTTP2_OUT_OF_STREAMS(): Error;
 declare function $ERR_HTTP_BODY_NOT_ALLOWED(): Error;
+declare function $ERR_HTTP_TRAILER_INVALID(): Error;
 declare function $ERR_HTTP_SOCKET_ASSIGNED(): Error;
 declare function $ERR_DIR_CLOSED(): Error;
 declare function $ERR_SOCKET_CONNECTION_TIMEOUT(): Error;
@@ -547,9 +655,8 @@ declare function $toClass(fn: Function, name: string, base?: Function | undefine
 
 declare function $min(a: number, b: number): number;
 
-interface Map<K, V> {
-  $get: typeof Map.prototype.get;
-  $set: typeof Map.prototype.set;
+interface Set<T> {
+  $forEach: Set<T>["forEach"];
 }
 
 interface ObjectConstructor {

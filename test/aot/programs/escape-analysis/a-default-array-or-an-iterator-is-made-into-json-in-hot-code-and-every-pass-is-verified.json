@@ -1,0 +1,3 @@
+{
+  "build": ["--aot-heat=everything-is-hot", "--aot-check=verify-each-pass"]
+}

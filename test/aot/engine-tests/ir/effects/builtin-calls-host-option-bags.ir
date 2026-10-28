@@ -1,0 +1,24 @@
+# Bun's natives test that a value is an object before they read a named member of it, so the number under `status` is asked for no member: an options object of proven numbers and strings runs no code. One that holds anything does
+# FORM: Prepared
+# RUN: effects f0 f1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Body" fields=[{key="ok" declared={type=number} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+layout L1 name="Options" fields=[{key="status" declared={type=number} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="statusText" declared={type=string} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+layout L2 name="OptionsHoldingAnything" fields=[{key="status" declared={type=anything} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+function f0 name="runsNoCode" parameters=[{type=L0}, {type=L1}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
+  b0(v0: L0, v1: L1):
+    v2 = CallBuiltin -, v0, v1 overload=ResponseJson/2
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NOT: v2 CallBuiltin: unknownCode
+# CHECK: v2 CallBuiltin: reads(
+
+function f1 name="mayRunCode" parameters=[{type=L0}, {type=L2}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
+  b0(v0: L0, v1: L2):
+    v2 = CallBuiltin -, v0, v1 overload=ResponseJson/2
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK: v2 CallBuiltin: unknownCode

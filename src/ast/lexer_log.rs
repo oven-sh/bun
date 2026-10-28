@@ -7,7 +7,7 @@
 //! collapses both.
 //!
 //! The trait carries a `'s` lifetime so `source()` can hand back the lexer's
-//! stored `&'s Source` *without* borrowing `self` — that is what lets the
+//! stored `&'s Source<'s>` *without* borrowing `self` — that is what lets the
 //! provided bodies call `self.log_mut()` afterwards without a split-borrow
 //! conflict.
 
@@ -23,8 +23,8 @@ pub trait LexerLog<'s> {
 
     // ── required state accessors ────────────────────────────────────────
     fn log_mut(&mut self) -> &mut Log;
-    /// NB: returns the lexer-stored `&'s Source`, *not* a `&self`-tied borrow.
-    fn source(&self) -> &'s Source;
+    /// NB: returns the lexer-stored `&'s Source<'s>`, *not* a `&self`-tied borrow.
+    fn source(&self) -> &'s Source<'s>;
     fn prev_error_loc_mut(&mut self) -> &mut Loc;
     fn start(&self) -> usize;
     fn syntax_err() -> Self::Err;

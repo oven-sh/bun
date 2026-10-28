@@ -3,7 +3,7 @@ import { CString, dlopen, ptr } from "bun:ffi";
 import { memoryUsage as jscMemoryUsage } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isRoot, isWindows, tempDir, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 import { getHeapStatistics } from "v8";
 
@@ -459,6 +459,19 @@ it("process.env", () => {
   expect(process.env["LOL SMILE latin1 <abc>"]).toBe(undefined);
 });
 
+it("reading process.env adds no property to Bun", () => {
+  const { stdout, exitCode } = spawnSync({
+    cmd: [
+      bunExe(),
+      "-e",
+      "const before = Object.keys(Bun).join(); globalThis.env = process.env; console.log(Object.keys({ ...Bun }).join() === before);",
+    ],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+  expect({ stdout: stdout.toString(), exitCode }).toEqual({ stdout: "true\n", exitCode: 0 });
+});
+
 it("process.env is spreadable and editable", () => {
   process.env["LOL SMILE UTF16 😂"] = "😂";
   const { "LOL SMILE UTF16 😂": lol, ...rest } = process.env;
@@ -472,8 +485,105 @@ it("process.env is spreadable and editable", () => {
   expect(eval(`globalThis.process.env.USER = "${orig}"`)).toBe(String(orig));
 });
 
+it("process.env coerces the value to a string every time the same assignment runs", () => {
+  const computedKey = "BUN_TEST_ENV_REPEATED_BYVAL";
+  process.env.BUN_TEST_ENV_REPEATED_EXISTING = "preset";
+  try {
+    const fresh = [];
+    const existing = [];
+    const byVal = [];
+    const byIndex = [];
+    for (let i = 0; i < 4; i++) {
+      process.env.BUN_TEST_ENV_REPEATED_FRESH = i;
+      fresh.push(process.env.BUN_TEST_ENV_REPEATED_FRESH);
+      process.env.BUN_TEST_ENV_REPEATED_EXISTING = i;
+      existing.push(process.env.BUN_TEST_ENV_REPEATED_EXISTING);
+      process.env[computedKey] = i;
+      byVal.push(process.env[computedKey]);
+      process.env[700] = i;
+      byIndex.push(process.env[700]);
+    }
+    // First store to an adjacent index.
+    process.env[701] = 7;
+    const expected = ["0", "1", "2", "3"];
+    expect({ fresh, existing, byVal, byIndex, neighbor: process.env[701] }).toEqual({
+      fresh: expected,
+      existing: expected,
+      byVal: expected,
+      byIndex: expected,
+      neighbor: "7",
+    });
+  } finally {
+    delete process.env.BUN_TEST_ENV_REPEATED_FRESH;
+    delete process.env.BUN_TEST_ENV_REPEATED_EXISTING;
+    delete process.env[computedKey];
+    delete process.env[700];
+    delete process.env[701];
+  }
+});
+
+it.concurrent("process.env coerces the value to a string in every JIT tier", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        function setPort(n) { process.env.PORT = n; return process.env.PORT; }
+        let result = "all strings";
+        for (let i = 0; i < 20000; i++) {
+          const value = setPort(3000 + (i % 10));
+          if (typeof value !== "string") {
+            result = "call " + i + " read back a " + typeof value;
+            break;
+          }
+        }
+        console.log(result);
+      `,
+    ],
+    // Compiling on the main thread makes every run reach the last tier at the same call.
+    env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    stdout: "all strings\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it.concurrent("process.env stores the value when its toString() modifies process.env", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        process.env.SAME = { toString() { process.env.SAME = "inner"; return "same" } };
+        console.log("same", process.env.SAME);
+        process.env.ADD = "0";
+        process.env.ADD = { toString() { process.env.ADDED = "1"; return "add" } };
+        console.log("add", process.env.ADD, process.env.ADDED);
+        process.env.DEL = "0";
+        process.env.DOOMED = "0";
+        process.env.DEL = { toString() { delete process.env.DOOMED; return "del" } };
+        console.log("del", process.env.DEL, String(process.env.DOOMED));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    stdout: "same same\nadd add 1\ndel del undefined\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it("process.env reads are never stale after a write (JIT inline-cache soundness)", async () => {
-  // process.env only sets OverridesPut (not ProhibitsPropertyCaching), so
+  // process.env does not set ProhibitsPropertyCaching, so
   // reads hit the ordinary self-access IC. This test verifies that writes
   // through the overridden put() still invalidate that IC: same-key Replace,
   // delete-then-set, and a hot read loop that FTL constant-folds before a
@@ -657,7 +767,6 @@ it("process.versions", async () => {
   const depsDir = resolve(import.meta.dir, "../../../../scripts/build/deps");
   const deps = {
     boringssl: "boringssl",
-    libarchive: "libarchive",
     mimalloc: "mimalloc",
     picohttpparser: "picohttpparser",
     zlib: "zlib",
@@ -690,6 +799,9 @@ it("process.versions", async () => {
   // Node.js exposes the bundled SQLite version here; Bun should too.
   expect(process.versions).toHaveProperty("sqlite");
   expect(process.versions.sqlite).toMatch(/^3\.\d+\.\d+$/);
+
+  // The version of TypeScript that `bun check` behaves like.
+  expect(process.versions.typescript).toMatch(/^\d+\.\d+\.\d+$/);
 });
 
 it("process.config", () => {
@@ -748,6 +860,36 @@ it("process.binding", () => {
   expect(() => process.binding(Symbol("ab"))).toThrow();
   expect(() => process.binding({})).toThrow();
   expect(() => process.binding(Object.freeze({ __proto__: null }))).toThrow();
+});
+
+it("spreading a process.binding() object passes exception check validation", async () => {
+  // Release builds ignore BUN_JSC_validateExceptionChecks, so there this only checks that every key is copied.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const missing = [];
+       for (const name of ["buffer", "config", "constants", "crypto/x509", "fs", "http_parser", "natives", "tty_wrap", "util", "uv"]) {
+         const binding = process.binding(name);
+         const spread = { ...binding };
+         for (const key of Object.keys(binding)) {
+           if (!(key in spread) || spread[key] !== binding[key]) missing.push(name + "." + key);
+         }
+       }
+       const { methods, allMethods } = process.binding("http_parser");
+       const { statValues, bigintStatValues } = process.binding("fs");
+       console.log(JSON.stringify({ missing, methods: methods.length, allMethods: allMethods.length, statValues: statValues.length, bigintStatValues: bigintStatValues.length }));`,
+    ],
+    env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ missing: [], methods: 35, allMethods: 47, statValues: 36, bigintStatValues: 36 }),
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 it("process.argv in testing", () => {
@@ -840,7 +982,7 @@ describe.concurrent(() => {
     });
 
     let [out, exited] = await Promise.all([new Response(subprocess.stdout).text(), subprocess.exited]);
-    expect(out.trim()).toEqual("v26.3.0");
+    expect(out.trim()).toEqual("v26.12.1");
     expect(exited).toBe(0);
   });
 
@@ -891,6 +1033,27 @@ describe.concurrent(() => {
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
       expect(exitCode).toBe(0);
       expect(stdout.trim()).toBe("beforeExit: 0\nbeforeExit: 1\nexit: 2");
+    });
+
+    // The script never touches process.nextTick, so no tick queue exists when the event is emitted.
+    it("runs the microtasks and the ticks that a listener queues, before 'exit'", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("beforeExit", async () => {
+             await null;
+             console.log("microtask");
+             process.nextTick(() => console.log("tick"));
+           });
+           process.on("exit", () => console.log("exit"));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "microtask\ntick\nexit\n", stderr: "", exitCode: 0 });
     });
 
     it("throwing inside preserves exit code", async () => {
@@ -1166,6 +1329,51 @@ describe.concurrent(() => {
     expect(maxRSS() + slack).toBeGreaterThan(rss());
   });
 
+  it("process.report's JavaScript stack names frames as error.stack does", () => {
+    // The report and the error are made at the same place, and nothing here is in tail position.
+    const seen = {};
+    const record = kind => {
+      seen[kind] = {
+        report: process.report.getReport().javascriptStack.stack,
+        error: new Error().stack.split("\n").slice(1),
+      };
+    };
+    class Widget {
+      constructor() {
+        record("constructor");
+        this.done = true;
+      }
+    }
+    function viaConstructor() {
+      const widget = new Widget();
+      expect(widget.done).toBe(true);
+    }
+    function viaEval() {
+      const made = (0, eval)("(function (record) { record('eval'); return true; })")(record);
+      expect(made).toBe(true);
+    }
+    function viaBuiltin() {
+      const made = [0].map(() => {
+        record("builtin");
+        return true;
+      });
+      expect(made).toEqual([true]);
+    }
+    viaConstructor();
+    viaEval();
+    viaBuiltin();
+
+    // "at new Widget (file:1:2)" -> "new Widget". The first frame is record().
+    const names = lines => lines.slice(1, 3).map(line => /^\s*at (.*?) ?\(/.exec(line)?.[1]);
+    const framesOf = kind => ({ report: names(seen[kind].report), error: names(seen[kind].error) });
+    expect({ constructor: framesOf("constructor"), eval: framesOf("eval"), builtin: framesOf("builtin") }).toEqual({
+      // `new Widget`, as in Node's report.
+      constructor: { report: ["new Widget", "viaConstructor"], error: ["new Widget", "viaConstructor"] },
+      eval: { report: ["<anonymous>", "viaEval"], error: ["<anonymous>", "viaEval"] },
+      builtin: { report: ["<anonymous>", "map"], error: ["<anonymous>", "map"] },
+    });
+  });
+
   // JSC measures the live size of the heap at the end of each collection and
   // keeps one figure per kind of collection, eden or full. heapUsed used to
   // report the eden figure only, so it did not change when a full collection
@@ -1347,7 +1555,7 @@ describe.concurrent(() => {
     // bmalloc scavenger) had signal-suspended a thread, it could never ack the barrier
     // and the whole process wedged at 0% CPU. The race is probabilistic, so hammer
     // seteuid under GC pressure from many processes at once and require each to exit.
-    it.skipIf(process.platform !== "linux" || process.getuid() !== 0)(
+    it.skipIf(process.platform !== "linux" || !isRoot)(
       "seteuid under GC pressure does not deadlock",
       async () => {
         using dir = tempDir("seteuid-deadlock", {
@@ -1569,17 +1777,21 @@ describe.concurrent(() => {
     expect(() => process.dlopen({ module: { exports: Symbol("123") } }, Symbol("badddd"))).toThrow();
   });
 
-  it("dlopen rejects over-length paths with ERR_DLOPEN_FAILED", async () => {
-    // Spawn so an unfixed build crashing doesn't take the whole suite down.
+  it.each([
     // On Windows the path is widened into a 32767-unit WPathBuffer; an
     // over-length path must come back as an error, not a Rust panic across
-    // the extern "C" boundary. POSIX already surfaces dlerror() here.
+    // the extern "C" boundary.
+    ["longer than the Windows path buffer", 40000],
+    // glibc's dlopen() uses alloca() to copy a name without a "/" onto the stack.
+    ["longer than the stack", 16 * 1024 * 1024],
+  ])("dlopen rejects over-length paths with ERR_DLOPEN_FAILED (%s)", async (_, length) => {
+    // Spawn so an unfixed build crashing doesn't take the whole suite down.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `try {
-          process.dlopen({ exports: {} }, Buffer.alloc(40000, "x").toString());
+          process.dlopen({ exports: {} }, Buffer.alloc(${length}, "x").toString());
           console.log("FAIL: did not throw");
         } catch (e) {
           console.log("CODE:" + e.code);
@@ -1611,8 +1823,83 @@ describe.concurrent(() => {
     );
   });
 
+  // Macros run inside the crash handler's parse action, and dlopen sets its own action on top of it.
+  it("dlopen works in a macro", async () => {
+    using dir = tempDir("dlopen-macro", {
+      "macro.ts": `export function load() {
+  try {
+    process.dlopen({ exports: {} }, "not-found.node");
+  } catch (e) {
+    return e.code;
+  }
+  return "loaded";
+}
+`,
+      "index.ts": `import { load } from "./macro.ts" with { type: "macro" };
+console.log(load());
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // Debug builds also log "[macro] call load" to stdout.
+    expect(stdout).toContain("ERR_DLOPEN_FAILED\n");
+    expect(exitCode).toBe(0);
+  });
+
   it("process.constrainedMemory()", () => {
     expect(process.constrainedMemory() >= 0).toBe(true);
+  });
+
+  // In a mount namespace of its own, `sys` is /sys/fs/cgroup and `cgroup` is /proc/self/cgroup.
+  const inMadeUpCgroup = `
+    mount --bind "$1/sys" /sys/fs/cgroup &&
+    mount --bind "$1/cgroup" /proc/$$/cgroup &&
+    exec "$2" -e "console.log(navigator.hardwareConcurrency, process.constrainedMemory())"
+  `;
+  const unshare = ["unshare", "--user", "--map-root-user", "--mount", "--propagation", "private"];
+  // Not in every container.
+  const canMount = () => {
+    if (!isLinux || !which("unshare")) return false;
+    using dir = tempDir("process-cgroup", { "cgroup": "", "sys/a": "" });
+    const script = inMadeUpCgroup.replace(/exec .*/, "true");
+    return spawnSync({ cmd: [...unshare, "sh", "-c", script, "sh", String(dir)] }).exitCode === 0;
+  };
+  const GiB = 1024 ** 3;
+  const v2 = group => ({
+    [`sys/${group}cpu.max`]: "100000 100000\n",
+    [`sys/${group}memory.max`]: `${GiB}\n`,
+    [`sys/${group}memory.high`]: "max\n",
+  });
+  const v1 = {
+    "sys/cpu/a/cpu.cfs_quota_us": "100000\n",
+    "sys/cpu/a/cpu.cfs_period_us": "100000\n",
+    "sys/memory/a/memory.limit_in_bytes": `${GiB}\n`,
+    "sys/memory/a/memory.soft_limit_in_bytes": "9223372036854771712\n",
+  };
+  it.skipIf(!canMount()).each([
+    ["cgroup v2", "0::/\n", v2("")],
+    ["cgroup v2, in a group", "0::/a/b\n", { ...v2("a/"), "sys/a/b/cpu.max": "max 100000\n" }],
+    ["cgroup v1", "5:cpu,cpuacct:/a\n4:memory:/a\n1:name=systemd:/a\n", v1],
+    ["cgroup v1, and cgroup v2 without controllers", "5:cpu,cpuacct:/a\n4:memory:/a\n0::/a\n", v1],
+    ["cgroup v1 with memory and cpu in one hierarchy, and cgroup v2", "3:cpu,cpuacct,memory:/a\n0::/a\n", v1],
+    // The kernel lists cgroup v1 first.
+    ["cgroup v2, and a cgroup v1 hierarchy without controllers", "1:name=systemd:/\n0::/a\n", v2("a/")],
+  ])("the limits of %s are seen", async (_, cgroup, files) => {
+    using dir = tempDir("process-cgroup", { cgroup, ...files });
+    await using proc = Bun.spawn({
+      cmd: [...unshare, "sh", "-c", inMadeUpCgroup, "sh", String(dir), bunExe()],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: `1 ${GiB}\n`, stderr: "", exitCode: 0 });
   });
 
   it("process.report", () => {
@@ -1667,6 +1954,41 @@ describe.concurrent(() => {
     expect(exitCode).toBe(0);
   });
 
+  it("building process.env doesn't run Object.prototype setters for a variable named like an array index", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `let fired = 0;
+         let caught = null;
+         Object.defineProperty(Object.prototype, "0", {
+           configurable: true,
+           set() {
+             fired++;
+             throw new Error("boom");
+           },
+         });
+         try {
+           process.env;
+         } catch (e) {
+           caught = e.message;
+         }
+         delete Object.prototype[0];
+         const env = process.env;
+         console.log(JSON.stringify({ fired, caught, zero: env[0], named: env.BUN_TEST_LAZY_ENV, cached: Bun.env === env }));`,
+      ],
+      env: { ...bunEnv, "0": "zero", BUN_TEST_LAZY_ENV: "lazy-env-value" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode, result: stdout && JSON.parse(stdout) }).toEqual({
+      stderr: "",
+      exitCode: 0,
+      result: { fired: 0, caught: null, zero: "zero", named: "lazy-env-value", cached: true },
+    });
+  });
+
   if (isWindows) {
     it("ownKeys trap windows process.env", () => {
       expect(() => Object.keys(process.env)).not.toThrow();
@@ -1708,6 +2030,107 @@ describe.concurrent(() => {
       } finally {
         delete process.env.BUN_TEST_ENV_PROXY;
       }
+    });
+
+    // On Windows a JS builtin finishes building process.env, and it throws a RangeError near the stack limit.
+    async function firstReadNearStackLimitBuildsRealEnv(entryPoint) {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const entryPoint = process.argv[1];
+           let reached = false;
+           const readers = {
+             "process.env": () => { reached = true; return process.env; },
+             "Bun.env": () => { reached = true; return Bun.env; },
+             "import.meta.env": () => { reached = true; return import.meta.env; },
+             "Bun.$": () => { reached = true; return Bun.$; },
+             "Bun.sql": () => { reached = true; return Bun.sql; },
+           };
+           const read = readers[entryPoint];
+           let value;
+           let readThrew = 0;
+           function recurse() {
+             try {
+               recurse();
+             } catch {}
+             if (value !== undefined) return;
+             reached = false;
+             try {
+               value = read();
+             } catch {
+               // Ignore a stack overflow thrown by the call to read() itself.
+               if (reached) readThrew++;
+             }
+           }
+           recurse();
+           const result = {
+             retried: readThrew > 0,
+             type: typeof value,
+             envIntact: process.env.BUN_TEST_LAZY_ENV === "lazy-env-value",
+             sameObject: Bun.env === process.env && import.meta.env === process.env,
+           };
+           if (entryPoint.endsWith("env")) result.isEnv = value === process.env;
+           if (entryPoint === "Bun.$") result.echo = (await value({ raw: ["echo $BUN_TEST_LAZY_ENV"] }).text()).trim();
+           console.log(JSON.stringify(result));`,
+          entryPoint,
+        ],
+        env: { ...bunEnv, BUN_TEST_LAZY_ENV: "lazy-env-value" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      const expected = { retried: true, envIntact: true, sameObject: true };
+      if (entryPoint.endsWith("env")) Object.assign(expected, { type: "object", isEnv: true });
+      else if (entryPoint === "Bun.$") Object.assign(expected, { type: "function", echo: "lazy-env-value" });
+      else Object.assign(expected, { type: "function" });
+      expect({ stderr, exitCode, result: stdout && JSON.parse(stdout) }).toEqual({
+        stderr: "",
+        exitCode: 0,
+        result: expected,
+      });
+    }
+
+    it.each(["process.env", "import.meta.env"])(
+      "%s throws when first read near the stack limit, and the next read builds the real env",
+      firstReadNearStackLimitBuildsRealEnv,
+    );
+
+    // The builtin assigns toJSON to an ordinary object, so this setter runs mid-build.
+    it("reading process.env from user code while it's being built returns the same env object", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `let inner;
+           Object.defineProperty(Object.prototype, "toJSON", {
+             configurable: true,
+             set(fn) {
+               // Remove the setter first, because the inner build assigns toJSON too.
+               delete Object.prototype.toJSON;
+               inner = process.env;
+               Object.defineProperty(this, "toJSON", { value: fn, writable: true, configurable: true, enumerable: true });
+             },
+           });
+           const outer = Bun.env;
+           console.log(JSON.stringify({
+             reentered: inner !== undefined,
+             oneObject: outer === inner && process.env === inner && import.meta.env === inner,
+             envIntact: inner.BUN_TEST_LAZY_ENV,
+             json: JSON.parse(JSON.stringify(process.env)).BUN_TEST_LAZY_ENV,
+           }));`,
+        ],
+        env: { ...bunEnv, BUN_TEST_LAZY_ENV: "lazy-env-value" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode, result: stdout && JSON.parse(stdout) }).toEqual({
+        stderr: "",
+        exitCode: 0,
+        result: { reentered: true, oneObject: true, envIntact: "lazy-env-value", json: "lazy-env-value" },
+      });
     });
   }
 
@@ -1787,6 +2210,147 @@ describe.concurrent(() => {
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
   });
 
+  // Pins which events fire, and in what order, whatever order the rejections of a
+  // turn are handled in, and that the queue keeps a promise alive exactly as long
+  // as it can still be reported. The "handling N rejected promises is O(N)" tests
+  // below cover the cost.
+  it("reports exactly the rejections that stay unhandled, in order, whatever order the others are handled in", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          import { heapStats } from "bun:jsc";
+          const noop = () => {};
+          const drain = async () => { for (let i = 0; i < 3; i++) await new Promise(r => setImmediate(r)); };
+          // Nothing else in this script makes a Date, so this counts the rejection reasons that are alive.
+          const datesAlive = () => (Bun.gc(true), heapStats().objectTypeCounts.Date ?? 0);
+          let seen = [];
+          let rejectionHandled = 0;
+          let onUnhandled = noop;
+          process.on("unhandledRejection", reason => {
+            seen.push(reason instanceof Date ? reason.getTime() : reason);
+            onUnhandled(reason);
+          });
+          process.on("rejectionHandled", () => rejectionHandled++);
+          const result = {};
+
+          // Every 7th promise stays unhandled. Each of the others is handled one
+          // step late, when it is no longer the newest rejection.
+          let previous;
+          for (let i = 0; i < 1000; i++) {
+            const promise = Promise.reject(i % 7 === 0 ? new Date(i) : i);
+            if (i % 7 === 0) continue;
+            previous?.catch(noop);
+            previous = promise;
+          }
+          previous.catch(noop);
+          // The promises that stay unhandled, and their reasons, are reachable only through the queue now.
+          const queuedAlive = datesAlive();
+          await drain();
+          result.oneStepLate = { seen, rejectionHandled, queuedAlive };
+
+          // The same in a loop that awaits, so that each handled promise is garbage at once. The queue
+          // must not keep them until the end of the turn: the number alive stays far below the 2,000 made.
+          const before = datesAlive();
+          let mostAlive = 0;
+          previous = Promise.reject(new Date(0));
+          for (let i = 1; i <= 2000; i++) {
+            const promise = Promise.reject(new Date(i));
+            try { await previous; } catch {}
+            previous = promise;
+            if (i % 500 === 0) mostAlive = Math.max(mostAlive, datesAlive() - before);
+          }
+          try { await previous; } catch {}
+          result.handledAreReleased = mostAlive < 200 ? true : mostAlive;
+
+          // Handled oldest first, as Promise.all does. Every 50th stays unhandled.
+          seen = [];
+          const oldestFirst = [];
+          for (let i = 0; i < 200; i++) oldestFirst.push(Promise.reject("o" + i));
+          for (let i = 0; i < 200; i++) if (i % 50 !== 49) oldestFirst[i].catch(noop);
+          await drain();
+          result.oldestFirst = { seen, rejectionHandled };
+
+          // Handled newest first. The oldest and one in the middle stay unhandled.
+          seen = [];
+          const newestFirst = [];
+          for (let i = 0; i < 100; i++) newestFirst.push(Promise.reject("n" + i));
+          for (let i = 99; i > 0; i--) if (i !== 50) newestFirst[i].catch(noop);
+          await drain();
+          result.newestFirst = { seen, rejectionHandled };
+
+          // A few rejections, handled in no particular order.
+          seen = [];
+          const few = [];
+          for (let i = 0; i < 8; i++) few.push(Promise.reject("f" + i));
+          for (const i of [3, 0, 7, 6, 4]) few[i].catch(noop);
+          await drain();
+          result.few = { seen, rejectionHandled };
+
+          // A long queue loses an entry in the middle and its newest entry, then grows again.
+          seen = [];
+          const regrown = [];
+          for (let i = 0; i < 300; i++) regrown.push(Promise.reject("r" + i));
+          regrown[5].catch(noop);
+          Bun.gc(true);
+          regrown[299].catch(noop);
+          const older = Promise.reject("older");
+          const newer = Promise.reject("newer");
+          older.catch(noop);
+          newer.catch(noop);
+          await drain();
+          result.regrown = { seen, rejectionHandled };
+
+          // The listener for the first rejection handles every odd one after it.
+          // Their 'unhandledRejection' has not fired, so they get neither event.
+          // b2 is handled after this batch reported it: one 'rejectionHandled'.
+          seen = [];
+          const batch = [];
+          onUnhandled = reason => {
+            if (reason === "b0") for (let i = 1; i < 600; i += 2) batch[i].catch(noop);
+            if (reason === "b2") Bun.gc(true);
+            if (reason === "b4") batch[2].catch(noop);
+          };
+          for (let i = 0; i < 600; i++) batch.push(Promise.reject("b" + i));
+          await drain();
+          result.handledByListener = { seen, rejectionHandled };
+
+          // Handled after the report, while other rejections wait in the queue:
+          // one 'rejectionHandled' each (b2 already had its own).
+          seen = [];
+          onUnhandled = noop;
+          for (let i = 0; i < 300; i++) Promise.reject("q" + i);
+          for (let i = 0; i < 600; i += 2) batch[i].catch(noop);
+          await drain();
+          result.handledAfterReport = { seen, rejectionHandled };
+
+          console.log(JSON.stringify(result));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      oneStepLate: {
+        seen: Array.from({ length: Math.ceil(1000 / 7) }, (_, i) => i * 7),
+        rejectionHandled: 0,
+        queuedAlive: Math.ceil(1000 / 7),
+      },
+      handledAreReleased: true,
+      oldestFirst: { seen: ["o49", "o99", "o149", "o199"], rejectionHandled: 0 },
+      newestFirst: { seen: ["n0", "n50"], rejectionHandled: 0 },
+      few: { seen: ["f1", "f2", "f5"], rejectionHandled: 0 },
+      regrown: { seen: Array.from({ length: 299 }, (_, i) => "r" + i).filter(r => r !== "r5"), rejectionHandled: 0 },
+      handledByListener: { seen: Array.from({ length: 300 }, (_, i) => "b" + i * 2), rejectionHandled: 1 },
+      handledAfterReport: { seen: Array.from({ length: 300 }, (_, i) => "q" + i), rejectionHandled: 300 },
+    });
+    expect(exitCode).toBe(0);
+  });
+
   it("aborts when the uncaughtException handler throws", async () => {
     const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtExceptionAbort.js")], {
       stderr: "pipe",
@@ -1810,6 +2374,187 @@ it("process.hasUncaughtExceptionCaptureCallback", () => {
   process.setUncaughtExceptionCaptureCallback(() => {});
   expect(process.hasUncaughtExceptionCaptureCallback()).toBe(true);
   process.setUncaughtExceptionCaptureCallback(null);
+});
+
+// Attaching a handler to a rejected promise used to search the rejections that
+// were not reported yet one by one (and shift the ones behind the hit), so
+// handling N of them cost O(N^2). Not concurrent: these measure time.
+describe("handling N rejected promises is O(N)", () => {
+  const N = 100_000;
+  // Measured for N = 100,000 (oldest first / from the listener):
+  //   before: release 23,900 / 4,600 ms, debug+ASAN ~55,000 / ~85,000 ms
+  //   after:  release 7 / 6 ms, debug+ASAN 350 / 240 ms
+  const limit = isDebug || isASAN ? 5_000 : 1_000;
+  // A machine too slow for `limit` still passes if the calls stay within 20x of
+  // `baseline`: the same calls again, on promises that are handled by then, so
+  // none of them reaches the rejection tracker. Measured ms / baseline: 0.4 to
+  // 1.2 after, 190 and up before.
+  const expectLinear = ({ ms, baseline }) => expect(ms).toBeLessThan(Math.max(limit, 20 * baseline));
+  // A debug build needs about 2 s to start and make the promises, too close to
+  // the 5 s default. The spawn timeout turns a quadratic run into a failure.
+  const timeout = 30_000;
+
+  async function run(script) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: {
+        ...bunEnv,
+        // The ASAN lane sets these. They slow every promise call several times over.
+        BUN_JSC_validateExceptionChecks: undefined,
+        BUN_JSC_dumpSimulatedThrows: undefined,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 20_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode, signalCode: proc.signalCode }).toEqual({ stderr: "", exitCode: 0, signalCode: null });
+    return JSON.parse(stdout);
+  }
+
+  it(
+    "while they wait to be reported, oldest first (the order Promise.allSettled attaches handlers)",
+    async () => {
+      const { ms, baseline, ...events } = await run(`
+      const noop = () => {};
+      const events = { unhandledRejection: 0, rejectionHandled: 0 };
+      process.on("unhandledRejection", () => events.unhandledRejection++);
+      process.on("rejectionHandled", () => events.rejectionHandled++);
+      const promises = [];
+      for (let i = 0; i < ${N}; i++) promises.push(Promise.reject(i));
+      let start = performance.now();
+      for (const promise of promises) promise.catch(noop);
+      const ms = performance.now() - start;
+      start = performance.now();
+      for (const promise of promises) promise.catch(noop);
+      const baseline = performance.now() - start;
+      for (let i = 0; i < 3; i++) await new Promise(r => setImmediate(r));
+      console.log(JSON.stringify({ ms, baseline, ...events }));
+    `);
+      expect(events).toEqual({ unhandledRejection: 0, rejectionHandled: 0 });
+      expectLinear({ ms, baseline });
+    },
+    timeout,
+  );
+
+  it(
+    "while they wait to be reported, in no particular order",
+    async () => {
+      const { ms, baseline, ...events } = await run(`
+      const noop = () => {};
+      const events = { unhandledRejection: 0, rejectionHandled: 0 };
+      process.on("unhandledRejection", () => events.unhandledRejection++);
+      process.on("rejectionHandled", () => events.rejectionHandled++);
+      const promises = [];
+      for (let i = 0; i < ${N}; i++) promises.push(Promise.reject(i));
+      // 7919 is coprime to N: every promise once, none next to the one before.
+      let start = performance.now();
+      for (let i = 0; i < ${N}; i++) promises[(i * 7919) % ${N}].catch(noop);
+      const ms = performance.now() - start;
+      start = performance.now();
+      for (let i = 0; i < ${N}; i++) promises[(i * 7919) % ${N}].catch(noop);
+      const baseline = performance.now() - start;
+      for (let i = 0; i < 3; i++) await new Promise(r => setImmediate(r));
+      console.log(JSON.stringify({ ms, baseline, ...events }));
+    `);
+      expect(events).toEqual({ unhandledRejection: 0, rejectionHandled: 0 });
+      expectLinear({ ms, baseline });
+    },
+    timeout,
+  );
+
+  // Nanoseconds per promise must not depend on how many are rejected in one turn.
+  // Measured, release: batches of 17 / 64 / 300 take 69 / 64 / 64 (before: 85 / 83 / 93).
+  // The allSettled loop takes 297 / 292 at N = 100 / 1,000 (before: 310 / 2,017).
+  const perPromise = `
+    const noop = () => {};
+    const total = ${isDebug || isASAN ? 6_000 : 240_000};
+    async function bestOf3(round) {
+      let best = Infinity;
+      for (let i = 0; i < 3; i++) {
+        const start = performance.now();
+        await round();
+        best = Math.min(best, performance.now() - start);
+      }
+      return (best * 1e6) / total;
+    }
+  `;
+
+  it(
+    "in batches of 17 to 300, oldest first",
+    async () => {
+      const ns = await run(`
+      ${perPromise}
+      const ns = {};
+      for (const size of [17, 64, 300]) {
+        ns[size] = await bestOf3(async () => {
+          for (let done = 0; done < total; done += size) {
+            const batch = [];
+            for (let i = 0; i < size; i++) batch.push(Promise.reject(i));
+            for (const promise of batch) promise.catch(noop);
+            await 0;
+          }
+        });
+      }
+      console.log(JSON.stringify(ns));
+    `);
+      expect(ns[64] / ns[17]).toBeLessThan(3);
+      expect(ns[300] / ns[17]).toBeLessThan(3);
+    },
+    timeout,
+  );
+
+  it(
+    "in a loop of Promise.allSettled over 100 and over 1,000 calls that throw",
+    async () => {
+      const ns = await run(`
+      ${perPromise}
+      const error = new Error("x");
+      async function fails() { throw error; }
+      const ns = {};
+      for (const size of [100, 1000]) {
+        const calls = Array.from({ length: size });
+        ns[size] = await bestOf3(async () => {
+          for (let done = 0; done < total; done += size) await Promise.allSettled(calls.map(fails));
+        });
+      }
+      console.log(JSON.stringify(ns));
+    `);
+      expect(ns[1000] / ns[100]).toBeLessThan(3);
+    },
+    timeout,
+  );
+
+  it(
+    "while they are being reported, from the 'unhandledRejection' listener",
+    async () => {
+      const { ms, baseline, ...events } = await run(`
+      const noop = () => {};
+      const events = { unhandledRejection: 0, rejectionHandled: 0 };
+      const promises = [];
+      let ms, baseline;
+      process.on("unhandledRejection", () => {
+        if (++events.unhandledRejection > 1) return;
+        // The first report. The other N - 1 promises are in the batch being
+        // reported. Newest first was the longest walk of that batch.
+        let start = performance.now();
+        for (let i = ${N} - 1; i > 0; i--) promises[i].catch(noop);
+        ms = performance.now() - start;
+        start = performance.now();
+        for (let i = ${N} - 1; i > 0; i--) promises[i].catch(noop);
+        baseline = performance.now() - start;
+      });
+      process.on("rejectionHandled", () => events.rejectionHandled++);
+      for (let i = 0; i < ${N}; i++) promises.push(Promise.reject(i));
+      for (let i = 0; i < 3; i++) await new Promise(r => setImmediate(r));
+      console.log(JSON.stringify({ ms, baseline, ...events }));
+    `);
+      expect(events).toEqual({ unhandledRejection: 1, rejectionHandled: 0 });
+      expectLinear({ ms, baseline });
+    },
+    timeout,
+  );
 });
 
 it("process.execArgv", async () => {
@@ -2186,6 +2931,56 @@ describe.concurrent("process.exit()", () => {
       exitCode: 42,
     });
   });
+
+  it("throws a TypeError with a message when process.reallyExit is not callable", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const results = [];
+         for (const value of ["str", undefined, {}]) {
+           process.reallyExit = value;
+           try {
+             process.exit(0);
+             results.push("did not throw");
+           } catch (e) {
+             results.push({ isTypeError: e instanceof TypeError, message: e.message });
+           }
+         }
+         console.log(JSON.stringify(results));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const expected = { isTypeError: true, message: "process.reallyExit is not a function" };
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify([expected, expected, expected]) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("calls process.reallyExit as a method of process", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const reallyExit = process.reallyExit;
+         process.reallyExit = function (code) {
+           require("node:fs").writeSync(1, "this is process: " + (this === process) + "\\n");
+           return reallyExit.call(process, code);
+         };
+         process.exit(3);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "this is process: true\n", stderr: "", exitCode: 3 });
+  });
 });
 
 it("process.memoryUsage.arrayBuffers", () => {
@@ -2228,8 +3023,8 @@ it.each(["stdin", "stdout", "stderr"])("%s stream accessor should handle excepti
 });
 
 it("process.versions", () => {
-  expect(process.versions.node).toEqual("26.3.0");
-  expect(process.versions.v8).toEqual("14.6.202.34-node.20");
+  expect(process.versions.node).toEqual("26.12.1");
+  expect(process.versions.v8).toEqual("14.6.202.34-node.40");
   expect(process.versions.napi).toEqual("10");
   expect(process.versions.modules).toEqual("147");
 });
@@ -2606,21 +3401,18 @@ it("_rawDebug never throws when fd 2 is closed", async () => {
   expect(exitCode).toBe(0);
 });
 
-it.skipIf(isWindows || process.getuid?.() === 0)(
-  "process.initgroups passes an unknown string user straight to initgroups(3)",
-  () => {
-    // Node hands string users to initgroups(3) as-is (no getpwnam pre-resolve),
-    // so as non-root we see the syscall's EPERM, not ERR_UNKNOWN_CREDENTIAL.
-    let err;
-    try {
-      process.initgroups("zz_no_user_zz", 0);
-    } catch (e) {
-      err = e;
-    }
-    expect(err?.code).toBe("EPERM");
-    expect(err?.syscall).toBe("initgroups");
-  },
-);
+it.skipIf(isWindows || isRoot)("process.initgroups passes an unknown string user straight to initgroups(3)", () => {
+  // Node hands string users to initgroups(3) as-is (no getpwnam pre-resolve),
+  // so as non-root we see the syscall's EPERM, not ERR_UNKNOWN_CREDENTIAL.
+  let err;
+  try {
+    process.initgroups("zz_no_user_zz", 0);
+  } catch (e) {
+    err = e;
+  }
+  expect(err?.code).toBe("EPERM");
+  expect(err?.syscall).toBe("initgroups");
+});
 
 it.skipIf(isWindows)("process.initgroups pre-resolves a numeric uid through passwd", () => {
   // Numeric users go through getpwuid_r first, so an unknown uid surfaces
@@ -2816,4 +3608,70 @@ it("no socket close handler runs after the 'exit' event", async () => {
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(stdout).toBe("exit\n");
   expect(exitCode).toBe(0);
+});
+
+it("native functions that define a property on `this` throw a TypeError when the receiver rejects it", async () => {
+  const src = `
+    // (module (type $s (struct (field (mut i32))))
+    //   (func (export "mk") (result (ref null $s)) struct.new_default $s))
+    const bytes = new Uint8Array([
+      0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+      0x01, 0x0a, 0x02, 0x5f, 0x01, 0x7f, 0x01, 0x60, 0x00, 0x01, 0x63, 0x00,
+      0x03, 0x02, 0x01, 0x01,
+      0x07, 0x06, 0x01, 0x02, 0x6d, 0x6b, 0x00, 0x00,
+      0x0a, 0x07, 0x01, 0x05, 0x00, 0xfb, 0x01, 0x00, 0x0b,
+    ]);
+    const wasmGCReference = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.mk();
+    const requirePrototype = Object.getPrototypeOf(require);
+    const natives = {
+      ppid: o => Object.getOwnPropertyDescriptor(process, "ppid").set.call(o, 7),
+      cache: o => Object.getOwnPropertyDescriptor(requirePrototype, "cache").set.call(o, 7),
+      extensions: o => Object.getOwnPropertyDescriptor(requirePrototype, "extensions").set.call(o, 7),
+      StringDecoder: o => require("node:string_decoder").StringDecoder.call(o, "utf8"),
+      on: o => process.on.call(o, "x", () => {}),
+    };
+    for (const [name, native] of Object.entries(natives)) {
+      for (const receiver of [wasmGCReference, Object.freeze({})]) {
+        try {
+          native(receiver);
+          console.log(name, "no error");
+        } catch (e) {
+          console.log(name, e.constructor.name);
+        }
+      }
+    }
+    process.ppid = "assigned";
+    require.cache = "assigned";
+    console.log(process.ppid, require.cache);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.split("\n"), stderr, exitCode }).toEqual({
+    stdout: [
+      ...["ppid", "cache", "extensions", "StringDecoder", "on"].flatMap(name => Array(2).fill(name + " TypeError")),
+      "assigned assigned",
+      "",
+    ],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it("the EventEmitter methods that node:process exports act on process", async () => {
+  const ns = await import("node:process");
+  const { emit, listenerCount } = ns;
+  const received = [];
+  const listener = value => received.push(value);
+  expect(ns.on("namespace-event", listener)).toBe(process);
+  expect(process.listeners("namespace-event")).toEqual([listener]);
+  expect(listenerCount("namespace-event")).toBe(1);
+  expect(emit("namespace-event", "hello")).toBe(true);
+  expect(received).toEqual(["hello"]);
+  expect(ns.off("namespace-event", listener)).toBe(process);
+  expect(process.listenerCount("namespace-event")).toBe(0);
 });

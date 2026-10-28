@@ -1,0 +1,23 @@
+Number.isNaN: TypeError, then false
+Number.isInteger: TypeError, then true
+Math.abs: TypeError, then 1
+Math.max: TypeError, then 2
+Object.keys: TypeError, then a
+Object.is: TypeError, then true
+Array.isArray: TypeError, then true
+Array.from: TypeError, then a,b
+String.fromCharCode: TypeError, then A
+Reflect.ownKeys: TypeError, then a
+BigInt.asIntN: TypeError, then 1
+Atomics.add: TypeError, then 0
+ArrayBuffer.isView: TypeError, then false
+Number.parseFloat: no error, then 123
+JSON.stringify: no error, then 123
+Date.now: no error, then 123
+Map.groupBy: no error, then 123
+Error.captureStackTrace: no error, then 123
+isNaN: no error, then 123
+parseInt: no error, then 123
+Math.random: no error, then 123
+Math.half: no error, then 123
+Array.range: no error, then 123

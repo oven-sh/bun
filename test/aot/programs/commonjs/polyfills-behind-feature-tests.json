@@ -1,0 +1,7 @@
+{
+  "entryPoints": [
+    "./name-declared-by-eval.cjs",
+    "./random-polyfill.cjs",
+    "./shadowed-polyfill.cjs"
+  ]
+}

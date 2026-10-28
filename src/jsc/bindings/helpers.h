@@ -76,15 +76,14 @@ static WTF::String tryConvertValidUTF8ToString(std::span<const unsigned char> by
 
 static WTF::String convertUTF8ToString(std::span<const unsigned char> bytes)
 {
+    if (!bytes.empty() && simdutf::validate_utf8(reinterpret_cast<const char*>(bytes.data()), bytes.size())) [[likely]]
+        return tryConvertValidUTF8ToString(bytes);
+
     // fromUTF8ReplacingInvalidSequences CRASH()es past a ~2^30-byte input
     // (it sizes an intermediate Vector<char16_t> by byte count).
-    if (WTF::isValidCapacityForVector<char16_t>(bytes.size())) [[likely]]
-        return WTF::String::fromUTF8ReplacingInvalidSequences(bytes);
-
-    const char* data = reinterpret_cast<const char*>(bytes.data());
-    if (!simdutf::validate_utf8(data, bytes.size())) [[unlikely]]
+    if (!WTF::isValidCapacityForVector<char16_t>(bytes.size())) [[unlikely]]
         return {};
-    return tryConvertValidUTF8ToString(bytes);
+    return WTF::String::fromUTF8ReplacingInvalidSequences(bytes);
 }
 
 // `bytes` must be valid UTF-8. Returns null if the allocation fails or the result exceeds the max string length.

@@ -1,0 +1,14 @@
+Array.prototype.push, its own method: throws TypeError
+Array.prototype.hasOwnProperty, inherited: throws TypeError
+URLSearchParams.prototype.size, an accessor: throws TypeError
+Symbol.iterator, a constant: throws TypeError
+Promise.resolve, a static method: throws TypeError
+Map.prototype.get, a fixed member of an extensible prototype: throws TypeError
+Array.prototype.added, a name of the program's own: spied, calls 1
+push of one array: spied, calls 1
+get of one URLSearchParams: spied, calls 1
+Date.prototype.getTime: throws TypeError
+Date.prototype.toString, a member that packages replace: spied, calls 1
+Error.prototype.toString, on a prototype that is not locked: spied, calls 1
+Math.max: throws TypeError
+1 1 1 2

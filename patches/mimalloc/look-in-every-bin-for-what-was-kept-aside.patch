@@ -1,0 +1,38 @@
+A request that looks in what was kept aside looks in the chunks of every bin.
+
+The arenas give each chunk the bin of the first thing that is placed in it, and
+a page of one slice is never placed in a chunk of another bin, to reduce
+fragmentation. A piece that the embedder keeps aside (mi_keep_piece_aside()) has
+sixteen slices, so what it leaves when it is given back lies in a chunk where no
+small page is looked for: a request for a small block that cannot fail had the
+embedder give back piece after piece and found none of them.
+
+Where the search has found nothing and the request is one that looks again
+(ask-who-may-take-address-space.patch), it goes through the chunks of all bins.
+A search that finds room runs the same instructions as before, and no other
+request looks anywhere else than before.
+
+--- a/src/bitmap.c
++++ b/src/bitmap.c
+@@ -1814,7 +1814,8 @@
+   mi_assert_internal(MI_BFIELD_BITS >= MI_BCHUNK_FIELDS);
+   const mi_bfield_t cmap_mask  = mi_bfield_mask(cmap_max_count,0);
+   const size_t cmap_cycle      = cmap_acc+1;
+-  const mi_chunkbin_t bbin = mi_chunkbin_of(n);
++  mi_chunkbin_t bbin = mi_chunkbin_of(n);
++again: ;
+   // visit each cmap entry
+   size_t cmap_idx = 0;
+   mi_bfield_cycle_iterate(cmap_mask, tseq, cmap_cycle, cmap_idx, X)
+@@ -1884,6 +1885,11 @@
+     }
+   }
+   mi_bfield_cycle_iterate_end(X);
++  // what the embedder has let go of for a request that cannot fail lies in a chunk of the bin of the piece: such a request goes on to look in the chunks of every bin
++  if (bbin != MI_CBIN_HUGE && _mi_is_looking_in_room_kept_aside()) {
++    bbin = MI_CBIN_HUGE;
++    goto again;
++  }
+   return false;
+ }
+ 

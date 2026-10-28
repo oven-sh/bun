@@ -2102,7 +2102,7 @@ pub(crate) fn bind_row(
                             .then(|| version.npm().version.head.head.range.left.version);
                             if let Some(exact) = exact
                                 && (!needs_extended_manifest
-                                    || manifest.pkg.has_extended_manifest
+                                    || manifest.pkg.has_extended_manifest()
                                     || manifest.should_exclude_from_age_filter(excludes))
                                 && !picks_latest_tag(
                                     this,

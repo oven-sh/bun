@@ -1,0 +1,24 @@
+[package]
+name = "bun_executable"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+test = false
+bench = false
+doctest = false
+
+[features]
+default = ["aot"]
+aot = ["dep:bun_aot"]
+# The functions that `bun_aot_interface` declares, in a Bun without the compiler.
+without_aot = ["dep:bun_aot_absent"]
+
+[dependencies]
+bun_aot = { workspace = true, features = ["linked_names"], optional = true }
+bun_aot_absent = { workspace = true, optional = true }
+bun_runtime = { path = "../runtime" }
+
+[lints]
+workspace = true

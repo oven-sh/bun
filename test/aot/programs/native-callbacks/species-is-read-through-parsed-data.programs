@@ -1,0 +1,212 @@
+//// species-constructor-runs-for-map-kept-in-a-parsed-array.ts
+// No getter of its own: Array's Symbol.species answers the receiver's class, and map constructs it.
+const log: string[] = [];
+class Mine extends Array<number> {
+  constructor(length: number) {
+    super(length);
+    log.push("constructed " + length);
+  }
+}
+const held: any[] = JSON.parse("[]");
+held.push(Array.prototype.map, new Mine(2));
+log.push(String(held[0].call(held[1], (one: number) => one) instanceof Mine));
+console.log(log.join("; "));
+//// species-getter-runs-for-a-typed-array-slice-kept-in-a-parsed-array.ts
+// Uint8Array.prototype.slice and its receiver both come out of an array that JSON.parse made.
+const log: string[] = [];
+class Mine extends Uint8Array {
+  static get [Symbol.species](): any {
+    log.push("getter");
+    return Uint8Array;
+  }
+}
+const held: any[] = JSON.parse("[]");
+held.push(Uint8Array.prototype.slice, new Mine(3));
+log.push(String(held[0].call(held[1], 1).length));
+console.log(log.join("; "));
+//// species-getter-runs-for-an-array-buffer-slice-kept-in-a-parsed-array.ts
+// ArrayBuffer.prototype.slice and its receiver both come out of an array that JSON.parse made.
+const log: string[] = [];
+class Mine extends ArrayBuffer {
+  static get [Symbol.species](): any {
+    log.push("getter");
+    return ArrayBuffer;
+  }
+}
+const held: any[] = JSON.parse("[]");
+held.push(ArrayBuffer.prototype.slice, new Mine(8));
+log.push(String(held[0].call(held[1], 2).byteLength));
+console.log(log.join("; "));
+//// species-getter-runs-for-concat-kept-in-a-parsed-array.ts
+// Array.prototype.concat and its receiver both come out of an array that JSON.parse made.
+const log: string[] = [];
+class Mine extends Array<number> {
+  static get [Symbol.species](): any {
+    log.push("getter");
+    return Array;
+  }
+}
+const held: any[] = JSON.parse("[]");
+held.push(Array.prototype.concat, new Mine());
+log.push(String(held[0].call(held[1], [1]).length));
+console.log(log.join("; "));
+//// species-getter-runs-for-filter-kept-in-a-parsed-array.ts
+// Array.prototype.filter and its receiver both come out of an array that JSON.parse made.
+const log: string[] = [];
+class Mine extends Array<number> {
+  static get [Symbol.species](): any {
+    log.push("getter");
+    return Array;
+  }
+}
+const held: any[] = JSON.parse("[]");
+held.push(Array.prototype.filter, new Mine());
+log.push(String(held[0].call(held[1], () => true).length));
+console.log(log.join("; "));
+//// species-getter-runs-for-finally-kept-in-a-parsed-array.ts
+// Promise.prototype.finally and its receiver both come out of an array that JSON.parse made.
+const log: string[] = [];
+class Mine<T> extends Promise<T> {
+  static get [Symbol.species](): any {
+    log.push("getter");
+    return Promise;
+  }
+}
+const held: any[] = JSON.parse("[]");
+held.push(Promise.prototype.finally, Mine.resolve(1));
+log.push(String(await held[0].call(held[1], () => {})));
+console.log(log.join("; "));
+//// species-getter-runs-for-flat-kept-in-a-parsed-array.ts
+// Array.prototype.flat and its receiver both come out of an array that JSON.parse made.
+const log: string[] = [];
+class Mine extends Array<number> {
+  static get [Symbol.species](): any {
+    log.push("getter");
+    return Array;
+  }
+}
+const held: any[] = JSON.parse("[]");
+held.push(Array.prototype.flat, new Mine());
+log.push(String(held[0].call(held[1], 1).length));
+console.log(log.join("; "));
+//// species-getter-runs-for-flat-map-kept-in-a-parsed-array.ts
+// Array.prototype.flatMap and its receiver both come out of an array that JSON.parse made.
+const log: string[] = [];
+class Mine extends Array<number> {
+  static get [Symbol.species](): any {
+    log.push("getter");
+    return Array;
+  }
+}
+const held: any[] = JSON.parse("[]");
+held.push(Array.prototype.flatMap, new Mine());
+log.push(String(held[0].call(held[1], (one: number) => [one]).length));
+console.log(log.join("; "));
+//// species-getter-runs-for-map-applied-by-reflect.ts
+// Reflect.apply gets map and its receiver out of the parsed array.
+const log: string[] = [];
+class Mine extends Array<number> {
+  static get [Symbol.species](): any {
+    log.push("getter");
+    return Array;
+  }
+}
+const held: any[] = JSON.parse("[]");
+held.push(Array.prototype.map, new Mine());
+const made: any = Reflect.apply(held[0], held[1], [(one: number) => one]);
+log.push(String(made.length));
+console.log(log.join("; "));
+//// species-getter-runs-for-map-called-without-call.ts
+// map is stored on the parsed value under a name and called as its method.
+const log: string[] = [];
+class Mine extends Array<number> {
+  static get [Symbol.species](): any {
+    log.push("getter");
+    return Array;
+  }
+}
+const held: any = JSON.parse("{}");
+held.list = new Mine();
+held.list.walk = held.walk = Array.prototype.map;
+log.push(String(held.list.walk((one: number) => one).length));
+console.log(log.join("; "));
+//// species-getter-runs-for-map-kept-in-a-parsed-array.ts
+// Array.prototype.map and its receiver both come out of an array that JSON.parse made. map still reads Symbol.species from the receiver's class.
+const log: string[] = [];
+class Mine extends Array<number> {
+  static get [Symbol.species](): any {
+    log.push("getter");
+    return Array;
+  }
+}
+const held: any[] = JSON.parse("[]");
+held.push(Array.prototype.map, new Mine());
+log.push(String(held[0].call(held[1], (one: number) => one).length));
+console.log(log.join("; "));
+//// species-getter-runs-for-map-kept-in-a-parsed-value.js
+// The same without a type: nothing says what JSON.parse answers.
+const log = [];
+class Mine extends Array {
+  static get [Symbol.species]() {
+    log.push("getter");
+    return Array;
+  }
+}
+const held = JSON.parse("[]");
+held.push(Array.prototype.map, new Mine());
+log.push(String(held[0].call(held[1], one => one).length));
+console.log(log.join("; "));
+//// species-getter-runs-for-slice-kept-in-a-parsed-array.ts
+// Array.prototype.slice and its receiver both come out of an array that JSON.parse made.
+const log: string[] = [];
+class Mine extends Array<number> {
+  static get [Symbol.species](): any {
+    log.push("getter");
+    return Array;
+  }
+}
+const held: any[] = JSON.parse("[]");
+held.push(Array.prototype.slice, new Mine());
+log.push(String(held[0].call(held[1], 0).length));
+console.log(log.join("; "));
+//// species-getter-runs-for-splice-kept-in-a-parsed-array.ts
+// Array.prototype.splice and its receiver both come out of an array that JSON.parse made.
+const log: string[] = [];
+class Mine extends Array<number> {
+  static get [Symbol.species](): any {
+    log.push("getter");
+    return Array;
+  }
+}
+const held: any[] = JSON.parse("[]");
+held.push(Array.prototype.splice, new Mine());
+log.push(String(held[0].call(held[1], 0, 0).length));
+console.log(log.join("; "));
+//// species-getter-runs-for-split-kept-in-a-parsed-array.ts
+// RegExp.prototype[Symbol.split] and its receiver both come out of an array that JSON.parse made.
+const log: string[] = [];
+class Mine extends RegExp {
+  static get [Symbol.species](): any {
+    log.push("getter");
+    return RegExp;
+  }
+}
+const held: any[] = JSON.parse("[]");
+held.push(RegExp.prototype[Symbol.split], new Mine(","));
+log.push(held[0].call(held[1], "a,b").join("+"));
+console.log(log.join("; "));
+//// species-getter-runs-for-then-kept-in-a-parsed-array.ts
+// Promise.prototype.then and its receiver both come out of an array that JSON.parse made.
+const log: string[] = [];
+class Mine<T> extends Promise<T> {
+  static get [Symbol.species](): any {
+    log.push("getter");
+    return Promise;
+  }
+}
+const held: any[] = JSON.parse("[]");
+held.push(Promise.prototype.then, Mine.resolve(1));
+const next = held[0].call(held[1], (one: number) => one + 1);
+log.push(String(next instanceof Mine));
+log.push(String(await next));
+console.log(log.join("; "));

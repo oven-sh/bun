@@ -970,9 +970,7 @@ mod _impl {
                         // `sdl_data` is `[c_char; N]` (signedness varies by platform);
                         // reinterpret as bytes — same width, same provenance.
                         let dl = unsafe { &*ll_addr.cast::<c::sockaddr_dl>() };
-                        let raw = &dl.sdl_data[dl.sdl_nlen as usize..];
-                        // c_char and u8 are both Pod; bytemuck statically checks the layout.
-                        bytemuck::cast_slice::<_, u8>(raw)
+                        bun_core::slice_as_bytes(&dl.sdl_data[dl.sdl_nlen as usize..])
                     };
                     if addr_data.len() < 6 {
                         let mac = b"00:00:00:00:00:00";

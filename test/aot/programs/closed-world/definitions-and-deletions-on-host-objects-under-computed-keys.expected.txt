@@ -1,0 +1,15 @@
+define process.config: defined
+define process.features: defined
+define process.release: TypeError
+define process.versions: TypeError
+define process.allowedNodeEnvironmentFlags: defined
+define process.aNameOfMyOwn: defined
+what a read that names the member finds: mine [object Object] mine
+delete process.config: true
+delete process.features: true
+delete process.release: TypeError
+delete process.versions: TypeError
+delete process.allowedNodeEnvironmentFlags: true
+delete process.aNameOfMyOwn: true
+after the deletions: undefined object undefined
+the members that a deletion made: string number string

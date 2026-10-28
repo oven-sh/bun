@@ -1,0 +1,10 @@
+{
+  "entryPoints": [
+    "./lazy.js",
+    "./library.js"
+  ],
+  "env": {
+    "BUN_JSC_crashIfInterpreterIsUsed": "1"
+  },
+  "skipInShell": "it loads modules by name through the module loader of the runtime, which the jsc shell does not have"
+}

@@ -1,0 +1,14 @@
+{
+  "entryPoints": [
+    "./part.js",
+    "./part/index.js",
+    "./typed.ts",
+    "./typed/index.ts",
+    "./node_modules/driver/start.js",
+    "./node_modules/driver/lib.js",
+    "./node_modules/driver/lib/index.js",
+    "./node_modules/closed/start.js",
+    "./node_modules/closed/feature.js"
+  ],
+  "skipInShell": "it needs Bun's CommonJS modules"
+}

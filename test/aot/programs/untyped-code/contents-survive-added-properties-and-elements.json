@@ -1,0 +1,3 @@
+{
+  "skipWithASAN": "it takes longer than the test has there"
+}

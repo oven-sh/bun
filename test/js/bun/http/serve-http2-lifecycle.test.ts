@@ -298,14 +298,17 @@ describe("Bun.serve http2 lifecycle", () => {
         );
       }
     };
-    const raw = await RawH2.connect(fx.port, false);
-    try {
-      send(raw, 1, Buffer.concat([hpackLiteral(baseHeaders("/hello")), field(65536 - 3)]));
-      expect((await raw.body(1)).toString()).toBe("hello");
-      send(raw, 3, Buffer.concat([hpackLiteral(baseHeaders("/hello")), field(65536 - 3 + 1)]));
-      expect((await raw.goaway()).code).toBe(11);
-    } finally {
-      raw.close();
+    // One symbol too many, and enough of them for the decoder to fill its output to the last byte first.
+    for (const tooLong of [65536 - 3 + 1, 65600]) {
+      const raw = await RawH2.connect(fx.port, false);
+      try {
+        send(raw, 1, Buffer.concat([hpackLiteral(baseHeaders("/hello")), field(65536 - 3)]));
+        expect((await raw.body(1)).toString()).toBe("hello");
+        send(raw, 3, Buffer.concat([hpackLiteral(baseHeaders("/hello")), field(tooLong)]));
+        expect((await raw.goaway()).code).toBe(11);
+      } finally {
+        raw.close();
+      }
     }
   });
 

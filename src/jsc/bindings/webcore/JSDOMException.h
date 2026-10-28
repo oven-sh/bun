@@ -71,15 +71,23 @@ public:
     JSDOMGlobalObject* globalObject() const { return uncheckedDowncast<JSDOMGlobalObject>(JSC::JSNonFinalObject::globalObject()); }
 
     // Installs `stack` as an own property in place of the captured frames.
-    void setStackString(JSC::VM&, WTF::String&&);
+    void setStackValue(JSC::VM&, JSC::JSValue);
 
-    // Shadows ErrorInstance's. JSVMClientData calls it for this subspace after each collection.
-    void reconcileWeakReferencesAtGCEnd(JSC::VM&, JSC::CollectionScope);
+    // ErrorInstance::stackWithHeader() reads name/message as data properties, and ours are prototype
+    // accessors. Call before anything that may make ErrorInstance materialize the stack.
+    static void willMaterializeErrorInfo(JSC::JSGlobalObject*, JSC::ErrorInstance*);
 
-    // An own data property wins over the wrapped impl, as it does for a plain Error. Never runs JS or allocates GC cells.
-    WTF::String displayName(JSC::VM&) const;
-    WTF::String displayMessage(JSC::VM&) const;
-    WTF::String displayHeader(JSC::VM&) const;
+    // An own primitive data property wins over the wrapped impl, as it does for a plain Error.
+    // Runs no JS. Leaves no exception pending but a termination.
+    WTF::String displayName(JSC::JSGlobalObject*);
+    WTF::String displayMessage(JSC::JSGlobalObject*);
+    WTF::String displayHeader(JSC::JSGlobalObject*);
+
+    static bool getOwnPropertySlot(JSC::JSObject*, JSC::JSGlobalObject*, JSC::PropertyName, JSC::PropertySlot&);
+    static void getOwnSpecialPropertyNames(JSC::JSObject*, JSC::JSGlobalObject*, JSC::PropertyNameArrayBuilder&, JSC::DontEnumPropertiesMode);
+    static bool defineOwnProperty(JSC::JSObject*, JSC::JSGlobalObject*, JSC::PropertyName, const JSC::PropertyDescriptor&, bool shouldThrow);
+    static bool put(JSC::JSCell*, JSC::JSGlobalObject*, JSC::PropertyName, JSC::JSValue, JSC::PutPropertySlot&);
+    static bool deleteProperty(JSC::JSCell*, JSC::JSGlobalObject*, JSC::PropertyName, JSC::DeletePropertySlot&);
 
 protected:
     JSDOMException(JSC::Structure*, JSDOMGlobalObject&, Ref<DOMException>&&);
@@ -87,7 +95,8 @@ protected:
     void finishCreation(JSC::VM&);
 
 private:
-    WTF::String ownStringOr(JSC::VM&, JSC::PropertyName, WTF::String&& fallback) const;
+    WTF::String ownStringOr(JSC::JSGlobalObject*, JSC::PropertyName, WTF::String&& fallback);
+    void prependStackHeaderIfFramesOnly(JSC::JSGlobalObject*);
 
     const Ref<DOMException> m_wrapped;
 };

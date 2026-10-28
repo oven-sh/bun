@@ -499,8 +499,8 @@ static String computeErrorInfoWithoutPrepareStackTrace(
     WTF::String message;
 
     if (auto* domException = dynamicDowncast<WebCore::JSDOMException>(errorInstance)) {
-        name = domException->displayName(vm);
-        message = domException->displayMessage(vm);
+        name = domException->displayName(lexicalGlobalObject);
+        message = domException->displayMessage(lexicalGlobalObject);
     } else if (auto* instance = dynamicDowncast<ErrorInstance>(errorInstance)) {
         name = instance->sanitizedNameString(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, {});

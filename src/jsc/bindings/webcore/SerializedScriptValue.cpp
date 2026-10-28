@@ -3621,8 +3621,9 @@ private:
             return JSValue();
         auto exception = DOMException::create(message->string(), name->string());
         JSValue wrapper = getJSValue(exception);
-        if (!stack.isNull())
-            uncheckedDowncast<JSDOMException>(asObject(wrapper))->setStackString(m_lexicalGlobalObject->vm(), WTF::move(stack));
+        // Never the frames the wrapper just captured here: undefined when the original had no string stack.
+        auto& vm = m_lexicalGlobalObject->vm();
+        uncheckedDowncast<JSDOMException>(asObject(wrapper))->setStackValue(vm, stack.isNull() ? jsUndefined() : jsString(vm, WTF::move(stack)));
         addTerminalToObjectPool(wrapper);
         return wrapper;
     }

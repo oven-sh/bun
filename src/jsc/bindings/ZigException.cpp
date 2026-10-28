@@ -543,7 +543,7 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
     }
 
     if (auto* domException = dynamicDowncast<WebCore::JSDOMException>(err))
-        except.name = Bun::toStringRef(domException->displayName(vm));
+        except.name = Bun::toStringRef(domException->displayName(global));
     else
         except.name = Bun::toStringRef(err->sanitizedNameString(global));
     if (!scope.clearExceptionExceptTermination()) [[unlikely]] {

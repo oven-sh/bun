@@ -35,6 +35,7 @@
 #include "JSDOMWrapperCache.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
+#include "ZigGlobalObject.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
 
@@ -239,35 +240,78 @@ void JSDOMException::finishCreation(VM& vm)
     Base::finishCreationForEmbedderError(vm);
     ASSERT(inherits(info()));
 
-    // ErrorInstance leaves .stack unset on an empty trace; other engines still give the header line.
+    // ErrorInstance leaves .stack unset on an empty trace; other engines still give the header line, made when it is read.
     auto* trace = stackTrace();
-    if (!trace || trace->isEmpty())
-        setStackString(vm, displayHeader(vm));
+    if (!trace || trace->isEmpty()) {
+        auto* realm = defaultGlobalObject(globalObject());
+        putDirectCustomAccessor(vm, vm.propertyNames->stack, realm->m_lazyStackCustomGetterSetter.get(realm), PropertyAttribute::DontEnum | PropertyAttribute::CustomAccessor);
+    }
 }
 
-void JSDOMException::setStackString(VM& vm, String&& stack)
+void JSDOMException::setStackValue(VM& vm, JSValue stack)
 {
     setStackFrames(vm, {});
-    putDirect(vm, vm.propertyNames->stack, jsString(vm, WTF::move(stack)), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+    putDirect(vm, vm.propertyNames->stack, stack, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
 }
 
-void JSDOMException::reconcileWeakReferencesAtGCEnd(VM& vm, JSC::CollectionScope collectionScope)
+void JSDOMException::willMaterializeErrorInfo(JSGlobalObject* globalObject, ErrorInstance* error)
 {
-    Base::reconcileWeakReferencesAtGCEnd(vm, collectionScope);
-    // ErrorInstance::stackWithHeader() reads name/message as data properties; ours are prototype accessors.
-    if (!m_stackStringIsFramesOnly)
+    if (auto* domException = dynamicDowncast<JSDOMException>(error))
+        domException->prependStackHeaderIfFramesOnly(globalObject);
+}
+
+// A collection formats the frames alone once one of them dies.
+void JSDOMException::prependStackHeaderIfFramesOnly(JSGlobalObject* globalObject)
+{
+    if (!m_stackStringIsFramesOnly || m_errorInfoMaterialized) [[likely]]
         return;
-    String header = displayHeader(vm);
+    String header = displayHeader(globalObject);
+    String stack = tryMakeString(header, m_stackString);
     Locker locker { cellLock() };
-    m_stackString = makeString(header, m_stackString);
+    m_stackString = stack.isNull() ? WTF::move(header) : WTF::move(stack);
     m_stackStringIsFramesOnly = false;
 }
 
-// Same joining rule as formatStackTrace: either side may be empty.
-String JSDOMException::displayHeader(VM& vm) const
+bool JSDOMException::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
-    auto name = displayName(vm);
-    auto message = displayMessage(vm);
+    if (isLazilyMaterialized(globalObject->vm(), propertyName)) [[unlikely]]
+        uncheckedDowncast<JSDOMException>(object)->prependStackHeaderIfFramesOnly(globalObject);
+    return Base::getOwnPropertySlot(object, globalObject, propertyName, slot);
+}
+
+void JSDOMException::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)
+{
+    if (mode == DontEnumPropertiesMode::Include)
+        uncheckedDowncast<JSDOMException>(object)->prependStackHeaderIfFramesOnly(globalObject);
+    Base::getOwnSpecialPropertyNames(object, globalObject, propertyNames, mode);
+}
+
+bool JSDOMException::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
+{
+    if (isLazilyMaterialized(globalObject->vm(), propertyName)) [[unlikely]]
+        uncheckedDowncast<JSDOMException>(object)->prependStackHeaderIfFramesOnly(globalObject);
+    return Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow);
+}
+
+bool JSDOMException::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
+{
+    if (isLazilyMaterialized(globalObject->vm(), propertyName)) [[unlikely]]
+        uncheckedDowncast<JSDOMException>(cell)->prependStackHeaderIfFramesOnly(globalObject);
+    return Base::put(cell, globalObject, propertyName, value, slot);
+}
+
+bool JSDOMException::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, DeletePropertySlot& slot)
+{
+    if (isLazilyMaterialized(globalObject->vm(), propertyName)) [[unlikely]]
+        uncheckedDowncast<JSDOMException>(cell)->prependStackHeaderIfFramesOnly(globalObject);
+    return Base::deleteProperty(cell, globalObject, propertyName, slot);
+}
+
+// Same joining rule as formatStackTrace: either side may be empty.
+String JSDOMException::displayHeader(JSGlobalObject* globalObject)
+{
+    auto name = displayName(globalObject);
+    auto message = displayMessage(globalObject);
     if (name.isEmpty())
         return message;
     if (message.isEmpty())
@@ -275,25 +319,35 @@ String JSDOMException::displayHeader(VM& vm) const
     return makeString(name, ": "_s, message);
 }
 
-String JSDOMException::ownStringOr(VM& vm, PropertyName propertyName, String&& fallback) const
+String JSDOMException::ownStringOr(JSGlobalObject* globalObject, PropertyName propertyName, String&& fallback)
 {
-    JSValue own = getDirect(vm, propertyName);
-    if (!own || !own.isString())
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    // JSObject's lookup, not ours: it must not materialize anything, and VMInquiry runs no getter.
+    PropertySlot slot(this, PropertySlot::InternalMethodType::VMInquiry, &vm);
+    bool found = JSObject::getOwnPropertySlot(this, globalObject, propertyName, slot);
+    String string;
+    if (!scope.exception() && found && slot.isValue()) {
+        JSValue value = slot.getValue(globalObject, propertyName);
+        // toWTFString throws for a Symbol, or on OOM resolving a rope.
+        if (value.isPrimitive() && !value.isUndefined())
+            string = value.toWTFString(globalObject);
+    }
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
         return WTF::move(fallback);
-    auto* string = asString(own);
-    if (string->isRope()) // Resolving would allocate; callers may be inside a GC end phase.
-        return WTF::move(fallback);
-    return String(string->tryGetValue(false));
+    }
+    return string.isNull() ? WTF::move(fallback) : WTF::move(string);
 }
 
-String JSDOMException::displayName(VM& vm) const
+String JSDOMException::displayName(JSGlobalObject* globalObject)
 {
-    return ownStringOr(vm, vm.propertyNames->name, wrapped().name());
+    return ownStringOr(globalObject, globalObject->vm().propertyNames->name, wrapped().name());
 }
 
-String JSDOMException::displayMessage(VM& vm) const
+String JSDOMException::displayMessage(JSGlobalObject* globalObject)
 {
-    return ownStringOr(vm, vm.propertyNames->message, wrapped().message());
+    return ownStringOr(globalObject, globalObject->vm().propertyNames->message, wrapped().message());
 }
 
 JSObject* JSDOMException::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)

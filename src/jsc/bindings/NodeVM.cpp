@@ -8,6 +8,7 @@
 #include <JavaScriptCore/SourceProvider.h>
 
 #include "BunClientData.h"
+#include "JSDOMException.h"
 #include "NodeVM.h"
 #include "CodeGenerationFromStrings.h"
 #include "NodeVMScript.h"
@@ -596,6 +597,7 @@ bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Excepti
         // No stack is captured for a throw that a `catch` clause further up is certain to handle. The error's own is
         // taken then, and that one is gone once the `stack` property is materialized.
         auto& e_stack = exception->stackForReporting(vm);
+        WebCore::JSDOMException::willMaterializeErrorInfo(globalObject, errorInstance);
         errorInstance->materializeErrorInfoIfNeeded(vm, vm.propertyNames->stack);
         RETURN_IF_EXCEPTION(throwScope, {});
         JSValue stack_jsval = errorInstance->get(globalObject, vm.propertyNames->stack);

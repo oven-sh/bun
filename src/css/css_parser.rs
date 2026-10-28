@@ -3714,27 +3714,40 @@ impl<'a> Parser<'a> {
     }
 
     /// The source text of the numeric token `next*` returned last, if an f32 may not hold it
-    /// (`1700000000.25`, `123456.78`) or it touches another number: `5.0.1` is `5.0` and `.1`,
-    /// whose values print as `5.1`.
+    /// (`1700000000.25`, `123456.78`), it has an exponent (`8e64`) or it touches another
+    /// number: `5.0.1` is `5.0` and `.1`, whose values print as `5.1`.
     #[inline]
     pub(crate) fn raw_number_text(&self) -> Option<&'static [u8]> {
         let cached = self.input.cached_token.as_ref()?;
-        if !matches!(
-            cached.token,
-            Token::Number(_) | Token::Percentage { .. } | Token::Dimension(_)
-        ) {
-            return None;
-        }
+        let int_value = match cached.token {
+            Token::Number(num) | Token::Dimension(Dimension { num, .. }) => num.int_value,
+            Token::Percentage { int_value, .. } => int_value,
+            _ => return None,
+        };
         let text = self.slice_from_cloned(cached.start_position);
         let before = &self.input.tokenizer.src[..cached.start_position];
         let touches_a_number = self.next_byte() == Some(b'.')
             || text.starts_with(b"+")
             || (text.starts_with(b".") && before.last().is_some_and(u8::is_ascii_digit));
+        if let Some(int) = int_value {
+            // No fraction and no exponent: long is more than 6 digits.
+            return (touches_a_number || int.unsigned_abs() >= 1_000_000).then_some(text);
+        }
         let digits = text.strip_prefix(b"-").unwrap_or(text);
         let digits = &digits[digits.iter().take_while(|b| **b == b'0').count()..];
         let integer_digits = digits.iter().take_while(|b| b.is_ascii_digit()).count();
         let is_long = integer_digits > 6 || (integer_digits == 6 && digits.get(6) == Some(&b'.'));
-        (is_long || touches_a_number).then_some(text)
+        let rest = &digits[integer_digits..];
+        let rest = rest.strip_prefix(b".").unwrap_or(rest);
+        let rest = &rest[rest.iter().take_while(|b| b.is_ascii_digit()).count()..];
+        // As in `Tokenizer::consume_numeric`: the `e` of `1em` and `1e-x` starts a unit.
+        let has_exponent = matches!(
+            rest,
+            [b'e' | b'E', b'0'..=b'9', ..] | [b'e' | b'E', b'+' | b'-', b'0'..=b'9', ..]
+        );
+        // `1e3\70` stops inside an escape, which reads on into what prints after it.
+        let has_escape = || strings::contains_char(text, b'\\');
+        (is_long || touches_a_number || (has_exponent && !has_escape())).then_some(text)
     }
 
     fn parse_empty(_: &mut Parser) -> CssResult<()> {

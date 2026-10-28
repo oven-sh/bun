@@ -8521,10 +8521,49 @@ describe("numeric tokens that print as written", () => {
     "a{--v:1.0.0}",
     "a{--v:2.0.0-beta.1}",
     "a{--v:10.20.30}",
+    // An exponent: an f32 clamps `8e64` and reads `1e-50` as 0.
+    ":root{--commit:12e45ab;--build:1e5f3a2;--ver:2e3;--tag:8e64}",
+    ":root{--uuid:12345678-12e3-8d9b-a456-426614174000}",
+    "a{--small:1e-50;--w:1.23456789e10;--v:1.6777217e7}",
+    ":root{--rounding:4.9406564584124654e-324}",
+    ":root{--radius-round:1e5px}",
+    "a{--x:1E-5E;--y:1e+3;--z:.5e3;--w:-0.5e-3px;--v:1.50e3;--p:1e3%;--q:1e39%}",
+    "a{--a:8E64;--b:1e0;--c:1e09;--d:1e-07;--e:1E+09px;--f:1.50e-9}",
+    "a{width:var(--w,8e64px)}",
+    "a{--x:calc(1e39*1px)}",
+    "@unknown 1e3{a{b:1e3}}",
+    "a:unknown(8e64 1e-50){color:red}",
+    // `1000e3` and `10e1e` are other tokens.
+    "a{--g:1e3e3;--c:1e1e1e}",
+    // Two values, or two spellings of one, are two rules.
+    ".x{--tag:8e64}.y{--tag:9e99}",
+    ".x{--n:1e3}.y{--n:1E3}",
+    // The text is kept before a unit is converted (`1s`).
+    "a{--t:1e3ms}",
+    // A known property whose value does not parse is kept as tokens.
+    ".a{z-index:7;z-index:1e3}",
+    "a{order:1e1}",
+    "a{width:calc(7.3px*4.9406564584124654e-324/4.9406564584124654e-324)}",
   ])("%s", css => {
     minify_test(css, css);
   });
   minify_test("a{--v:5.0 .10}", "a{--v:5 .1}");
+  // The `e` of a unit is no exponent.
+  minify_test(
+    "a{--x:1.50e-x;--y:1.50E+;--z:1.50e;--w:1.50EM}",
+    "a{--x:1.5\\65 -x;--y:1.5\\65 +;--z:1.5\\65 ;--w:1.5em}",
+  );
+  // A typed value is an f32.
+  minify_test("a{width:1e39px}", "a{width:3.40282e38px}");
+  minify_test("a{flex-grow:1e3}", "a{flex-grow:1000}");
+  // Leading zeros are not digits.
+  minify_test("a{--x:0999999;--y:01000000;--z:-01000000px}", "a{--x:999999;--y:01000000;--z:-01000000px}");
+  // A unit with an escape prints from the value: text that stops inside one takes in the blank.
+  minify_test("a{--x:1e3\\70/**/a}", "a{--x:1000p a}");
+  cssTest(
+    ":root { --tag: 8e64; --uuid: 12345678-12e3-8d9b-a456-426614174000 }",
+    ":root { --tag: 8e64; --uuid: 12345678-12e3-8d9b-a456-426614174000; }",
+  );
 });
 
 describe("number serialization", () => {

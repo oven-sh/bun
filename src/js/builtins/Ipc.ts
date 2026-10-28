@@ -57,7 +57,7 @@ export function serialize(message: unknown, handle: unknown, options: unknown) {
  * @returns {void}
  */
 export function parseHandle(target: $Bindgen.Subprocess | null, serialized: $Node.SerializedIPCHandle, fd: number) {
-  const emit: (target: $Bindgen.Subprocess | null, message: unknown, handle: object) => void = $bindgen(
+  const emit: (target: $Bindgen.Subprocess | null, message: unknown, handle: object | number) => void = $bindgen(
     "ipc_host.bind.ts",
     "emitHandleIPCMessage",
   );

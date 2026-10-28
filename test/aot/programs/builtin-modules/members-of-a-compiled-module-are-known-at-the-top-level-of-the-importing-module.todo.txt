@@ -1,0 +1,2 @@
+The literal of a library module is NewObject + PropDefine since the types of the library were erased, so flow takes each member for possibly missing: 3 tests of the callee.
+A first fix (what a literal defines before FinishObject is there) was wrong code and was taken out.

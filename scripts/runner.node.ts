@@ -34,6 +34,7 @@ import { basename, dirname, extname, join, relative, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { setTimeout as setTimeoutPromise } from "node:timers/promises";
 import { parseArgs } from "node:util";
+import { drawsShares, units as partsOfOneTestFile, unitsThatOnlyDraw } from "../test/aot/parts.mts";
 import { prestartMap as dockerPrestartMap } from "../test/docker/prestart-map.mjs";
 import {
   getAbi,
@@ -51,6 +52,7 @@ import {
   tmpdir,
   which,
 } from "./agent.ts";
+import { mustRunSomething, parseSample, pickDrawnTests, pickTestsWithSomethingFor } from "./aot-tests.ts";
 import {
   escapeCodeBlock,
   escapeHtml,
@@ -344,6 +346,36 @@ const { values: options, positionals: filters } = parseArgs({
       type: "string",
       default: undefined,
     },
+    /** Of the tests that are left after --include and --exclude, one in this many: others for each commit, or for each --aot-sample. */
+    ["one-in"]: {
+      type: "string",
+      default: undefined,
+    },
+    /**
+     * `fixed`: the tests take only what is the same on every commit (AOT_TAKES in test/aot/run-programs.ts), and those that
+     * have nothing of the kind are left out. `drawn`: only the tests that take a share by the commit, and only that share.
+     */
+    ["aot-takes"]: {
+      type: "string",
+      default: undefined,
+    },
+    /** What the draws go by in place of the commit, as `<revision>` or `<revision>+<number of the share>`: --one-in here, and the shares of programs in test/aot (AOT_SHARE). */
+    ["aot-sample"]: {
+      type: "string",
+      default: undefined,
+    },
+    /** These are run whatever --one-in draws. */
+    ["always-draw"]: {
+      type: "string",
+      multiple: true,
+      default: undefined,
+    },
+    /** One of these fails if it runs no test: each was skipped, or there was none. */
+    ["must-run"]: {
+      type: "string",
+      multiple: true,
+      default: undefined,
+    },
     ["vendor"]: {
       type: "string",
       default: undefined,
@@ -428,7 +460,7 @@ if (isBuildkite) {
 let coresDir: string | undefined;
 
 if (options["coredump-upload"]) {
-  // this sysctl is set in bootstrap.sh to /var/bun-cores-$distro-$release-$arch
+  // the image's bake sets this sysctl to /var/bun-cores-$distro-$release-$arch (the `coreDumps` tool of scripts/build/ci-images/spec.ts)
   const sysctl = await spawnWithTimeout({ command: "sysctl", args: ["-n", "kernel.core_pattern"] });
   coresDir = sysctl.stdout;
   if (sysctl.ok) {
@@ -731,7 +763,7 @@ async function runTests(): Promise<TestResult[]> {
   // Start the docker-service coordinator (test/docker/coordinator.ts). It
   // owns every `docker compose` invocation for this shard — `compose up` is
   // not concurrency-safe, so exactly one process runs it — and prestarts the
-  // services this shard's tests need (mysql/postgres/redis/minio/…) in the
+  // services this shard's tests need (mysql/postgres/redis/…) in the
   // background while getVendorTests below installs vendor deps. Tests reach
   // it through the unix socket in BUN_DOCKER_COORDINATOR (inherited by every
   // spawned test process); ensure() waits for the coordinator's ready message
@@ -1323,6 +1355,7 @@ async function runTests(): Promise<TestResult[]> {
       !/stress/i.test(t) &&
       isParallelAllowlisted(t) &&
       !needsDockerService(t) &&
+      !isPartOfOneTestFile(t) &&
       (!validationApplies || (shouldValidateExceptions(t) && shouldValidateLeakSan(t)));
 
     const serialTests = tests.filter(t => !isParallelSafeTest(t));
@@ -1985,6 +2018,9 @@ async function spawnBun(
     BUN_INSTALL_CACHE_DIR: tmpdirPath,
     SHELLOPTS: isWindows ? "igncr" : undefined, // ignore "\r" on Windows
     TEST_TMPDIR: tmpdirPath, // Used in Node.js tests.
+    // test/leaksan.supp names functions, so LeakSanitizer needs a symbolizer to apply it. It looks for one on PATH,
+    // which some tests replace.
+    ASAN_SYMBOLIZER_PATH: process.env.ASAN_SYMBOLIZER_PATH ?? which(["llvm-symbolizer"]),
     ...(typeof remapPort == "number"
       ? { BUN_CRASH_REPORT_URL: `http://localhost:${remapPort}` }
       : { BUN_ENABLE_CRASH_REPORTING: "0" }),
@@ -2188,10 +2224,13 @@ async function spawnBunTest(
     testArgs.push(`--reporter-outfile=${junitFilePath}`);
   }
 
-  testArgs.push(absPath);
+  testArgs.push(isPartOfOneTestFile(testPath) ? join(opts.cwd, "test", "aot", "parts.test.ts") : absPath);
 
   const env: SpawnEnv = {
     GITHUB_ACTIONS: "true", // always true so annotations are parsed
+    ...(isPartOfOneTestFile(testPath) && { TEST_PART: testPath }),
+    ...(options["aot-takes"] && { AOT_TAKES: options["aot-takes"] }),
+    ...(options["aot-sample"] && { AOT_SHARE: options["aot-sample"] }),
     ...opts.env,
   };
   if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(relative(cwd, absPath))) {
@@ -2212,7 +2251,7 @@ async function spawnBunTest(
     env.BUN_FEATURE_FLAG_NO_ORPHANS = "1";
   }
 
-  const { ok, error, stdout, crashes, exitCode, signalCode, duration } = await spawnBun(execPath, {
+  let { ok, error, stdout, crashes, exitCode, signalCode, duration } = await spawnBun(execPath, {
     args: isReallyTest ? testArgs : [...args, absPath],
     cwd: opts.cwd,
     // release-asan with debug-assertions on runs every spawned subprocess
@@ -2227,6 +2266,10 @@ async function spawnBunTest(
   });
   let { tests, errors, stdout: stdoutPreview } = parseTestStdout(stdout, testPath);
   if (crashes) stdoutPreview += crashes;
+  if (ok && mustRunATest(testPath) && !/^ *[1-9]\d* (?:pass|fail|todo)$/m.test(stripAnsi(stdout))) {
+    ok = false;
+    error = "no test ran: scripts/aot-tests.ts lists the tests that run nothing in this step";
+  }
 
   // If we generated a JUnit file and we're on BuildKite, upload it immediately
   if (junitFilePath && isReallyTest && isBuildkite && cliOptions["junit-upload"]) {
@@ -2253,7 +2296,7 @@ async function spawnBunTest(
 
 function getTestTimeout(testPath: string): number {
   if (
-    /integration|3rd_party|docker|bun-install-registry|bun-security-scanner-matrix|v8|bundler_compile|tonic|test[\\/]napi/i.test(
+    /integration|3rd_party|docker|bun-install-registry|bun-security-scanner-matrix|v8|bundler_compile|tonic|test[\\/]napi|\baot\b/i.test(
       testPath,
     )
   ) {
@@ -2400,8 +2443,8 @@ async function spawnBunInstall(
   // spawnBun sets BUN_INSTALL_CACHE_DIR to a fresh tmpdir so per-test installs
   // are hermetic. This function only runs the runner's own dependency setup
   // (root, test/, scripts/ci-remap-server, vendor), which should hit the
-  // image's baked cache when one exists (bootstrap.{sh,ps1} set
-  // BUN_INSTALL_CACHE_DIR machine-wide).
+  // image's baked cache when one exists (the `prefetch` tool of
+  // scripts/build/ci-images/spec.ts sets BUN_INSTALL_CACHE_DIR machine-wide).
   const cacheDir = process.env.BUN_INSTALL_CACHE_DIR;
   let { ok, error, stdout, duration, crashes } = await spawnBun(execPath, {
     args: ["install"],
@@ -2493,6 +2536,23 @@ function isTestStrict(path: string): boolean {
   return isJavaScript(path) && /\.test|spec\./.test(basename(path));
 }
 
+/** Of paths under test/. */
+const kindOfAotTest = {
+  draws: (path: string) => drawsShares(path.replaceAll("\\", "/"), path => readFileSync(join(testsPath, path), "utf8")),
+  onlyDraws: (path: string) => unitsThatOnlyDraw.has(path.replaceAll("\\", "/")),
+};
+
+function mustRunATest(testPath: string): boolean {
+  const mustRun = options["must-run"];
+  const path = testPath.replaceAll("\\", "/").replace(/^test\//, "");
+  return !!mustRun && mustRunSomething({ mustRun, takes: options["aot-takes"] }, path, kindOfAotTest);
+}
+
+/** It has the name of a test file and is none: test/aot/parts.mts. */
+function isPartOfOneTestFile(path: string): boolean {
+  return partsOfOneTestFile.includes(path.replaceAll("\\", "/").replace(/^test\//, ""));
+}
+
 function isHidden(path: string): boolean {
   return /node_modules|node.js/.test(dirname(path)) || /^\./.test(basename(path));
 }
@@ -2515,7 +2575,7 @@ function getTests(cwd: string): string[] {
       }
     }
   }
-  return [...getFiles(cwd, "")].sort();
+  return [...getFiles(cwd, ""), ...partsOfOneTestFile.map(path => join(path))].sort();
 }
 
 /** An entry of test/vendor.json. */
@@ -2740,6 +2800,33 @@ function getRelevantTests(cwd: string, testModifiers: string[], testExpectations
     }
   }
 
+  const aotTakes = options["aot-takes"];
+  if (aotTakes) {
+    const taken = pickTestsWithSomethingFor(aotTakes, availableTests, kindOfAotTest);
+    !isQuiet && console.log("Tests that have something", aotTakes, taken.length, "/", availableTests.length);
+    availableTests.splice(0, availableTests.length, ...taken);
+  }
+
+  const aotSample = options["aot-sample"];
+  if (aotSample && !isQuiet) {
+    console.log(
+      `Sample: ${aotSample}. AOT_SAMPLE=${parseSample(aotSample).sample} writes the steps of this commit again, AOT_SHARE=${aotSample} takes the programs of this step`,
+    );
+  }
+
+  const oneIn = parseInt(options["one-in"] ?? "1");
+  if (oneIn > 1) {
+    // Every shard draws the same files, because it draws by the path and the sample.
+    const commit = aotSample ?? process.env.BUILDKITE_COMMIT ?? "";
+    const drawnTests = pickDrawnTests(
+      { oneIn, sample: commit, alwaysDraw: options["always-draw"] ?? [] },
+      availableTests,
+    );
+    !isQuiet &&
+      console.log("Drawing tests: one in", oneIn, "for", commit, drawnTests.length, "/", availableTests.length);
+    availableTests.splice(0, availableTests.length, ...drawnTests);
+  }
+
   const shardId = parseInt(options.shard);
   const maxShards = parseInt(options["max-shards"]);
   if (filters?.length) {
@@ -2761,10 +2848,13 @@ function getRelevantTests(cwd: string, testModifiers: string[], testExpectations
     // Every shard computes the same deterministic assignment from the same
     // sorted input and picks its own bin, so the result is identical across
     // machines without any coordination. Tests absent from the table (new
-    // files, or the file failing to load) fall back to the table's median so
-    // they spread across shards instead of all landing on shard 0.
+    // files, or the file failing to load) fall back to the median of the tests
+    // being dealt out so they spread across shards instead of all landing on shard 0.
     const durations = loadExpectedDurations(cwd);
-    const known = Object.values(durations).sort((a, b) => a - b);
+    const known = availableTests
+      .map(testPath => durations[testPath.replaceAll("\\", "/")])
+      .filter(cost => cost !== undefined)
+      .sort((a, b) => a - b);
     const unknownCost = known.length ? known[Math.floor(known.length / 2)]! : 100;
     const costOf = (testPath: string) => durations[testPath.replaceAll("\\", "/")] ?? unknownCost;
 
@@ -2878,7 +2968,6 @@ async function getExecPathFromBuildkite(target: string, buildId?: string): Promi
 
   let zipPath: string | undefined;
   downloadLoop: for (let i = 0; i < 10; i++) {
-    // build-bun also uploads libbun-*.a / libbun_runtime.a / dep libs; only the zips are wanted here.
     const args = ["artifact", "download", "*.zip", releasePath, "--step", target];
     if (buildId) {
       args.push("--build", buildId);
@@ -2956,7 +3045,7 @@ function addPath(...paths: (string | undefined)[]): string {
 }
 
 function getTestLabel(): string | undefined {
-  return getBuildLabel()?.replace(" - test-bun", "");
+  return getBuildLabel()?.replace(/ - test-(?:bun|aot|hardened)$/, "");
 }
 
 /**
@@ -3438,39 +3527,6 @@ function escapeXml(str: string): string {
     .replace(/'/g, "&apos;");
 }
 
-/**
- * Windows 11 ships Smart App Control in evaluation mode. In that mode the kernel
- * hashes every unsigned executable on its first launch and asks the cloud for
- * its reputation, which costs 2 to 3.5 seconds for a 77 MB `bun build --compile`
- * output. bundler_compile.test.ts launches about 85 of those, which puts the file
- * at 220 to 290 seconds against the 300 second per-file cap. Turning the policy
- * off takes effect at once and needs no reboot. scripts/bootstrap.ps1 does the
- * same at image bake time; this covers images baked before that change.
- *
- * Only on Buildkite: the policy cannot be turned on again without a reinstall,
- * so a developer's machine running with CI=true must not get this.
- */
-async function disableSmartAppControl(): Promise<void> {
-  if (!isBuildkite) return;
-  const script = [
-    "$p = 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\CI\\Policy'",
-    "if (-not (Test-Path $p)) { exit 0 }",
-    "$state = (Get-ItemProperty $p).VerifiedAndReputablePolicyState",
-    "if ($null -eq $state -or $state -eq 0) { exit 0 }",
-    "Set-ItemProperty $p -Name VerifiedAndReputablePolicyState -Value 0 -Type DWord",
-    "if (Get-Command CiTool -ErrorAction SilentlyContinue) { CiTool --refresh -json | Out-Null }",
-    'Write-Output "Smart App Control: state $state -> 0"',
-  ].join("; ");
-  const { ok, error } = await spawnWithTimeout({
-    command: "pwsh",
-    args: ["-NoProfile", "-Command", script],
-    timeout: 60_000,
-  });
-  if (!ok) {
-    console.warn(`Failed to disable Smart App Control: ${error}`);
-  }
-}
-
 async function main(): Promise<void> {
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
     process.on(signal, () => onExit(signal));
@@ -3488,7 +3544,6 @@ async function main(): Promise<void> {
       "-Command",
       "Set-DnsClientServerAddress -InterfaceAlias 'Ethernet 4' -ServerAddresses ('8.8.8.8','8.8.4.4')",
     ]);
-    await disableSmartAppControl();
   }
 
   let doRunTests = true;

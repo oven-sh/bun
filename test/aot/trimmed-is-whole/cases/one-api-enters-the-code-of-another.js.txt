@@ -1,0 +1,123 @@
+// The program names one API, and what that API does at run time enters native code that another API also uses: decoders, sinks, clones, sockets.
+function serveBytes(encoding, base64) {
+  return Bun.serve({ port: 0, fetch: () => new Response(Buffer.from(base64, "base64"), { headers: { "Content-Encoding": encoding } }) });
+}
+async function fetched(encoding, base64) {
+  const server = serveBytes(encoding, base64);
+  try {
+    return await (await fetch(server.url)).text();
+  } finally {
+    server.stop(true);
+  }
+}
+//// fetch-decodes-gzip
+console.log(await fetched("gzip", "H4sIAAAAAAAAA8tIzcnJV8hAkACAiPnlEQAAAA=="));
+//// fetch-decodes-deflate
+console.log(await fetched("deflate", "eJzLSM3JyVfIQJAAOi4GfQ=="));
+//// fetch-decodes-brotli
+console.log(await fetched("br", "GxAA+I2Ubt5EVYaWbCBvAU8cYBw="));
+//// fetch-decodes-zstd
+console.log(await fetched("zstd", "KLUv/SARZQAAMGhlbGxvIAEAMUoR"));
+//// a-direct-stream-is-read-as-text
+const stream = new ReadableStream({ type: "direct", pull(controller) { controller.write("one "); controller.write("two"); controller.end(); } });
+console.log(await new Response(stream).text());
+//// a-direct-stream-is-served
+const server = Bun.serve({ port: 0, fetch: () => new Response(new ReadableStream({ type: "direct", async pull(controller) { controller.write("one "); await controller.flush(); controller.write("two"); controller.end(); } })) });
+console.log(await (await fetch(server.url)).text());
+server.stop(true);
+//// a-response-is-written-to-a-file
+await Bun.write("written.txt", new Response("from a response"));
+console.log(await Bun.file("written.txt").text());
+//// a-stream-is-written-to-a-file
+await Bun.write("written.txt", new Response(new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode("from a stream")); controller.close(); } })));
+console.log(await Bun.file("written.txt").text());
+//// a-file-is-served
+//@ file cwd/served.txt "from a file"
+const server = Bun.serve({ port: 0, fetch: () => new Response(Bun.file("served.txt")) });
+console.log(await (await fetch(server.url)).text());
+server.stop(true);
+//// a-fetched-body-is-written-to-a-file
+const server = Bun.serve({ port: 0, fetch: () => new Response("from a server") });
+await Bun.write("written.txt", await fetch(server.url));
+console.log(await Bun.file("written.txt").text());
+server.stop(true);
+//// a-rewritten-response-is-streamed
+const rewritten = new HTMLRewriter().on("p", { element(element) { element.setAttribute("class", "seen"); } }).transform(new Response("<p>one</p>"));
+let text = "";
+for await (const chunk of rewritten.body) text += new TextDecoder().decode(chunk);
+console.log(text);
+//// a-clone-of-many-kinds
+const cloned = structuredClone({ map: new Map([[1, new Set([2])]]), date: new Date(5), bytes: new Uint8Array([1, 2]), error: new RangeError("r"), big: 5n, pattern: /a/g, blob: new Blob(["b"]) });
+console.log(cloned.map.get(1).has(2), cloned.date.getTime(), cloned.bytes.join(), cloned.error.name, cloned.big, cloned.pattern.flags, await cloned.blob.text());
+//// a-message-through-a-channel
+const { port1, port2 } = new MessageChannel();
+const received = new Promise(resolve => { port2.onmessage = event => resolve(event.data); });
+port1.postMessage({ map: new Map([[1, "one"]]), bytes: new Uint8Array([3]) });
+const message = await received;
+console.log(message.map.get(1), message.bytes[0]);
+port1.close();
+port2.close();
+//// a-child-reads-what-is-written-to-its-input
+const child = Bun.spawn(["cat"], { stdin: "pipe", stdout: "pipe" });
+child.stdin.write("to the child");
+await child.stdin.end();
+console.log(await new Response(child.stdout).text(), await child.exited);
+//// the-output-of-a-child-goes-to-a-file
+const child = Bun.spawn(["echo", "to a file"], { stdout: Bun.file("written.txt") });
+await child.exited;
+console.log((await Bun.file("written.txt").text()).trim());
+//// a-socket-server-and-its-client
+const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data(socket, data) { socket.write("echo " + data); socket.end(); } } });
+const answer = await new Promise(resolve => {
+  let all = "";
+  Bun.connect({ hostname: "127.0.0.1", port: listener.port, socket: { open(socket) { socket.write("ping"); }, data(_, data) { all += data; }, close() { resolve(all); } } });
+});
+console.log(answer);
+listener.stop(true);
+//// a-websocket-server-and-its-client
+const server = Bun.serve({ port: 0, fetch(request, server) { return server.upgrade(request) ? undefined : new Response("no"); }, websocket: { perMessageDeflate: true, message(socket, message) { socket.send("echo " + message); } } });
+const socket = new WebSocket(server.url.href.replace("http", "ws"));
+const echoed = await new Promise(resolve => { socket.onopen = () => socket.send("ping ping ping ping"); socket.onmessage = event => resolve(event.data); });
+console.log(echoed);
+socket.close();
+server.stop(true);
+//// a-node-server-and-its-client
+import http from "node:http";
+const server = http.createServer((request, response) => response.end("from node " + request.url));
+await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+const body = await new Promise(resolve => http.get({ host: "127.0.0.1", port: server.address().port, path: "/a" }, response => { let all = ""; response.on("data", chunk => (all += chunk)); response.on("end", () => resolve(all)); }));
+console.log(body);
+server.close();
+//// a-pipeline-through-gzip
+import { pipeline } from "node:stream/promises";
+import { Readable, Writable } from "node:stream";
+import { createGzip, createGunzip } from "node:zlib";
+let unpacked = "";
+await pipeline(Readable.from(["packed ", "and unpacked"]), createGzip(), createGunzip(), new Writable({ write(chunk, _, done) { unpacked += chunk; done(); } }));
+console.log(unpacked);
+//// compression-streams
+const packed = new Response("through the web's streams").body.pipeThrough(new CompressionStream("gzip")).pipeThrough(new DecompressionStream("gzip"));
+console.log(await new Response(packed).text());
+//// a-form-is-sent-and-read
+const server = Bun.serve({ port: 0, async fetch(request) { const form = await request.formData(); return new Response(form.get("name") + " " + (await form.get("file").text())); } });
+const form = new FormData();
+form.append("name", "value");
+form.append("file", new Blob(["in a file"]), "a.txt");
+console.log(await (await fetch(server.url, { method: "POST", body: form })).text());
+server.stop(true);
+//// a-request-is-aborted
+const server = Bun.serve({ port: 0, fetch: () => new Promise(() => {}) });
+try {
+  await fetch(server.url, { signal: AbortSignal.timeout(50) });
+} catch (error) {
+  console.log(error.name);
+}
+server.stop(true);
+//// a-datagram-there-and-back
+const receiver = await Bun.udpSocket({ hostname: "127.0.0.1", socket: { data(socket, data, port, address) { socket.send("echo " + data, port, address); } } });
+const got = await new Promise(async resolve => {
+  const sender = await Bun.udpSocket({ hostname: "127.0.0.1", socket: { data(socket, data) { resolve(String(data)); socket.close(); } } });
+  sender.send("ping", receiver.port, "127.0.0.1");
+});
+console.log(got);
+receiver.close();

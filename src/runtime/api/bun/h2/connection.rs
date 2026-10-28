@@ -11,6 +11,7 @@ use super::hpack;
 use super::settings::{self, Settings};
 use super::stream::{self, State};
 use super::wire::{self, ErrorCode, FrameHeader, FrameType, SettingId};
+use crate::api::h2_frame_parser_body::{has_control_byte, has_edge_whitespace};
 use bun_collections::HashMap;
 use bun_http_types::parse_content_length_strict;
 use std::num::NonZeroU32;
@@ -25,28 +26,51 @@ mod pseudo {
     pub(super) const STATUS: u8 = 16;
     pub(super) const PROTOCOL: u8 = 32;
     pub(super) const UNKNOWN: u8 = 64;
+
+    /// Whether nghttp2 takes the value of a pseudo-header (nghttp2_check_method,
+    /// nghttp2_check_path, check_scheme, check_authority, parse_status_code).
+    pub(super) fn is_valid_value(bit: u8, value: &[u8]) -> bool {
+        let all = |extra: &[u8]| {
+            value
+                .iter()
+                .all(|c| c.is_ascii_alphanumeric() || extra.contains(c))
+        };
+        match bit {
+            METHOD => all(b"!#$%&'*+-.^_`|~"),
+            PATH => value.iter().all(|&c| c > b' ' && c != 0x7f),
+            SCHEME => value.first().is_some_and(u8::is_ascii_alphabetic) && all(b"+-."),
+            AUTHORITY => all(b"!$%&'()*+,-.:;=[]_~"),
+            // Three digits from 100 up. HTTP/2 has no 101 (RFC 9113 §8.6).
+            STATUS => matches!(value, [b'1'..=b'9', b'0'..=b'9', b'0'..=b'9']) && value != b"101",
+            _ => true,
+        }
+    }
 }
 
 /// Snapshot of the local-settings values carried by one sent-but-unACKed SETTINGS frame, so an
 /// inbound ACK is attributed to the submission it actually acknowledges (RFC 9113 §6.5.3) rather
 /// than to the latest submission.
 #[derive(Clone, Copy)]
-pub struct PendingLocalSettings {
+pub(crate) struct PendingLocalSettings {
     pub settings: Settings,
 }
 
 /// Per-stream protocol state tracked by the engine.
-pub struct Stream {
+pub(crate) struct Stream {
     pub state: State,
     pub send_window: SendWindow,
     pub recv_window: RecvWindow,
     /// A non-informational inbound header block was delivered: the next inbound HEADERS on this
     /// stream is a trailer section (RFC 9113 §8.1).
     pub recv_final_headers: bool,
+    /// A request's header section had a `host`: its trailer section cannot have another.
+    pub recv_host: bool,
     /// Declared `content-length` of the inbound message, if any (RFC 9113 §8.1.1).
     pub content_length: Option<u64>,
     /// DATA payload bytes (padding excluded) received so far.
     pub recv_body_bytes: u64,
+    /// The embedder had already sent GOAWAY when the peer opened this stream.
+    pub opened_after_goaway: bool,
 }
 
 impl Stream {
@@ -56,14 +80,22 @@ impl Stream {
             send_window: SendWindow::new(initial_send),
             recv_window: RecvWindow::new(initial_recv),
             recv_final_headers: false,
+            recv_host: false,
             content_length: None,
             recv_body_bytes: 0,
+            opened_after_goaway: false,
         }
+    }
+
+    /// RFC 9113 §8.1.1 (nghttp2_http_on_data_chunk): more DATA than the declared `content-length`.
+    fn body_exceeds_content_length(&self) -> bool {
+        self.content_length
+            .is_some_and(|declared| self.recv_body_bytes > declared)
     }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum WriteResult {
+pub(crate) enum WriteResult {
     Dropped = -1,
     Queued = 0,
     Sent = 1,
@@ -126,7 +158,7 @@ enum BlockDisposition {
     Refused,
 }
 
-pub struct Feed {
+pub(crate) struct Feed {
     pub consumed: usize,
     pub fatal: bool,
 }
@@ -135,11 +167,57 @@ pub struct Feed {
 /// behind a non-reading peer before the session is treated as flooded (NGHTTP2_ERR_FLOODED).
 const MAX_OUTBOUND_ACK_QUEUE: u32 = 1000;
 
+/// nghttp2's NGHTTP2_DEFAULT_STREAM_RESET_BURST / _RATE (node's streamResetBurst / streamResetRate).
+pub(crate) const DEFAULT_STREAM_RESET_BURST: u32 = 1000;
+pub(crate) const DEFAULT_STREAM_RESET_RATE: u32 = 33;
+
+#[derive(Clone, Copy)]
+enum ResetBy {
+    Peer,
+    Us,
+}
+
+/// nghttp2_ratelim: `rate` tokens per whole elapsed second, capped at `burst`.
+struct RateLimit {
+    burst: u32,
+    rate: u32,
+    tokens: u32,
+    last_refill: std::time::Instant,
+}
+
+impl RateLimit {
+    fn new(burst: u32, rate: u32) -> Self {
+        RateLimit {
+            burst,
+            rate,
+            tokens: burst,
+            last_refill: std::time::Instant::now(),
+        }
+    }
+
+    /// Returns false once the bucket is empty.
+    fn drain(&mut self) -> bool {
+        let elapsed = self.last_refill.elapsed().as_secs();
+        if elapsed > 0 {
+            let gain = u32::try_from(elapsed)
+                .unwrap_or(u32::MAX)
+                .saturating_mul(self.rate);
+            self.tokens = self.tokens.saturating_add(gain).min(self.burst);
+            self.last_refill += std::time::Duration::from_secs(elapsed);
+        }
+        if self.tokens == 0 {
+            return false;
+        }
+        self.tokens -= 1;
+        true
+    }
+}
+
 /// What the connection engine calls back into the embedder (the JSC binding) for. Methods take
 /// `&self`: the JSC binding (H2FrameParser) is fully interior-mutable (Cell/JsCell) and its host
 /// functions receive `&Self`, so it can own the `Connection` and pass itself as the sink without an
 /// ownership cycle.
-pub trait Sink {
+pub(crate) trait Sink {
     fn write(&self, bytes: &[u8]) -> WriteResult;
     /// A locally-detected connection error: the GOAWAY (when one applies) is already on the wire.
     /// `lib_error_code` is the negative nghttp2-style library error code (`wire::lib_error`) the
@@ -169,6 +247,10 @@ pub trait Sink {
     /// is allocated; the header block is still decoded for HPACK-table sync (§4.3).
     fn can_open_stream(&self) -> bool {
         true
+    }
+    /// Queried per use: a GOAWAY sent mid-dispatch counts for the rest of that read.
+    fn goaway_sent(&self) -> bool {
+        false
     }
     /// A SETTINGS entry with an id outside the standard registry (node's remoteCustomSettings).
     fn on_remote_custom_setting(&self, _id: u16, _value: u32) {}
@@ -224,7 +306,7 @@ pub trait Sink {
     }
 }
 
-pub struct Connection {
+pub(crate) struct Connection {
     pub is_server: bool,
     /// Wire frames fully accepted from the peer (perf_hooks http2 session stats).
     pub frames_received: u64,
@@ -242,6 +324,8 @@ pub struct Connection {
     /// session option; not a SETTINGS parameter). An empty DATA frame without END_STREAM counts
     /// as an invalid frame.
     pub max_invalid_frames: u32,
+    /// node's strictFieldWhitespaceValidation session option (not a SETTINGS parameter).
+    pub strict_field_whitespace: bool,
     /// The initial window size the peer has ACKed (RFC 9113 6.5.3): until our SETTINGS is ACKed,
     /// the peer may legitimately send according to the previous value - enforce the larger.
     acked_local_initial_window: u32,
@@ -286,6 +370,12 @@ pub struct Connection {
     /// obq_flood_counter_). Reset only via note_outbound_drained() when the
     /// embedder confirms its outbound buffer emptied — never per receive().
     obq_ack_pending: u32,
+    /// Inbound RST_STREAM (nghttp2's stream_reset_ratelim; node's streamResetBurst/Rate).
+    stream_reset_limit: RateLimit,
+    /// RST_STREAM this engine sends that cancels a delivered request (cf. nghttp2's glitch_ratelim).
+    sent_reset_limit: RateLimit,
+    /// A bucket ran dry mid-frame; receive() tears the session down between frames.
+    reset_flood: bool,
 
     /// Scratch buffer for the outbound HPACK-encoded header block.
     enc_buf: Vec<u8>,
@@ -300,7 +390,7 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub fn new(is_server: bool, local: Settings) -> Self {
+    pub(crate) fn new(is_server: bool, local: Settings) -> Self {
         Connection {
             is_server,
             local_settings: local,
@@ -310,6 +400,7 @@ impl Connection {
             frames_received: 0,
             frames_sent: 0,
             max_invalid_frames: 1000,
+            strict_field_whitespace: true,
             acked_local_initial_window: 65_535,
             enforced_max_header_list_size: local.max_header_list_size,
             pending_local_settings_acks: std::collections::VecDeque::new(),
@@ -324,6 +415,12 @@ impl Connection {
             data_in_flight: None,
             terminated: false,
             obq_ack_pending: 0,
+            stream_reset_limit: RateLimit::new(
+                DEFAULT_STREAM_RESET_BURST,
+                DEFAULT_STREAM_RESET_RATE,
+            ),
+            sent_reset_limit: RateLimit::new(DEFAULT_STREAM_RESET_BURST, DEFAULT_STREAM_RESET_RATE),
+            reset_flood: false,
             enc_buf: Vec::new(),
             replenish_buf: Vec::new(),
             evict_buf: Vec::new(),
@@ -391,7 +488,7 @@ impl Connection {
     /// Connection error with the generic NGHTTP2_ERR_PROTO library code — the same thing node
     /// reports ("Protocol error") whenever nghttp2 terminates a session internally without a more
     /// specific callback (node's `internal_goaway_sent_` path in OnFrameSent/SendPendingData).
-    pub fn send_go_away(&mut self, sink: &impl Sink, code: ErrorCode, debug: &[u8]) {
+    pub(crate) fn send_go_away(&mut self, sink: &impl Sink, code: ErrorCode, debug: &[u8]) {
         self.local_connection_error(sink, code, wire::lib_error::PROTO, debug);
     }
 
@@ -413,6 +510,11 @@ impl Connection {
             stream_id,
             &code.as_u32().to_be_bytes(),
         );
+        // MadeYouReset cancels a delivered request. A late frame on a closed stream cancels nothing.
+        let delivered = |s: &Stream| s.recv_final_headers && s.state != State::Closed;
+        if self.streams.get(&stream_id).is_some_and(delivered) {
+            self.note_reset(ResetBy::Us);
+        }
     }
 
     // ---- Inbound --------------------------------------------------------
@@ -420,7 +522,7 @@ impl Connection {
     /// Feed received bytes. Processes every complete frame and returns `consumed` = the offset of
     /// the first incomplete frame (the caller keeps `bytes[consumed..]` and re-presents it prepended
     /// to the next chunk — the engine holds no reassembly buffer).
-    pub fn receive(&mut self, sink: &impl Sink, bytes: &[u8]) -> Feed {
+    pub(crate) fn receive(&mut self, sink: &impl Sink, bytes: &[u8]) -> Feed {
         let mut offset = 0usize;
 
         // A locally-detected connection error already tore the session down (GOAWAY sent, error
@@ -539,6 +641,18 @@ impl Connection {
                 };
             }
             offset += total;
+            if self.check_reset_flood(sink) {
+                return Feed {
+                    consumed: offset,
+                    fatal: true,
+                };
+            }
+        }
+        if self.check_reset_flood(sink) {
+            return Feed {
+                consumed: offset,
+                fatal: true,
+            };
         }
         // Re-open consumed receive windows once per batch (RFC 9113 §6.9; mirrors how the
         // application-consumption-driven update works in node) — doing it per frame would both spam
@@ -576,8 +690,7 @@ impl Connection {
         }
         self.replenish_buf = buf;
         // Evict closed streams so the map (and this scan) stay bounded on long-lived connections.
-        // A late DATA/RST/WINDOW_UPDATE for an evicted id takes the unknown-stream path, which
-        // answers RST_STREAM(STREAM_CLOSED) - the 5.1 closed-state behavior. A late HEADERS for an
+        // Late DATA for an evicted id is dropped (is_closed_stream). A late HEADERS for an
         // evicted id re-opens a fresh entry (the parity check still applies); that matches how
         // trailers-after-close are treated as a new block by the legacy parser as well.
         let mut evict = std::mem::take(&mut self.evict_buf);
@@ -759,8 +872,44 @@ impl Connection {
     /// transport: reset the outbound-ACK-queue counter (mirrors nghttp2's
     /// per-send decrement, coarsened to whole-buffer drains). Never called
     /// from receive() itself so a peer that never reads cannot reset it.
-    pub fn note_outbound_drained(&mut self) {
+    pub(crate) fn note_outbound_drained(&mut self) {
         self.obq_ack_pending = 0;
+    }
+
+    /// No-op when unchanged: the embedder re-syncs this on every read and must not refill the bucket.
+    pub(crate) fn set_stream_reset_limit(&mut self, burst: u32, rate: u32) {
+        let lim = &self.stream_reset_limit;
+        if lim.burst != burst || lim.rate != rate {
+            self.stream_reset_limit = RateLimit::new(burst, rate);
+        }
+    }
+
+    /// Servers only. The callers charge a reset only when it cancels a live stream.
+    fn note_reset(&mut self, by: ResetBy) {
+        if !self.is_server || self.reset_flood {
+            return;
+        }
+        let limit = match by {
+            ResetBy::Peer => &mut self.stream_reset_limit,
+            ResetBy::Us => &mut self.sent_reset_limit,
+        };
+        if !limit.drain() {
+            self.reset_flood = true;
+        }
+    }
+
+    /// nghttp2 sends INTERNAL_ERROR here; ENHANCE_YOUR_CALM matches note_outbound_ack.
+    fn check_reset_flood(&mut self, sink: &impl Sink) -> bool {
+        if !self.reset_flood || self.terminated {
+            return false;
+        }
+        self.local_connection_error(
+            sink,
+            ErrorCode::EnhanceYourCalm,
+            wire::lib_error::FLOODED,
+            b"too many stream resets",
+        );
+        true
     }
 
     /// Bound queued PING/SETTINGS ACKs behind a non-reading peer — nghttp2's
@@ -866,8 +1015,10 @@ impl Connection {
         } else if let Some(s) = self.streams.get_mut(&hdr.stream_id) {
             // 6.9.1: a per-stream overflow is a stream error, not a connection error.
             if s.send_window.increase(increment).is_err() {
-                s.state = State::Closed;
                 self.send_rst_stream(sink, hdr.stream_id, ErrorCode::FlowControlError);
+                if let Some(s) = self.streams.get_mut(&hdr.stream_id) {
+                    s.state = State::Closed;
+                }
                 sink.on_stream_reset(hdr.stream_id, ErrorCode::FlowControlError.as_u32());
                 return false;
             }
@@ -937,11 +1088,14 @@ impl Connection {
             BlockDisposition::Deliver
         };
         if !refused {
-            let cur_state = self
+            let s = self
                 .streams
                 .entry(hdr.stream_id)
-                .or_insert_with(|| Stream::new(send_init, recv_init))
-                .state;
+                .or_insert_with(|| Stream::new(send_init, recv_init));
+            if is_new {
+                s.opened_after_goaway = sink.goaway_sent();
+            }
+            let cur_state = s.state;
             let ev = if end_stream {
                 stream::Event::RecvHeadersEndStream
             } else {
@@ -1108,7 +1262,11 @@ impl Connection {
         // nghttp2_http_on_request_headers): only an initial HEADERS block (or a PUSH_PROMISE
         // block) is a request; a later HEADERS on the same stream is a trailer section.
         let mut saw_connect = false;
-        let mut saw_host = false;
+        let mut saw_options = false;
+        let mut saw_host = self.streams.get(&target).is_some_and(|s| s.recv_host);
+        let mut http_scheme = false;
+        let mut origin_form = false;
+        let mut asterisk_form = false;
         let mut informational = false;
         let mut content_length: Option<u64> = None;
         while off < block.len() {
@@ -1150,11 +1308,10 @@ impl Connection {
                                 b"protocol" => pseudo::PROTOCOL,
                                 _ => pseudo::UNKNOWN,
                             };
-                            // 8.3.1: requests never carry :status - a server seeing it inbound is
-                            // a malformed block. (The client direction also constrains pseudo
-                            // headers, but inbound PUSH_PROMISE blocks legitimately carry request
-                            // pseudo-headers, so that check needs the push context first.)
-                            let wrong_direction = self.is_server && rest == b"status";
+                            // 8.3: :status is the only pseudo-header of a response, and a request
+                            // does not have it. A PUSH_PROMISE block is a request.
+                            let wrong_direction =
+                                (rest == b"status") == (self.is_server || push_parent.is_some());
                             // RFC 8441 §4: :protocol is only valid when SETTINGS_ENABLE_CONNECT_PROTOCOL
                             // has been enabled by this endpoint. nghttp2 (and so node) checks the
                             // submitted local value here, not the ACKed one — so a request that arrives
@@ -1166,7 +1323,14 @@ impl Connection {
                                 && self.local_settings.enable_connect_protocol == 0;
                             // nghttp2 (check_pseudo_header) treats an empty pseudo-header value as
                             // malformed, so `:path: ""` never counts as a present :path (§8.3.1:
-                            // `:path` "MUST NOT be empty" for http/https).
+                            // `:path` "MUST NOT be empty" for http/https). JS drops a field with
+                            // whitespace at an edge of its value, so it is not a present one either.
+                            // Without strictFieldWhitespaceValidation nghttp2 takes such a :protocol,
+                            // unless it is all whitespace.
+                            let edge_whitespace = has_edge_whitespace(value_b)
+                                && (self.strict_field_whitespace
+                                    || bit != pseudo::PROTOCOL
+                                    || value_b.iter().all(|c| matches!(c, b' ' | b'\t')));
                             if seen_regular
                                 || bit == pseudo::UNKNOWN
                                 || (seen_pseudo & bit) != 0
@@ -1174,6 +1338,9 @@ impl Connection {
                                 || protocol_disabled
                                 || is_trailer
                                 || value_b.is_empty()
+                                || edge_whitespace
+                                || has_control_byte(value_b)
+                                || !pseudo::is_valid_value(bit, value_b)
                             {
                                 malformed = true;
                             }
@@ -1184,12 +1351,34 @@ impl Connection {
                             if rest == b"method" && value_b == b"CONNECT" {
                                 saw_connect = true;
                             }
+                            match bit {
+                                pseudo::METHOD => saw_options = value_b == b"OPTIONS",
+                                pseudo::SCHEME => {
+                                    http_scheme = value_b.eq_ignore_ascii_case(b"http")
+                                        || value_b.eq_ignore_ascii_case(b"https");
+                                }
+                                pseudo::PATH => {
+                                    origin_form = value_b.starts_with(b"/");
+                                    asterisk_form = value_b == b"*";
+                                }
+                                _ => {}
+                            }
                         } else {
                             seen_regular = true;
                             match name_b {
                                 b"connection" | b"keep-alive" | b"proxy-connection"
                                 | b"transfer-encoding" | b"upgrade" => malformed = true,
-                                b"host" if is_request => saw_host = true,
+                                // nghttp2 ignores a request's Host that is not an authority.
+                                b"host" if self.is_server || push_parent.is_some() => {
+                                    if !pseudo::is_valid_value(pseudo::AUTHORITY, value_b) {
+                                        continue;
+                                    }
+                                    // check_pseudo_header: not empty, and one per stream.
+                                    if value_b.is_empty() || saw_host {
+                                        malformed = true;
+                                    }
+                                    saw_host = true;
+                                }
                                 b"te" => {
                                     // RFC 9110 10.1.4: field values are case-insensitive.
                                     if !value_b.eq_ignore_ascii_case(b"trailers") {
@@ -1203,6 +1392,10 @@ impl Connection {
                                     _ => malformed = true,
                                 },
                                 _ => {}
+                            }
+                            // nghttp2 ignores such a field (NGHTTP2_ERR_IGN_HTTP_HEADER).
+                            if has_control_byte(value_b) {
+                                continue;
                             }
                         }
                     }
@@ -1251,6 +1444,7 @@ impl Connection {
         // :scheme/:path and carries :authority; extended CONNECT (:protocol, RFC 8441) requires
         // :method CONNECT and :authority. Without this a block with an empty or missing :path
         // reaches JS as a request with an empty url (no compliant peer can produce that shape).
+        // For http and https, :path starts with "/", or is "*" in an OPTIONS request (check_path).
         if is_request && !rejected && !malformed {
             use pseudo::{AUTHORITY, METHOD, PATH, PROTOCOL, SCHEME};
             let extended_connect = (seen_pseudo & PROTOCOL) != 0;
@@ -1260,10 +1454,12 @@ impl Connection {
                 (seen_pseudo & (METHOD | SCHEME | PATH)) != (METHOD | SCHEME | PATH)
                     || ((seen_pseudo & AUTHORITY) == 0 && !saw_host)
                     || (extended_connect && (!saw_connect || (seen_pseudo & AUTHORITY) == 0))
+                    || (http_scheme && !origin_form && !(asterisk_form && saw_options))
             };
         }
         if push_parent.is_none() && self.is_server && !malformed && !rejected {
             if let Some(s) = self.streams.get_mut(&target) {
+                s.recv_host = saw_host;
                 if !saw_connect && s.content_length.is_none() {
                     s.content_length = content_length;
                 }
@@ -1369,8 +1565,10 @@ impl Connection {
         let recv_limit = self
             .acked_local_initial_window
             .max(self.local_settings.initial_window_size) as i64;
-        let mut discard = false;
+        let closed = self.is_closed_stream(sink, hdr.stream_id);
+        let mut discard = closed;
         match self.streams.get_mut(&hdr.stream_id) {
+            _ if closed => {}
             None => {
                 self.send_rst_stream(sink, hdr.stream_id, ErrorCode::StreamClosed);
                 sink.on_stream_reset(hdr.stream_id, ErrorCode::StreamClosed.as_u32());
@@ -1399,6 +1597,14 @@ impl Connection {
                         return StreamedDataStart::Fatal;
                     } else {
                         st.recv_body_bytes = st.recv_body_bytes.saturating_add(data_total as u64);
+                        if st.body_exceeds_content_length() {
+                            self.send_rst_stream(sink, hdr.stream_id, ErrorCode::ProtocolError);
+                            if let Some(st2) = self.streams.get_mut(&hdr.stream_id) {
+                                st2.state = State::Closed;
+                            }
+                            sink.on_stream_reset(hdr.stream_id, ErrorCode::ProtocolError.as_u32());
+                            discard = true;
+                        }
                     }
                 }
             }
@@ -1445,6 +1651,19 @@ impl Connection {
             if let Some(state) = state {
                 sink.on_stream_end(inflight.stream_id, state);
             }
+        }
+    }
+
+    fn has_existed(&self, sink: &impl Sink, stream_id: u32) -> bool {
+        stream_id <= self.last_stream_id || stream_id <= sink.highest_started_stream_id()
+    }
+
+    /// RFC 9113 §5.1 closed state. DATA on such a stream is dropped, as nghttp2 does.
+    fn is_closed_stream(&self, sink: &impl Sink, stream_id: u32) -> bool {
+        match self.streams.get(&stream_id) {
+            Some(s) => s.state == State::Closed,
+            // A stream the embedder opened has no entry here until its first inbound frame.
+            None => !sink.is_local_stream(stream_id) && self.has_existed(sink, stream_id),
         }
     }
 
@@ -1506,11 +1725,14 @@ impl Connection {
             s.state = State::Open;
             self.streams.insert(hdr.stream_id, s);
         }
+        if self.is_closed_stream(sink, hdr.stream_id) {
+            return false;
+        }
         let recv_limit = self
             .acked_local_initial_window
             .max(self.local_settings.initial_window_size) as i64;
         let decision = match self.streams.get_mut(&hdr.stream_id) {
-            // §5.1: DATA for an unknown/closed stream is a STREAM_CLOSED error.
+            // §5.1: DATA for a stream nobody opened is a STREAM_CLOSED error.
             None => DataDecision::Rst(ErrorCode::StreamClosed),
             Some(s) => {
                 if !stream::can_receive_data(s.state) {
@@ -1521,7 +1743,11 @@ impl Connection {
                         DataDecision::FlowControlViolation
                     } else {
                         s.recv_body_bytes = s.recv_body_bytes.saturating_add((end - off) as u64);
-                        DataDecision::Deliver(0)
+                        if s.body_exceeds_content_length() {
+                            DataDecision::Rst(ErrorCode::ProtocolError)
+                        } else {
+                            DataDecision::Deliver(0)
+                        }
                     }
                 }
             }
@@ -1605,9 +1831,13 @@ impl Connection {
     /// RFC 9113 §6.4 RST_STREAM.
     fn handle_rst_stream(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
         let code_raw = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
+        let mut charged = false;
         // §5.1: RST_STREAM on an idle (or never-seen) stream is a connection PROTOCOL_ERROR.
         let mut on_idle = match self.streams.get_mut(&hdr.stream_id) {
             Some(s) if s.state != State::Idle => {
+                // nghttp2 exempts every reset after its GOAWAY, but it opens no stream after it.
+                let exempt = sink.goaway_sent() && !s.opened_after_goaway;
+                charged = s.state != State::Closed && !exempt;
                 s.state = State::Closed;
                 false
             }
@@ -1629,10 +1859,7 @@ impl Connection {
         // closed, not idle — a late RST_STREAM on it MUST be tolerated. Anything at or
         // below the highest stream id either layer has started has existed; the embedder's
         // mark covers locally-initiated streams this engine never saw HEADERS for.
-        if on_idle
-            && (hdr.stream_id <= self.last_stream_id
-                || hdr.stream_id <= sink.highest_started_stream_id())
-        {
+        if on_idle && self.has_existed(sink, hdr.stream_id) {
             return false;
         }
         if on_idle {
@@ -1640,6 +1867,9 @@ impl Connection {
             return true;
         }
         sink.on_stream_reset(hdr.stream_id, code_raw);
+        if charged {
+            self.note_reset(ResetBy::Peer);
+        }
         false
     }
 
@@ -1778,7 +2008,7 @@ impl Connection {
     // ---- Outbound stream API (called by the embedder) ------------------
 
     /// Begin a new outbound header block. Emits any pending §6.3 dynamic-table size update first.
-    pub fn begin_header_block(&mut self) {
+    pub(crate) fn begin_header_block(&mut self) {
         self.enc_buf.clear();
         let mut tmp = [0u8; hpack::MAX_SIZE_UPDATE_BYTES];
         let n = self.hpack.take_pending_size_update(&mut tmp, 0);
@@ -1786,7 +2016,7 @@ impl Connection {
     }
 
     /// HPACK-encode one header field into the current block. Returns false on encode failure.
-    pub fn encode_header(&mut self, name: &[u8], value: &[u8], never_index: bool) -> bool {
+    pub(crate) fn encode_header(&mut self, name: &[u8], value: &[u8], never_index: bool) -> bool {
         let old = self.enc_buf.len();
         self.enc_buf.resize(old + name.len() + value.len() + 16, 0);
         match self
@@ -1806,7 +2036,7 @@ impl Connection {
 
     /// Emit the accumulated header block as a HEADERS frame, splitting into CONTINUATION frames when
     /// it exceeds the peer's max frame size (§4.3/§6.10), and advance the send-side stream state.
-    pub fn send_header_block(&mut self, sink: &impl Sink, stream_id: u32, end_stream: bool) {
+    pub(crate) fn send_header_block(&mut self, sink: &impl Sink, stream_id: u32, end_stream: bool) {
         let block = std::mem::take(&mut self.enc_buf);
         let max = (self.remote_settings.max_frame_size as usize).max(1);
         let total = block.len();
@@ -1868,7 +2098,7 @@ impl Connection {
     /// Send DATA honoring connection + stream send windows and the max frame size. Returns the
     /// number of bytes actually written; the caller queues and retries the remainder on
     /// WINDOW_UPDATE. END_STREAM is only set when the whole buffer is flushed in this call.
-    pub fn send_data(
+    pub(crate) fn send_data(
         &mut self,
         sink: &impl Sink,
         stream_id: u32,
@@ -1913,17 +2143,15 @@ impl Connection {
     /// The outbound half does not run through this engine yet, so without this hook a
     /// completed request's entry would linger as HalfClosedRemote forever — the map (and
     /// the per-batch replenish/evict scans) would grow by one entry per request. Removal
-    /// has the same observable behavior as scan-eviction of a Closed stream: late frames
-    /// for the id take the unknown-stream path (RST STREAM_CLOSED, the §5.1 closed-state
-    /// answer) and a late HEADERS re-opens a fresh entry.
-    pub fn close_stream(&mut self, stream_id: u32) {
+    /// has the same observable behavior as scan-eviction of a Closed stream.
+    pub(crate) fn close_stream(&mut self, stream_id: u32) {
         self.streams.remove(&stream_id);
     }
 
     /// Replenish a single stream's receive window now (the embedder's reader resumed after a
     /// pause). Without this, a peer stalled on a zero stream window would only be released by the
     /// next inbound batch — which may never come, since the peer is the one waiting.
-    pub fn replenish_stream(&mut self, sink: &impl Sink, stream_id: u32) {
+    pub(crate) fn replenish_stream(&mut self, sink: &impl Sink, stream_id: u32) {
         let inc = match self.streams.get_mut(&stream_id) {
             Some(s) if s.state != State::Closed && s.recv_window.needs_update() => {
                 s.recv_window.take_update()
@@ -1937,7 +2165,7 @@ impl Connection {
 
     /// Server-side: emit a PUSH_PROMISE on `parent_id` reserving `promised_id`, carrying the
     /// promised request headers staged via begin_header_block/encode_header (RFC 9113 §6.6).
-    pub fn send_push_promise(&mut self, sink: &impl Sink, parent_id: u32, promised_id: u32) {
+    pub(crate) fn send_push_promise(&mut self, sink: &impl Sink, parent_id: u32, promised_id: u32) {
         let block = std::mem::take(&mut self.enc_buf);
         let max = (self.remote_settings.max_frame_size as usize).max(5);
 

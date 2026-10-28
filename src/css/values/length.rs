@@ -39,6 +39,13 @@ impl Default for LengthOrNumber {
 
 pub(crate) type LengthPercentage = DimensionPercentage<LengthValue>;
 
+impl LengthPercentage {
+    /// `<length-percentage [0,∞]>`
+    pub(crate) fn parse_non_negative(input: &mut Parser) -> CssResult<Self> {
+        input.parse_with_non_negative(true, Self::parse)
+    }
+}
+
 /// Either a [`<length-percentage>`](https://www.w3.org/TR/css-values-4/#typedef-length-percentage), or the `auto` keyword.
 #[derive(Clone, PartialEq, css::Parse, css::ToCss)]
 pub enum LengthPercentageOrAuto {
@@ -269,12 +276,13 @@ impl LengthValue {
         let location = input.current_source_location();
         let token = *input.next()?;
         match &token {
-            Token::Dimension(dim) => {
+            Token::Dimension(dim) if !(input.flags.non_negative() && dim.num.value < 0.0) => {
                 if let Some(v) = Self::from_unit_ci(dim.unit, dim.num.value) {
                     return Ok(v);
                 }
             }
-            Token::Number(num) => return Ok(Self::Px(num.value)),
+            // Outside of quirks mode only `0` is a length without a unit.
+            Token::Number(num) if num.value == 0.0 => return Ok(Self::Px(num.value)),
             _ => {}
         }
         Err(location.new_unexpected_token_error(token))
@@ -414,12 +422,15 @@ impl Length {
     }
 
     pub(crate) fn parse(input: &mut Parser) -> CssResult<Length> {
-        if let Ok(calc_value) = input.try_parse(Calc::<Length>::parse) {
+        match input.try_parse(Calc::<Length>::parse) {
             // PERF: I don't like this redundant allocation
-            if let Calc::Value(v) = calc_value {
-                return Ok(*v);
+            Ok(Calc::Value(v)) => return Ok(*v),
+            // `calc(0)` is a number, and unlike `0` not a length.
+            Ok(Calc::Number(_)) => {
+                return Err(input.new_custom_error(css::ParserError::invalid_value));
             }
-            return Ok(Self::Calc(Box::new(calc_value)));
+            Ok(calc) => return Ok(Self::Calc(Box::new(calc))),
+            Err(_) => {}
         }
 
         let len = LengthValue::parse(input)?;
@@ -681,20 +692,11 @@ impl protocol::TryMap for LengthValue {
 impl protocol::TryOp for LengthValue {
     #[inline]
     fn try_op<C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> f32) -> Option<Self> {
-        // `LengthValue::try_op` takes a 2-arg closure (ctx folded
-        // in by caller); the `protocol::TryOp` shape passes `C` by-value with
-        // no `Copy` bound, so we can't capture `ctx` in an `Fn` closure that
-        // might be called more than once. Inline the same-unit + px-convert
-        // dispatch here so `f` is invoked exactly once on the chosen path.
         if core::mem::discriminant(self) == core::mem::discriminant(rhs) {
             let v = f(ctx, self.value(), rhs.value());
             return Some(self.map_value(|_| v));
         }
-        // Intentionally calls `self.to_px()` for BOTH operands (sic) — kept
-        // for behavioral compatibility.
-        if let (Some(a), Some(b)) = (self.to_px(), self.to_px()) {
-            return Some(LengthValue::Px(f(ctx, a, b)));
-        }
+        // A px fold can land a whole step off: `to_px` rounds, and round()/rem()/mod() jump.
         None
     }
 }
@@ -704,9 +706,7 @@ impl protocol::TryOpTo for LengthValue {
         if core::mem::discriminant(self) == core::mem::discriminant(rhs) {
             return Some(f(ctx, self.value(), rhs.value()));
         }
-        // Intentionally calls `self.to_px()` for BOTH operands (sic) — kept
-        // for behavioral compatibility.
-        if let (Some(a), Some(b)) = (self.to_px(), self.to_px()) {
+        if let (Some(a), Some(b)) = (self.to_px(), rhs.to_px()) {
             return Some(f(ctx, a, b));
         }
         None

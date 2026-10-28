@@ -1,0 +1,2931 @@
+////: lines-14
+{
+  const print = printer(«1»);
+  const p = { get() { return 44 } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  const t = {}; «3».defineProperty(t, "x", o); print(t.x);
+}
+////: lines-189
+{
+  const print = printer(«1»);
+  const p = { get() { return 44 } };
+  class C { x = 1; }
+  Object.setPrototypeOf(C.prototype, p);
+  const o = new C();
+  const t = «2», { x: o }); print(t.x);
+}
+////: lines-28
+{
+  const print = printer(«1»);
+  const p = { get() { return 44 } };
+  class C { x = 1; }
+  Object.setPrototypeOf(C.prototype, p);
+  const o = new C();
+  const t = {}; «2».defineProperty(t, "x", o); print(t.x);
+}
+////: lines-52
+{
+  const print = printer(«1»);
+  const p = { get() { return 44 } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  const t = Object.create(null, { x: o }); print(t.x);
+}
+////: lines-53
+{
+  const print = printer(«1»);
+  function F() {}
+  F.prototype.get = function () { return 44 };
+  const o = new F();
+  const t = {}; «2».defineProperty(t, "x", o); print(t.x);
+}
+////: lines-54
+{
+  const print = printer(«1»);
+  function F() {}
+  F.prototype = { get() { return 44 } };
+  const o = new F();
+  const t = {}; «2».defineProperty(t, "x", o); print(t.x);
+}
+////: lines-55
+{
+  const print = printer(«1»);
+  function make() { return { get() { return 44 } }; }
+  make();
+  const o = make();
+  const t = {}; «2».defineProperty(t, "x", o); print(t.x);
+}
+////: lines-56
+{
+  const print = printer(«1»);
+  const p = { get() { return 44 } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  const t = {}; «2».defineProperty(t, "x", o); print(t.x);
+}
+////: lines-57
+{
+  const print = printer(«1»);
+  const p = { get() { return 44 } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  const t = {}; «2».defineProperty(t, "x", o); print(t.x);
+}
+////: lines-58
+{
+  const print = printer(«1»);
+  class C { x = 1; }
+  const o = new C();
+  o.get = function () { return 44 };
+  const t = {}; «2».defineProperty(t, "x", o); print(t.x);
+}
+////: lines-59
+{
+  const print = printer(«1»);
+  const p = {};
+  p.get = function () { return 44 };
+  const o = Object.create(p);
+  const t = {}; «2».defineProperty(t, "x", o); print(t.x);
+}
+////: lines-60
+{
+  const print = printer(«1»);
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.get = function () { return 44 };
+  const t = {}; «2».defineProperty(t, "x", o); print(t.x);
+}
+////: lines-61
+{
+  const print = printer(«1»);
+  class C { x = 1; }
+  C.prototype.get = function () { return 44 };
+  const o = new C();
+  const t = {}; «2».defineProperty(t, "x", o); print(t.x);
+}
+////: lines-62
+{
+  const print = printer(«1»);
+  class B { get() { return 44 } }
+  class C extends B {}
+  const o = new C();
+  const t = {}; «2».defineProperty(t, "x", o); print(t.x);
+}
+////: lines-63
+{
+  const print = printer(«1»);
+  const p = { get() { return 44 } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  const t = {}; Object.defineProperties(t, { x: o }); print(t.x);
+}
+////: lines-64
+{
+  const print = printer(«1»);
+  const p = { set(v) { print("set", v) } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  const t = {}; Object.defineProperty(t, "x", o); t.x = 2;
+}
+////: lines-69
+{
+  const print = printer(«1»);
+  const p = { [Symbol.hasInstance](v) { return v === 1 } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  print(1 instanceof o, 2 instanceof o);
+}
+////: lines-76
+{
+  const print = printer(«1»);
+  const p = { apply(t, self, list) { return 43 } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  print(new Proxy(function () {}, o)());
+}
+////: lines-77
+{
+  const print = printer(«1»);
+  const p = { construct(t, list) { return { made: 1 } } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  print(new (new Proxy(function () {}, o))().made);
+}
+////: lines-78
+{
+  const print = printer(«1»);
+  const p = { deleteProperty(t, k) { print("delete", k); return true } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  delete new Proxy({}, o).x;
+}
+////: lines-79
+{
+  const print = printer(«1»);
+  const p = { get(t, k) { return 42 } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  print(new Proxy({}, o).x);
+}
+////: lines-80
+{
+  const print = printer(«1»);
+  const p = { getPrototypeOf(t) { return Array.prototype } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  print(Object.getPrototypeOf(new Proxy({}, o)) === Array.prototype);
+}
+////: lines-81
+{
+  const print = printer(«1»);
+  const p = { has(t, k) { return true } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  print("x" in new Proxy({}, o));
+}
+////: lines-82
+{
+  const print = printer(«1»);
+  const p = { ownKeys(t) { return ["a", "b"] } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  print(Reflect.ownKeys(new Proxy({}, o)).length);
+}
+////: lines-83
+{
+  const print = printer(«1»);
+  const p = { set(t, k, v) { print("set", k, v); return true } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  new Proxy({}, o).x = 1;
+}
+//// members-read-by-native-code.js
+// Symbol.hasInstance, the traps of a proxy handler and the members of a descriptor are read by native code, wherever the object got them from.
+const lines = [];
+////= printer
+
+{
+  const print = printer("has-instance literal");
+  const o = { [Symbol.hasInstance](v) { return v === 1 } };
+  print(1 instanceof o, 2 instanceof o);
+}
+{
+  const print = printer("has-instance literal-function");
+  const o = { [Symbol.hasInstance]: function (v) { return v === 1 } };
+  print(1 instanceof o, 2 instanceof o);
+}
+{
+  const print = printer("has-instance literal-with-field");
+  const o = { x: 1, [Symbol.hasInstance](v) { return v === 1 } };
+  print(1 instanceof o, 2 instanceof o);
+}
+{
+  const print = printer("has-instance class-method");
+  class C { [Symbol.hasInstance](v) { return v === 1 } }
+  const o = new C();
+  print(1 instanceof o, 2 instanceof o);
+}
+{
+  const print = printer("has-instance class-field");
+  class C { [Symbol.hasInstance] = function (v) { return v === 1 }; }
+  const o = new C();
+  print(1 instanceof o, 2 instanceof o);
+}
+{
+  const print = printer("has-instance subclass");
+  class B { [Symbol.hasInstance](v) { return v === 1 } }
+  class C extends B {}
+  const o = new C();
+  print(1 instanceof o, 2 instanceof o);
+}
+{
+  const print = printer("has-instance class-static");
+  class C { static [Symbol.hasInstance](v) { return v === 1 } }
+  const o = C;
+  print(1 instanceof o, 2 instanceof o);
+}
+{
+  const print = printer("has-instance prototype-create");
+  const p = { [Symbol.hasInstance](v) { return v === 1 } };
+  const o = Object.create(p);
+  print(1 instanceof o, 2 instanceof o);
+}
+{
+  const print = printer("has-instance prototype-literal");
+  const p = { [Symbol.hasInstance](v) { return v === 1 } };
+  const o = { __proto__: p };
+  print(1 instanceof o, 2 instanceof o);
+}
+{
+  const print = printer("has-instance prototype-literal-with-field");
+  const p = { [Symbol.hasInstance](v) { return v === 1 } };
+  const o = { __proto__: p, x: 1 };
+  print(1 instanceof o, 2 instanceof o);
+}
+{
+  const print = printer("has-instance prototype-set");
+  const p = { [Symbol.hasInstance](v) { return v === 1 } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print(1 instanceof o, 2 instanceof o);
+}
+////= lines-69	"has-instance prototype-set-with-field"	Object
+////= lines-69	"has-instance prototype-reflect-set"	Reflect
+{
+  const print = printer("has-instance prototype-proto-store");
+  const p = { [Symbol.hasInstance](v) { return v === 1 } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print(1 instanceof o, 2 instanceof o);
+}
+{
+  const print = printer("has-instance prototype-two-levels");
+  const p = { [Symbol.hasInstance](v) { return v === 1 } };
+  const o = Object.create(Object.create(p));
+  print(1 instanceof o, 2 instanceof o);
+}
+{
+  const print = printer("has-instance prototype-of-class-instance");
+  const p = { [Symbol.hasInstance](v) { return v === 1 } };
+  class C { x = 1; }
+  Object.setPrototypeOf(C.prototype, p);
+  const o = new C();
+  print(1 instanceof o, 2 instanceof o);
+}
+{
+  const print = printer("has-instance prototype-is-instance");
+  class C { [Symbol.hasInstance] = function (v) { return v === 1 }; }
+  const o = Object.create(new C());
+  print(1 instanceof o, 2 instanceof o);
+}
+{
+  const print = printer("has-instance stored-after");
+  const o = {};
+  o[Symbol.hasInstance] = function (v) { return v === 1 };
+  print(1 instanceof o, 2 instanceof o);
+}
+{
+  const print = printer("has-instance stored-after-with-field");
+  const o = { x: 1 };
+  o[Symbol.hasInstance] = function (v) { return v === 1 };
+  print(1 instanceof o, 2 instanceof o);
+}
+{
+  const print = printer("has-instance stored-after-on-prototype");
+  const p = {};
+  p[Symbol.hasInstance] = function (v) { return v === 1 };
+  const o = Object.create(p);
+  print(1 instanceof o, 2 instanceof o);
+}
+{
+  const print = printer("has-instance stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p[Symbol.hasInstance] = function (v) { return v === 1 };
+  print(1 instanceof o, 2 instanceof o);
+}
+{
+  const print = printer("has-instance stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o[Symbol.hasInstance] = function (v) { return v === 1 };
+  print(1 instanceof o, 2 instanceof o);
+}
+{
+  const print = printer("has-instance stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype[Symbol.hasInstance] = function (v) { return v === 1 };
+  const o = new C();
+  print(1 instanceof o, 2 instanceof o);
+}
+{
+  const print = printer("has-instance constructor-function");
+  function F() {}
+  F.prototype[Symbol.hasInstance] = function (v) { return v === 1 };
+  const o = new F();
+  print(1 instanceof o, 2 instanceof o);
+}
+{
+  const print = printer("has-instance constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { [Symbol.hasInstance](v) { return v === 1 } };
+  const o = new F();
+  print(1 instanceof o, 2 instanceof o);
+}
+{
+  const print = printer("has-instance constructor-function-this");
+  function F() { this[Symbol.hasInstance] = function (v) { return v === 1 }; }
+  const o = new F();
+  print(1 instanceof o, 2 instanceof o);
+}
+{
+  const print = printer("has-instance getter");
+  const o = { get [Symbol.hasInstance]() { return function (v) { return v === 1 }; } };
+  print(1 instanceof o, 2 instanceof o);
+}
+{
+  const print = printer("has-instance defined");
+  const o = {};
+  Object.defineProperty(o, Symbol.hasInstance, { value: function (v) { return v === 1 } });
+  print(1 instanceof o, 2 instanceof o);
+}
+{
+  const print = printer("has-instance assigned");
+  const o = Object.assign({}, { [Symbol.hasInstance](v) { return v === 1 } });
+  print(1 instanceof o, 2 instanceof o);
+}
+{
+  const print = printer("has-instance spread-copy");
+  const o = { ...{ [Symbol.hasInstance](v) { return v === 1 } } };
+  print(1 instanceof o, 2 instanceof o);
+}
+{
+  const print = printer("has-instance made-in-function");
+  function make() { return { [Symbol.hasInstance](v) { return v === 1 } }; }
+  const o = make();
+  print(1 instanceof o, 2 instanceof o);
+}
+{
+  const print = printer("has-instance made-in-function-twice");
+  function make() { return { [Symbol.hasInstance](v) { return v === 1 } }; }
+  make();
+  const o = make();
+  print(1 instanceof o, 2 instanceof o);
+}
+{
+  const print = printer("has-instance literal-arrow");
+  const o = { [Symbol.hasInstance]: (v) => { return v === 1 } };
+  print(1 instanceof o, 2 instanceof o);
+}
+{
+  const print = printer("has-instance class-field-arrow");
+  class C { [Symbol.hasInstance] = (v) => { return v === 1 }; }
+  const o = new C();
+  print(1 instanceof o, 2 instanceof o);
+}
+{
+  const print = printer("has-instance prototype-create-arrow");
+  const p = { [Symbol.hasInstance]: (v) => { return v === 1 } };
+  const o = Object.create(p);
+  print(1 instanceof o, 2 instanceof o);
+}
+{
+  const print = printer("proxy-get literal");
+  const o = { get(t, k) { return 42 } };
+  print(new Proxy({}, o).x);
+}
+{
+  const print = printer("proxy-get literal-function");
+  const o = { get: function (t, k) { return 42 } };
+  print(new Proxy({}, o).x);
+}
+{
+  const print = printer("proxy-get literal-with-field");
+  const o = { x: 1, get(t, k) { return 42 } };
+  print(new Proxy({}, o).x);
+}
+{
+  const print = printer("proxy-get class-method");
+  class C { get(t, k) { return 42 } }
+  const o = new C();
+  print(new Proxy({}, o).x);
+}
+{
+  const print = printer("proxy-get class-field");
+  class C { get = function (t, k) { return 42 }; }
+  const o = new C();
+  print(new Proxy({}, o).x);
+}
+{
+  const print = printer("proxy-get subclass");
+  class B { get(t, k) { return 42 } }
+  class C extends B {}
+  const o = new C();
+  print(new Proxy({}, o).x);
+}
+{
+  const print = printer("proxy-get class-static");
+  class C { static get(t, k) { return 42 } }
+  const o = C;
+  print(new Proxy({}, o).x);
+}
+{
+  const print = printer("proxy-get prototype-create");
+  const p = { get(t, k) { return 42 } };
+  const o = Object.create(p);
+  print(new Proxy({}, o).x);
+}
+{
+  const print = printer("proxy-get prototype-literal");
+  const p = { get(t, k) { return 42 } };
+  const o = { __proto__: p };
+  print(new Proxy({}, o).x);
+}
+{
+  const print = printer("proxy-get prototype-literal-with-field");
+  const p = { get(t, k) { return 42 } };
+  const o = { __proto__: p, x: 1 };
+  print(new Proxy({}, o).x);
+}
+{
+  const print = printer("proxy-get prototype-set");
+  const p = { get(t, k) { return 42 } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print(new Proxy({}, o).x);
+}
+////= lines-79	"proxy-get prototype-set-with-field"	Object
+////= lines-79	"proxy-get prototype-reflect-set"	Reflect
+{
+  const print = printer("proxy-get prototype-proto-store");
+  const p = { get(t, k) { return 42 } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print(new Proxy({}, o).x);
+}
+{
+  const print = printer("proxy-get prototype-two-levels");
+  const p = { get(t, k) { return 42 } };
+  const o = Object.create(Object.create(p));
+  print(new Proxy({}, o).x);
+}
+{
+  const print = printer("proxy-get prototype-of-class-instance");
+  const p = { get(t, k) { return 42 } };
+  class C { x = 1; }
+  Object.setPrototypeOf(C.prototype, p);
+  const o = new C();
+  print(new Proxy({}, o).x);
+}
+{
+  const print = printer("proxy-get prototype-is-instance");
+  class C { get = function (t, k) { return 42 }; }
+  const o = Object.create(new C());
+  print(new Proxy({}, o).x);
+}
+{
+  const print = printer("proxy-get stored-after");
+  const o = {};
+  o.get = function (t, k) { return 42 };
+  print(new Proxy({}, o).x);
+}
+{
+  const print = printer("proxy-get stored-after-with-field");
+  const o = { x: 1 };
+  o.get = function (t, k) { return 42 };
+  print(new Proxy({}, o).x);
+}
+{
+  const print = printer("proxy-get stored-after-on-prototype");
+  const p = {};
+  p.get = function (t, k) { return 42 };
+  const o = Object.create(p);
+  print(new Proxy({}, o).x);
+}
+{
+  const print = printer("proxy-get stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.get = function (t, k) { return 42 };
+  print(new Proxy({}, o).x);
+}
+{
+  const print = printer("proxy-get stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.get = function (t, k) { return 42 };
+  print(new Proxy({}, o).x);
+}
+{
+  const print = printer("proxy-get stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.get = function (t, k) { return 42 };
+  const o = new C();
+  print(new Proxy({}, o).x);
+}
+{
+  const print = printer("proxy-get constructor-function");
+  function F() {}
+  F.prototype.get = function (t, k) { return 42 };
+  const o = new F();
+  print(new Proxy({}, o).x);
+}
+{
+  const print = printer("proxy-get constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { get(t, k) { return 42 } };
+  const o = new F();
+  print(new Proxy({}, o).x);
+}
+{
+  const print = printer("proxy-get constructor-function-this");
+  function F() { this.get = function (t, k) { return 42 }; }
+  const o = new F();
+  print(new Proxy({}, o).x);
+}
+{
+  const print = printer("proxy-get getter");
+  const o = { get get() { return function (t, k) { return 42 }; } };
+  print(new Proxy({}, o).x);
+}
+{
+  const print = printer("proxy-get defined");
+  const o = {};
+  Object.defineProperty(o, "get", { value: function (t, k) { return 42 } });
+  print(new Proxy({}, o).x);
+}
+{
+  const print = printer("proxy-get assigned");
+  const o = Object.assign({}, { get(t, k) { return 42 } });
+  print(new Proxy({}, o).x);
+}
+{
+  const print = printer("proxy-get spread-copy");
+  const o = { ...{ get(t, k) { return 42 } } };
+  print(new Proxy({}, o).x);
+}
+{
+  const print = printer("proxy-get made-in-function");
+  function make() { return { get(t, k) { return 42 } }; }
+  const o = make();
+  print(new Proxy({}, o).x);
+}
+{
+  const print = printer("proxy-get made-in-function-twice");
+  function make() { return { get(t, k) { return 42 } }; }
+  make();
+  const o = make();
+  print(new Proxy({}, o).x);
+}
+{
+  const print = printer("proxy-get literal-arrow");
+  const o = { get: (t, k) => { return 42 } };
+  print(new Proxy({}, o).x);
+}
+{
+  const print = printer("proxy-get class-field-arrow");
+  class C { get = (t, k) => { return 42 }; }
+  const o = new C();
+  print(new Proxy({}, o).x);
+}
+{
+  const print = printer("proxy-get prototype-create-arrow");
+  const p = { get: (t, k) => { return 42 } };
+  const o = Object.create(p);
+  print(new Proxy({}, o).x);
+}
+{
+  const print = printer("proxy-has literal");
+  const o = { has(t, k) { return true } };
+  print("x" in new Proxy({}, o));
+}
+{
+  const print = printer("proxy-has literal-function");
+  const o = { has: function (t, k) { return true } };
+  print("x" in new Proxy({}, o));
+}
+{
+  const print = printer("proxy-has literal-with-field");
+  const o = { x: 1, has(t, k) { return true } };
+  print("x" in new Proxy({}, o));
+}
+{
+  const print = printer("proxy-has class-method");
+  class C { has(t, k) { return true } }
+  const o = new C();
+  print("x" in new Proxy({}, o));
+}
+{
+  const print = printer("proxy-has class-field");
+  class C { has = function (t, k) { return true }; }
+  const o = new C();
+  print("x" in new Proxy({}, o));
+}
+{
+  const print = printer("proxy-has subclass");
+  class B { has(t, k) { return true } }
+  class C extends B {}
+  const o = new C();
+  print("x" in new Proxy({}, o));
+}
+{
+  const print = printer("proxy-has class-static");
+  class C { static has(t, k) { return true } }
+  const o = C;
+  print("x" in new Proxy({}, o));
+}
+{
+  const print = printer("proxy-has prototype-create");
+  const p = { has(t, k) { return true } };
+  const o = Object.create(p);
+  print("x" in new Proxy({}, o));
+}
+{
+  const print = printer("proxy-has prototype-literal");
+  const p = { has(t, k) { return true } };
+  const o = { __proto__: p };
+  print("x" in new Proxy({}, o));
+}
+{
+  const print = printer("proxy-has prototype-literal-with-field");
+  const p = { has(t, k) { return true } };
+  const o = { __proto__: p, x: 1 };
+  print("x" in new Proxy({}, o));
+}
+{
+  const print = printer("proxy-has prototype-set");
+  const p = { has(t, k) { return true } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print("x" in new Proxy({}, o));
+}
+////= lines-81	"proxy-has prototype-set-with-field"	Object
+////= lines-81	"proxy-has prototype-reflect-set"	Reflect
+{
+  const print = printer("proxy-has prototype-proto-store");
+  const p = { has(t, k) { return true } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print("x" in new Proxy({}, o));
+}
+{
+  const print = printer("proxy-has prototype-two-levels");
+  const p = { has(t, k) { return true } };
+  const o = Object.create(Object.create(p));
+  print("x" in new Proxy({}, o));
+}
+{
+  const print = printer("proxy-has prototype-of-class-instance");
+  const p = { has(t, k) { return true } };
+  class C { x = 1; }
+  Object.setPrototypeOf(C.prototype, p);
+  const o = new C();
+  print("x" in new Proxy({}, o));
+}
+{
+  const print = printer("proxy-has prototype-is-instance");
+  class C { has = function (t, k) { return true }; }
+  const o = Object.create(new C());
+  print("x" in new Proxy({}, o));
+}
+{
+  const print = printer("proxy-has stored-after");
+  const o = {};
+  o.has = function (t, k) { return true };
+  print("x" in new Proxy({}, o));
+}
+{
+  const print = printer("proxy-has stored-after-with-field");
+  const o = { x: 1 };
+  o.has = function (t, k) { return true };
+  print("x" in new Proxy({}, o));
+}
+{
+  const print = printer("proxy-has stored-after-on-prototype");
+  const p = {};
+  p.has = function (t, k) { return true };
+  const o = Object.create(p);
+  print("x" in new Proxy({}, o));
+}
+{
+  const print = printer("proxy-has stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.has = function (t, k) { return true };
+  print("x" in new Proxy({}, o));
+}
+{
+  const print = printer("proxy-has stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.has = function (t, k) { return true };
+  print("x" in new Proxy({}, o));
+}
+{
+  const print = printer("proxy-has stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.has = function (t, k) { return true };
+  const o = new C();
+  print("x" in new Proxy({}, o));
+}
+{
+  const print = printer("proxy-has constructor-function");
+  function F() {}
+  F.prototype.has = function (t, k) { return true };
+  const o = new F();
+  print("x" in new Proxy({}, o));
+}
+{
+  const print = printer("proxy-has constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { has(t, k) { return true } };
+  const o = new F();
+  print("x" in new Proxy({}, o));
+}
+{
+  const print = printer("proxy-has constructor-function-this");
+  function F() { this.has = function (t, k) { return true }; }
+  const o = new F();
+  print("x" in new Proxy({}, o));
+}
+{
+  const print = printer("proxy-has getter");
+  const o = { get has() { return function (t, k) { return true }; } };
+  print("x" in new Proxy({}, o));
+}
+{
+  const print = printer("proxy-has defined");
+  const o = {};
+  Object.defineProperty(o, "has", { value: function (t, k) { return true } });
+  print("x" in new Proxy({}, o));
+}
+{
+  const print = printer("proxy-has assigned");
+  const o = Object.assign({}, { has(t, k) { return true } });
+  print("x" in new Proxy({}, o));
+}
+{
+  const print = printer("proxy-has spread-copy");
+  const o = { ...{ has(t, k) { return true } } };
+  print("x" in new Proxy({}, o));
+}
+{
+  const print = printer("proxy-has made-in-function");
+  function make() { return { has(t, k) { return true } }; }
+  const o = make();
+  print("x" in new Proxy({}, o));
+}
+{
+  const print = printer("proxy-has made-in-function-twice");
+  function make() { return { has(t, k) { return true } }; }
+  make();
+  const o = make();
+  print("x" in new Proxy({}, o));
+}
+{
+  const print = printer("proxy-has literal-arrow");
+  const o = { has: (t, k) => { return true } };
+  print("x" in new Proxy({}, o));
+}
+{
+  const print = printer("proxy-has class-field-arrow");
+  class C { has = (t, k) => { return true }; }
+  const o = new C();
+  print("x" in new Proxy({}, o));
+}
+{
+  const print = printer("proxy-has prototype-create-arrow");
+  const p = { has: (t, k) => { return true } };
+  const o = Object.create(p);
+  print("x" in new Proxy({}, o));
+}
+{
+  const print = printer("proxy-set literal");
+  const o = { set(t, k, v) { print("set", k, v); return true } };
+  new Proxy({}, o).x = 1;
+}
+{
+  const print = printer("proxy-set literal-function");
+  const o = { set: function (t, k, v) { print("set", k, v); return true } };
+  new Proxy({}, o).x = 1;
+}
+{
+  const print = printer("proxy-set literal-with-field");
+  const o = { x: 1, set(t, k, v) { print("set", k, v); return true } };
+  new Proxy({}, o).x = 1;
+}
+{
+  const print = printer("proxy-set class-method");
+  class C { set(t, k, v) { print("set", k, v); return true } }
+  const o = new C();
+  new Proxy({}, o).x = 1;
+}
+{
+  const print = printer("proxy-set class-field");
+  class C { set = function (t, k, v) { print("set", k, v); return true }; }
+  const o = new C();
+  new Proxy({}, o).x = 1;
+}
+{
+  const print = printer("proxy-set subclass");
+  class B { set(t, k, v) { print("set", k, v); return true } }
+  class C extends B {}
+  const o = new C();
+  new Proxy({}, o).x = 1;
+}
+{
+  const print = printer("proxy-set class-static");
+  class C { static set(t, k, v) { print("set", k, v); return true } }
+  const o = C;
+  new Proxy({}, o).x = 1;
+}
+{
+  const print = printer("proxy-set prototype-create");
+  const p = { set(t, k, v) { print("set", k, v); return true } };
+  const o = Object.create(p);
+  new Proxy({}, o).x = 1;
+}
+{
+  const print = printer("proxy-set prototype-literal");
+  const p = { set(t, k, v) { print("set", k, v); return true } };
+  const o = { __proto__: p };
+  new Proxy({}, o).x = 1;
+}
+{
+  const print = printer("proxy-set prototype-literal-with-field");
+  const p = { set(t, k, v) { print("set", k, v); return true } };
+  const o = { __proto__: p, x: 1 };
+  new Proxy({}, o).x = 1;
+}
+{
+  const print = printer("proxy-set prototype-set");
+  const p = { set(t, k, v) { print("set", k, v); return true } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  new Proxy({}, o).x = 1;
+}
+////= lines-83	"proxy-set prototype-set-with-field"	Object
+////= lines-83	"proxy-set prototype-reflect-set"	Reflect
+{
+  const print = printer("proxy-set prototype-proto-store");
+  const p = { set(t, k, v) { print("set", k, v); return true } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  new Proxy({}, o).x = 1;
+}
+{
+  const print = printer("proxy-set prototype-two-levels");
+  const p = { set(t, k, v) { print("set", k, v); return true } };
+  const o = Object.create(Object.create(p));
+  new Proxy({}, o).x = 1;
+}
+{
+  const print = printer("proxy-set prototype-of-class-instance");
+  const p = { set(t, k, v) { print("set", k, v); return true } };
+  class C { x = 1; }
+  Object.setPrototypeOf(C.prototype, p);
+  const o = new C();
+  new Proxy({}, o).x = 1;
+}
+{
+  const print = printer("proxy-set prototype-is-instance");
+  class C { set = function (t, k, v) { print("set", k, v); return true }; }
+  const o = Object.create(new C());
+  new Proxy({}, o).x = 1;
+}
+{
+  const print = printer("proxy-set stored-after");
+  const o = {};
+  o.set = function (t, k, v) { print("set", k, v); return true };
+  new Proxy({}, o).x = 1;
+}
+{
+  const print = printer("proxy-set stored-after-with-field");
+  const o = { x: 1 };
+  o.set = function (t, k, v) { print("set", k, v); return true };
+  new Proxy({}, o).x = 1;
+}
+{
+  const print = printer("proxy-set stored-after-on-prototype");
+  const p = {};
+  p.set = function (t, k, v) { print("set", k, v); return true };
+  const o = Object.create(p);
+  new Proxy({}, o).x = 1;
+}
+{
+  const print = printer("proxy-set stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.set = function (t, k, v) { print("set", k, v); return true };
+  new Proxy({}, o).x = 1;
+}
+{
+  const print = printer("proxy-set stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.set = function (t, k, v) { print("set", k, v); return true };
+  new Proxy({}, o).x = 1;
+}
+{
+  const print = printer("proxy-set stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.set = function (t, k, v) { print("set", k, v); return true };
+  const o = new C();
+  new Proxy({}, o).x = 1;
+}
+{
+  const print = printer("proxy-set constructor-function");
+  function F() {}
+  F.prototype.set = function (t, k, v) { print("set", k, v); return true };
+  const o = new F();
+  new Proxy({}, o).x = 1;
+}
+{
+  const print = printer("proxy-set constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { set(t, k, v) { print("set", k, v); return true } };
+  const o = new F();
+  new Proxy({}, o).x = 1;
+}
+{
+  const print = printer("proxy-set constructor-function-this");
+  function F() { this.set = function (t, k, v) { print("set", k, v); return true }; }
+  const o = new F();
+  new Proxy({}, o).x = 1;
+}
+{
+  const print = printer("proxy-set getter");
+  const o = { get set() { return function (t, k, v) { print("set", k, v); return true }; } };
+  new Proxy({}, o).x = 1;
+}
+{
+  const print = printer("proxy-set defined");
+  const o = {};
+  Object.defineProperty(o, "set", { value: function (t, k, v) { print("set", k, v); return true } });
+  new Proxy({}, o).x = 1;
+}
+{
+  const print = printer("proxy-set assigned");
+  const o = Object.assign({}, { set(t, k, v) { print("set", k, v); return true } });
+  new Proxy({}, o).x = 1;
+}
+{
+  const print = printer("proxy-set spread-copy");
+  const o = { ...{ set(t, k, v) { print("set", k, v); return true } } };
+  new Proxy({}, o).x = 1;
+}
+{
+  const print = printer("proxy-set made-in-function");
+  function make() { return { set(t, k, v) { print("set", k, v); return true } }; }
+  const o = make();
+  new Proxy({}, o).x = 1;
+}
+{
+  const print = printer("proxy-set made-in-function-twice");
+  function make() { return { set(t, k, v) { print("set", k, v); return true } }; }
+  make();
+  const o = make();
+  new Proxy({}, o).x = 1;
+}
+{
+  const print = printer("proxy-set literal-arrow");
+  const o = { set: (t, k, v) => { print("set", k, v); return true } };
+  new Proxy({}, o).x = 1;
+}
+{
+  const print = printer("proxy-set class-field-arrow");
+  class C { set = (t, k, v) => { print("set", k, v); return true }; }
+  const o = new C();
+  new Proxy({}, o).x = 1;
+}
+{
+  const print = printer("proxy-set prototype-create-arrow");
+  const p = { set: (t, k, v) => { print("set", k, v); return true } };
+  const o = Object.create(p);
+  new Proxy({}, o).x = 1;
+}
+{
+  const print = printer("proxy-apply literal");
+  const o = { apply(t, self, list) { return 43 } };
+  print(new Proxy(function () {}, o)());
+}
+{
+  const print = printer("proxy-apply literal-function");
+  const o = { apply: function (t, self, list) { return 43 } };
+  print(new Proxy(function () {}, o)());
+}
+{
+  const print = printer("proxy-apply literal-with-field");
+  const o = { x: 1, apply(t, self, list) { return 43 } };
+  print(new Proxy(function () {}, o)());
+}
+{
+  const print = printer("proxy-apply class-method");
+  class C { apply(t, self, list) { return 43 } }
+  const o = new C();
+  print(new Proxy(function () {}, o)());
+}
+{
+  const print = printer("proxy-apply class-field");
+  class C { apply = function (t, self, list) { return 43 }; }
+  const o = new C();
+  print(new Proxy(function () {}, o)());
+}
+{
+  const print = printer("proxy-apply subclass");
+  class B { apply(t, self, list) { return 43 } }
+  class C extends B {}
+  const o = new C();
+  print(new Proxy(function () {}, o)());
+}
+{
+  const print = printer("proxy-apply class-static");
+  class C { static apply(t, self, list) { return 43 } }
+  const o = C;
+  print(new Proxy(function () {}, o)());
+}
+{
+  const print = printer("proxy-apply prototype-create");
+  const p = { apply(t, self, list) { return 43 } };
+  const o = Object.create(p);
+  print(new Proxy(function () {}, o)());
+}
+{
+  const print = printer("proxy-apply prototype-literal");
+  const p = { apply(t, self, list) { return 43 } };
+  const o = { __proto__: p };
+  print(new Proxy(function () {}, o)());
+}
+{
+  const print = printer("proxy-apply prototype-literal-with-field");
+  const p = { apply(t, self, list) { return 43 } };
+  const o = { __proto__: p, x: 1 };
+  print(new Proxy(function () {}, o)());
+}
+{
+  const print = printer("proxy-apply prototype-set");
+  const p = { apply(t, self, list) { return 43 } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print(new Proxy(function () {}, o)());
+}
+////= lines-76	"proxy-apply prototype-set-with-field"	Object
+////= lines-76	"proxy-apply prototype-reflect-set"	Reflect
+{
+  const print = printer("proxy-apply prototype-proto-store");
+  const p = { apply(t, self, list) { return 43 } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print(new Proxy(function () {}, o)());
+}
+{
+  const print = printer("proxy-apply prototype-two-levels");
+  const p = { apply(t, self, list) { return 43 } };
+  const o = Object.create(Object.create(p));
+  print(new Proxy(function () {}, o)());
+}
+{
+  const print = printer("proxy-apply prototype-of-class-instance");
+  const p = { apply(t, self, list) { return 43 } };
+  class C { x = 1; }
+  Object.setPrototypeOf(C.prototype, p);
+  const o = new C();
+  print(new Proxy(function () {}, o)());
+}
+{
+  const print = printer("proxy-apply prototype-is-instance");
+  class C { apply = function (t, self, list) { return 43 }; }
+  const o = Object.create(new C());
+  print(new Proxy(function () {}, o)());
+}
+{
+  const print = printer("proxy-apply stored-after");
+  const o = {};
+  o.apply = function (t, self, list) { return 43 };
+  print(new Proxy(function () {}, o)());
+}
+{
+  const print = printer("proxy-apply stored-after-with-field");
+  const o = { x: 1 };
+  o.apply = function (t, self, list) { return 43 };
+  print(new Proxy(function () {}, o)());
+}
+{
+  const print = printer("proxy-apply stored-after-on-prototype");
+  const p = {};
+  p.apply = function (t, self, list) { return 43 };
+  const o = Object.create(p);
+  print(new Proxy(function () {}, o)());
+}
+{
+  const print = printer("proxy-apply stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.apply = function (t, self, list) { return 43 };
+  print(new Proxy(function () {}, o)());
+}
+{
+  const print = printer("proxy-apply stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.apply = function (t, self, list) { return 43 };
+  print(new Proxy(function () {}, o)());
+}
+{
+  const print = printer("proxy-apply stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.apply = function (t, self, list) { return 43 };
+  const o = new C();
+  print(new Proxy(function () {}, o)());
+}
+{
+  const print = printer("proxy-apply constructor-function");
+  function F() {}
+  F.prototype.apply = function (t, self, list) { return 43 };
+  const o = new F();
+  print(new Proxy(function () {}, o)());
+}
+{
+  const print = printer("proxy-apply constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { apply(t, self, list) { return 43 } };
+  const o = new F();
+  print(new Proxy(function () {}, o)());
+}
+{
+  const print = printer("proxy-apply constructor-function-this");
+  function F() { this.apply = function (t, self, list) { return 43 }; }
+  const o = new F();
+  print(new Proxy(function () {}, o)());
+}
+{
+  const print = printer("proxy-apply getter");
+  const o = { get apply() { return function (t, self, list) { return 43 }; } };
+  print(new Proxy(function () {}, o)());
+}
+{
+  const print = printer("proxy-apply defined");
+  const o = {};
+  Object.defineProperty(o, "apply", { value: function (t, self, list) { return 43 } });
+  print(new Proxy(function () {}, o)());
+}
+{
+  const print = printer("proxy-apply assigned");
+  const o = Object.assign({}, { apply(t, self, list) { return 43 } });
+  print(new Proxy(function () {}, o)());
+}
+{
+  const print = printer("proxy-apply spread-copy");
+  const o = { ...{ apply(t, self, list) { return 43 } } };
+  print(new Proxy(function () {}, o)());
+}
+{
+  const print = printer("proxy-apply made-in-function");
+  function make() { return { apply(t, self, list) { return 43 } }; }
+  const o = make();
+  print(new Proxy(function () {}, o)());
+}
+{
+  const print = printer("proxy-apply made-in-function-twice");
+  function make() { return { apply(t, self, list) { return 43 } }; }
+  make();
+  const o = make();
+  print(new Proxy(function () {}, o)());
+}
+{
+  const print = printer("proxy-apply literal-arrow");
+  const o = { apply: (t, self, list) => { return 43 } };
+  print(new Proxy(function () {}, o)());
+}
+{
+  const print = printer("proxy-apply class-field-arrow");
+  class C { apply = (t, self, list) => { return 43 }; }
+  const o = new C();
+  print(new Proxy(function () {}, o)());
+}
+{
+  const print = printer("proxy-apply prototype-create-arrow");
+  const p = { apply: (t, self, list) => { return 43 } };
+  const o = Object.create(p);
+  print(new Proxy(function () {}, o)());
+}
+{
+  const print = printer("proxy-construct literal");
+  const o = { construct(t, list) { return { made: 1 } } };
+  print(new (new Proxy(function () {}, o))().made);
+}
+{
+  const print = printer("proxy-construct literal-function");
+  const o = { construct: function (t, list) { return { made: 1 } } };
+  print(new (new Proxy(function () {}, o))().made);
+}
+{
+  const print = printer("proxy-construct literal-with-field");
+  const o = { x: 1, construct(t, list) { return { made: 1 } } };
+  print(new (new Proxy(function () {}, o))().made);
+}
+{
+  const print = printer("proxy-construct class-method");
+  class C { construct(t, list) { return { made: 1 } } }
+  const o = new C();
+  print(new (new Proxy(function () {}, o))().made);
+}
+{
+  const print = printer("proxy-construct class-field");
+  class C { construct = function (t, list) { return { made: 1 } }; }
+  const o = new C();
+  print(new (new Proxy(function () {}, o))().made);
+}
+{
+  const print = printer("proxy-construct subclass");
+  class B { construct(t, list) { return { made: 1 } } }
+  class C extends B {}
+  const o = new C();
+  print(new (new Proxy(function () {}, o))().made);
+}
+{
+  const print = printer("proxy-construct class-static");
+  class C { static construct(t, list) { return { made: 1 } } }
+  const o = C;
+  print(new (new Proxy(function () {}, o))().made);
+}
+{
+  const print = printer("proxy-construct prototype-create");
+  const p = { construct(t, list) { return { made: 1 } } };
+  const o = Object.create(p);
+  print(new (new Proxy(function () {}, o))().made);
+}
+{
+  const print = printer("proxy-construct prototype-literal");
+  const p = { construct(t, list) { return { made: 1 } } };
+  const o = { __proto__: p };
+  print(new (new Proxy(function () {}, o))().made);
+}
+{
+  const print = printer("proxy-construct prototype-literal-with-field");
+  const p = { construct(t, list) { return { made: 1 } } };
+  const o = { __proto__: p, x: 1 };
+  print(new (new Proxy(function () {}, o))().made);
+}
+{
+  const print = printer("proxy-construct prototype-set");
+  const p = { construct(t, list) { return { made: 1 } } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print(new (new Proxy(function () {}, o))().made);
+}
+////= lines-77	"proxy-construct prototype-set-with-field"	Object
+////= lines-77	"proxy-construct prototype-reflect-set"	Reflect
+{
+  const print = printer("proxy-construct prototype-proto-store");
+  const p = { construct(t, list) { return { made: 1 } } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print(new (new Proxy(function () {}, o))().made);
+}
+{
+  const print = printer("proxy-construct prototype-two-levels");
+  const p = { construct(t, list) { return { made: 1 } } };
+  const o = Object.create(Object.create(p));
+  print(new (new Proxy(function () {}, o))().made);
+}
+{
+  const print = printer("proxy-construct prototype-of-class-instance");
+  const p = { construct(t, list) { return { made: 1 } } };
+  class C { x = 1; }
+  Object.setPrototypeOf(C.prototype, p);
+  const o = new C();
+  print(new (new Proxy(function () {}, o))().made);
+}
+{
+  const print = printer("proxy-construct prototype-is-instance");
+  class C { construct = function (t, list) { return { made: 1 } }; }
+  const o = Object.create(new C());
+  print(new (new Proxy(function () {}, o))().made);
+}
+{
+  const print = printer("proxy-construct stored-after");
+  const o = {};
+  o.construct = function (t, list) { return { made: 1 } };
+  print(new (new Proxy(function () {}, o))().made);
+}
+{
+  const print = printer("proxy-construct stored-after-with-field");
+  const o = { x: 1 };
+  o.construct = function (t, list) { return { made: 1 } };
+  print(new (new Proxy(function () {}, o))().made);
+}
+{
+  const print = printer("proxy-construct stored-after-on-prototype");
+  const p = {};
+  p.construct = function (t, list) { return { made: 1 } };
+  const o = Object.create(p);
+  print(new (new Proxy(function () {}, o))().made);
+}
+{
+  const print = printer("proxy-construct stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.construct = function (t, list) { return { made: 1 } };
+  print(new (new Proxy(function () {}, o))().made);
+}
+{
+  const print = printer("proxy-construct stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.construct = function (t, list) { return { made: 1 } };
+  print(new (new Proxy(function () {}, o))().made);
+}
+{
+  const print = printer("proxy-construct stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.construct = function (t, list) { return { made: 1 } };
+  const o = new C();
+  print(new (new Proxy(function () {}, o))().made);
+}
+{
+  const print = printer("proxy-construct constructor-function");
+  function F() {}
+  F.prototype.construct = function (t, list) { return { made: 1 } };
+  const o = new F();
+  print(new (new Proxy(function () {}, o))().made);
+}
+{
+  const print = printer("proxy-construct constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { construct(t, list) { return { made: 1 } } };
+  const o = new F();
+  print(new (new Proxy(function () {}, o))().made);
+}
+{
+  const print = printer("proxy-construct constructor-function-this");
+  function F() { this.construct = function (t, list) { return { made: 1 } }; }
+  const o = new F();
+  print(new (new Proxy(function () {}, o))().made);
+}
+{
+  const print = printer("proxy-construct getter");
+  const o = { get construct() { return function (t, list) { return { made: 1 } }; } };
+  print(new (new Proxy(function () {}, o))().made);
+}
+{
+  const print = printer("proxy-construct defined");
+  const o = {};
+  Object.defineProperty(o, "construct", { value: function (t, list) { return { made: 1 } } });
+  print(new (new Proxy(function () {}, o))().made);
+}
+{
+  const print = printer("proxy-construct assigned");
+  const o = Object.assign({}, { construct(t, list) { return { made: 1 } } });
+  print(new (new Proxy(function () {}, o))().made);
+}
+{
+  const print = printer("proxy-construct spread-copy");
+  const o = { ...{ construct(t, list) { return { made: 1 } } } };
+  print(new (new Proxy(function () {}, o))().made);
+}
+{
+  const print = printer("proxy-construct made-in-function");
+  function make() { return { construct(t, list) { return { made: 1 } } }; }
+  const o = make();
+  print(new (new Proxy(function () {}, o))().made);
+}
+{
+  const print = printer("proxy-construct made-in-function-twice");
+  function make() { return { construct(t, list) { return { made: 1 } } }; }
+  make();
+  const o = make();
+  print(new (new Proxy(function () {}, o))().made);
+}
+{
+  const print = printer("proxy-construct literal-arrow");
+  const o = { construct: (t, list) => { return { made: 1 } } };
+  print(new (new Proxy(function () {}, o))().made);
+}
+{
+  const print = printer("proxy-construct class-field-arrow");
+  class C { construct = (t, list) => { return { made: 1 } }; }
+  const o = new C();
+  print(new (new Proxy(function () {}, o))().made);
+}
+{
+  const print = printer("proxy-construct prototype-create-arrow");
+  const p = { construct: (t, list) => { return { made: 1 } } };
+  const o = Object.create(p);
+  print(new (new Proxy(function () {}, o))().made);
+}
+{
+  const print = printer("proxy-delete literal");
+  const o = { deleteProperty(t, k) { print("delete", k); return true } };
+  delete new Proxy({}, o).x;
+}
+{
+  const print = printer("proxy-delete literal-function");
+  const o = { deleteProperty: function (t, k) { print("delete", k); return true } };
+  delete new Proxy({}, o).x;
+}
+{
+  const print = printer("proxy-delete literal-with-field");
+  const o = { x: 1, deleteProperty(t, k) { print("delete", k); return true } };
+  delete new Proxy({}, o).x;
+}
+{
+  const print = printer("proxy-delete class-method");
+  class C { deleteProperty(t, k) { print("delete", k); return true } }
+  const o = new C();
+  delete new Proxy({}, o).x;
+}
+{
+  const print = printer("proxy-delete class-field");
+  class C { deleteProperty = function (t, k) { print("delete", k); return true }; }
+  const o = new C();
+  delete new Proxy({}, o).x;
+}
+{
+  const print = printer("proxy-delete subclass");
+  class B { deleteProperty(t, k) { print("delete", k); return true } }
+  class C extends B {}
+  const o = new C();
+  delete new Proxy({}, o).x;
+}
+{
+  const print = printer("proxy-delete class-static");
+  class C { static deleteProperty(t, k) { print("delete", k); return true } }
+  const o = C;
+  delete new Proxy({}, o).x;
+}
+{
+  const print = printer("proxy-delete prototype-create");
+  const p = { deleteProperty(t, k) { print("delete", k); return true } };
+  const o = Object.create(p);
+  delete new Proxy({}, o).x;
+}
+{
+  const print = printer("proxy-delete prototype-literal");
+  const p = { deleteProperty(t, k) { print("delete", k); return true } };
+  const o = { __proto__: p };
+  delete new Proxy({}, o).x;
+}
+{
+  const print = printer("proxy-delete prototype-literal-with-field");
+  const p = { deleteProperty(t, k) { print("delete", k); return true } };
+  const o = { __proto__: p, x: 1 };
+  delete new Proxy({}, o).x;
+}
+{
+  const print = printer("proxy-delete prototype-set");
+  const p = { deleteProperty(t, k) { print("delete", k); return true } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  delete new Proxy({}, o).x;
+}
+////= lines-78	"proxy-delete prototype-set-with-field"	Object
+////= lines-78	"proxy-delete prototype-reflect-set"	Reflect
+{
+  const print = printer("proxy-delete prototype-proto-store");
+  const p = { deleteProperty(t, k) { print("delete", k); return true } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  delete new Proxy({}, o).x;
+}
+{
+  const print = printer("proxy-delete prototype-two-levels");
+  const p = { deleteProperty(t, k) { print("delete", k); return true } };
+  const o = Object.create(Object.create(p));
+  delete new Proxy({}, o).x;
+}
+{
+  const print = printer("proxy-delete prototype-of-class-instance");
+  const p = { deleteProperty(t, k) { print("delete", k); return true } };
+  class C { x = 1; }
+  Object.setPrototypeOf(C.prototype, p);
+  const o = new C();
+  delete new Proxy({}, o).x;
+}
+{
+  const print = printer("proxy-delete prototype-is-instance");
+  class C { deleteProperty = function (t, k) { print("delete", k); return true }; }
+  const o = Object.create(new C());
+  delete new Proxy({}, o).x;
+}
+{
+  const print = printer("proxy-delete stored-after");
+  const o = {};
+  o.deleteProperty = function (t, k) { print("delete", k); return true };
+  delete new Proxy({}, o).x;
+}
+{
+  const print = printer("proxy-delete stored-after-with-field");
+  const o = { x: 1 };
+  o.deleteProperty = function (t, k) { print("delete", k); return true };
+  delete new Proxy({}, o).x;
+}
+{
+  const print = printer("proxy-delete stored-after-on-prototype");
+  const p = {};
+  p.deleteProperty = function (t, k) { print("delete", k); return true };
+  const o = Object.create(p);
+  delete new Proxy({}, o).x;
+}
+{
+  const print = printer("proxy-delete stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.deleteProperty = function (t, k) { print("delete", k); return true };
+  delete new Proxy({}, o).x;
+}
+{
+  const print = printer("proxy-delete stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.deleteProperty = function (t, k) { print("delete", k); return true };
+  delete new Proxy({}, o).x;
+}
+{
+  const print = printer("proxy-delete stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.deleteProperty = function (t, k) { print("delete", k); return true };
+  const o = new C();
+  delete new Proxy({}, o).x;
+}
+{
+  const print = printer("proxy-delete constructor-function");
+  function F() {}
+  F.prototype.deleteProperty = function (t, k) { print("delete", k); return true };
+  const o = new F();
+  delete new Proxy({}, o).x;
+}
+{
+  const print = printer("proxy-delete constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { deleteProperty(t, k) { print("delete", k); return true } };
+  const o = new F();
+  delete new Proxy({}, o).x;
+}
+{
+  const print = printer("proxy-delete constructor-function-this");
+  function F() { this.deleteProperty = function (t, k) { print("delete", k); return true }; }
+  const o = new F();
+  delete new Proxy({}, o).x;
+}
+{
+  const print = printer("proxy-delete getter");
+  const o = { get deleteProperty() { return function (t, k) { print("delete", k); return true }; } };
+  delete new Proxy({}, o).x;
+}
+{
+  const print = printer("proxy-delete defined");
+  const o = {};
+  Object.defineProperty(o, "deleteProperty", { value: function (t, k) { print("delete", k); return true } });
+  delete new Proxy({}, o).x;
+}
+{
+  const print = printer("proxy-delete assigned");
+  const o = Object.assign({}, { deleteProperty(t, k) { print("delete", k); return true } });
+  delete new Proxy({}, o).x;
+}
+{
+  const print = printer("proxy-delete spread-copy");
+  const o = { ...{ deleteProperty(t, k) { print("delete", k); return true } } };
+  delete new Proxy({}, o).x;
+}
+{
+  const print = printer("proxy-delete made-in-function");
+  function make() { return { deleteProperty(t, k) { print("delete", k); return true } }; }
+  const o = make();
+  delete new Proxy({}, o).x;
+}
+{
+  const print = printer("proxy-delete made-in-function-twice");
+  function make() { return { deleteProperty(t, k) { print("delete", k); return true } }; }
+  make();
+  const o = make();
+  delete new Proxy({}, o).x;
+}
+{
+  const print = printer("proxy-delete literal-arrow");
+  const o = { deleteProperty: (t, k) => { print("delete", k); return true } };
+  delete new Proxy({}, o).x;
+}
+{
+  const print = printer("proxy-delete class-field-arrow");
+  class C { deleteProperty = (t, k) => { print("delete", k); return true }; }
+  const o = new C();
+  delete new Proxy({}, o).x;
+}
+{
+  const print = printer("proxy-delete prototype-create-arrow");
+  const p = { deleteProperty: (t, k) => { print("delete", k); return true } };
+  const o = Object.create(p);
+  delete new Proxy({}, o).x;
+}
+{
+  const print = printer("proxy-own-keys literal");
+  const o = { ownKeys(t) { return ["a", "b"] } };
+  print(Reflect.ownKeys(new Proxy({}, o)).length);
+}
+{
+  const print = printer("proxy-own-keys literal-function");
+  const o = { ownKeys: function (t) { return ["a", "b"] } };
+  print(Reflect.ownKeys(new Proxy({}, o)).length);
+}
+{
+  const print = printer("proxy-own-keys literal-with-field");
+  const o = { x: 1, ownKeys(t) { return ["a", "b"] } };
+  print(Reflect.ownKeys(new Proxy({}, o)).length);
+}
+{
+  const print = printer("proxy-own-keys class-method");
+  class C { ownKeys(t) { return ["a", "b"] } }
+  const o = new C();
+  print(Reflect.ownKeys(new Proxy({}, o)).length);
+}
+{
+  const print = printer("proxy-own-keys class-field");
+  class C { ownKeys = function (t) { return ["a", "b"] }; }
+  const o = new C();
+  print(Reflect.ownKeys(new Proxy({}, o)).length);
+}
+{
+  const print = printer("proxy-own-keys subclass");
+  class B { ownKeys(t) { return ["a", "b"] } }
+  class C extends B {}
+  const o = new C();
+  print(Reflect.ownKeys(new Proxy({}, o)).length);
+}
+{
+  const print = printer("proxy-own-keys class-static");
+  class C { static ownKeys(t) { return ["a", "b"] } }
+  const o = C;
+  print(Reflect.ownKeys(new Proxy({}, o)).length);
+}
+{
+  const print = printer("proxy-own-keys prototype-create");
+  const p = { ownKeys(t) { return ["a", "b"] } };
+  const o = Object.create(p);
+  print(Reflect.ownKeys(new Proxy({}, o)).length);
+}
+{
+  const print = printer("proxy-own-keys prototype-literal");
+  const p = { ownKeys(t) { return ["a", "b"] } };
+  const o = { __proto__: p };
+  print(Reflect.ownKeys(new Proxy({}, o)).length);
+}
+{
+  const print = printer("proxy-own-keys prototype-literal-with-field");
+  const p = { ownKeys(t) { return ["a", "b"] } };
+  const o = { __proto__: p, x: 1 };
+  print(Reflect.ownKeys(new Proxy({}, o)).length);
+}
+{
+  const print = printer("proxy-own-keys prototype-set");
+  const p = { ownKeys(t) { return ["a", "b"] } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print(Reflect.ownKeys(new Proxy({}, o)).length);
+}
+////= lines-82	"proxy-own-keys prototype-set-with-field"	Object
+////= lines-82	"proxy-own-keys prototype-reflect-set"	Reflect
+{
+  const print = printer("proxy-own-keys prototype-proto-store");
+  const p = { ownKeys(t) { return ["a", "b"] } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print(Reflect.ownKeys(new Proxy({}, o)).length);
+}
+{
+  const print = printer("proxy-own-keys prototype-two-levels");
+  const p = { ownKeys(t) { return ["a", "b"] } };
+  const o = Object.create(Object.create(p));
+  print(Reflect.ownKeys(new Proxy({}, o)).length);
+}
+{
+  const print = printer("proxy-own-keys prototype-of-class-instance");
+  const p = { ownKeys(t) { return ["a", "b"] } };
+  class C { x = 1; }
+  Object.setPrototypeOf(C.prototype, p);
+  const o = new C();
+  print(Reflect.ownKeys(new Proxy({}, o)).length);
+}
+{
+  const print = printer("proxy-own-keys prototype-is-instance");
+  class C { ownKeys = function (t) { return ["a", "b"] }; }
+  const o = Object.create(new C());
+  print(Reflect.ownKeys(new Proxy({}, o)).length);
+}
+{
+  const print = printer("proxy-own-keys stored-after");
+  const o = {};
+  o.ownKeys = function (t) { return ["a", "b"] };
+  print(Reflect.ownKeys(new Proxy({}, o)).length);
+}
+{
+  const print = printer("proxy-own-keys stored-after-with-field");
+  const o = { x: 1 };
+  o.ownKeys = function (t) { return ["a", "b"] };
+  print(Reflect.ownKeys(new Proxy({}, o)).length);
+}
+{
+  const print = printer("proxy-own-keys stored-after-on-prototype");
+  const p = {};
+  p.ownKeys = function (t) { return ["a", "b"] };
+  const o = Object.create(p);
+  print(Reflect.ownKeys(new Proxy({}, o)).length);
+}
+{
+  const print = printer("proxy-own-keys stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.ownKeys = function (t) { return ["a", "b"] };
+  print(Reflect.ownKeys(new Proxy({}, o)).length);
+}
+{
+  const print = printer("proxy-own-keys stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.ownKeys = function (t) { return ["a", "b"] };
+  print(Reflect.ownKeys(new Proxy({}, o)).length);
+}
+{
+  const print = printer("proxy-own-keys stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.ownKeys = function (t) { return ["a", "b"] };
+  const o = new C();
+  print(Reflect.ownKeys(new Proxy({}, o)).length);
+}
+{
+  const print = printer("proxy-own-keys constructor-function");
+  function F() {}
+  F.prototype.ownKeys = function (t) { return ["a", "b"] };
+  const o = new F();
+  print(Reflect.ownKeys(new Proxy({}, o)).length);
+}
+{
+  const print = printer("proxy-own-keys constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { ownKeys(t) { return ["a", "b"] } };
+  const o = new F();
+  print(Reflect.ownKeys(new Proxy({}, o)).length);
+}
+{
+  const print = printer("proxy-own-keys constructor-function-this");
+  function F() { this.ownKeys = function (t) { return ["a", "b"] }; }
+  const o = new F();
+  print(Reflect.ownKeys(new Proxy({}, o)).length);
+}
+{
+  const print = printer("proxy-own-keys getter");
+  const o = { get ownKeys() { return function (t) { return ["a", "b"] }; } };
+  print(Reflect.ownKeys(new Proxy({}, o)).length);
+}
+{
+  const print = printer("proxy-own-keys defined");
+  const o = {};
+  Object.defineProperty(o, "ownKeys", { value: function (t) { return ["a", "b"] } });
+  print(Reflect.ownKeys(new Proxy({}, o)).length);
+}
+{
+  const print = printer("proxy-own-keys assigned");
+  const o = Object.assign({}, { ownKeys(t) { return ["a", "b"] } });
+  print(Reflect.ownKeys(new Proxy({}, o)).length);
+}
+{
+  const print = printer("proxy-own-keys spread-copy");
+  const o = { ...{ ownKeys(t) { return ["a", "b"] } } };
+  print(Reflect.ownKeys(new Proxy({}, o)).length);
+}
+{
+  const print = printer("proxy-own-keys made-in-function");
+  function make() { return { ownKeys(t) { return ["a", "b"] } }; }
+  const o = make();
+  print(Reflect.ownKeys(new Proxy({}, o)).length);
+}
+{
+  const print = printer("proxy-own-keys made-in-function-twice");
+  function make() { return { ownKeys(t) { return ["a", "b"] } }; }
+  make();
+  const o = make();
+  print(Reflect.ownKeys(new Proxy({}, o)).length);
+}
+{
+  const print = printer("proxy-own-keys literal-arrow");
+  const o = { ownKeys: (t) => { return ["a", "b"] } };
+  print(Reflect.ownKeys(new Proxy({}, o)).length);
+}
+{
+  const print = printer("proxy-own-keys class-field-arrow");
+  class C { ownKeys = (t) => { return ["a", "b"] }; }
+  const o = new C();
+  print(Reflect.ownKeys(new Proxy({}, o)).length);
+}
+{
+  const print = printer("proxy-own-keys prototype-create-arrow");
+  const p = { ownKeys: (t) => { return ["a", "b"] } };
+  const o = Object.create(p);
+  print(Reflect.ownKeys(new Proxy({}, o)).length);
+}
+{
+  const print = printer("proxy-get-prototype literal");
+  const o = { getPrototypeOf(t) { return Array.prototype } };
+  print(Object.getPrototypeOf(new Proxy({}, o)) === Array.prototype);
+}
+{
+  const print = printer("proxy-get-prototype literal-function");
+  const o = { getPrototypeOf: function (t) { return Array.prototype } };
+  print(Object.getPrototypeOf(new Proxy({}, o)) === Array.prototype);
+}
+{
+  const print = printer("proxy-get-prototype literal-with-field");
+  const o = { x: 1, getPrototypeOf(t) { return Array.prototype } };
+  print(Object.getPrototypeOf(new Proxy({}, o)) === Array.prototype);
+}
+{
+  const print = printer("proxy-get-prototype class-method");
+  class C { getPrototypeOf(t) { return Array.prototype } }
+  const o = new C();
+  print(Object.getPrototypeOf(new Proxy({}, o)) === Array.prototype);
+}
+{
+  const print = printer("proxy-get-prototype class-field");
+  class C { getPrototypeOf = function (t) { return Array.prototype }; }
+  const o = new C();
+  print(Object.getPrototypeOf(new Proxy({}, o)) === Array.prototype);
+}
+{
+  const print = printer("proxy-get-prototype subclass");
+  class B { getPrototypeOf(t) { return Array.prototype } }
+  class C extends B {}
+  const o = new C();
+  print(Object.getPrototypeOf(new Proxy({}, o)) === Array.prototype);
+}
+{
+  const print = printer("proxy-get-prototype class-static");
+  class C { static getPrototypeOf(t) { return Array.prototype } }
+  const o = C;
+  print(Object.getPrototypeOf(new Proxy({}, o)) === Array.prototype);
+}
+{
+  const print = printer("proxy-get-prototype prototype-create");
+  const p = { getPrototypeOf(t) { return Array.prototype } };
+  const o = Object.create(p);
+  print(Object.getPrototypeOf(new Proxy({}, o)) === Array.prototype);
+}
+{
+  const print = printer("proxy-get-prototype prototype-literal");
+  const p = { getPrototypeOf(t) { return Array.prototype } };
+  const o = { __proto__: p };
+  print(Object.getPrototypeOf(new Proxy({}, o)) === Array.prototype);
+}
+{
+  const print = printer("proxy-get-prototype prototype-literal-with-field");
+  const p = { getPrototypeOf(t) { return Array.prototype } };
+  const o = { __proto__: p, x: 1 };
+  print(Object.getPrototypeOf(new Proxy({}, o)) === Array.prototype);
+}
+{
+  const print = printer("proxy-get-prototype prototype-set");
+  const p = { getPrototypeOf(t) { return Array.prototype } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print(Object.getPrototypeOf(new Proxy({}, o)) === Array.prototype);
+}
+////= lines-80	"proxy-get-prototype prototype-set-with-field"	Object
+////= lines-80	"proxy-get-prototype prototype-reflect-set"	Reflect
+{
+  const print = printer("proxy-get-prototype prototype-proto-store");
+  const p = { getPrototypeOf(t) { return Array.prototype } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print(Object.getPrototypeOf(new Proxy({}, o)) === Array.prototype);
+}
+{
+  const print = printer("proxy-get-prototype prototype-two-levels");
+  const p = { getPrototypeOf(t) { return Array.prototype } };
+  const o = Object.create(Object.create(p));
+  print(Object.getPrototypeOf(new Proxy({}, o)) === Array.prototype);
+}
+{
+  const print = printer("proxy-get-prototype prototype-of-class-instance");
+  const p = { getPrototypeOf(t) { return Array.prototype } };
+  class C { x = 1; }
+  Object.setPrototypeOf(C.prototype, p);
+  const o = new C();
+  print(Object.getPrototypeOf(new Proxy({}, o)) === Array.prototype);
+}
+{
+  const print = printer("proxy-get-prototype prototype-is-instance");
+  class C { getPrototypeOf = function (t) { return Array.prototype }; }
+  const o = Object.create(new C());
+  print(Object.getPrototypeOf(new Proxy({}, o)) === Array.prototype);
+}
+{
+  const print = printer("proxy-get-prototype stored-after");
+  const o = {};
+  o.getPrototypeOf = function (t) { return Array.prototype };
+  print(Object.getPrototypeOf(new Proxy({}, o)) === Array.prototype);
+}
+{
+  const print = printer("proxy-get-prototype stored-after-with-field");
+  const o = { x: 1 };
+  o.getPrototypeOf = function (t) { return Array.prototype };
+  print(Object.getPrototypeOf(new Proxy({}, o)) === Array.prototype);
+}
+{
+  const print = printer("proxy-get-prototype stored-after-on-prototype");
+  const p = {};
+  p.getPrototypeOf = function (t) { return Array.prototype };
+  const o = Object.create(p);
+  print(Object.getPrototypeOf(new Proxy({}, o)) === Array.prototype);
+}
+{
+  const print = printer("proxy-get-prototype stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.getPrototypeOf = function (t) { return Array.prototype };
+  print(Object.getPrototypeOf(new Proxy({}, o)) === Array.prototype);
+}
+{
+  const print = printer("proxy-get-prototype stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.getPrototypeOf = function (t) { return Array.prototype };
+  print(Object.getPrototypeOf(new Proxy({}, o)) === Array.prototype);
+}
+{
+  const print = printer("proxy-get-prototype stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.getPrototypeOf = function (t) { return Array.prototype };
+  const o = new C();
+  print(Object.getPrototypeOf(new Proxy({}, o)) === Array.prototype);
+}
+{
+  const print = printer("proxy-get-prototype constructor-function");
+  function F() {}
+  F.prototype.getPrototypeOf = function (t) { return Array.prototype };
+  const o = new F();
+  print(Object.getPrototypeOf(new Proxy({}, o)) === Array.prototype);
+}
+{
+  const print = printer("proxy-get-prototype constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { getPrototypeOf(t) { return Array.prototype } };
+  const o = new F();
+  print(Object.getPrototypeOf(new Proxy({}, o)) === Array.prototype);
+}
+{
+  const print = printer("proxy-get-prototype constructor-function-this");
+  function F() { this.getPrototypeOf = function (t) { return Array.prototype }; }
+  const o = new F();
+  print(Object.getPrototypeOf(new Proxy({}, o)) === Array.prototype);
+}
+{
+  const print = printer("proxy-get-prototype getter");
+  const o = { get getPrototypeOf() { return function (t) { return Array.prototype }; } };
+  print(Object.getPrototypeOf(new Proxy({}, o)) === Array.prototype);
+}
+{
+  const print = printer("proxy-get-prototype defined");
+  const o = {};
+  Object.defineProperty(o, "getPrototypeOf", { value: function (t) { return Array.prototype } });
+  print(Object.getPrototypeOf(new Proxy({}, o)) === Array.prototype);
+}
+{
+  const print = printer("proxy-get-prototype assigned");
+  const o = Object.assign({}, { getPrototypeOf(t) { return Array.prototype } });
+  print(Object.getPrototypeOf(new Proxy({}, o)) === Array.prototype);
+}
+{
+  const print = printer("proxy-get-prototype spread-copy");
+  const o = { ...{ getPrototypeOf(t) { return Array.prototype } } };
+  print(Object.getPrototypeOf(new Proxy({}, o)) === Array.prototype);
+}
+{
+  const print = printer("proxy-get-prototype made-in-function");
+  function make() { return { getPrototypeOf(t) { return Array.prototype } }; }
+  const o = make();
+  print(Object.getPrototypeOf(new Proxy({}, o)) === Array.prototype);
+}
+{
+  const print = printer("proxy-get-prototype made-in-function-twice");
+  function make() { return { getPrototypeOf(t) { return Array.prototype } }; }
+  make();
+  const o = make();
+  print(Object.getPrototypeOf(new Proxy({}, o)) === Array.prototype);
+}
+{
+  const print = printer("proxy-get-prototype literal-arrow");
+  const o = { getPrototypeOf: (t) => { return Array.prototype } };
+  print(Object.getPrototypeOf(new Proxy({}, o)) === Array.prototype);
+}
+{
+  const print = printer("proxy-get-prototype class-field-arrow");
+  class C { getPrototypeOf = (t) => { return Array.prototype }; }
+  const o = new C();
+  print(Object.getPrototypeOf(new Proxy({}, o)) === Array.prototype);
+}
+{
+  const print = printer("proxy-get-prototype prototype-create-arrow");
+  const p = { getPrototypeOf: (t) => { return Array.prototype } };
+  const o = Object.create(p);
+  print(Object.getPrototypeOf(new Proxy({}, o)) === Array.prototype);
+}
+{
+  const print = printer("descriptor-get literal");
+  const o = { get() { return 44 } };
+  const t = {}; Object.defineProperty(t, "x", o); print(t.x);
+}
+{
+  const print = printer("descriptor-get literal-function");
+  const o = { get: function () { return 44 } };
+  const t = {}; Object.defineProperty(t, "x", o); print(t.x);
+}
+{
+  const print = printer("descriptor-get literal-with-field");
+  const o = { x: 1, get() { return 44 } };
+  const t = {}; Object.defineProperty(t, "x", o); print(t.x);
+}
+{
+  const print = printer("descriptor-get class-method");
+  class C { get() { return 44 } }
+  const o = new C();
+  const t = {}; Object.defineProperty(t, "x", o); print(t.x);
+}
+{
+  const print = printer("descriptor-get class-field");
+  class C { get = function () { return 44 }; }
+  const o = new C();
+  const t = {}; Object.defineProperty(t, "x", o); print(t.x);
+}
+////= lines-62	"descriptor-get subclass"	Object
+{
+  const print = printer("descriptor-get class-static");
+  class C { static get() { return 44 } }
+  const o = C;
+  const t = {}; Object.defineProperty(t, "x", o); print(t.x);
+}
+{
+  const print = printer("descriptor-get prototype-create");
+  const p = { get() { return 44 } };
+  const o = Object.create(p);
+  const t = {}; Object.defineProperty(t, "x", o); print(t.x);
+}
+{
+  const print = printer("descriptor-get prototype-literal");
+  const p = { get() { return 44 } };
+  const o = { __proto__: p };
+  const t = {}; Object.defineProperty(t, "x", o); print(t.x);
+}
+{
+  const print = printer("descriptor-get prototype-literal-with-field");
+  const p = { get() { return 44 } };
+  const o = { __proto__: p, x: 1 };
+  const t = {}; Object.defineProperty(t, "x", o); print(t.x);
+}
+////= lines-57	"descriptor-get prototype-set"	Object
+////= lines-14	"descriptor-get prototype-set-with-field"	Object	Object
+////= lines-14	"descriptor-get prototype-reflect-set"	Reflect	Object
+////= lines-56	"descriptor-get prototype-proto-store"	Object
+{
+  const print = printer("descriptor-get prototype-two-levels");
+  const p = { get() { return 44 } };
+  const o = Object.create(Object.create(p));
+  const t = {}; Object.defineProperty(t, "x", o); print(t.x);
+}
+////= lines-28	"descriptor-get prototype-of-class-instance"	Object
+{
+  const print = printer("descriptor-get prototype-is-instance");
+  class C { get = function () { return 44 }; }
+  const o = Object.create(new C());
+  const t = {}; Object.defineProperty(t, "x", o); print(t.x);
+}
+{
+  const print = printer("descriptor-get stored-after");
+  const o = {};
+  o.get = function () { return 44 };
+  const t = {}; Object.defineProperty(t, "x", o); print(t.x);
+}
+{
+  const print = printer("descriptor-get stored-after-with-field");
+  const o = { x: 1 };
+  o.get = function () { return 44 };
+  const t = {}; Object.defineProperty(t, "x", o); print(t.x);
+}
+////= lines-59	"descriptor-get stored-after-on-prototype"	Object
+////= lines-60	"descriptor-get stored-after-on-prototype-late"	Object
+////= lines-58	"descriptor-get stored-after-on-instance"	Object
+////= lines-61	"descriptor-get stored-on-class-prototype"	Object
+////= lines-53	"descriptor-get constructor-function"	Object
+////= lines-54	"descriptor-get constructor-function-prototype-object"	Object
+{
+  const print = printer("descriptor-get constructor-function-this");
+  function F() { this.get = function () { return 44 }; }
+  const o = new F();
+  const t = {}; Object.defineProperty(t, "x", o); print(t.x);
+}
+{
+  const print = printer("descriptor-get getter");
+  const o = { get get() { return function () { return 44 }; } };
+  const t = {}; Object.defineProperty(t, "x", o); print(t.x);
+}
+{
+  const print = printer("descriptor-get defined");
+  const o = {};
+  Object.defineProperty(o, "get", { value: function () { return 44 } });
+  const t = {}; Object.defineProperty(t, "x", o); print(t.x);
+}
+{
+  const print = printer("descriptor-get assigned");
+  const o = Object.assign({}, { get() { return 44 } });
+  const t = {}; Object.defineProperty(t, "x", o); print(t.x);
+}
+{
+  const print = printer("descriptor-get spread-copy");
+  const o = { ...{ get() { return 44 } } };
+  const t = {}; Object.defineProperty(t, "x", o); print(t.x);
+}
+{
+  const print = printer("descriptor-get made-in-function");
+  function make() { return { get() { return 44 } }; }
+  const o = make();
+  const t = {}; Object.defineProperty(t, "x", o); print(t.x);
+}
+////= lines-55	"descriptor-get made-in-function-twice"	Object
+{
+  const print = printer("descriptor-get literal-arrow");
+  const o = { get: () => { return 44 } };
+  const t = {}; Object.defineProperty(t, "x", o); print(t.x);
+}
+{
+  const print = printer("descriptor-get class-field-arrow");
+  class C { get = () => { return 44 }; }
+  const o = new C();
+  const t = {}; Object.defineProperty(t, "x", o); print(t.x);
+}
+{
+  const print = printer("descriptor-get prototype-create-arrow");
+  const p = { get: () => { return 44 } };
+  const o = Object.create(p);
+  const t = {}; Object.defineProperty(t, "x", o); print(t.x);
+}
+{
+  const print = printer("descriptor-set literal");
+  const o = { set(v) { print("set", v) } };
+  const t = {}; Object.defineProperty(t, "x", o); t.x = 2;
+}
+{
+  const print = printer("descriptor-set literal-function");
+  const o = { set: function (v) { print("set", v) } };
+  const t = {}; Object.defineProperty(t, "x", o); t.x = 2;
+}
+{
+  const print = printer("descriptor-set literal-with-field");
+  const o = { x: 1, set(v) { print("set", v) } };
+  const t = {}; Object.defineProperty(t, "x", o); t.x = 2;
+}
+{
+  const print = printer("descriptor-set class-method");
+  class C { set(v) { print("set", v) } }
+  const o = new C();
+  const t = {}; Object.defineProperty(t, "x", o); t.x = 2;
+}
+{
+  const print = printer("descriptor-set class-field");
+  class C { set = function (v) { print("set", v) }; }
+  const o = new C();
+  const t = {}; Object.defineProperty(t, "x", o); t.x = 2;
+}
+{
+  const print = printer("descriptor-set subclass");
+  class B { set(v) { print("set", v) } }
+  class C extends B {}
+  const o = new C();
+  const t = {}; Object.defineProperty(t, "x", o); t.x = 2;
+}
+{
+  const print = printer("descriptor-set class-static");
+  class C { static set(v) { print("set", v) } }
+  const o = C;
+  const t = {}; Object.defineProperty(t, "x", o); t.x = 2;
+}
+{
+  const print = printer("descriptor-set prototype-create");
+  const p = { set(v) { print("set", v) } };
+  const o = Object.create(p);
+  const t = {}; Object.defineProperty(t, "x", o); t.x = 2;
+}
+{
+  const print = printer("descriptor-set prototype-literal");
+  const p = { set(v) { print("set", v) } };
+  const o = { __proto__: p };
+  const t = {}; Object.defineProperty(t, "x", o); t.x = 2;
+}
+{
+  const print = printer("descriptor-set prototype-literal-with-field");
+  const p = { set(v) { print("set", v) } };
+  const o = { __proto__: p, x: 1 };
+  const t = {}; Object.defineProperty(t, "x", o); t.x = 2;
+}
+{
+  const print = printer("descriptor-set prototype-set");
+  const p = { set(v) { print("set", v) } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  const t = {}; Object.defineProperty(t, "x", o); t.x = 2;
+}
+////= lines-64	"descriptor-set prototype-set-with-field"	Object
+////= lines-64	"descriptor-set prototype-reflect-set"	Reflect
+{
+  const print = printer("descriptor-set prototype-proto-store");
+  const p = { set(v) { print("set", v) } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  const t = {}; Object.defineProperty(t, "x", o); t.x = 2;
+}
+{
+  const print = printer("descriptor-set prototype-two-levels");
+  const p = { set(v) { print("set", v) } };
+  const o = Object.create(Object.create(p));
+  const t = {}; Object.defineProperty(t, "x", o); t.x = 2;
+}
+{
+  const print = printer("descriptor-set prototype-of-class-instance");
+  const p = { set(v) { print("set", v) } };
+  class C { x = 1; }
+  Object.setPrototypeOf(C.prototype, p);
+  const o = new C();
+  const t = {}; Object.defineProperty(t, "x", o); t.x = 2;
+}
+{
+  const print = printer("descriptor-set prototype-is-instance");
+  class C { set = function (v) { print("set", v) }; }
+  const o = Object.create(new C());
+  const t = {}; Object.defineProperty(t, "x", o); t.x = 2;
+}
+{
+  const print = printer("descriptor-set stored-after");
+  const o = {};
+  o.set = function (v) { print("set", v) };
+  const t = {}; Object.defineProperty(t, "x", o); t.x = 2;
+}
+{
+  const print = printer("descriptor-set stored-after-with-field");
+  const o = { x: 1 };
+  o.set = function (v) { print("set", v) };
+  const t = {}; Object.defineProperty(t, "x", o); t.x = 2;
+}
+{
+  const print = printer("descriptor-set stored-after-on-prototype");
+  const p = {};
+  p.set = function (v) { print("set", v) };
+  const o = Object.create(p);
+  const t = {}; Object.defineProperty(t, "x", o); t.x = 2;
+}
+{
+  const print = printer("descriptor-set stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.set = function (v) { print("set", v) };
+  const t = {}; Object.defineProperty(t, "x", o); t.x = 2;
+}
+{
+  const print = printer("descriptor-set stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.set = function (v) { print("set", v) };
+  const t = {}; Object.defineProperty(t, "x", o); t.x = 2;
+}
+{
+  const print = printer("descriptor-set stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.set = function (v) { print("set", v) };
+  const o = new C();
+  const t = {}; Object.defineProperty(t, "x", o); t.x = 2;
+}
+{
+  const print = printer("descriptor-set constructor-function");
+  function F() {}
+  F.prototype.set = function (v) { print("set", v) };
+  const o = new F();
+  const t = {}; Object.defineProperty(t, "x", o); t.x = 2;
+}
+{
+  const print = printer("descriptor-set constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { set(v) { print("set", v) } };
+  const o = new F();
+  const t = {}; Object.defineProperty(t, "x", o); t.x = 2;
+}
+{
+  const print = printer("descriptor-set constructor-function-this");
+  function F() { this.set = function (v) { print("set", v) }; }
+  const o = new F();
+  const t = {}; Object.defineProperty(t, "x", o); t.x = 2;
+}
+{
+  const print = printer("descriptor-set getter");
+  const o = { get set() { return function (v) { print("set", v) }; } };
+  const t = {}; Object.defineProperty(t, "x", o); t.x = 2;
+}
+{
+  const print = printer("descriptor-set defined");
+  const o = {};
+  Object.defineProperty(o, "set", { value: function (v) { print("set", v) } });
+  const t = {}; Object.defineProperty(t, "x", o); t.x = 2;
+}
+{
+  const print = printer("descriptor-set assigned");
+  const o = Object.assign({}, { set(v) { print("set", v) } });
+  const t = {}; Object.defineProperty(t, "x", o); t.x = 2;
+}
+{
+  const print = printer("descriptor-set spread-copy");
+  const o = { ...{ set(v) { print("set", v) } } };
+  const t = {}; Object.defineProperty(t, "x", o); t.x = 2;
+}
+{
+  const print = printer("descriptor-set made-in-function");
+  function make() { return { set(v) { print("set", v) } }; }
+  const o = make();
+  const t = {}; Object.defineProperty(t, "x", o); t.x = 2;
+}
+{
+  const print = printer("descriptor-set made-in-function-twice");
+  function make() { return { set(v) { print("set", v) } }; }
+  make();
+  const o = make();
+  const t = {}; Object.defineProperty(t, "x", o); t.x = 2;
+}
+{
+  const print = printer("descriptor-set literal-arrow");
+  const o = { set: (v) => { print("set", v) } };
+  const t = {}; Object.defineProperty(t, "x", o); t.x = 2;
+}
+{
+  const print = printer("descriptor-set class-field-arrow");
+  class C { set = (v) => { print("set", v) }; }
+  const o = new C();
+  const t = {}; Object.defineProperty(t, "x", o); t.x = 2;
+}
+{
+  const print = printer("descriptor-set prototype-create-arrow");
+  const p = { set: (v) => { print("set", v) } };
+  const o = Object.create(p);
+  const t = {}; Object.defineProperty(t, "x", o); t.x = 2;
+}
+{
+  const print = printer("descriptor-create literal");
+  const o = { get() { return 44 } };
+  const t = Object.create(null, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-create literal-function");
+  const o = { get: function () { return 44 } };
+  const t = Object.create(null, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-create literal-with-field");
+  const o = { x: 1, get() { return 44 } };
+  const t = Object.create(null, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-create class-method");
+  class C { get() { return 44 } }
+  const o = new C();
+  const t = Object.create(null, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-create class-field");
+  class C { get = function () { return 44 }; }
+  const o = new C();
+  const t = Object.create(null, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-create subclass");
+  class B { get() { return 44 } }
+  class C extends B {}
+  const o = new C();
+  const t = Object.create(null, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-create class-static");
+  class C { static get() { return 44 } }
+  const o = C;
+  const t = Object.create(null, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-create prototype-create");
+  const p = { get() { return 44 } };
+  const o = Object.create(p);
+  const t = Object.create(null, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-create prototype-literal");
+  const p = { get() { return 44 } };
+  const o = { __proto__: p };
+  const t = Object.create(null, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-create prototype-literal-with-field");
+  const p = { get() { return 44 } };
+  const o = { __proto__: p, x: 1 };
+  const t = Object.create(null, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-create prototype-set");
+  const p = { get() { return 44 } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  const t = Object.create(null, { x: o }); print(t.x);
+}
+////= lines-52	"descriptor-create prototype-set-with-field"	Object
+////= lines-52	"descriptor-create prototype-reflect-set"	Reflect
+{
+  const print = printer("descriptor-create prototype-proto-store");
+  const p = { get() { return 44 } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  const t = Object.create(null, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-create prototype-two-levels");
+  const p = { get() { return 44 } };
+  const o = Object.create(Object.create(p));
+  const t = Object.create(null, { x: o }); print(t.x);
+}
+////= lines-189	"descriptor-create prototype-of-class-instance"	Object.create(null
+{
+  const print = printer("descriptor-create prototype-is-instance");
+  class C { get = function () { return 44 }; }
+  const o = Object.create(new C());
+  const t = Object.create(null, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-create stored-after");
+  const o = {};
+  o.get = function () { return 44 };
+  const t = Object.create(null, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-create stored-after-with-field");
+  const o = { x: 1 };
+  o.get = function () { return 44 };
+  const t = Object.create(null, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-create stored-after-on-prototype");
+  const p = {};
+  p.get = function () { return 44 };
+  const o = Object.create(p);
+  const t = Object.create(null, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-create stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.get = function () { return 44 };
+  const t = Object.create(null, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-create stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.get = function () { return 44 };
+  const t = Object.create(null, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-create stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.get = function () { return 44 };
+  const o = new C();
+  const t = Object.create(null, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-create constructor-function");
+  function F() {}
+  F.prototype.get = function () { return 44 };
+  const o = new F();
+  const t = Object.create(null, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-create constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { get() { return 44 } };
+  const o = new F();
+  const t = Object.create(null, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-create constructor-function-this");
+  function F() { this.get = function () { return 44 }; }
+  const o = new F();
+  const t = Object.create(null, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-create getter");
+  const o = { get get() { return function () { return 44 }; } };
+  const t = Object.create(null, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-create defined");
+  const o = {};
+  Object.defineProperty(o, "get", { value: function () { return 44 } });
+  const t = Object.create(null, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-create assigned");
+  const o = Object.assign({}, { get() { return 44 } });
+  const t = Object.create(null, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-create spread-copy");
+  const o = { ...{ get() { return 44 } } };
+  const t = Object.create(null, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-create made-in-function");
+  function make() { return { get() { return 44 } }; }
+  const o = make();
+  const t = Object.create(null, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-create made-in-function-twice");
+  function make() { return { get() { return 44 } }; }
+  make();
+  const o = make();
+  const t = Object.create(null, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-create literal-arrow");
+  const o = { get: () => { return 44 } };
+  const t = Object.create(null, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-create class-field-arrow");
+  class C { get = () => { return 44 }; }
+  const o = new C();
+  const t = Object.create(null, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-create prototype-create-arrow");
+  const p = { get: () => { return 44 } };
+  const o = Object.create(p);
+  const t = Object.create(null, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-properties literal");
+  const o = { get() { return 44 } };
+  const t = {}; Object.defineProperties(t, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-properties literal-function");
+  const o = { get: function () { return 44 } };
+  const t = {}; Object.defineProperties(t, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-properties literal-with-field");
+  const o = { x: 1, get() { return 44 } };
+  const t = {}; Object.defineProperties(t, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-properties class-method");
+  class C { get() { return 44 } }
+  const o = new C();
+  const t = {}; Object.defineProperties(t, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-properties class-field");
+  class C { get = function () { return 44 }; }
+  const o = new C();
+  const t = {}; Object.defineProperties(t, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-properties subclass");
+  class B { get() { return 44 } }
+  class C extends B {}
+  const o = new C();
+  const t = {}; Object.defineProperties(t, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-properties class-static");
+  class C { static get() { return 44 } }
+  const o = C;
+  const t = {}; Object.defineProperties(t, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-properties prototype-create");
+  const p = { get() { return 44 } };
+  const o = Object.create(p);
+  const t = {}; Object.defineProperties(t, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-properties prototype-literal");
+  const p = { get() { return 44 } };
+  const o = { __proto__: p };
+  const t = {}; Object.defineProperties(t, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-properties prototype-literal-with-field");
+  const p = { get() { return 44 } };
+  const o = { __proto__: p, x: 1 };
+  const t = {}; Object.defineProperties(t, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-properties prototype-set");
+  const p = { get() { return 44 } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  const t = {}; Object.defineProperties(t, { x: o }); print(t.x);
+}
+////= lines-63	"descriptor-properties prototype-set-with-field"	Object
+////= lines-63	"descriptor-properties prototype-reflect-set"	Reflect
+{
+  const print = printer("descriptor-properties prototype-proto-store");
+  const p = { get() { return 44 } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  const t = {}; Object.defineProperties(t, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-properties prototype-two-levels");
+  const p = { get() { return 44 } };
+  const o = Object.create(Object.create(p));
+  const t = {}; Object.defineProperties(t, { x: o }); print(t.x);
+}
+////= lines-189	"descriptor-properties prototype-of-class-instance"	{}; Object.defineProperties(t
+{
+  const print = printer("descriptor-properties prototype-is-instance");
+  class C { get = function () { return 44 }; }
+  const o = Object.create(new C());
+  const t = {}; Object.defineProperties(t, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-properties stored-after");
+  const o = {};
+  o.get = function () { return 44 };
+  const t = {}; Object.defineProperties(t, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-properties stored-after-with-field");
+  const o = { x: 1 };
+  o.get = function () { return 44 };
+  const t = {}; Object.defineProperties(t, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-properties stored-after-on-prototype");
+  const p = {};
+  p.get = function () { return 44 };
+  const o = Object.create(p);
+  const t = {}; Object.defineProperties(t, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-properties stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.get = function () { return 44 };
+  const t = {}; Object.defineProperties(t, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-properties stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.get = function () { return 44 };
+  const t = {}; Object.defineProperties(t, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-properties stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.get = function () { return 44 };
+  const o = new C();
+  const t = {}; Object.defineProperties(t, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-properties constructor-function");
+  function F() {}
+  F.prototype.get = function () { return 44 };
+  const o = new F();
+  const t = {}; Object.defineProperties(t, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-properties constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { get() { return 44 } };
+  const o = new F();
+  const t = {}; Object.defineProperties(t, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-properties constructor-function-this");
+  function F() { this.get = function () { return 44 }; }
+  const o = new F();
+  const t = {}; Object.defineProperties(t, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-properties getter");
+  const o = { get get() { return function () { return 44 }; } };
+  const t = {}; Object.defineProperties(t, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-properties defined");
+  const o = {};
+  Object.defineProperty(o, "get", { value: function () { return 44 } });
+  const t = {}; Object.defineProperties(t, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-properties assigned");
+  const o = Object.assign({}, { get() { return 44 } });
+  const t = {}; Object.defineProperties(t, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-properties spread-copy");
+  const o = { ...{ get() { return 44 } } };
+  const t = {}; Object.defineProperties(t, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-properties made-in-function");
+  function make() { return { get() { return 44 } }; }
+  const o = make();
+  const t = {}; Object.defineProperties(t, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-properties made-in-function-twice");
+  function make() { return { get() { return 44 } }; }
+  make();
+  const o = make();
+  const t = {}; Object.defineProperties(t, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-properties literal-arrow");
+  const o = { get: () => { return 44 } };
+  const t = {}; Object.defineProperties(t, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-properties class-field-arrow");
+  class C { get = () => { return 44 }; }
+  const o = new C();
+  const t = {}; Object.defineProperties(t, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-properties prototype-create-arrow");
+  const p = { get: () => { return 44 } };
+  const o = Object.create(p);
+  const t = {}; Object.defineProperties(t, { x: o }); print(t.x);
+}
+{
+  const print = printer("descriptor-reflect literal");
+  const o = { get() { return 44 } };
+  const t = {}; Reflect.defineProperty(t, "x", o); print(t.x);
+}
+{
+  const print = printer("descriptor-reflect literal-function");
+  const o = { get: function () { return 44 } };
+  const t = {}; Reflect.defineProperty(t, "x", o); print(t.x);
+}
+{
+  const print = printer("descriptor-reflect literal-with-field");
+  const o = { x: 1, get() { return 44 } };
+  const t = {}; Reflect.defineProperty(t, "x", o); print(t.x);
+}
+{
+  const print = printer("descriptor-reflect class-method");
+  class C { get() { return 44 } }
+  const o = new C();
+  const t = {}; Reflect.defineProperty(t, "x", o); print(t.x);
+}
+{
+  const print = printer("descriptor-reflect class-field");
+  class C { get = function () { return 44 }; }
+  const o = new C();
+  const t = {}; Reflect.defineProperty(t, "x", o); print(t.x);
+}
+////= lines-62	"descriptor-reflect subclass"	Reflect
+{
+  const print = printer("descriptor-reflect class-static");
+  class C { static get() { return 44 } }
+  const o = C;
+  const t = {}; Reflect.defineProperty(t, "x", o); print(t.x);
+}
+{
+  const print = printer("descriptor-reflect prototype-create");
+  const p = { get() { return 44 } };
+  const o = Object.create(p);
+  const t = {}; Reflect.defineProperty(t, "x", o); print(t.x);
+}
+{
+  const print = printer("descriptor-reflect prototype-literal");
+  const p = { get() { return 44 } };
+  const o = { __proto__: p };
+  const t = {}; Reflect.defineProperty(t, "x", o); print(t.x);
+}
+{
+  const print = printer("descriptor-reflect prototype-literal-with-field");
+  const p = { get() { return 44 } };
+  const o = { __proto__: p, x: 1 };
+  const t = {}; Reflect.defineProperty(t, "x", o); print(t.x);
+}
+////= lines-57	"descriptor-reflect prototype-set"	Reflect
+////= lines-14	"descriptor-reflect prototype-set-with-field"	Object	Reflect
+////= lines-14	"descriptor-reflect prototype-reflect-set"	Reflect	Reflect
+////= lines-56	"descriptor-reflect prototype-proto-store"	Reflect
+{
+  const print = printer("descriptor-reflect prototype-two-levels");
+  const p = { get() { return 44 } };
+  const o = Object.create(Object.create(p));
+  const t = {}; Reflect.defineProperty(t, "x", o); print(t.x);
+}
+////= lines-28	"descriptor-reflect prototype-of-class-instance"	Reflect
+{
+  const print = printer("descriptor-reflect prototype-is-instance");
+  class C { get = function () { return 44 }; }
+  const o = Object.create(new C());
+  const t = {}; Reflect.defineProperty(t, "x", o); print(t.x);
+}
+{
+  const print = printer("descriptor-reflect stored-after");
+  const o = {};
+  o.get = function () { return 44 };
+  const t = {}; Reflect.defineProperty(t, "x", o); print(t.x);
+}
+{
+  const print = printer("descriptor-reflect stored-after-with-field");
+  const o = { x: 1 };
+  o.get = function () { return 44 };
+  const t = {}; Reflect.defineProperty(t, "x", o); print(t.x);
+}
+////= lines-59	"descriptor-reflect stored-after-on-prototype"	Reflect
+////= lines-60	"descriptor-reflect stored-after-on-prototype-late"	Reflect
+////= lines-58	"descriptor-reflect stored-after-on-instance"	Reflect
+////= lines-61	"descriptor-reflect stored-on-class-prototype"	Reflect
+////= lines-53	"descriptor-reflect constructor-function"	Reflect
+////= lines-54	"descriptor-reflect constructor-function-prototype-object"	Reflect
+{
+  const print = printer("descriptor-reflect constructor-function-this");
+  function F() { this.get = function () { return 44 }; }
+  const o = new F();
+  const t = {}; Reflect.defineProperty(t, "x", o); print(t.x);
+}
+{
+  const print = printer("descriptor-reflect getter");
+  const o = { get get() { return function () { return 44 }; } };
+  const t = {}; Reflect.defineProperty(t, "x", o); print(t.x);
+}
+{
+  const print = printer("descriptor-reflect defined");
+  const o = {};
+  Object.defineProperty(o, "get", { value: function () { return 44 } });
+  const t = {}; Reflect.defineProperty(t, "x", o); print(t.x);
+}
+{
+  const print = printer("descriptor-reflect assigned");
+  const o = Object.assign({}, { get() { return 44 } });
+  const t = {}; Reflect.defineProperty(t, "x", o); print(t.x);
+}
+{
+  const print = printer("descriptor-reflect spread-copy");
+  const o = { ...{ get() { return 44 } } };
+  const t = {}; Reflect.defineProperty(t, "x", o); print(t.x);
+}
+{
+  const print = printer("descriptor-reflect made-in-function");
+  function make() { return { get() { return 44 } }; }
+  const o = make();
+  const t = {}; Reflect.defineProperty(t, "x", o); print(t.x);
+}
+////= lines-55	"descriptor-reflect made-in-function-twice"	Reflect
+{
+  const print = printer("descriptor-reflect literal-arrow");
+  const o = { get: () => { return 44 } };
+  const t = {}; Reflect.defineProperty(t, "x", o); print(t.x);
+}
+{
+  const print = printer("descriptor-reflect class-field-arrow");
+  class C { get = () => { return 44 }; }
+  const o = new C();
+  const t = {}; Reflect.defineProperty(t, "x", o); print(t.x);
+}
+{
+  const print = printer("descriptor-reflect prototype-create-arrow");
+  const p = { get: () => { return 44 } };
+  const o = Object.create(p);
+  const t = {}; Reflect.defineProperty(t, "x", o); print(t.x);
+}
+
+console.log(lines.join("\n"));

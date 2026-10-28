@@ -1,0 +1,1 @@
+{ "skipInVariant": { "trimmed-runtime": "the text it evaluates calls structuredClone, which the source never uses: --trim removes it, and the call throws" } }

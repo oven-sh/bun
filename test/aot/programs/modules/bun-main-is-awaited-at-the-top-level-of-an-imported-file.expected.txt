@@ -1,0 +1,2 @@
+the imported file runs
+the entry point runs 0

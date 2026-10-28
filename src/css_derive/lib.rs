@@ -749,7 +749,6 @@ fn expand_enum_property(input: &DeriveInput) -> syn::Result<TokenStream2> {
         }
 
         #[automatically_derived]
-        #[allow(dead_code)]
         impl #name {
             /// CSS keyword for this variant.
             #[inline]
@@ -866,8 +865,7 @@ fn has_css_flag(attrs: &[Attribute], flag: &str) -> bool {
 /// Emit the `__generateToCss` field-sequence body shared by the struct branch
 /// and named-field enum variants: each field is `to_css`'d in declaration
 /// order, `Option<_>` fields are unwrapped, and a single space is written
-/// between fields (unconditionally — the separator is not elided when an
-/// optional field is `None`).
+/// after every field but the last (a `None` field writes neither).
 ///
 /// `access` maps a field ident to the expression that reads it (`self.f` for
 /// a struct, the binding name for a destructured enum variant).
@@ -880,21 +878,21 @@ fn gen_field_seq_to_css<'a>(
     let stmts = fields.enumerate().map(|(j, f)| {
         let fname = f.ident.as_ref().unwrap();
         let slot = access(fname);
-        let body = if is_option_type(&f.ty) {
-            quote! {
-                if let ::core::option::Option::Some(__v) = &#slot {
-                    __v.to_css(__dest)?;
-                }
-            }
-        } else {
-            quote! { #slot.to_css(__dest)?; }
-        };
         let sep = if len > 1 && j != last {
             quote! { __dest.write_char(b' ')?; }
         } else {
             quote! {}
         };
-        quote! { #body #sep }
+        if is_option_type(&f.ty) {
+            quote! {
+                if let ::core::option::Option::Some(__v) = &#slot {
+                    __v.to_css(__dest)?;
+                    #sep
+                }
+            }
+        } else {
+            quote! { #slot.to_css(__dest)?; #sep }
+        }
     });
     quote! { #(#stmts)* }
 }
@@ -929,8 +927,7 @@ fn expand_derive_to_css(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let body = match &input.data {
         // ── Struct branch ──────────────────────────────────────────────────
         // Auto-serializer for a payload struct: the printer is the field
-        // sequence, space-separated, with optionals unwrapped (and the
-        // inter-field space emitted unconditionally).
+        // sequence, space-separated, with optionals unwrapped.
         //
         // Proc-macros cannot see through a type name, so `ToCss` is derived
         // directly on the payload struct; the enum arm's
@@ -1015,7 +1012,6 @@ fn expand_derive_to_css(input: &DeriveInput) -> syn::Result<TokenStream2> {
         }
 
         #[automatically_derived]
-        #[allow(dead_code)]
         impl #impl_g #name #ty_g #where_g {
             #[inline]
             pub fn to_css(
@@ -1188,7 +1184,6 @@ fn expand_derive_parse(input: &DeriveInput) -> syn::Result<TokenStream2> {
         }
 
         #[automatically_derived]
-        #[allow(dead_code)]
         impl #b_impl_g #name #ty_g #b_where_g {
             #[inline]
             pub fn parse(

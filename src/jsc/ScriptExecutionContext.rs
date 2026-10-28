@@ -412,9 +412,15 @@ impl Drop for AbortHandle {
 /// [`arm_owner`](AbortHandle::arm_owner) / [`follow_owner`](AbortHandle::follow_owner)
 /// with the container-of recovery written once. Use [`impl_abort_handle_owner!`].
 pub trait AbortHandleOwner: Sized {
+    /// What keeps the owner alive while [`on_abort`](Self::on_abort) runs.
+    type KeepAlive;
+
     /// # Safety
     /// `this` is live.
     unsafe fn abort_handle(this: *mut Self) -> *mut AbortHandle;
+
+    /// SAFETY: `this` is live. Taken before anything else runs.
+    unsafe fn keep_alive(this: *mut Self) -> Self::KeepAlive;
 
     /// # Safety
     /// `handle` came from [`abort_handle`](Self::abort_handle) of a live `Self`.
@@ -430,7 +436,11 @@ pub trait AbortHandleOwner: Sized {
 impl AbortHandle {
     unsafe fn owner_aborted<O: AbortHandleOwner>(handle: *mut AbortHandle, cause: AbortCause) {
         // SAFETY: armed/followed through `*_owner::<O>`, so `handle` is `O`'s field.
-        unsafe { O::on_abort(O::from_abort_handle(handle), cause) }
+        unsafe {
+            let owner = O::from_abort_handle(handle);
+            let _keep_alive = O::keep_alive(owner);
+            O::on_abort(owner, cause)
+        }
     }
 
     /// Join `context` (JS thread): from here until the handle is disarmed,
@@ -459,8 +469,9 @@ impl AbortHandle {
 /// Generic owners: `impl_abort_handle_owner!([const N: bool] Owner<N>, field, ..)`.
 #[macro_export]
 macro_rules! impl_abort_handle_owner {
-    ([$($generics:tt)*] $Owner:ty, $field:ident, |$this:ident, $cause:ident| $body:expr) => {
+    ([$($generics:tt)*] $Owner:ty, $field:ident, keep_alive = |$pinned:ident| -> $KeepAlive:ty $pin:block, |$this:ident, $cause:ident| $body:expr) => {
         impl<$($generics)*> $crate::script_execution_context::AbortHandleOwner for $Owner {
+            type KeepAlive = $KeepAlive;
             #[inline]
             unsafe fn abort_handle(
                 this: *mut Self,
@@ -468,6 +479,8 @@ macro_rules! impl_abort_handle_owner {
                 // SAFETY: caller contract — `this` is live.
                 unsafe { ::core::ptr::addr_of_mut!((*this).$field) }
             }
+            #[inline]
+            unsafe fn keep_alive($pinned: *mut Self) -> $KeepAlive $pin
             #[inline]
             unsafe fn from_abort_handle(
                 handle: *mut $crate::script_execution_context::AbortHandle,
@@ -482,6 +495,12 @@ macro_rules! impl_abort_handle_owner {
                 $body
             }
         }
+    };
+    ([$($generics:tt)*] $Owner:ty, $field:ident, |$this:ident, $cause:ident| $body:expr) => {
+        $crate::impl_abort_handle_owner!([$($generics)*] $Owner, $field, keep_alive = |_this| -> () {}, |$this, $cause| $body);
+    };
+    ($Owner:ty, $field:ident, keep_alive = |$pinned:ident| -> $KeepAlive:ty $pin:block, |$this:ident, $cause:ident| $body:expr) => {
+        $crate::impl_abort_handle_owner!([] $Owner, $field, keep_alive = |$pinned| -> $KeepAlive $pin, |$this, $cause| $body);
     };
     ($Owner:ty, $field:ident, |$this:ident, $cause:ident| $body:expr) => {
         $crate::impl_abort_handle_owner!([] $Owner, $field, |$this, $cause| $body);

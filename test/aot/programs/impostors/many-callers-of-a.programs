@@ -1,0 +1,3200 @@
+////: Object-defineProperty-14
+Object.defineProperty(tools, «1», {
+  value: function (list) {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  },
+});
+////: Object-defineProperty-15
+Object.defineProperty(tools, «1», {
+  value: function (point) {
+    const { x, y } = point;
+    return x - y;
+  },
+});
+////: Object-defineProperty-16
+Object.defineProperty(tools, «1», {
+  value: function (n) {
+    return n * 2;
+  },
+});
+////: Object-defineProperty-17
+Object.defineProperty(tools, «1», {
+  value: function (text) {
+    return text.indexOf("b");
+  },
+});
+////: Tools-2
+////= Tools-prototype-sumPlainly
+
+////= Tools-prototype-sumAsCallback
+
+////= Tools-prototype-sumHidden
+
+////= Tools-prototype-findPlainly
+
+////= Tools-prototype-findAsCallback
+
+////= Tools-prototype-findHidden
+
+////= Tools-prototype-doublePlainly
+
+////= Tools-prototype-doubleAsCallback
+
+////= Tools-prototype-doubleHidden
+
+////= Tools-prototype-spanPlainly
+
+////= Tools-prototype-spanAsCallback
+
+////= Tools-prototype-spanHidden
+////: Tools-prototype-doubleAsCallback
+Tools.prototype.doubleAsCallback = function (n) {
+  return n * 2;
+};
+////: Tools-prototype-doubleHidden
+Tools.prototype.doubleHidden = function (n) {
+  return n * 2;
+};
+////: Tools-prototype-doublePlainly
+Tools.prototype.doublePlainly = function (n) {
+  return n * 2;
+};
+////: Tools-prototype-findAsCallback
+Tools.prototype.findAsCallback = function (text) {
+  return text.indexOf("b");
+};
+////: Tools-prototype-findHidden
+Tools.prototype.findHidden = function (text) {
+  return text.indexOf("b");
+};
+////: Tools-prototype-findPlainly
+Tools.prototype.findPlainly = function (text) {
+  return text.indexOf("b");
+};
+////: Tools-prototype-spanAsCallback
+Tools.prototype.spanAsCallback = function (point) {
+  const { x, y } = point;
+  return x - y;
+};
+////: Tools-prototype-spanHidden
+Tools.prototype.spanHidden = function (point) {
+  const { x, y } = point;
+  return x - y;
+};
+////: Tools-prototype-spanPlainly
+Tools.prototype.spanPlainly = function (point) {
+  const { x, y } = point;
+  return x - y;
+};
+////: Tools-prototype-sumAsCallback
+Tools.prototype.sumAsCallback = function (list) {
+  let sum = 0;
+  for (const item of list) sum += item;
+  return sum;
+};
+////: Tools-prototype-sumHidden
+Tools.prototype.sumHidden = function (list) {
+  let sum = 0;
+  for (const item of list) sum += item;
+  return sum;
+};
+////: Tools-prototype-sumPlainly
+Tools.prototype.sumPlainly = function (list) {
+  let sum = 0;
+  for (const item of list) sum += item;
+  return sum;
+};
+////: attempt-48
+attempt(«1», () => {
+  const point = { x: 3, y: 1 };
+  const generator = late(point);
+  generator.next();
+  «2»;
+  return generator.next().value;
+});
+////: for-42
+for (const [name, list] of lists) {
+  attempt("add of " + name, () => add(...list));
+  attempt("add.apply of " + name, () => add.apply(null, list));
+  attempt("howMany of " + name, () => howMany(...list));
+  attempt("howMany.call of " + name, () => howMany.call(null, ...list));
+  attempt("storeThroughArguments of " + name, () => storeThroughArguments(...list));
+  attempt("storeThroughParameters of " + name, () => storeThroughParameters(...list));
+  attempt("third of " + name, () => third(...list));
+  attempt("forward of " + name, () => forward(...list));
+  attempt("forwardSpread of " + name, () => forwardSpread(...list));
+  attempt("lastOne of " + name, () => lastOne(...list));
+  attempt("sumOfArguments of " + name, () => sumOfArguments(...list));
+  attempt("shorten of " + name, () => shorten(...list));
+}
+////: honest-2
+function honest(round) {
+  console.log(round, "add", add(1, 2), add(0.5, 0.5), add(-1, 1), add(10, 20), add(3, 4), add(1e10, 1));
+  console.log(round, "howMany", howMany(1, 2), howMany(3, 4), howMany(5, 6), howMany(7, 8));
+  console.log(round, "storeThroughArguments", show(storeThroughArguments(1, 2)), show(storeThroughArguments(3, 4)));
+  console.log(round, "storeThroughParameters", show(storeThroughParameters(1, 2)), show(storeThroughParameters(3, 4)));
+  console.log(round, "third", third(1, 2), third(3, 4), third(5, 6));
+  console.log(round, "forward", forward(1, 2), forward(3, 4), forwardSpread(1, 2), forwardSpread(3, 4));
+  console.log(round, "lastOne", lastOne(1), lastOne(1, 2), lastOne(1, 2, 3));
+  console.log(round, "sumOfArguments", sumOfArguments(1, 2), sumOfArguments(1, 2, 3), sumOfArguments(0.5));
+  console.log(round, "shorten", show(shorten(1, 2)), show(shorten(3, 4)));
+}
+////: lines-165
+const «1» = list => {
+  let sum = 0;
+  for (const item of list) sum += item;
+  return sum;
+};
+////: lines-200
+tools[names.«1»] = function (list) {
+  let sum = 0;
+  for (const item of list) sum += item;
+  return sum;
+};
+////: lines-211
+const «1» = point => {
+  const { x, y } = point;
+  return x - y;
+};
+////: lines-24
+const «1» = {
+  sumPlainly(list) {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  },
+
+  sumAsCallback(list) {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  },
+
+  sumHidden(list) {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  },
+
+  findPlainly(text) {
+    return text.indexOf("b");
+  },
+
+  findAsCallback(text) {
+    return text.indexOf("b");
+  },
+
+  findHidden(text) {
+    return text.indexOf("b");
+  },
+
+  doublePlainly(n) {
+    return n * 2;
+  },
+
+  doubleAsCallback(n) {
+    return n * 2;
+  },
+
+  doubleHidden(n) {
+    return n * 2;
+  },
+
+  spanPlainly(point) {
+    const { x, y } = point;
+    return x - y;
+  },
+
+  spanAsCallback(point) {
+    const { x, y } = point;
+    return x - y;
+  },
+
+  spanHidden(point) {
+    const { x, y } = point;
+    return x - y;
+  },
+};
+////: lines-240
+tools[names.«1»] = function (point) {
+  const { x, y } = point;
+  return x - y;
+};
+////: lists-2
+const lists = [
+  ["nothing", []],
+  ["one", [1]],
+  ["one undefined", [undefined]],
+  ["two", [1, 2]],
+  ["three", [1, 2, 3]],
+  ["nine", [1, 2, 3, 4, 5, 6, 7, 8, 9]],
+  ["a string and a number", ["1", 2]],
+  ["two objects", [{ valueOf: () => (log.push("first"), 1) }, { valueOf: () => (log.push("second"), 2) }]],
+];
+//// many-callers-of-a-generator-function-and-an-impostor.js
+////= show-5
+
+const log = [];
+
+////= attempt-6
+
+function* doubles(list) {
+  for (let i = 0; i < list.length; i++) yield list[i] * 2;
+}
+
+function* upTo(n) {
+  for (let i = 0; i < n; i++) yield i;
+}
+
+function* adder() {
+  let sum = 0;
+  for (;;) {
+    const n = yield sum;
+    if (n === "stop") return sum;
+    sum += n;
+  }
+}
+
+function* lows() {
+  let seen = 0;
+  for (;;) seen = (yield seen) & 7;
+}
+
+function* relay(inner) {
+  const result = yield* inner;
+  return result;
+}
+
+function* late(point) {
+  const x = point.x;
+  yield "paused";
+  return x - point.y;
+}
+
+function feed(generator, values) {
+  const out = [generator.next().value];
+  for (const value of values) out.push(generator.next(value).value);
+  return out;
+}
+
+function honest(round) {
+  console.log(round, "doubles", show([...doubles([1, 2, 3])]), show([...doubles([])]), show([...doubles(new Array(4, 5))]), show([...doubles([0.5])]));
+  console.log(round, "upTo", show([...upTo(3)]), show([...upTo(0)]), show([...upTo(1)]), show([...upTo(5)]));
+  console.log(round, "adder", show(feed(adder(), [1, 2, 3])), show(feed(adder(), [0.5, 0.25])), show(feed(adder(), [-1, 1, "stop"])));
+  console.log(round, "lows", show(feed(lows(), [1, 9, 255])), show(feed(lows(), [8, 7])));
+  console.log(round, "relay", show([...relay([1, 2])]), show([...relay([])]), show([...relay(doubles([1]))]));
+  console.log(round, "late", show([...late({ x: 3, y: 1 })]), show(feed(late({ x: 3, y: 1 }), [0])), show(feed(late({ x: 0.5, y: 0.25 }), [0])));
+}
+
+const notLists = [
+  ["a string", () => "12"],
+  ["an array-like object", () => ({ 0: 1, 1: "2", length: 2 })],
+  ["a typed array", () => new Uint8Array([200, 2])],
+  ["holes", () => new Array(2)],
+  ["BigInts", () => [1n]],
+  ["null", () => null],
+];
+
+const notNumbers = [
+  ["a numeric string", () => "2"],
+  ["an object with valueOf", () => ({ valueOf: () => (log.push("valueOf"), 2) })],
+  ["a BigInt", () => 2n],
+  ["a fraction", () => 1.5],
+  ["null", () => null],
+  ["undefined", () => undefined],
+  ["two to the 32nd and three", () => 4294967299],
+];
+
+const notIterables = [
+  ["a string", () => "ab"],
+  ["a Set", () => new Set([1, 2])],
+  ["a generator that returns a value", () => (function* () { yield 1; return "the end"; })()],
+  ["an iterator made by hand", () => ({ [Symbol.iterator]() { let i = 0; return { next: value => (log.push("next " + value), { done: i++ > 1, value: i }) }; } })],
+  ["an array-like object", () => ({ 0: 1, length: 1 })],
+  ["a number", () => 5],
+  ["undefined", () => undefined],
+];
+
+honest("before");
+for (const [name, make] of notLists) {
+  attempt("doubles of " + name, () => [...doubles(make())]);
+  attempt("doubles through apply of " + name, () => [...doubles.apply(null, [make()])]);
+  attempt("doubles as a callback of " + name, () => [make()].flatMap(value => [...doubles(value)]));
+}
+for (const [name, make] of notNumbers) {
+  attempt("upTo " + name, () => { const out = []; for (const i of upTo(make())) if (out.push(i) > 3) break; return out; });
+  attempt("adder is sent " + name, () => feed(adder(), [1, make(), 1]));
+  attempt("lows is sent " + name, () => feed(lows(), [1, make(), 1]));
+  attempt("adder is sent " + name + " by hidden code", () => new Function("g", "value", "g.next(); g.next(1); return g.next(value).value")(adder(), make()));
+}
+for (const [name, make] of notIterables) attempt("relay of " + name, () => feed(relay(make()), ["first", "second", "third"]));
+
+attempt("a generator after the value it was sent made it throw", () => {
+  const generator = adder();
+  generator.next();
+  generator.next(1);
+  try {
+    generator.next(1n);
+  } catch (error) {
+    log.push(error.constructor.name);
+  }
+  return generator.next(1);
+});
+////= attempt-48	"a point that changes at the pause"	point.y = "2"
+////= attempt-48	"a point whose y becomes a getter at the pause"	Object.defineProperty(point, "y", { get: () => (log.push("get y"), 2) })
+attempt("nothing runs before the first next", () => typeof late(null).next);
+attempt("and then it throws", () => late(null).next());
+attempt("a generator function is not a constructor", () => new upTo(1));
+attempt("return in the middle", () => { const generator = upTo(3); return [generator.next().value, generator.return("early").value, generator.next().done]; });
+attempt("throw in the middle", () => { const generator = upTo(3); generator.next(); return generator.throw(new RangeError("no")); });
+honest("after");
+//// many-callers-of-a-long-function-with-a-try-and-an-impostor.js
+////= show-5
+
+const log = [];
+
+////= attempt-6
+
+function summarize(list, scale, label, options) {
+  let sum = 0;
+  let largest = -Infinity;
+  let odd = 0;
+  let text = "";
+  const seen = [];
+  try {
+    for (let i = 0; i < list.length; i++) {
+      const item = list[i];
+      sum += item * scale;
+      if (item > largest) largest = item;
+      if (item & 1) odd++;
+      switch (i % 3) {
+        case 0:
+          text += label.charAt(i % label.length);
+          break;
+        case 1:
+          text += label.length;
+          break;
+        default:
+          text += "-";
+      }
+      seen.push(item);
+    }
+    if (options.round) sum = Math.round(sum);
+    if (options.limit < sum) {
+      sum = options.limit;
+      text += "!";
+    }
+    if (seen.length !== list.length) throw new RangeError("the list changed");
+  } catch (error) {
+    log.push("caught " + error.constructor.name);
+    return { failed: true, sum, odd, text, seen: seen.length };
+  } finally {
+    log.push("finally");
+  }
+  let check = 0;
+  for (const item of seen) check = (check * 31 + (item | 0)) | 0;
+  return { sum, largest, odd, text, check };
+}
+
+function honest(round) {
+  log.length = 0;
+  console.log(round, JSON.stringify(summarize([1, 2, 3], 2, "abc", { round: true, limit: 100 })));
+  console.log(round, JSON.stringify(summarize([], 1, "x", { round: false, limit: 0 })));
+  console.log(round, JSON.stringify(summarize([0.5, 1.5], 0.5, "label", { round: true, limit: 10 })));
+  console.log(round, JSON.stringify(summarize(new Array(7, 8, 9, 10), 3, "ab", { round: false, limit: 50 })));
+  console.log(round, JSON.stringify(summarize([100], 1, "z", { round: true, limit: 5 })));
+  console.log(round, JSON.stringify(summarize([-1, -2], -1, "neg", { round: false, limit: 1000 })));
+}
+
+const good = () => [[1, 2, 3], 2, "abc", { round: true, limit: 100 }];
+const places = ["list", "scale", "label", "options"];
+const impostors = [
+  ["a string", () => "123"],
+  ["a number", () => 7],
+  ["an array of strings", () => ["1", "2", "3"]],
+  ["an array-like object", () => ({ 0: 1, 1: 2, length: 2, round: 1, limit: 1, charAt: () => "?" })],
+  ["an object with valueOf", () => ({ valueOf: () => (log.push("valueOf"), 2), length: 1, charAt: () => "v", round: true, limit: 3 })],
+  ["a typed array", () => new Int16Array([1, 2, 3])],
+  ["a BigInt", () => 2n],
+  ["an array of BigInts", () => [1n, 2n]],
+  ["holes", () => new Array(2)],
+  ["a proxy of an array", () => new Proxy([1, 2], {})],
+  ["null", () => null],
+  ["undefined", () => undefined],
+];
+
+honest("before");
+for (const [name, make] of impostors) {
+  for (let place = 0; place < places.length; place++) {
+    attempt(places[place] + " is " + name, () => {
+      const list = good();
+      list[place] = make();
+      return summarize(list[0], list[1], list[2], list[3]);
+    });
+  }
+}
+attempt("every place at once through apply", () => summarize.apply(null, ["12", "2", ["a", "b"], "options"]));
+attempt("too few arguments", () => summarize([1, 2]));
+attempt("a list that grows while it is read", () => { const list = [1, 2]; return summarize(new Proxy(list, { get: (target, key) => (key === "1" && target.length < 4 && target.push(9), target[key]) }), 1, "ab", {}); });
+attempt("options whose limit is a getter that throws", () => summarize([1], 1, "a", { get limit() { throw new EvalError("no"); } }));
+attempt("as a callback", () => [[1, 2, 3]].map(summarize)[0]);
+attempt("from hidden code", () => new Function("f", "return f('12', '2', 'ab', {})")(summarize));
+honest("after");
+//// many-callers-of-a-method-added-with-define-property-and-an-impostor.js
+////= show-8
+
+const log = [];
+
+////= attempt-51
+
+const tools = {};
+
+////= Object-defineProperty-14	"sumPlainly"
+
+////= Object-defineProperty-14	"sumAsCallback"
+
+////= Object-defineProperty-14	"sumHidden"
+
+////= Object-defineProperty-17	"findPlainly"
+
+////= Object-defineProperty-17	"findAsCallback"
+
+////= Object-defineProperty-17	"findHidden"
+
+////= Object-defineProperty-16	"doublePlainly"
+
+////= Object-defineProperty-16	"doubleAsCallback"
+
+////= Object-defineProperty-16	"doubleHidden"
+
+////= Object-defineProperty-15	"spanPlainly"
+
+////= Object-defineProperty-15	"spanAsCallback"
+
+////= Object-defineProperty-15	"spanHidden"
+
+console.log("strict:", (function () { return this === undefined; })());
+console.log("before", "sumAsCallback", tools.sumAsCallback([1, 2, 3]), tools.sumAsCallback([]), tools.sumAsCallback(new Array(4, 5)), tools.sumAsCallback([0.5]), tools.sumAsCallback(Array.of(6)));
+for (let i = 0; i < 2000; i++) tools.sumHidden([1, 2, 3]);
+////= for-9
+console.log("after", "sumPlainly", tools.sumPlainly([1, 2, 3]), tools.sumPlainly([]), tools.sumPlainly(new Array(4, 5)), tools.sumPlainly([0.5]), tools.sumPlainly(Array.of(6)));
+console.log("after", "sumAsCallback", tools.sumAsCallback([1, 2, 3]), tools.sumAsCallback([]), tools.sumAsCallback(new Array(4, 5)), tools.sumAsCallback([0.5]), tools.sumAsCallback(Array.of(6)));
+console.log("after", "sumHidden", tools.sumHidden([1, 2, 3]), tools.sumHidden([]), tools.sumHidden(new Array(4, 5)), tools.sumHidden([0.5]), tools.sumHidden(Array.of(6)));
+console.log("before", "findAsCallback", tools.findAsCallback("abc"), tools.findAsCallback("b"), tools.findAsCallback(""), tools.findAsCallback("xyz"), tools.findAsCallback(`a${"b"}`));
+for (let i = 0; i < 2000; i++) tools.findHidden("abc");
+////= for-12
+console.log("after", "findPlainly", tools.findPlainly("abc"), tools.findPlainly("b"), tools.findPlainly(""), tools.findPlainly("xyz"), tools.findPlainly(`a${"b"}`));
+console.log("after", "findAsCallback", tools.findAsCallback("abc"), tools.findAsCallback("b"), tools.findAsCallback(""), tools.findAsCallback("xyz"), tools.findAsCallback(`a${"b"}`));
+console.log("after", "findHidden", tools.findHidden("abc"), tools.findHidden("b"), tools.findHidden(""), tools.findHidden("xyz"), tools.findHidden(`a${"b"}`));
+console.log("before", "doubleAsCallback", tools.doubleAsCallback(1), tools.doubleAsCallback(2.5), tools.doubleAsCallback(-3), tools.doubleAsCallback(0), tools.doubleAsCallback(1e10));
+for (let i = 0; i < 2000; i++) tools.doubleHidden(1);
+////= for-10
+console.log("after", "doublePlainly", tools.doublePlainly(1), tools.doublePlainly(2.5), tools.doublePlainly(-3), tools.doublePlainly(0), tools.doublePlainly(1e10));
+console.log("after", "doubleAsCallback", tools.doubleAsCallback(1), tools.doubleAsCallback(2.5), tools.doubleAsCallback(-3), tools.doubleAsCallback(0), tools.doubleAsCallback(1e10));
+console.log("after", "doubleHidden", tools.doubleHidden(1), tools.doubleHidden(2.5), tools.doubleHidden(-3), tools.doubleHidden(0), tools.doubleHidden(1e10));
+console.log("before", "spanAsCallback", tools.spanAsCallback({ x: 3, y: 1 }), tools.spanAsCallback(new Point(5, 2)), tools.spanAsCallback({ x: 0.5, y: 0.25 }), tools.spanAsCallback({ x: -1, y: -1 }), tools.spanAsCallback(new Point(0, 0)));
+for (let i = 0; i < 2000; i++) tools.spanHidden({ x: 3, y: 1 });
+////= for-11
+console.log("after", "spanPlainly", tools.spanPlainly({ x: 3, y: 1 }), tools.spanPlainly(new Point(5, 2)), tools.spanPlainly({ x: 0.5, y: 0.25 }), tools.spanPlainly({ x: -1, y: -1 }), tools.spanPlainly(new Point(0, 0)));
+console.log("after", "spanAsCallback", tools.spanAsCallback({ x: 3, y: 1 }), tools.spanAsCallback(new Point(5, 2)), tools.spanAsCallback({ x: 0.5, y: 0.25 }), tools.spanAsCallback({ x: -1, y: -1 }), tools.spanAsCallback(new Point(0, 0)));
+console.log("after", "spanHidden", tools.spanHidden({ x: 3, y: 1 }), tools.spanHidden(new Point(5, 2)), tools.spanHidden({ x: 0.5, y: 0.25 }), tools.spanHidden({ x: -1, y: -1 }), tools.spanHidden(new Point(0, 0)));
+//// many-callers-of-a-method-inherited-through-set-prototype-of-and-an-impostor.cjs
+////= show-8
+
+const log = [];
+
+////= attempt-51
+
+function Tools() {}
+
+////= Tools-2
+
+////= lines-282	MoreTools	Tools
+
+Object.setPrototypeOf(MoreTools.prototype, Tools.prototype);
+
+var tools = new MoreTools();
+
+console.log("strict:", (function () { return this === undefined; })());
+console.log("before", "sumAsCallback", tools.sumAsCallback([1, 2, 3]), tools.sumAsCallback([]), tools.sumAsCallback(new Array(4, 5)), tools.sumAsCallback([0.5]), tools.sumAsCallback(Array.of(6)));
+for (let i = 0; i < 2000; i++) tools.sumHidden([1, 2, 3]);
+////= for-9
+console.log("after", "sumPlainly", tools.sumPlainly([1, 2, 3]), tools.sumPlainly([]), tools.sumPlainly(new Array(4, 5)), tools.sumPlainly([0.5]), tools.sumPlainly(Array.of(6)));
+console.log("after", "sumAsCallback", tools.sumAsCallback([1, 2, 3]), tools.sumAsCallback([]), tools.sumAsCallback(new Array(4, 5)), tools.sumAsCallback([0.5]), tools.sumAsCallback(Array.of(6)));
+console.log("after", "sumHidden", tools.sumHidden([1, 2, 3]), tools.sumHidden([]), tools.sumHidden(new Array(4, 5)), tools.sumHidden([0.5]), tools.sumHidden(Array.of(6)));
+console.log("before", "findAsCallback", tools.findAsCallback("abc"), tools.findAsCallback("b"), tools.findAsCallback(""), tools.findAsCallback("xyz"), tools.findAsCallback(`a${"b"}`));
+for (let i = 0; i < 2000; i++) tools.findHidden("abc");
+////= for-12
+console.log("after", "findPlainly", tools.findPlainly("abc"), tools.findPlainly("b"), tools.findPlainly(""), tools.findPlainly("xyz"), tools.findPlainly(`a${"b"}`));
+console.log("after", "findAsCallback", tools.findAsCallback("abc"), tools.findAsCallback("b"), tools.findAsCallback(""), tools.findAsCallback("xyz"), tools.findAsCallback(`a${"b"}`));
+console.log("after", "findHidden", tools.findHidden("abc"), tools.findHidden("b"), tools.findHidden(""), tools.findHidden("xyz"), tools.findHidden(`a${"b"}`));
+console.log("before", "doubleAsCallback", tools.doubleAsCallback(1), tools.doubleAsCallback(2.5), tools.doubleAsCallback(-3), tools.doubleAsCallback(0), tools.doubleAsCallback(1e10));
+for (let i = 0; i < 2000; i++) tools.doubleHidden(1);
+////= for-10
+console.log("after", "doublePlainly", tools.doublePlainly(1), tools.doublePlainly(2.5), tools.doublePlainly(-3), tools.doublePlainly(0), tools.doublePlainly(1e10));
+console.log("after", "doubleAsCallback", tools.doubleAsCallback(1), tools.doubleAsCallback(2.5), tools.doubleAsCallback(-3), tools.doubleAsCallback(0), tools.doubleAsCallback(1e10));
+console.log("after", "doubleHidden", tools.doubleHidden(1), tools.doubleHidden(2.5), tools.doubleHidden(-3), tools.doubleHidden(0), tools.doubleHidden(1e10));
+console.log("before", "spanAsCallback", tools.spanAsCallback({ x: 3, y: 1 }), tools.spanAsCallback(new Point(5, 2)), tools.spanAsCallback({ x: 0.5, y: 0.25 }), tools.spanAsCallback({ x: -1, y: -1 }), tools.spanAsCallback(new Point(0, 0)));
+for (let i = 0; i < 2000; i++) tools.spanHidden({ x: 3, y: 1 });
+////= for-11
+console.log("after", "spanPlainly", tools.spanPlainly({ x: 3, y: 1 }), tools.spanPlainly(new Point(5, 2)), tools.spanPlainly({ x: 0.5, y: 0.25 }), tools.spanPlainly({ x: -1, y: -1 }), tools.spanPlainly(new Point(0, 0)));
+console.log("after", "spanAsCallback", tools.spanAsCallback({ x: 3, y: 1 }), tools.spanAsCallback(new Point(5, 2)), tools.spanAsCallback({ x: 0.5, y: 0.25 }), tools.spanAsCallback({ x: -1, y: -1 }), tools.spanAsCallback(new Point(0, 0)));
+console.log("after", "spanHidden", tools.spanHidden({ x: 3, y: 1 }), tools.spanHidden(new Point(5, 2)), tools.spanHidden({ x: 0.5, y: 0.25 }), tools.spanHidden({ x: -1, y: -1 }), tools.spanHidden(new Point(0, 0)));
+//// many-callers-of-a-method-inherited-through-util-inherits-and-an-impostor.cjs
+////= show-8
+
+const log = [];
+
+////= attempt-51
+
+var util = require("node:util");
+
+function Tools() {}
+
+////= Tools-2
+
+////= lines-282	MoreTools	Tools
+
+util.inherits(MoreTools, Tools);
+
+var tools = new MoreTools();
+
+console.log("strict:", (function () { return this === undefined; })());
+console.log("before", "sumAsCallback", tools.sumAsCallback([1, 2, 3]), tools.sumAsCallback([]), tools.sumAsCallback(new Array(4, 5)), tools.sumAsCallback([0.5]), tools.sumAsCallback(Array.of(6)));
+for (let i = 0; i < 2000; i++) tools.sumHidden([1, 2, 3]);
+////= for-9
+console.log("after", "sumPlainly", tools.sumPlainly([1, 2, 3]), tools.sumPlainly([]), tools.sumPlainly(new Array(4, 5)), tools.sumPlainly([0.5]), tools.sumPlainly(Array.of(6)));
+console.log("after", "sumAsCallback", tools.sumAsCallback([1, 2, 3]), tools.sumAsCallback([]), tools.sumAsCallback(new Array(4, 5)), tools.sumAsCallback([0.5]), tools.sumAsCallback(Array.of(6)));
+console.log("after", "sumHidden", tools.sumHidden([1, 2, 3]), tools.sumHidden([]), tools.sumHidden(new Array(4, 5)), tools.sumHidden([0.5]), tools.sumHidden(Array.of(6)));
+console.log("before", "findAsCallback", tools.findAsCallback("abc"), tools.findAsCallback("b"), tools.findAsCallback(""), tools.findAsCallback("xyz"), tools.findAsCallback(`a${"b"}`));
+for (let i = 0; i < 2000; i++) tools.findHidden("abc");
+////= for-12
+console.log("after", "findPlainly", tools.findPlainly("abc"), tools.findPlainly("b"), tools.findPlainly(""), tools.findPlainly("xyz"), tools.findPlainly(`a${"b"}`));
+console.log("after", "findAsCallback", tools.findAsCallback("abc"), tools.findAsCallback("b"), tools.findAsCallback(""), tools.findAsCallback("xyz"), tools.findAsCallback(`a${"b"}`));
+console.log("after", "findHidden", tools.findHidden("abc"), tools.findHidden("b"), tools.findHidden(""), tools.findHidden("xyz"), tools.findHidden(`a${"b"}`));
+console.log("before", "doubleAsCallback", tools.doubleAsCallback(1), tools.doubleAsCallback(2.5), tools.doubleAsCallback(-3), tools.doubleAsCallback(0), tools.doubleAsCallback(1e10));
+for (let i = 0; i < 2000; i++) tools.doubleHidden(1);
+////= for-10
+console.log("after", "doublePlainly", tools.doublePlainly(1), tools.doublePlainly(2.5), tools.doublePlainly(-3), tools.doublePlainly(0), tools.doublePlainly(1e10));
+console.log("after", "doubleAsCallback", tools.doubleAsCallback(1), tools.doubleAsCallback(2.5), tools.doubleAsCallback(-3), tools.doubleAsCallback(0), tools.doubleAsCallback(1e10));
+console.log("after", "doubleHidden", tools.doubleHidden(1), tools.doubleHidden(2.5), tools.doubleHidden(-3), tools.doubleHidden(0), tools.doubleHidden(1e10));
+console.log("before", "spanAsCallback", tools.spanAsCallback({ x: 3, y: 1 }), tools.spanAsCallback(new Point(5, 2)), tools.spanAsCallback({ x: 0.5, y: 0.25 }), tools.spanAsCallback({ x: -1, y: -1 }), tools.spanAsCallback(new Point(0, 0)));
+for (let i = 0; i < 2000; i++) tools.spanHidden({ x: 3, y: 1 });
+////= for-11
+console.log("after", "spanPlainly", tools.spanPlainly({ x: 3, y: 1 }), tools.spanPlainly(new Point(5, 2)), tools.spanPlainly({ x: 0.5, y: 0.25 }), tools.spanPlainly({ x: -1, y: -1 }), tools.spanPlainly(new Point(0, 0)));
+console.log("after", "spanAsCallback", tools.spanAsCallback({ x: 3, y: 1 }), tools.spanAsCallback(new Point(5, 2)), tools.spanAsCallback({ x: 0.5, y: 0.25 }), tools.spanAsCallback({ x: -1, y: -1 }), tools.spanAsCallback(new Point(0, 0)));
+console.log("after", "spanHidden", tools.spanHidden({ x: 3, y: 1 }), tools.spanHidden(new Point(5, 2)), tools.spanHidden({ x: 0.5, y: 0.25 }), tools.spanHidden({ x: -1, y: -1 }), tools.spanHidden(new Point(0, 0)));
+//// many-callers-of-a-method-mixed-in-with-object-assign-and-an-impostor.cjs
+////= show-8
+
+const log = [];
+
+////= attempt-51
+
+function Tools() {}
+
+Object.assign(Tools.prototype, {
+  sumPlainly(list) {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  },
+
+  sumAsCallback(list) {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  },
+
+  sumHidden(list) {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  },
+
+  findPlainly(text) {
+    return text.indexOf("b");
+  },
+
+  findAsCallback(text) {
+    return text.indexOf("b");
+  },
+
+  findHidden(text) {
+    return text.indexOf("b");
+  },
+
+  doublePlainly(n) {
+    return n * 2;
+  },
+
+  doubleAsCallback(n) {
+    return n * 2;
+  },
+
+  doubleHidden(n) {
+    return n * 2;
+  },
+
+  spanPlainly(point) {
+    const { x, y } = point;
+    return x - y;
+  },
+
+  spanAsCallback(point) {
+    const { x, y } = point;
+    return x - y;
+  },
+
+  spanHidden(point) {
+    const { x, y } = point;
+    return x - y;
+  },
+});
+
+var tools = new Tools();
+
+console.log("strict:", (function () { return this === undefined; })());
+console.log("before", "sumAsCallback", tools.sumAsCallback([1, 2, 3]), tools.sumAsCallback([]), tools.sumAsCallback(new Array(4, 5)), tools.sumAsCallback([0.5]), tools.sumAsCallback(Array.of(6)));
+for (let i = 0; i < 2000; i++) tools.sumHidden([1, 2, 3]);
+////= for-9
+console.log("after", "sumPlainly", tools.sumPlainly([1, 2, 3]), tools.sumPlainly([]), tools.sumPlainly(new Array(4, 5)), tools.sumPlainly([0.5]), tools.sumPlainly(Array.of(6)));
+console.log("after", "sumAsCallback", tools.sumAsCallback([1, 2, 3]), tools.sumAsCallback([]), tools.sumAsCallback(new Array(4, 5)), tools.sumAsCallback([0.5]), tools.sumAsCallback(Array.of(6)));
+console.log("after", "sumHidden", tools.sumHidden([1, 2, 3]), tools.sumHidden([]), tools.sumHidden(new Array(4, 5)), tools.sumHidden([0.5]), tools.sumHidden(Array.of(6)));
+console.log("before", "findAsCallback", tools.findAsCallback("abc"), tools.findAsCallback("b"), tools.findAsCallback(""), tools.findAsCallback("xyz"), tools.findAsCallback(`a${"b"}`));
+for (let i = 0; i < 2000; i++) tools.findHidden("abc");
+////= for-12
+console.log("after", "findPlainly", tools.findPlainly("abc"), tools.findPlainly("b"), tools.findPlainly(""), tools.findPlainly("xyz"), tools.findPlainly(`a${"b"}`));
+console.log("after", "findAsCallback", tools.findAsCallback("abc"), tools.findAsCallback("b"), tools.findAsCallback(""), tools.findAsCallback("xyz"), tools.findAsCallback(`a${"b"}`));
+console.log("after", "findHidden", tools.findHidden("abc"), tools.findHidden("b"), tools.findHidden(""), tools.findHidden("xyz"), tools.findHidden(`a${"b"}`));
+console.log("before", "doubleAsCallback", tools.doubleAsCallback(1), tools.doubleAsCallback(2.5), tools.doubleAsCallback(-3), tools.doubleAsCallback(0), tools.doubleAsCallback(1e10));
+for (let i = 0; i < 2000; i++) tools.doubleHidden(1);
+////= for-10
+console.log("after", "doublePlainly", tools.doublePlainly(1), tools.doublePlainly(2.5), tools.doublePlainly(-3), tools.doublePlainly(0), tools.doublePlainly(1e10));
+console.log("after", "doubleAsCallback", tools.doubleAsCallback(1), tools.doubleAsCallback(2.5), tools.doubleAsCallback(-3), tools.doubleAsCallback(0), tools.doubleAsCallback(1e10));
+console.log("after", "doubleHidden", tools.doubleHidden(1), tools.doubleHidden(2.5), tools.doubleHidden(-3), tools.doubleHidden(0), tools.doubleHidden(1e10));
+console.log("before", "spanAsCallback", tools.spanAsCallback({ x: 3, y: 1 }), tools.spanAsCallback(new Point(5, 2)), tools.spanAsCallback({ x: 0.5, y: 0.25 }), tools.spanAsCallback({ x: -1, y: -1 }), tools.spanAsCallback(new Point(0, 0)));
+for (let i = 0; i < 2000; i++) tools.spanHidden({ x: 3, y: 1 });
+////= for-11
+console.log("after", "spanPlainly", tools.spanPlainly({ x: 3, y: 1 }), tools.spanPlainly(new Point(5, 2)), tools.spanPlainly({ x: 0.5, y: 0.25 }), tools.spanPlainly({ x: -1, y: -1 }), tools.spanPlainly(new Point(0, 0)));
+console.log("after", "spanAsCallback", tools.spanAsCallback({ x: 3, y: 1 }), tools.spanAsCallback(new Point(5, 2)), tools.spanAsCallback({ x: 0.5, y: 0.25 }), tools.spanAsCallback({ x: -1, y: -1 }), tools.spanAsCallback(new Point(0, 0)));
+console.log("after", "spanHidden", tools.spanHidden({ x: 3, y: 1 }), tools.spanHidden(new Point(5, 2)), tools.spanHidden({ x: 0.5, y: 0.25 }), tools.spanHidden({ x: -1, y: -1 }), tools.spanHidden(new Point(0, 0)));
+//// many-callers-of-a-method-of-a-prototype-object-that-replaces-the-first-and-an-impostor.cjs
+////= show-8
+
+const log = [];
+
+////= attempt-51
+
+function Tools() {}
+
+Tools.prototype = {
+  constructor: Tools,
+
+  sumPlainly: function (list) {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  },
+
+  sumAsCallback: function (list) {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  },
+
+  sumHidden: function (list) {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  },
+
+  findPlainly: function (text) {
+    return text.indexOf("b");
+  },
+
+  findAsCallback: function (text) {
+    return text.indexOf("b");
+  },
+
+  findHidden: function (text) {
+    return text.indexOf("b");
+  },
+
+  doublePlainly: function (n) {
+    return n * 2;
+  },
+
+  doubleAsCallback: function (n) {
+    return n * 2;
+  },
+
+  doubleHidden: function (n) {
+    return n * 2;
+  },
+
+  spanPlainly: function (point) {
+    const { x, y } = point;
+    return x - y;
+  },
+
+  spanAsCallback: function (point) {
+    const { x, y } = point;
+    return x - y;
+  },
+
+  spanHidden: function (point) {
+    const { x, y } = point;
+    return x - y;
+  },
+};
+
+var tools = new Tools();
+
+console.log("strict:", (function () { return this === undefined; })());
+console.log("before", "sumAsCallback", tools.sumAsCallback([1, 2, 3]), tools.sumAsCallback([]), tools.sumAsCallback(new Array(4, 5)), tools.sumAsCallback([0.5]), tools.sumAsCallback(Array.of(6)));
+for (let i = 0; i < 2000; i++) tools.sumHidden([1, 2, 3]);
+////= for-9
+console.log("after", "sumPlainly", tools.sumPlainly([1, 2, 3]), tools.sumPlainly([]), tools.sumPlainly(new Array(4, 5)), tools.sumPlainly([0.5]), tools.sumPlainly(Array.of(6)));
+console.log("after", "sumAsCallback", tools.sumAsCallback([1, 2, 3]), tools.sumAsCallback([]), tools.sumAsCallback(new Array(4, 5)), tools.sumAsCallback([0.5]), tools.sumAsCallback(Array.of(6)));
+console.log("after", "sumHidden", tools.sumHidden([1, 2, 3]), tools.sumHidden([]), tools.sumHidden(new Array(4, 5)), tools.sumHidden([0.5]), tools.sumHidden(Array.of(6)));
+console.log("before", "findAsCallback", tools.findAsCallback("abc"), tools.findAsCallback("b"), tools.findAsCallback(""), tools.findAsCallback("xyz"), tools.findAsCallback(`a${"b"}`));
+for (let i = 0; i < 2000; i++) tools.findHidden("abc");
+////= for-12
+console.log("after", "findPlainly", tools.findPlainly("abc"), tools.findPlainly("b"), tools.findPlainly(""), tools.findPlainly("xyz"), tools.findPlainly(`a${"b"}`));
+console.log("after", "findAsCallback", tools.findAsCallback("abc"), tools.findAsCallback("b"), tools.findAsCallback(""), tools.findAsCallback("xyz"), tools.findAsCallback(`a${"b"}`));
+console.log("after", "findHidden", tools.findHidden("abc"), tools.findHidden("b"), tools.findHidden(""), tools.findHidden("xyz"), tools.findHidden(`a${"b"}`));
+console.log("before", "doubleAsCallback", tools.doubleAsCallback(1), tools.doubleAsCallback(2.5), tools.doubleAsCallback(-3), tools.doubleAsCallback(0), tools.doubleAsCallback(1e10));
+for (let i = 0; i < 2000; i++) tools.doubleHidden(1);
+////= for-10
+console.log("after", "doublePlainly", tools.doublePlainly(1), tools.doublePlainly(2.5), tools.doublePlainly(-3), tools.doublePlainly(0), tools.doublePlainly(1e10));
+console.log("after", "doubleAsCallback", tools.doubleAsCallback(1), tools.doubleAsCallback(2.5), tools.doubleAsCallback(-3), tools.doubleAsCallback(0), tools.doubleAsCallback(1e10));
+console.log("after", "doubleHidden", tools.doubleHidden(1), tools.doubleHidden(2.5), tools.doubleHidden(-3), tools.doubleHidden(0), tools.doubleHidden(1e10));
+console.log("before", "spanAsCallback", tools.spanAsCallback({ x: 3, y: 1 }), tools.spanAsCallback(new Point(5, 2)), tools.spanAsCallback({ x: 0.5, y: 0.25 }), tools.spanAsCallback({ x: -1, y: -1 }), tools.spanAsCallback(new Point(0, 0)));
+for (let i = 0; i < 2000; i++) tools.spanHidden({ x: 3, y: 1 });
+////= for-11
+console.log("after", "spanPlainly", tools.spanPlainly({ x: 3, y: 1 }), tools.spanPlainly(new Point(5, 2)), tools.spanPlainly({ x: 0.5, y: 0.25 }), tools.spanPlainly({ x: -1, y: -1 }), tools.spanPlainly(new Point(0, 0)));
+console.log("after", "spanAsCallback", tools.spanAsCallback({ x: 3, y: 1 }), tools.spanAsCallback(new Point(5, 2)), tools.spanAsCallback({ x: 0.5, y: 0.25 }), tools.spanAsCallback({ x: -1, y: -1 }), tools.spanAsCallback(new Point(0, 0)));
+console.log("after", "spanHidden", tools.spanHidden({ x: 3, y: 1 }), tools.spanHidden(new Point(5, 2)), tools.spanHidden({ x: 0.5, y: 0.25 }), tools.spanHidden({ x: -1, y: -1 }), tools.spanHidden(new Point(0, 0)));
+//// many-callers-of-a-method-of-an-object-literal-and-an-impostor.cjs
+////= show-8
+
+const log = [];
+
+////= attempt-51
+
+////= lines-24	tools
+
+console.log("strict:", (function () { return this === undefined; })());
+console.log("before", "sumAsCallback", tools.sumAsCallback([1, 2, 3]), tools.sumAsCallback([]), tools.sumAsCallback(new Array(4, 5)), tools.sumAsCallback([0.5]), tools.sumAsCallback(Array.of(6)));
+for (let i = 0; i < 2000; i++) tools.sumHidden([1, 2, 3]);
+////= for-9
+console.log("after", "sumPlainly", tools.sumPlainly([1, 2, 3]), tools.sumPlainly([]), tools.sumPlainly(new Array(4, 5)), tools.sumPlainly([0.5]), tools.sumPlainly(Array.of(6)));
+console.log("after", "sumAsCallback", tools.sumAsCallback([1, 2, 3]), tools.sumAsCallback([]), tools.sumAsCallback(new Array(4, 5)), tools.sumAsCallback([0.5]), tools.sumAsCallback(Array.of(6)));
+console.log("after", "sumHidden", tools.sumHidden([1, 2, 3]), tools.sumHidden([]), tools.sumHidden(new Array(4, 5)), tools.sumHidden([0.5]), tools.sumHidden(Array.of(6)));
+console.log("before", "findAsCallback", tools.findAsCallback("abc"), tools.findAsCallback("b"), tools.findAsCallback(""), tools.findAsCallback("xyz"), tools.findAsCallback(`a${"b"}`));
+for (let i = 0; i < 2000; i++) tools.findHidden("abc");
+////= for-12
+console.log("after", "findPlainly", tools.findPlainly("abc"), tools.findPlainly("b"), tools.findPlainly(""), tools.findPlainly("xyz"), tools.findPlainly(`a${"b"}`));
+console.log("after", "findAsCallback", tools.findAsCallback("abc"), tools.findAsCallback("b"), tools.findAsCallback(""), tools.findAsCallback("xyz"), tools.findAsCallback(`a${"b"}`));
+console.log("after", "findHidden", tools.findHidden("abc"), tools.findHidden("b"), tools.findHidden(""), tools.findHidden("xyz"), tools.findHidden(`a${"b"}`));
+console.log("before", "doubleAsCallback", tools.doubleAsCallback(1), tools.doubleAsCallback(2.5), tools.doubleAsCallback(-3), tools.doubleAsCallback(0), tools.doubleAsCallback(1e10));
+for (let i = 0; i < 2000; i++) tools.doubleHidden(1);
+////= for-10
+console.log("after", "doublePlainly", tools.doublePlainly(1), tools.doublePlainly(2.5), tools.doublePlainly(-3), tools.doublePlainly(0), tools.doublePlainly(1e10));
+console.log("after", "doubleAsCallback", tools.doubleAsCallback(1), tools.doubleAsCallback(2.5), tools.doubleAsCallback(-3), tools.doubleAsCallback(0), tools.doubleAsCallback(1e10));
+console.log("after", "doubleHidden", tools.doubleHidden(1), tools.doubleHidden(2.5), tools.doubleHidden(-3), tools.doubleHidden(0), tools.doubleHidden(1e10));
+console.log("before", "spanAsCallback", tools.spanAsCallback({ x: 3, y: 1 }), tools.spanAsCallback(new Point(5, 2)), tools.spanAsCallback({ x: 0.5, y: 0.25 }), tools.spanAsCallback({ x: -1, y: -1 }), tools.spanAsCallback(new Point(0, 0)));
+for (let i = 0; i < 2000; i++) tools.spanHidden({ x: 3, y: 1 });
+////= for-11
+console.log("after", "spanPlainly", tools.spanPlainly({ x: 3, y: 1 }), tools.spanPlainly(new Point(5, 2)), tools.spanPlainly({ x: 0.5, y: 0.25 }), tools.spanPlainly({ x: -1, y: -1 }), tools.spanPlainly(new Point(0, 0)));
+console.log("after", "spanAsCallback", tools.spanAsCallback({ x: 3, y: 1 }), tools.spanAsCallback(new Point(5, 2)), tools.spanAsCallback({ x: 0.5, y: 0.25 }), tools.spanAsCallback({ x: -1, y: -1 }), tools.spanAsCallback(new Point(0, 0)));
+console.log("after", "spanHidden", tools.spanHidden({ x: 3, y: 1 }), tools.spanHidden(new Point(5, 2)), tools.spanHidden({ x: 0.5, y: 0.25 }), tools.spanHidden({ x: -1, y: -1 }), tools.spanHidden(new Point(0, 0)));
+//// many-callers-of-a-method-of-the-prototype-named-in-an-object-literal-and-an-impostor.js
+////= show-8
+
+const log = [];
+
+////= attempt-51
+
+////= lines-24	base
+
+const tools = { __proto__: base, own: true };
+
+console.log("strict:", (function () { return this === undefined; })());
+console.log("before", "sumAsCallback", tools.sumAsCallback([1, 2, 3]), tools.sumAsCallback([]), tools.sumAsCallback(new Array(4, 5)), tools.sumAsCallback([0.5]), tools.sumAsCallback(Array.of(6)));
+for (let i = 0; i < 2000; i++) tools.sumHidden([1, 2, 3]);
+////= for-9
+console.log("after", "sumPlainly", tools.sumPlainly([1, 2, 3]), tools.sumPlainly([]), tools.sumPlainly(new Array(4, 5)), tools.sumPlainly([0.5]), tools.sumPlainly(Array.of(6)));
+console.log("after", "sumAsCallback", tools.sumAsCallback([1, 2, 3]), tools.sumAsCallback([]), tools.sumAsCallback(new Array(4, 5)), tools.sumAsCallback([0.5]), tools.sumAsCallback(Array.of(6)));
+console.log("after", "sumHidden", tools.sumHidden([1, 2, 3]), tools.sumHidden([]), tools.sumHidden(new Array(4, 5)), tools.sumHidden([0.5]), tools.sumHidden(Array.of(6)));
+console.log("before", "findAsCallback", tools.findAsCallback("abc"), tools.findAsCallback("b"), tools.findAsCallback(""), tools.findAsCallback("xyz"), tools.findAsCallback(`a${"b"}`));
+for (let i = 0; i < 2000; i++) tools.findHidden("abc");
+////= for-12
+console.log("after", "findPlainly", tools.findPlainly("abc"), tools.findPlainly("b"), tools.findPlainly(""), tools.findPlainly("xyz"), tools.findPlainly(`a${"b"}`));
+console.log("after", "findAsCallback", tools.findAsCallback("abc"), tools.findAsCallback("b"), tools.findAsCallback(""), tools.findAsCallback("xyz"), tools.findAsCallback(`a${"b"}`));
+console.log("after", "findHidden", tools.findHidden("abc"), tools.findHidden("b"), tools.findHidden(""), tools.findHidden("xyz"), tools.findHidden(`a${"b"}`));
+console.log("before", "doubleAsCallback", tools.doubleAsCallback(1), tools.doubleAsCallback(2.5), tools.doubleAsCallback(-3), tools.doubleAsCallback(0), tools.doubleAsCallback(1e10));
+for (let i = 0; i < 2000; i++) tools.doubleHidden(1);
+////= for-10
+console.log("after", "doublePlainly", tools.doublePlainly(1), tools.doublePlainly(2.5), tools.doublePlainly(-3), tools.doublePlainly(0), tools.doublePlainly(1e10));
+console.log("after", "doubleAsCallback", tools.doubleAsCallback(1), tools.doubleAsCallback(2.5), tools.doubleAsCallback(-3), tools.doubleAsCallback(0), tools.doubleAsCallback(1e10));
+console.log("after", "doubleHidden", tools.doubleHidden(1), tools.doubleHidden(2.5), tools.doubleHidden(-3), tools.doubleHidden(0), tools.doubleHidden(1e10));
+console.log("before", "spanAsCallback", tools.spanAsCallback({ x: 3, y: 1 }), tools.spanAsCallback(new Point(5, 2)), tools.spanAsCallback({ x: 0.5, y: 0.25 }), tools.spanAsCallback({ x: -1, y: -1 }), tools.spanAsCallback(new Point(0, 0)));
+for (let i = 0; i < 2000; i++) tools.spanHidden({ x: 3, y: 1 });
+////= for-11
+console.log("after", "spanPlainly", tools.spanPlainly({ x: 3, y: 1 }), tools.spanPlainly(new Point(5, 2)), tools.spanPlainly({ x: 0.5, y: 0.25 }), tools.spanPlainly({ x: -1, y: -1 }), tools.spanPlainly(new Point(0, 0)));
+console.log("after", "spanAsCallback", tools.spanAsCallback({ x: 3, y: 1 }), tools.spanAsCallback(new Point(5, 2)), tools.spanAsCallback({ x: 0.5, y: 0.25 }), tools.spanAsCallback({ x: -1, y: -1 }), tools.spanAsCallback(new Point(0, 0)));
+console.log("after", "spanHidden", tools.spanHidden({ x: 3, y: 1 }), tools.spanHidden(new Point(5, 2)), tools.spanHidden({ x: 0.5, y: 0.25 }), tools.spanHidden({ x: -1, y: -1 }), tools.spanHidden(new Point(0, 0)));
+//// many-callers-of-a-method-with-a-computed-name-and-an-impostor.js
+////= show-8
+
+const log = [];
+
+////= attempt-51
+
+const prefix = ["to", "ol"].join("");
+
+const tools = {
+  [prefix + "sumPlainly"](list) {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  },
+
+  [prefix + "sumAsCallback"](list) {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  },
+
+  [prefix + "sumHidden"](list) {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  },
+
+  [prefix + "findPlainly"](text) {
+    return text.indexOf("b");
+  },
+
+  [prefix + "findAsCallback"](text) {
+    return text.indexOf("b");
+  },
+
+  [prefix + "findHidden"](text) {
+    return text.indexOf("b");
+  },
+
+  [prefix + "doublePlainly"](n) {
+    return n * 2;
+  },
+
+  [prefix + "doubleAsCallback"](n) {
+    return n * 2;
+  },
+
+  [prefix + "doubleHidden"](n) {
+    return n * 2;
+  },
+
+  [prefix + "spanPlainly"](point) {
+    const { x, y } = point;
+    return x - y;
+  },
+
+  [prefix + "spanAsCallback"](point) {
+    const { x, y } = point;
+    return x - y;
+  },
+
+  [prefix + "spanHidden"](point) {
+    const { x, y } = point;
+    return x - y;
+  },
+};
+
+console.log("strict:", (function () { return this === undefined; })());
+console.log("before", "sumAsCallback", tools.toolsumAsCallback([1, 2, 3]), tools.toolsumAsCallback([]), tools.toolsumAsCallback(new Array(4, 5)), tools.toolsumAsCallback([0.5]), tools.toolsumAsCallback(Array.of(6)));
+for (let i = 0; i < 2000; i++) tools.toolsumHidden([1, 2, 3]);
+for (const [name, make] of notLists) {
+  attempt("sumPlainly " + name, () => tools.toolsumPlainly(make()));
+  attempt("sumAsCallback " + name, () => [make()].map(tools.toolsumAsCallback)[0]);
+  attempt("sumHidden " + name, () => new Function("object", "value", "return object.toolsumHidden(value)")(tools, make()));
+}
+console.log("after", "sumPlainly", tools.toolsumPlainly([1, 2, 3]), tools.toolsumPlainly([]), tools.toolsumPlainly(new Array(4, 5)), tools.toolsumPlainly([0.5]), tools.toolsumPlainly(Array.of(6)));
+console.log("after", "sumAsCallback", tools.toolsumAsCallback([1, 2, 3]), tools.toolsumAsCallback([]), tools.toolsumAsCallback(new Array(4, 5)), tools.toolsumAsCallback([0.5]), tools.toolsumAsCallback(Array.of(6)));
+console.log("after", "sumHidden", tools.toolsumHidden([1, 2, 3]), tools.toolsumHidden([]), tools.toolsumHidden(new Array(4, 5)), tools.toolsumHidden([0.5]), tools.toolsumHidden(Array.of(6)));
+console.log("before", "findAsCallback", tools.toolfindAsCallback("abc"), tools.toolfindAsCallback("b"), tools.toolfindAsCallback(""), tools.toolfindAsCallback("xyz"), tools.toolfindAsCallback(`a${"b"}`));
+for (let i = 0; i < 2000; i++) tools.toolfindHidden("abc");
+for (const [name, make] of notTexts) {
+  attempt("findPlainly " + name, () => tools.toolfindPlainly(make()));
+  attempt("findAsCallback " + name, () => [make()].map(tools.toolfindAsCallback)[0]);
+  attempt("findHidden " + name, () => new Function("object", "value", "return object.toolfindHidden(value)")(tools, make()));
+}
+console.log("after", "findPlainly", tools.toolfindPlainly("abc"), tools.toolfindPlainly("b"), tools.toolfindPlainly(""), tools.toolfindPlainly("xyz"), tools.toolfindPlainly(`a${"b"}`));
+console.log("after", "findAsCallback", tools.toolfindAsCallback("abc"), tools.toolfindAsCallback("b"), tools.toolfindAsCallback(""), tools.toolfindAsCallback("xyz"), tools.toolfindAsCallback(`a${"b"}`));
+console.log("after", "findHidden", tools.toolfindHidden("abc"), tools.toolfindHidden("b"), tools.toolfindHidden(""), tools.toolfindHidden("xyz"), tools.toolfindHidden(`a${"b"}`));
+console.log("before", "doubleAsCallback", tools.tooldoubleAsCallback(1), tools.tooldoubleAsCallback(2.5), tools.tooldoubleAsCallback(-3), tools.tooldoubleAsCallback(0), tools.tooldoubleAsCallback(1e10));
+for (let i = 0; i < 2000; i++) tools.tooldoubleHidden(1);
+for (const [name, make] of notNumbers) {
+  attempt("doublePlainly " + name, () => tools.tooldoublePlainly(make()));
+  attempt("doubleAsCallback " + name, () => [make()].map(tools.tooldoubleAsCallback)[0]);
+  attempt("doubleHidden " + name, () => new Function("object", "value", "return object.tooldoubleHidden(value)")(tools, make()));
+}
+console.log("after", "doublePlainly", tools.tooldoublePlainly(1), tools.tooldoublePlainly(2.5), tools.tooldoublePlainly(-3), tools.tooldoublePlainly(0), tools.tooldoublePlainly(1e10));
+console.log("after", "doubleAsCallback", tools.tooldoubleAsCallback(1), tools.tooldoubleAsCallback(2.5), tools.tooldoubleAsCallback(-3), tools.tooldoubleAsCallback(0), tools.tooldoubleAsCallback(1e10));
+console.log("after", "doubleHidden", tools.tooldoubleHidden(1), tools.tooldoubleHidden(2.5), tools.tooldoubleHidden(-3), tools.tooldoubleHidden(0), tools.tooldoubleHidden(1e10));
+console.log("before", "spanAsCallback", tools.toolspanAsCallback({ x: 3, y: 1 }), tools.toolspanAsCallback(new Point(5, 2)), tools.toolspanAsCallback({ x: 0.5, y: 0.25 }), tools.toolspanAsCallback({ x: -1, y: -1 }), tools.toolspanAsCallback(new Point(0, 0)));
+for (let i = 0; i < 2000; i++) tools.toolspanHidden({ x: 3, y: 1 });
+for (const [name, make] of notPoints) {
+  attempt("spanPlainly " + name, () => tools.toolspanPlainly(make()));
+  attempt("spanAsCallback " + name, () => [make()].map(tools.toolspanAsCallback)[0]);
+  attempt("spanHidden " + name, () => new Function("object", "value", "return object.toolspanHidden(value)")(tools, make()));
+}
+console.log("after", "spanPlainly", tools.toolspanPlainly({ x: 3, y: 1 }), tools.toolspanPlainly(new Point(5, 2)), tools.toolspanPlainly({ x: 0.5, y: 0.25 }), tools.toolspanPlainly({ x: -1, y: -1 }), tools.toolspanPlainly(new Point(0, 0)));
+console.log("after", "spanAsCallback", tools.toolspanAsCallback({ x: 3, y: 1 }), tools.toolspanAsCallback(new Point(5, 2)), tools.toolspanAsCallback({ x: 0.5, y: 0.25 }), tools.toolspanAsCallback({ x: -1, y: -1 }), tools.toolspanAsCallback(new Point(0, 0)));
+console.log("after", "spanHidden", tools.toolspanHidden({ x: 3, y: 1 }), tools.toolspanHidden(new Point(5, 2)), tools.toolspanHidden({ x: 0.5, y: 0.25 }), tools.toolspanHidden({ x: -1, y: -1 }), tools.toolspanHidden(new Point(0, 0)));
+//// many-callers-of-a-method-with-a-symbol-for-a-name-and-an-impostor.js
+////= show-8
+
+const log = [];
+
+////= attempt-51
+
+const names = {};
+const tools = {};
+
+names.sumPlainly = Symbol("sumPlainly");
+////= lines-200	sumPlainly
+
+names.sumAsCallback = Symbol("sumAsCallback");
+////= lines-200	sumAsCallback
+
+names.sumHidden = Symbol("sumHidden");
+////= lines-200	sumHidden
+
+names.findPlainly = Symbol("findPlainly");
+tools[names.findPlainly] = function (text) {
+  return text.indexOf("b");
+};
+
+names.findAsCallback = Symbol("findAsCallback");
+tools[names.findAsCallback] = function (text) {
+  return text.indexOf("b");
+};
+
+names.findHidden = Symbol("findHidden");
+tools[names.findHidden] = function (text) {
+  return text.indexOf("b");
+};
+
+names.doublePlainly = Symbol("doublePlainly");
+tools[names.doublePlainly] = function (n) {
+  return n * 2;
+};
+
+names.doubleAsCallback = Symbol("doubleAsCallback");
+tools[names.doubleAsCallback] = function (n) {
+  return n * 2;
+};
+
+names.doubleHidden = Symbol("doubleHidden");
+tools[names.doubleHidden] = function (n) {
+  return n * 2;
+};
+
+names.spanPlainly = Symbol("spanPlainly");
+////= lines-240	spanPlainly
+
+names.spanAsCallback = Symbol("spanAsCallback");
+////= lines-240	spanAsCallback
+
+names.spanHidden = Symbol("spanHidden");
+////= lines-240	spanHidden
+
+console.log("strict:", (function () { return this === undefined; })());
+console.log("before", "sumAsCallback", tools[names.sumAsCallback]([1, 2, 3]), tools[names.sumAsCallback]([]), tools[names.sumAsCallback](new Array(4, 5)), tools[names.sumAsCallback]([0.5]), tools[names.sumAsCallback](Array.of(6)));
+for (let i = 0; i < 2000; i++) tools[names.sumHidden]([1, 2, 3]);
+for (const [name, make] of notLists) {
+  attempt("sumPlainly " + name, () => tools[names.sumPlainly](make()));
+  attempt("sumAsCallback " + name, () => [make()].map(tools[names.sumAsCallback])[0]);
+  attempt("sumHidden " + name, () => new Function("object", "name", "value", "return object[name](value)")(tools, names.sumHidden, make()));
+}
+console.log("after", "sumPlainly", tools[names.sumPlainly]([1, 2, 3]), tools[names.sumPlainly]([]), tools[names.sumPlainly](new Array(4, 5)), tools[names.sumPlainly]([0.5]), tools[names.sumPlainly](Array.of(6)));
+console.log("after", "sumAsCallback", tools[names.sumAsCallback]([1, 2, 3]), tools[names.sumAsCallback]([]), tools[names.sumAsCallback](new Array(4, 5)), tools[names.sumAsCallback]([0.5]), tools[names.sumAsCallback](Array.of(6)));
+console.log("after", "sumHidden", tools[names.sumHidden]([1, 2, 3]), tools[names.sumHidden]([]), tools[names.sumHidden](new Array(4, 5)), tools[names.sumHidden]([0.5]), tools[names.sumHidden](Array.of(6)));
+console.log("before", "findAsCallback", tools[names.findAsCallback]("abc"), tools[names.findAsCallback]("b"), tools[names.findAsCallback](""), tools[names.findAsCallback]("xyz"), tools[names.findAsCallback](`a${"b"}`));
+for (let i = 0; i < 2000; i++) tools[names.findHidden]("abc");
+for (const [name, make] of notTexts) {
+  attempt("findPlainly " + name, () => tools[names.findPlainly](make()));
+  attempt("findAsCallback " + name, () => [make()].map(tools[names.findAsCallback])[0]);
+  attempt("findHidden " + name, () => new Function("object", "name", "value", "return object[name](value)")(tools, names.findHidden, make()));
+}
+console.log("after", "findPlainly", tools[names.findPlainly]("abc"), tools[names.findPlainly]("b"), tools[names.findPlainly](""), tools[names.findPlainly]("xyz"), tools[names.findPlainly](`a${"b"}`));
+console.log("after", "findAsCallback", tools[names.findAsCallback]("abc"), tools[names.findAsCallback]("b"), tools[names.findAsCallback](""), tools[names.findAsCallback]("xyz"), tools[names.findAsCallback](`a${"b"}`));
+console.log("after", "findHidden", tools[names.findHidden]("abc"), tools[names.findHidden]("b"), tools[names.findHidden](""), tools[names.findHidden]("xyz"), tools[names.findHidden](`a${"b"}`));
+console.log("before", "doubleAsCallback", tools[names.doubleAsCallback](1), tools[names.doubleAsCallback](2.5), tools[names.doubleAsCallback](-3), tools[names.doubleAsCallback](0), tools[names.doubleAsCallback](1e10));
+for (let i = 0; i < 2000; i++) tools[names.doubleHidden](1);
+for (const [name, make] of notNumbers) {
+  attempt("doublePlainly " + name, () => tools[names.doublePlainly](make()));
+  attempt("doubleAsCallback " + name, () => [make()].map(tools[names.doubleAsCallback])[0]);
+  attempt("doubleHidden " + name, () => new Function("object", "name", "value", "return object[name](value)")(tools, names.doubleHidden, make()));
+}
+console.log("after", "doublePlainly", tools[names.doublePlainly](1), tools[names.doublePlainly](2.5), tools[names.doublePlainly](-3), tools[names.doublePlainly](0), tools[names.doublePlainly](1e10));
+console.log("after", "doubleAsCallback", tools[names.doubleAsCallback](1), tools[names.doubleAsCallback](2.5), tools[names.doubleAsCallback](-3), tools[names.doubleAsCallback](0), tools[names.doubleAsCallback](1e10));
+console.log("after", "doubleHidden", tools[names.doubleHidden](1), tools[names.doubleHidden](2.5), tools[names.doubleHidden](-3), tools[names.doubleHidden](0), tools[names.doubleHidden](1e10));
+console.log("before", "spanAsCallback", tools[names.spanAsCallback]({ x: 3, y: 1 }), tools[names.spanAsCallback](new Point(5, 2)), tools[names.spanAsCallback]({ x: 0.5, y: 0.25 }), tools[names.spanAsCallback]({ x: -1, y: -1 }), tools[names.spanAsCallback](new Point(0, 0)));
+for (let i = 0; i < 2000; i++) tools[names.spanHidden]({ x: 3, y: 1 });
+for (const [name, make] of notPoints) {
+  attempt("spanPlainly " + name, () => tools[names.spanPlainly](make()));
+  attempt("spanAsCallback " + name, () => [make()].map(tools[names.spanAsCallback])[0]);
+  attempt("spanHidden " + name, () => new Function("object", "name", "value", "return object[name](value)")(tools, names.spanHidden, make()));
+}
+console.log("after", "spanPlainly", tools[names.spanPlainly]({ x: 3, y: 1 }), tools[names.spanPlainly](new Point(5, 2)), tools[names.spanPlainly]({ x: 0.5, y: 0.25 }), tools[names.spanPlainly]({ x: -1, y: -1 }), tools[names.spanPlainly](new Point(0, 0)));
+console.log("after", "spanAsCallback", tools[names.spanAsCallback]({ x: 3, y: 1 }), tools[names.spanAsCallback](new Point(5, 2)), tools[names.spanAsCallback]({ x: 0.5, y: 0.25 }), tools[names.spanAsCallback]({ x: -1, y: -1 }), tools[names.spanAsCallback](new Point(0, 0)));
+console.log("after", "spanHidden", tools[names.spanHidden]({ x: 3, y: 1 }), tools[names.spanHidden](new Point(5, 2)), tools[names.spanHidden]({ x: 0.5, y: 0.25 }), tools[names.spanHidden]({ x: -1, y: -1 }), tools[names.spanHidden](new Point(0, 0)));
+//// many-callers-of-a-private-method-and-an-impostor.js
+////= show-8
+
+const log = [];
+
+////= attempt-51
+
+class Tools {
+  #sumPlainly(list) {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  }
+
+  sumPlainly(value) {
+    return this.#sumPlainly(value);
+  }
+
+  #sumAsCallback(list) {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  }
+
+  sumAsCallback(value) {
+    return this.#sumAsCallback(value);
+  }
+
+  #sumHidden(list) {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  }
+
+  sumHidden(value) {
+    return this.#sumHidden(value);
+  }
+
+  #findPlainly(text) {
+    return text.indexOf("b");
+  }
+
+  findPlainly(value) {
+    return this.#findPlainly(value);
+  }
+
+  #findAsCallback(text) {
+    return text.indexOf("b");
+  }
+
+  findAsCallback(value) {
+    return this.#findAsCallback(value);
+  }
+
+  #findHidden(text) {
+    return text.indexOf("b");
+  }
+
+  findHidden(value) {
+    return this.#findHidden(value);
+  }
+
+  #doublePlainly(n) {
+    return n * 2;
+  }
+
+  doublePlainly(value) {
+    return this.#doublePlainly(value);
+  }
+
+  #doubleAsCallback(n) {
+    return n * 2;
+  }
+
+  doubleAsCallback(value) {
+    return this.#doubleAsCallback(value);
+  }
+
+  #doubleHidden(n) {
+    return n * 2;
+  }
+
+  doubleHidden(value) {
+    return this.#doubleHidden(value);
+  }
+
+  #spanPlainly(point) {
+    const { x, y } = point;
+    return x - y;
+  }
+
+  spanPlainly(value) {
+    return this.#spanPlainly(value);
+  }
+
+  #spanAsCallback(point) {
+    const { x, y } = point;
+    return x - y;
+  }
+
+  spanAsCallback(value) {
+    return this.#spanAsCallback(value);
+  }
+
+  #spanHidden(point) {
+    const { x, y } = point;
+    return x - y;
+  }
+
+  spanHidden(value) {
+    return this.#spanHidden(value);
+  }
+}
+
+const tools = new Tools();
+
+console.log("strict:", (function () { return this === undefined; })());
+console.log("before", "sumAsCallback", tools.sumAsCallback([1, 2, 3]), tools.sumAsCallback([]), tools.sumAsCallback(new Array(4, 5)), tools.sumAsCallback([0.5]), tools.sumAsCallback(Array.of(6)));
+for (let i = 0; i < 2000; i++) tools.sumHidden([1, 2, 3]);
+for (const [name, make] of notLists) {
+  attempt("sumPlainly " + name, () => tools.sumPlainly(make()));
+  attempt("sumAsCallback " + name, () => [make()].map(tools.sumAsCallback.bind(tools))[0]);
+  attempt("sumHidden " + name, () => new Function("object", "value", "return object.sumHidden(value)")(tools, make()));
+}
+console.log("after", "sumPlainly", tools.sumPlainly([1, 2, 3]), tools.sumPlainly([]), tools.sumPlainly(new Array(4, 5)), tools.sumPlainly([0.5]), tools.sumPlainly(Array.of(6)));
+console.log("after", "sumAsCallback", tools.sumAsCallback([1, 2, 3]), tools.sumAsCallback([]), tools.sumAsCallback(new Array(4, 5)), tools.sumAsCallback([0.5]), tools.sumAsCallback(Array.of(6)));
+console.log("after", "sumHidden", tools.sumHidden([1, 2, 3]), tools.sumHidden([]), tools.sumHidden(new Array(4, 5)), tools.sumHidden([0.5]), tools.sumHidden(Array.of(6)));
+console.log("before", "findAsCallback", tools.findAsCallback("abc"), tools.findAsCallback("b"), tools.findAsCallback(""), tools.findAsCallback("xyz"), tools.findAsCallback(`a${"b"}`));
+for (let i = 0; i < 2000; i++) tools.findHidden("abc");
+for (const [name, make] of notTexts) {
+  attempt("findPlainly " + name, () => tools.findPlainly(make()));
+  attempt("findAsCallback " + name, () => [make()].map(tools.findAsCallback.bind(tools))[0]);
+  attempt("findHidden " + name, () => new Function("object", "value", "return object.findHidden(value)")(tools, make()));
+}
+console.log("after", "findPlainly", tools.findPlainly("abc"), tools.findPlainly("b"), tools.findPlainly(""), tools.findPlainly("xyz"), tools.findPlainly(`a${"b"}`));
+console.log("after", "findAsCallback", tools.findAsCallback("abc"), tools.findAsCallback("b"), tools.findAsCallback(""), tools.findAsCallback("xyz"), tools.findAsCallback(`a${"b"}`));
+console.log("after", "findHidden", tools.findHidden("abc"), tools.findHidden("b"), tools.findHidden(""), tools.findHidden("xyz"), tools.findHidden(`a${"b"}`));
+console.log("before", "doubleAsCallback", tools.doubleAsCallback(1), tools.doubleAsCallback(2.5), tools.doubleAsCallback(-3), tools.doubleAsCallback(0), tools.doubleAsCallback(1e10));
+for (let i = 0; i < 2000; i++) tools.doubleHidden(1);
+for (const [name, make] of notNumbers) {
+  attempt("doublePlainly " + name, () => tools.doublePlainly(make()));
+  attempt("doubleAsCallback " + name, () => [make()].map(tools.doubleAsCallback.bind(tools))[0]);
+  attempt("doubleHidden " + name, () => new Function("object", "value", "return object.doubleHidden(value)")(tools, make()));
+}
+console.log("after", "doublePlainly", tools.doublePlainly(1), tools.doublePlainly(2.5), tools.doublePlainly(-3), tools.doublePlainly(0), tools.doublePlainly(1e10));
+console.log("after", "doubleAsCallback", tools.doubleAsCallback(1), tools.doubleAsCallback(2.5), tools.doubleAsCallback(-3), tools.doubleAsCallback(0), tools.doubleAsCallback(1e10));
+console.log("after", "doubleHidden", tools.doubleHidden(1), tools.doubleHidden(2.5), tools.doubleHidden(-3), tools.doubleHidden(0), tools.doubleHidden(1e10));
+console.log("before", "spanAsCallback", tools.spanAsCallback({ x: 3, y: 1 }), tools.spanAsCallback(new Point(5, 2)), tools.spanAsCallback({ x: 0.5, y: 0.25 }), tools.spanAsCallback({ x: -1, y: -1 }), tools.spanAsCallback(new Point(0, 0)));
+for (let i = 0; i < 2000; i++) tools.spanHidden({ x: 3, y: 1 });
+for (const [name, make] of notPoints) {
+  attempt("spanPlainly " + name, () => tools.spanPlainly(make()));
+  attempt("spanAsCallback " + name, () => [make()].map(tools.spanAsCallback.bind(tools))[0]);
+  attempt("spanHidden " + name, () => new Function("object", "value", "return object.spanHidden(value)")(tools, make()));
+}
+console.log("after", "spanPlainly", tools.spanPlainly({ x: 3, y: 1 }), tools.spanPlainly(new Point(5, 2)), tools.spanPlainly({ x: 0.5, y: 0.25 }), tools.spanPlainly({ x: -1, y: -1 }), tools.spanPlainly(new Point(0, 0)));
+console.log("after", "spanAsCallback", tools.spanAsCallback({ x: 3, y: 1 }), tools.spanAsCallback(new Point(5, 2)), tools.spanAsCallback({ x: 0.5, y: 0.25 }), tools.spanAsCallback({ x: -1, y: -1 }), tools.spanAsCallback(new Point(0, 0)));
+console.log("after", "spanHidden", tools.spanHidden({ x: 3, y: 1 }), tools.spanHidden(new Point(5, 2)), tools.spanHidden({ x: 0.5, y: 0.25 }), tools.spanHidden({ x: -1, y: -1 }), tools.spanHidden(new Point(0, 0)));
+//// many-callers-of-a-prototype-method-and-an-impostor.cjs
+////= show-8
+
+const log = [];
+
+////= attempt-51
+
+function Tools() {}
+
+////= Tools-2
+
+var tools = new Tools();
+
+console.log("strict:", (function () { return this === undefined; })());
+console.log("before", "sumAsCallback", tools.sumAsCallback([1, 2, 3]), tools.sumAsCallback([]), tools.sumAsCallback(new Array(4, 5)), tools.sumAsCallback([0.5]), tools.sumAsCallback(Array.of(6)));
+for (let i = 0; i < 2000; i++) tools.sumHidden([1, 2, 3]);
+////= for-9
+console.log("after", "sumPlainly", tools.sumPlainly([1, 2, 3]), tools.sumPlainly([]), tools.sumPlainly(new Array(4, 5)), tools.sumPlainly([0.5]), tools.sumPlainly(Array.of(6)));
+console.log("after", "sumAsCallback", tools.sumAsCallback([1, 2, 3]), tools.sumAsCallback([]), tools.sumAsCallback(new Array(4, 5)), tools.sumAsCallback([0.5]), tools.sumAsCallback(Array.of(6)));
+console.log("after", "sumHidden", tools.sumHidden([1, 2, 3]), tools.sumHidden([]), tools.sumHidden(new Array(4, 5)), tools.sumHidden([0.5]), tools.sumHidden(Array.of(6)));
+console.log("before", "findAsCallback", tools.findAsCallback("abc"), tools.findAsCallback("b"), tools.findAsCallback(""), tools.findAsCallback("xyz"), tools.findAsCallback(`a${"b"}`));
+for (let i = 0; i < 2000; i++) tools.findHidden("abc");
+////= for-12
+console.log("after", "findPlainly", tools.findPlainly("abc"), tools.findPlainly("b"), tools.findPlainly(""), tools.findPlainly("xyz"), tools.findPlainly(`a${"b"}`));
+console.log("after", "findAsCallback", tools.findAsCallback("abc"), tools.findAsCallback("b"), tools.findAsCallback(""), tools.findAsCallback("xyz"), tools.findAsCallback(`a${"b"}`));
+console.log("after", "findHidden", tools.findHidden("abc"), tools.findHidden("b"), tools.findHidden(""), tools.findHidden("xyz"), tools.findHidden(`a${"b"}`));
+console.log("before", "doubleAsCallback", tools.doubleAsCallback(1), tools.doubleAsCallback(2.5), tools.doubleAsCallback(-3), tools.doubleAsCallback(0), tools.doubleAsCallback(1e10));
+for (let i = 0; i < 2000; i++) tools.doubleHidden(1);
+////= for-10
+console.log("after", "doublePlainly", tools.doublePlainly(1), tools.doublePlainly(2.5), tools.doublePlainly(-3), tools.doublePlainly(0), tools.doublePlainly(1e10));
+console.log("after", "doubleAsCallback", tools.doubleAsCallback(1), tools.doubleAsCallback(2.5), tools.doubleAsCallback(-3), tools.doubleAsCallback(0), tools.doubleAsCallback(1e10));
+console.log("after", "doubleHidden", tools.doubleHidden(1), tools.doubleHidden(2.5), tools.doubleHidden(-3), tools.doubleHidden(0), tools.doubleHidden(1e10));
+console.log("before", "spanAsCallback", tools.spanAsCallback({ x: 3, y: 1 }), tools.spanAsCallback(new Point(5, 2)), tools.spanAsCallback({ x: 0.5, y: 0.25 }), tools.spanAsCallback({ x: -1, y: -1 }), tools.spanAsCallback(new Point(0, 0)));
+for (let i = 0; i < 2000; i++) tools.spanHidden({ x: 3, y: 1 });
+////= for-11
+console.log("after", "spanPlainly", tools.spanPlainly({ x: 3, y: 1 }), tools.spanPlainly(new Point(5, 2)), tools.spanPlainly({ x: 0.5, y: 0.25 }), tools.spanPlainly({ x: -1, y: -1 }), tools.spanPlainly(new Point(0, 0)));
+console.log("after", "spanAsCallback", tools.spanAsCallback({ x: 3, y: 1 }), tools.spanAsCallback(new Point(5, 2)), tools.spanAsCallback({ x: 0.5, y: 0.25 }), tools.spanAsCallback({ x: -1, y: -1 }), tools.spanAsCallback(new Point(0, 0)));
+console.log("after", "spanHidden", tools.spanHidden({ x: 3, y: 1 }), tools.spanHidden(new Point(5, 2)), tools.spanHidden({ x: 0.5, y: 0.25 }), tools.spanHidden({ x: -1, y: -1 }), tools.spanHidden(new Point(0, 0)));
+//// many-callers-of-a-recursive-function-and-an-impostor.js
+////= show-5
+
+const log = [];
+
+////= attempt-6
+
+function factorial(n) {
+  return n <= 1 ? 1 : n * factorial(n - 1);
+}
+
+function fibonacci(n) {
+  return n < 2 ? n : fibonacci(n - 1) + fibonacci(n - 2);
+}
+
+////= lines-287	isEven	true	isOdd
+
+////= lines-287	isOdd	false	isEven
+
+function countDown(n) {
+  return n > 0 ? countDown(n - 1) : n;
+}
+
+function sumTree(node) {
+  if (node === null) return 0;
+  return node.value + sumTree(node.left) + sumTree(node.right);
+}
+
+function flatten(list) {
+  const out = [];
+  for (let i = 0; i < list.length; i++) {
+    if (Array.isArray(list[i])) out.push(...flatten(list[i]));
+    else out.push(list[i]);
+  }
+  return out;
+}
+
+function reverse(text) {
+  return text.length === 0 ? "" : reverse(text.slice(1)) + text[0];
+}
+
+const leaf = value => ({ value, left: null, right: null });
+
+function honest(round) {
+  console.log(round, "factorial", factorial(0), factorial(1), factorial(5), factorial(10), factorial(20));
+  console.log(round, "fibonacci", fibonacci(0), fibonacci(1), fibonacci(7), fibonacci(12));
+  console.log(round, "isEven", isEven(0), isEven(1), isEven(10), isOdd(7), isOdd(8));
+  console.log(round, "countDown", countDown(0), countDown(3), countDown(100));
+  console.log(round, "sumTree", sumTree(null), sumTree(leaf(1)), sumTree({ value: 1, left: leaf(2), right: { value: 3, left: leaf(4), right: null } }));
+  console.log(round, "flatten", show(flatten([1, [2, [3, [4]]]])), show(flatten([])), show(flatten([[], [[]]])));
+  console.log(round, "reverse", reverse("abc"), reverse(""), reverse("x"), reverse("hello"));
+}
+
+const notNumbers = [
+  ["a numeric string", () => "4"],
+  ["an object with valueOf", () => ({ valueOf: () => (log.push("valueOf"), 4) })],
+  ["a BigInt", () => 4n],
+  ["a fraction", () => 2.5],
+  ["negative zero", () => -0],
+  ["an array of one", () => [4]],
+  ["true", () => true],
+  ["null", () => null],
+];
+
+honest("before");
+for (const [name, make] of notNumbers) {
+  attempt("factorial of " + name, () => factorial(make()));
+  attempt("fibonacci of " + name, () => fibonacci(make()));
+  attempt("countDown from " + name, () => countDown(make()));
+  attempt("factorial as a callback of " + name, () => [make()].map(factorial)[0]);
+}
+attempt("isEven of a numeric string", () => isEven("4"));
+attempt("isOdd of an array of one", () => isOdd([3]));
+attempt("isEven of negative zero", () => isEven(-0));
+attempt("isEven of true", () => isEven(true));
+attempt("factorial of 171", () => factorial(171));
+attempt("countDown from undefined", () => countDown(undefined));
+attempt("countDown from NaN", () => countDown(NaN));
+
+attempt("a string in a deep leaf", () => sumTree({ value: 1, left: leaf(2), right: { value: 3, left: leaf("4"), right: leaf(5) } }));
+attempt("a tree from JSON with a string at the root", () => sumTree(JSON.parse('{"value":"1","left":{"value":2,"left":null,"right":null},"right":null}')));
+attempt("a leaf without a right member", () => sumTree({ value: 1, left: null }));
+attempt("a leaf of another key order", () => sumTree({ right: null, left: leaf(2), value: 1 }));
+attempt("a leaf with getters", () => sumTree({ get value() { log.push("value"); return 1; }, get left() { log.push("left"); return null; }, get right() { log.push("right"); return leaf(2); } }));
+attempt("a BigInt in a leaf", () => sumTree({ value: 1, left: leaf(2n), right: null }));
+attempt("undefined for the tree", () => sumTree(undefined));
+
+attempt("flatten a string", () => flatten("ab"));
+attempt("flatten an array-like object that holds an array", () => flatten({ length: 2, 0: [1, [2]], 1: 3 }));
+attempt("flatten an array that holds a typed array", () => flatten([1, new Uint8Array([2, 3])]));
+attempt("flatten an array that holds a subclass", () => flatten([1, new (class extends Array {})(2, 3)]));
+attempt("flatten holes", () => flatten([1, , [2, , 3]]));
+attempt("flatten a proxy of an array inside an array", () => flatten([new Proxy([1, [2]], {})]));
+
+attempt("reverse an array", () => reverse(["a", "b", "c"]));
+attempt("reverse a String object", () => reverse(new String("abc")));
+attempt("reverse a number", () => reverse(123));
+attempt("reverse null", () => reverse(null));
+honest("after");
+//// many-callers-of-a-recursive-function-and-an-impostor-with-which-it-never-ends.js
+////= show-5
+
+const log = [];
+
+////= attempt-6
+
+function factorial(n) {
+  return n <= 1 ? 1 : n * factorial(n - 1);
+}
+
+function isEven(n) {
+  return n === 0 ? true : !isOdd(n - 1) === false;
+}
+
+function isOdd(n) {
+  return n === 0 ? false : !isEven(n - 1) === false;
+}
+
+function lengthOf(list) {
+  return list.length === 0 ? 0 : 1 + lengthOf(list.slice(1));
+}
+
+function honest(round) {
+  console.log(round, "factorial", factorial(0), factorial(1), factorial(5), factorial(10));
+  console.log(round, "isEven", isEven(0), isEven(1), isEven(10), isOdd(7));
+  console.log(round, "lengthOf", lengthOf([]), lengthOf([1]), lengthOf([1, 2, 3]), lengthOf("abc"));
+}
+
+honest("before");
+attempt("factorial of undefined", () => factorial(undefined));
+honest("after the first");
+attempt("factorial of NaN", () => factorial(NaN));
+attempt("factorial of a word", () => factorial("five"));
+attempt("factorial of an object", () => factorial({}));
+attempt("isEven of a fraction", () => isEven(2.5));
+attempt("isEven of minus one", () => isEven(-1));
+attempt("isOdd of undefined", () => isOdd(undefined));
+attempt("lengthOf an object whose slice answers itself", () => lengthOf({ length: 1, slice() { return this; } }));
+attempt("factorial of undefined as a callback", () => [undefined].map(factorial));
+attempt("factorial of undefined from hidden code", () => new Function("f", "return f()")(factorial));
+honest("after");
+//// many-callers-of-a-required-function-and-an-impostor/counter.cjs
+////= lines-35	Counter	start	this.count	start
+
+Counter.prototype.add = function (n) {
+  this.count += n;
+  return this.count;
+};
+
+module.exports = Counter;
+//// many-callers-of-a-required-function-and-an-impostor/honest.cjs
+var tools = require("./tools.cjs");
+var Counter = require("./counter.cjs");
+var sum = tools.sum;
+var { double, span } = require("./tools.cjs");
+
+module.exports = function honest(round) {
+  console.log(round, "sum", sum([1, 2, 3]), sum([]), sum(new Array(4, 5)), tools.sum([0.5, 0.25]), tools.sum(Array.of(6)));
+  console.log(round, "double", double(1), double(2.5), double(-3), tools.double(0), tools.double(1e10));
+  console.log(round, "span", span({ x: 3, y: 1 }), span({ x: 0.5, y: 0.25 }), tools.span({ x: -1, y: -1 }), tools.span({ x: 9, y: 4 }));
+  console.log(round, "shout", tools.shout("abc"), tools.shout(""), tools.shout("x" + round), tools.shout(round + "!"));
+  console.log(round, "low", tools.low(1), tools.low(17), tools.low(-1), tools.low(255), tools.low(16));
+  console.log(round, "counter", new Counter(1).add(2), new Counter(0).add(0.5), new Counter(-1).add(1));
+};
+//// many-callers-of-a-required-function-and-an-impostor/impostor.cjs
+var sum = require("./tools.cjs").sum;
+var attempt = require("./report.cjs").attempt;
+var notLists = require("./values.cjs").notLists;
+
+module.exports = function () {
+  notLists.forEach(function (entry) {
+    attempt("sum, required by a third module, of " + entry[0], function () { return sum(entry[1]()); });
+  });
+  attempt("sum of a literal string", function () { return sum("45"); });
+};
+//// many-callers-of-a-required-function-and-an-impostor/main.cjs
+var honest = require("./honest.cjs");
+var attempt = require("./report.cjs").attempt;
+var values = require("./values.cjs");
+
+console.log("strict:", (function () { return this === undefined; })());
+honest("before");
+require("./impostor.cjs")();
+
+var tools = require("./tools.cjs");
+var memberName = ["dou", "ble"].join("");
+values.notNumbers.forEach(function (entry) {
+  attempt("double, read from the exports by a computed name, of " + entry[0], function () { return tools[memberName](entry[1]()); });
+});
+
+var loaded = require("./" + ["to", "ols"].join("") + ".cjs");
+console.log("the module required by a computed name is the same:", loaded === tools);
+values.notPoints.forEach(function (entry) {
+  attempt("span, from a module required by a computed name, of " + entry[0], function () { return loaded.span(entry[1]()); });
+});
+
+var listed = Object.values(tools);
+console.log("the exports in order:", Object.keys(tools).join(" "));
+values.notTexts.forEach(function (entry) {
+  attempt("shout, from a list of the exported values, of " + entry[0], function () { return listed[3](entry[1]()); });
+});
+
+var copy = Object.assign({}, tools);
+values.notNumbers.forEach(function (entry) {
+  attempt("low, from a copy of the exports, of " + entry[0], function () { return copy.low(entry[1]()); });
+});
+
+var Counter = require("./counter.cjs");
+values.notNumbers.forEach(function (entry) {
+  attempt("a counter that starts at " + entry[0], function () { return new Counter(entry[1]()).add(1); });
+  attempt("a counter that adds " + entry[0], function () { return new Counter(1).add(entry[1]()); });
+});
+
+var original = tools.double;
+tools.double = function (text) { return "replaced " + text; };
+honest("while double is replaced");
+tools.double = original;
+honest("after");
+//// many-callers-of-a-required-function-and-an-impostor/report.cjs
+function show(value) {
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "bigint") return value + "n";
+  if (typeof value === "function") return "a function";
+  if (typeof value !== "object" || value === null) return String(value);
+  return Object.prototype.toString.call(value).slice(8, -1) + " " + JSON.stringify(value);
+}
+
+var log = [];
+
+function attempt(label, run) {
+  log.length = 0;
+  var line;
+  try {
+    line = show(run());
+  } catch (error) {
+    line = "threw " + error.constructor.name;
+  }
+  console.log(label + ":", line + (log.length ? ", log " + log.join(" ") : ""));
+}
+
+module.exports = { show: show, log: log, attempt: attempt };
+//// many-callers-of-a-required-function-and-an-impostor/tools.cjs
+exports.sum = function (list) {
+  var total = 0;
+  for (var i = 0; i < list.length; i++) total += list[i];
+  return total;
+};
+
+exports.double = function (n) {
+  return n * 2;
+};
+
+exports.span = function (point) {
+  return point.x - point.y;
+};
+
+exports.shout = function (text) {
+  return text.toUpperCase();
+};
+
+exports.low = function (n) {
+  return n & 15;
+};
+//// many-callers-of-a-required-function-and-an-impostor/values.cjs
+var log = require("./report.cjs").log;
+
+exports.notLists = [
+  ["a string", function () { return "12"; }],
+  ["an array-like object", function () { return { 0: 1, 1: 2, length: 2 }; }],
+  ["an arguments object", function () { return (function () { return arguments; })(1, 2); }],
+  ["holes", function () { return new Array(2); }],
+  ["null", function () { return null; }],
+];
+
+exports.notNumbers = [
+  ["a numeric string", function () { return "3"; }],
+  ["an object with valueOf", function () { return { valueOf: function () { log.push("valueOf"); return 3; } }; }],
+  ["a BigInt", function () { return 3n; }],
+  ["two to the 32nd and one", function () { return 4294967297; }],
+  ["negative zero", function () { return -0; }],
+  ["undefined", function () { return undefined; }],
+];
+
+exports.notPoints = [
+  ["the other key order", function () { return { y: 1, x: 3 }; }],
+  ["getters", function () { return { get y() { log.push("y"); return 1; }, get x() { log.push("x"); return 3; } }; }],
+  ["strings inside", function () { return { x: "3", y: "1" }; }],
+  ["y is missing", function () { return { x: 3 }; }],
+  ["a number", function () { return 5; }],
+  ["null", function () { return null; }],
+];
+
+exports.notTexts = [
+  ["an array", function () { return ["a"]; }],
+  ["a String object", function () { return new String("ab"); }],
+  ["an object with the method", function () { return { toUpperCase: function () { return "its own answer"; } }; }],
+  ["a number", function () { return 5; }],
+];
+//// many-callers-of-a-static-method-and-an-impostor.js
+////= show-8
+
+const log = [];
+
+////= attempt-51
+
+class Tools {
+  static sumPlainly(list) {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  }
+
+  static sumAsCallback(list) {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  }
+
+  static sumHidden(list) {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  }
+
+  static findPlainly(text) {
+    return text.indexOf("b");
+  }
+
+  static findAsCallback(text) {
+    return text.indexOf("b");
+  }
+
+  static findHidden(text) {
+    return text.indexOf("b");
+  }
+
+  static doublePlainly(n) {
+    return n * 2;
+  }
+
+  static doubleAsCallback(n) {
+    return n * 2;
+  }
+
+  static doubleHidden(n) {
+    return n * 2;
+  }
+
+  static spanPlainly(point) {
+    const { x, y } = point;
+    return x - y;
+  }
+
+  static spanAsCallback(point) {
+    const { x, y } = point;
+    return x - y;
+  }
+
+  static spanHidden(point) {
+    const { x, y } = point;
+    return x - y;
+  }
+}
+
+console.log("strict:", (function () { return this === undefined; })());
+console.log("before", "sumAsCallback", Tools.sumAsCallback([1, 2, 3]), Tools.sumAsCallback([]), Tools.sumAsCallback(new Array(4, 5)), Tools.sumAsCallback([0.5]), Tools.sumAsCallback(Array.of(6)));
+for (let i = 0; i < 2000; i++) Tools.sumHidden([1, 2, 3]);
+for (const [name, make] of notLists) {
+  attempt("sumPlainly " + name, () => Tools.sumPlainly(make()));
+  attempt("sumAsCallback " + name, () => [make()].map(Tools.sumAsCallback)[0]);
+  attempt("sumHidden " + name, () => new Function("object", "value", "return object.sumHidden(value)")(Tools, make()));
+}
+console.log("after", "sumPlainly", Tools.sumPlainly([1, 2, 3]), Tools.sumPlainly([]), Tools.sumPlainly(new Array(4, 5)), Tools.sumPlainly([0.5]), Tools.sumPlainly(Array.of(6)));
+console.log("after", "sumAsCallback", Tools.sumAsCallback([1, 2, 3]), Tools.sumAsCallback([]), Tools.sumAsCallback(new Array(4, 5)), Tools.sumAsCallback([0.5]), Tools.sumAsCallback(Array.of(6)));
+console.log("after", "sumHidden", Tools.sumHidden([1, 2, 3]), Tools.sumHidden([]), Tools.sumHidden(new Array(4, 5)), Tools.sumHidden([0.5]), Tools.sumHidden(Array.of(6)));
+console.log("before", "findAsCallback", Tools.findAsCallback("abc"), Tools.findAsCallback("b"), Tools.findAsCallback(""), Tools.findAsCallback("xyz"), Tools.findAsCallback(`a${"b"}`));
+for (let i = 0; i < 2000; i++) Tools.findHidden("abc");
+for (const [name, make] of notTexts) {
+  attempt("findPlainly " + name, () => Tools.findPlainly(make()));
+  attempt("findAsCallback " + name, () => [make()].map(Tools.findAsCallback)[0]);
+  attempt("findHidden " + name, () => new Function("object", "value", "return object.findHidden(value)")(Tools, make()));
+}
+console.log("after", "findPlainly", Tools.findPlainly("abc"), Tools.findPlainly("b"), Tools.findPlainly(""), Tools.findPlainly("xyz"), Tools.findPlainly(`a${"b"}`));
+console.log("after", "findAsCallback", Tools.findAsCallback("abc"), Tools.findAsCallback("b"), Tools.findAsCallback(""), Tools.findAsCallback("xyz"), Tools.findAsCallback(`a${"b"}`));
+console.log("after", "findHidden", Tools.findHidden("abc"), Tools.findHidden("b"), Tools.findHidden(""), Tools.findHidden("xyz"), Tools.findHidden(`a${"b"}`));
+console.log("before", "doubleAsCallback", Tools.doubleAsCallback(1), Tools.doubleAsCallback(2.5), Tools.doubleAsCallback(-3), Tools.doubleAsCallback(0), Tools.doubleAsCallback(1e10));
+for (let i = 0; i < 2000; i++) Tools.doubleHidden(1);
+for (const [name, make] of notNumbers) {
+  attempt("doublePlainly " + name, () => Tools.doublePlainly(make()));
+  attempt("doubleAsCallback " + name, () => [make()].map(Tools.doubleAsCallback)[0]);
+  attempt("doubleHidden " + name, () => new Function("object", "value", "return object.doubleHidden(value)")(Tools, make()));
+}
+console.log("after", "doublePlainly", Tools.doublePlainly(1), Tools.doublePlainly(2.5), Tools.doublePlainly(-3), Tools.doublePlainly(0), Tools.doublePlainly(1e10));
+console.log("after", "doubleAsCallback", Tools.doubleAsCallback(1), Tools.doubleAsCallback(2.5), Tools.doubleAsCallback(-3), Tools.doubleAsCallback(0), Tools.doubleAsCallback(1e10));
+console.log("after", "doubleHidden", Tools.doubleHidden(1), Tools.doubleHidden(2.5), Tools.doubleHidden(-3), Tools.doubleHidden(0), Tools.doubleHidden(1e10));
+console.log("before", "spanAsCallback", Tools.spanAsCallback({ x: 3, y: 1 }), Tools.spanAsCallback(new Point(5, 2)), Tools.spanAsCallback({ x: 0.5, y: 0.25 }), Tools.spanAsCallback({ x: -1, y: -1 }), Tools.spanAsCallback(new Point(0, 0)));
+for (let i = 0; i < 2000; i++) Tools.spanHidden({ x: 3, y: 1 });
+for (const [name, make] of notPoints) {
+  attempt("spanPlainly " + name, () => Tools.spanPlainly(make()));
+  attempt("spanAsCallback " + name, () => [make()].map(Tools.spanAsCallback)[0]);
+  attempt("spanHidden " + name, () => new Function("object", "value", "return object.spanHidden(value)")(Tools, make()));
+}
+console.log("after", "spanPlainly", Tools.spanPlainly({ x: 3, y: 1 }), Tools.spanPlainly(new Point(5, 2)), Tools.spanPlainly({ x: 0.5, y: 0.25 }), Tools.spanPlainly({ x: -1, y: -1 }), Tools.spanPlainly(new Point(0, 0)));
+console.log("after", "spanAsCallback", Tools.spanAsCallback({ x: 3, y: 1 }), Tools.spanAsCallback(new Point(5, 2)), Tools.spanAsCallback({ x: 0.5, y: 0.25 }), Tools.spanAsCallback({ x: -1, y: -1 }), Tools.spanAsCallback(new Point(0, 0)));
+console.log("after", "spanHidden", Tools.spanHidden({ x: 3, y: 1 }), Tools.spanHidden(new Point(5, 2)), Tools.spanHidden({ x: 0.5, y: 0.25 }), Tools.spanHidden({ x: -1, y: -1 }), Tools.spanHidden(new Point(0, 0)));
+//// many-callers-of-an-arrow-function-in-a-const-and-an-impostor.js
+////= show-8
+
+const log = [];
+
+////= attempt-51
+
+////= lines-165	sumPlainly
+
+////= lines-165	sumAsCallback
+
+////= lines-165	sumHidden
+
+const findPlainly = text => {
+  return text.indexOf("b");
+};
+
+const findAsCallback = text => {
+  return text.indexOf("b");
+};
+
+const findHidden = text => {
+  return text.indexOf("b");
+};
+
+const doublePlainly = n => {
+  return n * 2;
+};
+
+const doubleAsCallback = n => {
+  return n * 2;
+};
+
+const doubleHidden = n => {
+  return n * 2;
+};
+
+////= lines-211	spanPlainly
+
+////= lines-211	spanAsCallback
+
+////= lines-211	spanHidden
+
+console.log("strict:", (function () { return this === undefined; })());
+console.log("before", "sumAsCallback", sumAsCallback([1, 2, 3]), sumAsCallback([]), sumAsCallback(new Array(4, 5)), sumAsCallback([0.5]), sumAsCallback(Array.of(6)));
+for (let i = 0; i < 2000; i++) sumHidden([1, 2, 3]);
+////= for-77
+console.log("after", "sumPlainly", sumPlainly([1, 2, 3]), sumPlainly([]), sumPlainly(new Array(4, 5)), sumPlainly([0.5]), sumPlainly(Array.of(6)));
+console.log("after", "sumAsCallback", sumAsCallback([1, 2, 3]), sumAsCallback([]), sumAsCallback(new Array(4, 5)), sumAsCallback([0.5]), sumAsCallback(Array.of(6)));
+console.log("after", "sumHidden", sumHidden([1, 2, 3]), sumHidden([]), sumHidden(new Array(4, 5)), sumHidden([0.5]), sumHidden(Array.of(6)));
+console.log("before", "findAsCallback", findAsCallback("abc"), findAsCallback("b"), findAsCallback(""), findAsCallback("xyz"), findAsCallback(`a${"b"}`));
+for (let i = 0; i < 2000; i++) findHidden("abc");
+////= for-80
+console.log("after", "findPlainly", findPlainly("abc"), findPlainly("b"), findPlainly(""), findPlainly("xyz"), findPlainly(`a${"b"}`));
+console.log("after", "findAsCallback", findAsCallback("abc"), findAsCallback("b"), findAsCallback(""), findAsCallback("xyz"), findAsCallback(`a${"b"}`));
+console.log("after", "findHidden", findHidden("abc"), findHidden("b"), findHidden(""), findHidden("xyz"), findHidden(`a${"b"}`));
+console.log("before", "doubleAsCallback", doubleAsCallback(1), doubleAsCallback(2.5), doubleAsCallback(-3), doubleAsCallback(0), doubleAsCallback(1e10));
+for (let i = 0; i < 2000; i++) doubleHidden(1);
+////= for-78
+console.log("after", "doublePlainly", doublePlainly(1), doublePlainly(2.5), doublePlainly(-3), doublePlainly(0), doublePlainly(1e10));
+console.log("after", "doubleAsCallback", doubleAsCallback(1), doubleAsCallback(2.5), doubleAsCallback(-3), doubleAsCallback(0), doubleAsCallback(1e10));
+console.log("after", "doubleHidden", doubleHidden(1), doubleHidden(2.5), doubleHidden(-3), doubleHidden(0), doubleHidden(1e10));
+console.log("before", "spanAsCallback", spanAsCallback({ x: 3, y: 1 }), spanAsCallback(new Point(5, 2)), spanAsCallback({ x: 0.5, y: 0.25 }), spanAsCallback({ x: -1, y: -1 }), spanAsCallback(new Point(0, 0)));
+for (let i = 0; i < 2000; i++) spanHidden({ x: 3, y: 1 });
+////= for-79
+console.log("after", "spanPlainly", spanPlainly({ x: 3, y: 1 }), spanPlainly(new Point(5, 2)), spanPlainly({ x: 0.5, y: 0.25 }), spanPlainly({ x: -1, y: -1 }), spanPlainly(new Point(0, 0)));
+console.log("after", "spanAsCallback", spanAsCallback({ x: 3, y: 1 }), spanAsCallback(new Point(5, 2)), spanAsCallback({ x: 0.5, y: 0.25 }), spanAsCallback({ x: -1, y: -1 }), spanAsCallback(new Point(0, 0)));
+console.log("after", "spanHidden", spanHidden({ x: 3, y: 1 }), spanHidden(new Point(5, 2)), spanHidden({ x: 0.5, y: 0.25 }), spanHidden({ x: -1, y: -1 }), spanHidden(new Point(0, 0)));
+//// many-callers-of-an-arrow-function-in-an-object-literal-and-an-impostor.js
+////= show-8
+
+const log = [];
+
+////= attempt-51
+
+const tools = {
+  sumPlainly: list => {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  },
+
+  sumAsCallback: list => {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  },
+
+  sumHidden: list => {
+    let sum = 0;
+    for (const item of list) sum += item;
+    return sum;
+  },
+
+  findPlainly: text => {
+    return text.indexOf("b");
+  },
+
+  findAsCallback: text => {
+    return text.indexOf("b");
+  },
+
+  findHidden: text => {
+    return text.indexOf("b");
+  },
+
+  doublePlainly: n => {
+    return n * 2;
+  },
+
+  doubleAsCallback: n => {
+    return n * 2;
+  },
+
+  doubleHidden: n => {
+    return n * 2;
+  },
+
+  spanPlainly: point => {
+    const { x, y } = point;
+    return x - y;
+  },
+
+  spanAsCallback: point => {
+    const { x, y } = point;
+    return x - y;
+  },
+
+  spanHidden: point => {
+    const { x, y } = point;
+    return x - y;
+  },
+};
+
+console.log("strict:", (function () { return this === undefined; })());
+console.log("before", "sumAsCallback", tools.sumAsCallback([1, 2, 3]), tools.sumAsCallback([]), tools.sumAsCallback(new Array(4, 5)), tools.sumAsCallback([0.5]), tools.sumAsCallback(Array.of(6)));
+for (let i = 0; i < 2000; i++) tools.sumHidden([1, 2, 3]);
+////= for-9
+console.log("after", "sumPlainly", tools.sumPlainly([1, 2, 3]), tools.sumPlainly([]), tools.sumPlainly(new Array(4, 5)), tools.sumPlainly([0.5]), tools.sumPlainly(Array.of(6)));
+console.log("after", "sumAsCallback", tools.sumAsCallback([1, 2, 3]), tools.sumAsCallback([]), tools.sumAsCallback(new Array(4, 5)), tools.sumAsCallback([0.5]), tools.sumAsCallback(Array.of(6)));
+console.log("after", "sumHidden", tools.sumHidden([1, 2, 3]), tools.sumHidden([]), tools.sumHidden(new Array(4, 5)), tools.sumHidden([0.5]), tools.sumHidden(Array.of(6)));
+console.log("before", "findAsCallback", tools.findAsCallback("abc"), tools.findAsCallback("b"), tools.findAsCallback(""), tools.findAsCallback("xyz"), tools.findAsCallback(`a${"b"}`));
+for (let i = 0; i < 2000; i++) tools.findHidden("abc");
+////= for-12
+console.log("after", "findPlainly", tools.findPlainly("abc"), tools.findPlainly("b"), tools.findPlainly(""), tools.findPlainly("xyz"), tools.findPlainly(`a${"b"}`));
+console.log("after", "findAsCallback", tools.findAsCallback("abc"), tools.findAsCallback("b"), tools.findAsCallback(""), tools.findAsCallback("xyz"), tools.findAsCallback(`a${"b"}`));
+console.log("after", "findHidden", tools.findHidden("abc"), tools.findHidden("b"), tools.findHidden(""), tools.findHidden("xyz"), tools.findHidden(`a${"b"}`));
+console.log("before", "doubleAsCallback", tools.doubleAsCallback(1), tools.doubleAsCallback(2.5), tools.doubleAsCallback(-3), tools.doubleAsCallback(0), tools.doubleAsCallback(1e10));
+for (let i = 0; i < 2000; i++) tools.doubleHidden(1);
+////= for-10
+console.log("after", "doublePlainly", tools.doublePlainly(1), tools.doublePlainly(2.5), tools.doublePlainly(-3), tools.doublePlainly(0), tools.doublePlainly(1e10));
+console.log("after", "doubleAsCallback", tools.doubleAsCallback(1), tools.doubleAsCallback(2.5), tools.doubleAsCallback(-3), tools.doubleAsCallback(0), tools.doubleAsCallback(1e10));
+console.log("after", "doubleHidden", tools.doubleHidden(1), tools.doubleHidden(2.5), tools.doubleHidden(-3), tools.doubleHidden(0), tools.doubleHidden(1e10));
+console.log("before", "spanAsCallback", tools.spanAsCallback({ x: 3, y: 1 }), tools.spanAsCallback(new Point(5, 2)), tools.spanAsCallback({ x: 0.5, y: 0.25 }), tools.spanAsCallback({ x: -1, y: -1 }), tools.spanAsCallback(new Point(0, 0)));
+for (let i = 0; i < 2000; i++) tools.spanHidden({ x: 3, y: 1 });
+////= for-11
+console.log("after", "spanPlainly", tools.spanPlainly({ x: 3, y: 1 }), tools.spanPlainly(new Point(5, 2)), tools.spanPlainly({ x: 0.5, y: 0.25 }), tools.spanPlainly({ x: -1, y: -1 }), tools.spanPlainly(new Point(0, 0)));
+console.log("after", "spanAsCallback", tools.spanAsCallback({ x: 3, y: 1 }), tools.spanAsCallback(new Point(5, 2)), tools.spanAsCallback({ x: 0.5, y: 0.25 }), tools.spanAsCallback({ x: -1, y: -1 }), tools.spanAsCallback(new Point(0, 0)));
+console.log("after", "spanHidden", tools.spanHidden({ x: 3, y: 1 }), tools.spanHidden(new Point(5, 2)), tools.spanHidden({ x: 0.5, y: 0.25 }), tools.spanHidden({ x: -1, y: -1 }), tools.spanHidden(new Point(0, 0)));
+//// many-callers-of-an-async-function-and-an-impostor.js
+////= show-5
+
+const log = [];
+
+////= attempt-14
+
+////= lines-344	async function total(lis	await null
+
+async function double(n) {
+  const before = n * 2;
+  await null;
+  return before + n;
+}
+
+async function span(point) {
+  const x = point.x;
+  await null;
+  return x - point.y;
+}
+
+async function twice(promise) {
+  const value = await promise;
+  return value * 2;
+}
+
+async function shout(text) {
+  await null;
+  return text.toUpperCase();
+}
+
+async function honest(round) {
+  console.log(round, "total", await total([1, 2, 3]), await total([]), await total(new Array(4, 5)), await total([0.5]), await total(Array.of(6)));
+  console.log(round, "double", await double(1), await double(2.5), await double(-3), await double(0));
+  console.log(round, "span", await span({ x: 3, y: 1 }), await span({ x: 0.5, y: 0.25 }), await span({ x: 9, y: 4 }));
+  console.log(round, "twice", await twice(Promise.resolve(1)), await twice(Promise.resolve(2.5)), await twice(new Promise(resolve => resolve(3))));
+  console.log(round, "shout", await shout("abc"), await shout(""), await shout(round));
+}
+
+const notLists = [
+  ["a string", () => "12"],
+  ["an array-like object", () => ({ 0: 1, 1: 2, length: 2 })],
+  ["a typed array", () => new Uint8Array([1, 2])],
+  ["holes", () => new Array(2)],
+  ["null", () => null],
+];
+
+const notNumbers = [
+  ["a numeric string", () => "3"],
+  ["an object with valueOf", () => ({ valueOf: () => (log.push("valueOf"), 3) })],
+  ["a BigInt", () => 3n],
+  ["negative zero", () => -0],
+  ["undefined", () => undefined],
+];
+
+const notPromises = [
+  ["a number", () => 3],
+  ["a promise of a string", () => Promise.resolve("3")],
+  ["a promise of a BigInt", () => Promise.resolve(3n)],
+  ["a promise of undefined", () => Promise.resolve()],
+  ["a thenable", () => ({ then(resolve) { log.push("then"); resolve(3); } })],
+  ["a thenable that answers a string", () => ({ then(resolve) { log.push("then"); resolve("3"); } })],
+  ["a thenable that answers a thenable", () => ({ then(resolve) { log.push("outer"); resolve({ then(again) { log.push("inner"); again(4); } }); } })],
+  ["a thenable that rejects", () => ({ then(resolve, reject) { reject(new RangeError("no")); } })],
+  ["a thenable that throws", () => ({ then() { throw new SyntaxError("no"); } })],
+  ["an object whose then is a getter", () => ({ get then() { log.push("get then"); return undefined; }, valueOf: () => 5 })],
+  ["an object whose then is not a function", () => ({ then: 5, valueOf: () => 6 })],
+  ["a rejected promise", () => Promise.reject(new EvalError("no"))],
+  ["null", () => null],
+];
+
+async function main() {
+  await honest("before");
+  for (const [name, make] of notLists) {
+    await attempt("total of " + name, () => total(make()));
+    await attempt("total through call of " + name, () => total.call(null, make()));
+    await attempt("total as a reaction to " + name, () => Promise.resolve([make()]).then(([value]) => value).then(total));
+  }
+  for (const [name, make] of notNumbers) {
+    await attempt("double of " + name, () => double(make()));
+    await attempt("double as a callback of " + name, () => Promise.all([make()].map(double)).then(([value]) => value));
+    await attempt("double from hidden code of " + name, () => new Function("f", "value", "return f(value)")(double, make()));
+  }
+  for (const [name, make] of notPromises) await attempt("twice of " + name, () => twice(make()));
+
+  await attempt("a point whose y changes during the wait", () => {
+    const point = { x: 3, y: 1 };
+    const result = span(point);
+    point.y = "2";
+    return result;
+  });
+  await attempt("a point whose y is deleted during the wait", () => {
+    const point = { x: 3, y: 1 };
+    const result = span(point);
+    delete point.y;
+    return result;
+  });
+  await attempt("a point that gets a getter during the wait", () => {
+    const point = { x: 3, y: 1 };
+    const result = span(point);
+    Object.defineProperty(point, "y", { get: () => (log.push("get y"), 2) });
+    return result;
+  });
+  await attempt("a list that shrinks during the wait", () => {
+    const list = [1, 2, 3];
+    const result = total(list);
+    list.length = 1;
+    return result;
+  });
+  await attempt("a list that gets a string during the wait", () => {
+    const list = [1, 2, 3];
+    const result = total(list);
+    list[1] = "2";
+    return result;
+  });
+  await attempt("shout of an array", () => shout(["a"]));
+  await attempt("shout of an object with the method", () => shout({ toUpperCase: () => 5 }));
+  await attempt("what an async function answers is a promise", async () => [total([]) instanceof Promise, typeof double(1).then, (double(1) * 2)]);
+  await honest("after");
+}
+
+main();
+//// many-callers-of-an-async-generator-function-and-an-impostor.js
+////= show-5
+
+const log = [];
+
+////= attempt-14
+
+async function* plusOne(list) {
+  for (const item of list) {
+    await null;
+    yield item + 1;
+  }
+}
+
+async function* halves(source) {
+  for await (const n of source) yield n / 2;
+}
+
+async function* adder() {
+  let sum = 0;
+  for (;;) sum += yield sum;
+}
+
+////= lines-242	gather	out	item
+
+async function feed(generator, values) {
+  const out = [(await generator.next()).value];
+  for (const value of values) out.push((await generator.next(value)).value);
+  return out;
+}
+
+async function honest(round) {
+  console.log(round, "plusOne", show(await gather(plusOne([1, 2, 3]))), show(await gather(plusOne([]))), show(await gather(plusOne([0.5]))), show(await gather(plusOne(new Array(4, 5)))));
+  console.log(round, "halves", show(await gather(halves([2, 4]))), show(await gather(halves(plusOne([1, 3])))), show(await gather(halves([Promise.resolve(8)]))));
+  console.log(round, "adder", show(await feed(adder(), [1, 2, 3])), show(await feed(adder(), [0.5, 0.25])));
+}
+
+const sources = [
+  ["a string", () => "12"],
+  ["a Set of strings", () => new Set(["1", "2"])],
+  ["an array of promises of strings", () => [Promise.resolve("4"), Promise.resolve("6")]],
+  ["an array of thenables", () => [{ then(resolve) { log.push("then"); resolve(4); } }]],
+  ["an array with a BigInt", () => [2, 4n]],
+  ["holes", () => new Array(2)],
+  ["a typed array", () => new Int8Array([-2, 4])],
+  ["a generator", () => (function* () { yield 2; yield "4"; })()],
+  ["an async iterator made by hand", () => ({ [Symbol.asyncIterator]() { let i = 0; return { next: () => (log.push("next"), Promise.resolve({ done: i++ > 1, value: "" + i })) }; } })],
+  ["an async iterator whose next answers no promise", () => ({ [Symbol.asyncIterator]() { let i = 0; return { next: () => ({ done: i++ > 0, value: 8 }) }; } })],
+  ["an array with a rejected promise", () => { const rejected = Promise.reject(new RangeError("no")); rejected.catch(() => {}); return [2, rejected]; }],
+  ["an array-like object", () => ({ 0: 1, length: 1 })],
+  ["a number", () => 5],
+  ["null", () => null],
+];
+
+const sent = [
+  ["a numeric string", () => "2"],
+  ["an object with valueOf", () => ({ valueOf: () => (log.push("valueOf"), 2) })],
+  ["a BigInt", () => 2n],
+  ["a promise", () => Promise.resolve(2)],
+  ["undefined", () => undefined],
+];
+
+async function main() {
+  await honest("before");
+  for (const [name, make] of sources) {
+    await attempt("plusOne of " + name, () => gather(plusOne(make())));
+    await attempt("halves of " + name, () => gather(halves(make())));
+    await attempt("halves through call of " + name, () => gather(halves.call(null, make())));
+  }
+  for (const [name, make] of sent) await attempt("adder is sent " + name, () => feed(adder(), [1, make(), 1]));
+  await attempt("what it answers", async () => [typeof plusOne([]).next, plusOne([]).next() instanceof Promise, Symbol.asyncIterator in plusOne([]), Symbol.iterator in plusOne([])]);
+  await attempt("spread of it", () => [...plusOne([1])]);
+  await attempt("new on it", () => new plusOne([1]));
+  await honest("after");
+}
+
+main();
+//// many-callers-of-an-exported-function-and-an-impostor/again.js
+export { shout as yell } from "./tools.js";
+export * as everything from "./tools.js";
+//// many-callers-of-an-exported-function-and-an-impostor/honest.js
+import span, { sum, double, shout, low, step, Counter } from "./tools.js";
+
+export function honest(round) {
+  console.log(round, "sum", sum([1, 2, 3]), sum([]), sum(new Array(4, 5)), sum([0.5, 0.25]), sum(Array.of(6)));
+  console.log(round, "double", double(1), double(2.5), double(-3), double(0), double(1e10));
+  console.log(round, "span", span({ x: 3, y: 1 }), span({ x: 0.5, y: 0.25 }), span({ x: -1, y: -1 }), span({ x: 9, y: 4 }));
+  console.log(round, "shout", shout("abc"), shout(""), shout("x" + round), shout(`${round}!`));
+  console.log(round, "low", low(1), low(17), low(-1), low(255), low(16));
+  console.log(round, "step", step(1), step(2), step(-1), step(0.5));
+  console.log(round, "counter", new Counter(1).add(2), new Counter(0).add(0.5), new Counter(-1).add(1));
+}
+//// many-callers-of-an-exported-function-and-an-impostor/impostor.js
+import { sum } from "./tools.js";
+import { attempt } from "./report.js";
+import { notLists } from "./values.js";
+
+export function sumImpostors() {
+  for (const [name, make] of notLists) attempt("sum, imported by a third module, of " + name, () => sum(make()));
+  attempt("sum of a literal string", () => sum("45"));
+}
+//// many-callers-of-an-exported-function-and-an-impostor/main.js
+import * as tools from "./tools.js";
+import { step, replaceStep, Counter } from "./tools.js";
+import { honest } from "./honest.js";
+import { attempt } from "./report.js";
+import { notNumbers, notPoints, notTexts } from "./values.js";
+import { sumImpostors } from "./impostor.js";
+import { yell, everything } from "./again.js";
+
+honest("before");
+sumImpostors();
+
+const memberName = ["dou", "ble"].join("");
+for (const [name, make] of notNumbers) attempt("double, a member of the namespace read by a computed name, of " + name, () => tools[memberName](make()));
+
+const loaded = await import("./" + ["to", "ols"].join("") + ".js");
+console.log("the module loaded by a computed name is the same:", loaded.default === tools.default, loaded.sum === tools.sum);
+for (const [name, make] of notPoints) attempt("span, the default export of a module loaded by a computed name, of " + name, () => loaded.default(make()));
+
+for (const [name, make] of notTexts) attempt("shout, exported again under another name, of " + name, () => yell(make()));
+for (const [name, make] of notNumbers) attempt("low, through a namespace exported again, of " + name, () => everything.low(make()));
+
+for (const [name, make] of notNumbers) attempt("step of " + name, () => step(make()));
+replaceStep(text => text.length);
+attempt("step after it was replaced, of a string", () => step("four"));
+attempt("step after it was replaced, of a number", () => step(4));
+replaceStep("not a function");
+attempt("step after a string replaced it", () => step(4));
+replaceStep(n => n + 1);
+
+for (const [name, make] of notNumbers) {
+  attempt("a counter that starts at " + name, () => new Counter(make()).add(1));
+  attempt("a counter that adds " + name, () => new Counter(1).add(make()));
+}
+honest("after");
+//// many-callers-of-an-exported-function-and-an-impostor/report.js
+export function show(value) {
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "bigint") return value + "n";
+  if (typeof value === "function") return "a function";
+  if (typeof value !== "object" || value === null) return String(value);
+  return Object.prototype.toString.call(value).slice(8, -1) + " " + JSON.stringify(value);
+}
+
+export const log = [];
+
+export function attempt(label, run) {
+  log.length = 0;
+  let line;
+  try {
+    line = show(run());
+  } catch (error) {
+    line = "threw " + error.constructor.name;
+  }
+  console.log(label + ":", line + (log.length ? ", log " + log.join(" ") : ""));
+}
+//// many-callers-of-an-exported-function-and-an-impostor/tools.js
+export function sum(list) {
+  let total = 0;
+  for (let i = 0; i < list.length; i++) total += list[i];
+  return total;
+}
+
+export const double = n => n * 2;
+
+export default function span(point) {
+  return point.x - point.y;
+}
+
+export function shout(text) {
+  return text.toUpperCase();
+}
+
+export function low(n) {
+  return n & 15;
+}
+
+export let step = function (n) {
+  return n + 1;
+};
+
+export function replaceStep(f) {
+  step = f;
+}
+
+export class Counter {
+  constructor(start) {
+    this.count = start;
+  }
+
+  add(n) {
+    this.count += n;
+    return this.count;
+  }
+}
+//// many-callers-of-an-exported-function-and-an-impostor/values.js
+import { log } from "./report.js";
+
+export const notLists = [
+  ["a string", () => "12"],
+  ["an array-like object", () => ({ 0: 1, 1: 2, length: 2 })],
+  ["a typed array", () => new Uint8Array([1, 2])],
+  ["holes", () => new Array(2)],
+  ["null", () => null],
+];
+
+export const notNumbers = [
+  ["a numeric string", () => "3"],
+  ["an object with valueOf", () => ({ valueOf: () => (log.push("valueOf"), 3) })],
+  ["a BigInt", () => 3n],
+  ["two to the 32nd and one", () => 4294967297],
+  ["negative zero", () => -0],
+  ["undefined", () => undefined],
+];
+
+export const notPoints = [
+  ["the other key order", () => ({ y: 1, x: 3 })],
+  ["getters", () => ({ get y() { log.push("y"); return 1; }, get x() { log.push("x"); return 3; } })],
+  ["strings inside", () => ({ x: "3", y: "1" })],
+  ["y is missing", () => ({ x: 3 })],
+  ["a number", () => 5],
+  ["null", () => null],
+];
+
+export const notTexts = [
+  ["an array", () => ["a"]],
+  ["a String object", () => new String("ab")],
+  ["an object with the method", () => ({ toUpperCase: () => "its own answer" })],
+  ["a number", () => 5],
+];
+//// many-callers-of-an-inherited-class-method-and-an-impostor.js
+////= show-8
+
+const log = [];
+
+////= attempt-51
+
+////= Tools
+
+class MoreTools extends Tools {}
+
+const tools = new MoreTools();
+
+console.log("strict:", (function () { return this === undefined; })());
+console.log("before", "sumAsCallback", tools.sumAsCallback([1, 2, 3]), tools.sumAsCallback([]), tools.sumAsCallback(new Array(4, 5)), tools.sumAsCallback([0.5]), tools.sumAsCallback(Array.of(6)));
+for (let i = 0; i < 2000; i++) tools.sumHidden([1, 2, 3]);
+////= for-9
+console.log("after", "sumPlainly", tools.sumPlainly([1, 2, 3]), tools.sumPlainly([]), tools.sumPlainly(new Array(4, 5)), tools.sumPlainly([0.5]), tools.sumPlainly(Array.of(6)));
+console.log("after", "sumAsCallback", tools.sumAsCallback([1, 2, 3]), tools.sumAsCallback([]), tools.sumAsCallback(new Array(4, 5)), tools.sumAsCallback([0.5]), tools.sumAsCallback(Array.of(6)));
+console.log("after", "sumHidden", tools.sumHidden([1, 2, 3]), tools.sumHidden([]), tools.sumHidden(new Array(4, 5)), tools.sumHidden([0.5]), tools.sumHidden(Array.of(6)));
+console.log("before", "findAsCallback", tools.findAsCallback("abc"), tools.findAsCallback("b"), tools.findAsCallback(""), tools.findAsCallback("xyz"), tools.findAsCallback(`a${"b"}`));
+for (let i = 0; i < 2000; i++) tools.findHidden("abc");
+////= for-12
+console.log("after", "findPlainly", tools.findPlainly("abc"), tools.findPlainly("b"), tools.findPlainly(""), tools.findPlainly("xyz"), tools.findPlainly(`a${"b"}`));
+console.log("after", "findAsCallback", tools.findAsCallback("abc"), tools.findAsCallback("b"), tools.findAsCallback(""), tools.findAsCallback("xyz"), tools.findAsCallback(`a${"b"}`));
+console.log("after", "findHidden", tools.findHidden("abc"), tools.findHidden("b"), tools.findHidden(""), tools.findHidden("xyz"), tools.findHidden(`a${"b"}`));
+console.log("before", "doubleAsCallback", tools.doubleAsCallback(1), tools.doubleAsCallback(2.5), tools.doubleAsCallback(-3), tools.doubleAsCallback(0), tools.doubleAsCallback(1e10));
+for (let i = 0; i < 2000; i++) tools.doubleHidden(1);
+////= for-10
+console.log("after", "doublePlainly", tools.doublePlainly(1), tools.doublePlainly(2.5), tools.doublePlainly(-3), tools.doublePlainly(0), tools.doublePlainly(1e10));
+console.log("after", "doubleAsCallback", tools.doubleAsCallback(1), tools.doubleAsCallback(2.5), tools.doubleAsCallback(-3), tools.doubleAsCallback(0), tools.doubleAsCallback(1e10));
+console.log("after", "doubleHidden", tools.doubleHidden(1), tools.doubleHidden(2.5), tools.doubleHidden(-3), tools.doubleHidden(0), tools.doubleHidden(1e10));
+console.log("before", "spanAsCallback", tools.spanAsCallback({ x: 3, y: 1 }), tools.spanAsCallback(new Point(5, 2)), tools.spanAsCallback({ x: 0.5, y: 0.25 }), tools.spanAsCallback({ x: -1, y: -1 }), tools.spanAsCallback(new Point(0, 0)));
+for (let i = 0; i < 2000; i++) tools.spanHidden({ x: 3, y: 1 });
+////= for-11
+console.log("after", "spanPlainly", tools.spanPlainly({ x: 3, y: 1 }), tools.spanPlainly(new Point(5, 2)), tools.spanPlainly({ x: 0.5, y: 0.25 }), tools.spanPlainly({ x: -1, y: -1 }), tools.spanPlainly(new Point(0, 0)));
+console.log("after", "spanAsCallback", tools.spanAsCallback({ x: 3, y: 1 }), tools.spanAsCallback(new Point(5, 2)), tools.spanAsCallback({ x: 0.5, y: 0.25 }), tools.spanAsCallback({ x: -1, y: -1 }), tools.spanAsCallback(new Point(0, 0)));
+console.log("after", "spanHidden", tools.spanHidden({ x: 3, y: 1 }), tools.spanHidden(new Point(5, 2)), tools.spanHidden({ x: 0.5, y: 0.25 }), tools.spanHidden({ x: -1, y: -1 }), tools.spanHidden(new Point(0, 0)));
+//// many-callers-of-an-inherited-prototype-method-and-an-impostor.cjs
+////= show-8
+
+const log = [];
+
+////= attempt-51
+
+function Tools() {}
+
+////= Tools-2
+
+////= lines-282	MoreTools	Tools
+
+MoreTools.prototype = Object.create(Tools.prototype);
+MoreTools.prototype.constructor = MoreTools;
+
+var tools = new MoreTools();
+
+console.log("strict:", (function () { return this === undefined; })());
+console.log("before", "sumAsCallback", tools.sumAsCallback([1, 2, 3]), tools.sumAsCallback([]), tools.sumAsCallback(new Array(4, 5)), tools.sumAsCallback([0.5]), tools.sumAsCallback(Array.of(6)));
+for (let i = 0; i < 2000; i++) tools.sumHidden([1, 2, 3]);
+////= for-9
+console.log("after", "sumPlainly", tools.sumPlainly([1, 2, 3]), tools.sumPlainly([]), tools.sumPlainly(new Array(4, 5)), tools.sumPlainly([0.5]), tools.sumPlainly(Array.of(6)));
+console.log("after", "sumAsCallback", tools.sumAsCallback([1, 2, 3]), tools.sumAsCallback([]), tools.sumAsCallback(new Array(4, 5)), tools.sumAsCallback([0.5]), tools.sumAsCallback(Array.of(6)));
+console.log("after", "sumHidden", tools.sumHidden([1, 2, 3]), tools.sumHidden([]), tools.sumHidden(new Array(4, 5)), tools.sumHidden([0.5]), tools.sumHidden(Array.of(6)));
+console.log("before", "findAsCallback", tools.findAsCallback("abc"), tools.findAsCallback("b"), tools.findAsCallback(""), tools.findAsCallback("xyz"), tools.findAsCallback(`a${"b"}`));
+for (let i = 0; i < 2000; i++) tools.findHidden("abc");
+////= for-12
+console.log("after", "findPlainly", tools.findPlainly("abc"), tools.findPlainly("b"), tools.findPlainly(""), tools.findPlainly("xyz"), tools.findPlainly(`a${"b"}`));
+console.log("after", "findAsCallback", tools.findAsCallback("abc"), tools.findAsCallback("b"), tools.findAsCallback(""), tools.findAsCallback("xyz"), tools.findAsCallback(`a${"b"}`));
+console.log("after", "findHidden", tools.findHidden("abc"), tools.findHidden("b"), tools.findHidden(""), tools.findHidden("xyz"), tools.findHidden(`a${"b"}`));
+console.log("before", "doubleAsCallback", tools.doubleAsCallback(1), tools.doubleAsCallback(2.5), tools.doubleAsCallback(-3), tools.doubleAsCallback(0), tools.doubleAsCallback(1e10));
+for (let i = 0; i < 2000; i++) tools.doubleHidden(1);
+////= for-10
+console.log("after", "doublePlainly", tools.doublePlainly(1), tools.doublePlainly(2.5), tools.doublePlainly(-3), tools.doublePlainly(0), tools.doublePlainly(1e10));
+console.log("after", "doubleAsCallback", tools.doubleAsCallback(1), tools.doubleAsCallback(2.5), tools.doubleAsCallback(-3), tools.doubleAsCallback(0), tools.doubleAsCallback(1e10));
+console.log("after", "doubleHidden", tools.doubleHidden(1), tools.doubleHidden(2.5), tools.doubleHidden(-3), tools.doubleHidden(0), tools.doubleHidden(1e10));
+console.log("before", "spanAsCallback", tools.spanAsCallback({ x: 3, y: 1 }), tools.spanAsCallback(new Point(5, 2)), tools.spanAsCallback({ x: 0.5, y: 0.25 }), tools.spanAsCallback({ x: -1, y: -1 }), tools.spanAsCallback(new Point(0, 0)));
+for (let i = 0; i < 2000; i++) tools.spanHidden({ x: 3, y: 1 });
+////= for-11
+console.log("after", "spanPlainly", tools.spanPlainly({ x: 3, y: 1 }), tools.spanPlainly(new Point(5, 2)), tools.spanPlainly({ x: 0.5, y: 0.25 }), tools.spanPlainly({ x: -1, y: -1 }), tools.spanPlainly(new Point(0, 0)));
+console.log("after", "spanAsCallback", tools.spanAsCallback({ x: 3, y: 1 }), tools.spanAsCallback(new Point(5, 2)), tools.spanAsCallback({ x: 0.5, y: 0.25 }), tools.spanAsCallback({ x: -1, y: -1 }), tools.spanAsCallback(new Point(0, 0)));
+console.log("after", "spanHidden", tools.spanHidden({ x: 3, y: 1 }), tools.spanHidden(new Point(5, 2)), tools.spanHidden({ x: 0.5, y: 0.25 }), tools.spanHidden({ x: -1, y: -1 }), tools.spanHidden(new Point(0, 0)));
+//// many-callers-pass-a-check-in-the-function-and-so-does-an-impostor.js
+////= show-5
+
+const log = [];
+
+////= attempt-6
+
+class Point {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+  }
+
+  span() {
+    return this.x - this.y;
+  }
+}
+
+////= lines-344	function total(lis	if (!Array.isArray(list)) return "not an array"
+
+function append(list) {
+  if (!Array.isArray(list)) return "not an array";
+  return list.push(1);
+}
+
+function low(n) {
+  if (typeof n !== "number") return "not a number";
+  return n & 255;
+}
+
+function reciprocal(n) {
+  if (typeof n !== "number") return "not a number";
+  return 1 / n;
+}
+
+function whole(n) {
+  if (!Number.isInteger(n)) return "not an integer";
+  return n | 0;
+}
+
+function span(point) {
+  if (!(point instanceof Point)) return "not a point";
+  return point.x - point.y;
+}
+
+function spanByMethod(point) {
+  if (!(point instanceof Point)) return "not a point";
+  return point.span();
+}
+
+function invoke(f) {
+  if (typeof f !== "function") return "not a function";
+  return f(1);
+}
+
+function shout(text) {
+  if (typeof text !== "string") return "not a string";
+  return text.toUpperCase() + text.length;
+}
+
+function keysOf(object) {
+  if (typeof object !== "object") return "not an object";
+  return Object.keys(object).join();
+}
+
+function nameOf(object) {
+  if (!object || !("name" in object)) return "no name";
+  return object.name.length;
+}
+
+function firstOf(list) {
+  if (list.length === 0) return "empty";
+  return list[0];
+}
+
+function honest(round) {
+  console.log(round, total([1, 2, 3]), total([]), total(new Array(4, 5)), append([1]), append([]), append(new Array(1, 2)));
+  console.log(round, low(1), low(256), low(-1), reciprocal(2), reciprocal(4), reciprocal(0.5), whole(1), whole(7), whole(-3));
+  console.log(round, span(new Point(3, 1)), span(new Point(0.5, 0.25)), spanByMethod(new Point(3, 1)), spanByMethod(new Point(9, 4)));
+  console.log(round, invoke(v => v + 1), invoke(function (v) { return v * 2; }), shout("abc"), shout(""), shout(round));
+  console.log(round, keysOf({ a: 1 }), keysOf({ b: 1, c: 2 }), nameOf({ name: "ann" }), nameOf({ name: "" }), firstOf([1]), firstOf([]), firstOf([2, 3]));
+}
+
+honest("before");
+attempt("total of a subclass with its own iterator", () => total(new (class extends Array { [Symbol.iterator]() { return [][Symbol.iterator](); } })(1, 2)));
+attempt("total of a proxy of an array", () => total(new Proxy([1, 2], { get: (target, key) => (log.push(String(key)), target[key]) })));
+attempt("total of holes", () => total(new Array(2)));
+attempt("total of strings", () => total(["1", "2"]));
+attempt("total of an array with a getter for an element", () => total(Object.defineProperty([1, 2], 1, { get: () => (log.push("get 1"), 5) })));
+attempt("total of an array without a prototype", () => total(Object.setPrototypeOf([1, 2], null)));
+attempt("total of an array of another realm", () => total(require("node:vm").runInNewContext("[1, 2]")));
+attempt("append to a subclass", () => append(new (class extends Array { push() { return "the subclass's"; } })()));
+attempt("append to an array with its own push", () => append(Object.assign([], { push: () => "its own" })));
+attempt("append to a frozen array", () => append(Object.freeze([])));
+attempt("append to an array without a prototype", () => append(Object.setPrototypeOf([], null)));
+attempt("append to a proxy of an array", () => append(new Proxy([], { set: (target, key, value) => (log.push("set " + String(key)), Reflect.set(target, key, value)) })));
+attempt("append to an array whose length cannot change", () => append(Object.defineProperty([], "length", { writable: false })));
+for (const n of [2147483648, 4294967297, 1.5, -0, NaN, Infinity, -Infinity, 1e21, 2 ** 53]) {
+  attempt("low of " + show(n), () => low(n));
+  attempt("reciprocal of " + show(n), () => reciprocal(n));
+  attempt("whole of " + show(n), () => whole(n));
+}
+attempt("span of a point whose x was deleted", () => { const point = new Point(3, 1); delete point.x; return span(point); });
+attempt("span of a point with strings", () => span(new Point("3", "1")));
+attempt("span of a point made without the constructor", () => span(Object.create(Point.prototype)));
+attempt("span of an object moved under Point", () => span(Object.setPrototypeOf({ y: 1, x: 3, z: 0 }, Point.prototype)));
+attempt("span of a point whose x became a getter", () => span(Object.defineProperty(new Point(3, 1), "x", { get: () => (log.push("get x"), 10) })));
+attempt("span of a subclass with accessors", () => span(new (class extends Point { get y() { return 100; } set y(value) {} })(3, 1)));
+attempt("span of a proxy of a point", () => span(new Proxy(new Point(3, 1), { get: (target, key) => (log.push(String(key)), 7) })));
+attempt("span of an array moved under Point", () => span(Object.setPrototypeOf([3, 1], Point.prototype)));
+attempt("spanByMethod of a point with its own span", () => spanByMethod(Object.assign(new Point(3, 1), { span: () => "its own" })));
+attempt("spanByMethod of a subclass", () => spanByMethod(new (class extends Point { span() { return "the subclass's"; } })(3, 1)));
+attempt("spanByMethod of a point whose span is a number", () => spanByMethod(Object.assign(new Point(3, 1), { span: 5 })));
+attempt("invoke of a class", () => invoke(class {}));
+attempt("invoke of a callable proxy", () => invoke(new Proxy(() => {}, { apply: () => "trapped" })));
+attempt("invoke of a revoked proxy", () => { const { proxy, revoke } = Proxy.revocable(() => {}, {}); revoke(); return invoke(proxy); });
+attempt("invoke of a bound function", () => invoke(((a, b) => [a, b]).bind(null, 0)));
+attempt("invoke of an async function", () => invoke(async v => v));
+attempt("invoke of a generator function", () => invoke(function* (v) { yield v; }));
+attempt("shout of a String object", () => shout(new String("abc")));
+attempt("shout of a long rope", () => shout("ab".repeat(3) + "c"));
+attempt("shout of a string with a lone surrogate", () => shout("\ud800").length);
+attempt("keysOf null", () => keysOf(null));
+attempt("keysOf an array", () => keysOf([1, 2]));
+attempt("keysOf a proxy", () => keysOf(new Proxy({ a: 1 }, { ownKeys: () => (log.push("ownKeys"), ["a"]) })));
+attempt("nameOf an object whose name is undefined", () => nameOf({ name: undefined }));
+attempt("nameOf an object whose name is a number", () => nameOf({ name: 5 }));
+attempt("nameOf a function", () => nameOf(function named() {}));
+attempt("nameOf a proxy that claims a name", () => nameOf(new Proxy({}, { has: () => true })));
+attempt("nameOf a string", () => nameOf("text"));
+attempt("firstOf a string", () => firstOf("ab"));
+attempt("firstOf an object with a length", () => firstOf({ length: 3 }));
+attempt("firstOf a function", () => firstOf(function (a) {}));
+attempt("firstOf an object whose length is a getter", () => firstOf({ get length() { log.push("length"); return 1; }, get 0() { log.push("0"); return "first"; } }));
+honest("after");
+//// many-callers-pass-a-list-and-a-number-and-one-passes-them-the-other-way-round.js
+////= show-5
+
+const log = [];
+
+////= attempt-6
+
+////= lines-73	itemAt	list	i	list[i
+
+function scaled(list, factor) {
+  let sum = 0;
+  for (let j = 0; j < list.length; j++) sum += list[j] * factor;
+  return sum;
+}
+
+////= lines-25	repeated	text	count	text.repeat
+
+////= lines-55	padded	text	width	text.padStart	width	"."
+
+////= lines-82	applied	f	value	f	value
+
+////= lines-233	stored	object	key	object[key
+
+function shifted(n, by) {
+  return n << by;
+}
+
+////= lines-172	divided	a	b
+
+function honest(round) {
+  console.log(round, itemAt([1, 2, 3], 0), itemAt([1, 2, 3], 2), itemAt(["a"], 0), itemAt([], 0), itemAt(new Array(4, 5), 1));
+  console.log(round, scaled([1, 2], 2), scaled([], 1), scaled([0.5], 4), scaled(new Array(1, 2, 3), -1));
+  console.log(round, repeated("ab", 2), repeated("", 3), repeated("x", 0), padded("a", 3), padded("abc", 2), padded("", 1));
+  console.log(round, applied(v => v + 1, 1), applied(v => v * 2, 2), applied(String, 3), stored({}, "a", 1), stored({ a: 0 }, "a", 2), stored([], 0, 3));
+  console.log(round, shifted(1, 2), shifted(3, 0), shifted(-1, 31), divided(1, 2), divided(4, 2), divided(1, 0));
+}
+
+honest("before");
+attempt("itemAt(0, list)", () => itemAt(0, [1, 2, 3]));
+attempt("itemAt(1, [1])", () => itemAt(1, [1]));
+attempt("itemAt('abc', [1])", () => itemAt("abc", [1]));
+attempt("itemAt([1, 2, 3], [1])", () => itemAt([1, 2, 3], [1]));
+attempt("itemAt([1, 2, 3], ['length'])", () => itemAt([1, 2, 3], ["length"]));
+attempt("itemAt([1, 2, 3], [1, 2])", () => itemAt([1, 2, 3], [1, 2]));
+attempt("scaled(2, [1, 2])", () => scaled(2, [1, 2]));
+attempt("scaled([1, 2], [2])", () => scaled([1, 2], [2]));
+attempt("scaled([1, 2], [2, 3])", () => scaled([1, 2], [2, 3]));
+attempt("scaled('12', '2')", () => scaled("12", "2"));
+attempt("repeated(2, 'ab')", () => repeated(2, "ab"));
+attempt("repeated('ab', '2')", () => repeated("ab", "2"));
+attempt("repeated('ab', 'x')", () => repeated("ab", "x"));
+attempt("repeated('ab', -1)", () => repeated("ab", -1));
+attempt("repeated('ab', 1.9)", () => repeated("ab", 1.9));
+attempt("repeated('ab', [2])", () => repeated("ab", [2]));
+attempt("padded(3, 'a')", () => padded(3, "a"));
+attempt("padded('a', '3')", () => padded("a", "3"));
+attempt("padded('a', NaN)", () => padded("a", NaN));
+attempt("applied(1, f)", () => applied(1, v => v + 1));
+attempt("applied(f, f)", () => typeof applied(v => v, v => v));
+attempt("stored('a', {}, 1)", () => stored("a", {}, 1));
+attempt("stored({}, {}, 1)", () => stored({}, {}, 1));
+attempt("stored([], 'length', 3)", () => stored([], "length", 3));
+attempt("stored([], 'length', -1)", () => stored([], "length", -1));
+attempt("stored([1, 2], '1', 'x')", () => stored([1, 2], "1", "x"));
+attempt("stored([], 1.5, 'x')", () => stored([], 1.5, "x"));
+attempt("stored([], -0, 'x')", () => { const list = []; stored(list, -0, "x"); return list; });
+attempt("stored(new Uint8Array(1), 0, 300)", () => stored(new Uint8Array(1), 0, 300));
+attempt("stored(new Uint8Array(1), 5, 1)", () => stored(new Uint8Array(1), 5, 1));
+attempt("stored(Object.freeze({}), 'a', 1)", () => stored(Object.freeze({}), "a", 1));
+attempt("stored(5, 'a', 1)", () => stored(5, "a", 1));
+attempt("shifted(2, 1) against shifted(1, 2)", () => [shifted(2, 1), shifted(1, 2)]);
+attempt("shifted(1, 32)", () => shifted(1, 32));
+attempt("shifted(1, -1)", () => shifted(1, -1));
+attempt("shifted(1, 1.9)", () => shifted(1, 1.9));
+attempt("shifted('1', '2')", () => shifted("1", "2"));
+attempt("shifted(1n, 2n)", () => shifted(1n, 2n));
+attempt("shifted(1n, 2)", () => shifted(1n, 2));
+attempt("divided(0, 1) against divided(1, 0)", () => [divided(0, 1), divided(1, 0), divided(0, -1), divided(-1, 0), divided(0, 0)]);
+attempt("divided(1n, 2n)", () => divided(1n, 2n));
+attempt("divided(1n, 0n)", () => divided(1n, 0n));
+attempt("divided('4', '2')", () => divided("4", "2"));
+for (const swap of [false, true, false]) {
+  const pair = swap ? [1, [10, 20, 30]] : [[10, 20, 30], 1];
+  attempt("one place, swapped " + swap, () => [itemAt(pair[0], pair[1]), scaled(pair[0], pair[1])]);
+}
+honest("after");
+//// many-callers-pass-arrays-as-many-pass-strings-and-one-passes-neither.js
+////= show-5
+
+const log = [];
+
+////= attempt-6
+
+////= lines-7	size	value	value.length
+
+////= lines-37	firstOf	value	value[0
+
+////= lines-3	tail	value	value.slice	1
+
+////= lines-25	has	value	what	value.includes
+
+////= lines-25	where	value	what	value.indexOf
+
+////= lines-25	joinTwo	value	other	value.concat
+
+////= lines-193	lastOf	value	value.at	1
+
+////= lines-244	count	n	item	of
+
+////= add
+
+function less(a, b) {
+  return a < b;
+}
+
+function honest(round) {
+  console.log(round, "size", size([1, 2]), size("ab"), size([]), size(""), size(new Array(3)), size("abc"));
+  console.log(round, "firstOf", firstOf([1, 2]), firstOf("ab"), firstOf([]), firstOf(""), firstOf(["x"]), firstOf("x"));
+  console.log(round, "tail", show(tail([1, 2])), show(tail("ab")), show(tail([])), show(tail("")));
+  console.log(round, "has", has([1, 2], 2), has("ab", "b"), has([], 1), has("", ""), has([NaN], NaN), has("ab", "c"));
+  console.log(round, "where", where([1, 2], 2), where("ab", "b"), where([NaN], NaN), where("", ""));
+  console.log(round, "joinTwo", show(joinTwo([1], [2])), show(joinTwo("a", "b")), show(joinTwo([1], 2)), show(joinTwo("a", 1)));
+  console.log(round, "lastOf", lastOf([1, 2]), lastOf("ab"), lastOf([]), lastOf(""));
+  console.log(round, "count", count([1, 2]), count("ab"), count([]), count("\u{1f600}"));
+  console.log(round, "add", add(1, 2), add("a", "b"), add(0.5, 0.5), add("", ""), add(-1, 1), add("x", "y"));
+  console.log(round, "less", less(1, 2), less("a", "b"), less(2, 1), less("b", "a"), less("10", "9"), less(10, 9));
+}
+
+const neither = [
+  ["a typed array", () => new Uint8Array([1, 2])],
+  ["a String object", () => new String("ab")],
+  ["an arguments object", () => (function () { return arguments; })(1, 2)],
+  ["an array-like object", () => ({ 0: 1, 1: 2, length: 2 })],
+  ["an object with every method", () => ({ length: "its own", 0: "its own", slice: () => "its own", includes: () => "its own", indexOf: () => "its own", concat: () => "its own", at: () => "its own", [Symbol.iterator]: () => [1, 2, 3][Symbol.iterator]() })],
+  ["a Buffer", () => Buffer.from("ab")],
+  ["a Set", () => new Set([1, 2])],
+  ["a function", () => function (a, b) {}],
+  ["a number", () => 12],
+  ["null", () => null],
+  ["undefined", () => undefined],
+];
+
+honest("before");
+for (const [name, make] of neither) {
+  attempt("size of " + name, () => size(make()));
+  attempt("firstOf " + name, () => firstOf(make()));
+  attempt("tail of " + name, () => tail(make()));
+  attempt("has, " + name, () => has(make(), 2));
+  attempt("where, " + name, () => where(make(), 2));
+  attempt("joinTwo, " + name, () => joinTwo(make(), [3]));
+  attempt("lastOf " + name, () => lastOf(make()));
+  attempt("count of " + name, () => count(make()));
+}
+const mixed = [[1, "2"], ["1", 2], [1, 2n], [1n, 2n], [[1], [2]], [{}, 1], [null, 1], [undefined, "a"], [1, null], ["a", Symbol.iterator], [true, true], [-0, -0], [new Date(0), 1], ["10", 9], [10, "9"], ["a", 1], [NaN, NaN], [1n, 2], [1n, "2"], [[2], 10]];
+for (const [a, b] of mixed) {
+  const label = (typeof a === "object" ? JSON.stringify(a) : show(a)) + " and " + (typeof b === "object" ? JSON.stringify(b) : show(b));
+  attempt("add " + label, () => (a instanceof Date ? typeof add(a, b) : add(a, b)));
+  attempt("less " + label, () => less(a, b));
+}
+attempt("an array and a string", () => [joinTwo([1], "a"), joinTwo("a", [1]), has(["ab"], "a"), has("ab", ["a"]), where("1,2", [1, 2])]);
+honest("after");
+//// many-callers-pass-fresh-literals-and-one-literal-is-changed-on-the-way.js
+////= show-5
+
+const log = [];
+
+////= attempt-6
+
+////= total-3
+
+////= lines-3	append	list	list.push	4
+
+function span(point) {
+  return point.x - point.y;
+}
+
+////= lines-274	move	point	point.x
+
+////= Point
+
+function honest(round) {
+  console.log(round, total([1, 2, 3]), total([]), total([0.5, 0.25]), total(new Array(4, 5, 6)), append([1, 2, 3]), append([]), append(new Array(1, 2)));
+  console.log(round, span({ x: 3, y: 1 }), span(new Point(5, 2)), span({ x: 0.5, y: 0.25 }), move({ x: 3, y: 1 }), move(new Point(5, 2)), move({ x: 0.5, y: 0.25 }));
+}
+
+honest("before");
+attempt("an element becomes a string", () => { const list = [1, 2, 3]; list[1] = "2"; return [total(list), append(list)]; });
+attempt("an element becomes a fraction", () => { const list = [1, 2, 3]; list[1] = 2.5; return [total(list), append(list)]; });
+attempt("an element is deleted", () => { const list = [1, 2, 3]; delete list[1]; return [total(list), append(list)]; });
+attempt("an element far away is stored", () => { const list = [1, 2, 3]; list[6] = 7; return [total(list), append(list)]; });
+attempt("the length is cut", () => { const list = [1, 2, 3]; list.length = 1; return [total(list), append(list)]; });
+attempt("the length is raised", () => { const list = [1, 2, 3]; list.length = 5; return [total(list), append(list)]; });
+attempt("an element becomes a getter", () => { const list = [1, 2, 3]; Object.defineProperty(list, 1, { get: () => (log.push("get 1"), 20) }); return [total(list), append(list)]; });
+attempt("the array is frozen", () => { const list = [1, 2, 3]; Object.freeze(list); return [total(list), append(list)]; });
+attempt("the array gets its own push", () => { const list = [1, 2, 3]; list.push = () => "its own"; return [total(list), append(list)]; });
+attempt("the array loses its prototype", () => { const list = [1, 2, 3]; Object.setPrototypeOf(list, null); return [total(list), append(list)]; });
+attempt("the array gets another prototype", () => { const list = [1, 2, 3]; Object.setPrototypeOf(list, { push: () => "another prototype's" }); return [total(list), append(list)]; });
+attempt("the variable gets another value", () => { let list = [1, 2, 3]; list = "123"; return [total(list), append(list)]; });
+attempt("the variable gets another value in a closure", () => { let list = [1, 2, 3]; (() => { list = { length: 1, 0: "only", push: () => "an object's" }; })(); return [total(list), append(list)]; });
+
+attempt("x becomes a string", () => { const point = { x: 3, y: 1 }; point.x = "3"; return [span(point), move(point)]; });
+attempt("x is deleted", () => { const point = { x: 3, y: 1 }; delete point.x; return [span(point), move(point), Object.keys(point)]; });
+attempt("x is deleted and stored again", () => { const point = { x: 3, y: 1 }; delete point.x; point.x = 3; return [span(point), move(point), Object.keys(point)]; });
+attempt("a member is added", () => { const point = { x: 3, y: 1 }; point.z = 0; return [span(point), move(point), Object.keys(point)]; });
+attempt("x becomes a getter", () => { const point = { x: 3, y: 1 }; Object.defineProperty(point, "x", { get: () => (log.push("get x"), 30), set: value => log.push("set x " + value) }); return [span(point), move(point)]; });
+attempt("x can no longer be stored to", () => { const point = { x: 3, y: 1 }; Object.defineProperty(point, "x", { writable: false }); return [span(point), move(point)]; });
+attempt("the object is frozen", () => { const point = { x: 3, y: 1 }; Object.freeze(point); return [span(point), move(point)]; });
+attempt("the object gets another prototype", () => { const point = { y: 1 }; Object.setPrototypeOf(point, { x: 3 }); return [span(point), move(point), Object.keys(point)]; });
+attempt("an instance loses a field", () => { const point = new Point(3, 1); delete point.y; return [span(point), move(point)]; });
+attempt("an instance gets a string", () => { const point = new Point(3, 1); point.y = "1"; return [span(point), move(point)]; });
+attempt("an instance moves to another class", () => { const point = new Point(3, 1); Object.setPrototypeOf(point, class { get y() { return 100; } }.prototype); return [span(point), move(point)]; });
+
+const listChanges = [
+  ["a string is stored", list => { list[1] = "2"; }],
+  ["an element is deleted", list => { delete list[1]; }],
+  ["the length is cut", list => { list.length = 1; }],
+  ["it is frozen", list => { Object.freeze(list); }],
+  ["it gets its own push", list => { list.push = () => "its own"; }],
+  ["it loses its prototype", list => { Object.setPrototypeOf(list, null); }],
+  ["nothing", () => {}],
+];
+const pointChanges = [
+  ["a string is stored", point => { point.x = "3"; }],
+  ["x is deleted", point => { delete point.x; }],
+  ["x becomes a getter", point => { Object.defineProperty(point, "x", { get: () => (log.push("get x"), 30), set() {} }); }],
+  ["it is frozen", point => { Object.freeze(point); }],
+  ["nothing", () => {}],
+];
+const hiddenCaller = new Function("change", "value", "change(value)");
+for (const [name, change] of listChanges) {
+  attempt("a function from a table gets the array: " + name, () => { const list = [1, 2, 3]; change(list); return [total(list), append(list)]; });
+  attempt("hidden code gets the array: " + name, () => { const list = [1, 2, 3]; hiddenCaller(change, list); return [total(list), append(list)]; });
+  attempt("the array is reached through an object that holds it: " + name, () => { const list = [1, 2, 3]; const box = { list }; change(box.list); return [total(list), append(list)]; });
+  attempt("a callback of forEach gets the array: " + name, () => { const list = [1, 2, 3]; [list].forEach(change); return [total(list), append(list)]; });
+}
+for (const [name, change] of pointChanges) {
+  attempt("a function from a table gets the literal: " + name, () => { const point = { x: 3, y: 1 }; change(point); return [span(point), move(point)]; });
+  attempt("hidden code gets the literal: " + name, () => { const point = { x: 3, y: 1 }; hiddenCaller(change, point); return [span(point), move(point)]; });
+  attempt("a function from a table gets the instance: " + name, () => { const point = new Point(3, 1); change(point); return [span(point), move(point)]; });
+  attempt("the constructor leaks the instance: " + name, () => { class Leaky { constructor(x, y) { this.x = x; this.y = y; change(this); } } const point = new Leaky(3, 1); return [span(point), move(point)]; });
+}
+honest("after");
+//// many-callers-pass-two-arguments-and-one-passes-fewer-or-more-sloppy.cjs
+////= show-5
+
+const log = [];
+
+////= attempt-6
+
+////= add
+
+function howMany(a, b) {
+  return arguments.length;
+}
+
+function storeThroughArguments(a, b) {
+  arguments[0] = 10;
+  arguments[1] = 20;
+  return [a, b];
+}
+
+function storeThroughParameters(a, b) {
+  a = 10;
+  b = 20;
+  return [arguments[0], arguments[1], arguments.length];
+}
+
+////= lines-73	third	a	b	arguments[2
+
+////= lines-55	forward	a	b	add.apply	null	arguments
+
+function forwardSpread(a, b) {
+  return add(...arguments);
+}
+
+////= lastOne	arguments[arguments
+
+////= sumOfArguments
+
+function shorten(a, b) {
+  arguments.length = 1;
+  return [Array.prototype.slice.call(arguments), b];
+}
+
+////= honest-2
+
+////= lists-2
+
+console.log("strict:", (function () { return this === undefined; })());
+honest("before");
+attempt("add()", () => add());
+attempt("add(1)", () => add(1));
+attempt("add(1, 2, 3)", () => add(1, 2, 3));
+attempt("howMany()", () => howMany());
+attempt("howMany(1)", () => howMany(1));
+attempt("howMany(undefined, undefined, undefined)", () => howMany(undefined, undefined, undefined));
+attempt("storeThroughArguments()", () => storeThroughArguments());
+attempt("storeThroughArguments(1)", () => storeThroughArguments(1));
+attempt("storeThroughArguments(1, 2, 3)", () => storeThroughArguments(1, 2, 3));
+attempt("storeThroughParameters()", () => storeThroughParameters());
+attempt("storeThroughParameters(1)", () => storeThroughParameters(1));
+attempt("third(1, 2, 3)", () => third(1, 2, 3));
+attempt("lastOne()", () => lastOne());
+////= for-42
+attempt("add as a callback of map", () => [1, 2].map(add));
+attempt("howMany as a callback of map, forEach's cousin", () => [1].map(howMany));
+attempt("howMany as a comparator", () => { let seen; [2, 1].sort(function (a, b) { seen = howMany.apply(null, arguments); return a - b; }); return seen; });
+attempt("howMany bound to three", () => howMany.bind(null, 1, 2, 3)(4));
+attempt("howMany from hidden code", () => new Function("f", "return f(1, 2, 3, 4, 5)")(howMany));
+attempt("the lengths", () => [add.length, lastOne.length, howMany.bind(null, 1).length]);
+honest("after");
+//// many-callers-pass-two-arguments-and-one-passes-fewer-or-more-strict.mjs
+////= show-5
+
+const log = [];
+
+////= attempt-6
+
+////= add
+
+function howMany(a, b) {
+  return arguments.length;
+}
+
+function storeThroughArguments(a, b) {
+  arguments[0] = 10;
+  arguments[1] = 20;
+  return [a, b];
+}
+
+function storeThroughParameters(a, b) {
+  a = 10;
+  b = 20;
+  return [arguments[0], arguments[1], arguments.length];
+}
+
+////= lines-73	third	a	b	arguments[2
+
+////= lines-55	forward	a	b	add.apply	null	arguments
+
+function forwardSpread(a, b) {
+  return add(...arguments);
+}
+
+////= lastOne	arguments[arguments
+
+////= sumOfArguments
+
+function shorten(a, b) {
+  arguments.length = 1;
+  return [Array.prototype.slice.call(arguments), b];
+}
+
+////= honest-2
+
+////= lists-2
+
+console.log("strict:", (function () { return this === undefined; })());
+honest("before");
+attempt("add()", () => add());
+attempt("add(1)", () => add(1));
+attempt("add(1, 2, 3)", () => add(1, 2, 3));
+attempt("howMany()", () => howMany());
+attempt("howMany(1)", () => howMany(1));
+attempt("howMany(undefined, undefined, undefined)", () => howMany(undefined, undefined, undefined));
+attempt("storeThroughArguments()", () => storeThroughArguments());
+attempt("storeThroughArguments(1)", () => storeThroughArguments(1));
+attempt("storeThroughArguments(1, 2, 3)", () => storeThroughArguments(1, 2, 3));
+attempt("storeThroughParameters()", () => storeThroughParameters());
+attempt("storeThroughParameters(1)", () => storeThroughParameters(1));
+attempt("third(1, 2, 3)", () => third(1, 2, 3));
+attempt("lastOne()", () => lastOne());
+////= for-42
+attempt("add as a callback of map", () => [1, 2].map(add));
+attempt("howMany as a callback of map, forEach's cousin", () => [1].map(howMany));
+attempt("howMany as a comparator", () => { let seen; [2, 1].sort(function (a, b) { seen = howMany.apply(null, arguments); return a - b; }); return seen; });
+attempt("howMany bound to three", () => howMany.bind(null, 1, 2, 3)(4));
+attempt("howMany from hidden code", () => new Function("f", "return f(1, 2, 3, 4, 5)")(howMany));
+attempt("the lengths", () => [add.length, lastOne.length, howMany.bind(null, 1).length]);
+honest("after");
+//// many-callers-use-the-result-as-a-function-and-one-path-returns-something-else.js
+////= show-5
+
+const log = [];
+
+////= attempt-6
+
+function forCalled(value, which, text) {
+  if (which === 1) return class {};
+  if (which === 2) return (0, eval)(text);
+  return value;
+}
+
+function called(value, which, text) {
+  return forCalled(value, which, text)(1);
+}
+
+////= lines-18	forCalledMaybe	null
+
+function calledMaybe(value, which, text) {
+  return forCalledMaybe(value, which, text)?.(1);
+}
+
+function forBuilt(value, which, text) {
+  if (which === 1) return () => 1;
+  if (which === 2) return (0, eval)(text);
+  return value;
+}
+
+function built(value, which, text) {
+  return typeof new (forBuilt(value, which, text))(1);
+}
+
+////= lines-127	forThroughCall	call	"its own call"
+
+function throughCall(value, which, text) {
+  return forThroughCall(value, which, text).call(null, 1);
+}
+
+////= lines-127	forThroughApply	apply	"its own apply"
+
+function throughApply(value, which, text) {
+  return forThroughApply(value, which, text).apply(null, [1]);
+}
+
+function forBound(value, which, text) {
+  if (which === 1) return { bind: () => () => "its own bind" };
+  if (which === 2) return (0, eval)(text);
+  return value;
+}
+
+function bound(value, which, text) {
+  return forBound(value, which, text).bind(null, 1)();
+}
+
+////= lines-18	forAsCallback	undefined
+
+function asCallback(value, which, text) {
+  return [1].map(forAsCallback(value, which, text));
+}
+
+////= lines-18	forAsTag	"text"
+
+function asTag(value, which, text) {
+  return typeof forAsTag(value, which, text)`text`;
+}
+
+////= lines-179	forLengthOf	1	2
+
+////= lines-259	lengthOf	forLengthOf	length
+
+////= lines-180	forNameOf	name	"its own name"
+
+////= lines-259	nameOf	forNameOf	name
+
+function forKindOf(value, which, text) {
+  if (which === 1) return class {};
+  if (which === 2) return (0, eval)(text);
+  return value;
+}
+
+function kindOf(value, which, text) {
+  return typeof forKindOf(value, which, text);
+}
+
+function forInstanceTest(value, which, text) {
+  if (which === 1) return { [Symbol.hasInstance]: () => true };
+  if (which === 2) return (0, eval)(text);
+  return value;
+}
+
+function instanceTest(value, which, text) {
+  return ({}) instanceof forInstanceTest(value, which, text);
+}
+
+const hidden = [
+  "(class { constructor() { this.made = true; } })",
+  "null",
+  "undefined",
+  "\"text\"",
+  "5",
+  "({})",
+  "({ call() { return \"its own\"; }, apply() { return \"its own\"; }, bind() { return () => \"its own\"; }, length: \"its own\", name: \"its own\" })",
+  "async v => v",
+  "(function* (v) { yield v; })",
+  "(function (a, b) { return [this === null, a, b]; }).bind(null, 0)",
+  "new Proxy(function () {}, { apply() { return \"trapped\"; }, construct() { return {}; } })",
+  "Math.max",
+  "({ m(v) { return v; } }).m",
+];
+
+function honest(round) {
+  console.log(round, "called", show(called(function (v) { return v; })), show(called(function (v) { return 2; })), show(called(function () { return 3; })), show(called(function named() { return 4; })), show(called(function (v) { return [v]; })));
+  console.log(round, "calledMaybe", show(calledMaybe(function (v) { return v; })), show(calledMaybe(function (v) { return 2; })), show(calledMaybe(function () { return 3; })), show(calledMaybe(function named() { return 4; })), show(calledMaybe(function (v) { return [v]; })));
+  console.log(round, "built", show(built(function (v) { return v; })), show(built(function (v) { return 2; })), show(built(function () { return 3; })), show(built(function named() { return 4; })), show(built(function (v) { return [v]; })));
+  console.log(round, "throughCall", show(throughCall(function (v) { return v; })), show(throughCall(function (v) { return 2; })), show(throughCall(function () { return 3; })), show(throughCall(function named() { return 4; })), show(throughCall(function (v) { return [v]; })));
+  console.log(round, "throughApply", show(throughApply(function (v) { return v; })), show(throughApply(function (v) { return 2; })), show(throughApply(function () { return 3; })), show(throughApply(function named() { return 4; })), show(throughApply(function (v) { return [v]; })));
+  console.log(round, "bound", show(bound(function (v) { return v; })), show(bound(function (v) { return 2; })), show(bound(function () { return 3; })), show(bound(function named() { return 4; })), show(bound(function (v) { return [v]; })));
+  console.log(round, "asCallback", show(asCallback(function (v) { return v; })), show(asCallback(function (v) { return 2; })), show(asCallback(function () { return 3; })), show(asCallback(function named() { return 4; })), show(asCallback(function (v) { return [v]; })));
+  console.log(round, "asTag", show(asTag(function (v) { return v; })), show(asTag(function (v) { return 2; })), show(asTag(function () { return 3; })), show(asTag(function named() { return 4; })), show(asTag(function (v) { return [v]; })));
+  console.log(round, "lengthOf", show(lengthOf(function (v) { return v; })), show(lengthOf(function (v) { return 2; })), show(lengthOf(function () { return 3; })), show(lengthOf(function named() { return 4; })), show(lengthOf(function (v) { return [v]; })));
+  console.log(round, "nameOf", show(nameOf(function (v) { return v; })), show(nameOf(function (v) { return 2; })), show(nameOf(function () { return 3; })), show(nameOf(function named() { return 4; })), show(nameOf(function (v) { return [v]; })));
+  console.log(round, "kindOf", show(kindOf(function (v) { return v; })), show(kindOf(function (v) { return 2; })), show(kindOf(function () { return 3; })), show(kindOf(function named() { return 4; })), show(kindOf(function (v) { return [v]; })));
+  console.log(round, "instanceTest", show(instanceTest(function (v) { return v; })), show(instanceTest(function (v) { return 2; })), show(instanceTest(function () { return 3; })), show(instanceTest(function named() { return 4; })), show(instanceTest(function (v) { return [v]; })));
+}
+
+honest("before");
+attempt("called, the other path in sight", () => called(undefined, 1));
+for (const text of hidden) attempt("called of " + text, () => called(undefined, 2, text));
+attempt("calledMaybe, the other path in sight", () => calledMaybe(undefined, 1));
+for (const text of hidden) attempt("calledMaybe of " + text, () => calledMaybe(undefined, 2, text));
+attempt("built, the other path in sight", () => built(undefined, 1));
+for (const text of hidden) attempt("built of " + text, () => built(undefined, 2, text));
+attempt("throughCall, the other path in sight", () => throughCall(undefined, 1));
+for (const text of hidden) attempt("throughCall of " + text, () => throughCall(undefined, 2, text));
+attempt("throughApply, the other path in sight", () => throughApply(undefined, 1));
+for (const text of hidden) attempt("throughApply of " + text, () => throughApply(undefined, 2, text));
+attempt("bound, the other path in sight", () => bound(undefined, 1));
+for (const text of hidden) attempt("bound of " + text, () => bound(undefined, 2, text));
+attempt("asCallback, the other path in sight", () => asCallback(undefined, 1));
+for (const text of hidden) attempt("asCallback of " + text, () => asCallback(undefined, 2, text));
+attempt("asTag, the other path in sight", () => asTag(undefined, 1));
+for (const text of hidden) attempt("asTag of " + text, () => asTag(undefined, 2, text));
+attempt("lengthOf, the other path in sight", () => lengthOf(undefined, 1));
+for (const text of hidden) attempt("lengthOf of " + text, () => lengthOf(undefined, 2, text));
+attempt("nameOf, the other path in sight", () => nameOf(undefined, 1));
+for (const text of hidden) attempt("nameOf of " + text, () => nameOf(undefined, 2, text));
+attempt("kindOf, the other path in sight", () => kindOf(undefined, 1));
+for (const text of hidden) attempt("kindOf of " + text, () => kindOf(undefined, 2, text));
+attempt("instanceTest, the other path in sight", () => instanceTest(undefined, 1));
+for (const text of hidden) attempt("instanceTest of " + text, () => instanceTest(undefined, 2, text));
+honest("after");
+//// many-callers-use-the-result-as-a-number-and-one-path-returns-nothing.js
+////= show-5
+
+const log = [];
+
+////= attempt-14
+
+const letters = ["a", "b", "c", "d"];
+
+function offTheEnd(n) {
+  if (n > 0) return n;
+}
+
+function bareReturn(n) {
+  if (n <= 0) return;
+  return n;
+}
+
+function inASwitch(n) {
+  switch (n) {
+    case 1:
+      return 1;
+    case 2:
+      return 2;
+  }
+}
+
+function inALoop(list) {
+  for (const item of list) if (item > 1) return item;
+}
+
+function inATry(f) {
+  try {
+    return f();
+  } catch {}
+}
+
+function overriddenInFinally(n) {
+  try {
+    return n;
+  } finally {
+    if (n <= 0) return "from finally";
+  }
+}
+
+function brokenOutOfFinally(n) {
+  out: try {
+    return n;
+  } finally {
+    if (n <= 0) break out;
+  }
+}
+
+const forgotten = n => {
+  n * 2;
+};
+
+const voided = n => (n > 0 ? n : void n);
+
+const holder = {
+  limit: 2,
+  get size() {
+    if (this.limit > 0) return this.limit;
+  },
+  method(n) {
+    if (n > 0) return n;
+  },
+};
+
+function Maker(n) {
+  this.n = n;
+  if (n > 0) return n;
+}
+
+async function later(n) {
+  if (n > 0) return n;
+}
+
+function* yields(n) {
+  const sent = yield n;
+  if (sent > 0) return sent;
+}
+
+const uses = {
+  offTheEnd: n => [offTheEnd(n) * 2, offTheEnd(n) + 1, offTheEnd(n) | 0, offTheEnd(n) < 5, letters[offTheEnd(n)], -offTheEnd(n), offTheEnd(n)],
+  bareReturn: n => [bareReturn(n) * 2, bareReturn(n) + 1, bareReturn(n) | 0, bareReturn(n) < 5, letters[bareReturn(n)], -bareReturn(n), bareReturn(n)],
+  inASwitch: n => [inASwitch(n) * 2, inASwitch(n) + 1, inASwitch(n) | 0, inASwitch(n) < 5, letters[inASwitch(n)], -inASwitch(n), inASwitch(n)],
+  inALoop: n => [inALoop(n) * 2, inALoop(n) + 1, inALoop(n) | 0, inALoop(n) < 5, letters[inALoop(n)], -inALoop(n), inALoop(n)],
+  inATry: n => [inATry(n) * 2, inATry(n) + 1, inATry(n) | 0, inATry(n) < 5, letters[inATry(n)], -inATry(n), inATry(n)],
+  overriddenInFinally: n => [overriddenInFinally(n) * 2, overriddenInFinally(n) + 1, overriddenInFinally(n) | 0, overriddenInFinally(n) < 5, letters[overriddenInFinally(n)], -overriddenInFinally(n), overriddenInFinally(n)],
+  brokenOutOfFinally: n => [brokenOutOfFinally(n) * 2, brokenOutOfFinally(n) + 1, brokenOutOfFinally(n) | 0, brokenOutOfFinally(n) < 5, letters[brokenOutOfFinally(n)], -brokenOutOfFinally(n), brokenOutOfFinally(n)],
+  forgotten: n => [forgotten(n) * 2, forgotten(n) + 1, forgotten(n) | 0, forgotten(n) < 5, letters[forgotten(n)], -forgotten(n), forgotten(n)],
+  voided: n => [voided(n) * 2, voided(n) + 1, voided(n) | 0, voided(n) < 5, letters[voided(n)], -voided(n), voided(n)],
+  getter: n => ((holder.limit = n), [holder.size * 2, holder.size + 1, holder.size | 0, holder.size < 5, letters[holder.size], -holder.size, holder.size]),
+  method: n => [holder.method(n) * 2, holder.method(n) + 1, holder.method(n) | 0, holder.method(n) < 5, letters[holder.method(n)], -holder.method(n), holder.method(n)],
+  makerCalled: n => [Maker.call({}, n) * 2, Maker.call({}, n) + 1, Maker.call({}, n) | 0, Maker.call({}, n) < 5, letters[Maker.call({}, n)], -Maker.call({}, n), Maker.call({}, n)],
+  makerBuilt: n => [new Maker(n) * 2, new Maker(n) + 1, new Maker(n) | 0, new Maker(n) < 5, letters[new Maker(n)], -new Maker(n), new Maker(n)],
+  later: async n => [(await later(n)) * 2, (await later(n)) + 1, (await later(n)) | 0, (await later(n)) < 5, letters[await later(n)], -(await later(n)), await later(n)],
+  laterNotAwaited: n => [later(n) * 2, later(n) + 1, later(n) | 0, later(n) < 5, letters[later(n)], -later(n)],
+  sent: n => { const returned = () => { const it = yields(1); it.next(); return it.next(n).value; }; return [returned() * 2, returned() + 1, returned() | 0, returned() < 5, letters[returned()], -returned(), returned()]; },
+};
+
+const cases = [
+  ["offTheEnd", 1, 2, 0, -1, NaN, "2", undefined],
+  ["bareReturn", 1, 2, 0, -1, NaN, "2", undefined],
+  ["inASwitch", 1, 2, 3, 0, "1", undefined],
+  ["inALoop", [1, 2], [3], [], [0, 1], ["2"], "29"],
+  ["inATry", () => 1, () => 2, () => null.x, () => {}, () => "2", undefined],
+  ["overriddenInFinally", 1, 2, 0, -1, NaN, "2"],
+  ["brokenOutOfFinally", 1, 2, 0, -1, NaN, "2"],
+  ["forgotten", 1, 2],
+  ["voided", 1, 2, 0, "2", NaN],
+  ["getter", 1, 2, 0, "2", undefined],
+  ["method", 1, 2, 0, "2", undefined],
+  ["makerCalled", 1, 2, 0, "2"],
+  ["makerBuilt", 1, 2, 0],
+  ["later", 1, 2, 0, "2"],
+  ["laterNotAwaited", 1, 0],
+  ["sent", 1, 2, 0, "2", undefined],
+];
+
+async function main() {
+  for (let round = 0; round < 2; round++) {
+    for (const [name, ...inputs] of cases) {
+      for (const [i, input] of inputs.entries()) await attempt(round + " " + name + " of " + (typeof input === "function" ? "function number " + i : show(input)), () => uses[name](input));
+    }
+  }
+}
+
+main();
+//// many-callers-use-the-result-as-a-number-and-one-path-returns-something-else.js
+////= show-5
+
+const log = [];
+
+////= attempt-6
+
+////= lines-18	forTimesTwo	"7"
+
+function timesTwo(value, which, text) {
+  return forTimesTwo(value, which, text) * 2;
+}
+
+////= lines-18	forMinusOne	null
+
+function minusOne(value, which, text) {
+  return forMinusOne(value, which, text) - 1;
+}
+
+////= lines-18	forPlusOne	undefined
+
+function plusOne(value, which, text) {
+  return forPlusOne(value, which, text) + 1;
+}
+
+////= lines-18	forNegated	7n
+
+function negated(value, which, text) {
+  return -forNegated(value, which, text);
+}
+
+function forBelowFive(value, which, text) {
+  if (which === 1) return [7];
+  if (which === 2) return (0, eval)(text);
+  return value;
+}
+
+function belowFive(value, which, text) {
+  return forBelowFive(value, which, text) < 5;
+}
+
+////= lines-18	forHalved	true
+
+function halved(value, which, text) {
+  return forHalved(value, which, text) / 2;
+}
+
+////= lines-177	forFloored	0
+
+////= lines-222	floored	Math.floor	forFloored
+
+////= lines-18	forRemainder	NaN
+
+function remainder(value, which, text) {
+  return forRemainder(value, which, text) % 4;
+}
+
+////= lines-127	forSquared	valueOf	7
+
+function squared(value, which, text) {
+  return forSquared(value, which, text) ** 2;
+}
+
+////= lines-18	forIsSeven	"seven"
+
+function isSeven(value, which, text) {
+  return forIsSeven(value, which, text) === 7;
+}
+
+function forCounted(value, which, text) {
+  if (which === 1) return new Number(7);
+  if (which === 2) return (0, eval)(text);
+  return value;
+}
+
+function counted(value, which, text) {
+  let n = forCounted(value, which, text);
+  n++;
+  return n;
+}
+
+function forSummed(value, which, text) {
+  if (which === 1) return Symbol.iterator;
+  if (which === 2) return (0, eval)(text);
+  return value;
+}
+
+function summed(value, which, text) {
+  let sum = 0;
+  sum += forSummed(value, which, text);
+  sum += forSummed(value, which, text);
+  return sum;
+}
+
+const hidden = [
+  "\"7\"",
+  "\"seven\"",
+  "null",
+  "undefined",
+  "7n",
+  "[7]",
+  "true",
+  "-0",
+  "NaN",
+  "({ valueOf() { return 7; } })",
+  "new Date(7)",
+  "Symbol()",
+];
+
+function honest(round) {
+  console.log(round, "timesTwo", show(timesTwo(7)), show(timesTwo(2.5)), show(timesTwo(-3)), show(timesTwo(0)), show(timesTwo(100)));
+  console.log(round, "minusOne", show(minusOne(7)), show(minusOne(2.5)), show(minusOne(-3)), show(minusOne(0)), show(minusOne(100)));
+  console.log(round, "plusOne", show(plusOne(7)), show(plusOne(2.5)), show(plusOne(-3)), show(plusOne(0)), show(plusOne(100)));
+  console.log(round, "negated", show(negated(7)), show(negated(2.5)), show(negated(-3)), show(negated(0)), show(negated(100)));
+  console.log(round, "belowFive", show(belowFive(7)), show(belowFive(2.5)), show(belowFive(-3)), show(belowFive(0)), show(belowFive(100)));
+  console.log(round, "halved", show(halved(7)), show(halved(2.5)), show(halved(-3)), show(halved(0)), show(halved(100)));
+  console.log(round, "floored", show(floored(7)), show(floored(2.5)), show(floored(-3)), show(floored(0)), show(floored(100)));
+  console.log(round, "remainder", show(remainder(7)), show(remainder(2.5)), show(remainder(-3)), show(remainder(0)), show(remainder(100)));
+  console.log(round, "squared", show(squared(7)), show(squared(2.5)), show(squared(-3)), show(squared(0)), show(squared(100)));
+  console.log(round, "isSeven", show(isSeven(7)), show(isSeven(2.5)), show(isSeven(-3)), show(isSeven(0)), show(isSeven(100)));
+  console.log(round, "counted", show(counted(7)), show(counted(2.5)), show(counted(-3)), show(counted(0)), show(counted(100)));
+  console.log(round, "summed", show(summed(7)), show(summed(2.5)), show(summed(-3)), show(summed(0)), show(summed(100)));
+}
+
+honest("before");
+attempt("timesTwo, the other path in sight", () => timesTwo(undefined, 1));
+for (const text of hidden) attempt("timesTwo of " + text, () => timesTwo(undefined, 2, text));
+attempt("minusOne, the other path in sight", () => minusOne(undefined, 1));
+for (const text of hidden) attempt("minusOne of " + text, () => minusOne(undefined, 2, text));
+attempt("plusOne, the other path in sight", () => plusOne(undefined, 1));
+for (const text of hidden) attempt("plusOne of " + text, () => plusOne(undefined, 2, text));
+attempt("negated, the other path in sight", () => negated(undefined, 1));
+for (const text of hidden) attempt("negated of " + text, () => negated(undefined, 2, text));
+attempt("belowFive, the other path in sight", () => belowFive(undefined, 1));
+for (const text of hidden) attempt("belowFive of " + text, () => belowFive(undefined, 2, text));
+attempt("halved, the other path in sight", () => halved(undefined, 1));
+for (const text of hidden) attempt("halved of " + text, () => halved(undefined, 2, text));
+attempt("floored, the other path in sight", () => floored(undefined, 1));
+for (const text of hidden) attempt("floored of " + text, () => floored(undefined, 2, text));
+attempt("remainder, the other path in sight", () => remainder(undefined, 1));
+for (const text of hidden) attempt("remainder of " + text, () => remainder(undefined, 2, text));
+attempt("squared, the other path in sight", () => squared(undefined, 1));
+for (const text of hidden) attempt("squared of " + text, () => squared(undefined, 2, text));
+attempt("isSeven, the other path in sight", () => isSeven(undefined, 1));
+for (const text of hidden) attempt("isSeven of " + text, () => isSeven(undefined, 2, text));
+attempt("counted, the other path in sight", () => counted(undefined, 1));
+for (const text of hidden) attempt("counted of " + text, () => counted(undefined, 2, text));
+attempt("summed, the other path in sight", () => summed(undefined, 1));
+for (const text of hidden) attempt("summed of " + text, () => summed(undefined, 2, text));
+honest("after");

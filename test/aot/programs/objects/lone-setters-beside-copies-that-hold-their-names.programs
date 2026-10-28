@@ -1,0 +1,604 @@
+//// a-lone-setter-under-a-name--literal--rest-is-copied-in-ahead-of-the-setter--assign.mjs
+const more = { v: () => "called" };
+const { drop, ...rest } = { drop: 0, a: 1, b: more.v };
+const text = x => typeof x + " " + String(typeof x === "function" ? x() : typeof x === "object" && x !== null ? x.k : x);
+function show(r) {
+  const x = r.kept ?? r.b;
+  console.log(text(x), typeof r.a, typeof r.kept);
+}
+function main() {
+  const r = { ...rest, set b(x) { this.kept = x; } };
+  show(r);
+  r.b = 5;
+  show(r);
+  
+}
+try {
+  main();
+} catch (e) {
+  console.log("threw", e.constructor.name);
+}
+//// a-lone-setter-under-a-name--literal--rest-of-spread-is-copied-in-ahead-of-the-setter--clone.mjs
+const more = { v: () => "called" };
+const held = { b: more.v };
+const { drop, ...rest } = { drop: 0, a: 1, ...held };
+const text = x => typeof x + " " + String(typeof x === "function" ? x() : typeof x === "object" && x !== null ? x.k : x);
+function show(r) {
+  const x = r.kept ?? r.b;
+  console.log(text(x), typeof r.a, typeof r.kept);
+}
+function main() {
+  const r = { ...rest, set b(x) { this.kept = x; } };
+  show(r);
+  r.b = 5;
+  show(r);
+  try { show(structuredClone(r)); } catch (e) { console.log("clone threw", e.name); }
+}
+try {
+  main();
+} catch (e) {
+  console.log("threw", e.constructor.name);
+}
+//// a-lone-setter-under-a-name--literal--spread-of-instance-is-copied-in-ahead-of-the-setter--entries.mjs
+const more = { v: () => "called" };
+const text = x => typeof x + " " + String(typeof x === "function" ? x() : typeof x === "object" && x !== null ? x.k : x);
+function show(r) {
+  const x = r.kept ?? r.b;
+  console.log(text(x), typeof r.a, typeof r.kept);
+}
+function main() {
+  const r = { ...{ a: 1, ...new (class { b = more.v; })() }, set b(x) { this.kept = x; } };
+  show(r);
+  r.b = 5;
+  show(r);
+  for (const [key, value] of Object.entries(r)) console.log(key, text(value));
+}
+try {
+  main();
+} catch (e) {
+  console.log("threw", e.constructor.name);
+}
+//// a-lone-setter-under-a-name--defined--rest-is-assigned--for-in.mjs
+const more = { v: () => "called" };
+const { drop, ...rest } = { drop: 0, a: 1, b: more.v };
+const text = x => typeof x + " " + String(typeof x === "function" ? x() : typeof x === "object" && x !== null ? x.k : x);
+function show(r) {
+  const x = r.kept ?? r.b;
+  console.log(text(x), typeof r.a, typeof r.kept);
+}
+function main() {
+  const r = Object.assign(Object.defineProperty({}, "b", { set(x) { this.kept = x; }, enumerable: true, configurable: true }), rest);
+  show(r);
+  for (const key in r) console.log(key, text(r[key]));
+}
+try {
+  main();
+} catch (e) {
+  console.log("threw", e.constructor.name);
+}
+//// a-lone-setter-under-a-name--defined--rest-of-spread-is-assigned--spread.mjs
+const more = { v: () => "called" };
+const held = { b: more.v };
+const { drop, ...rest } = { drop: 0, a: 1, ...held };
+const text = x => typeof x + " " + String(typeof x === "function" ? x() : typeof x === "object" && x !== null ? x.k : x);
+function show(r) {
+  const x = r.kept ?? r.b;
+  console.log(text(x), typeof r.a, typeof r.kept);
+}
+function main() {
+  const r = Object.assign(Object.defineProperty({}, "b", { set(x) { this.kept = x; }, enumerable: true, configurable: true }), rest);
+  show(r);
+  show({ ...r });
+}
+try {
+  main();
+} catch (e) {
+  console.log("threw", e.constructor.name);
+}
+//// a-lone-setter-under-a-name--defined--spread-of-instance-is-assigned--stringify.mjs
+const more = { v: () => "called" };
+const text = x => typeof x + " " + String(typeof x === "function" ? x() : typeof x === "object" && x !== null ? x.k : x);
+function show(r) {
+  const x = r.kept ?? r.b;
+  console.log(text(x), typeof r.a, typeof r.kept);
+}
+function main() {
+  const r = Object.assign(Object.defineProperty({}, "b", { set(x) { this.kept = x; }, enumerable: true, configurable: true }), { a: 1, ...new (class { b = more.v; })() });
+  show(r);
+  console.log(JSON.stringify(r));
+}
+try {
+  main();
+} catch (e) {
+  console.log("threw", e.constructor.name);
+}
+//// a-lone-setter-under-a-name--literal--rest-is-assigned--assign.mjs
+const more = { v: () => "called" };
+const { drop, ...rest } = { drop: 0, a: 1, b: more.v };
+const text = x => typeof x + " " + String(typeof x === "function" ? x() : typeof x === "object" && x !== null ? x.k : x);
+function show(r) {
+  const x = r.kept ?? r.b;
+  console.log(text(x), typeof r.a, typeof r.kept);
+}
+function main() {
+  const r = Object.assign({ set b(x) { this.kept = x; } }, rest);
+  show(r);
+  
+}
+try {
+  main();
+} catch (e) {
+  console.log("threw", e.constructor.name);
+}
+//// a-lone-setter-under-a-name--literal--rest-of-spread-is-assigned--clone.mjs
+const more = { v: () => "called" };
+const held = { b: more.v };
+const { drop, ...rest } = { drop: 0, a: 1, ...held };
+const text = x => typeof x + " " + String(typeof x === "function" ? x() : typeof x === "object" && x !== null ? x.k : x);
+function show(r) {
+  const x = r.kept ?? r.b;
+  console.log(text(x), typeof r.a, typeof r.kept);
+}
+function main() {
+  const r = Object.assign({ set b(x) { this.kept = x; } }, rest);
+  show(r);
+  try { show(structuredClone(r)); } catch (e) { console.log("clone threw", e.name); }
+}
+try {
+  main();
+} catch (e) {
+  console.log("threw", e.constructor.name);
+}
+//// a-lone-setter-under-a-name--literal--spread-of-instance-is-assigned--entries.mjs
+const more = { v: () => "called" };
+const text = x => typeof x + " " + String(typeof x === "function" ? x() : typeof x === "object" && x !== null ? x.k : x);
+function show(r) {
+  const x = r.kept ?? r.b;
+  console.log(text(x), typeof r.a, typeof r.kept);
+}
+function main() {
+  const r = Object.assign({ set b(x) { this.kept = x; } }, { a: 1, ...new (class { b = more.v; })() });
+  show(r);
+  for (const [key, value] of Object.entries(r)) console.log(key, text(value));
+}
+try {
+  main();
+} catch (e) {
+  console.log("threw", e.constructor.name);
+}
+//// a-lone-setter-under-a-symbol--defined--rest-is-assigned--for-in.mjs
+const more = { v: () => "called" };
+const sym = Symbol("s");
+const { drop, ...rest } = { drop: 0, a: 1, [sym]: more.v };
+const text = x => typeof x + " " + String(typeof x === "function" ? x() : typeof x === "object" && x !== null ? x.k : x);
+function show(r) {
+  const x = r.kept ?? r[sym];
+  console.log(text(x), typeof r.a, typeof r.kept);
+}
+function main() {
+  const r = Object.assign(Object.defineProperty({}, sym, { set(x) { this.kept = x; }, enumerable: true, configurable: true }), rest);
+  show(r);
+  for (const key in r) console.log(key, text(r[key]));
+}
+try {
+  main();
+} catch (e) {
+  console.log("threw", e.constructor.name);
+}
+//// a-lone-setter-under-a-symbol--defined--rest-of-spread-is-assigned--spread.mjs
+const more = { v: () => "called" };
+const sym = Symbol("s");
+const held = { [sym]: more.v };
+const { drop, ...rest } = { drop: 0, a: 1, ...held };
+const text = x => typeof x + " " + String(typeof x === "function" ? x() : typeof x === "object" && x !== null ? x.k : x);
+function show(r) {
+  const x = r.kept ?? r[sym];
+  console.log(text(x), typeof r.a, typeof r.kept);
+}
+function main() {
+  const r = Object.assign(Object.defineProperty({}, sym, { set(x) { this.kept = x; }, enumerable: true, configurable: true }), rest);
+  show(r);
+  show({ ...r });
+}
+try {
+  main();
+} catch (e) {
+  console.log("threw", e.constructor.name);
+}
+//// a-lone-setter-under-a-symbol--defined--spread-of-instance-is-assigned--stringify.mjs
+const more = { v: () => "called" };
+const sym = Symbol("s");
+const text = x => typeof x + " " + String(typeof x === "function" ? x() : typeof x === "object" && x !== null ? x.k : x);
+function show(r) {
+  const x = r.kept ?? r[sym];
+  console.log(text(x), typeof r.a, typeof r.kept);
+}
+function main() {
+  const r = Object.assign(Object.defineProperty({}, sym, { set(x) { this.kept = x; }, enumerable: true, configurable: true }), { a: 1, ...new (class { [sym] = more.v; })() });
+  show(r);
+  console.log(JSON.stringify(r));
+}
+try {
+  main();
+} catch (e) {
+  console.log("threw", e.constructor.name);
+}
+//// a-lone-setter-under-a-symbol--literal--rest-is-assigned--assign.mjs
+const more = { v: () => "called" };
+const sym = Symbol("s");
+const { drop, ...rest } = { drop: 0, a: 1, [sym]: more.v };
+const text = x => typeof x + " " + String(typeof x === "function" ? x() : typeof x === "object" && x !== null ? x.k : x);
+function show(r) {
+  const x = r.kept ?? r[sym];
+  console.log(text(x), typeof r.a, typeof r.kept);
+}
+function main() {
+  const r = Object.assign({ set [sym](x) { this.kept = x; } }, rest);
+  show(r);
+  
+}
+try {
+  main();
+} catch (e) {
+  console.log("threw", e.constructor.name);
+}
+//// a-lone-setter-under-a-symbol--literal--rest-of-spread-is-assigned--clone.mjs
+const more = { v: () => "called" };
+const sym = Symbol("s");
+const held = { [sym]: more.v };
+const { drop, ...rest } = { drop: 0, a: 1, ...held };
+const text = x => typeof x + " " + String(typeof x === "function" ? x() : typeof x === "object" && x !== null ? x.k : x);
+function show(r) {
+  const x = r.kept ?? r[sym];
+  console.log(text(x), typeof r.a, typeof r.kept);
+}
+function main() {
+  const r = Object.assign({ set [sym](x) { this.kept = x; } }, rest);
+  show(r);
+  try { show(structuredClone(r)); } catch (e) { console.log("clone threw", e.name); }
+}
+try {
+  main();
+} catch (e) {
+  console.log("threw", e.constructor.name);
+}
+//// a-lone-setter-under-a-symbol--literal--spread-of-instance-is-assigned--entries.mjs
+const more = { v: () => "called" };
+const sym = Symbol("s");
+const text = x => typeof x + " " + String(typeof x === "function" ? x() : typeof x === "object" && x !== null ? x.k : x);
+function show(r) {
+  const x = r.kept ?? r[sym];
+  console.log(text(x), typeof r.a, typeof r.kept);
+}
+function main() {
+  const r = Object.assign({ set [sym](x) { this.kept = x; } }, { a: 1, ...new (class { [sym] = more.v; })() });
+  show(r);
+  for (const [key, value] of Object.entries(r)) console.log(key, text(value));
+}
+try {
+  main();
+} catch (e) {
+  console.log("threw", e.constructor.name);
+}
+//// a-lone-setter-under-a-name--literal--rest-is-copied-in-behind-the-setter--for-in.mjs
+const more = { v: () => "called" };
+const { drop, ...rest } = { drop: 0, a: 1, b: more.v };
+const text = x => typeof x + " " + String(typeof x === "function" ? x() : typeof x === "object" && x !== null ? x.k : x);
+function show(r) {
+  const x = r.kept ?? r.b;
+  console.log(text(x), typeof r.a, typeof r.kept);
+}
+function main() {
+  const r = { set b(x) { this.kept = x; }, ...rest };
+  show(r);
+  for (const key in r) console.log(key, text(r[key]));
+}
+try {
+  main();
+} catch (e) {
+  console.log("threw", e.constructor.name);
+}
+//// a-lone-setter-under-a-name--literal--rest-of-spread-is-copied-in-behind-the-setter--spread.mjs
+const more = { v: () => "called" };
+const held = { b: more.v };
+const { drop, ...rest } = { drop: 0, a: 1, ...held };
+const text = x => typeof x + " " + String(typeof x === "function" ? x() : typeof x === "object" && x !== null ? x.k : x);
+function show(r) {
+  const x = r.kept ?? r.b;
+  console.log(text(x), typeof r.a, typeof r.kept);
+}
+function main() {
+  const r = { set b(x) { this.kept = x; }, ...rest };
+  show(r);
+  show({ ...r });
+}
+try {
+  main();
+} catch (e) {
+  console.log("threw", e.constructor.name);
+}
+//// a-lone-setter-under-a-symbol--literal--rest-is-copied-in-behind-the-setter--stringify.mjs
+const more = { v: () => "called" };
+const sym = Symbol("s");
+const { drop, ...rest } = { drop: 0, a: 1, [sym]: more.v };
+const text = x => typeof x + " " + String(typeof x === "function" ? x() : typeof x === "object" && x !== null ? x.k : x);
+function show(r) {
+  const x = r.kept ?? r[sym];
+  console.log(text(x), typeof r.a, typeof r.kept);
+}
+function main() {
+  const r = { set [sym](x) { this.kept = x; }, ...rest };
+  show(r);
+  console.log(JSON.stringify(r));
+}
+try {
+  main();
+} catch (e) {
+  console.log("threw", e.constructor.name);
+}
+//// a-lone-setter-under-a-symbol--literal--rest-of-spread-is-copied-in-behind-the-setter--assign.mjs
+const more = { v: () => "called" };
+const sym = Symbol("s");
+const held = { [sym]: more.v };
+const { drop, ...rest } = { drop: 0, a: 1, ...held };
+const text = x => typeof x + " " + String(typeof x === "function" ? x() : typeof x === "object" && x !== null ? x.k : x);
+function show(r) {
+  const x = r.kept ?? r[sym];
+  console.log(text(x), typeof r.a, typeof r.kept);
+}
+function main() {
+  const r = { set [sym](x) { this.kept = x; }, ...rest };
+  show(r);
+  
+}
+try {
+  main();
+} catch (e) {
+  console.log("threw", e.constructor.name);
+}
+//// a-lone-setter-under-a-name--defined--rest-is-used-and-then-assigned--stringify.mjs
+const more = { v: () => "called" };
+const { drop, ...rest } = { drop: 0, a: 1, b: more.v };
+const text = x => typeof x + " " + String(typeof x === "function" ? x() : typeof x === "object" && x !== null ? x.k : x);
+function show(r) {
+  const x = r.kept ?? r.b;
+  console.log(text(x), typeof r.a, typeof r.kept);
+}
+function main() {
+  const s = rest;
+  console.log(JSON.stringify(s));
+  show(s);
+  const r = Object.assign(Object.defineProperty({}, "b", { set(x) { this.kept = x; }, enumerable: true, configurable: true }), s);
+  show(r);
+}
+try {
+  main();
+} catch (e) {
+  console.log("threw", e.constructor.name);
+}
+//// a-lone-setter-under-a-name--defined--rest-of-spread-is-used-and-then-assigned--clone.mjs
+const more = { v: () => "called" };
+const held = { b: more.v };
+const { drop, ...rest } = { drop: 0, a: 1, ...held };
+const text = x => typeof x + " " + String(typeof x === "function" ? x() : typeof x === "object" && x !== null ? x.k : x);
+function show(r) {
+  const x = r.kept ?? r.b;
+  console.log(text(x), typeof r.a, typeof r.kept);
+}
+function main() {
+  const s = rest;
+  try { show(structuredClone(s)); } catch (e) { console.log("clone threw", e.name); }
+  show(s);
+  const r = Object.assign(Object.defineProperty({}, "b", { set(x) { this.kept = x; }, enumerable: true, configurable: true }), s);
+  show(r);
+}
+try {
+  main();
+} catch (e) {
+  console.log("threw", e.constructor.name);
+}
+//// a-lone-setter-under-a-name--defined--spread-of-instance-is-used-and-then-assigned--for-in.mjs
+const more = { v: () => "called" };
+const text = x => typeof x + " " + String(typeof x === "function" ? x() : typeof x === "object" && x !== null ? x.k : x);
+function show(r) {
+  const x = r.kept ?? r.b;
+  console.log(text(x), typeof r.a, typeof r.kept);
+}
+function main() {
+  const s = { a: 1, ...new (class { b = more.v; })() };
+  for (const key in s) console.log(key, text(s[key]));
+  show(s);
+  const r = Object.assign(Object.defineProperty({}, "b", { set(x) { this.kept = x; }, enumerable: true, configurable: true }), s);
+  show(r);
+}
+try {
+  main();
+} catch (e) {
+  console.log("threw", e.constructor.name);
+}
+//// a-lone-setter-under-a-name--literal--rest-is-used-and-then-assigned--for-in.mjs
+const more = { v: () => "called" };
+const { drop, ...rest } = { drop: 0, a: 1, b: more.v };
+const text = x => typeof x + " " + String(typeof x === "function" ? x() : typeof x === "object" && x !== null ? x.k : x);
+function show(r) {
+  const x = r.kept ?? r.b;
+  console.log(text(x), typeof r.a, typeof r.kept);
+}
+function main() {
+  const s = rest;
+  for (const key in s) console.log(key, text(s[key]));
+  show(s);
+  const r = Object.assign({ set b(x) { this.kept = x; } }, s);
+  show(r);
+}
+try {
+  main();
+} catch (e) {
+  console.log("threw", e.constructor.name);
+}
+//// a-lone-setter-under-a-name--literal--rest-of-spread-is-used-and-then-assigned--spread.mjs
+const more = { v: () => "called" };
+const held = { b: more.v };
+const { drop, ...rest } = { drop: 0, a: 1, ...held };
+const text = x => typeof x + " " + String(typeof x === "function" ? x() : typeof x === "object" && x !== null ? x.k : x);
+function show(r) {
+  const x = r.kept ?? r.b;
+  console.log(text(x), typeof r.a, typeof r.kept);
+}
+function main() {
+  const s = rest;
+  show({ ...s });
+  show(s);
+  const r = Object.assign({ set b(x) { this.kept = x; } }, s);
+  show(r);
+}
+try {
+  main();
+} catch (e) {
+  console.log("threw", e.constructor.name);
+}
+//// a-lone-setter-under-a-name--literal--spread-of-instance-is-used-and-then-assigned--entries.mjs
+const more = { v: () => "called" };
+const text = x => typeof x + " " + String(typeof x === "function" ? x() : typeof x === "object" && x !== null ? x.k : x);
+function show(r) {
+  const x = r.kept ?? r.b;
+  console.log(text(x), typeof r.a, typeof r.kept);
+}
+function main() {
+  const s = { a: 1, ...new (class { b = more.v; })() };
+  for (const [key, value] of Object.entries(s)) console.log(key, text(value));
+  show(s);
+  const r = Object.assign({ set b(x) { this.kept = x; } }, s);
+  show(r);
+}
+try {
+  main();
+} catch (e) {
+  console.log("threw", e.constructor.name);
+}
+//// a-lone-setter-under-a-symbol--defined--rest-is-used-and-then-assigned--clone.mjs
+const more = { v: () => "called" };
+const sym = Symbol("s");
+const { drop, ...rest } = { drop: 0, a: 1, [sym]: more.v };
+const text = x => typeof x + " " + String(typeof x === "function" ? x() : typeof x === "object" && x !== null ? x.k : x);
+function show(r) {
+  const x = r.kept ?? r[sym];
+  console.log(text(x), typeof r.a, typeof r.kept);
+}
+function main() {
+  const s = rest;
+  try { show(structuredClone(s)); } catch (e) { console.log("clone threw", e.name); }
+  show(s);
+  const r = Object.assign(Object.defineProperty({}, sym, { set(x) { this.kept = x; }, enumerable: true, configurable: true }), s);
+  show(r);
+}
+try {
+  main();
+} catch (e) {
+  console.log("threw", e.constructor.name);
+}
+//// a-lone-setter-under-a-symbol--defined--rest-of-spread-is-used-and-then-assigned--entries.mjs
+const more = { v: () => "called" };
+const sym = Symbol("s");
+const held = { [sym]: more.v };
+const { drop, ...rest } = { drop: 0, a: 1, ...held };
+const text = x => typeof x + " " + String(typeof x === "function" ? x() : typeof x === "object" && x !== null ? x.k : x);
+function show(r) {
+  const x = r.kept ?? r[sym];
+  console.log(text(x), typeof r.a, typeof r.kept);
+}
+function main() {
+  const s = rest;
+  for (const [key, value] of Object.entries(s)) console.log(key, text(value));
+  show(s);
+  const r = Object.assign(Object.defineProperty({}, sym, { set(x) { this.kept = x; }, enumerable: true, configurable: true }), s);
+  show(r);
+}
+try {
+  main();
+} catch (e) {
+  console.log("threw", e.constructor.name);
+}
+//// a-lone-setter-under-a-symbol--defined--spread-of-instance-is-used-and-then-assigned--stringify.mjs
+const more = { v: () => "called" };
+const sym = Symbol("s");
+const text = x => typeof x + " " + String(typeof x === "function" ? x() : typeof x === "object" && x !== null ? x.k : x);
+function show(r) {
+  const x = r.kept ?? r[sym];
+  console.log(text(x), typeof r.a, typeof r.kept);
+}
+function main() {
+  const s = { a: 1, ...new (class { [sym] = more.v; })() };
+  console.log(JSON.stringify(s));
+  show(s);
+  const r = Object.assign(Object.defineProperty({}, sym, { set(x) { this.kept = x; }, enumerable: true, configurable: true }), s);
+  show(r);
+}
+try {
+  main();
+} catch (e) {
+  console.log("threw", e.constructor.name);
+}
+//// a-lone-setter-under-a-symbol--literal--rest-is-used-and-then-assigned--spread.mjs
+const more = { v: () => "called" };
+const sym = Symbol("s");
+const { drop, ...rest } = { drop: 0, a: 1, [sym]: more.v };
+const text = x => typeof x + " " + String(typeof x === "function" ? x() : typeof x === "object" && x !== null ? x.k : x);
+function show(r) {
+  const x = r.kept ?? r[sym];
+  console.log(text(x), typeof r.a, typeof r.kept);
+}
+function main() {
+  const s = rest;
+  show({ ...s });
+  show(s);
+  const r = Object.assign({ set [sym](x) { this.kept = x; } }, s);
+  show(r);
+}
+try {
+  main();
+} catch (e) {
+  console.log("threw", e.constructor.name);
+}
+//// a-lone-setter-under-a-symbol--literal--rest-of-spread-is-used-and-then-assigned--stringify.mjs
+const more = { v: () => "called" };
+const sym = Symbol("s");
+const held = { [sym]: more.v };
+const { drop, ...rest } = { drop: 0, a: 1, ...held };
+const text = x => typeof x + " " + String(typeof x === "function" ? x() : typeof x === "object" && x !== null ? x.k : x);
+function show(r) {
+  const x = r.kept ?? r[sym];
+  console.log(text(x), typeof r.a, typeof r.kept);
+}
+function main() {
+  const s = rest;
+  console.log(JSON.stringify(s));
+  show(s);
+  const r = Object.assign({ set [sym](x) { this.kept = x; } }, s);
+  show(r);
+}
+try {
+  main();
+} catch (e) {
+  console.log("threw", e.constructor.name);
+}
+//// a-lone-setter-under-a-symbol--literal--spread-of-instance-is-used-and-then-assigned--spread.mjs
+const more = { v: () => "called" };
+const sym = Symbol("s");
+const text = x => typeof x + " " + String(typeof x === "function" ? x() : typeof x === "object" && x !== null ? x.k : x);
+function show(r) {
+  const x = r.kept ?? r[sym];
+  console.log(text(x), typeof r.a, typeof r.kept);
+}
+function main() {
+  const s = { a: 1, ...new (class { [sym] = more.v; })() };
+  show({ ...s });
+  show(s);
+  const r = Object.assign({ set [sym](x) { this.kept = x; } }, s);
+  show(r);
+}
+try {
+  main();
+} catch (e) {
+  console.log("threw", e.constructor.name);
+}

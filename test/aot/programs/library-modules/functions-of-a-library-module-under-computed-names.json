@@ -1,0 +1,1 @@
+{ "env": { "NAMES": "basename,existsSync,hostname,format,deflateSync,inflateSync,createHash,fileURLToPath,isMap" }, "skipInShell": "it asks for modules of Bun" }

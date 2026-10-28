@@ -1,0 +1,1 @@
+error: TS18016: Private identifiers are not allowed outside class bodies.

@@ -3343,6 +3343,36 @@ impl<'a> LinkerContext<'a> {
         self.top_level_symbols_to_parts(Index::RUNTIME.get(), r#ref)
     }
 
+    /// The unbound `require` a CommonJS wrapper must declare for a direct `eval` in its body (ESM output only, see `auto_polyfill_require`).
+    pub(crate) fn direct_eval_require_ref(&self, source_index: crate::IndexInt) -> Option<Ref> {
+        if self.options.output_format != Format::Esm {
+            return None;
+        }
+        let targets = self.graph.ast.items_target();
+        // A browser has no `require`. A browser file in a server build (HTML import) would get the server's.
+        if targets[source_index as usize] == Target::Browser {
+            return None;
+        }
+        let scope = &self.graph.ast.items_module_scope()[source_index as usize];
+        if !scope.contains_direct_eval {
+            return None;
+        }
+        let ref_ = scope.members.get(&b"require"[..])?.ref_;
+        if self.graph.symbols.get_const(ref_)?.kind != bun_ast::symbol::Kind::Unbound {
+            return None;
+        }
+        // Every chunk prints the runtime `__require` part, and Node's imports `node:module`: a browser chunk would not load.
+        let entry_points = self.graph.entry_points.items_source_index();
+        if self.options.target == Target::Node
+            && entry_points
+                .iter()
+                .any(|&entry| targets[entry as usize] == Target::Browser)
+        {
+            return None;
+        }
+        Some(ref_)
+    }
+
     #[inline]
     pub(crate) fn get_source<I: TryInto<usize>>(&self, index: I) -> &Source<'a> {
         // Note: callers pass both `u32` and
@@ -3525,6 +3555,17 @@ impl<'a> LinkerContext<'a> {
                             crate::Index::RUNTIME,
                         )
                         .expect("unreachable");
+
+                    if self.direct_eval_require_ref(source_index).is_some() {
+                        self.graph
+                            .generate_runtime_symbol_import_and_use(
+                                source_index,
+                                crate::Index::part(part_index),
+                                b"__require",
+                                1,
+                            )
+                            .expect("unreachable");
+                    }
                 }
             }
 

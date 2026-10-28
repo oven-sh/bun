@@ -466,20 +466,13 @@ impl DirEntry {
         if self.complete || self.lookup(base).is_some() {
             return Ok(self.lookup(base));
         }
-        let dir = self.dir;
-        let needs_sep = !dir.is_empty() && dir[dir.len() - 1] != bun_paths::SEP;
-        let len = dir.len() + usize::from(needs_sep) + base.len();
         let mut buf = bun_paths::path_buffer_pool::get();
-        if len >= buf.len() {
-            return Ok(None);
-        }
-        buf[..dir.len()].copy_from_slice(dir);
-        let mut i = dir.len();
-        if needs_sep {
-            buf[i] = bun_paths::SEP;
-            i += 1;
-        }
-        buf[i..len].copy_from_slice(base);
+        let join_capacity = buf.len() - 1;
+        let len = bun_paths::resolve_path::join_string_buf::<bun_paths::platform::Auto>(
+            &mut buf[..join_capacity],
+            &[self.dir, base],
+        )
+        .len();
         buf[len] = 0;
         let path = bun_core::ZStr::from_buf(&buf[..], len);
         let mut filename_store = FilenameStoreAppender::new();

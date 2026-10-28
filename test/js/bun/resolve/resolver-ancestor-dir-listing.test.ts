@@ -157,17 +157,46 @@ describe.concurrent("resolver ancestor directory listing", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.skipIf(isWindows)("a symlinked ancestor of the cwd resolves to its real path", async () => {
+  // `root/link` is reached through an absolute require, so it is an ancestor
+  // above the cwd with a probe-only listing of `root`, where the child name
+  // `link` is probed to find its real path.
+  test.skipIf(isWindows)("a symlinked ancestor above the cwd resolves to its real path", async () => {
     using dir = tempDir("ancestor-symlink-cwd", {
       "real/proj/package.json": JSON.stringify({ name: "proj" }),
-      "real/proj/src/index.js": `console.log(__dirname);`,
+      "real/proj/src/index.js": `module.exports = __dirname;`,
+      "other/main.js": ``,
     });
     const root = realpathSync(String(dir));
     symlinkSync(join(root, "real/proj"), join(root, "link"));
+    writeFileSync(
+      join(root, "other/main.js"),
+      `console.log(require(${JSON.stringify(join(root, "link/src/index.js"))}));`,
+    );
 
-    const { stdout, stderr, exitCode } = await run([bunExe(), "index.js"], join(root, "link/src"));
+    const { stdout, stderr, exitCode } = await run([bunExe(), "main.js"], join(root, "other"));
     expect(stderr).toBe("");
     expect(stdout).toBe(`${join(root, "real/proj/src")}\n`);
+    expect(exitCode).toBe(0);
+  });
+
+  // The scan root is an ancestor of the cwd, so its listing is probe-only
+  // when the scanner asks for it. The scanner must still see it as a cached
+  // listing and sort it, not take the raw readdir order.
+  test("bun test sorts the files of a scan root above the cwd", async () => {
+    using dir = tempDir("ancestor-test-root", {
+      "proj/package.json": JSON.stringify({ name: "proj" }),
+      "proj/sub/bunfig.toml": `[test]\nroot = ".."\n`,
+      ...Object.fromEntries(
+        ["z", "b", "y", "a", "x", "c"].map(n => [
+          `proj/${n}.test.js`,
+          `import { test } from "bun:test"; test("${n}", () => {});`,
+        ]),
+      ),
+    });
+
+    const { stdout, stderr, exitCode } = await run([bunExe(), "test"], join(String(dir), "proj/sub"));
+    const order = (stdout + stderr).split("\n").flatMap(line => line.match(/^\.\.[\\/]([a-z])\.test\.js:$/)?.[1] ?? []);
+    expect(order).toEqual(["a", "b", "c", "x", "y", "z"]);
     expect(exitCode).toBe(0);
   });
 

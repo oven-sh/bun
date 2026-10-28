@@ -1081,7 +1081,7 @@ pub mod fs {
             &mut self,
             dir_maybe_trail_slash: &[u8],
             maybe_handle: Option<Fd>,
-            mut generation: Generation,
+            generation: Generation,
             store_fd: bool,
             iterator: I,
         ) -> crate::CrateResult<&'static mut EntriesOption> {
@@ -1103,8 +1103,17 @@ pub mod fs {
                     // scrutinee directly so no second `&mut *cached_ptr` is materialized
                     // while the first is on the borrow stack (Stacked Borrows hygiene).
                     match unsafe { &mut *cached_ptr } {
-                        EntriesOption::Entries(e) if e.generation < generation || !e.complete => {
-                            generation = generation.max(e.generation);
+                        EntriesOption::Entries(e) if !e.complete => {
+                            // Read in full without `iterator`, so the caller
+                            // sees this as a cache hit (the test scanner sorts
+                            // a cached listing and takes an iterated one as is).
+                            let out = self
+                                .entries_at_locked(cache_result.index, generation)
+                                .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
+                            // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
+                            return Ok(unsafe { &mut *std::ptr::from_mut::<EntriesOption>(out) });
+                        }
+                        EntriesOption::Entries(e) if e.generation < generation => {
                             in_place = Some(std::ptr::from_mut::<DirEntry>(*e));
                         }
                         cached => return Ok(cached),
@@ -1154,17 +1163,11 @@ pub mod fs {
                 DirnameStore::instance().append_slice(dir)?
             };
 
-            // Cache miss: read the directory entries. A probe-only listing's
-            // entries carry the lookup's spelling, so they are not reused.
-            let prev = in_place
-                .filter(|p| {
-                    // SAFETY: BSSMap-owned, no aliasing here (entries_mutex held).
-                    unsafe { (**p).complete }
-                })
-                .map(|p| {
-                    // SAFETY: BSSMap-owned, no aliasing here (entries_mutex held).
-                    unsafe { &mut (*p).data }
-                });
+            // Cache miss: read the directory entries
+            let prev = in_place.map(|p| {
+                // SAFETY: BSSMap-owned, no aliasing here (entries_mutex held).
+                unsafe { &mut (*p).data }
+            });
             let mut entries = match self.readdir(store_fd, prev, dir, generation, handle, iterator)
             {
                 Ok(e) => e,
@@ -1523,14 +1526,11 @@ pub mod fs {
                     // SAFETY: see above — exclusive `&mut` on the prev map for the duration of `readdir`.
                     let prev = unsafe { (*e_ptr).complete }.then(|| unsafe { &mut (*e_ptr).data });
                     match self.readdir(false, prev, dir, generation, handle, ()) {
-                        Ok(mut new_entry) => {
+                        Ok(new_entry) => {
                             // SAFETY: see above.
-                            unsafe {
-                                // The stored fd is an `openat` base, still valid.
-                                new_entry.fd = (*e_ptr).fd;
-                                (*e_ptr).data.clear();
-                                *e_ptr = new_entry;
-                            }
+                            unsafe { (*e_ptr).data.clear() };
+                            // SAFETY: see above — slot is exclusively owned here.
+                            unsafe { *e_ptr = new_entry };
                         }
                         Err(err) => {
                             // SAFETY: see above.

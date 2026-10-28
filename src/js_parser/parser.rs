@@ -1657,7 +1657,7 @@ impl Jest {
         matches!(global, "jest" | "xit" | "xtest" | "xdescribe")
     }
 
-    pub(crate) fn is_of_vitest_only(global: &str) -> bool {
+    pub fn is_of_vitest_only(global: &str) -> bool {
         matches!(global, "suite" | "vitest" | "onTestFailed" | "assertType")
     }
 }

@@ -23,6 +23,17 @@ describe("a group", () => {
 });
 xdescribe("a group that is skipped", () => { it("has a test", () => { throw new Error("it ran"); }); });
 `,
+  "names-of-one-runner.test.js": `
+console.log("row:", [typeof onTestFinished, typeof aroundEach, typeof aroundAll, typeof jest, typeof xit].join());
+console.log("row:", [typeof suite, typeof vitest, typeof onTestFailed, typeof assertType].join());
+test("a name is called", () => { onTestFinished(() => console.log("row: finished")); });
+`,
+  "names-of-vitest.test.js": `
+import { test } from "vitest";
+console.log("row:", [typeof onTestFinished, typeof aroundEach, typeof aroundAll, typeof jest, typeof xit].join());
+console.log("row:", [typeof suite, typeof vitest, typeof onTestFailed, typeof assertType].join());
+suite("a group", () => { test("has a test", () => { onTestFailed(() => {}); }); });
+`,
   "commonjs.test.cjs": `
 const path = require("node:path");
 test("in a CommonJS file", () => { expect(path.posix.sep).toBe("/"); expect(typeof module).toBe("object"); });

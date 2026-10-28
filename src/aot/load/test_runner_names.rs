@@ -1,11 +1,13 @@
 //! `bun test` hands every file the names of the test runner.
 
+use bun_js_parser::Jest;
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::Binding;
 use bun_sema::hir::{
     ExprId, ExprKind, File, FileBuilder, IdList, Keyword, NameKind, PatKind, PatProp, PropKey,
     PropKind, StmtId, TypeNodeKind,
 };
+use bun_sema::import_sites::ImportSpecifier;
 use bun_sema::module_format::ModuleFormat;
 use bun_sema::resolve::{TransformRequest, TreeChange};
 use bun_sema::session::Arena;
@@ -13,11 +15,21 @@ use bun_sema::session::Arena;
 use crate::load::react_compiler::module_items::{
     POSITION, finish_file, put_around_body, write_constant, write_import,
 };
-use crate::load::runtime_declarations::NAMES_OF_EVERY_TEST_FILE;
 
 const MODULE: &[u8] = b"bun:test";
+const MODULE_OF_VITEST: &[u8] = b"vitest";
 // No program can write such a name, so it meets no declaration of the file: `declare const test: ..` stands beside it.
 const LOCAL_NAME_PREFIX: &[u8] = b"%test:";
+
+fn imports_vitest(request: &TransformRequest<'_, '_>, atoms: &Interner<'_>) -> bool {
+    let mut sites = request.analysis.import_sites.iter();
+    sites.any(|site| match site.specifier {
+        ImportSpecifier::Constant(specifier) => atoms.bytes(specifier) == MODULE_OF_VITEST,
+        ImportSpecifier::Pattern { .. } | ImportSpecifier::OneOf(_) | ImportSpecifier::Unknown => {
+            false
+        }
+    })
+}
 
 // `typeof a.b` holds `a` as an expression, and asks for its type alone.
 fn find_names_in_type_queries(hir: &File<'_>) -> Vec<ExprId> {
@@ -83,7 +95,12 @@ fn write_use(file: &mut FileBuilder, expression: ExprId, written: Atom, local: A
     };
 }
 
-fn write_require(file: &mut FileBuilder, atoms: &Interner<'_>, names: &[(Atom, Atom)]) -> StmtId {
+fn write_require(
+    file: &mut FileBuilder,
+    atoms: &Interner<'_>,
+    module: &[u8],
+    names: &[(Atom, Atom)],
+) -> StmtId {
     let properties: Vec<PatProp> = names
         .iter()
         .map(|&(imported, local)| PatProp {
@@ -100,7 +117,7 @@ fn write_require(file: &mut FileBuilder, atoms: &Interner<'_>, names: &[(Atom, A
     let properties = file.add_pat_props(&properties);
     let pat = file.pat(PatKind::Object(properties), POSITION, POSITION);
     let callee = file.expr(ExprKind::Ident(known::require), POSITION, POSITION);
-    write_constant(file, pat, callee, atoms.intern(MODULE))
+    write_constant(file, pat, callee, atoms.intern(module))
 }
 
 pub(crate) fn import_used_names<'s>(
@@ -108,13 +125,27 @@ pub(crate) fn import_used_names<'s>(
     atoms: &Interner<'s>,
     request: &mut TransformRequest<'_, 's>,
 ) -> TreeChange {
-    let names = NAMES_OF_EVERY_TEST_FILE.map(|name| atoms.intern(name));
+    // The parser gives `bun test` the same names out of the same module.
+    let is_of_vitest = imports_vitest(request, atoms);
+    let module = if is_of_vitest {
+        MODULE_OF_VITEST
+    } else {
+        MODULE
+    };
+    let given = Jest::GLOBALS.iter().filter(|name| match is_of_vitest {
+        true => !Jest::is_of_bun_only(name),
+        false => !Jest::is_of_vitest_only(name),
+    });
+    let given: Vec<&[u8]> = given.map(|name| name.as_bytes()).collect();
+    let names: Vec<Atom> = given.iter().map(|name| atoms.intern(name)).collect();
     let uses = find_uses(request, &names);
     if uses.is_empty() {
         return TreeChange::Unchanged;
     }
-    let locals =
-        NAMES_OF_EVERY_TEST_FILE.map(|name| atoms.intern(&[LOCAL_NAME_PREFIX, name].concat()));
+    let locals = given
+        .iter()
+        .map(|name| atoms.intern(&[LOCAL_NAME_PREFIX, name].concat()));
+    let locals: Vec<Atom> = locals.collect();
     let mut file = FileBuilder::from_file(request.hir);
     for &(expression, name) in &uses {
         write_use(&mut file, expression, names[name], locals[name]);
@@ -132,8 +163,8 @@ pub(crate) fn import_used_names<'s>(
     let used = (0..names.len()).filter(|&name| is_used(name));
     let used: Vec<(Atom, Atom)> = used.map(|name| (names[name], locals[name])).collect();
     let added = match request.analysis.module_format {
-        ModuleFormat::Esm => write_import(&mut file, atoms, MODULE, used.iter().copied()),
-        ModuleFormat::CommonJs => write_require(&mut file, atoms, &used),
+        ModuleFormat::Esm => write_import(&mut file, atoms, module, used.iter().copied()),
+        ModuleFormat::CommonJs => write_require(&mut file, atoms, module, &used),
     };
     put_around_body(&mut file, &[added], &[]);
     *request.hir = finish_file(file, arena, atoms);
@@ -164,7 +195,9 @@ mod tests {
                 .ids(hir.body)
                 .find(|&statement| !is_directive(hir[statement].kind));
             let taken: Vec<String> = match first.map(|statement| hir[statement].kind) {
-                Some(StmtKind::Import(import)) if text_of(hir[import].spec) == "bun:test" => {
+                Some(StmtKind::Import(import))
+                    if matches!(text_of(hir[import].spec).as_str(), "bun:test" | "vitest") =>
+                {
                     let items = hir[import].named.iter().map(|item| hir[item]);
                     let added = items.filter(|item| text_of(item.local).starts_with("%test:"));
                     added
@@ -201,7 +234,8 @@ mod tests {
                 .zip(hir.exprs.iter())
                 .filter(|&(expression, node)| match node.kind {
                     ExprKind::Ident(name) => {
-                        super::NAMES_OF_EVERY_TEST_FILE.contains(&files.atoms.bytes(name))
+                        let name = files.atoms.bytes(name);
+                        super::Jest::GLOBALS.iter().any(|it| it.as_bytes() == name)
                             && in_type_queries.binary_search(&expression).is_err()
                     }
                     _ => false,
@@ -309,6 +343,16 @@ mod tests {
             ),
             (
                 "a.test.js",
+                "onTestFinished; aroundEach; aroundAll;",
+                "onTestFinished as %test:onTestFinished, aroundEach as %test:aroundEach, aroundAll as %test:aroundAll | 0 written | 0 typed",
+            ),
+            (
+                "a.test.js",
+                "import 'vitest'; suite; vitest; onTestFailed; assertType;",
+                "suite as %test:suite, vitest as %test:vitest, onTestFailed as %test:onTestFailed, assertType as %test:assertType | 0 written | 0 typed",
+            ),
+            (
+                "a.test.js",
                 "export * from 'bun:test'; describe;",
                 "describe as %test:describe | 0 written | 0 typed",
             ),
@@ -336,6 +380,8 @@ mod tests {
             ("js", "function test() {} test();", 1),
             ("js", "(expect => expect)(1);", 1),
             ("js", "x.test; ({ test: 1 });", 0),
+            ("js", "suite; vitest; onTestFailed; assertType;", 4),
+            ("js", "import 'vitest'; jest; xit; xtest; xdescribe;", 4),
         ];
         for (extension, text, written) in rows {
             let described = describe(&format!("a.test.{extension}"), text);

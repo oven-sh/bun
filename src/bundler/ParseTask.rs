@@ -1450,12 +1450,10 @@ pub mod parse_worker {
     // getCodeForParseTaskWithoutPlugins
     // ───────────────────────────────────────────────────────────────────────────
 
-    // `resolver` is a raw `*mut`: callers pass `&mut (*transpiler).resolver`
-    // while they hold `*mut Transpiler`. We only touch `(*resolver).caches.fs`.
     fn get_code_for_parse_task_without_plugins(
         task: &mut ParseTask<'static>,
         log: &mut Log,
-        resolver: *mut Resolver,
+        fs_cache: &mut bun_resolver::cache::Fs,
         bump: &Bump,
         file_path: &mut Fs::Path,
         _loader: Loader,
@@ -1526,9 +1524,7 @@ pub mod parse_worker {
                 // `OutputFile`). This avoids churning the global allocator with
                 // one `Vec<u8>` per file.
                 let read_arena: Option<&Bump> = Some(bump);
-                // SAFETY: `resolver` is a live `*mut Resolver`.
-                break 'brk match unsafe { &mut (*resolver).caches.fs }.read_file_with_allocator(
-                    Fs::FileSystem::get(),
+                break 'brk match fs_cache.read_file_with_allocator(
                     file_path.text,
                     contents_dir,
                     false,
@@ -1607,12 +1603,10 @@ pub mod parse_worker {
     // getCodeForParseTask
     // ───────────────────────────────────────────────────────────────────────────
 
-    // `resolver` is a raw `*mut` — see
-    // `get_code_for_parse_task_without_plugins`.
     pub(crate) fn get_code_for_parse_task<'b>(
         task: &mut ParseTask<'static>,
         log: &mut Log,
-        resolver: *mut Resolver<'b>,
+        fs_cache: &mut bun_resolver::cache::Fs,
         bump: &Bump,
         file_path: &mut Fs::Path<'b>,
         loader: &mut Loader,
@@ -1639,7 +1633,7 @@ pub mod parse_worker {
 
         if !might_have_on_parse_plugins {
             return get_code_for_parse_task_without_plugins(
-                task, log, resolver, bump, file_path, *loader,
+                task, log, fs_cache, bump, file_path, *loader,
             );
         }
 
@@ -1648,7 +1642,7 @@ pub mod parse_worker {
         let mut ctx = OnBeforeParsePlugin {
             task,
             log,
-            resolver,
+            fs_cache,
             bump,
             file_path,
             loader,
@@ -1672,8 +1666,7 @@ pub mod parse_worker {
     pub struct OnBeforeParsePlugin<'a, 'b: 'a> {
         task: &'a mut ParseTask<'static>,
         log: &'a mut Log,
-        // raw `*mut` — see `get_code_for_parse_task_without_plugins`.
-        resolver: *mut Resolver<'b>,
+        fs_cache: &'a mut bun_resolver::cache::Fs,
         bump: &'a Bump,
         file_path: &'a mut Fs::Path<'b>,
         loader: &'a mut Loader,
@@ -1950,7 +1943,7 @@ pub mod parse_worker {
             let mut entry = match get_code_for_parse_task_without_plugins(
                 this.task,
                 this.log,
-                this.resolver,
+                this.fs_cache,
                 this.bump,
                 this.file_path,
                 result.loader,
@@ -2215,7 +2208,7 @@ pub mod parse_worker {
             get_code_for_parse_task_without_plugins(
                 self.task,
                 self.log,
-                self.resolver,
+                self.fs_cache,
                 self.bump,
                 self.file_path,
                 *self.loader,
@@ -2238,38 +2231,29 @@ pub mod parse_worker {
         let bump: &Bump = this.arena.get();
 
         // `has_created` ⇒ `data`/`transpiler` were initialized in `create()`.
-        let data = this.data.as_mut().expect("Worker.data set in create()");
-        // `resolver` is a field of
-        // `*transpiler`. Hold both as raw `*mut` and never materialize
-        // `&mut Transpiler` while `resolver` is live — the callee chain takes raw
-        // pointers and reborrows disjoint fields only.
-        // SAFETY: `data.transpiler` is initialized (see above) and pinned for the
-        // bundle pass.
-        let transpiler: *mut Transpiler<'static> = &raw mut data.transpiler;
-        // errdefer transpiler.reset_store() — reshaped: call on the err
-        // path explicitly (scopeguard would alias `transpiler` access below).
-        // SAFETY: `transpiler` is live; `resolver` projects a field of it.
-        let resolver: *mut Resolver = unsafe { core::ptr::addr_of_mut!((*transpiler).resolver) };
+        let transpiler = &mut this
+            .data
+            .as_mut()
+            .expect("Worker.data set in create()")
+            .transpiler;
         let mut file_path = task.path;
         let mut loader = task
             .loader
-            // SAFETY: `options` is a disjoint field of the live `*transpiler`.
-            .or_else(|| file_path.loader(unsafe { &(*transpiler).options.loaders }))
+            .or_else(|| file_path.loader(&transpiler.options.loaders))
             .unwrap_or(Loader::File);
 
         let mut contents_came_from_plugin: bool = false;
         let result = get_code_for_parse_task(
             task,
             log,
-            resolver,
+            &mut transpiler.resolver.caches.fs,
             bump,
             &mut file_path,
             &mut loader,
             &mut contents_came_from_plugin,
         );
         if result.is_err() {
-            // SAFETY: `transpiler` is live; no other borrow of it is held here.
-            unsafe { (*transpiler).reset_store() };
+            transpiler.reset_store();
         }
         result
     }

@@ -92,7 +92,7 @@ fn run_plugins(
     let entry = get_code_for_parse_task(
         task,
         log,
-        &raw mut transpiler.resolver,
+        &mut transpiler.resolver.caches.fs,
         arena,
         &mut file_path,
         &mut loader,

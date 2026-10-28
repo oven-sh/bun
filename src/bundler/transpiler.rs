@@ -1418,7 +1418,6 @@ impl<'a> Transpiler<'a> {
             // job-scoped heap that `TranspilerJob::run` `mi_heap_destroy`s on
             // return — not the worker thread's default mimalloc heap.
             let mut entry = match self.resolver.caches.fs.read_file_with_allocator(
-                Fs::FileSystem::get(),
                 path.text,
                 dirname_fd,
                 USE_SHARED_BUFFER,
@@ -3097,7 +3096,6 @@ impl<'a> Transpiler<'a> {
         use crate::bun_css;
 
         let entry = match self.resolver.caches.fs.read_file_with_allocator(
-            Fs::FileSystem::get(),
             file_path_text,
             dirname_fd,
             false,

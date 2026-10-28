@@ -686,8 +686,7 @@ impl<'a> Resolver<'a> {
     /// Unique-borrow of the `FileSystem` singleton. Centralizes the
     /// `unsafe { &mut *self.fs() }` retag for call sites that hold no other
     /// borrow of `self` across the call. Sites that need `&mut FileSystem`
-    /// while also borrowing a disjoint `self.<field>` (e.g.
-    /// `self.caches.fs.read_file_with_allocator`) cannot route through
+    /// while also borrowing a disjoint `self.<field>` cannot route through
     /// `&mut self` and continue to narrow-retag via the raw [`fs()`](Self::fs)
     /// accessor — same caveat as [`log_mut`](Self::log_mut).
     #[inline(always)]
@@ -4254,14 +4253,10 @@ impl<'a> Resolver<'a> {
     ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
         // Since tsconfig.json is cached permanently, in our DirEntries cache
         // we must use the global allocator
-        let mut entry = self.caches.fs.read_file_with_allocator(
-            Fs::FileSystem::get(),
-            file,
-            dirname_fd,
-            false,
-            None,
-            None,
-        )?;
+        let mut entry = self
+            .caches
+            .fs
+            .read_file_with_allocator(file, dirname_fd, false, None, None)?;
         // NOTE: reshaped for borrowck — `mem::take` the contents (leaving
         // `Contents::Empty` behind) so `entry` stays whole for the close-guard.
         let entry_contents = core::mem::take(&mut entry.contents);

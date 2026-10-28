@@ -429,7 +429,6 @@ impl PackageJSON {
         // (allocator dropped — global mimalloc)
 
         let mut entry = match r.caches.fs.read_file_with_allocator(
-            r_fs,
             package_json_path,
             dirname_fd,
             false,

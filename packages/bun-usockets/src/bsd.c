@@ -706,22 +706,28 @@ void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd) {
 #else
 #define BSD_OWNED_KEYS (1u << 31)
 #endif
-static _Atomic(_Atomic(uint64_t) *) bsd_owned_pages[BSD_OWNED_KEYS / BSD_OWNED_PAGE_BITS];
+/* Not an array: half a megabyte more of zero-filled data makes room there for a transparent huge page, which nothing can opt out of. */
+static _Atomic(void *) bsd_owned_pages;
 
-static _Atomic(uint64_t) *bsd_owned_word(unsigned int key) {
-    _Atomic(_Atomic(uint64_t) *) *slot = &bsd_owned_pages[key / BSD_OWNED_PAGE_BITS];
-    _Atomic(uint64_t) *page = atomic_load(slot);
-    if (UNLIKELY(!page)) {
-        _Atomic(uint64_t) *fresh = us_calloc(BSD_OWNED_PAGE_BITS / 64, sizeof(uint64_t));
+static void *bsd_owned_level(_Atomic(void *) *slot, size_t size) {
+    void *level = atomic_load(slot);
+    if (UNLIKELY(!level)) {
+        void *fresh = us_calloc(1, size);
         if (UNLIKELY(!fresh)) {
             Bun__outOfMemory();
         }
-        if (atomic_compare_exchange_strong(slot, &page, fresh)) {
-            page = fresh;
+        if (atomic_compare_exchange_strong(slot, &level, fresh)) {
+            level = fresh;
         } else {
             us_free(fresh);
         }
     }
+    return level;
+}
+
+static _Atomic(uint64_t) *bsd_owned_word(unsigned int key) {
+    _Atomic(void *) *pages = bsd_owned_level(&bsd_owned_pages, BSD_OWNED_KEYS / BSD_OWNED_PAGE_BITS * sizeof(void *));
+    _Atomic(uint64_t) *page = bsd_owned_level(&pages[key / BSD_OWNED_PAGE_BITS], BSD_OWNED_PAGE_BITS / 8);
     return &page[key % BSD_OWNED_PAGE_BITS / 64];
 }
 
@@ -781,8 +787,9 @@ void bsd_disown_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
 
 #ifdef _WIN32
 void bsd_shutdown_owned_sockets(void) {
-    for (unsigned int i = 0; i < BSD_OWNED_KEYS / BSD_OWNED_PAGE_BITS; i++) {
-        _Atomic(uint64_t) *page = atomic_load(&bsd_owned_pages[i]);
+    _Atomic(void *) *pages = atomic_load(&bsd_owned_pages);
+    for (unsigned int i = 0; pages && i < BSD_OWNED_KEYS / BSD_OWNED_PAGE_BITS; i++) {
+        _Atomic(uint64_t) *page = atomic_load(&pages[i]);
         for (unsigned int word = 0; page && word < BSD_OWNED_PAGE_BITS / 64; word++) {
             uint64_t rest;
             /* Read again for each socket: its thread is running and may have closed it by now. */

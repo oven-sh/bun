@@ -38,7 +38,7 @@ const neverCalledNatives: ReadonlyMap<RegExp, string> = new Map([
   [/ffi\.bind\.ts:cc$|\.FfiBindTsCc$|^%FFI%|napi_body/i, "it compiles or loads machine code"],
   [/^Bun\.FFI\.(CString|closeCallback|toArrayBuffer|toBuffer)$/, "it takes a number for an address, and reads or frees what is there"],
   [/upgrade_?command|install_?binding|trim_testing|patch_testing\.?bind\.?ts:?apply|npmManifestTestHelpers|readTarball|loadNpmrc/i, "it works on files that its operands name outside the folder of the test"],
-  [/setSocketFault|clearSocketFaults|jsSetAsyncHooksEnabled|psiTrigger|injectStdioReadError|setMax\w+ForTesting|emitMemoryPressure|seedCacheForTesting/i, "it changes how the rest of the process behaves"],
+  [/setSocketFault|clearSocketFaults|jsSetAsyncHooksEnabled|psiTrigger|injectStdioReadError|setMax\w+ForTesting|emitMemoryPressure|seedCacheForTesting|setDefaultCA$/i, "it changes how the rest of the process behaves"],
   [/^%EventEmitter%\.prototype\.(removeAllListeners|off|removeListener|emit|setMaxListeners)$|^dispatchEvent$/, "with its own receiver it takes away or runs the handlers of the process"],
   [/^Bun\.Image\.(fromClipboard|hasClipboardImage|clipboardChangeCount)$/, "it reads the clipboard"],
   [/^Bun\.plugin\b|setConfigPlugins|setPages|checkFramework/, "it changes how modules are loaded"],

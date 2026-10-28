@@ -113,6 +113,7 @@ NativeFunctionsNode_fs_bindingBindTsCreateMemfdForTesting/0: it is not called: a
 NativeFunctionsNode_net_bindingBindTsDoConnect/0: it is not called: it opens a connection or writes to the channel of a parent process
 NativeFunctionsNode_osBindTsGetPriority/1: no set of operands selects it
 NativeFunctionsNode_osBindTsSetPriority/1: no set of operands selects it
+NativeFunctionsNode_tls_bindingBindTsSetDefaultCA/0: it is not called: it changes how the rest of the process behaves
 NativeFunctionsNpm_jscBindTsArchitectureIsMatch/0: it is not called: a helper of Bun's own tests that does not come back for some operands
 NativeFunctionsNpm_jscBindTsOperatingSystemIsMatch/0: it is not called: a helper of Bun's own tests that does not come back for some operands
 NativeFunctionsPack_commandBindTsReadTarball/0: it is not called: it works on files that its operands name outside the folder of the test

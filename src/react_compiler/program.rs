@@ -63,7 +63,7 @@ pub enum JsxImportKind {
 pub trait Host {
     fn symbols(&self) -> &[Symbol];
     fn module_scope(&self) -> &Scope;
-    fn import_records(&self) -> &[ImportRecord];
+    fn import_records(&self) -> &[ImportRecord<'_>];
 
     /// The operand of each `x as T` with the cast, in the order of the operands. The parser drops casts.
     fn type_casts(&self) -> &[(Loc, Loc)] {
@@ -215,11 +215,13 @@ fn has_memo_cache_function_import(import: &S::Import, record: &ImportRecord) -> 
 /// imported bindings reach `Environment::resolve_module_type` instead of
 /// degrading to `Global`.
 /// Also answers upstream's `should_skip_compilation`: see [`ImportBindings::AlreadyCompiled`].
+#[inline(never)]
 pub fn collect_import_bindings(
     stmts: &[Stmt],
     records: &[ImportRecord],
     symbols: &[Symbol],
 ) -> ImportBindings {
+    bun_removable_features::removable_definition!(ReactCompiler, collect_import_bindings);
     let mut out = IndexMap::new();
     for stmt in stmts {
         let StmtData::SImport(import) = &stmt.data else {
@@ -1193,11 +1195,13 @@ impl ReactCompilerState {
     /// (`ProgramContext::init_from_scope`, restricted-import validation) is
     /// deferred to the first `maybe_compile_*` call so the parser can set
     /// `p.react_compiler = Some(..)` without a `&mut p` borrow conflict.
+    #[inline(never)]
     pub fn new(
         options: ReactCompilerOptions,
         has_module_scope_opt_out: bool,
         import_bindings: IndexMap<Ref, VariableBinding>,
     ) -> Self {
+        bun_removable_features::removable_definition!(ReactCompiler, Self::new);
         bun_core::scoped_log!(
             react_compiler,
             "ReactCompilerState::new opt_out={}",
@@ -1328,6 +1332,7 @@ pub struct CompileResult {
 /// new body is returned as a `Vec` for the caller to splice into that buffer
 /// (so the existing mangle phase then runs on it), along with the new
 /// args/flags for `visit_func` / arrow-visit to apply.
+#[inline(never)]
 pub fn maybe_compile_pending(
     state: &mut ReactCompilerState,
     host: &mut dyn Host,
@@ -1335,6 +1340,7 @@ pub fn maybe_compile_pending(
     body: &mut [Stmt],
     name: Option<&[u8]>,
 ) -> Option<(Vec<Stmt>, CompileResult)> {
+    bun_removable_features::removable_definition!(ReactCompiler, maybe_compile_pending);
     let tmp = G::Fn {
         name: None,
         open_parens_loc: pending.args_loc,
@@ -1486,11 +1492,13 @@ fn maybe_compile_node(
 /// `out_stmts` receives the `react/compiler-runtime` import statement
 /// (prepended) plus any outlined function decls (appended). Returns the
 /// summary `CompileOutput`.
+#[inline(never)]
 pub fn finish(
     mut state: ReactCompilerState,
     host: &mut dyn Host,
     out_stmts: &mut Vec<Stmt>,
 ) -> CompileOutput {
+    bun_removable_features::removable_definition!(ReactCompiler, finish);
     if let Some(fatal) = state.fatal.take() {
         return fatal;
     }

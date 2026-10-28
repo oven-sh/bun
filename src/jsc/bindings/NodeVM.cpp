@@ -67,6 +67,8 @@
 #include "JavaScriptCore/GetterSetter.h"
 #include "JavaScriptCore/MicrotaskQueue.h"
 #include "JavaScriptCore/MicrotaskQueueInlines.h"
+#include "JavaScriptCore/AOTModuleHost.h"
+#include "BunCompiledModules.h"
 
 namespace Bun {
 using namespace WebCore;
@@ -962,6 +964,16 @@ Structure* NodeVMGlobalObject::createStructure(JSC::VM& vm, JSC::JSValue prototy
     return JSC::Structure::create(vm, nullptr, prototype, JSC::TypeInfo(JSC::GlobalObjectType, StructureFlags & ~IsImmutablePrototypeExoticObject), info());
 }
 
+const ClassInfo NodeVMGlobalProxy::s_info = { "NodeVMGlobalProxy"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMGlobalProxy) };
+
+NodeVMGlobalProxy* NodeVMGlobalProxy::create(VM& vm, NodeVMGlobalObject* target)
+{
+    Structure* structure = Structure::create(vm, target, target->getPrototypeDirect(), TypeInfo(GlobalProxyType, StructureFlags), info());
+    auto* proxy = new (NotNull, allocateCell<NodeVMGlobalProxy>(vm)) NodeVMGlobalProxy(vm, structure, target);
+    proxy->finishCreation(vm);
+    return proxy;
+}
+
 void unsafeEvalNoop(JSGlobalObject*, const WTF::String&) {}
 
 static void promiseRejectionTrackerForNodeVM(JSGlobalObject* globalObject, JSC::JSPromise* promise, JSC::JSPromiseRejectionOperation operation)
@@ -993,14 +1005,21 @@ const JSC::GlobalObjectMethodTable& NodeVMGlobalObject::globalObjectMethodTable(
         nullptr, // defaultLanguage
         nullptr, // compileStreaming
         nullptr, // instantiateStreaming
+#if defined(BUN_DISABLE_SHADOW_REALM)
+        nullptr, // deriveShadowRealmGlobalObject
+#else
         &Zig::GlobalObject::deriveShadowRealmGlobalObject,
+#endif
         &codeForEval,
         &canCompileStrings,
         &trustedScriptStructure,
+        nullptr, // requireBuiltinModule
+        nullptr, // nativeBinding
     };
     return table;
 }
 
+#if ENABLE(WEBASSEMBLY)
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmWasmDisallowed, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
 {
     VM& vm = globalObject->vm();
@@ -1021,12 +1040,16 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmWasmCompileDisallowed, (JSC::JSGlobalObject * g
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, error)));
 }
+#endif // ENABLE(WEBASSEMBLY)
 
 void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     Base::finishCreation(vm);
     RETURN_IF_EXCEPTION(scope, );
+
+    addressOfGlobalThis()->set(vm, this, NodeVMGlobalProxy::create(vm, this));
+    setPrototypeDirect(vm, jsNull());
 
     // microtaskMode: "afterEvaluate" — give this context its own microtask
     // queue, like Node's contextify own_microtask_queue. Microtasks enqueued
@@ -1049,9 +1072,10 @@ void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
     }
 
     // A context decides for itself, as in Node.js, unless nothing in the process may.
-    setEvalEnabled(m_contextOptions.allowStrings && !Bun::isCodeGenerationFromStringsStrict(), Bun::codeGenerationFromStringsDisallowedMessage);
+    setEvalEnabled(m_contextOptions.allowStrings && !Bun::isCodeGenerationFromStringsStrict(), Bun::codeGenerationFromStringsDisallowedMessage());
     setWebAssemblyEnabled(m_contextOptions.allowWasm, "Wasm code generation disallowed by embedder"_s);
 
+#if ENABLE(WEBASSEMBLY)
     if (!m_contextOptions.allowWasm) {
         // JSC's setWebAssemblyEnabled only gates the streaming entry points;
         // `new WebAssembly.Module(bytes)`, WebAssembly.compile(bytes), and
@@ -1097,6 +1121,7 @@ void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
             webAssemblyObject->putDirect(vm, Identifier::fromString(vm, "compile"_s), compileDisallowed, static_cast<unsigned>(PropertyAttribute::DontEnum));
         }
     }
+#endif // ENABLE(WEBASSEMBLY)
 
     // Delete the internal Loader property from the VM global object.
     // This is exposed by JSC when exposeInternalModuleLoader() is true,
@@ -1145,12 +1170,49 @@ void NodeVMGlobalObject::drainOwnMicrotasks()
     microtaskQueue().performMicrotaskCheckpoint</* useCallOnEachMicrotask */ true>(vm, [](JSGlobalObject*, JSGlobalObject*) {});
 }
 
+// JSObject::put() can't see the prototype chain, which is on the proxy.
+bool NodeVMGlobalObject::putOwnOrInherited(JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
+{
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // As in JSObject::put(), the value leaves the global object for an object with its own put(), a setter or a read-only property.
+    JSValue prototype = globalThis()->getPrototypeDirect();
+    bool isIntercepted = false;
+    for (JSValue next = prototype; next.isObject(); next = asObject(next)->getPrototypeDirect()) {
+        JSObject* object = asObject(next);
+        if (object->structure()->typeInfo().overridesPut()) {
+            isIntercepted = true;
+            break;
+        }
+        PropertySlot inheritedSlot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        bool isInherited = object->methodTable()->getOwnPropertySlot(object, globalObject, propertyName, inheritedSlot);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (isInherited) {
+            isIntercepted = inheritedSlot.attributes() & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessor;
+            break;
+        }
+    }
+    if (isIntercepted) {
+        PropertySlot ownSlot(this, PropertySlot::InternalMethodType::GetOwnProperty);
+        bool isOwn = Base::getOwnPropertySlot(this, globalObject, propertyName, ownSlot);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!isOwn)
+            RELEASE_AND_RETURN(scope, asObject(prototype)->methodTable()->put(asObject(prototype), globalObject, propertyName, value, slot));
+    }
+
+    RELEASE_AND_RETURN(scope, Base::put(this, globalObject, propertyName, value, slot));
+}
+
 bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
     auto* thisObject = uncheckedDowncast<NodeVMGlobalObject>(cell);
 
     if (!thisObject->m_sandbox) {
-        return Base::put(cell, globalObject, propertyName, value, slot);
+        // An assignment to a bare name has the global object as its receiver. A setter's `this` is the proxy.
+        if (slot.thisValue() == thisObject)
+            slot.setThisValue(thisObject->globalThis());
+        return thisObject->putOwnOrInherited(globalObject, propertyName, value, slot);
     }
 
     auto* sandbox = thisObject->m_sandbox.get();
@@ -1171,11 +1233,11 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
     bool isFunction = value.isCallable();
 
     if (slot.isStrictMode() && !isDeclared && isContextualStore && !isFunction) {
-        RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
+        RELEASE_AND_RETURN(scope, thisObject->putOwnOrInherited(globalObject, propertyName, value, slot));
     }
 
     if (!isDeclared && value.isSymbol()) {
-        RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
+        RELEASE_AND_RETURN(scope, thisObject->putOwnOrInherited(globalObject, propertyName, value, slot));
     }
 
     slot.setThisValue(sandbox);
@@ -1189,7 +1251,7 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
     }
 
     slot.setThisValue(thisValue);
-    RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
+    RELEASE_AND_RETURN(scope, thisObject->putOwnOrInherited(globalObject, propertyName, value, slot));
 }
 
 // This is copy-pasted from JSC's ProxyObject.cpp
@@ -1201,6 +1263,15 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = uncheckedDowncast<NodeVMGlobalObject>(cell);
+
+    // The sandbox's prototype chain can lead back here.
+    if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
+        throwStackOverflowError(globalObject, scope);
+        return false;
+    }
+
+    // True for a bare name, false for a property of `globalThis`.
+    bool startedOnGlobalObject = slot.thisValue() == thisObject;
 
     if (JSObject* contextifiedObject = thisObject->contextifiedObject()) {
         slot.setThisValue(contextifiedObject);
@@ -1308,9 +1379,29 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
 
         slot.setThisValue(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
+    } else if (startedOnGlobalObject) {
+        // A getter's `this` is the proxy.
+        slot.setThisValue(thisObject->globalThis());
     }
 
-    RELEASE_AND_RETURN(scope, Base::getOwnPropertySlot(cell, globalObject, propertyName, slot));
+    bool found = Base::getOwnPropertySlot(cell, globalObject, propertyName, slot);
+    RETURN_IF_EXCEPTION(scope, false);
+    auto internalMethod = slot.internalMethodType();
+    if (found || !startedOnGlobalObject || (internalMethod != PropertySlot::InternalMethodType::Get && internalMethod != PropertySlot::InternalMethodType::HasProperty))
+        return found;
+
+    // The lookup goes on in the prototype, which is on the proxy.
+    JSValue prototype = thisObject->globalThis()->getPrototypeDirect();
+    if (!prototype.isObject())
+        return false;
+    // A Proxy answers every [[Get]], so only [[HasProperty]] tells a name that isn't defined. Node.js doesn't ask in a contextified context.
+    if (internalMethod == PropertySlot::InternalMethodType::Get && !thisObject->contextifiedObject()) {
+        bool isDefined = asObject(prototype)->hasProperty(globalObject, propertyName);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!isDefined)
+            return false;
+    }
+    RELEASE_AND_RETURN(scope, asObject(prototype)->getPropertySlot(globalObject, propertyName, slot));
 }
 
 bool NodeVMGlobalObject::getOwnPropertySlotByIndex(JSObject* cell, JSGlobalObject* globalObject, unsigned index, PropertySlot& slot)
@@ -1584,7 +1675,7 @@ bool NodeVMGlobalObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* sandbox = thisObject->m_sandbox.get();
-    bool deleted = sandbox->deleteProperty(sandbox, globalObject, propertyName, slot);
+    bool deleted = Bun::hasCompiledModules() ? sandbox->methodTable()->deleteProperty(sandbox, globalObject, propertyName, slot) : sandbox->deleteProperty(sandbox, globalObject, propertyName, slot);
     RETURN_IF_EXCEPTION(scope, false);
     if (!deleted) {
         return false;
@@ -1652,7 +1743,10 @@ void NodeVMGlobalObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject* glo
     auto* thisObject = uncheckedDowncast<NodeVMGlobalObject>(cell);
 
     if (thisObject->m_sandbox) {
-        thisObject->m_sandbox->getOwnPropertyNames(thisObject->m_sandbox.get(), globalObject, propertyNames, mode);
+        if (Bun::hasCompiledModules()) [[unlikely]]
+            thisObject->m_sandbox->methodTable()->getOwnPropertyNames(thisObject->m_sandbox.get(), globalObject, propertyNames, mode);
+        else
+            thisObject->m_sandbox->getOwnPropertyNames(thisObject->m_sandbox.get(), globalObject, propertyNames, mode);
         RETURN_IF_EXCEPTION(scope, );
     }
 
@@ -1661,7 +1755,8 @@ void NodeVMGlobalObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject* glo
 
 JSC_DEFINE_HOST_FUNCTION(vmIsModuleNamespaceObject, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    return JSValue::encode(jsBoolean(callFrame->argument(0).inherits(JSModuleNamespaceObject::info())));
+    JSValue argument = callFrame->argument(0);
+    return JSValue::encode(jsBoolean(argument.inherits(JSModuleNamespaceObject::info()) || (argument.isCell() && JSC::AOT::isModuleNamespace(argument.asCell()))));
 }
 
 JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)

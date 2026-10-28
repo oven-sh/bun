@@ -3258,6 +3258,40 @@ static napi_value make_ungated_calls_spinner(const Napi::CallbackInfo &info) {
   return spin;
 }
 
+// gated_calls_until_terminated(report: Int32Array on a SharedArrayBuffer):
+// makes a call that Node gates behind can_call_into_js() until
+// worker.terminate() has it refused. report[0] is set once the loop is about to
+// start. Then report[1] is the status of napi_throw and report[2] is whether an
+// exception is pending after it. node-addon-api calls napi_fatal_error if an
+// exception that it cannot clear is pending.
+static napi_value
+gated_calls_until_terminated(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  void *data;
+  NODE_API_CALL(env, napi_get_typedarray_info(env, info[0], nullptr, nullptr,
+                                              &data, nullptr, nullptr));
+  auto *report = static_cast<std::atomic<int32_t> *>(data);
+  napi_value object, one, message, error;
+  NODE_API_CALL(env, napi_create_object(env, &object));
+  NODE_API_CALL(env, napi_create_int32(env, 1, &one));
+  NODE_API_CALL(env, napi_create_string_utf8(env, "refused", NAPI_AUTO_LENGTH,
+                                             &message));
+  NODE_API_CALL(env, napi_create_error(env, nullptr, message, &error));
+
+  report[0] = 1;
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(20);
+  while (napi_set_named_property(env, object, "k", one) == napi_ok &&
+         std::chrono::steady_clock::now() < deadline) {
+  }
+
+  report[1] = napi_throw(env, error);
+  bool pending = true;
+  napi_is_exception_pending(env, &pending);
+  report[2] = pending;
+  return nullptr;
+}
+
 // Leaves an exception pending on the engine itself, not just recorded by
 // napi_throw_error: Bun's napi_call_function raises the recorded exception
 // before refusing the call. Returns false if the setup failed (an error has
@@ -3934,9 +3968,6 @@ test_napi_adjust_external_memory(const Napi::CallbackInfo &info) {
 extern "C" {
 napi_status node_api_set_prototype(napi_env env, napi_value object,
                                    napi_value value);
-napi_status node_api_create_object_with_properties(
-    napi_env env, napi_value prototype_or_null, napi_value *property_names,
-    napi_value *property_values, size_t property_count, napi_value *result);
 napi_status node_api_is_sharedarraybuffer(napi_env env, napi_value value,
                                           bool *result);
 napi_status node_api_create_sharedarraybuffer(napi_env env, size_t byte_length,
@@ -4829,6 +4860,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, external_for_transfer_stats);
   REGISTER_FUNCTION(env, exports, test_pending_exception_gate);
   REGISTER_FUNCTION(env, exports, make_ungated_calls_spinner);
+  REGISTER_FUNCTION(env, exports, gated_calls_until_terminated);
   REGISTER_FUNCTION(env, exports, test_ungated_calls_with_engine_exception);
   REGISTER_FUNCTION(env, exports, ungated_calls_through_timeout);
   REGISTER_FUNCTION(env, exports, test_napi_get_named_property_copied_string);

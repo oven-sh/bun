@@ -1,0 +1,1 @@
+{ "skipInShell": "it uses what Bun provides and the jsc shell does not: Bun.CryptoHasher, Bun.SHA1, Buffer" }

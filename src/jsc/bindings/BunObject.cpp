@@ -1,6 +1,7 @@
 #include "root.h"
 
 #include "JavaScriptCore/HeapProfiler.h"
+#include <JavaScriptCore/AOTMembersLeftOut.h>
 #include <JavaScriptCore/HeapSnapshotBuilder.h>
 #include "ZigGlobalObject.h"
 #include "JavaScriptCore/ArgList.h"
@@ -36,21 +37,41 @@
 #include "wtf/text/ASCIILiteral.h"
 #include "BunObject+exports.h"
 #include "ErrorCode.h"
+#include "GeneratedArchive.h"
+#include "GeneratedBlob.h"
 #include "GeneratedBunObject.h"
 #include "GeneratedBunObjectInternals.h"
+#include "GeneratedColorJs.h"
 #include "GeneratedCrypto.h"
 #include "GeneratedCryptoHasher.h"
 #include "GeneratedCsrfJsc.h"
 #include "GeneratedDns.h"
+#include "GeneratedDnsInternals.h"
+#include "GeneratedFetch.h"
+#include "GeneratedFetchSession.h"
 #include "GeneratedFilesystemRouter.h"
 #include "GeneratedGlob.h"
 #include "GeneratedHashObject.h"
+#include "GeneratedImage.h"
+#include "GeneratedInterpreter.h"
+#include "GeneratedJSBundler.h"
 #include "GeneratedJSON5Object.h"
 #include "GeneratedJSONCObject.h"
+#include "GeneratedJest.h"
+#include "GeneratedJsBunSpawnBindings.h"
+#include "GeneratedListener.h"
+#include "GeneratedMarkdownObject.h"
+#include "GeneratedParsedShellScript.h"
 #include "GeneratedPasswordObject.h"
+#include "GeneratedS3Client.h"
 #include "GeneratedSemverObject.h"
+#include "GeneratedSink.h"
 #include "GeneratedTOMLObject.h"
+#include "GeneratedTerminal.h"
+#include "GeneratedTranspiler.h"
+#include "GeneratedUdpSocket.h"
 #include "GeneratedUnsafeObject.h"
+#include "GeneratedValkey.h"
 #include "GeneratedXMLObject.h"
 #include "GeneratedYAMLObject.h"
 #include "JavaScriptCore/BunV8HeapSnapshotBuilder.h"
@@ -68,26 +89,6 @@
 
 extern "C" size_t Bun__Feature__heap_snapshot;
 
-BUN_DECLARE_HOST_FUNCTION(Bun__DNS__lookup);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolve);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolveSrv);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolveTxt);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolveSoa);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolveNaptr);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolveMx);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolveCaa);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolveNs);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolvePtr);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolveCname);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolveAny);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNS__getServers);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNS__setServers);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNS__reverse);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNS__lookupService);
-BUN_DECLARE_HOST_FUNCTION(Bun__fetch);
-BUN_DECLARE_HOST_FUNCTION(Bun__fetchPreconnect);
-BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv7);
-
 #include "sliceAnsi.h"
 #include "escapeHTML.h"
 
@@ -103,11 +104,6 @@ using namespace WebCore;
 namespace Bun {
 
 extern "C" bool has_bun_garbage_collector_flag_enabled;
-
-static JSValue BunObject_lazyPropCb_wrap_ArrayBufferSink(VM& vm, JSObject* bunObject)
-{
-    return uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject())->ArrayBufferSink();
-}
 
 static JSValue constructCookieObject(VM& vm, JSObject* bunObject);
 static JSValue constructCookieMapObject(VM& vm, JSObject* bunObject);
@@ -321,8 +317,8 @@ static JSValue constructIsMainThread(VM&, JSObject* object)
 static JSValue constructPluginObject(VM& vm, JSObject* bunObject)
 {
     auto* globalObject = bunObject->globalObject();
-    JSFunction* pluginFunction = JSFunction::create(vm, globalObject, 1, String("plugin"_s), jsFunctionBunPlugin, ImplementationVisibility::Public, NoIntrinsic);
-    pluginFunction->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "clearAll"_s), 1, jsFunctionBunPluginClear, ImplementationVisibility::Public, NoIntrinsic,
+    JSFunction* pluginFunction = JSFunction::create(vm, globalObject, 1, String("plugin"_s), JSC::removableFunction<Bun::Feature::Plugin, JSC::RemovedFeatureStub::Throw, jsFunctionBunPlugin>(), ImplementationVisibility::Public, NoIntrinsic);
+    pluginFunction->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "clearAll"_s), 1, JSC::removableFunction<Bun::Feature::Plugin, JSC::RemovedFeatureStub::Throw, jsFunctionBunPluginClear>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
 
     return pluginFunction;
@@ -331,7 +327,7 @@ static JSValue constructPluginObject(VM& vm, JSObject* bunObject)
 static JSValue createBunSql(VM& vm, Zig::GlobalObject* globalObject)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue sqlValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::BunSql);
+    JSValue sqlValue = BUN_REQUIRE_INTERNAL_MODULE(globalObject, BunSql, "Bun.sql", "default"_s);
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, sqlValue.getObject()->get(globalObject, vm.propertyNames->defaultKeyword));
 }
@@ -339,7 +335,7 @@ static JSValue createBunSql(VM& vm, Zig::GlobalObject* globalObject)
 static JSValue createBunSQLConstructor(VM& vm, Zig::GlobalObject* globalObject)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue sqlValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::BunSql);
+    JSValue sqlValue = BUN_REQUIRE_INTERNAL_MODULE(globalObject, BunSql, "Bun.SQL", "SQL"_s);
     RETURN_IF_EXCEPTION(scope, {});
     auto clientData = WebCore::clientData(vm);
     RELEASE_AND_RETURN(scope, sqlValue.getObject()->get(globalObject, clientData->builtinNames().SQLPublicName()));
@@ -347,10 +343,10 @@ static JSValue createBunSQLConstructor(VM& vm, Zig::GlobalObject* globalObject)
 
 JSValue constructBunFetchObject(VM& vm, JSObject* bunObject)
 {
-    JSFunction* fetchFn = JSFunction::create(vm, bunObject->globalObject(), 1, "fetch"_s, Bun__fetch, ImplementationVisibility::Public, NoIntrinsic);
+    JSFunction* fetchFn = JSFunction::create(vm, bunObject->globalObject(), 1, "fetch"_s, JSC::removableFunction<Bun::Feature::Fetch, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::Fetch::jsFetch>(), ImplementationVisibility::Public, NoIntrinsic);
 
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject());
-    fetchFn->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "preconnect"_s), 1, Bun__fetchPreconnect, ImplementationVisibility::Public, NoIntrinsic,
+    fetchFn->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "preconnect"_s), 1, JSC::removableFunction<Bun::Feature::Fetch, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::Fetch::jsPreconnect>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
 
     return fetchFn;
@@ -358,8 +354,8 @@ JSValue constructBunFetchObject(VM& vm, JSObject* bunObject)
 
 static JSValue createBunShell(VM& vm, Zig::GlobalObject* globalObject)
 {
-    JSFunction* createParsedShellScript = JSFunction::create(vm, globalObject, 2, "createParsedShellScript"_s, BunObject_callback_createParsedShellScript, ImplementationVisibility::Private, NoIntrinsic);
-    JSFunction* createShellInterpreterFunction = JSFunction::create(vm, globalObject, 1, "createShellInterpreter"_s, BunObject_callback_createShellInterpreter, ImplementationVisibility::Private, NoIntrinsic);
+    JSFunction* createParsedShellScript = JSFunction::create(vm, globalObject, 2, "createParsedShellScript"_s, JSC::removableFunction<Bun::Feature::Shell, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::ParsedShellScript::jsCreateParsedShellScript>(), ImplementationVisibility::Private, NoIntrinsic);
+    JSFunction* createShellInterpreterFunction = JSFunction::create(vm, globalObject, 1, "createShellInterpreter"_s, JSC::removableFunction<Bun::Feature::Shell, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::Interpreter::jsCreateShellInterpreter>(), ImplementationVisibility::Private, NoIntrinsic);
     JSC::JSFunction* createShellFn = JSC::JSFunction::create(vm, globalObject, shellCreateBunShellTemplateFunctionCodeGenerator(vm), globalObject);
 
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -367,6 +363,18 @@ static JSValue createBunShell(VM& vm, Zig::GlobalObject* globalObject)
     args.append(createShellInterpreterFunction);
     args.append(createParsedShellScript);
     JSC::JSValue shell = JSC::call(globalObject, createShellFn, args, "BunShell"_s);
+#if ENABLE(AOT)
+    // An executable of a program that never names `Bun.$` has no code for the function. It reads `process.env` when it runs, so that read is made here.
+    if (vm.hasCompiledCode() && scope.exception()) [[unlikely]] {
+        if (JSValue standIn = JSC::AOT::takeStandInForMemberLeftOut(globalObject, "$"_s)) {
+            JSValue process = globalObject->get(globalObject, Identifier::fromString(vm, "process"_s));
+            RETURN_IF_EXCEPTION(scope, {});
+            process.get(globalObject, Identifier::fromString(vm, "env"_s));
+            RETURN_IF_EXCEPTION(scope, {});
+            return standIn;
+        }
+    }
+#endif
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!shell.isObject()) [[unlikely]] {
@@ -390,70 +398,54 @@ static JSValue createBunShell(VM& vm, Zig::GlobalObject* globalObject)
     return bunShell;
 }
 
-// $, sql, postgres and SQL run builtin JS, which can throw, so they're CustomValue getters and the caller's scope checks them.
-// The first read caches the value as a plain data property.
-static EncodedJSValue lazyBunObjectValue(JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName propertyName, JSValue (*create)(VM&, Zig::GlobalObject*))
+// reifyAllStaticProperties calls PropertyCallback builders without checking for exceptions, so check here.
+static JSValue checkedBunObjectValue(VM& vm, JSObject* bunObject, JSValue (*create)(VM&, Zig::GlobalObject*))
 {
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    // A CustomValue getter's thisValue is the property's owner, not the receiver.
-    JSObject* bunObject = JSValue::decode(thisValue).getObject();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue value = create(vm, defaultGlobalObject(bunObject->globalObject()));
     RETURN_IF_EXCEPTION(scope, {});
-    bunObject->putDirect(vm, propertyName, value, PropertyAttribute::DontDelete | 0);
-    return JSValue::encode(value);
+    return value;
 }
 
-// Assignment replaces the getter with a plain data property.
-static bool replaceLazyBunObjectValue(JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue value, PropertyName propertyName)
-{
-    if (JSObject* object = JSValue::decode(thisValue).getObject())
-        object->putDirect(JSC::getVM(lexicalGlobalObject), propertyName, JSValue::decode(value), PropertyAttribute::DontDelete | 0);
-    return true;
-}
-
-static JSC_DEFINE_CUSTOM_GETTER(bunObjectShell, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName propertyName)) { return lazyBunObjectValue(globalObject, thisValue, propertyName, createBunShell); }
-static JSC_DEFINE_CUSTOM_GETTER(bunObjectSql, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName propertyName)) { return lazyBunObjectValue(globalObject, thisValue, propertyName, createBunSql); }
-static JSC_DEFINE_CUSTOM_GETTER(bunObjectSQL, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName propertyName)) { return lazyBunObjectValue(globalObject, thisValue, propertyName, createBunSQLConstructor); }
-static JSC_DEFINE_CUSTOM_SETTER(setBunObjectShell, (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue value, PropertyName propertyName)) { return replaceLazyBunObjectValue(globalObject, thisValue, value, propertyName); }
-static JSC_DEFINE_CUSTOM_SETTER(setBunObjectSql, (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue value, PropertyName propertyName)) { return replaceLazyBunObjectValue(globalObject, thisValue, value, propertyName); }
-static JSC_DEFINE_CUSTOM_SETTER(setBunObjectSQL, (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue value, PropertyName propertyName)) { return replaceLazyBunObjectValue(globalObject, thisValue, value, propertyName); }
+static JSValue constructBunShell(VM& vm, JSObject* bunObject) { return checkedBunObjectValue(vm, bunObject, createBunShell); }
+static JSValue defaultBunSQLObject(VM& vm, JSObject* bunObject) { return checkedBunObjectValue(vm, bunObject, createBunSql); }
+static JSValue constructBunSQLObject(VM& vm, JSObject* bunObject) { return checkedBunObjectValue(vm, bunObject, createBunSQLConstructor); }
 
 static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
 {
     JSGlobalObject* globalObject = bunObject->globalObject();
     JSC::JSObject* dnsObject = JSC::constructEmptyObject(globalObject);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "lookup"_s), 2, Bun__DNS__lookup, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "lookup"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::Dns::jsLookup>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, vm.propertyNames->resolve, 2, Bun__DNS__resolve, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, vm.propertyNames->resolve, 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolve>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveSrv"_s), 2, Bun__DNS__resolveSrv, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveSrv"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveSrv>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveTxt"_s), 2, Bun__DNS__resolveTxt, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveTxt"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveTxt>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveSoa"_s), 2, Bun__DNS__resolveSoa, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveSoa"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveSoa>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveNaptr"_s), 2, Bun__DNS__resolveNaptr, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveNaptr"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveNaptr>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveMx"_s), 2, Bun__DNS__resolveMx, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveMx"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveMx>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveCaa"_s), 2, Bun__DNS__resolveCaa, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveCaa"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveCaa>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveNs"_s), 2, Bun__DNS__resolveNs, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveNs"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveNs>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolvePtr"_s), 2, Bun__DNS__resolvePtr, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolvePtr"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolvePtr>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveCname"_s), 2, Bun__DNS__resolveCname, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveCname"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveCname>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveAny"_s), 2, Bun__DNS__resolveAny, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveAny"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveAny>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getServers"_s), 2, Bun__DNS__getServers, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getServers"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGetGlobalServers>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "setServers"_s), 2, Bun__DNS__setServers, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "setServers"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsSetGlobalServers>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "reverse"_s), 2, Bun__DNS__reverse, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "reverse"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalReverse>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "lookupService"_s), 2, Bun__DNS__lookupService, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "lookupService"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalLookupService>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "prefetch"_s), 1, Bun::Bindgen::Generated::Dns::jsPrefetch, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
@@ -473,6 +465,7 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionJSONLParseChunk);
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParse, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Jsonl, jsFunctionJSONLParse);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -493,6 +486,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParse, (JSGlobalObject * globalObject, C
         }
         auto* data = static_cast<const uint8_t*>(view->vector());
         size_t length = view->byteLength();
+        Vector<uint8_t> copyOfSharedBytes;
+        if (view->isShared()) {
+            if (!copyOfSharedBytes.tryAppend(std::span { data, length })) {
+                throwOutOfMemoryError(globalObject, scope);
+                return {};
+            }
+            data = copyOfSharedBytes.span().data();
+        }
 
         // Skip UTF-8 BOM if present
         if (length >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF) {
@@ -500,10 +501,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParse, (JSGlobalObject * globalObject, C
             length -= 3;
         }
 
-        if (length <= String::MaxLength && simdutf::validate_ascii(reinterpret_cast<const char*>(data), length)) {
-            auto chars = std::span { reinterpret_cast<const char8_t*>(data), length };
-            result = JSC::streamingJSONParse(globalObject, StringView(chars), values);
-        } else {
+        result.status = JSC::StreamingJSONParseResult::Status::NeedsText;
+        if (length <= String::MaxLength) {
+            result = JSC::streamingJSONParse(globalObject, std::span { reinterpret_cast<const char8_t*>(data), length }, values);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        if (result.status == JSC::StreamingJSONParseResult::Status::NeedsText) {
+            values.clear();
             size_t u16Length = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(data), length);
             if (u16Length > String::MaxLength) {
                 throwOutOfMemoryError(globalObject, scope);
@@ -536,6 +540,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParse, (JSGlobalObject * globalObject, C
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParseChunk, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Jsonl, jsFunctionJSONLParseChunk);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -588,6 +593,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParseChunk, (JSGlobalObject * globalObje
 
         const uint8_t* sliceData = data + start;
         size_t sliceLen = end - start;
+        Vector<uint8_t> copyOfSharedBytes;
+        if (view->isShared()) {
+            if (!copyOfSharedBytes.tryAppend(std::span { sliceData, sliceLen })) {
+                throwOutOfMemoryError(globalObject, scope);
+                return {};
+            }
+            sliceData = copyOfSharedBytes.span().data();
+        }
 
         // Skip UTF-8 BOM if present at the start of the slice
         size_t bomOffset = 0;
@@ -597,12 +610,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParseChunk, (JSGlobalObject * globalObje
             bomOffset = 3;
         }
 
-        if (sliceLen <= String::MaxLength && simdutf::validate_ascii(reinterpret_cast<const char*>(sliceData), sliceLen)) {
-            auto chars = std::span { reinterpret_cast<const char8_t*>(sliceData), sliceLen };
-            result = JSC::streamingJSONParse(globalObject, StringView(chars), values);
-            // For ASCII, byte offset = character offset
+        result.status = JSC::StreamingJSONParseResult::Status::NeedsText;
+        if (sliceLen <= String::MaxLength) {
+            result = JSC::streamingJSONParse(globalObject, std::span { reinterpret_cast<const char8_t*>(sliceData), sliceLen }, values);
+            RETURN_IF_EXCEPTION(scope, {});
             readBytes = start + bomOffset + result.charactersConsumed;
-        } else {
+        }
+        if (result.status == JSC::StreamingJSONParseResult::Status::NeedsText) {
+            values.clear();
             size_t u16Length = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(sliceData), sliceLen);
             if (u16Length > String::MaxLength) {
                 throwOutOfMemoryError(globalObject, scope);
@@ -956,17 +971,17 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
 
 /* Source for BunObject.lut.h
 @begin bunObjectTable
-    $                                              bunObjectShell                                                      DontDelete|CustomValue
-    Archive                                        BunObject_lazyPropCb_wrap_Archive                                   DontDelete|PropertyCallback
-    ArrayBufferSink                                BunObject_lazyPropCb_wrap_ArrayBufferSink                           DontDelete|PropertyCallback
+    $                                              constructBunShell                                                   DontDelete|PropertyCallback
+    Archive                                        Bun::Bindgen::Generated::Archive::getArchiveConstructor             DontDelete|PropertyCallback
+    ArrayBufferSink                                Bun::Bindgen::Generated::Sink::getArrayBufferSinkConstructor        DontDelete|PropertyCallback
     Cookie                                         constructCookieObject                                               DontDelete|ReadOnly|PropertyCallback
     CookieMap                                      constructCookieMapObject                                            DontDelete|ReadOnly|PropertyCallback
     CryptoHasher                                   Bun::Bindgen::Generated::CryptoHasher::getCryptoHasherConstructor   DontDelete|PropertyCallback
     FFI                                            BunObject_lazyPropCb_wrap_FFI                                       DontDelete|PropertyCallback
-    FetchSession                                   BunObject_lazyPropCb_wrap_FetchSession                              DontDelete|PropertyCallback
+    FetchSession                                   Bun::Bindgen::Generated::FetchSession::getFetchSessionConstructor   DontDelete|PropertyCallback
     FileSystemRouter                               Bun::Bindgen::Generated::FilesystemRouter::getFileSystemRouterConstructor DontDelete|PropertyCallback
     Glob                                           Bun::Bindgen::Generated::Glob::getGlobConstructor                   DontDelete|PropertyCallback
-    Image                                          BunObject_lazyPropCb_wrap_Image                                     DontDelete|PropertyCallback
+    Image                                          Bun::Bindgen::Generated::Image::getImageConstructor                 DontDelete|PropertyCallback
     MD4                                            Bun::Bindgen::Generated::CryptoHasher::getMD4Constructor            DontDelete|PropertyCallback
     MD5                                            Bun::Bindgen::Generated::CryptoHasher::getMD5Constructor            DontDelete|PropertyCallback
     ModuleGraph                                    constructModuleGraphObject                                          DontDelete|ReadOnly|PropertyCallback
@@ -979,23 +994,23 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     JSONC                                          Bun::Bindgen::Generated::JSONCObject::createJSONC                   DontDelete|PropertyCallback
     JSON5                                          Bun::Bindgen::Generated::JSON5Object::createJSON5                   DontDelete|PropertyCallback
     JSONL                                          constructJSONLObject                                                ReadOnly|DontDelete|PropertyCallback
-    markdown                                         BunObject_lazyPropCb_wrap_markdown                                  DontDelete|PropertyCallback
+    markdown                                       Bun::Bindgen::Generated::MarkdownObject::createMarkdown             DontDelete|PropertyCallback
     TOML                                           Bun::Bindgen::Generated::TOMLObject::createTOML                     DontDelete|PropertyCallback
     XML                                            Bun::Bindgen::Generated::XMLObject::createXML                       DontDelete|PropertyCallback
     YAML                                           Bun::Bindgen::Generated::YAMLObject::createYAML                     DontDelete|PropertyCallback
-    Transpiler                                     BunObject_lazyPropCb_wrap_Transpiler                                DontDelete|PropertyCallback
+    Transpiler                                     Bun::Bindgen::Generated::Transpiler::getTranspilerConstructor       DontDelete|PropertyCallback
     embeddedFiles                                  BunObject_lazyPropCb_wrap_embeddedFiles                             DontDelete|PropertyCallback
-    S3Client                                       BunObject_lazyPropCb_wrap_S3Client                                  DontDelete|PropertyCallback
+    S3Client                                       Bun::Bindgen::Generated::S3Client::getS3ClientConstructor           DontDelete|PropertyCallback
     s3                                             BunObject_lazyPropCb_wrap_s3                                        DontDelete|PropertyCallback
     CSRF                                           Bun::Bindgen::Generated::CsrfJsc::createCSRF                        DontDelete|PropertyCallback
     allocUnsafe                                    Bun::Bindgen::Generated::BunObject::jsAllocUnsafe                   DontDelete|Function 1
     argv                                           BunObject_lazyPropCb_wrap_argv                                      DontDelete|PropertyCallback
-    build                                          BunObject_callback_build                                            DontDelete|Function 1
+    build                                          Bun::Bindgen::Generated::JSBundler::jsBuild                         DontDelete|Function 1
     concatArrayBuffers                             functionConcatTypedArrays                                           DontDelete|Function 3
-    connect                                        BunObject_callback_connect                                          DontDelete|Function 1
+    connect                                        Bun::Bindgen::Generated::Listener::jsConnect                        DontDelete|Function 1
     cron                                           BunObject_lazyPropCb_wrap_cron                                      DontDelete|PropertyCallback
     cwd                                            BunObject_lazyPropCb_wrap_cwd                                       DontEnum|DontDelete|PropertyCallback
-    color                                          BunObject_callback_color                                            DontDelete|Function 2
+    color                                          Bun::Bindgen::Generated::ColorJs::jsColor                           DontDelete|Function 2
     deepEquals                                     functionBunDeepEquals                                               DontDelete|Function 2
     deepMatch                                      functionBunDeepMatch                                                DontDelete|Function 2
     deflateSync                                    Bun::Bindgen::Generated::BunObject::jsDeflateSync                   DontDelete|Function 1
@@ -1004,7 +1019,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     env                                            constructEnvObject                                                  ReadOnly|DontDelete|PropertyCallback
     escapeHTML                                     jsFunctionBunEscapeHTML                                             DontDelete|Function 2
     fetch                                          constructBunFetchObject                                             ReadOnly|DontDelete|PropertyCallback
-    file                                           BunObject_callback_file                                             DontDelete|Function 1
+    file                                           Bun::Bindgen::Generated::Blob::jsFile                               DontDelete|Function 1
     fileURLToPath                                  functionFileURLToPath                                               DontDelete|Function 1
     gc                                             Bun::Bindgen::Generated::BunObject::jsGc                            DontDelete|Function 1
     generateHeapSnapshot                           functionGenerateHeapSnapshot                                        DontDelete|Function 2
@@ -1016,9 +1031,9 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     inspect                                        BunObject_lazyPropCb_wrap_inspect                                   DontDelete|PropertyCallback
     isMainThread                                   constructIsMainThread                                               ReadOnly|DontDelete|PropertyCallback
     isStandaloneExecutable                         BunObject_lazyPropCb_wrap_isStandaloneExecutable                    ReadOnly|DontDelete|PropertyCallback
-    jest                                           BunObject_callback_jest                                             DontEnum|DontDelete|Function 1
-    listen                                         BunObject_callback_listen                                           DontDelete|Function 1
-    udpSocket                                      BunObject_callback_udpSocket                                        DontDelete|Function 1
+    jest                                           Bun::Bindgen::Generated::Jest::jsJest                               DontEnum|DontDelete|Function 1
+    listen                                         Bun::Bindgen::Generated::Listener::jsListen                         DontDelete|Function 1
+    udpSocket                                      Bun::Bindgen::Generated::UdpSocket::jsUdpSocket                     DontDelete|Function 1
     main                                           bunObjectMain                                                       DontDelete|CustomAccessor
     mmap                                           Bun::Bindgen::Generated::BunObject::jsMmap                          DontDelete|Function 1
     nanoseconds                                    functionBunNanoseconds                                              DontDelete|Function 0
@@ -1029,7 +1044,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     pathToFileURL                                  functionPathToFileURL                                               DontDelete|Function 1
     peek                                           constructBunPeekObject                                              DontDelete|PropertyCallback
     plugin                                         constructPluginObject                                               ReadOnly|DontDelete|PropertyCallback
-    randomUUIDv7                                   Bun__randomUUIDv7                                                   DontDelete|Function 2
+    randomUUIDv7                                   Bun::Bindgen::Generated::Crypto::jsRandomUUIDv7                     DontDelete|Function 2
     randomUUIDv5                                   Bun::Bindgen::Generated::Crypto::jsRandomUUIDv5                     DontDelete|Function 3
     readableStreamToArray                          WebCore::jsFunctionReadableStreamToArray           DontDelete|Function 1
     readableStreamToArrayBuffer                    WebCore::jsFunctionReadableStreamToArrayBuffer     DontDelete|Function 1
@@ -1039,36 +1054,36 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     readableStreamToJSON                           WebCore::jsFunctionReadableStreamToJSON            DontDelete|Function 1
     readableStreamToText                           WebCore::jsFunctionReadableStreamToText            DontDelete|Function 1
     registerMacro                                  Bun::Bindgen::Generated::BunObjectInternals::jsRegisterMacro        DontEnum|DontDelete|Function 1
-    resolve                                        BunObject_callback_resolve                                          DontDelete|Function 1
-    resolveSync                                    BunObject_callback_resolveSync                                      DontDelete|Function 1
+    resolve                                        Bun::Bindgen::Generated::BunObject::jsResolve                       DontDelete|Function 1
+    resolveSync                                    Bun::Bindgen::Generated::BunObject::jsResolveSync                   DontDelete|Function 1
     revision                                       constructBunRevision                                                ReadOnly|DontDelete|PropertyCallback
     semver                                         Bun::Bindgen::Generated::SemverObject::createSemver                 ReadOnly|DontDelete|PropertyCallback
-    sql                                            bunObjectSql                                                        DontDelete|CustomValue
-    postgres                                       bunObjectSql                                                        DontDelete|CustomValue
-    SQL                                            bunObjectSQL                                                        DontDelete|CustomValue
-    serve                                          BunObject_callback_serve                                            DontDelete|Function 1
+    sql                                            defaultBunSQLObject                                                 DontDelete|PropertyCallback
+    postgres                                       defaultBunSQLObject                                                 DontDelete|PropertyCallback
+    SQL                                            constructBunSQLObject                                               DontDelete|PropertyCallback
+    serve                                          Bun::Bindgen::Generated::BunObject::jsServe                         DontDelete|Function 1
     sha                                            Bun::Bindgen::Generated::CryptoHasher::jsSha                        DontDelete|Function 1
     shrink                                         Bun::Bindgen::Generated::BunObject::jsShrink                        DontDelete|Function 0
     sliceAnsi                                      jsFunctionBunSliceAnsi                                              DontDelete|Function 5
     sleep                                          functionBunSleep                                                    DontDelete|Function 1
     sleepSync                                      Bun::Bindgen::Generated::BunObject::jsSleepSync                     DontDelete|Function 1
-    spawn                                          BunObject_callback_spawn                                            DontDelete|Function 1
-    spawnSync                                      BunObject_callback_spawnSync                                        DontDelete|Function 1
+    spawn                                          Bun::Bindgen::Generated::JsBunSpawnBindings::jsSpawn                DontDelete|Function 1
+    spawnSync                                      Bun::Bindgen::Generated::JsBunSpawnBindings::jsSpawnSync            DontDelete|Function 1
     stderr                                         BunObject_lazyPropCb_wrap_stderr                                    DontDelete|PropertyCallback
     stdin                                          BunObject_lazyPropCb_wrap_stdin                                     DontDelete|PropertyCallback
     stdout                                         BunObject_lazyPropCb_wrap_stdout                                    DontDelete|PropertyCallback
     stringWidth                                    jsFunctionBunStringWidth                                            DontDelete|Function 2
     stripANSI                                      jsFunctionBunStripANSI                                              DontDelete|Function 1
     wrapAnsi                                       jsFunctionBunWrapAnsi                                               DontDelete|Function 3
-    Terminal                                       BunObject_lazyPropCb_wrap_Terminal                                  DontDelete|PropertyCallback
+    Terminal                                       Bun::Bindgen::Generated::Terminal::getTerminalConstructor           DontDelete|PropertyCallback
     unsafe                                         Bun::Bindgen::Generated::UnsafeObject::createUnsafe                 DontDelete|PropertyCallback
     version                                        constructBunVersion                                                 ReadOnly|DontDelete|PropertyCallback
     WebView                                        constructWebViewObject                                              ReadOnly|DontDelete|PropertyCallback
     which                                          Bun::Bindgen::Generated::BunObject::jsWhich                         DontDelete|Function 1
-    RedisClient                                    BunObject_lazyPropCb_wrap_ValkeyClient                              DontDelete|PropertyCallback
+    RedisClient                                    Bun::Bindgen::Generated::Valkey::getRedisClientConstructor          DontDelete|PropertyCallback
     redis                                          BunObject_lazyPropCb_wrap_valkey                                    DontDelete|PropertyCallback
     secrets                                        constructSecretsObject                                              DontDelete|PropertyCallback
-    write                                          BunObject_callback_write                                            DontDelete|Function 1
+    write                                          Bun::Bindgen::Generated::Blob::jsWrite                              DontDelete|Function 1
     zstdCompressSync                               Bun::Bindgen::Generated::BunObject::jsZstdCompressSync             DontDelete|Function 1
     zstdDecompressSync                             Bun::Bindgen::Generated::BunObject::jsZstdDecompressSync           DontDelete|Function 1
     zstdCompress                                 Bun::Bindgen::Generated::BunObject::jsZstdCompress                 DontDelete|Function 1

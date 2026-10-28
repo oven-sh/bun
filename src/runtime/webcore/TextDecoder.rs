@@ -1,6 +1,4 @@
-use crate::generated_bindgen::text_decoder::{
-    TextDecodeOptions, TextDecoderClass, TextDecoderOptions,
-};
+use crate::generated_bindgen::text_decoder::{TextDecodeOptions, TextDecoderOptions};
 use crate::webcore::EncodingLabel;
 use crate::webcore::jsc::{self as jsc, JSGlobalObject, JSString, JSValue};
 use bun_core::strings;
@@ -150,11 +148,16 @@ impl TextDecoder {
     /// Feeds one chunk to the encoding_rs decoder shared across a stream's
     /// `{stream: true}` chunks. `InvalidByteSequence` is only reported in
     /// fatal mode; otherwise malformed bytes become U+FFFD in the output.
+    #[inline(never)]
     fn decode_with_encoding_rs<const FLUSH: bool>(
         fatal: bool,
         decoder: &mut encoding_rs::Decoder,
         bytes: &[u8],
     ) -> Result<Vec<u16>, strings::ToUTF16Error> {
+        bun_removable_features::removable_definition!(
+            LegacyEncodings,
+            Self::decode_with_encoding_rs::<FLUSH>
+        );
         // Nothing to decode. Also keeps the chunk away from encoding_rs 0.8.35,
         // whose big5, euc-kr and shift_jis decoders forget a pending lead byte
         // when fed an empty non-final chunk.
@@ -411,10 +414,8 @@ impl TextDecoder {
     }
 }
 
-impl TextDecoderClass for TextDecoder {
-    type Error<'a> = bindgen::Error<'a>;
-
-    fn constructor<'a>(
+impl TextDecoder {
+    pub(crate) fn constructor<'a>(
         heap: &JsHeap<'a>,
         label: Option<&'a [u8]>,
         options: &TextDecoderOptions,
@@ -440,7 +441,7 @@ impl TextDecoderClass for TextDecoder {
         })
     }
 
-    fn decode<'a>(
+    pub(crate) fn decode<'a>(
         &mut self,
         heap: &JsHeap<'a>,
         input: Option<&'a [u8]>,
@@ -449,15 +450,15 @@ impl TextDecoderClass for TextDecoder {
         self.decode_chunk(heap, input.unwrap_or_default(), options.stream)
     }
 
-    fn encoding<'a>(&self, heap: &JsHeap<'a>) -> JsLocal<'a, JSString> {
+    pub(crate) fn get_encoding<'a>(&self, heap: &JsHeap<'a>) -> JsLocal<'a, JSString> {
         self.encoding.to_js(heap)
     }
 
-    fn fatal(&self) -> bool {
+    pub(crate) fn get_fatal(&self) -> bool {
         self.fatal
     }
 
-    fn ignore_bom(&self) -> bool {
+    pub(crate) fn get_ignore_bom(&self) -> bool {
         self.ignore_bom
     }
 }

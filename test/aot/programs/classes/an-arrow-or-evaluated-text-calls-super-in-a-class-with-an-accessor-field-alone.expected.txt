@@ -1,0 +1,8 @@
+in an arrow: true 1 above
+ahead of the call < above < a | 10 above
+in evaluated text: true 1 above
+ahead of the text < above < a | 10 above
+in evaluated text, beside a field: true 1 2
+above < f < a | 10 above,f
+called twice: true 1
+above < a < above < ReferenceError | 10 above

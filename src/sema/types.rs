@@ -1348,7 +1348,8 @@ bitflags::bitflags! {
         /// with `Provenance::has_other_instantiation`.
         const HAS_OTHER_INSTANTIATION = 256;
         /// An intersection of object types that are each their own apparent type. That covers every object type except
-        /// a mapped type with type variables, which `getResolvedApparentTypeOfMappedType` may replace.
+        /// a mapped type with type variables, which `getResolvedApparentTypeOfMappedType` may replace. They don't all
+        /// have the same apparent type (`can_become_one_reference`).
         const HAS_ONLY_OWN_APPARENT_TYPES = 1024;
     }
 }
@@ -1696,7 +1697,7 @@ impl ProvenanceKey<'_> {
 
 /// Flags that `getUnionTypeEx`, `getIntersectionTypeEx` and `createTypeReferenceEx` set on a type only when they create
 /// it, so the first request for the type decides them. A record is created with them already set
-/// (`Types::as_first_request`).
+/// (`Types::as_first_request`). `FROM_TYPE_NODE` is also set later (`Types::mark_from_type_node`): which task requests a published type first depends on timing.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct FirstRequest(u8);
 
@@ -3658,6 +3659,32 @@ impl<'p, 's> Types<'p, 's> {
         })
     }
 
+    /// True if the members of an intersection are references to one target, and all but one at most are deferred.
+    /// `getTypeWithThisArgument` recreates every reference, so with the same type arguments they become one type:
+    /// the apparent type of `A & [number]` is `[number]` after `type A = [number]`. The type arguments aren't
+    /// resolved here.
+    pub fn can_become_one_reference(&self, members: &[TypeId]) -> bool {
+        let has_target_of_first = |&member: &TypeId| match (self.get(members[0]), self.get(member))
+        {
+            (TypeData::Ref { target: a, .. }, TypeData::Ref { target: b, .. }) => a == b,
+            (
+                TypeData::Tuple {
+                    flags: a,
+                    readonly: a_readonly,
+                    ..
+                },
+                TypeData::Tuple {
+                    flags: b,
+                    readonly: b_readonly,
+                    ..
+                },
+            ) => a_readonly == b_readonly && **a == **b,
+            _ => false,
+        };
+        let is_given = |&&member: &&TypeId| self.deferred(member).is_none();
+        members.iter().all(has_target_of_first) && members.iter().filter(is_given).count() <= 1
+    }
+
     fn new_record(&self, created: OwnedTypeKey<'s>, id: u32) -> TypeRecord<'s> {
         let data = &created.0;
         let may_be_reduced = match data {
@@ -3680,7 +3707,7 @@ impl<'p, 's> Types<'p, 's> {
             | TypeData::ReverseMapped { .. } => true,
             _ => false,
         };
-        let has_only_own_apparent_types = matches!(data, TypeData::Intersection(members) if members.iter().all(is_own_apparent_type));
+        let has_only_own_apparent_types = matches!(data, TypeData::Intersection(members) if members.iter().all(is_own_apparent_type) && !self.can_become_one_reference(members));
         let mut flags = self.object_flags_of(data);
         let has_type_variables_in_alias = (created.1.as_ref())
             .and_then(|provenance| provenance.alias.as_ref())
@@ -3774,6 +3801,33 @@ impl<'p, 's> Types<'p, 's> {
     #[inline]
     pub fn nesting_order(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
         self.rank(a).height.cmp(&self.rank(b).height)
+    }
+
+    /// True if the key of `whole` mentions `part`, directly or through the types in it. tsgo creates a type after every
+    /// type it's built from, so `part` has the lower id there. Only types higher than `part` can mention it, and the
+    /// others aren't entered.
+    pub fn is_built_from(&self, whole: TypeId, part: TypeId) -> bool {
+        let floor = self.rank(part).height;
+        let mut entered: SmallVec<[TypeId; 16]> = SmallVec::new();
+        let mut waiting: SmallVec<[TypeId; 16]> = SmallVec::new();
+        waiting.push(whole);
+        while let Some(next) = waiting.pop() {
+            let mut mentioned = Mentioned {
+                types: *self,
+                found: SmallVec::new(),
+            };
+            visit_type_as_content(&self.record(next).created, &mut mentioned);
+            for id in mentioned.found {
+                if id == part {
+                    return true;
+                }
+                if self.rank(id).height > floor && !entered.contains(&id) {
+                    entered.push(id);
+                    waiting.push(id);
+                }
+            }
+        }
+        false
     }
 
     #[inline]
@@ -4032,15 +4086,17 @@ impl<'p, 's> Types<'p, 's> {
 
     /// `ObjectFlagsFromTypeNode`: `id` is the type of a type node. `first_new_type_id` was taken
     /// before the node was resolved. `createTypeReferenceEx` sets the flags only on a type that it
-    /// creates, so a type that an instantiation created earlier is unchanged.
+    /// creates, so a task-local type that an instantiation created earlier is unchanged; a bound or a published type gets the flag all the same.
     pub fn mark_from_type_node(&self, id: TypeId, first_new_type_id: NewTypes) {
-        if id.0 & LOCAL == 0 {
-            return;
-        }
-        // Unlike in tsgo, a bound type gets the flag even if an instantiation created it earlier.
-        if self.is_new_since(id, first_new_type_id) || self.own.types.is_bound(id.0 & !LOCAL) {
-            let record = self.record(id);
-            record.is_from_type_node.store(true, Ordering::Relaxed);
+        if id.0 & LOCAL == 0
+            || self.is_new_since(id, first_new_type_id)
+            || self.own.types.is_bound(id.0 & !LOCAL)
+        {
+            let flag = &self.record(id).is_from_type_node;
+            // A store would take the record's cache line away from the threads that read it.
+            if !flag.load(Ordering::Relaxed) {
+                flag.store(true, Ordering::Relaxed);
+            }
         }
     }
 
@@ -5046,7 +5102,7 @@ impl Visitor for MentionsOwn {
 struct ContentHash(u64);
 
 #[inline]
-fn fold(a: u64, b: u64) -> u64 {
+pub(crate) fn fold(a: u64, b: u64) -> u64 {
     let product = u128::from(a) * u128::from(b);
     product as u64 ^ (product >> 64) as u64
 }
@@ -5131,6 +5187,38 @@ fn visit_type_as_content<V: Hashing>(created: &OwnedTypeKey, content: &mut V) {
         is_array_pattern.visit(content);
         has_other_instantiation.visit(content);
     }
+}
+
+/// Collects the types a key mentions, directly or through a mapper, a signature or a component list.
+struct Mentioned<'p, 's> {
+    types: Types<'p, 's>,
+    found: SmallVec<[TypeId; 8]>,
+}
+
+impl Hashing for Mentioned<'_, '_> {
+    fn unordered<T: Follow>(&mut self, items: &[T]) {
+        for item in items {
+            item.visit(self);
+        }
+    }
+}
+
+impl Visitor for Mentioned<'_, '_> {
+    fn atom(&mut self, _: Atom) {}
+    fn components(&mut self, id: ComponentsId) {
+        self.types.components(id).visit(self);
+    }
+    fn mapper(&mut self, id: MapperId) {
+        self.unordered(self.types.mapping(id));
+    }
+    fn sig(&mut self, id: SigId) {
+        self.types.sig(id).visit(self);
+    }
+    fn ty(&mut self, id: TypeId) {
+        self.found.push(id);
+    }
+    fn file(&mut self, _: FileId) {}
+    fn plain<T: Hash + ?Sized>(&mut self, _: &T) {}
 }
 
 /// Computes a `Rank`.
@@ -5833,5 +5921,28 @@ mod tests {
         let first = create();
         assert!(!first.is_local());
         assert_eq!(create(), first);
+    }
+
+    #[test]
+    fn type_node_marks_type_that_another_task_created() {
+        let session = Session::new();
+        let store = sharing_store(&session, Interner::new_in(&session));
+        let (file, id) = (FileId(2), crate::bind::SymbolId(7));
+        let key = || TypeKey::Ref {
+            target: Sym { file, id },
+            args: &[TypeId::STRING],
+        };
+        let instantiating = own_store(&session, &store, Sharing::Publishes);
+        let instantiated = Types::new(&store, &instantiating).intern_key(key());
+        assert!(!instantiated.is_local());
+        let own = own_store(&session, &store, Sharing::Publishes);
+        let types = Types::new(&store, &own);
+        assert!(!types.is_from_type_node(instantiated));
+        let first_new_type_id = types.first_new_type_id();
+        let named =
+            types.as_first_request(FirstRequest::FROM_TYPE_NODE, || types.intern_key(key()));
+        types.mark_from_type_node(named, first_new_type_id);
+        assert_eq!(named, instantiated);
+        assert!(types.is_from_type_node(named));
     }
 }

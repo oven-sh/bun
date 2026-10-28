@@ -1644,6 +1644,11 @@ impl CapturedWriter {
                 e.syscall
             );
             self.err = Some(e);
+            // The Cmd signaled below can free this PipeReader, so the chunks still queued must not call back.
+            if let Some(writer) = self.writer.clone() {
+                let child = std::ptr::from_mut(self).cast::<c_void>();
+                writer.cancel_chunks(io_writer::ChildPtr::subproc_capture(child));
+            }
         } else if !all_written {
             return Yield::Suspended;
         }
@@ -2192,6 +2197,7 @@ impl Drop for PipeReader {
 // may free `this` on drop, so a `&mut self` protector would be UB.
 bun_io::impl_buffered_reader_parent! {
     ShellPipeReader for PipeReader;
+    feature = Shell;
     has_on_read_chunk = true;
     on_read_chunk   = |this, chunk, has_more| (*this).on_read_chunk(&chunk, has_more);
     on_reader_done  = |this| PipeReader::on_reader_done(this);

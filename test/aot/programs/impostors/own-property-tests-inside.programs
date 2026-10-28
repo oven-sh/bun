@@ -1,0 +1,3528 @@
+////: Message
+class Message {
+  declare id: number;
+  declare body?: string;
+  declare seen?: boolean;
+  constructor(id: number, body?: string) {
+    this.id = id;
+    if (body !== undefined) this.body = body;
+  }
+}
+////: Object-defineProperty
+Object.defineProperty(Object.getPrototypeOf(old), "value", {
+  get(this: Lazy) {
+    computed++;
+    Object.defineProperty(this, "value", { value: this.id * 11, writable: true, enumerable: true, configurable: true });
+    return this.id * 11;
+  },
+  set(this: Lazy, value: number) {
+    offered++;
+    Object.defineProperty(this, "value", { value: value + 0.5, writable: true, enumerable: false, configurable: true });
+  },
+  configurable: true,
+});
+////: ask
+function ask(change: boolean): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(new URL(import.meta.url), { workerData: { change } });
+    worker.once("message", resolve);
+    worker.once("error", reject);
+  });
+}
+////: byDefinition
+function byDefinition(object: ByDefinition, rounds: number, holder: object) {
+  let sum = 0;
+  for (let i = 0; i < rounds; i++) {
+    sum += object.v ?? 1;
+    if (i === rounds - 2) Object.defineProperty(holder, "v", { get: () => 100, configurable: true });
+  }
+  return sum;
+}
+////: byFunction
+function byFunction(object: ByFunction, rounds: number, arm: boolean) {
+  let sum = 0;
+  for (let i = 0; i < rounds; i++) {
+    sum += object.v ?? 1;
+    if (arm && i === rounds - 2) arrive();
+  }
+  return sum;
+}
+////: byKey
+function byKey(object: ByKey, rounds: number, holder: any, key: string) {
+  let sum = 0;
+  for (let i = 0; i < rounds; i++) {
+    sum += object.v ?? 1;
+    if (i === rounds - 2) holder[key] = 100;
+  }
+  return sum;
+}
+////: byLink
+function byLink(object: ByLink, rounds: number, holder: object, above: object) {
+  let sum = 0;
+  for (let i = 0; i < rounds; i++) {
+    sum += object.v ?? 1;
+    if (i === rounds - 2) Object.setPrototypeOf(holder, above);
+  }
+  return sum;
+}
+////: byObjectAbove
+function byObjectAbove(object: ByObjectAbove, rounds: number, above: { v?: number }) {
+  let sum = 0;
+  for (let i = 0; i < rounds; i++) {
+    sum += object.v ?? 1;
+    if (i === rounds - 2) above.v = 100;
+  }
+  return sum;
+}
+////: byTypedStore
+function byTypedStore(object: ByTypedStore, rounds: number, other: ByTypedStore) {
+  let sum = 0;
+  for (let i = 0; i < rounds; i++) {
+    sum += object.v ?? 1;
+    if (i === rounds - 2) other.v = 100;
+  }
+  return sum;
+}
+////: console-log-2
+console.log(
+  "stores:",
+  attempt(() => write(empty, 1)),
+  attempt(() => write(filled, 3)),
+  attempt(() => write(fresh, 4)),
+  attempt(() => (empty.depth! += 1)),
+  attempt(() => empty.depth!++),
+  attempt(() => (empty.depth ??= 5)),
+  attempt(() => (empty.depth ||= 5)),
+  attempt(() => (empty.depth &&= 5)),
+  attempt(() => Reflect.set(empty, "depth", 6)),
+  attempt(() => Object.assign(fresh, { depth: 7 })),
+);
+////: console-log-5
+console.log(
+  "no change:",
+  byKey(new ByKey(1), 3000, scrap, "v"),
+  byTypedStore(new ByTypedStore(1), 3000, new ByTypedStore(2)),
+  byDefinition(new ByDefinition(1), 3000, scrap),
+  byFunction(new ByFunction(1), 3000, false),
+  byLink(new ByLink(1), 3000, scrap, {}),
+  byObjectAbove(new ByObjectAbove(1), 3000, {}),
+  storesInALoop(new ByKey(1), 3000, scrap, []),
+);
+////: console-log-8
+console.log(
+  "across a yield:",
+  drain(new Step(1), () => {
+    (Step.prototype as any)[name] = 60;
+  }),
+);
+////: describe-10
+function describe(«1»: «2») {
+  return `${read(«1»)} ${«3» in «1»} ${Object.hasOwn(«1», «3»)} [${Object.keys(«1»)}]`;
+}
+////: drain
+function drain(step: Step, between: () => void) {
+  const steps = stepwise(step);
+  const first = steps.next().value;
+  between();
+  const second = steps.next().value;
+  return `${first} ${second} ${steps.next().value}`;
+}
+////: exercise
+function exercise(change: boolean) {
+  const calls: number[] = [];
+  let sum = 0;
+  for (let i = 0; i < 3000; i++) {
+    const links = new Links(i);
+    sum += read(links) ?? 1;
+    if (i & 1) write(links, 2);
+    sum += read(links) ?? 1;
+  }
+  const old = new Links(1);
+  if (change) {
+    Object.defineProperty(Object.getPrototypeOf(old), "resolved", {
+      get() {
+        return 50;
+      },
+      set(value: number) {
+        calls.push(value);
+      },
+      configurable: true,
+    });
+  }
+  const fresh = new Links(2);
+  const seen = `${read(old)} ${read(fresh)}`;
+  write(old, 3);
+  write(fresh, 4);
+  return `${sum} ${seen} ${read(old)} ${read(fresh)} [${Object.keys(old)}] [${calls}]`;
+}
+////: for-106
+for (const position of positions) {
+  attempt("charCodeAt(" + position + ")", () => codeAt("hello", make(position)));
+  attempt("charAt(" + position + ")", () => characterAt("hello", make(position)));
+  attempt("codePointAt(" + position + ")", () => codePointAt("hello", make(position)));
+  attempt("at(" + position + ")", () => at("hello", make(position)));
+  attempt("[" + position + "]", () => element("hello", make(position)));
+  if (log.length) console.log("conversions", log.splice(0).join(" "));
+}
+////: for-118
+for (const run of [throughTheAccessor, throughValueOf, throughToString]) {
+  console.log(run.name, "without a change:", run(gauges, -1));
+  console.log(run.name, "with a change in round 2998:", run(gauges, 2998));
+  console.log(run.name, "afterwards:", run(gauges, -1), gauges[0].peak, gauges[5].peak, new Gauge(0).peak);
+  delete (Gauge.prototype as any).peak;
+  console.log(run.name, "gone again:", run(gauges, -1), gauges[0].peak);
+}
+////: for-128
+for (let i = 0; i < 3000; i++) {
+  const message = new Message(i, i & 1 ? "text" : undefined);
+  length += bodyOf(message)?.length ?? 1;
+  if (i & 2) setBody(message, "other");
+  if (i & 4) markSeen(message);
+  length += state(message).length;
+}
+////: for-130
+for (let i = 0; i < 3000; i++) {
+  const node = new Node_(i);
+  sum += countOf(node) ?? 1;
+  if (i & 1) setCount(node, 2);
+  if (i & 2) setName(node, "ab");
+  sum += (countOf(node) ?? 1) + (nameOf(node)?.length ?? 0);
+}
+////: for-132
+for (let i = 0; i < 3000; i++) {
+  const settings = new Settings(i);
+  sum += settings.limit! + settings.label!.length;
+  if (i % 1000 === 0) setWatch(settings, true);
+  if (i & 1) setLimit(settings, 1);
+  sum += settings.limit!;
+}
+////: for-141
+for (const message of [loud, quiet, plain, new Loud(4), new Quiet(5), new Message(6)]) {
+  setBody(message, "stored");
+  const seen = markSeen(message);
+  console.log(message.constructor.name, state(message), seen, "|", log.join(", "));
+  log.length = 0;
+}
+////: for-159
+for (let i = 0; i < 3000; i++) {
+  const late = new Late(i);
+  sum += lookLate(late).length;
+  if (i & 1) runLate(late, i & 3);
+  sum += late.retries ?? 0;
+}
+////: for-161
+for (let i = 0; i < 3000; i++) {
+  const links = new Links(i) as LinksShape;
+  if (read(links) === undefined) sum++;
+  if (i & 1) write(links, i);
+  sum += resolve(links, 2);
+}
+////: for-162
+for (let i = 0; i < 3000; i++) {
+  const options = new Options("o");
+  sum += read(options) ?? 1;
+  write(options, i & 7);
+  sum += read(options)!;
+}
+////: for-164
+for (let i = 0; i < 3000; i++) {
+  const record = new Record_(i);
+  sum += (read(record) ?? 1) + (has(record) ? 1 : 0);
+  if (i & 1) write(record, 3);
+  sum += (read(record) ?? 1) + (has(record) ? 1 : 0);
+}
+////: for-165
+for (let i = 0; i < 3000; i++) {
+  const task = new Task(i);
+  if (read(task) === undefined) count++;
+  write(task, "o" + (i & 3));
+  count += read(task)!.length;
+}
+////: for-189
+for (let i = 0; i < 3000; i++) {
+  const node = «1»;
+  sum += countOf(node) ?? 1;
+  if (i & 1) setCount(node, 2);
+  if (i & 2) setName(node, "ab");
+  sum += (countOf(node) ?? 1) + (nameOf(node)?.length ?? 0);
+}
+////: for-67
+for (let i = 0; i < 3000; i++) {
+  const links = new Links(i);
+  if (read(links) === undefined) sum++;
+  if (i & 1) write(links, i);
+  sum += resolve(links, 2);
+}
+////: for-84
+for (const value of ["text", 1.5, -0, NaN, 2 ** 31, 2 ** 53, 10n, Symbol.for("s"), null, undefined, true, [], () => 1]) {
+  (odd as any).count = value;
+  const back = (odd as any).count;
+  console.log("  count =", typeof value, String(typeof value === "symbol" ? value.toString() : value), "->", Object.is(back, value), Object.keys(odd).join());
+}
+////: gate
+const gate = Promise.resolve().then(() => {
+  Object.defineProperty(Job.prototype, name, {
+    get() {
+      return 40;
+    },
+    set(this: Job, value: number) {
+      log.push(`job ${this.id} = ${value}`);
+    },
+    configurable: true,
+  });
+});
+////: if
+if (isMainThread) {
+  const [changing, quiet] = await Promise.all([ask(true), ask(false)]);
+  console.log("a worker that changes:", changing);
+  console.log("a worker that does not:", quiet);
+  console.log("the main thread, unchanged:", exercise(false));
+  console.log("the main thread changes:", exercise(true));
+  console.log("a worker started afterwards:", await ask(false));
+  console.log("the main thread again:", exercise(false));
+} else {
+  parentPort!.postMessage(exercise(workerData.change));
+}
+////: install-2
+function install(holder: object, name: string, start: number | undefined) {
+  Object.defineProperty(holder, name, {
+    get() {
+      return start;
+    },
+    set(this: { id: number }, value: number) {
+      log.push(`${name} = ${value} on ${this.id}`);
+    },
+    configurable: true,
+  });
+}
+////: lines-204
+interface «1» {
+  id: number;
+  count?: number;
+  name?: string;
+  child?: «1»;
+  flag?: boolean;
+}
+////: lines-275
+function «1»(object: «2», n: number) {
+  object.retries = (object.retries ?? 0) + n;
+  object.state = "s" + n;
+}
+////: lines-288
+function «1»(object: «2») {
+  return `${object.retries} ${object.state} [${Object.keys(object)}]`;
+}
+////: listing
+function listing(node: Node_) {
+  const names: string[] = [];
+  for (const name in node) names.push(name);
+  return `[${Object.keys(node)}] ${names.join() === Object.keys(node).join()} ${JSON.stringify(node)}`;
+}
+////: make-7
+function make(flags: number): LinksShape {
+  const links = new Links() as LinksShape;
+  links.«1» = flags;
+  return links;
+}
+////: observed
+function observed<C extends AnyClass>(target: C, key: string): C {
+  const values = new WeakMap<object, unknown>();
+  Object.defineProperty(target.prototype, key, {
+    get() {
+      return values.get(this);
+    },
+    set(value) {
+      log.push(`${key} = ${value}`);
+      values.set(this, value);
+    },
+    configurable: true,
+  });
+  return target;
+}
+////: positions
+const positions = [
+  "0",
+  "4",
+  "5",
+  "-1",
+  "-5",
+  "-6",
+  "-0",
+  "1.5",
+  "-0.5",
+  "0.9999999",
+  "NaN",
+  "Infinity",
+  "-Infinity",
+  "2147483647",
+  "2147483648",
+  "-2147483648",
+  "4294967296",
+  "4294967297",
+  "9007199254740993",
+  "'1'",
+  "'01'",
+  "' 1 '",
+  "'1e0'",
+  "'0x1'",
+  "''",
+  "'length'",
+  "'x'",
+  "null",
+  "undefined",
+  "true",
+  "false",
+  "[]",
+  "[2]",
+  "[1, 2]",
+  "{}",
+  "{ valueOf() { log.push('valueOf'); return 2; } }",
+  "{ toString() { log.push('toString'); return '3'; } }",
+  "{ valueOf() { log.push('valueOf'); return {}; }, toString() { log.push('toString'); return '1'; } }",
+  "{ [Symbol.toPrimitive](hint) { log.push(hint); return 1; } }",
+  "{ [Symbol.toPrimitive](hint) { log.push(hint); return {}; } }",
+  "new Number(3)",
+  "new String('2')",
+  "1n",
+  "Symbol('1')",
+  "Symbol.iterator",
+];
+////: readStoreRead-2
+function readStoreRead(links: «1», holder: any) {
+  const before = links.resolved;
+  holder.resolved = 7;
+  return [before, links.resolved];
+}
+////: report-5
+const report = {
+  title: "report",
+  get pages() {
+    if (armed) {
+      armed = false;
+      Object.defineProperty(Page.prototype, "version", {
+        set(this: Page, value: number) {
+          log.push(`set ${value} on ${this.id}`);
+        },
+        configurable: true,
+      });
+    }
+    return 3;
+  },
+};
+////: setLabel
+function setLabel(settings: Settings, value: string) {
+  try {
+    settings.label = value;
+    return "stored";
+  } catch (error) {
+    return (error as Error).constructor.name;
+  }
+}
+////: settings
+const settings: { verbose: boolean } = new Proxy(
+  { verbose: false },
+  {
+    get(target, key, receiver) {
+      if (armed) {
+        armed = false;
+        (Doc.prototype as any)[String(key).replace("verbose", "version")] = 77;
+      }
+      return Reflect.get(target, key, receiver);
+    },
+  },
+);
+////: stepwise
+function* stepwise(step: Step): Generator<number | undefined, string, void> {
+  yield step.result;
+  yield step.result;
+  step.result = 6;
+  return `${step.result} [${Object.keys(step)}]`;
+}
+////: storeDefineStore
+function storeDefineStore(first: Task, second: Task, holder: object, name: string) {
+  first.owner = "before";
+  Object.defineProperty(holder, name, {
+    set(this: Task, value: string) {
+      log.push(`set ${value} on ${this.id}`);
+    },
+    configurable: true,
+  });
+  second.owner = "after";
+}
+////: storesInALoop
+function storesInALoop(object: ByKey, rounds: number, holder: object, log: number[]) {
+  for (let i = 0; i < rounds; i++) {
+    delete object.v;
+    if (i === rounds - 2) Object.defineProperty(holder, "v", { set: value => void log.push(value), configurable: true });
+    object.v = i;
+  }
+  return `${object.v} [${Object.keys(object)}] ${log}`;
+}
+////: throughTheAccessor
+function throughTheAccessor(gauges: Gauge[], at: number) {
+  let sum = 0;
+  for (let i = 0; i < gauges.length; i++) {
+    const gauge = gauges[i];
+    if (i === at) armed = "accessor";
+    sum += gauge.peak ?? 0;
+    sum += gauge.level;
+    sum += gauge.peak ?? 0;
+  }
+  return sum;
+}
+////: throughToString
+function throughToString(gauges: Gauge[], at: number) {
+  let sum = 0;
+  for (let i = 0; i < gauges.length; i++) {
+    const gauge = gauges[i];
+    if (i === at) armed = "toString";
+    sum += `${gauge.peak ?? ""}${gauge}${gauge.peak ?? ""}`.length;
+  }
+  return sum;
+}
+////: throughValueOf
+function throughValueOf(gauges: Gauge[], at: number) {
+  let sum = 0;
+  for (let i = 0; i < gauges.length; i++) {
+    const gauge = gauges[i];
+    if (i === at) armed = "valueOf";
+    sum += (gauge.peak ?? 0) + +gauge + (gauge.peak ?? 0);
+  }
+  return sum;
+}
+////: traps
+function traps(name: string): ProxyHandler<object> {
+  return {
+    get(target, key, receiver) {
+      if (typeof key === "string") log.push(`${name} get ${key} for ${(Object.getOwnPropertyDescriptor(receiver, "id") ?? {}).value}`);
+      return key === "memo" ? 500 : Reflect.get(target, key, receiver);
+    },
+    has(target, key) {
+      log.push(`${name} has ${String(key)}`);
+      return key === "memo" || Reflect.has(target, key);
+    },
+    set(target, key, value, receiver) {
+      log.push(`${name} set ${String(key)} = ${value}`);
+      return value > 100 ? Reflect.defineProperty(receiver, key, { value, writable: true, enumerable: true, configurable: true }) : true;
+    },
+  };
+}
+////: twice
+async function twice(job: Job, gate: Promise<void>) {
+  const before = job.result;
+  await gate;
+  const after = job.result;
+  job.result = 5;
+  return `${before} ${after} ${job.result} [${Object.keys(job)}]`;
+}
+////: untyped
+function untyped(node: any) {
+  const child = node.child;
+  return `${typeof node.count}:${String(node.count)} ${typeof node.name}:${JSON.stringify(node.name)} ${typeof child}:${child && child.id} ${typeof node.flag}:${String(node.flag)}`;
+}
+////: write-2
+function write(links: Links, value: number) {
+  links.resolved = value;
+}
+////: writePages
+function writePages(first: Page, second: Page) {
+  first.version = 1;
+  const text = JSON.stringify(report);
+  second.version = 2;
+  return `${text.length} ${first.version} ${second.version} [${Object.keys(first)}] [${Object.keys(second)}]`;
+}
+//// own-property-tests-inside-for-in-meet-inherited-and-changing-keys.js
+function listOwn(object) {
+  const lines = [];
+  for (const key in object) lines.push(key + ":" + object.hasOwnProperty(key));
+  return lines.join(" ");
+}
+
+function listHasOwn(object) {
+  const lines = [];
+  for (const key in object) lines.push(key + ":" + Object.hasOwn(object, key));
+  return lines.join(" ");
+}
+
+function listIn(object) {
+  const lines = [];
+  for (const key in object) lines.push(key + ":" + (key in object));
+  return lines.join(" ");
+}
+
+function listValues(object) {
+  const lines = [];
+  for (const key in object) lines.push(key + "=" + object[key]);
+  return lines.join(" ");
+}
+
+function listOwnOfOther(object, other) {
+  const lines = [];
+  for (const key in object) lines.push(key + ":" + Object.hasOwn(other, key) + ":" + (key in other) + ":" + other[key]);
+  return lines.join(" ");
+}
+
+function listWhileDeleting(object, victim) {
+  const lines = [];
+  for (const key in object) {
+    delete object[victim];
+    lines.push(key + ":" + Object.hasOwn(object, key) + ":" + (key in object) + ":" + object[key]);
+  }
+  return lines.join(" ");
+}
+
+function listWhileAdding(object) {
+  const lines = [];
+  for (const key in object) {
+    object["added" + key] = 1;
+    lines.push(key + ":" + Object.hasOwn(object, key) + ":" + object[key]);
+  }
+  return lines.join(" ") + " | " + Object.keys(object).join();
+}
+
+function listWhileRedefining(object, victim) {
+  const lines = [];
+  let reads = 0;
+  for (const key in object) {
+    Object.defineProperty(object, victim, {
+      get() {
+        reads++;
+        return "got";
+      },
+      configurable: true,
+      enumerable: true,
+    });
+    lines.push(key + ":" + Object.hasOwn(object, key) + ":" + object[key]);
+  }
+  return lines.join(" ") + " reads " + reads;
+}
+
+function attempt(label, run) {
+  try {
+    console.log(label, run());
+  } catch (error) {
+    console.log(label, "threw", error.constructor.name);
+  }
+}
+
+const uses = { listOwn, listHasOwn, listIn, listValues };
+for (let i = 0; i < 2000; i++) for (const use of Object.values(uses)) use({ a: i, b: 2, c: 3 });
+
+////= lines-67	Parent	own	1
+Parent.prototype.inherited = 2;
+
+////= lines-122	Base	field	1
+Base.prototype.shared = "s";
+
+const subjects = {
+  honest: () => ({ a: 1, b: 2, c: 3 }),
+  "an inherited key": () => Object.create({ up: 1 }, { down: { value: 2, enumerable: true } }),
+  "an own key that hides an inherited one": () => Object.assign(Object.create({ both: "up", up: 1 }), { both: "down" }),
+  "a constructor function's instance": () => new Parent(),
+  "a class instance with a key on the prototype": () => new Base(),
+  "index keys and names": () => ({ b: 1, 1: "one", a: 2, 0: "zero" }),
+  "an array with a name": () => Object.assign([7, 8], { name: "n" }),
+  "a string object": () => new String("hi"),
+  "no prototype": () => Object.assign(Object.create(null), { a: 1 }),
+  "its own hasOwnProperty": () => ({ a: 1, hasOwnProperty: () => "mine" }),
+  "a proxy that hides what it lists": () =>
+    new Proxy(
+      { a: 1, b: 2 },
+      {
+        has: () => false,
+        getOwnPropertyDescriptor: (target, key) =>
+          key === "b" ? undefined : Reflect.getOwnPropertyDescriptor(target, key),
+      },
+    ),
+  "a getter that deletes the next key": () => {
+    const object = {
+      get first() {
+        delete object.second;
+        return 1;
+      },
+      second: 2,
+      third: 3,
+    };
+    return object;
+  },
+};
+
+for (const [name, make] of Object.entries(subjects))
+  for (const [use, run] of Object.entries(uses)) attempt(name + ", " + use + ":", () => run(make()));
+
+attempt("another object of the same shape:", () => listOwnOfOther({ a: 1, b: 2 }, { a: 3, b: 4 }));
+attempt("another object that lacks a key:", () => listOwnOfOther({ a: 1, b: 2 }, { a: 3 }));
+attempt("another object that inherits a key:", () => listOwnOfOther({ a: 1, b: 2 }, Object.create({ a: 5, b: 6 })));
+attempt("another object in another order:", () => listOwnOfOther({ a: 1, b: 2 }, { b: 4, a: 3 }));
+attempt("a primitive as the other:", () => listOwnOfOther({ length: 1, b: 2 }, "xyz"));
+attempt("the key just visited is deleted:", () => listWhileDeleting({ a: 1, b: 2, c: 3 }, "a"));
+attempt("a key still to come is deleted:", () => listWhileDeleting({ a: 1, b: 2, c: 3 }, "c"));
+attempt("a deleted key shows an inherited one:", () =>
+  listWhileDeleting(Object.assign(Object.create({ b: "up" }), { a: 1, b: 2, c: 3 }), "b"),
+);
+attempt("keys are added:", () => listWhileAdding({ a: 1, b: 2 }));
+attempt("a key becomes a getter:", () => listWhileRedefining({ a: 1, b: 2, c: 3 }, "b"));
+for (const [use, run] of Object.entries(uses)) attempt("honest again, " + use + ":", () => run({ a: 1, b: 2, c: 3 }));
+//// patterns-are-run-against-values-that-are-not-strings.js
+////= show-26
+
+const log = [];
+globalThis.log = log;
+
+function isWord(value) {
+  return /^\w+$/.test(value);
+}
+
+function hasDigit(value) {
+  return /\d/.test(value);
+}
+
+function firstNumber(value) {
+  const found = /(\d+)/.exec(value);
+  return found === null ? null : [found[0], found[1], found.index, typeof found.input, found.input.length];
+}
+
+function mentionsNothing(value) {
+  return /null|undefined|NaN|object/.test(value);
+}
+
+function countMatches(value) {
+  const pattern = /l/g;
+  let count = 0;
+  while (pattern.exec(value) !== null && count < 10) count++;
+  return count;
+}
+
+function stickyAtOne(value) {
+  const pattern = /e/y;
+  pattern.lastIndex = 1;
+  return [pattern.test(value), pattern.lastIndex];
+}
+
+function named(value) {
+  const found = /(?<head>\w)(?<tail>\w*)/.exec(value);
+  return found && [found.groups.head, found.groups.tail];
+}
+
+const uses = [
+  ["is a word", isWord],
+  ["has a digit", hasDigit],
+  ["first number", firstNumber],
+  ["mentions nothing", mentionsNothing],
+  ["count of l", countMatches],
+  ["sticky at one", stickyAtOne],
+  ["named groups", named],
+];
+
+const values = [
+  "'hello1'",
+  "''",
+  "'he' + 'llo'",
+  "'h\\u00e9llo \\u4e16 42'",
+  "new String('hello1')",
+  "Object.assign(new String('hello1'), { toString() { log.push('toString'); return 'changed 7'; } })",
+  "12345",
+  "-0",
+  "1e21",
+  "NaN",
+  "12n",
+  "true",
+  "null",
+  "undefined",
+  "[]",
+  "['hello', 1]",
+  "{}",
+  "{ toString() { log.push('toString'); return 'hello 5'; }, valueOf() { log.push('valueOf'); return 'no'; } }",
+  "{ [Symbol.toPrimitive](hint) { log.push(hint); return 'hello 6'; } }",
+  "Symbol('hello1')",
+  "Buffer.from('hello1')",
+  "new Uint8Array([1, 2])",
+  "/hello1/",
+  "new Date(NaN)",
+  "Object.create(null)",
+];
+
+let total = 0;
+////= for-179	"hello1"
+console.log("2000 honest rounds", total);
+
+for (const [name, use] of uses) {
+  for (const text of values) {
+    attempt(name + " " + text, () => use(make(text)));
+    if (log.length) console.log("  log:", log.splice(0).join(", "));
+  }
+}
+attempt("no argument at all", () => [/undefined/.test(), /^undefined$/.exec()[0]]);
+
+for (const position of ["1", "'1'", "1.9", "-1", "NaN", "null", "undefined", "99", "2 ** 32 + 1", "{ valueOf() { log.push('valueOf'); return 1; } }", "1n", "Symbol('1')"]) {
+  attempt("lastIndex is " + position, () => {
+    const pattern = /l/g;
+    pattern.lastIndex = make(position);
+    const found = pattern.exec("hello");
+    return [found && found.index, pattern.lastIndex];
+  });
+  if (log.length) console.log("  log:", log.splice(0).join(", "));
+}
+
+console.log("bytes made in plain sight", Buffer.from("he").length);
+//// pieces-of-a-text-are-compared-and-it-is-not-a-text.js
+////= show-26
+
+function sliceIsEll(text) {
+  return text.slice(1, 4) === "ell";
+}
+
+function substringIsEll(text) {
+  return text.substring(1, 4) === "ell";
+}
+
+function characterIsE(text) {
+  return text.charAt(1) === "e";
+}
+
+function elementIsE(text) {
+  return text[1] === "e";
+}
+
+function codeIsE(text) {
+  return text.charCodeAt(1) === 101;
+}
+
+////= lines-33	startsWithEllAtOne	text	text.startsWith	"ell"	1
+
+function endIsLlo(text) {
+  return text.slice(-3) === "llo";
+}
+
+function sliceLooselyEquals(text) {
+  return text.slice(1, 2) == "e";
+}
+
+function sliceInASwitch(text) {
+  switch (text.slice(0, 2)) {
+    case "he":
+      return "he";
+    case "//":
+      return "comment";
+  }
+  return "other";
+}
+
+function sliceAsAKey(text) {
+  return { he: "by he", "h,e": "by a list", "104,101": "by bytes" }[text.slice(0, 2)];
+}
+
+////= lines-265	lengthOfSlice	text	slice	1	4
+
+function sliceOfSlice(text) {
+  return text.slice(1).slice(1).slice(0, 1);
+}
+
+////= lines-218	trimmedIsEmpty	text	text.trim	""
+
+////= lines-218	lowerIsHello	text	text.toLowerCase	"hello"
+
+////= receivers
+
+const uses = [
+  ["slice", "slice is ell", sliceIsEll],
+  ["substring", "substring is ell", substringIsEll],
+  ["charAt", "character is e", characterIsE],
+  ["at", "element is e", elementIsE],
+  ["charCodeAt", "code is e", codeIsE],
+  ["startsWith", "starts with ell at one", startsWithEllAtOne],
+  ["slice", "end is llo", endIsLlo],
+  ["slice", "slice loosely equals", sliceLooselyEquals],
+  ["slice", "slice in a switch", sliceInASwitch],
+  ["slice", "slice as a key", sliceAsAKey],
+  ["slice", "length of slice", lengthOfSlice],
+  ["slice", "slice of slice", sliceOfSlice],
+  ["trim", "trimmed is empty", trimmedIsEmpty],
+  ["toLowerCase", "lower is hello", lowerIsHello],
+];
+
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  for (const [, , use] of uses) total += String(use("hello")).length;
+}
+console.log("2000 honest rounds", total);
+
+////= outcome-4
+
+for (const [member, name, use] of uses) {
+  const list = receivers(member);
+  for (let from = 0; from < list.length; from += 5) {
+    console.log(name + ": " + list.slice(from, from + 5).map(text => outcome(use, text)).join("; "));
+  }
+  console.log(name + " of look-alikes whose pieces are not texts: " + [
+    "{ " + member + "() { return new String('ell'); } }",
+    "{ " + member + "() { return ['ell']; } }",
+    "{ " + member + "() { return { toString() { return 'ell'; }, length: 3, slice() { return this; } }; } }",
+    "{ " + member + "() { return 101; } }",
+    "{ " + member + "() { return null; } }",
+  ].map(text => outcome(use, text)).join("; "));
+}
+
+console.log("bytes made in plain sight", Buffer.from("he").length);
+//// positions-given-to-character-methods-are-not-integers.js
+////= show-26
+
+////= codeAt-2
+
+////= lines-73	element	text	index	text[index
+
+const log = [];
+globalThis.log = log;
+
+////= positions
+
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  total += codeAt("hello", i % 5) + characterAt("hello", i % 5).length + codePointAt("hello", i % 5) + at("hello", i % 5).length + element("hello", i % 5).length;
+}
+console.log("2000 honest rounds", total);
+
+////= for-106
+attempt("no position at all", () => ["hello".charCodeAt(), "hello".charAt(), "hello".codePointAt(), "hello".at()]);
+attempt("honest again", () => [codeAt("hello", 1), characterAt("hello", 1), codePointAt("hello", 1), at("hello", 1), element("hello", 1)]);
+//// positions-given-to-character-methods-are-not-integers-with-the-values-in-plain-sight.js
+////= show-33
+
+const made = {
+  "0": () => (0),
+  "4": () => (4),
+  "5": () => (5),
+  "-1": () => (-1),
+  "-5": () => (-5),
+  "-6": () => (-6),
+  "-0": () => (-0),
+  "1.5": () => (1.5),
+  "-0.5": () => (-0.5),
+  "0.9999999": () => (0.9999999),
+  "NaN": () => (NaN),
+  "Infinity": () => (Infinity),
+  "-Infinity": () => (-Infinity),
+  "2147483647": () => (2147483647),
+  "2147483648": () => (2147483648),
+  "-2147483648": () => (-2147483648),
+  "4294967296": () => (4294967296),
+  "4294967297": () => (4294967297),
+  "9007199254740993": () => (9007199254740993),
+  "'1'": () => ('1'),
+  "'01'": () => ('01'),
+  "' 1 '": () => (' 1 '),
+  "'1e0'": () => ('1e0'),
+  "'0x1'": () => ('0x1'),
+  "''": () => (''),
+  "'length'": () => ('length'),
+  "'x'": () => ('x'),
+  "null": () => (null),
+  "undefined": () => (undefined),
+  "true": () => (true),
+  "false": () => (false),
+  "[]": () => ([]),
+  "[2]": () => ([2]),
+  "[1, 2]": () => ([1, 2]),
+  "{}": () => ({}),
+  "{ valueOf() { log.push('valueOf'); return 2; } }": () => ({ valueOf() { log.push('valueOf'); return 2; } }),
+  "{ toString() { log.push('toString'); return '3'; } }": () => ({ toString() { log.push('toString'); return '3'; } }),
+  "{ valueOf() { log.push('valueOf'); return {}; }, toString() { log.push('toString'); return '1'; } }": () => ({ valueOf() { log.push('valueOf'); return {}; }, toString() { log.push('toString'); return '1'; } }),
+  "{ [Symbol.toPrimitive](hint) { log.push(hint); return 1; } }": () => ({ [Symbol.toPrimitive](hint) { log.push(hint); return 1; } }),
+  "{ [Symbol.toPrimitive](hint) { log.push(hint); return {}; } }": () => ({ [Symbol.toPrimitive](hint) { log.push(hint); return {}; } }),
+  "new Number(3)": () => (new Number(3)),
+  "new String('2')": () => (new String('2')),
+  "1n": () => (1n),
+  "Symbol('1')": () => (Symbol('1')),
+  "Symbol.iterator": () => (Symbol.iterator),
+};
+
+////= make-3
+
+////= codeAt-2
+
+////= lines-73	element	text	index	text[index
+
+const log = [];
+globalThis.log = log;
+
+////= positions
+
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  total += codeAt("hello", i % 5) + characterAt("hello", i % 5).length + codePointAt("hello", i % 5) + at("hello", i % 5).length + element("hello", i % 5).length;
+}
+console.log("2000 honest rounds", total);
+
+////= for-106
+attempt("no position at all", () => ["hello".charCodeAt(), "hello".charAt(), "hello".codePointAt(), "hello".at()]);
+attempt("honest again", () => [codeAt("hello", 1), characterAt("hello", 1), codePointAt("hello", 1), at("hello", 1), element("hello", 1)]);
+//// primitives-answer-to-the-names-of-objects.js
+////= show-17
+
+class Playlist {
+  constructor(length, name, size) {
+    this.length = length;
+    this.name = name;
+    this.size = size;
+    this.description = "a playlist";
+  }
+  toFixed(digits) {
+    return "playlist fixed to " + digits;
+  }
+  at(index) {
+    return "track " + index;
+  }
+  slice(from) {
+    return "tracks from " + from;
+  }
+  valueOf() {
+    return this.length;
+  }
+  toString() {
+    return "playlist " + this.name;
+  }
+}
+
+////= lines-7	lengthOf	value	value.length
+
+////= lines-7	nameOf	value	value.name
+
+////= lines-7	sizeOf	value	value.size
+
+////= lines-7	descriptionOf	value	value.description
+
+////= lines-3	fixed	value	value.toFixed	1
+
+////= lines-3	first	value	value.at	0
+
+////= lines-3	rest	value	value.slice	1
+
+////= lines-5	asValue	value	value.valueOf
+
+////= lines-5	asText	value	value.toString
+
+////= lines-230	makerOf	value	value.constructor.name
+
+////= lines-60	setLength	value	value.length	1
+
+////= lines-60	setName	value	value.name	"renamed"
+
+function lengthFromPattern({ length }) {
+  return length;
+}
+
+const uses = [
+  [".length", lengthOf],
+  [".name", nameOf],
+  [".size", sizeOf],
+  [".description", descriptionOf],
+  [".toFixed(1)", fixed],
+  [".at(0)", first],
+  [".slice(1)", rest],
+  [".valueOf()", asValue],
+  [".toString()", value => (typeof value === "function" ? typeof asText(value) : asText(value))],
+  [".constructor.name", makerOf],
+  [".length = 1", setLength],
+  [".name = ..", setName],
+  ["{ length }", lengthFromPattern],
+];
+
+const values = [
+  ["a string", () => "abc"],
+  ["a number", () => 3.14159],
+  ["-0", () => -0],
+  ["a boolean", () => true],
+  ["a bigint", () => 7n],
+  ["a symbol with a description", () => Symbol("described")],
+  ["null", () => null],
+  ["undefined", () => undefined],
+  ["an array", () => [1, 2, 3]],
+  ["a frozen array", () => Object.freeze([1, 2, 3])],
+  ["a function of two parameters", () => function two(a, b) {}],
+  ["a class", () => class Named { static size = "static size"; }],
+  ["arguments", () => (function () { return arguments; })(1, 2)],
+  ["a typed array", () => new Uint8Array([1, 2, 3])],
+  ["a Map", () => new Map([[1, 2]])],
+  ["a Set", () => new Set([1, 2])],
+  ["a String object", () => new String("abc")],
+  ["a Number object", () => new Number(2.5)],
+  ["an Error", () => new RangeError("out")],
+  ["a regular expression", () => /x/g],
+  ["a literal with the names", () => ({ length: "long", name: "literal", size: "big", description: "a literal" })],
+  ["a string joined at run time", () => ["joi", "ned"].join("")],
+  ["from JSON, a number", () => JSON.parse("12.5")],
+];
+
+function look(phase) {
+  for (const [label, make] of values) {
+    for (const [name, use] of uses) {
+      let line = phase + " | " + label + " | " + name + " -> ";
+      try {
+        line += show(use(make()));
+      } catch (error) {
+        line += "threw " + error.constructor.name;
+      }
+      console.log(line);
+    }
+  }
+}
+
+let count = 0;
+for (let i = 0; i < 2000; i++) for (const [, use] of uses) if (use(new Playlist(i % 9, "mix", 3)) !== undefined) count++;
+console.log("2000 honest playlists", count);
+look("after 2000 playlists");
+console.log("honest again", uses.map(([, use]) => show(use(new Playlist(2, "mix", 3)))).join(" "));
+//// private-names-on-impostors-and-on-foreign-objects.js
+////= show-9
+
+////= lines-109	handBack	value	return
+
+class Vault {
+  #code;
+  label = "vault";
+  constructor(code) {
+    this.#code = code;
+  }
+  reveal() {
+    return this.#code;
+  }
+  change(code) {
+    this.#code = code;
+    return this.#code;
+  }
+  #double() {
+    return this.#code * 2;
+  }
+  doubled() {
+    return this.#double();
+  }
+  static isVault(value) {
+    return #code in value;
+  }
+  static revealOf(value) {
+    return value.#code;
+  }
+  static same(one, other) {
+    return one.#code === other.#code;
+  }
+}
+
+class Stamp extends handBack {
+  #ink = "stamped";
+  static read(value) {
+    return value.#ink;
+  }
+  static write(value, ink) {
+    value.#ink = ink;
+    return value.#ink;
+  }
+  static has(value) {
+    return #ink in value;
+  }
+}
+
+class LookAlike {
+  #code;
+  label = "vault";
+  constructor(code) {
+    this.#code = code;
+  }
+  reveal() {
+    return "the look-alike's " + this.#code;
+  }
+}
+
+const uses = [
+  ["reveal()", value => value.reveal()],
+  ["Vault's reveal with it as this", value => Vault.prototype.reveal.call(value)],
+  ["Vault's change with it as this", value => Vault.prototype.change.call(value, 9)],
+  ["Vault's doubled with it as this", value => Vault.prototype.doubled.call(value)],
+  ["#code in it", value => Vault.isVault(value)],
+  ["it.#code", value => Vault.revealOf(value)],
+  ["compared with an honest one", value => Vault.same(new Vault(1), value)],
+];
+
+const values = [
+  ["an honest vault", () => new Vault(1)],
+  ["a subclass instance", () => new (class extends Vault {})(1)],
+  ["a class of the same text", () => new LookAlike(1)],
+  ["a literal", () => ({ label: "vault", reveal() { return "a literal"; } })],
+  ["a literal under Vault.prototype", () => ({ __proto__: Vault.prototype, label: "vault" })],
+  ["Object.create(Vault.prototype)", () => Object.create(Vault.prototype)],
+  ["an object that inherits from a vault", () => Object.create(new Vault(1))],
+  ["a proxy around a vault", () => new Proxy(new Vault(1), {})],
+  ["a vault moved under Object.prototype", () => Object.setPrototypeOf(new Vault(1), Object.prototype)],
+  ["a vault without a prototype", () => Object.setPrototypeOf(new Vault(1), null)],
+  ["a frozen vault", () => Object.freeze(new Vault(1))],
+  ["a structured clone of a vault", () => structuredClone(new Vault(1))],
+  ["Reflect.construct of Vault for Object", () => Reflect.construct(Vault, [1], Object)],
+  ["Reflect.construct of Object for Vault", () => Reflect.construct(Object, [], Vault)],
+  ["a vault with a string", () => new Vault("1")],
+  ["a number", () => 5],
+  ["null", () => null],
+];
+
+for (let i = 0; i < 2000; i++) for (const [, use] of uses) use(new Vault(i % 9));
+
+////= lines-300	or (const [label, make] of values
+
+const targets = [
+  ["a literal", () => ({ plain: true })],
+  ["a vault", () => new Vault(1)],
+  ["an array", () => [1, 2]],
+  ["a function", () => function target() {}],
+  ["a frozen literal", () => Object.freeze({ plain: true })],
+  ["a proxy", () => new Proxy({}, {})],
+  ["an object without a prototype", () => Object.create(null)],
+  ["the global object", () => globalThis],
+  ["Vault.prototype", () => Vault.prototype],
+];
+
+for (let i = 0; i < 2000; i++) Stamp.read(new Stamp({ plain: true }));
+
+for (const [label, make] of targets) {
+  const target = make();
+  const steps = [
+    ["has the name before", () => Stamp.has(target)],
+    ["read before", () => Stamp.read(target)],
+    ["stamp", () => new Stamp(target) === target],
+    ["has the name after", () => Stamp.has(target)],
+    ["read after", () => Stamp.read(target)],
+    ["write", () => Stamp.write(target, "again")],
+    ["stamp twice", () => new Stamp(target) === target],
+    ["own keys did not change", () => Reflect.ownKeys(target).includes("#ink")],
+    ["instanceof Stamp", () => target instanceof Stamp],
+  ];
+  for (const [name, step] of steps) {
+    let line = "stamping " + label + " | " + name + " -> ";
+    try {
+      line += show(step());
+    } catch (error) {
+      line += "threw " + error.constructor.name;
+    }
+    console.log(line);
+  }
+}
+for (const primitive of [5, "text", null, undefined]) {
+  let line = "stamping " + show(primitive) + " -> ";
+  try {
+    const made = new Stamp(primitive);
+    line += [typeof made, Stamp.has(made), made instanceof Stamp].join();
+  } catch (error) {
+    line += "threw " + error.constructor.name;
+  }
+  console.log(line);
+}
+//// promise-all-hands-over-the-value.cjs
+const log = [];
+
+////= show-28
+
+////= pushes-13	[a] = await Promise.all([given])
+
+////= iterates-15	given	[a] = await Promise.all([given])
+
+////= readsCharCode-12	[s] = await Promise.all([given])
+
+////= truncates-9	[n] = await Promise.all([given])
+
+////= addsOne-8	[n] = await Promise.all([given])
+
+////= calls-10	[f] = await Promise.all([given])
+
+////= addsMembers-11	[o] = await Promise.all([given])
+
+////= storesMember-13	[o] = await Promise.all([given])
+
+////= table-8
+
+main();
+//// proto-stores-that-do-and-do-not-change-the-prototype.cjs
+////= show-7
+
+const parent = {
+  greeting: "inherited greeting",
+  greet() {
+    return "hello from " + this.title;
+  },
+};
+
+////= lines-7	greetingOf	thing	thing.greeting
+
+////= lines-5	greet	thing	thing.greet
+
+function look(label, make) {
+  let line = label + " -> ";
+  try {
+    const thing = make();
+    line += "parent is the parent: " + (Object.getPrototypeOf(thing) === parent);
+    line += " | owns __proto__: " + Object.hasOwn(thing, "__proto__");
+    line += " | keys " + Object.keys(thing).join();
+    line += " | greeting " + show(greetingOf(thing));
+    try {
+      line += " | greet() " + show(greet(thing));
+    } catch (error) {
+      line += " | greet() threw " + error.constructor.name;
+    }
+  } catch (error) {
+    line += "threw " + error.constructor.name;
+  }
+  console.log(line);
+}
+
+const name = "__proto__";
+const __proto__ = parent;
+
+const cases = [
+  ["{ __proto__: parent }", () => ({ __proto__: parent, title: "a" })],
+  ['{ "__proto__": parent }', () => ({ "__proto__": parent, title: "b" })],
+  ['{ ["__proto__"]: parent }', () => ({ ["__proto__"]: parent, title: "c" })],
+  ["{ [name]: parent }", () => ({ [name]: parent, title: "d" })],
+  ["{ __proto__ } shorthand", () => ({ __proto__, title: "e" })],
+  ["{ __proto__() {} } method", () => ({ __proto__() {}, title: "f" })],
+  ["{ __proto__: 5 }", () => ({ __proto__: 5, title: "g" })],
+  ["{ __proto__: null }", () => ({ __proto__: null, title: "h" })],
+  ["{ __proto__: undefined }", () => ({ __proto__: undefined, title: "i" })],
+  ["thing.__proto__ = parent", () => { const thing = { title: "j" }; thing.__proto__ = parent; return thing; }],
+  ["thing[name] = parent", () => { const thing = { title: "k" }; thing[name] = parent; return thing; }],
+  ["thing.__proto__ = 5", () => { const thing = { title: "l" }; thing.__proto__ = 5; return thing; }],
+  ["thing.__proto__ = null, then = parent", () => { const thing = { title: "m" }; thing.__proto__ = null; thing.__proto__ = parent; return thing; }],
+  ["a store on an object without a prototype", () => { const thing = Object.create(null); thing.title = "n"; thing.__proto__ = parent; return thing; }],
+  ["Object.assign from a literal with a computed __proto__", () => Object.assign({ title: "o" }, { ["__proto__"]: parent })],
+  ["a spread of a literal with a computed __proto__", () => ({ title: "p", ...{ ["__proto__"]: parent } })],
+  ["JSON.parse with a __proto__ member", () => JSON.parse('{"title":"q","__proto__":{"greeting":"parsed greeting"}}')],
+  ["Object.assign from that parsed object", () => Object.assign({ title: "r" }, JSON.parse('{"__proto__":{"greeting":"parsed greeting"}}'))],
+  ["defineProperty of __proto__", () => Object.defineProperty({ title: "s" }, "__proto__", { value: parent, enumerable: true })],
+  ["a store on a frozen object", () => { const thing = Object.freeze({ title: "t" }); thing.__proto__ = parent; return thing; }],
+  ["a store on an object that is not extensible", () => { const thing = Object.preventExtensions({ title: "u" }); thing.__proto__ = parent; return thing; }],
+  ["a store that would make a cycle", () => { const thing = Object.create(parent); thing.title = "v"; parent.__proto__ = thing; return thing; }],
+  ["the setter taken from Object.prototype", () => { const thing = { title: "w" }; Object.getOwnPropertyDescriptor(Object.prototype, "__proto__").set.call(thing, parent); return thing; }],
+  ["a class field named __proto__", () => new (class { __proto__ = parent; title = "x"; })()],
+  ["this.__proto__ = parent in a constructor function", () => new (function Odd() { this.title = "y"; this.__proto__ = parent; })()],
+  ["destructuring into thing.__proto__", () => { const thing = { title: "z" }; ({ found: thing.__proto__ } = { found: parent }); return thing; }],
+];
+
+for (const [label, make] of cases) look("at first, " + label, make);
+
+let length = 0;
+for (let i = 0; i < 2000; i++) {
+  const honest = { __proto__: parent, title: "honest" };
+  length += greetingOf(honest).length + greet(honest).length;
+}
+console.log("2000 honest objects", length);
+
+for (const [label, make] of cases) look("later, " + label, make);
+console.log("the parent's own parent is still Object.prototype:", Object.getPrototypeOf(parent) === Object.prototype);
+
+const log = [];
+const catcher = {
+  set late(value) {
+    log.push("the setter of the new prototype got " + value);
+  },
+};
+
+function makeSource() {
+  const source = { early: 1 };
+  Object.defineProperty(source, "__proto__", { value: catcher, enumerable: true });
+  source.late = 2;
+  return source;
+}
+
+////= lines-215	copyByAssign	source
+
+////= lines-116	copyBySpread	source
+
+function copyByLoop(source) {
+  const copy = {};
+  for (const key in source) copy[key] = source[key];
+  return copy;
+}
+
+function copyByEntries(source) {
+  return Object.fromEntries(Object.entries(source));
+}
+
+for (let i = 0; i < 2000; i++) for (const copy of [copyByAssign, copyBySpread, copyByLoop, copyByEntries]) copy({ early: 1, late: 2 });
+
+for (const [label, copy] of [
+  ["Object.assign", copyByAssign],
+  ["a spread", copyBySpread],
+  ["a for-in loop", copyByLoop],
+  ["entries and fromEntries", copyByEntries],
+]) {
+  const made = copy(makeSource());
+  console.log(label + " of a source with an own __proto__ in the middle -> keys " + Reflect.ownKeys(made).join() + " | under the catcher: " + (Object.getPrototypeOf(made) === catcher) + " | log " + log.splice(0).join(", "));
+  console.log(label + " of an honest source -> " + show(copy({ early: 1, late: 2 })));
+}
+//// prototype-names/a-class-has-members-under-computed-names-that-are-also-fields-added-late.ts
+// The class body itself has members under computed names: a method, a getter with a setter, and a setter alone. The names are known only at run time,
+// and they are the names of fields that typed code adds to the instances late, through a cast. The prototype has them before the first instance exists.
+const log: string[] = [];
+const names: string[] = JSON.parse('["target","type","flags"]');
+interface LinksShape {
+  _brand: any;
+  target?: () => string;
+  type?: number;
+  flags?: number;
+  free?: number;
+}
+const Links = class implements LinksShape {
+  declare _brand: any;
+  [names[0]]() {
+    return "the method";
+  }
+  get [names[1]]() {
+    return 41;
+  }
+  set [names[1]](value: number) {
+    log.push("type = " + value);
+  }
+  set [names[2]](value: number) {
+    log.push("flags = " + value);
+  }
+};
+////= make-7	flags
+function typeOf(links: LinksShape) {
+  if (links.type === undefined) links.type = 1;
+  return links.type;
+}
+////= lines-16	setType	links	LinksShape	value	number	links.type
+function call(links: LinksShape) {
+  return links.target?.();
+}
+function state(links: LinksShape) {
+  return `${call(links)} ${links.type} ${links.flags} ${links.free} [${Object.keys(links)}]`;
+}
+
+const first = make(1);
+console.log("the first instance:", state(first), "|", log.join(", "));
+log.length = 0;
+let sum = 0;
+for (let i = 0; i < 3000; i++) {
+  const links = make(i & 3);
+  sum += typeOf(links) + (links.flags ?? 5) + (links.free ?? 7) + call(links)!.length;
+  if (i & 1) links.free = 1;
+  if (i === 2999) setType(links, 9);
+  sum += links.free ?? 7;
+}
+console.log("many", sum, log.length, log[log.length - 1]);
+log.length = 0;
+first.target = () => "an own function";
+setType(first, 2);
+console.log("stored:", state(first), "|", log.join(", "));
+for (const name of names) delete (Links.prototype as any)[name];
+const late = make(3);
+console.log("all three deleted:", state(first), "|", state(late), "|", typeOf(late), state(late));
+//// prototype-names/a-fresh-object-is-filled-right-after-new-and-the-prototype-has-accessors-by-then.ts
+// `const links = new Links() as Shape; links.checkFlags = flags;`: the object is fresh, its slots are known to be empty and its prototype is known to be the class's.
+// None of that says what the prototype holds. After 3000 rounds it gets a setter for the field that is stored first and a value for the field that is read first.
+interface LinksShape {
+  _brand: any;
+  checkFlags?: number;
+  target?: { id: number };
+  nameType?: { id: number };
+}
+const Links = class implements LinksShape {
+  declare _brand: any;
+};
+const log: string[] = [];
+const shared = { id: 1 };
+function make(flags: number): LinksShape {
+  const links = new Links() as LinksShape;
+  links.checkFlags = flags;
+  links.target = shared;
+  return links;
+}
+function makeAndLook(flags: number) {
+  const links = new Links() as LinksShape;
+  const before = links.nameType;
+  links.checkFlags = flags;
+  const stored = links.checkFlags;
+  if (!links.nameType) links.nameType = shared;
+  return `${before?.id} ${stored} ${links.nameType.id} [${Object.keys(links)}]`;
+}
+////= lines-34	Sym	flags	links	LinksShape	parent	Sym
+function createSymbol(flags: number, checkFlags: number) {
+  const symbol = new Sym(flags);
+  symbol.links = make(checkFlags);
+  return symbol;
+}
+function state(links: LinksShape) {
+  return `${links.checkFlags} ${links.target?.id} ${links.nameType?.id} [${Object.keys(links)}]`;
+}
+
+let length = 0;
+for (let i = 0; i < 3000; i++) {
+  length += state(make(i & 7)).length + makeAndLook(i & 7).length + Object.keys(createSymbol(i, i)).length;
+}
+console.log("warm", length);
+
+const holder: any = Object.getPrototypeOf(make(0));
+Object.defineProperty(holder, ["check", "Flags"].join(""), {
+  get() {
+    return -1;
+  },
+  set(value: number) {
+    log.push("checkFlags = " + value);
+  },
+  configurable: true,
+});
+holder[["name", "Type"].join("")] = { id: 77 };
+console.log("make:", state(make(3)), "|", log.join(", "));
+console.log("make and look:", makeAndLook(4), "|", log.join(", "));
+Object.defineProperty(Object.getPrototypeOf(new Sym(0)), "links", {
+  set(this: Sym, value: LinksShape) {
+    log.push("links offered to symbol " + this.flags);
+  },
+  configurable: true,
+});
+const symbol = createSymbol(5, 6);
+console.log("a symbol:", Object.keys(symbol).join(), symbol.links, "|", log.join(", "));
+log.length = 0;
+delete holder.checkFlags;
+delete holder.nameType;
+delete (Sym.prototype as any).links;
+console.log("gone again:", state(make(7)), "|", makeAndLook(8), "|", Object.keys(createSymbol(9, 9)).join(), log.length);
+//// prototype-names/a-function-returns-a-new-class-each-call-and-one-of-them-is-changed.ts
+// One class expression is evaluated many times: each evaluation has a prototype object of its own, and all share the compiled code.
+// The prototype of one evaluation gets the name; its instances must inherit, the instances of the others must not. A class evaluated after the change starts clean.
+////= lines-72	Model	id	number	cached	number
+type ModelClass = new (id: number) => Model;
+const log: string[] = [];
+function defineModel(): ModelClass {
+  return class implements Model {
+    declare id: number;
+    declare cached?: number;
+    constructor(id: number) {
+      this.id = id;
+    }
+  };
+}
+////= lines-14	read	model	Model	return	model.cached
+////= lines-264	remember	model	Model	model.cached	model.id	3
+function state(model: Model) {
+  return `${read(model)} ${"cached" in model} [${Object.keys(model)}]`;
+}
+
+const classes: ModelClass[] = [];
+for (let i = 0; i < 6; i++) classes.push(defineModel());
+let sum = 0;
+for (let i = 0; i < 3000; i++) {
+  const model = new classes[i % 6](i & 7);
+  sum += read(model) ?? 1;
+  if (i & 1) sum += remember(model);
+}
+console.log("warm", sum);
+
+const old = classes.map((C, index) => new C(index));
+classes[2].prototype["cach" + "ed"] = 222;
+Object.defineProperty(classes[4].prototype, "cached", {
+  get() {
+    return undefined;
+  },
+  set(this: Model, value: number) {
+    log.push(`set ${value} on ${this.id}`);
+  },
+  configurable: true,
+});
+const later = defineModel();
+classes.push(later);
+old.push(new later(6));
+console.log("old instances:", old.map(state).join(" | "));
+console.log("new instances:", classes.map((C, index) => state(new C(index))).join(" | "));
+console.log("remember:", old.map(remember).join(), "|", log.join(", "));
+console.log("old instances:", old.map(state).join(" | "));
+sum = 0;
+for (let i = 0; i < 3000; i++) {
+  const model = new classes[i % 7](i & 7);
+  sum += read(model) ?? 1;
+  if (i & 1) sum += remember(model) ?? 0;
+}
+console.log("mixed", sum, log.length);
+for (let i = 0; i < 2000; i++) {
+  const C = defineModel();
+  if (i % 500 === 0) C.prototype.cached = i;
+  const model = new C(i);
+  if (i % 250 === 0) console.log("evaluation", i, state(model), remember(model));
+}
+//// prototype-names/a-generator-is-suspended-while-its-caller-puts-the-name-on-the-prototype.ts
+// A generator reads an optional field, yields it, reads it again behind the yield, stores it and lists the keys.
+// While it is suspended its caller puts a value of that name on the prototype, under a computed key.
+////= lines-13	Step	id	number	result	number
+////= stepwise
+////= drain
+
+let length = 0;
+for (let i = 0; i < 3000; i++) length += drain(new Step(i), () => {}).length;
+console.log("warm", length);
+
+const name = ["re", "sult"].join("");
+////= console-log-8
+console.log("afterwards:", drain(new Step(2), () => {}));
+delete (Step.prototype as any)[name];
+console.log("gone again:", drain(new Step(3), () => {}));
+//// prototype-names/a-generator-is-suspended-while-its-caller-puts-the-name-on-the-prototype-with-class-fields-that-the-constructor-deletes.ts
+// A generator reads an optional field, yields it, reads it again behind the yield, stores it and lists the keys.
+// While it is suspended its caller puts a value of that name on the prototype, under a computed key.
+// In this twin the optional fields are class fields without `declare`: they are defined at birth and the constructor deletes them, so the slots are declared and empty. Every instance may reach unknown code.
+const unknownCodeRuns = process.argv.length > 99;
+////= handOver
+////= lines-4	Step	id	number	result	number
+////= stepwise
+////= drain
+
+let length = 0;
+for (let i = 0; i < 3000; i++) length += drain(new Step(i), () => {}).length;
+console.log("warm", length);
+
+const name = ["re", "sult"].join("");
+////= console-log-8
+console.log("afterwards:", drain(new Step(2), () => {}));
+delete (Step.prototype as any)[name];
+console.log("gone again:", drain(new Step(3), () => {}));
+//// prototype-names/a-helper-that-gets-the-class-as-an-argument-adds-defaults-and-accessors.ts
+// Helpers written like decorators get a class as an argument and change its prototype: one copies defaults, one makes a field observed.
+// One class is treated before it has instances, the other after 3000 of them.
+type AnyClass = new (...args: any[]) => object;
+const log: string[] = [];
+function withDefaults<C extends AnyClass>(target: C, defaults: Record<string, unknown>): C {
+  for (const key of Object.keys(defaults)) target.prototype[key] = defaults[key];
+  return target;
+}
+////= observed
+
+////= lines-34	Early	id	retries	number	state	string
+////= lines-34	Late	id	retries	number	state	string
+////= lines-288	lookEarly	Early
+////= lines-288	lookLate	Late
+////= lines-275	runEarly	Early
+////= lines-275	runLate	Late
+
+observed(withDefaults(Early, { retries: 3 }), "state");
+const early = new Early(1);
+console.log("treated first:", lookEarly(early));
+runEarly(early, 1);
+console.log("run:", lookEarly(early), log.join(", "));
+log.length = 0;
+
+let sum = 0;
+////= for-159
+console.log("warm", sum, log.length);
+const empty = new Late(1);
+const filled = new Late(2);
+runLate(filled, 2);
+observed(withDefaults(Late, { retries: 3 }), "state");
+const fresh = new Late(3);
+console.log("treated late:", lookLate(empty), "|", lookLate(filled), "|", lookLate(fresh));
+runLate(empty, 1);
+runLate(filled, 1);
+runLate(fresh, 1);
+console.log("run:", lookLate(empty), "|", lookLate(filled), "|", lookLate(fresh), "|", log.join(", "));
+//// prototype-names/a-helper-that-gets-the-class-as-an-argument-adds-defaults-and-accessors-with-class-fields-that-the-constructor-deletes.ts
+// Helpers written like decorators get a class as an argument and change its prototype: one copies defaults, one makes a field observed.
+// One class is treated before it has instances, the other after 3000 of them.
+// In this twin the optional fields are class fields without `declare`: they are defined at birth and the constructor deletes them, so the slots are declared and empty. Every instance may reach unknown code.
+const unknownCodeRuns = process.argv.length > 99;
+////= handOver
+type AnyClass = new (...args: any[]) => object;
+const log: string[] = [];
+function withDefaults<C extends AnyClass>(target: C, defaults: Record<string, unknown>): C {
+  for (const key of Object.keys(defaults)) target.prototype[key] = defaults[key];
+  return target;
+}
+////= observed
+
+////= lines-29	Early	id	retries	number	state	string
+////= lines-29	Late	id	retries	number	state	string
+////= lines-288	lookEarly	Early
+////= lines-288	lookLate	Late
+////= lines-275	runEarly	Early
+////= lines-275	runLate	Late
+
+observed(withDefaults(Early, { retries: 3 }), "state");
+const early = new Early(1);
+console.log("treated first:", lookEarly(early));
+runEarly(early, 1);
+console.log("run:", lookEarly(early), log.join(", "));
+log.length = 0;
+
+let sum = 0;
+////= for-159
+console.log("warm", sum, log.length);
+const empty = new Late(1);
+const filled = new Late(2);
+runLate(filled, 2);
+observed(withDefaults(Late, { retries: 3 }), "state");
+const fresh = new Late(3);
+console.log("treated late:", lookLate(empty), "|", lookLate(filled), "|", lookLate(fresh));
+runLate(empty, 1);
+runLate(filled, 1);
+runLate(fresh, 1);
+console.log("run:", lookLate(empty), "|", lookLate(filled), "|", lookLate(fresh), "|", log.join(", "));
+//// prototype-names/a-hidden-accessor-on-a-second-object-changes-the-prototype-between-two-typed-accesses.ts
+// One function reads an optional field, reads a field of a second object, and reads or stores the optional field again. The read in the middle is an innocent read of a slot, 3000 times over.
+// Then a definition that the build cannot attribute turns that field of one second object into an accessor, and the accessor puts the name on the prototype, on the base's prototype, hangs another object above the instance,
+// or defines the field on the instance. What was tested for the first access no longer holds for the second.
+const unknownCodeRuns = process.argv.length > 99;
+////= handOver
+class Base {
+  declare id: number;
+  constructor(id: number) {
+    this.id = id;
+    handOver(this);
+  }
+}
+class Links extends Base {
+  declare resolved?: number;
+  declare target?: string;
+}
+class Other {
+  value = 1;
+  constructor() {
+    handOver(this);
+  }
+}
+const log: string[] = [];
+function readReadRead(links: Links, other: Other) {
+  const before = links.resolved;
+  const seen = other.value;
+  return `${before} ${seen} ${links.resolved} ${"resolved" in links}`;
+}
+function readReadStore(links: Links, other: Other) {
+  const before = links.resolved;
+  const seen = other.value;
+  links.resolved = seen + 10;
+  return `${before} ${links.resolved} [${Object.keys(links)}]`;
+}
+function storeReadStore(links: Links, other: Other) {
+  links.target = "first";
+  const seen = other.value;
+  links.resolved = seen + 20;
+  return `${links.target} ${links.resolved} [${Object.keys(links)}]`;
+}
+function cleanUp() {
+  delete (Links.prototype as any).resolved;
+  delete (Base.prototype as any).resolved;
+}
+const accessors: PropertyDescriptor = {
+  get() { return 70; },
+  set(value: number) { log.push("set " + value); },
+  configurable: true,
+};
+const effects: [string, (links: Links) => void][] = [
+  ["nothing", () => {}],
+  ["a value on the prototype", links => { Object.getPrototypeOf(links).resolved = 50; }],
+  ["accessors on the prototype", links => { Object.defineProperty(Object.getPrototypeOf(links), "resolved", accessors); }],
+  ["accessors on the base's prototype", () => { Object.defineProperty(Base.prototype, "resolved", accessors); }],
+  ["a read-only value on the base's prototype", () => { Object.defineProperty(Base.prototype, "resolved", { value: 60, writable: false, configurable: true }); }],
+  ["another prototype for the instance", links => { Object.setPrototypeOf(links, { resolved: 80 }); }],
+  ["accessors on the instance", links => { Object.defineProperty(links, "resolved", accessors); }],
+  ["a value on the instance", links => { (links as any).resolved = 90; }],
+  ["the instance is closed", links => { Object.preventExtensions(links); }],
+];
+let length = 0;
+for (let i = 0; i < 3000; i++) length += readReadRead(new Links(i), new Other()).length + readReadStore(new Links(i), new Other()).length + storeReadStore(new Links(i), new Other()).length;
+console.log("warm", length);
+const name: string = JSON.parse('"value"');
+for (const [label, effect] of effects) {
+  for (const run of [readReadRead, readReadStore, storeReadStore]) {
+    const links = new Links(1), other = new Other();
+    Object.defineProperty(other, name, { get() { effect(links); return 2; }, configurable: true });
+    let outcome: string;
+    try {
+      outcome = run(links, other);
+    } catch (error) {
+      outcome = (error as Error).constructor.name;
+    }
+    console.log(`${label}, ${run.name}: ${outcome} | ${log.join()} | a neighbor: ${readReadRead(new Links(2), new Other())}`);
+    log.length = 0;
+    cleanUp();
+  }
+}
+console.log("afterwards:", readReadStore(new Links(3), new Other()));
+//// prototype-names/a-hook-kept-on-the-global-object-changes-the-prototype-of-what-it-is-given.ts
+// The loop hands every hundredth object to a function that it reads from the global object: an unknown callee.
+// In round 2000 the hook gives the prototype of what it was handed a getter and a setter named like the field the loop reads and fills.
+interface LinksShape {
+  _brand: any;
+  flags?: number;
+  resolved?: number;
+}
+const Links = class implements LinksShape {
+  declare _brand: any;
+};
+const log: string[] = [];
+let calls = 0;
+(globalThis as any).inspect = function (value: object) {
+  if (++calls !== 21) return;
+  Object.defineProperty(Object.getPrototypeOf(value), ["res", "olved"].join(""), {
+    get() {
+      return 1000;
+    },
+    set(value: number) {
+      if (log.length < 4) log.push("set " + value);
+    },
+    configurable: true,
+  });
+};
+////= make-7	flags
+function resolve(links: LinksShape): number {
+  if (links.resolved === undefined) links.resolved = links.flags! + 1;
+  return links.resolved;
+}
+function run(rounds: number) {
+  const inspect: (value: unknown) => void = (globalThis as any).inspect;
+  let sum = 0;
+  let filled = 0;
+  for (let i = 0; i < rounds; i++) {
+    const links = make(i & 7);
+    sum += links.resolved ?? 0;
+    if (i % 100 === 0) inspect(links);
+    sum += resolve(links);
+    if (Object.hasOwn(links, "resolved")) filled++;
+  }
+  return `${sum} ${filled}`;
+}
+const kept = make(1);
+const keptFilled = make(2);
+resolve(keptFilled);
+console.log("run:", run(3000), calls, log.join(", "));
+console.log("kept:", kept.resolved, resolve(kept), Object.keys(kept).join(), "|", keptFilled.resolved, resolve(keptFilled), Object.keys(keptFilled).join());
+delete (Links.prototype as any).resolved;
+console.log("gone again:", kept.resolved, resolve(kept), Object.keys(kept).join());
+console.log("run:", run(3000), calls);
+//// prototype-names/a-lazy-getter-arrives-on-the-prototype-and-fills-the-field-of-the-instance-it-is-read-on.ts
+// The lazy pattern: a getter on the prototype computes a value and defines it on `this` under its own name, so that the next read finds an own field.
+// The matching setter defines the field too. Both arrive after 3000 rounds; they fill the very slot whose emptiness sent the access to them.
+let computed = 0;
+let offered = 0;
+////= lines-13	Lazy	id	number	value	number
+////= lines-14	valueOf	lazy	Lazy	return	lazy.value
+////= lines-198	twice	lazy	Lazy	lazy.value	lazy.value
+////= lines-130	store	lazy	Lazy	number	lazy.value
+function state(lazy: Lazy) {
+  return `[${Object.keys(lazy)}] ${JSON.stringify(Object.getOwnPropertyDescriptor(lazy, "value"))}`;
+}
+
+let sum = 0;
+for (let i = 0; i < 3000; i++) {
+  const lazy = new Lazy(i);
+  sum += valueOf(lazy) ?? 1;
+  if (i & 1) sum += store(lazy, 2)!;
+}
+console.log("warm", sum);
+
+const old = new Lazy(1);
+const oldFilled = new Lazy(2);
+store(oldFilled, 20);
+////= Object-defineProperty
+console.log("before the first read:", state(old));
+console.log("two reads in one function:", twice(old), computed, state(old));
+console.log("an instance that had the field:", twice(oldFilled), computed);
+const fresh = new Lazy(3);
+console.log("a store first:", store(fresh, 7), offered, state(fresh));
+console.log("a second store:", store(fresh, 8), offered, state(fresh));
+sum = 0;
+for (let i = 0; i < 3000; i++) {
+  const lazy = new Lazy(i & 7);
+  if (i & 1) sum += store(lazy, 2)!;
+  sum += valueOf(lazy)! + valueOf(lazy)!;
+}
+console.log("many:", sum, computed, offered);
+delete old.value;
+console.log("emptied and read again:", twice(old), computed);
+//// prototype-names/a-lazy-getter-arrives-on-the-prototype-and-fills-the-field-of-the-instance-it-is-read-on-with-class-fields-that-the-constructor-deletes.ts
+// The lazy pattern: a getter on the prototype computes a value and defines it on `this` under its own name, so that the next read finds an own field.
+// The matching setter defines the field too. Both arrive after 3000 rounds; they fill the very slot whose emptiness sent the access to them.
+// In this twin the optional fields are class fields without `declare`: they are defined at birth and the constructor deletes them, so the slots are declared and empty. Every instance may reach unknown code.
+const unknownCodeRuns = process.argv.length > 99;
+////= handOver
+let computed = 0;
+let offered = 0;
+////= lines-4	Lazy	id	number	value	number
+////= lines-14	valueOf	lazy	Lazy	return	lazy.value
+////= lines-198	twice	lazy	Lazy	lazy.value	lazy.value
+////= lines-130	store	lazy	Lazy	number	lazy.value
+function state(lazy: Lazy) {
+  return `[${Object.keys(lazy)}] ${JSON.stringify(Object.getOwnPropertyDescriptor(lazy, "value"))}`;
+}
+
+let sum = 0;
+for (let i = 0; i < 3000; i++) {
+  const lazy = new Lazy(i);
+  sum += valueOf(lazy) ?? 1;
+  if (i & 1) sum += store(lazy, 2)!;
+}
+console.log("warm", sum);
+
+const old = new Lazy(1);
+const oldFilled = new Lazy(2);
+store(oldFilled, 20);
+////= Object-defineProperty
+console.log("before the first read:", state(old));
+console.log("two reads in one function:", twice(old), computed, state(old));
+console.log("an instance that had the field:", twice(oldFilled), computed);
+const fresh = new Lazy(3);
+console.log("a store first:", store(fresh, 7), offered, state(fresh));
+console.log("a second store:", store(fresh, 8), offered, state(fresh));
+sum = 0;
+for (let i = 0; i < 3000; i++) {
+  const lazy = new Lazy(i & 7);
+  if (i & 1) sum += store(lazy, 2)!;
+  sum += valueOf(lazy)! + valueOf(lazy)!;
+}
+console.log("many:", sum, computed, offered);
+delete old.value;
+console.log("emptied and read again:", twice(old), computed);
+//// prototype-names/a-lazy-getter-arrives-on-the-prototype-and-fills-the-field-of-the-instance-it-is-read-on-with-fields-added-late-through-a-cast.ts
+// The lazy pattern: a getter on the prototype computes a value and defines it on `this` under its own name, so that the next read finds an own field.
+// The matching setter defines the field too. Both arrive after 3000 rounds; they fill the very slot whose emptiness sent the access to them.
+// In this twin the class declares only what its constructor stores: the other fields are added late, through a cast to an interface.
+let computed = 0;
+let offered = 0;
+////= lines-72	LazyShape	id	number	value	number
+////= lines-59	Lazy	id	number
+////= lines-14	valueOf	lazy	LazyShape	return	lazy.value
+////= lines-198	twice	lazy	LazyShape	lazy.value	lazy.value
+////= lines-130	store	lazy	LazyShape	number	lazy.value
+function state(lazy: LazyShape) {
+  return `[${Object.keys(lazy)}] ${JSON.stringify(Object.getOwnPropertyDescriptor(lazy, "value"))}`;
+}
+
+let sum = 0;
+for (let i = 0; i < 3000; i++) {
+  const lazy = new Lazy(i) as LazyShape;
+  sum += valueOf(lazy) ?? 1;
+  if (i & 1) sum += store(lazy, 2)!;
+}
+console.log("warm", sum);
+
+const old = new Lazy(1) as LazyShape;
+const oldFilled = new Lazy(2) as LazyShape;
+store(oldFilled, 20);
+Object.defineProperty(Object.getPrototypeOf(old), "value", {
+  get(this: LazyShape) {
+    computed++;
+    Object.defineProperty(this, "value", { value: this.id * 11, writable: true, enumerable: true, configurable: true });
+    return this.id * 11;
+  },
+  set(this: LazyShape, value: number) {
+    offered++;
+    Object.defineProperty(this, "value", { value: value + 0.5, writable: true, enumerable: false, configurable: true });
+  },
+  configurable: true,
+});
+console.log("before the first read:", state(old));
+console.log("two reads in one function:", twice(old), computed, state(old));
+console.log("an instance that had the field:", twice(oldFilled), computed);
+const fresh = new Lazy(3) as LazyShape;
+console.log("a store first:", store(fresh, 7), offered, state(fresh));
+console.log("a second store:", store(fresh, 8), offered, state(fresh));
+sum = 0;
+for (let i = 0; i < 3000; i++) {
+  const lazy = new Lazy(i & 7) as LazyShape;
+  if (i & 1) sum += store(lazy, 2)!;
+  sum += valueOf(lazy)! + valueOf(lazy)!;
+}
+console.log("many:", sum, computed, offered);
+delete old.value;
+console.log("emptied and read again:", twice(old), computed);
+//// prototype-names/a-loop-reads-one-instance-again-and-again-and-the-name-arrives-in-a-late-round.ts
+// The object does not change inside the loop, so the test of its prototype and the read of its empty slot look invariant.
+// In the round before the last, something in the loop's own body puts the name on the prototype: a store under a key, a typed store whose receiver is the prototype,
+// Object.defineProperty, a small function of the program, Object.setPrototypeOf on the prototype, and a store to an object that was hung above the prototype earlier.
+////= lines-83	ByKey	v
+////= lines-83	ByTypedStore	v
+////= lines-83	ByDefinition	v
+////= lines-83	ByFunction	v
+////= lines-83	ByLink	v
+////= lines-83	ByObjectAbove	v
+////= byKey
+////= byTypedStore
+////= byDefinition
+function arrive() {
+  (ByFunction.prototype as any)["v"] = 100;
+}
+////= byFunction
+////= byLink
+////= byObjectAbove
+////= storesInALoop
+
+const scrap: any = {};
+const above: { v?: number } = {};
+Object.setPrototypeOf(ByObjectAbove.prototype, above);
+////= console-log-5
+console.log("a store under a key:", byKey(new ByKey(2), 3000, ByKey.prototype, "v"));
+console.log("a typed store:", byTypedStore(new ByTypedStore(2), 3000, ByTypedStore.prototype));
+console.log("a definition:", byDefinition(new ByDefinition(2), 3000, ByDefinition.prototype));
+console.log("a function:", byFunction(new ByFunction(2), 3000, true));
+console.log("a link:", byLink(new ByLink(2), 3000, ByLink.prototype, { v: 100 }));
+console.log("an object above:", byObjectAbove(new ByObjectAbove(2), 3000, above));
+delete (ByKey.prototype as any).v;
+console.log("stores:", storesInALoop(new ByKey(3), 3000, ByKey.prototype, []));
+//// prototype-names/a-loop-reads-one-instance-again-and-again-and-the-name-arrives-in-a-late-round-with-class-fields-that-the-constructor-deletes.ts
+// The object does not change inside the loop, so the test of its prototype and the read of its empty slot look invariant.
+// In the round before the last, something in the loop's own body puts the name on the prototype: a store under a key, a typed store whose receiver is the prototype,
+// Object.defineProperty, a small function of the program, Object.setPrototypeOf on the prototype, and a store to an object that was hung above the prototype earlier.
+// In this twin the optional fields are class fields without `declare`: they are defined at birth and the constructor deletes them, so the slots are declared and empty. Every instance may reach unknown code.
+const unknownCodeRuns = process.argv.length > 99;
+////= handOver
+////= lines-51	ByKey	v
+////= lines-51	ByTypedStore	v
+////= lines-51	ByDefinition	v
+////= lines-51	ByFunction	v
+////= lines-51	ByLink	v
+////= lines-51	ByObjectAbove	v
+////= byKey
+////= byTypedStore
+////= byDefinition
+function arrive() {
+  (ByFunction.prototype as any)["v"] = 100;
+}
+////= byFunction
+////= byLink
+////= byObjectAbove
+////= storesInALoop
+
+const scrap: any = {};
+const above: { v?: number } = {};
+Object.setPrototypeOf(ByObjectAbove.prototype, above);
+////= console-log-5
+console.log("a store under a key:", byKey(new ByKey(2), 3000, ByKey.prototype, "v"));
+console.log("a typed store:", byTypedStore(new ByTypedStore(2), 3000, ByTypedStore.prototype));
+console.log("a definition:", byDefinition(new ByDefinition(2), 3000, ByDefinition.prototype));
+console.log("a function:", byFunction(new ByFunction(2), 3000, true));
+console.log("a link:", byLink(new ByLink(2), 3000, ByLink.prototype, { v: 100 }));
+console.log("an object above:", byObjectAbove(new ByObjectAbove(2), 3000, above));
+delete (ByKey.prototype as any).v;
+console.log("stores:", storesInALoop(new ByKey(3), 3000, ByKey.prototype, []));
+//// prototype-names/a-method-of-the-class-and-a-field-of-the-instance-share-a-name.ts
+// The class has a method and an accessor from the start; some instances get an own field under the method's name.
+// Then the method is replaced on the prototype by another function, by a getter with a setter, and is deleted. The name is one the prototype is known to have.
+const log: string[] = [];
+class Item {
+  declare id: number;
+  declare note?: string;
+  constructor(id: number) {
+    this.id = id;
+  }
+  label(): string {
+    return "method of " + this.id;
+  }
+  get double() {
+    return this.id * 2;
+  }
+}
+function call(item: Item) {
+  return item.label?.();
+}
+function give(item: Item, f: () => string) {
+  item.label = f;
+}
+function state(item: Item) {
+  return `${call(item)} ${Object.hasOwn(item, "label")} ${item.double} [${Object.keys(item)}]`;
+}
+
+let length = 0;
+for (let i = 0; i < 3000; i++) {
+  const item = new Item(i & 7);
+  length += call(item).length;
+  if (i & 1) give(item, () => "own");
+  length += call(item).length + item.double;
+}
+console.log("warm", length);
+
+const bare = new Item(1);
+const covered = new Item(2);
+give(covered, () => "own of 2");
+console.log("start:", state(bare), "|", state(covered));
+(Item.prototype as any)["la" + "bel"] = function (this: Item) {
+  return "replaced for " + this.id;
+};
+console.log("replaced:", state(bare), "|", state(covered), "|", state(new Item(3)));
+Object.defineProperty(Item.prototype, "label", {
+  get(this: Item) {
+    return () => "from the getter for " + this.id;
+  },
+  set(this: Item, value: () => string) {
+    log.push(`set on ${this.id}: ${value()}`);
+  },
+  configurable: true,
+});
+console.log("accessors:", state(bare), "|", state(covered), "|", state(new Item(3)));
+give(bare, () => "late");
+give(covered, () => "own again");
+console.log("stored:", state(bare), "|", state(covered), "|", log.join(", "));
+delete (covered as any).label;
+console.log("own one deleted:", state(covered));
+delete (Item.prototype as any).label;
+console.log("no method:", state(bare), "|", state(covered), "|", "label" in bare);
+give(bare, () => "own at last");
+console.log("stored:", state(bare), log.length);
+Object.defineProperty(Item.prototype, "double", { value: -1, configurable: true });
+console.log("the accessor became a value:", state(bare), new Item(4).double);
+//// prototype-names/a-plain-store-puts-a-number-on-the-prototype-under-the-name-of-an-optional-field.ts
+// A plain store puts a number on the prototype of a class under the name of an optional field,
+// after 3000 rounds of reads that found the slot empty and of first stores that filled it.
+////= lines-34	Links	flags	resolved	number	target	object
+////= read
+////= write-2
+function resolve(links: Links, value: number) {
+  return links.resolved ?? (links.resolved = value);
+}
+function describe(links: Links) {
+  return [read(links), "resolved" in links, Object.hasOwn(links, "resolved"), Object.keys(links).join()].map(String).join(" ");
+}
+////= readStoreRead-2	Links
+
+let sum = 0;
+////= for-67
+console.log("warm", sum);
+
+const empty = new Links(1);
+const alsoEmpty = new Links(2);
+const filled = new Links(3);
+write(filled, 30);
+console.log("before:", describe(empty), "|", describe(filled));
+console.log("around the store:", readStoreRead(empty, Links.prototype).join());
+const fresh = new Links(4);
+console.log("inherited:", describe(empty), "|", describe(filled), "|", describe(fresh));
+console.log("resolve finds it:", resolve(alsoEmpty, 5), describe(alsoEmpty));
+write(empty, 10);
+write(fresh, 40);
+console.log("stored over it:", describe(empty), "|", describe(fresh));
+delete empty.resolved;
+console.log("own one deleted:", describe(empty));
+(Links.prototype as any).resolved = undefined;
+console.log("undefined on the prototype:", describe(empty), "|", describe(new Links(5)), "|", resolve(new Links(6), 60));
+delete (Links.prototype as any).resolved;
+console.log("gone again:", describe(empty), "|", describe(filled), "|", describe(fresh), "|", describe(new Links(7)));
+sum = 0;
+////= for-67
+console.log("afterwards", sum);
+//// prototype-names/a-plain-store-puts-a-number-on-the-prototype-under-the-name-of-an-optional-field-with-class-fields-that-the-constructor-deletes.ts
+// A plain store puts a number on the prototype of a class under the name of an optional field,
+// after 3000 rounds of reads that found the slot empty and of first stores that filled it.
+// In this twin the optional fields are class fields without `declare`: they are defined at birth and the constructor deletes them, so the slots are declared and empty. Every instance may reach unknown code.
+const unknownCodeRuns = process.argv.length > 99;
+////= handOver
+////= lines-29	Links	flags	resolved	number	target	object
+////= read
+////= write-2
+function resolve(links: Links, value: number) {
+  return links.resolved ?? (links.resolved = value);
+}
+function describe(links: Links) {
+  return [read(links), "resolved" in links, Object.hasOwn(links, "resolved"), Object.keys(links).join()].map(String).join(" ");
+}
+////= readStoreRead-2	Links
+
+let sum = 0;
+////= for-67
+console.log("warm", sum);
+
+const empty = new Links(1);
+const alsoEmpty = new Links(2);
+const filled = new Links(3);
+write(filled, 30);
+console.log("before:", describe(empty), "|", describe(filled));
+console.log("around the store:", readStoreRead(empty, Links.prototype).join());
+const fresh = new Links(4);
+console.log("inherited:", describe(empty), "|", describe(filled), "|", describe(fresh));
+console.log("resolve finds it:", resolve(alsoEmpty, 5), describe(alsoEmpty));
+write(empty, 10);
+write(fresh, 40);
+console.log("stored over it:", describe(empty), "|", describe(fresh));
+delete empty.resolved;
+console.log("own one deleted:", describe(empty));
+(Links.prototype as any).resolved = undefined;
+console.log("undefined on the prototype:", describe(empty), "|", describe(new Links(5)), "|", resolve(new Links(6), 60));
+delete (Links.prototype as any).resolved;
+console.log("gone again:", describe(empty), "|", describe(filled), "|", describe(fresh), "|", describe(new Links(7)));
+sum = 0;
+////= for-67
+console.log("afterwards", sum);
+//// prototype-names/a-plain-store-puts-a-number-on-the-prototype-under-the-name-of-an-optional-field-with-fields-added-late-through-a-cast.ts
+// A plain store puts a number on the prototype of a class under the name of an optional field,
+// after 3000 rounds of reads that found the slot empty and of first stores that filled it.
+// In this twin the class declares only what its constructor stores: the other fields are added late, through a cast to an interface.
+interface LinksShape {
+  flags: number;
+  resolved?: number;
+  target?: object;
+}
+////= lines-105	Links	flags
+////= lines-14	read	links	LinksShape	return	links.resolved
+////= lines-16	write	links	LinksShape	value	number	links.resolved
+function resolve(links: LinksShape, value: number) {
+  return links.resolved ?? (links.resolved = value);
+}
+function describe(links: LinksShape) {
+  return [read(links), "resolved" in links, Object.hasOwn(links, "resolved"), Object.keys(links).join()].map(String).join(" ");
+}
+////= readStoreRead-2	LinksShape
+
+let sum = 0;
+////= for-161
+console.log("warm", sum);
+
+const empty = new Links(1) as LinksShape;
+const alsoEmpty = new Links(2) as LinksShape;
+const filled = new Links(3) as LinksShape;
+write(filled, 30);
+console.log("before:", describe(empty), "|", describe(filled));
+console.log("around the store:", readStoreRead(empty, Links.prototype).join());
+const fresh = new Links(4) as LinksShape;
+console.log("inherited:", describe(empty), "|", describe(filled), "|", describe(fresh));
+console.log("resolve finds it:", resolve(alsoEmpty, 5), describe(alsoEmpty));
+write(empty, 10);
+write(fresh, 40);
+console.log("stored over it:", describe(empty), "|", describe(fresh));
+delete empty.resolved;
+console.log("own one deleted:", describe(empty));
+(Links.prototype as any).resolved = undefined;
+console.log("undefined on the prototype:", describe(empty), "|", describe((new Links(5) as LinksShape)), "|", resolve((new Links(6) as LinksShape), 60));
+delete (Links.prototype as any).resolved;
+console.log("gone again:", describe(empty), "|", describe(filled), "|", describe(fresh), "|", describe((new Links(7) as LinksShape)));
+sum = 0;
+////= for-161
+console.log("afterwards", sum);
+//// prototype-names/a-promise-reaction-changes-the-prototype-between-two-reads-of-an-async-function.ts
+// An async function reads an optional field, awaits, and reads it again.
+// While it is suspended a promise reaction puts a getter and a setter of that name on the prototype.
+////= lines-13	Job	id	number	result	number
+const log: string[] = [];
+////= twice
+
+let length = 0;
+for (let i = 0; i < 3000; i++) length += (await twice(new Job(i), Promise.resolve())).length;
+console.log("warm", length);
+
+const name = ["re", "sult"].join("");
+////= gate
+console.log("across an await:", await twice(new Job(1), gate), "|", log.join(", "));
+console.log("afterwards:", await twice(new Job(2), Promise.resolve()), "|", log.join(", "));
+delete (Job.prototype as any)[name];
+console.log("gone again:", await twice(new Job(3), Promise.resolve()), "|", log.length);
+//// prototype-names/a-promise-reaction-changes-the-prototype-between-two-reads-of-an-async-function-with-class-fields-that-the-constructor-deletes.ts
+// An async function reads an optional field, awaits, and reads it again.
+// While it is suspended a promise reaction puts a getter and a setter of that name on the prototype.
+// In this twin the optional fields are class fields without `declare`: they are defined at birth and the constructor deletes them, so the slots are declared and empty. Every instance may reach unknown code.
+const unknownCodeRuns = process.argv.length > 99;
+////= handOver
+////= lines-4	Job	id	number	result	number
+const log: string[] = [];
+////= twice
+
+let length = 0;
+for (let i = 0; i < 3000; i++) length += (await twice(new Job(i), Promise.resolve())).length;
+console.log("warm", length);
+
+const name = ["re", "sult"].join("");
+////= gate
+console.log("across an await:", await twice(new Job(1), gate), "|", log.join(", "));
+console.log("afterwards:", await twice(new Job(2), Promise.resolve()), "|", log.join(", "));
+delete (Job.prototype as any)[name];
+console.log("gone again:", await twice(new Job(3), Promise.resolve()), "|", log.length);
+//// prototype-names/a-proxy-becomes-the-prototype-of-the-prototype-and-of-one-instance.ts
+// A Proxy is hung above the prototype of a class, and another one directly above one instance.
+// Every read, `in` test and store that finds the slot empty must reach the traps, with the instance as the receiver; a filled slot must not.
+////= lines-13	Record_	id	number	memo	number
+const log: string[] = [];
+////= traps
+////= lines-14	read	record	Record_	return	record.memo
+////= lines-16	write	record	Record_	value	number	record.memo
+////= lines-182	has	record	Record_	"memo"
+////= flush
+
+let sum = 0;
+////= for-164
+console.log("warm", sum);
+
+const empty = new Record_(1);
+const filled = new Record_(2);
+write(filled, 20);
+Object.setPrototypeOf(Record_.prototype, new Proxy({}, traps("above")));
+flush();
+console.log("reads:", read(empty), read(filled), read(new Record_(3)), "|", flush());
+console.log("in:", has(empty), has(filled), "|", flush());
+write(empty, 5);
+console.log("a store that the trap swallows:", Object.keys(empty).join(), read(empty), "|", flush());
+write(empty, 105);
+console.log("a store that the trap defines:", Object.keys(empty).join(), read(empty), "|", flush());
+write(filled, 21);
+console.log("a store to a filled slot:", read(filled), "|", flush());
+Object.setPrototypeOf(Record_.prototype, Object.prototype);
+const plain = new Record_(4);
+console.log("the link is put back:", read(plain), has(plain), "|", flush());
+
+const single = new Record_(5);
+const neighbor = new Record_(6);
+Object.setPrototypeOf(single, new Proxy(Record_.prototype, traps("single")));
+flush();
+console.log("one instance:", read(single), read(neighbor), has(single), has(neighbor), "|", flush());
+write(single, 6);
+write(neighbor, 7);
+console.log("stores:", Object.keys(single).join(), Object.keys(neighbor).join(), "|", flush());
+//// prototype-names/a-proxy-becomes-the-prototype-of-the-prototype-and-of-one-instance-with-class-fields-that-the-constructor-deletes.ts
+// A Proxy is hung above the prototype of a class, and another one directly above one instance.
+// Every read, `in` test and store that finds the slot empty must reach the traps, with the instance as the receiver; a filled slot must not.
+// In this twin the optional fields are class fields without `declare`: they are defined at birth and the constructor deletes them, so the slots are declared and empty. Every instance may reach unknown code.
+const unknownCodeRuns = process.argv.length > 99;
+////= handOver
+////= lines-4	Record_	id	number	memo	number
+const log: string[] = [];
+////= traps
+////= lines-14	read	record	Record_	return	record.memo
+////= lines-16	write	record	Record_	value	number	record.memo
+////= lines-182	has	record	Record_	"memo"
+////= flush
+
+let sum = 0;
+////= for-164
+console.log("warm", sum);
+
+const empty = new Record_(1);
+const filled = new Record_(2);
+write(filled, 20);
+Object.setPrototypeOf(Record_.prototype, new Proxy({}, traps("above")));
+flush();
+console.log("reads:", read(empty), read(filled), read(new Record_(3)), "|", flush());
+console.log("in:", has(empty), has(filled), "|", flush());
+write(empty, 5);
+console.log("a store that the trap swallows:", Object.keys(empty).join(), read(empty), "|", flush());
+write(empty, 105);
+console.log("a store that the trap defines:", Object.keys(empty).join(), read(empty), "|", flush());
+write(filled, 21);
+console.log("a store to a filled slot:", read(filled), "|", flush());
+Object.setPrototypeOf(Record_.prototype, Object.prototype);
+const plain = new Record_(4);
+console.log("the link is put back:", read(plain), has(plain), "|", flush());
+
+const single = new Record_(5);
+const neighbor = new Record_(6);
+Object.setPrototypeOf(single, new Proxy(Record_.prototype, traps("single")));
+flush();
+console.log("one instance:", read(single), read(neighbor), has(single), has(neighbor), "|", flush());
+write(single, 6);
+write(neighbor, 7);
+console.log("stores:", Object.keys(single).join(), Object.keys(neighbor).join(), "|", flush());
+//// prototype-names/a-proxy-becomes-the-prototype-of-the-prototype-and-of-one-instance-with-fields-added-late-through-a-cast.ts
+// A Proxy is hung above the prototype of a class, and another one directly above one instance.
+// Every read, `in` test and store that finds the slot empty must reach the traps, with the instance as the receiver; a filled slot must not.
+// In this twin the class declares only what its constructor stores: the other fields are added late, through a cast to an interface.
+////= lines-72	RecordShape	id	number	memo	number
+////= lines-59	Record_	id	number
+const log: string[] = [];
+////= traps
+////= lines-14	read	record	RecordShape	return	record.memo
+////= lines-16	write	record	RecordShape	value	number	record.memo
+////= lines-182	has	record	RecordShape	"memo"
+////= flush
+
+let sum = 0;
+for (let i = 0; i < 3000; i++) {
+  const record = new Record_(i) as RecordShape;
+  sum += (read(record) ?? 1) + (has(record) ? 1 : 0);
+  if (i & 1) write(record, 3);
+  sum += (read(record) ?? 1) + (has(record) ? 1 : 0);
+}
+console.log("warm", sum);
+
+const empty = new Record_(1) as RecordShape;
+const filled = new Record_(2) as RecordShape;
+write(filled, 20);
+Object.setPrototypeOf(Record_.prototype, new Proxy({}, traps("above")));
+flush();
+console.log("reads:", read(empty), read(filled), read((new Record_(3) as RecordShape)), "|", flush());
+console.log("in:", has(empty), has(filled), "|", flush());
+write(empty, 5);
+console.log("a store that the trap swallows:", Object.keys(empty).join(), read(empty), "|", flush());
+write(empty, 105);
+console.log("a store that the trap defines:", Object.keys(empty).join(), read(empty), "|", flush());
+write(filled, 21);
+console.log("a store to a filled slot:", read(filled), "|", flush());
+Object.setPrototypeOf(Record_.prototype, Object.prototype);
+const plain = new Record_(4) as RecordShape;
+console.log("the link is put back:", read(plain), has(plain), "|", flush());
+
+const single = new Record_(5) as RecordShape;
+const neighbor = new Record_(6) as RecordShape;
+Object.setPrototypeOf(single, new Proxy(Record_.prototype, traps("single")));
+flush();
+console.log("one instance:", read(single), read(neighbor), has(single), has(neighbor), "|", flush());
+write(single, 6);
+write(neighbor, 7);
+console.log("stores:", Object.keys(single).join(), Object.keys(neighbor).join(), "|", flush());
+//// prototype-names/a-proxy-trap-and-a-getter-run-by-json-stringify-change-the-prototype.ts
+// Two built-ins run code of the program behind the compiler's back: a read through a Proxy runs its trap, and JSON.stringify runs a getter.
+// Each of them puts a member named like an optional field on the prototype of a class, between two reads of that field in one function.
+////= lines-13	Doc	id	number	version	number
+////= lines-13	Page	id	number	version	number
+const log: string[] = [];
+let armed = false;
+////= settings
+////= report-5
+function readDoc(doc: Doc) {
+  const before = doc.version;
+  const verbose = settings.verbose;
+  return `${before} ${verbose} ${doc.version}`;
+}
+////= writePages
+
+let length = 0;
+for (let i = 0; i < 3000; i++) length += readDoc(new Doc(i)).length + writePages(new Page(i), new Page(i)).length;
+console.log("warm", length);
+
+armed = true;
+const doc = new Doc(1);
+console.log("the trap:", readDoc(doc), "|", readDoc(new Doc(2)), "|", Object.keys(doc).join());
+armed = true;
+console.log("the getter:", writePages(new Page(1), new Page(2)), "|", log.join(", "));
+console.log("afterwards:", writePages(new Page(3), new Page(4)), "|", log.join(", "));
+delete (Doc.prototype as any).version;
+delete (Page.prototype as any).version;
+console.log("gone again:", readDoc(doc), "|", writePages(new Page(5), new Page(6)), "|", log.length);
+//// prototype-names/a-proxy-trap-and-a-getter-run-by-json-stringify-change-the-prototype-with-class-fields-that-the-constructor-deletes.ts
+// Two built-ins run code of the program behind the compiler's back: a read through a Proxy runs its trap, and JSON.stringify runs a getter.
+// Each of them puts a member named like an optional field on the prototype of a class, between two reads of that field in one function.
+// In this twin the optional fields are class fields without `declare`: they are defined at birth and the constructor deletes them, so the slots are declared and empty. Every instance may reach unknown code.
+const unknownCodeRuns = process.argv.length > 99;
+////= handOver
+////= lines-4	Doc	id	number	version	number
+////= lines-4	Page	id	number	version	number
+const log: string[] = [];
+let armed = false;
+////= settings
+////= report-5
+function readDoc(doc: Doc) {
+  const before = doc.version;
+  const verbose = settings.verbose;
+  return `${before} ${verbose} ${doc.version}`;
+}
+////= writePages
+
+let length = 0;
+for (let i = 0; i < 3000; i++) length += readDoc(new Doc(i)).length + writePages(new Page(i), new Page(i)).length;
+console.log("warm", length);
+
+armed = true;
+const doc = new Doc(1);
+console.log("the trap:", readDoc(doc), "|", readDoc(new Doc(2)), "|", Object.keys(doc).join());
+armed = true;
+console.log("the getter:", writePages(new Page(1), new Page(2)), "|", log.join(", "));
+console.log("afterwards:", writePages(new Page(3), new Page(4)), "|", log.join(", "));
+delete (Doc.prototype as any).version;
+delete (Page.prototype as any).version;
+console.log("gone again:", readDoc(doc), "|", writePages(new Page(5), new Page(6)), "|", log.length);
+//// prototype-names/a-read-only-member-arrives-on-the-prototype-and-sloppy-stores-do-nothing.cjs
+// Untyped sloppy code. A read-only data property, then a getter without a setter, arrive on the prototype of a constructor function
+// under the name of a property that instances get late. A store to an instance without it is ignored in silence.
+////= lines-35	Options	name	this.name	name
+////= lines-7	read	options	options.depth
+////= lines-93	write	options	value	options.depth	options.depth
+function describe(options) {
+  return read(options) + " " + ("depth" in options) + " " + options.hasOwnProperty("depth") + " [" + Object.keys(options) + "]";
+}
+console.log("sloppy:", (function () { return this !== undefined; })());
+
+var sum = 0;
+for (var i = 0; i < 3000; i++) {
+  var options = new Options("o");
+  sum += read(options) === undefined ? 1 : 0;
+  sum += write(options, i & 7);
+}
+console.log("warm", sum);
+
+var empty = new Options("empty");
+var filled = new Options("filled");
+write(filled, 2);
+Object.defineProperty(Options.prototype, "depth", { value: 9, writable: false, configurable: true });
+var fresh = new Options("fresh");
+console.log("read-only:", describe(empty), "|", describe(filled), "|", describe(fresh));
+console.log("stores:", write(empty, 1), write(filled, 3), write(fresh, 4), (empty.depth += 1), empty.depth++, ++empty.depth);
+console.log("after:", describe(empty), "|", describe(filled), "|", describe(fresh));
+Object.defineProperty(Options.prototype, "depth", { get: function () { return this.name.length; }, configurable: true });
+console.log("a getter:", describe(empty), "|", describe(filled), "|", describe(fresh));
+console.log("stores:", write(empty, 1), write(filled, 5), write(fresh, 4), write(new Options("ab"), 6));
+console.log("after:", describe(empty), "|", describe(filled), "|", describe(fresh));
+delete Options.prototype.depth;
+console.log("gone again:", describe(empty), "|", write(empty, 7), describe(empty), "|", describe(new Options("n")));
+//// prototype-names/a-read-only-member-arrives-on-the-prototype-and-strict-stores-throw.ts
+// A read-only data property arrives on the prototype under the name of an optional field.
+// In strict code a store to an instance without the field throws a TypeError and leaves the slot empty; defining the field still works.
+////= lines-13	Options	name	string	depth	number
+////= lines-14	read	options	Options	return	options.depth
+////= lines-16	write	options	Options	value	number	options.depth
+////= attempt-21
+////= describe-10	options	Options	"depth"
+
+let sum = 0;
+////= for-162
+console.log("warm", sum);
+
+const empty = new Options("empty");
+const filled = new Options("filled");
+write(filled, 2);
+Reflect.defineProperty(Options.prototype, "depth", { value: 9, writable: false, enumerable: true, configurable: true });
+const fresh = new Options("fresh");
+console.log("read-only:", describe(empty), "|", describe(filled), "|", describe(fresh));
+////= console-log-2
+console.log("after:", describe(empty), "|", describe(filled), "|", describe(fresh));
+Object.defineProperty(empty, "depth", { value: 11, writable: true, enumerable: true, configurable: true });
+console.log("defined on the instance:", describe(empty), attempt(() => write(empty, 12)), describe(empty));
+Object.defineProperty(Options.prototype, "depth", { writable: true });
+console.log("writable now:", attempt(() => write(fresh, 13)), describe(fresh), describe(new Options("n")));
+delete (Options.prototype as any).depth;
+console.log("gone again:", describe(new Options("n")), attempt(() => write(new Options("n"), 1)));
+//// prototype-names/a-read-only-member-arrives-on-the-prototype-and-strict-stores-throw-with-class-fields-that-the-constructor-deletes.ts
+// A read-only data property arrives on the prototype under the name of an optional field.
+// In strict code a store to an instance without the field throws a TypeError and leaves the slot empty; defining the field still works.
+// In this twin the optional fields are class fields without `declare`: they are defined at birth and the constructor deletes them, so the slots are declared and empty. Every instance may reach unknown code.
+const unknownCodeRuns = process.argv.length > 99;
+////= handOver
+////= lines-4	Options	name	string	depth	number
+////= lines-14	read	options	Options	return	options.depth
+////= lines-16	write	options	Options	value	number	options.depth
+////= attempt-21
+////= describe-10	options	Options	"depth"
+
+let sum = 0;
+////= for-162
+console.log("warm", sum);
+
+const empty = new Options("empty");
+const filled = new Options("filled");
+write(filled, 2);
+Reflect.defineProperty(Options.prototype, "depth", { value: 9, writable: false, enumerable: true, configurable: true });
+const fresh = new Options("fresh");
+console.log("read-only:", describe(empty), "|", describe(filled), "|", describe(fresh));
+////= console-log-2
+console.log("after:", describe(empty), "|", describe(filled), "|", describe(fresh));
+Object.defineProperty(empty, "depth", { value: 11, writable: true, enumerable: true, configurable: true });
+console.log("defined on the instance:", describe(empty), attempt(() => write(empty, 12)), describe(empty));
+Object.defineProperty(Options.prototype, "depth", { writable: true });
+console.log("writable now:", attempt(() => write(fresh, 13)), describe(fresh), describe(new Options("n")));
+delete (Options.prototype as any).depth;
+console.log("gone again:", describe(new Options("n")), attempt(() => write(new Options("n"), 1)));
+//// prototype-names/a-read-only-member-arrives-on-the-prototype-and-strict-stores-throw-with-fields-added-late-through-a-cast.ts
+// A read-only data property arrives on the prototype under the name of an optional field.
+// In strict code a store to an instance without the field throws a TypeError and leaves the slot empty; defining the field still works.
+// In this twin the class declares only what its constructor stores: the other fields are added late, through a cast to an interface.
+////= lines-72	OptionsShape	name	string	depth	number
+////= lines-59	Options	name	string
+////= lines-14	read	options	OptionsShape	return	options.depth
+////= lines-16	write	options	OptionsShape	value	number	options.depth
+////= attempt-21
+////= describe-10	options	OptionsShape	"depth"
+
+let sum = 0;
+for (let i = 0; i < 3000; i++) {
+  const options = new Options("o") as OptionsShape;
+  sum += read(options) ?? 1;
+  write(options, i & 7);
+  sum += read(options)!;
+}
+console.log("warm", sum);
+
+const empty = new Options("empty") as OptionsShape;
+const filled = new Options("filled") as OptionsShape;
+write(filled, 2);
+Reflect.defineProperty(Options.prototype, "depth", { value: 9, writable: false, enumerable: true, configurable: true });
+const fresh = new Options("fresh") as OptionsShape;
+console.log("read-only:", describe(empty), "|", describe(filled), "|", describe(fresh));
+////= console-log-2
+console.log("after:", describe(empty), "|", describe(filled), "|", describe(fresh));
+Object.defineProperty(empty, "depth", { value: 11, writable: true, enumerable: true, configurable: true });
+console.log("defined on the instance:", describe(empty), attempt(() => write(empty, 12)), describe(empty));
+Object.defineProperty(Options.prototype, "depth", { writable: true });
+console.log("writable now:", attempt(() => write(fresh, 13)), describe(fresh), describe((new Options("n") as OptionsShape)));
+delete (Options.prototype as any).depth;
+console.log("gone again:", describe((new Options("n") as OptionsShape)), attempt(() => write((new Options("n") as OptionsShape), 1)));
+//// prototype-names/a-required-field-is-deleted-and-the-inherited-name-shows-through.ts
+// The constructor always fills these fields, so a read needs no test at all, until `delete` empties the slot of one instance.
+// By then the prototype has a member of that name: a value for one field, a getter and a setter for the other. It must show through, for that instance only.
+const log: string[] = [];
+class Account {
+  balance: number;
+  owner: string;
+  constructor(balance: number, owner: string) {
+    this.balance = balance;
+    this.owner = owner;
+  }
+}
+////= lines-14	balanceOf	account	Account	return	account.balance
+////= lines-14	ownerOf	account	Account	return	account.owner
+function deposit(account: Account, amount: number) {
+  account.balance += amount;
+}
+////= lines-16	rename	account	Account	owner	string	account.owner
+function state(account: Account) {
+  return `${balanceOf(account)} ${ownerOf(account)} [${Object.keys(account)}]`;
+}
+function total(accounts: Account[]) {
+  let sum = 0;
+  for (const account of accounts) sum += account.balance + account.owner.length;
+  return sum;
+}
+
+const accounts: Account[] = [];
+for (let i = 0; i < 3000; i++) accounts.push(new Account(i & 15, "o" + (i & 1)));
+console.log("warm", total(accounts));
+
+const holder: any = Object.getPrototypeOf(accounts[0]);
+holder["balance"] = 1_000_000;
+Object.defineProperty(holder, "owner", {
+  get() {
+    return "nobody at all";
+  },
+  set(this: Account, value: string) {
+    log.push("owner = " + value);
+  },
+  configurable: true,
+});
+console.log("hidden by the own fields:", total(accounts), state(accounts[7]), state(new Account(1, "n")), log.length);
+delete (accounts[7] as any).balance;
+delete (accounts[8] as any).owner;
+console.log("deleted:", state(accounts[7]), "|", state(accounts[8]), "|", state(accounts[9]), "|", total(accounts));
+deposit(accounts[7], 5);
+rename(accounts[8], "someone");
+deposit(accounts[9], 5);
+rename(accounts[9], "someone");
+console.log("stored:", state(accounts[7]), "|", state(accounts[8]), "|", state(accounts[9]), "|", log.join(", "));
+delete holder.balance;
+delete holder.owner;
+delete (accounts[7] as any).balance;
+console.log("nothing to inherit:", state(accounts[7]), "|", state(accounts[8]));
+rename(accounts[8], "back");
+accounts[7].balance = 3;
+console.log("filled again:", state(accounts[7]), "|", state(accounts[8]), "|", total(accounts));
+//// prototype-names/a-setter-arrives-on-the-prototype-and-first-stores-must-call-it.ts
+// A setter without a getter arrives on the prototype under the name of an optional field.
+// A first store must call it and must not fill the slot; an instance that has the field already keeps storing to its own.
+////= lines-34	Task	id	owner	string	done	boolean
+const log: string[] = [];
+////= lines-14	read	task	Task	return	task.owner
+////= lines-16	write	task	Task	value	string	task.owner
+////= describe-10	task	Task	"owner"
+////= storeDefineStore
+
+let count = 0;
+////= for-165
+console.log("warm", count);
+
+const first = new Task(1);
+const second = new Task(2);
+const third = new Task(3);
+storeDefineStore(first, second, Task.prototype, "owner");
+console.log("around the definition:", describe(first), "|", describe(second));
+const fresh = new Task(4);
+write(first, "again");
+write(third, "third");
+write(fresh, "fresh");
+console.log("stores:", describe(first), "|", describe(third), "|", describe(fresh));
+console.log(log.join(", "));
+log.length = 0;
+for (let i = 0; i < 5; i++) write(new Task(10 + i), "n" + i);
+console.log(log.join(", "));
+log.length = 0;
+delete first.owner;
+write(first, "once more");
+console.log("own one deleted, then stored:", describe(first), log.join(", "));
+log.length = 0;
+delete (Task.prototype as any).owner;
+write(second, "at last");
+write(fresh, "at last");
+console.log("gone again:", describe(second), "|", describe(fresh), "|", describe(new Task(5)), log.length);
+//// prototype-names/a-setter-arrives-on-the-prototype-and-first-stores-must-call-it-with-class-fields-that-the-constructor-deletes.ts
+// A setter without a getter arrives on the prototype under the name of an optional field.
+// A first store must call it and must not fill the slot; an instance that has the field already keeps storing to its own.
+// In this twin the optional fields are class fields without `declare`: they are defined at birth and the constructor deletes them, so the slots are declared and empty. Every instance may reach unknown code.
+const unknownCodeRuns = process.argv.length > 99;
+////= handOver
+////= lines-29	Task	id	owner	string	done	boolean
+const log: string[] = [];
+////= lines-14	read	task	Task	return	task.owner
+////= lines-16	write	task	Task	value	string	task.owner
+////= describe-10	task	Task	"owner"
+////= storeDefineStore
+
+let count = 0;
+////= for-165
+console.log("warm", count);
+
+const first = new Task(1);
+const second = new Task(2);
+const third = new Task(3);
+storeDefineStore(first, second, Task.prototype, "owner");
+console.log("around the definition:", describe(first), "|", describe(second));
+const fresh = new Task(4);
+write(first, "again");
+write(third, "third");
+write(fresh, "fresh");
+console.log("stores:", describe(first), "|", describe(third), "|", describe(fresh));
+console.log(log.join(", "));
+log.length = 0;
+for (let i = 0; i < 5; i++) write(new Task(10 + i), "n" + i);
+console.log(log.join(", "));
+log.length = 0;
+delete first.owner;
+write(first, "once more");
+console.log("own one deleted, then stored:", describe(first), log.join(", "));
+log.length = 0;
+delete (Task.prototype as any).owner;
+write(second, "at last");
+write(fresh, "at last");
+console.log("gone again:", describe(second), "|", describe(fresh), "|", describe(new Task(5)), log.length);
+//// prototype-names/a-setter-arrives-on-the-prototype-and-first-stores-must-call-it-with-fields-added-late-through-a-cast.ts
+// A setter without a getter arrives on the prototype under the name of an optional field.
+// A first store must call it and must not fill the slot; an instance that has the field already keeps storing to its own.
+// In this twin the class declares only what its constructor stores: the other fields are added late, through a cast to an interface.
+interface TaskShape {
+  id: number;
+  owner?: string;
+  done?: boolean;
+}
+////= lines-105	Task	id
+const log: string[] = [];
+////= lines-14	read	task	TaskShape	return	task.owner
+////= lines-16	write	task	TaskShape	value	string	task.owner
+////= describe-10	task	TaskShape	"owner"
+function storeDefineStore(first: TaskShape, second: TaskShape, holder: object, name: string) {
+  first.owner = "before";
+  Object.defineProperty(holder, name, {
+    set(this: TaskShape, value: string) {
+      log.push(`set ${value} on ${this.id}`);
+    },
+    configurable: true,
+  });
+  second.owner = "after";
+}
+
+let count = 0;
+for (let i = 0; i < 3000; i++) {
+  const task = new Task(i) as TaskShape;
+  if (read(task) === undefined) count++;
+  write(task, "o" + (i & 3));
+  count += read(task)!.length;
+}
+console.log("warm", count);
+
+const first = new Task(1) as TaskShape;
+const second = new Task(2) as TaskShape;
+const third = new Task(3) as TaskShape;
+storeDefineStore(first, second, Task.prototype, "owner");
+console.log("around the definition:", describe(first), "|", describe(second));
+const fresh = new Task(4) as TaskShape;
+write(first, "again");
+write(third, "third");
+write(fresh, "fresh");
+console.log("stores:", describe(first), "|", describe(third), "|", describe(fresh));
+console.log(log.join(", "));
+log.length = 0;
+for (let i = 0; i < 5; i++) write((new Task(10 + i) as TaskShape), "n" + i);
+console.log(log.join(", "));
+log.length = 0;
+delete first.owner;
+write(first, "once more");
+console.log("own one deleted, then stored:", describe(first), log.join(", "));
+log.length = 0;
+delete (Task.prototype as any).owner;
+write(second, "at last");
+write(fresh, "at last");
+console.log("gone again:", describe(second), "|", describe(fresh), "|", describe((new Task(5) as TaskShape)), log.length);
+//// prototype-names/a-setter-arrives-while-the-right-hand-side-of-the-store-is-computed.ts
+// `object.field = compute()`: the object is evaluated first, then compute() runs and puts a setter of that name on the prototype, then the store happens.
+// The store must call the setter. The same for ??=, ||=, +=, a destructuring target and a store whose value is an argument with a side effect. One class for each form.
+const log: string[] = [];
+////= install-2
+function classOf(object: object) {
+  return Object.getPrototypeOf(object);
+}
+////= lines-13	Plain	id	number	v	number
+////= lines-13	Nullish	id	number	v	number
+////= lines-13	Falsy	id	number	v	number
+////= lines-13	Pattern	id	number	v	number
+////= lines-13	Listed	id	number	v	number
+function compute(object: object, arm: boolean) {
+  if (arm) install(classOf(object), "v", undefined);
+  return 7;
+}
+function plain(object: Plain, arm: boolean) {
+  object.v = compute(object, arm);
+  return object;
+}
+function nullish(object: Nullish, arm: boolean) {
+  object.v ??= compute(object, arm);
+  return object;
+}
+function falsy(object: Falsy, arm: boolean) {
+  object.v ||= compute(object, arm);
+  return object;
+}
+function pattern(object: Pattern, arm: boolean) {
+  ({ a: object.v } = { a: compute(object, arm) });
+  return object;
+}
+function listed(object: Listed, arm: boolean) {
+  [object.v] = [compute(object, arm)];
+  return object;
+}
+function state(object: { v?: number }) {
+  return `${object.v} [${Object.keys(object)}]`;
+}
+
+let sum = 0;
+for (let i = 0; i < 3000; i++) {
+  sum += plain(new Plain(i), false).v! + nullish(new Nullish(i), false).v! + falsy(new Falsy(i), false).v! + pattern(new Pattern(i), false).v! + listed(new Listed(i), false).v!;
+}
+console.log("warm", sum);
+console.log("=", state(plain(new Plain(1), true)), "| then", state(plain(new Plain(2), false)));
+console.log("??=", state(nullish(new Nullish(1), true)), "| then", state(nullish(new Nullish(2), false)));
+console.log("||=", state(falsy(new Falsy(1), true)), "| then", state(falsy(new Falsy(2), false)));
+console.log("{}", state(pattern(new Pattern(1), true)), "| then", state(pattern(new Pattern(2), false)));
+console.log("[]", state(listed(new Listed(1), true)), "| then", state(listed(new Listed(2), false)));
+console.log(log.join(", "));
+//// prototype-names/a-setter-arrives-while-the-right-hand-side-of-the-store-is-computed-with-class-fields-that-the-constructor-deletes.ts
+// `object.field = compute()`: the object is evaluated first, then compute() runs and puts a setter of that name on the prototype, then the store happens.
+// The store must call the setter. The same for ??=, ||=, +=, a destructuring target and a store whose value is an argument with a side effect. One class for each form.
+// In this twin the optional fields are class fields without `declare`: they are defined at birth and the constructor deletes them, so the slots are declared and empty. Every instance may reach unknown code.
+const unknownCodeRuns = process.argv.length > 99;
+////= handOver
+const log: string[] = [];
+////= install-2
+function classOf(object: object) {
+  return Object.getPrototypeOf(object);
+}
+////= lines-4	Plain	id	number	v	number
+////= lines-4	Nullish	id	number	v	number
+////= lines-4	Falsy	id	number	v	number
+////= lines-4	Pattern	id	number	v	number
+////= lines-4	Listed	id	number	v	number
+function compute(object: object, arm: boolean) {
+  if (arm) install(classOf(object), "v", undefined);
+  return 7;
+}
+function plain(object: Plain, arm: boolean) {
+  object.v = compute(object, arm);
+  return object;
+}
+function nullish(object: Nullish, arm: boolean) {
+  object.v ??= compute(object, arm);
+  return object;
+}
+function falsy(object: Falsy, arm: boolean) {
+  object.v ||= compute(object, arm);
+  return object;
+}
+function pattern(object: Pattern, arm: boolean) {
+  ({ a: object.v } = { a: compute(object, arm) });
+  return object;
+}
+function listed(object: Listed, arm: boolean) {
+  [object.v] = [compute(object, arm)];
+  return object;
+}
+function state(object: { v?: number }) {
+  return `${object.v} [${Object.keys(object)}]`;
+}
+
+let sum = 0;
+for (let i = 0; i < 3000; i++) {
+  sum += plain(new Plain(i), false).v! + nullish(new Nullish(i), false).v! + falsy(new Falsy(i), false).v! + pattern(new Pattern(i), false).v! + listed(new Listed(i), false).v!;
+}
+console.log("warm", sum);
+console.log("=", state(plain(new Plain(1), true)), "| then", state(plain(new Plain(2), false)));
+console.log("??=", state(nullish(new Nullish(1), true)), "| then", state(nullish(new Nullish(2), false)));
+console.log("||=", state(falsy(new Falsy(1), true)), "| then", state(falsy(new Falsy(2), false)));
+console.log("{}", state(pattern(new Pattern(1), true)), "| then", state(pattern(new Pattern(2), false)));
+console.log("[]", state(listed(new Listed(1), true)), "| then", state(listed(new Listed(2), false)));
+console.log(log.join(", "));
+//// prototype-names/a-static-block-puts-members-on-the-prototype-before-any-instance-exists.ts
+// A static block of the class puts members on its own prototype, under keys it gets from a function, before any instance exists.
+// The fields of those names are only declared: every instance starts with empty slots and must inherit from the first read on.
+const log: string[] = [];
+function nameOf(index: number): string {
+  return JSON.parse('["limit","label","watch"]')[index];
+}
+class Settings {
+  declare id: number;
+  declare limit?: number;
+  declare label?: string;
+  declare watch?: boolean;
+  static {
+    (this.prototype as any)[nameOf(0)] = 100;
+    Object.defineProperty(this.prototype, nameOf(1), {
+      get(this: Settings) {
+        return "settings " + this.id;
+      },
+      configurable: true,
+    });
+    Object.defineProperty(this.prototype, nameOf(2), {
+      set(this: Settings, value: boolean) {
+        log.push(`watch ${value} on ${this.id}`);
+      },
+      configurable: true,
+    });
+  }
+  constructor(id: number) {
+    this.id = id;
+  }
+}
+function look(settings: Settings) {
+  return `${settings.limit} ${settings.label} ${settings.watch} [${Object.keys(settings)}]`;
+}
+////= lines-16	setLimit	settings	Settings	value	number	settings.limit
+////= lines-16	setWatch	settings	Settings	value	boolean	settings.watch
+////= setLabel
+
+const first = new Settings(1);
+console.log("the first instance:", look(first));
+let sum = 0;
+////= for-132
+console.log("many", sum, log.join(", "));
+setLimit(first, 5);
+setWatch(first, false);
+console.log("stored:", look(first), setLabel(first, "x"), look(first), log[log.length - 1]);
+delete (Settings.prototype as any).limit;
+delete (Settings.prototype as any).label;
+delete (Settings.prototype as any).watch;
+const late = new Settings(2);
+console.log("all three deleted:", look(first), "|", look(late));
+setWatch(late, true);
+console.log("stored:", setLabel(late, "own"), look(late), log.length);
+//// prototype-names/a-static-block-puts-members-on-the-prototype-before-any-instance-exists-with-class-fields-that-the-constructor-deletes.ts
+// A static block of the class puts members on its own prototype, under keys it gets from a function, before any instance exists.
+// The fields of those names are only declared: every instance starts with empty slots and must inherit from the first read on.
+// In this twin the optional fields are class fields without `declare`: they are defined at birth and the constructor deletes them, so the slots are declared and empty. Every instance may reach unknown code.
+const unknownCodeRuns = process.argv.length > 99;
+////= handOver
+const log: string[] = [];
+function nameOf(index: number): string {
+  return JSON.parse('["limit","label","watch"]')[index];
+}
+class Settings {
+  declare id: number;
+  limit?: number;
+  label?: string;
+  watch?: boolean;
+  static {
+    (this.prototype as any)[nameOf(0)] = 100;
+    Object.defineProperty(this.prototype, nameOf(1), {
+      get(this: Settings) {
+        return "settings " + this.id;
+      },
+      configurable: true,
+    });
+    Object.defineProperty(this.prototype, nameOf(2), {
+      set(this: Settings, value: boolean) {
+        log.push(`watch ${value} on ${this.id}`);
+      },
+      configurable: true,
+    });
+  }
+  constructor(id: number) {
+    delete this.limit;
+    delete this.label;
+    delete this.watch;
+    handOver(this);
+    this.id = id;
+  }
+}
+function look(settings: Settings) {
+  return `${settings.limit} ${settings.label} ${settings.watch} [${Object.keys(settings)}]`;
+}
+////= lines-16	setLimit	settings	Settings	value	number	settings.limit
+////= lines-16	setWatch	settings	Settings	value	boolean	settings.watch
+////= setLabel
+
+const first = new Settings(1);
+console.log("the first instance:", look(first));
+let sum = 0;
+////= for-132
+console.log("many", sum, log.join(", "));
+setLimit(first, 5);
+setWatch(first, false);
+console.log("stored:", look(first), setLabel(first, "x"), look(first), log[log.length - 1]);
+delete (Settings.prototype as any).limit;
+delete (Settings.prototype as any).label;
+delete (Settings.prototype as any).watch;
+const late = new Settings(2);
+console.log("all three deleted:", look(first), "|", look(late));
+setWatch(late, true);
+console.log("stored:", setLabel(late, "own"), look(late), log.length);
+//// prototype-names/a-store-under-a-computed-key-puts-an-object-on-the-prototype-of-a-class-expression.ts
+// Objects of a class expression get their fields late, through a cast, as the TypeScript compiler's links do.
+// A store under a key that is computed at run time puts an object of that name on the prototype.
+interface LinksShape {
+  _brand: any;
+  checkFlags?: number;
+  target?: { id: number };
+  type?: { id: number };
+}
+const Links = class implements LinksShape {
+  declare _brand: any;
+};
+////= make-7	checkFlags
+function typeOf(links: LinksShape, fallback: { id: number }) {
+  if (!links.type) links.type = fallback;
+  return links.type;
+}
+////= lines-14	peek	links	LinksShape	return	links.type
+function describe(links: LinksShape) {
+  return `${peek(links)?.id} ${"type" in links} ${Object.hasOwn(links, "type")} [${Object.keys(links)}]`;
+}
+function readStoreRead(links: LinksShape, holder: any, key: string, value: { id: number }) {
+  const before = links.type;
+  holder[key] = value;
+  const after = links.type;
+  return `${before?.id} ${after?.id}`;
+}
+
+const fallback = { id: 1 };
+let sum = 0;
+for (let i = 0; i < 3000; i++) {
+  const links = make(i & 7);
+  if (peek(links) === undefined) sum++;
+  if (typeOf(links, fallback) === fallback) sum += links.checkFlags!;
+  if (typeOf(links, fallback) === fallback) sum++;
+}
+console.log("warm", sum);
+
+const key = JSON.parse('["ty","pe"]').join("");
+const empty = make(1);
+const second = make(2);
+const filled = make(3);
+typeOf(filled, fallback);
+console.log("before:", describe(empty), "|", describe(filled));
+console.log("around the store:", readStoreRead(empty, Links.prototype, key, { id: 99 }));
+const fresh = make(4);
+console.log("inherited:", describe(empty), "|", describe(filled), "|", describe(fresh));
+console.log("typeOf keeps the inherited one:", typeOf(second, fallback).id, describe(second));
+empty.type = { id: 5 };
+console.log("stored over it:", describe(empty));
+delete (Links.prototype as any)[key];
+console.log("gone again:", describe(empty), "|", describe(second), "|", describe(fresh), "|", describe(make(5)));
+console.log("typeOf fills:", typeOf(second, fallback).id, describe(second));
+//// prototype-names/a-subclass-made-by-evaluated-text-has-accessors-named-like-the-fields-of-its-base.ts
+// The executable knows nothing of this subclass: its text is evaluated at run time. Its instances are built by the compiled constructor of the base,
+// go through the compiled typed functions, and have a prototype with accessors named like the optional fields of the base.
+////= Message
+////= lines-14	bodyOf	message	Message	return	message.body
+////= lines-16	setBody	message	Message	body	string	message.body
+function markSeen(message: Message) {
+  if (!message.seen) message.seen = true;
+  return message.seen;
+}
+function state(message: Message) {
+  return `${bodyOf(message)} ${message.seen} [${Object.keys(message)}]`;
+}
+
+let length = 0;
+////= for-128
+console.log("warm", length);
+
+const log: string[] = [];
+const Loud = new Function(
+  "Base",
+  "log",
+  `return class Loud extends Base {
+    get body() { return "loud " + this.id; }
+    set body(value) { log.push("body = " + value + " on " + this.id); }
+    get seen() { log.push("seen is asked"); return false; }
+    set seen(value) { log.push("seen = " + value); }
+  }`,
+)(Message, log) as typeof Message;
+const Quiet = new Function("Base", "return class Quiet extends Base {}")(Message) as typeof Message;
+
+const loud = new Loud(1, "given to the constructor");
+const quiet = new Quiet(2, "given to the constructor");
+const plain = new Message(3, "given to the constructor");
+console.log("made:", state(loud), "|", state(quiet), "|", state(plain), "|", log.join(", "));
+log.length = 0;
+////= for-141
+(Quiet.prototype as any).seen = true;
+const late = new Quiet(7);
+console.log("the quiet one gets a value:", state(late), markSeen(late), state(late), "|", state(new Message(8)));
+//// prototype-names/a-subclass-made-by-evaluated-text-has-accessors-named-like-the-fields-of-its-base-and-the-text-is-put-together-at-run-time.ts
+// The executable knows nothing of this subclass: its text is evaluated at run time. Its instances are built by the compiled constructor of the base,
+// go through the compiled typed functions, and have a prototype with accessors named like the optional fields of the base.
+// In this twin no text is a constant: it is put together at run time, so the build cannot read it and it runs interpreted.
+function atRunTime(text: string): string {
+  return JSON.parse(JSON.stringify(text.split(""))).join("");
+}
+////= Message
+////= lines-14	bodyOf	message	Message	return	message.body
+////= lines-16	setBody	message	Message	body	string	message.body
+function markSeen(message: Message) {
+  if (!message.seen) message.seen = true;
+  return message.seen;
+}
+function state(message: Message) {
+  return `${bodyOf(message)} ${message.seen} [${Object.keys(message)}]`;
+}
+
+let length = 0;
+////= for-128
+console.log("warm", length);
+
+const log: string[] = [];
+const Loud = new Function(
+  "Base",
+  "log",
+  atRunTime(`return class Loud extends Base {
+    get body() { return "loud " + this.id; }
+    set body(value) { log.push("body = " + value + " on " + this.id); }
+    get seen() { log.push("seen is asked"); return false; }
+    set seen(value) { log.push("seen = " + value); }
+  }`),
+)(Message, log) as typeof Message;
+const Quiet = new Function("Base", atRunTime("return class Quiet extends Base {}"))(Message) as typeof Message;
+
+const loud = new Loud(1, "given to the constructor");
+const quiet = new Quiet(2, "given to the constructor");
+const plain = new Message(3, "given to the constructor");
+console.log("made:", state(loud), "|", state(quiet), "|", state(plain), "|", log.join(", "));
+log.length = 0;
+////= for-141
+(Quiet.prototype as any).seen = true;
+const late = new Quiet(7);
+console.log("the quiet one gets a value:", state(late), markSeen(late), state(late), "|", state(new Message(8)));
+//// prototype-names/a-value-of-another-type-is-stored-into-an-optional-field-through-any.ts
+// `(object as any).count = "many"`: a string goes into a field declared `count?: number`, an object into `name?: string`, a number into `child?: Node`, into empty slots and into filled ones.
+// Everything that looks at the object without the type must see exactly what was stored, in the order it was stored; a value of the right type stored afterwards must be seen by typed code again.
+class Node_ {
+  declare id: number;
+  declare count?: number;
+  declare name?: string;
+  declare child?: Node_;
+  declare flag?: boolean;
+  constructor(id: number) {
+    this.id = id;
+  }
+}
+////= lines-16	setCount	node	Node_	value	number	node.count
+////= lines-16	setName	node	Node_	value	string	node.name
+////= lines-14	countOf	node	Node_	return	node.count
+////= lines-14	nameOf	node	Node_	return	node.name
+////= untyped
+////= listing
+
+let sum = 0;
+////= for-130
+console.log("warm", sum);
+
+const empty = new Node_(1);
+(empty as any).name = { not: "a string" };
+(empty as any).count = "many";
+(empty as any).child = 42;
+(empty as any).flag = null;
+console.log("into empty slots:", untyped(empty), listing(empty));
+console.log("own:", ["count", "name", "child", "flag"].map(name => Object.hasOwn(empty, name) + " " + (name in empty)).join(", "), JSON.stringify(Object.getOwnPropertyDescriptor(empty, "count")));
+
+const filled = new Node_(2);
+setCount(filled, 5);
+setName(filled, "five");
+filled.child = new Node_(3);
+filled.flag = true;
+console.log("filled:", untyped(filled), listing(filled));
+(filled as any).count = "many";
+(filled as any).name = 7;
+(filled as any).child = "no node";
+(filled as any).flag = 0;
+console.log("over filled slots:", untyped(filled), listing(filled));
+
+setCount(empty, 8);
+setName(empty, "eight");
+setCount(filled, 9);
+setName(filled, "nine");
+console.log("the right types again:", countOf(empty), nameOf(empty), countOf(filled), nameOf(filled), "|", untyped(empty), listing(empty), "|", listing(filled));
+
+const odd = new Node_(4);
+////= for-84
+delete odd.count;
+console.log("deleted:", (odd as any).count, "count" in odd, listing(odd));
+setCount(odd, 3);
+console.log("stored by typed code:", countOf(odd), listing(odd));
+//// prototype-names/a-value-of-another-type-is-stored-into-an-optional-field-through-any-with-class-fields-that-the-constructor-deletes.ts
+// `(object as any).count = "many"`: a string goes into a field declared `count?: number`, an object into `name?: string`, a number into `child?: Node`, into empty slots and into filled ones.
+// Everything that looks at the object without the type must see exactly what was stored, in the order it was stored; a value of the right type stored afterwards must be seen by typed code again.
+// In this twin the optional fields are class fields without `declare`: they are defined at birth and the constructor deletes them, so the slots are declared and empty. Every instance may reach unknown code.
+const unknownCodeRuns = process.argv.length > 99;
+////= handOver
+class Node_ {
+  declare id: number;
+  count?: number;
+  name?: string;
+  child?: Node_;
+  flag?: boolean;
+  constructor(id: number) {
+    delete this.count;
+    delete this.name;
+    delete this.child;
+    delete this.flag;
+    handOver(this);
+    this.id = id;
+  }
+}
+////= lines-16	setCount	node	Node_	value	number	node.count
+////= lines-16	setName	node	Node_	value	string	node.name
+////= lines-14	countOf	node	Node_	return	node.count
+////= lines-14	nameOf	node	Node_	return	node.name
+////= untyped
+////= listing
+
+let sum = 0;
+////= for-130
+console.log("warm", sum);
+
+const empty = new Node_(1);
+(empty as any).name = { not: "a string" };
+(empty as any).count = "many";
+(empty as any).child = 42;
+(empty as any).flag = null;
+console.log("into empty slots:", untyped(empty), listing(empty));
+console.log("own:", ["count", "name", "child", "flag"].map(name => Object.hasOwn(empty, name) + " " + (name in empty)).join(", "), JSON.stringify(Object.getOwnPropertyDescriptor(empty, "count")));
+
+const filled = new Node_(2);
+setCount(filled, 5);
+setName(filled, "five");
+filled.child = new Node_(3);
+filled.flag = true;
+console.log("filled:", untyped(filled), listing(filled));
+(filled as any).count = "many";
+(filled as any).name = 7;
+(filled as any).child = "no node";
+(filled as any).flag = 0;
+console.log("over filled slots:", untyped(filled), listing(filled));
+
+setCount(empty, 8);
+setName(empty, "eight");
+setCount(filled, 9);
+setName(filled, "nine");
+console.log("the right types again:", countOf(empty), nameOf(empty), countOf(filled), nameOf(filled), "|", untyped(empty), listing(empty), "|", listing(filled));
+
+const odd = new Node_(4);
+////= for-84
+delete odd.count;
+console.log("deleted:", (odd as any).count, "count" in odd, listing(odd));
+setCount(odd, 3);
+console.log("stored by typed code:", countOf(odd), listing(odd));
+//// prototype-names/a-value-of-another-type-is-stored-into-an-optional-field-through-any-with-fields-added-late-through-a-cast.ts
+// `(object as any).count = "many"`: a string goes into a field declared `count?: number`, an object into `name?: string`, a number into `child?: Node`, into empty slots and into filled ones.
+// Everything that looks at the object without the type must see exactly what was stored, in the order it was stored; a value of the right type stored afterwards must be seen by typed code again.
+// In this twin the class declares only what its constructor stores: the other fields are added late, through a cast to an interface.
+////= lines-204	NodeShape
+////= lines-59	Node_	id	number
+////= lines-16	setCount	node	NodeShape	value	number	node.count
+////= lines-16	setName	node	NodeShape	value	string	node.name
+////= lines-14	countOf	node	NodeShape	return	node.count
+////= lines-14	nameOf	node	NodeShape	return	node.name
+////= untyped
+function listing(node: NodeShape) {
+  const names: string[] = [];
+  for (const name in node) names.push(name);
+  return `[${Object.keys(node)}] ${names.join() === Object.keys(node).join()} ${JSON.stringify(node)}`;
+}
+
+let sum = 0;
+////= for-189	new Node_(i) as NodeShape
+console.log("warm", sum);
+
+const empty = new Node_(1) as NodeShape;
+(empty as any).name = { not: "a string" };
+(empty as any).count = "many";
+(empty as any).child = 42;
+(empty as any).flag = null;
+console.log("into empty slots:", untyped(empty), listing(empty));
+console.log("own:", ["count", "name", "child", "flag"].map(name => Object.hasOwn(empty, name) + " " + (name in empty)).join(", "), JSON.stringify(Object.getOwnPropertyDescriptor(empty, "count")));
+
+const filled = new Node_(2) as NodeShape;
+setCount(filled, 5);
+setName(filled, "five");
+filled.child = new Node_(3) as NodeShape;
+filled.flag = true;
+console.log("filled:", untyped(filled), listing(filled));
+(filled as any).count = "many";
+(filled as any).name = 7;
+(filled as any).child = "no node";
+(filled as any).flag = 0;
+console.log("over filled slots:", untyped(filled), listing(filled));
+
+setCount(empty, 8);
+setName(empty, "eight");
+setCount(filled, 9);
+setName(filled, "nine");
+console.log("the right types again:", countOf(empty), nameOf(empty), countOf(filled), nameOf(filled), "|", untyped(empty), listing(empty), "|", listing(filled));
+
+const odd = new Node_(4) as NodeShape;
+////= for-84
+delete odd.count;
+console.log("deleted:", (odd as any).count, "count" in odd, listing(odd));
+setCount(odd, 3);
+console.log("stored by typed code:", countOf(odd), listing(odd));
+//// prototype-names/a-value-of-another-type-is-stored-into-an-optional-field-through-any-with-literals-typed-by-an-interface.ts
+// `(object as any).count = "many"`: a string goes into a field declared `count?: number`, an object into `name?: string`, a number into `child?: Node`, into empty slots and into filled ones.
+// Everything that looks at the object without the type must see exactly what was stored, in the order it was stored; a value of the right type stored afterwards must be seen by typed code again.
+// In this twin the objects are literals typed by an interface: the optional fields are declared, and their slots are empty from birth. Every object may reach unknown code.
+const unknownCodeRuns = process.argv.length > 99;
+////= handOver
+////= lines-204	Node_
+////= lines-70	makeNode	id	number	Node_
+////= lines-16	setCount	node	Node_	value	number	node.count
+////= lines-16	setName	node	Node_	value	string	node.name
+////= lines-14	countOf	node	Node_	return	node.count
+////= lines-14	nameOf	node	Node_	return	node.name
+////= untyped
+////= listing
+
+let sum = 0;
+////= for-189	makeNode(i)
+console.log("warm", sum);
+
+const empty = makeNode(1);
+(empty as any).name = { not: "a string" };
+(empty as any).count = "many";
+(empty as any).child = 42;
+(empty as any).flag = null;
+console.log("into empty slots:", untyped(empty), listing(empty));
+console.log("own:", ["count", "name", "child", "flag"].map(name => Object.hasOwn(empty, name) + " " + (name in empty)).join(", "), JSON.stringify(Object.getOwnPropertyDescriptor(empty, "count")));
+
+const filled = makeNode(2);
+setCount(filled, 5);
+setName(filled, "five");
+filled.child = makeNode(3);
+filled.flag = true;
+console.log("filled:", untyped(filled), listing(filled));
+(filled as any).count = "many";
+(filled as any).name = 7;
+(filled as any).child = "no node";
+(filled as any).flag = 0;
+console.log("over filled slots:", untyped(filled), listing(filled));
+
+setCount(empty, 8);
+setName(empty, "eight");
+setCount(filled, 9);
+setName(filled, "nine");
+console.log("the right types again:", countOf(empty), nameOf(empty), countOf(filled), nameOf(filled), "|", untyped(empty), listing(empty), "|", listing(filled));
+
+const odd = makeNode(4);
+////= for-84
+delete odd.count;
+console.log("deleted:", (odd as any).count, "count" in odd, listing(odd));
+setCount(odd, 3);
+console.log("stored by typed code:", countOf(odd), listing(odd));
+//// prototype-names/a-worker-changes-its-own-copy-of-the-prototype-and-the-main-thread-does-not.ts
+// The main thread and two workers run the same compiled code, each with prototype objects of its own.
+// One worker puts the name on its prototype, the main thread and the other worker do not; afterwards the main thread does and asks a third worker. Nobody may see another's change.
+import { Worker, isMainThread, parentPort, workerData } from "node:worker_threads";
+////= Links-2
+////= read
+////= write-2
+////= exercise
+////= ask
+////= if
+//// prototype-names/a-worker-changes-its-own-copy-of-the-prototype-and-the-main-thread-does-not-with-class-fields-that-the-constructor-deletes.ts
+// The main thread and two workers run the same compiled code, each with prototype objects of its own.
+// One worker puts the name on its prototype, the main thread and the other worker do not; afterwards the main thread does and asks a third worker. Nobody may see another's change.
+// In this twin the optional fields are class fields without `declare`: they are defined at birth and the constructor deletes them, so the slots are declared and empty. Every instance may reach unknown code.
+import { Worker, isMainThread, parentPort, workerData } from "node:worker_threads";
+const unknownCodeRuns = process.argv.length > 99;
+////= handOver
+////= Links
+////= read
+////= write-2
+////= exercise
+////= ask
+////= if
+//// prototype-names/accessors-arrive-the-old-way-by-define-getter-and-define-setter.cjs
+// Untyped sloppy CommonJS. __defineGetter__ and __defineSetter__ put accessors on the prototypes of a constructor function and of a class,
+// an object literal with __proto__ replaces the link of a prototype, and `prototype.__proto__ = other` hangs another object above it.
+var log = [];
+////= lines-35	Shape	id	this.id	id
+////= lines-121	Frame	id
+////= lines-7	areaOf	shape	shape.area
+function setArea(shape, value) {
+  shape.area = value;
+  return shape;
+}
+function state(shape) {
+  return areaOf(shape) + " " + ("area" in shape) + " [" + Object.keys(shape) + "]";
+}
+var makers = [function (id) { return new Shape(id); }, function (id) { return new Frame(id); }];
+
+var length = 0;
+for (var i = 0; i < 3000; i++) {
+  var shape = makers[i & 1](i);
+  length += state(shape).length;
+  if (i & 2) setArea(shape, 5);
+  length += state(shape).length;
+}
+console.log("warm", length);
+
+makers.forEach(function (make) {
+  var old = make(1);
+  var filled = setArea(make(2), 20);
+  var holder = Object.getPrototypeOf(old);
+  var name = holder.constructor.name;
+  holder.__defineGetter__("area", function () { return "area of " + this.id; });
+  console.log(name, "a getter:", state(old), "|", state(filled), "|", state(make(3)));
+  setArea(old, 1);
+  console.log(name, "a store without a setter:", state(old), holder.__lookupGetter__("area") !== undefined, old.__lookupSetter__("area"));
+  holder.__defineSetter__("area", function (value) { log.push("area = " + value + " on " + this.id); });
+  setArea(old, 2);
+  setArea(filled, 21);
+  setArea(make(4), 3);
+  console.log(name, "a setter too:", state(old), "|", state(filled), "|", log.join(", "));
+  log.length = 0;
+  delete holder.area;
+  console.log(name, "gone again:", state(old), "|", state(setArea(make(5), 6)));
+  holder.__proto__ = { area: "from above", __proto__: { deeper: true } };
+  console.log(name, "another object above:", state(old), "|", state(make(6)), old.deeper);
+  setArea(old, 7);
+  console.log(name, "stored:", state(old));
+  holder.__proto__ = Object.prototype;
+  console.log(name, "put back:", state(make(7)), make(8).deeper);
+});
+//// prototype-names/an-accessor-of-another-name-changes-the-prototype-in-the-middle-of-the-loop-that-reads-the-field.ts
+// The loop reads an optional field, then an accessor of another name that the class has from the start, then the field again.
+// In one round the accessor, a conversion by valueOf or a conversion by toString puts the field's name on the prototype: the read right behind it must see that.
+let armed = "";
+function arrive(holder: object, name: string, value: number) {
+  Object.defineProperty(holder, name, { value, writable: true, enumerable: false, configurable: true });
+}
+class Gauge {
+  declare id: number;
+  declare peak?: number;
+  constructor(id: number) {
+    this.id = id;
+  }
+  get level() {
+    if (armed === "accessor") {
+      armed = "";
+      arrive(Gauge.prototype, "pe" + "ak", 1000);
+    }
+    return 1;
+  }
+  valueOf() {
+    if (armed === "valueOf") {
+      armed = "";
+      arrive(Gauge.prototype, "pe" + "ak", 2000);
+    }
+    return 1;
+  }
+  toString() {
+    if (armed === "toString") {
+      armed = "";
+      arrive(Gauge.prototype, "pe" + "ak", 3000);
+    }
+    return "g";
+  }
+}
+////= throughTheAccessor
+////= throughValueOf
+////= throughToString
+
+const gauges: Gauge[] = [];
+for (let i = 0; i < 3000; i++) gauges.push(new Gauge(i));
+gauges[5].peak = 10;
+////= for-118
+//// prototype-names/an-accessor-of-another-name-changes-the-prototype-in-the-middle-of-the-loop-that-reads-the-field-with-class-fields-that-the-constructor-deletes.ts
+// The loop reads an optional field, then an accessor of another name that the class has from the start, then the field again.
+// In one round the accessor, a conversion by valueOf or a conversion by toString puts the field's name on the prototype: the read right behind it must see that.
+// In this twin the optional fields are class fields without `declare`: they are defined at birth and the constructor deletes them, so the slots are declared and empty. Every instance may reach unknown code.
+const unknownCodeRuns = process.argv.length > 99;
+////= handOver
+let armed = "";
+function arrive(holder: object, name: string, value: number) {
+  Object.defineProperty(holder, name, { value, writable: true, enumerable: false, configurable: true });
+}
+class Gauge {
+  declare id: number;
+  peak?: number;
+  constructor(id: number) {
+    delete this.peak;
+    handOver(this);
+    this.id = id;
+  }
+  get level() {
+    if (armed === "accessor") {
+      armed = "";
+      arrive(Gauge.prototype, "pe" + "ak", 1000);
+    }
+    return 1;
+  }
+  valueOf() {
+    if (armed === "valueOf") {
+      armed = "";
+      arrive(Gauge.prototype, "pe" + "ak", 2000);
+    }
+    return 1;
+  }
+  toString() {
+    if (armed === "toString") {
+      armed = "";
+      arrive(Gauge.prototype, "pe" + "ak", 3000);
+    }
+    return "g";
+  }
+}
+////= throughTheAccessor
+////= throughValueOf
+////= throughToString
+
+const gauges: Gauge[] = [];
+for (let i = 0; i < 3000; i++) gauges.push(new Gauge(i));
+gauges[5].peak = 10;
+////= for-118
+//// prototype-names/an-object-is-put-between-the-prototype-of-a-class-and-object-prototype.ts
+// Object.setPrototypeOf(C.prototype, other) hangs the prototype of a class under an ordinary object.
+// First the object has the name already; then an empty object is hung in and gets the name afterwards; then the name arrives one level above that object.
+////= lines-13	Full	id	number	hint	string
+////= lines-13	Empty	id	number	hint	string
+////= lines-13	Deep	id	number	hint	string
+const log: string[] = [];
+////= lines-14	hintOfFull	object	Full	return	object.hint
+////= lines-14	hintOfEmpty	object	Empty	return	object.hint
+////= lines-14	hintOfDeep	object	Deep	return	object.hint
+////= lines-16	setOnDeep	object	Deep	value	string	object.hint
+function aroundTheLink(object: Full, above: object) {
+  const before = object.hint;
+  Object.setPrototypeOf(Object.getPrototypeOf(object), above);
+  return `${before} ${object.hint}`;
+}
+function aroundTheStore(object: Empty, above: any, name: string) {
+  const before = object.hint;
+  above[name] = "came later";
+  return `${before} ${object.hint}`;
+}
+
+let length = 0;
+////= for-156
+console.log("warm", length);
+
+const full = new Full(1);
+console.log("an object that has the name:", aroundTheLink(full, { hint: "was there" }), "|", hintOfFull(new Full(2)), "hint" in full, Object.keys(full).join());
+
+const between: object = {};
+const empty = new Empty(1);
+Object.setPrototypeOf(Empty.prototype, between);
+console.log("an empty object:", hintOfEmpty(empty), hintOfEmpty(new Empty(2)));
+console.log("it gets the name:", aroundTheStore(empty, between, "hint"), "|", hintOfEmpty(new Empty(3)), "hint" in empty);
+delete (between as any).hint;
+console.log("it loses the name:", hintOfEmpty(empty), hintOfEmpty(new Empty(4)), "hint" in empty);
+
+const top: object = {};
+const middle: object = Object.create(top);
+const deep = new Deep(1);
+Object.setPrototypeOf(Deep.prototype, middle);
+console.log("two objects:", hintOfDeep(deep));
+////= Object-defineProperty-11
+console.log("the upper one gets accessors:", hintOfDeep(deep), hintOfDeep(new Deep(2)));
+setOnDeep(deep, "x");
+setOnDeep(new Deep(3), "y");
+console.log("stores:", hintOfDeep(deep), Object.keys(deep).join(), log.join(", "));
+Object.setPrototypeOf(Deep.prototype, Object.prototype);
+console.log("the link is put back:", hintOfDeep(deep), hintOfDeep(new Deep(4)));
+setOnDeep(deep, "z");
+console.log("stores:", hintOfDeep(deep), Object.keys(deep).join(), log.length);

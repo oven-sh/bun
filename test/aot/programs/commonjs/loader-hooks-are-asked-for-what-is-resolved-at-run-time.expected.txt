@@ -1,0 +1,26 @@
+assign _resolveFilename | true
+a constant require | b
+  _resolveFilename asked for ./b.cjs object false
+a computed require | b
+  _resolveFilename asked for alias object false
+a computed alias | a
+  _resolveFilename asked for alias object false
+require.resolve of the alias | true
+  _resolveFilename asked for node:path object false
+a computed built-in | function
+assign prototype.require | true
+a constant require | a
+  prototype.require asked for ./a.cjs
+  _resolveFilename asked for ./a.cjs object false
+a computed require | a
+  prototype.require asked for other
+  _resolveFilename asked for ./b.cjs object false
+a computed name that the hook turns | b
+  prototype.require asked for other
+  _resolveFilename asked for ./b.cjs object false
+module.require computed | b
+put both back | a
+assign _load | true
+a computed require | b
+assign wrap | true
+function

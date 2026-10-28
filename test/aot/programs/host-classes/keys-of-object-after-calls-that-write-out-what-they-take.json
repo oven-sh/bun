@@ -1,0 +1,4 @@
+{
+  "alone": "the order of the keys follows from which members were read first, and the other programs of a joined executable read some",
+  "skipInShell": "it uses what Bun provides and the jsc shell does not: console, Bun, process"
+}

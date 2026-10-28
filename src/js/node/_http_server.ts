@@ -2,7 +2,7 @@
 const EventEmitter: typeof import("node:events").EventEmitter = require("node:events");
 const { Stream } = require("node:stream");
 const { isIP } = require("internal/net/isIP");
-const { kWriteOperation } = require("internal/streams/utils");
+const { kWriteOperation, kWriteOperationEncoding } = require("internal/streams/utils");
 const {
   _checkInvalidHeaderChar: checkInvalidHeaderChar,
   chunkExpression,
@@ -1536,7 +1536,7 @@ function queueResponseSocketWrite(response, kind, chunk, encoding, callback) {
     if (kind === "write" || kind === "end") strict = strictContentLength(response, headerState, kind === "end");
     if (!response._hasBody && length) {
       if (response[kRejectNonStandardBodyWrites]) throw $ERR_HTTP_BODY_NOT_ALLOWED();
-      chunk = undefined;
+      chunk = kind === "write" ? "" : undefined;
       length = 0;
       bodyLength = 0;
     }
@@ -2356,7 +2356,7 @@ function getNodeHTTPServerSocket() {
     }
 
     _write(_chunk, _encoding, _callback) {
-      if (_encoding === kWriteOperation) {
+      if (_encoding === kWriteOperationEncoding) {
         const response = _chunk.response;
         const done = error => {
           if (this.#pendingResponseCallback !== done) return;

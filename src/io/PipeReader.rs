@@ -214,6 +214,8 @@ bitflags::bitflags! {
         const KEEP_ALIVE               = 1 << 10; // default true
         /// A read failed with a non-retry errno. Set before the bytes read ahead of the failure are delivered, so a pull from inside that delivery cannot read the fd past the error. Never cleared: `start()`, `unpause()` and `from()` keep it, and only a reader from `init()` reads again.
         const READ_FAILED              = 1 << 11;
+        /// The fd belongs to someone else, for example the process's own stdin. Set before `start()`. Every close of this reader then releases the poll and leaves the fd open.
+        const BORROWED_FD              = 1 << 14;
     }
 }
 
@@ -342,9 +344,15 @@ impl PosixBufferedReader {
             self.flags.insert(PosixFlags::CLOSED_WITHOUT_REPORTING);
             if self.flags.contains(PosixFlags::CLOSE_HANDLE) {
                 let owner = std::ptr::from_mut(self).cast::<c_void>();
-                self.handle.close(Some(owner), None::<fn(*mut c_void)>);
+                self.handle
+                    .close_impl(Some(owner), None::<fn(*mut c_void)>, self.closes_fd());
             }
         }
+    }
+
+    /// What every close of `handle` passes as `close_fd`.
+    fn closes_fd(&self) -> bool {
+        !self.flags.contains(PosixFlags::BORROWED_FD)
     }
 
     pub fn get_fd(&self) -> Fd {
@@ -390,7 +398,8 @@ impl PosixBufferedReader {
                 // close it on drop (handle.close() below does).
                 let result = sys::File::borrow(&fd)
                     .read_to_end_with_array_list(&mut self._buffer, sys::SizeHint::UnknownSize);
-                self.handle.close(None, None::<fn(*mut c_void)>);
+                self.handle
+                    .close_impl(None, None::<fn(*mut c_void)>, self.closes_fd());
                 if let Err(err) = result {
                     bun_core::debug_warn!("error reading from memfd\n{}", err);
                     return self.buffer();
@@ -446,10 +455,12 @@ impl PosixBufferedReader {
         // runs without a receiver borrow.
         unsafe {
             if (*this).flags.contains(PosixFlags::CLOSE_HANDLE) {
-                (*this).handle.close(
+                let close_fd = (*this).closes_fd();
+                (*this).handle.close_impl(
                     Some(this.cast::<c_void>()),
                     // SAFETY: ctx is the live reader raw pointer passed above.
                     Some(|ctx: *mut c_void| Self::done(ctx.cast::<PosixBufferedReader>())),
+                    close_fd,
                 );
             }
         }
@@ -554,7 +565,8 @@ impl PosixBufferedReader {
         if !is_pollable {
             self.buffer().clear();
             self.flags.remove(PosixFlags::IS_DONE);
-            self.handle.close(None, None::<fn(*mut c_void)>);
+            self.handle
+                .close_impl(None, None::<fn(*mut c_void)>, self.closes_fd());
             self.handle = PollOrFd::Fd(fd);
             return sys::Result::Ok(());
         }

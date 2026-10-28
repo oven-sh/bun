@@ -96,6 +96,9 @@ pub(crate) enum Lazy {
 
 pub(crate) struct OpenedFileBlob {
     pub(crate) fd: Fd,
+    /// `fd` is the caller's own stdin, stdout or stderr, not a descriptor opened here: the reader leaves it open.
+    #[cfg(not(windows))]
+    pub(crate) borrowed: bool,
     pub(crate) pollable: bool,
     pub(crate) nonblocking: bool,
     #[cfg(not(windows))]
@@ -106,6 +109,8 @@ impl Default for OpenedFileBlob {
     fn default() -> Self {
         Self {
             fd: Fd::INVALID,
+            #[cfg(not(windows))]
+            borrowed: false,
             pollable: false,
             nonblocking: true,
             #[cfg(not(windows))]
@@ -141,6 +146,7 @@ impl Lazy {
                                 file.is_atty = Some(true);
                                 break 'brk Fd::from_native(rc);
                             }
+                            this.borrowed = true;
                         }
                         break 'brk *pl_fd;
                     }
@@ -201,14 +207,18 @@ impl Lazy {
             let stat: sys::Stat = match sys::fstat(fd) {
                 Ok(result) => result,
                 Err(err) => {
-                    fd.close();
+                    if !this.borrowed {
+                        fd.close();
+                    }
                     return Err(err);
                 }
             };
 
             let mode = stat.st_mode as _;
             if sys::S::ISDIR(mode) {
-                aio::Closer::close(fd, ());
+                if !this.borrowed {
+                    aio::Closer::close(fd, ());
+                }
                 return Err(sys::Error::from_code(sys::Errno::EISDIR, sys::Tag::fstat));
             }
 
@@ -341,6 +351,9 @@ impl FileReader {
                                     .flags
                                     .set(PosixFlags::NONBLOCKING, opened.nonblocking);
                                 self.reader().flags.set(PosixFlags::POLLABLE, pollable);
+                                self.reader()
+                                    .flags
+                                    .set(PosixFlags::BORROWED_FD, opened.borrowed);
                             }
                             #[cfg(windows)]
                             {

@@ -1952,11 +1952,7 @@ fn console_on_before_print() {
     }
 }
 
-/// The console call of a Worker comes here on its own thread. The hook reads a
-/// flag, prints, then clears the flag, so the lock lets one console call at a
-/// time do that. It does not cover the test thread, which changes the same
-/// state with no lock. Not inlined, so that a console call outside `bun test`
-/// pays for the check alone.
+/// One console call at a time: a Worker calls from its own thread. The test thread takes no lock.
 #[inline(never)]
 fn console_on_before_print_in_test() {
     static LOCK: bun_threading::Mutex = bun_threading::Mutex::new();

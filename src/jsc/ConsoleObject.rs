@@ -87,8 +87,7 @@ const DEFAULT_CONSOLE_LOG_DEPTH: u16 = 2;
 
 type Counter = HashMap<u64, u32>;
 
-/// The position in a block of [`ConsoleObject::block`]. The block has `room`
-/// more bytes from `next`. What is before `next` is not written yet.
+/// Where the next byte of a block of [`ConsoleObject::block`] goes: `room` more bytes fit from `next`.
 #[derive(Clone, Copy)]
 struct Cursor {
     next: *mut u8,
@@ -116,26 +115,16 @@ pub struct ConsoleObject {
     stderr: Output::StreamType,
     stdout: Output::StreamType,
 
-    /// The heap buffer of a message that outgrew the stage of its [`emit`]
-    /// frame. That message takes it and gives it back, so a message that
-    /// starts while it is taken allocates its own.
+    /// The heap buffer that a message over the stage of [`emit`] takes and gives back.
     scratch: Vec<u8>,
 
-    /// Indexed by [`Destination`]. Set while a message of this VM holds the
-    /// stream mutex: from its first write to its end, for a message over
-    /// [`SPILL_AT`] or of primitives only. The mutex is not recursive, and a
-    /// VM is the only one on its thread. So a message that ends inside that
-    /// one (a hook that logs) reads this and does not lock again.
+    /// By [`Destination`]: a message of this VM holds the stream mutex. One that ends inside it does not lock.
     locked: [bool; 2],
 
-    /// Indexed by [`Destination`]. The memory of the message over
-    /// [`SPILL_AT`]: it fills the block and writes it when it is full. Only
-    /// the capacity is used, and `cursor` has the length. Output of this VM
-    /// that starts inside that message (a hook that logs) writes the block
-    /// first, so it lands where the hook ran.
+    /// By [`Destination`]: the memory of the message over [`SPILL_AT`]. `cursor` has its fill, not the `Vec`.
     block: [Vec<u8>; 2],
 
-    /// Indexed by [`Destination`]. Where the next byte of the block goes.
+    /// By [`Destination`]: where the next byte of the block goes.
     cursor: [Cursor; 2],
 
     pub(crate) default_indent: u16,
@@ -180,8 +169,7 @@ impl ConsoleObject {
         held
     }
 
-    /// Writes what the message over [`SPILL_AT`] on `stream` has not written
-    /// yet. `end`: these are the last bytes of the message.
+    /// Writes what the message over [`SPILL_AT`] on `stream` has not written yet (`end`: its last bytes).
     fn flush_block(&mut self, stream: Destination, end: bool) {
         let fd = self.fd(stream);
         let block = &mut self.block[stream as usize];
@@ -200,18 +188,14 @@ impl ConsoleObject {
         }
     }
 
-    /// Writes what the messages over [`SPILL_AT`] of this VM have not written
-    /// yet, on both streams.
+    /// [`Self::flush_block`] for both streams: output that starts inside such a message comes after it.
     fn flush_blocks(&mut self) {
         for stream in [Destination::Stderr, Destination::Stdout] {
             self.flush_block(stream, false);
         }
     }
 
-    /// The thread of this VM does not return to its console messages:
-    /// `process.exit()` ran inside one of their hooks. What they have not
-    /// written yet goes out, and their stream mutexes are given back, so that
-    /// no other thread waits for them for ever.
+    /// `process.exit()` ran inside a hook: writes what the messages hold and gives their stream mutexes back.
     pub(crate) fn abandon_messages(&mut self) {
         self.flush_blocks();
         for stream in [Destination::Stderr, Destination::Stdout] {
@@ -324,9 +308,9 @@ fn vm_console(global: &JSGlobalObject) -> *mut ConsoleObject {
 /// `&mut ConsoleObject` accessor for the set-once `VirtualMachine.console`
 /// box. Consolidates the open-coded `&mut *vm_console(global)` deref at the
 /// `Bun__ConsoleObject__*` FFI entry points (each is a top-level JS-thread
-/// host call, so the `&mut` is exclusive for the duration). Do not hold it
-/// while a message is formatted: that runs user code, and a console call made
-/// from there derefs the same box.
+/// host call, so the `&mut` is exclusive for the duration). Callers that need
+/// to interleave borrows across a deferred guard (`message_with_type_and_level_`)
+/// keep using the raw [`vm_console`] pointer instead.
 #[inline]
 unsafe fn vm_console_mut<'a>(global: &JSGlobalObject) -> &'a mut ConsoleObject {
     // SAFETY: see [`vm_console`] — `VirtualMachine.console` is initialized once
@@ -336,8 +320,7 @@ unsafe fn vm_console_mut<'a>(global: &JSGlobalObject) -> &'a mut ConsoleObject {
     unsafe { &mut *vm_console(global) }
 }
 
-/// The console, for one short read or update. `f` must not run user code: a
-/// console call made from there derefs the same box.
+/// The console for one short read or update. `f` must not run user code: that can call the console again.
 #[inline]
 fn with_console<R>(console: *mut ConsoleObject, f: impl FnOnce(&mut ConsoleObject) -> R) -> R {
     // SAFETY: see [`vm_console`]. No other reference to the box is live: each
@@ -348,8 +331,7 @@ fn with_console<R>(console: *mut ConsoleObject, f: impl FnOnce(&mut ConsoleObjec
 static STDERR_MUTEX: Mutex = Mutex::new();
 static STDOUT_MUTEX: Mutex = Mutex::new();
 
-/// Held for a write to the stream, so that the messages of two JS threads do
-/// not mix.
+/// Held for a write to the stream, so that the messages of two JS threads do not mix.
 #[inline]
 fn stream_mutex(stream: Destination) -> &'static Mutex {
     match stream {
@@ -361,10 +343,7 @@ fn stream_mutex(stream: Destination) -> &'static Mutex {
 /// Tells `bun test` that console output follows.
 #[inline]
 fn before_print() {
-    // LAYERING: `Jest::runner()` lives in `bun_runtime::test_runner` (forward
-    // dep on the high tier). Dispatch through `RuntimeHooks` instead — the
-    // high-tier hook checks `Jest.runner` and calls `onBeforePrint()`; no-op
-    // when `bun test` isn't running or hooks aren't installed.
+    // `Jest::runner()` is in `bun_runtime`, above this crate, so the call goes through `RuntimeHooks`.
     if let Some(hooks) = crate::virtual_machine::runtime_hooks() {
         (hooks.console_on_before_print)();
     }
@@ -373,27 +352,17 @@ fn before_print() {
 /// How much of a message [`emit`] holds on its own stack frame.
 const STAGE_SIZE: usize = 4096;
 
-/// Writes the last bytes of a message. A message that is longer than the stage
-/// ends with a write of its last byte alone. A write of more than a page can
-/// fill the last page of a pipe. On a nonblocking pipe, `process.stdout.write`
-/// queues the bytes that find no room, and the next console message would
-/// overtake them. The write of one byte waits for room, and it leaves a page
-/// that small writes fit in.
+/// Ends a message over a page with a 1-byte write: a later small write then finds room in a pipe.
 fn write_end(fd: bun_sys::Fd, bytes: &[u8]) {
     let (rest, last) = bytes.split_at(bytes.len() - usize::from(bytes.len() > STAGE_SIZE));
     let _ = bun_sys::write_all_to_stdio(fd, rest);
     let _ = bun_sys::write_all_to_stdio(fd, last);
 }
 
-/// How much of a message is held back before it starts to go out in blocks,
-/// and the most heap a VM keeps between messages. It is the default pipe
-/// capacity on Linux and macOS.
+/// How much of a message is held before it goes out in blocks, and the most heap a VM keeps between messages.
 const SPILL_AT: usize = 64 * 1024;
 
-/// Formatting these arguments of a `console.log`-type call runs no user code:
-/// each one is a string, a number, a boolean, `undefined` or `null`. No format
-/// specifier calls into JavaScript for these. A BigInt or a Symbol is not in
-/// the list: `%j` calls `toJSON` for a BigInt, and `%s` throws for a Symbol.
+/// Formatting a string, number, boolean, `undefined` or `null` runs no user code. A BigInt or a Symbol can.
 fn runs_no_user_code(args: &[JSValue]) -> bool {
     !args.is_empty()
         && args.iter().all(|arg| {
@@ -410,24 +379,15 @@ enum Hold {
     Stage,
     /// The message outgrew the stage and is in `heap`.
     Heap,
-    /// The message passed [`SPILL_AT`]. What it held is on the fd, and the
-    /// rest goes through `ConsoleObject::block`.
+    /// Past [`SPILL_AT`]: what the message held is on the fd, the rest goes through `ConsoleObject::block`.
     Streaming,
-    /// The message is a `console.log`-type call of primitives only (see
-    /// [`runs_no_user_code`]), so no user code runs before its end. It goes
-    /// out as it is produced: through the stage, and a chunk the stage cannot
-    /// take from the memory of its producer, with no copy.
+    /// Primitives only ([`runs_no_user_code`]): goes out as it is produced, a long chunk with no copy.
     Direct,
 }
 
-/// The sink of one console message. The message reaches the fd when it ends,
-/// and not at all when its formatting threw. So a console call made while
-/// another message is formatted prints first, and no user code runs with the
-/// stream mutex held. Only a message over [`SPILL_AT`] or of primitives only
-/// starts to go out earlier.
+/// The sink of one console message: the fd gets it when it ends, and not at all when its formatting threw.
 struct ConsoleWriter<'a> {
-    /// `ptr[..len]` is what the message holds, in the stage or in `heap`, and
-    /// `cap` is how much fits there. `len` and `cap` are 0 while it streams.
+    /// What the message holds is `ptr[..len]`, in the stage or `heap`. `len` and `cap` are 0 while it streams.
     ptr: *mut u8,
     len: usize,
     cap: usize,
@@ -436,11 +396,9 @@ struct ConsoleWriter<'a> {
     locked: bool,
     stream: Destination,
     heap: Vec<u8>,
-    /// Not a reference: user code runs while the message is formatted, and a
-    /// console call made from there derefs the same box.
+    /// Not a reference: user code runs while the message is formatted, and it can call the console again.
     console: *mut ConsoleObject,
-    /// The arguments of a `console.log`-type call, empty for any other call.
-    /// A message of primitives only can go out early.
+    /// The arguments of a `console.log`-type call, empty for any other call: see [`runs_no_user_code`].
     args: &'a [JSValue],
     stage: core::marker::PhantomData<&'a mut [core::mem::MaybeUninit<u8>; STAGE_SIZE]>,
 }
@@ -459,9 +417,7 @@ impl ConsoleWriter<'_> {
     fn hold_bytes(&mut self, bytes: &[u8]) {
         debug_assert!(bytes.len() <= self.cap - self.len);
         let len = self.len;
-        // `len` is stored before the copy, so the copy is the last use of
-        // `self` and its call saves no register. Every piece of every message
-        // comes through here.
+        // `len` first, so that the copy is the last use of `self`: every piece of every message comes here.
         self.len = len + bytes.len();
         // SAFETY: `ptr[..cap]` is the stage or the buffer of `heap`, and the
         // caller checked that `bytes` fits after `len`. `bytes` is not a part
@@ -469,8 +425,7 @@ impl ConsoleWriter<'_> {
         unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), self.ptr.add(len), bytes.len()) };
     }
 
-    /// Writes to the stream of the message. A failed write is not reported,
-    /// as before.
+    /// Writes to the stream of the message. A failed write is not reported.
     #[inline]
     fn write_fd(&self, bytes: &[u8]) {
         let fd = with_console(self.console, |console| console.fd(self.stream));
@@ -484,9 +439,7 @@ impl ConsoleWriter<'_> {
             let cursor = &mut console.cursor[self.stream as usize];
             let fits = bytes.len() <= cursor.room;
             if fits {
-                // As in `hold_bytes`: the cursor first, so that the copy is
-                // the last thing this function does. A quoted string comes
-                // here one character at a time.
+                // The cursor first, as in `hold_bytes`: a quoted string comes here one character at a time.
                 let next = cursor.next;
                 cursor.room -= bytes.len();
                 // SAFETY: the block has `room` more bytes from `next`, and
@@ -526,9 +479,7 @@ impl ConsoleWriter<'_> {
         }
     }
 
-    /// Moves the message to a heap buffer where `additional` more bytes fit:
-    /// the buffer the VM keeps when the message leaves the stage and that
-    /// buffer is large enough, and a new one if not.
+    /// Moves the message to a heap buffer with room for `additional` more bytes: the VM's, or a new one.
     fn grow(&mut self, additional: usize) {
         let needed = self.len + additional;
         debug_assert!(needed <= SPILL_AT);
@@ -549,9 +500,7 @@ impl ConsoleWriter<'_> {
         self.cap = self.heap.capacity().min(SPILL_AT);
     }
 
-    /// Lets bytes of this message reach the fd before its end. This message
-    /// takes the stream mutex and keeps it to its end, unless a message of
-    /// this VM that it runs inside holds it already.
+    /// Takes the stream mutex to the end of this message, unless a message of this VM around it holds it.
     #[inline(always)]
     fn enter_stream(&mut self) {
         let held = with_console(self.console, |console| {
@@ -578,8 +527,7 @@ impl ConsoleWriter<'_> {
         stream_mutex(self.stream).unlock();
     }
 
-    /// The message passed [`SPILL_AT`]. What it holds goes out now, and the
-    /// rest follows in blocks through `ConsoleObject::block`.
+    /// The message passed [`SPILL_AT`]: what it holds goes out now, and the rest follows in blocks.
     fn start_streaming(&mut self) {
         self.enter_stream();
         self.write_fd(self.held());
@@ -601,8 +549,7 @@ impl ConsoleWriter<'_> {
         self.cap = 0;
     }
 
-    /// `bytes` does not fit in the block of the stream. The block goes out,
-    /// and a chunk of a block or more goes out as it is, with no copy.
+    /// `bytes` does not fit in the block: the block goes out, and a chunk of a block or more goes out as it is.
     #[cold]
     #[inline(never)]
     fn write_streaming(&mut self, bytes: &[u8]) {
@@ -619,8 +566,7 @@ impl ConsoleWriter<'_> {
         }
     }
 
-    /// What the stage holds goes out first, and a chunk that the stage cannot
-    /// take goes out as it is, with no copy.
+    /// The stage goes out first, and a chunk that the stage cannot take goes out as it is.
     #[inline(always)]
     fn write_direct(&mut self, bytes: &[u8]) {
         if self.len > 0 {
@@ -634,9 +580,7 @@ impl ConsoleWriter<'_> {
         }
     }
 
-    /// Ends the message. When `complete` is false its formatting threw. A
-    /// message that is still held is then dropped. A message whose start is
-    /// on the fd writes the rest of what it has, as before.
+    /// Ends the message. When its formatting threw (`!complete`), a message that is still held is dropped.
     #[inline(always)]
     fn finish(&mut self, complete: bool) {
         match self.hold {
@@ -657,8 +601,7 @@ impl ConsoleWriter<'_> {
         }
     }
 
-    /// Writes the message that is held, with no byte of another message
-    /// inside it. `outgrew_stage`: the message is in `heap`.
+    /// Writes the held message under the stream mutex (`outgrew_stage`: it is in `heap`).
     #[inline(always)]
     fn deliver(&self, outgrew_stage: bool) {
         if with_console(self.console, |console| console.locked == [false; 2]) {
@@ -681,8 +624,7 @@ impl ConsoleWriter<'_> {
         );
     }
 
-    /// [`Self::deliver`] for a message that ends inside a message of this VM
-    /// that holds a stream mutex (a hook that logs).
+    /// [`Self::deliver`] inside a message of this VM that holds a stream mutex (a hook that logs).
     #[cold]
     #[inline(never)]
     fn deliver_inside(&self) {
@@ -718,8 +660,7 @@ impl ConsoleWriter<'_> {
         let mut heap = core::mem::take(&mut self.heap);
         if heap.capacity() != 0 {
             heap.clear();
-            // A message that started while this one had the buffer gave its
-            // own back first. Keep the larger.
+            // A message that started inside this one gave its own buffer back first: keep the larger.
             with_console(self.console, |console| {
                 if heap.capacity() > console.scratch.capacity() {
                     console.scratch = heap;
@@ -743,10 +684,7 @@ impl bun_io::Write for ConsoleWriter<'_> {
     }
 }
 
-/// Runs one console message: `format` writes it, and it then goes to `stream`
-/// whole. When `format` fails (user code threw while a value was formatted),
-/// the message is not written. `args` are the arguments of a
-/// `console.log`-type call, and empty for any other call.
+/// Runs one console message: `format` writes it, and `stream` gets it whole, or not at all when `format` fails.
 #[inline(always)]
 fn emit(
     console: *mut ConsoleObject,
@@ -754,8 +692,7 @@ fn emit(
     args: &[JSValue],
     format: impl FnOnce(&mut dyn bun_io::Write) -> JsResult<()>,
 ) -> JsResult<()> {
-    // A message of primitives only holds the mutex and runs no user code, so
-    // no message starts inside it.
+    // A message of primitives only runs no user code, so no message starts inside it.
     debug_assert!(with_console(console, |console| {
         !console.holds(stream) || console.block[stream as usize].capacity() != 0
     }));
@@ -780,8 +717,7 @@ fn emit(
 /// Leaves the error of a console call pending for its JavaScript caller.
 fn rethrow(global: &JSGlobalObject, result: JsResult<()>) {
     if let Err(err) = result {
-        // The exception is already set on the VM (`JsError::Thrown`); for OOM
-        // make sure something is pending. Mirrors `host_fn::void_from_js_error`.
+        // `JsError::Thrown` is pending already. OOM is made pending, as in `host_fn::void_from_js_error`.
         if matches!(err, jsc::JsError::OutOfMemory) {
             global.throw_out_of_memory_value();
         }
@@ -891,8 +827,7 @@ fn print_assertion_failed(console: *mut ConsoleObject) -> JsResult<()> {
     })
 }
 
-/// Prints one message. Not inlined: the frame has the stage of [`emit`], and a
-/// console call that prints nothing does not need it.
+/// Prints one message. Not inlined: only this frame needs the stage of [`emit`].
 #[inline(never)]
 fn print_message(
     console: *mut ConsoleObject,
@@ -910,18 +845,15 @@ fn print_message(
     } else {
         Output::enable_ansi_colors_stdout()
     };
-    // `console.error()` and `console.warn()` with no arguments print their
-    // line feed on stdout.
+    // `console.error()` and `console.warn()` with no arguments print their line feed on stdout.
     let stream = if use_stderr && !(vals.is_empty() && message_type == MessageType::Log) {
         Destination::Stderr
     } else {
         Destination::Stdout
     };
-    // Read before the message is formatted: a group that a hook opens or
-    // closes does not move this message.
+    // Read before formatting: a group that a hook opens or closes does not move this message.
     let default_indent = with_console(console, |console| console.default_indent);
-    // Another message type can run user code after its arguments are
-    // written: `console.trace` reads the `stack` of an Error.
+    // Not for another type: `console.trace` reads the `stack` of an Error after it writes its arguments.
     let args = if message_type == MessageType::Log {
         vals
     } else {
@@ -6261,8 +6193,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(
     });
 }
 
-/// The time since `console.time` started `timer`, as `console.timeEnd` and
-/// `console.timeLog` print it.
+/// The time since `console.time` started `timer`, as `timeEnd` and `timeLog` print it.
 fn elapsed_since(timer: &bun_core::time::Timer) -> Output::Elapsed {
     Output::Elapsed {
         colors: Output::enable_ansi_colors_stderr(),
@@ -6308,9 +6239,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     let result = emit(vm_console(global), Destination::Stderr, &[], |writer| {
         write_elapsed(writer, &elapsed, slice);
 
-        // print the arguments
-        // `Formatter` has a `Drop` impl, so struct-update from a
-        // temporary is rejected (E0509). Construct via `new()` then mutate.
+        // `Formatter` has a `Drop` impl, so it is made with `new()` and then changed (E0509).
         let mut fmt = Formatter::new(global);
         fmt.max_depth = bun_options_types::context::try_get()
             .and_then(|ctx| ctx.runtime_options.console_depth)

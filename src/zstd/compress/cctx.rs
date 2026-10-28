@@ -7,6 +7,7 @@ use std::sync::atomic::AtomicBool;
 use super::block_entropy::{
     build_entropy_statistics_and_estimate_sub_block_size, count_seq_store_literals_bytes,
     count_seq_store_match_bytes, derive_seq_store_chunk, entropy_compress_seq_store,
+    literals_compression_is_disabled,
 };
 use super::fse::FseRepeat;
 use super::huf::{self, HufRepeat};
@@ -15,8 +16,8 @@ use super::internal::{
     EntropyCTablesMetadata, HASH_READ_SIZE, LdmState, LongLengthType, Match, MatchState, OptState,
     ParamSwitch, Prefix, PriceTable, RawSeq, RawSeqStore, RowTags, SeqChunk, SeqStore, Strategy,
     Table, TableFillPurpose, Window, ZSTD_CHUNKSIZE_MAX, ZSTD_CURRENT_MAX, ZSTD_DUBT_UNSORTED_MARK,
-    ZSTD_OPT_SIZE, ZSTD_SHORT_CACHE_TAG_BITS, ZSTD_WINDOW_START_INDEX, min_gain, no_compress_block,
-    offbase_is_repcode, offset_to_offbase, rle_compress_block, update_rep,
+    ZSTD_OPT_SIZE, ZSTD_SHORT_CACHE_TAG_BITS, ZSTD_WINDOW_START_INDEX, block_header, min_gain,
+    no_compress_block, offbase_is_repcode, offset_to_offbase, rle_compress_block, update_rep,
 };
 use super::literals::min_literals_to_compress;
 use super::params::{
@@ -26,7 +27,7 @@ use super::params::{
     row_match_finder_used,
 };
 use super::superblock::compress_super_block;
-use super::{compress_block, double_fast, fast, lazy, ldm, opt, presplit};
+use super::{compress_block, double_fast, fast, lazy, ldm, opt, presplit, sequences};
 use crate::common::entropy::read_ncount;
 use crate::common::xxhash::Xxh64;
 use crate::common::{
@@ -37,7 +38,8 @@ use crate::common::{
 };
 use crate::error::{Error, Result};
 use crate::util::{
-    SliceExt, highbit32, read_le32, reset_table, write_le16, write_le24, write_le32, write_le64,
+    BUG, SliceExt, append, highbit32, read_le32, reset_table, write_le16, write_le24, write_le32,
+    write_le64,
 };
 
 /// `ZSTD_compressionStage_e`
@@ -113,7 +115,7 @@ pub(crate) struct Input<'a> {
 pub(crate) enum Output<'a> {
     Slice(&'a mut [u8]),
     /// What is from `start` to `end` in `vec`, which has the capacity for it. Only what is asked for becomes part of its
-    /// length, as zeros: most of the room for a frame is never written to.
+    /// length, as zeros, and what is appended: most of the room for a frame is never written to.
     Spare {
         vec: &'a mut Vec<u8>,
         start: usize,
@@ -121,10 +123,43 @@ pub(crate) enum Output<'a> {
     },
 }
 
-/// The header of a block, and far more than any encoder wants beyond what it writes.
+/// The header of a block, those of its literals and its sequences, the description of a Huffman table, and far more than
+/// any encoder wants beyond what it writes.
 const ROOM_TO_SPARE: usize = 1024;
 
 impl Output<'_> {
+    /// How many bytes there are from `pos` on.
+    fn room_from(&self, pos: usize) -> usize {
+        match self {
+            Output::Slice(slice) => slice.len().saturating_sub(pos),
+            Output::Spare { start, end, .. } => end.saturating_sub(*start + pos),
+        }
+    }
+
+    /// [`no_compress_block`] at `pos`, up to which the output is written.
+    fn store_block(&mut self, pos: usize, src: &[u8], last_block: bool) -> Result<usize> {
+        match self {
+            Output::Slice(slice) => no_compress_block(slice.sub_mut(pos..)?, src, last_block),
+            Output::Spare { vec, start, end } => {
+                let pos = *start + pos;
+                let size = ZSTD_BLOCKHEADERSIZE + src.len();
+                if pos + size > *end {
+                    return Err(Error::DstSizeTooSmall);
+                }
+                if pos > vec.len() {
+                    return Err(BUG);
+                }
+                // Appended, which takes no zeros first.
+                vec.truncate(pos);
+                let header = block_header(BlockType::Raw, src.len(), last_block);
+                let [header @ .., _] = header.to_le_bytes();
+                append(vec, &header)?;
+                append(vec, src)?;
+                Ok(size)
+            }
+        }
+    }
+
     /// What there is from `pos` on, or `needed` bytes of it at least.
     fn from(&mut self, pos: usize, needed: usize) -> Result<&mut [u8]> {
         match self {
@@ -652,9 +687,9 @@ fn write_block_header(
     last_block: bool,
 ) -> Result<()> {
     let c_block_header = if c_size == 1 {
-        u32::from(last_block) + ((BlockType::Rle as u32) << 1) + ((block_size as u32) << 3)
+        block_header(BlockType::Rle, block_size, last_block)
     } else {
-        u32::from(last_block) + ((BlockType::Compressed as u32) << 1) + ((c_size as u32) << 3)
+        block_header(BlockType::Compressed, c_size, last_block)
     };
     write_le24(op, 0, c_block_header)
 }
@@ -788,7 +823,7 @@ pub(crate) fn write_last_empty_block(dst: &mut [u8]) -> Result<usize> {
     if dst.len() < ZSTD_BLOCKHEADERSIZE {
         return Err(Error::DstSizeTooSmall);
     }
-    write_le24(dst, 0, 1 + ((BlockType::Raw as u32) << 1))?;
+    write_le24(dst, 0, block_header(BlockType::Raw, 0, true))?;
     Ok(ZSTD_BLOCKHEADERSIZE)
 }
 
@@ -1230,7 +1265,8 @@ impl FrameCompressor {
     /// `ZSTD_buildSeqStore`
     fn build_seq_store(&mut self, input: &Input<'_>, src: Span) -> Result<BuildSeqStore> {
         Ok(match self.find_sequences(input, src)? {
-            Some(rep) => {
+            Some((rep, last_ll_size)) => {
+                (self.seq_store).store_last_literals(src.bytes(&input.bufs)?, last_ll_size)?;
                 block_state_mut(&mut self.next_c_block).rep = rep;
                 BuildSeqStore::Compress
             }
@@ -1238,13 +1274,13 @@ impl FrameCompressor {
         })
     }
 
-    /// `ZSTD_buildSeqStore`, but for the repeat offsets after the block, which it returns rather than store. `None` is
-    /// `ZSTDbss_noCompress`.
+    /// `ZSTD_buildSeqStore`, but for the repeat offsets after the block and the literals after the last sequence, which
+    /// are not stored: it returns the former and the number of the latter. `None` is `ZSTDbss_noCompress`.
     fn find_sequences(
         &mut self,
         input: &Input<'_>,
         src: Span,
-    ) -> Result<Option<[u32; ZSTD_REP_NUM]>> {
+    ) -> Result<Option<([u32; ZSTD_REP_NUM], usize)>> {
         let params = &self.applied_params;
         let ms = &mut self.match_state;
         let src_size = src.len();
@@ -1333,20 +1369,20 @@ impl FrameCompressor {
                 dict_mode,
             )?
         };
-        let last_literals = block.buf.sub(src.end - last_ll_size..src.end)?;
-        self.seq_store.store_last_literals(last_literals)?;
-        Ok(Some(rep_after))
+        Ok(Some((rep_after, last_ll_size)))
     }
 
-    /// Whether the block is nothing but literals, too few for `ZSTD_compressLiterals` to try, which is larger than the
-    /// block is, if it fits in `dst_size` bytes at all. The tables for the next block need not be made to find that out.
-    fn is_too_short_to_compress(&self, dst_size: usize) -> bool {
+    /// Whether `ZSTD_compressLiterals` would leave `literals` as they are without a look at all of them. A block that is
+    /// nothing else then comes out larger than it went in: to find that out, the literals need not be copied and the
+    /// tables for the next block need not be made.
+    fn literals_stay_as_they_are(&self, literals: &[u8]) -> Result<bool> {
         let prev_huf = &block_state(&self.prev_c_block).entropy.huf;
         let strategy = self.applied_params.c_params.strat();
-        let store = &self.seq_store;
-        store.sequences.is_empty()
-            && store.lit_len < min_literals_to_compress(strategy, prev_huf.repeat_mode)
-            && store.lit_len + 3 + 4 <= dst_size
+        Ok(
+            literals.len() < min_literals_to_compress(strategy, prev_huf.repeat_mode)
+                || literals_compression_is_disabled(&self.applied_params)
+                || huf::samples_are_incompressible(literals)?,
+        )
     }
 
     /// `ZSTD_compressSeqStore_singleBlock`
@@ -1377,6 +1413,7 @@ impl FrameCompressor {
             &self.applied_params,
             dst.sub_mut(ZSTD_BLOCKHEADERSIZE..)?,
             src.len(),
+            None,
         )?;
 
         if !self.is_first_block && c_seqs_size < RLE_MAX_LENGTH && is_rle(src) {
@@ -1553,7 +1590,8 @@ impl FrameCompressor {
     /// better left uncompressed.
     fn compress_block_internal(
         &mut self,
-        dst: &mut [u8],
+        dst: &mut Output<'_>,
+        op: usize,
         input: &Input<'_>,
         src: Span,
     ) -> Result<usize> {
@@ -1562,28 +1600,45 @@ impl FrameCompressor {
 
         let c_size = match self.find_sequences(input, src)? {
             None => Ok(0),
-            Some(rep) => {
-                let mut c_size = if self.is_too_short_to_compress(dst.len()) {
+            Some((rep, last_ll_size)) => {
+                let room = dst.room_from(op).saturating_sub(ZSTD_BLOCKHEADERSIZE);
+                // If they fit as they are, which spares thinking about what fails first. They stay out of the store.
+                let only_literals =
+                    self.seq_store.sequences.is_empty() && bytes.len() + 3 + 4 <= room;
+                let mut c_size = if only_literals && self.literals_stay_as_they_are(bytes)? {
                     Ok(0)
                 } else {
+                    let store = &mut self.seq_store;
+                    let most = if only_literals {
+                        huf::room_for_quick_loops(bytes.len())
+                    } else {
+                        store.store_last_literals(bytes, last_ll_size)?;
+                        // A block that comes out no smaller than it went in is stored as it is, so it makes no
+                        // difference when an encoder runs out of that much room.
+                        (huf::room_for_quick_loops(store.lit_len)
+                            + sequences::max_size(store.sequences.len()))
+                        .min(bytes.len())
+                    };
                     let next = block_state_mut(&mut self.next_c_block);
                     next.rep = rep;
-                    let whole = self.seq_store.whole();
+                    let whole = store.whole();
                     entropy_compress_seq_store(
-                        &mut self.seq_store,
+                        store,
                         &whole,
                         &block_state(&self.prev_c_block).entropy,
                         &mut next.entropy,
                         &self.applied_params,
-                        dst,
+                        (dst.from(op, most + ROOM_TO_SPARE)?).sub_mut(ZSTD_BLOCKHEADERSIZE..)?,
                         bytes.len(),
+                        only_literals.then_some(bytes),
                     )
                 };
                 if !self.is_first_block
                     && c_size.is_ok_and(|c_size| c_size < RLE_MAX_LENGTH)
                     && is_rle(bytes)
                 {
-                    dst.put(0, bytes.at(0)?)?;
+                    dst.from(op, ZSTD_BLOCKHEADERSIZE + 1)?
+                        .put(ZSTD_BLOCKHEADERSIZE, bytes.at(0)?)?;
                     c_size = Ok(1);
                 }
                 c_size
@@ -1694,20 +1749,7 @@ impl FrameCompressor {
                 start: ip,
                 end: ip + block_size,
             };
-            let in_parts = self.applied_params.target_c_block_size != 0
-                || self.applied_params.post_block_splitter == ParamSwitch::Enable;
-            // A block in one part that comes out no smaller than it went in is stored as it is, so it makes no difference
-            // when an encoder runs out of this much room. Parts, which take long to make anyway, get all there is.
-            let out = dst.from(
-                op,
-                if in_parts {
-                    usize::MAX
-                } else {
-                    block_size + ROOM_TO_SPARE
-                },
-            )?;
-
-            if out.len() < ZSTD_BLOCKHEADERSIZE + MIN_CBLOCK_SIZE + 1 {
+            if dst.room_from(op) < ZSTD_BLOCKHEADERSIZE + MIN_CBLOCK_SIZE + 1 {
                 return Err(Error::DstSizeTooSmall);
             }
 
@@ -1728,19 +1770,19 @@ impl FrameCompressor {
             }
             ms.next_to_update = ms.next_to_update.max(ms.window.low_limit);
 
+            // Parts, which take long to make anyway, get all the room there is.
             let c_size = if self.applied_params.target_c_block_size != 0 {
+                let out = dst.from(op, usize::MAX)?;
                 self.compress_block_target_c_block_size(out, input, block, last_block)?
             } else if self.applied_params.post_block_splitter == ParamSwitch::Enable {
+                let out = dst.from(op, usize::MAX)?;
                 self.compress_block_split_block(out, input, block, last_block)?
             } else {
-                let c_size = self.compress_block_internal(
-                    out.sub_mut(ZSTD_BLOCKHEADERSIZE..)?,
-                    input,
-                    block,
-                )?;
+                let c_size = self.compress_block_internal(dst, op, input, block)?;
                 if c_size == 0 {
-                    no_compress_block(out, block.bytes(&input.bufs)?, last_block)?
+                    dst.store_block(op, block.bytes(&input.bufs)?, last_block)?
                 } else {
+                    let out = dst.from(op, ZSTD_BLOCKHEADERSIZE)?;
                     write_block_header(out, c_size, block_size, last_block)?;
                     c_size + ZSTD_BLOCKHEADERSIZE
                 }
@@ -1838,7 +1880,7 @@ impl FrameCompressor {
             if dst.len() - op < 3 {
                 return Err(Error::DstSizeTooSmall);
             }
-            write_le24(dst, op, 1 + ((BlockType::Raw as u32) << 1))?;
+            write_le24(dst, op, block_header(BlockType::Raw, 0, true))?;
             op += ZSTD_BLOCKHEADERSIZE;
         }
 

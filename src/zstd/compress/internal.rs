@@ -445,9 +445,10 @@ impl SeqStore {
         Ok(())
     }
 
-    /// Appends the literals that follow the last sequence of a block.
+    /// Appends the literals that follow the last sequence of `block`, `count` of them.
     #[inline]
-    pub(crate) fn store_last_literals(&mut self, literals: &[u8]) -> Result<()> {
+    pub(crate) fn store_last_literals(&mut self, block: &[u8], count: usize) -> Result<()> {
+        let literals = block.sub(block.len().checked_sub(count).ok_or(BUG)?..)?;
         self.lit_buffer.write_at(self.lit_len, literals)?;
         self.lit_len += literals.len();
         Ok(())
@@ -632,14 +633,17 @@ pub(crate) fn ml_code(ml_base: u32) -> u32 {
 
 /// `ZSTD_noCompressBlock`
 pub(crate) fn no_compress_block(dst: &mut [u8], src: &[u8], last_block: bool) -> Result<usize> {
-    let c_block_header24 =
-        u32::from(last_block) + ((BlockType::Raw as u32) << 1) + ((src.len() as u32) << 3);
     if src.len() + ZSTD_BLOCKHEADERSIZE > dst.len() {
         return Err(Error::DstSizeTooSmall);
     }
-    write_le24(dst, 0, c_block_header24)?;
+    write_le24(dst, 0, block_header(BlockType::Raw, src.len(), last_block))?;
     dst.write_at(ZSTD_BLOCKHEADERSIZE, src)?;
     Ok(ZSTD_BLOCKHEADERSIZE + src.len())
+}
+
+/// The 3 bytes before a block. `size` is that of its content, or for a run what it stands for.
+pub(crate) const fn block_header(block_type: BlockType, size: usize, last_block: bool) -> u32 {
+    last_block as u32 + ((block_type as u32) << 1) + ((size as u32) << 3)
 }
 
 /// `ZSTD_rleCompressBlock`
@@ -649,12 +653,10 @@ pub(crate) fn rle_compress_block(
     src_size: usize,
     last_block: bool,
 ) -> Result<usize> {
-    let c_block_header =
-        u32::from(last_block) + ((BlockType::Rle as u32) << 1) + ((src_size as u32) << 3);
     if dst.len() < 4 {
         return Err(Error::DstSizeTooSmall);
     }
-    write_le24(dst, 0, c_block_header)?;
+    write_le24(dst, 0, block_header(BlockType::Rle, src_size, last_block))?;
     dst.put(3, byte)?;
     Ok(4)
 }

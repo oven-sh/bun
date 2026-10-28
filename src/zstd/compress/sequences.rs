@@ -802,6 +802,12 @@ fn encode_sequences_into(
     Some(stream.bit_pos + 1)
 }
 
+/// `nb_seq` sequences and the descriptions of their three tables take no more. A sequence has up to 16, 16 and 31 bits,
+/// and 9, 9 and 8 for the states.
+pub(crate) const fn max_size(nb_seq: usize) -> usize {
+    3 * FSE_NCOUNTBOUND + nb_seq * 12
+}
+
 /// `ZSTD_encodeSequences`: `codes` are those of `sequences`, of which there is at least one. Without `many_bits`, none
 /// has too many extra bits to be written at once.
 pub(crate) fn encode_sequences(

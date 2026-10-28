@@ -197,19 +197,24 @@ fn entropy_compress_seq_store_internal(
     prev_entropy: &EntropyCTables,
     next_entropy: &mut EntropyCTables,
     cctx_params: &CCtxParams,
+    sampled_literals: Option<&[u8]>,
 ) -> Result<usize> {
     const SUSPECT_UNCOMPRESSIBLE_LITERAL_RATIO: usize = 20;
     let strategy = cctx_params.c_params.strat();
     let nb_seq = chunk.nb_seq();
     let lit_size = chunk.lit_size();
     let mut op = 0usize;
+    debug_assert!(sampled_literals.is_none() || nb_seq == 0);
 
     {
-        let suspect_uncompressible =
-            nb_seq == 0 || lit_size / nb_seq >= SUSPECT_UNCOMPRESSIBLE_LITERAL_RATIO;
+        let suspect_uncompressible = sampled_literals.is_none()
+            && (nb_seq == 0 || lit_size / nb_seq >= SUSPECT_UNCOMPRESSIBLE_LITERAL_RATIO);
         op += compress_literals(
             dst,
-            store.lit_buffer.sub(chunk.lit_start..chunk.lit_end)?,
+            match sampled_literals {
+                Some(literals) => literals,
+                None => store.lit_buffer.sub(chunk.lit_start..chunk.lit_end)?,
+            },
             &prev_entropy.huf,
             &mut next_entropy.huf,
             strategy,
@@ -266,7 +271,8 @@ fn entropy_compress_seq_store_internal(
 }
 
 /// `ZSTD_entropyCompressSeqStore`: the content of a compressed block for `chunk`, which stands for `block_size` bytes.
-/// Returns 0 if the block is better left uncompressed.
+/// Returns 0 if the block is better left uncompressed. A block without sequences can have its literals in
+/// `sampled_literals` instead of the store, if [`huf::samples_are_incompressible`] has been asked and is false for them.
 pub(crate) fn entropy_compress_seq_store(
     store: &mut SeqStore,
     chunk: &SeqChunk,
@@ -275,6 +281,7 @@ pub(crate) fn entropy_compress_seq_store(
     cctx_params: &CCtxParams,
     dst: &mut [u8],
     block_size: usize,
+    sampled_literals: Option<&[u8]>,
 ) -> Result<usize> {
     let c_size = match entropy_compress_seq_store_internal(
         dst,
@@ -283,6 +290,7 @@ pub(crate) fn entropy_compress_seq_store(
         prev_entropy,
         next_entropy,
         cctx_params,
+        sampled_literals,
     ) {
         // There is room for the block as it is.
         Err(Error::DstSizeTooSmall) if block_size <= dst.len() => return Ok(0),

@@ -1380,6 +1380,34 @@ describe("the output is that of zstd 1.5.7", () => {
     ]);
   });
 
+  it("where blocks are nothing but literals", () => {
+    // The lesser of two bytes has no matches worth taking, and compresses. At negative levels literals are not compressed.
+    const data = new Uint8Array(300_000);
+    for (let i = 0, x = 5; i < data.length; i++) {
+      x ^= x << 13;
+      x ^= x >>> 17;
+      x ^= x << 5;
+      data[i] = Math.min(x & 255, (x >> 8) & 255);
+    }
+    const inOneCall = [1, 3, 9, 16].map(level => digest(zstdCompressSync(data, { level })));
+    const streamed = [-5, 1, 3, 9, 16].map(level =>
+      digest(zlib.zstdCompressSync(data, { params: { [c.ZSTD_c_compressionLevel]: level } })),
+    );
+    expect(inOneCall).toEqual([
+      "290920 e4a05b68a9febcae",
+      "290984 c04074b7a3113a0c",
+      "290920 e4a05b68a9febcae",
+      "290920 e4a05b68a9febcae",
+    ]);
+    expect(streamed).toEqual([
+      "300018 3aa98e9a8e545874",
+      "290920 e4a05b68a9febcae",
+      "290936 bdaff5fb067b174b",
+      "290920 e4a05b68a9febcae",
+      "290920 e4a05b68a9febcae",
+    ]);
+  });
+
   it("with parameters", () => {
     const cases: Record<string, Record<number, number>> = {
       checksum: { [c.ZSTD_c_checksumFlag]: 1 },

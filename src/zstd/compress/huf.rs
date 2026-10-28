@@ -4,7 +4,7 @@ use super::fse::{self, FseCTable};
 use super::hist;
 use super::internal::Strategy;
 use crate::common::entropy::huf_read_stats;
-use crate::common::{HUF_SYMBOLVALUE_MAX, HUF_TABLELOG_MAX};
+use crate::common::{HUF_SYMBOLVALUE_MAX, HUF_TABLELOG_MAX, LIT_HUF_LOG};
 use crate::error::{Error, Result};
 use crate::util::{BUG, SliceExt, highbit32, write_le16};
 
@@ -873,6 +873,12 @@ const fn tight_compress_bound(src_size: usize, table_log: usize) -> usize {
     ((src_size * table_log) >> 3) + 8
 }
 
+/// With that much room, the streams of `nb_literals` are written the quick way, whatever their code and be it one stream
+/// or four. As they are, the literals take less.
+pub(crate) const fn room_for_quick_loops(nb_literals: usize) -> usize {
+    4 * tight_compress_bound(nb_literals.div_ceil(4), LIT_HUF_LOG as usize)
+}
+
 /// `HUF_compress1X_usingCTable`: the table has a code for every symbol in `src`. Returns the size of the output, or 0
 /// if `dst` is too small.
 pub(crate) fn compress_1x_using_ctable(
@@ -1020,6 +1026,24 @@ pub(crate) fn optimal_table_log(
     opt_log
 }
 
+/// Whether `src` is long enough to tell by its start and its end, and they say that it does not compress.
+pub(crate) fn samples_are_incompressible(src: &[u8]) -> Result<bool> {
+    let src_size = src.len();
+    if src_size < SUSPECT_INCOMPRESSIBLE_SAMPLE_SIZE * SUSPECT_INCOMPRESSIBLE_SAMPLE_RATIO {
+        return Ok(false);
+    }
+    let mut count = [0u32; HUF_SYMBOLVALUE_MAX as usize + 1];
+    let mut largest_total = 0usize;
+    for sample in [
+        src.sub(..SUSPECT_INCOMPRESSIBLE_SAMPLE_SIZE)?,
+        src.sub(src_size - SUSPECT_INCOMPRESSIBLE_SAMPLE_SIZE..)?,
+    ] {
+        let mut max_symbol_value = HUF_SYMBOLVALUE_MAX;
+        largest_total += hist::count_simple(&mut count, &mut max_symbol_value, sample)? as usize;
+    }
+    Ok(largest_total <= ((2 * SUSPECT_INCOMPRESSIBLE_SAMPLE_SIZE) >> 7) + 4)
+}
+
 /// `HUF_compress_internal`
 fn compress_internal(
     dst: &mut [u8],
@@ -1058,26 +1082,12 @@ fn compress_internal(
         return compress_ctable_internal(dst, 0, src, nb_streams, old_huf_table);
     }
 
-    let mut count = [0u32; HUF_SYMBOLVALUE_MAX as usize + 1];
-
     // If the input may well be incompressible, look at its start and its end before all of it.
-    if flags.suspect_uncompressible
-        && src_size >= SUSPECT_INCOMPRESSIBLE_SAMPLE_SIZE * SUSPECT_INCOMPRESSIBLE_SAMPLE_RATIO
-    {
-        let mut largest_total = 0usize;
-        for sample in [
-            src.sub(..SUSPECT_INCOMPRESSIBLE_SAMPLE_SIZE)?,
-            src.sub(src_size - SUSPECT_INCOMPRESSIBLE_SAMPLE_SIZE..)?,
-        ] {
-            let mut max_symbol_value_sample = max_symbol_value;
-            largest_total +=
-                hist::count_simple(&mut count, &mut max_symbol_value_sample, sample)? as usize;
-        }
-        if largest_total <= ((2 * SUSPECT_INCOMPRESSIBLE_SAMPLE_SIZE) >> 7) + 4 {
-            return Ok(0);
-        }
+    if flags.suspect_uncompressible && samples_are_incompressible(src)? {
+        return Ok(0);
     }
 
+    let mut count = [0u32; HUF_SYMBOLVALUE_MAX as usize + 1];
     let largest = hist::count_wksp(&mut count, &mut max_symbol_value, src)?;
     if largest == src_size {
         // A single symbol: run-length encoding.

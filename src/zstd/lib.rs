@@ -520,6 +520,45 @@ mod tests {
     }
 
     #[test]
+    fn literals_that_start_and_end_like_noise_are_stored_whatever_the_room() {
+        // Long enough for the C library to judge literals without a match by their first and last 4 KB.
+        const LEN: usize = 41_000;
+        const STORED: usize = 4 + 1 + 2 + 3 + LEN;
+        let mut state = 13u32;
+        let src: Vec<u8> = (0..LEN)
+            .map(|i| {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                let byte = (state >> 8) as u8;
+                if (4096..LEN - 4096).contains(&i) {
+                    byte % 64
+                } else {
+                    byte
+                }
+            })
+            .collect();
+        let cases = [
+            (STORED + 7, Ok(STORED)),
+            (STORED + 6, Ok(STORED)),
+            (STORED, Ok(STORED)),
+            (STORED - 1, Err(Error::DstSizeTooSmall)),
+        ];
+        // Miri takes 15 seconds for a call.
+        for (capacity, expected) in cases.into_iter().take(if cfg!(miri) { 1 } else { 4 }) {
+            let mut dst = vec![0; capacity];
+            assert_eq!(compress(&mut dst, &src, 1), expected);
+            let mut out = Vec::with_capacity(capacity);
+            assert_eq!(out.capacity(), capacity);
+            assert_eq!(compress_append(&mut out, &src, 1), expected);
+            if expected.is_ok() {
+                assert!(dst.get(..STORED) == Some(&*out));
+                assert!(decompress_alloc(&out).as_ref() == Ok(&src));
+            }
+        }
+    }
+
+    #[test]
     fn tables_that_change_size_give_the_same_frames() -> Result<()> {
         let mut state = 11u32;
         let src: Vec<u8> = (0..if cfg!(miri) { 300 } else { 6000 })

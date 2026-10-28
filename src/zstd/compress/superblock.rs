@@ -4,7 +4,7 @@ use super::block_entropy::{additional_bits_of, build_block_entropy_stats, write_
 use super::fse::FseCTable;
 use super::internal::{
     CompressedBlockState, EntropyCTables, EntropyCTablesMetadata, FseCTables, FseCTablesMetadata,
-    HufCTables, HufCTablesMetadata, SeqDef, SeqStore, no_compress_block, update_rep,
+    HufCTables, HufCTablesMetadata, SeqDef, SeqStore, block_header, no_compress_block, update_rep,
 };
 use super::literals::{compress_rle_literals_block, no_compress_literals};
 use super::params::CCtxParams;
@@ -233,9 +233,11 @@ fn compress_sub_block(
         op += c_seq_size;
     }
     let c_size = op - ZSTD_BLOCKHEADERSIZE;
-    let c_block_header24 =
-        u32::from(last_block) + ((BlockType::Compressed as u32) << 1) + ((c_size as u32) << 3);
-    write_le24(dst, 0, c_block_header24)?;
+    write_le24(
+        dst,
+        0,
+        block_header(BlockType::Compressed, c_size, last_block),
+    )?;
     result.c_size = op;
     Ok(result)
 }

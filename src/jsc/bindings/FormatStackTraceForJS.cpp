@@ -25,6 +25,7 @@
 #include "CallSite.h"
 #include "ErrorStackTrace.h"
 #include "ObjectBindings.h"
+#include "JSDOMException.h"
 #include "headers-handwritten.h"
 
 #include <wtf/Scope.h>
@@ -497,7 +498,10 @@ static String computeErrorInfoWithoutPrepareStackTrace(
     WTF::String name = "Error"_s;
     WTF::String message;
 
-    if (auto* instance = dynamicDowncast<ErrorInstance>(errorInstance)) {
+    if (auto* domException = dynamicDowncast<WebCore::JSDOMException>(errorInstance)) {
+        name = domException->displayName(vm);
+        message = domException->displayMessage(vm);
+    } else if (auto* instance = dynamicDowncast<ErrorInstance>(errorInstance)) {
         name = instance->sanitizedNameString(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, {});
         message = instance->sanitizedMessageString(lexicalGlobalObject);

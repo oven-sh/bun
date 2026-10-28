@@ -907,8 +907,10 @@ describe("X25519 CryptoKey records", () => {
 
   test("an X25519 record includes the key type", async () => {
     const [privateKey, publicKey] = await importX25519();
-    const privateRecord = `0e000000 21 39000000 0e000000 02000000 01000000 01000000 05 05 17 00 01 20000000 ${x25519Private}`;
-    const publicRecord = `0e000000 21 38000000 0e000000 02000000 01000000 00000000 05 17 00 00 20000000 ${x25519Public}`;
+    // The version both headers carry, from a real serialize() so a CurrentVersion bump doesn't invalidate the records.
+    const v = Buffer.from(serialize(0)).subarray(0, 4).toString("hex");
+    const privateRecord = `${v} 21 39000000 ${v} 02000000 01000000 01000000 05 05 17 00 01 20000000 ${x25519Private}`;
+    const publicRecord = `${v} 21 38000000 ${v} 02000000 01000000 00000000 05 17 00 00 20000000 ${x25519Public}`;
 
     expect(written(privateKey)).toBe(compact(privateRecord));
     expect(written(publicKey)).toBe(compact(publicRecord));

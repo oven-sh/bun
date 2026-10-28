@@ -432,8 +432,10 @@ const uint8_t cryptoKeyOKPOpNameTagMaximumValue = 1;
  * Version 13. added support for ErrorInstance objects.
  * Version 14. Date, RegExp, Error, DOMException, CryptoKey, KeyObject, X509Certificate,
  * and Bun cloneable types are recorded in the object reference pool on both sides.
+ * Version 15. DOMException records its stack.
  */
-[[maybe_unused]] static constexpr unsigned CurrentVersion = 14;
+[[maybe_unused]] static constexpr unsigned CurrentVersion = 15;
+[[maybe_unused]] static constexpr unsigned FirstVersionWithDOMExceptionStack = 15;
 // Deserializers must not pool the version 14 terminal types for older payloads,
 // whose writers never counted them, or the pool indices stop matching the writer's.
 [[maybe_unused]] static constexpr unsigned FirstVersionWithPooledTerminals = 14;
@@ -1092,20 +1094,6 @@ private:
         return dumpIfTerminal(toJSArrayBuffer(*arrayBuffer), code);
     }
 
-    void dumpDOMException(JSObject* obj, SerializationReturnCode& code)
-    {
-        if (auto* exception = JSDOMException::toWrapped(m_lexicalGlobalObject->vm(), obj)) {
-            if (!startObjectInternal(obj)) // handle duplicates
-                return;
-            write(DOMExceptionTag);
-            write(exception->message());
-            write(exception->name());
-            return;
-        }
-
-        code = SerializationReturnCode::DataCloneError;
-    }
-
     bool dumpIfTerminal(JSValue value, SerializationReturnCode& code)
     {
         if (!value.isCell()) {
@@ -1197,6 +1185,25 @@ private:
                 write(RegExpTag);
                 write(regExp->regExp()->pattern());
                 write(String(JSC::Yarr::flagsString(regExp->regExp()->flags()).span()));
+                return true;
+            }
+            if (auto* domException = dynamicDowncast<JSDOMException>(obj)) {
+                if (!startObjectInternal(domException)) // handle duplicates
+                    return true;
+                auto& vm = m_lexicalGlobalObject->vm();
+                // [[Get]] runs a user prepareStackTrace; the throw propagates out of the clone like Node.
+                JSValue stackValue = domException->get(m_lexicalGlobalObject, vm.propertyNames->stack);
+                RETURN_IF_EXCEPTION(scope, false);
+                String stack;
+                if (stackValue.isString()) {
+                    stack = stackValue.toWTFString(m_lexicalGlobalObject);
+                    RETURN_IF_EXCEPTION(scope, false);
+                }
+                auto& impl = domException->wrapped();
+                write(DOMExceptionTag);
+                write(impl.message());
+                write(impl.name());
+                writeNullableString(stack);
                 return true;
             }
             if (auto* errorInstance = dynamicDowncast<ErrorInstance>(obj)) {
@@ -1407,10 +1414,6 @@ private:
                 return true;
             }
 #endif
-            if (obj->inherits<JSDOMException>()) {
-                dumpDOMException(obj, code);
-                return true;
-            }
 
             // write bun types
             if (auto* blob = dynamicDowncast<Bun::Bindgen::Generated::JSBlob>(obj)) {
@@ -3613,8 +3616,13 @@ private:
         CachedStringRef name;
         if (!readStringData(name))
             return JSValue();
+        String stack;
+        if (m_version >= FirstVersionWithDOMExceptionStack && !readNullableString(stack))
+            return JSValue();
         auto exception = DOMException::create(message->string(), name->string());
         JSValue wrapper = getJSValue(exception);
+        if (!stack.isNull())
+            uncheckedDowncast<JSDOMException>(asObject(wrapper))->setStackString(m_lexicalGlobalObject->vm(), WTF::move(stack));
         addTerminalToObjectPool(wrapper);
         return wrapper;
     }

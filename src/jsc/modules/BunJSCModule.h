@@ -700,12 +700,11 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeZone, (JSGlobalObject * globalObject, Ca
     String timeZoneName = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (!WTF::setTimeZoneOverride(timeZoneName)) {
+    if (!Bun::setProcessTimeZone(vm, timeZoneName)) {
         throwTypeError(globalObject, scope,
             makeString("Invalid timezone: \""_s, timeZoneName, "\""_s));
         return {};
     }
-    Bun::resetDateCachesAfterTimeZoneChange(vm);
     WTF::Vector<char16_t, 32> buffer;
     WTF::getTimeZoneOverride(buffer);
     WTF::String timeZoneString(buffer.span());

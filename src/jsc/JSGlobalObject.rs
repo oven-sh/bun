@@ -332,7 +332,8 @@ impl JSGlobalObject {
         JSGlobalObject__clearTerminationException(self)
     }
 
-    pub fn set_time_zone(&self, time_zone: &EncodedSlice) -> bool {
+    /// Sets the time zone of the process from the `TZ` that it starts with.
+    pub fn set_time_zone(&self, time_zone: &EncodedSlice) {
         JSGlobalObject__setTimeZone(self, time_zone)
     }
 
@@ -1479,7 +1480,7 @@ unsafe extern "C" {
     safe fn JSGlobalObject__clearExceptionExceptTermination(this: &JSGlobalObject) -> bool;
     safe fn JSGlobalObject__clearTerminationException(this: &JSGlobalObject);
     safe fn JSGlobalObject__hasException(this: &JSGlobalObject) -> bool;
-    safe fn JSGlobalObject__setTimeZone(this: &JSGlobalObject, time_zone: &EncodedSlice) -> bool;
+    safe fn JSGlobalObject__setTimeZone(this: &JSGlobalObject, time_zone: &EncodedSlice);
     safe fn JSGlobalObject__tryTakeException(this: &JSGlobalObject) -> JSValue;
 
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is

@@ -1234,11 +1234,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     /// `configure_defines`, so `$TZ` set in one is honored.
     fn set_time_zone_from_env(vm: &VirtualMachine) {
         if let Some(tz) = vm.env_loader().get(b"TZ") {
-            if !tz.is_empty() {
-                let _ = vm
-                    .global()
-                    .set_time_zone(&bun_core::EncodedSlice::from_bytes(tz));
-            }
+            vm.global()
+                .set_time_zone(&bun_core::EncodedSlice::from_bytes(tz));
         }
     }
 

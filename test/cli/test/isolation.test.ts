@@ -113,6 +113,63 @@ describe.concurrent("bun test --isolate", () => {
     expect(exitCode).toBe(0);
   });
 
+  // "MSK-3" is a TZ that ICU has no name for: Bun translates it at the start of the run, and again for each file.
+  test("with --isolate, a POSIX TZ of the run is put back before the next file", async () => {
+    using dir = tempDir("isolate-posix-tz", {
+      "a-tz.test.ts": `
+        import { test, expect } from "bun:test";
+        const start = new Date(0).getTimezoneOffset();
+        process.env.TZ = "Asia/Tokyo";
+        test("the run starts on its TZ, and the write applies to this file", () => {
+          expect(start).toBe(-180);
+          expect(new Date(0).getTimezoneOffset()).toBe(-540);
+        });
+      `,
+      "b-tz.test.ts": `
+        import { test, expect } from "bun:test";
+        test("Date is back on the runner's TZ", () => {
+          expect(process.env.TZ).toBe("MSK-3");
+          expect(new Date(0).getTimezoneOffset()).toBe(-180);
+        });
+      `,
+    });
+    const files = ["./a-tz.test.ts", "./b-tz.test.ts"];
+    const result = await runTests(String(dir), ["--isolate"], files, { ...bunEnv, TZ: "MSK-3" });
+    expect(normalizeBunSnapshot(result.stderr, dir)).toContain("2 pass");
+    expect(result.exitCode).toBe(0);
+  });
+
+  // A TZ that is empty or not a time zone leaves the zone to the host, and the zone a file sets must not stay in its
+  // place. process.env.TZ is undefined for an empty TZ.
+  test.each([
+    ["Not/AZone", "Not/AZone"],
+    ["", undefined],
+  ])("with --isolate, the zone of the host is put back when the TZ of the run is %j", async (tz, seen) => {
+    using dir = tempDir("isolate-host-tz", {
+      "a-tz.test.ts": `
+        import { test, expect } from "bun:test";
+        import { join } from "node:path";
+        await Bun.write(join(import.meta.dir, "host.json"), JSON.stringify(new Date(0).getTimezoneOffset()));
+        process.env.TZ = "Asia/Tokyo";
+        test("the write applies to this file", () => {
+          expect(new Date(0).getTimezoneOffset()).toBe(-540);
+        });
+      `,
+      "b-tz.test.ts": `
+        import { test, expect } from "bun:test";
+        import { join } from "node:path";
+        test("Date is back on the zone of the host", async () => {
+          expect(process.env.TZ).toBe(${JSON.stringify(seen)});
+          expect(new Date(0).getTimezoneOffset()).toBe(await Bun.file(join(import.meta.dir, "host.json")).json());
+        });
+      `,
+    });
+    const files = ["./a-tz.test.ts", "./b-tz.test.ts"];
+    const result = await runTests(String(dir), ["--isolate"], files, { ...bunEnv, TZ: tz });
+    expect(normalizeBunSnapshot(result.stderr, dir)).toContain("2 pass");
+    expect(result.exitCode).toBe(0);
+  });
+
   // TZ, NODE_TLS_REJECT_UNAUTHORIZED, BUN_CONFIG_VERBOSE_FETCH and the proxy
   // keys have process.env setters with a native side effect outside the global
   // (the WTF time zone override, per-VM caches, the env map the next

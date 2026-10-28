@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows } from "harness";
 import assert from "node:assert";
 import path from "node:path";
 
@@ -162,6 +162,45 @@ describe("functions with a fixed number of operands, called with 65536 or more a
       }).toEqual(expected[ns]);
     });
   }
+});
+
+// join() and resolve() copy their arguments when one is a String object. `BUN_JSC_maxSingleAllocationSize` makes a WTF
+// allocation above the cap fail. It exists in debug builds only.
+test.skipIf(!isDebug)("a call throws when the copy of its arguments cannot be allocated", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const path = require("node:path");
+const rest = new Array(40000).fill("b");
+const results = {};
+for (const ns of ["posix", "win32"]) {
+  for (const fn of ["join", "resolve"]) {
+    try {
+      results[ns + "." + fn] = "returned a string of length " + path[ns][fn](new String("a"), ...rest).length;
+    } catch (e) {
+      results[ns + "." + fn] = e.name + ": " + e.message;
+    }
+  }
+}
+console.log(JSON.stringify(results));`,
+    ],
+    env: { ...bunEnv, BUN_JSC_maxSingleAllocationSize: "400000" },
+    stdout: "pipe",
+    // ASAN warns on stderr about the failed allocation.
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const outOfMemory = "RangeError: Out of memory";
+  expect(stdout.trim() || stderr).toBe(
+    JSON.stringify({
+      "posix.join": outOfMemory,
+      "posix.resolve": outOfMemory,
+      "win32.join": outOfMemory,
+      "win32.resolve": outOfMemory,
+    }),
+  );
+  expect(exitCode).toBe(0);
 });
 
 test.if(isWindows)("Bun.which skips PATH segments longer than the Windows wide-path buffer", async () => {

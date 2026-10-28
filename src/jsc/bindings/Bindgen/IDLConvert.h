@@ -203,6 +203,11 @@ private:
             converted.append(stringOfStringObject(globalObject, at(index)));
             RETURN_IF_EXCEPTION(scope, void());
         }
+        // append() drops the value when the buffer cannot grow, and the callee would read m_size values from a shorter buffer.
+        if (converted.hasOverflowed()) [[unlikely]] {
+            JSC::throwOutOfMemoryError(&globalObject, scope);
+            return;
+        }
         m_values = converted.data();
     }
 

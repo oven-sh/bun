@@ -1,12 +1,11 @@
 //! `lib/util/variable.js` of eslint-plugin-react.
 //!
-//! `findVariable(variables, name)` and `getVariable(variables, name)` with
-//! `variablesInScope` are [`Scope::get_name`] up the [`Scope::chain`].
+//! `findVariable(variables, name)` and `getVariable(variables, name)` with `variablesInScope`
+//! correspond to [`Scope::get_name`] along the [`Scope::chain`].
 
 use bun_lint::prelude::*;
 
-/// `getVariableFromContext`: it also looks into the first scope in each scope, and into the first
-/// in that.
+/// `getVariableFromContext`. In each scope it also searches the first child scope, and that scope's first child.
 pub(crate) fn variable_from_context<'a>(node: Node<'a>, name: Name<'a>) -> Option<Variable<'a>> {
     let from = node.scope();
     from.chain().find_map(|scope| {
@@ -19,15 +18,15 @@ pub(crate) fn variable_from_context<'a>(node: Node<'a>, name: Name<'a>) -> Optio
     })
 }
 
-/// The same, if the file declares it.
+/// Same, but only if the file declares the variable.
 pub(crate) fn get_variable_from_context<'a>(node: Node<'a>, name: Name<'a>) -> Option<Symbol<'a>> {
     variable_from_context(node, name)?.symbol()
 }
 
-/// What `findVariableByName` returns.
+/// The result of `findVariableByName`.
 #[derive(Copy, Clone)]
 pub(crate) enum Found<'a> {
-    /// `defs[0].node` of an `ImportBinding`: the specifier.
+    /// An `ImportBinding`'s `defs[0].node`, which is the specifier.
     Import(Declaration<'a>),
     /// `defs[0].node.init`
     Init(Expr<'a>),

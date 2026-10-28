@@ -31,7 +31,7 @@ pub struct PackageJsonEdit {
 pub enum EditSite {
     /// `key` in whichever of the four dependency groups of `file` declares `old_literal`.
     Dependencies,
-    /// `key` in this catalog of the root package.json; empty means the default catalog.
+    /// `key` is in this catalog of the root package.json. An empty name means the default catalog.
     Catalog(Box<[u8]>),
     /// The rule for `key` in the root package.json's `overrides` (or `resolutions`).
     Override(OverrideSelector),
@@ -40,7 +40,8 @@ pub enum EditSite {
 /// A rule as `OverrideMap` normalizes it, minus the target name (the edit's `key`).
 #[derive(Clone, PartialEq, Eq)]
 pub struct OverrideSelector {
-    /// Name and range of the dependent the rule is scoped to; an empty range takes any version.
+    /// The name and range of the dependent that the rule is scoped to. An empty range matches any
+    /// version.
     pub parent: Option<(Box<[u8]>, Box<[u8]>)>,
     /// Empty when the rule applies whatever range the dependent declares.
     pub target_range: Box<[u8]>,

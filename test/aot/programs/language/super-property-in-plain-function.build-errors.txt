@@ -1,0 +1,1 @@
+error: TS2660: 'super' can only be referenced in members of derived classes or object literal expressions.

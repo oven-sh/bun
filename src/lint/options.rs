@@ -1,8 +1,8 @@
-//! The options of a rule: what follows the severity in `"rule": ["error", ..]`.
+//! A rule's options: the array elements after the severity in `"rule": ["error", ..]`.
 
 pub use bun_sema::json::Json;
 
-/// The options of a rule, as the array that ESLint's `context.options` is.
+/// A rule's options, as an array like ESLint's `context.options`.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Options<'o> {
     values: &'o [Json],
@@ -29,7 +29,7 @@ impl<'o> Options<'o> {
         self.values.get(i)
     }
 
-    /// The option at `i`, if it is a string.
+    /// The option at `i`, if it's a string.
     #[inline]
     pub fn str(&self, i: usize) -> Option<&'o str> {
         as_str(self.get(i)?)
@@ -45,14 +45,14 @@ impl<'o> Options<'o> {
         as_number(self.get(i)?)
     }
 
-    /// The option at `i` as an object. Empty if it is missing or something else, so that every
-    /// lookup yields the default.
+    /// The option at `i` as an object. Empty if it's missing or not an object, so that every lookup returns the
+    /// default.
     #[inline]
     pub fn object(&self, i: usize) -> Object<'o> {
         Object::of(self.get(i))
     }
 
-    /// The first option that is an object.
+    /// The first option that's an object.
     pub fn first_object(&self) -> Object<'o> {
         Object::of(self.values.iter().find(|it| it.as_object().is_some()))
     }
@@ -69,7 +69,7 @@ fn as_number(value: &Json) -> Option<f64> {
     }
 }
 
-/// An object among the options.
+/// An object in a rule's options.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Object<'o> {
     entries: &'o [(Vec<u8>, Json)],
@@ -103,7 +103,7 @@ impl<'o> Object<'o> {
         self.get(key)?.as_bool()
     }
 
-    /// `default` if the key is missing.
+    /// Returns `default` if the key is missing.
     #[inline]
     pub fn bool_or(&self, key: &str, default: bool) -> bool {
         self.bool(key).unwrap_or(default)
@@ -133,14 +133,13 @@ impl<'o> Object<'o> {
         self.array(key).iter().filter_map(as_str).collect()
     }
 
-    /// Empty if it is missing.
+    /// Empty if the key is missing.
     #[inline]
     pub fn object(&self, key: &str) -> Object<'o> {
         Object::of(self.get(key))
     }
 
-    /// The regular expression `new RegExp(value, flags)` for the string at `key`. `None` if it is
-    /// missing or invalid.
+    /// `new RegExp(value, flags)` for the string at `key`. `None` if it's missing or invalid.
     pub fn regex(&self, key: &str, flags: &str) -> Option<crate::regex::Regex> {
         crate::regex::Regex::new(self.str(key)?, flags).ok()
     }

@@ -16,7 +16,7 @@ impl Rule for NoContinue {
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         let whole = stmt.span();
-        // oxlint points at the keyword.
+        // oxlint reports at the keyword.
         let end = if cx.language().is_oxlint {
             whole.start + "continue".len() as u32
         } else {

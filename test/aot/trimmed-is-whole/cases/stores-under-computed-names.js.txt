@@ -1,0 +1,30 @@
+// Stores a primitive under a computed name, for every member of globalThis, process and Bun.
+//@ build --disallow-code-generation-from-strings
+const { log } = console;
+const names = process.argv.slice(2);
+const own = process;
+function store(holder) {
+  let refused = 0;
+  for (const name of names) {
+    try {
+      holder[name] = 1;
+    } catch {
+      refused++;
+    }
+  }
+  return refused;
+}
+//// every-name-of-the-global-object
+//@ args AbortController AbortSignal AggregateError Array ArrayBuffer AsyncDisposableStack Atomics BigInt BigInt64Array BigUint64Array Blob Boolean BroadcastChannel Buffer BuildError BuildMessage Bun ByteLengthQueuingStrategy CloseEvent CompressionStream CountQueuingStrategy Crypto CryptoKey CustomEvent DOMException DataView Date DecompressionStream DisposableStack Error ErrorEvent EvalError Event EventTarget File FinalizationRegistry Float16Array Float32Array Float64Array FormData Function HTMLRewriter Headers Infinity Int16Array Int32Array Int8Array Intl Iterator JSON Map Math MessageChannel MessageEvent MessagePort NaN Number Object Performance PerformanceEntry PerformanceMark PerformanceMeasure PerformanceObserver PerformanceObserverEntryList PerformanceResourceTiming PerformanceServerTiming PerformanceTiming Promise Proxy RangeError ReadableByteStreamController ReadableStream ReadableStreamBYOBReader ReadableStreamBYOBRequest ReadableStreamDefaultController ReadableStreamDefaultReader ReferenceError Reflect RegExp Request ResolveError ResolveMessage Response Set ShadowRealm SharedArrayBuffer String SubtleCrypto SuppressedError Symbol SyntaxError Temporal TextDecoder TextDecoderStream TextEncoder TextEncoderStream TransformStream TransformStreamDefaultController TypeError URIError URL URLPattern URLSearchParams Uint16Array Uint32Array Uint8Array Uint8ClampedArray WeakMap WeakRef WeakSet WebAssembly WebSocket Worker WritableStream WritableStreamDefaultController WritableStreamDefaultWriter addEventListener alert atob btoa clearImmediate clearInterval clearTimeout confirm console crypto decodeURI decodeURIComponent dispatchEvent encodeURI encodeURIComponent escape eval fetch global globalThis isFinite isNaN navigator onerror onmessage parseFloat parseInt performance postMessage process prompt queueMicrotask removeEventListener reportError self setImmediate setInterval setTimeout structuredClone undefined unescape
+log("stored", names.length, store(globalThis));
+//// the-prototype-of-the-global-object
+//@ args __proto__
+log("stored", names.length, store(globalThis), typeof globalThis.toString);
+//// null-under-the-prototype-of-the-global-object
+//@ args __proto__
+globalThis[names[0]] = null;
+log("stored", typeof globalThis.toString);
+//// every-name-of-process
+//@ exit 1
+//@ args _debugEnd _debugProcess _eval _exiting _fatalException _getActiveHandles _getActiveRequests _kill _linkedBinding _preload_modules _rawDebug _startProfilerIdleNotifier _stopProfilerIdleNotifier _tickCallback abort addListener allowedNodeEnvironmentFlags arch argv argv0 assert availableMemory binding browser channel chdir config connected constrainedMemory constructor cpuUsage cwd debugPort disconnect dlopen emit emitWarning env eventNames execArgv execPath execve exit exitCode features finalization getActiveResourcesInfo getBuiltinModule getMaxListeners hasUncaughtExceptionCaptureCallback hrtime isBun kill listenerCount listeners loadEnvFile mainModule memoryUsage moduleLoadList nextTick off on once openStdin pid platform ppid prependListener prependOnceListener rawListeners reallyExit ref release removeAllListeners removeListener report resourceUsage revision send setMaxListeners setSourceMapsEnabled setUncaughtExceptionCaptureCallback stderr stdin stdout threadCpuUsage title umask unref uptime version versions
+log("stored", names.length, store(own));

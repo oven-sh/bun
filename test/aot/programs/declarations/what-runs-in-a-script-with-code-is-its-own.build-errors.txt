@@ -1,0 +1,4 @@
+error: TS2304: Cannot find name 'counted'.
+error: TS2304: Cannot find name 'helper'.
+error: TS2552: Cannot find name 'Both'. Did you mean 'both'?
+error: TS2304: Cannot find name 'Both'.

@@ -1,0 +1,11 @@
+{
+  "build": ["--aot-refuse-code-from-disk"],
+  "env": {
+    "NAMES": "node:path,node:dgram,node:no-such-module"
+  },
+  "skipInShell": "it asks for modules of Bun",
+  "skipInVariant": {
+    "no-flow-results": "which modules the executable leaves out is a result of flow: without it node:dgram is there and loads"
+  },
+  "alone": "what it prints hangs on what else the executable holds: which modules and members were compiled in, and whether anything evaluates text"
+}

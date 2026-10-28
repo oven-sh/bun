@@ -1,0 +1,1 @@
+The library takes 2.1 to 2.3 times as long as the class: its calls and reads by name, and the table under a key that is no constant.

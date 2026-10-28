@@ -384,6 +384,39 @@ describe("hostile header dimensions", () => {
     const vp8 = Buffer.from([0x30, 0x01, 0x00, 0x9d, 0x01, 0x2a, 0xff, 0x3f, 0xff, 0x3f, 0, 0, 0, 0]);
     expect(await survives(new Bun.Image(Buffer.concat([riff, vp8])).bytes())).toBe("rejected");
   });
+
+  test("GIF metadata() reports the size of the frame that is decoded", async () => {
+    Bun.Image.backend = "bun";
+    // 1×1 logical screen, 16383×16383 frame.
+    const bigFrame = Buffer.from("47494638396101000100800000000000255b0d2c00000000ff3fff3f0002022c003b", "hex");
+    expect(await new Bun.Image(bigFrame).metadata()).toEqual({ width: 16383, height: 16383, format: "gif" });
+    await expect(new Bun.Image(bigFrame, { maxPixels: 64 }).metadata()).rejects.toThrow(/maxPixels/);
+    // 65535×65535 logical screen, 4×4 frame.
+    const bigScreen = Buffer.from(bigFrame);
+    bigScreen.writeUInt16LE(65535, 6);
+    bigScreen.writeUInt16LE(65535, 8);
+    bigScreen.writeUInt16LE(4, 24);
+    bigScreen.writeUInt16LE(4, 26);
+    expect(await new Bun.Image(bigScreen, { maxPixels: 64 }).metadata()).toEqual({
+      width: 4,
+      height: 4,
+      format: "gif",
+    });
+    expect((await rgbaOf(bigScreen)).length).toBe(4 * 4 * 4);
+    // Only the start of a file still reports the logical screen.
+    expect(await new Bun.Image(Buffer.from("GIF89a\x02\x00\x03\x00\x00\x00\x00", "binary")).metadata()).toEqual({
+      width: 2,
+      height: 3,
+      format: "gif",
+    });
+  });
+
+  test("a path with a null byte is rejected like Bun.file() rejects it", () => {
+    using dir = tempDir("image-null-byte-path", { "image": tinyPng });
+    expect(() => new Bun.Image(join(String(dir), "image\0.png"))).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    );
+  });
 });
 
 // ─── 4. malformed PNG chunk structure ────────────────────────────────────────
@@ -438,6 +471,19 @@ describe("malformed PNG structure", () => {
     // assertion is "doesn't allocate 10 MB worth of pixels for an 8×8".
     const meta = await new Bun.Image(png).metadata();
     expect(meta.width).toBe(8);
+  });
+
+  test("maxPixels also bounds what an iCCP chunk inflates to", async () => {
+    const withProfile = (size: number) => {
+      const iccp = Buffer.concat([Buffer.from("icc\0\0"), zlib.deflateSync(Buffer.alloc(size))]);
+      return Buffer.concat([tinyPng.subarray(0, 33), pngChunk("iCCP", iccp), tinyPng.subarray(33)]);
+    };
+    const png = withProfile(32 << 20);
+    expect(await rgbaOf(png)).toStrictEqual(await rgbaOf(tinyPng));
+    await expect(new Bun.Image(png, { maxPixels: 64 }).png().bytes()).rejects.toThrow(/decode failed/);
+    // A profile of an ordinary size is fine under any limit.
+    expect(await new Bun.Image(withProfile(1 << 20), { maxPixels: 64 }).metadata()).toMatchObject({ format: "png" });
+    await new Bun.Image(withProfile(1 << 20), { maxPixels: 64 }).png().bytes();
   });
 });
 
@@ -1221,6 +1267,92 @@ describe("concurrent terminals on one Image", () => {
     const out = await p;
     expect(out[0]).toBe(0xff);
     expect(out[1]).toBe(0xd8); // still JPEG
+  });
+
+  // An input over ~1 KB is borrowed, so the pool thread reads bytes that the JS thread can still
+  // write. The docs forbid that write. It can corrupt the image, but it must not crash.
+  const raceFixture = (setup: string) => `
+    const bmp = (w, h, c) => {
+      const b = Buffer.alloc(54 + w * h * 4);
+      b.write("BM");
+      b.writeUInt32LE(b.length, 2);
+      b.writeUInt32LE(54, 10);
+      b.writeUInt32LE(40, 14);
+      b.writeInt32LE(w, 18);
+      b.writeInt32LE(-h, 22);
+      b.writeUInt16LE(1, 26);
+      b.writeUInt16LE(32, 28);
+      b.fill(Buffer.from([c, c, c, 255]), 54);
+      return b;
+    };
+    const webp = async (w, h, c) => Buffer.from(await new Bun.Image(bmp(w, h, c)).webp({ lossless: true }).bytes());
+    ${setup}
+    let settled = 0;
+    for (let round = 0; round < 8; round++) {
+      const jobs = [];
+      for (let i = 0; i < 32; i++) jobs.push(new Bun.Image(input).png().bytes().catch(() => {}).then(() => settled++));
+      let done = false;
+      const all = Promise.all(jobs).then(() => (done = true));
+      while (!done) {
+        const until = performance.now() + 4;
+        do {
+          for (let k = 0; k < 64; k++) rewrite();
+        } while (performance.now() < until);
+        await new Promise(r => setImmediate(r));
+      }
+      await all;
+    }
+    console.log(settled);
+  `;
+  test.concurrent.each([
+    [
+      // libwebp parses the header more than once, so its output size can differ from the size it reported.
+      "dimensions",
+      `
+      const input = new Uint8Array(2048);
+      const small = new Uint8Array(2048), large = new Uint8Array(2048);
+      small.set(await webp(16, 16, 1));
+      large.set(await webp(200, 211, 2));
+      const rewrite = () => { input.set(large); input.set(small); };
+      input.set(large);
+      `,
+    ],
+    [
+      // libwebp's demuxer counts the chunks with a tag, then looks one up.
+      // The filler chunks widen the gap between the two walks.
+      "ICCP tag",
+      `
+      const chunk = (tag, payload) => {
+        const h = Buffer.alloc(8);
+        h.write(tag, 0, "latin1");
+        h.writeUInt32LE(payload.length, 4);
+        return Buffer.concat([h, payload, Buffer.alloc(payload.length & 1)]);
+      };
+      const body = Buffer.concat([
+        Buffer.from("WEBP"),
+        chunk("VP8X", Buffer.from([0x20, 0, 0, 0, 31, 0, 0, 31, 0, 0])),
+        chunk("ICCP", Buffer.alloc(512, 7)),
+        Buffer.alloc(4096 * 10, chunk("FILL", Buffer.alloc(2))),
+        (await webp(32, 32, 9)).subarray(12),
+      ]);
+      const head = Buffer.alloc(8);
+      head.write("RIFF");
+      head.writeUInt32LE(body.length, 4);
+      const input = new Uint8Array(Buffer.concat([head, body]));
+      const at = Buffer.from(input.buffer).indexOf("ICCP");
+      const ICCP = Buffer.from("ICCP"), JUNK = Buffer.from("JUNK");
+      const rewrite = () => { input.set(JUNK, at); input.set(ICCP, at); };
+      `,
+    ],
+  ])("doesn't crash when the %s of a WebP input is rewritten while a pipeline is pending", async (_, setup) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", raceFixture(setup)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr: stderr.slice(-3000), exitCode }).toEqual({ stdout: "256\n", stderr: "", exitCode: 0 });
   });
 });
 

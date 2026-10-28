@@ -14,6 +14,8 @@ import { readdir, writeFile } from "fs/promises";
 import fs, { closeSync, openSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join, sep } from "path";
+import { locksEnvironment } from "./aot/hardened";
+import "./aot/harness/without-installing-packages";
 
 export const BREAKING_CHANGES_BUN_1_2 = false;
 
@@ -77,6 +79,9 @@ function detectASAN(): boolean {
 
 export const bunEnv: NodeJS.Dict<string> = {
   ...process.env,
+  // Windows spells PATH `Path`. `{ ...bunEnv, PATH }` would then hold both, and which one a child
+  // process gets depends on the other variables.
+  ...(isWindows && { Path: undefined, PATH: process.env.PATH }),
   // Strip ad-hoc JSC debug options that may be set on CI agents — they leak
   // a "WARNING: failed to parse" line to stderr that breaks snapshot tests.
   JSC_useJIT: undefined,
@@ -108,11 +113,35 @@ const ciEnv = { ...bunEnv };
 
 if (isASAN) {
   bunEnv.ASAN_OPTIONS ??= "allow_user_segv_handler=1:disable_coredump=0";
+  // libpas serves WTF's fastMalloc unless Malloc is set, and AddressSanitizer does not intercept libpas.
+  if (/[\\/]test[\\/]aot[\\/]/.test(Bun.main)) {
+    bunEnv.Malloc = "1";
+    // The slow unwinder aborts in a frame of compiled code and cuts the report off.
+    bunEnv.ASAN_OPTIONS += ":detect_leaks=0:fast_unwind_on_fatal=1";
+  }
 }
 
 if (isWindows) {
   bunEnv.SHELLOPTS = "igncr"; // Ignore carriage return
 }
+
+/**
+ * Spread over `bunEnv` for a child process. On macOS the system allocator then overwrites blocks when they are
+ * allocated and released, puts guard pages around large ones, checks its heap as it goes, aborts on the first error
+ * and prints the reason to stderr even when that is a pipe.
+ */
+export const strictSystemAllocatorEnv: Record<string, string> = isMacOS
+  ? {
+      MallocPreScribble: "1",
+      MallocScribble: "1",
+      MallocGuardEdges: "1",
+      MallocCheckHeapStart: "1",
+      MallocCheckHeapEach: "5000",
+      MallocCheckHeapAbort: "1",
+      MallocErrorAbort: "1",
+      MallocDebugReport: "crash",
+    }
+  : {};
 
 for (let key in bunEnv) {
   if (bunEnv[key] === undefined) {
@@ -122,6 +151,15 @@ for (let key in bunEnv) {
 
   if (key.startsWith("BUN_DEBUG_") && key !== "BUN_DEBUG_QUIET_LOGS") {
     delete ciEnv[key];
+    delete bunEnv[key];
+  }
+
+  // An executable that such a Bun compiles ahead of time does not start where the environment sets a variable that it
+  // never reads. A test that wants one of the few that it does read sets it itself.
+  if (
+    locksEnvironment &&
+    /^(BUN_DEBUG|BUN_JSC_|MIMALLOC_|BUN_CRASH_REPORT_URL$|BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING$)/i.test(key)
+  ) {
     delete bunEnv[key];
   }
 
@@ -144,7 +182,7 @@ for (let key in bunEnv) {
 delete bunEnv.BUN_INSPECT_CONNECT_TO;
 delete bunEnv.NODE_ENV;
 
-if (isDebug) {
+if (isDebug && !locksEnvironment) {
   // This makes debug build memory leak tests more reliable.
   // The code for dumping out the debug build transpiled source code has leaks.
   bunEnv.BUN_DEBUG_NO_DUMP = "1";
@@ -163,23 +201,34 @@ export function bunExe() {
  * kernel drops every later SYN. Needs listen(2) with the smallest backlog that admits
  * exactly one connection (macOS treats 0 as unlimited), which Bun's own listeners do
  * not expose, so the listener is a raw libc socket.
+ *
+ * On macOS the listener is bound to lo0. With SYN cookies on (net.inet.tcp.syncookie),
+ * XNU answers the SYN for a full accept queue and resets the connection when its ACK
+ * arrives, except for a listener bound to a loopback interface, which gets no SYN cookies.
  */
 export const blackholePortSource = `
 const net = require("node:net");
 const { dlopen, ptr } = require("bun:ffi");
 const darwin = process.platform === "darwin";
 const libc = dlopen(darwin ? "libSystem.B.dylib" : "libc.so.6", {
-  socket:      { args: ["int", "int", "int"],  returns: "int" },
-  bind:        { args: ["int", "ptr", "int"],  returns: "int" },
-  listen:      { args: ["int", "int"],         returns: "int" },
-  getsockname: { args: ["int", "ptr", "ptr"],  returns: "int" },
+  socket:         { args: ["int", "int", "int"],               returns: "int" },
+  if_nametoindex: { args: ["ptr"],                             returns: "u32" },
+  setsockopt:     { args: ["int", "int", "int", "ptr", "int"], returns: "int" },
+  bind:           { args: ["int", "ptr", "int"],               returns: "int" },
+  listen:         { args: ["int", "int"],                      returns: "int" },
+  getsockname:    { args: ["int", "ptr", "ptr"],               returns: "int" },
 });
-const AF_INET = 2, SOCK_STREAM = 1;
+const AF_INET = 2, SOCK_STREAM = 1, IPPROTO_IP = 0, IP_BOUND_IF = 25;
 const addr = new Uint8Array(16);
 if (darwin) { addr[0] = 16; addr[1] = AF_INET; } else new DataView(addr.buffer).setUint16(0, AF_INET, true);
 addr.set([127, 0, 0, 1], 4);
 const fd = libc.symbols.socket(AF_INET, SOCK_STREAM, 0);
-if (fd < 0 || libc.symbols.bind(fd, ptr(addr), 16) !== 0 || libc.symbols.listen(fd, darwin ? 1 : 0) !== 0) throw new Error("listen failed");
+if (fd < 0) throw new Error("socket failed");
+if (darwin) {
+  const lo0 = new Uint32Array([libc.symbols.if_nametoindex(ptr(Buffer.from("lo0\\0")))]);
+  if (lo0[0] === 0 || libc.symbols.setsockopt(fd, IPPROTO_IP, IP_BOUND_IF, ptr(lo0), 4) !== 0) throw new Error("IP_BOUND_IF failed");
+}
+if (libc.symbols.bind(fd, ptr(addr), 16) !== 0 || libc.symbols.listen(fd, darwin ? 1 : 0) !== 0) throw new Error("listen failed");
 const len = new Uint32Array([16]);
 if (libc.symbols.getsockname(fd, ptr(addr), ptr(len)) !== 0) throw new Error("getsockname failed");
 const port = (addr[2] << 8) | addr[3];
@@ -191,6 +240,22 @@ await new Promise((resolve, reject) => filler.on("connect", resolve).on("error",
 
 export function nodeExe(): string | null {
   return which("node") || null;
+}
+
+/**
+ * `nodeExe()`, or null when that Node.js is older than `version` or does not run. For a reference run whose expected
+ * output is that of a later release: the macOS CI hosts can have an older Node.js than the one Bun reports.
+ */
+export function nodeExeAtLeast(version: string): string | null {
+  const node = nodeExe();
+  if (!node) return null;
+  try {
+    const probe = spawnSync({ cmd: [node, "-p", "process.versions.node"], env: bunEnv, stderr: "ignore" });
+    return probe.exitCode === 0 && Bun.semver.satisfies(probe.stdout.toString().trim(), `>=${version}`) ? node : null;
+  } catch {
+    // A file that cannot be started at all: a script whose interpreter is gone, a binary of another architecture.
+    return null;
+  }
 }
 
 let abiMatchingNode: Promise<string> | undefined;
@@ -597,10 +662,29 @@ export function tempDirWithFiles(
 
 class DisposableString extends String {
   [Symbol.dispose]() {
-    fs.rmSync(this + "", { recursive: true, force: true });
+    // On Windows a process that was just killed can hold the folder for a moment: a child that a job
+    // object ends after its parent, for one. `rmSync` does not act on `maxRetries`.
+    const deadline = Date.now() + 5000;
+    while (true) {
+      try {
+        fs.rmSync(this + "", { recursive: true, force: true });
+        return;
+      } catch (error: any) {
+        if (!isWindows || error?.code !== "EBUSY" || Date.now() > deadline) throw error;
+        sleepSync(50);
+      }
+    }
   }
-  [Symbol.asyncDispose]() {
-    return fs.promises.rm(this + "", { recursive: true, force: true });
+  async [Symbol.asyncDispose]() {
+    const deadline = Date.now() + 5000;
+    while (true) {
+      try {
+        return await fs.promises.rm(this + "", { recursive: true, force: true });
+      } catch (error: any) {
+        if (!isWindows || error?.code !== "EBUSY" || Date.now() > deadline) throw error;
+        await Bun.sleep(50);
+      }
+    }
   }
 }
 
@@ -611,6 +695,16 @@ export function tempDir(
   const base = tempDirWithFiles(basename, filesOrAbsolutePathToCopyFolderFrom);
 
   return new DisposableString(base) as string & DisposableString & AsyncDisposable;
+}
+
+export function tempDirWithBunTypes(
+  basename: string,
+  filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string,
+): string & DisposableString & AsyncDisposable {
+  const dir = tempDir(basename, filesOrAbsolutePathToCopyFolderFrom);
+  fs.mkdirSync(join(String(dir), "node_modules", "@types"), { recursive: true });
+  fs.symlinkSync(join(import.meta.dir, "..", "packages", "bun-types"), join(String(dir), "node_modules", "@types", "bun"), "junction");
+  return dir;
 }
 
 /**
@@ -960,7 +1054,7 @@ if (expect.extend)
           pass: false,
           message: () => `Received function did not throw`,
         };
-      } catch (e) {
+      } catch (e: any) {
         // expect(e).toBeInstanceOf(cls);
         if (!(e instanceof cls)) {
           return {
@@ -997,7 +1091,7 @@ if (expect.extend)
           pass: false,
           message: () => `Received function did not throw`,
         };
-      } catch (e) {
+      } catch (e: any) {
         // expect(e).toBeInstanceOf(cls);
         if (!(e instanceof cls)) {
           return {
@@ -1028,7 +1122,7 @@ if (expect.extend)
       }
     },
     toBeLatin1String(actual: unknown) {
-      if ((actual as string).isLatin1()) {
+      if (require("bun:internal-for-testing").jscInternals.isLatin1String(actual)) {
         return {
           pass: true,
           message: () => `Expected ${actual} to be a Latin1 string`,
@@ -1041,7 +1135,7 @@ if (expect.extend)
       };
     },
     toBeUTF16String(actual: unknown) {
-      if ((actual as string).isUTF16()) {
+      if (require("bun:internal-for-testing").jscInternals.isUTF16String(actual)) {
         return {
           pass: true,
           message: () => `Expected ${actual} to be a UTF16 string`,
@@ -1283,17 +1377,6 @@ declare global {
      */
     toUnixString(): string;
   }
-
-  interface String {
-    /**
-     * **INTERNAL USE ONLY, NOT An API IN BUN**
-     */
-    isLatin1(): boolean;
-    /**
-     * **INTERNAL USE ONLY, NOT An API IN BUN**
-     */
-    isUTF16(): boolean;
-  }
 }
 
 Buffer.prototype.toUnixString = function () {
@@ -1420,7 +1503,7 @@ export async function describeWithContainer(
   }
 
   if (!isDockerServiceEnabled(actualService)) {
-    describe.todo(label);
+    describe.todo(label, () => {});
     return;
   }
 
@@ -1637,21 +1720,24 @@ export function joinP(...paths: string[]) {
  * we need to do case-insensitive stuff within our Bun.spawn implementation
  *
  * Windows has case-insensitive environment variables, so sometimes an
- * object like { Path: "...", PATH: "..." } will be passed. Bun lets
- * the first one win, but we really want the LAST one to win.
+ * object like { Path: "...", PATH: "..." } will be passed. Which one a
+ * child gets depends on the other variables, but we really want the LAST
+ * one to win.
  *
  * This is mostly needed if you want to override env vars, such like:
  *   env: {
- *     ...bunEnv,
+ *     ...env,
  *     PATH: "my path override here",
  *   }
  * becomes
  *   env: mergeWindowEnvs([
- *     bunEnv,
+ *     env,
  *     {
  *       PATH: "my path override here",
  *     },
  *   ])
+ *
+ * bunEnv spells PATH that way on every platform and does not need it for that.
  */
 export function mergeWindowEnvs(envs: Record<string, string | undefined>[]) {
   const keys: Record<string, string | undefined> = {};
@@ -1816,14 +1902,6 @@ export function disableAggressiveGCScope() {
     },
   };
 }
-
-String.prototype.isLatin1 = function () {
-  return require("bun:internal-for-testing").jscInternals.isLatin1String(this);
-};
-
-String.prototype.isUTF16 = function () {
-  return require("bun:internal-for-testing").jscInternals.isUTF16String(this);
-};
 
 interface BunHarnessTestMatchers {
   toBeLatin1String(): void;

@@ -1,0 +1,1 @@
+error: TS1341: Class constructor may not be an accessor.

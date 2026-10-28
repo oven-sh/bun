@@ -1,0 +1,12 @@
+literal, symbol, call TypeError calls: none
+variable, symbol, call TypeError calls: none
+symbol, literal, call TypeError calls: none
+call, literal, symbol, call TypeError calls: first
+literal, call, symbol, call TypeError calls: first
+literal, symbol, two calls TypeError calls: none
+literal, an object that converts, symbol, call TypeError calls: converted
+literal, symbol TypeError calls: none
+number, symbol, call TypeError calls: none
+literal, then the sum of symbol and call TypeError calls: last
+template TypeError calls: none
+template that begins with a call TypeError calls: first

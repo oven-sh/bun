@@ -1,0 +1,473 @@
+////: callee-22
+function callee(round: number): number {
+  strike();
+  return last(round + 4);
+}
+////: last
+function last(round: number): number {
+  strike();
+  return round & 3;
+}
+////: narrow
+function narrow(n: number): number {
+  strike();
+  return n & 7;
+}
+////: ping
+function ping(left: number, sum: number): number {
+  if (left === 0) return sum;
+  return pong(left - 1, sum + 1);
+}
+////: pong
+function pong(left: number, sum: number): number {
+  if (left === 2) strike();
+  return ping(left, sum + 1);
+}
+////: wide
+function wide(a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number): number {
+  strike();
+  return a + b * 2 + c * 3 + d * 4 + e * 5 + f * 6 + g * 7 + h * 8 + i * 9 + j * 10 + k * 11 + l * 12;
+}
+//// damage-behind-a-call-tail-calls/a-chain-of-tail-calls-that-widens-and-narrows.ts
+// Four functions call one another in tail position with one, nine, eighteen and two arguments, integers and fractions mixed. In a round of its own each of them does the damage before it leaves. The last one returns to the holder.
+////= Point
+
+let victim: Point | null = null;
+let strikeIn = 0;
+function strike(stage: number): void {
+  if (stage === strikeIn && victim !== null) delete (victim as any).x;
+}
+
+function two(a: number, b: number): number {
+  strike(4);
+  return a * 2 + b;
+}
+function eighteen(a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number): number {
+  strike(3);
+  return two(a + c + e + g + i + k + m + o + q, b + d + f + h + j + l + n + p + r);
+}
+function nine(a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number): number {
+  strike(2);
+  return eighteen(a, b + 0.5, c, d + 0.5, e, f + 0.5, g, h + 0.5, i, a + 0.25, b, c + 0.25, d, e + 0.25, f, g + 0.25, h, i + 0.25);
+}
+function one(a: number): number {
+  strike(1);
+  return nine(a, a + 1, a + 2, a + 3, a + 4, a + 5, a + 6, a + 7, a + 8);
+}
+
+function holder(p: Point, n: number): string {
+  const before = p.x;
+  const got = one(n);
+  return before + " " + got + " " + p.x + "," + p.y;
+}
+
+for (let round = 0; round < 500; round++) {
+  strikeIn = round % 100 === 99 ? (round + 1) / 100 : 0;
+  const p = new Point(round, 1);
+  victim = p;
+  const line = holder(p, round);
+  if (strikeIn || round === 0) console.log(round + ": " + line);
+}
+//// damage-behind-a-call-tail-calls/a-function-that-then-makes-a-tail-call-cuts-the-length-of-an-array.ts
+// A typed caller reads an array, makes a call and reads it again. The callee, which then leaves through a call in tail position, cuts the length of the array.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+
+let victim: number[] | null = null;
+let spark: number = 0;
+////= hot-17
+////= strike-2
+
+function last(round: number): number {
+  return round & 3;
+}
+////= callee-22
+
+////= holder-40
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-tail-calls/a-function-that-then-makes-a-tail-call-fills-an-optional-field.ts
+// A typed caller reads an object, makes a call and reads it again. The callee, which then leaves through a call in tail position, fills an optional field of the object, in typed code.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+////= Card
+
+let victim: Card | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-2
+////= strike
+
+function last(round: number): number {
+  return round & 3;
+}
+////= callee-22
+
+////= holder-6
+
+////= outer-14
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-tail-calls/a-function-that-then-makes-a-tail-call-stores-an-object-with-value-of-into-a-number-field.ts
+// A typed caller reads an object, makes a call and reads it again. The callee, which then leaves through a call in tail position, stores an object with a valueOf method into a number field of the object.
+////= Point
+
+let victim: Point | null = null;
+////= strike-10
+
+function last(round: number): number {
+  return round & 3;
+}
+////= callee-22
+
+////= holder-4
+
+////= outer-20
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-tail-calls/a-ring-of-tail-calls-gives-an-array-another-prototype.ts
+// A typed caller reads an array, makes a call and reads it again. One of two functions that call each other in tail position deletes an element of the array and gives the array a prototype that has an element there.
+const withAnElement: number[] = Object.create(Array.prototype, { 1: { value: 111 } });
+
+let victim: number[] | null = null;
+////= strike-5
+
+////= ping
+////= pong
+
+////= holder-35	ping((round % 4) + 3, 0	p[3]
+
+////= outer-5
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-tail-calls/a-ring-of-tail-calls-replaces-a-method-of-the-base-class.ts
+// A typed caller reads an object, makes a call and reads it again. One of two functions that call each other in tail position replaces a method on the prototype object of the base class.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+////= Shape-3
+const areaOfSquare = Square.prototype.area;
+const kindOfShape = Shape.prototype.kind;
+
+let victim: Square | null = null;
+let spark: number = 0;
+////= hot-15
+////= strike-2
+
+////= ping
+////= pong
+
+////= holder-38	ping((round % 4) + 3, 0)
+
+////= outer-2
+
+let digest = 0;
+////= for-6
+console.log("digest " + digest);
+//// damage-behind-a-call-tail-calls/a-ring-of-tail-calls-stores-a-string-into-a-number-field-of-a-literal.ts
+// A typed caller reads an object, makes a call and reads it again. One of two functions that call each other in tail position stores a string into a number field of the object, which an object literal has made.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+type Pair = { left: number; right: number; note?: string };
+
+let victim: Pair | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-6
+////= strike
+
+////= ping
+////= pong
+
+////= holder-36	ping((round % 4) + 3, 0)	(p.right + 1) + "," + typeof p.right
+
+////= outer-27
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-tail-calls/a-tail-call-that-is-handed-a-fresh-closure.ts
+// A function ends in `return inner(p, () => ..)`. The closure and its variables are made for the call, so they may lie in the frame, and then the frame cannot be given up. The damage that `inner` does has to reach the holder all the same.
+////= Point
+
+let strikes = false;
+function inner(p: Point, weigh: (y: number) => number): number {
+  if (strikes) (p as any).x = "T";
+  return weigh(p.y);
+}
+function leaves(p: Point, n: number): number {
+  const factor = n + 1;
+  return inner(p, y => y * factor);
+}
+
+////= holder-31	n	leaves
+
+////= for-24	holder(new Point(round, 2), round
+//// damage-behind-a-call-tail-calls/a-tail-call-that-is-handed-a-fresh-object.ts
+// A function ends in `return inner(p, { .. })`. The object is made for the call, so it may lie in the frame, and then the frame cannot be given up. Whether it jumps or calls and returns, the damage that `inner` does has to reach the holder.
+////= Point
+
+let strikes = false;
+function inner(p: Point, options: { scale: number; shift: number }): number {
+  if (strikes) delete (p as any).x;
+  return p.y * options.scale + options.shift;
+}
+function leaves(p: Point, n: number): number {
+  return inner(p, { scale: n, shift: 1 });
+}
+
+////= holder-31	n	leaves
+
+////= for-24	holder(new Point(round, 2), round
+//// damage-behind-a-call-tail-calls/a-tail-call-with-fewer-arguments-than-its-caller-got-cuts-the-length-of-an-array.ts
+// A typed caller reads an array, makes a call and reads it again. A function with one parameter, which the callee with twelve parameters calls in tail position, cuts the length of the array.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+
+let victim: number[] | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-16
+////= strike
+
+////= narrow
+function callee(a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number): number {
+  return narrow(a + b + c + d + e + f + g + h + i + j + k + l);
+}
+
+////= holder-35	callee(round, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11	p[3]
+
+////= outer
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-tail-calls/a-tail-call-with-fewer-arguments-than-its-caller-got-seals-the-object.ts
+// A typed caller reads an object, makes a call and reads it again. A function with one parameter, which the callee with twelve parameters calls in tail position, seals the object, which has an optional field that is not there yet.
+////= Card
+
+let victim: Card | null = null;
+////= strike-12
+
+////= narrow
+function callee(a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number): number {
+  return narrow(a + b + c + d + e + f + g + h + i + j + k + l);
+}
+
+function holder(p: Card, round: number): string {
+  const before = p.id + ":" + p.note;
+  const got = callee(round, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11);
+  let stored = "stored";
+  try {
+    p.note = "late";
+  } catch (error) {
+    stored = (error as Error).name;
+  }
+  const after = stored + "," + p.note + "," + p.id + "," + Object.keys(p).join("");
+  return before + " " + got + " " + after;
+}
+
+////= outer-21
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-tail-calls/a-tail-call-with-fewer-arguments-than-its-caller-got-stores-an-object-with-value-of-into-a-number-field.ts
+// A typed caller reads an object, makes a call and reads it again. A function with one parameter, which the callee with twelve parameters calls in tail position, stores an object with a valueOf method into a number field of the object.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+////= Point
+
+let victim: Point | null = null;
+let spark: number = 0;
+////= hot-10
+////= strike-2
+
+////= narrow
+function callee(a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number): number {
+  return narrow(a + b + c + d + e + f + g + h + i + j + k + l);
+}
+
+function holder(p: Point, round: number): string {
+  const before = p.x + p.y;
+  const got = callee(round, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11);
+  const after = (p.x + 1) + "," + typeof p.x + "," + p.y;
+  return before + " " + got + " " + after;
+}
+
+////= outer-18
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-tail-calls/a-tail-call-with-more-arguments-than-its-caller-got-freezes-the-object.ts
+// A typed caller reads an object, makes a call and reads it again. A function with twelve parameters, which the callee with one parameter calls in tail position, freezes the object.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+////= Point
+
+let victim: Point | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty
+////= strike
+
+////= wide
+function callee(n: number): number {
+  return wide(n, n + 1, n + 2, n + 3, n + 4, n + 5, n + 6, n + 7, n + 8, n + 9, n + 10, n + 11);
+}
+
+////= holder-10
+
+////= outer-12
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-tail-calls/a-tail-call-with-more-arguments-than-its-caller-got-puts-the-class-under-another-base.ts
+// A typed caller reads an object, makes a call and reads it again. A function with twelve parameters, which the callee with one parameter calls in tail position, puts the prototype object of the class under another one.
+////= Shape-3
+const areaOfSquare = Square.prototype.area;
+const kindOfShape = Shape.prototype.kind;
+const otherBase = { kind: () => "another base", area: () => -4 };
+
+let victim: Square | null = null;
+////= strike-13
+
+////= wide
+function callee(n: number): number {
+  return wide(n, n + 1, n + 2, n + 3, n + 4, n + 5, n + 6, n + 7, n + 8, n + 9, n + 10, n + 11);
+}
+
+////= holder-39
+
+let digest = 0;
+////= for-5
+console.log("digest " + digest);
+//// damage-behind-a-call-tail-calls/a-tail-call-with-more-arguments-than-its-caller-got-stores-zero-into-a-boolean-field.ts
+// A typed caller reads an object, makes a call and reads it again. A function with twelve parameters, which the callee with one parameter calls in tail position, stores 0 into a boolean field of the object.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+////= Lamp
+
+let victim: Lamp | null = null;
+let spark: number = 0;
+////= hot-7
+////= strike-2
+
+////= wide
+function callee(n: number): number {
+  return wide(n, n + 1, n + 2, n + 3, n + 4, n + 5, n + 6, n + 7, n + 8, n + 9, n + 10, n + 11);
+}
+
+////= holder-8
+
+////= outer-16
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-tail-calls/an-exception-and-a-trace-out-of-a-wide-tail-callee.ts
+// A function with one parameter does the damage and calls a function with fourteen parameters in tail position. That one takes a trace, and in some rounds it throws. The holder's handler and the holder's position have to be found behind the wider frame.
+////= Point
+
+const own = new Set(["wide", "narrow", "holder"]);
+////= framesOf
+
+let strikes = false;
+let throws = false;
+let trace = "";
+function wide(a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number): number {
+  trace = framesOf(String(new Error("wide").stack));
+  if (throws) throw new RangeError("from the wide one");
+  return a + b + c + d + e + f + g + h + i + j + k + l + m + n;
+}
+function narrow(p: Point): number {
+  if (strikes) delete (p as any).x;
+  const y = p.y;
+  return wide(y, y, y, y, y, y, y, y, y, y, y, y, y, y);
+}
+
+function holder(p: Point): string {
+  const before = p.x;
+  let got: string;
+  try {
+    got = "" + narrow(p);
+  } catch (error) {
+    got = (error as Error).name;
+  }
+  return before + " " + got + " " + p.x;
+}
+
+for (let round = 0; round < 400; round++) {
+  strikes = round % 100 >= 98;
+  throws = round % 100 === 97 || round % 100 === 99;
+  const line = holder(new Point(round, 1));
+  if (round % 100 >= 96) console.log(round + ": " + line + " | " + trace);
+}
+//// damage-behind-a-call-tail-calls/the-callee-of-a-tail-call-freezes-the-object.ts
+// A typed caller reads an object, makes a call and reads it again. A function that the callee calls in tail position, so that it returns in the callee's place, freezes the object.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+////= Point
+
+let victim: Point | null = null;
+let spark: number = 0;
+////= hot
+////= strike-2
+
+////= last
+////= lines-40	callee	last	4
+
+////= holder-10
+
+////= outer-13
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-tail-calls/the-callee-of-a-tail-call-puts-the-class-under-another-base.ts
+// A typed caller reads an object, makes a call and reads it again. A function that the callee calls in tail position, so that it returns in the callee's place, puts the prototype object of the class under another one.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+////= Shape-3
+const areaOfSquare = Square.prototype.area;
+const kindOfShape = Shape.prototype.kind;
+const otherBase = { kind: () => "another base", area: () => -4 };
+
+let victim: Square | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-12
+////= strike
+
+////= last
+////= lines-40	callee	last	4
+
+////= holder-43
+
+let digest = 0;
+////= for-5
+console.log("digest " + digest);
+//// damage-behind-a-call-tail-calls/the-callee-of-a-tail-call-stores-a-number-into-a-reference-field.ts
+// A typed caller reads an object, makes a call and reads it again. A function that the callee calls in tail position, so that it returns in the callee's place, stores a number into a field that is declared to hold an object.
+////= Leaf-5
+
+let victim: Branch | null = null;
+////= strike-6
+
+////= last
+////= lines-40	callee	last	4
+
+////= holder-47
+
+let digest = 0;
+////= for
+console.log("digest " + digest);

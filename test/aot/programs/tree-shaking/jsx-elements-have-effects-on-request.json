@@ -1,0 +1,1 @@
+{ "build": ["--jsx-side-effects", "--jsx-runtime", "classic", "--jsx-factory", "h"], "reference": "compiled" }

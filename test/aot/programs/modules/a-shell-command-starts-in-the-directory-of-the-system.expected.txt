@@ -1,0 +1,7 @@
+process.cwd(): <root>
+readFileSync: a note
+pwd: <scratch>
+cat of a relative path: a note on disk
+cat of an embedded file: failed: 1
+pwd with cwd: <other>
+cwd in the executable: failed: ENOENT

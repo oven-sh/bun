@@ -597,6 +597,13 @@ describe("Bun.Transpiler", () => {
       exp("x = a ? b : c => (d): T[] => e", "x = a ? b : (c) => (d) => e;\n");
       exp("x = a ? (b.c) : d => (e): T[] => f", "x = a ? b.c : (d) => (e) => f;\n");
 
+      // TypeScript reports an error for each of these, and main prints "x = a ? b : ...". The attempt for "(b)" finds
+      // its second ":", and what follows is read as main reads it elsewhere: type arguments in parentheses before
+      // "=>", "<T, U>(d)" as a cast, and "(d,)" as an expression.
+      exp("x = a ? (b) : c => (d): (P<R>) => e", "x = a ? (b) => d : (P) => e;\n");
+      exp("x = a ? (b) : c => <T, U>(d): R => e", "x = a ? (b) => d : (R) => e;\n");
+      exp("x = a ? (b) : c => (d,): T => e", "x = a ? (b) => d : (T) => e;\n");
+
       // The right side of each assignment operator
       exp("x = a ? b = (c) : d => e", "x = a ? b = c : (d) => e;\n");
       exp("x = a ? b = (c) : d => e : f", "x = a ? b = (c) => e : f;\n");
@@ -677,6 +684,8 @@ describe("Bun.Transpiler", () => {
 
       // Nothing is between a "?" and ":" after "case", so "(b): d => e" is an arrow function there, as in TypeScript
       err("switch (x) { case (b): d => e; }", 'Expected ":" but found ";"');
+      // The operand of "yield" is a new expression too. This is valid JavaScript that TypeScript 6.0 and main refuse.
+      err("function* g() { x = a ? yield (c) : d => e }", 'Expected ":" but found "}"');
 
       // Such a body takes "(d) : e => f" as an arrow function, so no ":" is left for "(b)"
       exp("x = a ? (b) : c => () => (d) : e => f", "x = a ? b : (c) => () => (d) => f;\n");
@@ -711,6 +720,8 @@ describe("Bun.Transpiler", () => {
       exp("x = a ? async (): T => { return b; } : () => c", "x = a ? async () => {\n  return b;\n} : () => c;\n");
       exp("x = a ? async (): T => b ? async() : 0 : () => c", "x = a ? async () => b ? async() : 0 : () => c;\n");
       exp("x = a ? async (): T => (b): U => c : d", "x = a ? async () => (b) => c : d;\n");
+      exp("x = a ? async (): T => (d) : e => f", "x = a ? async() : (T) => (d) => f;\n");
+      exp("x = a ? async() : T => (b): number => b", "x = a ? async() : (T) => (b) => b;\n");
 
       // ... also in an arrow function body and on the right side of an assignment
       exp("x = a ? q => async() : d => e", "x = a ? (q) => async() : (d) => e;\n");
@@ -721,6 +732,14 @@ describe("Bun.Transpiler", () => {
       exp("x = a ? b ? c : q => async() : d => e", "x = a ? b ? c : (q) => async() : (d) => e;\n");
       exp("x = a ? q => async (): T => b : c", "x = a ? (q) => async () => b : c;\n");
       exp("x = a ? q = async (): T => b : c", "x = a ? q = async () => b : c;\n");
+
+      // ... but there only when no reading leaves a ":" for the conditional. Each of these has one, an "async" arrow
+      // function with a return type, so they stay errors as on main. TypeScript 6.0 reports an error for them too.
+      err("x = a ? q => async (): T => (d) : e => f", 'Expected ":" but found end of file');
+      err("x = a ? q = async (): T => (d) : e => f", 'Expected ":" but found end of file');
+      err("x = a ? q += async (...b): T => (d) : e => f", 'Expected ":" but found end of file');
+      err("x = a ? q => async() : T => (b): number => b", 'Expected ":" but found end of file');
+      err("x = a ? q => b ? c : async (): T => (d) : e => f", 'Expected ":" but found end of file');
 
       // ... but not in the body of "(b): c =>". There "async ():" starts an arrow function at first
       // sight, as in TypeScript: a call would leave its ":" to "(b)".
@@ -746,6 +765,15 @@ describe("Bun.Transpiler", () => {
       err("x = a ? (): T => b", 'Expected ":" but found end of file');
       err("x = a ? (b: B): T => c", 'Expected ":" but found end of file');
       err("x = a ? q => (b?): T => c", 'Expected ":" but found end of file');
+
+      // Parentheses that can only be parameters are not tried as an expression, so an error is the one of the
+      // body or of the conditional, not an unexpected ":" in the parameters
+      err("x = a ? <T>(b: B): U => c", 'Expected ":" but found end of file');
+      err("x = a ? <T>(b: B): U => { return (c; } : d", 'Expected ")" but found ";"');
+      err("x = a ? (b, c: C): T => d", 'Expected ":" but found end of file');
+      exp("x = a ? (b, c: C): T => (d) : e => f", "x = a ? (b, c) => d : (e) => f;\n");
+      exp("x = a ? <T>(b: B): U => (c) : d => e", "x = a ? (b) => c : (d) => e;\n");
+      exp("x = a ? <T>(): U => (c) : d => e", "x = a ? () => c : (d) => e;\n");
 
       // "async (b:" and "async (b?" cannot be a call, so they need no second ":" either
       exp("x = a ? async (b: B): T => (c) : d => e : f", "x = a ? async (b) => (c) => e : f;\n");
@@ -859,8 +887,9 @@ describe("Bun.Transpiler", () => {
       // TypeScript reads "(p = await /x? ... : no)" as parameters first, where "await" is a name and
       // "/" divides, so it gives up on "async (h, k)" and takes both scripts. The attempt here reads
       // "await" as the operator: "/x? async (a, c = /" is then a regular expression, the parentheses
-      // end behind "/.y/g", and the ":" behind them ends the attempt. Only a name "await" or "yield"
-      // before "/" does this.
+      // end behind "/.y/g", and the ":" behind them ends the attempt. Only a name "await" before "/", "/="
+      // or the "<" of a TSX element does this. TypeScript and main print "x = y ? async(h, k) : (R) => ..."
+      // for each of these.
       err(
         "x = y ? async (h, k) : R => (p = await /x? async (a, c = /.y/g) : T => await z : no) => body;",
         '"await" can only be used inside an "async" function',
@@ -868,6 +897,11 @@ describe("Bun.Transpiler", () => {
       err(
         "x = y ? async (h, k) : R => (p = await /x? async w => async (a, c = /.y/g) : T => await /u ? 1 /g : no) => body;",
         'Expected ";" but found ")"',
+      );
+      // ... and not each is an error
+      exp(
+        'x = y ? async (h, k) : R => (p = await /x? async (a, c = ")" + /.y/g) : T => await /u + / + "[" : no) => body + "]" /g;',
+        'x = y ? async (h, k) => p = await /x? async (a, c = ")" + /.y / g : (T) => await / u + / + "[" : no) => body + "]" /g;\n',
       );
       // "async (h, k!)" cannot be parameters, so there is no attempt
       exp(
@@ -906,6 +940,14 @@ describe("Bun.Transpiler", () => {
       exp("x = a ? async <T,>(b): T => (c): U => d : e", "x = a ? async (b) => (c) => d : e;\n");
       err("x = a ? <T,>(b) => (c) : d => e", 'Expected ":" but found end of file');
       err("x = a ? async <T,>(b) => (c) : d => e", 'Expected ":" but found end of file');
+
+      // A name "await" before "<": the attempt for "async (h)" reads an element, and finds the ":" behind "/g)".
+      // TypeScript and main read "<" as less than, and print "x = y ? async(h) : (R) => ...".
+      expect(
+        tsx.transformSync(
+          "async function f() { x = y ? async (h) : R => (p = await < b > q ? w : async (a, c = d < /b>/g) : T => await / u + /)/g; }",
+        ),
+      ).toStartWith("async function f() {\n  x = y ? async (h) => p = await ");
     });
 
     it("every transpiler API takes a conditional whose branches are arrow functions", async () => {
@@ -1235,6 +1277,21 @@ export const next = byId ? (n) => n : (n) => n + 1;
       exp("x = <B[]>(b) => c", "x = (b) => c;\n");
       exp("x = <B[]>b => c", "x = (b) => c;\n");
       exp("x = a ? <B[]>(b) => c : d", "x = a ? (b) => c : d;\n");
+    });
+
+    it("a legacy decorator behind a <T> cast ends before the name of its member", () => {
+      const transpiler = new Bun.Transpiler({
+        loader: "ts",
+        tsconfig: { compilerOptions: { experimentalDecorators: true } },
+      });
+      const decorated = code =>
+        [...transpiler.transformSync(code).matchAll(/\(\[\n\s*(.*)\n\], C\.prototype, "(\w+)"/g)].map(match => [
+          match[1],
+          match[2],
+        ]);
+      expect(decorated("class C { @<any>new Foo ['k']() {} }")).toEqual([["new Foo", "k"]]);
+      expect(decorated("class C {\n  @<any>new Foo ['k']\n  m() {}\n}")).toEqual([["new Foo", "k"]]);
+      expect(decorated("class C { @<any>dec ['k']() {} }")).toEqual([["dec", "k"]]);
     });
 
     describe("a rest item in parentheses that are not parameters", () => {

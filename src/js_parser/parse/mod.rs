@@ -43,6 +43,36 @@ enum FirstSight {
     Arrow,
 }
 
+/// Ask while the first item is the only one: a later item sets the same records.
+#[cold]
+fn first_sight_arrow_head(
+    first: Option<&Expr>,
+    type_colon_range: bun_ast::Range,
+    errors: &DeferredErrors,
+) -> FirstSight {
+    let has_type_or_question =
+        type_colon_range.len > 0 || errors.invalid_expr_after_question.is_some();
+    match first.map(|first| &first.data) {
+        None | Some(js_ast::expr::Data::ESpread(_)) => {
+            if has_type_or_question {
+                FirstSight::Arrow
+            } else {
+                FirstSight::ArrowOrAsyncCall
+            }
+        }
+        Some(js_ast::expr::Data::EIdentifier(_)) if has_type_or_question => FirstSight::Arrow,
+        // "(a: T = b"
+        Some(js_ast::expr::Data::EBinary(binary))
+            if has_type_or_question
+                && binary.op == js_ast::op::Code::BinAssign
+                && matches!(binary.left.data, js_ast::expr::Data::EIdentifier(_)) =>
+        {
+            FirstSight::Arrow
+        }
+        Some(_) => FirstSight::Unknown,
+    }
+}
+
 // File-split mixin: Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`,
 // so this is a direct `impl P` block.
 
@@ -74,10 +104,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// What an arrow function body and the right side of an assignment get from the flags of their expression.
     #[inline]
     pub(crate) fn carried_flags(flags: EFlags) -> EFlags {
-        if Self::IS_TYPESCRIPT_ENABLED && flags.is_after_question_and_before_colon() {
-            flags
-        } else {
-            EFlags::None
+        if !Self::IS_TYPESCRIPT_ENABLED {
+            return EFlags::None;
+        }
+        match flags {
+            EFlags::AfterQuestionAndBeforeColon | EFlags::AfterQuestionAndBeforeColonCarried => {
+                EFlags::AfterQuestionAndBeforeColonCarried
+            }
+            EFlags::AfterQuestionAndBeforeColonInTypedArrow => flags,
+            _ => EFlags::None,
         }
     }
     pub(crate) fn parse_expr_common(
@@ -445,36 +480,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .all(|invalid| invalid.kind == InvalidLocTag::RestInitializer)
     }
 
-    /// Ask while the first item is the only one: a later item sets the same records.
-    #[cold]
-    fn first_sight_arrow_head(
-        first: Option<&Expr>,
-        type_colon_range: bun_ast::Range,
-        errors: &DeferredErrors,
-    ) -> FirstSight {
-        let has_type_or_question =
-            type_colon_range.len > 0 || errors.invalid_expr_after_question.is_some();
-        match first.map(|first| &first.data) {
-            None | Some(js_ast::expr::Data::ESpread(_)) => {
-                if has_type_or_question {
-                    FirstSight::Arrow
-                } else {
-                    FirstSight::ArrowOrAsyncCall
-                }
-            }
-            Some(js_ast::expr::Data::EIdentifier(_)) if has_type_or_question => FirstSight::Arrow,
-            // "(a: T = b"
-            Some(js_ast::expr::Data::EBinary(binary))
-                if has_type_or_question
-                    && binary.op == js_ast::op::Code::BinAssign
-                    && matches!(binary.left.data, js_ast::expr::Data::EIdentifier(_)) =>
-            {
-                FirstSight::Arrow
-            }
-            Some(_) => FirstSight::Unknown,
-        }
-    }
-
     /// This assumes that the open parenthesis has already been parsed by the caller
     pub(crate) fn parse_paren_expr(
         &mut self,
@@ -556,7 +561,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && opts.flags.is_after_question_and_before_colon()
                 && first_sight_at_comma.is_none()
             {
-                first_sight_at_comma = Some(Self::first_sight_arrow_head(
+                first_sight_at_comma = Some(first_sight_arrow_head(
                     items_list.first(),
                     type_colon_range,
                     &errors,
@@ -647,7 +652,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if is_after_question_and_before_colon {
                 if !opts.after_type_parameters {
                     first_sight = first_sight_at_comma.unwrap_or_else(|| {
-                        Self::first_sight_arrow_head(items.first(), type_colon_range, &errors)
+                        first_sight_arrow_head(items.first(), type_colon_range, &errors)
                     });
                 }
                 if first_sight == FirstSight::Unknown {
@@ -679,12 +684,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         FirstSight::Arrow => true,
                     };
-                if is_after_question_and_before_colon && !is_decided {
+                // "<T>(a: A)" and "(a, b: B)" can only be parameters. Outside of an attempt, a failed attempt for them only moves the error from the body to the ":" of a parameter.
+                let skips_attempt = !p.lexer.is_log_disabled
+                    && (type_colon_range.len > 0
+                        || errors.invalid_expr_after_question.is_some()
+                        || (!opts.is_async && (items.is_empty() || spread_range.len > 0)));
+                if is_after_question_and_before_colon && !is_decided && !skips_attempt {
+                    // In an arrow function body or an assignment, `async()` is a call only when no reading leaves a ":" for the conditional.
+                    let attempt_flags = if first_sight == FirstSight::ArrowOrAsyncCall
+                        && opts.flags == EFlags::AfterQuestionAndBeforeColonCarried
+                    {
+                        EFlags::AfterQuestionAndBeforeColonInTypedArrow
+                    } else {
+                        body_flags
+                    };
                     // Only do this very expensive check if we must
                     is_arrow_fn = p
                         .is_type_script_arrow_return_type_after_question_and_before_colon(
                             &arrow_data,
-                            body_flags,
+                            attempt_flags,
                         )?;
                     if is_arrow_fn {
                         // We know this will succeed because we've already done it once above

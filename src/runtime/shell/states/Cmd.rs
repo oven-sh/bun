@@ -14,6 +14,7 @@ use crate::shell::states::base::Base;
 use crate::shell::states::expansion::Expansion;
 use crate::shell::subproc::{ShellIO, SpawnArgs};
 use crate::shell::util::{OutKind, Stdio};
+use crate::shell::which_command;
 use crate::shell::yield_::Yield;
 use bun_collections::VecExt;
 
@@ -487,10 +488,10 @@ impl Cmd {
             spawn_args.fill_env::<false>(&mut iter);
         }
 
-        // Resolve argv[0] via PATH (`bun_which::which`).
+        // Resolve argv[0] via PATH.
         let resolved: Option<Vec<u8>> = {
             let mut path_buf = bun_paths::path_buffer_pool::get();
-            match bun_which::which(&mut *path_buf, spawn_args.path, spawn_args.cwd, &first_arg) {
+            match which_command(&mut *path_buf, spawn_args.path, spawn_args.cwd, &first_arg) {
                 Some(z) => Some(z.as_bytes().to_vec()),
                 None if &first_arg[..] == b"bun" || &first_arg[..] == b"bun-debug" => {
                     bun_core::self_exe_path()

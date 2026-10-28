@@ -451,4 +451,146 @@ mod host {
             Ok(())
         }
     }
+
+    /// Like `bun_which::which`, but `bun`, `bunx` and `node` skip a bin link whose target is gone.
+    pub fn which<'a>(
+        buf: &'a mut bun_paths::PathBuffer,
+        path: &[u8],
+        cwd: &[u8],
+        bin: &[u8],
+    ) -> Option<&'a bun_core::ZStr> {
+        use strings::eql_case_insensitive_ascii;
+
+        let name = match bin.len().checked_sub(b".exe".len()) {
+            Some(stem) if eql_case_insensitive_ascii(&bin[stem..], b".exe", true) => &bin[..stem],
+            _ => bin,
+        };
+        let is_runtime = [&b"bun"[..], b"bunx", b"node"]
+            .iter()
+            .any(|runtime| eql_case_insensitive_ascii(name, runtime, true));
+        if !is_runtime {
+            return bun_which::which(buf, path, cwd, bin);
+        }
+        bun_which::which_with(buf, path, cwd, bin, |exe| !is_dead_bin_shim(exe))
+    }
+
+    /// Returns true if `launcher` is the launcher of a bin link whose target is gone.
+    fn is_dead_bin_shim(launcher: &bun_core::WStr) -> bool {
+        use bun_core::WStr;
+        use bun_sys::windows as win;
+
+        const EXE: &[u16] = bun_core::w!(".exe");
+        const BUNX: &[u16] = bun_core::w!(".bunx");
+        // A launcher is about 8 to 13 KB. A real `bun.exe` or `node.exe` is tens of MB.
+        const MAX_LAUNCHER_SIZE: usize = 64 * 1024;
+
+        fn is_missing(path: &WStr) -> bool {
+            // SAFETY: `path` is NUL-terminated. This resolves `..` the way `CreateProcessW` does.
+            let attributes = unsafe { win::kernel32::GetFileAttributesW(path.as_ptr()) };
+            attributes == win::INVALID_FILE_ATTRIBUTES
+                && matches!(
+                    win::Win32Error::get(),
+                    win::Win32Error::FILE_NOT_FOUND | win::Win32Error::PATH_NOT_FOUND
+                )
+        }
+
+        let exe = launcher.as_slice();
+        let Some(stem_len) = exe.len().checked_sub(EXE.len()) else {
+            return false;
+        };
+        // A relative or `\\?\` path isn't checked, because `..` could resolve differently there.
+        if !strings::eql_case_insensitive_t(&exe[stem_len..], b".exe")
+            || !bun_paths::is_absolute_windows_wtf16(exe)
+            || bun_paths::string_paths::without_nt_prefix(exe).len() != exe.len()
+        {
+            return false;
+        }
+        // Outside a `.bin` directory, a real program can have a stale `<name>.bunx` next to it.
+        let bin_dir = bun_paths::resolve_path::dirname_w(exe);
+        let Some(base_len) = bin_dir.len().checked_sub(b".bin".len()) else {
+            return false;
+        };
+        // For example `C:\project\node_modules\`. A relative `bin_path` is resolved from here.
+        let base = &exe[..base_len];
+        if !strings::eql_case_insensitive_t(&bin_dir[base_len..], b".bin")
+            || !matches!(base.last(), Some(&unit) if unit == b'\\' as u16 || unit == b'/' as u16)
+        {
+            return false;
+        }
+
+        let mut pooled = bun_paths::w_path_buffer_pool::get();
+        let buf = pooled.as_mut_slice();
+        let bunx_len = stem_len + BUNX.len();
+        if bunx_len >= buf.len() {
+            return false;
+        }
+        buf[..stem_len].copy_from_slice(&exe[..stem_len]);
+        buf[stem_len..bunx_len].copy_from_slice(BUNX);
+        buf[bunx_len] = 0;
+        let Ok(bunx) = bun_sys::File::openat_os_path(
+            bun_sys::Fd::cwd(),
+            WStr::from_buf(buf, bunx_len),
+            bun_sys::O::RDONLY,
+            0,
+        ) else {
+            return false;
+        };
+
+        // Like the launcher, read the file right after `base` so a relative `bin_path` is in place.
+        buf[..base.len()].copy_from_slice(base);
+        let file: &mut [u8] = bytemuck::cast_slice_mut(&mut buf[base.len()..]);
+        let Ok(file_len) = bunx.read(file) else {
+            return false;
+        };
+        drop(bunx);
+        // A file that fills the buffer may be longer. A `.bunx` is a whole number of UTF-16 units.
+        if file_len == file.len() || file_len % 2 != 0 {
+            return false;
+        }
+        let file = &buf[base.len()..base.len() + file_len / 2];
+        let (Some(bin_path_len), Some(&flags)) = (
+            strings::index_of_any16(file, bun_core::w!("\"")),
+            file.last(),
+        ) else {
+            return false;
+        };
+        let flags = Flags::from_bits(flags);
+        // With a shebang, the launcher starts the interpreter and never opens the target itself.
+        if !flags.is_valid() || flags.has_shebang() || bin_path_len == 0 {
+            return false;
+        }
+        let start = if flags.is_absolute_target() {
+            base.len()
+        } else {
+            0
+        };
+        let end = base.len() + bin_path_len;
+
+        // Overwrite the `"` that ends `bin_path` with a NUL.
+        buf[end] = 0;
+        if !is_missing(WStr::from_buf(&buf[start..], end - start)) {
+            return false;
+        }
+        // `CreateProcessW` appends `.exe` to a file name that has no extension.
+        if strings::index_of_any16(
+            strings::basename_windows(&buf[start..end]),
+            bun_core::w!("."),
+        )
+        .is_none()
+        {
+            let end = end + EXE.len();
+            if end >= buf.len() {
+                return false;
+            }
+            buf[end - EXE.len()..end].copy_from_slice(EXE);
+            buf[end] = 0;
+            if !is_missing(WStr::from_buf(&buf[start..], end - start)) {
+                return false;
+            }
+        }
+        // A real `bun.exe` or `node.exe` that was copied over the launcher isn't a dead link.
+        bun_sys::File::openat_os_path(bun_sys::Fd::cwd(), launcher, bun_sys::O::RDONLY, 0)
+            .and_then(|file| file.get_end_pos())
+            .is_ok_and(|size| size <= MAX_LAUNCHER_SIZE)
+    }
 } // mod host

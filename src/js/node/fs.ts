@@ -24,7 +24,7 @@ const {
   validateReadRange,
   validateWriteRange,
 } = require("internal/fs/read-write");
-const normalizeEncoding = $newRustFunction("node_util_binding.rs", "normalizeEncoding", 1);
+const normalizeEncoding = $bindgen("node_util_binding.bind.ts", "normalizeEncoding");
 
 const kEmptyObject = Object.freeze(Object.create(null));
 

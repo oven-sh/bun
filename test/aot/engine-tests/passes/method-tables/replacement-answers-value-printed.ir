@@ -182,7 +182,7 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # -- generated: f0 look lookAtAll Cell value f9
 # CHECK-LABEL: function f0 module=
 # CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f30 callPosition=4294967295 isConstruction=true module=m0}, {callee=f26 callPosition=4294967295 isConstruction=true module=m0}, {callee=f22 callPosition=4294967295 isConstruction=true module=m0}, {callee=f22 callPosition=4294967295 parent=2 isConstruction=true module=m0}, {callee=f22 callPosition=4294967295 parent=1 isConstruction=true module=m0}] {
-# CHECK-NEXT: b0():
+# CHECK-NEXT: b0() frequency=Rare:
 # CHECK-NEXT: v0: f3 = NewClosure function=f3 allocationSite=1
 # CHECK-NEXT: v1: f3 = NewClass v0 layout=L0
 # CHECK-NEXT: v2: f4 = NewClosure function=f4 allocationSite=2
@@ -212,31 +212,52 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v26: "2.5" = String string="2.5"
 # CHECK-NEXT: v27: "-0" = String string="-0"
 # CHECK-NEXT: v28: "1e300" = String string="1e300"
-# CHECK-NEXT: v29: 0 = Integer
-# CHECK-NEXT: Jump -> next b1(v29)
-# CHECK-NEXT: b1(v30: int[0, 8] ~ 0):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v32: 8 = Integer integer=8
-# CHECK-NEXT: v33: boolean = Less v30, v32
-# CHECK-NEXT: Branch v33 -> taken b3(| 0), notTaken b2()
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v34: anything = PropGet v11 key="prototype" accessSite=3
+# CHECK-NEXT: v29: anything = PropGet v4 key="prototype" accessSite=5
+# CHECK-NEXT: v30: object = AssumeType v29 provenType=object
+# CHECK-NEXT: v31: f8 = NewClosure v21 function=f8 allocationSite=10
+# CHECK-NEXT: PropSet v30, v31 key="value" accessSite=6
+# CHECK-NEXT: v33: number = CallDirect v20 function=f2 accessSite=7
+# CHECK-NEXT: v34: anything = PropGet v4 key="prototype" accessSite=5
 # CHECK-NEXT: v35: object = AssumeType v34 provenType=object
-# CHECK-NEXT: v36: f9 = NewClosure function=f9 allocationSite=9
-# CHECK-NEXT: PropSet v35, v36 key="value" accessSite=4
-# CHECK-NEXT: v38: undefined = Undefined
-# CHECK-NEXT: Return v38
-# CHECK-NEXT: b3(v39: int[0, 7] ~ 0) frequency=Rare:
-# CHECK-NEXT: Switch v39 cases=[0, 1, 2, 3, 4, 5, 6] -> case b4(v21), case b4(v22), case b4(v23), case b4(v24), case b4(v25), case b4(v26), case b4(v27), otherwise b4(v28)
-# CHECK-NEXT: b4(v40: "\"text\""|"-0"|"1e300"|"2.5"|"[1,2]"|"null"|"true"|"{\"a\":1}") frequency=Rare:
-# CHECK-NEXT: v41: 1 = Integer integer=1
-# CHECK-NEXT: v42: int[1, 8] ~ 1 = Add v39, v41
-# CHECK-NEXT: v43: anything = PropGet v4 key="prototype" accessSite=5
-# CHECK-NEXT: v44: object = AssumeType v43 provenType=object
-# CHECK-NEXT: v45: f8 = NewClosure v40 function=f8 allocationSite=10
-# CHECK-NEXT: PropSet v44, v45 key="value" accessSite=6
-# CHECK-NEXT: v47: number = CallDirect v20 function=f2 accessSite=7
-# CHECK-NEXT: Jump -> next b1(v42)
+# CHECK-NEXT: v36: f8 = NewClosure v22 function=f8 allocationSite=10
+# CHECK-NEXT: PropSet v35, v36 key="value" accessSite=6
+# CHECK-NEXT: v38: number = CallDirect v20 function=f2 accessSite=7
+# CHECK-NEXT: v39: anything = PropGet v4 key="prototype" accessSite=5
+# CHECK-NEXT: v40: object = AssumeType v39 provenType=object
+# CHECK-NEXT: v41: f8 = NewClosure v23 function=f8 allocationSite=10
+# CHECK-NEXT: PropSet v40, v41 key="value" accessSite=6
+# CHECK-NEXT: v43: number = CallDirect v20 function=f2 accessSite=7
+# CHECK-NEXT: v44: anything = PropGet v4 key="prototype" accessSite=5
+# CHECK-NEXT: v45: object = AssumeType v44 provenType=object
+# CHECK-NEXT: v46: f8 = NewClosure v24 function=f8 allocationSite=10
+# CHECK-NEXT: PropSet v45, v46 key="value" accessSite=6
+# CHECK-NEXT: v48: number = CallDirect v20 function=f2 accessSite=7
+# CHECK-NEXT: v49: anything = PropGet v4 key="prototype" accessSite=5
+# CHECK-NEXT: v50: object = AssumeType v49 provenType=object
+# CHECK-NEXT: v51: f8 = NewClosure v25 function=f8 allocationSite=10
+# CHECK-NEXT: PropSet v50, v51 key="value" accessSite=6
+# CHECK-NEXT: v53: number = CallDirect v20 function=f2 accessSite=7
+# CHECK-NEXT: v54: anything = PropGet v4 key="prototype" accessSite=5
+# CHECK-NEXT: v55: object = AssumeType v54 provenType=object
+# CHECK-NEXT: v56: f8 = NewClosure v26 function=f8 allocationSite=10
+# CHECK-NEXT: PropSet v55, v56 key="value" accessSite=6
+# CHECK-NEXT: v58: number = CallDirect v20 function=f2 accessSite=7
+# CHECK-NEXT: v59: anything = PropGet v4 key="prototype" accessSite=5
+# CHECK-NEXT: v60: object = AssumeType v59 provenType=object
+# CHECK-NEXT: v61: f8 = NewClosure v27 function=f8 allocationSite=10
+# CHECK-NEXT: PropSet v60, v61 key="value" accessSite=6
+# CHECK-NEXT: v63: number = CallDirect v20 function=f2 accessSite=7
+# CHECK-NEXT: v64: anything = PropGet v4 key="prototype" accessSite=5
+# CHECK-NEXT: v65: object = AssumeType v64 provenType=object
+# CHECK-NEXT: v66: f8 = NewClosure v28 function=f8 allocationSite=10
+# CHECK-NEXT: PropSet v65, v66 key="value" accessSite=6
+# CHECK-NEXT: v68: number = CallDirect v20 function=f2 accessSite=7
+# CHECK-NEXT: v69: anything = PropGet v11 key="prototype" accessSite=3
+# CHECK-NEXT: v70: object = AssumeType v69 provenType=object
+# CHECK-NEXT: v71: f9 = NewClosure function=f9 allocationSite=9
+# CHECK-NEXT: PropSet v70, v71 key="value" accessSite=4
+# CHECK-NEXT: v73: undefined = Undefined
+# CHECK-NEXT: Return v73
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="look"
 # CHECK: module=m0 position=523 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|L0|L1|L2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

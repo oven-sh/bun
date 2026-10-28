@@ -113,19 +113,17 @@ function f5 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 0 = Integer
 # CHECK-NEXT: Jump -> next b1(v0)
-# CHECK-NEXT: b1(v1: int[0, 50] ~ 0):
+# CHECK-NEXT: b1(v1: int[0, 49] ~ 0) frequency=Rare:
+# CHECK-NEXT: v2: undefined|null|string = CallDirect function=f2 accessSite=0
+# CHECK-NEXT: v3: int[1, 50] ~ 1 = Increment v1
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v3: 50 = Integer integer=50
-# CHECK-NEXT: v4: boolean = Less v1, v3
-# CHECK-NEXT: Branch v4 -> taken b2(| 0), notTaken b3()
-# CHECK-NEXT: b2(v5: int[0, 49] ~ 0) frequency=Rare:
-# CHECK-NEXT: v6: undefined|null|string = CallDirect function=f2 accessSite=0
-# CHECK-NEXT: v7: int[1, 50] ~ 1 = Increment v5
-# CHECK-NEXT: Jump -> next b1(v7)
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v8: undefined = CallDirect function=f3 accessSite=1
-# CHECK-NEXT: v9: undefined = Undefined
-# CHECK-NEXT: Return v9
+# CHECK-NEXT: v5: 50 = Integer integer=50
+# CHECK-NEXT: v6: boolean = Less v3, v5
+# CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v7: undefined = CallDirect function=f3 accessSite=1
+# CHECK-NEXT: v8: undefined = Undefined
+# CHECK-NEXT: Return v8
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="makeRing"
 # CHECK: module=m0 position=431 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=L0}] functionTypes=[f5] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces]

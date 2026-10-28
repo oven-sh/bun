@@ -346,11 +346,11 @@ function f6 name="nested" module=m0 position=3333 flags=[IsChecked, HasExplicitN
 # -- generated: parseNumbers swapped sometimesMissing
 # CHECK-LABEL: function {{*}}name="parseNumbers"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 189, patchpoints: 35, rare instructions: 207, polls: 6
+# CHECK-NEXT: instructions: 188, patchpoints: 35, rare instructions: 207, polls: 6
 # CHECK-NEXT: end of function f2
 # CHECK-LABEL: function {{*}}name="swapped"
 # CHECK: role=ResultWorker
-# CHECK-NEXT: instructions: 63, patchpoints: 8, rare instructions: 11
+# CHECK-NEXT: instructions: 62, patchpoints: 8, rare instructions: 11
 # CHECK-NEXT: end of function f9
 # CHECK-LABEL: function {{*}}name="sometimesMissing"
 # CHECK: role=Source

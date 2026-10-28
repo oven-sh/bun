@@ -735,60 +735,68 @@ runtimefunction id=131089 function=f29
 # CHECK-NEXT: v6: 0 = Integer
 # CHECK-NEXT: v7: 0 = Integer
 # CHECK-NEXT: Jump -> next b1(v0, v4, v5, v6, v7)
-# CHECK-NEXT: b1(v8: Array<never, proven, pristine[Storage, Names]>, v9: i32, v10: int[-2147483648, 2147483646], v11: number, v12: i32):
-# CHECK-NEXT: v13: int = AssumeType v11 provenType=int
+# CHECK-NEXT: b1(v8: Array<never, proven, pristine[Storage, Names]>, v9: i32, v10: int[-2147483648, 2147483646], v11: int, v12: i32):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v15: f24 = GetModuleVariable variable=g14
-# CHECK-NEXT: v16: number = Call v15, -, v0, v12, v1, v2 calleeName="findDoubleRun" accessSite=8 callees=[f24]
-# CHECK-NEXT: v17: f14 = GetModuleVariable variable=g9
-# CHECK-NEXT: v18: number = Call v17, -, v10, v12, v16, v1 calleeName="computeRunPower" accessSite=9 callees=[f14]
-# CHECK-NEXT: Jump -> next b2(v9, v10)
-# CHECK-NEXT: b2(v19: i32, v20: i32 ~ int[-2147483648, 2147483646]):
+# CHECK-NEXT: v14: f24 = GetModuleVariable variable=g14
+# CHECK-NEXT: v15: number = Call v14, -, v0, v12, v1, v2 calleeName="findDoubleRun" accessSite=8 callees=[f24]
+# CHECK-NEXT: v16: f14 = GetModuleVariable variable=g9
+# CHECK-NEXT: v17: number = Call v16, -, v10, v12, v15, v1 calleeName="computeRunPower" accessSite=9 callees=[f14]
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v22: 2 = Integer integer=2
-# CHECK-NEXT: v23: int[-4294967296, 4294967294] = Mul v19, v22
-# CHECK-NEXT: v24: int[-6442450944, 6442450941] = Add v1, v23
-# CHECK-NEXT: v25: 1 = Integer integer=1
-# CHECK-NEXT: v26: int[-6442450945, 6442450940] = Sub v24, v25
-# CHECK-NEXT: v27: number = GetDoubleIndex v8, v26
-# CHECK-NEXT: v28: boolean = LessEq v27, v18
-# CHECK-NEXT: Branch v28 -> taken b3(), notTaken b4()
+# CHECK-NEXT: v19: 2 = Integer integer=2
+# CHECK-NEXT: v20: int[-4294967296, 4294967294] = Mul v9, v19
+# CHECK-NEXT: v21: int[-6442450944, 6442450941] = Add v1, v20
+# CHECK-NEXT: v22: 1 = Integer integer=1
+# CHECK-NEXT: v23: int[-6442450945, 6442450940] = Sub v21, v22
+# CHECK-NEXT: v24: number = GetDoubleIndex v8, v23
+# CHECK-NEXT: v25: boolean = LessEq v24, v17
+# CHECK-NEXT: Branch v25 -> taken b2(v9), notTaken b5(v9, v10)
+# CHECK-NEXT: b2(v26: i32):
+# CHECK-NEXT: v27: boolean = GreaterEq v12, v1
+# CHECK-NEXT: Branch v27 -> taken b3(), notTaken b4(| 0, 1)
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v29: boolean = GreaterEq v12, v1
-# CHECK-NEXT: Branch v29 -> taken b5(), notTaken b6(| 0, 1)
-# CHECK-NEXT: b4() frequency=Rare:
-# CHECK-NEXT: v30: 1 = Integer integer=1
-# CHECK-NEXT: v31: int[-2147483649, 2147483646] = Sub v19, v30
-# CHECK-NEXT: v32: 0 = Integer
-# CHECK-NEXT: v33: i32 = BitOr v31, v32
-# CHECK-NEXT: v34: 2 = Integer integer=2
-# CHECK-NEXT: v35: int[-4294967296, 4294967294] = Mul v33, v34
-# CHECK-NEXT: v36: int[-6442450944, 6442450941] = Add v1, v35
-# CHECK-NEXT: v37: number = GetDoubleIndex v8, v36
+# CHECK-NEXT: v28: undefined = Undefined
+# CHECK-NEXT: Return v28
+# CHECK-NEXT: b4(v29: int[-2147483648, 2147483646], v30: int[-2147483647, 2147483647]):
+# CHECK-NEXT: v31: int[-2147483575, 2147483719] = Add v30, v3
+# CHECK-NEXT: v32: 1 = Integer integer=1
+# CHECK-NEXT: v33: int[-2147483574, 2147483720] = Add v31, v32
+# CHECK-NEXT: v34: Array = NewDoubleArray v33 allocationSite=4
+# CHECK-NEXT: v35: Array<number> = Upcast v34 castType=undefined|null|Array<number>
+# CHECK-NEXT: v36: 1 = Integer integer=1
+# CHECK-NEXT: v37: int[-2147483647, 2147483648] = Add v26, v36
 # CHECK-NEXT: v38: 0 = Integer
 # CHECK-NEXT: v39: i32 = BitOr v37, v38
-# CHECK-NEXT: v40: anything = CallDirect v0, v39, v20, v13, v2 function=f38 accessSite=10
-# CHECK-NEXT: Jump -> next b2(v33, v39)
-# CHECK-NEXT: b5():
-# CHECK-NEXT: v41: undefined = Undefined
-# CHECK-NEXT: Return v41
-# CHECK-NEXT: b6(v42: int[-2147483648, 2147483646], v43: int[-2147483647, 2147483647]):
-# CHECK-NEXT: v44: int[-2147483575, 2147483719] = Add v43, v3
-# CHECK-NEXT: v45: 1 = Integer integer=1
-# CHECK-NEXT: v46: int[-2147483574, 2147483720] = Add v44, v45
-# CHECK-NEXT: v47: Array = NewDoubleArray v46 allocationSite=4
-# CHECK-NEXT: v48: Array<number> = Upcast v47 castType=undefined|null|Array<number>
-# CHECK-NEXT: v49: 1 = Integer integer=1
-# CHECK-NEXT: v50: int[-2147483647, 2147483648] = Add v19, v49
-# CHECK-NEXT: v51: 0 = Integer
-# CHECK-NEXT: v52: i32 = BitOr v50, v51
-# CHECK-NEXT: v53: 1 = Integer integer=1
-# CHECK-NEXT: v54: number = Add v16, v53
-# CHECK-NEXT: v55: 0 = Integer
-# CHECK-NEXT: v56: i32 = BitOr v54, v55
-# CHECK-NEXT: v57: fact = Specified
-# CHECK-NEXT: v58: Array<never, proven, pristine[Storage, Names]> = AssumeType v48, v57 provenType=Array<never, proven, pristine[Storage, Names]>
-# CHECK-NEXT: Jump -> next b1(v58, v52, v42, v16, v56)
+# CHECK-NEXT: v40: 1 = Integer integer=1
+# CHECK-NEXT: v41: number = Add v15, v40
+# CHECK-NEXT: v42: 0 = Integer
+# CHECK-NEXT: v43: i32 = BitOr v41, v42
+# CHECK-NEXT: v44: fact = Specified
+# CHECK-NEXT: v45: Array<never, proven, pristine[Storage, Names]> = AssumeType v35, v44 provenType=Array<never, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v46: fact = Specified
+# CHECK-NEXT: v47: int = AssumeType v15, v46 provenType=int
+# CHECK-NEXT: Jump -> next b1(v45, v39, v29, v47, v43)
+# CHECK-NEXT: b5(v48: i32, v49: i32 ~ int[-2147483648, 2147483646]) frequency=Rare:
+# CHECK-NEXT: v50: 1 = Integer integer=1
+# CHECK-NEXT: v51: int[-2147483649, 2147483646] = Sub v48, v50
+# CHECK-NEXT: v52: 0 = Integer
+# CHECK-NEXT: v53: i32 = BitOr v51, v52
+# CHECK-NEXT: v54: 2 = Integer integer=2
+# CHECK-NEXT: v55: int[-4294967296, 4294967294] = Mul v53, v54
+# CHECK-NEXT: v56: int[-6442450944, 6442450941] = Add v1, v55
+# CHECK-NEXT: v57: number = GetDoubleIndex v8, v56
+# CHECK-NEXT: v58: 0 = Integer
+# CHECK-NEXT: v59: i32 = BitOr v57, v58
+# CHECK-NEXT: v60: anything = CallDirect v0, v59, v49, v11, v2 function=f38 accessSite=10
+# CHECK-NEXT: v61: i32 ~ int[-2147483648, 2147483646] = Upcast v59 castType=i32
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v63: 2 = Integer integer=2
+# CHECK-NEXT: v64: int[-4294967296, 4294967294] = Mul v53, v63
+# CHECK-NEXT: v65: int[-6442450944, 6442450941] = Add v1, v64
+# CHECK-NEXT: v66: 1 = Integer integer=1
+# CHECK-NEXT: v67: int[-6442450945, 6442450940] = Sub v65, v66
+# CHECK-NEXT: v68: number = GetDoubleIndex v8, v67
+# CHECK-NEXT: v69: boolean = LessEq v68, v17
+# CHECK-NEXT: Branch v69 -> taken b2(v53), notTaken b5(v53, v61)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="sortDoubleArray"
 # CHECK: module=m1 position=20048 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w67 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=number site=w68 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

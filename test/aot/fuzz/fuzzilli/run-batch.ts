@@ -654,6 +654,19 @@ const setsThePrototypeOfABuiltIn = /\bsetPrototypeOf\([A-Z]/;
  */
 const hasATsconfigInAFolderOfItsOwn = /^\/\/ @filename: \.\/[^\n]+\/tsconfig\.json$/m;
 /**
+ * What a part under a tsconfig.json of its own prints is judged by the executable built without --aot, which follows that file as ours does and as `bun run` does not. Where that executable
+ * doesn't start, because a name that the bundler made for the exports of a file is not defined, nothing is left to judge those lines by. The scene prints them under the label "options <n>".
+ */
+const lacksTheYardstickOfItsOwnOptions = (ours: Ended, underBunRun: Ended, withoutAot: Ended) => {
+  const [left, right] = [ours.stdout.split("\n"), underBunRun.stdout.split("\n")];
+  return (
+    /\bexports_\w+ is not defined/.test(withoutAot.stderr) &&
+    ours.end === underBunRun.end &&
+    left.length === right.length &&
+    left.every((line, at) => line === right[at] || (/^options \d+ /.test(line) && /^options \d+ /.test(right[at])))
+  );
+};
+/**
  * Such a program can hold more than the file in that folder, and in the rest the executable built without --aot can be the one that parts from `bun run`, also by a line more or less. So the program is held against
  * both: it ends as both do, prints as many lines as `bun run`, and each of its lines is the line of `bun run` at that place or one of the lines of the other executable.
  */
@@ -1504,11 +1517,18 @@ async function judgeEndedEarly(
 ) {
   const spans = [1, 2, 4, 8, 16, 32, 64, 128, 256];
   const span = spans[Math.floor(Math.random() * spans.length)];
+  // Several Workers at the same time start and end beside each other, and under collections the end of one meets the collector.
+  const atOnce = [1, 1, 2, 4, 8][Math.floor(Math.random() * 5)];
+  const environment: Record<string, string> = {
+    BATCH_ENDS_WITHIN: String(span),
+    BATCH_AT_ONCE: String(atOnce),
+    ...(Math.random() < 0.5 ? drawCollections() : {}),
+  };
+  const words = Object.entries(environment)
+    .map(([name, value]) => `${name}=${value}`)
+    .join(" ");
   const runSo = (stage: string, command: string[], which: number[], more: Record<string, string> = {}) =>
-    run(stage, command, folder, extension, inGroup, which, milliseconds * 4, {
-      BATCH_ENDS_WITHIN: String(span),
-      ...more,
-    });
+    run(stage, command, folder, extension, inGroup, which, milliseconds * 4, { ...environment, ...more });
   const endedBySignal = ({ end }: Ended) => /^the process ended: SIG(?!KILL|TERM)/.test(end);
   const calm = units.filter(unit => !atDefault.get(unit)!.end.startsWith("the process ended"));
   const blamed = new Map<number, Ended>();
@@ -1516,10 +1536,14 @@ async function judgeEndedEarly(
     for (const [unit, ended] of await runSo("ending-early", [join(folder, "batch")], calm))
       if (endedBySignal(ended) && !blamed.has(unit)) blamed.set(unit, ended);
   add(`Workers ended within ${span} ms`, calm.length * 3);
+  add(
+    `Workers ended early, ${atOnce} at once${Object.keys(environment).length > 2 ? ", under collections" : ""}`,
+    calm.length * 3,
+  );
   for (const [unit, ended] of [...blamed].slice(0, 3)) {
-    // The thread of a Worker that was ended can outlive its mark, so the units in front of the blamed one count too.
+    // The thread of a Worker that was ended can outlive its mark, so the units in front of the blamed one count too, and those that ran beside it.
     const at = calm.indexOf(unit);
-    const suspects = calm.slice(Math.max(0, at - 3), at + 1);
+    const suspects = calm.slice(Math.max(0, at - 3), at + atOnce);
     let plainEndsSo = false;
     for (let round = 0; round < 3 && !plainEndsSo; round++)
       plainEndsSo = [
@@ -1535,7 +1559,7 @@ async function judgeEndedEarly(
     keepFind(kind, `${ended.end} | ${where}`, {
       ["program" + extension]: texts[membersOf(unit)[0]],
       "programs.txt": listed(suspects.flatMap(membersOf).map(index => texts[index])),
-      "report.txt": `${kind}\n${bun} build --compile --aot ${buildFlags.join(" ")}\n${ended.end} | ${where}\nThe runner ended each Worker at a moment within ${span} ms (BATCH_ENDS_WITHIN=${span}), in three runs. programs.txt holds the programs of the entry point that was running and of the ${suspects.length - 1} in front of it, whose threads may still have been ending.\nbun run of the same files, three runs: ${plainEndsSo ? "a signal too" : "no signal"}\n`,
+      "report.txt": `${kind}\n${bun} build --compile --aot ${buildFlags.join(" ")}\n${ended.end} | ${where}\nThe runner ended each Worker at a moment within ${span} ms, ${atOnce} at once, in three runs: ${words}. programs.txt holds the programs of the entry point that gets the blame, of up to three in front of it, whose threads may still have been ending, and of those that ran beside it.\nbun run of the same files, three runs: ${plainEndsSo ? "a signal too" : "no signal"}\n`,
       "compiled.stderr": ended.stderr,
     });
   }
@@ -1911,21 +1935,26 @@ for (
                         hasATsconfigInAFolderOfItsOwn.test(texts[index]) &&
                         printsOnlyLinesOfEither(second, referenceAgain, inOrdinary)
                       ? "documented difference"
-                      : inOrdinary && agree(second, inOrdinary) && classOfError(second) === classOfError(inOrdinary)
-                        ? "as an executable without --aot"
-                        : showsFunctionText || agreeButForLayout(second, referenceAgain)
-                          ? "function text"
-                          : second.end === referenceAgain.end && definesAnAccessorTwice(texts[index])
-                            ? "an accessor defined twice"
-                            : isLimit(second)
-                              ? "limit"
-                              : second.end !== referenceAgain.end
-                                ? "exit-code"
-                                : removeDetailsOfErrors(second.stdout) !== removeDetailsOfErrors(referenceAgain.stdout)
-                                  ? "stdout"
-                                  : lastError(second).name !== lastError(referenceAgain).name
-                                    ? "error-class"
-                                    : "error-message";
+                      : inOrdinary &&
+                          hasATsconfigInAFolderOfItsOwn.test(texts[index]) &&
+                          lacksTheYardstickOfItsOwnOptions(second, referenceAgain, inOrdinary)
+                        ? "options of its own, and the executable without --aot does not start"
+                        : inOrdinary && agree(second, inOrdinary) && classOfError(second) === classOfError(inOrdinary)
+                          ? "as an executable without --aot"
+                          : showsFunctionText || agreeButForLayout(second, referenceAgain)
+                            ? "function text"
+                            : second.end === referenceAgain.end && definesAnAccessorTwice(texts[index])
+                              ? "an accessor defined twice"
+                              : isLimit(second)
+                                ? "limit"
+                                : second.end !== referenceAgain.end
+                                  ? "exit-code"
+                                  : removeDetailsOfErrors(second.stdout) !==
+                                      removeDetailsOfErrors(referenceAgain.stdout)
+                                    ? "stdout"
+                                    : lastError(second).name !== lastError(referenceAgain).name
+                                      ? "error-class"
+                                      : "error-message";
     // A build warns about the first write to a built-in that it meets, so the build of a group names one program of several.
     if (["limit", "exit-code", "stdout", "error-class", "error-message"].includes(kind)) {
       const alone = join(work, `alone-${process.pid}`);

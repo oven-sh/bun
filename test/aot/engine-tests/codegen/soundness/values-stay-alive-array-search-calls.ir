@@ -381,10 +381,6 @@ function f12 name="addInitializer" module=m3 position=3267 kind=Arrow role=Libra
 function f13 module=m3 role=Signature thisType={type=anything} results=[{type=anything}]
 # -- generated: manyDoubles
 # CHECK-LABEL: function {{*}}name="manyDoubles"
-# CHECK: role=EntryChecks
-# CHECK-NEXT: instructions: 3, patchpoints: 2
-# CHECK-NEXT: end of function f2
-# CHECK-LABEL: function {{*}}name="manyDoubles"
 # CHECK: role=GenericVersion
 # CHECK-NEXT: instructions: 176, patchpoints: 39, polls: 1
 # CHECK-NEXT: end of function f17

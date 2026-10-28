@@ -356,6 +356,7 @@ impl Build<'_> {
                         .holds_every_load_by_unknown_name),
             further: &lacked_before,
             keeps_code_without_names: loaded.keeps_library_code_without_names,
+            holds_guessed_code: loaded.holds_guessed_library_code,
         };
         let known = (loaded.known_library_regions)();
         let reached = find_reached_runtime_code(&reach_input, known, &self.parallel_runner());
@@ -620,6 +621,7 @@ impl Build<'_> {
             can_load_code_at_run_time: loaded.can_load_code_at_run_time,
             loads_code_by_unknown_names_alone: loaded.loads_code_by_unknown_names_alone,
             keeps_library_code_without_names: true,
+            holds_guessed_library_code: true,
             finish_asset_reads: &|| true,
             known_library_regions: &|| None,
         };

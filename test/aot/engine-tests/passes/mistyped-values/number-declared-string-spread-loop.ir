@@ -564,76 +564,32 @@ runtimefunction id=69 function=f7
 # CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: ValidateFirstRun variable=g2
-# CHECK-NEXT: v1: 0 = Integer
-# CHECK-NEXT: Jump -> next b1(v1)
-# CHECK-NEXT: b1(v2: int[0, 2]):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v4: 2 = Integer integer=2
-# CHECK-NEXT: v5: boolean = Less v2, v4
-# CHECK-NEXT: Branch v5 -> taken b2(| 0), notTaken b3()
-# CHECK-NEXT: b2(v6: int[0, 1]):
-# CHECK-NEXT: v7: undefined = CallDirect function=f3 accessSite=0
-# CHECK-NEXT: v8: int[1, 2] = Increment v6
-# CHECK-NEXT: Jump -> next b1(v8)
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v9: "ab" = String string="ab"
-# CHECK-NEXT: v10: fractional = Double number=2.5
-# CHECK-NEXT: v11: "a\u{1f600}b" = String string="a\u{1f600}b"
-# CHECK-NEXT: v12: 7 = Integer integer=7
-# CHECK-NEXT: v13: "" = String string=""
-# CHECK-NEXT: v14: 0 = Integer
-# CHECK-NEXT: Jump -> next b4(v14)
-# CHECK-NEXT: b4(v15: int[0, 5]):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v17: 5 = Integer integer=5
-# CHECK-NEXT: v18: boolean = Less v15, v17
-# CHECK-NEXT: Branch v18 -> taken b12(| 0), notTaken b5()
-# CHECK-NEXT: b5():
-# CHECK-NEXT: v19: "xy" = String string="xy"
-# CHECK-NEXT: v20: fractional = Double number=0.5
-# CHECK-NEXT: v21: "z" = String string="z"
-# CHECK-NEXT: v22: 0 = Integer
-# CHECK-NEXT: Jump -> next b6(v22)
-# CHECK-NEXT: b6(v23: int[0, 3]):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v25: 3 = Integer integer=3
-# CHECK-NEXT: v26: boolean = Less v23, v25
-# CHECK-NEXT: Branch v26 -> taken b11(| 0), notTaken b7()
-# CHECK-NEXT: b7():
-# CHECK-NEXT: v27: fractional = Double number=1.5
-# CHECK-NEXT: v28: "pq" = String string="pq"
-# CHECK-NEXT: v29: fractional = Double number=1.5
-# CHECK-NEXT: v30: 0 = Integer
-# CHECK-NEXT: Jump -> next b8(v30)
-# CHECK-NEXT: b8(v31: int[0, 3]):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v33: 3 = Integer integer=3
-# CHECK-NEXT: v34: boolean = Less v31, v33
-# CHECK-NEXT: Branch v34 -> taken b10(| 0), notTaken b9()
-# CHECK-NEXT: b9():
-# CHECK-NEXT: v35: undefined = Undefined
-# CHECK-NEXT: Return v35
-# CHECK-NEXT: b10(v36: int[0, 2]):
-# CHECK-NEXT: Switch v36 cases=[0, 1] -> case b15(v27), case b15(v28), otherwise b15(v29)
-# CHECK-NEXT: b11(v37: int[0, 2]):
-# CHECK-NEXT: Switch v37 cases=[0, 1] -> case b14(v19), case b14(v20), otherwise b14(v21)
-# CHECK-NEXT: b12(v38: int[0, 4]):
-# CHECK-NEXT: Switch v38 cases=[0, 1, 2, 3] -> case b13(v9), case b13(v10), case b13(v11), case b13(v12), otherwise b13(v13)
-# CHECK-NEXT: b13(v39: 7|fractional|""|"ab"|"a\u{1f600}b"):
-# CHECK-NEXT: v40: 1 = Integer integer=1
-# CHECK-NEXT: v41: int[1, 5] = Add v38, v40
-# CHECK-NEXT: v42: undefined = CallDirect v39 function=f4 accessSite=3
-# CHECK-NEXT: Jump -> next b4(v41)
-# CHECK-NEXT: b14(v43: fractional|"xy"|"z"):
-# CHECK-NEXT: v44: 1 = Integer integer=1
-# CHECK-NEXT: v45: int[1, 3] = Add v37, v44
-# CHECK-NEXT: v46: undefined = CallDirect v43 function=f5 accessSite=2
-# CHECK-NEXT: Jump -> next b6(v45)
-# CHECK-NEXT: b15(v47: fractional|"pq"):
-# CHECK-NEXT: v48: 1 = Integer integer=1
-# CHECK-NEXT: v49: int[1, 3] = Add v36, v48
-# CHECK-NEXT: v50: undefined = CallDirect v47 function=f6 accessSite=1
-# CHECK-NEXT: Jump -> next b8(v49)
+# CHECK-NEXT: v1: undefined = CallDirect function=f3 accessSite=0
+# CHECK-NEXT: v2: undefined = CallDirect function=f3 accessSite=0
+# CHECK-NEXT: v3: "ab" = String string="ab"
+# CHECK-NEXT: v4: fractional = Double number=2.5
+# CHECK-NEXT: v5: "a\u{1f600}b" = String string="a\u{1f600}b"
+# CHECK-NEXT: v6: 7 = Integer integer=7
+# CHECK-NEXT: v7: "" = String string=""
+# CHECK-NEXT: v8: undefined = CallDirect v3 function=f4 accessSite=3
+# CHECK-NEXT: v9: undefined = CallDirect v4 function=f4 accessSite=3
+# CHECK-NEXT: v10: undefined = CallDirect v5 function=f4 accessSite=3
+# CHECK-NEXT: v11: undefined = CallDirect v6 function=f4 accessSite=3
+# CHECK-NEXT: v12: undefined = CallDirect v7 function=f4 accessSite=3
+# CHECK-NEXT: v13: "xy" = String string="xy"
+# CHECK-NEXT: v14: fractional = Double number=0.5
+# CHECK-NEXT: v15: "z" = String string="z"
+# CHECK-NEXT: v16: undefined = CallDirect v13 function=f5 accessSite=2
+# CHECK-NEXT: v17: undefined = CallDirect v14 function=f5 accessSite=2
+# CHECK-NEXT: v18: undefined = CallDirect v15 function=f5 accessSite=2
+# CHECK-NEXT: v19: fractional = Double number=1.5
+# CHECK-NEXT: v20: "pq" = String string="pq"
+# CHECK-NEXT: v21: fractional = Double number=1.5
+# CHECK-NEXT: v22: undefined = CallDirect v19 function=f6 accessSite=1
+# CHECK-NEXT: v23: undefined = CallDirect v20 function=f6 accessSite=1
+# CHECK-NEXT: v24: undefined = CallDirect v21 function=f6 accessSite=1
+# CHECK-NEXT: v25: undefined = Undefined
+# CHECK-NEXT: Return v25
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="spreadsBehindALoop"
 # CHECK: module=m0 position=280 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}] {

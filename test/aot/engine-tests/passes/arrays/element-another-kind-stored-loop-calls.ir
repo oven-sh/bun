@@ -392,7 +392,7 @@ function f17 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f18 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 # -- generated: f0 Shape Square scaled Disc Bar
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f36 callPosition=4294967295 isConstruction=true module=m0}, {callee=f30 callPosition=4294967295 isConstruction=true module=m0}, {callee=f30 callPosition=4294967295 isConstruction=true module=m0}, {callee=f33 callPosition=4294967295 isConstruction=true module=m0}, {callee=f30 callPosition=4294967295 isConstruction=true module=m0}, {callee=f8 callPosition=4294967295 parent=5 module=m0}, {callee=f28 callPosition=4294967295 parent=5 isConstruction=true module=m0}, {callee=f9 callPosition=4294967295 parent=4 module=m0}, {callee=f28 callPosition=4294967295 parent=4 isConstruction=true module=m0}, {callee=f8 callPosition=4294967295 parent=3 module=m0}, {callee=f28 callPosition=4294967295 parent=3 isConstruction=true module=m0}, {callee=f8 callPosition=4294967295 parent=2 module=m0}, {callee=f28 callPosition=4294967295 parent=2 isConstruction=true module=m0}, {callee=f10 callPosition=4294967295 parent=1 module=m0}, {callee=f28 callPosition=4294967295 parent=1 isConstruction=true module=m0}, {callee=f7 callPosition=4294967295 module=m0}, {callee=f5 callPosition=4294967295 module=m0}, {callee=f3 callPosition=4294967295 module=m0}, {callee=f23 callPosition=220 parent=18 isTailCall=true module=m0}, {callee=f20 callPosition=220 parent=18 isTailCall=true module=m0}, {callee=f21 callPosition=365 parent=17 isTailCall=true module=m0}, {callee=f25 callPosition=539 parent=16 isTailCall=true module=m0}, {callee=f22 callPosition=539 parent=16 isTailCall=true module=m0}] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f7 callPosition=4294967295 module=m0}, {callee=f5 callPosition=4294967295 module=m0}, {callee=f3 callPosition=4294967295 module=m0}, {callee=f36 callPosition=4294967295 isConstruction=true module=m0}, {callee=f30 callPosition=4294967295 isConstruction=true module=m0}, {callee=f30 callPosition=4294967295 isConstruction=true module=m0}, {callee=f33 callPosition=4294967295 isConstruction=true module=m0}, {callee=f30 callPosition=4294967295 isConstruction=true module=m0}, {callee=f8 callPosition=4294967295 parent=8 module=m0}, {callee=f28 callPosition=4294967295 parent=8 isConstruction=true module=m0}, {callee=f9 callPosition=4294967295 parent=7 module=m0}, {callee=f28 callPosition=4294967295 parent=7 isConstruction=true module=m0}, {callee=f8 callPosition=4294967295 parent=6 module=m0}, {callee=f28 callPosition=4294967295 parent=6 isConstruction=true module=m0}, {callee=f8 callPosition=4294967295 parent=5 module=m0}, {callee=f28 callPosition=4294967295 parent=5 isConstruction=true module=m0}, {callee=f10 callPosition=4294967295 parent=4 module=m0}, {callee=f28 callPosition=4294967295 parent=4 isConstruction=true module=m0}, {callee=f23 callPosition=220 parent=3 isTailCall=true module=m0}, {callee=f20 callPosition=220 parent=3 isTailCall=true module=m0}, {callee=f21 callPosition=365 parent=2 isTailCall=true module=m0}, {callee=f25 callPosition=539 parent=1 isTailCall=true module=m0}, {callee=f22 callPosition=539 parent=1 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: f2 = GetModuleVariable variable=g1
 # CHECK-NEXT: v1: f2 = FinishClass v0 layout=L1
@@ -462,103 +462,105 @@ function f18 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v51: int[0, 1] = Mod v26, v50
 # CHECK-NEXT: Switch v51 cases=[0] -> case b13(v13), otherwise b13(v14)
 # CHECK-NEXT: b13(v52: 1|fractional):
-# CHECK-NEXT: v53: boolean = TypeTest v49 testedType=L1
-# CHECK-NEXT: Branch v53 -> taken b14(| 0), notTaken b15(| 0)
-# CHECK-NEXT: b14(v54: L1):
-# CHECK-NEXT: v55: int[-2147483643, 2147483647] = GetSlot v54 key="side" receivers=[L1] level=Proven accessSite=19
-# CHECK-NEXT: v56: int|whole = Mul v55, v55
-# CHECK-NEXT: v57: number = Mul v56, v52
-# CHECK-NEXT: Jump -> next b18(v57)
-# CHECK-NEXT: b15(v58: L2|L3):
-# CHECK-NEXT: v59: boolean = TypeTest v58 testedType=L2
-# CHECK-NEXT: Branch v59 -> taken b16(| 0), notTaken b17(| 0)
-# CHECK-NEXT: b16(v60: L2):
-# CHECK-NEXT: v61: 3 = Integer integer=3
-# CHECK-NEXT: v62: int[-2147483643, 2147483647] = GetSlot v60 key="radius" receivers=[L2] level=Proven accessSite=24
-# CHECK-NEXT: v63: int[-6442450929, 6442450941] = Mul v61, v62
-# CHECK-NEXT: v64: int|whole = Mul v63, v62
-# CHECK-NEXT: v65: number = Mul v64, v52
-# CHECK-NEXT: Jump -> next b18(v65)
-# CHECK-NEXT: b17(v66: L3):
-# CHECK-NEXT: v67: int[-2147483643, 2147483647] = GetSlot v66 key="length" receivers=[L3] level=Proven accessSite=30
-# CHECK-NEXT: v68: int[-2147483643, 2147483647] = GetSlot v66 key="width" receivers=[L3] level=Proven accessSite=31
-# CHECK-NEXT: v69: int|whole = Mul v67, v68
-# CHECK-NEXT: v70: number = Mul v69, v52
-# CHECK-NEXT: Jump -> next b18(v70)
-# CHECK-NEXT: b18(v71: number):
-# CHECK-NEXT: v72: number = Add v20, v71
-# CHECK-NEXT: v73: int[1, 200] = Increment v26
-# CHECK-NEXT: Jump -> next b2(v72, v73, v45)
-# CHECK-NEXT: b19(v74: number, v75: int[0, 199], v76: int[0, 199]|whole) frequency=Rare:
-# CHECK-NEXT: v77: undefined|L1|L2|L3 = ElemGet v12, v76 accessSite=8 [keyIsIntegral]
-# CHECK-NEXT: v78: L1|L2|L3 = RequireObjectCoercible v77 name="scaled"
-# CHECK-NEXT: v79: 2 = Integer integer=2
-# CHECK-NEXT: v80: int[0, 1] = Mod v75, v79
-# CHECK-NEXT: Switch v80 cases=[0] -> case b20(v13), otherwise b20(v14)
-# CHECK-NEXT: b20(v81: 1|fractional) frequency=Rare:
-# CHECK-NEXT: v82: boolean = TypeTest v78 testedType=L1
-# CHECK-NEXT: Branch v82 -> taken b21(| 0), notTaken b22(| 0)
-# CHECK-NEXT: b21(v83: L1) frequency=Rare:
-# CHECK-NEXT: v84: number = CallDirect v83, v81 function=f20 accessSite=12
-# CHECK-NEXT: Jump -> next b25(v84)
-# CHECK-NEXT: b22(v85: L2|L3) frequency=Rare:
-# CHECK-NEXT: v86: boolean = TypeTest v85 testedType=L2
-# CHECK-NEXT: Branch v86 -> taken b23(| 0), notTaken b24(| 0)
-# CHECK-NEXT: b23(v87: L2) frequency=Rare:
-# CHECK-NEXT: v88: number = CallDirect v87, v81 function=f21 accessSite=12
-# CHECK-NEXT: Jump -> next b25(v88)
-# CHECK-NEXT: b24(v89: L3) frequency=Rare:
-# CHECK-NEXT: v90: number = CallDirect v89, v81 function=f22 accessSite=12
+# CHECK-NEXT: v53: 1|fractional = Expect v52 expectedType=number
+# CHECK-NEXT: v54: boolean = TypeTest v49 testedType=L1
+# CHECK-NEXT: Branch v54 -> taken b14(| 0), notTaken b15(| 0)
+# CHECK-NEXT: b14(v55: L1):
+# CHECK-NEXT: v56: int[-2147483643, 2147483647] = GetSlot v55 key="side" receivers=[L1] level=Proven accessSite=19
+# CHECK-NEXT: v57: int|whole = Mul v56, v56
+# CHECK-NEXT: v58: number = Mul v57, v53
+# CHECK-NEXT: Jump -> next b18(v58)
+# CHECK-NEXT: b15(v59: L2|L3):
+# CHECK-NEXT: v60: boolean = TypeTest v59 testedType=L2
+# CHECK-NEXT: Branch v60 -> taken b16(| 0), notTaken b17(| 0)
+# CHECK-NEXT: b16(v61: L2):
+# CHECK-NEXT: v62: 3 = Integer integer=3
+# CHECK-NEXT: v63: int[-2147483643, 2147483647] = GetSlot v61 key="radius" receivers=[L2] level=Proven accessSite=24
+# CHECK-NEXT: v64: int[-6442450929, 6442450941] = Mul v62, v63
+# CHECK-NEXT: v65: int|whole = Mul v64, v63
+# CHECK-NEXT: v66: number = Mul v65, v53
+# CHECK-NEXT: Jump -> next b18(v66)
+# CHECK-NEXT: b17(v67: L3):
+# CHECK-NEXT: v68: int[-2147483643, 2147483647] = GetSlot v67 key="length" receivers=[L3] level=Proven accessSite=30
+# CHECK-NEXT: v69: int[-2147483643, 2147483647] = GetSlot v67 key="width" receivers=[L3] level=Proven accessSite=31
+# CHECK-NEXT: v70: int|whole = Mul v68, v69
+# CHECK-NEXT: v71: number = Mul v70, v53
+# CHECK-NEXT: Jump -> next b18(v71)
+# CHECK-NEXT: b18(v72: number):
+# CHECK-NEXT: v73: number = Add v20, v72
+# CHECK-NEXT: v74: int[1, 200] = Increment v26
+# CHECK-NEXT: Jump -> next b2(v73, v74, v45)
+# CHECK-NEXT: b19(v75: number, v76: int[0, 199], v77: int[0, 199]|whole) frequency=Rare:
+# CHECK-NEXT: v78: undefined|L1|L2|L3 = ElemGet v12, v77 accessSite=8 [keyIsIntegral]
+# CHECK-NEXT: v79: L1|L2|L3 = RequireObjectCoercible v78 name="scaled"
+# CHECK-NEXT: v80: 2 = Integer integer=2
+# CHECK-NEXT: v81: int[0, 1] = Mod v76, v80
+# CHECK-NEXT: Switch v81 cases=[0] -> case b20(v13), otherwise b20(v14)
+# CHECK-NEXT: b20(v82: 1|fractional) frequency=Rare:
+# CHECK-NEXT: v83: 1|fractional = Expect v82 expectedType=number
+# CHECK-NEXT: v84: boolean = TypeTest v79 testedType=L1
+# CHECK-NEXT: Branch v84 -> taken b21(| 0), notTaken b22(| 0)
+# CHECK-NEXT: b21(v85: L1) frequency=Rare:
+# CHECK-NEXT: v86: number = CallDirect v85, v83 function=f20 accessSite=12
+# CHECK-NEXT: Jump -> next b25(v86)
+# CHECK-NEXT: b22(v87: L2|L3) frequency=Rare:
+# CHECK-NEXT: v88: boolean = TypeTest v87 testedType=L2
+# CHECK-NEXT: Branch v88 -> taken b23(| 0), notTaken b24(| 0)
+# CHECK-NEXT: b23(v89: L2) frequency=Rare:
+# CHECK-NEXT: v90: number = CallDirect v89, v83 function=f21 accessSite=12
 # CHECK-NEXT: Jump -> next b25(v90)
-# CHECK-NEXT: b25(v91: number) frequency=Rare:
-# CHECK-NEXT: v92: number = Add v74, v91
-# CHECK-NEXT: v93: int[1, 200] = Increment v75
-# CHECK-NEXT: v94: boolean = HasArrayStorage v12 arrayStorage=Contiguous [isWritable]
-# CHECK-NEXT: Branch v94 -> taken b26(| 0), notTaken b27()
-# CHECK-NEXT: b26(v95: guard) frequency=Rare:
-# CHECK-NEXT: Jump -> next b1(v92, v93, v95)
+# CHECK-NEXT: b24(v91: L3) frequency=Rare:
+# CHECK-NEXT: v92: number = CallDirect v91, v83 function=f22 accessSite=12
+# CHECK-NEXT: Jump -> next b25(v92)
+# CHECK-NEXT: b25(v93: number) frequency=Rare:
+# CHECK-NEXT: v94: number = Add v75, v93
+# CHECK-NEXT: v95: int[1, 200] = Increment v76
+# CHECK-NEXT: v96: boolean = HasArrayStorage v12 arrayStorage=Contiguous [isWritable]
+# CHECK-NEXT: Branch v96 -> taken b26(| 0), notTaken b27()
+# CHECK-NEXT: b26(v97: guard) frequency=Rare:
+# CHECK-NEXT: Jump -> next b1(v94, v95, v97)
 # CHECK-NEXT: b27() frequency=Rare:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v97: 200 = Integer integer=200
-# CHECK-NEXT: v98: boolean = Less v93, v97
-# CHECK-NEXT: Branch v98 -> taken b28(| 0), notTaken b36(v92)
-# CHECK-NEXT: b28(v99: int[1, 199]) frequency=Rare:
-# CHECK-NEXT: v100: 50 = Integer integer=50
-# CHECK-NEXT: v101: boolean = StrictEq v99, v100
-# CHECK-NEXT: Branch v101 -> taken b29(), notTaken b30()
+# CHECK-NEXT: v99: 200 = Integer integer=200
+# CHECK-NEXT: v100: boolean = Less v95, v99
+# CHECK-NEXT: Branch v100 -> taken b28(| 0), notTaken b36(v94)
+# CHECK-NEXT: b28(v101: int[1, 199]) frequency=Rare:
+# CHECK-NEXT: v102: 50 = Integer integer=50
+# CHECK-NEXT: v103: boolean = StrictEq v101, v102
+# CHECK-NEXT: Branch v103 -> taken b29(), notTaken b30()
 # CHECK-NEXT: b29() frequency=Rare:
-# CHECK-NEXT: v102: 1 = Integer integer=1
-# CHECK-NEXT: v103: 7 = Integer integer=7
-# CHECK-NEXT: v104: L1 = NewObject layout=L1 allocationClass=1
-# CHECK-NEXT: v105: undefined = CallDirect v104, v1, v1, v103 function=f30 accessSite=3 [isConstruction]
-# CHECK-NEXT: ElemSet v12, v102, v104 accessSite=4 [keyIsIntegral]
+# CHECK-NEXT: v104: 1 = Integer integer=1
+# CHECK-NEXT: v105: 7 = Integer integer=7
+# CHECK-NEXT: v106: L1 = NewObject layout=L1 allocationClass=1
+# CHECK-NEXT: v107: undefined = CallDirect v106, v1, v1, v105 function=f30 accessSite=3 [isConstruction]
+# CHECK-NEXT: ElemSet v12, v104, v106 accessSite=4 [keyIsIntegral]
 # CHECK-NEXT: Jump -> next b31()
 # CHECK-NEXT: b30() frequency=Rare:
 # CHECK-NEXT: Jump -> next b31()
 # CHECK-NEXT: b31() frequency=Rare:
-# CHECK-NEXT: v107: 90 = Integer integer=90
-# CHECK-NEXT: v108: boolean = StrictEq v99, v107
-# CHECK-NEXT: Branch v108 -> taken b32(), notTaken b34()
+# CHECK-NEXT: v109: 90 = Integer integer=90
+# CHECK-NEXT: v110: boolean = StrictEq v101, v109
+# CHECK-NEXT: Branch v110 -> taken b32(), notTaken b34()
 # CHECK-NEXT: b32() frequency=Rare:
-# CHECK-NEXT: v109: 2 = Integer integer=2
-# CHECK-NEXT: v110: 2 = Integer integer=2
-# CHECK-NEXT: v111: L3 = NewObject layout=L3 allocationClass=3
-# CHECK-NEXT: v112: undefined = CallDirect v111, v3, v3, v109, v110 function=f36 accessSite=5 [isConstruction]
-# CHECK-NEXT: Jump -> next b33(v92, v99, v111)
-# CHECK-NEXT: b33(v113: number, v114: int[0, 199], v115: L3) frequency=Rare:
-# CHECK-NEXT: v116: 0 = Integer
-# CHECK-NEXT: ElemSet v12, v116, v115 accessSite=6 [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b35(v113, v114)
+# CHECK-NEXT: v111: 2 = Integer integer=2
+# CHECK-NEXT: v112: 2 = Integer integer=2
+# CHECK-NEXT: v113: L3 = NewObject layout=L3 allocationClass=3
+# CHECK-NEXT: v114: undefined = CallDirect v113, v3, v3, v111, v112 function=f36 accessSite=5 [isConstruction]
+# CHECK-NEXT: Jump -> next b33(v94, v101, v113)
+# CHECK-NEXT: b33(v115: number, v116: int[0, 199], v117: L3) frequency=Rare:
+# CHECK-NEXT: v118: 0 = Integer
+# CHECK-NEXT: ElemSet v12, v118, v117 accessSite=6 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b35(v115, v116)
 # CHECK-NEXT: b34() frequency=Rare:
-# CHECK-NEXT: Jump -> next b35(v92, v99)
-# CHECK-NEXT: b35(v118: number, v119: int[0, 199]) frequency=Rare:
-# CHECK-NEXT: v120: int[0, 4294967295] = CallBuiltin v12 overload=ArrayPrototypeLength/0 accessSite=7
-# CHECK-NEXT: v121: int[0, 199]|whole = Mod v119, v120
-# CHECK-NEXT: Jump -> next b19(v118, v119, v121)
-# CHECK-NEXT: b36(v122: number):
-# CHECK-NEXT: v123: undefined = CallBuiltin -, v122 overload=ConsoleLog/0 accessSite=15
-# CHECK-NEXT: v124: undefined = Undefined
-# CHECK-NEXT: Return v124
+# CHECK-NEXT: Jump -> next b35(v94, v101)
+# CHECK-NEXT: b35(v120: number, v121: int[0, 199]) frequency=Rare:
+# CHECK-NEXT: v122: int[0, 4294967295] = CallBuiltin v12 overload=ArrayPrototypeLength/0 accessSite=7
+# CHECK-NEXT: v123: int[0, 199]|whole = Mod v121, v122
+# CHECK-NEXT: Jump -> next b19(v120, v121, v123)
+# CHECK-NEXT: b36(v124: number):
+# CHECK-NEXT: v125: undefined = CallBuiltin -, v124 overload=ConsoleLog/0 accessSite=15
+# CHECK-NEXT: v126: undefined = Undefined
+# CHECK-NEXT: Return v126
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Shape"
 # CHECK: module=m0 position=96 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L1|L2|L3 flags=[IsFromCompiler]}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {

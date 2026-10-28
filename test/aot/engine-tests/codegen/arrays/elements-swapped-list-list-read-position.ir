@@ -1291,28 +1291,7 @@ runtimefunction id=69 function=f14
 # CHECK-NEXT: Return v64
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="fewerThanAreAskedFor"
-# CHECK: module=m0 position=1733 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=5 site=w37}] results=[{type=string site=w38 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: 5):
-# CHECK-NEXT: v1: 0 = Integer
-# CHECK-NEXT: v2: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: Jump -> next b1(v1)
-# CHECK-NEXT: b1(v3: int[0, 3]):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v5: 3 = Integer integer=3
-# CHECK-NEXT: v6: boolean = Less v3, v5
-# CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b3()
-# CHECK-NEXT: b2(v7: int[0, 2]):
-# CHECK-NEXT: v8: int[5, 7] = Add v0, v7
-# CHECK-NEXT: v9: undefined = Undefined
-# CHECK-NEXT: v10: "," = String string=","
-# CHECK-NEXT: v11: " " = String string=" "
-# CHECK-NEXT: StringBuilderAppend v2, v8, v10, v9, v11
-# CHECK-NEXT: v13: int[1, 3] = Increment v7
-# CHECK-NEXT: Jump -> next b1(v13)
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v14: string = StringBuilderFinish v2
-# CHECK-NEXT: Return v14
-# CHECK-NEXT: }
+# CHECK: module=m0 position=1733 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=5 site=w37}] results=[{type=string site=w38 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="first"
 # CHECK: module=m0 position=2105 kind=Setter role=EntryChecks flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w41 flags=[IsExpected]}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f16 fallback=f18} {
 # CHECK-NEXT: b0(v0: anything ~ number):
@@ -1473,4 +1452,28 @@ runtimefunction id=69 function=f14
 # CHECK-NEXT: b0(v0: f13, v1: anything, v2: anything):
 # CHECK-NEXT: v3: undefined = CallDirect v2 function=f13
 # CHECK-NEXT: ReturnCall v3 requirement=Allowed
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="fewerThanAreAskedFor"
+# CHECK: module=m0 position=1733 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} results=[{type=string site=w38 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f10} {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v1: 5 = Integer integer=5
+# CHECK-NEXT: v2: undefined = Undefined
+# CHECK-NEXT: v3: string = CallBuiltin -, v1 overload=String/0 accessSite=89
+# CHECK-NEXT: v4: "," = String string=","
+# CHECK-NEXT: v5: string = CallBuiltin -, v2 overload=String/0 accessSite=90
+# CHECK-NEXT: v6: " " = String string=" "
+# CHECK-NEXT: v7: 6 = Integer integer=6
+# CHECK-NEXT: v8: undefined = Undefined
+# CHECK-NEXT: v9: string = CallBuiltin -, v7 overload=String/0 accessSite=89
+# CHECK-NEXT: v10: "," = String string=","
+# CHECK-NEXT: v11: string = CallBuiltin -, v8 overload=String/0 accessSite=90
+# CHECK-NEXT: v12: " " = String string=" "
+# CHECK-NEXT: v13: 7 = Integer integer=7
+# CHECK-NEXT: v14: undefined = Undefined
+# CHECK-NEXT: v15: string = CallBuiltin -, v13 overload=String/0 accessSite=89
+# CHECK-NEXT: v16: "," = String string=","
+# CHECK-NEXT: v17: string = CallBuiltin -, v14 overload=String/0 accessSite=90
+# CHECK-NEXT: v18: " " = String string=" "
+# CHECK-NEXT: v19: string = Strcat v3, v4, v5, v6, v9, v10, v11, v12, v15, v16, v17, v18
+# CHECK-NEXT: Return v19
 # CHECK-NEXT: }

@@ -792,5 +792,5 @@ runtimefunction id=131091 function=f113 visibility=Private
 # CHECK-NEXT: end of function f124
 # CHECK-LABEL: function {{*}}name="run"
 # CHECK: role=CoroutineBody
-# CHECK-NEXT: instructions: 191, patchpoints: 27, rare instructions: 173, polls: 2
+# CHECK-NEXT: instructions: 195, patchpoints: 34, rare instructions: 173, polls: 2
 # CHECK-NEXT: end of function f118

@@ -840,7 +840,7 @@ console.log(lines.join("\\n"));
 }
 
 for (const [name, program] of Object.entries(programs)) {
-  test(
+  test.concurrent(
     name,
     async () => {
       using dir = tempDir("aot-done-to-a-proxy", { "main.mjs": textOf(program) });

@@ -1,6 +1,6 @@
 // One folder for all tests of a file, and one build for each command line that they ask for.
 import { afterAll, expect, setDefaultTimeout } from "bun:test";
-import { bunExe, isWindows, tempDirWithBunTypes } from "harness";
+import { bunEnv, bunExe, isWindows, tempDirWithBunTypes } from "harness";
 import { statSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { basename, join } from "node:path";
@@ -43,19 +43,44 @@ export function sharedBuilds(name: string, files: Record<string, string>) {
   afterAll(() => dir[Symbol.dispose]());
   const folder = String(dir);
   const builds = new Map<string, Promise<Build>>();
+  const compile = ["build", "--compile"];
+
+  const named = (name: string) => ({
+    name,
+    executable: join(folder, name),
+    file: join(folder, name) + (isWindows ? ".exe" : ""),
+  });
 
   /** `bun <command> <flags> <entry> --outfile <name>`, once for each list of arguments. It may fail. */
   function tryBuildWith(command: string[], entry: string, ...flags: string[]): Promise<Build> {
     return builds.getOrInsertComputed(JSON.stringify([command, entry, ...flags]), () => {
       const name = `${basename(entry).replace(/\.\w+$/, "")}-${builds.size}`;
-      const executable = join(folder, name);
       return inTurn(async () => ({
         ...(await run([bunExe(), ...command, ...flags, ...withoutDebugInformation, entry, "--outfile", name], folder)),
-        name,
-        executable,
-        file: executable + (isWindows ? ".exe" : ""),
+        ...named(name),
       }));
     });
+  }
+
+  /**
+   * `bun build --compile --aot <flags> <entry>` without and with `--trim`. What --trim removes is decided behind the compiler, so one
+   * build compiles the program and writes both executables.
+   */
+  async function buildWholeAndTrimmed(entry: string, ...flags: string[]): Promise<[whole: Build, trimmed: Build]> {
+    const name = `${basename(entry).replace(/\.\w+$/, "")}-${builds.size}`;
+    const trimmed = builds.getOrInsertComputed(JSON.stringify(["whole and trimmed", entry, ...flags]), () =>
+      inTurn(async () => ({
+        ...(await run(
+          [bunExe(), ...compile, "--aot", "--trim", ...flags, ...withoutDebugInformation, entry, "--outfile", name],
+          folder,
+          { ...bunEnv, BUN_DEBUG_TEST_UNTRIMMED_OUTFILE: join(folder, name + "-whole") },
+        )),
+        ...named(name),
+      })),
+    );
+    const built = await trimmed;
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: built.stderr, exitCode: 0 });
+    return [{ ...built, ...named(built.name + "-whole") }, built];
   }
 
   /** The same, and the build succeeds. */
@@ -65,10 +90,10 @@ export function sharedBuilds(name: string, files: Record<string, string>) {
     return built;
   }
 
-  const compile = ["build", "--compile"];
   return {
     folder,
     buildWith,
+    buildWholeAndTrimmed,
     tryBuildWith,
     /** `bun build --compile <flags> <entry>`. */
     build: (entry: string, ...flags: string[]) => buildWith(compile, entry, ...flags),

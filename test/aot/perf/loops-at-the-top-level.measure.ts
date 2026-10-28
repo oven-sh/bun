@@ -2,8 +2,8 @@
 // `//// in every turn`, the body of a loop over `i` that adds to `sum`. Each is built twice: with the loop at the top level of the module, the way a first benchmark is
 // written, and with the same loop in `function main() { .. }` that is called once. The first may take 2% and one instruction more per turn than the second.
 // Nothing is pinned: both are built by the same Bun, as TypeScript and with the types erased. No clock, the same at any load.
-import { expect } from "bun:test";
-import { readFileSync, writeFileSync } from "fs";
+import { afterAll, expect } from "bun:test";
+import { readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { measureCommand } from "../analysis-scaling/measure-check";
@@ -45,6 +45,7 @@ if (skipped) console.error(`SKIPPED: test/aot/perf/loops-at-the-top-level.test.t
 
 describe.skipIf(!!skipped)("compile/aot/perf/loops-at-the-top-level", () => {
   const folder = String(tempDir("aot-loops-at-the-top-level", {}));
+  afterAll(() => rmSync(folder, { recursive: true, force: true }));
   const env = { ...bunEnv, ...withSteadyCollections };
 
   async function costOf(file: string, text: string, flags: string[]) {

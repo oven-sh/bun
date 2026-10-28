@@ -1,7 +1,7 @@
 // `await body.json()` gives the same whether or not it goes to a declared type, whatever holds the body: a string, bytes, a Blob, a stream of bytes or of strings, a file, a request or a response that came over the network.
 // The bodies are drawn from a fixed seed: JSON that fits the type and JSON that does not, behind byte order marks of every kind, with lone surrogates, with bytes that are no UTF-8, cut short, blank and empty.
 // STATISTIC: TypedResultsSelected >= 9
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, mkdtempSync, openSync, rmSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -149,7 +149,15 @@ function cut<T extends string | Uint8Array<ArrayBuffer>>(whole: T, at: number): 
 }
 
 const folder = mkdtempSync(join(tmpdir(), "bodies-"));
-const file = join(folder, "body.json");
+let files = 0;
+// A new name each time, and no length set afterwards: nothing here waits for the disk.
+function fileOf(body: Body): string {
+  const file = join(folder, `body-${files++}.json`);
+  const descriptor = openSync(file, "w");
+  writeSync(descriptor, typeof body === "string" ? encoder.encode(body) : body);
+  closeSync(descriptor);
+  return file;
+}
 const server = Bun.serve({
   port: 0,
   async fetch(request) {
@@ -197,14 +205,14 @@ const responses: [string, (body: Body, at: number) => Response | Promise<Respons
   ["a response over a stream", (body, at) => new Response(streamOf(cut(body, at)))],
   ["a response whose stream was taken", body => new Response(new Response(body).body)],
   ["a copy of a response", body => new Response(body).clone()],
-  ["a response over a file", body => (writeFileSync(file, body), new Response(Bun.file(file)))],
+  ["a response over a file", body => new Response(Bun.file(fileOf(body)))],
   ["a response of fetch", body => fetch(server.url + "echo", post(body))],
 ];
 const blobs: [string, (body: Body, at: number) => Blob][] = [
   ["a blob", body => new Blob([body])],
   ["a blob of two parts", (body, at) => new Blob(cut(body, at))],
   ["a part of a blob", body => new Blob(["{", body, "}"]).slice(1, -1)],
-  ["a file", body => (writeFileSync(file, body), Bun.file(file))],
+  ["a file", body => Bun.file(fileOf(body))],
 ];
 
 let differences = 0;

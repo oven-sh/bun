@@ -341,7 +341,7 @@ function f4 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChe
 runtimefunction id=69 function=f4
 # -- generated: f0 storeList next storeWords storeSums
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: builtin(Int32Array) = Builtin builtin=Int32Array
 # CHECK-NEXT: v1: 0 = Integer
@@ -389,57 +389,69 @@ runtimefunction id=69 function=f4
 # CHECK-NEXT: v43: 256 = Integer integer=256
 # CHECK-NEXT: v44: -2147483648 = Integer integer=-2147483648
 # CHECK-NEXT: v45: "words" = String string="words"
-# CHECK-NEXT: v46: string = CallDirect v41 function=f6 @638:12 tail
-# CHECK-NEXT: v47: undefined = CallBuiltin -, v45, v41, v46 overload=ConsoleLog/0 accessSite=18
-# CHECK-NEXT: v48: "words" = String string="words"
-# CHECK-NEXT: v49: string = CallDirect v42 function=f6 @638:11 tail
-# CHECK-NEXT: v50: undefined = CallBuiltin -, v48, v42, v49 overload=ConsoleLog/0 accessSite=18
-# CHECK-NEXT: v51: "words" = String string="words"
-# CHECK-NEXT: v52: string = CallDirect v43 function=f6 @638:10 tail
-# CHECK-NEXT: v53: undefined = CallBuiltin -, v51, v43, v52 overload=ConsoleLog/0 accessSite=18
-# CHECK-NEXT: v54: "words" = String string="words"
-# CHECK-NEXT: v55: string = CallDirect v44 function=f6 @638:9 tail
-# CHECK-NEXT: v56: undefined = CallBuiltin -, v54, v44, v55 overload=ConsoleLog/0 accessSite=18
-# CHECK-NEXT: v57: 0 = Integer
-# CHECK-NEXT: v58: 1 = Integer integer=1
-# CHECK-NEXT: v59: -1 = Integer integer=-1
-# CHECK-NEXT: v60: 255 = Integer integer=255
-# CHECK-NEXT: v61: -255 = Integer integer=-255
-# CHECK-NEXT: v62: 2147483647 = Integer integer=2147483647
-# CHECK-NEXT: v63: -2147483648 = Integer integer=-2147483648
-# CHECK-NEXT: v64: fractional = Double number=0.5
-# CHECK-NEXT: v65: "sums" = String string="sums"
-# CHECK-NEXT: v66: string = CallDirect v57 function=f7 @779:8 tail
-# CHECK-NEXT: v67: undefined = CallBuiltin -, v65, v57, v66 overload=ConsoleLog/0 accessSite=14
-# CHECK-NEXT: v68: "sums" = String string="sums"
-# CHECK-NEXT: v69: string = CallDirect v58 function=f7 @779:7 tail
-# CHECK-NEXT: v70: undefined = CallBuiltin -, v68, v58, v69 overload=ConsoleLog/0 accessSite=14
-# CHECK-NEXT: v71: "sums" = String string="sums"
-# CHECK-NEXT: v72: string = CallDirect v59 function=f7 @779:6 tail
-# CHECK-NEXT: v73: undefined = CallBuiltin -, v71, v59, v72 overload=ConsoleLog/0 accessSite=14
-# CHECK-NEXT: v74: "sums" = String string="sums"
-# CHECK-NEXT: v75: string = CallDirect v60 function=f7 @779:5 tail
-# CHECK-NEXT: v76: undefined = CallBuiltin -, v74, v60, v75 overload=ConsoleLog/0 accessSite=14
+# CHECK-NEXT: v46: fact = Specified
+# CHECK-NEXT: v47: string = CallDirect v41 function=f6 @638:1 tail
+# CHECK-NEXT: v48: undefined = CallBuiltin -, v45, v41, v47 overload=ConsoleLog/0 accessSite=18
+# CHECK-NEXT: v49: "words" = String string="words"
+# CHECK-NEXT: v50: fact = Specified
+# CHECK-NEXT: v51: string = CallDirect v42 function=f6 @638:1 tail
+# CHECK-NEXT: v52: undefined = CallBuiltin -, v49, v42, v51 overload=ConsoleLog/0 accessSite=18
+# CHECK-NEXT: v53: "words" = String string="words"
+# CHECK-NEXT: v54: fact = Specified
+# CHECK-NEXT: v55: string = CallDirect v43 function=f6 @638:1 tail
+# CHECK-NEXT: v56: undefined = CallBuiltin -, v53, v43, v55 overload=ConsoleLog/0 accessSite=18
+# CHECK-NEXT: v57: "words" = String string="words"
+# CHECK-NEXT: v58: fact = Specified
+# CHECK-NEXT: v59: string = CallDirect v44 function=f6 @638:1 tail
+# CHECK-NEXT: v60: undefined = CallBuiltin -, v57, v44, v59 overload=ConsoleLog/0 accessSite=18
+# CHECK-NEXT: v61: 0 = Integer
+# CHECK-NEXT: v62: 1 = Integer integer=1
+# CHECK-NEXT: v63: -1 = Integer integer=-1
+# CHECK-NEXT: v64: 255 = Integer integer=255
+# CHECK-NEXT: v65: -255 = Integer integer=-255
+# CHECK-NEXT: v66: 2147483647 = Integer integer=2147483647
+# CHECK-NEXT: v67: -2147483648 = Integer integer=-2147483648
+# CHECK-NEXT: v68: fractional = Double number=0.5
+# CHECK-NEXT: v69: "sums" = String string="sums"
+# CHECK-NEXT: v70: fact = Specified
+# CHECK-NEXT: v71: string = CallDirect v61 function=f7 @779:2 tail
+# CHECK-NEXT: v72: undefined = CallBuiltin -, v69, v61, v71 overload=ConsoleLog/0 accessSite=14
+# CHECK-NEXT: v73: "sums" = String string="sums"
+# CHECK-NEXT: v74: fact = Specified
+# CHECK-NEXT: v75: string = CallDirect v62 function=f7 @779:2 tail
+# CHECK-NEXT: v76: undefined = CallBuiltin -, v73, v62, v75 overload=ConsoleLog/0 accessSite=14
 # CHECK-NEXT: v77: "sums" = String string="sums"
-# CHECK-NEXT: v78: string = CallDirect v61 function=f7 @779:4 tail
-# CHECK-NEXT: v79: undefined = CallBuiltin -, v77, v61, v78 overload=ConsoleLog/0 accessSite=14
-# CHECK-NEXT: v80: "sums" = String string="sums"
-# CHECK-NEXT: v81: string = CallDirect v62 function=f7 @779:3 tail
-# CHECK-NEXT: v82: undefined = CallBuiltin -, v80, v62, v81 overload=ConsoleLog/0 accessSite=14
-# CHECK-NEXT: v83: "sums" = String string="sums"
-# CHECK-NEXT: v84: string = CallDirect v63 function=f7 @779:2 tail
-# CHECK-NEXT: v85: undefined = CallBuiltin -, v83, v63, v84 overload=ConsoleLog/0 accessSite=14
-# CHECK-NEXT: v86: "sums" = String string="sums"
-# CHECK-NEXT: v87: string = CallDirect v64 function=f7 @779:1 tail
-# CHECK-NEXT: v88: undefined = CallBuiltin -, v86, v64, v87 overload=ConsoleLog/0 accessSite=14
-# CHECK-NEXT: v89: "wide" = String string="wide"
-# CHECK-NEXT: v90: string = CallDirect v34 function=f3 accessSite=5
-# CHECK-NEXT: v91: undefined = CallBuiltin -, v89, v90 overload=ConsoleLog/0 accessSite=6
-# CHECK-NEXT: v92: "fractions" = String string="fractions"
-# CHECK-NEXT: v93: string = CallDirect v36 function=f3 accessSite=9
-# CHECK-NEXT: v94: undefined = CallBuiltin -, v92, v93 overload=ConsoleLog/0 accessSite=10
-# CHECK-NEXT: v95: undefined = Undefined
-# CHECK-NEXT: Return v95
+# CHECK-NEXT: v78: fact = Specified
+# CHECK-NEXT: v79: string = CallDirect v63 function=f7 @779:2 tail
+# CHECK-NEXT: v80: undefined = CallBuiltin -, v77, v63, v79 overload=ConsoleLog/0 accessSite=14
+# CHECK-NEXT: v81: "sums" = String string="sums"
+# CHECK-NEXT: v82: fact = Specified
+# CHECK-NEXT: v83: string = CallDirect v64 function=f7 @779:2 tail
+# CHECK-NEXT: v84: undefined = CallBuiltin -, v81, v64, v83 overload=ConsoleLog/0 accessSite=14
+# CHECK-NEXT: v85: "sums" = String string="sums"
+# CHECK-NEXT: v86: fact = Specified
+# CHECK-NEXT: v87: string = CallDirect v65 function=f7 @779:2 tail
+# CHECK-NEXT: v88: undefined = CallBuiltin -, v85, v65, v87 overload=ConsoleLog/0 accessSite=14
+# CHECK-NEXT: v89: "sums" = String string="sums"
+# CHECK-NEXT: v90: fact = Specified
+# CHECK-NEXT: v91: string = CallDirect v66 function=f7 @779:2 tail
+# CHECK-NEXT: v92: undefined = CallBuiltin -, v89, v66, v91 overload=ConsoleLog/0 accessSite=14
+# CHECK-NEXT: v93: "sums" = String string="sums"
+# CHECK-NEXT: v94: fact = Specified
+# CHECK-NEXT: v95: string = CallDirect v67 function=f7 @779:2 tail
+# CHECK-NEXT: v96: undefined = CallBuiltin -, v93, v67, v95 overload=ConsoleLog/0 accessSite=14
+# CHECK-NEXT: v97: "sums" = String string="sums"
+# CHECK-NEXT: v98: fact = Specified
+# CHECK-NEXT: v99: string = CallDirect v68 function=f7 @779:2 tail
+# CHECK-NEXT: v100: undefined = CallBuiltin -, v97, v68, v99 overload=ConsoleLog/0 accessSite=14
+# CHECK-NEXT: v101: "wide" = String string="wide"
+# CHECK-NEXT: v102: string = CallDirect v34 function=f3 accessSite=5
+# CHECK-NEXT: v103: undefined = CallBuiltin -, v101, v102 overload=ConsoleLog/0 accessSite=6
+# CHECK-NEXT: v104: "fractions" = String string="fractions"
+# CHECK-NEXT: v105: string = CallDirect v36 function=f3 accessSite=9
+# CHECK-NEXT: v106: undefined = CallBuiltin -, v104, v105 overload=ConsoleLog/0 accessSite=10
+# CHECK-NEXT: v107: undefined = Undefined
+# CHECK-NEXT: Return v107
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="storeWords"
 # CHECK: module=m0 position=638 role=EntryChecks flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w4 flags=[IsExpected]}] results=[{type=string site=w5 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f6 fallback=f8}

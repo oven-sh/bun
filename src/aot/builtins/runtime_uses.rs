@@ -20,19 +20,26 @@ pub struct RuntimeUses {
     pub functions: Box<[RuntimeFunction]>,
 }
 
-struct Collector {
-    platform: Platforms,
-    visited: DynamicBitSet,
-    work_stack: Vec<BuiltinId>,
+struct Collected {
     modules: DynamicBitSet,
     modules_read_whole: DynamicBitSet,
     exports_read: Vec<(RuntimeModule, &'static str)>,
     functions: DynamicBitSet,
+    has_startup_loads: bool,
+}
+
+struct Collector {
+    platform: Platforms,
+    visited: DynamicBitSet,
+    work_stack: Vec<BuiltinId>,
+    certain: Collected,
+    /// What native code does for some operands alone, and what an object of the host leads to that has got out of sight.
+    guessed: Collected,
+    is_guessing: bool,
     has_unknown_module_loader: bool,
     /// Whether an entry brings along what native code runs only for a program that names such an entry.
     follows_names: bool,
     is_of_program: bool,
-    has_startup_loads: bool,
 }
 
 const UNKNOWN_MODULE_LOADERS: BuiltinFlags =
@@ -87,7 +94,8 @@ fn has_code_of_library(id: BuiltinId) -> bool {
     !(entry.loads().is_empty()
         && entry.calls().is_empty()
         && entry.calls_for_texts().is_empty()
-        && entry.implemented_by().is_empty())
+        && entry.implemented_by().is_empty()
+        && entry.guessed_functions().is_empty())
         || objects_of_class_of(id).any(|object| !table::entry(object).calls().is_empty())
 }
 
@@ -142,50 +150,107 @@ fn create_id_set(id_count: u32) -> DynamicBitSet {
     DynamicBitSet::init_empty(id_count as usize).unwrap_or_oom()
 }
 
+impl Collected {
+    fn new() -> Collected {
+        Collected {
+            modules: create_id_set(RuntimeModule::COUNT),
+            modules_read_whole: create_id_set(RuntimeModule::COUNT),
+            exports_read: Vec::new(),
+            functions: create_id_set(RuntimeFunction::COUNT),
+            has_startup_loads: false,
+        }
+    }
+
+    fn finish(mut self, platform: Platforms) -> RuntimeUses {
+        let modules = RuntimeModule::ALL
+            .into_iter()
+            .filter(|module| self.modules.is_set(module.to_wire() as usize));
+        let is_read_whole =
+            |module: &RuntimeModule| self.modules_read_whole.is_set(module.to_wire() as usize);
+        self.exports_read
+            .retain(|(module, _)| !is_read_whole(module));
+        self.exports_read.shared_sort_unstable();
+        self.exports_read.dedup();
+        let functions = table::runtime_functions()
+            .iter()
+            .filter(|data| data.platforms.contains(platform))
+            .filter(|data| self.functions.is_set(data.function.to_wire() as usize))
+            .map(|data| data.function);
+        RuntimeUses {
+            modules: modules.collect(),
+            modules_read_whole: RuntimeModule::ALL
+                .into_iter()
+                .filter(is_read_whole)
+                .collect(),
+            exports_read: self.exports_read.clone().into(),
+            functions: functions.collect(),
+        }
+    }
+}
+
 impl Collector {
     fn new(platform: Platforms) -> Collector {
         Collector {
             platform,
             visited: create_id_set(BuiltinId::COUNT),
             work_stack: Vec::new(),
-            modules: create_id_set(RuntimeModule::COUNT),
-            modules_read_whole: create_id_set(RuntimeModule::COUNT),
-            exports_read: Vec::new(),
-            functions: create_id_set(RuntimeFunction::COUNT),
+            certain: Collected::new(),
+            guessed: Collected::new(),
+            is_guessing: false,
             has_unknown_module_loader: false,
             follows_names: false,
             is_of_program: false,
-            has_startup_loads: false,
         }
     }
 
+    fn collected(&mut self) -> &mut Collected {
+        match self.is_guessing {
+            true => &mut self.guessed,
+            false => &mut self.certain,
+        }
+    }
+
+    fn guess<R>(&mut self, is_guess: bool, add: impl FnOnce(&mut Collector) -> R) -> R {
+        let was_guessing = self.is_guessing;
+        self.is_guessing |= is_guess;
+        let result = add(self);
+        self.is_guessing = was_guessing;
+        result
+    }
+
+    fn add_module(&mut self, module: RuntimeModule) {
+        self.collected().modules.set(module.to_wire() as usize);
+    }
+
     fn add_load(&mut self, module: RuntimeModule, exports_read: Option<&'static [&'static str]>) {
-        self.modules.set(module.to_wire() as usize);
+        self.add_module(module);
+        let collected = self.collected();
         match exports_read {
-            Some(names) => self
+            Some(names) => collected
                 .exports_read
                 .extend(names.iter().map(|&name| (module, name))),
-            None => self.modules_read_whole.set(module.to_wire() as usize),
+            None => collected.modules_read_whole.set(module.to_wire() as usize),
         }
     }
 
     fn add_functions(&mut self, functions: &[RuntimeFunction]) {
+        let collected = self.collected();
         for function in functions {
-            self.functions.set(function.to_wire() as usize);
+            collected.functions.set(function.to_wire() as usize);
         }
     }
 
     // The method gets functions of those modules, which look at whatever they are given under whatever name: no name in a source tells
     // any more what of the language runs.
     fn add_startup_loads(&mut self) {
-        if core::mem::replace(&mut self.has_startup_loads, true) {
+        if core::mem::replace(&mut self.collected().has_startup_loads, true) {
             return;
         }
         for load in table::STARTUP_LOADS {
             self.add_load(load.module, load.exports_read);
         }
-        for module in table::STARTUP_MODULES {
-            self.modules.set(module.to_wire() as usize);
+        for &module in table::STARTUP_MODULES {
+            self.add_module(module);
         }
         self.add_functions(table::STARTUP_FUNCTIONS);
         for &id in &named_entries().of_language_with_code {
@@ -197,7 +262,7 @@ impl Collector {
         self.add_functions(table::FUNCTIONS_FOR_ANY_HOST_OBJECT);
         let functions = table::runtime_functions().iter();
         for data in functions.filter(|data| is_called_without_a_name(data.role)) {
-            self.functions.set(data.function.to_wire() as usize);
+            self.add_functions(&[data.function]);
         }
     }
 
@@ -239,12 +304,8 @@ impl Collector {
         if !table::exists_on(id, self.platform) {
             return;
         }
-        for function in table::entry(id)
-            .calls_for_texts()
-            .iter()
-            .flat_map(|listed| listed.calls)
-        {
-            self.functions.set(function.to_wire() as usize);
+        for listed in table::entry(id).calls_for_texts() {
+            self.add_functions(listed.calls);
         }
     }
 
@@ -256,13 +317,18 @@ impl Collector {
         let entry = table::entry(id);
         self.has_unknown_module_loader |= entry.flags.intersects(UNKNOWN_MODULE_LOADERS);
         if self.is_of_program && named_entries().lead_to_startup_loads[id.to_wire() as usize] {
-            self.add_startup_loads();
+            self.guess(true, Collector::add_startup_loads);
         }
         for load in entry.loads() {
-            self.add_load(load.module, load.exports_read);
+            self.guess(load.is_conditional, |collector| {
+                collector.add_load(load.module, load.exports_read);
+            });
         }
         self.add_functions(entry.calls());
         self.add_functions(entry.implemented_by());
+        self.guess(true, |collector| {
+            collector.add_functions(entry.guessed_functions());
+        });
     }
 
     fn expose_class_of(&mut self, id: BuiltinId) {
@@ -279,7 +345,7 @@ impl Collector {
             if !self.visit(id) {
                 continue;
             }
-            self.add_entry(id);
+            self.guess(!is_of_language(id), |collector| collector.add_entry(id));
             let entry = table::entry(id);
             self.work_stack.extend_from_slice(table::members(id));
             match entry.prototype {
@@ -292,31 +358,29 @@ impl Collector {
         }
     }
 
-    fn finish(mut self) -> RuntimeUses {
-        let modules = RuntimeModule::ALL
-            .into_iter()
-            .filter(|module| self.modules.is_set(module.to_wire() as usize));
-        let is_read_whole =
-            |module: &RuntimeModule| self.modules_read_whole.is_set(module.to_wire() as usize);
-        self.exports_read
-            .retain(|(module, _)| !is_read_whole(module));
-        self.exports_read.shared_sort_unstable();
-        self.exports_read.dedup();
-        let functions = table::runtime_functions()
-            .iter()
-            .filter(|data| data.platforms.contains(self.platform))
-            .filter(|data| self.functions.is_set(data.function.to_wire() as usize))
-            .map(|data| data.function);
-        RuntimeUses {
-            modules: modules.collect(),
-            modules_read_whole: RuntimeModule::ALL
-                .into_iter()
-                .filter(is_read_whole)
-                .collect(),
-            exports_read: self.exports_read.clone().into(),
-            functions: functions.collect(),
+    fn finish_apart(self) -> MentionedUses {
+        MentionedUses {
+            certain: self.certain.finish(self.platform),
+            guessed: self.guessed.finish(self.platform),
         }
     }
+
+    fn finish(self) -> RuntimeUses {
+        let (mut all, guessed) = (self.certain, self.guessed);
+        all.modules.set_union(&guessed.modules);
+        all.modules_read_whole
+            .set_union(&guessed.modules_read_whole);
+        all.exports_read.extend(guessed.exports_read);
+        all.functions.set_union(&guessed.functions);
+        all.finish(self.platform)
+    }
+}
+
+/// The engine, which follows values, says what of `guessed` a program lacks.
+#[derive(Clone, Default)]
+pub struct MentionedUses {
+    pub certain: RuntimeUses,
+    pub guessed: RuntimeUses,
 }
 
 pub fn reaches_unknown_module_loader(
@@ -398,8 +462,20 @@ const METHODS_OF_GENERATORS: &[BuiltinId] = &[
 ];
 
 impl RuntimeUses {
-    /// A guess where a member is read by its name: the engine, which follows values, says what a program lacks.
     pub fn of_mentions(mentions: &Mentions<'_>, platform: Platforms) -> RuntimeUses {
+        Collector::of_mentions(mentions, platform)
+            .map_or_else(RuntimeUses::default, Collector::finish)
+    }
+
+    pub fn of_mentions_apart(mentions: &Mentions<'_>, platform: Platforms) -> MentionedUses {
+        Collector::of_mentions(mentions, platform)
+            .map_or_else(MentionedUses::default, Collector::finish_apart)
+    }
+}
+
+impl Collector {
+    /// A guess where a member is read by its name: the engine, which follows values, says what a program lacks.
+    fn of_mentions(mentions: &Mentions<'_>, platform: Platforms) -> Option<Collector> {
         let Mentions {
             mentioned,
             called_with_other_texts,
@@ -420,7 +496,7 @@ impl RuntimeUses {
             && members_read.is_empty()
             && !(has_decorator || disposes_resource || iterates || has_generator || makes_promise);
         if names_nothing {
-            return RuntimeUses::default();
+            return None;
         }
         let mut collector = Collector::new(platform);
         collector.follows_names = true;
@@ -459,9 +535,11 @@ impl RuntimeUses {
         collector.add_functions(linked_functions);
         collector.work_stack.extend_from_slice(exposed);
         collector.add_reachable_entries();
-        collector.finish()
+        Some(collector)
     }
+}
 
+impl RuntimeUses {
     /// `used`: the entries that the engine has found a program to use.
     pub fn of_entries_used(
         used: impl Iterator<Item = BuiltinId>,
@@ -505,6 +583,21 @@ impl RuntimeUses {
 
     pub fn is_empty(&self) -> bool {
         self.modules.is_empty() && self.functions.is_empty()
+    }
+
+    /// What it says of the modules that `is_wanted` holds of.
+    pub fn of_modules(&self, is_wanted: impl Fn(RuntimeModule) -> bool) -> RuntimeUses {
+        let wanted = |modules: &[RuntimeModule]| {
+            let modules = modules.iter().copied();
+            modules.filter(|&module| is_wanted(module)).collect()
+        };
+        let exports_read = self.exports_read.iter().copied();
+        RuntimeUses {
+            modules: wanted(&self.modules),
+            modules_read_whole: wanted(&self.modules_read_whole),
+            exports_read: exports_read.filter(|it| is_wanted(it.0)).collect(),
+            functions: Box::default(),
+        }
     }
 
     pub fn add(&mut self, further: &RuntimeUses) {

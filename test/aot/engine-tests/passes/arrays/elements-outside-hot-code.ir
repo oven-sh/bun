@@ -769,78 +769,101 @@ runtimefunction id=131113 function=f130 visibility=Private
 # CHECK-NEXT: Jump -> next b4(v14)
 # CHECK-NEXT: b4(v17: int[0, 4294967295] ~ 0):
 # CHECK-NEXT: v18: boolean ~ true = TypeTest v1 testedType=number
-# CHECK-NEXT: Branch v18 -> taken b5(| 0), notTaken b14()
+# CHECK-NEXT: Branch v18 -> taken b5(| 0), notTaken b23()
 # CHECK-NEXT: b5(v19: number):
 # CHECK-NEXT: Jump -> next b6(v17)
 # CHECK-NEXT: b6(v20: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v22: int[0, 4294967295] = CallBuiltin v13 overload=ArrayPrototypeLength/0
 # CHECK-NEXT: v23: boolean = Less v20, v22
-# CHECK-NEXT: Branch v23 -> taken b7(| 0), notTaken b12()
+# CHECK-NEXT: Branch v23 -> taken b7(| 0), notTaken b21()
 # CHECK-NEXT: b7(v24: int[0, 4294967294]):
 # CHECK-NEXT: v25: boolean = HasArrayStorage v13 arrayStorage=Double
-# CHECK-NEXT: Branch v25 -> taken b8(| 0), notTaken b16(v24)
+# CHECK-NEXT: Branch v25 -> taken b8(| 0), notTaken b11()
 # CHECK-NEXT: b8(v26: guard):
+# CHECK-NEXT: Jump -> next b9()
+# CHECK-NEXT: b9():
 # CHECK-NEXT: v27: boolean = IsInBounds v13, v24
-# CHECK-NEXT: Branch v27 -> taken b9(| 0), notTaken b16(v24)
-# CHECK-NEXT: b9(v28: guard):
+# CHECK-NEXT: Branch v27 -> taken b10(| 0), notTaken b25(v24)
+# CHECK-NEXT: b10(v28: guard):
 # CHECK-NEXT: v29: guard = AllGuards v26, v28
 # CHECK-NEXT: v30: int[-1, 9007199254740991]|double = GetArrayElement v13, v24, v29 arrayStorage=Double level=Expected [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v31: 1 = Integer integer=1
-# CHECK-NEXT: v32: int[1, 4294967295] = Add v24, v31
-# CHECK-NEXT: v33: string = ToString v19
-# CHECK-NEXT: v34: anything ~ undefined|null|string = Call v16, -, v30 calleeName="show" accessSite=32 callees=[f4]
-# CHECK-NEXT: v35: boolean = TypeTest v34 testedType=string
-# CHECK-NEXT: Branch v35 -> taken b10(| 0), notTaken b11(| 0)
-# CHECK-NEXT: b10(v36: string):
-# CHECK-NEXT: v37: " has " = String string=" has "
-# CHECK-NEXT: v38: string = Strcat v33, v37, v36
-# CHECK-NEXT: v39: f51 = NewClosure v12, v30 function=f51 allocationSite=38
-# CHECK-NEXT: v40: anything = Call v15, -, v2, v38, v39 calleeName="attempt" accessSite=33 callees=[f18]
-# CHECK-NEXT: Jump -> next b6(v32)
-# CHECK-NEXT: b11(v41: undefined|null|boolean|number|symbol|bigint|object ~ undefined|null) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b17(v32, v30, v33, v41)
-# CHECK-NEXT: b12():
-# CHECK-NEXT: v42: 0 = Integer
-# CHECK-NEXT: v43: int[0, 4294967295] = CallBuiltin v13 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v44: boolean = Less v42, v43
-# CHECK-NEXT: Branch v44 -> taken b13(), notTaken b20()
-# CHECK-NEXT: b13():
-# CHECK-NEXT: v45: undefined|int[-1, 9007199254740991]|double = ElemGet v13, v42 [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b20()
-# CHECK-NEXT: b14() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b17(v30)
+# CHECK-NEXT: b11() frequency=Unlikely:
+# CHECK-NEXT: v31: boolean = HasArrayStorage v13 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v31 -> taken b12(| 0), notTaken b25(v24)
+# CHECK-NEXT: b12(v32: guard) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b13()
+# CHECK-NEXT: b13() frequency=Unlikely:
+# CHECK-NEXT: v33: boolean = IsInBounds v13, v24
+# CHECK-NEXT: Branch v33 -> taken b14(| 0), notTaken b25(v24)
+# CHECK-NEXT: b14(v34: guard) frequency=Unlikely:
+# CHECK-NEXT: v35: guard = AllGuards v32, v34
+# CHECK-NEXT: v36: int[-1, 9007199254740991]|double = GetArrayElement v13, v24, v35 arrayStorage=Contiguous level=Expected [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v37: true = TypeTest v36 testedType=number
+# CHECK-NEXT: Branch v37 -> taken b15(| 0), notTaken b20(| 0)
+# CHECK-NEXT: b15(v38: int[-1, 9007199254740991]|double) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b16(v38)
+# CHECK-NEXT: b16(v39: int[-1, 9007199254740991]|double) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b17(v39)
+# CHECK-NEXT: b17(v40: int[-1, 9007199254740991]|double):
+# CHECK-NEXT: v41: 1 = Integer integer=1
+# CHECK-NEXT: v42: int[1, 4294967295] = Add v24, v41
+# CHECK-NEXT: v43: string = ToString v19
+# CHECK-NEXT: v44: anything ~ undefined|null|string = Call v16, -, v40 calleeName="show" accessSite=32 callees=[f4]
+# CHECK-NEXT: v45: boolean = TypeTest v44 testedType=string
+# CHECK-NEXT: Branch v45 -> taken b18(| 0), notTaken b19(| 0)
+# CHECK-NEXT: b18(v46: string):
+# CHECK-NEXT: v47: " has " = String string=" has "
+# CHECK-NEXT: v48: string = Strcat v43, v47, v46
+# CHECK-NEXT: v49: f51 = NewClosure v12, v40 function=f51 allocationSite=38
+# CHECK-NEXT: v50: anything = Call v15, -, v2, v48, v49 calleeName="attempt" accessSite=33 callees=[f18]
+# CHECK-NEXT: Jump -> next b6(v42)
+# CHECK-NEXT: b19(v51: undefined|null|boolean|number|symbol|bigint|object ~ undefined|null) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b26(v42, v40, v43, v51)
+# CHECK-NEXT: b20(v52: never) frequency=Rare:
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b21():
+# CHECK-NEXT: v53: 0 = Integer
+# CHECK-NEXT: v54: int[0, 4294967295] = CallBuiltin v13 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v55: boolean = Less v53, v54
+# CHECK-NEXT: Branch v55 -> taken b22(), notTaken b29()
+# CHECK-NEXT: b22():
+# CHECK-NEXT: v56: undefined|int[-1, 9007199254740991]|double = ElemGet v13, v53 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b29()
+# CHECK-NEXT: b23() frequency=Unlikely:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v47: int[0, 4294967295] = CallBuiltin v13 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v48: boolean = Less v17, v47
-# CHECK-NEXT: Branch v48 -> taken b15(| 0), notTaken b18()
-# CHECK-NEXT: b15(v49: int[0, 4294967294] ~ 0) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b16(v49)
-# CHECK-NEXT: b16(v50: int[0, 4294967294]) frequency=Unlikely:
-# CHECK-NEXT: v51: undefined|int[-1, 9007199254740991]|double = ElemGet v13, v50 [keyIsIntegral]
-# CHECK-NEXT: v52: 1 = Integer integer=1
-# CHECK-NEXT: v53: int[1, 4294967295] = Add v50, v52
-# CHECK-NEXT: v54: undefined|int[-1, 9007199254740991]|double ~ int[-1, 9007199254740991]|double = Upcast v51 castType=anything
-# CHECK-NEXT: v55: string = ToString v1
-# CHECK-NEXT: v56: anything ~ undefined|null|string = Call v16, -, v54 calleeName="show" accessSite=32 callees=[f4]
-# CHECK-NEXT: Jump -> next b17(v53, v54, v55, v56)
-# CHECK-NEXT: b17(v57: int[1, 4294967295], v58: undefined|int[-1, 9007199254740991]|double ~ int[-1, 9007199254740991]|double, v59: string, v60: anything ~ undefined|null|string) frequency=Unlikely:
-# CHECK-NEXT: v61: string = ToString v60
-# CHECK-NEXT: v62: " has " = String string=" has "
-# CHECK-NEXT: v63: string = Strcat v59, v62, v61
-# CHECK-NEXT: v64: f51 = NewClosure v12, v58 function=f51 allocationSite=38
-# CHECK-NEXT: v65: anything = Call v15, -, v2, v63, v64 calleeName="attempt" accessSite=33 callees=[f18]
-# CHECK-NEXT: Jump -> next b4(v57)
-# CHECK-NEXT: b18() frequency=Unlikely:
-# CHECK-NEXT: v66: 0 = Integer
-# CHECK-NEXT: v67: int[0, 4294967295] = CallBuiltin v13 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v68: boolean = Less v66, v67
-# CHECK-NEXT: Branch v68 -> taken b19(), notTaken b20()
-# CHECK-NEXT: b19() frequency=Unlikely:
-# CHECK-NEXT: v69: undefined|int[-1, 9007199254740991]|double = ElemGet v13, v66 [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b20()
-# CHECK-NEXT: b20():
-# CHECK-NEXT: v70: absent = GetModuleVariable variable=g20
-# CHECK-NEXT: v71: never = CheckInitialized v70 name="values"
+# CHECK-NEXT: v58: int[0, 4294967295] = CallBuiltin v13 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v59: boolean = Less v17, v58
+# CHECK-NEXT: Branch v59 -> taken b24(| 0), notTaken b27()
+# CHECK-NEXT: b24(v60: int[0, 4294967294] ~ 0) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b25(v60)
+# CHECK-NEXT: b25(v61: int[0, 4294967294]) frequency=Unlikely:
+# CHECK-NEXT: v62: undefined|int[-1, 9007199254740991]|double = ElemGet v13, v61 [keyIsIntegral]
+# CHECK-NEXT: v63: 1 = Integer integer=1
+# CHECK-NEXT: v64: int[1, 4294967295] = Add v61, v63
+# CHECK-NEXT: v65: undefined|int[-1, 9007199254740991]|double ~ int[-1, 9007199254740991]|double = Upcast v62 castType=anything
+# CHECK-NEXT: v66: string = ToString v1
+# CHECK-NEXT: v67: anything ~ undefined|null|string = Call v16, -, v65 calleeName="show" accessSite=32 callees=[f4]
+# CHECK-NEXT: Jump -> next b26(v64, v65, v66, v67)
+# CHECK-NEXT: b26(v68: int[1, 4294967295], v69: undefined|int[-1, 9007199254740991]|double ~ int[-1, 9007199254740991]|double, v70: string, v71: anything ~ undefined|null|string) frequency=Unlikely:
+# CHECK-NEXT: v72: string = ToString v71
+# CHECK-NEXT: v73: " has " = String string=" has "
+# CHECK-NEXT: v74: string = Strcat v70, v73, v72
+# CHECK-NEXT: v75: f51 = NewClosure v12, v69 function=f51 allocationSite=38
+# CHECK-NEXT: v76: anything = Call v15, -, v2, v74, v75 calleeName="attempt" accessSite=33 callees=[f18]
+# CHECK-NEXT: Jump -> next b4(v68)
+# CHECK-NEXT: b27() frequency=Unlikely:
+# CHECK-NEXT: v77: 0 = Integer
+# CHECK-NEXT: v78: int[0, 4294967295] = CallBuiltin v13 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v79: boolean = Less v77, v78
+# CHECK-NEXT: Branch v79 -> taken b28(), notTaken b29()
+# CHECK-NEXT: b28() frequency=Unlikely:
+# CHECK-NEXT: v80: undefined|int[-1, 9007199254740991]|double = ElemGet v13, v77 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b29()
+# CHECK-NEXT: b29():
+# CHECK-NEXT: v81: absent = GetModuleVariable variable=g20
+# CHECK-NEXT: v82: never = CheckInitialized v81 name="values"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f115 module=

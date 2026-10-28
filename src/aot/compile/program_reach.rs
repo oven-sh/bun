@@ -572,7 +572,7 @@ impl<'a, 's> FileScan<'a, 's> {
         if let ExprKind::Call(call) = hir[expression].kind {
             let mut described = hir.ids(hir[call].args).skip(1);
             return self.add_stored_name(expression, names)
-                && described.all(|operand| removable.expression(operand));
+                && described.all(|operand| removable.stored_value(operand));
         }
         let mut has_store = false;
         while let ExprKind::Assign {
@@ -587,7 +587,7 @@ impl<'a, 's> FileScan<'a, 's> {
             has_store = true;
             expression = hir.skip_type_assertions(value);
         }
-        if !has_store || removable.expression(expression) {
+        if !has_store || removable.stored_value(expression) {
             return has_store;
         }
         let ExprKind::Class(class) = hir[expression].kind else {

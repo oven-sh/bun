@@ -310,82 +310,46 @@ runtimefunction id=69 function=f8
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 1 = Integer integer=1
 # CHECK-NEXT: v1: 2 = Integer integer=2
-# CHECK-NEXT: v2: true = Boolean boolean=true
-# CHECK-NEXT: v3: false = Boolean
-# CHECK-NEXT: v4: 0 = Integer
-# CHECK-NEXT: Jump -> next b1(v4)
-# CHECK-NEXT: b1(v5: int[0, 2]):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v7: 2 = Integer integer=2
-# CHECK-NEXT: v8: boolean = Less v5, v7
-# CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b13()
-# CHECK-NEXT: b2(v9: int[0, 1]):
-# CHECK-NEXT: Switch v9 cases=[0] -> case b3(v2), otherwise b3(v3)
-# CHECK-NEXT: b3(v10: boolean):
-# CHECK-NEXT: v11: 1 = Integer integer=1
-# CHECK-NEXT: v12: int[1, 2] = Add v9, v11
-# CHECK-NEXT: v13: L2 = NewObject -, v0, v1 layout=L2 fields=[0, 1] allocationSite=10 allocationClass=2
-# CHECK-NEXT: Branch v10 -> taken b4(), notTaken b5()
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v14: 3 = Integer integer=3
-# CHECK-NEXT: PutSlot v13, -, v14 key="c" receivers=[L2] level=Proven
-# CHECK-NEXT: Jump -> next b6()
-# CHECK-NEXT: b5():
-# CHECK-NEXT: Jump -> next b6()
-# CHECK-NEXT: b6():
-# CHECK-NEXT: v16: L2 = FinishObject v13
-# CHECK-NEXT: v17: i32 = CallDirect v16 function=f1 accessSite=14
-# CHECK-NEXT: v18: int|whole = CallDirect v16 function=f2 accessSite=15
-# CHECK-NEXT: v19: undefined|int[-2147483643, 2147483647] = GetSlotOrUndefined v16 key="c" receivers=[L2, L3, L4] level=Proven accessSite=18
-# CHECK-NEXT: v20: true = Boolean boolean=true
-# CHECK-NEXT: v21: true = Boolean boolean=true
-# CHECK-NEXT: v22: boolean = IsSlotFilled v16 key="c" receivers=[L2, L3, L4] level=Proven accessSite=21
+# CHECK-NEXT: v2: L0 = NewObject -, v0, v1 layout=L0 fields=[0, 1] allocationSite=5 allocationClass=0
+# CHECK-NEXT: v3: "spread" = String string="spread"
+# CHECK-NEXT: v4: 3 = Integer integer=3
+# CHECK-NEXT: v5: L2 = NewObject layout=L2 allocationSite=10 allocationClass=2
+# CHECK-NEXT: CopyDataProperties v5, v2
+# CHECK-NEXT: PutSlot v5, -, v4 key="c" receivers=[L2] level=Proven
+# CHECK-NEXT: v8: L2 = FinishObject v5
+# CHECK-NEXT: v9: undefined = CallDirect v3, v8 function=f3 accessSite=1
+# CHECK-NEXT: v10: "either" = String string="either"
+# CHECK-NEXT: v11: 3 = Integer integer=3
+# CHECK-NEXT: v12: L3 = NewObject layout=L3 allocationSite=11 allocationClass=3
+# CHECK-NEXT: CopyDataProperties v12, v2
+# CHECK-NEXT: v14: L3 = FinishObject v12
+# CHECK-NEXT: PutSlot v14, -, v11 key="c" receivers=[L3] level=Proven
+# CHECK-NEXT: v16: undefined = CallDirect v10, v14 function=f3 accessSite=3
+# CHECK-NEXT: v17: "assigned" = String string="assigned"
+# CHECK-NEXT: v18: 3 = Integer integer=3
+# CHECK-NEXT: v19: L4 = NewObject layout=L4 allocationSite=12 allocationClass=4
+# CHECK-NEXT: v20: L1 = NewObject -, v18 layout=L1 fields=[0] allocationSite=9 allocationClass=1
+# CHECK-NEXT: v21: L4 = CallBuiltin -, v19, v2, v20 overload=ObjectAssign/0 accessSite=24 @0:1 tail
+# CHECK-NEXT: v22: undefined = CallDirect v17, v21 function=f3 accessSite=5
 # CHECK-NEXT: v23: "spread" = String string="spread"
-# CHECK-NEXT: v24: undefined = CallBuiltin -, v23, v17, v18, v0, v1, v19, v20, v21, v22 overload=ConsoleLog/0 accessSite=22
-# CHECK-NEXT: v25: L3 = NewObject -, v0, v1 layout=L3 fields=[0, 1] allocationSite=11 allocationClass=3
-# CHECK-NEXT: Branch v10 -> taken b7(), notTaken b8()
-# CHECK-NEXT: b7():
-# CHECK-NEXT: v26: 3 = Integer integer=3
-# CHECK-NEXT: PutSlot v25, -, v26 key="c" receivers=[L3] level=Proven
-# CHECK-NEXT: Jump -> next b9()
-# CHECK-NEXT: b8():
-# CHECK-NEXT: v28: 4 = Integer integer=4
-# CHECK-NEXT: PutSlot v25, -, v28 key="d" receivers=[L3] level=Proven accessSite=23
-# CHECK-NEXT: Jump -> next b9()
-# CHECK-NEXT: b9():
-# CHECK-NEXT: v30: i32 = CallDirect v25 function=f1 accessSite=14
-# CHECK-NEXT: v31: int|whole = CallDirect v25 function=f2 accessSite=15
-# CHECK-NEXT: v32: undefined|int[-2147483643, 2147483647] = GetSlotOrUndefined v25 key="c" receivers=[L2, L3, L4] level=Proven accessSite=18
-# CHECK-NEXT: v33: true = Boolean boolean=true
-# CHECK-NEXT: v34: true = Boolean boolean=true
-# CHECK-NEXT: v35: boolean = IsSlotFilled v25 key="c" receivers=[L2, L3, L4] level=Proven accessSite=21
-# CHECK-NEXT: v36: "either" = String string="either"
-# CHECK-NEXT: v37: undefined = CallBuiltin -, v36, v30, v31, v0, v1, v32, v33, v34, v35 overload=ConsoleLog/0 accessSite=22
-# CHECK-NEXT: v38: L4 = NewObject layout=L4 allocationSite=12 allocationClass=4
-# CHECK-NEXT: Branch v10 -> taken b10(), notTaken b11()
-# CHECK-NEXT: b10():
-# CHECK-NEXT: PutSlot v38, -, v0 key="a" receivers=[L4] level=Proven @0:1 tail
-# CHECK-NEXT: PutSlot v38, -, v1 key="b" receivers=[L4] level=Proven @0:1 tail
-# CHECK-NEXT: v41: 3 = Integer integer=3
-# CHECK-NEXT: PutSlot v38, -, v41 key="c" receivers=[L4] level=Proven @0:1 tail
-# CHECK-NEXT: Jump -> next b12() @0:1 tail
-# CHECK-NEXT: b11():
-# CHECK-NEXT: PutSlot v38, -, v0 key="a" receivers=[L4] level=Proven @0:1 tail
-# CHECK-NEXT: PutSlot v38, -, v1 key="b" receivers=[L4] level=Proven @0:1 tail
-# CHECK-NEXT: Jump -> next b12() @0:1 tail
-# CHECK-NEXT: b12():
-# CHECK-NEXT: v45: i32 = CallDirect v38 function=f1 accessSite=14
-# CHECK-NEXT: v46: int|whole = CallDirect v38 function=f2 accessSite=15
-# CHECK-NEXT: v47: undefined|int[-2147483643, 2147483647] = GetSlotOrUndefined v38 key="c" receivers=[L2, L3, L4] level=Proven accessSite=18
-# CHECK-NEXT: v48: true = Boolean boolean=true
-# CHECK-NEXT: v49: true = Boolean boolean=true
-# CHECK-NEXT: v50: boolean = IsSlotFilled v38 key="c" receivers=[L2, L3, L4] level=Proven accessSite=21
-# CHECK-NEXT: v51: "assigned" = String string="assigned"
-# CHECK-NEXT: v52: undefined = CallBuiltin -, v51, v45, v46, v0, v1, v47, v48, v49, v50 overload=ConsoleLog/0 accessSite=22
-# CHECK-NEXT: Jump -> next b1(v12)
-# CHECK-NEXT: b13():
-# CHECK-NEXT: v53: undefined = Undefined
-# CHECK-NEXT: Return v53
+# CHECK-NEXT: v24: L2 = NewObject layout=L2 allocationSite=10 allocationClass=2
+# CHECK-NEXT: CopyDataProperties v24, v2
+# CHECK-NEXT: v26: L2 = FinishObject v24
+# CHECK-NEXT: v27: undefined = CallDirect v23, v26 function=f3 accessSite=1
+# CHECK-NEXT: v28: "either" = String string="either"
+# CHECK-NEXT: v29: L3 = NewObject layout=L3 allocationSite=11 allocationClass=3
+# CHECK-NEXT: CopyDataProperties v29, v2
+# CHECK-NEXT: v31: L3 = FinishObject v29
+# CHECK-NEXT: v32: 4 = Integer integer=4
+# CHECK-NEXT: PutSlot v31, -, v32 key="d" receivers=[L3] level=Proven accessSite=23
+# CHECK-NEXT: v34: undefined = CallDirect v28, v31 function=f3 accessSite=3
+# CHECK-NEXT: v35: "assigned" = String string="assigned"
+# CHECK-NEXT: v36: L4 = NewObject layout=L4 allocationSite=12 allocationClass=4
+# CHECK-NEXT: v37: undefined = Undefined
+# CHECK-NEXT: v38: L4 = CallBuiltin -, v36, v2, v37 overload=ObjectAssign/0 accessSite=24 @0:1 tail
+# CHECK-NEXT: v39: undefined = CallDirect v35, v38 function=f3 accessSite=5
+# CHECK-NEXT: v40: undefined = Undefined
+# CHECK-NEXT: Return v40
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="productsOf"
 # CHECK: module=m0 position=53 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L2|L3|L4}] results=[{type=i32}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -451,7 +415,71 @@ runtimefunction id=69 function=f8
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="show"
-# CHECK: module=m0 position=342 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string}, {type=L2|L3|L4}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
+# CHECK: module=m0 position=342 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string}, {type=L2|L3|L4}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: string, v1: L2|L3|L4):
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: v3: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v2, v3)
+# CHECK-NEXT: b1(v4: i32, v5: int[0, 100]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v7: 100 = Integer integer=100
+# CHECK-NEXT: v8: boolean = Less v5, v7
+# CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v9: int[0, 99]):
+# CHECK-NEXT: v10: int[-2147483643, 2147483647] = GetSlot v1 key="a" receivers=[L2, L3, L4] level=Proven accessSite=6
+# CHECK-NEXT: v11: int[-2147483643, 2147483647] = GetSlot v1 key="b" receivers=[L2, L3, L4] level=Proven accessSite=7
+# CHECK-NEXT: v12: int|whole = Mul v10, v11
+# CHECK-NEXT: v13: int|whole = Add v4, v12
+# CHECK-NEXT: v14: undefined|int[-2147483643, 2147483647] = GetSlotOrUndefined v1 key="c" receivers=[L2, L3, L4] level=Proven accessSite=8
+# CHECK-NEXT: v15: undefined|int[-2147483643, 2147483647] ~ int[-2147483643, 2147483647] = Upcast v14 castType=anything
+# CHECK-NEXT: v16: number ~ int|whole = Sub v13, v15
+# CHECK-NEXT: v17: int|whole = AssumeType v16 provenType=int|whole
+# CHECK-NEXT: v18: 0 = Integer
+# CHECK-NEXT: v19: i32 = BitOr v17, v18
+# CHECK-NEXT: v20: int[1, 100] = Increment v9
+# CHECK-NEXT: Jump -> next b1(v19, v20)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v21: 0 = Integer
+# CHECK-NEXT: v22: 0 = Integer
+# CHECK-NEXT: Jump -> next b4(v21, v22)
+# CHECK-NEXT: b4(v23: int|whole ~ 0, v24: int[0, 100] ~ 0):
+# CHECK-NEXT: Jump -> next b5(v23, v24)
+# CHECK-NEXT: b5(v25: int|whole, v26: int[0, 100]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v28: 100 = Integer integer=100
+# CHECK-NEXT: v29: boolean = Less v26, v28
+# CHECK-NEXT: Branch v29 -> taken b6(| 0), notTaken b9()
+# CHECK-NEXT: b6(v30: int[0, 99]):
+# CHECK-NEXT: v31: int[-2147483643, 2147483647] = GetSlot v1 key="a" receivers=[L2, L3, L4] level=Proven accessSite=9
+# CHECK-NEXT: v32: int[-2147483643, 2147483647] = GetSlot v1 key="b" receivers=[L2, L3, L4] level=Proven accessSite=10
+# CHECK-NEXT: v33: int[-4294967286, 4294967294] = Add v31, v32
+# CHECK-NEXT: v34: undefined|int[-2147483643, 2147483647] = GetSlotOrUndefined v1 key="c" receivers=[L2, L3, L4] level=Proven accessSite=11
+# CHECK-NEXT: v35: boolean = TypeTest v34 testedType=number
+# CHECK-NEXT: Branch v35 -> taken b7(| 0), notTaken b8()
+# CHECK-NEXT: b7(v36: int[-2147483643, 2147483647]):
+# CHECK-NEXT: v37: int[-6442450929, 6442450941] = Add v33, v36
+# CHECK-NEXT: v38: int|whole = Add v25, v37
+# CHECK-NEXT: v39: int[1, 100] = Increment v30
+# CHECK-NEXT: Jump -> next b5(v38, v39)
+# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: v40: undefined = Undefined
+# CHECK-NEXT: v41: number = Add v33, v40
+# CHECK-NEXT: v42: int|whole = AssumeType v41 provenType=int|whole
+# CHECK-NEXT: v43: int|whole ~ int[-6442450929, 6442450941] = Upcast v42 castType=int|whole
+# CHECK-NEXT: v44: int|whole = Add v25, v43
+# CHECK-NEXT: v45: int[1, 100] = Increment v30
+# CHECK-NEXT: Jump -> next b4(v44, v45)
+# CHECK-NEXT: b9():
+# CHECK-NEXT: v46: int[-2147483643, 2147483647] = GetSlot v1 key="a" receivers=[L2, L3, L4] level=Proven accessSite=16
+# CHECK-NEXT: v47: int[-2147483643, 2147483647] = GetSlot v1 key="b" receivers=[L2, L3, L4] level=Proven accessSite=17
+# CHECK-NEXT: v48: undefined|int[-2147483643, 2147483647] = GetSlotOrUndefined v1 key="c" receivers=[L2, L3, L4] level=Proven accessSite=18
+# CHECK-NEXT: v49: true = Boolean boolean=true
+# CHECK-NEXT: v50: true = Boolean boolean=true
+# CHECK-NEXT: v51: boolean = IsSlotFilled v1 key="c" receivers=[L2, L3, L4] level=Proven accessSite=21
+# CHECK-NEXT: v52: undefined = CallBuiltin -, v0, v4, v25, v46, v47, v48, v49, v50, v51 overload=ConsoleLog/0 accessSite=22
+# CHECK-NEXT: v53: undefined = Undefined
+# CHECK-NEXT: Return v53
+# CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="next"
 # CHECK: module=m1 kind=Method role=ResultWrapper flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=ArrayIterator flags=[IsExpected]} results=[{type=L(IteratorResult)}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f13 layout=L(IteratorResult)} {
 # CHECK-NEXT: b0(v0: anything):

@@ -225,6 +225,7 @@ impl<'a> ReachWhileLoading<'a> {
             can_load_code_at_run_time: false,
             further: &RuntimeUses::default(),
             keeps_code_without_names: false,
+            holds_guessed_code: false,
         };
         let mut state = self.state.lock();
         let State { known, told } = &mut *state;

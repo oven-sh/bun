@@ -332,21 +332,7 @@ function f35 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v8
 # CHECK-NEXT: }
 # CHECK-LABEL: function f18 module=
-# CHECK: m0 position=2779 kind=Arrow role=EntryChecks flags=[IsAsync, IsChecked, IsHiddenInStackTraces] syntax=[HasWrittenAwait] captures=[{type=undefined|null|function flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=Promise<anything, proven, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f32] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] creator=EntryChecks{body=f38 fallback=f40} inlineFrames=[{}, {callee=f40 callPosition=2779 isTailCall=true module=m0}, {callee=f38 callPosition=2779 isTailCall=true module=m0}] {
-# CHECK-NEXT: b0(v0: anything ~ undefined|null|function):
-# CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|function
-# CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v2: undefined|null|function):
-# CHECK-NEXT: v3: Promise = NewPromise
-# CHECK-NEXT: v4: anything = CallDirect v2, v3 function=f45
-# CHECK-NEXT: v5: Promise<anything, proven, pristine[Storage, Names]> = AssumeType v4 provenType=Promise<anything, proven, pristine[Storage, Names]>
-# CHECK-NEXT: Return v5
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v6: Promise = NewPromise
-# CHECK-NEXT: v7: anything = CallDirect v0, v6 function=f47
-# CHECK-NEXT: v8: Promise<anything, proven, pristine[Storage, Names]> = AssumeType v7 provenType=Promise<anything, proven, pristine[Storage, Names]>
-# CHECK-NEXT: Return v8
-# CHECK-NEXT: }
+# CHECK: m0 position=2779 kind=Arrow role=EntryChecks flags=[IsAsync, IsChecked, IsHiddenInStackTraces] syntax=[HasWrittenAwait] captures=[{type=undefined|null|function flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=Promise<anything, proven, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f32] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] creator=EntryChecks{body=f38 fallback=f40}
 # CHECK-LABEL: function {{*}}name="handBack"
 # CHECK: module=m0 position=1462 role=AsyncWorker flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=undefined} parameters=[{type=L1|L2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=L1|L2}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{original=0}, {original=1}]} creator=Coroutine{kind=AsyncFunction ramp=f1 body=f42 promiseType=Promise worker=f42} {
 # CHECK-NEXT: b0(v0: undefined, v1: L1|L2):

@@ -149,34 +149,50 @@ function f2 name="tries" module=m0 position=276 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: v1: 1048576 = Integer integer=1048576
 # CHECK-NEXT: v2: string = CallDirect v0, v1 function=f1 accessSite=0
 # CHECK-NEXT: PutModuleVariable v2 variable=g1
-# CHECK-NEXT: v4: 0 = Integer
-# CHECK-NEXT: v5: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: Jump -> next b1(v4)
-# CHECK-NEXT: b1(v6: int[0, 3]):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v8: 3 = Integer integer=3
-# CHECK-NEXT: v9: boolean = Less v6, v8
-# CHECK-NEXT: Branch v9 -> taken b2(| 0), notTaken b3()
-# CHECK-NEXT: b2(v10: int[0, 2]):
-# CHECK-NEXT: v11: anything ~ undefined|null|string = CallDirect function=f2 accessSite=1
-# CHECK-NEXT: v12: " " = String string=" "
-# CHECK-NEXT: v13: boolean = TypeTest v11 testedType=string
-# CHECK-NEXT: Branch v13 -> taken b4(| 0), notTaken b6(| 0)
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v14: string = StringBuilderFinish v5
-# CHECK-NEXT: v15: undefined = CallBuiltin -, v14 overload=ConsoleLog/0 accessSite=4
-# CHECK-NEXT: v16: undefined = Undefined
-# CHECK-NEXT: Return v16
-# CHECK-NEXT: b4(v17: string):
-# CHECK-NEXT: v18: string = Add v17, v12
-# CHECK-NEXT: Jump -> next b5(v18)
-# CHECK-NEXT: b5(v19: string):
-# CHECK-NEXT: StringBuilderAppend v5, v19
-# CHECK-NEXT: v21: int[1, 3] = Increment v10
-# CHECK-NEXT: Jump -> next b1(v21)
-# CHECK-NEXT: b6(v22: undefined|null|boolean|number|symbol|bigint|object ~ undefined|null) frequency=Rare:
-# CHECK-NEXT: v23: string = Add v22, v12
-# CHECK-NEXT: Jump -> next b5(v23)
+# CHECK-NEXT: v4: anything ~ undefined|null|string = CallDirect function=f2 accessSite=1
+# CHECK-NEXT: v5: " " = String string=" "
+# CHECK-NEXT: v6: boolean = TypeTest v4 testedType=string
+# CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b2(| 0)
+# CHECK-NEXT: b1(v7: string):
+# CHECK-NEXT: v8: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v8, v7, v5
+# CHECK-NEXT: Jump -> next b3(v8)
+# CHECK-NEXT: b2(v10: undefined|null|boolean|number|symbol|bigint|object ~ undefined|null) frequency=Rare:
+# CHECK-NEXT: v11: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: v12: "" = String string=""
+# CHECK-NEXT: v13: string = Add v12, v10
+# CHECK-NEXT: StringBuilderAppend v11, v13, v5
+# CHECK-NEXT: Jump -> next b3(v11)
+# CHECK-NEXT: b3(v15: stringbuilder):
+# CHECK-NEXT: StringBuilderAppend v15
+# CHECK-NEXT: v17: anything ~ undefined|null|string = CallDirect function=f2 accessSite=1
+# CHECK-NEXT: v18: " " = String string=" "
+# CHECK-NEXT: v19: boolean = TypeTest v17 testedType=string
+# CHECK-NEXT: Branch v19 -> taken b4(| 0), notTaken b5(| 0)
+# CHECK-NEXT: b4(v20: string):
+# CHECK-NEXT: v21: string = Add v20, v18
+# CHECK-NEXT: Jump -> next b6(v21)
+# CHECK-NEXT: b5(v22: undefined|null|boolean|number|symbol|bigint|object ~ undefined|null) frequency=Rare:
+# CHECK-NEXT: v23: string = Add v22, v18
+# CHECK-NEXT: Jump -> next b6(v23)
+# CHECK-NEXT: b6(v24: string):
+# CHECK-NEXT: StringBuilderAppend v15, v24
+# CHECK-NEXT: v26: anything ~ undefined|null|string = CallDirect function=f2 accessSite=1
+# CHECK-NEXT: v27: " " = String string=" "
+# CHECK-NEXT: v28: boolean = TypeTest v26 testedType=string
+# CHECK-NEXT: Branch v28 -> taken b7(| 0), notTaken b8(| 0)
+# CHECK-NEXT: b7(v29: string):
+# CHECK-NEXT: v30: string = Add v29, v27
+# CHECK-NEXT: Jump -> next b9(v30)
+# CHECK-NEXT: b8(v31: undefined|null|boolean|number|symbol|bigint|object ~ undefined|null) frequency=Rare:
+# CHECK-NEXT: v32: string = Add v31, v27
+# CHECK-NEXT: Jump -> next b9(v32)
+# CHECK-NEXT: b9(v33: string):
+# CHECK-NEXT: StringBuilderAppend v15, v33
+# CHECK-NEXT: v35: string = StringBuilderFinish v15
+# CHECK-NEXT: v36: undefined = CallBuiltin -, v35 overload=ConsoleLog/0 accessSite=4
+# CHECK-NEXT: v37: undefined = Undefined
+# CHECK-NEXT: Return v37
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="repeat"
 # CHECK: module=m0 position=103 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string site=w0 flags=[OmitsNull, OmitsUndefined]}, {type=int[4096, 1048576] site=w1}] results=[{type=string site=w2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

@@ -229,50 +229,48 @@ function f17 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v5: 2000000 = Integer integer=2000000
 # CHECK-NEXT: v6: boolean = Less v3, v5
-# CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b6()
 # CHECK-NEXT: b2(v7: int[0, 1999999]):
 # CHECK-NEXT: v8: 7 = Integer integer=7
 # CHECK-NEXT: v9: int[0, 7] = BitAnd v7, v8
 # CHECK-NEXT: v10: absent|f1 = GetModuleVariable variable=g8
 # CHECK-NEXT: v11: boolean = TypeTest v10 testedType=absent
-# CHECK-NEXT: Branch v11 -> taken b7(), notTaken b8()
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v12: L0 = ToObject v2 calledBuiltin=ObjectKeys
-# CHECK-NEXT: v13: 0 = Integer
-# CHECK-NEXT: Jump -> next b4(v13)
-# CHECK-NEXT: b4(v14: int[0, 1000] ~ 0):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v16: 1000 = Integer integer=1000
-# CHECK-NEXT: v17: boolean = Less v14, v16
-# CHECK-NEXT: Branch v17 -> taken b5(| 0), notTaken b6()
-# CHECK-NEXT: b5(v18: int[0, 999] ~ 0) frequency=Rare:
-# CHECK-NEXT: v19: 7 = Integer integer=7
-# CHECK-NEXT: v20: int[0, 7] ~ 0 = BitAnd v18, v19
-# CHECK-NEXT: v21: 16 = Integer integer=16
-# CHECK-NEXT: v22: L0 = CallDirect v21 function=f9 accessSite=23
-# CHECK-NEXT: PutSlotOrAdd v22, -, v20 key="props" receivers=[L0] level=Proven accessSite=19
-# CHECK-NEXT: v24: int[1, 1000] ~ 1 = Increment v18
-# CHECK-NEXT: Jump -> next b4(v24)
+# CHECK-NEXT: Branch v11 -> taken b3(), notTaken b4()
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: v12: f1 = CallDirect function=f19
+# CHECK-NEXT: Jump -> next b5(v12)
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v13: fact = Specified
+# CHECK-NEXT: v14: f1 = AssumeType v10, v13 provenType=f1
+# CHECK-NEXT: Jump -> next b5(v14)
+# CHECK-NEXT: b5(v15: f1):
+# CHECK-NEXT: v16: 7 = Integer integer=7
+# CHECK-NEXT: v17: 16 = Integer integer=16
+# CHECK-NEXT: v18: anything ~ object = Construct v15, -, v16, v17 calleeName="T" accessSite=17 callees=[f1]
+# CHECK-NEXT: v19: L0 = AssumeType v18 provenType=L0
+# CHECK-NEXT: PutSlotOrAdd v19, -, v9 key="props" receivers=[L0] level=Proven accessSite=19
+# CHECK-NEXT: v21: int[1, 2000000] = Increment v7
+# CHECK-NEXT: Jump -> next b1(v19, v21)
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v25: 3 = Integer integer=3
-# CHECK-NEXT: v26: L0 = CallDirect v25 function=f24 accessSite=14
-# CHECK-NEXT: v27: undefined = Undefined
-# CHECK-NEXT: Return v27
-# CHECK-NEXT: b7() frequency=Rare:
-# CHECK-NEXT: v28: f1 = CallDirect function=f19
-# CHECK-NEXT: Jump -> next b9(v28)
+# CHECK-NEXT: v22: L0 = ToObject v2 calledBuiltin=ObjectKeys
+# CHECK-NEXT: v23: 0 = Integer
+# CHECK-NEXT: Jump -> next b7(v23)
+# CHECK-NEXT: b7(v24: int[0, 999] ~ 0) frequency=Rare:
+# CHECK-NEXT: v25: 7 = Integer integer=7
+# CHECK-NEXT: v26: int[0, 7] ~ 0 = BitAnd v24, v25
+# CHECK-NEXT: v27: 16 = Integer integer=16
+# CHECK-NEXT: v28: L0 = CallDirect v27 function=f9 accessSite=23
+# CHECK-NEXT: PutSlotOrAdd v28, -, v26 key="props" receivers=[L0] level=Proven accessSite=19
+# CHECK-NEXT: v30: int[1, 1000] ~ 1 = Increment v24
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v32: 1000 = Integer integer=1000
+# CHECK-NEXT: v33: boolean = Less v30, v32
+# CHECK-NEXT: Branch v33 -> taken b7(| 0), notTaken b8()
 # CHECK-NEXT: b8():
-# CHECK-NEXT: v29: fact = Specified
-# CHECK-NEXT: v30: f1 = AssumeType v10, v29 provenType=f1
-# CHECK-NEXT: Jump -> next b9(v30)
-# CHECK-NEXT: b9(v31: f1):
-# CHECK-NEXT: v32: 7 = Integer integer=7
-# CHECK-NEXT: v33: 16 = Integer integer=16
-# CHECK-NEXT: v34: anything ~ object = Construct v31, -, v32, v33 calleeName="T" accessSite=17 callees=[f1]
-# CHECK-NEXT: v35: L0 = AssumeType v34 provenType=L0
-# CHECK-NEXT: PutSlotOrAdd v35, -, v9 key="props" receivers=[L0] level=Proven accessSite=19
-# CHECK-NEXT: v37: int[1, 2000000] = Increment v7
-# CHECK-NEXT: Jump -> next b1(v35, v37)
+# CHECK-NEXT: v34: 3 = Integer integer=3
+# CHECK-NEXT: v35: L0 = CallDirect v34 function=f24 accessSite=14
+# CHECK-NEXT: v36: undefined = Undefined
+# CHECK-NEXT: Return v36
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="createTy"
 # CHECK: module=m0 position=994 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=16}] results=[{type=L0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

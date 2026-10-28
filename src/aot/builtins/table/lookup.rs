@@ -51,6 +51,11 @@ impl BuiltinEntry {
     pub fn implemented_by(&self) -> &'static [RuntimeFunction] {
         self.dependencies().implemented_by
     }
+
+    /// What hangs on the operands of the entry, or on what is done with a value that it hands out.
+    pub fn guessed_functions(&self) -> &'static [RuntimeFunction] {
+        self.dependencies().guessed
+    }
 }
 
 pub fn class_data(class: BuiltinClass) -> &'static ClassData {

@@ -154,6 +154,7 @@ pub(crate) struct ReachInput<'a, 's> {
     /// What the program holds beside what its code names.
     pub further: &'a RuntimeUses,
     pub keeps_code_without_names: bool,
+    pub holds_guessed_code: bool,
 }
 
 /// The part of Bun's own code that the program can run, found the way a bundler finds it: by bindings, never by what a value is.
@@ -168,11 +169,25 @@ pub(crate) struct ReachedRuntimeCode {
 pub(crate) struct HeldLibraryCode {
     modules: Vec<RuntimeModule>,
     functions: Vec<RuntimeFunction>,
+    /// `MentionedUses::guessed` of the files of a program that does not hold it.
+    left_to_engine: RuntimeUses,
 }
 
 impl HeldLibraryCode {
     pub(crate) fn holds_module(&self, module: RuntimeModule) -> bool {
         self.modules.binary_search(&module).is_ok()
+    }
+
+    /// What was left to the engine of the modules whose objects it has found to be read: it says so of a module that a program lacks.
+    pub(crate) fn find_modules_left_out(&self, used: &[BuiltinId]) -> RuntimeUses {
+        self.left_to_engine.of_modules(|module| {
+            (table::module_data(module).flags).contains(table::ModuleFlags::HAS_SOURCE)
+                && used.contains(&table::canonical_id(table::namespace_of(module)))
+        })
+    }
+
+    pub(crate) fn is_left_to_engine(&self, function: RuntimeFunction) -> bool {
+        self.left_to_engine.functions.contains(&function)
     }
 
     /// What of `needed` the program lacks.
@@ -1089,6 +1104,7 @@ struct Walk<'a, 's> {
     asking_file: Option<FileId>,
     /// Each file with a file that its reached code imports.
     imports: Vec<(FileId, FileId)>,
+    left_to_engine: RuntimeUses,
 }
 
 struct RegionText {
@@ -1141,6 +1157,7 @@ impl<'a, 's> Walk<'a, 's> {
             notes_imports: false,
             asking_file: None,
             imports: Vec::new(),
+            left_to_engine: RuntimeUses::default(),
         };
         for &file in input.library.code_files() {
             if input.library.kind(file) != SourceKind::RuntimeFunctions {
@@ -1320,6 +1337,10 @@ impl<'a, 's> Walk<'a, 's> {
             }
             if let Some(source) = parsed_source(application, file) {
                 self.reach_uses(source.builtins.uses());
+                match self.input.holds_guessed_code {
+                    true => self.reach_uses(source.builtins.guessed_uses()),
+                    false => self.left_to_engine.add(source.builtins.guessed_uses()),
+                }
                 for named in source.named_modules() {
                     self.reach_every_export(ModuleRef::Runtime(named.module));
                 }
@@ -1600,7 +1621,10 @@ impl<'a, 's> Walk<'a, 's> {
 
     fn finish(self) -> ReachedRuntimeCode {
         let mut left_out_functions = FxHashSet::default();
-        let mut held = HeldLibraryCode::default();
+        let mut held = HeldLibraryCode {
+            left_to_engine: self.left_to_engine,
+            ..HeldLibraryCode::default()
+        };
         for (index, units) in self.files.iter().enumerate() {
             let Some(units) = units else {
                 continue;

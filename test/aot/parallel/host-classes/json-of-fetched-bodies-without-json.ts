@@ -1,4 +1,5 @@
-export {};
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 interface Order {
   id: number;
   name: string;
@@ -998,7 +999,7 @@ async function cell119(list: number[], file: string) {
   return (await holder.text().then(() => holder.json())) as Order;
 }
 for (const [name, list] of contents) {
-  const file = "holds-" + name.replaceAll(" ", "-").replaceAll(",", "");
+  const file = join(tmpdir(), `holds-${name.replaceAll(" ", "-").replaceAll(",", "")}-${process.pid}`);
   await Bun.write(file, Uint8Array.from(list));
   console.log(
     [
@@ -1260,5 +1261,6 @@ for (const [name, list] of contents) {
       "behind text() " + (await attempt(() => cell119(list, file))),
     ].join(" | "),
   );
+  await Bun.file(file).delete();
 }
 sender.stop(true);

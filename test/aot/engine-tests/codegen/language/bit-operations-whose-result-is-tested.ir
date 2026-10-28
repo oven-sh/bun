@@ -336,7 +336,7 @@ runtimefunction id=131091 function=f47 visibility=Private
 # CHECK-NEXT: end of function f1
 # CHECK-LABEL: function {{*}}name="found"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 47, patchpoints: 5, rare instructions: 26
+# CHECK-NEXT: instructions: 47, patchpoints: 5, rare instructions: 25
 # CHECK-NEXT: end of function f49
 # CHECK-LABEL: function {{*}}name="found"
 # CHECK: role=GenericVersion

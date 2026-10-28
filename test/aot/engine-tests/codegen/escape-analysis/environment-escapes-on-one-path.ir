@@ -554,29 +554,45 @@ function f31 module=m5 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v31: int[1, 600] = Increment v11
 # CHECK-NEXT: Jump -> next b1(v31)
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v32: 0 = Integer
-# CHECK-NEXT: Jump -> next b7(v32)
-# CHECK-NEXT: b7(v33: int[0, 4]):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v35: 4 = Integer integer=4
-# CHECK-NEXT: v36: boolean = Less v33, v35
-# CHECK-NEXT: Branch v36 -> taken b8(| 0), notTaken b9()
-# CHECK-NEXT: b8(v37: int[0, 3]):
-# CHECK-NEXT: v38: 2 = Integer integer=2
-# CHECK-NEXT: v39: int[0, 1] = Mod v37, v38
-# CHECK-NEXT: v40: 0 = Integer
-# CHECK-NEXT: v41: boolean = StrictEq v39, v40
-# CHECK-NEXT: v42: " " = String string=" "
-# CHECK-NEXT: v43: 20 = Integer integer=20
-# CHECK-NEXT: v44: int|whole = CallDirect v43, v41 function=f3 accessSite=7
-# CHECK-NEXT: v45: "\n" = String string="\n"
-# CHECK-NEXT: StringBuilderAppend v6, v41, v42, v44, v45
-# CHECK-NEXT: v47: int[1, 4] = Increment v37
-# CHECK-NEXT: Jump -> next b7(v47)
-# CHECK-NEXT: b9():
+# CHECK-NEXT: v32: true = Boolean boolean=true
+# CHECK-NEXT: v33: "true " = String string="true "
+# CHECK-NEXT: v34: 20 = Integer integer=20
+# CHECK-NEXT: v35: int|whole = CallDirect v34, v32 function=f3 accessSite=7
+# CHECK-NEXT: v36: "\n" = String string="\n"
+# CHECK-NEXT: StringBuilderAppend v6, v33, v35, v36
+# CHECK-NEXT: v38: 1 = Integer integer=1
+# CHECK-NEXT: v39: 2 = Integer integer=2
+# CHECK-NEXT: v40: int[0, 1] = Mod v38, v39
+# CHECK-NEXT: v41: 0 = Integer
+# CHECK-NEXT: v42: boolean = StrictEq v40, v41
+# CHECK-NEXT: v43: " " = String string=" "
+# CHECK-NEXT: v44: 20 = Integer integer=20
+# CHECK-NEXT: v45: int|whole = CallDirect v44, v42 function=f3 accessSite=7
+# CHECK-NEXT: v46: "\n" = String string="\n"
+# CHECK-NEXT: StringBuilderAppend v6, v42, v43, v45, v46
+# CHECK-NEXT: v48: 2 = Integer integer=2
+# CHECK-NEXT: v49: 2 = Integer integer=2
+# CHECK-NEXT: v50: int[0, 1] = Mod v48, v49
+# CHECK-NEXT: v51: 0 = Integer
+# CHECK-NEXT: v52: boolean = StrictEq v50, v51
+# CHECK-NEXT: v53: " " = String string=" "
+# CHECK-NEXT: v54: 20 = Integer integer=20
+# CHECK-NEXT: v55: int|whole = CallDirect v54, v52 function=f3 accessSite=7
+# CHECK-NEXT: v56: "\n" = String string="\n"
+# CHECK-NEXT: StringBuilderAppend v6, v52, v53, v55, v56
+# CHECK-NEXT: v58: 3 = Integer integer=3
+# CHECK-NEXT: v59: 2 = Integer integer=2
+# CHECK-NEXT: v60: int[0, 1] = Mod v58, v59
+# CHECK-NEXT: v61: 0 = Integer
+# CHECK-NEXT: v62: boolean = StrictEq v60, v61
+# CHECK-NEXT: v63: " " = String string=" "
+# CHECK-NEXT: v64: 20 = Integer integer=20
+# CHECK-NEXT: v65: int|whole = CallDirect v64, v62 function=f3 accessSite=7
+# CHECK-NEXT: v66: "\n" = String string="\n"
+# CHECK-NEXT: StringBuilderAppend v6, v62, v63, v65, v66
 # CHECK-NEXT: StringBuilderDiscard v6
-# CHECK-NEXT: v49: undefined = Undefined
-# CHECK-NEXT: Return v49
+# CHECK-NEXT: v69: undefined = Undefined
+# CHECK-NEXT: Return v69
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="objectsAcrossCollections"
 # CHECK: module=m0 position=1664 flags=[IsSloppy, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=20}, {type=boolean}] results=[{type=int|whole}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f6 callPosition=4294967295 module=m0}, {callee=f5 callPosition=4294967295 module=m0}, {callee=f4 callPosition=4294967295 module=m0}] {

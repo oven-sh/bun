@@ -177,5 +177,5 @@ function f1 name="textOf" module=m0 position=266 flags=[IsChecked, HasExplicitNa
 # CHECK-NEXT: end of function f3
 # CHECK-LABEL: function {{*}}name="textOf"
 # CHECK: role=GenericVersion
-# CHECK-NEXT: instructions: 101, patchpoints: 10, rare instructions: 19, polls: 1
+# CHECK-NEXT: instructions: 89, patchpoints: 10, rare instructions: 20, polls: 1
 # CHECK-NEXT: end of function f4

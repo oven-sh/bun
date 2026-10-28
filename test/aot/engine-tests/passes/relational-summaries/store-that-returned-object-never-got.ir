@@ -796,12 +796,7 @@ runtimefunction id=131091 function=f35 visibility=Private
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="factoryInALoop"
-# CHECK: module=m0 position=732 role=ResultWrapper flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w14}] results=[{type=L1 site=w15 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f6 parameterMap=[{original=0}]} creator=ResultWrapper{worker=f63 layout=L1} {
-# CHECK-NEXT: b0(v0: number):
-# CHECK-NEXT: v1: int = CallDirect v0 function=f63
-# CHECK-NEXT: v2: L1 = NewObject -, v1 layout=L1 fields=[1] allocationSite=13 allocationClass=1
-# CHECK-NEXT: Return v2
-# CHECK-NEXT: }
+# CHECK: module=m0 position=732 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w14}] results=[{type=L1 site=w15 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f6 parameterMap=[{original=0}]}
 # CHECK-LABEL: function {{*}}name="oneSiteOnly"
 # CHECK: module=m0 position=1051 role=ResultWrapper flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w18}] results=[{type=L1 site=w19 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f8 parameterMap=[{original=0}]} creator=ResultWrapper{worker=f51 layout=L1}
 # CHECK-LABEL: function {{*}}name="returnsThePrevious"
@@ -815,9 +810,34 @@ runtimefunction id=131091 function=f35 visibility=Private
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="instanceInALoop"
-# CHECK: module=m0 position=543 role=GenericVersion flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w12 flags=[IsExpected]}] results=[{type=L0 site=w13 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f5 parameterMap=[{original=0}]} creator=Version{provenVersion=f39}
+# CHECK: module=m0 position=543 role=GenericVersion flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w12 flags=[IsExpected]}] results=[{type=L0 site=w13 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f5 parameterMap=[{original=0}]} creator=Version{provenVersion=f39} {
+# CHECK-NEXT: b0(v0: anything) frequency=Unlikely:
+# CHECK-NEXT: v1: undefined|int = AssumeType v0 provenType=undefined|int
+# CHECK-NEXT: v2: f16 = GetModuleVariable variable=g3
+# CHECK-NEXT: v3: 0 = Integer
+# CHECK-NEXT: v4: L0 = NewObject layout=L0 storage=Frame allocationClass=0
+# CHECK-NEXT: v5: undefined = CallDirect v4, v2, v3 function=f58 accessSite=32 [isConstruction]
+# CHECK-NEXT: Jump -> next b1(v1)
+# CHECK-NEXT: b1(v6: undefined|number) frequency=Unlikely:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v8: f16 = GetModuleVariable variable=g3
+# CHECK-NEXT: v9: L0 = NewObject layout=L0 allocationClass=0
+# CHECK-NEXT: v10: undefined = CallDirect v9, v8, v6 function=f58 accessSite=34 [isConstruction]
+# CHECK-NEXT: v11: number = Decrement v6 form=Numbers
+# CHECK-NEXT: v12: 0 = Integer
+# CHECK-NEXT: v13: boolean = Greater v11, v12 form=Numbers
+# CHECK-NEXT: TestAndBranch v13 -> taken b1(v11), notTaken b2()
+# CHECK-NEXT: b2() frequency=Unlikely:
+# CHECK-NEXT: Return v9
+# CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="factoryInALoop"
-# CHECK: module=m0 position=732 role=GenericVersion flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w14 flags=[IsExpected]}] results=[{type=L1 site=w15 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f6 parameterMap=[{original=0}]} creator=Version{provenVersion=f40}
+# CHECK: module=m0 position=732 role=GenericVersion flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w14 flags=[IsExpected]}] results=[{type=L1 site=w15 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f6 parameterMap=[{original=0}]} creator=Version{provenVersion=f40} {
+# CHECK-NEXT: b0(v0: anything) frequency=Unlikely:
+# CHECK-NEXT: v1: undefined|int = AssumeType v0 provenType=undefined|int
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v3: L1 = CallDirect v1 function=f1 accessSite=36
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="oneSiteOnly"
 # CHECK: module=m0 position=1051 role=GenericVersion flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w18 flags=[IsExpected]}] results=[{type=L1 site=w19 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f8 parameterMap=[{original=0}]} creator=Version{provenVersion=f41} {
 # CHECK-NEXT: b0(v0: anything) frequency=Unlikely:
@@ -943,7 +963,11 @@ runtimefunction id=131091 function=f35 visibility=Private
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="C"
-# CHECK: module=m0 position=517 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=L0} parameters=[{type=number site=w35 flags=[IsExpected]}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f16 parameterMap=[{}, {original=0}, {original=1}]} creator=Version{provenVersion=f16} constructedClass=L0
+# CHECK: module=m0 position=517 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=L0} parameters=[{type=number site=w35 flags=[IsExpected]}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f16 parameterMap=[{}, {original=0}, {original=1}]} creator=Version{provenVersion=f16} constructedClass=L0 inlineFrames=[{}, {callee=f61 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: L0, v1: anything, v2: anything ~ number):
+# CHECK-NEXT: v3: undefined = Undefined
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="twoOfOnePlace"
 # CHECK: module=m0 position=2995 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} results=[{type=Array<undefined, proven, pristine[Storage, Names, Dense]> site=w28 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f12} {
 # CHECK-NEXT: b0():
@@ -964,10 +988,4 @@ runtimefunction id=131091 function=f35 visibility=Private
 # CHECK-NEXT: Branch v6 -> taken b1(v4), notTaken b2()
 # CHECK-NEXT: b2():
 # CHECK-NEXT: Return
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="factoryInALoop"
-# CHECK: module=m0 position=732 role=ResultWorker flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w14}] results=[{type=int}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f40 parameterMap=[{original=0}]} creator=ResultWorker{origin=f40} inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f37 callPosition=677 parent=2 isTailCall=true module=m0}, {callee=f37 callPosition=677 parent=1 isTailCall=true module=m0}, {callee=f49 callPosition=677 parent=4 module=m0}, {callee=f49 callPosition=677 parent=3 module=m0}] {
-# CHECK-NEXT: b0(v0: number):
-# CHECK-NEXT: v1: int = AssumeType v0 provenType=undefined|int
-# CHECK-NEXT: Return v1
 # CHECK-NEXT: }

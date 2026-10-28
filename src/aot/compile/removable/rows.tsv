@@ -1,7 +1,7 @@
 # answer	plain	minified	difference	configuration	extension	source
 # answer: + `Removable` says that the statement with MARK in it can be left out when nothing uses it, - that it cannot. Of a statement with several declarations, the one with MARK answers.
 # plain, minified: + `bun build` and `bun build --minify-syntax` leave the statement out, - they keep it, . not asked: nothing of the statement would show in the output.
-# difference: why answer and plain differ. The answer removes more: folded (the folder has a constant or dead code there), table (the table of built-ins knows the value that is read), inert (the statement compiles to nothing), minified (`bun run` leaves it out, as `bun build --minify-syntax` does). missed: the bundler removes more.
+# difference: why answer and plain differ. The answer removes more: folded (the folder has a constant or dead code there), table (the table of built-ins knows the value that is read), inert (the statement compiles to nothing), minified (`bun run` leaves it out, as `bun build --minify-syntax` does). The bundler removes more: read (a variable, a field or an export takes a member of a built-in object, which `bun run` reads and the object lists from then on), missed (all else).
 # literals and functions
 +	+	+	-	-	ts	const MARK = 1;
 +	+	+	-	-	ts	const MARK = "a";
@@ -159,20 +159,20 @@
 -	-	-	-	-	ts	import * as ns from "./dep.ts"; const MARK = ns.value.x;
 +	-	-	folded	-	ts	import * as ns from "./dep.ts"; const MARK = ns?.value;
 -	-	-	-	-	ts	import * as ns from "./dep.ts"; let k = "value"; const MARK = ns[k];
-+	+	+	-	-	ts	const MARK = Object.keys;
+-	+	+	read	-	ts	const MARK = Object.keys;
 +	+	+	-	-	ts	const MARK = Math.PI;
 +	+	+	-	-	ts	const MARK = Math.max;
 +	+	+	-	-	ts	const MARK = Math.random;
-+	+	+	-	-	ts	const MARK = JSON.parse;
+-	+	+	read	-	ts	const MARK = JSON.parse;
 +	+	+	-	-	ts	const MARK = console.log;
 +	+	+	-	-	ts	const MARK = Symbol.iterator;
-+	+	+	-	-	ts	const MARK = Reflect.get;
-+	+	+	-	-	ts	const MARK = Promise.resolve;
+-	+	+	read	-	ts	const MARK = Reflect.get;
+-	+	+	read	-	ts	const MARK = Promise.resolve;
 +	+	+	-	-	ts	const MARK = Object.prototype.hasOwnProperty;
 +	+	+	-	-	ts	const MARK = Array.isArray;
-+	+	+	-	-	ts	const MARK = Number.isNaN;
-+	+	+	-	-	ts	const MARK = Symbol.for;
-+	+	+	-	-	ts	const MARK = Object.defineProperty;
+-	+	+	read	-	ts	const MARK = Number.isNaN;
+-	+	+	read	-	ts	const MARK = Symbol.for;
+-	+	+	read	-	ts	const MARK = Object.defineProperty;
 -	-	-	-	-	ts	const MARK = Array.prototype.slice;
 -	-	-	-	-	ts	const MARK = Date.now;
 -	-	-	-	-	ts	const MARK = Number.MAX_SAFE_INTEGER;
@@ -180,9 +180,12 @@
 -	-	-	-	-	ts	const MARK = process.cwd;
 -	-	-	-	-	ts	const MARK = Function.prototype.call;
 +	-	-	table	-	ts	const MARK = globalThis.Object;
-+	-	-	table	-	ts	const MARK = globalThis.Object.keys;
+-	-	-	-	-	ts	const MARK = globalThis.Object.keys;
 -	-	-	-	-	ts	const MARK = String.fromCharCode;
-+	-	+	table	-	ts	const MARK = Object["keys"];
+-	-	+	-	-	ts	const MARK = Object["keys"];
+-	+	+	read	-	ts	class MARK { static a = Object.keys; }
+-	+	+	read	-	ts	const MARK = [Object.keys];
+-	+	+	read	-	ts	const MARK = { a: Object.keys };
 -	-	-	-	-	ts	const MARK = Buffer.from;
 -	-	-	-	-	ts	const MARK = Bun.serve;
 -	-	-	-	-	ts	const MARK = performance.now;

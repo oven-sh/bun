@@ -514,11 +514,11 @@ runtimefunction id=131110 function=f34
 # -- generated: differencesFromTwo downBehindToZero shiftUp
 # CHECK-LABEL: function {{*}}name="differencesFromTwo"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 42, patchpoints: 0, rare instructions: 111
+# CHECK-NEXT: instructions: 42, patchpoints: 0, rare instructions: 108
 # CHECK-NEXT: end of function f3
 # CHECK-LABEL: function {{*}}name="downBehindToZero"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 52, patchpoints: 0, rare instructions: 116
+# CHECK-NEXT: instructions: 52, patchpoints: 0, rare instructions: 121
 # CHECK-NEXT: end of function f10
 # CHECK-LABEL: function {{*}}name="shiftUp"
 # CHECK: role=Source

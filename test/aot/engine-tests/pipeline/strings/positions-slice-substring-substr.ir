@@ -530,7 +530,7 @@ function f5 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChe
 runtimefunction id=69 function=f5
 # -- generated: f0 one two mix halves next
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f3 callPosition=4294967295 module=m0}, {callee=f3 callPosition=4294967295 module=m0}] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f3 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f3 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f7 callPosition=867 parent=4 isTailCall=true module=m0}, {callee=f8 callPosition=980 parent=2 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "0123456789" = String string="0123456789"
 # CHECK-NEXT: v1: "\u{3b1}\u{3b2}\u{3b3}\u{3b4}\u{3b5}\u{3b6}\u{3b7}\u{3b8}\u{3b9}\u{3ba}" = String string="\u{3b1}\u{3b2}\u{3b3}\u{3b4}\u{3b5}\u{3b6}\u{3b7}\u{3b8}\u{3b9}\u{3ba}"
@@ -595,7 +595,7 @@ runtimefunction id=69 function=f5
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v60: int[0, 4294967295] = CallBuiltin v56 overload=ArrayPrototypeLength/0
 # CHECK-NEXT: v61: boolean = Less v58, v60
-# CHECK-NEXT: Branch v61 -> taken b2(| 0), notTaken b6()
+# CHECK-NEXT: Branch v61 -> taken b2(| 0), notTaken b9()
 # CHECK-NEXT: b2(v62: int[0, 4294967294]):
 # CHECK-NEXT: v63: undefined|null|boolean|number|string|symbol|bigint = GetArrayElement v56, v62 arrayStorage=Contiguous level=Proven [keyIsIntegral]
 # CHECK-NEXT: v64: 1 = Integer integer=1
@@ -611,159 +611,201 @@ runtimefunction id=69 function=f5
 # CHECK-NEXT: v70: string = CallBuiltin -, v66 overload=String/0 accessSite=23
 # CHECK-NEXT: Jump -> next b5(v70)
 # CHECK-NEXT: b5(v71: string):
-# CHECK-NEXT: v72: string = CallDirect v0, v66 function=f1 accessSite=24
-# CHECK-NEXT: v73: fractional = Double number=7.5
-# CHECK-NEXT: v74: string = CallDirect v0, v66, v73 function=f2 accessSite=25
-# CHECK-NEXT: v75: fractional = Double number=2.5
-# CHECK-NEXT: v76: string = CallDirect v0, v75, v66 function=f2 accessSite=26
-# CHECK-NEXT: v77: undefined = CallBuiltin -, v71, v72, v74, v76 overload=ConsoleLog/0 accessSite=27
+# CHECK-NEXT: v72: boolean ~ true = TypeTest v66 testedType=number
+# CHECK-NEXT: Branch v72 -> taken b6(| 0), notTaken b7(| 0)
+# CHECK-NEXT: b6(v73: number):
+# CHECK-NEXT: v74: string = CallDirect v0, v73 function=f7 @867:7 tail
+# CHECK-NEXT: v75: fractional = Double number=7.5
+# CHECK-NEXT: v76: string = CallDirect v0, v73, v75 function=f8 @980:6 tail
+# CHECK-NEXT: v77: fractional = Double number=2.5
+# CHECK-NEXT: v78: string = CallDirect v0, v77, v73 function=f8 @980:5 tail
+# CHECK-NEXT: Jump -> next b8(v78, v74, v76)
+# CHECK-NEXT: b7(v79: undefined|null|boolean|string|symbol|bigint) frequency=Rare:
+# CHECK-NEXT: v80: string = CallDirect v0, v79 function=f9 @867:7 tail
+# CHECK-NEXT: v81: fractional = Double number=7.5
+# CHECK-NEXT: v82: string = CallDirect v0, v79, v81 function=f10 @980:6 tail
+# CHECK-NEXT: v83: fractional = Double number=2.5
+# CHECK-NEXT: v84: string = CallDirect v0, v83, v79 function=f10 @980:5 tail
+# CHECK-NEXT: Jump -> next b8(v84, v80, v82)
+# CHECK-NEXT: b8(v85: string, v86: string, v87: string):
+# CHECK-NEXT: v88: undefined = CallBuiltin -, v71, v86, v87, v85 overload=ConsoleLog/0 accessSite=27
 # CHECK-NEXT: Jump -> next b1(v65)
-# CHECK-NEXT: b6():
-# CHECK-NEXT: v78: 0 = Integer
-# CHECK-NEXT: v79: 0 = Integer
-# CHECK-NEXT: Jump -> next b7(v78, v79)
-# CHECK-NEXT: b7(v80: i32, v81: int[0, 40]):
+# CHECK-NEXT: b9():
+# CHECK-NEXT: v89: 0 = Integer
+# CHECK-NEXT: v90: 0 = Integer
+# CHECK-NEXT: Jump -> next b10(v89, v90)
+# CHECK-NEXT: b10(v91: i32, v92: int[0, 40]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v83: 40 = Integer integer=40
-# CHECK-NEXT: v84: boolean = Less v81, v83
-# CHECK-NEXT: Branch v84 -> taken b8(| 0), notTaken b27()
-# CHECK-NEXT: b8(v85: int[0, 39]):
-# CHECK-NEXT: v86: 0 = Integer
-# CHECK-NEXT: Jump -> next b9(v80, v86)
-# CHECK-NEXT: b9(v87: i32, v88: int[0, 4294967295]):
+# CHECK-NEXT: v94: 40 = Integer integer=40
+# CHECK-NEXT: v95: boolean = Less v92, v94
+# CHECK-NEXT: Branch v95 -> taken b11(| 0), notTaken b37()
+# CHECK-NEXT: b11(v96: int[0, 39]):
+# CHECK-NEXT: v97: 0 = Integer
+# CHECK-NEXT: Jump -> next b12(v91, v97)
+# CHECK-NEXT: b12(v98: i32, v99: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v90: int[0, 4294967295] = CallBuiltin v56 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v91: boolean = Less v88, v90
-# CHECK-NEXT: Branch v91 -> taken b10(| 0), notTaken b26()
-# CHECK-NEXT: b10(v92: int[0, 4294967294]):
-# CHECK-NEXT: v93: undefined|null|boolean|number|string|symbol|bigint = GetArrayElement v56, v92 arrayStorage=Contiguous level=Proven [keyIsIntegral]
-# CHECK-NEXT: v94: 1 = Integer integer=1
-# CHECK-NEXT: v95: int[1, 4294967295] = Add v92, v94
-# CHECK-NEXT: v96: undefined|null|boolean|number|string|symbol|bigint ~ number = Expect v93 expectedType=number
-# CHECK-NEXT: v97: 1 = Integer integer=1
-# CHECK-NEXT: v98: int[0, 1] = BitAnd v85, v97
-# CHECK-NEXT: v99: boolean = ToBoolean v98
-# CHECK-NEXT: Branch v99 -> taken b11(), notTaken b12()
-# CHECK-NEXT: b11():
-# CHECK-NEXT: Jump -> next b13(v1)
-# CHECK-NEXT: b12():
-# CHECK-NEXT: Jump -> next b13(v0)
-# CHECK-NEXT: b13(v100: "0123456789"|"\u{3b1}\u{3b2}\u{3b3}\u{3b4}\u{3b5}\u{3b6}\u{3b7}\u{3b8}\u{3b9}\u{3ba}"):
-# CHECK-NEXT: v101: string = CallDirect v100, v96 function=f1 accessSite=4
-# CHECK-NEXT: v102: 0 = Integer
-# CHECK-NEXT: Jump -> next b14(v87, v102)
-# CHECK-NEXT: b14(v103: i32, v104: int[0, 2147483647]):
+# CHECK-NEXT: v101: int[0, 4294967295] = CallBuiltin v56 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v102: boolean = Less v99, v101
+# CHECK-NEXT: Branch v102 -> taken b13(| 0), notTaken b36()
+# CHECK-NEXT: b13(v103: int[0, 4294967294]):
+# CHECK-NEXT: v104: undefined|null|boolean|number|string|symbol|bigint = GetArrayElement v56, v103 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+# CHECK-NEXT: v105: 1 = Integer integer=1
+# CHECK-NEXT: v106: int[1, 4294967295] = Add v103, v105
+# CHECK-NEXT: v107: undefined|null|boolean|number|string|symbol|bigint ~ number = Expect v104 expectedType=number
+# CHECK-NEXT: v108: 1 = Integer integer=1
+# CHECK-NEXT: v109: int[0, 1] = BitAnd v96, v108
+# CHECK-NEXT: v110: boolean = ToBoolean v109
+# CHECK-NEXT: Branch v110 -> taken b14(), notTaken b15()
+# CHECK-NEXT: b14():
+# CHECK-NEXT: Jump -> next b16(v1)
+# CHECK-NEXT: b15():
+# CHECK-NEXT: Jump -> next b16(v0)
+# CHECK-NEXT: b16(v111: "0123456789"|"\u{3b1}\u{3b2}\u{3b3}\u{3b4}\u{3b5}\u{3b6}\u{3b7}\u{3b8}\u{3b9}\u{3ba}"):
+# CHECK-NEXT: v112: boolean ~ true = TypeTest v107 testedType=number
+# CHECK-NEXT: Branch v112 -> taken b17(| 0), notTaken b18()
+# CHECK-NEXT: b17(v113: number):
+# CHECK-NEXT: v114: int[0, 2147483647] = GetStringLength v111
+# CHECK-NEXT: v115: undefined = StringRange v114, v113
+# CHECK-NEXT: v116: int[0, 2147483647] = ResultAt v115
+# CHECK-NEXT: v117: int[0, 2147483647] = ResultAt v115 index=1
+# CHECK-NEXT: v118: string = Substring v111, v116, v117
+# CHECK-NEXT: v119: "|" = String string="|"
+# CHECK-NEXT: v120: int[0, 2147483647] = GetStringLength v111
+# CHECK-NEXT: v121: undefined = StringRange v120, v113 method=Substring
+# CHECK-NEXT: v122: int[0, 2147483647] = ResultAt v121
+# CHECK-NEXT: v123: int[0, 2147483647] = ResultAt v121 index=1
+# CHECK-NEXT: v124: string = Substring v111, v122, v123
+# CHECK-NEXT: v125: "|" = String string="|"
+# CHECK-NEXT: v126: int[0, 2147483647] = GetStringLength v111
+# CHECK-NEXT: v127: undefined = StringRange v126, v113 method=Substr
+# CHECK-NEXT: v128: int[0, 2147483647] = ResultAt v127
+# CHECK-NEXT: v129: int[0, 2147483647] = ResultAt v127 index=1
+# CHECK-NEXT: v130: string = Substring v111, v128, v129
+# CHECK-NEXT: v131: string = Strcat v118, v119, v124, v125, v130
+# CHECK-NEXT: Jump -> next b19(v131)
+# CHECK-NEXT: b18() frequency=Unlikely:
+# CHECK-NEXT: v132: string = CallDirect v111, v107 function=f9 @867:4 tail
+# CHECK-NEXT: Jump -> next b19(v132)
+# CHECK-NEXT: b19(v133: string):
+# CHECK-NEXT: v134: 0 = Integer
+# CHECK-NEXT: Jump -> next b20(v98, v134)
+# CHECK-NEXT: b20(v135: i32, v136: int[0, 2147483647]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v106: int[0, 2147483647] = GetStringLength v101
-# CHECK-NEXT: v107: boolean = Less v104, v106
-# CHECK-NEXT: Branch v107 -> taken b15(| 0), notTaken b16()
-# CHECK-NEXT: b15(v108: int[0, 2147483646]):
-# CHECK-NEXT: v109: 31 = Integer integer=31
-# CHECK-NEXT: v110: i32 = CallBuiltin -, v103, v109 overload=MathImul/0 accessSite=41
-# CHECK-NEXT: v111: int[0, 65535] = GetStringCodeUnit v101, v108
-# CHECK-NEXT: v112: int[-2147483648, 2147549182] = Add v110, v111
-# CHECK-NEXT: v113: 0 = Integer
-# CHECK-NEXT: v114: i32 = BitOr v112, v113
-# CHECK-NEXT: v115: int[1, 2147483647] = Increment v108
-# CHECK-NEXT: Jump -> next b14(v114, v115)
-# CHECK-NEXT: b16():
-# CHECK-NEXT: v116: 31 = Integer integer=31
-# CHECK-NEXT: v117: i32 = CallBuiltin -, v103, v116 overload=MathImul/0 accessSite=44
-# CHECK-NEXT: v118: int[0, 2147483647] = GetStringLength v101
-# CHECK-NEXT: v119: int[-2147483648, 4294967294] = Add v117, v118
-# CHECK-NEXT: v120: 0 = Integer
-# CHECK-NEXT: v121: i32 = BitOr v119, v120
-# CHECK-NEXT: v122: 0 = Integer
-# CHECK-NEXT: Jump -> next b17(v121, v122)
-# CHECK-NEXT: b17(v123: i32, v124: int[0, 4294967295]):
+# CHECK-NEXT: v138: int[0, 2147483647] = GetStringLength v133
+# CHECK-NEXT: v139: boolean = Less v136, v138
+# CHECK-NEXT: Branch v139 -> taken b21(| 0), notTaken b22()
+# CHECK-NEXT: b21(v140: int[0, 2147483646]):
+# CHECK-NEXT: v141: 31 = Integer integer=31
+# CHECK-NEXT: v142: i32 = CallBuiltin -, v135, v141 overload=MathImul/0 accessSite=41
+# CHECK-NEXT: v143: int[0, 65535] = GetStringCodeUnit v133, v140
+# CHECK-NEXT: v144: int[-2147483648, 2147549182] = Add v142, v143
+# CHECK-NEXT: v145: 0 = Integer
+# CHECK-NEXT: v146: i32 = BitOr v144, v145
+# CHECK-NEXT: v147: int[1, 2147483647] = Increment v140
+# CHECK-NEXT: Jump -> next b20(v146, v147)
+# CHECK-NEXT: b22():
+# CHECK-NEXT: v148: 31 = Integer integer=31
+# CHECK-NEXT: v149: i32 = CallBuiltin -, v135, v148 overload=MathImul/0 accessSite=44
+# CHECK-NEXT: v150: int[0, 2147483647] = GetStringLength v133
+# CHECK-NEXT: v151: int[-2147483648, 4294967294] = Add v149, v150
+# CHECK-NEXT: v152: 0 = Integer
+# CHECK-NEXT: v153: i32 = BitOr v151, v152
+# CHECK-NEXT: v154: 0 = Integer
+# CHECK-NEXT: Jump -> next b23(v153, v154)
+# CHECK-NEXT: b23(v155: i32, v156: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v126: int[0, 4294967295] = CallBuiltin v56 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v127: boolean = Less v124, v126
-# CHECK-NEXT: Branch v127 -> taken b18(| 0), notTaken b25()
-# CHECK-NEXT: b18(v128: int[0, 4294967294]):
-# CHECK-NEXT: v129: undefined|null|boolean|number|string|symbol|bigint = GetArrayElement v56, v128 arrayStorage=Contiguous level=Proven [keyIsIntegral]
-# CHECK-NEXT: v130: 1 = Integer integer=1
-# CHECK-NEXT: v131: int[1, 4294967295] = Add v128, v130
-# CHECK-NEXT: v132: undefined|null|boolean|number|string|symbol|bigint ~ number = Expect v129 expectedType=number
-# CHECK-NEXT: v133: 1 = Integer integer=1
-# CHECK-NEXT: v134: int[0, 1] = BitAnd v85, v133
-# CHECK-NEXT: v135: boolean = ToBoolean v134
-# CHECK-NEXT: Branch v135 -> taken b19(), notTaken b20()
-# CHECK-NEXT: b19():
-# CHECK-NEXT: Jump -> next b21(v1)
-# CHECK-NEXT: b20():
-# CHECK-NEXT: Jump -> next b21(v0)
-# CHECK-NEXT: b21(v136: "0123456789"|"\u{3b1}\u{3b2}\u{3b3}\u{3b4}\u{3b5}\u{3b6}\u{3b7}\u{3b8}\u{3b9}\u{3ba}"):
-# CHECK-NEXT: v137: string = CallDirect v136, v96, v132 function=f2 accessSite=6
-# CHECK-NEXT: v138: 0 = Integer
-# CHECK-NEXT: Jump -> next b22(v123, v138)
-# CHECK-NEXT: b22(v139: i32, v140: int[0, 2147483647]):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v142: int[0, 2147483647] = GetStringLength v137
-# CHECK-NEXT: v143: boolean = Less v140, v142
-# CHECK-NEXT: Branch v143 -> taken b23(| 0), notTaken b24()
-# CHECK-NEXT: b23(v144: int[0, 2147483646]):
-# CHECK-NEXT: v145: 31 = Integer integer=31
-# CHECK-NEXT: v146: i32 = CallBuiltin -, v139, v145 overload=MathImul/0 accessSite=41
-# CHECK-NEXT: v147: int[0, 65535] = GetStringCodeUnit v137, v144
-# CHECK-NEXT: v148: int[-2147483648, 2147549182] = Add v146, v147
-# CHECK-NEXT: v149: 0 = Integer
-# CHECK-NEXT: v150: i32 = BitOr v148, v149
-# CHECK-NEXT: v151: int[1, 2147483647] = Increment v144
-# CHECK-NEXT: Jump -> next b22(v150, v151)
-# CHECK-NEXT: b24():
-# CHECK-NEXT: v152: 31 = Integer integer=31
-# CHECK-NEXT: v153: i32 = CallBuiltin -, v139, v152 overload=MathImul/0 accessSite=44
-# CHECK-NEXT: v154: int[0, 2147483647] = GetStringLength v137
-# CHECK-NEXT: v155: int[-2147483648, 4294967294] = Add v153, v154
-# CHECK-NEXT: v156: 0 = Integer
-# CHECK-NEXT: v157: i32 = BitOr v155, v156
-# CHECK-NEXT: Jump -> next b17(v157, v131)
+# CHECK-NEXT: v158: int[0, 4294967295] = CallBuiltin v56 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v159: boolean = Less v156, v158
+# CHECK-NEXT: Branch v159 -> taken b24(| 0), notTaken b35()
+# CHECK-NEXT: b24(v160: int[0, 4294967294]):
+# CHECK-NEXT: v161: undefined|null|boolean|number|string|symbol|bigint = GetArrayElement v56, v160 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+# CHECK-NEXT: v162: 1 = Integer integer=1
+# CHECK-NEXT: v163: int[1, 4294967295] = Add v160, v162
+# CHECK-NEXT: v164: undefined|null|boolean|number|string|symbol|bigint ~ number = Expect v161 expectedType=number
+# CHECK-NEXT: v165: 1 = Integer integer=1
+# CHECK-NEXT: v166: int[0, 1] = BitAnd v96, v165
+# CHECK-NEXT: v167: boolean = ToBoolean v166
+# CHECK-NEXT: Branch v167 -> taken b25(), notTaken b26()
 # CHECK-NEXT: b25():
-# CHECK-NEXT: Jump -> next b9(v123, v95)
+# CHECK-NEXT: Jump -> next b27(v1)
 # CHECK-NEXT: b26():
-# CHECK-NEXT: v158: int[1, 40] = Increment v85
-# CHECK-NEXT: Jump -> next b7(v87, v158)
-# CHECK-NEXT: b27():
-# CHECK-NEXT: v159: undefined = CallBuiltin -, v80 overload=ConsoleLog/0 accessSite=10
-# CHECK-NEXT: v160: 4 = Integer integer=4
-# CHECK-NEXT: v161: string = CallDirect v0, v160 function=f4 accessSite=13
-# CHECK-NEXT: v162: undefined = CallBuiltin -, v161 overload=ConsoleLog/0 accessSite=14
-# CHECK-NEXT: v163: 0 = Integer
-# CHECK-NEXT: v164: 300 = Integer integer=300
-# CHECK-NEXT: v165: string = CallDirect v1, v164 function=f4 accessSite=17
-# CHECK-NEXT: v166: i32 = CallDirect v163, v165 function=f3 accessSite=18
-# CHECK-NEXT: v167: undefined = CallBuiltin -, v166 overload=ConsoleLog/0 accessSite=19
-# CHECK-NEXT: v168: undefined = Undefined
-# CHECK-NEXT: Return v168
+# CHECK-NEXT: Jump -> next b27(v0)
+# CHECK-NEXT: b27(v168: "0123456789"|"\u{3b1}\u{3b2}\u{3b3}\u{3b4}\u{3b5}\u{3b6}\u{3b7}\u{3b8}\u{3b9}\u{3ba}"):
+# CHECK-NEXT: v169: boolean ~ true = TypeTest v107 testedType=number
+# CHECK-NEXT: Branch v169 -> taken b28(| 0), notTaken b30()
+# CHECK-NEXT: b28(v170: number):
+# CHECK-NEXT: v171: boolean ~ true = TypeTest v164 testedType=number
+# CHECK-NEXT: Branch v171 -> taken b29(| 0), notTaken b30()
+# CHECK-NEXT: b29(v172: number):
+# CHECK-NEXT: v173: int[0, 2147483647] = GetStringLength v168
+# CHECK-NEXT: v174: undefined = StringRange v173, v170, v172
+# CHECK-NEXT: v175: int[0, 2147483647] = ResultAt v174
+# CHECK-NEXT: v176: int[0, 2147483647] = ResultAt v174 index=1
+# CHECK-NEXT: v177: string = Substring v168, v175, v176
+# CHECK-NEXT: v178: "|" = String string="|"
+# CHECK-NEXT: v179: int[0, 2147483647] = GetStringLength v168
+# CHECK-NEXT: v180: undefined = StringRange v179, v170, v172 method=Substring
+# CHECK-NEXT: v181: int[0, 2147483647] = ResultAt v180
+# CHECK-NEXT: v182: int[0, 2147483647] = ResultAt v180 index=1
+# CHECK-NEXT: v183: string = Substring v168, v181, v182
+# CHECK-NEXT: v184: "|" = String string="|"
+# CHECK-NEXT: v185: int[0, 2147483647] = GetStringLength v168
+# CHECK-NEXT: v186: undefined = StringRange v185, v170, v172 method=Substr
+# CHECK-NEXT: v187: int[0, 2147483647] = ResultAt v186
+# CHECK-NEXT: v188: int[0, 2147483647] = ResultAt v186 index=1
+# CHECK-NEXT: v189: string = Substring v168, v187, v188
+# CHECK-NEXT: v190: string = Strcat v177, v178, v183, v184, v189
+# CHECK-NEXT: Jump -> next b31(v190)
+# CHECK-NEXT: b30() frequency=Unlikely:
+# CHECK-NEXT: v191: string = CallDirect v168, v107, v164 function=f10 @980:2 tail
+# CHECK-NEXT: Jump -> next b31(v191)
+# CHECK-NEXT: b31(v192: string):
+# CHECK-NEXT: v193: 0 = Integer
+# CHECK-NEXT: Jump -> next b32(v155, v193)
+# CHECK-NEXT: b32(v194: i32, v195: int[0, 2147483647]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v197: int[0, 2147483647] = GetStringLength v192
+# CHECK-NEXT: v198: boolean = Less v195, v197
+# CHECK-NEXT: Branch v198 -> taken b33(| 0), notTaken b34()
+# CHECK-NEXT: b33(v199: int[0, 2147483646]):
+# CHECK-NEXT: v200: 31 = Integer integer=31
+# CHECK-NEXT: v201: i32 = CallBuiltin -, v194, v200 overload=MathImul/0 accessSite=41
+# CHECK-NEXT: v202: int[0, 65535] = GetStringCodeUnit v192, v199
+# CHECK-NEXT: v203: int[-2147483648, 2147549182] = Add v201, v202
+# CHECK-NEXT: v204: 0 = Integer
+# CHECK-NEXT: v205: i32 = BitOr v203, v204
+# CHECK-NEXT: v206: int[1, 2147483647] = Increment v199
+# CHECK-NEXT: Jump -> next b32(v205, v206)
+# CHECK-NEXT: b34():
+# CHECK-NEXT: v207: 31 = Integer integer=31
+# CHECK-NEXT: v208: i32 = CallBuiltin -, v194, v207 overload=MathImul/0 accessSite=44
+# CHECK-NEXT: v209: int[0, 2147483647] = GetStringLength v192
+# CHECK-NEXT: v210: int[-2147483648, 4294967294] = Add v208, v209
+# CHECK-NEXT: v211: 0 = Integer
+# CHECK-NEXT: v212: i32 = BitOr v210, v211
+# CHECK-NEXT: Jump -> next b23(v212, v163)
+# CHECK-NEXT: b35():
+# CHECK-NEXT: Jump -> next b12(v155, v106)
+# CHECK-NEXT: b36():
+# CHECK-NEXT: v213: int[1, 40] = Increment v96
+# CHECK-NEXT: Jump -> next b10(v98, v213)
+# CHECK-NEXT: b37():
+# CHECK-NEXT: v214: undefined = CallBuiltin -, v91 overload=ConsoleLog/0 accessSite=10
+# CHECK-NEXT: v215: 4 = Integer integer=4
+# CHECK-NEXT: v216: string = CallDirect v0, v215 function=f4 accessSite=13
+# CHECK-NEXT: v217: undefined = CallBuiltin -, v216 overload=ConsoleLog/0 accessSite=14
+# CHECK-NEXT: v218: 0 = Integer
+# CHECK-NEXT: v219: 300 = Integer integer=300
+# CHECK-NEXT: v220: string = CallDirect v1, v219 function=f4 accessSite=17
+# CHECK-NEXT: v221: i32 = CallDirect v218, v220 function=f3 accessSite=18
+# CHECK-NEXT: v222: undefined = CallBuiltin -, v221 overload=ConsoleLog/0 accessSite=19
+# CHECK-NEXT: v223: undefined = Undefined
+# CHECK-NEXT: Return v223
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="one"
-# CHECK: module=m0 position=867 role=EntryChecks flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string site=w4 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w5 flags=[IsExpected]}] results=[{type=string site=w6 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f7 fallback=f9} {
-# CHECK-NEXT: b0(v0: string, v1: anything ~ number):
-# CHECK-NEXT: v2: boolean ~ true = TypeTest v1 testedType=number
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v3: number):
-# CHECK-NEXT: v4: string = CallDirect v0, v3 function=f7
-# CHECK-NEXT: ReturnCall v4 requirement=Allowed
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v5: string = CallDirect v0, v1 function=f9
-# CHECK-NEXT: ReturnCall v5 requirement=Allowed
-# CHECK-NEXT: }
+# CHECK: module=m0 position=867 role=EntryChecks flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string site=w4 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w5 flags=[IsExpected]}] results=[{type=string site=w6 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f7 fallback=f9}
 # CHECK-LABEL: function {{*}}name="two"
-# CHECK: module=m0 position=980 role=EntryChecks flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=string site=w7 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w8 flags=[IsExpected]}, {type=number site=w9 flags=[IsExpected]}] results=[{type=string site=w10 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f8 fallback=f10} {
-# CHECK-NEXT: b0(v0: string, v1: anything ~ number, v2: anything ~ number):
-# CHECK-NEXT: v3: boolean ~ true = TypeTest v1 testedType=number
-# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b3()
-# CHECK-NEXT: b1(v4: number):
-# CHECK-NEXT: v5: boolean ~ true = TypeTest v2 testedType=number
-# CHECK-NEXT: Branch v5 -> taken b2(| 0), notTaken b3()
-# CHECK-NEXT: b2(v6: number):
-# CHECK-NEXT: v7: string = CallDirect v0, v4, v6 function=f8
-# CHECK-NEXT: ReturnCall v7 requirement=Allowed
-# CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v8: string = CallDirect v0, v1, v2 function=f10
-# CHECK-NEXT: ReturnCall v8 requirement=Allowed
-# CHECK-NEXT: }
+# CHECK: module=m0 position=980 role=EntryChecks flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=string site=w7 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w8 flags=[IsExpected]}, {type=number site=w9 flags=[IsExpected]}] results=[{type=string site=w10 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f8 fallback=f10}
 # CHECK-LABEL: function {{*}}name="mix"
 # CHECK: module=m0 position=1113 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=i32 site=w11}, {type=undefined|null|string site=w12 flags=[OmitsNull, OmitsUndefined]}] results=[{type=i32 site=w13}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: i32, v1: undefined|null|string):

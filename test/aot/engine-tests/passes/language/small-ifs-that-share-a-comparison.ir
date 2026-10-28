@@ -124,79 +124,94 @@ function f2 name="operandIsChanged" module=m0 position=793 flags=[IsChecked, Has
 # CHECK-NEXT: v21: false = Boolean
 # CHECK-NEXT: v22: 0 = Integer
 # CHECK-NEXT: Jump -> next b1(v21, v22)
-# CHECK-NEXT: b1(v23: boolean, v24: int[0, 2147483647]):
+# CHECK-NEXT: b1(v23: boolean ~ false, v24: int[0, 2147483647] ~ 0):
+# CHECK-NEXT: Jump -> next b2(v23, v24)
+# CHECK-NEXT: b2(v25: boolean, v26: int[0, 2147483647]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: Branch v23 -> taken b2(), notTaken b3()
-# CHECK-NEXT: b2():
-# CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: Branch v25 -> taken b3(), notTaken b4()
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v26: 5 = Integer integer=5
-# CHECK-NEXT: v27: boolean = Less v24, v26
-# CHECK-NEXT: Branch v27 -> taken b4(| 0), notTaken b6()
-# CHECK-NEXT: b4(v28: int[0, 4]):
-# CHECK-NEXT: Switch v28 cases=[0, 1, 2, 3] -> case b5(v4), case b5(v8), case b5(v12), case b5(v16), otherwise b5(v20)
-# CHECK-NEXT: b5(v29: Array<int[0, 987654321], proven, Int32, pristine[Storage, Names, Dense]>):
-# CHECK-NEXT: v30: 1 = Integer integer=1
-# CHECK-NEXT: v31: int[1, 5] = Add v28, v30
-# CHECK-NEXT: v32: false = Boolean
-# CHECK-NEXT: Jump -> next b8(v29, v32, v31)
-# CHECK-NEXT: b6():
-# CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: Jump -> next b8()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v28: 5 = Integer integer=5
+# CHECK-NEXT: v29: boolean = Less v26, v28
+# CHECK-NEXT: Branch v29 -> taken b5(| 0), notTaken b7()
+# CHECK-NEXT: b5(v30: int[0, 4]):
+# CHECK-NEXT: Switch v30 cases=[0, 1, 2, 3] -> case b6(v4), case b6(v8), case b6(v12), case b6(v16), otherwise b6(v20)
+# CHECK-NEXT: b6(v31: Array<int[0, 987654321], proven, Int32, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v32: 1 = Integer integer=1
+# CHECK-NEXT: v33: int[1, 5] = Add v30, v32
+# CHECK-NEXT: v34: false = Boolean
+# CHECK-NEXT: Jump -> next b9(v31, v34, v33)
 # CHECK-NEXT: b7():
-# CHECK-NEXT: v33: true = Boolean boolean=true
-# CHECK-NEXT: v34: undefined = Undefined
-# CHECK-NEXT: Jump -> next b8(v34, v33, v24)
-# CHECK-NEXT: b8(v35: undefined|Array<int[0, 987654321], proven, Int32, pristine[Storage, Names, Dense]>, v36: boolean, v37: int[0, 2147483647]):
-# CHECK-NEXT: v38: Array<int[0, 987654321], proven, Int32, pristine[Storage, Names, Dense]> = RequireObjectCoercible v35 nullishAccess=Iterate
-# CHECK-NEXT: v39: 0 = Integer
-# CHECK-NEXT: v40: boolean = IsInBounds v38, v39
-# CHECK-NEXT: Branch v40 -> taken b9(| 0), notTaken b11()
-# CHECK-NEXT: b9(v41: guard):
-# CHECK-NEXT: v42: int[0, 987654321] = GetArrayElement v38, v39, v41 arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v43: int[0, 987654321] ~ int[0, 70000] = Expect v42 expectedType=int[0, 70000]
-# CHECK-NEXT: v44: 1 = Integer integer=1
-# CHECK-NEXT: v45: boolean = IsInBounds v38, v44
-# CHECK-NEXT: Branch v45 -> taken b10(| 0), notTaken b12(v43)
-# CHECK-NEXT: b10(v46: guard):
-# CHECK-NEXT: v47: int[0, 987654321] = GetArrayElement v38, v44, v46 arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds]
-# CHECK-NEXT: Jump -> next b13(v47, v43)
-# CHECK-NEXT: b11() frequency=Rare:
-# CHECK-NEXT: v48: undefined|int[0, 987654321] = GetArrayElement v38, v39 arrayStorage=Int32 level=Proven [keyIsIntegral]
-# CHECK-NEXT: v49: undefined|int[0, 987654321] ~ int[0, 70000] = Expect v48 expectedType=int[0, 70000]
-# CHECK-NEXT: Jump -> next b12(v49)
-# CHECK-NEXT: b12(v50: undefined|int[0, 987654321] ~ int[0, 70000]) frequency=Rare:
-# CHECK-NEXT: v51: 1 = Integer integer=1
-# CHECK-NEXT: v52: undefined|int[0, 987654321] = GetArrayElement v38, v51 arrayStorage=Int32 level=Proven [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b13(v52, v50)
-# CHECK-NEXT: b13(v53: undefined|int[0, 987654321] ~ int[0, 987654321], v54: undefined|int[0, 987654321] ~ int[0, 70000]):
-# CHECK-NEXT: v55: undefined|int[0, 987654321] ~ int[1, 987654321] = Expect v53 expectedType=int[1, 987654321]
-# CHECK-NEXT: v56: undefined|null|Int32Array = Call v0, -, v54, v55 calleeName="fill" accessSite=0 callees=[f1, ..]
-# CHECK-NEXT: v57: Int32Array = RequireObjectCoercible v56 name="slice"
-# CHECK-NEXT: v58: boolean = IsPristine v57 builtinClass=Int32Array aspects=[Names]
-# CHECK-NEXT: Branch v58 -> taken b14(), notTaken b16()
-# CHECK-NEXT: b14():
-# CHECK-NEXT: v59: Int32Array = CallBuiltin v57 overload=TypedArrayPrototypeSlice/0 accessSite=2 [needsPristineReceiver]
-# CHECK-NEXT: Jump -> next b15()
-# CHECK-NEXT: b15():
-# CHECK-NEXT: v60: builtin(TypedArrayPrototypeSort) = Builtin builtin=TypedArrayPrototypeSort
-# CHECK-NEXT: v61: anything = Call v60, v59 calleeKey="sort" calleeName="sort" accessSite=4 callees=[..]
-# CHECK-NEXT: Jump -> next b18(v61)
-# CHECK-NEXT: b16() frequency=Rare:
-# CHECK-NEXT: v62: anything = PropGet v57 key="slice" accessSite=1
-# CHECK-NEXT: v63: anything ~ builtin(TypedArrayPrototypeSlice) = Upcast v62 castType=anything
-# CHECK-NEXT: v64: anything = Call v63, v57 calleeKey="slice" calleeName="values.slice" accessSite=2 callees=[..]
-# CHECK-NEXT: v65: anything ~ undefined|null|Int32Array = Expect v64 expectedType=undefined|null|Int32Array
-# CHECK-NEXT: v66: boolean|number|string|symbol|bigint|object ~ Int32Array = RequireObjectCoercible v65 name="sort"
-# CHECK-NEXT: Jump -> next b17(v66)
-# CHECK-NEXT: b17(v67: boolean|number|string|symbol|bigint|object ~ Int32Array) frequency=Rare:
-# CHECK-NEXT: v68: anything = PropGet v67 key="sort" accessSite=3
-# CHECK-NEXT: v69: anything = Call v68, v67 calleeKey="sort" calleeName="sort" accessSite=4 callees=[..]
-# CHECK-NEXT: Jump -> next b18(v69)
-# CHECK-NEXT: b18(v70: anything):
-# CHECK-NEXT: v71: anything ~ undefined|null|Int32Array = Expect v70 expectedType=undefined|null|Int32Array
-# CHECK-NEXT: v72: undefined|null|Int32Array = AssumeType v71 provenType=undefined|null|Int32Array
-# CHECK-NEXT: v73: string = CallDirect v72 function=f2 accessSite=5
-# CHECK-NEXT: Jump -> next b1(v36, v37)
+# CHECK-NEXT: Jump -> next b8()
+# CHECK-NEXT: b8():
+# CHECK-NEXT: v35: true = Boolean boolean=true
+# CHECK-NEXT: v36: undefined = Undefined
+# CHECK-NEXT: Jump -> next b9(v36, v35, v26)
+# CHECK-NEXT: b9(v37: undefined|Array<int[0, 987654321], proven, Int32, pristine[Storage, Names, Dense]>, v38: boolean, v39: int[0, 2147483647]):
+# CHECK-NEXT: v40: Array<int[0, 987654321], proven, Int32, pristine[Storage, Names, Dense]> = RequireObjectCoercible v37 nullishAccess=Iterate
+# CHECK-NEXT: v41: 0 = Integer
+# CHECK-NEXT: v42: boolean = IsInBounds v40, v41
+# CHECK-NEXT: Branch v42 -> taken b10(| 0), notTaken b14()
+# CHECK-NEXT: b10(v43: guard):
+# CHECK-NEXT: v44: int[0, 987654321] = GetArrayElement v40, v41, v43 arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v45: int[0, 987654321] ~ int[0, 70000] = Expect v44 expectedType=int[0, 70000]
+# CHECK-NEXT: v46: 1 = Integer integer=1
+# CHECK-NEXT: v47: boolean = IsInBounds v40, v46
+# CHECK-NEXT: Branch v47 -> taken b11(| 0), notTaken b15(v45)
+# CHECK-NEXT: b11(v48: guard):
+# CHECK-NEXT: v49: int[0, 987654321] = GetArrayElement v40, v46, v48 arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v50: int[0, 987654321] ~ int[1, 987654321] = Expect v49 expectedType=int[1, 987654321]
+# CHECK-NEXT: v51: undefined|null|Int32Array = Call v0, -, v45, v50 calleeName="fill" accessSite=0 callees=[f1, ..]
+# CHECK-NEXT: v52: Int32Array = RequireObjectCoercible v51 name="slice"
+# CHECK-NEXT: v53: boolean = IsPristine v52 builtinClass=Int32Array aspects=[Names]
+# CHECK-NEXT: Branch v53 -> taken b12(), notTaken b18(v52)
+# CHECK-NEXT: b12():
+# CHECK-NEXT: v54: Int32Array = CallBuiltin v52 overload=TypedArrayPrototypeSlice/0 accessSite=2 [needsPristineReceiver]
+# CHECK-NEXT: Jump -> next b13()
+# CHECK-NEXT: b13():
+# CHECK-NEXT: v55: builtin(TypedArrayPrototypeSort) = Builtin builtin=TypedArrayPrototypeSort
+# CHECK-NEXT: v56: anything = Call v55, v54 calleeKey="sort" calleeName="sort" accessSite=4 callees=[..]
+# CHECK-NEXT: v57: anything ~ undefined|null|Int32Array = Expect v56 expectedType=undefined|null|Int32Array
+# CHECK-NEXT: v58: undefined|null|Int32Array = AssumeType v57 provenType=undefined|null|Int32Array
+# CHECK-NEXT: v59: string = CallDirect v58 function=f2 accessSite=5
+# CHECK-NEXT: Jump -> next b2(v38, v39)
+# CHECK-NEXT: b14() frequency=Rare:
+# CHECK-NEXT: v60: undefined|int[0, 987654321] = GetArrayElement v40, v41 arrayStorage=Int32 level=Proven [keyIsIntegral]
+# CHECK-NEXT: v61: undefined|int[0, 987654321] ~ int[0, 70000] = Expect v60 expectedType=int[0, 70000]
+# CHECK-NEXT: Jump -> next b15(v61)
+# CHECK-NEXT: b15(v62: undefined|int[0, 987654321] ~ int[0, 70000]) frequency=Rare:
+# CHECK-NEXT: v63: 1 = Integer integer=1
+# CHECK-NEXT: v64: undefined|int[0, 987654321] = GetArrayElement v40, v63 arrayStorage=Int32 level=Proven [keyIsIntegral]
+# CHECK-NEXT: v65: undefined|int[0, 987654321] ~ int[0, 987654321] = Upcast v64 castType=undefined|int[0, 987654321]
+# CHECK-NEXT: v66: undefined|int[0, 987654321] ~ int[1, 987654321] = Expect v65 expectedType=int[1, 987654321]
+# CHECK-NEXT: v67: undefined|null|Int32Array = Call v0, -, v62, v66 calleeName="fill" accessSite=0 callees=[f1, ..]
+# CHECK-NEXT: v68: Int32Array = RequireObjectCoercible v67 name="slice"
+# CHECK-NEXT: v69: boolean = IsPristine v68 builtinClass=Int32Array aspects=[Names]
+# CHECK-NEXT: Branch v69 -> taken b16(), notTaken b18(v68)
+# CHECK-NEXT: b16() frequency=Unlikely:
+# CHECK-NEXT: v70: Int32Array = CallBuiltin v68 overload=TypedArrayPrototypeSlice/0 accessSite=2 [needsPristineReceiver]
+# CHECK-NEXT: Jump -> next b17()
+# CHECK-NEXT: b17() frequency=Unlikely:
+# CHECK-NEXT: v71: builtin(TypedArrayPrototypeSort) = Builtin builtin=TypedArrayPrototypeSort
+# CHECK-NEXT: v72: anything = Call v71, v70 calleeKey="sort" calleeName="sort" accessSite=4 callees=[..]
+# CHECK-NEXT: Jump -> next b20(v72)
+# CHECK-NEXT: b18(v73: Int32Array) frequency=Rare:
+# CHECK-NEXT: v74: anything = PropGet v73 key="slice" accessSite=1
+# CHECK-NEXT: v75: anything ~ builtin(TypedArrayPrototypeSlice) = Upcast v74 castType=anything
+# CHECK-NEXT: v76: anything = Call v75, v73 calleeKey="slice" calleeName="values.slice" accessSite=2 callees=[..]
+# CHECK-NEXT: v77: anything ~ undefined|null|Int32Array = Expect v76 expectedType=undefined|null|Int32Array
+# CHECK-NEXT: v78: boolean|number|string|symbol|bigint|object ~ Int32Array = RequireObjectCoercible v77 name="sort"
+# CHECK-NEXT: Jump -> next b19(v78)
+# CHECK-NEXT: b19(v79: boolean|number|string|symbol|bigint|object ~ Int32Array) frequency=Rare:
+# CHECK-NEXT: v80: anything = PropGet v79 key="sort" accessSite=3
+# CHECK-NEXT: v81: anything = Call v80, v79 calleeKey="sort" calleeName="sort" accessSite=4 callees=[..]
+# CHECK-NEXT: Jump -> next b20(v81)
+# CHECK-NEXT: b20(v82: anything) frequency=Unlikely:
+# CHECK-NEXT: v83: anything ~ undefined|null|Int32Array = Expect v82 expectedType=undefined|null|Int32Array
+# CHECK-NEXT: v84: undefined|null|Int32Array = AssumeType v83 provenType=undefined|null|Int32Array
+# CHECK-NEXT: v85: string = CallDirect v84 function=f2 accessSite=5
+# CHECK-NEXT: Jump -> next b1(v38, v39)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="operandIsChanged"
 # CHECK: module=m0 position=793 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]}] results=[{type=string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

@@ -9,8 +9,10 @@ const maxMilliseconds = Number(process.env.BATCH_MILLISECONDS ?? 2000);
 const maxBytes = Number(process.env.BATCH_MEGABYTES ?? 512) * 2 ** 20;
 // With BATCH_ENDS_WITHIN=<milliseconds>, each Worker is ended at a moment drawn from that span, whatever the program is doing then.
 const endsWithin = Number(process.env.BATCH_ENDS_WITHIN ?? 0);
+// With BATCH_AT_ONCE=<number> as well, that many Workers run at the same time. Their marks follow when all of them have ended.
+const atOnce = endsWithin ? Number(process.env.BATCH_AT_ONCE ?? 1) : 1;
 
-for (const index of indexes) {
+async function runInAWorker(index: string) {
   const bytesBefore = process.memoryUsage.rss();
   const group = new URL(`./group-${Math.floor(Number(index) / Number(programsInGroup))}.${extension}`, import.meta.url)
     .href;
@@ -39,7 +41,14 @@ for (const index of indexes) {
   );
   clearTimeout(clock);
   clearInterval(meter);
-  const end = stoppedBy || (failed ? "error" : exitCode);
-  console.log(`\n${mark} ${index} ${end}`);
-  console.error(`\n${mark} ${index} ${end}`);
+  return stoppedBy || (failed ? "error" : exitCode);
+}
+
+for (let first = 0; first < indexes.length; first += atOnce) {
+  const together = indexes.slice(first, first + atOnce);
+  const ends = await Promise.all(together.map(runInAWorker));
+  together.forEach((index, at) => {
+    console.log(`\n${mark} ${index} ${ends[at]}`);
+    console.error(`\n${mark} ${index} ${ends[at]}`);
+  });
 }

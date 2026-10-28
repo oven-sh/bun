@@ -286,10 +286,21 @@ async function run(cmd: string[], cwd: string, env: Record<string, string> = {})
   return { stdout, stderr, exitCode, signalCode: proc.signalCode };
 }
 
+// A reader stays a function of its own: copied into the `try` of its caller it would find null by a comparison.
 async function build(directory: string, file: string, ...furtherEntryPoints: string[]) {
   const executable = join(directory, file.replace(/\.ts$/, ""));
   const built = await run(
-    [bunExe(), "build", "--compile", "--aot", file, ...furtherEntryPoints, "--outfile", executable],
+    [
+      bunExe(),
+      "build",
+      "--compile",
+      "--aot",
+      "--aot-disable=InlineCalls",
+      file,
+      ...furtherEntryPoints,
+      "--outfile",
+      executable,
+    ],
     directory,
   );
   expect({ stderr: built.stderr, exitCode: built.exitCode }).toMatchObject({ exitCode: 0 });

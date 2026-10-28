@@ -704,7 +704,7 @@ runtimefunction id=131091 function=f33 visibility=Private
 # CHECK-NEXT: end of function f35
 # CHECK-LABEL: function {{*}}name="lengths"
 # CHECK: role=GenericVersion
-# CHECK-NEXT: instructions: 46, patchpoints: 8, rare instructions: 87, polls: 1
+# CHECK-NEXT: instructions: 49, patchpoints: 8, rare instructions: 78, polls: 1
 # CHECK-NEXT: end of function f41
 # CHECK-LABEL: function {{*}}name="leavesTheLoop"
 # CHECK: role=EntryChecks
@@ -712,7 +712,7 @@ runtimefunction id=131091 function=f33 visibility=Private
 # CHECK-NEXT: end of function f3
 # CHECK-LABEL: function {{*}}name="leavesTheLoop"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 53, patchpoints: 6, rare instructions: 218, polls: 1
+# CHECK-NEXT: instructions: 53, patchpoints: 6, rare instructions: 217, polls: 1
 # CHECK-NEXT: end of function f36
 # CHECK-LABEL: function {{*}}name="leavesTheLoop"
 # CHECK: role=GenericVersion

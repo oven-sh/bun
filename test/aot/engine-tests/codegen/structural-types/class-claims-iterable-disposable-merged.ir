@@ -163,5 +163,5 @@ function f40 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # -- generated: total
 # CHECK-LABEL: function {{*}}name="total"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 90, patchpoints: 3, rare instructions: 63, polls: 1
+# CHECK-NEXT: instructions: 92, patchpoints: 3, rare instructions: 61, polls: 1
 # CHECK-NEXT: end of function f1

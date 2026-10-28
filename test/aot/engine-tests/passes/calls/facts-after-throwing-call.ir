@@ -78,7 +78,7 @@ function f1 name="loop" module=m0 position=2362 flags=[IsChecked, HasExplicitNam
 function f2 name="Box" module=m0 position=169 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w3}, {type=undefined|null|string site=w4 flags=[OmitsNull]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0
 # -- generated: f0 loop
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: f2 = NewClosure function=f2 allocationSite=1
 # CHECK-NEXT: v1: f2 = NewClass v0 layout=L0
@@ -90,21 +90,19 @@ function f2 name="Box" module=m0 position=169 kind=BaseConstructor flags=[HasNew
 # CHECK-NEXT: v5: anything ~ object = Construct v2, -, v4 calleeName="Box" accessSite=0 callees=[f2]
 # CHECK-NEXT: v6: anything ~ L0 = Expect v5 expectedType=undefined|null|L0
 # CHECK-NEXT: v7: 9 = Integer integer=9
-# CHECK-NEXT: v8: undefined|null|string = CallDirect v6, v7 function=f1 accessSite=1
+# CHECK-NEXT: v8: boolean ~ true = TypeTest v6 testedType=undefined|null|L0
+# CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v9: undefined|null|L0 ~ L0):
+# CHECK-NEXT: v10: undefined|null|string = CallDirect v9, v7 function=f4 @2362:1 tail
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b3() frequency=Unlikely:
+# CHECK-NEXT: v11: undefined|null|string = CallDirect v6, v7 function=f5 @2362:1 tail
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b4():
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="loop"
-# CHECK: module=m0 position=2362 role=EntryChecks flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w0 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=9 site=w1}] results=[{type=undefined|null|string site=w2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f4 fallback=f5} {
-# CHECK-NEXT: b0(v0: anything ~ undefined|null|L0, v1: 9):
-# CHECK-NEXT: v2: boolean ~ true = TypeTest v0 testedType=undefined|null|L0
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v3: undefined|null|L0):
-# CHECK-NEXT: v4: undefined|null|string = CallDirect v3, v1 function=f4
-# CHECK-NEXT: ReturnCall v4 requirement=Allowed
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v5: undefined|null|string = CallDirect v0, v1 function=f5
-# CHECK-NEXT: ReturnCall v5 requirement=Allowed
-# CHECK-NEXT: }
+# CHECK: module=m0 position=2362 role=EntryChecks flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w0 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=9 site=w1}] results=[{type=undefined|null|string site=w2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f4 fallback=f5}
 # CHECK-LABEL: function {{*}}name="loop"
 # CHECK: module=m0 position=2362 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w0}, {type=9 site=w1}] results=[{type=undefined|null|string site=w2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{original=0}, {original=1}]} {
 # CHECK-NEXT: b0(v0: undefined|null|L0, v1: 9):

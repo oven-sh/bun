@@ -1,6 +1,7 @@
 // Each program is compiled with --aot, runs with the interpreter forbidden, and must say what plain Bun says; a CommonJS program, what it
 // says as an executable without --aot, where the bundler has linked its require() calls. Where this Bun can leave parts of the runtime
-// out, the executable that is trimmed by what the program names must say the same again.
+// out, the executable that is trimmed by what the program names must say the same again. What --trim removes is decided behind the
+// compiler, so one build compiles the program and writes both executables.
 import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
@@ -45,16 +46,18 @@ export function describePrograms(what: string, programs: Record<string, Program>
         using dir = tempDir("aot-built-in-functions-by-use", { [name]: program.source, ...program.files });
         const cwd = String(dir);
         await slot(async () => {
-          const build = async (flags: string[], outfile: string) => {
-            const { stderr: said, exitCode: built } = await runCommand([bunExe(), "build", "--compile", ...flags, name, "--outfile", outfile], cwd);
+          const build = async (flags: string[], outfile: string, env = bunEnv) => {
+            const { stderr: said, exitCode: built } = await runCommand([bunExe(), "build", "--compile", ...flags, name, "--outfile", outfile], cwd, env);
             expect({ title, flags, said, built }).toEqual({ title, flags, said: expect.any(String), built: 0 });
             return [outfile];
           };
           const expected = await run(name.endsWith(".cjs") ? await build([], join(cwd, "reference.exe")) : [bunExe(), name], cwd, program, bunEnv);
           expect({ title, exitCode: expected.exitCode, stderr: expected.stderr }).toEqual({ title, exitCode: program.exitCode ?? 0, stderr: expect.not.stringContaining("error:") });
           const compiled = program.aheadOfTime === undefined ? expected : { ...expected, stdout: program.aheadOfTime };
-          expect(await run(await build(["--aot"], join(cwd, "program.exe")), cwd, program, program.runsTextAsCode ? bunEnv : { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" })).toEqual(compiled);
-          if (canTrim) expect(await run(await build(["--aot", "--trim"], join(cwd, "trimmed.exe")), cwd, program, bunEnv)).toEqual(compiled);
+          const whole = join(cwd, "program.exe");
+          const trimmed = canTrim && (await build(["--aot", "--trim"], join(cwd, "trimmed.exe"), { ...bunEnv, BUN_DEBUG_TEST_UNTRIMMED_OUTFILE: whole }));
+          expect(await run(trimmed ? [whole] : await build(["--aot"], whole), cwd, program, program.runsTextAsCode ? bunEnv : { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" })).toEqual(compiled);
+          if (trimmed) expect(await run(trimmed, cwd, program, bunEnv)).toEqual(compiled);
         });
       }, 120_000);
     }

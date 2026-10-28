@@ -2,7 +2,8 @@
 // Each row names a program of ./one-loop-against-another, how it is built, two of its loops, and how many times the instructions of the first the second may take.
 // Both are measured in the same executable: no clock, the same at any load.
 // A row that is over its bound says how many times it takes today, and that number is held: more is red, and so is a row that has come under its bound, whose `today` goes out.
-import { expect } from "bun:test";
+import { afterAll, expect } from "bun:test";
+import { rmSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMusl, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { measureCommand } from "../analysis-scaling/measure-check";
@@ -186,6 +187,7 @@ if (skipped) console.error(`SKIPPED: test/aot/perf/one-loop-against-another.test
 
 describe.skipIf(!!skipped)("compile/aot/perf/one-loop-against-another", () => {
   const folder = String(tempDir("aot-one-loop-against-another", {}));
+  afterAll(() => rmSync(folder, { recursive: true, force: true }));
   const env = { ...bunEnv, ...withSteadyCollections };
   const executableOf = (program: string, flags: string[]) =>
     join(folder, [program, ...flags].join("").replaceAll(/[^a-z0-9]+/gi, "-"));

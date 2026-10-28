@@ -41,6 +41,7 @@ fn own_functions(id: BuiltinId) -> impl Iterator<Item = RuntimeFunction> {
         .calls()
         .iter()
         .chain(entry.implemented_by())
+        .chain(entry.guessed_functions())
         .chain(for_texts)
         .copied();
     listed.filter(|&function| exists_on_linux(function))

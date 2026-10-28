@@ -312,48 +312,96 @@ runtimefunction id=69 function=f5
 # CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: ValidateFirstRun variable=g1
-# CHECK-NEXT: v1: 0 = Integer
-# CHECK-NEXT: v2: f1 = GetModuleVariable variable=g0 [isValidatedWhereLookedAt]
-# CHECK-NEXT: Jump -> next b1(v1)
-# CHECK-NEXT: b1(v3: int[0, 3]):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v5: 3 = Integer integer=3
-# CHECK-NEXT: v6: boolean = Less v3, v5
-# CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b3()
-# CHECK-NEXT: b2(v7: int[0, 2]):
-# CHECK-NEXT: v8: "pre" = String string="pre"
-# CHECK-NEXT: v9: "post" = String string="post"
-# CHECK-NEXT: v10: string = Strcat v8, v7, v9
-# CHECK-NEXT: v11: Array<string, Contiguous> = NewArray v10 contents=string allocationSite=1 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: ValidateType v11 validatedType=Array<undefined|null|string, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v13: Array<undefined|null|string, pristine[Storage, Names, Dense]> = AssumeType v11 provenType=Array<undefined|null|string, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v14: Array<string, Contiguous> = Data data=d2 allocationSite=2 arrayStorage=Contiguous
-# CHECK-NEXT: ValidateType v14 validatedType=Array<undefined|null|string, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v16: Array<undefined|null|string, pristine[Storage, Names, Dense]> = AssumeType v14 provenType=Array<undefined|null|string, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v17: string = CallDirect v13, v16 function=f2 accessSite=2
-# CHECK-NEXT: v18: undefined = CallBuiltin -, v17 overload=ConsoleLog/0 accessSite=3
-# CHECK-NEXT: v19: f1 = GetModuleVariable variable=g0
-# CHECK-NEXT: ValidateSameValue v19, v2
-# CHECK-NEXT: v21: "pre" = String string="pre"
-# CHECK-NEXT: v22: "-mid-" = String string="-mid-"
-# CHECK-NEXT: v23: "post" = String string="post"
-# CHECK-NEXT: v24: string = Strcat v21, v7, v22, v7, v23
-# CHECK-NEXT: v25: Array<string, Contiguous> = NewArray v24 contents=string allocationSite=3 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: ValidateType v25 validatedType=Array<undefined|null|string, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v27: Array<undefined|null|string, pristine[Storage, Names, Dense]> = AssumeType v25 provenType=Array<undefined|null|string, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v28: Array<string, Contiguous> = Data data=d3 allocationSite=4 arrayStorage=Contiguous
-# CHECK-NEXT: ValidateType v28 validatedType=Array<undefined|null|string, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v30: Array<undefined|null|string, pristine[Storage, Names, Dense]> = AssumeType v28 provenType=Array<undefined|null|string, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v31: 2 = Integer integer=2
-# CHECK-NEXT: ValidateCallee v2 validatedType=f1
-# CHECK-NEXT: ValidateCallee v2 validatedType=f1
-# CHECK-NEXT: v34: string = CallDirect v27, v30, v31 function=f1 accessSite=6
-# CHECK-NEXT: v35: undefined = CallBuiltin -, v34 overload=ConsoleLog/0 accessSite=7
-# CHECK-NEXT: v36: int[1, 3] = Increment v7
-# CHECK-NEXT: Jump -> next b1(v36)
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v37: undefined = Undefined
-# CHECK-NEXT: Return v37
+# CHECK-NEXT: v1: f1 = GetModuleVariable variable=g0 [isValidatedWhereLookedAt]
+# CHECK-NEXT: v2: "pre0post" = String string="pre0post"
+# CHECK-NEXT: v3: Array<string, Contiguous> = NewArray v2 contents=string allocationSite=1 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: ValidateType v3 validatedType=Array<undefined|null|string, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v5: Array<undefined|null|string, pristine[Storage, Names, Dense]> = AssumeType v3 provenType=Array<undefined|null|string, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v6: "pre" = String string="pre"
+# CHECK-NEXT: v7: "post" = String string="post"
+# CHECK-NEXT: v8: "none" = String string="none"
+# CHECK-NEXT: v9: Array<string, Contiguous> = NewArray v6, v7, v8 contents=string allocationSite=2 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: ValidateType v9 validatedType=Array<undefined|null|string, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v11: Array<undefined|null|string, pristine[Storage, Names, Dense]> = AssumeType v9 provenType=Array<undefined|null|string, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v12: string = CallDirect v5, v11 function=f2 accessSite=2
+# CHECK-NEXT: v13: undefined = CallBuiltin -, v12 overload=ConsoleLog/0 accessSite=3
+# CHECK-NEXT: v14: f1 = GetModuleVariable variable=g0
+# CHECK-NEXT: ValidateSameValue v14, v1
+# CHECK-NEXT: v16: "pre0-mid-0post" = String string="pre0-mid-0post"
+# CHECK-NEXT: v17: Array<string, Contiguous> = NewArray v16 contents=string allocationSite=3 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: ValidateType v17 validatedType=Array<undefined|null|string, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v19: Array<undefined|null|string, pristine[Storage, Names, Dense]> = AssumeType v17 provenType=Array<undefined|null|string, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v20: "pre" = String string="pre"
+# CHECK-NEXT: v21: "-mid-" = String string="-mid-"
+# CHECK-NEXT: v22: "post" = String string="post"
+# CHECK-NEXT: v23: Array<string, Contiguous> = NewArray v20, v21, v22 contents=string allocationSite=4 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: ValidateType v23 validatedType=Array<undefined|null|string, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v25: Array<undefined|null|string, pristine[Storage, Names, Dense]> = AssumeType v23 provenType=Array<undefined|null|string, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v26: 2 = Integer integer=2
+# CHECK-NEXT: ValidateCallee v1 validatedType=f1
+# CHECK-NEXT: ValidateCallee v1 validatedType=f1
+# CHECK-NEXT: v29: string = CallDirect v19, v25, v26 function=f1 accessSite=6
+# CHECK-NEXT: v30: undefined = CallBuiltin -, v29 overload=ConsoleLog/0 accessSite=7
+# CHECK-NEXT: v31: "pre1post" = String string="pre1post"
+# CHECK-NEXT: v32: Array<string, Contiguous> = NewArray v31 contents=string allocationSite=1 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: ValidateType v32 validatedType=Array<undefined|null|string, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v34: Array<undefined|null|string, pristine[Storage, Names, Dense]> = AssumeType v32 provenType=Array<undefined|null|string, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v35: "pre" = String string="pre"
+# CHECK-NEXT: v36: "post" = String string="post"
+# CHECK-NEXT: v37: "none" = String string="none"
+# CHECK-NEXT: v38: Array<string, Contiguous> = NewArray v35, v36, v37 contents=string allocationSite=2 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: ValidateType v38 validatedType=Array<undefined|null|string, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v40: Array<undefined|null|string, pristine[Storage, Names, Dense]> = AssumeType v38 provenType=Array<undefined|null|string, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v41: string = CallDirect v34, v40 function=f2 accessSite=2
+# CHECK-NEXT: v42: undefined = CallBuiltin -, v41 overload=ConsoleLog/0 accessSite=3
+# CHECK-NEXT: v43: f1 = GetModuleVariable variable=g0
+# CHECK-NEXT: ValidateSameValue v43, v1
+# CHECK-NEXT: v45: "pre1-mid-1post" = String string="pre1-mid-1post"
+# CHECK-NEXT: v46: Array<string, Contiguous> = NewArray v45 contents=string allocationSite=3 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: ValidateType v46 validatedType=Array<undefined|null|string, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v48: Array<undefined|null|string, pristine[Storage, Names, Dense]> = AssumeType v46 provenType=Array<undefined|null|string, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v49: "pre" = String string="pre"
+# CHECK-NEXT: v50: "-mid-" = String string="-mid-"
+# CHECK-NEXT: v51: "post" = String string="post"
+# CHECK-NEXT: v52: Array<string, Contiguous> = NewArray v49, v50, v51 contents=string allocationSite=4 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: ValidateType v52 validatedType=Array<undefined|null|string, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v54: Array<undefined|null|string, pristine[Storage, Names, Dense]> = AssumeType v52 provenType=Array<undefined|null|string, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v55: 2 = Integer integer=2
+# CHECK-NEXT: ValidateCallee v1 validatedType=f1
+# CHECK-NEXT: ValidateCallee v1 validatedType=f1
+# CHECK-NEXT: v58: string = CallDirect v48, v54, v55 function=f1 accessSite=6
+# CHECK-NEXT: v59: undefined = CallBuiltin -, v58 overload=ConsoleLog/0 accessSite=7
+# CHECK-NEXT: v60: "pre2post" = String string="pre2post"
+# CHECK-NEXT: v61: Array<string, Contiguous> = NewArray v60 contents=string allocationSite=1 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: ValidateType v61 validatedType=Array<undefined|null|string, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v63: Array<undefined|null|string, pristine[Storage, Names, Dense]> = AssumeType v61 provenType=Array<undefined|null|string, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v64: "pre" = String string="pre"
+# CHECK-NEXT: v65: "post" = String string="post"
+# CHECK-NEXT: v66: "none" = String string="none"
+# CHECK-NEXT: v67: Array<string, Contiguous> = NewArray v64, v65, v66 contents=string allocationSite=2 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: ValidateType v67 validatedType=Array<undefined|null|string, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v69: Array<undefined|null|string, pristine[Storage, Names, Dense]> = AssumeType v67 provenType=Array<undefined|null|string, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v70: string = CallDirect v63, v69 function=f2 accessSite=2
+# CHECK-NEXT: v71: undefined = CallBuiltin -, v70 overload=ConsoleLog/0 accessSite=3
+# CHECK-NEXT: v72: f1 = GetModuleVariable variable=g0
+# CHECK-NEXT: ValidateSameValue v72, v1
+# CHECK-NEXT: v74: "pre2-mid-2post" = String string="pre2-mid-2post"
+# CHECK-NEXT: v75: Array<string, Contiguous> = NewArray v74 contents=string allocationSite=3 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: ValidateType v75 validatedType=Array<undefined|null|string, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v77: Array<undefined|null|string, pristine[Storage, Names, Dense]> = AssumeType v75 provenType=Array<undefined|null|string, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v78: "pre" = String string="pre"
+# CHECK-NEXT: v79: "-mid-" = String string="-mid-"
+# CHECK-NEXT: v80: "post" = String string="post"
+# CHECK-NEXT: v81: Array<string, Contiguous> = NewArray v78, v79, v80 contents=string allocationSite=4 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: ValidateType v81 validatedType=Array<undefined|null|string, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v83: Array<undefined|null|string, pristine[Storage, Names, Dense]> = AssumeType v81 provenType=Array<undefined|null|string, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v84: 2 = Integer integer=2
+# CHECK-NEXT: ValidateCallee v1 validatedType=f1
+# CHECK-NEXT: ValidateCallee v1 validatedType=f1
+# CHECK-NEXT: v87: string = CallDirect v77, v83, v84 function=f1 accessSite=6
+# CHECK-NEXT: v88: undefined = CallBuiltin -, v87 overload=ConsoleLog/0 accessSite=7
+# CHECK-NEXT: v89: undefined = Undefined
+# CHECK-NEXT: Return v89
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="throughItself"
 # CHECK: module=m0 position=583 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=Array<undefined|null|string, pristine[Storage, Names, Dense]> site=w0 flags=[OmitsNull, OmitsUndefined]}, {type=Array<undefined|null|string, pristine[Storage, Names, Dense]> site=w1 flags=[OmitsNull, OmitsUndefined]}, {type=int|whole site=w2}] results=[{type=string site=w3 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f3 callPosition=4294967295 module=m0}] {

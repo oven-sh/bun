@@ -3,7 +3,9 @@ use super::{
     BuiltinPath, CommonJsBuiltins, EvaluatedText, ModuleObjectMention, ResolveInput, Resolved,
     ResolvedBuiltins, SourceDialect,
 };
-use crate::builtins::runtime_uses::{Mentions, RuntimeUses, reaches_unknown_module_loader};
+use crate::builtins::runtime_uses::{
+    MentionedUses, Mentions, RuntimeUses, reaches_unknown_module_loader,
+};
 use crate::builtins::table::{
     BuiltinId, BuiltinName, Intrinsic, Mutability, RuntimeFunction, RuntimeModule,
 };
@@ -684,23 +686,30 @@ impl<'a, 's> Resolver<'a, 's> {
         let called_with_other_texts = sorted_unique(called_with_other_texts);
         let mentioned = sorted_unique(output.mentioned);
         let exposed = sorted_unique(output.exposed);
-        let uses = RuntimeUses::of_mentions(
-            &Mentions {
-                mentioned: &mentioned,
-                called_with_other_texts: &called_with_other_texts,
-                called: &output.called,
-                exposed: &exposed,
-                linked_functions: &output.linked_functions,
-                members_read: &sorted_unique(output.members_read),
-                has_decorator: output.has_decorator,
-                disposes_resource: output.disposes_resource,
-                iterates: output.iterates,
-                has_generator: output.has_generator,
-                makes_promise: output.makes_promise,
-                is_of_program: input.dialect == SourceDialect::Program,
+        let mentions = Mentions {
+            mentioned: &mentioned,
+            called_with_other_texts: &called_with_other_texts,
+            called: &output.called,
+            exposed: &exposed,
+            linked_functions: &output.linked_functions,
+            members_read: &sorted_unique(output.members_read),
+            has_decorator: output.has_decorator,
+            disposes_resource: output.disposes_resource,
+            iterates: output.iterates,
+            has_generator: output.has_generator,
+            makes_promise: output.makes_promise,
+            is_of_program: input.dialect == SourceDialect::Program,
+        };
+        let MentionedUses {
+            certain: uses,
+            guessed: guessed_uses,
+        } = match input.dialect {
+            SourceDialect::Program => RuntimeUses::of_mentions_apart(&mentions, input.platform),
+            SourceDialect::Runtime => MentionedUses {
+                certain: RuntimeUses::of_mentions(&mentions, input.platform),
+                guessed: RuntimeUses::default(),
             },
-            input.platform,
-        );
+        };
         let loads_unknown_modules = match input.dialect {
             SourceDialect::Program => reaches_unknown_module_loader(
                 &output.loaded,
@@ -753,6 +762,7 @@ impl<'a, 's> Resolver<'a, 's> {
             #[cfg(test)]
             exposed,
             uses,
+            guessed_uses,
             loads_unknown_modules,
         }
     }

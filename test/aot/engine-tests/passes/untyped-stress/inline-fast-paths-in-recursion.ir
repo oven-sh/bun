@@ -467,7 +467,7 @@ function f10 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # CHECK-NEXT: end of function f2
 # CHECK-LABEL: function {{*}}name="dispatchesInManyArms"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 1461, patchpoints: 34, rare instructions: 572, polls: 1
+# CHECK-NEXT: instructions: 1460, patchpoints: 34, rare instructions: 602, polls: 1
 # CHECK-NEXT: end of function f6
 # CHECK-LABEL: function {{*}}name="dispatchesInManyArms"
 # CHECK: role=GenericEntrypoint

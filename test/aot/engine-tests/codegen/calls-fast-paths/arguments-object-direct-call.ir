@@ -323,5 +323,5 @@ function f7 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: end of function f12
 # CHECK-LABEL: function {{*}}name="reduceLeft"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 135, patchpoints: 6, rare instructions: 65, polls: 3
+# CHECK-NEXT: instructions: 131, patchpoints: 6, rare instructions: 65, polls: 3
 # CHECK-NEXT: end of function f14

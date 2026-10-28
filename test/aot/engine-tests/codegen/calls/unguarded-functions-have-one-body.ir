@@ -409,69 +409,69 @@ runtimefunction id=12 function=f8
 # CHECK-NEXT: v10: 0 = Integer
 # CHECK-NEXT: v11: 0 = Integer
 # CHECK-NEXT: Jump -> next b1(v10, v11)
-# CHECK-NEXT: b1(v12: number|string|bigint ~ number, v13: int[0, 300]):
+# CHECK-NEXT: b1(v12: number ~ 0, v13: int[0, 300] ~ 0):
+# CHECK-NEXT: Jump -> next b2(v12, v13)
+# CHECK-NEXT: b2(v14: number, v15: int[0, 300]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v15: 300 = Integer integer=300
-# CHECK-NEXT: v16: boolean = Less v13, v15
-# CHECK-NEXT: Branch v16 -> taken b2(| 0), notTaken b68()
-# CHECK-NEXT: b2(v17: int[0, 299]):
-# CHECK-NEXT: v18: 1 = Integer integer=1
-# CHECK-NEXT: v19: int[0, 1] = BitAnd v17, v18
-# CHECK-NEXT: Switch v19 cases=[0] -> case b3(v2), otherwise b3(v3)
-# CHECK-NEXT: b3(v20: "first"|"second"):
-# CHECK-NEXT: v21: anything = ElemGet v1, v20 accessSite=8
-# CHECK-NEXT: v22: undefined|f3 = AssumeType v21 provenType=undefined|f3
-# CHECK-NEXT: v23: 1 = Integer integer=1
-# CHECK-NEXT: v24: 2 = Integer integer=2
-# CHECK-NEXT: v25: boolean = TypeTest v22 testedType=f3
-# CHECK-NEXT: Branch v25 -> taken b4(| 0), notTaken b67()
-# CHECK-NEXT: b4(v26: f3):
-# CHECK-NEXT: v27: int[2, 3] = GetCapture v26 function=f3
-# CHECK-NEXT: v28: 3 = Integer integer=3
-# CHECK-NEXT: v29: Array<undefined|int> = NewArray v17, v23, v24 contents=undefined|int
-# CHECK-NEXT: v30: fact = Entered function=f3
-# CHECK-NEXT: v31: Array<undefined|int, proven, pristine[Storage, Names, Dense]> = AssumeType v29, v30 provenType=Array<undefined|int, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v32: 0 = Integer
-# CHECK-NEXT: v33: 0 = Integer
-# CHECK-NEXT: Jump -> next b5(v32, v33)
-# CHECK-NEXT: b5(v34: int|whole ~ 0, v35: int[0, 2147483647] ~ 0):
+# CHECK-NEXT: v17: 300 = Integer integer=300
+# CHECK-NEXT: v18: boolean = Less v15, v17
+# CHECK-NEXT: Branch v18 -> taken b3(| 0), notTaken b99(v14)
+# CHECK-NEXT: b3(v19: int[0, 299]):
+# CHECK-NEXT: v20: 1 = Integer integer=1
+# CHECK-NEXT: v21: int[0, 1] = BitAnd v19, v20
+# CHECK-NEXT: Switch v21 cases=[0] -> case b4(v2), otherwise b4(v3)
+# CHECK-NEXT: b4(v22: "first"|"second"):
+# CHECK-NEXT: v23: anything = ElemGet v1, v22 accessSite=8
+# CHECK-NEXT: v24: undefined|f3 = AssumeType v23 provenType=undefined|f3
+# CHECK-NEXT: v25: 1 = Integer integer=1
+# CHECK-NEXT: v26: 2 = Integer integer=2
+# CHECK-NEXT: v27: boolean = TypeTest v24 testedType=f3
+# CHECK-NEXT: Branch v27 -> taken b5(| 0), notTaken b98(v19)
+# CHECK-NEXT: b5(v28: f3):
+# CHECK-NEXT: v29: int[2, 3] = GetCapture v28 function=f3
+# CHECK-NEXT: v30: 3 = Integer integer=3
+# CHECK-NEXT: v31: Array<undefined|int> = NewArray v19, v25, v26 contents=undefined|int
+# CHECK-NEXT: v32: fact = Entered function=f3
+# CHECK-NEXT: v33: Array<undefined|int, proven, pristine[Storage, Names, Dense]> = AssumeType v31, v32 provenType=Array<undefined|int, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v34: 0 = Integer
+# CHECK-NEXT: v35: 0 = Integer
 # CHECK-NEXT: Jump -> next b6(v34, v35)
-# CHECK-NEXT: b6(v36: int|whole, v37: int[0, 2147483647] ~ int[0, 3]):
+# CHECK-NEXT: b6(v36: int|whole, v37: int[0, 3]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v39: boolean = Less v37, v28
-# CHECK-NEXT: Branch v39 -> taken b7(| 0), notTaken b30(v36)
+# CHECK-NEXT: v39: boolean = Less v37, v30
+# CHECK-NEXT: Branch v39 -> taken b7(| 0), notTaken b23()
 # CHECK-NEXT: b7(v40: int[0, 2]):
 # CHECK-NEXT: v41: 0 = Integer
 # CHECK-NEXT: v42: int[0, 2] = Sub v40, v41
 # CHECK-NEXT: v43: undefined = Undefined
-# CHECK-NEXT: v44: boolean = Less v40, v28
+# CHECK-NEXT: v44: boolean = Less v40, v30
 # CHECK-NEXT: Branch v44 -> taken b8(), notTaken b21(v43)
 # CHECK-NEXT: b8():
-# CHECK-NEXT: v45: boolean = HasArrayStorage v31 arrayStorage=Double
+# CHECK-NEXT: v45: boolean = HasArrayStorage v33 arrayStorage=Double
 # CHECK-NEXT: Branch v45 -> taken b9(| 0), notTaken b12()
 # CHECK-NEXT: b9(v46: guard):
 # CHECK-NEXT: Jump -> next b10()
 # CHECK-NEXT: b10():
-# CHECK-NEXT: v47: boolean = IsElementPresent v31, v42, v46 arrayStorage=Double [keyIsIntegral]
-# CHECK-NEXT: Branch v47 -> taken b11(| 0), notTaken b28(v42, v36, v40)
+# CHECK-NEXT: v47: boolean = IsElementPresent v33, v42, v46 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: Branch v47 -> taken b11(| 0), notTaken b70(v42, v36, v40, v29, v33, v19, v14)
 # CHECK-NEXT: b11(v48: guard):
 # CHECK-NEXT: v49: guard = AllGuards v46, v48
-# CHECK-NEXT: v50: int = GetArrayElement v31, v42, v49 arrayStorage=Double level=Expected [keyIsIntegral, isPresent]
+# CHECK-NEXT: v50: int = GetArrayElement v33, v42, v49 arrayStorage=Double level=Expected [keyIsIntegral, isPresent]
 # CHECK-NEXT: Jump -> next b19(v50)
-# CHECK-NEXT: b12() frequency=Unlikely:
-# CHECK-NEXT: ConvertToDoubleStorage v31
+# CHECK-NEXT: b12() frequency=Rare:
+# CHECK-NEXT: ConvertToDoubleStorage v33
 # CHECK-NEXT: Jump -> next b13()
-# CHECK-NEXT: b13() frequency=Unlikely:
-# CHECK-NEXT: v52: boolean = HasArrayStorage v31 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v52 -> taken b14(| 0), notTaken b28(v42, v36, v40)
-# CHECK-NEXT: b14(v53: guard) frequency=Unlikely:
+# CHECK-NEXT: b13() frequency=Rare:
+# CHECK-NEXT: v52: boolean = HasArrayStorage v33 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v52 -> taken b14(| 0), notTaken b70(v42, v36, v40, v29, v33, v19, v14)
+# CHECK-NEXT: b14(v53: guard) frequency=Rare:
 # CHECK-NEXT: Jump -> next b15()
 # CHECK-NEXT: b15() frequency=Unlikely:
-# CHECK-NEXT: v54: boolean = IsElementPresent v31, v42, v53 arrayStorage=Contiguous [keyIsIntegral]
-# CHECK-NEXT: Branch v54 -> taken b16(| 0), notTaken b28(v42, v36, v40)
+# CHECK-NEXT: v54: boolean = IsElementPresent v33, v42, v53 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: Branch v54 -> taken b16(| 0), notTaken b70(v42, v36, v40, v29, v33, v19, v14)
 # CHECK-NEXT: b16(v55: guard) frequency=Unlikely:
 # CHECK-NEXT: v56: guard = AllGuards v53, v55
-# CHECK-NEXT: v57: undefined|int = GetArrayElement v31, v42, v56 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
+# CHECK-NEXT: v57: undefined|int = GetArrayElement v33, v42, v56 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
 # CHECK-NEXT: v58: boolean = TypeTest v57 testedType=number
 # CHECK-NEXT: Branch v58 -> taken b17(| 0), notTaken b20(| 0)
 # CHECK-NEXT: b17(v59: int) frequency=Unlikely:
@@ -481,233 +481,367 @@ runtimefunction id=12 function=f8
 # CHECK-NEXT: b19(v61: int):
 # CHECK-NEXT: Jump -> next b21(v61)
 # CHECK-NEXT: b20(v62: undefined) frequency=Rare:
-# CHECK-NEXT: Jump -> next b28(v42, v36, v40)
+# CHECK-NEXT: Jump -> next b70(v42, v36, v40, v29, v33, v19, v14)
 # CHECK-NEXT: b21(v63: undefined|int):
 # CHECK-NEXT: v64: undefined|int ~ int = Upcast v63 castType=anything
 # CHECK-NEXT: v65: boolean = TypeTest v64 testedType=i32
-# CHECK-NEXT: Branch v65 -> taken b22(| 0), notTaken b23(v64, v36, v40)
+# CHECK-NEXT: Branch v65 -> taken b22(| 0), notTaken b65(v64, v36, v40, v29, v33, v19, v14)
 # CHECK-NEXT: b22(v66: i32):
-# CHECK-NEXT: v67: int[-6442450944, 6442450941] = Mul v66, v27
+# CHECK-NEXT: v67: int[-6442450944, 6442450941] = Mul v66, v29
 # CHECK-NEXT: v68: int|whole = Add v36, v67
 # CHECK-NEXT: v69: int[1, 3] = Increment v40
 # CHECK-NEXT: Jump -> next b6(v68, v69)
-# CHECK-NEXT: b23(v70: undefined|int ~ int, v71: int|whole, v72: int|whole ~ int[0, 2]) frequency=Unlikely:
-# CHECK-NEXT: v73: number ~ int|whole = Mul v70, v27
-# CHECK-NEXT: v74: int|whole = AssumeType v73 provenType=int|whole
-# CHECK-NEXT: v75: int|whole = Add v71, v74
-# CHECK-NEXT: v76: int|whole ~ int[1, 3] = Increment v72
-# CHECK-NEXT: v77: boolean ~ true = TypeTest v76 testedType=int[0, 2147483647]
-# CHECK-NEXT: Branch v77 -> taken b24(| 0), notTaken b25()
-# CHECK-NEXT: b24(v78: int[0, 2147483647] ~ int[1, 3]) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b5(v75, v78)
-# CHECK-NEXT: b25() frequency=Unlikely:
+# CHECK-NEXT: b23():
+# CHECK-NEXT: v70: 0 = Integer
+# CHECK-NEXT: v71: boolean = Less v36, v70
+# CHECK-NEXT: Branch v71 -> taken b24(), notTaken b25()
+# CHECK-NEXT: b24():
+# CHECK-NEXT: v72: "marker of sumOfAll" = String string="marker of sumOfAll"
+# CHECK-NEXT: Jump -> next b26(v72)
+# CHECK-NEXT: b25():
+# CHECK-NEXT: Jump -> next b26(v36)
+# CHECK-NEXT: b26(v73: int|whole|"marker of sumOfAll"):
+# CHECK-NEXT: v74: 1 = Integer integer=1
+# CHECK-NEXT: v75: 2 = Integer integer=2
+# CHECK-NEXT: v76: Array<undefined|int> = NewArray v19, v74 contents=undefined|int
+# CHECK-NEXT: v77: fact = Entered function=f4
+# CHECK-NEXT: v78: 4 = Integer integer=4
+# CHECK-NEXT: v79: Array<undefined|int, proven, pristine[Storage, Names, Dense]> = AssumeType v76, v77 provenType=Array<undefined|int, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v80: 0 = Integer
+# CHECK-NEXT: v81: 0 = Integer
+# CHECK-NEXT: Jump -> next b27(v80, v81)
+# CHECK-NEXT: b27(v82: int|whole, v83: int[0, 2]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v80: boolean = Less v76, v28
-# CHECK-NEXT: Branch v80 -> taken b26(), notTaken b30(v75)
-# CHECK-NEXT: b26() frequency=Unlikely:
-# CHECK-NEXT: v81: int|whole ~ int[1, 2] = Upcast v76 castType=int|whole
-# CHECK-NEXT: v82: 0 = Integer
-# CHECK-NEXT: v83: int|whole ~ int[1, 2] = Sub v81, v82
-# CHECK-NEXT: v84: undefined = Undefined
-# CHECK-NEXT: v85: boolean = Less v81, v28
-# CHECK-NEXT: Branch v85 -> taken b27(), notTaken b29(v84, v75, v81)
-# CHECK-NEXT: b27() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b28(v83, v75, v81)
-# CHECK-NEXT: b28(v86: int|whole ~ int[0, 2], v87: int|whole, v88: int|whole ~ int[0, 2]) frequency=Unlikely:
-# CHECK-NEXT: v89: undefined|int = ElemGet v31, v86 [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b29(v89, v87, v88)
-# CHECK-NEXT: b29(v90: undefined|int, v91: int|whole, v92: int|whole ~ int[0, 2]) frequency=Unlikely:
-# CHECK-NEXT: v93: undefined|int ~ int = Upcast v90 castType=anything
-# CHECK-NEXT: Jump -> next b23(v93, v91, v92)
-# CHECK-NEXT: b30(v94: int|whole):
-# CHECK-NEXT: v95: 0 = Integer
-# CHECK-NEXT: v96: boolean = Less v94, v95
-# CHECK-NEXT: Branch v96 -> taken b31(), notTaken b32()
+# CHECK-NEXT: v85: boolean = Less v83, v75
+# CHECK-NEXT: Branch v85 -> taken b28(| 0), notTaken b44()
+# CHECK-NEXT: b28(v86: int[0, 1]):
+# CHECK-NEXT: v87: 0 = Integer
+# CHECK-NEXT: v88: int[0, 1] = Sub v86, v87
+# CHECK-NEXT: v89: undefined = Undefined
+# CHECK-NEXT: v90: boolean = Less v86, v75
+# CHECK-NEXT: Branch v90 -> taken b29(), notTaken b42(v89)
+# CHECK-NEXT: b29():
+# CHECK-NEXT: v91: boolean = HasArrayStorage v79 arrayStorage=Double
+# CHECK-NEXT: Branch v91 -> taken b30(| 0), notTaken b33()
+# CHECK-NEXT: b30(v92: guard):
+# CHECK-NEXT: Jump -> next b31()
 # CHECK-NEXT: b31():
-# CHECK-NEXT: v97: "marker of sumOfAll" = String string="marker of sumOfAll"
-# CHECK-NEXT: Jump -> next b33(v97)
-# CHECK-NEXT: b32():
-# CHECK-NEXT: Jump -> next b33(v94)
-# CHECK-NEXT: b33(v98: int|whole|"marker of sumOfAll"):
-# CHECK-NEXT: v99: 1 = Integer integer=1
-# CHECK-NEXT: v100: 2 = Integer integer=2
-# CHECK-NEXT: v101: Array<undefined|int> = NewArray v17, v99 contents=undefined|int
-# CHECK-NEXT: v102: fact = Entered function=f4
-# CHECK-NEXT: v103: 4 = Integer integer=4
-# CHECK-NEXT: v104: Array<undefined|int, proven, pristine[Storage, Names, Dense]> = AssumeType v101, v102 provenType=Array<undefined|int, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v105: 0 = Integer
-# CHECK-NEXT: v106: 0 = Integer
-# CHECK-NEXT: Jump -> next b34(v105, v106)
-# CHECK-NEXT: b34(v107: int|whole ~ 0, v108: int[0, 2147483647] ~ 0):
-# CHECK-NEXT: Jump -> next b35(v107, v108)
-# CHECK-NEXT: b35(v109: int|whole, v110: int[0, 2147483647] ~ int[0, 2]):
+# CHECK-NEXT: v93: boolean = IsElementPresent v79, v88, v92 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: Branch v93 -> taken b32(| 0), notTaken b90(v88, v82, v86, v73, v79, v19, v14)
+# CHECK-NEXT: b32(v94: guard):
+# CHECK-NEXT: v95: guard = AllGuards v92, v94
+# CHECK-NEXT: v96: int = GetArrayElement v79, v88, v95 arrayStorage=Double level=Expected [keyIsIntegral, isPresent]
+# CHECK-NEXT: Jump -> next b40(v96)
+# CHECK-NEXT: b33() frequency=Rare:
+# CHECK-NEXT: ConvertToDoubleStorage v79
+# CHECK-NEXT: Jump -> next b34()
+# CHECK-NEXT: b34() frequency=Rare:
+# CHECK-NEXT: v98: boolean = HasArrayStorage v79 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v98 -> taken b35(| 0), notTaken b90(v88, v82, v86, v73, v79, v19, v14)
+# CHECK-NEXT: b35(v99: guard) frequency=Rare:
+# CHECK-NEXT: Jump -> next b36()
+# CHECK-NEXT: b36() frequency=Unlikely:
+# CHECK-NEXT: v100: boolean = IsElementPresent v79, v88, v99 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: Branch v100 -> taken b37(| 0), notTaken b90(v88, v82, v86, v73, v79, v19, v14)
+# CHECK-NEXT: b37(v101: guard) frequency=Unlikely:
+# CHECK-NEXT: v102: guard = AllGuards v99, v101
+# CHECK-NEXT: v103: undefined|int = GetArrayElement v79, v88, v102 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
+# CHECK-NEXT: v104: boolean = TypeTest v103 testedType=number
+# CHECK-NEXT: Branch v104 -> taken b38(| 0), notTaken b41(| 0)
+# CHECK-NEXT: b38(v105: int) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b39(v105)
+# CHECK-NEXT: b39(v106: int) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b40(v106)
+# CHECK-NEXT: b40(v107: int):
+# CHECK-NEXT: Jump -> next b42(v107)
+# CHECK-NEXT: b41(v108: undefined) frequency=Rare:
+# CHECK-NEXT: Jump -> next b90(v88, v82, v86, v73, v79, v19, v14)
+# CHECK-NEXT: b42(v109: undefined|int):
+# CHECK-NEXT: v110: undefined|int ~ int = Upcast v109 castType=anything
+# CHECK-NEXT: v111: boolean = TypeTest v110 testedType=i32
+# CHECK-NEXT: Branch v111 -> taken b43(| 0), notTaken b85(v110, v82, v86, v73, v79, v19, v14)
+# CHECK-NEXT: b43(v112: i32):
+# CHECK-NEXT: v113: int[-8589934592, 8589934588] = Mul v112, v78
+# CHECK-NEXT: v114: int|whole = Add v82, v113
+# CHECK-NEXT: v115: int[1, 2] = Increment v86
+# CHECK-NEXT: Jump -> next b27(v114, v115)
+# CHECK-NEXT: b44():
+# CHECK-NEXT: v116: 0 = Integer
+# CHECK-NEXT: v117: boolean = Less v82, v116
+# CHECK-NEXT: Branch v117 -> taken b45(), notTaken b46()
+# CHECK-NEXT: b45():
+# CHECK-NEXT: v118: "marker of sumTested" = String string="marker of sumTested"
+# CHECK-NEXT: Jump -> next b47(v118)
+# CHECK-NEXT: b46():
+# CHECK-NEXT: Jump -> next b47(v82)
+# CHECK-NEXT: b47(v119: int|whole|"marker of sumTested"):
+# CHECK-NEXT: v120: number|string|bigint = Add v73, v119
+# CHECK-NEXT: v121: boolean = TypeTest v120 testedType=number
+# CHECK-NEXT: Branch v121 -> taken b48(| 0), notTaken b49(v120, v19, v14)
+# CHECK-NEXT: b48(v122: number):
+# CHECK-NEXT: v123: number = Add v14, v122
+# CHECK-NEXT: v124: int[1, 300] = Increment v19
+# CHECK-NEXT: Jump -> next b2(v123, v124)
+# CHECK-NEXT: b49(v125: number|string|bigint, v126: int[0, 299], v127: number|string|bigint ~ number) frequency=Rare:
+# CHECK-NEXT: v128: number|string|bigint = Add v127, v125
+# CHECK-NEXT: Jump -> next b50(v128, v126)
+# CHECK-NEXT: b50(v129: number|string|bigint, v130: int[0, 299]) frequency=Unlikely:
+# CHECK-NEXT: v131: int[1, 300] = Increment v130
+# CHECK-NEXT: v132: boolean = TypeTest v129 testedType=number
+# CHECK-NEXT: Branch v132 -> taken b51(| 0), notTaken b52()
+# CHECK-NEXT: b51(v133: number) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b1(v133, v131)
+# CHECK-NEXT: b52() frequency=Unlikely:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v112: boolean = Less v110, v100
-# CHECK-NEXT: Branch v112 -> taken b36(| 0), notTaken b59(v109)
-# CHECK-NEXT: b36(v113: int[0, 1]):
-# CHECK-NEXT: v114: 0 = Integer
-# CHECK-NEXT: v115: int[0, 1] = Sub v113, v114
-# CHECK-NEXT: v116: undefined = Undefined
-# CHECK-NEXT: v117: boolean = Less v113, v100
-# CHECK-NEXT: Branch v117 -> taken b37(), notTaken b50(v116)
-# CHECK-NEXT: b37():
-# CHECK-NEXT: v118: boolean = HasArrayStorage v104 arrayStorage=Double
-# CHECK-NEXT: Branch v118 -> taken b38(| 0), notTaken b41()
-# CHECK-NEXT: b38(v119: guard):
-# CHECK-NEXT: Jump -> next b39()
-# CHECK-NEXT: b39():
-# CHECK-NEXT: v120: boolean = IsElementPresent v104, v115, v119 arrayStorage=Double [keyIsIntegral]
-# CHECK-NEXT: Branch v120 -> taken b40(| 0), notTaken b57(v115, v109, v113)
-# CHECK-NEXT: b40(v121: guard):
-# CHECK-NEXT: v122: guard = AllGuards v119, v121
-# CHECK-NEXT: v123: int = GetArrayElement v104, v115, v122 arrayStorage=Double level=Expected [keyIsIntegral, isPresent]
-# CHECK-NEXT: Jump -> next b48(v123)
-# CHECK-NEXT: b41() frequency=Unlikely:
-# CHECK-NEXT: ConvertToDoubleStorage v104
-# CHECK-NEXT: Jump -> next b42()
-# CHECK-NEXT: b42() frequency=Unlikely:
-# CHECK-NEXT: v125: boolean = HasArrayStorage v104 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v125 -> taken b43(| 0), notTaken b57(v115, v109, v113)
-# CHECK-NEXT: b43(v126: guard) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b44()
-# CHECK-NEXT: b44() frequency=Unlikely:
-# CHECK-NEXT: v127: boolean = IsElementPresent v104, v115, v126 arrayStorage=Contiguous [keyIsIntegral]
-# CHECK-NEXT: Branch v127 -> taken b45(| 0), notTaken b57(v115, v109, v113)
-# CHECK-NEXT: b45(v128: guard) frequency=Unlikely:
-# CHECK-NEXT: v129: guard = AllGuards v126, v128
-# CHECK-NEXT: v130: undefined|int = GetArrayElement v104, v115, v129 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
-# CHECK-NEXT: v131: boolean = TypeTest v130 testedType=number
-# CHECK-NEXT: Branch v131 -> taken b46(| 0), notTaken b49(| 0)
-# CHECK-NEXT: b46(v132: int) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b47(v132)
-# CHECK-NEXT: b47(v133: int) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b48(v133)
-# CHECK-NEXT: b48(v134: int):
-# CHECK-NEXT: Jump -> next b50(v134)
-# CHECK-NEXT: b49(v135: undefined) frequency=Rare:
-# CHECK-NEXT: Jump -> next b57(v115, v109, v113)
-# CHECK-NEXT: b50(v136: undefined|int):
-# CHECK-NEXT: v137: undefined|int ~ int = Upcast v136 castType=anything
-# CHECK-NEXT: v138: boolean = TypeTest v137 testedType=i32
-# CHECK-NEXT: Branch v138 -> taken b51(| 0), notTaken b52(v137, v109, v113)
-# CHECK-NEXT: b51(v139: i32):
-# CHECK-NEXT: v140: int[-8589934592, 8589934588] = Mul v139, v103
-# CHECK-NEXT: v141: int|whole = Add v109, v140
-# CHECK-NEXT: v142: int[1, 2] = Increment v113
-# CHECK-NEXT: Jump -> next b35(v141, v142)
-# CHECK-NEXT: b52(v143: undefined|int ~ int, v144: int|whole, v145: int|whole ~ int[0, 1]) frequency=Unlikely:
-# CHECK-NEXT: v146: number ~ int|whole = Mul v143, v103
-# CHECK-NEXT: v147: int|whole = AssumeType v146 provenType=int|whole
-# CHECK-NEXT: v148: int|whole = Add v144, v147
-# CHECK-NEXT: v149: int|whole ~ int[1, 2] = Increment v145
-# CHECK-NEXT: v150: boolean ~ true = TypeTest v149 testedType=int[0, 2147483647]
-# CHECK-NEXT: Branch v150 -> taken b53(| 0), notTaken b54()
-# CHECK-NEXT: b53(v151: int[0, 2147483647] ~ int[1, 2]) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b34(v148, v151)
-# CHECK-NEXT: b54() frequency=Unlikely:
+# CHECK-NEXT: v135: 300 = Integer integer=300
+# CHECK-NEXT: v136: boolean = Less v131, v135
+# CHECK-NEXT: Branch v136 -> taken b53(| 0), notTaken b99(v129)
+# CHECK-NEXT: b53(v137: int[1, 299]) frequency=Unlikely:
+# CHECK-NEXT: v138: 1 = Integer integer=1
+# CHECK-NEXT: v139: int[0, 1] = BitAnd v137, v138
+# CHECK-NEXT: Switch v139 cases=[0] -> case b54(v2), otherwise b54(v3)
+# CHECK-NEXT: b54(v140: "first"|"second") frequency=Unlikely:
+# CHECK-NEXT: v141: anything = ElemGet v1, v140 accessSite=8
+# CHECK-NEXT: v142: undefined|f3 = AssumeType v141 provenType=undefined|f3
+# CHECK-NEXT: v143: boolean = TypeTest v142 testedType=f3
+# CHECK-NEXT: Branch v143 -> taken b55(| 0), notTaken b98(v137)
+# CHECK-NEXT: b55(v144: f3) frequency=Unlikely:
+# CHECK-NEXT: v145: int[2, 3] = GetCapture v144 function=f3
+# CHECK-NEXT: v146: 1 = Integer integer=1
+# CHECK-NEXT: v147: 2 = Integer integer=2
+# CHECK-NEXT: v148: Array<int> = NewArray v137, v146, v147 contents=int
+# CHECK-NEXT: v149: Array<undefined|int> = AssumeType v148 provenType=Array<undefined|int>
+# CHECK-NEXT: v150: fact = Entered function=f3
+# CHECK-NEXT: v151: Array<undefined|int, proven, pristine[Storage, Names, Dense]> = AssumeType v149, v150 provenType=Array<undefined|int, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v152: 0 = Integer
+# CHECK-NEXT: v153: 0 = Integer
+# CHECK-NEXT: Jump -> next b56(v152, v153, v145, v151, v137, v129)
+# CHECK-NEXT: b56(v154: int|whole ~ 0, v155: int[0, 2147483647] ~ 0, v156: int[2, 3], v157: Array<undefined|int, proven, pristine[Storage, Names, Dense]>, v158: int[0, 299], v159: number|string|bigint) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b57(v154, v155)
+# CHECK-NEXT: b57(v160: int|whole, v161: int[0, 2147483647] ~ int[0, 3]) frequency=Unlikely:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v153: boolean = Less v149, v100
-# CHECK-NEXT: Branch v153 -> taken b55(), notTaken b59(v148)
-# CHECK-NEXT: b55() frequency=Unlikely:
-# CHECK-NEXT: v154: int|whole ~ 1 = Upcast v149 castType=int|whole
-# CHECK-NEXT: v155: 0 = Integer
-# CHECK-NEXT: v156: int|whole ~ 1 = Sub v154, v155
-# CHECK-NEXT: v157: undefined = Undefined
-# CHECK-NEXT: v158: boolean = Less v154, v100
-# CHECK-NEXT: Branch v158 -> taken b56(), notTaken b58(v157, v148, v154)
-# CHECK-NEXT: b56() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b57(v156, v148, v154)
-# CHECK-NEXT: b57(v159: int|whole ~ int[0, 1], v160: int|whole, v161: int|whole ~ int[0, 1]) frequency=Unlikely:
-# CHECK-NEXT: v162: undefined|int = ElemGet v104, v159 [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b58(v162, v160, v161)
-# CHECK-NEXT: b58(v163: undefined|int, v164: int|whole, v165: int|whole ~ int[0, 1]) frequency=Unlikely:
-# CHECK-NEXT: v166: undefined|int ~ int = Upcast v163 castType=anything
-# CHECK-NEXT: Jump -> next b52(v166, v164, v165)
-# CHECK-NEXT: b59(v167: int|whole):
-# CHECK-NEXT: v168: 0 = Integer
-# CHECK-NEXT: v169: boolean = Less v167, v168
-# CHECK-NEXT: Branch v169 -> taken b60(), notTaken b61()
-# CHECK-NEXT: b60():
-# CHECK-NEXT: v170: "marker of sumTested" = String string="marker of sumTested"
-# CHECK-NEXT: Jump -> next b62(v170)
-# CHECK-NEXT: b61():
-# CHECK-NEXT: Jump -> next b62(v167)
-# CHECK-NEXT: b62(v171: int|whole|"marker of sumTested"):
-# CHECK-NEXT: v172: number|string|bigint = Add v98, v171
-# CHECK-NEXT: v173: boolean ~ true = TypeTest v12 testedType=number
-# CHECK-NEXT: Branch v173 -> taken b63(| 0), notTaken b65()
-# CHECK-NEXT: b63(v174: number):
-# CHECK-NEXT: v175: boolean = TypeTest v172 testedType=number
-# CHECK-NEXT: Branch v175 -> taken b64(| 0), notTaken b65()
-# CHECK-NEXT: b64(v176: number):
-# CHECK-NEXT: v177: number = Add v174, v176
-# CHECK-NEXT: Jump -> next b66(v177)
-# CHECK-NEXT: b65() frequency=Unlikely:
-# CHECK-NEXT: v178: number|string|bigint = Add v12, v172
-# CHECK-NEXT: Jump -> next b66(v178)
-# CHECK-NEXT: b66(v179: number|string|bigint ~ number):
-# CHECK-NEXT: v180: int[1, 300] = Increment v17
-# CHECK-NEXT: Jump -> next b1(v179, v180)
-# CHECK-NEXT: b67() frequency=Unlikely:
-# CHECK-NEXT: v181: undefined = Undefined
-# CHECK-NEXT: v182: never = Call v181, v1, v17, v23, v24 accessSite=9 callees=[f3]
+# CHECK-NEXT: v163: boolean = Less v161, v30
+# CHECK-NEXT: Branch v163 -> taken b58(| 0), notTaken b72(v160, v158, v159)
+# CHECK-NEXT: b58(v164: int[0, 2]) frequency=Unlikely:
+# CHECK-NEXT: v165: 0 = Integer
+# CHECK-NEXT: v166: int[0, 2] = Sub v164, v165
+# CHECK-NEXT: v167: undefined = Undefined
+# CHECK-NEXT: v168: boolean = Less v164, v30
+# CHECK-NEXT: Branch v168 -> taken b59(), notTaken b63(v167)
+# CHECK-NEXT: b59() frequency=Unlikely:
+# CHECK-NEXT: v169: boolean = HasArrayStorage v157 arrayStorage=Double
+# CHECK-NEXT: Branch v169 -> taken b60(| 0), notTaken b62()
+# CHECK-NEXT: b60(v170: guard) frequency=Unlikely:
+# CHECK-NEXT: v171: boolean = IsElementPresent v157, v166, v170 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: Branch v171 -> taken b61(| 0), notTaken b70(v166, v160, v164, v156, v157, v158, v159)
+# CHECK-NEXT: b61(v172: guard) frequency=Unlikely:
+# CHECK-NEXT: v173: guard = AllGuards v170, v172
+# CHECK-NEXT: v174: int = GetArrayElement v157, v166, v173 arrayStorage=Double level=Expected [keyIsIntegral, isPresent]
+# CHECK-NEXT: Jump -> next b63(v174)
+# CHECK-NEXT: b62() frequency=Rare:
+# CHECK-NEXT: ConvertToDoubleStorage v157
+# CHECK-NEXT: Jump -> next b70(v166, v160, v164, v156, v157, v158, v159)
+# CHECK-NEXT: b63(v176: undefined|int) frequency=Unlikely:
+# CHECK-NEXT: v177: undefined|int ~ int = Upcast v176 castType=anything
+# CHECK-NEXT: v178: boolean = TypeTest v177 testedType=i32
+# CHECK-NEXT: Branch v178 -> taken b64(| 0), notTaken b65(v177, v160, v164, v156, v157, v158, v159)
+# CHECK-NEXT: b64(v179: i32) frequency=Unlikely:
+# CHECK-NEXT: v180: int[-6442450944, 6442450941] = Mul v179, v156
+# CHECK-NEXT: v181: int|whole = Add v160, v180
+# CHECK-NEXT: v182: int[1, 3] = Increment v164
+# CHECK-NEXT: Jump -> next b57(v181, v182)
+# CHECK-NEXT: b65(v183: undefined|int ~ int, v184: int|whole, v185: int|whole ~ int[0, 2], v186: int[2, 3], v187: Array<undefined|int, proven, pristine[Storage, Names, Dense]>, v188: int[0, 299], v189: number|string|bigint ~ number) frequency=Rare:
+# CHECK-NEXT: v190: number ~ int|whole = Mul v183, v186
+# CHECK-NEXT: v191: int|whole = AssumeType v190 provenType=int|whole
+# CHECK-NEXT: v192: int|whole = Add v184, v191
+# CHECK-NEXT: v193: int|whole ~ int[1, 3] = Increment v185
+# CHECK-NEXT: v194: boolean ~ true = TypeTest v193 testedType=int[0, 2147483647]
+# CHECK-NEXT: Branch v194 -> taken b66(| 0), notTaken b67()
+# CHECK-NEXT: b66(v195: int[0, 2147483647] ~ int[1, 3]) frequency=Rare:
+# CHECK-NEXT: Jump -> next b56(v192, v195, v186, v187, v188, v189)
+# CHECK-NEXT: b67() frequency=Rare:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v197: boolean = Less v193, v30
+# CHECK-NEXT: Branch v197 -> taken b68(), notTaken b72(v192, v188, v189)
+# CHECK-NEXT: b68() frequency=Rare:
+# CHECK-NEXT: v198: int|whole ~ int[1, 2] = Upcast v193 castType=int|whole
+# CHECK-NEXT: v199: 0 = Integer
+# CHECK-NEXT: v200: int|whole ~ int[1, 2] = Sub v198, v199
+# CHECK-NEXT: v201: undefined = Undefined
+# CHECK-NEXT: v202: boolean = Less v198, v30
+# CHECK-NEXT: Branch v202 -> taken b69(), notTaken b71(v201, v192, v198, v186, v187, v188, v189)
+# CHECK-NEXT: b69() frequency=Rare:
+# CHECK-NEXT: Jump -> next b70(v200, v192, v198, v186, v187, v188, v189)
+# CHECK-NEXT: b70(v203: int|whole ~ int[0, 2], v204: int|whole, v205: int|whole ~ int[0, 2], v206: int[2, 3], v207: Array<undefined|int, proven, pristine[Storage, Names, Dense]>, v208: int[0, 299], v209: number|string|bigint ~ number) frequency=Rare:
+# CHECK-NEXT: v210: undefined|int = ElemGet v207, v203 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b71(v210, v204, v205, v206, v207, v208, v209)
+# CHECK-NEXT: b71(v211: undefined|int, v212: int|whole, v213: int|whole ~ int[0, 2], v214: int[2, 3], v215: Array<undefined|int, proven, pristine[Storage, Names, Dense]>, v216: int[0, 299], v217: number|string|bigint ~ number) frequency=Rare:
+# CHECK-NEXT: v218: undefined|int ~ int = Upcast v211 castType=anything
+# CHECK-NEXT: Jump -> next b65(v218, v212, v213, v214, v215, v216, v217)
+# CHECK-NEXT: b72(v219: int|whole, v220: int[0, 299], v221: number|string|bigint) frequency=Unlikely:
+# CHECK-NEXT: v222: 0 = Integer
+# CHECK-NEXT: v223: boolean = Less v219, v222
+# CHECK-NEXT: Branch v223 -> taken b73(), notTaken b74()
+# CHECK-NEXT: b73() frequency=Unlikely:
+# CHECK-NEXT: v224: "marker of sumOfAll" = String string="marker of sumOfAll"
+# CHECK-NEXT: Jump -> next b75(v224)
+# CHECK-NEXT: b74() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b75(v219)
+# CHECK-NEXT: b75(v225: int|whole|"marker of sumOfAll") frequency=Unlikely:
+# CHECK-NEXT: v226: 1 = Integer integer=1
+# CHECK-NEXT: v227: Array<int> = NewArray v220, v226 contents=int
+# CHECK-NEXT: v228: Array<undefined|int> = AssumeType v227 provenType=Array<undefined|int>
+# CHECK-NEXT: v229: fact = Entered function=f4
+# CHECK-NEXT: v230: Array<undefined|int, proven, pristine[Storage, Names, Dense]> = AssumeType v228, v229 provenType=Array<undefined|int, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v231: 0 = Integer
+# CHECK-NEXT: v232: 0 = Integer
+# CHECK-NEXT: Jump -> next b76(v231, v232, v225, v230, v220, v221)
+# CHECK-NEXT: b76(v233: int|whole ~ 0, v234: int[0, 2147483647] ~ 0, v235: int|whole|"marker of sumOfAll", v236: Array<undefined|int, proven, pristine[Storage, Names, Dense]>, v237: int[0, 299], v238: number|string|bigint) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b77(v233, v234)
+# CHECK-NEXT: b77(v239: int|whole, v240: int[0, 2147483647] ~ int[0, 2]) frequency=Unlikely:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v242: 2 = Integer integer=2
+# CHECK-NEXT: v243: boolean = Less v240, v242
+# CHECK-NEXT: Branch v243 -> taken b78(| 0), notTaken b92(v239, v235, v237, v238)
+# CHECK-NEXT: b78(v244: int[0, 1]) frequency=Unlikely:
+# CHECK-NEXT: v245: 0 = Integer
+# CHECK-NEXT: v246: int[0, 1] = Sub v244, v245
+# CHECK-NEXT: v247: undefined = Undefined
+# CHECK-NEXT: v248: boolean = Less v244, v242
+# CHECK-NEXT: Branch v248 -> taken b79(), notTaken b83(v247)
+# CHECK-NEXT: b79() frequency=Unlikely:
+# CHECK-NEXT: v249: boolean = HasArrayStorage v236 arrayStorage=Double
+# CHECK-NEXT: Branch v249 -> taken b80(| 0), notTaken b82()
+# CHECK-NEXT: b80(v250: guard) frequency=Unlikely:
+# CHECK-NEXT: v251: boolean = IsElementPresent v236, v246, v250 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: Branch v251 -> taken b81(| 0), notTaken b90(v246, v239, v244, v235, v236, v237, v238)
+# CHECK-NEXT: b81(v252: guard) frequency=Unlikely:
+# CHECK-NEXT: v253: guard = AllGuards v250, v252
+# CHECK-NEXT: v254: int = GetArrayElement v236, v246, v253 arrayStorage=Double level=Expected [keyIsIntegral, isPresent]
+# CHECK-NEXT: Jump -> next b83(v254)
+# CHECK-NEXT: b82() frequency=Rare:
+# CHECK-NEXT: ConvertToDoubleStorage v236
+# CHECK-NEXT: Jump -> next b90(v246, v239, v244, v235, v236, v237, v238)
+# CHECK-NEXT: b83(v256: undefined|int) frequency=Unlikely:
+# CHECK-NEXT: v257: undefined|int ~ int = Upcast v256 castType=anything
+# CHECK-NEXT: v258: boolean = TypeTest v257 testedType=i32
+# CHECK-NEXT: Branch v258 -> taken b84(| 0), notTaken b85(v257, v239, v244, v235, v236, v237, v238)
+# CHECK-NEXT: b84(v259: i32) frequency=Unlikely:
+# CHECK-NEXT: v260: 4 = Integer integer=4
+# CHECK-NEXT: v261: int[-8589934592, 8589934588] = Mul v259, v260
+# CHECK-NEXT: v262: int|whole = Add v239, v261
+# CHECK-NEXT: v263: int[1, 2] = Increment v244
+# CHECK-NEXT: Jump -> next b77(v262, v263)
+# CHECK-NEXT: b85(v264: undefined|int ~ int, v265: int|whole, v266: int|whole ~ int[0, 1], v267: int|whole|"marker of sumOfAll", v268: Array<undefined|int, proven, pristine[Storage, Names, Dense]>, v269: int[0, 299], v270: number|string|bigint ~ number) frequency=Rare:
+# CHECK-NEXT: v271: 4 = Integer integer=4
+# CHECK-NEXT: v272: number ~ int|whole = Mul v264, v271
+# CHECK-NEXT: v273: int|whole = AssumeType v272 provenType=int|whole
+# CHECK-NEXT: v274: int|whole = Add v265, v273
+# CHECK-NEXT: v275: int|whole ~ int[1, 2] = Increment v266
+# CHECK-NEXT: v276: boolean ~ true = TypeTest v275 testedType=int[0, 2147483647]
+# CHECK-NEXT: Branch v276 -> taken b86(| 0), notTaken b87()
+# CHECK-NEXT: b86(v277: int[0, 2147483647] ~ int[1, 2]) frequency=Rare:
+# CHECK-NEXT: Jump -> next b76(v274, v277, v267, v268, v269, v270)
+# CHECK-NEXT: b87() frequency=Rare:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v279: 2 = Integer integer=2
+# CHECK-NEXT: v280: boolean = Less v275, v279
+# CHECK-NEXT: Branch v280 -> taken b88(), notTaken b92(v274, v267, v269, v270)
+# CHECK-NEXT: b88() frequency=Rare:
+# CHECK-NEXT: v281: int|whole ~ 1 = Upcast v275 castType=int|whole
+# CHECK-NEXT: v282: 0 = Integer
+# CHECK-NEXT: v283: int|whole ~ 1 = Sub v281, v282
+# CHECK-NEXT: v284: undefined = Undefined
+# CHECK-NEXT: v285: 2 = Integer integer=2
+# CHECK-NEXT: v286: boolean = Less v281, v285
+# CHECK-NEXT: Branch v286 -> taken b89(), notTaken b91(v284, v274, v281, v267, v268, v269, v270)
+# CHECK-NEXT: b89() frequency=Rare:
+# CHECK-NEXT: Jump -> next b90(v283, v274, v281, v267, v268, v269, v270)
+# CHECK-NEXT: b90(v287: int|whole ~ int[0, 1], v288: int|whole, v289: int|whole ~ int[0, 1], v290: int|whole|"marker of sumOfAll", v291: Array<undefined|int, proven, pristine[Storage, Names, Dense]>, v292: int[0, 299], v293: number|string|bigint ~ number) frequency=Rare:
+# CHECK-NEXT: v294: undefined|int = ElemGet v291, v287 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b91(v294, v288, v289, v290, v291, v292, v293)
+# CHECK-NEXT: b91(v295: undefined|int, v296: int|whole, v297: int|whole ~ int[0, 1], v298: int|whole|"marker of sumOfAll", v299: Array<undefined|int, proven, pristine[Storage, Names, Dense]>, v300: int[0, 299], v301: number|string|bigint ~ number) frequency=Rare:
+# CHECK-NEXT: v302: undefined|int ~ int = Upcast v295 castType=anything
+# CHECK-NEXT: Jump -> next b85(v302, v296, v297, v298, v299, v300, v301)
+# CHECK-NEXT: b92(v303: int|whole, v304: int|whole|"marker of sumOfAll", v305: int[0, 299], v306: number|string|bigint) frequency=Unlikely:
+# CHECK-NEXT: v307: 0 = Integer
+# CHECK-NEXT: v308: boolean = Less v303, v307
+# CHECK-NEXT: Branch v308 -> taken b93(), notTaken b94()
+# CHECK-NEXT: b93() frequency=Unlikely:
+# CHECK-NEXT: v309: "marker of sumTested" = String string="marker of sumTested"
+# CHECK-NEXT: Jump -> next b95(v309)
+# CHECK-NEXT: b94() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b95(v303)
+# CHECK-NEXT: b95(v310: int|whole|"marker of sumTested") frequency=Unlikely:
+# CHECK-NEXT: v311: number|string|bigint = Add v304, v310
+# CHECK-NEXT: v312: boolean = TypeTest v306 testedType=number
+# CHECK-NEXT: Branch v312 -> taken b96(| 0), notTaken b49(v311, v305, v306)
+# CHECK-NEXT: b96(v313: number) frequency=Unlikely:
+# CHECK-NEXT: v314: boolean = TypeTest v311 testedType=number
+# CHECK-NEXT: Branch v314 -> taken b97(| 0), notTaken b49(v311, v305, v306)
+# CHECK-NEXT: b97(v315: number) frequency=Unlikely:
+# CHECK-NEXT: v316: number = Add v313, v315
+# CHECK-NEXT: Jump -> next b50(v316, v305)
+# CHECK-NEXT: b98(v317: int[0, 299]) frequency=Unlikely:
+# CHECK-NEXT: v318: undefined = Undefined
+# CHECK-NEXT: v319: never = Call v318, v1, v317, v25, v26 accessSite=9 callees=[f3]
 # CHECK-NEXT: Unreachable
-# CHECK-NEXT: b68():
-# CHECK-NEXT: v183: anything = PropGet v1 key="first" accessSite=13
-# CHECK-NEXT: v184: undefined|f3 = AssumeType v183 provenType=undefined|f3
-# CHECK-NEXT: v185: -1 = Integer integer=-1
-# CHECK-NEXT: v186: boolean = TypeTest v184 testedType=f3
-# CHECK-NEXT: Branch v186 -> taken b69(| 0), notTaken b72()
-# CHECK-NEXT: b69(v187: f3):
-# CHECK-NEXT: v188: int[2, 3] = GetCapture v187 function=f3
-# CHECK-NEXT: v189: 1 = Integer integer=1
-# CHECK-NEXT: v190: Array<undefined|int> = NewArray v185 contents=undefined|int
-# CHECK-NEXT: v191: int|whole|"marker of sumOfAll" = CallDirect v188, v189, v190 function=f3 accessSite=14
-# CHECK-NEXT: v192: anything = PropGet v1 key="second" accessSite=15
-# CHECK-NEXT: v193: undefined|f3 = AssumeType v192 provenType=undefined|f3
-# CHECK-NEXT: v194: boolean = TypeTest v193 testedType=f3
-# CHECK-NEXT: Branch v194 -> taken b70(| 0), notTaken b71()
-# CHECK-NEXT: b70(v195: f3):
-# CHECK-NEXT: v196: int[2, 3] = GetCapture v195 function=f3
-# CHECK-NEXT: v197: 0 = Integer
-# CHECK-NEXT: v198: Array<undefined|int> = NewArray contents=undefined|int
-# CHECK-NEXT: v199: int|whole|"marker of sumOfAll" = CallDirect v196, v197, v198 function=f3 accessSite=16
-# CHECK-NEXT: v200: anything = PropGet v1 key="first" accessSite=17
-# CHECK-NEXT: v201: undefined|f3 = AssumeType v200 provenType=undefined|f3
-# CHECK-NEXT: v202: f3 = RequireObjectCoercible v201 name="length"
-# CHECK-NEXT: v203: 0 = Integer
-# CHECK-NEXT: v204: -1 = Integer integer=-1
-# CHECK-NEXT: v205: 1 = Integer integer=1
-# CHECK-NEXT: v206: Array<undefined|int> = NewArray v204 contents=undefined|int
-# CHECK-NEXT: v207: int|whole|"marker of sumTested" = CallDirect v205, v206 function=f4 accessSite=19
-# CHECK-NEXT: v208: 1 = Integer integer=1
-# CHECK-NEXT: v209: 2 = Integer integer=2
-# CHECK-NEXT: v210: 3 = Integer integer=3
-# CHECK-NEXT: v211: 3 = Integer integer=3
-# CHECK-NEXT: v212: Array<undefined|int> = NewArray v208, v209, v210 contents=undefined|int
-# CHECK-NEXT: v213: int|whole|"marker of sumTested" = CallDirect v211, v212 function=f4 accessSite=21 [calleeIsPredicted]
-# CHECK-NEXT: v214: anything = PropGet v1 key="second" accessSite=22
-# CHECK-NEXT: v215: undefined|f3 = AssumeType v214 provenType=undefined|f3
-# CHECK-NEXT: v216: f3 = RequireObjectCoercible v215 name="apply"
-# CHECK-NEXT: v217: 1 = Integer integer=1
-# CHECK-NEXT: v218: 2 = Integer integer=2
-# CHECK-NEXT: v219: 3 = Integer integer=3
-# CHECK-NEXT: v220: 4 = Integer integer=4
-# CHECK-NEXT: v221: int[2, 3] = GetCapture v216 function=f3
-# CHECK-NEXT: v222: 4 = Integer integer=4
-# CHECK-NEXT: v223: Array<undefined|int> = NewArray v217, v218, v219, v220 contents=undefined|int
-# CHECK-NEXT: v224: int|whole|"marker of sumOfAll" = CallDirect v221, v222, v223 function=f3 accessSite=24 [calleeIsPredicted]
-# CHECK-NEXT: v225: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v226: undefined = CallBuiltin v225, v12, v191, v199, v203, v207, v213, v224 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=25
-# CHECK-NEXT: v227: undefined = Undefined
-# CHECK-NEXT: Return v227
-# CHECK-NEXT: b71() frequency=Unlikely:
-# CHECK-NEXT: v228: undefined = Undefined
-# CHECK-NEXT: v229: never = Call v228, v1 calleeKey="second" calleeName="table.second" accessSite=16 callees=[f3]
+# CHECK-NEXT: b99(v320: number|string|bigint ~ number):
+# CHECK-NEXT: v321: anything = PropGet v1 key="first" accessSite=13
+# CHECK-NEXT: v322: undefined|f3 = AssumeType v321 provenType=undefined|f3
+# CHECK-NEXT: v323: -1 = Integer integer=-1
+# CHECK-NEXT: v324: boolean = TypeTest v322 testedType=f3
+# CHECK-NEXT: Branch v324 -> taken b100(| 0), notTaken b103()
+# CHECK-NEXT: b100(v325: f3):
+# CHECK-NEXT: v326: int[2, 3] = GetCapture v325 function=f3
+# CHECK-NEXT: v327: 1 = Integer integer=1
+# CHECK-NEXT: v328: Array<undefined|int> = NewArray v323 contents=undefined|int
+# CHECK-NEXT: v329: int|whole|"marker of sumOfAll" = CallDirect v326, v327, v328 function=f3 accessSite=14
+# CHECK-NEXT: v330: anything = PropGet v1 key="second" accessSite=15
+# CHECK-NEXT: v331: undefined|f3 = AssumeType v330 provenType=undefined|f3
+# CHECK-NEXT: v332: boolean = TypeTest v331 testedType=f3
+# CHECK-NEXT: Branch v332 -> taken b101(| 0), notTaken b102()
+# CHECK-NEXT: b101(v333: f3):
+# CHECK-NEXT: v334: int[2, 3] = GetCapture v333 function=f3
+# CHECK-NEXT: v335: 0 = Integer
+# CHECK-NEXT: v336: Array<undefined|int> = NewArray contents=undefined|int
+# CHECK-NEXT: v337: int|whole|"marker of sumOfAll" = CallDirect v334, v335, v336 function=f3 accessSite=16
+# CHECK-NEXT: v338: anything = PropGet v1 key="first" accessSite=17
+# CHECK-NEXT: v339: undefined|f3 = AssumeType v338 provenType=undefined|f3
+# CHECK-NEXT: v340: f3 = RequireObjectCoercible v339 name="length"
+# CHECK-NEXT: v341: 0 = Integer
+# CHECK-NEXT: v342: -1 = Integer integer=-1
+# CHECK-NEXT: v343: 1 = Integer integer=1
+# CHECK-NEXT: v344: Array<undefined|int> = NewArray v342 contents=undefined|int
+# CHECK-NEXT: v345: int|whole|"marker of sumTested" = CallDirect v343, v344 function=f4 accessSite=19
+# CHECK-NEXT: v346: 1 = Integer integer=1
+# CHECK-NEXT: v347: 2 = Integer integer=2
+# CHECK-NEXT: v348: 3 = Integer integer=3
+# CHECK-NEXT: v349: 3 = Integer integer=3
+# CHECK-NEXT: v350: Array<undefined|int> = NewArray v346, v347, v348 contents=undefined|int
+# CHECK-NEXT: v351: int|whole|"marker of sumTested" = CallDirect v349, v350 function=f4 accessSite=21 [calleeIsPredicted]
+# CHECK-NEXT: v352: anything = PropGet v1 key="second" accessSite=22
+# CHECK-NEXT: v353: undefined|f3 = AssumeType v352 provenType=undefined|f3
+# CHECK-NEXT: v354: f3 = RequireObjectCoercible v353 name="apply"
+# CHECK-NEXT: v355: 1 = Integer integer=1
+# CHECK-NEXT: v356: 2 = Integer integer=2
+# CHECK-NEXT: v357: 3 = Integer integer=3
+# CHECK-NEXT: v358: 4 = Integer integer=4
+# CHECK-NEXT: v359: int[2, 3] = GetCapture v354 function=f3
+# CHECK-NEXT: v360: 4 = Integer integer=4
+# CHECK-NEXT: v361: Array<undefined|int> = NewArray v355, v356, v357, v358 contents=undefined|int
+# CHECK-NEXT: v362: int|whole|"marker of sumOfAll" = CallDirect v359, v360, v361 function=f3 accessSite=24 [calleeIsPredicted]
+# CHECK-NEXT: v363: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v364: undefined = CallBuiltin v363, v320, v329, v337, v341, v345, v351, v362 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=25
+# CHECK-NEXT: v365: undefined = Undefined
+# CHECK-NEXT: Return v365
+# CHECK-NEXT: b102() frequency=Unlikely:
+# CHECK-NEXT: v366: undefined = Undefined
+# CHECK-NEXT: v367: never = Call v366, v1 calleeKey="second" calleeName="table.second" accessSite=16 callees=[f3]
 # CHECK-NEXT: Unreachable
-# CHECK-NEXT: b72() frequency=Unlikely:
-# CHECK-NEXT: v230: undefined = Undefined
-# CHECK-NEXT: v231: never = Call v230, v1, v185 calleeKey="first" calleeName="table.first" accessSite=14 callees=[f3]
+# CHECK-NEXT: b103() frequency=Unlikely:
+# CHECK-NEXT: v368: undefined = Undefined
+# CHECK-NEXT: v369: never = Call v368, v1, v323 calleeKey="first" calleeName="table.first" accessSite=14 callees=[f3]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="sumOfAll"

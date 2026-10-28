@@ -1459,6 +1459,17 @@ export default b.declarations(
     ),
   ),
   b.fn("Bun.plugin.clearAll", b.otherwise),
+  // The printer of console.table. The second operand is a list of names or the options.
+  b.fn("Bun.inspect.table", {
+    ...printedValue,
+    ...operandCodeOnly,
+    args: { tabularData: b.any.optional, properties: b.any.optional, options: b.any.optional },
+    uses: {
+      tabularData: [b.printedByFormatter()],
+      properties: [b.printedByFormatter()],
+      options: membersInspected("depth", "colors", "sorted", "compact"),
+    },
+  }),
   b.namespace("Bun.JSONL", {
     parse: parsesLines(newArrayOf(parsedJSON), {}, {}),
     parseChunk: parsesLines(

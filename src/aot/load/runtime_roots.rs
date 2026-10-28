@@ -25,6 +25,8 @@ pub(crate) struct RuntimeRoots {
     pub asks: RuntimeUses,
     /// The program holds all of Bun's own code that can be got at without a name that the build sees.
     pub keeps_code_without_names: bool,
+    /// It also holds `MentionedUses::guessed` of its files. Of another program the engine says what it lacks of that.
+    pub holds_guessed_code: bool,
 }
 
 fn exists_on(function: RuntimeFunction, platform: Platforms) -> bool {
@@ -49,6 +51,7 @@ pub(crate) fn collect_runtime_roots(
     let mut imports_uncompiled_code = false;
     let mut named: Vec<RuntimeModule> = Vec::new();
     let mut asks = Asks::default();
+    let mut guessed = Asks::default();
     for &file in application.compiled_files() {
         if let Some(compiled) = application.compiled(file) {
             host_loaded.extend(compiled.implied_answers.iter().filter_map(implied_module));
@@ -60,6 +63,7 @@ pub(crate) fn collect_runtime_roots(
             functions.extend(source.builtins.called_functions());
             named.extend(source.named_modules().iter().map(|it| it.module));
             asks.add(source.builtins.uses());
+            guessed.add(source.builtins.guessed_uses());
         }
     }
     named.extend(find_library_modules_that_unknown_names_may_stand_for(
@@ -75,16 +79,23 @@ pub(crate) fn collect_runtime_roots(
     asks.add(further.lacked_before);
     let mut asks = asks.finish();
     // A function that comes along tells by its bindings what it runs, as the program does. A module evaluates too much for that, and what a Worker sends may be anything.
-    let keeps_code_without_names = further.serves_unseen_code
+    let holds_guessed_code = further.serves_unseen_code
         || imports_uncompiled_code
-        || loads_by_unknown_path
         || asks.has_module_of_host()
         || mentions_worker_constructor(application);
-    if keeps_code_without_names {
-        let uses = RuntimeUses::of_unseen_code(platform);
+    let keeps_code_without_names = holds_guessed_code || loads_by_unknown_path;
+    let guessed = match holds_guessed_code {
+        true => guessed.finish(),
+        false => RuntimeUses::default(),
+    };
+    let without_names = match keeps_code_without_names {
+        true => RuntimeUses::of_unseen_code(platform),
+        false => RuntimeUses::default(),
+    };
+    for uses in [&without_names, &guessed] {
         host_loaded.extend(&uses.modules);
         functions.extend(&uses.functions);
-        asks.add(&uses);
+        asks.add(uses);
     }
     functions.retain(|&function| exists_on(function, platform));
     let mut host_loaded_modules: Vec<RuntimeModule> = host_loaded.into_iter().collect();
@@ -92,6 +103,7 @@ pub(crate) fn collect_runtime_roots(
     let imported = application.host_modules().iter().copied();
     let mut modules: Vec<RuntimeModule> = imported.map(to_runtime_module).collect();
     modules.extend(&named);
+    modules.extend(&guessed.modules);
     let imports_cluster = modules.contains(&RuntimeModule::NodeCluster);
     modules.extend(&host_loaded_modules);
     let functions: Vec<RuntimeFunction> = functions.into_iter().collect();
@@ -106,6 +118,7 @@ pub(crate) fn collect_runtime_roots(
         loads_by_unknown_path,
         asks,
         keeps_code_without_names,
+        holds_guessed_code,
     }
 }
 

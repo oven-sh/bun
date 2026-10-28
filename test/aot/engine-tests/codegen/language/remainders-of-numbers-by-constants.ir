@@ -828,26 +828,18 @@ runtimefunction id=69 function=f17
 runtimefunction id=131091 function=f26 visibility=Private
 # -- generated: tested asNumbers
 # CHECK-LABEL: function {{*}}name="tested"
-# CHECK: role=EntryChecks
-# CHECK-NEXT: instructions: 7, patchpoints: 2
-# CHECK-NEXT: end of function f5
-# CHECK-LABEL: function {{*}}name="tested"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 293, patchpoints: 14, rare instructions: 409, polls: 3
+# CHECK-NEXT: instructions: 292, patchpoints: 14, rare instructions: 409, polls: 3
 # CHECK-NEXT: end of function f28
 # CHECK-LABEL: function {{*}}name="tested"
 # CHECK: role=GenericVersion
-# CHECK-NEXT: instructions: 223, patchpoints: 28, polls: 1
+# CHECK-NEXT: instructions: 222, patchpoints: 28, polls: 1
 # CHECK-NEXT: end of function f30
 # CHECK-LABEL: function {{*}}name="asNumbers"
-# CHECK: role=EntryChecks
-# CHECK-NEXT: instructions: 7, patchpoints: 2
-# CHECK-NEXT: end of function f6
-# CHECK-LABEL: function {{*}}name="asNumbers"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 763, patchpoints: 54, rare instructions: 341, polls: 4
+# CHECK-NEXT: instructions: 762, patchpoints: 54, rare instructions: 341, polls: 4
 # CHECK-NEXT: end of function f29
 # CHECK-LABEL: function {{*}}name="asNumbers"
 # CHECK: role=GenericVersion
-# CHECK-NEXT: instructions: 142, patchpoints: 36
+# CHECK-NEXT: instructions: 141, patchpoints: 36
 # CHECK-NEXT: end of function f31

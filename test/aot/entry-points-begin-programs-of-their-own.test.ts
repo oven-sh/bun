@@ -84,7 +84,8 @@ worker.onmessage = event => {
 };
 `;
 
-describe("compile/aot/entry points begin programs of their own", () => {
+// Each test has a folder of its own.
+describe.concurrent("compile/aot/entry points begin programs of their own", () => {
   const root = String(tempDir("aot-entry-points-begin-programs", {}));
   afterAll(() => rmSync(root, { recursive: true, force: true }));
   const carrier = withoutDebugInformation();

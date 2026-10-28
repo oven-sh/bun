@@ -10,12 +10,17 @@ function work(rounds: number): number {
 const session = new Session();
 session.connect();
 session.post("Profiler.enable");
-session.post("Profiler.start");
-const until = Date.now() + 60;
-while (Date.now() < until) work(20000);
-session.post("Profiler.stop", (error: unknown, result: any) => {
-  console.log(error == null, result.profile.nodes.length > 1, result.profile.samples.length > 0);
-});
+let stopped: { error: unknown; profile: any };
+for (let milliseconds = 60; ; milliseconds *= 2) {
+  session.post("Profiler.start");
+  const until = Date.now() + milliseconds;
+  while (Date.now() < until) work(20000);
+  stopped = await new Promise(resolve =>
+    session.post("Profiler.stop", (error: unknown, result: any) => resolve({ error, profile: result?.profile })),
+  );
+  if (stopped.error != null || stopped.profile.samples.length > 0 || milliseconds > 30_000) break;
+}
+console.log(stopped.error == null, stopped.profile.nodes.length > 1, stopped.profile.samples.length > 0);
 session.disconnect();
 const snapshot: any = Bun.generateHeapSnapshot();
 console.log(snapshot.version, snapshot.nodes.length > 1000, snapshot.nodeClassNames.includes("Function"));

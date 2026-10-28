@@ -1147,14 +1147,6 @@ runtimefunction id=131091 function=f85 visibility=Private
 # CHECK-NEXT: instructions: 53, patchpoints: 10, rare instructions: 10, polls: 2
 # CHECK-NEXT: end of function f94
 # CHECK-LABEL: function {{*}}name="bumpAll"
-# CHECK: role=EntryChecks
-# CHECK-NEXT: instructions: 3, patchpoints: 2
-# CHECK-NEXT: end of function f8
-# CHECK-LABEL: function {{*}}name="bumpAll"
-# CHECK: role=Source
-# CHECK-NEXT: instructions: 95, patchpoints: 8, rare instructions: 50, polls: 2
-# CHECK-NEXT: end of function f89
-# CHECK-LABEL: function {{*}}name="bumpAll"
 # CHECK: role=GenericVersion
 # CHECK-NEXT: instructions: 60, patchpoints: 16, rare instructions: 10, polls: 2
 # CHECK-NEXT: end of function f95

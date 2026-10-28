@@ -4,7 +4,7 @@ mod heritage;
 mod tests;
 mod unused;
 
-use core::cell::RefCell;
+use core::cell::{Cell, RefCell};
 use std::sync::OnceLock;
 
 use bun_core::StackCheck;
@@ -173,6 +173,8 @@ pub(crate) struct Removable<'a, 's> {
     modules: Option<(&'a ModuleGraph, FileId)>,
     stack: StackCheck,
     member_constants: RefCell<FxHashMap<EnumMemberId, Option<Primitive>>>,
+    // Whether a variable, a field or an export takes the value of what is asked about. `bun run` evaluates all of that, used or not.
+    is_value_taken: Cell<bool>,
 }
 
 impl<'a, 's> Removable<'a, 's> {
@@ -206,6 +208,7 @@ impl<'a, 's> Removable<'a, 's> {
             modules: None,
             stack: StackCheck::init(),
             member_constants: RefCell::default(),
+            is_value_taken: Cell::new(false),
         }
     }
 
@@ -215,6 +218,18 @@ impl<'a, 's> Removable<'a, 's> {
             modules: Some((modules, file)),
             ..self
         }
+    }
+
+    fn with_value_taken<T>(&self, is_taken: bool, ask: impl FnOnce() -> T) -> T {
+        let before = self.is_value_taken.replace(is_taken);
+        let answer = ask();
+        self.is_value_taken.set(before);
+        answer
+    }
+
+    // What is stored under a name that nothing reads: `exports.name = value`.
+    pub(crate) fn stored_value(&self, value: ExprId) -> bool {
+        self.with_value_taken(true, || self.expression(value))
     }
 
     // An import, and an export from another module, answer for themselves alone: whether the other module is evaluated is the caller's question.
@@ -235,16 +250,19 @@ impl<'a, 's> Removable<'a, 's> {
             | StmtKind::ExportAsNamespace(_)
             | StmtKind::Import(_)
             | StmtKind::ExportNamed(_) => true,
-            StmtKind::Expr(expression) | StmtKind::ExportDefault(expression) => {
-                self.expression(expression)
+            StmtKind::Expr(expression) => {
+                self.with_value_taken(false, || self.expression(expression))
             }
+            StmtKind::ExportDefault(expression) => self.stored_value(expression),
             StmtKind::Var(declarations) => declarations.iter().all(|it| self.declaration(it)),
             StmtKind::Class(class) => self.class(class),
             StmtKind::Enum(declaration) => self.enumeration(declaration),
             StmtKind::Module(namespace) => !self.bound.makes_namespace_object(hir, namespace),
             StmtKind::ImportEquals(alias) => self.import_equals(alias),
             StmtKind::If { test, yes, no } => {
-                self.expression(test) && self.never_runs(yes) && self.never_runs(no)
+                self.with_value_taken(false, || self.expression(test))
+                    && self.never_runs(yes)
+                    && self.never_runs(no)
             }
             StmtKind::Try {
                 block, finalizer, ..
@@ -268,7 +286,10 @@ impl<'a, 's> Removable<'a, 's> {
             }
             VarKind::AwaitUsing => false,
         };
-        disposes_nothing && self.pattern(node.pat, node.init) && self.expression(node.init)
+        disposes_nothing
+            && self.with_value_taken(true, || {
+                self.pattern(node.pat, node.init) && self.expression(node.init)
+            })
     }
 
     // A pattern reads properties of its value or runs its iterator. `value` is `NONE` where there is none.
@@ -329,6 +350,10 @@ impl<'a, 's> Removable<'a, 's> {
 
     // `None`: the class has to be defined though nothing uses it.
     pub(crate) fn find_class_checks(&self, class: ClassId) -> Option<ClassChecks> {
+        self.with_value_taken(true, || self.find_checks_of_class(class))
+    }
+
+    fn find_checks_of_class(&self, class: ClassId) -> Option<ClassChecks> {
         let node = &self.hir[class];
         let mut checks = ClassChecks::default();
         if node.flags.contains(Flags::AMBIENT) {
@@ -522,7 +547,7 @@ impl<'a, 's> Removable<'a, 's> {
         hir[declaration].members.iter().all(|member| {
             let node = &hir[member];
             node.computed_name.is_none()
-                && (self.member_constant(member).is_some() || self.expression(node.init))
+                && (self.member_constant(member).is_some() || self.stored_value(node.init))
         })
     }
 
@@ -803,7 +828,9 @@ impl<'a, 's> Removable<'a, 's> {
         };
         let mut is_left_out = false;
         members.iter().all(|member| {
-            is_left_out |= is_read_left_out_by_bun_run(member.id);
+            let shows_that_it_was_read =
+                self.is_value_taken.get() && table::entry(member.id).is_added_at_first_read;
+            is_left_out |= !shows_that_it_was_read && is_read_left_out_by_bun_run(member.id);
             is_read_without_code(member.id, false)
                 && (is_left_out || !may_be_added_by_first_read(member.id))
         }) && is_read_without_code(global.id, true)

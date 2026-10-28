@@ -344,9 +344,9 @@ function f48 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # -- generated: generic f28
 # CHECK-LABEL: function {{*}}name="generic"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 90, patchpoints: 7, rare instructions: 146
+# CHECK-NEXT: instructions: 90, patchpoints: 7, rare instructions: 132
 # CHECK-NEXT: end of function f7
 # CHECK-LABEL: function f28 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 91, patchpoints: 7, rare instructions: 151
+# CHECK-NEXT: instructions: 91, patchpoints: 7, rare instructions: 134
 # CHECK-NEXT: end of function f28

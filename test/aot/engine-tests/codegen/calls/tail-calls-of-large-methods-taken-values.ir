@@ -185,7 +185,7 @@ function f7 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # -- generated: stride
 # CHECK-LABEL: function {{*}}name="stride"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 152, patchpoints: 4, rare instructions: 70, polls: 3
+# CHECK-NEXT: instructions: 153, patchpoints: 4, rare instructions: 73, polls: 3
 # CHECK-NEXT: end of function f3
 # CHECK-LABEL: function {{*}}name="stride"
 # CHECK: role=GenericEntrypoint

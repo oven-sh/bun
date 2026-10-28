@@ -2,6 +2,7 @@ import { afterAll, expect } from "bun:test";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMusl, tempDir } from "harness";
 import { join } from "path";
+import { readElfFile } from "../elf-file";
 import { slot } from "../harness/commands";
 import { run } from "../harness/counted-run";
 import { compileCommand } from "../harness/flags";
@@ -159,6 +160,11 @@ const programs: Program[] = [
   },
   ...(process.env.AOT_SERVERS ? ["express", "fastify", "hono", "koa"].map(withPackages) : []),
 ];
+
+// The kernel gives a huge page only to a mapping that covers all of an aligned 2 MB.
+test.skipIf(!isLinux || isDebug || isASAN)("the part of Bun that starts as zeros has no room for a huge page", () => {
+  expect(readElfFile(bunExe()).largestPartThatStartsAsZeros).toBeLessThan(2 * 1024 * 1024);
+});
 
 describe.skipIf(!!skipped)("compile/aot/perf/start", () => {
   const root = String(tempDir("aot-start", {}));

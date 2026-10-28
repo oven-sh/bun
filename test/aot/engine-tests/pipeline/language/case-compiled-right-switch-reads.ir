@@ -349,17 +349,16 @@ function f1 name="tried" module=m0 position=264 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: v96: i32|whole = Mod v64, v70
 # CHECK-NEXT: Jump -> next b28(v96) @264:1 tail
 # CHECK-NEXT: b28(v97: int[-2147483648, 4294967295]|whole):
-# CHECK-NEXT: v98: int[-2147483648, 4294967295]|whole = Upcast v97 castType=int[-2147483648, 4294967295]|double
-# CHECK-NEXT: v99: " " = String string=" "
-# CHECK-NEXT: StringBuilderAppend v51, v99, v98
-# CHECK-NEXT: v101: int[1, 15] = Increment v59
-# CHECK-NEXT: Jump -> next b19(v101)
+# CHECK-NEXT: v98: " " = String string=" "
+# CHECK-NEXT: StringBuilderAppend v51, v98, v97
+# CHECK-NEXT: v100: int[1, 15] = Increment v59
+# CHECK-NEXT: Jump -> next b19(v100)
 # CHECK-NEXT: b29():
-# CHECK-NEXT: v102: string = StringBuilderFinish v51
-# CHECK-NEXT: v103: undefined = CallBuiltin -, v102 overload=ConsoleLog/0 accessSite=9
-# CHECK-NEXT: v104: int[1, 15] = Increment v20
-# CHECK-NEXT: Jump -> next b1(v104)
+# CHECK-NEXT: v101: string = StringBuilderFinish v51
+# CHECK-NEXT: v102: undefined = CallBuiltin -, v101 overload=ConsoleLog/0 accessSite=9
+# CHECK-NEXT: v103: int[1, 15] = Increment v20
+# CHECK-NEXT: Jump -> next b1(v103)
 # CHECK-NEXT: b30():
-# CHECK-NEXT: v105: undefined = Undefined
-# CHECK-NEXT: Return v105
+# CHECK-NEXT: v104: undefined = Undefined
+# CHECK-NEXT: Return v104
 # CHECK-NEXT: }

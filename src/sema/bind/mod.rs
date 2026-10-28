@@ -27,7 +27,7 @@ pub use static_referent::{
 
 use crate::atom::{Atom, known};
 use crate::hir::*;
-use crate::session::{Arena, ArenaHashMap, ArenaVec, transfer_arena, vec_from_iter_in};
+use crate::session::{Arena, ArenaHashMap, ArenaVec, transfer_arena};
 use crate::util::{FxBuild, FxHashMap, SharedSort};
 use smallvec::SmallVec;
 use std::hint::cold_path;
@@ -683,10 +683,15 @@ impl<'s> Symbols<'s> {
 
     /// Copies the lists into `arena`, for a program that shares the file with other programs.
     fn copy_in<'a>(&'a self, arena: &'a Arena) -> Symbols<'a> {
+        fn copy_of<'a, T: Copy>(list: &[T], arena: &'a Arena) -> ArenaVec<'a, T> {
+            let mut copy = ArenaVec::with_capacity_in(list.len(), arena);
+            copy.extend_from_slice(list);
+            copy
+        }
         Symbols {
-            list: vec_from_iter_in(self.list.iter().copied(), arena),
-            rest: vec_from_iter_in(self.rest.iter().copied(), arena),
-            many: vec_from_iter_in(self.many.iter().copied(), arena),
+            list: copy_of(&self.list, arena),
+            rest: copy_of(&self.rest, arena),
+            many: copy_of(&self.many, arena),
         }
     }
 }
@@ -2730,7 +2735,10 @@ impl BoundBuilder {
             scopes: copy_to_arena(&mut self.scopes, arena),
             tables: copy_to_arena(&mut self.tables, arena),
             entries: copy_to_arena(&mut self.entries, arena),
-            large_tables: map_to_arena(std::mem::take(&mut self.large_tables), arena),
+            large_tables: FixedMap::Arena(map_to_arena(
+                std::mem::take(&mut self.large_tables),
+                arena,
+            )),
             nested_names: copy_to_arena(&mut self.nested_names, arena),
             ids: copy_to_arena(&mut self.ids, arena),
             file_symbol: self.file_symbol,
@@ -2863,7 +2871,7 @@ impl Bound<'_> {
             scopes: Fixed::shared(&self.scopes),
             tables: Fixed::shared(&self.tables),
             entries: Fixed::shared(&self.entries),
-            large_tables: copy_of_map(&self.large_tables, arena),
+            large_tables: FixedMap::Shared(&self.large_tables),
             nested_names: Fixed::shared(&self.nested_names),
             ids: Fixed::shared(&self.ids),
             file_symbol: self.file_symbol,
@@ -3003,15 +3011,6 @@ impl Bound<'_> {
             runtime: self.runtime.share(),
         }
     }
-}
-
-fn copy_of_map<'s, K: Copy + Eq + std::hash::Hash, V: Copy>(
-    map: &ArenaHashMap<'_, K, V>,
-    arena: &'s Arena,
-) -> ArenaHashMap<'s, K, V> {
-    let mut exact = ArenaHashMap::with_capacity_and_hasher_in(map.len(), FxBuild, arena);
-    exact.extend(map.iter().map(|(&key, &value)| (key, value)));
-    exact
 }
 
 fn copy_of_few_map<'s, K: Copy + Ord, V: Copy>(

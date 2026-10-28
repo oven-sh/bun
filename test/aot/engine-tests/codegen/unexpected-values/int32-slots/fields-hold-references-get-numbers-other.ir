@@ -771,7 +771,7 @@ runtimefunction id=131091 function=f28 visibility=Private
 # -- generated: f0 typedView
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 553, patchpoints: 106, rare instructions: 391, polls: 4
+# CHECK-NEXT: instructions: 558, patchpoints: 107, rare instructions: 391, polls: 4
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="typedView"
 # CHECK: role=EntryChecks

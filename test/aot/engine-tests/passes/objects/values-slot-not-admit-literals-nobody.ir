@@ -205,83 +205,84 @@ function f39 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b1(v35: int[0, 11] @Int32):
 # CHECK-NEXT: v36: 11 @Int32 = Integer integer=11
 # CHECK-NEXT: v37: boolean @Boolean = Less v35, v36 form=Integers
-# CHECK-NEXT: TestAndBranch v37 -> taken b2(| 0), notTaken b14()
+# CHECK-NEXT: TestAndBranch v37 -> taken b2(| 0), notTaken b13()
 # CHECK-NEXT: b2(v38: int[0, 10] @Int32):
 # CHECK-NEXT: Switch v38 cases=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9] -> case b3(v0), case b3(v1), case b3(v10), case b3(v2), case b3(v3), case b3(v4), case b3(v5), case b3(v6), case b3(v7), case b3(v8), otherwise b3(v9)
 # CHECK-NEXT: b3(v39: f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11 @Cell):
 # CHECK-NEXT: v40: 1 @Int32 = Integer integer=1
 # CHECK-NEXT: v41: int[1, 11] @Int32 = Add v38, v40 form=Integers
 # CHECK-NEXT: v42: boolean @Boolean = TypeTest v39 testedType=f11
-# CHECK-NEXT: TestAndBranch v42 -> taken b4(), notTaken b10(| 0)
+# CHECK-NEXT: TestAndBranch v42 -> taken b4(), notTaken b9(| 0)
 # CHECK-NEXT: b4():
 # CHECK-NEXT: v43: 0 @Int64 = Integer
-# CHECK-NEXT: Jump -> next b5(v43)
-# CHECK-NEXT: b5(v44: int[0, 4294967295] @Int64):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v46: int[0, 4294967295] @Int64 = CallInline v33 inlineBuiltin=ArrayLength overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v47: boolean @Boolean = Less v44, v46 form=Integers
-# CHECK-NEXT: TestAndBranch v47 -> taken b6(| 0), notTaken b13()
-# CHECK-NEXT: b6(v48: int[0, 4294967294] @Int64):
-# CHECK-NEXT: v49: undefined|null|boolean|number|string|bigint|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> @JSValue = GetArrayElement v33, v48 arrayStorage=Contiguous level=Proven [keyIsIntegral]
-# CHECK-NEXT: v50: 1 @Int64 = Integer integer=1
-# CHECK-NEXT: v51: int[1, 4294967295] @Int64 = Add v48, v50 form=Integers
-# CHECK-NEXT: v52: undefined|null|boolean|number|string|bigint|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> @JSValue = Expect v49 expectedType=number
-# CHECK-NEXT: v53: boolean @Boolean = TypeTest v52 testedType=number
-# CHECK-NEXT: TestAndBranch v53 -> taken b7(), notTaken b8()
-# CHECK-NEXT: b7():
-# CHECK-NEXT: Jump -> next b9()
+# CHECK-NEXT: v45: int[0, 4294967295] @Int64 = CallInline v33 inlineBuiltin=ArrayLength overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v46: boolean @Boolean = Less v43, v45 form=Integers
+# CHECK-NEXT: TestAndBranch v46 -> taken b5(| 0), notTaken b12()
+# CHECK-NEXT: b5(v47: int[0, 4294967294] @Int64) frequency=Unlikely:
+# CHECK-NEXT: v48: undefined|null|boolean|number|string|bigint|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> @JSValue = GetArrayElement v33, v47 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+# CHECK-NEXT: v49: 1 @Int64 = Integer integer=1
+# CHECK-NEXT: v50: int[1, 4294967295] @Int64 = Add v47, v49 form=Integers
+# CHECK-NEXT: v51: undefined|null|boolean|number|string|bigint|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> @JSValue = Expect v48 expectedType=number
+# CHECK-NEXT: v52: boolean @Boolean = TypeTest v51 testedType=number
+# CHECK-NEXT: TestAndBranch v52 -> taken b6(), notTaken b7()
+# CHECK-NEXT: b6() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b8()
+# CHECK-NEXT: b7() frequency=Rare:
+# CHECK-NEXT: Jump -> next b8()
 # CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: Jump -> next b9()
-# CHECK-NEXT: b9() frequency=Rare:
-# CHECK-NEXT: Jump -> next b5(v51)
-# CHECK-NEXT: b10(v54: f1|f2|f3|f4|f5|f6|f7|f8|f9|f10 @JSValue) frequency=Unlikely:
-# CHECK-NEXT: v55: 0 @Int64 = Integer
-# CHECK-NEXT: Jump -> next b11(v55)
-# CHECK-NEXT: b11(v56: int[0, 4294967295] @Int64) frequency=Rare:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v58: int[0, 4294967295] @Int64 = CallInline v33 inlineBuiltin=ArrayLength overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v59: boolean @Boolean = Less v56, v58 form=Integers
-# CHECK-NEXT: TestAndBranch v59 -> taken b12(| 0), notTaken b13()
-# CHECK-NEXT: b12(v60: int[0, 4294967294] @Int64) frequency=Rare:
-# CHECK-NEXT: v61: undefined|null|boolean|number|string|bigint|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> @JSValue = GetArrayElement v33, v60 arrayStorage=Contiguous level=Proven [keyIsIntegral]
-# CHECK-NEXT: v62: 1 @Int64 = Integer integer=1
-# CHECK-NEXT: v63: int[1, 4294967295] @Int64 = Add v60, v62 form=Integers
-# CHECK-NEXT: v64: anything @JSValue = Call v54, -, v61, v61, v61, v61 calleeName="maker" accessSite=2 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11]
-# CHECK-NEXT: Jump -> next b11(v63)
-# CHECK-NEXT: b13():
+# CHECK-NEXT: v54: int[0, 4294967295] @Int64 = CallInline v33 inlineBuiltin=ArrayLength overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v55: boolean @Boolean = Less v50, v54 form=Integers
+# CHECK-NEXT: TestAndBranch v55 -> taken b5(| 0), notTaken b12()
+# CHECK-NEXT: b9(v56: f1|f2|f3|f4|f5|f6|f7|f8|f9|f10 @JSValue) frequency=Unlikely:
+# CHECK-NEXT: v57: 0 @Int64 = Integer
+# CHECK-NEXT: Jump -> next b10(v57)
+# CHECK-NEXT: b10(v58: int[0, 4294967295] @Int64) frequency=Rare:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v60: int[0, 4294967295] @Int64 = CallInline v33 inlineBuiltin=ArrayLength overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v61: boolean @Boolean = Less v58, v60 form=Integers
+# CHECK-NEXT: TestAndBranch v61 -> taken b11(| 0), notTaken b12()
+# CHECK-NEXT: b11(v62: int[0, 4294967294] @Int64) frequency=Rare:
+# CHECK-NEXT: v63: undefined|null|boolean|number|string|bigint|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> @JSValue = GetArrayElement v33, v62 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+# CHECK-NEXT: v64: 1 @Int64 = Integer integer=1
+# CHECK-NEXT: v65: int[1, 4294967295] @Int64 = Add v62, v64 form=Integers
+# CHECK-NEXT: v66: anything @JSValue = Call v56, -, v63, v63, v63, v63 calleeName="maker" accessSite=2 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11]
+# CHECK-NEXT: Jump -> next b10(v65)
+# CHECK-NEXT: b12():
 # CHECK-NEXT: Jump -> next b1(v41)
-# CHECK-NEXT: b14():
-# CHECK-NEXT: v65: false @Boolean = Boolean
-# CHECK-NEXT: v66: 0 @Int64 = Integer
-# CHECK-NEXT: v88: codeaddress @RawWord = ResolveCallTarget v0 argumentCount=4
-# CHECK-NEXT: Jump -> next b15(v65, v66)
-# CHECK-NEXT: b15(v67: boolean @Boolean, v68: int[0, 4294967295] @Int64):
+# CHECK-NEXT: b13():
+# CHECK-NEXT: v67: false @Boolean = Boolean
+# CHECK-NEXT: v68: 0 @Int64 = Integer
+# CHECK-NEXT: v90: codeaddress @RawWord = ResolveCallTarget v0 argumentCount=4
+# CHECK-NEXT: Jump -> next b14(v67, v68)
+# CHECK-NEXT: b14(v69: boolean @Boolean, v70: int[0, 4294967295] @Int64):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: Branch v67 -> taken b16(), notTaken b17()
+# CHECK-NEXT: Branch v69 -> taken b15(), notTaken b16()
+# CHECK-NEXT: b15():
+# CHECK-NEXT: v72: true @Boolean = Boolean boolean=true
+# CHECK-NEXT: v73: undefined @JSValue = Undefined
+# CHECK-NEXT: Jump -> next b19(v72, v73, v70)
 # CHECK-NEXT: b16():
-# CHECK-NEXT: v70: true @Boolean = Boolean boolean=true
-# CHECK-NEXT: v71: undefined @JSValue = Undefined
-# CHECK-NEXT: Jump -> next b20(v70, v71, v68)
-# CHECK-NEXT: b17():
-# CHECK-NEXT: v72: int[0, 4294967295] @Int64 = CallInline v33 inlineBuiltin=ArrayLength overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v73: boolean @Boolean = Less v68, v72 form=Integers
-# CHECK-NEXT: TestAndBranch v73 -> taken b18(| 0), notTaken b19()
-# CHECK-NEXT: b18(v74: int[0, 4294967294] @Int64):
-# CHECK-NEXT: v75: undefined|null|boolean|number|string|bigint|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> @JSValue = GetArrayElement v33, v74 arrayStorage=Contiguous level=Proven [keyIsIntegral]
-# CHECK-NEXT: v76: 1 @Int64 = Integer integer=1
-# CHECK-NEXT: v77: int[1, 4294967295] @Int64 = Add v74, v76 form=Integers
-# CHECK-NEXT: v78: false @Boolean = Boolean
-# CHECK-NEXT: Jump -> next b20(v78, v75, v77)
-# CHECK-NEXT: b19():
-# CHECK-NEXT: v79: true @Boolean = Boolean boolean=true
-# CHECK-NEXT: v80: undefined @JSValue = Undefined
-# CHECK-NEXT: Jump -> next b20(v79, v80, v68)
-# CHECK-NEXT: b20(v81: boolean @Boolean, v82: undefined|null|boolean|number|string|bigint|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> @JSValue, v83: int[0, 4294967295] @Int64):
-# CHECK-NEXT: v84: 1 @JSValue = Integer integer=1
-# CHECK-NEXT: v85: "t" @JSValue = String string="t"
-# CHECK-NEXT: v86: false @JSValue = Boolean
-# CHECK-NEXT: v87: undefined|null|L0|L1|L4 @JSValue = CallResolved v0, v88, -, v84, v82, v85, v86 calleeName="belowAnotherPrototype" accessSite=1 callees=[f1]
-# CHECK-NEXT: Jump -> next b15(v81, v83)
+# CHECK-NEXT: v74: int[0, 4294967295] @Int64 = CallInline v33 inlineBuiltin=ArrayLength overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v75: boolean @Boolean = Less v70, v74 form=Integers
+# CHECK-NEXT: TestAndBranch v75 -> taken b17(| 0), notTaken b18()
+# CHECK-NEXT: b17(v76: int[0, 4294967294] @Int64):
+# CHECK-NEXT: v77: undefined|null|boolean|number|string|bigint|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> @JSValue = GetArrayElement v33, v76 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+# CHECK-NEXT: v78: 1 @Int64 = Integer integer=1
+# CHECK-NEXT: v79: int[1, 4294967295] @Int64 = Add v76, v78 form=Integers
+# CHECK-NEXT: v80: false @Boolean = Boolean
+# CHECK-NEXT: Jump -> next b19(v80, v77, v79)
+# CHECK-NEXT: b18():
+# CHECK-NEXT: v81: true @Boolean = Boolean boolean=true
+# CHECK-NEXT: v82: undefined @JSValue = Undefined
+# CHECK-NEXT: Jump -> next b19(v81, v82, v70)
+# CHECK-NEXT: b19(v83: boolean @Boolean, v84: undefined|null|boolean|number|string|bigint|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> @JSValue, v85: int[0, 4294967295] @Int64):
+# CHECK-NEXT: v86: 1 @JSValue = Integer integer=1
+# CHECK-NEXT: v87: "t" @JSValue = String string="t"
+# CHECK-NEXT: v88: false @JSValue = Boolean
+# CHECK-NEXT: v89: undefined|null|L0|L1|L4 @JSValue = CallResolved v0, v90, -, v86, v84, v87, v88 calleeName="belowAnotherPrototype" accessSite=1 callees=[f1]
+# CHECK-NEXT: Jump -> next b14(v83, v85)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="storedOneByOne"
 # CHECK: module=m0 position=4461 flags=[IsChecked, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|boolean|number|string|bigint|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>}, {type=undefined|null|boolean|number|string|bigint|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>}, {type=undefined|null|boolean|number|string|bigint|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>}, {type=undefined|null|boolean|number|string|bigint|symbol("s")@m0:25|L3|f12|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>}] results=[{type=L0 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f37] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {

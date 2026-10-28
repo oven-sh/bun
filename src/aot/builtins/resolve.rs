@@ -211,6 +211,7 @@ pub struct ResolvedBuiltins {
     #[cfg(test)]
     exposed: Box<[BuiltinId]>,
     uses: RuntimeUses,
+    guessed_uses: RuntimeUses,
     loads_unknown_modules: bool,
 }
 
@@ -324,6 +325,11 @@ impl ResolvedBuiltins {
 
     pub fn uses(&self) -> &RuntimeUses {
         &self.uses
+    }
+
+    /// `MentionedUses::guessed` of a file of the program.
+    pub fn guessed_uses(&self) -> &RuntimeUses {
+        &self.guessed_uses
     }
 
     pub fn loads_unknown_modules(&self) -> bool {

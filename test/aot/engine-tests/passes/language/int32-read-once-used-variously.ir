@@ -1442,5 +1442,5 @@ runtimefunction id=131091 function=f32 visibility=Private
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="overWords"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 296, patchpoints: 53, rare instructions: 762, polls: 1
+# CHECK-NEXT: instructions: 299, patchpoints: 53, rare instructions: 762, polls: 1
 # CHECK-NEXT: end of function f8

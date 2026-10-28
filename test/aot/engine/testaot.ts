@@ -11,6 +11,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isArm64, isCI, isMacOS, isWindows } from "harness";
 import { existsSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { slot } from "../harness/commands";
 import { unsupported } from "../harness/compiler";
 
 const repository = join(import.meta.dir, "..", "..", "..");
@@ -132,16 +133,21 @@ export function irTests(part: number, parts: number) {
   }
 }
 
-// `testaot native` runs one test at a time.
-const atOnce = 4;
+// `testaot native` runs one test at a time, and one test takes a hundred times as long as another. So a file has many small shares, and
+// as many of them run at once as there are processors: whoever is done takes the next.
+const sharesOfAFile = 16;
 // TODO: on the Intel Macs of CI they did not end within the time that a test file has.
 const declare = isMacOS && !isArm64 ? test.todo : test.concurrent;
 
 /** Every `parts`-th native test, from the `part`-th on. */
 export function nativeTests(part: number, parts: number) {
   if (whyNoNativeTests) return void skipOrFail(whyNoNativeTests);
-  for (let slice = 0; slice < atOnce; slice++) {
-    const share = `${(part - 1) * atOnce + slice + 1}/${parts * atOnce}`;
-    declare(`native tests: --part=${share}`, () => expectEveryTestPasses(["native", `--part=${share}`]), 600_000);
+  for (let slice = 0; slice < sharesOfAFile; slice++) {
+    const share = `${(part - 1) * sharesOfAFile + slice + 1}/${parts * sharesOfAFile}`;
+    declare(
+      `native tests: --part=${share}`,
+      () => slot(() => expectEveryTestPasses(["native", `--part=${share}`])),
+      600_000,
+    );
   }
 }

@@ -1523,7 +1523,7 @@ for (let size = 16 * 1024 * 1024; size >= 8 * 1024; size /= 2) {
 
 let turns = 0;
 function pause() {
-  for (let i = 0; i < 3; i++) turns += i;
+  for (let i = 0; i < 30; i++) turns += i;
 }
 function attempt(run) {
   for (let i = 0; i < 4; i++) {
@@ -1607,7 +1607,7 @@ for (let size = 16 * 1024 * 1024; size >= 8 * 1024; size /= 2) {
 
 let turns = 0;
 function pause() {
-  for (let i = 0; i < 3; i++) turns += i;
+  for (let i = 0; i < 30; i++) turns += i;
 }
 for (let i = 0; i < 4; i++) {
   try {
@@ -1677,7 +1677,7 @@ for (let size = 16 * 1024 * 1024; size >= 8 * 1024; size /= 2) {
 
 let turns = 0;
 function pause() {
-  for (let i = 0; i < 3; i++) turns += i;
+  for (let i = 0; i < 30; i++) turns += i;
 }
 for (let i = 0; i < 4; i++) {
   try {
@@ -1724,7 +1724,7 @@ console.log(text.length, blobs.map(blob => blob.size).join(", "));
 }
 let turns = 0;
 function pause() {
-  for (let i = 0; i < 3; i++) turns += i;
+  for (let i = 0; i < 30; i++) turns += i;
 }
 function takeTexts(list) {
   for (let size = 16 * 1024 * 1024; size >= 8 * 1024; size /= 2) {

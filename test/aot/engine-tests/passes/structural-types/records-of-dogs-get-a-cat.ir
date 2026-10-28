@@ -238,39 +238,37 @@ function f37 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v14: f5 = GetModuleVariable variable=g4
 # CHECK-NEXT: v15: f6 = GetModuleVariable variable=g5
 # CHECK-NEXT: Jump -> next b1(v11)
-# CHECK-NEXT: b1(v16: int[0, 2000] ~ 0):
+# CHECK-NEXT: b1(v16: int[0, 1999] ~ 0) frequency=Rare:
+# CHECK-NEXT: v17: L4 = NewObject layout=L4 allocationSite=5 allocationClass=3
+# CHECK-NEXT: v18: L4 = FinishObject v17
+# CHECK-NEXT: v19: "a" = String string="a"
+# CHECK-NEXT: v20: number = Call v12, -, v18, v19 calleeName="legsOf" accessSite=0 callees=[f2]
+# CHECK-NEXT: v21: "b" = String string="b"
+# CHECK-NEXT: v22: undefined|null|string = Call v13, -, v18, v21 calleeName="barkOf" accessSite=1 callees=[f3]
+# CHECK-NEXT: v23: string = RequireObjectCoercible v22 name="length"
+# CHECK-NEXT: v24: number = CallDirect v18 function=f4 accessSite=3
+# CHECK-NEXT: v25: number = Call v14, -, v18 calleeName="totalByValues" accessSite=4 callees=[f5]
+# CHECK-NEXT: v26: L5 = NewObject layout=L5 allocationSite=6 allocationClass=4
+# CHECK-NEXT: v27: L5 = FinishObject v26
+# CHECK-NEXT: v28: number = Call v15, -, v27 calleeName="sum" accessSite=5 callees=[f6]
+# CHECK-NEXT: v29: int[1, 2000] ~ 1 = Increment v16
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v18: 2000 = Integer integer=2000
-# CHECK-NEXT: v19: boolean = Less v16, v18
-# CHECK-NEXT: Branch v19 -> taken b2(| 0), notTaken b3()
-# CHECK-NEXT: b2(v20: int[0, 1999] ~ 0) frequency=Rare:
-# CHECK-NEXT: v21: L4 = NewObject layout=L4 allocationSite=5 allocationClass=3
-# CHECK-NEXT: v22: L4 = FinishObject v21
-# CHECK-NEXT: v23: "a" = String string="a"
-# CHECK-NEXT: v24: number = Call v12, -, v22, v23 calleeName="legsOf" accessSite=0 callees=[f2]
-# CHECK-NEXT: v25: "b" = String string="b"
-# CHECK-NEXT: v26: undefined|null|string = Call v13, -, v22, v25 calleeName="barkOf" accessSite=1 callees=[f3]
-# CHECK-NEXT: v27: string = RequireObjectCoercible v26 name="length"
-# CHECK-NEXT: v28: number = CallDirect v22 function=f4 accessSite=3
-# CHECK-NEXT: v29: number = Call v14, -, v22 calleeName="totalByValues" accessSite=4 callees=[f5]
-# CHECK-NEXT: v30: L5 = NewObject layout=L5 allocationSite=6 allocationClass=4
-# CHECK-NEXT: v31: L5 = FinishObject v30
-# CHECK-NEXT: v32: number = Call v15, -, v31 calleeName="sum" accessSite=5 callees=[f6]
-# CHECK-NEXT: v33: int[1, 2000] ~ 1 = Increment v20
-# CHECK-NEXT: Jump -> next b1(v33)
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v34: object = NewDictionary
-# CHECK-NEXT: v35: Object = AssumeType v34 provenType=Object
-# CHECK-NEXT: PutModuleVariable v35 variable=g6
-# CHECK-NEXT: v37: "kit" = String string="kit"
-# CHECK-NEXT: v38: L2 = NewObject -, v37 layout=L2 fields=[2] allocationClass=2 [listsOnlyStoredValues]
-# CHECK-NEXT: PropSet v35, v38 key="kit" accessSite=18
-# CHECK-NEXT: v40: "fido" = String string="fido"
-# CHECK-NEXT: v41: L1 = NewObject -, v40 layout=L1 fields=[3] allocationClass=1 [listsOnlyStoredValues]
-# CHECK-NEXT: PropSet v35, v41 key="fido" accessSite=9
-# CHECK-NEXT: v43: undefined = CallDirect function=f52 accessSite=10
-# CHECK-NEXT: v44: undefined = Undefined
-# CHECK-NEXT: Return v44
+# CHECK-NEXT: v31: 2000 = Integer integer=2000
+# CHECK-NEXT: v32: boolean = Less v29, v31
+# CHECK-NEXT: Branch v32 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v33: object = NewDictionary
+# CHECK-NEXT: v34: Object = AssumeType v33 provenType=Object
+# CHECK-NEXT: PutModuleVariable v34 variable=g6
+# CHECK-NEXT: v36: "kit" = String string="kit"
+# CHECK-NEXT: v37: L2 = NewObject -, v36 layout=L2 fields=[2] allocationClass=2 [listsOnlyStoredValues]
+# CHECK-NEXT: PropSet v34, v37 key="kit" accessSite=18
+# CHECK-NEXT: v39: "fido" = String string="fido"
+# CHECK-NEXT: v40: L1 = NewObject -, v39 layout=L1 fields=[3] allocationClass=1 [listsOnlyStoredValues]
+# CHECK-NEXT: PropSet v34, v40 key="fido" accessSite=9
+# CHECK-NEXT: v42: undefined = CallDirect function=f52 accessSite=10
+# CHECK-NEXT: v43: undefined = Undefined
+# CHECK-NEXT: Return v43
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="totalLegs"
 # CHECK: module=m0 position=1774 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L4|Object flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

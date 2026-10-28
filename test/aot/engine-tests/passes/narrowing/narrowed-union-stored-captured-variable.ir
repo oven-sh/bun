@@ -362,7 +362,7 @@ function f8 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChe
 runtimefunction id=69 function=f8
 # -- generated: f0 take pick run Holder later f6 next
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f19 callPosition=4294967295 isConstruction=true module=m0}, {callee=f19 callPosition=4294967295 isConstruction=true module=m0}, {callee=f6 callPosition=4294967295 parent=2 module=m0}, {callee=f6 callPosition=4294967295 parent=1 module=m0}] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f3 callPosition=4294967295 module=m0}, {callee=f19 callPosition=4294967295 isConstruction=true module=m0}, {callee=f19 callPosition=4294967295 isConstruction=true module=m0}, {callee=f6 callPosition=4294967295 parent=3 module=m0}, {callee=f6 callPosition=4294967295 parent=2 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "off" = String string="off"
 # CHECK-NEXT: v1: "read" = String string="read"
@@ -374,7 +374,7 @@ runtimefunction id=69 function=f8
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v7: 16 = Integer integer=16
 # CHECK-NEXT: v8: boolean = Less v5, v7
-# CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b7()
+# CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b10()
 # CHECK-NEXT: b2(v9: int[0, 15]):
 # CHECK-NEXT: v10: 3 = Integer integer=3
 # CHECK-NEXT: v11: int[0, 3] = BitAnd v9, v10
@@ -392,27 +392,35 @@ runtimefunction id=69 function=f8
 # CHECK-NEXT: v22: boolean = StrictEq v20, v21
 # CHECK-NEXT: v23: "read" = String string="read"
 # CHECK-NEXT: v24: L0 = NewObject -, v23 layout=L0 fields=[0] allocationClass=0 [listsOnlyStoredValues]
-# CHECK-NEXT: v25: string = CallDirect v18, v22, v24 function=f3 accessSite=8
-# CHECK-NEXT: v26: boolean ~ true = TypeTest v18 testedType=null|boolean|number|string
-# CHECK-NEXT: Branch v26 -> taken b4(| 0), notTaken b5(| 0)
-# CHECK-NEXT: b4(v27: null|boolean|number|string ~ null|"admin"|"off"|"read"|"write"):
-# CHECK-NEXT: v28: undefined = CallBuiltin -, v27, v25 overload=ConsoleLog/0 accessSite=9
-# CHECK-NEXT: Jump -> next b6()
-# CHECK-NEXT: b5(v29: object) frequency=Rare:
-# CHECK-NEXT: v30: undefined = CallBuiltin -, v29, v25 overload=ConsoleLog/1 accessSite=9
-# CHECK-NEXT: Jump -> next b6()
-# CHECK-NEXT: b6():
-# CHECK-NEXT: v31: int[1, 16] = Increment v9
-# CHECK-NEXT: Jump -> next b1(v31)
-# CHECK-NEXT: b7():
-# CHECK-NEXT: v32: "other" = String string="other"
-# CHECK-NEXT: v33: true = Boolean boolean=true
-# CHECK-NEXT: v34: "read" = String string="read"
-# CHECK-NEXT: v35: L0 = NewObject -, v34 layout=L0 fields=[0] allocationClass=0 [listsOnlyStoredValues]
-# CHECK-NEXT: v36: string = CallDirect v32, v33, v35 function=f3 accessSite=13
-# CHECK-NEXT: v37: undefined = CallBuiltin -, v36 overload=ConsoleLog/0 accessSite=14
-# CHECK-NEXT: v38: undefined = Undefined
-# CHECK-NEXT: Return v38
+# CHECK-NEXT: v25: boolean ~ true = TypeTest v18 testedType=undefined|null|"admin"|"off"|"read"|"write"
+# CHECK-NEXT: Branch v25 -> taken b4(| 0), notTaken b5()
+# CHECK-NEXT: b4(v26: null|"admin"|"off"|"read"|"write"):
+# CHECK-NEXT: v27: string = CallDirect v26, v22, v24 function=f12 @822:1 tail
+# CHECK-NEXT: Jump -> next b6(v27)
+# CHECK-NEXT: b5() frequency=Unlikely:
+# CHECK-NEXT: v28: string = CallDirect v18, v22, v24 function=f15 @822:1 tail
+# CHECK-NEXT: Jump -> next b6(v28)
+# CHECK-NEXT: b6(v29: string):
+# CHECK-NEXT: v30: boolean ~ true = TypeTest v18 testedType=null|boolean|number|string
+# CHECK-NEXT: Branch v30 -> taken b7(| 0), notTaken b8(| 0)
+# CHECK-NEXT: b7(v31: null|boolean|number|string ~ null|"admin"|"off"|"read"|"write"):
+# CHECK-NEXT: v32: undefined = CallBuiltin -, v31, v29 overload=ConsoleLog/0 accessSite=9
+# CHECK-NEXT: Jump -> next b9()
+# CHECK-NEXT: b8(v33: object) frequency=Rare:
+# CHECK-NEXT: v34: undefined = CallBuiltin -, v33, v29 overload=ConsoleLog/1 accessSite=9
+# CHECK-NEXT: Jump -> next b9()
+# CHECK-NEXT: b9():
+# CHECK-NEXT: v35: int[1, 16] = Increment v9
+# CHECK-NEXT: Jump -> next b1(v35)
+# CHECK-NEXT: b10():
+# CHECK-NEXT: v36: "other" = String string="other"
+# CHECK-NEXT: v37: true = Boolean boolean=true
+# CHECK-NEXT: v38: "read" = String string="read"
+# CHECK-NEXT: v39: L0 = NewObject -, v38 layout=L0 fields=[0] allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: v40: string = CallDirect v36, v37, v39 function=f3 accessSite=13
+# CHECK-NEXT: v41: undefined = CallBuiltin -, v40 overload=ConsoleLog/0 accessSite=14
+# CHECK-NEXT: v42: undefined = Undefined
+# CHECK-NEXT: Return v42
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="take"
 # CHECK: module=m0 position=599 role=EntryChecks flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|"read"|"write" site=w0 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=int[1, 2] site=w1}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f10 fallback=f13} {

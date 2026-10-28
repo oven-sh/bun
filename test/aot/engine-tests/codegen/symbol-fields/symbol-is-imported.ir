@@ -288,7 +288,7 @@ runtimefunction id=131091 function=f15 visibility=Private
 # -- generated: f2 Body
 # CHECK-LABEL: function f2 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 15, patchpoints: 1, rare instructions: 4
+# CHECK-NEXT: instructions: 16, patchpoints: 1, rare instructions: 2
 # CHECK-NEXT: end of function f2
 # CHECK-LABEL: function {{*}}name="Body"
 # CHECK: role=Source

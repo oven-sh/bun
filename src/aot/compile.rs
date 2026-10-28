@@ -304,6 +304,8 @@ pub(crate) struct LoadedBuild<'b, 's> {
     pub loads_code_by_unknown_names_alone: bool,
     /// `RuntimeRoots::keeps_code_without_names`
     pub keeps_library_code_without_names: bool,
+    /// `RuntimeRoots::holds_guessed_code`
+    pub holds_guessed_library_code: bool,
     /// Waits until the plugins have answered for every asset. False: one of them is no asset, and the caller gives up.
     pub finish_asset_reads: &'b dyn Fn() -> bool,
     /// What the load of Bun's own code has read off its files.
@@ -644,7 +646,9 @@ fn find_library_code_lacked(
 ) -> RuntimeUses {
     let used = found.builtins_used.iter();
     let used = used.filter_map(|record| builtin_of(record.builtin));
-    let mut needed = RuntimeUses::of_entries_used(used, platform);
+    let used: Vec<BuiltinId> = used.map(table::canonical_id).collect();
+    let mut needed = RuntimeUses::of_entries_used(used.iter().copied(), platform);
+    needed.add(&held.find_modules_left_out(&used));
     // It has followed nothing, and keeps all that it was handed.
     let has_followed_nothing = found.unseen_code.iter().any(|record| {
         matches!(
@@ -664,8 +668,9 @@ fn find_library_code_lacked(
     let functions = entered.filter(|&function| {
         table::runtime_function(function).is_some_and(|data| {
             data.platforms.contains(platform)
-                && !(holds_named_functions_of_host_alone
+                && (!(holds_named_functions_of_host_alone
                     && data.role == RuntimeFunctionRole::HostBuiltin)
+                    || held.is_left_to_engine(function))
         })
     });
     needed.add(&RuntimeUses {
@@ -1441,6 +1446,15 @@ fn compile_program(
     Ok(compiled.programs.pop().expect("a build has a program").1)
 }
 
+/// Whether the build loads again behind a run of the engine.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum FurtherLoad {
+    /// For another program, whatever becomes of this one.
+    MayCome,
+    /// Only for the program that is compiled in place of this one.
+    ComesIfRunEnds,
+}
+
 struct CompiledPrograms {
     /// In the order of their entry points.
     programs: Vec<(ProgramPlace, Compilation)>,
@@ -1526,6 +1540,10 @@ fn compile_programs<'a>(
     }
     let mut compiled = Vec::with_capacity(outputs.len());
     let mut library_code_lacked = Vec::with_capacity(outputs.len());
+    // Entry points that this load has left, and the files that Workers start from, are loaded by themselves.
+    let mut is_loaded_again =
+        !build.left_entry_points.is_empty() || !build.started_workers.files.is_empty();
+    let mut programs_to_ask = outputs.len();
     for (place, output) in outputs {
         build.place = place;
         let emitted = build
@@ -1559,7 +1577,14 @@ fn compile_programs<'a>(
             let nobody_reads = find_ways_named_that_nobody_reads(found, ways_followed);
             find_load_options_with(own, &lacked, reads_main_module, ways, nobody_reads).is_none()
         };
-        let engine = build.run_engine(bytes, &engine_options, &output, &goes_on);
+        programs_to_ask -= 1;
+        let whole_runs = WHOLE_ENGINE_RUNS.get();
+        let further_load = match is_loaded_again || programs_to_ask > 0 {
+            true => FurtherLoad::MayCome,
+            false => FurtherLoad::ComesIfRunEnds,
+        };
+        let engine = build.run_engine(bytes, &engine_options, &output, &goes_on, further_load);
+        is_loaded_again |= WHOLE_ENGINE_RUNS.get() == whole_runs;
         let lacked = find_library_code_lacked(engine.flow_findings(), held, platform);
         library_code_lacked.push(lacked);
         if let Some(modules) = &mut output.modules {
@@ -1958,13 +1983,14 @@ impl<'a> Build<'a> {
         engine_options: &EngineOptions,
         output: &FrontEndOutput,
         goes_on: JudgeOfFlowFindings<'_>,
+        further_load: FurtherLoad,
     ) -> EngineResult {
         self.clock.stop();
         ENGINE_RUNS.set(ENGINE_RUNS.get() + 1);
         let leftovers = core::mem::take(&mut self.leftovers);
         let started = Instant::now();
         let has_ended_behind_flow_analysis = AtomicBool::new(false);
-        // It serves the load of the program that is compiled in place of this one. Where there is none, it goes while the engine goes on.
+        // It serves the loads that follow. Where none can, it goes while the engine goes on.
         let mut shared_by_loads = Guarded::new(SharedByLoads::take());
         let ((), engine) = run_beside(
             &self.beside_runner(),
@@ -1973,7 +1999,7 @@ impl<'a> Build<'a> {
                 engine::compile(bytes, engine_options, &|found| {
                     let goes_on = goes_on(found);
                     has_ended_behind_flow_analysis.store(!goes_on, Ordering::Relaxed);
-                    if goes_on {
+                    if goes_on && further_load == FurtherLoad::ComesIfRunEnds {
                         drop(shared_by_loads.lock().take());
                     }
                     goes_on

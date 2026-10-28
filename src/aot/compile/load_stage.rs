@@ -265,6 +265,7 @@ fn asks_the_same(a: &RuntimeRoots, b: &RuntimeRoots) -> bool {
         && a.imports_uncompiled_code == b.imports_uncompiled_code
         && a.loads_by_unknown_path == b.loads_by_unknown_path
         && a.keeps_code_without_names == b.keeps_code_without_names
+        && a.holds_guessed_code == b.holds_guessed_code
 }
 
 fn create_runtime_modules(archive: &'static Archive, options: &Options<'_>) -> RuntimeModules {
@@ -754,6 +755,7 @@ impl<'a> Build<'a> {
                     can_load_code_at_run_time,
                     loads_code_by_unknown_names_alone,
                     keeps_library_code_without_names: roots.keeps_code_without_names,
+                    holds_guessed_library_code: roots.holds_guessed_code,
                     finish_asset_reads: project.finish_asset_reads,
                     known_library_regions: &|| {
                         let reach = runtime_host.reach.as_ref()?;

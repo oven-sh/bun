@@ -57,22 +57,22 @@ const optionLists: [entry: string, options: string][] = [
 describe
   .skipIf(!!unsupported)
   .concurrent("an executable with --compile-exec-argv answers with --aot as it does without", () => {
-    const { folder, build } = sharedBuilds("compile-exec-argv", {
+    const { folder, build, buildWholeAndTrimmed } = sharedBuilds("compile-exec-argv", {
       "main.mjs": program,
       "header-size.mjs": readsHeaderSize,
     });
 
     test.each(optionLists)("%s %j", async (entry, options) => {
       const embedded = options ? ["--compile-exec-argv=" + options] : [];
-      const answerOf = async (...flags: string[]) => {
-        const { executable } = await build(entry, ...flags, ...embedded);
+      const answerOf = async ({ executable }: { executable: string }) => {
         const { stdout, exitCode } = await run([executable, "--own", "argument"], folder, { ...bunEnv, NO_COLOR: "1" });
         return { stdout, exitCode };
       };
-      const without = await answerOf();
+      const without = await answerOf(await build(entry, ...embedded));
       if (entry === "main.mjs") expect(without.stdout).toContain(`argv: ["--own","argument"]`);
       else expect(without.stdout).toBe("header size: 64\n");
-      expect(await answerOf("--aot")).toEqual(without);
-      if (canTrim) expect(await answerOf("--aot", "--trim")).toEqual(without);
+      if (!canTrim) return void expect(await answerOf(await build(entry, "--aot", ...embedded))).toEqual(without);
+      for (const built of await buildWholeAndTrimmed(entry, ...embedded))
+        expect(await answerOf(built)).toEqual(without);
     });
   });

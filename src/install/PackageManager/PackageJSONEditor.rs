@@ -232,7 +232,7 @@ pub fn edit_trusted_dependencies(
     let mut len = names_to_add.len();
 
     let query = package_json.as_property(TRUSTED_DEPENDENCIES_STRING);
-    let trusted_dependencies: &[Expr] = match query.as_ref().map(|query| &query.expr.data) {
+    let trusted_dependencies: &[Expr] = match query.as_ref().map(|q| &q.expr.data) {
         Some(bun_ast::ExprData::EArray(arr)) => arr.items.slice(),
         _ => &[],
     };
@@ -264,7 +264,7 @@ pub fn edit_trusted_dependencies(
 
     let mut needs_new_trusted_dependencies_list = true;
     let mut trusted_dependencies_array: Expr = 'brk: {
-        if let Some(query) = package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
+        if let Some(query) = query {
             if matches!(query.expr.data, bun_ast::ExprData::EArray(_)) {
                 needs_new_trusted_dependencies_list = false;
                 break 'brk query.expr;

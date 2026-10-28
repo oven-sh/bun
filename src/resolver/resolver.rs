@@ -4667,10 +4667,7 @@ impl<'a> Resolver<'a> {
         while queue_slice_len > 0 {
             // SAFETY: every slot in `0..queue_slice_len` was `.write()`-initialised above.
             let mut queue_top = unsafe { queue[queue_slice_len - 1].assume_init_ref() }.clone();
-            // `unsafe_path` was set to a slice of the threadlocal
-            // `dir_info_uncached_path` buffer earlier in this fn; valid for the
-            // remainder of the fn body. Copy the `RawSlice` handle out so the
-            // re-borrow below doesn't hold `queue_top` borrowed.
+            // Copy the `RawSlice` out so `.slice()` doesn't keep `queue_top` borrowed.
             let qt_unsafe_path = queue_top.unsafe_path;
             let queue_top_unsafe_path: &[u8] = qt_unsafe_path.slice();
             let queue_top_safe_path = queue_top.safe_path;

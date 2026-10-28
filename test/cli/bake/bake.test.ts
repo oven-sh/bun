@@ -530,6 +530,36 @@ test.concurrent("bun bake serves the new app/server.ts after a change, on the sa
   expect(await get(url, "/")).toBe("200 v2");
 });
 
+test.concurrent("bun bake serves a page added to app/pages/, at the next reload", async () => {
+  using dir = tempDir("bake-command-late-page", {
+    "app/pages/index.html": page,
+    "app/server.ts": `export default { fetch: () => new Response("v1", { status: 404 }) };`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const output = collectOutput(proc);
+  const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
+  expect(await get(url, "/late")).toBe("404 v1");
+
+  await Bun.write(join(String(dir), "app/pages/late.html"), `<!doctype html><html><body><h1>late</h1></body></html>`);
+  // A new file in app/pages/ does not reload; an edit to app/server.ts does. The reload imports
+  // the new page from a directory that the resolver listed before the page was there.
+  const before = output.text.length;
+  await Bun.write(
+    join(String(dir), "app/server.ts"),
+    `export default { fetch: () => new Response("v2", { status: 404 }) };`,
+  );
+  // While the edit is written, app/server.ts can be empty for a moment: that reload prints another
+  // error, and the reload for the whole file follows it.
+  const [, reloaded] = await output.waitFor(
+    new RegExp(`^[\\s\\S]{${before}}[\\s\\S]*?(url: http|error: Cannot find module[^\\n]*)`),
+  );
+  expect(reloaded).toBe("url: http");
+
+  expect(await get(url, "/late")).toContain("<h1>late</h1>");
+  expect(await get(url, "/missing")).toBe("404 v2");
+});
+
 test.concurrent("bun bake keeps one server across reloads when it started on a later port", async () => {
   // Take the port that `bun bake` tries first, so it starts on the next one.
   await using blocker = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("blocker") });

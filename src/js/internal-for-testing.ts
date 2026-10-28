@@ -91,6 +91,12 @@ export const napiThreadsafeFunctionLiveCount = $bindgen("napi_body.bind.ts", "th
 
 export const bundlerWorkerLiveCount = $bindgen("JSBundler.bind.ts", "workerLiveCount");
 
+/** How many directory records the resolver has filled. None is freed, so a directory that is dropped from the cache and read again counts twice. */
+export const resolverDirInfoSlotsUsed = $bindgen(
+  "BunObjectInternals.bind.ts",
+  "resolverDirInfoSlotsUsed",
+) as () => number;
+
 export const semverIntersects = $bindgen("SemverObjectInternals.bind.ts", "intersects") as (
   left: string,
   right: string,

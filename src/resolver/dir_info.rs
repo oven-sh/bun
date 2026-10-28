@@ -314,6 +314,12 @@ pub(crate) fn hash_map_instance() -> *mut HashMap {
     hash_map_instance_init()
 }
 
+/// `bun:internal-for-testing`: `DirInfo` slots filled so far. None is freed: a directory read again counts twice.
+pub fn slots_used() -> usize {
+    // SAFETY: the singleton lives for the process, and `slots_used` takes the map's mutex.
+    unsafe { (*hash_map_instance()).slots_used() }
+}
+
 #[cold]
 #[inline(never)]
 fn hash_map_instance_init() -> *mut HashMap {

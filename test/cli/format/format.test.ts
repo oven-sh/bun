@@ -7657,7 +7657,8 @@ try {
   ])(
     "an opener that is repeated without its closer takes linear time: .%s %j %j",
     async (extension, before, opener, other, after, configuration) => {
-      // An optimized build needs the larger size: at 256 KB its first two rows stay below 6 without the fix.
+      // Only a debug build takes the smaller size, not an optimized one with ASAN: at 256 KB the first two rows of an
+      // optimized build stay below 6 without the fix.
       const size = (isDebug ? 256 : 2048) * 1024;
       const run = (unit: string) => {
         const units = Buffer.alloc(size - (size % Buffer.byteLength(unit)), unit).toString();
@@ -7665,13 +7666,19 @@ try {
       };
       // The least of three runs each, in turns: the tests that run at the same time can make one run take several
       // times as long.
-      let [odd, plain] = [Infinity, Infinity];
+      const [odd, plain]: Awaited<ReturnType<typeof run>>[][] = [[], []];
       for (let turn = 0; turn < 3; turn++) {
-        odd = Math.min(odd, (await run(opener)).cpu);
-        plain = Math.min(plain, (await run(other)).cpu);
+        odd.push(await run(opener));
+        plain.push(await run(other));
       }
+      const runs = [...odd, ...plain];
+      // A text that is refused takes no time.
+      expect(runs.flatMap(result => result.stderr.match(/^error: .*/gm) ?? [])).toEqual([]);
+      const least = (results: typeof runs) => ({ cpu: Math.min(...results.map(result => result.cpu)) });
       // 0.8 to 1.7 when all is well, and up to 3.9 on a busy machine. 24 or more without the fix.
-      expect(slowdown({ cpu: odd }, { cpu: plain })).toBeLessThan(6);
+      expect(slowdown(least(odd), least(plain))).toBeLessThan(6);
+      // Nor does one that ends the formatter. A run that took too long was ended, which the ratio has shown by now.
+      expect(runs.map(result => result.exitCode).filter(exitCode => exitCode > 1)).toEqual([]);
     },
     120_000,
   );

@@ -2009,7 +2009,8 @@ pub mod bv2_impl {
 
             // SAFETY: `self.transpiler` (and the data its `&'a` fields borrow)
             // outlives this `BundleV2<'a>`; `for_target` widens those borrows to
-            // the same `'a`.
+            // the same `'a`. Its log outlives the bundle, only the bundle thread
+            // uses it, and no `log_mut()` result is live here.
             let mut ct: Transpiler<'a> = unsafe {
                 Transpiler::for_target(this_transpiler, Target::Browser, arena, this_transpiler.log)
             }?;

@@ -1120,15 +1120,16 @@ describe("the output is that of zstd 1.5.7", () => {
       const data = level < 19 ? large : large.subarray(0, 140_000);
       results[level] = `${digest(zstdCompressSync(data, { level }))}, ${digest(zstdCompressSync(small, { level }))}`;
     }
-    for (const level of [-1, -7, -100]) {
+    // Not -1: node:zlib takes that for a parameter that is not set.
+    for (const level of [-2, -7, -100]) {
       const params = { [c.ZSTD_c_compressionLevel]: level };
       results[level] =
         `${digest(zlib.zstdCompressSync(large, { params }))}, ${digest(zlib.zstdCompressSync(small, { params }))}`;
     }
     expect(results).toMatchInlineSnapshot(`
       {
-        "-1": "44935 b2f48ca4f89477e9, 810 e35cec5c3500c856",
         "-100": "167967 45693a3bc89d2838, 2112 a1f04bdd2c75d853",
+        "-2": "55329 a7cd8da33a4cce8b, 954 cb3a52b86b5193c7",
         "-7": "65641 25bb487794d2f45f, 1081 6841140ea417de55",
         "1": "46828 2a61d18b13a9df88, 824 3a3b2b799ed70f7b",
         "10": "42353 d560f70047c278d, 807 bc69857972f7737c",

@@ -25,6 +25,8 @@ pub struct Patience {
 
 impl Patience {
     const MAX_SKIPS: u32 = 64;
+    /// A wait that took this many times its length lost its processor for a time slice of the scheduler: 0.75 ms or more on Linux.
+    const LATE: u32 = 25;
 
     pub const fn new() -> Self {
         Patience {
@@ -61,7 +63,7 @@ impl Patience {
             std::thread::yield_now();
         };
         // Ready but late: the processor went to another program meanwhile, and a sleep would have cost no more.
-        self.record(is_ready && start.elapsed() <= length);
+        self.record(is_ready && start.elapsed() <= length.saturating_mul(Self::LATE));
         is_ready
     }
 
@@ -146,10 +148,22 @@ mod tests {
         let patience = Patience::new();
         let length = Duration::from_millis(1);
         assert!(patience.wait_for(length, || {
-            std::thread::sleep(5 * length);
+            std::thread::sleep(4 * Patience::LATE * length);
             true
         }));
         assert!(!patience.allows_wait());
+        assert!(patience.allows_wait());
+    }
+
+    #[test]
+    fn a_wait_that_ends_a_little_after_its_length_counts_as_in_time() {
+        let patience = Patience::new();
+        wait_in_vain(&patience);
+        let length = Duration::from_millis(100);
+        assert!(patience.wait_for(length, || {
+            std::thread::sleep(length + length / 2);
+            true
+        }));
         assert!(patience.allows_wait());
     }
 }

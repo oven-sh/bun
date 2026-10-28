@@ -1023,16 +1023,23 @@ impl ThreadPool {
         }
         let mut sync = self.sync.load(Ordering::Relaxed);
         while !*is_waking {
-            // Another thread has the role or was woken for it, or `wait` has a notification to take at once.
-            if sync.state() != SyncState::Pending || sync.notified() {
+            // Another thread has the role or was woken for it.
+            if sync.state() != SyncState::Pending {
                 return false;
             }
             let mut new_sync = sync;
             new_sync.set_state(SyncState::Waking);
+            new_sync.set_notified(false);
+            // Acquire barrier, here and below, as in `wait`: what was pushed before the notification is seen after it.
             match self
                 .sync
-                .cmpxchg_weak(sync, new_sync, Ordering::Relaxed, Ordering::Relaxed)
+                .cmpxchg_weak(sync, new_sync, Ordering::Acquire, Ordering::Relaxed)
             {
+                // A notification was there already: a task may wait, or a waking thread with nobody to wake left it.
+                None if sync.notified() => {
+                    *is_waking = true;
+                    return true;
+                }
                 None => *is_waking = true,
                 Some(current) => sync = current,
             }
@@ -1051,7 +1058,6 @@ impl ThreadPool {
                 }
                 let mut new_sync = sync;
                 new_sync.set_notified(false);
-                // Acquire barrier, as in `wait`: what was pushed before the notification is seen after it.
                 match self
                     .sync
                     .cmpxchg_weak(sync, new_sync, Ordering::Acquire, Ordering::Relaxed)

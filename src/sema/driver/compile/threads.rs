@@ -349,9 +349,9 @@ mod tests {
         );
     }
 
-    fn lingering_pool() -> &'static bun_threading::ThreadPool {
+    fn lingering_pool(max_threads: u32) -> &'static bun_threading::ThreadPool {
         let config = bun_threading::thread_pool::Config {
-            max_threads: 8,
+            max_threads,
             ..Default::default()
         };
         let pool = bun_threading::ThreadPool::init(config).named("Test");
@@ -361,30 +361,35 @@ mod tests {
     #[test]
     fn lingering_pool_runs_tasks_that_come_one_after_the_other() {
         set_up_output();
-        let pool = lingering_pool();
         static DONE: AtomicUsize = AtomicUsize::new(0);
-        for round in 1..=5000 {
-            // A thread that waits briefly takes most of the tasks. One that gave up and sleeps takes the rest.
-            if round % 50 == 0 {
+        let mut scheduled = 0;
+        // With one thread, the thread that takes a task has no other thread to wake for the next one.
+        for threads in [8, 1] {
+            let pool = lingering_pool(threads);
+            for round in 1..=5000 {
+                // A thread that waits briefly takes most of the tasks. One that gave up and sleeps takes the rest.
+                if round % 50 == 0 {
+                    wait_until(
+                        || pool.available_threads() == threads as usize,
+                        "the thread never came to rest",
+                    );
+                }
+                schedule_on(pool, || {
+                    DONE.fetch_add(1, Ordering::SeqCst);
+                });
+                scheduled += 1;
                 wait_until(
-                    || pool.available_threads() == 8,
-                    "the thread never came to rest",
+                    || DONE.load(Ordering::SeqCst) == scheduled,
+                    "the task never ran",
                 );
             }
-            schedule_on(pool, || {
-                DONE.fetch_add(1, Ordering::SeqCst);
-            });
-            wait_until(
-                || DONE.load(Ordering::SeqCst) == round,
-                "the task never ran",
-            );
         }
     }
 
     #[test]
     fn lingering_pool_runs_every_task() {
         set_up_output();
-        let pool = lingering_pool();
+        let pool = lingering_pool(8);
         static DONE: AtomicUsize = AtomicUsize::new(0);
         const SCHEDULERS: usize = 4;
         const TASKS: usize = 20_000;

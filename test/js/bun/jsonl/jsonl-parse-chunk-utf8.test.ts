@@ -1,6 +1,6 @@
 import { gcAndSweep } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { isASAN, isDebug, isLinux } from "harness";
+import { isASAN, isDebug, isLinux, withoutAggressiveGC } from "harness";
 import { readFileSync } from "node:fs";
 
 describe("Bun.JSONL.parseChunk on UTF-8 bytes", () => {
@@ -69,9 +69,15 @@ describe("Bun.JSONL.parseChunk on UTF-8 bytes", () => {
   //
   // The bytes go through simdutf five times and TextDecoder twice, so the ratio rises as simdutf's kernel gets slower.
   // On the SSE4.2 kernel it reaches the bound, so the case needs a CPU with AVX2.
-  const hasAVX2 =
-    isLinux && process.arch === "x64" && /^flags\s*:.*\bavx2\b/m.test(readFileSync("/proc/cpuinfo", "utf8"));
-  test.skipIf(!hasAVX2 || isDebug || isASAN)(
+  function hasAVX2() {
+    if (!isLinux || process.arch !== "x64") return false;
+    try {
+      return /^flags\s*:.*\bavx2\b/m.test(readFileSync("/proc/cpuinfo", "utf8"));
+    } catch {
+      return false;
+    }
+  }
+  test.skipIf(!hasAVX2() || isDebug || isASAN)(
     "a long line with one character outside ASCII takes under twice as long from bytes as from TextDecoder and a parse of its text",
     () => {
       // 900 KB: a call takes under a millisecond, so of 15 calls one runs undisturbed even on a busy machine.
@@ -79,25 +85,26 @@ describe("Bun.JSONL.parseChunk on UTF-8 bytes", () => {
         JSON.stringify("the quick brown fox jumps over the lazy dog. ".repeat(20000) + "\u2014") + "\n",
       );
       const decoder = new TextDecoder();
-      let values = 0;
       // Collecting first keeps a collection out of the measured time, and the call gets the memory the collection
-      // freed instead of pages the system has yet to map. The values are counted and checked once at the end: under
-      // BUN_GARBAGE_COLLECTOR_LEVEL, which CI sets, every `expect` starts a collection.
+      // freed instead of pages the system has yet to map.
       const timeOf = (parse: () => { values: unknown[] }) => {
         gcAndSweep();
         const began = performance.now();
-        values += parse().values.length;
-        return performance.now() - began;
+        const { values } = parse();
+        const took = performance.now() - began;
+        expect(values.length).toBe(1);
+        return took;
       };
       const parseBytes = () => Bun.JSONL.parseChunk(bytes);
       const parseText = () => Bun.JSONL.parseChunk(decoder.decode(bytes));
       let fromBytes = Infinity;
       let fromText = Infinity;
-      for (let run = 0; run < 15; run++) {
-        fromBytes = Math.min(fromBytes, timeOf(parseBytes));
-        fromText = Math.min(fromText, timeOf(parseText));
-      }
-      expect(values).toBe(30);
+      withoutAggressiveGC(() => {
+        for (let run = 0; run < 15; run++) {
+          fromBytes = Math.min(fromBytes, timeOf(parseBytes));
+          fromText = Math.min(fromText, timeOf(parseText));
+        }
+      });
       expect(fromBytes / fromText).toBeLessThan(2);
     },
   );

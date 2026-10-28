@@ -407,6 +407,20 @@ it.each([
       "/acme/settings/7/8": { name: "/[org]/settings/[...rest]", params: { org: "acme", rest: "7/8" } },
     },
   },
+  {
+    title: "two names that differ only in the case of static text, the lowercase one in the .js file",
+    files: ["[org]/Docs.tsx", "[org]/docs.js"],
+    expected: {
+      "/acme/docs": { name: "/[org]/docs", params: { org: "acme" } },
+    },
+  },
+  {
+    title: "two names that differ only in the case of static text, the lowercase one in the .tsx file",
+    files: ["[org]/docs.tsx", "[org]/Docs.js"],
+    expected: {
+      "/acme/docs": { name: "/[org]/docs", params: { org: "acme" } },
+    },
+  },
 ] satisfies { title: string; files: string[]; expected: Expected }[])(
   "matches the route Next.js picks: $title",
   ({ files, expected }) => {
@@ -477,12 +491,42 @@ it.each([
       "/x": { name: "/[[...ab]]", params: { ab: "x" } },
     },
   },
+  {
+    title: "two parameter names that differ only in case, the lowercase one in the .tsx file",
+    files: ["[id].tsx", "[Id].js"],
+    expected: {
+      "/x": { name: "/[id]", params: { id: "x" } },
+    },
+  },
+  {
+    title: "two parameter names that differ only in case, the lowercase one in the .js file",
+    files: ["[Id].tsx", "[id].js"],
+    expected: {
+      "/x": { name: "/[id]", params: { id: "x" } },
+    },
+  },
 ] satisfies { title: string; files: string[]; expected: Expected }[])(
   "orders routes that Next.js rejects: $title",
   ({ files, expected }) => {
     expect(matchAll(files, Object.keys(expected))).toEqual(expected);
   },
 );
+
+it("two names that differ only in case have one winner, whatever the other routes and the order of the files", () => {
+  const others = Array.from({ length: 50 }, (_, i) => `d${i}/[p].tsx`);
+  // Each tree comes twice, with the lowercase name in the other file. A tie gives one of the two to "/[Id]".
+  const trees = [
+    ["[id].tsx", "[Id].js", ...others],
+    ["[Id].tsx", "[id].js", ...others],
+    [...others, "[Id].js", "[id].tsx"],
+    [...others, "[id].js", "[Id].tsx"],
+    ["[id].tsx", "[Id].js", ...others.slice(0, 33)],
+    ["[Id].tsx", "[id].js", ...others.slice(0, 33)],
+  ];
+  expect(trees.map(files => matchAll(files, ["/x"])["/x"])).toEqual(
+    trees.map(() => ({ name: "/[id]", params: { id: "x" } })),
+  );
+});
 
 it("every spelling of the root path reaches a root-level optional catch-all", () => {
   const { dir } = make(["[[...slug]].tsx"]);

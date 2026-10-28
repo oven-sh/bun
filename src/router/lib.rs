@@ -1065,6 +1065,9 @@ pub(crate) mod sorter {
                     _ => self.get(a).iter().cmp(self.get(b)),
                 })
                 .then_with(|| sort_by_name_string(x.match_name.as_bytes(), y.match_name.as_bytes()))
+                // Only case differs from here, and a URL reaches both names by their lowercase text.
+                // The lowercase spelling goes first: it is the one that Next.js serves for that URL.
+                .then_with(|| y.name.cmp(x.name))
         }
     }
 }

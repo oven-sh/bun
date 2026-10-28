@@ -6,11 +6,16 @@ const fixtures = require('../common/fixtures');
 if (!common.hasCrypto)
   common.skip('missing crypto');
 
-const { hasOpenSSL } = require('../common/crypto');
+const { hasOpenSSL, isBoringSSL } = require('../common/crypto');
 
 const assert = require('assert');
 const { subtle } = globalThis.crypto;
-const { createPrivateKey, createPublicKey, createSecretKey } = require('crypto');
+const {
+  createPrivateKey,
+  createPublicKey,
+  createSecretKey,
+  getFips,
+} = require('crypto');
 
 {
   async function test() {
@@ -280,67 +285,35 @@ if (hasOpenSSL(3)) {
         [/* empty usages */]),
       { name: 'SyntaxError', message: 'Usages cannot be empty when importing a secret key.' });
 
-    {
-      const importedZeroImplicit = await subtle.importKey(
-        'raw-secret',
-        new Uint8Array(),
-        name,
-        true,
-        ['sign', 'verify']);
-      const importedZeroImplicitRaw =
-        await subtle.exportKey('raw-secret', importedZeroImplicit);
-      assert.strictEqual(importedZeroImplicit.algorithm.length, 0);
-      assert.strictEqual(importedZeroImplicitRaw.byteLength, 0);
+    for (const algorithm of [name, { name, length: 0 }]) {
+      await assert.rejects(
+        subtle.importKey(
+          'raw-secret', new Uint8Array(), algorithm, true, ['sign', 'verify']),
+        { name: 'NotSupportedError', message: 'Invalid key length' });
+    }
 
-      const importedZeroExplicit = await subtle.importKey(
+    await assert.rejects(
+      subtle.importKey(
         'raw-secret',
-        new Uint8Array(),
+        new Uint8Array([0xff]),
         { name, length: 0 },
         true,
-        ['sign', 'verify']);
-      const importedZeroExplicitRaw =
-        await subtle.exportKey('raw-secret', importedZeroExplicit);
-      assert.strictEqual(importedZeroExplicit.algorithm.length, 0);
-      assert.strictEqual(importedZeroExplicitRaw.byteLength, 0);
+        ['sign', 'verify']),
+      { name: 'NotSupportedError', message: 'Invalid key length' });
 
+    await assert.rejects(
+      subtle.generateKey({ name, length: 9 }, true, ['sign', 'verify']),
+      { name: 'NotSupportedError', message: 'Invalid key length' });
+
+    for (const byteLength of [1, 2]) {
       await assert.rejects(
         subtle.importKey(
           'raw-secret',
-          new Uint8Array([0xff]),
-          { name, length: 0 },
-          true,
-          ['sign', 'verify']),
-        { name: 'DataError', message: 'Invalid key length' });
-
-      const generated = await subtle.generateKey(
-        { name, length: 9 },
-        true,
-        ['sign', 'verify']);
-      const generatedRaw = await subtle.exportKey('raw-secret', generated);
-      assert.strictEqual(generated.algorithm.length, 9);
-      assert.strictEqual(generatedRaw.byteLength, 2);
-      assert.strictEqual(new Uint8Array(generatedRaw)[1] & 0b01111111, 0);
-
-      const importedExplicit = await subtle.importKey(
-        'raw-secret',
-        new Uint8Array([0xff, 0xff]),
-        { name, length: 9 },
-        true,
-        ['sign', 'verify']);
-      const importedExplicitRaw = await subtle.exportKey('raw-secret', importedExplicit);
-      assert.strictEqual(importedExplicit.algorithm.length, 9);
-      assert.deepStrictEqual(
-        new Uint8Array(importedExplicitRaw),
-        new Uint8Array([0xff, 0x80]));
-
-      await assert.rejects(
-        subtle.importKey(
-          'raw-secret',
-          new Uint8Array([0xff]),
+          new Uint8Array(byteLength).fill(0xff),
           { name, length: 9 },
           true,
           ['sign', 'verify']),
-        { name: 'DataError', message: 'Invalid key length' });
+        { name: 'NotSupportedError', message: 'Invalid key length' });
     }
   }
 
@@ -397,7 +370,7 @@ if (hasOpenSSL(3)) {
   async function test() {
     const { publicKey, privateKey } = await subtle.generateKey({
       name: 'RSA-PSS',
-      modulusLength: 1024,
+      modulusLength: getFips() === 1 ? 2048 : 1024,
       publicExponent: new Uint8Array([1, 0, 1]),
       hash: 'SHA-384'
     }, true, ['sign', 'verify']);
@@ -511,7 +484,7 @@ if (hasOpenSSL(3)) {
 }
 
 // SHA-3 hashes and JWK "alg"
-if (!process.features.openssl_is_boringssl) {
+if (!isBoringSSL) {
   const rsa = fixtures.readKey('rsa_private_2048.pem');
   const privateKey = createPrivateKey(rsa);
   const publicKey = createPublicKey(privateKey);

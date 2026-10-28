@@ -956,7 +956,7 @@ describe("X25519 CryptoKey records", () => {
 //   format version, CryptoKeyTag, record length, format version, key format, extractable,
 //   usage count, usage tags, HMAC, key size, key bytes, hash, [unused bits].
 // Only a key whose length is not a whole number of bytes has the unused bits, and only its
-// record is key format 3. Every other record stays key format 2, which Bun 1.4 also reads.
+// record is key format 3. Every other key record stays key format 2, with the same bytes.
 describe("HMAC CryptoKey records", () => {
   const compact = (spaced: string) => spaced.replaceAll(" ", "");
   const read = (spaced: string): CryptoKey => deserialize(Buffer.from(compact(spaced), "hex"));
@@ -971,9 +971,11 @@ describe("HMAC CryptoKey records", () => {
     crypto.subtle.importKey("raw", Buffer.from(keyBytes, "hex"), { name: "HMAC", hash: "SHA-256", length }, true, [
       "sign",
     ]);
-  const wholeBytes = `0e000000 21 37000000 0e000000 02000000 01000000 01000000 02 00 20000000 ${keyBytes} 10`;
+  // A payload and each key record in it start with the serialization format version.
+  const version = Buffer.from(serialize(0)).subarray(0, 4).toString("hex");
+  const wholeBytes = `${version} 21 37000000 ${version} 02000000 01000000 01000000 02 00 20000000 ${keyBytes} 10`;
   // 249 bits: the last key byte keeps only its first bit, and the record ends with the count of the 7 unused bits.
-  const partialByte = `0e000000 21 38000000 0e000000 03000000 01000000 01000000 02 00 20000000 ${keyBytes.slice(0, -2)}80 10 07`;
+  const partialByte = `${version} 21 38000000 ${version} 03000000 01000000 01000000 02 00 20000000 ${keyBytes.slice(0, -2)}80 10 07`;
 
   test("only a key with a partial last byte is key format 3", async () => {
     expect(written(await importHmac())).toBe(compact(wholeBytes));

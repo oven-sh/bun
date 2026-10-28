@@ -326,11 +326,10 @@ static String agentClusterIDFromGlobalObject(JSGlobalObject& globalObject)
 
 // Version 2 added the AKP key class (ML-DSA/ML-KEM), the KEM usage tags, and
 // the ChaCha20-Poly1305/ML-* algorithm identifier tags.
-// Version 3 ends a CryptoKeyHMAC record with <unusedBits>.
-//
-// A record carries the lowest version that can represent its key, so a reader
-// that stops at an older version still reads every key it can represent. Only an
-// HMAC key whose length is not a whole number of bytes is written as version 3.
+// Version 3 ends a CryptoKeyHMAC record with <unusedBits>. A reader that stops at
+// version 2 would skip that byte and report a longer key, so the record of an HMAC
+// key whose length is not a whole number of bytes is written as version 3. Every
+// other key is still written as version 2, so the bytes of its record do not change.
 // currentKeyFormatVersion is the newest version the reader accepts.
 const uint32_t currentKeyFormatVersion = 3;
 const uint32_t baseKeyFormatVersion = 2;

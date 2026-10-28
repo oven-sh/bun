@@ -1030,6 +1030,17 @@ impl JSValue {
         }
     }
 
+    /// Own-storage read: no getter runs, and an accessor gives its `GetterSetter` cell.
+    pub(crate) fn fast_get_direct(
+        self,
+        global: &JSGlobalObject,
+        builtin_name: BuiltinName,
+    ) -> Option<JSValue> {
+        debug_assert!(self.is_object());
+        let v = JSC__JSValue__fastGetDirect_(self, global, builtin_name as u8);
+        if v.is_empty() { None } else { Some(v) }
+    }
+
     /// `get` for a key that is one of `BunCommonStrings.h`'s, without the
     /// per-call `StringImpl` and atom-table probe.
     pub fn get_common_string(
@@ -1960,6 +1971,11 @@ unsafe extern "C" {
     safe fn JSC__JSValue__coerceToInt32(this: JSValue, global: &JSGlobalObject) -> i32;
     safe fn JSC__JSValue__coerceToInt64(this: JSValue, global: &JSGlobalObject) -> i64;
     safe fn JSC__JSValue__fastGet(this: JSValue, global: &JSGlobalObject, builtin: u8) -> JSValue;
+    safe fn JSC__JSValue__fastGetDirect_(
+        this: JSValue,
+        global: &JSGlobalObject,
+        builtin: u8,
+    ) -> JSValue;
     safe fn JSC__JSValue__jsonStringify(
         this: JSValue,
         global: &JSGlobalObject,
@@ -2505,6 +2521,41 @@ impl JSValue {
             u64::MAX => None,
             index => Some(index as u32),
         }
+    }
+    /// Asserts `self` is a `JSArray` (`Array` or `DerivedArray`).
+    pub(crate) fn array_length(self) -> u32 {
+        debug_assert!(self.is_cell() && self.js_type().is_array());
+        unsafe extern "C" {
+            safe fn Bun__JSArray__length(this: JSValue) -> u32;
+        }
+        Bun__JSArray__length(self)
+    }
+    /// Own-storage read of a `JSArray`: `None` for a hole, out of range, or sparse storage.
+    pub(crate) fn try_get_index_quickly(self, index: u32) -> Option<JSValue> {
+        debug_assert!(self.is_cell() && self.js_type().is_array());
+        unsafe extern "C" {
+            safe fn Bun__JSArray__tryGetIndexQuickly(this: JSValue, index: u32) -> JSValue;
+        }
+        let value = Bun__JSArray__tryGetIndexQuickly(self, index);
+        if value.is_empty() { None } else { Some(value) }
+    }
+    /// The own present indexes of a `JSArray`, ascending. Runs no user code.
+    pub(crate) fn present_indexes(self) -> Vec<u32> {
+        debug_assert!(self.is_cell() && self.js_type().is_array());
+        unsafe extern "C" {
+            fn Bun__JSArray__presentIndexes(this: JSValue, out: *mut u32, capacity: u32) -> u32;
+        }
+        // SAFETY: the callee writes nothing when `capacity` is 0.
+        let count = unsafe { Bun__JSArray__presentIndexes(self, core::ptr::null_mut(), 0) };
+        let mut indexes = Vec::<u32>::new();
+        bun_core::handle_oom(indexes.try_reserve_exact(count as usize));
+        // SAFETY: `indexes` has room for `count` elements. The callee writes at
+        // most `count` of them and initializes each one that it counts.
+        unsafe {
+            let written = Bun__JSArray__presentIndexes(self, indexes.as_mut_ptr(), count);
+            indexes.set_len(written.min(count) as usize);
+        }
+        indexes
     }
     /// `JSValue.getNameProperty` — the value's `.name` (function/class
     /// name). Empty for empty/`undefined`/`null`.

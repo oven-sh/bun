@@ -156,7 +156,9 @@ test.concurrent.each([
   },
   {
     name: "AggregateError member",
-    script: `console.log(Bun.inspect(new AggregateError([${throwsWhenPrinted}, new Error("second member")], "agg")).includes("second member"));`,
+    // The check is on a line of its own: the source preview of the
+    // AggregateError shows the line above it.
+    script: `const text = Bun.inspect(new AggregateError([${throwsWhenPrinted}, new Error("second member")], "agg"));\nconsole.log(text.includes("error: second member"));`,
     expected: { stdout: "true\n", stderr: "", exitCode: 0 },
   },
 ])("error printer doesn't leave an exception pending when the value throws: $name", async ({ script, expected }) => {

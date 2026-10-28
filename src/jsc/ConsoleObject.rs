@@ -1111,13 +1111,13 @@ impl<'a> TablePrinter<'a> {
 /// recover `&mut Self` from the `*mut io::Writer` they receive (same pattern as
 /// `Output::QuietWriterAdapter::new_interface`).
 #[repr(C)]
-struct DynWriteAdapter<'a> {
+pub(crate) struct DynWriteAdapter<'a> {
     head: bun_core::io::Writer,
     inner: &'a mut dyn bun_io::Write,
 }
 
 impl<'a> DynWriteAdapter<'a> {
-    fn new(inner: &'a mut dyn bun_io::Write) -> Self {
+    pub(crate) fn new(inner: &'a mut dyn bun_io::Write) -> Self {
         Self {
             head: bun_core::io::Writer {
                 write_all: Self::thunk_write_all,
@@ -1129,7 +1129,7 @@ impl<'a> DynWriteAdapter<'a> {
 
     /// Reborrow as the `io::Writer` head.
     #[inline]
-    fn interface(&mut self) -> &mut bun_core::io::Writer {
+    pub(crate) fn interface(&mut self) -> &mut bun_core::io::Writer {
         // SAFETY: `head` is the first `#[repr(C)]` field, so `&mut self.head`
         // and `&mut *self as *mut io::Writer` are the same address; the thunks
         // below cast back to `*mut Self`.
@@ -1150,6 +1150,61 @@ impl<'a> DynWriteAdapter<'a> {
         // field) as `w`; safe-fn coerces to the unsafe-fn-ptr slot type.
         let this = unsafe { &mut *w.cast::<Self>() };
         this.inner.flush()
+    }
+}
+
+/// Writes `prefix` before every line that is not empty.
+pub(crate) struct LinePrefixWriter<'a> {
+    inner: &'a mut dyn bun_io::Write,
+    prefix: &'static [u8],
+    trailing_newlines: u8,
+}
+
+impl<'a> LinePrefixWriter<'a> {
+    /// `trailing_newlines`: the `\n` count that ends what `inner` holds (2 after a blank line).
+    pub(crate) fn new(
+        inner: &'a mut dyn bun_io::Write,
+        prefix: &'static [u8],
+        trailing_newlines: u8,
+    ) -> Self {
+        Self {
+            inner,
+            prefix,
+            trailing_newlines,
+        }
+    }
+
+    /// How many `\n` end what was written so far. It stops counting at 2.
+    pub(crate) fn trailing_newlines(&self) -> u8 {
+        self.trailing_newlines
+    }
+}
+
+impl bun_io::Write for LinePrefixWriter<'_> {
+    fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error> {
+        let mut rest = bytes;
+        while !rest.is_empty() {
+            let line_len = match strings::index_of_char_usize(rest, b'\n') {
+                Some(newline) => newline + 1,
+                None => rest.len(),
+            };
+            let (line, after) = rest.split_at(line_len);
+            if line == b"\n" {
+                self.trailing_newlines = (self.trailing_newlines + 1).min(2);
+            } else {
+                if self.trailing_newlines != 0 {
+                    self.inner.write_all(self.prefix)?;
+                }
+                self.trailing_newlines = u8::from(line[line_len - 1] == b'\n');
+            }
+            self.inner.write_all(line)?;
+            rest = after;
+        }
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<(), bun_core::Error> {
+        self.inner.flush()
     }
 }
 

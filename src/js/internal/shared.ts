@@ -94,6 +94,12 @@ class NodeAggregateError extends AggregateError {
     return AggregateError;
   }
 }
+// JSC reads `name` from the error and its direct prototype only: without this it prints as `Error`.
+Object.defineProperty(NodeAggregateError.prototype, "name", {
+  value: "AggregateError",
+  writable: true,
+  configurable: true,
+});
 
 class ConnResetException extends Error {
   constructor(msg: string) {

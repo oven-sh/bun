@@ -516,6 +516,7 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
     } else {
         getFromSourceURL = true;
     }
+    static_assert(static_cast<uint8_t>(JSC::ErrorType::AggregateError) == JSErrorCodeAggregateError, "mirrored as JSErrorCode::AggregateError in src/jsc/JSErrorCode.rs");
     except.type = (unsigned char)err->errorType();
     if (err->isStackOverflowError()) {
         except.type = 253;

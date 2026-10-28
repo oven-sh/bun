@@ -8,6 +8,14 @@ const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
 });
+// The error that fn() throws.
+const thrownBy = fn => {
+  try {
+    fn();
+  } catch (e) {
+    return e;
+  }
+};
 
 test("Regular .stack", () => {
   var err;
@@ -2149,13 +2157,6 @@ test.concurrent("a stack taken while a CommonJS module loads names the frame of 
 });
 
 test("a SyntaxError gets an `at <parse>` line only if it has a source", async () => {
-  const thrownBy = fn => {
-    try {
-      fn();
-    } catch (e) {
-      return e;
-    }
-  };
   class Sub extends SyntaxError {}
   const withoutSource = {
     "new SyntaxError()": new SyntaxError("m"),
@@ -2189,13 +2190,6 @@ test("a SyntaxError gets an `at <parse>` line only if it has a source", async ()
 });
 
 test("Error.captureStackTrace adds an `at <parse>` line only to a SyntaxError that still has a source", () => {
-  const thrownBy = fn => {
-    try {
-      fn();
-    } catch (e) {
-      return e;
-    }
-  };
   const frameHere = expect.stringMatching(/^    at .*capture-stack-trace\.test\.js:\d+:\d+\)?$/);
 
   // The lazy getter formats an error whose stack was not read.
@@ -2230,12 +2224,7 @@ test("Error.captureStackTrace adds an `at <parse>` line only to a SyntaxError th
 test("a SyntaxError from node:vm has an `at <parse>` line only if the source has a filename", () => {
   // The `<parse>` line of the SyntaxError that fn() throws. A row with none reads `undefined`.
   const parseLineOf = fn => {
-    let error;
-    try {
-      fn();
-    } catch (e) {
-      error = e;
-    }
+    const error = thrownBy(fn);
     expect(error).toBeInstanceOf(SyntaxError);
     return error.stack.split("\n").find(line => line.includes("<parse>"));
   };

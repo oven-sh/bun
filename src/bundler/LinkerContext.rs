@@ -4533,41 +4533,37 @@ impl<'a> LinkerContext<'a> {
             && ast_flags.contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
     }
 
-    /// Does `require()` of `target` evaluate to its namespace object? It does
-    /// for a CommonJS file that the parser lifted to an ES module: that object
-    /// stands in for `module.exports`. The call gets no `__toCommonJS` copy,
-    /// and the file is not a chunk that `import.meta.require` loads as an ES
-    /// module. A lifted `module.exports = require("./impl")` is an `export *`,
-    /// so `./impl` decides.
+    /// Is `target` CommonJS to a `require()` call, although the parser lifted
+    /// it to an ES module? Its namespace object then stands in for
+    /// `module.exports`, and a `require()` in the same chunk evaluates to
+    /// that object with no `__toCommonJS` copy. A lifted
+    /// `module.exports = require("./impl")` is an `export *`, so `./impl`
+    /// decides.
     pub(crate) fn require_returns_namespace(
         ast_flags: &[AstFlags],
         exports_kinds: &[ExportsKind],
         export_star_import_records: &[bun_alloc::AstVec<u32>],
         import_records: &[bun_ast::import_record::List<'_>],
-        redirects: &[u32],
         target: u32,
     ) -> bool {
         let mut file = target as usize;
-        // Each step follows one record. A longer walk is a cycle of files
-        // that all passed the test.
+        // Each step follows one export star. A longer walk is a cycle of
+        // files that all passed the test.
         for _ in 0..ast_flags.len() {
-            let record_index = match crate::bundle_v2::bv2_impl::get_redirect_id(redirects[file]) {
-                // `find_reachable_files` points a record past a redirect file
-                // only when it visits the importer.
-                Some(redirect) => redirect,
-                None => {
-                    if exports_kinds[file] != ExportsKind::Esm
-                        || !ast_flags[file].contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
-                    {
-                        return false;
-                    }
-                    match export_star_import_records[file].first() {
-                        Some(&star) => star,
-                        None => return true,
-                    }
-                }
+            // A file of a listed package also has the flag when it stays
+            // CommonJS, and when it is JSON, text or empty.
+            if !ast_flags[file].contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+                || !matches!(
+                    exports_kinds[file],
+                    ExportsKind::Esm | ExportsKind::EsmWithDynamicFallbackFromCjs
+                )
+            {
+                return false;
+            }
+            let Some(&star) = export_star_import_records[file].first() else {
+                return true;
             };
-            let source = import_records[file].as_slice()[record_index as usize].source_index;
+            let source = import_records[file].as_slice()[star as usize].source_index;
             // An external module can be an ES module.
             if !source.is_valid() {
                 return false;

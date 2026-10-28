@@ -2082,8 +2082,6 @@ pub mod bv2_impl {
         pub(crate) dynamic_import_entry_points: &'a mut ArrayHashMap<IndexInt, ()>,
         pub(crate) split_require: bool,
         pub(crate) all_exports_kinds: &'a [ExportsKind],
-        pub(crate) all_ast_flags: &'a [crate::bundled_ast::Flags],
-        pub(crate) all_export_star_import_records: &'a [bun_alloc::AstVec<u32>],
         pub(crate) all_targets: &'a [Target],
         /// Files which are Server Component Boundaries
         pub(crate) scb_bitset: Option<DynamicBitSetUnmanaged>,
@@ -2254,33 +2252,21 @@ pub mod bv2_impl {
                             }
 
                             let next_source = import_record.source_index;
-                            let kind = import_record.kind;
                             // The importing file's own target decides: a server
                             // build's browser-side files cannot call `import.meta.require`.
                             let target_is_bun = self.split_require
                                 && self.all_targets[source_index.get() as usize].is_bun();
-                            let mut was_dynamic_import =
-                                CHECK_DYNAMIC_IMPORTS && kind.can_be_lazy_chunk(target_is_bun);
+                            let mut was_dynamic_import = CHECK_DYNAMIC_IMPORTS
+                                && import_record.kind.can_be_lazy_chunk(target_is_bun);
                             // A `require()` splits only when it targets another ES
                             // module; the flag is the linker's and printer's signal.
-                            // A lifted CommonJS module is CommonJS here: the call
-                            // returns its exports object, not a chunk's namespace.
-                            if was_dynamic_import && kind == ImportKind::Require {
+                            if was_dynamic_import && import_record.kind == ImportKind::Require {
                                 was_dynamic_import = next_source.is_valid()
                                     && next_source != import_record_list_id
                                     && self.all_exports_kinds[next_source.get() as usize]
-                                        == ExportsKind::Esm
-                                    && !LinkerContext::require_returns_namespace(
-                                        self.all_ast_flags,
-                                        self.all_exports_kinds,
-                                        self.all_export_star_import_records,
-                                        self.all_import_records,
-                                        self.redirects,
-                                        next_source.get(),
-                                    );
+                                        == ExportsKind::Esm;
                                 if was_dynamic_import {
-                                    self.all_import_records[import_record_list_id.get() as usize]
-                                        .as_mut_slice()[ir_idx]
+                                    import_record
                                         .flags
                                         .insert(bun_ast::ImportRecordFlags::CROSS_CHUNK_REQUIRE);
                                 }
@@ -2385,8 +2371,6 @@ pub mod bv2_impl {
                 ast_slice.split_mut().import_records;
             let all_urls_for_css = self.graph.ast.items_url_for_css();
             let all_exports_kinds = self.graph.ast.items_exports_kind();
-            let all_ast_flags = self.graph.ast.items_flags();
-            let all_export_star_import_records = self.graph.ast.items_export_star_import_records();
             let all_targets = self.graph.ast.items_target();
 
             let mut visitor = ReachableFileVisitor {
@@ -2399,8 +2383,6 @@ pub mod bv2_impl {
                 dynamic_import_entry_points: &mut self.dynamic_import_entry_points,
                 split_require: self.transpiler.options.split_require,
                 all_exports_kinds,
-                all_ast_flags,
-                all_export_star_import_records,
                 all_targets,
                 scb_bitset,
                 scb_list,
@@ -8477,7 +8459,7 @@ pub mod bv2_impl {
         }
     }
 
-    pub(crate) fn get_redirect_id(id: u32) -> Option<u32> {
+    fn get_redirect_id(id: u32) -> Option<u32> {
         if id == u32::MAX {
             return None;
         }

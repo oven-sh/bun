@@ -108,7 +108,6 @@ pub(crate) fn scan_imports_and_exports(
     let ast_flags_list: *mut [AstFlags] = ast.flags;
     let module_types: *mut [crate::options::ModuleType] = ast.module_type;
     let export_star_import_records: *mut [bun_alloc::AstVec<u32>] = ast.export_star_import_records;
-    let redirects: *mut [u32] = ast.redirect_import_record_index;
     let exports_refs: *mut [Ref] = ast.exports_ref;
     let module_refs: *mut [Ref] = ast.module_ref;
     let wrapper_refs: *mut [Ref] = ast.wrapper_ref;
@@ -1150,19 +1149,6 @@ pub(crate) fn scan_imports_and_exports(
                                 runtime_require_uses += 1;
                             }
 
-                            debug_assert!(
-                                !(kind == ImportKind::Require && is_external_dyn)
-                                    || !LinkerContext::require_returns_namespace(
-                                        col_ref!(ast_flags_list),
-                                        col_ref!(exports_kind),
-                                        col_ref!(export_star_import_records),
-                                        col_ref!(import_records_list),
-                                        col_ref!(redirects),
-                                        rec_source_index.get(),
-                                    ),
-                                "find_reachable_files splits no require() of a lifted CommonJS file"
-                            );
-
                             // A split `require()` whose target is CommonJS at link
                             // time (for example a lifted `module.exports = require()`
                             // file the linker wrapped again): the chunk exports only
@@ -1303,7 +1289,6 @@ pub(crate) fn scan_imports_and_exports(
                                         col_ref!(exports_kind),
                                         col_ref!(export_star_import_records),
                                         col_ref!(import_records_list),
-                                        col_ref!(redirects),
                                         other_source_index,
                                     ))
                             {

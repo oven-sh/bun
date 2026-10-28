@@ -308,6 +308,10 @@ export interface BundlerTestInput {
    * Pass an array to run multiple times with different options.
    */
   run?: boolean | BundlerTestRunOptions | BundlerTestRunOptions[];
+  /**
+   * The first entry point, run by `bun` without bundling, must print the `stdout` of the first `run`.
+   */
+  matchesBunRun?: boolean;
 
   /**
    * Shorthand for testing dead code elimination cases.
@@ -527,6 +531,7 @@ function expectBundled(
     legalComments,
     loader,
     mainFields,
+    matchesBunRun,
     matchesReference,
     metafile,
     minifyIdentifiers,
@@ -1691,6 +1696,26 @@ for (const [key, blob] of build.outputs) {
 
     if (onAfterBundle) {
       await onAfterBundle(api);
+    }
+
+    if (matchesBunRun) {
+      await using unbundled = Bun.spawn({
+        cmd: [bunExe(), entryPaths[0]],
+        env: { ...bunEnv, ...env },
+        stdio: ["ignore", "pipe", "pipe"],
+        cwd: root,
+      });
+      const [unbundledStdout, unbundledStderr, unbundledExitCode] = await Promise.all([
+        unbundled.stdout.text(),
+        unbundled.stderr.text(),
+        unbundled.exited,
+      ]);
+      const firstRun = (Array.isArray(run) ? run[0] : run) as BundlerTestRunOptions;
+      expect({ stdout: unbundledStdout.trim(), stderr: unbundledStderr, exitCode: unbundledExitCode }).toEqual({
+        stdout: dedent(firstRun.stdout as string).trim(),
+        stderr: "",
+        exitCode: 0,
+      });
     }
 
     // check reference

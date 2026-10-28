@@ -69,7 +69,7 @@ enum ChainTarget {
     Object(JSValue),
     /// A property does not exist, or its value is undefined or null.
     Missing,
-    /// The next read would call a getter or a Proxy trap that the program defined.
+    /// The next read would call a getter that the program defined, or a trap of a Proxy.
     Refused,
 }
 
@@ -1463,7 +1463,7 @@ impl<'a> Repl<'a> {
     // Inline Suggestions (ghost text)
     // ========================================================================
 
-    /// Walks `a.b.c` one property read at a time, not through the evaluator: `_` is untouched, and a getter or a Proxy of the program ends the walk uncalled.
+    /// Walks `a.b.c` one property read at a time, not through the evaluator: `_` is untouched, and a getter of the program or a Proxy ends the walk uncalled.
     fn resolve_object_expr(&self, expr: &[u8]) -> ChainTarget {
         let Some(global) = self.global else {
             return ChainTarget::Missing;

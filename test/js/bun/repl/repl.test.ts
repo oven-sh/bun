@@ -386,6 +386,14 @@ const programCode: [name: string, define: string, chain: string][] = [
     `globalThis.__heir = Object.create(new Proxy({}, __traps("names of a Proxy prototype")))`,
     "__heir.ze",
   ],
+  [
+    // The global of a node:vm context asks its sandbox for each name. The traps
+    // run when the context is made, so the count starts after that.
+    "property of a vm context on a Proxy",
+    `globalThis.__vmGlobal = require("node:vm").runInNewContext("this", new Proxy({}, __traps("property of a vm context on a Proxy"))); ` +
+      `delete __calls["property of a vm context on a Proxy"]`,
+    "__vmGlobal.a.th",
+  ],
 ];
 
 /** For `.load`: defines each row of `programCode`, and `__report()`, which names the rows that ran. */

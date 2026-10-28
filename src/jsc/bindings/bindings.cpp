@@ -7058,7 +7058,7 @@ extern "C" JSC::EncodedJSValue Bun__REPL__evaluate(
     return JSC::JSValue::encode(result);
 }
 
-// On Windows process.env is a Proxy that Bun makes (windowsEnv in ProcessObjectInternals.ts); the traps of every other Proxy are the program's code.
+// Completion reads one Proxy: process.env on Windows, which Bun makes (windowsEnv in ProcessObjectInternals.ts). It stops at every other one, also at those of Bun's own modules (require.cache, the http2 socket), because some of them forward to an object of the program (mock.property in node:test).
 static bool isBunProxyForREPLCompletion(JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
 {
 #if OS(WINDOWS)
@@ -7070,21 +7070,43 @@ static bool isBunProxyForREPLCompletion(JSC::JSGlobalObject* globalObject, JSC::
 #endif
 }
 
+// A Proxy, or the global of a node:vm context whose sandbox is one: that global asks its sandbox for each name.
+static bool isProxyForREPLCompletion(JSC::JSObject* object)
+{
+    switch (object->type()) {
+    case JSC::ProxyObjectType:
+        return true;
+    case JSC::GlobalProxyType:
+        object = uncheckedDowncast<JSC::JSGlobalProxy>(object)->target();
+        if (!object)
+            return false;
+        [[fallthrough]];
+    case JSC::GlobalObjectType: {
+        if (object->classInfo() != Bun::NodeVMGlobalObject::info())
+            return false;
+        JSC::JSObject* sandbox = uncheckedDowncast<Bun::NodeVMGlobalObject>(object)->contextifiedObject();
+        return sandbox && sandbox->type() == JSC::ProxyObjectType;
+    }
+    default:
+        return false;
+    }
+}
+
 enum class REPLCompletionWalk : uint8_t {
     Found,
     End,
-    ProgramProxy,
+    Proxy,
     Threw,
 };
 
-// Calls `visit` on `object` and then on each prototype until one returns true. Completion runs on every key the user types, so the walk stops in front of a Proxy of the program and calls none of its traps.
+// Calls `visit` on `object` and then on each prototype until one returns true. Completion runs on every key the user types, so the walk stops in front of a Proxy and calls none of its traps.
 template<typename Visit>
 static REPLCompletionWalk walkForREPLCompletion(JSC::JSGlobalObject* globalObject, JSC::TopExceptionScope& scope, JSC::JSObject* object, const Visit& visit)
 {
     unsigned prototypeCount = 0;
     for (JSC::JSObject* current = object;;) {
-        if (current->type() == JSC::ProxyObjectType && !isBunProxyForREPLCompletion(globalObject, current)) [[unlikely]]
-            return REPLCompletionWalk::ProgramProxy;
+        if (isProxyForREPLCompletion(current) && !isBunProxyForREPLCompletion(globalObject, current)) [[unlikely]]
+            return REPLCompletionWalk::Proxy;
 
         bool found = visit(current);
         if (scope.exception()) [[unlikely]]
@@ -7152,7 +7174,7 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
     });
     if (walk == REPLCompletionWalk::Threw) [[unlikely]]
         return clearAndEncode(JSC::jsUndefined());
-    *incomplete = walk == REPLCompletionWalk::ProgramProxy;
+    *incomplete = walk == REPLCompletionWalk::Proxy;
 
     JSC::JSArray* completions = JSC::constructEmptyArray(globalObject, nullptr, 0);
     if (scope.exception()) [[unlikely]]
@@ -7171,7 +7193,7 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
     return JSC::JSValue::encode(completions);
 }
 
-// One `base.name` step of a completion chain (primitives boxed, prototype chain, UTF-8 name). It does not call a getter or a Proxy trap that the program defined: it sets *refused there. A miss or a throw yields undefined.
+// One `base.name` step of a completion chain (primitives boxed, prototype chain, UTF-8 name). It does not call a getter that the program defined and it does not read through a Proxy: it sets *refused there. A miss or a throw yields undefined.
 extern "C" JSC::EncodedJSValue Bun__REPL__getProperty(
     JSC::JSGlobalObject* globalObject,
     JSC::EncodedJSValue baseValue,
@@ -7211,7 +7233,7 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getProperty(
         auto walk = walkForREPLCompletion(globalObject, scope, receiver, [&](JSC::JSObject* current) {
             return current->methodTable()->getOwnPropertySlot(current, globalObject, propertyName, slot);
         });
-        if (walk == REPLCompletionWalk::ProgramProxy)
+        if (walk == REPLCompletionWalk::Proxy)
             return refuse();
         if (walk != REPLCompletionWalk::Found)
             return missing();

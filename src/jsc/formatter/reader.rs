@@ -1,4 +1,4 @@
-//! The reads the console formatter makes on its own account. They run no user code.
+//! Reads of the console formatter that run no user code.
 
 use crate::{JSGlobalObject, JSPropertyIteratorOptions, JSType, JSValue, JsResult, ProxyField};
 

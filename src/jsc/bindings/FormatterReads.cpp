@@ -1,4 +1,4 @@
-// The reads the console formatter (src/jsc/formatter/reader.rs) makes on its own account. They run no user code.
+// Reads for the console formatter (src/jsc/formatter/reader.rs) that run no user code.
 
 #include "root.h"
 

@@ -869,9 +869,9 @@ function createConvenienceMethod(ctor: ZlibFunction | ZlibClass, sync: boolean, 
   }
 }
 
-const kMaxBrotliParam = MathMax(
-  ...ObjectKeys(constants).map(key => (key.startsWith("BROTLI_PARAM_") ? constants[key] : 0)),
-);
+// The largest BROTLI_PARAM_*. Node.js looks for it with `map` and `startsWith`, which user code can replace before this
+// module loads.
+const kMaxBrotliParam = constants.BROTLI_PARAM_NDIRECT;
 
 const brotliInitParamsArray = new Uint32Array(kMaxBrotliParam + 1);
 

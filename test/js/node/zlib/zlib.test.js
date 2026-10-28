@@ -704,6 +704,20 @@ describe("zlib.brotli", () => {
     expect(zlib.brotliDecompressSync(compressed, options).equals(input)).toBe(true);
   });
 
+  it("takes the BROTLI_PARAM_* in params and no other key", () => {
+    const taken = [];
+    for (let key = 0; key < 12; key++) {
+      try {
+        zlib.createBrotliCompress({ params: { [key]: 0 } }).close();
+        taken.push(key);
+      } catch (error) {
+        expect(error.code).toBe("ERR_BROTLI_INVALID_PARAM");
+      }
+    }
+    const names = Object.keys(zlib.constants).filter(name => name.startsWith("BROTLI_PARAM_"));
+    expect(taken).toEqual(names.map(name => zlib.constants[name]).sort((a, b) => a - b));
+  });
+
   // BROTLI_PARAM_STREAM_OFFSET, which node:zlib has no constant for.
   describe("parameter 9", () => {
     const c = zlib.constants;

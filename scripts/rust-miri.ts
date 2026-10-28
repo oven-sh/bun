@@ -13,8 +13,18 @@
  * moment a later `&mut self` is formed — which is the entire premise of
  * `HiveArray`, `MultiArrayList`, the slot pools, etc. (claim a stable
  * `*mut T`, mutate the container, deref the pointer afterward). Tree Borrows
- * is the candidate replacement spec, allows that pattern, and still catches
- * the bugs we care about.
+ * is the candidate replacement spec and still catches the bugs we care about.
+ *
+ * Tree Borrows accepts that pattern only in part. A later `&mut` over the
+ * container, or over a struct that holds the container inline, reads every
+ * slot. After that read, a slot that was written through its pointer cannot
+ * be written through that pointer again, and across threads the read is a
+ * data race. So a container keeps its slots behind a raw pointer
+ * (`MultiArrayList`), or in `UnsafeCell` storage that `&self` methods reach
+ * (`HiveArray`, the BSS stores in `bun_alloc`). An owner that holds such a
+ * container inline must not be borrowed `&mut` while a slot pointer is in
+ * use. The `&'static` accessors enforce that for the BSS stores. Nothing
+ * enforces it yet for the owners of a `HiveArray`.
  *
  * Usage:
  *   bun run rust:miri              # default crate set, crates run concurrently
@@ -41,6 +51,7 @@ const MIRI_CRATES = [
   "bun_sema",
   "bun_ast",
   "bun_paths",
+  "bun_alloc",
   "bun_hash",
   "bun_base64",
   "bun_bundler",

@@ -435,8 +435,6 @@ macro_rules! bufs {
 }
 
 // This is a global so even if multiple resolvers are created, the mutex will still work
-// `pub(crate)` so the `fs::EntriesMap::inner` debug-assert can verify it is held
-// (the resolver mutex is one of the two documented guards for the entries singleton).
 static RESOLVER_MUTEX: Mutex = Mutex::new();
 
 type BinFolderArray = BoundedArray<&'static [u8], 128>;
@@ -555,12 +553,8 @@ pub struct Resolver<'a> {
     /// This cache maps a directory path to information about that directory and
     /// all parent directories. When interacting with this structure, make sure
     /// to validate your keys with `Resolver.assertValidCacheKey`
-    // NOTE: a raw aliasing pointer to the
-    // `DirInfo::hash_map_instance()` singleton. Modeled as `*mut` (not `&'static mut`)
-    // for the same reason as `fs`/`log` above — every per-worker `Resolver` shares the
-    // singleton, so a `&'static mut` here would manufacture aliased unique refs (UB).
-    // Deref through the `dir_cache()` accessor below.
-    pub(crate) dir_cache: *mut DirInfo::HashMap,
+    // The `DirInfo::hash_map_instance()` singleton, which every per-worker `Resolver` shares.
+    pub(crate) dir_cache: &'static DirInfo::HashMap,
 
     /// This is set to false for the runtime. The runtime should choose "main"
     /// over "module" in package.json
@@ -780,38 +774,6 @@ impl<'a> Resolver<'a> {
         // `ResolverLogScope`) outlives every borrow returned here. Resolver
         // mutex serializes mutation across worker clones.
         unsafe { self.log.as_mut() }
-    }
-
-    /// NOTE (Stacked Borrows): returns RAW `*mut` (see `fs()` note). ARENA —
-    /// `DirInfo::hash_map_instance()` singleton; never freed. Caller
-    /// `unsafe { &mut *r.dir_cache() }` at each use site.
-    #[inline(always)]
-    pub(crate) fn dir_cache(&self) -> *mut DirInfo::HashMap {
-        self.dir_cache
-    }
-
-    /// Unique-borrow of the `DirInfo` BSSMap singleton.
-    ///
-    /// Centralizes the `unsafe { &mut *self.dir_cache() }` retag that every
-    /// call site previously open-coded. `&mut self` ensures no two coexisting
-    /// `&mut HashMap` are produced from the SAME `Resolver`; cross-clone
-    /// aliasing (per-worker `Resolver`s share the singleton) is
-    /// guarded by the resolver `mutex` — identical invariant to the prior
-    /// per-site `unsafe`.
-    ///
-    /// Stacked Borrows: each call pushes a fresh Unique tag on the BSSMap
-    /// allocation, so any `*mut DirInfo` previously projected from an earlier
-    /// `dir_cache_mut()` borrow is popped. Slot pointers that must survive a
-    /// subsequent map access are re-derived from the raw singleton via
-    /// `DirInfo::put_slot` / `DirInfo::slot_ptr_at`; refs from `at_index` /
-    /// `ref_at_index` are only durable until the next map access.
-    #[inline(always)]
-    pub(crate) fn dir_cache_mut(&mut self) -> &mut DirInfo::HashMap {
-        // SAFETY: ARENA — `self.dir_cache` is the never-null
-        // `DirInfo::hash_map_instance()` static (set in `init1`, never
-        // reassigned, never freed). Resolver mutex serializes all mutation
-        // across worker clones; `&mut self` rules out intra-instance aliasing.
-        unsafe { &mut *self.dir_cache }
     }
 
     /// Lazily initializing
@@ -2643,7 +2605,7 @@ impl<'a> Resolver<'a> {
         let path = strings::without_trailing_slash_windows_path(path);
         Self::assert_valid_cache_key(path);
         let first_bust = self.fs_mut().fs.bust_entries_cache(path);
-        let second_bust = self.dir_cache_mut().remove(path);
+        let second_bust = self.dir_cache.remove(path);
         bun_core::scoped_log!(
             ResolverDev,
             "Bust {} = {}, {}",
@@ -3576,17 +3538,14 @@ impl<'a> Resolver<'a> {
         let dir_path = strings::without_trailing_slash_windows_path(dir_path_maybe_trail_slash);
 
         Self::assert_valid_cache_key(dir_path);
-        let mut dir_cache_info_result = self.dir_cache_mut().get_or_put(dir_path)?;
+        let mut dir_cache_info_result = self.dir_cache.get_or_put(dir_path)?;
         if dir_cache_info_result.status == allocators::ItemStatus::Exists {
             // we've already looked up this package before
-            // SAFETY: `Exists` index was assigned by `put`; resolver mutex held.
-            // The slot pointer is rooted at the singleton, so the returned ref
-            // survives the caller's later map reborrows.
-            return Ok(unsafe { DirInfo::slot_ptr_at(dir_cache_info_result.index) }
-                .map(|p| unsafe { DirInfoRef::from_raw(p) }));
+            // SAFETY: `get_or_put` on this map read the index from the table, under the lock of the map.
+            return Ok(unsafe { DirInfo::ref_in(self.dir_cache, dir_cache_info_result.index) });
         }
         // SAFETY: PORT (Stacked Borrows) — derive `rfs` from the raw `*mut FileSystem`
-        // field via `addr_of_mut!` so later `&mut *self.log()` / `&mut *self.dir_cache()`
+        // field via `addr_of_mut!` so later `&mut *self.log()`
         // retags below don't pop its provenance. Re-borrow `&mut *rfs` per use.
         let rfs: *mut Fs::file_system::RealFS = self.rfs_ptr();
         macro_rules! rfs {
@@ -3713,15 +3672,11 @@ impl<'a> Resolver<'a> {
 
         // We must initialize it as empty so that the result index is correct.
         // This is important so that browser_scope has a valid index.
-        // SAFETY: `dir_cache()` is the live singleton; resolver mutex held.
-        let dir_info_ptr: *mut DirInfo::DirInfo = unsafe {
-            DirInfo::put_slot(
-                self.dir_cache(),
-                &mut dir_cache_info_result,
-                DirInfo::DirInfo::default(),
-            )
-        }
-        .expect("unreachable");
+        let dir_info_ptr: *mut DirInfo::DirInfo = self
+            .dir_cache
+            .put(&mut dir_cache_info_result, DirInfo::DirInfo::default())
+            .expect("unreachable")
+            .as_ptr();
 
         // `dir_path` is a slice into the threadlocal `bufs(.path_in_global_disk_cache)` buffer,
         // which gets overwritten on the next auto-install resolution. `dir_info_uncached` stores
@@ -4464,14 +4419,10 @@ impl<'a> Resolver<'a> {
 
         let path_without_trailing_slash = strings::without_trailing_slash_windows_path(input_path);
         Self::assert_valid_cache_key(path_without_trailing_slash);
-        let top_result = self
-            .dir_cache_mut()
-            .get_or_put(path_without_trailing_slash)?;
+        let top_result = self.dir_cache.get_or_put(path_without_trailing_slash)?;
         if top_result.status != allocators::ItemStatus::Unknown {
-            return Ok(self
-                .dir_cache_mut()
-                .at_index(top_result.index)
-                .map(DirInfoRef::from_slot));
+            // SAFETY: `get_or_put` on this map read the index from the table, under the lock of the map.
+            return Ok(unsafe { DirInfo::ref_in(self.dir_cache, top_result.index) });
         }
 
         self.dir_info_cached_miss(enable_logging, input_path, top_result)
@@ -4546,7 +4497,7 @@ impl<'a> Resolver<'a> {
 
         while top.len() > root_path.len() {
             debug_assert!(top.as_ptr() == root_path.as_ptr());
-            let result = self.dir_cache_mut().get_or_put(top)?;
+            let result = self.dir_cache.get_or_put(top)?;
 
             if result.status != allocators::ItemStatus::Unknown {
                 top_parent = result;
@@ -4589,7 +4540,7 @@ impl<'a> Resolver<'a> {
         }
 
         if top == root_path {
-            let result = self.dir_cache_mut().get_or_put(root_path)?;
+            let result = self.dir_cache.get_or_put(root_path)?;
             if result.status != allocators::ItemStatus::Unknown {
                 top_parent = result;
             } else {
@@ -4765,7 +4716,7 @@ impl<'a> Resolver<'a> {
                             //
                             //   openat(dfd: CWD, filename: "node_modules/react", flags: RDONLY|DIRECTORY) = -1 ENOENT (No such file or directory)
                             //   ...
-                            self.dir_cache_mut().mark_not_found(queue_top.result);
+                            self.dir_cache.mark_not_found(queue_top.result);
                             rfs!().entries.mark_not_found(cached_dir_entry_result);
                             if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                                 if enable_logging {
@@ -4951,20 +4902,12 @@ impl<'a> Resolver<'a> {
 
             // We must initialize it as empty so that the result index is correct.
             // This is important so that browser_scope has a valid index.
-            // SAFETY: `dir_cache()` is the live singleton; resolver mutex held.
-            // Both slot pointers are rooted at the singleton, so the map
-            // reborrows inside `dir_info_uncached` cannot pop them.
-            let dir_info_ptr: *mut DirInfo::DirInfo = unsafe {
-                DirInfo::put_slot(
-                    self.dir_cache(),
-                    &mut queue_top.result,
-                    DirInfo::DirInfo::default(),
-                )
-            }?;
-            // SAFETY: `top_parent.index` is a sentinel or a slot assigned by
-            // `put`; resolver mutex held.
-            let parent_dir_ptr = unsafe { DirInfo::slot_ptr_at(top_parent.index) }
-                .map(|p| unsafe { DirInfoRef::from_raw(p) });
+            let dir_info_ptr: *mut DirInfo::DirInfo = self
+                .dir_cache
+                .put(&mut queue_top.result, DirInfo::DirInfo::default())?
+                .as_ptr();
+            // SAFETY: `top_parent.index` is a sentinel, or `get_or_put` or `put` on this map gave it, on this thread.
+            let parent_dir_ptr = unsafe { DirInfo::ref_in(self.dir_cache, top_parent.index) };
 
             self.dir_info_uncached(
                 dir_info_ptr,

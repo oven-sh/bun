@@ -97,18 +97,13 @@ pub mod fs {
                     &$zst
                 }
                 pub fn append_slice(&self, value: &[u8]) -> crate::CrateResult<&'static [u8]> {
-                    // SAFETY: `$backing()` returns the raw `*mut` process-lifetime singleton;
-                    // `BSSStringList::append` takes `*mut Self` and serializes
-                    // all mutation through its internal `mutex` (no aliased `&mut` is ever
-                    // formed). The returned slice borrows its never-freed backing storage
-                    // (heap-owned by a `'static` `BSSStringList` or a leaked mi_malloc), so
-                    // widening to `'static` is sound.
-                    unsafe { bun_alloc::BSSStringList::append($backing(), &value) }
+                    $backing()
+                        .append(&value)
                         .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))
                 }
                 pub fn append_parts(&self, parts: &[&[u8]]) -> crate::CrateResult<&'static [u8]> {
-                    // SAFETY: see `append_slice`.
-                    unsafe { bun_alloc::BSSStringList::append($backing(), &parts) }
+                    $backing()
+                        .append(&parts)
                         .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))
                 }
                 /// Format directly into the store's tail; no intermediate `String`.
@@ -116,22 +111,16 @@ pub mod fs {
                     &self,
                     args: core::fmt::Arguments<'_>,
                 ) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
-                    // SAFETY: see `append_slice`.
-                    let s = unsafe { bun_alloc::BSSStringList::print($backing(), args)? };
-                    // SAFETY: storage owned by the process-lifetime `BSSStringList`
-                    // singleton (never freed); `Interned` is the canonical proof type.
-                    Ok(unsafe { bun_ptr::Interned::assume(s) }.as_bytes())
+                    $backing().print(args)
                 }
                 #[inline]
                 pub fn exists(&self, value: &[u8]) -> bool {
-                    // SAFETY: see `append_slice`.
-                    unsafe { &*$backing() }.exists(value)
+                    $backing().exists(value)
                 }
                 /// `value` with the store's lifetime, if it already points into the store.
                 #[inline]
                 pub fn as_interned(&self, value: &[u8]) -> Option<&'static [u8]> {
-                    // SAFETY: see `append_slice`; the singleton is `'static`.
-                    unsafe { &*$backing() }.as_interned(value)
+                    $backing().as_interned(value)
                 }
             }
         };
@@ -149,12 +138,7 @@ pub mod fs {
                     &self,
                     value: &[u8],
                 ) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
-                    // SAFETY: `$backing()` returns the raw `*mut` process-lifetime singleton;
-                    // `BSSStringList::append` takes `*mut Self` and serializes all mutation
-                    // through its internal `mutex`. Returned slice borrows its never-freed
-                    // storage, so widening to `'static` is sound.
-                    unsafe { bun_alloc::BSSStringList::append($backing(), &value) }
-                        .map_err(|_| bun_alloc::AllocError)
+                    $backing().append(&value)
                 }
                 /// Like `append`, but ASCII-lowercases `value` while copying
                 /// it into the store.
@@ -163,9 +147,7 @@ pub mod fs {
                     &self,
                     value: &[u8],
                 ) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
-                    // SAFETY: see `append`.
-                    unsafe { bun_alloc::BSSStringList::append_lower_case($backing(), value) }
-                        .map_err(|_| bun_alloc::AllocError)
+                    $backing().append_lower_case(value)
                 }
             }
         };
@@ -523,8 +505,7 @@ pub mod fs {
         /// (`FilenameStore` or `DirnameStore`), the slices are already `'static`
         /// and we return the path unchanged instead of appending a duplicate.
         /// Skipping this check makes the append-only `FilenameStore` grow without
-        /// bound across repeated in-process `Bun.build()` calls, eventually
-        /// tripping the overflow-block cap (index-out-of-bounds panic).
+        /// bound across repeated in-process `Bun.build()` calls.
         fn dupe_alloc<'b>(
             &self,
             alloc: &'b bun_alloc::MimallocArena,
@@ -818,42 +799,36 @@ pub mod fs {
     /// every call resolves to the `entries_option_map()` singleton; this keeps
     /// `RealFS.entries` field-shaped without inlining the (large) backing array.
     ///
-    /// **Uniqueness invariant**: this is a ZST proxy for a process-global, so a
-    /// freely-mintable value would let two threads each hold a "unique" `&mut
-    /// EntriesMap` and alias the same backing storage. Construction is therefore
-    /// module-private (`new()` below) and the *only* instance lives at
-    /// `FileSystem::INSTANCE.fs.entries`, written once by `RealFS::init` during
-    /// single-threaded startup. `&mut self` on the methods below is thus a real
-    /// uniqueness witness — obtaining it requires `&mut` to that singleton field.
+    /// `&mut self` on `get` and `at_index` only bounds the `&mut EntriesOption` that they return. The caller keeps the slot exclusive with `entries_mutex`: `DirInfo::get_entries_const` does not take it, and `read_directory` returns the slot after its guard is gone. The caller of `at_index` and `put` also passes an index that this map assigned, and not one of the `DirInfo` map.
     pub struct EntriesMap(());
     impl EntriesMap {
         /// Module-private: only `RealFS::init` may construct the singleton handle.
-        /// Widening this to `pub` re-opens the aliased-`&mut` hazard described on
-        /// the struct.
         #[inline]
         const fn new() -> Self {
             Self(())
         }
         #[inline]
-        fn inner(&mut self) -> &mut EntriesOptionMap {
-            // NOTE(73d79707): the data-race fix had a debug_assert here
-            // requiring `entries_mutex` OR `RESOLVER_MUTEX` held. Too strict —
-            // `&mut self` callers (every callsite) already prove exclusivity
-            // via borrowck; the runtime transpile path
-            // (`jsc_hooks::transpile_source_code`) reaches here via
-            // `&mut RealFS` without either mutex and is safe. The assert fired
-            // on every `bun-debug` invocation. Removed; the singleton's
-            // raw-ptr backdoor is covered by the `&mut self` receiver.
-            // SAFETY: `entries_option_map()` yields the process-static `*mut`
-            // singleton. `&mut self` proves the caller holds the unique
-            // `RealFS.entries` field (see struct invariant), and the returned
-            // borrow is bounded by that `&mut self` — it cannot outlive the
-            // field borrow nor be sent to another thread independently of it.
-            // Cross-thread exclusion is provided by the mutex asserted above.
-            unsafe { &mut *entries_option_map() }
+        fn inner(&self) -> &'static EntriesOptionMap {
+            entries_option_map()
+        }
+        /// Borrows a slot for as long as the handle is borrowed.
+        ///
+        /// SAFETY: `slot` must come from `inner()`, and the caller must keep the
+        /// slot exclusive for as long as the borrow is live.
+        #[inline]
+        unsafe fn slot_mut(
+            &mut self,
+            mut slot: core::ptr::NonNull<EntriesOption>,
+        ) -> &mut EntriesOption {
+            // SAFETY: `put` initialized every slot the map hands out. The caller
+            // keeps the slot exclusive. `&mut self` only bounds the borrow.
+            unsafe { slot.as_mut() }
         }
         pub fn get(&mut self, key: &[u8]) -> Option<&mut EntriesOption> {
-            self.inner().get(key)
+            let slot = self.inner().get(key)?;
+            // SAFETY: `slot` comes from `inner()`. Nothing here checks that the
+            // slot is exclusive: that rests on the caller (see the struct doc).
+            Some(unsafe { self.slot_mut(slot) })
         }
         pub(crate) fn get_or_put(&mut self, key: &[u8]) -> crate::CrateResult<bun_alloc::Result> {
             self.inner()
@@ -864,19 +839,31 @@ pub mod fs {
             &mut self,
             index: bun_alloc::IndexType,
         ) -> Option<&mut EntriesOption> {
-            self.inner().at_index(index)
+            // SAFETY: every caller passes the index of a `get_or_put` on this map,
+            // or `DirInfo::entries`, which stores one. Nothing here checks that:
+            // it rests on the caller, as the exclusive slot does (see the struct doc).
+            let slot = unsafe { self.inner().at_index(index) }?;
+            // SAFETY: as in `get`.
+            Some(unsafe { self.slot_mut(slot) })
         }
         pub(crate) fn put(
             &mut self,
             result: &mut bun_alloc::Result,
             value: EntriesOption,
         ) -> crate::CrateResult<*mut EntriesOption> {
+            if result.has_slot() {
+                // SAFETY: every caller passes the result of a `get_or_put` on this
+                // map, and holds `entries_mutex` from that `get_or_put` to here, so
+                // every user of the slot that takes the mutex is out. Nothing here
+                // checks either: it rests on the caller (see the struct doc).
+                return Ok(unsafe { self.inner().replace(result, value) }.as_ptr());
+            }
             // `BSSMapInner::put` mutates `result.index` to record placement; callers
             // (e.g. `dir_info_cached_maybe_log`) re-read `result.index` post-`put`, so the
             // mutation must be visible — pass through directly.
             self.inner()
                 .put(result, value)
-                .map(std::ptr::from_mut::<EntriesOption>)
+                .map(core::ptr::NonNull::as_ptr)
                 .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))
         }
         pub(crate) fn mark_not_found(&mut self, result: bun_alloc::Result) {
@@ -1198,8 +1185,7 @@ pub mod fs {
             // `entries` is the process-global
             // BSSMap singleton and `remove` mutates it; callers (transpiler /
             // hot-reloader / VM) reach this without `RESOLVER_MUTEX`, so take
-            // `entries_mutex` to satisfy `EntriesMap::inner`'s aliasing
-            // invariant. No caller already holds it (no re-entry from
+            // `entries_mutex`, which keeps the bust out of a `read_directory` in progress. No caller already holds it (no re-entry from
             // `read_directory`/`dir_info_cached_maybe_log`).
             let _g = self.entries_mutex.lock_guard();
             self.entries.remove(file_path)

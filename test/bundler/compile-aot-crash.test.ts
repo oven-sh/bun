@@ -23,24 +23,24 @@ const files = {
 import { read } from "bun:ffi";
 class Reader {
   constructor(public base: number) {}
-  byteAt(offset: number): number {
+  $byteAt(offset: number): number {
     return read.u8(this.base + offset, 0) + 1;
   }
-  peek(offset: number): number {
-    return this.byteAt(offset);
+  $peek(offset: number): number {
+    return this.$byteAt(offset);
   }
 }
-function sum(reader: Reader): number {
+function $sum(reader: Reader): number {
   let total = 0;
-  for (let i = 0; i < 3; i++) total += reader.peek(i);
+  for (let i = 0; i < 3; i++) total += reader.$peek(i);
   return total;
 }
-function start(): number {
-  const total = sum(new Reader(8));
+function $start(): number {
+  const total = $sum(new Reader(8));
   return total + 1;
 }
 console.log("before");
-console.log(start());
+console.log($start());
 `,
   "tsconfig.json": JSON.stringify({
     compilerOptions: {
@@ -95,13 +95,15 @@ test.if(!isASAN)("a crash in compiled code lists the compiled functions on the s
     .slice(1)
     .filter(line => line.startsWith("    at "));
   expect(frames).toEqual([
-    `    at byteAt (${root}app.ts:6:17)`,
-    `    at sum (${root}app.ts:14:47)`,
-    `    at start (${root}app.ts:18:17)`,
+    `    at $byteAt (${root}app.ts:6:17)`,
+    `    at $sum (${root}app.ts:14:47)`,
+    `    at $start (${root}app.ts:18:17)`,
     `    at ${root}app.ts:22:13`,
   ]);
   const url = stderr.match(/^ (\S*CGaot\S*)$/m)![1];
-  for (const word of ["byteAt", "peek", "sum", "start", "app.ts"]) expect(url).not.toContain(word);
+  // The numbers in the link are in base64, and in some builds of Bun their digits spell a short name such as "sum".
+  // So each name that is looked for has a character that is no base64 digit: "$" or ".".
+  for (const word of ["$byteAt", "$peek", "$sum", "$start", "app.ts"]) expect(url).not.toContain(word);
 
   const decoded = async (report: string) => {
     await using proc = spawn({

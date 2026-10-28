@@ -1,10 +1,8 @@
-// The ways in which the rows of a valid PNG file may be compressed, cut into chunks and handed over, and what other
-// programs make of them. See png-valid.test.ts.
+// The ways in which the rows of a valid PNG file may be compressed, cut into chunks and handed over.
+// See png-valid.test.ts.
 import { describe, expect, test } from "bun:test";
-import { join } from "node:path";
 import zlib from "node:zlib";
-import { loadCases } from "../../archive-golden/observe";
-import { decoded, make, maker, mistakes, slow, type Case } from "./check";
+import { make, maker, mistakes, slow, type Case } from "./check";
 import {
   filteredLines,
   formats,
@@ -210,29 +208,6 @@ test.each([
     return zlibStream(lines, [stored(lines.subarray(0, distance)), copyFromFarBack(distance, distance, true)]);
   };
   expect(await mistakes([make("", { ...top, height: 16, samples }, { deflate })])).toEqual([]);
-});
-
-// Pictures that were made up first and then written by 24 programs in as many ways as each offers. A name says which
-// program, what kind of file came out, and of which picture and settings. They are picked from 54,000 different files
-// so that each program is there with every format, zlib header, kind of block, filter, way to cut IDAT, set of other
-// chunks and magnitude of a copy's length and distance that it came up with in a file of up to 2.5 KB. Each keeps every
-// rule, and libpng gets the pixels that the picture has. What Bun makes of a file had no part in picking it.
-// 11 of the programs can put in a profile, and did.
-test("files written by other programs", async () => {
-  /** `sha256` is of what `rgbaLinesOf` gives for the picture, `profile` of the profile if there is one. */
-  type Entry = { name: string; data: string; width: number; height: number; sha256: string; profile?: string };
-  const entries = await loadCases<Entry>(join(import.meta.dir, "valid.json.gz"));
-  expect(entries.length).toBe(622);
-  const sha256 = (bytes: Uint8Array) => Bun.SHA256.hash(bytes, "hex");
-  const results = entries.map(async ({ name, data }) => {
-    try {
-      const { width, height, lines, profile } = await decoded(Buffer.from(data, "base64"));
-      return { name, width, height, sha256: sha256(lines), ...(profile && { profile: sha256(profile) }) };
-    } catch (error: any) {
-      return { name, error: error.code ?? error };
-    }
-  });
-  expect(await Promise.all(results)).toEqual(entries.map(({ data, ...expected }) => expected));
 });
 
 /** `height` rows out of a few of noise, unfiltered, so that making the file costs little. */

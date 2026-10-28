@@ -66,13 +66,13 @@ function parse(out: Uint8Array) {
 }
 
 /** The pixels as `rgbaLinesOf` gives them, and the profile. */
-export const decoded = async (file: Uint8Array, options?: { maxPixels: number }) =>
-  parse(await new Bun.Image(file, options).png({ compressionLevel: 0 }).bytes());
+export const decoded = async (file: Uint8Array, maxPixels?: number) =>
+  parse(await new Bun.Image(file, { maxPixels }).png({ compressionLevel: 0 }).bytes());
 
 async function mistake({ name, file, width, height, expected, profile, maxPixels }: Case) {
   let out: ReturnType<typeof parse>;
   try {
-    out = await decoded(file, maxPixels === undefined ? undefined : { maxPixels });
+    out = await decoded(file, maxPixels);
   } catch (error: any) {
     return `${name}: ${error.code ?? error}`;
   }

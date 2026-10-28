@@ -1,6 +1,7 @@
 // Pictures of every kind that PNG has, in files that keep every rule of the specification. Each file is written
 // around samples that are chosen first (write.ts), so what it has to decode to is known without asking a decoder.
 // What else a valid file may hold is in png-valid-chunks.test.ts, how it may be compressed in png-valid-stream.test.ts.
+// Files that were made elsewhere are in png-valid-kept.test.ts.
 import { describe, expect, test } from "bun:test";
 import { make, maker, mistakes, slow, type Case } from "./check";
 import {

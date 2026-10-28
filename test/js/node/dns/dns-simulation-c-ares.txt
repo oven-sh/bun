@@ -7204,6 +7204,36 @@ watch 1 r-
 send 1 dd740100000100000000000004686f73740000010001
 timer 2000
 ? @
+=== differs: a RES_OPTIONS that is set and empty undoes the whole configuration
+file /etc/resolv.conf nameserver%2010.0.0.1%0Asearch%20x.test%0A
+env RES_OPTIONS %
+lookup host 0 4
+---
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 127.0.0.1#53#53#0
+read /etc/hosts
+open 1 udp 127.0.0.1#53#0
+send 1 dd740100000100000000000004686f73740000010001
+watch 1 r-
+timer 2000
+? @
++++
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+read /etc/hosts
+open 1 udp 10.0.0.1#53#0
+watch 1 r-
+send 1 dd740100000100000000000004686f7374017804746573740000010001
+timer 2000
+? @
 === differs: a server whose probe was truncated is never probed again
 file /etc/resolv.conf nameserver%2010.0.0.1%0Anameserver%2010.0.0.2%0A
 seed 37

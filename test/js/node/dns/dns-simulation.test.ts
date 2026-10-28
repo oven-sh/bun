@@ -304,6 +304,13 @@ describe("the search list", () => {
     ).toEqual(["a.b.one.test", "a.b.two.test", "a.b.three.test", "a.b"]);
   });
 
+  test("macOS: options that are there and empty are no options", () => {
+    expect(searched("host", "settings mac", "mac-resolver 0 2 0 0 % search=one.test 10.0.0.1#0")).toEqual([
+      "host.one.test",
+      "host",
+    ]);
+  });
+
   test("a name without a dot that the file of HOSTALIASES lists is replaced and not searched for", () => {
     const world = [
       resolvConf("search one.test"),

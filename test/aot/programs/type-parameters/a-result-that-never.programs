@@ -1,0 +1,258 @@
+//// a-result-that-never-has-its-declared-layout-is-read-by-name.ts
+// `{} as Pick<T, K>`: what pick() returns never has the layout that its type names, so the check of the result is decided when the program is built, and all of the caller goes on by name.
+function pick<T extends object, K extends keyof T>(source: T, ...keys: K[]): Pick<T, K> {
+  const picked = {} as Pick<T, K>;
+  for (const key of keys) picked[key] = source[key];
+  return picked;
+}
+const person = { name: "Ann", age: 40, email: "a@b.c", city: "Rome" };
+function brief(i: number): string {
+  const picked = pick(person, "name", "age");
+  let text = "";
+  for (let k = 0; k < (i & 3); k++) text += picked.name + picked.age;
+  return text + Object.keys(picked).join() + ("email" in picked);
+}
+for (let i = 0; i < 6; i++) console.log(brief(i));
+//// a-value-that-is-not-the-type-argument-goes-through.ts
+// The type argument is a claim of the caller's where `any` is passed. What comes back is whatever went in, and every use of it does what plain JavaScript does.
+interface Named {
+  name: string;
+}
+
+class Item implements Named {
+  name = "item";
+  size = 2;
+}
+
+function same<T>(value: T): T {
+  return value;
+}
+
+function nameOf<T extends Named>(value: T): string {
+  return value.name;
+}
+
+function keep<T extends Named>(value: T): T {
+  return value;
+}
+
+function lastOf<T>(list: T[]): T | undefined {
+  return list[list.length - 1];
+}
+
+function attempt(run: () => unknown): string {
+  try {
+    return String(run());
+  } catch (error) {
+    return (error as Error).constructor.name;
+  }
+}
+
+const strangers: any[] = ["text", 7, null, undefined, { name: 5 }, { other: 1 }, [1, 2], () => 1, new Item()];
+
+for (const stranger of strangers) {
+  console.log(
+    [
+      attempt(() => same<number>(stranger) + 1),
+      attempt(() => same<string>(stranger).length),
+      attempt(() => same<Item>(stranger).size),
+      attempt(() => nameOf<Item>(stranger)),
+      attempt(() => keep<Item>(stranger).name),
+      attempt(() => keep<Item>(stranger).size + 1),
+      attempt(() => lastOf<number>([stranger])! * 2),
+      attempt(() => lastOf<Item>([stranger])!.name),
+      attempt(() => typeof same<boolean>(stranger)),
+    ].join(" | "),
+  );
+}
+//// an-array-is-asserted-out-of-a-type-without-required-names.ts
+// An array is a Sized, which requires no name, and the program asserts that Sized to be a Point. Type parameters above Point get points, and once the array.
+interface Sized { length?: number }
+interface Point { x: number; y: number }
+function same<T extends Point>(point: T): T { return point; }
+function norm<T extends Point>(point: T, depth: number): number { return depth === 0 ? point.x * point.x + point.y * point.y : norm(point, depth - 1) + point.x; }
+const sized: Sized = [1, 2, 3];
+const asserted = sized as Point;
+console.log(sized.length, asserted.x, same(asserted) === asserted, norm(asserted, 2));
+const points: Point[] = [];
+for (let i = 0; i < 100; i++) points.push({ x: i, y: i + 1 });
+let total = 0;
+for (let round = 0; round < 50; round++) for (const point of points) total += norm(same(point), 3);
+console.log(total);
+//// an-heir-and-an-implementer-fix-the-type-parameter.ts
+// A member of a generic class or interface is also what an heir or an implementer makes of it, and that one is written for one type only: what it hands out
+// need not be anything that came in.
+class Item {
+  constructor(public name: string) {}
+}
+
+class Box<T> {
+  constructor(public value: T) {}
+  get(): T {
+    return this.value;
+  }
+  put(value: T): void {
+    this.value = value;
+  }
+  map<U>(change: (value: T) => U): Box<U> {
+    return new Box(change(this.get()));
+  }
+}
+
+class FreshBox extends Box<Item> {
+  made = 0;
+  override get(): Item {
+    return new Item("fresh " + ++this.made);
+  }
+}
+
+class CountingBox extends Box<number> {
+  override get(): number {
+    return this.value++;
+  }
+}
+
+interface Source<T> {
+  next(): T;
+}
+
+class Items implements Source<Item> {
+  next(): Item {
+    return new Item("made");
+  }
+}
+
+class Numbers implements Source<number> {
+  at = 0.5;
+  next(): number {
+    return (this.at += 1);
+  }
+}
+
+function take<T>(box: Box<T>): T {
+  return box.get();
+}
+
+function pull<T>(source: Source<T>): T {
+  return source.next();
+}
+
+function run(): string {
+  const boxes: Box<Item>[] = [new Box(new Item("kept")), new FreshBox(new Item("never seen"))];
+  const counts: Box<number>[] = [new Box(7), new CountingBox(1)];
+  const lines: unknown[] = [];
+  for (const box of boxes) lines.push(take(box).name, box.get().name.length, box.map(item => item.name + "!").get());
+  for (const box of counts) lines.push(take(box) + 1, box.get() * 2, box.map(n => n + 0.5).get());
+  lines.push(pull(new Items()).name, pull(new Numbers()) + 1, pull<Item | number>(new Numbers()));
+  boxes[1].put(new Item("stored"));
+  lines.push(boxes[1].value.name, boxes[1].get().name);
+  return lines.map(String).join(" | ");
+}
+
+for (let turn = 0; turn < 3; turn++) console.log(run());
+//// an-object-is-made-as-the-type-parameter.ts
+// `{} as T`: the object is none of the layouts that the type argument names, and the caller goes on as if it were.
+interface Options {
+  start?: number;
+  end?: number;
+  name?: string;
+  flag?: boolean;
+}
+
+interface Point {
+  x: number;
+  y: number;
+}
+
+function copy<T extends object>(source: T): T {
+  const target = {} as T;
+  for (const key in source) target[key] = source[key];
+  return target;
+}
+
+function blank<T>(): T {
+  return {} as T;
+}
+
+function fill<T extends object>(target: T, source: Partial<T>): T {
+  return Object.assign(target, source);
+}
+
+function describe(options: Options): string {
+  const { start, end = Infinity, name, flag } = copy(options);
+  return [start, end, name, flag].map(String).join(",");
+}
+
+function run(turn: number): string {
+  const point = copy<Point>({ x: turn, y: 2 });
+  point.x += 1;
+  const empty = blank<Point>();
+  const filled = fill(blank<Point>(), { y: turn });
+  const lines: unknown[] = [
+    describe({}),
+    describe({ start: turn }),
+    describe({ start: 1, end: 2, name: "n", flag: true }),
+    point.x + point.y,
+    Object.keys(point).join(),
+    empty.x,
+    typeof empty.y,
+    "x" in empty,
+    filled.x,
+    filled.y + 1,
+    Object.keys(copy(Object.create({ inherited: 1 }) as { inherited: number })).join(),
+  ];
+  return lines.map(String).join(" ");
+}
+
+for (let turn = 0; turn < 3; turn++) console.log(run(turn));
+//// one-function-is-called-at-unrelated-types.ts
+// What one call puts for a type parameter says nothing of another call: a number here, an object there, a function, nothing at all.
+class Item {
+  name = "item";
+  size = 3;
+}
+
+class Other {
+  label = "other";
+}
+
+function same<T>(value: T): T {
+  return value;
+}
+
+function first<T>(list: T[]): T {
+  return list[0];
+}
+
+function pick<T>(left: T, right: T, takesLeft: boolean): T {
+  return takesLeft ? left : right;
+}
+
+function twice<T>(value: T, change: (value: T) => T): T {
+  return change(change(value));
+}
+
+function run(turn: number): string {
+  const lines: unknown[] = [
+    same(turn) + 1,
+    same("text").length,
+    same(new Item()).size + turn,
+    same(new Other()).label,
+    same(undefined),
+    same(null),
+    same((n: number) => n * 2)(turn),
+    first([turn, 2]) * 2,
+    first([new Item()]).name,
+    first(["a", "b"]).toUpperCase(),
+    first<number>([]),
+    pick(new Item(), new Item(), turn > 0).size,
+    pick(1.5, turn, false) + 0.25,
+    pick("left", "right", turn === 1),
+    twice(turn, n => n + 1),
+    twice("x", s => s + "y"),
+    twice(new Item(), item => ((item.size += 1), item)).size,
+  ];
+  return lines.map(String).join(" ");
+}
+
+for (let turn = 0; turn < 3; turn++) console.log(run(turn));

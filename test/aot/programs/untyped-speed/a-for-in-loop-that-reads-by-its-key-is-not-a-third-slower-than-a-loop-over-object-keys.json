@@ -1,0 +1,5 @@
+{
+  "skipInShell": "it reads a clock",
+  "skipWithASAN": "a clock",
+  "skipInVariants": "a clock"
+}

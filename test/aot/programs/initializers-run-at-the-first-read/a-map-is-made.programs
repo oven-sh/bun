@@ -1,0 +1,1319 @@
+////: lines
+try {
+  await import("./made.js");
+  console.log("ran to its end");
+} catch (error) {
+  console.log("caught", error?.constructor?.name);
+}
+////: read
+function read() {
+  return held;
+}
+//// a-map-is-made-of-a-list-of-pairs-that-a-number-was-pushed-to/made.js
+const list = [[1, 2]];
+list.push(7);
+const held = new Map(list);
+////= read
+if (process.argv.length > 5) console.log(read());
+console.log("reached");
+//// a-map-is-made-of-a-list-of-pairs-that-a-number-was-pushed-to/main.js
+// A Map that nobody reads is made of a list of pairs that a number was pushed to: the module stops there with a TypeError.
+////= lines
+//// a-map-is-made-of-a-list-of-pairs-that-got-a-hole/made.js
+const list = [[1, 2]];
+list[2] = [3, 4];
+const held = new Map(list);
+////= read
+if (process.argv.length > 5) console.log(read());
+console.log("reached");
+//// a-map-is-made-of-a-list-of-pairs-that-got-a-hole/main.js
+// A Map that nobody reads is made of a list of pairs that got a hole: the module stops there with a TypeError.
+////= lines
+//// a-map-is-made-of-a-pair-whose-first-element-became-an-accessor/made.js
+const pair = [1, 2];
+Object.defineProperty(pair, 0, {
+  get() {
+    throw new RangeError("the key is read");
+  },
+});
+const held = new Map([pair]);
+////= read
+if (process.argv.length > 5) console.log(read());
+console.log("reached");
+//// a-map-is-made-of-a-pair-whose-first-element-became-an-accessor/main.js
+// A Map that nobody reads is made of a pair whose first element became an accessor that throws: the module stops there with that error.
+////= lines
+//// a-static-method-under-a-computed-key-that-spells-prototype/made.js
+const key = ["proto", "type"].join("");
+const held = [
+  class {
+    static [key]() {}
+  },
+  new Map([[1, 2]]),
+];
+////= read
+if (process.argv.length > 5) console.log(read());
+console.log("reached");
+//// a-static-method-under-a-computed-key-that-spells-prototype/main.js
+// A class that nobody reads has a static method under a computed key that spells "prototype": the module stops there with a TypeError.
+////= lines
+//// a-static-setter-under-a-computed-key-that-spells-prototype/made.js
+const key = "prototype";
+const held = [
+  class {
+    static set [key](value) {}
+  },
+  new Map([[1, 2]]),
+];
+////= read
+if (process.argv.length > 5) console.log(read());
+console.log("reached");
+//// a-static-setter-under-a-computed-key-that-spells-prototype/main.js
+// A class that nobody reads has a static setter under a computed key that spells "prototype": the module stops there with a TypeError.
+////= lines
+//// a-store-to-a-new-async-function-stops-the-module.mjs
+// At the top level of a module: the binding that takes the result of a refused store is never read, and the module stops at the store all the same.
+process.on("uncaughtException", error => {
+  console.log("uncaught", error.name);
+  console.log("reached", reached.join(","));
+});
+const reached = [];
+reached.push("in front");
+function fill() { const made = async function () {}; made.constructor = 2; return made; }
+const table = fill();
+reached.push("behind");
+export const read = () => table;
+//// a-store-to-a-property-of-a-function-that-a-descriptor-made-read-only/made.js
+"use strict";
+function target() {}
+Object.defineProperty(target, "mark", { value: 1 });
+target.mark = 2;
+const held = [target, new Map([[1, 2]])];
+////= read
+if (process.argv.length > 5) console.log(read());
+console.log("reached");
+//// a-store-to-a-property-of-a-function-that-a-descriptor-made-read-only/main.js
+// Strict code stores to a property of a function that a descriptor made read-only, and nobody reads the function: the module stops there with a TypeError.
+////= lines
+//// built-ins-handed-odd-operands.js
+// Built-ins handed what makes them run code or throw.
+const log = [];
+function attempt(name, make) { try { log.push(name + " " + JSON.stringify(make())); } catch (error) { log.push(name + " threw " + error.name); } }
+const SYMBOLS = [Symbol("s")];
+let JOIN_SYMBOLS; try { JOIN_SYMBOLS = SYMBOLS.join(); } catch (error) { log.push("join threw " + error.name); }
+let TEMPLATE; try { TEMPLATE = `${SYMBOLS[0]}`; } catch (error) { log.push("template threw " + error.name); }
+let MIXED; try { MIXED = [1n].map(n => n + 1); } catch (error) { log.push("bigint threw " + error.name); }
+let REPEATED; try { REPEATED = ["ab"].map(s => s.repeat(-1)); } catch (error) { log.push("repeat threw " + error.name); }
+let BAD_SET; try { BAD_SET = new Set(5); } catch (error) { log.push("Set threw " + error.name); }
+let BAD_MAP; try { BAD_MAP = new Map([1, 2]); } catch (error) { log.push("Map threw " + error.name); }
+let BAD_LENGTH; try { BAD_LENGTH = new Array(-1); } catch (error) { log.push("Array threw " + error.name); }
+let NULL_KEYS; try { NULL_KEYS = Object.keys(null); } catch (error) { log.push("keys threw " + error.name); }
+let STARTS; try { STARTS = ["a"].map(s => s.startsWith(/a/)); } catch (error) { log.push("startsWith threw " + error.name); }
+let REPLACE_ALL; try { REPLACE_ALL = ["a"].map(s => s.replaceAll(/a/, "b")); } catch (error) { log.push("replaceAll threw " + error.name); }
+let NORMALIZED; try { NORMALIZED = ["a"].map(s => s.normalize("bad")); } catch (error) { log.push("normalize threw " + error.name); }
+const HOLES = [1, , 3];
+const HOLES_MAPPED = HOLES.map(n => n * 2);
+const HOLES_JOINED = HOLES.join("-");
+const HOLES_SET = new Set(HOLES);
+const SPARSE = []; SPARSE[5] = 1;
+const SPARSE_FLAT = SPARSE.flatMap(n => [n]);
+class Sub extends Array {}
+const SUB = Sub.from([1, 2]);
+const SUB_MAPPED = SUB.map(n => n);
+const FROZEN = Object.freeze([1, 2]);
+let FROZEN_PUSH; try { FROZEN_PUSH = FROZEN.push(3); } catch (error) { log.push("push threw " + error.name); }
+const FROZEN_OBJECT = Object.freeze({ a: 1 });
+"use strict";
+attempt("holes", () => [HOLES_MAPPED, HOLES_JOINED, [...HOLES_SET], 1 in HOLES_MAPPED, SPARSE_FLAT]);
+attempt("sub", () => [SUB_MAPPED instanceof Sub, SUB_MAPPED.constructor.name, SUB_MAPPED]);
+attempt("frozen", () => [Object.isFrozen(FROZEN), Object.isFrozen(FROZEN_OBJECT), FROZEN]);
+attempt("undefined ones", () => [JOIN_SYMBOLS, TEMPLATE, MIXED, REPEATED, BAD_SET, BAD_MAP, BAD_LENGTH, NULL_KEYS, STARTS, REPLACE_ALL, NORMALIZED].map(v => typeof v));
+console.log(log.join("\n"));
+//// builtin-call-on-object-mutated-later.js
+const log = [];
+
+const added = { a: 1, b: 2 };
+const keysOfAdded = Object.keys(added);
+added.c = 3;
+
+const stored = { a: 1, b: 2 };
+const valuesOfStored = Object.values(stored);
+stored.a = 9;
+
+const deleted = { a: 1, b: 2 };
+const entriesOfDeleted = Object.entries(deleted);
+delete deleted.a;
+
+const redefined = { a: 1 };
+const valuesOfRedefined = Object.values(redefined);
+Object.defineProperty(redefined, "a", { get() { log.push("getter of redefined"); return "from the getter"; }, enumerable: true });
+
+const gainsAccessor = { a: 1 };
+const valuesOfGainsAccessor = Object.values(gainsAccessor);
+Object.defineProperty(gainsAccessor, "z", { get() { log.push("getter of z"); return "z"; }, enumerable: true });
+
+const printed = { a: 1, inner: { b: 2 } };
+const textOfPrinted = JSON.stringify(printed);
+printed.inner.b = 3;
+
+const copied = { a: 1 };
+const copyOfCopied = Object.assign({}, copied);
+copied.a = 2;
+
+const spread = { a: 1 };
+const spreadOfSpread = { ...spread, z: 1 };
+spread.a = 2;
+
+const changedByCall = { a: 1 };
+function changeIt() { changedByCall.a = 5; }
+const valuesOfChangedByCall = Object.values(changedByCall);
+changeIt();
+
+const changedLater = { a: 1 };
+const valuesOfChangedLater = Object.values(changedLater);
+function changeLater() { changedLater.a = 7; }
+
+let calls = 0;
+const withGetter = { get a() { calls++; log.push("getter of a"); return calls; } };
+const valuesOfWithGetter = Object.values(withGetter);
+log.push("behind the getter");
+
+const frozen = Object.freeze({ a: 1 });
+const keysOfFrozen = Object.keys(frozen);
+
+const below = { a: 1 };
+Object.setPrototypeOf(below, { get b() { log.push("getter above"); return 2; } });
+const keysOfBelow = Object.keys(below);
+const hasB = "b" in below;
+
+const byKey = { a: 1 };
+const keysOfByKey = Object.keys(byKey);
+byKey[["n", "ew"].join("")] = 2;
+
+const handedOut = { a: 1 };
+const keysOfHandedOut = Object.keys(handedOut);
+globalThis.handedOut = handedOut;
+globalThis.handedOut.late = 1;
+
+const left = { a: 1, b: 2, c: 3 };
+const keysOfLeft = Object.keys(left);
+const valuesOfLeft = Object.values(left);
+
+function report() {
+  return [
+    keysOfAdded.join(), valuesOfStored.join(), JSON.stringify(entriesOfDeleted), valuesOfRedefined.join(), valuesOfGainsAccessor.join(), textOfPrinted, JSON.stringify(copyOfCopied),
+    JSON.stringify(spreadOfSpread), valuesOfChangedByCall.join(), valuesOfChangedLater.join(), valuesOfWithGetter.join(), keysOfFrozen.join(), keysOfBelow.join(), hasB, keysOfByKey.join(),
+    keysOfHandedOut.join(), keysOfLeft.join(), valuesOfLeft.join(),
+  ].join(" | ");
+}
+changeLater();
+log.push("before the first read");
+console.log(report());
+console.log(report());
+console.log(log.join(" | "), calls);
+//// callbacks-with-effects.ts
+// Callbacks and helpers that look pure and are not.
+const log: string[] = [];
+let counter = 0;
+const LIST = [1, 2, 3];
+const COUNTED = LIST.map(n => n + counter++);
+log.push("counter " + counter);
+const SEEN: number[] = [];
+const VISITED = LIST.filter(n => { SEEN.push(n); return n > 1; });
+log.push("seen " + SEEN.join());
+const STAMPED = LIST.map(() => typeof performance.now());
+const RANDOM = LIST.map(() => Math.random() < 2);
+let state = "before";
+const READS_STATE = LIST.map(n => state + n);
+state = "after";
+log.push(JSON.stringify([COUNTED, VISITED, STAMPED, RANDOM, READS_STATE]));
+
+function thrower(n: number) { if (n > 2) throw new RangeError("too big " + n); return n; }
+let caught = "";
+let THROWN: number[] | undefined;
+try { THROWN = LIST.map(thrower); } catch (error) { caught = String(error); }
+log.push(caught + " " + typeof THROWN);
+
+const WITH_GETTER = { get value() { log.push("getter ran"); return 1; } };
+const FROM_GETTER = [WITH_GETTER].map(o => o.value);
+log.push("after FROM_GETTER");
+log.push(JSON.stringify(FROM_GETTER));
+
+const CONVERTED = [{ toString() { log.push("toString ran"); return "s"; } }].join("-");
+log.push("after CONVERTED " + CONVERTED);
+const KEYED = [{ toString() { log.push("key made"); return "k"; } }].reduce<Record<string, number>>((o, k) => { o[k as unknown as string] = 1; return o; }, {});
+log.push("after KEYED " + JSON.stringify(KEYED));
+
+const SORTED = [3, 1, 2].sort((a, b) => { counter++; return a - b; });
+log.push("counter " + counter + " " + SORTED);
+const ids = new Map<string, number>();
+function idOf(name: string) { let id = ids.get(name); if (id === undefined) { id = ids.size; ids.set(name, id); } return id; }
+const ID_A = ["a", "b"].map(idOf);
+log.push("ids " + ids.size);
+const ID_B = ["c", "a"].map(idOf);
+log.push(JSON.stringify([ID_A, ID_B, [...ids]]));
+console.log(log.join("\n"));
+//// circles-of-imports/a.ts
+import { b, early as earlyB } from "./b";
+export const early: string[] = [];
+function attempt(read: () => unknown) { try { return JSON.stringify(read()); } catch (error) { return (error as Error).constructor.name; } }
+early.push(attempt(() => b));
+export const a: { name: string; sees: string; log: string[] } = { name: "a", sees: attempt(() => b.name), log: earlyB };
+export function readB() { return b.name; }
+//// circles-of-imports/b.ts
+import { a } from "./a";
+function attempt(read: () => unknown) { try { return JSON.stringify(read()); } catch (error) { return (error as Error).constructor.name; } }
+export const early: string[] = [attempt(() => a)];
+export const b: { name: string; sees: string } = { name: "b", sees: attempt(() => a.name) };
+export function readA() { return a.name; }
+//// circles-of-imports/main.ts
+// Modules that import each other see each other half evaluated.
+import { a, readB } from "./a";
+import { b, readA } from "./b";
+console.log(JSON.stringify([a, b, readA(), readB()]));
+//// classes-and-static-blocks.ts
+// Classes at the top level: static blocks, static fields, computed keys and heritage run where they stand.
+const log: string[] = [];
+function note<T>(text: string, value: T) { log.push(text); return value; }
+class Plain { a = 1; static s = { v: 1 }; m() { return this.a; } get g() { return 2; } static sm() { return 3; } }
+class Child extends Plain { b = 2; m() { return super.m() + this.b; } }
+class WithEffects { static a = note("static a", 1); static b = note("static b", 2); }
+class Keyed { [note("key", "k")]() { return 4; } }
+const Expression = class Named { static self = Named; };
+const mixin = (Base: typeof Plain) => class extends Base { extra() { return 5; } };
+const Mixed = mixin(Plain);
+class Private { #p = 6; static #sp = 7; read() { return this.#p + Private.#sp; } static has(o: object) { return #p in o; } }
+class FromBuiltin extends Map<string, number> { twice(k: string) { return (this.get(k) ?? 0) * 2; } }
+class Failing extends Error { code = "E"; }
+abstract class Abstract { abstract f(): number; g() { return this.f(); } }
+class Concrete extends Abstract { f() { return 8; } }
+const instance = new Child();
+const instances = [new Plain(), new Child()];
+log.push("end");
+function main(which: string) {
+  console.log(log.join());
+  if (which === "child") console.log(new Child().m(), Object.getPrototypeOf(Child) === Plain);
+  console.log(new Plain().m(), new Plain().g, Plain.sm(), Plain.s.v, instance.m(), instances.length, instance instanceof Plain);
+  console.log(WithEffects.a + WithEffects.b, (new Keyed() as any).k(), Expression.self === Expression, Expression.name, new Mixed().extra(), Mixed.name);
+  console.log(new Private().read(), Private.has(new Private()), Private.has({}));
+  const m = new FromBuiltin([["a", 2]]);
+  console.log(m.twice("a"), m instanceof Map, new Failing("f").code, new Failing("f") instanceof Error, new Concrete().g());
+  console.log(Object.getOwnPropertyNames(Plain).sort().join(), Object.getOwnPropertyNames(Plain.prototype).sort().join(), Child.name, Child.length);
+}
+main(process.argv[2] ?? "");
+//// collections-made-from-collections-that-change-before-the-first-read.ts
+// An initializer reads a Set, a Map or a list that a built-in has made. A function changes that collection before anybody reads what the initializer made of it, each in another way.
+type Change = { name: string; change(): void; read(): unknown };
+const changes: Change[] = [];
+const show = (value: Iterable<unknown>) => JSON.stringify([...value]);
+
+const added = new Set(["a", "b"]);
+const fromAdded = new Set(added);
+changes.push({ name: "add", change: () => void added.add("c"), read: () => show(fromAdded) });
+
+const deleted = new Set(["a", "b"]);
+const fromDeleted = Array.from(deleted);
+changes.push({ name: "delete", change: () => void deleted.delete("a"), read: () => show(fromDeleted) });
+
+const cleared = new Map([["a", 1], ["b", 2]]);
+const fromCleared = new Map(cleared);
+changes.push({ name: "clear", change: () => cleared.clear(), read: () => show(fromCleared) });
+
+const stored = new Map([["a", 1]]);
+const sizeOfStored = stored.size;
+changes.push({ name: "set", change: () => void stored.set("b", 2), read: () => sizeOfStored });
+
+const borrowed = new Map([["a", 1]]);
+const valueOfBorrowed = borrowed.get("a");
+changes.push({ name: "set.call", change: () => void Map.prototype.set.call(borrowed, "a", 9), read: () => valueOfBorrowed });
+
+const applied = new Set(["a"]);
+const hasInApplied = applied.has("z");
+changes.push({ name: "Reflect.apply", change: () => void Reflect.apply(Set.prototype.add, applied, ["z"]), read: () => hasInApplied });
+
+const walked = new Map([["a", 1], ["b", 2]]);
+const keysOfWalked = [...walked.keys()];
+changes.push({ name: "forEach", change: () => walked.forEach((value, key, map) => void map.delete(key)), read: () => show(keysOfWalked) });
+
+const aliased = new Set(["a"]);
+const holder = { inner: aliased };
+const fromAliased = new Set(aliased);
+changes.push({ name: "alias", change: () => void holder.inner.add("b"), read: () => show(fromAliased) });
+
+const pushed = Object.keys({ a: 1, b: 2 });
+const joinedPushed = pushed.join();
+changes.push({ name: "push", change: () => void pushed.push("c"), read: () => joinedPushed });
+
+const sorted = Object.keys({ b: 1, a: 2 });
+const firstOfSorted = sorted[0];
+changes.push({ name: "sort", change: () => void sorted.sort(), read: () => firstOfSorted });
+
+const cut = Object.values({ a: 1, b: 2 });
+const lengthOfCut = cut.length;
+changes.push({ name: "length", change: () => void (cut.length = 0), read: () => lengthOfCut });
+
+const written = "x y z".split(" ");
+const copyOfWritten = written.slice();
+changes.push({ name: "element", change: () => void (written[1] = "w"), read: () => show(copyOfWritten) });
+
+const filled = "x y z".split(" ");
+const joinedFilled = filled.join("-");
+changes.push({ name: "fill", change: () => void filled.fill("q"), read: () => joinedFilled });
+
+const defined = Object.entries({ a: 1 });
+const firstOfDefined = defined[0][0];
+changes.push({ name: "defineProperty", change: () => void Object.defineProperty(defined, 0, { value: ["z", 0] }), read: () => firstOfDefined });
+
+const inner = Object.entries({ a: 1 });
+const tableOfInner = new Map(inner);
+changes.push({ name: "pair", change: () => void (inner[0][1] = 5), read: () => show(tableOfInner) });
+
+const assigned = Object.keys({ a: 1 });
+const copyOfAssigned = [...assigned];
+changes.push({ name: "assign", change: () => void Object.assign(assigned, ["z", "y"]), read: () => show(copyOfAssigned) });
+
+const handedOut = new Set(["a"]);
+const fromHandedOut = new Set(handedOut);
+changes.push({ name: "unknown hands", change: () => void (JSON.parse('[0]') as number[]).map(function (this: Set<string>) { this.add("b"); }, handedOut), read: () => show(fromHandedOut) });
+
+const reparented = new Map([["a", 1]]);
+const viaMethod = reparented.get("a");
+changes.push({ name: "setPrototypeOf", change: () => void Object.setPrototypeOf(reparented, { get: () => "other" }), read: () => viaMethod });
+
+for (const { change } of changes) change();
+for (const { name, read } of changes) console.log(name, read());
+console.log(show(added), show(deleted), cleared.size, stored.size, borrowed.get("a"), applied.has("z"), walked.size, show(aliased), pushed.join(), sorted.join(), cut.length, written.join(), filled.join(), defined[0][0], inner[0][1], assigned.join(), show(handedOut), (reparented as Map<string, unknown>).get("a"));
+//// each-object-is-made-once.ts
+// One object for each binding, whoever reads it first and however often.
+const shared = { n: 0 };
+const holderA = { s: shared };
+const holderB = { s: shared };
+const list = [shared, shared];
+const fn = () => shared;
+const nested = { deep: { deeper: { s: shared } } };
+class Counter { static made = 0; id = ++Counter.made; }
+const one = new Counter();
+const two = new Counter();
+const sym = Symbol("s");
+const keyed = { [sym]: 1 };
+const registered = Symbol.for("lazy.attack");
+function readTwice<T>(read: () => T) { return read() === read(); }
+function main(order: string) {
+  if (order === "b") console.log(holderB.s === shared, holderA.s === holderB.s);
+  else console.log(holderA.s === holderB.s, holderB.s === shared);
+  holderA.s.n++;
+  console.log(shared.n, list[0] === list[1], list[1] === fn(), nested.deep.deeper.s.n);
+  console.log(readTwice(() => holderA), readTwice(() => list), readTwice(() => nested.deep), readTwice(() => sym), readTwice(() => one));
+  console.log(order === "b" ? [two.id, one.id] : [one.id, two.id], Counter.made);
+  console.log(keyed[sym], registered === Symbol.for("lazy.attack"), sym.description);
+}
+main(process.argv[2] ?? "a");
+//// every-kind-of-read.ts
+// A lazy binding read from every kind of place.
+const table = { a: 1, b: 2, list: [1, 2, 3] };
+const names = ["x", "y", "z"];
+const nested = { inner: { value: 7 } };
+const handlers = { run: (n: number) => n + 1 };
+const weak = new WeakMap<object, number>();
+const big = new Uint8Array(16);
+enum Kind { A, B, C }
+const out: unknown[] = [];
+
+async function asyncReader() { await null; out.push(table.a); await Promise.resolve(); out.push(names[1]); return nested.inner.value; }
+function* generatorReader() { yield table.b; yield* names; yield nested.inner.value; }
+async function* asyncGeneratorReader() { yield table.a; await null; yield names.length; }
+function tryReader() { try { out.push(table.list.length); throw new Error("t"); } catch (error) { out.push(names[0]); } finally { out.push(nested.inner.value); } }
+function loopReader() { let sum = 0; for (let i = 0; i < 3; i++) sum += table.list[i]!; for (const n of names) sum += n.length; for (const k in table) sum += k.length; while (sum < 20) sum += nested.inner.value; return sum; }
+function defaultReader(value = table.a, { x = names[2] } = {}) { return [value, x]; }
+function switchReader(k: Kind) { switch (k) { case Kind.A: return table.a; case Kind.B: return names[0]; default: return Kind[k]; } }
+function closureReader() { return () => () => handlers.run(table.b); }
+function typeofReader() { return [typeof table, typeof names, typeof weak, typeof big]; }
+function optionalReader() { return [(table as any)?.zzz?.y, nested?.inner?.value, handlers.run?.(1)]; }
+function spreadReader() { return [...names, ...table.list, { ...nested }]; }
+function tagReader() { const tag = (s: TemplateStringsArray, ...v: unknown[]) => s.join("|") + v.join(","); return tag`a${table.a}b${names[0]}c`; }
+function conditionalReader(flag: boolean) { return flag ? table : names; }
+function recursiveReader(n: number): number { return n ? recursiveReader(n - 1) + table.a : nested.inner.value; }
+function argumentsReader(..._rest: unknown[]) { return arguments.length + names.length; }
+class Reader {
+  field = table.a;
+  static fixed = names.length;
+  static { out.push("static block " + nested.inner.value); }
+  get value() { return table.b; }
+  set value(v: number) { out.push(v + table.a); }
+  method() { return handlers.run(this.field); }
+  arrow = () => names.join("");
+  static make() { return new Reader(); }
+  [Symbol.iterator]() { return names[Symbol.iterator](); }
+}
+class Derived extends Reader { constructor() { out.push(table.a); super(); out.push(names[0]); } method() { return super.method() + big.length; } }
+const getter = { get lazy() { return table.list; } };
+
+async function main() {
+  out.push(await asyncReader());
+  out.push([...generatorReader()]);
+  for await (const v of asyncGeneratorReader()) out.push(v);
+  tryReader();
+  out.push(loopReader(), defaultReader(), switchReader(Kind.A), switchReader(Kind.B), switchReader(Kind.C), closureReader()()(), typeofReader(), optionalReader(), spreadReader(), tagReader());
+  out.push(conditionalReader(true) === table, conditionalReader(false) === names, recursiveReader(5), argumentsReader(1, 2));
+  const r = Reader.make(); r.value = 5;
+  out.push(r.field, Reader.fixed, r.value, r.method(), r.arrow(), [...r], new Derived().method(), getter.lazy.length);
+  weak.set(table, 1); out.push(weak.get(table), big[0]);
+  await Promise.all([asyncReader(), asyncReader()]);
+  setTimeout(() => { out.push(names.length); console.log(JSON.stringify(out)); }, 1);
+}
+main();
+//// exports-found-by-name-through-a-namespace-object/beside.ts
+export const table = new Map<string, number>([["a", 1], ["b", 2]]);
+export const list = ["x", "y"].map(s => s + s);
+export function grow(k: string) { table.set(k, k.length); return table.size; }
+export function size() { return table.size; }
+//// exports-found-by-name-through-a-namespace-object/handed.ts
+export const table = new Map<string, number>([["a", 1], ["b", 2]]);
+export const list = ["x", "y"].map(s => s + s);
+export function grow(k: string) { table.set(k, k.length); return table.size; }
+export function size() { return table.size; }
+//// exports-found-by-name-through-a-namespace-object/inherited.ts
+export const table = new Map<string, number>([["a", 1], ["b", 2]]);
+export const list = ["x", "y"].map(s => s + s);
+export function grow(k: string) { table.set(k, k.length); return table.size; }
+export function size() { return table.size; }
+//// exports-found-by-name-through-a-namespace-object/main.ts
+// Namespace objects that only reads under known names look into. An export that such a read finds by its name while the program runs is there when the read comes,
+// whether or not other code reads the same export by an import.
+import * as beside from "./beside";
+import * as throughThis from "./through-this";
+import * as tested from "./tested";
+import * as handed from "./handed";
+import * as inherited from "./inherited";
+import { table as tableOfHanded } from "./handed";
+
+const log: string[] = [];
+const show = (map: Map<string, number>) => JSON.stringify([...map]);
+
+// Two receivers at one site: the name is read at run time.
+const other = { table: new Map([["other", 0]]), size() { return -1; } };
+function pick(flag: boolean) { return (flag ? beside : other).table; }
+function call(flag: boolean) { return (flag ? beside : other).size(); }
+log.push(show(pick(false)), show(pick(true)), String(call(false)), String(call(true)));
+
+// `this` of a call through the namespace object is the object.
+log.push(String(throughThis.sizeOfMine()), String(throughThis.growMine("ccc")), show(throughThis.table));
+
+// Tests for a name, and a description of the property.
+log.push(String("table" in tested), String(Object.hasOwn(tested, "table")), String("missing" in tested));
+log.push(JSON.stringify(Object.getOwnPropertyDescriptor(tested, "list")));
+
+// The object handed on as a value, read under a name by code that takes any object with that name.
+function sizeOf(holder: { table: Map<string, number> }) { return holder.table.size; }
+log.push(String(sizeOf(handed)), String(sizeOf(other)), String(handed.table === tableOfHanded));
+
+// The object as a prototype: the read climbs to it.
+const heir: { table?: Map<string, number> } = Object.create(inherited);
+log.push(show(heir.table!));
+
+console.log(log.join("\n"));
+//// exports-found-by-name-through-a-namespace-object/tested.ts
+export const table = new Map<string, number>([["a", 1], ["b", 2]]);
+export const list = ["x", "y"].map(s => s + s);
+export function grow(k: string) { table.set(k, k.length); return table.size; }
+export function size() { return table.size; }
+//// exports-found-by-name-through-a-namespace-object/through-this.ts
+export const table = new Map<string, number>([["a", 1], ["b", 2]]);
+export function sizeOfMine(this: { table: Map<string, number> }) { return this.table.size; }
+export function growMine(this: { table: Map<string, number> }, k: string) { this.table.set(k, k.length); return this.table.size; }
+//// exports-read-through-namespace-objects/dynamic.ts
+export const CONFIG = { name: "dynamic", parts: ["a", "b"] };
+export const DERIVED = CONFIG.parts.map(p => p.toUpperCase());
+export const MAYBE: { v: number } | undefined = { v: 1 };
+export default { kind: "default export" };
+//// exports-read-through-namespace-objects/main.ts
+// Exports read by computed keys, through dynamic imports, require and re-exported namespaces.
+import { TABLE, LIST, Thing, SET, counter, bump } from "./named";
+import * as star from "./star";
+import * as through from "./through";
+const log: string[] = [];
+log.push(JSON.stringify([TABLE, LIST, new Thing().n, [...SET], counter]));
+bump();
+log.push(JSON.stringify(counter));
+function pick(ns: Record<string, unknown>, key: string) { return ns[key]; }
+for (const key of ["ONE", "TWO", "THREE", "MISSING"]) { const v = pick(star, key); log.push(key + " " + (v instanceof Map ? JSON.stringify([...v]) : JSON.stringify(v))); }
+log.push(Object.keys(star).join() + " | " + Object.keys(through).join());
+log.push(JSON.stringify({ ...star, THREE: undefined }));
+log.push(String(through.ONE === star.ONE) + String(through.RENAMED === TABLE) + JSON.stringify(through.inner.FROM_ESM) + ("LATE" in through));
+log.push(JSON.stringify(Object.getOwnPropertyDescriptor(star, "TWO")));
+const required = require("./required");
+log.push(JSON.stringify([required.FROM_ESM, required.OTHER, required.FROM_ESM === through.inner.FROM_ESM]));
+const name = "./dyna" + (log.length > 0 ? "mic" : "");
+Promise.all([import("./dynamic"), import(name)]).then(([first, second]) => {
+  log.push(JSON.stringify([first.CONFIG, first.DERIVED, first.MAYBE, first.default, first === second, Object.keys(second)]));
+  const { CONFIG, ...rest } = second as Record<string, unknown>;
+  log.push(JSON.stringify([CONFIG === first.CONFIG, Object.keys(rest)]));
+  console.log(log.join("\n"));
+});
+//// exports-read-through-namespace-objects/named.ts
+export const TABLE = { a: 1, b: [1, 2] };
+export const LIST = ["x", "y"].map(s => s + s);
+export class Thing { static made = 0; n = ++Thing.made; }
+export const SET = new Set(["p", "q"]);
+export let counter = { n: 0 };
+export function bump() { counter = { n: counter.n + 1 }; }
+export const UNUSED = { big: [1, 2, 3, 4] };
+//// exports-read-through-namespace-objects/required.ts
+export const FROM_ESM = { required: true, list: [1, 2, 3] };
+export const OTHER = ["o"].concat(["p"]);
+//// exports-read-through-namespace-objects/star.ts
+export const ONE = { id: 1 };
+export const TWO = [2, 2];
+export const THREE = new Map([["k", 3]]);
+export const LATE = { order: ["star"] };
+//// exports-read-through-namespace-objects/through.ts
+export * from "./star";
+export { TABLE as RENAMED } from "./named";
+export * as inner from "./required";
+//// getters-and-proxies-run-in-order.js
+// What an initializer reads may run code.
+const log = [];
+const source = { get a() { log.push("get a"); return 1; }, b: 2 };
+const proxy = new Proxy({}, { get(t, k) { log.push("trap " + String(k)); return 7; }, ownKeys() { log.push("ownKeys"); return []; }, has(t, k) { log.push("has " + String(k)); return true; } });
+const fromGetter = { v: source.a };
+const fromProxy = { v: proxy.x };
+const spreadGetter = { ...source };
+const spreadProxy = { ...proxy };
+const inProxy = ["y" in proxy];
+const withKey = { [{ toString() { log.push("key"); return "k"; } }]: 1 };
+const withValueOf = [+{ valueOf() { log.push("valueOf"); return 3; } }];
+const template = [`${{ toString() { log.push("template"); return "t"; } }}`];
+const iterated = [...{ *[Symbol.iterator]() { log.push("iterate"); yield 1; } }];
+const mapped = new Map({ *[Symbol.iterator]() { log.push("map iterate"); yield [1, 2]; } });
+const destructured = (({ a }) => [a])(source);
+class WithStatic { static x = (log.push("static field"), 1); static { log.push("static block"); } [(log.push("computed name"), "m")]() {} }
+class Below extends (log.push("heritage"), WithStatic) {}
+const tagged = ((s) => (log.push("tag"), [s]))`x`;
+const defined = Object.defineProperty({}, "p", { get value() { log.push("descriptor"); return 1; } });
+const assigned = Object.assign({}, source);
+const frozen = Object.freeze({ a: 1 });
+log.push("end of the module");
+function main() {
+  console.log(log.join(" | "));
+  console.log(fromGetter.v, fromProxy.v, spreadGetter.a, Object.keys(spreadProxy).length, inProxy[0], withKey.k, withValueOf[0], template[0], iterated[0], mapped.get(1), destructured[0], WithStatic.x, typeof Below, tagged[0][0], defined.p, assigned.a, Object.isFrozen(frozen));
+  console.log(log.join(" | "));
+}
+main();
+//// helpers-called-at-the-top-level.ts
+// Purity through calls: what a callee does with what it is handed.
+const registry: object[] = [];
+const outer = { hits: 0 };
+function fresh(n: number) { return { n, list: [n] }; }
+function fill<T extends object>(target: T, key: string, value: unknown) { (target as any)[key] = value; return target; }
+function register<T extends object>(value: T) { registry.push(value); return value; }
+function touch() { outer.hits++; return { t: 1 }; }
+function peek() { return { seen: outer.hits }; }
+function maybeThrow(flag: boolean) { if (flag) throw new TypeError("no"); return { ok: true }; }
+function loop(n: number) { const out: number[] = []; for (let i = 0; i < n; i++) out.push(i); return out; }
+function recursive(n: number): { depth: number } { return n ? recursive(n - 1) : { depth: 0 }; }
+function callsBack(f: () => unknown) { return { r: f() }; }
+function keepsArgument(value: object) { return { kept: value }; }
+function definesOn(f: Function, name: string) { Object.defineProperty(f, "label", { value: name }); return f; }
+const a = fresh(1);
+const b = fill({ x: 1 }, "y", 2);
+const c = fill(a, "late", 3);
+const d = register({ r: 1 });
+const e = touch();
+const f = peek();
+const g = maybeThrow(false);
+const h = loop(4);
+const i = recursive(3);
+const j = callsBack(() => outer.hits);
+const k = callsBack(() => 5);
+const l = keepsArgument(a);
+const m = definesOn(() => 1, "m");
+const n = definesOn(fresh, "fresh");
+// One helper, many constants: what it does depends on which text or number it is handed.
+const said: string[] = [];
+function byText(kind: string) { if (kind === "loud") said.push("text " + outer.hits); return { kind }; }
+function byNumber(code: number) { if (code === 3) said.push("number " + outer.hits); return { code, twice: code * 2 }; }
+function byFlag(flag: boolean) { if (flag) said.push("flag " + outer.hits); return { flag }; }
+function byKey(target: Record<string, unknown>, key: string) { target[key] = outer.hits; return target; }
+function entry(code: number, key: string, text: string) { return { code, key, text }; }
+const quiet = byText("quiet"), loud = byText("loud"), calm = byText("calm");
+const one = byNumber(1), three = byNumber(3), four = byNumber(4);
+const off = byFlag(false), on = byFlag(true);
+const keyed = byKey(byKey({}, "first"), "second");
+const table = { a: entry(1, "a", "A"), b: entry(2, "b", "B"), c: entry(3, "c", "C"), d: entry(4, "d", "D") };
+function main() {
+  outer.hits = 50;
+  console.log(JSON.stringify([said, quiet, loud, calm, one, three, four, off, on, keyed, table, table.a === table.a]));
+  console.log(JSON.stringify([a, b, c === a, d, registry.length, e, f, g, h, i, j, k, l.kept === a, (m as any).label, (fresh as any).label, n === fresh]));
+}
+main();
+//// helpers-that-read-other-modules/circle-a.ts
+import { fromB } from "./circle-b";
+export const A_TABLE = { name: "a" };
+export function fromA() { return { from: A_TABLE.name }; }
+export const A_USES_B = (() => { try { return fromB(); } catch (error) { return { from: (error as Error).name }; } })();
+//// helpers-that-read-other-modules/circle-b.ts
+import { fromA } from "./circle-a";
+export const B_TABLE = { name: "b" };
+export function fromB() { return { from: B_TABLE.name }; }
+export const B_USES_A = (() => { try { return fromA(); } catch (error) { return { from: (error as Error).name }; } })();
+//// helpers-that-read-other-modules/kit.ts
+export const registry: string[] = [];
+export class Shape { constructor(public kind: string, public parts: Shape[] = []) {} }
+export const DEFAULTS = { depth: 1 };
+export function shape(kind: string, ...parts: Shape[]) { return new Shape(kind, parts); }
+export function counted(kind: string) { registry.push(kind); return new Shape(kind); }
+export function withDefaults(kind: string) { return { kind, depth: DEFAULTS.depth }; }
+export let mode = "first";
+export function setMode(next: string) { mode = next; }
+export function inMode(kind: string) { return { kind, mode }; }
+//// helpers-that-read-other-modules/main.ts
+// Helpers called at the top level read variables of their own modules, which may not have run to their end.
+import { shape, counted, withDefaults, inMode, setMode, registry, DEFAULTS, Shape } from "./kit";
+import { A_USES_B } from "./circle-a";
+import { B_USES_A } from "./circle-b";
+import { SEEN, EARLY } from "./requires-back";
+import { PLAIN } from "./required-back";
+const log: string[] = [];
+const TREE = shape("root", shape("leaf"), shape("leaf"));
+const COUNTED = counted("c");
+log.push("registry " + registry.join());
+const DEFAULTED = withDefaults("d");
+DEFAULTS.depth = 7;
+const MODE = inMode("m");
+setMode("second");
+function early() { return helperBelow(); }
+let EARLY_CALL: unknown; try { EARLY_CALL = early(); } catch (error) { EARLY_CALL = (error as Error).name; }
+const BELOW = { v: 1 };
+function helperBelow() { return { below: BELOW.v }; }
+const AFTER = helperBelow();
+log.push(JSON.stringify([TREE, TREE instanceof Shape, COUNTED, DEFAULTED, MODE, EARLY_CALL, AFTER]));
+log.push(JSON.stringify([A_USES_B, B_USES_A, SEEN, EARLY, PLAIN]));
+console.log(log.join("\n"));
+//// helpers-that-read-other-modules/required-back.ts
+import { late } from "./requires-back";
+export const SNAPSHOT = (() => { try { return { late: late() }; } catch (error) { return { late: (error as Error).name }; } })();
+export const PLAIN = { tried: (() => { try { return late(); } catch (error) { return (error as Error).name; } })() };
+//// helpers-that-read-other-modules/requires-back.ts
+export const EARLY = { at: "early" };
+const back = require("./required-back");
+export const SEEN = back.SNAPSHOT;
+export const LATE = { at: "late" };
+export function late() { return LATE.at; }
+//// initializers-that-depend-on-when-they-run.ts
+// Every initializer here depends on when it runs. A lazy one would answer differently.
+let counter = 0;
+function next() { return ++counter; }
+const first = { n: next() };
+const second = { n: next() };
+const startedAt = { t: Date.now() };
+const date = new Date();
+const random = [Math.random()];
+const clock = { p: performance.now() };
+const hr = { h: process.hrtime.bigint() };
+const failure = new Error("made at the start");
+const where = { stack: new Error("x").stack };
+const env = { home: process.env.LAZY_ATTACK };
+const cwd = { dir: process.cwd() };
+const argv = [...process.argv];
+const memory = { rss: process.memoryUsage().rss > 0 };
+let mutable = 1;
+const snapshot = { m: mutable };
+const table = { a: 1 };
+const copy = { ...table };
+const keys = Object.keys(table);
+const picked = { a: table.a };
+const listed = [table.a, table.a + 1];
+const text = { s: JSON.stringify(table) };
+
+function deep(n: number): unknown { return n ? deep(n - 1) : [failure.stack!.split("\n").length, where.stack!.split("\n").length]; }
+
+function main() {
+  mutable = 2;
+  table.a = 99;
+  (table as any).b = 5;
+  process.env.LAZY_ATTACK = "changed";
+  counter = 100;
+  const later = Date.now();
+  let spin = 0;
+  while (Date.now() - later < 5) spin++;
+  console.log(second.n, first.n);
+  console.log(startedAt.t <= later, date.getTime() <= later, clock.p < performance.now() - 4, hr.h < process.hrtime.bigint());
+  console.log(random[0] === random[0]);
+  console.log(JSON.stringify(deep(20)));
+  console.log(env.home, typeof cwd.dir, argv.length, memory.rss);
+  console.log(snapshot.m, JSON.stringify(copy), keys.join(), picked.a, listed.join(), text.s);
+}
+main();
+//// initializers-that-throw.js
+// An initializer that throws stops the module where it stands.
+const log = [];
+process.on("uncaughtException", (error) => {
+  log.push("uncaught " + error.constructor.name);
+});
+setTimeout(() => {
+  for (const read of [() => before.x, () => after.x, () => typeof after, () => AfterClass.name, () => afterFunction()]) {
+    try { log.push(String(read())); } catch (error) { log.push(error.constructor.name); }
+  }
+  console.log(log.join(" | "));
+}, 1);
+const before = { x: 1 };
+const nothing = null;
+const bad = { v: nothing.x };
+const after = { x: 2 };
+class AfterClass {}
+function afterFunction() { return after.x; }
+//// loops-that-fill-what-a-binding-holds.ts
+// Statements and loops at the top level that fill what a binding holds.
+const log: string[] = [];
+const SQUARES: number[] = [];
+for (let i = 0; i < 5; i++) SQUARES.push(i * i);
+const INDEX: Record<string, number> = {};
+for (const [i, name] of ["a", "b", "__proto__", "c"].entries()) INDEX[name] = i;
+const LOOKUP = new Map<string, number>();
+for (const name of ["k", "l"]) LOOKUP.set(name, name.charCodeAt(0));
+const GROWING = [1];
+for (const n of GROWING) { if (n < 5) GROWING.push(n + 1); }
+const PROTO: Record<string, unknown> = {};
+for (const key of ["a", "__proto__"]) PROTO[key] = { marker: key };
+let steps = 0;
+const STEPPED: number[] = [];
+for (let i = 10; i > 0; i -= 3) { STEPPED.push(i); steps++; }
+const BREAKS: number[] = [];
+for (let i = 0; i < 100; i++) { if (i * i > 50) break; BREAKS.push(i); }
+const WHILE: number[] = [];
+let w = 1; while (w < 100) { WHILE.push(w); w *= 3; }
+function read(which: string) {
+  switch (which) {
+    case "1": return [SQUARES, INDEX, Object.keys(INDEX), [...LOOKUP]];
+    case "2": return [GROWING, Object.keys(PROTO), (PROTO as any).marker, Object.getPrototypeOf(PROTO) === Object.prototype];
+    default: return [STEPPED, steps, BREAKS, WHILE, w];
+  }
+}
+for (const which of ["1", "2", "3"]) log.push(JSON.stringify(read(which)));
+console.log(log.join("\n"));
+//// matches-and-frozen-objects.js
+// Matches leave traces: lastIndex, RegExp.$1. Frozen objects refuse stores.
+"use strict";
+const log = [];
+const SHARED = /a(b)?/g;
+const FIRST = ["xab", "ab"].map(s => SHARED.test(s));
+log.push("lastIndex " + SHARED.lastIndex);
+const LOCAL = ["a_b", "c_d"].map(s => s.replace(/_/g, "-"));
+const SPLIT = "a1b22c".split(/\d+/);
+const MATCHED = "k=v".match(/(\w)=(\w)/);
+const WITH_FUNCTION = ["ab"].map(s => s.replace(/a/, m => { log.push("replacer ran"); return m.toUpperCase(); }));
+log.push("after WITH_FUNCTION");
+let NOT_GLOBAL; try { NOT_GLOBAL = ["a"].map(s => s.replaceAll(/a/, "b")); } catch (error) { log.push("replaceAll " + error.name); }
+const STICKY = /x/y;
+const STICKY_RESULTS = ["xx", "ax"].map(s => STICKY.exec(s) !== null);
+log.push("sticky " + STICKY.lastIndex);
+const odd = /z/; odd.exec = function () { log.push("own exec"); return null; };
+const ODD = ["z"].map(s => s.replace(odd, "!"));
+log.push("after ODD");
+
+const FROZEN = Object.freeze({ a: 1 });
+let stored; try { FROZEN.a = 2; stored = "stored"; } catch (error) { stored = error.name; }
+const FROZEN_LIST = Object.freeze(["x"]);
+let pushed; try { FROZEN_LIST.push("y"); pushed = "pushed"; } catch (error) { pushed = error.name; }
+const THEN_FILLED = {}; Object.freeze(THEN_FILLED);
+let filled; try { THEN_FILLED.late = 1; filled = "filled"; } catch (error) { filled = error.name; }
+const inner = { n: 1 };
+const SHALLOW = Object.freeze({ inner });
+inner.n = 2;
+function freezeLater(o) { return Object.freeze(o); }
+const LATER = { k: 1 };
+LATER.k = 2;
+freezeLater(LATER);
+const SYMBOL_A = Symbol.for("attack"), SYMBOL_B = Symbol.for("attack"), UNIQUE_A = Symbol("u"), UNIQUE_B = Symbol("u");
+const KEYED = { [SYMBOL_A]: 1, [UNIQUE_A]: 2 };
+const WEAK = new WeakMap(); const key = {}; WEAK.set(key, "held");
+const FROM_SET = new Set(new Set([1, 2, 2])); const FROM_MAP = new Map(new Map([["a", 1]])); const SPREAD = [...new Set(["p", "p", "q"]), ...new Map([["m", 1]]).keys()];
+const growing = new Set([1]); const COPIED = new Set(growing); const SPREAD_GROWING = [...growing]; growing.add(2);
+log.push(JSON.stringify([FIRST, LOCAL, SPLIT, MATCHED, WITH_FUNCTION, typeof NOT_GLOBAL, STICKY_RESULTS, ODD]));
+log.push(JSON.stringify([FROZEN, stored, FROZEN_LIST, pushed, filled, SHALLOW, Object.isFrozen(LATER), LATER]));
+log.push([SYMBOL_A === SYMBOL_B, UNIQUE_A === UNIQUE_B, KEYED[Symbol.for("attack")], KEYED[UNIQUE_A], WEAK.get(key), [...FROM_SET], [...FROM_MAP], SPREAD, [...COPIED], SPREAD_GROWING].join(" "));
+console.log(log.join("\n"));
+//// matches-seen-through-regexp-statics.js
+// The program reads RegExp.$1: every match shows.
+const log = [];
+const PARTS = ["k=v"].map(s => s.replace(/(\w)=(\w)/, "$2=$1"));
+log.push(RegExp.$1 + RegExp.$2 + " " + RegExp.lastMatch);
+/(z)/.test("z");
+log.push(RegExp.$1);
+log.push(PARTS.join());
+log.push(RegExp.$1);
+console.log(log.join("\n"));
+//// numbers-written-the-way-of-a-locale.ts
+// Numbers written the way of a locale: with a name that is none, with options that run code, on what is no number.
+const log: string[] = [];
+const plain = { text: (1234567.891).toLocaleString(), pad: [1, 2, 3] };
+const named = { text: (1234567.891).toLocaleString("de-DE"), other: (0.5).toLocaleString("en-US", undefined) };
+let thrown = "none";
+function bad(tag: string) { try { return (1).toLocaleString(tag); } catch (error) { thrown = (error as Error).name; return "bad"; } }
+const invalid = { text: bad("not a tag") };
+const options = { get maximumFractionDigits() { log.push("options read"); return 1; } };
+const withOptions = { text: (1.25).toLocaleString("en-US", options) };
+const odd = { toLocaleString() { log.push("own method"); return "odd"; } };
+const onObject = { text: odd.toLocaleString() };
+const big = { text: (12345678901234567890n).toLocaleString("en-US") };
+log.push("start is over", thrown);
+console.log(JSON.stringify([plain, named, invalid, withOptions, onObject, big, log]));
+//// objects-changed-by-later-statements.ts
+// What an initializer has made is changed by later statements of the module and by functions.
+const table: Record<string, number> = { a: 1 };
+table.b = 2;
+const sizeThen = Object.keys(table).length;
+table.c = 3;
+const list: number[] = [];
+for (let i = 0; i < 5; i++) list.push(i * i);
+const total = list.reduce((sum, n) => sum + n, 0);
+list.push(100);
+const map = new Map<string, number>();
+map.set("x", 1);
+const seen = map.size;
+map.set("y", 2);
+function Legacy(this: any) { this.v = 1; }
+Legacy.prototype.twice = function () { return this.v * 2; };
+(Legacy as any).label = "legacy";
+const frozen = Object.freeze({ a: 1 });
+let refused = "";
+try { "use strict"; (frozen as any).a = 2; } catch (error) { refused = (error as Error).constructor.name; }
+const sealedLater = { a: 1 };
+const before = Object.isSealed(sealedLater);
+Object.seal(sealedLater);
+function main() {
+  console.log(JSON.stringify(table), sizeThen, list.join(), total, seen, map.size);
+  console.log(new (Legacy as any)().twice(), (Legacy as any).label, refused, frozen.a, before, Object.isSealed(sealedLater));
+}
+main();
+//// objects-filled-under-another-name/flags.ts
+export const flag: boolean = process.argv.length > 100;
+export const count: number = process.argv.length > 100 ? 7 : 2;
+//// objects-filled-under-another-name/main.ts
+// An object that a binding holds is filled through another name for it: the one of two that a condition chose, what a switch chose, what `||` or `??` let through. Whoever reads the binding finds it filled.
+import { count, flag } from "./flags";
+
+const table: Record<string, () => number> = {};
+const spare: Record<string, () => number> = {};
+const target = flag ? spare : table;
+const one = () => 1, two = () => 2, three = () => 3;
+target.one = one; target.two = two; target.three = three;
+export function namesOfTable() { return Object.keys(table).join() + " | " + Object.keys(spare).join(); }
+export function callTable() { return one() + two() + three(); }
+
+const first: Record<string, () => string> = {};
+const second: Record<string, () => string> = {};
+const third: Record<string, () => string> = {};
+let picked: Record<string, () => string>;
+switch (count) {
+  case 1: picked = first; break;
+  case 2: picked = second; break;
+  default: picked = third;
+}
+const red = () => "red", green = () => "green", blue = () => "blue";
+picked.red = red; picked.green = green; picked.blue = blue;
+export function namesOfThree() { return [first, second, third].map(each => Object.keys(each).join()).join(" | "); }
+export function callThree() { return red() + green() + blue(); }
+
+const kept: { list: (() => number)[] } = { list: [] };
+const fallback: { list: (() => number)[] } = { list: [] };
+const through = (flag ? undefined : kept) ?? fallback;
+const four = () => 4, five = () => 5, six = () => 6;
+through.list = [four, five, six];
+export function lengths() { return kept.list.length + " | " + fallback.list.length; }
+export function callList() { return four() + five() + six(); }
+
+namespace States {
+  export function enter() { return "enter"; }
+  export function leave() { return "leave"; }
+  export function next(state: () => string) { return state === enter ? leave : enter; }
+}
+export function walk() { let state: () => string = States.enter; const seen = []; for (let i = 0; i < 3; i++) { seen.push(state()); state = States.next(state); } return seen.join(); }
+
+console.log(namesOfTable());
+console.log(namesOfThree());
+console.log(lengths());
+console.log(walk());
+console.log(callTable(), callThree(), callList());
+console.log(namesOfTable(), namesOfThree(), lengths());
+//// objects-that-several-initializers-take.ts
+// One object that several initializers take: identity, order of filling, and a taker that stays.
+const log: string[] = [];
+function make() { return { items: [] as number[] }; }
+const A = (() => { const shared = { n: 1 }; return [{ s: shared }, { s: shared }] as const; })();
+log.push(String(A[0].s === A[1].s));
+
+const BASE = ["x", "y"];
+const FIRST = { list: BASE };
+const SECOND = { list: BASE };
+const THIRD = BASE.map(s => s + s);
+log.push(String(FIRST.list === SECOND.list) + " " + THIRD);
+FIRST.list.push("z");
+log.push(SECOND.list.join() + " " + THIRD);
+
+const [P, Q] = [make(), make()];
+P.items.push(1);
+log.push(JSON.stringify([P, Q, P === Q]));
+
+const TABLE = [[1, 2], [3, 4]];
+const ROW = TABLE[1];
+const FLAT = TABLE.flatMap(r => r);
+const SUMS = TABLE.map(r => r[0] + r[1]);
+ROW[0] = 30;
+log.push(JSON.stringify([TABLE, ROW, FLAT, SUMS, ROW === TABLE[1]]));
+
+const NESTED = { inner: { deep: [1] } };
+const { inner } = NESTED;
+const { deep } = inner;
+const COPY = { ...inner };
+log.push(String(deep === NESTED.inner.deep) + String(COPY.deep === deep) + String(COPY === inner));
+
+console.log(BASE.length, log.join("\n"));
+//// patterns-and-constant-pairs.js
+// Patterns made of texts, and collections made of constant lists: what throws must throw at the start, and each object is made once.
+const log = [];
+function attempt(name, make) { try { return make(); } catch (error) { log.push(name + ":" + error.constructor.name); return null; } }
+const good = new RegExp("^(a|b)+$", "gi");
+const called = RegExp("x+y");
+const withoutFlags = new RegExp("[0-9]{2,}", undefined);
+const bad = attempt("bad pattern", () => new RegExp("(unclosed", "g"));
+const badFlags = attempt("bad flags", () => new RegExp("a", "zz"));
+let thrownAtTheTop = "none";
+try { var top = new RegExp("[z-a]"); } catch (error) { thrownAtTheTop = error.constructor.name; }
+const copy = new RegExp(good, "y");
+const sticky = { pattern: new RegExp("ab", "y"), uses: 0 };
+const pairs = new Map([["a", 1], ["b", 2], ["a", 3]]);
+const notPairs = attempt("no pairs", () => new Map([1, 2]));
+let mapAtTheTop = "none";
+try { var topMap = new Map(["ab", 5]); } catch (error) { mapAtTheTop = error.constructor.name; }
+const short = new Map([["only key"], []]);
+const words = new Set(["x", "y", "x"]);
+log.push("start is over", thrownAtTheTop, mapAtTheTop);
+function main() {
+  good.lastIndex = 1;
+  sticky.pattern.lastIndex = 0; sticky.uses += sticky.pattern.test("abab") ? 1 : 0; sticky.uses += sticky.pattern.test("abab") ? 1 : 0;
+  console.log(JSON.stringify([log, good.source, good.flags, good.lastIndex, good === good, called.test("xxy"), withoutFlags.flags, bad, badFlags, copy.flags, copy.source, sticky.uses, sticky.pattern.lastIndex,
+    [...pairs], notPairs, [...short], [...words], typeof top, typeof topMap]));
+}
+main();
+//// reads-in-the-dead-zone.ts
+// Reads in front of the declaration.
+const log: string[] = [];
+function attempt(name: string, read: () => unknown) {
+  try { log.push(name + "=" + JSON.stringify(read())); } catch (error) { log.push(name + ":" + (error as Error).constructor.name); }
+}
+function readAll(when: string) {
+  attempt(when + " object", () => object.a);
+  attempt(when + " list", () => list.length);
+  attempt(when + " typeof", () => typeof object);
+  attempt(when + " Klass", () => Klass.name);
+  attempt(when + " made", () => made.v);
+  attempt(when + " variable", () => variable);
+  attempt(when + " enum", () => Enumeration.B);
+  attempt(when + " nothing", () => String(nothing));
+  attempt(when + " something", () => String(something && something.n));
+  attempt(when + " none", () => String(none));
+  attempt(when + " either", () => String(either));
+}
+function choose(n: number): { n: number } | undefined { return n > 2 ? { n } : undefined; }
+function chooseNull(n: number): { n: number } | null { return n > 2 ? { n } : null; }
+function chooseEither(n: number): { n: number } | null | undefined { return n > 2 ? { n } : n > 1 ? null : undefined; }
+readAll("early");
+const object = { a: 1 };
+readAll("middle");
+const list = [1, 2, 3];
+class Klass { m() { return 1; } }
+function make() { return { v: list.length }; }
+const made = make();
+var variable = { w: 1 };
+enum Enumeration { A, B }
+const nothing = choose(1);
+const something = choose(3);
+readAll("between");
+const none = chooseNull(1);
+const either = chooseEither(2);
+readAll("late");
+readAll("again");
+console.log(log.join("\n"));
+//// sizes-of-collections.ts
+const table = new Map<string, number>([["a", 1], ["b", 2]]);
+const entries = table.size;
+const members = new Set<string>(["x", "y", "z"]);
+const howMany = members.size;
+const hasA = table.has("a");
+const grown = new Map<string, number>([["k", 1]]);
+const before = grown.size;
+grown.set("l", 2);
+const after = grown.size;
+
+function later(): void {
+  console.log(entries, howMany, hasA, table.get("b"), members.has("y"), before, after, grown.size);
+}
+setTimeout(later, 1);
+//// small-bindings-side-by-side.ts
+// Small bindings that stand side by side may be made together. Code that runs between two of them must still find the later one in its dead zone and the earlier one whole, and each object is made once.
+const log: string[] = [];
+function look(name: string, read: () => unknown): void {
+  try { log.push(name + "=" + JSON.stringify(read())); } catch (error) { log.push(name + ":" + (error as Error).constructor.name); }
+}
+const first = { n: 1 };
+const second = [1, 2];
+const third = { first, second };
+look("fourth early", () => fourth);
+look("first", () => first);
+const fourth = { m: 4 };
+const fifth = [fourth];
+var sixth = { v: 6 };
+look("seventh early", () => seventh);
+look("sixth", () => sixth);
+look("ninth early", () => ninth);
+let seventh = { w: 7 };
+const eighth = { list: [seventh.w, 8] };
+const ninth = new Map([["k", 9]]);
+const tenth = { text: "ten", more: { deep: [10] } };
+look("tenth at once", () => tenth);
+const untouched = { never: "read at the start" };
+const alsoUntouched = ["x", "y", "z"];
+const holdsBoth = { untouched, alsoUntouched };
+second.push(3);
+function later(): void {
+  fifth.push({ m: 5 });
+  look("third", () => third);
+  look("same first", () => third.first === first && third.second === second);
+  look("fifth", () => fifth);
+  look("same fourth", () => fifth[0] === fourth);
+  look("eighth", () => eighth);
+  look("ninth", () => [...ninth]);
+  look("holdsBoth", () => holdsBoth);
+  look("same untouched", () => holdsBoth.untouched === untouched && holdsBoth.alsoUntouched === alsoUntouched);
+  untouched.never = "changed";
+  look("seen through", () => holdsBoth.untouched.never);
+  console.log(log.join("\n"));
+}
+setTimeout(later, 1);
+//// stores-to-new-functions-in-sloppy-code-are-dropped-in-silence.cjs
+// Sloppy code: the same stores are refused in silence, and what was made does not have the property.
+function asyncConstructor() { const made = async function () {}; made.constructor = 2; return made; }
+function generatorConstructor() { const made = function* () {}; made.constructor = 2; return made; }
+function plainConstructor() { const made = function () {}; made.constructor = 2; return made; }
+function plainHasInstance() { const made = function () {}; made[Symbol.hasInstance] = 2; return made; }
+function once() {
+  const a = asyncConstructor(), g = generatorConstructor(), p = plainConstructor(), h = plainHasInstance();
+  console.log("behind the calls");
+  return () => [Object.hasOwn(a, "constructor"), Object.hasOwn(g, "constructor"), Object.hasOwn(p, "constructor"), Object.hasOwn(h, Symbol.hasInstance), typeof a.constructor, typeof g.constructor, typeof p.constructor];
+}
+console.log(once()().join(" "));
+//// stores-to-new-functions-that-the-objects-above-them-refuse.mjs
+// A store to a function that was just made is refused where an object above it has the name and does not let it be written: `constructor` above an async function or a generator function, Symbol.hasInstance above every function. The TypeError comes where the store stands, not at the first read of what the statement made, and not never.
+const log = [];
+function attempt(label, run) {
+  try {
+    const held = run();
+    log.push(label + ": no error, " + typeof held());
+  } catch (error) {
+    log.push(label + ": " + error.name + " after " + steps.join(","));
+  }
+  steps.length = 0;
+}
+const steps = [];
+
+function asyncConstructor() { const made = async function () {}.constructor = 2; }
+function generatorConstructor() { const made = function* () {}.constructor = 2; }
+function asyncGeneratorConstructor() { const made = async function* () {}.constructor = 2; }
+function asyncArrowConstructor() { const made = (async () => {}).constructor = 2; }
+function plainConstructor() { const made = function () {}.constructor = 2; }
+function arrowConstructor() { const made = (() => {}).constructor = 2; }
+function plainHasInstance() { const made = function () {}[Symbol.hasInstance] = 2; }
+function asyncToStringTag() { const made = async function () {}[Symbol.toStringTag] = 2; }
+function generatorToStringTag() { const made = function* () {}[Symbol.toStringTag] = 2; }
+function plainToStringTag() { const made = function () {}[Symbol.toStringTag] = 2; }
+function generatorPrototype() { const made = function* () {}.prototype = 2; }
+function asyncPrototype() { const made = async function () {}.prototype = 2; }
+function asyncOtherName() { const made = async function () {}.other = 2; }
+function asyncToString() { const made = async function () {}.toString = 2; }
+function asyncName() { const made = async function () {}.name = 2; }
+function asyncDefinition() { const made = Object.defineProperty(async function () {}, "constructor", { value: 2 }); return made; }
+
+for (const [label, make] of Object.entries({
+  asyncConstructor, generatorConstructor, asyncGeneratorConstructor, asyncArrowConstructor, plainConstructor, arrowConstructor, plainHasInstance, asyncToStringTag,
+  generatorToStringTag, plainToStringTag, generatorPrototype, asyncPrototype, asyncOtherName, asyncToString, asyncName, asyncDefinition,
+})) {
+  attempt(label + " by a table", () => { const result = make(); steps.push("behind the call"); return () => result; });
+}
+
+attempt("asyncConstructor", () => { const result = asyncConstructor(); steps.push("behind the call"); return () => result; });
+attempt("generatorConstructor", () => { const result = generatorConstructor(); steps.push("behind the call"); return () => result; });
+attempt("asyncGeneratorConstructor", () => { const result = asyncGeneratorConstructor(); steps.push("behind the call"); return () => result; });
+attempt("asyncArrowConstructor", () => { const result = asyncArrowConstructor(); steps.push("behind the call"); return () => result; });
+attempt("plainConstructor", () => { const result = plainConstructor(); steps.push("behind the call"); return () => result; });
+attempt("arrowConstructor", () => { const result = arrowConstructor(); steps.push("behind the call"); return () => result; });
+attempt("plainHasInstance", () => { const result = plainHasInstance(); steps.push("behind the call"); return () => result; });
+attempt("asyncToStringTag", () => { const result = asyncToStringTag(); steps.push("behind the call"); return () => result; });
+attempt("generatorToStringTag", () => { const result = generatorToStringTag(); steps.push("behind the call"); return () => result; });
+attempt("plainToStringTag", () => { const result = plainToStringTag(); steps.push("behind the call"); return () => result; });
+attempt("generatorPrototype", () => { const result = generatorPrototype(); steps.push("behind the call"); return () => result; });
+attempt("asyncPrototype", () => { const result = asyncPrototype(); steps.push("behind the call"); return () => result; });
+attempt("asyncOtherName", () => { const result = asyncOtherName(); steps.push("behind the call"); return () => result; });
+attempt("asyncToString", () => { const result = asyncToString(); steps.push("behind the call"); return () => result; });
+attempt("asyncName", () => { const result = asyncName(); steps.push("behind the call"); return () => result; });
+attempt("asyncDefinition", () => { const result = asyncDefinition(); steps.push("behind the call"); return () => result; });
+
+function once() {
+  const result = asyncConstructor();
+  log.push("once went on behind the call");
+  return () => result;
+}
+try { once(); } catch (error) { log.push("once: " + error.name); }
+
+function onceForAGenerator() {
+  const result = generatorConstructor();
+  log.push("onceForAGenerator went on behind the call");
+  const read = () => { try { return result.constructor; } catch (error) { return "the read threw " + error.name; } };
+  return read();
+}
+try { log.push(String(onceForAGenerator())); } catch (error) { log.push("onceForAGenerator: " + error.name); }
+
+function onceUnderASymbol() {
+  const result = plainHasInstance();
+  log.push("onceUnderASymbol went on behind the call");
+  return () => result;
+}
+try { onceUnderASymbol(); } catch (error) { log.push("onceUnderASymbol: " + error.name); }
+
+console.log(log.join("\n"));
+//// tables-derived-from-tables-that-change-later.ts
+// Tables derived from other tables, where something changes a source after the start and before the first read of what was derived.
+const log: string[] = [];
+const SOURCE = ["a", "b", "c"];
+const DERIVED = SOURCE.map(s => s + "!");
+const JOINED = SOURCE.join(",");
+const AS_SET = new Set(SOURCE);
+const COPY = [...SOURCE, "z"];
+const SLICED = SOURCE.slice(1);
+const HAS_B = SOURCE.includes("b");
+const LENGTH = { n: SOURCE.length };
+const PICKED = ["zero", "one", "two", "three", "four"][SOURCE.length];
+const LAST = [SOURCE.at(-1), SOURCE[SOURCE.length - 1], SOURCE.indexOf("c"), SOURCE.lastIndexOf("a")];
+const sizes = new Map([["k", 1]]); const members = new Set(["m"]);
+const SIZES = [sizes.size, members.size, sizes.has("l"), members.has("n"), sizes.get("l")];
+function grow() { SOURCE.push("d"); SOURCE[0] = "A"; sizes.set("l", 2); members.add("n"); }
+grow();
+log.push(JSON.stringify([DERIVED, JOINED, [...AS_SET], COPY, SLICED, HAS_B, LENGTH, PICKED, LAST, SIZES]));
+
+const RECORDS = [{ name: "x", n: 1 }, { name: "y", n: 2 }];
+const NAMES = RECORDS.map(r => r.name);
+const TOTAL = RECORDS.reduce((sum, r) => sum + r.n, 0);
+const BY_NAME = new Map(RECORDS.map(r => [r.name, r] as const));
+function rename() { RECORDS[0].name = "renamed"; RECORDS[1].n = 40; }
+rename();
+log.push(JSON.stringify([NAMES, TOTAL, [...BY_NAME.keys()], BY_NAME.get("x")]));
+
+const OPTIONS = { depth: 1, tags: ["t"] };
+const MERGED = { ...OPTIONS, extra: true };
+const KEYS = Object.keys(OPTIONS);
+const VALUES = Object.values(OPTIONS);
+const ENTRIES = Object.entries(OPTIONS);
+function reconfigure() { OPTIONS.depth = 9; (OPTIONS as any).added = 1; OPTIONS.tags.push("u"); }
+reconfigure();
+log.push(JSON.stringify([MERGED, KEYS, VALUES, ENTRIES]));
+
+// The one who changes it gets it through what was derived.
+const INNER = [1, 2, 3];
+const HOLDER = { list: INNER };
+const DOUBLED = INNER.map(n => n * 2);
+function throughHolder(h: { list: number[] }) { h.list.push(4); }
+throughHolder(HOLDER);
+log.push(JSON.stringify([DOUBLED, HOLDER]));
+
+// Changed in a later turn, read after that.
+const LATE = ["p", "q"];
+const LATE_UPPER = LATE.map(s => s.toUpperCase());
+setTimeout(() => { LATE.push("r"); }, 0);
+setTimeout(() => { log.push(JSON.stringify([LATE_UPPER, LATE])); console.log(log.join("\n")); }, 5);
+//// the-default-locale-is-fixed-at-the-start.ts
+// The default locale is fixed when the process starts: what the program stores in LANG, LC_ALL, LC_NUMERIC and their like changes neither Number.prototype.toLocaleString nor Intl.NumberFormat. A number that is written at the top level may therefore be written at the first read, which here comes behind the change, and is the first use of a locale in the compiled program.
+const atTheStart = { text: (1234567.891).toLocaleString(), half: (0.5).toLocaleString(undefined), negative: (-98765.4321).toLocaleString() };
+const named = { german: (1234567.891).toLocaleString("de-DE"), english: (1234567.891).toLocaleString("en-US") };
+
+process.env.LANG = "fi_FI.UTF-8";
+process.env.LANGUAGE = "fi";
+process.env.LC_ALL = "fi_FI.UTF-8";
+process.env.LC_NUMERIC = "fi_FI.UTF-8";
+process.env.LC_CTYPE = "fi_FI.UTF-8";
+process.env.LC_MESSAGES = "fi_FI.UTF-8";
+
+function report(): void {
+  const behindTheChange = { text: (1234567.891).toLocaleString(), half: (0.5).toLocaleString(undefined), negative: (-98765.4321).toLocaleString() };
+  const locale = new Intl.NumberFormat().resolvedOptions().locale;
+  console.log(JSON.stringify(behindTheChange) === JSON.stringify(atTheStart) ? "the same behind the change" : "DIFFERENT behind the change");
+  console.log(locale.startsWith("fi") ? "the default locale FOLLOWS the environment" : "the default locale does not follow the environment");
+  console.log(new Intl.NumberFormat(locale).format(1234567.891) === atTheStart.text ? "written the way of the default locale" : "NOT written the way of the default locale");
+  console.log(atTheStart.text, atTheStart.half, atTheStart.negative, named.german, named.english);
+}
+setTimeout(report, 1);
+//// what-a-class-extends.js
+// What a class extends decides whether its definition throws and what it reads.
+const log = [];
+let A; try { A = class extends Math.max {}; } catch (error) { log.push("Math.max " + error.name); }
+let B; try { B = class extends Symbol.iterator {}; } catch (error) { log.push("symbol " + error.name); }
+let C; try { C = class extends (() => {}) {}; } catch (error) { log.push("arrow " + error.name); }
+function Plain() {}
+Plain.prototype = 5;
+let D; try { D = class extends Plain {}; } catch (error) { log.push("prototype 5 " + error.name); }
+function Later() {}
+class E extends Later {}
+Later.prototype = { changed: true };
+class F extends Later {}
+const G = class extends Array {};
+const H = class extends null {};
+class Base { static s = log.push("static of Base"); }
+class Derived extends Base { static t = log.push("static of Derived"); }
+log.push("after the classes");
+const proxied = new Proxy(function () {}, { get(target, key) { log.push("get " + String(key)); return target[key]; } });
+class I extends proxied {}
+log.push("after I");
+log.push([typeof A, typeof B, typeof C, typeof D, new E().changed, new F().changed, new G(3).length, Object.getPrototypeOf(H.prototype), Derived.t, typeof I].join());
+console.log(log.join("\n"));
+//// writing-constructor-on-a-new-async-function-throws/before-a-closure-captures-the-result.mjs
+function make() { const made = async function () {}.constructor = 2; }
+function run() { const o = make(); console.log("before"); return () => o; }
+try { run(); } catch (e) { console.log("run threw", e.name, e.message); }
+//// writing-constructor-on-a-new-async-function-throws/before-a-closure-is-passed-to-the-result-of-log.mjs
+function make() { const made = async function () {}.constructor = 2; }
+function run() { const o = make(); console.log("before")(() => { try { o.constructor; } catch (e) {} }); }
+try { run(); } catch (e) { console.log("run threw", e.name, e.message); }
+//// writing-constructor-on-a-new-async-function-throws/before-a-closure-reads-a-member-of-the-result.mjs
+function make() { const made = async function () {}.constructor = 2; }
+function run() { const o = make(); console.log("before"); const f = () => o.constructor; f(); }
+try { run(); } catch (e) { console.log("run threw", e.name, e.message); }
+//// writing-constructor-on-a-new-async-function-throws/before-a-closure-reads-a-member-of-the-result-in-a-try.mjs
+function make() { const made = async function () {}.constructor = 2; }
+function run() { const o = make(); console.log("before"); const f = () => { try { o.constructor; } catch (e) {} }; f(); }
+try { run(); } catch (e) { console.log("run threw", e.name, e.message); }
+//// writing-constructor-on-a-new-async-function-throws/before-a-closure-reads-another-member-of-the-result.mjs
+function make() { const made = async function () {}.constructor = 2; }
+function run() { const o = make(); console.log("before"); const f = () => { try { o.other; } catch (e) {} }; f(); }
+try { run(); } catch (e) { console.log("run threw", e.name, e.message); }
+//// writing-constructor-on-a-new-async-function-throws/before-the-result-of-print-is-called.mjs
+const print = text => console.log(text);
+function make() {
+  const made = async function() {}.constructor = 2;
+}
+function run() {
+  let seen, line;
+  const o = make();
+  print("before: " + line)(() => {
+    try {
+      o.constructor;
+    } catch (e) {}
+  });
+}
+try {
+  run();
+} catch (e) {
+  print("run threw " + e.name + ": " + e.message);
+}
+//// writing-constructor-on-a-new-async-function-throws/on-a-generator-function-too.mjs
+function make() { const made = function* () {}.constructor = 2; }
+function run() { const o = make(); console.log("before"); const f = () => { try { o.constructor; } catch (e) {} }; f(); }
+try { run(); } catch (e) { console.log("run threw", e.name, e.message); }

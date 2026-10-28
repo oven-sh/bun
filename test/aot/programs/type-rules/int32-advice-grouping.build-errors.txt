@@ -1,0 +1,1 @@
+error: TS100031: 'kept' is declared 'int32', but 'kept -= a + b' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'kept = (kept - (a + b)) | 0'.

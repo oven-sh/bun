@@ -1,0 +1,5 @@
+import() ERR_MODULE_NOT_FOUND true
+import.meta.require() MODULE_NOT_FOUND true
+createRequire()() MODULE_NOT_FOUND true
+in require.cache: 0
+went on

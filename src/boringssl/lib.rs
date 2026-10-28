@@ -3,6 +3,7 @@
 
 #![warn(unused_must_use)]
 use core::ffi::{c_int, c_void};
+use core::net::IpAddr;
 use core::ptr;
 use std::cell::Cell;
 
@@ -107,6 +108,11 @@ pub unsafe fn ssl_ctx_setup(ctx: *mut boring::SSL_CTX) {
 // was reported as a leak at exit.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn OPENSSL_memory_alloc(size: usize) -> *mut c_void {
+    // ASan (LLVM 23+) poisons the one byte it hands back for `malloc(0)` while
+    // `malloc_usable_size` still reports it, and both `OPENSSL_memory_free`
+    // below and `OPENSSL_realloc` touch `usable_size` bytes (`CBB_init(_, 0)`
+    // then a grow is the first TLS handshake's ECDSA verify).
+    let size = if cfg!(bun_asan) && size == 0 { 1 } else { size };
     bun_alloc::default_alloc::malloc(size)
 }
 
@@ -162,37 +168,15 @@ pub use bun_sys::posix::INET6_ADDRSTRLEN;
 // Canonical cross-platform AF_* surface — handles the Windows ws2def.h split.
 use bun_sys::posix::AF::{INET as AF_INET, INET6 as AF_INET6};
 
-/// converts IP string to canonicalized IP string
-/// return null when the IP is invalid
+/// Node.js's `canonicalizeIP`: the canonical text of the address that libuv's `uv_inet_pton` reads in `addr_str`, without the zone id of an IPv6 address. `None` for any other text.
 pub fn canonicalize_ip<'a>(
     addr_str: &[u8],
     out_ip: &'a mut [u8; INET6_ADDRSTRLEN + 1],
 ) -> Option<&'a [u8]> {
-    if addr_str.len() >= INET6_ADDRSTRLEN {
-        return None;
+    match bun_core::ip_address::parse_uv_inet_pton(addr_str)? {
+        IpAddr::V4(ip) => canonical_ip_octets(&ip.octets(), out_ip),
+        IpAddr::V6(ip) => canonical_ip_octets(&ip.octets(), out_ip),
     }
-    let mut ip_std_text = [0u8; INET6_ADDRSTRLEN + 1];
-    // we need a null terminated string as input
-    out_ip[..addr_str.len()].copy_from_slice(addr_str);
-    out_ip[addr_str.len()] = 0;
-
-    let mut af: c_int = AF_INET;
-    // get the standard text representation of the IP
-    // SAFETY: out_ip is NUL-terminated above; ip_std_text is large enough for any address.
-    unsafe {
-        if c_ares::ares_inet_pton(af, out_ip.as_ptr().cast(), ip_std_text.as_mut_ptr().cast()) <= 0
-        {
-            af = AF_INET6;
-            if c_ares::ares_inet_pton(af, out_ip.as_ptr().cast(), ip_std_text.as_mut_ptr().cast())
-                <= 0
-            {
-                return None;
-            }
-        }
-    }
-    // out_ip will contain the null-terminated canonicalized IP
-    // SAFETY: ip_std_text holds the in_addr/in6_addr written by ares_inet_pton above.
-    unsafe { c_ares::ntop(af, ip_std_text.as_ptr().cast(), &mut out_ip[..]) }
 }
 
 /// Canonical text form of raw IP address octets (4 or 16 bytes), e.g. `::1`.
@@ -395,6 +379,10 @@ fn match_hostname(pattern: &[u8], hostname: &[u8], opts: MatchOpts) -> bool {
         &hostname[..end]
     };
 
+    // Node lets `*` match the empty label of ".example.com", the IDNA form of "。example.com".
+    if host_first.is_empty() {
+        return false;
+    }
     if prefix.len() + suffix.len() > host_first.len() {
         return false;
     }
@@ -429,37 +417,62 @@ fn match_dns_name(pattern: &[u8], hostname: &[u8]) -> bool {
     match_hostname(pattern, hostname, MatchOpts::TLS_CHECK)
 }
 
+unsafe extern "C" {
+    /// UTS #46 ToASCII in NodeURL.cpp, with no URL host parse. `Tag::Dead` when `domain` does not convert.
+    safe fn Bun__idnaToASCII(domain: &bun_core::String) -> bun_core::String;
+}
+
+/// Letters, digits, `-`, `_` and `.`. Not in Node.js: a host with any other byte matches nothing, as in rustls and mozilla::pkix. `*.evil.test` would cover "localhost/.evil.test".
+fn is_hostname(host: &[u8]) -> bool {
+    host.iter()
+        .all(|&b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+}
+
 pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> bool {
+    // As in Node.js, a host is an IP address only as typed, and only in the strict form of `net.isIP`: `ares_inet_pton` reads "127.1" as 127.1.0.0 and takes "1.2.3.4/8".
+    let typed = unfqdn(hostname);
+    let mut host_ip = bun_core::ip_address::parse_strict(typed);
+    let ascii_hostname;
+    // CVE-2026-48618: IDNA maps "。" to ".", so a non-ASCII host is matched on its UTS #46 form, as in `tls.checkServerIdentity`.
+    let hostname = if strings::first_non_ascii(hostname).is_some() {
+        let ascii = Bun__idnaToASCII(&bun_core::StringView::borrow_utf8(hostname));
+        if ascii.is_dead() {
+            return false;
+        }
+        ascii_hostname = ascii.to_owned_slice();
+        &ascii_hostname[..]
+    } else {
+        hostname
+    };
     let hostname = unfqdn(hostname);
-    let host_is_ip = bun_core::ip_address::is_ip_address(hostname);
+    let host_is_dns_name = host_ip.is_none() && is_hostname(hostname);
+    if host_ip.is_none() && !host_is_dns_name {
+        // `net.isIP` also takes an IPv6 address with a zone id (`fe80::1%eth0`), and a certificate names the address alone. No hostname has a `%`, so only a host that is neither pays for the search.
+        host_ip = bun_core::ip_address::parse_zoned_ipv6_host(typed).map(IpAddr::V6);
+    }
     let mut has_dns_san = false;
 
     match x509.subject_alt_names() {
         boring::SanLookup::Invalid => return false,
         boring::SanLookup::Absent => {}
         boring::SanLookup::Names(names) => {
-            let mut host_ip_buf = [0u8; INET6_ADDRSTRLEN + 1];
-            let host_ip: Option<&[u8]> = if host_is_ip {
-                Some(canonicalize_ip(hostname, &mut host_ip_buf).unwrap_or(hostname))
-            } else {
-                None
-            };
-            let mut cert_ip_buf = [0u8; INET6_ADDRSTRLEN + 1];
             for entry in names.subject_alt_names() {
                 match entry {
                     boring::SubjectAltName::Dns(name) => {
                         has_dns_san = true;
-                        if !host_is_ip && match_dns_name(name, hostname) {
+                        if host_is_dns_name && match_dns_name(name, hostname) {
                             return true;
                         }
                     }
                     boring::SubjectAltName::Ip(octets) => {
-                        if let (Some(host_ip), Some(cert_ip)) =
-                            (host_ip, canonical_ip_octets(octets, &mut cert_ip_buf))
-                        {
-                            if host_ip == cert_ip {
-                                return true;
-                            }
+                        // As in Node.js, `::ffff:1.2.3.4` is not `1.2.3.4`: the 16 octets are not the 4.
+                        let is_host_ip = match host_ip {
+                            Some(IpAddr::V4(ip)) => ip.octets() == *octets,
+                            Some(IpAddr::V6(ip)) => ip.octets() == *octets,
+                            None => false,
+                        };
+                        if is_host_ip {
+                            return true;
                         }
                     }
                     boring::SubjectAltName::Uri(_) => {}
@@ -472,7 +485,7 @@ pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> b
     // Subject CN is consulted only when the certificate carries no dNSName
     // SAN, and never for IP hosts. Non-DNS SANs (email / IP / URI) do not
     // suppress the fallback.
-    if !host_is_ip && !has_dns_san {
+    if host_is_dns_name && !has_dns_san {
         return x509.common_names().any(|cn| match_dns_name(&cn, hostname));
     }
     false
@@ -504,20 +517,10 @@ fn match_dot_subdomain(pattern: &[u8], host: &[u8], single_label: bool) -> bool 
     eq_nocase(&pattern[skip.len()..], host)
 }
 
-fn alloc_peer(name: &[u8], out_ptr: *mut *mut u8, out_len: *mut usize) {
-    if out_ptr.is_null() || out_len.is_null() {
-        return;
-    }
-    let buf = OPENSSL_memory_alloc(name.len() + 1).cast::<u8>();
-    if buf.is_null() {
-        return;
-    }
-    // SAFETY: `buf` is a fresh allocation of `name.len() + 1` bytes.
-    unsafe {
-        ptr::copy_nonoverlapping(name.as_ptr(), buf, name.len());
-        *buf.add(name.len()) = 0;
-        *out_ptr = buf;
-        *out_len = name.len();
+fn set_peer(name: &[u8], out_peer: *mut bun_core::String) {
+    if !out_peer.is_null() {
+        // SAFETY: caller contract of `Bun__X509__checkHost`: `out_peer` is writable and holds no string.
+        unsafe { out_peer.write(bun_core::String::clone_utf8(name)) };
     }
 }
 
@@ -528,20 +531,18 @@ fn alloc_peer(name: &[u8], out_ptr: *mut *mut u8, out_len: *mut usize) {
 /// values.
 ///
 /// Returns `1` (match), `0` (no match) or `-2` (invalid `host`). On match,
-/// `*out_peer` receives the matched certificate name as a NUL-terminated
-/// OPENSSL_malloc'd buffer the caller owns.
+/// `*out_peer` receives the matched certificate name.
 ///
 /// # Safety
 /// `x509` must be a live BoringSSL certificate, `host_ptr[..host_len]` must be
-/// readable, and `out_peer` / `out_len` must be null or writable.
+/// readable, and `out_peer` must be null or point to an empty string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Bun__X509__checkHost(
     x509: *mut boring::X509,
     host_ptr: *const u8,
     host_len: usize,
     flags: u32,
-    out_peer: *mut *mut u8,
-    out_len: *mut usize,
+    out_peer: *mut bun_core::String,
 ) -> c_int {
     // SAFETY: caller contract — `x509` is null or a live BoringSSL certificate.
     let Some(x509) = (unsafe { x509.as_mut() }) else {
@@ -587,7 +588,7 @@ pub unsafe extern "C" fn Bun__X509__checkHost(
                 if let boring::SubjectAltName::Dns(name) = entry {
                     has_dns_san = true;
                     if matches(name) {
-                        alloc_peer(name, out_peer, out_len);
+                        set_peer(name, out_peer);
                         return 1;
                     }
                 }
@@ -605,7 +606,7 @@ pub unsafe extern "C" fn Bun__X509__checkHost(
     }
     for cn in x509.common_names() {
         if matches(&cn) {
-            alloc_peer(&cn, out_peer, out_len);
+            set_peer(&cn, out_peer);
             return 1;
         }
     }
@@ -643,6 +644,18 @@ impl core::fmt::Display for NameBytes<'_> {
             }
         }
         f.write_char('"')
+    }
+}
+
+/// The host as typed, as Node.js prints it. Invalid UTF-8 takes the `NameBytes` escaping.
+struct HostName<'a>(&'a [u8]);
+
+impl core::fmt::Display for HostName<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match core::str::from_utf8(self.0) {
+            Ok(host) => f.write_str(host),
+            Err(_) => NameBytes(self.0).fmt(f),
+        }
     }
 }
 
@@ -735,8 +748,8 @@ pub fn write_server_identity_mismatch_reason(
 ) -> core::fmt::Result {
     const NO_DNS: &str = "Cert does not contain a DNS name";
     let hostname = unfqdn(hostname);
-    let host = NameBytes(hostname);
-    let host_is_ip = bun_core::ip_address::is_ip_address(hostname);
+    let host = HostName(hostname);
+    let host_is_ip = bun_core::ip_address::is_ip_host(hostname);
 
     let Some(x509) = ssl_ptr.peer_leaf_certificate() else {
         return out.write_str(NO_DNS);
@@ -775,6 +788,38 @@ pub fn check_server_identity(ssl_ptr: &mut boring::SSL, hostname: &[u8]) -> bool
     ssl_ptr
         .peer_leaf_certificate()
         .is_some_and(|x509| check_x509_server_identity(x509, hostname))
+}
+
+/// Node.js's `ERR_TLS_CERT_ALTNAME_INVALID` message for the peer's leaf certificate and `hostname`.
+pub fn server_identity_mismatch_message(ssl_ptr: &mut boring::SSL, hostname: &[u8]) -> String {
+    let mut message = String::from("Hostname/IP does not match certificate's altnames: ");
+    // Infallible: the writer is a `String`.
+    let _ = write_server_identity_mismatch_reason(ssl_ptr, hostname, &mut message);
+    message
+}
+
+/// What a client says about the name on the server's certificate, inside the handshake. openssl.c's `US_IDENTITY_*`.
+#[repr(i32)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ServerIdentity {
+    Rejected = 0,
+    Accepted = 1,
+    /// No native check here: the owner decides after the handshake.
+    Unchecked = 2,
+}
+
+/// [`check_server_identity`] as a verdict. `None` or an empty `host` is [`ServerIdentity::Unchecked`].
+pub fn server_identity(ssl: &mut boring::SSL, host: Option<&[u8]>) -> ServerIdentity {
+    match host {
+        Some(host) if !host.is_empty() => {
+            if check_server_identity(ssl, host) {
+                ServerIdentity::Accepted
+            } else {
+                ServerIdentity::Rejected
+            }
+        }
+        _ => ServerIdentity::Unchecked,
+    }
 }
 
 #[cfg(test)]

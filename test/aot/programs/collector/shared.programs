@@ -1,0 +1,7 @@
+////: Box
+class Box {
+  #secret = 1;
+  static read(value: any): number {
+    return value.#secret;
+  }
+}

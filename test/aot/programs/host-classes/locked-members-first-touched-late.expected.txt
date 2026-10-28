@@ -1,0 +1,76 @@
+Array.prototype.copyWithin, assign: throws TypeError
+Array.prototype.copyWithin, define: throws TypeError
+Array.prototype.copyWithin, delete: throws TypeError
+Array.prototype.copyWithin, Reflect.set: false
+Array.prototype.copyWithin, describe: writable data, configurable
+Array.prototype.copyWithin, use: 3,4,3,4
+Math.hypot, delete: throws TypeError
+Math.hypot, assign: throws TypeError
+Math.hypot, define: throws TypeError
+Math.hypot, Reflect.set: false
+Math.hypot, describe: writable data, configurable
+Math.hypot, use: 5
+globalThis.WeakRef, define: defined
+globalThis.WeakRef, assign: assigned
+globalThis.WeakRef, delete: true
+globalThis.WeakRef, Reflect.set: true
+globalThis.WeakRef, describe: writable data, configurable
+globalThis.WeakRef, use: throws TypeError
+Intl.Segmenter.prototype.segment, assign: assigned
+Intl.Segmenter.prototype.segment, define: defined
+Intl.Segmenter.prototype.segment, delete: true
+Intl.Segmenter.prototype.segment, Reflect.set: true
+Intl.Segmenter.prototype.segment, describe: writable data, configurable
+Intl.Segmenter.prototype.segment, use: |||||||
+Number.prototype.toExponential, delete: throws TypeError
+Number.prototype.toExponential, assign: throws TypeError
+Number.prototype.toExponential, define: throws TypeError
+Number.prototype.toExponential, Reflect.set: false
+Number.prototype.toExponential, describe: writable data, configurable
+Number.prototype.toExponential, use: 1.5e+3
+Date.UTC, Reflect.set: false
+Date.UTC, assign: throws TypeError
+Date.UTC, define: throws TypeError
+Date.UTC, delete: throws TypeError
+Date.UTC, describe: writable data, configurable
+Date.UTC, use: 946684800000
+Reflect.has, describe: writable data, configurable
+Reflect.has, assign: throws TypeError
+Reflect.has, define: throws TypeError
+Reflect.has, delete: throws TypeError
+Reflect.has, Reflect.set: false
+Reflect.has, use: true
+Number.prototype.toFixed, use: 1.50
+Number.prototype.toFixed, assign: throws TypeError
+Number.prototype.toFixed, define: throws TypeError
+Number.prototype.toFixed, delete: throws TypeError
+Number.prototype.toFixed, Reflect.set: false
+Number.prototype.toFixed, describe: writable data, configurable
+RegExp.input, define: defined
+RegExp.input, delete: true
+RegExp.input, describe: throws TypeError
+RegExp.input, use: stored
+RegExp.multiline, delete: true
+RegExp.multiline, define: defined
+RegExp.multiline, describe: read-only data, not configurable
+RegExp.multiline, use: throws TypeError
+RegExp.lastParen, describe: accessor, configurable
+RegExp.lastParen, define: defined
+RegExp.lastParen, delete: true
+RegExp.lastParen, use: undefined
+Symbol.prototype.description, use: late
+Symbol.prototype.description, define: throws TypeError
+Symbol.prototype.description, delete: throws TypeError
+Symbol.prototype.description, describe: accessor, configurable
+Number.prototype.toPrecision, Object.values: 0
+Number.prototype.toPrecision, describe: writable data, configurable
+Number.prototype.toPrecision, use: 1.5e+3
+RegExp.rightContext, Object.values: 1
+RegExp.rightContext, describe: accessor, configurable
+RegExp.rightContext, use: string
+Intl.Segmenter.prototype.resolvedOptions, Object.values: 1
+Intl.Segmenter.prototype.resolvedOptions, describe: writable data, configurable
+Intl.Segmenter.prototype.resolvedOptions, use: grapheme
+globalThis.console, describe: writable data, configurable
+globalThis.console, use: replaced and restored
+Math.added, use: 1, true, false

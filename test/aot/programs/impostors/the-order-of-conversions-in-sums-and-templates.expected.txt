@@ -1,0 +1,44 @@
+numbers are added before the text -> "33"
+  order: 
+the text comes first -> "123"
+  order: 
+grouped to the right -> "123"
+  order: 
+three objects that give numbers -> 6
+  order: a:default b:default c:default
+three objects, the last gives a text -> "33"
+  order: a:default b:default c:default
+three objects grouped to the right -> "123"
+  order: b:default c:default a:default
+objects between literals -> "[1|0]"
+  order: a:default b:default
+a symbol second: the first is converted already -> threw TypeError
+  order: a:default
+a symbol first: the second is never converted -> threw TypeError
+  order: 
+objects in a template -> "1-null-undefined"
+  order: a:string b:string c:string
+a symbol in the middle of a template -> threw TypeError
+  order: a:string
+an object that gives a symbol in a template -> threw TypeError
+  order: a:string b:string
+a BigInt and a number -> threw TypeError
+  order: 
+a BigInt and a text -> "123"
+  order: 
+a BigInt from an object and a number from another -> threw TypeError
+  order: a:default b:default
+a template evaluates and converts each in turn -> "1-2-3"
+  order: evaluate a a:string evaluate b b:string evaluate c c:string
+a sum evaluates and converts in pairs -> "1-2-3"
+  order: evaluate a a:default evaluate b b:default evaluate c c:default
+null and undefined -> ["NaN", "1", "NaN", "nullundefined", "null-undefined-"]
+  order: 
+true and false -> ["2", "truetrue", "1x"]
+  order: 
+lists -> ["", "123", "[object Object]", "12", "123"]
+  order: 
+minus zero -> ["0", "0", "0", "0-0-0"]
+  order: 
+honest again -> ["abc", "[a|b]", "abc", "a-b-c"]
+  order: 

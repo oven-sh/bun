@@ -1,0 +1,23 @@
+------------------
+{ printWidth: 80 }
+------------------
+a./* prettier-ignore */ \u{62};
+a.b;
+a./* a */ b;
+a
+// prettier-ignore
+.\u{62};
+a./* prettier-ignore */ \u{62}().c().d();
+
+-------------------
+{ printWidth: 100 }
+-------------------
+a./* prettier-ignore */ \u{62};
+a.b;
+a./* a */ b;
+a
+// prettier-ignore
+.\u{62};
+a./* prettier-ignore */ \u{62}().c().d();
+
+===================== End =====================

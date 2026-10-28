@@ -259,23 +259,29 @@ public:
         return !hasLeft() && enabledDomains.contains("Debugger"_s);
     }
 
-    // Inspected thread. Remembers `"<domain>.enable"` and `"<domain>.disable"` from this frontend.
-    void trackEnabledDomains(StringView message)
+    // Inspected thread. Remembers the domains this frontend turned on: its `<domain>.enable` and `<domain>.disable` commands.
+    void trackEnabledDomains(const WTF::String& message)
     {
-        auto domainBefore = [&](ASCIILiteral suffix) -> StringView {
-            size_t end = message.find(suffix);
-            size_t start = end == notFound ? notFound : message.reverseFind('"', end);
-            if (start == notFound)
-                return {};
-            auto domain = message.substring(start + 1, end - start - 1);
-            return domain.containsOnly<isASCIIAlphanumeric>() ? domain : StringView();
-        };
+        if (!message.contains(".enable\""_s) && !message.contains(".disable\""_s)) [[likely]]
+            return;
 
-        if (auto domain = domainBefore(".enable\""_s); !domain.isEmpty()) {
-            if (!enabledDomains.contains(domain))
-                enabledDomains.append(domain.toString());
-        } else if (auto domain = domainBefore(".disable\""_s); !domain.isEmpty())
-            enabledDomains.removeAll(domain);
+        auto value = JSON::Value::parseJSON(message);
+        auto object = value ? value->asObject() : nullptr;
+        if (!object)
+            return;
+
+        auto method = object->getString("method"_s);
+        bool enable = method.endsWith(".enable"_s);
+        if (!enable && !method.endsWith(".disable"_s))
+            return;
+
+        auto domain = method.left(method.length() - (enable ? 7 : 8));
+        if (domain.isEmpty() || !StringView(domain).containsOnly<isASCIIAlphanumeric>())
+            return;
+
+        enabledDomains.removeAll(domain);
+        if (enable)
+            enabledDomains.append(WTF::move(domain));
     }
 
     // Inspected thread. JSC keeps one state per domain for every frontend, so this one's leftovers could pause the program.

@@ -1,3 +1,4 @@
+import { gcAndSweep } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { isASAN, isDebug, isLinux } from "harness";
 
@@ -61,23 +62,36 @@ describe("Bun.JSONL.parseChunk on UTF-8 bytes", () => {
     expect(new TextDecoder().decode(bytes.subarray(result.read)).trimStart()).toBe('{"cut":');
   });
 
-  test.skipIf(!isLinux || process.arch !== "x64" || isDebug || isASAN)(
-    "one character outside ASCII does not make a long text several times as slow",
-    () => {
-      const line = (last: string) =>
-        new TextEncoder().encode(
-          JSON.stringify("the quick brown fox jumps over the lazy dog. ".repeat(180000) + last) + "\n",
-        );
-      const fastestOf = (bytes: Uint8Array) => {
-        let fastest = Infinity;
-        for (let run = 0; run < 15; run++) {
-          const began = performance.now();
-          expect(Bun.JSONL.parseChunk(bytes).values.length).toBe(1);
-          fastest = Math.min(fastest, performance.now() - began);
-        }
-        return fastest;
-      };
-      expect(fastestOf(line("\u2014")) / fastestOf(line(""))).toBeLessThan(4.5);
-    },
-  );
+  // parseChunk decodes bytes that are not all ASCII to text, then parses the text. TextDecoder and a parse of its text
+  // are those two steps on the same amount of memory, so the ratio to that pair is about the same on every machine.
+  // The ratio to an all-ASCII line is not: that line is parsed in place.
+  test.skipIf(!isLinux || process.arch !== "x64" || isDebug || isASAN).each([
+    ["in ASCII", ""],
+    ["with one character outside ASCII", "\u2014"],
+  ])("a long line %s takes under twice as long from bytes as from TextDecoder and a parse of its text", (_, last) => {
+    const bytes = new TextEncoder().encode(
+      JSON.stringify("the quick brown fox jumps over the lazy dog. ".repeat(180000) + last) + "\n",
+    );
+    const decoder = new TextDecoder();
+    let values = 0;
+    // A call makes up to 32 MB of strings. Collecting first keeps a collection out of the measured time, and the call
+    // gets the memory the collection freed instead of pages the system has yet to map. The values are counted and
+    // checked once at the end: under BUN_GARBAGE_COLLECTOR_LEVEL, which CI sets, every `expect` starts a collection.
+    const timeOf = (parse: () => { values: unknown[] }) => {
+      gcAndSweep();
+      const began = performance.now();
+      values += parse().values.length;
+      return performance.now() - began;
+    };
+    // Whatever else the machine runs slows the two calls of a run alike, so the ratio is taken within each run.
+    const ratios: number[] = [];
+    for (let run = 0; run < 15; run++) {
+      const fromBytes = timeOf(() => Bun.JSONL.parseChunk(bytes));
+      const fromText = timeOf(() => Bun.JSONL.parseChunk(decoder.decode(bytes)));
+      ratios.push(fromBytes / fromText);
+    }
+    expect(values).toBe(2 * ratios.length);
+    const median = ratios.sort((a, b) => a - b)[ratios.length >> 1];
+    expect(median).toBeLessThan(2);
+  });
 });

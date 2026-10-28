@@ -274,6 +274,16 @@ static JSValue getOwnPropertyStorage(JSGlobalObject* globalObject, JSObject* obj
     return custom;
 }
 
+// A function of compiled code is not a JSFunction.
+static bool isJSFunctionOrCompiledCallee(JSObject* object)
+{
+#if ENABLE(AOT)
+    if (JSC::AOT::CompiledCallee::isCompiledCallee(object))
+        return true;
+#endif
+    return object->inherits<JSC::JSFunction>();
+}
+
 JSObject* processEnvOfImportMetaEnvForTests(JSGlobalObject*, JSObject*);
 
 // Script never sees what putDirect() stores on a Proxy, or on a node:vm global for a key that the contextified object has.
@@ -465,8 +475,8 @@ public:
     void copyLength(JSC::VM& vm, JSGlobalObject* global, JSC::JSValue value)
     {
         auto scope = DECLARE_THROW_SCOPE(vm);
-        auto* fn = dynamicDowncast<JSFunction>(value);
-        if (!fn)
+        JSObject* fn = value.getObject();
+        if (!fn || !isJSFunctionOrCompiledCallee(fn))
             return;
         JSValue length = fn->get(global, vm.propertyNames->length);
         RETURN_IF_EXCEPTION(scope, );
@@ -1768,7 +1778,11 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsMockFunctionConstruct, __attribute__(
     if (constructor)
         constructData = JSC::getConstructData(constructor);
     // Jest calls the implementation on the new object instead of constructing it, except for a class, which can't be called.
-    if (!fn->isVitest && constructData.type == JSC::CallData::Type::JS && !constructData.js.functionExecutable->isClassConstructorFunction())
+    bool isPlainFunction = constructData.type == JSC::CallData::Type::JS && !constructData.js.functionExecutable->isClassConstructorFunction();
+#if ENABLE(AOT)
+    isPlainFunction |= constructor && constructor.isCell() && JSC::AOT::declaredAs(constructor.asCell()) == JSC::AOT::DeclaredAs::Function;
+#endif
+    if (!fn->isVitest && isPlainFunction)
         constructData = {};
     bool constructs = constructData.type != JSC::CallData::Type::None;
     JSValue thisValue = jsUndefined();
@@ -3042,6 +3056,11 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     RETURN_IF_EXCEPTION(scope, {});
     // A String object's indices and `length` are own properties, but come without a slotBase().
     bool isOwn = hasValue && (!slot.slotBase() || slot.slotBase() == object);
+    // An object of compiled code has what its layout lacks, such as an index key, in a second object, which is then the slotBase().
+    if (hasValue && !isOwn && vm.hasCompiledCode()) [[unlikely]] {
+        isOwn = object->hasOwnProperty(globalObject, propertyKey);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     unsigned slotAttributes = hasValue ? slot.attributes() : 0;
     bool isEasy = access == SpyAccess::Value && (!hasValue || slot.isValue());
 
@@ -3121,11 +3140,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
         } else {
             // JSFunction::getOwnPropertySlot serves `prototype` straight from property storage, ignoring
             // the Accessor attribute, so a GetterSetter installed here would escape to script as a raw cell.
-            bool isFunction = object->inherits<JSC::JSFunction>();
-#if ENABLE(AOT)
-            isFunction |= JSC::AOT::CompiledCallee::isCompiledCallee(object);
-#endif
-            if (propertyKey == vm.propertyNames->prototype && isFunction) {
+            if (propertyKey == vm.propertyNames->prototype && isJSFunctionOrCompiledCallee(object)) {
                 throwVMError(globalObject, scope, "Cannot spy on the `prototype` property because it is not a function"_s);
                 return {};
             }
@@ -3155,7 +3170,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
         throwTypeError(globalObject, scope, makeString("Cannot spy on the "_s, access == SpyAccess::Get ? "getter"_s : "setter"_s, " of the `"_s, propertyKeyForMessage(propertyKey), "` export because the exports of a module namespace object are not accessors"_s));
         return {};
     }
-    if (propertyKey == vm.propertyNames->prototype && object->inherits<JSC::JSFunction>()) {
+    if (propertyKey == vm.propertyNames->prototype && isJSFunctionOrCompiledCallee(object)) {
         throwVMError(globalObject, scope, "Cannot spy on the `prototype` property because it is not a function"_s);
         return {};
     }

@@ -23,8 +23,10 @@ extern "C" JSC::EncodedJSValue Bun__FakeTimers__setImmediate(JSC::JSGlobalObject
 extern "C" JSC::EncodedJSValue Bun__FakeTimers__requestAnimationFrame(JSC::JSGlobalObject*, JSC::EncodedJSValue function, JSC::EncodedJSValue callback);
 extern "C" void Bun__FakeTimers__queueTick(JSC::JSGlobalObject*, JSC::EncodedJSValue callback, JSC::EncodedJSValue arguments);
 extern "C" bool Bun__FakeTimers__isInstalled(JSC::EncodedJSValue function);
+extern "C" bool Bun__FakeTimers__fakes(uint8_t function);
 extern "C" void Bun__FakeTimers__runStep(JSC::JSGlobalObject*, uint32_t id);
 extern "C" double Bun__FakeTimers__replacedPerformanceNow();
+extern "C" bool isBunTest;
 
 namespace Zig {
 JSC_DECLARE_HOST_FUNCTION(functionQueueMicrotask);
@@ -120,23 +122,45 @@ static ALWAYS_INLINE EncodedJSValue scheduleImmediate(JSGlobalObject* globalObje
     RELEASE_AND_RETURN(scope, schedule(globalObject, JSC::JSValue::encode(job), JSValue::encode(arguments)));
 }
 
+// Must match `Api` in FakeTimers.rs.
+enum class FakeTimerFunction : uint8_t {
+    SetTimeout,
+    ClearTimeout,
+    SetInterval,
+    ClearInterval,
+    SetImmediate,
+    ClearImmediate,
+    NextTick,
+    QueueMicrotask,
+    RequestAnimationFrame,
+    CancelAnimationFrame,
+    DateNow,
+    PerformanceNow,
+};
+
+// Compiled code calls the built-in function, whatever useFakeTimers() has put on globalThis.
+static ALWAYS_INLINE bool isFakedForCompiledCode(JSGlobalObject* globalObject, FakeTimerFunction function)
+{
+    return isBunTest && globalObject->vm().hasCompiledCode() && Bun__FakeTimers__fakes(static_cast<uint8_t>(function));
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    return scheduleTimer(globalObject, callFrame, Bun__Timer__setTimeout, "setTimeout requires 1 argument (a function)"_s, "setTimeout expects a function"_s);
+    return scheduleTimer(globalObject, callFrame, isFakedForCompiledCode(globalObject, FakeTimerFunction::SetTimeout) ? Bun__FakeTimers__setTimeout : Bun__Timer__setTimeout, "setTimeout requires 1 argument (a function)"_s, "setTimeout expects a function"_s);
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    return scheduleTimer(globalObject, callFrame, Bun__Timer__setInterval, "setInterval requires 1 argument (a function)"_s, "setInterval expects a function"_s);
+    return scheduleTimer(globalObject, callFrame, isFakedForCompiledCode(globalObject, FakeTimerFunction::SetInterval) ? Bun__FakeTimers__setInterval : Bun__Timer__setInterval, "setInterval requires 1 argument (a function)"_s, "setInterval expects a function"_s);
 }
 
 // https://developer.mozilla.org/en-US/docs/Web/API/Window/setImmediate
 JSC_DEFINE_HOST_FUNCTION(functionSetImmediate,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    return scheduleImmediate(globalObject, callFrame, Bun__Timer__setImmediate);
+    return scheduleImmediate(globalObject, callFrame, isFakedForCompiledCode(globalObject, FakeTimerFunction::SetImmediate) ? Bun__FakeTimers__setImmediate : Bun__Timer__setImmediate);
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionClearImmediate,
@@ -324,22 +348,6 @@ JSC_DEFINE_HOST_FUNCTION(functionFakePerformanceNow, (JSGlobalObject * globalObj
     return JSValue::encode(jsDoubleNumber(now));
 }
 
-// Must match `Api` in FakeTimers.rs.
-enum class FakeTimerFunction : uint8_t {
-    SetTimeout,
-    ClearTimeout,
-    SetInterval,
-    ClearInterval,
-    SetImmediate,
-    ClearImmediate,
-    NextTick,
-    QueueMicrotask,
-    RequestAnimationFrame,
-    CancelAnimationFrame,
-    DateNow,
-    PerformanceNow,
-};
-
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] __attribute__((minsize)) JSC::EncodedJSValue Bun__FakeTimers__createFunction(Zig::GlobalObject* globalObject, uint8_t function)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -441,6 +449,22 @@ extern "C" void Bun__FakeTimers__putDirect(Zig::GlobalObject* globalObject, JSC:
     unsigned attributes = 0;
     object->getDirect(vm, property, attributes);
     object->putDirect(vm, property, JSValue::decode(value), attributes & (PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
+}
+
+// Compiled code has the built-in setTimeout, so that one has the fake's `clock` too while it is faked.
+extern "C" void Bun__FakeTimers__markBuiltinForCompiledCode(Zig::GlobalObject* globalObject, JSC::EncodedJSValue setTimeout, bool isFaked)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto* function = dynamicDowncast<JSFunction>(JSValue::decode(setTimeout));
+    if (!function || !vm.hasCompiledCode())
+        return;
+    auto clock = Identifier::fromString(vm, "clock"_s);
+    if (isFaked) {
+        function->putDirect(vm, clock, jsBoolean(true));
+        return;
+    }
+    DeletePropertySlot slot;
+    JSObject::deleteProperty(function, globalObject, clock, slot);
 }
 
 // node:timers and node:timers/promises capture the globals when first loaded, so load them before installing fakes.

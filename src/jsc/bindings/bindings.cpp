@@ -3549,7 +3549,7 @@ static JSObject* shallowCopyForDeepMatch(JSGlobalObject* globalObject, ThrowScop
     if (isJSArray(object)) {
         copy = constructEmptyArray(globalObject, nullptr, 0);
         RETURN_IF_EXCEPTION(scope, nullptr);
-    } else if (object->type() == FinalObjectType) {
+    } else if (object->type() == FinalObjectType || JSC::AOT::PropertyWalk::isCompiledObject(object)) {
         JSValue prototype = object->getPrototypeDirect();
         copy = prototype.isObject() ? constructEmptyObject(globalObject, asObject(prototype)) : constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
     } else {

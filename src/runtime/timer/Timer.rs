@@ -678,6 +678,11 @@ pub(crate) fn fake_timers_is_installed_export(function: JSValue) -> bool {
     timer_all_mut().fake_timers.is_installed(function)
 }
 
+// HOST_EXPORT(Bun__FakeTimers__fakes, c)
+pub(crate) fn fake_timers_fakes_export(api: u8) -> bool {
+    timer_all_mut().fake_timers.fakes_api(api)
+}
+
 // HOST_EXPORT(Bun__FakeTimers__runStep, c)
 pub(crate) fn fake_timers_run_step_export(global: &JSGlobalObject, id: u32) {
     if let Err(err) = FakeTimers::run_step(global, id) {

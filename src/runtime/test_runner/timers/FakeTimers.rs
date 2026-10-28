@@ -32,6 +32,11 @@ unsafe extern "C" {
     );
     safe fn Bun__FakeTimers__originalOf(originals: JSValue, value: JSValue) -> JSValue;
     safe fn Bun__FakeTimers__isNativeFunction(value: JSValue) -> bool;
+    safe fn Bun__FakeTimers__markBuiltinForCompiledCode(
+        global: &JSGlobalObject,
+        set_timeout: JSValue,
+        is_faked: bool,
+    );
     safe fn Bun__FakeTimers__putDirect(
         global: &JSGlobalObject,
         owner: JSValue,
@@ -648,6 +653,11 @@ impl FakeTimers {
             .any(|replaced| replaced.fake.get() == function)
     }
 
+    /// `api` is an `Api as u8`.
+    pub(crate) fn fakes_api(&self, api: u8) -> bool {
+        self.faked.0 & (1 << api) != 0
+    }
+
     /// Converting a timer function's arguments can run JS that calls `useRealTimers()`.
     pub(crate) fn clock_while_active(&self, clock: Clock) -> Clock {
         if self.active { clock } else { Clock::Real }
@@ -841,6 +851,9 @@ impl FakeTimers {
         let mut deactivated = unsafe { (*timer_all()).fake_timers.deactivate(global) };
         deactivated.cleared.release(global.bun_vm_ptr());
         for replaced in &deactivated.replaced {
+            if replaced.api == Api::SetTimeout {
+                Bun__FakeTimers__markBuiltinForCompiledCode(global, replaced.original.get(), false);
+            }
             // @testing-library/dom detects fake timers by `setTimeout.clock`, and a test can put this fake back later.
             if replaced.api == Api::SetTimeout
                 && let Err(err) = replaced.fake.get().delete_property(global, "clock")
@@ -890,8 +903,16 @@ impl FakeTimers {
                 .fake_timers
                 .activate(global, options, date_now)
         };
-        for Replaced { api, fake, .. } in &replaced {
+        for Replaced {
+            api,
+            fake,
+            original,
+        } in &replaced
+        {
             api.put(global, fake.get());
+            if *api == Api::SetTimeout {
+                Bun__FakeTimers__markBuiltinForCompiledCode(global, original.get(), true);
+            }
         }
         // SAFETY: as above.
         unsafe { (*timer_all()).fake_timers.replaced = replaced };

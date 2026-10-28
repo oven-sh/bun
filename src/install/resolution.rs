@@ -1054,6 +1054,11 @@ impl Tag {
         self == Tag::LocalTarball || self == Tag::RemoteTarball
     }
 
+    /// Only the package.json inside a git, GitHub or tarball package has its `bin` and scripts.
+    pub(crate) fn is_self_described(self) -> bool {
+        self.is_git() || self.is_tarball()
+    }
+
     /// `Uninitialized` only exists before a package is appended, and nothing produces
     /// `SingleFileModule`.
     pub(crate) fn belongs_in_lockfile(self) -> bool {

@@ -904,6 +904,35 @@ pub fn cached_tarball_folder_name(
     print(!has_verified_base, patch_hash)
 }
 
+/// The cache entry of the commit or of the integrity of a row. Empty if the row has neither.
+pub(crate) fn cached_pinned_folder_name<'a>(
+    this: &PackageManager,
+    buf: &'a mut [u8],
+    resolution: &Resolution,
+    integrity: &Integrity,
+) -> &'a ZStr {
+    match resolution.tag {
+        ResolutionTag::Git if !resolution.git().resolved.is_empty() => {
+            cached_git_folder_name_print(buf, this.lockfile.str(&resolution.git().resolved), None)
+        }
+        ResolutionTag::Github if !resolution.github().resolved.is_empty() => {
+            let resolved = this.lockfile.str(&resolution.github().resolved);
+            cached_github_folder_name_print(buf, resolved, None)
+        }
+        ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball
+            if integrity.tag.is_supported() =>
+        {
+            let url = match resolution.tag {
+                ResolutionTag::LocalTarball => resolution.local_tarball(),
+                _ => resolution.remote_tarball(),
+            };
+            let url = this.lockfile.str(url);
+            cached_tarball_folder_name_print(buf, integrity, false, resolution.tag, url, None)
+        }
+        _ => ZStr::EMPTY,
+    }
+}
+
 impl PackageManager {
     /// Returns true if what this run reads from a `file:` path or URL can become the integrity in
     /// bun.lock.

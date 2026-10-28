@@ -437,6 +437,15 @@ impl TrustCommand {
         // SAFETY: `update_lockfile_if_needed` never dereferences the lockfile through `load_lockfile`.
         unsafe { update_lockfile_if_needed(&mut *pm_raw, &load_lockfile)? };
         // SAFETY: `pm_raw` singleton; `load_lockfile` is not dereferenced while this runs.
+        let log = unsafe {
+            (*pm_raw).record_unread_from_cache();
+            (*pm_raw).log_mut()
+        };
+        if log.has_errors() {
+            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            Global::crash();
+        }
+        // SAFETY: `pm_raw` singleton; `load_lockfile` is not dereferenced while this runs.
         let recorded = read_trusted_dependencies(unsafe { &mut *pm_raw });
 
         // SAFETY: `pm_raw` singleton; `load_lockfile` is not dereferenced while this runs.

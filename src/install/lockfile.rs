@@ -193,6 +193,9 @@ pub struct Lockfile {
 
     /// Packages that so far only rows inside a bundle resolve to. Runtime-only, sized lazily.
     pub(crate) only_bundled: DynamicBitSet,
+
+    /// Rows that a migration wrote without the `bin` and the install scripts. Runtime-only.
+    pub(crate) unread: DynamicBitSet,
 }
 
 pub(crate) type PackageList = self::package::List<u64>;
@@ -1397,6 +1400,9 @@ impl Lockfile {
         // Carry the on-disk format version over from the lockfile we loaded so a
         // re-save preserves it (a fresh `new` defaults to the current version).
         new.text_lockfile_version = old.text_lockfile_version;
+        if old.unread.bit_length() > 0 {
+            clean_carry_unread_cold(old, &mut new, &package_id_mapping);
+        }
 
         if old.patched_dependencies.count() > 0 {
             clean_migrate_patched_dependencies_cold(old, &mut new)?;
@@ -1484,6 +1490,17 @@ fn clean_migrate_patched_dependencies_cold(
         new.patched_dependencies.put(*k, patchdep)?;
     }
     Ok(())
+}
+
+/// `mapping` has the id in `new` of each package of `old` that was kept.
+#[cold]
+#[inline(never)]
+fn clean_carry_unread_cold(old: &Lockfile, new: &mut Lockfile, mapping: &[PackageID]) {
+    for (id, &kept_as) in mapping.iter().enumerate() {
+        if kept_as != invalid_package_id && old.is_unread(id as PackageID) {
+            new.mark_unread(kept_as);
+        }
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -2289,6 +2306,7 @@ impl Lockfile {
             held_at_load: DynamicBitSet::default(),
             exact_pinned: DynamicBitSet::default(),
             only_bundled: DynamicBitSet::default(),
+            unread: DynamicBitSet::default(),
         }
     }
 
@@ -2505,6 +2523,19 @@ impl Lockfile {
             bun_core::handle_oom(self.only_bundled.resize(i + 1, false));
         }
         self.only_bundled.set(i);
+    }
+
+    pub(crate) fn mark_unread(&mut self, id: PackageID) {
+        let i = id as usize;
+        if self.unread.bit_length() <= i {
+            bun_core::handle_oom(self.unread.resize(i + 1, false));
+        }
+        self.unread.set(i);
+    }
+
+    #[inline]
+    pub(crate) fn is_unread(&self, id: PackageID) -> bool {
+        self.unread.is_set_allow_out_of_bound(id as usize, false)
     }
 
     /// Returns true if the dependency is bundled, or if its owner is only used inside bundles.

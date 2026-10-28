@@ -87,7 +87,7 @@ impl UpdateRequest {
     /// the returned slice and must not be reallocated while the borrow is
     /// live. Both invariants hold on every call path today — `string_bytes`
     /// is finalized before assignment in `clean_with_logger`, and the lockfile
-    /// is threaded alongside `updates` everywhere they are read.
+    /// is read alongside `updates`. `record_unread_from_cache` grows it and re-points this.
     #[inline]
     pub fn version_buf(&self) -> &[u8] {
         // See fn doc. `RawSlice` encapsulates the deref under the

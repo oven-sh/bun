@@ -90,6 +90,8 @@ pub(crate) mod remove_stale_workspace_links;
 pub mod run_tasks;
 #[path = "PackageManager/security_scanner.rs"]
 pub mod security_scanner;
+#[path = "PackageManager/unread_packages.rs"]
+pub(crate) mod unread_packages;
 #[path = "PackageManager/updatePackageJSONAndInstall.rs"]
 pub mod update_package_json_and_install;
 #[path = "PackageManager/UpdateRequest.rs"]

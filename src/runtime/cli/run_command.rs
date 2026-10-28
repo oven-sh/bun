@@ -1103,9 +1103,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         if let Some(entry) = entry
             && let Some(script) = ctx.runtime_options.eval.script.as_deref()
         {
-            // SAFETY: `ctx.runtime_options.eval.script` is process-lifetime
-            // (CLI argv); erase the borrow lifetime so the `Source` (stored in
-            // the VM for the process duration) can backref into it.
+            // SAFETY: `ctx` is the process-global `ContextData`, and nothing
+            // assigns `eval.script` after `boot`. So the bytes live as long as
+            // the `Source` (stored in the VM for the process duration) that
+            // backrefs into them.
             let script: &'static [u8] =
                 unsafe { ::core::slice::from_raw_parts(script.as_ptr(), script.len()) };
             vm.module_loader.eval_source =

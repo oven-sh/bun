@@ -2114,7 +2114,7 @@ describe.concurrent("--interactive", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stdout).toContain("Welcome to Bun");
       expect(stdout).toContain("> 2\n");
-      expect(stderr).not.toContain("Missing script to execute");
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     },
     interactiveTimeout,

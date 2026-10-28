@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { openSync } from "fs";
+import { closeSync, openSync } from "fs";
 import { join } from "path";
 import { bunEnv, bunExe, fakeNodeRun, isMacOS, isWindows, tempDir } from "../../harness";
+
+// The node REPL boots node:repl, readline and acorn. On a debug build with
+// ASAN that takes 4 to 5 seconds, more than the default test timeout.
+const replTimeout = 20_000;
 
 describe("fake node cli", () => {
   test("the node cli actually works", () => {
@@ -138,7 +142,7 @@ describe("fake node cli", () => {
     }
 
     const program =
-      "console.log(JSON.stringify({ argv: process.argv.slice(1), file: __filename.split(/[\\/]/).pop() }))";
+      'console.log(JSON.stringify({ argv: process.argv.slice(1), file: require("path").basename(__filename) }))';
 
     test.concurrent("bare node runs the piped program", async () => {
       expect(await nodeWithStdin(program)).toEqual({
@@ -210,7 +214,7 @@ describe("fake node cli", () => {
         expect(stderr).toBe("");
         expect(exitCode).toBe(0);
       },
-      30_000,
+      replTimeout,
     );
 
     test.concurrent("--version prints the node version", async () => {
@@ -220,25 +224,31 @@ describe("fake node cli", () => {
       expect(exitCode).toBe(0);
     });
 
-    // Node's test runner is not replaced by the program on stdin.
-    test.concurrent("--test with a piped program does not run it", async () => {
-      const { stdout, stderr, exitCode } = await nodeWithStdin('console.log("stdin")', ["--test"]);
+    // Node's test runner and syntax check are not replaced by the program on stdin.
+    test.concurrent.each(["--test", "--check"])("%s with a piped program does not run it", async flag => {
+      const { stdout, stderr, exitCode } = await nodeWithStdin('console.log("stdin")', [flag]);
       expect(stdout).toBe("");
-      expect(stderr).toContain("--test is not supported when bun runs as node");
+      expect(stderr).toContain(`${flag} is not supported when bun runs as node`);
       expect(exitCode).toBe(1);
     });
 
     // Node exits 0 and runs nothing when stdin cannot be read. Bun reports it.
     test.skipIf(isWindows)("a stdin that cannot be read is an error", async () => {
       using temp = tempDir("fake-node-stdin", {});
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "--bun", "node"],
-        cwd: String(temp),
-        env: { ...bunEnv, NODE_ENV: undefined },
-        stdin: openSync(String(temp), "r"),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+      const directory = openSync(String(temp), "r");
+      let proc: Bun.Subprocess<"ignore", "pipe", "pipe">;
+      try {
+        proc = Bun.spawn({
+          cmd: [bunExe(), "--bun", "node"],
+          cwd: String(temp),
+          env: { ...bunEnv, NODE_ENV: undefined },
+          stdin: directory,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+      } finally {
+        closeSync(directory);
+      }
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stdout).toBe("");
       expect(stderr).toContain("Failed to read the program from stdin");
@@ -301,19 +311,15 @@ describe("fake node cli", () => {
           write(".exit\r");
           expect(await proc.exited).toBe(0);
         }),
-      30_000,
+      replTimeout,
     );
 
-    test(
-      "node - reads the program to the end of the input",
-      () =>
-        nodeOnTerminal(["-"], async ({ proc, waitFor, write, output }) => {
-          write('console.log("from", "tty")\n\x04');
-          await waitFor("from tty");
-          expect(output()).not.toContain("Welcome to Bun");
-          expect(await proc.exited).toBe(0);
-        }),
-      30_000,
-    );
+    test("node - reads the program to the end of the input", () =>
+      nodeOnTerminal(["-"], async ({ proc, waitFor, write, output }) => {
+        write('console.log("from", "tty")\n\x04');
+        await waitFor("from tty");
+        expect(output()).not.toContain("Welcome to Bun");
+        expect(await proc.exited).toBe(0);
+      }));
   });
 });

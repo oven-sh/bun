@@ -1288,18 +1288,27 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     // of node that a program on stdin does not replace. With a script, the
     // script runs as before.
     if cmd == CommandTag::RunAsNodeCommand && ctx.positionals.is_empty() {
+        let refuse = |name: &[u8]| -> ! {
+            Output::err_generic(
+                "--{} is not supported when bun runs as node\n",
+                format_args!("{}", BStr::new(name)),
+            );
+            Global::exit(1);
+        };
         for flag in &unknown_long_flags {
             match flag.name {
                 b"version" => cli::print_node_version_and_exit(),
-                b"test" | b"run" | b"v8-options" | b"completion-bash" => {
-                    Output::err_generic(
-                        "--{} is not supported when bun runs as node\n",
-                        format_args!("{}", BStr::new(flag.name)),
-                    );
-                    Global::exit(1);
-                }
+                b"test" | b"run" | b"v8-options" | b"completion-bash" => refuse(flag.name),
                 _ => {}
             }
+        }
+        // To node, `--check` only parses the program. Without `-e` it would
+        // come from stdin.
+        if args.flag(b"--check")
+            && args.option(b"--eval").is_none()
+            && args.option(b"--print").is_none()
+        {
+            refuse(b"check");
         }
     }
 
@@ -1583,7 +1592,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         };
         if let Some(script) = args.option(b"--print") {
             ctx.runtime_options.eval.script = program(script);
-            ctx.runtime_options.eval.eval_and_print = true;
+            ctx.runtime_options.eval.eval_and_print = ctx.runtime_options.eval.script.is_some();
         } else if let Some(script) = args.option(b"--eval") {
             ctx.runtime_options.eval.script = program(script);
         }

@@ -22,28 +22,12 @@ pub enum Error {
     SnapshotInConcurrentGroup,
     #[error("SyntaxError")]
     SyntaxError,
-    #[error("FmtError")]
-    FmtError,
     #[error("JSError")]
     JSError,
-    #[error("ERR_TLS_CERT_ALTNAME_INVALID")]
-    ERR_TLS_CERT_ALTNAME_INVALID,
-    #[error("ConnectionClosed")]
-    ConnectionClosed,
     #[error("FailedToOpenSocket")]
     FailedToOpenSocket,
-    #[error("MissingCredentials")]
-    MissingCredentials,
-    #[error("InvalidMethod")]
-    InvalidMethod,
     #[error("InvalidPath")]
     InvalidPath,
-    #[error("InvalidEndpoint")]
-    InvalidEndpoint,
-    #[error("InvalidSessionToken")]
-    InvalidSessionToken,
-    #[error("SignError")]
-    SignError,
     #[error("failed to parse multipart data")]
     FailedToParseMultipartData,
     #[error("boundary is too long")]
@@ -68,8 +52,6 @@ pub enum Error {
     FailedToInitPipe,
     #[error("FailedToBindPipe")]
     FailedToBindPipe,
-    #[error("MissingPackageJSON")]
-    MissingPackageJSON,
     #[error("HTTPForbidden")]
     HTTPForbidden,
     #[error("ExampleNotFound")]
@@ -82,20 +64,14 @@ pub enum Error {
     NPMIsDown,
     #[error("HTTPError")]
     HTTPError,
-    #[error("MissingEntryPoint")]
-    MissingEntryPoint,
     #[error("UnrecognizedCommand")]
     UnrecognizedCommand,
     #[error("MissingShell")]
     MissingShell,
     #[error("NotFound")]
     NotFound,
-    #[error("InvalidRoot")]
-    InvalidRoot,
     #[error("EmptyKey")]
     EmptyKey,
-    #[error("ExpectedObject")]
-    ExpectedObject,
     #[error("FormatFailed")]
     FormatFailed,
     #[error("SelfExePathFailed")]
@@ -110,8 +86,6 @@ pub enum Error {
     ProcessWatchFailed,
     #[error("JUnitReportFailed")]
     JUnitReportFailed,
-    #[error("lcovCoverageError")]
-    lcovCoverageError,
     #[error("HTTP404")]
     HTTP404,
     #[error("GitHubIsDown")]
@@ -122,8 +96,6 @@ pub enum Error {
     UpgradeFailedBecauseOfMissingExecutableDir,
     #[error("NoBinFound")]
     NoBinFound,
-    #[error("NeedToInstall")]
-    NeedToInstall,
     #[error("PathTooLong")]
     PathTooLong,
     #[error("AssertionError")]
@@ -138,8 +110,6 @@ pub enum Error {
     CouldntReadCurrentDirectory,
     #[error("FailedToGetTempPath")]
     FailedToGetTempPath,
-    #[error("UnexpectedCreatingStdin")]
-    UnexpectedCreatingStdin,
     #[error("UnableToEncode")]
     UnableToEncode,
     #[error("InvalidHeaderName")]
@@ -150,16 +120,12 @@ pub enum Error {
     ReadError,
     #[error("OpenError")]
     OpenError,
-    #[error("CompilationFailed")]
-    CompilationFailed,
     #[error("UnexpectedPendingResolution")]
     UnexpectedPendingResolution,
     #[error("AsyncModule")]
     AsyncModule,
     #[error("BlobNotFound")]
     BlobNotFound,
-    #[error("JSErrorObject")]
-    JSErrorObject,
     #[error("InvalidRoutePattern")]
     InvalidRoutePattern,
     #[error("InvalidRequest")]
@@ -184,8 +150,6 @@ pub enum Error {
     ChromeNotFound,
     #[error("WatchFailed")]
     WatchFailed,
-    #[error("Unsupported")]
-    Unsupported,
     #[error("UnsupportedAlgorithm")]
     UnsupportedAlgorithm,
     #[error("PasswordVerificationFailed")]
@@ -310,11 +274,11 @@ impl From<bun_uws::ssl_wrapper::InitError> for Error {
     }
 }
 
-impl From<bun_libarchive::Error> for Error {
-    fn from(e: bun_libarchive::Error) -> Self {
+impl From<bun_archive::Error> for Error {
+    fn from(e: bun_archive::Error) -> Self {
         match e {
-            bun_libarchive::Error::Sys(s) => Self::Sys(s),
-            bun_libarchive::Error::Alloc(a) => Self::Alloc(a),
+            bun_archive::Error::Sys(s) => Self::Sys(s),
+            bun_archive::Error::Alloc(a) => Self::Alloc(a),
             _ => Self::Unexpected,
         }
     }
@@ -358,23 +322,6 @@ impl From<Error> for bun_jsc::JsError {
     }
 }
 
-impl From<Error> for bun_jsc::CrateError {
-    #[inline]
-    fn from(e: Error) -> Self {
-        match e {
-            Error::Sys(s) => Self::Sys(s),
-            Error::Alloc(a) => Self::Alloc(a),
-            Error::Core(c) => Self::Core(c),
-            Error::Resolver(r) => Self::Resolver(r),
-            Error::Bundler(b) => Self::Bundler(b),
-            Error::Install(i) => Self::Install(i),
-            Error::Jsc(j) => j,
-            Error::JSError | Error::Js(_) => Self::JSError,
-            _ => Self::Core(bun_core::Error::Unexpected),
-        }
-    }
-}
-
 impl From<Error> for bun_uws_sys::Error {
     #[inline]
     fn from(e: Error) -> Self {
@@ -387,7 +334,6 @@ impl From<Error> for bun_uws_sys::Error {
 }
 
 impl Error {
-    #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn name(&self) -> &'static str {
         match self {
             Self::SnapshotFailed => "SnapshotFailed",
@@ -401,17 +347,9 @@ impl Error {
             Self::TestNotActive => "TestNotActive",
             Self::SnapshotInConcurrentGroup => "SnapshotInConcurrentGroup",
             Self::SyntaxError => "SyntaxError",
-            Self::FmtError => "FmtError",
             Self::JSError => "JSError",
-            Self::ERR_TLS_CERT_ALTNAME_INVALID => "ERR_TLS_CERT_ALTNAME_INVALID",
-            Self::ConnectionClosed => "ConnectionClosed",
             Self::FailedToOpenSocket => "FailedToOpenSocket",
-            Self::MissingCredentials => "MissingCredentials",
-            Self::InvalidMethod => "InvalidMethod",
             Self::InvalidPath => "InvalidPath",
-            Self::InvalidEndpoint => "InvalidEndpoint",
-            Self::InvalidSessionToken => "InvalidSessionToken",
-            Self::SignError => "SignError",
             Self::FailedToParseMultipartData => "failed to parse multipart data",
             Self::BoundaryIsTooLong => "boundary is too long",
             Self::MissingFinalBoundary => "missing final boundary",
@@ -424,20 +362,16 @@ impl Error {
             Self::InvalidOptions => "InvalidOptions",
             Self::FailedToInitPipe => "FailedToInitPipe",
             Self::FailedToBindPipe => "FailedToBindPipe",
-            Self::MissingPackageJSON => "MissingPackageJSON",
             Self::HTTPForbidden => "HTTPForbidden",
             Self::ExampleNotFound => "ExampleNotFound",
             Self::GitHubRepositoryNotFound => "GitHubRepositoryNotFound",
             Self::HTTPTooManyRequests => "HTTPTooManyRequests",
             Self::NPMIsDown => "NPMIsDown",
             Self::HTTPError => "HTTPError",
-            Self::MissingEntryPoint => "MissingEntryPoint",
             Self::UnrecognizedCommand => "UnrecognizedCommand",
             Self::MissingShell => "MissingShell",
             Self::NotFound => "NotFound",
-            Self::InvalidRoot => "InvalidRoot",
             Self::EmptyKey => "EmptyKey",
-            Self::ExpectedObject => "ExpectedObject",
             Self::FormatFailed => "FormatFailed",
             Self::SelfExePathFailed => "SelfExePathFailed",
             Self::SpawnFailed => "SpawnFailed",
@@ -445,7 +379,6 @@ impl Error {
             Self::ChannelAdoptFailed => "ChannelAdoptFailed",
             Self::ProcessWatchFailed => "ProcessWatchFailed",
             Self::JUnitReportFailed => "JUnitReportFailed",
-            Self::lcovCoverageError => "lcovCoverageError",
             Self::HTTP404 => "HTTP404",
             Self::GitHubIsDown => "GitHubIsDown",
             Self::UpgradeFailedMissingExecutable => "UpgradeFailedMissingExecutable",
@@ -453,7 +386,6 @@ impl Error {
                 "UpgradeFailedBecauseOfMissingExecutableDir"
             }
             Self::NoBinFound => "NoBinFound",
-            Self::NeedToInstall => "NeedToInstall",
             Self::PathTooLong => "PathTooLong",
             Self::AssertionError => "AssertionError",
             Self::ModuleNotFound => "ModuleNotFound",
@@ -461,17 +393,14 @@ impl Error {
             Self::ThreadSpawnFailed => "ThreadSpawnFailed",
             Self::CouldntReadCurrentDirectory => "CouldntReadCurrentDirectory",
             Self::FailedToGetTempPath => "FailedToGetTempPath",
-            Self::UnexpectedCreatingStdin => "UnexpectedCreatingStdin",
             Self::UnableToEncode => "UnableToEncode",
             Self::InvalidHeaderName => "InvalidHeaderName",
             Self::FormatError => "FormatError",
             Self::ReadError => "ReadError",
             Self::OpenError => "OpenError",
-            Self::CompilationFailed => "CompilationFailed",
             Self::UnexpectedPendingResolution => "UnexpectedPendingResolution",
             Self::AsyncModule => "AsyncModule",
             Self::BlobNotFound => "BlobNotFound",
-            Self::JSErrorObject => "JSErrorObject",
             Self::InvalidRoutePattern => "InvalidRoutePattern",
             Self::InvalidRequest => "InvalidRequest",
             Self::FailedToCreateCoreFoudationSourceLoop => "FailedToCreateCoreFoudationSourceLoop",
@@ -484,7 +413,6 @@ impl Error {
             Self::TCCMissing => "TCCMissing",
             Self::ChromeNotFound => "ChromeNotFound",
             Self::WatchFailed => "WatchFailed",
-            Self::Unsupported => "Unsupported",
             Self::UnsupportedAlgorithm => "UnsupportedAlgorithm",
             Self::PasswordVerificationFailed => "PasswordVerificationFailed",
             Self::InvalidEncoding => "InvalidEncoding",
@@ -551,4 +479,4 @@ impl bun_core::output::ErrName for Error {
     }
 }
 
-pub type Result<T, E = Error> = core::result::Result<T, E>;
+pub(crate) type Result<T, E = Error> = core::result::Result<T, E>;

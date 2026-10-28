@@ -1,0 +1,4 @@
+[ 2, 0 ]
+a call holds the gate's promise and its own
+the promises that are kept are there
+1000 0 1998 999000

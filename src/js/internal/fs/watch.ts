@@ -9,26 +9,30 @@ const fs = require("internal/fs/binding");
 // mirroring node lib/internal/fs/watchers.js createIgnoreMatcher.
 // string -> glob (patterns without a slash also match the basename),
 // RegExp -> exec, function -> called with the filename. Arrays compose.
-function makeGlobMatcher(glob) {
+type Glob = import("bun").Glob;
+type Matcher = (filename: string) => boolean;
+type WatchListener = (eventType: string, filename: unknown) => void;
+
+function makeGlobMatcher(glob: Glob): Matcher {
   return function matchGlob(filename) {
     return glob.match(filename);
   };
 }
-function makeGlobOrBasenameMatcher(glob) {
+function makeGlobOrBasenameMatcher(glob: Glob): Matcher {
   return function matchGlobOrBasename(filename) {
     return glob.match(filename) || glob.match(basename(filename));
   };
 }
-function makeRegexMatcher(matcher) {
+function makeRegexMatcher(matcher: RegExp): Matcher {
   return function matchRegex(filename) {
     return matcher.exec(filename) !== null;
   };
 }
 
-function createIgnoreMatcher(ignore) {
+function createIgnoreMatcher(ignore: unknown) {
   if (ignore == null) return null;
   const matchers = $isArray(ignore) ? ignore : [ignore];
-  const compiled: Array<(filename: string) => boolean> = [];
+  const compiled: Matcher[] = [];
 
   for (const matcher of matchers) {
     if (typeof matcher === "string") {
@@ -45,18 +49,18 @@ function createIgnoreMatcher(ignore) {
     } else if (matcher instanceof RegExp) {
       compiled.push(makeRegexMatcher(matcher));
     } else if (typeof matcher === "function") {
-      compiled.push(matcher);
+      compiled.push(matcher as Matcher);
     } else {
       throw $ERR_INVALID_ARG_TYPE("options.ignore", ["string", "RegExp", "Function"], matcher);
     }
   }
 
-  return function isIgnored(filename) {
+  return function isIgnored(filename: unknown) {
     // With encoding: "buffer" the watcher delivers Buffer filenames; the
     // string/glob matchers (and basename()) need a string.
     if (typeof filename !== "string") filename = String(filename);
     for (const match of compiled) {
-      if (match(filename)) return true;
+      if (match(filename as string)) return true;
     }
     return false;
   };
@@ -73,12 +77,12 @@ let dispatchNativeEvent: (watcher: FSWatcher, eventType: string, filename: unkno
 let refNativeWatcher: (watcher: FSWatcher) => void;
 let unrefNativeWatcher: (watcher: FSWatcher) => void;
 
-let uvErrorMap;
+let uvErrorMap: Map<number, [code: string, description: string]> | undefined;
 
 // Mirrors node's UVException for the watch syscall:
 // "ENOENT: no such file or directory, watch '/path'".
-function makeWatchUVException(status, filename) {
-  uvErrorMap ??= process.binding("uv").getErrorMap();
+function makeWatchUVException(status: number, filename: unknown) {
+  uvErrorMap ??= process.binding("uv").getErrorMap() as Map<number, [code: string, description: string]>;
   const entry = uvErrorMap.$get(status);
   const code = entry ? entry[0] : "UNKNOWN";
   const description = entry ? entry[1] : "unknown error";
@@ -92,15 +96,15 @@ function makeWatchUVException(status, filename) {
 }
 
 class FSEvent {
-  #owner;
-  constructor(owner) {
+  #owner: FSWatcher;
+  constructor(owner: FSWatcher) {
     this.#owner = owner;
   }
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/watchers.js#L67
   // Node's binding invokes this callback; bun's native watcher reports through
   // FSWatcher#onEvent instead, so this exists for parity with code that drives
   // the handle directly.
-  onchange(status, eventType, filename) {
+  onchange(status: number, eventType: string, filename: unknown) {
     const owner = this.#owner;
     if (status < 0) {
       // Node drops the handle here without emitting "close" -- it closes the
@@ -123,18 +127,18 @@ class FSEvent {
   }
 }
 
-function assertFSEventHandle(handle) {
+function assertFSEventHandle(handle: unknown) {
   if (!(handle instanceof FSEvent)) {
     throw $ERR_INTERNAL_ASSERTION("handle must be a FSEvent" + require("internal/shared").kInternalAssertionSuffix);
   }
 }
 
 class FSWatcher extends EventEmitter {
-  #watcher;
-  #listener;
-  #ignoreMatcher;
+  #watcher: $Bindgen.FSWatcher | null | undefined;
+  #listener: WatchListener;
+  #ignoreMatcher: ((filename: unknown) => boolean) | null;
   #silentClose = false;
-  _handle;
+  _handle: FSEvent | null;
   constructor(path, options, listener) {
     super();
 
@@ -175,7 +179,7 @@ class FSWatcher extends EventEmitter {
     this._handle = new FSEvent(this);
   }
 
-  #onEvent(eventType, filenameOrError, fromAbort = false) {
+  #onEvent(eventType: string, filenameOrError: string | Buffer | Error | undefined, fromAbort = false) {
     if (eventType === "close") {
       if (this.#silentClose) return;
       // close on next microtask tick to avoid long-running function calls when
@@ -190,11 +194,11 @@ class FSWatcher extends EventEmitter {
         // 'error' listener if there is one, but is not an unhandled error
         // without one (node emits only 'close' for an abort).
         if (this.listenerCount("error") === 0) return;
-      } else if (filenameOrError.code === "EACCES") {
+      } else if ((filenameOrError as Error).code === "EACCES") {
         // Next.js/watchpack ends up watching paths it does not have access to,
         // which surfaces here as EACCES errors. Rewriting the code to EPERM
         // makes watchpack's error handling ignore the error instead of failing.
-        filenameOrError.code = "EPERM";
+        (filenameOrError as Error).code = "EPERM";
       }
 
       this.emit(eventType, filenameOrError);

@@ -184,8 +184,9 @@ fn init_modules() {
     }
 }
 
-#[inline]
+#[inline(never)]
 pub(crate) fn map() -> &'static bun_collections::StringHashMap<FallbackModule> {
+    bun_removable_features::removable_definition!(Bundler, map);
     INIT.call_once(init_modules);
     // SAFETY: `INIT` guarantees `MAP` is `Some` and never written again.
     unsafe { (*MAP.get()).as_ref().unwrap() }

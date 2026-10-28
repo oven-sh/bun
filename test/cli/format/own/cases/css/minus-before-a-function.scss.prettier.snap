@@ -1,0 +1,43 @@
+------------------
+{ printWidth: 80 }
+------------------
+.a {
+  left: calc(
+    var(--markdown-notebook-content-offset) * -1 -
+      1rem - var(--markdown-notebook-quote-indent) - var(--w)
+  );
+  width: calc(
+    var(--lemon-button-side-action-width) - var(
+        --lemon-button-padding-right,
+        var(--lemon-button-padding-h)
+      )
+  );
+  height: calc(
+    #{$calc-application-viewport-height} -
+      #{$mr-sticky-header-height} - var(--mr-review-bar-height-x)
+  );
+  top: calc(1px - var(--a));
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+.a {
+  left: calc(
+    var(--markdown-notebook-content-offset) * -1 -
+      1rem - var(--markdown-notebook-quote-indent) - var(--w)
+  );
+  width: calc(
+    var(--lemon-button-side-action-width) - var(
+        --lemon-button-padding-right,
+        var(--lemon-button-padding-h)
+      )
+  );
+  height: calc(
+    #{$calc-application-viewport-height} -
+      #{$mr-sticky-header-height} - var(--mr-review-bar-height-x)
+  );
+  top: calc(1px - var(--a));
+}
+
+===================== End =====================

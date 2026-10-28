@@ -1,0 +1,1 @@
+{ "build": ["--external", "late-package"], "skipInShell": "it asks the loader of Bun for an external package, which the jsc shell does not have" }

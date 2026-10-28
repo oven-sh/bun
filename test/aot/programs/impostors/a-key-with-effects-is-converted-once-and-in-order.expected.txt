@@ -1,0 +1,62 @@
+read -> 1
+  order: key a
+store -> {a: 1}
+  order: key a
++= -> {a: 2}
+  order: key a
+++ after -> {a: 2}
+  order: key a
+++ before -> [2, {a: 2}]
+  order: key a
+||= -> {a: "assigned"}
+  order: key a
+||= that does not assign -> {a: 1}
+  order: key a
+??= -> {a: "assigned"}
+  order: key a
+&&= -> {a: "assigned"}
+  order: key a
+call -> "with this"
+  order: key a
+delete -> [true, {}]
+  order: key a
+a key that changes: += -> {k1: 2, k2: 10, k3: 100}
+  order: turn 1
+a key that changes: ++ -> {k1: 1, k2: 11, k3: 100, k4: 1000}
+  order: turn 2
+a key that changes: ||= -> {k3: "assigned"}
+  order: turn 3
+a key that changes: read twice -> ["four", "five"]
+  order: turn 4, turn 5
+object, key, value -> "v"
+  order: object o, value v, key a
+object, key expression, value expression -> {a: "v"}
+  order: object o, key expression, value v, key a
+a store into null with a key and a value -> threw TypeError
+  order: object null, value v
+a store into undefined with a key and a value -> threw TypeError
+  order: object undefined, value v
+a read from null with a key -> threw TypeError
+  order: object null
+a call on null with a key and an argument -> threw TypeError
+  order: object null
+a call of a missing member with an argument -> threw TypeError
+  order: object o, key a, value argument
+delete from null with a key -> threw TypeError
+  order: object null
++= on null with a key and a value -> threw TypeError
+  order: object null
+in with a key and an object -> true
+  order: object o, key a
+in with a key and a text -> threw TypeError
+  order: object text
+a literal with two computed keys -> {b: "b", a: "a"}
+  order: key b, value b, key a, value a
+a pattern with two computed keys and defaults -> [1, "default b"]
+  order: object o, key b, value default b, key a
+a pattern that stores into computed members -> {first: 1, second: 2}
+  order: object source, object target, key first, object target, key second
+a key that is a symbol wrapper -> "by symbol"
+  order: hint string
+super with a key -> "base a"
+  order: key a

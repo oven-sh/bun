@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { aotTests } from "../../scripts/buildkite.ts";
 import { isPhaseGroupHeader } from "../../scripts/ci-log-phase.mjs";
 import { parseLog } from "../../scripts/ci-slowest-tests";
-import { parseLog as parseDurations } from "../../scripts/update-test-durations.mjs";
+import { isAotTest, parseLog as parseDurations } from "../../scripts/update-test-durations.mjs";
 
 // Buildkite prefixes each line with an APC timestamp: ESC `_bk;t=<ms>` BEL.
 const bk = (ts: number, body: string) => `\x1b_bk;t=${ts}\x07${body}`;
@@ -9,7 +12,7 @@ const gray = (s: string) => `\x1b[90m${s}\x1b[0m`;
 
 describe("scripts/ci-slowest-tests.ts parseLog", () => {
   test("does not charge the parallel-safe phase to the last serial test", () => {
-    // runner.node.mjs prints serial headers via startGroup (`--- [N/M] path`)
+    // runner.node.ts prints serial headers via startGroup (`--- [N/M] path`)
     // and parallel-safe headers via plain console.log (`[N/M] path`). A regex
     // that insists on `--- ` treats the first parallel header as invisible and
     // the last serial test swallows the whole phase (79.5s observed for a
@@ -120,7 +123,7 @@ describe("scripts/ci-slowest-tests.ts parseLog", () => {
   });
 
   test("ignores stray `--- ` lines that are test output, not group headers", () => {
-    // pipeTestStdout in runner.node.mjs sanitises `--- ` in streamed test
+    // pipeTestStdout in runner.node.ts sanitises `--- ` in streamed test
     // output, but a chunk boundary can split the token and the coordinator/
     // retry-preview paths write raw. Seen in build #86086: a `bun patch` diff
     // inside `test/cli/install/bun-patch.test.ts`'s span and `--- ps ---`
@@ -146,7 +149,7 @@ describe("scripts/ci-slowest-tests.ts parseLog", () => {
 
 describe("phase-header boundary", () => {
   // Both log parsers share this allowlist (scripts/ci-log-phase.mjs); if
-  // runner.node.mjs grows a new phase between the serial tests and the next
+  // runner.node.ts grows a new phase between the serial tests and the next
   // `[N/M]` header, add it there and here.
   test.each([
     [true, `--- napi prebuild: 3 addon(s), 23.9s`],
@@ -164,6 +167,25 @@ describe("phase-header boundary", () => {
   ])("%p %s", (expected, body) => {
     expect(isPhaseGroupHeader(body)).toBe(expected);
   });
+});
+
+test("scripts/update-test-durations.mjs keeps the durations of everything that the test-aot steps run", () => {
+  expect(aotTests.filter(group => !isAotTest(`${group}x.test.ts`))).toEqual([]);
+  expect(isAotTest("internal/trim/features.test.ts")).toBe(true);
+  expect(isAotTest("bundler/bundler_compile.test.ts")).toBe(false);
+});
+
+test("what .buildkite/update-test-durations.yml runs with node imports no TypeScript", () => {
+  const root = join(import.meta.dir, "..", "..");
+  const importsOf = (file: string): string[] =>
+    [...readFileSync(file, "utf8").matchAll(/^import .* from "(\.[^"]+)";$/gm)].flatMap(([, path]) => {
+      const imported = join(dirname(file), path);
+      return /\.m?ts$/.test(imported) ? [imported] : [imported, ...importsOf(imported)];
+    });
+  const commands = readFileSync(join(root, ".buildkite", "update-test-durations.yml"), "utf8");
+  const scripts = [...commands.matchAll(/^ +node (scripts\/\S+)/gm)].map(([, script]) => script);
+  expect(scripts).toContain("scripts/update-parallel-allowlist.mjs");
+  expect(scripts.filter(script => importsOf(join(root, script)).some(file => /\.m?ts$/.test(file)))).toEqual([]);
 });
 
 describe("scripts/update-test-durations.mjs parseLog", () => {

@@ -1,0 +1,192 @@
+//// damage-behind-a-call-order-of-evaluation/a-call-whose-receiver-is-damaged-by-its-own-argument.ts
+// In `tank.fill(touch(tank))` the receiver is evaluated first and the argument damages it. The method then runs on the damaged object, entered from a caller that has read the object before.
+let mode = 0;
+class Tank {
+  level: number;
+  limit: number;
+  constructor(level: number, limit: number) {
+    this.level = level;
+    this.limit = limit;
+  }
+  fill(by: number): string {
+    return this.level + by + "/" + this.limit;
+  }
+}
+function touch(tank: Tank): number {
+  if (mode === 1) delete (tank as any).level;
+  else if (mode === 2) (tank as any).limit = "none";
+  else if (mode === 3) Object.defineProperty(tank, "level", { get: () => -7 });
+  return 1;
+}
+
+function holder(tank: Tank): string {
+  const before = tank.level + tank.limit;
+  return before + " " + tank.fill(touch(tank)) + " " + tank.fill(0);
+}
+
+////= for-18	400	holder	Tank	round	1000
+//// damage-behind-a-call-order-of-evaluation/a-compound-assignment-whose-right-side-damages-the-object.ts
+// In `p.x += touch(p)` the old value is read first, then the right side runs, then the sum is stored. The right side makes the field an accessor, deletes it, freezes the object, or makes the field read-only.
+////= Point
+
+let mode = 0;
+let stored = "";
+function touch(p: Point): number {
+  if (mode === 1) {
+    Object.defineProperty(p, "x", {
+      get: () => -7,
+      set(value: number) {
+        stored += value + ";";
+      },
+    });
+  } else if (mode === 2) delete (p as any).x;
+  else if (mode === 3) Object.freeze(p);
+  else if (mode === 4) Object.defineProperty(p, "x", { writable: false });
+  return 1;
+}
+
+function holder(p: Point): string {
+  let outcome = "stored";
+  try {
+    p.x += touch(p);
+  } catch (error) {
+    outcome = (error as Error).name;
+  }
+  return outcome + " " + p.x + " " + Object.keys(p).join("");
+}
+
+for (let round = 0; round < 500; round++) {
+  mode = round % 100 === 99 ? (round + 1) / 100 : 0;
+  stored = "";
+  const line = holder(new Point(round, 1));
+  if (mode || round === 0) console.log(round + ": " + line + " " + stored);
+}
+//// damage-behind-a-call-order-of-evaluation/a-destructuring-whose-default-damages-the-object.ts
+// A destructuring pattern reads the properties of an object one after the other. The default value of the first one is a call, which damages the object before the others are read.
+type Options = { first?: number; second: number; third: number };
+
+let mode = 0;
+function fallback(options: Options): number {
+  if (mode === 1) delete (options as any).second;
+  else if (mode === 2) (options as any).third = "T";
+  else if (mode === 3) Object.defineProperty(options, "second", { get: () => -7 });
+  return 100;
+}
+
+function holder(options: Options): string {
+  const before = options.second + options.third;
+  const { first = fallback(options), second, third } = options;
+  return before + " " + first + "," + second + "," + third;
+}
+
+////= for-26	holder({ second: round, third: 1 }) + " | " + holder({ first: 5, second: round, third: 1 }
+//// damage-behind-a-call-order-of-evaluation/an-argument-replaces-the-method-that-is-being-called.ts
+// In `s.area(between())` the method is looked up before the argument is evaluated. The argument replaces the method on the prototype object, hides it on the object, or changes the prototype. The function that was found first is the one that runs.
+class Square {
+  side: number;
+  constructor(side: number) {
+    this.side = side;
+  }
+  area(extra: number): number {
+    return this.side * this.side + extra;
+  }
+}
+const area = Square.prototype.area;
+
+let mode = 0;
+function between(s: Square): number {
+  if (mode === 1) Square.prototype.area = () => -1;
+  else if (mode === 2) (s as any).area = () => -2;
+  else if (mode === 3) Object.setPrototypeOf(s, { area: () => -3 });
+  else if (mode === 4) delete (Square.prototype as any).area;
+  return 1;
+}
+
+function holder(s: Square): string {
+  const first = s.area(0);
+  const second = s.area(between(s));
+  let third: string;
+  try {
+    third = "" + s.area(0);
+  } catch (error) {
+    third = (error as Error).name;
+  }
+  return first + " " + second + " " + third;
+}
+
+for (let round = 0; round < 500; round++) {
+  mode = round % 100 === 99 ? (round + 1) / 100 : 0;
+  const line = holder(new Square(round));
+  Square.prototype.area = area;
+  if (mode || round === 0) console.log(round + ": " + line);
+}
+//// damage-behind-a-call-order-of-evaluation/an-element-store-whose-right-side-changes-the-array.ts
+// In `list[index] = touch(list)` the array and the index are evaluated first, then the right side runs, then the element is stored. The right side cuts the array, freezes it, changes its kind, or makes the element an accessor.
+let mode = 0;
+let caught = "";
+function touch(list: number[]): number {
+  if (mode === 1) list.length = 0;
+  else if (mode === 2) Object.freeze(list);
+  else if (mode === 3) (list as any)[0] = "s";
+  else if (mode === 4) {
+    Object.defineProperty(list, 2, {
+      get: () => -5,
+      set(value: number) {
+        caught += value;
+      },
+    });
+  } else if (mode === 5) list.push(1, 2, 3);
+  return 9;
+}
+
+function holder(list: number[]): string {
+  const before = list[2] + list.length;
+  let outcome = "stored";
+  try {
+    list[2] = touch(list);
+    list[list.length] = touch(list);
+  } catch (error) {
+    outcome = (error as Error).name;
+  }
+  return before + " " + outcome + " " + list.join() + " " + list.length;
+}
+
+for (let round = 0; round < 600; round++) {
+  mode = round % 100 === 99 ? (round + 1) / 100 : 0;
+  caught = "";
+  const line = holder([round, 1, 2, 3]);
+  if (mode || round === 0) console.log(round + ": " + line + " " + caught);
+}
+//// damage-behind-a-call-order-of-evaluation/reads-on-both-sides-of-a-call-in-one-expression.ts
+// One expression reads a field, makes the call that damages the object, and reads the field again: in a sum, in an array literal, in an object literal, in a template, in the arguments of another call.
+////= Point
+
+let strikes = false;
+function touch(p: Point): number {
+  if (strikes) (p as any).x = "T";
+  return 0;
+}
+function three(a: unknown, b: unknown, c: unknown): string {
+  return a + "," + b + "," + c;
+}
+
+function inSum(p: Point): string {
+  return "" + ((p.x as any) + touch(p) + p.x);
+}
+function inArray(p: Point): string {
+  return [p.x, touch(p), p.x].join();
+}
+function inObject(p: Point): string {
+  return JSON.stringify({ a: p.x, b: touch(p), c: p.x });
+}
+function inTemplate(p: Point): string {
+  return `${p.x},${touch(p)},${p.x}`;
+}
+function inArguments(p: Point): string {
+  return three(p.x, touch(p), p.x);
+}
+function inCondition(p: Point): string {
+  return p.x >= 0 && touch(p) === 0 && p.x >= 0 ? "still a number" : "no number";
+}
+
+////= for-24	[inSum, inArray, inObject, inTemplate, inArguments, inCondition].map(way => way(new Point(round, 1))).join(" | "

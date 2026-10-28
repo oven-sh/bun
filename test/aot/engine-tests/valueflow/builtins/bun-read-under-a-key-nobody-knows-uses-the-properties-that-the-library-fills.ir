@@ -1,0 +1,16 @@
+# Bun[key]
+# In place of a member that was left out stands a function, which an object cannot be taken for: on Windows a function of the library makes the object of the environment
+# RUN: valueflow-solve used
+# CHECK: BunEnv
+# CHECK-NOT: BunGlob
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Bun
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="key" [isFreeName]
+    v3 = ElemGet v0, v2
+    Return v3
+}

@@ -1,0 +1,1 @@
+{ "skipInShell": "it needs node:async_hooks, queueMicrotask and Workers, which the jsc shell does not have", "alone": "it measures time, memory or what is collected, and that hangs on what the compiler knows about the whole executable" }

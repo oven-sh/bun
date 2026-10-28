@@ -1,0 +1,14 @@
+{
+  "entryPoints": [
+    "./counted.cjs",
+    "./esm-flagged.mjs",
+    "./esm-module-exports.mjs",
+    "./esm-null-module-exports.mjs",
+    "./esm-plain.mjs",
+    "./esm-unflagged.mjs",
+    "./replaces-exports.cjs",
+    "./nested/resolver.cjs",
+    "./nested/sibling.cjs"
+  ],
+  "skipInShell": "it needs Bun's require, require.cache and import.meta.resolve"
+}

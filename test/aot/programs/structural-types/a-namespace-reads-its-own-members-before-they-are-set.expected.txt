@@ -1,0 +1,9 @@
+early: string depth undefined undefined, depth + 1 number NaN, width undefined undefined, height undefined undefined, panel threw ReferenceError, hidden threw ReferenceError
+late: string depth number 3, depth + 1 number 4, width number 4, height number 5, panel number 6, hidden number 7
+second part: number 4
+keys: string early,depth,width,height,Panel,describe,second
+after stores through an alias: string depth number 30, depth + 1 number 31, width number 40, height number 5, panel number 6, hidden number 7
+depth from outside: number 30
+width from outside: number 40
+a namespace used before it runs: string threw TypeError
+and after: string 8

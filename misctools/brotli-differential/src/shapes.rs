@@ -1,5 +1,5 @@
 //! Inputs of shapes that random data and files do not have.
-use crate::enc::{self, EncCase};
+use crate::enc::{self, EncCase, Step};
 use crate::r#gen;
 use crate::rng::Rng;
 use bun_brotli::{Decoder, DecoderResult, Encoder, EncoderOperation, EncoderParameter, PreparedDictionary};
@@ -1492,7 +1492,7 @@ pub fn run_reach(seed: u64, qualities: u64) {
 
 /// Qualities 10 and 11 tell UTF-8 from other data, by whether more than three quarters of the bytes of a meta-block belong to
 /// well-formed characters, and write the answer to the stream. Here it depends on the first or the last character of a
-/// length, on what is just not a character, or on a few bytes more or less.
+/// length, on what is just not a character, on a few bytes more or less, or on a character that is cut.
 pub fn run_utf8(seed0: u64, iters: u64, qualities: u64) {
     const EDGES: [&[u8]; 34] = [
         &[0x00],
@@ -1536,6 +1536,40 @@ pub fn run_utf8(seed0: u64, iters: u64, qualities: u64) {
         let seed = seed0.wrapping_add(it);
         let mut rng = Rng(seed);
         let q = *rng.pick(&qs);
+        if rng.chance(1, 8) {
+            // A character that the end of a meta-block cuts does not count, even if what comes after it in the ring buffer,
+            // which was written a lap before, completes it. With it, more than three quarters would be UTF-8.
+            let lap = 2usize << 16;
+            let unit: &[u8] = *rng.pick(&[&[0xC2, 0x80][..], &[0xE0, 0xA0, 0x80], &[0xF0, 0x90, 0x80, 0x80]]);
+            let cut = rng.range(1, unit.len() - 1);
+            let units = rng.range(3, 40);
+            let others = (units * unit.len()).div_ceil(3) + rng.below(unit.len()) - cut;
+            let mut pieces: Vec<&[u8]> = vec![unit; units];
+            pieces.resize(units + others, &[0xFF]);
+            for i in (1..pieces.len()).rev() {
+                pieces.swap(i, rng.below(i + 1));
+            }
+            pieces.push(&unit[..cut]);
+            let last = pieces.concat();
+            let end = lap + rng.range(last.len() + 8, 60_000);
+            let block: Vec<u8> = (0..64).map(|_| rng.next() as u8).collect();
+            let mut data: Vec<u8> = block.iter().copied().cycle().take(end - last.len()).collect();
+            data[end - lap..end - lap + unit.len() - cut].copy_from_slice(&unit[cut..]);
+            data.extend_from_slice(&last);
+            let steps = [Step { op: 1, n: end - last.len() }, Step { op: 1, n: last.len() }];
+            let params = vec![(1, q), (2, rng.range(10, 16) as u32)];
+            for schedule in [0, rng.next() | 1] {
+                let case = EncCase { data: data.clone(), params: params.clone(), dicts: Vec::new(), schedule, misuse: false };
+                match enc::compare_steps(&case, &steps).and_then(|out| enc::round_trip(&out, &data, &[], false, 0).map(|()| out)) {
+                    Ok(out) => {
+                        totals.0 += data.len();
+                        totals.1 += out.len();
+                    }
+                    Err(e) => panic!("seed {seed} schedule {schedule}: {e}\nlen {} params {params:?}, the last {} bytes are a meta-block", data.len(), last.len()),
+                }
+            }
+            continue;
+        }
         let most = if rng.chance(1, 4) { 100_000 } else { 2000 };
         let len = rng.range(16, most);
         let mut data = Vec::new();

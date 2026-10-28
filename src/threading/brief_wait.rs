@@ -48,22 +48,27 @@ impl Patience {
 
     /// Calls `is_ready` until it returns true or `LENGTH` passes, and yields the processor in between: the other thread may need it.
     pub fn wait_briefly(&self, is_ready: impl FnMut() -> bool) -> bool {
-        self.wait_for(length(), is_ready)
+        let start = Instant::now();
+        self.wait_for(length(), || start.elapsed(), is_ready)
     }
 
-    fn wait_for(&self, length: Duration, mut is_ready: impl FnMut() -> bool) -> bool {
-        let start = Instant::now();
+    fn wait_for(
+        &self,
+        length: Duration,
+        elapsed: impl Fn() -> Duration,
+        mut is_ready: impl FnMut() -> bool,
+    ) -> bool {
         let is_ready = loop {
             if is_ready() {
                 break true;
             }
-            if start.elapsed() >= length {
+            if elapsed() >= length {
                 break false;
             }
             std::thread::yield_now();
         };
         // Ready but late: the processor went to another program meanwhile, and a sleep would have cost no more.
-        self.record(is_ready && start.elapsed() <= length.saturating_mul(Self::LATE));
+        self.record(is_ready && elapsed() <= length.saturating_mul(Self::LATE));
         is_ready
     }
 
@@ -81,36 +86,50 @@ impl Patience {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::cell::Cell;
 
-    const NEVER: Duration = Duration::MAX;
+    const LENGTH: Duration = Duration::from_micros(20);
+
+    /// A wait of `LENGTH` on a clock that `is_ready` sets: it returns the time at which it is ready, if it is.
+    fn wait(patience: &Patience, mut is_ready: impl FnMut() -> (Duration, bool)) -> bool {
+        let now = Cell::new(Duration::ZERO);
+        patience.wait_for(
+            LENGTH,
+            || now.get(),
+            || {
+                let (time, is_ready) = is_ready();
+                now.set(time);
+                is_ready
+            },
+        )
+    }
 
     fn wait_in_vain(patience: &Patience) {
-        assert!(!patience.wait_for(Duration::ZERO, || false));
+        assert!(!wait(patience, || (LENGTH, false)));
     }
 
     #[test]
     fn a_wait_ends_when_it_is_ready() {
         let mut calls = 0;
-        assert!(Patience::new().wait_for(NEVER, || {
+        assert!(wait(&Patience::new(), || {
             calls += 1;
-            calls == 3
+            (Duration::ZERO, calls == 3)
         }));
         assert_eq!(calls, 3);
     }
 
     #[test]
-    fn a_wait_asks_once_before_its_length_counts() {
-        assert!(Patience::new().wait_for(Duration::ZERO, || true));
+    fn a_wait_ends_when_its_length_has_passed() {
         let mut calls = 0;
-        assert!(!Patience::new().wait_for(Duration::ZERO, || {
+        assert!(!wait(&Patience::new(), || {
             calls += 1;
-            false
+            (LENGTH / 4 * calls, false)
         }));
-        assert_eq!(calls, 1);
+        assert_eq!(calls, 4);
     }
 
     #[test]
-    fn a_wait_that_is_never_ready_ends() {
+    fn a_wait_on_the_real_clock_ends() {
         assert!(!Patience::new().wait_briefly(|| false));
     }
 
@@ -136,7 +155,7 @@ mod tests {
         for _ in 0..5 {
             wait_in_vain(&patience);
         }
-        assert!(patience.wait_for(NEVER, || true));
+        assert!(wait(&patience, || (LENGTH * Patience::LATE, true)));
         assert!(patience.allows_wait());
         wait_in_vain(&patience);
         assert!(!patience.allows_wait());
@@ -146,24 +165,9 @@ mod tests {
     #[test]
     fn a_wait_that_ends_late_counts_as_in_vain() {
         let patience = Patience::new();
-        let length = Duration::from_millis(1);
-        assert!(patience.wait_for(length, || {
-            std::thread::sleep(4 * Patience::LATE * length);
-            true
-        }));
+        let late = LENGTH * Patience::LATE + Duration::from_nanos(1);
+        assert!(wait(&patience, || (late, true)));
         assert!(!patience.allows_wait());
-        assert!(patience.allows_wait());
-    }
-
-    #[test]
-    fn a_wait_that_ends_a_little_after_its_length_counts_as_in_time() {
-        let patience = Patience::new();
-        wait_in_vain(&patience);
-        let length = Duration::from_millis(100);
-        assert!(patience.wait_for(length, || {
-            std::thread::sleep(length + length / 2);
-            true
-        }));
         assert!(patience.allows_wait());
     }
 }

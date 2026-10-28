@@ -965,8 +965,9 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     // siblings would alias. Dereference per-field via the raw `vm` ptr.
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
     let el: *mut bun_jsc::event_loop::EventLoop = unsafe { &*vm }.event_loop;
-    // SAFETY: `el` is the live per-thread event loop (field of `*vm`).
-    let loop_ = unsafe { (*el).usockets_loop() };
+    // SAFETY: `el` is the live per-thread event loop (field of `*vm`). Nothing frees its uws loop
+    // during a tick.
+    let loop_ = unsafe { &*(*el).usockets_loop() };
 
     // ── tick_immediate_tasks ────────────────────────────────────────────
     // After this call `immediate_tasks` reflects next-tick immediates, so
@@ -992,23 +993,21 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
             .pending_unref_counter
             .swap(0, core::sync::atomic::Ordering::Relaxed);
         if pending_unref > 0 {
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe { (*loop_).unref_count(pending_unref) };
+            loop_.unref_count(pending_unref);
         }
     }
 
     // ── DateHeaderTimer / imminent-GC ───────────────────────────────────
     let state = runtime_state();
     if !state.is_null() {
-        // SAFETY: `state` is the live per-thread `RuntimeState`; `loop_` is the
-        // live per-thread uws loop; `vm` per fn contract. The re-entrant
+        // SAFETY: `state` is the live per-thread `RuntimeState`; `vm` per fn contract. The re-entrant
         // `All::insert`/`update` inside `DateHeaderTimer::enable` touches only
         // fields disjoint from `date_header_timer` (raw-ptr-per-field pattern,
         // same as `Bun__internal_ensureDateHeaderTimerIsEnabled`).
         unsafe {
             (*state)
                 .timer
-                .update_date_header_timer_if_necessary(&*loop_, vm)
+                .update_date_header_timer_if_necessary(loop_, vm)
         };
     }
     // SAFETY: `el` is the live per-thread event loop.
@@ -1020,8 +1019,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         // poll. The uws loop must always be polled
         // (`tick_with_timeout`/`tick_without_idle`); `EventLoop::tick()` would only
         // drain JS tasks and never touch kqueue/epoll.
-        // SAFETY: `loop_` is the live per-thread uws loop.
-        unsafe { (*loop_).tick_without_idle() };
+        loop_.tick_without_idle();
         // Still run the post-poll hooks.
         // SAFETY: per fn contract.
         unsafe { (*vm).on_after_event_loop() };
@@ -1055,18 +1053,9 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
             || !unsafe { &*el }.immediate_tasks.is_empty()
             || unsafe { &*el }.has_pending_tasks();
         // Fold the QUIC deadline into the poll timeout.
-        // SAFETY: `loop_` is the live per-thread uws loop.
-        let quic_next_tick_us = unsafe {
-            let ild = &(*loop_).internal_loop_data;
-            if ild.quic_head.is_null() {
-                None
-            } else {
-                Some(ild.quic_next_tick_us)
-            }
-        };
+        let quic_next_tick_us = loop_.internal_loop_data.quic_next_tick_us();
         let mut timespec = bun_core::Timespec { sec: 0, nsec: 0 };
-        // SAFETY: `loop_` is the live per-thread uws loop.
-        if unsafe { (*loop_).is_active() } {
+        if loop_.is_active() {
             // Before `get_timeout`: the first call arms the idle GC timer, and a
             // timer armed after the poll deadline is computed is not in that deadline.
             // SAFETY: `el` is the live per-thread event loop.
@@ -1097,14 +1086,9 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
                 )
             };
             let now_ns = now.map_or(bun_uws::NOW_NS_UNKNOWN, |t| t.ns());
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe {
-                (*loop_)
-                    .tick_with_timeout(if have_timeout { Some(&timespec) } else { None }, now_ns)
-            };
+            loop_.tick_with_timeout(if have_timeout { Some(&timespec) } else { None }, now_ns);
         } else {
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe { (*loop_).tick_without_idle() };
+            loop_.tick_without_idle();
         }
     }
 
@@ -1141,8 +1125,9 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     // Note: reshaped for borrowck — see `auto_tick` above.
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
     let el: *mut bun_jsc::event_loop::EventLoop = unsafe { &*vm }.event_loop;
-    // SAFETY: `el` is the live per-thread event loop (field of `*vm`).
-    let loop_ = unsafe { (*el).usockets_loop() };
+    // SAFETY: `el` is the live per-thread event loop (field of `*vm`). Nothing frees its uws loop
+    // during a tick.
+    let loop_ = unsafe { &*(*el).usockets_loop() };
 
     // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
     unsafe { (*el).tick_immediate_tasks(vm) };
@@ -1164,8 +1149,7 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
             .pending_unref_counter
             .swap(0, core::sync::atomic::Ordering::Relaxed);
         if pending_unref > 0 {
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe { (*loop_).unref_count(pending_unref) };
+            loop_.unref_count(pending_unref);
         }
     }
 
@@ -1175,13 +1159,12 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
         unsafe {
             (*state)
                 .timer
-                .update_date_header_timer_if_necessary(&*loop_, vm)
+                .update_date_header_timer_if_necessary(loop_, vm)
         };
     }
 
     if state.is_null() {
-        // SAFETY: `loop_` is the live per-thread uws loop.
-        unsafe { (*loop_).tick_without_idle() };
+        loop_.tick_without_idle();
         // SAFETY: per fn contract.
         unsafe { (*vm).on_after_event_loop() };
         return;
@@ -1199,18 +1182,9 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
             || uv_idle_started
             || !unsafe { &*el }.immediate_tasks.is_empty()
             || unsafe { &*el }.has_pending_tasks();
-        // SAFETY: `loop_` is the live per-thread uws loop.
-        let quic_next_tick_us = unsafe {
-            let ild = &(*loop_).internal_loop_data;
-            if ild.quic_head.is_null() {
-                None
-            } else {
-                Some(ild.quic_next_tick_us)
-            }
-        };
+        let quic_next_tick_us = loop_.internal_loop_data.quic_next_tick_us();
         let mut timespec = bun_core::Timespec { sec: 0, nsec: 0 };
-        // SAFETY: `loop_` is the live per-thread uws loop.
-        if unsafe { (*loop_).is_active() } {
+        if loop_.is_active() {
             // Before `get_timeout` — see the matching call in `auto_tick`.
             // SAFETY: `el` is the live per-thread event loop.
             unsafe { (*el).process_gc_timer() };
@@ -1231,14 +1205,9 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
                 )
             };
             let now_ns = now.map_or(bun_uws::NOW_NS_UNKNOWN, |t| t.ns());
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe {
-                (*loop_)
-                    .tick_with_timeout(if have_timeout { Some(&timespec) } else { None }, now_ns)
-            };
+            loop_.tick_with_timeout(if have_timeout { Some(&timespec) } else { None }, now_ns);
         } else {
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe { (*loop_).tick_without_idle() };
+            loop_.tick_without_idle();
         }
     }
 

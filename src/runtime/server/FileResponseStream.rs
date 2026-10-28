@@ -608,7 +608,7 @@ impl FileResponseStream {
         {
             // SAFETY: `r#loop()` returns the live uws WindowsLoop; its `uv_loop`
             // is set by C `us_create_loop` and valid for the loop's lifetime.
-            return unsafe { (*self.event_loop().r#loop()).uv_loop };
+            return unsafe { (*self.event_loop().r#loop()).uv_loop() };
         }
         #[cfg(not(windows))]
         {

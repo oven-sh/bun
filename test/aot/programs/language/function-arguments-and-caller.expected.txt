@@ -1,0 +1,34 @@
+sloppy arguments === null: true
+sloppy caller === null: true
+sloppy arguments after a store: null
+sloppy caller after a store: null
+strict arguments: null
+strict caller: null
+strict arguments store: no error
+strict caller store: no error
+arrow arguments: TypeError
+arrow caller: TypeError
+arrow arguments store: TypeError
+arrow caller store: TypeError
+method arguments: TypeError
+method caller: TypeError
+method arguments store: TypeError
+method caller store: TypeError
+class arguments: TypeError
+class caller: TypeError
+class arguments store: TypeError
+class caller store: TypeError
+generator arguments: TypeError
+generator caller: TypeError
+generator arguments store: TypeError
+generator caller store: TypeError
+async arguments: TypeError
+async caller: TypeError
+async arguments store: TypeError
+async caller store: TypeError
+async generator arguments: TypeError
+async generator caller: TypeError
+async generator arguments store: TypeError
+async generator caller store: TypeError
+new Function arguments length: TypeError
+new Function caller: null

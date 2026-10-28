@@ -393,7 +393,7 @@ You can change this behavior with the `"embed"` attribute:
 import db from "./my.db" with { type: "sqlite", embed: "true" };
 ```
 
-With a [standalone executable](/bundler/executables), Bun embeds the database into the single-file executable.
+With a [standalone executable](/compiler/executables), Bun embeds the database into the single-file executable.
 
 Otherwise, the database to embed is copied into the `outdir` with a hashed filename.
 

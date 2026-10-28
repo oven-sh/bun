@@ -30,6 +30,24 @@ export const isBuildkite = process.env.BUILDKITE === "true";
 export const isGithubAction = process.env.GITHUB_ACTIONS === "true";
 export const isCI = process.env.CI === "true" || isBuildkite || isGithubAction;
 
+/**
+ * What the test-aot steps run, as the starts of paths under test/. With test/aot go the tests of --aot, --trim, --library and
+ * --dts that lie beside the bundler's and the command line's. Each of them builds executables: on macOS, where test-bun has
+ * two shards, they took as long as everything else in those shards.
+ */
+export const aotTests = [
+  "aot/",
+  "bundler/bun-build-api-dts",
+  "bundler/bun-build-dts",
+  "bundler/bundler_compile_aot",
+  "bundler/compile-aot",
+  "bundler/compile-trim",
+  "bundler/trim-runtime-icu/",
+  "cli/aot-",
+  "cli/compile/compile-library",
+  "internal/trim/features",
+];
+
 /** An environment variable that has to be set. */
 export function getEnv(name: string): string {
   const value = process.env[name];

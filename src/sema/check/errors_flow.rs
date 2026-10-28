@@ -16,9 +16,9 @@ impl Checker<'_, '_> {
             StmtKind::Var(decls) => decls
                 .iter()
                 .any(|d| hir[d].kind != VarKind::Var || hir[d].init.is_some()),
-            // A block and `;` aren't executable, but `with (e) s` is stored as a block.
-            StmtKind::Block(_) => super::errors_statements::is_with_statement(hir, s),
-            StmtKind::Empty
+            // A block and `;` aren't executable.
+            StmtKind::Block(_)
+            | StmtKind::Empty
             | StmtKind::Fn(_)
             | StmtKind::Interface(_)
             | StmtKind::TypeAlias(_)
@@ -38,8 +38,8 @@ impl Checker<'_, '_> {
         let hir = self.hir(file);
         let flow = self.bound(file).flow_of_stmt(s);
         // `ShouldPreserveConstEnums`
-        let preserves_const_enums =
-            self.p.files.options.preserve_const_enums || self.p.files.options.isolated_modules;
+        let options = self.module_options(file);
+        let preserves_const_enums = options.preserve_const_enums || options.isolated_modules;
         match hir[s].kind {
             // The binder doesn't give a class, an enum or a namespace a flow node, so only the reachability that the
             // binder itself determines applies to them.
@@ -97,10 +97,10 @@ impl Checker<'_, '_> {
                 break;
             }
             last = next;
-            self.reported_unreachable_nodes.push(next);
+            self.reported_unreachable_nodes.insert(next);
         }
         let end = self.end_of_stmt(file, last);
-        let is_error = self.p.files.options.allow_unreachable_code == Some(false);
+        let is_error = self.module_options(file).allow_unreachable_code == Some(false);
         let diagnostic = self.new_diagnostic((file, hir[s].start, end), 7027, &[]);
         self.add_error_or_suggestion(is_error, diagnostic);
         true
@@ -153,6 +153,7 @@ impl Checker<'_, '_> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let f = &hir[func];
         if !matches!(f.body, FnBody::Block(_))
+            || self.is_left_out(file, func)
             || matches!(
                 f.kind,
                 FnKind::Constructor | FnKind::Setter | FnKind::StaticBlock
@@ -193,7 +194,7 @@ impl Checker<'_, '_> {
             // A getter without a symbol: the setter's parameter annotation, falling back to the type inferred from the
             // body.
             Some(self.return_type_of_fn(file, func))
-        } else if self.p.files.options.no_implicit_returns {
+        } else if self.module_options(file).no_implicit_returns {
             None
         } else {
             return;
@@ -217,12 +218,11 @@ impl Checker<'_, '_> {
             Some(TypeId::NEVER) => 2534,
             Some(_) if !has_explicit_return => 2355,
             Some(t)
-                if self.p.files.options.strict_null_checks
-                    && !self.is_assignable(TypeId::UNDEFINED, t) =>
+                if self.reports_null_checks(file) && !self.is_assignable(TypeId::UNDEFINED, t) =>
             {
                 2366
             }
-            _ if self.p.files.options.no_implicit_returns => {
+            _ if self.module_options(file).no_implicit_returns => {
                 if declared.is_none() {
                     if !has_explicit_return {
                         return;

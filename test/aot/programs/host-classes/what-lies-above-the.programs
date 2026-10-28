@@ -1,0 +1,9 @@
+//// what-lies-above-the-prototype-of-a-host-class-is-changed-through-an-instance.mjs
+// The prototype object of a class of the host is reached through an instance, which native code has made, and is given another object to lie below.
+// SocketAddress is none of the classes whose prototypes are read-only.
+import { SocketAddress } from "node:net";
+const holder = new SocketAddress({ address: "127.0.0.1", port: 80 });
+const prototype = Object.getPrototypeOf(holder);
+delete prototype.address;
+Object.setPrototypeOf(prototype, Object.create(Object.getPrototypeOf(prototype), { address: { value: "from behind", configurable: true } }));
+console.log(holder.address);

@@ -1,0 +1,12 @@
+import "./first.cjs";
+const asked = import("./asked.cjs");
+import.meta.require("./requires-what-is-asked-for.cjs");
+console.log("asked", (await asked).parent());
+const earlier = await import("./imported-earlier.cjs");
+const later = await import("./requires-what-was-imported.cjs");
+console.log("imported earlier", earlier.early, earlier.parent(), later.children());
+await import("./requires-what-is-imported-later.cjs");
+const kept = await import("./imported-later.cjs");
+console.log("imported later", kept.early, kept.parent());
+await import("./graph.mjs");
+console.log("main");

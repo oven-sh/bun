@@ -88,6 +88,22 @@ describe("require(esm) rejects top-level await before evaluating anything", () =
       ...fixtures,
       "awaits-gate.mjs": `globalThis.order.push("awaits-gate"); await globalThis.gate; export const x = "gate";`,
       "imports-gate.mjs": `import { x as gate } from "./awaits-gate.mjs"; globalThis.order.push("imports-gate"); export const x = "imports:" + gate;`,
+      // Before its await a module has begun and waits for nothing: a module that imports it is a cycle, as without the await.
+      "before-its-await.mjs": `
+        import { createRequire } from "node:module";
+        const require = createRequire(import.meta.url);
+        export const early = "early";
+        export const cycle = require("./imports-before-its-await.mjs").seen;
+        export let itself;
+        try {
+          require("./before-its-await.mjs");
+          itself = "returned";
+        } catch (e) {
+          itself = e.code;
+        }
+        await 0;
+      `,
+      "imports-before-its-await.mjs": `import { early } from "./before-its-await.mjs"; export const seen = early;`,
       "main.cjs": `
         const { attempt } = require("./attempt.cjs");
         let open;
@@ -101,7 +117,9 @@ describe("require(esm) rejects top-level await before evaluating anything", () =
           const namespace = await pending;
           const afterwards = [attempt("./awaits-gate.mjs"), attempt("./imports-gate.mjs")];
           const same = require("./awaits-gate.mjs") === namespace;
-          console.log(JSON.stringify({ whileAwaiting, orderWhileAwaiting, afterwards, same, order: globalThis.order }));
+          const { cycle, itself } = await import("./before-its-await.mjs");
+          const beforeItsAwait = { cycle, itself };
+          console.log(JSON.stringify({ whileAwaiting, orderWhileAwaiting, afterwards, same, beforeItsAwait, order: globalThis.order }));
         })();
       `,
     });
@@ -110,6 +128,7 @@ describe("require(esm) rejects top-level await before evaluating anything", () =
       orderWhileAwaiting: ["awaits-gate"],
       afterwards: [{ returned: "gate" }, { returned: "imports:gate" }],
       same: true,
+      beforeItsAwait: { cycle: "early", itself: "ERR_REQUIRE_ASYNC_MODULE" },
       order: ["awaits-gate", "imports-gate"],
     });
   });

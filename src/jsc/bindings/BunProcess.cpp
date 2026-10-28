@@ -14,7 +14,6 @@
 #include <node_version.h>
 #include <wtf/Scope.h>
 #include <JavaScriptCore/AOTBuiltinModules.h>
-#include <JavaScriptCore/AOTHost.h>
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSMicrotask.h>
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -53,9 +52,6 @@
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
-#include <JavaScriptCore/JSModuleLoader.h>
-#include <JavaScriptCore/JSModuleNamespaceObject.h>
-#include <JavaScriptCore/ModuleRegistryEntry.h>
 #include "wtf-bindings.h"
 #include "EventLoopTask.h"
 #include "JSEventListener.h"
@@ -3416,6 +3412,55 @@ static JSValue constructArgv(VM& vm, JSObject* processObject)
     return JSValue::decode(Bun__Process__createArgv(processObject->globalObject()));
 }
 
+static void storeEntryPath(JSGlobalObject* globalObject, JSValue argv, const BunString& previous, const BunString& next)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* array = argv ? dynamicDowncast<JSArray>(argv) : nullptr;
+    if (!array) {
+        return;
+    }
+
+    // An accessor, or any value but the path the runner stored, is the program's and stays.
+    PropertySlot slot(array, PropertySlot::InternalMethodType::VMInquiry, &vm);
+    bool hasEntry = array->methodTable()->getOwnPropertySlotByIndex(array, globalObject, 1, slot);
+    RETURN_IF_EXCEPTION(scope, );
+    if (!hasEntry || !slot.isValue()) {
+        return;
+    }
+    JSValue entry = slot.getValue(globalObject, 1u);
+    if (!entry.isString()) {
+        return;
+    }
+    auto path = asString(entry)->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
+    if (path.data != previous.toWTFString(BunString::ZeroCopy)) {
+        return;
+    }
+
+    // An assignment that does not throw: a frozen array keeps its element.
+    RELEASE_AND_RETURN(scope, void(array->putByIndexInline(globalObject, 1u, jsString(vm, next.toWTFString()), false)));
+}
+
+// process.argv[1] is the entry path. Every holder of the array (Bun.argv, the node:process export, a reference the program kept) sees a store into it.
+extern "C" void Bun__Process__entryPointDidChange(Zig::GlobalObject* globalObject, const BunString* previous, const BunString* next)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto name = Identifier::fromString(vm, "argv"_s);
+
+    // Not a get(): that would build the array, or call a getter the program installed.
+    if (globalObject->hasProcessObject()) {
+        storeEntryPath(globalObject, globalObject->processObject()->getDirect(vm, name), *previous, *next);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+    // Bun.argv holds another array once the program has assigned to process.argv.
+    if (globalObject->m_bunObject.isInitialized()) {
+        RELEASE_AND_RETURN(scope, storeEntryPath(globalObject, globalObject->bunObject()->getDirect(vm, name), *previous, *next));
+    }
+}
+
 static JSValue constructExecArgv(VM& vm, JSObject* processObject)
 {
     return JSValue::decode(Bun__Process__createExecArgv(processObject->globalObject()));
@@ -3438,73 +3483,6 @@ extern "C" EncodedJSValue Bun__Process__getArgv(JSGlobalObject* lexicalGlobalObj
     JSValue argv = globalObject->processObject()->getArgv(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(argv);
-}
-
-static void repointOwnDataProperty(VM& vm, JSObject* object, const Identifier& name, JSValue value)
-{
-    unsigned attributes = 0;
-    PropertyOffset offset = object->structure()->get(vm, name, attributes);
-    if (!isValidOffset(offset) || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)) {
-        return;
-    }
-    // A compiled executable lets nobody store to a member that the program never stores to. This is the host's own store.
-    JSC::AllowLazyMaterializationOfImmutableProperties allowStores(vm);
-    object->putDirect(vm, name, value, attributes);
-}
-
-// process and Bun reify the property into an own value on first read; the node:process and bun modules bind it on first import.
-void repointProcessProperty(Zig::GlobalObject* globalObject, const Identifier& name, JSValue value)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (globalObject->hasProcessObject()) {
-        repointOwnDataProperty(vm, globalObject->processObject(), name, value);
-    }
-    if (globalObject->m_bunObject.isInitialized()) {
-        repointOwnDataProperty(vm, globalObject->bunObject(), name, value);
-    }
-    // Compiled code keeps what the first read of the property on process and on Bun gave.
-    JSC::AOT::hostDidReplaceProperty(globalObject, name.impl());
-
-    for (auto moduleKey : { "node:process"_s, "bun"_s }) {
-        auto* entry = globalObject->moduleLoader()->registryEntry(Identifier::fromString(vm, moduleKey));
-        if (!entry || !isModuleEvaluated(entry->record())) {
-            continue;
-        }
-        auto* moduleNamespace = entry->record()->getModuleNamespace(globalObject);
-        RETURN_IF_EXCEPTION(scope, void());
-        moduleNamespace->overrideExportValue(globalObject, name, value);
-        RETURN_IF_EXCEPTION(scope, void());
-    }
-}
-
-// argv[1] is the VM's entry point, which the test runner changes for every file.
-extern "C" void Bun__Process__resetArgv(Zig::GlobalObject* globalObject)
-{
-    if (!globalObject->hasProcessObject()) {
-        return;
-    }
-
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    auto* process = globalObject->processObject();
-    auto name = Identifier::fromString(vm, "argv"_s);
-    // Not process.argv: a read stores the array as an own value of the process object, and that is the copy to replace.
-    JSValue argv = constructArgv(vm, process);
-    if (!scope.exception()) {
-        unsigned attributes = 0;
-        if (!isValidOffset(process->structure()->get(vm, name, attributes))) {
-            // Nothing has read process.argv yet. The process object takes the array now: a later read would build a second one, apart from the module bindings.
-            JSC::AllowLazyMaterializationOfImmutableProperties allowStores(vm);
-            process->putDirect(vm, name, argv, 0);
-        }
-        repointProcessProperty(globalObject, name, argv);
-    }
-    if (auto* exception = scope.exception()) [[unlikely]] {
-        CLEAR_IF_EXCEPTION(scope);
-        Bun__reportError(globalObject, JSValue::encode(exception));
-    }
 }
 
 extern "C" EncodedJSValue Bun__Process__getExecArgv(JSGlobalObject* lexicalGlobalObject)

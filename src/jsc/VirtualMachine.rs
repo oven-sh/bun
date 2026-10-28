@@ -502,7 +502,12 @@ unsafe extern "C" {
 
     safe fn Process__dispatchOnBeforeExit(global: &JSGlobalObject, code: u8);
     safe fn Process__dispatchOnExit(global: &JSGlobalObject, code: u8);
-    safe fn Bun__Process__resetArgv(global: &JSGlobalObject);
+    /// Stores `next` over `previous` at index 1 of a `process.argv` array that was already built. Can throw.
+    safe fn Bun__Process__entryPointDidChange(
+        global: &JSGlobalObject,
+        previous: &bun_core::String,
+        next: &bun_core::String,
+    );
     safe fn Bun__closeAllSQLiteDatabasesForTermination(global: &JSGlobalObject);
     safe fn Bun__closeAllNodeSqliteDatabasesForTermination(global: &JSGlobalObject);
     safe fn Bun__WebView__closeAllForTermination();
@@ -5921,10 +5926,22 @@ impl VirtualMachine {
         let entry_path = crate::compiled_program::entry_module_key(entry_path);
         self.has_loaded = crate::compiled_program::runs_in_place()
             && crate::compiled_program::is_compiled_module(entry_path);
+        let previous_main = self.main;
         self.set_main(Some(entry_path));
         self.main_resolved_path = bun_core::String::EMPTY;
         self.overridden_main.deinit();
-        Bun__Process__resetArgv(self.global());
+        if let Some(previous) = previous_main.as_ref().map(|main| main.slice())
+            && previous != entry_path
+        {
+            // No isolation swap cleared `main`: this global ran `previous`, and a process.argv array it built still holds that path.
+            jsc::from_js_host_call_generic(self.global(), || {
+                Bun__Process__entryPointDidChange(
+                    self.global(),
+                    &bun_core::StringView::from_bytes(previous),
+                    &bun_core::StringView::from_bytes(entry_path),
+                )
+            })?;
+        }
 
         self.event_loop_mut().ensure_waker();
 

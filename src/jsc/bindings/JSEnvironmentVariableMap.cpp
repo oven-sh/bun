@@ -4,6 +4,7 @@
 #include "helpers.h"
 #include "JSEnvironmentVariableMap.h"
 
+#include <JavaScriptCore/AOTHost.h>
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/JSArray.h>
@@ -968,9 +969,28 @@ RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalOb
     auto* shared = createSharedEnvironmentVariablesMap(globalObject).getObject();
     globalObject->m_processEnvObject.set(vm, globalObject, shared);
 
-    // process.env, Bun.env and the node:process env export may still hold the orphaned pre-swap env.
-    repointProcessProperty(globalObject, JSC::Identifier::fromString(vm, "env"_s), shared);
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    auto envIdentifier = JSC::Identifier::fromString(vm, "env"_s);
+
+    // A compiled executable lets nobody store to a member that the program never stores to. This is the host's own store.
+    JSC::AllowLazyMaterializationOfImmutableProperties allowStores(vm);
+
+    // process.env may already be reified as an own property on the process object;
+    // overwrite it so it resolves to the shared variant.
+    if (globalObject->hasProcessObject()) {
+        JSObject* processObject = globalObject->processObject();
+        processObject->putDirect(vm, envIdentifier, shared, 0);
+    }
+
+    // Bun.env reifies to the same object at startup; repoint it too, or it keeps
+    // observing the orphaned pre-swap env and silently diverges from process.env.
+    if (globalObject->m_bunObject.isInitialized()) {
+        JSObject* bunObject = globalObject->bunObject();
+        if (bunObject->getDirect(vm, envIdentifier))
+            bunObject->putDirect(vm, envIdentifier, shared, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete);
+    }
+
+    // Compiled code keeps what the first read of process.env and of Bun.env gave.
+    JSC::AOT::hostDidReplaceProperty(globalObject, envIdentifier.impl());
 
     return store;
 }

@@ -1597,6 +1597,265 @@ describe("bun test", () => {
     `);
   });
 
+  // Without --isolate the files share one global, so process.argv is built once. The runner stores each file's path at index 1.
+  describe.concurrent("process.argv[1] in a global that is kept", () => {
+    const flag = "--from-preload";
+    const modules = {
+      // `enter` numbers the files in the order they ran, so no assertion depends on that order.
+      "roles.ts": /* ts */ `
+        import { basename } from "node:path";
+        export function enter(path) {
+          const file = (globalThis.filesRun = (globalThis.filesRun ?? 0) + 1);
+          (globalThis.fileNumbers ??= {})[basename(path)] = file;
+          return file;
+        }
+        // The path of a test file prints as "file N", so the temp dir stays out of the assertions.
+        export const seen = value =>
+          Array.isArray(value)
+            ? value.slice(1).map(item => {
+                const number = globalThis.fileNumbers[basename(String(item))];
+                return number ? "file " + number : item;
+              })
+            : String(value);
+        export const report = fields => console.log("ARGV " + JSON.stringify(fields));
+      `,
+      "captured.ts": `export const captured = process.argv;`,
+    };
+    const esm = (body: string) => /* ts */ `
+      import { describe, isRope } from "bun:jsc";
+      import { test } from "bun:test";
+      import { argv as bound } from "node:process";
+      import * as namespace from "process";
+      import { captured } from "./captured.ts";
+      import { enter, report, seen } from "./roles.ts";
+      const file = enter(import.meta.path);
+      const holders = () => [Bun.argv, bound, namespace.argv, require("node:process").argv, captured];
+      test("argv", () => {
+        ${body}
+      });
+    `;
+    const cjs = (body: string) => /* js */ `
+      const { test } = require("bun:test");
+      const { captured } = require("./captured.ts");
+      const { enter, report, seen } = require("./roles.ts");
+      const file = enter(__filename);
+      const holders = () => [Bun.argv, require("node:process").argv, captured];
+      test("argv", () => {
+        ${body}
+      });
+    `;
+    // One body for every file of a run: the file that runs first does the first step, and so on.
+    const steps = (...bodies: string[]) =>
+      esm(`switch (file) { ${bodies.map((body, index) => `case ${index + 1}: { ${body} break; }`).join(" ")} }`);
+    const own = `report({ file, argv: seen(process.argv) });`;
+
+    async function run(files: Record<string, string>, args: string[] = [], env = bunEnv) {
+      using dir = tempDir("bun-test-argv", { ...modules, ...files });
+      const testFiles = Object.keys(files).filter(name => name.includes(".test."));
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", ...args, ...testFiles.map(name => "./" + name)],
+        env,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // --parallel relays what its workers print on stderr.
+      const reports = `${stdout}\n${stderr}`
+        .split("\n")
+        .filter(line => line.startsWith("ARGV "))
+        .map(line => JSON.parse(line.slice("ARGV ".length)));
+      return { reports, stderr, exitCode };
+    }
+
+    // Every mode prints the same three lines: --isolate builds a new array for each file, the other two keep one.
+    const modes: Record<string, string[]> = {
+      "by default": [],
+      // Three files for two workers: one worker runs at least two of them in its global.
+      "in --parallel workers with --no-isolate": ["--parallel=2", "--no-isolate"],
+      "under --isolate": ["--isolate"],
+    };
+    for (const [mode, args] of Object.entries(modes)) {
+      test(`names the file for every holder of the array, and keeps what a preload pushed, ${mode}`, async () => {
+        const body = `report({
+          own: seen(process.argv)[0] === "file " + file,
+          rest: process.argv.slice(2),
+          same: holders().every(holder => holder === process.argv),
+        });`;
+        const { reports, stderr, exitCode } = await run(
+          {
+            "preload.ts": `Bun.argv; process.argv.push("${flag}");`,
+            "a.test.ts": esm(body),
+            "ç.test.ts": esm(body),
+            "b.test.cjs": cjs(body),
+          },
+          [...args, "--preload", "./preload.ts"],
+        );
+        const each = { own: true, rest: [flag], same: true };
+        expect(reports).toEqual([each, each, each]);
+        expect(stderr).toContain(" 3 pass");
+        expect(exitCode).toBe(0);
+      });
+    }
+
+    test("follows a copy that a preload stored", async () => {
+      const body = `report({ file, argv: seen(process.argv), bun: seen(Bun.argv) });`;
+      const { reports, stderr, exitCode } = await run(
+        {
+          "preload.ts": `Bun.argv; process.argv = [...process.argv, "${flag}"];`,
+          "a.test.ts": esm(body),
+          "b.test.ts": esm(body),
+        },
+        ["--preload", "./preload.ts"],
+      );
+      expect(reports).toEqual([
+        { file: 1, argv: ["file 1", flag], bun: ["file 1"] },
+        { file: 2, argv: ["file 2", flag], bun: ["file 2"] },
+      ]);
+      expect(stderr).toContain(" 2 pass");
+      expect(exitCode).toBe(0);
+    });
+
+    // After what the second file did, index 1 is still a writable data property that holds its path. The third file finds its own.
+    const followed: Record<string, string> = {
+      "a copy that the file saved and put back": `
+        const saved = [...process.argv];
+        if (!describe(saved).includes("CopyOnWriteArrayWithContiguous")) throw new Error("not copy-on-write");
+        process.argv = ["node", "cli"];
+        process.argv = saved;`,
+      "a sealed array": `Object.seal(process.argv);`,
+      "an equal string that is still a rope": `
+        const path = process.argv[1];
+        process.argv[1] = path.slice(0, 8) + path.slice(8);
+        if (!isRope(process.argv[1])) throw new Error("not a rope");`,
+    };
+    for (const [name, statement] of Object.entries(followed)) {
+      test(`follows ${name}`, async () => {
+        const file = steps(own, `${own} ${statement}`, own);
+        const { reports, stderr, exitCode } = await run({ "a.test.ts": file, "b.test.ts": file, "c.test.ts": file });
+        expect(reports).toEqual([
+          { file: 1, argv: ["file 1"] },
+          { file: 2, argv: ["file 2"] },
+          { file: 3, argv: ["file 3"] },
+        ]);
+        expect(stderr).toContain(" 3 pass");
+        expect(exitCode).toBe(0);
+      });
+    }
+
+    // What the second file did to argv is what the third file finds: the runner stores nothing, reads nothing and throws nothing.
+    const kept: Record<
+      string,
+      [statement: string, thirdFile: { argv: unknown; frozen: boolean }, env?: typeof bunEnv]
+    > = {
+      "another string at index 1": [`process.argv[1] = "edited";`, { argv: ["edited"], frozen: false }],
+      "a number at index 1": [`process.argv[1] = 7;`, { argv: [7], frozen: false }],
+      "no element at index 1": [`process.argv.splice(1, 1);`, { argv: [], frozen: false }],
+      "a deleted argv": [`delete process.argv;`, { argv: "undefined", frozen: false }],
+      "a value that is no array": [`process.argv = 7;`, { argv: "7", frozen: false }],
+      "a frozen array": [`Object.freeze(process.argv);`, { argv: ["file 2"], frozen: true }],
+      // The storage that a frozen array has under bun test --aot.
+      "an array frozen in place": [
+        `Object.freeze(process.argv);
+         if (!describe(process.argv).includes("FreezeElementsInPlace")) throw new Error("not frozen in place");`,
+        { argv: ["file 2"], frozen: true },
+        { ...bunEnv, BUN_JSC_keepDenseArraysDense: "1" },
+      ],
+      "a getter on process.argv": [
+        `Object.defineProperty(process, "argv", { configurable: true, get() { globalThis.reads++; return ["bun", "from a getter"]; } });`,
+        { argv: ["from a getter"], frozen: false },
+      ],
+      "an accessor at index 1": [
+        `Object.defineProperty(process.argv, 1, { configurable: true, get() { globalThis.reads++; return "from a getter"; }, set() { globalThis.reads++; } });`,
+        { argv: ["from a getter"], frozen: false },
+      ],
+    };
+    for (const [name, [statement, thirdFile, env]] of Object.entries(kept)) {
+      test(`${name} stays as the file left it`, async () => {
+        const file = steps(
+          own,
+          `${own} globalThis.reads = 0; ${statement}`,
+          `const reads = globalThis.reads;
+           const argv = process.argv;
+           report({ file, argv: seen(argv), frozen: Array.isArray(argv) && Object.isFrozen(argv), reads });`,
+        );
+        const { reports, stderr, exitCode } = await run(
+          { "a.test.ts": file, "b.test.ts": file, "c.test.ts": file },
+          [],
+          env,
+        );
+        expect(reports).toEqual([
+          { file: 1, argv: ["file 1"] },
+          { file: 2, argv: ["file 2"] },
+          { file: 3, ...thirdFile, reads: 0 },
+        ]);
+        expect(stderr).toContain(" 3 pass");
+        expect(exitCode).toBe(0);
+      });
+    }
+
+    test("a mock of node:process keeps its argv export", async () => {
+      const body = `report({ file, argv: seen(process.argv), bound: seen(bound) });`;
+      const { reports, stderr, exitCode } = await run(
+        {
+          "preload.ts": `import { mock } from "bun:test"; mock.module("node:process", () => ({ argv: ["bun", "mocked"] }));`,
+          "a.test.ts": esm(body),
+          "b.test.ts": esm(body),
+        },
+        ["--preload", "./preload.ts"],
+      );
+      expect(reports).toEqual([
+        { file: 1, argv: ["file 1"], bound: ["mocked"] },
+        { file: 2, argv: ["file 2"], bound: ["mocked"] },
+      ]);
+      expect(stderr).toContain(" 2 pass");
+      expect(exitCode).toBe(0);
+    });
+
+    test("--rerun-each keeps what every run pushed", async () => {
+      const body = `process.argv.push("again"); ${own}`;
+      const { reports, stderr, exitCode } = await run({ "a.test.ts": esm(body), "b.test.ts": esm(body) }, [
+        "--rerun-each=3",
+      ]);
+      expect(reports).toEqual(
+        [1, 2, 3, 4, 5, 6].map(file => ({
+          file,
+          argv: ["file " + file, ...Array.from({ length: file }, () => "again")],
+        })),
+      );
+      expect(stderr).toContain(" 6 pass");
+      expect(exitCode).toBe(0);
+    });
+
+    test("does not build an argv that no file has read", async () => {
+      const file = /* ts */ `
+        import { describe } from "bun:jsc";
+        import { test } from "bun:test";
+        import { enter, report, seen } from "./roles.ts";
+        const file = enter(import.meta.path);
+        const built = () => /\\bargv:/.test(describe(process));
+        test("argv", () => {
+          if (file < 3) return report({ file, built: built() });
+          report({ file, before: built(), argv: seen(process.argv), after: built() });
+        });
+      `;
+      const { reports, stderr, exitCode } = await run({
+        "a.test.ts": file,
+        "b.test.ts": file,
+        "c.test.ts": file,
+        "d.test.ts": file,
+      });
+      expect(reports).toEqual([
+        { file: 1, built: false },
+        { file: 2, built: false },
+        { file: 3, before: false, argv: ["file 3"], after: true },
+        { file: 4, before: true, argv: ["file 4"], after: true },
+      ]);
+      expect(stderr).toContain(" 4 pass");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   test("--tsconfig-override works", () => {
     using dir = tempDir("test-tsconfig-override", {
       "math.test.ts": `
@@ -1922,115 +2181,6 @@ describe("bun test", () => {
         "b.test.ts",
       );
       expect(stderr).not.toContain("worker crashed");
-      expect(stderr).toContain("2 pass");
-      expect(exitCode).toBe(0);
-    });
-  });
-
-  describe.concurrent("process.argv", () => {
-    // Each file reports what it sees next to its own path, so the assertions
-    // hold whichever file runs first. The same array is reachable as process.argv,
-    // Bun.argv, and the exports of the node:process and bun modules.
-    const argvProbe = /* ts */ `
-      import { test } from "bun:test";
-      import { argv } from "node:process";
-      import * as nodeProcess from "process";
-      import { argv as bunModuleArgv } from "bun";
-      test("argv", () => {
-        const copies = [Bun.argv, argv, nodeProcess.argv, bunModuleArgv];
-        console.log("ARGV " + JSON.stringify({
-          file: import.meta.path,
-          argv1: process.argv[1],
-          copies1: copies.map(copy => copy[1]),
-          same: copies.every(copy => copy === process.argv),
-        }));
-      });
-    `;
-
-    function parseProbes(stdout: string) {
-      return stdout
-        .split("\n")
-        .filter(line => line.startsWith("ARGV "))
-        .map(line => JSON.parse(line.slice("ARGV ".length)));
-    }
-
-    function expectedProbe(file: string) {
-      return { file, argv1: file, copies1: [file, file, file, file], same: true };
-    }
-
-    test("argv[1] is the current file, not the first file that read process.argv", async () => {
-      using dir = tempDir("bun-test-argv", { "a.test.ts": argvProbe, "b.test.ts": argvProbe });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "test", "./a.test.ts", "./b.test.ts"],
-        env: bunEnv,
-        cwd: String(dir),
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-      const probes = parseProbes(stdout);
-      expect(probes.map(p => basename(p.file)).sort()).toEqual(["a.test.ts", "b.test.ts"]);
-      for (const probe of probes) {
-        expect(probe).toEqual(expectedProbe(probe.file));
-      }
-      expect(stderr).toContain("2 pass");
-      expect(exitCode).toBe(0);
-    });
-
-    test("a file that replaces process.argv does not leak it into the next file", async () => {
-      using dir = tempDir("bun-test-argv-replace", {
-        "a.test.ts": /* ts */ `
-          import { test } from "bun:test";
-          test("replace", () => {
-            process.argv = ["custom", "argv"];
-            process.argv.push("--flag");
-          });
-        `,
-        "b.test.ts": argvProbe,
-      });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "test", "./a.test.ts", "./b.test.ts"],
-        env: bunEnv,
-        cwd: String(dir),
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-      // Files run in argument order, so a.test.ts has replaced argv before b.test.ts reads it.
-      const [aStart, bStart] = [stderr.indexOf("a.test.ts:"), stderr.indexOf("b.test.ts:")];
-      expect(aStart).toBeGreaterThanOrEqual(0);
-      expect(aStart).toBeLessThan(bStart);
-      const probes = parseProbes(stdout);
-      expect(probes).toHaveLength(1);
-      expect(probes[0]).toEqual(expectedProbe(probes[0].file));
-      expect(basename(probes[0].file)).toBe("b.test.ts");
-      expect(stderr).toContain("2 pass");
-      expect(exitCode).toBe(0);
-    });
-
-    test("the copies are one array after a file that imports node:process and does not read argv", async () => {
-      using dir = tempDir("bun-test-argv-unread", {
-        "a.test.ts": /* ts */ `
-          import { expect, test } from "bun:test";
-          import { platform } from "node:process";
-          test("platform", () => {
-            expect(platform).toBe(process.platform);
-          });
-        `,
-        "b.test.ts": argvProbe,
-      });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "test", "./a.test.ts", "./b.test.ts"],
-        env: bunEnv,
-        cwd: String(dir),
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-      const probes = parseProbes(stdout);
-      expect(probes).toHaveLength(1);
-      expect(probes[0]).toEqual(expectedProbe(probes[0].file));
-      expect(basename(probes[0].file)).toBe("b.test.ts");
       expect(stderr).toContain("2 pass");
       expect(exitCode).toBe(0);
     });

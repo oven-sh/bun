@@ -213,8 +213,7 @@ static void throwIfResolvedFileIsRefused(JSC::JSGlobalObject* globalObject, JSC:
         JSC::AOT::willAnswerWithModule(globalObject, *module);
         return;
     }
-    size_t query = resolved.find('?');
-    StringView path = query == notFound ? StringView(resolved) : StringView(resolved).left(static_cast<unsigned>(query));
+    StringView path = StringView(resolved).left(moduleKeyPathLength(resolved));
     if (!path.endsWith(".node"_s))
         return;
     if (JSValue error = Bun::errorIfCodeOutsideImageIsRefused(globalObject, Bun::ErrorCode::MODULE_NOT_FOUND, resolved))

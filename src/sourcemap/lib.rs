@@ -1121,12 +1121,45 @@ pub fn append_source_map_chunk<'a>(
     Ok(())
 }
 
+/// Whether `url_line` and the lines after it can end a file: no quote in the URL, then only blank lines and `//` comments.
+fn ends_source<T: bun_core::strings::PathByte>(url_line: &[T], mut rest: &[T]) -> bool {
+    let is = |unit: T, byte: u8| unit == T::from_u8(byte);
+    if url_line
+        .iter()
+        .any(|&unit| is(unit, b'"') || is(unit, b'\'') || is(unit, b'`'))
+    {
+        return false;
+    }
+    loop {
+        let end = bun_core::strings::index_of_scalar(rest, T::from_u8(b'\n'));
+        let mut line = &rest[..end.unwrap_or(rest.len())];
+        while let [first, tail @ ..] = line {
+            if !(is(*first, b' ') || is(*first, b'\t') || is(*first, b'\r')) {
+                break;
+            }
+            line = tail;
+        }
+        match line {
+            [] => {}
+            [first, second, ..] if is(*first, b'/') && is(*second, b'/') => {}
+            _ => return false,
+        }
+        match end {
+            Some(end) => rest = &rest[end + 1..],
+            None => return true,
+        }
+    }
+}
+
 /// Always returns UTF-8.
 fn find_source_mapping_url_u8(source: &[u8]) -> Option<bun_core::Utf8Bytes<'_>> {
     const NEEDLE: &[u8] = b"\n//# sourceMappingURL=";
     let found = bun_core::strings::last_index_of(source, NEEDLE)?;
     let start = found + NEEDLE.len();
     let end = bun_core::strings::index_of_char_pos(source, b'\n', start).unwrap_or(source.len());
+    if !ends_source(&source[start..end], &source[end..]) {
+        return None;
+    }
     let url = bun_core::strings::trim_right(&source[start..end], b" \r");
     Some(bun_core::Utf8Bytes::Borrowed(url))
 }
@@ -1138,6 +1171,9 @@ fn find_source_mapping_url_u16(source: &[u16]) -> Option<bun_core::Utf8Bytes<'st
     let end = bun_core::strings::index_of_scalar(&source[start..], u16::from(b'\n'))
         .map(|p| start + p)
         .unwrap_or(source.len());
+    if !ends_source(&source[start..end], &source[end..]) {
+        return None;
+    }
     let mut url = &source[start..end];
     while let Some(&last) = url.last() {
         if last == b' ' as u16 || last == b'\r' as u16 {

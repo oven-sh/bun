@@ -246,3 +246,54 @@ test("error.stack of // @bun code with a truncated VLQ in sourceMappingURL warns
   expect(stdout).toBe("");
   expect(exitCode).toBe(1);
 });
+
+// ";;EAIE" maps generated 3:3 to original 5:3 of source 0.
+test("map text inside a string is not the source map of a // @bun file", async () => {
+  const throwsOnLine3 = `// @bun\nexport function t() {\n  throw new Error("SC");\n}\n`;
+  const map = { version: 3, sources: ["original.ts"], sourcesContent: [null], names: [], mappings: ";;EAIE" };
+  const comment = map => `//# sourceMappingURL=data:application/json;base64,${btoa(JSON.stringify(map))}`;
+  const inString = comment({ ...map, sources: ["in-string.ts"] });
+  const beside = JSON.stringify({ ...map, sources: ["beside.ts"] });
+  using dir = tempDir("sourcemap-text-in-string", {
+    "main.js": `
+      for (const file of process.argv.slice(2)) {
+        const { t } = await import("./" + file);
+        try {
+          t();
+        } catch (e) {
+          console.log(file + ": " + e.stack.split("\\n")[1].trim());
+        }
+      }
+    `,
+    // As `bun build --sourcemap=external` writes it: the file ends with a debugId comment, the map is beside it.
+    "external.js": throwsOnLine3 + "export const text = `\n" + inString + "\n`;\n//# debugId=0\n",
+    "external.js.map": beside,
+    "external-utf16.js": throwsOnLine3 + "export const text = `\u2603\n" + inString + "\n`;\n//# debugId=0\n",
+    "external-utf16.js.map": beside,
+    "string-ends-file.js": throwsOnLine3 + "export const text = `\n" + inString + "`;",
+    "string-ends-file.js.map": beside,
+    "no-map.js": throwsOnLine3 + "export const text = `\n" + inString + "\n`;\n",
+    // A map comment of the file itself can have other comments after it.
+    "own.js": throwsOnLine3 + comment({ ...map, sources: ["own.ts"] }) + "\n// the end\n",
+    "own-utf16.js": throwsOnLine3 + "// \u2603\n" + comment({ ...map, sources: ["own.ts"] }) + "\n// the end\n",
+  });
+  const besideFiles = ["external.js", "external-utf16.js", "string-ends-file.js"];
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js", ...besideFiles, "no-map.js", "own.js", "own-utf16.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.replaceAll(String(dir), "<dir>").replaceAll("\\", "/"), stderr }).toEqual({
+    stdout:
+      besideFiles.map(file => `${file}: at t (<dir>/beside.ts:5:3)\n`).join("") +
+      "no-map.js: at t (<dir>/no-map.js:3:18)\n" +
+      "own.js: at t (<dir>/own.ts:5:3)\n" +
+      "own-utf16.js: at t (<dir>/own.ts:5:3)\n",
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});

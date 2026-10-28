@@ -295,8 +295,10 @@ describe("websocket", () => {
   // FIXME: Depends on https://github.com/oven-sh/bun/pull/4649
   test.todo("bun --inspect=ws+unix:///tmp/inspect.sock");
 
-  afterEach(() => {
+  // The next case can listen on the same port only when this process is gone.
+  afterEach(async () => {
     inspectee?.kill();
+    await inspectee?.exited;
   });
 });
 

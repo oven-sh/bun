@@ -488,7 +488,11 @@ describe("bundler", () => {
       ...reactWithCounter,
     },
     onAfterBundle(api) {
-      api.expectFile("/out.js").not.toContain("__toCommonJS");
+      const code = api.readFile("out.js");
+      expect(code).toContain("viaTsconfigPaths = (init_react(), exports_react);");
+      expect(code).toContain("viaPackageImports = (init_react(), exports_react);");
+      expect(code).toContain("viaRelativePath = () => (init_react(), exports_react);");
+      expect(code).not.toContain("__toCommonJS");
     },
     run: {
       stdout: "undefined true 40 41\nundefined true 81 82\nundefined true 122 123",

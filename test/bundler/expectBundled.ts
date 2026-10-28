@@ -310,6 +310,7 @@ export interface BundlerTestInput {
   run?: boolean | BundlerTestRunOptions | BundlerTestRunOptions[];
   /**
    * The first entry point, run by `bun` without bundling, must print the `stdout` of the first `run`.
+   * The unbundled run gets the build `env` and the `env`, `args` and `bunArgs` of that `run`.
    */
   matchesBunRun?: boolean;
 
@@ -1699,9 +1700,15 @@ for (const [key, blob] of build.outputs) {
     }
 
     if (matchesBunRun) {
+      const firstRun = Array.isArray(run) ? run[0] : run;
+      if (typeof firstRun !== "object" || typeof firstRun.stdout !== "string") {
+        throw new Error(`[${id}] matchesBunRun needs a first \`run\` with a string \`stdout\``);
+      }
+      const cmd = [bunExe(), ...(firstRun.bunArgs ?? []), entryPaths[0], ...(firstRun.args ?? [])];
       await using unbundled = Bun.spawn({
-        cmd: [bunExe(), entryPaths[0]],
-        env: { ...bunEnv, ...env },
+        cmd,
+        env: { ...bunEnv, ...env, ...(firstRun.env || {}) },
+        timeout: 60_000,
         stdio: ["ignore", "pipe", "pipe"],
         cwd: root,
       });
@@ -1710,9 +1717,16 @@ for (const [key, blob] of build.outputs) {
         unbundled.stderr.text(),
         unbundled.exited,
       ]);
-      const firstRun = (Array.isArray(run) ? run[0] : run) as BundlerTestRunOptions;
+      if (unbundled.signalCode) {
+        throw new Error(
+          `[${id}] unbundled run killed by ${unbundled.signalCode}\n` +
+            `cmd: ${cmd.join(" ")}\n` +
+            `STDOUT: ${unbundledStdout.slice(0, 2000)}\n` +
+            `STDERR: ${unbundledStderr.slice(0, 2000)}`,
+        );
+      }
       expect({ stdout: unbundledStdout.trim(), stderr: unbundledStderr, exitCode: unbundledExitCode }).toEqual({
-        stdout: dedent(firstRun.stdout as string).trim(),
+        stdout: dedent(firstRun.stdout).trim(),
         stderr: "",
         exitCode: 0,
       });

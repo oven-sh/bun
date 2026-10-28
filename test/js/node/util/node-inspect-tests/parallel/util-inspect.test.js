@@ -177,10 +177,21 @@ test("no assertion failures", () => {
 
   {
     const ab = new ArrayBuffer(42);
+    const dv = new DataView(ab);
+
     assert.strictEqual(ab.byteLength, 42);
     new MessageChannel().port1.postMessage(ab, [ab]);
     assert.strictEqual(ab.byteLength, 0);
     assert.strictEqual(util.inspect(ab), "ArrayBuffer { (detached), [byteLength]: 0 }");
+
+    assert.strictEqual(
+      util.inspect(dv),
+      "DataView {\n" +
+        "  [byteLength]: 0,\n" +
+        "  [byteOffset]: undefined,\n" +
+        "  [buffer]: ArrayBuffer { (detached), [byteLength]: 0 }\n" +
+        "}",
+    );
   }
 
   // Truncate output for ArrayBuffers using plural or singular bytes
@@ -633,6 +644,42 @@ test("no assertion failures 2", () => {
     assert.match(util.inspect(falsyCause1), /^\[Error\] \{ .*\[cause\]: false.* \}$/);
     assert.match(util.inspect(falsyCause2), /^\[Error\] \{ .*\[cause\]: null.* \}$/);
     assert.match(util.inspect(undefinedCause), /^\[Error\] \{ .*\[cause\]: undefined.* \}$/);
+  }
+
+  {
+    // The `error` and `suppressed` properties of a SuppressedError should be
+    // shown during inspection, same as `cause` and AggregateError's `errors`.
+    const { stackTraceLimit } = Error;
+    Error.stackTraceLimit = 0;
+
+    const disposeError = new Error("dispose error");
+    const bodyError = new Error("body error");
+    const suppressedError = new SuppressedError(disposeError, bodyError, "An error was suppressed during disposal");
+
+    assert.strictEqual(
+      util.inspect(suppressedError),
+      "[SuppressedError: An error was suppressed during disposal] " +
+        "{\n  [error]: [Error: dispose error],\n  [suppressed]: [Error: body error]\n}",
+    );
+
+    // Nested SuppressedErrors (multiple failed disposals) must recurse.
+    const outer = new SuppressedError(new Error("second dispose error"), suppressedError, "outer");
+    assert.strictEqual(
+      util.inspect(outer),
+      "[SuppressedError: outer] {\n" +
+        "  [error]: [Error: second dispose error],\n" +
+        "  [suppressed]: [SuppressedError: An error was suppressed during disposal] {\n" +
+        "    [error]: [Error: dispose error],\n" +
+        "    [suppressed]: [Error: body error]\n" +
+        "  }\n" +
+        "}",
+    );
+
+    const custom = new Error("No own error/suppressed property");
+    Object.setPrototypeOf(custom, suppressedError);
+    assert.strictEqual(util.inspect(custom), "[SuppressedError: No own error/suppressed property]");
+
+    Error.stackTraceLimit = stackTraceLimit;
   }
 
   {
@@ -2314,16 +2361,10 @@ test("no assertion failures 3", () => {
         return ++foo;
       },
     };
-    const thrower = {
-      get foo() {
-        throw new Error("Oops");
-      },
-    };
     assert.strictEqual(
       inspect(get, { getters: true, colors: true }),
       "{ foo: \u001b[36m[Getter:\u001b[39m " + "\u001b[33m1\u001b[39m\u001b[36m]\u001b[39m }",
     );
-    assert.strictEqual(inspect(thrower, { getters: true }), "{ foo: [Getter: <Inspection threw (Oops)>] }");
     assert.strictEqual(inspect(getset, { getters: true }), "{ foo: [Getter/Setter: 1], inc: [Getter: 2] }");
     assert.strictEqual(inspect(getset, { getters: "get" }), "{ foo: [Getter/Setter], inc: [Getter: 3] }");
     assert.strictEqual(inspect(getset, { getters: "set" }), "{ foo: [Getter/Setter: 3], inc: [Getter] }");
@@ -2332,6 +2373,278 @@ test("no assertion failures 3", () => {
       inspect(getset, { getters: true }),
       "{\n  foo: [Getter/Setter] Set(3) { [ [Object], 2, {} ], " + "'foobar', { x: 1 } },\n  inc: [Getter: NaN]\n}",
     );
+  }
+
+  // Getter returning a function.
+  // https://github.com/nodejs/node/issues/64838
+  {
+    const obj = {
+      get foo() {
+        return function bar() {};
+      },
+    };
+    assert.strictEqual(inspect(obj, { getters: true }), "{ foo: [Getter] [Function: bar] }");
+  }
+
+  // Property getter throwing an error.
+  {
+    const error = new Error("Oops");
+    error.stack = [
+      "Error: Oops",
+      "    at get foo (/foo/node_modules/foo.js:2:7)",
+      "    at get bar (/foo/node_modules/bar.js:827:30)",
+    ].join("\n");
+
+    const thrower = {
+      get foo() {
+        throw error;
+      },
+    };
+
+    assert.strictEqual(
+      inspect(thrower, { getters: true }),
+      "{\n" +
+        "  foo: [Getter: <Inspection threw (Error: Oops\n" +
+        "      at get foo (/foo/node_modules/foo.js:2:7)\n" +
+        "      at get bar (/foo/node_modules/bar.js:827:30))>]\n" +
+        "}",
+    );
+  }
+
+  //! In the three blocks below Node lists `stack` first and as [Getter/Setter]: V8 gives each error
+  //  an own `stack` accessor. JSC does not, so `stack` is in the order of the definition and has no setter.
+
+  // Property getter throwing an error with getters that throws.
+  // https://github.com/nodejs/node/issues/60683
+  {
+    const badError = new Error();
+
+    const innerError = new Error("Oops");
+    innerError.stack = [
+      "Error: Oops",
+      "    at get foo (/foo/node_modules/foo.js:2:7)",
+      "    at get bar (/foo/node_modules/bar.js:827:30)",
+    ].join("\n");
+
+    const throwingGetter = {
+      __proto__: null,
+      get() {
+        throw innerError;
+      },
+      configurable: true,
+      enumerable: true,
+    };
+
+    Object.defineProperties(badError, {
+      name: throwingGetter,
+      message: throwingGetter,
+      stack: throwingGetter,
+      cause: throwingGetter,
+    });
+
+    const thrower = {
+      get foo() {
+        throw badError;
+      },
+    };
+
+    assert.strictEqual(
+      inspect(thrower, { getters: true }),
+      "{\n" +
+        "  foo: [Getter: <Inspection threw ([object Error] {\n" +
+        "    name: [Getter: <Inspection threw (Error: Oops\n" +
+        "        at get foo (/foo/node_modules/foo.js:2:7)\n" +
+        "        at get bar (/foo/node_modules/bar.js:827:30))>],\n" +
+        "    message: [Getter: <Inspection threw (Error: Oops\n" +
+        "        at get foo (/foo/node_modules/foo.js:2:7)\n" +
+        "        at get bar (/foo/node_modules/bar.js:827:30))>],\n" +
+        "    stack: [Getter: <Inspection threw (Error: Oops\n" +
+        "        at get foo (/foo/node_modules/foo.js:2:7)\n" +
+        "        at get bar (/foo/node_modules/bar.js:827:30))>],\n" +
+        "    cause: [Getter: <Inspection threw (Error: Oops\n" +
+        "        at get foo (/foo/node_modules/foo.js:2:7)\n" +
+        "        at get bar (/foo/node_modules/bar.js:827:30))>]\n" +
+        "  })>]\n" +
+        "}",
+    );
+  }
+
+  // Property getter throwing an error with getters that throws recursively.
+  {
+    const recursivelyThrowingErrorDesc = {
+      __proto__: null,
+      get() {
+        throw createRecursivelyThrowingError();
+      },
+      configurable: true,
+      enumerable: true,
+    };
+    const createRecursivelyThrowingError = () =>
+      Object.defineProperties(new Error(), {
+        cause: recursivelyThrowingErrorDesc,
+        name: recursivelyThrowingErrorDesc,
+        message: recursivelyThrowingErrorDesc,
+        stack: recursivelyThrowingErrorDesc,
+      });
+    const thrower = Object.defineProperty({}, "foo", recursivelyThrowingErrorDesc);
+
+    assert.strictEqual(
+      inspect(thrower, { getters: true, depth: 1 }),
+      "{\n" +
+        "  foo: [Getter: <Inspection threw ([object Error] {\n" +
+        "    cause: [Getter: <Inspection threw ([Error])>],\n" +
+        "    name: [Getter: <Inspection threw ([Error])>],\n" +
+        "    message: [Getter: <Inspection threw ([Error])>],\n" +
+        "    stack: [Getter: <Inspection threw ([Error])>]\n" +
+        "  })>]\n" +
+        "}",
+    );
+
+    [{ getters: true, depth: 2 }, { getters: true }].forEach(options => {
+      assert.strictEqual(
+        inspect(thrower, options),
+        "{\n" +
+          "  foo: [Getter: <Inspection threw ([object Error] {\n" +
+          "    cause: [Getter: <Inspection threw ([object Error] {\n" +
+          "      cause: [Getter: <Inspection threw ([Error])>],\n" +
+          "      name: [Getter: <Inspection threw ([Error])>],\n" +
+          "      message: [Getter: <Inspection threw ([Error])>],\n" +
+          "      stack: [Getter: <Inspection threw ([Error])>]\n" +
+          "    })>],\n" +
+          "    name: [Getter: <Inspection threw ([object Error] {\n" +
+          "      cause: [Getter: <Inspection threw ([Error])>],\n" +
+          "      name: [Getter: <Inspection threw ([Error])>],\n" +
+          "      message: [Getter: <Inspection threw ([Error])>],\n" +
+          "      stack: [Getter: <Inspection threw ([Error])>]\n" +
+          "    })>],\n" +
+          "    message: [Getter: <Inspection threw ([object Error] {\n" +
+          "      cause: [Getter: <Inspection threw ([Error])>],\n" +
+          "      name: [Getter: <Inspection threw ([Error])>],\n" +
+          "      message: [Getter: <Inspection threw ([Error])>],\n" +
+          "      stack: [Getter: <Inspection threw ([Error])>]\n" +
+          "    })>],\n" +
+          "    stack: [Getter: <Inspection threw ([object Error] {\n" +
+          "      cause: [Getter: <Inspection threw ([Error])>],\n" +
+          "      name: [Getter: <Inspection threw ([Error])>],\n" +
+          "      message: [Getter: <Inspection threw ([Error])>],\n" +
+          "      stack: [Getter: <Inspection threw ([Error])>]\n" +
+          "    })>]\n" +
+          "  })>]\n" +
+          "}",
+      );
+    });
+  }
+
+  // Property getter throwing an error whose own getters throw that same error (infinite recursion).
+  {
+    const badError = new Error();
+
+    const throwingGetter = {
+      __proto__: null,
+      get() {
+        throw badError;
+      },
+      configurable: true,
+      enumerable: true,
+    };
+
+    Object.defineProperties(badError, {
+      name: throwingGetter,
+      message: throwingGetter,
+      stack: throwingGetter,
+      cause: throwingGetter,
+    });
+
+    const thrower = {
+      get foo() {
+        throw badError;
+      },
+    };
+
+    assert.strictEqual(
+      inspect(thrower, { getters: true, depth: Infinity }),
+      "{\n" +
+        "  foo: [Getter: <Inspection threw (<ref *1> [object Error] {\n" +
+        "    name: [Getter: <Inspection threw ([Circular *1])>],\n" +
+        "    message: [Getter: <Inspection threw ([Circular *1])>],\n" +
+        "    stack: [Getter: <Inspection threw ([Circular *1])>],\n" +
+        "    cause: [Getter: <Inspection threw ([Circular *1])>]\n" +
+        "  })>]\n" +
+        "}",
+    );
+  }
+
+  // Property getter throwing uncommon values.
+  {
+    // Node runs this with an Error.stackTraceLimit that is not enumerable.
+    const stackTraceLimit = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
+    Object.defineProperty(Error, "stackTraceLimit", { ...stackTraceLimit, enumerable: false });
+    try {
+      [
+        {
+          val: undefined,
+          expected: "{ foo: [Getter: <Inspection threw (undefined)>] }",
+        },
+        {
+          val: null,
+          expected: "{ foo: [Getter: <Inspection threw (null)>] }",
+        },
+        {
+          val: true,
+          expected: "{ foo: [Getter: <Inspection threw (true)>] }",
+        },
+        {
+          val: 1,
+          expected: "{ foo: [Getter: <Inspection threw (1)>] }",
+        },
+        {
+          val: 1n,
+          expected: "{ foo: [Getter: <Inspection threw (1n)>] }",
+        },
+        {
+          val: Symbol(),
+          expected: "{ foo: [Getter: <Inspection threw (Symbol())>] }",
+        },
+        {
+          val: () => {},
+          expected: "{ foo: [Getter: <Inspection threw ([Function: val])>] }",
+        },
+        {
+          val: "string",
+          expected: "{ foo: [Getter: <Inspection threw ('string')>] }",
+        },
+        {
+          val: [],
+          expected: "{ foo: [Getter: <Inspection threw ([])>] }",
+        },
+        {
+          val: {
+            get message() {
+              return "Oops";
+            },
+          },
+          expected: "{ foo: [Getter: <Inspection threw ({ message: [Getter: 'Oops'] })>] }",
+        },
+        {
+          val: Error,
+          expected: "{ foo: [Getter: <Inspection threw ([Function: Error])>] }",
+        },
+      ].forEach(({ val, expected }) => {
+        assert.strictEqual(
+          inspect(
+            {
+              get foo() {
+                throw val;
+              },
+            },
+            { getters: true },
+          ),
+          expected,
+        );
+      });
+    } finally {
+      Object.defineProperty(Error, "stackTraceLimit", stackTraceLimit);
+    }
   }
 
   // Check compact number mode.
@@ -2925,22 +3238,21 @@ test("no assertion failures 3", () => {
 
     assert.strictEqual(
       inspect(Object.getPrototypeOf(bar), { showHidden: true, getters: true }),
-      "<ref *1> Foo [Map] {\n" +
-        "    [constructor]: [class Bar extends Foo] {\n" +
-        "      [length]: 0,\n" +
-        `      [name]: 'Bar',\n      [prototype]: [Circular *1],\n` +
-        "      [Symbol(Symbol.species)]: [Getter: <Inspection threw " +
-        "(Symbol.prototype.toString requires that |this| be a symbol or a symbol object)>]\n" +
-        "    },\n" +
-        "    [xyz]: [Getter: 'YES!'],\n" +
-        "    [Symbol(nodejs.util.inspect.custom)]: " +
-        "[Function: [nodejs.util.inspect.custom]] {\n" +
-        "      [length]: 0,\n" +
-        "      [name]: '[nodejs.util.inspect.custom]'\n" +
-        "    },\n" +
-        "    [abc]: [Getter: true],\n" +
-        "    [def]: [Getter/Setter: false]\n" +
-        "  }",
+      "<ref *2> Foo [Map] {\n" +
+        "  [constructor]: <ref *1> [class Bar extends Foo] {\n" +
+        "    [length]: 0,\n" +
+        "    [name]: 'Bar',\n" +
+        "    [prototype]: [Circular *2],\n" +
+        "    [Symbol(Symbol.species)]: [Getter] [Circular *1]\n" +
+        "  },\n" +
+        "  [xyz]: [Getter: 'YES!'],\n" +
+        "  [Symbol(nodejs.util.inspect.custom)]: [Function: [nodejs.util.inspect.custom]] {\n" +
+        "    [length]: 0,\n" +
+        "    [name]: '[nodejs.util.inspect.custom]'\n" +
+        "  },\n" +
+        "  [abc]: [Getter: true],\n" +
+        "  [def]: [Getter/Setter: false]\n" +
+        "}",
     );
 
     assert.strictEqual(inspect(Object.getPrototypeOf(bar)), "Foo [Map] {}");
@@ -3179,6 +3491,7 @@ test("no assertion failures 3", () => {
     assert.strictEqual(util.inspect(NaN), "NaN");
     assert.strictEqual(util.inspect(Infinity), "Infinity");
     assert.strictEqual(util.inspect(-Infinity), "-Infinity");
+    assert.strictEqual(util.inspect(-0), "-0");
 
     assert.strictEqual(util.inspect(new Float64Array([100_000_000])), "Float64Array(1) [ 100_000_000 ]");
     assert.strictEqual(util.inspect(new BigInt64Array([9_100_000_100n])), "BigInt64Array(1) [ 9_100_000_100n ]");
@@ -3191,6 +3504,30 @@ test("no assertion failures 3", () => {
     assert.strictEqual(util.inspect(123456789.12345678, { numericSeparator: true }), "123_456_789.123_456_78");
 
     assert.strictEqual(util.inspect(-123456789.12345678, { numericSeparator: true }), "-123_456_789.123_456_78");
+
+    // -0 should be formatted as '-0' even with numericSeparator enabled
+    assert.strictEqual(util.inspect(-0, { numericSeparator: true }), "-0");
+
+    // Regression test for https://github.com/nodejs/node/issues/59376
+    // numericSeparator should work correctly for negative fractional numbers
+    {
+      // Test the exact values from the GitHub issue
+      const values = [0.1234, -0.12, -0.123, -0.1234, -1.234];
+      assert.strictEqual(
+        util.inspect(values, { numericSeparator: true }),
+        "[ 0.123_4, -0.12, -0.123, -0.123_4, -1.234 ]",
+      );
+
+      // Test individual negative fractional numbers between -1 and 0
+      assert.strictEqual(util.inspect(-0.1234, { numericSeparator: true }), "-0.123_4");
+      assert.strictEqual(util.inspect(-0.12345, { numericSeparator: true }), "-0.123_45");
+    }
+
+    // Numbers in scientific notation should not get malformed separators
+    assert.strictEqual(util.inspect(1e-7, { numericSeparator: true }), "1e-7");
+    assert.strictEqual(util.inspect(1.5e-10, { numericSeparator: true }), "1.5e-10");
+    assert.strictEqual(util.inspect(1.23e-100, { numericSeparator: true }), "1.23e-100");
+    assert.strictEqual(util.inspect(1.23456789e-12, { numericSeparator: true }), "1.23456789e-12");
   }
 
   // Regression test for https://github.com/nodejs/node/issues/41244
@@ -3203,6 +3540,19 @@ test("no assertion failures 3", () => {
       }),
       "{ Symbol(Symbol.iterator): [Getter] }",
     );
+  }
+
+  {
+    class Class {
+      get [Symbol.toStringTag]() {
+        return "Namespaced.Class";
+      }
+    }
+
+    class DerivedClass extends Class {}
+
+    assert.strictEqual(inspect(new Class()), "Namespaced.Class {}");
+    assert.strictEqual(inspect(new DerivedClass()), "DerivedClass [Namespaced.Class] {}");
   }
 });
 

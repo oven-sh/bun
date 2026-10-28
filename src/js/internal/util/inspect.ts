@@ -182,14 +182,14 @@ class AssertionError extends Error {
   declare actual: unknown;
   declare expected: unknown;
 
-  constructor(message?: string, isForced = false) {
+  constructor(message?: string) {
     super(message);
     this.name = "AssertionError";
     this.code = "ERR_ASSERTION";
     this.operator = "==";
-    this.generatedMessage = !isForced;
-    this.actual = isForced && undefined;
-    this.expected = !isForced || undefined;
+    this.generatedMessage = true;
+    this.actual = false;
+    this.expected = true;
   }
 }
 function assert(p: unknown, message?: string) {
@@ -1215,9 +1215,14 @@ function getPrefix(constructor: string | null, tag: string, fallback: string, si
     return `[${fallback}${size}: null prototype] `;
   }
 
-  if (tag !== "" && constructor !== tag) {
+  if (tag !== "") {
+    const dot = StringPrototypeLastIndexOf.$call(tag, ".");
+    if (constructor === (dot >= 1 ? StringPrototypeSlice.$call(tag, dot + 1) : tag)) {
+      return `${tag}${size} `;
+    }
     return `${constructor}${size} [${tag}] `;
   }
+
   return `${constructor}${size} `;
 }
 
@@ -1596,7 +1601,7 @@ function formatRaw(ctx: Context, value, recurseTimes: number, typedArray?: boole
         "special",
       );
     }
-    throw new AssertionError("handleMaxCallStackSize assertion failed: " + String(err), true);
+    throw err;
   }
   const circular = ctx.circular;
   if (circular !== undefined) {
@@ -2001,6 +2006,20 @@ function formatError(err, constructor: string | null, tag: string, ctx: Context,
     }
   } catch {
     // If errors is a getter that throws, ignore it.
+  }
+
+  // Print the wrapped errors of a SuppressedError.
+  if (
+    ObjectPrototypeHasOwnProperty.$call(err, "error") &&
+    (keys.length === 0 || !ArrayPrototypeIncludes.$call(keys, "error"))
+  ) {
+    ArrayPrototypePush.$call(keys, "error");
+  }
+  if (
+    ObjectPrototypeHasOwnProperty.$call(err, "suppressed") &&
+    (keys.length === 0 || !ArrayPrototypeIncludes.$call(keys, "suppressed"))
+  ) {
+    ArrayPrototypePush.$call(keys, "suppressed");
   }
 
   stack = improveStack(stack, constructor, name, tag);
@@ -2518,8 +2537,10 @@ function formatPromise(ctx: Context, value, recurseTimes: number) {
 }
 
 function formatExtraProperties(ctx: Context, value, recurseTimes: number, key: string, typedArray?: boolean) {
+  // Read the value before the indent: the getter throws for a detached DataView, and formatRaw() then retries.
+  const extraValue = value[key];
   ctx.indentationLvl += 2;
-  const str = formatValue(ctx, value[key], recurseTimes, typedArray);
+  const str = formatValue(ctx, extraValue, recurseTimes, typedArray);
   ctx.indentationLvl -= 2;
 
   // These entries are mainly getters. Should they be formatted like getters?
@@ -2559,22 +2580,22 @@ function formatProperty(
         (ctx.getters === "get" && desc.set === undefined) ||
         (ctx.getters === "set" && desc.set !== undefined))
     ) {
+      ctx.indentationLvl += 2;
       try {
         const tmp = descGet.$call(original);
-        ctx.indentationLvl += 2;
         if (tmp === null) {
           str = `${s(`[${label}:`, sp)} ${s("null", "null")}${s("]", sp)}`;
-        } else if (typeof tmp === "object") {
+        } else if (typeof tmp === "object" || typeof tmp === "function") {
           str = `${s(`[${label}]`, sp)} ${formatValue(ctx, tmp, recurseTimes)}`;
         } else {
           const primitive = formatPrimitive(s, tmp, ctx);
           str = `${s(`[${label}:`, sp)} ${primitive}${s("]", sp)}`;
         }
-        ctx.indentationLvl -= 2;
       } catch (err) {
-        const message = `<Inspection threw (${(err as Error).message})>`;
+        const message = `<Inspection threw (${formatValue(ctx, err, recurseTimes)})>`;
         str = `${s(`[${label}:`, sp)} ${message}${s("]", sp)}`;
       }
+      ctx.indentationLvl -= 2;
     } else {
       str = ctx.stylize(`[${label}]`, sp);
     }

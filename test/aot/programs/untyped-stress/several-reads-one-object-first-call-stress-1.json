@@ -1,0 +1,8 @@
+{
+  "env": {
+    "JSC_verifyGC": "1",
+    "JSC_scribbleFreeCells": "1",
+    "JSC_useZombieMode": "1",
+    "JSC_slowPathAllocsBetweenGCs": "50"
+  }
+}

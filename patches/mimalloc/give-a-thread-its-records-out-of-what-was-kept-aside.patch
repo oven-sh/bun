@@ -1,0 +1,122 @@
+Give a thread its records out of what was kept aside.
+
+The first request of a thread allocates the tld of the thread and its theap. Where
+that found no memory the request failed, whether or not it can fail. What the
+embedder and mimalloc keep for a thread is kept in the tld
+(no-thread-locals-for-address-space-kept-aside.patch), so the request was not
+remembered either and the embedder could not ask again.
+
+A thread without them can allocate nothing, so with an embedder that keeps address
+space aside (ask-who-may-take-address-space.patch) they are a request that cannot
+fail: where they find no memory the thread asks for them again as such a request.
+It allocates them from `theap_meta`, and until it has a tld of its own the tld of
+`theap_meta` stands in for it, for one thread at a time.
+
+A throwing `new` on a thread that still has no tld does not say that it cannot
+fail: the thread may get its tld before the request has ended, and the end would be
+counted in another word than the beginning.
+
+Without such an embedder a thread runs what it ran before.
+
+--- a/include/mimalloc/internal.h
++++ b/include/mimalloc/internal.h
+@@ -311,6 +311,7 @@
+ void          _mi_remember_failed_request(void* block, size_t size, size_t alignment);
+ bool          _mi_is_looking_in_room_kept_aside(void);
+ mi_tld_t*     _mi_tld_of_this_thread(void);                        // NULL on a thread that has not allocated yet
++mi_tld_t*     _mi_tld_lent_to_this_thread(void);                   // "init.c"
+ bool          _mi_is_allocating_page_of_large_blocks(void);        // "arena.c"
+ const mi_address_space_keeper_t* _mi_address_space_keeper(void);   // "os.c"
+ #define MI_MALLOC_GENERIC_ZERO        ((size_t)1)   // bits in `zero_huge_alignment` below the huge alignment (a multiple of MI_SLICE_SIZE)
+--- a/src/alloc.c
++++ b/src/alloc.c
+@@ -848,7 +848,7 @@
+ // A throwing `new` cannot fail: it says so to an embedder that keeps address space aside, and asks once more.
+ static const mi_address_space_keeper_t* mi_new_begin_asking_again(bool nothrow) {
+   const mi_address_space_keeper_t* const keeper = (nothrow ? NULL : _mi_address_space_keeper());
+-  if (keeper == NULL || keeper->begin_request_that_cannot_fail == NULL) return NULL;
++  if (keeper == NULL || keeper->begin_request_that_cannot_fail == NULL || _mi_tld_of_this_thread() == NULL) return NULL;
+   keeper->begin_request_that_cannot_fail();
+   return keeper;
+ }
+--- a/src/init.c
++++ b/src/init.c
+@@ -369,7 +369,44 @@
+   return thread_theap;
+ }
+ #endif
++
++// Allocate the tld of this thread and its theap for the main heap
++static mi_theap_t* mi_thread_alloc_tld_and_theap(mi_heap_t* heap_main) {
++  mi_tld_t* tld = mi_tld_create(heap_main->subproc);
++  if (tld==NULL) return NULL;    // out-of-memory on tld allocation
++  mi_theap_t* theap;
++  if (tld==&mi_process_tld_main) {
++    theap = &mi_process_theap_main;          // initial theap is pre-allocated
++    theap->memid = _mi_memid_create_static(theap,sizeof(*theap));
++  }
++  else {
++    theap = _mi_theap_alloc(heap_main,tld);  // otherwise meta allocate
++    if (theap==NULL) { mi_tld_free(tld); return NULL; } // out-of-memory on theap allocation
++  }
++  _mi_theap_init(theap,heap_main,tld);
++  return theap;
++}
+ 
++// The thread that asks again for its tld and theap. What is kept in the tld of a thread is kept for it in the tld of `theap_meta`, where it allocates.
++static _Atomic(mi_threadid_t) thread_without_tld;
++
++mi_tld_t* _mi_tld_lent_to_this_thread(void) {
++  return (mi_atomic_load_relaxed(&thread_without_tld) == _mi_thread_id() ? _mi_subproc_main()->theap_meta->tld : NULL);
++}
++
++// A thread without them can allocate nothing, so they are a request that cannot fail. One thread at a time.
++static mi_decl_cold mi_theap_t* mi_thread_alloc_tld_and_theap_in_room_kept_aside(mi_heap_t* heap_main) {
++  const mi_address_space_keeper_t* const keeper = _mi_address_space_keeper();
++  if (keeper == NULL || !_mi_subproc_is_main(heap_main->subproc)) return NULL;
++  mi_threadid_t none = 0;
++  while (!mi_atomic_cas_weak_acq_rel(&thread_without_tld, &none, _mi_thread_id())) { none = 0; _mi_prim_thread_yield(); }
++  keeper->begin_request_that_cannot_fail();
++  mi_theap_t* const theap = mi_thread_alloc_tld_and_theap(heap_main);
++  keeper->end_request_that_cannot_fail();
++  mi_atomic_store_release(&thread_without_tld, (mi_threadid_t)0);
++  return theap;
++}
++
+ // Initialize thread
+ mi_theap_t* _mi_thread_init_with_heap(mi_heap_t* heap_main)
+ {
+@@ -399,19 +436,9 @@
+   #endif
+ 
+   if (theap==NULL) {
+-    // allocated the tld
+-    mi_tld_t* tld = mi_tld_create(heap_main->subproc);
+-    if (tld==NULL) return NULL;    // out-of-memory on tld allocation
+-    // allocate and initialize the theap for the main heap
+-    if (tld==&mi_process_tld_main) {
+-      theap = &mi_process_theap_main;          // initial theap is pre-allocated
+-      theap->memid = _mi_memid_create_static(theap,sizeof(*theap));
+-    }
+-    else {
+-      theap = _mi_theap_alloc(heap_main,tld);  // otherwise meta allocate
+-      if (theap==NULL) { mi_tld_free(tld); return NULL; } // out-of-memory on theap allocation
+-    }
+-    _mi_theap_init(theap,heap_main,tld);
++    theap = mi_thread_alloc_tld_and_theap(heap_main);
++    if mi_unlikely(theap==NULL) { theap = mi_thread_alloc_tld_and_theap_in_room_kept_aside(heap_main); }
++    if (theap==NULL) return NULL;
+   }
+ 
+   // now initialize the thread
+--- a/src/page.c
++++ b/src/page.c
+@@ -2791,7 +2791,7 @@
+ 
+ mi_tld_t* _mi_tld_of_this_thread(void) {
+   mi_theap_t* const theap = _mi_theap_default();
+-  return (mi_theap_is_initialized(theap) ? theap->tld : NULL);
++  return (mi_theap_is_initialized(theap) ? theap->tld : _mi_tld_lent_to_this_thread());
+ }
+ 
+ size_t* mi_thread_embedder_word(void) mi_attr_noexcept {

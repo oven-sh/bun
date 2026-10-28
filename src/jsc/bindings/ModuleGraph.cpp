@@ -767,8 +767,6 @@ extern "C" uint32_t Bun__TestFile__enterModuleGraph(Zig::GlobalObject* globalObj
     scope.assertNoException();
     auto* graph = JSModuleGraph::create(vm, globalObject, globalObject->JSModuleGraphStructure(), loader, overlayShape, nullptr, nullptr);
     moduleGraphState(globalObject).testFile.set(vm, graph);
-    // argv[1] is the test file's path.
-    globalObject->processObject()->clearCachedArgv();
     // node:module is shared by all files, and `Module._cache` is the running file's require.cache.
     if (globalObject->m_nodeModuleConstructor.isInitialized()) {
         JSValue cache = requireCacheOf(globalObject, graph, nullptr);
@@ -981,6 +979,7 @@ const ClassInfo JSModuleGraphConstructor::s_info = { "ModuleGraph"_s, &Base::s_i
 // new Bun.ModuleGraph({ globals?, onError? })
 JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSModuleGraphConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(ModuleGraph, JSModuleGraphConstructor::construct);
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

@@ -120,8 +120,17 @@ const kObserverCallback = Symbol("kObserverCallback");
  * registry in internal/shared; everything else is delegated to the native
  * observer unchanged.
  */
+type NodeEntryObserver = InstanceType<typeof NodeEntryObserver>;
+type ObserverCallback = (
+  list: PerformanceObserverEntryList | Parameters<NodeEntryObserver["callback"]>[0],
+  observer: unknown,
+) => void;
+
 class PerformanceObserverForNodeTypes extends PerformanceObserver {
-  constructor(callback) {
+  declare [kNodeObserver]: NodeEntryObserver | undefined;
+  declare [kObserverCallback]: ObserverCallback;
+
+  constructor(callback: ObserverCallback) {
     super(callback);
     this[kObserverCallback] = callback;
   }
@@ -131,12 +140,12 @@ class PerformanceObserverForNodeTypes extends PerformanceObserver {
     return [...new Set([...(PerformanceObserver.supportedEntryTypes ?? []), ...kNodeEntryTypes])].sort();
   }
 
-  observe(options) {
-    let requested;
+  observe(options?: PerformanceObserverInit) {
+    let requested: string[] | undefined;
     let isTypeMode = false;
     if (options != null && typeof options === "object") {
       const entryTypes = options.entryTypes;
-      let type;
+      let type: string | undefined;
       if (entryTypes !== undefined && Array.isArray(entryTypes)) {
         requested = entryTypes;
       } else if ((type = options.type) !== undefined) {
@@ -197,7 +206,14 @@ Object.defineProperty(PerformanceObserverForNodeTypes, "name", {
 
 // kEmptyObject (frozen, null-prototype) so the histogram read below cannot
 // pick up a polluted Object.prototype, matching node's default.
-function timerify(fn, options = kEmptyObject) {
+interface Histogram {
+  record(value: number | bigint): void;
+}
+
+function timerify(
+  fn: (this: unknown, ...args: unknown[]) => unknown,
+  options: { histogram?: Histogram } = kEmptyObject,
+) {
   validateFunction(fn, "fn");
   validateObject(options, "options");
   const { histogram } = options;
@@ -205,12 +221,12 @@ function timerify(fn, options = kEmptyObject) {
     throw $ERR_INVALID_ARG_TYPE("options.histogram", ["RecordableHistogram"], histogram);
   }
 
-  function timerified(...args) {
+  function timerified(this: unknown, ...args: unknown[]) {
     const isConstructorCall = new.target !== undefined;
     const start = performance.now();
     const result = isConstructorCall ? Reflect.construct(fn, args, fn) : fn.$apply(this, args);
-    if (!isConstructorCall && typeof result?.finally === "function") {
-      return result.finally(() => {
+    if (!isConstructorCall && typeof (result as Promise<unknown> | undefined)?.finally === "function") {
+      return (result as Promise<unknown>).finally(() => {
         processTimerifyComplete(fn.name, start, args, histogram);
       });
     }
@@ -236,7 +252,7 @@ function timerify(fn, options = kEmptyObject) {
   return timerified;
 }
 
-function processTimerifyComplete(name, start, args, histogram) {
+function processTimerifyComplete(name: string, start: number, args: unknown[], histogram: Histogram | undefined) {
   const duration = performance.now() - start;
   if (histogram !== undefined) {
     histogram.record(Math.ceil(duration * 1e6));

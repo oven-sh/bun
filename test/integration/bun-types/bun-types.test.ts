@@ -381,6 +381,8 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "bindgen_test.bind.ts": null,
   "bun_string_jsc.bind.ts": null,
   "cares_jsc.bind.ts": null,
+  "checker_queries_testing.bind.ts": null,
+  "code_resolver_testing.bind.ts": null,
   "color_js.bind.ts": "typeof Bun",
   "crash_handler_jsc.bind.ts": null,
   "cron.bind.ts": null,
@@ -428,10 +430,12 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "node_http_binding.bind.ts": null,
   "node_net_binding.bind.ts": null,
   "node_os.bind.ts": null,
+  "node_path.bind.ts": null,
   "node_process.bind.ts": null,
   "node_quic_binding.bind.ts": null,
   "node_tls_binding.bind.ts": null,
   "node_util_binding.bind.ts": null,
+  "node_validators.bind.ts": null,
   "node_zlib_binding.bind.ts": null,
   "npm_jsc.bind.ts": null,
   "pack_command.bind.ts": null,
@@ -454,6 +458,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "sourcemap.bind.ts": null,
   "subprocess.bind.ts": null,
   "test_context.bind.ts": null,
+  "trim_testing.bind.ts": null,
   "udp_socket.bind.ts": null,
   "upgrade_command.bind.ts": null,
   "valkey.bind.ts": "typeof Bun",
@@ -640,6 +645,12 @@ describe("@types/bun integration test", () => {
           ).map(promise => `${file}: ${promise}`),
         ),
     ).toEqual([
+      // `undefined` for a Blob without a store or with bytes. What is published is a BunFile.
+      "Blob.bind.ts: file().stat() is Promise<unknown> | undefined, not Promise<Stats>",
+      // An S3File is a Blob with more members, which C++ adds and no schema describes.
+      "S3Client.bind.ts: new S3Client().file() has no readable, bucket, presign",
+      "S3Client.bind.ts: new S3Client().file().stat() is Promise<unknown> | undefined, not Promise<S3Stats>",
+      "S3Client.bind.ts: new S3Client().file().lastModified is not published",
       // bun.d.ts and s3.d.ts do not declare these.
       "Sink.bind.ts: ArrayBufferSink is not published as a function",
       "Sink.bind.ts: new ArrayBufferSink().close is not published",
@@ -648,6 +659,8 @@ describe("@types/bun integration test", () => {
       "Sink.bind.ts: new ArrayBufferSink()._getFd is not published",
       "Sink.bind.ts: new ArrayBufferSink().sinkId is not published",
       "Sink.bind.ts: new FileSink().close is not published",
+      // `undefined` once the sink is done, and what a write answers otherwise.
+      "Sink.bind.ts: new FileSink().flush() is number | boolean | Promise<unknown> | undefined, not number | Promise<number>",
       // Published, and a `FileSink` does not read it.
       "Sink.bind.ts: new FileSink().start(options?: { highWaterMark?: number | undefined; } | undefined): void: options takes FileSinkStartOptions | null | undefined, not { highWaterMark?: number | undefined; } | undefined",
       "Sink.bind.ts: new FileSink()._getFd is not published",
@@ -668,11 +681,19 @@ describe("@types/bun integration test", () => {
       "resolve_message.bind.ts: new BuildMessage().notes is not published",
       "resolve_message.bind.ts: new BuildMessage().[Symbol.toPrimitive] is not published",
       "resolve_message.bind.ts: new ResolveMessage().toJSON is not published",
+      // `undefined` for a message whose metadata is not that of a resolution.
+      "resolve_message.bind.ts: new ResolveMessage().code is string | undefined, not string",
       "resolve_message.bind.ts: new ResolveMessage().column is not published",
       "resolve_message.bind.ts: new ResolveMessage().line is not published",
       "resolve_message.bind.ts: new ResolveMessage().requireStack is not published",
       "resolve_message.bind.ts: new ResolveMessage().stack is not published",
       "resolve_message.bind.ts: new ResolveMessage().[Symbol.toPrimitive] is not published",
+      // Only compiled code calls it.
+      "response.bind.ts: constructJSONFromText is not published",
+      // As for `match` of FileSystemRouter.
+      "response.bind.ts: new Request().clone() has no keepalive, duplex",
+      // `undefined` once the socket is closed.
+      "server.bind.ts: new ServerWebSocket().remoteAddress is string | undefined, not string",
       // `pendingDeclarations` in test/internal/source-lints/redis-client-types.test.ts.
       "valkey.bind.ts: new RedisClient().psubscribe is not published",
       "valkey.bind.ts: new RedisClient().pubsub is not published",

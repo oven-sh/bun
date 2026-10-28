@@ -410,6 +410,7 @@ extern "C" bool Bun__fetchBuiltinModule(
     void* bunVM,
     JSC::JSGlobalObject* global,
     const BunString* specifier,
+    bool isCommonJSRequire,
     ErrorableResolvedSource* result);
 extern "C" bool Bun__resolveAndFetchBuiltinModule(
     const BunString* specifier,

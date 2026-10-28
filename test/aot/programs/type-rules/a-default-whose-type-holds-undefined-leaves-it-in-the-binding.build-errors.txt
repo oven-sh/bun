@@ -1,0 +1,1 @@
+error: TS2322: Type 'number | undefined' is not assignable to type 'number'.

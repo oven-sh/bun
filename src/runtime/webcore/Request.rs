@@ -1071,7 +1071,10 @@ impl Request {
         for &value in values_to_try {
             let value_type = value.js_type();
             let explicit_check = values_to_try.len() == 2
-                && value_type == bun_jsc::JSType::FinalObject
+                && matches!(
+                    value_type,
+                    bun_jsc::JSType::FinalObject | bun_jsc::JSType::CompiledObject
+                )
                 && values_to_try[1].js_type() == bun_jsc::JSType::DOMWrapper;
             if value_type == bun_jsc::JSType::DOMWrapper {
                 if let Some(request) = value.as_direct::<Request>() {

@@ -1,0 +1,4 @@
+{
+  "env": { "NODE_NO_WARNINGS": "1" },
+  "skipInShell": "it uses what Bun provides and the jsc shell does not: built-in modules, Request, Response, Blob, Headers, URL, URLSearchParams"
+}

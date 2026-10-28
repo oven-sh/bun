@@ -1,0 +1,10 @@
+a member: exec test toString compile constructor Symbol(Symbol.match) Symbol(Symbol.matchAll) Symbol(Symbol.replace) Symbol(Symbol.search) Symbol(Symbol.split): store TypeError/unchanged, sloppy store TypeError/unchanged, Reflect.set false/unchanged, define TypeError/unchanged, Reflect.defineProperty false/unchanged, delete TypeError/unchanged, sloppy delete TypeError/unchanged, Reflect.deleteProperty false/unchanged
+a member: flags global source sticky: store TypeError/unchanged, sloppy store done/unchanged, Reflect.set false/unchanged, define TypeError/unchanged, Reflect.defineProperty false/unchanged, delete TypeError/unchanged, sloppy delete TypeError/unchanged, Reflect.deleteProperty false/unchanged
+a new key: addedByTheProgram lastIndex then Symbol(mine) Symbol(shared) 0 5 7 4294967294 4294967295 -1 1.5 -0 NaN Infinity -Infinity 1e+21 Symbol(Symbol.asyncDispose) Symbol(Symbol.asyncIterator) Symbol(Symbol.dispose) Symbol(Symbol.hasInstance) Symbol(Symbol.isConcatSpreadable) Symbol(Symbol.iterator) Symbol(Symbol.species) Symbol(Symbol.toPrimitive) Symbol(Symbol.toStringTag) Symbol(Symbol.unscopables): store TypeError/unchanged, sloppy store TypeError/unchanged, Reflect.set false/unchanged, define TypeError/unchanged, Reflect.defineProperty false/unchanged, delete true/unchanged, sloppy delete true/unchanged, Reflect.deleteProperty true/unchanged
+RegExp.prototype: its prototype: Object.setPrototypeOf TypeError/unchanged, Reflect.setPrototypeOf false/unchanged, __proto__ TypeError/unchanged, the prototype it has done/unchanged, extensible false
+a subclass with its own exec: true false a[BB]c BB 1 a|c
+an object with its own exec: false true abbc x!y 1 null
+the same object without it: true false a!c
+an object with another prototype: another test bb true
+lastIndex belongs to the object: true 2 false 0 false
+literals: 2 10,20 a<1>b<22> 3

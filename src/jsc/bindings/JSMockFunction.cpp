@@ -33,6 +33,7 @@
 #include <JavaScriptCore/PropertyNameArray.h>
 #include <JavaScriptCore/ButterflyInlines.h>
 #include <JavaScriptCore/CustomGetterSetter.h>
+#include "JavaScriptCore/AOTHost.h"
 #include "BunPlugin.h"
 #include "NodeVM.h"
 #include "AsyncContextFrame.h"
@@ -464,19 +465,35 @@ public:
     {
         auto scope = DECLARE_THROW_SCOPE(vm);
         WTF::String nameToUse;
-        if (auto* fn = dynamicDowncast<JSFunction>(value)) {
+        auto useNameProperty = [&](JSObject* function) {
+            JSValue nameValue = function->get(global, vm.propertyNames->name);
+            RETURN_IF_EXCEPTION(scope, );
+            if (nameValue.isString())
+                nameToUse = asString(nameValue)->value(global);
+        };
+#if ENABLE(AOT)
+        if (JSObject* callee = value.getObject(); callee && JSC::AOT::CompiledCallee::isCompiledCallee(callee)) {
+            nameToUse = JSC::AOT::closureDeclaredName(callee);
+            if (nameToUse.isEmpty()) {
+                useNameProperty(callee);
+                RETURN_IF_EXCEPTION(scope, );
+            }
+            JSValue lengthJSValue = callee->get(global, vm.propertyNames->length);
+            RETURN_IF_EXCEPTION(scope, );
+            if (lengthJSValue.isNumber()) {
+                this->putDirect(vm, vm.propertyNames->length, (lengthJSValue), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
+            }
+        } else
+#endif
+            if (auto* fn = dynamicDowncast<JSFunction>(value)) {
             nameToUse = fn->name(vm);
             // `const f = () => {}` and `{ f: () => {} }` only have an ecmaName().
             if (nameToUse.isEmpty() && !fn->isHostFunction())
                 nameToUse = fn->jsExecutable()->ecmaName().string();
             // `{ [symbol]() {} }` only has the `name` property.
             if (nameToUse.isEmpty()) {
-                JSValue nameValue = fn->get(global, vm.propertyNames->name);
+                useNameProperty(fn);
                 RETURN_IF_EXCEPTION(scope, );
-                if (nameValue.isString()) {
-                    nameToUse = asString(nameValue)->value(global);
-                    RETURN_IF_EXCEPTION(scope, );
-                }
             }
             JSValue lengthJSValue = fn->get(global, vm.propertyNames->length);
             RETURN_IF_EXCEPTION(scope, );
@@ -932,6 +949,7 @@ private:
         JSC::Identifier identifier = m_spyIdentifier;
         unsigned attributes = m_spyAttributes;
 
+        JSC::AllowLazyMaterializationOfImmutableProperties throughLock(globalObject->vm());
         if (attributes & SpyAttributeESModuleNamespace) {
             auto* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(target);
             if (moduleNamespaceObject && original) {
@@ -3026,6 +3044,21 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
         }
     }
 
+#if ENABLE(AOT)
+    // The lock of a built-in object lists the members that a program could change. A member that the language makes read-only and not configurable is not listed, and putDirect asks no attribute.
+    constexpr unsigned fixedByLanguage = PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete;
+    bool isFixedMemberOfLockedObject = object->structure()->mayHaveImmutableProperties() && hasValue && slot.slotBase() == object && (slot.attributes() & fixedByLanguage) == fixedByLanguage;
+    if (vm.hasCompiledCode() && (object->structure()->isImmutableProperty(propertyKey.impl()) || isFixedMemberOfLockedObject)) {
+        throwTypeError(globalObject, scope, makeString("Cannot spy on '"_s, String(propertyKey.impl()), "' because this property of a built-in object is read-only in a compiled executable"_s));
+        return {};
+    }
+
+    if (JSC::AOT::isModuleNamespace(object)) {
+        throwTypeError(globalObject, scope, makeString("Cannot spy on '"_s, String(propertyKey.impl()), "' because module exports can't be replaced in a compiled executable"_s));
+        return {};
+    }
+#endif
+
     // easymode: regular property or missing property
     if (isEasy) {
         JSValue value = jsUndefined();
@@ -3063,6 +3096,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
             wrapFunction(globalObject, mock, value);
             RETURN_IF_EXCEPTION(scope, {});
 
+            JSC::AllowLazyMaterializationOfImmutableProperties throughLock(vm);
             if (moduleNamespaceObject) {
                 moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, mock);
             } else {
@@ -3072,7 +3106,11 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
         } else {
             // JSFunction::getOwnPropertySlot serves `prototype` straight from property storage, ignoring
             // the Accessor attribute, so a GetterSetter installed here would escape to script as a raw cell.
-            if (propertyKey == vm.propertyNames->prototype && object->inherits<JSC::JSFunction>()) {
+            bool isFunction = object->inherits<JSC::JSFunction>();
+#if ENABLE(AOT)
+            isFunction |= JSC::AOT::CompiledCallee::isCompiledCallee(object);
+#endif
+            if (propertyKey == vm.propertyNames->prototype && isFunction) {
                 throwVMError(globalObject, scope, "Cannot spy on the `prototype` property because it is not a function"_s);
                 return {};
             }
@@ -3080,6 +3118,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
             mock->pushImpl(globalObject, JSMockImplementation::Kind::ReturnValue, value);
             RETURN_IF_EXCEPTION(scope, {});
 
+            JSC::AllowLazyMaterializationOfImmutableProperties throughLock(vm);
             if (moduleNamespaceObject) {
                 moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, mock);
             } else {
@@ -3161,6 +3200,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     }
 
     // Always configurable, so that restoring can delete or redefine it.
+    JSC::AllowLazyMaterializationOfImmutableProperties throughLock(vm);
     putOwnPropertyStorage(globalObject, object, propertyKey, JSC::GetterSetter::create(vm, globalObject, getter, setter), PropertyAttribute::Accessor | (descriptor.attributes() & PropertyAttribute::DontEnum), isOpaque);
     RETURN_IF_EXCEPTION(scope, {});
 

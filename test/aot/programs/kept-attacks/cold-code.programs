@@ -1,0 +1,206 @@
+////: every
+function every<T>(array: readonly T[] | undefined, callback: (element: T, index: number) => boolean): boolean {
+  if (array !== undefined) {
+    for (let i = 0; i < array.length; i++) {
+      if (!callback(array[i], i)) return false;
+    }
+  }
+  return true;
+}
+////: everyType
+function everyType(type: Type, f: (t: Type) => boolean): boolean {
+  return type.flags & 1 ? every(type.types, f) : f(type);
+}
+//// cold-code/cold.ts
+// Cold code, one probe of many. It prints what plain Bun prints.
+interface Type { flags: number; types?: Type[] }
+////= every
+////= everyType
+function check(type: Type, kind: number): boolean {
+  let seen = 0;
+  const all = everyType(type, t => { seen++; return t.flags > kind; });
+  return all && seen > 0;
+}
+console.log(check({ flags: 1, types: [{ flags: 2 }, { flags: 4 }] }, 0), check({ flags: 2 }, 0), every([1, 2], n => n > 0));
+//// cold-code/cold2.ts
+// Cold code, one probe of many. It prints what plain Bun prints.
+interface Type { flags: number; types?: Type[] }
+////= every
+////= everyType
+function check(type: Type, kind: number): boolean {
+  let seen = 0;
+  const all = everyType(type, t => { seen++; return t.flags > kind; });
+  return all && seen > 0;
+}
+const given: Type = JSON.parse(process.argv[2] ?? '{"flags":1,"types":[{"flags":2},{"flags":4}]}');
+const made: Type = { flags: 1, types: [{ flags: 2 }, { flags: 4 }] };
+console.log(check(made, 0), check({ flags: 2 }, 0), check(given, 0), every([1, 2], n => n > 0));
+//// cold-code/cold3.ts
+// Cold code, one probe of many. It prints what plain Bun prints.
+////= every
+const typed: number[] = [1, 2, 3];
+// No array, whatever the annotation says: the tests at the head of `every` turn it away, and its untyped version runs.
+const given = { length: 3, 0: 1, 1: 2, 2: 3 } as unknown as number[];
+const results: boolean[] = [];
+results.push(every(typed, n => n > -19), every(given, n => n + 1 > 0));
+results.push(every(typed, n => n > -18), every(given, n => n + 2 > 0));
+results.push(every(typed, n => n > -17), every(given, n => n + 3 > 0));
+results.push(every(typed, n => n > -16), every(given, n => n + 4 > 0));
+results.push(every(typed, n => n > -15), every(given, n => n + 5 > 0));
+results.push(every(typed, n => n > -14), every(given, n => n + 6 > 0));
+results.push(every(typed, n => n > -13), every(given, n => n + 7 > 0));
+results.push(every(typed, n => n > -12), every(given, n => n + 8 > 0));
+results.push(every(typed, n => n > -11), every(given, n => n + 9 > 0));
+results.push(every(typed, n => n > -10), every(given, n => n + 10 > 0));
+results.push(every(typed, n => n > -9), every(given, n => n + 11 > 0));
+results.push(every(typed, n => n > -8), every(given, n => n + 12 > 0));
+results.push(every(typed, n => n > -7), every(given, n => n + 13 > 0));
+results.push(every(typed, n => n > -6), every(given, n => n + 14 > 0));
+results.push(every(typed, n => n > -5), every(given, n => n + 15 > 0));
+results.push(every(typed, n => n > -4), every(given, n => n + 16 > 0));
+results.push(every(typed, n => n > -3), every(given, n => n + 17 > 0));
+results.push(every(typed, n => n > -2), every(given, n => n + 18 > 0));
+results.push(every(typed, n => n > -1), every(given, n => n + 19 > 0));
+results.push(every(typed, n => n > 0), every(given, n => n + 20 > 0));
+results.push(every(typed, n => n > 1), every(given, n => n + 21 > 0));
+results.push(every(typed, n => n > 2), every(given, n => n + 22 > 0));
+results.push(every(typed, n => n > 3), every(given, n => n + 23 > 0));
+results.push(every(typed, n => n > 4), every(given, n => n + 24 > 0));
+console.log(results.join(" "));
+//// cold-code/cold4-12.ts
+// Cold code, one probe of many. It prints what plain Bun prints.
+////= every
+interface Type { flags: number; types?: Type[] }
+////= everyType
+const union: Type = { flags: 1, types: [{ flags: 2 }, { flags: 4 }] };
+const single: Type = { flags: 2 };
+const results: boolean[] = [];
+results.push(everyType(union, t => t.flags > -2), everyType(single, t => t.flags + 1 > 4));
+results.push(everyType(union, t => t.flags > -1), everyType(single, t => t.flags + 2 > 4));
+results.push(everyType(union, t => t.flags > 0), everyType(single, t => t.flags + 3 > 4));
+results.push(everyType(union, t => t.flags > 1), everyType(single, t => t.flags + 4 > 4));
+results.push(everyType(union, t => t.flags > 2), everyType(single, t => t.flags + 5 > 4));
+results.push(everyType(union, t => t.flags > 3), everyType(single, t => t.flags + 6 > 4));
+results.push(everyType(union, t => t.flags > 4), everyType(single, t => t.flags + 7 > 4));
+results.push(everyType(union, t => t.flags > 5), everyType(single, t => t.flags + 8 > 4));
+results.push(everyType(union, t => t.flags > 6), everyType(single, t => t.flags + 9 > 4));
+results.push(everyType(union, t => t.flags > 7), everyType(single, t => t.flags + 10 > 4));
+results.push(everyType(union, t => t.flags > 8), everyType(single, t => t.flags + 11 > 4));
+results.push(everyType(union, t => t.flags > 9), everyType(single, t => t.flags + 12 > 4));
+console.log(results.join(" "));
+//// cold-code/cold4-40.ts
+// Cold code, one probe of many. It prints what plain Bun prints.
+////= every
+interface Type { flags: number; types?: Type[] }
+////= everyType
+const union: Type = { flags: 1, types: [{ flags: 2 }, { flags: 4 }] };
+const single: Type = { flags: 2 };
+const results: boolean[] = [];
+results.push(everyType(union, t => t.flags > -2), everyType(single, t => t.flags + 1 > 4));
+results.push(everyType(union, t => t.flags > -1), everyType(single, t => t.flags + 2 > 4));
+results.push(everyType(union, t => t.flags > 0), everyType(single, t => t.flags + 3 > 4));
+results.push(everyType(union, t => t.flags > 1), everyType(single, t => t.flags + 4 > 4));
+results.push(everyType(union, t => t.flags > 2), everyType(single, t => t.flags + 5 > 4));
+results.push(everyType(union, t => t.flags > 3), everyType(single, t => t.flags + 6 > 4));
+results.push(everyType(union, t => t.flags > 4), everyType(single, t => t.flags + 7 > 4));
+results.push(everyType(union, t => t.flags > 5), everyType(single, t => t.flags + 8 > 4));
+results.push(everyType(union, t => t.flags > 6), everyType(single, t => t.flags + 9 > 4));
+results.push(everyType(union, t => t.flags > 7), everyType(single, t => t.flags + 10 > 4));
+results.push(everyType(union, t => t.flags > 8), everyType(single, t => t.flags + 11 > 4));
+results.push(everyType(union, t => t.flags > 9), everyType(single, t => t.flags + 12 > 4));
+results.push(everyType(union, t => t.flags > 10), everyType(single, t => t.flags + 13 > 4));
+results.push(everyType(union, t => t.flags > 11), everyType(single, t => t.flags + 14 > 4));
+results.push(everyType(union, t => t.flags > 12), everyType(single, t => t.flags + 15 > 4));
+results.push(everyType(union, t => t.flags > 13), everyType(single, t => t.flags + 16 > 4));
+results.push(everyType(union, t => t.flags > 14), everyType(single, t => t.flags + 17 > 4));
+results.push(everyType(union, t => t.flags > 15), everyType(single, t => t.flags + 18 > 4));
+results.push(everyType(union, t => t.flags > 16), everyType(single, t => t.flags + 19 > 4));
+results.push(everyType(union, t => t.flags > 17), everyType(single, t => t.flags + 20 > 4));
+results.push(everyType(union, t => t.flags > 18), everyType(single, t => t.flags + 21 > 4));
+results.push(everyType(union, t => t.flags > 19), everyType(single, t => t.flags + 22 > 4));
+results.push(everyType(union, t => t.flags > 20), everyType(single, t => t.flags + 23 > 4));
+results.push(everyType(union, t => t.flags > 21), everyType(single, t => t.flags + 24 > 4));
+results.push(everyType(union, t => t.flags > 22), everyType(single, t => t.flags + 25 > 4));
+results.push(everyType(union, t => t.flags > 23), everyType(single, t => t.flags + 26 > 4));
+results.push(everyType(union, t => t.flags > 24), everyType(single, t => t.flags + 27 > 4));
+results.push(everyType(union, t => t.flags > 25), everyType(single, t => t.flags + 28 > 4));
+results.push(everyType(union, t => t.flags > 26), everyType(single, t => t.flags + 29 > 4));
+results.push(everyType(union, t => t.flags > 27), everyType(single, t => t.flags + 30 > 4));
+results.push(everyType(union, t => t.flags > 28), everyType(single, t => t.flags + 31 > 4));
+results.push(everyType(union, t => t.flags > 29), everyType(single, t => t.flags + 32 > 4));
+results.push(everyType(union, t => t.flags > 30), everyType(single, t => t.flags + 33 > 4));
+results.push(everyType(union, t => t.flags > 31), everyType(single, t => t.flags + 34 > 4));
+results.push(everyType(union, t => t.flags > 32), everyType(single, t => t.flags + 35 > 4));
+results.push(everyType(union, t => t.flags > 33), everyType(single, t => t.flags + 36 > 4));
+results.push(everyType(union, t => t.flags > 34), everyType(single, t => t.flags + 37 > 4));
+results.push(everyType(union, t => t.flags > 35), everyType(single, t => t.flags + 38 > 4));
+results.push(everyType(union, t => t.flags > 36), everyType(single, t => t.flags + 39 > 4));
+results.push(everyType(union, t => t.flags > 37), everyType(single, t => t.flags + 40 > 4));
+console.log(results.join(" "));
+//// cold-code/cold4-6.ts
+// Cold code, one probe of many. It prints what plain Bun prints.
+////= every
+interface Type { flags: number; types?: Type[] }
+////= everyType
+const union: Type = { flags: 1, types: [{ flags: 2 }, { flags: 4 }] };
+const single: Type = { flags: 2 };
+const results: boolean[] = [];
+results.push(everyType(union, t => t.flags > -2), everyType(single, t => t.flags + 1 > 4));
+results.push(everyType(union, t => t.flags > -1), everyType(single, t => t.flags + 2 > 4));
+results.push(everyType(union, t => t.flags > 0), everyType(single, t => t.flags + 3 > 4));
+results.push(everyType(union, t => t.flags > 1), everyType(single, t => t.flags + 4 > 4));
+results.push(everyType(union, t => t.flags > 2), everyType(single, t => t.flags + 5 > 4));
+results.push(everyType(union, t => t.flags > 3), everyType(single, t => t.flags + 6 > 4));
+console.log(results.join(" "));
+//// cold-code/cold5.ts
+// Cold code, one probe of many. It prints what plain Bun prints.
+type Test<T> = ((element: T, index: number) => boolean) | undefined;
+function every<T>(array: readonly T[] | undefined, callback: Test<T>): boolean {
+  if (array !== undefined) {
+    for (let i = 0; i < array.length; i++) {
+      if (!callback!(array[i], i)) return false;
+    }
+  }
+  return true;
+}
+interface Type { flags: number; types?: Type[] }
+function everyType(type: Type, f: Test<Type>): boolean {
+  return type.flags & 1 ? every(type.types, f) : f!(type, 0);
+}
+const union: Type = { flags: 1, types: [{ flags: 2 }, { flags: 4 }] };
+const single: Type = { flags: 2 };
+const results: boolean[] = [];
+results.push(everyType(union, t => t.flags > -2), everyType(single, t => t.flags + 1 > 4));
+results.push(everyType(union, t => t.flags > -1), everyType(single, t => t.flags + 2 > 4));
+results.push(everyType(union, t => t.flags > 0), everyType(single, t => t.flags + 3 > 4));
+results.push(everyType(union, t => t.flags > 1), everyType(single, t => t.flags + 4 > 4));
+results.push(everyType(union, t => t.flags > 2), everyType(single, t => t.flags + 5 > 4));
+results.push(everyType(union, t => t.flags > 3), everyType(single, t => t.flags + 6 > 4));
+results.push(everyType(union, t => t.flags > 4), everyType(single, t => t.flags + 7 > 4));
+results.push(everyType(union, t => t.flags > 5), everyType(single, t => t.flags + 8 > 4));
+results.push(everyType(union, t => t.flags > 6), everyType(single, t => t.flags + 9 > 4));
+results.push(everyType(union, t => t.flags > 7), everyType(single, t => t.flags + 10 > 4));
+results.push(everyType(union, t => t.flags > 8), everyType(single, t => t.flags + 11 > 4));
+results.push(everyType(union, t => t.flags > 9), everyType(single, t => t.flags + 12 > 4));
+console.log(results.join(" "));
+//// cold-code/cold6.ts
+// Eight arrows reach one call, which is more than a call tests for one by one, so they form a group with an entry of its own. The callee may also be undefined, and a call by value is what is left
+// of such a call where no test takes undefined away: in code that is not expected to run. It enters the arrows through the entries that every closure has.
+type Test<T> = ((element: T, index: number) => boolean) | undefined;
+function every<T>(array: readonly T[], callback: Test<T>): boolean {
+  for (let i = 0; i < array.length; i++) {
+    if (!callback!(array[i], i)) return false;
+  }
+  return true;
+}
+const numbers = [1, 2, 3];
+const results: boolean[] = [every([], undefined)];
+results.push(every(numbers, n => n > -3));
+results.push(every(numbers, n => n > -2));
+results.push(every(numbers, n => n > -1));
+results.push(every(numbers, n => n > 0));
+results.push(every(numbers, n => n > 1));
+results.push(every(numbers, n => n > 2));
+results.push(every(numbers, n => n > 3));
+results.push(every(numbers, n => n > 4));
+console.log(results.join(" "));

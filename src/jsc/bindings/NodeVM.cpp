@@ -68,6 +68,8 @@
 #include "JavaScriptCore/GetterSetter.h"
 #include "JavaScriptCore/MicrotaskQueue.h"
 #include "JavaScriptCore/MicrotaskQueueInlines.h"
+#include "JavaScriptCore/AOTModuleHost.h"
+#include "BunCompiledModules.h"
 
 namespace Bun {
 using namespace WebCore;
@@ -984,14 +986,21 @@ const JSC::GlobalObjectMethodTable& NodeVMGlobalObject::globalObjectMethodTable(
         nullptr, // defaultLanguage
         nullptr, // compileStreaming
         nullptr, // instantiateStreaming
+#if defined(BUN_DISABLE_SHADOW_REALM)
+        nullptr, // deriveShadowRealmGlobalObject
+#else
         &Zig::GlobalObject::deriveShadowRealmGlobalObject,
+#endif
         &codeForEval,
         &canCompileStrings,
         &trustedScriptStructure,
+        nullptr, // requireBuiltinModule
+        nullptr, // nativeBinding
     };
     return table;
 }
 
+#if ENABLE(WEBASSEMBLY)
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmWasmDisallowed, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
 {
     VM& vm = globalObject->vm();
@@ -1012,6 +1021,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmWasmCompileDisallowed, (JSC::JSGlobalObject * g
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, error)));
 }
+#endif // ENABLE(WEBASSEMBLY)
 
 void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
 {
@@ -1040,9 +1050,10 @@ void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
     }
 
     // A context decides for itself, as in Node.js, unless nothing in the process may.
-    setEvalEnabled(m_contextOptions.allowStrings && !Bun::isCodeGenerationFromStringsStrict(), Bun::codeGenerationFromStringsDisallowedMessage);
+    setEvalEnabled(m_contextOptions.allowStrings && !Bun::isCodeGenerationFromStringsStrict(), Bun::codeGenerationFromStringsDisallowedMessage());
     setWebAssemblyEnabled(m_contextOptions.allowWasm, "Wasm code generation disallowed by embedder"_s);
 
+#if ENABLE(WEBASSEMBLY)
     if (!m_contextOptions.allowWasm) {
         // JSC's setWebAssemblyEnabled only gates the streaming entry points;
         // `new WebAssembly.Module(bytes)`, WebAssembly.compile(bytes), and
@@ -1088,6 +1099,7 @@ void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
             webAssemblyObject->putDirect(vm, Identifier::fromString(vm, "compile"_s), compileDisallowed, static_cast<unsigned>(PropertyAttribute::DontEnum));
         }
     }
+#endif // ENABLE(WEBASSEMBLY)
 
     // Delete the internal Loader property from the VM global object.
     // This is exposed by JSC when exposeInternalModuleLoader() is true,
@@ -1554,7 +1566,7 @@ bool NodeVMGlobalObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* sandbox = thisObject->m_sandbox.get();
-    bool deleted = sandbox->deleteProperty(sandbox, globalObject, propertyName, slot);
+    bool deleted = Bun::hasCompiledModules() ? sandbox->methodTable()->deleteProperty(sandbox, globalObject, propertyName, slot) : sandbox->deleteProperty(sandbox, globalObject, propertyName, slot);
     RETURN_IF_EXCEPTION(scope, false);
     if (!deleted) {
         return false;
@@ -1651,7 +1663,8 @@ void NodeVMGlobalObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject* glo
 
 JSC_DEFINE_HOST_FUNCTION(vmIsModuleNamespaceObject, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    return JSValue::encode(jsBoolean(callFrame->argument(0).inherits(JSModuleNamespaceObject::info())));
+    JSValue argument = callFrame->argument(0);
+    return JSValue::encode(jsBoolean(argument.inherits(JSModuleNamespaceObject::info()) || (argument.isCell() && JSC::AOT::isModuleNamespace(argument.asCell()))));
 }
 
 JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)

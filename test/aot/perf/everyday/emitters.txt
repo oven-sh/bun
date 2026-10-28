@@ -1,0 +1,161 @@
+//// one-listener-one-argument
+import { EventEmitter } from "node:events";
+let heard = 0;
+const emitter = new EventEmitter();
+emitter.on("tick", (i: number) => void (heard += i & 1));
+function turn(i: number): number {
+  return emitter.emit("tick", i) ? 1 : 0;
+}
+//// no-listener
+import { EventEmitter } from "node:events";
+const emitter = new EventEmitter();
+emitter.on("other", () => {});
+function turn(i: number): number {
+  return emitter.emit("tick", i) ? 1 : i & 1;
+}
+//// no-argument
+import { EventEmitter } from "node:events";
+let heard = 0;
+const emitter = new EventEmitter();
+emitter.on("tick", () => void heard++);
+function turn(i: number): number {
+  return emitter.emit("tick") ? 1 : i;
+}
+//// three-arguments
+import { EventEmitter } from "node:events";
+let heard = 0;
+const emitter = new EventEmitter();
+emitter.on("tick", (a: number, b: number, c: number) => void (heard += a + b + c));
+function turn(i: number): number {
+  return emitter.emit("tick", i & 1, 2, 3) ? 1 : 0;
+}
+//// five-arguments
+import { EventEmitter } from "node:events";
+let heard = 0;
+const emitter = new EventEmitter();
+emitter.on("tick", (a: number, b: number, c: number, d: number, e: number) => void (heard += a + b + c + d + e));
+function turn(i: number): number {
+  return emitter.emit("tick", i & 1, 2, 3, 4, 5) ? 1 : 0;
+}
+//// two-listeners
+import { EventEmitter } from "node:events";
+let heard = 0;
+const emitter = new EventEmitter();
+emitter.on("tick", (i: number) => void (heard += i & 1));
+emitter.on("tick", (i: number) => void (heard += i & 2));
+function turn(i: number): number {
+  return emitter.emit("tick", i) ? 1 : 0;
+}
+//// one-listener-and-two-listeners-in-turns
+import { EventEmitter } from "node:events";
+let heard = 0;
+const emitters = [new EventEmitter(), new EventEmitter()];
+emitters[0].on("data", (i: number) => void (heard += i & 1));
+emitters[1].on("data", (i: number) => void (heard += i & 2));
+emitters[1].on("data", (i: number) => void (heard += i & 4));
+function turn(i: number): number {
+  return emitters[i & 1].emit("data", i) ? 1 : 0;
+}
+//// four-events-by-turn
+import { EventEmitter } from "node:events";
+let heard = 0;
+const emitter = new EventEmitter();
+const names = ["open", "data", "drain", "close"];
+emitter.on("open", (i: number) => void (heard += i & 1));
+emitter.on("data", (i: number) => void (heard += i & 2));
+emitter.on("drain", (i: number) => void (heard += i & 4));
+emitter.on("close", (i: number) => void (heard += i & 8));
+function turn(i: number): number {
+  return emitter.emit(names[i & 3], i) ? 1 : 0;
+}
+//// four-emitters-by-turn
+import { EventEmitter } from "node:events";
+let heard = 0;
+const emitters = [new EventEmitter(), new EventEmitter(), new EventEmitter(), new EventEmitter()];
+emitters[0].on("data", (i: number) => void (heard += i & 1));
+emitters[1].on("data", (i: number) => void (heard += i & 2));
+emitters[2].on("data", (i: number) => void (heard += i & 4));
+emitters[3].on("data", (i: number) => void (heard += i & 8));
+emitters[1].on("end", () => void heard++);
+emitters[2].on("close", () => void heard++);
+emitters[2].on("end", () => void heard++);
+function turn(i: number): number {
+  return emitters[i & 3].emit("data", i) ? 1 : 0;
+}
+//// many-emitters-events-and-listeners
+import { EventEmitter } from "node:events";
+let heard = 0;
+const names = ["open", "data", "drain", "close", "end", "finish", "pipe", "readable"];
+const emitters: EventEmitter[] = [];
+for (let k = 0; k < 8; k++) {
+  const emitter = new EventEmitter();
+  for (let n = 0; n <= k; n++) {
+    emitter.on(names[n], (a: number, b: number) => void (heard += (a & k) + (b | 0)));
+    if ((n + k) % 3 === 0) emitter.on(names[n], (a: number) => void (heard += a & n));
+  }
+  emitters.push(emitter);
+}
+function turn(i: number): number {
+  const emitter = emitters[i & 7];
+  switch (i & 3) {
+    case 0:
+      return emitter.emit("open") ? 1 : 0;
+    case 1:
+      return emitter.emit("data", i) ? 1 : 0;
+    case 2:
+      return emitter.emit(names[(i >> 3) & 7], i, 1) ? 1 : 0;
+    default:
+      return emitter.emit("close", i, 1, 2) ? 1 : 0;
+  }
+}
+//// a-class-below-emits-to-itself
+import { EventEmitter } from "node:events";
+let heard = 0;
+class Source extends EventEmitter {
+  count = 0;
+  push(chunk: number): boolean {
+    this.count++;
+    return this.emit("data", chunk);
+  }
+}
+const source = new Source();
+source.on("data", (i: number) => void (heard += i & 1));
+function turn(i: number): number {
+  return source.push(i) ? 1 : 0;
+}
+//// on-and-off
+import { EventEmitter } from "node:events";
+let heard = 0;
+const emitter = new EventEmitter();
+const listener = (i: number) => void (heard += i & 1);
+function turn(i: number): number {
+  emitter.on("tick", listener);
+  emitter.off("tick", listener);
+  return i & 1;
+}
+//// once-then-emit
+import { EventEmitter } from "node:events";
+let heard = 0;
+const emitter = new EventEmitter();
+const listener = (i: number) => void (heard += i & 1);
+function turn(i: number): number {
+  emitter.once("tick", listener);
+  return emitter.emit("tick", i) ? 1 : 0;
+}
+//// emitter-made-listened-to-and-dropped
+import { EventEmitter } from "node:events";
+let heard = 0;
+const listener = (i: number) => void (heard += i & 1);
+function turn(i: number): number {
+  const emitter = new EventEmitter();
+  emitter.on("data", listener);
+  emitter.on("end", listener);
+  return emitter.emit("data", i) ? 1 : 0;
+}
+//// listener-count
+import { EventEmitter } from "node:events";
+const emitter = new EventEmitter();
+emitter.on("tick", () => {});
+function turn(i: number): number {
+  return emitter.listenerCount("tick") + (i & 1);
+}

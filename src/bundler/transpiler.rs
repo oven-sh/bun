@@ -638,6 +638,19 @@ impl<'a> Transpiler<'a> {
         }
     }
 
+    /// [`bun_resolver::Resolver::aot_package_config`]. It fills caches of the resolver, so only the thread that owns this
+    /// `Transpiler` may ask. A thread that works on a copy is handed the answer.
+    pub fn find_aot_package_config(
+        &mut self,
+        path: &[u8],
+        loader: options::Loader,
+    ) -> Option<std::sync::Arc<TSConfigJSON>> {
+        match loader.is_typescript() {
+            true => self.resolver.aot_package_config(path),
+            false => None,
+        }
+    }
+
     /// [`Self::configure_linker_with_auto_jsx`] with `auto_jsx = true`.
     #[inline]
     pub fn configure_linker(&mut self) {
@@ -869,6 +882,19 @@ impl<'a> ParseResult<'a> {
 }
 
 /// Per-file inputs to the transpiler's parse step.
+impl ParseOptions<'_, '_> {
+    /// What a package with the "aot" condition says about JSX, decorators and class fields, in place of what the program says.
+    pub fn apply_aot_package_config(&mut self, own: &TSConfigJSON) {
+        self.jsx = own.merge_jsx(crate::options_impl::jsx::Pragma {
+            development: self.jsx.development,
+            ..Default::default()
+        });
+        self.emit_decorator_metadata = own.emit_decorator_metadata;
+        self.experimental_decorators = own.experimental_decorators;
+        self.use_define_for_class_fields = own.use_define_for_class_fields != Some(false);
+    }
+}
+
 pub struct ParseOptions<'a, 'b> {
     pub arena: &'a Arena,
     pub dirname_fd: FD,
@@ -987,7 +1013,7 @@ fn init_file_system(top_level_dir: Option<&'static [u8]>) -> crate::Result<*mut 
 /// is the icache/decode footprint of the prologue, not the cold body itself.
 #[cold]
 #[inline(never)]
-fn resolver_bundle_options_subset(
+pub(crate) fn resolver_bundle_options_subset(
     src: &options::BundleOptions<'_>,
 ) -> resolver::options::BundleOptions {
     use resolver::options as ropts;
@@ -1276,6 +1302,30 @@ impl<'a> Transpiler<'a> {
         const USE_SHARED_BUFFER: bool,
     >(
         &mut self,
+        this_parse: ParseOptions<'p, '_>,
+        client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint<'p>>,
+    ) -> Option<ParseResult<'p>> {
+        self.parse_internal::<RETURN_FILE_ONLY, USE_SHARED_BUFFER, false>(
+            this_parse,
+            client_entry_point_,
+        )
+    }
+
+    /// References no JavaScript parser, so `--trim` can remove the parser and keep this.
+    pub fn parse_data_file<'p, const RETURN_FILE_ONLY: bool>(
+        &mut self,
+        this_parse: ParseOptions<'p, '_>,
+    ) -> Option<ParseResult<'p>> {
+        self.parse_internal::<RETURN_FILE_ONLY, false, true>(this_parse, None)
+    }
+
+    fn parse_internal<
+        'p,
+        const RETURN_FILE_ONLY: bool,
+        const USE_SHARED_BUFFER: bool,
+        const DATA_ONLY: bool,
+    >(
+        &mut self,
         mut this_parse: ParseOptions<'p, '_>,
         // The only caller passes `EntryPoints::ClientEntryPoint`, so the
         // param is typed concretely.
@@ -1309,7 +1359,7 @@ impl<'a> Transpiler<'a> {
                 break 'brk client_entry_point.source.clone();
             }
 
-            if path.namespace == b"node" {
+            if !DATA_ONLY && path.namespace == b"node" {
                 if let Some(code) = NodeFallbackModules::contents_from_path(path.text) {
                     break 'brk bun_ast::Source::init_path_string(path.text, code);
                 }
@@ -1443,7 +1493,9 @@ impl<'a> Transpiler<'a> {
             options::Loader::Js
             | options::Loader::Jsx
             | options::Loader::Ts
-            | options::Loader::Tsx => {
+            | options::Loader::Tsx
+                if !DATA_ONLY =>
+            {
                 // wasm magic number
                 if source.is_web_assembly() {
                     return Some(ParseResult::empty_with(
@@ -1754,7 +1806,7 @@ impl<'a> Transpiler<'a> {
             options::Loader::Text => {
                 return parse_text_loader(source, loader, source_backing, arena);
             }
-            options::Loader::Md => {
+            options::Loader::Md if !DATA_ONLY => {
                 return parse_md_loader(source, loader, source_backing, arena, log);
             }
             options::Loader::Wasm => {
@@ -1769,7 +1821,12 @@ impl<'a> Transpiler<'a> {
                 );
             }
             options::Loader::Css => {}
-            options::Loader::File
+            options::Loader::Js
+            | options::Loader::Jsx
+            | options::Loader::Ts
+            | options::Loader::Tsx
+            | options::Loader::Md
+            | options::Loader::File
             | options::Loader::Napi
             | options::Loader::Base64
             | options::Loader::Dataurl

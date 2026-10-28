@@ -1617,7 +1617,7 @@ pub mod parse_worker {
     // `transpiler`/`resolver` are raw `*mut` — see
     // `get_code_for_parse_task_without_plugins`.
     #[allow(clippy::too_many_arguments)]
-    fn get_code_for_parse_task<'b>(
+    pub(crate) fn get_code_for_parse_task<'b>(
         task: &mut ParseTask<'static>,
         log: &mut Log,
         transpiler: *mut Transpiler<'b>,
@@ -2517,6 +2517,7 @@ pub mod parse_worker {
             options::Format::InternalBakeDev => js_parser::options::Format::InternalBakeDev,
         };
         opts.features.minify_syntax = topts.minify_syntax;
+        opts.features.is_library = topts.is_library;
         opts.features.minify_identifiers = topts.minify_identifiers;
         opts.features.minify_keep_names = topts.keep_names;
         opts.features.minify_whitespace = topts.minify_whitespace;

@@ -3,13 +3,16 @@ import * as b from "../../codegen/bindgen-lib.ts";
 const js = { capability: "js", throws: true } as const;
 
 /** `expect(received).toBeTrue()` */
-const matcher = { returns: b.any, passThis: true, ...js } as const;
+const matcher = { returns: b.any.returning("undefined"), passThis: true, ...js } as const;
 /** `expect(received).toBe(expected)` */
 const matcherWithExpected = { ...matcher, args: { expected: b.any } } as const;
 /** `expect(mock).toHaveBeenCalledWith(...expected)` */
 const matcherWithCallArguments = { ...matcher, args: { expected: b.any.variadic } } as const;
 const matcherWithNthCallArguments = { ...matcher, args: { nth: b.any, expected: b.any.variadic }, length: 0 } as const;
 const matcherWithNthExpected = { ...matcher, args: { nth: b.any, expected: b.any }, length: 1 } as const;
+/** These return `this`. */
+const chainable = { ...matcher, returns: b.any.returning("this") } as const;
+const chainableWithExpected = { ...chainable, args: { expected: b.any } } as const;
 
 export const ExpectAnything = b.class({ rustPath: "crate::test_runner::ExpectAnything" });
 
@@ -53,7 +56,7 @@ const asymmetricMatchers = {
   stringContaining: { args: { string: b.any }, returns: ExpectStringContaining, ...js },
   stringMatching: { args: { test: b.any }, returns: ExpectStringMatching, ...js },
   /** `(predicate, message?)`. Variadic because printing it shows only the arguments it got. */
-  toSatisfy: { args: { args: b.any.variadic }, returns: b.any, ...js, length: 1 },
+  toSatisfy: { args: { args: b.any.variadic }, returns: b.any.returning("object"), ...js, length: 1 },
 } as const;
 
 /** `expect.not`, `expect.resolvesTo` and `expect.rejectsTo` */
@@ -81,13 +84,13 @@ export const Expect = b.class({
   internalFields: ["capturedValue", "resultValue"],
   protoCaller: "call_matcher",
   proto: {
-    fail: { args: { message: b.any }, returns: b.any, ...js },
+    fail: { args: { message: b.any }, returns: b.any.returning("undefined"), ...js },
     lastCalledWith: { ...matcherWithCallArguments, rustName: "to_have_been_last_called_with" },
     lastReturnedWith: { ...matcherWithExpected, rustName: "to_have_last_returned_with" },
     not: { getter: b.self, passThis: true },
     nthCalledWith: { ...matcherWithNthCallArguments, rustName: "to_have_been_nth_called_with" },
     nthReturnedWith: { ...matcherWithNthExpected, rustName: "to_have_nth_returned_with" },
-    pass: { args: { message: b.any }, returns: b.any, ...js },
+    pass: { args: { message: b.any }, returns: b.any.returning("undefined"), ...js },
     rejects: { getter: b.self, capability: "heap", throws: true, passThis: true },
     resolves: { getter: b.self, capability: "heap", throws: true, passThis: true },
     toBe: matcherWithExpected,
@@ -101,7 +104,7 @@ export const Expect = b.class({
     toBeDate: matcher,
     toBeDefined: matcher,
     toBeEmpty: matcher,
-    toBeEmptyObject: matcher,
+    toBeEmptyObject: chainable,
     toBeEven: matcher,
     toBeFalse: matcher,
     toBeFalsy: matcher,
@@ -118,7 +121,7 @@ export const Expect = b.class({
     toBeNil: matcher,
     toBeNull: matcher,
     toBeNumber: matcher,
-    toBeObject: matcher,
+    toBeObject: chainable,
     toBeOdd: matcher,
     toBeOneOf: matcherWithExpected,
     toBePositive: matcher,
@@ -128,18 +131,18 @@ export const Expect = b.class({
     toBeTruthy: matcher,
     toBeTypeOf: matcherWithExpected,
     toBeUndefined: matcher,
-    toBeValidDate: matcher,
+    toBeValidDate: chainable,
     toBeWithin: { ...matcher, args: { start: b.any, end: b.any } },
     toContain: matcherWithExpected,
-    toContainAllKeys: matcherWithExpected,
-    toContainAllValues: matcherWithExpected,
-    toContainAnyKeys: matcherWithExpected,
-    toContainAnyValues: matcherWithExpected,
-    toContainEqual: matcherWithExpected,
-    toContainKey: matcherWithExpected,
-    toContainKeys: matcherWithExpected,
-    toContainValue: matcherWithExpected,
-    toContainValues: matcherWithExpected,
+    toContainAllKeys: chainableWithExpected,
+    toContainAllValues: chainableWithExpected,
+    toContainAnyKeys: chainableWithExpected,
+    toContainAnyValues: chainableWithExpected,
+    toContainEqual: chainableWithExpected,
+    toContainKey: chainableWithExpected,
+    toContainKeys: chainableWithExpected,
+    toContainValue: chainableWithExpected,
+    toContainValues: chainableWithExpected,
     toEndWith: matcherWithExpected,
     toEqual: matcherWithExpected,
     toEqualIgnoringWhitespace: matcherWithExpected,
@@ -193,7 +196,7 @@ export const Expect = b.class({
     assertions: { args: { expected: b.any }, ...js },
     closeTo: asymmetricMatchers.closeTo,
     extend: { args: { matchers: b.any }, ...js },
-    getState: { returns: b.any, ...js },
+    getState: { returns: b.any.returning("object"), ...js },
     hasAssertions: { ...js, length: 1 },
     not: { getter: ExpectStatic, capability: "heap", rustName: "static_not" },
     objectContaining: asymmetricMatchers.objectContaining,
@@ -238,14 +241,14 @@ export const ExpectMatcherContext = b.class({
     customTesters: { getter: b.any, ...js },
     /** A plain function, like those of `utils`: a matcher can destructure it. */
     equals: { getter: b.any, capability: "js" },
-    expand: { getter: b.bool },
+    expand: { getter: b.bool, pure: true },
     expectedAssertionsNumber: { getter: b.u32.nullable },
     isExpectingAssertions: { getter: b.bool },
-    isNot: { getter: b.bool },
+    isNot: { getter: b.bool, pure: true },
     promise: { getter: b.string },
     suppressedErrors: { getter: b.any, ...js },
     testPath: { getter: b.any, ...js },
-    utils: { getter: b.any, capability: "js" },
+    utils: { getter: b.any.returning("ExpectMatcherUtils"), capability: "js" },
   },
 });
 

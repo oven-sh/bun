@@ -53,6 +53,8 @@ pub(crate) mod shell;
 // cycle the `bun_bun_js` shims were papering over.
 #[path = "api.rs"]
 pub(crate) mod api;
+pub(crate) mod checker_queries_testing;
+pub(crate) mod code_resolver_testing;
 pub(crate) mod dispatch;
 pub(crate) mod hw_exports;
 #[cfg(debug_assertions)]
@@ -64,6 +66,7 @@ pub(crate) mod jsc_hooks;
 pub(crate) mod json_line_buffer;
 pub(crate) mod linear_fifo_testing;
 pub(crate) mod napi;
+pub(crate) mod removed_feature;
 #[path = "../bun.js.rs"]
 pub(crate) mod run_main;
 pub(crate) mod timer;

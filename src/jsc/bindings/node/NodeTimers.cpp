@@ -160,29 +160,35 @@ JSC_DEFINE_HOST_FUNCTION(functionClearTimeout,
     return Bun__Timer__clearTimeout(globalObject, JSC::JSValue::encode(callFrame->argument(0)));
 }
 
-static JSC::EncodedJSValue timersPromisesExport(JSGlobalObject* lexicalGlobalObject, ASCIILiteral name)
+static JSC::EncodedJSValue timersPromisesExport(JSGlobalObject* lexicalGlobalObject, ASCIILiteral name, JSValue (*requireTimersPromises)(Zig::GlobalObject*))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    JSValue timersPromises = globalObject->internalModuleRegistry()->requireId(lexicalGlobalObject, vm, InternalModuleRegistry::Field::NodeTimersPromises);
+    JSValue timersPromises = requireTimersPromises(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(timersPromises.get(lexicalGlobalObject, Identifier::fromString(vm, name))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(setTimeoutPromisifyCustomGetter, (JSGlobalObject * globalObject, CallFrame*))
 {
-    return timersPromisesExport(globalObject, "setTimeout"_s);
+    return timersPromisesExport(globalObject, "setTimeout"_s, [](Zig::GlobalObject* realm) {
+        return BUN_REQUIRE_INTERNAL_MODULE(realm, NodeTimersPromises, "setTimeout.@@@nodejs.util.promisify.custom", "setTimeout"_s);
+    });
 }
 
 JSC_DEFINE_HOST_FUNCTION(setIntervalPromisifyCustomGetter, (JSGlobalObject * globalObject, CallFrame*))
 {
-    return timersPromisesExport(globalObject, "setInterval"_s);
+    return timersPromisesExport(globalObject, "setInterval"_s, [](Zig::GlobalObject* realm) {
+        return BUN_REQUIRE_INTERNAL_MODULE(realm, NodeTimersPromises, "setInterval.@@@nodejs.util.promisify.custom", "setInterval"_s);
+    });
 }
 
 JSC_DEFINE_HOST_FUNCTION(setImmediatePromisifyCustomGetter, (JSGlobalObject * globalObject, CallFrame*))
 {
-    return timersPromisesExport(globalObject, "setImmediate"_s);
+    return timersPromisesExport(globalObject, "setImmediate"_s, [](Zig::GlobalObject* realm) {
+        return BUN_REQUIRE_INTERNAL_MODULE(realm, NodeTimersPromises, "setImmediate.@@@nodejs.util.promisify.custom", "setImmediate"_s);
+    });
 }
 
 static Identifier promisifyCustomSymbol(VM& vm)
@@ -442,9 +448,9 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__FakeTimers__loadNodeTimers(Zig::
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::Field::NodeTimers);
+    BUN_REQUIRE_INTERNAL_MODULE(globalObject, NodeTimers, "bun:test");
     RETURN_IF_EXCEPTION(scope, );
-    globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::Field::NodeTimersPromises);
+    BUN_REQUIRE_INTERNAL_MODULE(globalObject, NodeTimersPromises, "bun:test");
     RETURN_IF_EXCEPTION(scope, );
 }
 

@@ -549,18 +549,45 @@ macro_rules! impl_buffered_reader_parent {
     // Single-lifetime generic: trait impl over `<'lt>`, link registered at `'static`.
     (
         $variant:ident for $T:ident<$lt:lifetime>;
+        feature = $feature:ident;
         $($rest:tt)*
     ) => {
         $crate::buffered_reader_parent_link!($variant for $T<'static>);
-        $crate::__impl_buffered_reader_parent_body! { [$lt] [$T<$lt>] $variant; $($rest)* }
+        $crate::__impl_buffered_reader_parent_body! { [$lt] [$T<$lt>] $variant; [$feature] $($rest)* }
+    };
+    (
+        $variant:ident for $T:ident<$lt:lifetime>;
+        $($rest:tt)*
+    ) => {
+        $crate::buffered_reader_parent_link!($variant for $T<'static>);
+        $crate::__impl_buffered_reader_parent_body! { [$lt] [$T<$lt>] $variant; [] $($rest)* }
     };
     // Non-generic.
+    (
+        $variant:ident for $T:ty;
+        feature = $feature:ident;
+        $($rest:tt)*
+    ) => {
+        $crate::buffered_reader_parent_link!($variant for $T);
+        $crate::__impl_buffered_reader_parent_body! { [] [$T] $variant; [$feature] $($rest)* }
+    };
     (
         $variant:ident for $T:ty;
         $($rest:tt)*
     ) => {
         $crate::buffered_reader_parent_link!($variant for $T);
-        $crate::__impl_buffered_reader_parent_body! { [] [$T] $variant; $($rest)* }
+        $crate::__impl_buffered_reader_parent_body! { [] [$T] $variant; [] $($rest)* }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __buffered_reader_callback {
+    ([] $body:expr) => {
+        $body
+    };
+    ([$feature:ident] $body:expr) => {
+        ::bun_removable_features::removable_body!($feature, Abort, { $body })
     };
 }
 
@@ -569,6 +596,7 @@ macro_rules! impl_buffered_reader_parent {
 macro_rules! __impl_buffered_reader_parent_body {
     (
         [$($lt:lifetime)?] [$T:ty] $variant:ident;
+        $feature:tt
         has_on_read_chunk = $has:expr;
         $( on_read_chunk = |$rc_this:ident, $rc_chunk:ident, $rc_more:ident| $rc:expr; )?
         on_reader_done = |$rd_this:ident| $rd:expr;
@@ -592,16 +620,16 @@ macro_rules! __impl_buffered_reader_parent_body {
                     $rc_chunk: $crate::Chunk<'_>,
                     $rc_more: $crate::ReadState,
                 ) -> bool {
-                    unsafe { $rc }
+                    unsafe { $crate::__buffered_reader_callback!($feature $rc) }
                 }
             )?
             #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
             unsafe fn on_reader_done($rd_this: *mut Self) {
-                unsafe { $rd }
+                unsafe { $crate::__buffered_reader_callback!($feature $rd) }
             }
             #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
             unsafe fn on_reader_error($re_this: *mut Self, $re_err: $crate::__bun_sys::Error) {
-                unsafe { $re }
+                unsafe { $crate::__buffered_reader_callback!($feature $re) }
             }
             #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
             unsafe fn loop_($l_this: *mut Self) -> *mut $crate::pipe_reader::Loop {

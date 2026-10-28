@@ -1,0 +1,2848 @@
+////: Range
+class Range {
+  constructor(
+    readonly from: number,
+    readonly to: number,
+  ) {}
+  [Symbol.iterator](): RangeIterator {
+    return new RangeIterator(this.from, this.to);
+  }
+}
+////: RangeIterator
+class RangeIterator {
+  at: number;
+  constructor(
+    at: number,
+    readonly end: number,
+  ) {
+    this.at = at;
+  }
+  next(): IteratorResult<number, undefined> {
+    if (this.at < this.end) return { value: this.at++, done: false };
+    return { value: undefined, done: true };
+  }
+}
+////: collect
+function collect(values: Iterable<unknown>, limit = «1»): unknown[] {
+  const seen: unknown[] = [];
+  for (const value of values) {
+    seen.push(value);
+    if (seen.length >= limit) break;
+  }
+  return seen;
+}
+//// for-await-over-sync-iterables-in-place.ts
+// `for await` over what is only sync iterable: arrays, sets, maps, strings, generators and iterators written by hand. Every call of next() and return() with its number of arguments, every read of
+// `done` and `value` (`value` is read when done, too), every then() of an element and every turn is as in plain Bun: with an empty job queue, where nothing needs to wait, and beside other jobs;
+// in a function that a job has entered, in one that has never been suspended and in an async generator; when the loop runs to its end, breaks, returns or throws; for elements that are fulfilled,
+// pending and rejected promises (a rejection closes the iterator) and thenables; and when next(), return() or one of the getters throws or answers with something else than an object.
+const settled = Promise.resolve();
+const lines: string[] = [];
+let log: string[] = [];
+
+////= Ticker
+let ticker: Ticker | null = null;
+////= startTicker-2
+function stopTicker(): void {
+  if (ticker) ticker.isOn = false;
+  ticker = null;
+}
+function note(text: string): void {
+  log.push(ticker ? text + " @" + ticker.count : text);
+}
+function show(value: unknown): string {
+  if (typeof value === "string") return JSON.stringify(value);
+  return typeof value === "object" && value !== null ? JSON.stringify(value) : String(value);
+}
+function messageOf(error: unknown): string {
+  if (error instanceof TypeError) return "a TypeError";
+  return error instanceof Error ? error.message : show(error);
+}
+////= afterTimer
+////= afterTwoJobs
+function afterATimer<T>(value: T): Promise<T> {
+  return new Promise<T>(resolve => {
+    setTimeout(() => resolve(value), 0);
+  });
+}
+function rejected(message: string): Promise<never> {
+  const promise = Promise.reject(new RangeError(message));
+  promise.catch(() => {});
+  return promise;
+}
+function rejectedAfterTwoJobs(message: string): Promise<never> {
+  const promise = new Promise<never>((_, reject) => {
+    settled.then(() => settled.then(() => reject(new RangeError(message))));
+  });
+  promise.catch(() => {});
+  return promise;
+}
+function thenable(label: string, settle: (resolve: (value: unknown) => void, reject: (reason: unknown) => void) => void): any {
+  return {
+    then(resolve: (value: unknown) => void, reject: (reason: unknown) => void): void {
+      note("then of " + label);
+      settle(resolve, reject);
+    },
+  };
+}
+class OwnPromise<T> extends Promise<T> {}
+
+function* generated(items: unknown[]): Generator<unknown, string, unknown> {
+  try {
+    for (const item of items) {
+      note("the generator yields");
+      yield item;
+    }
+    return "returned";
+  } finally {
+    note("the generator is closed");
+  }
+}
+// An iterator that reports how it is used. A missing `close` leaves it without a return().
+function counter(items: unknown[], close?: () => unknown): any {
+  return {
+    [Symbol.iterator](): unknown {
+      note("iterator");
+      let i = 0;
+      const iterator: any = {
+        next(): unknown {
+          note("next/" + arguments.length);
+          return i < items.length ? { done: false, value: items[i++] } : { done: true, value: "the end" };
+        },
+      };
+      if (close) {
+        const closes = close;
+        iterator.return = function (): unknown {
+          note("return/" + arguments.length);
+          return closes();
+        };
+      }
+      return iterator;
+    },
+  };
+}
+function withGetters(items: unknown[]): any {
+  return {
+    [Symbol.iterator](): unknown {
+      let i = 0;
+      return {
+        next(): unknown {
+          const index = i++;
+          note("next");
+          return {
+            get done(): boolean {
+              note("done " + index);
+              return index >= items.length;
+            },
+            get value(): unknown {
+              note("value " + index);
+              return index < items.length ? items[index] : "the end";
+            },
+          };
+        },
+        get return(): unknown {
+          note("return is read");
+          return function (): unknown {
+            note("return/" + arguments.length);
+            return {
+              get done(): boolean {
+                note("done of return");
+                return true;
+              },
+              get value(): unknown {
+                note("value of return");
+                return "closed";
+              },
+            };
+          };
+        },
+      };
+    },
+  };
+}
+function answers(results: (() => unknown)[]): any {
+  return {
+    [Symbol.iterator](): unknown {
+      let i = 0;
+      return {
+        next(): unknown {
+          note("next");
+          return i < results.length ? results[i++]() : { done: true, value: undefined };
+        },
+        return(): unknown {
+          note("return");
+          return {};
+        },
+      };
+    },
+  };
+}
+function fails(message: string): never {
+  throw new RangeError(message);
+}
+const closed = (): unknown => ({ done: true, value: undefined });
+
+type Source = () => any;
+// The third entry is true where a timer settles an element: such a loop cannot end while another chain of jobs keeps the queue busy.
+const sources: [label: string, source: Source, needsTimers?: boolean][] = [
+  ["numbers", () => [1, 2, 3]],
+  ["nothing", () => []],
+  ["one number", () => [1]],
+  ["a hole", () => [1, , 3]],
+  ["other values", () => ["text", null, undefined, 1.5, true, { n: 1 }, [2]]],
+  ["a set", () => new Set(["a", "b"])],
+  ["a map", () => new Map([["k", 1], ["l", 2]])],
+  ["keys of a map", () => new Map([[1, 1], [2, 2]]).keys()],
+  ["a string", () => "a\u{1F600}b"],
+  ["a typed array", () => new Uint8Array([7, 8])],
+  ["values of an array", () => [5, 6].values()],
+  ["entries of an array", () => ["p", "q"].entries()],
+  ["a generator", () => generated([1, 2, 3])],
+  ["a generator of promises", () => generated([Promise.resolve(1), afterTwoJobs(2), 3])],
+  ["a generator that yields a rejected promise", () => generated([1, rejected("rejected"), 3])],
+  ["an iterator", () => counter([1, 2, 3], closed)],
+  ["an iterator without return", () => counter([1, 2, 3])],
+  ["getters", () => withGetters([1, 2])],
+  ["getters and promises", () => withGetters([Promise.resolve(1), afterTwoJobs(2)])],
+  ["fulfilled promises", () => [Promise.resolve(1), Promise.resolve(2), Promise.resolve(3)]],
+  ["promises fulfilled after two jobs", () => [afterTwoJobs(1), 2, afterTwoJobs(3)]],
+  ["promises fulfilled by timers", () => [afterATimer(1), 2, afterATimer(3)], true],
+  ["a promise of a promise", () => [Promise.resolve(Promise.resolve(1)), 2]],
+  ["a rejected promise in an array", () => [1, rejected("rejected"), 3]],
+  ["a rejected promise first", () => counter([rejected("rejected"), 2], closed)],
+  ["a rejected promise from an iterator", () => counter([1, rejected("rejected"), 3], closed)],
+  ["a rejected promise from an iterator without return", () => counter([1, rejected("rejected"), 3])],
+  ["a promise rejected after two jobs", () => counter([1, rejectedAfterTwoJobs("rejected late"), 3], closed)],
+  ["a rejection, and return throws", () => counter([1, rejected("rejected"), 3], () => fails("return throws"))],
+  ["a rejected promise as the last value", () => answers([() => ({ done: false, value: 1 }), () => ({ done: true, value: rejected("rejected at the end") })])],
+  ["thenables", () => counter([thenable("a", resolve => resolve(1)), thenable("b", resolve => void settled.then(() => resolve(2))), 3], closed)],
+  ["a thenable that gives a thenable", () => [thenable("outer", resolve => resolve(thenable("inner", resolveInner => resolveInner(1)))), 2]],
+  ["a thenable that rejects", () => counter([1, thenable("c", (_, reject) => reject(new RangeError("rejected by then"))), 3], closed)],
+  ["a thenable that throws", () => counter([1, thenable("d", () => fails("then throws")), 3], closed)],
+  ["a thenable that settles twice", () => counter([thenable("e", (resolve, reject) => (resolve(1), reject(new RangeError("too late")), resolve(2))), 3], closed)],
+  [
+    "a then that cannot be read",
+    () =>
+      counter(
+        [
+          1,
+          {
+            get then(): unknown {
+              note("then is read");
+              return fails("then cannot be read");
+            },
+          },
+          3,
+        ],
+        closed,
+      ),
+  ],
+  ["a then that is no function", () => [{ then: 1 }, { then: null }]],
+  [
+    "a promise with its own then",
+    () => {
+      const promise: any = Promise.resolve(1);
+      promise.then = function (this: any, onFulfilled: any, onRejected: any): unknown {
+        note("its own then");
+        return Promise.prototype.then.call(this, onFulfilled, onRejected);
+      };
+      return [promise, 2];
+    },
+  ],
+  [
+    "a promise whose constructor is read",
+    () => {
+      const promise = Promise.resolve(1);
+      Object.defineProperty(promise, "constructor", {
+        get(): unknown {
+          note("constructor is read");
+          return Promise;
+        },
+      });
+      return [promise, 2];
+    },
+  ],
+  [
+    "a promise with another constructor",
+    () => {
+      const promise = Promise.resolve(1);
+      Object.defineProperty(promise, "constructor", { value: OwnPromise });
+      return [promise, 2];
+    },
+  ],
+  ["promises of a subclass", () => [OwnPromise.resolve(1), 2, OwnPromise.resolve(3)]],
+  ["next throws at once", () => answers([() => fails("next throws")])],
+  ["next throws later", () => answers([() => ({ done: false, value: 1 }), () => fails("next throws")])],
+  ["next answers with a number", () => answers([() => ({ done: false, value: 1 }), () => 5])],
+  ["next answers with undefined", () => answers([() => undefined])],
+  ["next answers with a promise", () => answers([() => Promise.resolve({ done: false, value: 1 })])],
+  ["next answers with an empty object", () => answers([() => ({}), () => ({}), () => ({ done: true })])],
+  ["done in other words", () => answers([() => ({ done: 0, value: 1 }), () => ({ done: "", value: 2 }), () => ({ done: null, value: 3 }), () => ({ done: "no", value: 4 }), () => ({ done: false, value: 5 })])],
+  [
+    "done throws",
+    () =>
+      answers([
+        () => ({ done: false, value: 1 }),
+        () => ({
+          get done(): boolean {
+            return fails("done throws");
+          },
+          value: 2,
+        }),
+      ]),
+  ],
+  [
+    "value throws",
+    () =>
+      answers([
+        () => ({ done: false, value: 1 }),
+        () => ({
+          done: false,
+          get value(): unknown {
+            return fails("value throws");
+          },
+        }),
+      ]),
+  ],
+  [
+    "value throws when done",
+    () =>
+      answers([
+        () => ({ done: false, value: 1 }),
+        () => ({
+          done: true,
+          get value(): unknown {
+            return fails("value throws when done");
+          },
+        }),
+      ]),
+  ],
+  ["Symbol.iterator throws", () => ({ [Symbol.iterator]: () => fails("Symbol.iterator throws") })],
+  ["Symbol.iterator answers with a number", () => ({ [Symbol.iterator]: () => 5 })],
+  ["Symbol.iterator is no function", () => ({ [Symbol.iterator]: 5 })],
+  ["next is no function", () => ({ [Symbol.iterator]: () => ({ next: 5 }) })],
+  ["no next", () => ({ [Symbol.iterator]: () => ({}) })],
+  ["not iterable", () => ({})],
+  ["null", () => null],
+  ["a number", () => 5],
+  ["Symbol.asyncIterator is undefined", () => Object.assign(counter([1, 2], closed), { [Symbol.asyncIterator]: undefined })],
+  ["Symbol.asyncIterator is null", () => Object.assign(counter([1, 2], closed), { [Symbol.asyncIterator]: null })],
+  [
+    "Symbol.asyncIterator is read",
+    () =>
+      Object.defineProperty(counter([1, 2], closed), Symbol.asyncIterator, {
+        get(): unknown {
+          note("Symbol.asyncIterator is read");
+          return undefined;
+        },
+      }),
+  ],
+  ["return throws", () => counter([1, 2, 3], () => fails("return throws"))],
+  ["return answers with a number", () => counter([1, 2, 3], () => 5)],
+  ["return answers with a promise as its value", () => counter([1, 2, 3], () => ({ done: true, value: afterTwoJobs("closed late") }))],
+  ["return answers with a rejected promise as its value", () => counter([1, 2, 3], () => ({ done: true, value: rejected("rejected by return") }))],
+  ["return answers that it is not done", () => counter([1, 2, 3], () => ({ done: false, value: "not done" }))],
+  ["return is null", () => ({ [Symbol.iterator]: () => Object.assign(counter([1, 2, 3])[Symbol.iterator](), { return: null }) })],
+  ["return is no function", () => ({ [Symbol.iterator]: () => Object.assign(counter([1, 2, 3])[Symbol.iterator](), { return: 5 }) })],
+];
+
+type Consumer = (source: Source) => Promise<void>;
+async function toTheEnd(source: Source): Promise<void> {
+  await null;
+  try {
+    for await (const value of source()) note("sees " + show(value));
+    note("ends");
+  } catch (error) {
+    note("caught " + messageOf(error));
+  }
+}
+async function neverSuspendedBefore(source: Source): Promise<void> {
+  try {
+    for await (const value of source()) note("sees " + show(value));
+    note("ends");
+  } catch (error) {
+    note("caught " + messageOf(error));
+  }
+}
+async function breaks(source: Source): Promise<void> {
+  await null;
+  let seen = 0;
+  try {
+    for await (const value of source()) {
+      note("sees " + show(value));
+      if (++seen === 2) break;
+    }
+    note("ends");
+  } catch (error) {
+    note("caught " + messageOf(error));
+  }
+}
+async function returnsFromTheLoop(source: Source): Promise<string> {
+  for await (const value of source()) {
+    note("sees " + show(value));
+    return "returned from the loop";
+  }
+  return "returned behind the loop";
+}
+async function returns(source: Source): Promise<void> {
+  await null;
+  try {
+    note(await returnsFromTheLoop(source));
+  } catch (error) {
+    note("caught " + messageOf(error));
+  }
+}
+async function throws(source: Source): Promise<void> {
+  await null;
+  try {
+    for await (const value of source()) {
+      note("sees " + show(value));
+      fails("thrown in the loop");
+    }
+    note("ends");
+  } catch (error) {
+    note("caught " + messageOf(error));
+  }
+}
+async function awaitsInTheLoop(source: Source): Promise<void> {
+  await null;
+  try {
+    for await (const value of source()) {
+      note("sees " + show(value));
+      await settled;
+      note("goes on");
+    }
+    note("ends");
+  } catch (error) {
+    note("caught " + messageOf(error));
+  }
+}
+async function* passesOn(source: Source): AsyncGenerator<unknown, void, unknown> {
+  try {
+    for await (const value of source()) {
+      note("passes on " + show(value));
+      yield value;
+    }
+    note("the async generator ends");
+  } catch (error) {
+    note("the async generator caught " + messageOf(error));
+  }
+}
+async function throughAnAsyncGenerator(source: Source): Promise<void> {
+  await null;
+  for await (const value of passesOn(source)) note("gets " + show(value));
+  note("ends");
+}
+async function leavesAnAsyncGenerator(source: Source): Promise<void> {
+  await null;
+  try {
+    for await (const value of passesOn(source)) {
+      note("gets " + show(value));
+      break;
+    }
+    note("ends");
+  } catch (error) {
+    note("caught " + messageOf(error));
+  }
+}
+async function twoAtOnce(source: Source): Promise<void> {
+  await Promise.all([toTheEnd(source), neverSuspendedBefore(source)]);
+}
+const consumers: [label: string, consume: Consumer][] = [
+  ["to the end", toTheEnd],
+  ["never suspended before", neverSuspendedBefore],
+  ["breaks", breaks],
+  ["returns", returns],
+  ["throws", throws],
+  ["awaits in the loop", awaitsInTheLoop],
+  ["through an async generator", throughAnAsyncGenerator],
+  ["leaves an async generator", leavesAnAsyncGenerator],
+  ["two at once", twoAtOnce],
+];
+
+for (const [consumerLabel, consume] of consumers) {
+  for (const withOtherJobs of [false, true]) {
+    lines.push("== " + consumerLabel + (withOtherJobs ? ", beside other jobs" : ", alone"));
+    for (const [label, source, needsTimers] of sources) {
+      if (withOtherJobs && needsTimers) continue;
+      log = [];
+      await afterTimer();
+      if (withOtherJobs) startTicker();
+      await consume(source);
+      stopTicker();
+      lines.push(label + ": " + log.join(" | "));
+    }
+  }
+}
+
+async function sums(list: Iterable<number | Promise<number>>): Promise<number> {
+  let sum = 0;
+  for await (const value of list) sum += value;
+  return sum;
+}
+const many: number[] = [];
+for (let i = 0; i < 20000; i++) many.push(i);
+lines.push("== long loops");
+await afterTimer();
+lines.push("an array: " + (await sums(many)));
+lines.push("a set: " + (await sums(new Set(many))));
+lines.push("fulfilled promises: " + (await sums(many.map(n => Promise.resolve(n)))));
+lines.push("two arrays at once: " + (await Promise.all([sums(many), sums(many)])).join(" "));
+console.log(lines.join("\n"));
+
+export {};
+//// for-await-over-what-a-method-returns.ts
+// `for await` over an object whose Symbol.asyncIterator method hands out an async generator: the steps, their order among other jobs, and who is called.
+import { Readable } from "node:stream";
+
+const lines: string[] = [];
+function log(line: string) { lines.push(line); }
+////= ticks
+
+async function* numbers(name: string, count: number): AsyncGenerator<number, string, unknown> {
+  try {
+    for (let i = 0; i < count; i++) {
+      log(name + " yields " + i);
+      const sent = yield i;
+      log(name + " got " + String(sent));
+      if (i === 1) await null;
+    }
+    return name + " is done";
+  } finally {
+    log(name + " is closed");
+  }
+}
+
+function from(make: () => any): AsyncIterable<number> {
+  return { [Symbol.asyncIterator]() { log("opened"); return make(); } };
+}
+
+async function consume(name: string, iterable: AsyncIterable<number>, stopAt = -1) {
+  ticks(name, 6);
+  try {
+    for await (const value of iterable) {
+      log(name + " sees " + value);
+      if (value === stopAt) break;
+    }
+    log(name + " is through");
+  } catch (error) {
+    log(name + " caught " + (error instanceof Error ? error.constructor.name : String(error)));
+  }
+}
+
+async function* relay(name: string, iterable: AsyncIterable<number>) {
+  for await (const value of iterable) {
+    log(name + " relays " + value);
+    yield value * 10;
+  }
+}
+
+const builtinNext = Object.getPrototypeOf(numbers.prototype).next;
+
+await consume("plain", from(() => numbers("a", 3)));
+await consume("stopped", from(() => numbers("b", 3)), 1);
+
+await consume("with a member", from(() => Object.assign(numbers("c", 3), { stream: "kept" })));
+
+await consume("own next", from(() => {
+  const generator: any = numbers("d", 3);
+  generator.next = function (...sent: unknown[]) { log("own next with " + sent.length); return builtinNext.call(this, "from own next"); };
+  return generator;
+}));
+
+await consume("own built-in next", from(() => Object.assign(numbers("e", 2), { next: builtinNext })));
+
+{
+  const generator: any = numbers("f", 3);
+  const iterable = from(() => generator);
+  ticks("late", 4);
+  for await (const value of iterable) {
+    log("late sees " + value);
+    generator.next = () => { log("never called"); return Promise.resolve({ done: true, value: undefined }); };
+  }
+}
+
+await consume("own return", from(() => {
+  const generator: any = numbers("g", 3);
+  const builtinReturn = generator.return;
+  generator.return = function (value: unknown) { log("own return"); return builtinReturn.call(this, value); };
+  return generator;
+}), 0);
+
+await consume("not a generator", from(() => ({ next: builtinNext })));
+await consume("a prototype below", from(() => Object.create(numbers("h", 2))));
+await consume("another prototype", from(() => Object.setPrototypeOf(numbers("i", 2), { next() { log("next of another prototype"); return { done: true }; } })));
+
+{
+  const generator = numbers("j", 4);
+  const byHand = [generator.next("first by hand"), generator.next("second by hand")];
+  await consume("behind requests", from(() => generator));
+  for (const result of await Promise.all(byHand)) log("by hand " + JSON.stringify(result));
+}
+
+{
+  const generator = numbers("k", 4);
+  const both = [consume("left", from(() => generator)), consume("right", from(() => generator))];
+  await Promise.all(both);
+}
+
+await consume("relayed", from(() => relay("m", from(() => numbers("l", 3)))));
+await consume("relayed and stopped", from(() => relay("o", from(() => numbers("n", 3)))), 10);
+
+async function once(iterable: AsyncIterable<number>) {
+  for await (const value of iterable) return value;
+  return -1;
+}
+{
+  const generator = numbers("p", 3);
+  ticks("once", 5);
+  log("once " + (await once(from(() => generator))));
+  log("once more " + (await once(from(() => generator))));
+}
+
+await consume("a stream", Readable.from(numbers("q", 3)));
+await consume("a stream that is left", Readable.from(numbers("r", 5)), 1);
+
+console.log(lines.join("\n"));
+//// for-await-sync-only-iterable.js
+// `for await` and `yield*` in async generators over values that are only sync iterable: generators as made and generators whose protocol was changed, containers, iterators written by hand; what is awaited, in which order, and what is closed.
+const log = [];
+const define = (object, key, value) => Object.defineProperty(object, key, { value, writable: true, enumerable: true, configurable: true });
+const say = (...parts) => log.push(parts.map(part => typeof part === "string" ? part : JSON.stringify(part)).join(" "));
+function* count(n) { try { for (let i = 0; i < n; i++) yield i; return "returned"; } finally { say("count closed"); } }
+function* promises() { yield Promise.resolve("a"); yield new Promise(resolve => setTimeout(() => resolve("b"), 1)); yield "c"; }
+function* rejects() { try { yield 1; yield Promise.reject(new RangeError("rejected")); yield 3; } finally { say("rejects closed"); } }
+function* throws() { yield 1; throw new TypeError("thrown"); }
+async function collect(name, iterable, limit = Infinity) {
+  const seen = [];
+  try { for await (const value of iterable) { seen.push(value); if (seen.length >= limit) break; } } catch (e) { seen.push(e instanceof RangeError || e.message === "thrown" ? e.name + ": " + e.message : e.name); }
+  say(name, seen);
+}
+async function* delegate(iterable) { const result = yield* iterable; say("yield* gave", result ?? "undefined"); }
+function* ownNext() { yield "original"; }
+const handWritten = { [Symbol.iterator]() { let i = 0; return { next() { say("next called"); return { done: i >= 2, value: i++ }; }, return() { say("return called"); return {}; } }; } };
+class Range { constructor(n) { this.n = n; } *[Symbol.iterator]() { for (let i = 0; i < this.n; i++) yield i * 10; } }
+async function main() {
+  await collect("count", count(3));
+  await collect("count, left early", count(5), 2);
+  await collect("promises", promises());
+  await collect("rejects", rejects());
+  await collect("throws", throws());
+  await collect("array", [1, Promise.resolve(2), 3]);
+  await collect("set", new Set(["x", "y"]));
+  await collect("map", new Map([["k", 1]]));
+  await collect("string", "hé𝒳");
+  await collect("array iterator", [7, 8].values());
+  await collect("entries", ["p"].entries());
+  await collect("hand written", handWritten);
+  await collect("hand written, left early", handWritten, 1);
+  await collect("a class with a generator method", new Range(3));
+  const own = define(ownNext(), "next", function () { return { done: this.used, value: (this.used = true, "own next") }; });
+  await collect("own next", own);
+  const ownAsync = define(ownNext(), Symbol.asyncIterator, function () { return delegate(["own async iterator"]); });
+  await collect("own Symbol.asyncIterator", ownAsync);
+  const ownSync = define(ownNext(), Symbol.iterator, function () { return count(1); });
+  await collect("own Symbol.iterator", ownSync);
+  await collect("own Symbol.asyncIterator that is null", define(ownNext(), Symbol.asyncIterator, null));
+  await collect("own Symbol.asyncIterator that is undefined", define(ownNext(), Symbol.asyncIterator, undefined));
+  await collect("another own property", define(ownNext(), "other", 1));
+  const inherits = count(2); Object.setPrototypeOf(inherits, { __proto__: Object.getPrototypeOf(inherits), next() { return { done: true, value: "never seen" }; } });
+  await collect("a next in between", inherits);
+  const inheritsAsync = count(2); Object.setPrototypeOf(inheritsAsync, { __proto__: Object.getPrototypeOf(inheritsAsync), [Symbol.asyncIterator]() { return delegate(["async in between"]); } });
+  await collect("a Symbol.asyncIterator in between", inheritsAsync);
+  const moved = count(2); Object.setPrototypeOf(moved, { __proto__: Object.getPrototypeOf(moved), [Symbol.iterator]() { return ["moved"].values(); } });
+  await collect("setPrototypeOf", moved);
+  const bare = count(2); Object.setPrototypeOf(bare, null);
+  await collect("no prototype", bare);
+  const started = count(3); started.next();
+  await collect("already started", started);
+  const finished = count(0); finished.next();
+  await collect("already finished", finished);
+  await collect("yield* a generator", delegate(count(2)));
+  await collect("yield* promises", delegate(promises()));
+  await collect("yield* rejects", delegate(rejects()));
+  await collect("yield* left early", delegate(count(4)), 1);
+  for (const bad of [undefined, null, 5, {}, { [Symbol.iterator]: 1 }, { [Symbol.asyncIterator]: 1 }, { [Symbol.iterator]() { return 1; } }]) await collect("not iterable", bad);
+  const order = [];
+  const ticks = (async () => { for (let i = 0; i < 12; i++) { order.push("tick " + i); await undefined; } })();
+  const loop = (async () => { for await (const value of count(3)) order.push("value " + value); order.push("loop done"); })();
+  await Promise.all([ticks, loop]);
+  say("order", order);
+  let sum = 0;
+  for (let i = 0; i < 20000; i++) for await (const value of count(2)) sum += value + i;
+  log.splice(log.lastIndexOf("count closed") - 19999, 19999);
+  say("sum", sum);
+}
+main().then(() => console.log(log.join("\n")), e => console.log("main rejected", e));
+//// for-of-opens-user-iterables.ts
+// how for..of and destructuring get an iterator out of an object that a user wrote: every kind of Symbol.iterator and every kind of iterator
+const lines: string[] = [];
+////= say
+class Mine extends Error {}
+////= attempt
+////= collect	6
+function firstTwo(values: Iterable<unknown>): unknown[] {
+  const [a, b] = values;
+  return [a, b];
+}
+function counting(to: number) {
+  let at = 0;
+  return { next: () => (at < to ? { value: at++, done: false } : { value: undefined, done: true }) };
+}
+const as = (value: unknown) => value as Iterable<unknown>;
+
+class OnPrototype {
+  [Symbol.iterator]() {
+    return counting(3);
+  }
+}
+class Inherits extends OnPrototype {}
+class WithGeneratorMethod {
+  constructor(readonly to: number) {}
+  *[Symbol.iterator](): Generator<number, void, unknown> {
+    for (let i = 0; i < this.to; i++) yield i;
+  }
+}
+class ReturnsItself {
+  at = 0;
+  [Symbol.iterator]() {
+    return this;
+  }
+  next() {
+    return this.at < 2 ? { value: this.at++, done: false } : { value: undefined, done: true };
+  }
+}
+say("a method of the class", collect(new OnPrototype()), firstTwo(new OnPrototype()));
+say("inherited", collect(new Inherits()));
+say("a generator method", collect(new WithGeneratorMethod(4)), firstTwo(new WithGeneratorMethod(1)), collect(new WithGeneratorMethod(0)));
+say("the iterable is its own iterator", collect(new ReturnsItself()));
+say("an own property", collect({ [Symbol.iterator]: () => counting(2) }));
+say("an object without a prototype", collect(as(Object.assign(Object.create(null), { [Symbol.iterator]: () => counting(2) }))));
+say("inherited from an object", collect(as(Object.create({ [Symbol.iterator]: () => counting(2) }))));
+{
+  const log: string[] = [];
+  const iterable = {
+    get [Symbol.iterator]() {
+      log.push("get Symbol.iterator");
+      return function (this: unknown) {
+        log.push(this === iterable ? "called on the iterable" : "called on something else");
+        return {
+          get next() {
+            log.push("get next");
+            return () => {
+              log.push("call next");
+              return { value: 1, done: log.length > 6 };
+            };
+          },
+          get return() {
+            log.push("get return");
+            return undefined;
+          },
+        };
+      };
+    },
+  };
+  say("the order of what is observable", collect(iterable), log);
+  log.length = 0;
+  say("and when it is left early", collect(iterable, 1), log);
+}
+say("it returns an array's iterator", collect({ [Symbol.iterator]: () => ["a", "b"][Symbol.iterator]() }));
+say("it returns a Map's iterator", collect({ [Symbol.iterator]: () => new Map([["k", 1]]).entries() }));
+say("it returns a Set's iterator", collect({ [Symbol.iterator]: () => new Set(["s"]).values() }));
+say("it returns a string's iterator", collect({ [Symbol.iterator]: () => "xy"[Symbol.iterator]() }));
+say("it returns matches", collect({ [Symbol.iterator]: () => "a1b2".matchAll(/\d/g) }).length);
+{
+  function* numbers(): Generator<number, void, unknown> {
+    yield 1;
+    yield 2;
+  }
+  say("it returns a generator", collect({ [Symbol.iterator]: numbers }));
+  const changed = numbers();
+  (changed as any).next = () => ({ value: "its own next", done: false });
+  say("it returns a changed generator", collect({ [Symbol.iterator]: () => changed }, 2));
+  const started = numbers();
+  started.next();
+  say("it returns one that has started", collect({ [Symbol.iterator]: () => started }));
+  const other = numbers();
+  (other as any)[Symbol.iterator] = () => counting(1);
+  say("a generator with its own Symbol.iterator", collect(other));
+}
+say("Array.prototype.values on an array-like", collect(as({ length: 2, 0: "a", 1: "b", [Symbol.iterator]: Array.prototype.values })));
+say("a bound function", collect(as({ [Symbol.iterator]: counting.bind(null, 2) })));
+say("a proxy of a function", collect(as({ [Symbol.iterator]: new Proxy(() => counting(2), {}) })));
+say("a proxy of an iterable", collect(as(new Proxy(new OnPrototype(), {}))));
+say("it returns a proxy", collect(as({ [Symbol.iterator]: () => new Proxy(counting(2), {}) })));
+say("it returns a function with next", collect(as({ [Symbol.iterator]: () => Object.assign(() => 0, counting(2)) })));
+say("it returns an array with next", collect(as({ [Symbol.iterator]: () => Object.assign([], counting(2)) })));
+say(
+  "arguments it gets",
+  collect(
+    as({
+      [Symbol.iterator](first: unknown) {
+        return counting(arguments.length === 0 && first === undefined ? 1 : 5);
+      },
+    }),
+  ),
+);
+for (const [title, value] of [
+  ["undefined", undefined],
+  ["null", null],
+  ["a plain object", {}],
+  ["an object without a prototype", Object.create(null)],
+  ["a function", () => 0],
+  ["an instance of a class", new Mine("x")],
+  ["Symbol.iterator is undefined", { [Symbol.iterator]: undefined }],
+  ["Symbol.iterator is null", { [Symbol.iterator]: null }],
+  ["Symbol.iterator is a number", { [Symbol.iterator]: 1 }],
+  ["Symbol.iterator is an object", { [Symbol.iterator]: {} }],
+  ["Symbol.iterator is a class", { [Symbol.iterator]: class {} }],
+  ["it returns undefined", { [Symbol.iterator]: () => undefined }],
+  ["it returns null", { [Symbol.iterator]: () => null }],
+  ["it returns a number", { [Symbol.iterator]: () => 1 }],
+  ["it returns a string", { [Symbol.iterator]: () => "s" }],
+  ["it returns an object without next", { [Symbol.iterator]: () => ({}) }],
+  ["it throws", { [Symbol.iterator]: () => { throw new Mine("while opening"); } }],
+  ["the getter throws", { get [Symbol.iterator]() { throw new Mine("while reading Symbol.iterator"); } }],
+  ["the getter of next throws", { [Symbol.iterator]: () => ({ get next() { throw new Mine("while reading next"); } }) }],
+] as [string, unknown][]) {
+  attempt(`for..of: ${title}`, () => collect(as(value)));
+  attempt(`pattern: ${title}`, () => firstTwo(as(value)));
+}
+{
+  const iterable: any = { [Symbol.iterator]: () => counting(1) };
+  const seen = [collect(iterable)];
+  iterable[Symbol.iterator] = () => counting(2);
+  seen.push(collect(iterable));
+  iterable.other = 1;
+  seen.push(collect(iterable));
+  delete iterable[Symbol.iterator];
+  attempt("after it was deleted", () => collect(iterable));
+  Object.setPrototypeOf(iterable, { [Symbol.iterator]: () => counting(3) });
+  seen.push(collect(iterable));
+  Object.getPrototypeOf(iterable)[Symbol.iterator] = () => counting(4);
+  seen.push(collect(iterable));
+  say("the method changes between loops", seen);
+  class Patched {
+    [Symbol.iterator]() {
+      return counting(1);
+    }
+  }
+  const instance = new Patched();
+  const before = collect(instance);
+  let patched: unknown;
+  try {
+    (Patched.prototype as any)[Symbol.iterator] = () => counting(2);
+    patched = "patched";
+  } catch (error) {
+    patched = "the prototype is locked";
+  }
+  say("a class is patched", before, typeof patched, collect(instance).length >= 1);
+}
+{
+  function stackNames(stack: string | undefined): string {
+    const names: string[] = [];
+    for (const line of (stack ?? "").split("\n")) {
+      if (line.endsWith("@[native code]")) continue;
+      const found = /^\s*at (?:async )?(?:([^\s(]+) \()?/.exec(line) ?? /^([^@]*)@/.exec(line);
+      if (!found) continue;
+      const name = found[1] ?? "";
+      if (name === "" || name === "module code" || name === "global code") break;
+      names.push(name);
+    }
+    return names.join(" < ");
+  }
+  function opens(values: Iterable<unknown>): unknown {
+    for (const value of values) return value;
+  }
+  say(
+    "the stack in Symbol.iterator",
+    opens({
+      [Symbol.iterator]: function opener() {
+        const names = stackNames(new Error("x").stack);
+        return { next: () => ({ value: names, done: false }) };
+      },
+    }),
+  );
+  say(
+    "the stack in next",
+    opens({
+      [Symbol.iterator]: () => ({
+        next: function stepper() {
+          return { value: stackNames(new Error("x").stack), done: false };
+        },
+      }),
+    }),
+  );
+}
+{
+  function deep(n: number): number {
+    let sum = 0;
+    for (const value of {
+      [Symbol.iterator]() {
+        return counting(n ? deep(n - 1) + 1 : 1);
+      },
+    })
+      sum += 1 + (value as number) * 0;
+    return sum;
+  }
+  say("Symbol.iterator methods that loop themselves", deep(10));
+  function endless(): number {
+    for (const value of { [Symbol.iterator]: () => counting(endless()) }) return value as number;
+    return 0;
+  }
+  attempt("without end", () => {
+    try {
+      return endless();
+    } catch (error) {
+      return error instanceof RangeError ? "RangeError" : String(error);
+    }
+  });
+  let total = 0;
+  for (let round = 0; round < 60000; round++) for (const value of new WithGeneratorMethod(2)) total += value;
+  for (let round = 0; round < 60000; round++) for (const value of new OnPrototype()) total += value as number;
+  say("many short loops", total);
+  let shapes = 0;
+  for (let round = 0; round < 400; round++) {
+    const own: any = { ["field" + round]: round, [Symbol.iterator]: () => counting(1) };
+    const inherits: any = Object.create({ ["other" + round]: round, [Symbol.iterator]: () => counting(2) });
+    const reads: any = { ["third" + round]: round, get [Symbol.iterator]() { return () => counting(3); } };
+    shapes += collect(own).length + collect(inherits).length + collect(reads).length + [...own, ...inherits, ...reads].length;
+  }
+  say("as many shapes as loops", shapes);
+}
+console.log(lines.join("\n"));
+//// for-of-over-generator-values.ts
+// for..of, destructuring and spread over generators that come in as values: real ones, changed ones, running and completed ones
+const lines: string[] = [];
+////= say
+class Mine extends Error {}
+////= attempt
+
+////= lines-23	upTo	"not seen by for..of"
+const held: any[] = [];
+////= lines-21	hide	held
+
+function sum(numbers: Iterable<number>): number {
+  let total = 0;
+  for (const n of numbers) total += n;
+  return total;
+}
+////= lines-24	sumOfAny	numbers	any	n
+function firstOver(numbers: Iterable<number>, limit: number): number {
+  for (const n of numbers) if (n > limit) return n;
+  return -1;
+}
+
+say("sum", sum(hide(upTo(10))), sumOfAny(hide(upTo(10))), sum(hide(upTo(0))), sum(hide(upTo(1))));
+say("other iterables through the same loops", sum([1, 2, 3]), sumOfAny(new Set([4, 5])), sum(new Map([[1, 2]]).keys()), sumOfAny([6].values()));
+{
+  const generator = hide(upTo(10));
+  say("leaving early closes it", firstOver(generator, 3), generator.next());
+  const started = hide(upTo(5));
+  started.next();
+  started.next();
+  say("one that has started", sum(started), started.next());
+  const completed = hide(upTo(2));
+  sum(completed);
+  say("one that is completed", sum(completed), firstOver(completed, 0));
+}
+
+function* guarded(log: string[]): Generator<number, void, unknown> {
+  try {
+    yield 1;
+    yield 2;
+    yield 3;
+  } finally {
+    log.push("finally");
+  }
+}
+{
+  const log: string[] = [];
+  say("break runs finally", firstOver(hide(guarded(log)), 1), log);
+  log.length = 0;
+  say("running to the end runs finally", sum(hide(guarded(log))), log);
+  log.length = 0;
+  attempt("a throw in the loop's body runs finally", () => {
+    for (const n of hide(guarded(log))) if (n === 2) throw new Mine("from the loop's body");
+  });
+  say("log", log);
+}
+{
+  function* yieldsInFinally(): Generator<number, void, unknown> {
+    try {
+      yield 1;
+      yield 2;
+    } finally {
+      yield 99;
+    }
+  }
+  const generator = hide(yieldsInFinally());
+  say("finally yields while it is closed", firstOver(generator, 0), generator.next(), generator.next());
+  function* throwsInFinally(): Generator<number, void, unknown> {
+    try {
+      yield 1;
+    } finally {
+      throw new Mine("from finally");
+    }
+  }
+  attempt("finally throws while it is closed by break", () => firstOver(hide(throwsInFinally()), 0));
+  attempt("the loop's own throw wins over finally's", () => {
+    for (const _ of hide(throwsInFinally())) throw new Mine("from the loop's body");
+  });
+}
+
+function* throwsAfter(n: number): Generator<number, void, unknown> {
+  for (let i = 0; i < n; i++) yield i;
+  throw new Mine(`the generator threw after ${n}`);
+}
+{
+  const generator = hide(throwsAfter(3));
+  attempt("the generator throws", () => sum(generator));
+  say("it is completed", generator.next(), sum(generator));
+  function catches(numbers: Iterable<number>): string {
+    let seen = 0;
+    try {
+      for (const _ of numbers) seen++;
+      return "ended";
+    } catch (error) {
+      return `caught after ${seen}: ${(error as Error).message}`;
+    } finally {
+      lines.push("the caller's finally ran");
+    }
+  }
+  const second = hide(throwsAfter(2));
+  say(catches(second), second.next());
+  function* catchesItsOwn(): Generator<string, void, unknown> {
+    try {
+      throw new Mine("inside");
+    } catch (error) {
+      yield `caught inside: ${(error as Error).message}`;
+    }
+    yield "went on";
+  }
+  say("a throw that stays inside", [...hide(catchesItsOwn())]);
+  function thrower(): never {
+    throw new Mine("three frames down");
+  }
+  function middle(): never {
+    return thrower();
+  }
+  function* throwsFromBelow(): Generator<number, void, unknown> {
+    yield 1;
+    middle();
+  }
+  const third = hide(throwsFromBelow());
+  say(catches(third), third.next());
+  function* outerLoop(inner: Iterable<number>): Generator<number, void, unknown> {
+    for (const n of inner) yield n * 10;
+  }
+  const innermost = hide(throwsAfter(1));
+  const outermost = hide(outerLoop(innermost));
+  say(catches(outermost), outermost.next(), innermost.next());
+}
+
+{
+  let self: Generator<number, void, unknown>;
+  function* loopsOverItself(): Generator<number, void, unknown> {
+    yield 1;
+    for (const n of self) yield n;
+  }
+  self = hide(loopsOverItself());
+  attempt("a generator that loops over itself", () => sum(self));
+  say("then", self.next());
+}
+{
+  const shared = hide(upTo(6));
+  const pairs: number[][] = [];
+  for (const a of shared) {
+    for (const b of shared) {
+      pairs.push([a, b]);
+      if (b === 2) break;
+    }
+  }
+  say("two loops over one generator", pairs, shared.next());
+}
+
+{
+  const ownNext = hide(upTo(3));
+  let calls = 0;
+  (ownNext as any).next = () => ({ value: 7, done: calls++ >= 2 });
+  say("its own next", sum(ownNext));
+  const ownIterator = hide(upTo(3));
+  (ownIterator as any)[Symbol.iterator] = () => [100, 200][Symbol.iterator]();
+  say("its own Symbol.iterator", sum(ownIterator));
+  const otherPrototype = hide(upTo(3));
+  Object.setPrototypeOf(otherPrototype, {
+    [Symbol.iterator]() {
+      return [1000][Symbol.iterator]();
+    },
+  });
+  say("another prototype", sum(otherPrototype));
+  const putBack = hide(upTo(4));
+  const original = Object.getPrototypeOf(putBack);
+  Object.setPrototypeOf(putBack, null);
+  Object.setPrototypeOf(putBack, original);
+  say("its prototype put back", sum(putBack));
+  const unrelated = hide(upTo(4));
+  (unrelated as any).label = "x";
+  say("an unrelated property", sum(unrelated));
+  say("frozen", sum(Object.freeze(hide(upTo(4)))));
+  const changedMeanwhile = hide(upTo(5));
+  const log: unknown[] = [];
+  for (const n of changedMeanwhile) {
+    log.push(n);
+    if (n === 1) (changedMeanwhile as any).next = () => ({ value: "never seen: next was read at the start", done: false });
+    if (n === 3) {
+      (changedMeanwhile as any).return = () => {
+        log.push("its own return");
+        return {};
+      };
+      break;
+    }
+  }
+  say("next is read once, return when the loop is left", log);
+}
+
+{
+  const [a, b] = hide(upTo(5));
+  const [c, ...rest] = hide(upTo(4));
+  const [d, e, f] = hide(upTo(2));
+  say("destructuring", a, b, c, rest, d, e, f === undefined);
+  const log: string[] = [];
+  const [first] = hide(guarded(log));
+  say("destructuring closes it", first, log);
+  say("spread", [...hide(upTo(4))], Math.max(...hide(upTo(4))), Array.from(hide(upTo(3))), new Set(hide(upTo(3))).size);
+}
+
+{
+  function* walk(depth: number): Generator<number, void, unknown> {
+    yield depth;
+    if (depth) for (const n of hide(walk(depth - 1))) yield n;
+  }
+  say("loops within generators, forty deep", sum(hide(walk(40))));
+  function* endless(): Generator<number, void, unknown> {
+    for (const n of hide(endless())) yield n;
+  }
+  attempt("without end", () => {
+    try {
+      return sum(hide(endless()));
+    } catch (error) {
+      return error instanceof RangeError ? "RangeError" : String(error);
+    }
+  });
+}
+{
+  function* objects(n: number): Generator<{ index: number; text: string }, void, unknown> {
+    for (let i = 0; i < n; i++) yield { index: i, text: `item ${i}` };
+  }
+  let length = 0;
+  for (let round = 0; round < 20; round++) for (const item of hide(objects(5000))) length += item.text.length + (item.index & 1);
+  say("many allocating steps", length);
+}
+
+console.log(lines.join("\n"));
+//// for-of-over-user-iterables.ts
+// for..of and destructuring over iterables that users write: every kind of next() and every kind of result object
+const lines: string[] = [];
+////= say
+class Mine extends Error {}
+////= attempt
+////= collect	10
+function collectAny(values: any): unknown[] {
+  const seen: unknown[] = [];
+  for (const value of values) seen.push(value);
+  return seen;
+}
+function from(next: (this: unknown) => unknown, more: object = {}): Iterable<unknown> {
+  return {
+    [Symbol.iterator]() {
+      return { next, ...more };
+    },
+  } as Iterable<unknown>;
+}
+
+////= RangeIterator
+////= Range
+say("a class", collect(new Range(0, 4)), collectAny(new Range(2, 5)), collect(new Range(3, 3)));
+{
+  let at = 0;
+  say("closures", collect(from(() => (at < 3 ? { value: at++, done: false } : { value: undefined, done: true }))));
+}
+{
+  const [a, b, c] = new Range(5, 7);
+  const [first, ...rest] = new Range(1, 5);
+  say("patterns", a, b, c === undefined, first, rest);
+}
+
+for (const [title, done] of [
+  ["0", 0],
+  ["an empty string", ""],
+  ["null", null],
+  ["undefined", undefined],
+  ["NaN", NaN],
+  ["1", 1],
+  ["a string", "x"],
+  ["an object", {}],
+  ["0n", 0n],
+] as [string, unknown][]) {
+  let count = 0;
+  say("done is", title, collect(from(() => (count++ < 2 ? { value: count, done } : { value: -1, done: true }))).length);
+}
+{
+  let count = 0;
+  say("no done at all", collect(from(() => (count++ < 2 ? { value: count } : { done: true }))));
+  count = 0;
+  say("no value at all", collect(from(() => (count++ < 2 ? { done: false } : { done: true }))));
+  count = 0;
+  say("other order of the properties", collect(from(() => (count++ < 2 ? { done: false, value: count } : { done: true, value: 0 }))));
+  count = 0;
+  say("more properties", collect(from(() => (count++ < 3 ? { extra: "e", value: count, other: 1, done: false } : { value: 0, done: true }))));
+  count = 0;
+  say(
+    "the shape changes from step to step",
+    collect(
+      from(() => {
+        count++;
+        if (count === 1) return { value: "a", done: false };
+        if (count === 2) return { done: false, value: "b" };
+        if (count === 3) return { x: 1, value: "c", done: false };
+        if (count === 4) return { value: "d", done: false };
+        return { done: true };
+      }),
+    ),
+  );
+}
+{
+  const log: string[] = [];
+  let count = 0;
+  const values = collect(
+    from(() => {
+      const now = count++;
+      log.push(`next ${now}`);
+      return {
+        get done() {
+          log.push(`get done ${now}`);
+          return now >= 2;
+        },
+        get value() {
+          log.push(`get value ${now}`);
+          return now;
+        },
+      };
+    }),
+  );
+  say("getters", values, log);
+}
+{
+  let count = 0;
+  const inherited = { value: "inherited", done: false };
+  say("inherited done and value", collect(from(() => (count++ < 2 ? Object.create(inherited) : { done: true }))));
+  count = 0;
+  say("value inherited, done its own", collect(from(() => (count++ < 2 ? Object.assign(Object.create({ value: "above" }), { done: false }) : { done: true }))));
+  count = 0;
+  class Result {
+    constructor(
+      readonly value: number,
+      readonly done: boolean,
+    ) {}
+  }
+  say("instances of a class", collect(from(() => new Result(count, count++ >= 3))));
+  count = 0;
+  say("frozen results", collect(from(() => Object.freeze({ value: count, done: count++ >= 2 }))));
+  count = 0;
+  say("proxies", collect(from(() => new Proxy({ value: count, done: count++ >= 2 }, {}))));
+  count = 0;
+  say("arrays with properties", collect(from(() => Object.assign([], { value: count, done: count++ >= 2 }))));
+  count = 0;
+  say("functions with properties", collect(from(() => Object.assign(() => 0, { value: count, done: count++ >= 2 }))));
+  count = 0;
+  say(
+    "a property was deleted and added again",
+    collect(
+      from(() => {
+        const result: any = { value: -1, done: true, extra: 0 };
+        delete result.value;
+        delete result.done;
+        result.done = count >= 2;
+        result.value = count++;
+        return result;
+      }),
+    ),
+  );
+  count = 0;
+  const same = { value: 0, done: false };
+  say(
+    "one object used again and again",
+    collect(
+      from(() => {
+        same.value = count;
+        same.done = count++ >= 3;
+        return same;
+      }),
+    ),
+  );
+}
+for (const [title, result] of [
+  ["undefined", undefined],
+  ["null", null],
+  ["a number", 1],
+  ["a string", "s"],
+  ["true", true],
+  ["a symbol", Symbol.iterator],
+] as [string, unknown][])
+  attempt(`next returns ${title}`, () => collect(from(() => result)));
+attempt("next throws", () =>
+  collect(
+    from(() => {
+      throw new Mine("from next");
+    }),
+  ),
+);
+for (const [title, next] of [
+  ["undefined", undefined],
+  ["a number", 5],
+  ["17", 17],
+  ["a double", 1.5],
+  ["an object", {}],
+  ["a class", class {}],
+] as [string, unknown][])
+  attempt(`next is ${title}`, () => collect(from(next as any)));
+{
+  let count = 0;
+  const step = function (this: { base: number }) {
+    return { value: this.base + count, done: count++ >= 2 };
+  };
+  say("a bound function", collect(from(step.bind({ base: 100 }))));
+  const inner = [7, 8][Symbol.iterator]();
+  say("a native function, bound", collect(from(inner.next.bind(inner))));
+  count = 0;
+  say("a proxy of a function", collect(from(new Proxy(() => ({ value: count, done: count++ >= 2 }), {}))));
+  count = 0;
+  say("this is the iterator", collect(from(function (this: any) {
+    return { value: typeof this.next, done: count++ >= 1 };
+  })));
+  count = 0;
+  say("more parameters than arguments", collect(from(function (a?: unknown, b?: unknown) {
+    return { value: [a === undefined, b === undefined, arguments.length], done: count++ >= 1 };
+  } as any)));
+}
+{
+  let count = 0;
+  const iterator: any = {
+    next() {
+      if (count === 1) iterator.next = () => ({ value: "never seen: next is read once", done: false });
+      return { value: count, done: count++ >= 3 };
+    },
+  };
+  say("next is replaced meanwhile", collect({ [Symbol.iterator]: () => iterator }));
+}
+{
+  const log: string[] = [];
+  let count = 0;
+  const closing = () =>
+    from(() => ({ value: count++, done: false }), {
+      return() {
+        log.push("return");
+        return {};
+      },
+    });
+  say("left early", collect(closing(), 2), log);
+  attempt("the body throws", () => {
+    for (const value of closing()) if ((value as number) > 3) throw new Mine("from the body");
+  });
+  say("log", log);
+  attempt("return gives a number", () => collect(from(() => ({ value: 1, done: false }), { return: () => 1 }), 1));
+  attempt("return throws", () =>
+    collect(
+      from(() => ({ value: 1, done: false }), {
+        return() {
+          throw new Mine("from return");
+        },
+      }),
+      1,
+    ),
+  );
+}
+{
+  function* inner(): Generator<number, void, unknown> {
+    for (const value of new Range(0, 3)) yield value * 2;
+  }
+  say("inside a generator", [...inner()]);
+  const nested: number[] = [];
+  for (const a of new Range(0, 3)) for (const b of new Range(0, a)) nested.push(a * 10 + b);
+  say("nested", nested);
+  function deep(n: number): number {
+    let sum = n;
+    for (const value of from(() => ({ value: n ? deep(n - 1) : 0, done: sum !== n }))) sum += (value as number) + 1;
+    return sum;
+  }
+  say("a next that loops itself", deep(12));
+}
+{
+  let sum = 0;
+  for (let round = 0; round < 30; round++) for (const value of new Range(0, 5000) as Iterable<number>) sum += value;
+  let length = 0;
+  let count = 0;
+  for (const text of from(() => ({ value: `item ${count}`, done: count++ >= 100000 }))) length += (text as string).length;
+  say("many", sum, length);
+}
+{
+  const makers: (() => Iterable<unknown>)[] = [];
+  for (let kind = 0; kind < 6; kind++) {
+    makers.push(() => {
+      let count = 0;
+      return from(() => {
+        const now = count++;
+        if (kind === 0) return { value: now, done: now >= 2 };
+        if (kind === 1) return { done: now >= 2, value: now };
+        if (kind === 2) return { a: 0, value: now, done: now >= 2 };
+        if (kind === 3) return { a: 0, b: 0, done: now >= 2, value: now };
+        if (kind === 4) return now >= 2 ? { done: true } : { value: now, done: false, last: 0 };
+        return Object.assign(Object.create(null), { value: now, done: now >= 2 });
+      });
+    });
+  }
+  let sum = 0;
+  for (let round = 0; round < 3000; round++) for (const value of makers[(round * 7) % 6]()) sum += (value as number) + 1;
+  const held: unknown[] = [];
+  for (let round = 0; round < 40; round++) {
+    for (let i = 0; i < 2000; i++) held[i % 50] = { ["shape" + ((round * 2000 + i) % 977)]: i };
+    for (const value of makers[round % 6]()) sum += (value as number) + 1;
+  }
+  say("six shapes of results in turn, and many other shapes made and dropped between", sum);
+}
+console.log(lines.join("\n"));
+//// for-of-that-suspends-over-user-iterables.ts
+// for..of with a yield or an await in its body, over iterables that users write: the loop's state outlives the frame
+const lines: string[] = [];
+////= say
+class Mine extends Error {}
+function counting(to: number, log?: string[]) {
+  let at = 0;
+  return {
+    next: () => (at < to ? { value: at++, done: false } : { value: undefined, done: true }),
+    return() {
+      log?.push("return");
+      return { value: undefined, done: true };
+    },
+  };
+}
+////= RangeIterator
+////= Range
+class Walk {
+  constructor(readonly to: number) {}
+  *[Symbol.iterator](): Generator<number, void, unknown> {
+    for (let i = 0; i < this.to; i++) yield i;
+  }
+}
+function* each(values: Iterable<unknown>): Generator<unknown, string, unknown> {
+  for (const value of values) yield value;
+  return "over";
+}
+async function gather(values: Iterable<unknown>, limit = 100): Promise<unknown[]> {
+  const seen: unknown[] = [];
+  for (const value of values) {
+    seen.push(await value);
+    if (seen.length >= limit) break;
+  }
+  return seen;
+}
+async function* eachLater(values: Iterable<unknown>): AsyncGenerator<unknown, void, unknown> {
+  for (const value of values) yield value;
+}
+function from(next: () => unknown, more: object = {}): Iterable<unknown> {
+  return { [Symbol.iterator]: () => ({ next, ...more }) } as Iterable<unknown>;
+}
+async function attempt(title: string, run: () => unknown) {
+  try {
+    say(title, "->", await run());
+  } catch (error) {
+    say(title, "threw", error instanceof Mine ? error.message : error instanceof Error ? error.constructor.name : error);
+  }
+}
+
+say("in a generator", [...each(new Range(0, 4))], [...each(new Walk(3))], [...each({ [Symbol.iterator]: () => counting(2) })], [...each(new Range(1, 1))]);
+{
+  const log: string[] = [];
+  const outer = each({ [Symbol.iterator]: () => counting(5, log) });
+  say("return() of the outer one closes the iterator", outer.next(), outer.return("asked"), log, outer.next());
+  log.length = 0;
+  const thrown = each({ [Symbol.iterator]: () => counting(5, log) });
+  thrown.next();
+  try {
+    thrown.throw(new Mine("thrown in"));
+  } catch (error) {
+    say("throw() into the outer one closes it too", (error as Error).message, log);
+  }
+}
+{
+  let count = 0;
+  say(
+    "the shape of the results changes while the loop is suspended",
+    [
+      ...each(
+        from(() => {
+          count++;
+          if (count === 1) return { value: "a", done: false };
+          if (count === 2) return { done: false, value: "b" };
+          if (count === 3) return { extra: 1, value: "c", done: false };
+          if (count === 4) return Object.create({ value: "inherited", done: false });
+          if (count === 5) return { value: "e", done: 0 };
+          return { done: "truthy" };
+        }),
+      ),
+    ],
+  );
+  const log: string[] = [];
+  count = 0;
+  say(
+    "getters",
+    [
+      ...each(
+        from(() => {
+          const now = count++;
+          return {
+            get done() {
+              log.push(`done ${now}`);
+              return now >= 2;
+            },
+            get value() {
+              log.push(`value ${now}`);
+              return now;
+            },
+          };
+        }),
+      ),
+    ],
+    log,
+  );
+}
+{
+  const first = each(new Range(0, 3));
+  const second = each(new Range(10, 13));
+  say("two suspended loops in turn", first.next().value, second.next().value, first.next().value, second.next().value, first.next().value, second.next().value, first.next(), second.next());
+  function* nested(): Generator<number, void, unknown> {
+    for (const a of new Range(0, 3) as Iterable<number>) for (const b of new Range(0, a) as Iterable<number>) yield a * 10 + b;
+  }
+  say("nested", [...nested()]);
+}
+await attempt("in an async function", () => gather(new Range(0, 4)));
+await attempt("a generator method", () => gather(new Walk(3)));
+await attempt("closures", () => gather({ [Symbol.iterator]: () => counting(3) }));
+{
+  const log: string[] = [];
+  await attempt("left early", () => gather({ [Symbol.iterator]: () => counting(9, log) }, 2));
+  say("log", log);
+}
+await attempt("promises as values", () => gather(from((() => { let n = 0; return () => ({ value: Promise.resolve(n), done: n++ >= 2 }); })())));
+{
+  const log: string[] = [];
+  await attempt("a rejected value closes the iterator", () =>
+    gather(from(() => ({ value: Promise.reject(new Mine("rejected")), done: false }), { return() { log.push("return"); return {}; } })),
+  );
+  say("log", log);
+}
+await attempt("next throws", () => gather(from(() => { throw new Mine("from next"); })));
+await attempt("next returns a number", () => gather(from(() => 1)));
+await attempt("next is not a function", () => gather({ [Symbol.iterator]: () => ({ next: 1 }) } as unknown as Iterable<unknown>));
+await attempt("in an async generator", async () => {
+  const seen: unknown[] = [];
+  for await (const value of eachLater(new Range(0, 3))) seen.push(value);
+  return seen;
+});
+await attempt("two async loops at once", async () => (await Promise.all([gather(new Range(0, 3)), gather(new Range(5, 8)), gather(new Walk(2))])).flat());
+{
+  let total = 0;
+  for (const value of each(new Range(0, 60000))) total += value as number;
+  const texts = await gather(from((() => { let n = 0; return () => ({ value: `item ${n}`, done: n++ >= 30000 }); })()), 1e9);
+  say("many", total, texts.length, texts[29999]);
+}
+console.log(lines.join("\n"));
+//// functions-that-read-their-arguments-from-the-stack-suspend-and-their-callers-go-on.js
+const pending = () => new Promise(resolve => queueMicrotask(() => resolve(1)));
+
+async function restAsync(...rest) {
+    const first = await pending();
+    const second = await pending();
+    return rest.length + first + second;
+}
+async function argumentsAsync() {
+    const count = arguments.length;
+    return count + (await pending()) + arguments.length;
+}
+const arrowAsync = async (...rest) => {
+    await pending();
+    return rest.reduce((sum, value) => sum + value, 0);
+};
+function* restGenerator(...rest) {
+    for (const value of rest) yield value;
+}
+function* argumentsGenerator() {
+    for (let i = 0; i < arguments.length; i++) yield arguments[i];
+}
+async function* restAsyncGenerator(...rest) {
+    for (const value of rest) {
+        await pending();
+        yield value;
+    }
+}
+class Holder {
+    async method(...rest) {
+        await pending();
+        return rest.length;
+    }
+    static async fixed() {
+        await pending();
+        return arguments.length;
+    }
+}
+
+const table = { restAsync, argumentsAsync, arrowAsync, restGenerator, argumentsGenerator, restAsyncGenerator, method: new Holder().method, fixed: Holder.fixed };
+
+function callByName(name, a, b, c, d, e, f) {
+    const before = [a, b, c, d, e, f].join();
+    const result = table[name](a, b, c, d, e, f);
+    if (before !== [a, b, c, d, e, f].join()) throw new Error("the caller's values moved: " + name);
+    return result;
+}
+
+function below(depth, name) {
+    const x = depth * 3;
+    const y = depth + 7;
+    const result = depth ? below(depth - 1, name) : callByName(name, 1, 2, 3, 4, 5, 6);
+    if (x !== depth * 3 || y !== depth + 7) throw new Error("a caller's value moved: " + name);
+    return result;
+}
+
+async function total(value) {
+    if (value[Symbol.asyncIterator]) {
+        let sum = 0;
+        for await (const part of value) sum += part;
+        return sum;
+    }
+    if (value[Symbol.iterator]) {
+        let sum = 0;
+        for (const part of value) sum += part;
+        return sum;
+    }
+    return await value;
+}
+
+const sums = {};
+for (let round = 0; round < 200; round++) {
+    for (const name of Object.keys(table)) {
+        sums[name] = (sums[name] ?? 0) + (await total(below(round % 5, name))) + (await total(Reflect.apply(table[name], undefined, [1, 2, 3, 4, 5, 6, 7])));
+    }
+}
+console.log(JSON.stringify(sums, null, 1));
+//// generator-closures-own-prototypes.js
+const closureCount = 300;
+const makeGenerator = base => function* () { yield base };
+const makeAsyncGenerator = base => async function* () { yield base };
+
+function createInTurn(make) {
+  const closures = [], objects = [];
+  for (let i = 0; i < closureCount; i++) {
+    const closure = make(i);
+    closures.push(closure);
+    objects.push(closure());
+    if (i % 50 === 49) Bun.gc(true);
+  }
+  return { closures, objects };
+}
+
+function countMismatches({ closures, objects }) {
+  let mismatches = 0;
+  for (let i = 0; i < closureCount; i++) {
+    const closure = closures[i], other = closures[(i + 1) % closureCount];
+    if (Object.getPrototypeOf(objects[i]) !== closure.prototype) mismatches++;
+    if (!(objects[i] instanceof closure)) mismatches++;
+    if (objects[i] instanceof other) mismatches++;
+    if (objects[(i + 1) % closureCount] instanceof closure) mismatches++;
+  }
+  return mismatches;
+}
+
+const generators = createInTurn(makeGenerator);
+console.log("first objects:", countMismatches(generators));
+console.log("distinct prototypes:", new Set(generators.closures.map(closure => closure.prototype)).size);
+console.log("values:", generators.objects.reduce((sum, object) => sum + object.next().value, 0));
+
+Bun.gc(true);
+const secondObjects = generators.closures.map(closure => closure());
+console.log("second objects:", countMismatches({ closures: generators.closures, objects: secondObjects }));
+
+generators.closures.forEach((closure, i) => { closure.prototype.tag = i });
+Bun.gc(true);
+console.log("own tags:", generators.closures.every((closure, i) => closure().tag === i));
+
+const asyncGenerators = createInTurn(makeAsyncGenerator);
+console.log("async objects:", countMismatches(asyncGenerators));
+console.log("async value:", (await asyncGenerators.objects[closureCount - 1].next()).value);
+
+function* topLevel() { yield "top" }
+const generatorPrototype = Object.getPrototypeOf(topLevel.prototype);
+const original = topLevel.prototype;
+const before = [topLevel(), topLevel(), topLevel()];
+console.log("before replacement:", before.every(object => Object.getPrototypeOf(object) === original));
+
+const replacement = Object.create(generatorPrototype);
+replacement.label = "replacement";
+topLevel.prototype = replacement;
+const replaced = topLevel();
+console.log("replaced prototype:", Object.getPrototypeOf(replaced) === replacement, replaced.label, replaced.next().value);
+console.log("instanceof after replacement:", replaced instanceof topLevel, before[0] instanceof topLevel);
+console.log("earlier object:", Object.getPrototypeOf(before[0]) === original, before[0].label, before[0].next().value);
+console.log("spread under replacement:", [...topLevel()].join());
+
+topLevel.prototype = 1;
+const fallback = topLevel();
+console.log("primitive prototype:", Object.getPrototypeOf(fallback) === generatorPrototype, fallback.next().value);
+
+topLevel.prototype = original;
+const restored = topLevel();
+console.log("restored prototype:", Object.getPrototypeOf(restored) === original, restored instanceof topLevel, replaced instanceof topLevel);
+Bun.gc(true);
+console.log("after collection:", Object.getPrototypeOf(topLevel()) === original);
+//// generator-creation.ts
+// what a freshly made generator is, for every kind of generator function, the first time and every later time
+const lines: string[] = [];
+////= say
+////= lines-23	declared	"end"
+const expression = function* (n: number): Generator<number, void, unknown> {
+  yield n;
+};
+class Holder {
+  constructor(readonly base: number) {}
+  *method(n: number): Generator<number, void, unknown> {
+    yield this.base + n;
+  }
+  static *fixed(n: number): Generator<number, void, unknown> {
+    yield n * 2;
+  }
+  *[Symbol.iterator](): Generator<number, void, unknown> {
+    yield this.base;
+  }
+}
+const literal = {
+  *member(n: number): Generator<number, void, unknown> {
+    yield n + 1;
+  },
+};
+function makes(offset: number) {
+  return function* inner(n: number): Generator<number, void, unknown> {
+    yield n + offset;
+  };
+}
+const holder = new Holder(10);
+const first = makes(100);
+const second = makes(200);
+const makers: [string, Function, () => Generator<number, unknown, unknown>][] = [
+  ["declared", declared, () => declared(2)],
+  ["expression", expression, () => expression(2)],
+  ["method", holder.method, () => holder.method(2)],
+  ["static method", Holder.fixed, () => Holder.fixed(2)],
+  ["Symbol.iterator", holder[Symbol.iterator], () => holder[Symbol.iterator]()],
+  ["member of a literal", literal.member, () => literal.member(2)],
+  ["closure", first, () => first(2)],
+  ["another closure of the same function", second, () => second(2)],
+];
+const generatorPrototype = Object.getPrototypeOf(Object.getPrototypeOf(declared(0)));
+for (let round = 0; round < 3; round++) {
+  for (const [title, maker, make] of makers) {
+    const a = make();
+    const b = make();
+    say(
+      round,
+      title,
+      Object.getPrototypeOf(a) === maker.prototype,
+      Object.getPrototypeOf(a) === Object.getPrototypeOf(b),
+      Object.getPrototypeOf(Object.getPrototypeOf(a)) === generatorPrototype,
+      a instanceof (maker as any),
+      Object.prototype.toString.call(a),
+      Object.getOwnPropertyNames(a).length,
+      Object.isExtensible(a),
+      a === (a[Symbol.iterator]() as unknown),
+      a.next(),
+      b.next(),
+      a.next(),
+    );
+  }
+}
+say("closures of one function have their own prototypes", first.prototype === second.prototype, Object.getPrototypeOf(first(0)) === Object.getPrototypeOf(second(0)));
+{
+  const generator = declared(1);
+  (generator as any).note = "kept";
+  (generator as any)[3] = "element";
+  say("a generator takes properties", Object.keys(generator), declared(1).hasOwnProperty("note"));
+}
+{
+  const kept: Generator<number, string, unknown>[] = [];
+  let sum = 0;
+  for (let i = 0; i < 200000; i++) {
+    const generator = declared(3);
+    sum += generator.next().value as number;
+    if (i % 1000 === 0) kept.push(generator);
+    else if (i % 7 === 0) sum += generator.next().value as number;
+  }
+  for (const generator of kept) for (const value of generator) sum += value;
+  say("many", sum, kept.length, kept[0].next());
+}
+console.log(lines.join("\n"));
+//// generator-creation-avoids-the-runtime.ts
+// A call of a generator function makes the generator and saves the frame of its body for the first time. From the second call of a function object on, neither enters the runtime, however the
+// function is written and whatever it takes. The generator inherits from what the function's `prototype` holds at that moment: another object, an object of another realm, or, for null, 1 and
+// any other primitive, the realm's own generator prototype. That holds after every way to store to `prototype`, for generator functions of another realm and for 48 closures called in turn.
+// The program counts the entries of the two operations, which only the jsc shell can.
+declare const aotOperationCount: undefined | ((name: string) => number);
+declare const gc: undefined | (() => void);
+declare const createGlobalObject: undefined | (() => any);
+const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
+const collect: () => void = typeof gc === "function" ? gc : () => Bun.gc(true);
+const otherRealm: any = typeof createGlobalObject === "function" ? createGlobalObject() : require("node:vm").runInNewContext("globalThis");
+////= lines-20	entered	"operationAOTNewGenerator"	"operationAOTSaveFrameAndYield"
+function few(entries: number, calls: number): string {
+  return entries * 20 < calls ? "few entries" : entries + " ENTRIES FOR " + calls + " CALLS";
+}
+const lines: string[] = [];
+let finished = 0;
+type Numbers = Generator<number, void, unknown>;
+type NumbersLater = AsyncGenerator<number, void, unknown>;
+
+function* declared(n: number): Numbers {
+  yield n;
+  yield n + 1;
+}
+const expression = function* (n: number): Numbers {
+  yield n;
+};
+class Holder {
+  constructor(readonly base: number) {}
+  *method(n: number): Numbers {
+    yield this.base + n;
+  }
+  static *fixed(n: number): Numbers {
+    yield n * 2;
+  }
+  *[Symbol.iterator](): Numbers {
+    yield this.base;
+  }
+  async *later(n: number): NumbersLater {
+    yield this.base + n;
+  }
+  static async *fixedLater(n: number): NumbersLater {
+    yield n * 2;
+  }
+}
+const holder = new Holder(10);
+const literal = {
+  *member(n: number): Numbers {
+    yield n + 1;
+  },
+  async *memberLater(n: number): NumbersLater {
+    yield n + 1;
+  },
+};
+function makes(offset: number): (n: number) => Numbers {
+  return function* (n: number): Numbers {
+    yield n + offset;
+  };
+}
+function makesLater(offset: number): (n: number) => NumbersLater {
+  return async function* (n: number): NumbersLater {
+    yield n + offset;
+  };
+}
+function* takesNothing(): Numbers {
+  yield 1;
+}
+function* takesAPattern({ n, m }: { n: number; m: number }): Numbers {
+  yield n + m;
+}
+function* takesADefault(n: number, step: number = 2): Numbers {
+  yield n + step;
+}
+function* takesARest(...all: number[]): Numbers {
+  yield all.length;
+}
+function* takesMany(a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number): Numbers {
+  yield a + b + c + d + e + f + g + h + i + j + k + l;
+}
+function* takesOtherKinds(text: string, fraction: number, flag: boolean, list: number[], record: { n: number }): Numbers {
+  yield text.length + fraction * 2 + (flag ? 1 : 0) + list.length + record.n;
+}
+function* readsArguments(n: number): Numbers {
+  yield arguments.length + n;
+}
+function* hasManyVariables(n: number): Numbers {
+  let a = n, b = a + 1, c = b + 1, d = c + 1, e = d + 1, f = e + 1, g = f + 1, h = g + 1, i = h + 1, j = i + 1, k = j + 1, l = k + 1, m = l + 1, o = m + 1, p = o + 1, q = p + 1;
+  for (;;) {
+    yield a + b + c + d + e + f + g + h + i + j + k + l + m + o + p + q;
+    a += q; b += a; c += b; d += c; e += d; f += e; g += f; h += g; i += h; j += i; k += j; l += k; m += l; o += m; p += o; q = (q + p) % 97;
+  }
+}
+function* hasAFinally(n: number): Numbers {
+  try {
+    yield n;
+  } finally {
+    finished++;
+  }
+}
+function* delegates(n: number): Numbers {
+  yield* declared(n);
+}
+function* closesOverItsParameter(n: number): Numbers {
+  const read = (): number => n;
+  yield read();
+}
+async function* declaredLater(n: number): NumbersLater {
+  yield n;
+  yield n + 1;
+}
+const expressionLater = async function* (n: number): NumbersLater {
+  yield n;
+};
+async function* takesAPatternLater({ n, m }: { n: number; m: number }): NumbersLater {
+  yield n + m;
+}
+async function* takesARestLater(...all: number[]): NumbersLater {
+  yield all.length;
+}
+async function* awaitsFirst(n: number): NumbersLater {
+  yield (await n) + 1;
+}
+
+const calls = 4000;
+function measure(label: string, make: (i: number) => Numbers): void {
+  make(0).next();
+  const before = entered();
+  let sum = 0;
+  const kept: Numbers[] = [];
+  for (let i = 0; i < calls; i++) {
+    const generator = make(i);
+    if (i % 4) sum += generator.next().value as number;
+    if (i % 500 === 0) kept.push(generator);
+    if (i % 2000 === 1999) collect();
+  }
+  const entries = entered() - before;
+  for (const generator of kept) sum += (generator.next().value as number) + (generator.return().done ? 1 : 0);
+  lines.push(label + ": " + sum + ", " + few(entries, calls));
+}
+async function measureLater(label: string, make: (i: number) => NumbersLater): Promise<void> {
+  await make(0).next();
+  const before = entered();
+  const steps: Promise<IteratorResult<number, void>>[] = [];
+  for (let i = 0; i < calls; i++) {
+    const generator = make(i);
+    if (i % 4 === 1) steps.push(generator.next());
+    if (i % 2000 === 1999) collect();
+  }
+  const entries = entered() - before;
+  let sum = 0;
+  for (const step of await Promise.all(steps)) sum += step.value as number;
+  lines.push(label + ": " + sum + ", " + few(entries, calls));
+}
+
+const theirs: any = otherRealm.Function("return function* (n) { yield n; yield 'theirs'; }")();
+const theirsLater: any = otherRealm.Function("return async function* (n) { yield n; yield 'theirs'; }")();
+const generatorPrototype: any = Object.getPrototypeOf(declared.prototype);
+const asyncGeneratorPrototype: any = Object.getPrototypeOf(declaredLater.prototype);
+const theirGeneratorPrototype: any = Object.getPrototypeOf(theirs.prototype);
+const theirAsyncGeneratorPrototype: any = Object.getPrototypeOf(theirsLater.prototype);
+
+// intrinsic: what a generator of f inherits from while f.prototype holds no object. foreign: an object of the realm that is not f's.
+async function changesOfPrototype(label: string, f: any, intrinsic: any, foreign: object): Promise<void> {
+  const own: object = f.prototype;
+  const other: object = Object.create(intrinsic);
+  const bare: object = Object.create(null);
+  const callable: object = () => 0;
+  const named: [string, unknown][] = [
+    ["its own", own],
+    ["another", other],
+    ["one without a prototype", bare],
+    ["a function", callable],
+    ["one of the other realm", foreign],
+    ["the realm's", intrinsic],
+  ];
+  const whose = (generator: object): string => {
+    const prototype: unknown = Object.getPrototypeOf(generator);
+    for (const [name, candidate] of named) if (prototype === candidate) return name;
+    return "UNKNOWN";
+  };
+  const firstOf = async (generator: object): Promise<unknown> => (await intrinsic.next.call(generator)).value;
+  const early: object = f(1);
+  lines.push(label + ", at first: " + whose(early) + ", " + whose(f(2)) + ", " + (early instanceof f));
+  const stores: [string, unknown][] = [
+    ["another", other],
+    ["null", null],
+    ["its own", own],
+    ["1", 1],
+    ["another", other],
+    ["undefined", undefined],
+    ["a string", "text"],
+    ["one without a prototype", bare],
+    ["a symbol", Symbol.iterator],
+    ["one of the other realm", foreign],
+    ["true", true],
+    ["a function", callable],
+    ["a bigint", 1n],
+    ["the realm's", intrinsic],
+    ["its own", own],
+  ];
+  for (const [name, value] of stores) {
+    f.prototype = value;
+    const made: object[] = [f(3), f(4), f(5)];
+    lines.push(label + ", prototype = " + name + ": " + made.map(whose).join(", ") + ", yields " + (await firstOf(made[1])));
+  }
+  let right = 0;
+  for (let i = 0; i < 3000; i++) {
+    const wanted = i % 3 === 0 ? own : i % 3 === 1 ? other : null;
+    f.prototype = wanted;
+    if (Object.getPrototypeOf(f(i)) === (wanted ?? intrinsic)) right++;
+  }
+  lines.push(label + ", a store before every call: " + right + " of 3000 right");
+  right = 0;
+  for (let block = 0; block < 40; block++) {
+    f.prototype = block % 4 === 3 ? 0 : block % 2 ? other : own;
+    if (block % 10 === 5) collect();
+    const wanted: unknown = block % 4 === 3 ? intrinsic : f.prototype;
+    for (let i = 0; i < 50; i++) if (Object.getPrototypeOf(f(i)) === wanted) right++;
+  }
+  lines.push(label + ", a store before every fifty calls: " + right + " of 2000 right");
+  const key = ["proto", "type"].join("");
+  const ways: [string, () => unknown][] = [
+    ["defineProperty", () => Object.defineProperty(f, "prototype", { value: other })],
+    ["Reflect.set", () => Reflect.set(f, "prototype", own)],
+    ["Reflect.defineProperty", () => Reflect.defineProperty(f, "prototype", { value: bare })],
+    ["Object.assign", () => Object.assign(f, { prototype: own })],
+    ["a computed name", () => (f[key] = other)],
+    ["defineProperties", () => Object.defineProperties(f, { prototype: { value: null } })],
+    ["a store through an heir, which leaves it alone", () => (Object.create(f).prototype = bare)],
+    ["delete, which fails", () => Reflect.deleteProperty(f, "prototype")],
+    ["a computed name again", () => (f[key] = own)],
+  ];
+  for (const [name, store] of ways) {
+    f(6);
+    store();
+    lines.push(label + ", by " + name + ": " + whose(f(7)) + ", " + whose(f(8)));
+  }
+  Object.setPrototypeOf(own, other);
+  const late: object = f(9);
+  lines.push(label + ", its own prototype inherits from another: " + whose(late) + ", " + (Object.getPrototypeOf(Object.getPrototypeOf(late)) === other) + ", " + (late instanceof f) + ", yields " + (await firstOf(late)));
+  Object.setPrototypeOf(own, intrinsic);
+  lines.push(label + ", the first one still: " + whose(early) + ", yields " + (await firstOf(early)));
+  Object.defineProperty(f, "prototype", { writable: false });
+  let refusal = "no error";
+  try {
+    f.prototype = other;
+  } catch (error) {
+    refusal = (error as Error).name;
+  }
+  lines.push(label + ", a store to a read-only prototype: " + refusal + ", " + whose(f(10)) + ", " + whose(f(11)));
+}
+
+function* changed(n: number): Numbers {
+  yield n;
+}
+async function* changedLater(n: number): NumbersLater {
+  yield n;
+}
+class Changed {
+  *method(n: number): Numbers {
+    yield n;
+  }
+}
+// The parameters are evaluated before the generator gets its prototype.
+function* storesInItsHead(to: unknown, stored: unknown = ((storesInItsHead as any).prototype = to)): Generator<unknown, void, unknown> {
+  yield stored;
+}
+async function* storesInItsHeadLater(to: unknown, stored: unknown = ((storesInItsHeadLater as any).prototype = to)): AsyncGenerator<unknown, void, unknown> {
+  yield stored;
+}
+function storesInHeads(): void {
+  const first: object = Object.create(generatorPrototype);
+  const second: object = Object.create(generatorPrototype);
+  const results: boolean[] = [];
+  for (const to of [first, second, second, first, null, first, 1, second]) results.push(Object.getPrototypeOf(storesInItsHead(to)) === (typeof to === "object" && to ? to : generatorPrototype));
+  lines.push("a store in the head of the function: " + results.join(" "));
+  const later: boolean[] = [];
+  for (const to of [first, second, second, first, null, first, 1, second]) later.push(Object.getPrototypeOf(storesInItsHeadLater(to)) === (typeof to === "object" && to ? to : asyncGeneratorPrototype));
+  lines.push("a store in the head of the async function: " + later.join(" "));
+}
+
+function closuresInTurn(): void {
+  const all: ((n: number) => Numbers)[] = [];
+  for (let i = 0; i < 48; i++) all.push(makes(i));
+  let sum = 0;
+  let right = 0;
+  for (let turn = 0; turn < 200; turn++) {
+    for (const make of all) {
+      const generator = make(turn);
+      sum += generator.next().value as number;
+      if (Object.getPrototypeOf(generator) === make.prototype) right++;
+    }
+    if (turn === 100) {
+      collect();
+      for (let i = 0; i < 48; i += 5) (all[i] as any).prototype = i % 2 ? null : all[(i + 1) % 48].prototype;
+    }
+  }
+  lines.push("48 closures in turn: " + sum + ", " + right + " inherit from what their function holds, prototypes of their own: " + (new Set(all.map(make => make.prototype)).size));
+  let fresh = 0;
+  for (let i = 0; i < 2000; i++) {
+    const make = makes(i);
+    const generator = make(1);
+    fresh += (generator.next().value as number) + (Object.getPrototypeOf(generator) === make.prototype ? 1 : 0);
+  }
+  lines.push("2000 closures called once: " + fresh);
+}
+
+function acrossRealms(): void {
+  const ours = makes(5) as any;
+  ours.prototype = theirs.prototype;
+  const mixed = ours(1);
+  lines.push("ours with their prototype: " + (Object.getPrototypeOf(mixed) === theirs.prototype) + ", " + [...mixed].join() + ", " + (mixed instanceof theirs) + ", " + (mixed instanceof ours));
+  theirs.prototype = declared.prototype;
+  const mixedToo = theirs(2);
+  lines.push("theirs with our prototype: " + (Object.getPrototypeOf(mixedToo) === declared.prototype) + ", " + [...mixedToo].join() + ", " + (mixedToo instanceof declared));
+  let sum = 0;
+  for (let i = 0; i < 2000; i++) for (const value of theirs(i)) if (typeof value === "number") sum += value;
+  lines.push("theirs in a loop of ours: " + sum);
+  lines.push("ours in a loop of theirs: " + otherRealm.Function("make", "let sum = 0; for (let i = 0; i < 2000; i++) for (const value of make(i)) sum += value; return sum;")(declared));
+}
+
+lines.push("== counts");
+measure("declared", i => declared(i));
+measure("a function expression", i => expression(i));
+measure("a method", i => holder.method(i));
+measure("a static method", i => Holder.fixed(i));
+measure("Symbol.iterator", () => holder[Symbol.iterator]());
+measure("a member of a literal", i => literal.member(i));
+const closure = makes(100);
+measure("a closure", i => closure(i));
+measure("takes nothing", () => takesNothing());
+measure("takes a pattern", i => takesAPattern({ n: i, m: 1 }));
+measure("takes a default", i => takesADefault(i));
+measure("takes a rest", i => takesARest(i, i, i));
+measure("takes many", i => takesMany(i, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11));
+measure("takes other kinds", i => takesOtherKinds("text", i / 2, i % 2 === 0, [i], { n: i }));
+measure("reads arguments", i => readsArguments(i));
+measure("has many variables", i => hasManyVariables(i % 10));
+measure("has a finally", i => hasAFinally(i));
+measure("delegates", i => delegates(i));
+measure("closes over its parameter", i => closesOverItsParameter(i));
+await measureLater("async, declared", i => declaredLater(i));
+await measureLater("async, a function expression", i => expressionLater(i));
+await measureLater("async, a method", i => holder.later(i));
+await measureLater("async, a static method", i => Holder.fixedLater(i));
+await measureLater("async, a member of a literal", i => literal.memberLater(i));
+const closureLater = makesLater(100);
+await measureLater("async, a closure", i => closureLater(i));
+await measureLater("async, takes a pattern", i => takesAPatternLater({ n: i, m: 1 }));
+await measureLater("async, takes a rest", i => takesARestLater(i, i, i));
+await measureLater("async, awaits first", i => awaitsFirst(i));
+lines.push("finally blocks run: " + finished);
+lines.push("== prototypes");
+await changesOfPrototype("declared", changed, generatorPrototype, theirs.prototype);
+await changesOfPrototype("a closure", makes(1), generatorPrototype, theirs.prototype);
+await changesOfPrototype("a method", Changed.prototype.method, generatorPrototype, theirs.prototype);
+await changesOfPrototype("async", changedLater, asyncGeneratorPrototype, theirsLater.prototype);
+await changesOfPrototype("an async closure", makesLater(1), asyncGeneratorPrototype, theirsLater.prototype);
+await changesOfPrototype("of another realm", otherRealm.Function("return function* (n) { yield n; }")(), theirGeneratorPrototype, declared.prototype);
+await changesOfPrototype("async, of another realm", otherRealm.Function("return async function* (n) { yield n; }")(), theirAsyncGeneratorPrototype, declaredLater.prototype);
+storesInHeads();
+closuresInTurn();
+acrossRealms();
+measure("declared, after all that", i => declared(i));
+console.log(lines.join("\n"));
+
+export {};
+//// generator-function-prototype.js
+// The `prototype` of a generator function: a writable property that holds an ordinary, extensible object, created at first use, one per closure. Iteration sees what the program puts on that object, on an object above it or on the generator itself.
+function said(f) { try { return String(f()) } catch (e) { return "threw " + e.name } }
+function* count(n) { for (let i = 0; i < n; i++) yield i }
+function* plain(n) { for (let i = 0; i < n; i++) yield i }
+async function* countLater(n) { for (let i = 0; i < n; i++) yield i }
+const make = () => function* () { yield 1 }
+function sum(iterable) { let s = 0; for (const v of iterable) s += v; return s }
+function sumDirect(n) { let s = 0; for (const v of count(n)) s += v; return s }
+const show = () => [sumDirect(4), sum(count(4)), [...count(3)].join(), (([p, q]) => p + q)(count(5))].join(" ")
+const describe = f => [JSON.stringify(Object.getOwnPropertyDescriptor(f, "prototype")), Reflect.ownKeys(f.prototype).length, Object.isExtensible(f.prototype), Object.isFrozen(f.prototype), Object.hasOwn(f.prototype, "constructor"),
+  f(0) instanceof f, Object.getPrototypeOf(f(0)) === f.prototype, Reflect.deleteProperty(f, "prototype"), Object.keys(f).length, Object.getOwnPropertyNames(f).sort().join(), said(() => new f())].join(" ")
+const usePlain = () => { let total = 0; for (const v of plain(5)) total += v; return total + " " + [...plain(3)].join() }
+console.log("plain:", usePlain())
+const early = count(1)
+console.log("call before read:", Object.getPrototypeOf(early) === count.prototype)
+const late = make(), fromLate = late()
+console.log("closure call before read:", Object.getPrototypeOf(fromLate) === late.prototype)
+const generatorPrototype = Object.getPrototypeOf(count.prototype)
+console.log("shared parent:", generatorPrototype === Object.getPrototypeOf(late.prototype))
+console.log("declaration:", describe(count))
+console.log("unchanged:", show())
+{
+  const pending = count(3)
+  count.prototype.tap = function () { return "tapped " + this.next().value }
+  console.log("tap added:", show(), sum(pending), count(3).tap(), early.tap())
+  delete count.prototype.tap
+  console.log("tap deleted:", show())
+}
+{
+  const pending = count(3)
+  count.prototype.next = () => ({ done: true, value: undefined })
+  console.log("next added:", show(), sum(pending))
+  delete count.prototype.next
+  console.log("next deleted:", show())
+}
+{
+  const pending = count(3)
+  count.prototype[Symbol.iterator] = () => [7, 8][Symbol.iterator]()
+  console.log("Symbol.iterator added:", show(), sum(pending))
+  delete count.prototype[Symbol.iterator]
+  console.log("Symbol.iterator deleted:", show())
+}
+let closed = 0
+{
+  const pending = count(3)
+  count.prototype.return = function (v) { closed++; return { done: true, value: v } }
+  console.log("return added:", show(), sum(pending))
+  for (const v of count(3)) break
+  console.log("closed:", closed)
+  delete count.prototype.return
+  console.log("return deleted:", show())
+}
+const middle = Object.create(generatorPrototype)
+Object.setPrototypeOf(count.prototype, middle)
+console.log("middle inserted:", show())
+middle.next = () => ({ done: true })
+console.log("middle.next added:", show())
+delete middle.next
+console.log("middle.next deleted:", show())
+Object.setPrototypeOf(count.prototype, generatorPrototype)
+console.log("middle removed:", show())
+const own = count(3); own.next = () => ({ done: true })
+console.log("own next:", sum(own), sum(count(3)))
+const bare = count(3); Object.setPrototypeOf(bare, { next() { return { done: true } }, [Symbol.iterator]() { return this } })
+console.log("own prototype:", sum(bare))
+const extended = count(3); extended.note = 1
+console.log("own property:", sum(extended), extended.note)
+const original = count.prototype, before = count(2)
+count.prototype = { kind: "replaced" }
+console.log("replaced:", count(1).kind, Object.getPrototypeOf(count(1)) === count.prototype, said(() => count(1).next()), said(() => sumDirect(2)), before instanceof count, sum(before))
+const chained = Object.create(generatorPrototype, { kind: { value: "chained" } }); count.prototype = chained
+console.log("chained:", count(1).kind, show())
+count.prototype = 5
+console.log("replaced by 5:", Object.getPrototypeOf(count(1)) === generatorPrototype, said(() => count(1) instanceof count), show())
+count.prototype = null
+console.log("replaced by null:", Object.getPrototypeOf(count(1)) === generatorPrototype, said(() => count(1) instanceof count), show())
+const kinds = []
+for (let i = 0; i < 6; i++) { count.prototype = i & 1 ? original : chained; kinds.push(String(count(1).kind)) }
+console.log("alternating:", kinds.join())
+count.prototype = original
+console.log("restored:", describe(count), show())
+const fixed = make(); Object.defineProperty(fixed, "prototype", { writable: false })
+console.log("read-only:", Reflect.set(fixed, "prototype", {}), sum(fixed()))
+const frozen = make(); Object.freeze(frozen.prototype)
+console.log("frozen:", Object.isFrozen(frozen.prototype), Reflect.set(frozen.prototype, "next", 1), sum(frozen()))
+const redefined = make(), other = Object.create(generatorPrototype); Object.defineProperty(redefined, "prototype", { value: other })
+console.log("redefined:", Object.getPrototypeOf(redefined()) === other)
+const f = make(), g = make()
+console.log("two closures:", f.prototype !== g.prototype, f() instanceof f, f() instanceof g)
+f.prototype.mark = 1
+console.log("mark:", f().mark, g().mark)
+console.log("1000 closures:", new Set(Array.from({ length: 1000 }, () => make().prototype)).size)
+function outer(n) { function* inner() { yield n } return [inner(), inner] }
+const [it1, fn1] = outer(1), [it2, fn2] = outer(2)
+console.log("escaping direct call:", Object.getPrototypeOf(it1) === fn1.prototype, Object.getPrototypeOf(it1) === Object.getPrototypeOf(it2), fn1.prototype === fn2.prototype, sum(it1) + sum(it2))
+class K { *m() { yield 1 } static *s() { yield 2 } }
+const literal = { *m() { yield 3 } }
+const expression = function* () { yield 4 }
+console.log("method:", describe(K.prototype.m))
+console.log("static method:", describe(K.s))
+console.log("literal method:", describe(literal.m))
+console.log("expression:", describe(expression))
+console.log("distinct prototypes:", new Set([K.prototype.m.prototype, K.s.prototype, literal.m.prototype, expression.prototype]).size)
+console.log("sums:", sum(new K().m()), sum(K.s()), sum(literal.m()), sum(expression()))
+console.log("plain:", usePlain())
+console.log("async:", describe(countLater))
+console.log("async shared parent:", Object.getPrototypeOf(countLater.prototype) === Object.getPrototypeOf((async function* () {}).prototype))
+countLater.prototype.extra = 1
+console.log("async extra:", countLater(0).extra)
+const makeLater = () => async function* () {}
+console.log("async closures:", makeLater().prototype !== makeLater().prototype)
+;(async () => { let s = 0; for await (const v of countLater(4)) s += v; countLater.prototype.next = async () => ({ done: true }); for await (const v of countLater(4)) s += 100; return s })().then(s => console.log(s))
+//// generator-methods-on-declared-generators.ts
+// next(), return() and throw() where the receiver is declared as a Generator: real generators, changed ones and look-alikes
+const lines: string[] = [];
+////= say
+class Mine extends Error {}
+////= attempt
+
+////= lines-11	Task	readonly	cost	number
+type Program = Generator<Task, number, number>;
+
+function* tasks(n: number): Program {
+  let sum = 0;
+  for (let i = 0; i < n; i++) sum += yield new Task(i);
+  return sum;
+}
+
+function drive(iterator: Program): number {
+  let step = iterator.next(0);
+  while (!step.done) step = iterator.next(step.value.cost * 2);
+  return step.value;
+}
+function driveWithConstants(iterator: Program): number {
+  let turns = 0;
+  for (;;) {
+    const step = iterator.next(1);
+    if (step.done) return step.value + turns;
+    turns++;
+  }
+}
+function driveByDestructuring(iterator: Program): number {
+  for (;;) {
+    const { value, done } = iterator.next(3);
+    if (done) return value as number;
+  }
+}
+function firstValue(iterator: Program): unknown {
+  return iterator.next(0).value;
+}
+function isOverAtOnce(iterator: Program): boolean | undefined {
+  return iterator.next(0).done;
+}
+function valueOfCompleted(iterator: Generator<Task, number | undefined, number>): unknown {
+  const step = iterator.next(0);
+  return [step.done, step.value];
+}
+function keepsResults(iterator: Program): IteratorResult<Task, number>[] {
+  const kept: IteratorResult<Task, number>[] = [];
+  for (;;) {
+    const step = iterator.next(5);
+    kept.push(step);
+    if (step.done) return kept;
+  }
+}
+function returnsResult(iterator: Program): IteratorResult<Task, number> {
+  return iterator.next(0);
+}
+function comparesResults(iterator: Program): boolean {
+  const first = iterator.next(0);
+  const second = iterator.next(0);
+  return (first as unknown) === second;
+}
+
+say("drive", drive(tasks(10)), drive(tasks(0)));
+say("constants", driveWithConstants(tasks(4)));
+say("destructuring", driveByDestructuring(tasks(4)));
+say("first value", firstValue(tasks(1)), firstValue(tasks(0)));
+say("over at once", isOverAtOnce(tasks(1)), isOverAtOnce(tasks(0)));
+say("results that are kept", keepsResults(tasks(2)));
+{
+  const result = returnsResult(tasks(1));
+  say("a result that is returned", result, Object.keys(result), Object.getPrototypeOf(result) === Object.prototype, Object.getOwnPropertyDescriptor(result, "done"));
+  (result as any).extra = 1;
+  say("it is an ordinary object", result);
+}
+say("two results are two objects", comparesResults(tasks(3)));
+{
+  const completed = tasks(1);
+  drive(completed);
+  say("a completed generator", isOverAtOnce(completed), valueOfCompleted(completed));
+}
+
+function lookAlike(log: string[]): Program {
+  let count = 0;
+  return {
+    next(sent: number) {
+      log.push(`next(${sent})`);
+      const now = count++;
+      return {
+        get done() {
+          log.push("get done");
+          return now >= 2;
+        },
+        get value() {
+          log.push("get value");
+          return now >= 2 ? 100 : new Task(now);
+        },
+      };
+    },
+    return(value: number) {
+      log.push(`return(${value})`);
+      return { value, done: true };
+    },
+    throw(error: unknown) {
+      log.push(`throw(${error})`);
+      return { value: -1, done: true };
+    },
+    [Symbol.iterator]() {
+      return this;
+    },
+  } as unknown as Program;
+}
+for (const [title, run] of [
+  ["drive", drive],
+  ["constants", driveWithConstants],
+  ["destructuring", driveByDestructuring],
+  ["first value", firstValue],
+  ["over at once", isOverAtOnce],
+] as [string, (iterator: Program) => unknown][]) {
+  const log: string[] = [];
+  say("a look-alike:", title, run(lookAlike(log)), log);
+}
+for (const [title, value] of [
+  ["undefined", undefined],
+  ["null", null],
+  ["a number", 1],
+  ["an object without next", {}],
+  ["next is not a function", { next: 1 }],
+  ["next returns undefined", { next: () => undefined }],
+  ["next returns a number", { next: () => 1 }],
+] as [string, unknown][])
+  attempt(`declared as a generator: ${title}`, () => drive(value as Program));
+
+{
+  const changed = tasks(3);
+  (changed as any).next = function (sent: number) {
+    return { value: sent + 1000, done: true };
+  };
+  say("its own next", drive(changed));
+  const inherits = tasks(3);
+  Object.setPrototypeOf(inherits, { next: (sent: number) => ({ value: sent + 2000, done: true }) });
+  say("another prototype", drive(inherits));
+  const putBack = tasks(3);
+  const original = Object.getPrototypeOf(putBack);
+  Object.setPrototypeOf(putBack, null);
+  Object.setPrototypeOf(putBack, original);
+  say("its prototype put back", drive(putBack));
+  const unrelated = tasks(3);
+  (unrelated as any).label = "x";
+  say("an unrelated property", drive(unrelated));
+  const frozen = Object.freeze(tasks(3));
+  say("frozen", drive(frozen));
+}
+{
+  const iterator = tasks(5);
+  function changesItWhileTheArgumentIsEvaluated(): number {
+    (iterator as any).next = () => ({ value: -5, done: true });
+    return 7;
+  }
+  function steps(generator: Program): unknown[] {
+    return [generator.next(0).done, generator.next(changesItWhileTheArgumentIsEvaluated()).done, generator.next(0).value];
+  }
+  say("the method is read before the argument is evaluated", steps(iterator));
+}
+
+function* guarded(log: string[]): Generator<string, string, unknown> {
+  try {
+    const got = yield "in try";
+    log.push(`got ${got}`);
+    yield "still in try";
+    return "ended by itself";
+  } catch (error) {
+    log.push(`caught ${error}`);
+    yield "after catch";
+    return "ended after catch";
+  } finally {
+    log.push("finally");
+    yield "from finally";
+  }
+}
+function returnsEarly(iterator: Generator<string, string, unknown>): unknown[] {
+  const seen: unknown[] = [iterator.next().value];
+  const returned = iterator.return("asked to return");
+  seen.push(returned.done, returned.value);
+  const after = iterator.next();
+  seen.push(after.done, after.value, iterator.next().done);
+  return seen;
+}
+function throwsIn(iterator: Generator<string, string, unknown>): unknown[] {
+  const seen: unknown[] = [iterator.next().value];
+  const thrown = iterator.throw("thrown in");
+  seen.push(thrown.done, thrown.value);
+  for (;;) {
+    const step = iterator.next();
+    seen.push(step.value);
+    if (step.done) return seen;
+  }
+}
+{
+  const log: string[] = [];
+  say("return()", returnsEarly(guarded(log)), log);
+  log.length = 0;
+  say("throw()", throwsIn(guarded(log)), log);
+}
+function returnsBeforeTheStart(iterator: Program): unknown[] {
+  const returned = iterator.return(9);
+  return [returned.done, returned.value, iterator.next(0).done];
+}
+function throwsBeforeTheStart(iterator: Program): unknown {
+  return iterator.throw(new Mine("before the start")).done;
+}
+say("return() before the start", returnsBeforeTheStart(tasks(2)));
+{
+  const iterator = tasks(2);
+  attempt("throw() before the start", () => throwsBeforeTheStart(iterator));
+  say("then", isOverAtOnce(iterator));
+}
+
+function* throwsAt(n: number): Program {
+  for (let i = 0; i < n; i++) yield new Task(i);
+  throw new Mine(`the body threw after ${n}`);
+}
+{
+  const iterator = throwsAt(2);
+  attempt("the body throws", () => drive(iterator));
+  say("it is completed", isOverAtOnce(iterator), valueOfCompleted(iterator));
+  function catches(generator: Program): string {
+    try {
+      for (;;) {
+        const step = generator.next(0);
+        if (step.done) return "ended";
+      }
+    } catch (error) {
+      return `caught in the caller: ${(error as Error).message}; then done is ${generator.next(0).done}`;
+    } finally {
+      lines.push("the caller's finally ran");
+    }
+  }
+  say(catches(throwsAt(1)));
+}
+{
+  let self: Program;
+  function* resumesItself(): Program {
+    yield new Task(1);
+    const step = self.next(0);
+    return step.done ? 1 : 0;
+  }
+  self = resumesItself();
+  say("first", firstValue(self));
+  attempt("a generator that resumes itself", () => drive(self));
+  say("then", isOverAtOnce(self));
+}
+{
+  function* stackOf(): Generator<string, void, unknown> {
+    yield (new Error("inside").stack ?? "").split("\n").length > 1 ? "has a stack" : "no stack";
+  }
+  function first(iterator: Generator<string, void, unknown>) {
+    return iterator.next().value;
+  }
+  say("an error made in the body", first(stackOf()));
+}
+{
+  function* deep(n: number): Generator<number, number, unknown> {
+    if (!n) return 0;
+    const inner = deep(n - 1);
+    const step = inner.next();
+    yield n;
+    return step.done ? step.value + 1 : -1;
+  }
+  function last(iterator: Generator<number, number, unknown>): number {
+    for (;;) {
+      const step = iterator.next();
+      if (step.done) return step.value;
+    }
+  }
+  say("generators that step generators", last(deep(50)));
+  function* endless(): Generator<number, number, unknown> {
+    return endless().next().value as number;
+  }
+  attempt("without end", () => {
+    try {
+      return last(endless());
+    } catch (error) {
+      return error instanceof RangeError ? "RangeError" : String(error);
+    }
+  });
+}
+{
+  let total = 0;
+  for (let round = 0; round < 300; round++) total += drive(tasks(100));
+  say("many steps", total);
+}
+
+console.log(lines.join("\n"));
+//// generator-methods-on-escaped-generators.ts
+// next(), return() and throw() on generators whose creation the caller cannot see.
+const shelf: unknown[] = []
+function hide<T>(value: T): T {
+  shelf.push(value)
+  return shelf[shelf.length - 1] as T
+}
+function show(label: string, action: () => unknown) {
+  try {
+    console.log(label, JSON.stringify(action()))
+  } catch (error) {
+    console.log(label, 'threw', error instanceof Error ? `${error.name}: ${error.message}` : String(error))
+  }
+}
+
+function* count(from: number, to: number): Generator<number, string, number | undefined> {
+  let total = 0
+  for (let n = from; n < to; n++) total += (yield n) ?? 0
+  return `sent ${total}`
+}
+
+const counted = hide(count(1, 4))
+show('first', () => counted.next(100))
+show('second', () => counted.next(10))
+show('third', () => counted.next(20))
+show('last', () => counted.next(30))
+show('after the end', () => counted.next(40))
+show('return after the end', () => counted.return('late'))
+show('throw after the end', () => counted.throw(new RangeError('late')))
+
+const shaped = hide(count(0, 2))
+const one = shaped.next()
+const two = shaped.next()
+console.log(one === two, Object.keys(one).join(), Object.getPrototypeOf(one) === Object.prototype, JSON.stringify(Object.getOwnPropertyDescriptors(one)))
+console.log(shaped[Symbol.iterator]() === shaped, Object.prototype.toString.call(shaped), typeof shaped.next, shaped.next.name, shaped.next.length, shaped.return.name, shaped.throw.name)
+console.log(shaped.next === hide(count(0, 1)).next, Object.hasOwn(shaped, 'next'), String(shaped.next).includes('[native code]'))
+
+function* failing(): Generator<number, void, void> {
+  yield 1
+  throw new TypeError('inside')
+}
+const failed = hide(failing())
+show('before the failure', () => failed.next())
+show('the failure', () => failed.next())
+show('after the failure', () => failed.next())
+show('return after the failure', () => failed.return())
+
+let reentrant: Generator<string, string, void>
+function* entersItself(): Generator<string, string, void> {
+  let message = ''
+  try {
+    reentrant.next()
+  } catch (error) {
+    message = `${(error as Error).name}: ${(error as Error).message}`
+  }
+  yield message
+  try {
+    reentrant.return('x')
+  } catch (error) {
+    message = `${(error as Error).name}`
+  }
+  yield message
+  try {
+    reentrant.throw(1)
+  } catch (error) {
+    message = `${(error as Error).name}`
+  }
+  return message
+}
+reentrant = hide(entersItself())
+show('enters itself by next', () => reentrant.next())
+show('enters itself by return', () => reentrant.next())
+show('enters itself by throw', () => reentrant.next())
+show('and is done', () => reentrant.next())
+
+const log: string[] = []
+function* guarded(kind: string): Generator<string, string, string | undefined> {
+  try {
+    log.push('try')
+    const sent = yield 'in try'
+    log.push(`sent ${sent}`)
+    return 'end of try'
+  } catch (error) {
+    log.push(`caught ${error}`)
+    if (kind === 'rethrows') throw `again ${error}`
+    yield 'in catch'
+    return 'end of catch'
+  } finally {
+    log.push('finally')
+    if (kind === 'yields in finally') yield 'in finally'
+    if (kind === 'throws in finally') throw new Error('from finally')
+    if (kind === 'returns in finally') return 'from finally'
+  }
+}
+for (const kind of ['plain', 'yields in finally', 'throws in finally', 'returns in finally', 'rethrows']) {
+  for (const method of ['return', 'throw'] as const) {
+    const early = hide(guarded(kind))
+    show(`${kind}: ${method} before the start`, () => early[method]('early'))
+    show(`${kind}: next after that`, () => early.next())
+    const started = hide(guarded(kind))
+    started.next()
+    show(`${kind}: ${method} at the yield`, () => started[method]('now'))
+    show(`${kind}: next after that`, () => started.next('more'))
+    show(`${kind}: and again`, () => started.next('more'))
+  }
+}
+console.log(log.join(' | '))
+
+const { next, return: finish, throw: raise } = Object.getPrototypeOf(Object.getPrototypeOf(hide(count(0, 1)))) as Generator<number, string, number>
+const borrowed = hide(count(5, 7))
+show('a borrowed next', () => next.call(borrowed, 1))
+show('a borrowed next by apply', () => Reflect.apply(next, borrowed, []))
+show('a borrowed return', () => finish.call(borrowed, 'stop'))
+for (const receiver of [undefined, null, 1, 'text', {}, [], () => 1, Object.create(borrowed), (async function* () {})(), [][Symbol.iterator]()]) {
+  show(`next on ${Object.prototype.toString.call(receiver)}`, () => next.call(receiver as any))
+  show(`return on ${Object.prototype.toString.call(receiver)}`, () => finish.call(receiver as any, 'x'))
+  show(`throw on ${Object.prototype.toString.call(receiver)}`, () => raise.call(receiver as any, 'x'))
+}
+
+class Tree {
+  readonly value: number
+  readonly children: Tree[]
+  constructor(value: number, children: Tree[] = []) {
+    this.value = value
+    this.children = children
+  }
+  *walk(): Generator<number, number, void> {
+    let seen = 1
+    yield this.value
+    for (const child of this.children) seen += yield* hide(child.walk())
+    return seen
+  }
+}
+const tree = new Tree(1, [new Tree(2, [new Tree(3), new Tree(4)]), new Tree(5)])
+const walk = hide(tree.walk())
+const visited: number[] = []
+for (let step = walk.next(); ; step = walk.next()) {
+  if (step.done) {
+    console.log(visited.join(), step.value)
+    break
+  }
+  visited.push(step.value)
+}
+console.log([...hide(tree.walk())].join(), Array.from(hide(tree.walk()), (n) => n * 2).join(), Math.max(...hide(tree.walk())))
+const [head, , third, ...others] = hide(tree.walk())
+console.log(head, third, others.join())
+
+function* outer(inner: Generator<string, string, string | undefined>): Generator<string, string, string | undefined> {
+  const result = yield* inner
+  return `outer got ${result}`
+}
+for (const method of ['next', 'return', 'throw'] as const) {
+  const delegating = hide(outer(hide(guarded('yields in finally'))))
+  show(`delegating: start`, () => delegating.next())
+  show(`delegating: ${method}`, () => delegating[method]('through'))
+  show(`delegating: next`, () => delegating.next('after'))
+  show(`delegating: next`, () => delegating.next('after'))
+}
+
+function* nested(depth: number): Generator<number, number, void> {
+  if (depth === 0) return 0
+  const inner = hide(nested(depth - 1))
+  let step = inner.next()
+  while (!step.done) {
+    yield step.value
+    step = inner.next()
+  }
+  yield depth
+  return step.value + 1
+}
+shelf.length = 0
+let sum = 0
+const deep = hide(nested(200))
+for (let step = deep.next(); ; step = deep.next()) {
+  if (step.done) {
+    console.log(sum, step.value)
+    break
+  }
+  sum += step.value
+}
+
+function* allocating(rounds: number): Generator<{ id: number; text: string }, number, { id: number } | undefined> {
+  let kept = 0
+  for (let id = 0; id < rounds; id++) {
+    const sent = yield { id, text: `record ${id}` }
+    kept += sent ? sent.id : 0
+  }
+  return kept
+}
+shelf.length = 0
+const records = hide(allocating(20000))
+let checksum = 0
+for (let step = records.next(); !step.done; step = records.next({ id: step.value.id })) checksum += step.value.text.length + step.value.id
+console.log(checksum, JSON.stringify(records.next()))
+
+const tagged = hide(count(0, 3)) as Generator<number, string, number | undefined> & { tag?: string }
+tagged.tag = 'mine'
+show('with an own property', () => [tagged.next(), tagged.tag, Object.keys(tagged)])
+const shadowed = hide(count(0, 3)) as Generator<number, string, number | undefined>
+Object.defineProperty(shadowed, 'next', { value: () => ({ value: -1, done: false }) })
+show('with an own next', () => [shadowed.next(), next.call(shadowed, 0)])
+let turns = 0
+for (const value of shadowed) {
+  if (++turns > 2) break
+  console.log('for of sees', value)
+}
+//// generator-methods-that-are-replaced-shadowed-overridden-or-removed.js
+// generator methods read without a lookup: every way the method behind a name can change
+const out = [];
+function say(...a) { out.push(a.join(" ")); }
+class Range {
+  constructor(n) { this.n = n; }
+  *items() { for (let i = 0; i < this.n; i++) yield i; }
+  *pairs(k) { for (let i = 0; i < this.n; i++) yield i * k; }
+  static *upTo(n) { for (let i = 0; i < n; i++) yield i + 100; }
+  sum() { let s = 0; for (const v of this.items()) s += v; return s; }
+  sumPairs(k) { let s = 0; for (const v of this.pairs(k)) s += v; return s; }
+}
+class Evens extends Range {
+  *items() { for (let i = 0; i < this.n; i++) yield i * 2; }
+}
+class Super extends Range {
+  *items() { yield -1; yield* super.items(); }
+}
+function total(r) { let s = 0; for (const v of r.items()) s += v; return s; }
+function warm(r) { let s = 0; for (let i = 0; i < 300; i++) s += total(r) + r.sum() + r.sumPairs(3); return s; }
+const a = new Range(4), b = new Evens(4), c = new Super(3);
+say("warm", warm(a), warm(b), warm(c));
+say("identity", a.items === Range.prototype.items, b.items === Evens.prototype.items, b.items === a.items, a.items.name, a.items.length, a.pairs.length);
+Range.prototype.items.tag = "tagged";
+say("tag", a.items.tag, c.items.tag, Object.getPrototypeOf(Super.prototype).items.tag);
+// an own property shadows
+const shadow = new Range(4);
+say("before shadow", total(shadow), shadow.sum());
+shadow.items = function* () { yield 1000; };
+say("shadow", total(shadow), shadow.sum(), total(a));
+delete shadow.items;
+say("shadow gone", total(shadow), shadow.sum());
+// the generator's own prototype object is replaced
+const kept = Range.prototype.items.prototype;
+Range.prototype.items.prototype = { next() { return { done: true, value: undefined }; }, [Symbol.iterator]() { return this; } };
+say("prototype of the generators replaced", total(a), a.sum(), total(c));
+Range.prototype.items.prototype = kept;
+say("and back", total(a), a.sum(), total(c));
+kept.extra = 7;
+say("extra", a.items().extra, b.items().extra);
+// the prototype of one object changes
+const moved = new Range(4);
+say("moved before", total(moved));
+Object.setPrototypeOf(moved, Evens.prototype);
+say("moved", total(moved), moved.sum());
+Object.setPrototypeOf(moved, { *items() { yield 5; yield 6; } });
+say("moved again", total(moved));
+// the method is replaced on the prototype
+const old = Range.prototype.items;
+Range.prototype.items = function* () { yield 42; };
+say("replaced", total(a), a.sum(), total(b), total(c), a.items === old);
+Range.prototype.items = function () { return [7, 8][Symbol.iterator](); };
+say("replaced by a plain function", total(a), a.sum(), total(c));
+Object.defineProperty(Range.prototype, "items", { get() { return function* () { yield 9; yield 9; }; }, configurable: true });
+say("replaced by a getter", total(a), a.sum(), total(c));
+delete Range.prototype.items;
+try { say("deleted", total(a)); } catch (e) { say("deleted", e.constructor.name); }
+Range.prototype.items = old;
+say("restored", total(a), a.sum(), total(b), total(c));
+// another this
+say("call", [...old.call({ n: 2 })].join(), [...Evens.prototype.items.call(a)].join(), [...Range.upTo(2)].join(), [...Range.upTo.call(null, 3)].join());
+Range.upTo = function* () { yield "static replaced"; };
+say("static", [...Range.upTo(2)].join(), [...Evens.upTo(2)].join());
+// a class evaluated many times
+function make(k) { return class { *items() { yield k; yield k + 1; } }; }
+const classes = []; for (let i = 0; i < 50; i++) classes.push(make(i));
+let s = 0; for (let r = 0; r < 50; r++) for (const K of classes) s += total(new K());
+say("many classes", s, classes[0].prototype.items === classes[1].prototype.items);
+// the parent of a prototype changes
+Object.setPrototypeOf(Evens.prototype, { *pairs(k) { yield k; }, n: 1 });
+say("parent changed", b.sumPairs ? "has" : "none", [...b.pairs(5)].join(), total(b));
+// generator objects are distinct, can be stepped by hand, returned, thrown into
+const g1 = a.items(), g2 = a.items();
+say("by hand", g1 === g2, g1.next().value, g1.next().value, g2.next().value, JSON.stringify(g1.return(9)), JSON.stringify(g1.next()));
+try { g2.throw(new Error("thrown in")); } catch (e) { say("throw", e.message, JSON.stringify(g2.next())); }
+say("toString", Object.prototype.toString.call(a.items()), typeof a.items, a.items.constructor.name, Object.getPrototypeOf(a.items()) === a.items.prototype);
+try { new a.items(); } catch (e) { say("new", e.constructor.name); }
+console.log(out.join("\n"));

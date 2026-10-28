@@ -63,6 +63,12 @@ void IsolatedModuleCache::insertInternalModule(JSC::VM& vm, uint32_t id, const J
     modules[id] = { source, JSC::Strong<JSC::UnlinkedFunctionExecutable>(vm, executable) };
 }
 
+void IsolatedModuleCache::insertIfAbsent(JSC::VM& vm, const WTF::String& key, Zig::SourceProvider& provider, const CodeString* pluginContents)
+{
+    if (!lookup(vm, key, pluginContents))
+        insert(vm, key, provider, pluginContents);
+}
+
 void IsolatedModuleCache::evict(JSC::VM& vm, const WTF::String& key)
 {
     WebCore::clientData(vm)->isolationSourceProviderCache.remove(key);

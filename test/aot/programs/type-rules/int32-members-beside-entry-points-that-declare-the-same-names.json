@@ -1,0 +1,1 @@
+{ "entryPoints": ["./interface.ts", "./alias.ts", "./class.ts", "./enum.ts", "./namespace.ts", "./global.ts", "./script.ts", "./untyped.js"] }

@@ -23,4 +23,7 @@ JSC::JSSourceCode* createJSValueModuleSourceCode(JSC::VM&, JSC::JSValue value, c
 
 JSC::JSSourceCode* createJSValueExportDefaultObjectSourceCode(JSC::VM&, JSC::JSValue value, const WTF::String& moduleKey);
 
+// As above, without the `__esModule` marker.
+JSC::JSSourceCode* createJSValueExportDefaultOnlySourceCode(GlobalObject*, JSC::JSValue value, WTF::String&& sourceURL);
+
 } // namespace Zig

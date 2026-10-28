@@ -21,12 +21,23 @@ export const returnUndefined = b.fn({ export: "Bun__Jest__returnUndefined" });
 /** The bound `this` of the `done` a test callback takes. */
 export const DoneCallback = b.class({ rustPath: "crate::test_runner::DoneCallback" });
 
-const modifier = { getter: b.any, cache: true, ...js } as const;
-const conditionalModifier = { args: { condition: b.bool.loose }, returns: b.any, ...js } as const;
+const modifier = { getter: b.any.returning("object"), cache: true, ...js } as const;
+const conditionalModifier = { args: { condition: b.bool.loose }, returns: b.any.returning("object"), ...js } as const;
 /** A tagged template call passes its substitutions as `values`. */
-const rows = { args: { table: b.any, values: b.any.variadic }, returns: b.any, ...js, length: 1 } as const;
+const rows = {
+  args: { table: b.any, values: b.any.variadic },
+  returns: b.any.returning("object"),
+  ...js,
+  length: 1,
+} as const;
 /** `(fixtures)` or `(name, options?, value)` */
-const fixtures = { args: { name: b.any, options: b.any, value: b.any }, returns: b.any, ...js, length: 1 } as const;
+const fixtures = {
+  args: { name: b.any, options: b.any, value: b.any },
+  returns: b.any.returning("object"),
+  ...js,
+  length: 1,
+} as const;
+const overriddenFixtures = { ...fixtures, returns: b.any.returning("object", "undefined"), passThis: true } as const;
 
 /** The bound `this` of `test`, `describe` and what their modifiers give, such as `test.skip`. */
 export const ScopeFunctions = b.class({
@@ -52,9 +63,9 @@ export const ScopeFunctions = b.class({
     for: rows,
     if: conditionalModifier,
     only: modifier,
-    override: { ...fixtures, passThis: true },
+    override: overriddenFixtures,
     runIf: conditionalModifier,
-    scoped: { ...fixtures, passThis: true, rustName: "override" },
+    scoped: { ...overriddenFixtures, rustName: "override" },
     sequential: modifier,
     serial: modifier,
     serialIf: conditionalModifier,

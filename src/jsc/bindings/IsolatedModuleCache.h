@@ -72,6 +72,12 @@ public:
     static const IsolatedInternalModule* lookupInternalModule(JSC::VM&, uint32_t id);
     static void insertInternalModule(JSC::VM&, uint32_t id, const JSC::SourceCode&, JSC::UnlinkedFunctionExecutable*);
 
+    // For callers that run some time after their lookup, or without one: the
+    // answer of the transpiler's thread, which another fetch of the key may
+    // have preceded, and Module._extensions[".js"] called by a program. The
+    // provider that is cached for the key stays.
+    static void insertIfAbsent(JSC::VM&, const WTF::String& key, Zig::SourceProvider&, const CodeString* pluginContents = nullptr);
+
     static void evict(JSC::VM&, const WTF::String& key);
     static void clear(JSC::VM&);
 };

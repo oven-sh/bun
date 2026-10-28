@@ -1,0 +1,9 @@
+require of a module of the executable, by a computed name: inside true
+import of it: inside
+require of CommonJS written at run time: refused; the message names the specifier: true, another entry point: true
+import of an ES module written at run time: refused; the message names the specifier: true, another entry point: true
+require of TypeScript written at run time: refused; the message names the specifier: true, another entry point: true
+require of JSON written at run time: outside
+import of JSON written at run time: outside
+require of TOML written at run time: outside
+the module of the executable once more: inside true

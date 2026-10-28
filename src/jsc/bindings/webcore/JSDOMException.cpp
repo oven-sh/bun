@@ -30,6 +30,9 @@
 #include "JSDOMConvertStrings.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMPrototype.h"
+#include "WebCoreJSClientData.h"
+#include <JavaScriptCore/HeapAnalyzer.h>
+#include <wtf/text/MakeString.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -175,14 +178,92 @@ template<> void JSDOMExceptionPrototype::finishCreation(VM& vm)
 
 const ClassInfo JSDOMException::s_info = { "DOMException"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDOMException) };
 
+JSDOMException::JSDOMException(Structure* structure, JSDOMGlobalObject& globalObject, Ref<DOMException>&& impl)
+    : Base(globalObject.vm(), structure, JSC::ErrorType::Error)
+    , m_wrapped(WTF::move(impl))
+{
+}
+
+void JSDOMException::finishCreation(VM& vm)
+{
+    Base::finishCreationForEmbedderError(vm);
+    ASSERT(inherits(info()));
+
+    // ErrorInstance leaves .stack unset on an empty trace; other engines still give the header line.
+    auto* trace = stackTrace();
+    if (!trace || trace->isEmpty())
+        setStackString(vm, displayHeader(vm));
+}
+
+void JSDOMException::setStackString(VM& vm, String&& stack)
+{
+    setStackFrames(vm, {});
+    putDirect(vm, vm.propertyNames->stack, jsString(vm, WTF::move(stack)), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+}
+
+void JSDOMException::reconcileWeakReferencesAtGCEnd(VM& vm, JSC::CollectionScope collectionScope)
+{
+    Base::reconcileWeakReferencesAtGCEnd(vm, collectionScope);
+    // ErrorInstance::stackWithHeader() reads name/message as data properties; ours are prototype accessors.
+    if (!m_stackStringIsFramesOnly)
+        return;
+    String header = displayHeader(vm);
+    Locker locker { cellLock() };
+    m_stackString = makeString(header, m_stackString);
+    m_stackStringIsFramesOnly = false;
+}
+
+// Same joining rule as formatStackTrace: either side may be empty.
+String JSDOMException::displayHeader(VM& vm) const
+{
+    auto name = displayName(vm);
+    auto message = displayMessage(vm);
+    if (name.isEmpty())
+        return message;
+    if (message.isEmpty())
+        return name;
+    return makeString(name, ": "_s, message);
+}
+
+String JSDOMException::ownStringOr(VM& vm, PropertyName propertyName, String&& fallback) const
+{
+    JSValue own = getDirect(vm, propertyName);
+    if (!own || !own.isString())
+        return WTF::move(fallback);
+    auto* string = asString(own);
+    if (string->isRope()) // Resolving would allocate; callers may be inside a GC end phase.
+        return WTF::move(fallback);
+    return String(string->tryGetValue(false));
+}
+
+String JSDOMException::displayName(VM& vm) const
+{
+    return ownStringOr(vm, vm.propertyNames->name, wrapped().name());
+}
+
+String JSDOMException::displayMessage(VM& vm) const
+{
+    return ownStringOr(vm, vm.propertyNames->message, wrapped().message());
+}
+
 JSObject* JSDOMException::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
     return JSDOMExceptionPrototype::create(vm, globalObject, globalObject.errorPrototype());
 }
 
+JSObject* JSDOMException::prototype(VM& vm, JSDOMGlobalObject& globalObject)
+{
+    return getDOMPrototype<JSDOMException>(vm, globalObject);
+}
+
 JSValue JSDOMException::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSDOMExceptionDOMConstructor, DOMConstructorID::DOMException>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
+}
+
+void JSDOMException::destroy(JSC::JSCell* cell)
+{
+    static_cast<JSDOMException*>(cell)->JSDOMException::~JSDOMException();
 }
 
 static inline JSValue jsDOMException_codeGetter(JSGlobalObject& lexicalGlobalObject, JSDOMException& thisObject)
@@ -222,6 +303,25 @@ static inline JSValue jsDOMException_messageGetter(JSGlobalObject& lexicalGlobal
 JSC_DEFINE_CUSTOM_GETTER(jsDOMException_message, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSDOMException>::get<jsDOMException_messageGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
+}
+
+JSC::GCClient::IsoSubspace* JSDOMException::subspaceForImpl(JSC::VM& vm)
+{
+    return WebCore::subspaceForImpl<JSDOMException, UseCustomHeapCellType::Yes>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForDOMException, m_subspaceForDOMException));
+}
+
+void JSDOMException::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSDOMException>(cell);
+    analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
+    Base::analyzeHeap(cell, analyzer);
+}
+
+DOMException* JSDOMException::toWrapped(JSC::VM&, JSC::JSValue value)
+{
+    if (auto* wrapper = dynamicDowncast<JSDOMException>(value))
+        return &wrapper->wrapped();
+    return nullptr;
 }
 
 }

@@ -23,20 +23,73 @@
 #include "root.h"
 
 #include "DOMException.h"
-#include "JSDOMInterface.h"
+#include "JSDOMWrapperCache.h"
+#include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/ErrorPrototype.h>
 
 namespace WebCore {
 
-class JSDOMException : public JSDOMInterface<JSDOMException, DOMException> {
+// An ErrorInstance so DOMException has [[ErrorData]] and a stack, as WebIDL requires.
+class JSDOMException : public JSC::ErrorInstance {
 public:
-    using JSDOMInterface::JSDOMInterface;
+    using Base = JSC::ErrorInstance;
+    using DOMWrapped = DOMException;
 
-    DECLARE_INFO;
-    static constexpr auto subspaceSlots = BUN_SUBSPACE_SLOTS(m_clientSubspaceForDOMException, m_subspaceForDOMException);
+    static JSDOMException* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<DOMException>&& impl)
+    {
+        JSDOMException* ptr = new (NotNull, JSC::allocateCell<JSDOMException>(globalObject->vm())) JSDOMException(structure, *globalObject, WTF::move(impl));
+        ptr->finishCreation(globalObject->vm());
+        return ptr;
+    }
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
+    static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
+    static DOMException* toWrapped(JSC::VM&, JSC::JSValue);
+    static void destroy(JSC::JSCell*);
+
+    DECLARE_INFO;
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ErrorInstanceType, StructureFlags), info(), JSC::NonArray);
+    }
+
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return subspaceForImpl(vm);
+    }
+    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
+
+    DOMException& wrapped() const { return m_wrapped; }
+    Ref<DOMException> protectedWrapped() const { return m_wrapped; }
+    static constexpr ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(JSDOMException, m_wrapped); }
+
+    JSDOMGlobalObject* globalObject() const { return uncheckedDowncast<JSDOMGlobalObject>(JSC::JSNonFinalObject::globalObject()); }
+
+    // Installs `stack` as an own property in place of the captured frames.
+    void setStackString(JSC::VM&, WTF::String&&);
+
+    // Shadows ErrorInstance's. JSVMClientData calls it for this subspace after each collection.
+    void reconcileWeakReferencesAtGCEnd(JSC::VM&, JSC::CollectionScope);
+
+    // An own data property wins over the wrapped impl, as it does for a plain Error. Never allocates or runs JS.
+    WTF::String displayName(JSC::VM&) const;
+    WTF::String displayMessage(JSC::VM&) const;
+    WTF::String displayHeader(JSC::VM&) const;
+
+protected:
+    JSDOMException(JSC::Structure*, JSDOMGlobalObject&, Ref<DOMException>&&);
+
+    void finishCreation(JSC::VM&);
+
+private:
+    WTF::String ownStringOr(JSC::VM&, JSC::PropertyName, WTF::String&& fallback) const;
+
+    const Ref<DOMException> m_wrapped;
 };
 
 template<> struct JSDOMWrapperConverterTraits<DOMException> {

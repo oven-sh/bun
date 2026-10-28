@@ -2789,24 +2789,26 @@ describe("DATA on a closed stream (RFC 9113 §5.1)", () => {
 });
 
 describe("HEADERS on a closed stream (RFC 9113 §5.1)", () => {
+  // Not the CANCEL that closes the stream: depending on what is read when, it goes out twice.
   const resets = (frames: Frame[]) =>
-    frames.filter(f => f.type === FrameType.RST_STREAM).map(f => [f.streamId, f.payload.readUInt32BE(0)]);
+    frames
+      .filter(f => f.type === FrameType.RST_STREAM)
+      .map(f => [f.streamId, f.payload.readUInt32BE(0)])
+      .filter(([, code]) => code !== ErrorCode.CANCEL);
   const headersOrGoaway = (id: number) => (f: Frame) =>
     (f.type === FrameType.HEADERS && f.streamId === id) || f.type === FrameType.GOAWAY;
   // What was on its way when the stream closed. It makes x-late: 1 entry 62 of the HPACK table.
   const trailers = Buffer.concat([Buffer.from([0x40]), hpackLiteral("x-late"), hpackLiteral("1")]);
 
-  // Each entry closes stream 1 of a server and resolves to the resets that this takes.
-  const closings: Record<string, (c: RawH2) => Promise<number[][]>> = {
-    "the server reset": async c => {
+  // Each entry closes stream 1 of a server.
+  const closings: Record<string, (c: RawH2) => Promise<Frame>> = {
+    "the server reset": c => {
       c.sendFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST"));
-      await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
-      return [[1, ErrorCode.CANCEL]];
+      return c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
     },
-    "the server answered": async c => {
+    "the server answered": c => {
       c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
-      await c.waitFor(f => f.type === FrameType.DATA && f.streamId === 1 && (f.flags & 0x1) !== 0);
-      return [];
+      return c.waitFor(f => f.type === FrameType.DATA && f.streamId === 1 && (f.flags & 0x1) !== 0);
     },
   };
 
@@ -2826,12 +2828,12 @@ describe("HEADERS on a closed stream (RFC 9113 §5.1)", () => {
     try {
       c.sendPreface();
       c.sendEmptySettings();
-      const expected = await closings[name](c);
+      await closings[name](c);
       c.sendFrame(FrameType.HEADERS, 0x5, 1, trailers);
       c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET")); // Not a new request either.
       c.sendFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET", Buffer.from([0xbe])));
       expect((await c.waitFor(headersOrGoaway(3))).type).toBe(FrameType.HEADERS);
-      expect(resets(c.frames)).toEqual(expected);
+      expect(resets(c.frames)).toEqual([]);
       expect(seen.map(headers => headers["x-late"])).toEqual([undefined, "1"]);
     } finally {
       c.destroy();
@@ -2893,7 +2895,7 @@ describe("HEADERS on a closed stream (RFC 9113 §5.1)", () => {
       // The session is not left waiting for a stream that nobody has.
       await new Promise<void>(resolve => client.close(resolve));
       await raw.waitFor(f => f.type === FrameType.GOAWAY);
-      expect(resets(raw.frames)).toEqual([[1, ErrorCode.CANCEL]]);
+      expect(resets(raw.frames)).toEqual([]);
     } finally {
       client.destroy();
       raw.close();

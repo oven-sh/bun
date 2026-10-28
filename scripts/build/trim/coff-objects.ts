@@ -78,7 +78,13 @@ export class CoffObject {
     const defined = new Set<number>();
     for (let index = 0; index < symbolCount; index++) {
       const at = index * this.entry;
-      const section = isBig ? this.symbols.readInt32LE(at + 12) : this.symbols.readInt16LE(at + 12);
+      // Only the numbers past 0xfeff are negative: an object that isn't big has up to 65,279 sections.
+      const shortSection = this.symbols.readUInt16LE(at + 12);
+      const section = isBig
+        ? this.symbols.readInt32LE(at + 12)
+        : shortSection > 0xfeff
+          ? shortSection - 0x10000
+          : shortSection;
       const storage = this.symbols[at + this.entry - 2]!;
       const auxiliaries = this.symbols[at + this.entry - 1]!;
       this.symbolSection[index] = section;

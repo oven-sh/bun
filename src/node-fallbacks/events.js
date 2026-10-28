@@ -9,7 +9,7 @@
 const SymbolFor = Symbol.for;
 
 const kCapture = Symbol("kCapture");
-const kErrorMonitor = Symbol("events.errorMonitor");
+const kErrorMonitor = SymbolFor("events.errorMonitor");
 const kMaxEventTargetListeners = Symbol("events.maxEventTargetListeners");
 const kMaxEventTargetListenersWarned = Symbol("events.maxEventTargetListenersWarned");
 const kRejection = SymbolFor("nodejs.rejection");

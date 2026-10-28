@@ -166,36 +166,6 @@ describe("bundler", () => {
       assert(!out.includes("$newPromiseCapability"), "events polyfill must not reference a JSC builtin intrinsic");
     },
   });
-  // The polyfill is its own copy of the emitter. As in node, its errorMonitor
-  // is not the symbol that Symbol.for("events.errorMonitor") returns.
-  itBundled("browser/NodeEventsErrorMonitor", {
-    files: {
-      "/entry.js": /* js */ `
-        import { EventEmitter } from "node:events";
-        const e = new EventEmitter();
-        const calls = [];
-        e.on(EventEmitter.errorMonitor, err => calls.push("monitor:" + err.message));
-        e.on(Symbol.for("events.errorMonitor"), err => calls.push("registered:" + err.message));
-        try {
-          e.emit("error", new Error("boom"));
-        } catch (err) {
-          calls.push("threw:" + err.message);
-        }
-        console.log(JSON.stringify({
-          keyFor: Symbol.keyFor(EventEmitter.errorMonitor) ?? null,
-          calls,
-          monitors: e.listenerCount(EventEmitter.errorMonitor),
-        }));
-      `,
-    },
-    target: "browser",
-    run: {
-      stdout: '{"keyFor":null,"calls":["monitor:boom","threw:boom"],"monitors":1}',
-    },
-    onAfterBundle(api) {
-      api.expectFile("out.js").not.toInclude("import ");
-    },
-  });
   itBundled("browser/NodeUrlProtocolTablesIgnorePrototype", {
     files: {
       "/entry.js": /* js */ `

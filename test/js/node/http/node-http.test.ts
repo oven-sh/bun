@@ -10162,6 +10162,25 @@ describe("raw request bytes on a server's connection socket", () => {
     },
   );
 
+  it.each([{ removed: [] }, { removed: ["newListener"] }, { removed: ["data"] }])(
+    "a listener added behind removeAllListeners(...$removed) gets the later reads",
+    async ({ removed }) => {
+      const { promise: raw, resolve } = Promise.withResolvers<string>();
+      const server = createServer((req, res) => {
+        req.socket.removeAllListeners(...removed);
+        req.socket.on("error", () => {});
+        req.socket.on("data", chunk => resolve(chunk.toString("latin1")));
+        res.end("<done>");
+      });
+      await withClient(server, async (client, until) => {
+        client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+        await until("<done>");
+        client.write("LATER");
+        expect(await raw).toBe("LATER");
+      });
+    },
+  );
+
   it.each([
     ["connect", "CONNECT x:1 HTTP/1.1\r\nHost: x\r\n\r\n"],
     ["upgrade", "GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\n"],

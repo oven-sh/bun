@@ -2616,9 +2616,9 @@ test("the socket of a server's connection keeps a peer address that the program 
   }
 });
 
-// Every value is Node v26.3.0's.
+// Every value is Node v26.3.0's but `inFront`: Node stores those three functions on each socket, and its prototype is the class's.
 describe.each(["http", "https"] as const)("%s: the socket of a server's connection", proto => {
-  test("is a plain net.Socket or tls.TLSSocket over one handle, before and after 'upgrade'", async () => {
+  test("is a net.Socket or tls.TLSSocket over one handle, before and after 'upgrade'", async () => {
     const prototype = proto === "https" ? tls.TLSSocket.prototype : net.Socket.prototype;
     const sockets: net.Socket[] = [];
     const handles: unknown[] = [];
@@ -2628,7 +2628,9 @@ describe.each(["http", "https"] as const)("%s: the socket of a server's connecti
       handles.push((socket as any)._handle);
       seen.push({
         event,
-        plain: Object.getPrototypeOf(socket) === prototype,
+        inFront: Reflect.ownKeys(Object.getPrototypeOf(socket)),
+        below: Object.getPrototypeOf(Object.getPrototypeOf(socket)) === prototype,
+        name: socket.constructor.name,
         address: socket.address(),
         flowing: socket.readableFlowing,
         encrypted: (socket as any).encrypted,
@@ -2662,7 +2664,9 @@ describe.each(["http", "https"] as const)("%s: the socket of a server's connecti
       client.destroy();
     }
     const same = {
-      plain: true,
+      inFront: ["constructor", "on", "addListener", "prependListener"],
+      below: true,
+      name: proto === "https" ? "TLSSocket" : "Socket",
       address: { address: "127.0.0.1", family: "IPv4", port },
       encrypted: proto === "https" ? true : undefined,
       server: true,

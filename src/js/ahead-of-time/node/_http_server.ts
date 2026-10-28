@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 c3402ea8cfe932a2dfcde21d1c9eb12237e3ef86aed466844a10e369b11ca53d.
+// Written against that file with the SHA-256 7b23b8f1ed10819880e0d9e4b9d91900f337337bf7ef3eecf2fff6ac36c4b692.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -244,6 +244,7 @@ const kEmptyBuffer = Buffer.alloc(0);
 const ObjectKeys = Object.keys;
 const ObjectHasOwn = Object.hasOwn;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const ArrayBufferIsView = ArrayBuffer.isView;
 const MathMin = Math.min;
 const MathFloor = Math.floor;
@@ -1897,7 +1898,7 @@ function applyServerCustomOptions(server: $Node.HttpServer) {
     onServerClientError.bind(server, server[kListenerGeneration]!),
   );
   setServerMaxHeadersCount(handle, nativeMaxHeadersCount(server.maxHeadersCount));
-  const SocketClass = server[kListenerGeneration]!.tls ? TLSSocket : NetSocket;
+  const SocketClass = server[kListenerGeneration]!.tls ? TLSConnection : NetConnection;
   const { 0: handlers, 1: data } = require("node:net").Server.prototype[kForeignListener].$call(server, SocketClass);
   // The native side keeps the async context it's called in for every handler. What a socket emits runs in nobody's AsyncLocalStorage store, as in Node.
   const frame = AsyncContextFrame.current();
@@ -2150,7 +2151,6 @@ function detachFromHttp(socket: $Node.HttpServerSocket, req: $Node.IncomingMessa
   socket.removeListener("pause", onSocketPause);
   socket.removeListener("resume", nativeSocketOnResume);
   socket.removeListener("data", noopOnData);
-  socket.removeListener("newListener", unconsumeForListener);
   delete (socket as any)._onTimeout;
   // Only that function ignores the keep-alive timer, which stays armed while a request is in flight.
   if (socket.timeout === 0) socket.setTimeout(0);
@@ -2897,16 +2897,32 @@ function onSocketTimeoutTimerExpired(this: $Node.HttpServerSocket) {
 }
 
 let NetSocket: $Node.SocketConstructor | undefined;
-let TLSSocket: $Node.TLSSocketConstructor | undefined;
+let NetConnection: $Node.SocketConstructor | undefined;
+let TLSConnection: $Node.SocketConstructor | undefined;
 let assignablePeerAddress: PropertyDescriptorMap | undefined;
+let connectionPrototype: object | undefined;
 let netSocketPrototype: object | undefined;
 let netSocketResume: unknown;
 let netSocketSetTimeout: unknown;
 function loadNet(tls: $Node.HttpServerTLSOptions | null) {
   if (NetSocket === undefined) {
     NetSocket = require("node:net").Socket;
-    // Where a program has stored another class in `net.Socket`, no socket has this prototype and no short road is taken.
-    const ownPrototype = netConstructors.Socket!.prototype;
+    const OwnSocket = netConstructors.Socket!;
+    NetConnection = class Socket extends OwnSocket {
+      on(event: $Node.EventName, listener: $Node.Listener) {
+        return unconsumeFor(this, event, super.on(event, listener));
+      }
+      addListener(event: $Node.EventName, listener: $Node.Listener) {
+        return unconsumeFor(this, event, super.addListener(event, listener));
+      }
+      prependListener(event: $Node.EventName, listener: $Node.Listener) {
+        return unconsumeFor(this, event, super.prependListener(event, listener));
+      }
+    } as unknown as $Node.SocketConstructor;
+    // Where a program has stored another class in `net.Socket`, no socket has these prototypes and no short road is taken.
+    const ownPrototype = OwnSocket.prototype;
+    if (NetSocket === OwnSocket) connectionPrototype = NetConnection.prototype;
+    else extendStoredClass(NetConnection, NetSocket!);
     netSocketPrototype = ownPrototype;
     netSocketResume = ownPrototype.resume;
     netSocketSetTimeout = ownPrototype.setTimeout;
@@ -2922,7 +2938,20 @@ function loadNet(tls: $Node.HttpServerTLSOptions | null) {
       };
     }
   }
-  if (tls) TLSSocket ??= require("node:tls").TLSSocket;
+  if (tls && TLSConnection === undefined) {
+    const Base = require("node:tls").TLSSocket as unknown as $Node.SocketConstructor;
+    TLSConnection = class TLSSocket extends Base {
+      on(event: $Node.EventName, listener: $Node.Listener) {
+        return unconsumeFor(this, event, super.on(event, listener));
+      }
+      addListener(event: $Node.EventName, listener: $Node.Listener) {
+        return unconsumeFor(this, event, super.addListener(event, listener));
+      }
+      prependListener(event: $Node.EventName, listener: $Node.Listener) {
+        return unconsumeFor(this, event, super.prependListener(event, listener));
+      }
+    } as unknown as $Node.SocketConstructor;
+  }
 }
 
 function attachConnection(server: $Node.HttpServer, socket: $Node.HttpServerSocket, http: $Node.NodeHTTPServerSocket) {
@@ -2952,7 +2981,6 @@ function nativeConnectionListener(server: $Node.HttpServer, socket: $Node.HttpSe
   if (serverTimeout && !(socket.timeout > 0 && socket.timeout < serverTimeout)) socket.setTimeout(serverTimeout);
   else socket._unrefTimer();
   socket.on("timeout", socketOnTimeout);
-  socket.parser = createServerParserShim(socket);
   socket.on("error", socketOnError);
   socket.on("close", nativeSocketOnClose);
   socket.on("end", nativeSocketOnEnd);
@@ -2960,7 +2988,8 @@ function nativeConnectionListener(server: $Node.HttpServer, socket: $Node.HttpSe
   socket.on("data", noopOnData);
   socket.on("resume", nativeSocketOnResume);
   socket.on("pause", onSocketPause);
-  socket.on("newListener", unconsumeForListener);
+  // Behind the listeners of this module: a later one for 'data' or 'readable' takes the reads from the parser.
+  socket.parser = createServerParserShim(socket);
   socket.setEncoding = socketSetEncoding;
   socket._onTimeout = onSocketTimeoutTimerExpired;
   socket._final = nativeSocketFinal;
@@ -2969,10 +2998,16 @@ function nativeConnectionListener(server: $Node.HttpServer, socket: $Node.HttpSe
   // Declared here, so that a socket that a program seals still takes every later store.
   socket[kBoundOnAbort] = undefined;
   socket[kCloseCallback] = undefined;
+  socket[kConnectionState] = undefined;
   socket[kKeepAliveTimeoutSet] = false;
   socket[kLastResponseWrite] = undefined;
   socket[kFinishedAtClose] = undefined;
   socket[kDetachedWhileClosing] = undefined;
+  socket[kHandedOff] = false;
+  socket[kHandleClosed] = undefined;
+  socket[kStopParsingOnCloseListener] = false;
+  socket[kUpgradeRequest] = undefined;
+  socket[kUpgradeStream] = undefined;
   // In Node an assignment to one of these throws in strict mode. Here a server's socket has always kept the value.
   Object.defineProperties(socket, assignablePeerAddress!);
   socket.$isPrepared = false;
@@ -2998,9 +3033,17 @@ function resumeUnlessFlowing(this: $Node.HttpServerSocket, asksWhetherReadable: 
   }
 }
 
-// Node stores functions of its own in socket.on and its like for this: https://github.com/nodejs/node/blob/v26.5.0/lib/_http_server.js#L1432-L1448
-function unconsumeForListener(this: $Node.HttpServerSocket, event: $Node.EventName) {
-  if (event === "data" || event === "readable") unconsume(this);
+function extendStoredClass(Connection: $Node.SocketConstructor, Stored: $Node.SocketConstructor) {
+  // Refuses what no class can extend.
+  void class extends Stored {};
+  ObjectSetPrototypeOf(Connection, Stored);
+  ObjectSetPrototypeOf(Connection.prototype, Stored.prototype);
+}
+
+// Node stores functions that do this on each socket: https://github.com/nodejs/node/blob/v26.5.0/lib/_http_server.js#L1432-L1448. On a prototype they shadow no method of an instance.
+function unconsumeFor<Result>(socket: $Node.HttpServerSocket, event: $Node.EventName, result: Result): Result {
+  if (event === "data" || event === "readable") unconsume(socket);
+  return result;
 }
 function noopOnData() {}
 // From here on the socket gets every read before the HTTP parser does, like Node's parser.unconsume().
@@ -4444,7 +4487,9 @@ function resumesUnseen(socket: $Node.HttpServerSocket): boolean {
 
 // Whether a read of that name on the socket reaches the accessor of Duplex.prototype: neither the socket nor a prototype in front of it has such a property.
 function reachesDuplexPrototype(socket: $Node.HttpServerSocket, name: string): boolean {
-  return !ObjectHasOwn(socket, name) && !ObjectHasOwn(netSocketPrototype!, name);
+  return (
+    !ObjectHasOwn(socket, name) && !ObjectHasOwn(connectionPrototype!, name) && !ObjectHasOwn(netSocketPrototype!, name)
+  );
 }
 
 // The same for an accessor of Readable.prototype.
@@ -4454,7 +4499,8 @@ function reachesReadablePrototype(socket: $Node.HttpServerSocket, name: string):
 
 function hasThePrototypesOfItsClass(socket: $Node.HttpServerSocket): boolean {
   return (
-    ObjectGetPrototypeOf(socket) === netSocketPrototype &&
+    ObjectGetPrototypeOf(socket) === connectionPrototype &&
+    ObjectGetPrototypeOf(connectionPrototype) === netSocketPrototype &&
     ObjectGetPrototypeOf(netSocketPrototype) === DuplexPrototype &&
     ObjectGetPrototypeOf(DuplexPrototype) === ReadablePrototype
   );
@@ -4463,7 +4509,7 @@ function hasThePrototypesOfItsClass(socket: $Node.HttpServerSocket): boolean {
 function readsFlowUnseen(socket: $Node.HttpServerSocket): boolean {
   if (!(
     IS_COMPILED_AHEAD_OF_TIME &&
-    ObjectGetPrototypeOf(socket) === netSocketPrototype &&
+    ObjectGetPrototypeOf(socket) === connectionPrototype &&
     $findsDeclaredMember(socket, "readable") &&
     $findsDeclaredMember(socket, "readableLength") &&
     $findsDeclaredMember(socket, "readableHighWaterMark") &&
@@ -4490,7 +4536,7 @@ function walksToAccessorsOfFlow(socket: $Node.HttpServerSocket): boolean {
 function readsHighWaterMarksUnseen(socket: $Node.HttpServerSocket): boolean {
   if (!(
     IS_COMPILED_AHEAD_OF_TIME &&
-    ObjectGetPrototypeOf(socket) === netSocketPrototype &&
+    ObjectGetPrototypeOf(socket) === connectionPrototype &&
     $findsDeclaredMember(socket, "readableHighWaterMark") &&
     $findsDeclaredMember(socket, "writableHighWaterMark")
   )) {
@@ -4511,7 +4557,7 @@ function walksToHighWaterMarks(socket: $Node.HttpServerSocket): boolean {
 function readsItsEndUnseen(socket: $Node.HttpServerSocket): boolean {
   if (!(
     IS_COMPILED_AHEAD_OF_TIME &&
-    ObjectGetPrototypeOf(socket) === netSocketPrototype &&
+    ObjectGetPrototypeOf(socket) === connectionPrototype &&
     $findsDeclaredMember(socket, "destroyed") &&
     $findsDeclaredMember(socket, "writableEnded")
   )) {

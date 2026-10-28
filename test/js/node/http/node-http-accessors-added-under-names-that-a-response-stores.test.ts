@@ -97,7 +97,7 @@ _closed on Stream.prototype: made [false false] GET [false false true] HEAD [fal
 _onPendingData on Stream.prototype: made [function] GET [function] HEAD [function]
 statusCode on Stream.prototype: made [] GET [] HEAD []
 _maxListeners on Stream.prototype: made [undefined undefined] GET [undefined undefined undefined undefined] HEAD [undefined undefined undefined undefined]
-_eventsCount on Stream.prototype: made [0] GET [NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN 0 1 NaN NaN NaN NaN] HEAD [NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN 0 1 NaN NaN NaN NaN]
+_eventsCount on Stream.prototype: made [0] GET [NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN 0 1 NaN NaN NaN NaN] HEAD [NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN 0 1 NaN NaN NaN NaN]
 `,
     stderr: "",
     exitCode: 0,

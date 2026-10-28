@@ -11,12 +11,12 @@ test("a server reads an accessor that a program adds between its connection and 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(stdout).toBe(`destroyed added on the prototype of the class, GET, end(body): 4 4 4 4 5
-destroyed added on the prototype of the class, GET, write(), end(body): 4 4 4 4 5
-destroyed added on the prototype of the class, GET, a content-length, write(), end(): 4 4 4 4 5
-destroyed added on the prototype of the class, POST with the body read: 4 6 6 6 5
-destroyed added on the prototype of the class, POST with the body read, write(), end(body): 4 6 6 6 5
-destroyed added on the prototype of the class, POST with the body ignored: 4 5 5 5 5
+  expect(stdout).toBe(`destroyed added on the prototype of the class, GET, end(body): 4 3 3 3 4
+destroyed added on the prototype of the class, GET, write(), end(body): 4 3 3 3 4
+destroyed added on the prototype of the class, GET, a content-length, write(), end(): 4 3 3 3 4
+destroyed added on the prototype of the class, POST with the body read: 4 5 5 5 4
+destroyed added on the prototype of the class, POST with the body read, write(), end(body): 4 5 5 5 4
+destroyed added on the prototype of the class, POST with the body ignored: 4 4 4 4 4
 readable added on the prototype of the class, GET, end(body): 3 3 3 3 0
 readable added on the prototype of the class, GET, write(), end(body): 3 3 3 3 0
 readable added on the prototype of the class, GET, a content-length, write(), end(): 3 3 3 3 0

@@ -1304,7 +1304,7 @@ function applyServerCustomOptions(server: Server) {
     onServerClientError.bind(server, server[kListenerGeneration]),
   );
   setServerMaxHeadersCount(handle, nativeMaxHeadersCount(server.maxHeadersCount));
-  const SocketClass = server[kListenerGeneration].tls ? TLSSocket : NetSocket;
+  const SocketClass = server[kListenerGeneration].tls ? TLSConnection : NetConnection;
   const { 0: handlers, 1: data } = require("node:net").Server.prototype[kForeignListener].$call(server, SocketClass);
   // The native side keeps the async context it's called in for every handler. What a socket emits runs in nobody's AsyncLocalStorage store, as in Node.
   const frame = AsyncContextFrame.current();
@@ -1547,7 +1547,6 @@ function detachFromHttp(socket, req) {
   socket.removeListener("pause", onSocketPause);
   socket.removeListener("resume", nativeSocketOnResume);
   socket.removeListener("data", noopOnData);
-  socket.removeListener("newListener", unconsumeForListener);
   delete socket._onTimeout;
   // Only that function ignores the keep-alive timer, which stays armed while a request is in flight.
   if (socket.timeout === 0) socket.setTimeout(0);
@@ -2246,11 +2245,24 @@ function onSocketTimeoutTimerExpired(this: any) {
 }
 
 let NetSocket;
-let TLSSocket;
+let NetConnection;
+let TLSConnection;
 let assignablePeerAddress;
 function loadNet(tls) {
   if (NetSocket === undefined) {
     NetSocket = require("node:net").Socket;
+    NetConnection = class Socket extends netConstructors.Socket {
+      on(event, listener) {
+        return unconsumeFor(this, event, super.on(event, listener));
+      }
+      addListener(event, listener) {
+        return unconsumeFor(this, event, super.addListener(event, listener));
+      }
+      prependListener(event, listener) {
+        return unconsumeFor(this, event, super.prependListener(event, listener));
+      }
+    };
+    if (NetSocket !== netConstructors.Socket) extendStoredClass(NetConnection, NetSocket);
     assignablePeerAddress = {};
     for (const name of ["remoteAddress", "remotePort", "remoteFamily"]) {
       assignablePeerAddress[name] = {
@@ -2263,7 +2275,20 @@ function loadNet(tls) {
       };
     }
   }
-  if (tls) TLSSocket ??= require("node:tls").TLSSocket;
+  if (tls && TLSConnection === undefined) {
+    const Base = require("node:tls").TLSSocket;
+    TLSConnection = class TLSSocket extends Base {
+      on(event, listener) {
+        return unconsumeFor(this, event, super.on(event, listener));
+      }
+      addListener(event, listener) {
+        return unconsumeFor(this, event, super.addListener(event, listener));
+      }
+      prependListener(event, listener) {
+        return unconsumeFor(this, event, super.prependListener(event, listener));
+      }
+    };
+  }
 }
 
 function attachConnection(server: Server, socket, http) {
@@ -2293,7 +2318,6 @@ function nativeConnectionListener(server: Server, socket) {
   if (serverTimeout && !(socket.timeout > 0 && socket.timeout < serverTimeout)) socket.setTimeout(serverTimeout);
   else socket._unrefTimer();
   socket.on("timeout", socketOnTimeout);
-  socket.parser = createServerParserShim(socket);
   socket.on("error", socketOnError);
   socket.on("close", nativeSocketOnClose);
   socket.on("end", nativeSocketOnEnd);
@@ -2301,7 +2325,8 @@ function nativeConnectionListener(server: Server, socket) {
   socket.on("data", noopOnData);
   socket.on("resume", nativeSocketOnResume);
   socket.on("pause", onSocketPause);
-  socket.on("newListener", unconsumeForListener);
+  // Behind the listeners of this module: a later one for 'data' or 'readable' takes the reads from the parser.
+  socket.parser = createServerParserShim(socket);
   socket.setEncoding = socketSetEncoding;
   socket._onTimeout = onSocketTimeoutTimerExpired;
   socket._final = nativeSocketFinal;
@@ -2310,17 +2335,31 @@ function nativeConnectionListener(server: Server, socket) {
   // Declared here, so that a socket that a program seals still takes every later store.
   socket[kBoundOnAbort] = undefined;
   socket[kCloseCallback] = undefined;
+  socket[kConnectionState] = undefined;
   socket[kKeepAliveTimeoutSet] = false;
   socket[kLastResponseWrite] = undefined;
   socket[kFinishedAtClose] = undefined;
   socket[kDetachedWhileClosing] = undefined;
+  socket[kHandedOff] = false;
+  socket[kHandleClosed] = undefined;
+  socket[kStopParsingOnCloseListener] = false;
+  socket[kUpgradeRequest] = undefined;
+  socket[kUpgradeStream] = undefined;
   // In Node an assignment to one of these throws in strict mode. Here a server's socket has always kept the value.
   Object.defineProperties(socket, assignablePeerAddress);
 }
 
-// Node stores functions of its own in socket.on and its like for this: https://github.com/nodejs/node/blob/v26.5.0/lib/_http_server.js#L1432-L1448
-function unconsumeForListener(this: any, event) {
-  if (event === "data" || event === "readable") unconsume(this);
+function extendStoredClass(Connection, Stored) {
+  // Refuses what no class can extend.
+  void class extends Stored {};
+  Object.setPrototypeOf(Connection, Stored);
+  Object.setPrototypeOf(Connection.prototype, Stored.prototype);
+}
+
+// Node stores functions that do this on each socket: https://github.com/nodejs/node/blob/v26.5.0/lib/_http_server.js#L1432-L1448. On a prototype they shadow no method of an instance.
+function unconsumeFor(socket, event, result) {
+  if (event === "data" || event === "readable") unconsume(socket);
+  return result;
 }
 function noopOnData() {}
 // From here on the socket gets every read before the HTTP parser does, like Node's parser.unconsume().

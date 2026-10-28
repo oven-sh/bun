@@ -1092,16 +1092,18 @@ describe.skipIf(isWindows)("endpoint UDP socket options", () => {
     return symbols.getsockopt(fd, level, option, ptr(value), ptr(new Uint32Array([4]))) === 0 ? value[0] : null;
   }
 
-  // Finds this process's UDP socket bound to `port`.
-  function udpSocketFd(port: number) {
+  // Finds this process's UDP socket bound to that address. An IPv6-only socket can get the port number that an IPv4 socket has.
+  function udpSocketFd({ family, port }: { family: string; port: number }) {
+    const sizeOfAddress = family === "ipv6" ? 28 : 16;
     for (const fd of readdirSync("/dev/fd").map(Number)) {
       if (getsockopt(fd, SOL_SOCKET, SO_TYPE) !== SOCK_DGRAM) continue;
       const addr = new Uint8Array(128);
-      if (lib!.symbols.getsockname(fd, ptr(addr), ptr(new Uint32Array([addr.length]))) !== 0) continue;
+      const size = new Uint32Array([addr.length]);
+      if (lib!.symbols.getsockname(fd, ptr(addr), ptr(size)) !== 0 || size[0] !== sizeOfAddress) continue;
       // sin_port and sin6_port are both at offset 2, in network byte order.
       if (((addr[2] << 8) | addr[3]) === port) return fd;
     }
-    throw new Error(`no UDP socket is bound to port ${port}`);
+    throw new Error(`no ${family} UDP socket is bound to port ${port}`);
   }
 
   test("udpReceiveBufferSize, udpSendBufferSize and udpTTL are set on the socket", async () => {
@@ -1112,7 +1114,7 @@ describe.skipIf(isWindows)("endpoint UDP socket options", () => {
     // Linux clamps the request to net.core.{r,w}mem_max and reports twice the result.
     const reported = (requested: number, max: string) =>
       isLinux ? 2 * Math.min(requested, Number(readFileSync(`/proc/sys/net/core/${max}`, "utf8"))) : requested;
-    const fd = udpSocketFd(server.address!.port);
+    const fd = udpSocketFd(server.address!);
     expect({
       rcvbuf: getsockopt(fd, SOL_SOCKET, SO_RCVBUF),
       sndbuf: getsockopt(fd, SOL_SOCKET, SO_SNDBUF),
@@ -1126,8 +1128,8 @@ describe.skipIf(isWindows)("endpoint UDP socket options", () => {
     await using dualStack = await listen(() => {}, { ...listenOptions, endpoint: { address } });
     await using v6Only = await listen(() => {}, { ...listenOptions, endpoint: { address, ipv6Only: true } });
     expect({
-      dualStack: getsockopt(udpSocketFd(dualStack.address!.port), IPPROTO_IPV6, IPV6_V6ONLY),
-      v6Only: getsockopt(udpSocketFd(v6Only.address!.port), IPPROTO_IPV6, IPV6_V6ONLY),
+      dualStack: getsockopt(udpSocketFd(dualStack.address!), IPPROTO_IPV6, IPV6_V6ONLY),
+      v6Only: getsockopt(udpSocketFd(v6Only.address!), IPPROTO_IPV6, IPV6_V6ONLY),
     }).toEqual({ dualStack: 0, v6Only: 1 });
   });
 

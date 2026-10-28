@@ -12,9 +12,9 @@ use super::fse::FseRepeat;
 use super::huf::{self, HufRepeat};
 use super::internal::{
     BlockSrc, BufId, Buffers, CompressedBlockState, CompressionParameters, DictMatchState,
-    DictTableLoadMethod, EntropyCTablesMetadata, HASH_READ_SIZE, LdmState, LongLengthType, Match,
-    MatchState, ParamSwitch, Prefix, RawSeq, RawSeqStore, RowTags, SeqChunk, SeqStore, Strategy,
-    Table, TableFillPurpose, Window, ZSTD_CHUNKSIZE_MAX, ZSTD_CURRENT_MAX, ZSTD_DUBT_UNSORTED_MARK,
+    EntropyCTablesMetadata, HASH_READ_SIZE, LdmState, LongLengthType, Match, MatchState,
+    ParamSwitch, Prefix, RawSeq, RawSeqStore, RowTags, SeqChunk, SeqStore, Strategy, Table,
+    TableFillPurpose, Window, ZSTD_CHUNKSIZE_MAX, ZSTD_CURRENT_MAX, ZSTD_DUBT_UNSORTED_MARK,
     ZSTD_OPT_SIZE, ZSTD_SHORT_CACHE_TAG_BITS, ZSTD_WINDOW_START_INDEX, min_gain, no_compress_block,
     offbase_is_repcode, offset_to_offbase, rle_compress_block, update_rep,
 };
@@ -70,13 +70,6 @@ enum IndexResetPolicy {
 enum ResetTarget {
     CDict,
     CCtx,
-}
-
-/// `ZSTD_dictContentType_e`. Nothing asks for `ZSTD_dct_fullDict`.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DictContentType {
-    Auto,
-    RawContent,
 }
 
 /// Some bytes of one of the [`Buffers`].
@@ -310,7 +303,6 @@ fn load_dictionary_content(
     params: &CCtxParams,
     bufs: &Buffers<'_>,
     mut src: Span,
-    dtlm: DictTableLoadMethod,
     tfp: TableFillPurpose,
 ) -> Result<()> {
     {
@@ -356,8 +348,8 @@ fn load_dictionary_content(
 
     let prefix = window_prefix(&ms.window, bufs);
     match params.c_params.strat() {
-        Strategy::Fast => fast::fill_hash_table(ms, prefix, src.end, dtlm, tfp)?,
-        Strategy::DFast => double_fast::fill_double_hash_table(ms, prefix, src.end, dtlm, tfp)?,
+        Strategy::Fast => fast::fill_hash_table(ms, prefix, src.end, tfp),
+        Strategy::DFast => double_fast::fill_double_hash_table(ms, prefix, src.end, tfp),
         Strategy::Greedy | Strategy::Lazy | Strategy::Lazy2 => {
             if params.use_row_match_finder == ParamSwitch::Enable {
                 ms.tag_table.fill(0);
@@ -495,8 +487,6 @@ fn compress_insert_dictionary(
     params: &CCtxParams,
     bufs: &Buffers<'_>,
     dict: Option<Span>,
-    dict_content_type: DictContentType,
-    dtlm: DictTableLoadMethod,
     tfp: TableFillPurpose,
 ) -> Result<u32> {
     let Some(dict) = dict.filter(|dict| dict.len() >= 8) else {
@@ -506,10 +496,8 @@ fn compress_insert_dictionary(
     bs.reset();
 
     let bytes = dict.bytes(bufs)?;
-    if dict_content_type == DictContentType::RawContent
-        || read_le32(bytes, 0)? != ZSTD_MAGIC_DICTIONARY
-    {
-        load_dictionary_content(ms, params, bufs, dict, dtlm, tfp)?;
+    if tfp == TableFillPurpose::ForCCtx || read_le32(bytes, 0)? != ZSTD_MAGIC_DICTIONARY {
+        load_dictionary_content(ms, params, bufs, dict, tfp)?;
         return Ok(0);
     }
 
@@ -524,7 +512,7 @@ fn compress_insert_dictionary(
         start: dict.start + e_size,
         ..dict
     };
-    load_dictionary_content(ms, params, bufs, content, dtlm, tfp)?;
+    load_dictionary_content(ms, params, bufs, content, tfp)?;
     Ok(dict_id)
 }
 
@@ -581,8 +569,6 @@ impl CDict {
                 start: 0,
                 end: cdict.dict_content.len(),
             }),
-            DictContentType::Auto,
-            DictTableLoadMethod::Full,
             TableFillPurpose::ForCDict,
         )?;
         Ok(cdict)
@@ -1144,8 +1130,6 @@ impl FrameCompressor {
         &mut self,
         input: &Input<'_>,
         dict: Option<Span>,
-        dict_content_type: DictContentType,
-        dtlm: DictTableLoadMethod,
         params: &CCtxParams,
         pledged_src_size: u64,
         buffered: bool,
@@ -1176,8 +1160,6 @@ impl FrameCompressor {
                 &self.applied_params,
                 &input.bufs,
                 dict,
-                dict_content_type,
-                dtlm,
                 TableFillPurpose::ForCCtx,
             )?,
             None => 0,

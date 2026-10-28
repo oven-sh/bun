@@ -94,14 +94,7 @@ pub(crate) enum DictMode {
     DictMatchState,
 }
 
-/// `ZSTD_dictTableLoadMethod_e`
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DictTableLoadMethod {
-    Fast,
-    Full,
-}
-
-/// `ZSTD_tableFillPurpose_e`
+/// `ZSTD_tableFillPurpose_e`. A `CDict` is loaded with `ZSTD_dtlm_full` and `ZSTD_dct_auto`, and nothing else is.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TableFillPurpose {
     ForCCtx,

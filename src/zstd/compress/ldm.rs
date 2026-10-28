@@ -1,9 +1,9 @@
 //! `zstd_ldm.c`: long distance matching.
 
 use super::internal::{
-    BlockSrc, Buffers, CompressionParameters, DictTableLoadMethod, HASH_READ_SIZE, LdmEntry,
-    LdmParams, LdmState, MatchState, ParamSwitch, Prefix, RawSeq, RawSeqStore, SeqStore, Strategy,
-    TableFillPurpose, count, count_2segments, offset_to_offbase,
+    BlockSrc, Buffers, CompressionParameters, HASH_READ_SIZE, LdmEntry, LdmParams, LdmState,
+    MatchState, ParamSwitch, Prefix, RawSeq, RawSeqStore, SeqStore, Strategy, TableFillPurpose,
+    count, count_2segments, offset_to_offbase,
 };
 use super::params::{ZSTD_HASHLOG_MAX, ZSTD_HASHLOG_MIN, ZSTD_LDM_BUCKETSIZELOG_MAX};
 use super::{compress_block, double_fast, fast};
@@ -289,29 +289,19 @@ fn count_backwards_match_2segments(
 }
 
 /// `ZSTD_ldm_fillFastTables`: the strategies that index only what they search have to be told about what they skip.
-fn fill_fast_tables(ms: &mut MatchState, prefix: Prefix<'_>, end: usize) -> Result<()> {
+fn fill_fast_tables(ms: &mut MatchState, prefix: Prefix<'_>, end: usize) {
     match ms.c_params.strat() {
-        Strategy::Fast => fast::fill_hash_table(
-            ms,
-            prefix,
-            end,
-            DictTableLoadMethod::Fast,
-            TableFillPurpose::ForCCtx,
-        ),
-        Strategy::DFast => double_fast::fill_double_hash_table(
-            ms,
-            prefix,
-            end,
-            DictTableLoadMethod::Fast,
-            TableFillPurpose::ForCCtx,
-        ),
+        Strategy::Fast => fast::fill_hash_table(ms, prefix, end, TableFillPurpose::ForCCtx),
+        Strategy::DFast => {
+            double_fast::fill_double_hash_table(ms, prefix, end, TableFillPurpose::ForCCtx)
+        }
         Strategy::Greedy
         | Strategy::Lazy
         | Strategy::Lazy2
         | Strategy::BtLazy2
         | Strategy::BtOpt
         | Strategy::BtUltra
-        | Strategy::BtUltra2 => Ok(()),
+        | Strategy::BtUltra2 => {}
     }
 }
 
@@ -693,7 +683,7 @@ pub(crate) fn block_compress(
         }
 
         limit_table_update(ms, src, ip);
-        fill_fast_tables(ms, src.prefix(), ip)?;
+        fill_fast_tables(ms, src.prefix(), ip);
         // The block compressor takes care of the literals, and what it leaves goes with the long distance match.
         let literals = BlockSrc {
             start: ip,
@@ -722,7 +712,7 @@ pub(crate) fn block_compress(
         ip += sequence.match_length as usize;
     }
     limit_table_update(ms, src, ip);
-    fill_fast_tables(ms, src.prefix(), ip)?;
+    fill_fast_tables(ms, src.prefix(), ip);
     let last = BlockSrc { start: ip, ..*src };
     compress_block(
         ms,

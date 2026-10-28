@@ -5,44 +5,31 @@ use super::fast::{
     put_tagged, put_tagged_in_between, restore_rep,
 };
 use super::internal::{
-    BlockSrc, DictTableLoadMethod, HASH_READ_SIZE, Hasher, K_SEARCH_STRENGTH, MatchState, Near,
-    Prefix, REPCODE1_TO_OFFBASE, SeqStore, TableFillPurpose, hashed_get, hashed_put, hashed_swap,
-    le64_at, offset_to_offbase, table_get, table_of_size, table_prefetch, table_put,
+    BlockSrc, HASH_READ_SIZE, Hasher, K_SEARCH_STRENGTH, MatchState, Near, Prefix,
+    REPCODE1_TO_OFFBASE, SeqStore, TableFillPurpose, hashed_get, hashed_put, hashed_swap, le64_at,
+    offset_to_offbase, table_of_size, table_prefetch, table_put,
 };
 use crate::common::ZSTD_REP_NUM;
 use crate::error::Result;
 use crate::util::{BUG, SliceExt};
 
 /// `ZSTD_fillDoubleHashTableForCDict`: the tables are empty.
-fn fill_double_hash_table_for_cdict(
-    ms: &mut MatchState,
-    prefix: Prefix<'_>,
-    end: usize,
-    dtlm: DictTableLoadMethod,
-) -> Result<()> {
+fn fill_double_hash_table_for_cdict(ms: &mut MatchState, prefix: Prefix<'_>, end: usize) {
     let long = Hasher::new(ms.tagged_hash_log(), 8);
     let small = Hasher::new(ms.tagged_chain_log(), ms.c_params.min_match);
     let positions = ThirdPositions::new(prefix, ms.next_to_update, end);
     let hash_large = ms.hash_table.as_mut_slice();
     let hash_small = ms.chain_table.as_mut_slice();
-    if dtlm == DictTableLoadMethod::Full {
-        put_tagged_in_between(hash_large, long, positions.clone());
-    }
+    put_tagged_in_between(hash_large, long, positions.clone());
     for at in positions {
         let bytes = le64_at::<0, _>(at.bytes);
         put_tagged(hash_small, small.hash(bytes), at.index);
         put_tagged(hash_large, long.hash(bytes), at.index);
     }
-    Ok(())
 }
 
 /// `ZSTD_fillDoubleHashTableForCCtx`
-fn fill_double_hash_table_for_cctx(
-    ms: &mut MatchState,
-    prefix: Prefix<'_>,
-    end: usize,
-    dtlm: DictTableLoadMethod,
-) -> Result<()> {
+fn fill_double_hash_table_for_cctx(ms: &mut MatchState, prefix: Prefix<'_>, end: usize) {
     let long = Hasher::new(ms.c_params.hash_log, 8);
     let small = Hasher::new(ms.c_params.chain_log, ms.c_params.min_match);
     let positions = ThirdPositions::new(prefix, ms.next_to_update, end);
@@ -52,20 +39,7 @@ fn fill_double_hash_table_for_cctx(
         let bytes = le64_at::<0, _>(at.bytes);
         table_put(hash_small, small.hash(bytes), at.index);
         table_put(hash_large, long.hash(bytes), at.index);
-        // The positions in between only go in the table of long hashes, where there is nothing yet.
-        if dtlm == DictTableLoadMethod::Full {
-            for (bytes, index) in [
-                (le64_at::<1, _>(at.bytes), at.index + 1),
-                (le64_at::<2, _>(at.bytes), at.index + 2),
-            ] {
-                let hash = long.hash(bytes);
-                if table_get(hash_large, hash) == 0 {
-                    table_put(hash_large, hash, index);
-                }
-            }
-        }
     }
-    Ok(())
 }
 
 /// `ZSTD_fillDoubleHashTable`: indexes the segment from `ms.next_to_update` up to the position `end`.
@@ -73,12 +47,11 @@ pub(crate) fn fill_double_hash_table(
     ms: &mut MatchState,
     prefix: Prefix<'_>,
     end: usize,
-    dtlm: DictTableLoadMethod,
     tfp: TableFillPurpose,
-) -> Result<()> {
+) {
     match tfp {
-        TableFillPurpose::ForCDict => fill_double_hash_table_for_cdict(ms, prefix, end, dtlm),
-        TableFillPurpose::ForCCtx => fill_double_hash_table_for_cctx(ms, prefix, end, dtlm),
+        TableFillPurpose::ForCDict => fill_double_hash_table_for_cdict(ms, prefix, end),
+        TableFillPurpose::ForCCtx => fill_double_hash_table_for_cctx(ms, prefix, end),
     }
 }
 

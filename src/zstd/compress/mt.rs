@@ -11,12 +11,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpmc::{Receiver, Sender, TryRecvError, channel};
 
-use super::cctx::{
-    CDict, DictContentType, FrameCompressor, Input, Span, reset_table, write_last_empty_block,
-};
+use super::cctx::{CDict, FrameCompressor, Input, Span, reset_table, write_last_empty_block};
 use super::internal::{
-    BufId, Buffers, DictTableLoadMethod, LdmParams, LdmState, ParamSwitch, RawSeq, RawSeqStore,
-    Strategy, Window,
+    BufId, Buffers, LdmParams, LdmState, ParamSwitch, RawSeq, RawSeqStore, Strategy, Window,
 };
 use super::ldm;
 use super::params::{
@@ -215,15 +212,7 @@ fn compression_job(state: &mut WorkerState, job: &Job, cancelled: &AtomicBool) -
     };
     let cctx = &mut state.cctx;
     if cdict.is_some() {
-        cctx.begin(
-            &input,
-            None,
-            DictContentType::Auto,
-            DictTableLoadMethod::Fast,
-            &job_params,
-            job.full_frame_size,
-            false,
-        )?;
+        cctx.begin(&input, None, &job_params, job.full_frame_size, false)?;
     } else {
         let pledged_src_size = if job.first_job {
             job.full_frame_size
@@ -238,8 +227,6 @@ fn compression_job(state: &mut WorkerState, job: &Job, cancelled: &AtomicBool) -
                 start: 0,
                 end: job.prefix_size,
             }),
-            DictContentType::RawContent,
-            DictTableLoadMethod::Fast,
             &job_params,
             pledged_src_size,
             false,
@@ -858,16 +845,8 @@ mod tests {
         let cancelled = Arc::new(AtomicBool::new(false));
         let mut cctx = FrameCompressor::for_worker(Arc::clone(&cancelled));
         let begin = |cctx: &mut FrameCompressor| {
-            cctx.begin(
-                &input,
-                Some(span(0, 32)),
-                DictContentType::RawContent,
-                DictTableLoadMethod::Fast,
-                &params,
-                32,
-                false,
-            )
-            .map(|_| ())
+            cctx.begin(&input, Some(span(0, 32)), &params, 32, false)
+                .map(|_| ())
         };
         let mut dst = [0u8; 128];
 

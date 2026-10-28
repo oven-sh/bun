@@ -3,10 +3,10 @@
 use core::sync::atomic::{Ordering, compiler_fence};
 
 use super::internal::{
-    BlockSrc, CompressionParameters, DictTableLoadMethod, HASH_READ_SIZE, Hasher,
-    K_SEARCH_STRENGTH, MatchState, Near, Prefix, REPCODE1_TO_OFFBASE, SeqSink, SeqStore,
-    TableFillPurpose, ZSTD_SHORT_CACHE_TAG_BITS, compare_packed_tags, hashed_get, hashed_put,
-    hashed_swap, le32_at, le64_at, offset_to_offbase, table_of_size, table_put,
+    BlockSrc, CompressionParameters, HASH_READ_SIZE, Hasher, K_SEARCH_STRENGTH, MatchState, Near,
+    Prefix, REPCODE1_TO_OFFBASE, SeqSink, SeqStore, TableFillPurpose, ZSTD_SHORT_CACHE_TAG_BITS,
+    compare_packed_tags, hashed_get, hashed_put, hashed_swap, le32_at, le64_at, offset_to_offbase,
+    table_of_size, table_put,
 };
 use crate::common::ZSTD_REP_NUM;
 use crate::error::Result;
@@ -164,33 +164,24 @@ pub(super) fn put_tagged_in_between(
 }
 
 /// `ZSTD_fillHashTableForCDict`: the table is empty.
-fn fill_hash_table_for_cdict(
-    ms: &mut MatchState,
-    prefix: Prefix<'_>,
-    end: usize,
-    dtlm: DictTableLoadMethod,
-) -> Result<()> {
+fn fill_hash_table_for_cdict(ms: &mut MatchState, prefix: Prefix<'_>, end: usize) {
     let hasher = Hasher::new(ms.tagged_hash_log(), ms.c_params.min_match);
     let positions = ThirdPositions::new(prefix, ms.next_to_update, end);
     let hash_table = ms.hash_table.as_mut_slice();
-    if dtlm == DictTableLoadMethod::Full {
-        put_tagged_in_between(hash_table, hasher, positions.clone());
-    }
+    put_tagged_in_between(hash_table, hasher, positions.clone());
     for at in positions {
         put_tagged(hash_table, hasher.hash(le64_at::<0, _>(at.bytes)), at.index);
     }
-    Ok(())
 }
 
-/// `ZSTD_fillHashTableForCCtx`, which is only for `ZSTD_dtlm_fast`.
-fn fill_hash_table_for_cctx(ms: &mut MatchState, prefix: Prefix<'_>, end: usize) -> Result<()> {
+/// `ZSTD_fillHashTableForCCtx`
+fn fill_hash_table_for_cctx(ms: &mut MatchState, prefix: Prefix<'_>, end: usize) {
     let hasher = Hasher::new(ms.c_params.hash_log, ms.c_params.min_match);
     let positions = ThirdPositions::new(prefix, ms.next_to_update, end);
     let hash_table = ms.hash_table.as_mut_slice();
     for at in positions {
         table_put(hash_table, hasher.hash(le64_at::<0, _>(at.bytes)), at.index);
     }
-    Ok(())
 }
 
 /// `ZSTD_fillHashTable`: indexes the segment from `ms.next_to_update` up to the position `end`.
@@ -198,11 +189,10 @@ pub(crate) fn fill_hash_table(
     ms: &mut MatchState,
     prefix: Prefix<'_>,
     end: usize,
-    dtlm: DictTableLoadMethod,
     tfp: TableFillPurpose,
-) -> Result<()> {
+) {
     match tfp {
-        TableFillPurpose::ForCDict => fill_hash_table_for_cdict(ms, prefix, end, dtlm),
+        TableFillPurpose::ForCDict => fill_hash_table_for_cdict(ms, prefix, end),
         TableFillPurpose::ForCCtx => fill_hash_table_for_cctx(ms, prefix, end),
     }
 }

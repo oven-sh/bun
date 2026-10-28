@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use super::cctx::{CDict, DictContentType, FrameCompressor, Input, Span};
-use super::internal::{BufId, Buffers, CompressedBlockState, DictTableLoadMethod};
+use super::cctx::{CDict, FrameCompressor, Input, Span};
+use super::internal::{BufId, Buffers, CompressedBlockState};
 use super::mt::MtCtx;
 use super::params::{
     CCtxParams, CParamMode, ZSTD_CLEVEL_DEFAULT, ZSTDMT_JOBSIZE_MIN, compress_bound,
@@ -229,15 +229,9 @@ impl CCtx {
                 },
                 cdict,
             };
-            let sizes = self.frame.begin(
-                &input,
-                None,
-                DictContentType::Auto,
-                DictTableLoadMethod::Fast,
-                &params,
-                pledged_src_size,
-                true,
-            )?;
+            let sizes = self
+                .frame
+                .begin(&input, None, &params, pledged_src_size, true)?;
             // They are part of the workspace in the C code.
             resize_buffer(
                 &mut self.in_buff,
@@ -506,15 +500,7 @@ pub fn compress(dst: &mut [u8], src: &[u8], compression_level: i32) -> Result<us
         },
         cdict: None,
     };
-    frame.begin(
-        &input,
-        None,
-        DictContentType::Auto,
-        DictTableLoadMethod::Fast,
-        &cctx_params,
-        src.len() as u64,
-        false,
-    )?;
+    frame.begin(&input, None, &cctx_params, src.len() as u64, false)?;
     frame.compress_end(
         dst,
         &input,

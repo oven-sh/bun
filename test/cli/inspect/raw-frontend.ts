@@ -51,7 +51,7 @@ export class RawFrontend {
         `Sec-WebSocket-Key: ${crypto.randomBytes(16).toString("base64")}\r\nSec-WebSocket-Version: 13\r\n\r\n`,
     );
     let head: Buffer | undefined = Buffer.alloc(0);
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       if (head) {
         head = Buffer.concat([head, chunk]);
         const end = head.indexOf("\r\n\r\n");
@@ -69,7 +69,7 @@ export class RawFrontend {
   /** Takes a connection that `bun --inspect=tcp://` or `--inspect=unix:` dialed. */
   static accept(socket: net.Socket): RawFrontend {
     const frontend = new RawFrontend(socket, false);
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       frontend.#read(chunk);
       frontend.#wake();
     });

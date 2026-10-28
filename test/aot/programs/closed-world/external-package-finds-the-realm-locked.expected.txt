@@ -1,0 +1,11 @@
+before: number 1,2,3 number number
+globalThis.Date = ..: TypeError
+Date.now = ..: TypeError
+Array.prototype.sort = ..: TypeError
+globalThis.process = ..: TypeError
+globalThis.addedByThePackage = ..: done
+process.addedByThePackage = ..: done
+after: number 1,2,3 number number
+added by the package: 1 function
+built-in modules in the package: function function b.txt
+the program seen from the package: object false object

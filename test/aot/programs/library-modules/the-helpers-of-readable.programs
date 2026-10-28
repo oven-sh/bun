@@ -1,0 +1,291 @@
+//// the-helpers-of-readable-streams.js
+// The methods that node:stream puts on Readable for working with values: map, filter, flatMap, take, drop, reduce, toArray, forEach, some, every, find, with concurrency and an abort; then compose, Duplex.from, duplexPair, wrap, and the functions that ask about a stream.
+import stream, { Readable, Writable, Duplex, Transform, PassThrough, compose, isReadable, isErrored, isDisturbed, getDefaultHighWaterMark, setDefaultHighWaterMark } from "node:stream";
+import { EventEmitter } from "node:events";
+
+const numbers = () => Readable.from([1, 2, 3, 4, 5]);
+console.log((await numbers().map(n => n * 2).toArray()).join(), (await numbers().filter(n => n % 2).toArray()).join(), (await numbers().flatMap(n => [n, n]).take(4).toArray()).join(), (await numbers().drop(3).toArray()).join());
+console.log(await numbers().reduce((sum, n) => sum + n, 0), await numbers().some(n => n > 4), await numbers().every(n => n > 4), await numbers().find(n => n > 2));
+const visited = [];
+await numbers().forEach(n => visited.push(n));
+console.log(visited.join(), (await numbers().map(async n => { await null; return n + 1; }, { concurrency: 2 }).toArray()).join());
+console.log(await numbers().map(n => { if (n === 3) throw new RangeError("at three"); return n; }).toArray().catch(error => error.message));
+console.log(await numbers().toArray({ signal: AbortSignal.abort() }).catch(error => error.name));
+
+const shout = new Transform({ transform(chunk, encoding, done) { done(null, chunk.toString().toUpperCase()); } });
+const twice = new Transform({ transform(chunk, encoding, done) { done(null, chunk.toString().repeat(2)); } });
+const composed = compose(shout, twice);
+composed.end("ab");
+console.log((await composed.toArray()).join(""));
+console.log((await Readable.from(["x", "y"]).compose(async function* (source) { for await (const part of source) yield part + "!"; }).toArray()).join());
+
+const fromGenerator = Duplex.from(async function* (source) { for await (const part of source) yield "got " + part; });
+fromGenerator.end("input");
+console.log((await fromGenerator.toArray()).join(), (await Duplex.from(Promise.resolve("a promise")).toArray()).join(), (await Duplex.from(["a", "list"]).toArray()).join());
+if (stream.duplexPair) {
+  const [left, right] = stream.duplexPair();
+  left.end("across");
+  console.log((await right.toArray()).join());
+} else console.log("across");
+
+const old = new EventEmitter();
+old.pause = old.resume = () => {};
+const wrapped = new Readable({ objectMode: true }).wrap(old);
+setImmediate(() => { old.emit("data", "from an old stream"); old.emit("end"); });
+console.log((await wrapped.toArray()).join());
+
+const fresh = new PassThrough();
+console.log(isReadable(fresh), isErrored(fresh), isDisturbed(fresh), Readable.isDisturbed(fresh), stream.isWritable?.(fresh), getDefaultHighWaterMark(true), getDefaultHighWaterMark(false) >= 16384);
+fresh.destroy(new Error("destroyed"));
+fresh.on("error", () => {});
+console.log(isReadable(fresh), isErrored(fresh), fresh.errored.message, fresh.closed, fresh.readableAborted, typeof setDefaultHighWaterMark, stream.Stream === stream, typeof stream.promises.pipeline);
+const iterator = numbers().iterator({ destroyOnReturn: false });
+console.log((await iterator.next()).value, typeof numbers()[Symbol.asyncDispose], numbers().readableFlowing, new Writable().writableNeedDrain, new Writable().writableCorked);
+//// the-keys-and-the-values-of-process-console-and-bun.js
+// Native code that lists keys reads no member, and native code that reads every member finds every member.
+console.log(Object.keys(process).length > 10, Object.getOwnPropertyNames(process).length > 10, Reflect.ownKeys(globalThis).length > 50);
+console.log(Object.values(process).length > 10, Object.entries(console).length > 5, Object.entries(Bun).length > 10);
+console.log(Object.getPrototypeOf(process) !== null, typeof Object.assign({}, console).log);
+//// the-module-module.js
+// node:module: the list of built-in modules, isBuiltin, createRequire for constant names of library modules and of a file of the program, the properties of a require function and of a module object, and the caches.
+import Module, { builtinModules, isBuiltin, createRequire } from "node:module";
+
+console.log(builtinModules.includes("fs"), builtinModules.includes("node:fs"), builtinModules.includes("bun:sqlite") || builtinModules.includes("bun"), builtinModules.length > 40, Module.builtinModules === builtinModules);
+console.log(isBuiltin("fs"), isBuiltin("node:fs"), isBuiltin("fs/promises"), isBuiltin("node:test"), isBuiltin("nope"), isBuiltin("node:nope"), isBuiltin("bun:jsc"));
+const load = createRequire(import.meta.url);
+console.log(typeof load, typeof load.resolve, typeof load.cache, load("node:os") === require("node:os"), load("node:events") === (await import("node:events")).default, load.resolve("node:fs"));
+console.log(typeof require.resolve, typeof require.cache, typeof require.main, typeof require.extensions, typeof Module._load, typeof Module._resolveFilename, typeof Module._nodeModulePaths, typeof Module.wrap, typeof Module.prototype.require, typeof Module.SourceMap, typeof Module.findSourceMap, typeof Module.register, typeof Module.syncBuiltinESMExports);
+console.log(Module.wrap("x"), Module._nodeModulePaths("/a/b").join());
+for (const bad of ["relative/path", 1]) {
+  try {
+    createRequire(bad);
+    console.log("accepted");
+  } catch (error) {
+    console.log(error.code);
+  }
+}
+//// the-names-stay-where-the-implementations-go.js
+// What only asks about a name answers as in plain Bun, whether or not the module is in the executable: isBuiltin, builtinModules, require.resolve, import.meta.resolve and Bun.resolveSync.
+import { builtinModules, isBuiltin } from "node:module";
+
+for (const name of process.env.NAMES.split(",")) {
+  const answers = [isBuiltin(name), builtinModules.includes(name.replace("node:", ""))];
+  for (const resolve of [() => require.resolve(name), () => import.meta.resolve(name), () => Bun.resolveSync(name, import.meta.dir)]) {
+    try {
+      answers.push(resolve());
+    } catch (error) {
+      answers.push(error.code);
+    }
+  }
+  console.log(name, answers.join(" "));
+}
+//// the-process-object.js
+// The global process and node:process: ticks with arguments, events at the end of the program in their order, exitCode, emitWarning and the warning event, uncaught errors that a listener takes, unhandled rejections, stdout.write with a callback, argv and env as objects, and a few functions that must be there.
+import processModule, { nextTick, env } from "node:process";
+
+console.log(processModule === process, env === process.env, nextTick === process.nextTick);
+const order = [];
+process.nextTick((a, b) => order.push("tick " + a + b), 1, 2);
+await null;
+console.log(order.join());
+
+process.removeAllListeners("warning");
+process.on("warning", warning => console.log("warning:", warning.name, warning.code, warning.message));
+process.emitWarning("careful", { code: "MY_CODE", type: "CustomWarning" });
+process.emitWarning(Object.assign(new Error("as an error"), { name: "OtherWarning" }));
+await new Promise(resolve => setImmediate(resolve));
+
+process.on("uncaughtException", (error, origin) => console.log("uncaught:", error.message, origin));
+setTimeout(() => { throw new Error("from a timer"); }, 0);
+await new Promise(resolve => setTimeout(resolve, 5));
+process.on("unhandledRejection", (reason, promise) => console.log("unhandled:", reason.message, promise instanceof Promise));
+Promise.reject(new Error("nobody catches"));
+await new Promise(resolve => setTimeout(resolve, 5));
+
+console.log(await new Promise(resolve => process.stdout.write("written directly\n", () => resolve("the callback ran"))));
+env.MADE_UP = 1;
+console.log(typeof env.MADE_UP, "MADE_UP" in env, delete env.MADE_UP, env.MADE_UP, Array.isArray(process.argv), Array.isArray(process.execArgv), typeof process.execPath, typeof process.argv0);
+console.log(process.listenerCount("warning"), process.eventNames().includes("uncaughtException"), typeof process.kill, typeof process.abort, typeof process.chdir, typeof process.emit, typeof process.binding, typeof process.config.variables, typeof process.features.inspector, typeof process.allowedNodeEnvironmentFlags, process.exitCode);
+console.log(process.stdout.fd, process.stderr.fd, process.stdin.fd, process.stdout.writable, typeof process.stdout.columns, typeof process.stdout.getWindowSize, process.stdout._type ?? typeof process.stdout._type);
+process.on("beforeExit", code => { if (!order.includes("beforeExit")) { order.push("beforeExit"); console.log("beforeExit", code); setTimeout(() => console.log("work started in beforeExit"), 1); } });
+process.on("exit", code => console.log("exit", code, process.exitCode));
+process.exitCode = 0;
+//// the-rest-of-util.js
+// node:util beside inspect: promisify and its custom symbol, callbackify, inherits, deprecate, types, isDeepStrictEqual, parseArgs, styleText, stripVTControlCharacters, TextEncoder and TextDecoder, debuglog, getSystemErrorName, toUSVString and aborted.
+import util from "node:util";
+import { types } from "node:util";
+
+process.noDeprecation = true;
+const delayed = (value, callback) => setImmediate(callback, value === "bad" ? new Error("refused") : null, value + "!");
+console.log(await util.promisify(delayed)("ok"), await util.promisify(delayed)("bad").catch(error => error.message));
+function custom() {}
+custom[util.promisify.custom] = () => Promise.resolve("custom form");
+console.log(await util.promisify(custom)(), util.promisify(setTimeout) === util.promisify(setTimeout));
+console.log(await new Promise(resolve => util.callbackify(async value => value * 2)(21, (error, value) => resolve([error, value].join()))));
+console.log(await new Promise(resolve => util.callbackify(async () => { throw null; })(error => resolve(error.code))));
+
+function Base() {}
+Base.prototype.hello = function () { return "hello from Base"; };
+function Derived() {}
+util.inherits(Derived, Base);
+console.log(new Derived().hello(), Derived.super_ === Base);
+
+console.log(types.isPromise(Promise.resolve()), types.isRegExp(/x/), types.isDate(new Date()), types.isMap(new Map()), types.isTypedArray(new Uint8Array()), types.isProxy(new Proxy({}, {})), types.isGeneratorFunction(function* () {}), types.isAsyncFunction(async () => {}), types.isNativeError(new TypeError()), types.isBoxedPrimitive(Object(1)), types.isArrayBuffer(new ArrayBuffer(1)), types.isUint8Array(Buffer.alloc(1)));
+console.log(util.isDeepStrictEqual({ a: [1, new Map([[1, 2]])] }, { a: [1, new Map([[1, 2]])] }), util.isDeepStrictEqual([1], ["1"]), util.isDeepStrictEqual(NaN, NaN), util.isDeepStrictEqual(0, -0));
+const parsed = util.parseArgs({ args: ["-f", "--name=x", "--list", "a", "--list", "b", "rest"], options: { f: { type: "boolean", short: "f" }, name: { type: "string" }, list: { type: "string", multiple: true } }, allowPositionals: true });
+console.log(JSON.stringify(parsed.values), parsed.positionals.join());
+////= lines-3	util.parseArgs({ args: ["--unknown"], options: {} }
+console.log(JSON.stringify(util.styleText("red", "text")), util.stripVTControlCharacters("\u001b[31mtext\u001b[39m"), JSON.stringify(util.styleText(["bold", "underline"], "both")));
+console.log(new util.TextDecoder().decode(new util.TextEncoder().encode("grüße")), util.TextEncoder === TextEncoder, new util.TextDecoder("utf-16le").decode(new Uint8Array([104, 0, 105, 0])));
+console.log(util.getSystemErrorName(-2), util.toUSVString("a\ud800b") === "a\ufffdb", typeof util.debuglog("section"), util.debuglog("section").enabled);
+console.log(util.isArray([]), typeof util.deprecate(() => 1, "old")(), util.inspect.defaultOptions.depth);
+//// the-stream-class-that-a-required-module-exports-is-replaced.cjs
+const stream = require("node:stream");
+const events = require("node:events");
+new stream.Duplex(); new stream.Transform();
+function make() { return new stream.Readable(); }
+function emitter() { return new events.EventEmitter(); }
+const say = value => console.log(value.constructor.name, value instanceof events, typeof value._readableState, value.fake);
+for (let i = 0; i < 3; i++) { say(make()); say(emitter()); }
+const kept = stream.Readable;
+stream.Readable = class Fake { fake = 1; };
+say(make());
+stream.Readable = stream.Writable;
+say(make());
+Object.defineProperty(stream, "Readable", { get() { console.log("getter"); return kept; }, configurable: true });
+say(make());
+delete stream.Readable;
+try { say(make()); } catch (error) { console.log(error.constructor.name); }
+stream.Readable = kept;
+say(make());
+const keptEmitter = events.EventEmitter;
+events.EventEmitter = function Other() { this.fake = 2; };
+say(emitter());
+events.EventEmitter = keptEmitter;
+say(emitter());
+//// timers-and-their-promises.js
+// node:timers and node:timers/promises: the order of timeouts, immediates, ticks and microtasks; clear, ref, unref, hasRef, refresh and Symbol.toPrimitive of a timer; promised timeouts with a value, with an abort, and an interval as an async iterator; scheduler.wait and yield.
+import timers from "node:timers";
+import { setTimeout as sleep, setImmediate as immediately, setInterval as every, scheduler } from "node:timers/promises";
+
+const order = [];
+await new Promise(resolve => {
+  let left = 3;
+  const ran = name => { order.push(name); if (--left === 0) resolve(); };
+  setTimeout(() => ran("timeout 2"), 2);
+  setTimeout(() => ran("timeout 0"), 0);
+  setImmediate(() => ran("immediate"));
+  process.nextTick(() => order.push("tick"));
+  queueMicrotask(() => order.push("microtask"));
+  Promise.resolve().then(() => order.push("promise"));
+  order.push("sync");
+});
+console.log(order.filter(name => name !== "immediate" && name !== "timeout 0").join(), order.includes("immediate"), order.includes("timeout 0"));
+
+const cleared = [];
+clearTimeout(setTimeout(() => cleared.push("timeout"), 0));
+clearImmediate(setImmediate(() => cleared.push("immediate")));
+clearInterval(setInterval(() => cleared.push("interval"), 0));
+timers.clearTimeout(timers.setTimeout(() => cleared.push("module"), 0));
+await sleep(5);
+console.log(cleared.length, timers.setTimeout === setTimeout);
+
+const timer = setTimeout(() => {}, 10_000);
+console.log(timer.hasRef(), timer.unref() === timer, timer.hasRef(), timer.ref().hasRef(), typeof timer[Symbol.toPrimitive](), timer.refresh() === timer);
+clearTimeout(+timer);
+let runs = 0;
+await new Promise(resolve => { const interval = setInterval(() => { if (++runs === 3) { clearInterval(interval); resolve(); } }, 1); });
+console.log(runs, await new Promise(resolve => setTimeout((a, b) => resolve(a + b), 0, "argu", "ments")));
+
+console.log(await sleep(1, "value"), await immediately("at once"));
+const controller = new AbortController();
+const pending = sleep(10_000, null, { signal: controller.signal });
+controller.abort();
+console.log(await pending.catch(error => [error.name, error.code].join()));
+console.log(await sleep(1, null, { signal: AbortSignal.abort() }).catch(error => error.code));
+let beats = 0;
+for await (const value of every(1, "beat")) if (++beats === 3) { console.log(value, beats); break; }
+console.log(await scheduler.wait(1), await scheduler.yield());
+//// web-streams-and-their-bridges.js
+// node:stream/web and the global stream classes: a ReadableStream with a controller, a TransformStream, a WritableStream, tee, text encoder and decoder streams, compression, and the bridges to node:stream.
+import { ReadableStream, TransformStream, WritableStream, TextDecoderStream, TextEncoderStream, CompressionStream, DecompressionStream } from "node:stream/web";
+import { Readable, Writable } from "node:stream";
+
+const numbers = () => new ReadableStream({ start(controller) { for (const n of [1, 2, 3]) controller.enqueue(n); controller.close(); } });
+const doubled = numbers().pipeThrough(new TransformStream({ transform(n, controller) { controller.enqueue(n * 2); } }));
+const seen = [];
+await doubled.pipeTo(new WritableStream({ write(n) { seen.push(n); } }));
+console.log(seen.join());
+
+const [left, right] = numbers().tee();
+const read = async stream => { const all = []; for await (const value of stream) all.push(value); return all.join(); };
+console.log(await read(left), await read(right));
+
+const words = new ReadableStream({ start(controller) { controller.enqueue("grüße"); controller.close(); } });
+console.log(await read(words.pipeThrough(new TextEncoderStream()).pipeThrough(new TextDecoderStream())));
+
+const packed = new Response("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").body.pipeThrough(new CompressionStream("gzip"));
+console.log(await new Response(packed.pipeThrough(new DecompressionStream("gzip"))).text());
+
+console.log(await read(Readable.toWeb(Readable.from(["a", "b"]))));
+const fromWeb = [];
+for await (const value of Readable.fromWeb(numbers(), { objectMode: true })) fromWeb.push(value);
+console.log(fromWeb.join());
+const sink = [];
+const writer = Writable.toWeb(new Writable({ write(chunk, encoding, done) { sink.push(chunk.toString()); done(); } })).getWriter();
+await writer.write("through the bridge");
+await writer.close();
+console.log(sink.join());
+
+const reader = numbers().getReader();
+console.log(JSON.stringify(await reader.read()), numbers().locked, ReadableStream === globalThis.ReadableStream);
+const failing = new ReadableStream({ pull() { throw new RangeError("pull failed"); } });
+console.log(await failing.getReader().read().catch(error => error.name + " " + error.message));
+//// what-a-typical-command-line-tool-uses.js
+// A small tool as people write them: parse arguments, walk a folder, read and hash files, compress one, print a table, run a child, and clean up; ten library modules, each by a constant name, some required late inside functions.
+const { parseArgs, inspect } = require("node:util");
+const path = require("node:path");
+
+function walk(folder) {
+  const fs = require("node:fs");
+  return fs.readdirSync(folder, { withFileTypes: true }).flatMap(entry => (entry.isDirectory() ? walk(path.join(folder, entry.name)) : [path.join(folder, entry.name)]));
+}
+function digest(file) {
+  return require("node:crypto").createHash("sha1").update(require("node:fs").readFileSync(file)).digest("hex").slice(0, 8);
+}
+async function pack(file) {
+  const { gzip } = require("node:zlib");
+  return (await require("node:util").promisify(gzip)(await require("node:fs/promises").readFile(file))).length;
+}
+
+const { values } = parseArgs({ args: ["--depth", "2", "-v"], options: { depth: { type: "string" }, v: { type: "boolean", short: "v" } } });
+const root = require("node:fs").mkdtempSync(path.join(require("node:os").tmpdir(), "library-modules-"));
+require("node:fs").mkdirSync(path.join(root, "src/lib"), { recursive: true });
+for (const [name, text] of [["a.txt", "alpha"], ["src/b.txt", "beta"], ["src/lib/c.txt", "gamma".repeat(100)]]) require("node:fs").writeFileSync(path.join(root, name), text);
+
+const files = walk(root).sort();
+console.table(files.map(file => ({ file: path.relative(root, file), sha1: digest(file), bytes: require("node:fs").statSync(file).size })));
+console.log(inspect(values), (await pack(files.at(-1))) < 100);
+console.log(require("node:child_process").execFileSync("ls", [root]).toString().trim().split("\n").join());
+const emitter = new (require("node:events"))();
+emitter.once("done", () => require("node:fs").rmSync(root, { recursive: true }));
+emitter.emit("done");
+console.log(require("node:fs").existsSync(root), new (require("node:url").URL)("file://" + root).protocol);
+//// what-the-system-says-about-itself.js
+// node:os and node:tty and parts of process: the answers differ from machine to machine, so the program prints what kind of answer each function gives and relations between them.
+import os from "node:os";
+import tty from "node:tty";
+
+console.log(["linux", "darwin", "win32", "freebsd", "android"].includes(os.platform()), os.platform() === process.platform, os.arch() === process.arch, ["LE", "BE"].includes(os.endianness()));
+console.log(JSON.stringify(os.EOL) === (process.platform === "win32" ? '"\\r\\n"' : '"\\n"'), typeof os.hostname(), typeof os.release(), typeof os.version(), typeof os.type(), typeof os.machine());
+console.log(os.cpus().length > 0, os.cpus().length === os.availableParallelism() || os.availableParallelism() > 0, Object.keys(os.cpus()[0]).sort().join(), Object.keys(os.cpus()[0].times).sort().join());
+console.log(os.totalmem() > os.freemem(), os.freemem() > 0, os.uptime() > 0, os.loadavg().length, os.tmpdir().length > 0, os.homedir().length > 0);
+const user = os.userInfo();
+console.log(Object.keys(user).sort().join(), typeof user.username, user.homedir === os.homedir() || typeof user.homedir);
+const interfaces = Object.values(os.networkInterfaces()).flat();
+console.log(interfaces.length > 0, interfaces.every(entry => ["IPv4", "IPv6"].includes(entry.family)), interfaces.some(entry => entry.internal));
+console.log(os.constants.signals.SIGINT, os.constants.signals.SIGKILL, os.constants.errno.ENOENT, typeof os.constants.priority.PRIORITY_LOW, os.devNull);
+console.log(typeof os.getPriority(), os.setPriority.length >= 1);
+console.log(tty.isatty(0), tty.isatty(1), tty.isatty(2), tty.isatty(99), tty.isatty(-1), typeof tty.ReadStream, typeof tty.WriteStream, process.stdout.isTTY, process.stdin.isTTY);
+console.log(typeof process.pid, process.ppid > 0, typeof process.uptime(), process.hrtime().length, typeof process.hrtime.bigint(), Object.keys(process.memoryUsage()).sort().join(), Object.keys(process.cpuUsage()).join(), Object.keys(process.resourceUsage()).length > 5);
+console.log(typeof process.cwd(), typeof process.umask(), typeof process.getuid?.(), process.title.length > 0, typeof process.version, typeof process.versions.bun, process.release.name);

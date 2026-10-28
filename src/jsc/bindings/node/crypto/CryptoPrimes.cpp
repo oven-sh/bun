@@ -242,7 +242,7 @@ JSValue GeneratePrimeJob::result(JSGlobalObject* globalObject, JSC::ThrowScope& 
             return {};
         }
 
-        JSValue result = JSBigInt::parseInt(globalObject, vm, primeHex.span(), 16, JSBigInt::ErrorParseMode::IgnoreExceptions, JSBigInt::ParseIntSign::Unsigned);
+        JSValue result = JSBigInt::parseInt(globalObject, vm, byteCast<Latin1Character>(primeHex.span()), 16, JSBigInt::ErrorParseMode::IgnoreExceptions, JSBigInt::ParseIntSign::Unsigned);
         RETURN_IF_EXCEPTION(scope, {});
         if (result.isEmpty()) {
             ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "could not generate prime"_s);

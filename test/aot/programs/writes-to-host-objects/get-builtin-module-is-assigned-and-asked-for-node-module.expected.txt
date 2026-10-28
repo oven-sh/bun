@@ -1,0 +1,1 @@
+Error: Cannot call createRequire: process.getBuiltinModule was replaced and returned a different createRequire. This executable can't load a module from a dynamic path.

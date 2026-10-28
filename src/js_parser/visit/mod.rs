@@ -37,9 +37,7 @@ use core::ptr::NonNull;
 // In the AST crate, ListManaged is arena-backed.
 type ListManaged<'bump, T> = BumpVec<'bump, T>;
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
-    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
-{
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     // Thin alias of `current_scope_mut()` kept for local readability.
     #[inline(always)]
     fn vis_scope(&mut self) -> &mut js_ast::Scope {
@@ -282,6 +280,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         is_export: bool,
     ) -> usize {
         let was_const = kind == LocalKind::KConst;
+        // A namespace member isn't a module export.
+        let can_replace_exports =
+            IS_POSSIBLY_DECL_TO_REMOVE && self.enclosing_namespace_arg_ref.is_none();
         let mut j: usize = 0;
         // Iterate by index so kept entries can be written back through `decls[j]`
         // while scanning ahead.
@@ -301,6 +302,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 let prev_require_to_convert_count = self.imports_to_convert_from_require.len();
                 let prev_macro_call_count = self.macro_call_count;
                 let orig_dead = self.is_control_flow_dead;
+                let orig_in_deleted = self.in_deleted_export;
                 // `replacement` is a `BackRef` so the
                 // borrow of `self.options` does not survive across `visit_expr_in_out(&mut self)`.
                 // `BackRef` invariant: `self.options.features.replace_exports` is never mutated
@@ -308,7 +310,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 let mut replacement: Option<
                     bun_ptr::BackRef<crate::parser::Runtime::ReplaceableExport>,
                 > = None;
-                if IS_POSSIBLY_DECL_TO_REMOVE {
+                if can_replace_exports {
                     if let BData::BIdentifier(id) = decl.binding.data {
                         let id_ref = id.r#ref;
                         let name = self.load_name_from_ref(id_ref);
@@ -322,6 +324,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                             replacement = Some(ptr);
                             if self.options.features.dead_code_elimination && !is_replace {
                                 self.is_control_flow_dead = true;
+                                self.in_deleted_export = true;
                             }
                         }
                     }
@@ -574,8 +577,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     }
                 }
 
-                if IS_POSSIBLY_DECL_TO_REMOVE {
+                if can_replace_exports {
                     self.is_control_flow_dead = orig_dead;
+                    self.in_deleted_export = orig_in_deleted;
                     if let BData::BIdentifier(_) = decl.binding.data {
                         if let Some(_ptr) = replacement {
                             // `BackRef::get` — entry lives in `self.options.features.replace_exports`,
@@ -601,7 +605,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         },
                     },
                 );
-            } else if IS_POSSIBLY_DECL_TO_REMOVE {
+            } else if can_replace_exports {
                 if let BData::BIdentifier(id) = decl.binding.data {
                     let id_ref = id.r#ref;
                     let name = self.load_name_from_ref(id_ref);
@@ -616,18 +620,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         // which is not mutated during the visit pass.
                         let replacer = _ptr.get();
                         if !self.replace_decl_and_possibly_remove(decl, replacer) {
-                            let is_after = self.vis_scope().is_after_const_local_prefix;
-                            self.visit_decl(
-                                decl,
-                                VisitDeclOpts {
-                                    was_anonymous_named_expr: false,
-                                    could_be_const_value: was_const && !is_after,
-                                    could_be_macro: false,
-                                },
-                            );
-                        } else {
                             continue 'outer;
                         }
+                        let is_after = self.vis_scope().is_after_const_local_prefix;
+                        self.visit_decl(
+                            decl,
+                            VisitDeclOpts {
+                                was_anonymous_named_expr: false,
+                                could_be_const_value: was_const && !is_after,
+                                could_be_macro: false,
+                            },
+                        );
                     }
                 }
             }
@@ -1023,17 +1026,36 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         // must be the original value of the name, not the re-assigned value.
         // Use "const" for this symbol to match JavaScript run-time semantics. You
         // are not allowed to assign to this symbol (it throws a TypeError).
+        //
+        // With lowered class decorators the body reads the class through
+        // `inner_class_ref`, which the lowering sets to what the decorators
+        // return (the spec initializes the inner binding with that class).
         let mut shadow_ref = if let Some(name) = class.class_name {
             let name_ref = name.ref_;
             let original_name: &'a [u8] = self.symbols[name_ref.inner_index() as usize]
                 .original_name
                 .slice();
+            let body_ref = if class.should_lower_standard_decorators
+                && class.ts_decorators.len_u32() > 0
+            {
+                let inner_ref = self.generate_temp_var(self.bump_name3(b"_", original_name, b""));
+                class.inner_class_ref = inner_ref;
+                self.decorated_class_names.push((inner_ref, name_ref));
+                // The name of a class expression is declared nowhere else:
+                // the renamer still has to number it around its neighbors.
+                if is_expr {
+                    VecExt::append(&mut self.vis_scope().generated, name_ref);
+                }
+                inner_ref
+            } else {
+                name_ref
+            };
             // SAFETY: `original_name` is an AST-arena slice.
             unsafe {
                 self.vis_scope().members.put(
                     original_name,
                     ScopeMember {
-                        ref_: name.ref_,
+                        ref_: body_ref,
                         loc: name.loc,
                     },
                 )
@@ -1482,6 +1504,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
         // class name scope
         self.pop_scope();
+        if class.inner_class_ref.is_symbol() {
+            self.decorated_class_names.pop();
+        }
 
         shadow_ref
     }
@@ -1806,7 +1831,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             }
         }
 
-        if !p.options.features.minify_syntax || !p.options.features.dead_code_elimination {
+        if !p.should_remove_dead_statements() || !p.options.features.dead_code_elimination {
+            return Ok(());
+        }
+
+        if !p.options.features.minify_syntax {
+            let mut is_control_flow_dead = false;
+            stmts.retain(|stmt| {
+                if is_control_flow_dead
+                    && !SideEffects::should_keep_stmt_in_dead_control_flow(*stmt, p.arena)
+                {
+                    return false;
+                }
+                match stmt.data {
+                    StmtData::SEmpty(_) => return false,
+                    StmtData::SBlock(block) if block.stmts.is_empty() => return false,
+                    StmtData::SReturn(_)
+                    | StmtData::SBreak(_)
+                    | StmtData::SContinue(_)
+                    | StmtData::SThrow(_) => is_control_flow_dead = true,
+                    _ => {}
+                }
+                true
+            });
             return Ok(());
         }
 
@@ -1906,7 +1953,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             // The eval'd code may indirectly reference this symbol and the actual
             // use count may be greater than 1.
             // SAFETY: current_scope is a valid arena ptr for the parse.
-            if p.current_scope != p.module_scope && !p.current_scope().contains_direct_eval {
+            if p.current_scope != p.module_scope
+                && !p.current_scope().contains_direct_eval
+                && !p.options.features.is_library
+            {
                 // Keep inlining variables until a failure or until there are none left.
                 // That handles cases like this:
                 //
@@ -2004,7 +2054,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 StmtData::SEmpty(_) => continue,
 
                 // skip directives for now
-                StmtData::SDirective(_) => continue,
+                StmtData::SDirective(_) if !p.options.keep_directives => continue,
 
                 StmtData::SLocal(local) => {
                     // Merge adjacent local statements

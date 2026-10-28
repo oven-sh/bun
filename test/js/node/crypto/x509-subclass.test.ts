@@ -129,3 +129,37 @@ describe("X509Certificate#checkIssued", () => {
     expect(() => agent1.checkIssued("" as any)).toThrow();
   });
 });
+
+// https://github.com/oven-sh/bun/issues/31810
+test("X509Certificate#ca is true only with basicConstraints CA:TRUE", () => {
+  const v1NoExtensions = new X509Certificate(`-----BEGIN CERTIFICATE-----
+MIICAjCCAagCCQDFYI3zR8B/izAKBggqhkjOPQQDAjAPMQ0wCwYDVQQDDAR0ZXN0
+MB4XDTI2MDUyODE3MDYwNVoXDTM2MDUyNTE3MDYwNVowDzENMAsGA1UEAwwEdGVz
+dDCCAUswggEDBgcqhkjOPQIBMIH3AgEBMCwGByqGSM49AQECIQD/////AAAAAQAA
+AAAAAAAAAAAAAP///////////////zBbBCD/////AAAAAQAAAAAAAAAAAAAAAP//
+/////////////AQgWsY12Ko6k+ez671VdpiGvGUdBrDMU7D2O848PifSYEsDFQDE
+nTYIhucEk2pmeOETnSa3gZ9+kARBBGsX0fLhLEJH+Lzm5WOkQPJ3A32BLeszoPSh
+OUXYmMKWT+NC4v4af5uO5+tKfA+eFivOM1drMV7Oy7ZAaDe/UfUCIQD/////AAAA
+AP//////////vOb6racXnoTzucrC/GMlUQIBAQNCAAR1hd/nVei+or93b6B6lA0v
+U52t80TD/E7NVfub7GJbHxbCX48zQH8YzMEsi/C/0G6N0/kf/ilwVuZXzwPVuTM/
+MAoGCCqGSM49BAMCA0gAMEUCIFTzv2XBNlegDgPaDlhmcxwOx9FaIfy/9SF6+qmV
+7IPSAiEAkQ1u46qvg4y2tr47yLzr0PbtPVYgjNS7VYLNDWf/btw=
+-----END CERTIFICATE-----
+`);
+  const v3CaTrue = new X509Certificate(`-----BEGIN CERTIFICATE-----
+MIIBjDCCATGgAwIBAgIUd0nA46zMcwqssVnVDNJ0F1APFuIwCgYIKoZIzj0EAwIw
+EzERMA8GA1UEAwwITXlSb290Q0EwHhcNMjYwNjA0MTYyMDM2WhcNMzYwNjAxMTYy
+MDM2WjATMREwDwYDVQQDDAhNeVJvb3RDQTBZMBMGByqGSM49AgEGCCqGSM49AwEH
+A0IABH5Mm74kubMd96Z5D09xITJcBhAiByKbnzyMRgcA14MlMmRXP9N812rhsyM6
+drajhDSLmtoeaLfdf+0YnndMppWjYzBhMB0GA1UdDgQWBBT/fNxTnDHehlFQZpEt
+DhbKDuhG+DAfBgNVHSMEGDAWgBT/fNxTnDHehlFQZpEtDhbKDuhG+DAPBgNVHRMB
+Af8EBTADAQH/MA4GA1UdDwEB/wQEAwIBBjAKBggqhkjOPQQDAgNJADBGAiEAwON8
+/nnAceDckQ0nD3etz11m120RFm0z3yGyPs2jmBQCIQCS7+FmRZYmXNAoqZFGtBmL
+ALUH18cGAJfxlfxayzf4DA==
+-----END CERTIFICATE-----
+`);
+  expect(v1NoExtensions.ca).toBe(false);
+  expect(v1NoExtensions.toLegacyObject().ca).toBe(false);
+  expect(v3CaTrue.ca).toBe(true);
+  expect(v3CaTrue.toLegacyObject().ca).toBe(true);
+});

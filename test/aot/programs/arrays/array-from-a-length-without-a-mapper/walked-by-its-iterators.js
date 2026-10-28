@@ -1,0 +1,1 @@
+function run(x) { const r = Array.from({ length: 2 }, x); const it = r.values(); const first = it.next(); return [first.done, first.value, r.entries().next().value.join("/"), r.at(0) === undefined, r.findLast(() => true) === undefined, r.find(() => true) === undefined, r.findLastIndex(() => true)].join(" "); } console.log(run());

@@ -1,0 +1,39 @@
+//// built-ins-callbacks/sort-forms.js
+// sort-forms.js <form> <size> <rounds>: one array of whole numbers (or objects with a whole-number key), shuffled the same way each round, sorted with comparators of several forms.
+const [form, sizeText, roundsText] = process.argv.slice(2);
+const size = sizeText | 0, rounds = roundsText | 0;
+let seed = 12345;
+function next() { seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff; return seed; }
+const numbers = []; for (let i = 0; i < size; i++) numbers.push((next() % 1024) | 0);
+const objects = numbers.map(k => ({ k, name: "n" + k }));
+function difference(a) { return a.slice().sort((x, y) => x - y); }
+function reversed(a) { return a.slice().sort((x, y) => y - x); }
+function ternary(a) { return a.slice().sort((x, y) => x < y ? -1 : x > y ? 1 : 0); }
+function differencePlusZero(a) { return a.slice().sort((x, y) => (x - y) + 0); }
+function keyDifference(a) { return a.slice().sort((x, y) => x.k - y.k); }
+function keyTernary(a) { return a.slice().sort((x, y) => x.k < y.k ? -1 : x.k > y.k ? 1 : 0); }
+function sliceOnly(a) { return a.slice(); }
+let sum = 0;
+for (let r = 0; r < rounds; r++) {
+    let out;
+    if (form === "difference") out = difference(numbers);
+    else if (form === "reversed") out = reversed(numbers);
+    else if (form === "ternary") out = ternary(numbers);
+    else if (form === "differencePlusZero") out = differencePlusZero(numbers);
+    else if (form === "keyDifference") out = keyDifference(objects);
+    else if (form === "keyTernary") out = keyTernary(objects);
+    else if (form === "sliceOnly") out = sliceOnly(numbers);
+    const first = out[0], last = out[size - 1];
+    sum = (sum + (typeof first === "number" ? first + last : first.k + last.k)) | 0;
+}
+console.log(form, size, sum);
+//// built-ins-callbacks/whole-numbers-stored-as-doubles.js
+// whole-numbers-stored-as-doubles.js <pinned | plain> <size> <rounds>: an array is filled by push in a loop whose bound is a number that nobody knows the range of; then it is summed.
+const pinned = process.argv[2] === "pinned", size = Number(process.argv[3] ?? 64), rounds = Number(process.argv[4] ?? 1000);
+const numbers = [];
+if (pinned) for (let i = 0; i < size; i++) numbers.push(((i * 7919) % 1000) | 0);
+else for (let i = 0; i < size; i++) numbers.push((i * 7919) % 1000);
+function sum(array) { let total = 0; for (let j = 0; j < array.length; j++) total += array[j]; return total; }
+let total = 0;
+for (let round = 0; round < rounds; round++) total += sum(numbers);
+console.log(total);

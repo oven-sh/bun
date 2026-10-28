@@ -1,0 +1,366 @@
+////: for-20
+for (let round = 0; round < «1»; round++) {
+  mode = round % 100 === 99 ? (round + 1) / 100 : 0;
+  const line = holder(new «2»(round, «3»));
+  if (mode !== 0 || round % 100 === 0) console.log(round + ": " + line);
+}
+////: sum
+function sum(p: Point): string {
+  return "" + (p.x + p.y);
+}
+//// damage-behind-a-call-state-travels-with-the-parameter/a-damaged-object-arrives-through-every-kind-of-call.ts
+// A typed function reads the fields of its parameter. Whole and damaged objects reach it by a plain call, by call, apply and bind, as a callback of built-ins, through a spread, as a method, as a getter's `this`, and through `new`.
+class Point {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+  sum(): string {
+    return "" + (this.x + this.y);
+  }
+  get total(): string {
+    return "" + (this.x + this.y);
+  }
+}
+////= sum
+class Holder {
+  told: string;
+  constructor(p: Point) {
+    this.told = "" + (p.x + p.y);
+  }
+}
+
+const ways: [string, (p: Point) => string][] = [
+  ["plain", p => sum(p)],
+  ["call", p => sum.call(undefined, p)],
+  ["apply", p => sum.apply(undefined, [p])],
+  ["bind", p => sum.bind(undefined, p)()],
+  ["reflect", p => Reflect.apply(sum, undefined, [p])],
+  ["map", p => [p].map(sum)[0]],
+  ["spread", p => sum(...([p] as [Point]))],
+  ["method", p => p.sum()],
+  ["borrowed", p => Point.prototype.sum.call(p)],
+  ["getter", p => p.total],
+  ["new", p => new Holder(p).told],
+];
+
+function make(kind: number, n: number): Point {
+  const p = new Point(n, 1);
+  if (kind === 1) delete (p as any).x;
+  else if (kind === 2) (p as any).y = "T";
+  else if (kind === 3) Object.defineProperty(p, "x", { get: () => -7 });
+  return p;
+}
+
+for (const [name, way] of ways) {
+  let text = "";
+  for (let round = 0; round < 200; round++) {
+    const kind = round % 50 === 49 ? (round + 1) / 50 : 0;
+    const told = way(make(kind, round));
+    if (kind) text += " " + told;
+  }
+  console.log(name + ":" + text);
+}
+//// damage-behind-a-call-state-travels-with-the-parameter/a-damaged-object-comes-out-of-a-typed-array.ts
+// Some objects in a typed array were damaged long ago. A typed function takes each out and passes it to another typed function, whose typed body assumes that the fields lie in their slots.
+////= Point
+
+const points: Point[] = [];
+for (let index = 0; index < 40; index++) points.push(new Point(index, 1));
+delete (points[7] as any).x;
+Object.defineProperty(points[17], "x", { get: () => -7 });
+(points[27] as any).x = "text";
+Object.setPrototypeOf(points[37], null);
+
+////= sum
+
+function walk(list: Point[]): string {
+  let text = "";
+  for (let index = 0; index < list.length; index++) {
+    const p = list[index];
+    text += sum(p) + "/" + p.x + " ";
+  }
+  return text;
+}
+
+let last = "";
+for (let round = 0; round < 50; round++) last = walk(points);
+console.log(last);
+//// damage-behind-a-call-state-travels-with-the-parameter/a-damaged-object-comes-out-of-a-typed-field.ts
+// An object that lies in a typed field of another object was damaged long ago. A typed function reads it out of the field, reads its fields in place and passes it to another typed function.
+////= Leaf
+////= lines-18	Branch	leaf	Leaf
+
+function twice(leaf: Leaf): string {
+  return "" + leaf.value * 2;
+}
+
+function visit(branch: Branch): string {
+  const leaf = branch.leaf;
+  return leaf.value + " " + twice(leaf) + " " + branch.leaf.value;
+}
+
+const branches: Branch[] = [];
+for (let index = 0; index < 8; index++) branches.push(new Branch(new Leaf(index)));
+delete (branches[1].leaf as any).value;
+Object.defineProperty(branches[3].leaf, "value", { get: () => -7 });
+(branches[5].leaf as any).value = "text";
+Object.freeze(branches[7].leaf);
+
+let text = "";
+for (let round = 0; round < 200; round++) {
+  text = "";
+  for (const branch of branches) text += visit(branch) + " | ";
+}
+console.log(text);
+//// damage-behind-a-call-state-travels-with-the-parameter/a-damaged-object-comes-out-of-a-typed-variable.ts
+// A typed variable of the module and a typed variable that a closure has captured hold an object that was damaged. Typed functions read the variables, read the fields in place and pass the object on.
+////= Point
+
+////= sum
+
+let current: Point = new Point(1, 2);
+function readsModuleVariable(): string {
+  const p = current;
+  return p.x + " " + sum(p);
+}
+
+function makeReader(first: Point): { read: () => string; put: (next: Point) => void } {
+  let held: Point = first;
+  return {
+    read: () => held.x + " " + sum(held),
+    put: next => {
+      held = next;
+    },
+  };
+}
+const reader = makeReader(new Point(3, 4));
+
+for (let round = 0; round < 400; round++) {
+  const p = new Point(round, 1);
+  if (round === 100) delete (p as any).x;
+  if (round === 200) Object.defineProperty(p, "x", { get: () => -7 });
+  if (round === 300) (p as any).x = "text";
+  current = p;
+  reader.put(p);
+  const line = readsModuleVariable() + " | " + reader.read();
+  if (round % 100 < 2) console.log(round + ": " + line);
+}
+//// damage-behind-a-call-state-travels-with-the-parameter/a-damaged-object-is-captured-by-a-closure.ts
+// A closure captures an object that its maker has read, so the value travels into the closure's body as a hidden argument. A call between the making and the calling of the closure damages the object.
+////= Point
+
+let mode = 0;
+function touch(p: Point): void {
+  if (mode === 1) delete (p as any).x;
+  else if (mode === 2) Object.defineProperty(p, "y", { get: () => -7 });
+  else if (mode === 3) (p as any).x = "text";
+}
+
+function holder(p: Point): string {
+  const before = p.x + p.y;
+  const sum = () => p.x + p.y;
+  const first = sum();
+  touch(p);
+  return before + " " + first + " " + sum() + " " + p.x + " " + p.y;
+}
+
+////= for-20	400	Point	1
+//// damage-behind-a-call-state-travels-with-the-parameter/a-damaged-object-is-passed-on-behind-the-call.ts
+// A typed caller has read an object, so it may enter the typed body of the next function without a test. Between the read and that call another call damages the object.
+////= Point
+
+let mode = 0;
+function touch(p: Point): number {
+  if (mode === 1) delete (p as any).x;
+  else if (mode === 2) Object.defineProperty(p, "x", { get: () => -7, configurable: true });
+  else if (mode === 3) (p as any).x = "text";
+  else if (mode === 4) {
+    delete (p as any).x;
+    Object.setPrototypeOf(p, { x: "inherited" });
+  }
+  return mode;
+}
+
+////= sum
+
+function holder(p: Point): string {
+  const before = p.x + p.y;
+  const touched = touch(p);
+  return before + " " + touched + " " + sum(p) + " " + sum(p);
+}
+
+////= for-20	500	Point	1
+//// damage-behind-a-call-state-travels-with-the-parameter/a-damaged-object-is-the-result-of-a-typed-function.ts
+// A typed function promises its result type, and the object that it returns has that type but was damaged. The caller tests no result. It reads the fields in place and passes the object on.
+////= Point
+
+const table: Point[] = [];
+for (let index = 0; index < 8; index++) table.push(new Point(index, 1));
+delete (table[1] as any).x;
+Object.defineProperty(table[3], "x", { get: () => -7 });
+(table[5] as any).x = "text";
+(table[7] as any).z = 3;
+
+function pick(index: number): Point {
+  return table[index & 7];
+}
+
+function damagedOnTheWay(index: number): Point {
+  const p = new Point(index, 2);
+  if (index % 100 === 50) delete (p as any).y;
+  return p;
+}
+
+////= sum
+
+function holder(index: number): string {
+  const p = pick(index);
+  const q = damagedOnTheWay(index);
+  return p.x + "," + p.y + "," + sum(p) + " " + q.x + "," + q.y + "," + sum(q);
+}
+
+for (let round = 0; round < 300; round++) {
+  const line = holder(round);
+  if (round < 8 || round % 100 === 50) console.log(round + ": " + line);
+}
+//// damage-behind-a-call-state-travels-with-the-parameter/a-damaged-object-is-this-of-a-method.ts
+// A method reads the fields of `this`. The caller has read the object and calls the method directly. Between the two a call damages the object, and the method is called again from inside another method.
+class Account {
+  balance: number;
+  rate: number;
+  constructor(balance: number, rate: number) {
+    this.balance = balance;
+    this.rate = rate;
+  }
+  interest(): number {
+    return this.balance * this.rate;
+  }
+  report(): string {
+    return this.balance + "*" + this.rate + "=" + this.interest();
+  }
+}
+
+let mode = 0;
+function audit(account: Account): void {
+  if (mode === 1) delete (account as any).rate;
+  else if (mode === 2) Object.defineProperty(account, "balance", { get: () => 1000 });
+  else if (mode === 3) (account as any).rate = "2";
+  else if (mode === 4) (account as any).interest = () => -1;
+}
+
+function holder(account: Account): string {
+  const before = account.interest();
+  audit(account);
+  return before + " " + account.interest() + " " + account.report();
+}
+
+////= for-20	500	Account	3
+//// damage-behind-a-call-state-travels-with-the-parameter/a-frozen-object-is-passed-to-a-function-that-stores.ts
+// A typed function stores into the fields of its parameter and adds an optional one. Its caller has read the object. A call in between freezes, seals, or closes the object, or makes a field read-only.
+////= Card
+
+let mode = 0;
+function touch(card: Card): void {
+  if (mode === 1) Object.freeze(card);
+  else if (mode === 2) Object.seal(card);
+  else if (mode === 3) Object.preventExtensions(card);
+  else if (mode === 4) Object.defineProperty(card, "id", { writable: false });
+}
+
+function stamp(card: Card): string {
+  let text = "";
+  try {
+    card.id = -1;
+    text += "id ";
+  } catch (error) {
+    text += (error as Error).name + " ";
+  }
+  try {
+    card.note = "stamped";
+    text += "note";
+  } catch (error) {
+    text += (error as Error).name;
+  }
+  return text;
+}
+
+function holder(card: Card): string {
+  const before = card.id;
+  touch(card);
+  return before + " " + stamp(card) + " " + card.id + "," + card.note;
+}
+
+////= for-27	holder(new Card(round)
+//// damage-behind-a-call-state-travels-with-the-parameter/a-function-passes-its-parameter-to-itself-behind-the-damage.ts
+// A function reads its parameter, calls something that damages the object at one depth, and passes the parameter to itself. Every deeper call and every call on the way back reads the field in place.
+////= Point
+
+let strikeAt = -1;
+function touch(p: Point, depth: number): void {
+  if (depth === strikeAt) delete (p as any).x;
+}
+
+function descend(p: Point, depth: number): string {
+  const before = p.x;
+  touch(p, depth);
+  const behind = p.x;
+  const below = depth === 0 ? "." : descend(p, depth - 1);
+  return before + ">" + behind + " " + below + " " + p.x;
+}
+
+for (let round = 0; round < 300; round++) {
+  strikeAt = round % 100 === 99 ? 2 : -1;
+  const line = descend(new Point(round, 1), 4);
+  if (strikeAt >= 0 || round === 0) console.log(round + ": " + line);
+}
+//// damage-behind-a-call-state-travels-with-the-parameter/an-unfinished-object-is-passed-on-by-its-constructor.ts
+// A constructor passes `this` to a typed function before it has stored all the fields, and that function reads them in place and keeps the object for later.
+class Point {
+  x: number;
+  y: number;
+  constructor(x: number, y: number, early: boolean) {
+    this.x = x;
+    if (early) seen += look(this) + ";";
+    this.y = y;
+    seen += look(this) + ";";
+  }
+}
+
+let seen = "";
+let kept: Point | null = null;
+function look(p: Point): string {
+  kept = p;
+  return p.x + "," + p.y + "," + (p.x + p.y);
+}
+
+for (let round = 0; round < 300; round++) {
+  seen = "";
+  const p = new Point(round, 1, round % 100 === 99);
+  const line = seen + " " + p.x + "," + p.y + " " + (kept === p) + " " + look(kept!);
+  if (round % 100 === 99 || round === 0) console.log(round + ": " + line);
+}
+//// damage-behind-a-call-state-travels-with-the-parameter/the-second-argument-damages-the-first.ts
+// The arguments of a call are evaluated from left to right. The first is an object that the caller has read. The evaluation of the second damages it, and then the typed body of the callee is entered.
+////= Point
+
+let mode = 0;
+function touch(p: Point): number {
+  if (mode === 1) delete (p as any).x;
+  else if (mode === 2) Object.defineProperty(p, "x", { get: () => -7 });
+  else if (mode === 3) (p as any).x = "text";
+  return mode;
+}
+
+function scaled(p: Point, by: number): string {
+  return p.x + "," + p.y + "," + by;
+}
+
+function holder(p: Point): string {
+  const before = p.x + p.y;
+  return before + " " + scaled(p, touch(p)) + " " + p.x;
+}
+
+////= for-20	400	Point	1

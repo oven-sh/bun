@@ -1,0 +1,174 @@
+No thread-locals for the address space that is kept aside.
+
+The request that last found no memory, and the two marks of a thread that is
+taking a page or looking again in what the embedder has let go of, were
+thread-locals. They are read and written only where a request has found no
+memory or a fresh page is made, but the static block for thread-locals is paid
+for by every thread of every process.
+
+They move into mi_tld_t, the record that mimalloc allocates for each thread.
+mi_thread_embedder_word() hands the embedder a word there for its own state of
+the same kind.
+
+--- a/include/mimalloc.h
++++ b/include/mimalloc.h
+@@ -219,6 +219,9 @@
+   void (*end_request_that_cannot_fail)(void);
+ } mi_address_space_keeper_t;
+ mi_decl_export void mi_register_address_space_keeper(const mi_address_space_keeper_t* keeper) mi_attr_noexcept;
++// A word of the embedder's own in the record that mimalloc keeps for this thread, zero at first. NULL on a thread that has not allocated yet.
++#define MI_HAS_THREAD_EMBEDDER_WORD  1
++mi_decl_export size_t* mi_thread_embedder_word(void) mi_attr_noexcept;
+ 
+ // What threads free stays in the arenas and does not come back as address space of the system. An embedder that finds none
+ // there keeps a piece of the arenas aside instead. A piece belongs to no thread and nothing is written to it.
+--- a/include/mimalloc/internal.h
++++ b/include/mimalloc/internal.h
+@@ -310,6 +310,7 @@
+ void*         _mi_malloc_generic(mi_theap_t* theap, size_t size, size_t zero_huge_alignment, mi_page_t** ppage)  mi_attr_noexcept mi_attr_malloc;
+ void          _mi_remember_failed_request(void* block, size_t size, size_t alignment);
+ bool          _mi_is_looking_in_room_kept_aside(void);
++mi_tld_t*     _mi_tld_of_this_thread(void);                        // NULL on a thread that has not allocated yet
+ bool          _mi_is_allocating_page_of_large_blocks(void);        // "arena.c"
+ const mi_address_space_keeper_t* _mi_address_space_keeper(void);   // "os.c"
+ #define MI_MALLOC_GENERIC_ZERO        ((size_t)1)   // bits in `zero_huge_alignment` below the huge alignment (a multiple of MI_SLICE_SIZE)
+--- a/include/mimalloc/types.h
++++ b/include/mimalloc/types.h
+@@ -878,6 +878,14 @@
+   size_t                tls_idx_kept;         // index+1 of the last freed thread-local key (or 0), reused by the next `_mi_thread_local_create`
+   size_t                tls_version_next;     // batch of key versions reserved by this thread
+   size_t                tls_version_count;
++
++  // Where an embedder keeps address space aside. Here and not in thread-locals: every thread of every process pays for those.
++  void*                 failed_request_block;       // the request of this thread that last found no memory
++  size_t                failed_request_size;
++  size_t                failed_request_alignment;
++  bool                  is_allocating_page_of_large_blocks;
++  bool                  is_looking_again;           // in what the embedder has let go of
++  size_t                embedder_word;              // `mi_thread_embedder_word`
+ };
+ 
+ 
+--- a/src/arena.c
++++ b/src/arena.c
+@@ -1005,11 +1005,10 @@
+   #endif
+   return NULL;
+ }
+-
+-static mi_decl_thread bool is_allocating_page_of_large_blocks;
+ 
+ bool _mi_is_allocating_page_of_large_blocks(void) {
+-  return is_allocating_page_of_large_blocks;
++  mi_tld_t* const tld = _mi_tld_of_this_thread();
++  return (tld != NULL && tld->is_allocating_page_of_large_blocks);
+ }
+ 
+ #define MI_PIECES_ASIDE_MAX  (64)
+@@ -1021,10 +1020,11 @@
+   mi_heap_t* const heap = mi_heap_main();
+   mi_memid_t memid = _mi_memid_none();
+   // the keeper may call this while it is asked about a page: it is not asked about the piece
+-  const bool was_allocating_page_of_large_blocks = is_allocating_page_of_large_blocks;
+-  is_allocating_page_of_large_blocks = false;
++  mi_tld_t* const tld = _mi_tld_of_this_thread();
++  const bool was_allocating_page_of_large_blocks = (tld != NULL && tld->is_allocating_page_of_large_blocks);
++  if (tld != NULL) { tld->is_allocating_page_of_large_blocks = false; }
+   void* const start = _mi_arenas_alloc(heap, size, false /* commit */, false /* allow large */, NULL, 0 /* thread seq */, -1 /* numa node */, &memid);
+-  is_allocating_page_of_large_blocks = was_allocating_page_of_large_blocks;
++  if (tld != NULL) { tld->is_allocating_page_of_large_blocks = was_allocating_page_of_large_blocks; }
+   if (start == NULL) return false;
+   if (memid.initially_committed) { _mi_os_reset(heap->subproc, start, size); }  // what an earlier owner wrote need not stay resident
+   pieces_aside[pieces_aside_count].start = start;
+@@ -1047,7 +1047,7 @@
+   // What a piece has left in an arena counts as taken, as what one has left to the system does.
+   // Asked here, where no lock is held: the keeper may take a piece out of the arenas before it answers.
+   const mi_address_space_keeper_t* const keeper = _mi_address_space_keeper();
+-  if mi_unlikely(keeper != NULL && is_allocating_page_of_large_blocks && _mi_theap_heap(theap)->exclusive_arena == NULL && !keeper->may_take(mi_size_of_slices(slice_count))) return NULL;
++  if mi_unlikely(keeper != NULL && theap->tld->is_allocating_page_of_large_blocks && _mi_theap_heap(theap)->exclusive_arena == NULL && !keeper->may_take(mi_size_of_slices(slice_count))) return NULL;
+ 
+   const bool os_align           = (block_alignment > MI_PAGE_MAX_OVERALLOC_ALIGN);
+   const bool singleton          = (os_align || block_size > MI_LARGE_MAX_OBJ_SIZE);
+@@ -1299,7 +1299,7 @@
+ 
+ mi_page_t* _mi_arenas_page_alloc(mi_theap_t* theap, size_t block_size, size_t block_alignment) {
+   mi_page_t* page;
+-  is_allocating_page_of_large_blocks = (block_size > MI_SMALL_MAX_OBJ_SIZE);
++  theap->tld->is_allocating_page_of_large_blocks = (block_size > MI_SMALL_MAX_OBJ_SIZE);
+   // semi static assert: ensure that all non-singleton block size bins are covered.
+   mi_assert(_mi_bin(MI_LARGE_MAX_OBJ_SIZE)  < MI_ARENA_BIN_COUNT);
+   if mi_unlikely(block_alignment > MI_PAGE_MAX_OVERALLOC_ALIGN) {
+@@ -1324,7 +1324,7 @@
+   else {
+     page = mi_arenas_page_singleton_alloc(theap, block_size, block_alignment);
+   }
+-  is_allocating_page_of_large_blocks = false;
++  theap->tld->is_allocating_page_of_large_blocks = false;
+   if mi_unlikely(page == NULL) {
+     return NULL;
+   }
+--- a/src/page.c
++++ b/src/page.c
+@@ -2789,39 +2789,51 @@
+   Generic allocation
+ ----------------------------------------------------------- */
+ 
+-static mi_decl_thread mi_failed_request_t failed_request;
++mi_tld_t* _mi_tld_of_this_thread(void) {
++  mi_theap_t* const theap = _mi_theap_default();
++  return (mi_theap_is_initialized(theap) ? theap->tld : NULL);
++}
++
++size_t* mi_thread_embedder_word(void) mi_attr_noexcept {
++  mi_tld_t* const tld = _mi_tld_of_this_thread();
++  return (tld == NULL ? NULL : &tld->embedder_word);
++}
+ 
+ // An outer request (aligned, realloc) is remembered after the plain request that it made.
+ mi_decl_cold void _mi_remember_failed_request(void* block, size_t size, size_t alignment) {
+-  failed_request.block = block;
+-  failed_request.size = size;
+-  failed_request.alignment = alignment;
++  mi_tld_t* const tld = _mi_tld_of_this_thread();
++  if (tld == NULL) return;
++  tld->failed_request_block = block;
++  tld->failed_request_size = size;
++  tld->failed_request_alignment = alignment;
+ }
+ 
+ bool mi_last_failed_request(mi_failed_request_t* request) mi_attr_noexcept {
+-  *request = failed_request;
++  mi_tld_t* const tld = _mi_tld_of_this_thread();
++  request->block = (tld == NULL ? NULL : tld->failed_request_block);
++  request->size = (tld == NULL ? 0 : tld->failed_request_size);
++  request->alignment = (tld == NULL ? 0 : tld->failed_request_alignment);
+   return (request->size != 0);
+ }
+ 
+ static mi_decl_noinline void* mi_malloc_generic_fallback(mi_theap_t* theap, size_t size, size_t zero_huge_alignment, mi_page_t** ppage);
+ 
+-static mi_decl_thread bool is_looking_again;
+-
+ bool _mi_is_looking_in_room_kept_aside(void) {
+-  return is_looking_again;
++  mi_tld_t* const tld = _mi_tld_of_this_thread();
++  return (tld != NULL && tld->is_looking_again);
+ }
+ 
+ // A request that has found no memory looks again for as long as the embedder makes room.
+ static mi_decl_cold void* mi_malloc_generic_in_room_kept_aside(mi_theap_t* theap, size_t size, size_t zero_huge_alignment, mi_page_t** ppage)
+ {
+   const mi_address_space_keeper_t* const keeper = _mi_address_space_keeper();
+-  if (keeper == NULL || is_looking_again || _mi_theap_heap(theap)->exclusive_arena != NULL) return NULL;
++  if (keeper == NULL || theap->tld->is_looking_again || _mi_theap_heap(theap)->exclusive_arena != NULL) return NULL;
+   void* p = NULL;
+-  is_looking_again = true;
++  theap->tld->is_looking_again = true;
+   for (size_t attempt = 0; p == NULL && keeper->make_room(size, attempt); attempt++) {
+     p = mi_malloc_generic_fallback(theap, size, zero_huge_alignment, ppage);
+   }
+-  is_looking_again = false;
++  theap->tld->is_looking_again = false;
+   return p;
+ }
+ 

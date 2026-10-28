@@ -8,7 +8,7 @@
 //!
 //! Corresponds to `src/ReactiveScopes/PruneUnusedLabels.ts`.
 
-use std::collections::HashSet;
+use crate::collections::FxHashSet as HashSet;
 
 use crate::hir::{
     BlockId, ReactiveFunction, ReactiveStatement, ReactiveTerminal, ReactiveTerminalStatement,
@@ -25,7 +25,7 @@ pub(crate) fn prune_unused_labels(
     env: &Environment,
 ) -> Result<(), crate::diagnostics::CompilerError> {
     let mut transform = Transform { env };
-    let mut labels: HashSet<BlockId> = HashSet::new();
+    let mut labels: HashSet<BlockId> = HashSet::default();
     transform_reactive_function(func, &mut transform, &mut labels)
 }
 

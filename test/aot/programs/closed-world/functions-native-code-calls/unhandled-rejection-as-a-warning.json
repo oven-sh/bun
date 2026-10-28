@@ -1,0 +1,1 @@
+{"env": {"BUN_OPTIONS": "--unhandled-rejections=warn"}, "skipInShell": "it uses process, which the jsc shell does not have"}

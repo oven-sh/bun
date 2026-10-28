@@ -28,6 +28,7 @@ import {
 } from "node:fs";
 import { builtinModules } from "node:module";
 import { isAbsolute, join, sep } from "path";
+import { isHardened } from "../aot/hardened";
 
 describe("Bun.build compile", () => {
   test("compile with current platform target string", async () => {
@@ -69,7 +70,7 @@ describe("Bun.build compile", () => {
     async () => {
       const body = Array.from(
         { length: 24 },
-        (_, j) => `s = (s * ${j + 3} + a) ^ (b + ${j}); if (s & ${1 << j % 20}) s = s - ${j} | 0; o.p${j} = s;`,
+        (_, j) => `s = (s * ${j + 3} + a) ^ (b + ${j}); if (s & ${1 << (j % 20)}) s = s - ${j} | 0; o.p${j} = s;`,
       ).join(" ");
       const functions = Array.from(
         { length: 4000 },
@@ -2470,8 +2471,8 @@ if (isLinux) {
       // #29963: the writable PT_LOAD must have been grown to cover .bun,
       // rather than a new late PT_LOAD being appended.
       expect(writableLoadCoversBun).toBe(true);
-      // A stock bun has 3 PT_LOAD segments; the fix must not add a 4th.
-      expect(loadCount).toBe(3);
+      // A stock bun has 3 PT_LOAD segments (4 when built with --hardened=on); the fix must not add one.
+      expect(loadCount).toBe(isHardened ? 4 : 3);
       // JSC bytecode cache requires 128-byte-aligned deserialization input.
       // StandaloneModuleGraph writes bytecode at payload offset 120 assuming
       // the `[u64 size]` header sits at a 128-byte-aligned vaddr (so bytecode

@@ -1,0 +1,13 @@
+read: number 0
+raised by the first block: [number 1, number 1]
+++ in the second block: number 1
+after it: [number 2, number 2]
+a store in the second block: undefined undefined
+after it: [number 10, number 10]
++= in the second block: number 15
+after it: [number 15, number 15]
+a store to the text: undefined undefined
+after it: string "renamed"
+taken apart into both: undefined undefined
+after it: [number 20, string "apart"]
+did a global appear: [boolean false, boolean false]

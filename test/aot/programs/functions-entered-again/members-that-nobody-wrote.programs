@@ -1,0 +1,419 @@
+//// members-that-nobody-wrote-are-read-through-descriptors.js
+// What a descriptor of a prototype object holds without anybody having written it: the methods of a class, its accessors, and `constructor`.
+class Source { greet() { return "hello " + this.name; } get loud() { return this.name.toUpperCase(); } static make() { return new Source(); } }
+class Target { constructor(name) { this.name = name; } }
+for (const key of ["greet", "loud"]) Object.defineProperty(Target.prototype, key, Object.getOwnPropertyDescriptor(Source.prototype, key));
+const target = new Target("ada");
+console.log(target.greet(), target.loud);
+const method = Object.getOwnPropertyDescriptor(Source.prototype, "greet").value;
+console.log(method.call({ name: "bob" }), typeof Object.getOwnPropertyDescriptor(Source, "make").value);
+const runs = [];
+function Counted() { let mine = runs.length; runs.push(() => mine); if (runs.length < 3) new (Reflect.getOwnPropertyDescriptor(Counted.prototype, "constructor").value)(); mine += 10; }
+new Counted();
+console.log(runs.map(read => read()).join());
+function named() {}
+console.log(Object.getOwnPropertyDescriptor(named, "name").value, Object.getOwnPropertyDescriptor(named, "length").value, Object.getOwnPropertyDescriptor(named, "prototype").value === named.prototype);
+//// through-apply.js
+// One statement of the module enters a function, which is entered again by another way (apply): each run has its own captured variable.
+const log = [], readers = [];
+function once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) once.apply(undefined, []); mine += 10; log.push(mine);  }
+once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-arguments-callee.cjs
+// One statement of the module enters a function, which is entered again by another way (arguments callee): each run has its own captured variable.
+const log = [], readers = [];
+function once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) arguments.callee(); mine += 10; log.push(mine);  }
+once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-async.js
+// One statement of the module enters a function, which is entered again by another way (async): each run has its own captured variable.
+const log = [], readers = [];
+async function once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) await once(); mine += 10; log.push(mine); }
+await once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-bind-call.js
+// One statement of the module enters a function, which is entered again by another way (bind call): each run has its own captured variable.
+const log = [], readers = [];
+function once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) once.bind(null)(); mine += 10; log.push(mine);  }
+once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-bind-construct.js
+// One statement of the module enters a function, which is entered again by another way (bind construct): each run has its own captured variable.
+const log = [], readers = [];
+function Once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) new (Once.bind(null))(); mine += 10; log.push(mine);  }
+new Once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-call-call.js
+// One statement of the module enters a function, which is entered again by another way (call call): each run has its own captured variable.
+const log = [], readers = [];
+function once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) Function.prototype.call.call(once); mine += 10; log.push(mine);  }
+once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-callback.js
+// One statement of the module enters a function, which is entered again by another way (callback): each run has its own captured variable.
+const log = [], readers = [];
+function once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) [0].forEach(once); mine += 10; log.push(mine);  }
+once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-class-prototype-constructor.js
+// One statement of the module enters a function, which is entered again by another way (class prototype constructor): each run has its own captured variable.
+const log = [], readers = [];
+class Once { constructor() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) new Once.prototype.constructor(); mine += 10; log.push(mine); } }
+new Once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-class-this-constructor.js
+// One statement of the module enters a function, which is entered again by another way (class this constructor): each run has its own captured variable.
+const log = [], readers = [];
+class Once { constructor() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) new this.constructor(); mine += 10; log.push(mine); } }
+new Once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-comma-call.js
+// One statement of the module enters a function, which is entered again by another way (comma call): each run has its own captured variable.
+const log = [], readers = [];
+function once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) (0, once)(); mine += 10; log.push(mine);  }
+once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-conditional-call.js
+// One statement of the module enters a function, which is entered again by another way (conditional call): each run has its own captured variable.
+const log = [], readers = [];
+function once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) (readers.length ? once : null)(); mine += 10; log.push(mine);  }
+once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-constructor-under-a-computed-name.js
+// One statement of the module enters a function, which is entered again by another way (constructor under a computed name): each run has its own captured variable.
+const log = [], readers = [];
+const name = ["construct", "or"].join("");
+function Once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) new (Once.prototype[name])(); mine += 10; log.push(mine);  }
+new Once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-destructured.js
+// One statement of the module enters a function, which is entered again by another way (destructured): each run has its own captured variable.
+const log = [], readers = [];
+function Once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) (() => { const { prototype: { constructor } } = Once; new constructor(); })(); mine += 10; log.push(mine);  }
+new Once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-event-listener.js
+// One statement of the module enters a function, which is entered again by another way (event listener): each run has its own captured variable.
+const log = [], readers = [];
+import { EventEmitter } from "node:events";
+const emitter = new EventEmitter();
+function once() { let mine = readers.length; readers.push(() => mine); mine += 10; log.push(mine); }
+emitter.on("e", once); once(); emitter.emit("e"); emitter.emit("e");
+console.log(log.join(), readers.map(read => read()).join());
+//// through-event-target.js
+// One statement of the module enters a function, which is entered again by another way (event target): each run has its own captured variable.
+const log = [], readers = [];
+const target = new EventTarget();
+function once() { let mine = readers.length; readers.push(() => mine); mine += 10; log.push(mine); }
+target.addEventListener("e", once); once(); target.dispatchEvent(new Event("e")); target.dispatchEvent(new Event("e"));
+console.log(log.join(), readers.map(read => read()).join());
+//// through-field-initializer.js
+// One statement of the module enters a function, which is entered again by another way (field initializer): each run has its own captured variable.
+const log = [], readers = [];
+class Holder { field = (() => { let mine = readers.length; readers.push(() => mine); mine += 10; log.push(mine); return 0; })(); }
+new Holder(); new Holder(); new Holder();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-finalizer-of-using.js
+// One statement of the module enters a function, which is entered again by another way (finalizer of using): each run has its own captured variable.
+const log = [], readers = [];
+const holder = { [Symbol.dispose]() { let mine = readers.length; readers.push(() => mine); mine += 10; log.push(mine); } };
+for (let i = 0; i < 3; i++) { using held = holder; }
+console.log(log.join(), readers.map(read => read()).join());
+//// through-function-constructor-property.js
+// One statement of the module enters a function, which is entered again by another way (function constructor property): each run has its own captured variable.
+const log = [], readers = [];
+function once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) once.self(); mine += 10; log.push(mine);  }
+once.self = once; once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-function-expression-this-constructor.js
+// One statement of the module enters a function, which is entered again by another way (function expression this constructor): each run has its own captured variable.
+const log = [], readers = [];
+new (function () { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) new this.constructor(); mine += 10; log.push(mine); })();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-generator.js
+// One statement of the module enters a function, which is entered again by another way (generator): each run has its own captured variable.
+const log = [], readers = [];
+function* once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) once().next(); mine += 10; log.push(mine); }
+once().next();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-generator-resumed-through-prototype.js
+// One statement of the module enters a function, which is entered again by another way (generator resumed through prototype): each run has its own captured variable.
+const log = [], readers = [];
+function* once() { let mine = readers.length; readers.push(() => mine); mine += 10; log.push(mine); }
+const next = Object.getPrototypeOf(once.prototype).next;
+next.call(once()); next.call(once()); next.call(once());
+console.log(log.join(), readers.map(read => read()).join());
+//// through-get-prototype-of-this.js
+// One statement of the module enters a function, which is entered again by another way (get prototype of this): each run has its own captured variable.
+const log = [], readers = [];
+function Once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) new (Object.getPrototypeOf(this).constructor)(); mine += 10; log.push(mine);  }
+new Once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-has-instance.js
+// One statement of the module enters a function, which is entered again by another way (has instance): each run has its own captured variable.
+const log = [], readers = [];
+const holder = { [Symbol.hasInstance]() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) ({}) instanceof holder; mine += 10; log.push(mine); return true; } };
+({}) instanceof holder;
+console.log(log.join(), readers.map(read => read()).join());
+//// through-implicit-constructor.js
+// One statement of the module enters a function, which is entered again by another way (implicit constructor): each run has its own captured variable.
+const log = [], readers = [];
+class Base { constructor() { let mine = readers.length; readers.push(() => mine); mine += 10; log.push(mine); } }
+class A extends Base {}
+class B extends A {}
+new B(); new A(); new Base();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-in-a-list.js
+// One statement of the module enters a function, which is entered again by another way (in a list): each run has its own captured variable.
+const log = [], readers = [];
+const list = [];
+function once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) list[0](); mine += 10; log.push(mine);  }
+list.push(once); once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-in-a-map.js
+// One statement of the module enters a function, which is entered again by another way (in a map): each run has its own captured variable.
+const log = [], readers = [];
+const map = new Map();
+function once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) map.get("k")(); mine += 10; log.push(mine);  }
+map.set("k", once); once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-in-a-property.js
+// One statement of the module enters a function, which is entered again by another way (in a property): each run has its own captured variable.
+const log = [], readers = [];
+const holder = {};
+function once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) holder.f(); mine += 10; log.push(mine);  }
+holder.f = once; once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-instance-made-by-object-create.js
+// One statement of the module enters a function, which is entered again by another way (instance made by object create): each run has its own captured variable.
+const log = [], readers = [];
+function Once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) new (Object.create(Once.prototype).constructor)(); mine += 10; log.push(mine);  }
+new Once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-iterator.js
+// One statement of the module enters a function, which is entered again by another way (iterator): each run has its own captured variable.
+const log = [], readers = [];
+const holder = { [Symbol.iterator]() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) [...holder]; mine += 10; log.push(mine); return [][Symbol.iterator](); } };
+[...holder];
+console.log(log.join(), readers.map(read => read()).join());
+//// through-method-through-prototype.js
+// One statement of the module enters a function, which is entered again by another way (method through prototype): each run has its own captured variable.
+const log = [], readers = [];
+class Holder { once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) Holder.prototype.once.call(this); mine += 10; log.push(mine); } }
+new Holder().once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-microtask.js
+// One statement of the module enters a function, which is entered again by another way (microtask): each run has its own captured variable.
+const log = [], readers = [];
+function once() { let mine = readers.length; readers.push(() => mine); mine += 10; log.push(mine); }
+once(); queueMicrotask(once); Promise.resolve().then(once);
+await 0; await 0; await 0;
+console.log(log.join(), readers.map(read => read()).join());
+//// through-named-function-expression.js
+// One statement of the module enters a function, which is entered again by another way (named function expression): each run has its own captured variable.
+const log = [], readers = [];
+(function once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) once(); mine += 10; log.push(mine); })();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-new-target.js
+// One statement of the module enters a function, which is entered again by another way (new target): each run has its own captured variable.
+const log = [], readers = [];
+function Once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) new new.target(); mine += 10; log.push(mine);  }
+new Once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-on-global-this.js
+// One statement of the module enters a function, which is entered again by another way (on global this): each run has its own captured variable.
+const log = [], readers = [];
+function once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) globalThis.again(); mine += 10; log.push(mine);  }
+globalThis.again = once; once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-optional-call.js
+// One statement of the module enters a function, which is entered again by another way (optional call): each run has its own captured variable.
+const log = [], readers = [];
+function once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) once?.(); mine += 10; log.push(mine);  }
+once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-own-property-descriptor.js
+// One statement of the module enters a function, which is entered again by another way (own property descriptor): each run has its own captured variable.
+const log = [], readers = [];
+function Once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) new (Object.getOwnPropertyDescriptor(Once.prototype, "constructor").value)(); mine += 10; log.push(mine);  }
+new Once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-proto-of-this.js
+// One statement of the module enters a function, which is entered again by another way (proto of this): each run has its own captured variable.
+const log = [], readers = [];
+function Once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) new (this.__proto__.constructor)(); mine += 10; log.push(mine);  }
+new Once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-prototype-under-a-computed-name.js
+// One statement of the module enters a function, which is entered again by another way (prototype under a computed name): each run has its own captured variable.
+const log = [], readers = [];
+const name = ["proto", "type"].join("");
+function Once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) new (Once[name].constructor)(); mine += 10; log.push(mine);  }
+new Once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-proxy-apply.js
+// One statement of the module enters a function, which is entered again by another way (proxy apply): each run has its own captured variable.
+const log = [], readers = [];
+function once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) new Proxy(once, {})(); mine += 10; log.push(mine);  }
+once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-proxy-construct.js
+// One statement of the module enters a function, which is entered again by another way (proxy construct): each run has its own captured variable.
+const log = [], readers = [];
+function Once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) new (new Proxy(Once, {}))(); mine += 10; log.push(mine);  }
+new Once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-proxy-trap.js
+// One statement of the module enters a function, which is entered again by another way (proxy trap): each run has its own captured variable.
+const log = [], readers = [];
+const handler = { get(target, key) { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) proxy.again; mine += 10; log.push(mine); return 0; } };
+const proxy = new Proxy({}, handler);
+proxy.first;
+console.log(log.join(), readers.map(read => read()).join());
+//// through-reflect-construct.js
+// One statement of the module enters a function, which is entered again by another way (reflect construct): each run has its own captured variable.
+const log = [], readers = [];
+function Once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) Reflect.construct(Once, []); mine += 10; log.push(mine);  }
+new Once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-reflect-construct-new-target.js
+// One statement of the module enters a function, which is entered again by another way (reflect construct new target): each run has its own captured variable.
+const log = [], readers = [];
+function Once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) Reflect.construct(Object, [], Once), Reflect.construct(Once, [], Object); mine += 10; log.push(mine);  }
+new Once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-reflect-get.js
+// One statement of the module enters a function, which is entered again by another way (reflect get): each run has its own captured variable.
+const log = [], readers = [];
+function Once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) new (Reflect.get(Reflect.get(Once, "prototype"), "constructor"))(); mine += 10; log.push(mine);  }
+new Once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-replace.js
+// One statement of the module enters a function, which is entered again by another way (replace): each run has its own captured variable.
+const log = [], readers = [];
+function once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) "a".replace("a", once); mine += 10; log.push(mine); return ""; }
+once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-returned-by-a-function.js
+// One statement of the module enters a function, which is entered again by another way (returned by a function): each run has its own captured variable.
+const log = [], readers = [];
+function give() { return once; }
+function once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) give()(); mine += 10; log.push(mine);  }
+once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-setter.js
+// One statement of the module enters a function, which is entered again by another way (setter): each run has its own captured variable.
+const log = [], readers = [];
+const holder = { set once(value) { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) holder.once = 1; mine += 10; log.push(mine); } };
+holder.once = 0;
+console.log(log.join(), readers.map(read => read()).join());
+//// through-sort.js
+// One statement of the module enters a function, which is entered again by another way (sort): each run has its own captured variable.
+const log = [], readers = [];
+function once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) [2, 1].sort(once); mine += 10; log.push(mine); return 0; }
+once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-species.js
+// One statement of the module enters a function, which is entered again by another way (species): each run has its own captured variable.
+const log = [], readers = [];
+function Made(length) { let mine = readers.length; readers.push(() => mine); mine += 10; log.push(mine); return []; }
+class List extends Array { static get [Symbol.species]() { return Made; } }
+const list = new List();
+list.map(x => x); list.filter(x => x); list.slice();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-spread-call.js
+// One statement of the module enters a function, which is entered again by another way (spread call): each run has its own captured variable.
+const log = [], readers = [];
+function once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) (f => f())(...[once]); mine += 10; log.push(mine);  }
+once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-static-through-this.js
+// One statement of the module enters a function, which is entered again by another way (static through this): each run has its own captured variable.
+const log = [], readers = [];
+class Holder { static once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) this.once(); mine += 10; log.push(mine); } }
+Holder.once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-structured-args.js
+// One statement of the module enters a function, which is entered again by another way (structured args): each run has its own captured variable.
+const log = [], readers = [];
+function once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) ((...all) => all[0]())(once); mine += 10; log.push(mine);  }
+once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-super-of-one-class-twice.js
+// One statement of the module enters a function, which is entered again by another way (super of one class twice): each run has its own captured variable.
+const log = [], readers = [];
+function Base() { let mine = readers.length; readers.push(() => mine); mine += 10; log.push(mine); }
+class A extends Base {}
+for (let i = 0; i < 3; i++) new A();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-super-of-two-classes.js
+// One statement of the module enters a function, which is entered again by another way (super of two classes): each run has its own captured variable.
+const log = [], readers = [];
+function Base() { let mine = readers.length; readers.push(() => mine); mine += 10; log.push(mine); }
+class A extends Base {}
+class B extends Base {}
+new A(); new B(); new Base();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-thenable.js
+// One statement of the module enters a function, which is entered again by another way (thenable): each run has its own captured variable.
+const log = [], readers = [];
+const thenable = { then(resolve) { let mine = readers.length; readers.push(() => mine); mine += 10; log.push(mine); resolve(0); } };
+await thenable; await thenable; await Promise.resolve(thenable);
+console.log(log.join(), readers.map(read => read()).join());
+//// through-this-constructor.js
+// One statement of the module enters a function, which is entered again by another way (this constructor): each run has its own captured variable.
+const log = [], readers = [];
+function Once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) new this.constructor(); mine += 10; log.push(mine);  }
+new Once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-through-another-function.js
+// One statement of the module enters a function, which is entered again by another way (through another function): each run has its own captured variable.
+const log = [], readers = [];
+function other() { once(); }
+function once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) other(); mine += 10; log.push(mine);  }
+once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-timer.js
+// One statement of the module enters a function, which is entered again by another way (timer): each run has its own captured variable.
+const log = [], readers = [];
+function once() { let mine = readers.length; readers.push(() => mine); mine += 10; log.push(mine); }
+once(); setTimeout(once, 0); setTimeout(once, 0);
+await new Promise(resolve => setTimeout(resolve, 5));
+console.log(log.join(), readers.map(read => read()).join());
+//// through-to-json.js
+// One statement of the module enters a function, which is entered again by another way (to json): each run has its own captured variable.
+const log = [], readers = [];
+const holder = { toJSON() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) JSON.stringify(holder); mine += 10; log.push(mine); return 0; } };
+JSON.stringify(holder);
+console.log(log.join(), readers.map(read => read()).join());
+//// through-to-primitive.js
+// One statement of the module enters a function, which is entered again by another way (to primitive): each run has its own captured variable.
+const log = [], readers = [];
+const holder = { [Symbol.toPrimitive]() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) holder + 1; mine += 10; log.push(mine); return 0; } };
+holder + 1;
+console.log(log.join(), readers.map(read => read()).join());
+//// through-to-string.js
+// One statement of the module enters a function, which is entered again by another way (to string): each run has its own captured variable.
+const log = [], readers = [];
+const holder = { toString() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) `${holder}`; mine += 10; log.push(mine); return ""; } };
+`${holder}`;
+console.log(log.join(), readers.map(read => read()).join());
+//// through-value-of.js
+// One statement of the module enters a function, which is entered again by another way (value of): each run has its own captured variable.
+const log = [], readers = [];
+const holder = { valueOf() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) +holder; mine += 10; log.push(mine); return 0; } };
++holder;
+console.log(log.join(), readers.map(read => read()).join());
+//// through-values-of-descriptors.js
+// One statement of the module enters a function, which is entered again by another way (values of descriptors): each run has its own captured variable.
+const log = [], readers = [];
+function Once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) new (Object.getOwnPropertyDescriptors(Once.prototype).constructor.value)(); mine += 10; log.push(mine);  }
+new Once();
+console.log(log.join(), readers.map(read => read()).join());
+//// through-weak-ref.js
+// One statement of the module enters a function, which is entered again by another way (weak ref): each run has its own captured variable.
+const log = [], readers = [];
+let ref;
+function once() { let mine = readers.length; readers.push(() => mine); if (readers.length < 3) ref.deref()(); mine += 10; log.push(mine);  }
+ref = new WeakRef(once); once();
+console.log(log.join(), readers.map(read => read()).join());

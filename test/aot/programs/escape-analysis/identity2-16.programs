@@ -1,0 +1,2950 @@
+//// identity2-16.ts
+// Generated program: object and closure identity stays observable when allocations are removed (second series, part 16).
+declare const console: any;
+const out: string[] = [];
+function say(name: string, value: unknown): void { out.push(name + "=" + String(value)); }
+
+interface R961 { a961: number; m961: () => number }
+function make961(): R961 { return { a961: 1, m961: () => 1 }; }
+function get961(): unknown { const t = make961(); const u = { t, n: 1 }; const v = { u }; return v.u.t.m961; }
+function c961(): void { say("record/structured-holder/includes", [(get961())].includes((get961()))); }
+
+interface R962 { a962: number; m962: () => number }
+function make962(): R962 { return { a962: 1, m962: () => 1 }; }
+function get962(): unknown { const t = make962(); const u = { t, n: 1 }; const v = { u }; return v.u.t.m962; }
+function c962(): void { say("record/structured-holder/index-of", [(get962())].indexOf((get962()))); }
+
+interface R963 { a963: number; m963: () => number }
+function make963(): R963 { return { a963: 1, m963: () => 1 }; }
+function get963(): unknown { const t = make963(); const u = { t, n: 1 }; const v = { u }; return v.u.t.m963; }
+const ws963 = new WeakSet<object>();
+function c963(): void { say("record/structured-holder/weak-set", (ws963.add((get963()) as object), ws963.has((get963()) as object))); }
+
+interface R964 { a964: number; m964: () => number }
+function make964(): R964 { return { a964: 1, m964: () => 1 }; }
+function get964(): unknown { const t = make964(); const u = { t, n: 1 }; const v = { u }; return v.u.t.m964; }
+const wm964 = new WeakMap<object, number>();
+function c964(): void { say("record/structured-holder/weak-map", (wm964.set((get964()) as object, 1), wm964.has((get964()) as object))); }
+
+interface R965 { a965: number; m965: () => number }
+function make965(): R965 { return { a965: 1, m965: () => 1 }; }
+function get965(): unknown { const t = make965(); const u = { t, n: 1 }; const v = { u }; return v.u.t.m965; }
+function c965(): void { say("record/structured-holder/written", ((((get965())) as any).tag = 1, (((get965())) as any).tag)); }
+
+interface R966 { a966: number; m966: () => number }
+function make966(): R966 { return { a966: 1, m966: () => 1 }; }
+function get966(): unknown { const t = make966(); const u = { t, n: 1 }; const v = { u }; return v.u.t.m966; }
+function c966(): void { say("record/structured-holder/defined", (Object.defineProperty((get966()) as object, "t", { value: 1 }), "t" in ((get966()) as object))); }
+
+interface R967 { a967: number; m967: () => number }
+function make967(): R967 { return { a967: 1, m967: () => 1 }; }
+function get967(): unknown { const t = make967(); const u = { t, n: 1 }; const v = { u }; return v.u.t.m967; }
+function c967(): void { say("record/structured-holder/frozen", (Object.freeze((get967())), Object.isFrozen((get967())))); }
+
+interface R968 { a968: number; m968: () => number }
+function make968(): R968 { return { a968: 1, m968: () => 1 }; }
+function get968(): unknown { const t = make968(); const u = { t, n: 1 }; const v = { u }; return v.u.t.m968; }
+function c968(): void { say("record/structured-holder/prototype-set", (Object.setPrototypeOf((get968()) as object, null), Object.getPrototypeOf((get968())) === null)); }
+
+interface R969 { a969: number; m969: () => number }
+function make969(): R969 { return { a969: 1, m969: () => 1 }; }
+function get969(): unknown { const t = make969(); const u = { t, n: 1 }; const v = { u }; return v.u.t.m969; }
+function c969(): void { say("record/structured-holder/deleted", (delete (((get969())) as any).length, Object.hasOwn((get969()) as object, "length"))); }
+
+interface R970 { a970: number; m970: () => number }
+function make970(): R970 { return { a970: 1, m970: () => 1 }; }
+function get970(): unknown { const t = make970(); const u = { t, n: 1 }; const v = { u }; return v.u.t.m970; }
+function same970(a: unknown, b: unknown): boolean { return a === b; }
+function c970(): void { say("record/structured-holder/in-a-callee", same970((get970()), (get970()))); }
+
+interface R971 { a971: number; m971: () => number }
+function make971(): R971 { return { a971: 1, m971: () => 1 }; }
+function get971(): unknown { const t = make971(); const u = { t, n: 1 }; const v = { u }; return v.u.t.m971; }
+function hit971(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c971(): void { say("record/structured-holder/switch", hit971((get971()), (get971()))); }
+
+interface R972 { a972: number; m972: () => number }
+function make972(): R972 { return { a972: 1, m972: () => 1 }; }
+function get972(): unknown { const t = make972(); const u = { t, n: 1 }; const v = { u }; return v.u.t.m972; }
+let last972: unknown;
+function seen972(f: unknown): boolean { const same = f === last972; last972 = f; return same; }
+function c972(): void { say("record/structured-holder/kept-then-compared", (seen972((get972())), seen972((get972())))); }
+
+interface R973 { a973: number; m973: () => number }
+interface O973 { in973: R973; n973: number }
+function make973(): O973 { return { in973: { a973: 1, m973: () => 1 }, n973: 2 }; }
+class K973 { #f: unknown; constructor() { this.#f = make973().in973.m973; } get(): unknown { return this.#f; } }
+function c973(): void { say("nested/private-field/strict-eq", (new K973().get()) === (new K973().get())); }
+
+interface R974 { a974: number; m974: () => number }
+interface O974 { in974: R974; n974: number }
+function make974(): O974 { return { in974: { a974: 1, m974: () => 1 }, n974: 2 }; }
+class K974 { static f: unknown; }
+function c974(): void { say("nested/static-field/strict-eq", ((K974.f = make974().in974.m974, K974.f)) === ((K974.f = make974().in974.m974, K974.f))); }
+
+interface R975 { a975: number; m975: () => number }
+interface O975 { in975: R975; n975: number }
+function make975(): O975 { return { in975: { a975: 1, m975: () => 1 }, n975: 2 }; }
+class K975 { f: unknown = make975().in975.m975; }
+function c975(): void { say("nested/instance-field/strict-eq", (new K975().f) === (new K975().f)); }
+
+interface R976 { a976: number; m976: () => number }
+interface O976 { in976: R976; n976: number }
+function make976(): O976 { return { in976: { a976: 1, m976: () => 1 }, n976: 2 }; }
+class K976 { s: unknown; set v(x: unknown) { this.s = x; } }
+function get976(): unknown { const k = new K976(); k.v = make976().in976.m976; return k.s; }
+function c976(): void { say("nested/setter/strict-eq", (get976()) === (get976())); }
+
+interface R977 { a977: number; m977: () => number }
+interface O977 { in977: R977; n977: number }
+function make977(): O977 { return { in977: { a977: 1, m977: () => 1 }, n977: 2 }; }
+class B977 { get(): unknown { return make977().in977.m977; } }
+class D977 extends B977 { get(): unknown { return super.get(); } }
+function c977(): void { say("nested/super-method/strict-eq", (new D977().get()) === (new D977().get())); }
+
+interface R978 { a978: number; m978: () => number }
+interface O978 { in978: R978; n978: number }
+function make978(): O978 { return { in978: { a978: 1, m978: () => 1 }, n978: 2 }; }
+class K978 { constructor(public f: unknown) {} }
+function c978(): void { say("nested/constructor-parameter/strict-eq", (new K978(make978().in978.m978).f) === (new K978(make978().in978.m978).f)); }
+
+interface R979 { a979: number; m979: () => number }
+interface O979 { in979: R979; n979: number }
+function make979(): O979 { return { in979: { a979: 1, m979: () => 1 }, n979: 2 }; }
+function tag979(_s: TemplateStringsArray, ...xs: unknown[]): unknown { return xs[0]; }
+function c979(): void { say("nested/tagged-template/strict-eq", (tag979`${make979().in979.m979}`) === (tag979`${make979().in979.m979}`)); }
+
+interface R980 { a980: number; m980: () => number }
+interface O980 { in980: R980; n980: number }
+function make980(): O980 { return { in980: { a980: 1, m980: () => 1 }, n980: 2 }; }
+function get980(x: unknown = make980().in980.m980): unknown { return x; }
+function c980(): void { say("nested/default-parameter/strict-eq", (get980()) === (get980())); }
+
+interface R981 { a981: number; m981: () => number }
+interface O981 { in981: R981; n981: number }
+function make981(): O981 { return { in981: { a981: 1, m981: () => 1 }, n981: 2 }; }
+function get981({ f = make981().in981.m981 as unknown }: { f?: unknown } = {}): unknown { return f; }
+function c981(): void { say("nested/pattern-default/strict-eq", (get981()) === (get981())); }
+
+interface R982 { a982: number; m982: () => number }
+interface O982 { in982: R982; n982: number }
+function make982(): O982 { return { in982: { a982: 1, m982: () => 1 }, n982: 2 }; }
+function get982(): unknown { const [f] = [make982().in982.m982]; return f; }
+function c982(): void { say("nested/array-pattern/strict-eq", (get982()) === (get982())); }
+
+interface R983 { a983: number; m983: () => number }
+interface O983 { in983: R983; n983: number }
+function make983(): O983 { return { in983: { a983: 1, m983: () => 1 }, n983: 2 }; }
+function get983(): unknown { const it = { *[Symbol.iterator](): Generator<unknown> { yield make983().in983.m983; } }; for (const f of it) return f; return 0; }
+function c983(): void { say("nested/custom-iterable/strict-eq", (get983()) === (get983())); }
+
+interface R984 { a984: number; m984: () => number }
+interface O984 { in984: R984; n984: number }
+function make984(): O984 { return { in984: { a984: 1, m984: () => 1 }, n984: 2 }; }
+function c984(): void { say("nested/map-callback/strict-eq", ([0].map(() => make984().in984.m984)[0]) === ([0].map(() => make984().in984.m984)[0])); }
+
+interface R985 { a985: number; m985: () => number }
+interface O985 { in985: R985; n985: number }
+function make985(): O985 { return { in985: { a985: 1, m985: () => 1 }, n985: 2 }; }
+function c985(): void { say("nested/find/strict-eq", ([make985().in985.m985].find(() => true)) === ([make985().in985.m985].find(() => true))); }
+
+interface R986 { a986: number; m986: () => number }
+interface O986 { in986: R986; n986: number }
+function make986(): O986 { return { in986: { a986: 1, m986: () => 1 }, n986: 2 }; }
+function c986(): void { say("nested/reduce/strict-eq", ([make986().in986.m986 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown)) === ([make986().in986.m986 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown))); }
+
+interface R987 { a987: number; m987: () => number }
+interface O987 { in987: R987; n987: number }
+function make987(): O987 { return { in987: { a987: 1, m987: () => 1 }, n987: 2 }; }
+function c987(): void { say("nested/filter/strict-eq", ([make987().in987.m987].filter(() => true)[0]) === ([make987().in987.m987].filter(() => true)[0])); }
+
+interface R988 { a988: number; m988: () => number }
+interface O988 { in988: R988; n988: number }
+function make988(): O988 { return { in988: { a988: 1, m988: () => 1 }, n988: 2 }; }
+function c988(): void { say("nested/flat/strict-eq", ([[make988().in988.m988]].flat()[0]) === ([[make988().in988.m988]].flat()[0])); }
+
+interface R989 { a989: number; m989: () => number }
+interface O989 { in989: R989; n989: number }
+function make989(): O989 { return { in989: { a989: 1, m989: () => 1 }, n989: 2 }; }
+function c989(): void { say("nested/at/strict-eq", ([make989().in989.m989].at(0)) === ([make989().in989.m989].at(0))); }
+
+interface R990 { a990: number; m990: () => number }
+interface O990 { in990: R990; n990: number }
+function make990(): O990 { return { in990: { a990: 1, m990: () => 1 }, n990: 2 }; }
+function c990(): void { say("nested/pop/strict-eq", ([make990().in990.m990].pop()) === ([make990().in990.m990].pop())); }
+
+interface R991 { a991: number; m991: () => number }
+interface O991 { in991: R991; n991: number }
+function make991(): O991 { return { in991: { a991: 1, m991: () => 1 }, n991: 2 }; }
+function c991(): void { say("nested/shift/strict-eq", ([make991().in991.m991].shift()) === ([make991().in991.m991].shift())); }
+
+interface R992 { a992: number; m992: () => number }
+interface O992 { in992: R992; n992: number }
+function make992(): O992 { return { in992: { a992: 1, m992: () => 1 }, n992: 2 }; }
+function c992(): void { say("nested/slice/strict-eq", ([make992().in992.m992].slice()[0]) === ([make992().in992.m992].slice()[0])); }
+
+interface R993 { a993: number; m993: () => number }
+interface O993 { in993: R993; n993: number }
+function make993(): O993 { return { in993: { a993: 1, m993: () => 1 }, n993: 2 }; }
+function c993(): void { say("nested/concat/strict-eq", (([] as unknown[]).concat([make993().in993.m993])[0]) === (([] as unknown[]).concat([make993().in993.m993])[0])); }
+
+interface R994 { a994: number; m994: () => number }
+interface O994 { in994: R994; n994: number }
+function make994(): O994 { return { in994: { a994: 1, m994: () => 1 }, n994: 2 }; }
+function c994(): void { say("nested/spread-array/strict-eq", ([...[make994().in994.m994]][0]) === ([...[make994().in994.m994]][0])); }
+
+interface R995 { a995: number; m995: () => number }
+interface O995 { in995: R995; n995: number }
+function make995(): O995 { return { in995: { a995: 1, m995: () => 1 }, n995: 2 }; }
+function c995(): void { say("nested/array-from/strict-eq", (Array.from([make995().in995.m995])[0]) === (Array.from([make995().in995.m995])[0])); }
+
+interface R996 { a996: number; m996: () => number }
+interface O996 { in996: R996; n996: number }
+function make996(): O996 { return { in996: { a996: 1, m996: () => 1 }, n996: 2 }; }
+function c996(): void { say("nested/array-of/strict-eq", (Array.of(make996().in996.m996)[0]) === (Array.of(make996().in996.m996)[0])); }
+
+interface R997 { a997: number; m997: () => number }
+interface O997 { in997: R997; n997: number }
+function make997(): O997 { return { in997: { a997: 1, m997: () => 1 }, n997: 2 }; }
+function get997(): unknown { const xs: unknown[] = []; xs.push(make997().in997.m997); return xs[0]; }
+function c997(): void { say("nested/push-then-read/strict-eq", (get997()) === (get997())); }
+
+interface R998 { a998: number; m998: () => number }
+interface O998 { in998: R998; n998: number }
+function make998(): O998 { return { in998: { a998: 1, m998: () => 1 }, n998: 2 }; }
+function c998(): void { say("nested/set-iteration/strict-eq", ([...new Set([make998().in998.m998])][0]) === ([...new Set([make998().in998.m998])][0])); }
+
+interface R999 { a999: number; m999: () => number }
+interface O999 { in999: R999; n999: number }
+function make999(): O999 { return { in999: { a999: 1, m999: () => 1 }, n999: 2 }; }
+function c999(): void { say("nested/map-get/strict-eq", (new Map([[1, make999().in999.m999]]).get(1)) === (new Map([[1, make999().in999.m999]]).get(1))); }
+
+interface R1000 { a1000: number; m1000: () => number }
+interface O1000 { in1000: R1000; n1000: number }
+function make1000(): O1000 { return { in1000: { a1000: 1, m1000: () => 1 }, n1000: 2 }; }
+function self1000(this: unknown): unknown { return this; }
+function c1000(): void { say("nested/bind-this/strict-eq", (self1000.bind(make1000().in1000.m1000)()) === (self1000.bind(make1000().in1000.m1000)())); }
+
+interface R1001 { a1001: number; m1001: () => number }
+interface O1001 { in1001: R1001; n1001: number }
+function make1001(): O1001 { return { in1001: { a1001: 1, m1001: () => 1 }, n1001: 2 }; }
+function self1001(this: unknown): unknown { return this; }
+function c1001(): void { say("nested/call-this/strict-eq", (self1001.call(make1001().in1001.m1001)) === (self1001.call(make1001().in1001.m1001))); }
+
+interface R1002 { a1002: number; m1002: () => number }
+interface O1002 { in1002: R1002; n1002: number }
+function make1002(): O1002 { return { in1002: { a1002: 1, m1002: () => 1 }, n1002: 2 }; }
+function first1002(x: unknown): unknown { return x; }
+function c1002(): void { say("nested/apply-arguments/strict-eq", (first1002.apply(null, [make1002().in1002.m1002])) === (first1002.apply(null, [make1002().in1002.m1002]))); }
+
+interface R1003 { a1003: number; m1003: () => number }
+interface O1003 { in1003: R1003; n1003: number }
+function make1003(): O1003 { return { in1003: { a1003: 1, m1003: () => 1 }, n1003: 2 }; }
+function first1003(x: unknown): unknown { return x; }
+function c1003(): void { say("nested/reflect-apply/strict-eq", (Reflect.apply(first1003, null, [make1003().in1003.m1003])) === (Reflect.apply(first1003, null, [make1003().in1003.m1003]))); }
+
+interface R1004 { a1004: number; m1004: () => number }
+interface O1004 { in1004: R1004; n1004: number }
+function make1004(): O1004 { return { in1004: { a1004: 1, m1004: () => 1 }, n1004: 2 }; }
+function c1004(): void { say("nested/logical-or/strict-eq", (((0 as unknown) || make1004().in1004.m1004)) === (((0 as unknown) || make1004().in1004.m1004))); }
+
+interface R1005 { a1005: number; m1005: () => number }
+interface O1005 { in1005: R1005; n1005: number }
+function make1005(): O1005 { return { in1005: { a1005: 1, m1005: () => 1 }, n1005: 2 }; }
+let none1005: unknown;
+function c1005(): void { say("nested/nullish/strict-eq", ((none1005 ?? make1005().in1005.m1005)) === ((none1005 ?? make1005().in1005.m1005))); }
+
+interface R1006 { a1006: number; m1006: () => number }
+interface O1006 { in1006: R1006; n1006: number }
+function make1006(): O1006 { return { in1006: { a1006: 1, m1006: () => 1 }, n1006: 2 }; }
+function c1006(): void { say("nested/comma/strict-eq", ((out.length, make1006().in1006.m1006)) === ((out.length, make1006().in1006.m1006))); }
+
+interface R1007 { a1007: number; m1007: () => number }
+interface O1007 { in1007: R1007; n1007: number }
+function make1007(): O1007 { return { in1007: { a1007: 1, m1007: () => 1 }, n1007: 2 }; }
+function c1007(): void { say("nested/computed-member/strict-eq", (({ ["k"]: make1007().in1007.m1007 })["k"]) === (({ ["k"]: make1007().in1007.m1007 })["k"])); }
+
+interface R1008 { a1008: number; m1008: () => number }
+interface O1008 { in1008: R1008; n1008: number }
+function make1008(): O1008 { return { in1008: { a1008: 1, m1008: () => 1 }, n1008: 2 }; }
+const s1008 = Symbol();
+function c1008(): void { say("nested/symbol-member/strict-eq", (({ [s1008]: make1008().in1008.m1008 })[s1008]) === (({ [s1008]: make1008().in1008.m1008 })[s1008])); }
+
+interface R1009 { a1009: number; m1009: () => number }
+interface O1009 { in1009: R1009; n1009: number }
+function make1009(): O1009 { return { in1009: { a1009: 1, m1009: () => 1 }, n1009: 2 }; }
+function c1009(): void { say("nested/getter-member/strict-eq", (({ get f(): unknown { return make1009().in1009.m1009; } }).f) === (({ get f(): unknown { return make1009().in1009.m1009; } }).f)); }
+
+interface R1010 { a1010: number; m1010: () => number }
+interface O1010 { in1010: R1010; n1010: number }
+function make1010(): O1010 { return { in1010: { a1010: 1, m1010: () => 1 }, n1010: 2 }; }
+function c1010(): void { say("nested/proxy-get/strict-eq", (new Proxy({ f: make1010().in1010.m1010 as unknown }, {}).f) === (new Proxy({ f: make1010().in1010.m1010 as unknown }, {}).f)); }
+
+interface R1011 { a1011: number; m1011: () => number }
+interface O1011 { in1011: R1011; n1011: number }
+function make1011(): O1011 { return { in1011: { a1011: 1, m1011: () => 1 }, n1011: 2 }; }
+function c1011(): void { say("nested/prototype-chain/strict-eq", (Object.create({ f: make1011().in1011.m1011 }).f) === (Object.create({ f: make1011().in1011.m1011 }).f)); }
+
+interface R1012 { a1012: number; m1012: () => number }
+interface O1012 { in1012: R1012; n1012: number }
+function make1012(): O1012 { return { in1012: { a1012: 1, m1012: () => 1 }, n1012: 2 }; }
+function c1012(): void { say("nested/weak-ref/strict-eq", (new WeakRef(make1012().in1012.m1012 as object).deref()) === (new WeakRef(make1012().in1012.m1012 as object).deref())); }
+
+interface R1013 { a1013: number; m1013: () => number }
+interface O1013 { in1013: R1013; n1013: number }
+function make1013(): O1013 { return { in1013: { a1013: 1, m1013: () => 1 }, n1013: 2 }; }
+function get1013(_x: unknown): unknown { return arguments[0]; }
+function c1013(): void { say("nested/arguments-object/strict-eq", (get1013(make1013().in1013.m1013)) === (get1013(make1013().in1013.m1013))); }
+
+interface R1014 { a1014: number; m1014: () => number }
+interface O1014 { in1014: R1014; n1014: number }
+function make1014(): O1014 { return { in1014: { a1014: 1, m1014: () => 1 }, n1014: 2 }; }
+function get1014(n: number): unknown { return n === 0 ? make1014().in1014.m1014 : get1014(n - 1); }
+function c1014(): void { say("nested/recursion/strict-eq", (get1014(2)) === (get1014(2))); }
+
+interface R1015 { a1015: number; m1015: () => number }
+interface O1015 { in1015: R1015; n1015: number }
+function make1015(): O1015 { return { in1015: { a1015: 1, m1015: () => 1 }, n1015: 2 }; }
+function even1015(n: number): unknown { return n === 0 ? make1015().in1015.m1015 : odd1015(n - 1); }
+function odd1015(n: number): unknown { return even1015(n - 1); }
+function c1015(): void { say("nested/mutual-recursion/strict-eq", (even1015(2)) === (even1015(2))); }
+
+interface R1016 { a1016: number; m1016: () => number }
+interface O1016 { in1016: R1016; n1016: number }
+function make1016(): O1016 { return { in1016: { a1016: 1, m1016: () => 1 }, n1016: 2 }; }
+function again1016(): O1016 { return make1016(); }
+function c1016(): void { say("nested/maker-forwarded/strict-eq", (again1016().in1016.m1016) === (again1016().in1016.m1016)); }
+
+interface R1017 { a1017: number; m1017: () => number }
+interface O1017 { in1017: R1017; n1017: number }
+function make1017(): O1017 { return { in1017: { a1017: 1, m1017: () => 1 }, n1017: 2 }; }
+function again1017(): O1017 { return make1017(); }
+function get1017(): unknown { return again1017().in1017.m1017; }
+function c1017(): void { say("nested/maker-forwarded-and-returned/strict-eq", (get1017()) === (get1017())); }
+
+interface R1018 { a1018: number; m1018: () => number }
+interface O1018 { in1018: R1018; n1018: number }
+function make1018(): O1018 { return { in1018: { a1018: 1, m1018: () => 1 }, n1018: 2 }; }
+function build1018(f: () => O1018): O1018 { return f(); }
+function c1018(): void { say("nested/maker-as-a-callback/strict-eq", (build1018(make1018).in1018.m1018) === (build1018(make1018).in1018.m1018)); }
+
+interface R1019 { a1019: number; m1019: () => number }
+interface O1019 { in1019: R1019; n1019: number }
+function make1019(): O1019 { return { in1019: { a1019: 1, m1019: () => 1 }, n1019: 2 }; }
+function build1019(f: () => O1019): O1019 { return f(); }
+function get1019(): unknown { return build1019(make1019).in1019.m1019; }
+function c1019(): void { say("nested/maker-as-a-callback-returned/strict-eq", (get1019()) === (get1019())); }
+
+interface R1020 { a1020: number; m1020: () => number }
+interface O1020 { in1020: R1020; n1020: number }
+function make1020(): O1020 { return { in1020: { a1020: 1, m1020: () => 1 }, n1020: 2 }; }
+function box1020(): { t: O1020 } { return { t: make1020() }; }
+function get1020(): unknown { return box1020().t.in1020.m1020; }
+function c1020(): void { say("nested/holder-through-a-record/strict-eq", (get1020()) === (get1020())); }
+
+c961(); c962(); c963(); c964(); c965(); c966(); c967(); c968(); c969(); c970(); c971(); c972(); c973(); c974(); c975(); c976(); c977(); c978(); c979(); c980(); c981(); c982(); c983(); c984(); c985(); c986(); c987(); c988(); c989(); c990(); c991(); c992(); c993(); c994(); c995(); c996(); c997(); c998(); c999(); c1000(); c1001(); c1002(); c1003(); c1004(); c1005(); c1006(); c1007(); c1008(); c1009(); c1010(); c1011(); c1012(); c1013(); c1014(); c1015(); c1016(); c1017(); c1018(); c1019(); c1020();
+console.log(out.join("\n"));
+//// identity2-17.ts
+// Generated program: object and closure identity stays observable when allocations are removed (second series, part 17).
+declare const console: any;
+const out: string[] = [];
+function say(name: string, value: unknown): void { out.push(name + "=" + String(value)); }
+
+interface R1021 { a1021: number; m1021: () => number }
+interface O1021 { in1021: R1021; n1021: number }
+function make1021(): O1021 { return { in1021: { a1021: 1, m1021: () => 1 }, n1021: 2 }; }
+function box1021(): Array<O1021> { return [make1021()]; }
+function get1021(): unknown { return box1021()[0].in1021.m1021; }
+function c1021(): void { say("nested/holder-through-an-array/strict-eq", (get1021()) === (get1021())); }
+
+interface R1022 { a1022: number; m1022: () => number }
+interface O1022 { in1022: R1022; n1022: number }
+function make1022(): O1022 { return { in1022: { a1022: 1, m1022: () => 1 }, n1022: 2 }; }
+function box1022(): () => O1022 { const t = make1022(); return () => t; }
+function get1022(): unknown { return box1022()().in1022.m1022; }
+function c1022(): void { say("nested/holder-through-a-closure/strict-eq", (get1022()) === (get1022())); }
+
+interface R1023 { a1023: number; m1023: () => number }
+interface O1023 { in1023: R1023; n1023: number }
+function make1023(): O1023 { return { in1023: { a1023: 1, m1023: () => 1 }, n1023: 2 }; }
+function get1023(): unknown { try { return make1023().in1023.m1023; } finally { out.length; } }
+function c1023(): void { say("nested/finally/strict-eq", (get1023()) === (get1023())); }
+
+interface R1024 { a1024: number; m1024: () => number }
+interface O1024 { in1024: R1024; n1024: number }
+function make1024(): O1024 { return { in1024: { a1024: 1, m1024: () => 1 }, n1024: 2 }; }
+function get1024(n: number): unknown { switch (n) { case 1: return make1024().in1024.m1024; default: return 0; } }
+function c1024(): void { say("nested/switch-arm/strict-eq", (get1024(1)) === (get1024(1))); }
+
+interface R1025 { a1025: number; m1025: () => number }
+interface O1025 { in1025: R1025; n1025: number }
+function make1025(): O1025 { return { in1025: { a1025: 1, m1025: () => 1 }, n1025: 2 }; }
+function c1025(): void { say("nested/object-from-entries/strict-eq", (Object.fromEntries([["k", make1025().in1025.m1025]]).k) === (Object.fromEntries([["k", make1025().in1025.m1025]]).k)); }
+
+interface R1026 { a1026: number; m1026: () => number }
+interface O1026 { in1026: R1026; n1026: number }
+function make1026(): O1026 { return { in1026: { a1026: 1, m1026: () => 1 }, n1026: 2 }; }
+function get1026(): unknown { const t = make1026(); const u = { t, n: 1 }; const v = { u }; return v.u.t.in1026.m1026; }
+function c1026(): void { say("nested/structured-holder/strict-eq", (get1026()) === (get1026())); }
+
+interface R1027 { a1027: number; m1027: () => number }
+interface O1027 { in1027: R1027; n1027: number }
+function make1027(): O1027 { return { in1027: { a1027: 1, m1027: () => 1 }, n1027: 2 }; }
+function box1027(): { t: O1027 } { return { t: make1027() }; }
+function get1027(): unknown { return box1027().t.in1027.m1027; }
+function c1027(): void { say("nested/holder-through-a-record/strict-ne", (get1027()) !== (get1027())); }
+
+interface R1028 { a1028: number; m1028: () => number }
+interface O1028 { in1028: R1028; n1028: number }
+function make1028(): O1028 { return { in1028: { a1028: 1, m1028: () => 1 }, n1028: 2 }; }
+function box1028(): { t: O1028 } { return { t: make1028() }; }
+function get1028(): unknown { return box1028().t.in1028.m1028; }
+function c1028(): void { say("nested/holder-through-a-record/loose-eq", (get1028()) == (get1028())); }
+
+interface R1029 { a1029: number; m1029: () => number }
+interface O1029 { in1029: R1029; n1029: number }
+function make1029(): O1029 { return { in1029: { a1029: 1, m1029: () => 1 }, n1029: 2 }; }
+function box1029(): { t: O1029 } { return { t: make1029() }; }
+function get1029(): unknown { return box1029().t.in1029.m1029; }
+function c1029(): void { say("nested/holder-through-a-record/object-is", Object.is((get1029()), (get1029()))); }
+
+interface R1030 { a1030: number; m1030: () => number }
+interface O1030 { in1030: R1030; n1030: number }
+function make1030(): O1030 { return { in1030: { a1030: 1, m1030: () => 1 }, n1030: 2 }; }
+function box1030(): { t: O1030 } { return { t: make1030() }; }
+function get1030(): unknown { return box1030().t.in1030.m1030; }
+function c1030(): void { say("nested/holder-through-a-record/set", new Set([(get1030()), (get1030())]).size); }
+
+interface R1031 { a1031: number; m1031: () => number }
+interface O1031 { in1031: R1031; n1031: number }
+function make1031(): O1031 { return { in1031: { a1031: 1, m1031: () => 1 }, n1031: 2 }; }
+function box1031(): { t: O1031 } { return { t: make1031() }; }
+function get1031(): unknown { return box1031().t.in1031.m1031; }
+function c1031(): void { say("nested/holder-through-a-record/map-key", new Map([[(get1031()), 1], [(get1031()), 2]]).size); }
+
+interface R1032 { a1032: number; m1032: () => number }
+interface O1032 { in1032: R1032; n1032: number }
+function make1032(): O1032 { return { in1032: { a1032: 1, m1032: () => 1 }, n1032: 2 }; }
+function box1032(): { t: O1032 } { return { t: make1032() }; }
+function get1032(): unknown { return box1032().t.in1032.m1032; }
+function c1032(): void { say("nested/holder-through-a-record/includes", [(get1032())].includes((get1032()))); }
+
+interface R1033 { a1033: number; m1033: () => number }
+interface O1033 { in1033: R1033; n1033: number }
+function make1033(): O1033 { return { in1033: { a1033: 1, m1033: () => 1 }, n1033: 2 }; }
+function box1033(): { t: O1033 } { return { t: make1033() }; }
+function get1033(): unknown { return box1033().t.in1033.m1033; }
+function c1033(): void { say("nested/holder-through-a-record/index-of", [(get1033())].indexOf((get1033()))); }
+
+interface R1034 { a1034: number; m1034: () => number }
+interface O1034 { in1034: R1034; n1034: number }
+function make1034(): O1034 { return { in1034: { a1034: 1, m1034: () => 1 }, n1034: 2 }; }
+function box1034(): { t: O1034 } { return { t: make1034() }; }
+function get1034(): unknown { return box1034().t.in1034.m1034; }
+const ws1034 = new WeakSet<object>();
+function c1034(): void { say("nested/holder-through-a-record/weak-set", (ws1034.add((get1034()) as object), ws1034.has((get1034()) as object))); }
+
+interface R1035 { a1035: number; m1035: () => number }
+interface O1035 { in1035: R1035; n1035: number }
+function make1035(): O1035 { return { in1035: { a1035: 1, m1035: () => 1 }, n1035: 2 }; }
+function box1035(): { t: O1035 } { return { t: make1035() }; }
+function get1035(): unknown { return box1035().t.in1035.m1035; }
+const wm1035 = new WeakMap<object, number>();
+function c1035(): void { say("nested/holder-through-a-record/weak-map", (wm1035.set((get1035()) as object, 1), wm1035.has((get1035()) as object))); }
+
+interface R1036 { a1036: number; m1036: () => number }
+interface O1036 { in1036: R1036; n1036: number }
+function make1036(): O1036 { return { in1036: { a1036: 1, m1036: () => 1 }, n1036: 2 }; }
+function box1036(): { t: O1036 } { return { t: make1036() }; }
+function get1036(): unknown { return box1036().t.in1036.m1036; }
+function c1036(): void { say("nested/holder-through-a-record/written", ((((get1036())) as any).tag = 1, (((get1036())) as any).tag)); }
+
+interface R1037 { a1037: number; m1037: () => number }
+interface O1037 { in1037: R1037; n1037: number }
+function make1037(): O1037 { return { in1037: { a1037: 1, m1037: () => 1 }, n1037: 2 }; }
+function box1037(): { t: O1037 } { return { t: make1037() }; }
+function get1037(): unknown { return box1037().t.in1037.m1037; }
+function c1037(): void { say("nested/holder-through-a-record/defined", (Object.defineProperty((get1037()) as object, "t", { value: 1 }), "t" in ((get1037()) as object))); }
+
+interface R1038 { a1038: number; m1038: () => number }
+interface O1038 { in1038: R1038; n1038: number }
+function make1038(): O1038 { return { in1038: { a1038: 1, m1038: () => 1 }, n1038: 2 }; }
+function box1038(): { t: O1038 } { return { t: make1038() }; }
+function get1038(): unknown { return box1038().t.in1038.m1038; }
+function c1038(): void { say("nested/holder-through-a-record/frozen", (Object.freeze((get1038())), Object.isFrozen((get1038())))); }
+
+interface R1039 { a1039: number; m1039: () => number }
+interface O1039 { in1039: R1039; n1039: number }
+function make1039(): O1039 { return { in1039: { a1039: 1, m1039: () => 1 }, n1039: 2 }; }
+function box1039(): { t: O1039 } { return { t: make1039() }; }
+function get1039(): unknown { return box1039().t.in1039.m1039; }
+function c1039(): void { say("nested/holder-through-a-record/prototype-set", (Object.setPrototypeOf((get1039()) as object, null), Object.getPrototypeOf((get1039())) === null)); }
+
+interface R1040 { a1040: number; m1040: () => number }
+interface O1040 { in1040: R1040; n1040: number }
+function make1040(): O1040 { return { in1040: { a1040: 1, m1040: () => 1 }, n1040: 2 }; }
+function box1040(): { t: O1040 } { return { t: make1040() }; }
+function get1040(): unknown { return box1040().t.in1040.m1040; }
+function c1040(): void { say("nested/holder-through-a-record/deleted", (delete (((get1040())) as any).length, Object.hasOwn((get1040()) as object, "length"))); }
+
+interface R1041 { a1041: number; m1041: () => number }
+interface O1041 { in1041: R1041; n1041: number }
+function make1041(): O1041 { return { in1041: { a1041: 1, m1041: () => 1 }, n1041: 2 }; }
+function box1041(): { t: O1041 } { return { t: make1041() }; }
+function get1041(): unknown { return box1041().t.in1041.m1041; }
+function same1041(a: unknown, b: unknown): boolean { return a === b; }
+function c1041(): void { say("nested/holder-through-a-record/in-a-callee", same1041((get1041()), (get1041()))); }
+
+interface R1042 { a1042: number; m1042: () => number }
+interface O1042 { in1042: R1042; n1042: number }
+function make1042(): O1042 { return { in1042: { a1042: 1, m1042: () => 1 }, n1042: 2 }; }
+function box1042(): { t: O1042 } { return { t: make1042() }; }
+function get1042(): unknown { return box1042().t.in1042.m1042; }
+function hit1042(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c1042(): void { say("nested/holder-through-a-record/switch", hit1042((get1042()), (get1042()))); }
+
+interface R1043 { a1043: number; m1043: () => number }
+interface O1043 { in1043: R1043; n1043: number }
+function make1043(): O1043 { return { in1043: { a1043: 1, m1043: () => 1 }, n1043: 2 }; }
+function box1043(): { t: O1043 } { return { t: make1043() }; }
+function get1043(): unknown { return box1043().t.in1043.m1043; }
+let last1043: unknown;
+function seen1043(f: unknown): boolean { const same = f === last1043; last1043 = f; return same; }
+function c1043(): void { say("nested/holder-through-a-record/kept-then-compared", (seen1043((get1043())), seen1043((get1043())))); }
+
+function make1044(): Array<() => number> { return [() => 1]; }
+class K1044 { #f: unknown; constructor() { this.#f = make1044()[0]; } get(): unknown { return this.#f; } }
+function c1044(): void { say("array/private-field/strict-eq", (new K1044().get()) === (new K1044().get())); }
+
+function make1045(): Array<() => number> { return [() => 1]; }
+class K1045 { static f: unknown; }
+function c1045(): void { say("array/static-field/strict-eq", ((K1045.f = make1045()[0], K1045.f)) === ((K1045.f = make1045()[0], K1045.f))); }
+
+function make1046(): Array<() => number> { return [() => 1]; }
+class K1046 { f: unknown = make1046()[0]; }
+function c1046(): void { say("array/instance-field/strict-eq", (new K1046().f) === (new K1046().f)); }
+
+function make1047(): Array<() => number> { return [() => 1]; }
+class K1047 { s: unknown; set v(x: unknown) { this.s = x; } }
+function get1047(): unknown { const k = new K1047(); k.v = make1047()[0]; return k.s; }
+function c1047(): void { say("array/setter/strict-eq", (get1047()) === (get1047())); }
+
+function make1048(): Array<() => number> { return [() => 1]; }
+class B1048 { get(): unknown { return make1048()[0]; } }
+class D1048 extends B1048 { get(): unknown { return super.get(); } }
+function c1048(): void { say("array/super-method/strict-eq", (new D1048().get()) === (new D1048().get())); }
+
+function make1049(): Array<() => number> { return [() => 1]; }
+class K1049 { constructor(public f: unknown) {} }
+function c1049(): void { say("array/constructor-parameter/strict-eq", (new K1049(make1049()[0]).f) === (new K1049(make1049()[0]).f)); }
+
+function make1050(): Array<() => number> { return [() => 1]; }
+function tag1050(_s: TemplateStringsArray, ...xs: unknown[]): unknown { return xs[0]; }
+function c1050(): void { say("array/tagged-template/strict-eq", (tag1050`${make1050()[0]}`) === (tag1050`${make1050()[0]}`)); }
+
+function make1051(): Array<() => number> { return [() => 1]; }
+function get1051(x: unknown = make1051()[0]): unknown { return x; }
+function c1051(): void { say("array/default-parameter/strict-eq", (get1051()) === (get1051())); }
+
+function make1052(): Array<() => number> { return [() => 1]; }
+function get1052({ f = make1052()[0] as unknown }: { f?: unknown } = {}): unknown { return f; }
+function c1052(): void { say("array/pattern-default/strict-eq", (get1052()) === (get1052())); }
+
+function make1053(): Array<() => number> { return [() => 1]; }
+function get1053(): unknown { const [f] = [make1053()[0]]; return f; }
+function c1053(): void { say("array/array-pattern/strict-eq", (get1053()) === (get1053())); }
+
+function make1054(): Array<() => number> { return [() => 1]; }
+function get1054(): unknown { const it = { *[Symbol.iterator](): Generator<unknown> { yield make1054()[0]; } }; for (const f of it) return f; return 0; }
+function c1054(): void { say("array/custom-iterable/strict-eq", (get1054()) === (get1054())); }
+
+function make1055(): Array<() => number> { return [() => 1]; }
+function c1055(): void { say("array/map-callback/strict-eq", ([0].map(() => make1055()[0])[0]) === ([0].map(() => make1055()[0])[0])); }
+
+function make1056(): Array<() => number> { return [() => 1]; }
+function c1056(): void { say("array/find/strict-eq", ([make1056()[0]].find(() => true)) === ([make1056()[0]].find(() => true))); }
+
+function make1057(): Array<() => number> { return [() => 1]; }
+function c1057(): void { say("array/reduce/strict-eq", ([make1057()[0] as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown)) === ([make1057()[0] as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown))); }
+
+function make1058(): Array<() => number> { return [() => 1]; }
+function c1058(): void { say("array/filter/strict-eq", ([make1058()[0]].filter(() => true)[0]) === ([make1058()[0]].filter(() => true)[0])); }
+
+function make1059(): Array<() => number> { return [() => 1]; }
+function c1059(): void { say("array/flat/strict-eq", ([[make1059()[0]]].flat()[0]) === ([[make1059()[0]]].flat()[0])); }
+
+function make1060(): Array<() => number> { return [() => 1]; }
+function c1060(): void { say("array/at/strict-eq", ([make1060()[0]].at(0)) === ([make1060()[0]].at(0))); }
+
+function make1061(): Array<() => number> { return [() => 1]; }
+function c1061(): void { say("array/pop/strict-eq", ([make1061()[0]].pop()) === ([make1061()[0]].pop())); }
+
+function make1062(): Array<() => number> { return [() => 1]; }
+function c1062(): void { say("array/shift/strict-eq", ([make1062()[0]].shift()) === ([make1062()[0]].shift())); }
+
+function make1063(): Array<() => number> { return [() => 1]; }
+function c1063(): void { say("array/slice/strict-eq", ([make1063()[0]].slice()[0]) === ([make1063()[0]].slice()[0])); }
+
+function make1064(): Array<() => number> { return [() => 1]; }
+function c1064(): void { say("array/concat/strict-eq", (([] as unknown[]).concat([make1064()[0]])[0]) === (([] as unknown[]).concat([make1064()[0]])[0])); }
+
+function make1065(): Array<() => number> { return [() => 1]; }
+function c1065(): void { say("array/spread-array/strict-eq", ([...[make1065()[0]]][0]) === ([...[make1065()[0]]][0])); }
+
+function make1066(): Array<() => number> { return [() => 1]; }
+function c1066(): void { say("array/array-from/strict-eq", (Array.from([make1066()[0]])[0]) === (Array.from([make1066()[0]])[0])); }
+
+function make1067(): Array<() => number> { return [() => 1]; }
+function c1067(): void { say("array/array-of/strict-eq", (Array.of(make1067()[0])[0]) === (Array.of(make1067()[0])[0])); }
+
+function make1068(): Array<() => number> { return [() => 1]; }
+function get1068(): unknown { const xs: unknown[] = []; xs.push(make1068()[0]); return xs[0]; }
+function c1068(): void { say("array/push-then-read/strict-eq", (get1068()) === (get1068())); }
+
+function make1069(): Array<() => number> { return [() => 1]; }
+function c1069(): void { say("array/set-iteration/strict-eq", ([...new Set([make1069()[0]])][0]) === ([...new Set([make1069()[0]])][0])); }
+
+function make1070(): Array<() => number> { return [() => 1]; }
+function c1070(): void { say("array/map-get/strict-eq", (new Map([[1, make1070()[0]]]).get(1)) === (new Map([[1, make1070()[0]]]).get(1))); }
+
+function make1071(): Array<() => number> { return [() => 1]; }
+function self1071(this: unknown): unknown { return this; }
+function c1071(): void { say("array/bind-this/strict-eq", (self1071.bind(make1071()[0])()) === (self1071.bind(make1071()[0])())); }
+
+function make1072(): Array<() => number> { return [() => 1]; }
+function self1072(this: unknown): unknown { return this; }
+function c1072(): void { say("array/call-this/strict-eq", (self1072.call(make1072()[0])) === (self1072.call(make1072()[0]))); }
+
+function make1073(): Array<() => number> { return [() => 1]; }
+function first1073(x: unknown): unknown { return x; }
+function c1073(): void { say("array/apply-arguments/strict-eq", (first1073.apply(null, [make1073()[0]])) === (first1073.apply(null, [make1073()[0]]))); }
+
+function make1074(): Array<() => number> { return [() => 1]; }
+function first1074(x: unknown): unknown { return x; }
+function c1074(): void { say("array/reflect-apply/strict-eq", (Reflect.apply(first1074, null, [make1074()[0]])) === (Reflect.apply(first1074, null, [make1074()[0]]))); }
+
+function make1075(): Array<() => number> { return [() => 1]; }
+function c1075(): void { say("array/logical-or/strict-eq", (((0 as unknown) || make1075()[0])) === (((0 as unknown) || make1075()[0]))); }
+
+function make1076(): Array<() => number> { return [() => 1]; }
+let none1076: unknown;
+function c1076(): void { say("array/nullish/strict-eq", ((none1076 ?? make1076()[0])) === ((none1076 ?? make1076()[0]))); }
+
+function make1077(): Array<() => number> { return [() => 1]; }
+function c1077(): void { say("array/comma/strict-eq", ((out.length, make1077()[0])) === ((out.length, make1077()[0]))); }
+
+function make1078(): Array<() => number> { return [() => 1]; }
+function c1078(): void { say("array/computed-member/strict-eq", (({ ["k"]: make1078()[0] })["k"]) === (({ ["k"]: make1078()[0] })["k"])); }
+
+function make1079(): Array<() => number> { return [() => 1]; }
+const s1079 = Symbol();
+function c1079(): void { say("array/symbol-member/strict-eq", (({ [s1079]: make1079()[0] })[s1079]) === (({ [s1079]: make1079()[0] })[s1079])); }
+
+function make1080(): Array<() => number> { return [() => 1]; }
+function c1080(): void { say("array/getter-member/strict-eq", (({ get f(): unknown { return make1080()[0]; } }).f) === (({ get f(): unknown { return make1080()[0]; } }).f)); }
+
+c1021(); c1022(); c1023(); c1024(); c1025(); c1026(); c1027(); c1028(); c1029(); c1030(); c1031(); c1032(); c1033(); c1034(); c1035(); c1036(); c1037(); c1038(); c1039(); c1040(); c1041(); c1042(); c1043(); c1044(); c1045(); c1046(); c1047(); c1048(); c1049(); c1050(); c1051(); c1052(); c1053(); c1054(); c1055(); c1056(); c1057(); c1058(); c1059(); c1060(); c1061(); c1062(); c1063(); c1064(); c1065(); c1066(); c1067(); c1068(); c1069(); c1070(); c1071(); c1072(); c1073(); c1074(); c1075(); c1076(); c1077(); c1078(); c1079(); c1080();
+console.log(out.join("\n"));
+//// identity2-18.ts
+// Generated program: object and closure identity stays observable when allocations are removed (second series, part 18).
+declare const console: any;
+const out: string[] = [];
+function say(name: string, value: unknown): void { out.push(name + "=" + String(value)); }
+
+function make1081(): Array<() => number> { return [() => 1]; }
+function c1081(): void { say("array/proxy-get/strict-eq", (new Proxy({ f: make1081()[0] as unknown }, {}).f) === (new Proxy({ f: make1081()[0] as unknown }, {}).f)); }
+
+function make1082(): Array<() => number> { return [() => 1]; }
+function c1082(): void { say("array/prototype-chain/strict-eq", (Object.create({ f: make1082()[0] }).f) === (Object.create({ f: make1082()[0] }).f)); }
+
+function make1083(): Array<() => number> { return [() => 1]; }
+function c1083(): void { say("array/weak-ref/strict-eq", (new WeakRef(make1083()[0] as object).deref()) === (new WeakRef(make1083()[0] as object).deref())); }
+
+function make1084(): Array<() => number> { return [() => 1]; }
+function get1084(_x: unknown): unknown { return arguments[0]; }
+function c1084(): void { say("array/arguments-object/strict-eq", (get1084(make1084()[0])) === (get1084(make1084()[0]))); }
+
+function make1085(): Array<() => number> { return [() => 1]; }
+function get1085(n: number): unknown { return n === 0 ? make1085()[0] : get1085(n - 1); }
+function c1085(): void { say("array/recursion/strict-eq", (get1085(2)) === (get1085(2))); }
+
+function make1086(): Array<() => number> { return [() => 1]; }
+function even1086(n: number): unknown { return n === 0 ? make1086()[0] : odd1086(n - 1); }
+function odd1086(n: number): unknown { return even1086(n - 1); }
+function c1086(): void { say("array/mutual-recursion/strict-eq", (even1086(2)) === (even1086(2))); }
+
+function make1087(): Array<() => number> { return [() => 1]; }
+function again1087(): Array<() => number> { return make1087(); }
+function c1087(): void { say("array/maker-forwarded/strict-eq", (again1087()[0]) === (again1087()[0])); }
+
+function make1088(): Array<() => number> { return [() => 1]; }
+function again1088(): Array<() => number> { return make1088(); }
+function get1088(): unknown { return again1088()[0]; }
+function c1088(): void { say("array/maker-forwarded-and-returned/strict-eq", (get1088()) === (get1088())); }
+
+function make1089(): Array<() => number> { return [() => 1]; }
+function build1089(f: () => Array<() => number>): Array<() => number> { return f(); }
+function c1089(): void { say("array/maker-as-a-callback/strict-eq", (build1089(make1089)[0]) === (build1089(make1089)[0])); }
+
+function make1090(): Array<() => number> { return [() => 1]; }
+function build1090(f: () => Array<() => number>): Array<() => number> { return f(); }
+function get1090(): unknown { return build1090(make1090)[0]; }
+function c1090(): void { say("array/maker-as-a-callback-returned/strict-eq", (get1090()) === (get1090())); }
+
+function make1091(): Array<() => number> { return [() => 1]; }
+function box1091(): { t: Array<() => number> } { return { t: make1091() }; }
+function get1091(): unknown { return box1091().t[0]; }
+function c1091(): void { say("array/holder-through-a-record/strict-eq", (get1091()) === (get1091())); }
+
+function make1092(): Array<() => number> { return [() => 1]; }
+function box1092(): Array<Array<() => number>> { return [make1092()]; }
+function get1092(): unknown { return box1092()[0][0]; }
+function c1092(): void { say("array/holder-through-an-array/strict-eq", (get1092()) === (get1092())); }
+
+function make1093(): Array<() => number> { return [() => 1]; }
+function box1093(): () => Array<() => number> { const t = make1093(); return () => t; }
+function get1093(): unknown { return box1093()()[0]; }
+function c1093(): void { say("array/holder-through-a-closure/strict-eq", (get1093()) === (get1093())); }
+
+function make1094(): Array<() => number> { return [() => 1]; }
+function get1094(): unknown { try { return make1094()[0]; } finally { out.length; } }
+function c1094(): void { say("array/finally/strict-eq", (get1094()) === (get1094())); }
+
+function make1095(): Array<() => number> { return [() => 1]; }
+function get1095(n: number): unknown { switch (n) { case 1: return make1095()[0]; default: return 0; } }
+function c1095(): void { say("array/switch-arm/strict-eq", (get1095(1)) === (get1095(1))); }
+
+function make1096(): Array<() => number> { return [() => 1]; }
+function c1096(): void { say("array/object-from-entries/strict-eq", (Object.fromEntries([["k", make1096()[0]]]).k) === (Object.fromEntries([["k", make1096()[0]]]).k)); }
+
+function make1097(): Array<() => number> { return [() => 1]; }
+function get1097(): unknown { const t = make1097(); const u = { t, n: 1 }; const v = { u }; return v.u.t[0]; }
+function c1097(): void { say("array/structured-holder/strict-eq", (get1097()) === (get1097())); }
+
+function make1098(): Array<() => number> { return [() => 1]; }
+function box1098(): { t: Array<() => number> } { return { t: make1098() }; }
+function get1098(): unknown { return box1098().t[0]; }
+function c1098(): void { say("array/holder-through-a-record/strict-ne", (get1098()) !== (get1098())); }
+
+function make1099(): Array<() => number> { return [() => 1]; }
+function box1099(): { t: Array<() => number> } { return { t: make1099() }; }
+function get1099(): unknown { return box1099().t[0]; }
+function c1099(): void { say("array/holder-through-a-record/loose-eq", (get1099()) == (get1099())); }
+
+function make1100(): Array<() => number> { return [() => 1]; }
+function box1100(): { t: Array<() => number> } { return { t: make1100() }; }
+function get1100(): unknown { return box1100().t[0]; }
+function c1100(): void { say("array/holder-through-a-record/object-is", Object.is((get1100()), (get1100()))); }
+
+function make1101(): Array<() => number> { return [() => 1]; }
+function box1101(): { t: Array<() => number> } { return { t: make1101() }; }
+function get1101(): unknown { return box1101().t[0]; }
+function c1101(): void { say("array/holder-through-a-record/set", new Set([(get1101()), (get1101())]).size); }
+
+function make1102(): Array<() => number> { return [() => 1]; }
+function box1102(): { t: Array<() => number> } { return { t: make1102() }; }
+function get1102(): unknown { return box1102().t[0]; }
+function c1102(): void { say("array/holder-through-a-record/map-key", new Map([[(get1102()), 1], [(get1102()), 2]]).size); }
+
+function make1103(): Array<() => number> { return [() => 1]; }
+function box1103(): { t: Array<() => number> } { return { t: make1103() }; }
+function get1103(): unknown { return box1103().t[0]; }
+function c1103(): void { say("array/holder-through-a-record/includes", [(get1103())].includes((get1103()))); }
+
+function make1104(): Array<() => number> { return [() => 1]; }
+function box1104(): { t: Array<() => number> } { return { t: make1104() }; }
+function get1104(): unknown { return box1104().t[0]; }
+function c1104(): void { say("array/holder-through-a-record/index-of", [(get1104())].indexOf((get1104()))); }
+
+function make1105(): Array<() => number> { return [() => 1]; }
+function box1105(): { t: Array<() => number> } { return { t: make1105() }; }
+function get1105(): unknown { return box1105().t[0]; }
+const ws1105 = new WeakSet<object>();
+function c1105(): void { say("array/holder-through-a-record/weak-set", (ws1105.add((get1105()) as object), ws1105.has((get1105()) as object))); }
+
+function make1106(): Array<() => number> { return [() => 1]; }
+function box1106(): { t: Array<() => number> } { return { t: make1106() }; }
+function get1106(): unknown { return box1106().t[0]; }
+const wm1106 = new WeakMap<object, number>();
+function c1106(): void { say("array/holder-through-a-record/weak-map", (wm1106.set((get1106()) as object, 1), wm1106.has((get1106()) as object))); }
+
+function make1107(): Array<() => number> { return [() => 1]; }
+function box1107(): { t: Array<() => number> } { return { t: make1107() }; }
+function get1107(): unknown { return box1107().t[0]; }
+function c1107(): void { say("array/holder-through-a-record/written", ((((get1107())) as any).tag = 1, (((get1107())) as any).tag)); }
+
+function make1108(): Array<() => number> { return [() => 1]; }
+function box1108(): { t: Array<() => number> } { return { t: make1108() }; }
+function get1108(): unknown { return box1108().t[0]; }
+function c1108(): void { say("array/holder-through-a-record/defined", (Object.defineProperty((get1108()) as object, "t", { value: 1 }), "t" in ((get1108()) as object))); }
+
+function make1109(): Array<() => number> { return [() => 1]; }
+function box1109(): { t: Array<() => number> } { return { t: make1109() }; }
+function get1109(): unknown { return box1109().t[0]; }
+function c1109(): void { say("array/holder-through-a-record/frozen", (Object.freeze((get1109())), Object.isFrozen((get1109())))); }
+
+function make1110(): Array<() => number> { return [() => 1]; }
+function box1110(): { t: Array<() => number> } { return { t: make1110() }; }
+function get1110(): unknown { return box1110().t[0]; }
+function c1110(): void { say("array/holder-through-a-record/prototype-set", (Object.setPrototypeOf((get1110()) as object, null), Object.getPrototypeOf((get1110())) === null)); }
+
+function make1111(): Array<() => number> { return [() => 1]; }
+function box1111(): { t: Array<() => number> } { return { t: make1111() }; }
+function get1111(): unknown { return box1111().t[0]; }
+function c1111(): void { say("array/holder-through-a-record/deleted", (delete (((get1111())) as any).length, Object.hasOwn((get1111()) as object, "length"))); }
+
+function make1112(): Array<() => number> { return [() => 1]; }
+function box1112(): { t: Array<() => number> } { return { t: make1112() }; }
+function get1112(): unknown { return box1112().t[0]; }
+function same1112(a: unknown, b: unknown): boolean { return a === b; }
+function c1112(): void { say("array/holder-through-a-record/in-a-callee", same1112((get1112()), (get1112()))); }
+
+function make1113(): Array<() => number> { return [() => 1]; }
+function box1113(): { t: Array<() => number> } { return { t: make1113() }; }
+function get1113(): unknown { return box1113().t[0]; }
+function hit1113(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c1113(): void { say("array/holder-through-a-record/switch", hit1113((get1113()), (get1113()))); }
+
+function make1114(): Array<() => number> { return [() => 1]; }
+function box1114(): { t: Array<() => number> } { return { t: make1114() }; }
+function get1114(): unknown { return box1114().t[0]; }
+let last1114: unknown;
+function seen1114(f: unknown): boolean { const same = f === last1114; last1114 = f; return same; }
+function c1114(): void { say("array/holder-through-a-record/kept-then-compared", (seen1114((get1114())), seen1114((get1114())))); }
+
+interface R1115 { a1115: number; m1115: () => number }
+function make1115(): R1115[] { return [{ a1115: 1, m1115: () => 1 }]; }
+class K1115 { #f: unknown; constructor() { this.#f = make1115()[0].m1115; } get(): unknown { return this.#f; } }
+function c1115(): void { say("records/private-field/strict-eq", (new K1115().get()) === (new K1115().get())); }
+
+interface R1116 { a1116: number; m1116: () => number }
+function make1116(): R1116[] { return [{ a1116: 1, m1116: () => 1 }]; }
+class K1116 { static f: unknown; }
+function c1116(): void { say("records/static-field/strict-eq", ((K1116.f = make1116()[0].m1116, K1116.f)) === ((K1116.f = make1116()[0].m1116, K1116.f))); }
+
+interface R1117 { a1117: number; m1117: () => number }
+function make1117(): R1117[] { return [{ a1117: 1, m1117: () => 1 }]; }
+class K1117 { f: unknown = make1117()[0].m1117; }
+function c1117(): void { say("records/instance-field/strict-eq", (new K1117().f) === (new K1117().f)); }
+
+interface R1118 { a1118: number; m1118: () => number }
+function make1118(): R1118[] { return [{ a1118: 1, m1118: () => 1 }]; }
+class K1118 { s: unknown; set v(x: unknown) { this.s = x; } }
+function get1118(): unknown { const k = new K1118(); k.v = make1118()[0].m1118; return k.s; }
+function c1118(): void { say("records/setter/strict-eq", (get1118()) === (get1118())); }
+
+interface R1119 { a1119: number; m1119: () => number }
+function make1119(): R1119[] { return [{ a1119: 1, m1119: () => 1 }]; }
+class B1119 { get(): unknown { return make1119()[0].m1119; } }
+class D1119 extends B1119 { get(): unknown { return super.get(); } }
+function c1119(): void { say("records/super-method/strict-eq", (new D1119().get()) === (new D1119().get())); }
+
+interface R1120 { a1120: number; m1120: () => number }
+function make1120(): R1120[] { return [{ a1120: 1, m1120: () => 1 }]; }
+class K1120 { constructor(public f: unknown) {} }
+function c1120(): void { say("records/constructor-parameter/strict-eq", (new K1120(make1120()[0].m1120).f) === (new K1120(make1120()[0].m1120).f)); }
+
+interface R1121 { a1121: number; m1121: () => number }
+function make1121(): R1121[] { return [{ a1121: 1, m1121: () => 1 }]; }
+function tag1121(_s: TemplateStringsArray, ...xs: unknown[]): unknown { return xs[0]; }
+function c1121(): void { say("records/tagged-template/strict-eq", (tag1121`${make1121()[0].m1121}`) === (tag1121`${make1121()[0].m1121}`)); }
+
+interface R1122 { a1122: number; m1122: () => number }
+function make1122(): R1122[] { return [{ a1122: 1, m1122: () => 1 }]; }
+function get1122(x: unknown = make1122()[0].m1122): unknown { return x; }
+function c1122(): void { say("records/default-parameter/strict-eq", (get1122()) === (get1122())); }
+
+interface R1123 { a1123: number; m1123: () => number }
+function make1123(): R1123[] { return [{ a1123: 1, m1123: () => 1 }]; }
+function get1123({ f = make1123()[0].m1123 as unknown }: { f?: unknown } = {}): unknown { return f; }
+function c1123(): void { say("records/pattern-default/strict-eq", (get1123()) === (get1123())); }
+
+interface R1124 { a1124: number; m1124: () => number }
+function make1124(): R1124[] { return [{ a1124: 1, m1124: () => 1 }]; }
+function get1124(): unknown { const [f] = [make1124()[0].m1124]; return f; }
+function c1124(): void { say("records/array-pattern/strict-eq", (get1124()) === (get1124())); }
+
+interface R1125 { a1125: number; m1125: () => number }
+function make1125(): R1125[] { return [{ a1125: 1, m1125: () => 1 }]; }
+function get1125(): unknown { const it = { *[Symbol.iterator](): Generator<unknown> { yield make1125()[0].m1125; } }; for (const f of it) return f; return 0; }
+function c1125(): void { say("records/custom-iterable/strict-eq", (get1125()) === (get1125())); }
+
+interface R1126 { a1126: number; m1126: () => number }
+function make1126(): R1126[] { return [{ a1126: 1, m1126: () => 1 }]; }
+function c1126(): void { say("records/map-callback/strict-eq", ([0].map(() => make1126()[0].m1126)[0]) === ([0].map(() => make1126()[0].m1126)[0])); }
+
+interface R1127 { a1127: number; m1127: () => number }
+function make1127(): R1127[] { return [{ a1127: 1, m1127: () => 1 }]; }
+function c1127(): void { say("records/find/strict-eq", ([make1127()[0].m1127].find(() => true)) === ([make1127()[0].m1127].find(() => true))); }
+
+interface R1128 { a1128: number; m1128: () => number }
+function make1128(): R1128[] { return [{ a1128: 1, m1128: () => 1 }]; }
+function c1128(): void { say("records/reduce/strict-eq", ([make1128()[0].m1128 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown)) === ([make1128()[0].m1128 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown))); }
+
+interface R1129 { a1129: number; m1129: () => number }
+function make1129(): R1129[] { return [{ a1129: 1, m1129: () => 1 }]; }
+function c1129(): void { say("records/filter/strict-eq", ([make1129()[0].m1129].filter(() => true)[0]) === ([make1129()[0].m1129].filter(() => true)[0])); }
+
+interface R1130 { a1130: number; m1130: () => number }
+function make1130(): R1130[] { return [{ a1130: 1, m1130: () => 1 }]; }
+function c1130(): void { say("records/flat/strict-eq", ([[make1130()[0].m1130]].flat()[0]) === ([[make1130()[0].m1130]].flat()[0])); }
+
+interface R1131 { a1131: number; m1131: () => number }
+function make1131(): R1131[] { return [{ a1131: 1, m1131: () => 1 }]; }
+function c1131(): void { say("records/at/strict-eq", ([make1131()[0].m1131].at(0)) === ([make1131()[0].m1131].at(0))); }
+
+interface R1132 { a1132: number; m1132: () => number }
+function make1132(): R1132[] { return [{ a1132: 1, m1132: () => 1 }]; }
+function c1132(): void { say("records/pop/strict-eq", ([make1132()[0].m1132].pop()) === ([make1132()[0].m1132].pop())); }
+
+interface R1133 { a1133: number; m1133: () => number }
+function make1133(): R1133[] { return [{ a1133: 1, m1133: () => 1 }]; }
+function c1133(): void { say("records/shift/strict-eq", ([make1133()[0].m1133].shift()) === ([make1133()[0].m1133].shift())); }
+
+interface R1134 { a1134: number; m1134: () => number }
+function make1134(): R1134[] { return [{ a1134: 1, m1134: () => 1 }]; }
+function c1134(): void { say("records/slice/strict-eq", ([make1134()[0].m1134].slice()[0]) === ([make1134()[0].m1134].slice()[0])); }
+
+interface R1135 { a1135: number; m1135: () => number }
+function make1135(): R1135[] { return [{ a1135: 1, m1135: () => 1 }]; }
+function c1135(): void { say("records/concat/strict-eq", (([] as unknown[]).concat([make1135()[0].m1135])[0]) === (([] as unknown[]).concat([make1135()[0].m1135])[0])); }
+
+interface R1136 { a1136: number; m1136: () => number }
+function make1136(): R1136[] { return [{ a1136: 1, m1136: () => 1 }]; }
+function c1136(): void { say("records/spread-array/strict-eq", ([...[make1136()[0].m1136]][0]) === ([...[make1136()[0].m1136]][0])); }
+
+interface R1137 { a1137: number; m1137: () => number }
+function make1137(): R1137[] { return [{ a1137: 1, m1137: () => 1 }]; }
+function c1137(): void { say("records/array-from/strict-eq", (Array.from([make1137()[0].m1137])[0]) === (Array.from([make1137()[0].m1137])[0])); }
+
+interface R1138 { a1138: number; m1138: () => number }
+function make1138(): R1138[] { return [{ a1138: 1, m1138: () => 1 }]; }
+function c1138(): void { say("records/array-of/strict-eq", (Array.of(make1138()[0].m1138)[0]) === (Array.of(make1138()[0].m1138)[0])); }
+
+interface R1139 { a1139: number; m1139: () => number }
+function make1139(): R1139[] { return [{ a1139: 1, m1139: () => 1 }]; }
+function get1139(): unknown { const xs: unknown[] = []; xs.push(make1139()[0].m1139); return xs[0]; }
+function c1139(): void { say("records/push-then-read/strict-eq", (get1139()) === (get1139())); }
+
+interface R1140 { a1140: number; m1140: () => number }
+function make1140(): R1140[] { return [{ a1140: 1, m1140: () => 1 }]; }
+function c1140(): void { say("records/set-iteration/strict-eq", ([...new Set([make1140()[0].m1140])][0]) === ([...new Set([make1140()[0].m1140])][0])); }
+
+c1081(); c1082(); c1083(); c1084(); c1085(); c1086(); c1087(); c1088(); c1089(); c1090(); c1091(); c1092(); c1093(); c1094(); c1095(); c1096(); c1097(); c1098(); c1099(); c1100(); c1101(); c1102(); c1103(); c1104(); c1105(); c1106(); c1107(); c1108(); c1109(); c1110(); c1111(); c1112(); c1113(); c1114(); c1115(); c1116(); c1117(); c1118(); c1119(); c1120(); c1121(); c1122(); c1123(); c1124(); c1125(); c1126(); c1127(); c1128(); c1129(); c1130(); c1131(); c1132(); c1133(); c1134(); c1135(); c1136(); c1137(); c1138(); c1139(); c1140();
+console.log(out.join("\n"));
+//// identity2-19.ts
+// Generated program: object and closure identity stays observable when allocations are removed (second series, part 19).
+declare const console: any;
+const out: string[] = [];
+function say(name: string, value: unknown): void { out.push(name + "=" + String(value)); }
+
+interface R1141 { a1141: number; m1141: () => number }
+function make1141(): R1141[] { return [{ a1141: 1, m1141: () => 1 }]; }
+function c1141(): void { say("records/map-get/strict-eq", (new Map([[1, make1141()[0].m1141]]).get(1)) === (new Map([[1, make1141()[0].m1141]]).get(1))); }
+
+interface R1142 { a1142: number; m1142: () => number }
+function make1142(): R1142[] { return [{ a1142: 1, m1142: () => 1 }]; }
+function self1142(this: unknown): unknown { return this; }
+function c1142(): void { say("records/bind-this/strict-eq", (self1142.bind(make1142()[0].m1142)()) === (self1142.bind(make1142()[0].m1142)())); }
+
+interface R1143 { a1143: number; m1143: () => number }
+function make1143(): R1143[] { return [{ a1143: 1, m1143: () => 1 }]; }
+function self1143(this: unknown): unknown { return this; }
+function c1143(): void { say("records/call-this/strict-eq", (self1143.call(make1143()[0].m1143)) === (self1143.call(make1143()[0].m1143))); }
+
+interface R1144 { a1144: number; m1144: () => number }
+function make1144(): R1144[] { return [{ a1144: 1, m1144: () => 1 }]; }
+function first1144(x: unknown): unknown { return x; }
+function c1144(): void { say("records/apply-arguments/strict-eq", (first1144.apply(null, [make1144()[0].m1144])) === (first1144.apply(null, [make1144()[0].m1144]))); }
+
+interface R1145 { a1145: number; m1145: () => number }
+function make1145(): R1145[] { return [{ a1145: 1, m1145: () => 1 }]; }
+function first1145(x: unknown): unknown { return x; }
+function c1145(): void { say("records/reflect-apply/strict-eq", (Reflect.apply(first1145, null, [make1145()[0].m1145])) === (Reflect.apply(first1145, null, [make1145()[0].m1145]))); }
+
+interface R1146 { a1146: number; m1146: () => number }
+function make1146(): R1146[] { return [{ a1146: 1, m1146: () => 1 }]; }
+function c1146(): void { say("records/logical-or/strict-eq", (((0 as unknown) || make1146()[0].m1146)) === (((0 as unknown) || make1146()[0].m1146))); }
+
+interface R1147 { a1147: number; m1147: () => number }
+function make1147(): R1147[] { return [{ a1147: 1, m1147: () => 1 }]; }
+let none1147: unknown;
+function c1147(): void { say("records/nullish/strict-eq", ((none1147 ?? make1147()[0].m1147)) === ((none1147 ?? make1147()[0].m1147))); }
+
+interface R1148 { a1148: number; m1148: () => number }
+function make1148(): R1148[] { return [{ a1148: 1, m1148: () => 1 }]; }
+function c1148(): void { say("records/comma/strict-eq", ((out.length, make1148()[0].m1148)) === ((out.length, make1148()[0].m1148))); }
+
+interface R1149 { a1149: number; m1149: () => number }
+function make1149(): R1149[] { return [{ a1149: 1, m1149: () => 1 }]; }
+function c1149(): void { say("records/computed-member/strict-eq", (({ ["k"]: make1149()[0].m1149 })["k"]) === (({ ["k"]: make1149()[0].m1149 })["k"])); }
+
+interface R1150 { a1150: number; m1150: () => number }
+function make1150(): R1150[] { return [{ a1150: 1, m1150: () => 1 }]; }
+const s1150 = Symbol();
+function c1150(): void { say("records/symbol-member/strict-eq", (({ [s1150]: make1150()[0].m1150 })[s1150]) === (({ [s1150]: make1150()[0].m1150 })[s1150])); }
+
+interface R1151 { a1151: number; m1151: () => number }
+function make1151(): R1151[] { return [{ a1151: 1, m1151: () => 1 }]; }
+function c1151(): void { say("records/getter-member/strict-eq", (({ get f(): unknown { return make1151()[0].m1151; } }).f) === (({ get f(): unknown { return make1151()[0].m1151; } }).f)); }
+
+interface R1152 { a1152: number; m1152: () => number }
+function make1152(): R1152[] { return [{ a1152: 1, m1152: () => 1 }]; }
+function c1152(): void { say("records/proxy-get/strict-eq", (new Proxy({ f: make1152()[0].m1152 as unknown }, {}).f) === (new Proxy({ f: make1152()[0].m1152 as unknown }, {}).f)); }
+
+interface R1153 { a1153: number; m1153: () => number }
+function make1153(): R1153[] { return [{ a1153: 1, m1153: () => 1 }]; }
+function c1153(): void { say("records/prototype-chain/strict-eq", (Object.create({ f: make1153()[0].m1153 }).f) === (Object.create({ f: make1153()[0].m1153 }).f)); }
+
+interface R1154 { a1154: number; m1154: () => number }
+function make1154(): R1154[] { return [{ a1154: 1, m1154: () => 1 }]; }
+function c1154(): void { say("records/weak-ref/strict-eq", (new WeakRef(make1154()[0].m1154 as object).deref()) === (new WeakRef(make1154()[0].m1154 as object).deref())); }
+
+interface R1155 { a1155: number; m1155: () => number }
+function make1155(): R1155[] { return [{ a1155: 1, m1155: () => 1 }]; }
+function get1155(_x: unknown): unknown { return arguments[0]; }
+function c1155(): void { say("records/arguments-object/strict-eq", (get1155(make1155()[0].m1155)) === (get1155(make1155()[0].m1155))); }
+
+interface R1156 { a1156: number; m1156: () => number }
+function make1156(): R1156[] { return [{ a1156: 1, m1156: () => 1 }]; }
+function get1156(n: number): unknown { return n === 0 ? make1156()[0].m1156 : get1156(n - 1); }
+function c1156(): void { say("records/recursion/strict-eq", (get1156(2)) === (get1156(2))); }
+
+interface R1157 { a1157: number; m1157: () => number }
+function make1157(): R1157[] { return [{ a1157: 1, m1157: () => 1 }]; }
+function even1157(n: number): unknown { return n === 0 ? make1157()[0].m1157 : odd1157(n - 1); }
+function odd1157(n: number): unknown { return even1157(n - 1); }
+function c1157(): void { say("records/mutual-recursion/strict-eq", (even1157(2)) === (even1157(2))); }
+
+interface R1158 { a1158: number; m1158: () => number }
+function make1158(): R1158[] { return [{ a1158: 1, m1158: () => 1 }]; }
+function again1158(): R1158[] { return make1158(); }
+function c1158(): void { say("records/maker-forwarded/strict-eq", (again1158()[0].m1158) === (again1158()[0].m1158)); }
+
+interface R1159 { a1159: number; m1159: () => number }
+function make1159(): R1159[] { return [{ a1159: 1, m1159: () => 1 }]; }
+function again1159(): R1159[] { return make1159(); }
+function get1159(): unknown { return again1159()[0].m1159; }
+function c1159(): void { say("records/maker-forwarded-and-returned/strict-eq", (get1159()) === (get1159())); }
+
+interface R1160 { a1160: number; m1160: () => number }
+function make1160(): R1160[] { return [{ a1160: 1, m1160: () => 1 }]; }
+function build1160(f: () => R1160[]): R1160[] { return f(); }
+function c1160(): void { say("records/maker-as-a-callback/strict-eq", (build1160(make1160)[0].m1160) === (build1160(make1160)[0].m1160)); }
+
+interface R1161 { a1161: number; m1161: () => number }
+function make1161(): R1161[] { return [{ a1161: 1, m1161: () => 1 }]; }
+function build1161(f: () => R1161[]): R1161[] { return f(); }
+function get1161(): unknown { return build1161(make1161)[0].m1161; }
+function c1161(): void { say("records/maker-as-a-callback-returned/strict-eq", (get1161()) === (get1161())); }
+
+interface R1162 { a1162: number; m1162: () => number }
+function make1162(): R1162[] { return [{ a1162: 1, m1162: () => 1 }]; }
+function box1162(): { t: R1162[] } { return { t: make1162() }; }
+function get1162(): unknown { return box1162().t[0].m1162; }
+function c1162(): void { say("records/holder-through-a-record/strict-eq", (get1162()) === (get1162())); }
+
+interface R1163 { a1163: number; m1163: () => number }
+function make1163(): R1163[] { return [{ a1163: 1, m1163: () => 1 }]; }
+function box1163(): Array<R1163[]> { return [make1163()]; }
+function get1163(): unknown { return box1163()[0][0].m1163; }
+function c1163(): void { say("records/holder-through-an-array/strict-eq", (get1163()) === (get1163())); }
+
+interface R1164 { a1164: number; m1164: () => number }
+function make1164(): R1164[] { return [{ a1164: 1, m1164: () => 1 }]; }
+function box1164(): () => R1164[] { const t = make1164(); return () => t; }
+function get1164(): unknown { return box1164()()[0].m1164; }
+function c1164(): void { say("records/holder-through-a-closure/strict-eq", (get1164()) === (get1164())); }
+
+interface R1165 { a1165: number; m1165: () => number }
+function make1165(): R1165[] { return [{ a1165: 1, m1165: () => 1 }]; }
+function get1165(): unknown { try { return make1165()[0].m1165; } finally { out.length; } }
+function c1165(): void { say("records/finally/strict-eq", (get1165()) === (get1165())); }
+
+interface R1166 { a1166: number; m1166: () => number }
+function make1166(): R1166[] { return [{ a1166: 1, m1166: () => 1 }]; }
+function get1166(n: number): unknown { switch (n) { case 1: return make1166()[0].m1166; default: return 0; } }
+function c1166(): void { say("records/switch-arm/strict-eq", (get1166(1)) === (get1166(1))); }
+
+interface R1167 { a1167: number; m1167: () => number }
+function make1167(): R1167[] { return [{ a1167: 1, m1167: () => 1 }]; }
+function c1167(): void { say("records/object-from-entries/strict-eq", (Object.fromEntries([["k", make1167()[0].m1167]]).k) === (Object.fromEntries([["k", make1167()[0].m1167]]).k)); }
+
+interface R1168 { a1168: number; m1168: () => number }
+function make1168(): R1168[] { return [{ a1168: 1, m1168: () => 1 }]; }
+function get1168(): unknown { const t = make1168(); const u = { t, n: 1 }; const v = { u }; return v.u.t[0].m1168; }
+function c1168(): void { say("records/structured-holder/strict-eq", (get1168()) === (get1168())); }
+
+interface R1169 { a1169: number; m1169: () => number }
+function make1169(): R1169[] { return [{ a1169: 1, m1169: () => 1 }]; }
+function box1169(): { t: R1169[] } { return { t: make1169() }; }
+function get1169(): unknown { return box1169().t[0].m1169; }
+function c1169(): void { say("records/holder-through-a-record/strict-ne", (get1169()) !== (get1169())); }
+
+interface R1170 { a1170: number; m1170: () => number }
+function make1170(): R1170[] { return [{ a1170: 1, m1170: () => 1 }]; }
+function box1170(): { t: R1170[] } { return { t: make1170() }; }
+function get1170(): unknown { return box1170().t[0].m1170; }
+function c1170(): void { say("records/holder-through-a-record/loose-eq", (get1170()) == (get1170())); }
+
+interface R1171 { a1171: number; m1171: () => number }
+function make1171(): R1171[] { return [{ a1171: 1, m1171: () => 1 }]; }
+function box1171(): { t: R1171[] } { return { t: make1171() }; }
+function get1171(): unknown { return box1171().t[0].m1171; }
+function c1171(): void { say("records/holder-through-a-record/object-is", Object.is((get1171()), (get1171()))); }
+
+interface R1172 { a1172: number; m1172: () => number }
+function make1172(): R1172[] { return [{ a1172: 1, m1172: () => 1 }]; }
+function box1172(): { t: R1172[] } { return { t: make1172() }; }
+function get1172(): unknown { return box1172().t[0].m1172; }
+function c1172(): void { say("records/holder-through-a-record/set", new Set([(get1172()), (get1172())]).size); }
+
+interface R1173 { a1173: number; m1173: () => number }
+function make1173(): R1173[] { return [{ a1173: 1, m1173: () => 1 }]; }
+function box1173(): { t: R1173[] } { return { t: make1173() }; }
+function get1173(): unknown { return box1173().t[0].m1173; }
+function c1173(): void { say("records/holder-through-a-record/map-key", new Map([[(get1173()), 1], [(get1173()), 2]]).size); }
+
+interface R1174 { a1174: number; m1174: () => number }
+function make1174(): R1174[] { return [{ a1174: 1, m1174: () => 1 }]; }
+function box1174(): { t: R1174[] } { return { t: make1174() }; }
+function get1174(): unknown { return box1174().t[0].m1174; }
+function c1174(): void { say("records/holder-through-a-record/includes", [(get1174())].includes((get1174()))); }
+
+interface R1175 { a1175: number; m1175: () => number }
+function make1175(): R1175[] { return [{ a1175: 1, m1175: () => 1 }]; }
+function box1175(): { t: R1175[] } { return { t: make1175() }; }
+function get1175(): unknown { return box1175().t[0].m1175; }
+function c1175(): void { say("records/holder-through-a-record/index-of", [(get1175())].indexOf((get1175()))); }
+
+interface R1176 { a1176: number; m1176: () => number }
+function make1176(): R1176[] { return [{ a1176: 1, m1176: () => 1 }]; }
+function box1176(): { t: R1176[] } { return { t: make1176() }; }
+function get1176(): unknown { return box1176().t[0].m1176; }
+const ws1176 = new WeakSet<object>();
+function c1176(): void { say("records/holder-through-a-record/weak-set", (ws1176.add((get1176()) as object), ws1176.has((get1176()) as object))); }
+
+interface R1177 { a1177: number; m1177: () => number }
+function make1177(): R1177[] { return [{ a1177: 1, m1177: () => 1 }]; }
+function box1177(): { t: R1177[] } { return { t: make1177() }; }
+function get1177(): unknown { return box1177().t[0].m1177; }
+const wm1177 = new WeakMap<object, number>();
+function c1177(): void { say("records/holder-through-a-record/weak-map", (wm1177.set((get1177()) as object, 1), wm1177.has((get1177()) as object))); }
+
+interface R1178 { a1178: number; m1178: () => number }
+function make1178(): R1178[] { return [{ a1178: 1, m1178: () => 1 }]; }
+function box1178(): { t: R1178[] } { return { t: make1178() }; }
+function get1178(): unknown { return box1178().t[0].m1178; }
+function c1178(): void { say("records/holder-through-a-record/written", ((((get1178())) as any).tag = 1, (((get1178())) as any).tag)); }
+
+interface R1179 { a1179: number; m1179: () => number }
+function make1179(): R1179[] { return [{ a1179: 1, m1179: () => 1 }]; }
+function box1179(): { t: R1179[] } { return { t: make1179() }; }
+function get1179(): unknown { return box1179().t[0].m1179; }
+function c1179(): void { say("records/holder-through-a-record/defined", (Object.defineProperty((get1179()) as object, "t", { value: 1 }), "t" in ((get1179()) as object))); }
+
+interface R1180 { a1180: number; m1180: () => number }
+function make1180(): R1180[] { return [{ a1180: 1, m1180: () => 1 }]; }
+function box1180(): { t: R1180[] } { return { t: make1180() }; }
+function get1180(): unknown { return box1180().t[0].m1180; }
+function c1180(): void { say("records/holder-through-a-record/frozen", (Object.freeze((get1180())), Object.isFrozen((get1180())))); }
+
+interface R1181 { a1181: number; m1181: () => number }
+function make1181(): R1181[] { return [{ a1181: 1, m1181: () => 1 }]; }
+function box1181(): { t: R1181[] } { return { t: make1181() }; }
+function get1181(): unknown { return box1181().t[0].m1181; }
+function c1181(): void { say("records/holder-through-a-record/prototype-set", (Object.setPrototypeOf((get1181()) as object, null), Object.getPrototypeOf((get1181())) === null)); }
+
+interface R1182 { a1182: number; m1182: () => number }
+function make1182(): R1182[] { return [{ a1182: 1, m1182: () => 1 }]; }
+function box1182(): { t: R1182[] } { return { t: make1182() }; }
+function get1182(): unknown { return box1182().t[0].m1182; }
+function c1182(): void { say("records/holder-through-a-record/deleted", (delete (((get1182())) as any).length, Object.hasOwn((get1182()) as object, "length"))); }
+
+interface R1183 { a1183: number; m1183: () => number }
+function make1183(): R1183[] { return [{ a1183: 1, m1183: () => 1 }]; }
+function box1183(): { t: R1183[] } { return { t: make1183() }; }
+function get1183(): unknown { return box1183().t[0].m1183; }
+function same1183(a: unknown, b: unknown): boolean { return a === b; }
+function c1183(): void { say("records/holder-through-a-record/in-a-callee", same1183((get1183()), (get1183()))); }
+
+interface R1184 { a1184: number; m1184: () => number }
+function make1184(): R1184[] { return [{ a1184: 1, m1184: () => 1 }]; }
+function box1184(): { t: R1184[] } { return { t: make1184() }; }
+function get1184(): unknown { return box1184().t[0].m1184; }
+function hit1184(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c1184(): void { say("records/holder-through-a-record/switch", hit1184((get1184()), (get1184()))); }
+
+interface R1185 { a1185: number; m1185: () => number }
+function make1185(): R1185[] { return [{ a1185: 1, m1185: () => 1 }]; }
+function box1185(): { t: R1185[] } { return { t: make1185() }; }
+function get1185(): unknown { return box1185().t[0].m1185; }
+let last1185: unknown;
+function seen1185(f: unknown): boolean { const same = f === last1185; last1185 = f; return same; }
+function c1185(): void { say("records/holder-through-a-record/kept-then-compared", (seen1185((get1185())), seen1185((get1185())))); }
+
+function make1186(): () => number { return () => 1; }
+class K1186 { #f: unknown; constructor() { this.#f = make1186(); } get(): unknown { return this.#f; } }
+function c1186(): void { say("bare/private-field/strict-eq", (new K1186().get()) === (new K1186().get())); }
+
+function make1187(): () => number { return () => 1; }
+class K1187 { static f: unknown; }
+function c1187(): void { say("bare/static-field/strict-eq", ((K1187.f = make1187(), K1187.f)) === ((K1187.f = make1187(), K1187.f))); }
+
+function make1188(): () => number { return () => 1; }
+class K1188 { f: unknown = make1188(); }
+function c1188(): void { say("bare/instance-field/strict-eq", (new K1188().f) === (new K1188().f)); }
+
+function make1189(): () => number { return () => 1; }
+class K1189 { s: unknown; set v(x: unknown) { this.s = x; } }
+function get1189(): unknown { const k = new K1189(); k.v = make1189(); return k.s; }
+function c1189(): void { say("bare/setter/strict-eq", (get1189()) === (get1189())); }
+
+function make1190(): () => number { return () => 1; }
+class B1190 { get(): unknown { return make1190(); } }
+class D1190 extends B1190 { get(): unknown { return super.get(); } }
+function c1190(): void { say("bare/super-method/strict-eq", (new D1190().get()) === (new D1190().get())); }
+
+function make1191(): () => number { return () => 1; }
+class K1191 { constructor(public f: unknown) {} }
+function c1191(): void { say("bare/constructor-parameter/strict-eq", (new K1191(make1191()).f) === (new K1191(make1191()).f)); }
+
+function make1192(): () => number { return () => 1; }
+function tag1192(_s: TemplateStringsArray, ...xs: unknown[]): unknown { return xs[0]; }
+function c1192(): void { say("bare/tagged-template/strict-eq", (tag1192`${make1192()}`) === (tag1192`${make1192()}`)); }
+
+function make1193(): () => number { return () => 1; }
+function get1193(x: unknown = make1193()): unknown { return x; }
+function c1193(): void { say("bare/default-parameter/strict-eq", (get1193()) === (get1193())); }
+
+function make1194(): () => number { return () => 1; }
+function get1194({ f = make1194() as unknown }: { f?: unknown } = {}): unknown { return f; }
+function c1194(): void { say("bare/pattern-default/strict-eq", (get1194()) === (get1194())); }
+
+function make1195(): () => number { return () => 1; }
+function get1195(): unknown { const [f] = [make1195()]; return f; }
+function c1195(): void { say("bare/array-pattern/strict-eq", (get1195()) === (get1195())); }
+
+function make1196(): () => number { return () => 1; }
+function get1196(): unknown { const it = { *[Symbol.iterator](): Generator<unknown> { yield make1196(); } }; for (const f of it) return f; return 0; }
+function c1196(): void { say("bare/custom-iterable/strict-eq", (get1196()) === (get1196())); }
+
+function make1197(): () => number { return () => 1; }
+function c1197(): void { say("bare/map-callback/strict-eq", ([0].map(() => make1197())[0]) === ([0].map(() => make1197())[0])); }
+
+function make1198(): () => number { return () => 1; }
+function c1198(): void { say("bare/find/strict-eq", ([make1198()].find(() => true)) === ([make1198()].find(() => true))); }
+
+function make1199(): () => number { return () => 1; }
+function c1199(): void { say("bare/reduce/strict-eq", ([make1199() as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown)) === ([make1199() as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown))); }
+
+function make1200(): () => number { return () => 1; }
+function c1200(): void { say("bare/filter/strict-eq", ([make1200()].filter(() => true)[0]) === ([make1200()].filter(() => true)[0])); }
+
+c1141(); c1142(); c1143(); c1144(); c1145(); c1146(); c1147(); c1148(); c1149(); c1150(); c1151(); c1152(); c1153(); c1154(); c1155(); c1156(); c1157(); c1158(); c1159(); c1160(); c1161(); c1162(); c1163(); c1164(); c1165(); c1166(); c1167(); c1168(); c1169(); c1170(); c1171(); c1172(); c1173(); c1174(); c1175(); c1176(); c1177(); c1178(); c1179(); c1180(); c1181(); c1182(); c1183(); c1184(); c1185(); c1186(); c1187(); c1188(); c1189(); c1190(); c1191(); c1192(); c1193(); c1194(); c1195(); c1196(); c1197(); c1198(); c1199(); c1200();
+console.log(out.join("\n"));
+//// identity2-20.ts
+// Generated program: object and closure identity stays observable when allocations are removed (second series, part 20).
+declare const console: any;
+const out: string[] = [];
+function say(name: string, value: unknown): void { out.push(name + "=" + String(value)); }
+
+function make1201(): () => number { return () => 1; }
+function c1201(): void { say("bare/flat/strict-eq", ([[make1201()]].flat()[0]) === ([[make1201()]].flat()[0])); }
+
+function make1202(): () => number { return () => 1; }
+function c1202(): void { say("bare/at/strict-eq", ([make1202()].at(0)) === ([make1202()].at(0))); }
+
+function make1203(): () => number { return () => 1; }
+function c1203(): void { say("bare/pop/strict-eq", ([make1203()].pop()) === ([make1203()].pop())); }
+
+function make1204(): () => number { return () => 1; }
+function c1204(): void { say("bare/shift/strict-eq", ([make1204()].shift()) === ([make1204()].shift())); }
+
+function make1205(): () => number { return () => 1; }
+function c1205(): void { say("bare/slice/strict-eq", ([make1205()].slice()[0]) === ([make1205()].slice()[0])); }
+
+function make1206(): () => number { return () => 1; }
+function c1206(): void { say("bare/concat/strict-eq", (([] as unknown[]).concat([make1206()])[0]) === (([] as unknown[]).concat([make1206()])[0])); }
+
+function make1207(): () => number { return () => 1; }
+function c1207(): void { say("bare/spread-array/strict-eq", ([...[make1207()]][0]) === ([...[make1207()]][0])); }
+
+function make1208(): () => number { return () => 1; }
+function c1208(): void { say("bare/array-from/strict-eq", (Array.from([make1208()])[0]) === (Array.from([make1208()])[0])); }
+
+function make1209(): () => number { return () => 1; }
+function c1209(): void { say("bare/array-of/strict-eq", (Array.of(make1209())[0]) === (Array.of(make1209())[0])); }
+
+function make1210(): () => number { return () => 1; }
+function get1210(): unknown { const xs: unknown[] = []; xs.push(make1210()); return xs[0]; }
+function c1210(): void { say("bare/push-then-read/strict-eq", (get1210()) === (get1210())); }
+
+function make1211(): () => number { return () => 1; }
+function c1211(): void { say("bare/set-iteration/strict-eq", ([...new Set([make1211()])][0]) === ([...new Set([make1211()])][0])); }
+
+function make1212(): () => number { return () => 1; }
+function c1212(): void { say("bare/map-get/strict-eq", (new Map([[1, make1212()]]).get(1)) === (new Map([[1, make1212()]]).get(1))); }
+
+function make1213(): () => number { return () => 1; }
+function self1213(this: unknown): unknown { return this; }
+function c1213(): void { say("bare/bind-this/strict-eq", (self1213.bind(make1213())()) === (self1213.bind(make1213())())); }
+
+function make1214(): () => number { return () => 1; }
+function self1214(this: unknown): unknown { return this; }
+function c1214(): void { say("bare/call-this/strict-eq", (self1214.call(make1214())) === (self1214.call(make1214()))); }
+
+function make1215(): () => number { return () => 1; }
+function first1215(x: unknown): unknown { return x; }
+function c1215(): void { say("bare/apply-arguments/strict-eq", (first1215.apply(null, [make1215()])) === (first1215.apply(null, [make1215()]))); }
+
+function make1216(): () => number { return () => 1; }
+function first1216(x: unknown): unknown { return x; }
+function c1216(): void { say("bare/reflect-apply/strict-eq", (Reflect.apply(first1216, null, [make1216()])) === (Reflect.apply(first1216, null, [make1216()]))); }
+
+function make1217(): () => number { return () => 1; }
+function c1217(): void { say("bare/logical-or/strict-eq", (((0 as unknown) || make1217())) === (((0 as unknown) || make1217()))); }
+
+function make1218(): () => number { return () => 1; }
+let none1218: unknown;
+function c1218(): void { say("bare/nullish/strict-eq", ((none1218 ?? make1218())) === ((none1218 ?? make1218()))); }
+
+function make1219(): () => number { return () => 1; }
+function c1219(): void { say("bare/comma/strict-eq", ((out.length, make1219())) === ((out.length, make1219()))); }
+
+function make1220(): () => number { return () => 1; }
+function c1220(): void { say("bare/computed-member/strict-eq", (({ ["k"]: make1220() })["k"]) === (({ ["k"]: make1220() })["k"])); }
+
+function make1221(): () => number { return () => 1; }
+const s1221 = Symbol();
+function c1221(): void { say("bare/symbol-member/strict-eq", (({ [s1221]: make1221() })[s1221]) === (({ [s1221]: make1221() })[s1221])); }
+
+function make1222(): () => number { return () => 1; }
+function c1222(): void { say("bare/getter-member/strict-eq", (({ get f(): unknown { return make1222(); } }).f) === (({ get f(): unknown { return make1222(); } }).f)); }
+
+function make1223(): () => number { return () => 1; }
+function c1223(): void { say("bare/proxy-get/strict-eq", (new Proxy({ f: make1223() as unknown }, {}).f) === (new Proxy({ f: make1223() as unknown }, {}).f)); }
+
+function make1224(): () => number { return () => 1; }
+function c1224(): void { say("bare/prototype-chain/strict-eq", (Object.create({ f: make1224() }).f) === (Object.create({ f: make1224() }).f)); }
+
+function make1225(): () => number { return () => 1; }
+function c1225(): void { say("bare/weak-ref/strict-eq", (new WeakRef(make1225() as object).deref()) === (new WeakRef(make1225() as object).deref())); }
+
+function make1226(): () => number { return () => 1; }
+function get1226(_x: unknown): unknown { return arguments[0]; }
+function c1226(): void { say("bare/arguments-object/strict-eq", (get1226(make1226())) === (get1226(make1226()))); }
+
+function make1227(): () => number { return () => 1; }
+function get1227(n: number): unknown { return n === 0 ? make1227() : get1227(n - 1); }
+function c1227(): void { say("bare/recursion/strict-eq", (get1227(2)) === (get1227(2))); }
+
+function make1228(): () => number { return () => 1; }
+function even1228(n: number): unknown { return n === 0 ? make1228() : odd1228(n - 1); }
+function odd1228(n: number): unknown { return even1228(n - 1); }
+function c1228(): void { say("bare/mutual-recursion/strict-eq", (even1228(2)) === (even1228(2))); }
+
+function make1229(): () => number { return () => 1; }
+function again1229(): () => number { return make1229(); }
+function c1229(): void { say("bare/maker-forwarded/strict-eq", (again1229()) === (again1229())); }
+
+function make1230(): () => number { return () => 1; }
+function again1230(): () => number { return make1230(); }
+function get1230(): unknown { return again1230(); }
+function c1230(): void { say("bare/maker-forwarded-and-returned/strict-eq", (get1230()) === (get1230())); }
+
+function make1231(): () => number { return () => 1; }
+function build1231(f: () => () => number): () => number { return f(); }
+function c1231(): void { say("bare/maker-as-a-callback/strict-eq", (build1231(make1231)) === (build1231(make1231))); }
+
+function make1232(): () => number { return () => 1; }
+function build1232(f: () => () => number): () => number { return f(); }
+function get1232(): unknown { return build1232(make1232); }
+function c1232(): void { say("bare/maker-as-a-callback-returned/strict-eq", (get1232()) === (get1232())); }
+
+function make1233(): () => number { return () => 1; }
+function box1233(): { t: () => number } { return { t: make1233() }; }
+function get1233(): unknown { return box1233().t; }
+function c1233(): void { say("bare/holder-through-a-record/strict-eq", (get1233()) === (get1233())); }
+
+function make1234(): () => number { return () => 1; }
+function box1234(): Array<() => number> { return [make1234()]; }
+function get1234(): unknown { return box1234()[0]; }
+function c1234(): void { say("bare/holder-through-an-array/strict-eq", (get1234()) === (get1234())); }
+
+function make1235(): () => number { return () => 1; }
+function box1235(): () => () => number { const t = make1235(); return () => t; }
+function get1235(): unknown { return box1235()(); }
+function c1235(): void { say("bare/holder-through-a-closure/strict-eq", (get1235()) === (get1235())); }
+
+function make1236(): () => number { return () => 1; }
+function get1236(): unknown { try { return make1236(); } finally { out.length; } }
+function c1236(): void { say("bare/finally/strict-eq", (get1236()) === (get1236())); }
+
+function make1237(): () => number { return () => 1; }
+function get1237(n: number): unknown { switch (n) { case 1: return make1237(); default: return 0; } }
+function c1237(): void { say("bare/switch-arm/strict-eq", (get1237(1)) === (get1237(1))); }
+
+function make1238(): () => number { return () => 1; }
+function c1238(): void { say("bare/object-from-entries/strict-eq", (Object.fromEntries([["k", make1238()]]).k) === (Object.fromEntries([["k", make1238()]]).k)); }
+
+function make1239(): () => number { return () => 1; }
+function get1239(): unknown { const t = make1239(); const u = { t, n: 1 }; const v = { u }; return v.u.t; }
+function c1239(): void { say("bare/structured-holder/strict-eq", (get1239()) === (get1239())); }
+
+function make1240(): () => number { return () => 1; }
+function box1240(): { t: () => number } { return { t: make1240() }; }
+function get1240(): unknown { return box1240().t; }
+function c1240(): void { say("bare/holder-through-a-record/strict-ne", (get1240()) !== (get1240())); }
+
+function make1241(): () => number { return () => 1; }
+function box1241(): { t: () => number } { return { t: make1241() }; }
+function get1241(): unknown { return box1241().t; }
+function c1241(): void { say("bare/holder-through-a-record/loose-eq", (get1241()) == (get1241())); }
+
+function make1242(): () => number { return () => 1; }
+function box1242(): { t: () => number } { return { t: make1242() }; }
+function get1242(): unknown { return box1242().t; }
+function c1242(): void { say("bare/holder-through-a-record/object-is", Object.is((get1242()), (get1242()))); }
+
+function make1243(): () => number { return () => 1; }
+function box1243(): { t: () => number } { return { t: make1243() }; }
+function get1243(): unknown { return box1243().t; }
+function c1243(): void { say("bare/holder-through-a-record/set", new Set([(get1243()), (get1243())]).size); }
+
+function make1244(): () => number { return () => 1; }
+function box1244(): { t: () => number } { return { t: make1244() }; }
+function get1244(): unknown { return box1244().t; }
+function c1244(): void { say("bare/holder-through-a-record/map-key", new Map([[(get1244()), 1], [(get1244()), 2]]).size); }
+
+function make1245(): () => number { return () => 1; }
+function box1245(): { t: () => number } { return { t: make1245() }; }
+function get1245(): unknown { return box1245().t; }
+function c1245(): void { say("bare/holder-through-a-record/includes", [(get1245())].includes((get1245()))); }
+
+function make1246(): () => number { return () => 1; }
+function box1246(): { t: () => number } { return { t: make1246() }; }
+function get1246(): unknown { return box1246().t; }
+function c1246(): void { say("bare/holder-through-a-record/index-of", [(get1246())].indexOf((get1246()))); }
+
+function make1247(): () => number { return () => 1; }
+function box1247(): { t: () => number } { return { t: make1247() }; }
+function get1247(): unknown { return box1247().t; }
+const ws1247 = new WeakSet<object>();
+function c1247(): void { say("bare/holder-through-a-record/weak-set", (ws1247.add((get1247()) as object), ws1247.has((get1247()) as object))); }
+
+function make1248(): () => number { return () => 1; }
+function box1248(): { t: () => number } { return { t: make1248() }; }
+function get1248(): unknown { return box1248().t; }
+const wm1248 = new WeakMap<object, number>();
+function c1248(): void { say("bare/holder-through-a-record/weak-map", (wm1248.set((get1248()) as object, 1), wm1248.has((get1248()) as object))); }
+
+function make1249(): () => number { return () => 1; }
+function box1249(): { t: () => number } { return { t: make1249() }; }
+function get1249(): unknown { return box1249().t; }
+function c1249(): void { say("bare/holder-through-a-record/written", ((((get1249())) as any).tag = 1, (((get1249())) as any).tag)); }
+
+function make1250(): () => number { return () => 1; }
+function box1250(): { t: () => number } { return { t: make1250() }; }
+function get1250(): unknown { return box1250().t; }
+function c1250(): void { say("bare/holder-through-a-record/defined", (Object.defineProperty((get1250()) as object, "t", { value: 1 }), "t" in ((get1250()) as object))); }
+
+function make1251(): () => number { return () => 1; }
+function box1251(): { t: () => number } { return { t: make1251() }; }
+function get1251(): unknown { return box1251().t; }
+function c1251(): void { say("bare/holder-through-a-record/frozen", (Object.freeze((get1251())), Object.isFrozen((get1251())))); }
+
+function make1252(): () => number { return () => 1; }
+function box1252(): { t: () => number } { return { t: make1252() }; }
+function get1252(): unknown { return box1252().t; }
+function c1252(): void { say("bare/holder-through-a-record/prototype-set", (Object.setPrototypeOf((get1252()) as object, null), Object.getPrototypeOf((get1252())) === null)); }
+
+function make1253(): () => number { return () => 1; }
+function box1253(): { t: () => number } { return { t: make1253() }; }
+function get1253(): unknown { return box1253().t; }
+function c1253(): void { say("bare/holder-through-a-record/deleted", (delete (((get1253())) as any).length, Object.hasOwn((get1253()) as object, "length"))); }
+
+function make1254(): () => number { return () => 1; }
+function box1254(): { t: () => number } { return { t: make1254() }; }
+function get1254(): unknown { return box1254().t; }
+function same1254(a: unknown, b: unknown): boolean { return a === b; }
+function c1254(): void { say("bare/holder-through-a-record/in-a-callee", same1254((get1254()), (get1254()))); }
+
+function make1255(): () => number { return () => 1; }
+function box1255(): { t: () => number } { return { t: make1255() }; }
+function get1255(): unknown { return box1255().t; }
+function hit1255(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c1255(): void { say("bare/holder-through-a-record/switch", hit1255((get1255()), (get1255()))); }
+
+function make1256(): () => number { return () => 1; }
+function box1256(): { t: () => number } { return { t: make1256() }; }
+function get1256(): unknown { return box1256().t; }
+let last1256: unknown;
+function seen1256(f: unknown): boolean { const same = f === last1256; last1256 = f; return same; }
+function c1256(): void { say("bare/holder-through-a-record/kept-then-compared", (seen1256((get1256())), seen1256((get1256())))); }
+
+function make1257(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+class K1257 { #f: unknown; constructor() { this.#f = make1257().get("k"); } get(): unknown { return this.#f; } }
+function c1257(): void { say("map/private-field/strict-eq", (new K1257().get()) === (new K1257().get())); }
+
+function make1258(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+class K1258 { static f: unknown; }
+function c1258(): void { say("map/static-field/strict-eq", ((K1258.f = make1258().get("k"), K1258.f)) === ((K1258.f = make1258().get("k"), K1258.f))); }
+
+function make1259(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+class K1259 { f: unknown = make1259().get("k"); }
+function c1259(): void { say("map/instance-field/strict-eq", (new K1259().f) === (new K1259().f)); }
+
+function make1260(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+class K1260 { s: unknown; set v(x: unknown) { this.s = x; } }
+function get1260(): unknown { const k = new K1260(); k.v = make1260().get("k"); return k.s; }
+function c1260(): void { say("map/setter/strict-eq", (get1260()) === (get1260())); }
+
+c1201(); c1202(); c1203(); c1204(); c1205(); c1206(); c1207(); c1208(); c1209(); c1210(); c1211(); c1212(); c1213(); c1214(); c1215(); c1216(); c1217(); c1218(); c1219(); c1220(); c1221(); c1222(); c1223(); c1224(); c1225(); c1226(); c1227(); c1228(); c1229(); c1230(); c1231(); c1232(); c1233(); c1234(); c1235(); c1236(); c1237(); c1238(); c1239(); c1240(); c1241(); c1242(); c1243(); c1244(); c1245(); c1246(); c1247(); c1248(); c1249(); c1250(); c1251(); c1252(); c1253(); c1254(); c1255(); c1256(); c1257(); c1258(); c1259(); c1260();
+console.log(out.join("\n"));
+//// identity2-21.ts
+// Generated program: object and closure identity stays observable when allocations are removed (second series, part 21).
+declare const console: any;
+const out: string[] = [];
+function say(name: string, value: unknown): void { out.push(name + "=" + String(value)); }
+
+function make1261(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+class B1261 { get(): unknown { return make1261().get("k"); } }
+class D1261 extends B1261 { get(): unknown { return super.get(); } }
+function c1261(): void { say("map/super-method/strict-eq", (new D1261().get()) === (new D1261().get())); }
+
+function make1262(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+class K1262 { constructor(public f: unknown) {} }
+function c1262(): void { say("map/constructor-parameter/strict-eq", (new K1262(make1262().get("k")).f) === (new K1262(make1262().get("k")).f)); }
+
+function make1263(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function tag1263(_s: TemplateStringsArray, ...xs: unknown[]): unknown { return xs[0]; }
+function c1263(): void { say("map/tagged-template/strict-eq", (tag1263`${make1263().get("k")}`) === (tag1263`${make1263().get("k")}`)); }
+
+function make1264(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function get1264(x: unknown = make1264().get("k")): unknown { return x; }
+function c1264(): void { say("map/default-parameter/strict-eq", (get1264()) === (get1264())); }
+
+function make1265(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function get1265({ f = make1265().get("k") as unknown }: { f?: unknown } = {}): unknown { return f; }
+function c1265(): void { say("map/pattern-default/strict-eq", (get1265()) === (get1265())); }
+
+function make1266(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function get1266(): unknown { const [f] = [make1266().get("k")]; return f; }
+function c1266(): void { say("map/array-pattern/strict-eq", (get1266()) === (get1266())); }
+
+function make1267(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function get1267(): unknown { const it = { *[Symbol.iterator](): Generator<unknown> { yield make1267().get("k"); } }; for (const f of it) return f; return 0; }
+function c1267(): void { say("map/custom-iterable/strict-eq", (get1267()) === (get1267())); }
+
+function make1268(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function c1268(): void { say("map/map-callback/strict-eq", ([0].map(() => make1268().get("k"))[0]) === ([0].map(() => make1268().get("k"))[0])); }
+
+function make1269(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function c1269(): void { say("map/find/strict-eq", ([make1269().get("k")].find(() => true)) === ([make1269().get("k")].find(() => true))); }
+
+function make1270(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function c1270(): void { say("map/reduce/strict-eq", ([make1270().get("k") as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown)) === ([make1270().get("k") as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown))); }
+
+function make1271(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function c1271(): void { say("map/filter/strict-eq", ([make1271().get("k")].filter(() => true)[0]) === ([make1271().get("k")].filter(() => true)[0])); }
+
+function make1272(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function c1272(): void { say("map/flat/strict-eq", ([[make1272().get("k")]].flat()[0]) === ([[make1272().get("k")]].flat()[0])); }
+
+function make1273(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function c1273(): void { say("map/at/strict-eq", ([make1273().get("k")].at(0)) === ([make1273().get("k")].at(0))); }
+
+function make1274(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function c1274(): void { say("map/pop/strict-eq", ([make1274().get("k")].pop()) === ([make1274().get("k")].pop())); }
+
+function make1275(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function c1275(): void { say("map/shift/strict-eq", ([make1275().get("k")].shift()) === ([make1275().get("k")].shift())); }
+
+function make1276(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function c1276(): void { say("map/slice/strict-eq", ([make1276().get("k")].slice()[0]) === ([make1276().get("k")].slice()[0])); }
+
+function make1277(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function c1277(): void { say("map/concat/strict-eq", (([] as unknown[]).concat([make1277().get("k")])[0]) === (([] as unknown[]).concat([make1277().get("k")])[0])); }
+
+function make1278(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function c1278(): void { say("map/spread-array/strict-eq", ([...[make1278().get("k")]][0]) === ([...[make1278().get("k")]][0])); }
+
+function make1279(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function c1279(): void { say("map/array-from/strict-eq", (Array.from([make1279().get("k")])[0]) === (Array.from([make1279().get("k")])[0])); }
+
+function make1280(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function c1280(): void { say("map/array-of/strict-eq", (Array.of(make1280().get("k"))[0]) === (Array.of(make1280().get("k"))[0])); }
+
+function make1281(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function get1281(): unknown { const xs: unknown[] = []; xs.push(make1281().get("k")); return xs[0]; }
+function c1281(): void { say("map/push-then-read/strict-eq", (get1281()) === (get1281())); }
+
+function make1282(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function c1282(): void { say("map/set-iteration/strict-eq", ([...new Set([make1282().get("k")])][0]) === ([...new Set([make1282().get("k")])][0])); }
+
+function make1283(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function c1283(): void { say("map/map-get/strict-eq", (new Map([[1, make1283().get("k")]]).get(1)) === (new Map([[1, make1283().get("k")]]).get(1))); }
+
+function make1284(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function self1284(this: unknown): unknown { return this; }
+function c1284(): void { say("map/bind-this/strict-eq", (self1284.bind(make1284().get("k"))()) === (self1284.bind(make1284().get("k"))())); }
+
+function make1285(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function self1285(this: unknown): unknown { return this; }
+function c1285(): void { say("map/call-this/strict-eq", (self1285.call(make1285().get("k"))) === (self1285.call(make1285().get("k")))); }
+
+function make1286(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function first1286(x: unknown): unknown { return x; }
+function c1286(): void { say("map/apply-arguments/strict-eq", (first1286.apply(null, [make1286().get("k")])) === (first1286.apply(null, [make1286().get("k")]))); }
+
+function make1287(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function first1287(x: unknown): unknown { return x; }
+function c1287(): void { say("map/reflect-apply/strict-eq", (Reflect.apply(first1287, null, [make1287().get("k")])) === (Reflect.apply(first1287, null, [make1287().get("k")]))); }
+
+function make1288(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function c1288(): void { say("map/logical-or/strict-eq", (((0 as unknown) || make1288().get("k"))) === (((0 as unknown) || make1288().get("k")))); }
+
+function make1289(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+let none1289: unknown;
+function c1289(): void { say("map/nullish/strict-eq", ((none1289 ?? make1289().get("k"))) === ((none1289 ?? make1289().get("k")))); }
+
+function make1290(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function c1290(): void { say("map/comma/strict-eq", ((out.length, make1290().get("k"))) === ((out.length, make1290().get("k")))); }
+
+function make1291(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function c1291(): void { say("map/computed-member/strict-eq", (({ ["k"]: make1291().get("k") })["k"]) === (({ ["k"]: make1291().get("k") })["k"])); }
+
+function make1292(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+const s1292 = Symbol();
+function c1292(): void { say("map/symbol-member/strict-eq", (({ [s1292]: make1292().get("k") })[s1292]) === (({ [s1292]: make1292().get("k") })[s1292])); }
+
+function make1293(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function c1293(): void { say("map/getter-member/strict-eq", (({ get f(): unknown { return make1293().get("k"); } }).f) === (({ get f(): unknown { return make1293().get("k"); } }).f)); }
+
+function make1294(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function c1294(): void { say("map/proxy-get/strict-eq", (new Proxy({ f: make1294().get("k") as unknown }, {}).f) === (new Proxy({ f: make1294().get("k") as unknown }, {}).f)); }
+
+function make1295(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function c1295(): void { say("map/prototype-chain/strict-eq", (Object.create({ f: make1295().get("k") }).f) === (Object.create({ f: make1295().get("k") }).f)); }
+
+function make1296(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function c1296(): void { say("map/weak-ref/strict-eq", (new WeakRef(make1296().get("k") as object).deref()) === (new WeakRef(make1296().get("k") as object).deref())); }
+
+function make1297(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function get1297(_x: unknown): unknown { return arguments[0]; }
+function c1297(): void { say("map/arguments-object/strict-eq", (get1297(make1297().get("k"))) === (get1297(make1297().get("k")))); }
+
+function make1298(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function get1298(n: number): unknown { return n === 0 ? make1298().get("k") : get1298(n - 1); }
+function c1298(): void { say("map/recursion/strict-eq", (get1298(2)) === (get1298(2))); }
+
+function make1299(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function even1299(n: number): unknown { return n === 0 ? make1299().get("k") : odd1299(n - 1); }
+function odd1299(n: number): unknown { return even1299(n - 1); }
+function c1299(): void { say("map/mutual-recursion/strict-eq", (even1299(2)) === (even1299(2))); }
+
+function make1300(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function again1300(): Map<string, () => number> { return make1300(); }
+function c1300(): void { say("map/maker-forwarded/strict-eq", (again1300().get("k")) === (again1300().get("k"))); }
+
+function make1301(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function again1301(): Map<string, () => number> { return make1301(); }
+function get1301(): unknown { return again1301().get("k"); }
+function c1301(): void { say("map/maker-forwarded-and-returned/strict-eq", (get1301()) === (get1301())); }
+
+function make1302(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function build1302(f: () => Map<string, () => number>): Map<string, () => number> { return f(); }
+function c1302(): void { say("map/maker-as-a-callback/strict-eq", (build1302(make1302).get("k")) === (build1302(make1302).get("k"))); }
+
+function make1303(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function build1303(f: () => Map<string, () => number>): Map<string, () => number> { return f(); }
+function get1303(): unknown { return build1303(make1303).get("k"); }
+function c1303(): void { say("map/maker-as-a-callback-returned/strict-eq", (get1303()) === (get1303())); }
+
+function make1304(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function box1304(): { t: Map<string, () => number> } { return { t: make1304() }; }
+function get1304(): unknown { return box1304().t.get("k"); }
+function c1304(): void { say("map/holder-through-a-record/strict-eq", (get1304()) === (get1304())); }
+
+function make1305(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function box1305(): Array<Map<string, () => number>> { return [make1305()]; }
+function get1305(): unknown { return box1305()[0].get("k"); }
+function c1305(): void { say("map/holder-through-an-array/strict-eq", (get1305()) === (get1305())); }
+
+function make1306(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function box1306(): () => Map<string, () => number> { const t = make1306(); return () => t; }
+function get1306(): unknown { return box1306()().get("k"); }
+function c1306(): void { say("map/holder-through-a-closure/strict-eq", (get1306()) === (get1306())); }
+
+function make1307(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function get1307(): unknown { try { return make1307().get("k"); } finally { out.length; } }
+function c1307(): void { say("map/finally/strict-eq", (get1307()) === (get1307())); }
+
+function make1308(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function get1308(n: number): unknown { switch (n) { case 1: return make1308().get("k"); default: return 0; } }
+function c1308(): void { say("map/switch-arm/strict-eq", (get1308(1)) === (get1308(1))); }
+
+function make1309(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function c1309(): void { say("map/object-from-entries/strict-eq", (Object.fromEntries([["k", make1309().get("k")]]).k) === (Object.fromEntries([["k", make1309().get("k")]]).k)); }
+
+function make1310(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function get1310(): unknown { const t = make1310(); const u = { t, n: 1 }; const v = { u }; return v.u.t.get("k"); }
+function c1310(): void { say("map/structured-holder/strict-eq", (get1310()) === (get1310())); }
+
+function make1311(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function box1311(): { t: Map<string, () => number> } { return { t: make1311() }; }
+function get1311(): unknown { return box1311().t.get("k"); }
+function c1311(): void { say("map/holder-through-a-record/strict-ne", (get1311()) !== (get1311())); }
+
+function make1312(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function box1312(): { t: Map<string, () => number> } { return { t: make1312() }; }
+function get1312(): unknown { return box1312().t.get("k"); }
+function c1312(): void { say("map/holder-through-a-record/loose-eq", (get1312()) == (get1312())); }
+
+function make1313(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function box1313(): { t: Map<string, () => number> } { return { t: make1313() }; }
+function get1313(): unknown { return box1313().t.get("k"); }
+function c1313(): void { say("map/holder-through-a-record/object-is", Object.is((get1313()), (get1313()))); }
+
+function make1314(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function box1314(): { t: Map<string, () => number> } { return { t: make1314() }; }
+function get1314(): unknown { return box1314().t.get("k"); }
+function c1314(): void { say("map/holder-through-a-record/set", new Set([(get1314()), (get1314())]).size); }
+
+function make1315(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function box1315(): { t: Map<string, () => number> } { return { t: make1315() }; }
+function get1315(): unknown { return box1315().t.get("k"); }
+function c1315(): void { say("map/holder-through-a-record/map-key", new Map([[(get1315()), 1], [(get1315()), 2]]).size); }
+
+function make1316(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function box1316(): { t: Map<string, () => number> } { return { t: make1316() }; }
+function get1316(): unknown { return box1316().t.get("k"); }
+function c1316(): void { say("map/holder-through-a-record/includes", [(get1316())].includes((get1316()))); }
+
+function make1317(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function box1317(): { t: Map<string, () => number> } { return { t: make1317() }; }
+function get1317(): unknown { return box1317().t.get("k"); }
+function c1317(): void { say("map/holder-through-a-record/index-of", [(get1317())].indexOf((get1317()))); }
+
+function make1318(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function box1318(): { t: Map<string, () => number> } { return { t: make1318() }; }
+function get1318(): unknown { return box1318().t.get("k"); }
+const ws1318 = new WeakSet<object>();
+function c1318(): void { say("map/holder-through-a-record/weak-set", (ws1318.add((get1318()) as object), ws1318.has((get1318()) as object))); }
+
+function make1319(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function box1319(): { t: Map<string, () => number> } { return { t: make1319() }; }
+function get1319(): unknown { return box1319().t.get("k"); }
+const wm1319 = new WeakMap<object, number>();
+function c1319(): void { say("map/holder-through-a-record/weak-map", (wm1319.set((get1319()) as object, 1), wm1319.has((get1319()) as object))); }
+
+function make1320(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function box1320(): { t: Map<string, () => number> } { return { t: make1320() }; }
+function get1320(): unknown { return box1320().t.get("k"); }
+function c1320(): void { say("map/holder-through-a-record/written", ((((get1320())) as any).tag = 1, (((get1320())) as any).tag)); }
+
+c1261(); c1262(); c1263(); c1264(); c1265(); c1266(); c1267(); c1268(); c1269(); c1270(); c1271(); c1272(); c1273(); c1274(); c1275(); c1276(); c1277(); c1278(); c1279(); c1280(); c1281(); c1282(); c1283(); c1284(); c1285(); c1286(); c1287(); c1288(); c1289(); c1290(); c1291(); c1292(); c1293(); c1294(); c1295(); c1296(); c1297(); c1298(); c1299(); c1300(); c1301(); c1302(); c1303(); c1304(); c1305(); c1306(); c1307(); c1308(); c1309(); c1310(); c1311(); c1312(); c1313(); c1314(); c1315(); c1316(); c1317(); c1318(); c1319(); c1320();
+console.log(out.join("\n"));
+//// identity2-22.ts
+// Generated program: object and closure identity stays observable when allocations are removed (second series, part 22).
+declare const console: any;
+const out: string[] = [];
+function say(name: string, value: unknown): void { out.push(name + "=" + String(value)); }
+
+function make1321(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function box1321(): { t: Map<string, () => number> } { return { t: make1321() }; }
+function get1321(): unknown { return box1321().t.get("k"); }
+function c1321(): void { say("map/holder-through-a-record/defined", (Object.defineProperty((get1321()) as object, "t", { value: 1 }), "t" in ((get1321()) as object))); }
+
+function make1322(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function box1322(): { t: Map<string, () => number> } { return { t: make1322() }; }
+function get1322(): unknown { return box1322().t.get("k"); }
+function c1322(): void { say("map/holder-through-a-record/frozen", (Object.freeze((get1322())), Object.isFrozen((get1322())))); }
+
+function make1323(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function box1323(): { t: Map<string, () => number> } { return { t: make1323() }; }
+function get1323(): unknown { return box1323().t.get("k"); }
+function c1323(): void { say("map/holder-through-a-record/prototype-set", (Object.setPrototypeOf((get1323()) as object, null), Object.getPrototypeOf((get1323())) === null)); }
+
+function make1324(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function box1324(): { t: Map<string, () => number> } { return { t: make1324() }; }
+function get1324(): unknown { return box1324().t.get("k"); }
+function c1324(): void { say("map/holder-through-a-record/deleted", (delete (((get1324())) as any).length, Object.hasOwn((get1324()) as object, "length"))); }
+
+function make1325(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function box1325(): { t: Map<string, () => number> } { return { t: make1325() }; }
+function get1325(): unknown { return box1325().t.get("k"); }
+function same1325(a: unknown, b: unknown): boolean { return a === b; }
+function c1325(): void { say("map/holder-through-a-record/in-a-callee", same1325((get1325()), (get1325()))); }
+
+function make1326(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function box1326(): { t: Map<string, () => number> } { return { t: make1326() }; }
+function get1326(): unknown { return box1326().t.get("k"); }
+function hit1326(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c1326(): void { say("map/holder-through-a-record/switch", hit1326((get1326()), (get1326()))); }
+
+function make1327(): Map<string, () => number> { return new Map([["k", () => 1]]); }
+function box1327(): { t: Map<string, () => number> } { return { t: make1327() }; }
+function get1327(): unknown { return box1327().t.get("k"); }
+let last1327: unknown;
+function seen1327(f: unknown): boolean { const same = f === last1327; last1327 = f; return same; }
+function c1327(): void { say("map/holder-through-a-record/kept-then-compared", (seen1327((get1327())), seen1327((get1327())))); }
+
+interface R1328 { a1328: number; m1328?: () => number }
+function make1328(): R1328 { const r: R1328 = { a1328: 1 }; r.m1328 = () => 1; return r; }
+class K1328 { #f: unknown; constructor() { this.#f = make1328().m1328; } get(): unknown { return this.#f; } }
+function c1328(): void { say("stored-later/private-field/strict-eq", (new K1328().get()) === (new K1328().get())); }
+
+interface R1329 { a1329: number; m1329?: () => number }
+function make1329(): R1329 { const r: R1329 = { a1329: 1 }; r.m1329 = () => 1; return r; }
+class K1329 { static f: unknown; }
+function c1329(): void { say("stored-later/static-field/strict-eq", ((K1329.f = make1329().m1329, K1329.f)) === ((K1329.f = make1329().m1329, K1329.f))); }
+
+interface R1330 { a1330: number; m1330?: () => number }
+function make1330(): R1330 { const r: R1330 = { a1330: 1 }; r.m1330 = () => 1; return r; }
+class K1330 { f: unknown = make1330().m1330; }
+function c1330(): void { say("stored-later/instance-field/strict-eq", (new K1330().f) === (new K1330().f)); }
+
+interface R1331 { a1331: number; m1331?: () => number }
+function make1331(): R1331 { const r: R1331 = { a1331: 1 }; r.m1331 = () => 1; return r; }
+class K1331 { s: unknown; set v(x: unknown) { this.s = x; } }
+function get1331(): unknown { const k = new K1331(); k.v = make1331().m1331; return k.s; }
+function c1331(): void { say("stored-later/setter/strict-eq", (get1331()) === (get1331())); }
+
+interface R1332 { a1332: number; m1332?: () => number }
+function make1332(): R1332 { const r: R1332 = { a1332: 1 }; r.m1332 = () => 1; return r; }
+class B1332 { get(): unknown { return make1332().m1332; } }
+class D1332 extends B1332 { get(): unknown { return super.get(); } }
+function c1332(): void { say("stored-later/super-method/strict-eq", (new D1332().get()) === (new D1332().get())); }
+
+interface R1333 { a1333: number; m1333?: () => number }
+function make1333(): R1333 { const r: R1333 = { a1333: 1 }; r.m1333 = () => 1; return r; }
+class K1333 { constructor(public f: unknown) {} }
+function c1333(): void { say("stored-later/constructor-parameter/strict-eq", (new K1333(make1333().m1333).f) === (new K1333(make1333().m1333).f)); }
+
+interface R1334 { a1334: number; m1334?: () => number }
+function make1334(): R1334 { const r: R1334 = { a1334: 1 }; r.m1334 = () => 1; return r; }
+function tag1334(_s: TemplateStringsArray, ...xs: unknown[]): unknown { return xs[0]; }
+function c1334(): void { say("stored-later/tagged-template/strict-eq", (tag1334`${make1334().m1334}`) === (tag1334`${make1334().m1334}`)); }
+
+interface R1335 { a1335: number; m1335?: () => number }
+function make1335(): R1335 { const r: R1335 = { a1335: 1 }; r.m1335 = () => 1; return r; }
+function get1335(x: unknown = make1335().m1335): unknown { return x; }
+function c1335(): void { say("stored-later/default-parameter/strict-eq", (get1335()) === (get1335())); }
+
+interface R1336 { a1336: number; m1336?: () => number }
+function make1336(): R1336 { const r: R1336 = { a1336: 1 }; r.m1336 = () => 1; return r; }
+function get1336({ f = make1336().m1336 as unknown }: { f?: unknown } = {}): unknown { return f; }
+function c1336(): void { say("stored-later/pattern-default/strict-eq", (get1336()) === (get1336())); }
+
+interface R1337 { a1337: number; m1337?: () => number }
+function make1337(): R1337 { const r: R1337 = { a1337: 1 }; r.m1337 = () => 1; return r; }
+function get1337(): unknown { const [f] = [make1337().m1337]; return f; }
+function c1337(): void { say("stored-later/array-pattern/strict-eq", (get1337()) === (get1337())); }
+
+interface R1338 { a1338: number; m1338?: () => number }
+function make1338(): R1338 { const r: R1338 = { a1338: 1 }; r.m1338 = () => 1; return r; }
+function get1338(): unknown { const it = { *[Symbol.iterator](): Generator<unknown> { yield make1338().m1338; } }; for (const f of it) return f; return 0; }
+function c1338(): void { say("stored-later/custom-iterable/strict-eq", (get1338()) === (get1338())); }
+
+interface R1339 { a1339: number; m1339?: () => number }
+function make1339(): R1339 { const r: R1339 = { a1339: 1 }; r.m1339 = () => 1; return r; }
+function c1339(): void { say("stored-later/map-callback/strict-eq", ([0].map(() => make1339().m1339)[0]) === ([0].map(() => make1339().m1339)[0])); }
+
+interface R1340 { a1340: number; m1340?: () => number }
+function make1340(): R1340 { const r: R1340 = { a1340: 1 }; r.m1340 = () => 1; return r; }
+function c1340(): void { say("stored-later/find/strict-eq", ([make1340().m1340].find(() => true)) === ([make1340().m1340].find(() => true))); }
+
+interface R1341 { a1341: number; m1341?: () => number }
+function make1341(): R1341 { const r: R1341 = { a1341: 1 }; r.m1341 = () => 1; return r; }
+function c1341(): void { say("stored-later/reduce/strict-eq", ([make1341().m1341 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown)) === ([make1341().m1341 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown))); }
+
+interface R1342 { a1342: number; m1342?: () => number }
+function make1342(): R1342 { const r: R1342 = { a1342: 1 }; r.m1342 = () => 1; return r; }
+function c1342(): void { say("stored-later/filter/strict-eq", ([make1342().m1342].filter(() => true)[0]) === ([make1342().m1342].filter(() => true)[0])); }
+
+interface R1343 { a1343: number; m1343?: () => number }
+function make1343(): R1343 { const r: R1343 = { a1343: 1 }; r.m1343 = () => 1; return r; }
+function c1343(): void { say("stored-later/flat/strict-eq", ([[make1343().m1343]].flat()[0]) === ([[make1343().m1343]].flat()[0])); }
+
+interface R1344 { a1344: number; m1344?: () => number }
+function make1344(): R1344 { const r: R1344 = { a1344: 1 }; r.m1344 = () => 1; return r; }
+function c1344(): void { say("stored-later/at/strict-eq", ([make1344().m1344].at(0)) === ([make1344().m1344].at(0))); }
+
+interface R1345 { a1345: number; m1345?: () => number }
+function make1345(): R1345 { const r: R1345 = { a1345: 1 }; r.m1345 = () => 1; return r; }
+function c1345(): void { say("stored-later/pop/strict-eq", ([make1345().m1345].pop()) === ([make1345().m1345].pop())); }
+
+interface R1346 { a1346: number; m1346?: () => number }
+function make1346(): R1346 { const r: R1346 = { a1346: 1 }; r.m1346 = () => 1; return r; }
+function c1346(): void { say("stored-later/shift/strict-eq", ([make1346().m1346].shift()) === ([make1346().m1346].shift())); }
+
+interface R1347 { a1347: number; m1347?: () => number }
+function make1347(): R1347 { const r: R1347 = { a1347: 1 }; r.m1347 = () => 1; return r; }
+function c1347(): void { say("stored-later/slice/strict-eq", ([make1347().m1347].slice()[0]) === ([make1347().m1347].slice()[0])); }
+
+interface R1348 { a1348: number; m1348?: () => number }
+function make1348(): R1348 { const r: R1348 = { a1348: 1 }; r.m1348 = () => 1; return r; }
+function c1348(): void { say("stored-later/concat/strict-eq", (([] as unknown[]).concat([make1348().m1348])[0]) === (([] as unknown[]).concat([make1348().m1348])[0])); }
+
+interface R1349 { a1349: number; m1349?: () => number }
+function make1349(): R1349 { const r: R1349 = { a1349: 1 }; r.m1349 = () => 1; return r; }
+function c1349(): void { say("stored-later/spread-array/strict-eq", ([...[make1349().m1349]][0]) === ([...[make1349().m1349]][0])); }
+
+interface R1350 { a1350: number; m1350?: () => number }
+function make1350(): R1350 { const r: R1350 = { a1350: 1 }; r.m1350 = () => 1; return r; }
+function c1350(): void { say("stored-later/array-from/strict-eq", (Array.from([make1350().m1350])[0]) === (Array.from([make1350().m1350])[0])); }
+
+interface R1351 { a1351: number; m1351?: () => number }
+function make1351(): R1351 { const r: R1351 = { a1351: 1 }; r.m1351 = () => 1; return r; }
+function c1351(): void { say("stored-later/array-of/strict-eq", (Array.of(make1351().m1351)[0]) === (Array.of(make1351().m1351)[0])); }
+
+interface R1352 { a1352: number; m1352?: () => number }
+function make1352(): R1352 { const r: R1352 = { a1352: 1 }; r.m1352 = () => 1; return r; }
+function get1352(): unknown { const xs: unknown[] = []; xs.push(make1352().m1352); return xs[0]; }
+function c1352(): void { say("stored-later/push-then-read/strict-eq", (get1352()) === (get1352())); }
+
+interface R1353 { a1353: number; m1353?: () => number }
+function make1353(): R1353 { const r: R1353 = { a1353: 1 }; r.m1353 = () => 1; return r; }
+function c1353(): void { say("stored-later/set-iteration/strict-eq", ([...new Set([make1353().m1353])][0]) === ([...new Set([make1353().m1353])][0])); }
+
+interface R1354 { a1354: number; m1354?: () => number }
+function make1354(): R1354 { const r: R1354 = { a1354: 1 }; r.m1354 = () => 1; return r; }
+function c1354(): void { say("stored-later/map-get/strict-eq", (new Map([[1, make1354().m1354]]).get(1)) === (new Map([[1, make1354().m1354]]).get(1))); }
+
+interface R1355 { a1355: number; m1355?: () => number }
+function make1355(): R1355 { const r: R1355 = { a1355: 1 }; r.m1355 = () => 1; return r; }
+function self1355(this: unknown): unknown { return this; }
+function c1355(): void { say("stored-later/bind-this/strict-eq", (self1355.bind(make1355().m1355)()) === (self1355.bind(make1355().m1355)())); }
+
+interface R1356 { a1356: number; m1356?: () => number }
+function make1356(): R1356 { const r: R1356 = { a1356: 1 }; r.m1356 = () => 1; return r; }
+function self1356(this: unknown): unknown { return this; }
+function c1356(): void { say("stored-later/call-this/strict-eq", (self1356.call(make1356().m1356)) === (self1356.call(make1356().m1356))); }
+
+interface R1357 { a1357: number; m1357?: () => number }
+function make1357(): R1357 { const r: R1357 = { a1357: 1 }; r.m1357 = () => 1; return r; }
+function first1357(x: unknown): unknown { return x; }
+function c1357(): void { say("stored-later/apply-arguments/strict-eq", (first1357.apply(null, [make1357().m1357])) === (first1357.apply(null, [make1357().m1357]))); }
+
+interface R1358 { a1358: number; m1358?: () => number }
+function make1358(): R1358 { const r: R1358 = { a1358: 1 }; r.m1358 = () => 1; return r; }
+function first1358(x: unknown): unknown { return x; }
+function c1358(): void { say("stored-later/reflect-apply/strict-eq", (Reflect.apply(first1358, null, [make1358().m1358])) === (Reflect.apply(first1358, null, [make1358().m1358]))); }
+
+interface R1359 { a1359: number; m1359?: () => number }
+function make1359(): R1359 { const r: R1359 = { a1359: 1 }; r.m1359 = () => 1; return r; }
+function c1359(): void { say("stored-later/logical-or/strict-eq", (((0 as unknown) || make1359().m1359)) === (((0 as unknown) || make1359().m1359))); }
+
+interface R1360 { a1360: number; m1360?: () => number }
+function make1360(): R1360 { const r: R1360 = { a1360: 1 }; r.m1360 = () => 1; return r; }
+let none1360: unknown;
+function c1360(): void { say("stored-later/nullish/strict-eq", ((none1360 ?? make1360().m1360)) === ((none1360 ?? make1360().m1360))); }
+
+interface R1361 { a1361: number; m1361?: () => number }
+function make1361(): R1361 { const r: R1361 = { a1361: 1 }; r.m1361 = () => 1; return r; }
+function c1361(): void { say("stored-later/comma/strict-eq", ((out.length, make1361().m1361)) === ((out.length, make1361().m1361))); }
+
+interface R1362 { a1362: number; m1362?: () => number }
+function make1362(): R1362 { const r: R1362 = { a1362: 1 }; r.m1362 = () => 1; return r; }
+function c1362(): void { say("stored-later/computed-member/strict-eq", (({ ["k"]: make1362().m1362 })["k"]) === (({ ["k"]: make1362().m1362 })["k"])); }
+
+interface R1363 { a1363: number; m1363?: () => number }
+function make1363(): R1363 { const r: R1363 = { a1363: 1 }; r.m1363 = () => 1; return r; }
+const s1363 = Symbol();
+function c1363(): void { say("stored-later/symbol-member/strict-eq", (({ [s1363]: make1363().m1363 })[s1363]) === (({ [s1363]: make1363().m1363 })[s1363])); }
+
+interface R1364 { a1364: number; m1364?: () => number }
+function make1364(): R1364 { const r: R1364 = { a1364: 1 }; r.m1364 = () => 1; return r; }
+function c1364(): void { say("stored-later/getter-member/strict-eq", (({ get f(): unknown { return make1364().m1364; } }).f) === (({ get f(): unknown { return make1364().m1364; } }).f)); }
+
+interface R1365 { a1365: number; m1365?: () => number }
+function make1365(): R1365 { const r: R1365 = { a1365: 1 }; r.m1365 = () => 1; return r; }
+function c1365(): void { say("stored-later/proxy-get/strict-eq", (new Proxy({ f: make1365().m1365 as unknown }, {}).f) === (new Proxy({ f: make1365().m1365 as unknown }, {}).f)); }
+
+interface R1366 { a1366: number; m1366?: () => number }
+function make1366(): R1366 { const r: R1366 = { a1366: 1 }; r.m1366 = () => 1; return r; }
+function c1366(): void { say("stored-later/prototype-chain/strict-eq", (Object.create({ f: make1366().m1366 }).f) === (Object.create({ f: make1366().m1366 }).f)); }
+
+interface R1367 { a1367: number; m1367?: () => number }
+function make1367(): R1367 { const r: R1367 = { a1367: 1 }; r.m1367 = () => 1; return r; }
+function c1367(): void { say("stored-later/weak-ref/strict-eq", (new WeakRef(make1367().m1367 as object).deref()) === (new WeakRef(make1367().m1367 as object).deref())); }
+
+interface R1368 { a1368: number; m1368?: () => number }
+function make1368(): R1368 { const r: R1368 = { a1368: 1 }; r.m1368 = () => 1; return r; }
+function get1368(_x: unknown): unknown { return arguments[0]; }
+function c1368(): void { say("stored-later/arguments-object/strict-eq", (get1368(make1368().m1368)) === (get1368(make1368().m1368))); }
+
+interface R1369 { a1369: number; m1369?: () => number }
+function make1369(): R1369 { const r: R1369 = { a1369: 1 }; r.m1369 = () => 1; return r; }
+function get1369(n: number): unknown { return n === 0 ? make1369().m1369 : get1369(n - 1); }
+function c1369(): void { say("stored-later/recursion/strict-eq", (get1369(2)) === (get1369(2))); }
+
+interface R1370 { a1370: number; m1370?: () => number }
+function make1370(): R1370 { const r: R1370 = { a1370: 1 }; r.m1370 = () => 1; return r; }
+function even1370(n: number): unknown { return n === 0 ? make1370().m1370 : odd1370(n - 1); }
+function odd1370(n: number): unknown { return even1370(n - 1); }
+function c1370(): void { say("stored-later/mutual-recursion/strict-eq", (even1370(2)) === (even1370(2))); }
+
+interface R1371 { a1371: number; m1371?: () => number }
+function make1371(): R1371 { const r: R1371 = { a1371: 1 }; r.m1371 = () => 1; return r; }
+function again1371(): R1371 { return make1371(); }
+function c1371(): void { say("stored-later/maker-forwarded/strict-eq", (again1371().m1371) === (again1371().m1371)); }
+
+interface R1372 { a1372: number; m1372?: () => number }
+function make1372(): R1372 { const r: R1372 = { a1372: 1 }; r.m1372 = () => 1; return r; }
+function again1372(): R1372 { return make1372(); }
+function get1372(): unknown { return again1372().m1372; }
+function c1372(): void { say("stored-later/maker-forwarded-and-returned/strict-eq", (get1372()) === (get1372())); }
+
+interface R1373 { a1373: number; m1373?: () => number }
+function make1373(): R1373 { const r: R1373 = { a1373: 1 }; r.m1373 = () => 1; return r; }
+function build1373(f: () => R1373): R1373 { return f(); }
+function c1373(): void { say("stored-later/maker-as-a-callback/strict-eq", (build1373(make1373).m1373) === (build1373(make1373).m1373)); }
+
+interface R1374 { a1374: number; m1374?: () => number }
+function make1374(): R1374 { const r: R1374 = { a1374: 1 }; r.m1374 = () => 1; return r; }
+function build1374(f: () => R1374): R1374 { return f(); }
+function get1374(): unknown { return build1374(make1374).m1374; }
+function c1374(): void { say("stored-later/maker-as-a-callback-returned/strict-eq", (get1374()) === (get1374())); }
+
+interface R1375 { a1375: number; m1375?: () => number }
+function make1375(): R1375 { const r: R1375 = { a1375: 1 }; r.m1375 = () => 1; return r; }
+function box1375(): { t: R1375 } { return { t: make1375() }; }
+function get1375(): unknown { return box1375().t.m1375; }
+function c1375(): void { say("stored-later/holder-through-a-record/strict-eq", (get1375()) === (get1375())); }
+
+interface R1376 { a1376: number; m1376?: () => number }
+function make1376(): R1376 { const r: R1376 = { a1376: 1 }; r.m1376 = () => 1; return r; }
+function box1376(): Array<R1376> { return [make1376()]; }
+function get1376(): unknown { return box1376()[0].m1376; }
+function c1376(): void { say("stored-later/holder-through-an-array/strict-eq", (get1376()) === (get1376())); }
+
+interface R1377 { a1377: number; m1377?: () => number }
+function make1377(): R1377 { const r: R1377 = { a1377: 1 }; r.m1377 = () => 1; return r; }
+function box1377(): () => R1377 { const t = make1377(); return () => t; }
+function get1377(): unknown { return box1377()().m1377; }
+function c1377(): void { say("stored-later/holder-through-a-closure/strict-eq", (get1377()) === (get1377())); }
+
+interface R1378 { a1378: number; m1378?: () => number }
+function make1378(): R1378 { const r: R1378 = { a1378: 1 }; r.m1378 = () => 1; return r; }
+function get1378(): unknown { try { return make1378().m1378; } finally { out.length; } }
+function c1378(): void { say("stored-later/finally/strict-eq", (get1378()) === (get1378())); }
+
+interface R1379 { a1379: number; m1379?: () => number }
+function make1379(): R1379 { const r: R1379 = { a1379: 1 }; r.m1379 = () => 1; return r; }
+function get1379(n: number): unknown { switch (n) { case 1: return make1379().m1379; default: return 0; } }
+function c1379(): void { say("stored-later/switch-arm/strict-eq", (get1379(1)) === (get1379(1))); }
+
+interface R1380 { a1380: number; m1380?: () => number }
+function make1380(): R1380 { const r: R1380 = { a1380: 1 }; r.m1380 = () => 1; return r; }
+function c1380(): void { say("stored-later/object-from-entries/strict-eq", (Object.fromEntries([["k", make1380().m1380]]).k) === (Object.fromEntries([["k", make1380().m1380]]).k)); }
+
+c1321(); c1322(); c1323(); c1324(); c1325(); c1326(); c1327(); c1328(); c1329(); c1330(); c1331(); c1332(); c1333(); c1334(); c1335(); c1336(); c1337(); c1338(); c1339(); c1340(); c1341(); c1342(); c1343(); c1344(); c1345(); c1346(); c1347(); c1348(); c1349(); c1350(); c1351(); c1352(); c1353(); c1354(); c1355(); c1356(); c1357(); c1358(); c1359(); c1360(); c1361(); c1362(); c1363(); c1364(); c1365(); c1366(); c1367(); c1368(); c1369(); c1370(); c1371(); c1372(); c1373(); c1374(); c1375(); c1376(); c1377(); c1378(); c1379(); c1380();
+console.log(out.join("\n"));
+//// identity2-23.ts
+// Generated program: object and closure identity stays observable when allocations are removed (second series, part 23).
+declare const console: any;
+const out: string[] = [];
+function say(name: string, value: unknown): void { out.push(name + "=" + String(value)); }
+
+interface R1381 { a1381: number; m1381?: () => number }
+function make1381(): R1381 { const r: R1381 = { a1381: 1 }; r.m1381 = () => 1; return r; }
+function get1381(): unknown { const t = make1381(); const u = { t, n: 1 }; const v = { u }; return v.u.t.m1381; }
+function c1381(): void { say("stored-later/structured-holder/strict-eq", (get1381()) === (get1381())); }
+
+interface R1382 { a1382: number; m1382?: () => number }
+function make1382(): R1382 { const r: R1382 = { a1382: 1 }; r.m1382 = () => 1; return r; }
+function box1382(): { t: R1382 } { return { t: make1382() }; }
+function get1382(): unknown { return box1382().t.m1382; }
+function c1382(): void { say("stored-later/holder-through-a-record/strict-ne", (get1382()) !== (get1382())); }
+
+interface R1383 { a1383: number; m1383?: () => number }
+function make1383(): R1383 { const r: R1383 = { a1383: 1 }; r.m1383 = () => 1; return r; }
+function box1383(): { t: R1383 } { return { t: make1383() }; }
+function get1383(): unknown { return box1383().t.m1383; }
+function c1383(): void { say("stored-later/holder-through-a-record/loose-eq", (get1383()) == (get1383())); }
+
+interface R1384 { a1384: number; m1384?: () => number }
+function make1384(): R1384 { const r: R1384 = { a1384: 1 }; r.m1384 = () => 1; return r; }
+function box1384(): { t: R1384 } { return { t: make1384() }; }
+function get1384(): unknown { return box1384().t.m1384; }
+function c1384(): void { say("stored-later/holder-through-a-record/object-is", Object.is((get1384()), (get1384()))); }
+
+interface R1385 { a1385: number; m1385?: () => number }
+function make1385(): R1385 { const r: R1385 = { a1385: 1 }; r.m1385 = () => 1; return r; }
+function box1385(): { t: R1385 } { return { t: make1385() }; }
+function get1385(): unknown { return box1385().t.m1385; }
+function c1385(): void { say("stored-later/holder-through-a-record/set", new Set([(get1385()), (get1385())]).size); }
+
+interface R1386 { a1386: number; m1386?: () => number }
+function make1386(): R1386 { const r: R1386 = { a1386: 1 }; r.m1386 = () => 1; return r; }
+function box1386(): { t: R1386 } { return { t: make1386() }; }
+function get1386(): unknown { return box1386().t.m1386; }
+function c1386(): void { say("stored-later/holder-through-a-record/map-key", new Map([[(get1386()), 1], [(get1386()), 2]]).size); }
+
+interface R1387 { a1387: number; m1387?: () => number }
+function make1387(): R1387 { const r: R1387 = { a1387: 1 }; r.m1387 = () => 1; return r; }
+function box1387(): { t: R1387 } { return { t: make1387() }; }
+function get1387(): unknown { return box1387().t.m1387; }
+function c1387(): void { say("stored-later/holder-through-a-record/includes", [(get1387())].includes((get1387()))); }
+
+interface R1388 { a1388: number; m1388?: () => number }
+function make1388(): R1388 { const r: R1388 = { a1388: 1 }; r.m1388 = () => 1; return r; }
+function box1388(): { t: R1388 } { return { t: make1388() }; }
+function get1388(): unknown { return box1388().t.m1388; }
+function c1388(): void { say("stored-later/holder-through-a-record/index-of", [(get1388())].indexOf((get1388()))); }
+
+interface R1389 { a1389: number; m1389?: () => number }
+function make1389(): R1389 { const r: R1389 = { a1389: 1 }; r.m1389 = () => 1; return r; }
+function box1389(): { t: R1389 } { return { t: make1389() }; }
+function get1389(): unknown { return box1389().t.m1389; }
+const ws1389 = new WeakSet<object>();
+function c1389(): void { say("stored-later/holder-through-a-record/weak-set", (ws1389.add((get1389()) as object), ws1389.has((get1389()) as object))); }
+
+interface R1390 { a1390: number; m1390?: () => number }
+function make1390(): R1390 { const r: R1390 = { a1390: 1 }; r.m1390 = () => 1; return r; }
+function box1390(): { t: R1390 } { return { t: make1390() }; }
+function get1390(): unknown { return box1390().t.m1390; }
+const wm1390 = new WeakMap<object, number>();
+function c1390(): void { say("stored-later/holder-through-a-record/weak-map", (wm1390.set((get1390()) as object, 1), wm1390.has((get1390()) as object))); }
+
+interface R1391 { a1391: number; m1391?: () => number }
+function make1391(): R1391 { const r: R1391 = { a1391: 1 }; r.m1391 = () => 1; return r; }
+function box1391(): { t: R1391 } { return { t: make1391() }; }
+function get1391(): unknown { return box1391().t.m1391; }
+function c1391(): void { say("stored-later/holder-through-a-record/written", ((((get1391())) as any).tag = 1, (((get1391())) as any).tag)); }
+
+interface R1392 { a1392: number; m1392?: () => number }
+function make1392(): R1392 { const r: R1392 = { a1392: 1 }; r.m1392 = () => 1; return r; }
+function box1392(): { t: R1392 } { return { t: make1392() }; }
+function get1392(): unknown { return box1392().t.m1392; }
+function c1392(): void { say("stored-later/holder-through-a-record/defined", (Object.defineProperty((get1392()) as object, "t", { value: 1 }), "t" in ((get1392()) as object))); }
+
+interface R1393 { a1393: number; m1393?: () => number }
+function make1393(): R1393 { const r: R1393 = { a1393: 1 }; r.m1393 = () => 1; return r; }
+function box1393(): { t: R1393 } { return { t: make1393() }; }
+function get1393(): unknown { return box1393().t.m1393; }
+function c1393(): void { say("stored-later/holder-through-a-record/frozen", (Object.freeze((get1393())), Object.isFrozen((get1393())))); }
+
+interface R1394 { a1394: number; m1394?: () => number }
+function make1394(): R1394 { const r: R1394 = { a1394: 1 }; r.m1394 = () => 1; return r; }
+function box1394(): { t: R1394 } { return { t: make1394() }; }
+function get1394(): unknown { return box1394().t.m1394; }
+function c1394(): void { say("stored-later/holder-through-a-record/prototype-set", (Object.setPrototypeOf((get1394()) as object, null), Object.getPrototypeOf((get1394())) === null)); }
+
+interface R1395 { a1395: number; m1395?: () => number }
+function make1395(): R1395 { const r: R1395 = { a1395: 1 }; r.m1395 = () => 1; return r; }
+function box1395(): { t: R1395 } { return { t: make1395() }; }
+function get1395(): unknown { return box1395().t.m1395; }
+function c1395(): void { say("stored-later/holder-through-a-record/deleted", (delete (((get1395())) as any).length, Object.hasOwn((get1395()) as object, "length"))); }
+
+interface R1396 { a1396: number; m1396?: () => number }
+function make1396(): R1396 { const r: R1396 = { a1396: 1 }; r.m1396 = () => 1; return r; }
+function box1396(): { t: R1396 } { return { t: make1396() }; }
+function get1396(): unknown { return box1396().t.m1396; }
+function same1396(a: unknown, b: unknown): boolean { return a === b; }
+function c1396(): void { say("stored-later/holder-through-a-record/in-a-callee", same1396((get1396()), (get1396()))); }
+
+interface R1397 { a1397: number; m1397?: () => number }
+function make1397(): R1397 { const r: R1397 = { a1397: 1 }; r.m1397 = () => 1; return r; }
+function box1397(): { t: R1397 } { return { t: make1397() }; }
+function get1397(): unknown { return box1397().t.m1397; }
+function hit1397(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c1397(): void { say("stored-later/holder-through-a-record/switch", hit1397((get1397()), (get1397()))); }
+
+interface R1398 { a1398: number; m1398?: () => number }
+function make1398(): R1398 { const r: R1398 = { a1398: 1 }; r.m1398 = () => 1; return r; }
+function box1398(): { t: R1398 } { return { t: make1398() }; }
+function get1398(): unknown { return box1398().t.m1398; }
+let last1398: unknown;
+function seen1398(f: unknown): boolean { const same = f === last1398; last1398 = f; return same; }
+function c1398(): void { say("stored-later/holder-through-a-record/kept-then-compared", (seen1398((get1398())), seen1398((get1398())))); }
+
+interface R1399 { a1399: number; m1399: () => number }
+function make1399(): R1399 { return { a1399: 1, m1399: function () { return 1; } }; }
+class K1399 { #f: unknown; constructor() { this.#f = make1399().m1399; } get(): unknown { return this.#f; } }
+function c1399(): void { say("function-expression/private-field/strict-eq", (new K1399().get()) === (new K1399().get())); }
+
+interface R1400 { a1400: number; m1400: () => number }
+function make1400(): R1400 { return { a1400: 1, m1400: function () { return 1; } }; }
+class K1400 { static f: unknown; }
+function c1400(): void { say("function-expression/static-field/strict-eq", ((K1400.f = make1400().m1400, K1400.f)) === ((K1400.f = make1400().m1400, K1400.f))); }
+
+interface R1401 { a1401: number; m1401: () => number }
+function make1401(): R1401 { return { a1401: 1, m1401: function () { return 1; } }; }
+class K1401 { f: unknown = make1401().m1401; }
+function c1401(): void { say("function-expression/instance-field/strict-eq", (new K1401().f) === (new K1401().f)); }
+
+interface R1402 { a1402: number; m1402: () => number }
+function make1402(): R1402 { return { a1402: 1, m1402: function () { return 1; } }; }
+class K1402 { s: unknown; set v(x: unknown) { this.s = x; } }
+function get1402(): unknown { const k = new K1402(); k.v = make1402().m1402; return k.s; }
+function c1402(): void { say("function-expression/setter/strict-eq", (get1402()) === (get1402())); }
+
+interface R1403 { a1403: number; m1403: () => number }
+function make1403(): R1403 { return { a1403: 1, m1403: function () { return 1; } }; }
+class B1403 { get(): unknown { return make1403().m1403; } }
+class D1403 extends B1403 { get(): unknown { return super.get(); } }
+function c1403(): void { say("function-expression/super-method/strict-eq", (new D1403().get()) === (new D1403().get())); }
+
+interface R1404 { a1404: number; m1404: () => number }
+function make1404(): R1404 { return { a1404: 1, m1404: function () { return 1; } }; }
+class K1404 { constructor(public f: unknown) {} }
+function c1404(): void { say("function-expression/constructor-parameter/strict-eq", (new K1404(make1404().m1404).f) === (new K1404(make1404().m1404).f)); }
+
+interface R1405 { a1405: number; m1405: () => number }
+function make1405(): R1405 { return { a1405: 1, m1405: function () { return 1; } }; }
+function tag1405(_s: TemplateStringsArray, ...xs: unknown[]): unknown { return xs[0]; }
+function c1405(): void { say("function-expression/tagged-template/strict-eq", (tag1405`${make1405().m1405}`) === (tag1405`${make1405().m1405}`)); }
+
+interface R1406 { a1406: number; m1406: () => number }
+function make1406(): R1406 { return { a1406: 1, m1406: function () { return 1; } }; }
+function get1406(x: unknown = make1406().m1406): unknown { return x; }
+function c1406(): void { say("function-expression/default-parameter/strict-eq", (get1406()) === (get1406())); }
+
+interface R1407 { a1407: number; m1407: () => number }
+function make1407(): R1407 { return { a1407: 1, m1407: function () { return 1; } }; }
+function get1407({ f = make1407().m1407 as unknown }: { f?: unknown } = {}): unknown { return f; }
+function c1407(): void { say("function-expression/pattern-default/strict-eq", (get1407()) === (get1407())); }
+
+interface R1408 { a1408: number; m1408: () => number }
+function make1408(): R1408 { return { a1408: 1, m1408: function () { return 1; } }; }
+function get1408(): unknown { const [f] = [make1408().m1408]; return f; }
+function c1408(): void { say("function-expression/array-pattern/strict-eq", (get1408()) === (get1408())); }
+
+interface R1409 { a1409: number; m1409: () => number }
+function make1409(): R1409 { return { a1409: 1, m1409: function () { return 1; } }; }
+function get1409(): unknown { const it = { *[Symbol.iterator](): Generator<unknown> { yield make1409().m1409; } }; for (const f of it) return f; return 0; }
+function c1409(): void { say("function-expression/custom-iterable/strict-eq", (get1409()) === (get1409())); }
+
+interface R1410 { a1410: number; m1410: () => number }
+function make1410(): R1410 { return { a1410: 1, m1410: function () { return 1; } }; }
+function c1410(): void { say("function-expression/map-callback/strict-eq", ([0].map(() => make1410().m1410)[0]) === ([0].map(() => make1410().m1410)[0])); }
+
+interface R1411 { a1411: number; m1411: () => number }
+function make1411(): R1411 { return { a1411: 1, m1411: function () { return 1; } }; }
+function c1411(): void { say("function-expression/find/strict-eq", ([make1411().m1411].find(() => true)) === ([make1411().m1411].find(() => true))); }
+
+interface R1412 { a1412: number; m1412: () => number }
+function make1412(): R1412 { return { a1412: 1, m1412: function () { return 1; } }; }
+function c1412(): void { say("function-expression/reduce/strict-eq", ([make1412().m1412 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown)) === ([make1412().m1412 as unknown].reduce((_a: unknown, x: unknown) => x, 0 as unknown))); }
+
+interface R1413 { a1413: number; m1413: () => number }
+function make1413(): R1413 { return { a1413: 1, m1413: function () { return 1; } }; }
+function c1413(): void { say("function-expression/filter/strict-eq", ([make1413().m1413].filter(() => true)[0]) === ([make1413().m1413].filter(() => true)[0])); }
+
+interface R1414 { a1414: number; m1414: () => number }
+function make1414(): R1414 { return { a1414: 1, m1414: function () { return 1; } }; }
+function c1414(): void { say("function-expression/flat/strict-eq", ([[make1414().m1414]].flat()[0]) === ([[make1414().m1414]].flat()[0])); }
+
+interface R1415 { a1415: number; m1415: () => number }
+function make1415(): R1415 { return { a1415: 1, m1415: function () { return 1; } }; }
+function c1415(): void { say("function-expression/at/strict-eq", ([make1415().m1415].at(0)) === ([make1415().m1415].at(0))); }
+
+interface R1416 { a1416: number; m1416: () => number }
+function make1416(): R1416 { return { a1416: 1, m1416: function () { return 1; } }; }
+function c1416(): void { say("function-expression/pop/strict-eq", ([make1416().m1416].pop()) === ([make1416().m1416].pop())); }
+
+interface R1417 { a1417: number; m1417: () => number }
+function make1417(): R1417 { return { a1417: 1, m1417: function () { return 1; } }; }
+function c1417(): void { say("function-expression/shift/strict-eq", ([make1417().m1417].shift()) === ([make1417().m1417].shift())); }
+
+interface R1418 { a1418: number; m1418: () => number }
+function make1418(): R1418 { return { a1418: 1, m1418: function () { return 1; } }; }
+function c1418(): void { say("function-expression/slice/strict-eq", ([make1418().m1418].slice()[0]) === ([make1418().m1418].slice()[0])); }
+
+interface R1419 { a1419: number; m1419: () => number }
+function make1419(): R1419 { return { a1419: 1, m1419: function () { return 1; } }; }
+function c1419(): void { say("function-expression/concat/strict-eq", (([] as unknown[]).concat([make1419().m1419])[0]) === (([] as unknown[]).concat([make1419().m1419])[0])); }
+
+interface R1420 { a1420: number; m1420: () => number }
+function make1420(): R1420 { return { a1420: 1, m1420: function () { return 1; } }; }
+function c1420(): void { say("function-expression/spread-array/strict-eq", ([...[make1420().m1420]][0]) === ([...[make1420().m1420]][0])); }
+
+interface R1421 { a1421: number; m1421: () => number }
+function make1421(): R1421 { return { a1421: 1, m1421: function () { return 1; } }; }
+function c1421(): void { say("function-expression/array-from/strict-eq", (Array.from([make1421().m1421])[0]) === (Array.from([make1421().m1421])[0])); }
+
+interface R1422 { a1422: number; m1422: () => number }
+function make1422(): R1422 { return { a1422: 1, m1422: function () { return 1; } }; }
+function c1422(): void { say("function-expression/array-of/strict-eq", (Array.of(make1422().m1422)[0]) === (Array.of(make1422().m1422)[0])); }
+
+interface R1423 { a1423: number; m1423: () => number }
+function make1423(): R1423 { return { a1423: 1, m1423: function () { return 1; } }; }
+function get1423(): unknown { const xs: unknown[] = []; xs.push(make1423().m1423); return xs[0]; }
+function c1423(): void { say("function-expression/push-then-read/strict-eq", (get1423()) === (get1423())); }
+
+interface R1424 { a1424: number; m1424: () => number }
+function make1424(): R1424 { return { a1424: 1, m1424: function () { return 1; } }; }
+function c1424(): void { say("function-expression/set-iteration/strict-eq", ([...new Set([make1424().m1424])][0]) === ([...new Set([make1424().m1424])][0])); }
+
+interface R1425 { a1425: number; m1425: () => number }
+function make1425(): R1425 { return { a1425: 1, m1425: function () { return 1; } }; }
+function c1425(): void { say("function-expression/map-get/strict-eq", (new Map([[1, make1425().m1425]]).get(1)) === (new Map([[1, make1425().m1425]]).get(1))); }
+
+interface R1426 { a1426: number; m1426: () => number }
+function make1426(): R1426 { return { a1426: 1, m1426: function () { return 1; } }; }
+function self1426(this: unknown): unknown { return this; }
+function c1426(): void { say("function-expression/bind-this/strict-eq", (self1426.bind(make1426().m1426)()) === (self1426.bind(make1426().m1426)())); }
+
+interface R1427 { a1427: number; m1427: () => number }
+function make1427(): R1427 { return { a1427: 1, m1427: function () { return 1; } }; }
+function self1427(this: unknown): unknown { return this; }
+function c1427(): void { say("function-expression/call-this/strict-eq", (self1427.call(make1427().m1427)) === (self1427.call(make1427().m1427))); }
+
+interface R1428 { a1428: number; m1428: () => number }
+function make1428(): R1428 { return { a1428: 1, m1428: function () { return 1; } }; }
+function first1428(x: unknown): unknown { return x; }
+function c1428(): void { say("function-expression/apply-arguments/strict-eq", (first1428.apply(null, [make1428().m1428])) === (first1428.apply(null, [make1428().m1428]))); }
+
+interface R1429 { a1429: number; m1429: () => number }
+function make1429(): R1429 { return { a1429: 1, m1429: function () { return 1; } }; }
+function first1429(x: unknown): unknown { return x; }
+function c1429(): void { say("function-expression/reflect-apply/strict-eq", (Reflect.apply(first1429, null, [make1429().m1429])) === (Reflect.apply(first1429, null, [make1429().m1429]))); }
+
+interface R1430 { a1430: number; m1430: () => number }
+function make1430(): R1430 { return { a1430: 1, m1430: function () { return 1; } }; }
+function c1430(): void { say("function-expression/logical-or/strict-eq", (((0 as unknown) || make1430().m1430)) === (((0 as unknown) || make1430().m1430))); }
+
+interface R1431 { a1431: number; m1431: () => number }
+function make1431(): R1431 { return { a1431: 1, m1431: function () { return 1; } }; }
+let none1431: unknown;
+function c1431(): void { say("function-expression/nullish/strict-eq", ((none1431 ?? make1431().m1431)) === ((none1431 ?? make1431().m1431))); }
+
+interface R1432 { a1432: number; m1432: () => number }
+function make1432(): R1432 { return { a1432: 1, m1432: function () { return 1; } }; }
+function c1432(): void { say("function-expression/comma/strict-eq", ((out.length, make1432().m1432)) === ((out.length, make1432().m1432))); }
+
+interface R1433 { a1433: number; m1433: () => number }
+function make1433(): R1433 { return { a1433: 1, m1433: function () { return 1; } }; }
+function c1433(): void { say("function-expression/computed-member/strict-eq", (({ ["k"]: make1433().m1433 })["k"]) === (({ ["k"]: make1433().m1433 })["k"])); }
+
+interface R1434 { a1434: number; m1434: () => number }
+function make1434(): R1434 { return { a1434: 1, m1434: function () { return 1; } }; }
+const s1434 = Symbol();
+function c1434(): void { say("function-expression/symbol-member/strict-eq", (({ [s1434]: make1434().m1434 })[s1434]) === (({ [s1434]: make1434().m1434 })[s1434])); }
+
+interface R1435 { a1435: number; m1435: () => number }
+function make1435(): R1435 { return { a1435: 1, m1435: function () { return 1; } }; }
+function c1435(): void { say("function-expression/getter-member/strict-eq", (({ get f(): unknown { return make1435().m1435; } }).f) === (({ get f(): unknown { return make1435().m1435; } }).f)); }
+
+interface R1436 { a1436: number; m1436: () => number }
+function make1436(): R1436 { return { a1436: 1, m1436: function () { return 1; } }; }
+function c1436(): void { say("function-expression/proxy-get/strict-eq", (new Proxy({ f: make1436().m1436 as unknown }, {}).f) === (new Proxy({ f: make1436().m1436 as unknown }, {}).f)); }
+
+interface R1437 { a1437: number; m1437: () => number }
+function make1437(): R1437 { return { a1437: 1, m1437: function () { return 1; } }; }
+function c1437(): void { say("function-expression/prototype-chain/strict-eq", (Object.create({ f: make1437().m1437 }).f) === (Object.create({ f: make1437().m1437 }).f)); }
+
+interface R1438 { a1438: number; m1438: () => number }
+function make1438(): R1438 { return { a1438: 1, m1438: function () { return 1; } }; }
+function c1438(): void { say("function-expression/weak-ref/strict-eq", (new WeakRef(make1438().m1438 as object).deref()) === (new WeakRef(make1438().m1438 as object).deref())); }
+
+interface R1439 { a1439: number; m1439: () => number }
+function make1439(): R1439 { return { a1439: 1, m1439: function () { return 1; } }; }
+function get1439(_x: unknown): unknown { return arguments[0]; }
+function c1439(): void { say("function-expression/arguments-object/strict-eq", (get1439(make1439().m1439)) === (get1439(make1439().m1439))); }
+
+interface R1440 { a1440: number; m1440: () => number }
+function make1440(): R1440 { return { a1440: 1, m1440: function () { return 1; } }; }
+function get1440(n: number): unknown { return n === 0 ? make1440().m1440 : get1440(n - 1); }
+function c1440(): void { say("function-expression/recursion/strict-eq", (get1440(2)) === (get1440(2))); }
+
+c1381(); c1382(); c1383(); c1384(); c1385(); c1386(); c1387(); c1388(); c1389(); c1390(); c1391(); c1392(); c1393(); c1394(); c1395(); c1396(); c1397(); c1398(); c1399(); c1400(); c1401(); c1402(); c1403(); c1404(); c1405(); c1406(); c1407(); c1408(); c1409(); c1410(); c1411(); c1412(); c1413(); c1414(); c1415(); c1416(); c1417(); c1418(); c1419(); c1420(); c1421(); c1422(); c1423(); c1424(); c1425(); c1426(); c1427(); c1428(); c1429(); c1430(); c1431(); c1432(); c1433(); c1434(); c1435(); c1436(); c1437(); c1438(); c1439(); c1440();
+console.log(out.join("\n"));
+//// identity2-24.ts
+// Generated program: object and closure identity stays observable when allocations are removed (second series, part 24).
+declare const console: any;
+const out: string[] = [];
+function say(name: string, value: unknown): void { out.push(name + "=" + String(value)); }
+
+interface R1441 { a1441: number; m1441: () => number }
+function make1441(): R1441 { return { a1441: 1, m1441: function () { return 1; } }; }
+function even1441(n: number): unknown { return n === 0 ? make1441().m1441 : odd1441(n - 1); }
+function odd1441(n: number): unknown { return even1441(n - 1); }
+function c1441(): void { say("function-expression/mutual-recursion/strict-eq", (even1441(2)) === (even1441(2))); }
+
+interface R1442 { a1442: number; m1442: () => number }
+function make1442(): R1442 { return { a1442: 1, m1442: function () { return 1; } }; }
+function again1442(): R1442 { return make1442(); }
+function c1442(): void { say("function-expression/maker-forwarded/strict-eq", (again1442().m1442) === (again1442().m1442)); }
+
+interface R1443 { a1443: number; m1443: () => number }
+function make1443(): R1443 { return { a1443: 1, m1443: function () { return 1; } }; }
+function again1443(): R1443 { return make1443(); }
+function get1443(): unknown { return again1443().m1443; }
+function c1443(): void { say("function-expression/maker-forwarded-and-returned/strict-eq", (get1443()) === (get1443())); }
+
+interface R1444 { a1444: number; m1444: () => number }
+function make1444(): R1444 { return { a1444: 1, m1444: function () { return 1; } }; }
+function build1444(f: () => R1444): R1444 { return f(); }
+function c1444(): void { say("function-expression/maker-as-a-callback/strict-eq", (build1444(make1444).m1444) === (build1444(make1444).m1444)); }
+
+interface R1445 { a1445: number; m1445: () => number }
+function make1445(): R1445 { return { a1445: 1, m1445: function () { return 1; } }; }
+function build1445(f: () => R1445): R1445 { return f(); }
+function get1445(): unknown { return build1445(make1445).m1445; }
+function c1445(): void { say("function-expression/maker-as-a-callback-returned/strict-eq", (get1445()) === (get1445())); }
+
+interface R1446 { a1446: number; m1446: () => number }
+function make1446(): R1446 { return { a1446: 1, m1446: function () { return 1; } }; }
+function box1446(): { t: R1446 } { return { t: make1446() }; }
+function get1446(): unknown { return box1446().t.m1446; }
+function c1446(): void { say("function-expression/holder-through-a-record/strict-eq", (get1446()) === (get1446())); }
+
+interface R1447 { a1447: number; m1447: () => number }
+function make1447(): R1447 { return { a1447: 1, m1447: function () { return 1; } }; }
+function box1447(): Array<R1447> { return [make1447()]; }
+function get1447(): unknown { return box1447()[0].m1447; }
+function c1447(): void { say("function-expression/holder-through-an-array/strict-eq", (get1447()) === (get1447())); }
+
+interface R1448 { a1448: number; m1448: () => number }
+function make1448(): R1448 { return { a1448: 1, m1448: function () { return 1; } }; }
+function box1448(): () => R1448 { const t = make1448(); return () => t; }
+function get1448(): unknown { return box1448()().m1448; }
+function c1448(): void { say("function-expression/holder-through-a-closure/strict-eq", (get1448()) === (get1448())); }
+
+interface R1449 { a1449: number; m1449: () => number }
+function make1449(): R1449 { return { a1449: 1, m1449: function () { return 1; } }; }
+function get1449(): unknown { try { return make1449().m1449; } finally { out.length; } }
+function c1449(): void { say("function-expression/finally/strict-eq", (get1449()) === (get1449())); }
+
+interface R1450 { a1450: number; m1450: () => number }
+function make1450(): R1450 { return { a1450: 1, m1450: function () { return 1; } }; }
+function get1450(n: number): unknown { switch (n) { case 1: return make1450().m1450; default: return 0; } }
+function c1450(): void { say("function-expression/switch-arm/strict-eq", (get1450(1)) === (get1450(1))); }
+
+interface R1451 { a1451: number; m1451: () => number }
+function make1451(): R1451 { return { a1451: 1, m1451: function () { return 1; } }; }
+function c1451(): void { say("function-expression/object-from-entries/strict-eq", (Object.fromEntries([["k", make1451().m1451]]).k) === (Object.fromEntries([["k", make1451().m1451]]).k)); }
+
+interface R1452 { a1452: number; m1452: () => number }
+function make1452(): R1452 { return { a1452: 1, m1452: function () { return 1; } }; }
+function get1452(): unknown { const t = make1452(); const u = { t, n: 1 }; const v = { u }; return v.u.t.m1452; }
+function c1452(): void { say("function-expression/structured-holder/strict-eq", (get1452()) === (get1452())); }
+
+interface R1453 { a1453: number; m1453: () => number }
+function make1453(): R1453 { return { a1453: 1, m1453: function () { return 1; } }; }
+function box1453(): { t: R1453 } { return { t: make1453() }; }
+function get1453(): unknown { return box1453().t.m1453; }
+function c1453(): void { say("function-expression/holder-through-a-record/strict-ne", (get1453()) !== (get1453())); }
+
+interface R1454 { a1454: number; m1454: () => number }
+function make1454(): R1454 { return { a1454: 1, m1454: function () { return 1; } }; }
+function box1454(): { t: R1454 } { return { t: make1454() }; }
+function get1454(): unknown { return box1454().t.m1454; }
+function c1454(): void { say("function-expression/holder-through-a-record/loose-eq", (get1454()) == (get1454())); }
+
+interface R1455 { a1455: number; m1455: () => number }
+function make1455(): R1455 { return { a1455: 1, m1455: function () { return 1; } }; }
+function box1455(): { t: R1455 } { return { t: make1455() }; }
+function get1455(): unknown { return box1455().t.m1455; }
+function c1455(): void { say("function-expression/holder-through-a-record/object-is", Object.is((get1455()), (get1455()))); }
+
+interface R1456 { a1456: number; m1456: () => number }
+function make1456(): R1456 { return { a1456: 1, m1456: function () { return 1; } }; }
+function box1456(): { t: R1456 } { return { t: make1456() }; }
+function get1456(): unknown { return box1456().t.m1456; }
+function c1456(): void { say("function-expression/holder-through-a-record/set", new Set([(get1456()), (get1456())]).size); }
+
+interface R1457 { a1457: number; m1457: () => number }
+function make1457(): R1457 { return { a1457: 1, m1457: function () { return 1; } }; }
+function box1457(): { t: R1457 } { return { t: make1457() }; }
+function get1457(): unknown { return box1457().t.m1457; }
+function c1457(): void { say("function-expression/holder-through-a-record/map-key", new Map([[(get1457()), 1], [(get1457()), 2]]).size); }
+
+interface R1458 { a1458: number; m1458: () => number }
+function make1458(): R1458 { return { a1458: 1, m1458: function () { return 1; } }; }
+function box1458(): { t: R1458 } { return { t: make1458() }; }
+function get1458(): unknown { return box1458().t.m1458; }
+function c1458(): void { say("function-expression/holder-through-a-record/includes", [(get1458())].includes((get1458()))); }
+
+interface R1459 { a1459: number; m1459: () => number }
+function make1459(): R1459 { return { a1459: 1, m1459: function () { return 1; } }; }
+function box1459(): { t: R1459 } { return { t: make1459() }; }
+function get1459(): unknown { return box1459().t.m1459; }
+function c1459(): void { say("function-expression/holder-through-a-record/index-of", [(get1459())].indexOf((get1459()))); }
+
+interface R1460 { a1460: number; m1460: () => number }
+function make1460(): R1460 { return { a1460: 1, m1460: function () { return 1; } }; }
+function box1460(): { t: R1460 } { return { t: make1460() }; }
+function get1460(): unknown { return box1460().t.m1460; }
+const ws1460 = new WeakSet<object>();
+function c1460(): void { say("function-expression/holder-through-a-record/weak-set", (ws1460.add((get1460()) as object), ws1460.has((get1460()) as object))); }
+
+interface R1461 { a1461: number; m1461: () => number }
+function make1461(): R1461 { return { a1461: 1, m1461: function () { return 1; } }; }
+function box1461(): { t: R1461 } { return { t: make1461() }; }
+function get1461(): unknown { return box1461().t.m1461; }
+const wm1461 = new WeakMap<object, number>();
+function c1461(): void { say("function-expression/holder-through-a-record/weak-map", (wm1461.set((get1461()) as object, 1), wm1461.has((get1461()) as object))); }
+
+interface R1462 { a1462: number; m1462: () => number }
+function make1462(): R1462 { return { a1462: 1, m1462: function () { return 1; } }; }
+function box1462(): { t: R1462 } { return { t: make1462() }; }
+function get1462(): unknown { return box1462().t.m1462; }
+function c1462(): void { say("function-expression/holder-through-a-record/written", ((((get1462())) as any).tag = 1, (((get1462())) as any).tag)); }
+
+interface R1463 { a1463: number; m1463: () => number }
+function make1463(): R1463 { return { a1463: 1, m1463: function () { return 1; } }; }
+function box1463(): { t: R1463 } { return { t: make1463() }; }
+function get1463(): unknown { return box1463().t.m1463; }
+function c1463(): void { say("function-expression/holder-through-a-record/defined", (Object.defineProperty((get1463()) as object, "t", { value: 1 }), "t" in ((get1463()) as object))); }
+
+interface R1464 { a1464: number; m1464: () => number }
+function make1464(): R1464 { return { a1464: 1, m1464: function () { return 1; } }; }
+function box1464(): { t: R1464 } { return { t: make1464() }; }
+function get1464(): unknown { return box1464().t.m1464; }
+function c1464(): void { say("function-expression/holder-through-a-record/frozen", (Object.freeze((get1464())), Object.isFrozen((get1464())))); }
+
+interface R1465 { a1465: number; m1465: () => number }
+function make1465(): R1465 { return { a1465: 1, m1465: function () { return 1; } }; }
+function box1465(): { t: R1465 } { return { t: make1465() }; }
+function get1465(): unknown { return box1465().t.m1465; }
+function c1465(): void { say("function-expression/holder-through-a-record/prototype-set", (Object.setPrototypeOf((get1465()) as object, null), Object.getPrototypeOf((get1465())) === null)); }
+
+interface R1466 { a1466: number; m1466: () => number }
+function make1466(): R1466 { return { a1466: 1, m1466: function () { return 1; } }; }
+function box1466(): { t: R1466 } { return { t: make1466() }; }
+function get1466(): unknown { return box1466().t.m1466; }
+function c1466(): void { say("function-expression/holder-through-a-record/deleted", (delete (((get1466())) as any).length, Object.hasOwn((get1466()) as object, "length"))); }
+
+interface R1467 { a1467: number; m1467: () => number }
+function make1467(): R1467 { return { a1467: 1, m1467: function () { return 1; } }; }
+function box1467(): { t: R1467 } { return { t: make1467() }; }
+function get1467(): unknown { return box1467().t.m1467; }
+function same1467(a: unknown, b: unknown): boolean { return a === b; }
+function c1467(): void { say("function-expression/holder-through-a-record/in-a-callee", same1467((get1467()), (get1467()))); }
+
+interface R1468 { a1468: number; m1468: () => number }
+function make1468(): R1468 { return { a1468: 1, m1468: function () { return 1; } }; }
+function box1468(): { t: R1468 } { return { t: make1468() }; }
+function get1468(): unknown { return box1468().t.m1468; }
+function hit1468(a: unknown, b: unknown): boolean { switch (a) { case b: return true; } return false; }
+function c1468(): void { say("function-expression/holder-through-a-record/switch", hit1468((get1468()), (get1468()))); }
+
+interface R1469 { a1469: number; m1469: () => number }
+function make1469(): R1469 { return { a1469: 1, m1469: function () { return 1; } }; }
+function box1469(): { t: R1469 } { return { t: make1469() }; }
+function get1469(): unknown { return box1469().t.m1469; }
+let last1469: unknown;
+function seen1469(f: unknown): boolean { const same = f === last1469; last1469 = f; return same; }
+function c1469(): void { say("function-expression/holder-through-a-record/kept-then-compared", (seen1469((get1469())), seen1469((get1469())))); }
+
+c1441(); c1442(); c1443(); c1444(); c1445(); c1446(); c1447(); c1448(); c1449(); c1450(); c1451(); c1452(); c1453(); c1454(); c1455(); c1456(); c1457(); c1458(); c1459(); c1460(); c1461(); c1462(); c1463(); c1464(); c1465(); c1466(); c1467(); c1468(); c1469();
+console.log(out.join("\n"));
+//// kept-through-a-choice-of-holders-or-callees.js
+let registry = { held: null, shared: true };
+function put(box, v) { box.held = v; }
+function fill(v, own) { put(own ? { held: null } : registry, v); }
+
+let sharedList = [];
+function push(list, v) { list.push(v); }
+function fillList(v, own) { push(own ? [] : sharedList, v); }
+
+class Box { held = null; }
+let sharedBox = new Box();
+function fillBox(v, own) { put(own ? new Box() : sharedBox, v); }
+
+let kept;
+const unknown = globalThis[process.argv[9] || "nothingHere"];
+function keep(v) { kept = v; return 2; }
+function drop(v) { return 1; }
+function callOne(which, a, b, x) { return (which ? a : b)(x); }
+
+function runChoices() {
+  fill({ n: 1 }, false);
+  fill({ n: 2 }, true);
+  fillList({ n: 3 }, false);
+  fillList({ n: 4 }, true);
+  fillBox({ n: 5 }, false);
+  fillBox({ n: 6 }, true);
+  const answered = callOne(false, unknown || drop, unknown || keep, { m: 7 });
+  return [registry.held.n, sharedList[0].n, sharedBox.held.n, answered, kept.m].join(" ");
+}
+console.log(runChoices());
+//// let-from-narrowed-number.ts
+// A `let` in a `switch` case is initialized from the narrowed number and then incremented, decremented and captured.
+declare const console: { log(...a: unknown[]): void };
+function f(k: number) { switch (k) { case 1: let w = k; return ++w; } }
+function g(k: number) { switch (k) { case 1: let w = k; w++; w++; return w * 2; } return 0; }
+function h(k: number) { switch (k) { case 5: let w = k; --w; const c = () => w; w--; return c() + w; } return 0; }
+function b(k: bigint) { switch (k) { case 1n: let w = k; w++; return w; } return 0n; }
+function still(k: number) { switch (k) { case 7: const w = k; return w + 1; } return 0; }
+console.log(f(1), g(1), h(5), b(1n) === 2n, still(7));
+//// literal-assigned-in-loop-read-behind-branches.js
+// A variable that is undefined or a literal assigned in a loop: the first read throws or proves that it holds the literal, and later reads stand behind branches that meet again.
+function attempt(f, ...args) { try { return f(...args); } catch (error) { return error.name; } }
+
+function arrayReadTwice(a, b, n, c) {
+  let last;
+  for (let i = 0; i < n; i++) last = [a + i, b + i];
+  const first = last[0];
+  let label;
+  if (c) label = "yes"; else label = "no";
+  return label + " " + first + " " + last[1] + " " + last.length;
+}
+
+function objectReadTwice(a, n, c) {
+  let last;
+  for (let i = 0; i < n; i++) last = { x: a + i, y: i };
+  const first = last.x;
+  const label = c ? "yes" : "no";
+  return label + " " + first + " " + last.y;
+}
+
+function handedOn(a, n, c, use) {
+  let last;
+  for (let i = 0; i < n; i++) last = [a, i];
+  use(last.length);
+  if (c) use("taken");
+  return use(last);
+}
+
+function nullOrLiteral(a, n, c) {
+  let last = null;
+  for (let i = 0; i < n; i++) last = { x: a + i };
+  let sum = last.x;
+  for (let i = 0; i < 2; i++) { if (c) sum += last.x; else sum -= last.x; }
+  return sum;
+}
+
+function inOuterLoop(names, n) {
+  const out = [];
+  for (const name of names) {
+    let last;
+    for (let i = 0; i < n; i++) last = [name + i, name.length + i];
+    out.push(String(last[0]), "|", String(last[1]));
+  }
+  return out.join(" ");
+}
+
+const seen = [];
+const use = (v) => { seen.push(Array.isArray(v) ? v.join("-") : v); return seen.length; };
+for (const n of [0, 1, 3]) {
+  for (const c of [true, false]) {
+    console.log(n, c, attempt(arrayReadTwice, 1, 10, n, c), "/", attempt(objectReadTwice, 5, n, c), "/", attempt(handedOn, "a", n, c, use), "/", attempt(nullOrLiteral, 2, n, c));
+  }
+  console.log(attempt(inOuterLoop, ["p", "qq"], n));
+}
+console.log(seen.join());
+//// local-array-elements-read-through-methods.ts
+// Elements of a local array are read through generic functions and array methods (`shift`, `find`, `concat`, `Array.from`, iterators).
+declare const console: { log(...a: unknown[]): void };
+function row(name: string, f: () => unknown): void { let got: unknown; try { got = f(); } catch (e) { got = "threw " + (e as Error).name + " " + (e as Error).message; } console.log(name + ": " + got); }
+function firstOf<T>(xs: T[]): T { return xs[0]; }
+function g1(k: number) { switch (k) { case 1: { const a = [k]; a[0]++; return firstOf(a); } } }
+row("through a generic function of the program", () => g1(1));
+function g2(k: number) { switch (k) { case 1: { const a = [k]; a[0]++; return a.shift(); } } }
+row("shift", () => g2(1));
+function g3(k: number) { switch (k) { case 1: { const a = [k]; a[0]++; return a.find(() => true); } } }
+row("find", () => g3(1));
+function g4(k: number) { switch (k) { case 1: { const a = [k]; a[0]++; return a.concat()[0]; } } }
+row("concat", () => g4(1));
+function g5(k: number) { switch (k) { case 1: { const a = [k]; a[0]++; return Array.from(a)[0]; } } }
+row("Array.from", () => g5(1));
+function g6(k: number) { switch (k) { case 1: { const a = [k]; a[0]++; return a.values().next().value; } } }
+row("values().next()", () => g6(1));
+function g7(k: number) { switch (k) { case 1: { const a = [k]; a[0]++; let s = 0; for (const [, x] of a.entries()) s += x; return s; } } }
+row("entries()", () => g7(1));
+function g8(k: number) { switch (k) { case 1: { const a = [k]; a[0]++; const x = a[0]; return x + 1; } } }
+row("kept in a const, then used", () => g8(1));
+function g9(k: number) { switch (k) { case 1: { const a = [k]; a[0]++; return a.filter(x => x > 0).length + a.lastIndexOf(k); } } }
+row("filter and lastIndexOf", () => g9(1));
+function sign(x: number) { return x < 0 ? -1 : x > 0 ? 1 : 0; }
+function g10(x: number) { const s = sign(x); return s === 1 ? "up" : s === -1 ? "down" : "flat"; }
+row("an inferred result of literals is as it was", () => g10(5) + g10(-5) + g10(0));
+type S = { kind: 1; a: number } | { kind: 2; b: string };
+function g11(all: S[]) { let t = ""; for (const s of all) t += s.kind === 1 ? s.a : s.b; return t; }
+row("a union told apart by a number, out of an array", () => g11([{ kind: 1, a: 5 }, { kind: 2, b: "z" }]));
+function g12() { const t = [1, 2] as const; return t[0] + t[1]; }
+row("as const", () => g12());
+//// local-object-removed-despite-untyped-lookalikes.ts
+// A local object's allocation is removed although objects created by untyped code can have the same type.
+declare const console: { log(...a: unknown[]): void };
+interface Q { x: number }
+const foreign: Q = { x: 0 } as any;
+function g(n: number): number { const o: Q = { x: n }; return o.x + 1; }
+console.log(g(1), foreign.x);
+//// moved-closures-across-young-collections.ts
+// Closures moved from the stack to the heap stay valid when young-generation garbage collections run in between.
+const saved: ((x: number) => void)[] = [];
+const keepers: number[][] = [];
+function keeping(list: number[]): number[] { keepers.push(list); return list; }
+function isKept(list: number[]): boolean { return keepers.indexOf(list) >= 0; }
+function hold(list: number[], callback: (x: number) => void): void { saved.push(callback); for (let i = 0; i < list.length; i++) callback(list[i]); }
+function sum(list: number[], tag: string): number {
+  let n = 0;
+  let text = tag;
+  let last: number[] = [];
+  if (isKept(list)) hold(list, x => { n += x; text = text + x; last = [x, n]; }); else list.forEach(x => { n += x; text = text + x; last = [x, n]; });
+  return n + text.length + last.length;
+}
+const plain = [1, 2, 3];
+const keeper = keeping([4, 5]);
+let total = 0;
+let garbage: string[] = [];
+for (let i = 0; i < 300000; i++) {
+  total += sum(i % 1000 === 7 ? keeper : plain, "t" + (i & 7));
+  garbage.push("g" + i);
+  if (garbage.length > 2000) garbage = [];
+  if (saved.length > 20) saved.length = 0;
+}
+console.log(total);
+//// object-allocated-only-where-escaping.ts
+// An object that escapes in one branch only is allocated in that branch.
+declare const console: { log(...a: unknown[]): void };
+interface P { x: number; y: number }
+let kept: P | undefined;
+function f(c: boolean, n: number): number {
+  const o: P = { x: n, y: n + 1 };
+  if (c) kept = o;
+  return o.x * 10 + o.y;
+}
+let s = 0;
+for (let i = 0; i < 4; i++) s += f(i === 3, i);
+console.log(s, kept!.x);
+//// object-built-where-a-field-is-odd-and-every-pass-is-verified.ts
+// One of two literals lacks a field that is a slice; the object is built where the name is empty.
+type Split = { name: string; place?: string };
+////= split-2	source.slice(0, at), place: source.slice(at + 1
+const kept: Split[] = [];
+// Too large to be inlined.
+function keep(parts: Split): void {
+  try {
+    for (let i = 0; i < 2; i++) if (kept.length < 40 + i) kept.push(parts);
+  } catch {
+    kept.length = 0;
+  }
+}
+const ids = ["plain", "a@north", "", "@", "a@", "a@b@c", "longer-without-a-mark", "x@y"];
+
+function use(id: string, turn: number): number {
+  const parts = split(id);
+  if (parts.name === "" || parts.name === "plain") keep(parts);
+  return parts.name.length + (turn & 1);
+}
+let total = 0;
+for (let turn = 0; turn < 3000; turn++) for (const id of ids) total += use(id, turn);
+console.log(total, kept.length);
+for (const parts of kept.slice(0, 24)) console.log(JSON.stringify(parts), "place" in parts);
+
+//// objects-in-frames-read-by-name.ts
+// Objects that never leave their function hold strings, objects, arrays and closures. Built with accesses left by name: the run time reads and stores their fields while they lie in frames.
+declare const console: any;
+declare const Bun: any;
+const out: string[] = [];
+function say(name: string, value: unknown): void { out.push(name + "=" + String(value)); }
+const kept: unknown[] = [];
+
+interface Point { y: number }
+interface Holder { text: string; point: Point; list: number[]; count: number; run: () => number }
+function text(n: number): string { return "t" + n; }
+function point(n: number): Point { const p = { y: n }; kept.push(p); return p; }
+function holder(n: number): Holder { return { text: text(n), point: point(n), list: [n, n + 1], count: n, run: () => 5 }; }
+
+function reads(): void { const h = holder(1); say("reads", h.text + "/" + h.point.y + "/" + h.list.join() + "/" + h.count + "/" + h.run()); }
+function readsAfterCollection(): void { const h = holder(2); Bun.gc(true); say("reads-after-collection", h.text + "/" + h.point.y + "/" + h.list.join() + "/" + (h.run === h.run)); }
+function stores(): void { const h = holder(3); h.text = text(30); h.point = point(31); h.list = [32]; h.count = 33; Bun.gc(true); say("stores", h.text + "/" + h.point.y + "/" + h.list.join() + "/" + h.count); }
+function readsIn(h: Holder, depth: number): string { return depth > 0 ? readsIn(h, depth - 1) : h.text + "/" + h.point.y + "/" + h.list.length; }
+function readsInCallee(): void { const h = holder(4); say("reads-in-callee", readsIn(h, 3) + "/" + h.text); }
+function storesIn(h: Holder, depth: number): void { if (depth > 0) storesIn(h, depth - 1); else { h.text = text(50); h.point = point(51); } }
+function storesInCallee(): void { const h = holder(5); storesIn(h, 3); Bun.gc(true); say("stores-in-callee", h.text + "/" + h.point.y); }
+function joins(flag: boolean): void { const a = holder(6), b = holder(7); const h = flag ? a : b; say("joins", h.text + "/" + h.point.y + "/" + (h.run === a.run) + "/" + (h.run === b.run)); }
+function tests(): void { const h = holder(8); say("tests", ("text" in h) + "/" + ("none" in h) + "/" + Object.hasOwn(h, "point")); }
+function loops(): void { let sum = 0; let last = ""; for (let i = 0; i < 50; i++) { const h = holder(i); sum += h.point.y + h.list[1] + h.count; last = h.text; if (i === 25) Bun.gc(true); } say("loops", sum + "/" + last); }
+
+reads(); readsAfterCollection(); stores(); readsInCallee(); storesInCallee(); joins(true); joins(false); tests(); loops();
+console.log(out.join("\n"));
+//// objects-that-refer-to-each-other-built-on-one-path.js
+// Objects that refer to each other (a closure over the object that holds it, a parent and its child) are needed on one path only. Where they are built, keys, values and identities are what the constructors made.
+const lines = [];
+function say(name, ...values) { lines.push(name + ": " + values.map(String).join(" ")); }
+
+class Handler {
+  constructor(name) {
+    this.name = name;
+    this.run = () => this.name;
+    this.again = () => this.run() + "!";
+    this.count = 0;
+    this.last = null;
+  }
+}
+const keptHandlers = [];
+function makeHandler(name, keep) {
+  const handler = new Handler(name);
+  handler.count++;
+  if (keep) {
+    keptHandlers.push(handler);
+    return handler.run;
+  }
+  return null;
+}
+let lastRun = null;
+for (let i = 0; i < 1000; i++) {
+  const run = makeHandler("h" + i, i % 400 === 7);
+  if (run) lastRun = run;
+}
+for (const handler of keptHandlers) {
+  say("handler keys", Object.keys(handler).join());
+  say("handler text", JSON.stringify(handler));
+  say("handler calls", handler.run(), handler.again(), handler.count, handler.last);
+  say("handler identity", handler.run === handler.run, handler.again === handler.again, handler.run === handler.again);
+}
+say("last run", lastRun(), lastRun === keptHandlers[keptHandlers.length - 1].run);
+
+class Parent {
+  constructor(name) {
+    this.name = name;
+    this.child = new Child(this);
+    this.size = 1;
+  }
+}
+class Child {
+  constructor(parent) {
+    this.depth = 1;
+    this.parent = parent;
+    this.label = "child of " + parent.name;
+  }
+}
+const keptParents = [];
+const keptChildren = [];
+function makeFamily(name, keepParent, keepChild) {
+  const parent = new Parent(name);
+  parent.size += parent.child.depth;
+  if (keepParent) keptParents.push(parent);
+  if (keepChild) keptChildren.push(parent.child);
+  return parent.child.parent.size;
+}
+let total = 0;
+for (let i = 0; i < 1000; i++) total += makeFamily("p" + i, i % 300 === 5, i % 450 === 9);
+say("families", total, keptParents.length, keptChildren.length);
+for (const parent of keptParents) {
+  say("parent keys", Object.keys(parent).join(), Object.keys(parent.child).join());
+  say("parent values", parent.name, parent.size, parent.child.depth, parent.child.label);
+  say("parent identity", parent.child.parent === parent, parent.child.parent.child === parent.child);
+}
+for (const child of keptChildren) {
+  say("child keys", Object.keys(child).join(), Object.keys(child.parent).join());
+  say("child values", child.label, child.parent.name, child.parent.size);
+  say("child identity", child.parent.child === child);
+}
+
+function makeRing(value, keep) {
+  const first = { value, next: null, tag: "first" };
+  const second = { value: value + 1, next: first, tag: "second" };
+  first.next = second;
+  if (keep) return first;
+  return first.next.next.value + second.next.next.value;
+}
+let ringTotal = 0;
+let ring = null;
+for (let i = 0; i < 1000; i++) {
+  const result = makeRing(i, i === 777);
+  if (typeof result === "number") ringTotal += result;
+  else ring = result;
+}
+say("ring", ringTotal, Object.keys(ring).join(), Object.keys(ring.next).join(), ring.value, ring.next.value, ring.tag, ring.next.tag, ring.next.next === ring);
+
+let keptTop = null;
+function makeShared(i, keep) {
+  const leaf = { w: i };
+  const middle = { id: i + 1, leaf, size: i + 2, half: i * 0.5 };
+  const top = { leaf, middle };
+  if (keep) keptTop = top;
+  return middle.size + top.leaf.w;
+}
+let sharedTotal = 0;
+for (let i = 0; i < 1000; i++) sharedTotal += makeShared(i, i === 777);
+say("shared keys", sharedTotal, Object.keys(keptTop).join(), Object.keys(keptTop.middle).join(), Object.keys(keptTop.leaf).join());
+say("shared text", JSON.stringify(keptTop));
+say("shared identity", keptTop.leaf === keptTop.middle.leaf, keptTop.middle.id, keptTop.middle.size, keptTop.middle.half);
+
+let keptSelf = null;
+function makeLiteral(i, keep) {
+  let literal;
+  literal = { id: i, self: () => literal, count: i + 3, half: i * 0.5 };
+  if (keep) keptSelf = literal.self;
+  return literal.count;
+}
+let literalTotal = 0;
+for (let i = 0; i < 1000; i++) literalTotal += makeLiteral(i, i === 555);
+const keptLiteral = keptSelf();
+say("literal keys", literalTotal, Object.keys(keptLiteral).join(), keptLiteral.id, keptLiteral.count, keptLiteral.half);
+say("literal text", JSON.stringify(keptLiteral));
+say("literal identity", keptLiteral.self === keptSelf, keptLiteral.self() === keptLiteral);
+
+console.log(lines.join("\n"));
+//// one-of-two-stack-closures-chosen.ts
+// One of two stack-allocated closures is chosen by a condition and then called.
+let noise = 0;
+function calls(f: () => number): number { if (noise > 1e9) return calls(f); return f() + f(); }
+function oneOfTwo(flag: boolean, n: number): number {
+  let t = n;
+  const a = (): number => ++t;
+  const b = (): number => t + 100;
+  const f = flag ? a : b;
+  return calls(f) + calls(f) + t;
+}
+function orNone(flag: boolean, n: number): number {
+  let t = n;
+  const a = (): number => { t += 2; return t; };
+  const f = flag ? a : undefined;
+  let sum = 0;
+  for (let i = 0; i < 3; i++) if (f) sum += f();
+  return sum + t;
+}
+function throughALoop(n: number): number {
+  let t = n;
+  const step = (): number => { t += 3; return t; };
+  let f = step;
+  let sum = 0;
+  for (let i = 0; i < 4; i++) { sum += f(); if (sum > 1e9) f = step; }
+  return sum;
+}
+function apply2(f: (x: number) => number, x: number): number { if (noise > 1e9) return apply2(f, x); return f(x) + f(x + 1); }
+function declared(n: number): number {
+  let t = n;
+  function add(x: number): number { t += x; return t; }
+  return apply2(add, 1) + apply2(add, 2) + t;
+}
+function report(f: (text: string, ...rest: number[]) => number): number { if (noise > 1e9) return report(f); return f("a", 1, 2, 3) + f("bc") + f("d", 9, 8, 7, 6, 5, 4, 3, 2, 1, 0); }
+function withRest(n: number): number {
+  let t = n;
+  const f = (text: string, ...rest: number[]): number => { t += text.length; for (const r of rest) t += r; return t + rest.length; };
+  return report(f) + report(f);
+}
+function behindACut(n: number, depth: number): number {
+  if (n < 0) return -1;
+  if (depth < 100) {
+  let t = n;
+  let text = "s";
+  let h = depth * 31 + 7;
+  h = ((h ^ (h >> 1)) + 13) % 100003; if (h % 89 === 0) noise++;
+  h = ((h ^ (h >> 2)) + 18) % 100003; if (h % 91 === 0) noise++;
+  h = ((h ^ (h >> 3)) + 23) % 100003; if (h % 93 === 0) noise++;
+  h = ((h ^ (h >> 4)) + 28) % 100003; if (h % 95 === 0) noise++;
+  h = ((h ^ (h >> 5)) + 33) % 100003; if (h % 97 === 0) noise++;
+  h = ((h ^ (h >> 1)) + 38) % 100003; if (h % 99 === 0) noise++;
+  h = ((h ^ (h >> 2)) + 43) % 100003; if (h % 101 === 0) noise++;
+  h = ((h ^ (h >> 3)) + 48) % 100003; if (h % 103 === 0) noise++;
+  h = ((h ^ (h >> 4)) + 53) % 100003; if (h % 105 === 0) noise++;
+  h = ((h ^ (h >> 5)) + 58) % 100003; if (h % 107 === 0) noise++;
+  h = ((h ^ (h >> 1)) + 63) % 100003; if (h % 109 === 0) noise++;
+  h = ((h ^ (h >> 2)) + 68) % 100003; if (h % 111 === 0) noise++;
+  h = ((h ^ (h >> 3)) + 73) % 100003; if (h % 113 === 0) noise++;
+  h = ((h ^ (h >> 4)) + 78) % 100003; if (h % 115 === 0) noise++;
+  const add = (x: number): number => { t += x; text += x; return t + text.length; };
+  if (depth > 0) return apply2(add, h % 5) + behindACut(n - 1, depth - 1);
+  return apply2(add, 1) + apply2(add, 2) + t;
+  }
+  return 0;
+}
+let out = "";
+for (let i = 0; i < 120; i++) {
+  const a = oneOfTwo(i % 2 === 0, i), b = orNone(i % 3 !== 0, i), c = throughALoop(i), d = declared(i), e = withRest(i), g = behindACut(i, 2) + behindACut(-i, 1) + behindACut(i + 1, 0) + behindACut(3, 1);
+  if (i % 24 === 0) out += a + "|" + b + "|" + c + "|" + d + "|" + e + "|" + g + "\n";
+}
+console.log(out);

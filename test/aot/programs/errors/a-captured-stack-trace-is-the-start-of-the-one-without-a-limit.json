@@ -1,0 +1,1 @@
+{ "skipInShell": "Error.captureStackTrace and bun:jsc are Bun's" }

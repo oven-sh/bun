@@ -1,0 +1,38 @@
+# Differences between a compiled program and plain Bun that are meant, and what a bed cannot do. A finding that matches is counted and not kept.
+# <regex><TAB><language | bed | who has the bug><TAB><why>[<TAB><what the regex is matched against>]
+#   finding (the default): "<bed> <mode> <kind> <detail>", as in the fifth and ninth column of findings.tsv
+#   reduced: the text of the reduced program. The finding is reduced first, which takes minutes
+#   both: the words of the finding, a line break, and the text of the reduced program
+#   program: the text of a program before it is run. A program that matches is not run at all
+compiled .*(Attempted to assign to readonly property|immutable properties|built-in objects are read-only|read-only in a compiled executable|this executable was compiled assuming)	language	built-in objects are locked: a write to one throws
+exit codes .*(Attempted to assign to readonly property|immutable properties|built-in objects are read-only|read-only in a compiled executable|this executable was compiled assuming)	language	the same, uncaught
+LockedBuiltinWrite|TS100014|built-in objects are read-only	language	a write to a locked built-in that always runs stops the build
+different output plain "(.*?)(Error|is not a|is not an|Cannot |undefined is|null is|not defined|not iterable|Invalid|Unexpected|must be|expected).*" compiled "\1(Error|is not a|is not an|Cannot |undefined is|null is|not defined|not iterable|Invalid|Unexpected|must be|expected)	language	the words of an engine error differ: the lines are the same up to the first such word
+^engine .*(Iterator result interface is not an object|this. is not a Promise|executor did not take)	bed	a stand-in answers for the built-ins that are written in JavaScript
+^engine .* compiled ".*\blibrary\b	bed	the name of the stand-in
+different output plain ".*\{ ?\}.*" compiled ".*\{"$	language	the text of a function or class is the source's in a compiled program and the transpiler's in plain Bun
+function (\w+)\(\) \{\s*\w+\+\+;?\s*try \{\s*\1\(\)	language	how deep a recursion gets before the stack overflows is not specified	reduced
+different output plain ".*iterable should have an iterator symbol.*" compiled ".*is not iterable	language	the words of an engine error differ
+different output plain ".* at /.*program\.[jt]s:\d+:\d+" compiled ".*\$bunfs	bed	the path of the program in a printed stack
+build error .*Class constructor may not be an accessor	language	not a valid program: plain Bun refuses it too
+^engine \w+ different output plain ".*" compiled "undefined"$	bed	a stand-in answers undefined for a built-in that is written in JavaScript and that no probe names
+Reflect\.construct\(\s*(Function|AsyncFunction|GeneratorFunction)\b|\bnew Function\(|\bFunction\(\s*["'`]|\beval\(	language	code from a string: where the compiler couldn't tell at build time that a call reaches eval() or the Function constructor, the call throws an EvalError	reduced
+Object\.(isExtensible|isSealed|isFrozen)\([^)]*[Pp]rototype	language	built-in prototypes are locked, so they are not extensible	reduced
+build error .*Cannot redeclare block-scoped variable	bed	a mutated program declares a name twice: not a valid program, plain Bun refuses it too
+different output plain " *(argv|argv0|execPath|execArgv|PATH|_): 	bed	the whole process object is printed, with the path of the executable and the environment
+different output [^\n]* compiled "[^\n]*TypeError[\s\S]*\b(Math|JSON|Object|Array|Number|String|Reflect|Promise|Symbol|Date|BigInt|globalThis)(\.prototype)?(\.\w+|\[[^\]\n]+\]) = 	language	built-in objects are locked: the program catches the TypeError of a write to one and prints its name	both
+different output .* \| the line tells of a stack overflow$	language	how deep a recursion gets before the stack overflows is not specified, and the line was built on the way down
+compiled ".*Error of a locked built-in	language	built-in objects are locked: the program catches the error of a write to one and prints its kind
+build error .*(in strict mode|is only allowed in the body of a function|Could not resolve)	bed	a build that programs share makes each of them a module: strict, without the names of CommonJS, and away from the files beside it
+different output plain ".*(=> ?|\bfunction ?\w* ?\(|\bclass \w+ (extends \w+ )?\{|^ +\w+\(\) ?\{$|^ +return\b).*" compiled ".*(=> ?|\bfunction ?\w* ?\(|\bclass \w+ (extends \w+ )?\{|^ +\w+\(\) ?\{|^ +return\b)	language	the line holds the text of a function or class: the source's in a compiled program, the transpiler's in plain Bun
+different output plain "(.* )?\d+ \| .*" compiled 	language	plain Bun prints the lines of the source beside an error; an executable holds no source
+different (output|exit code) [^\n]*\n[\s\S]*\b(Object|Array|Number|String|Boolean|Math|JSON|Reflect|Promise|Symbol|Date|BigInt|Proxy|globalThis) = [\s\S]*\bcatch\b	language	built-in objects are locked: the write throws and the program goes another way	both
+different (output|exit code) [^\n]*\n[\s\S]*((console\.\w+|inspect|JSON\.stringify|structuredClone)\((?:[^()\n]*, )?(process|globalThis)[,)]|(Object\.(keys|values|entries|assign|getOwnPropertyNames|getOwnPropertyDescriptors)|Reflect\.ownKeys)\((\{\}, )?(process|globalThis)[,)]|\.\.\.(process|globalThis)\b|\b(in|of) (process|globalThis)\))	bed	the whole process object or global object is printed or walked: paths, the environment, and lazy properties in the order they were first touched	both
+different (output|exit code) [^\n]*\n[\s\S]*(import\.meta\.(path|url|filename|dirname|dir|file)|__filename|__dirname|process\.argv|Bun\.main)	bed	the program asks for its own file, which an executable does not have	both
+different (output|exit code) [^\n]*\n[\s\S]*getBuiltinModule	language	a library module that is asked for by a computed name is not in the executable, and the loader says so	both
+different (output|exit code) (?![^\n]*"(lost|wrong|early|kept|strange|afterward|behind it|\d+ (full|fine|thrown|another))\b)[^\n]*(\d{4}|[0-9a-f]{8}|/tmp/|/dev/shm/|\\\\)[^\n]*\n[\s\S]*(mkdtemp|hrtime|[cC]puUsage|memoryUsage|resourceUsage|randomUUID|randomBytes|getRandomValues|port: 0|listen\(0|\bstat(Sync)?\b|\.pid\b|getTime\(\))	bed	a clock, chance, a port, a process number, a folder with a drawn name: the line that differs shows a number of four digits or more, eight hexadecimal digits or a path	both
+different (output|exit code) (?![^\n]*"(lost|wrong|early|kept|strange|afterward|behind it|\d+ (full|fine|thrown|another))\b)[^\n]*\d[^\n]*\n[\s\S]*openSync	bed	a descriptor: the line that differs shows a number	both
+different (output|exit code) (?![^\n]*"(lost|wrong|early|kept|strange|afterward|behind it|\d+ (full|fine|thrown|another))\b)[^\n]*\n[\s\S]*(heapStats|FinalizationRegistry|WeakRef)	bed	what the collector has freed	both
+crash SIGABRT FATAL: out of memory	language	where no error can be thrown, a compiled program whose range for objects is full stops and says why
+different output .*(callee|Symbol\(Symbol\.iterator\))[\s\S]*\n[\s\S]*return arguments;[\s\S]*(ownKeys|getOwnPropertyDescriptors|getOwnPropertyNames|getOwnPropertySymbols)	plain Bun	an arguments object lists callee and Symbol.iterator where they were created, in front of what the program adds; plain Bun creates them at the first look	both
+different output [\s\S]*\n[\s\S]*defineProperty\(\w+\.prototype, "4294967294", \{[^}]*writable: (!0|true)[\s\S]*defineProperty\(\w+\.prototype, "4294967294"	plain Bun	a store under an index stops at the nearest prototype that has it as a writable data property; plain Bun walks on to a read-only one above	both

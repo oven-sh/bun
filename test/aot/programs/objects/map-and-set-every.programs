@@ -1,0 +1,1570 @@
+////: lines-13
+function «1»(keys: «2»[], rounds: number): string {
+  let first = "";
+  let differing = 0;
+  for (let round = 0; round < rounds; round++) {
+    const map = new Map<«2», number>();
+    const set = new Set<«2»>();
+    let text = "";
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      text += describe(key) + ": " + answers(map.has(key), map.get(key), set.has(key), map.size, set.size);
+      map.set(key, i);
+      set.add(key);
+      text += " -> " + answers(map.has(key), map.get(key), set.has(key), map.size, set.size) + "\n";
+    }
+    text += [...map.keys()].map(describe).join() + " | " + [...set].map(describe).join();
+    if (!round) first = text;
+    else if (text !== first) differing++;
+  }
+  return `${first}\nrounds that differ: ${differing}`;
+}
+////: lines-19
+function «1»(key: «2»): string {
+  const before = answers(«3».has(key), «3».get(key), «4».has(key), «3».size, «4».size);
+  «3».set(key, «3».size);
+  «4».add(key);
+  return `${describe(key)}: ${before} -> ${answers(«3».has(key), «3».get(key), «4».has(key), «3».size, «4».size)}`;
+}
+////: outcome
+function outcome(run: () => unknown): string {
+  try {
+    return show(run());
+  } catch (error) {
+    return (error as Error).name;
+  }
+}
+////: sumPresent
+function sumPresent«1», rounds: number): string {
+  let sum = 0;
+  let absent = 0;
+  for (let i = 0; i < rounds; i++) {
+    const key = «2»;
+    if (map.has(key)) sum += map.get(key)!;
+    else absent++;
+  }
+  return `${sum} ${absent}`;
+}
+//// map-and-set-every-method.ts
+// Every method of Map and Set behaves as in plain Bun, for tables of every size from empty to a few hundred entries, and for keys and values of every kind: strings, integers, doubles, objects, symbols, bigints, and all of them in one table.
+const objects = Array.from({ length: 700 }, (_, index) => ({ id: index }));
+const symbols = Array.from({ length: 700 }, (_, index) => Symbol("s" + index));
+
+function show(value: unknown): string {
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "bigint") return value + "n";
+  if (typeof value === "symbol") return String(value);
+  if (Array.isArray(value)) return "[" + shorten(value.map(show)) + "]";
+  if (value instanceof Map) return "Map(" + value.size + "){" + shorten(Array.from(value, ([key, item]) => show(key) + "=>" + show(item))) + "}";
+  if (value instanceof Set) return "Set(" + value.size + "){" + shorten(Array.from(value, show)) + "}";
+  if (typeof value === "object" && value !== null) return "{id " + (value as { id: number }).id + "}";
+  return String(value);
+}
+////= shorten
+
+type KeyAt = (index: number) => unknown;
+const kinds: [string, KeyAt][] = [
+  ["strings", index => "k" + index],
+  ["integers", index => index],
+  ["doubles", index => index + 0.5],
+  ["objects", index => objects[index]],
+  ["symbols", index => symbols[index]],
+  ["bigints", index => BigInt(index) << 70n],
+  ["mixed", index => [undefined, null, true, false, NaN, "", "k" + index, index, index + 0.5, objects[index], symbols[index], BigInt(index)][index < 6 ? index : 6 + (index % 6)]],
+];
+const sizes = [0, 1, 4, 5, 8, 9, 254, 255, 300];
+const absent = 600;
+
+function createMap(count: number, keyAt: KeyAt, valueAt: KeyAt): Map<unknown, unknown> {
+  const map = new Map<unknown, unknown>();
+  for (let index = 0; index < count; index++) map.set(keyAt(index), valueAt(index));
+  return map;
+}
+function createSet(count: number, keyAt: KeyAt, from = 0): Set<unknown> {
+  const set = new Set<unknown>();
+  for (let index = from; index < from + count; index++) set.add(keyAt(index));
+  return set;
+}
+
+function runMap(label: string, count: number, keyAt: KeyAt, valueAt: KeyAt): void {
+  const say = (what: string, ...values: unknown[]) => console.log(label + " " + what + ": " + values.map(show).join(" "));
+  const last = Math.max(count - 1, 0);
+  const middle = count >> 1;
+  const map = createMap(count, keyAt, valueAt);
+  say("size", map.size, map);
+  say("has", map.has(keyAt(0)), map.has(keyAt(middle)), map.has(keyAt(last)), map.has(keyAt(count)), map.has(keyAt(absent)));
+  say("get", map.get(keyAt(0)), map.get(keyAt(middle)), map.get(keyAt(last)), map.get(keyAt(count)), map.get(keyAt(absent)));
+  say("keys, values, entries", [...map.keys()], [...map.values()], [...map.entries()], [...map[Symbol.iterator]()]);
+
+  const visited: unknown[] = [];
+  const receiver = { id: -1 };
+  map.forEach(function (this: unknown, value, key, owner) {
+    visited.push([key, value, owner === map, this === receiver]);
+  }, receiver);
+  say("forEach", visited);
+
+  say("set a present key", map.set(keyAt(middle), "replaced") === map, map.size, map.get(keyAt(middle)), [...map.keys()]);
+  say("set an absent key", map.set(keyAt(absent), 0.25) === map, map.size, map.get(keyAt(absent)), [...map.keys()].at(-1));
+  say("getOrInsert", map.getOrInsert(keyAt(0), "inserted"), map.getOrInsert(keyAt(absent + 1), "inserted"), map.size);
+  say("getOrInsertComputed", map.getOrInsertComputed(keyAt(0), key => [key]), map.getOrInsertComputed(keyAt(absent + 2), key => [key]), map.size);
+  say("delete", map.delete(keyAt(0)), map.delete(keyAt(0)), map.delete(keyAt(middle)), map.delete(keyAt(last)), map.delete(keyAt(absent + 3)), map.size);
+  say("after delete", map.has(keyAt(0)), map.get(keyAt(0)), map);
+  say("set a deleted key", map.set(keyAt(0), "again").size, [...map.keys()].at(-1), map.get(keyAt(0)));
+
+  const copies = [new Map(map), new Map(map.entries()), new Map([...map]), new Map(Array.from(map))];
+  map.set(keyAt(absent + 4), "only in the original");
+  copies[0].set(keyAt(absent + 5), "only in the copy");
+  say("copies", copies.map(copy => copy.size), map.size, copies[0].has(keyAt(absent + 4)), map.has(keyAt(absent + 5)), copies[1]);
+
+  for (let index = 0; index < count; index++) map.delete(keyAt(index));
+  say("every first key deleted", map);
+  say("clear", map.clear(), map.size, map.has(keyAt(absent)), map.get(keyAt(absent)), [...map], map.delete(keyAt(absent)));
+  say("filled again", map.set(keyAt(1), 1).set(keyAt(0), 0).size, map);
+}
+
+function runSet(label: string, count: number, keyAt: KeyAt): void {
+  const say = (what: string, ...values: unknown[]) => console.log(label + " " + what + ": " + values.map(show).join(" "));
+  const last = Math.max(count - 1, 0);
+  const middle = count >> 1;
+  const set = createSet(count, keyAt);
+  say("size", set.size, set);
+  say("has", set.has(keyAt(0)), set.has(keyAt(middle)), set.has(keyAt(last)), set.has(keyAt(count)), set.has(keyAt(absent)));
+  say("keys, values, entries", [...set.keys()], [...set.values()], [...set.entries()], [...set[Symbol.iterator]()]);
+
+  const visited: unknown[] = [];
+  const receiver = { id: -1 };
+  set.forEach(function (this: unknown, value, key, owner) {
+    visited.push([key, value, owner === set, this === receiver]);
+  }, receiver);
+  say("forEach", visited);
+
+  const others: [string, Set<unknown>][] = [
+    ["empty", new Set()],
+    ["a copy", new Set(set)],
+    ["the first half", createSet(middle, keyAt)],
+    ["overlapping", createSet(count, keyAt, middle)],
+    ["larger", createSet(count + 20, keyAt)],
+    ["keys of other kinds", new Set<unknown>(["k0", 0, 0.5, objects[0], symbols[0], 0n, undefined])],
+  ];
+  for (const [name, other] of others) {
+    say("with " + name, set.union(other), set.intersection(other), set.difference(other), set.symmetricDifference(other), set.isSubsetOf(other), set.isSupersetOf(other), set.isDisjointFrom(other));
+    say("from " + name, other.union(set), other.intersection(set), other.difference(set), other.symmetricDifference(set), other.isSubsetOf(set), other.isSupersetOf(set), other.isDisjointFrom(set));
+  }
+  const map = createMap(middle + 1, keyAt, index => index);
+  say("with a map", set.union(map), set.intersection(map), set.difference(map), set.symmetricDifference(map), set.isSubsetOf(map), set.isSupersetOf(map), set.isDisjointFrom(map));
+  const setLike = { size: 2, has: (key: unknown) => key === keyAt(0), keys: () => [keyAt(0), keyAt(absent)].values() };
+  say("with a set-like object", set.union(setLike), set.intersection(setLike), set.difference(setLike), set.symmetricDifference(setLike), set.isSubsetOf(setLike), set.isSupersetOf(setLike), set.isDisjointFrom(setLike));
+  say("unchanged", set);
+
+  say("add a present key", set.add(keyAt(middle)) === set, set.size, [...set]);
+  say("add an absent key", set.add(keyAt(absent)) === set, set.size, set.has(keyAt(absent)), [...set].at(-1));
+  say("delete", set.delete(keyAt(0)), set.delete(keyAt(0)), set.delete(keyAt(middle)), set.delete(keyAt(last)), set.delete(keyAt(absent + 3)), set.size);
+  say("after delete", set.has(keyAt(0)), set);
+  say("add a deleted key", set.add(keyAt(0)).size, [...set].at(-1));
+
+  const copies = [new Set(set), new Set(set.values()), new Set([...set]), new Set(Array.from(set))];
+  set.add(keyAt(absent + 4));
+  copies[0].add(keyAt(absent + 5));
+  say("copies", copies.map(copy => copy.size), set.size, copies[0].has(keyAt(absent + 4)), set.has(keyAt(absent + 5)), copies[1]);
+
+  for (let index = 0; index < count; index++) set.delete(keyAt(index));
+  say("every first key deleted", set);
+  say("clear", set.clear(), set.size, set.has(keyAt(absent)), [...set], set.delete(keyAt(absent)));
+  say("filled again", set.add(keyAt(1)).add(keyAt(0)).size, set);
+}
+
+const valueKinds: [string, KeyAt][] = [
+  ["to strings", index => "v" + index],
+  ["to integers", index => index],
+  ["to doubles", index => index / 4],
+  ["to anything", index => [undefined, null, "v" + index, index, index / 4, objects[index], true][index % 7]],
+];
+for (const [kind, keyAt] of kinds) {
+  for (const count of kind === "strings" ? sizes : [0, 5, 9, 255]) {
+    const hasEveryValueKind = count === 9 && (kind === "strings" || kind === "objects");
+    for (const [valueKind, valueAt] of hasEveryValueKind ? valueKinds : valueKinds.slice(3)) runMap("map of " + count + " " + kind + " " + valueKind, count, keyAt, valueAt);
+    runSet("set of " + count + " " + kind, count, keyAt);
+  }
+}
+
+const words = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+console.log(show(Map.groupBy(words, word => word.length)), show(Map.groupBy(words, word => word[0])), show(Map.groupBy(words, word => objects[word.length % 2])), show(Map.groupBy([], () => 1)));
+console.log(show(Map.groupBy([0, -0, NaN, NaN, 1, 1.0], value => value)));
+console.log(show(new Map()), show(new Map(null)), show(new Map(undefined)), show(new Set()), show(new Set(null)), show(new Set(undefined)), show(new Set("hello")), show(new Map([[1, 2], [1, 3], [-0, 4], [0, 5]])), show(new Set([NaN, NaN, -0, 0, 1n, BigInt(1), "a", "a"])));
+console.log(Object.prototype.toString.call(new Map()), Object.prototype.toString.call(new Set()), Map[Symbol.species] === Map, Set[Symbol.species] === Set, Set.prototype.keys === Set.prototype.values, Map.prototype[Symbol.iterator] === Map.prototype.entries, Set.prototype[Symbol.iterator] === Set.prototype.values);
+
+////= outcome
+function attempt(label: string, run: () => unknown): void {
+  console.log(label + ": " + outcome(run));
+}
+const mapMethods: any = Map.prototype;
+const setMethods: any = Set.prototype;
+const mapMethodNames = ["get", "set", "has", "delete", "clear", "keys", "values", "entries", "forEach", "getOrInsert", "getOrInsertComputed"];
+const setMethodNames = ["add", "has", "delete", "clear", "keys", "values", "entries", "forEach", "union", "intersection", "difference", "symmetricDifference", "isSubsetOf", "isSupersetOf", "isDisjointFrom"];
+for (const [label, receiver] of [["a set", new Set([1])], ["a weak map", new WeakMap()], ["an object", {}], ["undefined", undefined]] as [string, unknown][]) {
+  console.log("methods of Map on " + label + ": " + mapMethodNames.map(name => name + " " + outcome(() => mapMethods[name].call(receiver, 1, () => 1))).join(", "));
+}
+for (const [label, receiver] of [["a map", new Map([[1, 1]])], ["a weak set", new WeakSet()], ["an object", {}], ["undefined", undefined]] as [string, unknown][]) {
+  console.log("methods of Set on " + label + ": " + setMethodNames.map(name => name + " " + outcome(() => setMethods[name].call(receiver, new Set([1])))).join(", "));
+}
+attempt("the size of a map read on a set", () => Object.getOwnPropertyDescriptor(Map.prototype, "size")!.get!.call(new Set()));
+attempt("the size of a set read on a map", () => Object.getOwnPropertyDescriptor(Set.prototype, "size")!.get!.call(new Map()));
+attempt("forEach without a function", () => mapMethods.forEach.call(new Map(), 1));
+attempt("getOrInsertComputed without a function", () => mapMethods.getOrInsertComputed.call(new Map(), 1, 1));
+attempt("getOrInsertComputed whose callback throws", () => new Map().getOrInsertComputed(1, () => { throw new RangeError("no value"); }));
+attempt("getOrInsertComputed whose callback sets the key", () => { const map = new Map<number, string>(); return [map.getOrInsertComputed(1, key => { map.set(key, "set by the callback"); return "computed"; }), map]; });
+attempt("union with an array", () => setMethods.union.call(new Set([1]), [1]));
+attempt("a map from numbers", () => new Map([1, 2] as any));
+attempt("Map without new", () => (Map as any)());
+attempt("Set without new", () => (Set as any)());
+//// map-and-set-iterators-follow-changes.ts
+// An iterator of a Map or a Set follows every change to its table: it visits an entry added after it started, skips an entry deleted before it got there, continues after the table grew, shrank, was cleared or took a key or value of another kind, and stays finished once it has finished. The same holds for `forEach`, `for-of`, spread and `Array.from` over an iterator that has started.
+const objects = Array.from({ length: 2000 }, (_, index) => ({ id: index }));
+
+function show(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (Array.isArray(value)) return "[" + value.map(show).join("=") + "]";
+  if (typeof value === "object" && value !== null) return "#" + (value as { id: number }).id;
+  return String(value);
+}
+function shorten(parts: string[]): string {
+  if (parts.length <= 14) return parts.join(" ");
+  let sum = 0;
+  for (const part of parts) for (let i = 0; i < part.length; i++) sum = (Math.imul(sum, 31) + part.charCodeAt(i)) | 0;
+  return parts.slice(0, 4).join(" ") + " ..(" + parts.length + " in all, checksum " + sum + ").. " + parts.slice(-4).join(" ");
+}
+
+type Table = Map<unknown, unknown> | Set<unknown>;
+type KeyAt = (index: number) => unknown;
+const put = (table: Table, key: unknown, value: unknown): void => void (table instanceof Map ? table.set(key, value) : table.add(key));
+function create(isMap: boolean, count: number, keyAt: KeyAt): Table {
+  const table: Table = isMap ? new Map() : new Set();
+  for (let index = 0; index < count; index++) put(table, keyAt(index), keyAt(index));
+  return table;
+}
+
+const limit = 1200;
+type Change = (table: Table, step: number, count: number, keyAt: KeyAt) => void;
+const changes: [string, Change][] = [
+  ["nothing", () => {}],
+  ["deletes the current entry", (table, step, _count, keyAt) => void table.delete(keyAt(step))],
+  ["deletes the next entry", (table, step, _count, keyAt) => void (step % 2 === 0 && table.delete(keyAt(step + 1)))],
+  ["deletes every earlier entry", (table, step, _count, keyAt) => { if (step === 3) for (let index = 0; index < 3; index++) table.delete(keyAt(index)); }],
+  ["deletes every later entry", (table, step, count, keyAt) => { if (step === 1) for (let index = 2; index < count; index++) table.delete(keyAt(index)); }],
+  ["deletes and adds the current entry", (table, step, count, keyAt) => { if (step < count) { table.delete(keyAt(step)); put(table, keyAt(step), "again"); } }],
+  ["adds one entry each step", (table, step, count, keyAt) => { if (step < count + 5) put(table, keyAt(1000 + step), step); }],
+  ["adds 300 entries at once", (table, step, _count, keyAt) => { if (step === 0) for (let index = 0; index < 300; index++) put(table, keyAt(1000 + index), index); }],
+  ["adds 300 entries and deletes them", (table, step, _count, keyAt) => { if (step === 0) { for (let index = 0; index < 300; index++) put(table, keyAt(1000 + index), index); for (let index = 0; index < 300; index++) table.delete(keyAt(1000 + index)); } }],
+  ["adds keys and values of other kinds", (table, step) => { if (step === 0) for (const key of ["text", 7, 0.5, objects[1999], undefined, null, true, 5n, NaN]) put(table, key, key); }],
+  ["clears", (table, step) => { if (step === 1) table.clear(); }],
+  ["clears and fills again", (table, step, count, keyAt) => { if (step === 1) { table.clear(); for (let index = 0; index < count; index++) put(table, keyAt(index), "refilled"); } }],
+  ["clears and adds one entry", (table, step, _count, keyAt) => { if (step === 1) { table.clear(); put(table, keyAt(1500), "after clear"); } }],
+  ["clears twice", (table, step, _count, keyAt) => { if (step === 0 || step === 1) { table.clear(); put(table, keyAt(1500 + step), "after clear"); } }],
+];
+
+type Walk = (table: Table, change: (step: number) => void) => string[];
+const walks: [string, Walk][] = [
+  ["next()", (table, change) => {
+    const seen: string[] = [];
+    const iterator = table.entries();
+    for (let result = iterator.next(); !result.done && seen.length < limit; result = iterator.next()) {
+      seen.push(show(result.value));
+      change(seen.length - 1);
+    }
+    return seen;
+  }],
+  ["keys().next()", (table, change) => {
+    const seen: string[] = [];
+    const iterator = table.keys();
+    for (let result = iterator.next(); !result.done && seen.length < limit; result = iterator.next()) {
+      seen.push(show(result.value));
+      change(seen.length - 1);
+    }
+    return seen;
+  }],
+  ["for-of", (table, change) => {
+    const seen: string[] = [];
+    for (const entry of table) {
+      seen.push(show(entry));
+      if (seen.length === limit) break;
+      change(seen.length - 1);
+    }
+    return seen;
+  }],
+  ["for-of over values()", (table, change) => {
+    const seen: string[] = [];
+    for (const value of table.values()) {
+      seen.push(show(value));
+      if (seen.length === limit) break;
+      change(seen.length - 1);
+    }
+    return seen;
+  }],
+  ["forEach", (table, change) => {
+    const seen: string[] = [];
+    table.forEach((value: unknown, key: unknown) => {
+      seen.push(show([key, value]));
+      if (seen.length < limit) change(seen.length - 1);
+    });
+    return seen;
+  }],
+  ["one step, the change, then spread", (table, change) => {
+    const iterator = table.keys();
+    const first = iterator.next();
+    change(0);
+    change(1);
+    return [first.done ? "done" : show(first.value), "|", ...[...iterator].map(show)];
+  }],
+  ["one step, the change, then Array.from", (table, change) => {
+    const iterator = table.values();
+    const first = iterator.next();
+    change(0);
+    change(1);
+    return [first.done ? "done" : show(first.value), "|", ...Array.from(iterator, show)];
+  }],
+];
+
+const kinds: [string, KeyAt][] = [
+  ["strings", index => "k" + index],
+  ["integers", index => index],
+  ["objects", index => objects[index]],
+];
+for (const isMap of [true, false]) {
+  for (const [kind, keyAt] of kinds) {
+    for (const count of kind === "strings" ? [1, 4, 5, 8, 9, 254, 255] : [5, 9]) {
+      for (const [changeName, change] of changes) {
+        const results = walks.map(([walkName, walk]): [string, string] => {
+          const table = create(isMap, count, keyAt);
+          const seen = walk(table, step => change(table, step, count, keyAt));
+          return [walkName, shorten(seen) + " -> " + table.size];
+        });
+        console.log((isMap ? "map" : "set") + " of " + count + " " + kind + ", " + changeName);
+        for (const [walkName, result] of results) console.log("  " + walkName + ": " + result);
+      }
+    }
+  }
+}
+
+function finishedIteratorsStayFinished(table: Table): string {
+  const iterators = [table.keys(), table.values(), table.entries(), table[Symbol.iterator]()];
+  const before = iterators.map(iterator => [...iterator].length);
+  put(table, "late", "late");
+  const after = iterators.map(iterator => String(iterator.next().done));
+  return before.join() + " " + after.join() + " " + [...table.keys()].length;
+}
+console.log("finished iterators:", finishedIteratorsStayFinished(new Map([["a", 1]])), finishedIteratorsStayFinished(new Set(["a"])), finishedIteratorsStayFinished(new Map()), finishedIteratorsStayFinished(new Set()));
+
+function iteratorsOfEmptyTables(table: Table, keyAt: KeyAt): string {
+  const iterators = [table.keys(), table.values(), table.entries(), table[Symbol.iterator]()];
+  for (let index = 0; index < 10; index++) put(table, keyAt(index), index);
+  table.delete(keyAt(0));
+  return iterators.map(iterator => shorten([...iterator].map(show))).join(" | ");
+}
+for (const [kind, keyAt] of kinds) console.log("iterators created while the table is empty, " + kind + ":", iteratorsOfEmptyTables(new Map(), keyAt), "/", iteratorsOfEmptyTables(new Set(), keyAt));
+
+function severalIterators(table: Table, keyAt: KeyAt): string {
+  const slow = table.keys();
+  const fast = table.keys();
+  const seen: string[] = [];
+  for (let step = 0; step < 6; step++) {
+    seen.push("fast " + show(fast.next().value), "fast " + show(fast.next().value), "slow " + show(slow.next().value));
+    table.delete(keyAt(step * 2));
+    put(table, keyAt(100 + step), step);
+    if (step === 3) for (let index = 0; index < 40; index++) put(table, keyAt(200 + index), index);
+  }
+  return seen.join(", ") + " | " + [...slow].length + " " + [...fast].length + " " + table.size;
+}
+for (const [kind, keyAt] of kinds) console.log("two iterators, " + kind + ":", severalIterators(create(true, 12, keyAt), keyAt), "/", severalIterators(create(false, 12, keyAt), keyAt));
+
+function nestedLoops(table: Table, keyAt: KeyAt): string {
+  const seen: string[] = [];
+  for (const outer of table.keys()) {
+    for (const inner of table.keys()) {
+      seen.push(show(outer) + show(inner));
+      if (seen.length === 3) table.delete(keyAt(1));
+      if (seen.length === 5) put(table, keyAt(50), 50);
+      if (seen.length > 60) return "too many";
+    }
+  }
+  return seen.join(" ");
+}
+for (const [kind, keyAt] of kinds) console.log("nested loops, " + kind + ":", nestedLoops(create(true, 4, keyAt), keyAt), "/", nestedLoops(create(false, 4, keyAt), keyAt));
+
+function iteratorOutlivesTable(): string {
+  let table: Table | null = create(true, 20, index => "k" + index);
+  const iterator = table.entries();
+  iterator.next();
+  table.clear();
+  table = null;
+  const filler: unknown[] = [];
+  for (let index = 0; index < 20000; index++) filler.push({ id: index }, "s" + index);
+  return String(iterator.next().done) + " " + filler.length;
+}
+console.log("an iterator whose table is cleared and dropped:", iteratorOutlivesTable());
+//// map-and-set-read-by-host-functions.ts
+// Bun's native functions read a Map or a Set of a compiled program like any other: `structuredClone`, a message port, the serializers of node:v8 and bun:jsc, `Bun.deepEquals`, `util.isDeepStrictEqual`, `assert.deepStrictEqual`, `Bun.inspect`, `util.inspect` and `console.log`, for tables of every size, after deletions and after `clear`.
+import assert from "node:assert";
+import util from "node:util";
+import v8 from "node:v8";
+import { deserialize, serialize } from "bun:jsc";
+
+const objects = Array.from({ length: 700 }, (_, index) => ({ id: index }));
+
+function show(value: unknown): string {
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "bigint") return value + "n";
+  if (Array.isArray(value)) return "[" + shorten(value.map(show)) + "]";
+  if (value instanceof Map) return "Map{" + shorten(Array.from(value, ([key, item]) => show(key) + "=>" + show(item))) + "}";
+  if (value instanceof Set) return "Set{" + shorten(Array.from(value, show)) + "}";
+  if (typeof value === "object" && value !== null) return "#" + (value as { id: number }).id;
+  return String(value);
+}
+function checksum(text: string): number {
+  let sum = 0;
+  for (let i = 0; i < text.length; i++) sum = (Math.imul(sum, 31) + text.charCodeAt(i)) | 0;
+  return sum;
+}
+function shorten(parts: string[]): string {
+  if (parts.length <= 6) return parts.join(",");
+  return parts.slice(0, 2).join(",") + ",..(" + parts.length + " in all, checksum " + checksum(parts.join()) + ")..," + parts.slice(-2).join(",");
+}
+////= outcome
+const passes = (run: () => void): boolean => {
+  try {
+    run();
+    return true;
+  } catch {
+    return false;
+  }
+};
+const inspected = (text: string): string => (text.length <= 160 ? text.replaceAll("\n", " ") : text.length + " characters, checksum " + checksum(text));
+
+type Table = Map<unknown, unknown> | Set<unknown>;
+type KeyAt = (index: number) => unknown;
+const put = (table: Table, key: unknown, value: unknown): void => void (table instanceof Map ? table.set(key, value) : table.add(key));
+const copyOf = (table: Table): Table => (table instanceof Map ? new Map(table) : new Set(table));
+
+function read(label: string, table: Table, absentKey: unknown): void {
+  const say = (what: string, ...values: string[]) => console.log(label + " " + what + ": " + values.join(" "));
+  say("clones", outcome(() => structuredClone(table)), outcome(() => v8.deserialize(v8.serialize(table))), outcome(() => deserialize(serialize(table))), outcome(() => structuredClone({ id: 1, table }).table), outcome(() => structuredClone([table, table]).map((clone, _, all) => clone === all[0])));
+
+  const same = copyOf(table);
+  const larger = copyOf(table);
+  put(larger, absentKey, "more");
+  const reordered = copyOf(table);
+  const firstKey = table.keys().next();
+  if (!firstKey.done) {
+    const firstValue = table instanceof Map ? table.get(firstKey.value) : firstKey.value;
+    reordered.delete(firstKey.value);
+    put(reordered, firstKey.value, firstValue);
+  }
+  for (const [name, other] of [["a copy", same], ["a larger one", larger], ["a reordered one", reordered], ["a clone", structuredClone(table)]] as [string, Table][]) {
+    say("equal to " + name, String(Bun.deepEquals(table, other)), String(Bun.deepEquals(other, table, true)), String(util.isDeepStrictEqual(table, other)), String(passes(() => assert.deepStrictEqual(table, other))), String(passes(() => assert.deepEqual(other, table))));
+  }
+  say("inspected", inspected(Bun.inspect(table)), "|", inspected(util.inspect(table)), "|", inspected(util.inspect(table, { maxArrayLength: 3, breakLength: Infinity })), "|", inspected(util.format("%o", table.keys())), "|", inspected(Bun.inspect(table.entries())));
+}
+
+////= kinds	bigints", index => BigInt(index) << 70n	BigInt(index), index % 4 === 0
+for (const [kind, keyAt] of kinds) {
+  for (const count of kind === "strings" ? [0, 1, 4, 5, 8, 9, 254, 255, 300] : [5, 9, 255]) {
+    for (const isMap of [true, false]) {
+      const label = (isMap ? "map" : "set") + " of " + count + " " + kind;
+      const table: Table = isMap ? new Map() : new Set();
+      for (let index = 0; index < count; index++) put(table, keyAt(index), index % 3 === 0 ? index / 2 : keyAt(count - 1 - index));
+      read(label, table, keyAt(600));
+      if (count < 5) continue;
+      for (let index = 0; index < count; index += 2) table.delete(keyAt(index));
+      read(label + ", every second deleted", table, keyAt(600));
+      table.clear();
+      read(label + ", cleared", table, keyAt(600));
+      put(table, keyAt(1), "after clear");
+      read(label + ", cleared and given one entry", table, keyAt(600));
+    }
+  }
+}
+
+const shared = { id: 7 };
+const nested = new Map<unknown, unknown>([["set", new Set([shared, new Map([[shared, shared]])])], [shared, new Set([new Set([1])])]]);
+nested.set("itself", nested);
+const clone = structuredClone(nested) as Map<unknown, unknown>;
+const clonedKeys = [...clone.keys()];
+const clonedSet = [...(clone.get("set") as Set<unknown>)];
+const clonedInner = [...(clonedSet[1] as Map<unknown, unknown>)][0];
+console.log("nested:", clone !== nested, clone.get("itself") === clone, clonedKeys[1] !== shared, clonedKeys[1] === clonedSet[0], clonedInner[0] === clonedSet[0], clonedInner[1] === clonedSet[0], show(clone.get(clonedKeys[1])));
+console.log("not cloneable:", outcome(() => structuredClone(new Set([Symbol("s")]))), outcome(() => structuredClone(new Map([["f", () => 1]]))), outcome(() => structuredClone(new Map([[() => 1, "f"]]))));
+
+class Registry extends Map<string, number> {
+  label = "registry";
+}
+const registry = structuredClone(new Registry([["a", 1]]));
+console.log("a subclass:", registry instanceof Registry, registry instanceof Map, show(registry), "label" in registry);
+const withProperties = Object.assign(new Set(["a"]), { extra: "property" });
+console.log("own properties:", "extra" in structuredClone(withProperties), inspected(Bun.inspect(withProperties)), Bun.deepEquals(withProperties, new Set(["a"])), Bun.deepEquals(withProperties, new Set(["a"]), true));
+
+console.log(new Map<unknown, unknown>([["a", 1], [2, "b"], [shared, new Set([1, "two"])]]), new Set<unknown>(["a", 2, shared, new Map([["k", "v"]])]), new Map(), new Set());
+console.log(new Map([["a", 1]]).keys(), new Map([["a", 1]]).values(), new Map([["a", 1]]).entries(), new Set(["a"]).values(), new Set(["a"]).entries());
+console.log(JSON.stringify([new Map([["a", 1]]), new Set([1])]), JSON.stringify([...new Map([["a", 1]])]), String(new Map()), String(new Set()));
+
+const { port1, port2 } = new MessageChannel();
+const received = new Promise<unknown>(resolve => {
+  port2.onmessage = event => resolve(event.data);
+});
+const sent = new Map<unknown, unknown>();
+for (let index = 0; index < 300; index++) sent.set("k" + index, new Set([index, "v" + index]));
+for (let index = 0; index < 300; index += 3) sent.delete("k" + index);
+port1.postMessage(sent);
+console.log("through a message port:", show(await received), Bun.deepEquals(await received, sent, true));
+port1.close();
+port2.close();
+//// map-and-set-with-a-million-entries.ts
+// A Map or a Set with more than 2 ** 20 entries finds, replaces, deletes and visits its entries like a small one, while it grows to that size and after most of its entries are deleted.
+const count = (1 << 20) + 1000;
+
+function run(label: string, keyAt: (index: number) => unknown): void {
+  const map = new Map<unknown, number>();
+  const set = new Set<unknown>();
+  const iterator = set.values();
+  for (let index = 0; index < count; index++) {
+    const key = keyAt(index);
+    map.set(key, index);
+    set.add(key);
+  }
+  console.log(label, "sizes", map.size, set.size);
+
+  let found = 0;
+  let sum = 0;
+  for (let index = 0; index < count + 1000; index += 7) {
+    const key = keyAt(index);
+    if (map.has(key) && set.has(key)) found++;
+    sum += map.get(key) ?? -1;
+  }
+  console.log(label, "found", found, sum);
+
+  let visited = 0;
+  let inOrder = true;
+  for (const [key, value] of map) {
+    if (value !== visited || (visited % 100003 === 0 && key !== keyAt(visited))) inOrder = false;
+    visited++;
+  }
+  console.log(label, "visited", visited, inOrder);
+  let steps = 0;
+  while (!iterator.next().done) steps++;
+  console.log(label, "an iterator created while the set is empty", steps);
+  console.log(label, "copies", Array.from(set).length, [...map.keys()].length, new Set(set).size, new Map(map).size, set.union(new Set([keyAt(count)])).size, set.isSubsetOf(map));
+
+  for (let index = 0; index < count; index += 2) map.set(keyAt(index), -index);
+  let deleted = 0;
+  for (let index = 1; index < count; index += 2) if (map.delete(keyAt(index)) && set.delete(keyAt(index))) deleted++;
+  console.log(label, "deleted", deleted, map.size, set.size, map.has(keyAt(1)), set.has(keyAt(1)), map.get(keyAt(2)), map.get(keyAt(count - 2)));
+
+  for (let index = 0; index < count; index++) if (index % 1000 !== 0) { map.delete(keyAt(index)); set.delete(keyAt(index)); }
+  console.log(label, "left", map.size, set.size, [...map.values()].slice(0, 3).join(), [...set].length, [...map.keys()].at(-1) === keyAt(count - (count % 1000)));
+  map.set(keyAt(1), 1);
+  set.add(keyAt(1));
+  console.log(label, "added again", [...map.values()].at(-1), [...set].at(-1) === keyAt(1));
+  map.clear();
+  set.clear();
+  console.log(label, "cleared", map.size, set.size, map.has(keyAt(0)), set.has(keyAt(0)), [...map].length, [...set].length);
+}
+
+run("integers", index => index);
+const names = Array.from({ length: count + 1000 }, (_, index) => "k" + index);
+run("strings", index => names[index]);
+//// map-get-then-set.ts
+// `has` then `get`, `get` then `set` and `has` then `add` on one table with one key can share a lookup.
+// A write to a table in between can move or remove the entry, so the later operation has to look the key up again.
+////= Point-3
+
+const half = (n: number) => n / 2;
+const points: Point[] = [new Point(0, 0), new Point(1, 2), new Point(2, 4), new Point(3, 6), new Point(4, 8)];
+
+function summarize<K>(map: Map<K, number>, nameOf: (key: K) => string): string {
+  let sum = 0;
+  let head = "";
+  let position = 0;
+  for (const [key, value] of map) {
+    sum += value;
+    if (position++ < 6) head += ` ${nameOf(key)}=${value}`;
+  }
+  return `size ${map.size} sum ${sum}${head}`;
+}
+const nameOfNumber = (key: number) => (Object.is(key, -0) ? "-0" : String(key));
+const nameOfPoint = (key: Point) => `(${key.x},${key.y})`;
+const nameOfString = (key: string) => JSON.stringify(key);
+
+// get then set.
+function countNumbers(rounds: number): Map<number, number> {
+  const counts = new Map<number, number>();
+  for (let i = 0; i < rounds; i++) {
+    const key = half(i % 7);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function countPoints(rounds: number): Map<Point, number> {
+  const counts = new Map<Point, number>();
+  for (let i = 0; i < rounds; i++) {
+    const key = points[i % 5];
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function countStrings(rounds: number): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (let i = 0; i < rounds; i++) {
+    const key = "k" + (i % 6);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
+// has then get, with keys that are present and keys that are absent.
+////= sumPresent	Numbers(map: Map<number, number>	half(i % 20)
+
+////= sumPresent	Points(map: Map<Point, number>, other: Point	i % 3 ? points[i % 5] : other
+
+////= sumPresent	Strings(map: Map<string, number>	"k" + (i % 9)
+
+// has then add.
+function addOnce(rounds: number): string {
+  const numbers = new Set<number>();
+  const objects = new Set<Point>();
+  const strings = new Set<string>();
+  let added = 0;
+  for (let i = 0; i < rounds; i++) {
+    const numberKey = half(i % 11);
+    if (!numbers.has(numberKey)) {
+      numbers.add(numberKey);
+      added++;
+    }
+    const objectKey = points[i % 4];
+    if (!objects.has(objectKey)) {
+      objects.add(objectKey);
+      added++;
+    }
+    const stringKey = "s" + (i % 3);
+    if (!strings.has(stringKey)) {
+      strings.add(stringKey);
+      added++;
+    }
+  }
+  return `${added} ${numbers.size} ${objects.size} ${strings.size}`;
+}
+
+// Negative cases: an insertion between the two operations. Every round adds keys, so the table is rebuilt again and again.
+function insertNumbersBetween(rounds: number): Map<number, number> {
+  const map = new Map<number, number>();
+  for (let i = 0; i < rounds; i++) {
+    const key = half(i % 5);
+    const before = map.get(key);
+    map.set(1000 + i, 1);
+    map.set(key, (before ?? 0) + 1);
+    if (map.has(key)) {
+      map.set(-1000 - i, 1);
+      map.set(key, map.get(key)! + 1);
+    }
+  }
+  return map;
+}
+
+function insertPointsBetween(rounds: number): Map<Point, number> {
+  const map = new Map<Point, number>();
+  for (let i = 0; i < rounds; i++) {
+    const key = points[i % 5];
+    const before = map.get(key);
+    map.set(new Point(1000 + i, 0), 1);
+    map.set(key, (before ?? 0) + 1);
+    if (map.has(key)) {
+      map.set(new Point(-1000 - i, 0), 1);
+      map.set(key, map.get(key)! + 1);
+    }
+  }
+  return map;
+}
+
+function insertStringsBetween(rounds: number): Map<string, number> {
+  const map = new Map<string, number>();
+  for (let i = 0; i < rounds; i++) {
+    const key = "k" + (i % 5);
+    const before = map.get(key);
+    map.set("first" + i, 1);
+    map.set(key, (before ?? 0) + 1);
+    if (map.has(key)) {
+      map.set("second" + i, 1);
+      map.set(key, map.get(key)! + 1);
+    }
+  }
+  return map;
+}
+
+// The key itself is inserted, removed, or the table emptied, between the two operations.
+function changeKeyBetween(rounds: number): string {
+  const map = new Map<number, number>();
+  const set = new Set<number>();
+  let text = "";
+  let differing = 0;
+  for (let i = 0; i < rounds; i++) {
+    const key = half(i % 4);
+    const hadBefore = map.has(key);
+    map.set(key, i);
+    const afterInsertion = map.get(key) === i;
+    const hasBeforeDelete = map.has(key);
+    map.delete(key);
+    const afterDelete = map.get(key);
+    map.set(key, i);
+    map.set(key + 100, i);
+    const hasBeforeClear = map.has(key);
+    map.clear();
+    const afterClear = map.get(key);
+    map.set(key, (afterClear ?? 7) + 1);
+    const wasMember = set.has(key);
+    set.delete(key);
+    set.add(key);
+    const line = `${hadBefore} ${afterInsertion} ${hasBeforeDelete} ${afterDelete} ${hasBeforeClear} ${afterClear} ${map.get(key)} ${map.size} ${wasMember} ${set.has(key)}`;
+    if (i < 8) text += line + "\n";
+    else if (line !== "false true true undefined true undefined 8 1 true true") differing++;
+  }
+  return `${text}rounds that differ: ${differing}, ${set.size}`;
+}
+
+// The write is out of sight: in a function that is called, through another name for the same table, or in another table.
+function callBetween(map: Map<number, number>, change: (map: Map<number, number>, round: number) => void, rounds: number): string {
+  let sum = 0;
+  for (let i = 0; i < rounds; i++) {
+    const key = half(i % 5);
+    const before = map.get(key);
+    change(map, i);
+    map.set(key, (before ?? 0) + 1);
+    if (map.has(key)) {
+      change(map, -i - 1);
+      sum += map.get(key) ?? -1;
+    }
+  }
+  return `${sum} ${summarize(map, nameOfNumber)}`;
+}
+
+function aliasBetween(map: Map<number, number>, alias: Map<number, number>, rounds: number): string {
+  for (let i = 0; i < rounds; i++) {
+    const key = half(i % 5);
+    const before = map.get(key);
+    alias.set(2000 + i, 1);
+    map.set(key, (before ?? 0) + 1);
+  }
+  return `${summarize(map, nameOfNumber)} | ${summarize(alias, nameOfNumber)}`;
+}
+
+const rounds = 300;
+console.log(summarize(countNumbers(rounds), nameOfNumber));
+console.log(summarize(countPoints(rounds), nameOfPoint));
+console.log(summarize(countStrings(rounds), nameOfString));
+console.log(sumPresentNumbers(countNumbers(rounds), rounds));
+console.log(sumPresentPoints(countPoints(rounds), new Point(0, 0), rounds));
+console.log(sumPresentStrings(countStrings(rounds), rounds));
+console.log(addOnce(rounds));
+console.log(summarize(insertNumbersBetween(rounds), nameOfNumber));
+console.log(summarize(insertPointsBetween(rounds), nameOfPoint));
+console.log(summarize(insertStringsBetween(rounds), nameOfString));
+console.log(changeKeyBetween(rounds));
+console.log(callBetween(new Map<number, number>(), (map, round) => { map.set(3000 + round, 1); }, rounds));
+console.log(callBetween(new Map<number, number>(), (map, round) => { map.delete(half(Math.abs(round) % 5)); }, rounds));
+console.log(callBetween(new Map<number, number>(), () => {}, rounds));
+const shared = new Map<number, number>();
+console.log(aliasBetween(shared, shared, rounds));
+console.log(aliasBetween(new Map<number, number>(), new Map<number, number>(), rounds));
+
+// The same outside loops.
+const once = new Map<number, string>();
+const onceKey: number = half(2);
+console.log(once.has(onceKey), once.get(onceKey));
+once.set(onceKey, (once.get(onceKey) ?? "none") + "!");
+console.log(once.has(onceKey) ? once.get(onceKey) : "absent");
+const found = once.get(onceKey);
+once.set(2, "two").set(3, "three").set(4, "four").set(5, "five").set(6, "six");
+once.set(onceKey, found + "?");
+console.log(once.get(1), once.size);
+const members = new Set<Point>();
+console.log(members.has(points[0]), members.add(points[0]).has(points[0]), members.has(new Point(0, 0)), members.size);
+//// map-key-normalization.ts
+// Map and Set compare keys by SameValueZero whatever the key's static type is: -0 is 0, a double equal to an integer is that integer,
+// every NaN is one key, strings and bigints compare by content, objects by identity.
+type Letter = "a" | "b";
+
+const half = (n: number) => n / 2;
+const notANumber = Number("x");
+const computedA = "a".repeat(1) + "";
+const computedB = String.fromCharCode(98);
+const object = {};
+
+const numbers: number[] = [0, half(-0), 0.5, half(2), notANumber, -notANumber, 2 ** 31, half(2 ** 32)];
+const optionalNumbers: (number | undefined)[] = [undefined, 0, half(-0), 0.5, half(2), notANumber, -notANumber, 2 ** 31];
+const strings: string[] = ["a", computedA, "b", computedB, "", computedA + computedB, "ab", "1"];
+const letters: Letter[] = ["a", computedA as Letter, "b", computedB as Letter];
+const values: unknown[] = [0, half(-0), 0.5, half(2), notANumber, 2 ** 31, "a", computedA, 1n, BigInt("1"), object, {}, undefined, null, "1", 1, true];
+
+function describe(key: unknown): string {
+  if (typeof key === "number") return Object.is(key, -0) ? "-0" : String(key);
+  if (typeof key === "string") return JSON.stringify(key);
+  if (typeof key === "bigint") return key + "n";
+  if (typeof key === "object" && key !== null) return key === object ? "object" : "another object";
+  return String(key);
+}
+
+function answers(has: boolean, got: number | undefined, isMember: boolean, mapSize: number, setSize: number): string {
+  return `${has} ${got} ${isMember} ${mapSize} ${setSize}`;
+}
+
+function hotNumbers(keys: number[], rounds: number): string {
+  let first = "";
+  let differing = 0;
+  for (let round = 0; round < rounds; round++) {
+    const map = new Map<number, number>();
+    const set = new Set<number>();
+    let text = "";
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i] * 1;
+      text += describe(key) + ": " + answers(map.has(key), map.get(key), set.has(key), map.size, set.size);
+      map.set(key, i);
+      set.add(key);
+      text += " -> " + answers(map.has(key), map.get(key), set.has(key), map.size, set.size) + "\n";
+    }
+    text += [...map.keys()].map(describe).join() + " | " + [...set].map(describe).join();
+    if (!round) first = text;
+    else if (text !== first) differing++;
+  }
+  return `${first}\nrounds that differ: ${differing}`;
+}
+
+function hotOptionalNumbers(keys: (number | undefined)[], rounds: number): string {
+  let first = "";
+  let differing = 0;
+  for (let round = 0; round < rounds; round++) {
+    const map = new Map<number | undefined, number>();
+    const set = new Set<number | undefined>();
+    let text = "";
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      text += describe(key) + ": " + answers(map.has(key), map.get(key), set.has(key), map.size, set.size);
+      map.set(key, i);
+      set.add(key);
+      text += " -> " + answers(map.has(key), map.get(key), set.has(key), map.size, set.size) + "\n";
+    }
+    text += [...map.keys()].map(describe).join() + " | " + [...set].map(describe).join();
+    if (!round) first = text;
+    else if (text !== first) differing++;
+  }
+  return `${first}\nrounds that differ: ${differing}`;
+}
+
+function hotStrings(keys: string[], rounds: number): string {
+  let first = "";
+  let differing = 0;
+  for (let round = 0; round < rounds; round++) {
+    const map = new Map<string, number>();
+    const set = new Set<string>();
+    let text = "";
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      text += describe(key) + ": " + answers(map.has(key), map.get(key), set.has(key), map.size, set.size);
+      map.set(key, i);
+      set.add(key);
+      text += " -> " + answers(map.has(key), map.get(key), set.has(key), map.size, set.size) + "\n";
+    }
+    text += [...map.keys()].map(describe).join() + " | " + [...set].map(describe).join() + ` | ${map.size} ${set.size}`;
+    map.clear();
+    set.clear();
+    text += ` | ${map.size} ${set.size}`;
+    if (!round) first = text;
+    else if (text !== first) differing++;
+  }
+  return `${first}\nrounds that differ: ${differing}`;
+}
+
+////= lines-13	hotLetters	Letter
+
+////= lines-13	hotValues	unknown
+
+// An integer and the double that equals it are one key, inside and outside the int32 range.
+function hotIntegers(rounds: number): string {
+  const map = new Map<number, number>();
+  const set = new Set<number>();
+  let found = 0;
+  for (let i = 0; i < rounds; i++) {
+    const small = (i % 7) - 3;
+    const large = 2 ** 31 + small;
+    map.set(small, i);
+    map.set(large, -i);
+    set.add(small);
+    set.add(large);
+    if (map.get(half(small * 2)) === i && set.has(half(small * 2))) found++;
+    if (map.get(half(large * 2)) === -i && set.has(half(large * 2))) found++;
+  }
+  return `${found} ${map.size} ${set.size} ${[...map.keys()].map(describe).join()}`;
+}
+
+// Negative case: a key typed as a union of literals is no pointer to compare. The tables hold strings that were computed.
+function hotLettersAmongComputedStrings(map: Map<string, number>, set: Set<string>, keys: Letter[], rounds: number): string {
+  let found = 0;
+  let sum = 0;
+  for (let round = 0; round < rounds; round++) {
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      if (map.has(key) && set.has(key)) found++;
+      sum += map.get(key) ?? -1000;
+    }
+  }
+  return `${found} ${sum}`;
+}
+
+// An array of doubles gives a whole number back as a double, and an untyped read keeps it boxed that way.
+function hotWholeDoubles(map: Map<number, string>, set: Set<number>, doubles: any, rounds: number): string {
+  let found = 0;
+  for (let round = 0; round < rounds; round++) {
+    const key: number = doubles[1];
+    if (map.has(key) && set.has(key) && map.get(key) === "two") found++;
+  }
+  return String(found);
+}
+
+const rounds = 200;
+console.log(hotNumbers(numbers, rounds));
+console.log(hotOptionalNumbers(optionalNumbers, rounds));
+console.log(hotStrings(strings, rounds));
+console.log(hotLetters(letters, rounds));
+console.log(hotValues(values, rounds));
+console.log(hotIntegers(rounds));
+
+const computedStrings = new Map<string, number>([[computedA, 1], [computedB, 2]]);
+const computedMembers = new Set<string>([computedA, computedB]);
+console.log(hotLettersAmongComputedStrings(computedStrings, computedMembers, letters, rounds));
+
+const doubles: any = [0.5, 1.5, 2.5];
+doubles[1] = half(4);
+const wholeNumbers = new Map<number, string>([[2, "two"]]);
+const wholeMembers = new Set<number>([2]);
+console.log(hotWholeDoubles(wholeNumbers, wholeMembers, doubles, rounds));
+
+// The same outside loops.
+const numberMap = new Map<number, number>();
+const numberSet = new Set<number>();
+////= lines-19	onceNumber	number	numberMap	numberSet
+
+const optionalNumberMap = new Map<number | undefined, number>();
+const optionalNumberSet = new Set<number | undefined>();
+function onceOptionalNumber(key: number | undefined): string {
+  const before = answers(optionalNumberMap.has(key), optionalNumberMap.get(key), optionalNumberSet.has(key), optionalNumberMap.size, optionalNumberSet.size);
+  optionalNumberMap.set(key, optionalNumberMap.size);
+  optionalNumberSet.add(key);
+  return `${describe(key)}: ${before} -> ${answers(optionalNumberMap.has(key), optionalNumberMap.get(key), optionalNumberSet.has(key), optionalNumberMap.size, optionalNumberSet.size)}`;
+}
+
+const stringMap = new Map<string, number>();
+const stringSet = new Set<string>();
+////= lines-19	onceString	string	stringMap	stringSet
+
+const letterMap = new Map<Letter, number>();
+const letterSet = new Set<Letter>();
+////= lines-19	onceLetter	Letter	letterMap	letterSet
+
+const valueMap = new Map<unknown, number>();
+const valueSet = new Set<unknown>();
+////= lines-19	onceValue	unknown	valueMap	valueSet
+
+console.log([onceNumber(numbers[0]), onceNumber(numbers[1]), onceNumber(numbers[2]), onceNumber(numbers[3]), onceNumber(numbers[4]), onceNumber(numbers[5]), onceNumber(numbers[6]), onceNumber(numbers[7])].join("\n"));
+console.log([onceOptionalNumber(optionalNumbers[0]), onceOptionalNumber(optionalNumbers[1]), onceOptionalNumber(optionalNumbers[2]), onceOptionalNumber(optionalNumbers[3]), onceOptionalNumber(optionalNumbers[4]), onceOptionalNumber(optionalNumbers[5]), onceOptionalNumber(optionalNumbers[6]), onceOptionalNumber(optionalNumbers[7])].join("\n"));
+console.log([onceString(strings[0]), onceString(strings[1]), onceString(strings[2]), onceString(strings[3]), onceString(strings[4]), onceString(strings[5]), onceString(strings[6]), onceString(strings[7])].join("\n"));
+console.log([onceLetter(letters[0]), onceLetter(letters[1]), onceLetter(letters[2]), onceLetter(letters[3])].join("\n"));
+console.log([onceValue(values[0]), onceValue(values[1]), onceValue(values[2]), onceValue(values[3]), onceValue(values[4]), onceValue(values[5]), onceValue(values[6]), onceValue(values[7]), onceValue(values[8])].join("\n"));
+console.log([onceValue(values[9]), onceValue(values[10]), onceValue(values[11]), onceValue(values[12]), onceValue(values[13]), onceValue(values[14]), onceValue(values[15]), onceValue(values[16])].join("\n"));
+
+const minusZero: number = half(-0);
+const one: number = half(2);
+const topMap = new Map<number, string>();
+const topSet = new Set<number>();
+console.log(topMap.size, topSet.size, topMap.has(minusZero), topMap.get(one), topSet.has(notANumber));
+topMap.set(minusZero, "zero").set(one, "one").set(notANumber, "not a number");
+topSet.add(minusZero).add(one).add(-notANumber);
+console.log(topMap.has(0), topMap.get(0), topMap.has(1), topMap.get(1), topMap.has(-notANumber), topMap.get(-notANumber), topMap.size);
+console.log(topSet.has(0), topSet.has(1), topSet.has(notANumber), topSet.has(0.5), topSet.size);
+console.log([...topMap.keys()].map(describe).join(), [...topSet].map(describe).join());
+
+const letter: Letter = "a";
+const whole: number = doubles[1];
+console.log(computedStrings.has(letter), computedStrings.get(letter), computedMembers.has(letter), computedStrings.size, computedMembers.size);
+console.log((letterMap as Map<string, number>).get(computedB), (letterSet as Set<string>).has(computedB), (letterSet as Set<string>).has("c"));
+console.log(wholeNumbers.has(whole), wholeNumbers.get(whole), wholeMembers.has(whole));
+//// maps-and-sets-with-ordinary-storage-are-walked-by-native-code-in-a-validating-build.js
+// Native code that reads a whole map or set walks its table: Array.from, the methods of sets that take another set, structuredClone, the constructors, Object.fromEntries, a deep comparison. It changes nothing that a program can see, whatever the keys are and however many: as in plain Bun, and a validating build has nothing to find.
+import { isDeepStrictEqual } from "node:util";
+const objects = Array.from({ length: 300 }, (_, index) => ({ id: index }));
+const symbols = Array.from({ length: 300 }, (_, index) => Symbol("s" + index));
+const kinds = {
+  strings: index => "k" + index,
+  integers: index => index,
+  doubles: index => index + 0.5,
+  objects: index => objects[index],
+  symbols: index => symbols[index],
+  bigints: index => BigInt(index),
+  mixed: index => (index === 0 ? undefined : index === 1 ? null : ["k" + index, index, index + 0.5, objects[index], symbols[index], BigInt(index)][index % 6]),
+};
+function readSet(set) {
+  const before = [...set];
+  const answers = [Array.from(set).length, Array.from(set.values()).length, new Set(set).size, set.union(new Set([-1])).size, set.intersection(set).size, set.difference(new Set()).size, set.isSubsetOf(set), new Set(set).isSupersetOf(set), isDeepStrictEqual(set, new Set(set))];
+  const after = [...set];
+  return answers.join() + " " + (before.length === after.length && before.every((value, index) => Object.is(value, after[index])));
+}
+function readMap(map, canBeCloned) {
+  const before = [...map.keys()];
+  const answers = [Array.from(map).length, Array.from(map.keys()).length, Array.from(map.values()).length, new Map(map).size, canBeCloned ? structuredClone(map).size : "-", isDeepStrictEqual(map, new Map(map)), Map.groupBy(map, () => 1).get(1)?.length];
+  const after = [...map.keys()];
+  return answers.join() + " " + (before.length === after.length && before.every((value, index) => Object.is(value, after[index])));
+}
+for (const kind in kinds) {
+  for (const count of [0, 1, 5, 9, 255]) {
+    const set = new Set(), map = new Map();
+    for (let index = 0; index < count; index++) { set.add(kinds[kind](index)); map.set(kinds[kind](index), index); }
+    console.log(kind, count, readSet(set), readMap(map, kind !== "symbols" && kind !== "mixed"));
+    if (count < 5) continue;
+    set.delete(kinds[kind](2)); map.delete(kinds[kind](2));
+    console.log(kind, count, "with one deleted", readSet(set), readMap(map, kind !== "symbols" && kind !== "mixed"));
+  }
+}
+//// megamorphic-key-reads.ts
+// Many shapes, made one after the other, asked for the same names, and one shape asked for many names: whatever remembers a shape and a key has to tell the pairs apart.
+function read(object: any, key: any): any { return object[key]; }
+function isIn(object: any, key: any): boolean { return key in object; }
+function store(object: any, key: any, value: any): void { object[key] = value; }
+const names: string[] = [];
+for (let i = 0; i < 48; i++) names.push("n" + i);
+const symbols = [Symbol("s0"), Symbol("s1"), Symbol("s2")];
+let wrong = 0;
+let asked = 0;
+function expect(what: string, got: any, wanted: any): void {
+    asked++;
+    if (got !== wanted && wrong++ < 20) console.log("WRONG " + what + ": " + String(got) + ", not " + String(wanted));
+}
+// Shape s has the names s % 7, s % 7 + step, .. in an order of its own, so that the same name lies at another place in each.
+function make(s: number): any {
+    const object: any = {};
+    object["shape" + s] = s;
+    const step = 1 + s % 5;
+    for (let i = s % 7, place = 0; i < names.length; i += step, place++) object[names[(i + s) % names.length]] = s * 100 + place;
+    if (s % 3 === 0) object[symbols[s % symbols.length]] = -s;
+    return object;
+}
+function expected(s: number): Map<any, number> {
+    const map = new Map<any, number>();
+    const step = 1 + s % 5;
+    for (let i = s % 7, place = 0; i < names.length; i += step, place++) map.set(names[(i + s) % names.length], s * 100 + place);
+    if (s % 3 === 0) map.set(symbols[s % symbols.length], -s);
+    return map;
+}
+const count = 400;
+const objects: any[] = [];
+const maps: Map<any, number>[] = [];
+for (let s = 0; s < count; s++) { objects.push(make(s)); maps.push(expected(s)); }
+const keys: any[] = [...names, ...symbols];
+for (let round = 0; round < 3; round++) {
+    // By shape, then by key; and by key, then by shape.
+    for (let s = 0; s < count; s++) for (const key of keys) { expect("read", read(objects[s], key), maps[s].get(key)); expect("in", isIn(objects[s], key), maps[s].has(key)); }
+    for (const key of keys) for (let s = 0; s < count; s++) { expect("read by key", read(objects[s], key), maps[s].get(key)); expect("in by key", isIn(objects[s], key), maps[s].has(key)); }
+    // Replace what is there, add what is not, on a second object of each shape.
+    for (let s = 0; s < count; s += 3) {
+        const twin = make(s);
+        const map = expected(s);
+        for (const key of keys) { store(twin, key, round); map.set(key, round); }
+        for (const key of keys) expect("stored", read(twin, key), map.get(key));
+        expect("names of the twin", Reflect.ownKeys(twin).length, keys.length + 1);
+        for (const key of keys) expect("untouched", read(objects[s], key), maps[s].get(key));
+    }
+}
+console.log("asked " + asked + ", wrong " + wrong);
+//// members-of-a-literal-run-on-what-object-create-makes-below-it-and-on-other-receivers.js
+// The members of a literal store names through `this`. They run on objects made one and two steps below the literal, on the literal, on unrelated objects and on primitives,
+// while the objects above gain, lose and redefine members.
+const lines = [];
+const answers = {
+  get sent() {
+    return this.res.sent;
+  },
+  has(name) {
+    return this.res.names === name;
+  },
+  get status() {
+    return this.res.code;
+  },
+  set status(code) {
+    if (this.sent) return;
+    this._explicitStatus = true;
+    this.res.code = code;
+  },
+  get body() {
+    return this._body;
+  },
+  set body(value) {
+    const original = this._body;
+    this._body = value;
+    if (!this._explicitStatus) this.status = 200;
+    if (!this.has("b")) this.length = value.length;
+    if (original !== undefined) this.replaced = (this.replaced | 0) + 1;
+  },
+  set length(n) {
+    this.res.size = n;
+  },
+  get length() {
+    return this.res.size;
+  },
+  describe() {
+    return Object.keys(this).join() + "|" + this._body + "|" + this._explicitStatus + "|" + this.replaced;
+  },
+  whatIsThis() {
+    "use strict";
+    return typeof this;
+  },
+};
+class Application {
+  constructor() {
+    this.answers = Object.create(answers);
+  }
+  create(req, res) {
+    const made = Object.create(this.answers);
+    made.app = this;
+    made.req = req;
+    made.res = res;
+    return made;
+  }
+}
+const hidden = process.argv.length > 9 ? "x" : "";
+const application = new Application();
+const newRes = () => ({ sent: false, names: "a", code: 404, size: 0 });
+function handle(answer, value) {
+  answer.body = value;
+  return answer.status + ":" + answer.length + ":" + answer.describe();
+}
+globalThis["handle" + hidden] = handle;
+function call(answer, value) {
+  try {
+    return globalThis["handle" + hidden](answer, value);
+  } catch (error) {
+    return "threw " + error.constructor.name + " " + answers.describe.call(answer);
+  }
+}
+
+for (let i = 0; i < 3; i++) lines.push(call(application.create({ url: "/" }, newRes()), "Hello" + "!".repeat(i)));
+
+const twice = application.create({}, newRes());
+lines.push(call(twice, "one"), call(twice, "three"), Object.getOwnPropertyNames(twice).join());
+
+// The order of the names is the order of the stores.
+const ordered = application.create({}, newRes());
+ordered.replaced = 7;
+ordered._explicitStatus = false;
+lines.push(call(ordered, "x"), JSON.stringify(Object.entries(ordered).map(([name]) => name)));
+
+// One step below, the literal itself, an unrelated object, a primitive.
+application.answers.res = newRes();
+lines.push(call(application.answers, "middle"), Object.keys(application.answers).join());
+delete application.answers.res;
+delete application.answers._body;
+delete application.answers._explicitStatus;
+answers.res = newRes();
+lines.push(call(answers, "top"), Object.keys(answers).length);
+delete answers.res;
+delete answers._body;
+delete answers._explicitStatus;
+const stranger = { res: newRes(), has: answers.has, describe: answers.describe };
+Object.defineProperty(stranger, "body", Object.getOwnPropertyDescriptor(answers, "body"));
+lines.push(call(stranger, "far"), stranger.status, stranger.length);
+lines.push(answers.whatIsThis.call(5), answers.whatIsThis.call(undefined), answers.whatIsThis.call("s"), answers.describe.call([1, 2]));
+try {
+  Object.getOwnPropertyDescriptor(answers, "body").set.call(undefined, "x");
+} catch (error) {
+  lines.push(error instanceof TypeError);
+}
+
+// A name that the members store gets an accessor above, then a value, then goes.
+const seen = [];
+Object.defineProperty(application.answers, "_body", {
+  get() {
+    return "from above";
+  },
+  set(value) {
+    seen.push(value);
+  },
+  configurable: true,
+});
+const below = application.create({}, newRes());
+lines.push(call(below, "caught"), seen.join(), Object.hasOwn(below, "_body"));
+Object.defineProperty(application.answers, "_body", { value: "fixed", writable: false, configurable: true });
+const refused = application.create({}, newRes());
+lines.push(call(refused, "dropped"), Object.hasOwn(refused, "_body"));
+delete application.answers._body;
+lines.push(call(application.create({}, newRes()), "again"));
+
+// An accessor of the literal becomes a value, a method is replaced, the link above changes.
+Object.defineProperty(answers, "status", { value: 599, writable: true, configurable: true });
+const plain = application.create({}, newRes());
+lines.push(call(plain, "value"), Object.hasOwn(plain, "status"), plain.res.code);
+answers.has = () => true;
+lines.push(call(application.create({}, newRes()), "no length"));
+Object.setPrototypeOf(application.answers, { describe: () => "other", set body(value) {}, status: 1, length: 2 });
+lines.push(call(application.create({}, newRes()), "elsewhere"));
+
+// Frozen, sealed and closed objects.
+Object.setPrototypeOf(application.answers, answers);
+delete answers.status;
+for (const close of [Object.freeze, Object.seal, Object.preventExtensions]) {
+  const closed = close(application.create({}, newRes()));
+  lines.push(call(closed, "closed"), Object.keys(closed).join());
+}
+console.log(lines.join("\n"));
+//// members-of-classes-and-literals-read-at-run-time.js
+// Static members, super calls, accessors and methods that conversions, built-ins and heirs find at run time.
+const lines = [];
+////= printer
+
+{
+  const print = printer("constructor-property");
+  class C { m() { return new this.constructor(); } x = 3; }
+  print(new C().m().x);
+}
+{
+  const print = printer("species");
+  class A extends Array { static get [Symbol.species]() { return Array; } }
+  const a = new A(1, 2, 3);
+  print(a.slice(0) instanceof A);
+}
+{
+  const print = printer("static-call");
+  class C { static m() { return 1; } }
+  print(C.m());
+}
+{
+  const print = printer("static-field-by-conversion");
+  class C { static x = 4; static valueOf() { return C.x; } }
+  print(C + 1);
+}
+{
+  const print = printer("static-field-never-read");
+  class C { static x = 4; }
+  print(Object.keys(C).length);
+}
+{
+  const print = printer("static-field-stringify");
+  class C { static x = 4; }
+  print(JSON.stringify({ ...C }));
+}
+{
+  const print = printer("static-inherited-conversion");
+  class B { static toString() { return "B!"; } }
+  class C extends B {}
+  print(`${C}`);
+}
+{
+  const print = printer("static-inherited");
+  class B { static m() { return 1; } }
+  class C extends B {}
+  print(C.m());
+}
+{
+  const print = printer("static-this");
+  class C { static make() { return new this(); } x = 2; }
+  print(C.make().x);
+}
+{
+  const print = printer("accessor-by-conversion");
+  class C { get valueOf() { return () => 6; } }
+  print(new C() + 1);
+}
+{
+  const print = printer("array-index-conversion");
+  const o = { toString() { return "1"; } };
+  print([10, 20, 30][o]);
+}
+{
+  const print = printer("array-join-native");
+  const o = { toString() { return "x"; } };
+  print(String([o, o]));
+}
+{
+  const print = printer("array-length-store");
+  const o = { valueOf() { return 1; } };
+  const t = [1, 2, 3];
+  t.length = o;
+  print(t.length);
+}
+{
+  const print = printer("bigint-conversion");
+  const o = { valueOf() { return 2n; } };
+  print(o * 3n);
+}
+{
+  const print = printer("callback-field");
+  const o = { done(v) { print("done", v); } };
+  async function g() { return 4; }
+  g().then(o.done);
+}
+{
+  const print = printer("class-getter-not-stringified");
+  class C { get a() { return 1; } b = 2; }
+  print(JSON.stringify(new C()));
+}
+{
+  const print = printer("date-to-primitive");
+  const o = { [Symbol.toPrimitive](hint) { return hint === "default" ? 10 : 20; } };
+  print(new Date(o).getTime());
+}
+{
+  const print = printer("error-subclass");
+  class E extends Error { name = "E"; }
+  print(`${new E("m")}`);
+}
+{
+  const print = printer("error-thrown");
+  class E extends Error { constructor(m) { super(m); this.code = 3; } }
+  try { throw new E("m"); } catch (e) { print(e.code, e.message); }
+}
+{
+  const print = printer("field-shadowed");
+  const p = { m() { return 1; } };
+  const o = Object.create(p);
+  print(o.m());
+  o.m = function () { return 2; };
+  print(o.m());
+  delete o.m;
+  print(o.m());
+}
+{
+  const print = printer("frozen");
+  const o = Object.freeze({ valueOf() { return 2; } });
+  print(o + 1);
+}
+{
+  const print = printer("generator-method");
+  const o = { *[Symbol.iterator]() { yield 1; yield 2; } };
+  for (const x of o) print(x);
+}
+{
+  const print = printer("getter-stringify");
+  const o = { get a() { return 1; } };
+  print(JSON.stringify(o));
+}
+{
+  const print = printer("getter-through-prototype");
+  const p = { get a() { return 9; } };
+  const o = Object.create(p);
+  print(o.a);
+}
+{
+  const print = printer("heir-escapes");
+  const p = { toString() { return "escaped"; } };
+  const o = Object.create(p);
+  print(o);
+}
+{
+  const print = printer("json-parse-reviver-field");
+  const h = { revive(k, v) { return typeof v === "number" ? v + 1 : v; } };
+  print(JSON.parse('{"a":1}', h.revive).a);
+}
+{
+  const print = printer("json-replacer-function-field");
+  const h = { replace(k, v) { return typeof v === "number" ? v + 1 : v; } };
+  print(JSON.stringify({ a: 1 }, h.replace));
+}
+{
+  const print = printer("json-space");
+  const o = { a: 1 };
+  print(JSON.stringify(o, null, { valueOf() { return 1; } } + 0));
+}
+{
+  const print = printer("many-heirs");
+  const p = { m() { return this.x; } };
+  function make(x) { const o = Object.create(p); o.x = x; return o; }
+  let s = 0;
+  for (let i = 0; i < 10; i++) s += make(i).m();
+  print(s);
+}
+{
+  const print = printer("mixed-receivers");
+  const p = { m() { return 1; } };
+  const a = Object.create(p);
+  const b = { m() { return 2; } };
+  class C { m() { return 3; } }
+  const list = [a, b, new C()];
+  let s = "";
+  for (let i = 0; i < list.length; i++) s += list[i].m();
+  print(s);
+}
+{
+  const print = printer("number-key-call");
+  const o = { 0() { return 8; } };
+  print(o[0]());
+}
+{
+  const print = printer("own-and-inherited");
+  const p = { m() { return 1; } };
+  const o = Object.create(p);
+  print(p.m() + o.m());
+}
+{
+  const print = printer("own-call-and-conversion");
+  const o = { valueOf() { return 1; } };
+  print(o.valueOf() + (o + 1));
+}
+{
+  const print = printer("own-call-inherited-conversion");
+  const p = { valueOf() { return 1; } };
+  const o = Object.create(p);
+  print(p.valueOf() + (o + 1));
+}
+{
+  const print = printer("private-method");
+  class C { #m() { return 1; } valueOf() { return this.#m(); } }
+  print(new C() + 1);
+}
+{
+  const print = printer("prototype-field-deleted");
+  const p = { m() { return 1; } };
+  const o = Object.create(p);
+  print(o.m());
+  delete p.m;
+  print(typeof o.m);
+}
+{
+  const print = printer("prototype-field-replaced");
+  const p = { m() { return 1; } };
+  const o = Object.create(p);
+  print(o.m());
+  p.m = function () { return 2; };
+  print(o.m());
+}
+{
+  const print = printer("prototype-swapped");
+  const p = { m() { return 1; } };
+  const q = { m() { return 2; } };
+  const o = Object.create(p);
+  print(o.m());
+  Object.setPrototypeOf(o, q);
+  print(o.m());
+}
+{
+  const print = printer("relational-two-objects");
+  const a = { valueOf() { return 1; } };
+  const b = { valueOf() { return 2; } };
+  print(a < b, a + b);
+}
+{
+  const print = printer("setter-by-assign");
+  const o = { set a(v) { print("set", v); } };
+  Object.assign(o, { a: 1 });
+}
+{
+  const print = printer("setter-through-prototype");
+  const p = { set a(v) { print("set", v); } };
+  const o = Object.create(p);
+  o.a = 1;
+}
+{
+  const print = printer("sort-comparator-field");
+  const o = { compare(a, b) { return b - a; } };
+  const list = [1, 3, 2];
+  list.sort(o.compare);
+  print(list[0], list[1], list[2]);
+}
+{
+  const print = printer("string-method-argument");
+  const o = { toString() { return "b"; } };
+  print("abc".indexOf(o), "abc".charAt({ valueOf() { return 1; } }));
+}
+{
+  const print = printer("super-conversion");
+  class B { valueOf() { return 1; } }
+  class C extends B { valueOf() { return super.valueOf() + 1; } }
+  print(new C() + 1);
+}
+{
+  const print = printer("super-literal");
+  const p = { m() { return 1; } };
+  const o = { __proto__: p, m() { return super.m() + 1; } };
+  print(o.m());
+}
+{
+  const print = printer("super-method");
+  class B { m() { return 1; } }
+  class C extends B { m() { return super.m() + 1; } }
+  print(new C().m());
+}
+{
+  const print = printer("super-property");
+  const p = { x: 4 };
+  const o = { __proto__: p, m() { return super.x; } };
+  print(o.m());
+}
+{
+  const print = printer("switch-loose");
+  const o = { valueOf() { return 1; } };
+  if (o == 1) print("equal"); else print("different");
+}
+{
+  const print = printer("symbol-key-call");
+  const k = Symbol("k");
+  const o = { [k]() { return 8; } };
+  print(o[k]());
+}
+{
+  const print = printer("symbol-key-through-prototype");
+  const k = Symbol("k");
+  const p = { [k]() { return 8; } };
+  const o = Object.create(p);
+  print(o[k]());
+}
+{
+  const print = printer("typed-array-store");
+  const o = { valueOf() { return 7; } };
+  const t = new Uint8Array(1);
+  t[0] = o;
+  print(t[0]);
+}
+{
+  const print = printer("with-null-prototype");
+  const o = Object.create(null);
+  o.toString = function () { return "bare"; };
+  print(`${o}`);
+}
+{
+  const print = printer("call");
+  class C { #m() { return 1; } n() { return this.#m(); } }
+  print(new C().n());
+}
+{
+  const print = printer("conversion");
+  class C { #m() { return 1; } valueOf() { return this.#m(); } }
+  print(new C() + 1);
+}
+{
+  const print = printer("field-conversion");
+  class C { #x = 1; valueOf() { return this.#x; } }
+  print(new C() + 1);
+}
+{
+  const print = printer("getter");
+  class C { get #x() { return 1; } n() { return this.#x; } }
+  print(new C().n());
+}
+{
+  const print = printer("static");
+  class C { static #m() { return 1; } static n() { return C.#m(); } }
+  print(C.n());
+}
+{
+  const print = printer("value");
+  class C { #m() { return 1; } n() { const f = this.#m; return f(); } }
+  print(new C().n());
+}
+
+await new Promise(resolve => setTimeout(resolve, 0));
+console.log(lines.join("\n"));

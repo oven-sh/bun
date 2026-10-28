@@ -1,20 +1,22 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 /**
  * Regenerate test/expected-durations.json from recent Buildkite runs.
  * The file maps each test path (relative to test/, forward slashes) to its
- * median per-lane cost in ms (see `lanes` below). runner.node.mjs uses it
+ * median per-lane cost in ms (see `lanes` below). runner.node.ts uses it
  * to bin-pack test files across --max-shards so every shard does roughly
  * the same amount of work instead of `index % shards`.
- * Usage: BUILDKITE_API_TOKEN=... node scripts/update-test-durations.mjs [--builds N]
+ * Usage: BUILDKITE_API_TOKEN=... bun scripts/update-test-durations.mjs [--builds N]
  * Intended to be run by a scheduled Buildkite job on oven-sh/bun; it only
  * reads public build metadata and writes one file in the repo.
  */
 
-import { writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { units as partsOfOneTestFile } from "../test/aot/parts.mts";
+import { aotTests } from "./buildkite.ts";
 import { isPhaseGroupHeader } from "./ci-log-phase.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -47,6 +49,11 @@ const lanes = {
   "windows-aarch64": "windows-aarch64-11-test-bun",
 };
 
+const aotStepOf = stepKey => stepKey.replace(/-test-bun$/, "-test-aot");
+// getTestBunStep in .buildkite/ci.ts splits test/aot between these two.
+const aotStepsOf = stepKey => [aotStepOf(stepKey), `${aotStepOf(stepKey)}-drawn`];
+export const isAotTest = path => aotTests.some(group => path.startsWith(group));
+
 const api = async path => {
   for (let attempt = 0; ; attempt++) {
     const r = await fetch(`https://api.buildkite.com/v2/organizations/${opts.org}/pipelines/${opts.pipeline}/${path}`, {
@@ -65,7 +72,7 @@ const api = async path => {
 
 // Per-file cost is the gap between the APC timestamps Buildkite injects into
 // consecutive `[N/M] <path>` headers (ESC `_bk;t=<ms>` BEL). Serial tests
-// prefix the header with `--- `; the parallel-safe phase (runner.node.mjs)
+// prefix the header with `--- `; the parallel-safe phase (runner.node.ts)
 // prints the bare form. For that concurrent phase the gap is an inter-dispatch
 // delta, not wall clock; we clamp it so the last-dispatched file on each shard
 // does not absorb the N-wide tail drain or a sibling's 5-15 s retry backoff.
@@ -146,8 +153,16 @@ async function findSourceBuilds(want) {
 }
 
 async function collect(build, stepKey, into) {
-  const jobs = (await (await api(`builds/${build}`)).json()).jobs.filter(
-    j => j.step_key === stepKey && j.started_at && j.finished_at && j.state !== "canceled",
+  const allJobs = (await (await api(`builds/${build}`)).json()).jobs;
+  // Only a build that ran all of test/aot has the asan lane's step; the others run a tenth of it, and Windows arm64
+  // always does (getAotTests in .buildkite/ci.ts).
+  const ranAllOfAot = stepKey !== lanes["windows-aarch64"] && allJobs.some(j => j.step_key === aotStepOf(lanes.asan));
+  const jobs = allJobs.filter(
+    j =>
+      (j.step_key === stepKey || (ranAllOfAot && aotStepsOf(stepKey).includes(j.step_key))) &&
+      j.started_at &&
+      j.finished_at &&
+      j.state !== "canceled",
   );
   let idx = 0;
   const worker = async () => {
@@ -203,7 +218,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   }
 
   const paths = new Set(Object.values(samples).flatMap(s => Object.keys(s)));
-  // Guard the implicit contract with utils.mjs startGroup(): if the group-header
+  // Guard the implicit contract with startGroup() in scripts/buildkite.ts: if the group-header
   // format ever changes, parseLog() quietly returns nothing. Fail loudly rather
   // than committing an empty table that would collapse every shard onto shard 0.
   if (paths.size < 1000) {
@@ -221,10 +236,15 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       lanes,
     },
   };
+  const previous = JSON.parse(readFileSync(outputPath, "utf8"));
+  for (const p of Object.keys(previous)) {
+    if (isAotTest(p) && (existsSync(join(dirname(outputPath), p)) || partsOfOneTestFile.includes(p))) paths.add(p);
+  }
   for (const p of [...paths].sort()) {
     const entry = {};
     for (const lane of Object.keys(lanes)) {
       if (samples[lane][p]?.length) entry[lane] = median(samples[lane][p]);
+      else if (isAotTest(p) && previous[p]?.[lane] !== undefined) entry[lane] = previous[p][lane];
     }
     out[p] = entry;
   }

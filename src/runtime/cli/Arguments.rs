@@ -21,11 +21,15 @@ use bun_options_types::context::{Debugger, DebuggerEnable, HotReload, MacroOptio
 use bun_options_types::schema::api;
 use bun_paths::platform;
 use bun_paths::resolve_path;
+use bun_removable_features::{Feature, RuntimeRequirement, is_removed};
 
+use super::startup_options::{RequirementRow, RowName};
 use crate::cli;
 use crate::cli::colon_list_type::ColonListType;
 use crate::cli::command::{self, Context, Tag as CommandTag};
+use crate::cli::compile_options;
 use crate::cli::concat_params;
+use crate::cli::startup_options;
 use crate::cli::{DefineColonList, LoaderColonList};
 
 /// Clone borrowed argv slices into the owning `Vec<Box<[u8]>>` shape used by
@@ -38,6 +42,18 @@ fn slice_to_owned(input: &[&[u8]]) -> Vec<Box<[u8]>> {
 pub(crate) fn loader_resolver(input: &[u8]) -> crate::Result<api::Loader> {
     let option_loader = bun_ast::Loader::from_string(input).ok_or(crate::Error::InvalidLoader)?;
     Ok(option_loader.to_api())
+}
+
+/// The values of `--define`. `None`: there are none.
+pub(crate) fn resolve_defines(values: &[&'static [u8]]) -> crate::Result<Option<api::StringMap>> {
+    let defines = DefineColonList::resolve(values)?;
+    if defines.keys.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(api::StringMap {
+        keys: slice_to_owned(&defines.keys),
+        values: slice_to_owned(&defines.values),
+    }))
 }
 
 fn resolve_jsx_runtime(s: &[u8]) -> api::JsxRuntime {
@@ -89,6 +105,13 @@ const BASE_PARAMS_: &[ParamType] = concat_params!(
         parse_param!(
             "-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml"
         ),
+        parse_param!(
+            "--use-system-ca                   Use the system's trusted certificate authorities"
+        ),
+        parse_param!(
+            "--use-openssl-ca                  Use OpenSSL's default CA store instead of the bundled one"
+        ),
+        parse_param!("--use-bundled-ca                  Use bundled CA store"),
         parse_param!("-h, --help                        Display this menu and exit"),
     ],
     &[parse_param!("<POS>...")],
@@ -155,6 +178,15 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     ),
     parse_param!(
         "--no-clear-screen                 Disable clearing the terminal screen on reload when --hot or --watch is enabled"
+    ),
+    parse_param!(
+        "--check                           Type check before running. Nothing runs if there are type errors. Alone: <b>bun check<r>"
+    ),
+    parse_param!(
+        "--aot                             Check the program like bun compile does, then run it with built-in objects read-only"
+    ),
+    parse_param!(
+        "--aot-log-type-mismatches         Compile the program like bun compile, run it, and log every value that doesn't match its declared type"
     ),
     parse_param!(
         "--smol                            Use less memory, but run garbage collection more often"
@@ -265,11 +297,6 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled."
     ),
-    parse_param!(
-        "--use-system-ca                   Use the system's trusted certificate authorities"
-    ),
-    parse_param!("--use-openssl-ca                  Use OpenSSL's default CA store"),
-    parse_param!("--use-bundled-ca                  Use bundled CA store"),
     parse_param!("--tls-min-v1.0                    Set the default TLS minimum to TLSv1.0"),
     parse_param!("--tls-min-v1.1                    Set the default TLS minimum to TLSv1.1"),
     parse_param!("--tls-min-v1.2                    Set the default TLS minimum to TLSv1.2"),
@@ -284,6 +311,8 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--no-ffi-cc                       Throw an error if bun:ffi cc() is called (disables the C compiler)"
     ),
+    // No help text, which hides it: the name is wider than the column `bun --help` prints names in.
+    parse_param!("--disallow-code-generation-from-strings <STR>?"),
     parse_param!(
         "--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\""
     ),
@@ -310,6 +339,13 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--trace-exit"),
     parse_param!("--expose-internals"),
     parse_param!("--stack-trace-limit <STR>"),
+    // For bun's own use and tests: no help text.
+    parse_param!("--debug-aot"),
+    parse_param!("--aot-huge-heap"),
+    parse_param!("--aot-graph-fd <STR>"),
+    parse_param!("--aot-checked <STR>"),
+    parse_param!("--aot-decode-crash-report <STR>"),
+    parse_param!("--aot-build-id"),
 ];
 
 const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
@@ -358,6 +394,194 @@ pub(crate) const AUTO_PARAMS: &[ParamType] = concat_params!(
     BASE_PARAMS_
 );
 
+pub(crate) const AUTO_REQUIREMENTS: [RuntimeRequirement; AUTO_PARAMS.len()] =
+    startup_options::requirements_of(AUTO_PARAMS, AUTO_REQUIREMENT_ROWS);
+pub(crate) const CODE_GENERATION_PARAM: usize =
+    startup_options::index_of_long(AUTO_PARAMS, b"disallow-code-generation-from-strings");
+/// These need `Feature::HotReload` besides what their rows say.
+pub(crate) const HOT_RELOAD_PARAMS: [usize; 2] = [
+    startup_options::index_of_long(AUTO_PARAMS, b"watch"),
+    startup_options::index_of_long(AUTO_PARAMS, b"hot"),
+];
+/// What each parameter of `AUTO_PARAMS` needs, in the same order. A parameter without a row fails the build.
+pub(crate) const AUTO_REQUIREMENT_ROWS: &[RequirementRow] = {
+    use RowName::{Long, Positional, Short};
+    use RuntimeRequirement::{Nothing, RuntimeCode, WholeRuntime};
+    &[
+        (Long(b"silent"), Nothing),
+        (Long(b"elide-lines"), Nothing),
+        (Long(b"version"), Nothing),
+        (Long(b"revision"), Nothing),
+        (Long(b"filter"), Nothing),
+        (Long(b"bun"), Nothing),
+        (Long(b"no-orphans"), Nothing),
+        (Long(b"shell"), Nothing),
+        (Long(b"workspaces"), Nothing),
+        (Long(b"parallel"), Nothing),
+        (Long(b"sequential"), Nothing),
+        (Long(b"no-exit-on-error"), Nothing),
+        (Long(b"watch"), RuntimeCode),
+        (Long(b"watch-kill-signal"), Nothing),
+        (Long(b"hot"), RuntimeCode),
+        (Long(b"no-clear-screen"), Nothing),
+        (Long(b"check"), RuntimeRequirement::Feature(Feature::Check)),
+        (
+            Long(b"aot"),
+            RuntimeRequirement::Feature(Feature::AotCompiler),
+        ),
+        (
+            Long(b"aot-log-type-mismatches"),
+            RuntimeRequirement::Feature(Feature::AotCompiler),
+        ),
+        (Long(b"smol"), Nothing),
+        (Long(b"interactive"), Nothing),
+        (Long(b"preload"), RuntimeCode),
+        (Long(b"require"), RuntimeCode),
+        (Long(b"import"), RuntimeCode),
+        (
+            Long(b"inspect"),
+            RuntimeRequirement::Feature(Feature::Inspector),
+        ),
+        (
+            Long(b"inspect-wait"),
+            RuntimeRequirement::Feature(Feature::Inspector),
+        ),
+        (
+            Long(b"inspect-brk"),
+            RuntimeRequirement::Feature(Feature::Inspector),
+        ),
+        (
+            Long(b"cpu-prof"),
+            RuntimeRequirement::Feature(Feature::Profilers),
+        ),
+        (Long(b"cpu-prof-name"), Nothing),
+        (Long(b"cpu-prof-dir"), Nothing),
+        (
+            Long(b"cpu-prof-md"),
+            RuntimeRequirement::Feature(Feature::Profilers),
+        ),
+        (Long(b"cpu-prof-interval"), Nothing),
+        (
+            Long(b"heap-prof"),
+            RuntimeRequirement::Feature(Feature::Profilers),
+        ),
+        (Long(b"heap-prof-name"), Nothing),
+        (Long(b"heap-prof-dir"), Nothing),
+        (
+            Long(b"heap-prof-md"),
+            RuntimeRequirement::Feature(Feature::Profilers),
+        ),
+        (Long(b"heap-prof-interval"), Nothing),
+        (Long(b"if-present"), Nothing),
+        (Long(b"no-install"), Nothing),
+        (
+            Long(b"install"),
+            RuntimeRequirement::Feature(Feature::Install),
+        ),
+        (Short(b'i'), RuntimeRequirement::Feature(Feature::Install)),
+        (Long(b"eval"), RuntimeCode),
+        (Long(b"print"), RuntimeCode),
+        (Long(b"prefer-offline"), Nothing),
+        (Long(b"prefer-latest"), Nothing),
+        (Long(b"port"), Nothing),
+        (Long(b"origin"), Nothing),
+        (Long(b"conditions"), Nothing),
+        (
+            Long(b"fetch-preconnect"),
+            RuntimeRequirement::Feature(Feature::Fetch),
+        ),
+        (Long(b"experimental-http2-fetch"), Nothing),
+        (Long(b"experimental-http3-fetch"), Nothing),
+        (Long(b"max-http-header-size"), Nothing),
+        (Long(b"insecure-http-parser"), Nothing),
+        (Long(b"dns-result-order"), Nothing),
+        (Long(b"experimental-stream-iter"), Nothing),
+        (Long(b"expose-gc"), Nothing),
+        (Long(b"no-deprecation"), Nothing),
+        (Long(b"throw-deprecation"), Nothing),
+        (Long(b"no-warnings"), Nothing),
+        (Long(b"trace-warnings"), Nothing),
+        (Long(b"trace-deprecation"), Nothing),
+        (Long(b"pending-deprecation"), Nothing),
+        (Long(b"redirect-warnings"), Nothing),
+        (Long(b"disable-warning"), Nothing),
+        (Long(b"title"), Nothing),
+        (Long(b"zero-fill-buffers"), Nothing),
+        (Long(b"use-system-ca"), Nothing),
+        (Long(b"use-openssl-ca"), Nothing),
+        (Long(b"use-bundled-ca"), Nothing),
+        (Long(b"tls-min-v1.0"), Nothing),
+        (Long(b"tls-min-v1.1"), Nothing),
+        (Long(b"tls-min-v1.2"), Nothing),
+        (Long(b"tls-min-v1.3"), Nothing),
+        (Long(b"tls-max-v1.2"), Nothing),
+        (Long(b"tls-max-v1.3"), Nothing),
+        (
+            Long(b"redis-preconnect"),
+            RuntimeRequirement::Feature(Feature::Valkey),
+        ),
+        (
+            Long(b"sql-preconnect"),
+            RuntimeRequirement::Feature(Feature::Sql),
+        ),
+        (Long(b"no-addons"), Nothing),
+        (Long(b"no-ffi-cc"), Nothing),
+        (Long(b"disallow-code-generation-from-strings"), Nothing),
+        (Long(b"unhandled-rejections"), Nothing),
+        (Long(b"console-depth"), Nothing),
+        (Long(b"user-agent"), Nothing),
+        (Long(b"cron-title"), Nothing),
+        (Long(b"cron-period"), Nothing),
+        (Long(b"trace-events-enabled"), WholeRuntime),
+        (Long(b"trace-event-categories"), WholeRuntime),
+        (Long(b"trace-event-file-pattern"), WholeRuntime),
+        (Long(b"trace-env"), WholeRuntime),
+        (Long(b"trace-env-js-stack"), WholeRuntime),
+        (Long(b"trace-env-native-stack"), Nothing),
+        (Long(b"trace-exit"), WholeRuntime),
+        (
+            Long(b"expose-internals"),
+            RuntimeRequirement::Feature(Feature::InternalForTesting),
+        ),
+        (Long(b"stack-trace-limit"), Nothing),
+        (
+            Long(b"debug-aot"),
+            RuntimeRequirement::Feature(Feature::AotCompiler),
+        ),
+        (Long(b"aot-huge-heap"), Nothing),
+        (Long(b"aot-graph-fd"), Nothing),
+        (Long(b"aot-checked"), Nothing),
+        (Long(b"aot-decode-crash-report"), Nothing),
+        (Long(b"aot-build-id"), Nothing),
+        (Long(b"main-fields"), Nothing),
+        (Long(b"preserve-symlinks"), Nothing),
+        (Long(b"preserve-symlinks-main"), Nothing),
+        (Long(b"extension-order"), Nothing),
+        (Long(b"tsconfig-override"), Nothing),
+        (Long(b"define"), Nothing),
+        (Long(b"drop"), Nothing),
+        (Long(b"feature"), Nothing),
+        (Long(b"loader"), Nothing),
+        (Long(b"no-macros"), Nothing),
+        (Long(b"jsx-factory"), Nothing),
+        (Long(b"jsx-fragment"), Nothing),
+        (Long(b"jsx-import-source"), Nothing),
+        (Long(b"jsx-runtime"), Nothing),
+        (Long(b"jsx-side-effects"), Nothing),
+        (Long(b"ignore-dce-annotations"), Nothing),
+        (Long(b"breakpoint-resolve"), Nothing),
+        (Long(b"env-file"), Nothing),
+        (Long(b"no-env-file"), Nothing),
+        (Long(b"cwd"), Nothing),
+        (
+            Long(b"config"),
+            RuntimeRequirement::Feature(Feature::Bunfig),
+        ),
+        (Long(b"help"), RuntimeRequirement::Feature(Feature::Tools)),
+        (Positional, Nothing),
+    ]
+};
+
 const RUN_ONLY_PARAMS: &[ParamType] = concat_params!(
     &[
         parse_param!("--silent                          Don't print the script command"),
@@ -402,6 +626,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--compile-exec-argv <STR>       Prepend arguments to the standalone executable's execArgv"
         ),
         parse_param!(
+            "--bytecode-order <STR>...        With --compile --bytecode: lay the bytecode out by order file(s) a run of the executable wrote (BUN_BYTECODE_ORDER_OUT); comma-separated or repeated, most important first"
+        ),
+        parse_param!(
             "--compile-jit-policy <NUMBER>    JIT tier-up threshold scale the executable starts with (default 1 = normal; see Bun.unsafe.setJITPolicy)"
         ),
         parse_param!(
@@ -434,6 +661,69 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!(
             "--asset <STR>...                 Embed a file or directory into the compiled executable, preserving its relative path (requires --compile)"
         ),
+        parse_param!(
+            "--aot                            Compile JavaScript and TypeScript to machine code at build time. Requires --compile"
+        ),
+        parse_param!(
+            "--aot-log-type-mismatches        With --aot: the executable logs every value that doesn't match its declared type"
+        ),
+        parse_param!(
+            "--explain <STR>?...              With --aot: list the code that compiled to a slow path and how to fix it, worst first. Other reports: json, guards, guards-json, trim, missed-optimizations, allocations"
+        ),
+        parse_param!(
+            "--aot-huge-heap                  With --aot: remove the 32 GB heap limit per thread. Uses more memory and runs slower"
+        ),
+        parse_param!(
+            "--no-compile-function-source     With --aot: don't embed function source code. fn.toString() returns [native code], and an eval() or new Function() call the compiler didn't find at build time throws"
+        ),
+        parse_param!(
+            "--compile-in-place               With --aot: keep modules at their paths on disk and load anything that wasn't compiled from there. The executable only runs on the machine that built it"
+        ),
+        parse_param!(
+            "--trim                           Remove the Bun and Node.js APIs your code never calls from the executable. Requires --compile"
+        ),
+        parse_param!(
+            "--trim-locales <STR>...          Keep only these locales, such as en,de-AT. Implies --trim"
+        ),
+        parse_param!(
+            "--obfuscate                      With --aot: strip function names and source locations from the executable and write them to \\<outfile\\>.map. Same as --sourcemap=external"
+        ),
+        parse_param!(
+            "--compile-inspector              With --aot: let a debugger attach to the executable (BUN_INSPECT, --inspect). Makes it larger and slower"
+        ),
+        parse_param!(
+            "--aot-allow-code-from-disk       With --aot: let import() and require() load code that isn't in the executable from disk at run time. Makes it larger and slower"
+        ),
+        parse_param!(
+            "--disallow-code-generation-from-strings <STR>?  In the executable, eval() and new Function() throw an EvalError. \"strict\" also blocks every other way to run code from a string. Requires --compile"
+        ),
+        parse_param!("--aot-validate"),
+        parse_param!("--aot-check <STR>..."),
+        parse_param!("--aot-disable <STR>..."),
+        parse_param!("--aot-only-passes <STR>"),
+        parse_param!("--aot-disable-in <STR>"),
+        parse_param!("--aot-limit <STR>"),
+        parse_param!("--aot-heat <STR>"),
+        parse_param!("--aot-flow <STR>"),
+        parse_param!("--aot-testing <STR>..."),
+        parse_param!("--aot-sabotage <STR>"),
+        parse_param!("--aot-count-branches"),
+        parse_param!("--aot-count-arrivals"),
+        parse_param!("--aot-drop-guard <STR>"),
+        parse_param!("--aot-layout-seed <STR>"),
+        parse_param!("--aot-report <STR>"),
+        parse_param!("--aot-report-detail <STR>"),
+        parse_param!("--aot-list <STR>"),
+        parse_param!("--aot-verify-each-pass"),
+        parse_param!("--aot-references <STR>"),
+        parse_param!("--aot-threads <STR>"),
+        parse_param!("--aot-erase-types"),
+        parse_param!("--aot-refuse-code-from-disk"),
+        parse_param!("--aot-out <STR>"),
+        parse_param!("--aot-symbols"),
+        parse_param!("--no-builtin-modules"),
+        parse_param!("--trim-without <STR>..."),
+        parse_param!("--trim-template"),
         parse_param!("--bytecode                       Use a bytecode cache"),
         parse_param!(
             "--bytecode-depth <NUMBER>        How many levels of nested functions to compile to bytecode ahead of time. Defaults to all"
@@ -515,6 +805,12 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         ),
         parse_param!("--no-bundle                      Transpile file only, do not bundle"),
         parse_param!(
+            "--check                          Type check the entry points and what they import. Nothing is bundled if there are type errors"
+        ),
+        parse_param!(
+            "--dts                            Write declaration files (.d.ts), and each output file with its types kept (.aot.ts), to --outdir. Implies --check"
+        ),
+        parse_param!(
             "--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed."
         ),
         parse_param!(
@@ -530,12 +826,10 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!(
             "--css-chunking                   Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an effect when multiple entrypoints import CSS"
         ),
-        parse_param!("--dump-environment-variables"),
         parse_param!("--conditions <STR>...            Pass custom conditions to resolve"),
         parse_param!(
             "--app                            (EXPERIMENTAL) Build a web app for production using Bun Bake."
         ),
-        parse_param!("--server-components              (EXPERIMENTAL) Enable server components"),
         parse_param!(
             "--env <inline|prefix*|disable>   Inline environment variables into the bundle as process.env.${name}. Defaults to 'disable'. To inline environment variables matching a prefix, use my prefix like 'FOO_PUBLIC_*'."
         ),
@@ -566,6 +860,21 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
 const BUILD_PARAMS: &[ParamType] =
     concat_params!(BUILD_ONLY_PARAMS, TRANSPILER_PARAMS_, BASE_PARAMS_);
 
+pub(crate) const COMPILE_ONLY_PARAMS: &[ParamType] = &[
+    parse_param!(
+        "--library                        Build a package to publish instead of an executable: JavaScript, .d.ts files and a package.json, in --outdir (default: \"dist\")"
+    ),
+    parse_param!(
+        "--no-aot                         Bundle the JavaScript into the executable instead of compiling it to machine code, like bun build --compile"
+    ),
+    parse_param!(
+        "--no-script                      Run this command even if package.json has a \"compile\" script"
+    ),
+];
+pub(crate) const COMPILE_HELP_PARAMS: &[ParamType] =
+    concat_params!(COMPILE_ONLY_PARAMS, BUILD_ONLY_PARAMS, TRANSPILER_PARAMS_);
+const COMPILE_PARAMS: &[ParamType] = concat_params!(COMPILE_ONLY_PARAMS, BUILD_PARAMS);
+
 // TODO: update test completions
 pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     parse_param!(
@@ -593,7 +902,7 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     parse_param!("--seed <INT>                     Set the random seed for test randomization"),
     parse_param!("--coverage                       Generate a coverage profile"),
     parse_param!(
-        "--coverage-reporter <STR>...     Report coverage in 'text' and/or 'lcov'. Defaults to 'text'."
+        "--coverage-reporter <STR>...     Report coverage in 'text' and/or 'lcov'. Defaults to 'text'. Implies --coverage."
     ),
     parse_param!(
         "--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'."
@@ -684,12 +993,15 @@ const BASE_RUNTIME_TRANSPILER_PARAMS: &[ParamType] =
 // `src/startup.order` can still cluster the ones a sampled cold path actually
 // hits without weighing down the `.rodata.startup` fault-around window.
 #[cfg_attr(
-    any(target_os = "linux", target_os = "android"),
+    all(any(target_os = "linux", target_os = "android"), not(bun_hardened)),
     unsafe(link_section = ".rodata.startup")
 )]
+#[cfg_attr(bun_hardened, unsafe(link_section = ".data.rel.ro.startup"))]
 pub(crate) static AUTO_TABLE: &clap::ConvertedTable = clap::comptime_table!(AUTO_PARAMS);
 pub(crate) static RUN_TABLE: &clap::ConvertedTable = clap::comptime_table!(RUN_PARAMS, cold);
 pub(crate) static BUILD_TABLE: &clap::ConvertedTable = clap::comptime_table!(BUILD_PARAMS, cold);
+pub(crate) static COMPILE_TABLE: &clap::ConvertedTable =
+    clap::comptime_table!(COMPILE_PARAMS, cold);
 pub(crate) static TEST_TABLE: &clap::ConvertedTable = clap::comptime_table!(TEST_PARAMS, cold);
 static BASE_RUNTIME_TRANSPILER_TABLE: &clap::ConvertedTable =
     clap::comptime_table!(BASE_RUNTIME_TRANSPILER_PARAMS, cold);
@@ -703,6 +1015,7 @@ fn tag_table(cmd: CommandTag) -> &'static clap::ConvertedTable {
         CommandTag::AutoCommand => AUTO_TABLE,
         CommandTag::RunCommand | CommandTag::RunAsNodeCommand => RUN_TABLE,
         CommandTag::BuildCommand => BUILD_TABLE,
+        CommandTag::CompileCommand => COMPILE_TABLE,
         CommandTag::TestCommand => TEST_TABLE,
         CommandTag::BunxCommand => RUN_TABLE,
         _ => BASE_RUNTIME_TRANSPILER_TABLE,
@@ -755,30 +1068,56 @@ fn replace_pid_placeholder(name: &[u8]) -> Box<[u8]> {
     out.into_boxed_slice()
 }
 
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) enum BunCAStore {
-    Bundled,
-    Openssl,
-    System,
+use crate::generated_bindgen::node_tls_binding::CAStore;
+
+pub(crate) fn get_ca_store() -> CAStore {
+    match Global::ca_store() {
+        Global::CAStore::Bundled => CAStore::Bundled,
+        Global::CAStore::System => CAStore::System,
+        Global::CAStore::OpenSSL => CAStore::Openssl,
+    }
 }
-#[unsafe(no_mangle)]
-static Bun__Node__CAStore: core::sync::atomic::AtomicU8 =
-    core::sync::atomic::AtomicU8::new(BunCAStore::Bundled as u8);
-#[unsafe(no_mangle)]
-pub(crate) static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
-    core::sync::atomic::AtomicBool::new(false);
 
 // ─── bunfig loading ──────────────────────────────────────────────────────────
 // their private helpers moved to `bun_bunfig::arguments` so `bun_install` can
 // call them without a tier-6 dependency. Re-export here so existing
 // `crate::cli::arguments::load_config*` callers are unaffected.
-pub use bun_bunfig::arguments::{load_config_path, load_config_with_cmd_args};
+pub(crate) use bun_bunfig::arguments::{load_config_path, load_config_with_cmd_args};
 
 /// node aliases `-pe` to `--print --eval` as a whole token (node_options.cc):
 /// it can't be a short in either runtime, being ambiguous with `-p` carrying
 /// the attached value `e`. Bun's `-p` takes the code, so `-pe X` is `-p X`.
-pub const NODE_SHORT_ALIASES: &[(&[u8], &[u8])] = &[(b"-pe", b"-p")];
+pub(crate) const NODE_SHORT_ALIASES: &[(&[u8], &[u8])] = &[(b"-pe", b"-p")];
+
+/// `--disallow-code-generation-from-strings[=<value>]`. Raises the process's level; never lowers it.
+fn disallow_code_generation_from_strings(value: &[u8]) {
+    match bun_core::CodeGenerationFromStrings::from_flag_value(value) {
+        Some(level) => bun_core::disallow_code_generation_from_strings(level),
+        None => {
+            Output::err_generic(
+                "Invalid value for --disallow-code-generation-from-strings: \"{}\". Must be \"strict\", or no value\n",
+                format_args!("{}", BStr::new(value)),
+            );
+            Global::exit(1);
+        }
+    }
+}
+
+/// The level a compiled executable was built with (`--compile-exec-argv`) is a floor. The parser
+/// keeps an option's last value and reads `BUN_OPTIONS` after the embedded flags, so on its own it
+/// would let the environment lower it. `embedded` is the embedded flags as the parser is given them.
+pub(crate) fn disallow_code_generation_from_strings_as_compiled(embedded: &[&bun_core::ZStr]) {
+    for token in embedded {
+        match token
+            .as_bytes()
+            .strip_prefix(b"--disallow-code-generation-from-strings".as_slice())
+        {
+            Some(b"") => disallow_code_generation_from_strings(b""),
+            Some([b'=', value @ ..]) => disallow_code_generation_from_strings(value),
+            _ => {}
+        }
+    }
+}
 
 /// Parse `argv` into `api::TransformOptions` for the given subcommand.
 ///
@@ -788,6 +1127,10 @@ pub const NODE_SHORT_ALIASES: &[(&[u8], &[u8])] = &[(b"-pe", b"-p")];
 pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformOptions> {
     let mut diag = clap::Diagnostic::default();
     let table = tag_table(cmd);
+    let is_build = matches!(cmd, CommandTag::BuildCommand | CommandTag::CompileCommand);
+    let may_refuse_options =
+        cmd == CommandTag::AutoCommand && startup_options::may_refuse_options();
+    let mut unknown_long_flags: Vec<clap::UnknownLongFlag<'static>> = Vec::new();
 
     let args = match clap::parse_with_table::<clap::Help>(
         table,
@@ -803,21 +1146,33 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => NODE_SHORT_ALIASES,
                 _ => &[],
             },
+            unknown_long_flags: Some(&mut unknown_long_flags),
+            ..Default::default()
         },
     ) {
         Ok(a) => a,
         Err(err) => {
             // Report useful error and exit
             let _ = diag.report(Output::error_writer(), err);
-            command::tag_print_help(cmd, false);
+            if !is_removed(Feature::Tools) {
+                command::tag_print_help(cmd, false);
+            }
             Global::exit(1);
         }
     };
+
+    if may_refuse_options {
+        startup_options::reject_unusable_arguments();
+    }
 
     if args.flag(b"--help") {
         command::tag_print_help(cmd, true);
         Output::flush();
         Global::exit(0);
+    }
+
+    if !unknown_long_flags.is_empty() {
+        compile_options::reject_unknown_flags(cmd, &unknown_long_flags);
     }
 
     if cmd == CommandTag::AutoCommand {
@@ -839,7 +1194,9 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         let base: &[u8] = if bun_paths::is_absolute(cwd_arg) {
             b"/"
         } else {
-            bun_core::getcwd(&mut outbuf)?.as_bytes()
+            let original_cwd = bun_core::getcwd(&mut outbuf)?.as_bytes();
+            ctx.original_cwd = Some(Box::from(original_cwd));
+            original_cwd
         };
         let mut spill = Vec::new();
         let out =
@@ -896,6 +1253,9 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         ctx.parallel = args.flag(b"--parallel");
         ctx.sequential = args.flag(b"--sequential");
         ctx.no_exit_on_error = args.flag(b"--no-exit-on-error");
+        // Set before bunfig.toml is loaded so that `--silent` hides the warning about an unreadable
+        // bunfig.toml. It is set again below so that the flag overrides `run.silent`.
+        ctx.debug.silent = args.flag(b"--silent");
 
         if let Some(elide_lines) = args.option(b"--elide-lines") {
             if !elide_lines.is_empty() {
@@ -923,25 +1283,15 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
 
     if command::LOADS_CONFIG[cmd] {
         load_config_with_cmd_args(cmd, &args, ctx)?;
+        if may_refuse_options {
+            startup_options::reject_unusable_bunfig_settings(ctx);
+        }
     }
 
     let mut opts: api::TransformOptions = ctx.args.clone();
 
-    let defines_tuple = DefineColonList::resolve(args.options(b"--define"))?;
-
-    if !defines_tuple.keys.is_empty() {
-        opts.define = Some(api::StringMap {
-            keys: defines_tuple
-                .keys
-                .iter()
-                .map(|s| Box::<[u8]>::from(*s))
-                .collect(),
-            values: defines_tuple
-                .values
-                .iter()
-                .map(|s| Box::<[u8]>::from(*s))
-                .collect(),
-        });
+    if let Some(define) = resolve_defines(args.options(b"--define"))? {
+        opts.define = Some(define);
     }
 
     opts.drop = slice_to_owned(args.options(b"--drop"));
@@ -1002,12 +1352,20 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         CommandTag::AutoCommand
             | CommandTag::RunCommand
             | CommandTag::BuildCommand
+            | CommandTag::CompileCommand
             | CommandTag::TestCommand
     ) {
         if !args.options(b"--conditions").is_empty() {
             opts.conditions = slice_to_owned(args.options(b"--conditions"));
         }
+        // `bun run --aot` runs the files that `bun build --compile --aot` compiles.
+        let runs_program = !matches!(cmd, CommandTag::BuildCommand | CommandTag::CompileCommand);
+        if runs_program && compile_options::checks_before_each_run(cmd, &args) {
+            opts.conditions.push(Box::from(&b"aot"[..]));
+        }
     }
+
+    Global::set_ca_store_from_flags(|flag| args.flag(flag));
 
     // runtime commands
     if matches!(
@@ -1022,6 +1380,9 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             let preloads2 = args.options(b"--require");
             let preloads3 = args.options(b"--import");
             let preload4 = env_var::BUN_INSPECT_PRELOAD.get();
+            if may_refuse_options && preload4.is_some() {
+                startup_options::reject_unusable_inspect_preload();
+            }
 
             let total_preloads = ctx.preloads.len()
                 + preloads.len()
@@ -1051,9 +1412,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
 
         if args.flag(b"--hot") {
             ctx.debug.hot_reload = HotReload::Hot;
-            if args.flag(b"--no-clear-screen") {
-                let _ = bun_dotenv::HAS_NO_CLEAR_SCREEN_CLI_FLAG.set(true);
-            }
         } else if args.flag(b"--watch") {
             ctx.debug.hot_reload = HotReload::Watch;
 
@@ -1063,32 +1421,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             {
                 bun_core::set_auto_reload_on_crash(true);
             }
-
-            if args.flag(b"--no-clear-screen") {
-                let _ = bun_dotenv::HAS_NO_CLEAR_SCREEN_CLI_FLAG.set(true);
-            }
         }
-
-        if let Some(kill_signal) = args.option(b"--watch-kill-signal") {
-            // Node reads --watch-kill-signal only in watch mode; elsewhere it is
-            // accepted and ignored. Matching is case-insensitive (node uppercases).
-            if ctx.debug.hot_reload == HotReload::Watch {
-                let upper = kill_signal.to_ascii_uppercase();
-                match bun_core::SignalCode::from_name(&upper)
-                    .filter(|s| s.platform_number().is_some())
-                {
-                    Some(sig) => ctx.debug.watch_kill_signal = sig,
-                    None => {
-                        Output::print_errorln(format_args!(
-                            "TypeError [ERR_UNKNOWN_SIGNAL]: Unknown signal: {}",
-                            bstr::BStr::new(kill_signal)
-                        ));
-                        Output::flush();
-                        Global::exit(1);
-                    }
-                }
-            }
-        }
+        ctx.debug.no_clear_screen = args.flag(b"--no-clear-screen");
+        ctx.debug.watch_flag = args.flag(b"--watch");
+        ctx.debug.watch_kill_signal_arg = args.option(b"--watch-kill-signal").map(Into::into);
 
         if let Some(origin) = args.option(b"--origin") {
             opts.origin = Some(origin.into());
@@ -1110,6 +1446,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
 
         if args.flag(b"--no-ffi-cc") {
             opts.allow_ffi_cc = Some(false);
+        }
+
+        if let Some(value) = args.option(b"--disallow-code-generation-from-strings") {
+            disallow_code_generation_from_strings(value);
         }
 
         if let Some(unhandled_rejections) = args.option(b"--unhandled-rejections") {
@@ -1171,18 +1511,26 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
 
         if let Some(user_agent) = args.option(b"--user-agent") {
+            if bun_http::async_http::breaks_header_line(user_agent) {
+                Output::err_generic(
+                    "Invalid value for --user-agent: must not contain a newline or NUL byte",
+                    (),
+                );
+                Global::exit(1);
+            }
             // argv slices returned by `clap::Args::option` borrow
             // process-lifetime `argv` storage.
             let _ = bun_http::OVERRIDDEN_DEFAULT_USER_AGENT.set(user_agent);
         }
 
-        ctx.debug.offline_mode_setting = Some(if args.flag(b"--prefer-offline") {
-            bun_options_types::offline_mode::OfflineMode::Offline
+        // Without a flag, `install.prefer` from bunfig.toml is kept.
+        if args.flag(b"--prefer-offline") {
+            ctx.debug.offline_mode_setting =
+                Some(bun_options_types::offline_mode::OfflineMode::Offline);
         } else if args.flag(b"--prefer-latest") {
-            bun_options_types::offline_mode::OfflineMode::Latest
-        } else {
-            bun_options_types::offline_mode::OfflineMode::Online
-        });
+            ctx.debug.offline_mode_setting =
+                Some(bun_options_types::offline_mode::OfflineMode::Latest);
+        }
 
         if args.flag(b"--no-install") {
             ctx.debug.global_cache = options::GlobalCache::disable;
@@ -1214,6 +1562,14 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
         ctx.runtime_options.if_present = args.flag(b"--if-present");
         ctx.runtime_options.smol = args.flag(b"--smol");
+        // To `node`, `--check` means something else.
+        ctx.runtime_options.check = args.flag(b"--check") && cmd != CommandTag::RunAsNodeCommand;
+        // Decided here: on Windows the process that starts it again is set up right after this.
+        if ctx.runtime_options.check || compile_options::checks_before_each_run(cmd, &args) {
+            super::watch_instead_of_hot_for_check(ctx);
+        }
+        let restarts = ctx.debug.hot_reload == HotReload::Watch;
+        super::apply_watch_mode_flags(ctx, restarts);
         // node's `-i` is an alias for --interactive; elsewhere `-i` is --install=fallback.
         ctx.runtime_options.interactive = args.flag(b"--interactive")
             || (cmd == CommandTag::RunAsNodeCommand && args.flag(b"-i"));
@@ -1462,43 +1818,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         if args.flag(b"--zero-fill-buffers") {
             Bun__Node__ZeroFillBuffers.store(true, core::sync::atomic::Ordering::Relaxed);
         }
-        let use_system_ca = args.flag(b"--use-system-ca");
-        let use_openssl_ca = args.flag(b"--use-openssl-ca");
-        let use_bundled_ca = args.flag(b"--use-bundled-ca");
-
-        // Disallow any combination > 1
-        if (use_system_ca as u8) + (use_openssl_ca as u8) + (use_bundled_ca as u8) > 1 {
-            bun_core::pretty_errorln!(
-                "<r><red>error<r>: choose exactly one of --use-system-ca, --use-openssl-ca, or --use-bundled-ca"
-            );
-            Global::exit(1);
-        }
-
-        // CLI overrides env var (NODE_USE_SYSTEM_CA)
-        let store: Option<BunCAStore> = if use_bundled_ca {
-            Some(BunCAStore::Bundled)
-        } else if use_openssl_ca {
-            Some(BunCAStore::Openssl)
-        } else if use_system_ca || env_var::NODE_USE_SYSTEM_CA.get().unwrap_or(false) {
-            Some(BunCAStore::System)
-        } else {
-            // No CA flag — leave the FFI default (Bundled) in place. Avoids a
-            // `transmute<u8, BunCAStore>` round-trip through the atomic, which
-            // would be UB on an out-of-range discriminant.
-            None
-        };
-        if let Some(store) = store {
-            Bun__Node__CAStore.store(store as u8, core::sync::atomic::Ordering::Relaxed);
-            // Back-compat boolean used by native code until fully migrated
-            Bun__Node__UseSystemCA.store(
-                store == BunCAStore::System,
-                core::sync::atomic::Ordering::Relaxed,
-            );
-        } else {
-            // `Bun__Node__UseSystemCA` is written unconditionally,
-            // even when no CA flag/env was supplied (default bundled ⇒ false).
-            Bun__Node__UseSystemCA.store(false, core::sync::atomic::Ordering::Relaxed);
-        }
 
         if args.flag(b"--tls-min-v1.3") && args.flag(b"--tls-max-v1.2") {
             bun_core::pretty_errorln!(
@@ -1506,6 +1825,8 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             );
             Global::exit(1);
         }
+
+        compile_options::parse_runtime_flags(cmd, &args, ctx);
     }
 
     if let (Some(port), true) = (opts.port, opts.origin.is_none()) {
@@ -1520,7 +1841,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
 
     ctx.bundler_options.ignore_dce_annotations = args.flag(b"--ignore-dce-annotations");
 
-    if cmd == CommandTag::BuildCommand {
+    if is_build {
         parse_build_command_options(cmd, &args, &mut opts, ctx, &mut diag);
     }
 
@@ -1528,9 +1849,11 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         let mut entry_points: &[Box<[u8]>] = &ctx.positionals;
 
         match cmd {
-            CommandTag::BuildCommand => {
+            CommandTag::BuildCommand | CommandTag::CompileCommand => {
                 if !entry_points.is_empty()
-                    && (&*entry_points[0] == b"build" || &*entry_points[0] == b"bun")
+                    && (&*entry_points[0] == b"build"
+                        || &*entry_points[0] == b"bun"
+                        || &*entry_points[0] == b"compile")
                 {
                     let mut out_entry = &entry_points[1..];
                     for (i, entry) in entry_points.iter().enumerate() {
@@ -1634,8 +1957,11 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
     }
 
-    if cmd == CommandTag::BuildCommand {
-        if opts.entry_points.is_empty() && !ctx.bundler_options.bake {
+    if is_build {
+        if cmd == CommandTag::BuildCommand
+            && opts.entry_points.is_empty()
+            && !ctx.bundler_options.bake
+        {
             bun_core::prettyln!(
                 "<r><b>bun build <r><d>v{}<r>",
                 bun_core::Global::package_json_version_with_sha
@@ -1723,6 +2049,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
 #[cold]
 #[inline(never)]
 fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
+    bun_removable_features::removable_definition!(TestCommand, parse_test_command_options);
     if let Some(timeout_ms) = args.option(b"--timeout") {
         if !timeout_ms.is_empty() {
             ctx.test_options.default_timeout_ms = match strings::parse_int::<u32>(timeout_ms, 10) {
@@ -1760,6 +2087,7 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     }
 
     if !args.options(b"--coverage-reporter").is_empty() {
+        ctx.test_options.coverage.enabled = true;
         ctx.test_options.coverage.reporters = CoverageReporters {
             text: false,
             lcov: false,
@@ -1882,7 +2210,7 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     if let Some(name_pattern) = args.option(b"--test-name-pattern") {
         ctx.test_options.test_filter_pattern = Some(name_pattern.into());
         let regex = match RegularExpression::init(
-            &bun_core::String::from_bytes(name_pattern),
+            &bun_core::StringView::from_bytes(name_pattern),
             RegexFlags::None,
         ) {
             Ok(r) => r,
@@ -2038,7 +2366,41 @@ fn parse_build_command_options(
     ctx: Context<'_>,
     diag: &mut clap::Diagnostic,
 ) {
+    bun_removable_features::removable_definition!(BuildCommand, parse_build_command_options);
+    let library = cmd == CommandTag::CompileCommand && args.flag(b"--library");
+    let compiles = args.flag(b"--compile") || (cmd == CommandTag::CompileCommand && !library);
     ctx.bundler_options.transform_only = args.flag(b"--no-bundle");
+    ctx.bundler_options.check = args.flag(b"--check");
+    if library {
+        let unsupported = [
+            ("--compile", args.flag(b"--compile")),
+            ("--aot", args.flag(b"--aot")),
+            ("--trim", args.flag(b"--trim")),
+        ];
+        if let Some((flag, _)) = unsupported.iter().find(|(_, is_set)| *is_set) {
+            Output::err_generic("--library cannot be used with {}", format_args!("{}", flag));
+            Global::exit(1);
+        }
+        if args.option(b"--outfile").is_some() {
+            Output::err_generic(
+                "--library writes a folder. Use --outdir instead of --outfile",
+                (),
+            );
+            Global::exit(1);
+        }
+        if args
+            .option(b"--format")
+            .is_some_and(|format| format != b"esm" && format != b"cjs")
+        {
+            Output::err_generic("--library only supports --format=esm and --format=cjs", ());
+            Global::exit(1);
+        }
+        ctx.bundler_options.outdir = cli::compile_command::DEFAULT_LIBRARY_OUTDIR.into();
+        ctx.bundler_options.env_behavior = options::EnvBehavior::LoadAllWithoutInlining;
+        opts.target = Some(api::Target::Node);
+    }
+    ctx.bundler_options.library = library;
+    ctx.bundler_options.dts = library || args.flag(b"--dts");
     ctx.bundler_options.bytecode = args.flag(b"--bytecode");
     if let Some(depth) = args.option(b"--bytecode-depth") {
         ctx.bundler_options.bytecode_depth = match strings::parse_int::<u32>(depth, 10) {
@@ -2164,8 +2526,8 @@ fn parse_build_command_options(
 
     if let Some(target) = args.option(b"--target") {
         'brk: {
-            if cmd == CommandTag::BuildCommand {
-                if args.flag(b"--compile") {
+            if matches!(cmd, CommandTag::BuildCommand | CommandTag::CompileCommand) {
+                if compiles {
                     if target.len() > 4 && strings::has_prefix(target, b"bun-") {
                         ctx.bundler_options.compile_target =
                             cli::Cli::CompileTarget::from(&target[3..]);
@@ -2182,19 +2544,24 @@ fn parse_build_command_options(
                 }
             }
 
-            opts.target = Some(opts.target.unwrap_or_else(|| match target {
-                b"browser" => api::Target::Browser,
-                b"node" => api::Target::Node,
-                b"macro" => {
-                    if cmd == CommandTag::BuildCommand {
-                        api::Target::BunMacro
-                    } else {
-                        api::Target::Bun
-                    }
-                }
-                b"bun" => api::Target::Bun,
-                _ => cli::invalid_target(diag, target),
-            }));
+            opts.target = Some(
+                opts.target
+                    .filter(|_| !library)
+                    .unwrap_or_else(|| match target {
+                        b"browser" => api::Target::Browser,
+                        b"node" => api::Target::Node,
+                        b"macro" => {
+                            if matches!(cmd, CommandTag::BuildCommand | CommandTag::CompileCommand)
+                            {
+                                api::Target::BunMacro
+                            } else {
+                                api::Target::Bun
+                            }
+                        }
+                        b"bun" => api::Target::Bun,
+                        _ => cli::invalid_target(diag, target),
+                    }),
+            );
 
             if opts.target.unwrap() == api::Target::Bun {
                 ctx.debug.run_in_bun = opts.target.unwrap() == api::Target::Bun;
@@ -2236,7 +2603,7 @@ fn parse_build_command_options(
         }
     }
 
-    if args.flag(b"--compile") {
+    if compiles {
         ctx.bundler_options.compile = true;
         ctx.bundler_options.inline_entrypoint_import_meta_main = true;
     }
@@ -2247,6 +2614,20 @@ fn parse_build_command_options(
             Global::crash();
         }
         ctx.bundler_options.compile_exec_argv = Some(compile_exec_argv.into());
+    }
+
+    for order_files in args.options(b"--bytecode-order") {
+        if !compile_options::is_aot_requested(cmd, args)
+            && (!ctx.bundler_options.compile || !ctx.bundler_options.bytecode)
+        {
+            Output::err_generic("--bytecode-order requires --compile --bytecode", ());
+            Global::crash();
+        }
+        ctx.bundler_options.bytecode_order.extend(
+            strings::split(order_files, b",")
+                .filter(|path| !path.is_empty())
+                .map(Box::<[u8]>::from),
+        );
     }
 
     if let Some(jit_policy) = args.option(b"--compile-jit-policy") {
@@ -2629,26 +3010,6 @@ fn parse_build_command_options(
         }
     }
 
-    if args.flag(b"--server-components") {
-        ctx.bundler_options.server_components = true;
-        if let Some(target) = opts.target {
-            if !<bun_ast::Target as bun_options_types::TargetExt>::from_api(Some(target))
-                .is_server_side()
-            {
-                Output::err_generic(
-                    "Cannot use client-side --target={} with --server-components",
-                    format_args!(
-                        "{:?}",
-                        <bun_ast::Target as bun_options_types::TargetExt>::from_api(Some(target))
-                    ),
-                );
-                Global::crash();
-            } else {
-                opts.target = Some(api::Target::Bun);
-            }
-        }
-    }
-
     if args.flag(b"--react-fast-refresh") {
         ctx.bundler_options.react_fast_refresh = true;
     }
@@ -2683,4 +3044,6 @@ fn parse_build_command_options(
         // produces an executable or a standalone HTML file (browsers do read
         // the comment, so standalone HTML keeps the user's choice).
     }
+
+    compile_options::parse_build_flags(cmd, args, ctx);
 }

@@ -1,0 +1,35 @@
+# A method call on a receiver that is only expected to be of a built-in class, with operands that match no overload, is still a call of the built-in behind the tests of the receiver where flow has seen that built-in and no other arrive as the callee: no other guess about the callee takes its place
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="oneBuiltinSeen" parameters=[{type=Buffer flags=[IsExpected]}, {type=string}] results=[{type=anything}] {
+  b0(v0: anything ~ Buffer, v1: string):
+    v2 = PropGet v0 key="readUInt8"
+    v3 = Call v2, v0, v1 calleeKey="readUInt8" callees=[builtin(BufferPrototypeReadUInt8), ..]
+    Return v3
+}
+# CHECK-LABEL: function f0 name="oneBuiltinSeen"
+# CHECK: = TypeTest v0 testedType=Buffer
+# CHECK: = CallBuiltin {{*}}, v1 overload=BufferPrototypeReadUInt8/0 builtinCallForm=AnyReceiver
+# CHECK: frequency=Unlikely:
+# CHECK: anything = Call {{*}}, v0, v1 calleeKey="readUInt8"
+
+function f1 name="twoBuiltinsSeen" parameters=[{type=Buffer flags=[IsExpected]}, {type=string}] results=[{type=anything}] {
+  b0(v0: anything ~ Buffer, v1: string):
+    v2 = PropGet v0 key="readUInt8"
+    v3 = Call v2, v0, v1 calleeKey="readUInt8" callees=[builtin(BufferPrototypeReadUInt8), builtin(BufferPrototypeReadInt8), ..]
+    Return v3
+}
+# CHECK-LABEL: function f1 name="twoBuiltinsSeen"
+# CHECK-NOT: CallBuiltin
+
+function f2 name="nothingSeen" parameters=[{type=Buffer flags=[IsExpected]}, {type=string}] results=[{type=anything}] {
+  b0(v0: anything ~ Buffer, v1: string):
+    v2 = PropGet v0 key="readUInt8"
+    v3 = Call v2, v0, v1 calleeKey="readUInt8"
+    Return v3
+}
+# CHECK-LABEL: function f2 name="nothingSeen"
+# CHECK-NOT: CallBuiltin

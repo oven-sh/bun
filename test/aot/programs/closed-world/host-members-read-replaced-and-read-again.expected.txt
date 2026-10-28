@@ -1,0 +1,19 @@
+env, before: object
+env, by its name: named
+env, under a computed key: computed
+env, through a receiver nobody follows: hidden
+env, by a definition: defined
+env, by Reflect.set: reflected
+env, by Object.assign: assigned
+env, by a getter: from a getter
+env, deleted: undefined
+env, put back: object true
+versions, replaced before the first read, under a computed key: TypeError
+release, replaced before the first read, through a receiver nobody follows: TypeError
+config, defined before the first read: defined
+features, deleted before the first read: undefined
+nextTick, before: function
+nextTick, under a computed key: computed
+nextTick, put back: function
+hrtime, in a loop that replaces it half way: function | function | replaced in round 1 | replaced in round 1
+argv0: string

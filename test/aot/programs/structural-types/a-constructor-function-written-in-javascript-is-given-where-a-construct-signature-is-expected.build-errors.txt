@@ -1,0 +1,1 @@
+error: TS2322: Type '() => void' is not assignable to type 'new () => object'.

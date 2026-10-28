@@ -311,8 +311,9 @@ mod tests {
             to.fill(0);
 
             let mut vec = vec![0; start];
-            vec.reserve(from.len());
-            assert_eq!(append(&mut vec, to.sub(..from.len() + PAGE)?), Err(BUG));
+            vec.reserve_exact(from.len());
+            let too_long = vec.capacity() - vec.len() + 1;
+            assert_eq!(append(&mut vec, to.sub(..too_long)?), Err(BUG));
             append(&mut vec, &from)?;
             assert!(*vec.sub(start..)? == *from);
         }

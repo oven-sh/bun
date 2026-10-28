@@ -4848,7 +4848,8 @@ impl VirtualMachine {
                     if self.transpiler.resolver.opts.preserve_symlinks {
                         ret.path = path.as_bytes().to_vec().into();
                         if self.finds_entry_points_by_path
-                            && let Some(entry) = crate::compiled_program::find_entry_point_by_source_path(&ret.path)
+                            && let Some(entry) =
+                                crate::compiled_program::find_entry_point_by_source_path(&ret.path)
                         {
                             ret.path = crate::compiled_program::module_key(entry).into();
                         }
@@ -4858,7 +4859,8 @@ impl VirtualMachine {
                     if let Ok(realpath) = bun_sys::realpath(path, &mut realpath_buf) {
                         ret.path = realpath.to_vec().into();
                         if self.finds_entry_points_by_path
-                            && let Some(entry) = crate::compiled_program::find_entry_point_by_source_path(&ret.path)
+                            && let Some(entry) =
+                                crate::compiled_program::find_entry_point_by_source_path(&ret.path)
                         {
                             ret.path = crate::compiled_program::module_key(entry).into();
                         }

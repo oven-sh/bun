@@ -726,7 +726,7 @@ impl EventLoop {
     pub(crate) fn apply_concurrent_ref_delta(&self) {
         let delta = self.concurrent_ref.swap(0, Ordering::SeqCst);
         // SAFETY: `native_loop()` is live for this loop's lifetime; JS thread only.
-        let loop_ = unsafe { &mut *self.native_loop() };
+        let loop_ = unsafe { &*self.native_loop() };
         #[cfg(windows)]
         {
             if delta > 0 {
@@ -738,15 +738,21 @@ impl EventLoop {
         #[cfg(not(windows))]
         {
             if delta > 0 {
-                loop_.num_polls += delta;
-                loop_.active = loop_
-                    .active
-                    .saturating_add(u32::try_from(delta).expect("int cast"));
+                loop_.num_polls.set(loop_.num_polls.get() + delta);
+                loop_.active.set(
+                    loop_
+                        .active
+                        .get()
+                        .saturating_add(u32::try_from(delta).expect("int cast")),
+                );
             } else {
-                loop_.num_polls -= -delta;
-                loop_.active = loop_
-                    .active
-                    .saturating_sub(u32::try_from(-delta).expect("int cast"));
+                loop_.num_polls.set(loop_.num_polls.get() - -delta);
+                loop_.active.set(
+                    loop_
+                        .active
+                        .get()
+                        .saturating_sub(u32::try_from(-delta).expect("int cast")),
+                );
             }
         }
     }
@@ -1408,8 +1414,7 @@ impl EventLoop {
         // `tick()` below can start work (e.g. a --hot reload) whose only wake
         // source is a cross-thread `wakeup()`; bound the park, same as the GC
         // timerfd used to. libuv's `tick_with_timeout` ignores the argument.
-        // SAFETY: as above — the tick runs loop callbacks that reach the loop
-        // themselves, so the exclusive borrow is scoped to this call only.
+        // SAFETY: as above.
         unsafe {
             (*loop_ptr).tick_with_timeout(
                 Some(&bun_core::Timespec { sec: 1, nsec: 0 }),
@@ -1469,11 +1474,11 @@ pub(crate) fn get_active_tasks(
     #[cfg(windows)]
     // SAFETY: `Loop::get()` returns the live process-global `uv_loop_t`.
     let num_polls: i32 =
-        i32::try_from(unsafe { (*bun_sys::windows::libuv::Loop::get()).active_handles })
+        i32::try_from(unsafe { (*bun_sys::windows::libuv::Loop::get()).active_handles.get() })
             .expect("int cast");
     #[cfg(not(windows))]
     // SAFETY: uws::Loop::get() returns a live process-global loop.
-    let num_polls: i32 = unsafe { (*uws::Loop::get()).num_polls };
+    let num_polls: i32 = unsafe { (*uws::Loop::get()).num_polls.get() };
     crate::generated_bindgen::event_loop::ActiveTasks {
         active_tasks: vm_ref.active_tasks,
         tasks: event_loop.tasks.readable_length(),
@@ -1489,7 +1494,7 @@ pub(crate) fn get_active_tasks(
         sweep_timer_count: unsafe {
             (*event_loop.usockets_loop())
                 .internal_loop_data
-                .sweep_timer_count
+                .sweep_timer_count()
         },
         #[cfg(windows)]
         sweep_deadline: None,
@@ -1498,7 +1503,7 @@ pub(crate) fn get_active_tasks(
         sweep_deadline: Some(unsafe {
             (*event_loop.usockets_loop())
                 .internal_loop_data
-                .sweep_next_tick_ns
+                .sweep_next_tick_ns()
         } as f64),
     }
 }

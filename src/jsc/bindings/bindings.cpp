@@ -5736,6 +5736,10 @@ restart:
         // The global of another realm shows what the program put on it, not the realm's builtins.
         auto* globalProxy = dynamicDowncast<JSGlobalProxy>(object);
         const bool isOtherGlobal = globalProxy && globalProxy->target() != globalObject;
+        // A [[Get]] on the global of a node:vm context calls the sandbox's getter. Reading the property's own slot does not.
+        const auto lookupType = (!nonIndexedOnly && isOtherGlobal) ? PropertySlot::InternalMethodType::GetOwnProperty : PropertySlot::InternalMethodType::Get;
+        auto* contextGlobal = (!nonIndexedOnly && isOtherGlobal) ? dynamicDowncast<Bun::NodeVMGlobalObject>(globalProxy->target()) : nullptr;
+        JSObject* sandbox = contextGlobal ? contextGlobal->contextifiedObject() : nullptr;
 
         while (iterating && !(iterating == globalObject->objectPrototype() || iterating == globalObject->functionPrototype() || (iterating != object && iterating->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(iterating)->target() != globalObject)) && prototypeCount++ < 5) {
             if constexpr (nonIndexedOnly) {
@@ -5759,7 +5763,7 @@ restart:
                     }
                 }
 
-                JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
+                JSC::PropertySlot slot(object, lookupType);
                 bool hasProperty = object->getPropertySlot(globalObject, property, slot);
                 // Ignore exceptions from "Get" proxy traps and lazy initializers; they also report the property as not found.
                 CLEAR_IF_EXCEPTION(scope);
@@ -5799,13 +5803,16 @@ restart:
                     }
                 } else if (slot.isAccessor()) {
                     // If we can't use getPureResult, let's at least say it was a [Getter]
-                    if (!slot.isCacheableGetter()) {
+                    if (!slot.isCacheableGetter() || lookupType == PropertySlot::InternalMethodType::GetOwnProperty) {
                         propertyValue = slot.getterSetter();
                     } else {
                         propertyValue = slot.getPureResult();
                     }
                 } else {
                     propertyValue = slot.getValue(globalObject, property);
+                    // A read of a property that holds the sandbox gives the context's global.
+                    if (sandbox && propertyValue == sandbox) [[unlikely]]
+                        propertyValue = object;
                 }
 
                 // Ignore exceptions from getters.

@@ -887,6 +887,8 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
           let bytesRead;
           try {
             ({ bytesRead } = await handle.read(view, 0, view.byteLength));
+            // close() throws when a read left part of an element filled. Release the handle then too, which node does not.
+            if (bytesRead === 0 && !done) controller.close();
           } catch (err) {
             if (done) return;
             await ondone();
@@ -894,10 +896,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
           }
           if (done) return;
 
-          if (bytesRead === 0) {
-            controller.close();
-            await ondone();
-          }
+          if (bytesRead === 0) await ondone();
 
           controller.byobRequest!.respond(bytesRead);
         },

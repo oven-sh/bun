@@ -419,9 +419,8 @@ impl Image {
         // nullish width is allowed only when the height is given.
         let width_auto = width.is_undefined_or_null() && height.is_number();
         if !width.is_number() && !width_auto {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "resize(width | null, height?, options?)"
-            )));
+            return Err(global
+                .throw_invalid_arguments(format_args!("resize(width | null, height?, options?)")));
         }
         // 0x3FFF² is the max_pixels default; capping each side at 0x3FFFF (≈262k)
         // keeps every downstream u32 product in range without a per-stage check.

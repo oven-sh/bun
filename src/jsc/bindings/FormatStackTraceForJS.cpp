@@ -863,6 +863,86 @@ JSC_DEFINE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter, (JSGlobalObject * g
     return true;
 }
 
+static bool isInNodeModules(const String& sourceURL)
+{
+    return sourceURL.contains("/node_modules/"_s) || sourceURL.contains("\\node_modules\\"_s)
+        || sourceURL.contains("/node_modules\\"_s) || sourceURL.contains("\\node_modules/"_s);
+}
+
+// Port of node's IsInsideNodeModules (src/node_util.cc): an engine frame takes none of the `limit` frames, as a V8 builtin takes none there.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionIsInsideNodeModules, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    JSValue limitArgument = callFrame->argument(0);
+    int32_t limit = limitArgument.isInt32AsAnyInt() ? limitArgument.asInt32AsAnyInt() : 10;
+    int32_t listed = 0;
+    bool isInside = false;
+    JSC::SourceProvider* outsideProvider = nullptr;
+    JSC::LineColumn outsideLineColumn;
+
+    JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
+        using CodeType = JSC::StackVisitor::Frame::CodeType;
+#if ENABLE(AOT)
+        // A frame of `bun build --compile --aot` has no CodeBlock. The build recorded its position, so no source map applies at run time.
+        if (visitor->isCompiledFrame()) [[unlikely]] {
+            JSC::AOT::FunctionDescription description(visitor->compiledFrame().function);
+            if (description.builtinKind() != JSC::AOT::StackTraceBuiltinKind::None)
+                return WTF::IterationStatus::Continue;
+            if (listed++ >= limit)
+                return WTF::IterationStatus::Done;
+            if (description.isInRuntimeModule())
+                return WTF::IterationStatus::Continue;
+            String sourceURL = Zig::sourceURL(visitor);
+            if (sourceURL.startsWith("node:"_s))
+                return WTF::IterationStatus::Continue;
+            isInside = isInNodeModules(sourceURL);
+            return WTF::IterationStatus::Done;
+        }
+#endif
+        switch (visitor->codeType()) {
+        case CodeType::Native:
+            return WTF::IterationStatus::Continue;
+        case CodeType::Wasm:
+            // V8 names it wasm://wasm/<hash>, so it decides.
+            return WTF::IterationStatus::Done;
+        case CodeType::Function:
+            if (uncheckedDowncast<JSC::FunctionExecutable>(visitor->codeBlock()->ownerExecutable())->isPrivateBuiltinFunction())
+                return WTF::IterationStatus::Continue;
+            break;
+        case CodeType::Eval:
+        case CodeType::Module:
+        case CodeType::Global:
+            break;
+        }
+
+        if (listed++ >= limit)
+            return WTF::IterationStatus::Done;
+
+        // A built-in module, and a script that a program names "node:", which node steps over by that name.
+        if (visitor->codeBlock()->ownerExecutable()->sourceOrigin().url().protocolIs("builtin"_s))
+            return WTF::IterationStatus::Continue;
+        String sourceURL = Zig::sourceURL(visitor);
+        if (sourceURL.startsWith("node:"_s))
+            return WTF::IterationStatus::Continue;
+
+        isInside = isInNodeModules(sourceURL);
+        if (!isInside) {
+            outsideProvider = visitor->codeBlock()->source().provider();
+            outsideLineColumn = visitor->computeLineAndColumn();
+        }
+        return WTF::IterationStatus::Done;
+    });
+
+    // A bundle is one file outside node_modules. Its source map names the files it was built from.
+    if (outsideProvider) {
+        String remappedURL;
+        computeLineColumnWithSourcemap(vm, outsideProvider, outsideLineColumn, remappedURL);
+        isInside = isInNodeModules(remappedURL);
+    }
+
+    return JSValue::encode(jsBoolean(isInside));
+}
+
 JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);

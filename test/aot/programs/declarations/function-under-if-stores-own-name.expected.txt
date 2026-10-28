@@ -1,0 +1,11 @@
+[ "function", 1, "function", 1 ]
+[ "function", "string" ]
+2 undefined
+[ true, true, false, "only the first", true ]
+inner
+text
+[ 0, 1, 2 ]
+true
+top function
+function
+block function

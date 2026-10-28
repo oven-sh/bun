@@ -17,6 +17,14 @@ use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
 
+mod code;
+mod code_host;
+mod project_resolvers;
+
+pub use self::code::*;
+pub use self::code_host::*;
+pub use self::project_resolvers::ProjectResolvers;
+
 /// Runs `step` on the calling thread until it returns false, while helper threads each run `work` once.
 ///
 /// Polls `Host::helpers_now` before every step. When it allows more helpers than are running, the extra ones start and
@@ -61,6 +69,27 @@ pub type CachedConfig = std::sync::Arc<dyn std::any::Any + Send + Sync>;
 /// `Options::paths`
 pub type Paths = Vec<(Vec<u8>, Vec<Vec<u8>>)>;
 
+/// Changes whenever the contents of a file may have changed.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct FileStamp {
+    pub device: u64,
+    pub inode: u64,
+    pub size: u64,
+    pub modified: (i64, i64),
+    pub changed: (i64, i64),
+}
+
+impl FileStamp {
+    /// For a text that can't change while the host exists.
+    pub const IMMUTABLE: FileStamp = FileStamp {
+        device: 0,
+        inode: 0,
+        size: 0,
+        modified: (0, 0),
+        changed: (0, 0),
+    };
+}
+
 /// The file system and the parser. The bundler has its own implementation of both.
 pub trait Host: Sync {
     /// Returns the file's contents. As in `bun_ast::Source`, a host that already holds them (the
@@ -79,6 +108,10 @@ pub trait Host: Sync {
     /// The paths for which `read_source` has failed since the last call.
     fn take_unreadable(&self) -> Vec<Vec<u8>> {
         Vec::new()
+    }
+    /// `None`: the host can't tell whether `read_source` would return the same text later.
+    fn file_stamp(&self, _path: &[u8]) -> Option<FileStamp> {
+        None
     }
     fn is_file(&self, path: &[u8]) -> bool;
     fn is_dir(&self, path: &[u8]) -> bool;
@@ -119,6 +152,17 @@ pub trait Host: Sync {
         atoms: &crate::atom::Interner<'s>,
         options: ParseOptions,
     ) -> crate::hir::File<'s>;
+    /// `parse` for a caller that reads the top level of the file alone: a function may have an empty body in the place of its own.
+    fn parse_top_level<'s>(
+        &self,
+        _arena: &'s crate::session::Arena,
+        _path: &[u8],
+        _text: &[u8],
+        _atoms: &crate::atom::Interner<'s>,
+        _options: ParseOptions,
+    ) -> Option<crate::hir::File<'s>> {
+        None
+    }
     /// `packagejson.Parse`: returns an object with exactly the fields of `Fields` that `text` has. Returns `None` on an
     /// error, after which typescript-go continues as if the file had no fields.
     /// How an `Expected[T]` is encoded: if it's `Valid`, as its `Value`. Otherwise as a value of
@@ -154,6 +198,10 @@ pub trait Host: Sync {
     ) {
         self.parallel(count, work);
         meanwhile();
+    }
+    /// Runs `work`.
+    fn run_regions_inline(&self, work: &mut dyn FnMut()) {
+        work();
     }
     /// True if `parallel` would currently run only on the calling thread, however many threads are requested.
     fn is_single_threaded(&self) -> bool {
@@ -557,6 +605,8 @@ pub fn is_javascript_file(host: &dyn Host, path: &[u8]) -> bool {
 pub struct ParseOptions {
     pub experimental_decorators: bool,
     pub module_detection: ModuleDetection,
+    /// What the project says.
+    pub written_module_detection: ModuleDetection,
     /// `jsx` is `react-jsx` or `react-jsxdev`: a JSX tag imports its factory.
     pub jsx_imports_its_factory: bool,
     /// The source text of TypeScript's own libraries is only needed when they're checked. With
@@ -704,6 +754,12 @@ pub struct Options {
     /// and the files only they bring in, aren't the project's sources: nothing is emitted for them, so `rootDir` and
     /// `composite` don't apply to them. `None`: all of them belong to it.
     pub own_roots: Option<usize>,
+    /// A root file, a script, whose global declarations and ambient modules count only where no other file declares the name.
+    pub declarations_of_last_resort: Vec<u8>,
+    /// Where `/// <reference types>` and an entry of `types` are looked up that are found nowhere else. It is none of `typeRoots`.
+    pub type_root_of_last_resort: Option<Vec<u8>>,
+    /// The declarations of one symbol in several files are considered in the order in which the directories list the files, whichever file refers to which.
+    pub orders_files_as_listed: bool,
     /// `validatedFilesSpecBeforeSubstitution`, each paired with the corresponding entry of
     /// `validatedFilesSpec` as an absolute path.
     pub file_specs: Vec<(Vec<u8>, Vec<u8>)>,
@@ -728,6 +784,8 @@ pub struct Options {
     /// The effective `moduleResolution` is `node16` or `nodenext`, specified or defaulted.
     /// Otherwise it is `bundler`.
     pub resolves_like_node: bool,
+    /// What an `import` names is found as `bun run` finds it, which adds an extension and takes the index file of a directory under every `moduleResolution`.
+    pub imports_need_no_extension: bool,
     /// The effective `moduleResolution` is `node16`, which doesn't support `#/` in the `imports`
     /// of a `package.json` (`NodeResolutionFeaturesImportsPatternRoot`). `nodenext` and `bundler`
     /// do.
@@ -813,6 +871,7 @@ impl Options {
         ParseOptions {
             experimental_decorators: self.experimental_decorators,
             module_detection: self.module_detection,
+            written_module_detection: self.module_detection,
             jsx_imports_its_factory: matches!(self.jsx, JsxEmit::ReactJsx | JsxEmit::ReactJsxDev),
             keeps_library_text: self.lib_replacement
                 || !(self.skip_lib_check || self.skip_default_lib_check),
@@ -821,6 +880,7 @@ impl Options {
                 emit_standard_class_fields: self.emit_standard_class_fields,
                 before_es2020: is_before(ScriptTarget::ES2020),
                 before_es2017: is_before(ScriptTarget::ES2017),
+                runtime: None,
             },
         }
     }
@@ -2022,6 +2082,8 @@ struct Caches<'h> {
     /// `knownSymlinks.Directories`: the symlink target of a package directory in `node_modules`.
     /// `None`: it isn't a symlink.
     linked_packages: Memo<&'h [u8], Option<&'h [u8]>>,
+    /// `Some` in a compile build: the text of each `package.json`, which both questions read. See `code.rs`.
+    manifest_texts: Option<Memo<&'h [u8], Option<&'h [u8]>>>,
 }
 
 impl Caches<'_> {
@@ -2032,6 +2094,7 @@ impl Caches<'_> {
             files: Memo::new(are_small),
             resolved: Memo::new(are_small),
             linked_packages: Memo::new(are_small),
+            manifest_texts: None,
         }
     }
 }
@@ -2057,6 +2120,8 @@ pub struct Resolver<'h> {
     /// `redirectedReference != nil`: its 1-based index in another resolver's `redirected`, or 0 if
     /// it isn't one of those.
     redirect: u32,
+    /// `Some` in a compile build: what the code question needs. See `code.rs`.
+    code: Option<Box<CodeState<'h>>>,
 }
 
 /// `guessDirectorySymlink`: the real path of the symlinked directory and the path of the symlink,
@@ -2280,7 +2345,16 @@ pub(crate) fn get_base_file_name(path: &[u8]) -> &[u8] {
 
 /// `IsDeclarationFileName`: the name ends in `.d.ts`, `.d.mts`, `.d.cts` or `.d.*.ts`.
 pub fn is_declaration_file_name(path: &[u8]) -> bool {
-    !get_declaration_file_extension(path).is_empty()
+    let is_separator = |byte: &u8| matches!(byte, b'/' | b'\\');
+    let root_is_one_slash = path.first() == Some(&b'/') && !path.get(1).is_some_and(is_separator);
+    if !root_is_one_slash || path.last().is_some_and(is_separator) {
+        return !get_declaration_file_extension(path).is_empty();
+    }
+    // The base name is the end of such a path, from its last separator on.
+    SUPPORTED_DECLARATION_EXTENSIONS
+        .into_iter()
+        .any(|extension| path.ends_with(extension))
+        || (path.ends_with(b".ts") && strings::contains(get_base_file_name(path), b".d."))
 }
 
 /// `GetDeclarationFileExtension`: for `a.d.b.d.json.ts` it's `.d.b.d.json.ts`, from the first `.d.`
@@ -2371,6 +2445,7 @@ impl<'h> Resolver<'h> {
             // Not in an arena, so a resolver that stores nothing never creates one.
             redirected: redirected.collect(),
             redirect: 0,
+            code: None,
         }
     }
 
@@ -2424,6 +2499,7 @@ impl<'h> Resolver<'h> {
             links: bun_threading::Guarded::new(Vec::new_in(self.session)),
             redirected: Vec::new(),
             redirect: 1 + project as u32,
+            code: None,
         });
         (redirected, source)
     }
@@ -2611,7 +2687,7 @@ impl<'h> Resolver<'h> {
         let path = inside(dir, b"package.json");
         // `getPackageJsonInfo`: a file that can't be read or parsed is a package without fields.
         let package = self.is_file(&path).then(|| {
-            let text = self.host.read(&path);
+            let text = self.read_manifest_text(&path);
             let json =
                 text.and_then(|text| (self.host).parse_package_json(self.session.arena(), &text));
             let json = json.unwrap_or(Json::Null);
@@ -2850,7 +2926,9 @@ impl<'h> Resolver<'h> {
         let like_node = self.options.resolves_like_node;
         Look {
             tracer: None,
-            esm: like_node && mode == ResolutionMode::Import,
+            esm: like_node
+                && mode == ResolutionMode::Import
+                && !self.options.imports_need_no_extension,
             // `GetConditions`: under bundler resolution, a mode that isn't explicitly `require` is
             // `import`.
             import: mode == ResolutionMode::Import || mode == ResolutionMode::None && !like_node,
@@ -3248,6 +3326,10 @@ impl<'h> Resolver<'h> {
             } else {
                 self.node_modules(name, from_dir, look).file()
             }
+        });
+        let found = found.or_else(|| {
+            let root = self.options.type_root_of_last_resort.as_ref()?;
+            self.in_type_roots(std::slice::from_ref(root), false, name, look)
         });
         // `createResolvedTypeReferenceDirective`: `typesVersions` can name any file, but only a
         // TypeScript file is accepted.
@@ -3839,7 +3921,7 @@ impl<'h> Resolver<'h> {
             // Whatever is combined with `candidate` here is normalized afterwards.
             let normalized = normalized_for_lookup(candidate);
             let dir = normalized.as_deref().unwrap_or(candidate);
-            let version_paths = get_version_paths(&package.json, look);
+            let version_paths = get_version_paths(&package.json, look.tracer);
             // `getPackageFile`: only the first of these fields that has a value.
             let fields: &[&[u8]] = match (is_package_dir, look.declarations) {
                 (false, _) => &[],
@@ -4053,7 +4135,7 @@ impl<'h> Resolver<'h> {
         if !rest.is_empty()
             && !look.as_require
             && let Some(package) = package
-            && let Some(paths) = get_version_paths(&package.json, look)
+            && let Some(paths) = get_version_paths(&package.json, look.tracer)
             && let Some(found) = self.through_types_versions(paths, &package_dir, rest, &load, look)
         {
             return Found::File(found);
@@ -4154,9 +4236,44 @@ impl<'h> Resolver<'h> {
         Found::No
     }
 
+    /// Under `--aot` the file that "aot" names is the module for the checker too, wherever "types" stands.
+    fn export_target(
+        &self,
+        package_dir: &[u8],
+        module_name: &[u8],
+        target: &Json,
+        subpath: &[u8],
+        is_pattern: IsPattern,
+        key: &[u8],
+        is_imports: IsImports,
+        look: Look,
+    ) -> Found {
+        let walk = |skips_types: bool| {
+            self.walk_export_target(
+                package_dir,
+                module_name,
+                target,
+                subpath,
+                is_pattern,
+                key,
+                is_imports,
+                look,
+                skips_types,
+            )
+        };
+        let custom_conditions = &self.options.custom_conditions;
+        if custom_conditions.iter().any(|it| it == AOT_CONDITION)
+            && names_condition(target, AOT_CONDITION)
+            && let Found::File(path) = walk(true)
+        {
+            return Found::File(path);
+        }
+        walk(false)
+    }
+
     /// `loadModuleFromTargetExportOrImport`. `subpath`: the text matched by the `*` of `key` if
-    /// `is_pattern`, or else the text after `key`.
-    fn export_target<'j>(
+    /// `is_pattern`, or else the text after `key`. With `skips_types` it finds only what stands below "aot".
+    fn walk_export_target<'j>(
         &self,
         package_dir: &[u8],
         module_name: &[u8],
@@ -4166,6 +4283,7 @@ impl<'h> Resolver<'h> {
         key: &[u8],
         is_imports: IsImports,
         look: Look,
+        skips_types: bool,
     ) -> Found {
         /// An object or an array whose targets are being searched.
         enum Entered<'a> {
@@ -4178,7 +4296,9 @@ impl<'h> Resolver<'h> {
             match entered {
                 Entered::Conditions(condition, rest) => {
                     for (next, target) in rest.by_ref() {
-                        if self.condition_matches(next, look) {
+                        let is_skipped =
+                            skips_types && (next == b"types" || next.starts_with(b"types@"));
+                        if !is_skipped && self.condition_matches(next, look) {
                             look.trace(6403, &[Arg::Bytes(field), Arg::Bytes(next)]);
                             *condition = next.as_slice();
                             return Some(target);
@@ -4228,6 +4348,14 @@ impl<'h> Resolver<'h> {
                 }
                 entered.push(inner);
             };
+            let is_below_aot = || {
+                entered.iter().any(|it| {
+                    matches!(it, Entered::Conditions(condition, _) if *condition == AOT_CONDITION)
+                })
+            };
+            if skips_types && matches!(found, Found::File(_)) && !is_below_aot() {
+                return Found::No;
+            }
             // Back out to the innermost entry that has another target to try. A result ends the search.
             loop {
                 let Some(innermost) = entered.last_mut() else {
@@ -4710,32 +4838,37 @@ fn get_package_json_path_field(
 /// `GetVersionPaths`: finds the first entry of `typesVersions` in the `package.json` `json` whose range contains the
 /// compiler's version. Returns the range and the paths, which are an object. `None` means `Exists` is false. It's also
 /// false for an entry whose range is the empty string, which ends the search.
-fn get_version_paths<'j>(json: &'j Json, look: Look) -> Option<(&'j [u8], &'j Json)> {
+fn get_version_paths<'j>(json: &'j Json, tracer: Option<&Tracer>) -> Option<(&'j [u8], &'j Json)> {
+    let trace = |code: u32, args: &[Arg<'_>]| {
+        if let Some(tracer) = tracer {
+            tracer.write(code, args);
+        }
+    };
     let (types_versions, object) = (Arg::Bytes(b"typesVersions"), Arg::Bytes(b"object"));
     let Some(field) = json.get(b"typesVersions") else {
-        look.trace(6100, &[types_versions]);
+        trace(6100, &[types_versions]);
         return None;
     };
     let Some(versions) = field.as_object() else {
-        look.trace(
+        trace(
             6105,
             &[types_versions, object, Arg::Bytes(json_type(field))],
         );
         return None;
     };
-    look.trace(6206, &[types_versions]);
+    trace(6206, &[types_versions]);
     for (key, value) in versions {
         let Some(key_range) = try_parse_version_range(key) else {
-            look.trace(6209, &[Arg::Bytes(key)]);
+            trace(6209, &[Arg::Bytes(key)]);
             continue;
         };
         if !key_range.test(&TYPESCRIPT_VERSION) {
             continue;
         }
         if value.as_object().is_none() {
-            if look.tracer.is_some() {
+            if tracer.is_some() {
                 let name = [b"typesVersions['", key.as_slice(), b"']"].concat();
-                look.trace(
+                trace(
                     6105,
                     &[Arg::Bytes(&name), object, Arg::Bytes(json_type(value))],
                 );
@@ -4744,8 +4877,24 @@ fn get_version_paths<'j>(json: &'j Json, look: Look) -> Option<(&'j [u8], &'j Js
         }
         return (!key.is_empty()).then_some((key.as_slice(), value));
     }
-    look.trace(6207, &[Arg::Bytes(VERSION_MAJOR_MINOR)]);
+    trace(6207, &[Arg::Bytes(VERSION_MAJOR_MINOR)]);
     None
+}
+
+/// `GetVersionPaths(nil).GetPaths()` of the `package.json` `json`. An entry that isn't an array is skipped, and an
+/// element that isn't a string counts as the empty substitution.
+pub(crate) fn paths_of_types_versions(json: &Json) -> Option<Paths> {
+    let (_, mapping) = get_version_paths(json, None)?;
+    let substitutions = |targets: &[Json]| -> Vec<Vec<u8>> {
+        let texts = targets.iter().map(|it| it.as_str().unwrap_or_default());
+        texts.map(<[u8]>::to_vec).collect()
+    };
+    let entries = mapping.as_object()?.iter();
+    Some(
+        entries
+            .filter_map(|(key, value)| Some((key.clone(), substitutions(value.as_array()?))))
+            .collect(),
+    )
 }
 
 /// The key of `Caches::resolved`. Only the directory of `from` is used.
@@ -4875,6 +5024,19 @@ const VERSION: &[u8] = VERSION_C.to_bytes();
 const VERSION_MAJOR_MINOR: &[u8] = b"7.0";
 
 /// `IsApplicableVersionedTypesKey`
+fn names_condition(target: &Json, condition: &[u8]) -> bool {
+    if !bun_core::StackCheck::init().is_safe_to_recurse() {
+        return false;
+    }
+    match target {
+        Json::Object(conditions) => conditions
+            .iter()
+            .any(|(key, value)| key == condition || names_condition(value, condition)),
+        Json::Array(targets) => targets.iter().any(|it| names_condition(it, condition)),
+        _ => false,
+    }
+}
+
 pub(crate) fn is_applicable_versioned_types_key(key: &[u8]) -> bool {
     key.strip_prefix(b"types@")
         .and_then(try_parse_version_range)
@@ -5250,4 +5412,46 @@ bun_core::comptime_string_set! {
 pub fn is_node_core_module(spec: &[u8]) -> bool {
     NODE_CORE_MODULES.contains(spec.strip_prefix(b"node:").unwrap_or(spec))
         || PREFIXED_NODE_CORE_MODULES.contains(spec)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn declaration_file_names_are_those_with_a_declaration_extension() {
+        let paths: [&[u8]; 22] = [
+            b"",
+            b"/",
+            b"//",
+            b"/a.d.ts",
+            b"/.d.ts",
+            b"/d.ts",
+            b"/a.ts",
+            b"/a.d.mts",
+            b"/a.d.cts",
+            b"/a.d.json.ts",
+            b"/a.d.json.mts",
+            b"/a.d.x/b.ts",
+            b"/a.d.x\\b.ts",
+            b"/a/b.d.ts/",
+            b"/a/b.d.ts\\",
+            b"//a.d.ts",
+            b"/\\a.d.ts",
+            b"a.d.ts",
+            b"c:/a.d.ts",
+            b"c:.d.ts",
+            b"file:///a.d.ts",
+            b"/a.d.tsx",
+        ];
+        for path in paths {
+            let has_extension = !get_declaration_file_extension(path).is_empty();
+            assert_eq!(
+                is_declaration_file_name(path),
+                has_extension,
+                "{}",
+                bstr::BStr::new(path)
+            );
+        }
+    }
 }

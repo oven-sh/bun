@@ -1,0 +1,287 @@
+//// what-bundlers-and-compilers-write/babel.cjs
+"use strict";
+function _getRequireWildcardCache(nodeInterop) {
+  if (typeof WeakMap !== "function") return null;
+  var cache = new WeakMap();
+  return (_getRequireWildcardCache = function () { return cache; })(nodeInterop);
+}
+function _interopRequireWildcard(obj, nodeInterop) {
+  if (!nodeInterop && obj && obj.__esModule) return obj;
+  if (obj === null || (typeof obj !== "object" && typeof obj !== "function")) return { default: obj };
+  var cache = _getRequireWildcardCache(nodeInterop);
+  if (cache && cache.has(obj)) return cache.get(obj);
+  var newObj = {};
+  var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;
+  for (var key in obj) {
+    if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+      var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;
+      if (desc && (desc.get || desc.set)) Object.defineProperty(newObj, key, desc);
+      else newObj[key] = obj[key];
+    }
+  }
+  newObj.default = obj;
+  if (cache) cache.set(obj, newObj);
+  return newObj;
+}
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+var wildcard = _interopRequireWildcard(require("./typescript-source.cjs"));
+var _default = _interopRequireDefault(require("./umd.cjs"));
+module.exports = function () { return (0, wildcard.viaImportStar)() + ", " + _default.default.greet(); };
+//// what-bundlers-and-compilers-write/esbuild.cjs
+var __defProp = Object.defineProperty;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __esm = (fn, res) => function __init() { return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res; };
+var __commonJS = (cb, mod) => function __require() { return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports; };
+var __export = (target, all) => { for (var name in all) __defProp(target, name, { get: all[name], enumerable: true }); };
+
+var require_old = __commonJS({
+  "src/old.js"(exports, module) {
+    function helper() { return "helper of old.js"; }
+    module.exports = { run: function () { return helper(); } };
+  },
+});
+var new_exports = {};
+__export(new_exports, { run: () => run });
+function run() { return prefix + "new.js"; }
+var prefix;
+var init_new = __esm({ "src/new.js"() { prefix = "initialized "; } });
+
+module.exports = function () {
+  init_new();
+  return require_old().run() + ", " + new_exports.run();
+};
+//// what-bundlers-and-compilers-write/main.js
+// Files as tools emit them, one per tool: esbuild's __commonJS, __esm and __export; a webpack module map; a UMD wrapper; rollup's frozen namespace; TypeScript's __createBinding, __exportStar and __importStar; Babel's interop helpers. In each the functions are reached through tables, getters and loops of the tool's own run time.
+import esbuild from "./esbuild.cjs";
+import webpack from "./webpack.cjs";
+import umd from "./umd.cjs";
+import { rollup } from "./rollup.mjs";
+import typescript from "./typescript.cjs";
+import babel from "./babel.cjs";
+
+console.log(esbuild());
+console.log(webpack());
+console.log(umd.greet(), umd.version());
+console.log(rollup());
+console.log(typescript());
+console.log(babel());
+//// what-bundlers-and-compilers-write/rollup.mjs
+function first() { return "first of a frozen namespace"; }
+function second() { return "second"; }
+var namespace = /*#__PURE__*/ Object.freeze({ __proto__: null, first: first, second: second });
+function pick(object, name) { return object[name]; }
+export function rollup() { return pick(namespace, "fir" + "st")() + ", " + Object.keys(namespace).map(name => typeof namespace[name]).join(); }
+//// what-bundlers-and-compilers-write/typescript-source.cjs
+function viaExportStar() { return "through __exportStar"; }
+function viaImportStar() { return "through __importStar"; }
+function viaDefault() { return "through its default"; }
+exports.viaExportStar = viaExportStar;
+exports.viaImportStar = viaImportStar;
+exports.viaDefault = viaDefault;
+//// what-bundlers-and-compilers-write/typescript.cjs
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? function (o, m, k, k2) {
+  if (k2 === undefined) k2 = k;
+  var desc = Object.getOwnPropertyDescriptor(m, k);
+  if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) desc = { enumerable: true, get: function () { return m[k]; } };
+  Object.defineProperty(o, k2, desc);
+} : function (o, m, k, k2) { if (k2 === undefined) k2 = k; o[k2] = m[k]; });
+var __exportStar = (this && this.__exportStar) || function (m, exports) {
+  for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
+};
+var __setModuleDefault = Object.create ? function (o, v) { Object.defineProperty(o, "default", { enumerable: true, value: v }); } : function (o, v) { o["default"] = v; };
+var __importStar = function (mod) {
+  if (mod && mod.__esModule) return mod;
+  var result = {};
+  if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+  __setModuleDefault(result, mod);
+  return result;
+};
+const barrel = {};
+__exportStar(require("./typescript-source.cjs"), barrel);
+const star = __importStar(require("./typescript-source.cjs"));
+module.exports = function () { return barrel.viaExportStar() + ", " + star.viaImportStar() + ", " + star.default.viaDefault(); };
+//// what-bundlers-and-compilers-write/umd.cjs
+(function (root, factory) {
+  if (typeof define === "function" && define.amd) define([], factory);
+  else if (typeof module === "object" && module.exports) module.exports = factory();
+  else root.Greeter = factory();
+})(typeof self !== "undefined" ? self : this, function () {
+  function greet() { return "greeted by a UMD module"; }
+  function version() { return "1.0"; }
+  return { greet: greet, version: version };
+});
+//// what-bundlers-and-compilers-write/webpack.cjs
+var __webpack_modules__ = {
+  10: function (module, exports, __webpack_require__) {
+    var other = __webpack_require__(20);
+    module.exports = function () { return "module 10, " + other.name() + ", " + other.default(); };
+  },
+  20: function (module, __webpack_exports__, __webpack_require__) {
+    __webpack_require__.r(__webpack_exports__);
+    __webpack_require__.d(__webpack_exports__, { default: function () { return __WEBPACK_DEFAULT_EXPORT__; }, name: function () { return name; } });
+    function name() { return "module 20"; }
+    function __WEBPACK_DEFAULT_EXPORT__() { return "its default"; }
+  },
+};
+var __webpack_module_cache__ = {};
+function __webpack_require__(moduleId) {
+  var cached = __webpack_module_cache__[moduleId];
+  if (cached !== undefined) return cached.exports;
+  var module = (__webpack_module_cache__[moduleId] = { exports: {} });
+  __webpack_modules__[moduleId](module, module.exports, __webpack_require__);
+  return module.exports;
+}
+__webpack_require__.d = function (exports, definition) {
+  for (var key in definition) if (__webpack_require__.o(definition, key) && !__webpack_require__.o(exports, key)) Object.defineProperty(exports, key, { enumerable: true, get: definition[key] });
+};
+__webpack_require__.o = function (object, property) { return Object.prototype.hasOwnProperty.call(object, property); };
+__webpack_require__.r = function (exports) { Object.defineProperty(exports, "__esModule", { value: true }); };
+module.exports = __webpack_require__(10);
+//// what-is-marked-pure-and-what-its-arguments-do.js
+// A mark before a call or a `new` lets it go when its result is not used. What the arguments do stays or goes with the whole call, as the bundler has it. The calls stand in constants, in exports, in statements, in arguments of other marked calls, in class fields and after extends.
+const log = [];
+const effect = name => { log.push(name); return name; };
+const make = name => { log.push("make " + name); return { name }; };
+class Made { constructor(name) { log.push("new Made " + name); } }
+
+const a = /* @__PURE__ */ make("a constant nothing reads");
+const b = /* @__PURE__ */ new Made("a constant nothing reads");
+const c = /* @__PURE__ */ make(effect("an argument with an effect"));
+const d = /* @__PURE__ */ make(/* @__PURE__ */ make("marked inside marked"));
+const e = /* @__PURE__ */ make(make("not marked inside marked"));
+const f = [/* @__PURE__ */ make("in an array nothing reads")];
+const g = { key: /* @__PURE__ */ make("in an object nothing reads") };
+const h = () => /* @__PURE__ */ make("in a function nobody calls");
+export const i = /* @__PURE__ */ make("an export of the entry point");
+class J { static field = /* @__PURE__ */ make("a static field of a class nothing names"); }
+class K extends (/* @__PURE__ */ make("after extends"), Object) {}
+const l = /* @__PURE__ */ make("used");
+const m = /* @__PURE__ */ (() => effect("a marked function called on the spot"))();
+const o = /* @__PURE__ */ make?.("an optional call");
+const p = /* @__PURE__ */ make("spread argument", ...[effect("in a spread")]);
+const q = true ? /* @__PURE__ */ make("an arm") : 0;
+/* @__PURE__ */ make("a statement");
+/* @__PURE__ */ new Made("a statement");
+void /* @__PURE__ */ make("under void");
+
+console.log(l.name);
+console.log(log.join("\n"));
+//// what-runs-when-a-class-nobody-names-is-defined.ts
+// Nothing names these classes, yet defining them runs the expression after extends, the computed keys of methods, accessors and fields. Those hold the only references to these functions.
+const log: string[] = [];
+function base() { log.push("extends"); return Object; }
+function methodKey() { log.push("key of a method"); return "a"; }
+function getterKey() { log.push("key of a getter"); return "b"; }
+function staticKey() { log.push("key of a static method"); return "c"; }
+function generatorKey() { log.push("key of a generator"); return "e"; }
+
+class WithHeritage extends base() {
+  method() { return 1; }
+}
+
+class WithKeys {
+  [methodKey()]() { return 1; }
+  get [getterKey()]() { return 1; }
+  static [staticKey()]() { return 1; }
+  *[generatorKey()]() {}
+  plain() { return 1; }
+}
+
+console.log(log.join(", "));
+//// what-the-checker-asks-of-declarations-that-are-left-out/main.ts
+// Nothing that runs names these constants, classes and enums of two files, so they are left out. The type checker still needs all of them: for contextual types, inferred generics, discriminated unions, mapped and conditional types, overloads picked by a constant's type, a class's private and protected members, an enum as the type of a parameter, and a `unique symbol`.
+import type { Remote, RemoteShape } from "./types";
+import { remoteDefaults, RemoteKind } from "./types";
+
+const shapes = [{ kind: "circle" as const, radius: 1 }, { kind: "square" as const, side: 2 }];
+type Shape = (typeof shapes)[number];
+const handlers = { circle: (shape: { radius: number }) => shape.radius, square: (shape: { side: number }) => shape.side };
+type Handlers = typeof handlers;
+type Results = { [K in keyof Handlers]: ReturnType<Handlers[K]> };
+const marker: unique symbol = Symbol("marker");
+type Marked = { [marker]: string };
+class Account { private balance = 0; protected owner = "nobody"; public id = 1; static count = 0; }
+type PublicOfAccount = keyof Account;
+enum Step { One, Two, Three }
+const tuple = [1, "two", true] as const;
+type Second = (typeof tuple)[1];
+const pick = <T extends object, K extends keyof T>(object: T, key: K): T[K] => object[key];
+type Picked = ReturnType<typeof pick<{ a: number }, "a">>;
+const nestedDefaults = { server: { port: 80, tls: { enabled: false } } };
+type DeepPartial<T> = { [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K] };
+
+function area(shape: Shape): number {
+  switch (shape.kind) {
+    case "circle": return shape.radius * 3;
+    case "square": return shape.side * shape.side;
+  }
+}
+function name(step: Step): string {
+  switch (step) {
+    case 0: return "one";
+    case 1: return "two";
+    default: return "three";
+  }
+}
+const results: Results = { circle: 1, square: 2 };
+const key: PublicOfAccount = "id";
+const second: Second = "two";
+const picked: Picked = 5;
+const partial: DeepPartial<typeof nestedDefaults> = { server: { tls: {} } };
+const remote: Remote = { url: "u", retries: 2 };
+const remoteShape: RemoteShape = "round";
+const fromDefaults: typeof remoteDefaults = { url: "v", retries: 3 };
+const kind: `${RemoteKind}` = "fast";
+
+console.log(area({ kind: "circle", radius: 2 }), area({ kind: "square", side: 3 }), name(1 as Step), results.square, key, second, picked + 1);
+console.log(JSON.stringify(partial), remote.retries + 1, remoteShape, fromDefaults.url, kind);
+//// what-the-checker-asks-of-declarations-that-are-left-out/types.ts
+export const remoteDefaults = { url: "", retries: 0 };
+export type Remote = typeof remoteDefaults;
+const remoteShapes = ["round", "flat"] as const;
+export type RemoteShape = (typeof remoteShapes)[number];
+export enum RemoteKind { Fast = "fast", Slow = "slow" }
+//// what-the-program-is-started-as-decides-a-branch/imported-commonjs.cjs
+function whenMain() { return "imported-commonjs.cjs is the entry point"; }
+function whenNotMain() { return "imported-commonjs.cjs is not the entry point"; }
+
+module.exports = require.main === module ? whenMain() : whenNotMain();
+//// what-the-program-is-started-as-decides-a-branch/imported.ts
+function whenMain() { return "imported.ts is the entry point"; }
+function whenNotMain() { return "imported.ts is not the entry point"; }
+
+export const fromImported = import.meta.main ? whenMain() : whenNotMain();
+//// what-the-program-is-started-as-decides-a-branch/main.ts
+// import.meta.main and require.main === module are true in the entry point and false in a file it imports. Each branch calls a function that nothing else names.
+import { fromImported } from "./imported";
+import fromCommonJS from "./imported-commonjs.cjs";
+
+function whenMain() { return "main.ts is the entry point"; }
+function whenNotMain() { return "main.ts is not the entry point"; }
+
+console.log(import.meta.main ? whenMain() : whenNotMain());
+if (!import.meta.main) console.log(whenNotMain());
+console.log(fromImported);
+console.log(fromCommonJS);
+//// which-jsx-tags-name-a-binding-and-which-are-text.tsx
+// <box /> is the text "box" although a function box exists. <_Box />, <$Box /> and <ui.box /> name bindings although they do not start with a capital.
+/* @jsxRuntime classic */
+/* @jsx h */
+export {};
+declare global { namespace JSX { interface IntrinsicElements { [name: string]: any } } }
+
+function h(tag: any, props: any): any {
+  return typeof tag === "function" ? tag(props) : "text " + tag;
+}
+
+////= lines-3	box	"the function box"
+////= lines-3	_Box	"the function _Box"
+////= lines-3	$Box	"the function $Box"
+////= lines-3	inner	"the function inner"
+const ui = { box: () => inner() };
+
+console.log(<box />);
+console.log(<_Box />);
+console.log(<$Box />);
+console.log(<ui.box />);

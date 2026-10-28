@@ -490,6 +490,7 @@ export class Dev extends EventEmitter {
         while (acks() === before && this.eventsHeld === held && Date.now() < deadline) await Bun.sleep(1);
         expect(acks()).toBe(before);
         await options.whileEmpty?.();
+        expect(acks()).toBe(before);
         fd ??= fs.openSync(filePath, "wx");
         fs.writeSync(fd, text);
       } finally {

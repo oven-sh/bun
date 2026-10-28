@@ -21,7 +21,7 @@
 //     `assert!(self.root == v)`, or a different timer dropped on a canary build.
 import type { Subprocess } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isMacOS, tempDir, waitUntil } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isMacOS, tempDir, waitUntil } from "harness";
 import { closeSync, existsSync, openSync, readFileSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
@@ -499,6 +499,8 @@ test.concurrent.skipIf(!isDebug && !Bun.version_with_sha.includes("-canary"))(
   },
 );
 
+// A hold that a test lets end at its deadline gets more time in a slow build.
+const slowBuild = isDebug || isASAN ? 3 : 1;
 /** Starts `server.ts` under `bun --hot`. `waitMs` is the deadline of a hold. */
 function spawnHotServer(dir: string, waitMs: number) {
   return Bun.spawn({
@@ -526,19 +528,27 @@ async function openPage(
   // r0: a testing batch started. r1: the batch saw files. r2: the batch was empty. r3, r4: a bundle finished.
   // r5: the dev server holds a file event. r6: the hold ended. u: a hot update. e: the errors of a bundle.
   const frames: string[] = [];
+  // A dev server that exits, or a socket that it closes, fails every wait at once.
+  let failure: Error | undefined;
+  proc.exited.then(code => (failure ??= new Error(`The dev server exited with code ${code}`)));
   const hmr = await connectHmr(
     port,
     (id, body) => {
       frames.push(id === "r" ? id + body[0] : id);
       onFrame(id, body);
     },
-    () => {},
+    error => (failure ??= error),
   );
+  const context = () => `. Frames: ${frames.join(" ")}\n${dev.stderr()}`;
   const until = (what: string, done: () => boolean) =>
-    waitUntil(what, done, {
-      timeout: 30_000,
-      context: () => `. Frames: ${frames.join(" ")}\n${dev.stderr()}`,
-    });
+    waitUntil(
+      what,
+      () => {
+        if (failure) throw new Error(`${failure.message} while the test waited for ${what}${context()}`);
+        return done();
+      },
+      { timeout: 30_000, context },
+    );
   // The reply to SetUrl comes after the dev server has handled the Subscribe frame before it.
   hmr.ws.send("sher");
   hmr.ws.send("n/");
@@ -670,7 +680,7 @@ test.concurrent("a hold that ends while a testing batch is open puts its files i
   });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "server.ts"],
-    env: { ...bunEnv, BUN_DEBUG_TEST_DEV_SERVER_HALF_SAVED_WAIT_MS: "300" },
+    env: { ...bunEnv, BUN_DEBUG_TEST_DEV_SERVER_HALF_SAVED_WAIT_MS: String(300 * slowBuild) },
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
@@ -691,31 +701,35 @@ test.concurrent("a hold that ends while a testing batch is open puts its files i
   await until("the bundle of the batch", () => frames.includes("r3") || frames.includes("r4"));
 });
 
-test.concurrent("a file event that waited behind a bundle does not take a hold out of a testing batch", async () => {
-  // The first request for `/two` parks a bundle in the plugin until this server answers.
-  const bundleEntered = Promise.withResolvers<void>();
-  const bundleRelease = Promise.withResolvers<void>();
-  await using gate = Bun.serve({
-    port: 0,
-    async fetch() {
-      bundleEntered.resolve();
-      await bundleRelease.promise;
-      return new Response("go");
-    },
-  });
-  using dir = tempDir("hmr-hold-batch-waiting-event", {
-    "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
-    "plugin.ts": holdPlugin,
-    "index.html": indexHtml,
-    "entry.ts": `import "./module.ts";\nimport "./other.ts";`,
-    "module.ts": `console.log("m0");\nimport.meta.hot.accept();`,
-    "other.ts": `console.log("o0");\nimport.meta.hot.accept();`,
-    "two.html": /* html */ `<!DOCTYPE html>
+test.concurrent(
+  "a file event that waited behind a bundle does not take a hold out of a testing batch",
+  async () => {
+    // The hold is open before the bundle starts, and its deadline passes while the bundle runs.
+    const holdMs = 1000 * slowBuild;
+    // The first request for `/two` parks a bundle in the plugin until this server answers.
+    const bundleEntered = Promise.withResolvers<void>();
+    const bundleRelease = Promise.withResolvers<void>();
+    await using gate = Bun.serve({
+      port: 0,
+      async fetch() {
+        bundleEntered.resolve();
+        await bundleRelease.promise;
+        return new Response("go");
+      },
+    });
+    using dir = tempDir("hmr-hold-batch-waiting-event", {
+      "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+      "plugin.ts": holdPlugin,
+      "index.html": indexHtml,
+      "entry.ts": `import "./module.ts";\nimport "./other.ts";`,
+      "module.ts": `console.log("m0");\nimport.meta.hot.accept();`,
+      "other.ts": `console.log("o0");\nimport.meta.hot.accept();`,
+      "two.html": /* html */ `<!DOCTYPE html>
 <html><head><meta charset="utf-8"></head>
 <body><script type="module" src="./two.ts"></script></body></html>`,
-    "two.ts": `import "./hold.block";\nconsole.log("two");`,
-    "hold.block": "",
-    "server.ts": /* ts */ `
+      "two.ts": `import "./hold.block";\nconsole.log("two");`,
+      "hold.block": "",
+      "server.ts": /* ts */ `
       import one from "./index.html";
       import two from "./two.html";
       const server = Bun.serve({
@@ -726,54 +740,61 @@ test.concurrent("a file event that waited behind a bundle does not take a hold o
       });
       console.log("PORT=" + server.port);
     `,
-  });
-  // A trace inside the project would report its own writes.
-  using traceDir = tempDir("hmr-hold-batch-waiting-event-trace", {});
-  const trace = join(String(traceDir), "watcher-trace");
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "server.ts"],
-    env: {
-      ...bunEnv,
-      HMR_TEST_BUNDLE_GATE: String(gate.url),
-      BUN_DEBUG_TEST_DEV_SERVER_HALF_SAVED_WAIT_MS: "1000",
-      BUN_WATCHER_TRACE: trace,
-    },
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const dev = await openPage(proc);
-  using hmr = dev.hmr;
-  const { frames, until } = dev;
+    });
+    // A trace inside the project would report its own writes.
+    using traceDir = tempDir("hmr-hold-batch-waiting-event-trace", {});
+    const trace = join(String(traceDir), "watcher-trace");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "server.ts"],
+      env: {
+        ...bunEnv,
+        HMR_TEST_BUNDLE_GATE: String(gate.url),
+        BUN_DEBUG_TEST_DEV_SERVER_HALF_SAVED_WAIT_MS: String(holdMs),
+        BUN_WATCHER_TRACE: trace,
+      },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const dev = await openPage(proc);
+    using hmr = dev.hmr;
+    const { frames, until } = dev;
 
-  emptyOrDelete(join(String(dir), "module.ts"));
-  await until("the hold", () => frames.includes("r5"));
-  const twoFetch = fetch(dev.origin + "/two");
-  twoFetch.catch(() => {});
-  await bundleEntered.promise;
-  // The batch opens when the bundle ends.
-  hmr.ws.send("H");
-  writeFileSync(join(String(dir), "other.ts"), `console.log("o1");\nimport.meta.hot.accept();`);
-  await until(
-    "the watcher to report other.ts",
-    () => existsSync(trace) && readFileSync(trace, "latin1").includes("other.ts"),
-  );
-  // The deadline of the hold passes while the bundle runs.
-  await Bun.sleep(1100);
-  expect(frames).not.toContain("r6");
+    emptyOrDelete(join(String(dir), "module.ts"));
+    await until("the hold", () => frames.includes("r5"));
+    const twoFetch = fetch(dev.origin + "/two");
+    twoFetch.catch(() => {});
+    bundleEntered.promise.catch(() => {});
+    proc.exited.then(() =>
+      bundleEntered.reject(new Error(`The dev server exited before the bundle reached the plugin\n${dev.stderr()}`)),
+    );
+    await bundleEntered.promise;
+    // The batch opens when the bundle ends.
+    hmr.ws.send("H");
+    writeFileSync(join(String(dir), "other.ts"), `console.log("o1");\nimport.meta.hot.accept();`);
+    await until(
+      "the watcher to report other.ts",
+      () => existsSync(trace) && readFileSync(trace, "latin1").includes("other.ts"),
+    );
+    // The deadline of the hold passes while the bundle runs.
+    await Bun.sleep(holdMs + 100);
+    expect(frames).not.toContain("r6");
 
-  // The file event that waited is bundled at once, as without a hold. The hold ends after that, in the batch.
-  bundleRelease.resolve();
-  await until(
-    "the files of the hold in the batch",
-    () => frames.includes("r0") && frames.includes("r6") && frames.includes("r1"),
-  );
-  const before = frames.length;
-  hmr.ws.send("H");
-  await until("the end of the batch", () =>
-    frames.slice(before).some(frame => frame === "r2" || frame === "r3" || frame === "r4"),
-  );
-  // Not an empty batch.
-  expect(frames.slice(before)).not.toContain("r2");
-  expect((await twoFetch).status).toBe(200);
-});
+    // The file event that waited is bundled at once, as without a hold. The hold ends after that, in the batch.
+    bundleRelease.resolve();
+    await until(
+      "the files of the hold in the batch",
+      () => frames.includes("r0") && frames.includes("r6") && frames.includes("r1"),
+    );
+    const before = frames.length;
+    hmr.ws.send("H");
+    await until("the end of the batch", () =>
+      frames.slice(before).some(frame => frame === "r2" || frame === "r3" || frame === "r4"),
+    );
+    // Not an empty batch.
+    expect(frames.slice(before)).not.toContain("r2");
+    expect((await twoFetch).status).toBe(200);
+    // This test waits for a hold to pass its deadline, which is 3 s in a slow build.
+  },
+  20_000,
+);

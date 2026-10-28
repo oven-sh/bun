@@ -600,15 +600,7 @@ impl ClientSession {
         }
 
         self.rearm_timeout();
-        // DATA-frame encoding may yield mid-body — compress into the Vec so the
-        // cursor stays valid across event-loop ticks.
-        if let Err(e) = client.compress_body_for_send(false) {
-            self.remove_stream(stream);
-            client.h2 = None;
-            client.fail(e);
-            return;
-        }
-        let request = client.h2_build_request(client.body_len_for_send());
+        let request = client.h2_build_request(client.state.original_request_body.len());
         if let Err(err) = encode::write_request(self, client, stream_ref, &request) {
             // encodeHeader pushes into the HPACK encoder's dynamic table per
             // call, so a mid-encode failure leaves entries the server will

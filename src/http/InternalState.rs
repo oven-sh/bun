@@ -91,11 +91,6 @@ pub struct InternalStateFlags {
     /// redirect hop / failure, so each hop re-parks independently).
     pub(crate) is_waiting_for_cert_check: bool,
     pub(crate) receive_paused: bool,
-    /// Set once `HTTPClient::compress_body_for_send` has run for this attempt.
-    /// Guards header-retry re-entries from compressing again. Cleared by
-    /// `reset()`/`init()` so each redirect/retry hop re-compresses from the
-    /// original uncompressed `original_request_body`.
-    pub(crate) body_compressed: bool,
     /// Held input or buffered decoder output remains for `HTTPClient::drain_response_body`.
     pub(crate) decompress_output_pending: bool,
 }
@@ -112,7 +107,6 @@ impl InternalStateFlags {
             resend_request_body_on_redirect: false,
             is_waiting_for_cert_check: false,
             receive_paused: false,
-            body_compressed: false,
             decompress_output_pending: false,
         }
     }

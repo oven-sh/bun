@@ -197,9 +197,6 @@ fn make_client<'a>(
         signals,
         async_http_id,
         unix_socket_path: b"",
-        compress: None,
-        compressed_request_body: Vec::new(),
-        compressed_body_len: 0,
         pool: crate::PoolOptions::default(),
     }
 }
@@ -261,7 +258,6 @@ pub struct Options<'a> {
     pub max_redirects: Option<u8>,
     pub reject_unauthorized: Option<bool>,
     pub tls_props: Option<SSLConfigSharedPtr>,
-    pub compress: Option<crate::compress_body::CompressOption>,
     pub pool: crate::PoolOptions,
     pub bypass_pool: bool,
 }
@@ -493,7 +489,6 @@ impl<'a> AsyncHTTP<'a> {
         if let Some(val) = options.tls_props {
             this.client.tls_props = Some(val);
         }
-        this.client.compress = options.compress;
         this.client.proxy_settings = options.proxy_settings;
         this.client.pool = options.pool;
         if options.bypass_pool {
@@ -764,7 +759,6 @@ impl<'a> AsyncHTTP<'a> {
                     // Clone-owned (allocated after `ptr::read`).
                     drop(core::mem::take(&mut client.redirect));
                     drop(core::mem::take(&mut client.prev_redirect));
-                    drop(core::mem::take(&mut client.compressed_request_body));
                     drop(core::mem::take(&mut client.proxy_authorization));
                     client.close_proxy_tunnel(false);
                     debug_assert!(client.h2.is_none());

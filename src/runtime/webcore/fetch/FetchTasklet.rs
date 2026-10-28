@@ -2039,15 +2039,11 @@ impl FetchTasklet {
             is_waiting_abort: false,
             is_waiting_request_stream_start: false,
             mutex: Mutex::new(),
-            // SAFETY: jsc_vm derived from FFI ptr above; AsyncTaskTracker::init only
-            // bumps a counter on the VM.
-            tracker: AsyncTaskTracker::init(cx.vm().as_mut()),
+            tracker: fetch_options.tracker,
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
         });
 
         fetch_tasklet.signals = fetch_tasklet.signal_store.to_with_backpressure();
-
-        fetch_tasklet.tracker.did_schedule(cx.global());
 
         // `body` is *moved* through `FetchOptions` into `request_body` (no
         // shallow alias, no post-queue detach), so the RefPtr<Store> already carries
@@ -2166,7 +2162,6 @@ impl FetchTasklet {
                 reject_unauthorized: Some(fetch_options.reject_unauthorized),
                 verbose: Some(fetch_options.verbose),
                 tls_props: fetch_options.ssl_config,
-                compress: fetch_options.compress,
                 pool: fetch_options.pool,
                 bypass_pool: fetch_options.bypass_pool,
             },
@@ -2798,7 +2793,8 @@ pub(crate) struct FetchOptions {
     pub(crate) upgraded_connection: bool,
     pub(crate) forced_protocol: Option<http::Protocol>,
     pub(crate) is_node_http_client: bool,
-    pub(crate) compress: Option<http::compress_body::CompressOption>,
+    /// Scheduled in `fetch()`'s frame, before any body compression.
+    pub(crate) tracker: AsyncTaskTracker,
     pub(crate) pool: http::PoolOptions,
     pub(crate) bypass_pool: bool,
     pub(crate) fetch_session: Option<super::fetch_session::SessionHold>,

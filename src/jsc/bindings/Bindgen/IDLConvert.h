@@ -200,13 +200,14 @@ private:
         auto scope = DECLARE_THROW_SCOPE(JSC::getVM(&globalObject));
         auto& converted = m_converted.emplace();
         for (size_t index = 0; index < m_size; ++index) {
-            converted.append(stringOfStringObject(globalObject, at(index)));
+            JSC::JSValue value = stringOfStringObject(globalObject, at(index));
             RETURN_IF_EXCEPTION(scope, void());
-        }
-        // append() drops the value when the buffer cannot grow, and the callee would read m_size values from a shorter buffer.
-        if (converted.hasOverflowed()) [[unlikely]] {
-            JSC::throwOutOfMemoryError(&globalObject, scope);
-            return;
+            converted.append(value);
+            // append() drops the value when the buffer cannot grow, and the callee would read m_size values from a shorter buffer.
+            if (converted.hasOverflowed()) [[unlikely]] {
+                JSC::throwOutOfMemoryError(&globalObject, scope);
+                return;
+            }
         }
         m_values = converted.data();
     }

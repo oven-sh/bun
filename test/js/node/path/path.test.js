@@ -173,34 +173,53 @@ test.skipIf(!isDebug)("a call throws when the copy of its arguments cannot be al
       "-e",
       `const path = require("node:path");
 const rest = new Array(40000).fill("b");
+const outcome = fn => {
+  try {
+    return "returned a string of length " + fn().length;
+  } catch (e) {
+    return e.name + ": " + e.message;
+  }
+};
 const results = {};
 for (const ns of ["posix", "win32"]) {
   for (const fn of ["join", "resolve"]) {
-    try {
-      results[ns + "." + fn] = "returned a string of length " + path[ns][fn](new String("a"), ...rest).length;
-    } catch (e) {
-      results[ns + "." + fn] = e.name + ": " + e.message;
-    }
+    results[ns + "." + fn] = outcome(() => path[ns][fn](new String("a"), ...rest));
   }
+  // Under the cap, so the copy is made.
+  results[ns + ".join, 20001 arguments"] = outcome(() => path[ns].join(new String("a"), ...rest.slice(0, 20000)));
 }
+// The copy fails before the last argument, so that argument is not converted.
+let conversions = 0;
+const last = Object.assign(new String("c"), {
+  [Symbol.toPrimitive]() {
+    conversions++;
+    return "c";
+  },
+});
+results["join, a String object last"] = outcome(() => path.posix.join(new String("a"), ...rest, last));
+results.conversions = conversions;
 console.log(JSON.stringify(results));`,
     ],
     env: { ...bunEnv, BUN_JSC_maxSingleAllocationSize: "400000" },
     stdout: "pipe",
-    // ASAN warns on stderr about the failed allocation.
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const outOfMemory = "RangeError: Out of memory";
-  expect(stdout.trim() || stderr).toBe(
-    JSON.stringify({
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({
       "posix.join": outOfMemory,
       "posix.resolve": outOfMemory,
+      "posix.join, 20001 arguments": "returned a string of length 40001",
       "win32.join": outOfMemory,
       "win32.resolve": outOfMemory,
+      "win32.join, 20001 arguments": "returned a string of length 40001",
+      "join, a String object last": outOfMemory,
+      conversions: 0,
     }),
-  );
-  expect(exitCode).toBe(0);
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 test.if(isWindows)("Bun.which skips PATH segments longer than the Windows wide-path buffer", async () => {

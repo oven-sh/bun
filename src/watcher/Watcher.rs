@@ -793,6 +793,14 @@ impl Watcher {
         self.cwd
     }
 
+    /// Watches the directory of the entry point when `is_eligible_directory` leaves it out: a replaced entry file is found again through it.
+    #[cfg(not(windows))]
+    pub fn add_entry_point_directory(&mut self, dir: &'static [u8], hash: HashType) {
+        if !self.is_eligible_directory(dir) {
+            let _ = self.add_directory::<false>(Fd::INVALID, dir, hash);
+        }
+    }
+
     pub fn add_directory<const CLONE_FILE_PATH: bool>(
         &mut self,
         fd: Fd,

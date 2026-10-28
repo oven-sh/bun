@@ -747,6 +747,16 @@ where
             core::sync::atomic::Ordering::Relaxed,
         );
 
+        #[cfg(not(windows))]
+        {
+            // SAFETY: the watcher thread does not run yet, so nothing else reads `reloader`.
+            let main = unsafe { &(*reloader).main };
+            if main.dir_hash != 0 {
+                // SAFETY: `watcher_ptr` was just installed into the ctx and is live.
+                unsafe { (*watcher_ptr).add_entry_point_directory(main.dir, main.dir_hash) };
+            }
+        }
+
         // SAFETY: `watcher_ptr` was just installed into the ctx and is live.
         if let Err(err) = unsafe { (*watcher_ptr).start() } {
             bun_core::handle_error_return_trace(&err);

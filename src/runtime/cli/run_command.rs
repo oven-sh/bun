@@ -94,6 +94,15 @@ pub(crate) struct ConfigureEnvOptions {
     pub(crate) store_root_fd: bool,
 }
 
+/// What the `entry_path` of [`RunCommand::boot`] names.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EntryPath {
+    /// The file to run.
+    Resolved,
+    /// A path as `node` takes it. `boot` resolves it and it stays `process.argv[1]` (Node: `resolveMainPath`).
+    Unresolved,
+}
+
 pub(crate) struct RunCommand;
 
 /// What `RunCommand::boot_main` starts the VM with.
@@ -101,6 +110,7 @@ enum BootMain {
     /// The file at `path`. An `.html` file is served by `src/js/internal/html.ts`.
     File {
         path: Box<[u8]>,
+        kind: EntryPath,
         loader: Option<Loader>,
     },
     /// `bun bake`: `src/js/internal/bake.ts` serves the app in the working directory. There is no
@@ -981,12 +991,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     pub(crate) fn boot(
         ctx: &mut ContextData,
         entry_path: Box<[u8]>,
+        entry_kind: EntryPath,
         loader: Option<Loader>,
     ) -> crate::Result<()> {
         Self::boot_main(
             ctx,
             BootMain::File {
                 path: entry_path,
+                kind: entry_kind,
                 loader,
             },
         )
@@ -1027,7 +1039,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let watches = ctx.debug.hot_reload != cli::command::HotReload::None;
         if is_checked && !watches {
             // `bun bake` always watches, so it checks in `Run::start`.
-            let BootMain::File { path, loader } = &main else {
+            let BootMain::File { path, loader, .. } = &main else {
                 unreachable!("bun bake always watches")
             };
             let has_type_errors = !Self::check_main(ctx, path, *loader, &ctx.passthrough, None);
@@ -1090,12 +1102,13 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             bun_dns::Order::from_string_or_die(&ctx.runtime_options.dns_result_order) as u8;
         // `vm.main` is a BACKREF into these bytes and the runner never returns,
         // so the allocation is process-lifetime by construction.
-        let (entry, loader): (Option<&'static [u8]>, Option<Loader>) = match main {
-            BootMain::File { path, loader } => (Some(Box::leak(path)), loader),
-            BootMain::Bake => (None, None),
-        };
+        let (entry, entry_kind, loader): (Option<&'static [u8]>, EntryPath, Option<Loader>) =
+            match main {
+                BootMain::File { path, kind, loader } => (Some(Box::leak(path)), kind, loader),
+                BootMain::Bake => (None, EntryPath::Resolved, None),
+            };
         // What `Run::start` passes to `vm.load_entry_point`; `mut` because the
-        // cron-execution branch below may swap in a synthetic `cwd/[eval]` path
+        // cron-execution branch (a synthetic `cwd/[eval]` path) and `EntryPath::Unresolved` swap it
         // while `entry` stays the user's path for the loader check further down.
         let mut run_entry = entry;
         vm.set_main(entry);
@@ -1185,6 +1198,21 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         bun_http::async_http::load_env(unsafe { vm.log.unwrap().as_mut() }, vm.env_loader());
 
         vm.load_extra_env_and_source_code_printer();
+        if let Some(entry) = entry
+            && entry_kind == EntryPath::Unresolved
+            && vm.module_loader.eval_source.is_none()
+        {
+            match Self::resolve_entry_path(vm, entry, Self::preserve_symlinks_main(ctx)) {
+                Some(resolved) if resolved != entry => {
+                    vm.set_main_for_argv(entry);
+                    vm.set_main(Some(resolved));
+                    run_entry = Some(resolved);
+                }
+                Some(_) => {}
+                // A preload can create the entry point, so this resolve must leave nothing in the resolver cache.
+                None => Self::forget_entry_path(vm, entry),
+            }
+        }
         vm.is_main_thread = true;
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
@@ -1226,6 +1254,57 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             }),
         }
         .start()
+    }
+
+    /// The main module of `entry`, for `vm.main()`. On `None` the module loader reports the failure.
+    fn resolve_entry_path(
+        vm: &mut VirtualMachine,
+        entry: &'static [u8],
+        preserve_symlinks_main: bool,
+    ) -> Option<&'static [u8]> {
+        let top_level_dir = vm.top_level_dir();
+        // Like the module loader, keep the resolver's messages out of `vm.log`.
+        let mut log = bun_ast::Log::default();
+        let resolver = &raw mut vm.transpiler.resolver;
+        // SAFETY: `resolver` is a field of the live VM. `log` is declared
+        // before the guard, so the guard restores the log before `log` drops.
+        let _restore_log = unsafe {
+            bun_resolver::Resolver::scoped_log(resolver, ::core::ptr::NonNull::from(&mut log))
+        };
+        // SAFETY: `vm` is borrowed for this call, so nothing else uses its resolver.
+        let resolver = unsafe { &mut *resolver };
+        let resolved = resolver.resolve(top_level_dir, entry, bun_ast::ImportKind::EntryPointRun);
+        let path = resolved.ok()?.path_const()?.text;
+        if preserve_symlinks_main || !resolver.opts.preserve_symlinks {
+            return Some(path);
+        }
+        // The resolver cache keeps the symlink rule of the imports for each directory, so this resolve does not change it.
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let mut real_buf = bun_paths::path_buffer_pool::get();
+        let real = sys::realpath(
+            bun_paths::resolve_path::z(path, &mut path_buf),
+            &mut real_buf,
+        );
+        Some(real.map_or(path, |real| &*Box::leak(Box::<[u8]>::from(real))))
+    }
+
+    /// After [`Self::resolve_entry_path`] found nothing: removes what that resolve put in the resolver cache.
+    fn forget_entry_path(vm: &mut VirtualMachine, entry: &[u8]) {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        // The resolver keys an absolute path as it is given, or without its `..` when it has one.
+        let collapsed = vm.fs().abs_buf_checked(&[entry], &mut buf.0);
+        for path in [Some(entry), collapsed].into_iter().flatten() {
+            let key = strings::paths::without_trailing_slash_windows_path(path);
+            vm.transpiler.resolver.bust_dir_cache_of_path(key);
+        }
+    }
+
+    /// Node keeps a symlink in the path of the main module only with `--preserve-symlinks-main` (`resolveMainPath`).
+    fn preserve_symlinks_main(ctx: &ContextData) -> bool {
+        ctx.runtime_options.preserve_symlinks_main
+            || bun_core::env_var::NODE_PRESERVE_SYMLINKS_MAIN
+                .get()
+                .unwrap_or(false)
     }
 
     /// Allow setting a custom timezone. Without `$TZ`, JSC/ICU lazily
@@ -1901,7 +1980,7 @@ impl RunCommand {
         // owned copy by value.
         let owned: Box<[u8]> = path.to_vec().into_boxed_slice();
 
-        if let Err(err) = Self::boot(ctx, owned, loader) {
+        if let Err(err) = Self::boot(ctx, owned, EntryPath::Resolved, loader) {
             Self::boot_failed_exit(ctx, paths::basename(path), &err);
         }
         true
@@ -2691,11 +2770,7 @@ impl RunCommand {
         let prefixed: Vec<u8>;
         let resolution: ::core::result::Result<bun_resolver::Result, bun_resolver::Error> = {
             let saved_preserve = this_transpiler.resolver.opts.preserve_symlinks;
-            this_transpiler.resolver.opts.preserve_symlinks =
-                ctx.runtime_options.preserve_symlinks_main
-                    || bun_core::env_var::NODE_PRESERVE_SYMLINKS_MAIN
-                        .get()
-                        .unwrap_or(false);
+            this_transpiler.resolver.opts.preserve_symlinks = Self::preserve_symlinks_main(ctx);
             // SAFETY: `Transpiler::init` always sets `fs`; resolver-cache lifetime.
             let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir() };
             let resolved = match this_transpiler.resolver.resolve(
@@ -3136,7 +3211,7 @@ impl RunCommand {
         // `basename(target_name)` (= "-"), not `basename(entry_path)`
         // (= "[stdin]"), in the error message.
         let owned: Box<[u8]> = entry_path.to_vec().into_boxed_slice();
-        if let Err(err) = Self::boot(ctx, owned, None) {
+        if let Err(err) = Self::boot(ctx, owned, EntryPath::Resolved, None) {
             Self::boot_failed_exit(ctx, b"-", &err);
         }
         Ok(true)
@@ -3186,7 +3261,7 @@ impl RunCommand {
         let entry: Box<[u8]> = entry_point_buf[..cwd_len + EVAL_TRIGGER.len()]
             .to_vec()
             .into_boxed_slice();
-        Self::boot(ctx, entry, None)
+        Self::boot(ctx, entry, EntryPath::Resolved, None)
     }
 
     /// `node` argv0 emulation. Port of `execAsIfNode`.
@@ -3221,7 +3296,7 @@ impl RunCommand {
             let entry: Box<[u8]> = entry_point_buf[..cwd_len + EVAL_TRIGGER.len()]
                 .to_vec()
                 .into_boxed_slice();
-            return Self::boot(ctx, entry, None);
+            return Self::boot(ctx, entry, EntryPath::Resolved, None);
         }
 
         if ctx.positionals.is_empty() {
@@ -3262,7 +3337,7 @@ impl RunCommand {
         // `Global::configure_allocator` and (b) uses the
         // `Output.err(err, "Failed to run script \"...\"")` form.
         let basename: Box<[u8]> = paths::basename(&normalized).to_vec().into_boxed_slice();
-        if let Err(err) = Self::boot(ctx, normalized, None) {
+        if let Err(err) = Self::boot(ctx, normalized, EntryPath::Unresolved, None) {
             Self::exec_as_if_node_boot_failed(ctx, &basename, err);
         }
         Ok(())
@@ -4304,7 +4379,12 @@ impl BunXFastPath {
             ::core::slice::from_raw_parts_mut(raw.cast::<u8>(), bun_paths::PATH_MAX_WIDE * 2)
         };
         let utf8 = strings::convert_utf16_to_utf8_in_buffer(out_buf, wpath);
-        if let Err(err) = RunCommand::boot(ctx, utf8.to_vec().into_boxed_slice(), None) {
+        if let Err(err) = RunCommand::boot(
+            ctx,
+            utf8.to_vec().into_boxed_slice(),
+            EntryPath::Resolved,
+            None,
+        ) {
             // SAFETY: `ctx.log` was set in `create_context_data`.
             let _ = unsafe { &mut *ctx.log }.print(std::ptr::from_mut(Output::error_writer()));
             Output::err(

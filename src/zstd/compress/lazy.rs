@@ -1413,29 +1413,22 @@ pub(crate) fn row_update(ms: &mut MatchState, prefix: Prefix<'_>, ip: usize) -> 
 
 /// Bit `n` is set if the entry `n` has the tag `tag`. This becomes a comparison of vectors.
 #[inline(always)]
-fn tags_match_mask(tags: &[u8; 16], tag: u8) -> u32 {
-    let mut matches = 0u16;
+fn tags_match_mask(tags: &[u8; 16], tag: u8) -> u16 {
+    let mut matches = 0;
     for (n, &entry) in tags.iter().enumerate() {
         matches |= u16::from(entry == tag) << n;
     }
-    u32::from(matches)
+    matches
 }
 
-/// Bit `n` is set if the entry `n` has the tag `tag`.
+/// Bit `n` is set if the entry `n` has the tag `tag`. As `a | b << 16 | ..`, LTO makes 10 times the instructions of it.
 #[inline(always)]
 fn row_tags_match_mask<const ROW_ENTRIES: usize>(tags: &[u8; ROW_ENTRIES], tag: u8) -> u64 {
-    match *tags.as_chunks::<16>().0 {
-        [ref tags] => u64::from(tags_match_mask(tags, tag)),
-        [ref low, ref high] => {
-            u64::from(tags_match_mask(low, tag) | tags_match_mask(high, tag) << 16)
-        }
-        [ref tags_0, ref tags_1, ref tags_2, ref tags_3] => {
-            let low = tags_match_mask(tags_0, tag) | tags_match_mask(tags_1, tag) << 16;
-            let high = tags_match_mask(tags_2, tag) | tags_match_mask(tags_3, tag) << 16;
-            u64::from(low) | u64::from(high) << 32
-        }
-        _ => 0,
-    }
+    const { assert!(matches!(ROW_ENTRIES, 16 | 32 | 64)) }
+    let (chunks, _) = tags.as_chunks::<16>();
+    chunks.iter().rev().fold(0, |matches, tags| {
+        matches << 16 | u64::from(tags_match_mask(tags, tag))
+    })
 }
 
 /// `ZSTD_row_getMatchMask`: bit `n` is set if the entry `(head + n) % ROW_ENTRIES` has the tag `tag`.
@@ -1453,7 +1446,7 @@ fn row_get_match_mask<const ROW_ENTRIES: usize>(
     }
 }
 
-/// [`row_get_match_mask`]. On its own, it stays a comparison of vectors.
+/// [`row_get_match_mask`]. Inlined, levels 11 and 12 take a tenth longer for text.
 #[inline(never)]
 fn row_get_second_match_mask<const ROW_ENTRIES: usize>(
     tags: &[u8; ROW_ENTRIES],

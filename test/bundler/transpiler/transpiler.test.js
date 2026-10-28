@@ -2999,13 +2999,11 @@ console.log(<div {...obj} key="after" />);`),
       expect(new Bun.Transpiler(opts).scan("export const x = 1;").imports).toEqual([]);
     });
 
-    it(".scan() and .scanImports() honour logLevel like .transformSync()", () => {
+    it(".scan() and .scanImports() use logLevel like .transformSync()", () => {
+      // The key after the spread logs a warning. logLevel: "error" drops it.
       const src = `export default <div {...p} key="k" />;`;
-      const loud = new Bun.Transpiler({ loader: "tsx" });
-      expect(() => loud.scan(src)).toThrow('"key" prop after a {...spread} is deprecated in JSX');
-      expect(() => loud.scanImports(src)).toThrow('"key" prop after a {...spread} is deprecated in JSX');
-
       const quiet = new Bun.Transpiler({ loader: "tsx", logLevel: "error" });
+      expect(quiet.transformSync(src)).toContain('from "react";');
       expect(quiet.scan(src).imports).toEqual([{ kind: "import-statement", path: "react" }]);
       expect(quiet.scanImports(src)).toEqual([{ kind: "import-statement", path: "react" }]);
     });
@@ -3055,6 +3053,19 @@ console.log(<div {...obj} key="after" />);`),
           "/** @jsxImportSource preact */\nexport default <div/>;",
           [{ kind: "import-statement", path: "preact/jsx-dev-runtime" }],
         ],
+        [
+          "@jsxImportSource pragma over tsconfig jsxImportSource",
+          { loader: "tsx", tsconfig: { compilerOptions: { jsx: "react-jsx", jsxImportSource: "preact" } } },
+          "/** @jsxImportSource solid-js */\nexport default <div/>;",
+          [{ kind: "import-statement", path: "solid-js/jsx-runtime" }],
+        ],
+        // "preserve" is not supported. Both passes warn and keep the configured runtime.
+        [
+          "@jsxRuntime preserve",
+          { ...dev, logLevel: "error" },
+          "// @jsxRuntime preserve\nexport default <div/>;",
+          jsxDevRuntime,
+        ],
         ["no JSX", dev, "export const x = 1;", []],
         // A key after a spread falls back to createElement from the package.
         [
@@ -3098,6 +3109,9 @@ console.log(<div {...obj} key="after" />);`),
         const t = new Bun.Transpiler(opts);
         expect(t.scanImports(src)).toEqual(expected);
         expect(t.scan(src).imports).toEqual(expected);
+        // The scan records name the modules that the output imports, in order.
+        const imported = [...t.transformSync(src).matchAll(/^import .* from "([^"]+)";$/gm)].map(m => m[1]);
+        expect(imported).toEqual(expected.map(r => r.path));
       });
     });
   });

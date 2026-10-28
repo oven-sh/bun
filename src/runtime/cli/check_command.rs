@@ -873,15 +873,17 @@ fn imports_of_page(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
     // The same lookup as the bundler's: `/src/main.tsx` is under the page's directory, else
     // under the cwd.
     let root_relative = |url: &[u8]| {
-        use bun_bundler::html_scanner::{rebase_root_relative_url, root_relative_bases};
-        let (root, cwd) = root_relative_bases(&page, b"", cwd);
-        let under_root = rebase_root_relative_url(root, url).to_vec();
-        match cwd {
-            Some(cwd) if !bun_sys::exists(&under_root) => {
-                rebase_root_relative_url(cwd, url).to_vec()
-            }
-            _ => under_root,
+        use bun_bundler::html_scanner::{RootRelativeBases, rebase_root_relative_url};
+        let bases = RootRelativeBases::init(&page, b"", cwd);
+        let mut candidates =
+            (bases.as_slice().iter()).map(|base| rebase_root_relative_url(base, url).to_vec());
+        let first = candidates.next().unwrap_or_default();
+        if bun_sys::exists(&first) {
+            return first;
         }
+        candidates
+            .find(|candidate| bun_sys::exists(candidate))
+            .unwrap_or(first)
     };
     (records.unwrap_or_default().iter())
         .filter(|record| !is_url(record.path.text()))

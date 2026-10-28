@@ -460,7 +460,7 @@ Bun automatically handles all common web assets:
 - **Media** (`<video>`, `<audio>`, `<source>`) are copied and hashed
 - Any `<link>` tag with an `href` attribute pointing to a local file is rewritten to the new path, and hashed
 
-Bun resolves relative paths against your HTML file, so you can organize your project however you want. A path that starts with a single `/`, such as `<link rel="icon" href="/favicon.png">`, is resolved against the project root: the [`root`](/bundler#root) option, which defaults to the directory of the HTML file. If the file does not exist there, Bun looks for it under the current working directory.
+Bun resolves relative paths against your HTML file, so you can organize your project however you want. A path that starts with a single `/`, such as `<link rel="icon" href="/favicon.png">`, is resolved against the project root: the [`root`](/bundler#root) option, which defaults to the directory of the HTML file. If the file does not exist there, Bun looks for it next to the HTML file, then under the current working directory.
 
 <Warning>
 **This is a work in progress**

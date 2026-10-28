@@ -1264,6 +1264,7 @@ body {
         const config: Bun.BuildConfig = { entrypoints: [entry], outdir };
         if (mode === "root") config.root = arg;
         if (mode === "external") config.external = ["/favicon.png"];
+        if (mode === "external-cwd") config.external = ["./favicon.png"];
         if (mode === "files") {
           // The page is on disk under public/. Its script is an in-memory file under the cwd.
           config.entrypoints = [arg + "/public/index.html"];
@@ -1358,9 +1359,23 @@ body {
       expect(exitCode).toBe(0);
     });
 
+    // `./favicon.png` is stored as `<cwd>/favicon.png`, one of the files the URL can name.
+    test.concurrent("external keyed on the file under the cwd keeps the URL in the output", async () => {
+      using dir = tempDir("html-root-relative", files);
+      const { stdout, stderr, exitCode } = await build(String(dir), [
+        "build.ts",
+        `${dir}/site/index.html`,
+        `${dir}/out`,
+        "external-cwd",
+      ]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ href: "/favicon.png", icon: null, seen: [] });
+      expect(exitCode).toBe(0);
+    });
+
     // An exact `external` entry is stored as an absolute path. On Windows `/favicon.png`
     // becomes a drive path there, so only the wildcard form matches on Windows.
-    test.skipIf(isWindows)("external matches the URL as written and keeps it in the output", async () => {
+    test.concurrent.skipIf(isWindows)("external matches the URL as written and keeps it in the output", async () => {
       using dir = tempDir("html-root-relative", files);
       const { stdout, stderr, exitCode } = await build(String(dir), [
         "build.ts",

@@ -180,39 +180,58 @@ pub fn rebase_root_relative_url<'r>(root: &'r [u8], url: &[u8]) -> &'r [u8] {
     resolve_path::join_abs_string::<platform::Auto>(root, &[&url[1..]])
 }
 
-/// The directories a root-relative HTML URL is looked up under, in order: the project
-/// root (`root_dir` when the front end set one, else the directory of the HTML file
-/// `importer`), then `cwd` when that is a different directory (an entry point under
-/// `public/` whose `/src/app.tsx` lives beside `public/`).
-pub fn root_relative_bases<'a>(
-    importer: &'a [u8],
-    root_dir: &'a [u8],
-    cwd: &'a [u8],
-) -> (&'a [u8], Option<&'a [u8]>) {
-    let root = if root_dir.is_empty() {
-        resolve_path::dirname::<platform::Auto>(importer)
-    } else {
-        root_dir
-    };
-    (
-        root,
-        (strip_trailing_sep(cwd) != strip_trailing_sep(root)).then_some(cwd),
-    )
+/// The directories a root-relative HTML URL is looked up under, in order: `root_dir`
+/// when the front end set one, the directory of the HTML file `importer`, then `cwd`
+/// (an entry point under `public/` whose `/src/app.tsx` lives beside `public/`). A
+/// directory that repeats an earlier one is left out.
+pub struct RootRelativeBases<'a> {
+    dirs: [&'a [u8]; 3],
+    len: usize,
 }
 
-/// A root-relative HTML URL of an import record, rebased onto each base of
-/// `root_relative_bases`. The bundler looks the record up under `under_root` first.
+impl<'a> RootRelativeBases<'a> {
+    pub fn init(importer: &'a [u8], root_dir: &'a [u8], cwd: &'a [u8]) -> Self {
+        let mut bases = Self {
+            dirs: [b""; 3],
+            len: 0,
+        };
+        if !root_dir.is_empty() {
+            bases.push(root_dir);
+        }
+        bases.push(resolve_path::dirname::<platform::Auto>(importer));
+        bases.push(cwd);
+        bases
+    }
+
+    fn push(&mut self, dir: &'a [u8]) {
+        let dir = strip_trailing_sep(dir);
+        if dir.is_empty() || self.as_slice().contains(&dir) {
+            return;
+        }
+        self.dirs[self.len] = dir;
+        self.len += 1;
+    }
+
+    pub fn as_slice(&self) -> &[&'a [u8]] {
+        &self.dirs[..self.len]
+    }
+}
+
+/// A root-relative HTML URL of an import record, and the file it names under each of
+/// its `RootRelativeBases`, in lookup order.
 pub struct RootRelativeUrl<'r> {
-    under_root: &'r [u8],
-    /// `None` when the cwd is the project root, or once `take_cwd_retry` used it.
-    under_cwd: Option<&'r [u8]>,
+    url: &'r [u8],
+    candidates: [&'r [u8]; 3],
+    len: usize,
+    /// The index of the candidate `next_retry` hands out.
+    retry: usize,
 }
 
 impl<'r> RootRelativeUrl<'r> {
     /// `None` unless `record` (an import of the HTML file `importer`) was written with
-    /// one leading `/`. The rebased paths are copied into `arena`.
+    /// one leading `/`. The candidate paths are copied into `arena`.
     pub fn of_record(
-        record: &ImportRecord,
+        record: &ImportRecord<'r>,
         importer: &[u8],
         root_dir: &[u8],
         arena: &'r bun_alloc::Arena,
@@ -221,24 +240,44 @@ impl<'r> RootRelativeUrl<'r> {
         if !is_root_relative_url(url) {
             return None;
         }
-        let (root, cwd) = root_relative_bases(importer, root_dir, bun_core::top_level_dir());
-        Some(Self {
-            under_root: arena.alloc_slice_copy(rebase_root_relative_url(root, url)),
-            under_cwd: cwd.map(|cwd| &*arena.alloc_slice_copy(rebase_root_relative_url(cwd, url))),
-        })
+        let bases = RootRelativeBases::init(importer, root_dir, bun_core::top_level_dir());
+        let mut this = Self {
+            url,
+            candidates: [b""; 3],
+            len: bases.as_slice().len(),
+            retry: 1,
+        };
+        for (candidate, base) in this.candidates.iter_mut().zip(bases.as_slice()) {
+            *candidate = arena.alloc_slice_copy(rebase_root_relative_url(base, url));
+        }
+        Some(this)
     }
 
-    pub fn under_root(&self) -> &'r [u8] {
-        self.under_root
+    /// Every file the URL can name, in lookup order.
+    pub fn candidates(&self) -> &[&'r [u8]] {
+        &self.candidates[..self.len]
     }
 
-    pub fn under_cwd(&self) -> Option<&'r [u8]> {
-        self.under_cwd
+    /// The file to resolve first.
+    pub fn first(&self) -> &'r [u8] {
+        self.candidates[0]
     }
 
-    /// The cwd candidate, once: the path to resolve after `under_root` is not found.
-    pub fn take_cwd_retry(&mut self) -> Option<&'r [u8]> {
-        self.under_cwd.take()
+    /// The next file to resolve after the previous candidate was not found.
+    pub fn next_retry(&mut self) -> Option<&'r [u8]> {
+        let next = *self.candidates().get(self.retry)?;
+        self.retry += 1;
+        Some(next)
+    }
+
+    /// True when the user marked the URL as written, or one of the files it can name,
+    /// external.
+    pub fn is_user_external(&self, resolver: &bun_resolver::Resolver) -> bool {
+        resolver.is_user_external(self.url)
+            || self
+                .candidates()
+                .iter()
+                .any(|candidate| resolver.is_user_external(candidate))
     }
 }
 

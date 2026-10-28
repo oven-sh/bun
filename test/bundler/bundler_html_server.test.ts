@@ -53,6 +53,34 @@ describe.concurrent("bundler", () => {
       },
     });
 
+    // The page is under site/, the server entry is not. `/favicon.png` is not under the
+    // project root (the entry's directory), so the lookup continues next to the page.
+    itBundled(`compile/${backend}/HTMLServerRootRelativeUrl`, {
+      compile: true,
+      backend: backend,
+      files: {
+        "/entry.ts": /* js */ `
+        import index from "./site/index.html";
+
+        using server = Bun.serve({
+          port: 0,
+          routes: {
+            "/": index,
+          },
+        });
+
+        const html = await (await fetch(server.url)).text();
+        const href = html.match(/rel="icon" href="([^"]+)"/)?.[1];
+        console.log("Icon:", href ? await (await fetch(new URL(href, server.url))).text() : "missing");
+      `,
+        "/site/index.html": /* html */ `<!DOCTYPE html><html><head><link rel="icon" href="/favicon.png"></head><body><h1>Hello</h1></body></html>`,
+        "/site/favicon.png": "site favicon",
+      },
+      run: {
+        stdout: "Icon: site favicon",
+      },
+    });
+
     itBundled(`compile/${backend}/HTMLServerMultipleRoutes`, {
       compile: true,
       backend: backend,

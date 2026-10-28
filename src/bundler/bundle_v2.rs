@@ -2687,7 +2687,7 @@ pub mod bv2_impl {
                 Fs::PathName::init(&import_record.source_file).dir_with_trailing_slash();
 
             // Same as in `resolve_import_records`: a root-relative HTML URL is looked up
-            // under the project root, then under the cwd.
+            // under each of its `RootRelativeBases`.
             let mut specifier: &[u8] = &import_record.specifier;
             let mut root_relative = if self.graph.input_files.items_loader()
                 [import_record.importer_source_index as usize]
@@ -2706,17 +2706,21 @@ pub mod bv2_impl {
                 None
             };
             if let Some(url) = &root_relative {
-                specifier = url.under_root();
+                specifier = url.first();
             }
 
             // Check the FileMap first for in-memory files
             if let Some(file_map) = self.file_map {
-                let file_map_result = file_map
-                    .resolve(self.arena(), &import_record.source_file, specifier)
-                    .or_else(|| {
-                        let under_cwd = root_relative.as_ref()?.under_cwd()?;
-                        file_map.resolve(self.arena(), &import_record.source_file, under_cwd)
-                    });
+                let file_map_result = match &root_relative {
+                    None => file_map.resolve(self.arena(), &import_record.source_file, specifier),
+                    // Each file the URL can name, then the URL as written for a files map
+                    // that is its own root.
+                    Some(url) => (url.candidates().iter().copied())
+                        .chain([&*import_record.specifier])
+                        .find_map(|candidate| {
+                            file_map.resolve(self.arena(), &import_record.source_file, candidate)
+                        }),
+                };
                 if let Some(_file_map_result) = file_map_result {
                     let file_map_result = _file_map_result;
                     let mut path_primary = file_map_result.path_pair.primary;
@@ -2787,10 +2791,9 @@ pub mod bv2_impl {
             }
 
             // SAFETY: see `transpiler` note above.
-            if root_relative.is_some()
-                && unsafe { &*transpiler }
-                    .resolver
-                    .is_user_external(&import_record.specifier)
+            if root_relative
+                .as_ref()
+                .is_some_and(|url| url.is_user_external(&unsafe { &*transpiler }.resolver))
             {
                 return;
             }
@@ -2821,13 +2824,6 @@ pub mod bv2_impl {
                                     continue;
                                 }
                             }
-                            if let Some(under_cwd) =
-                                root_relative.as_mut().and_then(|url| url.take_cwd_retry())
-                            {
-                                specifier = under_cwd;
-                                had_busted_dir_cache = false;
-                                continue;
-                            }
                             if let Some(dev) = &self.dev_server {
                                 // Tell Bake's Dev Server to wait for the file to be imported.
                                 dev.track_resolution_failure(
@@ -2838,7 +2834,15 @@ pub mod bv2_impl {
                                         [import_record.importer_source_index as usize],
                                 )
                                 .expect("oom");
-
+                            }
+                            if let Some(next) =
+                                root_relative.as_mut().and_then(|url| url.next_retry())
+                            {
+                                specifier = next;
+                                had_busted_dir_cache = false;
+                                continue;
+                            }
+                            if self.dev_server.is_some() {
                                 // Turn this into an invalid AST, so that incremental mode skips it when printing.
                                 // SAFETY: truncating to len 0 never exposes uninitialized elements.
                                 unsafe {
@@ -6932,9 +6936,8 @@ pub mod bv2_impl {
 
                 // A root-relative HTML URL (`/favicon.png`) names a file under the
                 // project root. The record keeps the URL as written, so plugins,
-                // `external` and the error message see it. Resolution uses the
-                // rebased path, then the same path under the process cwd when the
-                // project root has no such file.
+                // `external` and the error message see it. Resolution tries each
+                // file the URL can name, see `RootRelativeBases`.
                 let mut specifier: &'a [u8] = import_record.path.text;
                 let mut root_relative = if loader == Loader::Html {
                     crate::html_scanner::RootRelativeUrl::of_record(
@@ -6947,17 +6950,21 @@ pub mod bv2_impl {
                     None
                 };
                 if let Some(url) = &root_relative {
-                    specifier = url.under_root();
+                    specifier = url.first();
                 }
 
                 // Check the FileMap first for in-memory files
                 if let Some(file_map) = self.file_map {
-                    let file_map_result = file_map
-                        .resolve(self.arena(), source.path.text, specifier)
-                        .or_else(|| {
-                            let under_cwd = root_relative.as_ref()?.under_cwd()?;
-                            file_map.resolve(self.arena(), source.path.text, under_cwd)
-                        });
+                    let file_map_result = match &root_relative {
+                        None => file_map.resolve(self.arena(), source.path.text, specifier),
+                        // Each file the URL can name, then the URL as written for a files
+                        // map that is its own root.
+                        Some(url) => (url.candidates().iter().copied())
+                            .chain([import_record.path.text])
+                            .find_map(|candidate| {
+                                file_map.resolve(self.arena(), source.path.text, candidate)
+                            }),
+                    };
                     if let Some(_file_map_result) = file_map_result {
                         let mut file_map_result = _file_map_result;
                         let mut path_primary = file_map_result.path_pair.primary;
@@ -7013,10 +7020,9 @@ pub mod bv2_impl {
                     }
                 }
 
-                if root_relative.is_some()
-                    && transpiler
-                        .resolver
-                        .is_user_external(import_record.path.text)
+                if root_relative
+                    .as_ref()
+                    .is_some_and(|url| url.is_user_external(&transpiler.resolver))
                 {
                     continue;
                 }
@@ -7064,13 +7070,6 @@ pub mod bv2_impl {
                                         }
                                     }
                                 }
-                                if let Some(under_cwd) =
-                                    root_relative.as_mut().and_then(|url| url.take_cwd_retry())
-                                {
-                                    specifier = under_cwd;
-                                    had_busted_dir_cache = false;
-                                    continue 'inner;
-                                }
                                 if self.bun_watcher.is_some() {
                                     if let Some(dev) = self.dev_server {
                                         // Tell DevServer about the resolution failure.
@@ -7082,6 +7081,13 @@ pub mod bv2_impl {
                                         )
                                         .expect("oom");
                                     }
+                                }
+                                if let Some(next) =
+                                    root_relative.as_mut().and_then(|url| url.next_retry())
+                                {
+                                    specifier = next;
+                                    had_busted_dir_cache = false;
+                                    continue 'inner;
                                 }
                             }
 

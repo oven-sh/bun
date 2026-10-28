@@ -22,8 +22,8 @@ use bun_ast::LexerLog as _;
 use crate::lexer::T;
 use crate::p::P;
 use crate::parser::{
-    AwaitOrYield, ConditionalArrowFn, DeferredArrowArgErrors, DeferredErrors, ExprListLoc,
-    ExprOrLetStmt, FnOrArrowDataParse, LexicalDecl, LocList, ParenExprOpts, ParseBindingOptions,
+    AwaitOrYield, DeferredArrowArgErrors, DeferredErrors, ExprListLoc, ExprOrLetStmt,
+    FnOrArrowDataParse, LexicalDecl, LocList, ParenExprOpts, ParseBindingOptions,
     ParseClassOptions, ParseStatementOptions, ParsedPath, PropertyOpts, SkipTypeParameterResult,
     StmtList, TypeParameterFlag,
 };
@@ -418,39 +418,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// The end of `parse_paren_expr` when the parentheses hold the arguments of
-    /// an arrow function. The lexer is at the "=>".
-    #[inline(always)]
-    pub(crate) fn parse_paren_arrow_fn(
-        &mut self,
-        loc: bun_ast::Loc,
-        opts: ParenExprOpts,
-        spread_range: bun_ast::Range,
-        comma_after_spread: bun_ast::Loc,
-        arrow_arg_errors: &mut DeferredArrowArgErrors,
-        invalid_log: &LocList<'a>,
-        args: BumpVec<'a, G::Arg>,
-        arrow_data: &mut FnOrArrowDataParse,
-    ) -> Result<Expr, Error> {
-        let p = self;
-        p.maybe_comma_spread_error(comma_after_spread);
-        p.log_arrow_arg_errors(arrow_arg_errors);
-
-        // Now that we've decided we're an arrow function, report binding pattern
-        // conversion errors
-        if !invalid_log.is_empty() {
-            for loc_ in invalid_log.iter() {
-                loc_.add_error(p.log(), p.source);
-            }
-        }
-        let args_slice: &'a mut [G::Arg] = args.into_bump_slice_mut();
-        let mut arrow = p.parse_arrow_body(args_slice, arrow_data)?;
-        arrow.is_async = opts.is_async;
-        arrow.has_rest_arg = spread_range.len > 0;
-        p.pop_scope();
-        Ok(p.new_expr(arrow, loc))
-    }
-
     /// This assumes that the open parenthesis has already been parsed by the caller
     pub(crate) fn parse_paren_expr(
         &mut self,
@@ -605,55 +572,48 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // attempt to convert the expressions to bindings first before deciding
             // whether this is an arrow function, and only pick an arrow function if
             // there were no conversion errors.
-            let maybe_return_type =
-                Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon && invalid_log.is_empty();
-            if maybe_return_type && opts.is_after_question_and_before_colon {
-                // Only do this very expensive check if we must
-                match p.parse_arrow_fn_after_question_and_before_colon(
-                    loc,
-                    opts,
-                    spread_range,
-                    comma_after_spread,
-                    arrow_arg_errors,
-                    args,
-                    &arrow_data,
-                )? {
-                    ConditionalArrowFn::Parsed(arrow) => return Ok(arrow),
-                    ConditionalArrowFn::Found(args) => {
+            if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon && invalid_log.is_empty() {
+                if opts.is_after_question_and_before_colon {
+                    // Only do this very expensive check if we must
+                    let parsed;
+                    (is_arrow_fn, parsed) = p
+                        .is_type_script_arrow_return_type_after_question_and_before_colon(
+                            &arrow_data,
+                        )?;
+                    if let Some(arrow) = parsed {
+                        // Parsed without its arguments, for an outer attempt that restores
+                        debug_assert!(p.lexer.is_log_disabled);
+                        p.pop_scope();
+                        return Ok(p.new_expr(arrow, loc));
+                    }
+                    if is_arrow_fn {
                         // We know this will succeed because we've already done it once above
                         p.lexer.next()?;
                         p.skip_typescript_return_type()?;
-                        return p.parse_paren_arrow_fn(
-                            loc,
-                            opts,
-                            spread_range,
-                            comma_after_spread,
-                            &mut arrow_arg_errors,
-                            &invalid_log,
-                            args,
-                            &mut arrow_data,
-                        );
                     }
-                    ConditionalArrowFn::NotFound => {}
-                }
-            } else {
-                if maybe_return_type {
+                } else {
                     // Otherwise, do the less expensive check
                     is_arrow_fn = p.try_skip_type_script_arrow_return_type_with_backtracking()?;
                 }
+            }
 
-                if is_arrow_fn || opts.force_arrow_fn {
-                    return p.parse_paren_arrow_fn(
-                        loc,
-                        opts,
-                        spread_range,
-                        comma_after_spread,
-                        &mut arrow_arg_errors,
-                        &invalid_log,
-                        args,
-                        &mut arrow_data,
-                    );
+            if is_arrow_fn || opts.force_arrow_fn {
+                p.maybe_comma_spread_error(comma_after_spread);
+                p.log_arrow_arg_errors(&mut arrow_arg_errors);
+
+                // Now that we've decided we're an arrow function, report binding pattern
+                // conversion errors
+                if !invalid_log.is_empty() {
+                    for loc_ in invalid_log.iter() {
+                        loc_.add_error(p.log(), p.source);
+                    }
                 }
+                let args_slice: &'a mut [G::Arg] = args.into_bump_slice_mut();
+                let mut arrow = p.parse_arrow_body(args_slice, &mut arrow_data)?;
+                arrow.is_async = opts.is_async;
+                arrow.has_rest_arg = spread_range.len > 0;
+                p.pop_scope();
+                return Ok(p.new_expr(arrow, loc));
             }
         }
 

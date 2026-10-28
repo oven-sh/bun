@@ -225,10 +225,6 @@ pub struct Lexer<'a> {
     pub(crate) preserve_all_comments_before: bool,
     pub(crate) is_legacy_octal_literal: bool,
     pub(crate) is_log_disabled: bool,
-    /// `expected` returns `Error::Backtrack` with the log on, as it does with
-    /// the log off. Set for a parse that is thrown away when a token does not
-    /// fit, and whose messages stay when it is kept.
-    pub(crate) backtrack_on_mismatch: bool,
     pub(crate) comments_to_preserve_before: Vec<js_ast::G::Comment>,
     pub(crate) code_point: CodePoint,
     pub(crate) identifier: &'a [u8],
@@ -1830,7 +1826,7 @@ impl<'a> Lexer<'a> {
     #[cold]
     #[inline(never)]
     pub(crate) fn expected(&mut self, token: T) -> Result<(), Error> {
-        if self.is_log_disabled || self.backtrack_on_mismatch {
+        if self.is_log_disabled {
             return Err(Error::Backtrack);
         } else if !tokenToString_get(token).is_empty() {
             self.expected_string(tokenToString_get(token))
@@ -2271,7 +2267,6 @@ impl<'a> Lexer<'a> {
             preserve_all_comments_before: false,
             is_legacy_octal_literal: false,
             is_log_disabled: false,
-            backtrack_on_mismatch: false,
             comments_to_preserve_before: Vec::new(),
             code_point: -1,
             identifier: b"",

@@ -1236,17 +1236,6 @@ pub struct ParenExprOpts {
     pub(crate) is_after_question_and_before_colon: bool,
 }
 
-/// See `P::parse_arrow_fn_after_question_and_before_colon`.
-pub(crate) enum ConditionalArrowFn<'a> {
-    /// The ":" pairs with the "?". The lexer is at the ":".
-    NotFound,
-    /// The ":" starts the return type of an arrow function, which is not parsed
-    /// yet. The lexer is at the ":". These are its arguments.
-    Found(bun_alloc::ArenaVec<'a, G::Arg>),
-    /// The same, and this is the arrow function.
-    Parsed(Expr),
-}
-
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum AwaitOrYield {

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 const testScript = `const arr = []; for (let i = 0; i < 100; i++) arr.push({ x: i, y: "hello" + i }); console.log("done");`;
@@ -320,6 +320,65 @@ test.skipIf(isWindows).each([
   expect(stderr).toContain("Failed to write heap profile");
   expect(exitCode).toBe(0);
   expect(proc.signalCode).toBeNull();
+});
+
+// The V8 builder gives up when its serialized output passes a WTF container
+// limit (about 2 GiB). With Malloc=1 its buffers come from the system allocator,
+// so ASAN's allocation cap stands in for that limit: 1500 unique strings of 1024
+// control characters escape to about 9 MB of JSON.
+test.skipIf(!isASAN)("--heap-prof reports a snapshot too large to serialize and writes no file", async () => {
+  using dir = tempDir("heap-prof-too-large", {});
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "--heap-prof",
+      "--heap-prof-dir",
+      "profiles",
+      "-e",
+      `globalThis.items = Array.from({ length: 1500 }, (_, i) => String(i).padEnd(1024, "\\x01")); console.log("done");`,
+    ],
+    cwd: String(dir),
+    env: {
+      ...bunEnv,
+      Malloc: "1",
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1", "max_allocation_size_mb=4", "detect_leaks=0"]
+        .filter(Boolean)
+        .join(":"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe("done");
+  expect(stderr).toContain("HeapSnapshotTooLarge: Failed to write heap profile");
+  expect(exitCode).toBe(0);
+  // The file is created only once there is a snapshot, so a failed snapshot
+  // leaves neither the file nor the directory behind.
+  expect(Array.from(new Bun.Glob("**/*").scanSync({ cwd: String(dir), onlyFiles: false }))).toEqual([]);
+});
+
+test("--heap-prof reports a write failure and leaves the path alone", async () => {
+  // A regular file where the profile directory should be: the open fails, and
+  // so does the mkdir retry.
+  using dir = tempDir("heap-prof-write-failed", { profiles: "not a directory" });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--heap-prof", "--heap-prof-dir", "profiles", "-e", testScript],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe("done");
+  expect(stderr).toContain("WriteFailed: Failed to write heap profile");
+  expect(exitCode).toBe(0);
+  expect(await Bun.file(join(String(dir), "profiles")).text()).toBe("not a directory");
 });
 
 test("--heap-prof-interval equal to the default is a noop without --heap-prof, like node", async () => {

@@ -1,11 +1,13 @@
 #include "root.h"
 #include "headers-handwritten.h"
+#include "BunHeapProfiler.h"
 #include <JavaScriptCore/HeapProfiler.h>
 #include <JavaScriptCore/HeapSnapshotBuilder.h>
 #include <JavaScriptCore/BunV8HeapSnapshotBuilder.h>
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSONObject.h>
+#include <JavaScriptCore/Error.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
@@ -935,14 +937,36 @@ static WTF::String generateHeapProfile(JSC::VM& vm)
     return output.toString();
 }
 
-static WTF::String generateHeapSnapshotV8(JSC::VM& vm)
+template<typename Take>
+static auto takeV8HeapSnapshot(JSC::VM& vm, Take take) -> std::optional<decltype(take(std::declval<JSC::BunV8HeapSnapshotBuilder&>()))>
 {
     vm.ensureHeapProfiler();
     auto& heapProfiler = *vm.heapProfiler();
     heapProfiler.clearSnapshots();
 
     JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
-    return builder.json();
+    auto result = take(builder);
+    if (builder.hasOverflowed()) [[unlikely]] {
+        // Drop the JSC-side snapshot the builder appended; nothing reads it after a failure.
+        heapProfiler.clearSnapshots();
+        return std::nullopt;
+    }
+    return result;
+}
+
+std::optional<WTF::String> takeV8HeapSnapshotJSON(JSC::VM& vm)
+{
+    return takeV8HeapSnapshot(vm, [](JSC::BunV8HeapSnapshotBuilder& builder) { return builder.json(); });
+}
+
+std::optional<WTF::Vector<uint8_t>> takeV8HeapSnapshotBytes(JSC::VM& vm)
+{
+    return takeV8HeapSnapshot(vm, [](JSC::BunV8HeapSnapshotBuilder& builder) { return builder.jsonBytes(); });
+}
+
+JSC::JSObject* createHeapSnapshotTooLargeError(JSC::JSGlobalObject* globalObject)
+{
+    return JSC::createOutOfMemoryError(globalObject, "Heap snapshot is too large to serialize"_s);
 }
 
 } // namespace Bun
@@ -953,8 +977,11 @@ extern "C" BunString Bun__generateHeapProfile(JSC::VM* vm)
     return Bun::toStringRef(result);
 }
 
-extern "C" BunString Bun__generateHeapSnapshotV8(JSC::VM* vm)
+extern "C" bool Bun__generateHeapSnapshotV8(JSC::VM* vm, BunString* out)
 {
-    WTF::String result = Bun::generateHeapSnapshotV8(*vm);
-    return Bun::toStringRef(result);
+    auto json = Bun::takeV8HeapSnapshotJSON(*vm);
+    if (!json)
+        return false;
+    *out = Bun::toStringRef(*json);
+    return true;
 }

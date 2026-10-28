@@ -74,7 +74,7 @@
 #include "GeneratedValkey.h"
 #include "GeneratedXMLObject.h"
 #include "GeneratedYAMLObject.h"
-#include "JavaScriptCore/BunV8HeapSnapshotBuilder.h"
+#include "BunHeapProfiler.h"
 #include "BunObjectModule.h"
 #include "_NativeModule.h"
 #include "JSCookie.h"
@@ -823,12 +823,6 @@ JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGl
 JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
-    vm.ensureHeapProfiler();
-    auto& heapProfiler = *vm.heapProfiler();
-    heapProfiler.clearSnapshots();
-
-    Bun__Feature__heap_snapshot += 1;
-
     JSValue arg0 = callFrame->argument(0);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     bool useV8 = false;
@@ -863,11 +857,15 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * gl
             }
         }
 
+        Bun__Feature__heap_snapshot += 1;
         if (useArrayBuffer) {
-            JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
-            auto bytes = builder.jsonBytes();
+            auto bytes = Bun::takeV8HeapSnapshotBytes(vm);
             RETURN_IF_EXCEPTION(throwScope, {});
-            auto released = bytes.releaseBuffer();
+            if (!bytes) [[unlikely]] {
+                throwException(globalObject, throwScope, Bun::createHeapSnapshotTooLargeError(globalObject));
+                return {};
+            }
+            auto released = bytes->releaseBuffer();
             auto span = released.leakSpan();
             auto buffer = ArrayBuffer::createFromBytes(std::span<const uint8_t> { span.data(), span.size() }, createSharedTask<void(void*)>([](void* p) {
                 fastFree(p);
@@ -875,12 +873,19 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * gl
             return JSC::JSValue::encode(JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(), WTF::move(buffer)));
         }
 
-        JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
-        auto json = builder.json();
+        auto json = Bun::takeV8HeapSnapshotJSON(vm);
         RETURN_IF_EXCEPTION(throwScope, {});
-        return JSC::JSValue::encode(jsString(vm, json));
+        if (!json) [[unlikely]] {
+            throwException(globalObject, throwScope, Bun::createHeapSnapshotTooLargeError(globalObject));
+            return {};
+        }
+        return JSC::JSValue::encode(jsString(vm, WTF::move(*json)));
     }
 
+    Bun__Feature__heap_snapshot += 1;
+    vm.ensureHeapProfiler();
+    auto& heapProfiler = *vm.heapProfiler();
+    heapProfiler.clearSnapshots();
     JSC::HeapSnapshotBuilder builder(heapProfiler);
     builder.buildSnapshot();
     auto json = builder.json();

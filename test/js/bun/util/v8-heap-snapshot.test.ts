@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import { join } from "node:path";
 
 const fixture = join(import.meta.dir, "v8-heap-snapshot-fixture.ts");
@@ -87,6 +87,80 @@ test("v8.writeHeapSnapshot() with path", async () => {
   using dir = tempDir("v8-heap-snapshot", {});
   const path = join(String(dir), "test.heapsnapshot");
   expect(await runFixture("write-path", { args: [path] })).toEqual({ returnedPath: path, ...structure });
+});
+
+// The builder records an overflow when its serialized output passes a WTF
+// container limit (about 2 GiB) and returns an empty result; every caller must
+// turn that into an error. With Malloc=1 the builder's buffers come from the
+// system allocator, so ASAN's allocation cap stands in for that limit: 1500
+// unique strings of 1024 control characters escape to about 9 MB of JSON.
+describe.concurrent.skipIf(!isASAN)("a snapshot too large to serialize", () => {
+  const env = {
+    ...bunEnv,
+    Malloc: "1",
+    ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1", "max_allocation_size_mb=4", "detect_leaks=0"]
+      .filter(Boolean)
+      .join(":"),
+  };
+  const heap = `globalThis.items = Array.from({ length: 1500 }, (_, i) => String(i).padEnd(1024, "\\x01"));`;
+  const report = `e => console.log("threw", e.name, e.message)`;
+  const message = "threw RangeError Out of memory: Heap snapshot is too large to serialize\n";
+
+  test.each([
+    ["Bun.generateHeapSnapshot('v8')", `Bun.generateHeapSnapshot("v8").length`],
+    ["Bun.generateHeapSnapshot('v8', 'arraybuffer')", `Bun.generateHeapSnapshot("v8", "arraybuffer").byteLength`],
+    ["v8.getHeapSnapshot()", `require("node:v8").getHeapSnapshot()`],
+  ])("%s throws", async (_name, expression) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `${heap} try { console.log("returned", ${expression}); } catch (e) { (${report})(e); }`],
+      env,
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe(message);
+    expect(exitCode).toBe(0);
+  });
+
+  test("v8.writeHeapSnapshot() throws and leaves no file", async () => {
+    using dir = tempDir("v8-heap-snapshot-overflow", {});
+    const path = join(String(dir), "too-large.heapsnapshot");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `${heap}
+         const { writeHeapSnapshot } = require("node:v8");
+         try { console.log("returned", writeHeapSnapshot(${JSON.stringify(path)})); } catch (e) { (${report})(e); }
+         console.log("file exists", require("node:fs").existsSync(${JSON.stringify(path)}));`,
+      ],
+      env,
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe(`${message}file exists false\n`);
+    expect(exitCode).toBe(0);
+  });
+
+  test("worker.getHeapSnapshot() rejects", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const worker = new Worker(URL.createObjectURL(new Blob([\`${heap} postMessage("ready"); setInterval(() => {}, 1000);\`])));
+         await new Promise(resolve => worker.addEventListener("message", resolve, { once: true }));
+         try { console.log("returned", (await worker.getHeapSnapshot()).length); } catch (e) { (${report})(e); }
+         worker.terminate();`,
+      ],
+      env,
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe(message);
+    expect(exitCode).toBe(0);
+  });
 });
 
 test("v8 heap snapshot labels Web Streams internal edges", async () => {

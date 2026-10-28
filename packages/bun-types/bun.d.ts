@@ -6146,6 +6146,8 @@ declare module "bun" {
    * const snapshot = Bun.generateHeapSnapshot("v8");
    * await Bun.write("heap.heapsnapshot", snapshot);
    * ```
+   *
+   * @throws {RangeError} `Out of memory` when the serialized snapshot is too large (about 2 GiB)
    */
   function generateHeapSnapshot(format: "v8"): string;
 
@@ -6159,6 +6161,8 @@ declare module "bun" {
    * const snapshot = Bun.generateHeapSnapshot("v8", "arraybuffer");
    * await Bun.write("heap.heapsnapshot", snapshot);
    * ```
+   *
+   * @throws {RangeError} `Out of memory` when the serialized snapshot is too large (about 2 GiB)
    */
   function generateHeapSnapshot(format: "v8", encoding: "arraybuffer"): ArrayBuffer;
 

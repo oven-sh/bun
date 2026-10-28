@@ -54,6 +54,8 @@ pub enum Error {
     EndOfFile,
     #[error("FailedToOpenSocket")]
     FailedToOpenSocket,
+    #[error("HeapSnapshotTooLarge")]
+    HeapSnapshotTooLarge,
     #[error(transparent)]
     Sys(#[from] bun_errno::SystemErrno),
     #[error(transparent)]
@@ -117,6 +119,7 @@ impl Error {
             Self::MissingDebugInfo => "MissingDebugInfo",
             Self::EndOfFile => "EndOfFile",
             Self::FailedToOpenSocket => "FailedToOpenSocket",
+            Self::HeapSnapshotTooLarge => "HeapSnapshotTooLarge",
             Self::Sys(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
             Self::Core(e) => e.name(),

@@ -1,0 +1,1 @@
+{ "skipInShell": "it uses node:fs" }

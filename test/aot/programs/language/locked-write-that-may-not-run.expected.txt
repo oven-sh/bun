@@ -1,0 +1,7 @@
+in a try: TypeError
+under a condition that is false: 0
+in a function that is not called yet: 1
+in a function that is called: TypeError
+a new name on the same object: 3
+a new name on a namespace: 4
+a member that is left open: 8

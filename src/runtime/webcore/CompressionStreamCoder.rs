@@ -217,6 +217,13 @@ impl CompressionStreamCoder {
                 }
             }
             (Format::Brotli, false) => {
+                if bun_removable_features::is_removed(
+                    bun_removable_features::Feature::BrotliEncoder,
+                ) {
+                    return Err(CodecError::Message(
+                        "Brotli compression isn't in this executable",
+                    ));
+                }
                 // SAFETY: FFI — the default-allocator instance (all nulls).
                 let p = NonNull::new(unsafe {
                     brotli::BrotliEncoderCreateInstance(None, None, ptr::null_mut())
@@ -238,6 +245,13 @@ impl CompressionStreamCoder {
                 Backend::BrotliEncode(p)
             }
             (Format::Brotli, true) => {
+                if bun_removable_features::is_removed(
+                    bun_removable_features::Feature::BrotliDecoder,
+                ) {
+                    return Err(CodecError::Message(
+                        "Brotli decompression isn't in this executable",
+                    ));
+                }
                 // SAFETY: FFI — the default-allocator instance (all nulls).
                 let p = NonNull::new(unsafe {
                     brotli::BrotliDecoderCreateInstance(None, None, ptr::null_mut())
@@ -715,6 +729,7 @@ impl AsyncInput {
 // ─── extern "C" surface (called from JSCompressionStream.cpp) ──────────────
 
 /// `level` (present when `has_level`) is range-checked by the caller; ignored for decompression.
+#[inline(never)]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn CompressionStreamCoder__create(
     format: u8,
@@ -723,6 +738,10 @@ pub(crate) extern "C" fn CompressionStreamCoder__create(
     has_level: bool,
     level: i32,
 ) -> *mut CompressionStreamCoder {
+    bun_removable_features::removable_definition!(
+        CompressionStreams,
+        CompressionStreamCoder__create
+    );
     let Some(format) = Format::from_u8(format) else {
         return ptr::null_mut();
     };
@@ -734,8 +753,13 @@ pub(crate) extern "C" fn CompressionStreamCoder__create(
 }
 
 /// Releases the C++ cell's reference; see [`CompressionStreamCoder::ref_count`].
+#[inline(never)]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn CompressionStreamCoder__destroy(this: *mut CompressionStreamCoder) {
+    bun_removable_features::removable_definition!(
+        CompressionStreams,
+        CompressionStreamCoder__destroy
+    );
     if !this.is_null() {
         // SAFETY: `this` was returned by `CompressionStreamCoder__create` and
         // the cell's reference has not been released yet.
@@ -746,6 +770,7 @@ pub(crate) extern "C" fn CompressionStreamCoder__destroy(this: *mut CompressionS
 /// One JS-thread [`step`](CompressionStreamCoder::step): returns its output as
 /// a fresh (possibly empty) `Uint8Array` and sets `more` if the coder must be
 /// stepped again (with `input` null), or throws a `TypeError` and returns zero.
+#[inline(never)]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn CompressionStreamCoder__transform(
     this: *mut CompressionStreamCoder,
@@ -755,6 +780,10 @@ pub(crate) extern "C" fn CompressionStreamCoder__transform(
     finish: bool,
     more: &mut bool,
 ) -> JSValue {
+    bun_removable_features::removable_definition!(
+        CompressionStreams,
+        CompressionStreamCoder__transform
+    );
     let slice = if input.is_null() {
         &[][..]
     } else {
@@ -817,6 +846,7 @@ fn throw_codec_error(global: &JSGlobalObject, e: CodecError) {
 /// [`CompressionStreamCoder__transform`], but the output is written to the
 /// native sink of `controller`: returns the sink's `write` result (see
 /// nativeSinkWriteIsBackpressure), `undefined` when there was no output.
+#[inline(never)]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn CompressionStreamCoder__transformInto(
     this: *mut CompressionStreamCoder,
@@ -827,6 +857,10 @@ pub(crate) extern "C" fn CompressionStreamCoder__transformInto(
     controller: &crate::webcore::sink::ReadableSinkController,
     more: &mut bool,
 ) -> JSValue {
+    bun_removable_features::removable_definition!(
+        CompressionStreams,
+        CompressionStreamCoder__transformInto
+    );
     let slice = if input.is_null() {
         &[][..]
     } else {
@@ -947,6 +981,7 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
 
 /// Schedules one off-thread step; a continuation step passes no chunk and no
 /// input (the coder kept the tail).
+#[inline(never)]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn CompressionStreamCoder__transformAsync(
     this: *mut CompressionStreamCoder,
@@ -957,6 +992,10 @@ pub(crate) extern "C" fn CompressionStreamCoder__transformAsync(
     input_len: usize,
     finish: bool,
 ) {
+    bun_removable_features::removable_definition!(
+        CompressionStreams,
+        CompressionStreamCoder__transformAsync
+    );
     let fallback = if input.is_null() {
         &[][..]
     } else {

@@ -1,0 +1,3821 @@
+////: arrayFromMapLate
+async function arrayFromMapLate() {
+  let src = [1, 2]; let f = x => x + 1;
+  function install() { f = x => 'late' + x; }
+  async function use(tag) { show(tag, Array.from(src, f)[0]); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: arraySubclassIteratorLate
+async function arraySubclassIteratorLate() {
+  class List extends Array {} const l = List.from([1, 2]);
+  function install() { List.prototype[Symbol.iterator] = function* () { yield 'late'; }; }
+  async function use(tag) { for (const x of l) show(tag, x); const [p] = l; show(tag, p); show(tag, [...l].length); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: asyncGeneratorLate
+async function asyncGeneratorLate() {
+  let y = 1; async function* g() { yield y; }
+  function install() { y = Promise.resolve("late"); }
+  async function use(tag) { for await (const x of g()) show(tag, x); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: asyncGeneratorYieldThenable
+async function asyncGeneratorYieldThenable() {
+  const t = { v: 1 }; async function* g() { yield t; }
+  function install() { t.then = function (res) { res("late"); }; }
+  async function use(tag) { for await (const x of g()) show(tag, x); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: asyncIteratorOnPrototypeLate
+async function asyncIteratorOnPrototypeLate() {
+  class Feed { *[Symbol.iterator]() { yield 1; } } const f = new Feed();
+  function install() { Feed.prototype[Symbol.asyncIterator] = async function* () { yield 'late'; }; }
+  async function use(tag) { for await (const x of f) show(tag, x); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: await
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log(«1», "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log(«1», "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  class A { constructor(n) { once(); if (n) new «2»(n - 1); } } new A(1);
+  report();
+})();
+////: await-2
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log(«1», "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log(«1», "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  "aXbX".«2»("X", () => { once(); return ""; });
+  report();
+})();
+////: await-5
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log(«1», "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log(«1», "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  «2»); 
+  await settle();
+  report();
+})();
+////: await-6
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log(«1», "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log(«1», "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const O = structuredClone({}).constructor;
+  «2»);
+  report();
+})();
+////: await-7
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log(«1», "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log(«1», "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  «2»); 
+  await settle();
+  report();
+})();
+////: builtinArgumentBecomesIterable
+async function builtinArgumentBecomesIterable() {
+  let o = 'ab';
+  function install() { o = { [Symbol.iterator]() { let i = 0; return { next() { return { done: i++ >= 2, value: "late" }; } }; } }; }
+  async function use(tag) { show(tag, Array.from(o)[0]); show(tag, [...new Set(o)][0]); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: destructuringDefaultLate
+async function destructuringDefaultLate() {
+  let a = [1];
+  function install() { a = [undefined, 'late']; }
+  async function use(tag) { const [p = 'default', q = 5] = a; show(tag, p); show(tag, q); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: destructuringRestLate
+async function destructuringRestLate() {
+  let a = [1, 2, 3];
+  function install() { a = new Set(['late', 'x']); }
+  async function use(tag) { const [p, ...rest] = a; show(tag, p); show(tag, rest[0]); show(tag, rest.length); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: forAwaitLateAsyncIterator
+async function forAwaitLateAsyncIterator() {
+  const o = { [Symbol.iterator]() { let i = 0; return { next() { return { done: i >= 2, value: i++ }; } }; } };
+  function install() { o[Symbol.asyncIterator] = function () { let i = 0; return { next() { return Promise.resolve({ done: i++ >= 2, value: "late" }); } }; }; }
+  async function use(tag) { for await (const x of o) show(tag, x); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: forAwaitResultThenable
+async function forAwaitResultThenable() {
+  const r = { done: false, value: 1 }; let i = 0; const o = { [Symbol.asyncIterator]() { i = 0; return { next() { r.done = i++ >= 1; return r; } }; } };
+  function install() { r.then = function (res) { res({ done: i > 1, value: "late" }); }; }
+  async function use(tag) { for await (const x of o) show(tag, x); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: forAwaitSyncValuesThenable
+async function forAwaitSyncValuesThenable() {
+  const t = { v: 1 }; const o = [t];
+  function install() { t.then = function (res) { res("late"); }; }
+  async function use(tag) { for await (const x of o) show(tag, x); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: generatorArgumentLate
+async function generatorArgumentLate() {
+  let arg = 1; function* g(a) { yield a; }
+  function install() { arg = 'late'; }
+  async function use(tag) { for (const x of g(arg)) show(tag, x); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: generatorEscapesLate
+async function generatorEscapesLate() {
+  function* g() { const x = yield 1; show('sent', x); } const box = [];
+  function install() { box.push(g()); }
+  async function use(tag) { for (const it of box) { it.next(); it.next('late'); } show(tag, box.length); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: generatorOwnPrototypeNext
+async function generatorOwnPrototypeNext() {
+  function* g() { yield 1; }
+  function install() { let n = 0; g.prototype.next = function () { return { done: n++ % 2 === 1, value: "late" }; }; }
+  async function use(tag) { for (const x of g()) show(tag, x); const [a] = g(); show(tag, a); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: generatorPrototypeReplaced
+async function generatorPrototypeReplaced() {
+  function* g() { yield 1; }
+  function install() { g.prototype = { next() { return { done: true, value: "late" }; }, [Symbol.iterator]() { let n = 0; return { next() { return { done: n++ >= 1, value: "late" }; } }; } }; }
+  async function use(tag) { for (const x of g()) show(tag, x); show(tag, g().next().value); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: generatorReturnCallLate
+async function generatorReturnCallLate() {
+  let v = 1; function* g() { try { yield 0; } finally { show('finally', v); } }
+  function install() { v = 'late'; }
+  async function use(tag) { const it = g(); it.next(); show(tag, it.return(v).value); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: generatorReturnLate
+async function generatorReturnLate() {
+  let y = 1; function* g() { yield 0; return y; }
+  function install() { y = "late"; }
+  async function use(tag) { const it = g(); it.next(); show(tag, it.next().value); function* d() { const r = yield* g(); show(tag + ' delegated', r); } for (const x of d()) show(tag, x); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: generatorReturnMethodLate
+async function generatorReturnMethodLate() {
+  let closed = 0; function* g() { yield 1; yield 2; }
+  function install() { g.prototype.return = function () { closed = "closed"; return {}; }; }
+  async function use(tag) { for (const x of g()) { show(tag, x); break; } show(tag, closed); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: generatorSentLate
+async function generatorSentLate() {
+  let sent = 1; function* g() { while (true) { const x = yield 0; show('in generator', x); } }
+  function install() { sent = "late"; }
+  async function use(tag) { const it = g(); it.next(); it.next(sent); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: generatorSentLate-2
+////= generatorSentLate
+
+////= generatorSentObjectLate
+
+////= generatorYieldLate
+
+////= generatorReturnLate
+
+////= generatorThrowLate
+
+////= generatorPrototypeReplaced
+
+////= generatorOwnPrototypeNext
+
+////= generatorReturnMethodLate
+
+////= yieldStarLateIterable
+
+////= asyncGeneratorLate
+
+////= asyncGeneratorYieldThenable
+
+////= generatorReturnCallLate
+
+////= generatorThrowUncaughtLate
+
+////= generatorStoredLate
+
+////= generatorArgumentLate
+
+////= generatorThisLate
+
+////= generatorEscapesLate
+
+////= main-5
+////: generatorSentObjectLate
+async function generatorSentObjectLate() {
+  let sent = { a: 1 }; function* g() { while (true) { const x = yield 0; show('in generator', x); show('field', x.a); } }
+  function install() { sent = { a: "late", b: 2 }; }
+  async function use(tag) { const it = g(); it.next(); it.next(sent); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: generatorStoredLate
+async function generatorStoredLate() {
+  function* one() { yield 1; } function* two() { yield 'late'; } let make = one;
+  function install() { make = two; }
+  async function use(tag) { for (const x of make()) show(tag, x); const it = make(); show(tag, it.next().value); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: generatorThisLate
+async function generatorThisLate() {
+  const holder = { v: 1, *g() { yield this.v; } };
+  function install() { holder.v = 'late'; }
+  async function use(tag) { for (const x of holder.g()) show(tag, x); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: generatorThrowLate
+async function generatorThrowLate() {
+  let y = 1; function* g() { try { yield 0; } catch (e) { show('caught in generator', e); } }
+  function install() { y = "late"; }
+  async function use(tag) { const it = g(); it.next(); it.throw(y); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: generatorThrowUncaughtLate
+async function generatorThrowUncaughtLate() {
+  let v = 1; function* g() { yield 0; }
+  function install() { v = 'late'; }
+  async function use(tag) { const it = g(); it.next(); try { it.throw(v); } catch (e) { show(tag + ' caught', e); } }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: generatorYieldLate
+async function generatorYieldLate() {
+  let y = 1; function* g() { yield y; yield y; }
+  function install() { y = "late"; }
+  async function use(tag) { for (const x of g()) show(tag, x); const [a] = g(); show(tag, a); show(tag, [...g()][1]); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: iterateArrayOwnIterator
+async function iterateArrayOwnIterator() {
+  const a = [1, 2];
+  function install() { a[Symbol.iterator] = function () { let i = 0; return { next() { return { done: i++ >= 2, value: "late" }; } }; }; }
+  async function use(tag) { for (const x of a) show(tag, x); const [p, q] = a; show(tag, p); show(tag, [...a][0]); show(tag, Array.from(a)[0]); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: iterateArrayValuesResultOwnNext
+async function iterateArrayValuesResultOwnNext() {
+  const a = [1, 2]; const it = a.values();
+  function install() { let n = 0; it.next = function () { return { done: n++ >= 2, value: "late" }; }; }
+  async function use(tag) { if (tag === 'first') { show(tag, 0); return; } for (const x of it) show(tag, x); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: iterateBuiltinsLateIterator
+async function iterateBuiltinsLateIterator() {
+  const o = { length: 0 };
+  function install() { o[Symbol.iterator] = function () { let i = 0; return { next() { return { done: i++ >= 2, value: "late" }; } }; }; }
+  async function use(tag) { try { show(tag, Array.from(o)[0]); show(tag, [...new Set(o)][0]); show(tag, (await Promise.all(o))[0]); } catch (e) { print(tag, 'threw'); } }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: iterateElementsLate
+async function iterateElementsLate() {
+  const a = [1, 2];
+  function install() { a.push("late"); }
+  async function use(tag) { for (const v of a) show(tag, v); const [p, q, r] = a; show(tag, r); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: iterateElementsMovedLate
+async function iterateElementsMovedLate() {
+  const a = [1, "s"];
+  function install() { a.reverse(); }
+  async function use(tag) { const [p] = a; show(tag, p); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: iterateElementsStoredLate
+async function iterateElementsStoredLate() {
+  const a = [1, 2];
+  function install() { a[0] = "late"; }
+  async function use(tag) { for (const v of a) show(tag, v); const [p] = a; show(tag, p); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: iterateIteratorReplaced
+async function iterateIteratorReplaced() {
+  const o = { [Symbol.iterator]() { let i = 0; return { next() { return { done: i >= 2, value: i++ }; } }; } };
+  function install() { o[Symbol.iterator] = function () { let i = 0; return { next() { return { done: i++ >= 2, value: "late" }; } }; }; }
+  async function use(tag) { for (const x of o) show(tag, x); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: iterateMapConstructorLate
+async function iterateMapConstructorLate() {
+  const o = [];
+  function install() { o[Symbol.iterator] = function () { let i = 0; return { next() { return { done: i++ >= 1, value: ["late", "late"] }; } }; }; }
+  async function use(tag) { const m = new Map(o); for (const [k, v] of m) { show(tag, k); show(tag, v); } show(tag, m.size); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: iterateMapEntriesLate
+async function iterateMapEntriesLate() {
+  const m = new Map([[1, 1]]);
+  function install() { m.set("late", "late"); }
+  async function use(tag) { for (const [k, v] of m) { show(tag, k); show(tag, v); } for (const k of m.keys()) show(tag, k); for (const v of m.values()) show(tag, v); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: iterateNextOnProto
+async function iterateNextOnProto() {
+  let i = 0; const IP = { next() { return { done: i++ >= 2, value: 1 }; } }; const it = Object.create(IP); const o = { [Symbol.iterator]() { i = 0; return it; } };
+  function install() { it.next = function () { return { done: i++ >= 2, value: "late" }; }; }
+  async function use(tag) { for (const x of o) show(tag, x); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: iterateNextReplaced
+async function iterateNextReplaced() {
+  let i = 0; const it = { next() { return { done: i++ >= 2, value: 1 }; } }; const o = { [Symbol.iterator]() { i = 0; return it; } };
+  function install() { it.next = function () { return { done: i++ >= 2, value: "late" }; }; }
+  async function use(tag) { for (const x of o) show(tag, x); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: iterateOwnIterator
+async function iterateOwnIterator() {
+  const o = { v: 1 };
+  function install() { o[Symbol.iterator] = function () { let i = 0; return { next() { return { done: i++ >= 2, value: "late" }; } }; }; }
+  async function use(tag) { try { for (const x of o) show(tag, x); } catch (e) { print(tag, 'not iterable'); } }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: iterateOwnIterator-2
+////= iterateOwnIterator
+
+////= iterateProtoIterator
+
+////= iterateIteratorReplaced
+
+////= iterateNextReplaced
+
+////= iterateNextOnProto
+
+////= iterateReturnAppears
+
+////= iterateArrayOwnIterator
+
+////= iterateArrayValuesResultOwnNext
+
+////= iterateResultValueLate
+
+////= iterateResultValueGetter
+
+////= iterateResultValueOnProto
+
+////= iterateResultDoneGetter
+
+////= iterateSecondResultObject
+
+////= iterateSecondIterable
+
+////= iterateThirdIterable
+
+////= iterateElementsLate
+
+////= iterateElementsStoredLate
+
+////= iterateElementsMovedLate
+
+////= iterateMapEntriesLate
+
+////= iterateBuiltinsLateIterator
+
+////= iterateMapConstructorLate
+
+////= forAwaitLateAsyncIterator
+
+////= forAwaitSyncValuesThenable
+
+////= forAwaitResultThenable
+
+////= spreadCallLate
+
+////= builtinArgumentBecomesIterable
+
+////= iteratorGetterLate
+
+////= nextGetterLate
+
+////= iteratorClassMethodLate
+
+////= iteratorSubclassLate
+
+////= arraySubclassIteratorLate
+
+////= asyncIteratorOnPrototypeLate
+
+////= destructuringDefaultLate
+
+////= destructuringRestLate
+
+////= arrayFromMapLate
+
+////= setElementsLate
+
+////= setFromIterableLate
+
+////= mapFromEntriesLate
+
+////= objectEntriesLate
+
+////= main-2
+////: iterateProtoIterator
+async function iterateProtoIterator() {
+  const P = {}; const o = Object.create(P);
+  function install() { P[Symbol.iterator] = function () { let i = 0; return { next() { return { done: i++ >= 2, value: "late" }; } }; }; }
+  async function use(tag) { try { for (const x of o) show(tag, x); } catch (e) { print(tag, 'not iterable'); } }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: iterateResultDoneGetter
+async function iterateResultDoneGetter() {
+  let i = 0; let seen = 0; const r = { done: false, value: 1 }; const o = { [Symbol.iterator]() { i = 0; return { next() { i++; return r; } }; } };
+  function install() { Object.defineProperty(r, "done", { get() { seen = "getter"; return i > 2; } }); }
+  async function use(tag) { if (tag === 'first') { show(tag, 0); return; } for (const x of o) show(tag, x); show(tag, seen); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: iterateResultValueGetter
+async function iterateResultValueGetter() {
+  let i = 0; const r = { done: false, value: 1 }; const o = { [Symbol.iterator]() { i = 0; return { next() { r.done = i++ >= 2; return r; } }; } };
+  function install() { Object.defineProperty(r, "value", { get() { return "late"; } }); }
+  async function use(tag) { for (const x of o) show(tag, x); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: iterateResultValueLate
+async function iterateResultValueLate() {
+  let i = 0; const r = { done: false, value: 1 }; const o = { [Symbol.iterator]() { i = 0; return { next() { r.done = i++ >= 2; return r; } }; } };
+  function install() { r.value = "late"; }
+  async function use(tag) { for (const x of o) show(tag, x); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: iterateResultValueOnProto
+async function iterateResultValueOnProto() {
+  let i = 0; const RP = {}; const o = { [Symbol.iterator]() { i = 0; return { next() { const r = Object.create(RP); r.done = i++ >= 2; return r; } }; } };
+  function install() { RP.value = "late"; }
+  async function use(tag) { for (const x of o) show(tag, x); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: iterateReturnAppears
+async function iterateReturnAppears() {
+  let i = 0; let closed = 0; const it = { next() { return { done: false, value: i++ }; } }; const o = { [Symbol.iterator]() { return it; } };
+  function install() { it.return = function () { closed = "closed"; return {}; }; }
+  async function use(tag) { for (const x of o) { show(tag, x); break; } show(tag, closed); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: iterateSecondIterable
+async function iterateSecondIterable() {
+  let x = [1, 2];
+  function install() { x = new Set(["late"]); }
+  async function use(tag) { for (const v of x) show(tag, v); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: iterateSecondResultObject
+async function iterateSecondResultObject() {
+  let i = 0; let late = false; function other() { return { done: i++ >= 2, value: "late" }; } const o = { [Symbol.iterator]() { i = 0; return { next() { return late ? other() : { done: i++ >= 2, value: 1 }; } }; } };
+  function install() { late = true; }
+  async function use(tag) { for (const x of o) show(tag, x); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: iterateThirdIterable
+async function iterateThirdIterable() {
+  let x = [1, 2];
+  function install() { x = "ab"; }
+  async function use(tag) { for (const v of x) show(tag, v); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: iteratorClassMethodLate
+async function iteratorClassMethodLate() {
+  class Bag { constructor() { this.items = [1, 2]; } } const b = new Bag();
+  function install() { Bag.prototype[Symbol.iterator] = function* () { for (const x of this.items) yield String(x); }; }
+  async function use(tag) { try { for (const x of b) show(tag, x); } catch (e) { print(tag, 'not iterable'); } }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: iteratorGetterLate
+async function iteratorGetterLate() {
+  const o = {};
+  function install() { Object.defineProperty(o, Symbol.iterator, { get() { return function () { let i = 0; return { next() { return { done: i++ >= 2, value: "late" }; } }; }; } }); }
+  async function use(tag) { try { for (const x of o) show(tag, x); } catch (e) { print(tag, 'not iterable'); } }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: iteratorSubclassLate
+async function iteratorSubclassLate() {
+  class Base { *[Symbol.iterator]() { yield 1; } } class Sub extends Base {} let b = new Base();
+  function install() { Sub.prototype[Symbol.iterator] = function* () { yield 'late'; }; b = new Sub(); }
+  async function use(tag) { for (const x of b) show(tag, x); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: lines-16
+«1».defineProperty(«2», «3», {
+  get() {
+    log.push(«4»);
+    return «5»;
+  },
+});
+////: main-2
+async function main() {
+  print('# iterate own iterator');
+  await iterateOwnIterator().catch(e => print('failed', String(e)));
+  print('# iterate proto iterator');
+  await iterateProtoIterator().catch(e => print('failed', String(e)));
+  print('# iterate iterator replaced');
+  await iterateIteratorReplaced().catch(e => print('failed', String(e)));
+  print('# iterate next replaced');
+  await iterateNextReplaced().catch(e => print('failed', String(e)));
+  print('# iterate next on proto');
+  await iterateNextOnProto().catch(e => print('failed', String(e)));
+  print('# iterate return appears');
+  await iterateReturnAppears().catch(e => print('failed', String(e)));
+  print('# iterate array own iterator');
+  await iterateArrayOwnIterator().catch(e => print('failed', String(e)));
+  print('# iterate array values result own next');
+  await iterateArrayValuesResultOwnNext().catch(e => print('failed', String(e)));
+  print('# iterate result value late');
+  await iterateResultValueLate().catch(e => print('failed', String(e)));
+  print('# iterate result value getter');
+  await iterateResultValueGetter().catch(e => print('failed', String(e)));
+  print('# iterate result value on proto');
+  await iterateResultValueOnProto().catch(e => print('failed', String(e)));
+  print('# iterate result done getter');
+  await iterateResultDoneGetter().catch(e => print('failed', String(e)));
+  print('# iterate second result object');
+  await iterateSecondResultObject().catch(e => print('failed', String(e)));
+  print('# iterate second iterable');
+  await iterateSecondIterable().catch(e => print('failed', String(e)));
+  print('# iterate third iterable');
+  await iterateThirdIterable().catch(e => print('failed', String(e)));
+  print('# iterate elements late');
+  await iterateElementsLate().catch(e => print('failed', String(e)));
+  print('# iterate elements stored late');
+  await iterateElementsStoredLate().catch(e => print('failed', String(e)));
+  print('# iterate elements moved late');
+  await iterateElementsMovedLate().catch(e => print('failed', String(e)));
+  print('# iterate map entries late');
+  await iterateMapEntriesLate().catch(e => print('failed', String(e)));
+  print('# iterate builtins late iterator');
+  await iterateBuiltinsLateIterator().catch(e => print('failed', String(e)));
+  print('# iterate map constructor late');
+  await iterateMapConstructorLate().catch(e => print('failed', String(e)));
+  print('# for await late async iterator');
+  await forAwaitLateAsyncIterator().catch(e => print('failed', String(e)));
+  print('# for await sync values thenable');
+  await forAwaitSyncValuesThenable().catch(e => print('failed', String(e)));
+  print('# for await result thenable');
+  await forAwaitResultThenable().catch(e => print('failed', String(e)));
+  print('# spread call late');
+  await spreadCallLate().catch(e => print('failed', String(e)));
+  print('# builtin argument becomes iterable');
+  await builtinArgumentBecomesIterable().catch(e => print('failed', String(e)));
+  print('# iterator getter late');
+  await iteratorGetterLate().catch(e => print('failed', String(e)));
+  print('# next getter late');
+  await nextGetterLate().catch(e => print('failed', String(e)));
+  print('# iterator class method late');
+  await iteratorClassMethodLate().catch(e => print('failed', String(e)));
+  print('# iterator subclass late');
+  await iteratorSubclassLate().catch(e => print('failed', String(e)));
+  print('# array subclass iterator late');
+  await arraySubclassIteratorLate().catch(e => print('failed', String(e)));
+  print('# async iterator on prototype late');
+  await asyncIteratorOnPrototypeLate().catch(e => print('failed', String(e)));
+  print('# destructuring default late');
+  await destructuringDefaultLate().catch(e => print('failed', String(e)));
+  print('# destructuring rest late');
+  await destructuringRestLate().catch(e => print('failed', String(e)));
+  print('# array from map late');
+  await arrayFromMapLate().catch(e => print('failed', String(e)));
+  print('# set elements late');
+  await setElementsLate().catch(e => print('failed', String(e)));
+  print('# set from iterable late');
+  await setFromIterableLate().catch(e => print('failed', String(e)));
+  print('# map from entries late');
+  await mapFromEntriesLate().catch(e => print('failed', String(e)));
+  print('# object entries late');
+  await objectEntriesLate().catch(e => print('failed', String(e)));
+}
+////: main-5
+async function main() {
+  print('# generator sent late');
+  await generatorSentLate().catch(e => print('failed', String(e)));
+  print('# generator sent object late');
+  await generatorSentObjectLate().catch(e => print('failed', String(e)));
+  print('# generator yield late');
+  await generatorYieldLate().catch(e => print('failed', String(e)));
+  print('# generator return late');
+  await generatorReturnLate().catch(e => print('failed', String(e)));
+  print('# generator throw late');
+  await generatorThrowLate().catch(e => print('failed', String(e)));
+  print('# generator prototype replaced');
+  await generatorPrototypeReplaced().catch(e => print('failed', String(e)));
+  print('# generator own prototype next');
+  await generatorOwnPrototypeNext().catch(e => print('failed', String(e)));
+  print('# generator return method late');
+  await generatorReturnMethodLate().catch(e => print('failed', String(e)));
+  print('# yield star late iterable');
+  await yieldStarLateIterable().catch(e => print('failed', String(e)));
+  print('# async generator late');
+  await asyncGeneratorLate().catch(e => print('failed', String(e)));
+  print('# async generator yield thenable');
+  await asyncGeneratorYieldThenable().catch(e => print('failed', String(e)));
+  print('# generator return call late');
+  await generatorReturnCallLate().catch(e => print('failed', String(e)));
+  print('# generator throw uncaught late');
+  await generatorThrowUncaughtLate().catch(e => print('failed', String(e)));
+  print('# generator stored late');
+  await generatorStoredLate().catch(e => print('failed', String(e)));
+  print('# generator argument late');
+  await generatorArgumentLate().catch(e => print('failed', String(e)));
+  print('# generator this late');
+  await generatorThisLate().catch(e => print('failed', String(e)));
+  print('# generator escapes late');
+  await generatorEscapesLate().catch(e => print('failed', String(e)));
+}
+////: mapFromEntriesLate
+async function mapFromEntriesLate() {
+  const src = [[1, 1]];
+  function install() { src.push(['late', { deep: 'late' }]); }
+  async function use(tag) { const m = new Map(src); for (const [k, v] of m) { show(tag, k); show(tag, v); } }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: nextGetterLate
+async function nextGetterLate() {
+  let i = 0; const it = { next() { return { done: i++ >= 2, value: 1 }; } }; const o = { [Symbol.iterator]() { i = 0; return it; } };
+  function install() { Object.defineProperty(it, "next", { get() { return function () { return { done: i++ >= 2, value: "late" }; }; } }); }
+  async function use(tag) { for (const x of o) show(tag, x); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: objectEntriesLate
+async function objectEntriesLate() {
+  const o = { a: 1 };
+  function install() { o.b = 'late'; }
+  async function use(tag) { for (const [k, v] of Object.entries(o)) { show(tag, k); show(tag, v); } for (const v of Object.values(o)) show(tag, v); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: setElementsLate
+async function setElementsLate() {
+  const s = new Set([1]);
+  function install() { s.add('late'); }
+  async function use(tag) { for (const x of s) show(tag, x); show(tag, [...s][s.size - 1]); s.forEach(x => show(tag + ' each', x)); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: setFromIterableLate
+async function setFromIterableLate() {
+  const src = [1];
+  function install() { src.push('late'); }
+  async function use(tag) { const s = new Set(src); for (const x of s) show(tag, x); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: spreadCallLate
+async function spreadCallLate() {
+  let x = [1, 2]; function f(a, b) { show('arg', a); show('arg', b); }
+  function install() { x = { [Symbol.iterator]() { let i = 0; return { next() { return { done: i++ >= 2, value: "late" }; } }; } }; }
+  async function use(tag) { f(...x); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+////: yieldStarLateIterable
+async function yieldStarLateIterable() {
+  let inner = [1]; function* g() { yield* inner; }
+  function install() { inner = { [Symbol.iterator]() { let i = 0; return { next() { return { done: i++ >= 2, value: "late" }; } }; } }; }
+  async function use(tag) { for (const x of g()) show(tag, x); }
+  await use('first');
+  h0(install);
+  await use('second');
+}
+//// functions-entered-again-by-protocols-timers-and-recursion.js
+const lines = [];
+function once(label) {
+  let count = 0;
+  const state = { label, hits: [] };
+  function bump(by) {
+    count += by;
+    state.hits.push(count);
+    return state;
+  }
+  return bump;
+}
+const first = once("first");
+first(1);
+const trigger = { get again() { return once("by a getter")(10); }, valueOf() { return once("by valueOf")(20).hits[0]; }, toString() { return once("by toString")(30).label; }, toJSON() { return once("by toJSON")(40).hits; }, [Symbol.iterator]() { return once("by an iterator")(50).hits[Symbol.iterator](); }, then(resolve) { resolve(once("by then")(60).label); } };
+lines.push(trigger.again.label, trigger.again.hits.join(), trigger + 1, `${trigger}`, JSON.stringify({ trigger }), [...trigger].join(), first(2).hits.join());
+function setup() {
+  const table = new Map();
+  const list = [];
+  let made = 0;
+  return { add(key) { made++; table.set(key, made); list.push(key); return this; }, report() { return made + ":" + [...table].join("|") + ":" + list.join(); } };
+}
+const a = setup().add("x");
+lines.push(a.report());
+const again = [1, 2].map(() => setup().add("y").add("z").report());
+lines.push(again.join(" "), a.add("w").report());
+class Registry {
+  static instances = 0;
+  static last = null;
+  items = [];
+  constructor(name) { Registry.instances++; Registry.last = this; this.name = name; }
+}
+new Registry("one").items.push(1);
+const makeRegistry = name => new Registry(name);
+setTimeout(makeRegistry, 0, "from a timer");
+queueMicrotask(() => makeRegistry("from a job").items.push(2, 3));
+Promise.resolve(trigger).then(label => lines.push(label));
+process.on("exit", () => { makeRegistry("at exit"); lines.push(Registry.instances + " " + Registry.last.name + " " + Registry.last.items.length); console.log(lines.join("\n")); });
+function recursive(depth) {
+  const local = { depth, below: null };
+  if (depth > 0) local.below = recursive(depth - 1);
+  return local;
+}
+lines.push(JSON.stringify(recursive(2)));
+function* generated() { const own = { n: 0 }; for (;;) { own.n++; yield own; } }
+const g1 = generated(), g2 = generated();
+lines.push([g1.next().value.n, g1.next().value.n, g2.next().value.n, g1.next().value === g2.next().value].join());
+//// functions-entered-twice-keep-their-state-apart-1.js
+const settle = () => new Promise(resolve => setTimeout(resolve, 5));
+
+// array like element getter
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("array-like-element-getter", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("array-like-element-getter", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const g = { get() { once(); return 1; }, enumerable: true }; const o = Object.defineProperties({ length: 2 }, { 0: g, 1: g }); Array.prototype.join.bind(o)();
+  report();
+})();
+
+// array like length getter
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("array-like-length-getter", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("array-like-length-getter", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const o = { get length() { once(); return 0; } }; Array.prototype.join.bind(o)(); Array.prototype.indexOf.bind(o)(1);
+  report();
+})();
+
+// async generator
+////= await-5	"async-generator"	async function* g() { for (let i = 0; i < 2; i++) { once(); yield i; } } (async () => { for await (const x of g()) ; })(
+
+// bound called twice
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("bound-called-twice", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("bound-called-twice", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const b = once.bind(null); b(); b();
+  report();
+})();
+
+// bound twice bound
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("bound-twice-bound", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("bound-twice-bound", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const b = once.bind(null).bind(null); const list = [b, b]; list[0](); list[1]();
+  report();
+})();
+
+// callee from two element array
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("callee-from-two-element-array", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("callee-from-two-element-array", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const f = () => { once(); }; const fs = [f, f]; for (let i = 0; i < fs.length; i++) fs[i]();
+  report();
+})();
+
+// class getter static
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("class-getter-static", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("class-getter-static", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  class C { static get x() { return once(); } } C.x; Object.getOwnPropertyDescriptor(C, "x").get.bind(C)();
+  report();
+})();
+
+// closure created in loop called once each
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("closure-created-in-loop-called-once-each", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("closure-created-in-loop-called-once-each", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const fs = []; for (let i = 0; i < 2; i++) fs[i] = () => once(); fs[0](); fs[1]();
+  report();
+})();
+
+// comma and logical
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("comma-and-logical", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("comma-and-logical", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const f = () => { once(); return 0; }; f() || f();
+  report();
+})();
+
+// computed key in function
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("computed-key-in-function", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("computed-key-in-function", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  function make() { return class { [(once(), "m")]() {} }; } make(); make();
+  report();
+})();
+
+// concat spreadable getter
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("concat-spreadable-getter", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("concat-spreadable-getter", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const o = { get [Symbol.isConcatSpreadable]() { once(); return false; } }; [].concat(o, o);
+  report();
+})();
+
+// conditional callee
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("conditional-callee", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("conditional-callee", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const f = () => { once(); }; const g = JSON.parse("true") ? f : () => 0; f(); g();
+  report();
+})();
+
+// control two sites
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("control-two-sites", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("control-two-sites", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  once(); once();
+  report();
+})();
+
+// date to json
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("date-to-json", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("date-to-json", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const o = { toISOString() { once(); return "d"; }, valueOf() { return 1; } }; Date.prototype.toJSON.bind(o)(); Date.prototype.toJSON.bind(o)();
+  report();
+})();
+
+// default in destructuring
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("default-in-destructuring", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("default-in-destructuring", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  for (const { a = once() } of [{}, {}]) ;
+  report();
+})();
+
+// default parameter
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("default-parameter", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("default-parameter", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  function f(a = once()) {} f(); f();
+  report();
+})();
+
+// define properties getter
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("define-properties-getter", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("define-properties-getter", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const d = { get value() { once(); return 1; } }; Object.defineProperties({}, { a: d, b: d });
+  report();
+})();
+
+// do while
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("do-while", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("do-while", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  let i = 0; do { once(); } while (++i < 2);
+  report();
+})();
+
+// escaped by closure
+////= await-6	"escaped-by-closure"	const f = () => { once(); }; const wrap = () => f; f(); O(wrap)()(
+
+// escaped in object to unknown
+////= await-6	"escaped-in-object-to-unknown"	const h = { f() { once(); } }; h.f(); O(h).f(
+
+// escaped through arguments
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("escaped-through-arguments", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("escaped-through-arguments", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const f = () => { once(); }; function call() { arguments[0](); } f(); call(f);
+  report();
+})();
+
+// escaped through array
+////= await-6	"escaped-through-array"	const f = () => { once(); }; f(); O([f])[0](
+
+// escaped through generator send
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("escaped-through-generator-send", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("escaped-through-generator-send", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const f = () => { once(); }; function* g() { (yield)(); } f(); const it = g(); it.next(); it.next(f);
+  report();
+})();
+
+// escaped through json reviver this
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("escaped-through-json-reviver-this", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("escaped-through-json-reviver-this", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const f = () => { once(); }; f(); JSON.parse("1", function () { f(); });
+  report();
+})();
+
+// escaped through prototype
+////= await-6	"escaped-through-prototype"	class C { m() { once(); } } const c = new C(); c.m(); O.getPrototypeOf(c).m(
+
+// escaped through rejection
+////= await-5	"escaped-through-rejection"	const f = () => { once(); }; f(); Promise.reject(f).catch(e => e()
+
+// escaped through rest
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("escaped-through-rest", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("escaped-through-rest", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const f = () => { once(); }; function call(...fs) { fs[0](); } f(); call(f);
+  report();
+})();
+
+// escaped through spread call
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("escaped-through-spread-call", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("escaped-through-spread-call", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const f = () => { once(); }; function call(g) { g(); } f(); call(...[f]);
+  report();
+})();
+
+// escaped through this
+////= await-6	"escaped-through-this"	class C { m() { once(); } } const c = new C(); c.m(); O(c).m(
+
+// escaped through thrown
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("escaped-through-thrown", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("escaped-through-thrown", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const f = () => { once(); }; f(); try { throw f; } catch (e) { e(); }
+  report();
+})();
+
+// escaped to unknown callee
+////= await-5	"escaped-to-unknown-callee"	const f = () => { once(); }; setTimeout(f); setTimeout(f
+
+// field initializer
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("field-initializer", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("field-initializer", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  class C { f = once(); } new C(); new C();
+  report();
+})();
+
+// field initializer bound
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("field-initializer-bound", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("field-initializer-bound", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  class C { f = once(); } const B = C.bind(null); new C(); new B();
+  report();
+})();
+
+// field initializer one site factory
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("field-initializer-one-site-factory", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("field-initializer-one-site-factory", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  class C { f = once(); } const make = () => new C(); make(); make();
+  report();
+})();
+
+// field initializer other new target
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("field-initializer-other-new-target", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("field-initializer-other-new-target", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  class C { f = once(); } function F() {} new C(); Reflect.construct(C, [], F);
+  report();
+})();
+//// functions-entered-twice-keep-their-state-apart-3.js
+const settle = () => new Promise(resolve => setTimeout(resolve, 5));
+
+// labeled continue
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("labeled-continue", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("labeled-continue", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  let i = 0; outer: while (true) { while (true) { once(); if (++i === 2) break outer; continue outer; } }
+  report();
+})();
+
+// module function hoisted before
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("module-function-hoisted-before", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("module-function-hoisted-before", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  hoisted(); function hoisted() { once(); } hoisted();
+  report();
+})();
+
+// mutual recursion variables
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("mutual-recursion-variables", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("mutual-recursion-variables", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  let f = n => { once(); if (n) g(n - 1); }; let g = n => f(n); f(1);
+  report();
+})();
+
+// named function expression
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("named-function-expression", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("named-function-expression", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  (function f(n) { once(); if (n) f(n - 1); })(1);
+  report();
+})();
+
+// optional call
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("optional-call", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("optional-call", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const o = { f() { once(); } }; o.f?.(); o?.f();
+  report();
+})();
+
+// promise executor control
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("promise-executor-control", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("promise-executor-control", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  new Promise(() => { once(); });
+  report();
+})();
+
+// promise executor subclass
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("promise-executor-subclass", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("promise-executor-subclass", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  class P2 extends Promise {} const e = () => { once(); }; new P2(e); P2.resolve(1).then(() => {});
+  report();
+})();
+
+// promise finally
+////= await-5	"promise-finally"	const f = () => { once(); }; for (const p of [Promise.resolve(1), Promise.reject(2)]) p.finally(f).catch(() => {}
+
+// promise then and catch same
+////= await-5	"promise-then-and-catch-same"	const f = () => { once(); }; Promise.resolve(1).then(f, f); Promise.reject(1).then(f, f
+
+// promise then two
+////= await-5	"promise-then-two"	const f = () => { once(); }; const p = Promise.resolve(1); p.then(f); p.then(f
+
+// proxy apply trap
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("proxy-apply-trap", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("proxy-apply-trap", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const p = new Proxy(function () {}, { apply() { once(); } }); [p, p].forEach ? (p(), Reflect.apply(p, undefined, [])) : 0;
+  report();
+})();
+
+// proxy descriptor trap
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("proxy-descriptor-trap", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("proxy-descriptor-trap", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const p = new Proxy({ a: 1, b: 2 }, { getOwnPropertyDescriptor(t, k) { once(); return Reflect.getOwnPropertyDescriptor(t, k); } }); Object.keys(p);
+  report();
+})();
+
+// proxy get trap
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("proxy-get-trap", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("proxy-get-trap", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const p = new Proxy({}, { get() { once(); } }); const { a, b } = p;
+  report();
+})();
+
+// proxy has trap with
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("proxy-has-trap-with", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("proxy-has-trap-with", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const p = new Proxy({}, { has() { once(); return false; } }); "a" in p; Reflect.has(p, "b");
+  report();
+})();
+
+// recursion
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("recursion", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("recursion", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  function rec(n) { once(); if (n) rec(n - 1); } rec(1);
+  report();
+})();
+
+// recursion through array
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("recursion-through-array", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("recursion-through-array", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const fs = [n => { once(); if (n) fs[0](n - 1); }]; fs[0](1);
+  report();
+})();
+
+// recursion through await
+////= await-7	"recursion-through-await"	async function rec(n) { once(); await 0; if (n) await rec(n - 1); } rec(1
+
+// recursion through bound
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("recursion-through-bound", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("recursion-through-bound", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  function rec(n) { once(); if (n) again(n - 1); } const again = rec.bind(null); rec(1);
+  report();
+})();
+
+// recursion through catch
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("recursion-through-catch", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("recursion-through-catch", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  function rec(n) { try { once(); if (n) throw n; } catch (e) { rec(e - 1); } } rec(1);
+  report();
+})();
+
+// recursion through computed key
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("recursion-through-computed-key", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("recursion-through-computed-key", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const o = { m(n) { once(); if (n) o[JSON.parse('"m"')](n - 1); } }; o.m(1);
+  report();
+})();
+
+// recursion through constructor
+////= await	"recursion-through-constructor"	this.constructor
+
+// recursion through descriptor
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("recursion-through-descriptor", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("recursion-through-descriptor", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const o = { m(n) { once(); if (n) Object.getOwnPropertyDescriptor(o, "m").value(n - 1); } }; o.m(1);
+  report();
+})();
+
+// recursion through finally
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("recursion-through-finally", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("recursion-through-finally", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  function rec(n) { try { once(); } finally { if (n) rec(n - 1); } } rec(1);
+  report();
+})();
+
+// recursion through generator
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("recursion-through-generator", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("recursion-through-generator", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  function* g(n) { once(); if (n) yield* g(n - 1); } for (const x of g(1)) ;
+  report();
+})();
+
+// recursion through getter
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("recursion-through-getter", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("recursion-through-getter", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  let n = 1; const o = { get x() { once(); return n-- ? this.x : 0; } }; o.x;
+  report();
+})();
+
+// recursion through global
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("recursion-through-global", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("recursion-through-global", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  globalThis.again = function rec(n) { once(); if (n) globalThis.again(n - 1); }; globalThis.again(1);
+  report();
+})();
+
+// recursion through global computed
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("recursion-through-global-computed", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("recursion-through-global-computed", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  globalThis.again = function rec(n) { once(); if (n) globalThis[JSON.parse('"again"')](n - 1); }; globalThis.again(1);
+  report();
+})();
+
+// recursion through map
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("recursion-through-map", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("recursion-through-map", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const m = new Map(); m.set("f", n => { once(); if (n) m.get("f")(n - 1); }); m.get("f")(1);
+  report();
+})();
+
+// recursion through new target
+////= await	"recursion-through-new-target"	new.target
+
+// recursion through object
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("recursion-through-object", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("recursion-through-object", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const o = { m(n) { once(); if (n) this.m(n - 1); } }; o.m(1);
+  report();
+})();
+
+// recursion through parameter
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("recursion-through-parameter", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("recursion-through-parameter", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  function run(f, n) { once(); if (n) f(f, n - 1); } run(run, 1);
+  report();
+})();
+
+// recursion through promise
+////= await-5	"recursion-through-promise"	function rec(n) { once(); if (n) Promise.resolve(n - 1).then(rec); } rec(1
+
+// recursion through proxy
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("recursion-through-proxy", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("recursion-through-proxy", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  function rec(n) { once(); if (n) p(n - 1); } const p = new Proxy(rec, {}); rec(1);
+  report();
+})();
+
+// recursion through reflect apply
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("recursion-through-reflect-apply", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("recursion-through-reflect-apply", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  function rec(n) { once(); if (n) Reflect.apply(rec, undefined, [n - 1]); } rec(1);
+  report();
+})();
+
+// recursion through setter
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("recursion-through-setter", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("recursion-through-setter", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const o = { set x(n) { once(); if (n) this.x = n - 1; } }; o.x = 1;
+  report();
+})();
+//// functions-entered-twice-keep-their-state-apart-4.js
+const settle = () => new Promise(resolve => setTimeout(resolve, 5));
+
+// recursion through symbol key
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("recursion-through-symbol-key", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("recursion-through-symbol-key", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const s = Symbol(); const o = { [s](n) { once(); if (n) o[s](n - 1); } }; o[s](1);
+  report();
+})();
+
+// recursion through thrown function
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("recursion-through-thrown-function", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("recursion-through-thrown-function", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  function rec(n) { once(); if (n) { try { throw rec; } catch (f) { f(n - 1); } } } rec(1);
+  report();
+})();
+
+// recursion through unknown constructor
+////= await-6	"recursion-through-unknown-constructor"	class A { constructor(n) { once(); if (n) new (O(this).constructor)(n - 1); } } new A(1
+
+// recursion through unknown identity
+////= await-6	"recursion-through-unknown-identity"	function rec(n) { once(); if (n) O(rec)(n - 1); } rec(1
+
+// recursion through values
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("recursion-through-values", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("recursion-through-values", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const o = { m(n) { once(); if (n) Object.values(o)[0](n - 1); } }; o.m(1);
+  report();
+})();
+
+// recursion through weakref
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("recursion-through-weakref", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("recursion-through-weakref", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  function rec(n) { once(); if (n) w.deref()(n - 1); } const w = new WeakRef(rec); rec(1);
+  report();
+})();
+
+// reflect apply loop helper
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("reflect-apply-loop-helper", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("reflect-apply-loop-helper", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  function call(f) { return Reflect.apply(f, undefined, []); } call(once); call(once);
+  report();
+})();
+
+// reflect apply twice
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("reflect-apply-twice", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("reflect-apply-twice", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  Reflect.apply(once, undefined, []); Reflect.apply(once, undefined, []);
+  report();
+})();
+
+// regexp exec override
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("regexp-exec-override", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("regexp-exec-override", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  let n = 0; const r = /a/g; r.exec = function () { once(); return n++ < 1 ? Object.assign(["a"], { index: 0 }) : null; }; RegExp.prototype[Symbol.replace].bind(r)("aa", "b");
+  report();
+})();
+
+// replace all string
+////= await-2	"replace-all-string"	replaceAll
+
+// replace custom symbol
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("replace-custom-symbol", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("replace-custom-symbol", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  "aXbX".replace({ [Symbol.replace](s, f) { f(); f(); return s; } }, () => { once(); return ""; });
+  report();
+})();
+
+// replace global regexp
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("replace-global-regexp", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("replace-global-regexp", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  "aXbX".replace(/X/g, () => { once(); return ""; });
+  report();
+})();
+
+// replace parsed flags
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("replace-parsed-flags", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("replace-parsed-flags", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  "aXbX".replace(new RegExp("X", JSON.parse('"g"')), () => { once(); return ""; });
+  report();
+})();
+
+// replace string pattern control
+////= await-2	"replace-string-pattern-control"	replace
+
+// replace unknown pattern
+////= await-6	"replace-unknown-pattern"	"aXbX".replace(O(/X/g), () => { once(); return ""; }
+
+// setter and assign
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("setter-and-assign", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("setter-and-assign", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const o = { set x(v) { once(); } }; o.x = 1; Object.assign(o, { x: 2 });
+  report();
+})();
+
+// setter and reflect set
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("setter-and-reflect-set", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("setter-and-reflect-set", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const o = { set x(v) { once(); } }; o.x = 1; Reflect.set(o, "x", 2);
+  report();
+})();
+
+// setter inherited by literal
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("setter-inherited-by-literal", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("setter-inherited-by-literal", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const p = { set x(v) { once(); } }; const a = { __proto__: p }; a.x = 1; const b = Object.create(p); b[JSON.parse('"x"')] = 2;
+  report();
+})();
+
+// sort comparator
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("sort-comparator", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("sort-comparator", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  [3, 1, 2].sort(() => { if (all.length < 2) once(); return 0; });
+  report();
+})();
+
+// species getter
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("species-getter", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("species-getter", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  class C extends Array { static get [Symbol.species]() { once(); return Array; } } const c = new C(); c.slice(); c.concat();
+  report();
+})();
+
+// static block control
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("static-block-control", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("static-block-control", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  class C { static { once(); } }
+  report();
+})();
+
+// static block in function
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("static-block-in-function", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("static-block-in-function", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  function make() { return class { static { once(); } }; } make(); make();
+  report();
+})();
+
+// switch fallthrough
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("switch-fallthrough", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("switch-fallthrough", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  function s(x) { switch (x) { case 1: once(); case 2: break; } } s(1); s(1);
+  report();
+})();
+
+// tag function
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("tag-function", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("tag-function", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  function tag() { once(); } const run = () => tag`x`; run(); run();
+  report();
+})();
+
+// thenable all
+////= await-5	"thenable-all"	const o = { then(r) { once(); r(1); } }; Promise.all([o, o]
+
+// thenable await loop
+////= await-7	"thenable-await-loop"	const o = { then(r) { once(); r(1); } }; (async () => { await o; await o; })(
+
+// thenable resolve and await
+////= await-5	"thenable-resolve-and-await"	const o = { then(r) { once(); r(1); } }; (async () => { await o; })(); Promise.resolve(o
+
+// to json twice
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("to-json-twice", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("to-json-twice", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const o = { toJSON() { once(); return 1; } }; JSON.stringify([o, o]);
+  report();
+})();
+
+// to primitive multiply
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("to-primitive-multiply", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("to-primitive-multiply", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const o = { [Symbol.toPrimitive]() { once(); return 1; } }; o * o;
+  report();
+})();
+
+// to string as key
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("to-string-as-key", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("to-string-as-key", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const o = { toString() { once(); return "k"; } }; const t = {}; t[o] = t[o];
+  report();
+})();
+
+// to string join
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("to-string-join", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("to-string-join", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const o = { toString() { once(); return "s"; } }; [o, o].join();
+  report();
+})();
+
+// to string template
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("to-string-template", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("to-string-template", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const o = { toString() { once(); return "s"; } }; `${o}${o}`;
+  report();
+})();
+
+// value of both operands
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("value-of-both-operands", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("value-of-both-operands", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  const o = { valueOf() { once(); return 1; } }; o + o;
+  report();
+})();
+
+// while true break
+await (async () => {
+  const all = [];
+  function once() {
+    let c = 0;
+    class K { static s = 0; #p = 1; static has(o) { return #p in o; } }
+    const sym = Symbol("s");
+    const obj = { n: 0 };
+    const r = { inc: () => ++c, K, sym, obj };
+    all[all.length] = r;
+    return r;
+  }
+  function report() {
+    if (all.length < 2) { console.log("while-true-break", "runs", all.length); return; }
+    const a = all[0], b = all[1];
+    a.inc(); a.inc(); a.K.s = 5; a.obj.n = 7;
+    const holder = {}; holder[a.sym] = "a"; holder[b.sym] = "b";
+    console.log("while-true-break", "runs", all.length, b.inc(), a.K === b.K, b.K.s, a.sym === b.sym, holder[a.sym], a.obj === b.obj, b.obj.n, new a.K() instanceof b.K, b.K.has(new a.K()));
+  }
+  let i = 0; while (true) { once(); if (++i === 2) break; }
+  report();
+})();
+//// functions-in-native-code-get-targets-and-captures-late.js
+// A function, a bound function or a generator reaches code nobody sees. What it captures, what it is bound to and what is sent to it arrive later.
+function show(...parts) { let text = ""; for (let i = 0; i < parts.length; i++) text += (i ? " | " : "") + String(parts[i]); console.log(text); }
+let stash;
+const box = new Proxy({}, { set(target, key, value) { stash = value; return true; }, get() { return stash; } });
+function hide(value) { box.kept = value; return box.kept; }
+// `seen` is undefined at run time: the field is read through a leak of `this` before its store. An analysis learns that late, and only then finds the member `undefined`.
+class Leaking { constructor() { leak(this); this.key = "early"; } }
+let seen;
+function leak(o) { seen = o.key; }
+new Leaking();
+
+// 1: a captured variable is assigned late
+{ let captured = 1; const f = () => typeof captured; const u = hide(f); show("1a", u()); const table = { early() {}, undefined() { captured = "s"; } }; table[seen](); show("1b", u()); }
+// 2: one call of bind binds two functions, the second one late
+{ let target = function first(x) { return typeof x; }; function bind() { return target.bind(null); } const u1 = hide(bind());
+  const table = { early() {}, undefined() { target = function second(x) { return typeof x + "!"; }; } }; table[seen](); const u2 = hide(bind()); show("2", u1(1), u1("s"), u2("s"), u2(2)); }
+// 3: the bound receiver is changed by a call of the hidden bound function
+{ const self = { v: 1 }; function set(x) { this.v = x; } const table = { early() { return () => {}; }, undefined() { return hide(set.bind(self)); } }; table[seen]()("s"); show("3", typeof self.v); }
+// 4: bound arguments
+{ const first = { v: 1 }; function change(o, x) { o.v = x; } const table = { early() { return () => {}; }, undefined() { return hide(change.bind(null, first)); } }; table[seen]()("s"); show("4", typeof first.v); }
+// 5: instanceof asks the target of a hidden bound class
+{ class C {} const table = { early() { return Object; }, undefined() { return hide(C.bind(null)); } }; const u = table[seen](); show("5", new C() instanceof u, ({}) instanceof u); }
+// 6: a hidden bound class is constructed
+{ class C { constructor(v) { this.v = v; } } const table = { early() { return Object; }, undefined() { return hide(C.bind(null)); } }; const made = new (table[seen]())("s"); show("6", typeof made.v, made instanceof C); }
+// 7: values are sent to a generator that is hidden late
+{ const log = []; function* g() { const x = yield 1; log.push(typeof x); const y = yield x; log.push(typeof y); } const table = { early() { return [][Symbol.iterator](); }, undefined() { return hide(g()); } };
+  const it = table[seen](); it.next(); it.next("s"); it.next(3); show("7", log.join()); }
+// 8: what a hidden function returns is changed by its caller
+{ const kept = { v: 1 }; function give() { return kept; } const table = { early() { return () => ({}); }, undefined() { return hide(give); } }; table[seen]()().v = "s"; show("8", typeof kept.v); }
+// 9: what a hidden function throws is changed by whoever catches it
+{ const thrown = { v: 1 }; function fail() { throw thrown; } const table = { early() { return () => {}; }, undefined() { return hide(fail); } }; try { table[seen]()(); } catch (e) { e.v = "s"; } show("9", typeof thrown.v); }
+//// functions-that-only-built-ins-and-the-host-call.js
+// Functions of the program that only built-ins and the host call: each must run, with the right `this` and arguments, and what it returns must arrive.
+const util = require("node:util");
+const log = [];
+function t(name, f) { log.length = 0; let r; try { r = f(); } catch (e) { r = "threw " + e.name; } console.log(name, "|", String(r), "|", log.join(",")); }
+const mark = (x, v) => { log.push(x); return v; };
+t("inspect custom", () => util.inspect({ [util.inspect.custom](depth, options) { return mark("custom:" + typeof depth + typeof options, "CUSTOM"); } }));
+t("inspect getters", () => util.inspect({ get g() { return mark("getter", 5); } }, { getters: true }));
+t("format s", () => util.format("%s", { toString() { return mark("toString", "S"); } }));
+t("format d", () => util.format("%d", { valueOf() { return mark("valueOf", 7); } }));
+t("format j", () => util.format("%j", { toJSON() { return mark("toJSON", { a: 1 }); } }));
+t("stringify", () => JSON.stringify({ k: { toJSON(key) { return mark("toJSON:" + key, 1); } } }));
+t("stringify getter", () => JSON.stringify({ get k() { return mark("getter", 2); } }));
+t("stringify date", () => JSON.stringify({ d: Object.assign(new Date(0), { toISOString() { return mark("toISOString", "iso"); } }) }));
+t("sort default", () => [{ toString() { return mark("b", "b"); } }, { toString() { return mark("a", "a"); } }].sort().length);
+t("join", () => [{ toString() { return mark("toString", "j"); } }].join());
+t("array to string", () => String([{ toString() { return mark("toString", "k"); } }]));
+t("array join replaced", () => { const a = [1]; a.join = function () { return mark("join", "mine"); }; return String(a); });
+t("to locale", () => [{ toLocaleString() { return mark("toLocaleString", "l"); } }].toLocaleString());
+t("new Date", () => new Date({ [Symbol.toPrimitive](h) { return mark("hint:" + h, 0); } }).getTime());
+t("Number", () => Number({ valueOf() { return mark("valueOf", 3); } }));
+t("parseInt", () => parseInt({ toString() { return mark("toString", "12"); } }));
+t("isNaN", () => isNaN({ valueOf() { return mark("valueOf", NaN); } }));
+t("Math.max", () => Math.max(1, { valueOf() { return mark("valueOf", 9); } }));
+t("indexOf", () => "abc".indexOf({ toString() { return mark("toString", "c"); } }));
+t("padEnd", () => "a".padEnd({ valueOf() { return mark("valueOf", 3); } }, "-"));
+t("replace symbol", () => "abc".replace({ [Symbol.replace](s, r) { return mark("replace:" + s + r, "R"); } }, "x"));
+t("split symbol", () => "abc".split({ [Symbol.split](s) { return mark("split:" + s, ["p"]); } }).length);
+t("match symbol", () => "abc".match({ [Symbol.match](s) { return mark("match:" + s, "M"); } }));
+t("search symbol", () => "abc".search({ [Symbol.search](s) { return mark("search:" + s, 4); } }));
+t("replace function", () => "abc".replace(/b/, (m, i) => mark("fn:" + m + i, "X")));
+t("regexp exec", () => { const r = /a/; r.exec = function (s) { return mark("exec:" + s, null); }; return r.test("a"); });
+t("new RegExp", () => new RegExp({ toString() { return mark("toString", "x+"); } }).source);
+t("key", () => ({ a: 1 })[{ toString() { return mark("toString", "a"); } }]);
+t("define key", () => Object.keys(Object.defineProperty({}, { [Symbol.toPrimitive]() { return mark("prim", "dk"); } }, { value: 1, enumerable: true })).join());
+t("descriptor getters", () => Object.defineProperty({}, "k", { get value() { return mark("value", 8); }, get enumerable() { return mark("enumerable", true); } }).k);
+t("Symbol", () => Symbol({ toString() { return mark("toString", "d"); } }).description);
+t("Error message", () => new Error({ toString() { return mark("toString", "m"); } }).message);
+t("Error cause getter", () => new Error("m", { get cause() { return mark("cause", 1); } }).cause);
+t("BigInt", () => BigInt({ valueOf() { return mark("valueOf", 5); } }));
+t("Array.from iterator", () => Array.from({ [Symbol.iterator]() { mark("iterator"); let n = 0; return { next() { return mark("next", { done: n++ > 0, value: 1 }); }, return() { return mark("return", {}); } }; } }).length);
+t("Array.from length", () => Array.from({ get length() { return mark("length", 1); }, get 0() { return mark("zero", "z"); } })[0]);
+t("new Map", () => new Map({ *[Symbol.iterator]() { mark("gen"); yield ["k", 1]; } }).size);
+t("new Set adder", () => { class S extends Set { add(v) { mark("add:" + v); return super.add(v); } } return new S([1, 2]).size; });
+t("fromEntries", () => Object.fromEntries({ *[Symbol.iterator]() { mark("gen"); yield { get 0() { return mark("k", "a"); }, get 1() { return mark("v", 1); } }; } }).a);
+t("assign getters", () => Object.assign({}, { get g() { return mark("getter", 1); } }).g);
+t("assign setter", () => { Object.assign({ set s(v) { mark("setter:" + v); } }, { s: 4 }); return 0; });
+t("spread getters", () => ({ ...{ get g() { return mark("getter", 2); } } }).g);
+t("entries getters", () => Object.entries({ get g() { return mark("getter", 3); } })[0][1]);
+t("clone getters", () => structuredClone({ get g() { return mark("getter", 4); } }).g);
+t("concat spreadable", () => [].concat({ get [Symbol.isConcatSpreadable]() { return mark("spreadable", true); }, length: 1, 0: "c" })[0]);
+t("species", () => { class A extends Array { static get [Symbol.species]() { mark("species"); return Array; } } return new A(1, 2).map(x => x) instanceof A; });
+t("has instance", () => ({}) instanceof { [Symbol.hasInstance](v) { return mark("hasInstance:" + typeof v, true); } });
+t("proxy traps", () => { const p = new Proxy({}, { get(o, k) { return mark("get:" + String(k), 1); }, has(o, k) { return mark("has:" + k, true); }, ownKeys() { return mark("ownKeys", []); } }); return [p.a, "b" in p, Object.keys(p).length].join(); });
+t("proxy apply", () => new Proxy(function () {}, { apply(f, th, a) { return mark("apply:" + a.length, "A"); }, construct(f, a) { return mark("construct", { c: 1 }); } })(1, 2));
+t("reduce", () => [1, 2].reduce((a, b) => mark("r" + a + b, a + b)));
+t("find this", () => [1].find(function (v) { return mark("this:" + this.tag + v, true); }, { tag: "T" }));
+t("typed array from", () => Uint8Array.from({ length: 1, 0: { valueOf() { return mark("valueOf", 300); } } })[0]);
+t("typed array sort", () => new Uint8Array([2, 1]).sort((a, b) => mark("cmp", a - b)).join());
+t("Buffer.from", () => Buffer.from({ valueOf() { return mark("valueOf", "hi"); } }).toString());
+t("URL", () => new URL({ toString() { return mark("toString", "http://a/b"); } }).pathname);
+t("URLSearchParams", () => new URLSearchParams({ *[Symbol.iterator]() { mark("gen"); yield ["a", "1"]; } }).get("a"));
+t("Headers", () => new Headers({ get x() { return mark("getter", "1"); } }).get("x"));
+t("handleEvent", () => { const et = new EventTarget(); et.addEventListener("e", { handleEvent(ev) { mark("handleEvent:" + ev.type + (this === undefined)); } }); return et.dispatchEvent(new Event("e")); });
+t("abort listener", () => { const a = new AbortController(); a.signal.onabort = function (ev) { mark("onabort:" + ev.type); }; a.abort(); return a.signal.aborted; });
+t("prepareStackTrace", () => { const old = Error.prepareStackTrace; Error.prepareStackTrace = (e, frames) => mark("prepare:" + Array.isArray(frames), "STACK"); const s = new Error("x").stack; Error.prepareStackTrace = old; return s; });
+t("Intl options", () => new Intl.NumberFormat("en", { get style() { return mark("style", "percent"); } }).format(0.5));
+t("localeCompare", () => "a".localeCompare({ toString() { return mark("toString", "a"); } }));
+t("date toJSON", () => Date.prototype.toJSON.call({ toISOString() { return mark("toISOString", "I"); }, valueOf() { return mark("valueOf", 1); } }));
+t("bind name", () => (function () {}).bind.call(Object.defineProperty(function () {}, "name", { get() { return mark("name", "n"); } })).name);
+t("using", () => { { using r = { [Symbol.dispose]() { mark("dispose"); } }; } return 0; });
+t("tagged raw", () => String.raw({ get raw() { return mark("raw", ["a", "b"]); } }, 1));
+t("with resolvers", () => { class P extends Promise { constructor(f) { mark("ctor"); super(f); } } return P.resolve(1) instanceof P; });
+const later = [];
+Promise.resolve({ then(res) { later.push("then"); res(1); } }).then(v => later.push("v" + v));
+queueMicrotask(function () { later.push("micro" + (this === undefined)); });
+process.nextTick(function (a) { later.push("tick" + a); }, 1);
+setImmediate(function (a) { later.push("immediate" + a); }, 2);
+setTimeout(function (a) { later.push("timeout" + a); console.log(later.join()); }, 5, 3);
+process.on("exit", function (code) { console.log("exit handler", code, this === process); });
+//// generators-changed-by-a-function-found-late.js
+// What a generator is sent, yields, returns and inherits changes after it has run once, in a function that is found under a key read from a field before the constructor stores it.
+function print(a, b, c) { let s = "" + a; if (b !== undefined) s += " " + b; if (c !== undefined) s += " " + c; console.log(s); }
+////= show-2
+function nothing() {}
+let leaked = "a";
+function probe(x) { leaked = x.k; }
+class Leak { constructor() { probe(this); this.k = "a"; } }
+function h0(f) { const choices = { a: nothing, undefined: f }; new Leak(); return choices[leaked](); }
+
+////= generatorSentLate-2
+main();
+//// generators-whose-values-and-methods-change-after-the-first-run.js
+// What a generator is sent, yields, returns and inherits changes after it has run once, in code that is reached through a chain of calls.
+function print(a, b, c) { let s = "" + a; if (b !== undefined) s += " " + b; if (c !== undefined) s += " " + c; console.log(s); }
+////= show-2
+function h0(f) { return h1(f); }
+function h1(f) { return h2(f); }
+function h2(f) { return h3(f); }
+function h3(f) { return h4(f); }
+function h4(f) { return h5(f); }
+function h5(f) { return h6(f); }
+function h6(f) { return h7(f); }
+function h7(f) { return h8(f); }
+function h8(f) { return f(); }
+
+////= generatorSentLate-2
+main();
+//// generic-base-stores-what-the-subclass-makes.ts
+class Box<T> {
+  value: T;
+  text: string;
+  constructor(v: T) { this.value = this.wrap(v); this.text = this.show(); }
+  wrap(v: T): T { return v; }
+  show(): string { return "box " + String(this.value); }
+}
+class Doubled extends Box<number> {
+  scale: number = 3;
+  wrap(v: number): number { return v * 2; }
+  show(): string { return "doubled " + this.value + " " + this.scale; }
+}
+class Named extends Box<string> {
+  wrap(v: string): string { return v.toUpperCase(); }
+}
+console.log(new Doubled(2).text, new Doubled(2).scale, new Named("n").text, new Box(true).text);
+//// getter-deletes-a-later-property-while-the-object-is-written-as-json.js
+// The getter of the first property deletes the last one while JSON.stringify walks the object.
+"use strict";
+const print = text => console.log(text);
+let count = 0;
+let trail = "";
+////= note-2
+function saysWhereItWasMade(key) {
+  return (
+    key === "line" ||
+    key === "column" ||
+    key === "sourceURL" ||
+    key === "stack" ||
+    key === "originalLine" ||
+    key === "originalColumn"
+  );
+}
+function shortened(text) {
+  if (text.length <= 400) return text;
+  let sum = 0;
+  for (let i = 0; i < text.length; i++) sum = (sum * 31 + text.charCodeAt(i)) | 0;
+  return text.slice(0, 150) + " .. " + text.length + " characters, sum " + sum + " .. " + text.slice(-150);
+}
+function listed(items) {
+  let text = "";
+  let size = 0;
+  for (let i = 0; i < items.length; i++) {
+    if (saysWhereItWasMade(items[i])) continue;
+    text += (size++ ? "," : "") + String(items[i]);
+  }
+  return shortened(size + " [" + text + "]");
+}
+////= A
+////= make
+function run() {
+  let seen, before, line;
+  const o = make();
+  let isDone = false;
+  Object.defineProperty(o, "a", {
+    get() {
+      if (!isDone) {
+        isDone = true;
+        try {
+          note("deleted " + delete o.z);
+        } catch (e) {
+          note("the change threw " + e.name);
+        }
+      }
+      return 1;
+    },
+    enumerable: true,
+    configurable: true,
+  });
+  before = count;
+  try {
+    seen = shortened(str(JSON.stringify(o)));
+  } catch (e) {
+    seen = "threw " + e.name;
+  }
+  line = seen + " | " + (count - before) + " " + trail;
+  trail = "";
+  print("during" + ": " + line);
+  before = count;
+  try {
+    seen = shortened(str(JSON.stringify(o)));
+  } catch (e) {
+    seen = "threw " + e.name;
+  }
+  line = seen + " | " + (count - before) + " " + trail;
+  trail = "";
+  print("after" + ": " + line);
+}
+////= lines
+print("end: " + count + " " + trail);
+//// getter-of-iterator-result-installs-return.js
+function print(a, b, c) { let s = "" + a; if (b !== undefined) s += " " + b; if (c !== undefined) s += " " + c; console.log(s); }
+////= show-2
+let closed = 0;
+const iterator = { next() { return { done: false, get value() { iterator.return = function () { closed = "closed"; return {}; }; return 1; } }; } };
+const iterable = { [Symbol.iterator]() { return iterator; } };
+for (const x of iterable) { show("x", x); break; }
+show("closed", closed);
+//// getter-runs-inside-structured-clone.js
+// structuredClone runs the getters of what it copies, so a variable that a getter writes has another value after the call.
+let count = 0;
+function cloneAndCount() {
+  const source = { a: 1, get g() { count++; return count; } };
+  const before = count;
+  const copy = structuredClone(source);
+  const after = count;
+  return [before, after, copy.g, after - before];
+}
+console.log(cloneAndCount().join());
+console.log(cloneAndCount().join());
+let total = 0;
+for (let i = 0; i < 5; i++) total += cloneAndCount()[3];
+console.log(total, count);
+//// getters-defined-on-instances-of-built-in-classes-are-run-by-built-ins.js
+// A getter that Object.defineProperty or __defineGetter__ puts on a promise or a regular expression, and nothing else is ever added to the object, is run by the built-ins that read the name.
+const log = [];
+
+const resolved = Promise.resolve("resolved");
+////= lines-16	Object	resolved	"constructor"	"constructor is read by resolve"	Promise
+log.push(`resolve: ${Promise.resolve(resolved) === resolved}`);
+
+const chained = new Promise(resolve => resolve("chained"));
+////= lines-16	Object	chained	"constructor"	"constructor is read by then"	Promise
+log.push(`then: ${chained.then(value => value) !== chained}`);
+
+const old = Promise.resolve("old");
+old.__defineGetter__("constructor", function () {
+  log.push("constructor is read after __defineGetter__");
+  return Promise;
+});
+log.push(`__defineGetter__: ${Promise.resolve(old) === old}`);
+
+const many = Promise.resolve("many");
+Object.defineProperties(many, {
+  constructor: {
+    get() {
+      log.push("constructor is read after defineProperties");
+      return Promise;
+    },
+  },
+});
+log.push(`defineProperties: ${Promise.resolve(many) === many}`);
+
+const reflected = Promise.resolve("reflected");
+////= lines-16	Reflect	reflected	"constructor"	"constructor is read after Reflect.defineProperty"	Promise
+log.push(`Reflect.defineProperty: ${Promise.resolve(reflected) === reflected}`);
+
+const pattern = /a/g;
+////= lines-16	Object	pattern	"flags"	"flags is read"	"g"
+log.push("banana".replaceAll(pattern, "o"));
+
+const written = Promise.resolve("written");
+Object.defineProperty(written, "constructor", {
+  set(value) {
+    log.push(`constructor is stored: ${value === Promise}`);
+  },
+});
+written.constructor = Promise;
+log.push(`setter alone: ${Promise.resolve(written) === written}`);
+
+console.log(log.join("\n"));
+//// half-an-accessor-hides-the-whole-one-above.js
+// An accessor property with a getter alone hides the setter of the accessor above it, and the other way round.
+const log = [];
+function attempt(run) { try { return String(run()); } catch (error) { return error.constructor.name; } }
+class Both { get x() { log.push("get above"); return "above"; } set x(v) { log.push("set above " + v); } }
+class GetterAlone extends Both { get x() { return "below"; } }
+class SetterAlone extends Both { set x(v) { log.push("set below " + v); } }
+class BelowGetter extends GetterAlone {}
+class BelowSetter extends SetterAlone {}
+function read(o) { return o.x; }
+function store(o, v) { o.x = v; return Object.hasOwn(o, "x"); }
+function storeStrict(o, v) { "use strict"; o.x = v; return Object.hasOwn(o, "x"); }
+for (const make of [() => new Both(), () => new GetterAlone(), () => new SetterAlone(), () => new BelowGetter(), () => new BelowSetter()]) {
+  console.log(String(read(make())), attempt(() => store(make(), 1)), attempt(() => storeStrict(make(), 2)), log.splice(0).join());
+}
+const g = new GetterAlone(); console.log(attempt(() => { g.x = 3; }), g.x, Object.hasOwn(g, "x"), log.splice(0).join());
+const s = new SetterAlone(); console.log(s.x, log.splice(0).join()); s.x = 4; console.log(log.splice(0).join());
+class StaticBoth { static get y() { return "above"; } static set y(v) { log.push("static set above " + v); } }
+class StaticGetter extends StaticBoth { static get y() { return "below"; } }
+class StaticSetter extends StaticBoth { static set y(v) { log.push("static set below " + v); } }
+console.log(attempt(() => { StaticGetter.y = 5; })); StaticSetter.y = 6;
+console.log(StaticGetter.y, StaticSetter.y, log.splice(0).join());
+//// has-own-of-a-function-member-overwritten-through-a-wider-type.ts
+type Shape = { a: number; m: () => string };
+function make(): Shape { return { a: 1, m: () => "m" }; }
+function change(x: { m: unknown }): void { x.m = 9; }
+const o = make();
+change(o);
+console.log(Object.hasOwn(o, "m"), "m" in o, Object.keys(o).join(), typeof (o as any).m, String((o as any).m), JSON.stringify(o), Object.getOwnPropertyNames(o).join(), o.hasOwnProperty("m"), Reflect.has(o, "m"), Object.entries(o).length);
+//// import-cycle-read-through-bindings-namespaces-and-functions/again.js
+export * from "./first.js";
+//// import-cycle-read-through-bindings-namespaces-and-functions/first.js
+import { log } from "./log.js";
+import "./second.js";
+export var hoisted = 1;
+export let scoped = 2;
+export const fixed = 3;
+export class Kind { static n = 4; }
+export function declared() { const t = hoisted; return t === undefined ? "missing" : t + 1; }
+export function readsScoped() { return scoped + 1; }
+export default function () { return fixed + 1; }
+export let changed = 5;
+export function change() { changed = "five"; }
+export { hoisted as renamed };
+log.push("first ran");
+//// import-cycle-read-through-bindings-namespaces-and-functions/log.js
+export const log = [];
+export function attempt(f) { try { return f(); } catch (e) { return e.constructor.name; } }
+//// import-cycle-read-through-bindings-namespaces-and-functions/main.js
+// Modules that import each other: what the second one reads of the first one before the first one has run.
+import { log } from "./log.js";
+import "./first.js";
+import { after } from "./second.js";
+after();
+console.log(log.join("\n"));
+//// import-cycle-read-through-bindings-namespaces-and-functions/second.js
+import { log, attempt } from "./log.js";
+import def, { hoisted, scoped, fixed, Kind, declared, readsScoped, changed, change, renamed } from "./first.js";
+import * as all from "./first.js";
+import * as again from "./again.js";
+function direct() { const t = hoisted; return t === undefined ? "missing" : t + 1; }
+function viaNamespace() { const t = all.hoisted; return t === undefined ? "missing" : t + 1; }
+function viaRenamed() { const t = renamed; return t === undefined ? "missing" : t + 1; }
+function viaReexport() { const t = again.hoisted; return t === undefined ? "missing" : t + 1; }
+function viaKey(k) { const t = all[k]; return t === undefined ? "missing" : t + 1; }
+var lateKey; const table = { a: () => "early", undefined: () => { const t = hoisted; return t === undefined ? "missing" : t + 1; } };
+function report(when) {
+  log.push(when + " direct " + direct());
+  log.push(when + " namespace " + viaNamespace());
+  log.push(when + " renamed " + viaRenamed());
+  log.push(when + " reexport " + viaReexport());
+  log.push(when + " key " + viaKey("hoisted"));
+  log.push(when + " declared " + declared());
+  log.push(when + " scoped " + attempt(() => scoped + 1));
+  log.push(when + " scoped in first " + attempt(readsScoped));
+  log.push(when + " scoped namespace " + attempt(() => all.scoped + 1));
+  log.push(when + " fixed " + attempt(() => fixed + 1));
+  log.push(when + " default " + attempt(def));
+  log.push(when + " class " + attempt(() => Kind.n + 1));
+  log.push(when + " keys " + attempt(() => Object.keys(all).join()));
+  log.push(when + " in " + ("scoped" in all));
+  log.push(when + " values " + attempt(() => Object.values(all).length));
+  log.push(when + " late " + table[lateKey]());
+  log.push(when + " changed " + attempt(() => changed + 1));
+}
+report("before");
+var lateKey = "a";
+export function after() { report("after"); change(); log.push("changed " + (changed + 1) + " " + (all.changed + 1)); }
+//// import-cycle-reads-bindings-before-their-module-ran/a.js
+import { probe } from "./b.js";
+export let counter = 0;
+export function inc() { counter++; }
+export function setText() { counter = "text"; }
+export const early = probe;
+const secret = { v: 42 };
+var hoisted = "set";
+export class K { v = secret.v; }
+export function peek() { const out = []; for (const f of [() => secret.v, () => hoisted, () => counter, () => new K().v, () => typeof inc]) { try { out.push(String(f())); } catch (e) { out.push(e.name); } } return out.join(); }
+export function later() { return peek(); }
+//// import-cycle-reads-bindings-before-their-module-ran/b.js
+import { peek } from "./a.js";
+export const probe = peek();
+//// import-cycle-reads-bindings-before-their-module-ran/main.js
+// Import cycles: a hoisted function of a module whose body has not run reads its let, const, var, class; live bindings change value and type.
+import { early, counter, inc, setText, later, K } from "./a.js";
+console.log("main", early, counter, typeof counter);
+inc(); console.log(counter); setText(); console.log(counter, typeof counter, counter + 1);
+console.log(later(), new K().v);
+//// in-sloppy-code-the-arguments-object-and-the-parameters-are-two-names-of-the-same-places.cjs
+// In sloppy code the arguments object and the parameters are two names of the same places.
+function attempt(f) { try { return f(); } catch (e) { return "threw " + e.constructor.name; } }
+function direct(a, b) { arguments[0] = "s"; arguments[1] = { q: 1 }; return a + 1 + "," + typeof b; }
+function back(a) { a = "t"; return arguments[0] + 1; }
+function write(list, v) { list[0] = v; }
+function leaked(a) { write(arguments, "u"); return a + 1; }
+function captured(a) { const read = () => a + 1; arguments[0] = "v"; return read(); }
+function capturedLate(a) { const args = arguments; return [() => a + 1, v => { args[0] = v; }]; }
+function filled(a, b) { Array.prototype.fill.call(arguments, "w"); return a + 1 + "," + (b + 1); }
+function assigned(a) { Object.assign(arguments, ["x"]); return a + 1; }
+function defined(a) { Object.defineProperty(arguments, "0", { value: "y" }); return a + 1; }
+function unmapped(a) { delete arguments[0]; arguments[0] = "z"; return a + 1; }
+function frozen(a) { Object.freeze(arguments); a = 5; return a + "," + arguments[0]; }
+function readOnly(a) { Object.defineProperty(arguments, "0", { writable: false }); a = 5; return a + "," + arguments[0]; }
+function shortened(a, b) { arguments.length = 0; arguments[1] = "k"; return b + 1 + "," + arguments.length; }
+function missing(a, b) { arguments[1] = "m"; return typeof b + "," + arguments.length; }
+function sorted(a, b, c) { Array.prototype.sort.call(arguments); return a + "," + b + "," + c; }
+function reflected(a) { Reflect.set(arguments, "0", { q: 2 }); return attempt(() => a.q + typeof a); }
+function objects(o) { arguments[0] = 7; return attempt(() => o.q); }
+function looped(a) { let t = 0; for (let i = 0; i < 3; i++) { t += a; arguments[0] = i === 0 ? 0.5 : "n"; } return t; }
+function spreadOut(a) { (function (list) { list[0] = "p"; })(arguments); return [...arguments].join() + a; }
+function viaCallee(a) { return arguments.callee.length + a; }
+for (let turn = 0; turn < 3; turn++) {
+  const [read, store] = capturedLate(1);
+  const before = read(); store("late");
+  console.log(direct(1, 2), back(1), leaked(1), captured(1), before, read(), filled(1, 2), assigned(1), defined(1), unmapped(1), frozen(1), readOnly(1), shortened(1, 2), missing(1), sorted(3, 1, 2), reflected(1), objects({ q: 1 }), looped(1), spreadOut(1), viaCallee(1));
+}
+//// index-accessor-on-the-prototype-of-an-array-subclass.js
+// An accessor is defined under an index on the prototype of an array subclass. Nothing reads the element: a store past the end runs the setter.
+"use strict";
+const print = text => console.log(text);
+let count = 0;
+let trail = "";
+////= note-2
+class A extends Array {
+  m() {
+    return "m";
+  }
+}
+function make() {
+  const made = new A();
+  made.push(10, 20, 30);
+  return made;
+}
+function run() {
+  let seen, before, line;
+  const o = make();
+  before = count;
+  try {
+    o[7] = 5;
+    seen = "stored";
+  } catch (e) {
+    seen = "threw " + e.name;
+  }
+  line = seen + " | " + (count - before) + " " + trail;
+  trail = "";
+  print("before" + ": " + line);
+  try {
+    Object.defineProperty(A.prototype, 7, {
+      get() {
+        note("get");
+        return "got";
+      },
+      set(v) {
+        note("set " + str(v));
+      },
+      enumerable: true,
+      configurable: true,
+    });
+  } catch (e) {
+    note("the change threw " + e.name);
+  }
+  before = count;
+  try {
+    o[7] = 5;
+    seen = "stored";
+  } catch (e) {
+    seen = "threw " + e.name;
+  }
+  line = seen + " | " + (count - before) + " " + trail;
+  trail = "";
+  print("after" + ": " + line);
+}
+////= lines
+print("end: " + count + " " + trail);
+//// index-keys-are-added-to-built-in-constructors-sloppy.cjs
+console.log("strict: " + (function () { return this === undefined; })());
+////= attempt-2
+attempt("Array[1]", () => { Array[1] = 5; }, () => Array[1]);
+attempt("Object[1]", () => { Object[1] = 5; }, () => Object[1]);
+attempt("Map[1]", () => { Map[1] = 5; }, () => Map[1]);
+attempt("Date[1]", () => { Date[1] = 5; }, () => Date[1]);
+attempt("String[1]", () => { String[1] = 5; }, () => String[1]);
+attempt("JSON[1]", () => { JSON[1] = 5; }, () => JSON[1]);
+attempt("Function[1]", () => { Function[1] = 5; }, () => Function[1]);
+attempt("Error[1]", () => { Error[1] = 5; }, () => Error[1]);
+const holder = Array;
+const key = [3][0];
+attempt("Array by a variable", () => { holder[key] = 5; }, () => holder[key]);
+//// index-keys-are-added-to-built-in-constructors-strict.mjs
+////= attempt-2
+attempt("Array[1]", () => { Array[1] = 5; }, () => Array[1]);
+attempt("Object[1]", () => { Object[1] = 5; }, () => Object[1]);
+attempt("Map[1]", () => { Map[1] = 5; }, () => Map[1]);
+attempt("Date[1]", () => { Date[1] = 5; }, () => Date[1]);
+attempt("String[1]", () => { String[1] = 5; }, () => String[1]);
+attempt("JSON[1]", () => { JSON[1] = 5; }, () => JSON[1]);
+attempt("Function[1]", () => { Function[1] = 5; }, () => Function[1]);
+attempt("Error[1]", () => { Error[1] = 5; }, () => Error[1]);
+const holder = Array;
+const key = [3][0];
+attempt("Array by a variable", () => { holder[key] = 5; }, () => holder[key]);
+//// indexed-reads-of-a-string-object.js
+// A String object has its characters as own properties under the indexes.
+function kindOf(v) {
+  return typeof v;
+}
+function quoted(v) {
+  return typeof v === "string" ? '"' + v + '"' : "" + v;
+}
+
+const boxed = new String("abc");
+const second = boxed[1];
+console.log(second === undefined, typeof second, second + "!", second.length);
+console.log(kindOf(boxed[0]), kindOf(Object("abc")[1]), kindOf(boxed[3]), kindOf(boxed["2"]));
+
+const found = [];
+for (let i = 0; i < boxed.length; i++) found.push(quoted(boxed[i]));
+console.log(found.join());
+
+console.log(1 in boxed, 3 in boxed, Object.hasOwn(boxed, 2), Object.keys(boxed).join(), JSON.stringify(Object.getOwnPropertyDescriptor(boxed, 0)));
+
+// What the usual helpers do with `this`.
+function each(callback) {
+  const object = Object(this);
+  for (let k = 0; k < object.length; k++) if (k in object) callback(object[k], k);
+}
+const seen = [];
+each.call("xyz", (character, k) => seen.push(k + character.toUpperCase()));
+console.log(seen.join());
+
+try {
+  boxed[0] = "z";
+  console.log("stored", boxed[0]);
+} catch (e) {
+  console.log("threw " + e.name);
+}
+//// init-hook-changes-the-arguments-of-a-tick.mjs
+// An init hook of node:async_hooks is handed an object that holds the callback and the arguments of process.nextTick, inside the call.
+import { createHook } from "node:async_hooks";
+
+class Counter {
+  constructor(n) {
+    this.n = n;
+    this.list = [1, 2];
+  }
+  twice() {
+    return this.n * 2;
+  }
+  total() {
+    let sum = 0;
+    for (let i = 0; i < this.list.length; i++) sum += this.list[i];
+    return sum;
+  }
+}
+
+const untouched = new Counter(4);
+const counter = new Counter(21);
+const calls = [];
+const hook = createHook({
+  init(id, type, trigger, resource) {
+    if (type !== "TickObject" || !resource.args) return;
+    const [first] = resource.args;
+    first.n = "x";
+    first.list.push("y");
+    resource.callback("called by the hook");
+  },
+}).enable();
+process.nextTick(value => calls.push(typeof value === "string" ? value : value.n), counter);
+hook.disable();
+console.log(typeof counter.n, counter.twice(), counter.total(), calls.join());
+console.log(typeof untouched.n, untouched.twice(), untouched.total());
+process.nextTick(() => console.log(calls.join()));
+//// instance-of-a-constructor-function-with-another-prototype-serialized-with-a-replacer.js
+// A constructor function is given another prototype, and JSON.stringify hands its instance to a replacer.
+////= lines-18	F1	a0	weight
+F1.prototype = {};
+const o2 = new F1(1n);
+console.log(JSON.stringify(o2, () => 0));
+//// instanceof-a-bound-class-hands-over-what-is-tested.js
+// `x instanceof bound` in a function, with several values: the method under Symbol.hasInstance of the bound class gets each value and reads a field of it.
+class C { static [Symbol.hasInstance](value) { return value.marked === true; } }
+const b = C.bind(null);
+function test(value) { return value instanceof b; }
+console.log(test({ marked: true }), test({ marked: false }), test(1));
+//// instanceof-a-bound-class-runs-the-method-of-the-class.js
+// `x instanceof bound` asks the target of the bound function: the static method under Symbol.hasInstance of the class that was bound runs, and nothing else in the program calls it.
+class C { static [Symbol.hasInstance]() { return true; } }
+const b = C.bind(null);
+console.log({} instanceof b);
+//// instanceof-a-bound-function-lets-the-target-change-what-is-tested.js
+// The method under Symbol.hasInstance of the target of a bound function keeps what is tested and stores into it, and runs with the target as `this`.
+const seen = [];
+const f = () => 1, b = f.bind(null);
+Object.defineProperty(f, Symbol.hasInstance, { value(value) { seen.push(value); value.touched = true; return this === f; } });
+const tested = { touched: false };
+console.log(tested instanceof b, tested.touched, seen[0] === tested);
+//// instanceof-a-function-bound-twice-runs-the-method-of-the-last-target.js
+// `x instanceof bound` where a bound function was bound again: the question goes down to the last target, whose own method under Symbol.hasInstance runs.
+const f = () => 1, b = f.bind(null), c = b.bind(null);
+Object.defineProperty(f, Symbol.hasInstance, { value: () => true });
+console.log({} instanceof c);
+//// instanceof-follows-prototype-objects-not-class-parents.js
+// instanceof follows the prototype objects, not the parents of the class objects; both can be changed apart.
+class A { a() { return "a"; } static s() { return "As"; } }
+class B { b() { return "b"; } }
+class C extends A {}
+const b = new B(), c = new C();
+console.log(b instanceof A, c instanceof A, typeof B.s);
+Object.setPrototypeOf(B, A);
+console.log(b instanceof A, new B() instanceof A, B.s(), typeof new B().a);
+Object.setPrototypeOf(C, B);
+console.log(c instanceof A, new C() instanceof A, new C() instanceof B, typeof C.s, new C().a());
+Object.setPrototypeOf(C.prototype, B.prototype);
+console.log(c instanceof A, c instanceof B, new C() instanceof A, typeof c.a, c.b());
+class D extends A {}
+Object.setPrototypeOf(D.prototype, null);
+console.log(Object.create(D.prototype) instanceof A, Object.create(D.prototype) instanceof D);
+function F() {} const f = new F(); F.prototype = {}; console.log(f instanceof F, new F() instanceof F);
+class G {} const g = new G(); Object.setPrototypeOf(g, A.prototype); console.log(g instanceof G, g instanceof A, g.a());
+class H extends A {} const isA = x => x instanceof A; console.log([new H(), new B(), {}, null, 5, Object.create(A.prototype), Object.create(null)].map(isA).join());
+//// instances-of-subclasses-of-built-ins-hand-back-their-contents.js
+////= attempt-3
+class M extends Map {}
+class S extends Set {}
+class W extends WeakMap {}
+class A extends Array {}
+class E extends Error {}
+class R extends RegExp {}
+class D extends Date {}
+class U extends Uint8Array {}
+class T extends String {}
+class N extends Number {}
+class F extends Function {}
+class B extends ArrayBuffer {}
+const item = { name: "item" };
+attempt("map", () => { const m = new M([["k", item]]); m.set("l", { name: "later" }); return m.get("k").name + m.get("l").name + [...m.values()].map(v => v.name).join() + [...m.keys()].map(k => k.length).join() + [...m].map(([k, v]) => k + v.name).join() + m.size; });
+attempt("map forEach", () => { let t = ""; new M([["k", item]]).forEach((v, k, m) => (t += v.name + k.length + m.size)); return t; });
+attempt("set", () => { const s = new S([item]); s.add({ name: "later" }); return [...s].map(v => v.name).join() + [...s.values()].length + [...s.entries()].map(([a, b]) => a.name + b.name).join() + s.has(item) + s.size; });
+attempt("set methods", () => [...new S([1, 2]).union(new S([3]))].join() + [...new S([1, 2]).intersection(new Set([2]))].join());
+attempt("weak", () => new W([[item, { name: "held" }]]).get(item).name);
+attempt("array", () => { const a = new A(); a.push(item); a[1] = { name: "second" }; return a[0].name + a[1].name + a.map(v => v.name).join() + a.length + a.at(-1).name + a.find(v => v.name).name + a.pop().name + a.concat([item])[1].name + a.slice(0)[0].name + [...a][0].name; });
+attempt("array from", () => A.from([item])[0].name + A.of(item)[0].name + (A.from([1]) instanceof A) + A.from([item]).filter(() => true)[0].name);
+attempt("array loop", () => { let t = ""; for (const v of A.of(item, item)) t += v.name; A.of(item).forEach(v => (t += v.name)); for (const [i, v] of A.of(item).entries()) t += i + v.name; return t; });
+attempt("error", () => { const e = new E("message", { cause: item }); return e.message.length + e.cause.name + e.name + (e instanceof E) + typeof e.stack; });
+attempt("regexp", () => { const r = new R("(a)(b)?", "g"); const m = r.exec("xab"); return m[1].length + m[2].length + m.index + r.lastIndex + "ab".replace(r, "$1") + r.test("a") + r.source + "aXa".split(new R("X")).join(); });
+attempt("date", () => new D(0).getTime() + new D(0).toISOString().length + (new D(5) - new D(2)));
+attempt("typed", () => { const u = new U([1, 2, 300]); return u[2] + u.length + u.map(v => v * 2).join() + (u.subarray(1) instanceof U) + u.at(0).toFixed(1) + [...u].join() + U.from([7])[0]; });
+attempt("string", () => new T("abc").length + new T("abc")[1].length + new T("abc").toUpperCase() + [...new T("ab")].join() + (new T("a") + "b"));
+attempt("number", () => new N(5).toFixed(1) + (new N(5) + 1) + new N(5).valueOf().toString().length);
+attempt("buffer", () => new B(8).byteLength + new Uint8Array(new B(2)).length + (new B(4).slice(1) instanceof B));
+class P extends Promise {}
+P.resolve(item).then(v => console.log("promise", v.name, P.resolve(1) instanceof P));
+new P(resolve => resolve(item)).then(v => v.name).then(n => console.log("promise chain", n.length));
+P.all([P.resolve(item), item]).then(([a, b]) => console.log("promise all", a.name, b.name));
+(async () => console.log("awaited", (await P.resolve(item)).name))();
+//// instances-of-typed-subclasses-of-built-ins-pass-instanceof.ts
+// What `super()` of a class that extends Map, Error or Array makes is a cell of the built-in class, so no test for the layout of the class takes it.
+// It is an instance of the class all the same: in a union, behind `instanceof`, as a typed parameter, in a typed field and after a trip through `any`.
+declare const console: { log(...values: unknown[]): void };
+class Registry extends Map<string, number> { tag = "r"; #n = 1; bump() { return ++this.#n; } }
+class Failure extends Error { code = 7; describe() { return this.name + ":" + this.message + ":" + this.code; } }
+class Stack extends Array<number> { label = "s"; top() { return this[this.length - 1]; } }
+class Plain { tag = "p"; bump() { return 0; } }
+function viaInstanceOf(x: Registry | Plain | string): string {
+  if (x instanceof Registry) return "registry " + x.tag + x.size + x.bump();
+  if (x instanceof Plain) return "plain " + x.tag + x.bump();
+  return "string " + x;
+}
+function viaUnion(x: Registry | Plain): string { return x.tag + x.bump(); }
+function typed(r: Registry): number { return r.size + r.bump(); }
+function failing(f: Failure | null): string { return f ? f.describe() : "none"; }
+function stack(s: Stack): string { return s.label + s.top() + s.length; }
+const holder: { r: Registry | Plain } = { r: new Plain() };
+const values: any[] = JSON.parse("[1]");
+for (let i = 0; i < 3; i++) {
+  const r = new Registry(); r.set("a", i);
+  holder.r = i % 2 ? r : new Plain();
+  const s = new Stack(); s.push(i, i + 1);
+  console.log(viaInstanceOf(r), viaInstanceOf(new Plain()), viaInstanceOf("t"), viaUnion(r), viaUnion(holder.r), typed(r), failing(new Failure("m" + i)), failing(null), stack(s));
+  values.push(r, s, new Failure("v"));
+}
+for (const v of values) console.log(typeof v === "number" ? v : v instanceof Registry ? typed(v) : v instanceof Stack ? stack(v) : failing(v));
+//// instances-stored-under-computed-keys-beside-a-name-stored-by-name.js
+// One instance of a class gets a name by a direct store, others get it under keys that only the run knows, with another type. Methods read the name and a field of the constructor from all of them.
+const names = JSON.parse('["late", "size"]');
+const input = JSON.parse('{"late": 5, "size": "big"}');
+class Record {
+  constructor(i) {
+    this.x = i;
+    this.size = i + 1;
+  }
+  lateLength() {
+    return this.late.length;
+  }
+  sizePlusOne() {
+    return this.size + 1;
+  }
+}
+const first = new Record(1);
+first[names[0]] = 5;
+const second = new Record(2);
+second.late = "text";
+const third = new Record(3);
+for (const k of Object.keys(input)) third[k] = input[k];
+const fourth = Object.assign(new Record(4), input);
+let out = [];
+for (const o of [first, second, third, fourth]) out.push(o.lateLength(), o.sizePlusOne(), Object.keys(o).join("+"), JSON.stringify(o));
+console.log(out.join(" | "));
+let total = 0;
+for (let i = 0; i < 10000; i++) {
+  const o = i % 4 === 0 ? first : i % 4 === 1 ? second : i % 4 === 2 ? third : fourth;
+  const length = o.lateLength();
+  total += length === undefined ? 1 : length;
+  const size = o.sizePlusOne();
+  total += typeof size === "number" ? size : size.length;
+}
+console.log(total);
+//// instances-with-a-prototype-other-than-their-class-names.js
+// Instances whose prototype is not the one their constructor's class names: Reflect.construct, bound and proxied constructors, factories, new.target without a prototype object.
+class K { a = 1; b = "two"; constructor(c) { this.c = c; } sum() { return this.a + this.b + this.c; } }
+function show(o) { return [Object.keys(o).join(), o.a, o.b, o.c, typeof o.sum, o instanceof K, Object.getPrototypeOf(o) === K.prototype].join(" "); }
+console.log(show(new K(3)));
+function Other() {} Other.prototype.sum = function () { return "other" + this.a; };
+const r1 = Reflect.construct(K, [3], Other); console.log(show(r1), r1.sum(), r1 instanceof Other);
+function NoProto() {} NoProto.prototype = 5; const r2 = Reflect.construct(K, [3], NoProto); console.log(show(r2), Object.getPrototypeOf(r2) === Object.prototype);
+const Bound = K.bind(null, 9); const r3 = new Bound(); console.log(show(r3), r3.sum());
+const Prox = new Proxy(K, {}); const r4 = new Prox(4); console.log(show(r4), r4.sum());
+const Prox3 = new Proxy(K, { construct(t, a) { return { fake: true }; } }); console.log(JSON.stringify(new Prox3(1)));
+const make = B => class extends B { d = 4; sum() { return "sub" + super.sum() + this.d; } };
+const S1 = make(K), S2 = make(K); const r6 = new S1(6), r7 = new S2(7); console.log(show(r6), r6.sum(), r7.sum(), r6 instanceof S2, Object.keys(r6).join());
+const S3 = make(make(K)); console.log(new S3(8).sum(), Object.keys(new S3(8)).join());
+class L extends K {} Object.setPrototypeOf(L, class { constructor() { this.z = 26; } }); const r8 = new L(1); console.log(JSON.stringify(r8), r8 instanceof K, typeof r8.sum);
+class M extends K {} Object.setPrototypeOf(M.prototype, Other.prototype); const r9 = new M(2); console.log(show(r9), r9.sum());
+const saved = K.prototype.sum; K.prototype.sum = function () { return "patched" + this.c; }; console.log(new K(1).sum(), r6.sum()); K.prototype.sum = saved;
+function F(x) { this.x = x; } F.prototype.get = function () { return this.x; }; const f1 = new F(1); F.prototype = { get() { return "second" + this.x; } }; const f2 = new F(2); console.log(f1.get(), f2.get(), f1 instanceof F, f2 instanceof F);
+function G() { return new.target === undefined ? "call" : new.target === G ? "new" : "derived"; } console.log(G(), typeof new G(), typeof Reflect.construct(G, [], Other));
+class N { constructor() { this.t = new.target.name; } } class N2 extends N {} console.log(new N().t, new N2().t, Reflect.construct(N, [], Other).t);
+const many = []; for (const C of [K, S1, M, Bound, Prox]) many.push(new C(1)); let total = ""; for (const o of many) total += o.a + o.c; console.log(total);
+const o10 = new K(1); Object.setPrototypeOf(o10, null); console.log(o10.a, o10.sum, Object.keys(o10).join());
+const o11 = new K(1); o11.__proto__ = Other.prototype; console.log(o11.sum(), o11 instanceof K);
+const o12 = Object.create(K.prototype); console.log(show(o12), String(o12.sum()));
+const o13 = Object.create(new K(13)); o13.a = 100; console.log(o13.sum(), Object.keys(o13).join(), o13.b);
+const o14 = Object.setPrototypeOf({ a: 5, b: 6, c: 7 }, K.prototype); console.log(o14.sum(), o14 instanceof K);
+//// integers-leave-the-int32-range.js
+// Integer proofs: overflow, -0, NaN, shifts, division, loop counters, array indexes.
+function mul(a, b) { return a * b; }
+let r = []; for (let i = 65535; i < 65538; i++) r.push(mul(i, i)); console.log(r.join());
+let x = 2147483646; for (let i = 0; i < 3; i++) x++; console.log(x, x | 0);
+let y = -2147483647; for (let i = 0; i < 3; i++) y--; console.log(y);
+console.log(Object.is(mul(0, -1), -0), Object.is(-0 + 0, 0), Object.is(Math.round(-0.2), -0), Object.is(0 / -3, -0), 1 / (0 * -1));
+function idx(a, i) { return a[i]; }
+const arr = [10, 20, 30]; console.log(idx(arr, 1), idx(arr, -1), idx(arr, 3), idx(arr, 1.5), idx(arr, "1"), idx(arr, 4294967295), idx(arr, NaN));
+console.log(5 % -5, Object.is(-5 % 5, -0), 5 / 2 | 0, (-5) >>> 0, 1 << 31, 1 << 32, 2 ** 31 >> 0, -1 >>> 31);
+function half(n) { return n / 2; } let hs = 0; for (let i = 0; i < 5; i++) hs += half(i); console.log(hs);
+function abs(n) { return Math.abs(n); } console.log(abs(-2147483648), abs(-2147483648 | 0), -(-2147483648 | 0), Math.imul(65536, 65536), Math.max(), Math.min(0, -0));
+let c = 0; for (let i = 0; i < 10; i += 0.5) c++; console.log(c);
+let big = 1; for (let i = 0; i < 40; i++) big *= 2; console.log(big, big | 0);
+let sum = 0; for (let i = 0; i < 100000; i++) sum += i * 100000; console.log(sum);
+const len = "abc".length - 4; console.log(len, "abc".charCodeAt(len), "abc"[len], "abc".at(len + 3));
+console.log(parseInt("9007199254740993"), Number.MAX_SAFE_INTEGER + 2, 0.1 + 0.2, (0.1 * 3) | 0, ~~2147483648.5, Math.floor(-0.5), Math.trunc(-0.5));
+function count(n) { let k = 0; while (n) { n &= n - 1; k++; } return k; } console.log(count(-1), count(2 ** 32), count(2 ** 31));
+let u = 4294967295; u = u + 1; console.log(u, u >>> 0); let neg = 0; neg = -neg; console.log(Object.is(neg, -0));
+const ta = new Int8Array(2); ta[0] = 200; ta[1] = -129.7; console.log(ta[0], ta[1], ta[2], ta[-1]);
+//// iterables-handed-to-built-ins.js
+function print(a, b, c) { let s = "" + a; if (b !== undefined) s += " " + b; if (c !== undefined) s += " " + c; console.log(s); }
+let opened = 0, stepped = 0, closed = 0;
+function iterable(values) {
+  return { [Symbol.iterator]() { opened++; let i = 0; return { next() { stepped++; return i < values.length ? { done: false, value: values[i++] } : { done: true, value: undefined }; }, return() { closed++; return {}; } }; } };
+}
+function counts() { return opened + "/" + stepped + "/" + closed; }
+function kind(v) { return typeof v + " " + String(v); }
+
+async function main() {
+  print("Array.from", Array.from(iterable(["a", 1])).map(kind).join("; "), counts());
+  print("Array.from mapped", Array.from(iterable([1]), x => "m" + x).map(kind).join("; "), counts());
+  print("spread", [...iterable(["b"])].map(kind).join("; "), counts());
+  print("call spread", Math.max(...iterable([1, 5])), counts());
+  print("new spread", new Array(...iterable(["c", "d"])).length, counts());
+  const [first] = iterable(["e", "f"]); print("pattern closes", kind(first), counts());
+  const [x, ...rest] = iterable(["g", 2, 3n]); print("pattern rest", kind(x) + "; " + rest.map(kind).join("; "), counts());
+  print("Set", [...new Set(iterable(["h", "h", 4]))].map(kind).join("; "), counts());
+  print("Map", [...new Map(iterable([["k", "v"], [1, 2]]))].map(e => kind(e[0]) + "=" + kind(e[1])).join("; "), counts());
+  try { new Map(iterable([5])); } catch (e) { print("Map closes on a bad entry", e instanceof TypeError, counts()); }
+  print("WeakSet", new WeakSet(iterable([{}])) instanceof WeakSet, counts());
+  print("fromEntries", JSON.stringify(Object.fromEntries(iterable([["a", "late"], ["b", 2]]))), counts());
+  print("groupBy", JSON.stringify(Object.groupBy(iterable([1, 2, 3]), n => (n % 2 ? "odd" : "even"))), counts());
+  print("Map.groupBy", Map.groupBy(iterable(["p", "q"]), s => s).size, counts());
+  print("all", (await Promise.all(iterable(["i", Promise.resolve(6)]))).map(kind).join("; "), counts());
+  print("race", kind(await Promise.race(iterable(["j"]))), counts());
+  print("typed array", new Uint8Array(iterable([7, 8])).join(), counts());
+  print("typed array from", Float64Array.from(iterable([1.5])).join(), counts());
+  print("Iterator.from", Iterator.from(iterable(["l", "m"])).map(s => s + "!").toArray().join(), counts());
+  print("flatMap", Iterator.from(iterable([1])).flatMap(() => iterable(["n", "o"])).toArray().join(), counts());
+  print("take closes", Iterator.from(iterable([1, 2, 3])).take(1).toArray().join(), counts());
+  function* delegate() { const r = yield* iterable(["p"]); return r; }
+  print("yield*", [...delegate()].map(kind).join("; "), counts());
+  for (const v of iterable(["q", "r"])) { print("break closes", kind(v), counts()); break; }
+  try { for (const v of iterable(["s"])) throw "t"; } catch (e) { print("throw closes", kind(e), counts()); }
+  outer: for (const a of iterable([1])) for (const b of iterable([2])) continue outer;
+  print("continue outer closes", counts());
+  print("fromAsync", (await Array.fromAsync(iterable(["u", Promise.resolve("v")]))).map(kind).join("; "), counts());
+  for await (const v of iterable([Promise.resolve("w")])) print("for await", kind(v), counts());
+  print("union", [...new Set([1]).union({ size: 1, has() { return false; }, keys() { return iterable(["x"])[Symbol.iterator](); } })].map(kind).join("; "), counts());
+  print("String.raw", String.raw({ raw: ["y", "z"] }, ...iterable([0])), counts());
+  print("concat does not iterate", [].concat(iterable([1])).length, counts());
+  print("apply does not iterate", Math.max.apply(null, { length: 1, 0: 9 }), counts());
+}
+main().catch(e => print("failed", String(e)));
+//// iteration-methods-and-contents-changed-by-a-function-found-late.js
+// What a loop, a pattern or a spread finds (@@iterator, next, return, the results, the contents) changes after it has run once, in a function that is found under a key read from a field before the constructor stores it.
+function print(a, b, c) { let s = "" + a; if (b !== undefined) s += " " + b; if (c !== undefined) s += " " + c; console.log(s); }
+////= show-2
+function nothing() {}
+let leaked = "a";
+function probe(x) { leaked = x.k; }
+class Leak { constructor() { probe(this); this.k = "a"; } }
+function h0(f) { const choices = { a: nothing, undefined: f }; new Leak(); return choices[leaked](); }
+
+////= iterateOwnIterator-2
+main();
+//// iteration-methods-and-contents-that-change-after-the-first-loop.js
+// What a loop, a pattern or a spread finds (@@iterator, next, return, the results, the contents) changes after it has run once, in code that is reached through a chain of calls.
+function print(a, b, c) { let s = "" + a; if (b !== undefined) s += " " + b; if (c !== undefined) s += " " + c; console.log(s); }
+////= show-2
+function h0(f) { return h1(f); }
+function h1(f) { return h2(f); }
+function h2(f) { return h3(f); }
+function h3(f) { return h4(f); }
+function h4(f) { return h5(f); }
+function h5(f) { return h6(f); }
+function h6(f) { return h7(f); }
+function h7(f) { return h8(f); }
+function h8(f) { return f(); }
+
+////= iterateOwnIterator-2
+main();
+//// iterator-helpers-hand-on-what-their-generator-yields.js
+const item = { n: 1 };
+const other = { n: 2 };
+const same = value => value;
+function show(label, value) {
+  console.log(label, typeof value, value === item, value === other);
+}
+
+show("spread of map", [...[item, other].values().map(same)][0]);
+show("toArray of map", [item, other].values().map(same).toArray()[1]);
+show("spread of filter", [...[item, other].values().filter(value => value === other)][0]);
+show("toArray of take", [item, other].values().take(1).toArray()[0]);
+show("spread of drop", [...[item, other].values().drop(1)][0]);
+show("spread of flatMap", [...[item].values().flatMap(value => [value, other])][1]);
+
+const step = [item, other].values().filter(() => true).next();
+console.log("step", typeof step, Object.keys(step).join(), step.done);
+show("value of a step", step.value);
+
+const doubled = [...[1, 2].values().map(value => value * 2)];
+console.log("numbers", doubled.length, doubled.join(), doubled[0] + 1);
+for (const number of doubled) console.log(number + 1);
+
+const called = [() => 21, () => 42].values().drop(1).next();
+console.log("function", typeof called, called.done, called.value());
+
+const empty = [].values().map(same);
+const last = empty.next();
+console.log("completed", last.done, last.value, JSON.stringify(empty.next()));
+
+const closed = [item].values().map(same);
+console.log("closed", JSON.stringify(closed.return()), JSON.stringify(closed.next()));
+const started = [item, other].values().map(same);
+show("before return", started.next().value);
+console.log("return", JSON.stringify(started.return()), JSON.stringify(started.next()));
+
+function* twice() {
+  yield item;
+  return other;
+}
+const byHand = twice();
+show("yielded", byHand.next().value);
+const returned = byHand.next();
+console.log("returned", returned.done);
+show("returned value", returned.value);
+const after = byHand.next();
+console.log("after the end", after.done, after.value);
+show("over a generator", [...twice().map(same)][0]);
+show("over a set", [...new Set([other]).values().map(same)][0]);
+show("for-of", (() => { for (const value of [item].values().map(same)) return value; })());
+show("Array.from", Array.from([other].values().map(same))[0]);
+const [first] = [item].values().map(same);
+show("pattern", first);
+//// json-replacer-and-reviver-arrive-late.js
+// The replacer and the reviver of JSON change from nothing to a function to a list, and toJSON adds a member with its own toJSON.
+function main() {
+  let replacer = null;
+  const data = { a: 1, b: { c: 2 } };
+  const seen = [];
+  function pick(key, value) { seen.push(typeof this, key); replacer = ["a"]; return value; }
+  const out = [];
+  for (let i = 0; i < 3; i++) { out.push(JSON.stringify(data, replacer)); if (!i) replacer = pick; }
+  console.log(out.join(" "), seen.join());
+  let reviver = undefined;
+  function revive(key, value) { return typeof value === "number" ? { n: value } : value; }
+  const parsed = [];
+  for (let i = 0; i < 2; i++) { parsed.push(JSON.parse('{"x":1}', reviver)); reviver = revive; }
+  console.log(typeof parsed[0].x, typeof parsed[1].x, parsed[1].x.n);
+  const withToJSON = { toJSON() { withToJSON.extra = { toJSON() { return "inner"; } }; return { extra: withToJSON.extra }; } };
+  console.log(JSON.stringify(withToJSON), JSON.stringify(withToJSON));
+}
+main();
+//// keys-and-objects-of-reflective-accesses-arrive-late.js
+// The key of a reflective read changes inside a function that is found through the first read.
+function main() {
+let key = "first";
+const table = {
+  first() { key = "second"; return 1; },
+  second() { key = "third"; return "two"; },
+  third: { deep: true },
+};
+let seen = [];
+for (let i = 0; i < 3; i++) {
+  const member = Reflect.get(table, key);
+  seen.push(typeof member === "function" ? typeof member() : member.deep);
+}
+console.log(seen.join());
+
+// The object changes the same way.
+let source = { value() { source = { value: "late object" }; return 0; } };
+let out = [];
+for (let i = 0; i < 2; i++) {
+  const v = Reflect.get(source, "value");
+  out.push(typeof v === "function" ? v() : v.length);
+}
+console.log(out.join());
+
+// A store under a key that arrives late.
+let storeKey = "a";
+const stored = { a: 0, b: 0 };
+function bump() { storeKey = "b"; return "text"; }
+for (let i = 0; i < 2; i++) Reflect.set(stored, storeKey, i ? bump : bump());
+console.log(typeof stored.a, typeof stored.b);
+for (let i = 0; i < 2; i++) Reflect.set(stored, storeKey, { n: i });
+console.log(typeof stored.a, typeof stored.b, stored.b.n);
+
+let definedKey = "x";
+const definedOn = { x: 1, y: 2 };
+const descriptor = { get() { definedKey = "y"; return "got"; }, configurable: true };
+for (let i = 0; i < 2; i++) { Object.defineProperty(definedOn, definedKey, descriptor); definedOn.x; }
+console.log(definedOn.x, definedOn.y);
+}
+main();
+//// keys-listed-of-an-object-that-never-had-the-removed-field-in-a-validating-build.js
+// Two allocations have the layout of B: the one of First stores `first`, which nothing reads, and the one the super call makes for A never has it and lists its keys.
+function A() { this.x = 1; let names = ""; for (const k in this) names += k + ","; this.names = names; }
+class First { constructor() { this.first = "First"; } }
+class B extends First {}
+Object.setPrototypeOf(B, A);
+console.log(new B().names);

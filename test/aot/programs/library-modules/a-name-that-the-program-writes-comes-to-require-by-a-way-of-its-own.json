@@ -1,0 +1,4 @@
+{
+  "skipInShell": "it asks for modules of Bun",
+  "alone": "it reads process.mainModule, which is the main file of the executable: as one of many entry points it is not that file"
+}

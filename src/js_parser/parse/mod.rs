@@ -73,6 +73,19 @@ fn first_sight_arrow_head(
     }
 }
 
+/// Not inlined: `parse_suffix` would compute it at its entry, for every expression.
+#[cold]
+#[inline(never)]
+fn carried_mark(flags: EFlags) -> EFlags {
+    match flags {
+        EFlags::AfterQuestionAndBeforeColon | EFlags::AfterQuestionAndBeforeColonCarried => {
+            EFlags::AfterQuestionAndBeforeColonCarried
+        }
+        EFlags::AfterQuestionAndBeforeColonInTypedArrow => flags,
+        _ => EFlags::None,
+    }
+}
+
 // File-split mixin: Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`,
 // so this is a direct `impl P` block.
 
@@ -104,15 +117,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// What an arrow function body and the right side of an assignment get from the flags of their expression.
     #[inline]
     pub(crate) fn carried_flags(flags: EFlags) -> EFlags {
-        if !Self::IS_TYPESCRIPT_ENABLED {
-            return EFlags::None;
-        }
-        match flags {
-            EFlags::AfterQuestionAndBeforeColon | EFlags::AfterQuestionAndBeforeColonCarried => {
-                EFlags::AfterQuestionAndBeforeColonCarried
-            }
-            EFlags::AfterQuestionAndBeforeColonInTypedArrow => flags,
-            _ => EFlags::None,
+        if Self::IS_TYPESCRIPT_ENABLED && flags != EFlags::None {
+            carried_mark(flags)
+        } else {
+            EFlags::None
         }
     }
     pub(crate) fn parse_expr_common(

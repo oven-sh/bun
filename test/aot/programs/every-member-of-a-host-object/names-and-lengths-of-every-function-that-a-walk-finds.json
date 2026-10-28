@@ -1,0 +1,4 @@
+{
+  "skipInShell": "it asks for objects of the host, which the jsc shell does not provide",
+  "mainThread": "a Worker has other globals and other streams"
+}

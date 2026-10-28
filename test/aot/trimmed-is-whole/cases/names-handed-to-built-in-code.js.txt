@@ -1,0 +1,117 @@
+const given = process.argv[2] ?? "";
+function tell(run) {
+  try {
+    console.log(String(run()));
+  } catch (error) {
+    console.log("threw", String(error.name), String(error.code));
+  }
+}
+async function askRoute(handle) {
+  const server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    routes: {
+      "/a/:id": request => {
+        tell(() => handle(request));
+        return new Response("ok");
+      },
+    },
+  });
+  console.log(await (await fetch(new URL("/a/1", server.url), { headers: { cookie: "c=d" } })).text());
+  server.stop(true);
+}
+function moduleThatCallsItsImport(field) {
+  const name = [...field].map(character => character.charCodeAt(0));
+  const imports = [1, 1, 0x6a, name.length, ...name, 0, 0];
+  return new Uint8Array([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0, 1, 8, 2, 0x60, 1, 0x7c, 0, 0x60, 0, 0, 2, imports.length, ...imports, 3, 2, 1, 1, 7, 7, 1, 3, 0x72, 0x75, 0x6e, 0, 1, 10, 15, 1, 13, 0, 0x44, 0, 0, 0, 0, 0, 0, 0xf0, 0x3f, 0x10, 0, 0x0b]);
+}
+//// an-emitter-whose-listeners-are-Math
+import { EventEmitter } from "node:events";
+import querystring from "node:querystring";
+const made = querystring.decode("a=b", null, null, { decodeURIComponent: text => (text === "a" ? "_events" : Math) });
+tell(() => EventEmitter.prototype.emit.call(made, "sum" + given + "Precise", [1, 2]));
+//// headers-of-a-message-as-the-listeners-of-an-emitter
+import { EventEmitter } from "node:events";
+import http from "node:http";
+const message = new http.OutgoingMessage();
+message.setHeader("_events", Math);
+tell(() => EventEmitter.prototype.emit.call(message.getHeaders(), "sum" + given + "Precise", [1, 2]));
+//// util-_extend-replaces-the-listeners-of-an-emitter
+import { EventEmitter } from "node:events";
+import querystring from "node:querystring";
+import util from "node:util";
+const emitter = new EventEmitter();
+util._extend(emitter, querystring.decode("a=b", null, null, { decodeURIComponent: text => (text === "a" ? "_events" : Math) }));
+tell(() => emitter.emit("sum" + given + "Precise", [1, 2]));
+//// node-http-calls-a-method-of-the-socket
+import http from "node:http";
+const list = [1, [2, [3]]];
+list.writable = true;
+tell(() => http.ClientRequest.prototype._deferToConnect.call({ socket: list }, "toSp" + given + "liced", [0, 1]));
+//// inspect-calls-a-style
+import querystring from "node:querystring";
+function inspector(depth, options, inspect) {
+  inspect.styles = Math;
+  return String(options.stylize([1, 2], "sum" + given + "Precise"));
+}
+const inspected = querystring.decode("a=b", null, null, { decodeURIComponent: text => (text === "a" ? Bun.inspect.custom : inspector) });
+tell(() => Bun.inspect(inspected, { colors: true }));
+//// inspect-calls-a-style-of-Uint8Array
+import querystring from "node:querystring";
+function inspector(depth, options, inspect) {
+  inspect.styles = Uint8Array;
+  return String(options.stylize("00ff", "from" + given + "Hex"));
+}
+const inspected = querystring.decode("a=b", null, null, { decodeURIComponent: text => (text === "a" ? Bun.inspect.custom : inspector) });
+tell(() => Bun.inspect(inspected, { colors: true }));
+//// spyOn-of-bun-test
+//@ todo --trim removes the method that spyOn finds under a name made at run time: ERR_FEATURE_REMOVED
+import { spyOn } from "bun:test";
+tell(() => spyOn(Object.create(Object.getPrototypeOf("a")), "isWell" + given + "Formed").call("a"));
+tell(() => spyOn(Object(1.005), "to" + given + "Fixed").call(1.5, 1));
+//// toHaveProperty-of-bun-test
+import { expect } from "bun:test";
+await askRoute(request => {
+  expect(request).toHaveProperty("coo" + given + "kies");
+  return "has";
+});
+//// an-import-of-a-WebAssembly-module-from-JSON
+const { instance } = await WebAssembly.instantiate(moduleThatCallsItsImport("raw" + given + "JSON"), { j: JSON });
+tell(() => instance.exports.run());
+//// an-import-of-a-WebAssembly-module-from-Math
+const instance = new WebAssembly.Instance(new WebAssembly.Module(moduleThatCallsItsImport("sum" + given + "Precise")), { j: Math });
+tell(() => instance.exports.run());
+//// an-import-of-a-WebAssembly-module-from-Promise
+const { instance } = await WebAssembly.instantiate(moduleThatCallsItsImport("all" + given + "Settled"), { j: Promise });
+tell(() => instance.exports.run());
+//// an-import-of-a-WebAssembly-module-from-the-prototype-of-strings
+const { instance } = await WebAssembly.instantiate(moduleThatCallsItsImport("isWell" + given + "Formed"), { j: Object.getPrototypeOf("a") });
+tell(() => instance.exports.run());
+//// JSON-stringify-with-a-list-of-names
+await askRoute(request => JSON.stringify(request, ["coo" + given + "kies"]));
+//// Bun-deepMatch-with-keys-from-data
+await askRoute(request => Bun.deepMatch(JSON.parse('{"coo' + given + 'kies":{}}'), request));
+//// a-named-group-in-a-replacement-text
+await askRoute(request => {
+  let isFirst = true;
+  const matcher = {
+    flags: "",
+    lastIndex: 0,
+    exec() {
+      if (!isFirst) return null;
+      isFirst = false;
+      return Object.assign(["a"], { index: 0, groups: request });
+    },
+  };
+  return RegExp.prototype[Symbol.replace].call(matcher, "a", "$<coo" + given + "kies>");
+});
+//// a-table-whose-parent-is-set-through-the-rest-of-a-pattern
+const table = { a() { return 1; }, b() { return 2; } };
+[...table.__proto__] = [];
+tell(() => table["toSp" + given + "liced"](0).length);
+//// a-file-of-function-overrides-in-the-environment
+//@ env BUN_JSC_functionOverrides=/dev/null
+console.log("ran");
+//// bytecode-validation-in-the-environment
+//@ env BUN_JSC_validateBytecode=true
+console.log("ran");

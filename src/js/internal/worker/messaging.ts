@@ -17,7 +17,32 @@ const messageTypes = {
   UNREGISTER_MAIN_THREAD_PORT: "unregisterMainThreadPort",
   SEND_MESSAGE_TO_WORKER: "sendMessageToWorker",
   RECEIVE_MESSAGE_FROM_WORKER: "receiveMessageFromWorker",
-};
+} as const;
+
+interface RegisterMainThreadPortMessage {
+  type: typeof messageTypes.REGISTER_MAIN_THREAD_PORT;
+  threadId: number;
+  port: MessagePort;
+}
+interface UnregisterMainThreadPortMessage {
+  type: typeof messageTypes.UNREGISTER_MAIN_THREAD_PORT;
+  threadId: number;
+}
+interface SendMessageToWorkerMessage {
+  type: typeof messageTypes.SEND_MESSAGE_TO_WORKER;
+  source: number;
+  destination: number;
+  value: unknown;
+  transferList: object[];
+  memory: SharedArrayBuffer;
+}
+interface ReceiveMessageFromWorkerMessage {
+  type: typeof messageTypes.RECEIVE_MESSAGE_FROM_WORKER;
+  source: number;
+  value: unknown;
+  memory: SharedArrayBuffer;
+}
+type MessageFromThread = RegisterMainThreadPortMessage | UnregisterMainThreadPortMessage | SendMessageToWorkerMessage;
 
 // Set once via initThreadInfo() when worker_threads.ts loads.
 let currentThreadId = 0;
@@ -29,10 +54,10 @@ let MessageChannel: typeof globalThis.MessageChannel;
 // Only populated on the main thread (the hub); always empty elsewhere.
 // SafeMap: its prototype is a frozen null-proto snapshot taken at bootstrap, so the
 // cross-thread routing table can't be broken by user code replacing Map.prototype.
-const threadsPorts: Map<number, import("node:worker_threads").MessagePort> = new SafeMap();
+const threadsPorts: Map<number, MessagePort> = new SafeMap();
 
 // Only populated on child threads; always undefined on the main thread.
-let mainThreadPort: any;
+let mainThreadPort: MessagePort | undefined;
 
 // SharedArrayBuffer must always be Int32, so it's * 4.
 // One slot for the operation status (performing / performed) and one for the result.
@@ -52,7 +77,7 @@ function initThreadInfo(threadId: number, mainThread: boolean, MessageChannelCto
 }
 
 // This event handler is always executed on the main thread only.
-function handleMessageFromThread(message) {
+function handleMessageFromThread(message: MessageFromThread) {
   switch (message.type) {
     case messageTypes.REGISTER_MAIN_THREAD_PORT: {
       const { threadId, port } = message;
@@ -91,7 +116,7 @@ function handleMessageFromThread(message) {
   }
 }
 
-function handleMessageFromMainThread(message) {
+function handleMessageFromMainThread(message: ReceiveMessageFromWorkerMessage) {
   switch (message.type) {
     case messageTypes.RECEIVE_MESSAGE_FROM_WORKER:
       receiveMessageFromWorker(message.source, message.value, message.memory);
@@ -99,7 +124,13 @@ function handleMessageFromMainThread(message) {
   }
 }
 
-function sendMessageToWorker(source, destination, value, transferList, memory) {
+function sendMessageToWorker(
+  source: number,
+  destination: number,
+  value: unknown,
+  transferList: object[],
+  memory: SharedArrayBuffer,
+) {
   // We are on the main thread, we can directly process the message.
   if (destination === 0) {
     receiveMessageFromWorker(source, value, memory);
@@ -129,7 +160,7 @@ function sendMessageToWorker(source, destination, value, transferList, memory) {
   );
 }
 
-function receiveMessageFromWorker(source, value, memory) {
+function receiveMessageFromWorker(source: number, value: unknown, memory: SharedArrayBuffer) {
   let response = WORKER_MESSAGING_RESULT_NO_LISTENERS;
 
   // Don't use process.emit("workerMessage", ...): Bun's native emit routes a
@@ -140,7 +171,7 @@ function receiveMessageFromWorker(source, value, memory) {
   // removed here — the native process EventEmitter tracks isOnce internally
   // (fireEventListeners handles removal) with no JS-side onceWrapper to detect.
   // Fixing this needs the native emit to rethrow (a broader change).
-  const listeners = process.listeners("workerMessage");
+  const listeners: Array<(value: unknown, source: number) => void> = process.listeners("workerMessage");
   const listenerCount = listeners.length;
   if (listenerCount > 0) {
     try {
@@ -171,8 +202,8 @@ function createMessagingChannel() {
 
 // Bun half of Node's createMainThreadPort: register the hub-side port now that the
 // child's threadId is known. Called after `new Worker`.
-function registerMainThreadPort(threadId: number, portToMain: any) {
-  const registrationMessage = {
+function registerMainThreadPort(threadId: number, portToMain: MessagePort) {
+  const registrationMessage: RegisterMainThreadPortMessage = {
     type: messageTypes.REGISTER_MAIN_THREAD_PORT,
     threadId,
     port: portToMain,
@@ -188,7 +219,7 @@ function registerMainThreadPort(threadId: number, portToMain: any) {
 }
 
 function destroyMainThreadPort(threadId: number) {
-  const unregistrationMessage = {
+  const unregistrationMessage: UnregisterMainThreadPortMessage = {
     type: messageTypes.UNREGISTER_MAIN_THREAD_PORT,
     threadId,
   };
@@ -206,9 +237,9 @@ function destroyMainThreadPort(threadId: number) {
 // main ordering: a routed message must not observe "no listeners" while the
 // entry that registers them is still loading.
 let entryEvaluated = false;
-let pendingMainPortMessages: any[] | null = null;
+let pendingMainPortMessages: ReceiveMessageFromWorkerMessage[] | null = null;
 
-function handleMessageFromMainThreadGated(message) {
+function handleMessageFromMainThreadGated(message: ReceiveMessageFromWorkerMessage) {
   if (!entryEvaluated) {
     (pendingMainPortMessages ??= []).push(message);
     return;
@@ -216,7 +247,7 @@ function handleMessageFromMainThreadGated(message) {
   handleMessageFromMainThread(message);
 }
 
-function setupMainThreadPort(port: any, setEntryEvaluatedHook: (hook: () => void) => void) {
+function setupMainThreadPort(port: MessagePort, setEntryEvaluatedHook: (hook: () => void) => void) {
   mainThreadPort = port;
   mainThreadPort.on("message", handleMessageFromMainThreadGated);
 
@@ -234,7 +265,12 @@ function setupMainThreadPort(port: any, setEntryEvaluatedHook: (hook: () => void
   mainThreadPort.unref();
 }
 
-async function postMessageToThread(threadId, value, transferList, timeout) {
+async function postMessageToThread(
+  threadId: number,
+  value: unknown,
+  transferList?: object[] | number,
+  timeout?: number,
+) {
   if (typeof transferList === "number" && typeof timeout === "undefined") {
     timeout = transferList;
     transferList = [];
@@ -256,19 +292,19 @@ async function postMessageToThread(threadId, value, transferList, timeout) {
   const status = new Int32Array(memory);
   const promise = Atomics.waitAsync(status, WORKER_MESSAGING_STATUS_INDEX, 0, timeout).value;
 
-  const message = {
+  const message: SendMessageToWorkerMessage = {
     type: messageTypes.SEND_MESSAGE_TO_WORKER,
     source: currentThreadId,
     destination: threadId,
     value,
     memory,
-    transferList,
+    transferList: transferList as object[],
   };
 
   if (isMainThread) {
     handleMessageFromThread(message);
   } else if (mainThreadPort) {
-    mainThreadPort.postMessage(message, transferList);
+    mainThreadPort.postMessage(message, transferList as object[]);
   } else {
     // This thread is not connected to the main-thread hub (e.g. created via the raw Web
     // Worker API), so there is no route to the destination.

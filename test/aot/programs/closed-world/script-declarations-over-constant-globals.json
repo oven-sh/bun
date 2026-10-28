@@ -1,0 +1,1 @@
+{ "skipInShell": "it uses node:vm, which the jsc shell does not have", "skipInVariants": "which of these globals are constants is a result of the flow analysis, and a variant without that result refuses no declaration of them", "alone": "what it prints hangs on what else the executable holds: which modules and members were compiled in, and whether anything evaluates text" }

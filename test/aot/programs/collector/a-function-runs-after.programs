@@ -1,0 +1,1282 @@
+//// a-function-runs-after-its-closure-is-gone.js
+// Compiled code calls a function that it knows without the function object. What was stored on the object still counts when nothing else holds the object.
+function names(stack, ...candidates) {
+  return candidates.filter(candidate => stack.includes(candidate)).join() || "neither";
+}
+
+function declared() { return new Error("x").stack; }
+declared.displayName = "ShownForDeclaration";
+const arrow = () => new Error("x").stack;
+arrow.displayName = "ShownForArrow";
+const expression = function () { return new Error("x").stack; };
+expression.displayName = "ShownForExpression";
+class Made { constructor() { this.stack = new Error("x").stack; } }
+Made.displayName = "ShownForClass";
+const holder = { method() { return new Error("x").stack; } };
+holder.method.displayName = "ShownForMethod";
+
+function fill(depth) {
+  const some = [depth, depth + 1, depth + 2, depth + 3];
+  return depth ? fill(depth - 1) + some.length : some.length;
+}
+
+for (let round = 0; round < 3; round++) {
+  fill(40);
+  Bun.gc(true);
+  console.log(
+    names(declared(), "declared", "ShownForDeclaration"),
+    names(arrow(), "arrow", "ShownForArrow"),
+    names(expression(), "expression", "ShownForExpression"),
+    names(new Made().stack, "Made", "ShownForClass"),
+    names(holder.method(), "method", "ShownForMethod"),
+  );
+}
+//// a-number-that-looks-like-the-header-of-an-object-in-a-frame-is-held-while-the-collector-runs.js
+"use strict";
+// Numbers whose bits look like the header of an object that lies in a frame, with structure IDs that name nothing, stay in frames while full collections run.
+const bits = new BigUint64Array([0xff00610000000001n, 0xff00610000000000n, 0xff00610000000003n, 0xff006100fffffffen, 0xff006100ffffffffn]);
+const numbers = new Float64Array(bits.buffer);
+function collectAndReturn(number) {
+  Bun.gc(true);
+  return number;
+}
+let same = 0;
+for (let i = 0; i < numbers.length; i++) {
+  const number = numbers[i];
+  Bun.gc(true);
+  if (collectAndReturn(number) === number) same++;
+}
+console.log(same);
+//// a-weak-map-is-read-on-both-sides-of-a-throw.ts
+// A weak map is read, an operation throws, and the map is read again behind the handler. The error is allocated on the way to the handler, so a collection may have moved the table of the map meanwhile: nothing of it may be kept across the throw.
+////= Box
+
+function probe(weak: WeakMap<object, number>, keys: object[], wrong: object): number {
+  let sum = 0;
+  for (let index = 0; index + 1 < keys.length; index++) {
+    sum += weak.get(keys[index])!;
+    try {
+      sum += Box.read(wrong);
+    } catch {
+      sum++;
+    }
+    sum += weak.get(keys[index + 1])!;
+  }
+  return sum;
+}
+
+let total = 0;
+for (let round = 0; round < 40; round++) {
+  const weak = new WeakMap<object, number>();
+  const keys: object[] = [];
+  for (let index = 0; index < 400; index++) {
+    const key = { index };
+    weak.set(key, index);
+    if (index % 20 === 0) keys.push(key);
+  }
+  total += probe(weak, keys, {});
+}
+console.log(total);
+//// accessors-of-host-classes-are-read-while-other-accessor-functions-come-and-go.ts
+// Accessors of host classes are read in loops while other accessor functions are made and dropped, much is allocated and the collector runs between the reads.
+function describeUrl(url: URL): string {
+  return [
+    url.href,
+    url.origin,
+    url.protocol,
+    url.username,
+    url.password,
+    url.host,
+    url.hostname,
+    url.port,
+    url.pathname,
+    url.search,
+    url.hash,
+    url.searchParams.size,
+  ].join(" ");
+}
+
+function describeRequest(request: Request): string {
+  return [
+    request.method,
+    request.url,
+    request.mode,
+    request.cache,
+    request.redirect,
+    request.credentials,
+    request.referrerPolicy,
+    request.bodyUsed,
+    request.headers.count,
+    request.signal.aborted,
+  ].join(" ");
+}
+
+function describeResponse(response: Response): string {
+  return [
+    response.status,
+    response.statusText,
+    response.ok,
+    response.type,
+    response.redirected,
+    response.bodyUsed,
+    response.url.length,
+    response.headers.count,
+  ].join(" ");
+}
+
+function describeRest(blob: Blob, decoder: TextDecoder, encoder: TextEncoder, hasher: Bun.CryptoHasher): string {
+  return [
+    blob.size,
+    blob.type,
+    decoder.encoding,
+    decoder.fatal,
+    decoder.ignoreBOM,
+    encoder.encoding,
+    hasher.algorithm,
+    hasher.byteLength,
+  ].join(" ");
+}
+
+const holders: object[] = [
+  URL.prototype,
+  URLSearchParams.prototype,
+  Request.prototype,
+  Response.prototype,
+  Blob.prototype,
+  TextDecoder.prototype,
+  TextEncoder.prototype,
+  Bun.CryptoHasher.prototype,
+  Event.prototype,
+  AbortSignal.prototype,
+  AbortController.prototype,
+  Intl.Locale.prototype,
+  Intl.NumberFormat.prototype,
+  Intl.DateTimeFormat.prototype,
+  Intl.Collator.prototype,
+];
+
+function makeAccessorFunctions(from: number): number {
+  let made = 0;
+  for (let index = 0; index < holders.length; index++) {
+    const holder = holders[(index + from) % holders.length];
+    for (const name of Object.getOwnPropertyNames(holder)) {
+      const descriptor = Object.getOwnPropertyDescriptor(holder, name)!;
+      if (typeof descriptor.get === "function") made++;
+      if (typeof descriptor.set === "function") made++;
+    }
+  }
+  return made;
+}
+
+let kept: unknown[] = [];
+function allocate(turn: number): number {
+  const list: unknown[] = [];
+  for (let index = 0; index < 300; index++) {
+    switch ((index + turn) % 6) {
+      case 0:
+        list.push({ index, turn });
+        break;
+      case 1:
+        list.push([index, turn, index + turn]);
+        break;
+      case 2:
+        list.push("text " + index + " of " + turn);
+        break;
+      case 3:
+        list.push(() => index + turn);
+        break;
+      case 4:
+        list.push(function () {
+          return index;
+        });
+        break;
+      default:
+        list.push(new Map([[index, turn]]));
+    }
+  }
+  kept = turn % 3 ? list : [];
+  return list.length;
+}
+
+function run(label: string, takesDescriptorsFirst: boolean) {
+  if (takesDescriptorsFirst) {
+    makeAccessorFunctions(0);
+    Bun.gc(true);
+  }
+  const seen = new Map<string, number>();
+  let made = 0;
+  let allocated = 0;
+  for (let turn = 0; turn < 10; turn++) {
+    const url = new URL(`https://user:word@example.com:8${turn % 10}43/a/b?x=${turn % 4}&y=2#part`);
+    const request = new Request(url.href, { method: turn % 2 ? "POST" : "GET", headers: { a: "1", b: "2" } });
+    const response = new Response("body", { status: 200 + (turn % 5), statusText: "fine", headers: { c: "3" } });
+    const blob = new Blob(["four"], { type: "text/plain" });
+    const decoder = new TextDecoder("utf-8", { fatal: turn % 2 === 0 });
+    const encoder = new TextEncoder();
+    const hasher = new Bun.CryptoHasher(turn % 2 ? "sha256" : "md5");
+    for (let inner = 0; inner < 16; inner++) {
+      const text = [
+        describeUrl(url),
+        describeRequest(request),
+        describeResponse(response),
+        describeRest(blob, decoder, encoder, hasher),
+      ].join(" ; ");
+      seen.set(text, (seen.get(text) ?? 0) + 1);
+      if (inner % 8 === 3) made += makeAccessorFunctions(turn + inner);
+      if (inner % 8 === 5) allocated += allocate(turn + inner);
+      if (inner % 8 === 7) Bun.gc(inner % 16 === 7);
+    }
+  }
+  console.log(label, seen.size, made, allocated, kept.length);
+  for (const [text, count] of [...seen].sort((a, b) => (a[0] < b[0] ? -1 : 1)).slice(0, 4)) console.log(count, text);
+}
+
+run("reads first", false);
+run("descriptors first", true);
+//// an-object-in-a-variable-nobody-reads-lives-through-the-job-of-its-weak-reference.ts
+// A module variable that nothing reads holds the only other reference to an object. The variable may go, but the language keeps the target of a weak reference alive from its creation, and from each deref, to the end of the job, whatever the collector does meanwhile. (Bun.gc() ends that promise on purpose, so the collections here are fullGC()'s.)
+import { fullGC } from "bun:jsc";
+
+class Session {
+  constructor(public id: number, public log: string[]) {}
+}
+function open(id: number): WeakRef<Session> {
+  const session = new Session(id, ["opened " + id]);
+  onlyHolder = session;
+  return new WeakRef(session);
+}
+let onlyHolder: Session;
+const reference = open(7);
+fullGC();
+for (let i = 0; i < 20000; i++) new Session(i, [String(i)]);
+fullGC();
+const found = reference.deref();
+console.log(found !== undefined, found?.id, found?.log.join());
+
+await Promise.resolve();
+const again = open(8);
+fullGC();
+console.log(again.deref()?.id, again.deref()?.log.join());
+//// an-operation-that-throws-allocates-what-it-throws.ts
+// An operation that does nothing but look and throw allocates the error that it throws, so a collection may lie between it and the handler.
+class Box {
+  #secret = 1;
+  static read(value: any): number {
+    return value.#secret;
+  }
+  static has(value: any): boolean {
+    return #secret in value;
+  }
+}
+
+const weak = new WeakMap<object, number>();
+const weakSet = new WeakSet<object>();
+const keys: object[] = [];
+for (let index = 0; index < 64; index++) {
+  const key = { index };
+  weak.set(key, index);
+  weakSet.add(key);
+  if (index % 8 === 0) keys.push(key);
+}
+
+type Attempt = (value: any) => unknown;
+const attempts: [string, Attempt, unknown][] = [
+  ["private name read", value => Box.read(value), {}],
+  ["private name read of a primitive", value => Box.read(value), 5],
+  ["private name tested", value => Box.has(value), 5],
+  ["call of a number", value => value(), 5],
+  ["call of a member", value => value.member(), {}],
+  ["construction", value => new value(), {}],
+  ["read of null", value => value.length, null],
+  ["detached array", value => value.fill(1), detached()],
+  ["in a primitive", value => "name" in value, 5],
+  ["instance of a number", value => ({}) instanceof value, 5],
+  ["symbol to number", value => +value, Symbol.iterator],
+  ["big integer and number", value => value + 1, 1n],
+  ["spread of a number", value => [...value], 5],
+  ["destructured null", value => { const { a } = value; return a; }, null],
+];
+
+function detached(): Uint8Array {
+  const bytes = new Uint8Array(8);
+  structuredClone(bytes.buffer, { transfer: [bytes.buffer] });
+  return bytes;
+}
+
+function around(attempt: Attempt, value: unknown, first: object, second: object): string {
+  let sum = weak.get(first)!;
+  let isThere = weakSet.has(first);
+  const holder: { error: unknown; before: object } = { error: null, before: first };
+  let thrown: any = null;
+  try {
+    attempt(value);
+  } catch (error) {
+    thrown = error;
+  }
+  holder.error = thrown;
+  sum += weak.get(second)!;
+  isThere &&= weakSet.has(second);
+  return `${(holder.error as Error)?.constructor.name} ${sum} ${isThere}`;
+}
+
+for (const [name, attempt, value] of attempts) {
+  const seen = new Set<string>();
+  for (let round = 0; round + 1 < keys.length; round++) seen.add(around(attempt, value, keys[round], keys[round + 1]));
+  console.log(name + ":", [...seen].join(" | "));
+}
+//// array-held-by-nobody-but-the-loop-over-it.ts
+// Nothing in the loop of `count` changes the storage of `tokens`, so compiled code reads its address once in front of the loop, and nobody but `count` holds the array. The collector reaches the tokens through the array alone.
+interface Token { kind: string; text: string; position: number }
+
+function lex(source: string): Token[] {
+  const tokens: Token[] = [];
+  for (let i = 0; i + 3 <= source.length; i += 3) tokens.push({ kind: "id", text: source.slice(i, i + 3), position: i });
+  return tokens;
+}
+
+function count(tokens: Token[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const token of tokens) if (token.kind === "id") counts.set(token.text, (counts.get(token.text) ?? 0) + 1);
+  return counts;
+}
+
+function countByIndex(tokens: Token[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (let i = 0; i < tokens.length; i++) counts.set(tokens[i].text, (counts.get(tokens[i].text) ?? 0) + 1);
+  return counts;
+}
+
+let source = "";
+for (let i = 0; i < 400; i++) source += "ab" + (i % 10);
+let sizes = 0;
+for (let round = 0; round < 20; round++) sizes += count(lex(source)).size + countByIndex(lex(source)).size;
+console.log(sizes);
+//// every-fast-marked-class.ts
+// Each case is the only path from a root to its leaves, through one cell class that the collector's marking loop visits without the method table, or through one that the loop must send to the method table. The allocations after a collection reuse the cell of a leaf that was not marked.
+const shell = globalThis as any;
+const collectFull: () => void = shell.gc ?? (() => Bun.gc(true));
+const collectYoung: () => void = shell.edenGC ?? require("bun:jsc").edenGC;
+const youngCollectionCount = 50;
+
+class Leaf {
+  id: number;
+  constructor(id: number) {
+    this.id = id;
+  }
+}
+
+type Case = {
+  name: string;
+  build: (id: number) => unknown;
+  read: (holder: any) => number | Promise<number>;
+  replace?: (holder: any, id: number) => void;
+};
+
+const same = (...ids: number[]) => (ids.length > 0 && ids.every(id => id === ids[0]) ? ids[0] : -1);
+
+function withLeaf(object: any, id: number) {
+  object.leaf = new Leaf(id);
+  return object;
+}
+
+class Fields {
+  boxed: unknown = null;
+  narrow: Leaf | null = null;
+}
+
+const wideFieldCount = 40;
+class Wide {
+  f0?: Leaf; f1?: Leaf; f2?: Leaf; f3?: Leaf; f4?: Leaf; f5?: Leaf; f6?: Leaf; f7?: Leaf; f8?: Leaf; f9?: Leaf;
+  f10?: Leaf; f11?: Leaf; f12?: Leaf; f13?: Leaf; f14?: Leaf; f15?: Leaf; f16?: Leaf; f17?: Leaf; f18?: Leaf; f19?: Leaf;
+  f20?: Leaf; f21?: Leaf; f22?: Leaf; f23?: Leaf; f24?: Leaf; f25?: Leaf; f26?: Leaf; f27?: Leaf; f28?: Leaf; f29?: Leaf;
+  f30?: Leaf; f31?: Leaf; f32?: Leaf; f33?: Leaf; f34?: Leaf; f35?: Leaf; f36?: Leaf; f37?: Leaf; f38?: Leaf; f39?: Leaf;
+}
+
+function fillWide(wide: Wide, id: number) {
+  const untyped: any = wide;
+  for (let i = 0; i < wideFieldCount; i++) untyped["f" + i] = new Leaf(id);
+  wide.f0 = new Leaf(id);
+  wide.f39 = new Leaf(id);
+  return wide;
+}
+
+function readWide(wide: Wide) {
+  const untyped: any = wide;
+  const ids = [wide.f0!.id, wide.f39!.id];
+  for (let i = 0; i < wideFieldCount; i++) ids.push(untyped["f" + i].id);
+  return same(...ids);
+}
+
+function createVariable(leaf: Leaf) {
+  let current = leaf;
+  return {
+    get: () => current,
+    set: (next: Leaf) => {
+      current = next;
+    },
+  };
+}
+
+const capture = (leaf: Leaf) => () => leaf;
+
+function createConstructor(leaf: Leaf) {
+  return function (this: any) {
+    this.leaf = leaf;
+  };
+}
+
+function createClass(leaf: Leaf) {
+  return class {
+    static leaf = leaf;
+  };
+}
+
+function* suspend(leaf: Leaf) {
+  yield 0;
+  yield leaf.id;
+}
+
+function getThisID(this: Leaf) {
+  return this.id;
+}
+
+function getArgumentsID(first: Leaf, second: Leaf) {
+  return same(first.id, second.id);
+}
+
+// As a JSValue these bits are a cell pointer, so a visit that takes an array of doubles for an array of values crashes.
+const cellLikeDouble = new Float64Array(new BigUint64Array([0x7ffffffe0000n]).buffer)[0];
+
+const createLiterals = () => ({ strings: ["left", "right"], integers: [1, 2, 3], doubles: [1.5, 2.5] });
+
+const sparseIndex = 5000000;
+
+const side = (fill: string, id: number) => fill.repeat(40) + id;
+const createRope = (id: number) => side("l", id) + side("r", id);
+const createLongRope = (id: number) => `${side("a", id)}${side("b", id)}${side("c", id)}`;
+const createSubstring = (id: number) => createRope(id).substring(30, 60);
+
+function fillObject(object: any, count: number, id: number) {
+  for (let i = 0; i < count; i++) object["p" + i] = new Leaf(id);
+  return object;
+}
+
+const objectCase = (name: string, create: () => any, count: number): Case => ({
+  name: `${name} with ${count} properties`,
+  build: id => fillObject(create(), count, id),
+  read: object => {
+    const keys = Object.keys(object);
+    return keys.length === count ? same(...keys.map(key => object[key].id)) : -1;
+  },
+  replace: (object, id) => {
+    fillObject(object, count, id);
+  },
+});
+
+function fillMap(map: Map<string, Leaf>, count: number, id: number) {
+  for (let i = 0; i < count; i++) map.set("key" + i, new Leaf(id));
+  return map;
+}
+
+const mapCase = (count: number): Case => ({
+  name: `Map with ${count} string keys`,
+  build: id => fillMap(new Map<string, Leaf>(), count, id),
+  read: (map: Map<string, Leaf>) =>
+    map.size === count ? same(map.get("key0")!.id, map.get("key" + (count - 1))!.id, ...[...map.values()].map(leaf => leaf.id)) : -1,
+  replace: (map: Map<string, Leaf>, id) => {
+    fillMap(map, count, id);
+  },
+});
+
+function fillSet(set: Set<string>, count: number, id: number) {
+  for (let i = 0; i < count; i++) set.add("key" + id + "_" + i);
+  return set;
+}
+
+const setCase = (count: number): Case => ({
+  name: `Set with ${count} strings`,
+  build: id => fillSet(new Set<string>(), count, id),
+  read: (set: Set<string>) => (set.size === count ? same(...[...set].map(key => Number(key.slice(3, 7)))) : -1),
+  replace: (set: Set<string>, id) => {
+    set.clear();
+    fillSet(set, count, id);
+  },
+});
+
+const createColors = () => new Set(["red", "green", "blue"]);
+const createNumerals = () => new Map([["one", 1], ["two", 2], ["three", 3]]);
+
+function createPending<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(resolveFunction => {
+    resolve = resolveFunction;
+  });
+  return { promise, resolve };
+}
+
+const reactionCase = (name: string, count: number): Case => ({
+  name: `pending promise with ${name}`,
+  build: id => {
+    const { promise, resolve } = createPending<void>();
+    const results: Promise<number>[] = [];
+    for (let i = 0; i < count; i++) {
+      const leaf = new Leaf(id);
+      results.push(i % 2 ? promise.then(() => leaf.id, () => -1) : promise.then(() => leaf.id));
+    }
+    return { resolve, results };
+  },
+  read: async ({ resolve, results }: { resolve: () => void; results: Promise<number>[] }) => {
+    resolve();
+    return same(...(await Promise.all(results)));
+  },
+});
+
+async function readAfter(promise: Promise<void>, leaf: Leaf) {
+  await promise;
+  return leaf.id;
+}
+
+class Tagged<T> extends Promise<T> {
+  tag: Leaf | undefined;
+}
+
+// (type $s (struct (field externref))) (func (export "new") (param externref) (result (ref $s)) local.get 0 struct.new $s) (func (export "get") (param (ref null $s)) (result externref) local.get 0 struct.get $s 0)
+const structModule = new WebAssembly.Module(
+  new Uint8Array([
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+    0x01, 0x11, 0x03, 0x5f, 0x01, 0x6f, 0x00, 0x60, 0x01, 0x6f, 0x01, 0x64, 0x00, 0x60, 0x01, 0x63, 0x00, 0x01, 0x6f,
+    0x03, 0x03, 0x02, 0x01, 0x02,
+    0x07, 0x0d, 0x02, 0x03, 0x6e, 0x65, 0x77, 0x00, 0x00, 0x03, 0x67, 0x65, 0x74, 0x00, 0x01,
+    0x0a, 0x12, 0x02, 0x07, 0x00, 0x20, 0x00, 0xfb, 0x00, 0x00, 0x0b, 0x08, 0x00, 0x20, 0x00, 0xfb, 0x02, 0x00, 0x00, 0x0b,
+  ]),
+);
+const structExports = new WebAssembly.Instance(structModule, {}).exports;
+const createStruct = structExports.new as (value: unknown) => object;
+const readStruct = structExports.get as (struct: object) => Leaf;
+
+const cases: Case[] = [
+  {
+    name: "class instance, field of unknown type",
+    build: id => {
+      const fields = new Fields();
+      fields.boxed = new Leaf(id);
+      return fields;
+    },
+    read: (fields: Fields) => (fields.boxed as Leaf).id,
+    replace: (fields: Fields, id) => {
+      fields.boxed = new Leaf(id);
+    },
+  },
+  {
+    name: "class instance, field of a class type",
+    build: id => {
+      const fields = new Fields();
+      fields.narrow = new Leaf(id);
+      return fields;
+    },
+    read: (fields: Fields) => fields.narrow!.id,
+    replace: (fields: Fields, id) => {
+      fields.narrow = new Leaf(id);
+    },
+  },
+  {
+    name: "class instance, 40 optional fields",
+    build: id => fillWide(new Wide(), id),
+    read: readWide,
+    replace: (wide: Wide, id) => {
+      fillWide(wide, id);
+    },
+  },
+  { name: "class instance, undeclared property", build: id => withLeaf(new Fields(), id), read: fields => fields.leaf.id, replace: withLeaf },
+  {
+    name: "captured variable that is reassigned",
+    build: id => createVariable(new Leaf(id)),
+    read: variable => variable.get().id,
+    replace: (variable, id) => {
+      variable.set(new Leaf(id));
+    },
+  },
+  { name: "arrow function", build: id => capture(new Leaf(id)), read: arrow => arrow().id },
+  {
+    name: "arrow function with a property",
+    build: id => {
+      const arrow: any = capture(new Leaf(id));
+      arrow.x = 1;
+      return arrow;
+    },
+    read: arrow => (arrow.x === 1 ? arrow().id : -1),
+  },
+  {
+    name: "arrow function, first property stored once the function is old",
+    build: id => capture(new Leaf(id)),
+    read: arrow => (arrow().id > 0 ? (arrow.leaf ?? arrow()).id : -1),
+    replace: withLeaf,
+  },
+  { name: "function used as a constructor", build: id => createConstructor(new Leaf(id)), read: constructor => new constructor().leaf.id },
+  { name: "class with a static field", build: id => createClass(new Leaf(id)), read: classObject => classObject.leaf.id, replace: withLeaf },
+  { name: "function from text evaluated at run time", build: id => new Function("leaf", "return () => leaf")(new Leaf(id)), read: arrow => arrow().id },
+  {
+    name: "suspended generator",
+    build: id => {
+      const generator = suspend(new Leaf(id));
+      generator.next();
+      return generator;
+    },
+    read: generator => generator.next().value,
+  },
+  { name: "bound this of a compiled function", build: id => getThisID.bind(new Leaf(id)), read: bound => bound() },
+  { name: "bound arguments of a compiled function", build: id => getArgumentsID.bind(null, new Leaf(id), new Leaf(id)), read: bound => bound() },
+  {
+    name: "array of objects",
+    build: id => [new Leaf(id), new Leaf(id)],
+    read: (array: Leaf[]) => same(...array.map(leaf => leaf.id)),
+    replace: (array: Leaf[], id) => {
+      array[0] = new Leaf(id);
+      array[1] = new Leaf(id);
+    },
+  },
+  {
+    name: "array of integers with a property",
+    build: id => withLeaf([id, id + 1], id),
+    read: array => same(array[0], array[1] - 1, array.leaf.id),
+    replace: (array, id) => {
+      array[0] = id;
+      array[1] = id + 1;
+      withLeaf(array, id);
+    },
+  },
+  {
+    name: "array of doubles with a property",
+    build: id => withLeaf([id + 0.5, cellLikeDouble], id),
+    read: array => (array[1] === cellLikeDouble ? same(array[0] - 0.5, array.leaf.id) : -1),
+    replace: (array, id) => {
+      array[0] = id + 0.5;
+      withLeaf(array, id);
+    },
+  },
+  { name: "array of holes with a property", build: id => withLeaf(new Array(4), id), read: array => (array.length === 4 && !(0 in array) ? array.leaf.id : -1), replace: withLeaf },
+  {
+    name: "copy-on-write array literals",
+    build: id => withLeaf(createLiterals(), id),
+    read: literals => (`${literals.strings}|${literals.integers}|${literals.doubles}` === "left,right|1,2,3|1.5,2.5" ? literals.leaf.id : -1),
+  },
+  {
+    name: "sparse array",
+    build: id => {
+      const array: Leaf[] = [];
+      array[0] = new Leaf(id);
+      array[sparseIndex] = new Leaf(id);
+      return array;
+    },
+    read: (array: Leaf[]) => same(array[0].id, array[sparseIndex].id),
+    replace: (array: Leaf[], id) => {
+      array[0] = new Leaf(id);
+      array[sparseIndex] = new Leaf(id);
+    },
+  },
+  {
+    name: "rope",
+    build: createRope,
+    read: (text: string) => {
+      const id = Number(text.slice(-4));
+      return text === createRope(id) ? id : -1;
+    },
+  },
+  {
+    name: "rope with three fibers",
+    build: createLongRope,
+    read: (text: string) => {
+      const id = Number(text.slice(-4));
+      return text === createLongRope(id) ? id : -1;
+    },
+  },
+  {
+    name: "substring",
+    build: createSubstring,
+    read: (text: string) => {
+      const id = Number(text.slice(10, 14));
+      return text === createSubstring(id) ? id : -1;
+    },
+  },
+  objectCase("object literal", () => ({}), 3),
+  objectCase("object literal", () => ({}), 300),
+  objectCase("parsed object", () => JSON.parse("{}"), 3),
+  objectCase("parsed object", () => JSON.parse("{}"), 300),
+  {
+    name: "object with property names of its own",
+    build: id => {
+      const object: any = {};
+      for (let i = 0; i < 5; i++) object["n" + id + "_" + i] = new Leaf(id);
+      return object;
+    },
+    read: object => same(...Object.keys(object).flatMap(key => [Number(key.slice(1, 5)), object[key].id])),
+  },
+  {
+    name: "prototype",
+    build: id => Object.create(withLeaf({}, id)),
+    read: object => object.leaf.id,
+    replace: (object, id) => {
+      withLeaf(Object.getPrototypeOf(object), id);
+    },
+  },
+  mapCase(3),
+  mapCase(12),
+  mapCase(300),
+  {
+    name: "Map from strings to numbers and objects",
+    build: id => new Map<string, unknown>([["number", id + 0.5], ["leaf", new Leaf(id)]]),
+    read: (map: Map<string, unknown>) => same((map.get("number") as number) - 0.5, (map.get("leaf") as Leaf).id),
+    replace: (map: Map<string, unknown>, id) => {
+      map.set("number", id + 0.5);
+      map.set("leaf", new Leaf(id));
+    },
+  },
+  {
+    name: "Map with a string key and a number key",
+    build: id => new Map<string | number, Leaf>().set("key", new Leaf(id)).set(7, new Leaf(id)),
+    read: (map: Map<string | number, Leaf>) => same(map.get("key")!.id, map.get(7)!.id),
+    replace: (map: Map<string | number, Leaf>, id) => {
+      map.set("key", new Leaf(id)).set(7, new Leaf(id));
+    },
+  },
+  { name: "Map with an object key", build: id => new Map([[new Leaf(id), new Leaf(id)]]), read: (map: Map<Leaf, Leaf>) => same(...[...map].flat().map(leaf => leaf.id)) },
+  setCase(3),
+  setCase(12),
+  setCase(300),
+  {
+    name: "Set with a string and an object",
+    build: id => new Set<string | Leaf>().add("key").add(new Leaf(id)),
+    read: (set: Set<string | Leaf>) => {
+      for (const entry of set) if (typeof entry !== "string") return entry.id;
+      return -1;
+    },
+  },
+  {
+    name: "constant Set and Map",
+    build: id => ({ colors: createColors(), numerals: createNumerals(), leaf: new Leaf(id) }),
+    read: ({ colors, numerals, leaf }) => (colors.size === 3 && colors.has("green") && !colors.has("pink") && numerals.size === 3 && numerals.get("three") === 3 ? leaf.id : -1),
+  },
+  {
+    name: "constant Set with a key added at run time",
+    build: id => createColors().add("key" + id),
+    read: (set: Set<string>) => (set.size === 4 && set.has("blue") ? Number([...set][3].slice(3)) : -1),
+  },
+  {
+    name: "getter and setter",
+    build: id => {
+      const box = { leaf: new Leaf(id) };
+      return Object.defineProperty({}, "leaf", {
+        get: () => box.leaf,
+        set: (next: Leaf) => {
+          box.leaf = next;
+        },
+      });
+    },
+    read: object => object.leaf.id,
+    replace: withLeaf,
+  },
+  reactionCase("one reaction", 1),
+  reactionCase("three reactions", 3),
+  {
+    name: "async function suspended at an await",
+    build: id => {
+      const { promise, resolve } = createPending<void>();
+      return { resolve, result: readAfter(promise, new Leaf(id)) };
+    },
+    read: ({ resolve, result }) => {
+      resolve();
+      return result;
+    },
+  },
+  {
+    name: "Promise.all with one element resolved",
+    build: id => {
+      const first = createPending<Leaf>();
+      const second = createPending<Leaf>();
+      const all = Promise.all([first.promise, second.promise]);
+      first.resolve(new Leaf(id));
+      return { resolve: second.resolve, all };
+    },
+    read: async ({ resolve, all }) => {
+      resolve(new Leaf(0));
+      return (await all)[0].id;
+    },
+  },
+  { name: "fulfilled promise", build: id => Promise.resolve(new Leaf(id)), read: async promise => (await promise).id },
+  {
+    name: "Date with a property",
+    build: id => withLeaf(new Date(id), id),
+    read: date => same(date.getTime(), date.leaf.id),
+    replace: (date, id) => {
+      date.setTime(id);
+      withLeaf(date, id);
+    },
+  },
+  { name: "Proxy", build: id => new Proxy(withLeaf({}, id), {}), read: proxy => proxy.leaf.id, replace: withLeaf },
+  {
+    name: "WeakMap value",
+    build: id => {
+      const key = new Leaf(0);
+      return { key, map: new WeakMap([[key, new Leaf(id)]]) };
+    },
+    read: ({ key, map }) => map.get(key).id,
+    replace: ({ key, map }, id) => {
+      map.set(key, new Leaf(id));
+    },
+  },
+  {
+    name: "instance of a Promise subclass",
+    build: id => {
+      const promise = Tagged.resolve(new Leaf(id)) as Tagged<Leaf>;
+      promise.tag = new Leaf(id);
+      return promise;
+    },
+    read: async (promise: Tagged<Leaf>) => same((await promise).id, promise.tag!.id),
+  },
+  { name: "bound this of a native function", build: id => Object.prototype.valueOf.bind(new Leaf(id)), read: bound => bound().id },
+  { name: "typed array with a property", build: id => withLeaf(new Uint8Array(8), id), read: bytes => (bytes.length === 8 ? bytes.leaf.id : -1), replace: withLeaf },
+  { name: "WebAssembly struct", build: id => createStruct(new Leaf(id)), read: struct => readStruct(struct).id },
+];
+
+const ring: unknown[] = new Array(64);
+function churn(count: number) {
+  for (let i = 0; i < count; i++) ring[i & 63] = [new Leaf(-1), { leaf: new Leaf(-1) }, "garbage" + i, () => i];
+}
+
+function runYoungCollections() {
+  for (let i = 0; i < youngCollectionCount; i++) {
+    collectYoung();
+    churn(200);
+  }
+}
+
+async function build(firstID: number) {
+  const holders = cases.map((testCase, index) => testCase.build(firstID + index));
+  for (let i = 0; i < 10; i++) await null;
+  return holders;
+}
+
+async function report(phase: string, holders: unknown[], expectedID: (testCase: Case, index: number) => number) {
+  for (let index = 0; index < cases.length; index++) {
+    const expected = expectedID(cases[index], index);
+    let found: unknown;
+    try {
+      found = await cases[index].read(holders[index]);
+    } catch (error) {
+      found = error;
+    }
+    console.log(`${phase}: ${cases[index].name}: ${found === expected ? "ok" : `${found} instead of ${expected}`}`);
+  }
+}
+
+async function main() {
+  let holders = await build(1000);
+  collectFull();
+  churn(5000);
+  await report("full collection", holders, (testCase, index) => 1000 + index);
+
+  holders = await build(2000);
+  runYoungCollections();
+  await report("young collections", holders, (testCase, index) => 2000 + index);
+
+  holders = await build(3000);
+  collectFull();
+  cases.forEach((testCase, index) => testCase.replace?.(holders[index], 4000 + index));
+  runYoungCollections();
+  await report("young leaves in old holders", holders, (testCase, index) => (testCase.replace ? 4000 : 3000) + index);
+}
+
+main();
+//// flags-kept-out-of-line-are-read-by-the-last-holder-of-their-object-in-a-loop-that-makes-texts.ts
+// An object with very many optional flags keeps most of them out of line. Its last holder reads a few of those on every turn of a loop that also makes texts.
+interface Options { name: string; b000?: boolean; b001?: boolean; b002?: boolean; b003?: boolean; b004?: boolean; b005?: boolean; b006?: boolean; b007?: boolean; b008?: boolean; b009?: boolean; b010?: boolean; b011?: boolean; b012?: boolean; b013?: boolean; b014?: boolean; b015?: boolean; b016?: boolean; b017?: boolean; b018?: boolean; b019?: boolean; b020?: boolean; b021?: boolean; b022?: boolean; b023?: boolean; b024?: boolean; b025?: boolean; b026?: boolean; b027?: boolean; b028?: boolean; b029?: boolean; b030?: boolean; b031?: boolean; b032?: boolean; b033?: boolean; b034?: boolean; b035?: boolean; b036?: boolean; b037?: boolean; b038?: boolean; b039?: boolean; b040?: boolean; b041?: boolean; b042?: boolean; b043?: boolean; b044?: boolean; b045?: boolean; b046?: boolean; b047?: boolean; b048?: boolean; b049?: boolean; b050?: boolean; b051?: boolean; b052?: boolean; b053?: boolean; b054?: boolean; b055?: boolean; b056?: boolean; b057?: boolean; b058?: boolean; b059?: boolean; b060?: boolean; b061?: boolean; b062?: boolean; b063?: boolean; b064?: boolean; b065?: boolean; b066?: boolean; b067?: boolean; b068?: boolean; b069?: boolean; b070?: boolean; b071?: boolean; b072?: boolean; b073?: boolean; b074?: boolean; b075?: boolean; b076?: boolean; b077?: boolean; b078?: boolean; b079?: boolean; b080?: boolean; b081?: boolean; b082?: boolean; b083?: boolean; b084?: boolean; b085?: boolean; b086?: boolean; b087?: boolean; b088?: boolean; b089?: boolean; b090?: boolean; b091?: boolean; b092?: boolean; b093?: boolean; b094?: boolean; b095?: boolean; b096?: boolean; b097?: boolean; b098?: boolean; b099?: boolean; b100?: boolean; b101?: boolean; b102?: boolean; b103?: boolean; b104?: boolean; b105?: boolean; b106?: boolean; b107?: boolean; b108?: boolean; b109?: boolean; b110?: boolean; b111?: boolean; b112?: boolean; b113?: boolean; b114?: boolean; b115?: boolean; b116?: boolean; b117?: boolean; b118?: boolean; b119?: boolean; b120?: boolean; b121?: boolean; b122?: boolean; b123?: boolean; b124?: boolean; b125?: boolean; b126?: boolean; b127?: boolean; b128?: boolean; b129?: boolean; b130?: boolean; b131?: boolean; b132?: boolean; b133?: boolean; b134?: boolean; b135?: boolean; b136?: boolean; b137?: boolean; b138?: boolean; b139?: boolean; b140?: boolean; b141?: boolean; b142?: boolean; b143?: boolean; b144?: boolean; b145?: boolean; b146?: boolean; b147?: boolean; b148?: boolean; b149?: boolean; b150?: boolean; b151?: boolean; b152?: boolean; b153?: boolean; b154?: boolean; b155?: boolean; b156?: boolean; b157?: boolean; b158?: boolean; b159?: boolean; }
+function make(i: number): Options {
+  const next: Options = { name: "n" + i };
+  switch (i % 16) {
+    case 0: next.b000 = false; next.b016 = true; next.b032 = true; next.b048 = false; next.b064 = true; next.b080 = true; next.b096 = false; next.b112 = true; next.b128 = true; next.b144 = false; break;
+    case 1: next.b001 = false; next.b017 = true; next.b033 = true; next.b049 = false; next.b065 = true; next.b081 = true; next.b097 = false; next.b113 = true; next.b129 = true; next.b145 = false; break;
+    case 2: next.b002 = false; next.b018 = true; next.b034 = true; next.b050 = false; next.b066 = true; next.b082 = true; next.b098 = false; next.b114 = true; next.b130 = true; next.b146 = false; break;
+    case 3: next.b003 = false; next.b019 = true; next.b035 = true; next.b051 = false; next.b067 = true; next.b083 = true; next.b099 = false; next.b115 = true; next.b131 = true; next.b147 = false; break;
+    case 4: next.b004 = false; next.b020 = true; next.b036 = true; next.b052 = false; next.b068 = true; next.b084 = true; next.b100 = false; next.b116 = true; next.b132 = true; next.b148 = false; break;
+    case 5: next.b005 = false; next.b021 = true; next.b037 = true; next.b053 = false; next.b069 = true; next.b085 = true; next.b101 = false; next.b117 = true; next.b133 = true; next.b149 = false; break;
+    case 6: next.b006 = false; next.b022 = true; next.b038 = true; next.b054 = false; next.b070 = true; next.b086 = true; next.b102 = false; next.b118 = true; next.b134 = true; next.b150 = false; break;
+    case 7: next.b007 = false; next.b023 = true; next.b039 = true; next.b055 = false; next.b071 = true; next.b087 = true; next.b103 = false; next.b119 = true; next.b135 = true; next.b151 = false; break;
+    case 8: next.b008 = false; next.b024 = true; next.b040 = true; next.b056 = false; next.b072 = true; next.b088 = true; next.b104 = false; next.b120 = true; next.b136 = true; next.b152 = false; break;
+    case 9: next.b009 = false; next.b025 = true; next.b041 = true; next.b057 = false; next.b073 = true; next.b089 = true; next.b105 = false; next.b121 = true; next.b137 = true; next.b153 = false; break;
+    case 10: next.b010 = false; next.b026 = true; next.b042 = true; next.b058 = false; next.b074 = true; next.b090 = true; next.b106 = false; next.b122 = true; next.b138 = true; next.b154 = false; break;
+    case 11: next.b011 = false; next.b027 = true; next.b043 = true; next.b059 = false; next.b075 = true; next.b091 = true; next.b107 = false; next.b123 = true; next.b139 = true; next.b155 = false; break;
+    case 12: next.b012 = false; next.b028 = true; next.b044 = true; next.b060 = false; next.b076 = true; next.b092 = true; next.b108 = false; next.b124 = true; next.b140 = true; next.b156 = false; break;
+    case 13: next.b013 = false; next.b029 = true; next.b045 = true; next.b061 = false; next.b077 = true; next.b093 = true; next.b109 = false; next.b125 = true; next.b141 = true; next.b157 = false; break;
+    case 14: next.b014 = false; next.b030 = true; next.b046 = true; next.b062 = false; next.b078 = true; next.b094 = true; next.b110 = false; next.b126 = true; next.b142 = true; next.b158 = false; break;
+    case 15: next.b015 = false; next.b031 = true; next.b047 = true; next.b063 = false; next.b079 = true; next.b095 = true; next.b111 = false; next.b127 = true; next.b143 = true; next.b159 = false; break;
+  }
+  return next;
+}
+function readOften(o: Options, turns: number): number {
+  let n = 0;
+  for (let a = 0; a < turns; a++) for (let b = 0; b < turns; b++) for (let c = 0; c < turns; c++) { if (o.b000) n += 0; if (o.b001) n += 1; if (o.b002) n += 2; if (o.b003) n += 3; if (o.b004) n += 4; if (o.b005) n += 5; if (o.b006) n += 6; if (o.b007) n += 7; if (o.b008) n += 8; if (o.b009) n += 9; if (o.b010) n += 10; if (o.b011) n += 11; if (o.b012) n += 12; if (o.b013) n += 13; if (o.b014) n += 14; if (o.b015) n += 15; if (o.b016) n += 16; if (o.b017) n += 17; if (o.b018) n += 18; if (o.b019) n += 19; if (o.b020) n += 20; if (o.b021) n += 21; if (o.b022) n += 22; if (o.b023) n += 23; if (o.b024) n += 24; if (o.b025) n += 25; if (o.b026) n += 26; if (o.b027) n += 27; if (o.b028) n += 28; if (o.b029) n += 29; if (o.b030) n += 30; if (o.b031) n += 31; if (o.b032) n += 32; if (o.b033) n += 33; if (o.b034) n += 34; if (o.b035) n += 35; if (o.b036) n += 36; if (o.b037) n += 37; if (o.b038) n += 38; if (o.b039) n += 39; if (o.b040) n += 40; if (o.b041) n += 41; if (o.b042) n += 42; if (o.b043) n += 43; if (o.b044) n += 44; if (o.b045) n += 45; if (o.b046) n += 46; if (o.b047) n += 47; if (o.b048) n += 48; if (o.b049) n += 49; if (o.b050) n += 50; if (o.b051) n += 51; if (o.b052) n += 52; if (o.b053) n += 53; if (o.b054) n += 54; if (o.b055) n += 55; if (o.b056) n += 56; if (o.b057) n += 57; if (o.b058) n += 58; if (o.b059) n += 59; if (o.b060) n += 60; if (o.b061) n += 61; if (o.b062) n += 62; if (o.b063) n += 63; }
+  return n;
+}
+function readOnce(o: Options): number {
+  let n = 0;
+  if (o.b064) n += 64; if (o.b065) n += 65; if (o.b066) n += 66; if (o.b067) n += 67; if (o.b068) n += 68; if (o.b069) n += 69; if (o.b070) n += 70; if (o.b071) n += 71; if (o.b072) n += 72; if (o.b073) n += 73; if (o.b074) n += 74; if (o.b075) n += 75; if (o.b076) n += 76; if (o.b077) n += 77; if (o.b078) n += 78; if (o.b079) n += 79; if (o.b080) n += 80; if (o.b081) n += 81; if (o.b082) n += 82; if (o.b083) n += 83; if (o.b084) n += 84; if (o.b085) n += 85; if (o.b086) n += 86; if (o.b087) n += 87; if (o.b088) n += 88; if (o.b089) n += 89; if (o.b090) n += 90; if (o.b091) n += 91; if (o.b092) n += 92; if (o.b093) n += 93; if (o.b094) n += 94; if (o.b095) n += 95; if (o.b096) n += 96; if (o.b097) n += 97; if (o.b098) n += 98; if (o.b099) n += 99; if (o.b100) n += 100; if (o.b101) n += 101; if (o.b102) n += 102; if (o.b103) n += 103; if (o.b104) n += 104; if (o.b105) n += 105; if (o.b106) n += 106; if (o.b107) n += 107; if (o.b108) n += 108; if (o.b109) n += 109; if (o.b110) n += 110; if (o.b111) n += 111; if (o.b112) n += 112; if (o.b113) n += 113; if (o.b114) n += 114; if (o.b115) n += 115; if (o.b116) n += 116; if (o.b117) n += 117; if (o.b118) n += 118; if (o.b119) n += 119; if (o.b120) n += 120; if (o.b121) n += 121; if (o.b122) n += 122; if (o.b123) n += 123; if (o.b124) n += 124; if (o.b125) n += 125; if (o.b126) n += 126; if (o.b127) n += 127; if (o.b128) n += 128; if (o.b129) n += 129; if (o.b130) n += 130; if (o.b131) n += 131; if (o.b132) n += 132; if (o.b133) n += 133; if (o.b134) n += 134; if (o.b135) n += 135; if (o.b136) n += 136; if (o.b137) n += 137; if (o.b138) n += 138; if (o.b139) n += 139; if (o.b140) n += 140; if (o.b141) n += 141; if (o.b142) n += 142; if (o.b143) n += 143; if (o.b144) n += 144; if (o.b145) n += 145; if (o.b146) n += 146; if (o.b147) n += 147; if (o.b148) n += 148; if (o.b149) n += 149; if (o.b150) n += 150; if (o.b151) n += 151; if (o.b152) n += 152; if (o.b153) n += 153; if (o.b154) n += 154; if (o.b155) n += 155; if (o.b156) n += 156; if (o.b157) n += 157; if (o.b158) n += 158; if (o.b159) n += 159;
+  return n;
+}
+function label(n: number, depth: number): string { return depth > 0 ? label(n + 1, depth - 1) + "." : "t" + n; }
+function readBesideTexts(o: Options, turns: number): number {
+  let n = 0;
+  for (let turn = 0; turn < turns; turn++) {
+    n += label(turn, 3).length << 4;
+    if (o.b100) n += 1;
+    if (o.b116) n += 2;
+    if (o.b132) n += 4;
+    if (o.b148) n += 8;
+  }
+  return n;
+}
+let sum = 0;
+for (let i = 0; i < 32; i++) sum += readOften(make(i), 3) + readOnce(make(i));
+for (let i = 0; i < 64; i++) sum += readBesideTexts(make(4 + 16 * i), 8);
+console.log(sum);
+//// locals-of-nested-frames-live-through-collections-at-allocations.ts
+// Objects that only local variables of nine nested frames hold stay alive while allocation after allocation makes the collector run: the frames stand at calls that can do nothing but collect, some under a handler, some not. What is thrown afterwards reaches the handler in force.
+class Link {
+  constructor(
+    public value: number,
+    public next: Link | null,
+  ) {}
+}
+
+function chain(length: number, seed: number): Link | null {
+  let head: Link | null = null;
+  for (let index = 0; index < length; index++) head = new Link(seed + index, head);
+  return head;
+}
+
+function sum(link: Link | null): number {
+  let total = 0;
+  for (; link; link = link.next) total += link.value;
+  return total;
+}
+
+function churn(rounds: number): number {
+  let kept = 0;
+  for (let round = 0; round < rounds; round++) {
+    const garbage = { first: round, pair: [round, round + 1], text: "x" + round };
+    kept += garbage.pair.length + garbage.text.length;
+  }
+  return kept;
+}
+
+function holds(depth: number): number {
+  const mine = chain(50, depth * 1000);
+  const before = sum(mine);
+  let below = 0;
+  try {
+    below = depth ? holds(depth - 1) : churn(2_000_000);
+    if (depth % 3 === 0) throw new RangeError("from depth " + depth);
+  } catch (error) {
+    below += (error as Error).message.length;
+  }
+  const more = chain(20, depth);
+  below += churn(100_000) % 7;
+  if (sum(mine) !== before) throw new Error("an object that a local variable holds has changed");
+  return before + below + sum(more);
+}
+
+console.log(holds(8));
+console.log(holds(2));
+//// modules-loaded-between-collections/fifth.js
+import third, { name as nameOfThird } from "./third.cjs";
+import * as second from "./second.cjs";
+export const name = "fifth";
+export const seen = () => [nameOfThird, third.list.join("+"), Object.keys(second).sort().join("+")].join(" ");
+//// modules-loaded-between-collections/first.js
+export const name = "first";
+export const list = [1, 2, { three: 3 }];
+export const where = () => import.meta.url.replace(/^.*[\\/]/, "") + ":" + typeof import.meta.dirname;
+export let count = 0;
+export function bump() { return ++count > 0 ? "bumped" : "never"; }
+//// modules-loaded-between-collections/fourth.js
+import { list as firstList } from "./first.js";
+export const name = "fourth";
+export const list = firstList.map(item => typeof item);
+export default { kind: "default of the fourth" };
+//// modules-loaded-between-collections/main.js
+// What the run time holds for a loaded module (its namespace object, import.meta, the objects of a CommonJS module, the exports that an import of a CommonJS module captured) is held by nothing else between two uses. Here modules are loaded one at a time, in every way a module is loaded, with young and full collections between; then everything is asked for again.
+const collectFull = () => Bun.gc(true);
+const collectYoung = require("bun:jsc").edenGC;
+function garbage(count) {
+  let kept = null;
+  for (let i = 0; i < count; i++) kept = { i, text: "t" + i, list: [i, kept && kept.i] };
+  return kept.i;
+}
+const between = [collectYoung, collectFull, () => { collectYoung(); collectYoung(); }, () => { collectFull(); collectYoung(); }, () => { collectYoung(); collectFull(); }, () => garbage(20000)];
+let turn = 0;
+function collect() {
+  garbage(3000);
+  between[turn++ % between.length]();
+}
+const describe = namespace => Object.keys(namespace).sort().map(key => key + "=" + (typeof namespace[key] === "function" ? namespace[key]() : JSON.stringify(namespace[key]))).join(" ");
+const ways = [
+  ["import of a module", () => import("./first.js")],
+  ["import of a CommonJS module", () => import("./second.cjs")],
+  ["require of a CommonJS module", async () => require("./third.cjs")],
+  ["require of a module", async () => require("./fourth.js")],
+  ["import of a module that imports a CommonJS module", () => import("./fifth.js")],
+  ["import of a module with a star export", () => import("./sixth.js")],
+];
+const firstAnswers = [];
+for (const [name, load] of ways) {
+  collect();
+  const loaded = await load();
+  collect();
+  firstAnswers.push(describe(loaded));
+  console.log(name + ":", firstAnswers.at(-1));
+}
+for (let round = 0; round < 4; round++) {
+  collect();
+  let index = 0;
+  for (const [name, load] of ways) {
+    const again = describe(await load());
+    if (round === 0 || again !== firstAnswers[index]) console.log("again, " + name + ":", again === firstAnswers[index] ? "the same" : again);
+    index++;
+  }
+}
+collectFull();
+//// modules-loaded-between-collections/second.cjs
+exports.name = "second";
+exports.list = ["a", { b: ["c"] }];
+exports.self = () => typeof module.exports.self + ":" + typeof module.id;
+//// modules-loaded-between-collections/sixth.js
+export * from "./second.cjs";
+export * as first from "./first.js";
+export const own = "sixth";
+//// modules-loaded-between-collections/third.cjs
+const second = require("./second.cjs");
+module.exports = { name: "third", list: [second.name, second.list.length], parent: () => typeof module.parent };
+//// old-objects-get-extra-properties-that-nothing-else-keeps.js
+// An object that has lived through a collection gets properties that its layout does not have, under keys and names that come again and again, so that the stubs add them.
+// What is stored is young and nothing else keeps it: a young collection finds it only if the old object, and the old cell of its extra properties, are remembered.
+import { edenGC, fullGC } from "bun:jsc";
+
+const shelf = globalThis;
+const shelfKey = process.env.SHELF || "shelf";
+function hide(x) { shelf[shelfKey] = x; return shelf[shelfKey]; }
+
+class Plain { constructor(a) { this.a = a; } }
+class Wide { constructor(a) { this.a = a; this.b = a + 1; this.c = "c" + a; } }
+function make(i) { return i & 1 ? new Wide(i) : new Plain(i); }
+
+function addUnderKey(o, k, v) { o[k] = v; }
+function addFirstName(o, v) { o.firstLate = v; }
+function addSecondName(o, v) { o.secondLate = v; }
+function valueFor(k, i) { return k % 3 === 0 ? { k, i } : k % 3 === 1 ? "v" + k + "-" + i : [k, i]; }
+function isValueFor(v, k, i) { return k % 3 === 0 ? v.k === k && v.i === i : k % 3 === 1 ? v === "v" + k + "-" + i : v.length === 2 && v[0] === k && v[1] === i; }
+// Takes the room of whatever the collection has let go.
+let sink = 0;
+function fill(n) {
+  for (let i = 0; i < n; i++) sink += [i, "g" + i, { i, j: i, k: i }, { a: i }, [i, i, i, i]].length;
+}
+
+const count = 1024;
+const batch = 64;
+const keys = [];
+for (let k = 0; k < 12; k++) keys.push((process.env.PREFIX || "key") + k);
+
+const byKey = [];
+const byName = [];
+for (let i = 0; i < count; i++) {
+  byKey.push(make(i));
+  byName.push(hide(make(i)));
+}
+fullGC();
+fullGC();
+
+let wrong = 0;
+// One key after the other: the cell of the extra properties is made for an old object, grows old itself, takes more, and gets storage outside that grows.
+for (let k = 0; k < keys.length; k++) {
+  for (let first = 0; first < count; first += batch) {
+    for (let i = first; i < first + batch; i++) addUnderKey(byKey[i], keys[k], valueFor(k, i));
+    edenGC();
+    fill(200);
+    for (let i = first; i < first + batch; i++) if (!isValueFor(byKey[i][keys[k]], k, i)) wrong++;
+  }
+  if (k % 2 === 1) fullGC();
+}
+for (let first = 0; first < count; first += batch) {
+  for (let i = first; i < first + batch; i++) addFirstName(byName[i], valueFor(0, i));
+  edenGC();
+  fill(200);
+  for (let i = first; i < first + batch; i++) if (!isValueFor(byName[i].firstLate, 0, i)) wrong++;
+}
+fullGC();
+for (let first = 0; first < count; first += batch) {
+  for (let i = first; i < first + batch; i++) addSecondName(byName[i], valueFor(1, i));
+  edenGC();
+  fill(200);
+  for (let i = first; i < first + batch; i++) if (!isValueFor(byName[i].secondLate, 1, i)) wrong++;
+}
+fullGC();
+for (let i = 0; i < count; i++) {
+  for (let k = 0; k < keys.length; k++) if (!isValueFor(byKey[i][keys[k]], k, i)) wrong++;
+  if (byKey[i].a !== i || byName[i].a !== i || !isValueFor(byName[i].firstLate, 0, i) || !isValueFor(byName[i].secondLate, 1, i)) wrong++;
+}
+console.log("wrong:", wrong, Object.keys(byKey[0]).join(), Object.keys(byKey[1]).join(), Object.keys(byName[1]).join());
+//// regular-expression-literals-first-used-between-collections.js
+// The compiled pattern of a literal is made when the literal is first evaluated and lasts as long as the program; nothing but the run time holds it between two evaluations. Here literals are first evaluated a few at a time, with young and full collections between, in every order of the two, and all of them are evaluated again at the end.
+const shell = globalThis;
+const collectFull = shell.gc ?? (() => Bun.gc(true));
+const collectYoung = shell.edenGC ?? require("bun:jsc").edenGC;
+const literals = [
+  () => /k0-(\d+)(?<tail>[a-c]*)/,
+  () => /k1-(\d+)(?<tail>[a-d]*)/g,
+  () => /k2-(\d+)(?<tail>[a-e]*)/i,
+  () => /k3-(\d+)(?<tail>[a-f]*)/u,
+  () => /k4-(\d+)(?<tail>[a-g]*)/y,
+  () => /k5-(\d+)(?<tail>[a-h]*)/m,
+  () => /k6-(\d+)(?<tail>[a-c]*)/s,
+  () => /k7-(\d+)(?<tail>[a-d]*)/gi,
+  () => /k8-(\d+)(?<tail>[a-e]*)/d,
+  () => /k9-(\d+)(?<tail>[a-f]*)/v,
+  () => /k10-(\d+)(?<tail>[a-g]*)/,
+  () => /k11-(\d+)(?<tail>[a-h]*)/g,
+  () => /k12-(\d+)(?<tail>[a-c]*)/i,
+  () => /k13-(\d+)(?<tail>[a-d]*)/u,
+  () => /k14-(\d+)(?<tail>[a-e]*)/y,
+  () => /k15-(\d+)(?<tail>[a-f]*)/m,
+  () => /k16-(\d+)(?<tail>[a-g]*)/s,
+  () => /k17-(\d+)(?<tail>[a-h]*)/gi,
+  () => /k18-(\d+)(?<tail>[a-c]*)/d,
+  () => /k19-(\d+)(?<tail>[a-d]*)/v,
+  () => /k20-(\d+)(?<tail>[a-e]*)/,
+  () => /k21-(\d+)(?<tail>[a-f]*)/g,
+  () => /k22-(\d+)(?<tail>[a-g]*)/i,
+  () => /k23-(\d+)(?<tail>[a-h]*)/u,
+  () => /k24-(\d+)(?<tail>[a-c]*)/y,
+  () => /k25-(\d+)(?<tail>[a-d]*)/m,
+  () => /k26-(\d+)(?<tail>[a-e]*)/s,
+  () => /k27-(\d+)(?<tail>[a-f]*)/gi,
+  () => /k28-(\d+)(?<tail>[a-g]*)/d,
+  () => /k29-(\d+)(?<tail>[a-h]*)/v,
+  () => /k30-(\d+)(?<tail>[a-c]*)/,
+  () => /k31-(\d+)(?<tail>[a-d]*)/g,
+  () => /k32-(\d+)(?<tail>[a-e]*)/i,
+  () => /k33-(\d+)(?<tail>[a-f]*)/u,
+  () => /k34-(\d+)(?<tail>[a-g]*)/y,
+  () => /k35-(\d+)(?<tail>[a-h]*)/m,
+  () => /k36-(\d+)(?<tail>[a-c]*)/s,
+  () => /k37-(\d+)(?<tail>[a-d]*)/gi,
+  () => /k38-(\d+)(?<tail>[a-e]*)/d,
+  () => /k39-(\d+)(?<tail>[a-f]*)/v,
+  () => /k40-(\d+)(?<tail>[a-g]*)/,
+  () => /k41-(\d+)(?<tail>[a-h]*)/g,
+  () => /k42-(\d+)(?<tail>[a-c]*)/i,
+  () => /k43-(\d+)(?<tail>[a-d]*)/u,
+  () => /k44-(\d+)(?<tail>[a-e]*)/y,
+  () => /k45-(\d+)(?<tail>[a-f]*)/m,
+  () => /k46-(\d+)(?<tail>[a-g]*)/s,
+  () => /k47-(\d+)(?<tail>[a-h]*)/gi,
+  () => /k48-(\d+)(?<tail>[a-c]*)/d,
+  () => /k49-(\d+)(?<tail>[a-d]*)/v,
+  () => /k50-(\d+)(?<tail>[a-e]*)/,
+  () => /k51-(\d+)(?<tail>[a-f]*)/g,
+  () => /k52-(\d+)(?<tail>[a-g]*)/i,
+  () => /k53-(\d+)(?<tail>[a-h]*)/u,
+  () => /k54-(\d+)(?<tail>[a-c]*)/y,
+  () => /k55-(\d+)(?<tail>[a-d]*)/m,
+  () => /k56-(\d+)(?<tail>[a-e]*)/s,
+  () => /k57-(\d+)(?<tail>[a-f]*)/gi,
+  () => /k58-(\d+)(?<tail>[a-g]*)/d,
+  () => /k59-(\d+)(?<tail>[a-h]*)/v,
+];
+function garbage(count) {
+  let kept = null;
+  for (let i = 0; i < count; i++) kept = { i, text: "t" + i, list: [i, kept && kept.i] };
+  return kept.i;
+}
+function ask(index) {
+  const pattern = literals[index]();
+  const match = pattern.exec("xx k" + index + "-" + index * 7 + "abcz K" + index + "-1");
+  return index + ":" + pattern.flags + ":" + (match ? match[0] + "|" + match.groups.tail + "|" + match.index : "none") + ":" + pattern.source.length;
+}
+const between = [collectYoung, collectFull, () => { collectYoung(); collectYoung(); }, () => { collectFull(); collectYoung(); }, () => { collectYoung(); collectFull(); }, () => garbage(20000)];
+const first = [];
+for (let index = 0; index < literals.length; index++) {
+  first.push(ask(index));
+  if (index % 3 === 2) {
+    garbage(3000);
+    between[(index / 3 | 0) % between.length]();
+  }
+}
+collectFull();
+garbage(50000);
+collectYoung();
+let same = 0;
+for (let round = 0; round < 3; round++) {
+  for (let index = literals.length - 1; index >= 0; index--) same += ask(index) === first[index] ? 1 : 0;
+  between[round]();
+}
+console.log(first.join("\n"));
+console.log("the same at the end:", same, "of", 3 * literals.length);
+//// shapes-and-prototypes-that-nobody-uses-any-more-are-let-go.ts
+// What a program has learned about a shape outlives the objects of that shape. It does not outlive the prototype that the shape hangs on, and it keeps no prototype alive; and a program that gives its objects new names for ever does not grow.
+import { fullGC, heapStats } from "bun:jsc";
+
+class Message {
+  url: string;
+  constructor(url: string) { this.url = url; }
+}
+
+function structures(): number {
+  let sum = 0;
+  for (const [name, count] of Object.entries(heapStats().objectTypeCounts)) if (name.includes("Structure")) sum += count as number;
+  return sum;
+}
+async function settle(): Promise<void> {
+  for (let i = 0; i < 3; i++) {
+    await new Promise(resolve => setTimeout(resolve, 1));
+    fullGC();
+  }
+}
+
+function underNewPrototype(i: number, watched: WeakRef<object>[]): number {
+  const prototype: any = Object.create(Message.prototype);
+  prototype.helper = function () { return i; };
+  const message: any = new Message("/" + i);
+  Object.setPrototypeOf(message, prototype);
+  message.params = i;
+  message.route = "route";
+  if (i % 20 === 0) watched.push(new WeakRef(prototype));
+  return message.helper() + message.params + message.route.length + message.url.length;
+}
+
+function withNewNames(i: number): number {
+  const message: any = new Message("/" + i);
+  message["name" + i] = i;
+  message["other" + i] = i + 1;
+  const plain: any = {};
+  plain["key" + i] = i;
+  return message["name" + i] + message["other" + i] + plain["key" + i];
+}
+
+let sum = 0;
+const watched: WeakRef<object>[] = [];
+for (let i = 0; i < 200; i++) sum += underNewPrototype(i, []) + withNewNames(i);
+await settle();
+const before = structures();
+
+for (let round = 0; round < 10; round++) {
+  for (let i = 0; i < 400; i++) sum += underNewPrototype(round * 400 + i, watched);
+  await settle();
+}
+const alive = watched.filter(ref => ref.deref() !== undefined).length;
+console.log("prototypes watched:", watched.length, "nearly all are gone:", alive <= 3);
+console.log("no more Structures than before:", structures() - before < 100);
+
+for (let round = 0; round < 10; round++) {
+  for (let i = 0; i < 2000; i++) sum += withNewNames(1000 + round * 2000 + i);
+  await settle();
+}
+console.log("nor behind twenty thousand new names:", structures() - before < 100);
+console.log(sum);

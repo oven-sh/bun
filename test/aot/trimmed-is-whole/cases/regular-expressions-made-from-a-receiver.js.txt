@@ -1,0 +1,24 @@
+//@ build --disallow-code-generation-from-strings
+const given = process.argv[2] ?? "";
+//// Symbol-matchAll
+const letters = { flags: "u", lastIndex: 0, toString: () => "\\p" + given + "{L}+" };
+console.log(String(/a/[Symbol.matchAll].call(letters, "ab1").next().value));
+//// Symbol-split
+const digits = { flags: "u", toString: () => "\\p" + given + "{N}" };
+console.log(/a/[Symbol.split].call(digits, "ab1cd").join("|"));
+//// Symbol-matchAll-literal-with-own-flags
+const letterRun = /\p{L}+/;
+Object.defineProperty(letterRun, "flags", { value: "gu" });
+console.log(String("ab1".matchAll(letterRun).next().value));
+//// Symbol-split-literal-with-own-flags
+const letter = /\p{L}/;
+Object.defineProperty(letter, "flags", { value: "u" });
+console.log("1a2".split(letter).join("|"));
+//// Symbol-split-literal-with-range-to-property
+const range = /[a-\p{L}]/;
+Object.defineProperty(range, "flags", { value: "u" });
+try {
+  "1a2".split(range);
+} catch (error) {
+  console.log(error.name);
+}

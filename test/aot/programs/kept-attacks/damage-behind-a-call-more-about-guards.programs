@@ -1,0 +1,318 @@
+////: Card-2
+class Card {
+  id: number;
+  declare title?: string;
+  declare owner?: string;
+  declare note?: string;
+  constructor(id: number) {
+    this.id = id;
+  }
+}
+////: callee-20
+function callee(round: number): number {
+  return factor * (round & 3);
+}
+////: lines-28
+class «1» extends «2» {
+  «3»: number;
+  constructor(id: number) {
+    super(id);
+    this.«3» = id + «4»;
+  }
+}
+//// damage-behind-a-call-more-about-guards/a-class-below-error-and-names-put-on-the-prototype-of-error.ts
+// The class has a built-in parent. A name that it does not declare is looked for there too, and nobody watches there for the class, so the condition on such a name has no bit and its test never passes.
+// The same function calls a method and reads a getter that the class does declare. Whatever is done with the tests of one function, the answers stay those of the language:
+// a callee leaves its typed path and puts one absent name on Error.prototype, later another on the prototype object of the class, and at last replaces the method.
+class Failure extends Error {
+  code: number;
+  declare hint?: string;
+  declare cause2?: string;
+  constructor(code: number) {
+    super("failure " + code);
+    this.code = code;
+  }
+  label(): string {
+    return "F" + this.code;
+  }
+  get twice(): number {
+    return this.code * 2;
+  }
+}
+
+let damage = 0;
+const bomb = {
+  valueOf(): number {
+    if (damage === 1) (Error.prototype as any).hint = "hint from Error";
+    else if (damage === 2) (Failure.prototype as any).cause2 = "cause from Failure";
+    else if (damage === 3) (Failure.prototype as any).label = () => "replaced";
+    return 2;
+  },
+};
+
+let factor: number = 2;
+////= callee-20
+
+function holder(p: Failure, round: number): string {
+  const before = p.label() + "," + p.twice + "," + p.hint + "," + p.cause2;
+  const got = callee(round);
+  return before + " " + got + " " + p.label() + "," + p.twice + "," + p.hint + "," + p.cause2 + "," + p.message;
+}
+
+let digest = 0;
+for (let round = 0; round < 500; round++) {
+  const p = new Failure(round);
+  if (round % 5 === 0) p.hint = "h" + round;
+  damage = round === 201 ? 1 : round === 302 ? 2 : round === 401 ? 3 : 0;
+  if (damage) factor = bomb as any;
+  const line = holder(p, round);
+  factor = 2;
+  for (let index = 0; index < line.length; index++) digest = (digest * 31 + line.charCodeAt(index)) | 0;
+  if (round < 2 || round % 100 <= 3 || round % 100 === 99) console.log(round + ": " + line);
+  if (round === 250) delete (Error.prototype as any).hint;
+}
+console.log("digest " + digest);
+//// damage-behind-a-call-more-about-guards/a-constructor-function-that-is-first-used-below-the-call-comes-with-the-name.js
+// One site sees objects of two constructor functions. The class of a constructor function is made by its first construction, and a test that speaks of several classes does not wait for a class that does not exist yet.
+// The prototype object of the second function has had the name from the start. Its first object is made below a call of the caller that has passed the test, and comes back as the result of that call.
+function Early(id) {
+  this.id = id;
+  if (id % 5 === 0) this.owner = "own" + id;
+}
+function Late(id) {
+  this.id = id;
+  if (id % 5 === 0) this.note = "own" + id;
+}
+Late.prototype.owner = "owner of every Late";
+
+var wantsLate = false;
+function make(id) {
+  if (wantsLate) return new Late(id);
+  return new Early(id);
+}
+
+function describe(p) {
+  return p.id + ":" + p.owner + ":" + p.note;
+}
+
+function holder(p, round) {
+  var before = p.owner + "," + p.note;
+  var q = make(round + 1);
+  return before + " " + q.owner + "," + q.note + " " + p.owner + "," + p.note + " " + describe(q);
+}
+
+var digest = 0;
+for (var round = 0; round < 400; round++) {
+  wantsLate = round >= 200 && round % 2 === 0;
+  var line = holder(new Early(round), round);
+  for (var index = 0; index < line.length; index++) digest = (digest * 31 + line.charCodeAt(index)) | 0;
+  if (round < 2 || (round >= 198 && round <= 205) || round === 399) console.log(round + ": " + line);
+  if (round === 300) Early.prototype.note = "note of every Early";
+}
+console.log("digest " + digest);
+//// damage-behind-a-call-more-about-guards/a-name-appears-in-the-middle-of-three-classes.ts
+// One site sees objects of three classes that stand below each other, so its test speaks of three prototype chains at once. A callee leaves its typed path and puts the name on the prototype object in the middle:
+// objects of the class in the middle and of the one below find it, objects of the one above do not. Then the same on the lowest class under another name.
+////= lines-20	Base	owner
+////= lines-28	Middle	Base	width	1
+////= lines-28	Leaf	Middle	depth	2
+
+let damage = 0;
+const bomb = {
+  valueOf(): number {
+    if (damage === 1) (Middle.prototype as any).owner = "owner from the middle";
+    else if (damage === 2) (Leaf.prototype as any).note = "note from the leaf";
+    return 2;
+  },
+};
+
+let factor: number = 2;
+////= callee-20
+
+function holder(a: Base, b: Base, c: Base, round: number): string {
+  const before = a.owner + "," + b.owner + "," + c.owner + "," + c.note;
+  const got = callee(round);
+  return before + " " + got + " " + a.owner + "," + b.owner + "," + c.owner + " " + a.note + "," + b.note + "," + c.note;
+}
+
+let digest = 0;
+for (let round = 0; round < 400; round++) {
+  const objects: Base[] = [new Base(round), new Middle(round), new Leaf(round)];
+  if (round % 5 === 0) objects[round % 3].owner = "o" + round;
+  damage = round === 200 ? 1 : round === 300 ? 2 : 0;
+  if (damage) factor = bomb as any;
+  const line = holder(objects[round % 3], objects[(round + 1) % 3], objects[(round + 2) % 3], round);
+  factor = 2;
+  for (let index = 0; index < line.length; index++) digest = (digest * 31 + line.charCodeAt(index)) | 0;
+  if (round < 3 || (round >= 199 && round <= 203) || (round >= 299 && round <= 303)) console.log(round + ": " + line);
+}
+console.log("digest " + digest);
+//// damage-behind-a-call-more-about-guards/another-name-of-the-class-has-changed-long-before.ts
+// One bit says that nothing on the prototype object of a class has changed. Here it is broken before the first hot call: the program gives the class a default under a name that hot code reads.
+// From then on each read of another absent name rests on the bit of its own name, which is asked in cold code. Much later a callee leaves its typed path and puts that name on the prototype object too.
+class Card {
+  id: number;
+  declare spare?: number;
+  declare owner?: string;
+  declare note?: string;
+  constructor(id: number) {
+    this.id = id;
+  }
+}
+
+function readSpare(p: Card): number {
+  const spare = p.spare;
+  return spare === undefined ? -1 : spare;
+}
+
+let strikes = false;
+const bomb = {
+  valueOf(): number {
+    if (strikes) (Card.prototype as any).owner = "owner from above";
+    return 2;
+  },
+};
+
+let factor: number = 2;
+////= callee-20
+
+function holder(p: Card, round: number): string {
+  const before = p.owner + "," + p.note;
+  const got = callee(round);
+  return before + " " + got + " " + p.owner + "," + p.note + "," + readSpare(p);
+}
+
+let digest = 0;
+for (let round = 0; round < 400; round++) {
+  if (round === 3) (Card.prototype as any).spare = 7;
+  const p = new Card(round);
+  if (round % 5 === 0) p.note = "n" + round;
+  if (round % 11 === 0) p.spare = round;
+  strikes = round === 250;
+  if (strikes) factor = bomb as any;
+  const line = holder(p, round);
+  factor = 2;
+  for (let index = 0; index < line.length; index++) digest = (digest * 31 + line.charCodeAt(index)) | 0;
+  if (round < 5 || (round >= 249 && round <= 252) || round === 399) console.log(round + ": " + line);
+  if (round === 300) delete (Card.prototype as any).owner;
+}
+console.log("digest " + digest);
+//// damage-behind-a-call-more-about-guards/one-default-on-the-prototype-and-the-other-reads-of-the-function.ts
+// No wrong answer is expected here: this one is to be counted. A library gives its class a default by a computed name at start, as mixins do, so the guard of that one name is broken before the first hot call.
+// The hot function reads that name and three other optional fields of the same class. With a test of its own for each name, one read goes by name and three stay typed.
+// With one test for the names of the function, all four go by name for the life of the program. Count the failing edges of AreMembersUnchanged and the reads by name with and without --aot-disable=CleanReturns.
+class Card {
+  id: number;
+  declare kind?: string;
+  declare title?: string;
+  declare owner?: string;
+  declare note?: string;
+  constructor(id: number) {
+    this.id = id;
+  }
+}
+
+const defaults: Record<string, unknown> = { kind: "card" };
+for (const name of Object.keys(defaults)) (Card.prototype as any)[name] = defaults[name];
+
+function lengthOf(text: string | undefined): number {
+  return text === undefined ? 1 : text.length;
+}
+
+function weigh(p: Card): number {
+  return lengthOf(p.kind) + lengthOf(p.title) * 3 + lengthOf(p.owner) * 5 + lengthOf(p.note) * 7 + p.id;
+}
+
+let sum = 0;
+for (let round = 0; round < 2_000_000; round++) {
+  const p = new Card(round & 15);
+  if ((round & 7) === 0) p.title = "title";
+  if ((round & 31) === 0) p.kind = "special";
+  sum = (sum + weigh(p)) | 0;
+}
+console.log("sum " + sum);
+//// damage-behind-a-call-more-about-guards/the-prototype-object-gets-a-parent-that-has-the-names.ts
+// Nothing is put on the prototype object of the class: it gets another parent, which has two of the names that the caller reads off objects with empty slots.
+// The callee does it in a generic arm, three calls below the caller that holds the proof, and the two functions in between end in tail calls.
+////= Card-2
+
+let strikes = false;
+const parent = { owner: "owner from far above", note: "note from far above" };
+const bomb = {
+  valueOf(): number {
+    if (strikes) Object.setPrototypeOf(Card.prototype, parent);
+    return 2;
+  },
+};
+
+let factor: number = 2;
+function deepest(round: number): number {
+  return factor * (round & 3);
+}
+////= lines-40	deeper	deepest	1
+////= lines-40	callee	deeper	1
+
+function holder(p: Card, round: number): string {
+  const before = p.title + "," + p.owner + "," + p.note;
+  const got = callee(round);
+  return before + " " + got + " " + p.title + "," + p.owner + "," + p.note + "," + ("owner" in p);
+}
+
+let digest = 0;
+for (let round = 0; round < 400; round++) {
+  const p = new Card(round);
+  if (round % 5 === 0) p.owner = "o" + round;
+  strikes = round === 201;
+  if (strikes) factor = bomb as any;
+  const line = holder(p, round);
+  factor = 2;
+  for (let index = 0; index < line.length; index++) digest = (digest * 31 + line.charCodeAt(index)) | 0;
+  if (round < 2 || (round >= 199 && round <= 203) || round === 301 || round === 399) console.log(round + ": " + line);
+  if (round === 300) Object.setPrototypeOf(Card.prototype, Object.prototype);
+}
+console.log("digest " + digest);
+//// damage-behind-a-call-more-about-guards/the-second-and-the-third-absent-name-appear-on-the-prototype.ts
+// A function reads three optional fields of one class in front of a call and behind it. A read of an empty slot rests on "nobody has put the name on the prototype object".
+// The tests for the three names may have become one test in front of the first read, and the call may have kept it. A number variable of the callee holds an object in some rounds,
+// so the multiplication leaves the typed path and runs valueOf, which puts one of the names on the prototype object: the second, then the third, then the first.
+////= Card-2
+
+let damage = 0;
+const bomb = {
+  valueOf(): number {
+    if (damage === 1) (Card.prototype as any).owner = "owner from above";
+    else if (damage === 2) (Card.prototype as any).note = "note from above";
+    else if (damage === 3) (Card.prototype as any).title = "title from above";
+    return 2;
+  },
+};
+
+let factor: number = 2;
+////= callee-20
+
+function holder(p: Card, round: number): string {
+  const before = p.title + "," + p.owner + "," + p.note;
+  const got = callee(round);
+  return before + " " + got + " " + p.title + "," + p.owner + "," + p.note;
+}
+
+function outer(p: Card, round: number): string {
+  const before = p.note + "," + p.owner;
+  const inner = holder(p, round);
+  return before + " [" + inner + "] " + p.owner + "," + p.note + "," + p.title;
+}
+
+let digest = 0;
+for (let round = 0; round < 500; round++) {
+  const p = new Card(round);
+  if (round % 5 === 0) p.title = "t" + round;
+  if (round % 7 === 0) p.note = "n" + round;
+  damage = round === 201 ? 1 : round === 302 ? 2 : round === 401 ? 3 : 0;
+  if (damage) factor = bomb as any;
+  const line = outer(p, round);
+  factor = 2;
+  for (let index = 0; index < line.length; index++) digest = (digest * 31 + line.charCodeAt(index)) | 0;
+  if (round < 2 || round % 100 <= 3 || round % 100 === 99) console.log(round + ": " + line);
+  if (round === 250) delete (Card.prototype as any).owner;
+}
+console.log("digest " + digest);

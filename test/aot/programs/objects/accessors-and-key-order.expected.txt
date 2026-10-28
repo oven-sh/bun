@@ -1,0 +1,73 @@
+a getter and its setter around a value: a,b,c | a,b,c | {"a":1,"b":2,"c":3} | "a" wec 1, "b" -ec getset, "c" wec 3
+after the setter ran: a,b,c | a,b,c | {"a":10,"b":11,"c":3} | "a" wec 10, "b" -ec getset, "c" wec 3
+five accessors in one literal: start,one,two,middle,three,four,five,end | start,one,two,middle,three,four,five,end | {"start":1,"one":2,"two":3,"middle":2,"four":5,"five":6,"end":3} | "start" wec 1, "one" -ec get, "two" -ec get, "middle" wec 2, "three" -ec set, "four" -ec get, "five" -ec get, "end" wec 3
+only accessors: a,b,c | a,b,c | {"a":1,"c":3} | "a" -ec get, "b" -ec set, "c" -ec get
+a value after a getter of the same name: first,a,between,last | first,a,between,last | {"first":0,"a":"value","between":1,"last":2} | "first" wec 0, "a" wec value, "between" wec 1, "last" wec 2
+a getter after a value of the same name: first,a,between,last | first,a,between,last | {"first":0,"a":"getter","between":1,"last":2} | "first" wec 0, "a" -ec get, "between" wec 1, "last" wec 2
+a setter, a value, a getter: a,b,c | a,b,c | {"a":"getter","b":0,"c":1} | "a" -ec get, "b" wec 0, "c" wec 1
+two getters of the same name: a,b | a,b | {"a":"second","b":0} | "a" -ec get, "b" wec 0
+the setter first: a,b | a,b | {"a":"getter","b":0} | "a" -ec getset, "b" wec 0
+a method after an accessor of the same name: a,b | a,b | {"b":0} | "a" wec function, "b" wec 0
+indexes, numbers, strings and a symbol as names: 0,1,z,1.5,quoted name,a | 0,1,z,1.5,quoted name,a | {"0":"zero","1":"one","z":0,"1.5":"one and a half","quoted name":"quoted","a":1} | "0" -ec get, "1" -ec get, "z" wec 0, "1.5" -ec get, "quoted name" -ec get, "a" wec 1, Symbol(tag) -ec get
+an accessor named __proto__: __proto__,a | __proto__,a | {"__proto__":"own","a":1} | "__proto__" -ec get, "a" wec 1
+the prototype is unchanged: true
+computed accessors, "k": a,k,b,c | a,k,b,c | {"a":1,"k":"got 1","b":2,"c":3} | "a" wec 1, "k" -ec getset, "b" wec 2, "c" wec 3
+computed accessors, "a": a,b,c | a,b,c | {"a":"got 1","b":2,"c":3} | "a" -ec getset, "b" wec 2, "c" wec 3
+computed accessors, "c": a,c,b | a,c,b | {"a":1,"c":3,"b":2} | "a" wec 1, "c" wec 3, "b" wec 2
+computed accessors, 0: 0,a,b,c | 0,a,b,c | {"0":"got 1","a":1,"b":2,"c":3} | "0" -ec getset, "a" wec 1, "b" wec 2, "c" wec 3
+computed accessors, "0": 0,a,b,c | 0,a,b,c | {"0":"got 1","a":1,"b":2,"c":3} | "0" -ec getset, "a" wec 1, "b" wec 2, "c" wec 3
+computed accessors, Symbol(tag): a,b,c | a,b,c | {"a":1,"b":2,"c":3} | "a" wec 1, "b" wec 2, "c" wec 3, Symbol(tag) -ec getset
+computed accessors, "__proto__": a,__proto__,b,c | a,__proto__,b,c | {"a":1,"__proto__":"got 1","b":2,"c":3} | "a" wec 1, "__proto__" -ec getset, "b" wec 2, "c" wec 3
+a getter between spreads: x,middle,y,z | x,middle,y,z | {"x":1,"middle":"getter","y":2,"z":3} | "x" wec 1, "middle" -ec get, "y" wec 2, "z" wec 3
+a spread over a getter: middle,y,z | middle,y,z | {"middle":"from the second spread","y":2,"z":3} | "middle" wec from the second spread, "y" wec 2, "z" wec 3
+a setter after a spread over a getter: middle,y | middle,y | {"y":2} | "middle" -ec set, "y" wec 2
+a getter and a setter with a spread between them: middle,y | middle,y | {"middle":"getter","y":2} | "middle" -ec getset, "y" wec 2
+a spread of an object with accessors: before,a,b,c,after | before,a,b,c,after | {"before":0,"a":1,"b":2,"c":3,"after":1} | "before" wec 0, "a" wec 1, "b" wec 2, "c" wec 3, "after" wec 1
+100 of each: 66940 | start,one,two,middle,three,four,five,end ; a,b,c ; a,k,b,c / start,one,two,middle,three,four,five,end ; a,b,c ; a,longer name,b,c / start,one,two,middle,three,four,five,end ; a,b,c ; a,b,c
+an accessor deleted and its name assigned: a,c,b | a,c,b | {"a":1,"c":3,"b":"again"} | "a" wec 1, "c" wec 3, "b" wec again
+properties added after the literal, and the accessor changed to non-enumerable: a,c,d,e | a,c,d,e | {"a":1,"c":3,"d":4,"e":5} | "a" wec 1, "b" --c getset, "c" wec 3, "d" wec 4, "e" -e- get
+frozen: a,b,c | a,b,c | {"a":1,"b":2,"c":3} | "a" -e- 1, "b" -e- getset, "c" -e- 3
+accessors of a class: "constructor" w-c function, "area" --c getset, "computed" --c set, Symbol(tag) --c get | "unit" --c get, "computed" --c set
+an instance of it: side | side | {"side":4} | "side" wec 4
+its inherited accessors: 16,tagged,1
+the function under "2": --c "2"
+the function under "computedMethod": --c "computedMethod"
+the function under "computedAsync": --c "computedAsync"
+the function under "computedGenerator": --c "computedGenerator"
+the function under "computedAsyncGenerator": --c "computedAsyncGenerator"
+the function under "computedArrow": --c "computedArrow"
+the function under "computedFunction": --c "computedFunction"
+the function under "computedClass": --c "computedClass"
+the function under "computedNamedFunction": --c "own"
+the function under "computedNamedClass": --c "Own"
+the function under "computed with spaces": --c "computed with spaces"
+the function under "": --c ""
+the function under "1.5": --c "1.5"
+the function under Symbol(description): --c "[description]"
+the function under Symbol(arrow description): --c "[arrow description]"
+the function under Symbol(class description): --c "[class description]"
+the function under Symbol(): --c "[]"
+the function under Symbol(): --c ""
+the function under Symbol(Symbol.iterator): --c "[Symbol.iterator]"
+the accessor under "3": --c "get 3", no setter
+the accessor under "computedGetter": --c "get computedGetter", no setter
+the accessor under "computedSetter": no getter, --c "set computedSetter"
+the accessor under "computedBoth": --c "get computedBoth", --c "set computedBoth"
+the accessor under Symbol(description): --c "get [description]", --c "set [description]"
+the accessor under Symbol(): --c "get ", no setter
+the class under "computedStaticMethod": w-c a method
+the class under "computedStaticGetter": --c an accessor that returns "from the getter"
+the class under "computedStaticField": wec "from the field"
+the class under "computedStaticComputedField": wec "from the computed field"
+the class under "computedStaticComputedMethod": w-c a method
+the class under "computedOtherStatics": --c "computedOtherStatics"
+the class under "computedDerived": --c "computedDerived"
+members of a class with computed names: --c "computedMethod" | --c "computedStatic" | --c "get computedGetter", no setter | no getter, --c "set computedSetter" | --c "[description]" | --c "computedField" | --c "computedFunctionField" | --c "computedClassField" | --c "own" | --c "[field description]" | --c "computedStaticField" | --c "plainField"
+100 closures of one method: [description],n1,n2,n3,n4,n5,n6,n7,n8,n9 | [description] n1 n9
+100 closures of one getter: get [description],get n1,get n2,get n3,get n4,get n5,get n6,get n7,get n8,get n9 | get [description] get n1 get n9
+100 closures of one arrow function: [description],n1,n2,n3,n4,n5,n6,n7,n8,n9 | [description] n1 n9
+100 closures of one class: [description],n1,n2,n3,n4,n5,n6,n7,n8,n9 | [description] n1 n9
+no accessors: a,b,c | a,b,c | {"a":1,"b":2,"c":3} | "a" wec 1, "b" wec 2, "c" wec 3
+no accessors, a computed key: a,b,c | a,b,c | {"a":1,"b":2,"c":3} | "a" wec 1, "b" wec 2, "c" wec 3
+no accessors, a method: a,b,c | a,b,c | {"a":1,"c":3} | "a" wec 1, "b" wec function, "c" wec 3
+names that are not computed: --c "method" | --c "arrow" | --c "expression" | --c "own" | --c "quoted name" | --c "7" | --c "get getter", no setter | no getter, --c "set setter"

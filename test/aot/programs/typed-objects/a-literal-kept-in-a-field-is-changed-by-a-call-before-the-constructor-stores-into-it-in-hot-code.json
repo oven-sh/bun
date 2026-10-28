@@ -1,0 +1,4 @@
+{
+  "build": ["--aot-heat=everything-is-hot"],
+  "runWithASAN": "a build with assertions compares the store that was planned with the tests in front of it"
+}

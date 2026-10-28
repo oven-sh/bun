@@ -1,0 +1,22 @@
+namespace function true false
+symbols Symbol(react.element) Symbol(react.memo_cache_sentinel) Symbol(react.early_return_sentinel) true
+__commonJS true 1
+__toESM 1 [object Object] 1 true
+__export 3 b
+__exportGetters 4
+__exportValue 6
+__exportDefault 7
+__exportCjs 9 9
+__reExport 1 10 false
+__toCommonJS 3 true true
+__esm 1
+__name given
+__merge {"a":1,"b":2}
+__jsonParse 2 1,2
+__publicField 12 g
+private 14 true false 15
+private, refused TypeError
+legacy method,0,method,function true undefined
+standard 18 method,method object
+__using second,first
+__using, refused Object expected to be assigned to "using" declaration

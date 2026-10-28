@@ -1,0 +1,14 @@
+a member: call apply bind constructor caller arguments: store TypeError/unchanged, sloppy store TypeError/unchanged, Reflect.set false/unchanged, define TypeError/unchanged, Reflect.defineProperty false/unchanged, delete TypeError/unchanged, sloppy delete TypeError/unchanged, Reflect.deleteProperty false/unchanged
+a member: length name: store TypeError/unchanged, sloppy store done/unchanged, Reflect.set false/unchanged, define TypeError/unchanged, Reflect.defineProperty false/unchanged, delete TypeError/unchanged, sloppy delete TypeError/unchanged, Reflect.deleteProperty false/unchanged
+a member: Symbol(Symbol.hasInstance): store TypeError/unchanged, sloppy store done/unchanged, Reflect.set false/unchanged, define TypeError/unchanged, Reflect.defineProperty false/unchanged, delete TypeError/unchanged, sloppy delete false/unchanged, Reflect.deleteProperty false/unchanged
+a new key: addedByTheProgram prototype then toJSON valueOf 0 5 7 4294967294 4294967295 -1 1.5 -0 NaN Infinity -Infinity 1e+21 Symbol(Symbol.asyncDispose) Symbol(Symbol.asyncIterator) Symbol(Symbol.dispose) Symbol(Symbol.isConcatSpreadable) Symbol(Symbol.iterator) Symbol(Symbol.match) Symbol(Symbol.matchAll) Symbol(Symbol.replace) Symbol(Symbol.search) Symbol(Symbol.species) Symbol(Symbol.split) Symbol(Symbol.toPrimitive) Symbol(Symbol.toStringTag) Symbol(Symbol.unscopables): store TypeError/unchanged, sloppy store TypeError/unchanged, Reflect.set false/unchanged, define TypeError/unchanged, Reflect.defineProperty false/unchanged, delete true/unchanged, sloppy delete true/unchanged, Reflect.deleteProperty true/unchanged
+a key that stays open: demethodize unThis Symbol(mine) Symbol(shared): store done/changed, sloppy store done/changed, Reflect.set true/changed, define done/changed, Reflect.defineProperty true/changed, delete true/unchanged, sloppy delete true/unchanged, Reflect.deleteProperty true/unchanged
+the member that stays open: toString: store done/changed, sloppy store done/changed, Reflect.set true/changed, define done/changed, Reflect.defineProperty true/changed, delete true/changed, sloppy delete true/changed, Reflect.deleteProperty true/changed
+Function.prototype: its prototype: Object.setPrototypeOf TypeError/unchanged, Reflect.setPrototypeOf false/unchanged, __proto__ TypeError/unchanged, the prototype it has done/unchanged, extensible true
+toString after an assignment: <named> <named> <named> <named> <Point> <max>
+and with the original again: true string false
+the members: 13 13 13 13 true false
+a function with its own call and bind: its-own-call its-own-bind called called
+a class with static members of the same names: static-call static-apply true false
+what a class does not have: object undefined Plain 0 true no undefined false undefined
+a function with another prototype: another-call called undefined false

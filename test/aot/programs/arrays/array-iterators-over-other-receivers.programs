@@ -1,0 +1,51 @@
+//// array-values-of-a-string-read-at-index-0.js
+console.log([...Array.prototype.values.call("ab")][0]);
+//// array-values-of-a-string-read-at-index-1.js
+console.log([...Array.prototype.values.call("ab")][1]);
+//// array-values-of-a-string-read-with-at.js
+console.log([...Array.prototype.values.call("ab")].at(0));
+//// array-values-of-a-string-destructured.js
+const [first] = [...Array.prototype.values.call("ab")];
+console.log(first);
+//// array-values-of-a-string-kept-in-a-constant.js
+const list = [...Array.prototype.values.call("ab")];
+console.log(list[0]);
+//// array-keys-of-a-string.js
+console.log([...Array.prototype.keys.call("ab")][1]);
+//// array-entries-of-a-string.js
+console.log(JSON.stringify([...Array.prototype.entries.call("ab")][0]));
+//// array-values-of-a-string-object.js
+console.log([...Array.prototype.values.call(new String("ab"))][0]);
+//// array-values-of-an-array-like-object.js
+console.log([...Array.prototype.values.call({ length: 2, 0: "a", 1: "b" })][0]);
+//// array-values-of-a-typed-array.js
+console.log([...Array.prototype.values.call(new Uint8Array([7, 8]))][0]);
+//// array-values-of-an-array.js
+console.log([...Array.prototype.values.call(["a", "b"])][0]);
+//// array-values-of-an-arguments-object.js
+console.log((function () { return [...Array.prototype.values.call(arguments)][0]; })("a", "b"));
+//// array-symbol-iterator-of-a-string.js
+console.log([...Array.prototype[Symbol.iterator].call("ab")][0]);
+//// spread-of-a-string-read-at-index-0.js
+console.log([..."ab"][0]);
+//// spread-of-a-string-iterator-read-at-index-0.js
+console.log([..."ab"[Symbol.iterator]()][0]);
+//// array-from-array-values-of-a-string.js
+console.log(Array.from(Array.prototype.values.call("ab"))[0]);
+//// array-values-of-a-string-spread-after-an-element.js
+console.log(["x", ...Array.prototype.values.call("ab")][1]);
+//// array-values-of-a-typed-string.ts
+const text: string = "ab";
+console.log([...Array.prototype.values.call(text)][0]);
+//// array-values-of-an-array-like-object-with-a-getter.js
+const like = { length: 1, get 0() { console.log("read"); return "a"; } };
+console.log([...Array.prototype.values.call(like)][0]);
+//// array-values-of-a-proxy.js
+const like = new Proxy({ length: 1, 0: "a" }, { get(target, key) { if (key === "0") console.log("trap"); return target[key]; } });
+console.log([...Array.prototype.values.call(like)][0]);
+//// array-values-of-an-object-with-an-inherited-element.js
+const like = Object.create({ 0: "a" }); like.length = 1;
+console.log([...Array.prototype.values.call(like)][0]);
+//// array-values-of-an-array-with-a-hole-over-a-prototype.js
+const list = [, "b"]; Object.setPrototypeOf(list, Object.assign(Object.create(Array.prototype), { 0: "below" }));
+console.log([...Array.prototype.values.call(list)][0]);

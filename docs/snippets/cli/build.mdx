@@ -54,7 +54,8 @@ bun build <entry points>
 </ParamField>
 
 <ParamField path="--sourcemap" type="string" default="none">
-  Generate source maps. One of <code>linked</code>, <code>inline</code>, <code>external</code>, or <code>none</code>
+  Generate source maps. One of <code>linked</code>, <code>inline</code>, <code>external</code>, or <code>none</code>.
+  With <code>--aot</code>, only <code>external</code> has an effect: it's the same as <code>--obfuscate</code>
 </ParamField>
 
 <ParamField path="--banner" type="string">
@@ -170,6 +171,11 @@ bun build <entry points>
   Type check the entry points and everything they import. Nothing is bundled if there are type errors
 </ParamField>
 
+<ParamField path="--dts" type="boolean">
+  Write declaration files (<code>.d.ts</code>), and each output file with its types kept (<code>.aot.ts</code>), to{" "}
+  <code>--outdir</code>. Implies <code>--check</code>
+</ParamField>
+
 <ParamField path="--watch" type="boolean">
   Rebuild automatically when files change
 </ParamField>
@@ -195,6 +201,63 @@ bun build <entry points>
 
 <ParamField path="--compile-exec-argv" type="string">
   Prepend arguments to the standalone executable’s <code>execArgv</code>
+</ParamField>
+
+<ParamField path="--disallow-code-generation-from-strings" type="string">
+  In the standalone executable, <code>eval()</code> and <code>new Function()</code> throw an <code>EvalError</code>,
+  like Node.js's flag of the same name. <code>=strict</code> also blocks every other way to run code from a string.
+  Requires <code>--compile</code>
+</ParamField>
+
+<ParamField path="--aot" type="boolean">
+  Compile JavaScript and TypeScript to machine code at build time. Requires <code>--compile</code>. Implies{" "}
+  <code>--format=esm</code>
+</ParamField>
+
+<ParamField path="--explain" type="string">
+  With <code>--aot</code>: list the code that compiled to a slow path, worst first, with a fix for each.{" "}
+  <code>--explain=json</code> prints one object per line. Other reports: <code>guards</code>, <code>guards-json</code>,{" "}
+  <code>trim</code>, <code>missed-optimizations</code>, <code>allocations</code>
+</ParamField>
+
+<ParamField path="--aot-log-type-mismatches" type="boolean">
+  With <code>--aot</code>: the executable logs every value that doesn't match its declared type
+</ParamField>
+
+<ParamField path="--aot-huge-heap" type="boolean">
+  With <code>--aot</code>: remove the 32 GB heap limit per thread. The executable uses more memory and runs slower
+</ParamField>
+
+<ParamField path="--no-compile-function-source" type="boolean">
+  With <code>--aot</code>: don't embed function source code. <code>fn.toString()</code> returns{" "}
+  <code>[native code]</code>, and the executable only runs code that was compiled into it
+</ParamField>
+
+<ParamField path="--compile-inspector" type="boolean">
+  With <code>--aot</code>: let a debugger attach to the executable. Makes it larger and slower
+</ParamField>
+
+<ParamField path="--aot-allow-code-from-disk" type="boolean">
+  With <code>--aot</code>: let <code>import()</code> and <code>require()</code> load code that isn't in the executable
+  from disk at run time. Makes it larger and slower
+</ParamField>
+
+<ParamField path="--compile-in-place" type="boolean">
+  With <code>--aot</code>: keep modules at their paths on disk and load anything that wasn't compiled from there. The
+  executable only runs on the machine that built it
+</ParamField>
+
+<ParamField path="--obfuscate" type="boolean">
+  With <code>--aot</code>: strip function names and source locations from the executable and write them to{" "}
+  <code>&lt;outfile&gt;.map</code>. Same as <code>--sourcemap=external</code>
+</ParamField>
+
+<ParamField path="--trim" type="boolean">
+  Remove the Bun and Node.js APIs your code never calls from the executable. Requires <code>--compile</code>
+</ParamField>
+
+<ParamField path="--trim-locales" type="string">
+  Keep only these locales, such as <code>en,de-AT</code>. Implies <code>--trim</code>
 </ParamField>
 
 <ParamField path="--compile-jit-policy" type="number" default="1">

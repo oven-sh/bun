@@ -358,14 +358,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
         // Like Node: a builtin id wins before `paths` is read; any other non-relative request needs string entries.
         bool entriesMustBeStrings = false;
         if (!pathsValue.isUndefinedOrNull()) {
-            bool isPrimitive = moduleName.isString();
+            bool isString = moduleName.isString();
             auto request = moduleName.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            if (isPrimitive && Bun::isBuiltinModule(request)) {
+            if (isString && Bun::isBuiltinModule(request)) {
                 pathsValue = JSC::jsUndefined();
             } else {
                 entriesMustBeStrings = !isRelativeRequest(request);
-                if (!isPrimitive)
+                if (!isString)
                     moduleName = JSC::jsString(vm, request);
             }
         }

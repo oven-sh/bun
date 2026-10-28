@@ -869,9 +869,8 @@ if (isBun) {
         console.log(require("no-deps", { paths: ["plugins"] }));
         process.chdir("../modules");
         console.log(relative(() => require(path.resolve("node_modules/typed-config"))));
-        // No entry has it. The calling file has no node_modules directory above it, so it is installed, once.
-        console.log(resolve("no-deps", ["../..", "."]) === resolve("no-deps", [abs("nowhere")]));
-        console.log(resolve("no-deps", ["../.."]));
+        // No entry has it, and no node_modules directory is above the entry or the calling file: it is installed, once.
+        console.log(resolve("no-deps", ["../.."]), resolve("no-deps", [abs("../..")]));
       `,
     });
     const onDisk = "a/b/project/plugins/node_modules/no-deps/index.js";
@@ -883,8 +882,7 @@ if (isBun) {
         ...(isPosix ? [onDisk] : []),
         "on disk",
         "a/b/modules/node_modules/no-deps/index.js",
-        "true",
-        fromRegistry,
+        `${fromRegistry} ${fromRegistry}`,
       ],
       stderr: "",
       exitCode: 0,

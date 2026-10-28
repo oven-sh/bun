@@ -238,42 +238,61 @@ impl<'a> BundleV2<'a> {
         self.graph.path_to_source_index_map(target)
     }
 
-    /// In bake builds, register a stylesheet's source index in every graph's
-    /// path map so client, server, and SSR imports of it resolve to one copy:
-    /// per-graph copies emit duplicate chunks, and with `css_target()` forcing
-    /// identical minify output they collide on the content-hashed output
-    /// path, so this gate must match `css_target()`'s. Every other loader
-    /// stays per-graph: its module is JavaScript that each graph's bundle
-    /// needs its own copy of.
-    pub(crate) fn share_css_source_index_across_graphs(
-        &mut self,
-        target: options::Target,
+    /// Whether `bun build --app` builds this file once for every graph. Copies
+    /// of a plain `.css` file print the same (`BundleOptions::css_target`) and
+    /// would collide on the content-hashed output path. Every other loader
+    /// stays per graph: a JS chunk takes its side from its entry point. So
+    /// does the dev server, whose IncrementalGraph tracks a stylesheet per
+    /// importing graph, and a plugin namespace, where the same path text can
+    /// be anything.
+    pub(crate) fn is_stylesheet_shared_across_graphs(
+        &self,
         loader: options::Loader,
-        path_text: &[u8],
+        path: &bun_paths::fs::Path<'_>,
+    ) -> bool {
+        loader.is_css() && path.is_file() && self.framework.is_some() && self.dev_server.is_none()
+    }
+
+    /// The graph that parses a file `importer` imports. A shared stylesheet is
+    /// always a client file, so its class names and the resolution of its own
+    /// imports do not depend on which graph registers it first.
+    pub(crate) fn target_for_imported_file(
+        &self,
+        importer: options::Target,
+        loader: options::Loader,
+        path: &bun_paths::fs::Path<'_>,
+    ) -> options::Target {
+        if self.is_stylesheet_shared_across_graphs(loader, path) {
+            Target::Browser
+        } else {
+            importer
+        }
+    }
+
+    /// Registers a shared stylesheet in the path map of every graph, so each
+    /// graph's imports of it resolve to the one copy.
+    pub(crate) fn share_stylesheet_source_index_across_graphs(
+        &mut self,
+        loader: options::Loader,
+        path: &bun_paths::fs::Path<'_>,
         source_index: IndexInt,
     ) {
-        if !loader.is_css() || !self.transpiler.options.is_bake_build() {
+        if !self.is_stylesheet_shared_across_graphs(loader, path) {
             return;
         }
-        let main_target = self.transpiler.options.target;
         let separate_ssr = self
             .framework
             .as_ref()
             .and_then(|f| f.server_components.as_ref())
             .is_some_and(|sc| sc.separate_ssr_graph);
-        let (ta, tb) = match target {
-            Target::Browser => (main_target, Target::ServerComponentsSsr),
-            Target::ServerComponentsSsr => (main_target, Target::Browser),
-            _ => (Target::Browser, Target::ServerComponentsSsr),
-        };
-        self.graph
-            .path_to_source_index_map(ta)
-            .put(path_text, source_index)
-            .expect("oom");
-        if separate_ssr {
+        let server = self.transpiler.options.target;
+        for target in [Target::Browser, server, Target::ServerComponentsSsr] {
+            if target == Target::ServerComponentsSsr && !separate_ssr {
+                continue;
+            }
             self.graph
-                .path_to_source_index_map(tb)
-                .put(path_text, source_index)
+                .path_to_source_index_map(target)
+                .put(path.text, source_index)
                 .expect("oom");
         }
     }
@@ -2979,9 +2998,6 @@ pub mod bv2_impl {
             if let Some(existing) = self.path_to_source_index_map(target).get(path.text) {
                 out_source_index = Some(Index::init(existing));
             } else {
-                let path = self
-                    .path_with_pretty_initialized(&path, target)
-                    .expect("oom");
                 let loader: Loader = 'brk: {
                     let record: &ImportRecord = &self.graph.ast.items_import_records()
                         [import_record.importer_source_index as usize]
@@ -2995,6 +3011,13 @@ pub mod bv2_impl {
                         .unwrap_or(Loader::File);
                     // HTML is only allowed at the entry point.
                 };
+                let shared = self.is_stylesheet_shared_across_graphs(loader, &path);
+                let path = self
+                    .path_with_pretty_initialized(
+                        &path,
+                        if shared { Target::Browser } else { target },
+                    )
+                    .expect("oom");
                 let mut tmp_source = bun_ast::Source {
                     path,
                     contents: std::borrow::Cow::Borrowed(&b""[..]),
@@ -3006,7 +3029,11 @@ pub mod bv2_impl {
                         self.parse_task_path(&resolve_result, path),
                         &mut tmp_source,
                         loader,
-                        import_record.original_target,
+                        if shared {
+                            Target::Browser
+                        } else {
+                            import_record.original_target
+                        },
                     )
                     .expect("oom");
                 self.path_to_source_index_map(target)
@@ -3025,7 +3052,7 @@ pub mod bv2_impl {
                 }
 
                 // It is silly to bundle index.css depended on by client+server twice.
-                self.share_css_source_index_across_graphs(target, loader, path.text, idx);
+                self.share_stylesheet_source_index_across_graphs(loader, &path, idx);
             }
 
             if let Some(source_index) = out_source_index {
@@ -5322,11 +5349,21 @@ pub mod bv2_impl {
                             )
                         };
                         if !found_existing {
+                            // A file that a plugin resolved the record to instead keeps its own loader.
+                            let loader = this.requested_file_loader(
+                                &path,
+                                resolve
+                                    .import_record
+                                    .loader
+                                    .filter(|_| path.text == &*resolve.import_record.specifier),
+                            );
+                            let task_target = this.target_for_imported_file(
+                                resolve.import_record.original_target,
+                                loader,
+                                &path,
+                            );
                             let path = this
-                                .path_with_pretty_initialized(
-                                    &path,
-                                    resolve.import_record.original_target,
-                                )
+                                .path_with_pretty_initialized(&path, task_target)
                                 .expect("oom");
                             // `GetOrPutResult` has no `key_ptr` — `get_or_put` already
                             // duped the key into the map (see PathToSourceIndexMap.rs).
@@ -5338,14 +5375,6 @@ pub mod bv2_impl {
                             unsafe { *value_ptr = source_index.get() };
                             out_source_index = Some(source_index);
                             let _ = this.graph.ast.append(JSAst::empty_in(this.graph.heap)); // OOM/capacity: fire-and-forget
-                            // A file that a plugin resolved the record to instead keeps its own loader.
-                            let loader = this.requested_file_loader(
-                                &path,
-                                resolve
-                                    .import_record
-                                    .loader
-                                    .filter(|_| path.text == &*resolve.import_record.specifier),
-                            );
 
                             this.graph
                                 .input_files
@@ -5361,10 +5390,9 @@ pub mod bv2_impl {
                                     ..Default::default()
                                 })
                                 .expect("unreachable");
-                            this.share_css_source_index_across_graphs(
-                                resolve.import_record.original_target,
+                            this.share_stylesheet_source_index_across_graphs(
                                 loader,
-                                path.text,
+                                &path,
                                 source_index.get(),
                             );
                             let task_val = ParseTask {
@@ -5384,14 +5412,14 @@ pub mod bv2_impl {
                                 },
                                 side_effects: bun_ast::SideEffects::HasSideEffects,
                                 jsx: this
-                                    .transpiler_for_target(resolve.import_record.original_target)
+                                    .transpiler_for_target(task_target)
                                     .options
                                     .jsx
                                     .clone(),
                                 source_index: bun_ast::Index::init(source_index.get()),
                                 module_type: options::ModuleType::Unknown,
                                 loader: Some(loader),
-                                known_target: resolve.import_record.original_target,
+                                known_target: task_target,
                                 is_entry_point: resolve.import_record.kind
                                     == ImportKind::EntryPointBuild,
                                 ..Default::default()
@@ -7254,8 +7282,9 @@ pub mod bv2_impl {
                     continue;
                 }
 
+                let task_target = self.target_for_imported_file(target, import_record_loader, path);
                 *path = self
-                    .path_with_pretty_initialized(path, target)
+                    .path_with_pretty_initialized(path, task_target)
                     .expect("oom");
 
                 import_record.path = *path;
@@ -7274,7 +7303,7 @@ pub mod bv2_impl {
                 resolve_task.known_target = if import_record.kind == ImportKind::HtmlManifest {
                     Target::Browser
                 } else {
-                    target
+                    task_target
                 };
 
                 resolve_task.jsx = resolve_result.jsx.clone();
@@ -7383,10 +7412,9 @@ pub mod bv2_impl {
                         *value_ptr = new_task.source_index.get();
                     }
 
-                    self.share_css_source_index_across_graphs(
-                        target,
+                    self.share_stylesheet_source_index_across_graphs(
                         loader,
-                        new_task.path.text,
+                        &new_task.path,
                         new_task.source_index.get(),
                     );
 

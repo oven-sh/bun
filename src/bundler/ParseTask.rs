@@ -2415,7 +2415,8 @@ pub mod parse_worker {
             .separate_ssr_graph)
         ||
         // set the target to the client when bundling client-side files
-        (topts.is_bake_build() && task.known_target == options::Target::Browser)
+        ((topts.server_components || topts.has_dev_server())
+            && task.known_target == options::Target::Browser)
         {
             // separate_ssr_graph makes boundaries switch to client because the server file uses that generated file as input.
             // this is not done when there is one server graph because it is easier for plugins to deal with.

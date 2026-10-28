@@ -1164,4 +1164,72 @@ export default function Client() {
     expect(stdout).toBe("client shared\n");
     expect(exitCode).toBe(0);
   });
+
+  test("a css module that the client and SSR graphs share gets the class name of a client build", async () => {
+    // A dependency of a "use client" file is in the client graph and in the
+    // SSR graph. The one copy of its CSS module is a client file, so its class
+    // name does not depend on which graph imports it first.
+    using dir = tempDir("bake-production-shared-css-module", {
+      "server.ts": `
+        export function render(req, meta) {
+          return new Response(String(meta.pageModule.default()));
+        }
+        export async function prerender(meta) {
+          return { files: { "index.html": "<body>" + meta.pageModule.default() + "</body>" } };
+        }
+        export function registerClientReference(value, file, uid) {
+          return { value, file, uid };
+        }
+      `,
+      "routes/index.ts": `
+        import Client from "../Client";
+        export default () => "homepage " + typeof Client;
+      `,
+      "Client.ts": `
+        "use client";
+        import { box } from "./Button";
+        export default function Client() {
+          return box;
+        }
+      `,
+      "Button.ts": `
+        import styles from "./a.module.css";
+        export const box = styles.box;
+      `,
+      "a.module.css": `.box { color: red; }`,
+      "client-only.ts": `
+        import styles from "./a.module.css";
+        console.log(styles.box);
+      `,
+      "app.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" };
+        const serverComponents = {
+          separateSSRGraph: true,
+          serverRuntimeImportSource: "./server.ts",
+          serverRegisterClientReferenceExport: "registerClientReference",
+        };
+        export default { app: { framework: { fileSystemRouterTypes: [fsr], serverComponents } } };
+      `,
+    });
+    const className = async (outdir: string) => {
+      const files = await Array.fromAsync(new Bun.Glob("**/*.css").scan(path.join(String(dir), outdir)));
+      expect(files).toHaveLength(1);
+      const css = await Bun.file(path.join(String(dir), outdir, files[0])).text();
+      return css.match(/\.(box_[\w-]+)/)?.[1];
+    };
+
+    const app = await Bun.$`${bunExe()} build --app ./app.ts`.cwd(String(dir)).env(bunEnv).throws(false);
+    expect(app.stderr.toString()).not.toContain("error:");
+    expect(app.exitCode).toBe(0);
+
+    const control = await Bun.$`${bunExe()} build ./client-only.ts --outdir ./control`
+      .cwd(String(dir))
+      .env(bunEnv)
+      .throws(false);
+    expect(control.exitCode).toBe(0);
+
+    const expected = await className("control");
+    expect(expected).toStartWith("box_");
+    expect(await className("dist")).toBe(expected);
+  });
 });

@@ -1620,24 +1620,16 @@ impl<'a> BundleOptions<'a> {
         b"react-refresh",
     ];
 
-    /// Whether this bundle is part of a bake build (dev server or
-    /// `bun build --app`), i.e. it has a client graph alongside server graphs.
-    /// `framework` is set on every bake transpiler, including production
-    /// builds of frameworks that don't configure server components.
-    #[inline]
-    pub(crate) fn is_bake_build(&self) -> bool {
-        self.framework.is_some() || self.has_dev_server()
-    }
-
     /// The target whose CSS feature set stylesheets are minified and printed
-    /// for. Bake builds emit every stylesheet into the client bundle, so CSS
+    /// for. A bake build (the dev server, `bun build --app`) sets `framework`
+    /// on every transpiler and ships every stylesheet to the browser, so CSS
     /// compiles for the browser even when the importing graph is a server
     /// one. Minify and print must both resolve targets here: minify assigns
     /// vendor prefixes and fallbacks, print compiles nesting and media
     /// ranges, and a sheet that gets one half is only partly lowered.
     #[inline]
     pub(crate) fn css_target(&self) -> Target {
-        if self.is_bake_build() {
+        if self.framework.is_some() {
             Target::Browser
         } else {
             self.target
